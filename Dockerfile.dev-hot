@@ -1,0 +1,17 @@
+FROM golang:1.26.1-alpine
+
+ENV PATH="/usr/local/go/bin:/tmp/go/bin:${PATH}" \
+    GO111MODULE=on \
+    CGO_ENABLED=0 \
+    GOEXPERIMENT=greenteagc \
+    GOCACHE=/tmp/go-build \
+    GOMODCACHE=/tmp/go-mod \
+    GOPATH=/tmp/go \
+    GOPROXY=https://goproxy.cn,https://goproxy.io,direct \
+    GOSUMDB=sum.golang.google.cn
+
+RUN mkdir -p /tmp/go-build /tmp/go-mod /tmp/go/bin \
+    && chmod -R 0777 /tmp/go-build /tmp/go-mod /tmp/go
+
+WORKDIR /app
+EXPOSE 3000

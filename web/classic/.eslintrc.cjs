@@ -16,7 +16,7 @@ module.exports = {
           'block',
           [
             '',
-            'Copyright (C) 2025 QuantumNous',
+            'Copyright (C) 2025 c1cada',
             '',
             'This program is free software: you can redistribute it and/or modify',
             'it under the terms of the GNU Affero General Public License as',
@@ -31,7 +31,7 @@ module.exports = {
             'You should have received a copy of the GNU Affero General Public License',
             'along with this program. If not, see <https://www.gnu.org/licenses/>.',
             '',
-            'For commercial licensing, please contact support@quantumnous.com',
+            'For commercial licensing, please contact support@c1cada.dev',
             '',
           ],
         ],

@@ -3,8 +3,8 @@ package controller
 import (
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/model"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/model"
 	"github.com/stretchr/testify/require"
 )
 

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/types"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -163,7 +163,7 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
-func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+func (channel *Channel) GetNextEnabledKey() (string, int, *types.NexusTokError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		return channel.Key, 0, nil

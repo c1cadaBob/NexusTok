@@ -7,20 +7,20 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
-	appconstant "github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/common"
+	appconstant "github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	relayconstant "github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/relay/helper"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/setting/model_setting"
+	"github.com/c1cada/NexusTok/types"
 
 	"github.com/gin-gonic/gin"
 )
 
-func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {

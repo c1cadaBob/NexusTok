@@ -3,10 +3,10 @@ package controller
 import (
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 

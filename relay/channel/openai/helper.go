@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/logger"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	relayconstant "github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/relay/helper"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/types"
 
 	"github.com/samber/lo"
 

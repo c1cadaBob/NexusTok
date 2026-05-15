@@ -4,7 +4,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/c1cada/NexusTok/setting/config"
 )
 
 type MonitorSetting struct {

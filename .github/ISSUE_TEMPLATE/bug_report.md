@@ -10,7 +10,7 @@ assignees: ''
 ## 提交前必读（请勿删除本节）
 
 - 文档：https://docs.newapi.ai/
-- 使用问题先看或先问：https://deepwiki.com/QuantumNous/new-api
+- 使用问题先看或先问：https://deepwiki.com/c1cada/NexusTok
 - 警告：删除本模板、删除小节标题或随意清空内容的 issue，可能会被直接关闭；重复恶意提交者可能会被 block。
 
 **您当前的 newapi 版本**

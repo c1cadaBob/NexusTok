@@ -1,6 +1,6 @@
 package common
 
-import "github.com/QuantumNous/new-api/constant"
+import "github.com/c1cada/NexusTok/constant"
 
 func ChannelType2APIType(channelType int) (int, bool) {
 	apiType := -1

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/model"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/i18n"
-	"github.com/QuantumNous/new-api/model"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/i18n"
+	"github.com/c1cada/NexusTok/model"
+	relayconstant "github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/setting/ratio_setting"
+	"github.com/c1cada/NexusTok/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -342,7 +342,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	return &modelRequest, shouldSelectChannel, nil
 }
 
-func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NexusTokError {
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())

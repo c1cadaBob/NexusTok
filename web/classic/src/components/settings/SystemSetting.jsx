@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2025 QuantumNous
+Copyright (C) 2025 c1cada
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
@@ -14,7 +14,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-For commercial licensing, please contact support@quantumnous.com
+For commercial licensing, please contact support@c1cada.dev
 */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -747,13 +747,13 @@ const SystemSetting = () => {
                   <Text>
                     {t('仅支持')}{' '}
                     <a
-                      href='https://github.com/Calcium-Ion/new-api-worker'
+                      href='https://github.com/c1cada/nexustok-worker'
                       target='_blank'
                       rel='noreferrer'
                     >
-                      new-api-worker
+                      nexustok-worker
                     </a>{' '}
-                    {t('或其兼容new-api-worker格式的其他版本')}
+                    {t('或其兼容nexustok-worker格式的其他版本')}
                   </Text>
                   <Row
                     gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}

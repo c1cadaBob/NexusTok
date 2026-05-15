@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2023-2026 QuantumNous
+Copyright (C) 2023-2026 c1cada
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
@@ -14,7 +14,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-For commercial licensing, please contact support@quantumnous.com
+For commercial licensing, please contact support@c1cada.dev
 */
 import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
@@ -40,9 +40,9 @@ interface FooterProps {
   className?: string
 }
 
-const NEW_API_FOOTER_ATTRIBUTION_KEY = [
+const NEXUSTOK_FOOTER_ATTRIBUTION_KEY = [
   'footer',
-  'new' + 'api',
+  'nexus' + 'tok',
   'projectAttributionSuffix',
 ].join('.')
 
@@ -82,14 +82,14 @@ function ProjectAttribution(props: { currentYear: number }) {
       <span className='text-muted-foreground/45'>
         &copy; {props.currentYear}{' '}
         <a
-          href='https://github.com/QuantumNous/new-api'
+          href='https://github.com/c1cada/NexusTok'
           target='_blank'
           rel='noopener noreferrer'
           className='text-foreground/70 hover:text-foreground font-medium transition-colors'
         >
-          {t('New API')}
+          {t('NexusTok')}
         </a>
-        . {t(NEW_API_FOOTER_ATTRIBUTION_KEY)}
+        . {t(NEXUSTOK_FOOTER_ATTRIBUTION_KEY)}
       </span>
     </div>
   )
@@ -105,7 +105,7 @@ export function Footer(props: FooterProps) {
   } = useSystemConfig()
 
   const displayLogo = systemLogo || props.logo || '/logo.png'
-  const displayName = systemName || props.name || 'New API'
+  const displayName = systemName || props.name || 'NexusTok'
   const isDemoSiteMode = Boolean(demoSiteEnabled)
   const currentYear = new Date().getFullYear()
 
@@ -158,7 +158,7 @@ export function Footer(props: FooterProps) {
           },
           {
             text: t('footer.columns.related.links.newApiKeyTool'),
-            href: 'https://github.com/Calcium-Ion/new-api-key-tool',
+            href: 'https://github.com/c1cada/nexustok-key-tool',
           },
         ],
       },

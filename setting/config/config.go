@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/QuantumNous/new-api/common"
+	"github.com/c1cada/NexusTok/common"
 )
 
 // ConfigManager 统一管理所有配置

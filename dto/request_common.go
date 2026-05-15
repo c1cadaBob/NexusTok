@@ -1,7 +1,7 @@
 package dto
 
 import (
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/types"
 	"github.com/gin-gonic/gin"
 )
 

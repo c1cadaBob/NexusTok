@@ -1,7 +1,7 @@
 package setting
 
 import (
-	"github.com/QuantumNous/new-api/common"
+	"github.com/c1cada/NexusTok/common"
 )
 
 var autoGroups = []string{

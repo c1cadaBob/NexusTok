@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"github.com/QuantumNous/new-api/types"
+	"github.com/c1cada/NexusTok/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +47,7 @@ func TestResetStatusCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			newAPIError := &types.NewAPIError{
+			newAPIError := &types.NexusTokError{
 				StatusCode: tc.statusCode,
 			}
 			ResetStatusCode(newAPIError, tc.statusCodeConfig)

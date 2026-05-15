@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/i18n"
-	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/c1cada/NexusTok/i18n"
+	"github.com/c1cada/NexusTok/logger"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 

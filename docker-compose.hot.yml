@@ -1,0 +1,100 @@
+name: nexustok-hot
+
+services:
+  frontend-watch:
+    image: oven/bun:1
+    container_name: nexustok-frontend-watch
+    user: "${DOCKER_UID:-1002}:${DOCKER_GID:-1003}"
+    working_dir: /app
+    environment:
+      BUN_INSTALL_CACHE_DIR: /app/.cache/bun
+      DISABLE_ESLINT_PLUGIN: "true"
+      HOME: /app/.cache/home
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      NODE_ENV: production
+      TMPDIR: /app/.cache/tmp
+      npm_config_registry: https://registry.npmmirror.com
+    volumes:
+      - .:/app
+    command: >
+      sh -lc '
+        set -eu
+        mkdir -p /app/.cache/bun /app/.cache/home /app/.cache/tmp
+        cd /app/web/default
+        bun install --frozen-lockfile
+        cd /app/web/classic
+        bun install --frozen-lockfile
+        cd /app
+        (cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
+        (cd web/classic && VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
+        wait
+      '
+    restart: unless-stopped
+
+  nexustok:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev-hot
+    image: nexustok-api-hot:local
+    container_name: nexustok-api-hot
+    user: "${DOCKER_UID:-1002}:${DOCKER_GID:-1003}"
+    working_dir: /app
+    command: ["/app/bin/docker-hot-backend.sh"]
+    ports:
+      - "${HOT_PORT:-3003}:3000"
+    volumes:
+      - .:/app
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      SQL_DSN: postgresql://root:123456@postgres:5432/nexustok
+      REDIS_CONN_STRING: redis://redis:6379
+      TZ: Asia/Shanghai
+      GIN_MODE: release
+      GOPROXY: https://goproxy.cn,https://goproxy.io,direct
+      GOSUMDB: sum.golang.google.cn
+      DEBUG: "false"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: nexustok-hot-node-1
+    depends_on:
+      frontend-watch:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      - hot-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexustok-hot-redis
+    restart: unless-stopped
+    networks:
+      - hot-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: nexustok-hot-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: nexustok
+    volumes:
+      - hot_pg_data:/var/lib/postgresql/data
+    networks:
+      - hot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d nexustok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hot_pg_data:
+
+networks:
+  hot-network:
+    driver: bridge

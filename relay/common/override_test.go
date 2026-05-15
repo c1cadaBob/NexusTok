@@ -6,11 +6,11 @@ import (
 	"reflect"
 	"testing"
 
-	common2 "github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/types"
+	common2 "github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/types"
 
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/setting/model_setting"
 	"github.com/samber/lo"
 )
 

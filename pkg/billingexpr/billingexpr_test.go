@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/c1cada/NexusTok/pkg/billingexpr"
 )
 
 // ---------------------------------------------------------------------------

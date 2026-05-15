@@ -1,7 +1,7 @@
 {
-  "name": "new-api-electron",
+  "name": "nexustok-electron",
   "version": "1.0.0",
-  "description": "New API - AI Model Gateway Desktop Application",
+  "description": "NexusTok - AI Model Gateway Desktop Application",
   "main": "main.js",
   "scripts": {
     "start-app": "electron .",
@@ -18,10 +18,10 @@
     "openai",
     "claude"
   ],
-  "author": "QuantumNous",
+  "author": "c1cada",
   "repository": {
     "type": "git",
-    "url": "https://github.com/QuantumNous/new-api"
+    "url": "https://github.com/c1cada/NexusTok"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
@@ -29,8 +29,8 @@
     "electron-builder": "^26.7.0"
   },
   "build": {
-    "appId": "com.newapi.desktop",
-    "productName": "New-API-App",
+    "appId": "com.nexustok.desktop",
+    "productName": "NexusTok",
     "publish": null,
     "directories": {
       "output": "dist"
@@ -57,8 +57,8 @@
       ],
       "extraResources": [
         {
-          "from": "../new-api",
-          "to": "bin/new-api"
+          "from": "../nexustok",
+          "to": "bin/nexustok"
         },
         {
           "from": "../web/dist",
@@ -94,8 +94,8 @@
       ],
       "extraResources": [
         {
-          "from": "../new-api.exe",
-          "to": "bin/new-api.exe"
+          "from": "../nexustok.exe",
+          "to": "bin/nexustok.exe"
         },
         {
           "from": "../LICENSE",
@@ -128,8 +128,8 @@
       "category": "Development",
       "extraResources": [
         {
-          "from": "../new-api",
-          "to": "bin/new-api"
+          "from": "../nexustok",
+          "to": "bin/nexustok"
         },
         {
           "from": "../LICENSE",

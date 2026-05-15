@@ -1,6 +1,6 @@
 package system_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import "github.com/c1cada/NexusTok/setting/config"
 
 type OIDCSettings struct {
 	Enabled               bool   `json:"enabled"`

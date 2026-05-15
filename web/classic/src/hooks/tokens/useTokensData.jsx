@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2025 QuantumNous
+Copyright (C) 2025 c1cada
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
@@ -14,7 +14,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-For commercial licensing, please contact support@quantumnous.com
+For commercial licensing, please contact support@c1cada.dev
 */
 
 import { useState, useEffect, useRef } from 'react';
@@ -233,7 +233,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     }
     if (url.includes('{cherryConfig}') === true) {
       let cherryConfig = {
-        id: 'new-api',
+        id: 'nexustok',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };
@@ -243,7 +243,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       url = url.replaceAll('{cherryConfig}', encodedConfig);
     } else if (url.includes('{aionuiConfig}') === true) {
       let aionuiConfig = {
-        platform: 'new-api',
+        platform: 'nexustok',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };
@@ -253,7 +253,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       url = url.replaceAll('{aionuiConfig}', encodedConfig);
     } else if (url.includes('{deepchatConfig}') === true) {
       let deepchatConfig = {
-        id: 'new-api',
+        id: 'nexustok',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };

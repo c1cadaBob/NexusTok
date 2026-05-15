@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/model"
-	relaychannel "github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/gemini"
-	"github.com/QuantumNous/new-api/relay/channel/ollama"
-	"github.com/QuantumNous/new-api/service"
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/model"
+	relaychannel "github.com/c1cada/NexusTok/relay/channel"
+	"github.com/c1cada/NexusTok/relay/channel/gemini"
+	"github.com/c1cada/NexusTok/relay/channel/ollama"
+	"github.com/c1cada/NexusTok/service"
 
 	"github.com/gin-gonic/gin"
 )
