@@ -102,6 +102,13 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			}
 		}
 
+		// 应用请求规则覆写
+		jsonData, matchedRules, ruleErr := service.ApplyRequestRuleOverrides(jsonData, info)
+		if ruleErr != nil {
+			return newAPIErrorFromParamOverride(ruleErr)
+		}
+		service.RecordRequestLogAsync(info, matchedRules, jsonData, info.RelayFormat)
+
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}

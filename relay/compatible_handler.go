@@ -174,6 +174,14 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
+		// 应用请求规则覆写（全局规则，在渠道覆写之后执行）
+		jsonData, matchedRules, ruleErr := service.ApplyRequestRuleOverrides(jsonData, info)
+		if ruleErr != nil {
+			return newAPIErrorFromParamOverride(ruleErr)
+		}
+		// 异步记录匹配到规则的请求
+		service.RecordRequestLogAsync(info, matchedRules, jsonData, info.RelayFormat)
+
 		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
 
 		requestBody = bytes.NewBuffer(jsonData)

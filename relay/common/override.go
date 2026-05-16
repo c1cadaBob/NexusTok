@@ -1491,6 +1491,11 @@ func syncRuntimeHeaderOverrideFromContext(info *RelayInfo, context map[string]in
 	info.UseRuntimeHeadersOverride = true
 }
 
+// SyncRuntimeHeaderOverrideFromContext 导出版本，供 service 层调用
+func SyncRuntimeHeaderOverrideFromContext(info *RelayInfo, context map[string]interface{}) {
+	syncRuntimeHeaderOverrideFromContext(info, context)
+}
+
 func moveValue(jsonStr, fromPath, toPath string) (string, error) {
 	sourceValue := gjson.Get(jsonStr, fromPath)
 	if !sourceValue.Exists() {
