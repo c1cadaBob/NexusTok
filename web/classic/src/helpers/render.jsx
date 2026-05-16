@@ -80,6 +80,7 @@ import {
   Package,
   Server,
   CalendarClock,
+  Filter,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -139,6 +140,8 @@ export function getLucideIcon(key, selected = false) {
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'channel':
       return <Layers {...commonProps} color={iconColor} />;
+    case 'request-rules':
+      return <Filter {...commonProps} color={iconColor} />;
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
     case 'user':
