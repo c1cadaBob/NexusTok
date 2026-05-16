@@ -94,6 +94,9 @@ func main() {
 			model.InitChannelCache()
 		}()
 
+		// 初始化请求规则缓存
+		model.InitRequestRuleCache()
+
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 
