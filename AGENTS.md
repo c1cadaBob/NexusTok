@@ -135,3 +135,37 @@ For request structs that are parsed from client JSON and then re-marshaled to up
 ### Rule 7: Billing Expression System — Read `pkg/billingexpr/expr.md`
 
 When working on tiered/dynamic billing (expression-based pricing), you MUST read `pkg/billingexpr/expr.md` first. It documents the design philosophy, expression language (variables, functions, examples), full system architecture (editor → storage → pre-consume → settlement → log display), token normalization rules (`p`/`c` auto-exclusion), quota conversion, and expression versioning. All code changes to the billing expression system must follow the patterns described in that document.
+
+### Rule 8: Git 提交规范 — 每次修改必须提交
+
+每次涉及项目文件的修改都**必须**通过 `git commit` 进行记录，不允许存在未提交的变更积压。
+
+- 每次完成一个功能点、修复、或有意义的改动后，立即提交
+- 提交信息（commit message）**优先使用中文**，简洁清晰地说明本次变更的目的
+- 禁止将大量不相关的改动合并到一个 commit 中
+
+### Rule 9: GitHub 同步规范 — 每 5 次提交至少推送一次
+
+本地 Git 仓库**最少每 5 次 commit 必须推送一次**到 GitHub 远程仓库（`origin`）。
+
+- 推送命令：`git push origin main`
+- 远程地址使用 SSH 协议：`git@github.com:c1cadaBob/NexusTok.git`
+- 如果累积了 5 个未推送的 commit，必须在下一次操作前先执行推送
+- 关键节点（如功能完成、重大修复）建议立即推送，不必等到 5 次
+
+### Rule 10: 对话语言 — 使用中文
+
+与用户的所有对话交流**必须使用中文**，包括：
+
+- 任务说明、进度汇报、问题确认
+- commit message 优先使用中文
+- 代码注释和文档保持原有语言（英文），不做翻译
+
+### Rule 11: 代码注释 — 使用中文注释提升可维护性
+
+编写代码时**必须使用中文注释**，以增强代码的可读性和维护性：
+
+- 函数/方法上方的功能说明使用中文
+- 关键逻辑、业务规则、复杂算法处添加中文注释
+- 已有英文注释的代码在修改时可保留原注释，新增注释使用中文
+- 注释应解释"为什么"而非"做了什么"，避免无意义的注释
