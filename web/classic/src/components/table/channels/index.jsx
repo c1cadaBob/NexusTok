@@ -33,6 +33,7 @@ import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import EditChannelModal from './modals/EditChannelModal';
 import EditTagModal from './modals/EditTagModal';
 import MultiKeyManageModal from './modals/MultiKeyManageModal';
+import ChannelAccountPoolModal from './modals/ChannelAccountPoolModal';
 import ChannelUpstreamUpdateModal from './modals/ChannelUpstreamUpdateModal';
 import { createCardProPagination } from '../../../helpers/utils';
 
@@ -62,6 +63,12 @@ const ChannelsPage = () => {
         visible={channelsData.showMultiKeyManageModal}
         onCancel={() => channelsData.setShowMultiKeyManageModal(false)}
         channel={channelsData.currentMultiKeyChannel}
+        onRefresh={channelsData.refresh}
+      />
+      <ChannelAccountPoolModal
+        visible={channelsData.showAccountPoolModal}
+        onCancel={() => channelsData.setShowAccountPoolModal(false)}
+        channel={channelsData.currentAccountPoolChannel}
         onRefresh={channelsData.refresh}
       />
       <ChannelUpstreamUpdateModal

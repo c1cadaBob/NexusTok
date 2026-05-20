@@ -117,6 +117,9 @@ export const useChannelsData = () => {
   // Multi-key management states
   const [showMultiKeyManageModal, setShowMultiKeyManageModal] = useState(false);
   const [currentMultiKeyChannel, setCurrentMultiKeyChannel] = useState(null);
+  const [showAccountPoolModal, setShowAccountPoolModal] = useState(false);
+  const [currentAccountPoolChannel, setCurrentAccountPoolChannel] =
+    useState(null);
 
   // Refs
   const requestCounter = useRef(0);
@@ -1203,6 +1206,10 @@ export const useChannelsData = () => {
     setShowMultiKeyManageModal,
     currentMultiKeyChannel,
     setCurrentMultiKeyChannel,
+    showAccountPoolModal,
+    setShowAccountPoolModal,
+    currentAccountPoolChannel,
+    setCurrentAccountPoolChannel,
     ...upstreamUpdates,
 
     // Form

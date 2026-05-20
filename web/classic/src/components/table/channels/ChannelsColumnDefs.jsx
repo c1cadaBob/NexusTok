@@ -325,6 +325,8 @@ export const getChannelsColumns = ({
   checkOllamaVersion,
   setShowMultiKeyManageModal,
   setCurrentMultiKeyChannel,
+  setShowAccountPoolModal,
+  setCurrentAccountPoolChannel,
   openUpstreamUpdateModal,
   detectChannelUpstreamUpdates,
 }) => {
@@ -341,6 +343,20 @@ export const getChannelsColumns = ({
       render: (text, record, index) => {
         const passThroughEnabled = isRequestPassThroughEnabled(record);
         const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
+        const accountPoolStats = record.channel_account_stats;
+        const isAccountPool =
+          record.channel_info?.credential_mode === 'account_pool' ||
+          record.channel_info?.account_pool_enabled === true;
+        const showAccountPoolStats =
+          record.children === undefined &&
+          (isAccountPool || (accountPoolStats?.total || 0) > 0);
+        const accountPoolColor =
+          (accountPoolStats?.enabled || 0) === 0 &&
+          (accountPoolStats?.total || 0) > 0
+            ? 'red'
+            : (accountPoolStats?.cooldown || 0) > 0
+              ? 'orange'
+              : 'light-blue';
         const pendingAddCount = upstreamUpdateMeta.pendingAddModels.length;
         const pendingRemoveCount =
           upstreamUpdateMeta.pendingRemoveModels.length;
@@ -383,7 +399,11 @@ export const getChannelsColumns = ({
             <span>{text}</span>
           );
 
-        if (!passThroughEnabled && !showUpstreamUpdateTag) {
+        if (
+          !passThroughEnabled &&
+          !showUpstreamUpdateTag &&
+          !showAccountPoolStats
+        ) {
           return nameNode;
         }
 
@@ -452,6 +472,32 @@ export const getChannelsColumns = ({
                   </Tooltip>
                 ) : null}
               </Space>
+            )}
+            {showAccountPoolStats && (
+              <Tooltip
+                position='top'
+                content={
+                  <div className='text-xs leading-5'>
+                    <div>
+                      {t('总数')}: {accountPoolStats?.total || 0}
+                    </div>
+                    <div>
+                      {t('已启用')}: {accountPoolStats?.enabled || 0}
+                    </div>
+                    <div>
+                      {t('冷却中')}: {accountPoolStats?.cooldown || 0}
+                    </div>
+                    <div>
+                      {t('已禁用')}: {accountPoolStats?.disabled || 0}
+                    </div>
+                  </div>
+                }
+              >
+                <Tag color={accountPoolColor} type='light' shape='circle'>
+                  {t('账号池')} {accountPoolStats?.enabled || 0}/
+                  {accountPoolStats?.total || 0}
+                </Tag>
+              </Tooltip>
             )}
           </Space>
         );
@@ -691,6 +737,15 @@ export const getChannelsColumns = ({
         if (record.children === undefined) {
           const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
           const moreMenuItems = [
+            {
+              node: 'item',
+              name: t('账号池'),
+              type: 'tertiary',
+              onClick: () => {
+                setCurrentAccountPoolChannel(record);
+                setShowAccountPoolModal(true);
+              },
+            },
             {
               node: 'item',
               name: t('删除'),
