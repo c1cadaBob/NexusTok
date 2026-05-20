@@ -106,6 +106,7 @@ export default function SettingsSidebarModulesUser() {
         models: isSidebarModuleAllowed('admin', 'models'),
         pricing_setting: isSidebarModuleAllowed('admin', 'pricing_setting'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
+        account_pool: isSidebarModuleAllowed('admin', 'account_pool'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         user: isSidebarModuleAllowed('admin', 'user'),
         setting: isSidebarModuleAllowed('admin', 'setting'),
@@ -349,6 +350,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'deployment',
           title: t('模型部署'),
           description: t('模型部署管理'),
+        },
+        {
+          key: 'account_pool',
+          title: t('账号池管理'),
+          description: t('官方账号组与轮询管理'),
         },
         {
           key: 'redemption',

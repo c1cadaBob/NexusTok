@@ -81,6 +81,7 @@ import {
   Server,
   CalendarClock,
   Calculator,
+  UsersRound,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -151,6 +152,8 @@ export function getLucideIcon(key, selected = false) {
       return <Calculator {...commonProps} color={iconColor} />;
     case 'deployment':
       return <Server {...commonProps} color={iconColor} />;
+    case 'account_pool':
+      return <UsersRound {...commonProps} color={iconColor} />;
     case 'subscription':
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'setting':

@@ -47,6 +47,7 @@ const routerMap = {
   task: '/console/task',
   models: '/console/models',
   deployment: '/console/deployment',
+  account_pool: '/console/account-pool',
   pricing_setting: '/console/pricing-setting',
   playground: '/console/playground',
   personal: '/console/personal',
@@ -176,6 +177,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('模型部署'),
         itemKey: 'deployment',
         to: '/deployment',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('账号池管理'),
+        itemKey: 'account_pool',
+        to: '/account-pool',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

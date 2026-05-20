@@ -43,6 +43,7 @@ import Pricing from './pages/Pricing';
 import Task from './pages/Task';
 import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
+import AccountPool from './pages/AccountPool';
 import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import PricingSetting from './pages/PricingSetting';
@@ -121,6 +122,14 @@ function App() {
           element={
             <AdminRoute>
               <ModelDeploymentPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/account-pool'
+          element={
+            <AdminRoute>
+              <AccountPool />
             </AdminRoute>
           }
         />
