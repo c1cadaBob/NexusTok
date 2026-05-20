@@ -444,7 +444,9 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 		permissions["sidebar_settings"] = true
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": map[string]interface{}{
-				"setting": false, // 管理员不能访问系统设置
+				"setting":         false, // 管理员不能访问系统设置
+				"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
+				"pricing_setting": false, // 经典前端中的分组与模型定价入口
 			},
 		}
 	} else {
@@ -490,22 +492,26 @@ func generateDefaultSidebarConfig(userRole int) string {
 	if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    false, // 管理员不能访问系统设置
+			"enabled":         true,
+			"channel":         true,
+			"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
+			"pricing_setting": false, // 经典前端中的分组与模型定价入口
+			"models":          true,
+			"redemption":      true,
+			"user":            true,
+			"setting":         false, // 管理员不能访问系统设置
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    true,
+			"enabled":         true,
+			"channel":         true,
+			"pricing":         true,
+			"pricing_setting": true,
+			"models":          true,
+			"redemption":      true,
+			"user":            true,
+			"setting":         true,
 		}
 	}
 	// 普通用户不包含admin区域
