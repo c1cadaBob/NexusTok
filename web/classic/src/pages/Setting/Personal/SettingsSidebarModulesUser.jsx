@@ -342,7 +342,7 @@ export default function SettingsSidebarModulesUser() {
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'pricing_setting',
-          title: t('分组与模型定价设置'),
+          title: t('模型定价分组'),
           description: t('模型和分组计费规则'),
         },
         {

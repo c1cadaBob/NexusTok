@@ -167,7 +167,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
-        text: t('分组与模型定价设置'),
+        text: t('模型定价分组'),
         itemKey: 'pricing_setting',
         to: '/console/pricing-setting',
         className: isRoot() ? '' : 'tableHiddle',

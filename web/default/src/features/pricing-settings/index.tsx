@@ -56,7 +56,7 @@ export function PricingSettings() {
       <div className='min-h-0 flex-1 px-4 pt-6 pb-4'>
         <div className='faded-bottom h-full w-full overflow-y-auto scroll-smooth pe-4 pb-12'>
           <RatioSettingsCard
-            titleKey='Model & Group Pricing Settings'
+            titleKey='Model Pricing Groups'
             descriptionKey='Configure model, caching, and group ratios used for billing'
             modelDefaults={getModelDefaults(settings)}
             groupDefaults={getGroupDefaults(settings)}

@@ -125,7 +125,7 @@ export function SidebarModulesSection({
         description: t('Configure upstream providers and routing.'),
       },
       pricing: {
-        title: t('Model & Group Pricing Settings'),
+        title: t('Model Pricing Groups'),
         description: t(
           'Configure model, caching, and group ratios used for billing'
         ),

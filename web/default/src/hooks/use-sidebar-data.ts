@@ -137,7 +137,7 @@ export function useSidebarData(): SidebarData {
           ...(userRole === ROLE.SUPER_ADMIN
             ? [
                 {
-                  title: t('Model & Group Pricing Settings'),
+                  title: t('Model Pricing Groups'),
                   url: '/pricing-settings',
                   icon: Calculator,
                 },
