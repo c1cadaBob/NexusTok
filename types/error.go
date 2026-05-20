@@ -90,6 +90,7 @@ const (
 type NexusTokError struct {
 	Err            error
 	RelayError     any
+	RetryAfter     string
 	skipRetry      bool
 	recordErrorLog *bool
 	errorType      ErrorType

@@ -211,3 +211,14 @@ func AddChannelAccountUsedQuota(accountID int, quota int64) {
 		common.SysLog(fmt.Sprintf("failed to update channel account used_quota: account_id=%d, quota=%d, error=%v", accountID, quota, err))
 	}
 }
+
+func UpdateChannelAccountErrorState(channelID int, accountID int, updates map[string]interface{}) error {
+	if accountID <= 0 || len(updates) == 0 {
+		return nil
+	}
+	query := DB.Model(&ChannelAccount{}).Where("id = ?", accountID)
+	if channelID > 0 {
+		query = query.Where("channel_id = ?", channelID)
+	}
+	return query.Updates(updates).Error
+}
