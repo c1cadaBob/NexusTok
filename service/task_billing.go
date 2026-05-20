@@ -224,7 +224,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logQuota = quotaDelta
 		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
-		model.AddChannelAccountUsedQuota(relayInfo.ChannelAccountId, int64(quotaDelta))
+		model.AddChannelAccountUsedQuota(task.PrivateData.ChannelAccountId, int64(quotaDelta))
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
