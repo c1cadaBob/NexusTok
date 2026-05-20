@@ -388,26 +388,5 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
 
-		// 请求规则管理（参数覆写 + 请求记录）
-		requestRuleRoute := apiRouter.Group("/request_rule")
-		requestRuleRoute.Use(middleware.AdminAuth())
-		{
-			requestRuleRoute.GET("/", controller.GetAllRequestRules)
-			requestRuleRoute.GET("/search", controller.SearchRequestRules)
-			requestRuleRoute.GET("/:id", controller.GetRequestRule)
-			requestRuleRoute.POST("/", controller.CreateRequestRule)
-			requestRuleRoute.PUT("/", controller.UpdateRequestRule)
-			requestRuleRoute.DELETE("/:id", controller.DeleteRequestRule)
-			requestRuleRoute.PUT("/:id/status", controller.UpdateRequestRuleStatus)
 		}
-
-		// 请求记录查询
-		requestLogRoute := apiRouter.Group("/request_log")
-		requestLogRoute.Use(middleware.AdminAuth())
-		{
-			requestLogRoute.GET("/", controller.GetAllRequestLogs)
-			requestLogRoute.GET("/:id", controller.GetRequestLogDetail)
-			requestLogRoute.DELETE("/", controller.DeleteRequestLogs)
-		}
-	}
 }

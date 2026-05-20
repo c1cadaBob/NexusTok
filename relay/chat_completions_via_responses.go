@@ -89,12 +89,6 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	}
 
 	// 应用请求规则覆写
-	chatJSON, matchedRules, ruleErr := service.ApplyRequestRuleOverrides(chatJSON, info)
-	if ruleErr != nil {
-		return nil, newAPIErrorFromParamOverride(ruleErr)
-	}
-	service.RecordRequestLogAsync(info, matchedRules, chatJSON, info.RelayFormat)
-
 	var overriddenChatReq dto.GeneralOpenAIRequest
 	if err := common.Unmarshal(chatJSON, &overriddenChatReq); err != nil {
 		return nil, types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())

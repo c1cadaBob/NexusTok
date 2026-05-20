@@ -59,12 +59,6 @@ func EmbeddingHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	// 应用请求规则覆写
-	jsonData, matchedRules, ruleErr := service.ApplyRequestRuleOverrides(jsonData, info)
-	if ruleErr != nil {
-		return newAPIErrorFromParamOverride(ruleErr)
-	}
-	service.RecordRequestLogAsync(info, matchedRules, jsonData, info.RelayFormat)
-
 	logger.LogDebug(c, fmt.Sprintf("converted embedding request body: %s", string(jsonData)))
 	var requestBody io.Reader = bytes.NewBuffer(jsonData)
 	statusCodeMappingStr := c.GetString("status_code_mapping")

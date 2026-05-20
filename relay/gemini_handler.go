@@ -164,12 +164,6 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		// 应用请求规则覆写
-		jsonData, matchedRules, ruleErr := service.ApplyRequestRuleOverrides(jsonData, info)
-		if ruleErr != nil {
-			return newAPIErrorFromParamOverride(ruleErr)
-		}
-		service.RecordRequestLogAsync(info, matchedRules, jsonData, info.RelayFormat)
-
 		logger.LogDebug(c, "Gemini request body: "+string(jsonData))
 
 		requestBody = bytes.NewReader(jsonData)
@@ -271,12 +265,6 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	}
 
 	// 应用请求规则覆写
-	jsonData, matchedRules2, ruleErr2 := service.ApplyRequestRuleOverrides(jsonData, info)
-	if ruleErr2 != nil {
-		return newAPIErrorFromParamOverride(ruleErr2)
-	}
-	service.RecordRequestLogAsync(info, matchedRules2, jsonData, info.RelayFormat)
-
 	logger.LogDebug(c, "Gemini embedding request body: "+string(jsonData))
 	requestBody = bytes.NewReader(jsonData)
 
