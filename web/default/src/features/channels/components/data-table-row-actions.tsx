@@ -34,6 +34,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  UsersRound,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -125,6 +126,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleManageKeys = () => {
     setCurrentRow(channel)
     setOpen('multi-key-manage')
+  }
+
+  const handleManageAccountPool = () => {
+    setCurrentRow(channel)
+    setOpen('account-pool-manage')
   }
 
   const handleToggleStatus = async (
@@ -293,6 +299,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
+
+          <DropdownMenuItem onClick={handleManageAccountPool}>
+            {t('Account Pool')}
+            <DropdownMenuShortcut>
+              <UsersRound size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
 
           <DropdownMenuSeparator />
 

@@ -52,6 +52,11 @@ export const channelFormSchema = z.object({
   // Multi-key options (not sent to backend directly)
   multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
   multi_key_type: z.enum(['random', 'polling']).optional(),
+  credential_mode: z
+    .enum(['single_key', 'multi_key', 'account_pool'])
+    .optional(),
+  account_pool_mode: z.enum(['polling', 'random']).optional(),
+  account_pool_fallback: z.boolean().optional(),
   batch_add_set_key_prefix_2_name: z.boolean().optional(),
   key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
   // Channel extra settings (stored in setting JSON, not sent directly)
@@ -110,6 +115,9 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
+  credential_mode: 'single_key',
+  account_pool_mode: 'polling',
+  account_pool_fallback: false,
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
@@ -219,6 +227,15 @@ export function transformChannelToFormDefaults(
     }
   }
 
+  let credentialMode: ChannelFormValues['credential_mode'] = 'single_key'
+  if (channel.channel_info.credential_mode) {
+    credentialMode = channel.channel_info.credential_mode
+  } else if (channel.channel_info.account_pool_enabled) {
+    credentialMode = 'account_pool'
+  } else if (channel.channel_info.is_multi_key) {
+    credentialMode = 'multi_key'
+  }
+
   return {
     name: channel.name || '',
     type: channel.type,
@@ -243,6 +260,9 @@ export function transformChannelToFormDefaults(
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
+    credential_mode: credentialMode,
+    account_pool_mode: channel.channel_info.account_pool_mode || 'polling',
+    account_pool_fallback: channel.channel_info.account_pool_fallback === true,
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
     // Channel extra settings
@@ -398,7 +418,13 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 } {
-  const mode = formData.multi_key_mode || 'single'
+  const credentialMode = formData.credential_mode || 'single_key'
+  const mode =
+    credentialMode === 'multi_key'
+      ? 'multi_to_single'
+      : credentialMode === 'account_pool'
+        ? 'single'
+        : formData.multi_key_mode || 'single'
 
   const channel: Partial<Channel> = {
     name: formData.name,
@@ -422,6 +448,16 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
+    channel_info: {
+      credential_mode: credentialMode,
+      account_pool_enabled: credentialMode === 'account_pool',
+      account_pool_mode: formData.account_pool_mode || 'polling',
+      account_pool_fallback: formData.account_pool_fallback === true,
+      is_multi_key: credentialMode === 'multi_key',
+      multi_key_size: 0,
+      multi_key_polling_index: 0,
+      multi_key_mode: formData.multi_key_type || 'random',
+    },
   }
 
   // Clean up empty strings to null for optional fields
@@ -470,6 +506,16 @@ export function transformFormDataToUpdatePayload(
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
+    channel_info: {
+      credential_mode: formData.credential_mode || 'single_key',
+      account_pool_enabled: formData.credential_mode === 'account_pool',
+      account_pool_mode: formData.account_pool_mode || 'polling',
+      account_pool_fallback: formData.account_pool_fallback === true,
+      is_multi_key: formData.credential_mode === 'multi_key',
+      multi_key_size: 0,
+      multi_key_polling_index: 0,
+      multi_key_mode: formData.multi_key_type || 'random',
+    },
   }
 
   // Only include key if it was changed (not empty)

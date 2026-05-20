@@ -180,6 +180,83 @@ func CountChannelAccountsByStatus(channelID int) (map[string]int64, error) {
 	return result, nil
 }
 
+func CountChannelAccountsByChannelIDs(channelIDs []int) (map[int]map[string]int64, error) {
+	result := make(map[int]map[string]int64)
+	uniqueIDs := make([]int, 0, len(channelIDs))
+	seen := make(map[int]bool)
+	for _, channelID := range channelIDs {
+		if channelID <= 0 || seen[channelID] {
+			continue
+		}
+		seen[channelID] = true
+		uniqueIDs = append(uniqueIDs, channelID)
+		result[channelID] = map[string]int64{
+			"total":    0,
+			"enabled":  0,
+			"disabled": 0,
+			"cooldown": 0,
+		}
+	}
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	now := common.GetTimestamp()
+	var accounts []ChannelAccount
+	if err := DB.Select("channel_id", "status", "rate_limited_until", "overload_until", "temp_disabled_until").Where("channel_id IN ?", uniqueIDs).Find(&accounts).Error; err != nil {
+		return result, err
+	}
+	for _, account := range accounts {
+		stats := result[account.ChannelId]
+		if stats == nil {
+			stats = map[string]int64{
+				"total":    0,
+				"enabled":  0,
+				"disabled": 0,
+				"cooldown": 0,
+			}
+			result[account.ChannelId] = stats
+		}
+		stats["total"]++
+		if account.Status == common.ChannelStatusEnabled {
+			stats["enabled"]++
+			if account.IsCoolingDown(now) {
+				stats["cooldown"]++
+			}
+		} else {
+			stats["disabled"]++
+		}
+	}
+	return result, nil
+}
+
+func AttachChannelAccountStats(channels []*Channel) {
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	stats, err := CountChannelAccountsByChannelIDs(channelIDs)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to count channel account stats: %v", err))
+		return
+	}
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelStats := stats[channel.Id]
+		if channelStats == nil {
+			continue
+		}
+		if channelStats["total"] > 0 || channel.IsAccountPoolEnabled() {
+			channel.ChannelAccountStats = channelStats
+		}
+	}
+}
+
 func UpdateChannelAccountStatus(channelID int, accountID int, status int, reason string) error {
 	update := map[string]interface{}{
 		"status":          status,

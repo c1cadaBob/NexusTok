@@ -30,9 +30,24 @@ export const channelInfoSchema = z.object({
   multi_key_disabled_time: z.record(z.string(), z.number()).optional(),
   multi_key_polling_index: z.number().default(0),
   multi_key_mode: z.enum(['random', 'polling']).default('random'),
+  credential_mode: z
+    .enum(['single_key', 'multi_key', 'account_pool'])
+    .optional(),
+  account_pool_enabled: z.boolean().optional(),
+  account_pool_mode: z.enum(['polling', 'random']).optional(),
+  account_pool_fallback: z.boolean().optional(),
 })
 
 export type ChannelInfo = z.infer<typeof channelInfoSchema>
+
+export const channelAccountStatsSchema = z.object({
+  total: z.number().default(0),
+  enabled: z.number().default(0),
+  disabled: z.number().default(0),
+  cooldown: z.number().default(0),
+})
+
+export type ChannelAccountStats = z.infer<typeof channelAccountStatsSchema>
 
 export const channelSchema = z.object({
   id: z.number(),
@@ -70,6 +85,7 @@ export const channelSchema = z.object({
     multi_key_polling_index: 0,
     multi_key_mode: 'random',
   }),
+  channel_account_stats: channelAccountStatsSchema.optional(),
   settings: z.string().default('{}'), // other_settings JSON
 })
 
@@ -208,6 +224,99 @@ export interface MultiKeyStatusResponse {
   }
 }
 
+export type ChannelCredentialMode = 'single_key' | 'multi_key' | 'account_pool'
+export type ChannelAccountPoolMode = 'polling' | 'random'
+
+export interface ChannelAccount {
+  id: number
+  channel_id: number
+  name: string
+  key: string
+  status: number
+  models: string
+  group: string
+  priority: number
+  weight: number
+  last_used_time: number
+  used_quota: number
+  base_url?: string | null
+  openai_organization?: string | null
+  other: string
+  setting?: string | null
+  settings: string
+  model_mapping?: string | null
+  param_override?: string | null
+  header_override?: string | null
+  status_code_mapping?: string | null
+  rate_limited_until: number
+  overload_until: number
+  temp_disabled_until: number
+  disabled_reason: string
+  last_error: string
+  max_concurrency: number
+  created_time: number
+}
+
+export interface ChannelAccountListResponse {
+  success: boolean
+  message?: string
+  data?: {
+    accounts: {
+      items: ChannelAccount[]
+      total: number
+      page: number
+      page_size: number
+    }
+    stats: ChannelAccountStats
+  }
+}
+
+export interface ChannelAccountMutationResponse {
+  success: boolean
+  message?: string
+  data?: ChannelAccount
+}
+
+export interface ChannelAccountBatchResponse {
+  success: boolean
+  message?: string
+  data?: {
+    created: number
+    skipped: number
+  }
+}
+
+export interface ChannelAccountPayload {
+  name?: string
+  key?: string
+  status?: number
+  models?: string
+  group?: string
+  priority?: number
+  weight?: number
+  base_url?: string | null
+  openai_organization?: string | null
+  other?: string
+  setting?: string | null
+  settings?: string
+  model_mapping?: string | null
+  param_override?: string | null
+  header_override?: string | null
+  status_code_mapping?: string | null
+  max_concurrency?: number
+}
+
+export interface ChannelAccountBatchPayload {
+  keys: string
+  name_prefix?: string
+  models?: string
+  group?: string
+  priority?: number
+  weight?: number
+  status?: number
+  max_concurrency?: number
+}
+
 // ============================================================================
 // API Request Parameters
 // ============================================================================
@@ -318,6 +427,7 @@ export interface ChannelFormData {
   header_override?: string
   settings?: string
   other?: string
+  channel_info?: Partial<ChannelInfo>
   // Multi-key specific
   multi_key_mode?: 'single' | 'batch' | 'multi_to_single'
   multi_key_type?: 'random' | 'polling'

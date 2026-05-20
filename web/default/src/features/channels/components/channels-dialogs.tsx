@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useChannels } from './channels-provider'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
+import { ChannelAccountPoolDialog } from './dialogs/channel-account-pool-dialog'
 import { ChannelTestDialog } from './dialogs/channel-test-dialog'
 import { CopyChannelDialog } from './dialogs/copy-channel-dialog'
 import { EditTagDialog } from './dialogs/edit-tag-dialog'
@@ -73,6 +74,12 @@ export function ChannelsDialogs() {
       {/* Multi-Key Management Dialog */}
       <MultiKeyManageDialog
         open={open === 'multi-key-manage'}
+        onOpenChange={(v) => !v && setOpen(null)}
+      />
+
+      {/* Account Pool Management Dialog */}
+      <ChannelAccountPoolDialog
+        open={open === 'account-pool-manage'}
         onOpenChange={(v) => !v && setOpen(null)}
       />
 

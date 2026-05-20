@@ -56,6 +56,8 @@ type Channel struct {
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+
+	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"`
 }
 
 type ChannelInfo struct {

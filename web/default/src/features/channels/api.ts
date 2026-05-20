@@ -23,6 +23,11 @@ import type {
   AddChannelRequest,
   BatchDeleteParams,
   BatchSetTagParams,
+  ChannelAccountBatchPayload,
+  ChannelAccountBatchResponse,
+  ChannelAccountListResponse,
+  ChannelAccountMutationResponse,
+  ChannelAccountPayload,
   Channel,
   ChannelBalanceResponse,
   ChannelTestResponse,
@@ -249,6 +254,84 @@ export async function getChannelKey(
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
   const payload = code ? { code } : undefined
   const res = await api.post(`/api/channel/${id}/key`, payload)
+  return res.data
+}
+
+// ============================================================================
+// Channel Account Pool
+// ============================================================================
+
+export async function getChannelAccounts(
+  channelId: number,
+  params: {
+    p?: number
+    page_size?: number
+    status?: number
+    search?: string
+  } = {}
+): Promise<ChannelAccountListResponse> {
+  const res = await api.get(`/api/channel/${channelId}/accounts`, { params })
+  return res.data
+}
+
+export async function createChannelAccount(
+  channelId: number,
+  data: ChannelAccountPayload
+): Promise<ChannelAccountMutationResponse> {
+  const res = await api.post(`/api/channel/${channelId}/accounts`, data)
+  return res.data
+}
+
+export async function updateChannelAccount(
+  channelId: number,
+  accountId: number,
+  data: ChannelAccountPayload
+): Promise<ChannelAccountMutationResponse> {
+  const res = await api.put(
+    `/api/channel/${channelId}/accounts/${accountId}`,
+    data
+  )
+  return res.data
+}
+
+export async function deleteChannelAccount(
+  channelId: number,
+  accountId: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.delete(
+    `/api/channel/${channelId}/accounts/${accountId}`
+  )
+  return res.data
+}
+
+export async function updateChannelAccountStatus(
+  channelId: number,
+  accountId: number,
+  data: { status?: number; reason?: string; clear_cooldown?: boolean }
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.post(
+    `/api/channel/${channelId}/accounts/${accountId}/status`,
+    data
+  )
+  return res.data
+}
+
+export async function batchCreateChannelAccounts(
+  channelId: number,
+  data: ChannelAccountBatchPayload
+): Promise<ChannelAccountBatchResponse> {
+  const res = await api.post(`/api/channel/${channelId}/accounts/batch`, data)
+  return res.data
+}
+
+export async function importMultiKeyToChannelAccounts(
+  channelId: number,
+  data: Partial<ChannelAccountBatchPayload> = {}
+): Promise<ChannelAccountBatchResponse> {
+  const res = await api.post(
+    `/api/channel/${channelId}/accounts/import-multikey`,
+    data
+  )
   return res.data
 }
 

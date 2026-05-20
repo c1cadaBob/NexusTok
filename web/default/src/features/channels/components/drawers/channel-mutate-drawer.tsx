@@ -389,6 +389,7 @@ export function ChannelMutateDrawer({
   // Watch form values for conditional rendering
   const multiKeyMode = form.watch('multi_key_mode')
   const multiKeyType = form.watch('multi_key_type')
+  const credentialMode = form.watch('credential_mode')
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
@@ -468,6 +469,19 @@ export function ChannelMutateDrawer({
         ?.label || `#${currentType}`,
     [currentType]
   )
+
+  const credentialModeDescription = useMemo(() => {
+    switch (credentialMode) {
+      case 'account_pool':
+        return t(
+          'Select a channel first, then rotate concrete accounts inside its account pool.'
+        )
+      case 'multi_key':
+        return t('Rotate keys stored on this channel using the multi-key list.')
+      default:
+        return t('Use the channel key directly.')
+    }
+  }, [credentialMode, t])
 
   const channelTypeOptions = useMemo(() => {
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
@@ -1836,7 +1850,136 @@ export function ChannelMutateDrawer({
                     icon={<KeyRound className='h-3.5 w-3.5' />}
                   />
                 </div>
-                {!isEditing && (
+                <FormField
+                  control={form.control}
+                  name='credential_mode'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Credential Mode')}</FormLabel>
+                      <Select
+                        items={[
+                          {
+                            value: 'single_key',
+                            label: t('Single Key'),
+                          },
+                          {
+                            value: 'multi_key',
+                            label: t('Multi-Key Rotation'),
+                          },
+                          {
+                            value: 'account_pool',
+                            label: t('Account Pool'),
+                          },
+                        ]}
+                        onValueChange={(value) => {
+                          field.onChange(value)
+                          if (value === 'multi_key') {
+                            form.setValue('multi_key_mode', 'multi_to_single')
+                          } else if (value === 'account_pool') {
+                            form.setValue('multi_key_mode', 'single')
+                          } else if (
+                            form.getValues('multi_key_mode') ===
+                            'multi_to_single'
+                          ) {
+                            form.setValue('multi_key_mode', 'single')
+                          }
+                        }}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            <SelectItem value='single_key'>
+                              {t('Single Key')}
+                            </SelectItem>
+                            <SelectItem value='multi_key'>
+                              {t('Multi-Key Rotation')}
+                            </SelectItem>
+                            <SelectItem value='account_pool'>
+                              {t('Account Pool')}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {credentialModeDescription}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {credentialMode === 'account_pool' && (
+                  <div className='grid gap-4 sm:grid-cols-2'>
+                    <FormField
+                      control={form.control}
+                      name='account_pool_mode'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Account Pool Strategy')}</FormLabel>
+                          <Select
+                            items={[
+                              { value: 'polling', label: t('Polling') },
+                              { value: 'random', label: t('Random') },
+                            ]}
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                <SelectItem value='polling'>
+                                  {t('Polling')}
+                                </SelectItem>
+                                <SelectItem value='random'>
+                                  {t('Random')}
+                                </SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {t(
+                              'Highest priority wins; accounts with the same priority rotate by weight.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='account_pool_fallback'
+                      render={({ field }) => (
+                        <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
+                          <div className='space-y-0.5'>
+                            <FormLabel>
+                              {t('Fallback to Channel Key')}
+                            </FormLabel>
+                            <FormDescription className='text-xs'>
+                              {t(
+                                'Use the channel key or multi-key list only when no account is available.'
+                              )}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value === true}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+                {!isEditing && credentialMode === 'single_key' && (
                   <FormField
                     control={form.control}
                     name='multi_key_mode'

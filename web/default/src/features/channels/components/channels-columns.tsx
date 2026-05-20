@@ -515,6 +515,19 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const name = row.getValue('name') as string
         const channel = row.original
         const isMultiKey = isMultiKeyChannel(channel)
+        const accountPoolStats = channel.channel_account_stats
+        const isAccountPool =
+          channel.channel_info?.credential_mode === 'account_pool' ||
+          channel.channel_info?.account_pool_enabled === true
+        const showAccountPoolStats =
+          isAccountPool || (accountPoolStats?.total ?? 0) > 0
+        const accountPoolVariant =
+          (accountPoolStats?.enabled ?? 0) === 0 &&
+          (accountPoolStats?.total ?? 0) > 0
+            ? 'danger'
+            : (accountPoolStats?.cooldown ?? 0) > 0
+              ? 'warning'
+              : 'blue'
 
         // Tag row with expand/collapse
         if (isTagRow) {
@@ -580,6 +593,41 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
                     size='sm'
                     copyable={false}
                   />
+                )}
+                {showAccountPoolStats && (
+                  <TooltipProvider delay={100}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className='inline-flex'>
+                            <StatusBadge
+                              label={`${t('Pool')} ${accountPoolStats?.enabled ?? 0}/${accountPoolStats?.total ?? 0}`}
+                              variant={accountPoolVariant}
+                              size='sm'
+                              copyable={false}
+                            />
+                          </span>
+                        }
+                      />
+                      <TooltipContent side='top'>
+                        <div className='space-y-1 text-xs'>
+                          <div>
+                            {t('Total')}: {accountPoolStats?.total ?? 0}
+                          </div>
+                          <div>
+                            {t('Enabled')}: {accountPoolStats?.enabled ?? 0}
+                          </div>
+                          <div>
+                            {t('Cooling Down')}:{' '}
+                            {accountPoolStats?.cooldown ?? 0}
+                          </div>
+                          <div>
+                            {t('Disabled')}: {accountPoolStats?.disabled ?? 0}
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 <UpstreamUpdateTags channel={channel} />
               </div>
