@@ -124,6 +124,12 @@ export function SidebarModulesSection({
         title: t('Channels'),
         description: t('Configure upstream providers and routing.'),
       },
+      account_pool: {
+        title: t('Account Pool'),
+        description: t(
+          'Manage official login accounts and expose account groups to channels.'
+        ),
+      },
       pricing: {
         title: t('Model Pricing Groups'),
         description: t(
