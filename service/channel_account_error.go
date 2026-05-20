@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/types"
 
@@ -23,6 +24,7 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 		return
 	}
 	ExcludeChannelAccountForRequest(c, channelError.ChannelAccountId)
+	common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, channelError.ChannelId)
 
 	reason := err.ErrorWithStatusCode()
 	updates := map[string]interface{}{

@@ -309,6 +309,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
+	if channel, setupErr, ok := trySetupAccountPoolRetryChannel(c, info); ok {
+		return channel, setupErr
+	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
@@ -326,6 +329,53 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 	info.InitChannelMeta(c)
 	return channel, nil
+}
+
+// trySetupAccountPoolRetryChannel 在账号失败后的重试中优先复用当前渠道，避免直接跳出账号池。
+func trySetupAccountPoolRetryChannel(c *gin.Context, info *relaycommon.RelayInfo) (*model.Channel, *types.NexusTokError, bool) {
+	if info == nil {
+		return nil, nil, false
+	}
+	retryChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountRetryChannelId)
+	if retryChannelID <= 0 || len(service.GetExcludedChannelAccountIds(c)) == 0 {
+		return nil, nil, false
+	}
+	usingGroup := getAccountPoolRetryGroup(c, info)
+	if usingGroup == "" || !model.IsChannelEnabledForGroupModel(usingGroup, info.OriginModelName, retryChannelID) {
+		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
+		return nil, nil, false
+	}
+	channel, err := model.CacheGetChannel(retryChannelID)
+	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channel.IsAccountPoolEnabled() {
+		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
+		return nil, nil, false
+	}
+	setupErr := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+	if setupErr != nil {
+		if setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey {
+			common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
+			return nil, nil, false
+		}
+		return nil, setupErr, true
+	}
+	// 账号池账号失败后的第一次重试，应优先在同一渠道内切换账号。
+	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+	info.InitChannelMeta(c)
+	return channel, nil, true
+}
+
+// getAccountPoolRetryGroup 返回账号池重试应使用的实际分组。
+func getAccountPoolRetryGroup(c *gin.Context, info *relaycommon.RelayInfo) string {
+	if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
+		return autoGroup
+	}
+	if usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup); usingGroup != "" && usingGroup != "auto" {
+		return usingGroup
+	}
+	if info != nil && info.UsingGroup != "auto" {
+		return info.UsingGroup
+	}
+	return ""
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NexusTokError, retryTimes int) bool {
