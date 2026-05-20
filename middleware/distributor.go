@@ -156,7 +156,11 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+			return
+		}
+		defer service.ReleaseSelectedChannelAccount(c)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -347,26 +351,46 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+	service.ReleaseSelectedChannelAccount(c)
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
 	common.SetContextKey(c, constant.ContextKeyChannelCreateTime, channel.CreatedTime)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, channel.GetSetting())
-	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, channel.GetOtherSettings())
-	paramOverride := channel.GetParamOverride()
-	headerOverride := channel.GetHeaderOverride()
-	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
-		paramOverride = mergedParam
-	}
-	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
-	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
-	if nil != channel.OpenAIOrganization && *channel.OpenAIOrganization != "" {
-		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
-	}
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
-	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
-	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
+	common.SetContextKey(c, constant.ContextKeyChannelCredentialMode, channel.GetCredentialMode())
+	common.SetContextKey(c, constant.ContextKeyChannelAccountPool, false)
+	common.SetContextKey(c, constant.ContextKeyChannelAccountId, 0)
+	common.SetContextKey(c, constant.ContextKeyChannelAccountName, "")
 
+	credentialMode := channel.GetCredentialMode()
+	if credentialMode == constant.ChannelCredentialModeAccountPool {
+		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		account, err := service.SelectChannelAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
+		if err != nil {
+			if !channel.ChannelInfo.AccountPoolFallback {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+		} else {
+			applyChannelContext(c, channel, account)
+			common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+			common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, account.Key)
+			common.SetContextKey(c, constant.ContextKeyChannelAccountPool, true)
+			common.SetContextKey(c, constant.ContextKeyChannelAccountId, account.Id)
+			common.SetContextKey(c, constant.ContextKeyChannelAccountName, account.Name)
+			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+			return nil
+		}
+	}
+
+	applyChannelContext(c, channel, nil)
+	if credentialMode == constant.ChannelCredentialModeSingleKey {
+		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+		common.SetContextKey(c, constant.ContextKeyChannelKey, channel.Key)
+		common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+		return nil
+	}
 	key, index, newAPIError := channel.GetNextEnabledKey()
 	if newAPIError != nil {
 		return newAPIError
@@ -380,30 +404,134 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	}
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+	return nil
+}
+
+func applyChannelContext(c *gin.Context, channel *model.Channel, account *model.ChannelAccount) {
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolveChannelSetting(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, resolveChannelOtherSettings(channel, account))
+	paramOverride := resolveChannelParamOverride(channel, account)
+	headerOverride := resolveChannelHeaderOverride(channel, account)
+	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
+		paramOverride = mergedParam
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelOrganization, resolveChannelOrganization(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, resolveChannelModelMapping(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, resolveChannelStatusCodeMapping(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, resolveChannelBaseURL(channel, account))
 
 	// TODO: api_version统一
+	channelOther := resolveChannelOther(channel, account)
+	c.Set("api_version", "")
+	c.Set("region", "")
+	c.Set("plugin", "")
+	c.Set("bot_id", "")
 	switch channel.Type {
 	case constant.ChannelTypeAzure:
-		c.Set("api_version", channel.Other)
+		c.Set("api_version", channelOther)
 	case constant.ChannelTypeVertexAi:
-		c.Set("region", channel.Other)
+		c.Set("region", channelOther)
 	case constant.ChannelTypeXunfei:
-		c.Set("api_version", channel.Other)
+		c.Set("api_version", channelOther)
 	case constant.ChannelTypeGemini:
-		c.Set("api_version", channel.Other)
+		c.Set("api_version", channelOther)
 	case constant.ChannelTypeAli:
-		c.Set("plugin", channel.Other)
+		c.Set("plugin", channelOther)
 	case constant.ChannelCloudflare:
-		c.Set("api_version", channel.Other)
+		c.Set("api_version", channelOther)
 	case constant.ChannelTypeMokaAI:
-		c.Set("api_version", channel.Other)
+		c.Set("api_version", channelOther)
 	case constant.ChannelTypeCoze:
-		c.Set("bot_id", channel.Other)
+		c.Set("bot_id", channelOther)
 	}
-	return nil
+}
+
+func resolveChannelSetting(channel *model.Channel, account *model.ChannelAccount) dto.ChannelSettings {
+	setting := channel.GetSetting()
+	if account == nil || account.Setting == nil || strings.TrimSpace(*account.Setting) == "" {
+		return setting
+	}
+	if err := common.Unmarshal([]byte(*account.Setting), &setting); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal channel account setting: account_id=%d, error=%v", account.Id, err))
+	}
+	return setting
+}
+
+func resolveChannelOtherSettings(channel *model.Channel, account *model.ChannelAccount) dto.ChannelOtherSettings {
+	setting := channel.GetOtherSettings()
+	if account == nil || strings.TrimSpace(account.OtherSettings) == "" {
+		return setting
+	}
+	if err := common.UnmarshalJsonStr(account.OtherSettings, &setting); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal channel account other settings: account_id=%d, error=%v", account.Id, err))
+	}
+	return setting
+}
+
+func resolveChannelParamOverride(channel *model.Channel, account *model.ChannelAccount) map[string]interface{} {
+	override := channel.GetParamOverride()
+	if account == nil || account.ParamOverride == nil || strings.TrimSpace(*account.ParamOverride) == "" {
+		return override
+	}
+	override = make(map[string]interface{})
+	if err := common.Unmarshal([]byte(*account.ParamOverride), &override); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal channel account param override: account_id=%d, error=%v", account.Id, err))
+	}
+	return override
+}
+
+func resolveChannelHeaderOverride(channel *model.Channel, account *model.ChannelAccount) map[string]interface{} {
+	override := channel.GetHeaderOverride()
+	if account == nil || account.HeaderOverride == nil || strings.TrimSpace(*account.HeaderOverride) == "" {
+		return override
+	}
+	override = make(map[string]interface{})
+	if err := common.Unmarshal([]byte(*account.HeaderOverride), &override); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal channel account header override: account_id=%d, error=%v", account.Id, err))
+	}
+	return override
+}
+
+func resolveChannelOrganization(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && account.OpenAIOrganization != nil && strings.TrimSpace(*account.OpenAIOrganization) != "" {
+		return *account.OpenAIOrganization
+	}
+	if channel.OpenAIOrganization != nil {
+		return *channel.OpenAIOrganization
+	}
+	return ""
+}
+
+func resolveChannelModelMapping(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && account.ModelMapping != nil && strings.TrimSpace(*account.ModelMapping) != "" {
+		return *account.ModelMapping
+	}
+	return channel.GetModelMapping()
+}
+
+func resolveChannelStatusCodeMapping(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && account.StatusCodeMapping != nil && strings.TrimSpace(*account.StatusCodeMapping) != "" {
+		return *account.StatusCodeMapping
+	}
+	return channel.GetStatusCodeMapping()
+}
+
+func resolveChannelBaseURL(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && account.BaseURL != nil && strings.TrimSpace(*account.BaseURL) != "" {
+		return *account.BaseURL
+	}
+	return channel.GetBaseURL()
+}
+
+func resolveChannelOther(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && strings.TrimSpace(account.Other) != "" {
+		return account.Other
+	}
+	return channel.Other
 }
 
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名
