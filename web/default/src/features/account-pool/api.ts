@@ -1,0 +1,174 @@
+/*
+Copyright (C) 2023-2026 c1cada
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@c1cada.dev
+*/
+import { api } from '@/lib/api'
+import type {
+  AccountPoolGroup,
+  AccountPoolGroupOption,
+  AccountPoolGroupPayload,
+  ApiResponse,
+  PageResponse,
+  PoolAccount,
+  PoolAccountBatchPayload,
+  PoolAccountPayload,
+  AccountPoolStats,
+} from './types'
+
+export const accountPoolQueryKeys = {
+  groups: (params?: unknown) => ['account-pool', 'groups', params] as const,
+  groupOptions: () => ['account-pool', 'groups', 'options'] as const,
+  accounts: (groupId: number, params?: unknown) =>
+    ['account-pool', 'groups', groupId, 'accounts', params] as const,
+}
+
+export async function getAccountPoolGroups(params: {
+  p?: number
+  page_size?: number
+  status?: number
+  search?: string
+}): Promise<ApiResponse<PageResponse<AccountPoolGroup>>> {
+  const res = await api.get('/api/account-pool/groups', { params })
+  return res.data
+}
+
+export async function getAccountPoolGroupOptions(): Promise<
+  ApiResponse<AccountPoolGroupOption[]>
+> {
+  const res = await api.get('/api/account-pool/groups/options')
+  return res.data
+}
+
+export async function createAccountPoolGroup(
+  data: AccountPoolGroupPayload
+): Promise<ApiResponse<AccountPoolGroup>> {
+  const res = await api.post('/api/account-pool/groups', data)
+  return res.data
+}
+
+export async function updateAccountPoolGroup(
+  groupId: number,
+  data: AccountPoolGroupPayload
+): Promise<ApiResponse<AccountPoolGroup>> {
+  const res = await api.put(`/api/account-pool/groups/${groupId}`, data)
+  return res.data
+}
+
+export async function deleteAccountPoolGroup(
+  groupId: number
+): Promise<ApiResponse<null>> {
+  const res = await api.delete(`/api/account-pool/groups/${groupId}`)
+  return res.data
+}
+
+export async function getPoolAccounts(
+  groupId: number,
+  params: {
+    p?: number
+    page_size?: number
+    status?: number
+    search?: string
+  }
+): Promise<
+  ApiResponse<{
+    accounts: PageResponse<PoolAccount>
+    stats?: AccountPoolStats
+  }>
+> {
+  const res = await api.get(`/api/account-pool/groups/${groupId}/accounts`, {
+    params,
+  })
+  return res.data
+}
+
+export async function createPoolAccount(
+  groupId: number,
+  data: PoolAccountPayload
+): Promise<ApiResponse<PoolAccount>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts`,
+    data
+  )
+  return res.data
+}
+
+export async function batchCreatePoolAccounts(
+  groupId: number,
+  data: PoolAccountBatchPayload
+): Promise<ApiResponse<{ created: number; skipped: number }>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/batch`,
+    data
+  )
+  return res.data
+}
+
+export async function updatePoolAccount(
+  accountId: number,
+  data: PoolAccountPayload
+): Promise<ApiResponse<PoolAccount>> {
+  const res = await api.put(`/api/account-pool/accounts/${accountId}`, data)
+  return res.data
+}
+
+export async function deletePoolAccount(
+  accountId: number
+): Promise<ApiResponse<null>> {
+  const res = await api.delete(`/api/account-pool/accounts/${accountId}`)
+  return res.data
+}
+
+export async function updatePoolAccountStatus(
+  accountId: number,
+  data: {
+    status?: number
+    reason?: string
+    clear_cooldown?: boolean
+    schedulable?: boolean
+  }
+): Promise<ApiResponse<null>> {
+  const res = await api.post(
+    `/api/account-pool/accounts/${accountId}/status`,
+    data
+  )
+  return res.data
+}
+
+export async function refreshPoolAccountCredential(
+  accountId: number
+): Promise<ApiResponse<PoolAccount>> {
+  const res = await api.post(`/api/account-pool/accounts/${accountId}/refresh`)
+  return res.data
+}
+
+export async function startAccountPoolCodexOAuth(data: {
+  pool_group_id: number
+  proxy?: string
+}): Promise<ApiResponse<{ authorize_url?: string }>> {
+  const res = await api.post('/api/account-pool/oauth/codex/start', data)
+  return res.data
+}
+
+export async function completeAccountPoolCodexOAuth(data: {
+  pool_group_id: number
+  input: string
+  name?: string
+  proxy?: string
+}): Promise<ApiResponse<PoolAccount>> {
+  const res = await api.post('/api/account-pool/oauth/codex/complete', data)
+  return res.data
+}

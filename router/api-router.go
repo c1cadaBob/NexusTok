@@ -215,6 +215,26 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
+		accountPoolRoute := apiRouter.Group("/account-pool")
+		accountPoolRoute.Use(middleware.AdminAuth())
+		{
+			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)
+			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)
+			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions)
+			accountPoolRoute.GET("/groups/:id", controller.GetAccountPoolGroup)
+			accountPoolRoute.PUT("/groups/:id", controller.UpdateAccountPoolGroup)
+			accountPoolRoute.DELETE("/groups/:id", controller.DeleteAccountPoolGroup)
+			accountPoolRoute.GET("/groups/:id/accounts", controller.ListPoolAccounts)
+			accountPoolRoute.POST("/groups/:id/accounts", controller.CreatePoolAccount)
+			accountPoolRoute.POST("/groups/:id/accounts/batch", controller.BatchCreatePoolAccounts)
+			accountPoolRoute.GET("/accounts/:account_id", controller.GetPoolAccount)
+			accountPoolRoute.PUT("/accounts/:account_id", controller.UpdatePoolAccount)
+			accountPoolRoute.DELETE("/accounts/:account_id", controller.DeletePoolAccount)
+			accountPoolRoute.POST("/accounts/:account_id/status", controller.UpdatePoolAccountStatus)
+			accountPoolRoute.POST("/accounts/:account_id/refresh", controller.RefreshPoolAccountCredential)
+			accountPoolRoute.POST("/oauth/codex/start", controller.StartAccountPoolCodexOAuth)
+			accountPoolRoute.POST("/oauth/codex/complete", controller.CompleteAccountPoolCodexOAuth)
+		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{
@@ -396,5 +416,5 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
 
-		}
+	}
 }

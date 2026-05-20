@@ -68,10 +68,11 @@ type ChannelInfo struct {
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
-	CredentialMode         string                `json:"credential_mode,omitempty"`          // single_key / multi_key / account_pool
-	AccountPoolEnabled     bool                  `json:"account_pool_enabled,omitempty"`     // 是否启用账号池
-	AccountPoolMode        string                `json:"account_pool_mode,omitempty"`        // 账号池轮询策略
-	AccountPoolFallback    bool                  `json:"account_pool_fallback,omitempty"`    // 账号池无可用账号时是否回退渠道凭证
+	CredentialMode         string                `json:"credential_mode,omitempty"`       // single_key / multi_key / account_pool / global_account_pool
+	AccountPoolEnabled     bool                  `json:"account_pool_enabled,omitempty"`  // 是否启用账号池
+	AccountPoolMode        string                `json:"account_pool_mode,omitempty"`     // 账号池轮询策略
+	AccountPoolFallback    bool                  `json:"account_pool_fallback,omitempty"` // 账号池无可用账号时是否回退渠道凭证
+	AccountPoolGroupId     int                   `json:"account_pool_group_id,omitempty"` // 全局账号池组 ID
 }
 
 type ChannelSortOptions struct {
@@ -290,7 +291,7 @@ func (channel *Channel) GetOtherInfo() map[string]interface{} {
 }
 
 func (channel *Channel) SetOtherInfo(otherInfo map[string]interface{}) {
-	otherInfoBytes, err := json.Marshal(otherInfo)
+	otherInfoBytes, err := common.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
 		return
@@ -334,7 +335,19 @@ func (channel *Channel) GetCredentialMode() string {
 }
 
 func (channel *Channel) IsAccountPoolEnabled() bool {
+	if channel == nil {
+		return false
+	}
+	mode := channel.GetCredentialMode()
+	return mode == constant.ChannelCredentialModeAccountPool || mode == constant.ChannelCredentialModeGlobalAccountPool
+}
+
+func (channel *Channel) IsChannelAccountPoolEnabled() bool {
 	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeAccountPool
+}
+
+func (channel *Channel) IsGlobalAccountPoolEnabled() bool {
+	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeGlobalAccountPool
 }
 
 func (channel *Channel) GetAccountPoolMode() string {

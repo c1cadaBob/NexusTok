@@ -161,6 +161,7 @@ func Distribute() func(c *gin.Context) {
 			return
 		}
 		defer service.ReleaseSelectedChannelAccount(c)
+		defer service.ReleaseSelectedPoolAccount(c)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -352,6 +353,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	service.ReleaseSelectedChannelAccount(c)
+	service.ReleaseSelectedPoolAccount(c)
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
@@ -361,6 +363,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelAccountPool, false)
 	common.SetContextKey(c, constant.ContextKeyChannelAccountId, 0)
 	common.SetContextKey(c, constant.ContextKeyChannelAccountName, "")
+	common.SetContextKey(c, constant.ContextKeyPoolGroupId, 0)
+	common.SetContextKey(c, constant.ContextKeyPoolGroupName, "")
+	common.SetContextKey(c, constant.ContextKeyPoolAccountId, 0)
+	common.SetContextKey(c, constant.ContextKeyPoolAccountName, "")
+	common.SetContextKey(c, constant.ContextKeyPoolAccountAuthType, "")
 
 	credentialMode := channel.GetCredentialMode()
 	if credentialMode == constant.ChannelCredentialModeAccountPool {
@@ -380,6 +387,35 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 			common.SetContextKey(c, constant.ContextKeyChannelAccountName, account.Name)
 			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 			return nil
+		}
+	}
+	if credentialMode == constant.ChannelCredentialModeGlobalAccountPool {
+		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		group, account, err := service.SelectPoolAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
+		if err != nil {
+			if !channel.ChannelInfo.AccountPoolFallback {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+		} else {
+			channelKey, err := service.BuildPoolAccountChannelKey(account)
+			if err != nil {
+				if !channel.ChannelInfo.AccountPoolFallback {
+					return types.NewErrorWithStatusCode(err, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+				}
+			} else {
+				applyPoolAccountContext(c, channel, group, account)
+				common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+				common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+				common.SetContextKey(c, constant.ContextKeyChannelKey, channelKey)
+				common.SetContextKey(c, constant.ContextKeyChannelAccountPool, true)
+				common.SetContextKey(c, constant.ContextKeyPoolGroupId, group.Id)
+				common.SetContextKey(c, constant.ContextKeyPoolGroupName, group.Name)
+				common.SetContextKey(c, constant.ContextKeyPoolAccountId, account.Id)
+				common.SetContextKey(c, constant.ContextKeyPoolAccountName, account.Name)
+				common.SetContextKey(c, constant.ContextKeyPoolAccountAuthType, account.AuthType)
+				common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+				return nil
+			}
 		}
 	}
 
@@ -426,6 +462,46 @@ func applyChannelContext(c *gin.Context, channel *model.Channel, account *model.
 
 	// TODO: api_version统一
 	channelOther := resolveChannelOther(channel, account)
+	c.Set("api_version", "")
+	c.Set("region", "")
+	c.Set("plugin", "")
+	c.Set("bot_id", "")
+	switch channel.Type {
+	case constant.ChannelTypeAzure:
+		c.Set("api_version", channelOther)
+	case constant.ChannelTypeVertexAi:
+		c.Set("region", channelOther)
+	case constant.ChannelTypeXunfei:
+		c.Set("api_version", channelOther)
+	case constant.ChannelTypeGemini:
+		c.Set("api_version", channelOther)
+	case constant.ChannelTypeAli:
+		c.Set("plugin", channelOther)
+	case constant.ChannelCloudflare:
+		c.Set("api_version", channelOther)
+	case constant.ChannelTypeMokaAI:
+		c.Set("api_version", channelOther)
+	case constant.ChannelTypeCoze:
+		c.Set("bot_id", channelOther)
+	}
+}
+
+func applyPoolAccountContext(c *gin.Context, channel *model.Channel, group *model.AccountPoolGroup, account *model.PoolAccount) {
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvePoolChannelSetting(channel, group, account))
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, resolvePoolChannelOtherSettings(channel, account))
+	paramOverride := resolvePoolChannelParamOverride(channel, account)
+	headerOverride := resolvePoolChannelHeaderOverride(channel, account)
+	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
+		paramOverride = mergedParam
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelOrganization, resolvePoolChannelOrganization(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, resolvePoolChannelModelMapping(channel, group, account))
+	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, resolvePoolChannelStatusCodeMapping(channel, account))
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, resolvePoolChannelBaseURL(channel, account))
+
+	channelOther := resolvePoolChannelOther(channel, account)
 	c.Set("api_version", "")
 	c.Set("region", "")
 	c.Set("plugin", "")
@@ -528,6 +604,98 @@ func resolveChannelBaseURL(channel *model.Channel, account *model.ChannelAccount
 }
 
 func resolveChannelOther(channel *model.Channel, account *model.ChannelAccount) string {
+	if account != nil && strings.TrimSpace(account.Other) != "" {
+		return account.Other
+	}
+	return channel.Other
+}
+
+func resolvePoolChannelSetting(channel *model.Channel, group *model.AccountPoolGroup, account *model.PoolAccount) dto.ChannelSettings {
+	setting := channel.GetSetting()
+	if group != nil && strings.TrimSpace(group.Settings) != "" {
+		if err := common.UnmarshalJsonStr(group.Settings, &setting); err != nil {
+			common.SysLog(fmt.Sprintf("failed to unmarshal account pool group setting: group_id=%d, error=%v", group.Id, err))
+		}
+	}
+	if account == nil || account.Setting == nil || strings.TrimSpace(*account.Setting) == "" {
+		return setting
+	}
+	if err := common.Unmarshal([]byte(*account.Setting), &setting); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal pool account setting: account_id=%d, error=%v", account.Id, err))
+	}
+	return setting
+}
+
+func resolvePoolChannelOtherSettings(channel *model.Channel, account *model.PoolAccount) dto.ChannelOtherSettings {
+	setting := channel.GetOtherSettings()
+	if account == nil || strings.TrimSpace(account.OtherSettings) == "" {
+		return setting
+	}
+	if err := common.UnmarshalJsonStr(account.OtherSettings, &setting); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal pool account other settings: account_id=%d, error=%v", account.Id, err))
+	}
+	return setting
+}
+
+func resolvePoolChannelParamOverride(channel *model.Channel, account *model.PoolAccount) map[string]interface{} {
+	override := channel.GetParamOverride()
+	if account == nil || account.ParamOverride == nil || strings.TrimSpace(*account.ParamOverride) == "" {
+		return override
+	}
+	override = make(map[string]interface{})
+	if err := common.Unmarshal([]byte(*account.ParamOverride), &override); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal pool account param override: account_id=%d, error=%v", account.Id, err))
+	}
+	return override
+}
+
+func resolvePoolChannelHeaderOverride(channel *model.Channel, account *model.PoolAccount) map[string]interface{} {
+	override := channel.GetHeaderOverride()
+	if account == nil || account.HeaderOverride == nil || strings.TrimSpace(*account.HeaderOverride) == "" {
+		return override
+	}
+	override = make(map[string]interface{})
+	if err := common.Unmarshal([]byte(*account.HeaderOverride), &override); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal pool account header override: account_id=%d, error=%v", account.Id, err))
+	}
+	return override
+}
+
+func resolvePoolChannelOrganization(channel *model.Channel, account *model.PoolAccount) string {
+	if account != nil && account.OpenAIOrganization != nil && strings.TrimSpace(*account.OpenAIOrganization) != "" {
+		return *account.OpenAIOrganization
+	}
+	if channel.OpenAIOrganization != nil {
+		return *channel.OpenAIOrganization
+	}
+	return ""
+}
+
+func resolvePoolChannelModelMapping(channel *model.Channel, group *model.AccountPoolGroup, account *model.PoolAccount) string {
+	if account != nil && account.ModelMapping != nil && strings.TrimSpace(*account.ModelMapping) != "" {
+		return *account.ModelMapping
+	}
+	if group != nil && group.ModelMapping != nil && strings.TrimSpace(*group.ModelMapping) != "" {
+		return *group.ModelMapping
+	}
+	return channel.GetModelMapping()
+}
+
+func resolvePoolChannelStatusCodeMapping(channel *model.Channel, account *model.PoolAccount) string {
+	if account != nil && account.StatusCodeMapping != nil && strings.TrimSpace(*account.StatusCodeMapping) != "" {
+		return *account.StatusCodeMapping
+	}
+	return channel.GetStatusCodeMapping()
+}
+
+func resolvePoolChannelBaseURL(channel *model.Channel, account *model.PoolAccount) string {
+	if account != nil && account.BaseURL != nil && strings.TrimSpace(*account.BaseURL) != "" {
+		return *account.BaseURL
+	}
+	return channel.GetBaseURL()
+}
+
+func resolvePoolChannelOther(channel *model.Channel, account *model.PoolAccount) string {
 	if account != nil && strings.TrimSpace(account.Other) != "" {
 		return account.Other
 	}

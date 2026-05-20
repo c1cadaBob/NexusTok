@@ -24,6 +24,7 @@ import {
   Wallet,
   Box,
   Users,
+  UsersRound,
   Ticket,
   User,
   Command,
@@ -128,6 +129,11 @@ export function useSidebarData(): SidebarData {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
+          },
+          {
+            title: t('Account Pool'),
+            url: '/account-pool',
+            icon: UsersRound,
           },
           {
             title: t('Models'),

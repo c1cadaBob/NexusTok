@@ -101,6 +101,7 @@ import {
 } from '@/components/ui/tooltip'
 import { JsonEditor } from '@/components/json-editor'
 import { MultiSelect } from '@/components/multi-select'
+import { getAccountPoolGroupOptions } from '@/features/account-pool/api'
 import {
   SecureVerificationDialog,
   useSecureVerification,
@@ -354,6 +355,11 @@ export function ChannelMutateDrawer({
     queryFn: () => getPrefillGroups('model'),
   })
 
+  const { data: accountPoolGroupsData } = useQuery({
+    queryKey: ['account-pool', 'groups', 'options'],
+    queryFn: getAccountPoolGroupOptions,
+  })
+
   const { copyToClipboard } = useCopyToClipboard()
 
   const {
@@ -390,6 +396,7 @@ export function ChannelMutateDrawer({
   const multiKeyMode = form.watch('multi_key_mode')
   const multiKeyType = form.watch('multi_key_type')
   const credentialMode = form.watch('credential_mode')
+  const accountPoolGroupId = form.watch('account_pool_group_id')
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
@@ -447,6 +454,15 @@ export function ChannelMutateDrawer({
     [prefillGroupsData]
   )
 
+  const accountPoolGroupOptions = useMemo(
+    () =>
+      accountPoolGroupsData?.data?.map((group) => ({
+        value: String(group.id),
+        label: `${group.name} · ${group.platform}/${group.auth_type}`,
+      })) ?? [],
+    [accountPoolGroupsData]
+  )
+
   // Transform groups to multi-select options
   const groupOptions = useMemo(() => {
     if (!groupsData?.data) return []
@@ -472,6 +488,10 @@ export function ChannelMutateDrawer({
 
   const credentialModeDescription = useMemo(() => {
     switch (credentialMode) {
+      case 'global_account_pool':
+        return t(
+          'Select a channel by model and group, then rotate official accounts from a global account group.'
+        )
       case 'account_pool':
         return t(
           'Select a channel first, then rotate concrete accounts inside its account pool.'
@@ -1870,12 +1890,19 @@ export function ChannelMutateDrawer({
                             value: 'account_pool',
                             label: t('Account Pool'),
                           },
+                          {
+                            value: 'global_account_pool',
+                            label: t('Global Account Pool'),
+                          },
                         ]}
                         onValueChange={(value) => {
                           field.onChange(value)
                           if (value === 'multi_key') {
                             form.setValue('multi_key_mode', 'multi_to_single')
-                          } else if (value === 'account_pool') {
+                          } else if (
+                            value === 'account_pool' ||
+                            value === 'global_account_pool'
+                          ) {
                             form.setValue('multi_key_mode', 'single')
                           } else if (
                             form.getValues('multi_key_mode') ===
@@ -1902,6 +1929,9 @@ export function ChannelMutateDrawer({
                             <SelectItem value='account_pool'>
                               {t('Account Pool')}
                             </SelectItem>
+                            <SelectItem value='global_account_pool'>
+                              {t('Global Account Pool')}
+                            </SelectItem>
                           </SelectGroup>
                         </SelectContent>
                       </Select>
@@ -1913,71 +1943,114 @@ export function ChannelMutateDrawer({
                   )}
                 />
                 {credentialMode === 'account_pool' && (
-                  <div className='grid gap-4 sm:grid-cols-2'>
-                    <FormField
-                      control={form.control}
-                      name='account_pool_mode'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('Account Pool Strategy')}</FormLabel>
-                          <Select
-                            items={[
-                              { value: 'polling', label: t('Polling') },
-                              { value: 'random', label: t('Random') },
-                            ]}
-                            onValueChange={field.onChange}
-                            value={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent alignItemWithTrigger={false}>
-                              <SelectGroup>
-                                <SelectItem value='polling'>
-                                  {t('Polling')}
+                  <FormField
+                    control={form.control}
+                    name='account_pool_mode'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Account Pool Strategy')}</FormLabel>
+                        <Select
+                          items={[
+                            { value: 'polling', label: t('Polling') },
+                            { value: 'random', label: t('Random') },
+                          ]}
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='polling'>
+                                {t('Polling')}
+                              </SelectItem>
+                              <SelectItem value='random'>
+                                {t('Random')}
+                              </SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {t(
+                            'Highest priority wins; accounts with the same priority rotate by weight.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {credentialMode === 'global_account_pool' && (
+                  <FormField
+                    control={form.control}
+                    name='account_pool_group_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Global Account Group')}</FormLabel>
+                        <Select
+                          items={accountPoolGroupOptions}
+                          onValueChange={(value) =>
+                            field.onChange(Number(value))
+                          }
+                          value={field.value ? String(field.value) : ''}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={t('Select account group')}
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {accountPoolGroupOptions.map((option) => (
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {option.label}
                                 </SelectItem>
-                                <SelectItem value='random'>
-                                  {t('Random')}
-                                </SelectItem>
-                              </SelectGroup>
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {accountPoolGroupId
+                            ? t('Channels reference this group at relay time.')
+                            : t('Create account groups in Admin Account Pool.')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {(credentialMode === 'account_pool' ||
+                  credentialMode === 'global_account_pool') && (
+                  <FormField
+                    control={form.control}
+                    name='account_pool_fallback'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
+                        <div className='space-y-0.5'>
+                          <FormLabel>{t('Fallback to Channel Key')}</FormLabel>
+                          <FormDescription className='text-xs'>
                             {t(
-                              'Highest priority wins; accounts with the same priority rotate by weight.'
+                              'Use the channel key or multi-key list only when no account is available.'
                             )}
                           </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name='account_pool_fallback'
-                      render={({ field }) => (
-                        <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
-                          <div className='space-y-0.5'>
-                            <FormLabel>
-                              {t('Fallback to Channel Key')}
-                            </FormLabel>
-                            <FormDescription className='text-xs'>
-                              {t(
-                                'Use the channel key or multi-key list only when no account is available.'
-                              )}
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value === true}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value === true}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
                 )}
                 {!isEditing && credentialMode === 'single_key' && (
                   <FormField
@@ -2028,6 +2101,9 @@ export function ChannelMutateDrawer({
                   name='key'
                   render={({ field }) => {
                     const keyPlaceholder = (() => {
+                      if (credentialMode === 'global_account_pool') {
+                        return t('Optional fallback key for this channel')
+                      }
                       if (isEditing) {
                         return t('Leave empty to keep existing key')
                       }
@@ -2054,7 +2130,11 @@ export function ChannelMutateDrawer({
                     })()
                     return (
                       <FormItem>
-                        <FormLabel>{t('API Key *')}</FormLabel>
+                        <FormLabel>
+                          {credentialMode === 'global_account_pool'
+                            ? t('Fallback Key')
+                            : t('API Key *')}
+                        </FormLabel>
                         <FormControl>
                           <Textarea
                             placeholder={keyPlaceholder}
@@ -2079,6 +2159,10 @@ export function ChannelMutateDrawer({
                                     </span>
                                   )}
                                 </>
+                              ) : credentialMode === 'global_account_pool' ? (
+                                t(
+                                  'Global account pool mode uses the selected account group by default.'
+                                )
                               ) : isBatchMode ? (
                                 t(
                                   'Enter one API key per line for batch creation'
@@ -2163,58 +2247,59 @@ export function ChannelMutateDrawer({
                   }}
                 />
 
-                {currentType === 57 && (
-                  <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
-                    <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                      <div className='space-y-0.5'>
-                        <div className='text-sm font-semibold'>
-                          {t('Codex Authorization')}
+                {currentType === 57 &&
+                  credentialMode !== 'global_account_pool' && (
+                    <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
+                      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                        <div className='space-y-0.5'>
+                          <div className='text-sm font-semibold'>
+                            {t('Codex Authorization')}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {t(
+                              'Codex channels use an OAuth JSON credential as the key.'
+                            )}
+                          </div>
                         </div>
-                        <div className='text-muted-foreground text-xs'>
-                          {t(
-                            'Codex channels use an OAuth JSON credential as the key.'
-                          )}
-                        </div>
-                      </div>
-                      <div className='flex flex-wrap items-center gap-2'>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setCodexOAuthDialogOpen(true)}
-                        >
-                          <Link2 className='mr-2 h-4 w-4' />
-                          {t('Authorize')}
-                        </Button>
-                        {isEditing && channelId && (
+                        <div className='flex flex-wrap items-center gap-2'>
                           <Button
                             type='button'
                             variant='outline'
                             size='sm'
-                            onClick={handleRefreshCodexCredential}
-                            disabled={isCodexCredentialRefreshing}
+                            onClick={() => setCodexOAuthDialogOpen(true)}
                           >
-                            {isCodexCredentialRefreshing ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <RefreshCw className='mr-2 h-4 w-4' />
-                            )}
-                            {isCodexCredentialRefreshing
-                              ? t('Refreshing...')
-                              : t('Refresh credential')}
+                            <Link2 className='mr-2 h-4 w-4' />
+                            {t('Authorize')}
                           </Button>
-                        )}
+                          {isEditing && channelId && (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleRefreshCodexCredential}
+                              disabled={isCodexCredentialRefreshing}
+                            >
+                              {isCodexCredentialRefreshing ? (
+                                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                              ) : (
+                                <RefreshCw className='mr-2 h-4 w-4' />
+                              )}
+                              {isCodexCredentialRefreshing
+                                ? t('Refreshing...')
+                                : t('Refresh credential')}
+                            </Button>
+                          )}
+                        </div>
                       </div>
+                      <Alert>
+                        <AlertDescription>
+                          {t(
+                            'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
+                          )}
+                        </AlertDescription>
+                      </Alert>
                     </div>
-                    <Alert>
-                      <AlertDescription>
-                        {t(
-                          'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  </div>
-                )}
+                  )}
 
                 <CodexOAuthDialog
                   open={codexOAuthDialogOpen}

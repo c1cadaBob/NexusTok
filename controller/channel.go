@@ -441,7 +441,10 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if channel == nil {
+			return fmt.Errorf("channel cannot be empty")
+		}
+		if channel.Key == "" && channel.ChannelInfo.CredentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -470,7 +473,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
-	if channel.Type == constant.ChannelTypeCodex {
+	if channel.Type == constant.ChannelTypeCodex && channel.ChannelInfo.CredentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
 			if !strings.HasPrefix(trimmedKey, "{") {
@@ -547,7 +550,7 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		case string:
 			keyStr = strings.TrimSpace(v)
 		default:
-			bytes, err := json.Marshal(v)
+			bytes, err := common.Marshal(v)
 			if err != nil {
 				return nil, fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
 			}
@@ -581,6 +584,13 @@ func AddChannel(c *gin.Context) {
 	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
+	if addChannelRequest.Channel.ChannelInfo.CredentialMode == constant.ChannelCredentialModeGlobalAccountPool {
+		addChannelRequest.Channel.ChannelInfo.IsMultiKey = false
+		addChannelRequest.Channel.ChannelInfo.AccountPoolEnabled = false
+		if strings.TrimSpace(addChannelRequest.Channel.Key) == "" {
+			addChannelRequest.Channel.Key = constant.ChannelCredentialModeGlobalAccountPool
+		}
+	}
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
@@ -871,18 +881,26 @@ func UpdateChannel(c *gin.Context) {
 	if incomingChannelInfo.CredentialMode != "" ||
 		incomingChannelInfo.AccountPoolEnabled ||
 		incomingChannelInfo.AccountPoolMode != "" ||
-		incomingChannelInfo.AccountPoolFallback {
+		incomingChannelInfo.AccountPoolFallback ||
+		incomingChannelInfo.AccountPoolGroupId > 0 {
 		channel.ChannelInfo.CredentialMode = incomingChannelInfo.CredentialMode
 		channel.ChannelInfo.AccountPoolEnabled = incomingChannelInfo.AccountPoolEnabled
 		channel.ChannelInfo.AccountPoolMode = incomingChannelInfo.AccountPoolMode
 		channel.ChannelInfo.AccountPoolFallback = incomingChannelInfo.AccountPoolFallback
+		channel.ChannelInfo.AccountPoolGroupId = incomingChannelInfo.AccountPoolGroupId
 		switch incomingChannelInfo.CredentialMode {
 		case constant.ChannelCredentialModeSingleKey:
 			channel.ChannelInfo.IsMultiKey = false
+			channel.ChannelInfo.AccountPoolGroupId = 0
 		case constant.ChannelCredentialModeMultiKey:
 			channel.ChannelInfo.IsMultiKey = true
+			channel.ChannelInfo.AccountPoolGroupId = 0
 		case constant.ChannelCredentialModeAccountPool:
 			channel.ChannelInfo.IsMultiKey = false
+			channel.ChannelInfo.AccountPoolGroupId = 0
+		case constant.ChannelCredentialModeGlobalAccountPool:
+			channel.ChannelInfo.IsMultiKey = false
+			channel.ChannelInfo.AccountPoolEnabled = false
 		}
 	}
 
@@ -904,7 +922,7 @@ func UpdateChannel(c *gin.Context) {
 				if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
 					// JSON数组格式
 					var arr []json.RawMessage
-					if err := json.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
+					if err := common.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
 						existingKeys = make([]string, len(arr))
 						for i, v := range arr {
 							existingKeys[i] = string(v)
@@ -1089,7 +1107,7 @@ func FetchModels(c *gin.Context) {
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+	if err := common.DecodeJson(response.Body, &result); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": err.Error(),
@@ -1835,7 +1853,7 @@ func OllamaPullModelStream(c *gin.Context) {
 
 	// 创建进度回调函数
 	progressCallback := func(progress ollama.OllamaPullResponse) {
-		data, _ := json.Marshal(progress)
+		data, _ := common.Marshal(progress)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
 		c.Writer.Flush()
 	}
@@ -1844,12 +1862,12 @@ func OllamaPullModelStream(c *gin.Context) {
 	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
 
 	if err != nil {
-		errorData, _ := json.Marshal(gin.H{
+		errorData, _ := common.Marshal(gin.H{
 			"error": err.Error(),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
-		successData, _ := json.Marshal(gin.H{
+		successData, _ := common.Marshal(gin.H{
 			"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(successData))

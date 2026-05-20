@@ -31,11 +31,12 @@ export const channelInfoSchema = z.object({
   multi_key_polling_index: z.number().default(0),
   multi_key_mode: z.enum(['random', 'polling']).default('random'),
   credential_mode: z
-    .enum(['single_key', 'multi_key', 'account_pool'])
+    .enum(['single_key', 'multi_key', 'account_pool', 'global_account_pool'])
     .optional(),
   account_pool_enabled: z.boolean().optional(),
   account_pool_mode: z.enum(['polling', 'random']).optional(),
   account_pool_fallback: z.boolean().optional(),
+  account_pool_group_id: z.number().optional(),
 })
 
 export type ChannelInfo = z.infer<typeof channelInfoSchema>
@@ -224,7 +225,11 @@ export interface MultiKeyStatusResponse {
   }
 }
 
-export type ChannelCredentialMode = 'single_key' | 'multi_key' | 'account_pool'
+export type ChannelCredentialMode =
+  | 'single_key'
+  | 'multi_key'
+  | 'account_pool'
+  | 'global_account_pool'
 export type ChannelAccountPoolMode = 'polling' | 'random'
 
 export interface ChannelAccount {

@@ -68,6 +68,11 @@ type ChannelMeta struct {
 	ChannelAccountPool   bool
 	ChannelAccountId     int
 	ChannelAccountName   string
+	PoolGroupId          int
+	PoolGroupName        string
+	PoolAccountId        int
+	PoolAccountName      string
+	PoolAccountAuthType  string
 	ChannelBaseUrl       string
 	ApiType              int
 	ApiVersion           string
@@ -198,6 +203,11 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		ChannelAccountPool:   common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool),
 		ChannelAccountId:     common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId),
 		ChannelAccountName:   common.GetContextKeyString(c, constant.ContextKeyChannelAccountName),
+		PoolGroupId:          common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId),
+		PoolGroupName:        common.GetContextKeyString(c, constant.ContextKeyPoolGroupName),
+		PoolAccountId:        common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId),
+		PoolAccountName:      common.GetContextKeyString(c, constant.ContextKeyPoolAccountName),
+		PoolAccountAuthType:  common.GetContextKeyString(c, constant.ContextKeyPoolAccountAuthType),
 		ChannelBaseUrl:       common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
 		ApiType:              apiType,
 		ApiVersion:           c.GetString("api_version"),

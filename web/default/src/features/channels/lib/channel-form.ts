@@ -53,10 +53,11 @@ export const channelFormSchema = z.object({
   multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
   multi_key_type: z.enum(['random', 'polling']).optional(),
   credential_mode: z
-    .enum(['single_key', 'multi_key', 'account_pool'])
+    .enum(['single_key', 'multi_key', 'account_pool', 'global_account_pool'])
     .optional(),
   account_pool_mode: z.enum(['polling', 'random']).optional(),
   account_pool_fallback: z.boolean().optional(),
+  account_pool_group_id: z.number().optional(),
   batch_add_set_key_prefix_2_name: z.boolean().optional(),
   key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
   // Channel extra settings (stored in setting JSON, not sent directly)
@@ -118,6 +119,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   credential_mode: 'single_key',
   account_pool_mode: 'polling',
   account_pool_fallback: false,
+  account_pool_group_id: 0,
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
@@ -263,6 +265,7 @@ export function transformChannelToFormDefaults(
     credential_mode: credentialMode,
     account_pool_mode: channel.channel_info.account_pool_mode || 'polling',
     account_pool_fallback: channel.channel_info.account_pool_fallback === true,
+    account_pool_group_id: channel.channel_info.account_pool_group_id || 0,
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
     // Channel extra settings
@@ -422,7 +425,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   const mode =
     credentialMode === 'multi_key'
       ? 'multi_to_single'
-      : credentialMode === 'account_pool'
+      : credentialMode === 'account_pool' ||
+          credentialMode === 'global_account_pool'
         ? 'single'
         : formData.multi_key_mode || 'single'
 
@@ -430,7 +434,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     name: formData.name,
     type: formData.type,
     base_url: formData.base_url || null,
-    key: formData.key,
+    key:
+      credentialMode === 'global_account_pool' && !formData.key.trim()
+        ? 'global_account_pool'
+        : formData.key,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -453,6 +460,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
       account_pool_enabled: credentialMode === 'account_pool',
       account_pool_mode: formData.account_pool_mode || 'polling',
       account_pool_fallback: formData.account_pool_fallback === true,
+      account_pool_group_id:
+        credentialMode === 'global_account_pool'
+          ? formData.account_pool_group_id || 0
+          : 0,
       is_multi_key: credentialMode === 'multi_key',
       multi_key_size: 0,
       multi_key_polling_index: 0,
@@ -511,6 +522,10 @@ export function transformFormDataToUpdatePayload(
       account_pool_enabled: formData.credential_mode === 'account_pool',
       account_pool_mode: formData.account_pool_mode || 'polling',
       account_pool_fallback: formData.account_pool_fallback === true,
+      account_pool_group_id:
+        formData.credential_mode === 'global_account_pool'
+          ? formData.account_pool_group_id || 0
+          : 0,
       is_multi_key: formData.credential_mode === 'multi_key',
       multi_key_size: 0,
       multi_key_polling_index: 0,

@@ -105,6 +105,7 @@ type TaskPrivateData struct {
 	SubscriptionId   int                 `json:"subscription_id,omitempty"`    // 订阅 ID，用于订阅退款
 	TokenId          int                 `json:"token_id,omitempty"`           // 令牌 ID，用于令牌额度退款
 	ChannelAccountId int                 `json:"channel_account_id,omitempty"` // 账号池账号 ID，用于异步任务差额结算
+	PoolAccountId    int                 `json:"pool_account_id,omitempty"`    // 全局账号池账号 ID，用于异步任务差额结算
 	BillingContext   *TaskBillingContext `json:"billing_context,omitempty"`    // 计费参数快照（用于轮询阶段重新计算）
 }
 
@@ -185,6 +186,7 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 			properties.OriginModelName = relayInfo.OriginModelName
 		}
 		privateData.ChannelAccountId = relayInfo.ChannelAccountId
+		privateData.PoolAccountId = relayInfo.PoolAccountId
 	}
 
 	// 使用预生成的公开 ID（如果有），否则新生成

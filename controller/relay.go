@@ -206,6 +206,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
 			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
@@ -221,6 +222,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -337,7 +339,7 @@ func trySetupAccountPoolRetryChannel(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, nil, false
 	}
 	retryChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountRetryChannelId)
-	if retryChannelID <= 0 || len(service.GetExcludedChannelAccountIds(c)) == 0 {
+	if retryChannelID <= 0 || (len(service.GetExcludedChannelAccountIds(c)) == 0 && len(service.GetExcludedPoolAccountIds(c)) == 0) {
 		return nil, nil, false
 	}
 	usingGroup := getAccountPoolRetryGroup(c, info)
@@ -416,10 +418,17 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	channelError.AccountPool = common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool)
 	channelError.ChannelAccountId = common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId)
 	channelError.ChannelAccountName = common.GetContextKeyString(c, constant.ContextKeyChannelAccountName)
+	channelError.PoolGroupId = common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId)
+	channelError.PoolGroupName = common.GetContextKeyString(c, constant.ContextKeyPoolGroupName)
+	channelError.PoolAccountId = common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId)
+	channelError.PoolAccountName = common.GetContextKeyString(c, constant.ContextKeyPoolAccountName)
+	channelError.PoolAccountAuthType = common.GetContextKeyString(c, constant.ContextKeyPoolAccountAuthType)
 
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if channelError.AccountPool && channelError.ChannelAccountId > 0 {
+	if channelError.AccountPool && channelError.PoolAccountId > 0 {
+		service.ProcessPoolAccountError(c, channelError, err)
+	} else if channelError.AccountPool && channelError.ChannelAccountId > 0 {
 		service.ProcessChannelAccountError(c, channelError, err)
 	} else if service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
@@ -459,6 +468,13 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["account_pool"] = true
 			adminInfo["channel_account_id"] = common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId)
 			adminInfo["channel_account_name"] = common.GetContextKeyString(c, constant.ContextKeyChannelAccountName)
+			if poolAccountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
+				adminInfo["pool_group_id"] = common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId)
+				adminInfo["pool_group_name"] = common.GetContextKeyString(c, constant.ContextKeyPoolGroupName)
+				adminInfo["pool_account_id"] = poolAccountID
+				adminInfo["pool_account_name"] = common.GetContextKeyString(c, constant.ContextKeyPoolAccountName)
+				adminInfo["pool_account_auth_type"] = common.GetContextKeyString(c, constant.ContextKeyPoolAccountAuthType)
+			}
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
@@ -613,12 +629,14 @@ func RelayTask(c *gin.Context) {
 				taskErr = service.TaskErrorWrapperLocal(bodyErr, "read_request_body_failed", http.StatusBadRequest)
 			}
 			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
 		if taskErr == nil {
 			break
 		}

@@ -135,7 +135,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isLoadingData = isLoading || (isFetching && !data)
 
   const table = useReactTable({
-    data: logs as Record<string, unknown>[],
+    data: logs as unknown as Record<string, unknown>[],
     columns: columns as ColumnDef<Record<string, unknown>>[],
     state: {
       columnFilters,

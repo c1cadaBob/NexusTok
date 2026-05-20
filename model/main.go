@@ -258,6 +258,8 @@ func migrateDB() error {
 	err := DB.AutoMigrate(
 		&Channel{},
 		&ChannelAccount{},
+		&AccountPoolGroup{},
+		&PoolAccount{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -308,6 +310,8 @@ func migrateDBFast() error {
 	}{
 		{&Channel{}, "Channel"},
 		{&ChannelAccount{}, "ChannelAccount"},
+		{&AccountPoolGroup{}, "AccountPoolGroup"},
+		{&PoolAccount{}, "PoolAccount"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},

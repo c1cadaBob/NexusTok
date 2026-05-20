@@ -71,6 +71,13 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		adminInfo["account_pool"] = true
 		adminInfo["channel_account_id"] = common.GetContextKeyInt(ctx, constant.ContextKeyChannelAccountId)
 		adminInfo["channel_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountName)
+		if poolAccountID := common.GetContextKeyInt(ctx, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
+			adminInfo["pool_group_id"] = common.GetContextKeyInt(ctx, constant.ContextKeyPoolGroupId)
+			adminInfo["pool_group_name"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolGroupName)
+			adminInfo["pool_account_id"] = poolAccountID
+			adminInfo["pool_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountName)
+			adminInfo["pool_account_auth_type"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountAuthType)
+		}
 	}
 
 	isLocalCountTokens := common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens)
