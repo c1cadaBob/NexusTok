@@ -4615,10 +4615,10 @@
         "name": "Authorization",
         "description": "Access Token认证，格式: Bearer {access_token}，通过 /api/user/token 接口生成"
       },
-      "NewApiUser": {
+      "NexusTokUser": {
         "type": "apiKey",
         "in": "header",
-        "name": "New-Api-User",
+        "name": "NexusTok-User",
         "description": "用户ID请求头，必须与当前登录用户ID匹配，使用Session或AccessToken认证时必须提供"
       },
       "Combination": {
@@ -4627,7 +4627,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4638,7 +4638,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4649,7 +4649,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4660,7 +4660,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4671,7 +4671,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4682,7 +4682,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4693,7 +4693,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4704,7 +4704,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4715,7 +4715,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4726,7 +4726,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4737,7 +4737,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4748,7 +4748,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4759,7 +4759,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4770,7 +4770,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4781,7 +4781,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4792,7 +4792,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4803,7 +4803,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4814,7 +4814,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4825,7 +4825,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4836,7 +4836,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4847,7 +4847,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4858,7 +4858,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4869,7 +4869,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4880,7 +4880,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4891,7 +4891,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4902,7 +4902,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4913,7 +4913,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4924,7 +4924,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4935,7 +4935,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4946,7 +4946,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4957,7 +4957,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4968,7 +4968,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4979,7 +4979,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -4990,7 +4990,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5001,7 +5001,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5012,7 +5012,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5023,7 +5023,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5034,7 +5034,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5045,7 +5045,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5056,7 +5056,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5067,7 +5067,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5078,7 +5078,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5089,7 +5089,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5100,7 +5100,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5111,7 +5111,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5122,7 +5122,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5133,7 +5133,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5144,7 +5144,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5155,7 +5155,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5166,7 +5166,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5177,7 +5177,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5188,7 +5188,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5199,7 +5199,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5210,7 +5210,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5221,7 +5221,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5232,7 +5232,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5243,7 +5243,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5254,7 +5254,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5265,7 +5265,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5276,7 +5276,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5287,7 +5287,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5298,7 +5298,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5309,7 +5309,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5320,7 +5320,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5331,7 +5331,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5342,7 +5342,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5353,7 +5353,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5364,7 +5364,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5375,7 +5375,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5386,7 +5386,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5397,7 +5397,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5408,7 +5408,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5419,7 +5419,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5430,7 +5430,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5441,7 +5441,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5452,7 +5452,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5463,7 +5463,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5474,7 +5474,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5485,7 +5485,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5496,7 +5496,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5507,7 +5507,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5518,7 +5518,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5529,7 +5529,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5540,7 +5540,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5551,7 +5551,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5562,7 +5562,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5573,7 +5573,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5584,7 +5584,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5595,7 +5595,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5606,7 +5606,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5617,7 +5617,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5628,7 +5628,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5639,7 +5639,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5650,7 +5650,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5661,7 +5661,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5672,7 +5672,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5683,7 +5683,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5694,7 +5694,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5705,7 +5705,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5716,7 +5716,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5727,7 +5727,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5738,7 +5738,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5749,7 +5749,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5760,7 +5760,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5771,7 +5771,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5782,7 +5782,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5793,7 +5793,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5804,7 +5804,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5815,7 +5815,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5826,7 +5826,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5837,7 +5837,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5848,7 +5848,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5859,7 +5859,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5870,7 +5870,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5881,7 +5881,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5892,7 +5892,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5903,7 +5903,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5914,7 +5914,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5925,7 +5925,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5936,7 +5936,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5947,7 +5947,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5958,7 +5958,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5969,7 +5969,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5980,7 +5980,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -5991,7 +5991,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6002,7 +6002,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6013,7 +6013,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6024,7 +6024,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6035,7 +6035,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6046,7 +6046,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6057,7 +6057,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6068,7 +6068,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6079,7 +6079,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6090,7 +6090,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6101,7 +6101,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6112,7 +6112,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6123,7 +6123,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6134,7 +6134,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6145,7 +6145,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6156,7 +6156,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6167,7 +6167,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6178,7 +6178,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6189,7 +6189,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6200,7 +6200,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6211,7 +6211,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6222,7 +6222,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6233,7 +6233,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6244,7 +6244,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6255,7 +6255,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6266,7 +6266,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6277,7 +6277,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6288,7 +6288,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6299,7 +6299,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6310,7 +6310,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6321,7 +6321,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6332,7 +6332,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6343,7 +6343,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6354,7 +6354,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6365,7 +6365,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6376,7 +6376,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6387,7 +6387,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6398,7 +6398,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6409,7 +6409,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6420,7 +6420,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6431,7 +6431,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6442,7 +6442,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6453,7 +6453,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6464,7 +6464,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6475,7 +6475,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6486,7 +6486,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6497,7 +6497,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6508,7 +6508,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6519,7 +6519,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6530,7 +6530,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6541,7 +6541,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6552,7 +6552,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6563,7 +6563,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6574,7 +6574,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6585,7 +6585,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6596,7 +6596,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6607,7 +6607,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6618,7 +6618,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6629,7 +6629,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6640,7 +6640,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6651,7 +6651,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6662,7 +6662,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6673,7 +6673,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6684,7 +6684,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6695,7 +6695,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6706,7 +6706,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6717,7 +6717,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6728,7 +6728,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6739,7 +6739,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6750,7 +6750,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6761,7 +6761,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6772,7 +6772,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6783,7 +6783,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6794,7 +6794,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6805,7 +6805,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6816,7 +6816,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6827,7 +6827,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6838,7 +6838,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6849,7 +6849,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6860,7 +6860,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6871,7 +6871,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6882,7 +6882,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6893,7 +6893,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6904,7 +6904,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6915,7 +6915,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6926,7 +6926,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6937,7 +6937,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6948,7 +6948,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6959,7 +6959,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6970,7 +6970,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6981,7 +6981,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -6992,7 +6992,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7003,7 +7003,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7014,7 +7014,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7025,7 +7025,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7036,7 +7036,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7047,7 +7047,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7058,7 +7058,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7069,7 +7069,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7080,7 +7080,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7091,7 +7091,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7102,7 +7102,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7113,7 +7113,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7124,7 +7124,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7135,7 +7135,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7146,7 +7146,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7157,7 +7157,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7168,7 +7168,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7179,7 +7179,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7190,7 +7190,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7201,7 +7201,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7212,7 +7212,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7223,7 +7223,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7234,7 +7234,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7245,7 +7245,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7256,7 +7256,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7267,7 +7267,7 @@
             "id": "SessionAuth"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"
@@ -7278,7 +7278,7 @@
             "id": "AccessToken"
           },
           {
-            "id": "NewApiUser"
+            "id": "NexusTokUser"
           }
         ],
         "type": "combination"

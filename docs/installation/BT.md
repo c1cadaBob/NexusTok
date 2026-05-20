@@ -2,7 +2,7 @@
 
 本文档提供使用宝塔面板 Docker 功能部署 NexusTok 的图文教程。
 
-> 📖 官方文档：[宝塔面板部署](https://docs.newapi.pro/zh/docs/installation/deployment-methods/bt-docker-installation)
+> 📖 官方链接：[NexusTok 仓库](https://github.com/c1cada/NexusTok)
 
 ***
 
@@ -136,9 +136,9 @@ docker-compose down && docker-compose up -d
 
 ## 相关链接
 
-- [官方文档](https://docs.newapi.pro/zh/docs/installation)
-- [环境变量配置](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
-- [常见问题](https://docs.newapi.pro/zh/docs/support/faq)
+- [NexusTok 仓库](https://github.com/c1cada/NexusTok)
+- [README](https://github.com/c1cada/NexusTok#readme)
+- [问题反馈](https://github.com/c1cada/NexusTok/issues)
 - [GitHub 仓库](https://github.com/c1cada/NexusTok)
 
 ***
@@ -148,4 +148,3 @@ docker-compose down && docker-compose up -d
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
 > ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
-

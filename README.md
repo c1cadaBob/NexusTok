@@ -102,7 +102,7 @@ docker run --name nexustok -d --restart always \
 | `PYROSCOPE_BLOCK_RATE` | Pyroscope block 采样率 | `5` |
 | `HOSTNAME` | Pyroscope 标签里的主机名 | `nexustok` |
 
-📖 **完整配置：** [环境变量文档](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
+📖 **完整配置：** [NexusTok 仓库](https://github.com/c1cada/NexusTok)
 
 </details>
 
@@ -196,7 +196,7 @@ docker run --name nexustok -d --restart always \
 
 如果这个项目对你有帮助，欢迎给我们一个 ⭐️ Star！
 
-**[官方文档](https://docs.newapi.pro/zh/docs)** • **[问题反馈](https://github.com/c1cada/NexusTok/issues)** • **[最新发布](https://github.com/c1cada/NexusTok/releases)**
+**[NexusTok 仓库](https://github.com/c1cada/NexusTok)** • **[问题反馈](https://github.com/c1cada/NexusTok/issues)** • **[最新发布](https://github.com/c1cada/NexusTok/releases)**
 
 <sub>Built with ❤️ by c1cada</sub>
 

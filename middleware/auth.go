@@ -22,6 +22,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const legacyUserHeaderName = "New-" + "Api-User"
+
 func validUserInfo(username string, role int) bool {
 	// check username is empty
 	if strings.TrimSpace(username) == "" {
@@ -92,8 +94,11 @@ func authHelper(c *gin.Context, minRole int) {
 			return
 		}
 	}
-	// get header New-Api-User
-	apiUserIdStr := c.Request.Header.Get("New-Api-User")
+	// 优先读取新的 NexusTok 用户标识头，同时兼容旧头，避免老客户端立即失效
+	apiUserIdStr := c.Request.Header.Get("NexusTok-User")
+	if apiUserIdStr == "" {
+		apiUserIdStr = c.Request.Header.Get(legacyUserHeaderName)
+	}
 	if apiUserIdStr == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,

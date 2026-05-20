@@ -26,7 +26,7 @@ type ClaudeError struct {
 type ErrorType string
 
 const (
-	ErrorTypeNexusTokError     ErrorType = "new_api_error"
+	ErrorTypeNexusTokError     ErrorType = "nexustok_error"
 	ErrorTypeOpenAIError     ErrorType = "openai_error"
 	ErrorTypeClaudeError     ErrorType = "claude_error"
 	ErrorTypeMidjourneyError ErrorType = "midjourney_error"
@@ -42,7 +42,7 @@ const (
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
 
-	// new api error
+	// NexusTok error
 	ErrorCodeCountTokenFailed   ErrorCode = "count_token_failed"
 	ErrorCodeModelPriceError    ErrorCode = "model_price_error"
 	ErrorCodeInvalidApiType     ErrorCode = "invalid_api_type"

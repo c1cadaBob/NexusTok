@@ -189,7 +189,7 @@ export const useApiRequest = (
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'New-Api-User': getUserIdFromLocalStorage(),
+            'NexusTok-User': getUserIdFromLocalStorage(),
           },
           body: JSON.stringify(payload),
         });
@@ -316,7 +316,7 @@ export const useApiRequest = (
       const source = new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
         headers: {
           'Content-Type': 'application/json',
-          'New-Api-User': getUserIdFromLocalStorage(),
+          'NexusTok-User': getUserIdFromLocalStorage(),
         },
         method: 'POST',
         payload: JSON.stringify(payload),
