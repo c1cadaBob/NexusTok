@@ -33,7 +33,6 @@ import { Nav, Divider, Button } from '@douyinfe/semi-ui';
 const routerMap = {
   home: '/',
   channel: '/console/channel',
-  'request-rules': '/console/request-rules',
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
@@ -48,6 +47,7 @@ const routerMap = {
   task: '/console/task',
   models: '/console/models',
   deployment: '/console/deployment',
+  pricing_setting: '/console/pricing-setting',
   playground: '/console/playground',
   personal: '/console/personal',
 };
@@ -155,12 +155,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
-        text: t('请求规则'),
-        itemKey: 'request-rules',
-        to: '/console/request-rules',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
@@ -171,6 +165,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'models',
         to: '/console/models',
         className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('分组与模型定价设置'),
+        itemKey: 'pricing_setting',
+        to: '/console/pricing-setting',
+        className: isRoot() ? '' : 'tableHiddle',
       },
       {
         text: t('模型部署'),

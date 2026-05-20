@@ -47,8 +47,8 @@ export const DEFAULT_ADMIN_CONFIG = {
   admin: {
     enabled: true,
     channel: true,
-    'request-rules': true,
     models: true,
+    pricing_setting: true,
     deployment: true,
     redemption: true,
     user: true,

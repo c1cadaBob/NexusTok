@@ -23,7 +23,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Settings,
-  Calculator,
   Gauge,
   Shapes,
   Cog,
@@ -43,7 +42,6 @@ import OperationSetting from '../../components/settings/OperationSetting';
 import RateLimitSetting from '../../components/settings/RateLimitSetting';
 import ModelSetting from '../../components/settings/ModelSetting';
 import DashboardSetting from '../../components/settings/DashboardSetting';
-import RatioSetting from '../../components/settings/RatioSetting';
 import ChatsSetting from '../../components/settings/ChatsSetting';
 import DrawingSetting from '../../components/settings/DrawingSetting';
 import PaymentSetting from '../../components/settings/PaymentSetting';
@@ -107,16 +105,6 @@ const Setting = () => {
       ),
       content: <PaymentSetting />,
       itemKey: 'payment',
-    });
-    panes.push({
-      tab: (
-        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <Calculator size={18} />
-          {t('分组与模型定价设置')}
-        </span>
-      ),
-      content: <RatioSetting />,
-      itemKey: 'ratio',
     });
     panes.push({
       tab: (
@@ -186,6 +174,10 @@ const Setting = () => {
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const tab = searchParams.get('tab');
+    if (tab === 'ratio') {
+      navigate('/console/pricing-setting', { replace: true });
+      return;
+    }
     if (tab) {
       setTabActiveKey(tab);
     } else {

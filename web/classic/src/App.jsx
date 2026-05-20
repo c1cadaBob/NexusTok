@@ -21,7 +21,7 @@ import React, { lazy, Suspense, useContext, useMemo } from 'react';
 import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, isRoot } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
 import LoginForm from './components/auth/LoginForm';
 import NotFound from './pages/NotFound';
@@ -45,7 +45,7 @@ import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
 import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
-import RequestRule from './pages/RequestRule';
+import PricingSetting from './pages/PricingSetting';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -137,14 +137,6 @@ function App() {
           element={
             <AdminRoute>
               <Channel />
-            </AdminRoute>
-          }
-        />
-        <Route
-          path='/console/request-rules'
-          element={
-            <AdminRoute>
-              <RequestRule />
             </AdminRoute>
           }
         />
@@ -263,6 +255,23 @@ function App() {
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Setting />
               </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/pricing-setting'
+          element={
+            <AdminRoute>
+              {isRoot() ? (
+                <Suspense
+                  fallback={<Loading></Loading>}
+                  key={location.pathname}
+                >
+                  <PricingSetting />
+                </Suspense>
+              ) : (
+                <Forbidden />
+              )}
             </AdminRoute>
           }
         />

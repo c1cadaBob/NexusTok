@@ -104,6 +104,7 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         channel: isSidebarModuleAllowed('admin', 'channel'),
         models: isSidebarModuleAllowed('admin', 'models'),
+        pricing_setting: isSidebarModuleAllowed('admin', 'pricing_setting'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         user: isSidebarModuleAllowed('admin', 'user'),
@@ -339,6 +340,11 @@ export default function SettingsSidebarModulesUser() {
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
+        {
+          key: 'pricing_setting',
+          title: t('分组与模型定价设置'),
+          description: t('模型和分组计费规则'),
+        },
         {
           key: 'deployment',
           title: t('模型部署'),
