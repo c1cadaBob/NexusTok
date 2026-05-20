@@ -33,14 +33,17 @@ import {
   CreditCard,
   ListTodo,
   Settings,
-  Filter,
+  Calculator,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const userRole = useAuthStore((state) => state.auth.user?.role)
 
   return {
     workspaces: [
@@ -127,15 +130,19 @@ export function useSidebarData(): SidebarData {
             icon: Radio,
           },
           {
-            title: t('Request Rules'),
-            url: '/request-rules',
-            icon: Filter,
-          },
-          {
             title: t('Models'),
             url: '/models/metadata',
             icon: Box,
           },
+          ...(userRole === ROLE.SUPER_ADMIN
+            ? [
+                {
+                  title: t('Model & Group Pricing Settings'),
+                  url: '/pricing-settings',
+                  icon: Calculator,
+                },
+              ]
+            : []),
           {
             title: t('Users'),
             url: '/users',

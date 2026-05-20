@@ -17,30 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { BillingSettings } from '@/features/system-settings/billing'
-import {
-  BILLING_DEFAULT_SECTION,
-  BILLING_SECTION_IDS,
-} from '@/features/system-settings/billing/section-registry.tsx'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
+import { PricingSettings } from '@/features/pricing-settings'
 
-export const Route = createFileRoute(
-  '/_authenticated/system-settings/billing/$section'
-)({
-  beforeLoad: ({ params }) => {
-    if (
-      params.section === 'model-pricing' ||
-      params.section === 'group-pricing'
-    ) {
-      throw redirect({ to: '/pricing-settings' })
-    }
-
-    const validSections = BILLING_SECTION_IDS as unknown as string[]
-    if (!validSections.includes(params.section)) {
-      throw redirect({
-        to: '/system-settings/billing/$section',
-        params: { section: BILLING_DEFAULT_SECTION },
-      })
+export const Route = createFileRoute('/_authenticated/pricing-settings/')({
+  beforeLoad: () => {
+    const { auth } = useAuthStore.getState()
+    if (!auth.user || auth.user.role !== ROLE.SUPER_ADMIN) {
+      throw redirect({ to: '/403' })
     }
   },
-  component: BillingSettings,
+  component: PricingSettings,
 })

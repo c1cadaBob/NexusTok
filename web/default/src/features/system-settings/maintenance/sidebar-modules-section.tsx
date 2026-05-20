@@ -124,6 +124,12 @@ export function SidebarModulesSection({
         title: t('Channels'),
         description: t('Configure upstream providers and routing.'),
       },
+      pricing: {
+        title: t('Model & Group Pricing Settings'),
+        description: t(
+          'Configure model, caching, and group ratios used for billing'
+        ),
+      },
       models: {
         title: t('Models'),
         description: t('Manage catalog visibility and pricing.'),

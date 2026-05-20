@@ -23,7 +23,7 @@ import {
   getBillingSectionContent,
 } from './section-registry.tsx'
 
-const defaultBillingSettings: BillingSettings = {
+export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   QuotaForNewUser: 0,
   PreConsumedQuota: 0,
   QuotaForInviter: 0,
@@ -117,7 +117,7 @@ export function BillingSettings() {
   return (
     <SettingsPage
       routePath='/_authenticated/system-settings/billing/$section'
-      defaultSettings={defaultBillingSettings}
+      defaultSettings={DEFAULT_BILLING_SETTINGS}
       defaultSection={BILLING_DEFAULT_SECTION}
       getSectionContent={getBillingSectionContent}
     />
