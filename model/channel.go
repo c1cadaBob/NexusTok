@@ -66,6 +66,10 @@ type ChannelInfo struct {
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
+	CredentialMode         string                `json:"credential_mode,omitempty"`          // single_key / multi_key / account_pool
+	AccountPoolEnabled     bool                  `json:"account_pool_enabled,omitempty"`     // 是否启用账号池
+	AccountPoolMode        string                `json:"account_pool_mode,omitempty"`        // 账号池轮询策略
+	AccountPoolFallback    bool                  `json:"account_pool_fallback,omitempty"`    // 账号池无可用账号时是否回退渠道凭证
 }
 
 type ChannelSortOptions struct {
@@ -308,6 +312,38 @@ func (channel *Channel) GetAutoBan() bool {
 		return false
 	}
 	return *channel.AutoBan == 1
+}
+
+func (channel *Channel) GetCredentialMode() string {
+	if channel == nil {
+		return constant.ChannelCredentialModeSingleKey
+	}
+	mode := strings.TrimSpace(channel.ChannelInfo.CredentialMode)
+	if mode != "" {
+		return mode
+	}
+	if channel.ChannelInfo.AccountPoolEnabled {
+		return constant.ChannelCredentialModeAccountPool
+	}
+	if channel.ChannelInfo.IsMultiKey {
+		return constant.ChannelCredentialModeMultiKey
+	}
+	return constant.ChannelCredentialModeSingleKey
+}
+
+func (channel *Channel) IsAccountPoolEnabled() bool {
+	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeAccountPool
+}
+
+func (channel *Channel) GetAccountPoolMode() string {
+	if channel == nil {
+		return constant.ChannelAccountPoolModePolling
+	}
+	mode := strings.TrimSpace(channel.ChannelInfo.AccountPoolMode)
+	if mode == "" {
+		return constant.ChannelAccountPoolModePolling
+	}
+	return mode
 }
 
 func (channel *Channel) Save() error {
