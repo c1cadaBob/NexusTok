@@ -2331,6 +2331,8 @@
     "渠道的模型测试": "Test de modèle de canal",
     "渠道的高级配置选项": "Options de configuration avancées du canal",
     "渠道管理": "Canaux",
+    "账号池管理": "Gestion du pool de comptes",
+    "CLIProxyAPI 账号池运行时": "Runtime du pool de comptes CLIProxyAPI",
     "渠道行为": "Comportement du canal",
     "渠道额外设置": "Paramètres supplémentaires du canal",
     "源地址": "Adresse source",

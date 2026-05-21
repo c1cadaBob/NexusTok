@@ -2417,6 +2417,8 @@
     "渠道的模型测试": "Kiểm tra mô hình kênh",
     "渠道的高级配置选项": "Tùy chọn cấu hình nâng cao của kênh",
     "渠道管理": "Quản lý kênh",
+    "账号池管理": "Quản lý nhóm tài khoản",
+    "CLIProxyAPI 账号池运行时": "Runtime nhóm tài khoản CLIProxyAPI",
     "渠道类型": "Loại kênh",
     "渠道行为": "Hành vi kênh",
     "渠道设置": "Cài đặt kênh",

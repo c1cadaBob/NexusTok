@@ -49,6 +49,7 @@ const routerMap = {
   deployment: '/console/deployment',
   account_pool: '/console/account-pool',
   pricing_setting: '/console/pricing-setting',
+  account_pool: '/account-pool/manager/',
   playground: '/console/playground',
   personal: '/console/personal',
 };
@@ -153,6 +154,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道管理'),
         itemKey: 'channel',
         to: '/channel',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('账号池管理'),
+        itemKey: 'account_pool',
+        to: '/account-pool/manager/',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
@@ -433,6 +440,18 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
             // 如果没有路由，直接返回元素
             if (!to) return itemElement;
+
+            if (to.startsWith('/account-pool/manager')) {
+              return (
+                <a
+                  href={to}
+                  style={{ textDecoration: 'none' }}
+                  onClick={onNavigate}
+                >
+                  {itemElement}
+                </a>
+              );
+            }
 
             return (
               <Link

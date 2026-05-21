@@ -103,6 +103,7 @@ export default function SettingsSidebarModulesUser() {
       defaultConfig.admin = {
         enabled: true,
         channel: isSidebarModuleAllowed('admin', 'channel'),
+        account_pool: isSidebarModuleAllowed('admin', 'account_pool'),
         models: isSidebarModuleAllowed('admin', 'models'),
         pricing_setting: isSidebarModuleAllowed('admin', 'pricing_setting'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
@@ -340,6 +341,11 @@ export default function SettingsSidebarModulesUser() {
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'account_pool',
+          title: t('账号池管理'),
+          description: t('CLIProxyAPI 账号池运行时'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'pricing_setting',
