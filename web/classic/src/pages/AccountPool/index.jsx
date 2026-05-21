@@ -82,6 +82,7 @@ function getCoolingUntil(account) {
     Number(account?.rate_limited_until || 0),
     Number(account?.overload_until || 0),
     Number(account?.temp_disabled_until || 0),
+    Number(account?.next_retry_time || 0),
   );
 }
 
@@ -104,6 +105,9 @@ function getAccountStatus(account, t) {
           ? t('自动禁用')
           : t('已禁用'),
     };
+  }
+  if (account.unavailable) {
+    return { color: 'red', text: t('不可用') };
   }
   if (getCoolingUntil(account) > now) {
     return { color: 'orange', text: t('冷却中') };
@@ -145,6 +149,9 @@ const AccountPool = () => {
   const [oauthVisible, setOauthVisible] = useState(false);
   const [oauthInput, setOauthInput] = useState('');
   const [oauthName, setOauthName] = useState('');
+  const [oauthSessionId, setOauthSessionId] = useState('');
+  const [deviceVisible, setDeviceVisible] = useState(false);
+  const [deviceSession, setDeviceSession] = useState();
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId),
@@ -164,6 +171,31 @@ const AccountPool = () => {
     }
     return params;
   }, [page, pageSize, search, statusFilter]);
+
+  useEffect(() => {
+    if (!deviceVisible || !deviceSession?.session_id) return undefined;
+    if (deviceSession.status !== 'pending') return undefined;
+    const timer = window.setInterval(async () => {
+      try {
+        const res = await API.get(
+          `/api/account-pool/login-sessions/${deviceSession.session_id}`,
+        );
+        const { success, data } = res.data || {};
+        if (!success || !data) return;
+        setDeviceSession(data);
+        if (data.status === 'completed') {
+          showSuccess(t('操作成功完成！'));
+          await refreshAll();
+        }
+        if (data.status === 'failed') {
+          showError(data.status_message || t('操作失败'));
+        }
+      } catch (error) {
+        showError(error?.message || t('操作失败'));
+      }
+    }, Math.max(3, Number(deviceSession.poll_interval || 5)) * 1000);
+    return () => window.clearInterval(timer);
+  }, [deviceVisible, deviceSession, t]);
 
   const loadGroups = async () => {
     try {
@@ -496,9 +528,10 @@ const AccountPool = () => {
     if (!selectedGroupId) return;
     setActionLoading(true);
     try {
-      const res = await API.post('/api/account-pool/oauth/codex/start', {
-        pool_group_id: selectedGroupId,
-      });
+      const res = await API.post(
+        `/api/account-pool/groups/${selectedGroupId}/oauth/codex/start`,
+        {},
+      );
       const { success, message, data } = res.data || {};
       if (!success) {
         showError(message || t('操作失败'));
@@ -507,6 +540,7 @@ const AccountPool = () => {
       if (data?.authorize_url) {
         window.open(data.authorize_url, '_blank', 'noopener,noreferrer');
       }
+      setOauthSessionId(data?.session_id || '');
       setOauthVisible(true);
     } catch (error) {
       showError(error?.message || t('操作失败'));
@@ -522,11 +556,14 @@ const AccountPool = () => {
     }
     setActionLoading(true);
     try {
-      const res = await API.post('/api/account-pool/oauth/codex/complete', {
-        pool_group_id: selectedGroupId,
-        input: oauthInput.trim(),
-        name: oauthName.trim(),
-      });
+      const res = await API.post(
+        `/api/account-pool/groups/${selectedGroupId}/oauth/codex/complete`,
+        {
+          session_id: oauthSessionId,
+          input: oauthInput.trim(),
+          name: oauthName.trim(),
+        },
+      );
       const { success, message } = res.data || {};
       if (!success) {
         showError(message || t('操作失败'));
@@ -536,7 +573,33 @@ const AccountPool = () => {
       setOauthVisible(false);
       setOauthInput('');
       setOauthName('');
+      setOauthSessionId('');
       await refreshAll();
+    } catch (error) {
+      showError(error?.message || t('操作失败'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const startCodexDevice = async () => {
+    if (!selectedGroupId) return;
+    setActionLoading(true);
+    try {
+      const res = await API.post(
+        `/api/account-pool/groups/${selectedGroupId}/device/codex/start`,
+        {},
+      );
+      const { success, message, data } = res.data || {};
+      if (!success || !data) {
+        showError(message || t('操作失败'));
+        return;
+      }
+      setDeviceSession({ ...data, status: 'pending' });
+      setDeviceVisible(true);
+      if (data.verification_url) {
+        window.open(data.verification_url, '_blank', 'noopener,noreferrer');
+      }
     } catch (error) {
       showError(error?.message || t('操作失败'));
     } finally {
@@ -564,6 +627,26 @@ const AccountPool = () => {
     }
   };
 
+  const resetRuntime = async (account) => {
+    setActionLoading(true);
+    try {
+      const res = await API.post(
+        `/api/account-pool/accounts/${account.id}/runtime/reset`,
+      );
+      const { success, message } = res.data || {};
+      if (!success) {
+        showError(message || t('操作失败'));
+        return;
+      }
+      showSuccess(t('操作成功完成！'));
+      await refreshAll();
+    } catch (error) {
+      showError(error?.message || t('操作失败'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const accountColumns = [
     {
       title: t('名称'),
@@ -572,7 +655,13 @@ const AccountPool = () => {
         <div>
           <div>{value || `#${account.id}`}</div>
           <Text type='tertiary' size='small'>
-            #{account.id} · {account.platform}/{account.auth_type}
+            #{account.id} · {account.credential_provider || account.platform}/
+            {account.auth_type}
+          </Text>
+          <br />
+          <Text type='tertiary' size='small'>
+            {t('成功')}: {account.success_count || 0} · {t('失败')}:{' '}
+            {account.failed_count || 0}
           </Text>
         </div>
       ),
@@ -659,6 +748,14 @@ const AccountPool = () => {
             onClick={() => updateAccountStatus(account, 'clear')}
           >
             {t('清除冷却')}
+          </Button>
+          <Button
+            size='small'
+            type='tertiary'
+            loading={actionLoading}
+            onClick={() => resetRuntime(account)}
+          >
+            {t('重置状态')}
           </Button>
           {account.platform === 'codex' &&
             account.auth_type === 'official_oauth' && (
@@ -788,6 +885,9 @@ const AccountPool = () => {
                   </Button>
                   <Button type='tertiary' onClick={startCodexOAuth}>
                     {t('Codex OAuth')}
+                  </Button>
+                  <Button type='tertiary' onClick={startCodexDevice}>
+                    {t('Codex Device')}
                   </Button>
                   <Button type='tertiary' onClick={() => setBatchVisible(true)}>
                     {t('批量导入')}
@@ -1081,6 +1181,45 @@ const AccountPool = () => {
             onChange={setOauthInput}
           />
         </Form>
+      </Modal>
+
+      <Modal
+        title={t('Codex Device')}
+        visible={deviceVisible}
+        onCancel={() => setDeviceVisible(false)}
+        footer={
+          <Space>
+            <Button
+              onClick={() =>
+                deviceSession?.verification_url &&
+                window.open(
+                  deviceSession.verification_url,
+                  '_blank',
+                  'noopener,noreferrer',
+                )
+              }
+            >
+              {t('打开验证页')}
+            </Button>
+            <Button type='primary' onClick={() => setDeviceVisible(false)}>
+              {t('关闭')}
+            </Button>
+          </Space>
+        }
+      >
+        <Space vertical align='start'>
+          <Text type='tertiary'>{t('验证地址')}</Text>
+          <Text copyable>{deviceSession?.verification_url || '-'}</Text>
+          <Text type='tertiary'>{t('用户代码')}</Text>
+          <Title heading={4}>{deviceSession?.user_code || '-'}</Title>
+          <Text type='tertiary'>{t('状态')}</Text>
+          <Tag color={deviceSession?.status === 'failed' ? 'red' : 'blue'}>
+            {deviceSession?.status || 'pending'}
+          </Tag>
+          {deviceSession?.status_message && (
+            <Text type='danger'>{deviceSession.status_message}</Text>
+          )}
+        </Space>
       </Modal>
     </div>
   );

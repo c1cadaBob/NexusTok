@@ -46,8 +46,14 @@ export type PoolAccount = {
   platform: string
   auth_type: string
   credential_summary: string
+  credential_provider: string
+  credential_label: string
+  credential_metadata: string
+  credential_attributes: string
   status: number
+  status_message: string
   schedulable: boolean
+  unavailable: boolean
   models: string
   group: string
   priority: number
@@ -72,8 +78,26 @@ export type PoolAccount = {
   last_error: string
   quota_snapshot: string
   model_states: string
+  last_refreshed_time: number
+  next_refresh_time: number
+  next_retry_time: number
+  success_count: number
+  failed_count: number
+  recent_requests: string
+  runtime?: AccountRuntimeView
   created_time: number
   updated_time: number
+}
+
+export type AccountRuntimeView = {
+  status: string
+  status_message?: string
+  unavailable: boolean
+  last_refreshed_time?: number
+  next_refresh_time?: number
+  next_retry_time?: number
+  success_count: number
+  failed_count: number
 }
 
 export type PageResponse<T> = {
@@ -145,4 +169,36 @@ export type AccountPoolGroupOption = {
   auth_type: string
   strategy: string
   stats?: AccountPoolStats
+}
+
+export type AccountPoolProvider = {
+  name: string
+  display_name: string
+  supports_oauth: boolean
+  supports_device: boolean
+  supports_refresh: boolean
+}
+
+export type AccountPoolLoginStartResult = {
+  session_id: string
+  provider: string
+  mode: string
+  authorize_url?: string
+  verification_url?: string
+  user_code?: string
+  expires_at?: number
+  poll_interval?: number
+}
+
+export type AccountPoolLoginSession = {
+  session_id: string
+  account_id?: number
+  provider: string
+  mode: string
+  status: 'pending' | 'completed' | 'failed' | 'cancelled'
+  status_message?: string
+  verification_url?: string
+  user_code?: string
+  expires_at?: number
+  poll_interval?: number
 }

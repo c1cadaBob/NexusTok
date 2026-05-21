@@ -25,7 +25,9 @@ import {
   Power,
   PowerOff,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
+  Smartphone,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -64,15 +66,19 @@ import { formatTimestamp } from '@/features/channels/lib'
 import {
   accountPoolQueryKeys,
   batchCreatePoolAccounts,
-  completeAccountPoolCodexOAuth,
+  completeAccountPoolProviderOAuth,
   createAccountPoolGroup,
   createPoolAccount,
   deleteAccountPoolGroup,
   deletePoolAccount,
+  getAccountPoolLoginSession,
   getAccountPoolGroups,
+  getAccountPoolProviders,
   getPoolAccounts,
   refreshPoolAccountCredential,
-  startAccountPoolCodexOAuth,
+  resetPoolAccountRuntime,
+  startAccountPoolProviderDevice,
+  startAccountPoolProviderOAuth,
   updateAccountPoolGroup,
   updatePoolAccount,
   updatePoolAccountStatus,
@@ -80,6 +86,7 @@ import {
 import type {
   AccountPoolGroup,
   AccountPoolGroupPayload,
+  AccountPoolLoginSession,
   PoolAccount,
   PoolAccountPayload,
 } from './types'
@@ -157,10 +164,14 @@ function statusVariant(
   if (account.status !== CHANNEL_STATUS.ENABLED || !account.schedulable) {
     return 'danger'
   }
+  if (account.unavailable) {
+    return 'danger'
+  }
   if (
     account.rate_limited_until > nowSeconds ||
     account.overload_until > nowSeconds ||
-    account.temp_disabled_until > nowSeconds
+    account.temp_disabled_until > nowSeconds ||
+    account.next_retry_time > nowSeconds
   ) {
     return 'warning'
   }
@@ -175,6 +186,9 @@ function statusLabel(
   if (account.status !== CHANNEL_STATUS.ENABLED || !account.schedulable) {
     return t('Disabled')
   }
+  if (account.unavailable) {
+    return t('Unavailable')
+  }
   if (statusVariant(account, nowSeconds) === 'warning') {
     return t('Cooling Down')
   }
@@ -185,7 +199,8 @@ function cooldownText(account: PoolAccount, nowSeconds: number): string {
   const until = Math.max(
     account.rate_limited_until,
     account.overload_until,
-    account.temp_disabled_until
+    account.temp_disabled_until,
+    account.next_retry_time
   )
   if (until <= nowSeconds) return '-'
   return formatTimestamp(until)
@@ -218,11 +233,20 @@ export function AccountPool() {
   const [codexInputOpen, setCodexInputOpen] = useState(false)
   const [codexInput, setCodexInput] = useState('')
   const [codexName, setCodexName] = useState('')
+  const [codexSessionId, setCodexSessionId] = useState('')
+  const [deviceSessionOpen, setDeviceSessionOpen] = useState(false)
+  const [deviceSession, setDeviceSession] =
+    useState<AccountPoolLoginSession | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   const groupsQuery = useQuery({
     queryKey: accountPoolQueryKeys.groups({ page_size: 100 }),
     queryFn: () => getAccountPoolGroups({ p: 1, page_size: 100 }),
+  })
+
+  useQuery({
+    queryKey: accountPoolQueryKeys.providers(),
+    queryFn: getAccountPoolProviders,
   })
 
   const groups = groupsQuery.data?.data?.items ?? []
@@ -260,6 +284,27 @@ export function AccountPool() {
     Math.ceil((accountPage?.total ?? 0) / (accountPage?.page_size ?? 10))
   )
   const nowSeconds = useMemo(() => Math.floor(Date.now() / 1000), [accounts])
+
+  useEffect(() => {
+    if (!deviceSessionOpen || !deviceSession?.session_id) return
+    if (deviceSession.status !== 'pending') return
+    const timer = window.setInterval(() => {
+      void getAccountPoolLoginSession(deviceSession.session_id).then(
+        async (response) => {
+          if (!response.success || !response.data) return
+          setDeviceSession(response.data)
+          if (response.data.status === 'completed') {
+            toast.success(t('Account created successfully'))
+            await refreshAll()
+          }
+          if (response.data.status === 'failed') {
+            toast.error(response.data.status_message || t('Operation failed'))
+          }
+        }
+      )
+    }, Math.max(3, deviceSession.poll_interval ?? 5) * 1000)
+    return () => window.clearInterval(timer)
+  }, [deviceSession, deviceSessionOpen, t])
 
   const refreshAll = async () => {
     await queryClient.invalidateQueries({ queryKey: ['account-pool'] })
@@ -521,13 +566,31 @@ export function AccountPool() {
     }
   }
 
+  const resetRuntime = async (account: PoolAccount) => {
+    setActionLoading(true)
+    try {
+      const response = await resetPoolAccountRuntime(account.id)
+      if (!response.success) throw new Error(response.message)
+      toast.success(t('Operation successful'))
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const startCodexOAuth = async () => {
     if (!selectedGroupId) return
     setActionLoading(true)
     try {
-      const response = await startAccountPoolCodexOAuth({
-        pool_group_id: selectedGroupId,
-      })
+      const response = await startAccountPoolProviderOAuth(
+        selectedGroupId,
+        'codex',
+        {}
+      )
       if (!response.success) throw new Error(response.message)
       if (response.data?.authorize_url) {
         window.open(
@@ -536,6 +599,7 @@ export function AccountPool() {
           'noopener,noreferrer'
         )
       }
+      setCodexSessionId(response.data?.session_id ?? '')
       setCodexInputOpen(true)
     } catch (error) {
       toast.error(
@@ -550,17 +614,61 @@ export function AccountPool() {
     if (!selectedGroupId || !codexInput.trim()) return
     setActionLoading(true)
     try {
-      const response = await completeAccountPoolCodexOAuth({
-        pool_group_id: selectedGroupId,
-        input: codexInput.trim(),
-        name: codexName.trim(),
-      })
+      const response = await completeAccountPoolProviderOAuth(
+        selectedGroupId,
+        'codex',
+        {
+          session_id: codexSessionId,
+          input: codexInput.trim(),
+          name: codexName.trim(),
+        }
+      )
       if (!response.success) throw new Error(response.message)
       toast.success(t('Account created successfully'))
       setCodexInputOpen(false)
       setCodexInput('')
       setCodexName('')
+      setCodexSessionId('')
       await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const startCodexDevice = async () => {
+    if (!selectedGroupId) return
+    setActionLoading(true)
+    try {
+      const response = await startAccountPoolProviderDevice(
+        selectedGroupId,
+        'codex',
+        {}
+      )
+      if (!response.success || !response.data) {
+        throw new Error(response.message)
+      }
+      setDeviceSession({
+        session_id: response.data.session_id,
+        provider: response.data.provider,
+        mode: response.data.mode,
+        status: 'pending',
+        verification_url: response.data.verification_url,
+        user_code: response.data.user_code,
+        expires_at: response.data.expires_at,
+        poll_interval: response.data.poll_interval,
+      })
+      setDeviceSessionOpen(true)
+      if (response.data.verification_url) {
+        window.open(
+          response.data.verification_url,
+          '_blank',
+          'noopener,noreferrer'
+        )
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('Operation failed')
@@ -696,6 +804,14 @@ export function AccountPool() {
                   <Button
                     variant='outline'
                     size='sm'
+                    onClick={startCodexDevice}
+                  >
+                    <Smartphone className='mr-2 h-4 w-4' />
+                    {t('Codex Device')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
                     onClick={() => setBatchOpen(true)}
                   >
                     <Upload className='mr-2 h-4 w-4' />
@@ -753,7 +869,13 @@ export function AccountPool() {
                     <TableCell>
                       <div className='font-medium'>{account.name}</div>
                       <div className='text-muted-foreground text-xs'>
-                        #{account.id} · {account.platform} / {account.auth_type}
+                        #{account.id} ·{' '}
+                        {account.credential_provider || account.platform} /{' '}
+                        {account.auth_type}
+                      </div>
+                      <div className='text-muted-foreground text-xs'>
+                        {t('Success')}: {account.success_count ?? 0} ·{' '}
+                        {t('Failed')}: {account.failed_count ?? 0}
                       </div>
                     </TableCell>
                     <TableCell className='max-w-[260px] truncate text-xs'>
@@ -778,6 +900,12 @@ export function AccountPool() {
                       {account.last_used_time
                         ? formatTimestamp(account.last_used_time)
                         : '-'}
+                      {account.next_refresh_time ? (
+                        <div className='text-muted-foreground mt-1'>
+                          {t('Next refresh')}:&nbsp;
+                          {formatTimestamp(account.next_refresh_time)}
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <div className='flex flex-wrap gap-1.5'>
@@ -812,6 +940,13 @@ export function AccountPool() {
                           onClick={() => void clearCooldown(account)}
                         >
                           <RefreshCw className='h-4 w-4' />
+                        </Button>
+                        <Button
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => void resetRuntime(account)}
+                        >
+                          <RotateCcw className='h-4 w-4' />
                         </Button>
                         {account.platform === 'codex' &&
                           account.auth_type === 'official_oauth' && (
@@ -1203,6 +1338,64 @@ export function AccountPool() {
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
               {t('Complete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deviceSessionOpen} onOpenChange={setDeviceSessionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Codex Device Login')}</DialogTitle>
+            <DialogDescription>
+              {t('Open the verification page and enter the user code.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3 text-sm'>
+            <div>
+              <div className='text-muted-foreground text-xs'>
+                {t('Verification URL')}
+              </div>
+              <div className='break-all font-medium'>
+                {deviceSession?.verification_url ?? '-'}
+              </div>
+            </div>
+            <div>
+              <div className='text-muted-foreground text-xs'>
+                {t('User Code')}
+              </div>
+              <div className='text-lg font-semibold'>
+                {deviceSession?.user_code ?? '-'}
+              </div>
+            </div>
+            <div>
+              <div className='text-muted-foreground text-xs'>{t('Status')}</div>
+              <div className='font-medium'>
+                {deviceSession?.status ?? t('Pending')}
+              </div>
+              {deviceSession?.status_message ? (
+                <div className='text-destructive mt-1 text-xs'>
+                  {deviceSession.status_message}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant='outline'
+              onClick={() =>
+                deviceSession?.verification_url &&
+                window.open(
+                  deviceSession.verification_url,
+                  '_blank',
+                  'noopener,noreferrer'
+                )
+              }
+            >
+              {t('Open')}
+            </Button>
+            <Button onClick={() => setDeviceSessionOpen(false)}>
+              {t('Close')}
             </Button>
           </DialogFooter>
         </DialogContent>

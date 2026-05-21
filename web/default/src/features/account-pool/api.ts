@@ -21,6 +21,9 @@ import type {
   AccountPoolGroup,
   AccountPoolGroupOption,
   AccountPoolGroupPayload,
+  AccountPoolLoginSession,
+  AccountPoolLoginStartResult,
+  AccountPoolProvider,
   ApiResponse,
   PageResponse,
   PoolAccount,
@@ -32,8 +35,18 @@ import type {
 export const accountPoolQueryKeys = {
   groups: (params?: unknown) => ['account-pool', 'groups', params] as const,
   groupOptions: () => ['account-pool', 'groups', 'options'] as const,
+  providers: () => ['account-pool', 'providers'] as const,
+  loginSession: (sessionId: string) =>
+    ['account-pool', 'login-sessions', sessionId] as const,
   accounts: (groupId: number, params?: unknown) =>
     ['account-pool', 'groups', groupId, 'accounts', params] as const,
+}
+
+export async function getAccountPoolProviders(): Promise<
+  ApiResponse<AccountPoolProvider[]>
+> {
+  const res = await api.get('/api/account-pool/providers')
+  return res.data
 }
 
 export async function getAccountPoolGroups(params: {
@@ -155,10 +168,62 @@ export async function refreshPoolAccountCredential(
   return res.data
 }
 
+export async function resetPoolAccountRuntime(
+  accountId: number
+): Promise<ApiResponse<null>> {
+  const res = await api.post(
+    `/api/account-pool/accounts/${accountId}/runtime/reset`
+  )
+  return res.data
+}
+
+export async function startAccountPoolProviderOAuth(
+  groupId: number,
+  provider: string,
+  data: { name?: string; proxy?: string }
+): Promise<ApiResponse<AccountPoolLoginStartResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/oauth/${provider}/start`,
+    data
+  )
+  return res.data
+}
+
+export async function completeAccountPoolProviderOAuth(
+  groupId: number,
+  provider: string,
+  data: { session_id?: string; input: string; name?: string; proxy?: string }
+): Promise<ApiResponse<PoolAccount>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/oauth/${provider}/complete`,
+    data
+  )
+  return res.data
+}
+
+export async function startAccountPoolProviderDevice(
+  groupId: number,
+  provider: string,
+  data: { name?: string; proxy?: string }
+): Promise<ApiResponse<AccountPoolLoginStartResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/device/${provider}/start`,
+    data
+  )
+  return res.data
+}
+
+export async function getAccountPoolLoginSession(
+  sessionId: string
+): Promise<ApiResponse<AccountPoolLoginSession>> {
+  const res = await api.get(`/api/account-pool/login-sessions/${sessionId}`)
+  return res.data
+}
+
 export async function startAccountPoolCodexOAuth(data: {
   pool_group_id: number
   proxy?: string
-}): Promise<ApiResponse<{ authorize_url?: string }>> {
+}): Promise<ApiResponse<{ authorize_url?: string; session_id?: string }>> {
   const res = await api.post('/api/account-pool/oauth/codex/start', data)
   return res.data
 }
@@ -166,6 +231,7 @@ export async function startAccountPoolCodexOAuth(data: {
 export async function completeAccountPoolCodexOAuth(data: {
   pool_group_id: number
   input: string
+  session_id?: string
   name?: string
   proxy?: string
 }): Promise<ApiResponse<PoolAccount>> {
