@@ -24,11 +24,36 @@ services:
         bun install --frozen-lockfile
         cd /app/web/classic
         bun install --frozen-lockfile
+        cd /app/modules/cpa-manager
+        npm ci
         cd /app
         (cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
         (cd web/classic && VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
+        (cd modules/cpa-manager && VITE_NEXUSTOK_EMBEDDED=true npm run build -- --watch) &
         wait
       '
+    restart: unless-stopped
+
+  cliproxyapi:
+    image: golang:1.26.1-alpine
+    container_name: nexustok-account-pool-hot
+    working_dir: /app
+    command: ["/app/bin/docker-account-pool-sidecar.sh"]
+    expose:
+      - "8317"
+    volumes:
+      - .:/app
+      - ./data:/data
+      - hot_account_pool_gomodcache:/go/pkg/mod
+      - hot_account_pool_gocache:/root/.cache/go-build
+    environment:
+      ACCOUNT_POOL_CLI_PROXY_DATA_DIR: /data/account-pool/cliproxyapi
+      GOPROXY: https://goproxy.cn,https://goproxy.io,direct
+      GOSUMDB: sum.golang.google.cn
+      MANAGEMENT_PASSWORD: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      TZ: Asia/Shanghai
+    networks:
+      - hot-network
     restart: unless-stopped
 
   nexustok:
@@ -56,8 +81,12 @@ services:
       DEBUG: "false"
       BATCH_UPDATE_ENABLED: "true"
       NODE_NAME: nexustok-hot-node-1
+      ACCOUNT_POOL_CLI_PROXY_URL: http://cliproxyapi:8317
+      ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
     depends_on:
       frontend-watch:
+        condition: service_started
+      cliproxyapi:
         condition: service_started
       redis:
         condition: service_started
@@ -94,6 +123,8 @@ services:
 
 volumes:
   hot_pg_data:
+  hot_account_pool_gomodcache:
+  hot_account_pool_gocache:
 
 networks:
   hot-network:

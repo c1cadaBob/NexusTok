@@ -21,7 +21,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 wait_for_dist() {
-  until [ -f /app/web/default/dist/index.html ] && [ -f /app/web/classic/dist/index.html ]; do
+  until [ -f /app/web/default/dist/index.html ] && [ -f /app/web/classic/dist/index.html ] && [ -f /app/modules/cpa-manager/dist/index.html ]; do
     echo "[hot] waiting for production frontend dist..."
     sleep 2
   done
@@ -35,6 +35,9 @@ snapshot() {
     -path /app/.gomodcache -prune -o \
     -path /app/data -prune -o \
     -path /app/logs -prune -o \
+    -path /app/modules/cliproxyapi -prune -o \
+    -path /app/modules/cpa-manager/node_modules -prune -o \
+    -path /app/modules/cpa-manager/usage-service -prune -o \
     -path /app/tmp -prune -o \
     -path /app/upload -prune -o \
     -path /app/web/default/node_modules -prune -o \
@@ -45,7 +48,8 @@ snapshot() {
       -name 'go.mod' -o \
       -name 'go.sum' -o \
       -path '/app/web/default/dist/*' -o \
-      -path '/app/web/classic/dist/*' \
+      -path '/app/web/classic/dist/*' -o \
+      -path '/app/modules/cpa-manager/dist/*' \
     \) -print \
     | sort \
     | while IFS= read -r file; do

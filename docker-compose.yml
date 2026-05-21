@@ -33,6 +33,8 @@ services:
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
       - NODE_NAME=nexustok-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
+      - ACCOUNT_POOL_CLI_PROXY_URL=http://cliproxyapi:8317
+      - ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
@@ -43,6 +45,7 @@ services:
     depends_on:
       - redis
       - postgres
+      - cliproxyapi
 #      - mysql  # Uncomment if using MySQL
     networks:
       - nexustok-network
@@ -51,6 +54,24 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  cliproxyapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.account-pool-sidecar
+    image: nexustok-account-pool-sidecar:local
+    container_name: nexustok-account-pool
+    restart: always
+    expose:
+      - "8317"
+    volumes:
+      - ./data/account-pool/cliproxyapi:/data/account-pool/cliproxyapi
+    environment:
+      - MANAGEMENT_PASSWORD=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      - ACCOUNT_POOL_CLI_PROXY_DATA_DIR=/data/account-pool/cliproxyapi
+      - TZ=Asia/Shanghai
+    networks:
+      - nexustok-network
 
   redis:
     image: redis:latest

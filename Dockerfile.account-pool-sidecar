@@ -1,0 +1,26 @@
+FROM golang:1.26.1-alpine AS builder
+
+WORKDIR /build
+COPY modules/cliproxyapi/go.mod modules/cliproxyapi/go.sum ./
+RUN go mod download
+
+COPY modules/cliproxyapi .
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o /out/CLIProxyAPI ./cmd/server/
+
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && mkdir -p /opt/cliproxyapi /data/account-pool/cliproxyapi
+
+COPY --from=builder /out/CLIProxyAPI /usr/local/bin/CLIProxyAPI
+COPY modules/cliproxyapi/config.example.yaml /opt/cliproxyapi/config.example.yaml
+COPY bin/docker-account-pool-sidecar.sh /usr/local/bin/docker-account-pool-sidecar.sh
+
+WORKDIR /opt/cliproxyapi
+EXPOSE 8317
+ENTRYPOINT ["/usr/local/bin/docker-account-pool-sidecar.sh"]

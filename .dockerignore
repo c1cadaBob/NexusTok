@@ -12,4 +12,9 @@ docs
 /web/default/dist
 /web/classic/node_modules
 /web/classic/dist
+/modules/cpa-manager/node_modules
+/modules/cpa-manager/dist
+/modules/cpa-manager/usage-service/*.sqlite
+/modules/cpa-manager/usage-service/*.sqlite-shm
+/modules/cpa-manager/usage-service/*.sqlite-wal
 !THIRD-PARTY-LICENSES.md
