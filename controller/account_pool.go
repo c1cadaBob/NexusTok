@@ -11,6 +11,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/service/accountauth"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -81,9 +82,21 @@ type accountPoolCodexOAuthStartRequest struct {
 
 type accountPoolCodexOAuthCompleteRequest struct {
 	PoolGroupId int    `json:"pool_group_id"`
+	SessionId   string `json:"session_id"`
 	Input       string `json:"input"`
 	Name        string `json:"name"`
 	Proxy       string `json:"proxy"`
+}
+
+type accountPoolProviderLoginRequest struct {
+	SessionId    string            `json:"session_id"`
+	Input        string            `json:"input"`
+	Name         string            `json:"name"`
+	Proxy        string            `json:"proxy"`
+	NoBrowser    bool              `json:"no_browser"`
+	ProjectID    string            `json:"project_id"`
+	CallbackPort int               `json:"callback_port"`
+	Metadata     map[string]string `json:"metadata"`
 }
 
 func ListAccountPoolGroups(c *gin.Context) {
@@ -391,6 +404,157 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
+func ListAccountPoolProviders(c *gin.Context) {
+	common.ApiSuccess(c, accountauth.DefaultManager().Providers())
+}
+
+func StartAccountPoolProviderOAuth(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	provider, ok := getAccountPoolProvider(c)
+	if !ok {
+		return
+	}
+	var req accountPoolProviderLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := provider.StartOAuth(c.Request.Context(), group, accountauth.LoginStartRequest{
+		PoolGroupID: groupID,
+		Name:        strings.TrimSpace(req.Name),
+		Options:     accountPoolLoginOptions(req),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func CompleteAccountPoolProviderOAuth(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	provider, ok := getAccountPoolProvider(c)
+	if !ok {
+		return
+	}
+	var req accountPoolProviderLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	credential, err := provider.CompleteOAuth(c.Request.Context(), group, accountauth.LoginCompleteRequest{
+		SessionID:   strings.TrimSpace(req.SessionId),
+		PoolGroupID: groupID,
+		Name:        strings.TrimSpace(req.Name),
+		Input:       strings.TrimSpace(req.Input),
+		Options:     accountPoolLoginOptions(req),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	account, err := createPoolAccountFromCredential(group, credential)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	accountauth.SetLoginSessionAccountID(req.SessionId, account.Id)
+	common.ApiSuccess(c, poolAccountResponse(account))
+}
+
+func StartAccountPoolProviderDevice(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	provider, ok := getAccountPoolProvider(c)
+	if !ok {
+		return
+	}
+	var req accountPoolProviderLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	options := accountPoolLoginOptions(req)
+	result, err := provider.StartDevice(c.Request.Context(), group, accountauth.LoginStartRequest{
+		PoolGroupID: groupID,
+		Name:        strings.TrimSpace(req.Name),
+		Options:     options,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	startPoolDeviceLoginWorker(provider, group.Id, strings.TrimSpace(req.Name), options, result.SessionID)
+	common.ApiSuccess(c, result)
+}
+
+func GetAccountPoolLoginSession(c *gin.Context) {
+	session, ok := accountauth.GetLoginSession(c.Param("session_id"))
+	if !ok {
+		common.ApiErrorMsg(c, "login session not found")
+		return
+	}
+	common.ApiSuccess(c, accountauth.LoginSessionPublicView(session))
+}
+
+func CancelAccountPoolLoginSession(c *gin.Context) {
+	if !accountauth.CancelLoginSession(c.Param("session_id")) {
+		common.ApiErrorMsg(c, "login session not found")
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
+func ResetPoolAccountRuntime(c *gin.Context) {
+	accountID, ok := parsePoolAccountIDParam(c)
+	if !ok {
+		return
+	}
+	err := model.UpdatePoolAccountErrorState(accountID, map[string]interface{}{
+		"unavailable":         false,
+		"status_message":      "",
+		"last_error":          "",
+		"quota_snapshot":      "",
+		"model_states":        "",
+		"recent_requests":     "",
+		"success_count":       0,
+		"failed_count":        0,
+		"rate_limited_until":  0,
+		"overload_until":      0,
+		"temp_disabled_until": 0,
+		"next_retry_time":     0,
+		"disabled_reason":     "",
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
 func StartAccountPoolCodexOAuth(c *gin.Context) {
 	var req accountPoolCodexOAuthStartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -404,18 +568,30 @@ func StartAccountPoolCodexOAuth(c *gin.Context) {
 	if !ensureAccountPoolGroupExists(c, req.PoolGroupId) {
 		return
 	}
-	flow, err := service.CreateCodexOAuthAuthorizationFlow()
+	group, err := model.GetAccountPoolGroupById(req.PoolGroupId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	provider, err := accountauth.DefaultManager().MustProvider("codex")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := provider.StartOAuth(c.Request.Context(), group, accountauth.LoginStartRequest{
+		PoolGroupID: req.PoolGroupId,
+		Options: accountauth.LoginOptions{
+			Proxy: strings.TrimSpace(req.Proxy),
+		},
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	session := sessions.Default(c)
-	session.Set(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "state"), flow.State)
-	session.Set(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "verifier"), flow.Verifier)
-	session.Set(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "proxy"), strings.TrimSpace(req.Proxy))
-	session.Set(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "created_at"), time.Now().Unix())
+	session.Set(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "session_id"), result.SessionID)
 	_ = session.Save()
-	common.ApiSuccess(c, gin.H{"authorize_url": flow.AuthorizeURL})
+	common.ApiSuccess(c, gin.H{"authorize_url": result.AuthorizeURL, "session_id": result.SessionID})
 }
 
 func CompleteAccountPoolCodexOAuth(c *gin.Context) {
@@ -433,47 +609,37 @@ func CompleteAccountPoolCodexOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	code, state, err := parseCodexAuthorizationInput(req.Input)
-	if err != nil || strings.TrimSpace(code) == "" || strings.TrimSpace(state) == "" {
-		common.ApiErrorMsg(c, "解析授权信息失败，请检查输入格式")
-		return
-	}
 	session := sessions.Default(c)
-	expectedState, _ := session.Get(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "state")).(string)
-	verifier, _ := session.Get(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "verifier")).(string)
-	sessionProxy, _ := session.Get(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "proxy")).(string)
-	if strings.TrimSpace(expectedState) == "" || strings.TrimSpace(verifier) == "" {
-		common.ApiErrorMsg(c, "oauth flow not started or session expired")
-		return
+	sessionID := strings.TrimSpace(req.SessionId)
+	if sessionID == "" {
+		sessionID, _ = session.Get(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "session_id")).(string)
 	}
-	if state != expectedState {
-		common.ApiErrorMsg(c, "state mismatch")
+	provider, err := accountauth.DefaultManager().MustProvider("codex")
+	if err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	proxy := strings.TrimSpace(req.Proxy)
-	if proxy == "" {
-		proxy = sessionProxy
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-	defer cancel()
-	tokenRes, err := service.ExchangeCodexAuthorizationCodeWithProxy(ctx, code, verifier, proxy)
+	credential, err := provider.CompleteOAuth(c.Request.Context(), group, accountauth.LoginCompleteRequest{
+		SessionID:   sessionID,
+		PoolGroupID: req.PoolGroupId,
+		Name:        strings.TrimSpace(req.Name),
+		Input:       strings.TrimSpace(req.Input),
+		Options: accountauth.LoginOptions{
+			Proxy: proxy,
+		},
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	account, err := buildCodexPoolAccount(group, req.Name, proxy, tokenRes)
+	account, err := createPoolAccountFromCredential(group, credential)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := model.DB.Create(account).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	session.Delete(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "state"))
-	session.Delete(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "verifier"))
-	session.Delete(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "proxy"))
-	session.Delete(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "created_at"))
+	accountauth.SetLoginSessionAccountID(sessionID, account.Id)
+	session.Delete(accountPoolCodexOAuthSessionKey(req.PoolGroupId, "session_id"))
 	_ = session.Save()
 	common.ApiSuccess(c, poolAccountResponse(account))
 }
@@ -488,32 +654,20 @@ func RefreshPoolAccountCredential(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if !strings.EqualFold(account.Platform, "codex") || account.AuthType != model.AccountPoolAuthTypeOfficialOAuth {
-		common.ApiErrorMsg(c, "only Codex official OAuth account refresh is supported")
-		return
-	}
-	raw, err := account.GetDecryptedCredentials()
+	providerName := account.GetCredentialProvider()
+	provider, err := accountauth.DefaultManager().MustProvider(providerName)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	var oauthKey service.CodexOAuthKey
-	if err := common.UnmarshalJsonStr(raw, &oauthKey); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if strings.TrimSpace(oauthKey.RefreshToken) == "" {
-		common.ApiErrorMsg(c, "refresh_token is required")
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
-	tokenRes, err := service.RefreshCodexOAuthTokenWithProxy(ctx, oauthKey.RefreshToken, account.Proxy)
+	credential, err := provider.Refresh(ctx, account)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := updateCodexPoolAccountCredential(account, &oauthKey, tokenRes); err != nil {
+	if err := updatePoolAccountCredential(account, credential); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -549,6 +703,155 @@ func ensureAccountPoolGroupExists(c *gin.Context, groupID int) bool {
 		return false
 	}
 	return true
+}
+
+func getAccountPoolProvider(c *gin.Context) (accountauth.Provider, bool) {
+	providerName := strings.TrimSpace(c.Param("provider"))
+	if providerName == "" {
+		common.ApiErrorMsg(c, "provider is required")
+		return nil, false
+	}
+	provider, err := accountauth.DefaultManager().MustProvider(providerName)
+	if err != nil {
+		common.ApiError(c, err)
+		return nil, false
+	}
+	return provider, true
+}
+
+func accountPoolLoginOptions(req accountPoolProviderLoginRequest) accountauth.LoginOptions {
+	return accountauth.LoginOptions{
+		NoBrowser:    req.NoBrowser,
+		ProjectID:    strings.TrimSpace(req.ProjectID),
+		CallbackPort: req.CallbackPort,
+		Proxy:        strings.TrimSpace(req.Proxy),
+		Metadata:     req.Metadata,
+	}
+}
+
+func startPoolDeviceLoginWorker(provider accountauth.Provider, groupID int, name string, options accountauth.LoginOptions, sessionID string) {
+	if provider == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	go func() {
+		group, err := model.GetAccountPoolGroupById(groupID)
+		if err != nil {
+			markLoginSessionFailed(sessionID, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 16*time.Minute)
+		defer cancel()
+		credential, err := provider.CompleteDevice(ctx, group, accountauth.LoginCompleteRequest{
+			SessionID:   sessionID,
+			PoolGroupID: groupID,
+			Name:        name,
+			Options:     options,
+		})
+		if err != nil {
+			markLoginSessionFailed(sessionID, err)
+			return
+		}
+		account, err := createPoolAccountFromCredential(group, credential)
+		if err != nil {
+			markLoginSessionFailed(sessionID, err)
+			return
+		}
+		accountauth.SetLoginSessionAccountID(sessionID, account.Id)
+	}()
+}
+
+func markLoginSessionFailed(sessionID string, err error) {
+	session, ok := accountauth.GetLoginSession(sessionID)
+	if !ok || session == nil || err == nil {
+		return
+	}
+	session.Status = accountauth.LoginSessionFailed
+	session.StatusMessage = err.Error()
+	accountauth.UpdateLoginSession(session)
+}
+
+func createPoolAccountFromCredential(group *model.AccountPoolGroup, credential *accountauth.AccountCredential) (*model.PoolAccount, error) {
+	if group == nil {
+		return nil, fmt.Errorf("account pool group is required")
+	}
+	if credential == nil {
+		return nil, fmt.Errorf("credential is required")
+	}
+	encrypted, summary, err := encryptAccountPoolCredentials(credential.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(credential.Summary) != "" {
+		summary = credential.Summary
+	}
+	account := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               credential.Label,
+		Platform:           credential.Provider,
+		AuthType:           credential.AuthType,
+		Credentials:        encrypted,
+		CredentialSummary:  summary,
+		CredentialProvider: credential.Provider,
+		CredentialLabel:    credential.Label,
+		CredentialMetadata: accountauth.MetadataToJSON(credential.Metadata),
+		CredentialAttrs:    accountauth.AttributesToJSON(credential.Attributes),
+		Status:             common.ChannelStatusEnabled,
+		Schedulable:        true,
+		Weight:             1,
+		LastRefreshedTime:  timestampOrZero(credential.LastRefreshedAt),
+		NextRefreshTime:    timestampOrZero(credential.NextRefreshAt),
+	}
+	if account.Name == "" {
+		account.Name = credential.Provider + " 账号"
+	}
+	if err := model.DB.Create(account).Error; err != nil {
+		return nil, err
+	}
+	return account, nil
+}
+
+func updatePoolAccountCredential(account *model.PoolAccount, credential *accountauth.AccountCredential) error {
+	if account == nil || credential == nil {
+		return fmt.Errorf("account and credential are required")
+	}
+	encrypted, summary, err := encryptAccountPoolCredentials(credential.Credentials)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(credential.Summary) != "" {
+		summary = credential.Summary
+	}
+	updates := map[string]interface{}{
+		"credentials":           encrypted,
+		"credential_summary":    summary,
+		"credential_provider":   credential.Provider,
+		"credential_label":      credential.Label,
+		"credential_metadata":   accountauth.MetadataToJSON(credential.Metadata),
+		"credential_attributes": accountauth.AttributesToJSON(credential.Attributes),
+		"schedulable":           true,
+		"unavailable":           false,
+		"last_error":            "",
+		"status_message":        "",
+		"last_refreshed_time":   timestampOrZero(credential.LastRefreshedAt),
+		"next_refresh_time":     timestampOrZero(credential.NextRefreshAt),
+	}
+	if strings.TrimSpace(credential.Provider) != "" {
+		updates["platform"] = credential.Provider
+	}
+	if strings.TrimSpace(credential.AuthType) != "" {
+		updates["auth_type"] = credential.AuthType
+	}
+	if strings.TrimSpace(credential.Label) != "" {
+		updates["name"] = credential.Label
+	}
+	return model.DB.Model(account).Updates(updates).Error
+}
+
+func timestampOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model.AccountPoolGroup, error) {
@@ -867,40 +1170,53 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"id":                  account.Id,
-		"pool_group_id":       account.PoolGroupId,
-		"name":                account.Name,
-		"platform":            account.Platform,
-		"auth_type":           account.AuthType,
-		"credential_summary":  account.CredentialSummary,
-		"status":              account.Status,
-		"schedulable":         account.Schedulable,
-		"models":              account.Models,
-		"group":               account.Group,
-		"priority":            account.Priority,
-		"weight":              account.Weight,
-		"max_concurrency":     account.MaxConcurrency,
-		"proxy":               account.Proxy,
-		"base_url":            account.BaseURL,
-		"openai_organization": account.OpenAIOrganization,
-		"other":               account.Other,
-		"setting":             account.Setting,
-		"settings":            account.OtherSettings,
-		"model_mapping":       account.ModelMapping,
-		"param_override":      account.ParamOverride,
-		"header_override":     account.HeaderOverride,
-		"status_code_mapping": account.StatusCodeMapping,
-		"last_used_time":      account.LastUsedTime,
-		"used_quota":          account.UsedQuota,
-		"rate_limited_until":  account.RateLimitedUntil,
-		"overload_until":      account.OverloadUntil,
-		"temp_disabled_until": account.TempDisabledUntil,
-		"disabled_reason":     account.DisabledReason,
-		"last_error":          account.LastError,
-		"quota_snapshot":      account.QuotaSnapshot,
-		"model_states":        account.ModelStates,
-		"created_time":        account.CreatedTime,
-		"updated_time":        account.UpdatedTime,
+		"id":                    account.Id,
+		"pool_group_id":         account.PoolGroupId,
+		"name":                  account.Name,
+		"platform":              account.Platform,
+		"auth_type":             account.AuthType,
+		"credential_summary":    account.CredentialSummary,
+		"credential_provider":   account.CredentialProvider,
+		"credential_label":      account.CredentialLabel,
+		"credential_metadata":   account.CredentialMetadata,
+		"credential_attributes": account.CredentialAttrs,
+		"status":                account.Status,
+		"status_message":        account.StatusMessage,
+		"schedulable":           account.Schedulable,
+		"unavailable":           account.Unavailable,
+		"models":                account.Models,
+		"group":                 account.Group,
+		"priority":              account.Priority,
+		"weight":                account.Weight,
+		"max_concurrency":       account.MaxConcurrency,
+		"proxy":                 account.Proxy,
+		"base_url":              account.BaseURL,
+		"openai_organization":   account.OpenAIOrganization,
+		"other":                 account.Other,
+		"setting":               account.Setting,
+		"settings":              account.OtherSettings,
+		"model_mapping":         account.ModelMapping,
+		"param_override":        account.ParamOverride,
+		"header_override":       account.HeaderOverride,
+		"status_code_mapping":   account.StatusCodeMapping,
+		"last_used_time":        account.LastUsedTime,
+		"used_quota":            account.UsedQuota,
+		"rate_limited_until":    account.RateLimitedUntil,
+		"overload_until":        account.OverloadUntil,
+		"temp_disabled_until":   account.TempDisabledUntil,
+		"disabled_reason":       account.DisabledReason,
+		"last_error":            account.LastError,
+		"quota_snapshot":        account.QuotaSnapshot,
+		"model_states":          account.ModelStates,
+		"last_refreshed_time":   account.LastRefreshedTime,
+		"next_refresh_time":     account.NextRefreshTime,
+		"next_retry_time":       account.NextRetryTime,
+		"success_count":         account.SuccessCount,
+		"failed_count":          account.FailedCount,
+		"recent_requests":       account.RecentRequests,
+		"runtime":               accountauth.RuntimeView(account),
+		"created_time":          account.CreatedTime,
+		"updated_time":          account.UpdatedTime,
 	}
 }
 
