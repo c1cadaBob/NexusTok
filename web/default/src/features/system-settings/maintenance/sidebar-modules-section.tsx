@@ -125,10 +125,8 @@ export function SidebarModulesSection({
         description: t('Configure upstream providers and routing.'),
       },
       account_pool: {
-        title: t('Account Pool'),
-        description: t(
-          'Manage official login accounts and expose account groups to channels.'
-        ),
+        title: t('Account Pool Management'),
+        description: t('Manage official-account pools and CLIProxyAPI runtime.'),
       },
       pricing: {
         title: t('Model Pricing Groups'),

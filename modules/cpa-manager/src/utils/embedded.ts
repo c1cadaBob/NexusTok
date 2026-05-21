@@ -19,5 +19,5 @@ export const getNexusTokUserId = (): string => {
 export const redirectToNexusTokLogin = (): void => {
   if (typeof window === 'undefined') return;
   const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+  window.location.href = `/sign-in?redirect=${encodeURIComponent(currentPath)}`;
 };

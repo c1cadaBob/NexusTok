@@ -72,7 +72,7 @@ func accountPoolManagerSessionAuth() gin.HandlerFunc {
 		role, roleOK := session.Get("role").(int)
 		status, statusOK := session.Get("status").(int)
 		if session.Get("id") == nil || !roleOK || !statusOK {
-			redirect := "/login?redirect=/account-pool/manager/"
+			redirect := "/sign-in?redirect=/account-pool/manager/"
 			c.Redirect(http.StatusFound, redirect)
 			c.Abort()
 			return

@@ -26,6 +26,10 @@ export const STATIC_I18N_KEYS = [
   'Rankings',
   'Docs',
   'About',
+  'Account Pool Management',
+  'Open Account Pool Management',
+  'Opening account pool management...',
+  'Manage official-account pools and CLIProxyAPI runtime.',
 
   // Workspace
   'System Settings',

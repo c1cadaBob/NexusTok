@@ -24,7 +24,6 @@ import {
   Wallet,
   Box,
   Users,
-  UsersRound,
   Ticket,
   User,
   Command,
@@ -35,6 +34,7 @@ import {
   ListTodo,
   Settings,
   Calculator,
+  DatabaseZap,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
@@ -131,9 +131,9 @@ export function useSidebarData(): SidebarData {
             icon: Radio,
           },
           {
-            title: t('Account Pool'),
+            title: t('Account Pool Management'),
             url: '/account-pool',
-            icon: UsersRound,
+            icon: DatabaseZap,
           },
           {
             title: t('Models'),

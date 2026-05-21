@@ -438,12 +438,17 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 	if userRole == common.RoleRootUser {
 		// 超级管理员不需要边栏设置功能
 		permissions["sidebar_settings"] = false
-		permissions["sidebar_modules"] = map[string]interface{}{}
+		permissions["sidebar_modules"] = map[string]interface{}{
+			"admin": map[string]interface{}{
+				"account_pool": true,
+			},
+		}
 	} else if userRole == common.RoleAdminUser {
 		// 管理员可以设置边栏，但不包含系统设置功能
 		permissions["sidebar_settings"] = true
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": map[string]interface{}{
+				"account_pool":    true,
 				"setting":         false, // 管理员不能访问系统设置
 				"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
 				"pricing_setting": false, // 经典前端中的分组与模型定价入口
@@ -494,6 +499,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 		defaultConfig["admin"] = map[string]interface{}{
 			"enabled":         true,
 			"channel":         true,
+			"account_pool":    true,
 			"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
 			"pricing_setting": false, // 经典前端中的分组与模型定价入口
 			"models":          true,
@@ -506,6 +512,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 		defaultConfig["admin"] = map[string]interface{}{
 			"enabled":         true,
 			"channel":         true,
+			"account_pool":    true,
 			"pricing":         true,
 			"pricing_setting": true,
 			"models":          true,

@@ -16,20 +16,40 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { useEffect } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
-import { AccountPool } from '@/features/account-pool'
+
+const ACCOUNT_POOL_MANAGER_URL = '/account-pool/manager/'
 
 export const Route = createFileRoute('/_authenticated/account-pool/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
-
     if (!auth.user || auth.user.role < ROLE.ADMIN) {
-      throw redirect({
-        to: '/403',
-      })
+      throw redirect({ to: '/403' })
     }
   },
-  component: AccountPool,
+  component: AccountPoolRedirect,
 })
+
+function AccountPoolRedirect() {
+  const { t } = useTranslation()
+
+  useEffect(() => {
+    window.location.replace(ACCOUNT_POOL_MANAGER_URL)
+  }, [])
+
+  return (
+    <main className='flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center'>
+      <p className='text-muted-foreground'>
+        {t('Opening account pool management...')}
+      </p>
+      <Button onClick={() => window.location.assign(ACCOUNT_POOL_MANAGER_URL)}>
+        {t('Open Account Pool Management')}
+      </Button>
+    </main>
+  )
+}
