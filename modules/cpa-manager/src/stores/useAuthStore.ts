@@ -12,6 +12,11 @@ import { apiClient } from '@/services/api/client';
 import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
+import {
+  getNexusTokEmbeddedOrigin,
+  isNexusTokEmbedded,
+  redirectToNexusTokLogin
+} from '@/utils/embedded';
 
 interface AuthStoreState extends AuthState {
   connectionStatus: ConnectionStatus;
@@ -46,6 +51,20 @@ export const useAuthStore = create<AuthStoreState>()(
         if (restoreSessionPromise) return restoreSessionPromise;
 
         restoreSessionPromise = (async () => {
+          if (isNexusTokEmbedded) {
+            const embeddedBase = getNexusTokEmbeddedOrigin();
+            set({
+              isAuthenticated: true,
+              apiBase: embeddedBase,
+              managementKey: '',
+              rememberPassword: false,
+              connectionStatus: 'connected',
+              connectionError: null
+            });
+            apiClient.setConfig({ apiBase: embeddedBase, managementKey: '' });
+            return true;
+          }
+
           obfuscatedStorage.migratePlaintextKeys(['apiBase', 'apiUrl', 'managementKey']);
 
           const wasLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
@@ -88,6 +107,11 @@ export const useAuthStore = create<AuthStoreState>()(
 
       // 登录
       login: async (credentials) => {
+        if (isNexusTokEmbedded) {
+          await get().restoreSession();
+          return;
+        }
+
         const apiBase = normalizeApiBase(credentials.apiBase);
         const managementKey = credentials.managementKey.trim();
         const rememberPassword = credentials.rememberPassword ?? get().rememberPassword ?? false;
@@ -149,10 +173,29 @@ export const useAuthStore = create<AuthStoreState>()(
           connectionError: null
         });
         localStorage.removeItem('isLoggedIn');
+        if (isNexusTokEmbedded) {
+          localStorage.removeItem('uid');
+          void fetch('/api/user/logout', { credentials: 'include' }).finally(() => {
+            redirectToNexusTokLogin();
+          });
+        }
       },
 
       // 检查认证状态
       checkAuth: async () => {
+        if (isNexusTokEmbedded) {
+          await get().restoreSession();
+          try {
+            await useConfigStore.getState().fetchConfig(undefined, true);
+            return true;
+          } catch {
+            set({
+              connectionStatus: 'error'
+            });
+            return false;
+          }
+        }
+
         const { managementKey, apiBase } = get();
 
         if (!managementKey || !apiBase) {

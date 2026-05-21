@@ -37,6 +37,7 @@ function getVersion(): string {
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: process.env.VITE_NEXUSTOK_EMBEDDED === 'true' ? '/account-pool/manager/' : undefined,
   plugins: [
     react(),
     viteSingleFile({

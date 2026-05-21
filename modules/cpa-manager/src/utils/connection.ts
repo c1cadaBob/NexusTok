@@ -1,4 +1,5 @@
 import { DEFAULT_API_PORT, MANAGEMENT_API_PREFIX } from './constants';
+import { isNexusTokEmbedded, NEXUSTOK_EMBEDDED_API_BASE } from './embedded';
 
 export const DEFAULT_DOCKER_CPA_BASE_URL = 'http://host.docker.internal:8317';
 
@@ -14,6 +15,7 @@ export const normalizeApiBase = (input: string): string => {
 };
 
 export const computeApiUrl = (base: string): string => {
+  if (isNexusTokEmbedded) return NEXUSTOK_EMBEDDED_API_BASE;
   const normalized = normalizeApiBase(base);
   if (!normalized) return '';
   return `${normalized}${MANAGEMENT_API_PREFIX}`;

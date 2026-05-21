@@ -11,6 +11,11 @@ import {
   VERSION_HEADER_KEYS
 } from '@/utils/constants';
 import { computeApiUrl } from '@/utils/connection';
+import {
+  getNexusTokUserId,
+  isNexusTokEmbedded,
+  NEXUSTOK_EMBEDDED_API_BASE
+} from '@/utils/embedded';
 
 class ApiClient {
   private instance: AxiosInstance;
@@ -20,6 +25,7 @@ class ApiClient {
   constructor() {
     this.instance = axios.create({
       timeout: REQUEST_TIMEOUT_MS,
+      withCredentials: isNexusTokEmbedded,
       headers: {
         'Content-Type': 'application/json'
       }
@@ -32,8 +38,13 @@ class ApiClient {
    * 设置 API 配置
    */
   setConfig(config: ApiClientConfig): void {
-    this.apiBase = computeApiUrl(config.apiBase);
-    this.managementKey = config.managementKey;
+    if (isNexusTokEmbedded) {
+      this.apiBase = NEXUSTOK_EMBEDDED_API_BASE;
+      this.managementKey = '';
+    } else {
+      this.apiBase = computeApiUrl(config.apiBase);
+      this.managementKey = config.managementKey;
+    }
 
     if (config.timeout) {
       this.instance.defaults.timeout = config.timeout;
@@ -96,7 +107,13 @@ class ApiClient {
         }
 
         // 添加认证头
-        if (this.managementKey) {
+        if (isNexusTokEmbedded) {
+          const uid = getNexusTokUserId();
+          if (uid) {
+            config.headers['NexusTok-User'] = uid;
+          }
+          delete config.headers.Authorization;
+        } else if (this.managementKey) {
           config.headers.Authorization = `Bearer ${this.managementKey}`;
         }
 
