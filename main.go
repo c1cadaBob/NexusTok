@@ -47,6 +47,12 @@ var classicBuildFS embed.FS
 //go:embed web/classic/dist/index.html
 var classicIndexPage []byte
 
+//go:embed modules/cpa-manager/dist
+var cpaManagerBuildFS embed.FS
+
+//go:embed modules/cpa-manager/dist/index.html
+var cpaManagerIndexPage []byte
+
 func main() {
 	startTime := time.Now()
 
@@ -192,10 +198,12 @@ func main() {
 
 	// 设置路由
 	router.SetRouter(server, router.ThemeAssets{
-		DefaultBuildFS:   buildFS,
-		DefaultIndexPage: indexPage,
-		ClassicBuildFS:   classicBuildFS,
-		ClassicIndexPage: classicIndexPage,
+		DefaultBuildFS:      buildFS,
+		DefaultIndexPage:    indexPage,
+		ClassicBuildFS:      classicBuildFS,
+		ClassicIndexPage:    classicIndexPage,
+		CPAManagerBuildFS:   cpaManagerBuildFS,
+		CPAManagerIndexPage: cpaManagerIndexPage,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {
