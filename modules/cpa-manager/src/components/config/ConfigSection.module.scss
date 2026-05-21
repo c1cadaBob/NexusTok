@@ -1,0 +1,96 @@
+@use '../../styles/mixins' as *;
+@use '../../styles/variables' as *;
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 24px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+  scroll-margin-top: 112px;
+
+  &:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  @include mobile {
+    gap: 12px;
+    padding: 20px 0;
+    scroll-margin-top: 88px;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+
+  @include mobile {
+    align-items: flex-start;
+  }
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.iconBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.headingGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.description {
+  margin: 0;
+  max-width: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
