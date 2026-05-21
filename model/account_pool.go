@@ -46,8 +46,14 @@ type PoolAccount struct {
 	AuthType           string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`
 	Credentials        string  `json:"credentials" gorm:"type:text;not null"`
 	CredentialSummary  string  `json:"credential_summary" gorm:"type:text"`
+	CredentialProvider string  `json:"credential_provider" gorm:"type:varchar(64);index"`
+	CredentialLabel    string  `json:"credential_label" gorm:"type:varchar(255)"`
+	CredentialMetadata string  `json:"credential_metadata" gorm:"type:text"`
+	CredentialAttrs    string  `json:"credential_attributes" gorm:"column:credential_attributes;type:text"`
 	Status             int     `json:"status" gorm:"default:1;index"`
+	StatusMessage      string  `json:"status_message" gorm:"type:text"`
 	Schedulable        bool    `json:"schedulable" gorm:"default:true;index"`
+	Unavailable        bool    `json:"unavailable" gorm:"default:false;index"`
 	Models             string  `json:"models" gorm:"type:text"`
 	Group              string  `json:"group" gorm:"column:group;type:varchar(255);index"`
 	Priority           int64   `json:"priority" gorm:"bigint;default:0;index"`
@@ -72,6 +78,12 @@ type PoolAccount struct {
 	LastError          string  `json:"last_error" gorm:"type:text"`
 	QuotaSnapshot      string  `json:"quota_snapshot" gorm:"type:text"`
 	ModelStates        string  `json:"model_states" gorm:"type:text"`
+	LastRefreshedTime  int64   `json:"last_refreshed_time" gorm:"bigint;default:0;index"`
+	NextRefreshTime    int64   `json:"next_refresh_time" gorm:"bigint;default:0;index"`
+	NextRetryTime      int64   `json:"next_retry_time" gorm:"bigint;default:0;index"`
+	SuccessCount       int64   `json:"success_count" gorm:"bigint;default:0"`
+	FailedCount        int64   `json:"failed_count" gorm:"bigint;default:0"`
+	RecentRequests     string  `json:"recent_requests" gorm:"type:text"`
 	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
 	UpdatedTime        int64   `json:"updated_time" gorm:"bigint"`
 }
@@ -139,6 +151,11 @@ func (account *PoolAccount) normalize() {
 	if account.AuthType == "" {
 		account.AuthType = AccountPoolAuthTypeAPIKey
 	}
+	account.CredentialProvider = strings.ToLower(strings.TrimSpace(account.CredentialProvider))
+	if account.CredentialProvider == "" {
+		account.CredentialProvider = account.Platform
+	}
+	account.CredentialLabel = strings.TrimSpace(account.CredentialLabel)
 }
 
 func (account *PoolAccount) GetWeight() int {
@@ -152,7 +169,7 @@ func (account *PoolAccount) IsCoolingDown(now int64) bool {
 	if account == nil {
 		return true
 	}
-	return account.RateLimitedUntil > now || account.OverloadUntil > now || account.TempDisabledUntil > now
+	return account.RateLimitedUntil > now || account.OverloadUntil > now || account.TempDisabledUntil > now || account.NextRetryTime > now
 }
 
 func (account *PoolAccount) GetDecryptedCredentials() (string, error) {
@@ -160,6 +177,28 @@ func (account *PoolAccount) GetDecryptedCredentials() (string, error) {
 		return "", nil
 	}
 	return common.DecryptSensitiveString(account.Credentials)
+}
+
+func (account *PoolAccount) GetCredentialProvider() string {
+	if account == nil {
+		return ""
+	}
+	provider := strings.TrimSpace(account.CredentialProvider)
+	if provider == "" {
+		provider = account.Platform
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func (account *PoolAccount) GetCredentialLabel() string {
+	if account == nil {
+		return ""
+	}
+	label := strings.TrimSpace(account.CredentialLabel)
+	if label == "" {
+		label = strings.TrimSpace(account.Name)
+	}
+	return label
 }
 
 func (account *PoolAccount) GetBaseURL(defaultBaseURL string) string {
@@ -308,7 +347,7 @@ func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, erro
 	}
 	now := common.GetTimestamp()
 	var accounts []PoolAccount
-	if err := DB.Select("pool_group_id", "status", "schedulable", "rate_limited_until", "overload_until", "temp_disabled_until").Where("pool_group_id IN ?", uniqueIDs).Find(&accounts).Error; err != nil {
+	if err := DB.Select("pool_group_id", "status", "schedulable", "unavailable", "rate_limited_until", "overload_until", "temp_disabled_until", "next_retry_time").Where("pool_group_id IN ?", uniqueIDs).Find(&accounts).Error; err != nil {
 		return result, err
 	}
 	for _, account := range accounts {
@@ -318,7 +357,7 @@ func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, erro
 			result[account.PoolGroupId] = stats
 		}
 		stats["total"]++
-		if account.Status == common.ChannelStatusEnabled && account.Schedulable {
+		if account.Status == common.ChannelStatusEnabled && account.Schedulable && !account.Unavailable {
 			stats["enabled"]++
 			if account.IsCoolingDown(now) {
 				stats["cooldown"]++
@@ -373,12 +412,16 @@ func UpdatePoolAccountStatus(accountID int, status int, reason string, schedulab
 	updates := map[string]interface{}{
 		"status":          status,
 		"disabled_reason": reason,
+		"status_message":  reason,
 	}
 	if status == common.ChannelStatusEnabled {
 		updates["rate_limited_until"] = 0
 		updates["overload_until"] = 0
 		updates["temp_disabled_until"] = 0
+		updates["next_retry_time"] = 0
+		updates["unavailable"] = false
 		updates["last_error"] = ""
+		updates["status_message"] = ""
 		if schedulable == nil {
 			updates["schedulable"] = true
 		}
@@ -411,5 +454,24 @@ func AddPoolAccountUsedQuota(accountID int, quota int64) {
 	}
 	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to update pool account used_quota: account_id=%d, quota=%d, error=%v", accountID, quota, err))
+	}
+}
+
+func RecordPoolAccountRequest(accountID int, success bool, recentRequests string) {
+	if accountID <= 0 {
+		return
+	}
+	updates := map[string]interface{}{
+		"recent_requests": recentRequests,
+	}
+	if success {
+		updates["success_count"] = gorm.Expr("success_count + ?", 1)
+		updates["unavailable"] = false
+		updates["status_message"] = ""
+	} else {
+		updates["failed_count"] = gorm.Expr("failed_count + ?", 1)
+	}
+	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(updates).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to update pool account request runtime: account_id=%d, error=%v", accountID, err))
 	}
 }
