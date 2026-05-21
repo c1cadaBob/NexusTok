@@ -16,8 +16,20 @@ export const getNexusTokUserId = (): string => {
   }
 };
 
+const resolveNexusTokLoginPath = async (): Promise<string> => {
+  try {
+    const response = await fetch('/api/status', { credentials: 'include' });
+    const payload = await response.json();
+    return payload?.data?.theme === 'classic' ? '/login' : '/sign-in';
+  } catch {
+    return '/sign-in';
+  }
+};
+
 export const redirectToNexusTokLogin = (): void => {
   if (typeof window === 'undefined') return;
   const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  window.location.href = `/sign-in?redirect=${encodeURIComponent(currentPath)}`;
+  void resolveNexusTokLoginPath().then((loginPath) => {
+    window.location.href = `${loginPath}?redirect=${encodeURIComponent(currentPath)}`;
+  });
 };
