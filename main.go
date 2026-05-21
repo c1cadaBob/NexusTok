@@ -94,8 +94,8 @@ func main() {
 			model.InitChannelCache()
 		}()
 
-			go model.SyncChannelCache(common.SyncFrequency)
-		}
+		go model.SyncChannelCache(common.SyncFrequency)
+	}
 
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
@@ -115,6 +115,7 @@ func main() {
 
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
+	service.StartAccountPoolCredentialAutoRefreshTask()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
@@ -163,12 +164,12 @@ func main() {
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(fmt.Sprintf("panic detected: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
-				"error": gin.H{
-					"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/c1cada/NexusTok", err),
-					"type":    "nexustok_panic",
-				},
-			})
-		}))
+			"error": gin.H{
+				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/c1cada/NexusTok", err),
+				"type":    "nexustok_panic",
+			},
+		})
+	}))
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())

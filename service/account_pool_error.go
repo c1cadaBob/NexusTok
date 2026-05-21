@@ -2,10 +2,12 @@ package service
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service/accountauth"
 	"github.com/c1cada/NexusTok/types"
 
 	"github.com/gin-gonic/gin"
@@ -21,8 +23,11 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 
 	reason := err.ErrorWithStatusCode()
 	updates := map[string]interface{}{
-		"last_error": reason,
+		"last_error":     reason,
+		"status_message": reason,
+		"unavailable":    true,
 	}
+	recordPoolAccountRequestRuntime(channelError.PoolAccountId, false)
 
 	if shouldDisableChannelAccount(err) && channelError.AutoBan {
 		updates["status"] = common.ChannelStatusAutoDisabled
@@ -31,15 +36,30 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 		updates["temp_disabled_until"] = 0
 		updates["rate_limited_until"] = 0
 		updates["overload_until"] = 0
+		updates["next_retry_time"] = 0
 	} else if err.StatusCode == http.StatusTooManyRequests {
 		updates["rate_limited_until"] = retryAfterUntil(err.RetryAfter, defaultChannelAccountRateLimitCooldown)
 		updates["disabled_reason"] = reason
+		updates["next_retry_time"] = updates["rate_limited_until"]
 	} else if isChannelAccountOverloadError(err) {
 		updates["overload_until"] = common.GetTimestamp() + int64(defaultChannelAccountOverloadCooldown.Seconds())
 		updates["disabled_reason"] = reason
+		updates["next_retry_time"] = updates["overload_until"]
 	}
 
 	if updateErr := model.UpdatePoolAccountErrorState(channelError.PoolAccountId, updates); updateErr != nil {
 		common.SysLog("failed to update pool account error state: " + updateErr.Error())
 	}
+}
+
+func recordPoolAccountRequestRuntime(accountID int, success bool) {
+	if accountID <= 0 {
+		return
+	}
+	account, err := model.GetPoolAccountById(accountID)
+	if err != nil || account == nil {
+		return
+	}
+	recentRequests := accountauth.RecordRecentRequest(account.RecentRequests, time.Now(), success)
+	model.RecordPoolAccountRequest(accountID, success, recentRequests)
 }

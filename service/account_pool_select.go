@@ -12,6 +12,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service/accountauth"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -59,7 +60,7 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		if excluded[account.Id] {
 			continue
 		}
-		if account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.IsCoolingDown(now) {
+		if account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.Unavailable || account.IsCoolingDown(now) {
 			continue
 		}
 		if !poolAccountSupportsModel(account, group, modelName) {
@@ -289,6 +290,9 @@ func releasePoolAccountConcurrency(accountID int) {
 func BuildPoolAccountChannelKey(account *model.PoolAccount) (string, error) {
 	if account == nil {
 		return "", ErrNoAvailablePoolAccount
+	}
+	if provider, ok := accountauth.DefaultManager().Provider(account.GetCredentialProvider()); ok && account.AuthType == model.AccountPoolAuthTypeOfficialOAuth {
+		return provider.BuildChannelKey(account)
 	}
 	raw, err := account.GetDecryptedCredentials()
 	if err != nil {
