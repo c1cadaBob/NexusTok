@@ -10,7 +10,14 @@ export const getNexusTokEmbeddedOrigin = (): string => {
 export const getNexusTokUserId = (): string => {
   if (typeof window === 'undefined') return '';
   try {
-    return window.localStorage.getItem('uid') || '';
+    const uid = window.localStorage.getItem('uid');
+    if (uid) return uid;
+
+    const userText = window.localStorage.getItem('user');
+    if (!userText) return '';
+
+    const user = JSON.parse(userText) as { id?: unknown };
+    return user.id === undefined || user.id === null ? '' : String(user.id);
   } catch {
     return '';
   }
