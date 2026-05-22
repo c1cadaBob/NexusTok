@@ -25,11 +25,11 @@ services:
         cd /app/web/classic
         bun install --frozen-lockfile
         cd /app/modules/cpa-manager
-        npm ci
+        bun install --frozen-lockfile
         cd /app
         (cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
         (cd web/classic && VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
-        (cd modules/cpa-manager && VITE_NEXUSTOK_EMBEDDED=true npm run build -- --watch) &
+        (cd modules/cpa-manager && VITE_NEXUSTOK_EMBEDDED=true bun run build -- --watch) &
         wait
       '
     restart: unless-stopped
