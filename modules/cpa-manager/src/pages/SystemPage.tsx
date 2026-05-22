@@ -16,6 +16,7 @@ import { configApi, versionApi } from '@/services/api';
 import { apiKeysApi } from '@/services/api/apiKeys';
 import { classifyModels } from '@/utils/models';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import iconGemini from '@/assets/icons/gemini.svg';
 import iconClaude from '@/assets/icons/claude.svg';
@@ -372,6 +373,7 @@ export function SystemPage() {
   }, []);
 
   useEffect(() => {
+    if (isNexusTokEmbedded) return;
     fetchModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.connectionStatus, auth.apiBase]);
@@ -568,14 +570,16 @@ export function SystemPage() {
           )}
         </Card>
 
-        <Card title={t('system_info.clear_login_title')}>
-          <p className={styles.sectionDescription}>{t('system_info.clear_login_desc')}</p>
-          <div className={styles.clearLoginActions}>
-            <Button variant="danger" onClick={handleClearLoginStorage}>
-              {t('system_info.clear_login_button')}
-            </Button>
-          </div>
-        </Card>
+        {!isNexusTokEmbedded && (
+          <Card title={t('system_info.clear_login_title')}>
+            <p className={styles.sectionDescription}>{t('system_info.clear_login_desc')}</p>
+            <div className={styles.clearLoginActions}>
+              <Button variant="danger" onClick={handleClearLoginStorage}>
+                {t('system_info.clear_login_button')}
+              </Button>
+            </div>
+          </Card>
+        )}
       </div>
 
       <Modal

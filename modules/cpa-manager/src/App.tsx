@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
-import { Outlet, RouterProvider, createHashRouter } from 'react-router-dom';
+import { Navigate, Outlet, RouterProvider, createHashRouter } from 'react-router-dom';
 import { LoginPage } from '@/pages/LoginPage';
 import { NotificationContainer } from '@/components/common/NotificationContainer';
 import { ConfirmationModal } from '@/components/common/ConfirmationModal';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ProtectedRoute } from '@/router/ProtectedRoute';
 import { useLanguageStore, useThemeStore } from '@/stores';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 
 function RootShell() {
   return (
@@ -21,7 +22,7 @@ const router = createHashRouter([
   {
     element: <RootShell />,
     children: [
-      { path: '/login', element: <LoginPage /> },
+      { path: '/login', element: isNexusTokEmbedded ? <Navigate to="/" replace /> : <LoginPage /> },
       {
         path: '/*',
         element: (

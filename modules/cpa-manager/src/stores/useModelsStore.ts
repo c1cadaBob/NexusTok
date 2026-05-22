@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { modelsApi } from '@/services/api/models';
 import { CACHE_EXPIRY_MS } from '@/utils/constants';
 import type { ModelInfo } from '@/utils/models';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 
 interface ModelsCache {
   data: ModelInfo[];
@@ -34,6 +35,12 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   fetchModels: async (apiBase, apiKey, forceRefresh = false) => {
     const { cache, isCacheValid } = get();
     const apiKeyScope = apiKey?.trim() || '';
+
+    if (isNexusTokEmbedded) {
+      // 嵌入 NexusTok 时浏览器同源不是 CLIProxyAPI 服务，避免误请求主项目 /v1/models。
+      set({ models: [], loading: false, error: null });
+      return [];
+    }
 
     // 检查缓存
     if (!forceRefresh && isCacheValid(apiBase, apiKeyScope) && cache) {
