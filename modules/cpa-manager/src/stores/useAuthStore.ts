@@ -13,6 +13,7 @@ import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
 import {
+  clearNexusTokEmbeddedAuthStorage,
   getNexusTokEmbeddedOrigin,
   isNexusTokEmbedded,
   redirectToNexusTokLogin
@@ -174,7 +175,7 @@ export const useAuthStore = create<AuthStoreState>()(
         });
         localStorage.removeItem('isLoggedIn');
         if (isNexusTokEmbedded) {
-          localStorage.removeItem('uid');
+          clearNexusTokEmbeddedAuthStorage();
           void fetch('/api/user/logout', { credentials: 'include' }).finally(() => {
             redirectToNexusTokLogin();
           });

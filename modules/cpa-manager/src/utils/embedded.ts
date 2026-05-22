@@ -23,6 +23,16 @@ export const getNexusTokUserId = (): string => {
   }
 };
 
+export const clearNexusTokEmbeddedAuthStorage = (): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem('uid');
+    window.localStorage.removeItem('user');
+  } catch {
+    // 忽略浏览器隐私模式或存储不可用导致的清理失败。
+  }
+};
+
 const resolveNexusTokLoginPath = async (): Promise<string> => {
   try {
     const response = await fetch('/api/status', { credentials: 'include' });
@@ -35,6 +45,7 @@ const resolveNexusTokLoginPath = async (): Promise<string> => {
 
 export const redirectToNexusTokLogin = (): void => {
   if (typeof window === 'undefined') return;
+  clearNexusTokEmbeddedAuthStorage();
   const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   void resolveNexusTokLoginPath().then((loginPath) => {
     window.location.href = `${loginPath}?redirect=${encodeURIComponent(currentPath)}`;
