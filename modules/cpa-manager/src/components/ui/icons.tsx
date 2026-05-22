@@ -444,6 +444,18 @@ export function IconSidebarAuthFiles({ size = 20, ...props }: IconProps) {
   );
 }
 
+export function IconSidebarAccountGroups({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...sidebarSvgProps} width={size} height={size} {...props}>
+      <circle cx="8" cy="8" r="3" fill="currentColor" fillOpacity="0.1" />
+      <circle cx="16" cy="8" r="3" />
+      <path d="M4 20v-1.5A4.5 4.5 0 0 1 8.5 14h7A4.5 4.5 0 0 1 20 18.5V20" />
+      <path d="M8 14v6" />
+      <path d="M16 14v6" />
+    </svg>
+  );
+}
+
 export function IconSidebarOauth({ size = 20, ...props }: IconProps) {
   return (
     <svg {...sidebarSvgProps} width={size} height={size} {...props}>

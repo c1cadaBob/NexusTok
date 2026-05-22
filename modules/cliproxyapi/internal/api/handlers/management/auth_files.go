@@ -352,6 +352,12 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 						fileData["note"] = trimmed
 					}
 				}
+				if gv := gjson.GetBytes(data, "account_group"); gv.Exists() && gv.Type == gjson.String {
+					if trimmed := strings.TrimSpace(gv.String()); trimmed != "" {
+						fileData["account_group"] = trimmed
+						fileData["accountGroup"] = trimmed
+					}
+				}
 			}
 
 			files = append(files, fileData)
@@ -400,6 +406,10 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	}
 	if projectID := authProjectID(auth); projectID != "" {
 		entry["project_id"] = projectID
+	}
+	if accountGroup := authAccountGroup(auth); accountGroup != "" {
+		entry["account_group"] = accountGroup
+		entry["accountGroup"] = accountGroup
 	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
@@ -535,6 +545,26 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 		return nil
 	}
 	return result
+}
+
+func authAccountGroup(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if auth.Attributes != nil {
+		if v := strings.TrimSpace(auth.Attributes["account_group"]); v != "" {
+			return v
+		}
+	}
+	if auth.Metadata != nil {
+		if v, ok := auth.Metadata["account_group"].(string); ok {
+			return strings.TrimSpace(v)
+		}
+		if v, ok := auth.Metadata["accountGroup"].(string); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func authEmail(auth *coreauth.Auth) string {
@@ -1150,7 +1180,7 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "disabled": *req.Disabled})
 }
 
-// PatchAuthFileFields updates editable fields (prefix, proxy_url, headers, priority, note) of an auth file.
+// PatchAuthFileFields updates editable fields (prefix, proxy_url, headers, priority, note, account_group) of an auth file.
 func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -1164,6 +1194,8 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		Headers  map[string]string `json:"headers"`
 		Priority *int              `json:"priority"`
 		Note     *string           `json:"note"`
+		// account_group 只用于管理台归类，不改变认证文件的实际请求行为。
+		AccountGroup *string `json:"account_group"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -1300,7 +1332,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			changed = true
 		}
 	}
-	if req.Priority != nil || req.Note != nil {
+	if req.Priority != nil || req.Note != nil || req.AccountGroup != nil {
 		if targetAuth.Metadata == nil {
 			targetAuth.Metadata = make(map[string]any)
 		}
@@ -1325,6 +1357,17 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			} else {
 				targetAuth.Metadata["note"] = trimmedNote
 				targetAuth.Attributes["note"] = trimmedNote
+			}
+		}
+		if req.AccountGroup != nil {
+			trimmedGroup := strings.TrimSpace(*req.AccountGroup)
+			if trimmedGroup == "" {
+				delete(targetAuth.Metadata, "account_group")
+				delete(targetAuth.Metadata, "accountGroup")
+				delete(targetAuth.Attributes, "account_group")
+			} else {
+				targetAuth.Metadata["account_group"] = trimmedGroup
+				targetAuth.Attributes["account_group"] = trimmedGroup
 			}
 		}
 		changed = true

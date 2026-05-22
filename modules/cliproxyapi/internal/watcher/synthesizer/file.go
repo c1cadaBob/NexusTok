@@ -157,6 +157,14 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			}
 		}
 	}
+	// 账号分组只作为管理台维度透出，不参与 provider 选择。
+	if rawGroup, ok := metadata["account_group"]; ok {
+		if group, isStr := rawGroup.(string); isStr {
+			if trimmed := strings.TrimSpace(group); trimmed != "" {
+				a.Attributes["account_group"] = trimmed
+			}
+		}
+	}
 	coreauth.ApplyCustomHeadersFromMetadata(a)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
 	// For codex auth files, extract plan_type from the JWT id_token.
@@ -234,6 +242,9 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		if noteVal, hasNote := primary.Attributes["note"]; hasNote && noteVal != "" {
 			attrs["note"] = noteVal
 		}
+		if groupVal, hasGroup := primary.Attributes["account_group"]; hasGroup && strings.TrimSpace(groupVal) != "" {
+			attrs["account_group"] = strings.TrimSpace(groupVal)
+		}
 		for k, v := range primary.Attributes {
 			if strings.HasPrefix(k, "header:") && strings.TrimSpace(v) != "" {
 				attrs[k] = v
@@ -259,6 +270,9 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		proxy := strings.TrimSpace(primary.ProxyURL)
 		if proxy != "" {
 			metadataCopy["proxy_url"] = proxy
+		}
+		if groupVal := strings.TrimSpace(attrs["account_group"]); groupVal != "" {
+			metadataCopy["account_group"] = groupVal
 		}
 		virtual := &coreauth.Auth{
 			ID:         buildGeminiVirtualID(primary.ID, projectID),

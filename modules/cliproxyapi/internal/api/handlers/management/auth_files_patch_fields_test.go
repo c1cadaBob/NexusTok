@@ -162,3 +162,54 @@ func TestPatchAuthFileFields_HeadersEmptyMapIsNoop(t *testing.T) {
 		t.Fatalf("metadata.headers.X-Kee = %#v, want %q", got, "1")
 	}
 }
+
+func TestPatchAuthFileFields_AccountGroupIsPersistedAndListed(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	record := &coreauth.Auth{
+		ID:         "grouped.json",
+		FileName:   "grouped.json",
+		Provider:   "codex",
+		Attributes: map[string]string{"path": "/tmp/grouped.json"},
+		Metadata:   map[string]any{"type": "codex"},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+
+	body := `{"name":"grouped.json","account_group":"production"}`
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPatch, "/v0/management/auth-files/fields", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx.Request = req
+	h.PatchAuthFileFields(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	updated, ok := manager.GetByID("grouped.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected auth record to exist after patch")
+	}
+	if got := updated.Attributes["account_group"]; got != "production" {
+		t.Fatalf("attrs account_group = %q, want %q", got, "production")
+	}
+	if got, _ := updated.Metadata["account_group"].(string); got != "production" {
+		t.Fatalf("metadata.account_group = %q, want %q", got, "production")
+	}
+
+	entry := h.buildAuthFileEntry(updated)
+	if got, _ := entry["account_group"].(string); got != "production" {
+		t.Fatalf("entry.account_group = %q, want %q", got, "production")
+	}
+	if got, _ := entry["accountGroup"].(string); got != "production" {
+		t.Fatalf("entry.accountGroup = %q, want %q", got, "production")
+	}
+}
