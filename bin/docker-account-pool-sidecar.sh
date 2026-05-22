@@ -18,7 +18,6 @@ remote-management:
   allow-remote: true
   secret-key: ""
   disable-control-panel: true
-  disable-auto-update-panel: true
 auth-dir: "${AUTH_DIR}"
 debug: false
 logging-to-file: true

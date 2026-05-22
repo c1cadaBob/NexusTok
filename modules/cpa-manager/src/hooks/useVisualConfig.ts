@@ -735,7 +735,6 @@ function getNextDirtyFields(
 
   (
     [
-      'rmDisableAutoUpdatePanel',
       'errorLogsMaxFiles',
       'usageStatisticsEnabled',
       'redisUsageQueueRetentionSeconds',
@@ -784,9 +783,6 @@ function getNextDirtyFields(
       'rmDisableControlPanel',
       nextValues.rmDisableControlPanel === baselineValues.rmDisableControlPanel
     );
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'rmPanelRepo')) {
-    updateDirty('rmPanelRepo', nextValues.rmPanelRepo === baselineValues.rmPanelRepo);
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'authDir')) {
     updateDirty('authDir', nextValues.authDir === baselineValues.authDir);
@@ -1036,13 +1032,6 @@ export function useVisualConfig() {
             ? remoteManagement['secret-key']
             : '',
         rmDisableControlPanel: Boolean(remoteManagement?.['disable-control-panel']),
-        rmDisableAutoUpdatePanel: Boolean(remoteManagement?.['disable-auto-update-panel']),
-        rmPanelRepo:
-          typeof remoteManagement?.['panel-github-repository'] === 'string'
-            ? remoteManagement['panel-github-repository']
-            : typeof remoteManagement?.['panel-repo'] === 'string'
-              ? remoteManagement['panel-repo']
-              : '',
 
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
         apiKeysText: resolveApiKeysText(parsed),
@@ -1175,9 +1164,7 @@ export function useVisualConfig() {
           docHas(doc, ['remote-management']) ||
           values.rmAllowRemote ||
           values.rmSecretKey.trim() ||
-          values.rmDisableControlPanel ||
-          values.rmDisableAutoUpdatePanel ||
-          values.rmPanelRepo.trim()
+          values.rmDisableControlPanel
         ) {
           ensureMapInDoc(doc, ['remote-management']);
           setBooleanInDoc(doc, ['remote-management', 'allow-remote'], values.rmAllowRemote);
@@ -1187,15 +1174,6 @@ export function useVisualConfig() {
             ['remote-management', 'disable-control-panel'],
             values.rmDisableControlPanel
           );
-          setBooleanInDoc(
-            doc,
-            ['remote-management', 'disable-auto-update-panel'],
-            values.rmDisableAutoUpdatePanel
-          );
-          setStringInDoc(doc, ['remote-management', 'panel-github-repository'], values.rmPanelRepo);
-          if (docHas(doc, ['remote-management', 'panel-repo'])) {
-            doc.deleteIn(['remote-management', 'panel-repo']);
-          }
           deleteIfMapEmpty(doc, ['remote-management']);
         }
 

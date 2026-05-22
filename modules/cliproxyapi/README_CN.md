@@ -159,7 +159,7 @@ Windows 桌面应用，基于 Tauri + React 构建，用于通过 CLIProxyAPI �
 
 ### [CPA-XXX Panel](https://github.com/ferretgeek/CPA-X)
 
-面向 CLIProxyAPI 的 Web 管理面板，提供健康检查、资源监控、日志查看、自动更新、请求统计与定价展示，支持一键安装与 systemd 服务。
+面向 CLIProxyAPI 的 Web 管理面板，提供健康检查、资源监控、日志查看、请求统计与定价展示，支持一键安装与 systemd 服务。
 
 ### [CLIProxyAPI Tray](https://github.com/kitephp/CLIProxyAPI_Tray)
 

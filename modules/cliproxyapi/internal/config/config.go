@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
-	DefaultPprofAddr             = "127.0.0.1:8316"
-	DefaultAuthDir               = "~/.cli-proxy-api"
+	DefaultPprofAddr = "127.0.0.1:8316"
+	DefaultAuthDir   = "~/.cli-proxy-api"
 )
 
 // Config represents the application's configuration, loaded from a YAML file.
@@ -196,14 +195,8 @@ type RemoteManagement struct {
 	AllowRemote bool `yaml:"allow-remote"`
 	// SecretKey is the management key (plaintext or bcrypt hashed). YAML key intentionally 'secret-key'.
 	SecretKey string `yaml:"secret-key"`
-	// DisableControlPanel skips serving and syncing the bundled management UI when true.
+	// DisableControlPanel skips serving the bundled management UI when true.
 	DisableControlPanel bool `yaml:"disable-control-panel"`
-	// DisableAutoUpdatePanel disables automatic periodic background updates of the management panel asset from GitHub.
-	// When false (the default), the background updater remains enabled; when true, the panel is only downloaded on first access if missing.
-	DisableAutoUpdatePanel bool `yaml:"disable-auto-update-panel"`
-	// PanelGitHubRepository overrides the GitHub repository used to fetch the management panel asset.
-	// Accepts either a repository URL (https://github.com/org/repo) or an API releases endpoint.
-	PanelGitHubRepository string `yaml:"panel-github-repository"`
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
@@ -645,7 +638,6 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
-	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -682,11 +674,6 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		// Persist the hashed value back to the config file to avoid re-hashing on next startup.
 		// Preserve YAML comments and ordering; update only the nested key.
 		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, []string{"remote-management", "secret-key"}, hashed)
-	}
-
-	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
-	if cfg.RemoteManagement.PanelGitHubRepository == "" {
-		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	}
 
 	cfg.Pprof.Addr = strings.TrimSpace(cfg.Pprof.Addr)
@@ -1380,8 +1367,6 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		switch fullPath {
 		case "pprof.addr":
 			return node.Value == DefaultPprofAddr
-		case "remote-management.panel-github-repository":
-			return node.Value == DefaultPanelGitHubRepository
 		case "routing.strategy":
 			return node.Value == "round-robin"
 		}

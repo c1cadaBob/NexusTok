@@ -160,7 +160,7 @@ Windows desktop app built with Tauri + React for monitoring AI coding assistant 
 
 ### [CPA-XXX Panel](https://github.com/ferretgeek/CPA-X)
 
-A lightweight web admin panel for CLIProxyAPI with health checks, resource monitoring, real-time logs, auto-update, request statistics and pricing display. Supports one-click installation and systemd service.
+A lightweight web admin panel for CLIProxyAPI with health checks, resource monitoring, real-time logs, request statistics and pricing display. Supports one-click installation and systemd service.
 
 ### [CLIProxyAPI Tray](https://github.com/kitephp/CLIProxyAPI_Tray)
 

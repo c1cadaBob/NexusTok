@@ -31,10 +31,6 @@ type OpenAICompatibilityModel = internalconfig.OpenAICompatibilityModel
 
 type TLS = internalconfig.TLSConfig
 
-const (
-	DefaultPanelGitHubRepository = internalconfig.DefaultPanelGitHubRepository
-)
-
 func LoadConfig(configFile string) (*Config, error) { return internalconfig.LoadConfig(configFile) }
 
 func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
