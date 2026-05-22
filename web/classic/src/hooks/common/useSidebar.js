@@ -51,7 +51,6 @@ export const DEFAULT_ADMIN_CONFIG = {
     models: true,
     pricing_setting: true,
     deployment: true,
-    account_pool: true,
     redemption: true,
     user: true,
     subscription: true,

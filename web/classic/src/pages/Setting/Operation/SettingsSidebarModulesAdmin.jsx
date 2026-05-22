@@ -59,7 +59,6 @@ const createDefaultSidebarModulesAdmin = () => ({
     models: true,
     pricing_setting: true,
     deployment: true,
-    account_pool: true,
     redemption: true,
     user: true,
     subscription: true,
@@ -238,11 +237,6 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'deployment',
           title: t('模型部署'),
           description: t('模型部署管理'),
-        },
-        {
-          key: 'account_pool',
-          title: t('账号池管理'),
-          description: t('官方账号组与轮询管理'),
         },
         {
           key: 'subscription',
