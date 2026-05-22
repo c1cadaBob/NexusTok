@@ -219,6 +219,49 @@
   --accent-tertiary: var(--color-primary-light-9);
 }
 
+// NexusTok 嵌入模式：跟随主项目「羊毛纸」主题预设。
+[data-nexus-tok-theme-preset='wool-paper'] {
+  --bg-secondary: #f8f5ee;
+  --bg-primary: #fffdf8;
+  --bg-tertiary: #f1eadf;
+  --bg-hover: #ede4d7;
+  --bg-quinary: #fbf7ef;
+  --floating-surface: #fffdf8;
+  --floating-border: #dfd2bf;
+  --floating-shadow: 0 14px 28px rgba(104, 86, 61, 0.14);
+
+  --text-primary: #332d24;
+  --text-secondary: #6f6250;
+  --text-tertiary: #9b8c78;
+  --text-quaternary: #c5b7a2;
+  --text-muted: var(--text-tertiary);
+
+  --border-color: #ded2c0;
+  --border-secondary: #e9dfd0;
+  --border-primary: #d8cab7;
+  --border-hover: #c9b69e;
+
+  --color-primary: #8b6f47;
+  --color-primary-light-3: #aa8f66;
+  --color-primary-light-5: #c4ad88;
+  --color-primary-light-7: #dac9ae;
+  --color-primary-light-8: #e8dcc8;
+  --color-primary-light-9: #f2eadc;
+  --color-primary-dark-2: #6f5636;
+
+  --primary-color: var(--color-primary);
+  --primary-hover: var(--color-primary-light-3);
+  --primary-active: var(--color-primary-dark-2);
+  --primary-soft: var(--color-primary-light-8);
+  --primary-subtle: var(--color-primary-light-9);
+  --primary-ring: rgba(139, 111, 71, 0.22);
+
+  --accent-tertiary: var(--color-primary-light-9);
+  --glass-bg: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+  --glass-bg-secondary: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
+  --glass-border: color-mix(in srgb, var(--border-color) 68%, transparent);
+}
+
 // 深色主题（#191919）
 [data-theme='dark'] {
   // Element Plus 风格：深色模式（蓝色状态保留，背景冷调化）
@@ -324,6 +367,48 @@
   --accent-tertiary: var(--color-primary-light-9);
 
   --glass-border: color-mix(in srgb, var(--border-color) 55%, transparent);
+}
+
+[data-theme='dark'][data-nexus-tok-theme-preset='wool-paper'] {
+  --bg-secondary: #211c15;
+  --bg-primary: #2b241b;
+  --bg-tertiary: #362c20;
+  --bg-hover: #433625;
+  --bg-quinary: #1b1712;
+  --floating-surface: #30271d;
+  --floating-border: #66513a;
+  --floating-shadow: 0 14px 30px rgba(0, 0, 0, 0.36);
+
+  --text-primary: #f3eadc;
+  --text-secondary: #d9c9b1;
+  --text-tertiary: #aa9678;
+  --text-quaternary: #7c6a51;
+  --text-muted: var(--text-tertiary);
+
+  --border-color: #594832;
+  --border-secondary: #4a3c2b;
+  --border-primary: #68543c;
+  --border-hover: #826a49;
+
+  --color-primary: #d7b982;
+  --color-primary-light-3: #e6cca0;
+  --color-primary-light-5: #7b6344;
+  --color-primary-light-7: #5d4932;
+  --color-primary-light-8: #4a3a29;
+  --color-primary-light-9: #382d21;
+  --color-primary-dark-2: #f0d7a9;
+
+  --primary-color: var(--color-primary);
+  --primary-hover: var(--color-primary-light-3);
+  --primary-active: var(--color-primary-dark-2);
+  --primary-soft: var(--color-primary-light-8);
+  --primary-subtle: var(--color-primary-light-9);
+  --primary-ring: rgba(215, 185, 130, 0.3);
+
+  --accent-tertiary: var(--color-primary-light-9);
+  --glass-bg: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+  --glass-bg-secondary: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
+  --glass-border: color-mix(in srgb, var(--border-color) 62%, transparent);
 }
 
 @media (max-width: 768px), (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {

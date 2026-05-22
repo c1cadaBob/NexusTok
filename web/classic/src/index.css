@@ -31,6 +31,23 @@ body {
   background-color: var(--semi-color-bg-0);
 }
 
+body[data-theme-preset='wool-paper'] {
+  --semi-color-bg-0: #fbf7ef;
+  --semi-color-bg-1: #fffdf8;
+  --semi-color-bg-2: #f4ede1;
+  --semi-color-fill-0: rgba(139, 111, 71, 0.08);
+  --semi-color-fill-1: rgba(139, 111, 71, 0.14);
+  --semi-color-fill-2: rgba(139, 111, 71, 0.2);
+  --semi-color-border: #dfd2bf;
+  --semi-color-text-0: #332d24;
+  --semi-color-text-1: #5d5142;
+  --semi-color-text-2: #7c6f5f;
+  --semi-color-primary: #8b6f47;
+  --semi-color-primary-light-default: rgba(139, 111, 71, 0.1);
+  --semi-color-primary-light-hover: rgba(139, 111, 71, 0.17);
+  --semi-color-primary-light-active: rgba(139, 111, 71, 0.26);
+}
+
 /* 桌面端禁止 body 纵向滚动 - 防止 VChart tooltip 触发页面滚动条 */
 @media (min-width: 768px) {
   body {

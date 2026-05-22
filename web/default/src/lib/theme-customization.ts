@@ -64,6 +64,11 @@ export const THEME_PRESETS = [
     name: 'Lavender Dream',
     swatches: ['oklch(0.5709 0.1808 306.89)', 'oklch(0.811 0.0589 201.14)'],
   },
+  {
+    value: 'wool-paper',
+    name: 'Wool Paper',
+    swatches: ['oklch(0.742 0.065 78.7)', 'oklch(0.964 0.025 84.6)'],
+  },
 ] as const
 
 export type ThemePreset = (typeof THEME_PRESETS)[number]['value']

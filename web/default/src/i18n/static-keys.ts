@@ -577,4 +577,5 @@ export const STATIC_I18N_KEYS = [
   'Failed to load',
   'Expired at',
   'Cancelled at',
+  'preset.wool-paper',
 ] as const

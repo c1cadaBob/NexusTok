@@ -17,13 +17,67 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { THEME_WOOL_PAPER, useActualTheme, useTheme } from '../../context/Theme';
 
 const ACCOUNT_POOL_MANAGER_URL = '/account-pool/manager/?embeddedFrame=true';
+const ACCOUNT_POOL_PREFERENCES_EVENT = 'nexustok:account-pool-preferences';
+const ACCOUNT_POOL_READY_EVENT = 'nexustok:account-pool-ready';
+const PREFERENCE_SYNC_RETRY_DELAYS = [0, 100, 300, 700, 1500, 3000, 5000];
 
 const AccountPool = () => {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const iframeRef = useRef(null);
+  const theme = useTheme();
+  const actualTheme = useActualTheme();
+
+  const syncPreferencesToFrame = useCallback(() => {
+    const target = iframeRef.current?.contentWindow;
+    if (!target) return;
+
+    target.postMessage(
+      {
+        type: ACCOUNT_POOL_PREFERENCES_EVENT,
+        language: i18n.language,
+        lang: i18n.language,
+        resolvedTheme: actualTheme,
+        themeMode: actualTheme,
+        themePreset: theme === THEME_WOOL_PAPER ? THEME_WOOL_PAPER : 'default',
+      },
+      window.location.origin,
+    );
+  }, [actualTheme, i18n.language, theme]);
+
+  const schedulePreferenceSync = useCallback(() => {
+    const timers = PREFERENCE_SYNC_RETRY_DELAYS.map((delay) =>
+      window.setTimeout(syncPreferencesToFrame, delay),
+    );
+
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [syncPreferencesToFrame]);
+
+  useEffect(() => {
+    return schedulePreferenceSync();
+  }, [schedulePreferenceSync]);
+
+  useEffect(() => {
+    const handleLanguageChanged = () => schedulePreferenceSync();
+    i18n.on('languageChanged', handleLanguageChanged);
+    return () => i18n.off('languageChanged', handleLanguageChanged);
+  }, [i18n, schedulePreferenceSync]);
+
+  useEffect(() => {
+    const handleFrameMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== ACCOUNT_POOL_READY_EVENT) return;
+      schedulePreferenceSync();
+    };
+
+    window.addEventListener('message', handleFrameMessage);
+    return () => window.removeEventListener('message', handleFrameMessage);
+  }, [schedulePreferenceSync]);
 
   return (
     <div
@@ -35,9 +89,11 @@ const AccountPool = () => {
       }}
     >
       <iframe
+        ref={iframeRef}
         title={t('账号池管理')}
         src={ACCOUNT_POOL_MANAGER_URL}
         allow='clipboard-read; clipboard-write'
+        onLoad={schedulePreferenceSync}
         style={{
           width: '100%',
           height: '100%',

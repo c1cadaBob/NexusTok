@@ -25,6 +25,9 @@ import {
   useEffect,
 } from 'react';
 
+export const THEME_WOOL_PAPER = 'wool-paper';
+const THEME_VALUES = new Set(['light', 'dark', 'auto', THEME_WOOL_PAPER]);
+
 const ThemeContext = createContext(null);
 export const useTheme = () => useContext(ThemeContext);
 
@@ -56,7 +59,8 @@ export const ThemeProvider = ({ children }) => {
   const [systemTheme, setSystemTheme] = useState(getSystemTheme());
 
   // 计算实际应用的主题
-  const actualTheme = theme === 'auto' ? systemTheme : theme;
+  const actualTheme =
+    theme === 'auto' ? systemTheme : theme === THEME_WOOL_PAPER ? 'light' : theme;
 
   // 监听系统主题变化
   useEffect(() => {
@@ -78,6 +82,8 @@ export const ThemeProvider = ({ children }) => {
   // 应用主题到DOM
   useEffect(() => {
     const body = document.body;
+    body.dataset.themePreset = theme === THEME_WOOL_PAPER ? THEME_WOOL_PAPER : '';
+
     if (actualTheme === 'dark') {
       body.setAttribute('theme-mode', 'dark');
       document.documentElement.classList.add('dark');
@@ -85,7 +91,7 @@ export const ThemeProvider = ({ children }) => {
       body.removeAttribute('theme-mode');
       document.documentElement.classList.remove('dark');
     }
-  }, [actualTheme]);
+  }, [actualTheme, theme]);
 
   const setTheme = useCallback((newTheme) => {
     let themeValue;
@@ -94,8 +100,7 @@ export const ThemeProvider = ({ children }) => {
       // 向后兼容原有的 boolean 参数
       themeValue = newTheme ? 'dark' : 'light';
     } else if (typeof newTheme === 'string') {
-      // 新的字符串参数支持 'light', 'dark', 'auto'
-      themeValue = newTheme;
+      themeValue = THEME_VALUES.has(newTheme) ? newTheme : 'auto';
     } else {
       themeValue = 'auto';
     }

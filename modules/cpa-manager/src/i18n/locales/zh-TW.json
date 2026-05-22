@@ -2092,10 +2092,10 @@
   },
   "theme": {
     "switch": "主題",
-    "light": "羊毛紙",
+    "light": "淺色",
     "white": "純白",
     "dark": "深色",
-    "switch_to_light": "切換到羊毛紙模式",
+    "switch_to_light": "切換到淺色模式",
     "switch_to_dark": "切換到深色模式",
     "auto": "跟隨系統"
   },

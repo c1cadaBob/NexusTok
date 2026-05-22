@@ -200,7 +200,7 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     (newTheme) => {
       if (
         !newTheme ||
-        (newTheme !== 'light' && newTheme !== 'dark' && newTheme !== 'auto')
+        !['light', 'dark', 'auto', 'wool-paper'].includes(newTheme)
       ) {
         return;
       }

@@ -19,8 +19,8 @@ For commercial licensing, please contact support@c1cada.dev
 
 import React, { useMemo } from 'react';
 import { Button, Dropdown } from '@douyinfe/semi-ui';
-import { Sun, Moon, Monitor } from 'lucide-react';
-import { useActualTheme } from '../../../context/Theme';
+import { FileText, Moon, Monitor, Sun } from 'lucide-react';
+import { THEME_WOOL_PAPER, useActualTheme } from '../../../context/Theme';
 
 const ThemeToggle = ({ theme, onThemeToggle, t }) => {
   const actualTheme = useActualTheme();
@@ -47,6 +47,13 @@ const ThemeToggle = ({ theme, onThemeToggle, t }) => {
         buttonIcon: <Monitor size={18} />,
         label: t('自动模式'),
         description: t('跟随系统主题设置'),
+      },
+      {
+        key: THEME_WOOL_PAPER,
+        icon: <FileText size={18} />,
+        buttonIcon: <FileText size={18} />,
+        label: t('羊毛纸'),
+        description: t('使用温润纸感主题'),
       },
     ],
     [t],
