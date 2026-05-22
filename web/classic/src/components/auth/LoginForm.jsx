@@ -143,6 +143,23 @@ const LoginForm = () => {
       hasCustomOAuthProviders,
   );
 
+  const getRedirectTarget = () => {
+    const redirect = searchParams.get('redirect');
+    if (!redirect || !redirect.startsWith('/') || redirect.startsWith('//')) {
+      return '';
+    }
+    return redirect;
+  };
+
+  const navigateAfterLogin = () => {
+    const redirectTarget = getRedirectTarget();
+    if (redirectTarget) {
+      window.location.assign(redirectTarget);
+      return;
+    }
+    navigate('/console');
+  };
+
   useEffect(() => {
     if (status?.turnstile_check) {
       setTurnstileEnabled(true);
@@ -255,7 +272,7 @@ const LoginForm = () => {
               centered: true,
             });
           }
-          navigate('/console');
+          navigateAfterLogin();
         } else {
           showError(message);
         }
@@ -456,7 +473,7 @@ const LoginForm = () => {
         setUserData(finish.data);
         updateAPI();
         showSuccess('登录成功！');
-        navigate('/console');
+        navigateAfterLogin();
       } else {
         showError(finish.message || 'Passkey 登录失败，请重试');
       }
@@ -491,7 +508,7 @@ const LoginForm = () => {
     setUserData(data);
     updateAPI();
     showSuccess('登录成功！');
-    navigate('/console');
+    navigateAfterLogin();
   };
 
   // 返回登录页面
