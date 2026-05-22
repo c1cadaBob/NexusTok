@@ -27,21 +27,9 @@ interface ProviderStats {
   openai: number | null;
 }
 
-type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night';
-
-function getTimeOfDay(): TimeOfDay {
-  const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return 'morning';
-  if (hour >= 12 && hour < 17) return 'afternoon';
-  if (hour >= 17 && hour < 21) return 'evening';
-  return 'night';
-}
-
 export function DashboardPage() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const serverVersion = useAuthStore((state) => state.serverVersion);
-  const serverBuildDate = useAuthStore((state) => state.serverBuildDate);
   const apiBase = useAuthStore((state) => state.apiBase);
   const config = useConfigStore((state) => state.config);
 
@@ -66,24 +54,11 @@ export function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
 
-  // Time-of-day state for dynamic greeting
-  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(getTimeOfDay);
-  const [currentTime, setCurrentTime] = useState(() => new Date());
-
   const apiKeysCache = useRef<string[]>([]);
 
   useEffect(() => {
     apiKeysCache.current = [];
   }, [apiBase, config?.apiKeys]);
-
-  // Update time every 60 seconds
-  useEffect(() => {
-    const id = setInterval(() => {
-      setTimeOfDay(getTimeOfDay());
-      setCurrentTime(new Date());
-    }, 60_000);
-    return () => clearInterval(id);
-  }, []);
 
   const normalizeApiKeyList = (input: unknown): string[] => {
     if (!Array.isArray(input)) return [];
@@ -260,76 +235,13 @@ export function DashboardPage() {
         ? styles.configBadgeFillFirst
         : styles.configBadgeUnknown;
 
-  // Derived time-based values
-  const greetingKey = `dashboard.greeting_${timeOfDay}`;
-  const caringKey = `dashboard.caring_${timeOfDay}`;
-
-  const formattedDate = currentTime.toLocaleDateString(i18n.language, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-
-  const formattedTime = currentTime.toLocaleTimeString(i18n.language, {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-
   return (
     <div className={styles.dashboard}>
-      {/* Decorative background orbs */}
       <div className={styles.backgroundOrbs} aria-hidden="true">
         <div className={styles.orb1} />
         <div className={styles.orb2} />
       </div>
 
-      {/* Hero welcome section */}
-      <section className={styles.hero}>
-        <span className={styles.heroWatermark} aria-hidden="true">
-          OVERVIEW
-        </span>
-        <div className={styles.heroContent}>
-          <span className={styles.heroGreeting}>{t(greetingKey)}</span>
-          <h1 className={styles.heroTitle}>{t('dashboard.welcome_back')}</h1>
-          <p className={styles.heroCaring}>{t(caringKey)}</p>
-        </div>
-        <div className={styles.heroMeta}>
-          <div className={styles.dateTimeBlock}>
-            <span className={styles.time}>{formattedTime}</span>
-            <span className={styles.date}>{formattedDate}</span>
-          </div>
-          <div className={styles.connectionPill}>
-            <span
-              className={`${styles.statusDot} ${
-                connectionStatus === 'connected'
-                  ? styles.connected
-                  : connectionStatus === 'connecting'
-                    ? styles.connecting
-                    : styles.disconnected
-              }`}
-            />
-            <span className={styles.pillText}>
-              {serverVersion
-                ? `v${serverVersion.trim().replace(/^[vV]+/, '')}`
-                : t(
-                    connectionStatus === 'connected'
-                      ? 'common.connected'
-                      : connectionStatus === 'connecting'
-                        ? 'common.connecting'
-                        : 'common.disconnected'
-                  )}
-            </span>
-          </div>
-          {serverBuildDate && (
-            <span className={styles.buildDate}>
-              {new Date(serverBuildDate).toLocaleDateString(i18n.language)}
-            </span>
-          )}
-        </div>
-      </section>
-
-      {/* Bento stats grid */}
       <section className={styles.statsSection}>
         <h2 className={styles.sectionHeading}>{t('dashboard.system_overview')}</h2>
         <div className={styles.bentoGrid}>

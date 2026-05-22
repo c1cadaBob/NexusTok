@@ -200,15 +200,6 @@
     "routing_strategy": "路由策略",
     "available_models": "可用模型",
     "available_models_desc": "所有供應商的模型總數",
-    "welcome_back": "歡迎回來",
-    "greeting_morning": "早安",
-    "greeting_afternoon": "午安",
-    "greeting_evening": "晚安",
-    "greeting_night": "夜深了",
-    "caring_morning": "新的一天，準備大展身手吧。",
-    "caring_afternoon": "穩步推進中，繼續加油。",
-    "caring_evening": "今天辛苦了，收尾工作做好喔。",
-    "caring_night": "夜深了，別忘了早點休息。",
     "system_overview": "系統概覽"
   },
   "basic_settings": {
