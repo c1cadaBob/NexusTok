@@ -2,6 +2,18 @@ export const isNexusTokEmbedded = import.meta.env.VITE_NEXUSTOK_EMBEDDED === 'tr
 
 export const NEXUSTOK_EMBEDDED_API_BASE = '/api/account-pool/management';
 
+export const isNexusTokEmbeddedFrame = (): boolean => {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    if (window.self !== window.top) return true;
+  } catch {
+    return true;
+  }
+
+  return new URLSearchParams(window.location.search).get('embeddedFrame') === 'true';
+};
+
 export const getNexusTokEmbeddedOrigin = (): string => {
   if (typeof window === 'undefined') return '';
   return window.location.origin;

@@ -16,14 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { Main } from '@/components/layout/components/main'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 
-const ACCOUNT_POOL_MANAGER_URL = '/account-pool/manager/'
+const ACCOUNT_POOL_MANAGER_URL = '/account-pool/manager/?embeddedFrame=true'
 
 export const Route = createFileRoute('/_authenticated/account-pool/')({
   beforeLoad: () => {
@@ -32,24 +31,20 @@ export const Route = createFileRoute('/_authenticated/account-pool/')({
       throw redirect({ to: '/403' })
     }
   },
-  component: AccountPoolRedirect,
+  component: AccountPoolFrame,
 })
 
-function AccountPoolRedirect() {
+function AccountPoolFrame() {
   const { t } = useTranslation()
 
-  useEffect(() => {
-    window.location.assign(ACCOUNT_POOL_MANAGER_URL)
-  }, [])
-
   return (
-    <main className='flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center'>
-      <p className='text-muted-foreground'>
-        {t('Opening account pool management...')}
-      </p>
-      <Button onClick={() => window.location.assign(ACCOUNT_POOL_MANAGER_URL)}>
-        {t('Open Account Pool Management')}
-      </Button>
-    </main>
+    <Main className='bg-background p-0'>
+      <iframe
+        title={t('Account Pool Management')}
+        src={ACCOUNT_POOL_MANAGER_URL}
+        className='min-h-0 w-full flex-1 border-0 bg-background'
+        allow='clipboard-read; clipboard-write'
+      />
+    </Main>
   )
 }

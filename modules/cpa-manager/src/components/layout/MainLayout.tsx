@@ -34,7 +34,11 @@ import {
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
-import { isNexusTokEmbedded, returnToNexusTokConsole } from '@/utils/embedded';
+import {
+  isNexusTokEmbedded,
+  isNexusTokEmbeddedFrame,
+  returnToNexusTokConsole,
+} from '@/utils/embedded';
 import { isSupportedLanguage } from '@/utils/language';
 import type { Theme } from '@/types';
 
@@ -246,6 +250,7 @@ export function MainLayout() {
   const fullBrandName = 'CLI Proxy API Management Center';
   const abbrBrandName = t('title.abbr');
   const isLogsPage = location.pathname.startsWith('/logs');
+  const embeddedFrame = isNexusTokEmbeddedFrame();
   const showSidebarLabels = !sidebarCollapsed || sidebarOpen;
 
   // 将顶部悬浮控制区高度写入 CSS 变量，供移动端粘性元素和浮层避让。
@@ -622,7 +627,7 @@ export function MainLayout() {
               </div>
             )}
           </div>
-          {isNexusTokEmbedded ? (
+          {isNexusTokEmbedded && !embeddedFrame ? (
             <Button
               variant="ghost"
               size="sm"
@@ -631,11 +636,12 @@ export function MainLayout() {
             >
               {headerIcons.home}
             </Button>
-          ) : (
+          ) : null}
+          {!isNexusTokEmbedded ? (
             <Button variant="ghost" size="sm" onClick={logout} title={t('header.logout')}>
               {headerIcons.logout}
             </Button>
-          )}
+          ) : null}
         </div>
       </header>
 
