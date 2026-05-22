@@ -77,6 +77,9 @@ func accountPoolManagerSessionAuth() gin.HandlerFunc {
 				loginPath = "/login"
 			}
 			redirect := loginPath + "?redirect=/account-pool/manager/"
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
 			c.Redirect(http.StatusFound, redirect)
 			c.Abort()
 			return
