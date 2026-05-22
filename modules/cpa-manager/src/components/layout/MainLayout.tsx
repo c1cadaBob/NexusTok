@@ -34,6 +34,7 @@ import {
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
+import { isNexusTokEmbedded, returnToNexusTokConsole } from '@/utils/embedded';
 import { isSupportedLanguage } from '@/utils/language';
 import type { Theme } from '@/types';
 
@@ -154,6 +155,13 @@ const headerIcons = {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <path d="m16 17 5-5-5-5" />
       <path d="M21 12H9" />
+    </svg>
+  ),
+  home: (
+    <svg {...headerIconProps}>
+      <path d="m3 11 9-8 9 8" />
+      <path d="M5 10v10h14V10" />
+      <path d="M9 20v-6h6v6" />
     </svg>
   ),
 };
@@ -614,9 +622,20 @@ export function MainLayout() {
               </div>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={logout} title={t('header.logout')}>
-            {headerIcons.logout}
-          </Button>
+          {isNexusTokEmbedded ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={returnToNexusTokConsole}
+              title={t('header.return_to_nexustok')}
+            >
+              {headerIcons.home}
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={logout} title={t('header.logout')}>
+              {headerIcons.logout}
+            </Button>
+          )}
         </div>
       </header>
 

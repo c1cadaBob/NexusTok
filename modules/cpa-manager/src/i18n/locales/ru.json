@@ -125,6 +125,7 @@
   "header": {
     "check_connection": "Проверить подключение",
     "refresh_all": "Обновить всё",
+    "return_to_nexustok": "Вернуться в консоль NexusTok",
     "logout": "Выйти"
   },
   "connection": {

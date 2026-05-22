@@ -51,3 +51,20 @@ export const redirectToNexusTokLogin = (): void => {
     window.location.href = `${loginPath}?redirect=${encodeURIComponent(currentPath)}`;
   });
 };
+
+const resolveNexusTokConsolePath = async (): Promise<string> => {
+  try {
+    const response = await fetch('/api/status', { credentials: 'include' });
+    const payload = await response.json();
+    return payload?.data?.theme === 'classic' ? '/console' : '/dashboard';
+  } catch {
+    return '/console';
+  }
+};
+
+export const returnToNexusTokConsole = (): void => {
+  if (typeof window === 'undefined') return;
+  void resolveNexusTokConsolePath().then((consolePath) => {
+    window.location.href = consolePath;
+  });
+};

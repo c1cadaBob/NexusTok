@@ -127,6 +127,7 @@
   "header": {
     "check_connection": "检查连接",
     "refresh_all": "刷新全部",
+    "return_to_nexustok": "返回 NexusTok 控制台",
     "logout": "登出"
   },
   "connection": {

@@ -127,6 +127,7 @@
   "header": {
     "check_connection": "Check Connection",
     "refresh_all": "Refresh All",
+    "return_to_nexustok": "Return to NexusTok Console",
     "logout": "Logout"
   },
   "connection": {

@@ -39,7 +39,7 @@ function AccountPoolRedirect() {
   const { t } = useTranslation()
 
   useEffect(() => {
-    window.location.replace(ACCOUNT_POOL_MANAGER_URL)
+    window.location.assign(ACCOUNT_POOL_MANAGER_URL)
   }, [])
 
   return (
