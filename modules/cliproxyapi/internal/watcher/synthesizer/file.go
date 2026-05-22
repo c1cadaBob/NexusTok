@@ -24,6 +24,74 @@ func NewFileSynthesizer() *FileSynthesizer {
 	return &FileSynthesizer{}
 }
 
+func normalizeAccountGroupsFromMetadata(metadata map[string]any) []string {
+	if metadata == nil {
+		return nil
+	}
+	return normalizeAccountGroupValues(
+		metadata["account_groups"],
+		metadata["accountGroups"],
+		metadata["account_group"],
+		metadata["accountGroup"],
+	)
+}
+
+func normalizeAccountGroupValues(values ...any) []string {
+	seen := make(map[string]struct{})
+	groups := make([]string, 0, len(values))
+	add := func(value string) {
+		for _, part := range normalizeAccountGroupString(value) {
+			if _, ok := seen[part]; ok {
+				continue
+			}
+			seen[part] = struct{}{}
+			groups = append(groups, part)
+		}
+	}
+
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			add(v)
+		case []string:
+			for _, item := range v {
+				add(item)
+			}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+	}
+	return groups
+}
+
+func normalizeAccountGroupString(value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		var decoded []string
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+			return normalizeAccountGroupValues(decoded)
+		}
+	}
+	if strings.Contains(trimmed, "\n") {
+		parts := strings.Split(trimmed, "\n")
+		groups := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if group := strings.TrimSpace(part); group != "" {
+				groups = append(groups, group)
+			}
+		}
+		return groups
+	}
+	return []string{strings.Join(strings.Fields(trimmed), " ")}
+}
+
 // Synthesize generates Auth entries from auth files in the auth directory.
 func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, error) {
 	out := make([]*coreauth.Auth, 0, 16)
@@ -158,12 +226,9 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 		}
 	}
 	// 账号分组只作为管理台维度透出，不参与 provider 选择。
-	if rawGroup, ok := metadata["account_group"]; ok {
-		if group, isStr := rawGroup.(string); isStr {
-			if trimmed := strings.TrimSpace(group); trimmed != "" {
-				a.Attributes["account_group"] = trimmed
-			}
-		}
+	if groups := normalizeAccountGroupsFromMetadata(metadata); len(groups) > 0 {
+		a.Attributes["account_groups"] = strings.Join(groups, "\n")
+		a.Attributes["account_group"] = groups[0]
 	}
 	coreauth.ApplyCustomHeadersFromMetadata(a)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
@@ -242,8 +307,9 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		if noteVal, hasNote := primary.Attributes["note"]; hasNote && noteVal != "" {
 			attrs["note"] = noteVal
 		}
-		if groupVal, hasGroup := primary.Attributes["account_group"]; hasGroup && strings.TrimSpace(groupVal) != "" {
-			attrs["account_group"] = strings.TrimSpace(groupVal)
+		if groups := normalizeAccountGroupValues(primary.Attributes["account_groups"], primary.Attributes["account_group"]); len(groups) > 0 {
+			attrs["account_groups"] = strings.Join(groups, "\n")
+			attrs["account_group"] = groups[0]
 		}
 		for k, v := range primary.Attributes {
 			if strings.HasPrefix(k, "header:") && strings.TrimSpace(v) != "" {
@@ -271,8 +337,9 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		if proxy != "" {
 			metadataCopy["proxy_url"] = proxy
 		}
-		if groupVal := strings.TrimSpace(attrs["account_group"]); groupVal != "" {
-			metadataCopy["account_group"] = groupVal
+		if groups := normalizeAccountGroupValues(attrs["account_groups"], attrs["account_group"]); len(groups) > 0 {
+			metadataCopy["account_groups"] = append([]string(nil), groups...)
+			metadataCopy["account_group"] = groups[0]
 		}
 		virtual := &coreauth.Auth{
 			ID:         buildGeminiVirtualID(primary.ID, projectID),

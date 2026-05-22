@@ -352,12 +352,7 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 						fileData["note"] = trimmed
 					}
 				}
-				if gv := gjson.GetBytes(data, "account_group"); gv.Exists() && gv.Type == gjson.String {
-					if trimmed := strings.TrimSpace(gv.String()); trimmed != "" {
-						fileData["account_group"] = trimmed
-						fileData["accountGroup"] = trimmed
-					}
-				}
+				setAccountGroupFields(fileData, authAccountGroupsFromJSON(data))
 			}
 
 			files = append(files, fileData)
@@ -407,10 +402,7 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if projectID := authProjectID(auth); projectID != "" {
 		entry["project_id"] = projectID
 	}
-	if accountGroup := authAccountGroup(auth); accountGroup != "" {
-		entry["account_group"] = accountGroup
-		entry["accountGroup"] = accountGroup
-	}
+	setAccountGroupFields(entry, authAccountGroups(auth))
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
 			entry["account_type"] = accountType
@@ -547,24 +539,149 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	return result
 }
 
-func authAccountGroup(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
+func setAccountGroupFields(entry gin.H, groups []string) {
+	groups = normalizeAccountGroupValues(groups)
+	if len(groups) == 0 {
+		return
 	}
+	entry["account_groups"] = append([]string(nil), groups...)
+	entry["accountGroups"] = append([]string(nil), groups...)
+	entry["account_group"] = groups[0]
+	entry["accountGroup"] = groups[0]
+}
+
+func authAccountGroupsFromJSON(data []byte) []string {
+	return normalizeAccountGroupValues(
+		authAccountGroupsFromGJSON(gjson.GetBytes(data, "account_groups")),
+		authAccountGroupsFromGJSON(gjson.GetBytes(data, "accountGroups")),
+		authAccountGroupsFromGJSON(gjson.GetBytes(data, "account_group")),
+		authAccountGroupsFromGJSON(gjson.GetBytes(data, "accountGroup")),
+	)
+}
+
+func authAccountGroupsFromGJSON(result gjson.Result) []string {
+	if !result.Exists() {
+		return nil
+	}
+	if result.IsArray() {
+		groups := make([]string, 0, len(result.Array()))
+		result.ForEach(func(_, value gjson.Result) bool {
+			if value.Type == gjson.String {
+				groups = append(groups, value.String())
+			}
+			return true
+		})
+		return groups
+	}
+	if result.Type == gjson.String {
+		return []string{result.String()}
+	}
+	return nil
+}
+
+func authAccountGroups(auth *coreauth.Auth) []string {
+	if auth == nil {
+		return nil
+	}
+	values := make([]any, 0, 6)
 	if auth.Attributes != nil {
-		if v := strings.TrimSpace(auth.Attributes["account_group"]); v != "" {
-			return v
-		}
+		values = append(values, auth.Attributes["account_groups"], auth.Attributes["account_group"])
 	}
 	if auth.Metadata != nil {
-		if v, ok := auth.Metadata["account_group"].(string); ok {
-			return strings.TrimSpace(v)
-		}
-		if v, ok := auth.Metadata["accountGroup"].(string); ok {
-			return strings.TrimSpace(v)
+		values = append(values,
+			auth.Metadata["account_groups"],
+			auth.Metadata["accountGroups"],
+			auth.Metadata["account_group"],
+			auth.Metadata["accountGroup"],
+		)
+	}
+	return normalizeAccountGroupValues(values...)
+}
+
+func normalizeAccountGroupValues(values ...any) []string {
+	seen := make(map[string]struct{})
+	groups := make([]string, 0, len(values))
+	add := func(value string) {
+		for _, part := range normalizeAccountGroupString(value) {
+			if _, ok := seen[part]; ok {
+				continue
+			}
+			seen[part] = struct{}{}
+			groups = append(groups, part)
 		}
 	}
-	return ""
+
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			add(v)
+		case []string:
+			for _, item := range v {
+				add(item)
+			}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+	}
+	return groups
+}
+
+func normalizeAccountGroupString(value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		var decoded []string
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+			return normalizeAccountGroupValues(decoded)
+		}
+	}
+	if strings.Contains(trimmed, "\n") {
+		parts := strings.Split(trimmed, "\n")
+		groups := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if group := strings.TrimSpace(part); group != "" {
+				groups = append(groups, group)
+			}
+		}
+		return groups
+	}
+	return []string{strings.Join(strings.Fields(trimmed), " ")}
+}
+
+func applyAuthAccountGroups(auth *coreauth.Auth, groups []string) {
+	if auth == nil {
+		return
+	}
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+
+	groups = normalizeAccountGroupValues(groups)
+	if len(groups) == 0 {
+		delete(auth.Metadata, "account_groups")
+		delete(auth.Metadata, "accountGroups")
+		delete(auth.Metadata, "account_group")
+		delete(auth.Metadata, "accountGroup")
+		delete(auth.Attributes, "account_groups")
+		delete(auth.Attributes, "account_group")
+		return
+	}
+
+	auth.Metadata["account_groups"] = append([]string(nil), groups...)
+	auth.Metadata["account_group"] = groups[0]
+	delete(auth.Metadata, "accountGroups")
+	delete(auth.Metadata, "accountGroup")
+	auth.Attributes["account_groups"] = strings.Join(groups, "\n")
+	auth.Attributes["account_group"] = groups[0]
 }
 
 func authEmail(auth *coreauth.Auth) string {
@@ -1180,7 +1297,7 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "disabled": *req.Disabled})
 }
 
-// PatchAuthFileFields updates editable fields (prefix, proxy_url, headers, priority, note, account_group) of an auth file.
+// PatchAuthFileFields updates editable fields (prefix, proxy_url, headers, priority, note, account_groups) of an auth file.
 func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -1194,8 +1311,10 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		Headers  map[string]string `json:"headers"`
 		Priority *int              `json:"priority"`
 		Note     *string           `json:"note"`
-		// account_group 只用于管理台归类，不改变认证文件的实际请求行为。
-		AccountGroup *string `json:"account_group"`
+		// account_groups 只用于管理台归类，不改变认证文件的实际请求行为。
+		AccountGroup       *string   `json:"account_group"`
+		AccountGroups      *[]string `json:"account_groups"`
+		AccountGroupsCamel *[]string `json:"accountGroups"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -1332,7 +1451,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			changed = true
 		}
 	}
-	if req.Priority != nil || req.Note != nil || req.AccountGroup != nil {
+	if req.Priority != nil || req.Note != nil || req.AccountGroup != nil || req.AccountGroups != nil || req.AccountGroupsCamel != nil {
 		if targetAuth.Metadata == nil {
 			targetAuth.Metadata = make(map[string]any)
 		}
@@ -1360,15 +1479,13 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			}
 		}
 		if req.AccountGroup != nil {
-			trimmedGroup := strings.TrimSpace(*req.AccountGroup)
-			if trimmedGroup == "" {
-				delete(targetAuth.Metadata, "account_group")
-				delete(targetAuth.Metadata, "accountGroup")
-				delete(targetAuth.Attributes, "account_group")
-			} else {
-				targetAuth.Metadata["account_group"] = trimmedGroup
-				targetAuth.Attributes["account_group"] = trimmedGroup
-			}
+			applyAuthAccountGroups(targetAuth, normalizeAccountGroupValues(*req.AccountGroup))
+		}
+		if req.AccountGroupsCamel != nil {
+			applyAuthAccountGroups(targetAuth, normalizeAccountGroupValues(*req.AccountGroupsCamel))
+		}
+		if req.AccountGroups != nil {
+			applyAuthAccountGroups(targetAuth, normalizeAccountGroupValues(*req.AccountGroups))
 		}
 		changed = true
 	}

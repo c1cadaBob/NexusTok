@@ -18,6 +18,8 @@ export type AuthFileFieldsPatch = {
   priority?: number;
   note?: string;
   account_group?: string;
+  account_groups?: string[];
+  accountGroups?: string[];
 };
 type AuthFileBatchFailure = { name: string; error: string };
 type AuthFileBatchUploadResponse = {

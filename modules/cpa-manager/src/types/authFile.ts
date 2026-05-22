@@ -39,6 +39,8 @@ export interface AuthFileItem {
   projectId?: string;
   account_group?: string;
   accountGroup?: string;
+  account_groups?: string[];
+  accountGroups?: string[];
   group?: string;
   gemini_virtual_project?: string;
   geminiVirtualProject?: string;

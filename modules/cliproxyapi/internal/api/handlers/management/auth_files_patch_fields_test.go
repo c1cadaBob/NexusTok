@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -211,5 +212,90 @@ func TestPatchAuthFileFields_AccountGroupIsPersistedAndListed(t *testing.T) {
 	}
 	if got, _ := entry["accountGroup"].(string); got != "production" {
 		t.Fatalf("entry.accountGroup = %q, want %q", got, "production")
+	}
+	if got, _ := entry["account_groups"].([]string); !reflect.DeepEqual(got, []string{"production"}) {
+		t.Fatalf("entry.account_groups = %#v, want %#v", got, []string{"production"})
+	}
+}
+
+func TestPatchAuthFileFields_AccountGroupsSupportMultipleGroups(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	record := &coreauth.Auth{
+		ID:         "multi-grouped.json",
+		FileName:   "multi-grouped.json",
+		Provider:   "codex",
+		Attributes: map[string]string{"path": "/tmp/multi-grouped.json"},
+		Metadata:   map[string]any{"type": "codex"},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+
+	body := `{"name":"multi-grouped.json","account_groups":["production","fallback","production","  testing  "]}`
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPatch, "/v0/management/auth-files/fields", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx.Request = req
+	h.PatchAuthFileFields(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	updated, ok := manager.GetByID("multi-grouped.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected auth record to exist after patch")
+	}
+
+	wantGroups := []string{"production", "fallback", "testing"}
+	if got := updated.Attributes["account_group"]; got != "production" {
+		t.Fatalf("attrs account_group = %q, want %q", got, "production")
+	}
+	if got := strings.Split(updated.Attributes["account_groups"], "\n"); !reflect.DeepEqual(got, wantGroups) {
+		t.Fatalf("attrs account_groups = %#v, want %#v", got, wantGroups)
+	}
+	if got, _ := updated.Metadata["account_groups"].([]string); !reflect.DeepEqual(got, wantGroups) {
+		t.Fatalf("metadata.account_groups = %#v, want %#v", got, wantGroups)
+	}
+	if got, _ := updated.Metadata["account_group"].(string); got != "production" {
+		t.Fatalf("metadata.account_group = %q, want %q", got, "production")
+	}
+
+	entry := h.buildAuthFileEntry(updated)
+	if got, _ := entry["account_groups"].([]string); !reflect.DeepEqual(got, wantGroups) {
+		t.Fatalf("entry.account_groups = %#v, want %#v", got, wantGroups)
+	}
+	if got, _ := entry["account_group"].(string); got != "production" {
+		t.Fatalf("entry.account_group = %q, want %q", got, "production")
+	}
+
+	clearBody := `{"name":"multi-grouped.json","account_groups":[]}`
+	clearRec := httptest.NewRecorder()
+	clearCtx, _ := gin.CreateTestContext(clearRec)
+	clearReq := httptest.NewRequest(http.MethodPatch, "/v0/management/auth-files/fields", strings.NewReader(clearBody))
+	clearReq.Header.Set("Content-Type", "application/json")
+	clearCtx.Request = clearReq
+	h.PatchAuthFileFields(clearCtx)
+
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("expected clear status %d, got %d with body %s", http.StatusOK, clearRec.Code, clearRec.Body.String())
+	}
+
+	cleared, ok := manager.GetByID("multi-grouped.json")
+	if !ok || cleared == nil {
+		t.Fatalf("expected auth record to exist after clearing groups")
+	}
+	if _, ok := cleared.Metadata["account_groups"]; ok {
+		t.Fatalf("expected metadata.account_groups to be cleared")
+	}
+	if _, ok := cleared.Attributes["account_groups"]; ok {
+		t.Fatalf("expected attrs account_groups to be cleared")
 	}
 }

@@ -34,14 +34,47 @@ type AccountGroupView = {
   providers: Array<{ provider: string; count: number }>;
 };
 
+type AccountGroupUpdate = {
+  file: AuthFileItem;
+  groups: string[];
+};
+
 const readText = (value: unknown): string => {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return '';
 };
 
-const resolveAccountGroup = (file: AuthFileItem): string =>
-  readText(file.account_group) || readText(file.accountGroup) || readText(file.group);
+const normalizeGroupInput = (value: string): string => value.trim().replace(/\s+/g, ' ');
+
+const normalizeGroupList = (groups: string[]): string[] => {
+  const seen = new Set<string>();
+  return groups.reduce<string[]>((result, group) => {
+    const normalized = normalizeGroupInput(group);
+    if (!normalized || seen.has(normalized)) return result;
+    seen.add(normalized);
+    result.push(normalized);
+    return result;
+  }, []);
+};
+
+const readStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => readText(item))
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const resolveAccountGroups = (file: AuthFileItem): string[] =>
+  normalizeGroupList([
+    ...readStringArray(file.account_groups),
+    ...readStringArray(file.accountGroups),
+    readText(file.account_group),
+    readText(file.accountGroup),
+    readText(file.group),
+  ]);
 
 const resolveProvider = (file: AuthFileItem): string => {
   const provider = readText(file.provider) || readText(file.type);
@@ -71,14 +104,6 @@ const matchesStatusFilter = (file: AuthFileItem, filter: AccountStatusFilter): b
 const sortByName = (left: AuthFileItem, right: AuthFileItem) =>
   left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
 
-const normalizeGroupInput = (value: string): string => value.trim().replace(/\s+/g, ' ');
-
-const buildGroupOptionValue = (groupName: string): string =>
-  groupName ? groupName : UNGROUPED_VALUE;
-
-const resolveGroupPatchValue = (value: string): string =>
-  value === UNGROUPED_VALUE ? '' : value.trim();
-
 export function AccountGroupsPage() {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -98,6 +123,8 @@ export function AccountGroupsPage() {
   const [createSelected, setCreateSelected] = useState<Set<string>>(new Set());
   const [renameTarget, setRenameTarget] = useState<AccountGroupView | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
+  const [editTarget, setEditTarget] = useState<AuthFileItem | null>(null);
+  const [editSelected, setEditSelected] = useState<Set<string>>(new Set());
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -154,7 +181,7 @@ export function AccountGroupsPage() {
         file.name,
         resolveAccountLabel(file),
         resolveProjectLabel(file),
-        resolveAccountGroup(file),
+        resolveAccountGroups(file).join(' '),
         readText(file.note),
         readText(file.status),
         readText(file.statusMessage),
@@ -168,14 +195,16 @@ export function AccountGroupsPage() {
   const groups = useMemo<AccountGroupView[]>(() => {
     const grouped = new Map<string, AuthFileItem[]>();
     filteredFiles.forEach((file) => {
-      const groupName = resolveAccountGroup(file);
-      const key = buildGroupOptionValue(groupName);
-      const bucket = grouped.get(key);
-      if (bucket) {
-        bucket.push(file);
-        return;
-      }
-      grouped.set(key, [file]);
+      const accountGroups = resolveAccountGroups(file);
+      const keys = accountGroups.length > 0 ? accountGroups : [UNGROUPED_VALUE];
+      keys.forEach((key) => {
+        const bucket = grouped.get(key);
+        if (bucket) {
+          bucket.push(file);
+          return;
+        }
+        grouped.set(key, [file]);
+      });
     });
 
     return Array.from(grouped.entries())
@@ -221,18 +250,10 @@ export function AccountGroupsPage() {
 
   const groupNames = useMemo(
     () =>
-      Array.from(new Set(files.map(resolveAccountGroup).filter(Boolean))).sort((left, right) =>
+      Array.from(new Set(files.flatMap(resolveAccountGroups).filter(Boolean))).sort((left, right) =>
         left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
       ),
     [files]
-  );
-
-  const groupSelectOptions = useMemo<SelectOption[]>(
-    () => [
-      { value: UNGROUPED_VALUE, label: t('account_groups.ungrouped') },
-      ...groupNames.map((groupName) => ({ value: groupName, label: groupName })),
-    ],
-    [groupNames, t]
   );
 
   const totalActive = files.filter((file) => file.disabled !== true && !isUnavailableAccount(file)).length;
@@ -255,15 +276,25 @@ export function AccountGroupsPage() {
     });
   }, []);
 
-  const updateAccountGroups = useCallback(
-    async (targetFiles: AuthFileItem[], groupName: string) => {
-      const names = Array.from(new Set(targetFiles.map((file) => file.name).filter(Boolean)));
+  const saveAccountGroupUpdates = useCallback(
+    async (updates: AccountGroupUpdate[]) => {
+      const normalizedUpdates = updates
+        .map((update) => ({
+          file: update.file,
+          groups: normalizeGroupList(update.groups),
+        }))
+        .filter((update) => update.file.name);
+      const names = Array.from(new Set(normalizedUpdates.map((update) => update.file.name)));
       if (names.length === 0) return;
 
       setActionBusy(true);
       markUpdating(names, true);
       try {
-        await Promise.all(names.map((name) => authFilesApi.patchFields(name, { account_group: groupName })));
+        await Promise.all(
+          normalizedUpdates.map((update) =>
+            authFilesApi.patchFields(update.file.name, { account_groups: update.groups })
+          )
+        );
         await loadFiles();
         showNotification(t('account_groups.save_success'), 'success');
       } catch (err) {
@@ -277,13 +308,10 @@ export function AccountGroupsPage() {
     [loadFiles, markUpdating, showNotification, t]
   );
 
-  const handleMoveAccount = useCallback(
-    async (file: AuthFileItem, value: string) => {
-      const nextGroup = resolveGroupPatchValue(value);
-      if (nextGroup === resolveAccountGroup(file)) return;
-      await updateAccountGroups([file], nextGroup);
-    },
-    [updateAccountGroups]
+  const getFilesInGroup = useCallback(
+    (groupName: string): AuthFileItem[] =>
+      files.filter((file) => resolveAccountGroups(file).includes(groupName)),
+    [files]
   );
 
   const toggleCreateSelection = useCallback((name: string) => {
@@ -318,10 +346,15 @@ export function AccountGroupsPage() {
       }
 
       const selectedFiles = files.filter((file) => createSelected.has(file.name));
-      await updateAccountGroups(selectedFiles, groupName);
+      await saveAccountGroupUpdates(
+        selectedFiles.map((file) => ({
+          file,
+          groups: [...resolveAccountGroups(file), groupName],
+        }))
+      );
       setCreateOpen(false);
     },
-    [createGroupName, createSelected, files, showNotification, t, updateAccountGroups]
+    [createGroupName, createSelected, files, saveAccountGroupUpdates, showNotification, t]
   );
 
   const openRenameModal = useCallback((group: AccountGroupView) => {
@@ -343,10 +376,18 @@ export function AccountGroupsPage() {
         return;
       }
 
-      await updateAccountGroups(renameTarget.files, nextGroup);
+      const targetFiles = getFilesInGroup(renameTarget.key);
+      await saveAccountGroupUpdates(
+        targetFiles.map((file) => ({
+          file,
+          groups: resolveAccountGroups(file).map((groupName) =>
+            groupName === renameTarget.key ? nextGroup : groupName
+          ),
+        }))
+      );
       setRenameTarget(null);
     },
-    [renameGroupName, renameTarget, showNotification, t, updateAccountGroups]
+    [getFilesInGroup, renameGroupName, renameTarget, saveAccountGroupUpdates, showNotification, t]
   );
 
   const clearGroup = useCallback(
@@ -358,11 +399,44 @@ export function AccountGroupsPage() {
         cancelText: t('common.cancel'),
         variant: 'danger',
         onConfirm: async () => {
-          await updateAccountGroups(group.files, '');
+          const targetFiles = getFilesInGroup(group.key);
+          await saveAccountGroupUpdates(
+            targetFiles.map((file) => ({
+              file,
+              groups: resolveAccountGroups(file).filter((groupName) => groupName !== group.key),
+            }))
+          );
         },
       });
     },
-    [showConfirmation, t, updateAccountGroups]
+    [getFilesInGroup, saveAccountGroupUpdates, showConfirmation, t]
+  );
+
+  const openEditGroupsModal = useCallback((file: AuthFileItem) => {
+    setEditTarget(file);
+    setEditSelected(new Set(resolveAccountGroups(file)));
+  }, []);
+
+  const toggleEditSelection = useCallback((groupName: string) => {
+    setEditSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  }, []);
+
+  const submitEditGroups = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!editTarget) return;
+      await saveAccountGroupUpdates([{ file: editTarget, groups: Array.from(editSelected) }]);
+      setEditTarget(null);
+    },
+    [editSelected, editTarget, saveAccountGroupUpdates]
   );
 
   const renderProviderBadge = (provider: string, count?: number) => {
@@ -515,7 +589,7 @@ export function AccountGroupsPage() {
                       : isUnavailableAccount(file)
                         ? styles.statusUnavailable
                         : styles.statusActive;
-                  const currentGroupValue = buildGroupOptionValue(resolveAccountGroup(file));
+                  const accountGroups = resolveAccountGroups(file);
 
                   return (
                     <div className={styles.accountRow} key={file.name}>
@@ -528,14 +602,26 @@ export function AccountGroupsPage() {
                       </div>
                       <div className={styles.accountProvider}>{renderProviderBadge(provider)}</div>
                       <span className={`${styles.statusBadge} ${statusClass}`}>{statusLabel}</span>
-                      <div className={styles.accountMove}>
-                        <Select
-                          value={currentGroupValue}
-                          options={groupSelectOptions}
-                          onChange={(value) => void handleMoveAccount(file, value)}
-                          ariaLabel={t('account_groups.move_account')}
+                      <div className={styles.accountGroupsCell}>
+                        <div className={styles.accountGroupChips}>
+                          {accountGroups.length > 0 ? (
+                            accountGroups.map((groupName) => (
+                              <span className={styles.groupChip} key={groupName}>
+                                {groupName}
+                              </span>
+                            ))
+                          ) : (
+                            <span className={styles.ungroupedChip}>{t('account_groups.ungrouped')}</span>
+                          )}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openEditGroupsModal(file)}
                           disabled={updatingNames.has(file.name)}
-                        />
+                        >
+                          {t('account_groups.edit_membership')}
+                        </Button>
                       </div>
                     </div>
                   );
@@ -596,6 +682,57 @@ export function AccountGroupsPage() {
       </Modal>
 
       <Modal
+        open={Boolean(editTarget)}
+        title={t('account_groups.edit_membership')}
+        onClose={() => setEditTarget(null)}
+        width={560}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditTarget(null)} disabled={actionBusy}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" form="account-group-edit-form" loading={actionBusy}>
+              {t('common.save')}
+            </Button>
+          </>
+        }
+      >
+        <form id="account-group-edit-form" className={styles.modalForm} onSubmit={submitEditGroups}>
+          {editTarget && (
+            <div className={styles.editAccountSummary}>
+              <strong>{editTarget.name}</strong>
+              <span>{resolveAccountLabel(editTarget)}</span>
+            </div>
+          )}
+          {groupNames.length === 0 ? (
+            <p className={styles.renameHint}>{t('account_groups.no_groups_hint')}</p>
+          ) : (
+            <>
+              <div className={styles.modalAccountsHeader}>
+                <span>{t('account_groups.group_memberships')}</span>
+                <span>{t('account_groups.selected_count', { count: editSelected.size })}</span>
+              </div>
+              <div className={styles.modalAccountList}>
+                {groupNames.map((groupName) => (
+                  <label className={styles.modalAccountItem} key={groupName}>
+                    <input
+                      type="checkbox"
+                      checked={editSelected.has(groupName)}
+                      onChange={() => toggleEditSelection(groupName)}
+                    />
+                    <span>
+                      <strong>{groupName}</strong>
+                      <small>{t('account_groups.group_membership_hint')}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </form>
+      </Modal>
+
+      <Modal
         open={Boolean(renameTarget)}
         title={t('account_groups.rename_group')}
         onClose={() => setRenameTarget(null)}
@@ -621,7 +758,7 @@ export function AccountGroupsPage() {
           />
           {renameTarget && (
             <p className={styles.renameHint}>
-              {t('account_groups.rename_hint', { count: renameTarget.files.length })}
+              {t('account_groups.rename_hint', { count: getFilesInGroup(renameTarget.key).length })}
             </p>
           )}
         </form>
