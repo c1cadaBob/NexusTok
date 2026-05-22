@@ -33,6 +33,8 @@ services:
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
       - NODE_NAME=nexustok-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
+      - SESSION_SECRET_FILE=/data/session_secret
+      - SESSION_MAX_AGE=7776000 # 默认 90 天；多节点部署仍建议显式设置 SESSION_SECRET
       - ACCOUNT_POOL_CLI_PROXY_URL=http://cliproxyapi:8317
       - ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）

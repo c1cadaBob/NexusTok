@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -46,16 +47,19 @@ func InitEnv() {
 		os.Exit(0)
 	}
 
-	if os.Getenv("SESSION_SECRET") != "" {
-		ss := os.Getenv("SESSION_SECRET")
-		if ss == "random_string" {
+	sessionSecret, err := resolveSessionSecret()
+	if err != nil {
+		if errors.Is(err, errDefaultSessionSecret) {
 			log.Println("WARNING: SESSION_SECRET is set to the default value 'random_string', please change it to a random string.")
 			log.Println("警告：SESSION_SECRET被设置为默认值'random_string'，请修改为随机字符串。")
 			log.Fatal("Please set SESSION_SECRET to a random string.")
-		} else {
-			SessionSecret = ss
 		}
+		log.Printf("WARNING: failed to load persistent session secret, using in-memory fallback: %v", err)
+		log.Printf("警告：无法加载持久化会话密钥，将使用进程内临时密钥：%v", err)
+	} else {
+		SessionSecret = sessionSecret
 	}
+	SessionMaxAge = resolveSessionMaxAge(SessionMaxAge)
 	if os.Getenv("CRYPTO_SECRET") != "" {
 		CryptoSecret = os.Getenv("CRYPTO_SECRET")
 	} else {

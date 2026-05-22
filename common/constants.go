@@ -74,6 +74,7 @@ var DefaultCollapseSidebar = false // default value of collapse sidebar
 
 var SessionSecret = uuid.New().String()
 var CryptoSecret = uuid.New().String()
+var SessionMaxAge = 90 * 24 * 60 * 60 // 默认保持 90 天登录态
 
 var OptionMap map[string]string
 var OptionMapRWMutex sync.RWMutex

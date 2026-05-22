@@ -81,6 +81,8 @@ services:
       DEBUG: "false"
       BATCH_UPDATE_ENABLED: "true"
       NODE_NAME: nexustok-hot-node-1
+      SESSION_SECRET_FILE: /data/session_secret
+      SESSION_MAX_AGE: "7776000"
       ACCOUNT_POOL_CLI_PROXY_URL: http://cliproxyapi:8317
       ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
     depends_on:
