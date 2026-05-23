@@ -6,6 +6,7 @@ CONFIG_PATH=${ACCOUNT_POOL_CLI_PROXY_CONFIG:-${DATA_DIR}/config.yaml}
 AUTH_DIR=${ACCOUNT_POOL_CLI_PROXY_AUTH_DIR:-${DATA_DIR}/auths}
 LOG_DIR=${ACCOUNT_POOL_CLI_PROXY_LOG_DIR:-${DATA_DIR}/logs}
 PORT=${ACCOUNT_POOL_CLI_PROXY_PORT:-8317}
+RELAY_KEY=${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
 
 mkdir -p "${DATA_DIR}" "${AUTH_DIR}" "${LOG_DIR}" "$(dirname "${CONFIG_PATH}")"
 
@@ -32,7 +33,30 @@ routing:
   strategy: "round-robin"
   session-affinity: false
 ws-auth: true
+api-keys:
+  - "${RELAY_KEY}"
 EOF
+fi
+
+if ! grep -Fq "${RELAY_KEY}" "${CONFIG_PATH}"; then
+  if grep -Eq '^[[:space:]]*api-keys:[[:space:]]*$' "${CONFIG_PATH}"; then
+    tmp_config="${CONFIG_PATH}.tmp"
+    awk -v relay_key="${RELAY_KEY}" '
+      {
+        print
+        if (!inserted && $0 ~ /^[[:space:]]*api-keys:[[:space:]]*$/) {
+          print "  - \"" relay_key "\""
+          inserted = 1
+        }
+      }
+    ' "${CONFIG_PATH}" >"${tmp_config}"
+    mv "${tmp_config}" "${CONFIG_PATH}"
+  else
+    cat >>"${CONFIG_PATH}" <<EOF
+api-keys:
+  - "${RELAY_KEY}"
+EOF
+  fi
 fi
 
 export MANAGEMENT_PASSWORD="${MANAGEMENT_PASSWORD:-nexustok-account-pool-local}"

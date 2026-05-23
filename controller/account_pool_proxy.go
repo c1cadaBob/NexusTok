@@ -5,8 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
+
+	"github.com/c1cada/NexusTok/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,10 +27,7 @@ var accountPoolHopByHopHeaders = map[string]struct{}{
 
 // AccountPoolManagementProxy 将 NexusTok 管理员态请求转发到内部 CLIProxyAPI 管理接口。
 func AccountPoolManagementProxy(c *gin.Context) {
-	targetBase := strings.TrimRight(strings.TrimSpace(os.Getenv("ACCOUNT_POOL_CLI_PROXY_URL")), "/")
-	if targetBase == "" {
-		targetBase = "http://127.0.0.1:8317"
-	}
+	targetBase := service.AccountPoolCLIProxyURL()
 
 	targetURL, err := buildAccountPoolProxyURL(targetBase, c.Param("path"), c.Request.URL.RawQuery)
 	if err != nil {
@@ -53,7 +51,7 @@ func AccountPoolManagementProxy(c *gin.Context) {
 	removeAccountPoolHopByHopHeaders(proxyReq.Header)
 	proxyReq.Header.Del("Authorization")
 	proxyReq.Header.Del("Proxy-Authorization")
-	proxyReq.Header.Set("Authorization", "Bearer "+accountPoolManagementKey())
+	proxyReq.Header.Set("Authorization", "Bearer "+service.AccountPoolCLIProxyManagementKey())
 	proxyReq.Host = targetURL.Host
 
 	resp, err := accountPoolProxyClient.Do(proxyReq)
@@ -92,17 +90,6 @@ func buildAccountPoolProxyURL(base string, rawPath string, rawQuery string) (*ur
 	parsedBase.Path = strings.TrimRight(parsedBase.Path, "/") + "/v0/management" + proxyPath
 	parsedBase.RawQuery = rawQuery
 	return parsedBase, nil
-}
-
-func accountPoolManagementKey() string {
-	key := strings.TrimSpace(os.Getenv("ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY"))
-	if key == "" {
-		key = strings.TrimSpace(os.Getenv("ACCOUNT_POOL_MANAGEMENT_KEY"))
-	}
-	if key == "" {
-		key = "nexustok-account-pool-local"
-	}
-	return key
 }
 
 func copyAccountPoolHeaders(dst http.Header, src http.Header) {

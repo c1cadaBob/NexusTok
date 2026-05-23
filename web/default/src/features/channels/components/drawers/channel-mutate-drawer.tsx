@@ -429,6 +429,8 @@ export function ChannelMutateDrawer({
   // Helper computed values
   const isBatchMode =
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
+  const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
+  const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
 
   // Get all models list
   const allModelsList = useMemo(
@@ -458,7 +460,9 @@ export function ChannelMutateDrawer({
     () =>
       accountPoolGroupsData?.data?.map((group) => ({
         value: String(group.id),
-        label: `${group.name} · ${group.platform}/${group.auth_type}`,
+        label: `${group.name} · ${
+          group.source === 'cliproxyapi' ? 'CPAMC' : group.platform
+        }/${group.auth_type}`,
       })) ?? [],
     [accountPoolGroupsData]
   )
@@ -490,11 +494,11 @@ export function ChannelMutateDrawer({
     switch (credentialMode) {
       case 'global_account_pool':
         return t(
-          'Select a channel by model and group, then rotate official accounts from a global account group.'
+          'Select an account pool group; upstream tokens are provided by accounts in that group.'
         )
       case 'account_pool':
         return t(
-          'Select a channel first, then rotate concrete accounts inside its account pool.'
+          'Legacy channel account pool mode is kept for existing channels.'
         )
       case 'multi_key':
         return t('Rotate keys stored on this channel using the multi-key list.')
@@ -662,7 +666,7 @@ export function ChannelMutateDrawer({
     if (isEditing) return // Don't auto-set defaults when editing
 
     // Type 45 (VolcEngine) - set default base_url
-    if (currentType === 45) {
+    if (currentType === 45 && !isGlobalAccountPoolMode) {
       const currentBaseUrlValue = form.getValues('base_url')
       if (!currentBaseUrlValue || currentBaseUrlValue === '') {
         form.setValue('base_url', 'https://ark.cn-beijing.volces.com')
@@ -676,11 +680,17 @@ export function ChannelMutateDrawer({
         form.setValue('other', 'v2.1')
       }
     }
-  }, [currentType, isEditing, form])
+  }, [currentType, isEditing, form, isGlobalAccountPoolMode])
 
   // Validate base_url - warn if it ends with /v1
   useEffect(() => {
-    if (!currentBaseUrl || !currentBaseUrl.endsWith('/v1')) return
+    if (
+      isGlobalAccountPoolMode ||
+      !currentBaseUrl ||
+      !currentBaseUrl.endsWith('/v1')
+    ) {
+      return
+    }
 
     // Show warning toast
     const timer = setTimeout(() => {
@@ -694,7 +704,7 @@ export function ChannelMutateDrawer({
 
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBaseUrl])
+  }, [currentBaseUrl, isGlobalAccountPoolMode])
 
   // Handle key deduplication
   const handleDeduplicateKeys = () => {
@@ -794,6 +804,11 @@ export function ChannelMutateDrawer({
 
   // Handle fetching models from upstream
   const handleFetchModels = useCallback(async () => {
+    if (isGlobalAccountPoolMode) {
+      toast.info(t('Account pool mode does not fetch models from channel key.'))
+      return
+    }
+
     const type = form.getValues('type')
 
     if (!MODEL_FETCHABLE_TYPES.has(type)) {
@@ -837,7 +852,7 @@ export function ChannelMutateDrawer({
     } finally {
       setIsFetchingModels(false)
     }
-  }, [isEditing, currentRow, form, t, updateModels])
+  }, [isEditing, currentRow, form, t, updateModels, isGlobalAccountPoolMode])
 
   // Handle adding custom models
   const handleAddCustomModels = useCallback(() => {
@@ -1275,7 +1290,7 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* Azure (type 3) */}
-                {currentType === 3 && (
+                {currentType === 3 && !isGlobalAccountPoolMode && (
                   <>
                     <FormField
                       control={form.control}
@@ -1342,7 +1357,7 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* Custom (type 8) */}
-                {currentType === 8 && (
+                {currentType === 8 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
                     name='base_url'
@@ -1491,7 +1506,7 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* FastGPT (type 22) */}
-                {currentType === 22 && (
+                {currentType === 22 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
                     name='base_url'
@@ -1518,7 +1533,7 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* SunoAPI (type 36) */}
-                {currentType === 36 && (
+                {currentType === 36 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
                     name='base_url'
@@ -1729,92 +1744,97 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* VolcEngine (type 45) */}
-                {currentType === 45 && !doubaoApiEditUnlocked && (
-                  <FormField
-                    control={form.control}
-                    name='base_url'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel
-                          className='cursor-pointer select-none'
-                          onClick={handleApiConfigSecretClick}
-                        >
-                          {t('API Base URL *')}
-                        </FormLabel>
-                        <Select
-                          items={[
-                            {
-                              value: 'https://ark.cn-beijing.volces.com',
-                              label: t('https://ark.cn-beijing.volces.com'),
-                            },
-                            {
-                              value: 'https://ark.ap-southeast.bytepluses.com',
-                              label: t(
-                                'https://ark.ap-southeast.bytepluses.com'
-                              ),
-                            },
-                            {
-                              value: 'doubao-coding-plan',
-                              label: t('Doubao Coding Plan'),
-                            },
-                          ]}
-                          onValueChange={field.onChange}
-                          value={
-                            field.value || 'https://ark.cn-beijing.volces.com'
-                          }
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              <SelectItem value='https://ark.cn-beijing.volces.com'>
-                                {t('https://ark.cn-beijing.volces.com')}
-                              </SelectItem>
-                              <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
-                                {t('https://ark.ap-southeast.bytepluses.com')}
-                              </SelectItem>
-                              <SelectItem value='doubao-coding-plan'>
-                                {t('Doubao Coding Plan')}
-                              </SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          {t('Select the API endpoint region')}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
+                {currentType === 45 &&
+                  !doubaoApiEditUnlocked &&
+                  !isGlobalAccountPoolMode && (
+                    <FormField
+                      control={form.control}
+                      name='base_url'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel
+                            className='cursor-pointer select-none'
+                            onClick={handleApiConfigSecretClick}
+                          >
+                            {t('API Base URL *')}
+                          </FormLabel>
+                          <Select
+                            items={[
+                              {
+                                value: 'https://ark.cn-beijing.volces.com',
+                                label: t('https://ark.cn-beijing.volces.com'),
+                              },
+                              {
+                                value:
+                                  'https://ark.ap-southeast.bytepluses.com',
+                                label: t(
+                                  'https://ark.ap-southeast.bytepluses.com'
+                                ),
+                              },
+                              {
+                                value: 'doubao-coding-plan',
+                                label: t('Doubao Coding Plan'),
+                              },
+                            ]}
+                            onValueChange={field.onChange}
+                            value={
+                              field.value || 'https://ark.cn-beijing.volces.com'
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                <SelectItem value='https://ark.cn-beijing.volces.com'>
+                                  {t('https://ark.cn-beijing.volces.com')}
+                                </SelectItem>
+                                <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
+                                  {t('https://ark.ap-southeast.bytepluses.com')}
+                                </SelectItem>
+                                <SelectItem value='doubao-coding-plan'>
+                                  {t('Doubao Coding Plan')}
+                                </SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {t('Select the API endpoint region')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                 {/* VolcEngine (type 45) - Custom API URL (unlocked) */}
-                {currentType === 45 && doubaoApiEditUnlocked && (
-                  <FormField
-                    control={form.control}
-                    name='base_url'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('API Base URL *')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t(
-                              'e.g., https://ark.cn-beijing.volces.com'
-                            )}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t('Enter custom API endpoint URL')}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
+                {currentType === 45 &&
+                  doubaoApiEditUnlocked &&
+                  !isGlobalAccountPoolMode && (
+                    <FormField
+                      control={form.control}
+                      name='base_url'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('API Base URL *')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={t(
+                                'e.g., https://ark.cn-beijing.volces.com'
+                              )}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t('Enter custom API endpoint URL')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                 {/* Coze (type 49) */}
                 {currentType === 49 && (
@@ -1840,29 +1860,30 @@ export function ChannelMutateDrawer({
                 )}
 
                 {/* General base_url for other types */}
-                {![3, 8, 22, 36, 45].includes(currentType) && (
-                  <FormField
-                    control={form.control}
-                    name='base_url'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Base URL')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t(
-                            'Custom API base URL. For official channels, NexusTok has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
+                {![3, 8, 22, 36, 45].includes(currentType) &&
+                  !isGlobalAccountPoolMode && (
+                    <FormField
+                      control={form.control}
+                      name='base_url'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Base URL')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Custom API base URL. For official channels, NexusTok has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                 <div className='border-border/60 border-t pt-4'>
                   <SubHeading
@@ -1887,13 +1908,17 @@ export function ChannelMutateDrawer({
                             label: t('Multi-Key Rotation'),
                           },
                           {
-                            value: 'account_pool',
+                            value: 'global_account_pool',
                             label: t('Account Pool'),
                           },
-                          {
-                            value: 'global_account_pool',
-                            label: t('Global Account Pool'),
-                          },
+                          ...(isLegacyChannelAccountPoolMode
+                            ? [
+                                {
+                                  value: 'account_pool',
+                                  label: t('Legacy Channel Account Pool'),
+                                },
+                              ]
+                            : []),
                         ]}
                         onValueChange={(value) => {
                           field.onChange(value)
@@ -1904,6 +1929,11 @@ export function ChannelMutateDrawer({
                             value === 'global_account_pool'
                           ) {
                             form.setValue('multi_key_mode', 'single')
+                            if (value === 'global_account_pool') {
+                              form.setValue('account_pool_fallback', false)
+                              form.setValue('base_url', '')
+                              form.setValue('key', '')
+                            }
                           } else if (
                             form.getValues('multi_key_mode') ===
                             'multi_to_single'
@@ -1926,12 +1956,14 @@ export function ChannelMutateDrawer({
                             <SelectItem value='multi_key'>
                               {t('Multi-Key Rotation')}
                             </SelectItem>
-                            <SelectItem value='account_pool'>
+                            <SelectItem value='global_account_pool'>
                               {t('Account Pool')}
                             </SelectItem>
-                            <SelectItem value='global_account_pool'>
-                              {t('Global Account Pool')}
-                            </SelectItem>
+                            {isLegacyChannelAccountPoolMode && (
+                              <SelectItem value='account_pool'>
+                                {t('Legacy Channel Account Pool')}
+                              </SelectItem>
+                            )}
                           </SelectGroup>
                         </SelectContent>
                       </Select>
@@ -1989,7 +2021,7 @@ export function ChannelMutateDrawer({
                     name='account_pool_group_id'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Global Account Group')}</FormLabel>
+                        <FormLabel>{t('Account Pool Group')}</FormLabel>
                         <Select
                           items={accountPoolGroupOptions}
                           onValueChange={(value) =>
@@ -2027,8 +2059,7 @@ export function ChannelMutateDrawer({
                     )}
                   />
                 )}
-                {(credentialMode === 'account_pool' ||
-                  credentialMode === 'global_account_pool') && (
+                {credentialMode === 'account_pool' && (
                   <FormField
                     control={form.control}
                     name='account_pool_fallback'
@@ -2096,156 +2127,147 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                <FormField
-                  control={form.control}
-                  name='key'
-                  render={({ field }) => {
-                    const keyPlaceholder = (() => {
-                      if (credentialMode === 'global_account_pool') {
-                        return t('Optional fallback key for this channel')
-                      }
-                      if (isEditing) {
-                        return t('Leave empty to keep existing key')
-                      }
-                      if (currentType === 33) {
-                        if (awsKeyType === 'api_key') {
+                {!isGlobalAccountPoolMode && (
+                  <FormField
+                    control={form.control}
+                    name='key'
+                    render={({ field }) => {
+                      const keyPlaceholder = (() => {
+                        if (isEditing) {
+                          return t('Leave empty to keep existing key')
+                        }
+                        if (currentType === 33) {
+                          if (awsKeyType === 'api_key') {
+                            return isBatchMode
+                              ? t(
+                                  'Enter API Key, one per line, format: APIKey|Region'
+                                )
+                              : t('Enter API Key, format: APIKey|Region')
+                          }
                           return isBatchMode
                             ? t(
-                                'Enter API Key, one per line, format: APIKey|Region'
+                                'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
                               )
-                            : t('Enter API Key, format: APIKey|Region')
+                            : t(
+                                'Enter key, format: AccessKey|SecretAccessKey|Region'
+                              )
                         }
-                        return isBatchMode
-                          ? t(
-                              'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
-                            )
-                          : t(
-                              'Enter key, format: AccessKey|SecretAccessKey|Region'
-                            )
-                      }
-                      if (isBatchMode) {
-                        return t('Enter one key per line for batch creation')
-                      }
-                      return t(getKeyPromptForType(currentType))
-                    })()
-                    return (
-                      <FormItem>
-                        <FormLabel>
-                          {credentialMode === 'global_account_pool'
-                            ? t('Fallback Key')
-                            : t('API Key *')}
-                        </FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder={keyPlaceholder}
-                            rows={isBatchMode ? 8 : 4}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          <div className='flex flex-col gap-2'>
-                            <span>
-                              {isEditing ? (
-                                <>
-                                  {t(
-                                    'Enter new key to update, or leave empty to keep current key'
-                                  )}
-                                  {isMultiKeyChannel && (
-                                    <span className='text-warning mt-1 block'>
-                                      {t('Multi-key channel: Keys will be')}{' '}
-                                      {keyMode === 'replace'
-                                        ? t('replaced')
-                                        : t('appended')}
-                                    </span>
-                                  )}
-                                </>
-                              ) : credentialMode === 'global_account_pool' ? (
-                                t(
-                                  'Global account pool mode uses the selected account group by default.'
-                                )
-                              ) : isBatchMode ? (
-                                t(
-                                  'Enter one API key per line for batch creation'
-                                )
-                              ) : (
-                                t(FIELD_DESCRIPTIONS.KEY)
-                              )}
-                            </span>
-                            {isBatchMode && (
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleDeduplicateKeys}
-                                className='w-fit'
-                              >
-                                <Trash2 className='mr-2 h-4 w-4' />
-                                {t('Remove Duplicates')}
-                              </Button>
-                            )}
-                          </div>
-                        </FormDescription>
-                        {isEditing && (
-                          <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
-                            <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                              <div>
-                                <p className='text-sm font-medium'>
-                                  {t('Current key')}
-                                </p>
-                                <p className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Verification required to reveal the saved key.'
-                                  )}
-                                </p>
-                              </div>
-                              <div className='flex items-center gap-2'>
+                        if (isBatchMode) {
+                          return t('Enter one key per line for batch creation')
+                        }
+                        return t(getKeyPromptForType(currentType))
+                      })()
+                      return (
+                        <FormItem>
+                          <FormLabel>{t('API Key *')}</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder={keyPlaceholder}
+                              rows={isBatchMode ? 8 : 4}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            <div className='flex flex-col gap-2'>
+                              <span>
+                                {isEditing ? (
+                                  <>
+                                    {t(
+                                      'Enter new key to update, or leave empty to keep current key'
+                                    )}
+                                    {isMultiKeyChannel && (
+                                      <span className='text-warning mt-1 block'>
+                                        {t('Multi-key channel: Keys will be')}{' '}
+                                        {keyMode === 'replace'
+                                          ? t('replaced')
+                                          : t('appended')}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : isBatchMode ? (
+                                  t(
+                                    'Enter one API key per line for batch creation'
+                                  )
+                                ) : (
+                                  t(FIELD_DESCRIPTIONS.KEY)
+                                )}
+                              </span>
+                              {isBatchMode && (
                                 <Button
                                   type='button'
                                   variant='outline'
                                   size='sm'
-                                  onClick={handleRevealKey}
-                                  disabled={
-                                    isChannelKeyLoading ||
-                                    verificationState.loading
-                                  }
+                                  onClick={handleDeduplicateKeys}
+                                  className='w-fit'
                                 >
-                                  {isChannelKeyLoading ||
-                                  verificationState.loading ? (
-                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                  ) : (
-                                    <Eye className='mr-2 h-4 w-4' />
-                                  )}
-                                  {t('Reveal key')}
+                                  <Trash2 className='mr-2 h-4 w-4' />
+                                  {t('Remove Duplicates')}
                                 </Button>
-                                <Button
-                                  type='button'
-                                  variant='ghost'
-                                  size='sm'
-                                  onClick={async () => {
-                                    if (channelKey) {
-                                      await copyToClipboard(channelKey)
-                                    }
-                                  }}
-                                  disabled={!channelKey}
-                                >
-                                  <Copy className='mr-2 h-4 w-4' />
-                                  {t('Copy')}
-                                </Button>
-                              </div>
+                              )}
                             </div>
-                            <Input
-                              readOnly
-                              value={channelKey ?? ''}
-                              placeholder={t('Hidden — verify to reveal')}
-                              className='font-mono'
-                            />
-                          </div>
-                        )}
-                        <FormMessage />
-                      </FormItem>
-                    )
-                  }}
-                />
+                          </FormDescription>
+                          {isEditing && (
+                            <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
+                              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                <div>
+                                  <p className='text-sm font-medium'>
+                                    {t('Current key')}
+                                  </p>
+                                  <p className='text-muted-foreground text-xs'>
+                                    {t(
+                                      'Verification required to reveal the saved key.'
+                                    )}
+                                  </p>
+                                </div>
+                                <div className='flex items-center gap-2'>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleRevealKey}
+                                    disabled={
+                                      isChannelKeyLoading ||
+                                      verificationState.loading
+                                    }
+                                  >
+                                    {isChannelKeyLoading ||
+                                    verificationState.loading ? (
+                                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                    ) : (
+                                      <Eye className='mr-2 h-4 w-4' />
+                                    )}
+                                    {t('Reveal key')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    size='sm'
+                                    onClick={async () => {
+                                      if (channelKey) {
+                                        await copyToClipboard(channelKey)
+                                      }
+                                    }}
+                                    disabled={!channelKey}
+                                  >
+                                    <Copy className='mr-2 h-4 w-4' />
+                                    {t('Copy')}
+                                  </Button>
+                                </div>
+                              </div>
+                              <Input
+                                readOnly
+                                value={channelKey ?? ''}
+                                placeholder={t('Hidden — verify to reveal')}
+                                className='font-mono'
+                              />
+                            </div>
+                          )}
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
+                  />
+                )}
 
                 {currentType === 57 &&
                   credentialMode !== 'global_account_pool' && (
@@ -2456,22 +2478,23 @@ export function ChannelMutateDrawer({
                               <Plus className='mr-2 h-4 w-4' />
                               {t('Fill All Models')}
                             </Button>
-                            {MODEL_FETCHABLE_TYPES.has(currentType) && (
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleFetchModels}
-                                disabled={isFetchingModels}
-                              >
-                                {isFetchingModels ? (
-                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                ) : (
-                                  <Sparkles className='mr-2 h-4 w-4' />
-                                )}
-                                {t('Fetch from Upstream')}
-                              </Button>
-                            )}
+                            {MODEL_FETCHABLE_TYPES.has(currentType) &&
+                              !isGlobalAccountPoolMode && (
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleFetchModels}
+                                  disabled={isFetchingModels}
+                                >
+                                  {isFetchingModels ? (
+                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                  ) : (
+                                    <Sparkles className='mr-2 h-4 w-4' />
+                                  )}
+                                  {t('Fetch from Upstream')}
+                                </Button>
+                              )}
                             <Button
                               type='button'
                               variant='outline'

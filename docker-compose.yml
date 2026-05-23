@@ -37,6 +37,7 @@ services:
       - SESSION_MAX_AGE=7776000 # 默认 90 天；多节点部署仍建议显式设置 SESSION_SECRET
       - ACCOUNT_POOL_CLI_PROXY_URL=http://cliproxyapi:8317
       - ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      - ACCOUNT_POOL_CLI_PROXY_RELAY_KEY=${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
@@ -71,6 +72,7 @@ services:
     environment:
       - MANAGEMENT_PASSWORD=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
       - ACCOUNT_POOL_CLI_PROXY_DATA_DIR=/data/account-pool/cliproxyapi
+      - ACCOUNT_POOL_CLI_PROXY_RELAY_KEY=${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
       - TZ=Asia/Shanghai
     networks:
       - nexustok-network

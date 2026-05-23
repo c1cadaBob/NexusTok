@@ -225,7 +225,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			}
 		}
 	}
-	// 账号分组只作为管理台维度透出，不参与 provider 选择。
+	// Account groups are exposed for management and NexusTok sidecar filtering.
 	if groups := normalizeAccountGroupsFromMetadata(metadata); len(groups) > 0 {
 		a.Attributes["account_groups"] = strings.Join(groups, "\n")
 		a.Attributes["account_group"] = groups[0]

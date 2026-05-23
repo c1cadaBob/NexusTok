@@ -71,12 +71,17 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		adminInfo["account_pool"] = true
 		adminInfo["channel_account_id"] = common.GetContextKeyInt(ctx, constant.ContextKeyChannelAccountId)
 		adminInfo["channel_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountName)
-		if poolAccountID := common.GetContextKeyInt(ctx, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
-			adminInfo["pool_group_id"] = common.GetContextKeyInt(ctx, constant.ContextKeyPoolGroupId)
+		if poolGroupID := common.GetContextKeyInt(ctx, constant.ContextKeyPoolGroupId); poolGroupID > 0 {
+			adminInfo["pool_group_id"] = poolGroupID
 			adminInfo["pool_group_name"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolGroupName)
+		}
+		if poolAccountID := common.GetContextKeyInt(ctx, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
 			adminInfo["pool_account_id"] = poolAccountID
 			adminInfo["pool_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountName)
 			adminInfo["pool_account_auth_type"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountAuthType)
+		} else if authType := common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountAuthType); authType != "" {
+			adminInfo["pool_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyPoolAccountName)
+			adminInfo["pool_account_auth_type"] = authType
 		}
 	}
 

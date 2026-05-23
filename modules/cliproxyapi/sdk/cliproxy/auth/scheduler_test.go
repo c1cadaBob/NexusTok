@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,6 +365,75 @@ func TestManager_PickNextMixed_DisallowFreeAuthSkipsCodexFreePlan(t *testing.T) 
 	}
 	if got.ID != "codex-b-plus" {
 		t.Fatalf("pickNextMixed() auth.ID = %q, want %q", got.ID, "codex-b-plus")
+	}
+}
+
+func TestManager_PickNext_AccountPoolGroupFilter(t *testing.T) {
+	t.Parallel()
+
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.executors["codex"] = schedulerTestExecutor{}
+	if _, errRegister := manager.Register(context.Background(), &Auth{
+		ID:       "codex-a",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"account_groups": "team-a\nshared",
+		},
+	}); errRegister != nil {
+		t.Fatalf("Register(codex-a) error = %v", errRegister)
+	}
+	if _, errRegister := manager.Register(context.Background(), &Auth{
+		ID:       "codex-b",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"account_groups": []string{"team-b", "shared"},
+		},
+	}); errRegister != nil {
+		t.Fatalf("Register(codex-b) error = %v", errRegister)
+	}
+
+	opts := cliproxyexecutor.Options{
+		Metadata: map[string]any{
+			cliproxyexecutor.NexusTokAccountPoolGroupMetadataKey: "team-b",
+		},
+	}
+	got, _, errPick := manager.pickNext(context.Background(), "codex", "", opts, map[string]struct{}{})
+	if errPick != nil {
+		t.Fatalf("pickNext() error = %v", errPick)
+	}
+	if got == nil || got.ID != "codex-b" {
+		t.Fatalf("pickNext() auth = %#v, want codex-b", got)
+	}
+}
+
+func TestManager_PickNext_AccountPoolGroupFilterNoMatch(t *testing.T) {
+	t.Parallel()
+
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.executors["codex"] = schedulerTestExecutor{}
+	if _, errRegister := manager.Register(context.Background(), &Auth{
+		ID:         "codex-a",
+		Provider:   "codex",
+		Attributes: map[string]string{"account_group": "team-a"},
+	}); errRegister != nil {
+		t.Fatalf("Register(codex-a) error = %v", errRegister)
+	}
+
+	opts := cliproxyexecutor.Options{
+		Metadata: map[string]any{
+			cliproxyexecutor.NexusTokAccountPoolGroupMetadataKey: "missing",
+		},
+	}
+	_, _, errPick := manager.pickNext(context.Background(), "codex", "", opts, map[string]struct{}{})
+	if errPick == nil {
+		t.Fatal("pickNext() error = nil, want account group error")
+	}
+	var authErr *Error
+	if !errors.As(errPick, &authErr) {
+		t.Fatalf("pickNext() error type = %T, want *Error", errPick)
+	}
+	if authErr.Code != "auth_not_found" || !strings.Contains(authErr.Message, "missing") {
+		t.Fatalf("pickNext() error = %#v, want missing group message", authErr)
 	}
 }
 

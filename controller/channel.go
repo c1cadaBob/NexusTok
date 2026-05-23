@@ -434,17 +434,32 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	if channel == nil {
+		return fmt.Errorf("channel cannot be empty")
+	}
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
 
+	credentialMode := channel.GetCredentialMode()
+	if credentialMode == constant.ChannelCredentialModeGlobalAccountPool {
+		groupID := channel.ChannelInfo.AccountPoolGroupId
+		if groupID <= 0 {
+			return fmt.Errorf("账号池模式必须选择账号池组")
+		}
+		group, err := model.GetAccountPoolGroupById(groupID)
+		if err != nil {
+			return fmt.Errorf("账号池组不存在或不可用")
+		}
+		if group == nil || group.Status != common.ChannelStatusEnabled {
+			return fmt.Errorf("账号池组未启用")
+		}
+	}
+
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil {
-			return fmt.Errorf("channel cannot be empty")
-		}
-		if channel.Key == "" && channel.ChannelInfo.CredentialMode != constant.ChannelCredentialModeGlobalAccountPool {
+		if channel.Key == "" && credentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -473,7 +488,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
-	if channel.Type == constant.ChannelTypeCodex && channel.ChannelInfo.CredentialMode != constant.ChannelCredentialModeGlobalAccountPool {
+	if channel.Type == constant.ChannelTypeCodex && credentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
 			if !strings.HasPrefix(trimmedKey, "{") {
@@ -587,9 +602,11 @@ func AddChannel(c *gin.Context) {
 	if addChannelRequest.Channel.ChannelInfo.CredentialMode == constant.ChannelCredentialModeGlobalAccountPool {
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = false
 		addChannelRequest.Channel.ChannelInfo.AccountPoolEnabled = false
-		if strings.TrimSpace(addChannelRequest.Channel.Key) == "" {
-			addChannelRequest.Channel.Key = constant.ChannelCredentialModeGlobalAccountPool
-		}
+		addChannelRequest.Channel.ChannelInfo.AccountPoolFallback = false
+		addChannelRequest.Channel.Key = constant.ChannelCredentialModeGlobalAccountPool
+		addChannelRequest.Mode = "single"
+		emptyBaseURL := ""
+		addChannelRequest.Channel.BaseURL = &emptyBaseURL
 	}
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
@@ -901,6 +918,10 @@ func UpdateChannel(c *gin.Context) {
 		case constant.ChannelCredentialModeGlobalAccountPool:
 			channel.ChannelInfo.IsMultiKey = false
 			channel.ChannelInfo.AccountPoolEnabled = false
+			channel.ChannelInfo.AccountPoolFallback = false
+			channel.Key = constant.ChannelCredentialModeGlobalAccountPool
+			emptyBaseURL := ""
+			channel.BaseURL = &emptyBaseURL
 		}
 	}
 

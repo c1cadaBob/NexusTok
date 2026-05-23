@@ -15,6 +15,9 @@ const (
 	AccountPoolAuthTypeServiceAccount = "service_account"
 	AccountPoolAuthTypeCustomJSON     = "custom_json"
 
+	AccountPoolGroupSourceNative      = "native"
+	AccountPoolGroupSourceCLIProxyAPI = "cliproxyapi"
+
 	AccountPoolStrategyRoundRobin = "round_robin"
 	AccountPoolStrategyWeighted   = "weighted"
 	AccountPoolStrategyFillFirst  = "fill_first"
@@ -26,6 +29,8 @@ type AccountPoolGroup struct {
 	Name         string  `json:"name" gorm:"type:varchar(255);index;not null"`
 	Platform     string  `json:"platform" gorm:"type:varchar(64);index;not null"`
 	AuthType     string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`
+	Source       string  `json:"source" gorm:"type:varchar(64);default:'native';index"`
+	ExternalKey  string  `json:"external_group_key" gorm:"column:external_group_key;type:varchar(255);index"`
 	Status       int     `json:"status" gorm:"default:1;index"`
 	Strategy     string  `json:"strategy" gorm:"type:varchar(64);default:'round_robin'"`
 	Models       string  `json:"models" gorm:"type:text"`
@@ -115,6 +120,11 @@ func (group *AccountPoolGroup) normalize() {
 	if group.AuthType == "" {
 		group.AuthType = AccountPoolAuthTypeAPIKey
 	}
+	group.Source = strings.ToLower(strings.TrimSpace(group.Source))
+	if group.Source == "" {
+		group.Source = AccountPoolGroupSourceNative
+	}
+	group.ExternalKey = strings.TrimSpace(group.ExternalKey)
 	group.Strategy = strings.ToLower(strings.TrimSpace(group.Strategy))
 	if group.Strategy == "" {
 		group.Strategy = AccountPoolStrategyRoundRobin

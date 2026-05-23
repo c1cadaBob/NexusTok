@@ -391,6 +391,24 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	}
 	if credentialMode == constant.ChannelCredentialModeGlobalAccountPool {
 		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		group, err := model.GetAccountPoolGroupById(channel.ChannelInfo.AccountPoolGroupId)
+		if err != nil || group == nil || group.Status != common.ChannelStatusEnabled {
+			return types.NewErrorWithStatusCode(service.ErrNoAvailablePoolAccount, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		if service.IsCLIProxyAccountPoolGroup(group) {
+			applyCLIProxyAccountPoolContext(c, channel, group)
+			common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+			common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, service.AccountPoolCLIProxyRelayKey())
+			common.SetContextKey(c, constant.ContextKeyChannelAccountPool, true)
+			common.SetContextKey(c, constant.ContextKeyPoolGroupId, group.Id)
+			common.SetContextKey(c, constant.ContextKeyPoolGroupName, group.Name)
+			common.SetContextKey(c, constant.ContextKeyPoolAccountId, 0)
+			common.SetContextKey(c, constant.ContextKeyPoolAccountName, strings.TrimSpace(group.ExternalKey))
+			common.SetContextKey(c, constant.ContextKeyPoolAccountAuthType, model.AccountPoolGroupSourceCLIProxyAPI)
+			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+			return nil
+		}
 		group, account, err := service.SelectPoolAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
 		if err != nil {
 			if !channel.ChannelInfo.AccountPoolFallback {
@@ -524,6 +542,31 @@ func applyPoolAccountContext(c *gin.Context, channel *model.Channel, group *mode
 	case constant.ChannelTypeCoze:
 		c.Set("bot_id", channelOther)
 	}
+}
+
+func applyCLIProxyAccountPoolContext(c *gin.Context, channel *model.Channel, group *model.AccountPoolGroup) {
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvePoolChannelSetting(channel, group, nil))
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, channel.GetOtherSettings())
+	paramOverride := channel.GetParamOverride()
+	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
+		paramOverride = mergedParam
+	}
+	headerOverride := service.MergeHeaderOverrides(channel.GetHeaderOverride(), service.BuildCLIProxyGroupHeaderOverride(group))
+	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
+	if channel.OpenAIOrganization != nil {
+		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyChannelOrganization, "")
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, resolvePoolChannelModelMapping(channel, group, nil))
+	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, service.AccountPoolCLIProxyURL())
+
+	c.Set("api_version", "")
+	c.Set("region", "")
+	c.Set("plugin", "")
+	c.Set("bot_id", "")
 }
 
 func resolveChannelSetting(channel *model.Channel, account *model.ChannelAccount) dto.ChannelSettings {

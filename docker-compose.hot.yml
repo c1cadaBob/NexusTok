@@ -51,6 +51,7 @@ services:
       GOPROXY: https://goproxy.cn,https://goproxy.io,direct
       GOSUMDB: sum.golang.google.cn
       MANAGEMENT_PASSWORD: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      ACCOUNT_POOL_CLI_PROXY_RELAY_KEY: ${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
       TZ: Asia/Shanghai
     networks:
       - hot-network
@@ -85,6 +86,7 @@ services:
       SESSION_MAX_AGE: "7776000"
       ACCOUNT_POOL_CLI_PROXY_URL: http://cliproxyapi:8317
       ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      ACCOUNT_POOL_CLI_PROXY_RELAY_KEY: ${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
     depends_on:
       frontend-watch:
         condition: service_started

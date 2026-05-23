@@ -288,21 +288,24 @@ export function AccountPool() {
   useEffect(() => {
     if (!deviceSessionOpen || !deviceSession?.session_id) return
     if (deviceSession.status !== 'pending') return
-    const timer = window.setInterval(() => {
-      void getAccountPoolLoginSession(deviceSession.session_id).then(
-        async (response) => {
-          if (!response.success || !response.data) return
-          setDeviceSession(response.data)
-          if (response.data.status === 'completed') {
-            toast.success(t('Account created successfully'))
-            await refreshAll()
+    const timer = window.setInterval(
+      () => {
+        void getAccountPoolLoginSession(deviceSession.session_id).then(
+          async (response) => {
+            if (!response.success || !response.data) return
+            setDeviceSession(response.data)
+            if (response.data.status === 'completed') {
+              toast.success(t('Account created successfully'))
+              await refreshAll()
+            }
+            if (response.data.status === 'failed') {
+              toast.error(response.data.status_message || t('Operation failed'))
+            }
           }
-          if (response.data.status === 'failed') {
-            toast.error(response.data.status_message || t('Operation failed'))
-          }
-        }
-      )
-    }, Math.max(3, deviceSession.poll_interval ?? 5) * 1000)
+        )
+      },
+      Math.max(3, deviceSession.poll_interval ?? 5) * 1000
+    )
     return () => window.clearInterval(timer)
   }, [deviceSession, deviceSessionOpen, t])
 
@@ -710,54 +713,58 @@ export function AccountPool() {
             )}
           </div>
           <div className='divide-border divide-y'>
-            {groups.map((group) => (
-              <button
-                key={group.id}
-                type='button'
-                className={`hover:bg-muted/60 flex w-full flex-col gap-2 px-3 py-3 text-left ${
-                  selectedGroupId === group.id ? 'bg-muted' : ''
-                }`}
-                onClick={() => {
-                  setSelectedGroupId(group.id)
-                  setPage(1)
-                }}
-              >
-                <div className='flex items-start justify-between gap-2'>
-                  <div className='min-w-0'>
-                    <div className='truncate text-sm font-medium'>
-                      {group.name}
+            {groups.map((group) => {
+              const isMirrorGroup = group.source === 'cliproxyapi'
+              return (
+                <button
+                  key={group.id}
+                  type='button'
+                  className={`hover:bg-muted/60 flex w-full flex-col gap-2 px-3 py-3 text-left ${
+                    selectedGroupId === group.id ? 'bg-muted' : ''
+                  }`}
+                  onClick={() => {
+                    setSelectedGroupId(group.id)
+                    setPage(1)
+                  }}
+                >
+                  <div className='flex items-start justify-between gap-2'>
+                    <div className='min-w-0'>
+                      <div className='truncate text-sm font-medium'>
+                        {group.name}
+                      </div>
+                      <div className='text-muted-foreground truncate text-xs'>
+                        {isMirrorGroup ? 'CPAMC' : group.platform} /{' '}
+                        {group.auth_type}
+                      </div>
                     </div>
-                    <div className='text-muted-foreground truncate text-xs'>
-                      {group.platform} / {group.auth_type}
-                    </div>
+                    <StatusBadge
+                      label={
+                        group.status === CHANNEL_STATUS.ENABLED
+                          ? t('Enabled')
+                          : t('Disabled')
+                      }
+                      variant={
+                        group.status === CHANNEL_STATUS.ENABLED
+                          ? 'success'
+                          : 'danger'
+                      }
+                      copyable={false}
+                    />
                   </div>
-                  <StatusBadge
-                    label={
-                      group.status === CHANNEL_STATUS.ENABLED
-                        ? t('Enabled')
-                        : t('Disabled')
-                    }
-                    variant={
-                      group.status === CHANNEL_STATUS.ENABLED
-                        ? 'success'
-                        : 'danger'
-                    }
-                    copyable={false}
-                  />
-                </div>
-                <div className='text-muted-foreground flex gap-3 text-xs'>
-                  <span>
-                    {t('Total')}: {group.stats?.total ?? 0}
-                  </span>
-                  <span>
-                    {t('Available')}: {group.stats?.enabled ?? 0}
-                  </span>
-                  <span>
-                    {t('Cooldown')}: {group.stats?.cooldown ?? 0}
-                  </span>
-                </div>
-              </button>
-            ))}
+                  <div className='text-muted-foreground flex gap-3 text-xs'>
+                    <span>
+                      {t('Total')}: {group.stats?.total ?? 0}
+                    </span>
+                    <span>
+                      {t('Available')}: {group.stats?.enabled ?? 0}
+                    </span>
+                    <span>
+                      {t('Cooldown')}: {group.stats?.cooldown ?? 0}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
             {!groupsQuery.isLoading && groups.length === 0 && (
               <div className='text-muted-foreground p-6 text-center text-sm'>
                 {t('No account groups found')}
@@ -1356,7 +1363,7 @@ export function AccountPool() {
               <div className='text-muted-foreground text-xs'>
                 {t('Verification URL')}
               </div>
-              <div className='break-all font-medium'>
+              <div className='font-medium break-all'>
                 {deviceSession?.verification_url ?? '-'}
               </div>
             </div>

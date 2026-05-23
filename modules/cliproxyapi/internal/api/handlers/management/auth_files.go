@@ -1311,7 +1311,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		Headers  map[string]string `json:"headers"`
 		Priority *int              `json:"priority"`
 		Note     *string           `json:"note"`
-		// account_groups 只用于管理台归类，不改变认证文件的实际请求行为。
+		// account_groups also drive NexusTok sidecar group filtering.
 		AccountGroup       *string   `json:"account_group"`
 		AccountGroups      *[]string `json:"account_groups"`
 		AccountGroupsCamel *[]string `json:"accountGroups"`

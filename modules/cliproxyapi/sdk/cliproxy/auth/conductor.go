@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -1732,6 +1733,113 @@ func isFreeCodexAuth(auth *Auth) bool {
 	return strings.EqualFold(strings.TrimSpace(auth.Attributes["plan_type"]), "free")
 }
 
+func accountPoolGroupFromMetadata(meta map[string]any) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	raw, ok := meta[cliproxyexecutor.NexusTokAccountPoolGroupMetadataKey]
+	if !ok {
+		return ""
+	}
+	return strings.Join(strings.Fields(fmt.Sprint(raw)), " ")
+}
+
+func accountPoolGroupUnavailableError(group string) error {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return &Error{Code: "auth_not_found", Message: "no auth available"}
+	}
+	return &Error{Code: "auth_not_found", Message: "no auth available for account group " + group, HTTPStatus: http.StatusServiceUnavailable}
+}
+
+func authMatchesAccountPoolGroup(auth *Auth, group string) bool {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return true
+	}
+	for _, candidate := range authAccountPoolGroups(auth) {
+		if strings.EqualFold(candidate, group) {
+			return true
+		}
+	}
+	return false
+}
+
+func authAccountPoolGroups(auth *Auth) []string {
+	if auth == nil {
+		return nil
+	}
+	values := make([]any, 0, 6)
+	if auth.Attributes != nil {
+		values = append(values, auth.Attributes["account_groups"], auth.Attributes["account_group"])
+	}
+	if auth.Metadata != nil {
+		values = append(values,
+			auth.Metadata["account_groups"],
+			auth.Metadata["accountGroups"],
+			auth.Metadata["account_group"],
+			auth.Metadata["accountGroup"],
+		)
+	}
+	return normalizeAccountPoolGroupValues(values...)
+}
+
+func normalizeAccountPoolGroupValues(values ...any) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(values))
+	add := func(value string) {
+		for _, part := range splitAccountPoolGroupString(value) {
+			key := strings.ToLower(part)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, part)
+		}
+	}
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			add(v)
+		case []string:
+			for _, item := range v {
+				add(item)
+			}
+		case []any:
+			for _, item := range v {
+				if text, ok := item.(string); ok {
+					add(text)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func splitAccountPoolGroupString(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") {
+		var decoded []string
+		if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+			return normalizeAccountPoolGroupValues(decoded)
+		}
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	groups := make([]string, 0, len(parts))
+	for _, part := range parts {
+		group := strings.Join(strings.Fields(strings.TrimSpace(part)), " ")
+		if group != "" {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
 func publishSelectedAuthMetadata(meta map[string]any, authID string) {
 	if len(meta) == 0 {
 		return
@@ -2887,6 +2995,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
 	disallowFreeAuth := disallowFreeAuthFromMetadata(opts.Metadata)
+	accountPoolGroup := accountPoolGroupFromMetadata(opts.Metadata)
 
 	m.mu.RLock()
 	executor, okExecutor := m.executors[provider]
@@ -2914,6 +3023,9 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		if disallowFreeAuth && isFreeCodexAuth(candidate) {
 			continue
 		}
+		if !authMatchesAccountPoolGroup(candidate, accountPoolGroup) {
+			continue
+		}
 		if _, used := tried[candidate.ID]; used {
 			continue
 		}
@@ -2924,7 +3036,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, &Error{Code: "auth_not_found", Message: "no auth available"}
+		return nil, nil, accountPoolGroupUnavailableError(accountPoolGroup)
 	}
 	available, errAvailable := m.availableAuthsForRouteModel(candidates, provider, model, time.Now())
 	if errAvailable != nil {
@@ -2960,6 +3072,9 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	}
 
 	if !m.useSchedulerFastPath() {
+		return m.pickNextLegacy(ctx, provider, model, opts, tried)
+	}
+	if accountPoolGroupFromMetadata(opts.Metadata) != "" {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
 	if strings.TrimSpace(model) != "" {
@@ -3022,6 +3137,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
 	disallowFreeAuth := disallowFreeAuthFromMetadata(opts.Metadata)
+	accountPoolGroup := accountPoolGroupFromMetadata(opts.Metadata)
 
 	providerSet := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
@@ -3056,6 +3172,9 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		if disallowFreeAuth && isFreeCodexAuth(candidate) {
 			continue
 		}
+		if !authMatchesAccountPoolGroup(candidate, accountPoolGroup) {
+			continue
+		}
 		providerKey := strings.TrimSpace(strings.ToLower(candidate.Provider))
 		if providerKey == "" {
 			continue
@@ -3076,7 +3195,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
+		return nil, nil, "", accountPoolGroupUnavailableError(accountPoolGroup)
 	}
 	available, errAvailable := m.availableAuthsForRouteModel(candidates, "mixed", model, time.Now())
 	if errAvailable != nil {
@@ -3117,6 +3236,9 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	}
 
 	if !m.useSchedulerFastPath() {
+		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
+	}
+	if accountPoolGroupFromMetadata(opts.Metadata) != "" {
 		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
 	}
 

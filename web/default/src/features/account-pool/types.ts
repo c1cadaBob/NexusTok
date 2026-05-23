@@ -21,6 +21,7 @@ export type AccountPoolStats = {
   enabled: number
   disabled: number
   cooldown: number
+  unavailable?: number
 }
 
 export type AccountPoolGroup = {
@@ -28,6 +29,8 @@ export type AccountPoolGroup = {
   name: string
   platform: string
   auth_type: string
+  source?: 'native' | 'cliproxyapi' | string
+  external_group_key?: string
   status: number
   strategy: string
   models: string
@@ -167,6 +170,8 @@ export type AccountPoolGroupOption = {
   name: string
   platform: string
   auth_type: string
+  source?: 'native' | 'cliproxyapi' | string
+  external_group_key?: string
   strategy: string
   stats?: AccountPoolStats
 }

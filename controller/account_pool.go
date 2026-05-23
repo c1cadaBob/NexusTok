@@ -102,12 +102,14 @@ type accountPoolProviderLoginRequest struct {
 func ListAccountPoolGroups(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	status, _ := strconv.Atoi(c.Query("status"))
+	syncCLIProxyGroupsForList(c)
 	groups, total, err := model.GetAccountPoolGroups(pageInfo.GetPage(), pageInfo.GetPageSize(), status, c.Query("search"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.AttachAccountPoolGroupStats(groups)
+	attachCLIProxyGroupStats(c, groups)
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, accountPoolGroupResponse(group))
@@ -118,21 +120,25 @@ func ListAccountPoolGroups(c *gin.Context) {
 }
 
 func ListAccountPoolGroupOptions(c *gin.Context) {
+	syncCLIProxyGroupsForList(c)
 	var groups []*model.AccountPoolGroup
 	if err := model.DB.Where("status = ?", common.ChannelStatusEnabled).Order("id DESC").Find(&groups).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.AttachAccountPoolGroupStats(groups)
+	attachCLIProxyGroupStats(c, groups)
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, gin.H{
-			"id":        group.Id,
-			"name":      group.Name,
-			"platform":  group.Platform,
-			"auth_type": group.AuthType,
-			"strategy":  group.Strategy,
-			"stats":     group.Stats,
+			"id":                 group.Id,
+			"name":               group.Name,
+			"platform":           group.Platform,
+			"auth_type":          group.AuthType,
+			"source":             group.Source,
+			"external_group_key": group.ExternalKey,
+			"strategy":           group.Strategy,
+			"stats":              group.Stats,
 		})
 	}
 	common.ApiSuccess(c, items)
@@ -854,6 +860,46 @@ func timestampOrZero(t time.Time) int64 {
 	return t.Unix()
 }
 
+func syncCLIProxyGroupsForList(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	if err := service.SyncCLIProxyAccountGroups(ctx); err != nil {
+		common.SysLog(service.AccountPoolSidecarUnavailableError(err).Error())
+	}
+}
+
+func attachCLIProxyGroupStats(c *gin.Context, groups []*model.AccountPoolGroup) {
+	hasCLIProxyGroup := false
+	for _, group := range groups {
+		if service.IsCLIProxyAccountPoolGroup(group) {
+			hasCLIProxyGroup = true
+			break
+		}
+	}
+	if !hasCLIProxyGroup {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	stats, err := service.CLIProxyGroupStats(ctx)
+	if err != nil {
+		common.SysLog(service.AccountPoolSidecarUnavailableError(err).Error())
+		return
+	}
+	for _, group := range groups {
+		if !service.IsCLIProxyAccountPoolGroup(group) {
+			continue
+		}
+		groupKey := strings.TrimSpace(group.ExternalKey)
+		if groupKey == "" {
+			groupKey = strings.TrimSpace(group.Name)
+		}
+		if groupStats := stats[groupKey]; groupStats != nil {
+			group.Stats = groupStats
+		}
+	}
+}
+
 func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model.AccountPoolGroup, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -879,6 +925,7 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 		Name:         name,
 		Platform:     platform,
 		AuthType:     authType,
+		Source:       model.AccountPoolGroupSourceNative,
 		Status:       status,
 		Strategy:     strategy,
 		Models:       strings.TrimSpace(req.Models),
@@ -1149,19 +1196,21 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"id":            group.Id,
-		"name":          group.Name,
-		"platform":      group.Platform,
-		"auth_type":     group.AuthType,
-		"status":        group.Status,
-		"strategy":      group.Strategy,
-		"models":        group.Models,
-		"group":         group.Group,
-		"model_mapping": group.ModelMapping,
-		"settings":      group.Settings,
-		"created_time":  group.CreatedTime,
-		"updated_time":  group.UpdatedTime,
-		"stats":         group.Stats,
+		"id":                 group.Id,
+		"name":               group.Name,
+		"platform":           group.Platform,
+		"auth_type":          group.AuthType,
+		"source":             group.Source,
+		"external_group_key": group.ExternalKey,
+		"status":             group.Status,
+		"strategy":           group.Strategy,
+		"models":             group.Models,
+		"group":              group.Group,
+		"model_mapping":      group.ModelMapping,
+		"settings":           group.Settings,
+		"created_time":       group.CreatedTime,
+		"updated_time":       group.UpdatedTime,
+		"stats":              group.Stats,
 	}
 }
 

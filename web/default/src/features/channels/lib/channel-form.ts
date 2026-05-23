@@ -24,67 +24,80 @@ import type { Channel } from '../types'
 // Form Validation Schema
 // ============================================================================
 
-export const channelFormSchema = z.object({
-  name: z.string().min(1, 'Channel name is required'),
-  type: z.number().min(0, 'Channel type is required'),
-  base_url: z.string().optional(),
-  key: z.string(),
-  openai_organization: z.string().optional(),
-  models: z.string().min(1, 'At least one model is required'),
-  group: z.array(z.string()).min(1, 'At least one group is required'),
-  model_mapping: z.string().optional(),
-  priority: z.number().optional(),
-  weight: z.number().optional(),
-  test_model: z.string().optional(),
-  auto_ban: z.number().optional(),
-  status: z.number(),
-  status_code_mapping: z.string().optional(),
-  tag: z.string().optional(),
-  remark: z
-    .string()
-    .max(255, 'Remark must be less than 255 characters')
-    .optional(),
-  setting: z.string().optional(),
-  param_override: z.string().optional(),
-  header_override: z.string().optional(),
-  settings: z.string().optional(),
-  other: z.string().optional(),
-  // Multi-key options (not sent to backend directly)
-  multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
-  multi_key_type: z.enum(['random', 'polling']).optional(),
-  credential_mode: z
-    .enum(['single_key', 'multi_key', 'account_pool', 'global_account_pool'])
-    .optional(),
-  account_pool_mode: z.enum(['polling', 'random']).optional(),
-  account_pool_fallback: z.boolean().optional(),
-  account_pool_group_id: z.number().optional(),
-  batch_add_set_key_prefix_2_name: z.boolean().optional(),
-  key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
-  // Channel extra settings (stored in setting JSON, not sent directly)
-  force_format: z.boolean().optional(),
-  thinking_to_content: z.boolean().optional(),
-  proxy: z.string().optional(),
-  pass_through_body_enabled: z.boolean().optional(),
-  system_prompt: z.string().optional(),
-  system_prompt_override: z.boolean().optional(),
-  // Type-specific settings (stored in settings JSON)
-  is_enterprise_account: z.boolean().optional(), // OpenRouter specific
-  vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
-  aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
-  azure_responses_version: z.string().optional(), // Azure specific
-  // Field passthrough controls (stored in settings JSON)
-  allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
-  disable_store: z.boolean().optional(), // OpenAI only
-  allow_safety_identifier: z.boolean().optional(), // OpenAI only
-  allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
-  allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
-  allow_speed: z.boolean().optional(), // Anthropic: speed mode control
-  claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
-  // Upstream model update settings (stored in settings JSON)
-  upstream_model_update_check_enabled: z.boolean().optional(),
-  upstream_model_update_auto_sync_enabled: z.boolean().optional(),
-  upstream_model_update_ignored_models: z.string().optional(),
-})
+export const channelFormSchema = z
+  .object({
+    name: z.string().min(1, 'Channel name is required'),
+    type: z.number().min(0, 'Channel type is required'),
+    base_url: z.string().optional(),
+    key: z.string(),
+    openai_organization: z.string().optional(),
+    models: z.string().min(1, 'At least one model is required'),
+    group: z.array(z.string()).min(1, 'At least one group is required'),
+    model_mapping: z.string().optional(),
+    priority: z.number().optional(),
+    weight: z.number().optional(),
+    test_model: z.string().optional(),
+    auto_ban: z.number().optional(),
+    status: z.number(),
+    status_code_mapping: z.string().optional(),
+    tag: z.string().optional(),
+    remark: z
+      .string()
+      .max(255, 'Remark must be less than 255 characters')
+      .optional(),
+    setting: z.string().optional(),
+    param_override: z.string().optional(),
+    header_override: z.string().optional(),
+    settings: z.string().optional(),
+    other: z.string().optional(),
+    // Multi-key options (not sent to backend directly)
+    multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
+    multi_key_type: z.enum(['random', 'polling']).optional(),
+    credential_mode: z
+      .enum(['single_key', 'multi_key', 'account_pool', 'global_account_pool'])
+      .optional(),
+    account_pool_mode: z.enum(['polling', 'random']).optional(),
+    account_pool_fallback: z.boolean().optional(),
+    account_pool_group_id: z.number().optional(),
+    batch_add_set_key_prefix_2_name: z.boolean().optional(),
+    key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
+    // Channel extra settings (stored in setting JSON, not sent directly)
+    force_format: z.boolean().optional(),
+    thinking_to_content: z.boolean().optional(),
+    proxy: z.string().optional(),
+    pass_through_body_enabled: z.boolean().optional(),
+    system_prompt: z.string().optional(),
+    system_prompt_override: z.boolean().optional(),
+    // Type-specific settings (stored in settings JSON)
+    is_enterprise_account: z.boolean().optional(), // OpenRouter specific
+    vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
+    aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
+    azure_responses_version: z.string().optional(), // Azure specific
+    // Field passthrough controls (stored in settings JSON)
+    allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
+    disable_store: z.boolean().optional(), // OpenAI only
+    allow_safety_identifier: z.boolean().optional(), // OpenAI only
+    allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
+    allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
+    allow_speed: z.boolean().optional(), // Anthropic: speed mode control
+    claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
+    // Upstream model update settings (stored in settings JSON)
+    upstream_model_update_check_enabled: z.boolean().optional(),
+    upstream_model_update_auto_sync_enabled: z.boolean().optional(),
+    upstream_model_update_ignored_models: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.credential_mode === 'global_account_pool' &&
+      (!data.account_pool_group_id || data.account_pool_group_id <= 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['account_pool_group_id'],
+        message: 'Account pool group is required',
+      })
+    }
+  })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
 
@@ -433,7 +446,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   const channel: Partial<Channel> = {
     name: formData.name,
     type: formData.type,
-    base_url: formData.base_url || null,
+    base_url:
+      credentialMode === 'global_account_pool'
+        ? null
+        : formData.base_url || null,
     key:
       credentialMode === 'global_account_pool' && !formData.key.trim()
         ? 'global_account_pool'
@@ -459,7 +475,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
       credential_mode: credentialMode,
       account_pool_enabled: credentialMode === 'account_pool',
       account_pool_mode: formData.account_pool_mode || 'polling',
-      account_pool_fallback: formData.account_pool_fallback === true,
+      account_pool_fallback:
+        credentialMode === 'global_account_pool'
+          ? false
+          : formData.account_pool_fallback === true,
       account_pool_group_id:
         credentialMode === 'global_account_pool'
           ? formData.account_pool_group_id || 0
@@ -495,11 +514,15 @@ export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
   channelId: number
 ): Partial<Channel> {
+  const credentialMode = formData.credential_mode || 'single_key'
   const payload: Partial<Channel> = {
     id: channelId,
     name: formData.name,
     type: formData.type,
-    base_url: formData.base_url || null,
+    base_url:
+      credentialMode === 'global_account_pool'
+        ? null
+        : formData.base_url || null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -518,15 +541,18 @@ export function transformFormDataToUpdatePayload(
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
     channel_info: {
-      credential_mode: formData.credential_mode || 'single_key',
-      account_pool_enabled: formData.credential_mode === 'account_pool',
+      credential_mode: credentialMode,
+      account_pool_enabled: credentialMode === 'account_pool',
       account_pool_mode: formData.account_pool_mode || 'polling',
-      account_pool_fallback: formData.account_pool_fallback === true,
+      account_pool_fallback:
+        credentialMode === 'global_account_pool'
+          ? false
+          : formData.account_pool_fallback === true,
       account_pool_group_id:
-        formData.credential_mode === 'global_account_pool'
+        credentialMode === 'global_account_pool'
           ? formData.account_pool_group_id || 0
           : 0,
-      is_multi_key: formData.credential_mode === 'multi_key',
+      is_multi_key: credentialMode === 'multi_key',
       multi_key_size: 0,
       multi_key_polling_index: 0,
       multi_key_mode: formData.multi_key_type || 'random',
@@ -534,7 +560,9 @@ export function transformFormDataToUpdatePayload(
   }
 
   // Only include key if it was changed (not empty)
-  if (formData.key && formData.key.trim()) {
+  if (credentialMode === 'global_account_pool') {
+    payload.key = 'global_account_pool'
+  } else if (formData.key && formData.key.trim()) {
     payload.key = formData.key
   }
 

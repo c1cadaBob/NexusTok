@@ -20,6 +20,9 @@ const DisallowFreeAuthMetadataKey = "disallow_free_auth"
 // ReasoningEffortMetadataKey stores the client-requested reasoning effort for usage logs.
 const ReasoningEffortMetadataKey = "reasoning_effort"
 
+// NexusTokAccountPoolGroupMetadataKey stores the NexusTok account pool group filter.
+const NexusTokAccountPoolGroupMetadataKey = "nexustok_account_pool_group"
+
 const (
 	// PinnedAuthMetadataKey locks execution to a specific auth ID.
 	PinnedAuthMetadataKey = "pinned_auth_id"
