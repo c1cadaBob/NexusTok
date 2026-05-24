@@ -15,7 +15,6 @@ import {
   IconChartLine,
   IconCrosshair,
   IconInfo,
-  IconKey,
   IconScrollText,
   IconSearch,
 } from '@/components/ui/icons';
@@ -38,7 +37,6 @@ import { useThemeStore } from '@/stores';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
 import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
-import { getAuthFileIcon } from '@/features/authFiles/constants';
 import styles from './QuotaPage.module.scss';
 import iconVertex from '@/assets/icons/vertex.svg';
 
@@ -50,14 +48,6 @@ const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
   kimi: 'kimi',
 };
 
-type UpstreamConfigShortcut = {
-  provider: string;
-  path: string;
-  titleKey: string;
-  descKey: string;
-  actionKey: string;
-};
-
 type OperationsShortcut = {
   path: string;
   titleKey: string;
@@ -65,9 +55,10 @@ type OperationsShortcut = {
   icon: ReactNode;
 };
 
-// 配额页保留少量高频入口：顶部用于新增官方账号，下面用于补充 API Key
-// 上游和查看运维状态。认证文件、账号分组、模型禁用和模型别名仍可通过
-// CPAMC 左侧导航进入，这里不再重复铺开展示，避免配额页首屏过于拥挤。
+// 配额页只保留账号池日常维护所需的 OAuth 登录和运行诊断入口。
+// 供应商 API Key、Base URL、模型范围等上游配置已经由 NexusTok 主项目
+// 的渠道管理、模型管理和模型定价分组承接，CPAMC 内不再重复展示这些入口，
+// 避免管理员在两个系统中维护同类配置时产生来源不一致的问题。
 const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
   {
     path: '/monitoring',
@@ -92,51 +83,6 @@ const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
     titleKey: 'quota_management.ops_system_title',
     descKey: 'quota_management.ops_system_desc',
     icon: <IconInfo size={20} />,
-  },
-];
-
-const UPSTREAM_CONFIG_SHORTCUTS: UpstreamConfigShortcut[] = [
-  {
-    provider: 'gemini',
-    path: '/ai-providers/gemini/new',
-    titleKey: 'quota_management.upstream_gemini_title',
-    descKey: 'quota_management.upstream_gemini_desc',
-    actionKey: 'quota_management.upstream_add_action',
-  },
-  {
-    provider: 'codex',
-    path: '/ai-providers/codex/new',
-    titleKey: 'quota_management.upstream_codex_title',
-    descKey: 'quota_management.upstream_codex_desc',
-    actionKey: 'quota_management.upstream_add_action',
-  },
-  {
-    provider: 'claude',
-    path: '/ai-providers/claude/new',
-    titleKey: 'quota_management.upstream_claude_title',
-    descKey: 'quota_management.upstream_claude_desc',
-    actionKey: 'quota_management.upstream_add_action',
-  },
-  {
-    provider: 'vertex',
-    path: '/ai-providers/vertex/new',
-    titleKey: 'quota_management.upstream_vertex_title',
-    descKey: 'quota_management.upstream_vertex_desc',
-    actionKey: 'quota_management.upstream_add_action',
-  },
-  {
-    provider: 'openai',
-    path: '/ai-providers/openai/new',
-    titleKey: 'quota_management.upstream_openai_title',
-    descKey: 'quota_management.upstream_openai_desc',
-    actionKey: 'quota_management.upstream_add_action',
-  },
-  {
-    provider: 'ampcode',
-    path: '/ai-providers/ampcode',
-    titleKey: 'quota_management.upstream_ampcode_title',
-    descKey: 'quota_management.upstream_ampcode_desc',
-    actionKey: 'quota_management.upstream_configure_action',
   },
 ];
 
@@ -214,13 +160,6 @@ export function QuotaPage() {
     setLoginProvider(QUOTA_OAUTH_PROVIDER_MAP[type]);
   }, []);
 
-  const openUpstreamConfig = useCallback(
-    (shortcut: UpstreamConfigShortcut) => {
-      navigate(shortcut.path, { state: { fromAiProviders: true } });
-    },
-    [navigate]
-  );
-
   return (
     <div className={styles.container}>
       <div className={styles.pageHeader}>
@@ -263,42 +202,6 @@ export function QuotaPage() {
         </div>
         <div className={styles.oauthShortcutHint}>
           {t('quota_management.oauth_shortcuts_desc')}
-        </div>
-      </Card>
-
-      <Card
-        className={styles.upstreamConfigCard}
-        title={t('quota_management.upstream_config_shortcuts_title')}
-      >
-        <div className={styles.upstreamConfigGrid}>
-          {UPSTREAM_CONFIG_SHORTCUTS.map((shortcut) => {
-            const icon = getAuthFileIcon(shortcut.provider, resolvedTheme);
-
-            return (
-              <button
-                key={shortcut.provider}
-                type="button"
-                className={styles.upstreamConfigButton}
-                onClick={() => openUpstreamConfig(shortcut)}
-              >
-                {icon ? (
-                  <img src={icon} alt="" className={styles.upstreamConfigIcon} />
-                ) : (
-                  <span className={styles.upstreamConfigIconFallback}>
-                    <IconKey size={18} />
-                  </span>
-                )}
-                <span className={styles.upstreamConfigContent}>
-                  <span className={styles.upstreamConfigTitle}>{t(shortcut.titleKey)}</span>
-                  <span className={styles.upstreamConfigDesc}>{t(shortcut.descKey)}</span>
-                  <span className={styles.upstreamConfigAction}>{t(shortcut.actionKey)}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className={styles.oauthShortcutHint}>
-          {t('quota_management.upstream_config_shortcuts_desc')}
         </div>
       </Card>
 

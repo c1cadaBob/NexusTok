@@ -20,7 +20,6 @@ import {
   IconSidebarLogs,
   IconSidebarMonitor,
   IconSidebarOauth,
-  IconSidebarProviders,
   IconSidebarQuota,
   IconSidebarSystem,
 } from '@/components/ui/icons';
@@ -38,7 +37,6 @@ import {
 
 const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
-  aiProviders: <IconSidebarProviders size={18} />,
   authFiles: <IconSidebarAuthFiles size={18} />,
   accountGroups: <IconSidebarAccountGroups size={18} />,
   oauth: <IconSidebarOauth size={18} />,
@@ -186,14 +184,13 @@ export function MainLayout() {
 
   useEffect(() => {
     fetchConfig().catch(() => {
-      // ignore initial failure; login flow会提示
+      // 初始化配置失败时不阻断布局渲染；登录态或连接状态会在页面内给出提示。
     });
   }, [fetchConfig]);
 
   const navItems = [
     { path: '/', label: t('nav.dashboard'), icon: sidebarIcons.dashboard },
     { path: '/config', label: t('nav.config_management'), icon: sidebarIcons.config },
-    { path: '/ai-providers', label: t('nav.ai_providers'), icon: sidebarIcons.aiProviders },
     { path: '/auth-files', label: t('nav.auth_files'), icon: sidebarIcons.authFiles },
     { path: '/account-groups', label: t('nav.account_groups'), icon: sidebarIcons.accountGroups },
     { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },
@@ -210,20 +207,6 @@ export function MainLayout() {
     const trimmedPath =
       pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
     const normalizedPath = trimmedPath === '/dashboard' ? '/' : trimmedPath;
-
-    const aiProvidersIndex = navOrder.indexOf('/ai-providers');
-    if (aiProvidersIndex !== -1) {
-      if (normalizedPath === '/ai-providers') return aiProvidersIndex;
-      if (normalizedPath.startsWith('/ai-providers/')) {
-        if (normalizedPath.startsWith('/ai-providers/gemini')) return aiProvidersIndex + 0.1;
-        if (normalizedPath.startsWith('/ai-providers/codex')) return aiProvidersIndex + 0.2;
-        if (normalizedPath.startsWith('/ai-providers/claude')) return aiProvidersIndex + 0.3;
-        if (normalizedPath.startsWith('/ai-providers/vertex')) return aiProvidersIndex + 0.4;
-        if (normalizedPath.startsWith('/ai-providers/ampcode')) return aiProvidersIndex + 0.5;
-        if (normalizedPath.startsWith('/ai-providers/openai')) return aiProvidersIndex + 0.6;
-        return aiProvidersIndex + 0.05;
-      }
-    }
 
     const authFilesIndex = navOrder.indexOf('/auth-files');
     if (authFilesIndex !== -1) {
@@ -254,10 +237,7 @@ export function MainLayout() {
     const to = normalize(toPathname);
     const isAuthFiles = (pathname: string) =>
       pathname === '/auth-files' || pathname.startsWith('/auth-files/');
-    const isAiProviders = (pathname: string) =>
-      pathname === '/ai-providers' || pathname.startsWith('/ai-providers/');
     if (isAuthFiles(from) && isAuthFiles(to)) return 'ios';
-    if (isAiProviders(from) && isAiProviders(to)) return 'ios';
     return 'vertical';
   }, []);
 

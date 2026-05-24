@@ -221,55 +221,16 @@
   line-height: 1.6;
 }
 
-.upstreamConfigCard {
-  :global(.card-header) {
-    align-items: center;
-  }
-}
-
 .opsShortcutCard {
   :global(.card-header) {
     align-items: center;
   }
 }
 
-.upstreamConfigGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: $spacing-sm;
-}
-
 .opsShortcutGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: $spacing-sm;
-}
-
-.upstreamConfigButton {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: start;
-  gap: $spacing-sm;
-  min-width: 0;
-  min-height: 112px;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    transform 0.18s ease;
-
-  &:hover {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-primary));
-    transform: translateY(-1px);
-  }
 }
 
 .opsShortcutButton {
@@ -299,26 +260,6 @@
   }
 }
 
-.upstreamConfigIcon,
-.upstreamConfigIconFallback {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-}
-
-.upstreamConfigIcon {
-  object-fit: contain;
-}
-
-.upstreamConfigIconFallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: $radius-md;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-}
-
 .opsShortcutIcon {
   display: inline-flex;
   align-items: center;
@@ -330,32 +271,11 @@
   background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
-.upstreamConfigContent {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
 .opsShortcutContent {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-
-.upstreamConfigTitle {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 20px;
-}
-
-.upstreamConfigDesc {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  overflow-wrap: anywhere;
 }
 
 .opsShortcutTitle {
@@ -370,14 +290,6 @@
   font-size: 12px;
   line-height: 18px;
   overflow-wrap: anywhere;
-}
-
-.upstreamConfigAction {
-  margin-top: auto;
-  color: var(--primary-color);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 18px;
 }
 
 .oauthModalTitle {
