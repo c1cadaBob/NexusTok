@@ -2,9 +2,8 @@
  * 配额管理页面，负责统一加载认证文件、配置文件，并协调各供应商配额区块。
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore, useThemeStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
@@ -14,11 +13,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import {
-  IconChartLine,
-  IconCrosshair,
-  IconInfo,
   IconRefreshCw,
-  IconScrollText,
   IconSearch,
 } from '@/components/ui/icons';
 import {
@@ -57,13 +52,6 @@ const QUOTA_LOGIN_TITLE_KEY_MAP: Partial<Record<QuotaType, string>> = {
   xai: 'auth_login.xai_oauth_title',
 };
 
-type OperationsShortcut = {
-  path: string;
-  titleKey: string;
-  descKey: string;
-  icon: ReactNode;
-};
-
 type SupplementalProviderId = 'xai' | 'vertex' | 'kiro';
 
 type SupplementalProviderAction = 'oauth' | 'vertex-import' | 'reserved';
@@ -84,39 +72,6 @@ type SupplementalViewMode = 'paged' | 'all';
 const SUPPLEMENTAL_GRID_MIN_WIDTH = 380;
 const SUPPLEMENTAL_MAX_ITEMS_PER_PAGE = 25;
 const SUPPLEMENTAL_MAX_SHOW_ALL_THRESHOLD = 30;
-
-// 配额页只保留账号池日常维护所需的运行诊断入口。
-// OAuth 登录入口下沉到对应供应商额度区块的右上角，和额度刷新、分页切换放在同一操作区；
-// 这样管理员在查看某个供应商额度时可以就地登录补充账号，不需要先回到顶部寻找入口。
-// 供应商 API Key、Base URL、模型范围等上游配置已经由 NexusTok 主项目
-// 的渠道管理、模型管理和模型定价分组承接，CPAMC 内不再重复展示这些入口，
-// 避免管理员在两个系统中维护同类配置时产生来源不一致的问题。
-const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
-  {
-    path: '/monitoring',
-    titleKey: 'quota_management.ops_monitoring_title',
-    descKey: 'quota_management.ops_monitoring_desc',
-    icon: <IconChartLine size={20} />,
-  },
-  {
-    path: '/monitoring/codex-inspection',
-    titleKey: 'quota_management.ops_codex_inspection_title',
-    descKey: 'quota_management.ops_codex_inspection_desc',
-    icon: <IconCrosshair size={20} />,
-  },
-  {
-    path: '/logs',
-    titleKey: 'quota_management.ops_logs_title',
-    descKey: 'quota_management.ops_logs_desc',
-    icon: <IconScrollText size={20} />,
-  },
-  {
-    path: '/system',
-    titleKey: 'quota_management.ops_system_title',
-    descKey: 'quota_management.ops_system_desc',
-    icon: <IconInfo size={20} />,
-  },
-];
 
 // xAI、Vertex、Kiro 目前还没有接入和 Codex/Gemini CLI 相同的自动额度查询器，
 // 但它们仍然属于账号池官方账号能力的一部分。这里把它们作为“补充供应商区块”
@@ -418,7 +373,6 @@ function SupplementalProviderSection({
 
 export function QuotaPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
 
   const [files, setFiles] = useState<AuthFileItem[]>([]);
@@ -521,31 +475,6 @@ export function QuotaPage() {
       </div>
 
       {error && <div className={styles.errorBox}>{error}</div>}
-
-      <Card
-        className={styles.opsShortcutCard}
-        title={t('quota_management.ops_shortcuts_title')}
-      >
-        <div className={styles.opsShortcutGrid}>
-          {OPERATIONS_SHORTCUTS.map((item) => (
-            <button
-              key={item.path}
-              type="button"
-              className={styles.opsShortcutButton}
-              onClick={() => navigate(item.path)}
-            >
-              <span className={styles.opsShortcutIcon}>{item.icon}</span>
-              <span className={styles.opsShortcutContent}>
-                <span className={styles.opsShortcutTitle}>{t(item.titleKey)}</span>
-                <span className={styles.opsShortcutDesc}>{t(item.descKey)}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className={styles.shortcutHint}>
-          {t('quota_management.ops_shortcuts_desc')}
-        </div>
-      </Card>
 
       <div className={styles.toolbar}>
         <div className={styles.toolbarField}>

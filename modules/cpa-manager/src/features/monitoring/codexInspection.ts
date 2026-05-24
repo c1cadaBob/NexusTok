@@ -22,6 +22,8 @@ export type CodexInspectionProgressStatus = 'idle' | 'running' | 'paused' | 'sto
 export type CodexInspectionAutoActionMode = 'none' | 'disable' | 'delete';
 export type CodexInspectionStoredActionFilter = 'all' | 'delete' | 'disable' | 'enable';
 
+const ALL_ACCOUNT_INSPECTION_TARGET = 'all';
+
 export interface CodexInspectionSettings {
   baseUrl: string;
   token: string;
@@ -195,6 +197,7 @@ export class CodexInspectionStoppedError extends Error {
 export const CODEX_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-codex-inspection-settings-v1';
 export const CODEX_INSPECTION_LAST_RUN_STORAGE_KEY = 'cli-proxy-codex-inspection-last-run-v1';
 
+const CODEX_INSPECTION_SETTINGS_STORAGE_VERSION = 2;
 const CODEX_INSPECTION_LAST_RUN_STORAGE_VERSION = 1;
 export const CODEX_INSPECTION_AUTO_ACTION_MODES: readonly CodexInspectionAutoActionMode[] = [
   'none',
@@ -203,7 +206,7 @@ export const CODEX_INSPECTION_AUTO_ACTION_MODES: readonly CodexInspectionAutoAct
 ];
 
 export const DEFAULT_CODEX_INSPECTION_SETTINGS: CodexInspectionConfigurableSettings = {
-  targetType: 'codex',
+  targetType: ALL_ACCOUNT_INSPECTION_TARGET,
   workers: 4,
   deleteWorkers: 4,
   timeout: 15000,
@@ -397,6 +400,7 @@ const readConfigurableSettingsFromConfig = (
 };
 
 type CodexInspectionConfigurableSettingsInput = {
+  storageVersion?: unknown;
   targetType?: unknown;
   workers?: unknown;
   deleteWorkers?: unknown;
@@ -422,8 +426,11 @@ const normalizeConfigurableSettings = (
   const sampleSizeValue = normalizeNumberValue(merged.sampleSize);
 
   return {
-    targetType:
-      readString(merged.targetType).toLowerCase() || DEFAULT_CODEX_INSPECTION_SETTINGS.targetType,
+    targetType: (() => {
+      const normalized = readString(merged.targetType).toLowerCase();
+      if (!normalized) return DEFAULT_CODEX_INSPECTION_SETTINGS.targetType;
+      return normalized;
+    })(),
     workers: clampPositiveInteger(
       normalizeNumberValue(merged.workers) ?? undefined,
       DEFAULT_CODEX_INSPECTION_SETTINGS.workers
@@ -475,6 +482,12 @@ export const loadCodexInspectionConfigurableSettings = (
     return normalizeConfigurableSettings({
       ...configSettings,
       ...parsed,
+      targetType:
+        readNonNegativeInteger(parsed.storageVersion, 0) <
+          CODEX_INSPECTION_SETTINGS_STORAGE_VERSION &&
+        readString(parsed.targetType).toLowerCase() === 'codex'
+          ? DEFAULT_CODEX_INSPECTION_SETTINGS.targetType
+          : parsed.targetType,
     });
   } catch {
     return normalizeConfigurableSettings(configSettings);
@@ -488,7 +501,13 @@ export const saveCodexInspectionConfigurableSettings = (
 
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
+      localStorage.setItem(
+        CODEX_INSPECTION_SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          ...normalized,
+          storageVersion: CODEX_INSPECTION_SETTINGS_STORAGE_VERSION,
+        })
+      );
     }
   } catch {
     console.warn('保存 Codex 巡检配置失败');
@@ -970,6 +989,29 @@ const inspectSingleAccount = async (
   settings: CodexInspectionSettings,
   onLog?: LogHandler
 ): Promise<CodexInspectionResultItem> => {
+  if (account.provider !== 'codex') {
+    const shouldEnable =
+      account.disabled && account.status !== 'unavailable' && account.state !== 'unavailable';
+    const action: CodexInspectionAction = shouldEnable ? 'enable' : 'keep';
+    const actionReason = shouldEnable
+      ? '非 Codex 账号当前已禁用，但未标记为不可用，建议重新启用'
+      : '非 Codex 账号暂未接入额度探测器，仅完成状态巡检';
+
+    onLog?.(
+      'info',
+      `${account.displayAccount} (${account.provider || 'unknown'}) ${actionReason}`
+    );
+    return {
+      ...account,
+      action,
+      actionReason,
+      statusCode: null,
+      usedPercent: null,
+      isQuota: false,
+      error: '',
+    };
+  }
+
   if (!account.authIndex) {
     onLog?.('warning', `${account.displayAccount} 缺少 auth_index，跳过探测`);
     return {
@@ -1345,7 +1387,10 @@ export const createCodexInspectionSession = ({
     const authFilesResponse = await authFilesApi.list();
     files = Array.isArray(authFilesResponse.files) ? authFilesResponse.files : [];
     const accounts = files.map(toInspectionAccount);
-    probeSet = accounts.filter((item) => item.provider === resolvedSettings.targetType);
+    probeSet =
+      resolvedSettings.targetType === ALL_ACCOUNT_INSPECTION_TARGET
+        ? accounts
+        : accounts.filter((item) => item.provider === resolvedSettings.targetType);
     sampledAccounts =
       resolvedSettings.sampleSize > 0
         ? pickSample(probeSet, Math.min(resolvedSettings.sampleSize, probeSet.length))

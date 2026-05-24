@@ -10,6 +10,7 @@ import {
   loadCodexInspectionConfigurableSettings,
   loadCodexInspectionLastRun,
   resolveCodexInspectionAutoActionItems,
+  saveCodexInspectionConfigurableSettings,
   saveCodexInspectionLastRun,
   type CodexInspectionAction,
   type CodexInspectionResultItem,
@@ -114,6 +115,24 @@ describe('Codex inspection settings', () => {
     storage.setItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY, JSON.stringify({ autoExecuteActions: true }));
 
     expect(loadCodexInspectionConfigurableSettings(null).autoActionMode).toBe('disable');
+  });
+
+  it('migrates the old Codex-only default target to all accounts', () => {
+    const storage = createStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem(CODEX_INSPECTION_SETTINGS_STORAGE_KEY, JSON.stringify({ targetType: 'codex' }));
+
+    expect(loadCodexInspectionConfigurableSettings(null).targetType).toBe('all');
+  });
+
+  it('keeps a newly saved Codex target when the user explicitly filters providers', () => {
+    const storage = createStorage();
+    vi.stubGlobal('localStorage', storage);
+
+    expect(saveCodexInspectionConfigurableSettings({ targetType: 'codex' }).targetType).toBe(
+      'codex'
+    );
+    expect(loadCodexInspectionConfigurableSettings(null).targetType).toBe('codex');
   });
 });
 

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
 import {
+  IconCrosshair,
   IconSidebarAccountGroups,
   IconSidebarAuthFiles,
   IconSidebarConfig,
@@ -28,7 +29,6 @@ import {
   useAuthStore,
   useConfigStore,
 } from '@/stores';
-import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import {
   isNexusTokEmbedded,
   isNexusTokEmbeddedFrame,
@@ -42,6 +42,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   oauth: <IconSidebarOauth size={18} />,
   quota: <IconSidebarQuota size={18} />,
   monitoring: <IconSidebarMonitor size={18} />,
+  inspection: <IconCrosshair size={18} />,
   config: <IconSidebarConfig size={18} />,
   logs: <IconSidebarLogs size={18} />,
   system: <IconSidebarSystem size={18} />,
@@ -108,7 +109,6 @@ export function MainLayout() {
 
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
-  const requestMonitoringAvailability = useRequestMonitoringAvailability();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -194,9 +194,12 @@ export function MainLayout() {
     { path: '/auth-files', label: t('nav.auth_files'), icon: sidebarIcons.authFiles },
     { path: '/account-groups', label: t('nav.account_groups'), icon: sidebarIcons.accountGroups },
     { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },
-    ...(requestMonitoringAvailability.available
-      ? [{ path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring }]
-      : []),
+    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },
+    {
+      path: '/monitoring/inspection',
+      label: t('nav.account_inspection'),
+      icon: sidebarIcons.inspection,
+    },
     ...(config?.loggingToFile
       ? [{ path: '/logs', label: t('nav.logs'), icon: sidebarIcons.logs }]
       : []),
