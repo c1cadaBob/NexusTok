@@ -200,7 +200,7 @@ function getErrorMessage(error: unknown): string | undefined {
   return undefined
 }
 
-// Helper functions
+// 表单辅助函数
 const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
   invalidJson: false,
   entries: [],
@@ -330,26 +330,26 @@ export function ChannelMutateDrawer({
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
 
-  // Fetch channel details if editing
+  // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
   const { data: channelData } = useQuery({
     queryKey: channelsQueryKeys.detail(currentRow?.id || 0),
     queryFn: () => getChannel(currentRow!.id),
     enabled: isEditing && Boolean(currentRow?.id),
   })
 
-  // Fetch available groups
+  // 拉取 NexusTok 用户分组，渠道仍然需要用它做路由、权限和计费归属。
   const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
   })
 
-  // Fetch all available models
+  // 拉取当前系统可见模型，供渠道模型选择器和快捷填充使用。
   const { data: allModelsData } = useQuery({
     queryKey: ['channel_models'],
     queryFn: getAllModels,
   })
 
-  // Fetch prefill model groups
+  // 拉取模型预设分组，便于管理员快速批量填入常用模型集合。
   const { data: prefillGroupsData } = useQuery({
     queryKey: ['prefill_groups', 'model'],
     queryFn: () => getPrefillGroups('model'),
@@ -382,17 +382,17 @@ export function ChannelMutateDrawer({
     }
   }, [open, channelId])
 
-  // Check if this is a multi-key channel
+  // 判断当前编辑对象是否为多 Key 渠道，决定是否展示追加/覆盖等历史密钥管理入口。
   const isMultiKeyChannel =
     isEditing && channelData?.data?.channel_info?.is_multi_key === true
 
-  // Form setup
+  // 表单实例初始化。
   const form = useForm<ChannelFormValues>({
     resolver: zodResolver(channelFormSchema),
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
 
-  // Watch form values for conditional rendering
+  // 监听表单字段变化，用于驱动凭证模式、渠道类型和高级配置的条件渲染。
   const multiKeyMode = form.watch('multi_key_mode')
   const multiKeyType = form.watch('multi_key_type')
   const credentialMode = form.watch('credential_mode')
@@ -426,22 +426,22 @@ export function ChannelMutateDrawer({
     }
   }, [open, resetDoubaoApiUnlock])
 
-  // Helper computed values
+  // 根据表单状态计算渲染分支。
   const isBatchMode =
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
 
-  // Get all models list
+  // 汇总系统模型列表。
   const allModelsList = useMemo(
     () => allModelsData?.data?.map((model) => model.id).filter(Boolean) || [],
     [allModelsData]
   )
 
-  // Get basic models for the current channel type
+  // 按渠道类型推导基础模型集合。
   const basicModels = useMemo(() => {
     if (!allModelsList.length) return []
-    // Filter models based on common patterns for specific types
+    // OpenAI 类型只优先填充常见文本模型，避免把无关 provider 的模型一起塞入渠道。
     if (currentType === 1) {
       return allModelsList.filter(
         (model) => model.startsWith('gpt-') || model.startsWith('text-')
@@ -450,7 +450,7 @@ export function ChannelMutateDrawer({
     return allModelsList
   }, [allModelsList, currentType])
 
-  // Get prefill groups
+  // 模型预设分组列表。
   const prefillGroups = useMemo(
     () => prefillGroupsData?.data || [],
     [prefillGroupsData]
@@ -467,7 +467,7 @@ export function ChannelMutateDrawer({
     [accountPoolGroupsData]
   )
 
-  // Transform groups to multi-select options
+  // 将用户分组转换成多选组件选项，同时保留当前渠道已有但接口暂未返回的历史分组。
   const groupOptions = useMemo(() => {
     if (!groupsData?.data) return []
     const allGroups = new Set([...groupsData.data, ...(currentGroups || [])])
@@ -477,7 +477,7 @@ export function ChannelMutateDrawer({
     }))
   }, [groupsData, currentGroups])
 
-  // Parse current models as array
+  // 将当前模型字符串解析成数组，供模型映射和多选组件复用。
   const currentModelsArray = useMemo(
     () => parseModelsString(currentModels),
     [currentModels]
@@ -523,19 +523,19 @@ export function ChannelMutateDrawer({
     return options
   }, [currentType, t])
 
-  // Extract redirect models from model_mapping (target values)
+  // 从 model_mapping 中提取重定向目标模型，用于提示用户避免暴露上游真实模型名。
   const redirectModelList = useMemo(
     () => extractRedirectModels(currentModelMapping || ''),
     [currentModelMapping]
   )
 
-  // Extract source keys from model_mapping (models being remapped FROM)
+  // 从 model_mapping 中提取源模型名，用于检查这些源模型是否已经包含在渠道模型列表里。
   const redirectModelKeyList = useMemo(
     () => extractMappingSourceModels(currentModelMapping || ''),
     [currentModelMapping]
   )
 
-  // Transform models to multi-select options
+  // 将系统模型和当前渠道模型合并成模型选择器选项，避免编辑历史模型时选项丢失。
   const modelOptions = useMemo(() => {
     const allModels = new Set([...allModelsList, ...currentModelsArray])
     return Array.from(allModels).map((model) => ({
@@ -637,7 +637,7 @@ export function ChannelMutateDrawer({
     upstreamUpdateMeta.detectedModels.length -
     upstreamDetectedModelsPreview.length
 
-  // Load channel data into form when editing
+  // 编辑模式加载渠道数据并写入表单，同时记录初始模型配置用于后续风险提示。
   useEffect(() => {
     if (isEditing && channelData?.data) {
       const defaults = transformChannelToFormDefaults(channelData.data)
@@ -645,7 +645,7 @@ export function ChannelMutateDrawer({
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
-      // Store initial values for comparison
+      // 记录初始值，提交前用来判断是否需要弹出模型映射风险确认。
       initialModelsRef.current = parseModelsString(
         channelData.data.models || ''
       )
@@ -661,11 +661,11 @@ export function ChannelMutateDrawer({
     }
   }, [isEditing, channelData, form])
 
-  // Handle type change - set default values for specific types
+  // 渠道类型变化时补充类型默认值；编辑模式不自动覆盖已有渠道配置。
   useEffect(() => {
-    if (isEditing) return // Don't auto-set defaults when editing
+    if (isEditing) return
 
-    // Type 45 (VolcEngine) - set default base_url
+    // 火山引擎默认使用北京区域；账号池组模式下不填写渠道自身 base_url。
     if (currentType === 45 && !isGlobalAccountPoolMode) {
       const currentBaseUrlValue = form.getValues('base_url')
       if (!currentBaseUrlValue || currentBaseUrlValue === '') {
@@ -673,7 +673,7 @@ export function ChannelMutateDrawer({
       }
     }
 
-    // Type 18 (Xunfei) - set default other (version)
+    // 讯飞星火渠道需要默认版本号，账号池模式也保留该协议字段。
     if (currentType === 18) {
       const currentOther = form.getValues('other')
       if (!currentOther || currentOther === '') {
@@ -682,7 +682,7 @@ export function ChannelMutateDrawer({
     }
   }, [currentType, isEditing, form, isGlobalAccountPoolMode])
 
-  // Validate base_url - warn if it ends with /v1
+  // base_url 末尾带 /v1 时很容易与后端自动拼接逻辑冲突，因此延迟提示管理员确认。
   useEffect(() => {
     if (
       isGlobalAccountPoolMode ||
@@ -692,7 +692,7 @@ export function ChannelMutateDrawer({
       return
     }
 
-    // Show warning toast
+    // 延迟触发可以避开输入过程中的瞬时状态，减少提示打断。
     const timer = setTimeout(() => {
       toast.warning(
         t(
@@ -706,7 +706,7 @@ export function ChannelMutateDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentBaseUrl, isGlobalAccountPoolMode])
 
-  // Handle key deduplication
+  // 多 Key 输入去重。
   const handleDeduplicateKeys = () => {
     const currentKey = form.getValues('key')
     if (!currentKey || currentKey.trim() === '') {
@@ -790,7 +790,7 @@ export function ChannelMutateDrawer({
     }
   }, [channelId, queryClient, t])
 
-  // Unified function to update models
+  // 统一更新模型字段，所有快捷填充和预设导入都走这里保持格式一致。
   const updateModels = useCallback(
     (newModels: string[], merge: boolean = false) => {
       const finalModels = merge
@@ -802,7 +802,7 @@ export function ChannelMutateDrawer({
     [currentModelsArray, form]
   )
 
-  // Handle fetching models from upstream
+  // 从上游拉取模型列表。账号池组模式不使用渠道 key，因此不允许走该路径。
   const handleFetchModels = useCallback(async () => {
     if (isGlobalAccountPoolMode) {
       toast.info(t('Account pool mode does not fetch models from channel key.'))
@@ -816,13 +816,13 @@ export function ChannelMutateDrawer({
       return
     }
 
-    // For editing mode, open FetchModelsDialog to let user select
+    // 编辑模式先打开选择弹窗，避免直接覆盖已有模型列表。
     if (isEditing && currentRow) {
       setFetchModelsDialogOpen(true)
       return
     }
 
-    // For creation mode, fetch and fill all models
+    // 新建模式直接拉取并合并到当前模型列表。
     const key = form.getValues('key')
     if (!key?.trim()) {
       toast.error(t('Please enter API key first'))
@@ -854,7 +854,7 @@ export function ChannelMutateDrawer({
     }
   }, [isEditing, currentRow, form, t, updateModels, isGlobalAccountPoolMode])
 
-  // Handle adding custom models
+  // 添加手动输入的自定义模型。
   const handleAddCustomModels = useCallback(() => {
     if (!customModel?.trim()) return
 
@@ -864,7 +864,7 @@ export function ChannelMutateDrawer({
     toast.success(t('Added {{count}} custom model(s)', { count }))
   }, [customModel, t, updateModels])
 
-  // Handle model operations
+  // 模型快捷操作。
   const handleFillRelatedModels = useCallback(() => {
     if (!basicModels.length) {
       toast.info(t('No related models available for this channel type'))
@@ -901,7 +901,7 @@ export function ChannelMutateDrawer({
     await copyToClipboard(models)
   }, [form, copyToClipboard, t])
 
-  // Handle adding prefill group models
+  // 添加模型预设分组中的模型。
   const handleAddPrefillGroup = useCallback(
     (group: { id: number; name: string; items: string | string[] }) => {
       try {
@@ -927,7 +927,7 @@ export function ChannelMutateDrawer({
     [updateModels, t]
   )
 
-  // Handle model selection change from MultiSelect
+  // MultiSelect 组件会回传数组，保存前仍要转成逗号分隔字符串。
   const handleModelsChange = useCallback(
     (selected: string[]) => {
       form.setValue('models', selected.join(','))
@@ -935,14 +935,14 @@ export function ChannelMutateDrawer({
     [form]
   )
 
-  // Handle successful submission
+  // 提交成功后刷新渠道列表并关闭抽屉。
   const handleSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
     onOpenChange(false)
     setOpen(null)
   }, [queryClient, onOpenChange, setOpen])
 
-  // Show missing models confirmation dialog
+  // 模型映射源模型缺失时弹出确认，避免管理员保存后看不到映射入口模型。
   const confirmMissingModelMappings = useCallback(
     (missingModels: string[]): Promise<MissingModelsAction> => {
       return new Promise((resolve) => {
@@ -954,7 +954,7 @@ export function ChannelMutateDrawer({
     []
   )
 
-  // Handle missing models dialog action
+  // 处理模型缺失确认弹窗的用户选择。
   const handleMissingModelsAction = useCallback(
     (action: MissingModelsAction) => {
       setMissingModelsDialogOpen(false)
@@ -994,11 +994,17 @@ export function ChannelMutateDrawer({
     }
   }, [])
 
-  // Submit handler
+  // 提交前先做前端侧快速校验，避免把明显不完整的数据发给后端。
+  //
+  // 注意：`global_account_pool` 是用户当前看到的“账号池”模式，它只需要选择账号池组，
+  // 上游 token 由组内账号提供，不再要求渠道自身填写 API Key 或 Base URL。
+  // 旧的 `account_pool` 仍表示“渠道内账号池”，只在编辑历史渠道时保留入口。
   const onSubmit = useCallback(
     async (data: ChannelFormValues) => {
-      // Validate key is required when creating
-      if (!isEditing && !data.key?.trim()) {
+      const isAccountPoolGroupMode =
+        data.credential_mode === 'global_account_pool'
+
+      if (!isEditing && !isAccountPoolGroupMode && !data.key?.trim()) {
         form.setError('key', {
           type: 'manual',
           message: 'API key is required',
@@ -1006,7 +1012,7 @@ export function ChannelMutateDrawer({
         return
       }
 
-      // Validate status_code_mapping entries
+      // 状态码复写会直接影响本地重试和禁用判断，提交前必须先拦截非法状态码。
       if (data.status_code_mapping?.trim()) {
         const invalidEntries = collectInvalidStatusCodeEntries(
           data.status_code_mapping
@@ -1030,7 +1036,7 @@ export function ChannelMutateDrawer({
         }
       }
 
-      // Validate model_mapping JSON format
+      // 模型映射既影响用户可见模型，也影响实际请求模型；格式错误时不能保存。
       const hasModelMapping =
         typeof data.model_mapping === 'string' &&
         data.model_mapping.trim() !== ''
@@ -1043,10 +1049,10 @@ export function ChannelMutateDrawer({
         }
       }
 
-      // Normalize models array
+      // 模型字段最终以逗号分隔字符串提交，先归一化便于后续映射检查。
       const normalizedModels = parseModelsString(data.models || '')
 
-      // Check for missing models in model_mapping
+      // 当模型映射的源模型没有出现在渠道模型列表中时，请用户确认是否自动补齐。
       if (hasModelMapping) {
         const missingModels = findMissingModelsInMapping(
           data.model_mapping!,
@@ -1080,7 +1086,7 @@ export function ChannelMutateDrawer({
       setIsSubmitting(true)
       try {
         if (isEditing && currentRow) {
-          // Update existing channel
+          // 更新已有渠道。
           const payload = transformFormDataToUpdatePayload(data, currentRow.id)
           const payloadWithKeyMode =
             isMultiKeyChannel && data.key_mode
@@ -1099,7 +1105,7 @@ export function ChannelMutateDrawer({
             handleSuccess()
           }
         } else {
-          // Create new channel(s)
+          // 创建新渠道；批量、多 Key 聚合和账号池组模式都在转换函数中归一。
           const payload = transformFormDataToCreatePayload(data)
           const response = await createChannel(payload)
           if (response.success) {
@@ -1125,7 +1131,7 @@ export function ChannelMutateDrawer({
     ]
   )
 
-  // Handle drawer close
+  // 关闭抽屉时同步重置表单状态，避免下一次新建渠道沿用上一次编辑残留字段。
   const handleOpenChange = useCallback(
     (v: boolean) => {
       onOpenChange(v)
@@ -1255,7 +1261,7 @@ export function ChannelMutateDrawer({
                   )}
                 />
 
-                {currentType === 1 && (
+                {currentType === 1 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
                     name='openai_organization'
@@ -1289,7 +1295,7 @@ export function ChannelMutateDrawer({
                   </Alert>
                 )}
 
-                {/* Azure (type 3) */}
+                {/* Azure 类型的 endpoint 和 API version 配置。 */}
                 {currentType === 3 && !isGlobalAccountPoolMode && (
                   <>
                     <FormField
@@ -1356,7 +1362,7 @@ export function ChannelMutateDrawer({
                   </>
                 )}
 
-                {/* Custom (type 8) */}
+                {/* 自定义完整 URL 渠道。 */}
                 {currentType === 8 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
@@ -1387,7 +1393,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* Xunfei/Spark (type 18) */}
+                {/* 讯飞星火模型版本配置。 */}
                 {currentType === 18 && (
                   <FormField
                     control={form.control}
@@ -1409,7 +1415,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* OpenRouter (type 20) */}
+                {/* OpenRouter 企业账户配置。 */}
                 {currentType === 20 && (
                   <FormField
                     control={form.control}
@@ -1435,8 +1441,8 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* AWS (type 33) */}
-                {currentType === 33 && (
+                {/* AWS 凭证格式配置；账号池组模式下由组内账号提供，不在渠道表单展示。 */}
+                {currentType === 33 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
                     name='aws_key_type'
@@ -1485,7 +1491,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* AI Proxy Library (type 21) */}
+                {/* AI Proxy Library 知识库 ID。 */}
                 {currentType === 21 && (
                   <FormField
                     control={form.control}
@@ -1505,7 +1511,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* FastGPT (type 22) */}
+                {/* FastGPT 私有部署地址。 */}
                 {currentType === 22 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
@@ -1532,7 +1538,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* SunoAPI (type 36) */}
+                {/* SunoAPI 专用基础地址。 */}
                 {currentType === 36 && !isGlobalAccountPoolMode && (
                   <FormField
                     control={form.control}
@@ -1561,7 +1567,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* Cloudflare Workers AI (type 39) */}
+                {/* Cloudflare Workers AI Account ID。 */}
                 {currentType === 39 && (
                   <FormField
                     control={form.control}
@@ -1584,7 +1590,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* SiliconFlow (type 40) */}
+                {/* SiliconFlow 推荐链接提示。 */}
                 {currentType === 40 && (
                   <Alert>
                     <AlertDescription>
@@ -1601,8 +1607,8 @@ export function ChannelMutateDrawer({
                   </Alert>
                 )}
 
-                {/* Vertex AI (type 41) */}
-                {currentType === 41 && (
+                {/* Vertex AI 凭证和部署地区配置；账号池组模式下由组内账号提供。 */}
+                {currentType === 41 && !isGlobalAccountPoolMode && (
                   <>
                     <FormField
                       control={form.control}
@@ -1660,7 +1666,7 @@ export function ChannelMutateDrawer({
                             onChange={async (e) => {
                               const fileList = e.target.files
                               const files = fileList ? Array.from(fileList) : []
-                              // allow re-selecting the same file
+                              // 清空 input value，允许管理员重新选择同一个文件并触发 change。
                               e.target.value = ''
 
                               if (files.length === 0) {
@@ -1743,7 +1749,7 @@ export function ChannelMutateDrawer({
                   </>
                 )}
 
-                {/* VolcEngine (type 45) */}
+                {/* 火山引擎内置区域地址选择。 */}
                 {currentType === 45 &&
                   !doubaoApiEditUnlocked &&
                   !isGlobalAccountPoolMode && (
@@ -1809,7 +1815,7 @@ export function ChannelMutateDrawer({
                     />
                   )}
 
-                {/* VolcEngine (type 45) - Custom API URL (unlocked) */}
+                {/* 火山引擎自定义 API URL，仅在隐藏开关解锁后展示。 */}
                 {currentType === 45 &&
                   doubaoApiEditUnlocked &&
                   !isGlobalAccountPoolMode && (
@@ -1836,7 +1842,7 @@ export function ChannelMutateDrawer({
                     />
                   )}
 
-                {/* Coze (type 49) */}
+                {/* Coze 智能体 ID。 */}
                 {currentType === 49 && (
                   <FormField
                     control={form.control}
@@ -1859,7 +1865,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                {/* General base_url for other types */}
+                {/* 其他渠道类型的通用 base_url 配置。 */}
                 {![3, 8, 22, 36, 45].includes(currentType) &&
                   !isGlobalAccountPoolMode && (
                     <FormField
@@ -2545,7 +2551,7 @@ export function ChannelMutateDrawer({
                   )}
                 />
 
-                {/* Custom Model Input */}
+                {/* 自定义模型输入。 */}
                 <div className='flex gap-2'>
                   <Input
                     placeholder={t('Add custom model(s), comma-separated')}
@@ -3641,13 +3647,13 @@ export function ChannelMutateDrawer({
         />
       )}
 
-      {/* Fetch Models Dialog (for editing mode) */}
+      {/* 编辑模式下的上游模型选择弹窗。 */}
       {isEditing && currentRow && (
         <FetchModelsDialog
           open={fetchModelsDialogOpen}
           onOpenChange={setFetchModelsDialogOpen}
           onModelsSelected={(models) => {
-            // Fill selected models to form
+            // 将管理员选择的上游模型追加到表单模型列表。
             form.setValue('models', formatModelsArray(models))
           }}
           redirectModels={redirectModelList}
@@ -3672,7 +3678,7 @@ export function ChannelMutateDrawer({
         onMethodChange={switchVerificationMethod}
       />
 
-      {/* Missing Models Confirmation Dialog */}
+      {/* 模型映射源模型缺失确认弹窗。 */}
       <MissingModelsConfirmationDialog
         open={missingModelsDialogOpen}
         missingModels={missingModelsList}

@@ -194,6 +194,7 @@ const EditChannelModal = (props) => {
     credential_mode: 'single_key',
     account_pool_mode: 'polling',
     account_pool_fallback: false,
+    account_pool_group_id: undefined,
     // 渠道额外设置的默认值
     force_format: false,
     thinking_to_content: false,
@@ -230,6 +231,7 @@ const EditChannelModal = (props) => {
   const [originModelOptions, setOriginModelOptions] = useState([]);
   const [modelOptions, setModelOptions] = useState([]);
   const [groupOptions, setGroupOptions] = useState([]);
+  const [accountPoolGroupOptions, setAccountPoolGroupOptions] = useState([]);
   const [basicModels, setBasicModels] = useState([]);
   const [fullModels, setFullModels] = useState([]);
   const [modelGroups, setModelGroups] = useState([]);
@@ -606,6 +608,35 @@ const EditChannelModal = (props) => {
 
   const isIonetLocked = isIonetChannel && isEdit;
 
+  const formatAccountPoolGroupOption = (group) => {
+    const stats = group?.stats || {};
+    const sourceLabel = group?.source === 'cliproxyapi' ? 'CPAMC' : group?.platform;
+    const total = Number(stats.total || 0);
+    const enabled = Number(stats.enabled || 0);
+    return {
+      value: Number(group.id),
+      label: `${group.name} · ${sourceLabel || '-'} / ${group.auth_type || '-'} · ${enabled}/${total}`,
+    };
+  };
+
+  const fetchAccountPoolGroupOptions = async () => {
+    try {
+      const res = await API.get('/api/account-pool/groups/options', {
+        disableDuplicate: true,
+      });
+      const { success, data } = res.data || {};
+      if (!success || !Array.isArray(data)) {
+        setAccountPoolGroupOptions([]);
+        return;
+      }
+      setAccountPoolGroupOptions(data.map(formatAccountPoolGroupOption));
+    } catch (error) {
+      // 账号池组只是渠道表单的一个可选上游来源，加载失败时不阻断普通渠道编辑。
+      console.error('加载账号池组选项失败:', error);
+      setAccountPoolGroupOptions([]);
+    }
+  };
+
   const handleInputChange = (name, value) => {
     if (
       isIonetChannel &&
@@ -674,10 +705,12 @@ const EditChannelModal = (props) => {
           break;
         case 45:
           localModels = getChannelModels(value);
-          setInputs((prevInputs) => ({
-            ...prevInputs,
-            base_url: 'https://ark.cn-beijing.volces.com',
-          }));
+          if (inputs.credential_mode !== 'global_account_pool') {
+            setInputs((prevInputs) => ({
+              ...prevInputs,
+              base_url: 'https://ark.cn-beijing.volces.com',
+            }));
+          }
           break;
         default:
           localModels = getChannelModels(value);
@@ -716,7 +749,19 @@ const EditChannelModal = (props) => {
       return;
     }
     setMultiToSingle(false);
+    if (value === 'global_account_pool') {
+      setBatch(false);
+      setMultiKeyMode('random');
+      handleInputChange('multi_key_mode', 'random');
+      handleInputChange('account_pool_mode', 'polling');
+      handleInputChange('account_pool_fallback', false);
+      handleInputChange('account_pool_group_id', undefined);
+      handleInputChange('key', '');
+      handleInputChange('base_url', '');
+      return;
+    }
     if (value === 'account_pool') {
+      // 旧渠道内账号池只为历史渠道保留；新建渠道应使用 global_account_pool 绑定账号池组。
       setBatch(false);
     }
   };
@@ -876,6 +921,7 @@ const EditChannelModal = (props) => {
       data.credential_mode = credentialMode;
       data.account_pool_mode = chInfo.account_pool_mode || 'polling';
       data.account_pool_fallback = chInfo.account_pool_fallback === true;
+      data.account_pool_group_id = chInfo.account_pool_group_id || undefined;
       setIsMultiKeyChannel(isMulti);
       if (credentialMode === 'multi_key') {
         setBatch(true);
@@ -997,6 +1043,7 @@ const EditChannelModal = (props) => {
       }
 
       if (
+        credentialMode !== 'global_account_pool' &&
         data.type === 45 &&
         (!data.base_url ||
           (typeof data.base_url === 'string' && data.base_url.trim() === ''))
@@ -1044,14 +1091,14 @@ const EditChannelModal = (props) => {
             parsedIonet = maybeMeta;
           }
         } catch (error) {
-          // ignore parse error
+          // IO.NET 元数据解析失败时按普通渠道处理，避免坏 remark 阻断编辑。
         }
       }
       const managedByIonet = !!parsedIonet;
       setIsIonetChannel(managedByIonet);
       setIonetMetadata(parsedIonet);
 
-      // Smart expand: auto-open advanced settings if any advanced field has a value
+      // 如果历史渠道已经配置过高级字段，编辑时自动展开高级设置，避免管理员误以为配置丢失。
       const hasAdvancedValues =
         (data.model_mapping && data.model_mapping.trim()) ||
         (data.param_override && data.param_override.trim()) ||
@@ -1338,6 +1385,7 @@ const EditChannelModal = (props) => {
   useEffect(() => {
     fetchModels().then();
     fetchGroups().then();
+    fetchAccountPoolGroupOptions().then();
     if (!isEdit) {
       initialBaseUrlRef.current = '';
       setInputs(originInputs);
@@ -1582,8 +1630,10 @@ const EditChannelModal = (props) => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
+    const isGlobalAccountPoolMode =
+      localInputs.credential_mode === 'global_account_pool';
 
-    if (localInputs.type === 57) {
+    if (localInputs.type === 57 && !isGlobalAccountPoolMode) {
       if (batch) {
         showInfo(t('Codex 渠道不支持批量创建'));
         return;
@@ -1624,7 +1674,7 @@ const EditChannelModal = (props) => {
       }
     }
 
-    if (localInputs.type === 41) {
+    if (localInputs.type === 41 && !isGlobalAccountPoolMode) {
       const keyType = localInputs.vertex_key_type || 'json';
       if (keyType === 'api_key') {
         // 直接作为普通字符串密钥处理
@@ -1688,8 +1738,20 @@ const EditChannelModal = (props) => {
     }
     delete localInputs.vertex_files;
 
-    if (!isEdit && (!localInputs.name || !localInputs.key)) {
+    if (!localInputs.name) {
+      showInfo(t('请为渠道命名'));
+      return;
+    }
+    if (!isEdit && !isGlobalAccountPoolMode && !localInputs.key) {
       showInfo(t('请填写渠道名称和渠道密钥！'));
+      return;
+    }
+    if (
+      isGlobalAccountPoolMode &&
+      (!localInputs.account_pool_group_id ||
+        Number(localInputs.account_pool_group_id) <= 0)
+    ) {
+      showInfo(t('请选择账号池组'));
       return;
     }
     if (!Array.isArray(localInputs.models) || localInputs.models.length === 0) {
@@ -1698,6 +1760,7 @@ const EditChannelModal = (props) => {
     }
     if (
       localInputs.type === 45 &&
+      !isGlobalAccountPoolMode &&
       (!localInputs.base_url || localInputs.base_url.trim() === '')
     ) {
       showInfo(t('请输入API地址！'));
@@ -1900,11 +1963,25 @@ const EditChannelModal = (props) => {
     if (batch && multiToSingle) {
       credentialMode = 'multi_key';
     }
+    if (credentialMode === 'global_account_pool') {
+      // 全局账号池组模式不使用渠道自身 key/base_url；写入哨兵 key 只为兼容后端 Channel.Key 非空约束。
+      localInputs.key = 'global_account_pool';
+      localInputs.base_url = '';
+      localInputs.account_pool_fallback = false;
+      localInputs.account_pool_mode = localInputs.account_pool_mode || 'polling';
+    }
     localInputs.channel_info = {
       credential_mode: credentialMode,
       account_pool_enabled: credentialMode === 'account_pool',
       account_pool_mode: localInputs.account_pool_mode || 'polling',
-      account_pool_fallback: localInputs.account_pool_fallback === true,
+      account_pool_fallback:
+        credentialMode === 'global_account_pool'
+          ? false
+          : localInputs.account_pool_fallback === true,
+      account_pool_group_id:
+        credentialMode === 'global_account_pool'
+          ? Number(localInputs.account_pool_group_id || 0)
+          : 0,
       is_multi_key: credentialMode === 'multi_key',
       multi_key_size: 0,
       multi_key_polling_index: 0,
@@ -1914,11 +1991,15 @@ const EditChannelModal = (props) => {
     delete localInputs.credential_mode;
     delete localInputs.account_pool_mode;
     delete localInputs.account_pool_fallback;
+    delete localInputs.account_pool_group_id;
 
     let mode = 'single';
     if (credentialMode === 'multi_key') {
       mode = 'multi_to_single';
-    } else if (credentialMode === 'account_pool') {
+    } else if (
+      credentialMode === 'account_pool' ||
+      credentialMode === 'global_account_pool'
+    ) {
       mode = 'single';
     } else if (batch) {
       mode = multiToSingle ? 'multi_to_single' : 'batch';
@@ -2039,8 +2120,10 @@ const EditChannelModal = (props) => {
   };
 
   const credentialMode = inputs.credential_mode || 'single_key';
+  const isGlobalAccountPoolMode = credentialMode === 'global_account_pool';
   const batchAllowed =
     credentialMode !== 'account_pool' &&
+    !isGlobalAccountPoolMode &&
     (!isEdit || isMultiKeyChannel || credentialMode === 'multi_key') &&
     inputs.type !== 57;
   const batchExtra = batchAllowed ? (
@@ -2279,7 +2362,7 @@ const EditChannelModal = (props) => {
           {() => {
             const advancedSettingsContent = (
               <div className='space-y-4'>
-                {/* Upstream Model Management Section */}
+                {/* 上游模型管理区域 */}
                 {MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type) && (
                   <div className='pb-3 border-b border-gray-100'>
                     <Text className='text-sm font-medium text-gray-500 mb-3 block'>
@@ -2374,7 +2457,7 @@ const EditChannelModal = (props) => {
                   </div>
                 )}
 
-                {/* Request Config Section */}
+                {/* 请求改写配置区域 */}
                 <div className='py-3 border-b border-gray-100'>
                   <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                     {t('请求配置')}
@@ -2550,7 +2633,7 @@ const EditChannelModal = (props) => {
                   />
                 </div>
 
-                {/* Channel Behavior Section */}
+                {/* 渠道行为配置区域 */}
                 <div className='py-3 border-b border-gray-100'>
                   <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                     {t('渠道行为')}
@@ -2720,7 +2803,7 @@ const EditChannelModal = (props) => {
                   )}
                 </div>
 
-                {/* Extra Settings Section */}
+                {/* 扩展信息配置区域 */}
                 <div className='pt-3'>
                   <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                     {t('额外设置')}
@@ -2864,9 +2947,9 @@ const EditChannelModal = (props) => {
                         }
                       />
                     )}
-                    {/* Core Configuration Card - Always Visible */}
+                    {/* 核心配置卡片：创建和编辑渠道时始终展示。 */}
                     <Card className='!rounded-2xl shadow-sm border-0'>
-                      {/* Header */}
+                      {/* 卡片标题 */}
                       <div className='flex items-center mb-4'>
                         <Avatar
                           size='small'
@@ -2973,19 +3056,54 @@ const EditChannelModal = (props) => {
                         optionList={[
                           { label: t('单账号 Key'), value: 'single_key' },
                           { label: t('多 Key 轮询'), value: 'multi_key' },
-                          { label: t('账号池'), value: 'account_pool' },
+                          { label: t('账号池'), value: 'global_account_pool' },
+                          ...(inputs.credential_mode === 'account_pool'
+                            ? [
+                                {
+                                  label: t('旧渠道内账号池'),
+                                  value: 'account_pool',
+                                },
+                              ]
+                            : []),
                         ]}
                         value={inputs.credential_mode || 'single_key'}
                         onChange={handleCredentialModeChange}
                         style={{ width: '100%' }}
                         extraText={
-                          inputs.credential_mode === 'account_pool'
-                            ? t('先选择渠道，再在账号池内轮询具体账号。')
+                          inputs.credential_mode === 'global_account_pool'
+                            ? t('选择账号池组，上游 token 由该组内账号提供。')
+                            : inputs.credential_mode === 'account_pool'
+                              ? t('旧渠道内账号池仅为历史渠道保留。')
                             : inputs.credential_mode === 'multi_key'
                               ? t('使用该渠道保存的多 Key 列表进行轮询。')
                               : t('直接使用渠道密钥。')
                         }
                       />
+
+                      {inputs.credential_mode === 'global_account_pool' && (
+                        <Form.Select
+                          field='account_pool_group_id'
+                          label={t('账号池组')}
+                          placeholder={t('请选择账号池组')}
+                          optionList={accountPoolGroupOptions}
+                          value={inputs.account_pool_group_id || undefined}
+                          onChange={(value) =>
+                            handleInputChange(
+                              'account_pool_group_id',
+                              value ? Number(value) : undefined,
+                            )
+                          }
+                          style={{ width: '100%' }}
+                          rules={[
+                            { required: true, message: t('请选择账号池组') },
+                          ]}
+                          extraText={
+                            inputs.account_pool_group_id
+                              ? t('渠道会在中转时引用该账号组。')
+                              : t('请先在管理员账号池中创建账号组。')
+                          }
+                        />
+                      )}
 
                       {inputs.credential_mode === 'account_pool' && (
                         <>
@@ -3021,7 +3139,7 @@ const EditChannelModal = (props) => {
                         </>
                       )}
 
-                      {inputs.type === 33 && (
+                      {inputs.type === 33 && !isGlobalAccountPoolMode && (
                         <>
                           <Form.Select
                             field='aws_key_type'
@@ -3049,7 +3167,7 @@ const EditChannelModal = (props) => {
                         </>
                       )}
 
-                      {inputs.type === 41 && (
+                      {inputs.type === 41 && !isGlobalAccountPoolMode && (
                         <Form.Select
                           field='vertex_key_type'
                           label={t('密钥格式')}
@@ -3084,7 +3202,7 @@ const EditChannelModal = (props) => {
                           }
                         />
                       )}
-                      {batch ? (
+                      {!isGlobalAccountPoolMode && batch ? (
                         inputs.type === 41 &&
                         (inputs.vertex_key_type || 'json') === 'json' ? (
                           <Form.Upload
@@ -3166,7 +3284,7 @@ const EditChannelModal = (props) => {
                             showClear
                           />
                         )
-                      ) : (
+                      ) : !isGlobalAccountPoolMode ? (
                         <>
                           {inputs.type === 57 ? (
                             <>
@@ -3477,9 +3595,9 @@ const EditChannelModal = (props) => {
                             />
                           )}
                         </>
-                      )}
+                      ) : null}
 
-                      {isEdit && isMultiKeyChannel && (
+                      {isEdit && isMultiKeyChannel && !isGlobalAccountPoolMode && (
                         <Form.Select
                           field='key_mode'
                           label={t('密钥更新模式')}
@@ -3500,7 +3618,7 @@ const EditChannelModal = (props) => {
                           }
                         />
                       )}
-                      {batch && multiToSingle && (
+                      {batch && multiToSingle && !isGlobalAccountPoolMode && (
                         <>
                           <Form.Select
                             field='multi_key_mode'
@@ -3604,7 +3722,7 @@ const EditChannelModal = (props) => {
                         />
                       )}
 
-                      {inputs.type === 1 && (
+                      {inputs.type === 1 && !isGlobalAccountPoolMode && (
                         <Form.Input
                           field='openai_organization'
                           label={t('组织')}
@@ -3617,8 +3735,8 @@ const EditChannelModal = (props) => {
                         />
                       )}
 
-                      {/* API Configuration Section */}
-                      {showApiConfigCard && (
+                      {/* API 地址配置区域；账号池组模式下不展示，因为连接参数由组内账号提供。 */}
+                      {showApiConfigCard && !isGlobalAccountPoolMode && (
                         <div onClick={handleApiConfigSecretClick}>
                           {inputs.type === 40 && (
                             <Banner
@@ -3831,7 +3949,7 @@ const EditChannelModal = (props) => {
                         </div>
                       )}
 
-                      {/* Model Selection - Part of Core Config */}
+                      {/* 模型选择：属于核心配置，用于 NexusTok 路由、计费和模型映射。 */}
                       <Form.Select
                         field='models'
                         label={t('模型')}
@@ -3893,7 +4011,8 @@ const EditChannelModal = (props) => {
                             >
                               {t('填入相关模型')}
                             </Button>
-                            {MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type) && (
+                            {MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type) &&
+                              !isGlobalAccountPoolMode && (
                               <Button
                                 size='small'
                                 type='tertiary'
@@ -3995,7 +4114,7 @@ const EditChannelModal = (props) => {
                         }
                       />
 
-                      {/* Custom Model Name - Core Config */}
+                      {/* 自定义模型名：允许管理员添加模型列表中不存在的模型。 */}
                       <Form.Input
                         field='custom_model'
                         label={t('自定义模型名称')}
@@ -4013,7 +4132,7 @@ const EditChannelModal = (props) => {
                         }
                       />
 
-                      {/* Groups - Core Config */}
+                      {/* 用户分组：决定哪些 NexusTok 用户组可以命中该渠道。 */}
                       <Form.Select
                         field='groups'
                         label={t('分组')}
@@ -4029,7 +4148,7 @@ const EditChannelModal = (props) => {
                         onChange={(value) => handleInputChange('groups', value)}
                       />
 
-                      {/* Model Mapping - Core Config */}
+                      {/* 模型映射：把用户请求模型名映射到上游真实模型名。 */}
                       <JSONEditor
                         key={`model_mapping-${isEdit ? channelId : 'new'}`}
                         field='model_mapping'
@@ -4077,7 +4196,7 @@ const EditChannelModal = (props) => {
                         )}
                       />
 
-                      {/* Auto Ban - Core Config */}
+                      {/* 自动禁用：控制渠道异常时是否由后端自动禁用。 */}
                       <Form.Switch
                         field='auto_ban'
                         label={t('是否自动禁用')}
@@ -4090,7 +4209,7 @@ const EditChannelModal = (props) => {
                         initValue={autoBan}
                       />
 
-                      {/* Test Model - Core Config */}
+                      {/* 测试模型：用于渠道检测时指定一个更合适的模型。 */}
                       <Form.Input
                         field='test_model'
                         label={t('默认测试模型')}
@@ -4102,7 +4221,7 @@ const EditChannelModal = (props) => {
                       />
                     </Card>
 
-                    {/* Advanced Settings Toggle / Collapse */}
+                    {/* 高级设置折叠入口 */}
                     {isMobile ? (
                       <Collapse
                         activeKey={advancedSettingsOpen ? ['advanced'] : []}
@@ -4125,7 +4244,7 @@ const EditChannelModal = (props) => {
                         </Collapse.Panel>
                       </Collapse>
                     ) : (
-                      /* Desktop: toggle button to open side panel */
+                      /* 桌面端使用按钮打开右侧高级设置面板。 */
                       <div
                         className='flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors hover:bg-gray-50'
                         style={{
@@ -4173,7 +4292,7 @@ const EditChannelModal = (props) => {
                   </div>
                 </Spin>
 
-                {/* Desktop: Advanced Settings Side Panel - rendered inside Form tree */}
+                {/* 桌面端高级设置侧边面板，需要保留在 Form 树内才能读写表单字段。 */}
                 {!isMobile && advancedSettingsOpen && (
                   <div
                     className='fixed top-0 h-full overflow-y-auto z-[999] semi-sidesheet-inner'

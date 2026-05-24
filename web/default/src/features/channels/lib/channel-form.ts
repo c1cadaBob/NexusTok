@@ -21,7 +21,7 @@ import { CHANNEL_STATUS, MODEL_FETCHABLE_TYPES } from '../constants'
 import type { Channel } from '../types'
 
 // ============================================================================
-// Form Validation Schema
+// 表单校验 Schema
 // ============================================================================
 
 export const channelFormSchema = z
@@ -50,7 +50,7 @@ export const channelFormSchema = z
     header_override: z.string().optional(),
     settings: z.string().optional(),
     other: z.string().optional(),
-    // Multi-key options (not sent to backend directly)
+    // 多 Key 表单选项只用于前端决定创建模式，不作为渠道字段直接保存。
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
     multi_key_type: z.enum(['random', 'polling']).optional(),
     credential_mode: z
@@ -60,28 +60,28 @@ export const channelFormSchema = z
     account_pool_fallback: z.boolean().optional(),
     account_pool_group_id: z.number().optional(),
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
-    key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
-    // Channel extra settings (stored in setting JSON, not sent directly)
+    key_mode: z.enum(['append', 'replace']).optional(), // 编辑多 Key 渠道时用于控制覆盖或追加。
+    // 渠道扩展设置会汇总进 setting JSON，避免污染后端 Channel 顶层字段。
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z.string().optional(),
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
-    // Type-specific settings (stored in settings JSON)
-    is_enterprise_account: z.boolean().optional(), // OpenRouter specific
-    vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
-    aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
-    azure_responses_version: z.string().optional(), // Azure specific
-    // Field passthrough controls (stored in settings JSON)
-    allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
-    disable_store: z.boolean().optional(), // OpenAI only
-    allow_safety_identifier: z.boolean().optional(), // OpenAI only
-    allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
-    allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
-    allow_speed: z.boolean().optional(), // Anthropic: speed mode control
-    claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
-    // Upstream model update settings (stored in settings JSON)
+    // 类型专属配置统一保存在 settings JSON 中，便于新增 provider 时保持后端结构稳定。
+    is_enterprise_account: z.boolean().optional(), // OpenRouter 专属配置。
+    vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI 专属配置。
+    aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS 专属配置。
+    azure_responses_version: z.string().optional(), // Azure 专属配置。
+    // 字段透传控制统一保存在 settings JSON 中，避免用户无感开启高风险上游参数。
+    allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic 透传控制。
+    disable_store: z.boolean().optional(), // 仅 OpenAI 使用。
+    allow_safety_identifier: z.boolean().optional(), // 仅 OpenAI 使用。
+    allow_include_obfuscation: z.boolean().optional(), // OpenAI stream_options.include_obfuscation。
+    allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic 推理地域控制。
+    allow_speed: z.boolean().optional(), // Anthropic speed 模式控制。
+    claude_beta_query: z.boolean().optional(), // Anthropic beta query 透传控制。
+    // 上游模型更新设置同样保存在 settings JSON 中，后端定时任务会读取这些字段。
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
@@ -91,6 +91,7 @@ export const channelFormSchema = z
       data.credential_mode === 'global_account_pool' &&
       (!data.account_pool_group_id || data.account_pool_group_id <= 0)
     ) {
+      // 账号池组模式的上游凭证全部来自被选中的账号池组；没有组 ID 时后端无法确定调度范围。
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['account_pool_group_id'],
@@ -102,7 +103,7 @@ export const channelFormSchema = z
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
 
 // ============================================================================
-// Default Form Values
+// 表单默认值
 // ============================================================================
 
 export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
@@ -135,19 +136,19 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   account_pool_group_id: 0,
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
-  // Channel extra settings
+  // 渠道扩展设置默认值。
   force_format: false,
   thinking_to_content: false,
   proxy: '',
   pass_through_body_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
-  // Type-specific settings
+  // 类型专属设置默认值。
   is_enterprise_account: false,
   vertex_key_type: 'json',
   aws_key_type: 'ak_sk',
   azure_responses_version: '',
-  // Field passthrough controls
+  // 字段透传控制默认值。
   allow_service_tier: false,
   disable_store: false,
   allow_safety_identifier: false,
@@ -161,16 +162,19 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
 }
 
 // ============================================================================
-// Transform Functions
+// 表单与 API 数据转换
 // ============================================================================
 
 /**
- * Transform Channel from API to Form default values
+ * 将后端 Channel 转换为表单默认值。
+ *
+ * 后端不会回传完整 key，编辑模式下 key 字段必须保持空字符串；只有用户显式输入新 key 时，
+ * 更新 payload 才会携带 key，避免不小心用空值覆盖已有密钥。
  */
 export function transformChannelToFormDefaults(
   channel: Channel
 ): ChannelFormValues {
-  // Parse channel extra settings from setting field
+  // setting 是渠道通用扩展设置，解析失败时回落到安全默认值，避免坏数据阻塞编辑页面。
   let extraSettings = {
     force_format: false,
     thinking_to_content: false,
@@ -197,7 +201,7 @@ export function transformChannelToFormDefaults(
     }
   }
 
-  // Parse type-specific settings from settings field
+  // settings 保存类型专属设置和字段透传开关，解析失败时只影响高级配置展示，不影响基础字段编辑。
   let vertexKeyType: 'json' | 'api_key' = 'json'
   let azureResponsesVersion = ''
   let isEnterpriseAccount = false
@@ -255,7 +259,7 @@ export function transformChannelToFormDefaults(
     name: channel.name || '',
     type: channel.type,
     base_url: channel.base_url || '',
-    key: '', // Never populate key from backend for security
+    key: '', // 安全要求：后端不会在普通详情接口回传完整 key，表单也不应自动填充。
     openai_organization: channel.openai_organization || '',
     models: channel.models || '',
     group: parseGroups(channel.group || 'default'),
@@ -280,10 +284,10 @@ export function transformChannelToFormDefaults(
     account_pool_fallback: channel.channel_info.account_pool_fallback === true,
     account_pool_group_id: channel.channel_info.account_pool_group_id || 0,
     batch_add_set_key_prefix_2_name: false,
-    key_mode: 'append', // Default to append mode for editing multi-key channels
-    // Channel extra settings
+    key_mode: 'append', // 编辑多 Key 渠道时默认追加，降低误覆盖风险。
+    // 渠道扩展设置。
     ...extraSettings,
-    // Type-specific settings
+    // 类型专属设置。
     is_enterprise_account: isEnterpriseAccount,
     vertex_key_type: vertexKeyType,
     azure_responses_version: azureResponsesVersion,
@@ -302,7 +306,7 @@ export function transformChannelToFormDefaults(
 }
 
 /**
- * Build the setting JSON string from form extra settings
+ * 根据表单中的渠道扩展设置构造 setting JSON。
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj = {
@@ -317,12 +321,15 @@ function buildSettingJSON(formData: ChannelFormValues): string {
 }
 
 /**
- * Build the settings JSON string (for type-specific config like vertex_key_type)
+ * 根据表单中的类型专属配置构造 settings JSON。
+ *
+ * 这里会先保留已有 settings 中未知字段，再按当前渠道类型写入或清理已知字段。
+ * 这样做是为了兼容历史数据和后端后续新增字段，避免前端编辑一次就把未知配置抹掉。
  */
 function buildSettingsJSON(formData: ChannelFormValues): string {
   let settingsObj: Record<string, unknown> = {}
 
-  // Try to parse existing settings first
+  // 优先读取已有 settings，避免编辑渠道时丢失当前前端暂不识别的后端配置。
   if (formData.settings && formData.settings !== '{}') {
     try {
       settingsObj = JSON.parse(formData.settings)
@@ -332,37 +339,36 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     }
   }
 
-  // Add vertex_key_type for Vertex AI channels (type 41)
+  // Vertex AI 渠道需要区分服务账号 JSON 和 API Key 两种凭证格式。
   if (formData.type === 41) {
     settingsObj.vertex_key_type = formData.vertex_key_type || 'json'
   } else if ('vertex_key_type' in settingsObj) {
     delete settingsObj.vertex_key_type
   }
 
-  // Add azure_responses_version for Azure channels (type 3)
+  // Azure Responses API 可使用与默认 API version 不同的版本号。
   if (formData.type === 3 && formData.azure_responses_version) {
     settingsObj.azure_responses_version = formData.azure_responses_version
   } else if ('azure_responses_version' in settingsObj) {
     delete settingsObj.azure_responses_version
   }
 
-  // Add enterprise account setting for OpenRouter (type 20)
+  // OpenRouter 企业账户返回格式不同，需要在 relay 中做特殊处理。
   if (formData.type === 20) {
     settingsObj.openrouter_enterprise = formData.is_enterprise_account === true
   } else if ('openrouter_enterprise' in settingsObj) {
     delete settingsObj.openrouter_enterprise
   }
 
-  // Add aws_key_type for AWS channels (type 33)
+  // AWS 支持 AK/SK 和 API Key 两种接入方式。
   if (formData.type === 33) {
     settingsObj.aws_key_type = formData.aws_key_type || 'ak_sk'
   } else if ('aws_key_type' in settingsObj) {
     delete settingsObj.aws_key_type
   }
 
-  // Field passthrough controls:
-  // - OpenAI (type 1) and Anthropic (type 14): allow_service_tier
-  // - OpenAI only: disable_store, allow_safety_identifier
+  // 字段透传开关必须按渠道类型保存，避免把仅某个 provider 支持的字段带到其他渠道。
+  // OpenAI 和 Anthropic 共享 allow_service_tier；store、safety_identifier 等仅 OpenAI 使用。
   if (formData.type === 1 || formData.type === 14) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
@@ -386,7 +392,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       delete settingsObj.allow_inference_geo
   }
 
-  // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
+  // Anthropic 专属 beta query、推理地域和 speed 模式控制。
   if (formData.type === 14) {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
     settingsObj.allow_speed = formData.allow_speed === true
@@ -396,7 +402,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     if ('claude_beta_query' in settingsObj) delete settingsObj.claude_beta_query
   }
 
-  // Upstream model update settings (for model-fetchable channel types)
+  // 只有可拉取模型的渠道才保留上游模型更新配置，避免无效渠道被定时任务扫描。
   if (MODEL_FETCHABLE_TYPES.has(formData.type)) {
     settingsObj.upstream_model_update_check_enabled =
       formData.upstream_model_update_check_enabled === true
@@ -426,7 +432,11 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 }
 
 /**
- * Transform form data to API payload for creating channel
+ * 将创建表单转换为后端创建 payload。
+ *
+ * `global_account_pool` 是当前面向用户的“账号池”模式：渠道只保存模型、分组、优先级、
+ * 计费和日志配置；真实上游 token 由账号池组内账号提供。因此创建时必须清空 base_url，
+ * 并写入哨兵 key `global_account_pool`，用于兼容数据库 key 非空和旧路径判断。
  */
 export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   mode: 'single' | 'batch' | 'multi_to_single'
@@ -451,7 +461,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
         ? null
         : formData.base_url || null,
     key:
-      credentialMode === 'global_account_pool' && !formData.key.trim()
+      credentialMode === 'global_account_pool'
         ? 'global_account_pool'
         : formData.key,
     openai_organization: formData.openai_organization || null,
@@ -490,7 +500,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     },
   }
 
-  // Clean up empty strings to null for optional fields
+  // 将可选字段的空字符串归一为 null，减少后端保存无意义空值。
   Object.keys(channel).forEach((key) => {
     if (channel[key as keyof typeof channel] === '') {
       ;(channel as Record<string, unknown>)[key] = null
@@ -508,7 +518,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
 }
 
 /**
- * Transform form data to API payload for updating channel
+ * 将编辑表单转换为后端更新 payload。
+ *
+ * 账号池组模式不依赖渠道 key/base_url，因此更新时强制写入哨兵 key 并清空 base_url。
+ * 其他模式下，只有用户输入了新 key 才提交 key 字段，防止编辑保存时误清空已有密钥。
  */
 export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
@@ -559,21 +572,21 @@ export function transformFormDataToUpdatePayload(
     },
   }
 
-  // Only include key if it was changed (not empty)
+  // 只有账号池组模式或用户显式输入新 key 时才携带 key，避免空 key 覆盖旧凭证。
   if (credentialMode === 'global_account_pool') {
     payload.key = 'global_account_pool'
   } else if (formData.key && formData.key.trim()) {
     payload.key = formData.key
   }
 
-  // Clean up empty strings to null for optional fields
+  // 将可选字段的空字符串归一为 null，减少后端保存无意义空值。
   Object.keys(payload).forEach((key) => {
     if (payload[key as keyof typeof payload] === '') {
       ;(payload as Record<string, unknown>)[key] = null
     }
   })
 
-  // Send explicit empty strings for nullable JSON/text fields so GORM updates can clear them.
+  // 这些 JSON/text 字段需要允许用户清空；显式发送空字符串可让 GORM 更新旧值。
   payload.model_mapping = formData.model_mapping || ''
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''
@@ -583,11 +596,11 @@ export function transformFormDataToUpdatePayload(
 }
 
 // ============================================================================
-// Validation Helpers
+// 校验与解析辅助函数
 // ============================================================================
 
 /**
- * Validate JSON string
+ * 校验字符串是否为合法 JSON。
  */
 export function validateJSON(value: string): boolean {
   if (!value || value.trim() === '') return true
@@ -600,7 +613,7 @@ export function validateJSON(value: string): boolean {
 }
 
 /**
- * Validate model mapping format
+ * 校验模型映射格式。
  */
 export function validateModelMapping(value: string): boolean {
   if (!value || value.trim() === '') return true
@@ -608,7 +621,7 @@ export function validateModelMapping(value: string): boolean {
 }
 
 /**
- * Parse models string to array
+ * 将逗号分隔的模型字符串解析为数组。
  */
 export function parseModels(models: string): string[] {
   if (!models) return []

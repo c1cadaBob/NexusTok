@@ -472,7 +472,8 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	// 如果是添加操作，检查 channel 和 key 是否为空
+	// 如果是添加操作，检查 channel 和 key 是否为空。全局账号池组模式的真实凭证来自账号池组，
+	// 渠道自身只保存模型、用户分组、优先级、计费和日志配置，因此允许 key 为空。
 	if isAdd {
 		if channel.Key == "" && credentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 			return fmt.Errorf("channel cannot be empty")
@@ -486,8 +487,9 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	// VertexAI 特殊校验
-	if channel.Type == constant.ChannelTypeVertexAi {
+	// Vertex AI 的部署地区属于渠道自身凭证配置；全局账号池组模式下，上游 token 和相关连接参数
+	// 都由组内账号提供，所以这里不能再强制要求渠道表单填写部署地区。
+	if channel.Type == constant.ChannelTypeVertexAi && credentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 		if channel.Other == "" {
 			return fmt.Errorf("部署地区不能为空")
 		}
@@ -502,7 +504,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	// Codex OAuth key validation (optional, only when JSON object is provided)
+	// Codex OAuth key 校验：普通 Codex 渠道仍要求 JSON 凭证；全局账号池组模式下凭证来自账号池账号。
 	if channel.Type == constant.ChannelTypeCodex && credentialMode != constant.ChannelCredentialModeGlobalAccountPool {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
@@ -898,7 +900,8 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
-	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
+	// 编辑渠道时先读取原始 ChannelInfo，避免前端只提交部分字段时误清空多 Key 状态、
+	// 账号池状态或轮询游标等运行时配置。后续会按本次请求显式携带的字段逐项覆盖。
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -908,7 +911,8 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
+	// 默认完整继承原始 ChannelInfo；只有请求中明确携带凭证模式、账号池字段或分组 ID 时，
+	// 才认为用户正在切换凭证模式，并根据目标模式重置互斥字段。
 	channel.ChannelInfo = originChannel.ChannelInfo
 	if incomingChannelInfo.CredentialMode != "" ||
 		incomingChannelInfo.AccountPoolEnabled ||
@@ -940,7 +944,7 @@ func UpdateChannel(c *gin.Context) {
 		}
 	}
 
-	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
+	// 如果请求显式指定新的 MultiKeyMode，则在继承原始 ChannelInfo 后覆盖该字段。
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
 	}
@@ -1208,7 +1212,7 @@ func GetTagModels(c *gin.Context) {
 	var longestModels string
 	maxLength := 0
 
-	// Find the longest models string among all channels with the given tag
+	// 同一标签下可能存在多条渠道配置，选择模型数量最多的一条作为回填来源。
 	for _, channel := range channels {
 		if channel.Models != "" {
 			currentModels := strings.Split(channel.Models, ",")
@@ -1227,9 +1231,9 @@ func GetTagModels(c *gin.Context) {
 	return
 }
 
-// CopyChannel handles cloning an existing channel with its key.
+// CopyChannel 复制已有渠道，并保留原渠道密钥。
 // POST /api/channel/copy/:id
-// Optional query params:
+// 可选 query 参数：
 //
 //	suffix         - string appended to the original name (default "_复制")
 //	reset_balance  - bool, when true will reset balance & used_quota to 0 (default true)
@@ -1279,24 +1283,24 @@ func CopyChannel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"id": clone.Id}})
 }
 
-// MultiKeyManageRequest represents the request for multi-key management operations
+// MultiKeyManageRequest 表示多 Key 管理操作的请求体。
 type MultiKeyManageRequest struct {
 	ChannelId int    `json:"channel_id"`
-	Action    string `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status"
-	KeyIndex  *int   `json:"key_index,omitempty"` // for disable_key, enable_key, and delete_key actions
-	Page      int    `json:"page,omitempty"`      // for get_key_status pagination
-	PageSize  int    `json:"page_size,omitempty"` // for get_key_status pagination
-	Status    *int   `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
+	Action    string `json:"action"`              // 操作名：disable_key、enable_key、delete_key、delete_disabled_keys、get_key_status。
+	KeyIndex  *int   `json:"key_index,omitempty"` // disable_key、enable_key 和 delete_key 使用的密钥索引。
+	Page      int    `json:"page,omitempty"`      // get_key_status 分页页码。
+	PageSize  int    `json:"page_size,omitempty"` // get_key_status 每页数量。
+	Status    *int   `json:"status,omitempty"`    // get_key_status 状态过滤：1=启用、2=手动禁用、3=自动禁用、nil=全部。
 }
 
-// MultiKeyStatusResponse represents the response for key status query
+// MultiKeyStatusResponse 表示多 Key 状态查询响应。
 type MultiKeyStatusResponse struct {
 	Keys       []KeyStatus `json:"keys"`
 	Total      int         `json:"total"`
 	Page       int         `json:"page"`
 	PageSize   int         `json:"page_size"`
 	TotalPages int         `json:"total_pages"`
-	// Statistics
+	// 统计信息
 	EnabledCount        int `json:"enabled_count"`
 	ManualDisabledCount int `json:"manual_disabled_count"`
 	AutoDisabledCount   int `json:"auto_disabled_count"`
@@ -1307,10 +1311,10 @@ type KeyStatus struct {
 	Status       int    `json:"status"` // 1: enabled, 2: disabled
 	DisabledTime int64  `json:"disabled_time,omitempty"`
 	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	KeyPreview   string `json:"key_preview"` // 密钥前 10 个字符，用于管理员识别。
 }
 
-// ManageMultiKeys handles multi-key management operations
+// ManageMultiKeys 处理多 Key 管理操作。
 func ManageMultiKeys(c *gin.Context) {
 	request := MultiKeyManageRequest{}
 	err := c.ShouldBindJSON(&request)
@@ -1344,23 +1348,23 @@ func ManageMultiKeys(c *gin.Context) {
 	case "get_key_status":
 		keys := channel.GetKeys()
 
-		// Default pagination parameters
+		// 默认分页参数。
 		page := request.Page
 		pageSize := request.PageSize
 		if page <= 0 {
 			page = 1
 		}
 		if pageSize <= 0 {
-			pageSize = 50 // Default page size
+			pageSize = 50 // 默认每页数量。
 		}
 
-		// Statistics for all keys (unchanged by filtering)
+		// 所有密钥的整体统计不受筛选条件影响，便于页面同时展示全局概览和筛选结果。
 		var enabledCount, manualDisabledCount, autoDisabledCount int
 
-		// Build all key status data first
+		// 先构造完整密钥状态列表，再统一执行状态筛选和分页。
 		var allKeyStatusList []KeyStatus
 		for i, key := range keys {
-			status := 1 // default enabled
+			status := 1 // 默认启用。
 			var disabledTime int64
 			var reason string
 
@@ -1370,7 +1374,7 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
-			// Count for statistics (all keys)
+			// 统计全量密钥状态。
 			switch status {
 			case 1:
 				enabledCount++
@@ -1389,7 +1393,7 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
-			// Create key preview (first 10 chars)
+			// 生成密钥预览，避免在状态列表里暴露完整密钥。
 			keyPreview := key
 			if len(key) > 10 {
 				keyPreview = key[:10] + "..."
@@ -1404,7 +1408,7 @@ func ManageMultiKeys(c *gin.Context) {
 			})
 		}
 
-		// Apply status filter if specified
+		// 如果请求指定状态，则只返回对应状态的密钥。
 		var filteredKeyStatusList []KeyStatus
 		if request.Status != nil {
 			for _, keyStatus := range allKeyStatusList {
@@ -1416,7 +1420,7 @@ func ManageMultiKeys(c *gin.Context) {
 			filteredKeyStatusList = allKeyStatusList
 		}
 
-		// Calculate pagination based on filtered results
+		// 基于筛选结果计算分页信息。
 		filteredTotal := len(filteredKeyStatusList)
 		totalPages := (filteredTotal + pageSize - 1) / pageSize
 		if totalPages == 0 {
@@ -1426,14 +1430,14 @@ func ManageMultiKeys(c *gin.Context) {
 			page = totalPages
 		}
 
-		// Calculate range for current page
+		// 计算当前页的切片范围。
 		start := (page - 1) * pageSize
 		end := start + pageSize
 		if end > filteredTotal {
 			end = filteredTotal
 		}
 
-		// Get the page data
+		// 获取当前页数据。
 		var pageKeyStatusList []KeyStatus
 		if start < filteredTotal {
 			pageKeyStatusList = filteredKeyStatusList[start:end]
@@ -1444,13 +1448,13 @@ func ManageMultiKeys(c *gin.Context) {
 			"message": "",
 			"data": MultiKeyStatusResponse{
 				Keys:                pageKeyStatusList,
-				Total:               filteredTotal, // Total of filtered results
+				Total:               filteredTotal, // 筛选后的总数。
 				Page:                page,
 				PageSize:            pageSize,
 				TotalPages:          totalPages,
-				EnabledCount:        enabledCount,        // Overall statistics
-				ManualDisabledCount: manualDisabledCount, // Overall statistics
-				AutoDisabledCount:   autoDisabledCount,   // Overall statistics
+				EnabledCount:        enabledCount,        // 全量启用数量。
+				ManualDisabledCount: manualDisabledCount, // 全量手动禁用数量。
+				AutoDisabledCount:   autoDisabledCount,   // 全量自动禁用数量。
 			},
 		})
 		return
@@ -1671,7 +1675,7 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		// Update channel with remaining keys
+		// 使用删除后的密钥列表更新渠道。
 		channel.Key = strings.Join(remainingKeys, "\n")
 		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
@@ -1739,7 +1743,7 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		// Update channel with remaining keys
+		// 使用删除后的密钥列表更新渠道。
 		channel.Key = strings.Join(remainingKeys, "\n")
 		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
