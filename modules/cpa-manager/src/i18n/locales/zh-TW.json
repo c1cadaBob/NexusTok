@@ -814,7 +814,7 @@
     "reset_hint": "{{hint}} 後重置"
   },
   "xai_quota": {
-    "title": "xAI 配額",
+    "title": "xAI 憑證",
     "empty_title": "暫無 xAI OAuth 驗證",
     "empty_desc": "使用 xAI OAuth 登入後即可在帳號池中使用 Grok 官方帳號。",
     "hint": "xAI 目前只展示已匯入或已登入的官方帳號憑證；配額查詢能力後續接入後會在此處展示。"

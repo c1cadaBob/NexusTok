@@ -816,7 +816,7 @@
     "reset_hint": "resets in {{hint}}"
   },
   "xai_quota": {
-    "title": "xAI Quota",
+    "title": "xAI Credentials",
     "empty_title": "No xAI OAuth Files",
     "empty_desc": "Log in with xAI OAuth to use official Grok accounts in the account pool.",
     "hint": "xAI currently lists official-account credentials that have been imported or logged in. Quota details will appear here after the quota reader is wired in."

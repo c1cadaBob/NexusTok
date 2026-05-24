@@ -816,7 +816,7 @@
     "reset_hint": "{{hint}} 后重置"
   },
   "xai_quota": {
-    "title": "xAI 额度",
+    "title": "xAI 凭证",
     "empty_title": "暂无 xAI OAuth 认证",
     "empty_desc": "使用 xAI OAuth 登录后即可在账号池中使用 Grok 官方账号。",
     "hint": "xAI 当前只展示已导入或已登录的官方账号凭证；额度查询能力后续接入后会在此处展示。"
