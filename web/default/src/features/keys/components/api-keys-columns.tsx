@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 import { getUserGroups } from '@/lib/api'
+import { formatQuotaAsFixedUSD } from '@/lib/currency'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -191,6 +192,23 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
         )
       },
       meta: { label: t('Quota') },
+    },
+    {
+      id: 'used_usd',
+      accessorKey: 'used_quota',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Consumed (USD)')} />
+      ),
+      cell: ({ row }) => (
+        <span className='font-mono text-xs tabular-nums'>
+          {formatQuotaAsFixedUSD(row.original.used_quota, {
+            digitsLarge: 2,
+            digitsSmall: 6,
+            abbreviate: false,
+          })}
+        </span>
+      ),
+      meta: { label: t('Consumed (USD)') },
     },
     {
       accessorKey: 'group',

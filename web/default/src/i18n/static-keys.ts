@@ -86,6 +86,7 @@ export const STATIC_I18N_KEYS = [
   'API Key deleted successfully',
   'API Key enabled successfully',
   'API Key disabled successfully',
+  'Consumed (USD)',
   'Failed to load API keys',
   'Failed to search API keys',
   'Failed to create API key',

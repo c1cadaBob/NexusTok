@@ -37,6 +37,7 @@ import {
   timestamp2string,
   renderGroup,
   renderQuota,
+  renderQuotaAsUSD,
   getModelCategories,
   showError,
 } from '../../../helpers';
@@ -348,6 +349,18 @@ const renderQuotaUsage = (text, record, t) => {
   );
 };
 
+// 固定按美元展示令牌已消耗金额，便于和账单口径对齐。
+const renderUsedUsd = (text, record, t) => {
+  const used = parseInt(record.used_quota) || 0;
+  return (
+    <Tooltip content={`${t('已用额度')}: ${renderQuota(used)}`} position='top'>
+      <Tag color='white' shape='circle'>
+        <span className='font-mono text-xs'>{renderQuotaAsUSD(used)}</span>
+      </Tag>
+    </Tooltip>
+  );
+};
+
 // Render operations column
 const renderOperations = (
   text,
@@ -496,6 +509,11 @@ export const getTokensColumns = ({
       title: t('剩余额度/总额度'),
       key: 'quota_usage',
       render: (text, record) => renderQuotaUsage(text, record, t),
+    },
+    {
+      title: t('已消耗金额（USD）'),
+      key: 'used_usd',
+      render: (text, record) => renderUsedUsd(text, record, t),
     },
     {
       title: t('分组'),

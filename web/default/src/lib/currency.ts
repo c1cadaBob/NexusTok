@@ -422,6 +422,23 @@ export function formatBillingCurrencyFromUSD(
 }
 
 /**
+ * 固定按 USD 展示金额，不套用管理员配置的展示货币。
+ */
+export function formatFixedUSD(
+  amountUSD: number | null | undefined,
+  options?: CurrencyFormatOptions
+): string {
+  if (amountUSD == null || Number.isNaN(amountUSD)) return '-'
+
+  return formatCurrencyValue(amountUSD, mergeOptions(options), {
+    kind: 'currency',
+    symbol: '$',
+    currencyCode: 'USD',
+    exchangeRate: 1,
+  })
+}
+
+/**
  * Format raw quota values (token units) to display currency.
  *
  * Converts raw quota/token amounts to USD first, then formats according
@@ -458,6 +475,24 @@ export function formatQuotaWithCurrency(
   const { config } = getCurrencyDisplay()
   const amountUSD = quota / config.quotaPerUnit
   return formatCurrencyFromUSD(amountUSD, options)
+}
+
+/**
+ * 将原生额度固定换算成 USD，适合审计类美元消耗展示。
+ */
+export function formatQuotaAsFixedUSD(
+  quota: number | null | undefined,
+  options?: CurrencyFormatOptions
+): string {
+  if (quota == null || Number.isNaN(quota)) return '-'
+
+  const { config } = getCurrencyDisplay()
+  const quotaPerUnit =
+    config.quotaPerUnit > 0
+      ? config.quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
+  const amountUSD = quota / quotaPerUnit
+  return formatFixedUSD(amountUSD, options)
 }
 
 /**

@@ -33,6 +33,7 @@ import {
 import { Database } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { formatQuotaAsFixedUSD } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
@@ -179,6 +180,19 @@ function ApiKeysMobileList({
                   </span>
                 </span>
               )}
+            </div>
+
+            <div className='flex items-center justify-between gap-2 text-xs'>
+              <span className='text-muted-foreground'>
+                {t('Consumed (USD)')}
+              </span>
+              <span className='font-medium tabular-nums'>
+                {formatQuotaAsFixedUSD(apiKey.used_quota, {
+                  digitsLarge: 2,
+                  digitsSmall: 6,
+                  abbreviate: false,
+                })}
+              </span>
             </div>
           </div>
         )

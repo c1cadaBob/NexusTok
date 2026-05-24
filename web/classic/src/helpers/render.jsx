@@ -1145,6 +1145,26 @@ export function convertUSDToCurrency(usdAmount, digits = 2) {
   return symbol + convertedAmount.toFixed(digits);
 }
 
+/**
+ * 将原生额度固定换算成美元显示，不受站点当前货币展示设置影响。
+ */
+export function renderQuotaAsUSD(quota, digits = 6) {
+  let quotaPerUnit = localStorage.getItem('quota_per_unit');
+  quotaPerUnit = parseFloat(quotaPerUnit);
+  if (!quotaPerUnit || quotaPerUnit <= 0) {
+    quotaPerUnit = 500000;
+  }
+
+  const value = (parseFloat(quota) || 0) / quotaPerUnit;
+  const displayDigits = Math.abs(value) >= 1 ? 2 : digits;
+  const fixedResult = value.toFixed(displayDigits);
+  if (parseFloat(fixedResult) === 0 && quota > 0 && value > 0) {
+    const minValue = Math.pow(10, -displayDigits);
+    return '$' + minValue.toFixed(displayDigits);
+  }
+  return '$' + fixedResult;
+}
+
 export function renderQuota(quota, digits = 2) {
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
   const quotaDisplayType = localStorage.getItem('quota_display_type') || 'USD';
