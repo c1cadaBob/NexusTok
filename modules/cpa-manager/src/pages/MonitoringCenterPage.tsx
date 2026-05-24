@@ -2383,15 +2383,14 @@ export function MonitoringCenterPage() {
       meta: `${failedGroupCount} ${t('monitoring.groups_suffix')}`,
       tone: scopedSummary.failureCalls > 0 ? 'bad' : 'good',
     },
-  ];
-
-  const secondarySummaryCards: SummaryCardProps[] = [
     {
       label: t('monitoring.total_tokens'),
       value: formatCompactNumber(scopedSummary.totalTokens),
       meta: `${t('monitoring.reasoning_tokens')} ${formatCompactNumber(scopedSummary.reasoningTokens)}`,
-      variant: 'secondary',
     },
+  ];
+
+  const secondarySummaryCards: SummaryCardProps[] = [
     {
       label: t('monitoring.input_tokens'),
       value: formatCompactNumber(scopedSummary.inputTokens),
