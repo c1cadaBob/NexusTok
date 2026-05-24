@@ -217,15 +217,30 @@ export const DEFAULT_CODEX_INSPECTION_SETTINGS: CodexInspectionConfigurableSetti
   autoActionMode: 'none',
 };
 
+type CodexInspectionConnectionFingerprintOptions = {
+  embedded?: boolean;
+  embeddedScope?: string;
+};
+
 export const createCodexInspectionConnectionFingerprint = (
   apiBase: string,
-  managementKey: string
+  managementKey: string,
+  options: CodexInspectionConnectionFingerprintOptions = {}
 ) => {
   const normalizedApiBase = readString(apiBase).replace(/\/+$/, '');
   const normalizedManagementKey = readString(managementKey);
-  if (!normalizedApiBase || !normalizedManagementKey) return null;
+  if (!normalizedApiBase) return null;
 
-  const input = `${normalizedApiBase}\u0000${normalizedManagementKey}`;
+  // NexusTok 嵌入模式下，浏览器只持有主项目 session，不再保存 CPAMC 自身
+  // managementKey。巡检的历史结果缓存仍然需要一个“当前连接”的隔离指纹，
+  // 因此这里使用固定的嵌入式作用域作为身份种子；这样既不会把内部管理密钥暴露
+  // 到 localStorage，也不会让空 managementKey 被误判为“未连接”。
+  const credentialScope = options.embedded
+    ? `embedded:${readString(options.embeddedScope) || 'nexustok'}`
+    : `key:${normalizedManagementKey}`;
+  if (!options.embedded && !normalizedManagementKey) return null;
+
+  const input = `${normalizedApiBase}\u0000${credentialScope}`;
   let hashA = 0x811c9dc5;
   let hashB = 0x9e3779b9;
 

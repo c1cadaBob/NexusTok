@@ -48,6 +48,7 @@ import {
   type CodexInspectionStoredLogEntry,
 } from '@/features/monitoring/codexInspection';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 import styles from './CodexInspectionPage.module.scss';
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
@@ -262,7 +263,11 @@ export function CodexInspectionPage() {
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const connectionFingerprint = useMemo(
-    () => createCodexInspectionConnectionFingerprint(apiBase, managementKey),
+    () =>
+      createCodexInspectionConnectionFingerprint(apiBase, managementKey, {
+        embedded: isNexusTokEmbedded,
+        embeddedScope: 'account-inspection',
+      }),
     [apiBase, managementKey]
   );
   const initialLastRunRef = useRef<ReturnType<typeof loadCodexInspectionLastRun> | undefined>(

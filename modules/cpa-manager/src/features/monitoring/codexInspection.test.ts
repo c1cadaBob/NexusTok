@@ -224,6 +224,24 @@ describe('Codex inspection last-run cache', () => {
     );
   });
 
+  it('creates embedded fingerprints without a browser-side management key', () => {
+    const fingerprint = createCodexInspectionConnectionFingerprint(
+      'https://nexustok.example.test/',
+      '',
+      { embedded: true, embeddedScope: 'account-inspection' }
+    );
+
+    expect(fingerprint).toBe(
+      createCodexInspectionConnectionFingerprint('https://nexustok.example.test', '', {
+        embedded: true,
+        embeddedScope: 'account-inspection',
+      })
+    );
+    expect(fingerprint).not.toBeNull();
+    expect(fingerprint).not.toContain('account-inspection');
+    expect(createCodexInspectionConnectionFingerprint('https://nexustok.example.test', '')).toBeNull();
+  });
+
   it('sanitizes raw auth data before saving browser cache', () => {
     const storage = createStorage();
     vi.stubGlobal('localStorage', storage);

@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/c1cada/NexusTok/common" // 公共工具包
@@ -89,8 +90,9 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 			c.Abort()
 			return
 		}
-		// time.Since will return negative number!
-		// See: https://stackoverflow.com/questions/50970900/why-is-time-since-returning-negative-durations-on-windows
+		// 这里不能直接使用 time.Since。某些 Windows 环境下单调时钟信息丢失或不一致时，
+		// time.Since 可能返回负数，进而误判滑动窗口是否过期；显式解析格式化后的时间可以
+		// 保持 Redis 存储值与当前时间的比较口径一致。
 		if int64(nowTime.Sub(oldTime).Seconds()) < duration {
 			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
 			c.Status(http.StatusTooManyRequests)
@@ -137,7 +139,8 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 			redisRateLimiter(c, maxRequestNum, duration, mark)
 		}
 	} else {
-		// It's safe to call multi times.
+		// Init 内部会保证重复调用的安全性；这里在构造中间件时初始化一次，
+		// 避免每个请求都重复创建清理协程，同时保持 Redis 不可用时的本地兜底能力。
 		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 		return func(c *gin.Context) {
 			memoryRateLimiter(c, maxRequestNum, duration, mark)
@@ -145,12 +148,71 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 	}
 }
 
+// isAccountPoolEmbeddedWebRateLimitExemptPath 判断当前 Web 路径是否属于账号池嵌入模块的受保护代理。
+//
+// CPAMC 嵌入 NexusTok 后会保留原模块的轮询行为：请求监控页会周期性访问
+// /usage-service、/status、/v0/management/usage、/v0/management/api-key-aliases 等同源路径，
+// 账号巡检页也会在一次批量巡检中连续访问管理代理。上述路由后续仍会经过
+// accountPoolManagerSessionAuth 做管理员会话校验，并由 NexusTok 服务端注入内部管理密钥；
+// 如果继续计入面向普通网页访问的 IP 级 GlobalWebRateLimit，管理员页面停留几分钟后
+// 会把自己限流成 429，导致账号巡检和请求监控都无法稳定使用。
+//
+// 这里只豁免账号池嵌入模块的页面资源和 Usage Service 同源代理，不影响普通前端页面、
+// 登录、注册、静态资源、Relay API 等路径的全局限流。
+func isAccountPoolEmbeddedWebRateLimitExemptPath(path string) bool {
+	normalizedPath := strings.TrimSpace(path)
+	if normalizedPath == "" {
+		return false
+	}
+
+	if strings.HasPrefix(normalizedPath, "/account-pool/manager") ||
+		strings.HasPrefix(normalizedPath, "/usage-service") {
+		return true
+	}
+
+	if normalizedPath == "/status" {
+		return true
+	}
+
+	for _, prefix := range []string{
+		"/v0/management/usage",
+		"/v0/management/model-prices",
+		"/v0/management/api-key-aliases",
+	} {
+		if normalizedPath == prefix || strings.HasPrefix(normalizedPath, prefix+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isAccountPoolEmbeddedAPIRateLimitExemptPath 判断当前 API 路径是否属于账号池管理代理。
+//
+// /api/account-pool/management/* 是浏览器访问 CLIProxyAPI management API 的唯一受保护入口。
+// 账号巡检会针对每个账号调用 /api-call，账号导入、禁用、删除也会经过该代理；这些请求都
+// 已经由 middleware.AdminAuth 校验管理员权限，真正的 CLIProxyAPI management key 只在服务端
+// 转发时注入。将它们从 IP 级 GlobalAPIRateLimit 中排除，可以避免一次正常批量巡检因为请求
+// 数较多而被主项目误判为滥用，同时仍保留路由自身的管理员权限边界。
+func isAccountPoolEmbeddedAPIRateLimitExemptPath(path string) bool {
+	normalizedPath := strings.TrimSpace(path)
+	return normalizedPath == "/api/account-pool/management" ||
+		strings.HasPrefix(normalizedPath, "/api/account-pool/management/")
+}
+
 // GlobalWebRateLimit 全局 Web 请求限流中间件
 // 对所有 Web 请求进行基于 IP 的频率限制
 // 配置项：GLOBAL_WEB_RATE_LIMIT_ENABLE、GLOBAL_WEB_RATE_LIMIT_NUM、GLOBAL_WEB_RATE_LIMIT_DURATION
 func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
-		return rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		limiter := rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		return func(c *gin.Context) {
+			if isAccountPoolEmbeddedWebRateLimitExemptPath(c.Request.URL.Path) {
+				c.Next()
+				return
+			}
+			limiter(c)
+		}
 	}
 	return defNext
 }
@@ -160,7 +222,14 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 // 配置项：GLOBAL_API_RATE_LIMIT_ENABLE、GLOBAL_API_RATE_LIMIT_NUM、GLOBAL_API_RATE_LIMIT_DURATION
 func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
-		return rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		limiter := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		return func(c *gin.Context) {
+			if isAccountPoolEmbeddedAPIRateLimitExemptPath(c.Request.URL.Path) {
+				c.Next()
+				return
+			}
+			limiter(c)
+		}
 	}
 	return defNext
 }
@@ -189,9 +258,11 @@ func UploadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.UploadRateLimitNum, common.UploadRateLimitDuration, "UP")
 }
 
-// userRateLimitFactory creates a rate limiter keyed by authenticated user ID
-// instead of client IP, making it resistant to proxy rotation attacks.
-// Must be used AFTER authentication middleware (UserAuth).
+// userRateLimitFactory 创建按已认证用户 ID 计数的限流器。
+//
+// 与基于 ClientIP 的全局限流不同，该限流器把 key 绑定到登录后的用户 ID，
+// 可以避免用户通过切换代理 IP 绕过搜索等用户级限制。调用方必须把它放在
+// UserAuth 等认证中间件之后，否则上下文中还没有用户 ID，函数会返回 401。
 func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
 	if common.RedisEnabled {
 		return func(c *gin.Context) {
@@ -205,7 +276,8 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 			userRedisRateLimiter(c, maxRequestNum, duration, key)
 		}
 	}
-	// It's safe to call multi times.
+	// Init 内部会保证重复调用的安全性；这里在构造按用户限流中间件时初始化一次，
+	// 让内存模式与 Redis 模式具备相同的过期清理语义。
 	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 	return func(c *gin.Context) {
 		userId := c.GetInt("id")
@@ -223,8 +295,10 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 	}
 }
 
-// userRedisRateLimiter is like redisRateLimiter but accepts a pre-built key
-// (to support user-ID-based keys).
+// userRedisRateLimiter 是 Redis 版本的用户级限流实现。
+//
+// 它与 redisRateLimiter 使用同样的滑动窗口算法，但接收调用方预先构造好的 key，
+// 这样可以把 key 绑定到 user:{id} 而不是 ClientIP，满足按用户维度限流的需求。
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	ctx := context.Background()
 	rdb := common.RDB
