@@ -1984,8 +1984,17 @@ export function MonitoringCenterPage() {
     connectionStatus === 'connected' && Number(autoRefreshMs) > 0 ? Number(autoRefreshMs) : null
   );
 
+  // 请求监控页同时有“可用性探测”和“真实数据读取”两条链路。
+  // 在 NexusTok 嵌入模式中，浏览器可能保留过 sidecar 重启期间的旧 502 探测缓存；
+  // 如果 /v0/management/usage 已经成功返回，就以真实数据链路为准，避免顶部横幅继续
+  // 显示“请求监控服务不可用”，同时导入导出等操作也跟随 useUsageData 的实时状态。
+  const monitoringAvailabilityReady =
+    usageServiceAvailable ||
+    (!requestMonitoringAvailability.checking && requestMonitoringAvailability.available);
   const monitoringUnavailable =
-    !requestMonitoringAvailability.checking && !requestMonitoringAvailability.available;
+    !usageServiceAvailable &&
+    !requestMonitoringAvailability.checking &&
+    !requestMonitoringAvailability.available;
   const monitoringUnavailableTitle =
     requestMonitoringAvailability.reason === 'monitoring_disabled'
       ? t('monitoring.request_monitoring_disabled_title')
@@ -1997,7 +2006,9 @@ export function MonitoringCenterPage() {
         ? t('monitoring.request_monitoring_service_unavailable_body')
         : t('monitoring.request_monitoring_not_configured_body');
   const overallLoading =
-    usageLoading || monitoringLoading || requestMonitoringAvailability.checking;
+    usageLoading ||
+    monitoringLoading ||
+    (!monitoringAvailabilityReady && requestMonitoringAvailability.checking);
   const combinedError = monitoringUnavailable
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');

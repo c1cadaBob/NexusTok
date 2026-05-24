@@ -1,16 +1,16 @@
-# NexusTok Docker Compose Configuration
-# 
-# Quick Start:
+# NexusTok Docker Compose 配置
+#
+# 快速启动：
 #   1. docker-compose up -d
-#   2. Access at http://localhost:3000
+#   2. 访问 http://localhost:3000
 #
-# Using MySQL instead of PostgreSQL:
-#   1. Comment out the postgres service and SQL_DSN line 15
-#   2. Uncomment the mysql service and SQL_DSN line 16
-#   3. Uncomment mysql in depends_on (line 28)
-#   4. Uncomment mysql_data in volumes section (line 64)
+# 使用 MySQL 替代 PostgreSQL：
+#   1. 注释 postgres 服务和 SQL_DSN 行
+#   2. 取消 mysql 服务和 MySQL SQL_DSN 行的注释
+#   3. 在 depends_on 中取消 mysql 注释
+#   4. 在 volumes 中取消 mysql_data 注释
 #
-# ⚠️  IMPORTANT: Change all default passwords before deploying to production!
+# ⚠️  重要：生产环境部署前必须修改所有默认密码和账号池内部密钥！
 
 version: '3.4' # For compatibility with older Docker versions
 
@@ -38,6 +38,8 @@ services:
       - ACCOUNT_POOL_CLI_PROXY_URL=http://cliproxyapi:8317
       - ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
       - ACCOUNT_POOL_CLI_PROXY_RELAY_KEY=${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
+      - ACCOUNT_POOL_USAGE_SERVICE_URL=http://account-pool-usage:18317
+      - ACCOUNT_POOL_USAGE_SERVICE_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
@@ -49,6 +51,7 @@ services:
       - redis
       - postgres
       - cliproxyapi
+      - account-pool-usage
 #      - mysql  # Uncomment if using MySQL
     networks:
       - nexustok-network
@@ -74,6 +77,36 @@ services:
       - ACCOUNT_POOL_CLI_PROXY_DATA_DIR=/data/account-pool/cliproxyapi
       - ACCOUNT_POOL_CLI_PROXY_RELAY_KEY=${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
       - TZ=Asia/Shanghai
+    networks:
+      - nexustok-network
+
+  account-pool-usage:
+    build:
+      context: ./modules/cpa-manager
+      dockerfile: Dockerfile.usage-service
+    image: nexustok-account-pool-usage:local
+    container_name: nexustok-account-pool-usage
+    restart: always
+    expose:
+      - "18317"
+    volumes:
+      - ./data/account-pool/usage-service:/data/account-pool/usage-service
+    environment:
+      - HTTP_ADDR=0.0.0.0:18317
+      - USAGE_DATA_DIR=/data/account-pool/usage-service
+      - USAGE_DB_PATH=/data/account-pool/usage-service/usage.sqlite
+      - CPA_UPSTREAM_URL=http://cliproxyapi:8317
+      - CPA_MANAGEMENT_KEY=${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      - USAGE_COLLECTOR_MODE=auto
+      - USAGE_RESP_QUEUE=usage
+      - USAGE_RESP_POP_SIDE=right
+      - USAGE_BATCH_SIZE=100
+      - USAGE_POLL_INTERVAL_MS=500
+      - USAGE_QUERY_LIMIT=50000
+      - USAGE_CORS_ORIGINS=*
+      - TZ=Asia/Shanghai
+    depends_on:
+      - cliproxyapi
     networks:
       - nexustok-network
 

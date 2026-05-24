@@ -67,6 +67,11 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	// 设置账号池管理器路由
 	setAccountPoolManagerRouter(router, cpaManagerFS, assets.CPAManagerIndexPage)
 
+	// 设置账号池请求监控 Usage Service 代理路由
+	// 这些路径必须注册在静态文件服务之前，否则 /usage-service、/status 和 /v0/management/*
+	// 会被前端 SPA 回退吞掉，CPAMC 的请求监控页面就只能看到“服务不可用”。
+	setAccountPoolUsageServiceProxyRouter(router)
+
 	// 注册静态文件服务
 	// "/" 路径下的所有请求都会尝试从 themeFS 中查找文件
 	router.Use(static.Serve("/", themeFS))
@@ -135,6 +140,31 @@ func setAccountPoolManagerRouter(router *gin.Engine, cpaManagerFS static.ServeFi
 		// 返回 index.html（SPA 路由回退）
 		c.Data(http.StatusOK, "text/html; charset=utf-8", indexPage)
 	})
+}
+
+// setAccountPoolUsageServiceProxyRouter 设置 CPAMC 请求监控 Usage Service 的同源代理路由。
+//
+// CPA-Manager 原生请求监控功能默认访问 Usage Service 的根路径端点：
+// - /usage-service/info 和 /usage-service/config 用于探测与读取采集器配置；
+// - /status 用于读取采集器和数据库状态；
+// - /v0/management/usage、model-prices、api-key-aliases 用于读取监控数据和辅助配置。
+//
+// NexusTok 嵌入 CPAMC 后，浏览器同源是主项目而不是 Usage Service。本路由只允许
+// 已登录管理员访问，并由 controller.AccountPoolUsageServiceProxy 在服务端注入内部
+// management key，从而让页面保留原请求路径，同时继续复用 NexusTok 的登录态与权限。
+func setAccountPoolUsageServiceProxyRouter(router *gin.Engine) {
+	auth := accountPoolManagerSessionAuth()
+	handler := controller.AccountPoolUsageServiceProxy
+
+	router.Any("/usage-service", auth, handler)
+	router.Any("/usage-service/*path", auth, handler)
+	router.Any("/status", auth, handler)
+	router.Any("/v0/management/usage", auth, handler)
+	router.Any("/v0/management/usage/*path", auth, handler)
+	router.Any("/v0/management/model-prices", auth, handler)
+	router.Any("/v0/management/model-prices/*path", auth, handler)
+	router.Any("/v0/management/api-key-aliases", auth, handler)
+	router.Any("/v0/management/api-key-aliases/*path", auth, handler)
 }
 
 // accountPoolManagerSessionAuth 账号池管理器会话认证中间件

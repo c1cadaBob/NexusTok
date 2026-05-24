@@ -44,7 +44,7 @@ type LoginOptions struct {
 // Authenticator 定义了认证器的核心接口。
 // 每个第三方 AI 提供商（如 Claude、Codex、xAI、Gemini 等）都需要实现此接口，
 // 以提供统一的登录和令牌刷新前置时间查询能力。
-type Authenticator {
+type Authenticator interface {
 	// Provider 返回该认证器对应的提供商标识字符串。
 	// 该标识用于在 Manager 中注册和查找认证器，例如 "claude"、"codex"、"xai"。
 	Provider() string

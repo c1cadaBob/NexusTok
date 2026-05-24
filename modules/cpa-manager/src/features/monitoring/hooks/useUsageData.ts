@@ -12,6 +12,7 @@ import {
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
 import { detectApiBaseFromLocation } from '@/utils/connection';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 import { clearModelPrices, loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
 
 export interface UsagePayload {
@@ -55,6 +56,16 @@ export function useUsageData(): UseUsageDataReturn {
   const aliasRequestIdRef = useRef(0);
 
   const resolveUsageServiceBase = useCallback(async (): Promise<string> => {
+    if (isNexusTokEmbedded) {
+      const candidate = normalizeUsageServiceBase(detectApiBaseFromLocation());
+      // NexusTok 嵌入模式下，Usage Service 已经固定由主项目同源代理承接。
+      // 监控页的自动刷新会同时读取 usage、alias、model prices 等多类实时数据；
+      // 如果每次读取前都额外请求 /usage-service/info，短时间内会产生大量探测请求，
+      // 在主项目 Web 限流较紧时反而让页面进入 429。这里直接返回同源地址，
+      // 让真正的数据接口作为健康信号；独立部署模式仍保留下面的逐候选探测逻辑。
+      return candidate;
+    }
+
     if (usageServiceEnabled && usageServiceBase) {
       return usageServiceBase;
     }
@@ -74,7 +85,7 @@ export function useUsageData(): UseUsageDataReturn {
           return candidate;
         }
       } catch {
-        // The regular CPA management API does not expose Usage Service metadata.
+        // 普通 CPA 管理接口不会暴露 Usage Service 元信息，继续尝试下一个候选地址。
       }
     }
 

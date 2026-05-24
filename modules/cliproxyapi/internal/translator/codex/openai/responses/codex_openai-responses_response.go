@@ -14,14 +14,6 @@ import (
 // 转换逻辑较为简单，因为 Codex 上游本身返回的就是 OpenAI Responses 格式：
 // - 流式模式：剥离 data: 前缀后重新添加标准 SSE 格式前缀
 // - 非流式模式：从 response.completed 事件中提取 response 对象
-package responses
-
-import (
-	"bytes"
-	"context"
-
-	"github.com/tidwall/gjson"
-)
 
 // ConvertCodexResponseToOpenAIResponses 将 Codex 的流式响应转换为 OpenAI Responses SSE 格式。
 // 由于 Codex 上游返回的已经是 Responses 格式，主要处理 SSE data: 前缀的标准化。

@@ -4,6 +4,7 @@
 # - 前端：使用 Bun 监听文件变化并自动重新构建
 # - 后端：使用 Go 热重载脚本自动编译和重启
 # - 账号池：CLIProxyAPI 从源码热重载
+# - 请求监控：CPA-Manager Usage Service 从源码运行并采集账号池使用量
 # - 数据库：PostgreSQL + Redis
 #
 # 使用方法：
@@ -77,8 +78,44 @@ services:
       - hot-network
     restart: unless-stopped
 
+  account-pool-usage:
+    image: golang:1.26.1-alpine
+    container_name: nexustok-account-pool-usage-hot
+    working_dir: /app/modules/cpa-manager/usage-service
+    command: ["go", "run", "./cmd/cpa-manager"]
+    expose:
+      - "18317"
+    volumes:
+      - .:/app
+      - ./data:/data
+      - hot_usage_gomodcache:/go/pkg/mod
+      - hot_usage_gocache:/root/.cache/go-build
+    environment:
+      HTTP_ADDR: 0.0.0.0:18317
+      USAGE_DATA_DIR: /data/account-pool/usage-service
+      USAGE_DB_PATH: /data/account-pool/usage-service/usage.sqlite
+      CPA_UPSTREAM_URL: http://cliproxyapi:8317
+      CPA_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
+      USAGE_COLLECTOR_MODE: auto
+      USAGE_RESP_QUEUE: usage
+      USAGE_RESP_POP_SIDE: right
+      USAGE_BATCH_SIZE: "100"
+      USAGE_POLL_INTERVAL_MS: "500"
+      USAGE_QUERY_LIMIT: "50000"
+      USAGE_CORS_ORIGINS: "*"
+      GOPROXY: https://goproxy.cn,https://goproxy.io,direct
+      GOSUMDB: sum.golang.google.cn
+      TZ: Asia/Shanghai
+    depends_on:
+      cliproxyapi:
+        condition: service_started
+    networks:
+      - hot-network
+    restart: unless-stopped
+
   # NexusTok 后端服务（热重载模式）
   nexustok:
+    build:
       context: .
       dockerfile: Dockerfile.dev-hot
     image: nexustok-api-hot:local
@@ -107,10 +144,14 @@ services:
       ACCOUNT_POOL_CLI_PROXY_URL: http://cliproxyapi:8317
       ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
       ACCOUNT_POOL_CLI_PROXY_RELAY_KEY: ${ACCOUNT_POOL_CLI_PROXY_RELAY_KEY:-nexustok-account-pool-relay-local}
+      ACCOUNT_POOL_USAGE_SERVICE_URL: http://account-pool-usage:18317
+      ACCOUNT_POOL_USAGE_SERVICE_MANAGEMENT_KEY: ${ACCOUNT_POOL_MANAGEMENT_KEY:-nexustok-account-pool-local}
     depends_on:
       frontend-watch:
         condition: service_started
       cliproxyapi:
+        condition: service_started
+      account-pool-usage:
         condition: service_started
       redis:
         condition: service_started
@@ -122,12 +163,16 @@ services:
 
   # Redis 缓存服务
   redis:
+    image: redis:7-alpine
+    container_name: nexustok-hot-redis
     restart: unless-stopped
     networks:
       - hot-network
 
   # PostgreSQL 数据库服务
   postgres:
+    image: postgres:15-alpine
+    container_name: nexustok-hot-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: root
@@ -147,6 +192,8 @@ volumes:
   hot_pg_data:
   hot_account_pool_gomodcache:
   hot_account_pool_gocache:
+  hot_usage_gomodcache:
+  hot_usage_gocache:
 
 networks:
   hot-network:

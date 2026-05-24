@@ -6,6 +6,7 @@ import {
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
 import { detectApiBaseFromLocation } from '@/utils/connection';
+import { isNexusTokEmbedded } from '@/utils/embedded';
 
 export type RequestMonitoringUnavailableReason =
   | 'checking'
@@ -34,6 +35,11 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
   });
 
   const candidates = useMemo(() => {
+    if (isNexusTokEmbedded) {
+      const embeddedBase = normalizeUsageServiceBase(detectApiBaseFromLocation());
+      return embeddedBase ? [embeddedBase] : [];
+    }
+
     return Array.from(
       new Set(
         [
@@ -51,7 +57,7 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
     let cancelled = false;
 
     const detect = async () => {
-      if (!managementKey || candidates.length === 0) {
+      if ((!isNexusTokEmbedded && !managementKey) || candidates.length === 0) {
         setState({
           checking: false,
           available: false,
@@ -69,6 +75,24 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
           const info = await usageServiceApi.getInfo(candidate);
           if (!isUsageServiceId(info.service)) {
             continue;
+          }
+          if (isNexusTokEmbedded) {
+            // NexusTok 嵌入模式下，Usage Service 只通过主项目同源代理暴露给浏览器。
+            // 浏览器侧不会保存 CPAMC 独立部署时使用的 managementKey，也不应该重新校验
+            // CPA 连接密钥是否存在；这些权限、内部密钥注入和上游可达性检查都由
+            // NexusTok 后端代理完成。这里保持一个更贴近嵌入形态的不变量：
+            // 只要同源 /usage-service/info 返回合法 Usage Service 身份，且服务声明
+            // configured !== false，就认为请求监控入口可用。后续 /status 和
+            // /v0/management/usage 若出现真实错误，会由数据加载 hook 展示具体错误。
+            if (cancelled) return;
+            const configured = info.configured !== false;
+            setState({
+              checking: false,
+              available: configured,
+              serviceBase: configured ? candidate : '',
+              reason: configured ? '' : 'service_not_configured',
+            });
+            return;
           }
           const response = await usageServiceApi.getManagerConfig(candidate, managementKey);
           const collectorEnabled = response.config.collector?.enabled !== false;
@@ -89,7 +113,7 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
           });
           return;
         } catch {
-          // A regular CPA panel or an unreachable external Usage Service is handled below.
+          // 普通 CPA 面板或不可达的外部 Usage Service 会在循环结束后统一归类为不可用。
         }
       }
 

@@ -169,6 +169,22 @@ const buildUrl = (base: string, path: string): string => {
 const authHeaders = (managementKey?: string) =>
   managementKey ? { Authorization: `Bearer ${managementKey}` } : undefined;
 
+const usageServiceRequestHeaders = (managementKey?: string): Record<string, string> => {
+  const headers: Record<string, string> = {
+    // 请求监控接口是实时管理数据，且在 NexusTok 嵌入模式下会经过主项目 Web 路由。
+    // 主项目的静态资源缓存策略曾经把 sidecar 重启期间产生的 502 探测结果缓存下来，
+    // 导致页面即使后端恢复也继续显示“请求监控服务不可用”。这里显式要求浏览器和
+    // 中间代理重新验证每次请求；真正的内部 managementKey 仍由 NexusTok 后端代理注入。
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+  };
+  const authorizationHeaders = authHeaders(managementKey);
+  if (authorizationHeaders) {
+    Object.assign(headers, authorizationHeaders);
+  }
+  return headers;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object';
 
@@ -274,6 +290,7 @@ export const usageServiceApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<UsageServiceInfo>(buildUrl(base, '/usage-service/info'), {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
+        headers: usageServiceRequestHeaders(),
       });
       return response.data;
     });
@@ -283,6 +300,7 @@ export const usageServiceApi = {
     await withUsageServiceError(async () => {
       await axios.post(buildUrl(base, '/setup'), payload, {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
+        headers: usageServiceRequestHeaders(),
       });
     });
   },
@@ -296,7 +314,7 @@ export const usageServiceApi = {
         buildUrl(base, '/usage-service/config'),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -314,7 +332,7 @@ export const usageServiceApi = {
         { config },
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -325,7 +343,7 @@ export const usageServiceApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<UsageServiceStatus>(buildUrl(base, '/status'), {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
-        headers: authHeaders(managementKey),
+        headers: usageServiceRequestHeaders(managementKey),
       });
       return response.data;
     });
@@ -335,7 +353,7 @@ export const usageServiceApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<UsagePayload>(buildUrl(base, '/v0/management/usage'), {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
-        headers: authHeaders(managementKey),
+        headers: usageServiceRequestHeaders(managementKey),
       });
       return response.data;
     });
@@ -347,7 +365,7 @@ export const usageServiceApi = {
         buildUrl(base, '/v0/management/model-prices'),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -365,7 +383,7 @@ export const usageServiceApi = {
         { prices },
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -381,7 +399,7 @@ export const usageServiceApi = {
         buildUrl(base, '/v0/management/api-key-aliases'),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -404,7 +422,7 @@ export const usageServiceApi = {
         body,
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -421,7 +439,7 @@ export const usageServiceApi = {
         buildUrl(base, `/v0/management/api-key-aliases/${encodeURIComponent(apiKeyHash)}`),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
     });
@@ -438,7 +456,7 @@ export const usageServiceApi = {
         models ? { models } : {},
         {
           timeout: 30 * 1000,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
@@ -449,7 +467,7 @@ export const usageServiceApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<Blob>(buildUrl(base, '/v0/management/usage/export'), {
         timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
-        headers: authHeaders(managementKey),
+        headers: usageServiceRequestHeaders(managementKey),
         responseType: 'blob',
       });
       const contentDisposition = readHeader(response.headers, 'content-disposition');
@@ -471,7 +489,7 @@ export const usageServiceApi = {
         payload,
         {
           timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
-          headers: authHeaders(managementKey),
+          headers: usageServiceRequestHeaders(managementKey),
         }
       );
       return response.data;
