@@ -36,7 +36,6 @@ import {
   IconMoreVertical,
   IconRefreshCw,
   IconSearch,
-  IconSettings,
   IconSlidersHorizontal,
   IconTimer,
   IconTrendingUp,
@@ -3010,14 +3009,6 @@ export function MonitoringCenterPage() {
             <IconFileText size={16} />
             <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
           </button>
-          <button
-            type="button"
-            className={styles.actionButton}
-            onClick={() => setIsPriceModalOpen(true)}
-          >
-            <IconSettings size={16} />
-            <span>{t('usage_stats.model_price_settings')}</span>
-          </button>
           <input
             ref={usageImportInputRef}
             type="file"
@@ -3025,9 +3016,6 @@ export function MonitoringCenterPage() {
             style={{ display: 'none' }}
             onChange={handleUsageImportChange}
           />
-        </div>
-
-        <div className={`${styles.actionGroup} ${styles.actionGroupNav}`}>
           <Link
             to="/monitoring/codex-inspection"
             className={`${styles.actionButton} ${styles.quickNavLink}`}

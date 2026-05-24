@@ -220,7 +220,7 @@
 .actionBar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   min-width: 0;
   padding: 12px;
@@ -233,13 +233,15 @@
 .actionGroup {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.actionGroupNav {
-  justify-content: flex-end;
+.actionGroup::-webkit-scrollbar {
+  display: none;
 }
 
 .actionButton,
@@ -3206,12 +3208,8 @@
   }
 
   .actionBar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .actionGroupNav {
-    justify-content: flex-start;
+    align-items: center;
+    flex-direction: row;
   }
 
   .masthead {
@@ -3227,7 +3225,6 @@
     grid-template-columns: 1fr;
   }
 
-  .actionGroup,
   .quickLinkRow {
     justify-content: flex-start;
   }
@@ -3375,7 +3372,6 @@
   .controlBar,
   .toolbarControls,
   .actionBar,
-  .actionGroup,
   .refreshControls,
   .filterSearchRow,
   .realtimeHeaderActions {
