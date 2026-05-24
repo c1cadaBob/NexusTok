@@ -1,5 +1,5 @@
 /**
- * Generic quota section component.
+ * 通用配额区块组件，封装供应商过滤、搜索、排序、分页和批量刷新逻辑。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -126,8 +126,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     Record<string, TState>
   >;
 
-  /* Removed useRef */
-  const [columns, gridRef] = useGridColumns(380); // Min card width 380px matches SCSS
+  const [columns, gridRef] = useGridColumns(380); // 最小卡片宽度与 SCSS 中的网格列宽保持一致。
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
 
@@ -223,12 +222,12 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     };
   }, [showAllAllowed, viewMode]);
 
-  // Update page size based on view mode and columns
+  // 根据当前展示模式和实际列数更新分页大小，避免窗口尺寸变化后分页数量不匹配。
   useEffect(() => {
     if (effectiveViewMode === 'all') {
       setPageSize(Math.max(1, displayFiles.length));
     } else {
-      // Paged mode: 3 rows * columns, capped to avoid oversized pages.
+      // 分页模式固定展示 3 行，并设置上限，避免单页卡片过多导致滚动和刷新都变慢。
       setPageSize(Math.min(columns * 3, MAX_ITEMS_PER_PAGE));
     }
   }, [effectiveViewMode, columns, displayFiles.length, setPageSize]);
@@ -322,7 +321,9 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
 
   return (
     <Card
+      className={styles.providerSectionCard}
       title={titleNode}
+      id={`quota-provider-${config.type}`}
       extra={
         <div className={styles.headerActions}>
           <div className={styles.viewModeToggle}>

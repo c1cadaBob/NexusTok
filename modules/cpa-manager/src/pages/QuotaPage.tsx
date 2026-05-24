@@ -1,5 +1,5 @@
 /**
- * Quota management page - coordinates the three quota sections.
+ * 配额管理页面，负责统一加载认证文件、配置文件，并协调各供应商配额区块。
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { IconSearch } from '@/components/ui/icons';
 import {
+  QuotaProviderNav,
   QuotaSection,
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
@@ -152,6 +153,7 @@ export function QuotaPage() {
         searchQuery={searchQuery}
         sortMode={sortMode}
       />
+      <QuotaProviderNav />
     </div>
   );
 }
