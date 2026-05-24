@@ -316,15 +316,22 @@
 .summaryGrid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .summaryCard {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label value"
+    "meta value";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 3px;
   min-width: 0;
-  min-height: 138px;
-  padding: 18px;
+  min-height: 74px;
+  padding: 12px 14px;
+  border-radius: 18px;
   background: var(--inspect-surface-elevated);
   transition:
     transform 0.18s ease,
@@ -354,18 +361,24 @@
 }
 
 .summaryLabel {
+  grid-area: label;
+  min-width: 0;
   color: var(--inspect-muted);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0;
   text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .summaryValue {
+  grid-area: value;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  font-size: clamp(24px, 2vw, 32px);
+  font-size: clamp(24px, 1.8vw, 30px);
   line-height: 1;
   letter-spacing: 0;
   text-overflow: ellipsis;
@@ -385,10 +398,19 @@
 }
 
 .summaryMeta {
-  margin-top: auto;
+  grid-area: meta;
+  min-width: 0;
   color: var(--inspect-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultsPanel {
+  min-height: 420px;
+  align-content: start;
 }
 
 .resultsHeaderActions {
@@ -472,6 +494,7 @@
 .tableWrap {
   min-width: 0;
   max-width: 100%;
+  min-height: 260px;
   overflow-x: auto;
 }
 
@@ -974,7 +997,14 @@
 
 @container codex-inspection-page (max-width: 1280px) {
   .summaryGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(108px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .summaryGrid::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -989,7 +1019,8 @@
   }
 
   .summaryGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: visible;
   }
 
   .settingsField {
@@ -1018,6 +1049,10 @@
 
   .summaryGrid {
     grid-template-columns: 1fr;
+  }
+
+  .summaryCard {
+    min-height: 70px;
   }
 
   .logRow {

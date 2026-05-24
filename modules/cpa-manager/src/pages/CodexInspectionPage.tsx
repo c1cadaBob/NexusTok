@@ -1125,6 +1125,7 @@ export function CodexInspectionPage() {
       <Panel
         title={t('monitoring.codex_inspection_results_title')}
         subtitle={t('monitoring.codex_inspection_results_desc')}
+        className={styles.resultsPanel}
         extra={
           <div className={styles.resultsHeaderActions}>
             <Button
