@@ -92,12 +92,12 @@ function AccountPoolFrame() {
   }, [schedulePreferenceSync])
 
   return (
-    <Main className='bg-background p-0'>
+    <Main className='h-full bg-background p-0'>
       <iframe
         ref={iframeRef}
         title={t('Account Pool Management')}
         src={ACCOUNT_POOL_MANAGER_URL}
-        className='min-h-0 w-full flex-1 border-0 bg-background'
+        className='block h-full min-h-0 w-full flex-1 border-0 bg-background'
         allow='clipboard-read; clipboard-write'
         onLoad={schedulePreferenceSync}
       />

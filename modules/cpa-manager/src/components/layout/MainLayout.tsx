@@ -188,13 +188,49 @@ export function MainLayout() {
     });
   }, [fetchConfig]);
 
+  useEffect(() => {
+    if (!embeddedFrame) return undefined;
+
+    const root = document.documentElement;
+    const previousProviderNavBottom = root.style.getPropertyValue('--quota-provider-nav-bottom');
+    const previousProviderNavContentGap = root.style.getPropertyValue(
+      '--quota-provider-nav-content-gap'
+    );
+
+    // 配额页的供应商快速导航通过 React Portal 挂载到 document.body。
+    // Portal 节点不在 `.app-shell-embedded-frame` 的 DOM 继承链上，因此无法读取该容器
+    // 内声明的 CSS 变量。这里把嵌入模式专用的底部定位变量同步到 documentElement，
+    // 保证浮层在嵌入到 NexusTok 后也能贴近 iframe 底部，而独立运行模式仍保持原样。
+    root.style.setProperty('--quota-provider-nav-bottom', '4px');
+    root.style.setProperty('--quota-provider-nav-content-gap', '4px');
+
+    return () => {
+      if (previousProviderNavBottom) {
+        root.style.setProperty('--quota-provider-nav-bottom', previousProviderNavBottom);
+      } else {
+        root.style.removeProperty('--quota-provider-nav-bottom');
+      }
+
+      if (previousProviderNavContentGap) {
+        root.style.setProperty('--quota-provider-nav-content-gap', previousProviderNavContentGap);
+      } else {
+        root.style.removeProperty('--quota-provider-nav-content-gap');
+      }
+    };
+  }, [embeddedFrame]);
+
   const navItems = [
-    { path: '/', label: t('nav.dashboard'), icon: sidebarIcons.dashboard },
+    { path: '/', label: t('nav.dashboard'), icon: sidebarIcons.dashboard, end: true },
     { path: '/config', label: t('nav.config_management'), icon: sidebarIcons.config },
     { path: '/auth-files', label: t('nav.auth_files'), icon: sidebarIcons.authFiles },
     { path: '/account-groups', label: t('nav.account_groups'), icon: sidebarIcons.accountGroups },
     { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },
-    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },
+    {
+      path: '/monitoring',
+      label: t('nav.monitoring_center'),
+      icon: sidebarIcons.monitoring,
+      end: true,
+    },
     {
       path: '/monitoring/inspection',
       label: t('nav.account_inspection'),
@@ -249,7 +285,11 @@ export function MainLayout() {
     : t('sidebar.toggle_expand', { defaultValue: 'Open navigation' });
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
+    <div
+      className={`app-shell ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${
+        embeddedFrame ? 'app-shell-embedded-frame' : ''
+      }`}
+    >
       <header className="main-header" ref={headerRef}>
         <div className="mobile-sidebar-actions">
           <Button
@@ -325,6 +365,7 @@ export function MainLayout() {
               <NavLink
                 key={item.path}
                 to={item.path}
+                end={item.end}
                 className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                 onClick={() => setSidebarOpen(false)}
                 title={showSidebarLabels ? undefined : item.label}

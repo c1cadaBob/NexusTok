@@ -81,10 +81,11 @@ const AccountPool = () => {
 
   return (
     <div
-      className='mt-[60px]'
       style={{
-        height: 'calc(100vh - 172px)',
-        minHeight: 560,
+        height: 'calc(100vh - 88px)',
+        marginTop: 40,
+        minHeight: 0,
+        overflow: 'hidden',
         width: '100%',
       }}
     >

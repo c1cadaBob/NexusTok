@@ -6,7 +6,8 @@
   flex-direction: column;
   gap: $spacing-lg;
   padding-bottom: calc(
-    var(--quota-provider-nav-height, 60px) + 12px + env(safe-area-inset-bottom) + #{$spacing-md}
+    var(--quota-provider-nav-height, 60px) + var(--quota-provider-nav-content-gap, 12px) +
+      env(safe-area-inset-bottom) + #{$spacing-md}
   );
 }
 
@@ -316,7 +317,7 @@
 .providerNavContainer {
   position: fixed;
   left: var(--content-center-x, 50%);
-  bottom: calc(12px + env(safe-area-inset-bottom));
+  bottom: calc(var(--quota-provider-nav-bottom, 12px) + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: auto;
