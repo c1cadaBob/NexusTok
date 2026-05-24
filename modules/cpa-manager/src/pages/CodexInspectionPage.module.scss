@@ -652,6 +652,15 @@
   color: var(--inspect-muted);
 }
 
+.noActionText {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  color: var(--inspect-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .actionDelete {
   background: color-mix(in srgb, var(--inspect-red) 14%, var(--inspect-surface));
   color: var(--inspect-red);

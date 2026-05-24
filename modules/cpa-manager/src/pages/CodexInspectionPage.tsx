@@ -684,9 +684,11 @@ export function CodexInspectionPage() {
     [result]
   );
 
+  const allResults = useMemo(() => result?.results ?? [], [result]);
+
   const filteredResults = useMemo(
-    () => filterByAction(actionableResults, actionFilter),
-    [actionableResults, actionFilter]
+    () => filterByAction(allResults, actionFilter),
+    [actionFilter, allResults]
   );
 
   const handleExecutePlanned = useCallback(() => {
@@ -981,12 +983,12 @@ export function CodexInspectionPage() {
   const filterCounts = useMemo(() => {
     const counts = countActions(actionableResults);
     return {
-      all: actionableResults.length,
+      all: allResults.length,
       delete: counts.delete,
       disable: counts.disable,
       enable: counts.enable,
     };
-  }, [actionableResults]);
+  }, [actionableResults, allResults.length]);
 
   const filterLabel = (filter: ActionFilter) => {
     switch (filter) {
@@ -1224,14 +1226,20 @@ export function CodexInspectionPage() {
                           </span>
                         </td>
                         <td>
-                          <Button
-                            size="sm"
-                            variant={item.action === 'delete' ? 'danger' : 'secondary'}
-                            onClick={() => handleExecuteSingle(item)}
-                            disabled={isInspectionInFlight || executing}
-                          >
-                            {formatActionLabel(item.action, t)}
-                          </Button>
+                          {isSuggestedAction(item) ? (
+                            <Button
+                              size="sm"
+                              variant={item.action === 'delete' ? 'danger' : 'secondary'}
+                              onClick={() => handleExecuteSingle(item)}
+                              disabled={isInspectionInFlight || executing}
+                            >
+                              {formatActionLabel(item.action, t)}
+                            </Button>
+                          ) : (
+                            <span className={styles.noActionText}>
+                              {t('monitoring.codex_inspection_no_action')}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -1239,8 +1247,8 @@ export function CodexInspectionPage() {
                     <tr>
                       <td colSpan={6}>
                         <div className={styles.emptyBlockSmall}>
-                          {actionableResults.length === 0
-                            ? t('monitoring.codex_inspection_no_pending_actions')
+                          {actionFilter === 'all'
+                            ? t('monitoring.codex_inspection_empty')
                             : t('monitoring.codex_inspection_no_pending_actions')}
                         </div>
                       </td>
