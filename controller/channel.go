@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"                    // 公共工具包
+	"github.com/c1cada/NexusTok/common"                     // 公共工具包
 	"github.com/c1cada/NexusTok/constant"                   // 常量定义
 	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
 	"github.com/c1cada/NexusTok/model"                      // 数据模型
@@ -28,12 +28,12 @@ import (
 // OpenAIModel OpenAI 模型结构体
 // 用于表示从上游获取的模型信息
 type OpenAIModel struct {
-	ID         string         `json:"id"`                   // 模型 ID
-	Object     string         `json:"object"`               // 对象类型
-	Created    int64          `json:"created"`              // 创建时间
-	OwnedBy    string         `json:"owned_by"`             // 所有者
-	Metadata   map[string]any `json:"metadata,omitempty"`   // 元数据
-	Permission []struct {                                    // 权限列表
+	ID         string         `json:"id"`                 // 模型 ID
+	Object     string         `json:"object"`             // 对象类型
+	Created    int64          `json:"created"`            // 创建时间
+	OwnedBy    string         `json:"owned_by"`           // 所有者
+	Metadata   map[string]any `json:"metadata,omitempty"` // 元数据
+	Permission []struct {     // 权限列表
 		ID                 string `json:"id"`
 		Object             string `json:"object"`
 		Created            int64  `json:"created"`
@@ -469,6 +469,17 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 		if group == nil || group.Status != common.ChannelStatusEnabled {
 			return fmt.Errorf("账号池组未启用")
+		}
+		// global_account_pool 是“CPAMC/CLIProxyAPI 账号组作为上游凭证”的模式，
+		// 请求最终会转发到 CLIProxyAPI sidecar，并通过 external_group_key 进行组过滤。
+		// NexusTok 原生 native 分组只服务旧的本地账号池管理，无法让 sidecar 选择官方账号；
+		// 因此这里必须拒绝 native 分组，避免用户明明没有在 CPAMC 创建分组却能保存渠道。
+		groupKey := strings.TrimSpace(group.ExternalKey)
+		if groupKey == "" {
+			groupKey = strings.TrimSpace(group.Name)
+		}
+		if !service.IsCLIProxyAccountPoolGroup(group) || groupKey == "" {
+			return fmt.Errorf("账号池模式只能选择 CPAMC 中已创建的账号组")
 		}
 	}
 

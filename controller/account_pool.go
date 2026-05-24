@@ -51,27 +51,27 @@ type accountPoolGroupUpsertRequest struct {
 
 // poolAccountUpsertRequest 池账号创建/更新请求
 type poolAccountUpsertRequest struct {
-	Name               string  `json:"name"`                 // 账号名称
-	Platform           string  `json:"platform"`             // 平台标识
-	AuthType           string  `json:"auth_type"`            // 认证类型
-	Credentials        string  `json:"credentials"`          // 凭证（API Key 或 OAuth Token）
-	Status             *int    `json:"status"`               // 状态
-	Schedulable        *bool   `json:"schedulable"`          // 是否可调度
-	Models             string  `json:"models"`               // 支持的模型
-	Group              string  `json:"group"`                // 用户组
-	Priority           *int64  `json:"priority"`             // 优先级
-	Weight             *int    `json:"weight"`               // 权重
-	MaxConcurrency     *int    `json:"max_concurrency"`      // 最大并发数
-	Proxy              string  `json:"proxy"`                // 代理地址
-	BaseURL            *string `json:"base_url"`             // 基础 URL
-	OpenAIOrganization *string `json:"openai_organization"`  // OpenAI 组织 ID
-	Other              string  `json:"other"`                // 其他配置
-	Setting            *string `json:"setting"`              // 设置
-	OtherSettings      string  `json:"settings"`             // 其他设置
-	ModelMapping       *string `json:"model_mapping"`        // 模型映射
-	ParamOverride      *string `json:"param_override"`       // 参数覆盖
-	HeaderOverride     *string `json:"header_override"`      // 请求头覆盖
-	StatusCodeMapping  *string `json:"status_code_mapping"`  // 状态码映射
+	Name               string  `json:"name"`                // 账号名称
+	Platform           string  `json:"platform"`            // 平台标识
+	AuthType           string  `json:"auth_type"`           // 认证类型
+	Credentials        string  `json:"credentials"`         // 凭证（API Key 或 OAuth Token）
+	Status             *int    `json:"status"`              // 状态
+	Schedulable        *bool   `json:"schedulable"`         // 是否可调度
+	Models             string  `json:"models"`              // 支持的模型
+	Group              string  `json:"group"`               // 用户组
+	Priority           *int64  `json:"priority"`            // 优先级
+	Weight             *int    `json:"weight"`              // 权重
+	MaxConcurrency     *int    `json:"max_concurrency"`     // 最大并发数
+	Proxy              string  `json:"proxy"`               // 代理地址
+	BaseURL            *string `json:"base_url"`            // 基础 URL
+	OpenAIOrganization *string `json:"openai_organization"` // OpenAI 组织 ID
+	Other              string  `json:"other"`               // 其他配置
+	Setting            *string `json:"setting"`             // 设置
+	OtherSettings      string  `json:"settings"`            // 其他设置
+	ModelMapping       *string `json:"model_mapping"`       // 模型映射
+	ParamOverride      *string `json:"param_override"`      // 参数覆盖
+	HeaderOverride     *string `json:"header_override"`     // 请求头覆盖
+	StatusCodeMapping  *string `json:"status_code_mapping"` // 状态码映射
 }
 
 // poolAccountBatchRequest 池账号批量创建请求
@@ -114,14 +114,14 @@ type accountPoolCodexOAuthCompleteRequest struct {
 
 // accountPoolProviderLoginRequest 账号池提供商登录请求
 type accountPoolProviderLoginRequest struct {
-	SessionId    string            `json:"session_id"`     // 会话 ID
-	Input        string            `json:"input"`          // 用户输入
-	Name         string            `json:"name"`           // 账号名称
-	Proxy        string            `json:"proxy"`          // 代理地址
-	NoBrowser    bool              `json:"no_browser"`     // 是否不自动打开浏览器
-	ProjectID    string            `json:"project_id"`     // 项目 ID
-	CallbackPort int               `json:"callback_port"`  // 回调端口
-	Metadata     map[string]string `json:"metadata"`       // 元数据
+	SessionId    string            `json:"session_id"`    // 会话 ID
+	Input        string            `json:"input"`         // 用户输入
+	Name         string            `json:"name"`          // 账号名称
+	Proxy        string            `json:"proxy"`         // 代理地址
+	NoBrowser    bool              `json:"no_browser"`    // 是否不自动打开浏览器
+	ProjectID    string            `json:"project_id"`    // 项目 ID
+	CallbackPort int               `json:"callback_port"` // 回调端口
+	Metadata     map[string]string `json:"metadata"`      // 元数据
 }
 
 func ListAccountPoolGroups(c *gin.Context) {
@@ -147,7 +147,7 @@ func ListAccountPoolGroups(c *gin.Context) {
 func ListAccountPoolGroupOptions(c *gin.Context) {
 	syncCLIProxyGroupsForList(c)
 	var groups []*model.AccountPoolGroup
-	if err := model.DB.Where("status = ?", common.ChannelStatusEnabled).Order("id DESC").Find(&groups).Error; err != nil {
+	if err := model.DB.Where("status = ? AND source = ?", common.ChannelStatusEnabled, model.AccountPoolGroupSourceCLIProxyAPI).Order("id DESC").Find(&groups).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -155,16 +155,9 @@ func ListAccountPoolGroupOptions(c *gin.Context) {
 	attachCLIProxyGroupStats(c, groups)
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
-		items = append(items, gin.H{
-			"id":                 group.Id,
-			"name":               group.Name,
-			"platform":           group.Platform,
-			"auth_type":          group.AuthType,
-			"source":             group.Source,
-			"external_group_key": group.ExternalKey,
-			"strategy":           group.Strategy,
-			"stats":              group.Stats,
-		})
+		if item, ok := accountPoolGroupOptionResponse(group); ok {
+			items = append(items, item)
+		}
 	}
 	common.ApiSuccess(c, items)
 }
@@ -1237,6 +1230,43 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		"updated_time":       group.UpdatedTime,
 		"stats":              group.Stats,
 	}
+}
+
+// accountPoolGroupOptionResponse 构造渠道表单可选择的账号池组响应。
+// 这里刻意只暴露 CPAMC/CLIProxyAPI 同步出来、并且当前至少包含一个真实账号的镜像组：
+//   - NexusTok 原生 native 分组用于旧的本地账号池管理，不能代表 CPAMC 的官方账号组；
+//   - 渠道的 global_account_pool 模式会把请求转发给 CLIProxyAPI sidecar，因此必须绑定
+//     source=cliproxyapi 且 external_group_key 可用于下游组过滤的分组；
+//   - 如果 CPAMC 里没有创建分组，统计 total 会是 0，此时返回空选项，避免用户误以为
+//     可以选择一个并不存在的上游账号组。
+func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool) {
+	if group == nil || group.Status != common.ChannelStatusEnabled {
+		return nil, false
+	}
+	if !service.IsCLIProxyAccountPoolGroup(group) {
+		return nil, false
+	}
+	groupKey := strings.TrimSpace(group.ExternalKey)
+	if groupKey == "" {
+		groupKey = strings.TrimSpace(group.Name)
+	}
+	if groupKey == "" {
+		return nil, false
+	}
+	stats := group.Stats
+	if stats == nil || stats["total"] <= 0 {
+		return nil, false
+	}
+	return gin.H{
+		"id":                 group.Id,
+		"name":               group.Name,
+		"platform":           group.Platform,
+		"auth_type":          group.AuthType,
+		"source":             group.Source,
+		"external_group_key": group.ExternalKey,
+		"strategy":           group.Strategy,
+		"stats":              group.Stats,
+	}, true
 }
 
 func poolAccountResponse(account *model.PoolAccount) gin.H {

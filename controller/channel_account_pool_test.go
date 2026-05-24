@@ -69,3 +69,75 @@ func TestValidateChannelGlobalAccountPoolAllowsEmptyKeyAndBaseURL(t *testing.T) 
 
 	require.NoError(t, validateChannel(channel, true))
 }
+
+func TestAccountPoolGroupOptionResponseOnlyReturnsSchedulableCLIProxyGroup(t *testing.T) {
+	nativeGroup := &model.AccountPoolGroup{
+		Id:       1,
+		Name:     "local-only",
+		Platform: "codex",
+		AuthType: model.AccountPoolAuthTypeAPIKey,
+		Source:   model.AccountPoolGroupSourceNative,
+		Status:   common.ChannelStatusEnabled,
+		Stats:    map[string]int64{"total": 3, "enabled": 3},
+	}
+	item, ok := accountPoolGroupOptionResponse(nativeGroup)
+	require.False(t, ok)
+	require.Nil(t, item)
+
+	emptyCLIProxyGroup := &model.AccountPoolGroup{
+		Id:          2,
+		Name:        "empty-remote",
+		Platform:    "codex",
+		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
+		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
+		ExternalKey: "empty-remote",
+		Status:      common.ChannelStatusEnabled,
+		Stats:       map[string]int64{"total": 0, "enabled": 0},
+	}
+	item, ok = accountPoolGroupOptionResponse(emptyCLIProxyGroup)
+	require.False(t, ok)
+	require.Nil(t, item)
+
+	activeCLIProxyGroup := &model.AccountPoolGroup{
+		Id:          3,
+		Name:        "remote-main",
+		Platform:    "codex",
+		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
+		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
+		ExternalKey: "remote-main",
+		Status:      common.ChannelStatusEnabled,
+		Stats:       map[string]int64{"total": 2, "enabled": 1},
+	}
+	item, ok = accountPoolGroupOptionResponse(activeCLIProxyGroup)
+	require.True(t, ok)
+	require.Equal(t, activeCLIProxyGroup.Id, item["id"])
+	require.Equal(t, model.AccountPoolGroupSourceCLIProxyAPI, item["source"])
+}
+
+func TestValidateChannelGlobalAccountPoolRejectsNativeGroup(t *testing.T) {
+	setupAccountPoolChannelTestDB(t)
+
+	group := &model.AccountPoolGroup{
+		Name:     "local-only",
+		Platform: "codex",
+		AuthType: model.AccountPoolAuthTypeAPIKey,
+		Source:   model.AccountPoolGroupSourceNative,
+		Status:   common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(group).Error)
+
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "",
+		Models: "gpt-4o-mini",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeGlobalAccountPool,
+			AccountPoolGroupId: group.Id,
+		},
+	}
+
+	err := validateChannel(channel, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "账号池模式只能选择 CPAMC 中已创建的账号组")
+}
