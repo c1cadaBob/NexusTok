@@ -2,12 +2,15 @@ import type { TFunction } from 'i18next';
 import iconAntigravity from '@/assets/icons/antigravity.svg';
 import iconClaude from '@/assets/icons/claude.svg';
 import iconCodex from '@/assets/icons/codex.svg';
+import iconAmp from '@/assets/icons/amp.svg';
 import iconGemini from '@/assets/icons/gemini.svg';
 import iconGrok from '@/assets/icons/grok.svg';
 import iconGrokDark from '@/assets/icons/grok-dark.svg';
 import iconIflow from '@/assets/icons/iflow.svg';
 import iconKimiDark from '@/assets/icons/kimi-dark.svg';
 import iconKimiLight from '@/assets/icons/kimi-light.svg';
+import iconOpenaiDark from '@/assets/icons/openai-dark.svg';
+import iconOpenaiLight from '@/assets/icons/openai-light.svg';
 import iconQwen from '@/assets/icons/qwen.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
 import type { AuthFileItem } from '@/types';
@@ -42,62 +45,72 @@ export const INTEGER_STRING_PATTERN = /^[+-]?\d+$/;
 export const TRUTHY_TEXT_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 export const FALSY_TEXT_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
 
-// 标签类型颜色配置 — 基于各提供商 Logo 品牌色调配，确保彼此不重复
+// 标签类型颜色配置：基于各提供商 Logo 品牌色调配，确保列表中不同账号类型有稳定且容易区分的视觉提示。
 export const TYPE_COLORS: Record<string, TypeColorSet> = {
-  // Qwen logo: 紫罗兰渐变 #6336E7 → #6F69F7
+  // Qwen logo 使用紫罗兰渐变 #6336E7 到 #6F69F7，因此标签采用同一色相的浅底深字。
   qwen: {
     light: { bg: '#ede5fd', text: '#5530c7' },
     dark: { bg: '#36208a', text: '#b5a3f0' },
   },
-  // Kimi logo: 亮蓝 #027AFF（K字 + 蓝色圆点）
+  // Kimi logo 主色为亮蓝 #027AFF，标签保留蓝色识别度但降低背景饱和度。
   kimi: {
     light: { bg: '#dce8ff', text: '#0560cf' },
     dark: { bg: '#003880', text: '#70b5ff' },
   },
-  // Gemini logo: 多色蓝 #3186FF（偏柔和的蓝）
+  // Gemini logo 使用偏柔和的多色蓝，这里选取 #3186FF 附近的蓝色作为主识别色。
   gemini: {
     light: { bg: '#e3f2fd', text: '#1565c0' },
     dark: { bg: '#0d47a1', text: '#64b5f6' },
   },
-  // Gemini-CLI: 同 Gemini 图标，用更深的海军蓝区分
+  // Gemini-CLI 与 Gemini 共用图标，但在认证文件里代表官方账号凭证，使用更深海军蓝做区分。
   'gemini-cli': {
     light: { bg: '#e0e8ff', text: '#1e4fa3' },
     dark: { bg: '#1c3f73', text: '#a8c7ff' },
   },
-  // AI Studio: 使用 Gemini 图标，中性灰标签
+  // AI Studio 也复用 Gemini 图标，但执行路径不同，使用中性灰避免误认为 Gemini API Key。
   aistudio: {
     light: { bg: '#f0f2f5', text: '#2f343c' },
     dark: { bg: '#373c42', text: '#cfd3db' },
   },
-  // Claude logo: 陶土橙 #D97757
+  // Claude logo 主色接近陶土橙 #D97757，标签使用暖色以便和蓝色系供应商拉开距离。
   claude: {
     light: { bg: '#fbece4', text: '#c05621' },
     dark: { bg: '#5e2c14', text: '#e8a882' },
   },
-  // Codex logo: 靛蓝渐变 #B1A7FF → #3941FF
+  // Codex logo 使用靛蓝渐变 #B1A7FF 到 #3941FF，因此标签采用更稳定的靛蓝文字。
   codex: {
     light: { bg: '#eae7ff', text: '#3538d4' },
     dark: { bg: '#262395', text: '#b5b0ff' },
   },
-  // Antigravity logo: 多色（主色 #3789F9 蓝 + #53A89A 青绿），用青色区分
+  // Antigravity logo 同时包含蓝色和青绿色，这里优先使用青色，避免与 Gemini/Codex 过度相似。
   antigravity: {
     light: { bg: '#e0f7fa', text: '#006064' },
     dark: { bg: '#004d40', text: '#80deea' },
   },
-  // xAI / Grok: graphite brand treatment, distinct from blue and purple providers
+  // xAI / Grok：使用石墨色系，避免和蓝色、紫色供应商混在一起。
   xai: {
     light: { bg: '#f3f4f6', text: '#111827', border: '1px solid #d1d5db' },
     dark: { bg: '#111827', text: '#f9fafb', border: '1px solid #374151' },
   },
-  // iFlow logo: 品红紫渐变 #5C5CFF → #AE5CFF，偏品红以区别于 Qwen 的紫罗兰
+  // iFlow logo 为品红紫渐变 #5C5CFF 到 #AE5CFF，这里偏向品红以区别于 Qwen 紫罗兰。
   iflow: {
     light: { bg: '#f5e3fc', text: '#9025c8' },
     dark: { bg: '#521490', text: '#d49cf5' },
   },
-  // Vertex logo: Google 蓝 #4285F4
+  // Vertex logo 使用 Google 蓝 #4285F4，标签保留官方视觉线索。
   vertex: {
     light: { bg: '#e4edfd', text: '#2b5fbc' },
     dark: { bg: '#1a3d80', text: '#89b3f7' },
+  },
+  // OpenAI 兼容上游：使用中性黑白标签，和实际 OpenAI 图标保持一致。
+  openai: {
+    light: { bg: '#f2f3f5', text: '#202123', border: '1px solid #d4d4d8' },
+    dark: { bg: '#202123', text: '#f8fafc', border: '1px solid #3f3f46' },
+  },
+  // Ampcode：使用偏绿色标签，和账号/OAuth 类型区分开，表示它更接近上游路由配置。
+  ampcode: {
+    light: { bg: '#e8f7ef', text: '#137447' },
+    dark: { bg: '#0f3f2a', text: '#8ee6b5' },
   },
   empty: {
     light: { bg: '#f5f5f5', text: '#616161' },
@@ -119,9 +132,45 @@ export const AUTH_FILE_ICONS: Record<string, AuthFileIconAsset> = {
   xai: { light: iconGrok, dark: iconGrokDark },
   iflow: iconIflow,
   kimi: { light: iconKimiLight, dark: iconKimiDark },
+  openai: { light: iconOpenaiLight, dark: iconOpenaiDark },
   qwen: iconQwen,
   vertex: iconVertex,
+  ampcode: iconAmp,
 };
+
+// CLIProxyAPI 的 /model-definitions/:channel 只为下列 channel 提供静态模型列表。
+// 其他 provider（例如 Qwen、iFlow）仍然可以手动维护规则，但前端不能请求不存在的
+// 模型定义接口，否则管理代理会返回 400 并在嵌入页面里产生误导性的错误提示。
+const MODEL_DEFINITION_SUPPORTED_PROVIDERS = new Set([
+  'claude',
+  'gemini',
+  'vertex',
+  'gemini-cli',
+  'aistudio',
+  'codex',
+  'kimi',
+  'antigravity',
+  'xai',
+]);
+
+// OAuth 模型别名只有在 CLIProxyAPI 执行链路会读取 alias channel 时才真正生效。
+// API Key 型上游或尚未实现官方账号执行器的类型可以继续管理认证文件和禁用规则，
+// 但不应在快捷入口中暗示其模型别名已经会被 relay 使用。
+const OAUTH_MODEL_ALIAS_SUPPORTED_PROVIDERS = new Set([
+  'gemini-cli',
+  'vertex',
+  'aistudio',
+  'antigravity',
+  'claude',
+  'codex',
+  'kimi',
+]);
+
+export const supportsModelDefinitions = (provider: string): boolean =>
+  MODEL_DEFINITION_SUPPORTED_PROVIDERS.has(normalizeProviderKey(provider));
+
+export const supportsOAuthModelAlias = (provider: string): boolean =>
+  OAUTH_MODEL_ALIAS_SUPPORTED_PROVIDERS.has(normalizeProviderKey(provider));
 
 export const clampCardPageSize = (value: number) =>
   Math.min(MAX_CARD_PAGE_SIZE, Math.max(MIN_CARD_PAGE_SIZE, Math.round(value)));

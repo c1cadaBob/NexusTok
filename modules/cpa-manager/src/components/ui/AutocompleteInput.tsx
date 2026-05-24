@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { IconChevronDown } from './icons';
 
 interface AutocompleteInputProps {
@@ -32,6 +32,8 @@ export function AutocompleteInput({
   id,
   rightElement
 }: AutocompleteInputProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,10 +100,11 @@ export function AutocompleteInput({
 
   return (
     <div className={`form-group ${wrapperClassName}`} ref={containerRef} style={wrapperStyle}>
-      {label && <label htmlFor={id}>{label}</label>}
+      {label && <label htmlFor={inputId}>{label}</label>}
       <div style={{ position: 'relative' }}>
         <input 
-            id={id}
+            id={inputId}
+            name={inputId}
             className={`input ${className}`.trim()} 
             value={value}
             onChange={handleInputChange}

@@ -31,12 +31,22 @@ const easeCircOut = (progress: number) => Math.sqrt(1 - (progress - 1) ** 2);
 
 const buildVerticalTransform = (y: number) => `translate3d(0px, ${y}px, 0px)`;
 const buildIosTransform = (xPercent: number, y: number) => `translate3d(${xPercent}%, ${y}px, 0px)`;
+const buildLocationSignature = (target: Location) =>
+  `${target.pathname}${target.search}${target.hash}`;
 
 const clearLayerStyles = (element: HTMLElement | null) => {
   if (!element) return;
   element.style.removeProperty('transform');
   element.style.removeProperty('opacity');
   element.style.removeProperty('box-shadow');
+};
+
+const blurFocusedElementInside = (container: HTMLElement | null) => {
+  if (!container || typeof document === 'undefined') return;
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && container.contains(activeElement)) {
+    activeElement.blur();
+  }
 };
 
 type Layer = {
@@ -77,6 +87,10 @@ export function PageTransition({
     layers.find((layer) => layer.status === 'current') ?? layers[layers.length - 1];
   const currentLayerKey = currentLayer?.key ?? location.key;
   const currentLayerPathname = currentLayer?.location.pathname;
+  const currentLayerSignature = currentLayer
+    ? buildLocationSignature(currentLayer.location)
+    : '';
+  const nextLocationSignature = buildLocationSignature(location);
 
   const resolveScrollContainer = useCallback(() => {
     if (scrollContainerRef?.current) return scrollContainerRef.current;
@@ -86,8 +100,8 @@ export function PageTransition({
 
   useLayoutEffect(() => {
     if (isAnimating) return;
-    if (location.key === currentLayerKey) return;
-    if (currentLayerPathname === location.pathname) return;
+    if (location.key === currentLayerKey && currentLayerSignature === nextLocationSignature) return;
+    if (currentLayerSignature === nextLocationSignature) return;
     const scrollContainer = resolveScrollContainer();
     const exitScrollOffset = scrollContainer?.scrollTop ?? 0;
     exitScrollOffsetRef.current = exitScrollOffset;
@@ -112,8 +126,8 @@ export function PageTransition({
           ? 'forward'
           : 'backward';
 
-    // When using iOS-style stacking, history POP within the same "section" can have equal route order.
-    // In that case, prefer treating navigation to an existing layer as a backward (pop) transition.
+    // 使用 iOS 风格堆叠页面时，同一业务区块内的 history POP 可能拿到相同的路由顺序。
+    // 如果目标 location 已经存在于历史图层中，就优先按后退动画处理，避免用户返回列表页时仍看到前进动画。
     if (nextVariant === 'ios' && layers.some((layer) => layer.key === location.key)) {
       nextDirection = 'backward';
     }
@@ -133,6 +147,12 @@ export function PageTransition({
       if (!fromSegments.length || !toSegments.length) return false;
       return fromSegments[0] === toSegments[0] && toSegments.length === 1;
     })();
+
+    // 切换路由前先释放旧图层里的焦点。
+    // 页面转场会把旧图层标记为 aria-hidden/inert；如果用户刚点击了旧页面按钮，
+    // 焦点仍停在即将隐藏的节点上，Chrome 会报告可访问性警告，并可能影响键盘用户的焦点位置。
+    // 这里仅在焦点确实位于当前图层内部时 blur，不主动把焦点跳到其他控件，避免打断浏览器后续的自然聚焦。
+    blurFocusedElementInside(currentLayerRef.current);
 
     setLayers((prev) => {
       const variant = transitionVariantRef.current;
@@ -199,13 +219,16 @@ export function PageTransition({
     location,
     currentLayerKey,
     currentLayerPathname,
+    currentLayerSignature,
+    nextLocationSignature,
     getRouteOrder,
     getTransitionVariant,
     resolveScrollContainer,
     layers,
   ]);
 
-  // Run Motion animation when animating starts
+  // isAnimating 切换为 true 后统一启动 Motion 动画。
+  // 图层数组已经在上一个 layout effect 中完成切换，这里只负责把当前图层和退出图层的视觉状态补齐。
   useLayoutEffect(() => {
     if (!isAnimating) return;
 
@@ -300,7 +323,7 @@ export function PageTransition({
         )
       );
     } else {
-      // Exit animation: fade out with slight movement (runs simultaneously)
+      // 退出图层使用轻微位移和淡出，和进入图层动画同时执行。
       if (exitingLayerEl) {
         exitingLayerEl.style.transform = buildVerticalTransform(exitBaseY);
         activeAnimations.push(
@@ -321,7 +344,7 @@ export function PageTransition({
         );
       }
 
-      // Enter animation: fade in with slight movement (runs simultaneously)
+      // 进入图层先放在滚动方向对应的偏移位置，再淡入到正常位置。
       currentLayerEl.style.transform = buildVerticalTransform(enterFromY);
       currentLayerEl.style.opacity = '0';
       activeAnimations.push(

@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode } from 'react';
+import { useId, type ChangeEvent, type ReactNode } from 'react';
 import { IconCheck } from './icons';
 import styles from './SelectionCheckbox.module.scss';
 
@@ -11,6 +11,8 @@ interface SelectionCheckboxProps {
   disabled?: boolean;
   className?: string;
   labelClassName?: string;
+  id?: string;
+  name?: string;
 }
 
 export function SelectionCheckbox({
@@ -22,7 +24,12 @@ export function SelectionCheckbox({
   disabled = false,
   className,
   labelClassName,
+  id,
+  name,
 }: SelectionCheckboxProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  const inputName = name ?? inputId;
   const rootClassName = [styles.root, disabled ? styles.disabled : '', className]
     .filter(Boolean)
     .join(' ');
@@ -36,6 +43,8 @@ export function SelectionCheckbox({
   return (
     <label className={rootClassName} title={title}>
       <input
+        id={inputId}
+        name={inputName}
         className={styles.input}
         type="checkbox"
         checked={checked}

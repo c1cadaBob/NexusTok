@@ -11,7 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { animate } from 'motion/mini';
 import type { AnimationPlaybackControlsWithThen } from 'motion-dom';
 import type { AuthFileItem, CodexQuotaState } from '@/types';
@@ -223,6 +223,7 @@ export function AuthFilesPage() {
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [filter, setFilter] = useState<'all' | string>('all');
   const [problemOnly, setProblemOnly] = useState(false);
@@ -322,6 +323,11 @@ export function AuthFilesPage() {
   const disableControls = connectionStatus !== 'connected';
   const normalizedFilter = normalizeProviderKey(String(filter));
   const pageSize = compactMode ? pageSizeByMode.compact : pageSizeByMode.regular;
+  const requestedTypeFilter = useMemo(() => {
+    const rawFilter = searchParams.get('type') || searchParams.get('provider') || '';
+    const normalized = normalizeProviderKey(rawFilter);
+    return normalized || null;
+  }, [searchParams]);
 
   useEffect(() => {
     const persistedCompactMode = readPersistedAuthFilesCompactMode();
@@ -379,6 +385,20 @@ export function AuthFilesPage() {
 
     setUiStateHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!requestedTypeFilter) return;
+
+    // URL 中的 type/provider 是从配额页快捷入口进入认证文件页时的显式意图。
+    // 它需要优先于本地保存的上次筛选状态，否则用户点击 Qwen、iFlow 等账号类型入口后，
+    // 页面仍可能停留在旧 provider、搜索词或问题状态筛选上，看起来像跳转没有生效。
+    setFilter(requestedTypeFilter);
+    setProblemOnly(false);
+    setDisabledOnly(false);
+    setHealthyOnly(false);
+    setSearch('');
+    setPage(1);
+  }, [requestedTypeFilter]);
 
   useEffect(() => {
     if (!uiStateHydrated) return;

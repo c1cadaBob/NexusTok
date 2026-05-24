@@ -218,3 +218,23 @@
     padding-right: $spacing-md;
   }
 }
+
+.manualModelsEditor {
+  padding: $spacing-md $spacing-lg $spacing-lg;
+
+  @include mobile {
+    padding-left: $spacing-md;
+    padding-right: $spacing-md;
+  }
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.manualModelsTextarea {
+  min-height: 150px;
+  resize: vertical;
+  line-height: 1.55;
+  font-family: inherit;
+}

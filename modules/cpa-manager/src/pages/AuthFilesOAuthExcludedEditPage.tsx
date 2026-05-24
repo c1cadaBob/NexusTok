@@ -12,6 +12,10 @@ import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { authFilesApi } from '@/services/api';
+import {
+  parseExcludedModelsText,
+  supportsModelDefinitions,
+} from '@/features/authFiles/constants';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import styles from './AuthFilesOAuthExcludedEditPage.module.scss';
 
@@ -21,11 +25,13 @@ type LocationState = { fromAuthFiles?: boolean } | null;
 
 const OAUTH_PROVIDER_PRESETS = [
   'gemini-cli',
+  'gemini',
   'vertex',
   'aistudio',
   'antigravity',
   'claude',
   'codex',
+  'xai',
   'qwen',
   'kimi',
   'iflow',
@@ -54,6 +60,7 @@ export function AuthFilesOAuthExcludedEditPage() {
   const [excludedUnsupported, setExcludedUnsupported] = useState(false);
 
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [manualModelsText, setManualModelsText] = useState('');
   const [modelsList, setModelsList] = useState<AuthFileModelItem[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<'unsupported' | null>(null);
@@ -196,12 +203,23 @@ export function AuthFilesOAuthExcludedEditPage() {
     }
     const existing = excluded[resolvedProviderKey] ?? [];
     setSelectedModels(new Set(existing));
+    setManualModelsText(existing.join('\n'));
   }, [excluded, resolvedProviderKey]);
 
   useEffect(() => {
     if (!resolvedProviderKey || excludedUnsupported) {
       setModelsList([]);
       setModelsError(null);
+      setModelsLoading(false);
+      return;
+    }
+
+    if (!supportsModelDefinitions(resolvedProviderKey)) {
+      // 部分账号类型（例如 Qwen、iFlow）可以在配置里手动保存 OAuthExcludedModels，
+      // 但 CLIProxyAPI 当前没有为它们提供 /model-definitions/:channel 静态模型列表。
+      // 这里提前进入手动维护模式，避免发起必然返回 400 的请求，同时保留保存能力。
+      setModelsList([]);
+      setModelsError('unsupported');
       setModelsLoading(false);
       return;
     }
@@ -276,7 +294,10 @@ export function AuthFilesOAuthExcludedEditPage() {
       return;
     }
 
-    const models = [...selectedModels];
+    const models =
+      modelsError === 'unsupported'
+        ? parseExcludedModelsText(manualModelsText)
+        : [...selectedModels];
     setSaving(true);
     try {
       if (models.length) {
@@ -292,7 +313,7 @@ export function AuthFilesOAuthExcludedEditPage() {
     } finally {
       setSaving(false);
     }
-  }, [handleBack, provider, selectedModels, showNotification, t]);
+  }, [handleBack, manualModelsText, modelsError, provider, selectedModels, showNotification, t]);
 
   const canSave = !disableControls && !saving && !excludedUnsupported;
 
@@ -420,11 +441,31 @@ export function AuthFilesOAuthExcludedEditPage() {
                   );
                 })}
               </div>
+            ) : modelsError === 'unsupported' ? (
+              <div className={styles.manualModelsEditor}>
+                <div className="form-group">
+                  <label htmlFor="oauth-excluded-manual-models">
+                    {t('oauth_excluded.manual_models_label')}
+                  </label>
+                  <textarea
+                    id="oauth-excluded-manual-models"
+                    name="oauth-excluded-manual-models"
+                    className={`input ${styles.manualModelsTextarea}`}
+                    value={manualModelsText}
+                    onChange={(event) => setManualModelsText(event.target.value)}
+                    placeholder={t('oauth_excluded.manual_models_placeholder')}
+                    rows={7}
+                    disabled={disableControls || saving}
+                    aria-describedby="oauth-excluded-manual-models-hint"
+                  />
+                  <div id="oauth-excluded-manual-models-hint" className="hint">
+                    {t('oauth_excluded.manual_models_hint')}
+                  </div>
+                </div>
+              </div>
             ) : resolvedProviderKey ? (
               <div className={styles.emptyModels}>
-                {modelsError === 'unsupported'
-                  ? t('oauth_excluded.models_unsupported')
-                  : t('oauth_excluded.no_models_available')}
+                {t('oauth_excluded.no_models_available')}
               </div>
             ) : (
               <div className={styles.emptyModels}>{t('oauth_excluded.provider_required')}</div>

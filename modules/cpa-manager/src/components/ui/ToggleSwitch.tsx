@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode } from 'react';
+import { useId, type ChangeEvent, type ReactNode } from 'react';
 import styles from './ToggleSwitch.module.scss';
 
 interface ToggleSwitchProps {
@@ -8,6 +8,8 @@ interface ToggleSwitchProps {
   ariaLabel?: string;
   disabled?: boolean;
   labelPosition?: 'left' | 'right';
+  id?: string;
+  name?: string;
 }
 
 export function ToggleSwitch({
@@ -16,8 +18,14 @@ export function ToggleSwitch({
   label,
   ariaLabel,
   disabled = false,
-  labelPosition = 'right'
+  labelPosition = 'right',
+  id,
+  name
 }: ToggleSwitchProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  const inputName = name ?? inputId;
+
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     onChange(event.target.checked);
   };
@@ -33,6 +41,8 @@ export function ToggleSwitch({
   return (
     <label className={className}>
       <input
+        id={inputId}
+        name={inputName}
         type="checkbox"
         checked={checked}
         onChange={handleChange}

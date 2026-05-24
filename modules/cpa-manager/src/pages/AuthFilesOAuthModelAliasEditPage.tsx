@@ -11,6 +11,10 @@ import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { authFilesApi } from '@/services/api';
+import {
+  supportsModelDefinitions,
+  supportsOAuthModelAlias,
+} from '@/features/authFiles/constants';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import { generateId } from '@/utils/helpers';
 import styles from './AuthFilesOAuthModelAliasEditPage.module.scss';
@@ -23,11 +27,13 @@ type OAuthModelMappingFormEntry = OAuthModelAliasEntry & { id: string };
 
 const OAUTH_PROVIDER_PRESETS = [
   'gemini-cli',
+  'gemini',
   'vertex',
   'aistudio',
   'antigravity',
   'claude',
   'codex',
+  'xai',
   'qwen',
   'kimi',
   'iflow',
@@ -231,6 +237,16 @@ export function AuthFilesOAuthModelAliasEditPage() {
       return;
     }
 
+    if (!supportsModelDefinitions(resolvedProviderKey)) {
+      // Qwen、iFlow 等类型可以保留手动输入入口，方便用户预先维护配置，
+      // 但后端没有静态模型定义列表。提前标记为 unsupported 可以避免请求
+      // /model-definitions/:channel 返回 400，同时 Autocomplete 仍允许手写模型名。
+      setModelsList([]);
+      setModelsError('unsupported');
+      setModelsLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setModelsLoading(true);
     setModelsError(null);
@@ -402,12 +418,17 @@ export function AuthFilesOAuthModelAliasEditPage() {
                       <button
                         key={option}
                         type="button"
-                        className={`${styles.tag} ${isActive ? styles.tagActive : ''}`}
-                        onClick={() => updateProvider(option)}
-                        disabled={disableControls || saving}
-                      >
-                        {getTypeLabel(option)}
-                      </button>
+                    className={`${styles.tag} ${isActive ? styles.tagActive : ''}`}
+                    onClick={() => updateProvider(option)}
+                    disabled={disableControls || saving}
+                    title={
+                      supportsOAuthModelAlias(option)
+                        ? undefined
+                        : t('oauth_model_alias.manual_provider_hint')
+                    }
+                  >
+                    {getTypeLabel(option)}
+                  </button>
                     );
                   })}
                 </div>
@@ -432,6 +453,7 @@ export function AuthFilesOAuthModelAliasEditPage() {
               {mappings.map((entry, index) => (
                 <div key={entry.id} className={styles.mappingRow}>
                   <AutocompleteInput
+                    id={`oauth-model-alias-source-${entry.id}`}
                     wrapperStyle={{ flex: 1, marginBottom: 0 }}
                     placeholder={t('oauth_model_alias.alias_name_placeholder')}
                     value={entry.name}
@@ -447,6 +469,8 @@ export function AuthFilesOAuthModelAliasEditPage() {
                   />
                   <span className={styles.mappingSeparator}>→</span>
                   <input
+                    id={`oauth-model-alias-target-${entry.id}`}
+                    name={`oauth-model-alias-target-${entry.id}`}
                     className={`input ${styles.mappingAliasInput}`}
                     placeholder={t('oauth_model_alias.alias_placeholder')}
                     value={entry.alias}
@@ -455,6 +479,8 @@ export function AuthFilesOAuthModelAliasEditPage() {
                   />
                   <div className={styles.mappingFork}>
                     <ToggleSwitch
+                      id={`oauth-model-alias-fork-${entry.id}`}
+                      name={`oauth-model-alias-fork-${entry.id}`}
                       label={t('oauth_model_alias.alias_fork_label')}
                       labelPosition="left"
                       checked={Boolean(entry.fork)}
