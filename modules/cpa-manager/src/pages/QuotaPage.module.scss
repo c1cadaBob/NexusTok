@@ -697,6 +697,103 @@
       rgba(220, 232, 255, 0));
 }
 
+.xaiCard {
+  background-image: linear-gradient(180deg,
+      rgba(17, 24, 39, 0.08),
+      rgba(17, 24, 39, 0));
+}
+
+.vertexCard {
+  background-image: linear-gradient(180deg,
+      rgba(66, 133, 244, 0.12),
+      rgba(66, 133, 244, 0));
+}
+
+.kiroCard {
+  background-image: linear-gradient(180deg,
+      rgba(56, 189, 248, 0.12),
+      rgba(167, 139, 250, 0.04),
+      rgba(56, 189, 248, 0));
+}
+
+.supplementalProviderCard {
+  :global(.empty-state) {
+    min-height: 104px;
+  }
+}
+
+.supplementalCredentialSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.supplementalProviderHint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.supplementalCredentialList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: $spacing-sm;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.supplementalCredentialItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+}
+
+.supplementalCredentialMain {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.supplementalCredentialName {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supplementalCredentialMeta {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supplementalCredentialType {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 90%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .quotaSection {
   display: flex;
   flex-direction: column;

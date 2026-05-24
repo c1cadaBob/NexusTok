@@ -8,7 +8,9 @@ import { useNavigate } from 'react-router-dom';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import {
@@ -28,25 +30,28 @@ import {
   KIMI_CONFIG
 } from '@/components/quota';
 import { OAuthLoginModal } from '@/components/oauth/OAuthLoginModal';
+import { VertexImportModal } from '@/components/oauth/VertexImportModal';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
 import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
 import styles from './QuotaPage.module.scss';
 
-const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
+const QUOTA_OAUTH_PROVIDER_MAP: Partial<Record<QuotaType, OAuthProvider>> = {
   codex: 'codex',
   claude: 'anthropic',
   antigravity: 'antigravity',
   'gemini-cli': 'gemini-cli',
   kimi: 'kimi',
+  xai: 'xai',
 };
 
-const QUOTA_LOGIN_TITLE_KEY_MAP: Record<QuotaType, string> = {
+const QUOTA_LOGIN_TITLE_KEY_MAP: Partial<Record<QuotaType, string>> = {
   codex: 'auth_login.codex_oauth_title',
   claude: 'auth_login.anthropic_oauth_title',
   antigravity: 'auth_login.antigravity_oauth_title',
   'gemini-cli': 'auth_login.gemini_cli_oauth_title',
   kimi: 'auth_login.kimi_oauth_title',
+  xai: 'auth_login.xai_oauth_title',
 };
 
 type OperationsShortcut = {
@@ -54,6 +59,21 @@ type OperationsShortcut = {
   titleKey: string;
   descKey: string;
   icon: ReactNode;
+};
+
+type SupplementalProviderId = 'xai' | 'vertex' | 'kiro';
+
+type SupplementalProviderAction = 'oauth' | 'vertex-import' | 'reserved';
+
+type SupplementalProviderDefinition = {
+  id: SupplementalProviderId;
+  titleKey: string;
+  emptyTitleKey: string;
+  emptyDescKey: string;
+  hintKey: string;
+  action: SupplementalProviderAction;
+  actionLabelKey: string;
+  actionProviderTitleKey?: string;
 };
 
 // 配额页只保留账号池日常维护所需的运行诊断入口。
@@ -89,6 +109,198 @@ const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
   },
 ];
 
+// xAI、Vertex、Kiro 目前还没有接入和 Codex/Gemini CLI 相同的自动额度查询器，
+// 但它们仍然属于账号池官方账号能力的一部分。这里把它们作为“补充供应商区块”
+// 下沉到配额页下方，统一承担登录、导入、预留和凭证可见性职责：
+// - xAI 复用已有 OAuth callback 流程，可以直接发起登录；
+// - Vertex 不是 OAuth 流程，而是服务账号 JSON 导入，因此使用独立导入弹窗；
+// - Kiro 暂未接入 provider runtime，先固定展示预留区块，方便后续补齐能力时不再调整页面结构。
+const SUPPLEMENTAL_PROVIDERS: SupplementalProviderDefinition[] = [
+  {
+    id: 'xai',
+    titleKey: 'xai_quota.title',
+    emptyTitleKey: 'xai_quota.empty_title',
+    emptyDescKey: 'xai_quota.empty_desc',
+    hintKey: 'xai_quota.hint',
+    action: 'oauth',
+    actionLabelKey: 'quota_management.login_provider',
+    actionProviderTitleKey: 'auth_login.xai_oauth_title',
+  },
+  {
+    id: 'vertex',
+    titleKey: 'vertex_quota.title',
+    emptyTitleKey: 'vertex_quota.empty_title',
+    emptyDescKey: 'vertex_quota.empty_desc',
+    hintKey: 'vertex_quota.hint',
+    action: 'vertex-import',
+    actionLabelKey: 'vertex_import.title',
+  },
+  {
+    id: 'kiro',
+    titleKey: 'kiro_quota.title',
+    emptyTitleKey: 'kiro_quota.empty_title',
+    emptyDescKey: 'kiro_quota.empty_desc',
+    hintKey: 'kiro_quota.hint',
+    action: 'reserved',
+    actionLabelKey: 'kiro_quota.reserved_button',
+  },
+];
+
+const normalizeProviderKey = (value: unknown): string => {
+  const key = String(value ?? '').trim().toLowerCase().replace(/_/g, '-');
+  if (key === 'x-ai' || key === 'grok') return 'xai';
+  if (key === 'google-vertex' || key === 'vertex-ai') return 'vertex';
+  return key;
+};
+
+const getAuthFileProviderKey = (file: AuthFileItem): string =>
+  normalizeProviderKey(file.type ?? file.provider);
+
+const stringifySearchValue = (value: unknown): string[] => {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.flatMap(stringifySearchValue);
+  if (typeof value === 'string') return value.trim() ? [value] : [];
+  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];
+  return [];
+};
+
+const matchesCredentialSearch = (file: AuthFileItem, normalizedSearchQuery: string): boolean => {
+  if (!normalizedSearchQuery) return true;
+  const values = [
+    file.name,
+    file.type,
+    file.provider,
+    file.authIndex,
+    file['auth_index'],
+    file.status,
+    file.statusMessage,
+    file['status_message'],
+    file.account,
+    file.email,
+    file.projectId,
+    file.project_id,
+  ];
+  return stringifySearchValue(values).some((value) =>
+    value.toLowerCase().includes(normalizedSearchQuery)
+  );
+};
+
+const getCredentialSubtitle = (file: AuthFileItem): string => {
+  const candidates = [
+    file.account,
+    file.email,
+    file.projectId,
+    file.project_id,
+    file.authIndex,
+    file['auth_index'],
+  ];
+  for (const candidate of candidates) {
+    const text = stringifySearchValue(candidate)[0];
+    if (text) return text;
+  }
+  return '';
+};
+
+interface SupplementalProviderSectionProps {
+  definition: SupplementalProviderDefinition;
+  files: AuthFileItem[];
+  disabled: boolean;
+  searchQuery: string;
+  onAction: (definition: SupplementalProviderDefinition) => void;
+  getActionLabel: (definition: SupplementalProviderDefinition) => string;
+}
+
+function SupplementalProviderSection({
+  definition,
+  files,
+  disabled,
+  searchQuery,
+  onAction,
+  getActionLabel,
+}: SupplementalProviderSectionProps) {
+  const { t } = useTranslation();
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const providerFiles = useMemo(
+    () =>
+      files
+        .filter((file) => getAuthFileProviderKey(file) === definition.id && file.disabled !== true)
+        .sort((left, right) =>
+          left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' })
+        ),
+    [definition.id, files]
+  );
+  const displayFiles = useMemo(
+    () => providerFiles.filter((file) => matchesCredentialSearch(file, normalizedSearchQuery)),
+    [normalizedSearchQuery, providerFiles]
+  );
+  const titleNode = (
+    <div className={styles.titleWrapper}>
+      <span>{t(definition.titleKey)}</span>
+      {providerFiles.length > 0 && (
+        <span className={styles.countBadge}>
+          {normalizedSearchQuery ? displayFiles.length : providerFiles.length}
+        </span>
+      )}
+    </div>
+  );
+  const isReserved = definition.action === 'reserved';
+
+  return (
+    <Card
+      className={`${styles.providerSectionCard} ${styles.supplementalProviderCard} ${
+        styles[`${definition.id}Card`]
+      }`}
+      id={`quota-provider-${definition.id}`}
+      title={titleNode}
+      extra={
+        <div className={styles.headerActions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className={styles.loginCredentialButton}
+            onClick={() => onAction(definition)}
+            disabled={disabled || isReserved}
+            title={isReserved ? t('kiro_quota.reserved_hint') : undefined}
+          >
+            {getActionLabel(definition)}
+          </Button>
+        </div>
+      }
+    >
+      {providerFiles.length === 0 ? (
+        <EmptyState title={t(definition.emptyTitleKey)} description={t(definition.emptyDescKey)} />
+      ) : displayFiles.length === 0 ? (
+        <EmptyState
+          title={t('quota_management.search_empty_title')}
+          description={t('quota_management.search_empty_desc')}
+        />
+      ) : (
+        <div className={styles.supplementalCredentialSection}>
+          <p className={styles.supplementalProviderHint}>{t(definition.hintKey)}</p>
+          <div className={styles.supplementalCredentialList}>
+            {displayFiles.map((file) => {
+              const subtitle = getCredentialSubtitle(file);
+              return (
+                <div key={file.name} className={styles.supplementalCredentialItem}>
+                  <div className={styles.supplementalCredentialMain}>
+                    <span className={styles.supplementalCredentialName}>{file.name}</span>
+                    {subtitle && (
+                      <span className={styles.supplementalCredentialMeta}>{subtitle}</span>
+                    )}
+                  </div>
+                  <span className={styles.supplementalCredentialType}>
+                    {t(`auth_files.type_${definition.id}`, { defaultValue: definition.id })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function QuotaPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -100,6 +312,7 @@ export function QuotaPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<QuotaSortMode>('default');
   const [loginProvider, setLoginProvider] = useState<OAuthProvider | null>(null);
+  const [vertexImportOpen, setVertexImportOpen] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
   const sortOptions = useMemo(
@@ -148,15 +361,41 @@ export function QuotaPage() {
 
   const getLoginLabel = useCallback(
     (type: QuotaType) => {
+      const titleKey = QUOTA_LOGIN_TITLE_KEY_MAP[type];
       return t('quota_management.login_provider', {
-        provider: t(QUOTA_LOGIN_TITLE_KEY_MAP[type]),
+        provider: titleKey ? t(titleKey) : type,
       });
     },
     [t]
   );
 
   const openLoginModal = useCallback((type: QuotaType) => {
-    setLoginProvider(QUOTA_OAUTH_PROVIDER_MAP[type]);
+    const provider = QUOTA_OAUTH_PROVIDER_MAP[type];
+    if (provider) {
+      setLoginProvider(provider);
+    }
+  }, []);
+
+  const getSupplementalActionLabel = useCallback(
+    (definition: SupplementalProviderDefinition) => {
+      if (definition.actionProviderTitleKey) {
+        return t(definition.actionLabelKey, {
+          provider: t(definition.actionProviderTitleKey),
+        });
+      }
+      return t(definition.actionLabelKey);
+    },
+    [t]
+  );
+
+  const handleSupplementalAction = useCallback((definition: SupplementalProviderDefinition) => {
+    if (definition.action === 'oauth') {
+      setLoginProvider('xai');
+      return;
+    }
+    if (definition.action === 'vertex-import') {
+      setVertexImportOpen(true);
+    }
   }, []);
 
   return (
@@ -269,11 +508,27 @@ export function QuotaPage() {
         onLogin={() => openLoginModal(KIMI_CONFIG.type)}
         loginLabel={getLoginLabel(KIMI_CONFIG.type)}
       />
+      {SUPPLEMENTAL_PROVIDERS.map((definition) => (
+        <SupplementalProviderSection
+          key={definition.id}
+          definition={definition}
+          files={files}
+          disabled={disableControls}
+          searchQuery={searchQuery}
+          onAction={handleSupplementalAction}
+          getActionLabel={getSupplementalActionLabel}
+        />
+      ))}
       <QuotaProviderNav />
       <OAuthLoginModal
         provider={loginProvider}
         open={Boolean(loginProvider)}
         onClose={() => setLoginProvider(null)}
+        onSuccess={loadFiles}
+      />
+      <VertexImportModal
+        open={vertexImportOpen}
+        onClose={() => setVertexImportOpen(false)}
         onSuccess={loadFiles}
       />
     </div>

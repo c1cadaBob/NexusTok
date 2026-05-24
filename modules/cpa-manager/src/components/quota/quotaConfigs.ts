@@ -1,5 +1,12 @@
 /**
- * Quota configuration definitions.
+ * 配额配置定义。
+ *
+ * QuotaType 同时服务两类页面元素：
+ * - 有真实额度查询器的供应商，例如 Codex、Claude、Gemini CLI；
+ * - 只在配额页展示登录、导入或预留入口的补充供应商，例如 xAI、Vertex、Kiro。
+ *
+ * 真实额度查询器仍然通过 QuotaConfig 注册；补充供应商只用于页面锚点、
+ * 底部快速跳转和供应商入口展示，避免在没有上游额度接口时伪造配额数据。
  */
 
 import React from 'react';
@@ -45,7 +52,15 @@ import styles from '@/pages/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
-export type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi';
+export type QuotaType =
+  | 'antigravity'
+  | 'claude'
+  | 'codex'
+  | 'gemini-cli'
+  | 'kimi'
+  | 'xai'
+  | 'vertex'
+  | 'kiro';
 export type QuotaSortMode = 'default' | 'name-asc' | 'plan-desc' | 'plan-asc';
 
 const QUOTA_PROGRESS_HIGH_THRESHOLD = 70;

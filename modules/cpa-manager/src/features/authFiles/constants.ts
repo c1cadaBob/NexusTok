@@ -7,6 +7,7 @@ import iconGemini from '@/assets/icons/gemini.svg';
 import iconGrok from '@/assets/icons/grok.svg';
 import iconGrokDark from '@/assets/icons/grok-dark.svg';
 import iconIflow from '@/assets/icons/iflow.svg';
+import iconKiro from '@/assets/icons/kiro.svg';
 import iconKimiDark from '@/assets/icons/kimi-dark.svg';
 import iconKimiLight from '@/assets/icons/kimi-light.svg';
 import iconOpenaiDark from '@/assets/icons/openai-dark.svg';
@@ -102,6 +103,12 @@ export const TYPE_COLORS: Record<string, TypeColorSet> = {
     light: { bg: '#e4edfd', text: '#2b5fbc' },
     dark: { bg: '#1a3d80', text: '#89b3f7' },
   },
+  // Kiro 先作为账号池官方账号预留类型展示，使用青蓝和紫色之间的折中色，
+  // 与底部配额导航中的预留图标保持一致，避免误认为已经接入的 Vertex 或 Gemini。
+  kiro: {
+    light: { bg: '#e0f2fe', text: '#075985', border: '1px solid #bae6fd' },
+    dark: { bg: '#0c4a6e', text: '#bae6fd', border: '1px solid #0369a1' },
+  },
   // OpenAI 兼容上游：使用中性黑白标签，和实际 OpenAI 图标保持一致。
   openai: {
     light: { bg: '#f2f3f5', text: '#202123', border: '1px solid #d4d4d8' },
@@ -135,6 +142,7 @@ export const AUTH_FILE_ICONS: Record<string, AuthFileIconAsset> = {
   openai: { light: iconOpenaiLight, dark: iconOpenaiDark },
   qwen: iconQwen,
   vertex: iconVertex,
+  kiro: iconKiro,
   ampcode: iconAmp,
 };
 

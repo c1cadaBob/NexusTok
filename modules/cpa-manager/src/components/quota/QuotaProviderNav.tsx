@@ -11,8 +11,12 @@ import iconAntigravity from '@/assets/icons/antigravity.svg';
 import iconClaude from '@/assets/icons/claude.svg';
 import iconCodex from '@/assets/icons/codex.svg';
 import iconGemini from '@/assets/icons/gemini.svg';
+import iconGrok from '@/assets/icons/grok.svg';
+import iconGrokDark from '@/assets/icons/grok-dark.svg';
+import iconKiro from '@/assets/icons/kiro.svg';
 import iconKimiDark from '@/assets/icons/kimi-dark.svg';
 import iconKimiLight from '@/assets/icons/kimi-light.svg';
+import iconVertex from '@/assets/icons/vertex.svg';
 import { useThemeStore } from '@/stores';
 import type { QuotaType } from './quotaConfigs';
 import styles from '@/pages/QuotaPage.module.scss';
@@ -29,6 +33,9 @@ const QUOTA_PROVIDER_NAV_ITEMS: QuotaProviderNavItem[] = [
   { id: 'antigravity', label: 'Antigravity', getIcon: () => iconAntigravity },
   { id: 'gemini-cli', label: 'Gemini CLI', getIcon: () => iconGemini },
   { id: 'kimi', label: 'Kimi', getIcon: (theme) => (theme === 'dark' ? iconKimiDark : iconKimiLight) },
+  { id: 'xai', label: 'xAI', getIcon: (theme) => (theme === 'dark' ? iconGrokDark : iconGrok) },
+  { id: 'vertex', label: 'Vertex', getIcon: () => iconVertex },
+  { id: 'kiro', label: 'Kiro', getIcon: () => iconKiro },
 ];
 
 const QUOTA_NAV_SCROLL_OFFSET = 24;
@@ -46,6 +53,9 @@ export function QuotaProviderNav() {
     codex: null,
     'gemini-cli': null,
     kimi: null,
+    xai: null,
+    vertex: null,
+    kiro: null,
   });
   const [indicatorRect, setIndicatorRect] = useState<{
     x: number;

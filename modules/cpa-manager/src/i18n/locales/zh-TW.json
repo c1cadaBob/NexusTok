@@ -813,6 +813,26 @@
     "limit_index": "限額 #{{index}}",
     "reset_hint": "{{hint}} 後重置"
   },
+  "xai_quota": {
+    "title": "xAI 配額",
+    "empty_title": "暫無 xAI OAuth 驗證",
+    "empty_desc": "使用 xAI OAuth 登入後即可在帳號池中使用 Grok 官方帳號。",
+    "hint": "xAI 目前只展示已匯入或已登入的官方帳號憑證；配額查詢能力後續接入後會在此處展示。"
+  },
+  "vertex_quota": {
+    "title": "Vertex 憑證",
+    "empty_title": "暫無 Vertex 憑證",
+    "empty_desc": "匯入 Vertex 服務帳號 JSON 後即可在帳號池中使用 Vertex 官方憑證。",
+    "hint": "Vertex 使用服務帳號 JSON 匯入，不屬於 OAuth callback 流程；這裡集中展示已匯入的 Vertex 憑證。"
+  },
+  "kiro_quota": {
+    "title": "Kiro 預留",
+    "empty_title": "Kiro 官方帳號能力預留中",
+    "empty_desc": "Kiro provider runtime 尚未接入，目前先保留帳號池入口和底部快速定位。",
+    "hint": "這裡會在後續接入 Kiro 官方帳號登入、重新整理和調度能力後展示對應憑證。",
+    "reserved_button": "Kiro 登入預留",
+    "reserved_hint": "Kiro 登入能力尚未接入，目前僅預留入口。"
+  },
   "vertex_import": {
     "title": "Vertex JSON 登入",
     "description": "上傳 Google 服務帳號 JSON，使用 CLI vertex-import 同步規則寫入 auth-dir/vertex-<project>.json。",

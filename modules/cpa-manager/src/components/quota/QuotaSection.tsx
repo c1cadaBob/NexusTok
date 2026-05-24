@@ -388,10 +388,11 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       }
     >
       {filteredFiles.length === 0 ? (
+        // 供应商标题栏已经提供了统一的 OAuth 登录入口；空状态只保留说明文案，
+        // 避免管理员在同一个供应商区块内看到两个含义完全相同的登录按钮。
         <EmptyState
           title={t(`${config.i18nPrefix}.empty_title`)}
           description={t(`${config.i18nPrefix}.empty_desc`)}
-          action={loginButton}
         />
       ) : displayFiles.length === 0 ? (
         <EmptyState
