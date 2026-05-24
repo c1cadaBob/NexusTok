@@ -221,89 +221,6 @@
   line-height: 1.6;
 }
 
-.oauthSettingsCard {
-  :global(.card-header) {
-    align-items: center;
-  }
-}
-
-.oauthSettingsGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: $spacing-sm;
-}
-
-.oauthSettingsButton {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  align-items: start;
-  gap: $spacing-sm;
-  min-width: 0;
-  min-height: 76px;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    transform 0.18s ease;
-
-  &:hover {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-primary));
-    transform: translateY(-1px);
-  }
-}
-
-.oauthSettingsIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: $radius-md;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
-}
-
-.oauthSettingsContent {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 4px;
-}
-
-.oauthSettingsTitle {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 20px;
-}
-
-.oauthSettingsDesc {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  overflow-wrap: anywhere;
-}
-
-.oauthRulesCard {
-  :global(.card-header) {
-    align-items: center;
-  }
-}
-
-.accountTypeCard {
-  :global(.card-header) {
-    align-items: center;
-  }
-}
-
 .upstreamConfigCard {
   :global(.card-header) {
     align-items: center;
@@ -316,19 +233,7 @@
   }
 }
 
-.oauthRulesGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: $spacing-sm;
-}
-
 .upstreamConfigGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: $spacing-sm;
-}
-
-.accountTypeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: $spacing-sm;
@@ -338,28 +243,6 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: $spacing-sm;
-}
-
-.oauthRuleProvider {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
-}
-
-.accountTypeProvider {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
 }
 
 .upstreamConfigButton {
@@ -416,34 +299,6 @@
   }
 }
 
-.oauthRuleProviderHeader {
-  display: flex;
-  align-items: center;
-  gap: $spacing-sm;
-  min-width: 0;
-}
-
-.accountTypeProviderHeader {
-  display: flex;
-  align-items: center;
-  gap: $spacing-sm;
-  min-width: 0;
-}
-
-.oauthRuleProviderIcon,
-.oauthRuleProviderIconFallback {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-}
-
-.accountTypeProviderIcon,
-.accountTypeProviderIconFallback {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-}
-
 .upstreamConfigIcon,
 .upstreamConfigIconFallback {
   width: 28px;
@@ -451,38 +306,8 @@
   flex: 0 0 auto;
 }
 
-.oauthRuleProviderIcon {
-  object-fit: contain;
-}
-
-.accountTypeProviderIcon {
-  object-fit: contain;
-}
-
 .upstreamConfigIcon {
   object-fit: contain;
-}
-
-.oauthRuleProviderIconFallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.accountTypeProviderIconFallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .upstreamConfigIconFallback {
@@ -503,28 +328,6 @@
   border-radius: $radius-md;
   color: var(--primary-color);
   background: color-mix(in srgb, var(--primary-color) 10%, transparent);
-}
-
-.oauthRuleProviderName {
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 20px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.accountTypeProviderName {
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 20px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .upstreamConfigContent {
@@ -575,100 +378,6 @@
   font-size: 12px;
   font-weight: 700;
   line-height: 18px;
-}
-
-.oauthRuleActions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: $spacing-xs;
-}
-
-.accountTypeActions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: $spacing-xs;
-}
-
-.oauthRuleActionButton {
-  min-width: 0;
-  min-height: 36px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
-  border-radius: $radius-md;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    transform 0.18s ease;
-
-  &:hover {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
-    transform: translateY(-1px);
-  }
-}
-
-.oauthRuleManualOnly {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 36px;
-  padding: 8px 10px;
-  border: 1px dashed color-mix(in srgb, var(--border-color) 88%, transparent);
-  border-radius: $radius-md;
-  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-}
-
-.accountTypePrimaryAction,
-.accountTypeActionButton {
-  min-width: 0;
-  min-height: 36px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
-  border-radius: $radius-md;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    transform 0.18s ease;
-
-  &:hover:not(:disabled) {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
-    transform: translateY(-1px);
-  }
-
-  &:disabled {
-    color: var(--text-tertiary);
-    cursor: not-allowed;
-    opacity: 0.65;
-  }
-}
-
-.accountTypePrimaryAction {
-  grid-column: 1 / -1;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 9%, var(--bg-secondary));
 }
 
 .oauthModalTitle {

@@ -14,15 +14,10 @@ import { Select } from '@/components/ui/Select';
 import {
   IconChartLine,
   IconCrosshair,
-  IconFileText,
   IconInfo,
   IconKey,
-  IconSettings,
-  IconModelCluster,
   IconScrollText,
   IconSearch,
-  IconShield,
-  IconSlidersHorizontal,
 } from '@/components/ui/icons';
 import {
   QuotaProviderNav,
@@ -43,11 +38,7 @@ import { useThemeStore } from '@/stores';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
 import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
-import {
-  getAuthFileIcon,
-  getTypeLabel,
-  supportsOAuthModelAlias,
-} from '@/features/authFiles/constants';
+import { getAuthFileIcon } from '@/features/authFiles/constants';
 import styles from './QuotaPage.module.scss';
 import iconVertex from '@/assets/icons/vertex.svg';
 
@@ -57,21 +48,6 @@ const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
   antigravity: 'antigravity',
   'gemini-cli': 'gemini-cli',
   kimi: 'kimi',
-};
-
-type OAuthSettingsShortcut = {
-  path: string;
-  titleKey: string;
-  descKey: string;
-  icon: ReactNode;
-};
-
-type OAuthRuleShortcutKind = 'excluded' | 'alias';
-
-type AccountTypeShortcut = {
-  provider: string;
-  loginProvider?: OAuthProvider;
-  importKind?: 'vertex';
 };
 
 type UpstreamConfigShortcut = {
@@ -89,48 +65,9 @@ type OperationsShortcut = {
   icon: ReactNode;
 };
 
-// 配额页是账号池日常运维的起点。这里保留的快捷入口必须全部指向
-// CPAMC 已经存在且可以直接访问的真实页面，避免把“账号类型”“模型规则”
-// 和真正可发起 OAuth callback/device flow 的登录入口混在一起。
-const OAUTH_SETTINGS_SHORTCUTS: OAuthSettingsShortcut[] = [
-  {
-    path: '/auth-files',
-    titleKey: 'quota_management.settings_auth_files',
-    descKey: 'quota_management.settings_auth_files_desc',
-    icon: <IconFileText size={20} />,
-  },
-  {
-    path: '/account-groups',
-    titleKey: 'quota_management.settings_account_groups',
-    descKey: 'quota_management.settings_account_groups_desc',
-    icon: <IconModelCluster size={20} />,
-  },
-  {
-    path: '/ai-providers',
-    titleKey: 'quota_management.settings_ai_providers',
-    descKey: 'quota_management.settings_ai_providers_desc',
-    icon: <IconSlidersHorizontal size={20} />,
-  },
-  {
-    path: '/config',
-    titleKey: 'quota_management.settings_runtime_config',
-    descKey: 'quota_management.settings_runtime_config_desc',
-    icon: <IconSettings size={20} />,
-  },
-  {
-    path: '/auth-files/oauth-excluded',
-    titleKey: 'quota_management.settings_oauth_excluded',
-    descKey: 'quota_management.settings_oauth_excluded_desc',
-    icon: <IconShield size={20} />,
-  },
-  {
-    path: '/auth-files/oauth-model-alias',
-    titleKey: 'quota_management.settings_oauth_model_alias',
-    descKey: 'quota_management.settings_oauth_model_alias_desc',
-    icon: <IconScrollText size={20} />,
-  },
-];
-
+// 配额页保留少量高频入口：顶部用于新增官方账号，下面用于补充 API Key
+// 上游和查看运维状态。认证文件、账号分组、模型禁用和模型别名仍可通过
+// CPAMC 左侧导航进入，这里不再重复铺开展示，避免配额页首屏过于拥挤。
 const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
   {
     path: '/monitoring',
@@ -156,34 +93,6 @@ const OPERATIONS_SHORTCUTS: OperationsShortcut[] = [
     descKey: 'quota_management.ops_system_desc',
     icon: <IconInfo size={20} />,
   },
-];
-
-const OAUTH_RULE_PROVIDERS = [
-  'codex',
-  'claude',
-  'antigravity',
-  'gemini-cli',
-  'gemini',
-  'kimi',
-  'xai',
-  'vertex',
-  'aistudio',
-  'qwen',
-  'iflow',
-];
-
-const ACCOUNT_TYPE_SHORTCUTS: AccountTypeShortcut[] = [
-  { provider: 'codex', loginProvider: 'codex' },
-  { provider: 'claude', loginProvider: 'anthropic' },
-  { provider: 'antigravity', loginProvider: 'antigravity' },
-  { provider: 'gemini-cli', loginProvider: 'gemini-cli' },
-  { provider: 'gemini' },
-  { provider: 'kimi', loginProvider: 'kimi' },
-  { provider: 'xai', loginProvider: 'xai' },
-  { provider: 'vertex', importKind: 'vertex' },
-  { provider: 'aistudio' },
-  { provider: 'qwen' },
-  { provider: 'iflow' },
 ];
 
 const UPSTREAM_CONFIG_SHORTCUTS: UpstreamConfigShortcut[] = [
@@ -230,15 +139,6 @@ const UPSTREAM_CONFIG_SHORTCUTS: UpstreamConfigShortcut[] = [
     actionKey: 'quota_management.upstream_configure_action',
   },
 ];
-
-const buildOAuthRulePath = (provider: string, kind: OAuthRuleShortcutKind) => {
-  const basePath =
-    kind === 'excluded' ? '/auth-files/oauth-excluded' : '/auth-files/oauth-model-alias';
-  return `${basePath}?provider=${encodeURIComponent(provider)}`;
-};
-
-const buildAuthFilesTypePath = (provider: string) =>
-  `/auth-files?type=${encodeURIComponent(provider)}`;
 
 export function QuotaPage() {
   const { t } = useTranslation();
@@ -314,30 +214,6 @@ export function QuotaPage() {
     setLoginProvider(QUOTA_OAUTH_PROVIDER_MAP[type]);
   }, []);
 
-  const openOAuthRule = useCallback(
-    (provider: string, kind: OAuthRuleShortcutKind) => {
-      navigate(buildOAuthRulePath(provider, kind), { state: { fromAuthFiles: true } });
-    },
-    [navigate]
-  );
-
-  const openAccountType = useCallback(
-    (provider: string) => {
-      navigate(buildAuthFilesTypePath(provider));
-    },
-    [navigate]
-  );
-
-  const openAccountTypeLogin = useCallback((shortcut: AccountTypeShortcut) => {
-    if (shortcut.importKind === 'vertex') {
-      setVertexImportOpen(true);
-      return;
-    }
-    if (shortcut.loginProvider) {
-      setLoginProvider(shortcut.loginProvider);
-    }
-  }, []);
-
   const openUpstreamConfig = useCallback(
     (shortcut: UpstreamConfigShortcut) => {
       navigate(shortcut.path, { state: { fromAiProviders: true } });
@@ -391,83 +267,6 @@ export function QuotaPage() {
       </Card>
 
       <Card
-        className={styles.oauthSettingsCard}
-        title={t('quota_management.oauth_settings_title')}
-      >
-        <div className={styles.oauthSettingsGrid}>
-          {OAUTH_SETTINGS_SHORTCUTS.map((item) => (
-            <button
-              key={item.path}
-              type="button"
-              className={styles.oauthSettingsButton}
-              onClick={() => navigate(item.path)}
-            >
-              <span className={styles.oauthSettingsIcon}>{item.icon}</span>
-              <span className={styles.oauthSettingsContent}>
-                <span className={styles.oauthSettingsTitle}>{t(item.titleKey)}</span>
-                <span className={styles.oauthSettingsDesc}>{t(item.descKey)}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className={styles.oauthShortcutHint}>
-          {t('quota_management.oauth_settings_desc')}
-        </div>
-      </Card>
-
-      <Card
-        className={styles.oauthRulesCard}
-        title={t('quota_management.oauth_rule_shortcuts_title')}
-      >
-        <div className={styles.oauthRulesGrid}>
-          {OAUTH_RULE_PROVIDERS.map((provider) => {
-            const icon = getAuthFileIcon(provider, resolvedTheme);
-            return (
-              <div key={provider} className={styles.oauthRuleProvider}>
-                <div className={styles.oauthRuleProviderHeader}>
-                  {icon ? (
-                    <img src={icon} alt="" className={styles.oauthRuleProviderIcon} />
-                  ) : (
-                    <span className={styles.oauthRuleProviderIconFallback}>
-                      {getTypeLabel(t, provider).slice(0, 1)}
-                    </span>
-                  )}
-                  <span className={styles.oauthRuleProviderName}>
-                    {getTypeLabel(t, provider)}
-                  </span>
-                </div>
-                <div className={styles.oauthRuleActions}>
-                  <button
-                    type="button"
-                    className={styles.oauthRuleActionButton}
-                    onClick={() => openOAuthRule(provider, 'excluded')}
-                  >
-                    {t('quota_management.oauth_rule_excluded_action')}
-                  </button>
-                  {supportsOAuthModelAlias(provider) ? (
-                    <button
-                      type="button"
-                      className={styles.oauthRuleActionButton}
-                      onClick={() => openOAuthRule(provider, 'alias')}
-                    >
-                      {t('quota_management.oauth_rule_alias_action')}
-                    </button>
-                  ) : (
-                    <span className={styles.oauthRuleManualOnly}>
-                      {t('quota_management.oauth_rule_manual_only')}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className={styles.oauthShortcutHint}>
-          {t('quota_management.oauth_rule_shortcuts_desc')}
-        </div>
-      </Card>
-
-      <Card
         className={styles.upstreamConfigCard}
         title={t('quota_management.upstream_config_shortcuts_title')}
       >
@@ -500,77 +299,6 @@ export function QuotaPage() {
         </div>
         <div className={styles.oauthShortcutHint}>
           {t('quota_management.upstream_config_shortcuts_desc')}
-        </div>
-      </Card>
-
-      <Card
-        className={styles.accountTypeCard}
-        title={t('quota_management.account_type_shortcuts_title')}
-      >
-        <div className={styles.accountTypeGrid}>
-          {ACCOUNT_TYPE_SHORTCUTS.map((shortcut) => {
-            const icon = getAuthFileIcon(shortcut.provider, resolvedTheme);
-            const hasLoginEntry = Boolean(shortcut.loginProvider || shortcut.importKind);
-            const loginLabel =
-              shortcut.importKind === 'vertex'
-                ? t('quota_management.account_type_import_action')
-                : t('quota_management.account_type_login_action');
-
-            return (
-              <div key={shortcut.provider} className={styles.accountTypeProvider}>
-                <div className={styles.accountTypeProviderHeader}>
-                  {icon ? (
-                    <img src={icon} alt="" className={styles.accountTypeProviderIcon} />
-                  ) : (
-                    <span className={styles.accountTypeProviderIconFallback}>
-                      {getTypeLabel(t, shortcut.provider).slice(0, 1)}
-                    </span>
-                  )}
-                  <span className={styles.accountTypeProviderName}>
-                    {getTypeLabel(t, shortcut.provider)}
-                  </span>
-                </div>
-                <div className={styles.accountTypeActions}>
-                  <button
-                    type="button"
-                    className={styles.accountTypePrimaryAction}
-                    onClick={() => openAccountType(shortcut.provider)}
-                  >
-                    {t('quota_management.account_type_view_accounts_action')}
-                  </button>
-                  {hasLoginEntry && (
-                    <button
-                      type="button"
-                      className={styles.accountTypeActionButton}
-                      onClick={() => openAccountTypeLogin(shortcut)}
-                      disabled={disableControls}
-                    >
-                      {loginLabel}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={styles.accountTypeActionButton}
-                    onClick={() => openOAuthRule(shortcut.provider, 'excluded')}
-                  >
-                    {t('quota_management.oauth_rule_excluded_action')}
-                  </button>
-                  {supportsOAuthModelAlias(shortcut.provider) && (
-                    <button
-                      type="button"
-                      className={styles.accountTypeActionButton}
-                      onClick={() => openOAuthRule(shortcut.provider, 'alias')}
-                    >
-                      {t('quota_management.oauth_rule_alias_action')}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className={styles.oauthShortcutHint}>
-          {t('quota_management.account_type_shortcuts_desc')}
         </div>
       </Card>
 
