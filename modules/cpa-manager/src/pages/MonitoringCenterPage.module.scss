@@ -914,18 +914,26 @@
 }
 
 .summaryHero {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 
-  @include narrow-laptop {
+  @container monitoring-page (max-width: 760px) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @container monitoring-page (max-width: 520px) {
+    grid-template-columns: 1fr;
   }
 }
 
 .summarySub {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 
-  @include narrow-laptop {
+  @container monitoring-page (max-width: 760px) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @container monitoring-page (max-width: 520px) {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3232,12 +3240,6 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .summaryHero,
-  .summarySub,
-  .summaryGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .accountOverviewCardGrid {
     grid-template-columns: repeat(2, minmax(360px, 1fr));
   }
@@ -3315,10 +3317,7 @@
 }
 
 @container monitoring-page (max-width: 900px) {
-  .filterGrid,
-  .summaryHero,
-  .summarySub,
-  .summaryGrid {
+  .filterGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3416,8 +3415,6 @@
   }
 
   .filterGrid,
-  .summaryHero,
-  .summarySub,
   .summaryGrid,
   .priceGrid {
     grid-template-columns: 1fr;

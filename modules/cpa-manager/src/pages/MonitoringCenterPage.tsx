@@ -2383,14 +2383,6 @@ export function MonitoringCenterPage() {
       meta: `${failedGroupCount} ${t('monitoring.groups_suffix')}`,
       tone: scopedSummary.failureCalls > 0 ? 'bad' : 'good',
     },
-    {
-      label: t('monitoring.estimated_cost'),
-      value: hasPrices ? formatUsd(scopedSummary.totalCost) : '--',
-      meta: hasPrices
-        ? t('monitoring.estimated_cost_hint')
-        : t('monitoring.estimated_cost_missing'),
-      tone: hasPrices ? undefined : 'warn',
-    },
   ];
 
   const secondarySummaryCards: SummaryCardProps[] = [
