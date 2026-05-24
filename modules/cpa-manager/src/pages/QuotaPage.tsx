@@ -27,18 +27,11 @@ import {
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
-import {
-  OAuthLoginModal,
-  getOAuthProviderIcon,
-  quotaOAuthProviders
-} from '@/components/oauth/OAuthLoginModal';
-import { VertexImportModal } from '@/components/oauth/VertexImportModal';
-import { useThemeStore } from '@/stores';
+import { OAuthLoginModal } from '@/components/oauth/OAuthLoginModal';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
 import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
 import styles from './QuotaPage.module.scss';
-import iconVertex from '@/assets/icons/vertex.svg';
 
 const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
   codex: 'codex',
@@ -48,6 +41,14 @@ const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
   kimi: 'kimi',
 };
 
+const QUOTA_LOGIN_TITLE_KEY_MAP: Record<QuotaType, string> = {
+  codex: 'auth_login.codex_oauth_title',
+  claude: 'auth_login.anthropic_oauth_title',
+  antigravity: 'auth_login.antigravity_oauth_title',
+  'gemini-cli': 'auth_login.gemini_cli_oauth_title',
+  kimi: 'auth_login.kimi_oauth_title',
+};
+
 type OperationsShortcut = {
   path: string;
   titleKey: string;
@@ -55,7 +56,9 @@ type OperationsShortcut = {
   icon: ReactNode;
 };
 
-// 配额页只保留账号池日常维护所需的 OAuth 登录和运行诊断入口。
+// 配额页只保留账号池日常维护所需的运行诊断入口。
+// OAuth 登录入口下沉到对应供应商额度区块的右上角，和额度刷新、分页切换放在同一操作区；
+// 这样管理员在查看某个供应商额度时可以就地登录补充账号，不需要先回到顶部寻找入口。
 // 供应商 API Key、Base URL、模型范围等上游配置已经由 NexusTok 主项目
 // 的渠道管理、模型管理和模型定价分组承接，CPAMC 内不再重复展示这些入口，
 // 避免管理员在两个系统中维护同类配置时产生来源不一致的问题。
@@ -90,7 +93,6 @@ export function QuotaPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
 
   const [files, setFiles] = useState<AuthFileItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +100,6 @@ export function QuotaPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<QuotaSortMode>('default');
   const [loginProvider, setLoginProvider] = useState<OAuthProvider | null>(null);
-  const [vertexImportOpen, setVertexImportOpen] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
   const sortOptions = useMemo(
@@ -147,10 +148,8 @@ export function QuotaPage() {
 
   const getLoginLabel = useCallback(
     (type: QuotaType) => {
-      const provider = QUOTA_OAUTH_PROVIDER_MAP[type];
-      const definition = quotaOAuthProviders.find((item) => item.id === provider);
       return t('quota_management.login_provider', {
-        provider: definition ? t(definition.titleKey) : provider,
+        provider: t(QUOTA_LOGIN_TITLE_KEY_MAP[type]),
       });
     },
     [t]
@@ -168,42 +167,6 @@ export function QuotaPage() {
       </div>
 
       {error && <div className={styles.errorBox}>{error}</div>}
-
-      <Card
-        className={styles.oauthLoginCard}
-        title={t('quota_management.oauth_shortcuts_title')}
-      >
-        <div className={styles.oauthShortcutGrid}>
-          {quotaOAuthProviders.map((provider) => (
-            <button
-              key={provider.id}
-              type="button"
-              className={styles.oauthShortcutButton}
-              onClick={() => setLoginProvider(provider.id)}
-              disabled={disableControls}
-            >
-              <img
-                src={getOAuthProviderIcon(provider.icon, resolvedTheme)}
-                alt=""
-                className={styles.oauthShortcutIcon}
-              />
-              <span className={styles.oauthShortcutText}>{t(provider.titleKey)}</span>
-            </button>
-          ))}
-          <button
-            type="button"
-            className={styles.oauthShortcutButton}
-            onClick={() => setVertexImportOpen(true)}
-            disabled={disableControls}
-          >
-            <img src={iconVertex} alt="" className={styles.oauthShortcutIcon} />
-            <span className={styles.oauthShortcutText}>{t('vertex_import.title')}</span>
-          </button>
-        </div>
-        <div className={styles.oauthShortcutHint}>
-          {t('quota_management.oauth_shortcuts_desc')}
-        </div>
-      </Card>
 
       <Card
         className={styles.opsShortcutCard}
@@ -225,7 +188,7 @@ export function QuotaPage() {
             </button>
           ))}
         </div>
-        <div className={styles.oauthShortcutHint}>
+        <div className={styles.shortcutHint}>
           {t('quota_management.ops_shortcuts_desc')}
         </div>
       </Card>
@@ -311,11 +274,6 @@ export function QuotaPage() {
         provider={loginProvider}
         open={Boolean(loginProvider)}
         onClose={() => setLoginProvider(null)}
-        onSuccess={loadFiles}
-      />
-      <VertexImportModal
-        open={vertexImportOpen}
-        onClose={() => setVertexImportOpen(false)}
         onSuccess={loadFiles}
       />
     </div>
