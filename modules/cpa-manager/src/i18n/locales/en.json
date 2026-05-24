@@ -1965,6 +1965,8 @@
     "login_provider": "Log in {{provider}}",
     "oauth_login_title": "OAuth Login",
     "oauth_login_title_with_provider": "{{provider}} Login",
+    "oauth_shortcuts_title": "OAuth Login",
+    "oauth_shortcuts_desc": "All OAuth login entries remain here; matching provider sections below also show shortcut login buttons.",
     "sort_label": "Sort",
     "sort_default": "Default order",
     "sort_name_asc": "Name A-Z",

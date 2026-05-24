@@ -1989,6 +1989,8 @@
     "login_provider": "登入 {{provider}}",
     "oauth_login_title": "OAuth 登入",
     "oauth_login_title_with_provider": "{{provider}} 登入",
+    "oauth_shortcuts_title": "OAuth 登入",
+    "oauth_shortcuts_desc": "這裡保留全部 OAuth 登入入口；下方配額區塊也會顯示對應供應商的快捷登入按鈕。",
     "sort_label": "排序",
     "sort_default": "預設順序",
     "sort_name_asc": "名稱 A-Z",

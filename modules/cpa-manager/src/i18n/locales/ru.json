@@ -1960,6 +1960,8 @@
     "login_provider": "Войти в {{provider}}",
     "oauth_login_title": "OAuth вход",
     "oauth_login_title_with_provider": "{{provider}} вход",
+    "oauth_shortcuts_title": "OAuth вход",
+    "oauth_shortcuts_desc": "Все входы OAuth остаются здесь; соответствующие блоки квот ниже также показывают быстрые кнопки входа.",
     "sort_label": "Сортировка",
     "sort_default": "По умолчанию",
     "sort_name_asc": "Имя A-Z",

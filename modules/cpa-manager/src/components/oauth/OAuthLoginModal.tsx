@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import type { ResolvedTheme } from '@/types';
 import { useNotificationStore, useThemeStore } from '@/stores';
 import { oauthApi, type OAuthProvider } from '@/services/api/oauth';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -22,6 +23,8 @@ import iconAntigravity from '@/assets/icons/antigravity.svg';
 import iconGemini from '@/assets/icons/gemini.svg';
 import iconKimiLight from '@/assets/icons/kimi-light.svg';
 import iconKimiDark from '@/assets/icons/kimi-dark.svg';
+import iconGrok from '@/assets/icons/grok.svg';
+import iconGrokDark from '@/assets/icons/grok-dark.svg';
 
 type ProviderIcon = string | { light: string; dark: string };
 
@@ -54,12 +57,13 @@ interface OAuthLoginModalProps {
   onSuccess?: () => void | Promise<void>;
 }
 
-const PROVIDERS: ProviderDefinition[] = [
+export const quotaOAuthProviders: ProviderDefinition[] = [
   { id: 'codex', titleKey: 'auth_login.codex_oauth_title', hintKey: 'auth_login.codex_oauth_hint', urlLabelKey: 'auth_login.codex_oauth_url_label', icon: iconCodex },
   { id: 'anthropic', titleKey: 'auth_login.anthropic_oauth_title', hintKey: 'auth_login.anthropic_oauth_hint', urlLabelKey: 'auth_login.anthropic_oauth_url_label', icon: iconClaude },
   { id: 'antigravity', titleKey: 'auth_login.antigravity_oauth_title', hintKey: 'auth_login.antigravity_oauth_hint', urlLabelKey: 'auth_login.antigravity_oauth_url_label', icon: iconAntigravity },
   { id: 'gemini-cli', titleKey: 'auth_login.gemini_cli_oauth_title', hintKey: 'auth_login.gemini_cli_oauth_hint', urlLabelKey: 'auth_login.gemini_cli_oauth_url_label', icon: iconGemini },
   { id: 'kimi', titleKey: 'auth_login.kimi_oauth_title', hintKey: 'auth_login.kimi_oauth_hint', urlLabelKey: 'auth_login.kimi_oauth_url_label', icon: { light: iconKimiLight, dark: iconKimiDark } },
+  { id: 'xai', titleKey: 'auth_login.xai_oauth_title', hintKey: 'auth_login.xai_oauth_hint', urlLabelKey: 'auth_login.xai_oauth_url_label', icon: { light: iconGrok, dark: iconGrokDark } },
 ];
 
 const CALLBACK_SUPPORTED: OAuthProvider[] = [
@@ -67,6 +71,7 @@ const CALLBACK_SUPPORTED: OAuthProvider[] = [
   'anthropic',
   'antigravity',
   'gemini-cli',
+  'xai',
 ];
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const SUCCESS_RESET_DELAY_MS = 1200;
@@ -76,7 +81,7 @@ const getProviderI18nPrefix = (provider: OAuthProvider) => provider.replace('-',
 const getAuthKey = (provider: OAuthProvider, suffix: string) =>
   `auth_login.${getProviderI18nPrefix(provider)}_${suffix}`;
 
-const getIcon = (icon: ProviderIcon, theme: 'light' | 'dark') =>
+export const getOAuthProviderIcon = (icon: ProviderIcon, theme: ResolvedTheme) =>
   typeof icon === 'string' ? icon : icon[theme];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -164,8 +169,6 @@ const resolveCallbackUrl = (
   return buildXaiCallbackUrl(input, state);
 };
 
-export const quotaOAuthProviders = PROVIDERS;
-
 export function OAuthLoginModal({ provider, open, onClose, onSuccess }: OAuthLoginModalProps) {
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
@@ -175,7 +178,7 @@ export function OAuthLoginModal({ provider, open, onClose, onSuccess }: OAuthLog
   const successResetTimerRef = useRef<number | null>(null);
 
   const definition = useMemo(
-    () => PROVIDERS.find((item) => item.id === provider) ?? null,
+    () => quotaOAuthProviders.find((item) => item.id === provider) ?? null,
     [provider]
   );
   const state = provider ? (states[provider] ?? {}) : {};
@@ -437,7 +440,7 @@ export function OAuthLoginModal({ provider, open, onClose, onSuccess }: OAuthLog
       title={
         <span className={styles.oauthModalTitle}>
           <img
-            src={getIcon(definition.icon, resolvedTheme)}
+            src={getOAuthProviderIcon(definition.icon, resolvedTheme)}
             alt=""
             className={styles.oauthModalTitleIcon}
           />

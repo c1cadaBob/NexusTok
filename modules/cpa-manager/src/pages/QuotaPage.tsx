@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
+import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { IconSearch } from '@/components/ui/icons';
@@ -19,7 +20,12 @@ import {
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
-import { OAuthLoginModal, quotaOAuthProviders } from '@/components/oauth/OAuthLoginModal';
+import {
+  OAuthLoginModal,
+  getOAuthProviderIcon,
+  quotaOAuthProviders
+} from '@/components/oauth/OAuthLoginModal';
+import { useThemeStore } from '@/stores';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
 import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
@@ -36,6 +42,7 @@ const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
 export function QuotaPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
 
   const [files, setFiles] = useState<AuthFileItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,6 +119,33 @@ export function QuotaPage() {
       </div>
 
       {error && <div className={styles.errorBox}>{error}</div>}
+
+      <Card
+        className={styles.oauthLoginCard}
+        title={t('quota_management.oauth_shortcuts_title')}
+      >
+        <div className={styles.oauthShortcutGrid}>
+          {quotaOAuthProviders.map((provider) => (
+            <button
+              key={provider.id}
+              type="button"
+              className={styles.oauthShortcutButton}
+              onClick={() => setLoginProvider(provider.id)}
+              disabled={disableControls}
+            >
+              <img
+                src={getOAuthProviderIcon(provider.icon, resolvedTheme)}
+                alt=""
+                className={styles.oauthShortcutIcon}
+              />
+              <span className={styles.oauthShortcutText}>{t(provider.titleKey)}</span>
+            </button>
+          ))}
+        </div>
+        <div className={styles.oauthShortcutHint}>
+          {t('quota_management.oauth_shortcuts_desc')}
+        </div>
+      </Card>
 
       <div className={styles.toolbar}>
         <div className={styles.toolbarField}>

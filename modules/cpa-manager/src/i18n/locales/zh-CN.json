@@ -1965,6 +1965,8 @@
     "login_provider": "登录 {{provider}}",
     "oauth_login_title": "OAuth 登录",
     "oauth_login_title_with_provider": "{{provider}} 登录",
+    "oauth_shortcuts_title": "OAuth 登录",
+    "oauth_shortcuts_desc": "这里保留全部 OAuth 登录入口；下方配额区块也会显示对应供应商的快捷登录按钮。",
     "sort_label": "排序",
     "sort_default": "默认顺序",
     "sort_name_asc": "名称 A-Z",
