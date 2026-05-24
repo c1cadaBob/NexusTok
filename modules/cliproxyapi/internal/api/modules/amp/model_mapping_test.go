@@ -1,3 +1,15 @@
+// amp - model_mapping_test.go
+// 模型映射器（ModelMapper）的单元测试。
+// 测试以下功能：
+// - 映射器的创建和初始化
+// - 模型映射的正确性（有/无注册提供商）
+// - 大小写不敏感匹配
+// - 未知模型和空输入的处理
+// - 映射更新和替换行为
+// - 无效映射的跳过
+// - GetMappings 返回副本的不可变性
+// - 正则表达式映射：基础匹配、优先级、无效模式、大小写不敏感
+// - 思维后缀保留：数字后缀、级别后缀、配置后缀优先级、正则后缀保留
 package amp
 
 import (
@@ -7,6 +19,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
+// TestNewModelMapper 测试创建映射器并验证映射数量正确
 func TestNewModelMapper(t *testing.T) {
 	mappings := []config.AmpModelMapping{
 		{From: "claude-opus-4.5", To: "claude-sonnet-4"},
@@ -24,6 +37,7 @@ func TestNewModelMapper(t *testing.T) {
 	}
 }
 
+// TestNewModelMapper_Empty 测试空映射创建
 func TestNewModelMapper_Empty(t *testing.T) {
 	mapper := NewModelMapper(nil)
 	if mapper == nil {
@@ -36,6 +50,7 @@ func TestNewModelMapper_Empty(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_NoProvider 测试当目标模型没有注册的提供商时，映射返回空字符串
 func TestModelMapper_MapModel_NoProvider(t *testing.T) {
 	mappings := []config.AmpModelMapping{
 		{From: "claude-opus-4.5", To: "claude-sonnet-4"},
@@ -50,6 +65,7 @@ func TestModelMapper_MapModel_NoProvider(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_WithProvider 测试当目标模型有注册的提供商时，映射正确工作
 func TestModelMapper_MapModel_WithProvider(t *testing.T) {
 	// Register a mock provider for the target model
 	reg := registry.GetGlobalRegistry()
@@ -71,6 +87,7 @@ func TestModelMapper_MapModel_WithProvider(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_TargetWithThinkingSuffix 测试目标模型包含思维后缀时的映射
 func TestModelMapper_MapModel_TargetWithThinkingSuffix(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	reg.RegisterClient("test-client-thinking", "codex", []*registry.ModelInfo{
@@ -90,6 +107,7 @@ func TestModelMapper_MapModel_TargetWithThinkingSuffix(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_CaseInsensitive 测试大小写不敏感的模型匹配
 func TestModelMapper_MapModel_CaseInsensitive(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	reg.RegisterClient("test-client2", "claude", []*registry.ModelInfo{
@@ -110,6 +128,7 @@ func TestModelMapper_MapModel_CaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_NotFound 测试未知模型返回空字符串
 func TestModelMapper_MapModel_NotFound(t *testing.T) {
 	mappings := []config.AmpModelMapping{
 		{From: "claude-opus-4.5", To: "claude-sonnet-4"},
@@ -124,6 +143,7 @@ func TestModelMapper_MapModel_NotFound(t *testing.T) {
 	}
 }
 
+// TestModelMapper_MapModel_EmptyInput 测试空输入返回空字符串
 func TestModelMapper_MapModel_EmptyInput(t *testing.T) {
 	mappings := []config.AmpModelMapping{
 		{From: "claude-opus-4.5", To: "claude-sonnet-4"},
@@ -137,6 +157,7 @@ func TestModelMapper_MapModel_EmptyInput(t *testing.T) {
 	}
 }
 
+// TestModelMapper_UpdateMappings 测试映射更新：替换而非追加
 func TestModelMapper_UpdateMappings(t *testing.T) {
 	mapper := NewModelMapper(nil)
 
@@ -167,6 +188,7 @@ func TestModelMapper_UpdateMappings(t *testing.T) {
 	}
 }
 
+// TestModelMapper_UpdateMappings_SkipsInvalid 测试无效映射（空 from/to、空白 from）被跳过
 func TestModelMapper_UpdateMappings_SkipsInvalid(t *testing.T) {
 	mapper := NewModelMapper(nil)
 
@@ -183,6 +205,8 @@ func TestModelMapper_UpdateMappings_SkipsInvalid(t *testing.T) {
 	}
 }
 
+// TestModelMapper_GetMappings_ReturnsCopy 测试 GetMappings 返回的映射是副本，
+// 修改返回值不影响原始映射
 func TestModelMapper_GetMappings_ReturnsCopy(t *testing.T) {
 	mappings := []config.AmpModelMapping{
 		{From: "model-a", To: "model-b"},
@@ -204,6 +228,8 @@ func TestModelMapper_GetMappings_ReturnsCopy(t *testing.T) {
 	}
 }
 
+// TestModelMapper_Regex_MatchBaseWithoutParens 测试正则映射时保留思维后缀：
+// 正则匹配基础模型名，后缀 (high) 被保留到目标模型
 func TestModelMapper_Regex_MatchBaseWithoutParens(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	reg.RegisterClient("test-client-regex-1", "gemini", []*registry.ModelInfo{
@@ -224,6 +250,7 @@ func TestModelMapper_Regex_MatchBaseWithoutParens(t *testing.T) {
 	}
 }
 
+// TestModelMapper_Regex_ExactPrecedence 测试精确匹配优先于正则匹配
 func TestModelMapper_Regex_ExactPrecedence(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	reg.RegisterClient("test-client-regex-2", "claude", []*registry.ModelInfo{
@@ -249,6 +276,7 @@ func TestModelMapper_Regex_ExactPrecedence(t *testing.T) {
 	}
 }
 
+// TestModelMapper_Regex_InvalidPattern_Skipped 测试无效正则模式被跳过，不会 panic
 func TestModelMapper_Regex_InvalidPattern_Skipped(t *testing.T) {
 	// Invalid regex should be skipped and not cause panic
 	mappings := []config.AmpModelMapping{
@@ -263,6 +291,7 @@ func TestModelMapper_Regex_InvalidPattern_Skipped(t *testing.T) {
 	}
 }
 
+// TestModelMapper_Regex_CaseInsensitive 测试正则映射的大小写不敏感匹配
 func TestModelMapper_Regex_CaseInsensitive(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	reg.RegisterClient("test-client-regex-4", "claude", []*registry.ModelInfo{
@@ -282,6 +311,16 @@ func TestModelMapper_Regex_CaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestModelMapper_SuffixPreservation 测试各种思维后缀保留场景：
+// - 数字后缀 (8192) 保留
+// - 级别后缀 (high) 保留
+// - 无后缀不变
+// - 配置后缀优先于请求后缀
+// - 正则映射时后缀保留
+// - auto/none 后缀保留
+// - 大小写不敏感基础查找时后缀保留
+// - 空后缀 () 被过滤
+// - 不完整后缀视为无后缀
 func TestModelMapper_SuffixPreservation(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 

@@ -1,3 +1,8 @@
+// Package claude - utls_transport.go
+// 实现基于 utls 的自定义 HTTP 传输层，用于绕过 Anthropic 域名的 TLS 指纹检测。
+// 使用 Chrome 浏览器的 TLS 指纹模拟，配合 HTTP/2 连接池管理和代理支持，
+// 确保与 Claude API 的连接不被 Cloudflare 等防护层阻断。
+//
 // Package claude provides authentication functionality for Anthropic's Claude API.
 // This file implements a custom HTTP transport using utls to bypass TLS fingerprinting.
 package claude

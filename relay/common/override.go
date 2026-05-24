@@ -1,3 +1,22 @@
+// Package common - override.go
+// 本文件实现了参数覆盖（Param Override）系统，用于在请求转发到上游之前动态修改请求参数。
+// 参数覆盖系统支持两种模式：
+//  1. 传统覆盖模式：直接以 key-value 形式覆盖请求体中的字段。
+//  2. 操作覆盖模式（operations）：通过声明式的操作列表对请求进行精细修改。
+//
+// 操作覆盖模式支持以下操作类型：
+//   - 基础操作：set、delete、copy、move
+//   - 字符串操作：prepend、append、trim_prefix、trim_suffix、ensure_prefix、ensure_suffix、
+//     trim_space、to_lower、to_upper、replace、regex_replace
+//   - 对象操作：prune_objects（递归删除匹配条件的对象）
+//   - 请求头操作：set_header、delete_header、copy_header、move_header、pass_headers
+//   - 字段同步：sync_fields（在 JSON body 和 header 之间同步值）
+//   - 错误拦截：return_error（在满足条件时强制返回错误）
+//
+// 所有操作都支持条件执行（conditions），可以基于请求体字段、上下文变量、
+// 请求头等信息决定是否执行操作。条件支持 AND/OR 逻辑和取反（invert）。
+//
+// 参数覆盖系统还包含审计日志功能，记录关键参数（model、service_tier 等）的修改历史。
 package common
 
 import (
@@ -16,16 +35,23 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// negativeIndexRegexp 用于匹配 JSON 路径中的负数索引（如 arr.-1）。
 var negativeIndexRegexp = regexp.MustCompile(`\.(-\d+)`)
 
 const (
+	// paramOverrideContextRequestHeaders 条件上下文中请求头的键名。
 	paramOverrideContextRequestHeaders = "request_headers"
+	// paramOverrideContextHeaderOverride 条件上下文中覆盖头的键名。
 	paramOverrideContextHeaderOverride = "header_override"
-	paramOverrideContextAuditRecorder  = "__param_override_audit_recorder"
+	// paramOverrideContextAuditRecorder 条件上下文中审计记录器的键名。
+	paramOverrideContextAuditRecorder = "__param_override_audit_recorder"
 )
 
+// errSourceHeaderNotFound 表示在 copy/move header 操作中源 header 不存在的错误。
 var errSourceHeaderNotFound = errors.New("source header does not exist")
 
+// paramOverrideKeyAuditPaths 定义了需要记录审计日志的关键参数路径。
+// 即使非调试模式下，这些参数的修改也会被记录。
 var paramOverrideKeyAuditPaths = map[string]struct{}{
 	"model":          {},
 	"original_model": {},
@@ -35,37 +61,46 @@ var paramOverrideKeyAuditPaths = map[string]struct{}{
 	"speed":          {},
 }
 
+// paramOverrideAuditRecorder 是参数覆盖操作的审计日志记录器。
+// 记录每个操作的模式、路径、来源、目标和值，用于调试和追踪参数修改历史。
 type paramOverrideAuditRecorder struct {
-	lines []string
+	lines []string // 审计日志行列表
 }
 
+// ConditionOperation 定义了参数覆盖操作中的条件判断。
+// 条件用于决定某个操作是否应该执行。
 type ConditionOperation struct {
-	Path           string      `json:"path"`             // JSON路径
-	Mode           string      `json:"mode"`             // full, prefix, suffix, contains, gt, gte, lt, lte
-	Value          interface{} `json:"value"`            // 匹配的值
-	Invert         bool        `json:"invert"`           // 反选功能，true表示取反结果
-	PassMissingKey bool        `json:"pass_missing_key"` // 未获取到json key时的行为
+	Path           string      `json:"path"`             // JSON 路径，指向要检查的字段
+	Mode           string      `json:"mode"`             // 比较模式：full、prefix、suffix、contains、gt、gte、lt、lte
+	Value          interface{} `json:"value"`            // 比较的目标值
+	Invert         bool        `json:"invert"`           // 取反标志，true 时将比较结果取反
+	PassMissingKey bool        `json:"pass_missing_key"` // 当 JSON 中不存在该路径时，是否视为条件通过
 }
 
+// ParamOperation 定义了参数覆盖的单个操作。
+// 每个操作包含目标路径、操作模式、值和可选的条件列表。
 type ParamOperation struct {
-	Path       string               `json:"path"`
-	Mode       string               `json:"mode"` // delete, set, move, copy, prepend, append, trim_prefix, trim_suffix, ensure_prefix, ensure_suffix, trim_space, to_lower, to_upper, replace, regex_replace, return_error, prune_objects, set_header, delete_header, copy_header, move_header, pass_headers, sync_fields
-	Value      interface{}          `json:"value"`
-	KeepOrigin bool                 `json:"keep_origin"`
-	From       string               `json:"from,omitempty"`
-	To         string               `json:"to,omitempty"`
-	Conditions []ConditionOperation `json:"conditions,omitempty"` // 条件列表
-	Logic      string               `json:"logic,omitempty"`      // AND, OR (默认OR)
+	Path       string               `json:"path"`                  // 操作的目标 JSON 路径
+	Mode       string               `json:"mode"`                  // 操作模式（见文件头部注释）
+	Value      interface{}          `json:"value"`                 // 操作的值（set/prepend/append 等使用）
+	KeepOrigin bool                 `json:"keep_origin"`           // 是否保留原值（set 操作中已有值时不覆盖）
+	From       string               `json:"from,omitempty"`        // 源路径（copy/move/replace 等使用）
+	To         string               `json:"to,omitempty"`          // 目标路径（copy/move 等使用）
+	Conditions []ConditionOperation `json:"conditions,omitempty"`  // 条件列表，所有条件满足时才执行操作
+	Logic      string               `json:"logic,omitempty"`       // 条件逻辑：AND 或 OR（默认 OR）
 }
 
+// ParamOverrideReturnError 表示 return_error 操作产生的错误。
+// 当参数覆盖中配置了 return_error 操作且条件满足时，会返回此错误终止请求。
 type ParamOverrideReturnError struct {
-	Message    string
-	StatusCode int
-	Code       string
-	Type       string
-	SkipRetry  bool
+	Message    string // 错误消息
+	StatusCode int    // HTTP 状态码
+	Code       string // 错误代码
+	Type       string // 错误类型
+	SkipRetry  bool   // 是否跳过重试
 }
 
+// Error 实现 error 接口，返回错误消息。
 func (e *ParamOverrideReturnError) Error() string {
 	if e == nil {
 		return "param override return error"
@@ -76,6 +111,15 @@ func (e *ParamOverrideReturnError) Error() string {
 	return e.Message
 }
 
+// AsParamOverrideReturnError 尝试从错误中提取 ParamOverrideReturnError 类型。
+// 用于在上层调用中判断错误是否由 return_error 操作产生，以便返回正确的 HTTP 状态码。
+//
+// 参数：
+//   - err: 待检查的错误
+//
+// 返回值：
+//   - *ParamOverrideReturnError: 提取到的错误对象（如果匹配）
+//   - bool: 是否成功提取
 func AsParamOverrideReturnError(err error) (*ParamOverrideReturnError, bool) {
 	if err == nil {
 		return nil, false
@@ -87,6 +131,14 @@ func AsParamOverrideReturnError(err error) (*ParamOverrideReturnError, bool) {
 	return nil, false
 }
 
+// NexusTokErrorFromParamOverride 将 ParamOverrideReturnError 转换为标准的 NexusTokError。
+// 确保状态码在合法范围内，设置默认的错误代码和类型，并根据 SkipRetry 标志设置重试策略。
+//
+// 参数：
+//   - err: ParamOverrideReturnError 对象
+//
+// 返回值：
+//   - *types.NexusTokError: 标准错误对象
 func NexusTokErrorFromParamOverride(err *ParamOverrideReturnError) *types.NexusTokError {
 	if err == nil {
 		return types.NewError(
@@ -128,6 +180,19 @@ func NexusTokErrorFromParamOverride(err *ParamOverrideReturnError) *types.NexusT
 	}, statusCode, opts...)
 }
 
+// ApplyParamOverride 是参数覆盖的核心执行函数。
+// 根据 paramOverride 的格式自动选择执行模式：
+//   - 若包含 "operations" 字段：使用操作覆盖模式，支持传统覆盖与 operations 混合执行。
+//   - 否则：使用传统覆盖模式，直接以 key-value 方式覆盖请求体字段。
+//
+// 参数：
+//   - jsonData: 原始请求体的 JSON 字节数据
+//   - paramOverride: 参数覆盖配置（包含操作列表或 key-value 映射）
+//   - conditionContext: 条件判断的上下文信息（如请求头、重试状态等）
+//
+// 返回值：
+//   - []byte: 处理后的 JSON 字节数据
+//   - error: 处理过程中的错误
 func ApplyParamOverride(jsonData []byte, paramOverride map[string]interface{}, conditionContext map[string]interface{}) ([]byte, error) {
 	if len(paramOverride) == 0 {
 		return jsonData, nil
@@ -169,6 +234,18 @@ func buildLegacyParamOverride(paramOverride map[string]interface{}) map[string]i
 	return legacy
 }
 
+// ApplyParamOverrideWithRelayInfo 是面向 RelayInfo 的参数覆盖入口函数。
+// 从 RelayInfo 中提取参数覆盖配置和请求头信息，构建条件上下文，
+// 执行参数覆盖后将运行时头覆盖同步回 RelayInfo。
+// 如果启用了审计日志，还会将操作记录存储到 RelayInfo.ParamOverrideAudit 中。
+//
+// 参数：
+//   - jsonData: 原始请求体的 JSON 字节数据
+//   - info: 中继信息，包含渠道配置、请求头等
+//
+// 返回值：
+//   - []byte: 处理后的 JSON 字节数据
+//   - error: 处理过程中的错误
 func ApplyParamOverrideWithRelayInfo(jsonData []byte, info *RelayInfo) ([]byte, error) {
 	paramOverride := getParamOverrideMap(info)
 	if len(paramOverride) == 0 {
@@ -417,6 +494,15 @@ func isHeaderPassthroughRuleKeyForOverride(key string) bool {
 	return strings.HasPrefix(key, "re:") || strings.HasPrefix(key, "regex:")
 }
 
+// GetEffectiveHeaderOverride 获取最终生效的请求头覆盖映射。
+// 优先使用运行时头覆盖（RuntimeHeadersOverride），若未启用则使用渠道的静态头覆盖（HeadersOverride）。
+// 返回的映射中的键已统一转换为小写形式。
+//
+// 参数：
+//   - info: 中继信息
+//
+// 返回值：
+//   - map[string]interface{}: 生效的头覆盖映射（键为小写）
 func GetEffectiveHeaderOverride(info *RelayInfo) map[string]interface{} {
 	if info == nil {
 		return map[string]interface{}{}
@@ -1997,12 +2083,24 @@ func mergeObjects(jsonStr, path string, value interface{}, keepOrigin bool) (str
 	return sjson.Set(jsonStr, path, result)
 }
 
-// BuildParamOverrideContext 提供 ApplyParamOverride 可用的上下文信息。
-// 目前内置以下字段：
-//   - upstream_model/model：始终为通道映射后的上游模型名。
-//   - original_model：请求最初指定的模型名。
-//   - request_path：请求路径
-//   - is_channel_test：是否为渠道测试请求（同 is_test）。
+// BuildParamOverrideContext 构建参数覆盖操作可用的上下文信息。
+// 内置以下上下文字段：
+//   - model / upstream_model: 渠道映射后的上游模型名
+//   - original_model: 请求最初指定的模型名
+//   - request_path: 请求路径
+//   - request_headers: 请求头（键已小写化）
+//   - header_override: 当前的头覆盖映射
+//   - retry_index: 重试索引
+//   - is_retry: 是否为重试请求
+//   - retry: 重试信息对象（包含 index 和 is_retry）
+//   - last_error: 上一次错误的详细信息（仅重试时存在）
+//   - is_channel_test: 是否为渠道测试请求
+//
+// 参数：
+//   - info: 中继信息
+//
+// 返回值：
+//   - map[string]interface{}: 上下文映射
 func BuildParamOverrideContext(info *RelayInfo) map[string]interface{} {
 	if info == nil {
 		return nil

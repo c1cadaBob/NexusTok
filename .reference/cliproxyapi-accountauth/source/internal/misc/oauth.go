@@ -1,3 +1,6 @@
+// 包 misc - oauth.go
+// 该文件提供了 OAuth2 流程的辅助功能。
+// 包括随机状态生成、回调参数解析和异步提示等。
 package misc
 
 import (
@@ -8,12 +11,11 @@ import (
 	"strings"
 )
 
-// GenerateRandomState generates a cryptographically secure random state parameter
-// for OAuth2 flows to prevent CSRF attacks.
+// GenerateRandomState 生成加密安全的随机 state 参数，用于防止 OAuth2 流程中的 CSRF 攻击。
 //
-// Returns:
-//   - string: A hexadecimal encoded random state string
-//   - error: An error if the random generation fails, nil otherwise
+// 返回：
+//   - string: 十六进制编码的随机 state 字符串
+//   - error: 随机生成失败时返回错误
 func GenerateRandomState() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
@@ -22,17 +24,28 @@ func GenerateRandomState() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// OAuthCallback captures the parsed OAuth callback parameters.
+// OAuthCallback 封装了解析后的 OAuth 回调参数。
 type OAuthCallback struct {
-	Code             string
-	State            string
-	Error            string
+	// Code 是授权码
+	Code string
+	// State 是防 CSRF 的 state 参数
+	State string
+	// Error 是 OAuth 错误码
+	Error string
+	// ErrorDescription 是 OAuth 错误的详细描述
 	ErrorDescription string
 }
 
-// AsyncPrompt runs a prompt function in a goroutine and returns channels for
-// the result. The returned channels are buffered (size 1) so the goroutine can
-// complete even if the caller abandons the channels.
+// AsyncPrompt 在 goroutine 中异步运行提示函数，返回结果通道。
+// 返回的通道是缓冲的（大小为 1），即使调用方放弃通道，goroutine 也能完成。
+//
+// 参数：
+//   - promptFn: 提示函数
+//   - message: 提示消息
+//
+// 返回：
+//   - <-chan string: 输入结果通道
+//   - <-chan error: 错误通道
 func AsyncPrompt(promptFn func(string) (string, error), message string) (<-chan string, <-chan error) {
 	inputCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -47,8 +60,16 @@ func AsyncPrompt(promptFn func(string) (string, error), message string) (<-chan 
 	return inputCh, errCh
 }
 
-// ParseOAuthCallback extracts OAuth parameters from a callback URL.
-// It returns nil when the input is empty.
+// ParseOAuthCallback 从回调 URL 中提取 OAuth 参数。
+// 支持完整 URL、查询字符串、片段等多种输入格式。
+// 输入为空时返回 nil。
+//
+// 参数：
+//   - input: OAuth 回调 URL 或查询字符串
+//
+// 返回：
+//   - *OAuthCallback: 解析后的回调参数
+//   - error: 解析失败时返回错误
 func ParseOAuthCallback(input string) (*OAuthCallback, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {

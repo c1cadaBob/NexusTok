@@ -1,3 +1,6 @@
+// logging - log_dir_cleaner.go
+// 本文件实现了日志目录大小限制的自动清理机制。
+// 定期检查日志目录总大小，当超过限制时按修改时间从旧到新删除日志文件。
 package logging
 
 import (
@@ -11,10 +14,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// logDirCleanerInterval 是日志目录清理器的检查间隔。
 const logDirCleanerInterval = time.Minute
 
+// logDirCleanerCancel 是用于停止清理器的取消函数。
 var logDirCleanerCancel context.CancelFunc
 
+// configureLogDirCleanerLocked 配置并启动日志目录清理器。
+// 当日志目录总大小超过 maxTotalSizeMB 时，自动删除最旧的日志文件。
+// protectedPath 指定的文件不会被删除。
 func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB int, protectedPath string) {
 	stopLogDirCleanerLocked()
 

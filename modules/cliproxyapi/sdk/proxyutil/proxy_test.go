@@ -1,3 +1,8 @@
+// proxyutil - proxy_test.go
+// 该文件包含代理工具包的单元测试。
+// 测试覆盖了代理配置解析、HTTP transport 构建、SOCKS5 代理、
+// HTTP CONNECT 隧道、代理 URL 脱敏和凭据安全性。
+
 package proxyutil
 
 import (
@@ -12,6 +17,7 @@ import (
 	"time"
 )
 
+// mustDefaultTransport 获取默认 HTTP transport，测试辅助函数。
 func mustDefaultTransport(t *testing.T) *http.Transport {
 	t.Helper()
 
@@ -22,6 +28,7 @@ func mustDefaultTransport(t *testing.T) *http.Transport {
 	return transport
 }
 
+// TestParse 测试代理配置解析的各种输入场景。
 func TestParse(t *testing.T) {
 	t.Parallel()
 
@@ -60,6 +67,7 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestBuildHTTPTransportDirectBypassesProxy 测试 "direct" 模式是否禁用代理。
 func TestBuildHTTPTransportDirectBypassesProxy(t *testing.T) {
 	t.Parallel()
 
@@ -78,6 +86,7 @@ func TestBuildHTTPTransportDirectBypassesProxy(t *testing.T) {
 	}
 }
 
+// TestBuildHTTPTransportHTTPProxy 测试 HTTP 代理 transport 的构建。
 func TestBuildHTTPTransportHTTPProxy(t *testing.T) {
 	t.Parallel()
 
@@ -117,6 +126,8 @@ func TestBuildHTTPTransportHTTPProxy(t *testing.T) {
 	}
 }
 
+// TestBuildHTTPTransportSOCKS5ProxyInheritsDefaultTransportSettings 测试 SOCKS5 代理
+// 是否继承默认 transport 的设置。
 func TestBuildHTTPTransportSOCKS5ProxyInheritsDefaultTransportSettings(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +157,7 @@ func TestBuildHTTPTransportSOCKS5ProxyInheritsDefaultTransportSettings(t *testin
 	}
 }
 
+// TestBuildHTTPTransportSOCKS5HProxy 测试 SOCKS5H 代理 transport 的构建。
 func TestBuildHTTPTransportSOCKS5HProxy(t *testing.T) {
 	t.Parallel()
 
@@ -167,6 +179,7 @@ func TestBuildHTTPTransportSOCKS5HProxy(t *testing.T) {
 	}
 }
 
+// TestBuildDialerHTTPProxyCONNECT 测试 HTTP CONNECT 隧道代理拨号器。
 func TestBuildDialerHTTPProxyCONNECT(t *testing.T) {
 	t.Parallel()
 
@@ -269,6 +282,7 @@ func TestBuildDialerHTTPProxyCONNECT(t *testing.T) {
 	}
 }
 
+// TestRedactProxyURL 测试代理 URL 脱敏功能。
 func TestRedactProxyURL(t *testing.T) {
 	t.Parallel()
 
@@ -306,6 +320,7 @@ func TestRedactProxyURL(t *testing.T) {
 	}
 }
 
+// TestParseErrorDoesNotExposeProxyCredentials 测试解析错误不会暴露代理凭据。
 func TestParseErrorDoesNotExposeProxyCredentials(t *testing.T) {
 	t.Parallel()
 

@@ -1,8 +1,9 @@
+// claude/gemini - claude_gemini_response.go
 // Package gemini provides response translation functionality for Claude Code to Gemini API compatibility.
-// This package handles the conversion of Claude Code API responses into Gemini-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Gemini API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, and usage metadata appropriately.
+// 本文件提供 Claude Code API 响应到 Gemini API 格式的转换功能。
+// 负责将 Claude Code 的 SSE 流式事件和非流式响应转换为 Gemini API 兼容的 JSON 格式，
+// 支持文本内容、工具调用（functionCall）的增量组装、思考内容（thinking）和使用量元数据的映射。
+// 流式模式下通过状态跟踪（ToolUseNames/ToolUseArgs）实现跨事件的工具调用参数拼接。
 package gemini
 
 import (
@@ -17,6 +18,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 SSE 数据行的前缀标识，用于从原始响应中提取 JSON 数据。
 var (
 	dataTag = []byte("data:")
 )
@@ -485,6 +487,7 @@ func ConvertClaudeResponseToGeminiNonStream(_ context.Context, modelName string,
 	return template
 }
 
+// GeminiTokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }

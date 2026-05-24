@@ -1,3 +1,10 @@
+// helps - user_id_cache_test.go
+// 用户 ID 缓存的单元测试。
+// 测试以下功能：
+// - TTL 内缓存命中：相同 API Key 返回相同的 user_id
+// - TTL 过期后重新生成
+// - 不同 API Key 返回不同的 user_id
+// - 缓存命中时续期 TTL
 package helps
 
 import (
@@ -5,12 +12,14 @@ import (
 	"time"
 )
 
+// resetUserIDCache 是辅助函数，重置用户 ID 缓存到初始状态
 func resetUserIDCache() {
 	userIDCacheMu.Lock()
 	userIDCache = make(map[string]userIDCacheEntry)
 	userIDCacheMu.Unlock()
 }
 
+// TestCachedUserID_ReusesWithinTTL 测试 TTL 内缓存命中：相同 API Key 返回相同的 user_id
 func TestCachedUserID_ReusesWithinTTL(t *testing.T) {
 	resetUserIDCache()
 
@@ -25,6 +34,7 @@ func TestCachedUserID_ReusesWithinTTL(t *testing.T) {
 	}
 }
 
+// TestCachedUserID_ExpiresAfterTTL 测试 TTL 过期后 user_id 被重新生成
 func TestCachedUserID_ExpiresAfterTTL(t *testing.T) {
 	resetUserIDCache()
 
@@ -46,6 +56,7 @@ func TestCachedUserID_ExpiresAfterTTL(t *testing.T) {
 	}
 }
 
+// TestCachedUserID_IsScopedByAPIKey 测试不同 API Key 返回不同的 user_id
 func TestCachedUserID_IsScopedByAPIKey(t *testing.T) {
 	resetUserIDCache()
 
@@ -57,6 +68,7 @@ func TestCachedUserID_IsScopedByAPIKey(t *testing.T) {
 	}
 }
 
+// TestCachedUserID_RenewsTTLOnHit 测试缓存命中时续期 TTL
 func TestCachedUserID_RenewsTTLOnHit(t *testing.T) {
 	resetUserIDCache()
 

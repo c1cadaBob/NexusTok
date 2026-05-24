@@ -1,3 +1,21 @@
+// Package controller - channel-billing.go
+// 该文件实现了渠道余额查询和更新功能
+//
+// 支持多种上游 AI 服务提供商的余额查询：
+// - OpenAI：通过 Dashboard API 查询
+// - AIProxy：通过用户概览 API 查询
+// - API2GPT：通过信用额度 API 查询
+// - AIGC2D：通过信用额度 API 查询
+// - SiliconFlow：通过用户信息 API 查询
+// - DeepSeek：通过余额 API 查询
+// - OpenRouter：通过信用额度 API 查询
+// - Moonshot：通过余额 API 查询
+//
+// 功能：
+// - 单个渠道余额查询
+// - 批量渠道余额更新
+// - 定时自动更新渠道余额
+// - 余额不足自动禁用渠道
 package controller
 
 import (
@@ -23,13 +41,14 @@ import (
 
 // https://github.com/songquanpeng/one-api/issues/79
 
+// OpenAISubscriptionResponse OpenAI 订阅信息响应
 type OpenAISubscriptionResponse struct {
-	Object             string  `json:"object"`
-	HasPaymentMethod   bool    `json:"has_payment_method"`
-	SoftLimitUSD       float64 `json:"soft_limit_usd"`
-	HardLimitUSD       float64 `json:"hard_limit_usd"`
-	SystemHardLimitUSD float64 `json:"system_hard_limit_usd"`
-	AccessUntil        int64   `json:"access_until"`
+	Object             string  `json:"object"`               // 对象类型
+	HasPaymentMethod   bool    `json:"has_payment_method"`   // 是否有支付方式
+	SoftLimitUSD       float64 `json:"soft_limit_usd"`       // 软限制（美元）
+	HardLimitUSD       float64 `json:"hard_limit_usd"`       // 硬限制（美元）
+	SystemHardLimitUSD float64 `json:"system_hard_limit_usd"` // 系统硬限制（美元）
+	AccessUntil        int64   `json:"access_until"`         // 访问有效期
 }
 
 type OpenAIUsageDailyCost struct {

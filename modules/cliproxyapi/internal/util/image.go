@@ -1,3 +1,6 @@
+// util - image.go
+// 本文件提供图片生成的辅助功能，包括根据宽高比创建白色占位图片并返回 Base64 编码。
+// 主要用于图片生成接口的测试和占位场景。
 package util
 
 import (
@@ -8,6 +11,16 @@ import (
 	"image/png"
 )
 
+// CreateWhiteImageBase64 根据指定的宽高比创建一个纯白色图片并返回其 Base64 编码字符串。
+// 支持多种常见宽高比，包括 1:1、2:3、3:2、3:4、4:3、4:5、5:4、9:16、16:9、21:9。
+// 未匹配的宽高比默认使用 1024x1024。
+//
+// 参数：
+//   - aspectRatio: 宽高比字符串，如 "1:1"、"16:9" 等
+//
+// 返回值：
+//   - string: PNG 图片的 Base64 编码字符串
+//   - error: 图片编码失败时返回错误
 func CreateWhiteImageBase64(aspectRatio string) (string, error) {
 	width := 1024
 	height := 1024

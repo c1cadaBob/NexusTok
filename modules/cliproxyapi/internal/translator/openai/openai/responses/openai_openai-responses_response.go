@@ -1,3 +1,15 @@
+// responses - openai_openai-responses_response.go
+// OpenAI Chat Completions -> Responses 响应转换器。
+// 负责将 OpenAI Chat Completions 格式的流式/非流式响应转换为 OpenAI Responses API 格式。
+//
+// 转换特性：
+// - 流式模式：完整的 SSE 状态机，处理 text delta、tool_calls、reasoning_content
+// - 消息生命周期：output_item.added -> content_part.added -> output_text.delta -> output_text.done -> content_part.done -> output_item.done
+// - 工具调用生命周期：output_item.added -> function_call_arguments.delta -> function_call_arguments.done -> output_item.done
+// - 推理内容：reasoning_summary_part.added -> reasoning_summary_text.delta -> reasoning_summary_text.done -> output_item.done
+// - 延迟 response.completed：等到 [DONE] 标记才发送，以收集延迟的 usage 数据
+// - 多 choice 支持：每个 choice 独立的 output_index
+// - 非流式模式：聚合所有内容到单个 response.completed 事件
 package responses
 
 import (
@@ -14,54 +26,87 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// oaiToResponsesStateReasoning 保存推理内容的状态信息。
 type oaiToResponsesStateReasoning struct {
-	ReasoningID   string
+	// ReasoningID 推理内容的唯一标识符
+	ReasoningID string
+	// ReasoningData 累积的推理文本内容
 	ReasoningData string
-	OutputIndex   int
-}
-type oaiToResponsesState struct {
-	Seq               int
-	ResponseID        string
-	Created           int64
-	Started           bool
-	CompletionPending bool
-	CompletedEmitted  bool
-	ReasoningID       string
-	ReasoningIndex    int
-	// aggregation buffers for response.output
-	// Per-output message text buffers by index
-	MsgTextBuf   map[int]*strings.Builder
-	ReasoningBuf strings.Builder
-	Reasonings   []oaiToResponsesStateReasoning
-	FuncArgsBuf  map[string]*strings.Builder
-	FuncNames    map[string]string
-	FuncCallIDs  map[string]string
-	FuncOutputIx map[string]int
-	MsgOutputIx  map[int]int
-	NextOutputIx int
-	// message item state per output index
-	MsgItemAdded    map[int]bool // whether response.output_item.added emitted for message
-	MsgContentAdded map[int]bool // whether response.content_part.added emitted for message
-	MsgItemDone     map[int]bool // whether message done events were emitted
-	// function item done state
-	FuncArgsDone map[string]bool
-	FuncItemDone map[string]bool
-	// usage aggregation
-	PromptTokens     int64
-	CachedTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
-	ReasoningTokens  int64
-	UsageSeen        bool
+	// OutputIndex 在 response.output 中的输出索引
+	OutputIndex int
 }
 
-// responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
+// oaiToResponsesState 保存 Chat Completions 到 Responses 转换过程中的完整状态。
+type oaiToResponsesState struct {
+	// Seq 事件序列号计数器
+	Seq int
+	// ResponseID 响应唯一标识符
+	ResponseID string
+	// Created 响应创建时间的 Unix 时间戳
+	Created int64
+	// Started 标记是否已发送 response.created 和 response.in_progress 事件
+	Started bool
+	// CompletionPending 标记是否已收到 finish_reason（等待 [DONE] 发送 response.completed）
+	CompletionPending bool
+	// CompletedEmitted 标记是否已发送 response.completed 事件
+	CompletedEmitted bool
+	// ReasoningID 当前活跃的推理内容标识符
+	ReasoningID string
+	// ReasoningIndex 推理内容的输出索引
+	ReasoningIndex int
+	// MsgTextBuf 按输出索引索引的消息文本累积缓冲区
+	MsgTextBuf map[int]*strings.Builder
+	// ReasoningBuf 推理内容的文本累积缓冲区
+	ReasoningBuf strings.Builder
+	// Reasonings 已完成的推理内容列表
+	Reasonings []oaiToResponsesStateReasoning
+	// FuncArgsBuf 按工具状态键索引的函数调用参数累积缓冲区
+	FuncArgsBuf map[string]*strings.Builder
+	// FuncNames 工具状态键到函数名称的映射
+	FuncNames map[string]string
+	// FuncCallIDs 工具状态键到调用 ID 的映射
+	FuncCallIDs map[string]string
+	// FuncOutputIx 工具状态键到输出索引的映射
+	FuncOutputIx map[string]int
+	// MsgOutputIx 消息选择索引到输出索引的映射
+	MsgOutputIx map[int]int
+	// NextOutputIx 下一个可分配的输出索引
+	NextOutputIx int
+	// MsgItemAdded 标记是否已为指定消息索引发送 output_item.added 事件
+	MsgItemAdded map[int]bool
+	// MsgContentAdded 标记是否已为指定消息索引发送 content_part.added 事件
+	MsgContentAdded map[int]bool
+	// MsgItemDone 标记是否已为指定消息索引发送完成事件
+	MsgItemDone map[int]bool
+	// FuncArgsDone 标记指定工具是否已完成参数接收
+	FuncArgsDone map[string]bool
+	// FuncItemDone 标记指定工具是否已发送 output_item.done 事件
+	FuncItemDone map[string]bool
+	// PromptTokens 输入 token 数量
+	PromptTokens int64
+	// CachedTokens 缓存 token 数量
+	CachedTokens int64
+	// CompletionTokens 输出 token 数量
+	CompletionTokens int64
+	// TotalTokens 总 token 数量
+	TotalTokens int64
+	// ReasoningTokens 推理 token 数量
+	ReasoningTokens int64
+	// UsageSeen 标记是否已接收到用量数据
+	UsageSeen bool
+}
+
+// responseIDCounter 提供进程范围内唯一的响应标识符计数器。
 var responseIDCounter uint64
 
+// emitRespEvent 构建 SSE 事件数据，包含事件类型和 JSON 载荷。
 func emitRespEvent(event string, payload []byte) []byte {
 	return translatorcommon.SSEEventData(event, payload)
 }
 
+// buildResponsesCompletedEvent 构建 response.completed 事件。
+// 聚合所有累积的消息、推理和工具调用内容，注入请求参数字段，
+// 并按 output_index 排序后生成完整的 completed 事件。
 func buildResponsesCompletedEvent(st *oaiToResponsesState, requestRawJSON []byte, nextSeq func() int) []byte {
 	completed := []byte(`{"type":"response.completed","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null}}`)
 	completed, _ = sjson.SetBytes(completed, "sequence_number", nextSeq())
@@ -197,8 +242,26 @@ func buildResponsesCompletedEvent(st *oaiToResponsesState, requestRawJSON []byte
 	return emitRespEvent("response.completed", completed)
 }
 
-// ConvertOpenAIChatCompletionsResponseToOpenAIResponses converts OpenAI Chat Completions streaming chunks
-// to OpenAI Responses SSE events (response.*).
+// ConvertOpenAIChatCompletionsResponseToOpenAIResponses 将 OpenAI Chat Completions 流式响应转换为 OpenAI Responses SSE 格式。
+//
+// 处理的事件流程：
+// - 首个 chunk：发送 response.created 和 response.in_progress
+// - text delta：发送 output_item.added、content_part.added、output_text.delta
+// - reasoning_content：发送 reasoning 相关事件
+// - tool_calls：发送 function_call 相关事件（output_item.added、arguments delta/done）
+// - finish_reason：关闭所有活跃的 message 和 function_call 项
+// - [DONE]：发送延迟的 response.completed（包含聚合的 output 和 usage）
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Chat Completions 格式的原始响应数据
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Responses 格式的 SSE 事件数据切片
 func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &oaiToResponsesState{
@@ -618,8 +681,18 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 	return out
 }
 
-// ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream builds a single Responses JSON
-// from a non-streaming OpenAI Chat Completions response.
+// ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream 将 OpenAI Chat Completions 非流式响应转换为 OpenAI Responses JSON 格式。
+// 聚合所有消息内容、工具调用和推理内容到单个 response.completed 响应中。
+//
+// 参数：
+//   - ctx: 请求上下文（未使用）
+//   - modelName: 模型名称（未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Chat Completions 格式的原始响应数据
+//
+// 返回值：
+//   - []byte: OpenAI Responses 格式的完整 JSON 响应数据
 func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawJSON)
 

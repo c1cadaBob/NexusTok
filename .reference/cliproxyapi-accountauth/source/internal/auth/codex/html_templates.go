@@ -1,8 +1,12 @@
+// codex - html_templates.go
+// 包 codex 提供 OpenAI Codex API 的认证功能。
+// 该文件定义了 OAuth2 认证成功后显示给用户的 HTML 模板，
+// 包含登录成功页面和附加设置提示的模板内容。
 package codex
 
-// LoginSuccessHTML is the HTML template for the page shown after a successful
-// OAuth2 authentication with Codex. It informs the user that the authentication
-// was successful and provides a countdown timer to automatically close the window.
+// LoginSuccessHtml 是 OAuth2 认证成功后显示给用户的 HTML 模板。
+// 提供一个用户友好的成功页面，告知用户认证已完成，并提供倒计时自动关闭窗口功能。
+// 模板中的占位符 {{PLATFORM_URL}} 和 {{SETUP_NOTICE}} 会在运行时被替换。
 const LoginSuccessHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -204,9 +208,9 @@ const LoginSuccessHtml = `<!DOCTYPE html>
 </body>
 </html>`
 
-// SetupNoticeHTML is the HTML template for the section that provides instructions
-// for additional setup. This is displayed on the success page when further actions
-// are required from the user.
+// SetupNoticeHtml 是附加设置提示部分的 HTML 模板。
+// 嵌入在成功页面中，用于通知用户完成 Codex 账户配置所需的额外设置步骤。
+// 模板中的占位符 {{PLATFORM_URL}} 会在运行时被替换为实际的平台 URL。
 const SetupNoticeHtml = `
         <div class="setup-notice">
             <h3>Additional Setup Required</h3>

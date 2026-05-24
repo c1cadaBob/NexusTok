@@ -1,13 +1,20 @@
 package common
 
+// 本文件测试重定向 URL 验证函数 ValidateRedirectURL 的安全性和正确性。
+// 测试范围包括：域名精确匹配、子域名匹配、大小写不敏感匹配、
+// 未信任域名拒绝、后缀攻击防护、非法协议拦截以及边界情况处理。
+
 import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/constant"
 )
 
+// TestValidateRedirectURL 测试 ValidateRedirectURL 函数对各类 URL 的验证能力。
+// 覆盖场景：合法域名（精确匹配/子域名/大小写）、未信任域名、后缀攻击、
+// 危险协议（javascript/data）、空 URL 等安全相关场景。
 func TestValidateRedirectURL(t *testing.T) {
-	// Save original trusted domains and restore after test
+	// 保存原始信任域名列表，测试结束后恢复，避免影响其他测试
 	originalDomains := constant.TrustedRedirectDomains
 	defer func() {
 		constant.TrustedRedirectDomains = originalDomains
@@ -20,7 +27,7 @@ func TestValidateRedirectURL(t *testing.T) {
 		wantErr        bool
 		errContains    string
 	}{
-		// Valid cases
+		// ===== 合法场景 =====
 		{
 			name:           "exact domain match with https",
 			url:            "https://example.com/success",
@@ -46,7 +53,7 @@ func TestValidateRedirectURL(t *testing.T) {
 			wantErr:        false,
 		},
 
-		// Invalid cases - untrusted domain
+		// ===== 非法场景 - 未信任域名 =====
 		{
 			name:           "untrusted domain",
 			url:            "https://evil.com/phishing",
@@ -69,7 +76,7 @@ func TestValidateRedirectURL(t *testing.T) {
 			errContains:    "not in the trusted domains list",
 		},
 
-		// Invalid cases - scheme
+		// ===== 非法场景 - 危险协议 =====
 		{
 			name:           "javascript scheme",
 			url:            "javascript:alert('xss')",
@@ -85,7 +92,7 @@ func TestValidateRedirectURL(t *testing.T) {
 			errContains:    "invalid URL scheme",
 		},
 
-		// Edge cases
+		// ===== 边界情况 =====
 		{
 			name:           "empty URL",
 			url:            "",
@@ -97,7 +104,7 @@ func TestValidateRedirectURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set up trusted domains for this test case
+			// 为当前测试用例设置信任域名列表
 			constant.TrustedRedirectDomains = tt.trustedDomains
 
 			err := ValidateRedirectURL(tt.url)
@@ -107,10 +114,12 @@ func TestValidateRedirectURL(t *testing.T) {
 					t.Errorf("ValidateRedirectURL(%q) expected error containing %q, got nil", tt.url, tt.errContains)
 					return
 				}
+				// 断言：错误信息应包含预期的关键词
 				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
 					t.Errorf("ValidateRedirectURL(%q) error = %q, want error containing %q", tt.url, err.Error(), tt.errContains)
 				}
 			} else {
+				// 断言：合法 URL 不应返回错误
 				if err != nil {
 					t.Errorf("ValidateRedirectURL(%q) unexpected error: %v", tt.url, err)
 				}
@@ -119,11 +128,13 @@ func TestValidateRedirectURL(t *testing.T) {
 	}
 }
 
+// contains 检查字符串 s 是否包含子串 substr（辅助函数）。
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
 }
 
+// findSubstring 使用朴素方法在字符串 s 中查找子串 substr（辅助函数）。
 func findSubstring(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

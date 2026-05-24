@@ -1,4 +1,6 @@
-// Package thinking provides unified thinking configuration processing.
+// 包 thinking - apply.go
+// 该文件实现了思考配置的应用逻辑。
+// 提供统一入口点 ApplyThinking，按路由检查 -> 模型能力查询 -> 配置提取 -> 验证 -> 应用的顺序处理。
 package thinking
 
 import (

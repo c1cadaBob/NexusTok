@@ -1,6 +1,7 @@
-// Package registry provides centralized model management for all AI service providers.
-// It implements a dynamic model registry with reference counting to track active clients
-// and automatically hide models when no clients are available or when quota is exceeded.
+// 包 registry - model_registry.go
+// 该文件实现了集中式模型管理注册表。
+// 使用引用计数跟踪活跃客户端，当无可用客户端或配额超限时自动隐藏模型。
+// 支持提供商级别的模型信息和配额/挂起状态管理。
 package registry
 
 import (
@@ -15,7 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// OpenAIImageModelType marks models that are callable through OpenAI-compatible image endpoints.
+// OpenAIImageModelType 标记可通过 OpenAI 兼容图像端点调用的模型。
 const OpenAIImageModelType = "openai-image"
 
 // ModelInfo represents information about an available model
@@ -65,6 +66,7 @@ type ModelInfo struct {
 	UserDefined bool `json:"-"`
 }
 
+// availableModelsCacheEntry 是可用模型缓存的条目，包含模型数据和过期时间。
 type availableModelsCacheEntry struct {
 	models    []map[string]any
 	expiresAt time.Time
@@ -148,12 +150,16 @@ func GetGlobalRegistry() *ModelRegistry {
 	})
 	return globalRegistry
 }
+// ensureAvailableModelsCacheLocked 确保可用模型缓存已初始化。
+// 调用前必须持有写锁。
 func (r *ModelRegistry) ensureAvailableModelsCacheLocked() {
 	if r.availableModelsCache == nil {
 		r.availableModelsCache = make(map[string]availableModelsCacheEntry)
 	}
 }
 
+// invalidateAvailableModelsCacheLocked 使所有可用模型缓存失效。
+// 调用前必须持有写锁。
 func (r *ModelRegistry) invalidateAvailableModelsCacheLocked() {
 	if len(r.availableModelsCache) == 0 {
 		return
@@ -192,6 +198,8 @@ func (r *ModelRegistry) SetHook(hook ModelRegistryHook) {
 const defaultModelRegistryHookTimeout = 5 * time.Second
 const modelQuotaExceededWindow = 5 * time.Minute
 
+// triggerModelsRegistered 异步触发模型注册钩子。
+// 在 goroutine 中执行，带超时保护和 panic 恢复。
 func (r *ModelRegistry) triggerModelsRegistered(provider, clientID string, models []*ModelInfo) {
 	hook := r.hook
 	if hook == nil {
@@ -210,6 +218,8 @@ func (r *ModelRegistry) triggerModelsRegistered(provider, clientID string, model
 	}()
 }
 
+// triggerModelsUnregistered 异步触发模型注销钩子。
+// 在 goroutine 中执行，带超时保护和 panic 恢复。
 func (r *ModelRegistry) triggerModelsUnregistered(provider, clientID string) {
 	hook := r.hook
 	if hook == nil {
@@ -447,6 +457,8 @@ func (r *ModelRegistry) RegisterClient(clientID, clientProvider string, models [
 	misc.LogCredentialSeparator()
 }
 
+// addModelRegistration 添加或递增模型的注册计数。
+// 如果模型已存在则递增计数，否则创建新的注册条目。
 func (r *ModelRegistry) addModelRegistration(modelID, provider string, model *ModelInfo, now time.Time) {
 	if model == nil || modelID == "" {
 		return
@@ -488,6 +500,7 @@ func (r *ModelRegistry) addModelRegistration(modelID, provider string, model *Mo
 	log.Debugf("Registered new model %s from provider %s", modelID, provider)
 }
 
+// removeModelRegistration 递减模型的注册计数，计数为零时移除模型。
 func (r *ModelRegistry) removeModelRegistration(clientID, modelID, provider string, now time.Time) {
 	registration, exists := r.models[modelID]
 	if !exists {
@@ -523,6 +536,7 @@ func (r *ModelRegistry) removeModelRegistration(clientID, modelID, provider stri
 	}
 }
 
+// cloneModelInfo 深拷贝 ModelInfo 结构体，包括所有切片和嵌套结构。
 func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	if model == nil {
 		return nil
@@ -550,6 +564,7 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	return &copyModel
 }
 
+// cloneModelInfosUnique 深拷贝 ModelInfo 列表，按 ID 去重。
 func cloneModelInfosUnique(models []*ModelInfo) []*ModelInfo {
 	if len(models) == 0 {
 		return nil
@@ -786,6 +801,8 @@ func (r *ModelRegistry) GetAvailableModels(handlerType string) []map[string]any 
 	return models
 }
 
+// buildAvailableModelsLocked 构建可用模型列表，考虑配额超限和挂起状态。
+// 调用前必须持有写锁。
 func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.Time) ([]map[string]any, time.Time) {
 	models := make([]map[string]any, 0, len(r.models))
 	var expiresAt time.Time
@@ -835,6 +852,7 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 	return models, expiresAt
 }
 
+// cloneModelMaps 深拷贝模型映射列表。
 func cloneModelMaps(models []map[string]any) []map[string]any {
 	cloned := make([]map[string]any, 0, len(models))
 	for _, model := range models {
@@ -851,6 +869,7 @@ func cloneModelMaps(models []map[string]any) []map[string]any {
 	return cloned
 }
 
+// cloneModelMapValue 递归深拷贝模型映射中的值。
 func cloneModelMapValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -1107,7 +1126,8 @@ func (r *ModelRegistry) GetModelInfo(modelID, provider string) *ModelInfo {
 	return nil
 }
 
-// convertModelToMap converts ModelInfo to the appropriate format for different handler types
+// convertModelToMap 将 ModelInfo 转换为适合不同处理器类型的 map 格式。
+// 支持 openai、claude、gemini 和通用格式。
 func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) map[string]any {
 	if model == nil {
 		return nil

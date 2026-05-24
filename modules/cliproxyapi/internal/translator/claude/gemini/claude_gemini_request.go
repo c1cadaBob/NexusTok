@@ -1,8 +1,9 @@
+// claude/gemini - claude_gemini_request.go
 // Package gemini provides request translation functionality for Gemini to Claude Code API compatibility.
-// It handles parsing and transforming Gemini API requests into Claude Code API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Gemini API format and Claude Code API's expected format.
+// 本文件提供 Gemini API 请求到 Claude Code API 格式的转换功能。
+// 负责解析和转换 Gemini API 请求，提取模型信息、系统指令、消息内容和工具声明，
+// 并将其转换为 Claude Code API 期望的格式。支持思考配置（thinkingConfig）映射、
+// 工具调用与结果的 FIFO 队列匹配、图片和文件数据的 base64 格式转换等功能。
 package gemini
 
 import (
@@ -21,6 +22,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// user、account、session 用于生成 Claude Code 请求中的 metadata.user_id 字段。
+// 首次调用时自动生成 UUID 并缓存，后续请求复用相同的用户标识。
 var (
 	user    = ""
 	account = ""

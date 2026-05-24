@@ -1,3 +1,13 @@
+// Package model - option.go
+// 该文件定义了系统选项（Option）数据模型及相关操作
+//
+// 主要结构体：
+// - Option：系统选项键值对
+//
+// 核心功能：
+// - 系统选项的读写（支持内存缓存）
+// - 批量获取和更新选项
+// - 选项值的类型转换（字符串、整数、布尔值）
 package model
 
 import (
@@ -14,11 +24,18 @@ import (
 	"github.com/c1cada/NexusTok/setting/system_setting"
 )
 
+// Option 系统选项键值对
+// 用于存储系统配置，支持内存缓存和数据库持久化
 type Option struct {
-	Key   string `json:"key" gorm:"primaryKey"`
-	Value string `json:"value"`
+	Key   string `json:"key" gorm:"primaryKey"` // 选项键名（主键）
+	Value string `json:"value"`                 // 选项值
 }
 
+// AllOption 获取所有系统选项
+//
+// 返回值：
+//   - []*Option: 选项列表
+//   - error: 查询失败时返回错误
 func AllOption() ([]*Option, error) {
 	var options []*Option
 	var err error
@@ -26,6 +43,9 @@ func AllOption() ([]*Option, error) {
 	return options, err
 }
 
+// InitOptionMap 初始化系统选项映射
+// 将所有配置项的默认值加载到内存映射中
+// 然后从数据库加载已保存的配置覆盖默认值
 func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
@@ -188,6 +208,7 @@ func InitOptionMap() {
 	loadOptionsFromDatabase()
 }
 
+// loadOptionsFromDatabase 从数据库加载所有选项并更新内存映射
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
 	for _, option := range options {
@@ -198,6 +219,11 @@ func loadOptionsFromDatabase() {
 	}
 }
 
+// SyncOptions 定时同步系统选项（后台协程）
+// 每隔 frequency 秒从数据库重新加载配置
+//
+// 参数：
+//   - frequency: 同步间隔（秒）
 func SyncOptions(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
@@ -206,6 +232,15 @@ func SyncOptions(frequency int) {
 	}
 }
 
+// UpdateOption 更新系统选项
+// 先保存到数据库，然后更新内存映射
+//
+// 参数：
+//   - key: 选项键名
+//   - value: 选项值
+//
+// 返回值：
+//   - error: 更新失败时返回错误
 func UpdateOption(key string, value string) error {
 	// Save to database first
 	option := Option{
@@ -222,6 +257,15 @@ func UpdateOption(key string, value string) error {
 	return updateOptionMap(key, value)
 }
 
+// updateOptionMap 更新内存中的选项映射
+// 根据选项键名更新对应的全局变量
+//
+// 参数：
+//   - key: 选项键名
+//   - value: 选项值
+//
+// 返回值：
+//   - err: 更新失败时返回错误
 func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
@@ -551,7 +595,15 @@ func updateOptionMap(key string, value string) (err error) {
 	return err
 }
 
-// handleConfigUpdate 处理分层配置更新，返回是否已处理
+// handleConfigUpdate 处理分层配置更新
+// 检查键名是否符合 "configName.configKey" 格式，如果是则更新对应的配置对象
+//
+// 参数：
+//   - key: 选项键名（格式：configName.configKey）
+//   - value: 选项值
+//
+// 返回值：
+//   - bool: 是否已处理（true 表示是分层配置，已处理；false 表示不是分层配置）
 func handleConfigUpdate(key, value string) bool {
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {

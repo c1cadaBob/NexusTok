@@ -1,3 +1,8 @@
+// api - redis_queue_protocol_integration_test.go
+// 该文件测试 Redis 协议兼容层的集成行为。
+// 测试覆盖了管理功能禁用时的连接拒绝、Home 模式下的连接禁用、
+// AUTH 认证命令以及 RPOP/LPOP 队列操作的正确性。
+
 package api
 
 import (
@@ -15,6 +20,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 )
 
+// startRedisMuxListener 启动用于测试的 Redis 协议多路复用监听器。
 func startRedisMuxListener(t *testing.T, server *Server) (addr string, stop func()) {
 	t.Helper()
 
@@ -43,6 +49,7 @@ func startRedisMuxListener(t *testing.T, server *Server) (addr string, stop func
 	return listener.Addr().String(), stop
 }
 
+// writeTestRESPCommand 向连接写入 RESP 格式的命令。
 func writeTestRESPCommand(conn net.Conn, args ...string) error {
 	if conn == nil {
 		return net.ErrClosed
@@ -60,6 +67,7 @@ func writeTestRESPCommand(conn net.Conn, args ...string) error {
 	return err
 }
 
+// readTestRESPLine 从缓冲读取器读取一行 RESP 数据。
 func readTestRESPLine(r *bufio.Reader) (string, error) {
 	line, err := r.ReadString('\n')
 	if err != nil {
@@ -159,6 +167,7 @@ func readRESPArrayOfBulkStrings(r *bufio.Reader) ([][]byte, error) {
 	return out, nil
 }
 
+// TestRedisProtocol_ManagementDisabled_RejectsConnection 测试管理功能禁用时拒绝连接。
 func TestRedisProtocol_ManagementDisabled_RejectsConnection(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	redisqueue.SetEnabled(false)
@@ -192,6 +201,7 @@ func TestRedisProtocol_ManagementDisabled_RejectsConnection(t *testing.T) {
 	}
 }
 
+// TestRedisProtocol_HomeEnabled_DisablesConnection 测试 Home 模式下禁用 Redis 使用输出。
 func TestRedisProtocol_HomeEnabled_DisablesConnection(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "test-management-password")
 	redisqueue.SetEnabled(false)
@@ -235,6 +245,7 @@ func TestRedisProtocol_HomeEnabled_DisablesConnection(t *testing.T) {
 	}
 }
 
+// TestRedisProtocol_AUTH_And_PopContracts 测试 AUTH 认证和 RPOP/LPOP 队列操作的正确性。
 func TestRedisProtocol_AUTH_And_PopContracts(t *testing.T) {
 	const managementPassword = "test-management-password"
 

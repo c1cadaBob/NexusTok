@@ -1,3 +1,7 @@
+// account_pool_cliproxy.go 实现了与 CLIProxyAPI (CPAMC) Sidecar 的集成。
+// 负责将 CLIProxyAPI 管理的账号分组同步为 NexusTok 内部的账号池组镜像，
+// 查询 Sidecar 的分组统计信息，以及构造发往 Sidecar 的请求头。
+// CLIProxyAPI 是一个外部的账号管理服务，本模块将其账号分组映射到 NexusTok 的账号池体系中。
 package service
 
 import (
@@ -16,34 +20,40 @@ import (
 )
 
 const (
+	// AccountPoolCLIProxyGroupHeader 是发往 CLIProxyAPI Sidecar 时用于指定账号分组的 HTTP 请求头名称。
 	AccountPoolCLIProxyGroupHeader = "X-NexusTok-Account-Pool-Group"
 
-	defaultAccountPoolCLIProxyURL           = "http://127.0.0.1:8317"
-	defaultAccountPoolCLIProxyManagementKey = "nexustok-account-pool-local"
-	defaultAccountPoolCLIProxyRelayKey      = "nexustok-account-pool-relay-local"
+	defaultAccountPoolCLIProxyURL           = "http://127.0.0.1:8317"                    // CLIProxyAPI Sidecar 的默认地址
+	defaultAccountPoolCLIProxyManagementKey = "nexustok-account-pool-local"               // 默认的管理 API 密钥
+	defaultAccountPoolCLIProxyRelayKey      = "nexustok-account-pool-relay-local"         // 默认的 Relay API 密钥
 )
 
+// cliProxyAuthFilesResponse 表示 CLIProxyAPI /v0/management/auth-files 接口的响应结构。
 type cliProxyAuthFilesResponse struct {
-	Files []cliProxyAuthFileEntry `json:"files"`
+	Files []cliProxyAuthFileEntry `json:"files"` // 认证文件条目列表
 }
 
+// cliProxyAuthFileEntry 表示 CLIProxyAPI 中单个认证文件的信息。
+// 每个条目对应一个外部账号的配置文件。
 type cliProxyAuthFileEntry struct {
-	Name          string   `json:"name"`
-	Type          string   `json:"type"`
-	Provider      string   `json:"provider"`
-	Disabled      bool     `json:"disabled"`
-	Unavailable   bool     `json:"unavailable"`
-	AccountGroup  string   `json:"account_group"`
-	AccountGroups []string `json:"account_groups"`
+	Name          string   `json:"name"`           // 认证文件名
+	Type          string   `json:"type"`           // 账号类型（如 codex）
+	Provider      string   `json:"provider"`       // 提供者名称
+	Disabled      bool     `json:"disabled"`       // 是否已禁用
+	Unavailable   bool     `json:"unavailable"`    // 是否不可用
+	AccountGroup  string   `json:"account_group"`  // 单一分组名（旧格式）
+	AccountGroups []string `json:"account_groups"` // 多分组名列表（新格式）
 }
 
+// cliproxyGroupAggregate 表示 CLIProxyAPI 账号分组的聚合统计信息。
+// 用于将多个认证文件条目按分组名进行汇总。
 type cliproxyGroupAggregate struct {
-	name        string
-	platforms   map[string]int
-	total       int64
-	enabled     int64
-	disabled    int64
-	unavailable int64
+	name        string         // 分组名称
+	platforms   map[string]int // 各平台的账号数量统计
+	total       int64          // 账号总数
+	enabled     int64          // 已启用的账号数
+	disabled    int64          // 已禁用的账号数
+	unavailable int64          // 不可用的账号数
 }
 
 // AccountPoolCLIProxyURL 返回 NexusTok 访问内部 CLIProxyAPI sidecar 的地址。
@@ -86,6 +96,15 @@ func SyncCLIProxyAccountGroups(ctx context.Context) error {
 	return upsertCLIProxyAccountGroups(aggregates)
 }
 
+// fetchCLIProxyAuthFiles 从 CLIProxyAPI Sidecar 获取认证文件列表。
+// 向 /v0/management/auth-files 端点发送 GET 请求，使用 management key 鉴权。
+//
+// 参数：
+//   - ctx: 请求上下文
+//
+// 返回：
+//   - []cliProxyAuthFileEntry: 认证文件条目列表
+//   - error: 请求或解析错误
 func fetchCLIProxyAuthFiles(ctx context.Context) ([]cliProxyAuthFileEntry, error) {
 	targetURL, err := url.JoinPath(AccountPoolCLIProxyURL(), "/v0/management/auth-files")
 	if err != nil {
@@ -114,6 +133,15 @@ func fetchCLIProxyAuthFiles(ctx context.Context) ([]cliProxyAuthFileEntry, error
 	return payload.Files, nil
 }
 
+// aggregateCLIProxyGroups 将认证文件条目按分组名聚合统计。
+// 每个条目可能属于多个分组（通过 AccountGroups 或 AccountGroup 指定）。
+// 统计每个分组的总数、启用数、禁用数、不可用数和平台分布。
+//
+// 参数：
+//   - entries: 认证文件条目列表
+//
+// 返回：
+//   - map[string]*cliproxyGroupAggregate: 分组名 -> 聚合统计信息
 func aggregateCLIProxyGroups(entries []cliProxyAuthFileEntry) map[string]*cliproxyGroupAggregate {
 	aggregates := map[string]*cliproxyGroupAggregate{}
 	for _, entry := range entries {
@@ -144,6 +172,14 @@ func aggregateCLIProxyGroups(entries []cliProxyAuthFileEntry) map[string]*clipro
 	return aggregates
 }
 
+// upsertCLIProxyAccountGroups 将聚合后的分组信息同步到 NexusTok 数据库。
+// 在事务中执行：新增或更新活跃分组，然后禁用不在同步列表中的旧镜像分组。
+//
+// 参数：
+//   - aggregates: 分组名 -> 聚合统计信息
+//
+// 返回：
+//   - error: 数据库操作错误
 func upsertCLIProxyAccountGroups(aggregates map[string]*cliproxyGroupAggregate) error {
 	now := common.GetTimestamp()
 	return model.DB.Transaction(func(tx *gorm.DB) error {
@@ -196,6 +232,16 @@ func upsertCLIProxyAccountGroups(aggregates map[string]*cliproxyGroupAggregate) 
 	})
 }
 
+// disableMissingCLIProxyAccountGroups 禁用不在当前同步列表中的旧镜像分组。
+// 遍历数据库中所有来源为 CLIProxyAPI 的分组，将不在 activeGroups 中的标记为手动禁用。
+//
+// 参数：
+//   - tx: 数据库事务
+//   - activeGroups: 当前活跃的分组名集合
+//   - now: 当前时间戳
+//
+// 返回：
+//   - error: 数据库操作错误
 func disableMissingCLIProxyAccountGroups(tx *gorm.DB, activeGroups map[string]struct{}, now int64) error {
 	var groups []model.AccountPoolGroup
 	if err := tx.Where("source = ?", model.AccountPoolGroupSourceCLIProxyAPI).Find(&groups).Error; err != nil {
@@ -224,6 +270,10 @@ func disableMissingCLIProxyAccountGroups(tx *gorm.DB, activeGroups map[string]st
 	}).Error
 }
 
+// primaryPlatform 推断分组的主要平台。
+// 如果分组中只有一个平台，返回该平台名称；
+// 如果有多个平台，返回 "cliproxyapi"（混合平台标识）；
+// 如果没有平台信息，也返回 "cliproxyapi"。
 func (aggregate *cliproxyGroupAggregate) primaryPlatform() string {
 	if aggregate == nil || len(aggregate.platforms) == 0 {
 		return "cliproxyapi"
@@ -248,6 +298,8 @@ func (aggregate *cliproxyGroupAggregate) primaryPlatform() string {
 	return items[0].platform
 }
 
+// normalizeCLIProxyPlatform 从多个候选值中提取第一个非空的平台名称。
+// 所有值会被标准化为小写并去除首尾空格。
 func normalizeCLIProxyPlatform(values ...string) string {
 	for _, value := range values {
 		platform := strings.ToLower(strings.TrimSpace(value))
@@ -258,6 +310,10 @@ func normalizeCLIProxyPlatform(values ...string) string {
 	return ""
 }
 
+// normalizeCLIProxyGroupValues 从多个输入值中解析并去重分组名列表。
+// 支持的分隔符：换行符、逗号、分号。
+// 支持 JSON 数组格式输入（如 ["group1","group2"]）。
+// 分组名会被规范化为单空格分隔的形式。
 func normalizeCLIProxyGroupValues(values ...string) []string {
 	seen := map[string]struct{}{}
 	groups := make([]string, 0, len(values))
@@ -347,10 +403,14 @@ func MergeHeaderOverrides(base map[string]interface{}, overrides map[string]inte
 	return merged
 }
 
+// IsCLIProxyAccountPoolGroup 判断账号池分组是否来源于 CLIProxyAPI。
+// 通过比较分组的 Source 字段与 CLIProxyAPI 标识实现。
 func IsCLIProxyAccountPoolGroup(group *model.AccountPoolGroup) bool {
 	return group != nil && strings.EqualFold(strings.TrimSpace(group.Source), model.AccountPoolGroupSourceCLIProxyAPI)
 }
 
+// AccountPoolSidecarUnavailableError 将错误包装为 Sidecar 不可用的错误信息。
+// 用于统一 CLIProxyAPI 同步失败的错误格式。
 func AccountPoolSidecarUnavailableError(err error) error {
 	if err == nil {
 		return nil

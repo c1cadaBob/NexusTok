@@ -1,18 +1,20 @@
+// auth - errors.go
+// 定义认证相关的通用错误类型，提供与具体提供商无关的认证失败描述。
 package auth
 
-// Error describes an authentication related failure in a provider agnostic format.
+// Error 描述与认证相关的失败，采用与提供商无关的通用格式。
 type Error struct {
-	// Code is a short machine readable identifier.
+	// Code 是短机器可读的错误标识符。
 	Code string `json:"code,omitempty"`
-	// Message is a human readable description of the failure.
+	// Message 是人类可读的错误描述信息。
 	Message string `json:"message"`
-	// Retryable indicates whether a retry might fix the issue automatically.
+	// Retryable 指示重试是否可能自动修复该问题。
 	Retryable bool `json:"retryable"`
-	// HTTPStatus optionally records an HTTP-like status code for the error.
+	// HTTPStatus 可选地记录与错误关联的 HTTP 状态码。
 	HTTPStatus int `json:"http_status,omitempty"`
 }
 
-// Error implements the error interface.
+// Error 实现 error 接口，返回格式化的错误字符串。
 func (e *Error) Error() string {
 	if e == nil {
 		return ""
@@ -23,7 +25,7 @@ func (e *Error) Error() string {
 	return e.Code + ": " + e.Message
 }
 
-// StatusCode implements optional status accessor for manager decision making.
+// StatusCode 实现可选的状态码访问器，供 Manager 进行决策判断。
 func (e *Error) StatusCode() int {
 	if e == nil {
 		return 0

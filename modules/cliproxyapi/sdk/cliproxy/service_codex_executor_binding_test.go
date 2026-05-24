@@ -1,3 +1,7 @@
+// cliproxy - service_codex_executor_binding_test.go
+// 该文件测试 Codex 执行器的绑定行为。
+// 验证正常模式下 Codex 执行器不会被重复替换，以及强制模式下的替换行为。
+
 package cliproxy
 
 import (
@@ -7,6 +11,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestEnsureExecutorsForAuth_CodexDoesNotReplaceInNormalMode 测试在正常模式下，
+// Codex 执行器在多次绑定后保持不变（不会被重复替换）。
 func TestEnsureExecutorsForAuth_CodexDoesNotReplaceInNormalMode(t *testing.T) {
 	service := &Service{
 		cfg:         &config.Config{},
@@ -35,6 +41,8 @@ func TestEnsureExecutorsForAuth_CodexDoesNotReplaceInNormalMode(t *testing.T) {
 	}
 }
 
+// TestEnsureExecutorsForAuthWithMode_CodexForceReplace 测试在强制模式下，
+// Codex 执行器会被正确替换为新的实例。
 func TestEnsureExecutorsForAuthWithMode_CodexForceReplace(t *testing.T) {
 	service := &Service{
 		cfg:         &config.Config{},

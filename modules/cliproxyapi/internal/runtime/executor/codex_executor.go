@@ -1,3 +1,5 @@
+// Package executor - codex_executor.go
+// 实现 Codex 执行器，处理 OpenAI Codex API 的请求代理和认证。
 package executor
 
 import (

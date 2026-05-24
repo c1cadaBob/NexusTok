@@ -1,3 +1,9 @@
+// gemini - relay-gemini.go
+// Google Gemini 渠道的核心中继处理逻辑。
+// 本文件包含 Gemini API 的请求格式转换（OpenAI -> Gemini）、
+// 响应格式转换（Gemini -> OpenAI/Claude）、流式和非流式响应处理、
+// 思考（Thinking）模式适配、工具调用处理、嵌入模型处理、图像生成处理等核心功能。
+// 是 Gemini 渠道适配器中最重要的业务逻辑文件。
 package gemini
 
 import (
@@ -27,7 +33,10 @@ import (
 	"github.com/samber/lo"
 )
 
-// https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference?hl=zh-cn#blob
+// geminiSupportedMimeTypes 定义了 Gemini API 支持的 MIME 类型白名单。
+// 在处理内联文件数据（如图片、视频、音频、PDF 等）时，
+// 会校验文件的 MimeType 是否在此白名单中，不支持的类型将返回错误。
+// 参考: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference?hl=zh-cn#blob
 var geminiSupportedMimeTypes = map[string]bool{
 	"application/pdf": true,
 	"audio/mpeg":      true,
@@ -50,23 +59,48 @@ var geminiSupportedMimeTypes = map[string]bool{
 	"video/flv":       true,
 }
 
+// thoughtSignatureBypassValue 是思考签名的绕过值。
+// 用于在 Gemini 的 FunctionCall 和图像数据中附加 ThoughtSignature 字段，
+// 以确保 Gemini API 能够正确处理包含工具调用和图像内容的请求。
 const thoughtSignatureBypassValue = "context_engineering_is_the_way_to_go"
 
-// Gemini 允许的思考预算范围
+// 以下常量定义了 Gemini 各模型版本允许的思考预算（ThinkingBudget）范围。
+// 不同模型版本的预算限制不同：
+//   - gemini-2.5-pro: 128 ~ 32768
+//   - gemini-2.5-flash: 0 ~ 24576
+//   - gemini-2.5-flash-lite: 512 ~ 24576
 const (
+	// pro25MinBudget 是 gemini-2.5-pro 模型的最小思考预算
 	pro25MinBudget       = 128
+	// pro25MaxBudget 是 gemini-2.5-pro 模型的最大思考预算
 	pro25MaxBudget       = 32768
+	// flash25MaxBudget 是 gemini-2.5-flash 模型的最大思考预算
 	flash25MaxBudget     = 24576
+	// flash25LiteMinBudget 是 gemini-2.5-flash-lite 模型的最小思考预算
 	flash25LiteMinBudget = 512
+	// flash25LiteMaxBudget 是 gemini-2.5-flash-lite 模型的最大思考预算
 	flash25LiteMaxBudget = 24576
 )
 
+// isNew25ProModel 判断给定的模型名称是否为新版 gemini-2.5-pro 模型。
+// 排除了旧版预览模型 gemini-2.5-pro-preview-05-06 和 gemini-2.5-pro-preview-03-25。
+// 参数:
+//   - modelName: 模型名称
+//
+// 返回:
+//   - bool: 是否为新版 gemini-2.5-pro 模型
 func isNew25ProModel(modelName string) bool {
 	return strings.HasPrefix(modelName, "gemini-2.5-pro") &&
 		!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-05-06") &&
 		!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-03-25")
 }
 
+// is25FlashLiteModel 判断给定的模型名称是否为 gemini-2.5-flash-lite 模型。
+// 参数:
+//   - modelName: 模型名称
+//
+// 返回:
+//   - bool: 是否为 gemini-2.5-flash-lite 模型
 func is25FlashLiteModel(modelName string) bool {
 	return strings.HasPrefix(modelName, "gemini-2.5-flash-lite")
 }
@@ -101,10 +135,20 @@ func clampThinkingBudget(modelName string, budget int) int {
 	return budget
 }
 
-// "effort": "high" - Allocates a large portion of tokens for reasoning (approximately 80% of max_tokens)
-// "effort": "medium" - Allocates a moderate portion of tokens (approximately 50% of max_tokens)
-// "effort": "low" - Allocates a smaller portion of tokens (approximately 20% of max_tokens)
-// "effort": "minimal" - Allocates a minimal portion of tokens (approximately 5% of max_tokens)
+// clampThinkingBudgetByEffort 根据 effort 级别和模型名称计算思考预算。
+// effort 级别与预算比例的对应关系：
+//   - "high": 最大预算的 80%
+//   - "medium": 最大预算的 50%
+//   - "low": 最大预算的 20%
+//   - "minimal": 最大预算的 5%
+//
+// 计算后的预算值会通过 clampThinkingBudget 进行二次限制。
+// 参数:
+//   - modelName: 模型名称
+//   - effort: effort 级别字符串
+//
+// 返回:
+//   - int: 计算后的思考预算 token 数
 func clampThinkingBudgetByEffort(modelName string, effort string) int {
 	isNew25Pro := isNew25ProModel(modelName)
 	is25FlashLite := is25FlashLiteModel(modelName)
@@ -131,6 +175,17 @@ func clampThinkingBudgetByEffort(modelName string, effort string) int {
 	return clampThinkingBudget(modelName, maxBudget)
 }
 
+// ThinkingAdaptor 配置 Gemini 请求的思考（Thinking）模式。
+// 支持多种思考模式配置方式：
+//   - "-thinking-<budget>" 后缀：直接指定思考预算 token 数
+//   - "-thinking" 后缀：启用思考模式，根据 MaxOutputTokens 或 reasoning_effort 自动计算预算
+//   - "-nothinking" 后缀：禁用思考模式（设置 budget = 0）
+//   - reasoning_effort 后缀：根据 effort 级别（high/medium/low/minimal）设置思考级别
+//
+// 参数:
+//   - geminiRequest: Gemini 请求对象，函数会修改其 GenerationConfig.ThinkingConfig
+//   - info: Relay 中继信息（包含上游模型名称）
+//   - oaiRequest: 可选的 OpenAI 请求参数（用于读取 reasoning_effort）
 func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.RelayInfo, oaiRequest ...dto.GeneralOpenAIRequest) {
 	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
 		modelName := info.UpstreamModelName
@@ -197,7 +252,25 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 	}
 }
 
-// Setting safety to the lowest possible values since Gemini is already powerless enough
+// CovertOpenAI2Gemini 将 OpenAI 格式的请求转换为 Gemini 格式。
+// 这是 Gemini 渠道的核心转换函数，处理以下内容：
+//   - 基本参数映射（temperature, top_p, max_tokens, seed）
+//   - 思考模式（Thinking）配置
+//   - 安全设置（SafetySettings）
+//   - 工具调用（Tools / ToolChoice）转换，包括 googleSearch、codeExecution、urlContext 等特殊工具
+//   - 响应格式（ResponseFormat）转换，支持 JSON Schema
+//   - 消息历史转换（system -> SystemInstructions，assistant -> model，tool -> FunctionResponse）
+//   - 多模态内容处理（图片 base64、文件 URL、markdown 内嵌图片等）
+//   - extra_body 中的 Google 特定参数透传
+//
+// 参数:
+//   - c: Gin 上下文
+//   - textRequest: OpenAI 格式的请求
+//   - info: Relay 中继信息
+//
+// 返回:
+//   - *dto.GeminiChatRequest: Gemini 格式的请求
+//   - error: 转换过程中的错误
 func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*dto.GeminiChatRequest, error) {
 
 	geminiRequest := dto.GeminiChatRequest{
@@ -644,7 +717,17 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 	return &geminiRequest, nil
 }
 
-// parseStopSequences 解析停止序列，支持字符串或字符串数组
+// parseStopSequences 解析停止序列参数，兼容多种输入格式。
+// 支持以下输入类型：
+//   - string: 单个停止序列字符串
+//   - []string: 字符串数组
+//   - []interface{}: 通用数组（从 JSON 解析而来）
+//
+// 参数:
+//   - stop: 停止序列参数（可为多种类型）
+//
+// 返回:
+//   - []string: 解析后的停止序列列表，输入为空或无效时返回 nil
 func parseStopSequences(stop any) []string {
 	if stop == nil {
 		return nil
@@ -669,6 +752,13 @@ func parseStopSequences(stop any) []string {
 	return nil
 }
 
+// hasFunctionCallContent 检查 FunctionCall 是否包含有效内容。
+// 判断 FunctionCall 的函数名或参数是否非空。
+// 参数:
+//   - call: FunctionCall 指针
+//
+// 返回:
+//   - bool: 是否包含有效的函数调用内容
 func hasFunctionCallContent(call *dto.FunctionCall) bool {
 	if call == nil {
 		return false
@@ -691,7 +781,10 @@ func hasFunctionCallContent(call *dto.FunctionCall) bool {
 	}
 }
 
-// Helper function to get a list of supported MIME types for error messages
+// getSupportedMimeTypesList 获取 Gemini 支持的所有 MIME 类型列表。
+// 用于错误提示信息中展示支持的文件类型。
+// 返回:
+//   - []string: 支持的 MIME 类型字符串列表
 func getSupportedMimeTypesList() []string {
 	keys := make([]string, 0, len(geminiSupportedMimeTypes))
 	for k := range geminiSupportedMimeTypes {
@@ -700,6 +793,9 @@ func getSupportedMimeTypesList() []string {
 	return keys
 }
 
+// geminiOpenAPISchemaAllowedFields 定义了 Gemini API 支持的 OpenAPI Schema 字段白名单。
+// 在将 OpenAI 的函数参数 Schema 转换为 Gemini 格式时，
+// 会过滤掉不在白名单中的字段，确保 Gemini API 能正确解析。
 var geminiOpenAPISchemaAllowedFields = map[string]struct{}{
 	"anyOf":            {},
 	"default":          {},
@@ -725,13 +821,31 @@ var geminiOpenAPISchemaAllowedFields = map[string]struct{}{
 	"type":             {},
 }
 
+// geminiFunctionSchemaMaxDepth 定义了函数参数 Schema 递归清理的最大深度。
+// 超过此深度时将停止递归，防止过深的嵌套结构导致性能问题。
 const geminiFunctionSchemaMaxDepth = 64
 
-// cleanFunctionParameters recursively removes unsupported fields from Gemini function parameters.
+// cleanFunctionParameters 递归清理函数参数中的 Gemini 不支持的字段。
+// 过滤掉不在 geminiOpenAPISchemaAllowedFields 白名单中的字段，
+// 并规范化类型名称（如 object -> OBJECT）和处理 nullable 类型。
+// 参数:
+//   - params: 函数参数（通常为 map[string]interface{}）
+//
+// 返回:
+//   - interface{}: 清理后的参数对象
 func cleanFunctionParameters(params interface{}) interface{} {
 	return cleanFunctionParametersWithDepth(params, 0)
 }
 
+// cleanFunctionParametersWithDepth 带深度控制的递归清理函数参数。
+// 当递归深度达到 geminiFunctionSchemaMaxDepth 时，切换为浅层清理模式，
+// 保留基本字段但不再递归处理 properties、items、anyOf 等嵌套结构。
+// 参数:
+//   - params: 函数参数
+//   - depth: 当前递归深度
+//
+// 返回:
+//   - interface{}: 清理后的参数对象
 func cleanFunctionParametersWithDepth(params interface{}, depth int) interface{} {
 	if params == nil {
 		return nil
@@ -796,6 +910,14 @@ func cleanFunctionParametersWithDepth(params interface{}, depth int) interface{}
 	}
 }
 
+// cleanFunctionParametersShallow 浅层清理函数参数。
+// 当递归深度超过限制时使用此函数，只保留基本字段（description、type 等），
+// 删除 properties、items、anyOf 等嵌套结构，防止过大嵌套导致性能问题。
+// 参数:
+//   - params: 函数参数
+//
+// 返回:
+//   - interface{}: 浅层清理后的参数对象
 func cleanFunctionParametersShallow(params interface{}) interface{} {
 	switch v := params.(type) {
 	case map[string]interface{}:
@@ -819,6 +941,16 @@ func cleanFunctionParametersShallow(params interface{}) interface{} {
 	}
 }
 
+// normalizeGeminiSchemaTypeAndNullable 规范化 Gemini Schema 中的类型名称和 nullable 处理。
+// Gemini API 要求类型名称为大写形式（如 OBJECT、ARRAY、STRING 等），
+// 并通过 nullable 字段而非 "null" 类型来表示可空性。
+// 处理逻辑：
+//   - 将小写类型名转换为大写（object -> OBJECT, array -> ARRAY 等）
+//   - 将 "null" 类型转换为 nullable: true
+//   - 处理数组形式的类型定义（如 ["string", "null"]）
+//
+// 参数:
+//   - schema: Schema 映射，函数会直接修改此映射
 func normalizeGeminiSchemaTypeAndNullable(schema map[string]interface{}) {
 	rawType, ok := schema["type"]
 	if !ok || rawType == nil {
@@ -881,6 +1013,17 @@ func normalizeGeminiSchemaTypeAndNullable(schema map[string]interface{}) {
 	}
 }
 
+// removeAdditionalPropertiesWithDepth 递归移除 JSON Schema 中的 additionalProperties 字段。
+// Gemini API 不支持 OpenAI 格式中的 additionalProperties 字段，
+// 需要在发送前移除。同时移除 title 和 $schema 字段。
+// 递归处理对象的 properties、allOf、anyOf、oneOf 以及数组的 items。
+// 最大递归深度为 5 层。
+// 参数:
+//   - schema: JSON Schema 对象
+//   - depth: 当前递归深度
+//
+// 返回:
+//   - interface{}: 清理后的 Schema 对象
 func removeAdditionalPropertiesWithDepth(schema interface{}, depth int) interface{} {
 	if depth >= 5 {
 		return schema
@@ -922,6 +1065,15 @@ func removeAdditionalPropertiesWithDepth(schema interface{}, depth int) interfac
 	return v
 }
 
+// unescapeString 手动解析转义字符串，支持常见转义序列。
+// 处理 \"、\\、\/、\b、\f、\n、\r、\t、\' 等转义序列。
+// 对于非法的转义字符，按原样输出反斜杠加字符。
+// 参数:
+//   - s: 包含转义序列的字符串
+//
+// 返回:
+//   - string: 解析后的字符串
+//   - error: 遇到非法 UTF-8 编码时返回错误
 func unescapeString(s string) (string, error) {
 	var result []rune
 	escaped := false
@@ -971,6 +1123,13 @@ func unescapeString(s string) (string, error) {
 
 	return string(result), nil
 }
+// unescapeMapOrSlice 递归解嵌套数据结构中的转义字符串。
+// 遍历 map 和 slice 类型的嵌套结构，对其中的字符串值调用 unescapeString 进行反转义。
+// 参数:
+//   - data: 待处理的数据（可能是 map、slice 或 string）
+//
+// 返回:
+//   - interface{}: 处理后的数据
 func unescapeMapOrSlice(data interface{}) interface{} {
 	switch v := data.(type) {
 	case map[string]interface{}:
@@ -991,6 +1150,13 @@ func unescapeMapOrSlice(data interface{}) interface{} {
 	return data
 }
 
+// getResponseToolCall 将 Gemini 的 FunctionCall 转换为 OpenAI 格式的 ToolCallResponse。
+// 为函数调用生成唯一的 call ID（格式: call_<uuid>），并将参数序列化为 JSON 字符串。
+// 参数:
+//   - item: Gemini 响应中的 Part，包含 FunctionCall 信息
+//
+// 返回:
+//   - *dto.ToolCallResponse: OpenAI 格式的工具调用响应，序列化失败时返回 nil
 func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 	var argsBytes []byte
 	var err error
@@ -1011,6 +1177,21 @@ func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 	}
 }
 
+// buildUsageFromGeminiMetadata 从 Gemini 的 UsageMetadata 构建标准的 Usage 对象。
+// Token 计算规则：
+//   - PromptTokens = PromptTokenCount + ToolUsePromptTokenCount（当上游未返回时使用 fallbackPromptTokens）
+//   - CompletionTokens = CandidatesTokenCount + ThoughtsTokenCount
+//   - TotalTokens = TotalTokenCount（直接使用上游返回的值）
+//   - ReasoningTokens = ThoughtsTokenCount
+//   - CachedTokens = CachedContentTokenCount
+//
+// 同时处理 PromptTokensDetails 和 CandidatesTokensDetails 中的模态信息（AUDIO、TEXT、IMAGE）。
+// 参数:
+//   - metadata: Gemini 使用量元数据
+//   - fallbackPromptTokens: 当上游未返回 PromptTokenCount 时的回退值（来自请求阶段的估算）
+//
+// 返回:
+//   - dto.Usage: 标准格式的使用量对象
 func buildUsageFromGeminiMetadata(metadata dto.GeminiUsageMetadata, fallbackPromptTokens int) dto.Usage {
 	promptTokens := metadata.PromptTokenCount + metadata.ToolUsePromptTokenCount
 	if promptTokens <= 0 && fallbackPromptTokens > 0 {
@@ -1061,6 +1242,21 @@ func buildUsageFromGeminiMetadata(metadata dto.GeminiUsageMetadata, fallbackProm
 	return usage
 }
 
+// responseGeminiChat2OpenAI 将 Gemini 非流式聊天响应转换为 OpenAI 格式。
+// 处理以下内容：
+//   - 文本内容合并
+//   - 函数调用（FunctionCall）转换为 ToolCall
+//   - 内联数据（图片等）转换为 Markdown 图片格式
+//   - 思考内容（Thought）提取为 ReasoningContent
+//   - 代码执行结果格式化
+//   - FinishReason 映射（STOP -> stop, MAX_TOKENS -> length, SAFETY/RECITATION/etc -> content_filter）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - response: Gemini 聊天响应
+//
+// 返回:
+//   - *dto.OpenAITextResponse: OpenAI 格式的文本响应
 func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse) *dto.OpenAITextResponse {
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      helper.GetResponseID(c),
@@ -1155,6 +1351,15 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 	return &fullTextResponse
 }
 
+// streamResponseGeminiChat2OpenAI 将 Gemini 流式聊天响应转换为 OpenAI 流式格式。
+// 与 responseGeminiChat2OpenAI 类似，但处理的是流式数据块（chunk）。
+// 每个 chunk 只包含增量内容（delta），而非完整的响应。
+// 参数:
+//   - geminiResponse: Gemini 流式响应数据块
+//
+// 返回:
+//   - *dto.ChatCompletionsStreamResponse: OpenAI 格式的流式响应
+//   - bool: 是否为最后一个数据块（isStop）
 func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*dto.ChatCompletionsStreamResponse, bool) {
 	choices := make([]dto.ChatCompletionsStreamResponseChoice, 0, len(geminiResponse.Candidates))
 	isStop := false
@@ -1249,6 +1454,16 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*d
 	return &response, isStop
 }
 
+// handleStream 将流式响应数据发送给客户端。
+// 序列化响应对象并通过 openai.HandleStreamFormat 处理流格式，
+// 支持 forceFormat 和 thinkingToContent 配置。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: OpenAI 格式的流式响应
+//
+// 返回:
+//   - error: 序列化或发送过程中的错误
 func handleStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.ChatCompletionsStreamResponse) error {
 	streamData, err := common.Marshal(resp)
 	if err != nil {
@@ -1261,6 +1476,15 @@ func handleStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.ChatCom
 	return nil
 }
 
+// handleFinalStream 处理流式响应的最终数据包。
+// 在流式响应结束时发送最终的使用量统计信息。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: 包含最终使用量的流式响应
+//
+// 返回:
+//   - error: 发送过程中的错误
 func handleFinalStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.ChatCompletionsStreamResponse) error {
 	streamData, err := common.Marshal(resp)
 	if err != nil {
@@ -1270,6 +1494,25 @@ func handleFinalStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.Ch
 	return nil
 }
 
+// geminiStreamHandler 通用的 Gemini 流式响应处理器。
+// 负责：
+//   - 逐行扫描 SSE 格式的流式响应
+//   - 解析每个数据块为 GeminiChatResponse
+//   - 检测内容过滤（PromptFeedback.BlockReason）
+//   - 统计内联图片数量
+//   - 累积响应文本用于回退的 token 计算
+//   - 更新使用量统计（从 UsageMetadata）
+//   - 通过 callback 回调处理每个数据块
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 流式响应
+//   - callback: 数据块处理回调函数，返回 false 时停止处理
+//
+// 返回:
+//   - *dto.Usage: 累积的使用量统计
+//   - *types.NexusTokError: 错误信息
 func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, callback func(data string, geminiResponse *dto.GeminiChatResponse) bool) (*dto.Usage, *types.NexusTokError) {
 	var usage = &dto.Usage{}
 	var imageCount int
@@ -1326,6 +1569,22 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	return usage, nil
 }
 
+// GeminiChatStreamHandler 处理 Gemini 聊天的流式响应（OpenAI 兼容模式）。
+// 负责：
+//   - 生成响应 ID 和时间戳
+//   - 管理工具调用的索引映射（确保同一 tool ID 在不同 chunk 中索引一致）
+//   - 发送首个空响应（用于初始化流式连接）
+//   - 处理工具调用的特殊首包逻辑（先发送 tool_calls 列表，再发送参数）
+//   - 发送停止响应和最终使用量统计
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 流式响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	id := helper.GetResponseID(c)
 	createAt := common.GetTimestamp()
@@ -1416,6 +1675,21 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	return usage, nil
 }
 
+// GeminiChatHandler 处理 Gemini 聊天的非流式响应（OpenAI 兼容模式）。
+// 负责：
+//   - 解析 Gemini API 的 JSON 响应
+//   - 处理空候选响应（内容过滤或无响应的错误处理）
+//   - 转换为 OpenAI/Claude/Gemini 格式（根据 RelayFormat 决定输出格式）
+//   - 计算使用量统计
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1493,6 +1767,17 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	return &usage, nil
 }
 
+// GeminiEmbeddingHandler 处理 Gemini 嵌入模型的响应（OpenAI 兼容模式）。
+// 将 Gemini 的批量嵌入响应转换为 OpenAI 的嵌入格式。
+// Token 使用量按 OpenAI 的方式计算（使用输入 token 作为计费依据）。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -1538,6 +1823,18 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	return usage, nil
 }
 
+// GeminiImageHandler 处理 Gemini Imagen 图像生成模型的响应（OpenAI 兼容模式）。
+// 将 Gemini 的图像生成响应转换为 OpenAI 的图像响应格式。
+// 跳过被 RAI（Responsible AI）过滤的图像。
+// Token 使用量按固定值计算：每张生成的图像 258 tokens。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	responseBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
@@ -1592,11 +1889,24 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	return usage, nil
 }
 
+// GeminiModelsResponse 是 Gemini 模型列表 API 的响应结构体。
+// 包含模型列表和分页标记（用于获取下一页模型列表）。
 type GeminiModelsResponse struct {
 	Models        []dto.GeminiModel `json:"models"`
 	NextPageToken string            `json:"nextPageToken"`
 }
 
+// FetchGeminiModels 从 Gemini API 获取可用的模型列表。
+// 通过分页请求获取所有模型，支持代理配置和超时控制。
+// 最多获取 100 页数据以防止无限循环。
+// 参数:
+//   - baseURL: Gemini API 的基础 URL
+//   - apiKey: Google API 密钥
+//   - proxyURL: 代理 URL（可为空）
+//
+// 返回:
+//   - []string: 模型名称列表（已去除 "models/" 前缀）
+//   - error: 获取过程中的错误
 func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 	client, err := service.GetHttpClientWithProxy(proxyURL)
 	if err != nil {
@@ -1665,17 +1975,18 @@ func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 	return allModels, nil
 }
 
-// convertToolChoiceToGeminiConfig converts OpenAI tool_choice to Gemini toolConfig
-// OpenAI tool_choice values:
-//   - "auto": Let the model decide (default)
-//   - "none": Don't call any tools
-//   - "required": Must call at least one tool
-//   - {"type": "function", "function": {"name": "xxx"}}: Call specific function
+// convertToolChoiceToGeminiConfig 将 OpenAI 的 tool_choice 参数转换为 Gemini 的 toolConfig 配置。
+// 映射关系：
+//   - "auto" -> Mode: "AUTO"（模型自行决定是否调用工具）
+//   - "none" -> Mode: "NONE"（模型不调用任何工具）
+//   - "required" -> Mode: "ANY"（模型必须调用至少一个工具）
+//   - {"type": "function", "function": {"name": "xxx"}} -> Mode: "ANY" + AllowedFunctionNames（指定调用特定函数）
 //
-// Gemini functionCallingConfig.mode values:
-//   - "AUTO": Model decides whether to call functions
-//   - "NONE": Model won't call functions
-//   - "ANY": Model must call at least one function
+// 参数:
+//   - toolChoice: OpenAI 格式的 tool_choice 参数（可为 string 或 object）
+//
+// 返回:
+//   - *dto.ToolConfig: Gemini 格式的工具配置，不支持的类型返回 nil
 func convertToolChoiceToGeminiConfig(toolChoice any) *dto.ToolConfig {
 	if toolChoice == nil {
 		return nil

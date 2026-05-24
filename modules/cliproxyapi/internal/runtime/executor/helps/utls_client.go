@@ -1,3 +1,5 @@
+// Package helps - utls_client.go
+// 提供 uTLS 客户端实现，用于模拟真实浏览器的 TLS 指纹以绕过反爬虫检测。
 package helps
 
 import (

@@ -1,3 +1,12 @@
+// responses - gemini_openai-responses_response.go
+// Gemini 的 OpenAI Responses 响应转换器。
+// 负责将 Gemini API 的 SSE 流式响应和非流式响应转换为 OpenAI Responses 格式。
+// 实现了完整的 Responses 流式事件状态机，包括：
+// 1. 文本聚合与分段输出（output_text.delta/done、content_part.done）
+// 2. 推理内容处理（reasoning_summary_text.delta/done）
+// 3. 函数调用事件生成（function_call_arguments.delta/done）
+// 4. 响应生命周期事件（response.created、response.in_progress、response.completed）
+// 5. 用量元数据映射（usage.input_tokens、output_tokens、cached_tokens 等）
 package responses
 
 import (
@@ -14,43 +23,70 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiToResponsesState 保存 Gemini 到 OpenAI Responses 流式转换过程中的状态。
+// 用于在多次 ConvertGeminiResponseToOpenAIResponses 调用之间维护转换状态。
 type geminiToResponsesState struct {
-	Seq        int
+	// Seq 事件序列号，每发射一个 SSE 事件自增 1
+	Seq int
+	// ResponseID 响应唯一标识符，从 Gemini 的 responseId 派生或合成
 	ResponseID string
-	CreatedAt  int64
-	Started    bool
+	// CreatedAt 响应创建时间的 Unix 时间戳
+	CreatedAt int64
+	// Started 标记是否已发射 response.created 和 response.in_progress 事件
+	Started bool
 
-	// message aggregation
-	MsgOpened    bool
-	MsgClosed    bool
-	MsgIndex     int
+	// message aggregation 消息聚合相关字段
+	// MsgOpened 标记是否已开始输出助手消息
+	MsgOpened bool
+	// MsgClosed 标记助手消息是否已完成输出
+	MsgClosed bool
+	// MsgIndex 当前消息在 output 数组中的索引
+	MsgIndex int
+	// CurrentMsgID 当前消息的唯一标识符
 	CurrentMsgID string
-	TextBuf      strings.Builder
-	ItemTextBuf  strings.Builder
+	// TextBuf 累积的完整文本内容（用于最终聚合）
+	TextBuf strings.Builder
+	// ItemTextBuf 当前输出项的文本缓冲区
+	ItemTextBuf strings.Builder
 
-	// reasoning aggregation
+	// reasoning aggregation 推理内容聚合相关字段
+	// ReasoningOpened 标记是否已开始输出推理内容
 	ReasoningOpened bool
-	ReasoningIndex  int
+	// ReasoningIndex 推理内容在 output 数组中的索引
+	ReasoningIndex int
+	// ReasoningItemID 推理输出项的唯一标识符
 	ReasoningItemID string
-	ReasoningEnc    string
-	ReasoningBuf    strings.Builder
+	// ReasoningEnc 推理内容的加密签名
+	ReasoningEnc string
+	// ReasoningBuf 累积的推理文本内容
+	ReasoningBuf strings.Builder
+	// ReasoningClosed 标记推理内容是否已完成输出
 	ReasoningClosed bool
 
-	// function call aggregation (keyed by output_index)
-	NextIndex        int
-	FuncArgsBuf      map[int]*strings.Builder
-	FuncNames        map[int]string
-	FuncCallIDs      map[int]string
-	FuncDone         map[int]bool
+	// function call aggregation 函数调用聚合相关字段（按 output_index 索引）
+	// NextIndex 下一个输出项的索引
+	NextIndex int
+	// FuncArgsBuf 各函数调用的参数缓冲区，键为 output_index
+	FuncArgsBuf map[int]*strings.Builder
+	// FuncNames 各函数调用的函数名，键为 output_index
+	FuncNames map[int]string
+	// FuncCallIDs 各函数调用的唯一标识符，键为 output_index
+	FuncCallIDs map[int]string
+	// FuncDone 各函数调用是否已完成，键为 output_index
+	FuncDone map[int]bool
+	// SanitizedNameMap 工具名称清理映射表，用于还原被清理过的函数名称
 	SanitizedNameMap map[string]string
 }
 
-// responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
+// responseIDCounter 提供进程级别的唯一响应标识符计数器。
+// 使用原子操作确保在并发场景下的线程安全性。
 var responseIDCounter uint64
 
-// funcCallIDCounter provides a process-wide unique counter for function call identifiers.
+// funcCallIDCounter 提供进程级别的唯一函数调用标识符计数器。
 var funcCallIDCounter uint64
 
+// pickRequestJSON 选择最佳可用的请求 JSON 数据。
+// 优先使用原始请求数据，如果不可用则使用转换后的请求数据。
 func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
 	if len(originalRequestRawJSON) > 0 && gjson.ValidBytes(originalRequestRawJSON) {
 		return originalRequestRawJSON
@@ -61,6 +97,9 @@ func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
 	return nil
 }
 
+// unwrapRequestRoot 从请求 JSON 中提取实际的请求根对象。
+// 如果存在 "request" 子对象且包含关键字段，则返回该子对象；否则返回原始根对象。
+// 用于处理 Gemini CLI 等带有额外封装层的请求格式。
 func unwrapRequestRoot(root gjson.Result) gjson.Result {
 	req := root.Get("request")
 	if !req.Exists() {
@@ -72,6 +111,9 @@ func unwrapRequestRoot(root gjson.Result) gjson.Result {
 	return root
 }
 
+// unwrapGeminiResponseRoot 从响应 JSON 中提取实际的 Gemini 响应根对象。
+// Vertex 风格的 Gemini 响应会将实际数据封装在 "response" 对象中。
+// 如果检测到 candidates、responseId 或 usageMetadata 字段，则返回内部对象。
 func unwrapGeminiResponseRoot(root gjson.Result) gjson.Result {
 	resp := root.Get("response")
 	if !resp.Exists() {
@@ -84,11 +126,33 @@ func unwrapGeminiResponseRoot(root gjson.Result) gjson.Result {
 	return root
 }
 
+// emitEvent 将事件名称和载荷组合为 SSE 格式的事件数据。
 func emitEvent(event string, payload []byte) []byte {
 	return translatorcommon.SSEEventData(event, payload)
 }
 
-// ConvertGeminiResponseToOpenAIResponses converts Gemini SSE chunks into OpenAI Responses SSE events.
+// ConvertGeminiResponseToOpenAIResponses 将 Gemini SSE 流式响应转换为 OpenAI Responses SSE 事件。
+//
+// 该函数实现了一个完整的状态机，将 Gemini 的流式响应逐步转换为 OpenAI Responses 格式的
+// SSE 事件序列。状态通过 param 参数在多次调用之间保持。
+//
+// 事件生成顺序：
+// 1. response.created + response.in_progress（首次调用时）
+// 2. 推理内容事件（如果存在 thinking 内容）
+// 3. 文本内容事件（output_text.delta/done）
+// 4. 函数调用事件（function_call_arguments.delta/done）
+// 5. response.completed（当检测到 finishReason 时）
+//
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Gemini 格式的原始响应 JSON 数据
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Responses 格式的 SSE 事件数据切片
 func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &geminiToResponsesState{
@@ -567,7 +631,21 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 	return out
 }
 
-// ConvertGeminiResponseToOpenAIResponsesNonStream aggregates Gemini response JSON into a single OpenAI Responses JSON object.
+// ConvertGeminiResponseToOpenAIResponsesNonStream 将 Gemini 的非流式响应聚合为单个 OpenAI Responses JSON 对象。
+//
+// 该函数处理完整的 Gemini 响应，将所有内容（推理、文本、函数调用）聚合到
+// 一个符合 OpenAI Responses 格式的 JSON 对象中。
+//
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Gemini 格式的原始响应 JSON 数据
+//   - _: 未使用的参数指针
+//
+// 返回值：
+//   - []byte: OpenAI Responses 格式的完整 JSON 响应数据
 func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawJSON)
 	root = unwrapGeminiResponseRoot(root)

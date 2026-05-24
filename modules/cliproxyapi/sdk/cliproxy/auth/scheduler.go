@@ -1,3 +1,7 @@
+// auth - scheduler.go
+// 该文件实现了认证凭据的调度器，管理提供商/模型级别的凭据分片和路由状态。
+// 支持 round-robin、fill-first 和自定义选择策略，维护就绪队列和冷却队列，
+// 处理凭据的优先级排序、状态转换（就绪/冷却/阻塞/禁用）等调度逻辑。
 package auth
 
 import (
@@ -11,72 +15,79 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
-// schedulerStrategy identifies which built-in routing semantics the scheduler should apply.
+// schedulerStrategy 标识调度器应应用的内置路由语义。
 type schedulerStrategy int
 
 const (
+	// schedulerStrategyCustom 使用自定义选择器。
 	schedulerStrategyCustom schedulerStrategy = iota
+	// schedulerStrategyRoundRobin 使用轮询策略。
 	schedulerStrategyRoundRobin
+	// schedulerStrategyFillFirst 使用优先填充策略。
 	schedulerStrategyFillFirst
 )
 
-// scheduledState describes how an auth currently participates in a model shard.
+// scheduledState 描述认证凭据当前在模型分片中的参与状态。
 type scheduledState int
 
 const (
+	// scheduledStateReady 表示凭据就绪可用。
 	scheduledStateReady scheduledState = iota
+	// scheduledStateCooldown 表示凭据正在冷却中。
 	scheduledStateCooldown
+	// scheduledStateBlocked 表示凭据被阻塞。
 	scheduledStateBlocked
+	// scheduledStateDisabled 表示凭据被禁用。
 	scheduledStateDisabled
 )
 
-// authScheduler keeps the incremental provider/model scheduling state used by Manager.
+// authScheduler 维护 Manager 使用的增量提供商/模型调度状态。
 type authScheduler struct {
-	mu            sync.Mutex
-	strategy      schedulerStrategy
-	providers     map[string]*providerScheduler
-	authProviders map[string]string
-	mixedCursors  map[string]int
+	mu            sync.Mutex                        // 保护调度状态的互斥锁
+	strategy      schedulerStrategy                 // 当前调度策略
+	providers     map[string]*providerScheduler     // 提供商调度器映射
+	authProviders map[string]string                 // 认证 ID 到提供商的映射
+	mixedCursors  map[string]int                    // 混合提供商的轮询游标
 }
 
-// providerScheduler stores auth metadata and model shards for a single provider.
+// providerScheduler 存储单个提供商的认证元数据和模型分片。
 type providerScheduler struct {
-	providerKey string
-	auths       map[string]*scheduledAuthMeta
-	modelShards map[string]*modelScheduler
+	providerKey string                          // 提供商键
+	auths       map[string]*scheduledAuthMeta   // 认证 ID 到调度元数据的映射
+	modelShards map[string]*modelScheduler      // 模型键到模型调度器的映射
 }
 
-// scheduledAuthMeta stores the immutable scheduling fields derived from an auth snapshot.
+// scheduledAuthMeta 存储从认证快照派生的不可变调度字段。
 type scheduledAuthMeta struct {
-	auth              *Auth
-	providerKey       string
-	priority          int
-	virtualParent     string
-	websocketEnabled  bool
-	supportedModelSet map[string]struct{}
+	auth              *Auth                  // 认证凭据引用
+	providerKey       string                 // 提供商键
+	priority          int                    // 优先级
+	virtualParent     string                 // 虚拟父级 ID
+	websocketEnabled  bool                   // 是否启用 WebSocket
+	supportedModelSet map[string]struct{}     // 支持的模型集合
 }
 
-// modelScheduler tracks ready and blocked auths for one provider/model combination.
+// modelScheduler 跟踪单个提供商/模型组合的就绪和阻塞认证。
 type modelScheduler struct {
-	modelKey        string
-	entries         map[string]*scheduledAuth
-	priorityOrder   []int
-	readyByPriority map[int]*readyBucket
-	blocked         cooldownQueue
+	modelKey        string                          // 模型键
+	entries         map[string]*scheduledAuth       // 认证 ID 到调度认证的映射
+	priorityOrder   []int                           // 优先级排序列表
+	readyByPriority map[int]*readyBucket            // 优先级到就绪桶的映射
+	blocked         cooldownQueue                   // 冷却队列
 }
 
-// scheduledAuth stores the runtime scheduling state for a single auth inside a model shard.
+// scheduledAuth 存储模型分片中单个认证的运行时调度状态。
 type scheduledAuth struct {
-	meta        *scheduledAuthMeta
-	auth        *Auth
-	state       scheduledState
-	nextRetryAt time.Time
+	meta        *scheduledAuthMeta // 调度元数据引用
+	auth        *Auth              // 认证凭据引用
+	state       scheduledState     // 当前调度状态
+	nextRetryAt time.Time          // 下次重试时间
 }
 
-// readyBucket keeps the ready views for one priority level.
+// readyBucket 保持一个优先级级别的就绪视图。
 type readyBucket struct {
-	all readyView
-	ws  readyView
+	all readyView // 所有就绪凭据的视图
+	ws  readyView // WebSocket 就绪凭据的视图
 }
 
 // readyView holds the selection order for flat or grouped round-robin traversal.

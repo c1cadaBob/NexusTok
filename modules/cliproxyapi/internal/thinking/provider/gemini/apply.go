@@ -1,14 +1,15 @@
-// Package gemini implements thinking configuration for Gemini models.
+// gemini - apply.go
+// 本文件实现了 Gemini 模型的 thinking 配置应用逻辑。
 //
-// Gemini models have two formats:
-//   - Gemini 2.5: Uses thinkingBudget (numeric)
-//   - Gemini 3.x: Uses thinkingLevel (string: minimal/low/medium/high)
-//     or thinkingBudget=-1 for auto/dynamic mode
+// Gemini 模型有两种格式：
+//   - Gemini 2.5：使用 thinkingBudget（数字）
+//   - Gemini 3.x：使用 thinkingLevel（字符串：minimal/low/medium/high）
+//     或 thinkingBudget=-1 表示自动/动态模式
 //
-// Output format is determined by ThinkingConfig.Mode and ThinkingSupport.Levels:
-//   - ModeAuto: Always uses thinkingBudget=-1 (both Gemini 2.5 and 3.x)
-//   - len(Levels) > 0: Uses thinkingLevel (Gemini 3.x discrete levels)
-//   - len(Levels) == 0: Uses thinkingBudget (Gemini 2.5)
+// 输出格式由 ThinkingConfig.Mode 和 ThinkingSupport.Levels 决定：
+//   - ModeAuto：始终使用 thinkingBudget=-1（Gemini 2.5 和 3.x 均适用）
+//   - len(Levels) > 0：使用 thinkingLevel（Gemini 3.x 离散级别）
+//   - len(Levels) == 0：使用 thinkingBudget（Gemini 2.5）
 package gemini
 
 import (
@@ -18,15 +19,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier applies thinking configuration for Gemini models.
+// Applier 实现了 Gemini 模型的 thinking 配置应用器。
 //
-// Gemini-specific behavior:
-//   - Gemini 2.5: thinkingBudget format, flash series supports ZeroAllowed
-//   - Gemini 3.x: thinkingLevel format, cannot be disabled
-//   - Use ThinkingSupport.Levels to decide output format
+// Gemini 特有行为：
+//   - Gemini 2.5：thinkingBudget 格式，flash 系列支持 ZeroAllowed
+//   - Gemini 3.x：thinkingLevel 格式，不可禁用
+//   - 使用 ThinkingSupport.Levels 决定输出格式
 type Applier struct{}
 
-// NewApplier creates a new Gemini thinking applier.
+// NewApplier 创建一个新的 Gemini thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

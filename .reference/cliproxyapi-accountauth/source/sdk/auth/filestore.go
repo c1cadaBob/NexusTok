@@ -1,3 +1,7 @@
+// 包 auth - filestore.go
+// 该文件实现了基于文件系统的令牌存储。
+// FileTokenStore 将认证凭据和元数据以 JSON 文件形式持久化到磁盘，
+// 支持保存、列举、删除认证记录，以及自动发现 GCP 项目 ID 等功能。
 package auth
 
 import (
@@ -18,27 +22,41 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// FileTokenStore persists token records and auth metadata using the filesystem as backing storage.
+// FileTokenStore 使用文件系统作为后端存储，持久化令牌记录和认证元数据。
 type FileTokenStore struct {
-	mu      sync.Mutex
-	dirLock sync.RWMutex
-	baseDir string
+	mu      sync.Mutex   // 保护写操作的互斥锁
+	dirLock sync.RWMutex // 保护 baseDir 读写的读写锁
+	baseDir string       // 认证 JSON 文件存储的基础目录
 }
 
-// NewFileTokenStore creates a token store that saves credentials to disk through the
-// TokenStorage implementation embedded in the token record.
+// NewFileTokenStore 创建一个通过 TokenStorage 实现将凭据保存到磁盘的令牌存储。
+//
+// 返回:
+//   - *FileTokenStore: 文件令牌存储实例
 func NewFileTokenStore() *FileTokenStore {
 	return &FileTokenStore{}
 }
 
-// SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
+// SetBaseDir 更新当未提供显式路径时用于认证 JSON 持久化的默认目录。
+//
+// 参数:
+//   - dir: 认证文件存储目录路径
 func (s *FileTokenStore) SetBaseDir(dir string) {
 	s.dirLock.Lock()
 	s.baseDir = strings.TrimSpace(dir)
 	s.dirLock.Unlock()
 }
 
-// Save persists token storage and metadata to the resolved auth file path.
+// Save 将令牌存储和元数据持久化到解析后的认证文件路径。
+// 支持 TokenStorage 实现和纯元数据两种保存模式。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - auth: 认证记录
+//
+// 返回:
+//   - string: 保存的文件路径
+//   - error: 保存失败时返回错误信息
 func (s *FileTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, error) {
 	if auth == nil {
 		return "", fmt.Errorf("auth filestore: auth is nil")
@@ -126,7 +144,14 @@ func (s *FileTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (str
 	return path, nil
 }
 
-// List enumerates all auth JSON files under the configured directory.
+// List 枚举配置目录下的所有认证 JSON 文件。
+//
+// 参数:
+//   - ctx: 请求上下文
+//
+// 返回:
+//   - []*cliproxyauth.Auth: 认证记录列表
+//   - error: 枚举失败时返回错误信息
 func (s *FileTokenStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error) {
 	dir := s.baseDirSnapshot()
 	if dir == "" {
@@ -158,7 +183,14 @@ func (s *FileTokenStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error)
 	return entries, nil
 }
 
-// Delete removes the auth file.
+// Delete 删除指定 ID 对应的认证文件。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - id: 认证文件 ID
+//
+// 返回:
+//   - error: 删除失败时返回错误信息
 func (s *FileTokenStore) Delete(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -174,6 +206,15 @@ func (s *FileTokenStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// resolveDeletePath 根据 ID 解析待删除文件的完整路径。
+// 如果 ID 包含路径分隔符或为绝对路径，直接使用；否则与基础目录拼接。
+//
+// 参数:
+//   - id: 认证文件 ID
+//
+// 返回:
+//   - string: 文件完整路径
+//   - error: 解析失败时返回错误信息
 func (s *FileTokenStore) resolveDeletePath(id string) (string, error) {
 	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
 		return id, nil
@@ -185,6 +226,16 @@ func (s *FileTokenStore) resolveDeletePath(id string) (string, error) {
 	return filepath.Join(dir, id), nil
 }
 
+// readAuthFile 读取并解析单个认证 JSON 文件为 Auth 结构体。
+// 对于 antigravity 和 gemini 类型，如果缺少 project_id 则尝试自动获取。
+//
+// 参数:
+//   - path: JSON 文件的完整路径
+//   - baseDir: 认证文件存储的基础目录
+//
+// 返回:
+//   - *cliproxyauth.Auth: 解析后的认证记录
+//   - error: 读取或解析失败时返回错误信息
 func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -262,6 +313,15 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 	return auth, nil
 }
 
+// idFor 根据文件路径和基础目录生成认证记录的 ID。
+// 在 Windows 上将 ID 转为小写以避免大小写不敏感路径导致的重复条目。
+//
+// 参数:
+//   - path: 文件完整路径
+//   - baseDir: 认证文件存储的基础目录
+//
+// 返回:
+//   - string: 认证记录 ID
 func (s *FileTokenStore) idFor(path, baseDir string) string {
 	id := path
 	if baseDir != "" {
@@ -276,6 +336,15 @@ func (s *FileTokenStore) idFor(path, baseDir string) string {
 	return id
 }
 
+// resolveAuthPath 根据 Auth 对象的属性解析认证文件的保存路径。
+// 优先使用 Attributes["path"]，其次使用 FileName，最后使用 ID 与基础目录拼接。
+//
+// 参数:
+//   - auth: 认证记录
+//
+// 返回:
+//   - string: 认证文件路径
+//   - error: 解析失败时返回错误信息
 func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error) {
 	if auth == nil {
 		return "", fmt.Errorf("auth filestore: auth is nil")
@@ -307,6 +376,14 @@ func (s *FileTokenStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error
 	return filepath.Join(dir, auth.ID), nil
 }
 
+// labelFor 从元数据中提取认证记录的显示标签。
+// 优先使用 label 字段，其次使用 email，最后使用 project_id。
+//
+// 参数:
+//   - metadata: 认证元数据
+//
+// 返回:
+//   - string: 显示标签
 func (s *FileTokenStore) labelFor(metadata map[string]any) string {
 	if metadata == nil {
 		return ""
@@ -323,12 +400,24 @@ func (s *FileTokenStore) labelFor(metadata map[string]any) string {
 	return ""
 }
 
+// baseDirSnapshot 线程安全地获取当前基础目录的快照。
+//
+// 返回:
+//   - string: 当前配置的基础目录
 func (s *FileTokenStore) baseDirSnapshot() string {
 	s.dirLock.RLock()
 	defer s.dirLock.RUnlock()
 	return s.baseDir
 }
 
+// extractAccessToken 从认证元数据中提取访问令牌。
+// 支持顶层 access_token 和嵌套在 token 对象中的 access_token 两种格式。
+//
+// 参数:
+//   - metadata: 认证元数据
+//
+// 返回:
+//   - string: 访问令牌；为空字符串表示未找到
 func extractAccessToken(metadata map[string]any) string {
 	if at, ok := metadata["access_token"].(string); ok {
 		if v := strings.TrimSpace(at); v != "" {
@@ -345,6 +434,16 @@ func extractAccessToken(metadata map[string]any) string {
 	return ""
 }
 
+// refreshGeminiAccessToken 使用刷新令牌获取新的 Gemini 访问令牌。
+// 当存储的访问令牌过期时（约 1 小时有效期），使用长期有效的刷新令牌进行刷新。
+//
+// 参数:
+//   - tokenMap: 包含刷新凭据的令牌映射
+//   - httpClient: HTTP 客户端
+//
+// 返回:
+//   - string: 新的访问令牌
+//   - error: 刷新失败时返回错误信息
 func refreshGeminiAccessToken(tokenMap map[string]any, httpClient *http.Client) (string, error) {
 	refreshToken, _ := tokenMap["refresh_token"].(string)
 	clientID, _ := tokenMap["client_id"].(string)
@@ -390,7 +489,14 @@ func refreshGeminiAccessToken(tokenMap map[string]any, httpClient *http.Client) 
 	return newAccessToken, nil
 }
 
-// jsonEqual compares two JSON blobs by parsing them into Go objects and deep comparing.
+// jsonEqual 通过解析为 Go 对象并深度比较来判断两个 JSON 字节切片是否相等。
+//
+// 参数:
+//   - a: 第一个 JSON 字节切片
+//   - b: 第二个 JSON 字节切片
+//
+// 返回:
+//   - bool: 如果两个 JSON 相等返回 true
 func jsonEqual(a, b []byte) bool {
 	var objA any
 	var objB any
@@ -403,6 +509,15 @@ func jsonEqual(a, b []byte) bool {
 	return deepEqualJSON(objA, objB)
 }
 
+// deepEqualJSON 递归深度比较两个解析后的 JSON 值。
+// 支持 map、slice、float64、string、bool 和 nil 类型的比较。
+//
+// 参数:
+//   - a: 第一个值
+//   - b: 第二个值
+//
+// 返回:
+//   - bool: 如果两个值深度相等返回 true
 func deepEqualJSON(a, b any) bool {
 	switch valA := a.(type) {
 	case map[string]any:

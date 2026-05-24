@@ -1,7 +1,12 @@
+// Package codex - openai.go
+// 定义 Codex OAuth 认证流程中使用的核心数据结构。
+// 包括 PKCE 代码对、OAuth 令牌数据和认证数据包，
+// 用于在 OAuth2 认证完成后聚合和管理所有认证相关数据。
 package codex
 
-// PKCECodes holds the verification codes for the OAuth2 PKCE (Proof Key for Code Exchange) flow.
-// PKCE is an extension to the Authorization Code flow to prevent CSRF and authorization code injection attacks.
+// PKCECodes 存储 OAuth2 PKCE（Proof Key for Code Exchange）流程的验证代码。
+// PKCE 是授权码流程的扩展，用于防止 CSRF 和授权码注入攻击。
+// 持有用于关联授权请求与令牌请求的密码验证器及其 SHA256 挑战码。
 type PKCECodes struct {
 	// CodeVerifier is the cryptographically random string used to correlate
 	// the authorization request to the token request

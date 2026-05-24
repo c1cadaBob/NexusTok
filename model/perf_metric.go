@@ -1,3 +1,13 @@
+// Package model - perf_metric.go
+// 该文件定义了性能指标（PerfMetric）数据模型及相关操作
+//
+// 主要结构体：
+// - PerfMetric：模型广场展示的聚合性能指标
+//
+// 核心功能：
+// - 性能指标的批量写入和更新
+// - 按模型和分组查询性能指标
+// - 支持时间桶（bucket）聚合
 package model
 
 import (
@@ -7,25 +17,35 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// PerfMetric stores aggregated relay performance metrics for the model square.
+// PerfMetric 性能指标数据模型
+// 存储模型广场展示的聚合性能指标，按时间桶（bucket）聚合
 type PerfMetric struct {
-	Id             int    `json:"id" gorm:"primaryKey"`
-	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`
-	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`
-	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"`
-	RequestCount   int64  `json:"-" gorm:"default:0"`
-	SuccessCount   int64  `json:"-" gorm:"default:0"`
-	TotalLatencyMs int64  `json:"-" gorm:"default:0"`
-	TtftSumMs      int64  `json:"-" gorm:"default:0"`
-	TtftCount      int64  `json:"-" gorm:"default:0"`
-	OutputTokens   int64  `json:"-" gorm:"default:0"`
-	GenerationMs   int64  `json:"-" gorm:"default:0"`
+	Id             int    `json:"id" gorm:"primaryKey"`                                                          // 指标 ID
+	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"` // 模型名称
+	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"` // 分组
+	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"` // 时间桶时间戳
+	RequestCount   int64  `json:"-" gorm:"default:0"`   // 请求数量
+	SuccessCount   int64  `json:"-" gorm:"default:0"`   // 成功数量
+	TotalLatencyMs int64  `json:"-" gorm:"default:0"`   // 总延迟（毫秒）
+	TtftSumMs      int64  `json:"-" gorm:"default:0"`   // TTFT 总和（毫秒，Time To First Token）
+	TtftCount      int64  `json:"-" gorm:"default:0"`   // TTFT 计数
+	OutputTokens   int64  `json:"-" gorm:"default:0"`   // 输出 Token 数量
+	GenerationMs   int64  `json:"-" gorm:"default:0"`   // 生成时间（毫秒）
 }
 
+// TableName 指定性能指标表名
 func (PerfMetric) TableName() string {
 	return "perf_metrics"
 }
 
+// UpsertPerfMetric 插入或更新性能指标
+// 使用 ON CONFLICT DO UPDATE 策略，累加各项指标值
+//
+// 参数：
+//   - metric: 性能指标对象
+//
+// 返回值：
+//   - error: 操作失败时返回错误
 func UpsertPerfMetric(metric *PerfMetric) error {
 	if metric == nil || metric.RequestCount == 0 {
 		return nil
@@ -48,6 +68,17 @@ func UpsertPerfMetric(metric *PerfMetric) error {
 	}).Create(metric).Error
 }
 
+// GetPerfMetrics 获取指定模型和时间范围的性能指标
+//
+// 参数：
+//   - modelName: 模型名称
+//   - group: 分组（可选，为空则查询所有分组）
+//   - startTs: 开始时间戳
+//   - endTs: 结束时间戳
+//
+// 返回值：
+//   - []PerfMetric: 性能指标列表
+//   - error: 查询失败时返回错误
 func GetPerfMetrics(modelName string, group string, startTs int64, endTs int64) ([]PerfMetric, error) {
 	var metrics []PerfMetric
 	query := DB.Model(&PerfMetric{}).
@@ -59,15 +90,26 @@ func GetPerfMetrics(modelName string, group string, startTs int64, endTs int64) 
 	return metrics, err
 }
 
+// PerfMetricSummary 性能指标汇总
+// 用于展示模型的聚合性能数据
 type PerfMetricSummary struct {
-	ModelName      string `json:"model_name"`
-	RequestCount   int64  `json:"request_count"`
-	SuccessCount   int64  `json:"success_count"`
-	TotalLatencyMs int64  `json:"total_latency_ms"`
-	OutputTokens   int64  `json:"output_tokens"`
-	GenerationMs   int64  `json:"generation_ms"`
+	ModelName      string `json:"model_name"`      // 模型名称
+	RequestCount   int64  `json:"request_count"`   // 请求数量
+	SuccessCount   int64  `json:"success_count"`   // 成功数量
+	TotalLatencyMs int64  `json:"total_latency_ms"` // 总延迟（毫秒）
+	OutputTokens   int64  `json:"output_tokens"`   // 输出 Token 数量
+	GenerationMs   int64  `json:"generation_ms"`   // 生成时间（毫秒）
 }
 
+// GetPerfMetricsSummaryAll 获取所有模型的性能指标汇总
+//
+// 参数：
+//   - startTs: 开始时间戳
+//   - endTs: 结束时间戳
+//
+// 返回值：
+//   - []PerfMetricSummary: 性能指标汇总列表
+//   - error: 查询失败时返回错误
 func GetPerfMetricsSummaryAll(startTs int64, endTs int64) ([]PerfMetricSummary, error) {
 	var summaries []PerfMetricSummary
 	err := DB.Model(&PerfMetric{}).
@@ -79,6 +121,14 @@ func GetPerfMetricsSummaryAll(startTs int64, endTs int64) ([]PerfMetricSummary, 
 	return summaries, err
 }
 
+// DeletePerfMetricsBefore 删除指定时间之前的性能指标
+// 用于清理过期的历史数据
+//
+// 参数：
+//   - cutoffTs: 截止时间戳
+//
+// 返回值：
+//   - error: 删除失败时返回错误
 func DeletePerfMetricsBefore(cutoffTs int64) error {
 	if cutoffTs <= 0 {
 		return nil
@@ -86,6 +136,13 @@ func DeletePerfMetricsBefore(cutoffTs int64) error {
 	return DB.Where("bucket_ts < ?", cutoffTs).Delete(&PerfMetric{}).Error
 }
 
+// PerfMetricStartTime 计算性能指标的开始时间
+//
+// 参数：
+//   - hours: 回溯小时数（默认 24 小时）
+//
+// 返回值：
+//   - int64: 开始时间的 UNIX 时间戳
 func PerfMetricStartTime(hours int) int64 {
 	if hours <= 0 {
 		hours = 24

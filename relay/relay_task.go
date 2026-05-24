@@ -1,3 +1,11 @@
+// Package relay - relay_task.go
+// 本文件实现了异步任务（Task）的提交和查询中继处理逻辑。
+// 异步任务包括视频生成（Sora/Kling/Kling-v2）、音乐生成（Suno）等需要较长时间才能完成的 AI 任务。
+// 本文件包含以下核心功能：
+//   - ResolveOriginTask: 处理基于已有任务的操作（remix/continuation），解析原始任务信息。
+//   - RelayTaskSubmit: 完整的任务提交流程，包括计费估算、预扣费、请求发送和提交后调整。
+//   - RelayTaskFetch: 查询任务状态，支持按 ID 或条件批量查询。
+//   - tryRealtimeFetch: 尝试从上游实时拉取 Gemini/Vertex 视频任务的最新状态。
 package relay
 
 import (
@@ -22,11 +30,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TaskSubmitResult 表示任务提交成功后的结果数据。
+// 包含上游返回的任务 ID、原始响应数据、所属平台和最终配额。
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	Platform       constant.TaskPlatform
-	Quota          int
+	UpstreamTaskID string               // 上游返回的任务唯一标识符
+	TaskData       []byte               // 上游返回的原始响应数据（JSON 格式）
+	Platform       constant.TaskPlatform // 任务所属平台（如 suno、kling、sora 等）
+	Quota          int                  // 最终消费的配额（经过提交后调整）
 	//PerCallPrice   types.PriceData
 }
 
@@ -257,8 +267,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}, nil
 }
 
-// recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
-// 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
+// recalcQuotaFromRatios 根据调整后的 OtherRatios 重新计算配额。
+// 计算公式：基础配额 × 各倍率的乘积。
+// 首先从当前 PriceData.Quota 中除掉原有的 OtherRatios 恢复基础额度，
+// 然后应用新的 ratios 重新计算最终配额。
+//
+// 参数：
+//   - info: 中继信息，包含当前的 PriceData
+//   - ratios: 调整后的倍率映射（如 {"seconds": 4.0, "size": 1.667}）
+//
+// 返回值：
+//   - int: 重新计算后的配额值
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) int {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.Quota
@@ -278,12 +297,27 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 	return int(result)
 }
 
+// fetchRespBuilders 是任务查询响应构建器的映射表。
+// 根据 RelayMode 选择对应的响应体构建函数：
+//   - RelayModeSunoFetchByID: 按 Suno 任务 ID 查询
+//   - RelayModeSunoFetch: 按条件批量查询 Suno 任务
+//   - RelayModeVideoFetchByID: 按视频任务 ID 查询
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
 	relayconstant.RelayModeSunoFetchByID:  sunoFetchByIDRespBodyBuilder,
 	relayconstant.RelayModeSunoFetch:      sunoFetchRespBodyBuilder,
 	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
 }
 
+// RelayTaskFetch 处理任务查询请求。
+// 根据 relayMode 从 fetchRespBuilders 中选择对应的响应构建函数，
+// 执行查询并将结果以 JSON 格式写入响应。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - relayMode: 中继模式，决定使用哪个查询构建器
+//
+// 返回值：
+//   - taskResp: 查询过程中的错误，成功时为 nil
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
@@ -307,6 +341,15 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	return
 }
 
+// sunoFetchRespBodyBuilder 构建 Suno 批量查询的响应体。
+// 从请求体中解析 ID 列表和操作类型，根据 ID 列表批量查询任务并转换为 DTO。
+//
+// 参数：
+//   - c: Gin 上下文，包含请求体中的 ids 和 action 字段
+//
+// 返回值：
+//   - respBody: JSON 格式的响应体
+//   - taskResp: 查询过程中的错误
 func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	userId := c.GetInt("id")
 	var condition = struct {
@@ -338,6 +381,15 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 	return
 }
 
+// sunoFetchByIDRespBodyBuilder 构建 Suno 按 ID 查询的响应体。
+// 从 URL 路径参数中提取任务 ID，查询单个任务并转换为 DTO。
+//
+// 参数：
+//   - c: Gin 上下文，包含 URL 路径参数中的任务 id
+//
+// 返回值：
+//   - respBody: JSON 格式的响应体
+//   - taskResp: 查询过程中的错误
 func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	taskId := c.Param("id")
 	userId := c.GetInt("id")
@@ -359,6 +411,18 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 	return
 }
 
+// videoFetchByIDRespBodyBuilder 构建视频任务按 ID 查询的响应体。
+// 支持三种查询路径：
+//  1. 实时查询（Gemini/Vertex）：直接从上游拉取最新状态并更新本地记录。
+//  2. OpenAI Video API 格式：通过适配器的 ConvertToOpenAIVideo 转换。
+//  3. 通用 TaskDto 格式：直接转换为标准任务 DTO。
+//
+// 参数：
+//   - c: Gin 上下文，包含 URL 路径参数中的 task_id
+//
+// 返回值：
+//   - respBody: JSON 格式的响应体
+//   - taskResp: 查询过程中的错误
 func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	taskId := c.Param("task_id")
 	if taskId == "" {
@@ -538,6 +602,14 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
+// TaskModel2Dto 将数据库模型 Task 转换为数据传输对象 TaskDto。
+// 用于将任务信息序列化为客户端可读的格式。
+//
+// 参数：
+//   - task: 数据库中的任务模型对象
+//
+// 返回值：
+//   - *dto.TaskDto: 任务的数据传输对象
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	return &dto.TaskDto{
 		ID:         task.ID,

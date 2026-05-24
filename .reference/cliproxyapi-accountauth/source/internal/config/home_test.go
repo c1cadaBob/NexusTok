@@ -1,7 +1,15 @@
+// config - home_test.go
+// Home 配置解析测试
+// 验证 ParseConfigBytes 函数在解析客户端配置时，
+// 会忽略 Home 相关的配置节（Home 配置仅在服务端生效）。
 package config
 
 import "testing"
 
+// TestParseConfigBytesIgnoresHomeConfig 验证即使 YAML 中包含完整的 home 配置节
+// （包括 enabled、host、port、TLS 等字段），ParseConfigBytes 也会将其忽略，
+// 返回的 Config 对象中 Home 字段保持零值。这是安全设计，防止客户端配置
+// 意外覆盖服务端的 Home 集群配置。
 func TestParseConfigBytesIgnoresHomeConfig(t *testing.T) {
 	cfg, err := ParseConfigBytes([]byte(`
 home:

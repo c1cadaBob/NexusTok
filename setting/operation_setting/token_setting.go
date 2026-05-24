@@ -1,3 +1,6 @@
+// token_setting.go — API 令牌（Token）管理配置
+// 职责：管理用户 API 令牌相关的配置，包括每用户最大令牌数量限制。
+
 package operation_setting
 
 import "github.com/c1cada/NexusTok/setting/config"
@@ -12,6 +15,7 @@ var tokenSetting = TokenSetting{
 	MaxUserTokens: 1000, // 默认每用户最多 1000 个令牌
 }
 
+// init 注册令牌配置到全局配置管理器
 func init() {
 	// 注册到全局配置管理器
 	config.GlobalConfig.Register("token_setting", &tokenSetting)

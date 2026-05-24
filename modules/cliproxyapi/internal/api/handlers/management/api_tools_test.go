@@ -1,3 +1,5 @@
+// management - api_tools_test.go
+// 测试管理 API 工具函数，包括代理传输配置（直连、全局代理、按提供商代理）和认证索引区分
 package management
 
 import (
@@ -10,6 +12,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestAPICallTransportDirectBypassesGlobalProxy 测试直连代理绕过全局代理设置
 func TestAPICallTransportDirectBypassesGlobalProxy(t *testing.T) {
 	t.Parallel()
 
@@ -29,6 +32,7 @@ func TestAPICallTransportDirectBypassesGlobalProxy(t *testing.T) {
 	}
 }
 
+// TestAPICallTransportInvalidAuthFallsBackToGlobalProxy 测试无效认证代理回退到全局代理
 func TestAPICallTransportInvalidAuthFallsBackToGlobalProxy(t *testing.T) {
 	t.Parallel()
 
@@ -58,6 +62,7 @@ func TestAPICallTransportInvalidAuthFallsBackToGlobalProxy(t *testing.T) {
 	}
 }
 
+// TestAPICallTransportAPIKeyAuthFallsBackToConfigProxyURL 测试 API Key 认证回退到配置中的代理 URL
 func TestAPICallTransportAPIKeyAuthFallsBackToConfigProxyURL(t *testing.T) {
 	t.Parallel()
 
@@ -157,6 +162,7 @@ func TestAPICallTransportAPIKeyAuthFallsBackToConfigProxyURL(t *testing.T) {
 	}
 }
 
+// TestAuthByIndexDistinguishesSharedAPIKeysAcrossProviders 测试跨提供商共享 API Key 的认证索引区分
 func TestAuthByIndexDistinguishesSharedAPIKeysAcrossProviders(t *testing.T) {
 	t.Parallel()
 

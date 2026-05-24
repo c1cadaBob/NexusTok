@@ -1,3 +1,10 @@
+// Package billingexpr - billingexpr_test.go
+// 该文件包含计费表达式系统的单元测试
+//
+// 测试内容包括：
+// - Claude 风格的分层计费表达式
+// - 表达式编译和运行
+// - 边界条件和精度测试
 package billingexpr_test
 
 import (

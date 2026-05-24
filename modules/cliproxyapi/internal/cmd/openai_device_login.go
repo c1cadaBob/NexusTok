@@ -1,3 +1,5 @@
+// Package cmd - openai_device_login.go
+// 提供 OpenAI Codex 的设备流程认证，作为传统 OAuth 回调流程的替代方案。
 package cmd
 
 import (
@@ -17,8 +19,14 @@ const (
 	codexLoginModeDevice      = "device"
 )
 
-// DoCodexDeviceLogin triggers the Codex device-code flow while keeping the
-// existing codex-login OAuth callback flow intact.
+// DoCodexDeviceLogin 触发 Codex 设备代码流程，同时保留现有的 codex-login OAuth 回调流程。
+// 通过设备代码流程进行认证，用户需要在浏览器中输入显示的代码。
+//
+// 参数:
+//   - cfg: 应用程序配置
+//   - options: 登录选项，包括浏览器行为和提示
+//
+// DoCodexDeviceLogin triggers the Codex device-code flow.
 func DoCodexDeviceLogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {
 		options = &LoginOptions{}

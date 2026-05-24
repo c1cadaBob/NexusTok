@@ -1,3 +1,9 @@
+// responses - openai_openai-responses_request_test.go
+// OpenAI Responses -> Chat Completions 请求转换器测试文件。
+// 包含以下测试用例：
+// 1. 连续 function_call 合并为单个 assistant 的 tool_calls
+// 2. 被消息中断的 function_call 分成独立的 assistant 消息
+// 3. 消息延迟机制：确保 tool_calls 和 tool 结果紧邻
 package responses
 
 import (
@@ -8,6 +14,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// prettyJSONForTest 格式化 JSON 以便在测试日志中更易阅读。
 func prettyJSONForTest(raw []byte) string {
 	if !gjson.ValidBytes(raw) {
 		return string(raw)
@@ -19,6 +26,8 @@ func prettyJSONForTest(raw []byte) string {
 	return out.String()
 }
 
+// TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFunctionCalls 测试连续的 function_call 合并为单个 assistant 的 tool_calls。
+// 验证多个 function_call 被合并到一个 assistant 消息中，tool_call_id 正确配对。
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFunctionCalls(t *testing.T) {
 	raw := []byte(`{
 		"input": [
@@ -62,6 +71,8 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFu
 	}
 }
 
+// TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCallsWhenInterrupted 测试被消息中断的 function_call 分成独立的 assistant 消息。
+// 验证 function_call、message、function_call 的序列被正确拆分为三个独立的消息。
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCallsWhenInterrupted(t *testing.T) {
 	raw := []byte(`{
 		"input": [
@@ -86,6 +97,9 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCalls
 	}
 }
 
+// TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_DefersMessageUntilToolOutput 测试消息延迟机制。
+// 验证在 function_call 和 function_call_output 之间的消息被延迟到 tool 结果之后才输出，
+// 确保 tool_calls 和 tool 结果紧邻（某些提供商要求此顺序）。
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_DefersMessageUntilToolOutput(t *testing.T) {
 	raw := []byte(`{
 		"input": [

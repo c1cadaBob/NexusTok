@@ -1,3 +1,6 @@
+// openai - codex_client_models.go
+// 提供 Codex 客户端模型列表的构建逻辑，将全局模型注册表中的模型信息转换为 Codex 客户端期望的格式。
+// 包含模型模板加载、推理级别标准化、可见性覆盖、优先级排序等功能。
 package openai
 
 import (
@@ -9,17 +12,19 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
+// codexClientModelsPayload Codex 客户端模型列表的 JSON 解析载体
 type codexClientModelsPayload struct {
 	Models []map[string]any `json:"models"`
 }
 
 var (
-	codexClientModelTemplatesOnce sync.Once
-	codexClientModelTemplates     map[string]map[string]any
-	codexClientDefaultTemplate    map[string]any
-	codexClientModelTemplatesErr  error
+	codexClientModelTemplatesOnce sync.Once                   // 保证模型模板只加载一次
+	codexClientModelTemplates     map[string]map[string]any   // 按 slug 索引的模型模板映射
+	codexClientDefaultTemplate    map[string]any              // 默认模型模板（gpt-5.5）
+	codexClientModelTemplatesErr  error                       // 模板加载错误
 )
 
+// codexClientAllowedReasoningLevels 允许的推理级别集合
 var codexClientAllowedReasoningLevels = map[string]struct{}{
 	"none":   {},
 	"low":    {},
@@ -28,16 +33,20 @@ var codexClientAllowedReasoningLevels = map[string]struct{}{
 	"xhigh":  {},
 }
 
+// codexClientModelsResponse 生成 Codex 客户端兼容的模型列表响应
 func (h *OpenAIAPIHandler) codexClientModelsResponse() map[string]any {
 	return CodexClientModelsResponse(h.Models())
 }
 
+// CodexClientModelsResponse 根据模型列表构建 Codex 客户端格式的响应体
 func CodexClientModelsResponse(models []map[string]any) map[string]any {
 	return map[string]any{
 		"models": buildCodexClientModels(models),
 	}
 }
 
+// buildCodexClientModels 将全局模型列表构建为 Codex 客户端期望的模型元数据数组，
+// 优先使用预加载的模板，无模板时使用默认模板并填充模型信息
 func buildCodexClientModels(models []map[string]any) []map[string]any {
 	templates, defaultTemplate, err := loadCodexClientModelTemplates()
 	if err != nil || defaultTemplate == nil {
@@ -73,6 +82,7 @@ func buildCodexClientModels(models []map[string]any) []map[string]any {
 	return result
 }
 
+// loadCodexClientModelTemplates 从嵌入的 JSON 资源中一次性加载模型模板，返回模板映射和默认模板
 func loadCodexClientModelTemplates() (map[string]map[string]any, map[string]any, error) {
 	codexClientModelTemplatesOnce.Do(func() {
 		var payload codexClientModelsPayload
@@ -97,6 +107,7 @@ func loadCodexClientModelTemplates() (map[string]map[string]any, map[string]any,
 	return codexClientModelTemplates, codexClientDefaultTemplate, codexClientModelTemplatesErr
 }
 
+// applyCodexClientModelMetadata 将模型注册表中的元数据（显示名、描述、上下文窗口等）应用到 Codex 客户端模型条目
 func applyCodexClientModelMetadata(entry map[string]any, id string, model map[string]any) {
 	info := registry.LookupModelInfo(id)
 
@@ -149,6 +160,7 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	}
 }
 
+// applyCodexClientVisibilityOverride 对特定模型强制隐藏（如图片生成模型在 Codex 客户端中不可见）
 func applyCodexClientVisibilityOverride(entry map[string]any, id string) {
 	switch strings.TrimSpace(id) {
 	case "grok-imagine-image-quality", "gpt-image-2", "grok-imagine-image", "grok-imagine-video":
@@ -156,6 +168,7 @@ func applyCodexClientVisibilityOverride(entry map[string]any, id string) {
 	}
 }
 
+// applyCodexClientThinkingMetadata 将模型的思维推理支持信息应用到 Codex 客户端模型条目
 func applyCodexClientThinkingMetadata(entry map[string]any, thinking *registry.ThinkingSupport) {
 	if thinking == nil || len(thinking.Levels) == 0 {
 		return
@@ -191,6 +204,7 @@ func applyCodexClientThinkingMetadata(entry map[string]any, thinking *registry.T
 	entry["default_reasoning_level"] = defaultLevel
 }
 
+// sanitizeCodexClientReasoningMetadata 清洗并规范化推理级别元数据，移除无效级别并修正默认级别
 func sanitizeCodexClientReasoningMetadata(entry map[string]any) {
 	rawLevels, ok := entry["supported_reasoning_levels"].([]any)
 	if !ok {
@@ -229,6 +243,7 @@ func sanitizeCodexClientReasoningMetadata(entry map[string]any) {
 	entry["default_reasoning_level"] = defaultLevel
 }
 
+// normalizeCodexClientReasoningLevel 将推理级别字符串标准化为允许的级别值，无效值返回空字符串
 func normalizeCodexClientReasoningLevel(rawLevel string) string {
 	level := strings.ToLower(strings.TrimSpace(rawLevel))
 	if _, ok := codexClientAllowedReasoningLevels[level]; !ok {
@@ -237,6 +252,7 @@ func normalizeCodexClientReasoningLevel(rawLevel string) string {
 	return level
 }
 
+// codexClientReasoningDescription 返回推理级别的人类可读描述
 func codexClientReasoningDescription(level string) string {
 	switch level {
 	case "none":
@@ -254,6 +270,7 @@ func codexClientReasoningDescription(level string) string {
 	}
 }
 
+// codexClientModelPriority 提取模型的优先级数值，未设置时默认为 100
 func codexClientModelPriority(model map[string]any) int {
 	if priority, ok := model["priority"].(int); ok {
 		return priority
@@ -264,6 +281,7 @@ func codexClientModelPriority(model map[string]any) int {
 	return 100
 }
 
+// stringModelValue 从模型 map 中提取字符串字段值，自动去除首尾空白
 func stringModelValue(model map[string]any, key string) string {
 	if model == nil {
 		return ""
@@ -278,6 +296,7 @@ func stringModelValue(model map[string]any, key string) string {
 	return ""
 }
 
+// intModelValue 从模型 map 中提取整数字段值，支持 int、int64 和 float64 类型
 func intModelValue(model map[string]any, key string) int {
 	if model == nil {
 		return 0
@@ -294,6 +313,7 @@ func intModelValue(model map[string]any, key string) int {
 	}
 }
 
+// cloneCodexClientModelMap 深拷贝模型 map，包括嵌套的 map 和 slice
 func cloneCodexClientModelMap(model map[string]any) map[string]any {
 	if model == nil {
 		return nil
@@ -305,6 +325,7 @@ func cloneCodexClientModelMap(model map[string]any) map[string]any {
 	return cloned
 }
 
+// cloneCodexClientModelValue 递归深拷贝任意模型值（map、slice 或原始类型）
 func cloneCodexClientModelValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:

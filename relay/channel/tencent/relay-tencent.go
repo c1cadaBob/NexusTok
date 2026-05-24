@@ -1,3 +1,7 @@
+// 腾讯云混元 API 的请求转换和响应处理实现文件。
+// 包含 OpenAI 格式与腾讯云格式的互转、流式/非流式响应处理、
+// TC3-HMAC-SHA256 签名计算等核心功能。
+// 参考文档：https://cloud.tencent.com/document/product/1729/97732
 package tencent
 
 import (
@@ -14,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	// 项目内部依赖
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
@@ -22,12 +27,17 @@ import (
 	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/types"
 
+	// 第三方依赖
 	"github.com/gin-gonic/gin"
 )
 
-// https://cloud.tencent.com/document/product/1729/97732
-
-func requestOpenAI2Tencent(a *Adaptor, request dto.GeneralOpenAIRequest) *TencentChatRequest {
+// requestOpenAI2Tencent 将 OpenAI 格式的请求转换为腾讯云混元 API 格式。
+// 将消息列表中的每条消息提取 Content 和 Role，映射到腾讯云的消息格式。
+// 参数:
+//   - a: 腾讯云适配器实例
+//   - request: OpenAI 格式的通用请求
+// 返回:
+//   - *TencentChatRequest: 转换后的腾讯云请求体
 	messages := make([]*TencentMessage, 0, len(request.Messages))
 	for i := 0; i < len(request.Messages); i++ {
 		message := request.Messages[i]
@@ -48,7 +58,12 @@ func requestOpenAI2Tencent(a *Adaptor, request dto.GeneralOpenAIRequest) *Tencen
 	return &req
 }
 
-func responseTencent2OpenAI(response *TencentChatResponse) *dto.OpenAITextResponse {
+// responseTencent2OpenAI 将腾讯云混元的非流式响应转换为 OpenAI 格式。
+// 提取 ID、消息内容、finish_reason 和 token 使用量。
+// 参数:
+//   - response: 腾讯云响应结构体
+// 返回:
+//   - *dto.OpenAITextResponse: OpenAI 格式的文本响应
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      response.Id,
 		Object:  "chat.completion",
@@ -73,7 +88,12 @@ func responseTencent2OpenAI(response *TencentChatResponse) *dto.OpenAITextRespon
 	return &fullTextResponse
 }
 
-func streamResponseTencent2OpenAI(TencentResponse *TencentChatResponse) *dto.ChatCompletionsStreamResponse {
+// streamResponseTencent2OpenAI 将腾讯云混元的流式响应转换为 OpenAI 格式。
+// 提取增量内容（delta）和 finish_reason。
+// 参数:
+//   - TencentResponse: 腾讯云流式响应结构体
+// 返回:
+//   - *dto.ChatCompletionsStreamResponse: OpenAI 格式的流式响应
 	response := dto.ChatCompletionsStreamResponse{
 		Object:  "chat.completion.chunk",
 		Created: common.GetTimestamp(),
@@ -90,7 +110,16 @@ func streamResponseTencent2OpenAI(TencentResponse *TencentChatResponse) *dto.Cha
 	return &response
 }
 
-func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
+// tencentStreamHandler 处理腾讯云混元的流式响应。
+// 逐行扫描 Server-Sent Events (SSE) 数据，将每个数据块转换为 OpenAI 格式后
+// 通过 EventSource 流式写入客户端。
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 HTTP 响应
+// 返回:
+//   - *dto.Usage: token 使用量统计
+//   - *types.NexusTokError: 处理过程中的错误信息
 	var responseText string
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -133,7 +162,15 @@ func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 	return service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens()), nil
 }
 
-func tencentHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
+// tencentHandler 处理腾讯云混元的非流式响应。
+// 读取完整响应体，检查错误码，转换为 OpenAI 格式后写入客户端。
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 HTTP 响应
+// 返回:
+//   - *dto.Usage: token 使用量统计
+//   - *types.NexusTokError: 处理过程中的错误信息
 	var tencentSb TencentChatResponseSB
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -161,7 +198,15 @@ func tencentHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Resp
 	return &fullTextResponse.Usage, nil
 }
 
-func parseTencentConfig(config string) (appId int64, secretId string, secretKey string, err error) {
+// parseTencentConfig 解析腾讯云渠道的配置字符串。
+// 格式为 "AppID|SecretId|SecretKey"，三个字段用竖线分隔。
+// 参数:
+//   - config: 配置字符串
+// 返回:
+//   - appId: 腾讯云应用 ID
+//   - secretId: 腾讯云 Secret ID
+//   - secretKey: 腾讯云 Secret Key
+//   - err: 解析失败时返回错误
 	parts := strings.Split(config, "|")
 	if len(parts) != 3 {
 		err = errors.New("invalid tencent config")
@@ -173,18 +218,41 @@ func parseTencentConfig(config string) (appId int64, secretId string, secretKey 
 	return
 }
 
-func sha256hex(s string) string {
+// sha256hex 计算字符串的 SHA256 哈希值并返回十六进制编码。
+// 用于 TC3 签名中的请求体哈希和规范请求哈希。
+// 参数:
+//   - s: 待哈希的字符串
+// 返回:
+//   - string: SHA256 十六进制编码字符串
 	b := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(b[:])
 }
 
-func hmacSha256(s, key string) string {
+// hmacSha256 使用 HMAC-SHA256 算法计算消息的认证码。
+// 用于 TC3 签名中的派生密钥计算链。
+// 参数:
+//   - s: 待签名的消息
+//   - key: HMAC 密钥
+// 返回:
+//   - string: HMAC-SHA256 认证码原始字节的字符串表示
 	hashed := hmac.New(sha256.New, []byte(key))
 	hashed.Write([]byte(s))
 	return string(hashed.Sum(nil))
 }
 
-func getTencentSign(req TencentChatRequest, adaptor *Adaptor, secId, secKey string) string {
+// getTencentSign 计算腾讯云 API 的 TC3-HMAC-SHA256 签名。
+// 签名流程：
+// 1. 构建规范请求串（CanonicalRequest）：HTTP 方法、URI、查询串、头部、签名头、请求体哈希
+// 2. 构建待签名串（StringToSign）：算法、时间戳、凭据范围、规范请求哈希
+// 3. 计算签名：通过 "TC3" + SecretKey 逐层派生密钥，对待签名串进行 HMAC-SHA256
+// 4. 构建 Authorization 头
+// 参数:
+//   - req: 腾讯云请求体
+//   - adaptor: 适配器实例（包含 Action、Timestamp 等元数据）
+//   - secId: 腾讯云 Secret ID
+//   - secKey: 腾讯云 Secret Key
+// 返回:
+//   - string: Authorization 头的值
 	// build canonical request string
 	host := "hunyuan.tencentcloudapi.com"
 	httpRequestMethod := "POST"

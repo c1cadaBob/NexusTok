@@ -1,3 +1,9 @@
+// Package controller - channel_test_internal_test.go
+// 该文件包含渠道控制器内部测试（分层计费相关）
+//
+// 测试内容包括：
+// - 分层计费配额计算（settleTestQuota）
+// - 测试日志中分层计费信息注入（buildTestLogOther）
 package controller
 
 import (

@@ -1,6 +1,8 @@
-// Package main provides the entry point for the CLI Proxy API server.
-// This server acts as a proxy that provides OpenAI/Gemini/Claude compatible API interfaces
-// for CLI models, allowing CLI models to be used with tools and libraries designed for standard AI APIs.
+// Package main - server.go
+// CLI Proxy API 服务器的入口程序。
+// 该服务器作为代理服务，为 CLI 模型提供 OpenAI/Gemini/Claude 兼容的 API 接口，
+// 允许 CLI 模型与为标准 AI API 设计的工具和库一起使用。
+// 支持多种运行模式：登录认证、服务器启动、TUI 管理界面等。
 package main
 
 import (
@@ -35,14 +37,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// 构建版本信息变量，在编译时通过 ldflags 注入。
 var (
-	Version           = "dev"
-	Commit            = "none"
-	BuildDate         = "unknown"
+	// Version 是应用程序版本号，默认为 "dev"。
+	Version = "dev"
+	// Commit 是 Git 提交哈希值，默认为 "none"。
+	Commit = "none"
+	// BuildDate 是构建日期，默认为 "unknown"。
+	BuildDate = "unknown"
+	// DefaultConfigPath 是默认配置文件路径，默认为空字符串。
 	DefaultConfigPath = ""
 )
 
-// init initializes the shared logger setup.
+// init 初始化共享日志记录器，并将构建版本信息设置到全局构建信息中。
 func init() {
 	logging.SetupBaseLogger()
 	buildinfo.Version = Version
@@ -50,13 +57,13 @@ func init() {
 	buildinfo.BuildDate = BuildDate
 }
 
-// main is the entry point of the application.
-// It parses command-line flags, loads configuration, and starts the appropriate
-// service based on the provided flags (login, codex-login, or server mode).
+// main 是应用程序的入口函数。
+// 它解析命令行参数、加载配置文件，并根据提供的标志启动相应的服务
+//（登录认证、Codex 登录、Claude 登录或服务器模式）。
 func main() {
 	fmt.Printf("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 
-	// Command-line flags to control the application's behavior.
+	// 命令行参数变量，用于控制应用程序的行为模式。
 	var login bool
 	var codexLogin bool
 	var codexDeviceLogin bool
@@ -77,7 +84,7 @@ func main() {
 	var standalone bool
 	var localModel bool
 
-	// Define command-line flags for different operation modes.
+	// 定义各种运行模式的命令行标志。
 	flag.BoolVar(&login, "login", false, "Login Google Account")
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
 	flag.BoolVar(&codexDeviceLogin, "codex-device-login", false, "Login to Codex using device code flow")
@@ -128,7 +135,7 @@ func main() {
 	// Parse the command-line flags.
 	flag.Parse()
 
-	// Core application variables.
+	// 核心应用程序变量。
 	var err error
 	var cfg *config.Config
 	var isCloudDeploy bool
@@ -162,7 +169,7 @@ func main() {
 		return
 	}
 
-	// Load environment variables from .env if present.
+	// 如果存在 .env 文件，则加载环境变量。
 	if errLoad := godotenv.Load(filepath.Join(wd, ".env")); errLoad != nil {
 		if !errors.Is(errLoad, os.ErrNotExist) {
 			log.WithError(errLoad).Warn("failed to load .env file")
@@ -240,15 +247,15 @@ func main() {
 		objectStoreLocalPath = value
 	}
 
-	// Check for cloud deploy mode only on first execution
-	// Read env var name in uppercase: DEPLOY
+	// 检查云部署模式（仅在首次执行时检查）。
+	// 读取环境变量 DEPLOY，值为 "cloud" 时启用云部署模式。
 	deployEnv := os.Getenv("DEPLOY")
 	if deployEnv == "cloud" {
 		isCloudDeploy = true
 	}
 
-	// Determine and load the configuration file.
-	// Prefer the Postgres store when configured, otherwise fallback to git or local files.
+	// 确定并加载配置文件。
+	// 优先使用 Postgres 存储，否则回退到 Git 存储或本地文件。
 	var configFilePath string
 	if strings.TrimSpace(homeJWT) != "" {
 		configLoadedFromHome = true
@@ -459,7 +466,7 @@ func main() {
 		cfg = &config.Config{}
 	}
 
-	// In cloud deploy mode, check if we have a valid configuration
+	// 在云部署模式下，检查是否具有有效的配置。
 	var configFileExists bool
 	if isCloudDeploy {
 		if configLoadedFromHome && cfg != nil {
@@ -494,7 +501,7 @@ func main() {
 
 	log.Infof("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 
-	// Set the log level based on the configuration.
+	// 根据配置设置日志级别。
 	util.SetLogLevel(cfg)
 
 	if resolvedAuthDir, errResolveAuthDir := util.ResolveAuthDir(cfg.AuthDir); errResolveAuthDir != nil {
@@ -504,13 +511,13 @@ func main() {
 		cfg.AuthDir = resolvedAuthDir
 	}
 
-	// Create login options to be used in authentication flows.
+	// 创建登录选项，用于各种认证流程。
 	options := &cmd.LoginOptions{
 		NoBrowser:    noBrowser,
 		CallbackPort: oauthCallbackPort,
 	}
 
-	// Register the shared token store once so all components use the same persistence backend.
+	// 注册共享令牌存储，确保所有组件使用相同的持久化后端。
 	if usePostgresStore {
 		sdkAuth.RegisterTokenStore(pgStoreInst)
 	} else if useObjectStore {
@@ -521,35 +528,37 @@ func main() {
 		sdkAuth.RegisterTokenStore(sdkAuth.NewFileTokenStore())
 	}
 
-	// Register built-in access providers before constructing services.
+	// 在构建服务之前注册内置的访问提供者。
 	configaccess.Register(&cfg.SDKConfig)
 
-	// Handle different command modes based on the provided flags.
+	// 根据提供的标志处理不同的命令模式。
 
 	if vertexImport != "" {
-		// Handle Vertex service account import
+		// 处理 Vertex 服务账号密钥导入。
 		cmd.DoVertexImport(cfg, vertexImport, vertexImportPrefix)
 	} else if login {
-		// Handle Google/Gemini login
+		// 处理 Google/Gemini 登录。
 		cmd.DoLogin(cfg, projectID, options)
 	} else if antigravityLogin {
-		// Handle Antigravity login
+		// 处理 Antigravity 登录。
 		cmd.DoAntigravityLogin(cfg, options)
 	} else if codexLogin {
-		// Handle Codex login
+		// 处理 Codex OAuth 登录。
 		cmd.DoCodexLogin(cfg, options)
 	} else if codexDeviceLogin {
-		// Handle Codex device-code login
+		// 处理 Codex 设备码流程登录。
 		cmd.DoCodexDeviceLogin(cfg, options)
 	} else if claudeLogin {
-		// Handle Claude login
+		// 处理 Claude 登录。
 		cmd.DoClaudeLogin(cfg, options)
 	} else if kimiLogin {
+		// 处理 Kimi 登录。
 		cmd.DoKimiLogin(cfg, options)
 	} else if xaiLogin {
+		// 处理 xAI 登录。
 		cmd.DoXAILogin(cfg, options)
 	} else {
-		// In cloud deploy mode without config file, just wait for shutdown signals
+		// 云部署模式下无配置文件时，仅等待关闭信号。
 		if isCloudDeploy && !configFileExists {
 			// No config file available, just wait for shutdown
 			cmd.WaitForCloudDeploy()
@@ -560,7 +569,7 @@ func main() {
 		}
 		if tuiMode {
 			if standalone {
-				// Standalone mode: start an embedded local server and connect TUI client to it.
+				// 独立模式：启动嵌入式本地服务器并连接 TUI 客户端。
 				misc.StartAntigravityVersionUpdater(context.Background())
 				if !localModel && !cfg.Home.Enabled {
 					registry.StartModelsUpdater(context.Background())
@@ -630,14 +639,14 @@ func main() {
 				cancel()
 				<-done
 			} else {
-				// Default TUI mode: pure management client.
-				// The proxy server must already be running.
+				// 默认 TUI 模式：纯管理客户端。
+				// 代理服务器必须已在运行。
 				if errRun := tui.Run(cfg.Port, password, nil, os.Stdout); errRun != nil {
 					fmt.Fprintf(os.Stderr, "TUI error: %v\n", errRun)
 				}
 			}
 		} else {
-			// Start the main proxy service
+			// 启动主代理服务。
 			misc.StartAntigravityVersionUpdater(context.Background())
 			if !localModel && !cfg.Home.Enabled {
 				registry.StartModelsUpdater(context.Background())

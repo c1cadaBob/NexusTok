@@ -1,3 +1,7 @@
+// qwen.go — Qwen（通义千问）模型配置管理
+// 职责：定义和管理 Qwen 模型的专属配置，包括同步图像生成模型列表等设置。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package model_setting
 
 import (
@@ -35,12 +39,13 @@ func init() {
 	config.GlobalConfig.Register("qwen", &qwenSettings)
 }
 
-// GetQwenSettings
+// GetQwenSettings 获取当前 Qwen 配置的指针。
 func GetQwenSettings() *QwenSettings {
 	return &qwenSettings
 }
 
-// IsSyncImageModel
+// IsSyncImageModel 判断指定模型是否为同步图像生成模型。
+// 通过子串匹配检查模型名称是否包含列表中的任一关键词。
 func IsSyncImageModel(model string) bool {
 	for _, m := range qwenSettings.SyncImageModels {
 		if strings.Contains(model, m) {

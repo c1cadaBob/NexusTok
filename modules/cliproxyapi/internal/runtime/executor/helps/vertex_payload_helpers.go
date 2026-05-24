@@ -1,3 +1,5 @@
+// Package helps - vertex_payload_helpers.go
+// 提供 Vertex AI 负载处理的辅助函数，用于转换和构造 Vertex AI 格式的请求负载。
 package helps
 
 import (

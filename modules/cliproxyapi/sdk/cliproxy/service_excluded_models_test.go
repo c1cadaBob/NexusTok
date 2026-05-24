@@ -1,3 +1,7 @@
+// cliproxy - service_excluded_models_test.go
+// 该文件测试模型排除功能和 OpenAI 兼容性模型类型注册。
+// 验证 auth 属性中的排除模型配置是否正确生效，以及图像模型类型的正确注册。
+
 package cliproxy
 
 import (
@@ -9,6 +13,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestRegisterModelsForAuth_UsesPreMergedExcludedModelsAttribute 测试 auth 属性中预合并的
+// 排除模型配置会覆盖全局配置，确保 per-account 排除和全局排除的正确合并行为。
 func TestRegisterModelsForAuth_UsesPreMergedExcludedModelsAttribute(t *testing.T) {
 	service := &Service{
 		cfg: &config.Config{
@@ -65,6 +71,8 @@ func TestRegisterModelsForAuth_UsesPreMergedExcludedModelsAttribute(t *testing.T
 	}
 }
 
+// TestRegisterModelsForAuth_OpenAICompatibilityImageModelType 测试 OpenAI 兼容性提供商中
+// 图像模型是否正确注册为 OpenAIImageModelType 类型，并保持默认 thinking 支持。
 func TestRegisterModelsForAuth_OpenAICompatibilityImageModelType(t *testing.T) {
 	service := &Service{
 		cfg: &config.Config{

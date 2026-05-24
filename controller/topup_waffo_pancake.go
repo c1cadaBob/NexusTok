@@ -1,3 +1,16 @@
+// Package controller - topup_waffo_pancake.go
+// 该文件实现了 Waffo Pancake 支付平台的充值 API 控制器
+//
+// Waffo Pancake 是 Waffo 的一个子产品，提供简化的结账体验
+// 功能包括：
+// - 创建 Waffo Pancake 结账会话
+// - 处理 Waffo Pancake Webhook 支付回调
+// - 支持多种货币和分组倍率
+//
+// 主要 API：
+// - RequestWaffoPancakeAmount：查询 Waffo Pancake 充值金额
+// - RequestWaffoPancakePay：发起 Waffo Pancake 充值支付
+// - WaffoPancakeWebhook：处理 Waffo Pancake 支付回调
 package controller
 
 import (
@@ -18,10 +31,14 @@ import (
 	"github.com/thanhpk/randstr"
 )
 
+// WaffoPancakePayRequest Waffo Pancake 充值支付请求结构体
 type WaffoPancakePayRequest struct {
-	Amount int64 `json:"amount"`
+	Amount int64 `json:"amount"` // 充值数量
 }
 
+// RequestWaffoPancakeAmount 查询 Waffo Pancake 充值金额
+//
+// 根据充值数量和用户分组计算实际支付金额
 func RequestWaffoPancakeAmount(c *gin.Context) {
 	var req WaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -50,6 +67,17 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": fmt.Sprintf("%.2f", payMoney)})
 }
 
+// getWaffoPancakePayMoney 计算 Waffo Pancake 充值支付金额
+//
+// 使用 decimal 库进行精确计算，避免浮点数精度问题
+// 计算公式：amount * unitPrice * topupGroupRatio * discount
+//
+// 参数：
+//   - amount: 充值数量
+//   - group: 用户分组
+//
+// 返回：
+//   - float64: 实际支付金额
 func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -74,6 +102,10 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	return payMoney.InexactFloat64()
 }
 
+// normalizeWaffoPancakeTopUpAmount 标准化 Waffo Pancake 充值数量
+//
+// 如果配额显示类型为 Token，将数量转换为配额单位
+// 最小值为 1
 func normalizeWaffoPancakeTopUpAmount(amount int64) int64 {
 	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
 		return amount
@@ -88,10 +120,16 @@ func normalizeWaffoPancakeTopUpAmount(amount int64) int64 {
 	return normalized
 }
 
+// formatWaffoPancakeAmount 格式化 Waffo Pancake 支付金额
+//
+// 使用 decimal 库确保两位小数精度
 func formatWaffoPancakeAmount(payMoney float64) string {
 	return decimal.NewFromFloat(payMoney).StringFixed(2)
 }
 
+// getWaffoPancakeBuyerEmail 获取 Waffo Pancake 买家邮箱
+//
+// 优先使用用户邮箱，如果没有则生成占位邮箱
 func getWaffoPancakeBuyerEmail(user *model.User) string {
 	if user != nil && strings.TrimSpace(user.Email) != "" {
 		return user.Email
@@ -102,6 +140,9 @@ func getWaffoPancakeBuyerEmail(user *model.User) string {
 	return ""
 }
 
+// getWaffoPancakeReturnURL 获取 Waffo Pancake 支付返回 URL
+//
+// 优先使用配置的返回 URL，否则使用默认的充值历史页面
 func getWaffoPancakeReturnURL() string {
 	if strings.TrimSpace(setting.WaffoPancakeReturnURL) != "" {
 		return setting.WaffoPancakeReturnURL
@@ -109,6 +150,17 @@ func getWaffoPancakeReturnURL() string {
 	return paymentReturnPath("/console/topup?show_history=true")
 }
 
+// RequestWaffoPancakePay 发起 Waffo Pancake 充值支付
+//
+// 流程：
+// 1. 验证 Waffo Pancake 支付是否启用
+// 2. 验证配置完整性（商户 ID、私钥、公钥等）
+// 3. 验证充值数量
+// 4. 计算实际支付金额
+// 5. 生成唯一订单号
+// 6. 创建本地待处理订单
+// 7. 调用 service 层创建结账会话
+// 8. 返回结账 URL 和会话信息
 func RequestWaffoPancakePay(c *gin.Context) {
 	if !setting.WaffoPancakeEnabled {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "Waffo Pancake 支付未启用"})
@@ -208,6 +260,16 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	})
 }
 
+// WaffoPancakeWebhook 处理 Waffo Pancake 支付回调
+//
+// 流程：
+// 1. 检查 Webhook 是否启用
+// 2. 读取请求体
+// 3. 验证签名（X-Waffo-Signature）
+// 4. 解析 Webhook 事件
+// 5. 处理 order.completed 事件
+// 6. 解析订单号映射
+// 7. 加锁处理订单，完成充值
 func WaffoPancakeWebhook(c *gin.Context) {
 	if !isWaffoPancakeWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))

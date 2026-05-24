@@ -1,5 +1,7 @@
-// Package kimi provides authentication and token management for Kimi (Moonshot AI) API.
-// It handles the RFC 8628 OAuth2 Device Authorization Grant flow for secure authentication.
+// kimi - kimi.go
+// 包 kimi 提供 Kimi（Moonshot AI）API 的认证和令牌管理功能。
+// 该文件实现了 RFC 8628 OAuth2 设备授权授权流程（Device Authorization Grant），
+// 用于安全认证。包含设备代码请求、轮询令牌交换和刷新令牌等功能。
 package kimi
 
 import (
@@ -21,31 +23,39 @@ import (
 )
 
 const (
-	// kimiClientID is Kimi Code's OAuth client ID.
+	// kimiClientID 是 Kimi Code 的 OAuth 客户端 ID
 	kimiClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
-	// kimiOAuthHost is the OAuth server endpoint.
+	// kimiOAuthHost 是 OAuth 服务器端点
 	kimiOAuthHost = "https://auth.kimi.com"
-	// kimiDeviceCodeURL is the endpoint for requesting device codes.
+	// kimiDeviceCodeURL 是请求设备代码的端点
 	kimiDeviceCodeURL = kimiOAuthHost + "/api/oauth/device_authorization"
-	// kimiTokenURL is the endpoint for exchanging device codes for tokens.
+	// kimiTokenURL 是用设备代码交换令牌的端点
 	kimiTokenURL = kimiOAuthHost + "/api/oauth/token"
-	// KimiAPIBaseURL is the base URL for Kimi API requests.
+	// KimiAPIBaseURL 是 Kimi API 请求的基础 URL
 	KimiAPIBaseURL = "https://api.kimi.com/coding"
-	// defaultPollInterval is the default interval for polling token endpoint.
+	// defaultPollInterval 是轮询令牌端点的默认间隔
 	defaultPollInterval = 5 * time.Second
-	// maxPollDuration is the maximum time to wait for user authorization.
+	// maxPollDuration 是等待用户授权的最大时间
 	maxPollDuration = 15 * time.Minute
-	// refreshThresholdSeconds is when to refresh token before expiry (5 minutes).
+	// refreshThresholdSeconds 是令牌过期前刷新的阈值（5 分钟）
 	refreshThresholdSeconds = 300
 )
 
-// KimiAuth handles Kimi authentication flow.
+// KimiAuth 处理 Kimi 认证流程。
 type KimiAuth struct {
+	// deviceClient 是设备流程客户端
 	deviceClient *DeviceFlowClient
-	cfg          *config.Config
+	// cfg 是应用程序配置
+	cfg *config.Config
 }
 
-// NewKimiAuth creates a new KimiAuth service instance.
+// NewKimiAuth 创建一个新的 KimiAuth 服务实例。
+//
+// 参数：
+//   - cfg: 应用程序配置，包含代理设置
+//
+// 返回：
+//   - *KimiAuth: 新的 KimiAuth 服务实例
 func NewKimiAuth(cfg *config.Config) *KimiAuth {
 	return &KimiAuth{
 		deviceClient: NewDeviceFlowClient(cfg),
@@ -53,12 +63,29 @@ func NewKimiAuth(cfg *config.Config) *KimiAuth {
 	}
 }
 
-// StartDeviceFlow initiates the device flow authentication.
+// StartDeviceFlow 启动设备流程认证。
+// 向 Kimi 服务器请求设备代码，返回设备代码响应供用户完成授权。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//
+// 返回：
+//   - *DeviceCodeResponse: 设备代码响应，包含用户需要输入的代码
+//   - error: 请求失败时返回的错误
 func (k *KimiAuth) StartDeviceFlow(ctx context.Context) (*DeviceCodeResponse, error) {
 	return k.deviceClient.RequestDeviceCode(ctx)
 }
 
-// WaitForAuthorization polls for user authorization and returns the auth bundle.
+// WaitForAuthorization 轮询等待用户授权并返回认证包。
+// 持续轮询令牌端点，直到用户完成授权或设备代码过期。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - deviceCode: 设备代码响应
+//
+// 返回：
+//   - *KimiAuthBundle: 认证包，包含令牌数据和设备 ID
+//   - error: 授权失败时返回的错误
 func (k *KimiAuth) WaitForAuthorization(ctx context.Context, deviceCode *DeviceCodeResponse) (*KimiAuthBundle, error) {
 	tokenData, err := k.deviceClient.PollForToken(ctx, deviceCode)
 	if err != nil {
@@ -71,7 +98,14 @@ func (k *KimiAuth) WaitForAuthorization(ctx context.Context, deviceCode *DeviceC
 	}, nil
 }
 
-// CreateTokenStorage creates a new KimiTokenStorage from auth bundle.
+// CreateTokenStorage 从认证包创建 KimiTokenStorage。
+// 将认证包中的令牌数据转换为适合持久化存储的结构。
+//
+// 参数：
+//   - bundle: 包含令牌数据的认证包
+//
+// 返回：
+//   - *KimiTokenStorage: 新的令牌存储实例
 func (k *KimiAuth) CreateTokenStorage(bundle *KimiAuthBundle) *KimiTokenStorage {
 	expired := ""
 	if bundle.TokenData.ExpiresAt > 0 {
@@ -88,25 +122,49 @@ func (k *KimiAuth) CreateTokenStorage(bundle *KimiAuthBundle) *KimiTokenStorage 
 	}
 }
 
-// DeviceFlowClient handles the OAuth2 device flow for Kimi.
+// DeviceFlowClient 处理 Kimi 的 OAuth2 设备流程。
 type DeviceFlowClient struct {
+	// httpClient 是用于发送 HTTP 请求的客户端
 	httpClient *http.Client
-	cfg        *config.Config
-	deviceID   string
+	// cfg 是应用程序配置
+	cfg *config.Config
+	// deviceID 是设备标识符
+	deviceID string
 }
 
-// NewDeviceFlowClient creates a new device flow client.
+// NewDeviceFlowClient 创建一个新的设备流程客户端。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//
+// 返回：
+//   - *DeviceFlowClient: 新的设备流程客户端实例
 func NewDeviceFlowClient(cfg *config.Config) *DeviceFlowClient {
 	return NewDeviceFlowClientWithDeviceID(cfg, "")
 }
 
-// NewDeviceFlowClientWithDeviceID creates a new device flow client with the specified device ID.
+// NewDeviceFlowClientWithDeviceID 使用指定的设备 ID 创建一个新的设备流程客户端。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//   - deviceID: 设备标识符
+//
+// 返回：
+//   - *DeviceFlowClient: 新的设备流程客户端实例
 func NewDeviceFlowClientWithDeviceID(cfg *config.Config, deviceID string) *DeviceFlowClient {
 	return NewDeviceFlowClientWithDeviceIDAndProxyURL(cfg, deviceID, "")
 }
 
-// NewDeviceFlowClientWithDeviceIDAndProxyURL creates a new device flow client with a proxy override.
-// proxyURL takes precedence over cfg.ProxyURL when non-empty.
+// NewDeviceFlowClientWithDeviceIDAndProxyURL 使用代理覆盖创建一个新的设备流程客户端。
+// 当 proxyURL 非空时，优先使用它而非 cfg.ProxyURL。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//   - deviceID: 设备标识符
+//   - proxyURL: 可选的代理 URL
+//
+// 返回：
+//   - *DeviceFlowClient: 新的设备流程客户端实例
 func NewDeviceFlowClientWithDeviceIDAndProxyURL(cfg *config.Config, deviceID string, proxyURL string) *DeviceFlowClient {
 	client := &http.Client{Timeout: 30 * time.Second}
 	effectiveProxyURL := strings.TrimSpace(proxyURL)
@@ -131,12 +189,19 @@ func NewDeviceFlowClientWithDeviceIDAndProxyURL(cfg *config.Config, deviceID str
 	}
 }
 
-// getOrCreateDeviceID returns an in-memory device ID for the current authentication flow.
+// getOrCreateDeviceID 返回当前认证流程的内存设备 ID。
+//
+// 返回：
+//   - string: 新生成的 UUID 设备 ID
 func getOrCreateDeviceID() string {
 	return uuid.New().String()
 }
 
-// getDeviceModel returns a device model string.
+// getDeviceModel 返回设备模型字符串。
+// 根据操作系统和架构生成设备描述。
+//
+// 返回：
+//   - string: 设备模型描述字符串
 func getDeviceModel() string {
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
@@ -153,7 +218,10 @@ func getDeviceModel() string {
 	}
 }
 
-// getHostname returns the machine hostname.
+// getHostname 返回机器主机名。
+//
+// 返回：
+//   - string: 机器主机名，获取失败时返回 "unknown"
 func getHostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -162,7 +230,10 @@ func getHostname() string {
 	return hostname
 }
 
-// commonHeaders returns headers required for Kimi API requests.
+// commonHeaders 返回 Kimi API 请求所需的通用请求头。
+//
+// 返回：
+//   - map[string]string: 包含设备信息的请求头映射
 func (c *DeviceFlowClient) commonHeaders() map[string]string {
 	return map[string]string{
 		"X-Msh-Platform":     "cli-proxy-api",
@@ -173,7 +244,14 @@ func (c *DeviceFlowClient) commonHeaders() map[string]string {
 	}
 }
 
-// RequestDeviceCode initiates the device flow by requesting a device code from Kimi.
+// RequestDeviceCode 通过向 Kimi 请求设备代码来启动设备流程。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//
+// 返回：
+//   - *DeviceCodeResponse: 设备代码响应
+//   - error: 请求失败时返回的错误
 func (c *DeviceFlowClient) RequestDeviceCode(ctx context.Context) (*DeviceCodeResponse, error) {
 	data := url.Values{}
 	data.Set("client_id", kimiClientID)
@@ -215,7 +293,15 @@ func (c *DeviceFlowClient) RequestDeviceCode(ctx context.Context) (*DeviceCodeRe
 	return &deviceCode, nil
 }
 
-// PollForToken polls the token endpoint until the user authorizes or the device code expires.
+// PollForToken 轮询令牌端点，直到用户完成授权或设备代码过期。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - deviceCode: 设备代码响应
+//
+// 返回：
+//   - *KimiTokenData: 令牌数据
+//   - error: 授权失败时返回的错误
 func (c *DeviceFlowClient) PollForToken(ctx context.Context, deviceCode *DeviceCodeResponse) (*KimiTokenData, error) {
 	if deviceCode == nil {
 		return nil, fmt.Errorf("kimi: device code is nil")
@@ -258,8 +344,17 @@ func (c *DeviceFlowClient) PollForToken(ctx context.Context, deviceCode *DeviceC
 	}
 }
 
-// exchangeDeviceCode attempts to exchange the device code for an access token.
-// Returns (token, error, shouldContinue).
+// exchangeDeviceCode 尝试用设备代码交换访问令牌。
+// 返回 (令牌, 错误, 是否应继续轮询)。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - deviceCode: 设备代码字符串
+//
+// 返回：
+//   - *KimiTokenData: 令牌数据，成功时非 nil
+//   - error: 错误信息
+//   - bool: 是否应继续轮询
 func (c *DeviceFlowClient) exchangeDeviceCode(ctx context.Context, deviceCode string) (*KimiTokenData, error, bool) {
 	data := url.Values{}
 	data.Set("client_id", kimiClientID)
@@ -339,7 +434,15 @@ func (c *DeviceFlowClient) exchangeDeviceCode(ctx context.Context, deviceCode st
 	}, nil, false
 }
 
-// RefreshToken exchanges a refresh token for a new access token.
+// RefreshToken 用刷新令牌交换新的访问令牌。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - refreshToken: 刷新令牌
+//
+// 返回：
+//   - *KimiTokenData: 新的令牌数据
+//   - error: 刷新失败时返回的错误
 func (c *DeviceFlowClient) RefreshToken(ctx context.Context, refreshToken string) (*KimiTokenData, error) {
 	data := url.Values{}
 	data.Set("client_id", kimiClientID)

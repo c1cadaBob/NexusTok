@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器的紧凑请求功能，验证默认指令注入。
 package executor
 
 import (
@@ -14,6 +16,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCodexExecutorCompactAddsDefaultInstructions 验证紧凑请求在缺少或为 null 的 instructions 字段时
+// 自动注入空字符串的默认指令。
 func TestCodexExecutorCompactAddsDefaultInstructions(t *testing.T) {
 	cases := []struct {
 		name    string

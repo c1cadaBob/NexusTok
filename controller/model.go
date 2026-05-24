@@ -1,3 +1,16 @@
+// Package controller - model.go
+// 该文件实现了模型管理的 API 控制器
+//
+// 模型管理功能包括：
+// - 模型列表：获取所有可用的 AI 模型
+// - 模型详情：获取特定模型的详细信息
+// - 模型搜索：按关键词搜索模型
+// - 渠道模型：获取特定渠道支持的模型
+//
+// 模型数据来源：
+// - 各适配器内置的模型列表
+// - 动态从上游获取的模型列表
+// - 用户自定义的模型映射
 package controller
 
 import (
@@ -25,12 +38,21 @@ import (
 
 // https://platform.openai.com/docs/api-reference/models/list
 
+// openAIModels 所有可用的 OpenAI 兼容模型列表
 var openAIModels []dto.OpenAIModels
+
+// openAIModelsMap 模型名称到模型信息的映射
 var openAIModelsMap map[string]dto.OpenAIModels
+
+// channelId2Models 渠道 ID 到支持的模型列表的映射
 var channelId2Models map[int][]string
 
+// init 初始化模型列表
+//
+// 从所有适配器中获取支持的模型，并构建模型映射
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
+	// 遍历所有 API 类型，从适配器中获取模型列表
 	for i := 0; i < constant.APITypeDummy; i++ {
 		if i == constant.APITypeAIProxyLibrary {
 			continue
@@ -47,6 +69,7 @@ func init() {
 			})
 		}
 	}
+	// 添加 360 智脑的模型
 	for _, modelName := range ai360.ModelList {
 		openAIModels = append(openAIModels, dto.OpenAIModels{
 			Id:      modelName,

@@ -1,3 +1,13 @@
+// chat_completions - codex_openai_response_test.go
+// Codex 的 OpenAI Chat Completions 格式响应转换器测试文件。
+// 包含以下测试用例：
+// 1. 流式模式下从 response.created 事件获取模型名称
+// 2. 首个数据块使用请求中的模型名称
+// 3. 工具调用块省略空的 content 和 reasoning_content 字段
+// 4. 工具调用参数增量省略空的 content 字段
+// 5. 流式图片生成增量事件的处理和去重
+// 6. 图片生成完成事件的去重处理
+// 7. 非流式模式下图片生成调用的处理
 package chat_completions
 
 import (
@@ -7,6 +17,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertCodexResponseToOpenAI_StreamSetsModelFromResponseCreated 测试流式模式下从 response.created 事件获取模型名称。
+// 验证后续数据块使用 response.created 中设置的模型名称。
 func TestConvertCodexResponseToOpenAI_StreamSetsModelFromResponseCreated(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -29,6 +41,7 @@ func TestConvertCodexResponseToOpenAI_StreamSetsModelFromResponseCreated(t *test
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_FirstChunkUsesRequestModelName 测试首个数据块使用请求中指定的模型名称。
 func TestConvertCodexResponseToOpenAI_FirstChunkUsesRequestModelName(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -46,6 +59,8 @@ func TestConvertCodexResponseToOpenAI_FirstChunkUsesRequestModelName(t *testing.
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_ToolCallChunkOmitsNullContentFields 测试工具调用块省略空的 content 和 reasoning_content 字段。
+// 验证 output_item.added 事件生成的块不包含 null 值的 content 和 reasoning_content。
 func TestConvertCodexResponseToOpenAI_ToolCallChunkOmitsNullContentFields(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -66,6 +81,8 @@ func TestConvertCodexResponseToOpenAI_ToolCallChunkOmitsNullContentFields(t *tes
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_ToolCallArgumentsDeltaOmitsNullContentFields 测试工具调用参数增量省略空的 content 字段。
+// 验证 function_call_arguments.delta 事件生成的块不包含 null 值的 content 和 reasoning_content。
 func TestConvertCodexResponseToOpenAI_ToolCallArgumentsDeltaOmitsNullContentFields(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -91,6 +108,8 @@ func TestConvertCodexResponseToOpenAI_ToolCallArgumentsDeltaOmitsNullContentFiel
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_StreamPartialImageEmitsDeltaImages 测试流式图片生成增量事件的处理。
+// 验证 partial_image 事件正确转换为 data: URL 格式的图片，且重复的图片被去重抑制。
 func TestConvertCodexResponseToOpenAI_StreamPartialImageEmitsDeltaImages(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -113,6 +132,8 @@ func TestConvertCodexResponseToOpenAI_StreamPartialImageEmitsDeltaImages(t *test
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_StreamImageGenerationCallDoneEmitsDeltaImages 测试图片生成完成事件的去重处理。
+// 验证 output_item.done 事件中的图片与最后的 partial_image 相同时被抑制，不同时正常输出。
 func TestConvertCodexResponseToOpenAI_StreamImageGenerationCallDoneEmitsDeltaImages(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -138,6 +159,8 @@ func TestConvertCodexResponseToOpenAI_StreamImageGenerationCallDoneEmitsDeltaIma
 	}
 }
 
+// TestConvertCodexResponseToOpenAI_NonStreamImageGenerationCallAddsMessageImages 测试非流式模式下图片生成调用的处理。
+// 验证 response.completed 中的 image_generation_call 被正确转换为 message.images 数组。
 func TestConvertCodexResponseToOpenAI_NonStreamImageGenerationCallAddsMessageImages(t *testing.T) {
 	ctx := context.Background()
 

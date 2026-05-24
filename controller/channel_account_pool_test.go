@@ -1,3 +1,9 @@
+// Package controller - channel_account_pool_test.go
+// 该文件包含渠道账号池模式验证的单元测试
+//
+// 测试内容包括：
+// - 全局账号池模式必须选择账号池组
+// - 全局账号池模式允许空 Key 和 BaseURL
 package controller
 
 import (

@@ -1,3 +1,5 @@
+// management - api_key_usage_test.go
+// 测试 API Key 使用统计功能，验证按提供商和 API Key 分组的使用计数和最近请求桶
 package management
 
 import (
@@ -12,6 +14,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// sumRecentRequestBuckets 辅助函数，计算最近请求桶的总成功和失败数
 func sumRecentRequestBuckets(buckets []coreauth.RecentRequestBucket) (int64, int64) {
 	var success int64
 	var failed int64
@@ -22,6 +25,7 @@ func sumRecentRequestBuckets(buckets []coreauth.RecentRequestBucket) (int64, int
 	return success, failed
 }
 
+// TestGetAPIKeyUsage_GroupsByProviderAndAPIKey 测试 API Key 使用统计按提供商和 Key 分组
 func TestGetAPIKeyUsage_GroupsByProviderAndAPIKey(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

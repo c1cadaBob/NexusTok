@@ -1,13 +1,15 @@
+// Package config - vertex_compat.go
+// 定义 Vertex AI 兼容 API 密钥配置，支持使用简单 API 密钥认证的第三方 Vertex 兼容服务。
 package config
 
 import "strings"
 
-// VertexCompatKey represents the configuration for Vertex AI-compatible API keys.
-// This supports third-party services that use Vertex AI-style endpoint paths
-// (/publishers/google/models/{model}:streamGenerateContent) but authenticate
-// with simple API keys instead of Google Cloud service account credentials.
+// VertexCompatKey 表示 Vertex AI 兼容 API 密钥的配置。
+// 支持使用 Vertex AI 风格端点路径但使用简单 API 密钥进行认证的第三方服务。
 //
-// Example services: zenmux.ai and similar Vertex-compatible providers.
+// 示例服务: zenmux.ai 及类似的 Vertex 兼容提供商。
+//
+// VertexCompatKey represents the configuration for Vertex AI-compatible API keys.
 type VertexCompatKey struct {
 	// APIKey is the authentication key for accessing the Vertex-compatible API.
 	// Maps to the x-goog-api-key header.

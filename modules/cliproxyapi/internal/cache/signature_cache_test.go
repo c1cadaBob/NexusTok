@@ -1,3 +1,9 @@
+// cache - signature_cache_test.go
+// 该文件测试签名缓存（Signature Cache）的功能。
+// 测试覆盖了基本存取、不同模型分组隔离、未找到返回空、空输入处理、短签名拒绝、
+// 缓存清除、有效签名检查、哈希碰撞抗性、Unicode 文本、覆盖写入、过期逻辑、
+// 模式设置日志级别以及重复状态日志抑制等场景。
+
 package cache
 
 import (
@@ -9,8 +15,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// testModelName 测试用的模型名称常量。
 const testModelName = "claude-sonnet-4-5"
 
+// TestCacheSignature_BasicStorageAndRetrieval 测试签名缓存的基本存储和检索功能。
 func TestCacheSignature_BasicStorageAndRetrieval(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -27,6 +35,7 @@ func TestCacheSignature_BasicStorageAndRetrieval(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_DifferentModelGroups 测试不同模型的签名缓存相互隔离。
 func TestCacheSignature_DifferentModelGroups(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -46,6 +55,7 @@ func TestCacheSignature_DifferentModelGroups(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_NotFound 测试不存在的会话和不同文本返回空字符串。
 func TestCacheSignature_NotFound(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -61,6 +71,7 @@ func TestCacheSignature_NotFound(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_EmptyInputs 测试空输入和无效输入被忽略。
 func TestCacheSignature_EmptyInputs(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -74,6 +85,7 @@ func TestCacheSignature_EmptyInputs(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_ShortSignatureRejected 测试短于 50 字符的签名被拒绝存储。
 func TestCacheSignature_ShortSignatureRejected(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -87,6 +99,7 @@ func TestCacheSignature_ShortSignatureRejected(t *testing.T) {
 	}
 }
 
+// TestClearSignatureCache_ModelGroup 测试按会话 ID 清除缓存时，不相关的缓存保留。
 func TestClearSignatureCache_ModelGroup(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -101,6 +114,7 @@ func TestClearSignatureCache_ModelGroup(t *testing.T) {
 	}
 }
 
+// TestClearSignatureCache_AllSessions 测试清除所有会话缓存。
 func TestClearSignatureCache_AllSessions(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -118,6 +132,7 @@ func TestClearSignatureCache_AllSessions(t *testing.T) {
 	}
 }
 
+// TestHasValidSignature 测试 HasValidSignature 函数对各种长度和格式签名的验证。
 func TestHasValidSignature(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -143,6 +158,7 @@ func TestHasValidSignature(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_TextHashCollisionResistance 测试不同文本的哈希不会碰撞。
 func TestCacheSignature_TextHashCollisionResistance(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -163,6 +179,7 @@ func TestCacheSignature_TextHashCollisionResistance(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_UnicodeText 测试 Unicode 文本的签名缓存正确性。
 func TestCacheSignature_UnicodeText(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -176,6 +193,7 @@ func TestCacheSignature_UnicodeText(t *testing.T) {
 	}
 }
 
+// TestCacheSignature_Overwrite 测试相同文本的签名可以被覆盖更新。
 func TestCacheSignature_Overwrite(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -191,8 +209,8 @@ func TestCacheSignature_Overwrite(t *testing.T) {
 	}
 }
 
-// Note: TTL expiration test is tricky to test without mocking time
-// We test the logic path exists but actual expiration would require time manipulation
+// TestCacheSignature_ExpirationLogic 测试签名缓存的过期逻辑路径存在。
+// 注意：实际过期需要时间模拟，此处仅验证新鲜条目可正常检索。
 func TestCacheSignature_ExpirationLogic(t *testing.T) {
 	ClearSignatureCache("")
 
@@ -213,6 +231,8 @@ func TestCacheSignature_ExpirationLogic(t *testing.T) {
 	_ = time.Now() // Acknowledge we're not testing time passage
 }
 
+// TestSignatureModeSetters_LogAtInfoLevel 测试签名缓存禁用时在 Info 级别记录日志，
+// 而绕过模式切换在 Debug 级别记录。
 func TestSignatureModeSetters_LogAtInfoLevel(t *testing.T) {
 	logger := log.StandardLogger()
 	previousOutput := logger.Out
@@ -247,6 +267,7 @@ func TestSignatureModeSetters_LogAtInfoLevel(t *testing.T) {
 	}
 }
 
+// TestSignatureModeSetters_DoNotRepeatSameStateLogs 测试重复设置相同状态时不产生重复日志。
 func TestSignatureModeSetters_DoNotRepeatSameStateLogs(t *testing.T) {
 	logger := log.StandardLogger()
 	previousOutput := logger.Out
@@ -273,6 +294,7 @@ func TestSignatureModeSetters_DoNotRepeatSameStateLogs(t *testing.T) {
 	}
 }
 
+// TestSignatureBypassStrictMode_LogsAtDebugLevel 测试绕过严格模式切换在 Debug 级别记录日志。
 func TestSignatureBypassStrictMode_LogsAtDebugLevel(t *testing.T) {
 	logger := log.StandardLogger()
 	previousOutput := logger.Out

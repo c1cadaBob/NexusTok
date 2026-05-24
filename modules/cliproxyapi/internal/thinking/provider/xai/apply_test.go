@@ -1,3 +1,5 @@
+// xai - apply_test.go
+// 测试 xAI 提供商的思维推理配置应用逻辑，验证推理努力级别设置和禁用模式回退行为
 package xai
 
 import (
@@ -8,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestApplySetsReasoningEffort 测试 Apply 方法正确设置推理努力级别
 func TestApplySetsReasoningEffort(t *testing.T) {
 	applier := NewApplier()
 	modelInfo := &registry.ModelInfo{
@@ -30,6 +33,7 @@ func TestApplySetsReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestApplyNoneFallsBackToLowestLevelWhenDisableUnsupported 测试当禁用模式不支持时回退到最低级别
 func TestApplyNoneFallsBackToLowestLevelWhenDisableUnsupported(t *testing.T) {
 	applier := NewApplier()
 	modelInfo := &registry.ModelInfo{

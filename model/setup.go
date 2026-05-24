@@ -1,3 +1,13 @@
+// Package model - setup.go
+// 该文件定义了系统初始化（Setup）数据模型及相关操作
+//
+// 主要结构体：
+// - Setup：系统初始化记录
+//
+// 核心功能：
+// - 记录系统初始化状态和版本信息
+// - 判断系统是否已完成初始化
+// - Root 用户存在性检查
 package model
 
 type Setup struct {

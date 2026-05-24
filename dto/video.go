@@ -1,5 +1,28 @@
+// Package dto - video.go
+// 该文件定义了视频生成 API 的数据传输对象
+//
+// 主要结构体：
+// - VideoRequest：视频生成请求（支持文生视频和图生视频）
+// - VideoResponse：视频任务提交响应
+// - VideoTaskResponse：视频任务查询响应
+// - VideoTaskMetadata：视频任务元数据（实际生成的视频参数）
+// - VideoTaskError：视频任务错误信息
+//
+// 支持的厂商参数通过 Metadata map 透传
 package dto
 
+// VideoRequest 视频生成请求
+// Model：目标模型/风格 ID（如 kling-v1、sora 等）
+// Prompt：文本提示词
+// Image：输入图像（URL 或 Base64，用于图生视频）
+// Duration：视频时长（秒）
+// Width/Height：视频宽高
+// Fps：帧率
+// Seed：随机种子（用于结果可复现）
+// N：生成视频数量
+// ResponseFormat：响应格式（url/b64_json）
+// User：用户标识
+// Metadata：扩展元数据（厂商特定参数，如 negative_prompt、style、quality_level 等）
 type VideoRequest struct {
 	Model          string         `json:"model,omitempty" example:"kling-v1"`                                                                                                                                    // Model/style ID
 	Prompt         string         `json:"prompt,omitempty" example:"宇航员站起身走了"`                                                                                                                                   // Text prompt

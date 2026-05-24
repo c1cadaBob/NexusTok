@@ -1,3 +1,7 @@
+// auth - antigravity_credits_test.go
+// Antigravity 积分回退机制测试
+// 验证当首次流式请求因配额耗尽失败时，
+// 系统能够自动使用积分（credits）模式重试请求。
 package auth
 
 import (
@@ -12,6 +16,9 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// antigravityCreditsFallbackExecutor 是用于测试的执行器实现，
+// 模拟积分回退场景：未请求积分时返回配额耗尽错误，
+// 请求积分时返回成功响应。
 type antigravityCreditsFallbackExecutor struct {
 	streamCreditsRequested []bool
 }

@@ -1,9 +1,10 @@
+// gemini/claude - gemini_claude_response.go
 // Package claude provides response translation functionality for Claude API.
-// This package handles the conversion of backend client responses into Claude-compatible
-// Server-Sent Events (SSE) format, implementing a sophisticated state machine that manages
-// different response types including text content, thinking processes, and function calls.
-// The translation ensures proper sequencing of SSE events and maintains state across
-// multiple response chunks to provide a seamless streaming experience.
+// 本文件提供 Gemini API 响应到 Claude API 格式的转换功能。
+// 实现了复杂的状态机，将后端客户端响应转换为 Claude 兼容的 Server-Sent Events (SSE) 格式。
+// 支持文本内容、思考过程（thinking）和函数调用（tool_use）等不同响应类型的处理，
+// 维护跨多个响应块的状态信息以确保正确的 SSE 事件排序。
+// 响应类型状态：0=无, 1=内容, 2=思考, 3=函数调用。
 package claude
 
 import (
@@ -19,19 +20,20 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Params holds parameters for response conversion.
+// Params 持有响应转换的参数和状态信息。
+// 跟踪当前响应翻译过程的状态，确保 SSE 事件的正确排序和不同内容类型之间的状态转换。
 type Params struct {
-	IsGlAPIKey       bool
-	HasFirstResponse bool
-	ResponseType     int
-	ResponseIndex    int
-	HasContent       bool // Tracks whether any content (text, thinking, or tool use) has been output
-	ToolNameMap      map[string]string
-	SanitizedNameMap map[string]string
-	SawToolCall      bool
+	IsGlAPIKey       bool              // 是否使用 GL API 密钥
+	HasFirstResponse bool              // 是否已发送初始 message_start 事件
+	ResponseType     int               // 当前响应类型：0=无, 1=内容, 2=思考, 3=函数调用
+	ResponseIndex    int               // 流式响应中内容块的索引计数器
+	HasContent       bool              // 跟踪是否已输出任何内容（文本、思考或工具使用）
+	ToolNameMap      map[string]string // 工具名称映射表
+	SanitizedNameMap map[string]string // 清理后的工具名称映射表
+	SawToolCall      bool              // 是否观察到工具调用
 }
 
-// toolUseIDCounter provides a process-wide unique counter for tool use identifiers.
+// toolUseIDCounter 提供进程范围内的唯一工具使用标识符计数器。
 var toolUseIDCounter uint64
 
 // ConvertGeminiResponseToClaude performs sophisticated streaming response format conversion.
@@ -363,6 +365,7 @@ func ConvertGeminiResponseToClaudeNonStream(_ context.Context, _ string, origina
 	return out
 }
 
+// ClaudeTokenCount 生成 Claude 格式的 Token 计数 JSON 响应。
 func ClaudeTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.ClaudeInputTokensJSON(count)
 }

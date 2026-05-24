@@ -1,3 +1,9 @@
+// Package claude - antigravity_claude_request_test.go
+// 测试 Claude 到 Antigravity（Gemini 兼容）请求格式转换功能。
+// 覆盖基本结构、角色映射、thinking 块处理（签名缓存/绕过模式）、
+// 工具声明与工具选择、工具调用与工具结果转换、
+// 图片内容处理、生成参数配置、thinking 配置、
+// 以及排序策略（thinking 优先、functionCall 置后）等测试用例。
 package claude
 
 import (
@@ -11,6 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
+// testAnthropicNativeSignature 生成一个符合 Anthropic 原生格式的 protobuf 签名用于测试
 func testAnthropicNativeSignature(t *testing.T) string {
 	t.Helper()
 
@@ -22,6 +29,7 @@ func testAnthropicNativeSignature(t *testing.T) string {
 	return signature
 }
 
+// testMinimalAnthropicSignature 生成一个最小化的 Anthropic 签名用于测试
 func testMinimalAnthropicSignature(t *testing.T) string {
 	t.Helper()
 
@@ -29,6 +37,7 @@ func testMinimalAnthropicSignature(t *testing.T) string {
 	return base64.StdEncoding.EncodeToString(payload)
 }
 
+// buildClaudeSignaturePayload 使用 protobuf 编码构建 Claude 签名的二进制载荷
 func buildClaudeSignaturePayload(t *testing.T, channelID uint64, field2 *uint64, modelText string, includeField7 bool) []byte {
 	t.Helper()
 
@@ -66,10 +75,13 @@ func buildClaudeSignaturePayload(t *testing.T, channelID uint64, field2 *uint64,
 	return payload
 }
 
+// uint64Ptr 返回 uint64 值的指针，用于测试辅助
 func uint64Ptr(v uint64) *uint64 {
 	return &v
 }
 
+// TestConvertClaudeRequestToAntigravity_StripsClaudeCodeAttribution 测试
+// Claude Code 归属信息头应从系统指令中被剥离
 func TestConvertClaudeRequestToAntigravity_StripsClaudeCodeAttribution(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",
@@ -92,6 +104,7 @@ func TestConvertClaudeRequestToAntigravity_StripsClaudeCodeAttribution(t *testin
 	}
 }
 
+// testNonAnthropicRawSignature 生成一个非 Anthropic 格式的原始签名用于测试
 func testNonAnthropicRawSignature(t *testing.T) string {
 	t.Helper()
 
@@ -103,6 +116,7 @@ func testNonAnthropicRawSignature(t *testing.T) string {
 	return signature
 }
 
+// testGeminiRawSignature 生成一个 Gemini 格式的原始签名用于测试
 func testGeminiRawSignature(t *testing.T) string {
 	t.Helper()
 
@@ -114,6 +128,8 @@ func testGeminiRawSignature(t *testing.T) string {
 	return signature
 }
 
+// TestConvertClaudeRequestToAntigravity_BasicStructure 测试基本的请求结构转换，
+// 包括模型名称、contents 数组、角色映射和系统指令
 func TestConvertClaudeRequestToAntigravity_BasicStructure(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -160,6 +176,7 @@ func TestConvertClaudeRequestToAntigravity_BasicStructure(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_RoleMapping 测试角色映射：assistant -> model
 func TestConvertClaudeRequestToAntigravity_RoleMapping(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -179,6 +196,8 @@ func TestConvertClaudeRequestToAntigravity_RoleMapping(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ThinkingBlocks 测试 thinking 块的转换，
+// 包括签名缓存和 thoughtSignature 字段的正确设置
 func TestConvertClaudeRequestToAntigravity_ThinkingBlocks(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -222,6 +241,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingBlocks(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_AcceptsClaudeSingleAndDoubleLayer 测试绕过模式验证器
+// 应接受单层和双层编码的 Claude 原生签名
 func TestValidateBypassMode_AcceptsClaudeSingleAndDoubleLayer(t *testing.T) {
 	rawSignature := testAnthropicNativeSignature(t)
 	doubleEncoded := base64.StdEncoding.EncodeToString([]byte(rawSignature))
@@ -243,6 +264,7 @@ func TestValidateBypassMode_AcceptsClaudeSingleAndDoubleLayer(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsGeminiSignature 测试应拒绝 Gemini 格式的签名
 func TestValidateBypassMode_RejectsGeminiSignature(t *testing.T) {
 	inputJSON := []byte(`{
 		"messages": [
@@ -261,6 +283,7 @@ func TestValidateBypassMode_RejectsGeminiSignature(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsMissingSignature 测试应拒绝缺少签名的 thinking 块
 func TestValidateBypassMode_RejectsMissingSignature(t *testing.T) {
 	inputJSON := []byte(`{
 		"messages": [
@@ -282,6 +305,7 @@ func TestValidateBypassMode_RejectsMissingSignature(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsNonREPrefix 测试应拒绝非 R/E 前缀的签名
 func TestValidateBypassMode_RejectsNonREPrefix(t *testing.T) {
 	inputJSON := []byte(`{
 		"messages": [
@@ -300,6 +324,8 @@ func TestValidateBypassMode_RejectsNonREPrefix(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsEPrefixWrongFirstByte 测试
+// E 前缀但首字节不是 0x80 的签名应被拒绝
 func TestValidateBypassMode_RejectsEPrefixWrongFirstByte(t *testing.T) {
 	t.Parallel()
 	payload := append([]byte{0x10}, bytes.Repeat([]byte{0x34}, 48)...)
@@ -323,6 +349,8 @@ func TestValidateBypassMode_RejectsEPrefixWrongFirstByte(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsTopLevel12WithoutClaudeTree 测试
+// 严格模式下应拒绝没有 Claude protobuf 树的 0x12 顶层签名
 func TestValidateBypassMode_RejectsTopLevel12WithoutClaudeTree(t *testing.T) {
 	previous := cache.SignatureBypassStrictMode()
 	cache.SetSignatureBypassStrictMode(true)
@@ -348,6 +376,8 @@ func TestValidateBypassMode_RejectsTopLevel12WithoutClaudeTree(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_NonStrictAccepts12WithoutClaudeTree 测试
+// 非严格模式下应接受没有 Claude protobuf 树的 0x12 顶层签名
 func TestValidateBypassMode_NonStrictAccepts12WithoutClaudeTree(t *testing.T) {
 	previous := cache.SignatureBypassStrictMode()
 	cache.SetSignatureBypassStrictMode(false)
@@ -370,6 +400,8 @@ func TestValidateBypassMode_NonStrictAccepts12WithoutClaudeTree(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsRPrefixInnerNotE 测试
+// R 前缀但内部签名不是 E 前缀的应被拒绝
 func TestValidateBypassMode_RejectsRPrefixInnerNotE(t *testing.T) {
 	t.Parallel()
 	inner := "F" + strings.Repeat("a", 60)
@@ -390,6 +422,7 @@ func TestValidateBypassMode_RejectsRPrefixInnerNotE(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsInvalidBase64 测试应拒绝无效 base64 编码的签名
 func TestValidateBypassMode_RejectsInvalidBase64(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -418,6 +451,8 @@ func TestValidateBypassMode_RejectsInvalidBase64(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsPrefixStrippedToEmpty 测试
+// 仅有前缀（如 "claude#"）的签名应被拒绝
 func TestValidateBypassMode_RejectsPrefixStrippedToEmpty(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -444,6 +479,8 @@ func TestValidateBypassMode_RejectsPrefixStrippedToEmpty(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_HandlesMultipleHashMarks 测试
+// 包含多个 # 字符的签名应被拒绝（无效 base64）
 func TestValidateBypassMode_HandlesMultipleHashMarks(t *testing.T) {
 	t.Parallel()
 	rawSignature := testAnthropicNativeSignature(t)
@@ -461,6 +498,8 @@ func TestValidateBypassMode_HandlesMultipleHashMarks(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_HandlesWhitespace 测试
+// 包含前导/尾随空白的签名应被正确处理（空白被修剪后验证通过）
 func TestValidateBypassMode_HandlesWhitespace(t *testing.T) {
 	t.Parallel()
 	rawSignature := testAnthropicNativeSignature(t)
@@ -488,6 +527,8 @@ func TestValidateBypassMode_HandlesWhitespace(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_RejectsOversizedSignature 测试
+// 超过最大长度限制的签名应被拒绝
 func TestValidateBypassMode_RejectsOversizedSignature(t *testing.T) {
 	t.Parallel()
 	sig := strings.Repeat("A", maxBypassSignatureLen+1)
@@ -507,6 +548,8 @@ func TestValidateBypassMode_RejectsOversizedSignature(t *testing.T) {
 	}
 }
 
+// TestValidateBypassMode_StrictAcceptsSignatureBetween16KiBAnd32MiB 测试
+// 严格模式下应接受 16KiB 到 32MiB 之间的签名
 func TestValidateBypassMode_StrictAcceptsSignatureBetween16KiBAnd32MiB(t *testing.T) {
 	previous := cache.SignatureBypassStrictMode()
 	cache.SetSignatureBypassStrictMode(true)
@@ -534,6 +577,8 @@ func TestValidateBypassMode_StrictAcceptsSignatureBetween16KiBAnd32MiB(t *testin
 	}
 }
 
+// TestResolveBypassModeSignature_TrimsWhitespace 测试
+// 签名解析函数应正确修剪尾随空白
 func TestResolveBypassModeSignature_TrimsWhitespace(t *testing.T) {
 	previous := cache.SignatureCacheEnabled()
 	cache.SetSignatureCacheEnabled(false)
@@ -553,6 +598,8 @@ func TestResolveBypassModeSignature_TrimsWhitespace(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassModeNormalizesESignature 测试
+// 绕过模式下 E 前缀签名应被标准化为双层编码格式
 func TestConvertClaudeRequestToAntigravity_BypassModeNormalizesESignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -594,6 +641,8 @@ func TestConvertClaudeRequestToAntigravity_BypassModeNormalizesESignature(t *tes
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassModePreservesShortValidSignature 测试
+// 绕过模式下短的有效签名应被保留
 func TestConvertClaudeRequestToAntigravity_BypassModePreservesShortValidSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -640,6 +689,8 @@ func TestConvertClaudeRequestToAntigravity_BypassModePreservesShortValidSignatur
 	}
 }
 
+// TestInspectClaudeSignaturePayload_ExtractsSpecTree 测试
+// 签名载荷检查函数应能正确提取结构化的 Claude 路由信息
 func TestInspectClaudeSignaturePayload_ExtractsSpecTree(t *testing.T) {
 	t.Parallel()
 	payload := buildClaudeSignaturePayload(t, 12, uint64Ptr(2), "claude-sonnet-4-6", true)
@@ -662,6 +713,8 @@ func TestInspectClaudeSignaturePayload_ExtractsSpecTree(t *testing.T) {
 	}
 }
 
+// TestInspectDoubleLayerSignature_TracksEncodingLayers 测试
+// 双层签名检查函数应正确追踪编码层数
 func TestInspectDoubleLayerSignature_TracksEncodingLayers(t *testing.T) {
 	t.Parallel()
 	inner := base64.StdEncoding.EncodeToString(buildClaudeSignaturePayload(t, 11, uint64Ptr(2), "", false))
@@ -679,6 +732,8 @@ func TestInspectDoubleLayerSignature_TracksEncodingLayers(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_CacheModeDropsRawSignature 测试
+// 缓存模式下原始签名的 thinking 块应被丢弃（仅保留文本部分）
 func TestConvertClaudeRequestToAntigravity_CacheModeDropsRawSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -712,6 +767,8 @@ func TestConvertClaudeRequestToAntigravity_CacheModeDropsRawSignature(t *testing
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassModeDropsInvalidSignature 测试
+// 绕过模式下无效签名的 thinking 块应被丢弃
 func TestConvertClaudeRequestToAntigravity_BypassModeDropsInvalidSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -750,6 +807,8 @@ func TestConvertClaudeRequestToAntigravity_BypassModeDropsInvalidSignature(t *te
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassModeDropsGeminiSignature 测试
+// 绕过模式下 Gemini 格式签名的 thinking 块应被丢弃
 func TestConvertClaudeRequestToAntigravity_BypassModeDropsGeminiSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -784,6 +843,8 @@ func TestConvertClaudeRequestToAntigravity_BypassModeDropsGeminiSignature(t *tes
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ThinkingBlockWithoutSignature 测试
+// 无签名的 thinking 块应被完全移除（不转换为文本）
 func TestConvertClaudeRequestToAntigravity_ThinkingBlockWithoutSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -819,6 +880,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingBlockWithoutSignature(t *test
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolDeclarations 测试工具声明的转换，
+// 包括 input_schema 到 parametersJsonSchema 的重命名
 func TestConvertClaudeRequestToAntigravity_ToolDeclarations(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -861,6 +924,8 @@ func TestConvertClaudeRequestToAntigravity_ToolDeclarations(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolChoice_SpecificTool 测试指定工具选择到
+// Antigravity toolConfig 的映射
 func TestConvertClaudeRequestToAntigravity_ToolChoice_SpecificTool(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gemini-3-flash-preview",
@@ -897,6 +962,8 @@ func TestConvertClaudeRequestToAntigravity_ToolChoice_SpecificTool(t *testing.T)
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolUse 测试工具调用的转换，
+// 包括 functionCall 结构和 skip_thought_signature_validator 的注入
 func TestConvertClaudeRequestToAntigravity_ToolUse(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -943,6 +1010,8 @@ func TestConvertClaudeRequestToAntigravity_ToolUse(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature 测试带签名的工具调用，
+// 签名应从前置 thinking 块传递到工具调用的 thoughtSignature 字段
 func TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -986,6 +1055,8 @@ func TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ReorderThinking 测试排序策略：
+// 当 text 块在 thinking 块之前时，应重新排序为 thinking 在前
 func TestConvertClaudeRequestToAntigravity_ReorderThinking(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -1029,6 +1100,9 @@ func TestConvertClaudeRequestToAntigravity_ReorderThinking(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ReorderTextAfterFunctionCall 测试排序策略：
+// functionCall 后的 text 部分应被移到 functionCall 之前，
+// 以避免 Antigravity 在 functionCall 边界处拆分消息
 func TestConvertClaudeRequestToAntigravity_ReorderTextAfterFunctionCall(t *testing.T) {
 	// Bug: text part after tool_use in an assistant message causes Antigravity
 	// to split at functionCall boundary, creating an extra assistant turn that
@@ -1086,6 +1160,8 @@ func TestConvertClaudeRequestToAntigravity_ReorderTextAfterFunctionCall(t *testi
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ReorderParallelFunctionCalls 测试
+// 多个并行 functionCall 的排序策略
 func TestConvertClaudeRequestToAntigravity_ReorderParallelFunctionCalls(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",
@@ -1134,6 +1210,8 @@ func TestConvertClaudeRequestToAntigravity_ReorderParallelFunctionCalls(t *testi
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ReorderThinkingAndTextBeforeFunctionCall 测试
+// thinking 和 text 部分应在 functionCall 之前排序
 func TestConvertClaudeRequestToAntigravity_ReorderThinkingAndTextBeforeFunctionCall(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -1190,6 +1268,8 @@ func TestConvertClaudeRequestToAntigravity_ReorderThinkingAndTextBeforeFunctionC
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResult 测试工具结果的转换，
+// 包括 functionResponse 结构的正确生成
 func TestConvertClaudeRequestToAntigravity_ToolResult(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -1234,6 +1314,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResult(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultName_TouluFormat 测试
+// toolu_ 格式的工具 ID 应能正确解析出工具名称
 func TestConvertClaudeRequestToAntigravity_ToolResultName_TouluFormat(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-haiku-4-5-20251001",
@@ -1293,6 +1375,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultName_TouluFormat(t *testing
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultName_CustomFormat 测试
+// 自定义格式的工具 ID 应能正确解析出工具名称
 func TestConvertClaudeRequestToAntigravity_ToolResultName_CustomFormat(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-haiku-4-5-20251001",
@@ -1333,6 +1417,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultName_CustomFormat(t *testin
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_Heuristic 测试
+// 无匹配 tool_use 时应通过启发式方法从 ID 推导工具名称
 func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_Heuristic(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",
@@ -1362,6 +1448,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_Heur
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_RawID 测试
+// 无匹配 tool_use 且无法推导时应使用原始 ID 作为工具名称
 func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_RawID(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",
@@ -1395,6 +1483,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_RawI
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ThinkingConfig 测试 thinking 配置的转换，
+// 包括 thinkingBudget 和 includeThoughts 参数
 func TestConvertClaudeRequestToAntigravity_ThinkingConfig(t *testing.T) {
 	// Note: This test requires the model to be registered in the registry
 	// with Thinking metadata. If the registry is not populated in test environment,
@@ -1425,6 +1515,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingConfig(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ImageContent 测试图片内容的转换，
+// 包括 base64 图片到 inlineData 的映射
 func TestConvertClaudeRequestToAntigravity_ImageContent(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -1461,6 +1553,8 @@ func TestConvertClaudeRequestToAntigravity_ImageContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_GenerationConfig 测试生成参数的转换，
+// 包括 temperature、top_p、top_k、max_tokens 到 Antigravity 格式的映射
 func TestConvertClaudeRequestToAntigravity_GenerationConfig(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -1490,9 +1584,11 @@ func TestConvertClaudeRequestToAntigravity_GenerationConfig(t *testing.T) {
 }
 
 // ============================================================================
-// Trailing Unsigned Thinking Block Removal
+// 尾部无签名 thinking 块移除测试
 // ============================================================================
 
+// TestConvertClaudeRequestToAntigravity_TrailingUnsignedThinking_Removed 测试
+// 最后一条 assistant 消息末尾的无签名 thinking 块应被移除
 func TestConvertClaudeRequestToAntigravity_TrailingUnsignedThinking_Removed(t *testing.T) {
 	// Last assistant message ends with unsigned thinking block - should be removed
 	inputJSON := []byte(`{
@@ -1532,6 +1628,8 @@ func TestConvertClaudeRequestToAntigravity_TrailingUnsignedThinking_Removed(t *t
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_TrailingSignedThinking_Kept 测试
+// 最后一条 assistant 消息末尾的有签名 thinking 块应被保留
 func TestConvertClaudeRequestToAntigravity_TrailingSignedThinking_Kept(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -1569,6 +1667,8 @@ func TestConvertClaudeRequestToAntigravity_TrailingSignedThinking_Kept(t *testin
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_MiddleUnsignedThinking_Removed 测试
+// 中间消息的无签名 thinking 块应被完全移除
 func TestConvertClaudeRequestToAntigravity_MiddleUnsignedThinking_Removed(t *testing.T) {
 	// Middle message has unsigned thinking - should be removed entirely
 	inputJSON := []byte(`{
@@ -1607,9 +1707,11 @@ func TestConvertClaudeRequestToAntigravity_MiddleUnsignedThinking_Removed(t *tes
 }
 
 // ============================================================================
-// Tool + Thinking System Hint Injection
+// 工具 + Thinking 系统提示注入测试
 // ============================================================================
 
+// TestConvertClaudeRequestToAntigravity_ToolAndThinking_HintInjected 测试
+// 当同时启用工具和 thinking 时，系统指令中应注入交错 thinking 提示
 func TestConvertClaudeRequestToAntigravity_ToolAndThinking_HintInjected(t *testing.T) {
 	// When both tools and thinking are enabled, hint should be injected into system instruction
 	inputJSON := []byte(`{
@@ -1649,6 +1751,8 @@ func TestConvertClaudeRequestToAntigravity_ToolAndThinking_HintInjected(t *testi
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolsOnly_NoHint 测试
+// 仅有工具（无 thinking）时不应注入提示
 func TestConvertClaudeRequestToAntigravity_ToolsOnly_NoHint(t *testing.T) {
 	// When only tools are present (no thinking), hint should NOT be injected
 	inputJSON := []byte(`{
@@ -1678,6 +1782,8 @@ func TestConvertClaudeRequestToAntigravity_ToolsOnly_NoHint(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ThinkingOnly_NoHint 测试
+// 仅有 thinking（无工具）时不应注入提示
 func TestConvertClaudeRequestToAntigravity_ThinkingOnly_NoHint(t *testing.T) {
 	// When only thinking is enabled (no tools), hint should NOT be injected
 	inputJSON := []byte(`{
@@ -1701,6 +1807,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingOnly_NoHint(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultNoContent 测试
+// tool_result 无 content 字段时应生成有效的 JSON
 func TestConvertClaudeRequestToAntigravity_ToolResultNoContent(t *testing.T) {
 	// Bug repro: tool_result with no content field produces invalid JSON
 	inputJSON := []byte(`{
@@ -1743,6 +1851,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultNoContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultNullContent 测试
+// tool_result 的 content 为 null 时应生成有效的 JSON
 func TestConvertClaudeRequestToAntigravity_ToolResultNullContent(t *testing.T) {
 	// Bug repro: tool_result with null content produces invalid JSON
 	inputJSON := []byte(`{
@@ -1780,6 +1890,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultNullContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultWithImage 测试
+// tool_result 中包含文本和图片数组时，图片应放入 functionResponse.parts 中
 func TestConvertClaudeRequestToAntigravity_ToolResultWithImage(t *testing.T) {
 	// tool_result with array content containing text + image should place
 	// image data inside functionResponse.parts as inlineData, not as a
@@ -1851,6 +1963,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultWithImage(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultWithSingleImage 测试
+// tool_result 中仅包含单张图片时的处理
 func TestConvertClaudeRequestToAntigravity_ToolResultWithSingleImage(t *testing.T) {
 	// tool_result with single image object as content should place
 	// image data inside functionResponse.parts, not as outer sibling part.
@@ -1910,6 +2024,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultWithSingleImage(t *testing.
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultWithMultipleImagesAndTexts 测试
+// tool_result 中包含多个文本和多张图片的混合内容处理
 func TestConvertClaudeRequestToAntigravity_ToolResultWithMultipleImagesAndTexts(t *testing.T) {
 	// tool_result with array content: 2 text items + 2 images
 	// All images go into functionResponse.parts, texts into response.result array
@@ -1987,6 +2103,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultWithMultipleImagesAndTexts(
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultWithOnlyMultipleImages 测试
+// tool_result 中仅包含多张图片（无文本）时的处理
 func TestConvertClaudeRequestToAntigravity_ToolResultWithOnlyMultipleImages(t *testing.T) {
 	// tool_result with only images (no text) — response.result should be empty string
 	inputJSON := []byte(`{
@@ -2050,6 +2168,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultWithOnlyMultipleImages(t *t
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultImageNotBase64 测试
+// 非 base64 类型的图片应被视为非图片内容处理
 func TestConvertClaudeRequestToAntigravity_ToolResultImageNotBase64(t *testing.T) {
 	// image with source.type != "base64" should be treated as non-image (falls through)
 	inputJSON := []byte(`{
@@ -2103,6 +2223,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultImageNotBase64(t *testing.T
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultImageMissingData 测试
+// base64 图片缺少 data 字段时的处理
 func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingData(t *testing.T) {
 	// image with source.type=base64 but missing data field
 	inputJSON := []byte(`{
@@ -2153,6 +2275,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingData(t *testing
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolResultImageMissingMediaType 测试
+// base64 图片缺少 media_type 字段时的处理
 func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingMediaType(t *testing.T) {
 	// image with source.type=base64 but missing media_type field
 	inputJSON := []byte(`{
@@ -2203,6 +2327,8 @@ func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingMediaType(t *te
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassMode_DropsRedactedThinkingBlocks 测试
+// 绕过模式下空文本的 redacted thinking 块应被丢弃
 func TestConvertClaudeRequestToAntigravity_BypassMode_DropsRedactedThinkingBlocks(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -2251,6 +2377,8 @@ func TestConvertClaudeRequestToAntigravity_BypassMode_DropsRedactedThinkingBlock
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassMode_DropsWrappedRedactedThinking 测试
+// 绕过模式下包装格式的 redacted thinking 块应被丢弃
 func TestConvertClaudeRequestToAntigravity_BypassMode_DropsWrappedRedactedThinking(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -2296,6 +2424,8 @@ func TestConvertClaudeRequestToAntigravity_BypassMode_DropsWrappedRedactedThinki
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassMode_KeepsNonEmptyThinking 测试
+// 绕过模式下非空的 thinking 块应被保留
 func TestConvertClaudeRequestToAntigravity_BypassMode_KeepsNonEmptyThinking(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -2342,6 +2472,8 @@ func TestConvertClaudeRequestToAntigravity_BypassMode_KeepsNonEmptyThinking(t *t
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_BypassMode_MultiTurnRedactedThinking 测试
+// 绕过模式下多轮对话中的 redacted thinking 块处理
 func TestConvertClaudeRequestToAntigravity_BypassMode_MultiTurnRedactedThinking(t *testing.T) {
 	cache.ClearSignatureCache("")
 	previous := cache.SignatureCacheEnabled()
@@ -2422,6 +2554,8 @@ func TestConvertClaudeRequestToAntigravity_BypassMode_MultiTurnRedactedThinking(
 	}
 }
 
+// TestConvertClaudeRequestToAntigravity_ToolAndThinking_NoExistingSystem 测试
+// 当同时启用工具和 thinking 但无系统指令时，应创建包含提示的系统指令
 func TestConvertClaudeRequestToAntigravity_ToolAndThinking_NoExistingSystem(t *testing.T) {
 	// When tools + thinking but no system instruction, should create one with hint
 	inputJSON := []byte(`{

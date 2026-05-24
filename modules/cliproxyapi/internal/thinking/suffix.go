@@ -1,7 +1,7 @@
-// Package thinking provides unified thinking configuration processing.
-//
-// This file implements suffix parsing functionality for extracting
-// thinking configuration from model names in the format model(value).
+// thinking - suffix.go
+// 本文件实现了从模型名称中解析 thinking 后缀的功能。
+// 后缀格式为 model(value)，例如 "claude-sonnet-4-5(16384)" 或 "gpt-5.2(high)"。
+// 支持数字预算、级别名称和特殊值（none、auto）的解析。
 package thinking
 
 import (

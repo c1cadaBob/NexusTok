@@ -1,3 +1,6 @@
+// auth - auto_refresh_loop_test.go
+// 测试自动刷新循环的调度逻辑，验证 nextRefreshCheckAt 函数在各种场景下的行为。
+// 覆盖场景包括：禁用认证调度、API Key 跳过、NextRefreshAfter 门控、首选间隔、提供商提前量、刷新评估器回退。
 package auth
 
 import (
@@ -6,10 +9,14 @@ import (
 	"time"
 )
 
+// testRefreshEvaluator 是一个始终返回 false 的刷新评估器，用于测试回退逻辑。
 type testRefreshEvaluator struct{}
 
+// ShouldRefresh 始终返回 false，表示不需要刷新。
 func (testRefreshEvaluator) ShouldRefresh(time.Time, *Auth) bool { return false }
 
+// setRefreshLeadFactory 是测试辅助函数，为指定 provider 设置自定义的刷新提前量工厂函数。
+// 测试结束后自动恢复原始值。
 func setRefreshLeadFactory(t *testing.T, provider string, factory func() *time.Duration) {
 	t.Helper()
 	key := strings.ToLower(strings.TrimSpace(provider))
@@ -32,6 +39,7 @@ func setRefreshLeadFactory(t *testing.T, provider string, factory func() *time.D
 	})
 }
 
+// TestNextRefreshCheckAt_DisabledUnschedule 测试禁用的认证仍按过期时间减去提前量计算刷新时间。
 func TestNextRefreshCheckAt_DisabledUnschedule(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	expiry := now.Add(time.Hour)
@@ -62,6 +70,7 @@ func TestNextRefreshCheckAt_DisabledUnschedule(t *testing.T) {
 	}
 }
 
+// TestNextRefreshCheckAt_APIKeyUnschedule 测试使用 API Key 的认证不需要自动刷新调度。
 func TestNextRefreshCheckAt_APIKeyUnschedule(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	auth := &Auth{ID: "a1", Provider: "test", Attributes: map[string]string{"api_key": "k"}}
@@ -70,6 +79,7 @@ func TestNextRefreshCheckAt_APIKeyUnschedule(t *testing.T) {
 	}
 }
 
+// TestNextRefreshCheckAt_NextRefreshAfterGate 测试 NextRefreshAfter 门控时间优先于其他计算。
 func TestNextRefreshCheckAt_NextRefreshAfterGate(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	nextAfter := now.Add(30 * time.Minute)
@@ -88,6 +98,8 @@ func TestNextRefreshCheckAt_NextRefreshAfterGate(t *testing.T) {
 	}
 }
 
+// TestNextRefreshCheckAt_PreferredInterval_PicksEarliestCandidate 测试首选间隔与过期提前量
+// 取最早时间作为刷新检查时间。
 func TestNextRefreshCheckAt_PreferredInterval_PicksEarliestCandidate(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	expiry := now.Add(20 * time.Minute)
@@ -111,6 +123,7 @@ func TestNextRefreshCheckAt_PreferredInterval_PicksEarliestCandidate(t *testing.
 	}
 }
 
+// TestNextRefreshCheckAt_ProviderLead_Expiry 测试提供商自定义提前量应用于过期时间计算。
 func TestNextRefreshCheckAt_ProviderLead_Expiry(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	expiry := now.Add(time.Hour)
@@ -139,6 +152,8 @@ func TestNextRefreshCheckAt_ProviderLead_Expiry(t *testing.T) {
 	}
 }
 
+// TestNextRefreshCheckAt_RefreshEvaluatorFallback 测试当存在刷新评估器但无过期时间时，
+// 使用首选间隔作为回退。
 func TestNextRefreshCheckAt_RefreshEvaluatorFallback(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	interval := 15 * time.Minute

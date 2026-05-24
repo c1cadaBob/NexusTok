@@ -1,6 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 本文件实现了 Gemini CLI 执行器，使用认证元数据中的 OAuth 凭据与 Cloud Code Assist 端点通信。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// This file implements the Gemini CLI executor that talks to Cloud Code Assist endpoints
-// using OAuth credentials from auth metadata.
 package executor
 
 import (

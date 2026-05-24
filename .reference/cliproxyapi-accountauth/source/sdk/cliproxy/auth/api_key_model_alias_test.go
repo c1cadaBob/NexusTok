@@ -1,3 +1,10 @@
+// auth - api_key_model_alias_test.go
+// API Key 模型别名功能测试
+// 验证基于 API Key 配置的模型别名解析功能：
+// - 别名到上游模型名称的映射（支持后缀保留）
+// - 配置热重载后别名立即生效
+// - 多提供商（Gemini/Claude/Codex）的别名隔离
+// - API Key 认证与 OAuth 认证的别名处理差异
 package auth
 
 import (
@@ -7,6 +14,12 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestLookupAPIKeyUpstreamModel 测试 API Key 上游模型查找的各种场景：
+// - 带后缀的别名解析（如 g25p(8192) -> gemini-2.5-pro-exp-03-25(8192)）
+// - 配置中的后缀优先级高于用户后缀
+// - 大小写不敏感的别名查找
+// - 直接使用上游模型名称的透传
+// - 缓存未命中场景（不存在的 auth、未知别名等）
 func TestLookupAPIKeyUpstreamModel(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{
@@ -66,6 +79,8 @@ func TestLookupAPIKeyUpstreamModel(t *testing.T) {
 	}
 }
 
+// TestAPIKeyModelAlias_ConfigHotReload 验证配置热重载后，
+// 新的模型别名映射立即生效，无需重启服务。
 func TestAPIKeyModelAlias_ConfigHotReload(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{
@@ -103,6 +118,8 @@ func TestAPIKeyModelAlias_ConfigHotReload(t *testing.T) {
 	}
 }
 
+// TestAPIKeyModelAlias_MultipleProviders 验证多提供商场景下，
+// 各提供商的模型别名相互独立，不会混淆。
 func TestAPIKeyModelAlias_MultipleProviders(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{{APIKey: "gemini-key", Models: []internalconfig.GeminiModel{{Name: "gemini-2.5-pro", Alias: "gp"}}}},
@@ -133,6 +150,9 @@ func TestAPIKeyModelAlias_MultipleProviders(t *testing.T) {
 	}
 }
 
+// TestApplyAPIKeyModelAlias 验证 applyAPIKeyModelAlias 方法：
+// - API Key 认证使用别名解析
+// - OAuth 认证直接透传（不使用 API Key 别名）
 func TestApplyAPIKeyModelAlias(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{

@@ -1,3 +1,11 @@
+// amp - response_rewriter.go
+// 响应重写器，用于在模型映射场景下修改响应中的模型名称。
+// 该模块拦截并修改 HTTP 响应正文，主要功能包括：
+//   - 将响应中的模型名称重写为客户端请求的原始模型名
+//   - 注入空的 signature 字段到 tool_use/thinking 块（Amp TUI 兼容性）
+//   - 规范化工具名称大小写（Amp 模式白名单要求精确匹配）
+//   - 支持流式（SSE）和非流式响应的重写
+//   - 清理请求体中的无效 thinking 块签名
 package amp
 
 import (
@@ -13,18 +21,18 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ResponseRewriter wraps a gin.ResponseWriter to intercept and modify the response body
-// It is used to rewrite model names in responses when model mapping is used
-// and to keep Amp-compatible response shapes.
+// ResponseRewriter 包装 gin.ResponseWriter 以拦截和修改响应正文。
+// 用于在使用模型映射时重写响应中的模型名称，保持 Amp 兼容的响应格式。
 type ResponseRewriter struct {
-	gin.ResponseWriter
-	body             *bytes.Buffer
-	originalModel    string
-	isStreaming      bool
-	suppressThinking bool
+	gin.ResponseWriter                // 嵌入原始响应写入器
+	body             *bytes.Buffer    // 缓冲非流式响应的正文
+	originalModel    string           // 客户端请求的原始模型名称（重写目标）
+	isStreaming      bool             // 是否为流式响应
+	suppressThinking bool             // 是否抑制 thinking 块（用于非流式响应）
 }
 
-// NewResponseRewriter creates a new response rewriter for model name substitution.
+// NewResponseRewriter 创建一个新的响应重写器，用于模型名称替换。
+// 参数 originalModel 为客户端请求的原始模型名称，将用于替换响应中的实际模型名。
 func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRewriter {
 	return &ResponseRewriter{
 		ResponseWriter: w,
@@ -33,8 +41,12 @@ func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRe
 	}
 }
 
+// maxBufferedResponseBytes 是非流式响应缓冲的最大字节数（2 MiB）。
+// 超过此限制将自动切换到流式模式。
 const maxBufferedResponseBytes = 2 * 1024 * 1024 // 2MB safety cap
 
+// looksLikeSSEChunk 检测数据是否看起来像 SSE（Server-Sent Events）格式。
+// 通过查找 "data:" 或 "event:" 前缀来判断。
 func looksLikeSSEChunk(data []byte) bool {
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
@@ -46,6 +58,9 @@ func looksLikeSSEChunk(data []byte) bool {
 	return false
 }
 
+// enableStreaming 将重写器切换到流式模式。
+// 切换前会将已缓冲的数据作为第一个流式块刷新到客户端。
+// 参数 reason 用于日志记录切换原因。
 func (rw *ResponseRewriter) enableStreaming(reason string) error {
 	if rw.isStreaming {
 		return nil
@@ -70,6 +85,10 @@ func (rw *ResponseRewriter) enableStreaming(reason string) error {
 	return nil
 }
 
+// Write 拦截响应写入，根据响应类型选择缓冲或流式处理。
+// 非流式响应：缓冲到内存，待 Flush 时统一重写。
+// 流式响应：每个数据块立即重写并刷新到客户端。
+// 自动检测流式模式的触发条件：Content-Type 包含 "stream"、SSE 格式启发式、缓冲区超限。
 func (rw *ResponseRewriter) Write(data []byte) (int, error) {
 	if !rw.isStreaming && rw.body.Len() == 0 {
 		contentType := rw.Header().Get("Content-Type")
@@ -103,6 +122,9 @@ func (rw *ResponseRewriter) Write(data []byte) (int, error) {
 	return rw.body.Write(data)
 }
 
+// Flush 将缓冲的非流式响应重写后刷新到客户端。
+// 流式模式下直接调用底层 Flusher。
+// 非流式模式下重写整个响应体并更新 Content-Length。
 func (rw *ResponseRewriter) Flush() {
 	if rw.isStreaming {
 		if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
@@ -121,10 +143,12 @@ func (rw *ResponseRewriter) Flush() {
 	}
 }
 
+// modelFieldPaths 是响应中可能包含模型名称的 JSON 字段路径列表。
+// 重写器会将这些路径的值替换为客户端请求的原始模型名。
 var modelFieldPaths = []string{"message.model", "model", "modelVersion", "response.model", "response.modelVersion"}
 
-// ampCanonicalToolNames maps tool names to the exact casing expected by the
-// Amp mode tool whitelist (case-sensitive match).
+// ampCanonicalToolNames 映射工具名称到 Amp 模式白名单期望的规范大小写。
+// 某些上游模型返回小写的工具名（如 "bash"），但 Amp 的大小写敏感白名单要求 "Bash"。
 var ampCanonicalToolNames = map[string]string{
 	"bash":  "Bash",
 	"read":  "Read",
@@ -134,9 +158,10 @@ var ampCanonicalToolNames = map[string]string{
 	"check": "Check",
 }
 
-// normalizeAmpToolNames fixes tool_use block names to match Amp's canonical casing.
-// Some upstream models return lowercase tool names (e.g. "bash" instead of "Bash")
-// which causes Amp's case-sensitive mode whitelist to reject them.
+// normalizeAmpToolNames 修正 tool_use 块中的工具名称大小写。
+// 处理两种格式：
+//   - 非流式：content[].name
+//   - 流式：content_block.name（content_block_start 事件）
 func normalizeAmpToolNames(data []byte) []byte {
 	// Non-streaming: content[].name in tool_use blocks
 	for index, block := range gjson.GetBytes(data, "content").Array() {
@@ -169,8 +194,11 @@ func normalizeAmpToolNames(data []byte) []byte {
 	return data
 }
 
-// ensureAmpSignature injects empty signature fields into tool_use/thinking blocks
-// in API responses so that the Amp TUI does not crash on P.signature.length.
+// ensureAmpSignature 向 tool_use/thinking 块注入空的 signature 字段。
+// Amp TUI 在渲染时会访问 P.signature.length，缺少该字段会导致崩溃。
+// 处理两种格式：
+//   - 非流式：content[].signature
+//   - 流式：content_block.signature
 func ensureAmpSignature(data []byte) []byte {
 	for index, block := range gjson.GetBytes(data, "content").Array() {
 		blockType := block.Get("type").String()
@@ -201,6 +229,9 @@ func ensureAmpSignature(data []byte) []byte {
 	return data
 }
 
+// suppressAmpThinking 在非流式响应中抑制 thinking 块。
+// 当响应中同时存在 tool_use 块时，移除 thinking 块以简化 Amp TUI 的渲染。
+// 仅在 suppressThinking 标志为 true 时生效。
 func (rw *ResponseRewriter) suppressAmpThinking(data []byte) []byte {
 	if !rw.suppressThinking {
 		return data
@@ -223,6 +254,11 @@ func (rw *ResponseRewriter) suppressAmpThinking(data []byte) []byte {
 	return data
 }
 
+// rewriteModelInResponse 对非流式响应执行完整的重写流程：
+//  1. 注入空的 signature 字段（Amp TUI 兼容性）
+//  2. 规范化工具名称大小写
+//  3. 抑制 thinking 块（如果启用）
+//  4. 将模型字段路径的值替换为原始模型名
 func (rw *ResponseRewriter) rewriteModelInResponse(data []byte) []byte {
 	data = ensureAmpSignature(data)
 	data = normalizeAmpToolNames(data)
@@ -242,6 +278,13 @@ func (rw *ResponseRewriter) rewriteModelInResponse(data []byte) []byte {
 	return data
 }
 
+// rewriteStreamChunk 对流式 SSE 数据块执行重写。
+// 处理三种情况：
+//  1. "event:" 行：向前查找配对的 "data:" 行，组合处理
+//  2. 独立的 "data:" 行：直接提取 JSON 并重写
+//  3. 其他行：原样传递
+//
+// 支持跨 chunk 分割的事件（event 和 data 在不同 chunk 中到达）。
 func (rw *ResponseRewriter) rewriteStreamChunk(chunk []byte) []byte {
 	lines := bytes.Split(chunk, []byte("\n"))
 	var out [][]byte
@@ -316,11 +359,13 @@ func (rw *ResponseRewriter) rewriteStreamChunk(chunk []byte) []byte {
 	return bytes.Join(out, []byte("\n"))
 }
 
-// rewriteStreamEvent processes a single JSON event in the SSE stream.
-// It rewrites model names and ensures signature fields exist.
-// NOTE: streaming mode does NOT suppress thinking blocks - they are
-// passed through with signature injection to avoid breaking SSE index
-// alignment and TUI rendering.
+// rewriteStreamEvent 处理 SSE 流中的单个 JSON 事件。
+// 执行的重写操作：
+//  1. 注入空的 signature 字段
+//  2. 规范化工具名称大小写
+//  3. 重写模型名称
+//
+// 注意：流式模式不抑制 thinking 块，以避免破坏 SSE 索引对齐和 TUI 渲染。
 func (rw *ResponseRewriter) rewriteStreamEvent(data []byte) []byte {
 	// Inject empty signature where needed
 	data = ensureAmpSignature(data)
@@ -340,11 +385,12 @@ func (rw *ResponseRewriter) rewriteStreamEvent(data []byte) []byte {
 	return data
 }
 
-// SanitizeAmpRequestBody removes thinking blocks with empty/missing/invalid signatures
-// and strips the proxy-injected "signature" field from tool_use blocks in the messages
-// array before forwarding to the upstream API.
-// This prevents 400 errors from the API which requires valid signatures on thinking
-// blocks and does not accept a signature field on tool_use blocks.
+// SanitizeAmpRequestBody 清理发送给上游 API 的请求体。
+// 执行的清理操作：
+//  1. 移除 thinking 块中空/缺失/无效的 signature（API 要求有效签名）
+//  2. 移除 tool_use 块中代理注入的 signature 字段（API 不接受此字段）
+//
+// 这些清理防止上游 API 返回 400 错误。
 func SanitizeAmpRequestBody(body []byte) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {

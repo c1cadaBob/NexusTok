@@ -1,14 +1,14 @@
-// Package gemini implements thinking configuration for Gemini models.
+// 包 gemini - apply.go
+// 该文件实现了 Gemini 模型的思考配置应用器。
+// Gemini 模型有两种格式：
+//   - Gemini 2.5：使用 thinkingBudget（数字）
+//   - Gemini 3.x：使用 thinkingLevel（字符串：minimal/low/medium/high）
+//     或 thinkingBudget=-1 表示自动/动态模式
 //
-// Gemini models have two formats:
-//   - Gemini 2.5: Uses thinkingBudget (numeric)
-//   - Gemini 3.x: Uses thinkingLevel (string: minimal/low/medium/high)
-//     or thinkingBudget=-1 for auto/dynamic mode
-//
-// Output format is determined by ThinkingConfig.Mode and ThinkingSupport.Levels:
-//   - ModeAuto: Always uses thinkingBudget=-1 (both Gemini 2.5 and 3.x)
-//   - len(Levels) > 0: Uses thinkingLevel (Gemini 3.x discrete levels)
-//   - len(Levels) == 0: Uses thinkingBudget (Gemini 2.5)
+// 输出格式由 ThinkingConfig.Mode 和 ThinkingSupport.Levels 决定：
+//   - ModeAuto：始终使用 thinkingBudget=-1（Gemini 2.5 和 3.x 通用）
+//   - len(Levels) > 0：使用 thinkingLevel（Gemini 3.x 离散级别）
+//   - len(Levels) == 0：使用 thinkingBudget（Gemini 2.5）
 package gemini
 
 import (

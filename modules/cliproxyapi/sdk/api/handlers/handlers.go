@@ -1,6 +1,7 @@
-// Package handlers provides core API handler functionality for the CLI Proxy API server.
-// It includes common types, client management, load balancing, and error handling
-// shared across all API endpoint handlers (OpenAI, Claude, Gemini).
+// handlers - handlers.go
+// 提供 CLI Proxy API 服务器的核心 API 处理器功能，包括通用类型定义、认证管理、流式传输、错误处理等。
+// 作为所有 API 端点处理器（OpenAI、Claude、Gemini）的基础层，提供执行管理、上下文取消、
+// 非流式保活、SSE 验证、认证选择错误增强等共享功能。
 package handlers
 
 import (
@@ -25,41 +26,49 @@ import (
 	"golang.org/x/net/context"
 )
 
-// ErrorResponse represents a standard error response format for the API.
-// It contains a single ErrorDetail field.
+// ErrorResponse API 标准错误响应格式，包含一个 ErrorDetail 字段
 type ErrorResponse struct {
-	// Error contains detailed information about the error that occurred.
+	// Error 包含所发生错误的详细信息
 	Error ErrorDetail `json:"error"`
 }
 
-// ErrorDetail provides specific information about an error that occurred.
-// It includes a human-readable message, an error type, and an optional error code.
+// ErrorDetail 提供所发生错误的具体信息，包括人类可读消息、错误类型和可选错误代码
 type ErrorDetail struct {
-	// Message is a human-readable message providing more details about the error.
+	// Message 提供更多错误详情的人类可读消息
 	Message string `json:"message"`
 
-	// Type is the category of error that occurred (e.g., "invalid_request_error").
+	// Type 错误发生的类别（如 "invalid_request_error"）
 	Type string `json:"type"`
 
-	// Code is a short code identifying the error, if applicable.
+	// Code 标识错误的简短代码（如适用）
 	Code string `json:"code,omitempty"`
 }
 
+// idempotencyKeyMetadataKey 幂等性键的元数据键名
 const idempotencyKeyMetadataKey = "idempotency_key"
 
+// nexusTokAccountPoolGroupHeader NexusTok 账号池分组请求头名称
 const nexusTokAccountPoolGroupHeader = "X-NexusTok-Account-Pool-Group"
 
+// 默认流式保活秒数和引导重试次数
 const (
 	defaultStreamingKeepAliveSeconds = 0
 	defaultStreamingBootstrapRetries = 0
 )
 
+// pinnedAuthContextKey 固定认证 ID 的上下文键类型
 type pinnedAuthContextKey struct{}
+
+// selectedAuthCallbackContextKey 选定认证回调的上下文键类型
 type selectedAuthCallbackContextKey struct{}
+
+// executionSessionContextKey 执行会话 ID 的上下文键类型
 type executionSessionContextKey struct{}
+
+// disallowFreeAuthContextKey 禁止免费认证的上下文键类型
 type disallowFreeAuthContextKey struct{}
 
-// WithPinnedAuthID returns a child context that requests execution on a specific auth ID.
+// WithPinnedAuthID 返回一个子上下文，要求在特定认证 ID 上执行请求
 func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 	authID = strings.TrimSpace(authID)
 	if authID == "" {
@@ -71,7 +80,7 @@ func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 	return context.WithValue(ctx, pinnedAuthContextKey{}, authID)
 }
 
-// WithSelectedAuthIDCallback returns a child context that receives the selected auth ID.
+// WithSelectedAuthIDCallback 返回一个子上下文，接收选定的认证 ID 回调
 func WithSelectedAuthIDCallback(ctx context.Context, callback func(string)) context.Context {
 	if callback == nil {
 		return ctx
@@ -82,7 +91,7 @@ func WithSelectedAuthIDCallback(ctx context.Context, callback func(string)) cont
 	return context.WithValue(ctx, selectedAuthCallbackContextKey{}, callback)
 }
 
-// WithExecutionSessionID returns a child context tagged with a long-lived execution session ID.
+// WithExecutionSessionID 返回一个标记了长生命周期执行会话 ID 的子上下文
 func WithExecutionSessionID(ctx context.Context, sessionID string) context.Context {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -94,7 +103,7 @@ func WithExecutionSessionID(ctx context.Context, sessionID string) context.Conte
 	return context.WithValue(ctx, executionSessionContextKey{}, sessionID)
 }
 
-// WithDisallowFreeAuth returns a child context that requests skipping known free-tier credentials.
+// WithDisallowFreeAuth 返回一个子上下文，要求跳过已知的免费层凭证
 func WithDisallowFreeAuth(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -102,8 +111,8 @@ func WithDisallowFreeAuth(ctx context.Context) context.Context {
 	return context.WithValue(ctx, disallowFreeAuthContextKey{}, true)
 }
 
-// BuildErrorResponseBody builds an OpenAI-compatible JSON error response body.
-// If errText is already valid JSON, it is returned as-is to preserve upstream error payloads.
+// BuildErrorResponseBody 构建 OpenAI 兼容的 JSON 错误响应体。
+// 如果 errText 已经是合法 JSON，则直接返回以保留上游错误载荷
 func BuildErrorResponseBody(status int, errText string) []byte {
 	if status <= 0 {
 		status = http.StatusInternalServerError
@@ -152,8 +161,8 @@ func BuildErrorResponseBody(status int, errText string) []byte {
 	return payload
 }
 
-// StreamingKeepAliveInterval returns the SSE keep-alive interval for this server.
-// Returning 0 disables keep-alives (default when unset).
+// StreamingKeepAliveInterval 返回此服务器的 SSE 保活间隔。
+// 返回 0 表示禁用保活（未设置时的默认值）
 func StreamingKeepAliveInterval(cfg *config.SDKConfig) time.Duration {
 	seconds := defaultStreamingKeepAliveSeconds
 	if cfg != nil {
@@ -165,8 +174,8 @@ func StreamingKeepAliveInterval(cfg *config.SDKConfig) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// NonStreamingKeepAliveInterval returns the keep-alive interval for non-streaming responses.
-// Returning 0 disables keep-alives (default when unset).
+// NonStreamingKeepAliveInterval 返回非流式响应的保活间隔。
+// 返回 0 表示禁用保活（未设置时的默认值）
 func NonStreamingKeepAliveInterval(cfg *config.SDKConfig) time.Duration {
 	seconds := 0
 	if cfg != nil {
@@ -178,7 +187,7 @@ func NonStreamingKeepAliveInterval(cfg *config.SDKConfig) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// StreamingBootstrapRetries returns how many times a streaming request may be retried before any bytes are sent.
+// StreamingBootstrapRetries 返回流式请求在发送任何字节之前可以重试的次数
 func StreamingBootstrapRetries(cfg *config.SDKConfig) int {
 	retries := defaultStreamingBootstrapRetries
 	if cfg != nil {
@@ -190,15 +199,15 @@ func StreamingBootstrapRetries(cfg *config.SDKConfig) int {
 	return retries
 }
 
-// PassthroughHeadersEnabled returns whether upstream response headers should be forwarded to clients.
-// Default is false.
+// PassthroughHeadersEnabled 返回是否应将上游响应头转发给客户端，默认为 false
 func PassthroughHeadersEnabled(cfg *config.SDKConfig) bool {
 	return cfg != nil && cfg.PassthroughHeaders
 }
 
+// requestExecutionMetadata 从上下文中提取请求执行元数据，包括幂等性键、请求路径、账号池分组等
 func requestExecutionMetadata(ctx context.Context) map[string]any {
-	// Idempotency-Key is an optional client-supplied header used to correlate retries.
-	// Only include it if the client explicitly provides it.
+	// Idempotency-Key 是客户端提供的可选请求头，用于关联重试
+	// 仅在客户端明确提供时才包含
 	key := ""
 	requestPath := ""
 	accountPoolGroup := ""
@@ -238,6 +247,7 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	return meta
 }
 
+// setReasoningEffortMetadata 从请求体中提取推理努力级别并设置到元数据中
 func setReasoningEffortMetadata(meta map[string]any, handlerType, model string, rawJSON []byte) {
 	if meta == nil {
 		return
@@ -249,9 +259,8 @@ func setReasoningEffortMetadata(meta map[string]any, handlerType, model string, 
 	meta[coreexecutor.ReasoningEffortMetadataKey] = effort
 }
 
-// headersFromContext extracts the original HTTP request headers from the gin context
-// embedded in the provided context. This allows session affinity selectors to read
-// client headers like X-Amp-Thread-Id.
+// headersFromContext 从嵌入在提供的上下文中的 gin 上下文提取原始 HTTP 请求头，
+// 允许会话亲和性选择器读取客户端请求头（如 X-Amp-Thread-Id）
 func headersFromContext(ctx context.Context) http.Header {
 	if ctx == nil {
 		return nil
@@ -262,6 +271,7 @@ func headersFromContext(ctx context.Context) http.Header {
 	return nil
 }
 
+// pinnedAuthIDFromContext 从上下文中提取固定认证 ID
 func pinnedAuthIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -277,6 +287,7 @@ func pinnedAuthIDFromContext(ctx context.Context) string {
 	}
 }
 
+// selectedAuthIDCallbackFromContext 从上下文中提取选定认证 ID 回调函数
 func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
 	if ctx == nil {
 		return nil
@@ -288,6 +299,7 @@ func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
 	return nil
 }
 
+// executionSessionIDFromContext 从上下文中提取执行会话 ID
 func executionSessionIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -303,6 +315,7 @@ func executionSessionIDFromContext(ctx context.Context) string {
 	}
 }
 
+// disallowFreeAuthFromContext 从上下文中提取是否禁止免费认证的标志
 func disallowFreeAuthFromContext(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -311,26 +324,24 @@ func disallowFreeAuthFromContext(ctx context.Context) bool {
 	return ok && raw
 }
 
-// BaseAPIHandler contains the handlers for API endpoints.
-// It holds a pool of clients to interact with the backend service and manages
-// load balancing, client selection, and configuration.
+// BaseAPIHandler API 端点的基础处理器，持有与后端服务交互的客户端池，
+// 管理负载均衡、客户端选择和配置
 type BaseAPIHandler struct {
-	// AuthManager manages auth lifecycle and execution in the new architecture.
+	// AuthManager 管理新架构中的认证生命周期和执行
 	AuthManager *coreauth.Manager
 
-	// Cfg holds the current application configuration.
+	// Cfg 持有当前应用程序配置
 	Cfg *config.SDKConfig
 }
 
-// NewBaseAPIHandlers creates a new API handlers instance.
-// It takes a slice of clients and configuration as input.
+// NewBaseAPIHandlers 创建新的 API 处理器实例
 //
-// Parameters:
-//   - cliClients: A slice of AI service clients
-//   - cfg: The application configuration
+// 参数:
+//   - cfg: 应用程序配置
+//   - authManager: 认证管理器
 //
-// Returns:
-//   - *BaseAPIHandler: A new API handlers instance
+// 返回:
+//   - *BaseAPIHandler: 新的 API 处理器实例
 func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *BaseAPIHandler {
 	return &BaseAPIHandler{
 		Cfg:         cfg,
@@ -338,22 +349,21 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 	}
 }
 
-// UpdateClients updates the handlers' client list and configuration.
-// This method is called when the configuration or authentication tokens change.
+// UpdateClients 更新处理器的客户端列表和配置。
+// 当配置或认证令牌更改时调用此方法
 //
-// Parameters:
-//   - clients: The new slice of AI service clients
-//   - cfg: The new application configuration
+// 参数:
+//   - cfg: 新的应用程序配置
 func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig) { h.Cfg = cfg }
 
-// GetAlt extracts the 'alt' parameter from the request query string.
-// It checks both 'alt' and '$alt' parameters and returns the appropriate value.
+// GetAlt 从请求查询字符串中提取 'alt' 参数。
+// 检查 'alt' 和 '$alt' 参数并返回适当的值
 //
-// Parameters:
-//   - c: The Gin context containing the HTTP request
+// 参数:
+//   - c: 包含 HTTP 请求的 Gin 上下文
 //
-// Returns:
-//   - string: The alt parameter value, or empty string if it's "sse"
+// 返回:
+//   - string: alt 参数值，如果为 "sse" 则返回空字符串
 func (h *BaseAPIHandler) GetAlt(c *gin.Context) string {
 	var alt string
 	var hasAlt bool
@@ -367,18 +377,18 @@ func (h *BaseAPIHandler) GetAlt(c *gin.Context) string {
 	return alt
 }
 
-// GetContextWithCancel creates a new context with cancellation capabilities.
-// It embeds the Gin context and the API handler into the new context for later use.
-// The returned cancel function also handles logging the API response if request logging is enabled.
+// GetContextWithCancel 创建带有取消功能的新上下文。
+// 将 Gin 上下文和 API 处理器嵌入到新上下文中供后续使用。
+// 返回的取消函数还负责在启用请求日志时记录 API 响应
 //
-// Parameters:
-//   - handler: The API handler associated with the request.
-//   - c: The Gin context of the current request.
-//   - ctx: The parent context (caller values/deadlines are preserved; request context adds cancellation and request ID).
+// 参数:
+//   - handler: 与请求关联的 API 处理器
+//   - c: 当前请求的 Gin 上下文
+//   - ctx: 父上下文（调用者的值/截止时间会被保留；请求上下文添加取消和请求 ID）
 //
-// Returns:
-//   - context.Context: The new context with cancellation and embedded values.
-//   - APIHandlerCancelFunc: A function to cancel the context and log the response.
+// 返回:
+//   - context.Context: 带有取消功能和嵌入值的新上下文
+//   - APIHandlerCancelFunc: 取消上下文并记录响应的函数
 func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *gin.Context, ctx context.Context) (context.Context, APIHandlerCancelFunc) {
 	parentCtx := ctx
 	if parentCtx == nil {
@@ -476,8 +486,8 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	}
 }
 
-// StartNonStreamingKeepAlive emits blank lines every 5 seconds while waiting for a non-streaming response.
-// It returns a stop function that must be called before writing the final response.
+// StartNonStreamingKeepAlive 在等待非流式响应时每 5 秒发送空行。
+// 返回一个停止函数，必须在写入最终响应之前调用
 func (h *BaseAPIHandler) StartNonStreamingKeepAlive(c *gin.Context, ctx context.Context) func() {
 	if h == nil || c == nil {
 		return func() {}
@@ -523,13 +533,13 @@ func (h *BaseAPIHandler) StartNonStreamingKeepAlive(c *gin.Context, ctx context.
 	}
 }
 
-// appendAPIResponse preserves any previously captured API response and appends new data.
+// appendAPIResponse 保留之前捕获的 API 响应并追加新数据
 func appendAPIResponse(c *gin.Context, data []byte) {
 	if c == nil || len(data) == 0 {
 		return
 	}
 
-	// Capture timestamp on first API response
+	// 在首次 API 响应时捕获时间戳
 	if _, exists := c.Get("API_RESPONSE_TIMESTAMP"); !exists {
 		c.Set("API_RESPONSE_TIMESTAMP", time.Now())
 	}
@@ -550,17 +560,17 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 	c.Set("API_RESPONSE", bytes.Clone(data))
 }
 
-// ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
-// This path is the only supported execution route.
+// ExecuteWithAuthManager 通过核心认证管理器执行非流式请求，这是唯一支持的执行路径
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false)
 }
 
-// ExecuteImageWithAuthManager executes an OpenAI-compatible image endpoint request.
+// ExecuteImageWithAuthManager 执行 OpenAI 兼容的图片端点请求
 func (h *BaseAPIHandler) ExecuteImageWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true)
 }
 
+// executeWithAuthManager 内部执行方法，支持普通请求和图片请求
 func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, allowImageModel bool) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetailsWithOptions(modelName, allowImageModel)
 	if errMsg != nil {
@@ -608,8 +618,7 @@ func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType
 	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
 }
 
-// ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
-// This path is the only supported execution route.
+// ExecuteCountWithAuthManager 通过核心认证管理器执行非流式请求（用于计数）
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
@@ -657,18 +666,18 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
 }
 
-// ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
-// This path is the only supported execution route.
-// The returned http.Header carries upstream response headers captured before streaming begins.
+// ExecuteStreamWithAuthManager 通过核心认证管理器执行流式请求，这是唯一支持的执行路径。
+// 返回的 http.Header 携带在流式传输开始前捕获的上游响应头
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	return h.executeStreamWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false)
 }
 
-// ExecuteImageStreamWithAuthManager executes a streaming OpenAI-compatible image endpoint request.
+// ExecuteImageStreamWithAuthManager 执行流式 OpenAI 兼容的图片端点请求
 func (h *BaseAPIHandler) ExecuteImageStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	return h.executeStreamWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true)
 }
 
+// executeStreamWithAuthManager 内部流式执行方法，支持普通请求和图片请求
 func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, allowImageModel bool) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetailsWithOptions(modelName, allowImageModel)
 	if errMsg != nil {
@@ -717,8 +726,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 		return nil, nil, errChan
 	}
 	passthroughHeadersEnabled := PassthroughHeadersEnabled(h.Cfg)
-	// Capture upstream headers from the initial connection synchronously before the goroutine starts.
-	// Keep a mutable map so bootstrap retries can replace it before first payload is sent.
+	// 在 goroutine 启动前同步从初始连接捕获上游响应头。
+	// 保持可变映射，以便引导重试可以在发送第一个载荷之前替换它
 	var upstreamHeaders http.Header
 	if passthroughHeadersEnabled {
 		upstreamHeaders = cloneHeader(FilterUpstreamHeaders(streamResult.Headers))
@@ -795,8 +804,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 				}
 				if chunk.Err != nil {
 					streamErr := chunk.Err
-					// Safe bootstrap recovery: if the upstream fails before any payload bytes are sent,
-					// retry a few times (to allow auth rotation / transient recovery) and then attempt model fallback.
+					// 安全的引导恢复：如果上游在发送任何载荷字节之前失败，
+					// 重试几次（允许认证轮换/瞬态恢复），然后尝试模型回退
 					if !sentPayload {
 						if bootstrapRetries < maxBootstrapRetries && bootstrapEligible(streamErr) {
 							bootstrapRetries++
@@ -845,6 +854,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 	return dataChan, upstreamHeaders, errChan
 }
 
+// validateSSEDataJSON 验证 SSE 块中所有 data 行的内容是否为合法 JSON
 func validateSSEDataJSON(chunk []byte) error {
 	for _, line := range bytes.Split(chunk, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -874,6 +884,7 @@ func validateSSEDataJSON(chunk []byte) error {
 	return nil
 }
 
+// statusFromError 从错误中提取 HTTP 状态码
 func statusFromError(err error) int {
 	if err == nil {
 		return 0
@@ -886,10 +897,12 @@ func statusFromError(err error) int {
 	return 0
 }
 
+// getRequestDetails 获取请求详情，不允许图片模型
 func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
 	return h.getRequestDetailsWithOptions(modelName, false)
 }
 
+// getRequestDetailsWithOptions 获取请求详情，支持可选的图片模型允许标志
 func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowImageModel bool) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
 	resolvedModelName := modelName
 	initialSuffix := thinking.ParseSuffix(modelName)
@@ -927,11 +940,10 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 	}
 
 	providers = util.GetProviderName(baseModel)
-	// Fallback: if baseModel has no provider but differs from resolvedModelName,
-	// try using the full model name. This handles edge cases where custom models
-	// may be registered with their full suffixed name (e.g., "my-model(8192)").
-	// Evaluated in Story 11.8: This fallback is intentionally preserved to support
-	// custom model registrations that include thinking suffixes.
+	// 回退：如果 baseModel 没有提供者但与 resolvedModelName 不同，
+	// 尝试使用完整模型名称。这处理自定义模型可能以完整后缀名称注册的边缘情况
+	// （如 "my-model(8192)"）。
+	// 在 Story 11.8 中评估：此回退被有意保留以支持包含思维后缀的自定义模型注册
 	if len(providers) == 0 && baseModel != resolvedModelName {
 		providers = util.GetProviderName(resolvedModelName)
 	}
@@ -940,11 +952,11 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 		return nil, "", &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("unknown provider for model %s", modelName)}
 	}
 
-	// The thinking suffix is preserved in the model name itself, so no
-	// metadata-based configuration passing is needed.
+	// 思维后缀在模型名称本身中保留，因此不需要基于元数据的配置传递
 	return providers, resolvedModelName, nil
 }
 
+// routeModelBaseName 从模型名称中提取基础名称（去除路径前缀）
 func routeModelBaseName(model string) string {
 	model = strings.TrimSpace(model)
 	if idx := strings.LastIndex(model, "/"); idx >= 0 && idx < len(model)-1 {
@@ -953,6 +965,7 @@ func routeModelBaseName(model string) string {
 	return model
 }
 
+// cloneBytes 深拷贝字节切片
 func cloneBytes(src []byte) []byte {
 	if len(src) == 0 {
 		return nil
@@ -962,6 +975,7 @@ func cloneBytes(src []byte) []byte {
 	return dst
 }
 
+// cloneHeader 深拷贝 HTTP 请求头
 func cloneHeader(src http.Header) http.Header {
 	if src == nil {
 		return nil
@@ -973,6 +987,7 @@ func cloneHeader(src http.Header) http.Header {
 	return dst
 }
 
+// replaceHeader 用源请求头替换目标请求头的所有内容
 func replaceHeader(dst http.Header, src http.Header) {
 	for key := range dst {
 		delete(dst, key)
@@ -982,6 +997,7 @@ func replaceHeader(dst http.Header, src http.Header) {
 	}
 }
 
+// enrichAuthSelectionError 增强认证选择错误，添加提供者和模型信息以改善错误消息的可诊断性
 func enrichAuthSelectionError(err error, providers []string, model string) error {
 	if err == nil {
 		return nil
@@ -1012,7 +1028,7 @@ func enrichAuthSelectionError(err error, providers []string, model string) error
 	}
 	detail := fmt.Sprintf("%s (providers=%s, model=%s)", baseMessage, providerText, modelText)
 
-	// Clarify the most common alias confusion between Anthropic route names and internal provider keys.
+	// 澄清 Anthropic 路由名称和内部提供者键之间最常见的别名混淆
 	if strings.Contains(","+providerText+",", ",claude,") {
 		detail += "; check Claude auth/key session and cooldown state via /v0/management/auth-files"
 	}
@@ -1030,7 +1046,7 @@ func enrichAuthSelectionError(err error, providers []string, model string) error
 	}
 }
 
-// WriteErrorResponse writes an error message to the response writer using the HTTP status embedded in the message.
+// WriteErrorResponse 使用消息中嵌入的 HTTP 状态码将错误消息写入响应写入器
 func (h *BaseAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.ErrorMessage) {
 	status := http.StatusInternalServerError
 	if msg != nil && msg.StatusCode > 0 {
@@ -1056,7 +1072,7 @@ func (h *BaseAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.Erro
 	}
 
 	body := BuildErrorResponseBody(status, errText)
-	// Append first to preserve upstream response logs, then drop duplicate payloads if already recorded.
+	// 先追加以保留上游响应日志，然后丢弃已记录的重复载荷
 	var previous []byte
 	if existing, exists := c.Get("API_RESPONSE"); exists {
 		if existingBytes, ok := existing.([]byte); ok && len(existingBytes) > 0 {
@@ -1080,6 +1096,7 @@ func (h *BaseAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.Erro
 	_, _ = c.Writer.Write(body)
 }
 
+// LoggingAPIResponseError 记录 API 响应错误到 Gin 上下文中，用于请求日志
 func (h *BaseAPIHandler) LoggingAPIResponseError(ctx context.Context, err *interfaces.ErrorMessage) {
 	if h.Cfg.RequestLog {
 		if ginContext, ok := ctx.Value("gin").(*gin.Context); ok {
@@ -1089,13 +1106,13 @@ func (h *BaseAPIHandler) LoggingAPIResponseError(ctx context.Context, err *inter
 					ginContext.Set("API_RESPONSE_ERROR", slicesAPIResponseError)
 				}
 			} else {
-				// Create new response data entry
+				// 创建新的响应数据条目
 				ginContext.Set("API_RESPONSE_ERROR", []*interfaces.ErrorMessage{err})
 			}
 		}
 	}
 }
 
-// APIHandlerCancelFunc is a function type for canceling an API handler's context.
-// It can optionally accept parameters, which are used for logging the response.
+// APIHandlerCancelFunc 取消 API 处理器上下文的函数类型。
+// 可以选择性地接受参数，用于记录响应
 type APIHandlerCancelFunc func(params ...interface{})

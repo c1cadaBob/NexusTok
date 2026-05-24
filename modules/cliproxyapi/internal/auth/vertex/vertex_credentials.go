@@ -1,3 +1,8 @@
+// Package vertex - vertex_credentials.go
+// 提供 Google Vertex AI Gemini 的服务账号凭据存储功能。
+// 将服务账号 JSON 序列化为认证文件，供运行时执行器使用，
+// 支持项目 ID、区域和邮箱等辅助字段以增强日志记录和凭据发现。
+//
 // Package vertex provides token storage for Google Vertex AI Gemini via service account credentials.
 // It serialises service account JSON into an auth file that is consumed by the runtime executor.
 package vertex

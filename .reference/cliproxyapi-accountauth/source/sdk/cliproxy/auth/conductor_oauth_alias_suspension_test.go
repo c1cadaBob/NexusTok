@@ -1,3 +1,8 @@
+// auth - conductor_oauth_alias_suspension_test.go
+// Conductor OAuth 别名路由与模型暂停测试
+// 验证当路由模型（如 claude-opus-4-6）被暂停时，
+// OAuth 模型别名机制能够正确将请求路由到目标模型（如 claude-opus-4-6-thinking），
+// 同时保留原始路由模型名称作为上下文别名。
 package auth
 
 import (
@@ -13,6 +18,8 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// aliasRoutingExecutor 是用于测试的执行器实现，
+// 记录每次执行时使用的模型名称和别名，用于验证路由行为。
 type aliasRoutingExecutor struct {
 	id string
 
@@ -63,6 +70,9 @@ func (e *aliasRoutingExecutor) ExecuteAliases() []string {
 	return out
 }
 
+// TestManagerExecute_OAuthAliasBypassesBlockedRouteModel 验证：
+// 当路由模型被标记为不可用（Unavailable）时，OAuth 模型别名机制
+// 能够将请求自动路由到目标模型，绕过被暂停的路由模型。
 func TestManagerExecute_OAuthAliasBypassesBlockedRouteModel(t *testing.T) {
 	const (
 		provider    = "antigravity"

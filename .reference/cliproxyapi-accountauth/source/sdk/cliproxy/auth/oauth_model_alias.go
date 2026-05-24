@@ -1,3 +1,6 @@
+// 包 auth - oauth_model_alias.go
+// 该文件实现了 OAuth 模型别名的编译和查找机制。
+// 将配置中的模型别名映射编译为高效的反向查找表，用于运行时模型名称解析。
 package auth
 
 import (
@@ -7,16 +10,19 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 )
 
+// modelAliasEntry 定义模型别名条目的接口。
 type modelAliasEntry interface {
-	GetName() string
-	GetAlias() string
+	GetName() string  // 获取原始模型名称
+	GetAlias() string // 获取别名
 }
 
+// oauthModelAliasTable 存储编译后的 OAuth 模型别名反向查找表。
 type oauthModelAliasTable struct {
-	// reverse maps channel -> alias (lower) -> original upstream model name.
+	// reverse 映射 channel -> alias（小写）-> 原始上游模型名称。
 	reverse map[string]map[string]string
 }
 
+// compileOAuthModelAliasTable 将配置中的模型别名编译为反向查找表。
 func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelAlias) *oauthModelAliasTable {
 	if len(aliases) == 0 {
 		return &oauthModelAliasTable{}

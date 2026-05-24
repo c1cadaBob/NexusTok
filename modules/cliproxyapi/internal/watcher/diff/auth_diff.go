@@ -1,4 +1,6 @@
-// auth_diff.go computes human-readable diffs for auth file field changes.
+// diff - auth_diff.go
+// 本文件计算认证文件字段变更的人类可读差异。
+// 用于在日志中记录认证文件的具体变更内容。
 package diff
 
 import (

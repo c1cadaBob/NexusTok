@@ -1,3 +1,7 @@
+// Package relay - rerank_handler.go
+// 本文件实现了文档重排序（Rerank）请求的中继处理逻辑。
+// Rerank 是一种将查询与文档列表进行相关性排序的功能，
+// 常用于检索增强生成（RAG）场景中的文档重排阶段。
 package relay
 
 import (
@@ -17,6 +21,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RerankHelper 是文档重排序（Rerank）请求的中继处理函数。
+// 处理流程：
+//  1. 初始化渠道元数据，类型断言并深拷贝请求为 *dto.RerankRequest。
+//  2. 执行模型映射（ModelMappedHelper）。
+//  3. 获取并初始化对应 API 类型的适配器。
+//  4. 根据 passthrough 模式选择请求体来源。
+//  5. 应用参数覆盖（ParamOverride）。
+//  6. 通过适配器发送请求并解析响应。
+//  7. 调用 PostTextConsumeQuota 进行文本计费结算。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func RerankHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 

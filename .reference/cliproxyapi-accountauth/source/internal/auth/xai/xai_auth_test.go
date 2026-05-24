@@ -1,3 +1,9 @@
+// xai - xai_auth_test.go
+// XAI OAuth 认证流程测试
+// 验证 xAI 提供商的 OAuth 认证相关功能：
+// - 授权 URL 构建（包含所有必需参数）
+// - OAuth 端点验证（仅接受 x.ai 域名的 HTTPS 端点）
+// - 令牌刷新请求格式（POST 表单提交 client_id 和 refresh_token）
 package xai
 
 import (
@@ -10,6 +16,9 @@ import (
 	"testing"
 )
 
+// TestBuildAuthorizeURLIncludesXAIRequiredParameters 验证构建的授权 URL
+// 包含 xAI OAuth 所需的所有参数：response_type、client_id、redirect_uri、
+// scope、code_challenge、code_challenge_method、state、nonce、plan、referrer。
 func TestBuildAuthorizeURLIncludesXAIRequiredParameters(t *testing.T) {
 	authURL, err := BuildAuthorizeURL(AuthorizeURLParams{
 		AuthorizationEndpoint: "https://auth.x.ai/oauth/authorize",
@@ -50,6 +59,10 @@ func TestBuildAuthorizeURLIncludesXAIRequiredParameters(t *testing.T) {
 	}
 }
 
+// TestValidateOAuthEndpointRejectsNonXAIOrigin 验证 OAuth 端点验证：
+// - 仅接受 https://auth.x.ai 域名的端点
+// - 拒绝非 HTTPS 端点
+// - 拒绝非 x.ai 域名的端点
 func TestValidateOAuthEndpointRejectsNonXAIOrigin(t *testing.T) {
 	if _, err := ValidateOAuthEndpoint("https://auth.x.ai/oauth/token", "token_endpoint"); err != nil {
 		t.Fatalf("ValidateOAuthEndpoint(xai) error = %v", err)
@@ -62,6 +75,11 @@ func TestValidateOAuthEndpointRejectsNonXAIOrigin(t *testing.T) {
 	}
 }
 
+// TestRefreshTokensPostsClientIDAndRefreshToken 验证令牌刷新请求：
+// - 使用 POST 方法
+// - Content-Type 为 application/x-www-form-urlencoded
+// - 包含 grant_type=refresh_token、client_id、refresh_token 参数
+// - 正确解析返回的 access_token 和 refresh_token
 func TestRefreshTokensPostsClientIDAndRefreshToken(t *testing.T) {
 	var gotForm url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,3 +1,9 @@
+// auth - conductor_scheduler_refresh_test.go
+// 调度器刷新与冷却重建测试
+// 验证 Manager 的调度器相关功能：
+// - 401 未授权刷新失败后停止自动刷新重试
+// - RefreshSchedulerEntry 重建支持模型集合
+// - 模型冷却错误后调度器自动重建
 package auth
 
 import (
@@ -11,40 +17,55 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerProviderTestExecutor 是用于调度器测试的空操作执行器。
+// 按 provider 标识自身，所有操作返回空结果。
 type schedulerProviderTestExecutor struct {
 	provider string
 }
 
+// Identifier 返回执行器的 provider 标识。
 func (e schedulerProviderTestExecutor) Identifier() string { return e.provider }
 
+// Execute 执行同步请求，测试中返回空结果。
 func (e schedulerProviderTestExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, nil
 }
 
+// ExecuteStream 执行流式请求，测试中返回 nil。
 func (e schedulerProviderTestExecutor) ExecuteStream(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	return nil, nil
 }
 
+// Refresh 刷新认证，测试中直接返回原认证。
 func (e schedulerProviderTestExecutor) Refresh(ctx context.Context, auth *Auth) (*Auth, error) {
 	return auth, nil
 }
 
+// CountTokens 执行 Token 计数，测试中返回空结果。
 func (e schedulerProviderTestExecutor) CountTokens(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, nil
 }
 
+// HttpRequest 执行 HTTP 请求，测试中返回 nil。
 func (e schedulerProviderTestExecutor) HttpRequest(ctx context.Context, auth *Auth, req *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
+// unauthorizedRefreshTestExecutor 是模拟 401 刷新失败的执行器。
+// 嵌入 schedulerProviderTestExecutor，重写 Refresh 方法返回 401 错误。
 type unauthorizedRefreshTestExecutor struct {
 	schedulerProviderTestExecutor
 }
 
+// Refresh 模拟 401 未授权的 token 刷新失败。
 func (e unauthorizedRefreshTestExecutor) Refresh(ctx context.Context, auth *Auth) (*Auth, error) {
 	return nil, errors.New("token refresh failed with status 401: invalid_grant")
 }
 
+// TestManager_RefreshAuthUnauthorizedFailureStopsAutoRefreshRetry 验证：
+// 当 token 刷新返回 401 未授权错误时，认证被标记为 unauthorized，
+// 不再设置下次刷新时间，且 shouldRefresh 和 nextRefreshCheckAt 均返回 false，
+// 即该认证从自动刷新调度中移除。
 func TestManager_RefreshAuthUnauthorizedFailureStopsAutoRefreshRetry(t *testing.T) {
 	ctx := context.Background()
 	manager := NewManager(nil, &RoundRobinSelector{}, nil)
@@ -90,6 +111,9 @@ func TestManager_RefreshAuthUnauthorizedFailureStopsAutoRefreshRetry(t *testing.
 	}
 }
 
+// TestManager_RefreshSchedulerEntry_RebuildsSupportedModelSetAfterModelRegistration 验证：
+// 在认证注册或更新后，调用 RefreshSchedulerEntry 能重建调度器的支持模型集合。
+// 使用表驱动测试覆盖 register 和 update 两种路径。
 func TestManager_RefreshSchedulerEntry_RebuildsSupportedModelSetAfterModelRegistration(t *testing.T) {
 	ctx := context.Background()
 
@@ -158,6 +182,9 @@ func TestManager_RefreshSchedulerEntry_RebuildsSupportedModelSetAfterModelRegist
 	}
 }
 
+// TestManager_PickNext_RebuildsSchedulerAfterModelCooldownError 验证：
+// 当调度器因模型冷却错误返回失败时，pickNext 会触发调度器重建，
+// 使新注册的可用认证能被正确选中。
 func TestManager_PickNext_RebuildsSchedulerAfterModelCooldownError(t *testing.T) {
 	ctx := context.Background()
 	manager := NewManager(nil, &RoundRobinSelector{}, nil)

@@ -1,6 +1,17 @@
-# Backend-only build for frontend development
-# Skips frontend build, uses a placeholder for //go:embed web/dist
+# Dockerfile.dev - NexusTok 后端开发环境构建
+#
+# 功能：
+# - 仅构建后端，跳过前端构建
+# - 使用占位符替代 //go:embed web/dist
+# - 适用于前端开发服务器（bun run dev）模式
+#
+# 构建参数：
+#   TARGETOS - 目标操作系统（默认: linux）
+#   TARGETARCH - 目标架构（默认: amd64）
+#
+# 暴露端口：3000
 
+# 后端构建阶段（跳过前端，使用占位符）
 FROM golang:1.26.1-alpine AS builder
 
 ENV GO111MODULE=on CGO_ENABLED=0
@@ -16,12 +27,15 @@ RUN go mod download
 
 COPY . .
 
+# 创建前端占位符（满足 Go embed 要求）
 RUN mkdir -p web/default/dist web/classic/dist && \
     echo '<!doctype html><html><head><title>dev</title></head><body>use frontend dev server</body></html>' > web/default/dist/index.html && \
     echo '<!doctype html><html><head><title>dev</title></head><body>use frontend dev server</body></html>' > web/classic/dist/index.html
 
+# 编译 Go 后端
 RUN go build -ldflags "-s -w -X 'github.com/c1cada/NexusTok/common.Version=$(cat VERSION)'" -o nexustok
 
+# 运行时镜像
 FROM debian:bookworm-slim
 
 RUN apt-get update \

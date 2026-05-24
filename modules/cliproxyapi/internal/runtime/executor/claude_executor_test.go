@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Claude 执行器的各种功能，包括头部配置、设备配置文件稳定化、
+// 工具前缀管理、缓存控制、用户 ID 缓存和压缩响应处理等。
 package executor
 
 import (
@@ -27,10 +30,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// resetClaudeDeviceProfileCache 重置 Claude 设备配置文件缓存。
 func resetClaudeDeviceProfileCache() {
 	helps.ResetClaudeDeviceProfileCache()
 }
 
+// newClaudeHeaderTestRequest 创建带有指定头部的 Claude 测试请求。
 func newClaudeHeaderTestRequest(t *testing.T, incoming http.Header) *http.Request {
 	t.Helper()
 
@@ -45,6 +50,7 @@ func newClaudeHeaderTestRequest(t *testing.T, incoming http.Header) *http.Reques
 	return req.WithContext(context.WithValue(req.Context(), "gin", ginCtx))
 }
 
+// assertClaudeFingerprint 断言 Claude 请求头部的指纹信息是否符合预期。
 func assertClaudeFingerprint(t *testing.T, headers http.Header, userAgent, pkgVersion, runtimeVersion, osName, arch string) {
 	t.Helper()
 
@@ -65,6 +71,8 @@ func assertClaudeFingerprint(t *testing.T, headers http.Header, userAgent, pkgVe
 	}
 }
 
+// TestApplyClaudeHeaders_UsesConfiguredBaselineFingerprint 验证使用配置的基线指纹
+// 作为默认头部值。
 func TestApplyClaudeHeaders_UsesConfiguredBaselineFingerprint(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -107,6 +115,8 @@ func TestApplyClaudeHeaders_UsesConfiguredBaselineFingerprint(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeHeaders_TracksHighestClaudeCLIFingerprint 验证跟踪最高版本的 Claude CLI 指纹，
+// 低版本请求不会覆盖已缓存的高版本指纹。
 func TestApplyClaudeHeaders_TracksHighestClaudeCLIFingerprint(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -169,6 +179,8 @@ func TestApplyClaudeHeaders_TracksHighestClaudeCLIFingerprint(t *testing.T) {
 	assertClaudeFingerprint(t, lowerReq.Header, "claude-cli/2.1.63 (external, cli)", "0.75.0", "v24.4.0", "MacOS", "arm64")
 }
 
+// TestApplyClaudeHeaders_DoesNotDowngradeConfiguredBaselineOnFirstClaudeClient 验证
+// 第一个 Claude 客户端不会降低配置的基线指纹。
 func TestApplyClaudeHeaders_DoesNotDowngradeConfiguredBaselineOnFirstClaudeClient(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -211,6 +223,8 @@ func TestApplyClaudeHeaders_DoesNotDowngradeConfiguredBaselineOnFirstClaudeClien
 	assertClaudeFingerprint(t, newerClaudeReq.Header, "claude-cli/2.1.71 (external, cli)", "0.81.0", "v24.6.0", "MacOS", "arm64")
 }
 
+// TestApplyClaudeHeaders_UpgradesCachedSoftwareFingerprintWhenBaselineAdvances 验证
+// 当基线配置升级时，缓存的软件指纹也随之升级。
 func TestApplyClaudeHeaders_UpgradesCachedSoftwareFingerprintWhenBaselineAdvances(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -263,6 +277,8 @@ func TestApplyClaudeHeaders_UpgradesCachedSoftwareFingerprintWhenBaselineAdvance
 	assertClaudeFingerprint(t, thirdPartyReq.Header, "claude-cli/2.1.77 (external, cli)", "0.87.0", "v24.8.0", "MacOS", "arm64")
 }
 
+// TestApplyClaudeHeaders_LearnsOfficialFingerprintAfterCustomBaselineFallback 验证
+// 自定义基线回退后学习官方指纹的功能。
 func TestApplyClaudeHeaders_LearnsOfficialFingerprintAfterCustomBaselineFallback(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -315,6 +331,8 @@ func TestApplyClaudeHeaders_LearnsOfficialFingerprintAfterCustomBaselineFallback
 	assertClaudeFingerprint(t, postLearningThirdPartyReq.Header, "claude-cli/2.1.77 (external, cli)", "0.87.0", "v24.8.0", "MacOS", "arm64")
 }
 
+// TestResolveClaudeDeviceProfile_RechecksCacheBeforeStoringCandidate 验证在存储候选配置前
+// 重新检查缓存以避免竞态条件。
 func TestResolveClaudeDeviceProfile_RechecksCacheBeforeStoringCandidate(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -415,6 +433,8 @@ func TestResolveClaudeDeviceProfile_RechecksCacheBeforeStoringCandidate(t *testi
 	}
 }
 
+// TestApplyClaudeHeaders_ThirdPartyBaselineThenOfficialUpgradeKeepsPinnedPlatform 验证
+// 第三方基线后官方升级保留固定的平台信息。
 func TestApplyClaudeHeaders_ThirdPartyBaselineThenOfficialUpgradeKeepsPinnedPlatform(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	stabilize := true
@@ -457,6 +477,8 @@ func TestApplyClaudeHeaders_ThirdPartyBaselineThenOfficialUpgradeKeepsPinnedPlat
 	assertClaudeFingerprint(t, officialReq.Header, "claude-cli/2.1.77 (external, cli)", "0.87.0", "v24.8.0", "MacOS", "arm64")
 }
 
+// TestApplyClaudeHeaders_DisableDeviceProfileStabilization 验证禁用设备配置文件稳定化时
+// 每次请求使用客户端提供的头部值。
 func TestApplyClaudeHeaders_DisableDeviceProfileStabilization(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 
@@ -509,6 +531,8 @@ func TestApplyClaudeHeaders_DisableDeviceProfileStabilization(t *testing.T) {
 	assertClaudeFingerprint(t, lowerReq.Header, "claude-cli/2.1.61 (external, cli)", "0.73.0", "v24.2.0", "Windows", "x64")
 }
 
+// TestApplyClaudeHeaders_LegacyModePreservesConfiguredUserAgentOverrideForClaudeClients 验证在传统模式下
+// 保留通过认证属性配置的 User-Agent 覆盖值，同时使用客户端上报的其他头部值。
 func TestApplyClaudeHeaders_LegacyModePreservesConfiguredUserAgentOverrideForClaudeClients(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 
@@ -541,6 +565,8 @@ func TestApplyClaudeHeaders_LegacyModePreservesConfiguredUserAgentOverrideForCla
 	assertClaudeFingerprint(t, req.Header, "config-ua/1.0", "0.74.0", "v24.3.0", "Linux", "x64")
 }
 
+// TestApplyClaudeHeaders_LegacyModeFallsBackToRuntimeOSArchWhenMissing 验证在传统模式下
+// 当客户端未上报 OS 和 Arch 头部时，回退到配置文件中设置的运行时 OS 和 Arch 值。
 func TestApplyClaudeHeaders_LegacyModeFallsBackToRuntimeOSArchWhenMissing(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 
@@ -570,6 +596,8 @@ func TestApplyClaudeHeaders_LegacyModeFallsBackToRuntimeOSArchWhenMissing(t *tes
 	assertClaudeFingerprint(t, req.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
 }
 
+// TestApplyClaudeHeaders_UnsetStabilizationAlsoUsesLegacyRuntimeOSArchFallback 验证当设备配置文件稳定化设置
+// 未明确配置（nil）时，也使用与传统模式相同的运行时 OS/Arch 回退逻辑。
 func TestApplyClaudeHeaders_UnsetStabilizationAlsoUsesLegacyRuntimeOSArchFallback(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 
@@ -597,6 +625,8 @@ func TestApplyClaudeHeaders_UnsetStabilizationAlsoUsesLegacyRuntimeOSArchFallbac
 	assertClaudeFingerprint(t, req.Header, "claude-cli/2.1.60 (external, cli)", "0.70.0", "v22.0.0", helps.MapStainlessOS(), helps.MapStainlessArch())
 }
 
+// TestClaudeDeviceProfileStabilizationEnabled_DefaultFalse 验证设备配置文件稳定化功能
+// 在 nil 配置或未设置 StabilizeDeviceProfile 时默认为禁用状态。
 func TestClaudeDeviceProfileStabilizationEnabled_DefaultFalse(t *testing.T) {
 	if helps.ClaudeDeviceProfileStabilizationEnabled(nil) {
 		t.Fatal("expected nil config to default to disabled stabilization")
@@ -606,6 +636,7 @@ func TestClaudeDeviceProfileStabilizationEnabled_DefaultFalse(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix 测试工具前缀的添加功能。
 func TestApplyClaudeToolPrefix(t *testing.T) {
 	input := []byte(`{"tools":[{"name":"alpha"},{"name":"proxy_bravo"}],"tool_choice":{"type":"tool","name":"charlie"},"messages":[{"role":"assistant","content":[{"type":"tool_use","name":"delta","id":"t1","input":{}}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
@@ -624,6 +655,7 @@ func TestApplyClaudeToolPrefix(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_WithToolReference 验证 tool_reference 类型的内容块中的 tool_name 也被正确添加前缀。
 func TestApplyClaudeToolPrefix_WithToolReference(t *testing.T) {
 	input := []byte(`{"tools":[{"name":"alpha"}],"messages":[{"role":"user","content":[{"type":"tool_reference","tool_name":"beta"},{"type":"tool_reference","tool_name":"proxy_gamma"}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
@@ -636,6 +668,8 @@ func TestApplyClaudeToolPrefix_WithToolReference(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_SkipsBuiltinTools 验证内置工具（如 web_search）不被添加前缀，
+// 而自定义工具被正确添加前缀。
 func TestApplyClaudeToolPrefix_SkipsBuiltinTools(t *testing.T) {
 	input := []byte(`{"tools":[{"type":"web_search_20250305","name":"web_search"},{"name":"my_custom_tool","input_schema":{"type":"object"}}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
@@ -648,6 +682,8 @@ func TestApplyClaudeToolPrefix_SkipsBuiltinTools(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_BuiltinToolSkipped 验证内置工具在工具定义和消息中的 tool_use 引用中均不被添加前缀，
+// 而自定义工具在两处均被正确添加前缀。
 func TestApplyClaudeToolPrefix_BuiltinToolSkipped(t *testing.T) {
 	body := []byte(`{
 		"tools": [
@@ -677,6 +713,8 @@ func TestApplyClaudeToolPrefix_BuiltinToolSkipped(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_KnownBuiltinInHistoryOnly 验证当已知内置工具仅出现在消息历史中
+// 而不在工具定义中时，消息中的引用保持不加前缀，工具定义中的自定义工具被添加前缀。
 func TestApplyClaudeToolPrefix_KnownBuiltinInHistoryOnly(t *testing.T) {
 	body := []byte(`{
 		"tools": [
@@ -698,6 +736,7 @@ func TestApplyClaudeToolPrefix_KnownBuiltinInHistoryOnly(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_CustomToolsPrefixed 验证自定义工具在工具定义和消息中的 tool_use 引用中均被添加前缀。
 func TestApplyClaudeToolPrefix_CustomToolsPrefixed(t *testing.T) {
 	body := []byte(`{
 		"tools": [{"name": "Read"}, {"name": "Write"}],
@@ -724,6 +763,7 @@ func TestApplyClaudeToolPrefix_CustomToolsPrefixed(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_ToolChoiceBuiltin 验证 tool_choice 中引用的内置工具不被添加前缀。
 func TestApplyClaudeToolPrefix_ToolChoiceBuiltin(t *testing.T) {
 	body := []byte(`{
 		"tools": [
@@ -739,6 +779,9 @@ func TestApplyClaudeToolPrefix_ToolChoiceBuiltin(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_KnownFallbackBuiltinsRemainUnprefixed 验证所有已知的回退内置工具
+// （web_search、code_execution、text_editor、computer）在 tool_choice、tool_use、tool_reference
+// 和 tool_result 中均不被添加前缀。
 func TestApplyClaudeToolPrefix_KnownFallbackBuiltinsRemainUnprefixed(t *testing.T) {
 	for _, builtin := range []string{"web_search", "code_execution", "text_editor", "computer"} {
 		t.Run(builtin, func(t *testing.T) {
@@ -768,6 +811,7 @@ func TestApplyClaudeToolPrefix_KnownFallbackBuiltinsRemainUnprefixed(t *testing.
 	}
 }
 
+// TestStripClaudeToolPrefixFromResponse 测试从响应中移除工具前缀的功能。
 func TestStripClaudeToolPrefixFromResponse(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_use","name":"proxy_alpha","id":"t1","input":{}},{"type":"tool_use","name":"bravo","id":"t2","input":{}}]}`)
 	out := stripClaudeToolPrefixFromResponse(input, "proxy_")
@@ -780,6 +824,7 @@ func TestStripClaudeToolPrefixFromResponse(t *testing.T) {
 	}
 }
 
+// TestStripClaudeToolPrefixFromResponse_WithToolReference 验证从响应中移除 tool_reference 类型内容块的工具前缀。
 func TestStripClaudeToolPrefixFromResponse_WithToolReference(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_reference","tool_name":"proxy_alpha"},{"type":"tool_reference","tool_name":"bravo"}]}`)
 	out := stripClaudeToolPrefixFromResponse(input, "proxy_")
@@ -792,6 +837,7 @@ func TestStripClaudeToolPrefixFromResponse_WithToolReference(t *testing.T) {
 	}
 }
 
+// TestStripClaudeToolPrefixFromStreamLine 验证从 SSE 流式行中移除 tool_use 类型内容块的工具前缀。
 func TestStripClaudeToolPrefixFromStreamLine(t *testing.T) {
 	line := []byte(`data: {"type":"content_block_start","content_block":{"type":"tool_use","name":"proxy_alpha","id":"t1"},"index":0}`)
 	out := stripClaudeToolPrefixFromStreamLine(line, "proxy_")
@@ -805,6 +851,7 @@ func TestStripClaudeToolPrefixFromStreamLine(t *testing.T) {
 	}
 }
 
+// TestStripClaudeToolPrefixFromStreamLine_WithToolReference 验证从 SSE 流式行中移除 tool_reference 类型内容块的工具前缀。
 func TestStripClaudeToolPrefixFromStreamLine_WithToolReference(t *testing.T) {
 	line := []byte(`data: {"type":"content_block_start","content_block":{"type":"tool_reference","tool_name":"proxy_beta"},"index":0}`)
 	out := stripClaudeToolPrefixFromStreamLine(line, "proxy_")
@@ -818,6 +865,7 @@ func TestStripClaudeToolPrefixFromStreamLine_WithToolReference(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_NestedToolReference 验证嵌套在 tool_result 中的 tool_reference 的 tool_name 被正确添加前缀。
 func TestApplyClaudeToolPrefix_NestedToolReference(t *testing.T) {
 	input := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_123","content":[{"type":"tool_reference","tool_name":"mcp__nia__manage_resource"}]}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
@@ -827,6 +875,8 @@ func TestApplyClaudeToolPrefix_NestedToolReference(t *testing.T) {
 	}
 }
 
+// TestClaudeExecutor_ReusesUserIDAcrossModelsWhenCacheEnabled 验证启用缓存时
+// 跨模型复用相同的 user_id。
 func TestClaudeExecutor_ReusesUserIDAcrossModelsWhenCacheEnabled(t *testing.T) {
 	var userIDs []string
 	var requestModels []string
@@ -893,6 +943,7 @@ func TestClaudeExecutor_ReusesUserIDAcrossModelsWhenCacheEnabled(t *testing.T) {
 	t.Logf("✓ End-to-end test passed: Same user_id (%s) was used for both models", userIDs[0])
 }
 
+// TestClaudeExecutor_GeneratesNewUserIDByDefault 验证默认情况下每次请求生成新的 user_id。
 func TestClaudeExecutor_GeneratesNewUserIDByDefault(t *testing.T) {
 	var userIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -936,6 +987,8 @@ func TestClaudeExecutor_GeneratesNewUserIDByDefault(t *testing.T) {
 	}
 }
 
+// TestClaudeExecutor_ExecuteOpenAINonStreamRejectsEmptyClaudeStream 验证 OpenAI 非流式请求
+// 拒绝空的 Claude 流式响应。
 func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsEmptyClaudeStream(t *testing.T) {
 	_, err := executeOpenAIChatCompletionThroughClaude(t, "")
 	if err == nil {
@@ -947,6 +1000,8 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsEmptyClaudeStream(t *testin
 	}
 }
 
+// TestClaudeExecutor_ExecuteOpenAINonStreamRejectsClaudeErrorEvent 验证 OpenAI 非流式请求
+// 在收到 Claude 上游错误事件时返回 502 错误。
 func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsClaudeErrorEvent(t *testing.T) {
 	body := `data: {"type":"error","error":{"type":"overloaded_error","message":"upstream overloaded"}}` + "\n"
 	_, err := executeOpenAIChatCompletionThroughClaude(t, body)
@@ -959,6 +1014,8 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsClaudeErrorEvent(t *testing
 	}
 }
 
+// TestClaudeExecutor_ExecuteOpenAINonStreamRejectsIncompleteClaudeStream 验证 OpenAI 非流式请求
+// 在 Claude 流式响应未完成（缺少 message_delta 事件）时返回 502 错误。
 func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsIncompleteClaudeStream(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-sonnet-20241022"}}`,
@@ -976,6 +1033,8 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsIncompleteClaudeStream(t *t
 	}
 }
 
+// TestClaudeExecutor_ExecuteOpenAINonStreamConvertsValidClaudeStream 验证 OpenAI 非流式请求
+// 将有效的 Claude 流式响应正确转换为 OpenAI 格式的聊天完成响应，包括 ID、模型、内容和用量信息。
 func TestClaudeExecutor_ExecuteOpenAINonStreamConvertsValidClaudeStream(t *testing.T) {
 	body := strings.Join([]string{
 		`event: message_start`,
@@ -1007,6 +1066,7 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamConvertsValidClaudeStream(t *testi
 	}
 }
 
+// executeOpenAIChatCompletionThroughClaude 通过 Claude 执行器执行 OpenAI 格式的聊天完成请求。
 func executeOpenAIChatCompletionThroughClaude(t *testing.T, upstreamBody string) (cliproxyexecutor.Response, error) {
 	t.Helper()
 
@@ -1031,6 +1091,7 @@ func executeOpenAIChatCompletionThroughClaude(t *testing.T, upstreamBody string)
 	})
 }
 
+// assertStatusErr 断言错误包含预期的状态码。
 func assertStatusErr(t *testing.T, err error, want int) {
 	t.Helper()
 
@@ -1043,6 +1104,8 @@ func assertStatusErr(t *testing.T, err error, want int) {
 	}
 }
 
+// TestStripClaudeToolPrefixFromResponse_NestedToolReference 验证从响应中移除嵌套在 tool_result
+// 中的 tool_reference 的工具前缀。
 func TestStripClaudeToolPrefixFromResponse_NestedToolReference(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":[{"type":"tool_reference","tool_name":"proxy_mcp__nia__manage_resource"}]}]}`)
 	out := stripClaudeToolPrefixFromResponse(input, "proxy_")
@@ -1052,8 +1115,10 @@ func TestStripClaudeToolPrefixFromResponse_NestedToolReference(t *testing.T) {
 	}
 }
 
+// TestApplyClaudeToolPrefix_NestedToolReferenceWithStringContent 验证当 tool_result 的 content 为字符串时
+// 不会被误处理为 tool_reference 数组，保持原样不变。
 func TestApplyClaudeToolPrefix_NestedToolReferenceWithStringContent(t *testing.T) {
-	// tool_result.content can be a string - should not be processed
+	// tool_result.content 可以是字符串 - 不应被处理
 	input := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"plain string result"}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
 	got := gjson.GetBytes(out, "messages.0.content.0.content").String()
@@ -1062,6 +1127,8 @@ func TestApplyClaudeToolPrefix_NestedToolReferenceWithStringContent(t *testing.T
 	}
 }
 
+// TestApplyClaudeToolPrefix_SkipsBuiltinToolReference 验证嵌套在 tool_result 中的内置工具
+// tool_reference 不被添加前缀。
 func TestApplyClaudeToolPrefix_SkipsBuiltinToolReference(t *testing.T) {
 	input := []byte(`{"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"tool_reference","tool_name":"web_search"}]}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")
@@ -1071,6 +1138,8 @@ func TestApplyClaudeToolPrefix_SkipsBuiltinToolReference(t *testing.T) {
 	}
 }
 
+// TestNormalizeCacheControlTTL_DowngradesLaterOneHourBlocks 验证当存在默认 5 分钟 TTL 的缓存块时，
+// 后续的 1 小时 TTL 块被降级（移除 TTL 字段），但前面的 1 小时块保持不变。
 func TestNormalizeCacheControlTTL_DowngradesLaterOneHourBlocks(t *testing.T) {
 	payload := []byte(`{
 		"tools": [{"name":"t1","cache_control":{"type":"ephemeral","ttl":"1h"}}],
@@ -1088,6 +1157,8 @@ func TestNormalizeCacheControlTTL_DowngradesLaterOneHourBlocks(t *testing.T) {
 	}
 }
 
+// TestNormalizeCacheControlTTL_PreservesOriginalBytesWhenNoChange 验证当不需要 TTL 规范化时
+// 输出与输入字节完全相同，包括 HTML 特殊字符的转义行为。
 func TestNormalizeCacheControlTTL_PreservesOriginalBytesWhenNoChange(t *testing.T) {
 	// Payload where no TTL normalization is needed (all blocks use 1h with no
 	// preceding 5m block). The text intentionally contains HTML chars (<, >, &)
@@ -1101,6 +1172,8 @@ func TestNormalizeCacheControlTTL_PreservesOriginalBytesWhenNoChange(t *testing.
 	}
 }
 
+// TestNormalizeCacheControlTTL_PreservesKeyOrderWhenModified 验证 TTL 规范化修改 JSON 时
+// 保持顶层键的原始顺序不变。
 func TestNormalizeCacheControlTTL_PreservesKeyOrderWhenModified(t *testing.T) {
 	payload := []byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"u1","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"name":"t1","cache_control":{"type":"ephemeral"}}],"system":[{"type":"text","text":"s1","cache_control":{"type":"ephemeral"}}]}`)
 
@@ -1123,6 +1196,8 @@ func TestNormalizeCacheControlTTL_PreservesKeyOrderWhenModified(t *testing.T) {
 	}
 }
 
+// TestEnforceCacheControlLimit_StripsNonLastToolBeforeMessages 验证当缓存控制块数量超过限制时
+// 优先移除非最后一个工具的 cache_control，同时保留最后一个工具和所有消息的 cache_control。
 func TestEnforceCacheControlLimit_StripsNonLastToolBeforeMessages(t *testing.T) {
 	payload := []byte(`{
 		"tools": [
@@ -1152,6 +1227,8 @@ func TestEnforceCacheControlLimit_StripsNonLastToolBeforeMessages(t *testing.T) 
 	}
 }
 
+// TestEnforceCacheControlLimit_PreservesKeyOrderWhenModified 验证缓存控制限制修改 JSON 时
+// 保持顶层键的原始顺序不变。
 func TestEnforceCacheControlLimit_PreservesKeyOrderWhenModified(t *testing.T) {
 	payload := []byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"u1","cache_control":{"type":"ephemeral"}},{"type":"text","text":"u2","cache_control":{"type":"ephemeral"}}]}],"tools":[{"name":"t1","cache_control":{"type":"ephemeral"}},{"name":"t2","cache_control":{"type":"ephemeral"}}],"system":[{"type":"text","text":"s1","cache_control":{"type":"ephemeral"}}]}`)
 
@@ -1177,6 +1254,8 @@ func TestEnforceCacheControlLimit_PreservesKeyOrderWhenModified(t *testing.T) {
 	}
 }
 
+// TestEnforceCacheControlLimit_ToolOnlyPayloadStillRespectsLimit 验证仅包含工具的负载
+// 在缓存控制块数量超过限制时也能正确移除多余的 cache_control，保留最后一个工具的 cache_control。
 func TestEnforceCacheControlLimit_ToolOnlyPayloadStillRespectsLimit(t *testing.T) {
 	payload := []byte(`{
 		"tools": [
@@ -1201,6 +1280,8 @@ func TestEnforceCacheControlLimit_ToolOnlyPayloadStillRespectsLimit(t *testing.T
 	}
 }
 
+// TestClaudeExecutor_CountTokens_AppliesCacheControlGuards 验证 CountTokens 方法在发送请求前
+// 正确应用缓存控制保护：限制 cache_control 块数量不超过 4 个，且 TTL 顺序无违规。
 func TestClaudeExecutor_CountTokens_AppliesCacheControlGuards(t *testing.T) {
 	var seenBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1251,6 +1332,7 @@ func TestClaudeExecutor_CountTokens_AppliesCacheControlGuards(t *testing.T) {
 	}
 }
 
+// hasTTLOrderingViolation 检查负载中是否存在 TTL 顺序违规。
 func hasTTLOrderingViolation(payload []byte) bool {
 	seen5m := false
 	violates := false
@@ -1302,6 +1384,8 @@ func hasTTLOrderingViolation(payload []byte) bool {
 	return violates
 }
 
+// TestClaudeExecutor_Execute_InvalidGzipErrorBodyReturnsDecodeMessage 验证非流式执行在收到
+// 无效 gzip 压缩的错误响应体时返回解码失败错误信息。
 func TestClaudeExecutor_Execute_InvalidGzipErrorBodyReturnsDecodeMessage(t *testing.T) {
 	testClaudeExecutorInvalidCompressedErrorBody(t, func(executor *ClaudeExecutor, auth *cliproxyauth.Auth, payload []byte) error {
 		_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
@@ -1312,6 +1396,8 @@ func TestClaudeExecutor_Execute_InvalidGzipErrorBodyReturnsDecodeMessage(t *test
 	})
 }
 
+// TestClaudeExecutor_ExecuteStream_InvalidGzipErrorBodyReturnsDecodeMessage 验证流式执行在收到
+// 无效 gzip 压缩的错误响应体时返回解码失败错误信息。
 func TestClaudeExecutor_ExecuteStream_InvalidGzipErrorBodyReturnsDecodeMessage(t *testing.T) {
 	testClaudeExecutorInvalidCompressedErrorBody(t, func(executor *ClaudeExecutor, auth *cliproxyauth.Auth, payload []byte) error {
 		_, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
@@ -1322,6 +1408,8 @@ func TestClaudeExecutor_ExecuteStream_InvalidGzipErrorBodyReturnsDecodeMessage(t
 	})
 }
 
+// TestClaudeExecutor_CountTokens_InvalidGzipErrorBodyReturnsDecodeMessage 验证 CountTokens 在收到
+// 无效 gzip 压缩的错误响应体时返回解码失败错误信息。
 func TestClaudeExecutor_CountTokens_InvalidGzipErrorBodyReturnsDecodeMessage(t *testing.T) {
 	testClaudeExecutorInvalidCompressedErrorBody(t, func(executor *ClaudeExecutor, auth *cliproxyauth.Auth, payload []byte) error {
 		_, err := executor.CountTokens(context.Background(), auth, cliproxyexecutor.Request{
@@ -1332,6 +1420,7 @@ func TestClaudeExecutor_CountTokens_InvalidGzipErrorBodyReturnsDecodeMessage(t *
 	})
 }
 
+// testClaudeExecutorInvalidCompressedErrorBody 测试 Claude 执行器处理无效压缩错误体的功能。
 func testClaudeExecutorInvalidCompressedErrorBody(
 	t *testing.T,
 	invoke func(executor *ClaudeExecutor, auth *cliproxyauth.Auth, payload []byte) error,
@@ -1365,6 +1454,7 @@ func testClaudeExecutorInvalidCompressedErrorBody(
 	}
 }
 
+// TestEnsureModelMaxTokens_UsesRegisteredMaxCompletionTokens 验证使用注册的 MaxCompletionTokens 值。
 func TestEnsureModelMaxTokens_UsesRegisteredMaxCompletionTokens(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	clientID := "test-claude-max-completion-tokens-client"
@@ -1388,6 +1478,7 @@ func TestEnsureModelMaxTokens_UsesRegisteredMaxCompletionTokens(t *testing.T) {
 	}
 }
 
+// TestEnsureModelMaxTokens_DefaultsMissingValue 验证缺少值时使用默认的 max_tokens。
 func TestEnsureModelMaxTokens_DefaultsMissingValue(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	clientID := "test-claude-default-max-tokens-client"
@@ -1410,6 +1501,7 @@ func TestEnsureModelMaxTokens_DefaultsMissingValue(t *testing.T) {
 	}
 }
 
+// TestEnsureModelMaxTokens_PreservesExplicitValue 验证显式设置的 max_tokens 值被保留。
 func TestEnsureModelMaxTokens_PreservesExplicitValue(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	clientID := "test-claude-preserve-max-tokens-client"
@@ -1433,6 +1525,7 @@ func TestEnsureModelMaxTokens_PreservesExplicitValue(t *testing.T) {
 	}
 }
 
+// TestEnsureModelMaxTokens_SkipsUnregisteredModel 验证未注册的模型不会设置 max_tokens。
 func TestEnsureModelMaxTokens_SkipsUnregisteredModel(t *testing.T) {
 	input := []byte(`{"model":"test-claude-unregistered-model","messages":[{"role":"user","content":"hi"}]}`)
 	out := ensureModelMaxTokens(input, "test-claude-unregistered-model")
@@ -1442,9 +1535,8 @@ func TestEnsureModelMaxTokens_SkipsUnregisteredModel(t *testing.T) {
 	}
 }
 
-// TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding verifies that streaming
-// requests use Accept-Encoding: identity so the upstream cannot respond with a
-// compressed SSE body that would silently break the line scanner.
+// TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding 验证流式请求使用
+// Accept-Encoding: identity 防止上游压缩 SSE 响应体。
 func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 	var gotEncoding, gotAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1485,9 +1577,8 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 	}
 }
 
-// TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding verifies that non-streaming
-// requests keep the full accept-encoding to allow response compression (which
-// decodeResponseBody handles correctly).
+// TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding 验证非流式请求使用完整的
+// accept-encoding 允许响应压缩。
 func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 	var gotEncoding, gotAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1523,9 +1614,8 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 	}
 }
 
-// TestClaudeExecutor_ExecuteStream_GzipSuccessBodyDecoded verifies that a streaming
-// HTTP 200 response with Content-Encoding: gzip is correctly decompressed before
-// the line scanner runs, so SSE chunks are not silently dropped.
+// TestClaudeExecutor_ExecuteStream_GzipSuccessBodyDecoded 验证流式 HTTP 200 响应在
+// Content-Encoding: gzip 时被正确解压，确保 SSE 块不会被静默丢弃。
 func TestClaudeExecutor_ExecuteStream_GzipSuccessBodyDecoded(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -1573,8 +1663,8 @@ func TestClaudeExecutor_ExecuteStream_GzipSuccessBodyDecoded(t *testing.T) {
 	}
 }
 
-// TestDecodeResponseBody_MagicByteGzipNoHeader verifies that decodeResponseBody
-// detects gzip-compressed content via magic bytes even when Content-Encoding is absent.
+// TestDecodeResponseBody_MagicByteGzipNoHeader 验证 decodeResponseBody 通过魔术字节检测
+// gzip 压缩内容，即使 Content-Encoding 头部缺失也能正确解压。
 func TestDecodeResponseBody_MagicByteGzipNoHeader(t *testing.T) {
 	const plaintext = "data: {\"type\":\"message_stop\"}\n"
 
@@ -1599,8 +1689,8 @@ func TestDecodeResponseBody_MagicByteGzipNoHeader(t *testing.T) {
 	}
 }
 
-// TestDecodeResponseBody_MagicByteZstdNoHeader verifies that decodeResponseBody
-// detects zstd-compressed content via magic bytes even when Content-Encoding is absent.
+// TestDecodeResponseBody_MagicByteZstdNoHeader 验证 decodeResponseBody 通过魔术字节检测
+// zstd 压缩内容，即使 Content-Encoding 头部缺失也能正确解压。
 func TestDecodeResponseBody_MagicByteZstdNoHeader(t *testing.T) {
 	const plaintext = "data: {\"type\":\"message_stop\"}\n"
 
@@ -1628,8 +1718,8 @@ func TestDecodeResponseBody_MagicByteZstdNoHeader(t *testing.T) {
 	}
 }
 
-// TestDecodeResponseBody_PlainTextNoHeader verifies that decodeResponseBody returns
-// plain text untouched when Content-Encoding is absent and no magic bytes match.
+// TestDecodeResponseBody_PlainTextNoHeader 验证当 Content-Encoding 缺失且无魔术字节匹配时
+// 纯文本内容原样返回，不做任何处理。
 func TestDecodeResponseBody_PlainTextNoHeader(t *testing.T) {
 	const plaintext = "data: {\"type\":\"message_stop\"}\n"
 	rc := io.NopCloser(strings.NewReader(plaintext))
@@ -1648,10 +1738,9 @@ func TestDecodeResponseBody_PlainTextNoHeader(t *testing.T) {
 	}
 }
 
-// TestClaudeExecutor_ExecuteStream_GzipNoContentEncodingHeader verifies the full
-// pipeline: when the upstream returns a gzip-compressed SSE body WITHOUT setting
-// Content-Encoding (a misbehaving upstream), the magic-byte sniff in
-// decodeResponseBody still decompresses it, so chunks reach the caller.
+// TestClaudeExecutor_ExecuteStream_GzipNoContentEncodingHeader 验证完整管道：当上游返回
+// gzip 压缩的 SSE 体但未设置 Content-Encoding（异常上游）时，decodeResponseBody 的魔术字节嗅探
+// 仍能解压，使块能到达调用者。
 func TestClaudeExecutor_ExecuteStream_GzipNoContentEncodingHeader(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -1699,10 +1788,9 @@ func TestClaudeExecutor_ExecuteStream_GzipNoContentEncodingHeader(t *testing.T) 
 	}
 }
 
-// TestClaudeExecutor_Execute_GzipErrorBodyNoContentEncodingHeader verifies that the
-// error path (4xx) correctly decompresses a gzip body even when the upstream omits
-// the Content-Encoding header.  This closes the gap left by PR #1771, which only
-// fixed header-declared compression on the error path.
+// TestClaudeExecutor_Execute_GzipErrorBodyNoContentEncodingHeader 验证非流式执行的错误路径（4xx）
+// 在上游未设置 Content-Encoding 头部时仍能正确解压 gzip 压缩的错误响应体。
+// 这修复了 PR #1771 遗留的问题，该 PR 仅修复了声明式压缩的错误路径。
 func TestClaudeExecutor_Execute_GzipErrorBodyNoContentEncodingHeader(t *testing.T) {
 	const errJSON = `{"type":"error","error":{"type":"invalid_request_error","message":"test error"}}`
 
@@ -1741,9 +1829,8 @@ func TestClaudeExecutor_Execute_GzipErrorBodyNoContentEncodingHeader(t *testing.
 	}
 }
 
-// TestClaudeExecutor_ExecuteStream_GzipErrorBodyNoContentEncodingHeader verifies
-// the same for the streaming executor: 4xx gzip body without Content-Encoding is
-// decoded and the error message is readable.
+// TestClaudeExecutor_ExecuteStream_GzipErrorBodyNoContentEncodingHeader 验证流式执行器的相同场景：
+// 4xx gzip 错误体在未设置 Content-Encoding 时也能被正确解码并返回可读的错误信息。
 func TestClaudeExecutor_ExecuteStream_GzipErrorBodyNoContentEncodingHeader(t *testing.T) {
 	const errJSON = `{"type":"error","error":{"type":"invalid_request_error","message":"stream test error"}}`
 
@@ -1782,8 +1869,8 @@ func TestClaudeExecutor_ExecuteStream_GzipErrorBodyNoContentEncodingHeader(t *te
 	}
 }
 
-// TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity verifies that the
-// streaming executor enforces Accept-Encoding: identity regardless of auth.Attributes override.
+// TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity 验证流式执行器
+// 强制使用 Accept-Encoding: identity，即使 auth.Attributes 中设置了覆盖值也无法绕过。
 func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity(t *testing.T) {
 	var gotEncoding string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1821,6 +1908,7 @@ func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity
 	}
 }
 
+// expectedClaudeCodeStaticPrompt 返回预期的 Claude Code 静态提示内容。
 func expectedClaudeCodeStaticPrompt() string {
 	return strings.Join([]string{
 		helps.ClaudeCodeIntro,
@@ -1831,6 +1919,7 @@ func expectedClaudeCodeStaticPrompt() string {
 	}, "\n\n")
 }
 
+// expectedForwardedSystemReminder 返回预期的转发系统提醒格式。
 func expectedForwardedSystemReminder(text string) string {
 	return fmt.Sprintf(`<system-reminder>
 As you answer the user's questions, you can use the following context from the system:
@@ -1841,7 +1930,8 @@ IMPORTANT: this context may or may not be relevant to your tasks. You should not
 `, text)
 }
 
-// Test case 1: String system prompt is preserved by forwarding it to the first user message
+// TestCheckSystemInstructionsWithMode_StringSystemPreserved 验证字符串系统提示被保留
+// 并转发到第一个用户消息中。
 func TestCheckSystemInstructionsWithMode_StringSystemPreserved(t *testing.T) {
 	payload := []byte(`{"system":"You are a helpful assistant.","messages":[{"role":"user","content":"hi"}]}`)
 
@@ -1875,7 +1965,7 @@ func TestCheckSystemInstructionsWithMode_StringSystemPreserved(t *testing.T) {
 	}
 }
 
-// Test case 2: Strict mode keeps only the injected Claude Code system blocks
+// TestCheckSystemInstructionsWithMode_StringSystemStrict 验证严格模式下仅保留注入的 Claude Code 系统块。
 func TestCheckSystemInstructionsWithMode_StringSystemStrict(t *testing.T) {
 	payload := []byte(`{"system":"You are a helpful assistant.","messages":[{"role":"user","content":"hi"}]}`)
 
@@ -1890,7 +1980,8 @@ func TestCheckSystemInstructionsWithMode_StringSystemStrict(t *testing.T) {
 	}
 }
 
-// Test case 3: Empty string system prompt does not alter the first user message
+// TestCheckSystemInstructionsWithMode_EmptyStringSystemIgnored 验证空字符串系统提示
+// 不会修改第一个用户消息。
 func TestCheckSystemInstructionsWithMode_EmptyStringSystemIgnored(t *testing.T) {
 	payload := []byte(`{"system":"","messages":[{"role":"user","content":"hi"}]}`)
 
@@ -1905,7 +1996,8 @@ func TestCheckSystemInstructionsWithMode_EmptyStringSystemIgnored(t *testing.T) 
 	}
 }
 
-// Test case 4: Array system prompt is forwarded to the first user message
+// TestCheckSystemInstructionsWithMode_ArraySystemStillWorks 验证数组系统提示
+// 被转发到第一个用户消息。
 func TestCheckSystemInstructionsWithMode_ArraySystemStillWorks(t *testing.T) {
 	payload := []byte(`{"system":[{"type":"text","text":"Be concise."}],"messages":[{"role":"user","content":"hi"}]}`)
 
@@ -1923,7 +2015,8 @@ func TestCheckSystemInstructionsWithMode_ArraySystemStillWorks(t *testing.T) {
 	}
 }
 
-// Test case 5: Special characters in string system prompt survive forwarding
+// TestCheckSystemInstructionsWithMode_StringWithSpecialChars 验证包含特殊字符的字符串系统提示
+// 在转发过程中保持不变。
 func TestCheckSystemInstructionsWithMode_StringWithSpecialChars(t *testing.T) {
 	payload := []byte(`{"system":"Use <xml> tags & \"quotes\" in output.","messages":[{"role":"user","content":"hi"}]}`)
 
@@ -1938,6 +2031,8 @@ func TestCheckSystemInstructionsWithMode_StringWithSpecialChars(t *testing.T) {
 	}
 }
 
+// TestClaudeExecutor_ExperimentalCCHSigningDisabledByDefaultKeepsLegacyHeader 验证
+// 默认禁用 CCH 签名时保留遗留的计费头。
 func TestClaudeExecutor_ExperimentalCCHSigningDisabledByDefaultKeepsLegacyHeader(t *testing.T) {
 	var seenBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1975,6 +2070,8 @@ func TestClaudeExecutor_ExperimentalCCHSigningDisabledByDefaultKeepsLegacyHeader
 	}
 }
 
+// TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody 验证启用 CCH 签名时
+// 最终请求体被正确签名。
 func TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody(t *testing.T) {
 	var seenBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2026,6 +2123,8 @@ func TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody(t *testing.T) 
 	}
 }
 
+// TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmitted 验证
+// 省略模式时保留配置的严格模式和敏感词设置。
 func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmitted(t *testing.T) {
 	cfg := &config.Config{
 		ClaudeKey: []config.ClaudeKey{{
@@ -2053,6 +2152,8 @@ func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmi
 	}
 }
 
+// TestNormalizeClaudeTemperatureForThinking_AdaptiveCoercesToOne 验证自适应思考模式下
+// 温度被强制设为 1。
 func TestNormalizeClaudeTemperatureForThinking_AdaptiveCoercesToOne(t *testing.T) {
 	payload := []byte(`{"temperature":0,"thinking":{"type":"adaptive"},"output_config":{"effort":"max"}}`)
 	out := normalizeClaudeTemperatureForThinking(payload)
@@ -2062,6 +2163,7 @@ func TestNormalizeClaudeTemperatureForThinking_AdaptiveCoercesToOne(t *testing.T
 	}
 }
 
+// TestNormalizeClaudeTemperatureForThinking_EnabledCoercesToOne 验证启用思考模式时温度被强制设为 1。
 func TestNormalizeClaudeTemperatureForThinking_EnabledCoercesToOne(t *testing.T) {
 	payload := []byte(`{"temperature":0.2,"thinking":{"type":"enabled","budget_tokens":2048}}`)
 	out := normalizeClaudeTemperatureForThinking(payload)
@@ -2071,6 +2173,8 @@ func TestNormalizeClaudeTemperatureForThinking_EnabledCoercesToOne(t *testing.T)
 	}
 }
 
+// TestNormalizeClaudeTemperatureForThinking_NoThinkingLeavesTemperatureAlone 验证无思考模式时
+// 温度保持不变。
 func TestNormalizeClaudeTemperatureForThinking_NoThinkingLeavesTemperatureAlone(t *testing.T) {
 	payload := []byte(`{"temperature":0,"messages":[{"role":"user","content":"hi"}]}`)
 	out := normalizeClaudeTemperatureForThinking(payload)
@@ -2080,6 +2184,8 @@ func TestNormalizeClaudeTemperatureForThinking_NoThinkingLeavesTemperatureAlone(
 	}
 }
 
+// TestNormalizeClaudeTemperatureForThinking_AfterForcedToolChoiceKeepsOriginalTemperature 验证
+// 当 tool_choice 强制使用工具时思考模式被移除，温度恢复为原始值。
 func TestNormalizeClaudeTemperatureForThinking_AfterForcedToolChoiceKeepsOriginalTemperature(t *testing.T) {
 	payload := []byte(`{"temperature":0,"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},"tool_choice":{"type":"any"}}`)
 	out := disableThinkingIfToolChoiceForced(payload)
@@ -2093,6 +2199,7 @@ func TestNormalizeClaudeTemperatureForThinking_AfterForcedToolChoiceKeepsOrigina
 	}
 }
 
+// TestRemapOAuthToolNames_TitleCase_NoReverseNeeded 验证 TitleCase 工具名不需要反向映射。
 func TestRemapOAuthToolNames_TitleCase_NoReverseNeeded(t *testing.T) {
 	body := []byte(`{"tools":[{"name":"Bash","description":"Run shell commands","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}}}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
 
@@ -2111,6 +2218,7 @@ func TestRemapOAuthToolNames_TitleCase_NoReverseNeeded(t *testing.T) {
 	}
 }
 
+// TestRemapOAuthToolNames_Lowercase_ReverseApplied 验证小写工具名被正确映射和反向映射。
 func TestRemapOAuthToolNames_Lowercase_ReverseApplied(t *testing.T) {
 	body := []byte(`{"tools":[{"name":"bash","description":"Run shell commands","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}}}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
 
@@ -2129,13 +2237,8 @@ func TestRemapOAuthToolNames_Lowercase_ReverseApplied(t *testing.T) {
 	}
 }
 
-// TestRemapOAuthToolNames_MixedCase_OnlyRenamedToolsReversed is the regression
-// test for a case where a single request contains both a TitleCase tool (which
-// must pass through unchanged) and a lowercase tool that we forward-rename.
-// Before the fix, triggering ANY forward rename caused the reverse pass to
-// lowercase every TitleCase tool in the response using a global reverse map,
-// corrupting tool names the client originally sent in TitleCase (notably Amp
-// CLI's `Bash`, which its registry lookup cannot find as `bash`).
+// TestRemapOAuthToolNames_MixedCase_OnlyRenamedToolsReversed 是混合大小写工具名的回归测试，
+// 验证只有被重命名的工具才会被反向映射。
 func TestRemapOAuthToolNames_MixedCase_OnlyRenamedToolsReversed(t *testing.T) {
 	body := []byte(`{"tools":[` +
 		`{"name":"Bash","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}}}},` +
@@ -2175,8 +2278,8 @@ func TestRemapOAuthToolNames_MixedCase_OnlyRenamedToolsReversed(t *testing.T) {
 	}
 }
 
-// TestReverseRemapOAuthToolNamesFromStreamLine_HonorsPerRequestMap guards the
-// SSE streaming code path against the same mixed-case bug.
+// TestReverseRemapOAuthToolNamesFromStreamLine_HonorsPerRequestMap 验证 SSE 流式代码路径
+// 正确使用每请求的映射表进行反向映射。
 func TestReverseRemapOAuthToolNamesFromStreamLine_HonorsPerRequestMap(t *testing.T) {
 	reverseMap := map[string]string{"Glob": "glob"}
 
@@ -2198,6 +2301,8 @@ func TestReverseRemapOAuthToolNamesFromStreamLine_HonorsPerRequestMap(t *testing
 	}
 }
 
+// TestPrepareClaudeOAuthToolNamesForUpstream_MixedCaseWithPrefix 验证混合大小写工具名
+// 在添加前缀时的正确处理。
 func TestPrepareClaudeOAuthToolNamesForUpstream_MixedCaseWithPrefix(t *testing.T) {
 	body := []byte(`{"tools":[` +
 		`{"name":"Bash","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}}}},` +
@@ -2226,6 +2331,8 @@ func TestPrepareClaudeOAuthToolNamesForUpstream_MixedCaseWithPrefix(t *testing.T
 	}
 }
 
+// TestRestoreClaudeOAuthToolNamesFromResponse_MixedCaseWithPrefix 验证从响应中恢复
+// 混合大小写工具名的正确处理。
 func TestRestoreClaudeOAuthToolNamesFromResponse_MixedCaseWithPrefix(t *testing.T) {
 	reverseMap := map[string]string{"Glob": "glob"}
 	resp := []byte(`{"content":[` +
@@ -2243,6 +2350,8 @@ func TestRestoreClaudeOAuthToolNamesFromResponse_MixedCaseWithPrefix(t *testing.
 	}
 }
 
+// TestRestoreClaudeOAuthToolNamesFromStreamLine_MixedCaseWithPrefix 验证从流式行中恢复
+// 混合大小写工具名的正确处理。
 func TestRestoreClaudeOAuthToolNamesFromStreamLine_MixedCaseWithPrefix(t *testing.T) {
 	reverseMap := map[string]string{"Glob": "glob"}
 

@@ -1,7 +1,13 @@
+// util - claude_model_test.go
+// 该文件包含 IsClaudeThinkingModel 函数的单元测试，验证是否能正确识别
+// Claude 思考模型（名称中包含 "thinking" 的 Claude 模型变体）。
 package util
 
 import "testing"
 
+// TestIsClaudeThinkingModel 测试各种模型名称是否能被正确分类为
+// Claude 思考模型或非思考模型，涵盖 Claude 思考模型、普通 Claude 模型、
+// 非 Claude 模型以及边界情况。
 func TestIsClaudeThinkingModel(t *testing.T) {
 	tests := []struct {
 		name     string

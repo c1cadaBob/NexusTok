@@ -1,3 +1,8 @@
+// management - auth_files.go
+// 提供认证文件管理的完整 CRUD 操作和 OAuth 认证流程。
+// 支持多种 AI 提供商的 OAuth 认证：Claude（Anthropic）、Gemini（Google）、Codex（OpenAI）、
+// xAI、Kimi 和 Antigravity。包含认证文件的上传、下载、删除、状态切换、字段编辑等功能，
+// 以及 OAuth 回调转发器、账号分组管理、Gemini CLI 项目配置等辅助功能。
 package management
 
 import (
@@ -40,29 +45,33 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// lastRefreshKeys 用于查找认证刷新时间戳的多种可能键名
 var lastRefreshKeys = []string{"last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt"}
 
+// OAuth 回调端口和 Gemini CLI 端点常量
 const (
-	anthropicCallbackPort = 54545
-	geminiCallbackPort    = 8085
-	codexCallbackPort     = 1455
-	geminiCLIEndpoint     = "https://cloudcode-pa.googleapis.com"
-	geminiCLIVersion      = "v1internal"
+	anthropicCallbackPort = 54545  // Anthropic OAuth 回调端口
+	geminiCallbackPort    = 8085   // Gemini OAuth 回调端口
+	codexCallbackPort     = 1455   // Codex OAuth 回调端口
+	geminiCLIEndpoint     = "https://cloudcode-pa.googleapis.com" // Gemini CLI API 端点
+	geminiCLIVersion      = "v1internal" // Gemini CLI API 版本
 )
 
+// callbackForwarder OAuth 回调转发器，用于将本地回调端口的请求转发到管理服务器
 type callbackForwarder struct {
-	provider string
-	server   *http.Server
-	done     chan struct{}
+	provider string       // 提供商名称
+	server   *http.Server // HTTP 服务器实例
+	done     chan struct{} // 服务器关闭信号
 }
 
 var (
-	callbackForwardersMu  sync.Mutex
-	callbackForwarders    = make(map[int]*callbackForwarder)
-	errAuthFileMustBeJSON = errors.New("auth file must be .json")
-	errAuthFileNotFound   = errors.New("auth file not found")
+	callbackForwardersMu  sync.Mutex                        // 回调转发器映射的互斥锁
+	callbackForwarders    = make(map[int]*callbackForwarder) // 按端口索引的回调转发器映射
+	errAuthFileMustBeJSON = errors.New("auth file must be .json") // 认证文件必须为 JSON 格式的错误
+	errAuthFileNotFound   = errors.New("auth file not found")     // 认证文件未找到的错误
 )
 
+// extractLastRefreshTimestamp 从认证元数据中提取最后刷新时间戳
 func extractLastRefreshTimestamp(meta map[string]any) (time.Time, bool) {
 	if len(meta) == 0 {
 		return time.Time{}, false
@@ -77,6 +86,7 @@ func extractLastRefreshTimestamp(meta map[string]any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// parseLastRefreshValue 解析各种格式的最后刷新时间值（字符串、数字、json.Number）
 func parseLastRefreshValue(v any) (time.Time, bool) {
 	switch val := v.(type) {
 	case string:
@@ -116,6 +126,7 @@ func parseLastRefreshValue(v any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// isWebUIRequest 检查请求是否来自 Web UI（通过查询参数 is_webui 判断）
 func isWebUIRequest(c *gin.Context) bool {
 	raw := strings.TrimSpace(c.Query("is_webui"))
 	if raw == "" {
@@ -129,6 +140,7 @@ func isWebUIRequest(c *gin.Context) bool {
 	}
 }
 
+// startCallbackForwarder 启动 OAuth 回调转发器，监听指定端口并将请求重定向到目标 URL
 func startCallbackForwarder(port int, provider, targetBase string) (*callbackForwarder, error) {
 	callbackForwardersMu.Lock()
 	prev := callbackForwarders[port]
@@ -189,6 +201,7 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 	return forwarder, nil
 }
 
+// stopCallbackForwarderInstance 停止指定端口的回调转发器实例
 func stopCallbackForwarderInstance(port int, forwarder *callbackForwarder) {
 	if forwarder == nil {
 		return
@@ -202,6 +215,7 @@ func stopCallbackForwarderInstance(port int, forwarder *callbackForwarder) {
 	stopForwarderInstance(port, forwarder)
 }
 
+// stopForwarderInstance 停止回调转发器实例，优雅关闭 HTTP 服务器
 func stopForwarderInstance(port int, forwarder *callbackForwarder) {
 	if forwarder == nil || forwarder.server == nil {
 		return
@@ -222,6 +236,7 @@ func stopForwarderInstance(port int, forwarder *callbackForwarder) {
 	log.Infof("callback forwarder on port %d stopped", port)
 }
 
+// managementCallbackURL 构建管理服务器的回调 URL
 func (h *Handler) managementCallbackURL(path string) (string, error) {
 	if h == nil || h.cfg == nil || h.cfg.Port <= 0 {
 		return "", fmt.Errorf("server port is not configured")
@@ -236,6 +251,7 @@ func (h *Handler) managementCallbackURL(path string) (string, error) {
 	return fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, h.cfg.Port, path), nil
 }
 
+// ListAuthFiles 列出所有认证文件，支持从认证管理器或磁盘读取
 func (h *Handler) ListAuthFiles(c *gin.Context) {
 	if h == nil {
 		c.JSON(500, gin.H{"error": "handler not initialized"})
@@ -260,7 +276,7 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 	c.JSON(200, gin.H{"files": files})
 }
 
-// GetAuthFileModels returns the models supported by a specific auth file
+// GetAuthFileModels 返回指定认证文件支持的模型列表
 func (h *Handler) GetAuthFileModels(c *gin.Context) {
 	name := c.Query("name")
 	if name == "" {
@@ -308,7 +324,7 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 	c.JSON(200, gin.H{"models": result})
 }
 
-// List auth files from disk when the auth manager is unavailable.
+// listAuthFilesFromDisk 当认证管理器不可用时从磁盘列出认证文件
 func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 	entries, err := os.ReadDir(h.cfg.AuthDir)
 	if err != nil {
@@ -361,6 +377,7 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 	c.JSON(200, gin.H{"files": files})
 }
 
+// buildAuthFileEntry 构建认证文件的列表条目，包含完整的认证状态信息
 func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if auth == nil {
 		return nil
@@ -477,6 +494,7 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	return entry
 }
 
+// authProjectID 从认证对象中提取项目 ID
 func authProjectID(auth *coreauth.Auth) string {
 	if auth == nil {
 		return ""
@@ -499,6 +517,7 @@ func authProjectID(auth *coreauth.Auth) string {
 	return ""
 }
 
+// extractCodexIDTokenClaims 从 Codex 认证中提取 ID 令牌声明
 func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	if auth == nil || auth.Metadata == nil {
 		return nil
@@ -539,6 +558,7 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	return result
 }
 
+// setAccountGroupFields 设置认证条目中的账号分组字段（支持多种命名格式）
 func setAccountGroupFields(entry gin.H, groups []string) {
 	groups = normalizeAccountGroupValues(groups)
 	if len(groups) == 0 {
@@ -550,6 +570,7 @@ func setAccountGroupFields(entry gin.H, groups []string) {
 	entry["accountGroup"] = groups[0]
 }
 
+// authAccountGroupsFromJSON 从 JSON 数据中提取账号分组
 func authAccountGroupsFromJSON(data []byte) []string {
 	return normalizeAccountGroupValues(
 		authAccountGroupsFromGJSON(gjson.GetBytes(data, "account_groups")),
@@ -559,6 +580,7 @@ func authAccountGroupsFromJSON(data []byte) []string {
 	)
 }
 
+// authAccountGroupsFromGJSON 从 gjson.Result 中提取账号分组（支持数组和字符串格式）
 func authAccountGroupsFromGJSON(result gjson.Result) []string {
 	if !result.Exists() {
 		return nil
@@ -579,6 +601,7 @@ func authAccountGroupsFromGJSON(result gjson.Result) []string {
 	return nil
 }
 
+// authAccountGroups 从认证对象的属性和元数据中提取账号分组
 func authAccountGroups(auth *coreauth.Auth) []string {
 	if auth == nil {
 		return nil
@@ -598,6 +621,7 @@ func authAccountGroups(auth *coreauth.Auth) []string {
 	return normalizeAccountGroupValues(values...)
 }
 
+// normalizeAccountGroupValues 规范化账号分组值，去重并返回唯一值列表
 func normalizeAccountGroupValues(values ...any) []string {
 	seen := make(map[string]struct{})
 	groups := make([]string, 0, len(values))
@@ -630,6 +654,7 @@ func normalizeAccountGroupValues(values ...any) []string {
 	return groups
 }
 
+// normalizeAccountGroupString 规范化单个账号分组字符串（支持 JSON 数组和换行分隔格式）
 func normalizeAccountGroupString(value string) []string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -654,6 +679,7 @@ func normalizeAccountGroupString(value string) []string {
 	return []string{strings.Join(strings.Fields(trimmed), " ")}
 }
 
+// applyAuthAccountGroups 将账号分组应用到认证对象的元数据和属性中
 func applyAuthAccountGroups(auth *coreauth.Auth, groups []string) {
 	if auth == nil {
 		return
@@ -684,6 +710,7 @@ func applyAuthAccountGroups(auth *coreauth.Auth, groups []string) {
 	auth.Attributes["account_group"] = groups[0]
 }
 
+// authEmail 从认证对象中提取邮箱地址
 func authEmail(auth *coreauth.Auth) string {
 	if auth == nil {
 		return ""
@@ -704,6 +731,7 @@ func authEmail(auth *coreauth.Auth) string {
 	return ""
 }
 
+// authAttribute 从认证对象的属性中获取指定键的值
 func authAttribute(auth *coreauth.Auth, key string) string {
 	if auth == nil || len(auth.Attributes) == 0 {
 		return ""
@@ -711,6 +739,7 @@ func authAttribute(auth *coreauth.Auth, key string) string {
 	return auth.Attributes[key]
 }
 
+// isRuntimeOnlyAuth 检查认证是否为仅运行时认证（无磁盘文件）
 func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {
 	if auth == nil || len(auth.Attributes) == 0 {
 		return false
@@ -718,6 +747,7 @@ func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {
 	return strings.EqualFold(strings.TrimSpace(auth.Attributes["runtime_only"]), "true")
 }
 
+// isUnsafeAuthFileName 检查认证文件名是否不安全（包含路径分隔符或卷名）
 func isUnsafeAuthFileName(name string) bool {
 	if strings.TrimSpace(name) == "" {
 		return true
@@ -731,7 +761,7 @@ func isUnsafeAuthFileName(name string) bool {
 	return false
 }
 
-// Download single auth file by name
+// DownloadAuthFile 按名称下载单个认证文件
 func (h *Handler) DownloadAuthFile(c *gin.Context) {
 	name := strings.TrimSpace(c.Query("name"))
 	if isUnsafeAuthFileName(name) {
@@ -756,7 +786,7 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 	c.Data(200, "application/json", data)
 }
 
-// Upload auth file: multipart or raw JSON with ?name=
+// UploadAuthFile 上传认证文件，支持 multipart 表单和原始 JSON（带 ?name= 参数）
 func (h *Handler) UploadAuthFile(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -837,7 +867,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// Delete auth files: single by name or all
+// DeleteAuthFile 删除认证文件，支持按名称删除单个或删除全部
 func (h *Handler) DeleteAuthFile(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -918,6 +948,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": len(deletedFiles), "files": deletedFiles})
 }
 
+// multipartAuthFileHeaders 从 multipart 表单中提取认证文件头列表
 func (h *Handler) multipartAuthFileHeaders(c *gin.Context) ([]*multipart.FileHeader, error) {
 	if h == nil || c == nil || c.ContentType() != "multipart/form-data" {
 		return nil, nil
@@ -943,6 +974,7 @@ func (h *Handler) multipartAuthFileHeaders(c *gin.Context) ([]*multipart.FileHea
 	return headers, nil
 }
 
+// storeUploadedAuthFile 存储上传的认证文件到磁盘
 func (h *Handler) storeUploadedAuthFile(ctx context.Context, file *multipart.FileHeader) (string, error) {
 	if file == nil {
 		return "", fmt.Errorf("no file uploaded")
@@ -967,6 +999,7 @@ func (h *Handler) storeUploadedAuthFile(ctx context.Context, file *multipart.Fil
 	return name, nil
 }
 
+// writeAuthFile 将认证数据写入文件并更新认证记录
 func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) error {
 	dst := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
 	if !filepath.IsAbs(dst) {
@@ -987,6 +1020,7 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 	return nil
 }
 
+// requestedAuthFileNamesForDelete 从请求中提取要删除的认证文件名列表
 func requestedAuthFileNamesForDelete(c *gin.Context) ([]string, error) {
 	if c == nil {
 		return nil, nil
@@ -1028,6 +1062,7 @@ func requestedAuthFileNamesForDelete(c *gin.Context) ([]string, error) {
 	return uniqueAuthFileNames(out), nil
 }
 
+// uniqueAuthFileNames 对认证文件名列表去重
 func uniqueAuthFileNames(names []string) []string {
 	if len(names) == 0 {
 		return nil
@@ -1048,6 +1083,7 @@ func uniqueAuthFileNames(names []string) []string {
 	return out
 }
 
+// deleteAuthFileByName 按名称删除认证文件，返回删除的文件名、状态码和错误
 func (h *Handler) deleteAuthFileByName(ctx context.Context, name string) (string, int, error) {
 	name = strings.TrimSpace(name)
 	if isUnsafeAuthFileName(name) {
@@ -1084,6 +1120,7 @@ func (h *Handler) deleteAuthFileByName(ctx context.Context, name string) (string
 	return filepath.Base(name), http.StatusOK, nil
 }
 
+// findAuthForDelete 查找要删除的认证对象（按 ID、文件名或路径匹配）
 func (h *Handler) findAuthForDelete(name string) *coreauth.Auth {
 	if h == nil || h.authManager == nil {
 		return nil
@@ -1110,6 +1147,7 @@ func (h *Handler) findAuthForDelete(name string) *coreauth.Auth {
 	return nil
 }
 
+// authIDForPath 根据文件路径生成认证 ID（在 Windows 上规范化大小写以避免重复条目）
 func (h *Handler) authIDForPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -1146,6 +1184,7 @@ func (h *Handler) authIDForPath(path string) string {
 	return id
 }
 
+// registerAuthFromFile 从文件注册认证记录到认证管理器
 func (h *Handler) registerAuthFromFile(ctx context.Context, path string, data []byte) error {
 	if h.authManager == nil {
 		return nil
@@ -1157,6 +1196,7 @@ func (h *Handler) registerAuthFromFile(ctx context.Context, path string, data []
 	return h.upsertAuthRecord(ctx, auth)
 }
 
+// buildAuthFromFileData 从文件路径和数据构建认证对象
 func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Auth, error) {
 	if path == "" {
 		return nil, fmt.Errorf("auth path is empty")
@@ -1218,6 +1258,7 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	return auth, nil
 }
 
+// upsertAuthRecord 更新或插入认证记录到认证管理器
 func (h *Handler) upsertAuthRecord(ctx context.Context, auth *coreauth.Auth) error {
 	if h == nil || h.authManager == nil || auth == nil {
 		return nil
@@ -1231,7 +1272,7 @@ func (h *Handler) upsertAuthRecord(ctx context.Context, auth *coreauth.Auth) err
 	return err
 }
 
-// PatchAuthFileStatus toggles the disabled state of an auth file
+// PatchAuthFileStatus 切换认证文件的禁用状态
 func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -1297,7 +1338,7 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "disabled": *req.Disabled})
 }
 
-// PatchAuthFileFields updates editable fields (prefix, proxy_url, headers, priority, note, account_groups) of an auth file.
+// PatchAuthFileFields 更新认证文件的可编辑字段（prefix、proxy_url、headers、priority、note、account_groups）
 func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -1505,6 +1546,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// disableAuth 禁用指定 ID 的认证
 func (h *Handler) disableAuth(ctx context.Context, id string) {
 	if h == nil || h.authManager == nil {
 		return
@@ -1534,6 +1576,7 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 	}
 }
 
+// deleteTokenRecord 删除指定路径的令牌记录
 func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("auth path is empty")
@@ -1545,6 +1588,7 @@ func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
 	return store.Delete(ctx, path)
 }
 
+// tokenStoreWithBaseDir 获取带有基础目录的令牌存储实例
 func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
 	if h == nil {
 		return nil
@@ -1562,6 +1606,7 @@ func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
 	return store
 }
 
+// saveTokenRecord 保存认证记录到令牌存储
 func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (string, error) {
 	if record == nil {
 		return "", fmt.Errorf("token record is nil")
@@ -1578,6 +1623,9 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 	return store.Save(ctx, record)
 }
 
+// RequestAnthropicToken 发起 Anthropic（Claude）OAuth 认证流程，
+// 生成 PKCE 代码和授权 URL，启动回调转发器（Web UI 模式），
+// 并在后台协程中等待回调、交换令牌并保存认证记录
 func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -1723,6 +1771,8 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// RequestGeminiCLIToken 发起 Gemini CLI OAuth 认证流程，
+// 使用 Google OAuth2 配置生成授权 URL，支持项目 ID 自动发现和全项目注册
 func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -1982,6 +2032,8 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// RequestCodexToken 发起 Codex（OpenAI）OAuth 认证流程，
+// 使用 PKCE 代码交换授权码获取令牌
 func (h *Handler) RequestCodexToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -2128,6 +2180,8 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// RequestAntigravityToken 发起 Antigravity OAuth 认证流程，
+// 获取访问令牌、用户信息和项目 ID
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -2293,6 +2347,8 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// RequestXAIToken 发起 xAI OAuth 认证流程，
+// 使用 OIDC 发现和 PKCE 代码交换授权码获取令牌
 func (h *Handler) RequestXAIToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -2472,6 +2528,8 @@ func (h *Handler) RequestXAIToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// RequestKimiToken 发起 Kimi 设备授权流程，
+// 使用设备码流等待用户授权并保存令牌
 func (h *Handler) RequestKimiToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
@@ -2549,12 +2607,15 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
 
+// projectSelectionRequiredError Gemini CLI 需要项目选择时的错误类型
 type projectSelectionRequiredError struct{}
 
 func (e *projectSelectionRequiredError) Error() string {
 	return "gemini cli: project selection required"
 }
 
+// ensureGeminiProjectAndOnboard 确保 Gemini 项目存在并完成注册，
+// 如果未指定项目则自动发现第一个可用项目
 func ensureGeminiProjectAndOnboard(ctx context.Context, httpClient *http.Client, storage *geminiAuth.GeminiTokenStorage, requestedProject string) error {
 	if storage == nil {
 		return fmt.Errorf("gemini storage is nil")
@@ -2589,6 +2650,7 @@ func ensureGeminiProjectAndOnboard(ctx context.Context, httpClient *http.Client,
 	return nil
 }
 
+// onboardAllGeminiProjects 注册所有可用的 GCP 项目到 Gemini CLI
 func onboardAllGeminiProjects(ctx context.Context, httpClient *http.Client, storage *geminiAuth.GeminiTokenStorage) ([]string, error) {
 	projects, errProjects := fetchGCPProjects(ctx, httpClient)
 	if errProjects != nil {
@@ -2623,6 +2685,7 @@ func onboardAllGeminiProjects(ctx context.Context, httpClient *http.Client, stor
 	return activated, nil
 }
 
+// ensureGeminiProjectsEnabled 确保所有指定项目的 Cloud AI API 已启用
 func ensureGeminiProjectsEnabled(ctx context.Context, httpClient *http.Client, projectIDs []string) error {
 	for _, pid := range projectIDs {
 		trimmed := strings.TrimSpace(pid)
@@ -2640,6 +2703,7 @@ func ensureGeminiProjectsEnabled(ctx context.Context, httpClient *http.Client, p
 	return nil
 }
 
+// performGeminiCLISetup 执行 Gemini CLI 设置，包括加载代码助手、确定层级、注册用户
 func performGeminiCLISetup(ctx context.Context, httpClient *http.Client, storage *geminiAuth.GeminiTokenStorage, requestedProject string) error {
 	metadata := map[string]string{
 		"ideType":    "IDE_UNSPECIFIED",
@@ -2788,6 +2852,7 @@ func performGeminiCLISetup(ctx context.Context, httpClient *http.Client, storage
 	}
 }
 
+// callGeminiCLI 调用 Gemini CLI API 端点
 func callGeminiCLI(ctx context.Context, httpClient *http.Client, endpoint string, body any, result any) error {
 	endPointURL := fmt.Sprintf("%s/%s:%s", geminiCLIEndpoint, geminiCLIVersion, endpoint)
 	if strings.HasPrefix(endpoint, "operations/") {
@@ -2837,6 +2902,7 @@ func callGeminiCLI(ctx context.Context, httpClient *http.Client, endpoint string
 	return nil
 }
 
+// fetchGCPProjects 从 GCP 资源管理器获取项目列表
 func fetchGCPProjects(ctx context.Context, httpClient *http.Client) ([]interfaces.GCPProjectProjects, error) {
 	req, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, "https://cloudresourcemanager.googleapis.com/v1/projects", nil)
 	if errRequest != nil {
@@ -2866,6 +2932,7 @@ func fetchGCPProjects(ctx context.Context, httpClient *http.Client) ([]interface
 	return projects.Projects, nil
 }
 
+// checkCloudAPIIsEnabled 检查指定项目的 Cloud AI API 是否已启用，未启用则尝试启用
 func checkCloudAPIIsEnabled(ctx context.Context, httpClient *http.Client, projectID string) (bool, error) {
 	serviceUsageURL := "https://serviceusage.googleapis.com"
 	requiredServices := []string{
@@ -2926,6 +2993,7 @@ func checkCloudAPIIsEnabled(ctx context.Context, httpClient *http.Client, projec
 	return true, nil
 }
 
+// GetAuthStatus 获取 OAuth 认证流程的状态（等待中、完成或错误）
 func (h *Handler) GetAuthStatus(c *gin.Context) {
 	state := strings.TrimSpace(c.Query("state"))
 	if state == "" {
@@ -2949,7 +3017,7 @@ func (h *Handler) GetAuthStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "wait"})
 }
 
-// PopulateAuthContext extracts request info and adds it to the context
+// PopulateAuthContext 提取请求信息并添加到上下文中
 func PopulateAuthContext(ctx context.Context, c *gin.Context) context.Context {
 	info := &coreauth.RequestInfo{
 		Query:   c.Request.URL.Query(),

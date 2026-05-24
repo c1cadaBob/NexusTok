@@ -1,7 +1,10 @@
+// codex/gemini - codex_gemini_response.go
 // Package gemini provides response translation functionality for Codex to Gemini API compatibility.
-// This package handles the conversion of Codex API responses into Gemini-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Gemini API clients.
+// 本文件提供 Codex API 响应到 Gemini API 格式的转换功能。
+// 处理各种 Codex 事件类型（response.created、response.output_text.delta、
+// response.output_item.done、response.completed 等），将其转换为 Gemini 兼容的 JSON 响应。
+// 支持文本内容、思考内容（reasoning）、函数调用（function_call）和图片生成（image_generation_call）
+// 的转换，维护跨多个调用的状态信息以确保正确的响应排序。
 package gemini
 
 import (
@@ -16,18 +19,20 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 SSE 数据行的前缀标识，用于从原始响应中提取 JSON 数据。
 var (
 	dataTag = []byte("data:")
 )
 
-// ConvertCodexResponseToGeminiParams holds parameters for response conversion.
+// ConvertCodexResponseToGeminiParams 持有响应转换的状态参数。
+// 跟踪模型名称、创建时间、响应 ID 等元数据，以及用于图片去重的哈希映射。
 type ConvertCodexResponseToGeminiParams struct {
-	Model              string
-	CreatedAt          int64
-	ResponseID         string
-	LastStorageOutput  []byte
-	HasOutputTextDelta bool
-	LastImageHashByID  map[string][32]byte
+	Model              string               // 模型名称
+	CreatedAt          int64                // 创建时间戳
+	ResponseID         string               // 响应 ID
+	LastStorageOutput  []byte               // 上一次存储的输出（用于延迟发送函数调用）
+	HasOutputTextDelta bool                 // 是否已接收到输出文本增量
+	LastImageHashByID  map[string][32]byte  // 图片 ID 到 SHA256 哈希的映射，用于去重
 }
 
 // ConvertCodexResponseToGemini converts Codex streaming response format to Gemini format.
@@ -381,7 +386,8 @@ func ConvertCodexResponseToGeminiNonStream(_ context.Context, modelName string, 
 	return template
 }
 
-// buildReverseMapFromGeminiOriginal builds a map[short]original from original Gemini request tools.
+// buildReverseMapFromGeminiOriginal 从原始 Gemini 请求的工具声明中
+// 构建 map[short]original 映射，用于将 Codex 响应中的缩短工具名恢复为原始名称。
 func buildReverseMapFromGeminiOriginal(original []byte) map[string]string {
 	tools := gjson.GetBytes(original, "tools")
 	rev := map[string]string{}
@@ -410,10 +416,13 @@ func buildReverseMapFromGeminiOriginal(original []byte) map[string]string {
 	return rev
 }
 
+// GeminiTokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }
 
+// mimeTypeFromCodexOutputFormat 将 Codex 输出格式转换为 MIME 类型字符串。
+// 支持 png、jpg/jpeg、webp、gif 等格式，默认返回 image/png。
 func mimeTypeFromCodexOutputFormat(outputFormat string) string {
 	if outputFormat == "" {
 		return "image/png"

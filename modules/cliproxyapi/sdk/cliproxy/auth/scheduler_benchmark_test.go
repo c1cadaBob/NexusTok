@@ -1,3 +1,6 @@
+// auth - scheduler_benchmark_test.go
+// 该文件包含认证调度器的性能基准测试，验证在大量认证凭据（500/1000 个）下
+// pickNext 的性能表现，涵盖优先级排序、混合提供商等场景。
 package auth
 
 import (
@@ -10,12 +13,15 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerBenchmarkExecutor 是基准测试用的空执行器实现。
 type schedulerBenchmarkExecutor struct {
-	id string
+	id string // 执行器标识符
 }
 
+// Identifier 返回执行器标识符。
 func (e schedulerBenchmarkExecutor) Identifier() string { return e.id }
 
+// Execute 空实现，直接返回空响应。
 func (e schedulerBenchmarkExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, nil
 }

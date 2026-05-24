@@ -1,3 +1,8 @@
+// translator - registry.go
+// 该文件实现了翻译注册表（Registry），用于管理不同格式之间的请求和响应转换函数。
+// 注册表支持线程安全的注册和查询操作，并提供默认的全局注册表实例。
+// 当没有注册转换函数时，会自动规范化请求中的 model 字段。
+
 package translator
 
 import (
@@ -9,14 +14,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Registry manages translation functions across schemas.
+// Registry 管理跨格式的翻译函数注册表。
+// 使用读写锁保证并发安全，支持请求转换和响应转换的独立注册。
 type Registry struct {
 	mu        sync.RWMutex
 	requests  map[Format]map[Format]RequestTransform
 	responses map[Format]map[Format]ResponseTransform
 }
 
-// NewRegistry constructs an empty translator registry.
+// NewRegistry 创建一个空的翻译注册表实例。
 func NewRegistry() *Registry {
 	return &Registry{
 		requests:  make(map[Format]map[Format]RequestTransform),
@@ -24,7 +30,8 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register stores request/response transforms between two formats.
+// Register 在两个格式之间注册请求和响应转换函数。
+// 如果请求转换函数为 nil，则不注册请求转换；响应转换始终注册（可为 nil）。
 func (r *Registry) Register(from, to Format, request RequestTransform, response ResponseTransform) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -42,10 +49,9 @@ func (r *Registry) Register(from, to Format, request RequestTransform, response 
 	r.responses[from][to] = response
 }
 
-// TranslateRequest converts a payload between schemas, returning the original payload
-// if no translator is registered. When falling back to the original payload, the
-// "model" field is still updated to match the resolved model name so that
-// client-side prefixes (e.g. "copilot/gpt-5-mini") are not leaked upstream.
+// TranslateRequest 在两个格式之间转换请求载荷。
+// 如果没有注册转换函数，则返回原始载荷，但会将 model 字段更新为解析后的模型名称，
+// 以避免客户端前缀（如 "copilot/gpt-5-mini"）泄漏到上游服务。
 func (r *Registry) TranslateRequest(from, to Format, model string, rawJSON []byte, stream bool) []byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -65,7 +71,7 @@ func (r *Registry) TranslateRequest(from, to Format, model string, rawJSON []byt
 	return rawJSON
 }
 
-// HasResponseTransformer indicates whether a response translator exists.
+// HasResponseTransformer 检查是否已注册指定格式对之间的响应转换器。
 func (r *Registry) HasResponseTransformer(from, to Format) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -78,7 +84,8 @@ func (r *Registry) HasResponseTransformer(from, to Format) bool {
 	return false
 }
 
-// TranslateStream applies the registered streaming response translator.
+// TranslateStream 应用已注册的流式响应转换函数。
+// 如果没有注册转换函数，则将原始数据作为单个块返回。
 func (r *Registry) TranslateStream(ctx context.Context, from, to Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -91,7 +98,8 @@ func (r *Registry) TranslateStream(ctx context.Context, from, to Format, model s
 	return [][]byte{rawJSON}
 }
 
-// TranslateNonStream applies the registered non-stream response translator.
+// TranslateNonStream 应用已注册的非流式响应转换函数。
+// 如果没有注册转换函数，则返回原始响应。
 func (r *Registry) TranslateNonStream(ctx context.Context, from, to Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -104,7 +112,8 @@ func (r *Registry) TranslateNonStream(ctx context.Context, from, to Format, mode
 	return rawJSON
 }
 
-// TranslateTokenCount applies the registered token count response translator.
+// TranslateTokenCount 应用已注册的 token 计数转换函数。
+// 如果没有注册转换函数，则返回原始响应。
 func (r *Registry) TranslateTokenCount(ctx context.Context, from, to Format, count int64, rawJSON []byte) []byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -117,39 +126,40 @@ func (r *Registry) TranslateTokenCount(ctx context.Context, from, to Format, cou
 	return rawJSON
 }
 
+// defaultRegistry 是包级别的默认全局注册表实例。
 var defaultRegistry = NewRegistry()
 
-// Default exposes the package-level registry for shared use.
+// Default 返回用于共享的全局注册表实例。
 func Default() *Registry {
 	return defaultRegistry
 }
 
-// Register attaches transforms to the default registry.
+// Register 将转换函数附加到默认全局注册表。
 func Register(from, to Format, request RequestTransform, response ResponseTransform) {
 	defaultRegistry.Register(from, to, request, response)
 }
 
-// TranslateRequest is a helper on the default registry.
+// TranslateRequest 是默认全局注册表的请求转换辅助函数。
 func TranslateRequest(from, to Format, model string, rawJSON []byte, stream bool) []byte {
 	return defaultRegistry.TranslateRequest(from, to, model, rawJSON, stream)
 }
 
-// HasResponseTransformer inspects the default registry.
+// HasResponseTransformer 检查默认全局注册表中是否存在指定格式对的响应转换器。
 func HasResponseTransformer(from, to Format) bool {
 	return defaultRegistry.HasResponseTransformer(from, to)
 }
 
-// TranslateStream is a helper on the default registry.
+// TranslateStream 是默认全局注册表的流式响应转换辅助函数。
 func TranslateStream(ctx context.Context, from, to Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	return defaultRegistry.TranslateStream(ctx, from, to, model, originalRequestRawJSON, requestRawJSON, rawJSON, param)
 }
 
-// TranslateNonStream is a helper on the default registry.
+// TranslateNonStream 是默认全局注册表的非流式响应转换辅助函数。
 func TranslateNonStream(ctx context.Context, from, to Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []byte {
 	return defaultRegistry.TranslateNonStream(ctx, from, to, model, originalRequestRawJSON, requestRawJSON, rawJSON, param)
 }
 
-// TranslateTokenCount is a helper on the default registry.
+// TranslateTokenCount 是默认全局注册表的 token 计数转换辅助函数。
 func TranslateTokenCount(ctx context.Context, from, to Format, count int64, rawJSON []byte) []byte {
 	return defaultRegistry.TranslateTokenCount(ctx, from, to, count, rawJSON)
 }

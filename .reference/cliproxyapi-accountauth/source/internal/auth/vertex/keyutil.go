@@ -1,3 +1,7 @@
+// vertex - keyutil.go
+// 包 vertex 提供 Google Vertex AI 的服务账户凭证管理功能。
+// 该文件实现了服务账户 JSON 的规范化和私钥清理功能，
+// 确保私钥字段包含有效的 RSA PRIVATE KEY PEM 块。
 package vertex
 
 import (
@@ -10,9 +14,16 @@ import (
 	"strings"
 )
 
-// NormalizeServiceAccountJSON normalizes the given JSON-encoded service account payload.
-// It returns the normalized JSON (with sanitized private_key) or, if normalization fails,
-// the original bytes and the encountered error.
+// NormalizeServiceAccountJSON 规范化给定的 JSON 编码的服务账户有效负载。
+// 返回规范化后的 JSON（带有清理后的 private_key），如果规范化失败，
+// 则返回原始字节和遇到的错误。
+//
+// 参数：
+//   - raw: 原始服务账户 JSON 字节
+//
+// 返回：
+//   - []byte: 规范化后的 JSON 字节
+//   - error: 规范化失败时返回的错误
 func NormalizeServiceAccountJSON(raw []byte) ([]byte, error) {
 	if len(raw) == 0 {
 		return raw, nil
@@ -32,8 +43,15 @@ func NormalizeServiceAccountJSON(raw []byte) ([]byte, error) {
 	return out, nil
 }
 
-// NormalizeServiceAccountMap returns a copy of the given service account map with
-// a sanitized private_key field that is guaranteed to contain a valid RSA PRIVATE KEY PEM block.
+// NormalizeServiceAccountMap 返回给定服务账户映射的副本，
+// 其中 private_key 字段经过清理，保证包含有效的 RSA PRIVATE KEY PEM 块。
+//
+// 参数：
+//   - sa: 服务账户映射
+//
+// 返回：
+//   - map[string]any: 规范化后的服务账户映射副本
+//   - error: 规范化失败时返回的错误
 func NormalizeServiceAccountMap(sa map[string]any) (map[string]any, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("service account payload is empty")
@@ -54,6 +72,15 @@ func NormalizeServiceAccountMap(sa map[string]any) (map[string]any, error) {
 	return clone, nil
 }
 
+// sanitizePrivateKey 清理私钥字符串，确保其为有效的 PEM 格式。
+// 处理行尾符、ANSI 转义序列和编码问题。
+//
+// 参数：
+//   - raw: 原始私钥字符串
+//
+// 返回：
+//   - string: 清理后的 PEM 格式私钥
+//   - error: 清理失败时返回的错误
 func sanitizePrivateKey(raw string) (string, error) {
 	pk := strings.ReplaceAll(raw, "\r\n", "\n")
 	pk = strings.ReplaceAll(pk, "\r", "\n")
@@ -83,6 +110,15 @@ func sanitizePrivateKey(raw string) (string, error) {
 	return string(pem.EncodeToMemory(rsaBlock)), nil
 }
 
+// ensureRSAPrivateKey 确保 PEM 块包含 RSA 私钥。
+// 支持 PKCS#1 和 PKCS#8 格式的私钥。
+//
+// 参数：
+//   - block: PEM 块
+//
+// 返回：
+//   - *pem.Block: 包含 RSA 私钥的 PEM 块
+//   - error: 私钥格式不支持时返回的错误
 func ensureRSAPrivateKey(block *pem.Block) (*pem.Block, error) {
 	if block == nil {
 		return nil, fmt.Errorf("pem block is nil")
@@ -122,6 +158,15 @@ func ensureRSAPrivateKey(block *pem.Block) (*pem.Block, error) {
 	return nil, fmt.Errorf("private_key uses unsupported format")
 }
 
+// rebuildPEM 从原始文本有效负载重建 PEM 格式。
+// 提取 PEM 标记之间的 Base64 内容并重新编码。
+//
+// 参数：
+//   - raw: 原始文本
+//
+// 返回：
+//   - string: 重建的 PEM 格式字符串
+//   - error: 重建失败时返回的错误
 func rebuildPEM(raw string) (string, error) {
 	kind := "PRIVATE KEY"
 	if strings.Contains(raw, "RSA PRIVATE KEY") {
@@ -147,6 +192,14 @@ func rebuildPEM(raw string) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
+// filterBase64 从字符串中过滤出有效的 Base64 字符。
+// 仅保留字母、数字和 Base64 特殊字符（+、/、=）。
+//
+// 参数：
+//   - s: 输入字符串
+//
+// 返回：
+//   - string: 过滤后的 Base64 字符串
 func filterBase64(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -166,6 +219,14 @@ func filterBase64(s string) string {
 	return b.String()
 }
 
+// stripANSIEscape 从字符串中移除 ANSI 转义序列。
+// 处理 OSC 序列（]...）和 CSI 序列（[...）。
+//
+// 参数：
+//   - s: 可能包含 ANSI 转义序列的字符串
+//
+// 返回：
+//   - string: 移除转义序列后的字符串
 func stripANSIEscape(s string) string {
 	in := []rune(s)
 	var out []rune

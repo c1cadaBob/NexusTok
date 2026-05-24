@@ -1,3 +1,8 @@
+// user_notify.go - 用户通知服务
+// 本文件提供多渠道用户通知功能。
+// 支持的通知渠道包括：邮件（Email）、Webhook、Bark（iOS 推送）、Gotify。
+// 每种渠道都支持 Worker 代理模式和直连模式，直连模式下包含 SSRF 防护。
+// 通知内容支持占位符替换和模板变量。
 package service
 
 import (
@@ -14,6 +19,12 @@ import (
 	"github.com/c1cada/NexusTok/setting/system_setting"
 )
 
+// NotifyRootUser 向系统管理员（root 用户）发送通知。
+// 自动获取 root 用户的信息并调用 NotifyUser 发送。
+// 参数:
+//   - t: 通知类型
+//   - subject: 通知主题
+//   - content: 通知内容
 func NotifyRootUser(t string, subject string, content string) {
 	user := model.GetRootUser().ToBaseUser()
 	err := NotifyUser(user.Id, user.Email, user.GetSetting(), dto.NewNotify(t, subject, content, nil))
@@ -22,6 +33,12 @@ func NotifyRootUser(t string, subject string, content string) {
 	}
 }
 
+// NotifyUpstreamModelUpdateWatchers 向所有启用了上游模型更新通知的管理员发送通知。
+// 查询所有启用状态的管理员用户，筛选出开启了 UpstreamModelUpdateNotifyEnabled 的用户，
+// 逐个发送上游模型更新通知。
+// 参数:
+//   - subject: 通知主题
+//   - content: 通知内容
 func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 	var users []model.User
 	if err := model.DB.
@@ -48,6 +65,17 @@ func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 	common.SysLog(fmt.Sprintf("upstream model update notifications sent: %d", sentCount))
 }
 
+// NotifyUser 向指定用户发送通知的统一入口。
+// 根据用户的通知渠道设置，分发到对应的发送函数。
+// 发送前会检查通知频率限制，避免短时间内发送过多通知。
+// 支持的通知渠道：Email、Webhook、Bark、Gotify。
+// 参数:
+//   - userId: 用户 ID（用于通知频率限制检查）
+//   - userEmail: 用户邮箱地址（Email 渠道使用）
+//   - userSetting: 用户通知设置（包含渠道类型、Webhook URL 等）
+//   - data: 通知数据（标题、内容、类型等）
+// 返回值:
+//   - error: 发送失败时返回错误
 func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify) error {
 	notifyType := userSetting.NotifyType
 	if notifyType == "" {
@@ -105,6 +133,13 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 	return nil
 }
 
+// sendEmailNotify 通过邮件发送通知。
+// 处理通知内容中的占位符替换后，调用 common.SendEmail 发送邮件。
+// 参数:
+//   - userEmail: 收件人邮箱地址
+//   - data: 通知数据
+// 返回值:
+//   - error: 发送失败时返回错误
 func sendEmailNotify(userEmail string, data dto.Notify) error {
 	// make email content
 	content := data.Content
@@ -115,6 +150,14 @@ func sendEmailNotify(userEmail string, data dto.Notify) error {
 	return common.SendEmail(data.Title, userEmail, content)
 }
 
+// sendBarkNotify 通过 Bark（iOS 推送服务）发送通知。
+// 支持 URL 模板变量（{{title}}、{{content}}）替换。
+// 支持 Worker 代理模式和直连模式，直连模式下包含 SSRF 防护。
+// 参数:
+//   - barkURL: Bark 推送 URL（可包含模板变量）
+//   - data: 通知数据
+// 返回值:
+//   - error: 发送失败时返回错误
 func sendBarkNotify(barkURL string, data dto.Notify) error {
 	// 处理占位符
 	content := data.Content
@@ -185,6 +228,16 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 	return nil
 }
 
+// sendGotifyNotify 通过 Gotify（自托管推送服务）发送通知。
+// 构建 JSON 格式的 Gotify 消息，支持优先级设置（0-10，超出范围使用默认值 5）。
+// 支持 Worker 代理模式和直连模式，直连模式下包含 SSRF 防护。
+// 参数:
+//   - gotifyUrl: Gotify 服务器 URL
+//   - gotifyToken: Gotify 应用 Token
+//   - priority: 消息优先级（0-10）
+//   - data: 通知数据
+// 返回值:
+//   - error: 发送失败时返回错误
 func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data dto.Notify) error {
 	// 处理占位符
 	content := data.Content

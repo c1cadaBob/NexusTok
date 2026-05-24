@@ -1,3 +1,5 @@
+// management - test_store_test.go
+// 提供测试用的内存认证存储实现，用于替代真实的磁盘存储
 package management
 
 import (
@@ -7,6 +9,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// memoryAuthStore 内存认证存储，用于测试环境
 type memoryAuthStore struct {
 	mu    sync.Mutex
 	items map[string]*coreauth.Auth

@@ -1,3 +1,8 @@
+// openai - relay_responses.go
+// OpenAI Responses API 的中继处理文件。
+// 本文件负责处理 OpenAI Responses API（/v1/responses 端点）的请求和响应，包括：
+// - 非流式 Responses API 响应处理：解析 usage、内置工具计数、图片生成检测
+// - 流式 Responses API 响应处理：逐事件处理 SSE 数据、统计 token、追踪工具调用
 package openai
 
 import (
@@ -17,6 +22,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OaiResponsesHandler 处理 OpenAI Responses API 的非流式响应。
+// 该函数执行以下处理流程：
+//
+//  1. 读取并解析响应体为 OpenAIResponsesResponse 格式
+//  2. 检查上游返回的错误信息
+//  3. 图片生成检测：如果响应包含 image_generation_call，
+//     将图片质量（quality）和尺寸（size）信息存储到 Gin 上下文中
+//  4. 将响应体写回客户端
+//  5. 提取 token 使用量：
+//     - InputTokens -> PromptTokens
+//     - OutputTokens -> CompletionTokens
+//     - TotalTokens -> TotalTokens
+//     - InputTokensDetails.CachedTokens -> PromptTokensDetails.CachedTokens
+//  6. 解析内置工具（Built-in Tools）的调用次数：
+//     - 遍历响应中的 tools 数组
+//     - 根据 tool type 匹配到对应的内置工具信息
+//     - 递增 CallCount 计数器
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含内置工具配置
+//   - resp: 上游 API 返回的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 处理过程中的错误
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -68,6 +99,34 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	return &usage, nil
 }
 
+// OaiResponsesStreamHandler 处理 OpenAI Responses API 的流式响应。
+// 该函数使用 StreamScannerHandler 逐行扫描 SSE 数据，处理以下类型的事件：
+//
+//   - response.completed: 响应完成事件
+//     - 提取 token 使用量（InputTokens、OutputTokens、TotalTokens）
+//     - 提取缓存 token 信息（CachedTokens）
+//     - 检测图片生成调用并存储到上下文
+//
+//   - response.output_text.delta: 输出文本增量事件
+//     - 将文本片段追加到 responseTextBuilder 用于后续 token 估算
+//
+//   - response.output_item.done: 输出项完成事件
+//     - 处理函数调用（如 web_search_call 类型的内置工具调用）
+//     - 递增对应内置工具的 CallCount 计数器
+//
+// 流式处理完成后：
+//   - 如果上游未返回 CompletionTokens，使用累积的文本内容进行 token 估算
+//   - 如果未返回 PromptTokens 但有 CompletionTokens，使用估算的 prompt token 数
+//   - 计算 TotalTokens = PromptTokens + CompletionTokens
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含模型名称和内置工具配置
+//   - resp: 上游 API 返回的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 处理过程中的错误
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")

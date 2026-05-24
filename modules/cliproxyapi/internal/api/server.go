@@ -1,33 +1,33 @@
-// Package api provides the HTTP API server implementation for the CLI Proxy API.
-// It includes the main server struct, routing setup, middleware for CORS and authentication,
-// and integration with various AI API handlers (OpenAI, Claude, Gemini).
-// The server supports hot-reloading of clients and configuration.
+// Package api 提供 CLI Proxy API 的 HTTP API 服务器实现
+// 包含主服务器结构体、路由设置、CORS 和认证中间件，
+// 以及与各种 AI API 处理器（OpenAI、Claude、Gemini）的集成
+// 服务器支持客户端和配置的热重载
 package api
 
 import (
-	"context"
-	"crypto/subtle"
-	"crypto/tls"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"reflect"
-	"sort"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
+	"context"       // 上下文管理，用于请求生命周期控制
+	"crypto/subtle" // 常量时间比较，用于安全的密钥比对
+	"crypto/tls"    // TLS 配置
+	"encoding/json" // JSON 编解码
+	"errors"        // 错误处理
+	"fmt"           // 格式化输出
+	"net"           // 网络操作
+	"net/http"      // HTTP 服务器
+	"os"            // 操作系统功能
+	"path/filepath" // 文件路径操作
+	"reflect"       // 反射，用于动态类型检查
+	"sort"          // 排序
+	"strings"       // 字符串操作
+	"sync"          // 同步原语
+	"sync/atomic"   // 原子操作
+	"time"          // 时间处理
 
-	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
-	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules"
-	ampmodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/amp"
+	"github.com/gin-gonic/gin" // Gin Web 框架
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"                          // 访问控制
+	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management" // 管理 API 处理器
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"                   // API 中间件
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules"                     // API 模块
+	ampmodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/amp"       // Amp 模块
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"

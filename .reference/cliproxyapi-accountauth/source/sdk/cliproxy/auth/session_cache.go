@@ -1,3 +1,6 @@
+// 包 auth - session_cache.go
+// 该文件实现了基于 TTL 的会话到认证的映射缓存。
+// SessionCache 提供自动过期清理机制，用于会话亲和性选择器的会话绑定管理。
 package auth
 
 import (
@@ -5,22 +8,28 @@ import (
 	"time"
 )
 
-// sessionEntry stores auth binding with expiration.
+// sessionEntry 存储带有过期时间的认证绑定。
 type sessionEntry struct {
-	authID    string
-	expiresAt time.Time
+	authID    string    // 绑定的认证 ID
+	expiresAt time.Time // 过期时间
 }
 
-// SessionCache provides TTL-based session to auth mapping with automatic cleanup.
+// SessionCache 提供基于 TTL 的会话到认证映射，支持自动清理过期条目。
 type SessionCache struct {
-	mu      sync.RWMutex
-	entries map[string]sessionEntry
-	ttl     time.Duration
-	stopCh  chan struct{}
+	mu      sync.RWMutex              // 保护 entries 的读写锁
+	entries map[string]sessionEntry    // 会话 ID 到认证绑定的映射
+	ttl     time.Duration             // 条目的生存时间
+	stopCh  chan struct{}              // 停止信号通道
 }
 
-// NewSessionCache creates a cache with the specified TTL.
-// A background goroutine periodically cleans expired entries.
+// NewSessionCache 创建具有指定 TTL 的缓存。
+// 后台 goroutine 定期清理过期条目。
+//
+// 参数:
+//   - ttl: 条目的生存时间（<=0 时默认 30 分钟）
+//
+// 返回:
+//   - *SessionCache: 会话缓存实例
 func NewSessionCache(ttl time.Duration) *SessionCache {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
@@ -34,8 +43,15 @@ func NewSessionCache(ttl time.Duration) *SessionCache {
 	return c
 }
 
-// Get retrieves the auth ID bound to a session, if still valid.
-// Does NOT refresh the TTL on access.
+// Get 检索绑定到会话的认证 ID（如果仍然有效）。
+// 访问时不会刷新 TTL。
+//
+// 参数:
+//   - sessionID: 会话标识
+//
+// 返回:
+//   - string: 绑定的认证 ID
+//   - bool: 是否找到有效绑定
 func (c *SessionCache) Get(sessionID string) (string, bool) {
 	if sessionID == "" {
 		return "", false
@@ -55,8 +71,15 @@ func (c *SessionCache) Get(sessionID string) (string, bool) {
 	return entry.authID, true
 }
 
-// GetAndRefresh retrieves the auth ID bound to a session and refreshes TTL on hit.
-// This extends the binding lifetime for active sessions.
+// GetAndRefresh 检索绑定到会话的认证 ID 并在命中时刷新 TTL。
+// 这会延长活跃会话的绑定生存时间。
+//
+// 参数:
+//   - sessionID: 会话标识
+//
+// 返回:
+//   - string: 绑定的认证 ID
+//   - bool: 是否找到有效绑定
 func (c *SessionCache) GetAndRefresh(sessionID string) (string, bool) {
 	if sessionID == "" {
 		return "", false
@@ -80,7 +103,11 @@ func (c *SessionCache) GetAndRefresh(sessionID string) (string, bool) {
 	return entry.authID, true
 }
 
-// Set binds a session to an auth ID with TTL refresh.
+// Set 将会话绑定到认证 ID 并刷新 TTL。
+//
+// 参数:
+//   - sessionID: 会话标识
+//   - authID: 认证 ID
 func (c *SessionCache) Set(sessionID, authID string) {
 	if sessionID == "" || authID == "" {
 		return
@@ -93,7 +120,10 @@ func (c *SessionCache) Set(sessionID, authID string) {
 	c.mu.Unlock()
 }
 
-// Invalidate removes a specific session binding.
+// Invalidate 移除特定的会话绑定。
+//
+// 参数:
+//   - sessionID: 要移除的会话标识
 func (c *SessionCache) Invalidate(sessionID string) {
 	if sessionID == "" {
 		return
@@ -103,8 +133,11 @@ func (c *SessionCache) Invalidate(sessionID string) {
 	c.mu.Unlock()
 }
 
-// InvalidateAuth removes all sessions bound to a specific auth ID.
-// Used when an auth becomes unavailable.
+// InvalidateAuth 移除绑定到特定认证 ID 的所有会话。
+// 当认证变为不可用时使用。
+//
+// 参数:
+//   - authID: 要移除的认证 ID
 func (c *SessionCache) InvalidateAuth(authID string) {
 	if authID == "" {
 		return
@@ -118,7 +151,7 @@ func (c *SessionCache) InvalidateAuth(authID string) {
 	c.mu.Unlock()
 }
 
-// Stop terminates the background cleanup goroutine.
+// Stop 终止后台清理 goroutine。
 func (c *SessionCache) Stop() {
 	select {
 	case <-c.stopCh:
@@ -127,6 +160,7 @@ func (c *SessionCache) Stop() {
 	}
 }
 
+// cleanupLoop 是后台清理循环，每隔 TTL/2 清理一次过期条目。
 func (c *SessionCache) cleanupLoop() {
 	ticker := time.NewTicker(c.ttl / 2)
 	defer ticker.Stop()
@@ -140,6 +174,7 @@ func (c *SessionCache) cleanupLoop() {
 	}
 }
 
+// cleanup 执行一次过期条目的清理。
 func (c *SessionCache) cleanup() {
 	now := time.Now()
 	c.mu.Lock()

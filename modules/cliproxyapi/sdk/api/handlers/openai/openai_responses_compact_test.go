@@ -1,3 +1,6 @@
+// openai - openai_responses_compact_test.go
+// 测试 OpenAI Responses Compact 端点的功能，包括流式请求拒绝、执行器调用参数验证、
+// 会话 ID 透传、压缩请求体 zstd 解压等场景
 package openai
 
 import (
@@ -18,6 +21,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// compactCaptureExecutor Compact 测试用的捕获执行器，记录调用参数
 type compactCaptureExecutor struct {
 	alt          string
 	sourceFormat string
@@ -49,6 +53,7 @@ func (e *compactCaptureExecutor) HttpRequest(context.Context, *coreauth.Auth, *h
 	return nil, errors.New("not implemented")
 }
 
+// TestOpenAIResponsesCompactRejectsStream 测试 Compact 端点拒绝流式请求
 func TestOpenAIResponsesCompactRejectsStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &compactCaptureExecutor{}
@@ -82,6 +87,7 @@ func TestOpenAIResponsesCompactRejectsStream(t *testing.T) {
 	}
 }
 
+// TestOpenAIResponsesCompactExecute 测试 Compact 端点的正常执行流程
 func TestOpenAIResponsesCompactExecute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &compactCaptureExecutor{}

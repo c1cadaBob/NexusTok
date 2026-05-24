@@ -1,9 +1,11 @@
+// antigravity/claude - antigravity_claude_response.go
 // Package claude provides response translation functionality for Claude Code API compatibility.
-// This package handles the conversion of backend client responses into Claude Code-compatible
-// Server-Sent Events (SSE) format, implementing a sophisticated state machine that manages
-// different response types including text content, thinking processes, and function calls.
-// The translation ensures proper sequencing of SSE events and maintains state across
-// multiple response chunks to provide a seamless streaming experience.
+// 本文件提供 Antigravity（Gemini CLI）API 响应到 Claude Code API 格式的转换功能。
+// 实现了复杂的状态机，将后端客户端响应转换为 Claude Code 兼容的 Server-Sent Events (SSE) 格式。
+// 支持文本内容、思考过程（thinking + thoughtSignature）和函数调用（functionCall）等不同响应类型的处理，
+// 维护跨多个响应块的状态信息以确保正确的 SSE 事件排序。
+// 响应类型状态：0=无, 1=内容, 2=思考, 3=函数调用。
+// 包含签名缓存支持，用于在流式响应中累积思考文本并缓存对应的签名。
 package claude
 
 import (
@@ -24,8 +26,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// decodeSignature decodes R... (2-layer Base64) to E... (1-layer Base64, Anthropic format).
-// Returns empty string if decoding fails (skip invalid signatures).
+// decodeSignature 将双层 Base64 编码的签名（R 前缀）解码为单层 Base64（E 前缀，Anthropic 格式）。
+// 解码失败时返回空字符串（跳过无效签名）。
 func decodeSignature(signature string) string {
 	if signature == "" {
 		return signature
@@ -41,6 +43,8 @@ func decodeSignature(signature string) string {
 	return signature
 }
 
+// formatClaudeSignatureValue 格式化 Claude 签名值。
+// 缓存模式下添加模型组前缀；Claude 模型组下解码双层签名。
 func formatClaudeSignatureValue(modelName, signature string) string {
 	if cache.SignatureCacheEnabled() {
 		return fmt.Sprintf("%s#%s", cache.GetModelGroup(modelName), signature)
@@ -51,34 +55,33 @@ func formatClaudeSignatureValue(modelName, signature string) string {
 	return signature
 }
 
-// Params holds parameters for response conversion and maintains state across streaming chunks.
-// This structure tracks the current state of the response translation process to ensure
-// proper sequencing of SSE events and transitions between different content types.
+// Params 持有响应转换的状态参数和签名缓存支持。
+// 跟踪当前响应翻译过程的状态，确保 SSE 事件的正确排序和不同内容类型之间的状态转换。
 type Params struct {
-	HasFirstResponse     bool   // Indicates if the initial message_start event has been sent
-	ResponseType         int    // Current response type: 0=none, 1=content, 2=thinking, 3=function
-	ResponseIndex        int    // Index counter for content blocks in the streaming response
-	HasFinishReason      bool   // Tracks whether a finish reason has been observed
-	FinishReason         string // The finish reason string returned by the provider
-	HasUsageMetadata     bool   // Tracks whether usage metadata has been observed
-	PromptTokenCount     int64  // Cached prompt token count from usage metadata
-	CandidatesTokenCount int64  // Cached candidate token count from usage metadata
-	ThoughtsTokenCount   int64  // Cached thinking token count from usage metadata
-	TotalTokenCount      int64  // Cached total token count from usage metadata
-	CachedTokenCount     int64  // Cached content token count (indicates prompt caching)
-	HasSentFinalEvents   bool   // Indicates if final content/message events have been sent
-	HasToolUse           bool   // Indicates if tool use was observed in the stream
-	HasContent           bool   // Tracks whether any content (text, thinking, or tool use) has been output
+	HasFirstResponse     bool              // 是否已发送初始 message_start 事件
+	ResponseType         int               // 当前响应类型：0=无, 1=内容, 2=思考, 3=函数调用
+	ResponseIndex        int               // 流式响应中内容块的索引计数器
+	HasFinishReason      bool              // 是否已观察到完成原因
+	FinishReason         string            // 提供者返回的完成原因字符串
+	HasUsageMetadata     bool              // 是否已观察到使用量元数据
+	PromptTokenCount     int64             // 缓存的提示 Token 计数
+	CandidatesTokenCount int64             // 缓存的候选 Token 计数
+	ThoughtsTokenCount   int64             // 缓存的思考 Token 计数
+	TotalTokenCount      int64             // 缓存的总 Token 计数
+	CachedTokenCount     int64             // 缓存的内容 Token 计数（表示提示缓存）
+	HasSentFinalEvents   bool              // 是否已发送最终内容/消息事件
+	HasToolUse           bool              // 是否在流中观察到工具使用
+	HasContent           bool              // 跟踪是否已输出任何内容
 
-	// Signature caching support
-	CurrentThinkingText strings.Builder // Accumulates thinking text for signature caching
+	// 签名缓存支持
+	CurrentThinkingText strings.Builder   // 累积思考文本用于签名缓存
 
-	// Reverse map: sanitized Gemini function name → original Claude tool name.
-	// Populated lazily on the first response chunk from the original request JSON.
+	// 反向映射：清理后的 Gemini 函数名 → 原始 Claude 工具名。
+	// 在第一个响应块中从原始请求 JSON 延迟初始化。
 	ToolNameMap map[string]string
 }
 
-// toolUseIDCounter provides a process-wide unique counter for tool use identifiers.
+// toolUseIDCounter 提供进程范围内的唯一工具使用标识符计数器。
 var toolUseIDCounter uint64
 
 // ConvertAntigravityResponseToClaude performs sophisticated streaming response format conversion.
@@ -330,6 +333,8 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 	return [][]byte{output}
 }
 
+// appendFinalEvents 追加最终的 SSE 事件（content_block_stop 和 message_delta）。
+// 仅在使用量元数据可用或强制模式下发送，且必须有实际内容输出。
 func appendFinalEvents(params *Params, output *[]byte, force bool) {
 	if params.HasSentFinalEvents {
 		return
@@ -372,6 +377,8 @@ func appendFinalEvents(params *Params, output *[]byte, force bool) {
 	params.HasSentFinalEvents = true
 }
 
+// resolveStopReason 根据状态参数解析 Claude 停止原因。
+// 如果存在工具使用则返回 "tool_use"，否则根据完成原因映射。
 func resolveStopReason(params *Params) string {
 	if params.HasToolUse {
 		return "tool_use"
@@ -547,6 +554,7 @@ func ConvertAntigravityResponseToClaudeNonStream(_ context.Context, _ string, or
 	return responseJSON
 }
 
+// ClaudeTokenCount 生成 Claude 格式的 Token 计数 JSON 响应。
 func ClaudeTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.ClaudeInputTokensJSON(count)
 }

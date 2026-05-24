@@ -1,3 +1,7 @@
+// translator - registry_test.go
+// 该文件包含翻译注册表（Registry）的单元测试。
+// 测试覆盖了请求翻译的模型名称规范化功能，以及已注册转换函数的优先级行为。
+
 package translator
 
 import (
@@ -6,6 +10,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestTranslateRequest_FallbackNormalizesModel 测试当没有注册转换函数时，
+// 注册表会自动将请求中的 model 字段更新为解析后的模型名称。
+// 这确保了客户端前缀（如 "copilot/gpt-5-mini"）不会泄漏到上游服务。
 func TestTranslateRequest_FallbackNormalizesModel(t *testing.T) {
 	r := NewRegistry()
 
@@ -73,6 +80,8 @@ func TestTranslateRequest_FallbackNormalizesModel(t *testing.T) {
 	}
 }
 
+// TestTranslateRequest_RegisteredTransformTakesPrecedence 测试已注册的转换函数
+// 会覆盖默认的模型名称规范化逻辑，优先使用注册表中的自定义转换。
 func TestTranslateRequest_RegisteredTransformTakesPrecedence(t *testing.T) {
 	r := NewRegistry()
 	from := Format("openai-response")

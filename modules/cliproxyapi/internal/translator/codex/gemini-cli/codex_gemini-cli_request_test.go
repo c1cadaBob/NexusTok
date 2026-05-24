@@ -1,3 +1,7 @@
+// Package geminiCLI - codex_gemini-cli_request_test.go
+// 测试 Gemini CLI 到 Codex 请求格式转换功能。
+// 覆盖 JSON Schema 中名为 "type" 的属性字段的保留测试，
+// 确保在 schema 转换过程中不会将属性名 "type" 误识别为类型声明。
 package geminiCLI
 
 import (
@@ -6,6 +10,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertGeminiCLIRequestToCodex_PreservesSchemaPropertyNamedType 测试
+// JSON Schema 中名为 "type" 的属性字段在转换后应被保留为完整的对象结构，
+// 而不是被误识别为类型声明字符串
 func TestConvertGeminiCLIRequestToCodex_PreservesSchemaPropertyNamedType(t *testing.T) {
 	input := []byte(`{
 		"request": {

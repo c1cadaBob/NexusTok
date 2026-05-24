@@ -1,3 +1,5 @@
+// Package helps - payload_helpers.go
+// 提供请求负载处理的辅助函数，包括参数注入、模型过滤和图像生成功能控制。
 package helps
 
 import (

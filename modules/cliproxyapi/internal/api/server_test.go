@@ -1,3 +1,8 @@
+// api - server_test.go
+// 该文件包含 HTTP API 服务器的集成测试。
+// 测试覆盖了健康检查端点、管理使用队列端点、Home 模式下的端点隐藏、
+// 提供商模型路由、Codex 目录格式和请求日志记录器工厂。
+
 package api
 
 import (
@@ -20,6 +25,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// newTestServer 创建用于测试的服务器实例。
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
@@ -49,6 +55,7 @@ func newTestServer(t *testing.T) *Server {
 	return NewServer(cfg, authManager, accessManager, configPath)
 }
 
+// TestHealthz 测试健康检查端点的 GET 和 HEAD 请求。
 func TestHealthz(t *testing.T) {
 	server := newTestServer(t)
 
@@ -86,6 +93,7 @@ func TestHealthz(t *testing.T) {
 	})
 }
 
+// TestManagementUsageRequiresManagementAuthAndPopsArray 测试管理使用队列端点的认证和弹出行为。
 func TestManagementUsageRequiresManagementAuthAndPopsArray(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "test-management-key")
 
@@ -148,6 +156,7 @@ func TestManagementUsageRequiresManagementAuthAndPopsArray(t *testing.T) {
 	}
 }
 
+// TestHomeEnabledHidesManagementEndpointsAndControlPanel 测试 Home 模式下管理端点和控制面板被隐藏。
 func TestHomeEnabledHidesManagementEndpointsAndControlPanel(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "test-management-key")
 
@@ -174,6 +183,7 @@ func TestHomeEnabledHidesManagementEndpointsAndControlPanel(t *testing.T) {
 	})
 }
 
+// TestAmpProviderModelRoutes 测试各提供商的模型路由端点。
 func TestAmpProviderModelRoutes(t *testing.T) {
 	testCases := []struct {
 		name         string
@@ -240,6 +250,7 @@ func TestAmpProviderModelRoutes(t *testing.T) {
 	}
 }
 
+// TestModelsWithClientVersionReturnsCodexCatalog 测试带客户端版本的模型请求返回 Codex 格式目录。
 func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "test-client-version-catalog"
@@ -377,6 +388,7 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	}
 }
 
+// assertCodexSupportedReasoningLevels 断言 Codex 目录中的推理级别支持。
 func assertCodexSupportedReasoningLevels(t *testing.T, model map[string]any, want []string) {
 	t.Helper()
 
@@ -398,6 +410,7 @@ func assertCodexSupportedReasoningLevels(t *testing.T, model map[string]any, wan
 	}
 }
 
+// TestDefaultRequestLoggerFactory_UsesResolvedLogDirectory 测试默认请求日志工厂使用解析后的日志目录。
 func TestDefaultRequestLoggerFactory_UsesResolvedLogDirectory(t *testing.T) {
 	t.Setenv("WRITABLE_PATH", "")
 	t.Setenv("writable_path", "")

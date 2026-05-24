@@ -1,3 +1,12 @@
+// auth - conductor_credits_candidates_test.go
+// Antigravity 积分候选认证测试
+// 验证 findAllAntigravityCreditsCandidateAuths 方法能够正确筛选
+// 支持 Antigravity 积分的候选认证：
+// - 优先选择已知有积分的认证
+// - 其次选择积分状态未知的认证
+// - 排除已知无积分的认证
+// - 非 Claude 模型不使用积分候选
+// - 支持固定认证（pinned auth）的积分候选
 package auth
 
 import (
@@ -7,6 +16,8 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestFindAllAntigravityCreditsCandidateAuths_PrefersKnownCreditsThenUnknown 验证
+// 积分候选认证的优先级排序：已知有积分 > 未知 > 已知无积分。
 func TestFindAllAntigravityCreditsCandidateAuths_PrefersKnownCreditsThenUnknown(t *testing.T) {
 	m := &Manager{
 		auths: map[string]*Auth{

@@ -1,3 +1,5 @@
+// handlers - handlers_metadata_test.go
+// 测试请求执行元数据的构建逻辑，验证 ExecutionSession、ReasoningEffort 等元数据的正确设置。
 package handlers
 
 import (
@@ -7,6 +9,8 @@ import (
 	"golang.org/x/net/context"
 )
 
+// TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey 测试执行会话 ID
+// 正确包含在元数据中，且不包含幂等键。
 func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t *testing.T) {
 	ctx := WithExecutionSessionID(context.Background(), "session-1")
 
@@ -19,6 +23,7 @@ func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t
 	}
 }
 
+// TestSetReasoningEffortMetadataUsesSuffixOverBody 测试模型名称后缀中的推理努力级别优先于请求体中的值。
 func TestSetReasoningEffortMetadataUsesSuffixOverBody(t *testing.T) {
 	meta := make(map[string]any)
 
@@ -29,6 +34,7 @@ func TestSetReasoningEffortMetadataUsesSuffixOverBody(t *testing.T) {
 	}
 }
 
+// TestSetReasoningEffortMetadataSupportsOpenAIResponses 测试 OpenAI Responses API 格式的推理努力元数据提取。
 func TestSetReasoningEffortMetadataSupportsOpenAIResponses(t *testing.T) {
 	meta := make(map[string]any)
 

@@ -1,3 +1,6 @@
+// logging - request_logger_home_test.go
+// 该文件包含 FileRequestLogger 与 Home 集成的单元测试，验证当 Home 请求日志功能启用时
+// 日志转发行为、以及请求日志禁用时强制错误日志的本地写入逻辑。
 package logging
 
 import (
@@ -10,18 +13,24 @@ import (
 	"time"
 )
 
+// stubHomeRequestLogClient 是 Home 请求日志客户端的测试桩实现，
+// 用于模拟 Home 服务端的心跳检查和日志推送功能。
 type stubHomeRequestLogClient struct {
-	heartbeatOK bool
-	pushed      [][]byte
+	heartbeatOK bool // 心跳检查结果
+	pushed      [][]byte // 已推送的日志载荷列表
 }
 
+// HeartbeatOK 返回模拟的心跳检查结果。
 func (c *stubHomeRequestLogClient) HeartbeatOK() bool { return c.heartbeatOK }
 
+// RPushRequestLog 模拟向 Home 服务端推送请求日志，将载荷克隆后存入 pushed 列表。
 func (c *stubHomeRequestLogClient) RPushRequestLog(_ context.Context, payload []byte) error {
 	c.pushed = append(c.pushed, bytes.Clone(payload))
 	return nil
 }
 
+// TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled 测试当请求日志功能启用且
+// Home 集成已激活时，日志应被转发到 Home 服务端而非写入本地文件。
 func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.T) {
 	original := currentHomeRequestLogClient
 	defer func() {
@@ -93,6 +102,8 @@ func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.
 	}
 }
 
+// TestFileRequestLogger_HomeEnabled_DoesNotForwardForcedErrorLogsWhenRequestLogDisabled 测试当请求日志功能
+// 禁用时，即使 Home 集成已激活，强制错误日志也不应被转发到 Home，而是写入本地文件。
 func TestFileRequestLogger_HomeEnabled_DoesNotForwardForcedErrorLogsWhenRequestLogDisabled(t *testing.T) {
 	original := currentHomeRequestLogClient
 	defer func() {

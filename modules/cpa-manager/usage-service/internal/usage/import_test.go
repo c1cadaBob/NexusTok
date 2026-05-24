@@ -1,3 +1,14 @@
+// usage - import_test.go
+// 使用量导入解析模块的单元测试。
+// 测试覆盖以下场景：
+//   - 旧版导出格式（legacy_usage_export）的解析和事件哈希稳定性
+//   - 旧版汇总格式（无 details）的拒绝处理
+//   - 导出事件记录的 event_hash/source_hash/api_key_hash 保留
+//   - JSONL 格式的坏行计数
+//   - 认证项目 ID 快照的保留
+//   - NormalizeRaw 中 project_id 字段的读取
+//   - alias 和 resolved_model 的分离
+//   - BuildPayload 中 resolved_model 的输出
 package usage
 
 import (
@@ -6,6 +17,9 @@ import (
 	"testing"
 )
 
+// legacyUsageExportFixture 是旧版使用量导出格式的测试数据。
+// 包含两个 detail 记录：一个成功的（带邮箱来源）和一个失败的（带密钥来源）。
+// 用于验证旧版格式的解析、来源脱敏和事件哈希稳定性。
 const legacyUsageExportFixture = `{
   "version": 1,
   "exported_at": "2026-01-02T03:04:05Z",
@@ -52,6 +66,15 @@ const legacyUsageExportFixture = `{
   }
 }`
 
+// TestParseImportPayloadLegacyUsageExport 验证旧版使用量导出格式的解析。
+// 验证内容：
+// 1. 格式识别为 legacy_usage_export
+// 2. 两个 detail 记录均成功解析
+// 3. 生成 legacy 相关警告
+// 4. 第一条记录的来源被脱敏（ali***@example.com）
+// 5. Token 总数、延迟、事件哈希和请求 ID 的正确性
+// 6. 第二条记录的失败状态和 token 合计
+// 7. 重复解析产生相同的事件哈希（稳定性）
 func TestParseImportPayloadLegacyUsageExport(t *testing.T) {
 	result, err := ParseImportPayload([]byte(legacyUsageExportFixture))
 	if err != nil {
@@ -98,6 +121,8 @@ func TestParseImportPayloadLegacyUsageExport(t *testing.T) {
 	}
 }
 
+// TestParseImportPayloadRejectsLegacySummaryWithoutDetails 验证旧版汇总格式
+// （只有 requests 计数，没有 details 数组）被正确拒绝，返回 ErrLegacyUsageNoDetails。
 func TestParseImportPayloadRejectsLegacySummaryWithoutDetails(t *testing.T) {
 	payload := `{
 	  "usage": {
@@ -122,6 +147,8 @@ func TestParseImportPayloadRejectsLegacySummaryWithoutDetails(t *testing.T) {
 	}
 }
 
+// TestParseImportPayloadPreservesExportedEventHash 验证导出事件记录的
+// event_hash、source_hash、api_key_hash 在导入时被保留（不重新计算）。
 func TestParseImportPayloadPreservesExportedEventHash(t *testing.T) {
 	payload := `{
 	  "request_id": "req-1",
@@ -151,6 +178,8 @@ func TestParseImportPayloadPreservesExportedEventHash(t *testing.T) {
 	}
 }
 
+// TestParseImportPayloadJSONLCountsBadLines 验证 JSONL 格式中解析失败的行
+// 被正确计入 Failed 统计，而成功解析的行正常入库。
 func TestParseImportPayloadJSONLCountsBadLines(t *testing.T) {
 	payload := `{"timestamp":"2026-01-02T03:04:05Z","model":"gpt-4o","endpoint":"GET /v1/models","tokens":{"input_tokens":1}}
 not-json`
@@ -163,6 +192,8 @@ not-json`
 	}
 }
 
+// TestParseImportPayloadPreservesAuthProjectIDSnapshot 验证导出事件记录中的
+// auth_project_id_snapshot 字段在导入时被正确保留。
 func TestParseImportPayloadPreservesAuthProjectIDSnapshot(t *testing.T) {
 	payload := `{
 	  "event_hash": "hash-project",
@@ -186,6 +217,8 @@ func TestParseImportPayloadPreservesAuthProjectIDSnapshot(t *testing.T) {
 	}
 }
 
+// TestNormalizeRawReadsProjectID 验证 NormalizeRaw 能正确读取 project_id 字段
+// 并映射到 AuthProjectIDSnapshot。
 func TestNormalizeRawReadsProjectID(t *testing.T) {
 	payload := `{
 	  "timestamp": "2026-05-19T10:00:00Z",
@@ -204,6 +237,9 @@ func TestNormalizeRawReadsProjectID(t *testing.T) {
 	}
 }
 
+// TestNormalizeRawSplitsAliasAndResolvedModel 验证当同时存在 alias 和 model 字段时，
+// NormalizeRaw 正确分离 RequestedModel（alias）和 ResolvedModel（model），
+// Model（聚合键）使用 RequestedModel。
 func TestNormalizeRawSplitsAliasAndResolvedModel(t *testing.T) {
 	payload := `{
 	  "timestamp": "2026-05-19T10:00:00Z",
@@ -228,6 +264,8 @@ func TestNormalizeRawSplitsAliasAndResolvedModel(t *testing.T) {
 	}
 }
 
+// TestNormalizeRawFallsBackToResolvedModelWhenAliasMissing 验证当只有 model 没有 alias 时，
+// Model（聚合键）回退到 ResolvedModel。
 func TestNormalizeRawFallsBackToResolvedModelWhenAliasMissing(t *testing.T) {
 	payload := `{
 	  "timestamp": "2026-05-19T10:00:00Z",
@@ -251,6 +289,8 @@ func TestNormalizeRawFallsBackToResolvedModelWhenAliasMissing(t *testing.T) {
 	}
 }
 
+// TestBuildPayloadExposesResolvedModelOnDetails 验证 BuildPayload 在 Detail 中
+// 正确输出 ResolvedModel，同时按 RequestedModel（聚合键）分组。
 func TestBuildPayloadExposesResolvedModelOnDetails(t *testing.T) {
 	event := Event{
 		Timestamp:      "2026-05-19T10:00:00Z",

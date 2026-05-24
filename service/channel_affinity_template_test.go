@@ -1,3 +1,8 @@
+// 本文件测试渠道亲和性（Channel Affinity）的模板覆盖与重试跳过功能，包括：
+// - 参数覆盖模板的合并逻辑（无模板时跳过、有模板时合并且基础参数优先）
+// - operations 字段的合并（模板操作追加到基础操作列表之后）
+// - 重试跳过判断逻辑（上下文标记或规则元数据中的 SkipRetry 标志）
+// - Codex CLI 场景下的端到端模板传递（缓存命中、请求头透传、参数覆盖生效）
 package service
 
 import (
@@ -14,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// buildChannelAffinityTemplateContextForTest 构建用于测试的 gin.Context，
+// 并设置渠道亲和性元数据。
 func buildChannelAffinityTemplateContextForTest(meta channelAffinityMeta) *gin.Context {
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -21,6 +28,8 @@ func buildChannelAffinityTemplateContextForTest(meta channelAffinityMeta) *gin.C
 	return ctx
 }
 
+// TestApplyChannelAffinityOverrideTemplate_NoTemplate 测试无模板时的行为，
+// 验证当规则没有配置 ParamTemplate 时，applied 为 false，基础参数原样返回。
 func TestApplyChannelAffinityOverrideTemplate_NoTemplate(t *testing.T) {
 	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 		RuleName: "rule-no-template",
@@ -34,6 +43,9 @@ func TestApplyChannelAffinityOverrideTemplate_NoTemplate(t *testing.T) {
 	require.Equal(t, base, merged)
 }
 
+// TestApplyChannelAffinityOverrideTemplate_MergeTemplate 测试模板参数合并逻辑，
+// 验证：模板中的新参数（如 top_p）被添加；基础参数（如 temperature）保留原值不被覆盖；
+// 合并后的日志信息正确记录到 gin.Context 中。
 func TestApplyChannelAffinityOverrideTemplate_MergeTemplate(t *testing.T) {
 	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 		RuleName: "rule-with-template",
@@ -55,12 +67,13 @@ func TestApplyChannelAffinityOverrideTemplate_MergeTemplate(t *testing.T) {
 	}
 
 	merged, applied := ApplyChannelAffinityOverrideTemplate(ctx, base)
-	require.True(t, applied)
-	require.Equal(t, 0.7, merged["temperature"])
-	require.Equal(t, 0.95, merged["top_p"])
-	require.Equal(t, 2000, merged["max_tokens"])
-	require.Equal(t, 0.7, base["temperature"])
+	require.True(t, applied)                        // 模板存在，应标记为已应用
+	require.Equal(t, 0.7, merged["temperature"])    // 基础参数保持原值，不被模板覆盖
+	require.Equal(t, 0.95, merged["top_p"])         // 模板中的新参数被正确添加
+	require.Equal(t, 2000, merged["max_tokens"])    // 基础参数中的 max_tokens 保留
+	require.Equal(t, 0.7, base["temperature"])      // 原始 base map 不被修改
 
+	// 验证日志信息已正确写入 gin.Context
 	anyInfo, ok := ctx.Get(ginKeyChannelAffinityLogInfo)
 	require.True(t, ok)
 	info, ok := anyInfo.(map[string]interface{})
@@ -74,6 +87,9 @@ func TestApplyChannelAffinityOverrideTemplate_MergeTemplate(t *testing.T) {
 	require.EqualValues(t, 2, overrideInfo["param_override_keys"])
 }
 
+// TestApplyChannelAffinityOverrideTemplate_MergeOperations 测试 operations 字段的合并逻辑，
+// 验证模板中的 operations 会追加到基础 operations 列表之后（而非覆盖），
+// 且合并顺序正确（模板操作在前，基础操作在后）。
 func TestApplyChannelAffinityOverrideTemplate_MergeOperations(t *testing.T) {
 	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 		RuleName: "rule-with-ops-template",
@@ -99,23 +115,30 @@ func TestApplyChannelAffinityOverrideTemplate_MergeOperations(t *testing.T) {
 
 	merged, applied := ApplyChannelAffinityOverrideTemplate(ctx, base)
 	require.True(t, applied)
-	require.Equal(t, 0.7, merged["temperature"])
+	require.Equal(t, 0.7, merged["temperature"]) // 基础参数保持不变
 
 	opsAny, ok := merged["operations"]
 	require.True(t, ok)
 	ops, ok := opsAny.([]interface{})
 	require.True(t, ok)
-	require.Len(t, ops, 2)
+	require.Len(t, ops, 2) // 合并后应有 2 个操作（模板 1 个 + 基础 1 个）
 
+	// 验证模板操作（pass_headers）排在第一位
 	firstOp, ok := ops[0].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "pass_headers", firstOp["mode"])
 
+	// 验证基础操作（trim_prefix）排在第二位
 	secondOp, ok := ops[1].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "trim_prefix", secondOp["mode"])
 }
 
+// TestShouldSkipRetryAfterChannelAffinityFailure 测试重试跳过判断函数的各种场景：
+// - nil 上下文时返回 false
+// - 上下文中显式设置了跳过重试标记时返回 true
+// - 规则元数据中 SkipRetry 为 true 时返回 true
+// - 规则元数据中 SkipRetry 为 false 时返回 false
 func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 	tests := []struct {
 		name string
@@ -176,6 +199,11 @@ func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 	}
 }
 
+// TestChannelAffinityHitCodexTemplatePassHeadersEffective 测试 Codex CLI 场景下的端到端流程：
+// - 缓存命中时能正确获取优选渠道 ID
+// - 参数覆盖模板正确应用
+// - 请求头透传（pass_headers）操作生效，将原始请求中的 Originator、Session_id 等头传递到上游
+// - 未在白名单中的头（如 x-codex-beta-features）不会被透传
 func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -207,8 +235,8 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
 	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
-	require.True(t, found)
-	require.Equal(t, 9527, channelID)
+	require.True(t, found)          // 缓存命中，应找到优选渠道
+	require.Equal(t, 9527, channelID) // 返回缓存中存储的渠道 ID
 
 	baseOverride := map[string]interface{}{
 		"temperature": 0.2,
@@ -233,13 +261,15 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 
 	_, err := relaycommon.ApplyParamOverrideWithRelayInfo([]byte(`{"model":"gpt-5"}`), info)
 	require.NoError(t, err)
-	require.True(t, info.UseRuntimeHeadersOverride)
+	require.True(t, info.UseRuntimeHeadersOverride) // 应启用运行时头覆盖
 
+	// 验证原始静态头保留，以及 pass_headers 操作透传的请求头生效
 	require.Equal(t, "legacy-static", info.RuntimeHeadersOverride["x-static"])
-	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])
-	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])
-	require.Equal(t, "codex-cli-test", info.RuntimeHeadersOverride["user-agent"])
+	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])      // 从原始请求头透传
+	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])        // 从原始请求头透传
+	require.Equal(t, "codex-cli-test", info.RuntimeHeadersOverride["user-agent"])  // 从原始请求头透传
 
+	// 验证未在白名单中的 Codex 特定头不会被透传
 	_, exists := info.RuntimeHeadersOverride["x-codex-beta-features"]
 	require.False(t, exists)
 	_, exists = info.RuntimeHeadersOverride["x-codex-turn-metadata"]

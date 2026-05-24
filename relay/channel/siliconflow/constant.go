@@ -1,5 +1,10 @@
+// Package siliconflow 的常量定义文件。
+// 定义了 SiliconFlow 渠道支持的模型列表和渠道名称。
+// SiliconFlow 是一个 AI 模型聚合平台，提供多种开源模型的推理服务。
 package siliconflow
 
+// ModelList 是 SiliconFlow 渠道当前支持的模型列表。
+// 包含多种开源大语言模型、图像生成模型、嵌入模型和重排模型等。
 var ModelList = []string{
 	"THUDM/glm-4-9b-chat",
 	//"stabilityai/stable-diffusion-xl-base-1.0",
@@ -48,4 +53,6 @@ var ModelList = []string{
 	"netease-youdao/bce-reranker-base_v1",
 	"BAAI/bge-reranker-v2-m3",
 }
+
+// ChannelName 渠道名称标识，用于路由和日志中识别 SiliconFlow 渠道。
 var ChannelName = "siliconflow"

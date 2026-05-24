@@ -1,3 +1,7 @@
+// thinking - apply_user_defined_test.go
+// 该文件测试用户自定义模型的思考配置应用行为。
+// 测试覆盖了 Claude 自适应思考级别在请求体和后缀两种来源下的保留行为。
+
 package thinking_test
 
 import (
@@ -9,6 +13,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestApplyThinking_UserDefinedClaudePreservesAdaptiveLevel 测试用户自定义 Claude 模型在应用思考配置时
+// 能够正确保留自适应（adaptive）级别。验证 thinking.type 设为 "adaptive"，output_config.effort 保持不变，
+// 且不注入 budget_tokens 字段。测试覆盖了请求体直接指定和后缀指定两种场景。
 func TestApplyThinking_UserDefinedClaudePreservesAdaptiveLevel(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	clientID := "test-user-defined-claude-" + t.Name()

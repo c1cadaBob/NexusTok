@@ -1,3 +1,11 @@
+// jimeng - sign.go
+// 即梦（Jimeng）AI API 请求签名模块。
+// 实现了基于 HMAC-SHA256 的请求签名机制，用于对即梦 API 的 HTTP 请求进行身份认证。
+// 签名流程遵循火山引擎的签名规范（V4 签名算法），包括：
+//   - 构建规范请求（Canonical Request）
+//   - 计算签名字符串（String to Sign）
+//   - 派生签名密钥（Signing Key）
+//   - 生成最终签名并附加到 Authorization 请求头
 package jimeng
 
 import (
@@ -38,8 +46,18 @@ import (
 //	return signJimengHeaders(&req.Header, req.Method, req.URL, bodyBytes, accessKey, secretKey)
 //}
 
+// HexPayloadHashKey 是 Gin 上下文中存储 payload hash 的键名。
+// 用于在请求处理链中传递已计算的请求体哈希值。
 const HexPayloadHashKey = "HexPayloadHash"
 
+// SetPayloadHash 计算请求体的 SHA-256 哈希值并存储到 Gin 上下文中。
+// 用于在后续的签名过程中复用已计算的 payload hash，避免重复计算。
+// 参数:
+//   - c: Gin 上下文
+//   - req: 请求对象（将被序列化为 JSON 后计算哈希）
+//
+// 返回:
+//   - error: JSON 序列化失败时返回错误
 func SetPayloadHash(c *gin.Context, req any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -51,10 +69,34 @@ func SetPayloadHash(c *gin.Context, req any) error {
 	c.Set(HexPayloadHashKey, hexPayloadHash)
 	return nil
 }
+// getPayloadHash 从 Gin 上下文中获取之前存储的 payload hash。
+// 参数:
+//   - c: Gin 上下文
+//
+// 返回:
+//   - string: 十六进制编码的 payload hash，不存在时返回空字符串
 func getPayloadHash(c *gin.Context) string {
 	return c.GetString(HexPayloadHashKey)
 }
 
+// Sign 对即梦 API 的 HTTP 请求进行 HMAC-SHA256 签名。
+// 签名流程（遵循火山引擎 V4 签名规范）：
+//  1. 读取并计算请求体的 SHA-256 哈希
+//  2. 从 apiKey 中解析 accessKey 和 secretKey（格式: "ak|sk"）
+//  3. 设置 Host、X-Date、X-Content-Sha256 请求头
+//  4. 构建规范请求字符串（Canonical Request）：包含 HTTP 方法、路径、查询参数、头部和 payload hash
+//  5. 计算规范请求的 SHA-256 哈希
+//  6. 构建签名字符串（String to Sign）
+//  7. 通过 HMAC 链式派生签名密钥：secretKey -> kDate -> kRegion -> kService -> kSigning
+//  8. 计算最终签名并生成 Authorization 头
+//
+// 参数:
+//   - c: Gin 上下文
+//   - req: 待签名的 HTTP 请求（函数会修改其 Header）
+//   - apiKey: 即梦 API 密钥，格式为 "accessKey|secretKey"
+//
+// 返回:
+//   - error: 签名过程中的错误（如 apiKey 格式无效、读取请求体失败等）
 func Sign(c *gin.Context, req *http.Request, apiKey string) error {
 	header := req.Header
 
@@ -169,7 +211,14 @@ func Sign(c *gin.Context, req *http.Request, apiKey string) error {
 	return nil
 }
 
-// hmacSHA256 计算 HMAC-SHA256
+// hmacSHA256 使用 HMAC-SHA256 算法计算消息认证码。
+// 用于火山引擎 V4 签名算法中的密钥派生和签名计算。
+// 参数:
+//   - key: HMAC 密钥
+//   - data: 待计算的数据
+//
+// 返回:
+//   - []byte: HMAC-SHA256 计算结果（32 字节）
 func hmacSHA256(key []byte, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)

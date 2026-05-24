@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Gemini 执行器的 maxOutputTokens 限制功能。
 package executor
 
 import (
@@ -14,6 +16,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCapGeminiMaxOutputTokensUsesOutputTokenLimit 验证 maxOutputTokens 被限制到
+// 模型的 outputTokenLimit 值。
 func TestCapGeminiMaxOutputTokensUsesOutputTokenLimit(t *testing.T) {
 	body := []byte(`{"generationConfig":{"maxOutputTokens":500000,"temperature":0.2},"contents":[]}`)
 
@@ -27,6 +31,7 @@ func TestCapGeminiMaxOutputTokensUsesOutputTokenLimit(t *testing.T) {
 	}
 }
 
+// TestCapGeminiMaxOutputTokensLeavesAllowedOrUnknown 验证允许范围内的值和未知模型的值不会被修改。
 func TestCapGeminiMaxOutputTokensLeavesAllowedOrUnknown(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -58,6 +63,8 @@ func TestCapGeminiMaxOutputTokensLeavesAllowedOrUnknown(t *testing.T) {
 	}
 }
 
+// TestGeminiExecutorExecuteCapsMaxOutputTokensBeforeUpstream 验证执行请求时
+// maxOutputTokens 在发送到上游之前被正确限制。
 func TestGeminiExecutorExecuteCapsMaxOutputTokensBeforeUpstream(t *testing.T) {
 	var upstreamMaxOutputTokens int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

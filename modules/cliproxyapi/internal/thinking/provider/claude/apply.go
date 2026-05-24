@@ -1,11 +1,11 @@
-// Package claude implements thinking configuration scaffolding for Claude models.
+// claude - apply.go
+// 本文件实现了 Claude 模型的 thinking 配置应用逻辑。
 //
-// Claude models support two thinking control styles:
-//   - Manual thinking: thinking.type="enabled" with thinking.budget_tokens (token budget)
-//   - Adaptive thinking (Claude 4.6): thinking.type="adaptive" with output_config.effort (low/medium/high/max)
+// Claude 模型支持两种 thinking 控制方式：
+//   - 手动 thinking：thinking.type="enabled" 配合 thinking.budget_tokens（token 预算）
+//   - 自适应 thinking（Claude 4.6）：thinking.type="adaptive" 配合 output_config.effort（low/medium/high/max）
 //
-// Some Claude models support ZeroAllowed (sonnet-4-5, opus-4-5), while older models do not.
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-6
+// 部分 Claude 模型支持 ZeroAllowed（sonnet-4-5、opus-4-5），而旧模型不支持。
 package claude
 
 import (
@@ -15,11 +15,11 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier implements thinking.ProviderApplier for Claude models.
-// This applier is stateless and holds no configuration.
+// Applier 实现了 Claude 模型的 thinking.ProviderApplier 接口。
+// 该应用器是无状态的，不持有任何配置。
 type Applier struct{}
 
-// NewApplier creates a new Claude thinking applier.
+// NewApplier 创建一个新的 Claude thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

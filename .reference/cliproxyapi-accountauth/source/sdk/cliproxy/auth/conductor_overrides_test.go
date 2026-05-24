@@ -1,3 +1,12 @@
+// auth - conductor_overrides_test.go
+// 重试设置、凭证限制与冷却覆盖测试
+// 验证 Manager 的以下覆盖机制：
+// - 认证级别的 request_retry 覆盖全局重试设置
+// - OAuth 模型别名在冷却查找中的使用
+// - max-retry-credentials 限制跨凭证重试次数
+// - 模型不支持时的回退与暂停
+// - disable_cooling 元数据禁用冷却机制
+// - 请求作用域的 404 错误不触发冷却
 package auth
 
 import (
@@ -13,8 +22,13 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// requestScopedNotFoundMessage 是请求作用域的 404 错误消息模板。
+// 此类错误表示请求中引用的资源不存在，不应导致认证被冷却。
 const requestScopedNotFoundMessage = "Item with id 'rs_0b5f3eb6f51f175c0169ca74e4a85881998539920821603a74' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input."
 
+// TestManager_ShouldRetryAfterError_RespectsAuthRequestRetryOverride 验证：
+// 认证元数据中的 request_retry 字段能覆盖全局重试设置。
+// 当 request_retry=0 时不重试，当 request_retry=1 时重试一次。
 func TestManager_ShouldRetryAfterError_RespectsAuthRequestRetryOverride(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.SetRetryConfig(3, 30*time.Second, 0)
@@ -65,6 +79,8 @@ func TestManager_ShouldRetryAfterError_RespectsAuthRequestRetryOverride(t *testi
 	}
 }
 
+// TestManager_ShouldRetryAfterError_UsesOAuthModelAliasForCooldown 验证：
+// 当使用 OAuth 模型别名时，冷却查找能正确解析路由模型到上游模型。
 func TestManager_ShouldRetryAfterError_UsesOAuthModelAliasForCooldown(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.SetRetryConfig(3, 30*time.Second, 0)
@@ -108,6 +124,8 @@ func TestManager_ShouldRetryAfterError_UsesOAuthModelAliasForCooldown(t *testing
 	}
 }
 
+// credentialRetryLimitExecutor 是用于测试凭证重试限制的执行器。
+// 所有操作返回 500 错误，并记录调用次数。
 type credentialRetryLimitExecutor struct {
 	id string
 
@@ -115,45 +133,55 @@ type credentialRetryLimitExecutor struct {
 	calls int
 }
 
+// Identifier 返回执行器的唯一标识符。
 func (e *credentialRetryLimitExecutor) Identifier() string {
 	return e.id
 }
 
+// Execute 执行同步请求，记录调用并返回 500 错误。
 func (e *credentialRetryLimitExecutor) Execute(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	e.recordCall()
 	return cliproxyexecutor.Response{}, &Error{HTTPStatus: 500, Message: "boom"}
 }
 
+// ExecuteStream 执行流式请求，记录调用并返回 500 错误。
 func (e *credentialRetryLimitExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	e.recordCall()
 	return nil, &Error{HTTPStatus: 500, Message: "boom"}
 }
 
+// Refresh 刷新认证，测试中直接返回原认证。
 func (e *credentialRetryLimitExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
 	return auth, nil
 }
 
+// CountTokens 执行 Token 计数，记录调用并返回 500 错误。
 func (e *credentialRetryLimitExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	e.recordCall()
 	return cliproxyexecutor.Response{}, &Error{HTTPStatus: 500, Message: "boom"}
 }
 
+// HttpRequest 执行 HTTP 请求，测试中返回 nil。
 func (e *credentialRetryLimitExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
+// recordCall 记录一次调用（线程安全）。
 func (e *credentialRetryLimitExecutor) recordCall() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls++
 }
 
+// Calls 返回总调用次数。
 func (e *credentialRetryLimitExecutor) Calls() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.calls
 }
 
+// authFallbackExecutor 是支持认证回退测试的执行器。
+// 按认证 ID 注入错误，记录 Execute 和 ExecuteStream 的调用序列。
 type authFallbackExecutor struct {
 	id string
 
@@ -164,10 +192,12 @@ type authFallbackExecutor struct {
 	streamFirstErrors map[string]error
 }
 
+// Identifier 返回执行器的唯一标识符。
 func (e *authFallbackExecutor) Identifier() string {
 	return e.id
 }
 
+// Execute 执行同步请求，按认证 ID 记录调用并返回可能的错误。
 func (e *authFallbackExecutor) Execute(_ context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	e.mu.Lock()
 	e.executeCalls = append(e.executeCalls, auth.ID)
@@ -179,6 +209,7 @@ func (e *authFallbackExecutor) Execute(_ context.Context, auth *Auth, _ cliproxy
 	return cliproxyexecutor.Response{Payload: []byte(auth.ID)}, nil
 }
 
+// ExecuteStream 执行流式请求，按认证 ID 记录调用并返回可能的首块错误。
 func (e *authFallbackExecutor) ExecuteStream(_ context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	e.mu.Lock()
 	e.streamCalls = append(e.streamCalls, auth.ID)
@@ -196,18 +227,22 @@ func (e *authFallbackExecutor) ExecuteStream(_ context.Context, auth *Auth, _ cl
 	return &cliproxyexecutor.StreamResult{Headers: http.Header{"X-Auth": {auth.ID}}, Chunks: ch}, nil
 }
 
+// Refresh 刷新认证，测试中直接返回原认证。
 func (e *authFallbackExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
 	return auth, nil
 }
 
+// CountTokens 执行 Token 计数，测试中返回未实现错误。
 func (e *authFallbackExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, &Error{HTTPStatus: 500, Message: "not implemented"}
 }
 
+// HttpRequest 执行 HTTP 请求，测试中返回 nil。
 func (e *authFallbackExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
+// ExecuteCalls 返回所有 Execute 调用的认证 ID 列表（线程安全副本）。
 func (e *authFallbackExecutor) ExecuteCalls() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -216,6 +251,7 @@ func (e *authFallbackExecutor) ExecuteCalls() []string {
 	return out
 }
 
+// StreamCalls 返回所有 ExecuteStream 调用的认证 ID 列表（线程安全副本）。
 func (e *authFallbackExecutor) StreamCalls() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -224,12 +260,15 @@ func (e *authFallbackExecutor) StreamCalls() []string {
 	return out
 }
 
+// retryAfterStatusError 是支持 Retry-After 的状态错误实现。
+// 用于模拟带有 Retry-After 头的 HTTP 错误响应。
 type retryAfterStatusError struct {
 	status     int
 	message    string
 	retryAfter time.Duration
 }
 
+// Error 返回错误消息。
 func (e *retryAfterStatusError) Error() string {
 	if e == nil {
 		return ""
@@ -237,6 +276,7 @@ func (e *retryAfterStatusError) Error() string {
 	return e.message
 }
 
+// StatusCode 返回 HTTP 状态码。
 func (e *retryAfterStatusError) StatusCode() int {
 	if e == nil {
 		return 0
@@ -244,6 +284,7 @@ func (e *retryAfterStatusError) StatusCode() int {
 	return e.status
 }
 
+// RetryAfter 返回建议的重试等待时间。
 func (e *retryAfterStatusError) RetryAfter() *time.Duration {
 	if e == nil {
 		return nil
@@ -252,6 +293,8 @@ func (e *retryAfterStatusError) RetryAfter() *time.Duration {
 	return &d
 }
 
+// newCredentialRetryLimitTestManager 创建用于凭证重试限制测试的 Manager 实例。
+// 配置 maxRetryCredentials 限制，注册执行器和两个认证，并在全局注册表中注册模型信息。
 func newCredentialRetryLimitTestManager(t *testing.T, maxRetryCredentials int) (*Manager, *credentialRetryLimitExecutor) {
 	t.Helper()
 
@@ -284,6 +327,9 @@ func newCredentialRetryLimitTestManager(t *testing.T, maxRetryCredentials int) (
 	return m, executor
 }
 
+// TestManager_MaxRetryCredentials_LimitsCrossCredentialRetries 验证：
+// max-retry-credentials 设置能限制跨凭证的重试次数。
+// 使用表驱动测试覆盖 Execute、ExecuteCount、ExecuteStream 三种操作。
 func TestManager_MaxRetryCredentials_LimitsCrossCredentialRetries(t *testing.T) {
 	request := cliproxyexecutor.Request{Model: "test-model"}
 	testCases := []struct {
@@ -335,6 +381,9 @@ func TestManager_MaxRetryCredentials_LimitsCrossCredentialRetries(t *testing.T) 
 	}
 }
 
+// TestManager_ModelSupportBadRequest_FallsBackAndSuspendsAuth 验证：
+// 当某个认证返回 "model not supported" 的 400 错误时，
+// 系统回退到其他可用认证，并暂停不支持该模型的认证。
 func TestManager_ModelSupportBadRequest_FallsBackAndSuspendsAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	executor := &authFallbackExecutor{
@@ -405,6 +454,9 @@ func TestManager_ModelSupportBadRequest_FallsBackAndSuspendsAuth(t *testing.T) {
 	}
 }
 
+// TestManagerExecuteStream_ModelSupportBadRequestFallsBackAndSuspendsAuth 验证：
+// 流式请求中，当某个认证返回 "model not supported" 的 400 错误时，
+// 系统回退到其他可用认证，并暂停不支持该模型的认证。
 func TestManagerExecuteStream_ModelSupportBadRequestFallsBackAndSuspendsAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	executor := &authFallbackExecutor{
@@ -482,6 +534,9 @@ func TestManagerExecuteStream_ModelSupportBadRequestFallsBackAndSuspendsAuth(t *
 	}
 }
 
+// TestManager_MarkResult_RespectsAuthDisableCoolingOverride 验证：
+// 当认证元数据中设置 disable_cooling=true 时，
+// MarkResult 不会为该认证设置冷却时间。
 func TestManager_MarkResult_RespectsAuthDisableCoolingOverride(t *testing.T) {
 	prev := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
@@ -522,6 +577,9 @@ func TestManager_MarkResult_RespectsAuthDisableCoolingOverride(t *testing.T) {
 	}
 }
 
+// TestManager_MarkResult_RespectsAuthDisableCoolingOverride_On403 验证：
+// 当认证设置 disable_cooling=true 时，即使收到 403 错误，
+// 也不会设置冷却时间，且模型计数保持不变。
 func TestManager_MarkResult_RespectsAuthDisableCoolingOverride_On403(t *testing.T) {
 	prev := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
@@ -570,6 +628,9 @@ func TestManager_MarkResult_RespectsAuthDisableCoolingOverride_On403(t *testing.
 	}
 }
 
+// TestManager_Execute_DisableCooling_DoesNotBlackoutAfter403 验证：
+// 当认证设置 disable_cooling=true 时，403 错误不会导致认证被暂停，
+// 后续请求仍能使用该认证。
 func TestManager_Execute_DisableCooling_DoesNotBlackoutAfter403(t *testing.T) {
 	prev := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
@@ -621,6 +682,9 @@ func TestManager_Execute_DisableCooling_DoesNotBlackoutAfter403(t *testing.T) {
 	}
 }
 
+// TestManager_Execute_DisableCooling_DoesNotBlackoutAfter429RetryAfter 验证：
+// 当认证设置 disable_cooling=true 时，带有 Retry-After 的 429 错误
+// 不会导致认证被暂停，后续请求仍能使用该认证。
 func TestManager_Execute_DisableCooling_DoesNotBlackoutAfter429RetryAfter(t *testing.T) {
 	prev := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
@@ -690,6 +754,9 @@ func TestManager_Execute_DisableCooling_DoesNotBlackoutAfter429RetryAfter(t *tes
 	}
 }
 
+// TestManager_Execute_DisableCooling_RetriesAfter429RetryAfter 验证：
+// 当认证设置 disable_cooling=true 且 Retry-After 时间较短时，
+// 请求会按照配置的重试次数进行重试。
 func TestManager_Execute_DisableCooling_RetriesAfter429RetryAfter(t *testing.T) {
 	prev := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
@@ -741,6 +808,8 @@ func TestManager_Execute_DisableCooling_RetriesAfter429RetryAfter(t *testing.T) 
 	}
 }
 
+// TestManager_MarkResult_RequestScopedNotFoundDoesNotCooldownAuth 验证：
+// 请求作用域的 404 错误（如 "Item with id ... not found"）不会导致认证被冷却。
 func TestManager_MarkResult_RequestScopedNotFoundDoesNotCooldownAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
@@ -779,6 +848,9 @@ func TestManager_MarkResult_RequestScopedNotFoundDoesNotCooldownAuth(t *testing.
 	}
 }
 
+// TestManager_RequestScopedNotFoundStopsRetryWithoutSuspendingAuth 验证：
+// 请求作用域的 404 错误会停止当前请求的重试（不回退到其他认证），
+// 但不会暂停该认证，后续请求仍可使用。
 func TestManager_RequestScopedNotFoundStopsRetryWithoutSuspendingAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	executor := &authFallbackExecutor{

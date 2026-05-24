@@ -1,3 +1,8 @@
+// watcher - config_reload.go
+// 该文件实现了带防抖的配置热重载功能。
+// 通过 SHA256 哈希检测配置文件的实际变更，避免无效重载，
+// 并在重载后触发客户端更新、日志级别调整和配置持久化。
+
 // config_reload.go implements debounced configuration hot reload.
 // It detects material changes and reloads clients when the config changes.
 package watcher
@@ -17,6 +22,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// stopConfigReloadTimer 停止当前的配置重载防抖定时器。
 func (w *Watcher) stopConfigReloadTimer() {
 	w.configReloadMu.Lock()
 	if w.configReloadTimer != nil {
@@ -26,6 +32,7 @@ func (w *Watcher) stopConfigReloadTimer() {
 	w.configReloadMu.Unlock()
 }
 
+// scheduleConfigReload 调度一次防抖的配置重载。多次快速调用会被合并为一次实际重载。
 func (w *Watcher) scheduleConfigReload() {
 	w.configReloadMu.Lock()
 	defer w.configReloadMu.Unlock()
@@ -40,6 +47,7 @@ func (w *Watcher) scheduleConfigReload() {
 	})
 }
 
+// reloadConfigIfChanged 检查配置文件哈希是否变更，仅在内容实际变化时触发重载。
 func (w *Watcher) reloadConfigIfChanged() {
 	data, err := os.ReadFile(w.configPath)
 	if err != nil {
@@ -77,6 +85,8 @@ func (w *Watcher) reloadConfigIfChanged() {
 	}
 }
 
+// reloadConfig 执行实际的配置重载流程：加载新配置、解析认证目录、
+// 检测 OAuth 排除模型变更、调整日志级别、构建变更详情并触发客户端重载。
 func (w *Watcher) reloadConfig() bool {
 	log.Debug("=========================== CONFIG RELOAD ============================")
 	log.Debugf("starting config reload from: %s", w.configPath)

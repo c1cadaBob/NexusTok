@@ -1,3 +1,6 @@
+// store - gitstore.go
+// 本文件实现了基于 Git 仓库的令牌和配置持久化。
+// 通过 Git 提交历史管理配置和认证文件的版本，支持远程仓库同步。
 package store
 
 import (

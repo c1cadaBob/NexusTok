@@ -1,8 +1,9 @@
+// codex/gemini-cli - codex_gemini-cli_request.go
 // Package geminiCLI provides request translation functionality for Gemini CLI to Codex API compatibility.
-// It handles parsing and transforming Gemini CLI API requests into Codex API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Gemini CLI API format and Codex API's expected format.
+// 本文件提供 Gemini CLI API 请求到 Codex API 格式的转换功能。
+// 从 Gemini CLI 请求中提取内部 request 对象，恢复模型信息，
+// 将 systemInstruction 重命名为 system_instruction，然后委托给
+// codex/gemini 包的 ConvertGeminiRequestToCodex 函数进行进一步转换。
 package geminiCLI
 
 import (

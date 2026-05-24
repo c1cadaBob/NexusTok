@@ -1,7 +1,7 @@
-// Package gemini provides HTTP handlers for Gemini CLI API functionality.
-// This package implements handlers that process CLI-specific requests for Gemini API operations,
-// including content generation and streaming content generation endpoints.
-// The handlers restrict access to localhost only and manage communication with the backend service.
+// gemini - gemini-cli_handlers.go
+// 提供 Gemini CLI API 功能的 HTTP 处理器。
+// 处理 CLI 特定的 Gemini API 操作请求，包括内容生成和流式内容生成端点。
+// 处理器限制仅允许本地访问，并管理与后端服务的通信。
 package gemini
 
 import (
@@ -23,32 +23,32 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// GeminiCLIAPIHandler contains the handlers for Gemini CLI API endpoints.
-// It holds a pool of clients to interact with the backend service.
+// GeminiCLIAPIHandler 是 Gemini CLI API 端点的处理器。
+// 包含基础 API 处理器，用于与后端服务交互。
 type GeminiCLIAPIHandler struct {
 	*handlers.BaseAPIHandler
 }
 
-// NewGeminiCLIAPIHandler creates a new Gemini CLI API handlers instance.
-// It takes an BaseAPIHandler instance as input and returns a GeminiCLIAPIHandler.
+// NewGeminiCLIAPIHandler 创建新的 Gemini CLI API 处理器实例。
 func NewGeminiCLIAPIHandler(apiHandlers *handlers.BaseAPIHandler) *GeminiCLIAPIHandler {
 	return &GeminiCLIAPIHandler{
 		BaseAPIHandler: apiHandlers,
 	}
 }
 
-// HandlerType returns the type of this handler.
+// HandlerType 返回此处理器的类型标识符。
 func (h *GeminiCLIAPIHandler) HandlerType() string {
 	return GeminiCLI
 }
 
-// Models returns a list of models supported by this handler.
+// Models 返回此处理器支持的模型列表。
+// CLI 处理器不直接暴露模型列表，返回空切片。
 func (h *GeminiCLIAPIHandler) Models() []map[string]any {
 	return make([]map[string]any, 0)
 }
 
-// CLIHandler handles CLI-specific requests for Gemini API operations.
-// It restricts access to localhost only and routes requests to appropriate internal handlers.
+// CLIHandler 处理 Gemini CLI 特定的 API 请求。
+// 限制仅允许本地访问（127.0.0.1），根据请求路径路由到相应的内部处理器。
 func (h *GeminiCLIAPIHandler) CLIHandler(c *gin.Context) {
 	if h.Cfg == nil || !h.Cfg.EnableGeminiCLIEndpoint {
 		c.JSON(http.StatusForbidden, handlers.ErrorResponse{

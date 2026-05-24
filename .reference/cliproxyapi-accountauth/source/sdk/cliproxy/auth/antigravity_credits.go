@@ -1,3 +1,6 @@
+// 包 auth - antigravity_credits.go
+// 该文件提供了 Antigravity AI 积分（Credits）的上下文控制和状态缓存。
+// 包括积分请求标志、积分状态提示的存储和检索等功能。
 package auth
 
 import (
@@ -7,15 +10,14 @@ import (
 	"time"
 )
 
-type antigravityUseCreditsContextKey struct{}
+type antigravityUseCreditsContextKey struct{} // 上下文键类型，用于标记启用积分
 
-// WithAntigravityCredits returns a child context that signals the executor to
-// inject enabledCreditTypes into the request payload.
+// WithAntigravityCredits 返回一个子上下文，信号执行器将 enabledCreditTypes 注入请求载荷。
 func WithAntigravityCredits(ctx context.Context) context.Context {
 	return context.WithValue(ctx, antigravityUseCreditsContextKey{}, true)
 }
 
-// AntigravityCreditsRequested reports whether the context carries the credits flag.
+// AntigravityCreditsRequested 报告上下文是否携带积分标志。
 func AntigravityCreditsRequested(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -24,19 +26,19 @@ func AntigravityCreditsRequested(ctx context.Context) bool {
 	return v
 }
 
-// AntigravityCreditsHint stores the latest known AI credits state for one auth.
+// AntigravityCreditsHint 存储一个认证的最新已知 AI 积分状态。
 type AntigravityCreditsHint struct {
-	Known           bool
-	Available       bool
-	CreditAmount    float64
-	MinCreditAmount float64
-	PaidTierID      string
-	UpdatedAt       time.Time
+	Known           bool      // 是否已知积分状态
+	Available       bool      // 积分是否可用
+	CreditAmount    float64   // 当前积分余额
+	MinCreditAmount float64   // 最低积分余额阈值
+	PaidTierID      string    // 付费层级 ID
+	UpdatedAt       time.Time // 最后更新时间
 }
 
-var antigravityCreditsHintByAuth sync.Map
+var antigravityCreditsHintByAuth sync.Map // 认证 ID 到积分状态提示的并发安全映射
 
-// SetAntigravityCreditsHint updates the latest known AI credits state for an auth.
+// SetAntigravityCreditsHint 更新一个认证的最新已知 AI 积分状态。
 func SetAntigravityCreditsHint(authID string, hint AntigravityCreditsHint) {
 	authID = strings.TrimSpace(authID)
 	if authID == "" {

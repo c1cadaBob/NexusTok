@@ -1,3 +1,6 @@
+// auth - conductor_executor_replace_test.go
+// 该文件包含执行器替换和会话关闭的单元测试，验证当执行器被替换时
+// 旧执行器的活跃会话被正确关闭。
 package auth
 
 import (
@@ -9,13 +12,15 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// replaceAwareExecutor 是测试用的执行器，跟踪已关闭的会话 ID。
 type replaceAwareExecutor struct {
-	id string
+	id string // 执行器标识符
 
-	mu               sync.Mutex
-	closedSessionIDs []string
+	mu               sync.Mutex   // 保护记录的互斥锁
+	closedSessionIDs []string     // 已关闭的会话 ID 列表
 }
 
+// Identifier 返回执行器标识符。
 func (e *replaceAwareExecutor) Identifier() string {
 	return e.id
 }

@@ -1,3 +1,8 @@
+// token_estimator.go - Token 数量估算器
+// 本文件提供基于字符类型分析的 Token 数量估算功能。
+// 针对不同 AI 厂商（OpenAI、Gemini、Claude）使用不同的权重配置，
+// 按字符类型（拉丁字母、数字、CJK 字符、标点、Emoji 等）分别计算消耗。
+// 适用于无法使用精确 tokenizer 的场景，提供快速的近似估算。
 package service
 
 import (
@@ -32,6 +37,8 @@ type multipliers struct {
 	BasePad    int     // 基础起步消耗 (Start/End tokens)
 }
 
+// multipliersMap 各厂商的计费权重配置映射表
+// 每个厂商的权重基于其 tokenizer 的实际分词特征进行标定
 var (
 	multipliersMap = map[Provider]multipliers{
 		Gemini: {
@@ -65,7 +72,15 @@ func getMultipliers(p Provider) multipliers {
 	}
 }
 
-// EstimateToken 计算 Token 数量
+// EstimateToken 根据厂商和文本内容估算 Token 数量。
+// 使用状态机遍历文本中的每个字符，按字符类型（空格、CJK、Emoji、
+// 拉丁字母/数字、标点符号）分别应用不同的权重系数。
+// 字母和数字之间的切换被视为新 token 的开始。
+// 参数:
+//   - provider: AI 厂商类型（决定使用哪套权重配置）
+//   - text: 待估算的文本内容
+// 返回值:
+//   - int: 估算的 Token 数量（向上取整，加上基础 padding）
 func EstimateToken(provider Provider, text string) int {
 	m := getMultipliers(provider)
 	var count float64
@@ -213,6 +228,14 @@ func isURLDelim(r rune) bool {
 	return false
 }
 
+// EstimateTokenByModel 根据模型名称自动选择厂商并估算 Token 数量。
+// 通过模型名称中的关键词（gemini、claude）自动判断厂商，
+// 无法识别的模型默认使用 OpenAI 的权重配置。
+// 参数:
+//   - model: 模型名称（如 "gpt-4o", "gemini-1.5-pro", "claude-3-sonnet"）
+//   - text: 待估算的文本内容
+// 返回值:
+//   - int: 估算的 Token 数量
 func EstimateTokenByModel(model, text string) int {
 	// strings.Contains(model, "gpt-4o")
 	if text == "" {

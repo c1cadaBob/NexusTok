@@ -1,3 +1,5 @@
+// Package helps - proxy_helpers.go
+// 提供代理相关的辅助函数，包括 HTTP 客户端创建、代理配置和请求转发。
 package helps
 
 import (

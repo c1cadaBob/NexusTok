@@ -1,8 +1,8 @@
+// antigravity/gemini - antigravity_gemini_response.go
 // Package gemini provides request translation functionality for Gemini to Gemini CLI API compatibility.
-// It handles parsing and transforming Gemini API requests into Gemini CLI API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Gemini API format and Gemini CLI API's expected format.
+// 本文件提供 Antigravity（Gemini CLI）API 响应到 Gemini API 格式的转换功能。
+// 处理流式和非流式响应，从 Gemini CLI 响应中提取 response 对象，
+// 并将 cpaUsageMetadata 恢复为 usageMetadata 以匹配标准 Gemini API 格式。
 package gemini
 
 import (
@@ -83,14 +83,15 @@ func ConvertAntigravityResponseToGeminiNonStream(_ context.Context, _ string, or
 	return rawJSON
 }
 
+// GeminiTokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }
 
-// restoreUsageMetadata renames cpaUsageMetadata back to usageMetadata.
-// The executor renames usageMetadata to cpaUsageMetadata in non-terminal chunks
-// to preserve usage data while hiding it from clients that don't expect it.
-// When returning standard Gemini API format, we must restore the original name.
+// restoreUsageMetadata 将 cpaUsageMetadata 重命名回 usageMetadata。
+// 执行器在非终端块中将 usageMetadata 重命名为 cpaUsageMetadata，
+// 以在保留使用数据的同时对不期望它的客户端隐藏。
+// 返回标准 Gemini API 格式时，必须恢复原始名称。
 func restoreUsageMetadata(chunk []byte) []byte {
 	if cpaUsage := gjson.GetBytes(chunk, "cpaUsageMetadata"); cpaUsage.Exists() {
 		chunk, _ = sjson.SetRawBytes(chunk, "usageMetadata", []byte(cpaUsage.Raw))

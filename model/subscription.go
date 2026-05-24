@@ -1,3 +1,17 @@
+// Package model - subscription.go
+// 该文件定义了订阅（Subscription）数据模型及相关操作
+//
+// 主要结构体：
+// - SubscriptionPlan：订阅计划
+// - SubscriptionOrder：订阅订单
+// - UserSubscription：用户订阅
+// - SubscriptionPreConsumeRecord：订阅预消费记录
+//
+// 核心功能：
+// - 订阅计划的增删改查
+// - 订阅订单的创建和管理
+// - 用户订阅状态管理
+// - 订阅配额的预消费和结算
 package model
 
 import (

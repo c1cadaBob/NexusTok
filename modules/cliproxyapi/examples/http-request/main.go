@@ -1,9 +1,9 @@
-// Package main demonstrates how to use coreauth.Manager.HttpRequest/NewHttpRequest
-// to execute arbitrary HTTP requests with provider credentials injected.
+// Package main - http-request 示例
+// 演示如何使用 coreauth.Manager.HttpRequest/NewHttpRequest
+// 执行带有提供者凭证注入的任意 HTTP 请求。
 //
-// This example registers a minimal custom executor that injects an Authorization
-// header from auth.Attributes["api_key"], then performs two requests against
-// httpbin.org to show the injected headers.
+// 本示例注册了一个最小化的自定义执行器，该执行器从 auth.Attributes["api_key"]
+// 注入 Authorization 头，然后对 httpbin.org 执行两个请求以展示注入的头部信息。
 package main
 
 import (
@@ -21,13 +21,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// providerKey 是 echo 提供者的标识符。
 const providerKey = "echo"
 
-// EchoExecutor is a minimal provider implementation for demonstration purposes.
+// EchoExecutor 是用于演示的最小化提供者实现。
 type EchoExecutor struct{}
 
+// Identifier 返回此执行器的唯一标识符。
 func (EchoExecutor) Identifier() string { return providerKey }
 
+// PrepareRequest 向 HTTP 请求注入认证头。
+// 从认证信息的 Attributes 中提取 api_key，并设置为 Bearer token。
 func (EchoExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth) error {
 	if req == nil || auth == nil {
 		return nil
@@ -40,6 +44,7 @@ func (EchoExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth) error
 	return nil
 }
 
+// HttpRequest 执行原始 HTTP 请求，注入凭证后发送。
 func (EchoExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("echo executor: request is nil")
@@ -54,22 +59,30 @@ func (EchoExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *h
 	return http.DefaultClient.Do(httpReq)
 }
 
+// Execute 执行同步请求（本示例中未实现）。
 func (EchoExecutor) Execute(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
 	return clipexec.Response{}, errors.New("echo executor: Execute not implemented")
 }
 
+// ExecuteStream 执行流式请求（本示例中未实现）。
 func (EchoExecutor) ExecuteStream(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (*clipexec.StreamResult, error) {
 	return nil, errors.New("echo executor: ExecuteStream not implemented")
 }
 
+// Refresh 刷新认证信息（本示例中未实现）。
 func (EchoExecutor) Refresh(context.Context, *coreauth.Auth) (*coreauth.Auth, error) {
 	return nil, errors.New("echo executor: Refresh not implemented")
 }
 
+// CountTokens 计算 token 数量（本示例中未实现）。
 func (EchoExecutor) CountTokens(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
 	return clipexec.Response{}, errors.New("echo executor: CountTokens not implemented")
 }
 
+// main 是示例程序的入口函数。
+// 它演示了两种使用 HTTP 请求的方式：
+// 1. 使用 NewHttpRequest 构建预处理后的请求，然后手动执行
+// 2. 使用 HttpRequest 直接执行带有凭证注入的请求
 func main() {
 	log.SetLevel(log.InfoLevel)
 

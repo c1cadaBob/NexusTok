@@ -1,3 +1,7 @@
+// Package codex - errors.go
+// 定义 OAuth 认证流程中的错误类型和错误处理函数。
+// 包括 OAuth 错误和认证错误两种类型，以及预定义的常见错误实例，
+// 提供用户友好的错误消息映射和错误类型检查功能。
 package codex
 
 import (

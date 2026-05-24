@@ -1,3 +1,18 @@
+// Package controller - custom_oauth.go
+// 该文件实现了自定义 OAuth 提供商管理的 API 控制器
+//
+// 自定义 OAuth 允许管理员配置第三方 OAuth 提供商（如 GitLab、Keycloak 等）
+// 用户可以绑定/解绑自定义 OAuth 账户进行登录
+//
+// 主要 API：
+// - GetCustomOAuthProviders：获取所有自定义 OAuth 提供商
+// - GetCustomOAuthProvider：获取单个提供商详情
+// - CreateCustomOAuthProvider：创建提供商
+// - UpdateCustomOAuthProvider：更新提供商
+// - DeleteCustomOAuthProvider：删除提供商
+// - FetchCustomOAuthDiscovery：获取 OIDC Discovery 配置
+// - GetUserOAuthBindings：获取当前用户的 OAuth 绑定
+// - UnbindCustomOAuth：解绑 OAuth 账户
 package controller
 
 import (
@@ -15,8 +30,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CustomOAuthProviderResponse is the response structure for custom OAuth providers
-// It excludes sensitive fields like client_secret
+// CustomOAuthProviderResponse 自定义 OAuth 提供商响应结构体
+// 排除了 client_secret 等敏感字段
 type CustomOAuthProviderResponse struct {
 	Id                    int    `json:"id"`
 	Name                  string `json:"name"`
@@ -38,6 +53,7 @@ type CustomOAuthProviderResponse struct {
 	AccessDeniedMessage   string `json:"access_denied_message"`
 }
 
+// UserOAuthBindingResponse 用户 OAuth 绑定响应结构体
 type UserOAuthBindingResponse struct {
 	ProviderId     int    `json:"provider_id"`
 	ProviderName   string `json:"provider_name"`
@@ -46,6 +62,7 @@ type UserOAuthBindingResponse struct {
 	ProviderUserId string `json:"provider_user_id"`
 }
 
+// toCustomOAuthProviderResponse 将模型对象转换为响应对象（排除敏感字段）
 func toCustomOAuthProviderResponse(p *model.CustomOAuthProvider) *CustomOAuthProviderResponse {
 	return &CustomOAuthProviderResponse{
 		Id:                    p.Id,
@@ -69,7 +86,9 @@ func toCustomOAuthProviderResponse(p *model.CustomOAuthProvider) *CustomOAuthPro
 	}
 }
 
-// GetCustomOAuthProviders returns all custom OAuth providers
+// GetCustomOAuthProviders 获取所有自定义 OAuth 提供商列表
+//
+// 返回排除敏感字段的提供商列表
 func GetCustomOAuthProviders(c *gin.Context) {
 	providers, err := model.GetAllCustomOAuthProviders()
 	if err != nil {
@@ -89,7 +108,10 @@ func GetCustomOAuthProviders(c *gin.Context) {
 	})
 }
 
-// GetCustomOAuthProvider returns a single custom OAuth provider by ID
+// GetCustomOAuthProvider 获取单个自定义 OAuth 提供商详情
+//
+// 路径参数：
+//   - id: 提供商 ID
 func GetCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -111,7 +133,7 @@ func GetCustomOAuthProvider(c *gin.Context) {
 	})
 }
 
-// CreateCustomOAuthProviderRequest is the request structure for creating a custom OAuth provider
+// CreateCustomOAuthProviderRequest 创建自定义 OAuth 提供商请求结构体
 type CreateCustomOAuthProviderRequest struct {
 	Name                  string `json:"name" binding:"required"`
 	Slug                  string `json:"slug" binding:"required"`
@@ -133,12 +155,17 @@ type CreateCustomOAuthProviderRequest struct {
 	AccessDeniedMessage   string `json:"access_denied_message"`
 }
 
+// FetchCustomOAuthDiscoveryRequest 获取 OIDC Discovery 配置请求结构体
 type FetchCustomOAuthDiscoveryRequest struct {
 	WellKnownURL string `json:"well_known_url"`
 	IssuerURL    string `json:"issuer_url"`
 }
 
-// FetchCustomOAuthDiscovery fetches OIDC discovery document via backend (root-only route)
+// FetchCustomOAuthDiscovery 通过后端获取 OIDC Discovery 配置（仅管理员）
+//
+// 支持两种方式：
+//   - 直接提供 well_known_url
+//   - 提供 issuer_url，自动拼接 /.well-known/openid-configuration
 func FetchCustomOAuthDiscovery(c *gin.Context) {
 	var req FetchCustomOAuthDiscoveryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -210,7 +237,10 @@ func FetchCustomOAuthDiscovery(c *gin.Context) {
 	})
 }
 
-// CreateCustomOAuthProvider creates a new custom OAuth provider
+// CreateCustomOAuthProvider 创建新的自定义 OAuth 提供商
+//
+// 创建前会检查 slug 是否与现有提供商冲突
+// 创建成功后会注册到 OAuth 提供商注册表
 func CreateCustomOAuthProvider(c *gin.Context) {
 	var req CreateCustomOAuthProviderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -266,7 +296,8 @@ func CreateCustomOAuthProvider(c *gin.Context) {
 	})
 }
 
-// UpdateCustomOAuthProviderRequest is the request structure for updating a custom OAuth provider
+// UpdateCustomOAuthProviderRequest 更新自定义 OAuth 提供商请求结构体
+// 使用指针类型字段支持部分更新（nil 表示不更新）
 type UpdateCustomOAuthProviderRequest struct {
 	Name                  string  `json:"name"`
 	Slug                  string  `json:"slug"`
@@ -288,7 +319,9 @@ type UpdateCustomOAuthProviderRequest struct {
 	AccessDeniedMessage   *string `json:"access_denied_message"` // Optional: if nil, keep existing
 }
 
-// UpdateCustomOAuthProvider updates an existing custom OAuth provider
+// UpdateCustomOAuthProvider 更新现有的自定义 OAuth 提供商
+//
+// 如果 slug 发生变化，会先注销旧 slug 再注册新 slug
 func UpdateCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -399,7 +432,9 @@ func UpdateCustomOAuthProvider(c *gin.Context) {
 	})
 }
 
-// DeleteCustomOAuthProvider deletes a custom OAuth provider
+// DeleteCustomOAuthProvider 删除自定义 OAuth 提供商
+//
+// 删除前会检查是否存在用户绑定，如有绑定则拒绝删除
 func DeleteCustomOAuthProvider(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -441,6 +476,9 @@ func DeleteCustomOAuthProvider(c *gin.Context) {
 	})
 }
 
+// buildUserOAuthBindingsResponse 构建用户 OAuth 绑定响应
+//
+// 查询用户的所有 OAuth 绑定并附加提供商信息
 func buildUserOAuthBindingsResponse(userId int) ([]UserOAuthBindingResponse, error) {
 	bindings, err := model.GetUserOAuthBindingsByUserId(userId)
 	if err != nil {
@@ -465,7 +503,7 @@ func buildUserOAuthBindingsResponse(userId int) ([]UserOAuthBindingResponse, err
 	return response, nil
 }
 
-// GetUserOAuthBindings returns all OAuth bindings for the current user
+// GetUserOAuthBindings 获取当前用户的所有 OAuth 绑定
 func GetUserOAuthBindings(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId == 0 {
@@ -486,6 +524,10 @@ func GetUserOAuthBindings(c *gin.Context) {
 	})
 }
 
+// GetUserOAuthBindingsByAdmin 管理员获取指定用户的 OAuth 绑定
+//
+// 路径参数：
+//   - id: 用户 ID
 func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)
@@ -519,7 +561,10 @@ func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 	})
 }
 
-// UnbindCustomOAuth unbinds a custom OAuth provider from the current user
+// UnbindCustomOAuth 解绑当前用户的指定 OAuth 提供商
+//
+// 路径参数：
+//   - provider_id: 提供商 ID
 func UnbindCustomOAuth(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId == 0 {
@@ -545,6 +590,11 @@ func UnbindCustomOAuth(c *gin.Context) {
 	})
 }
 
+// UnbindCustomOAuthByAdmin 管理员解绑指定用户的 OAuth 提供商
+//
+// 路径参数：
+//   - id: 用户 ID
+//   - provider_id: 提供商 ID
 func UnbindCustomOAuthByAdmin(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)

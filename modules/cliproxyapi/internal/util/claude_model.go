@@ -1,3 +1,6 @@
+// util - claude_model.go
+// 本文件提供了 Claude 模型相关的工具函数。
+// 处理 Claude 模型名称的解析和判断。
 package util
 
 import "strings"

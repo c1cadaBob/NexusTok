@@ -1,3 +1,5 @@
+// Package cmd - xai_login.go
+// 提供 xAI 提供商的 OAuth 认证流程。
 package cmd
 
 import (
@@ -9,6 +11,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// DoXAILogin 触发 xAI 提供商的 OAuth 流程并保存令牌。
+//
+// 参数:
+//   - cfg: 应用程序配置
+//   - options: 登录选项，包括浏览器行为和提示
+//
 // DoXAILogin triggers the OAuth flow for the xAI provider and saves tokens.
 func DoXAILogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {

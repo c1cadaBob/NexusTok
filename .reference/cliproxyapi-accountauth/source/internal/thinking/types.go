@@ -1,7 +1,7 @@
-// Package thinking provides unified thinking configuration processing.
-//
-// This package offers a unified interface for parsing, validating, and applying
-// thinking configurations across various AI providers (Claude, Gemini, OpenAI, Codex, Antigravity, Kimi, xAI).
+// 包 thinking - types.go
+// 该文件定义了统一思考配置的核心类型。
+// 提供了跨各 AI 提供商（Claude、Gemini、OpenAI、Codex、Antigravity、Kimi、xAI）的
+// 思考配置解析、验证和应用的统一接口。
 package thinking
 
 import "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"

@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Antigravity 执行器的请求构建功能，验证工具 schema 清理、非 schema 请求字段保留
+// 以及无工具或空工具数组场景下的行为。
 package executor
 
 import (
@@ -9,6 +12,9 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestAntigravityBuildRequest_SanitizesGeminiToolSchema 验证针对 Gemini 模型的工具 schema 清理：
+// parametersJsonSchema 被重命名为 parameters，$id、patternProperties 等非标准字段被移除，
+// 但 properties 中名为 $id 的属性被保留，嵌套的 prefill、enumTitles、deprecated 也被移除。
 func TestAntigravityBuildRequest_SanitizesGeminiToolSchema(t *testing.T) {
 	body := buildRequestBodyFromPayload(t, "gemini-2.5-pro")
 
@@ -24,6 +30,8 @@ func TestAntigravityBuildRequest_SanitizesGeminiToolSchema(t *testing.T) {
 	assertSchemaSanitizedAndPropertyPreserved(t, params)
 }
 
+// TestAntigravityBuildRequest_SanitizesAntigravityToolSchema 验证针对 Claude 模型的工具 schema 清理，
+// 确保与 Gemini 模型使用相同的清理逻辑。
 func TestAntigravityBuildRequest_SanitizesAntigravityToolSchema(t *testing.T) {
 	body := buildRequestBodyFromPayload(t, "claude-opus-4-6")
 
@@ -35,6 +43,9 @@ func TestAntigravityBuildRequest_SanitizesAntigravityToolSchema(t *testing.T) {
 	assertSchemaSanitizedAndPropertyPreserved(t, params)
 }
 
+// TestAntigravityBuildRequest_SkipsSchemaSanitizationWithoutToolsField 验证当请求中没有 tools 字段时
+// 跳过 schema 清理，保留所有自定义字段（x-debug、nullable、x-extra），
+// 但 maxOutputTokens 对非 Claude 请求仍被移除。
 func TestAntigravityBuildRequest_SkipsSchemaSanitizationWithoutToolsField(t *testing.T) {
 	body := buildRequestBodyFromRawPayload(t, "gemini-3.1-flash-image", []byte(`{
 		"request": {
@@ -62,6 +73,8 @@ func TestAntigravityBuildRequest_SkipsSchemaSanitizationWithoutToolsField(t *tes
 	assertNonSchemaRequestPreserved(t, body)
 }
 
+// TestAntigravityBuildRequest_SkipsSchemaSanitizationWithEmptyToolsArray 验证当 tools 为空数组时
+// 跳过 schema 清理，与无 tools 字段场景行为一致。
 func TestAntigravityBuildRequest_SkipsSchemaSanitizationWithEmptyToolsArray(t *testing.T) {
 	body := buildRequestBodyFromRawPayload(t, "gemini-3.1-flash-image", []byte(`{
 		"request": {
@@ -90,6 +103,8 @@ func TestAntigravityBuildRequest_SkipsSchemaSanitizationWithEmptyToolsArray(t *t
 	assertNonSchemaRequestPreserved(t, body)
 }
 
+// assertNonSchemaRequestPreserved 辅助函数：验证无工具 schema 时非 schema 请求字段（x-debug、nullable、x-extra）
+// 被正确保留，且 maxOutputTokens 对非 Claude 请求被移除。
 func assertNonSchemaRequestPreserved(t *testing.T, body map[string]any) {
 	t.Helper()
 
@@ -128,6 +143,8 @@ func assertNonSchemaRequestPreserved(t *testing.T, body map[string]any) {
 	}
 }
 
+// buildRequestBodyFromPayload 辅助函数：使用预定义的工具 schema 负载构建请求体，
+// 用于测试标准工具 schema 清理场景。
 func buildRequestBodyFromPayload(t *testing.T, modelName string) map[string]any {
 	t.Helper()
 	return buildRequestBodyFromRawPayload(t, modelName, []byte(`{
@@ -168,6 +185,8 @@ func buildRequestBodyFromPayload(t *testing.T, modelName string) map[string]any 
 	}`))
 }
 
+// buildRequestBodyFromRawPayload 辅助函数：使用自定义原始 JSON 负载构建请求体，
+// 将其反序列化为 map 以便断言验证。
 func buildRequestBodyFromRawPayload(t *testing.T, modelName string, payload []byte) map[string]any {
 	t.Helper()
 
@@ -191,6 +210,8 @@ func buildRequestBodyFromRawPayload(t *testing.T, modelName string, payload []by
 	return body
 }
 
+// extractFirstFunctionDeclaration 辅助函数：从请求体中提取第一个工具的第一个 function_declaration，
+// 用于验证 schema 清理结果。
 func extractFirstFunctionDeclaration(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
 
@@ -217,6 +238,8 @@ func extractFirstFunctionDeclaration(t *testing.T, body map[string]any) map[stri
 	return decl
 }
 
+// assertSchemaSanitizedAndPropertyPreserved 辅助函数：验证 schema 清理后根级 $id 和 patternProperties 被移除，
+// 但 properties 中名为 $id 的属性被保留，嵌套的 prefill、enumTitles、deprecated 也被移除。
 func assertSchemaSanitizedAndPropertyPreserved(t *testing.T, params map[string]any) {
 	t.Helper()
 

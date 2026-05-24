@@ -1,3 +1,6 @@
+// synthesizer - config.go
+// 本文件实现了从配置 API 密钥生成 Auth 条目的合成器。
+// 处理 Gemini、Claude、Codex、OpenAI 兼容和 Vertex 兼容等提供商。
 package synthesizer
 
 import (
@@ -9,11 +12,11 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// ConfigSynthesizer generates Auth entries from configuration API keys.
-// It handles Gemini, Claude, Codex, OpenAI-compat, and Vertex-compat providers.
+// ConfigSynthesizer 从配置 API 密钥生成 Auth 条目。
+// 处理 Gemini、Claude、Codex、OpenAI 兼容和 Vertex 兼容等提供商。
 type ConfigSynthesizer struct{}
 
-// NewConfigSynthesizer creates a new ConfigSynthesizer instance.
+// NewConfigSynthesizer 创建一个新的 ConfigSynthesizer 实例。
 func NewConfigSynthesizer() *ConfigSynthesizer {
 	return &ConfigSynthesizer{}
 }

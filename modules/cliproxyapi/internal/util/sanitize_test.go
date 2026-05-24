@@ -1,9 +1,16 @@
+// util - sanitize_test.go
+// 该文件包含工具名称清洗相关函数的单元测试，验证 SanitizeFunctionName、
+// SanitizedToolNameMap 和 RestoreSanitizedToolName 的正确性。
+// SanitizeFunctionName 确保工具名称符合 Gemini/Vertex AI 的命名要求
+// （仅允许字母、数字、下划线、点、冒号、连字符，且以字母或下划线开头，最长 64 字符）。
 package util
 
 import (
 	"testing"
 )
 
+// TestSanitizeFunctionName 测试 SanitizeFunctionName 函数的各种输入场景，
+// 包含正常名称、含特殊字符、非 ASCII 字符、数字开头、超长名称等边界用例。
 func TestSanitizeFunctionName(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -55,6 +62,9 @@ func TestSanitizeFunctionName(t *testing.T) {
 	}
 }
 
+// TestSanitizedToolNameMap 测试从 Claude 请求中构建清洗后工具名称映射的功能，
+// 验证需要清洗的工具名被正确映射、无需清洗的工具名不被包含、
+// 空/缺失工具返回 nil，以及名称冲突时保留第一个映射。
 func TestSanitizedToolNameMap(t *testing.T) {
 	t.Run("returns map for tools needing sanitization", func(t *testing.T) {
 		raw := []byte(`{"tools":[
@@ -109,6 +119,8 @@ func TestSanitizedToolNameMap(t *testing.T) {
 	})
 }
 
+// TestRestoreSanitizedToolName 测试从清洗后名称恢复原始工具名称的功能，
+// 验证已知映射能正确恢复、未知名称原样返回、nil 映射安全处理、空名称返回空字符串。
 func TestRestoreSanitizedToolName(t *testing.T) {
 	m := map[string]string{
 		"mcp_server_read": "mcp/server/read",

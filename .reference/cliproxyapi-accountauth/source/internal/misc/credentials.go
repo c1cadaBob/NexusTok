@@ -1,3 +1,5 @@
+// 包 misc - credentials.go
+// 该文件提供了凭据保存日志和元数据合并的辅助功能。
 package misc
 
 import (
@@ -9,10 +11,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Separator used to visually group related log lines.
+// credentialSeparator 是用于在日志中视觉分组相关凭据处理行的分隔符。
 var credentialSeparator = strings.Repeat("-", 67)
 
-// LogSavingCredentials emits a consistent log message when persisting auth material.
+// LogSavingCredentials 输出保存凭据时的一致日志消息。
+//
+// 参数：
+//   - path: 凭据保存路径
 func LogSavingCredentials(path string) {
 	if path == "" {
 		return
@@ -21,12 +26,21 @@ func LogSavingCredentials(path string) {
 	fmt.Printf("Saving credentials to %s\n", filepath.Clean(path))
 }
 
-// LogCredentialSeparator adds a visual separator to group auth/key processing logs.
+// LogCredentialSeparator 在日志中添加视觉分隔符，用于分组认证/密钥处理日志。
 func LogCredentialSeparator() {
 	log.Debug(credentialSeparator)
 }
 
-// MergeMetadata serializes the source struct into a map and merges the provided metadata into it.
+// MergeMetadata 将源结构体序列化为 map 并与提供的元数据合并。
+// 如果源已经是 map 类型则直接拷贝，否则通过 JSON 序列化/反序列化转换。
+//
+// 参数：
+//   - source: 源数据（结构体或 map）
+//   - metadata: 要合并的额外元数据
+//
+// 返回：
+//   - map[string]any: 合并后的数据
+//   - error: 序列化失败时返回错误
 func MergeMetadata(source any, metadata map[string]any) (map[string]any, error) {
 	var data map[string]any
 

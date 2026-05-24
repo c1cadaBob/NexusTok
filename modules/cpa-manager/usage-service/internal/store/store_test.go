@@ -1,3 +1,10 @@
+// store - store_test.go
+// 数据存储层的单元测试。
+// 测试覆盖以下场景：
+//   - 使用量事件的持久化（含认证快照字段）
+//   - 请求模型和解析模型的双字段存储与读取
+//   - API Key 别名的 CRUD 操作和唯一性约束
+//   - API Key 别名的活跃 hash 集合迁移（孤儿清理）
 package store
 
 import (
@@ -8,6 +15,10 @@ import (
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
 )
 
+// TestStorePersistsAccountSnapshot 验证使用量事件的认证快照字段能正确持久化。
+// 包括 AccountSnapshot、AuthLabelSnapshot、AuthFileSnapshot、
+// AuthProviderSnapshot、AuthSnapshotAtMS 和 APIKeyHash。
+// 同时验证 BuildPayload 输出中也包含这些字段。
 func TestStorePersistsAccountSnapshot(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {
@@ -78,6 +89,9 @@ func TestStorePersistsAccountSnapshot(t *testing.T) {
 	}
 }
 
+// TestStorePersistsRequestedAndResolvedModels 验证请求模型（RequestedModel）
+// 和解析模型（ResolvedModel）的双字段存储与读取。
+// 同时验证 BuildPayload 中的 resolved_model 字段正确输出。
 func TestStorePersistsRequestedAndResolvedModels(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {
@@ -124,6 +138,9 @@ func TestStorePersistsRequestedAndResolvedModels(t *testing.T) {
 	}
 }
 
+// TestStoreAPIKeyAliases 验证 API Key 别名的完整 CRUD 操作。
+// 测试创建、更新（同一 hash 更换别名）、别名唯一性约束（不同 hash 不可使用相同别名）、
+// 批量操作中的唯一性检查、以及删除操作。
 func TestStoreAPIKeyAliases(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {
@@ -189,6 +206,11 @@ func TestStoreAPIKeyAliases(t *testing.T) {
 	}
 }
 
+// TestStoreAPIKeyAliasesActiveHashesMigration 验证活跃 hash 集合的孤儿清理机制。
+// 场景：旧密钥被删除/编辑后，其 hash 留下孤儿映射，新密钥可复用该别名。
+// 验证：
+// 1. 孤儿 hash 不在活跃集合时，新 hash 可以接管其别名并清理孤儿记录
+// 2. 真冲突（被占用方仍在活跃集合中）应被拒绝
 func TestStoreAPIKeyAliasesActiveHashesMigration(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {

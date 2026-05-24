@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Anthropic 提示缓存控制注入功能，验证 system prompt、tools 和 messages
+// 上的 cache_control 标记是否按正确顺序和规则注入。
 package executor
 
 import (
@@ -7,8 +10,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestEnsureCacheControl 验证 ensureCacheControl 函数在各种场景下正确注入 cache_control 标记。
+// 测试覆盖：字符串/数组 system prompt、工具缓存、独立断点、仅工具无 system、大量工具（Claude Code 场景）、
+// 空工具数组、多轮消息缓存（倒数第二条用户消息）以及已有 cache_control 时的跳过逻辑。
 func TestEnsureCacheControl(t *testing.T) {
-	// Test case 1: System prompt as string
+	// 测试用例 1：system prompt 为字符串
 	t.Run("String System Prompt", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "system": "This is a long system prompt", "messages": []}`)
 		output := ensureCacheControl(input)
@@ -19,12 +25,12 @@ func TestEnsureCacheControl(t *testing.T) {
 		}
 	})
 
-	// Test case 2: System prompt as array
+	// 测试用例 2：system prompt 为数组，cache_control 只应在最后一个元素上
 	t.Run("Array System Prompt", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "system": [{"type": "text", "text": "Part 1"}, {"type": "text", "text": "Part 2"}], "messages": []}`)
 		output := ensureCacheControl(input)
 
-		// cache_control should only be on the LAST element
+		// cache_control 只应在最后一个元素上
 		res0 := gjson.GetBytes(output, "system.0.cache_control")
 		res1 := gjson.GetBytes(output, "system.1.cache_control.type")
 
@@ -36,7 +42,7 @@ func TestEnsureCacheControl(t *testing.T) {
 		}
 	})
 
-	// Test case 3: Tools are cached
+	// 测试用例 3：工具缓存
 	t.Run("Tools Caching", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -49,7 +55,7 @@ func TestEnsureCacheControl(t *testing.T) {
 		}`)
 		output := ensureCacheControl(input)
 
-		// cache_control should only be on the LAST tool
+		// cache_control 只应在最后一个工具上
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control")
 		tool1Cache := gjson.GetBytes(output, "tools.1.cache_control.type")
 
@@ -60,15 +66,15 @@ func TestEnsureCacheControl(t *testing.T) {
 			t.Errorf("cache_control not found on last tool. Output: %s", string(output))
 		}
 
-		// System should also have cache_control
+		// system 也应有 cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
 			t.Errorf("cache_control not found in system. Output: %s", string(output))
 		}
 	})
 
-	// Test case 4: Tools and system are INDEPENDENT breakpoints
-	// Per Anthropic docs: Up to 4 breakpoints allowed, tools and system are cached separately
+	// 测试用例 4：工具和 system 是独立的缓存断点
+	// 根据 Anthropic 文档：最多允许 4 个断点，工具和 system 是分开缓存的
 	t.Run("Independent Cache Breakpoints", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -80,21 +86,21 @@ func TestEnsureCacheControl(t *testing.T) {
 		}`)
 		output := ensureCacheControl(input)
 
-		// Tool already has cache_control - should not be changed
+		// 工具已有 cache_control - 不应被修改
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control.type")
 		if tool0Cache.String() != "ephemeral" {
 			t.Errorf("existing cache_control was incorrectly removed")
 		}
 
-		// System SHOULD get cache_control because it is an INDEPENDENT breakpoint
-		// Tools and system are separate cache levels in the hierarchy
+		// system 应获得自己的 cache_control，因为它是独立的断点
+		// 工具和 system 在缓存层级中是分开的
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
 			t.Errorf("system should have its own cache_control breakpoint (independent of tools)")
 		}
 	})
 
-	// Test case 5: Only tools, no system
+	// 测试用例 5：仅有工具，无 system
 	t.Run("Only Tools No System", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -111,9 +117,9 @@ func TestEnsureCacheControl(t *testing.T) {
 		}
 	})
 
-	// Test case 6: Many tools (Claude Code scenario)
+	// 测试用例 6：大量工具（Claude Code 场景）
 	t.Run("Many Tools (Claude Code Scenario)", func(t *testing.T) {
-		// Simulate Claude Code with many tools
+		// 模拟 Claude Code 使用大量工具的场景
 		toolsJSON := `[`
 		for i := 0; i < 50; i++ {
 			if i > 0 {
@@ -132,7 +138,7 @@ func TestEnsureCacheControl(t *testing.T) {
 
 		output := ensureCacheControl(input)
 
-		// Only the last tool (index 49) should have cache_control
+		// 只有最后一个工具（索引 49）应有 cache_control
 		for i := 0; i < 49; i++ {
 			path := fmt.Sprintf("tools.%d.cache_control", i)
 			if gjson.GetBytes(output, path).Exists() {
@@ -145,7 +151,7 @@ func TestEnsureCacheControl(t *testing.T) {
 			t.Errorf("last tool (49) should have cache_control")
 		}
 
-		// System should also have cache_control
+		// system 也应有 cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
 			t.Errorf("system should have cache_control")
@@ -154,19 +160,19 @@ func TestEnsureCacheControl(t *testing.T) {
 		t.Log("test passed: 50 tools - cache_control only on last tool")
 	})
 
-	// Test case 7: Empty tools array
+	// 测试用例 7：空工具数组
 	t.Run("Empty Tools Array", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "tools": [], "system": "Test", "messages": []}`)
 		output := ensureCacheControl(input)
 
-		// System should still get cache_control
+		// 即使工具数组为空，system 仍应获得 cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
 			t.Errorf("system should have cache_control even with empty tools array")
 		}
 	})
 
-	// Test case 8: Messages caching for multi-turn (second-to-last user)
+	// 测试用例 8：多轮消息缓存（倒数第二条用户消息）
 	t.Run("Messages Caching Second-To-Last User", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -191,7 +197,7 @@ func TestEnsureCacheControl(t *testing.T) {
 		}
 	})
 
-	// Test case 9: Existing message cache_control should skip injection
+	// 测试用例 9：已有消息 cache_control 时应跳过注入
 	t.Run("Messages Skip When Cache Control Exists", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -215,7 +221,8 @@ func TestEnsureCacheControl(t *testing.T) {
 	})
 }
 
-// TestCacheControlOrder verifies the correct order: tools -> system -> messages
+// TestCacheControlOrder 验证缓存控制的正确顺序：tools -> system -> messages。
+// 确保最后一个工具和最后一个 system 元素获得 cache_control，而第一个元素不会获得。
 func TestCacheControlOrder(t *testing.T) {
 	input := []byte(`{
 		"model": "claude-sonnet-4",
@@ -234,22 +241,22 @@ func TestCacheControlOrder(t *testing.T) {
 
 	output := ensureCacheControl(input)
 
-	// 1. Last tool has cache_control
+	// 1. 最后一个工具应有 cache_control
 	if gjson.GetBytes(output, "tools.1.cache_control.type").String() != "ephemeral" {
 		t.Error("last tool should have cache_control")
 	}
 
-	// 2. First tool has NO cache_control
+	// 2. 第一个工具不应有 cache_control
 	if gjson.GetBytes(output, "tools.0.cache_control").Exists() {
 		t.Error("first tool should NOT have cache_control")
 	}
 
-	// 3. Last system element has cache_control
+	// 3. 最后一个 system 元素应有 cache_control
 	if gjson.GetBytes(output, "system.1.cache_control.type").String() != "ephemeral" {
 		t.Error("last system element should have cache_control")
 	}
 
-	// 4. First system element has NO cache_control
+	// 4. 第一个 system 元素不应有 cache_control
 	if gjson.GetBytes(output, "system.0.cache_control").Exists() {
 		t.Error("first system element should NOT have cache_control")
 	}

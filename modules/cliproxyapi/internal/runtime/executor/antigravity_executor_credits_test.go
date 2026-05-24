@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Antigravity 执行器的额度管理功能，包括 429 错误分类、
+// 额度注入、重试逻辑和令牌刷新等。
 package executor
 
 import (
@@ -16,6 +19,8 @@ import (
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
+// resetAntigravityCreditsRetryState 重置 Antigravity 额度重试相关的全局状态。
+// 用于测试前清理状态，确保测试隔离。
 func resetAntigravityCreditsRetryState() {
 	antigravityCreditsFailureByAuth = sync.Map{}
 	antigravityShortCooldownByAuth = sync.Map{}
@@ -23,6 +28,8 @@ func resetAntigravityCreditsRetryState() {
 	antigravityCreditsHintRefreshByID = sync.Map{}
 }
 
+// TestClassifyAntigravity429 测试 429 错误的分类逻辑，
+// 区分配额耗尽、速率限制和软限制等不同类型。
 func TestClassifyAntigravity429(t *testing.T) {
 	t.Run("quota exhausted", func(t *testing.T) {
 		body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"QUOTA_EXHAUSTED"}}`)
@@ -105,6 +112,8 @@ func TestClassifyAntigravity429(t *testing.T) {
 	})
 }
 
+// TestAntigravityShouldRetryNoCapacity_Standard503 测试标准 503 容量不足错误
+// 被正确识别为可重试。
 func TestAntigravityShouldRetryNoCapacity_Standard503(t *testing.T) {
 	body := []byte(`{
 		"error": {
@@ -128,6 +137,7 @@ func TestAntigravityShouldRetryNoCapacity_Standard503(t *testing.T) {
 	}
 }
 
+// TestInjectEnabledCreditTypes 测试向请求体注入启用的额度类型。
 func TestInjectEnabledCreditTypes(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","request":{}}`)
 	got := injectEnabledCreditTypes(body)
@@ -143,6 +153,7 @@ func TestInjectEnabledCreditTypes(t *testing.T) {
 	}
 }
 
+// TestParseRetryDelay_HumanReadableDuration 测试解析人类可读的重试延迟时间格式。
 func TestParseRetryDelay_HumanReadableDuration(t *testing.T) {
 	body := []byte(`{"error":{"message":"You have exhausted your capacity on this model. Your quota will reset after 1h43m56s."}}`)
 	retryAfter, err := parseRetryDelay(body)
@@ -158,6 +169,8 @@ func TestParseRetryDelay_HumanReadableDuration(t *testing.T) {
 	}
 }
 
+// TestAntigravityExecute_RetriesTransient429ResourceExhausted 验证执行器对瞬时 429 资源耗尽错误
+// 进行自动重试并在第二次请求成功。
 func TestAntigravityExecute_RetriesTransient429ResourceExhausted(t *testing.T) {
 	resetAntigravityCreditsRetryState()
 	t.Cleanup(resetAntigravityCreditsRetryState)
@@ -208,6 +221,8 @@ func TestAntigravityExecute_RetriesTransient429ResourceExhausted(t *testing.T) {
 	}
 }
 
+// TestAntigravityExecute_CreditsInjectedWhenConductorRequests 验证当 conductor 请求额度时
+// 额度类型被正确注入到请求体中。
 func TestAntigravityExecute_CreditsInjectedWhenConductorRequests(t *testing.T) {
 	resetAntigravityCreditsRetryState()
 	t.Cleanup(resetAntigravityCreditsRetryState)
@@ -266,6 +281,8 @@ func TestAntigravityExecute_CreditsInjectedWhenConductorRequests(t *testing.T) {
 	}
 }
 
+// TestAntigravityExecute_NoCreditsWithoutConductorFlag 验证没有 conductor 标志时
+// 额度类型不会被注入到请求体中。
 func TestAntigravityExecute_NoCreditsWithoutConductorFlag(t *testing.T) {
 	resetAntigravityCreditsRetryState()
 	t.Cleanup(resetAntigravityCreditsRetryState)
@@ -319,6 +336,8 @@ func TestAntigravityExecute_NoCreditsWithoutConductorFlag(t *testing.T) {
 	}
 }
 
+// TestAntigravityAuthHasCredits 测试认证对象的额度检查逻辑，
+// 包括充足余额、不足余额、无余额存储、nil 认证和未知余额等情况。
 func TestAntigravityAuthHasCredits(t *testing.T) {
 	t.Run("sufficient balance", func(t *testing.T) {
 		resetAntigravityCreditsRetryState()
@@ -379,12 +398,17 @@ func TestAntigravityAuthHasCredits(t *testing.T) {
 	})
 }
 
+// roundTripperFunc 是一个函数类型，实现了 http.RoundTripper 接口。
+// 用于在测试中模拟 HTTP 请求的处理。
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip 执行 HTTP 请求，调用函数自身处理请求。
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestEnsureAccessToken_WarmTokenLoadsCreditsHint 验证热令牌（未过期）在 ensureAccessToken 时
+// 异步加载额度提示信息。
 func TestEnsureAccessToken_WarmTokenLoadsCreditsHint(t *testing.T) {
 	resetAntigravityCreditsRetryState()
 	t.Cleanup(resetAntigravityCreditsRetryState)
@@ -439,6 +463,8 @@ func TestEnsureAccessToken_WarmTokenLoadsCreditsHint(t *testing.T) {
 	}
 }
 
+// TestUpdateAntigravityCreditsBalance_LoadCodeAssistUserAgent 验证 loadCodeAssist 请求
+// 使用正确的 User-Agent 和 X-Goog-Api-Client 头。
 func TestUpdateAntigravityCreditsBalance_LoadCodeAssistUserAgent(t *testing.T) {
 	resetAntigravityCreditsRetryState()
 	t.Cleanup(resetAntigravityCreditsRetryState)
@@ -474,6 +500,8 @@ func TestUpdateAntigravityCreditsBalance_LoadCodeAssistUserAgent(t *testing.T) {
 	exec.updateAntigravityCreditsBalance(ctx, auth, "token")
 }
 
+// TestParseMetaFloat 测试从元数据 map 中解析浮点数值的逻辑，
+// 支持字符串、float64、int、int64 等多种类型。
 func TestParseMetaFloat(t *testing.T) {
 	tests := []struct {
 		name    string

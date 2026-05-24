@@ -1,6 +1,5 @@
-// Package util provides utility functions for the CLI Proxy API server.
-// It includes helper functions for proxy configuration, HTTP client setup,
-// log level management, and other common operations used across the application.
+// 包 util - proxy.go
+// 该文件提供了 HTTP 客户端代理配置功能。
 package util
 
 import (

@@ -1,10 +1,18 @@
+// Package tencent 的数据传输对象（DTO）定义文件。
+// 定义了腾讯云混元 API 的请求和响应结构体，
+// 包含聊天消息格式、请求参数、错误信息、token 使用量和响应选项等。
+// 腾讯云混元 API 文档：https://cloud.tencent.com/document/product/1729/97732
 package tencent
 
+// TencentMessage 腾讯云混元聊天消息格式。
+// 包含消息角色（Role）和文本内容（Content），用于构建对话上下文。
 type TencentMessage struct {
-	Role    string `json:"Role"`
-	Content string `json:"Content"`
+	Role    string `json:"Role"`    // 消息角色："system"（系统）、"user"（用户）、"assistant"（助手）
+	Content string `json:"Content"` // 消息文本内容
 }
 
+// TencentChatRequest 腾讯云混元聊天请求结构体。
+// 包含模型选择、对话消息列表、流式开关以及生成参数（温度、Top-P 等）。
 type TencentChatRequest struct {
 	// 模型名称，可选值包括 hunyuan-lite、hunyuan-standard、hunyuan-standard-256K、hunyuan-pro。
 	// 各模型介绍请阅读 [产品概述](https://cloud.tencent.com/document/product/1729/104753) 中的说明。
@@ -43,23 +51,31 @@ type TencentChatRequest struct {
 	Temperature *float64 `json:"Temperature,omitempty"`
 }
 
+// TencentError 腾讯云 API 错误信息结构体。
+// 当请求失败时，响应中会包含此结构体描述错误原因。
 type TencentError struct {
-	Code    int    `json:"Code"`
-	Message string `json:"Message"`
+	Code    int    `json:"Code"`    // 错误码，0 表示成功，非 0 表示错误
+	Message string `json:"Message"` // 错误描述信息
 }
 
+// TencentUsage 腾讯云 API 的 token 使用量统计结构体。
+// 记录输入、输出和总计的 token 消耗数量。
 type TencentUsage struct {
-	PromptTokens     int `json:"PromptTokens"`
-	CompletionTokens int `json:"CompletionTokens"`
-	TotalTokens      int `json:"TotalTokens"`
+	PromptTokens     int `json:"PromptTokens"`     // 输入（提示词）token 数量
+	CompletionTokens int `json:"CompletionTokens"` // 输出（补全）token 数量
+	TotalTokens      int `json:"TotalTokens"`      // 总 token 数量
 }
 
+// TencentResponseChoices 腾讯云 API 响应中的单个选项结构体。
+// 同步模式通过 Messages 字段返回内容，流式模式通过 Delta 字段返回增量内容。
 type TencentResponseChoices struct {
-	FinishReason string         `json:"FinishReason,omitempty"` // 流式结束标志位，为 stop 则表示尾包
+	FinishReason string         `json:"FinishReason,omitempty"` // 流式结束标志位，为 "stop" 则表示尾包
 	Messages     TencentMessage `json:"Message,omitempty"`      // 内容，同步模式返回内容，流模式为 null 输出 content 内容总数最多支持 1024token。
 	Delta        TencentMessage `json:"Delta,omitempty"`        // 内容，流模式返回内容，同步模式为 null 输出 content 内容总数最多支持 1024token。
 }
 
+// TencentChatResponse 腾讯云混元聊天响应结构体。
+// 包含生成结果选项、创建时间、会话 ID、token 使用量和错误信息等。
 type TencentChatResponse struct {
 	Choices []TencentResponseChoices `json:"Choices,omitempty"` // 结果
 	Created int64                    `json:"Created,omitempty"` // unix 时间戳的字符串
@@ -70,6 +86,8 @@ type TencentChatResponse struct {
 	ReqID   string                   `json:"Req_id,omitempty"`  // 唯一请求 Id，每次请求都会返回。用于反馈接口入参
 }
 
+// TencentChatResponseSB 腾讯云 API 响应的顶层包装结构体。
+// 腾讯云 API 的实际响应数据嵌套在 Response 字段中。
 type TencentChatResponseSB struct {
-	Response TencentChatResponse `json:"Response,omitempty"`
+	Response TencentChatResponse `json:"Response,omitempty"` // 实际的聊天响应数据
 }

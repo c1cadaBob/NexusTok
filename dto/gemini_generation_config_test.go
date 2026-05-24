@@ -1,3 +1,10 @@
+// Package dto - gemini_generation_config_test.go
+// 该文件包含 Gemini 生成配置的单元测试
+//
+// 测试内容包括：
+// - camelCase 格式的显式零值保留
+// - snake_case 格式的显式零值保留
+// 验证指针类型字段在显式设为 0/false 时不会被 JSON 序列化省略
 package dto
 
 import (

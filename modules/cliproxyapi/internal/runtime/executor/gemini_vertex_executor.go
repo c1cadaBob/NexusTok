@@ -1,6 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 本文件实现了 Vertex AI Gemini 执行器，使用服务账号凭据或 API 密钥与 Google Vertex AI 端点通信。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// This file implements the Vertex AI Gemini executor that talks to Google Vertex AI
-// endpoints using service account credentials or API keys.
 package executor
 
 import (

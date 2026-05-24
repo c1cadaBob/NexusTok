@@ -1,3 +1,6 @@
+// 包 logging - global_logger.go
+// 该文件实现了全局日志配置和格式化功能。
+// 包括自定义日志格式、日志输出配置、日志目录解析等。
 package logging
 
 import (
@@ -17,22 +20,27 @@ import (
 )
 
 var (
-	setupOnce      sync.Once
-	writerMu       sync.Mutex
-	logWriter      *lumberjack.Logger
-	ginInfoWriter  *io.PipeWriter
+	// setupOnce 确保日志初始化只执行一次
+	setupOnce sync.Once
+	// writerMu 保护日志写入器的并发访问
+	writerMu sync.Mutex
+	// logWriter 是日志文件写入器
+	logWriter *lumberjack.Logger
+	// ginInfoWriter 是 Gin 信息日志写入器
+	ginInfoWriter *io.PipeWriter
+	// ginErrorWriter 是 Gin 错误日志写入器
 	ginErrorWriter *io.PipeWriter
 )
 
-// LogFormatter defines a custom log format for logrus.
-// This formatter adds timestamp, level, request ID, and source location to each log entry.
-// Format: [2025-12-23 20:14:04] [debug] [manager.go:524] | a1b2c3d4 | Use API key sk-9...0RHO for model gpt-5.2
+// LogFormatter 定义了 logrus 的自定义日志格式。
+// 此格式化器为每个日志条目添加时间戳、级别、请求 ID 和源位置。
+// 格式：[2025-12-23 20:14:04] [debug] [manager.go:524] | a1b2c3d4 | Use API key sk-9...0RHO for model gpt-5.2
 type LogFormatter struct{}
 
-// logFieldOrder defines the display order for common log fields.
+// logFieldOrder 定义常见日志字段的显示顺序。
 var logFieldOrder = []string{"provider", "model", "mode", "budget", "level", "original_mode", "original_value", "min", "max", "clamped_to", "error"}
 
-// Format renders a single log entry with custom formatting.
+// Format 渲染单个日志条目，使用自定义格式。
 func (m *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
 	var buffer *bytes.Buffer
 	if entry.Buffer != nil {
@@ -55,7 +63,7 @@ func (m *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
 	}
 	levelStr := fmt.Sprintf("%-5s", level)
 
-	// Build fields string (only print fields in logFieldOrder)
+	// 构建字段字符串（仅打印 logFieldOrder 中的字段）
 	var fieldsStr string
 	if len(entry.Data) > 0 {
 		var fields []string
@@ -80,8 +88,8 @@ func (m *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetupBaseLogger configures the shared logrus instance and Gin writers.
-// It is safe to call multiple times; initialization happens only once.
+// SetupBaseLogger 配置共享的 logrus 实例和 Gin 写入器。
+// 可以安全地多次调用；初始化只执行一次。
 func SetupBaseLogger() {
 	setupOnce.Do(func() {
 		log.SetOutput(os.Stdout)
@@ -101,7 +109,7 @@ func SetupBaseLogger() {
 	})
 }
 
-// isDirWritable checks if the specified directory exists and is writable by attempting to create and remove a test file.
+// isDirWritable 检查指定目录是否存在且可写，通过尝试创建和删除测试文件来验证。
 func isDirWritable(dir string) bool {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
@@ -121,7 +129,7 @@ func isDirWritable(dir string) bool {
 	return true
 }
 
-// ResolveLogDirectory determines the directory used for application logs.
+// ResolveLogDirectory 确定用于应用程序日志的目录。
 func ResolveLogDirectory(cfg *config.Config) string {
 	logDir := "logs"
 	if base := util.WritablePath(); base != "" {
@@ -142,9 +150,9 @@ func ResolveLogDirectory(cfg *config.Config) string {
 	return logDir
 }
 
-// ConfigureLogOutput switches the global log destination between rotating files and stdout.
-// When logsMaxTotalSizeMB > 0, a background cleaner removes the oldest log files in the logs directory
-// until the total size is within the limit.
+// ConfigureLogOutput 在轮转文件和标准输出之间切换全局日志目标。
+// 当 logsMaxTotalSizeMB > 0 时，后台清理器会移除日志目录中最旧的日志文件，
+// 直到总大小在限制范围内。
 func ConfigureLogOutput(cfg *config.Config) error {
 	SetupBaseLogger()
 

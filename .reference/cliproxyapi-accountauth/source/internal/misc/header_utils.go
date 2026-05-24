@@ -1,6 +1,6 @@
-// Package misc provides miscellaneous utility functions for the CLI Proxy API server.
-// It includes helper functions for HTTP header manipulation and other common operations
-// that don't fit into more specific packages.
+// 包 misc - header_utils.go
+// 该文件提供了 HTTP 头操作的辅助函数。
+// 包括 Gemini CLI User-Agent 生成、代理/指纹头清理、头确保设置等功能。
 package misc
 
 import (
@@ -10,15 +10,13 @@ import (
 	"strings"
 )
 
-const (
-	// GeminiCLIVersion is the version string reported in the User-Agent for upstream requests.
-	GeminiCLIVersion = "0.34.0"
+// GeminiCLIVersion 是上游请求 User-Agent 中报告的 Gemini CLI 版本字符串。
+const GeminiCLIVersion = "0.34.0"
 
-	// GeminiCLIApiClientHeader is the value for the X-Goog-Api-Client header sent to the Gemini CLI upstream.
-	GeminiCLIApiClientHeader = "google-genai-sdk/1.41.0 gl-node/v22.19.0"
-)
+// GeminiCLIApiClientHeader 是发送到 Gemini CLI 上游的 X-Goog-Api-Client 头值。
+const GeminiCLIApiClientHeader = "google-genai-sdk/1.41.0 gl-node/v22.19.0"
 
-// geminiCLIOS maps Go runtime OS names to the Node.js-style platform strings used by Gemini CLI.
+// geminiCLIOS 将 Go 运行时 OS 名称映射为 Gemini CLI 使用的 Node.js 风格平台字符串。
 func geminiCLIOS() string {
 	switch runtime.GOOS {
 	case "windows":
@@ -28,7 +26,7 @@ func geminiCLIOS() string {
 	}
 }
 
-// geminiCLIArch maps Go runtime architecture names to the Node.js-style arch strings used by Gemini CLI.
+// geminiCLIArch 将 Go 运行时架构名称映射为 Gemini CLI 使用的 Node.js 风格架构字符串。
 func geminiCLIArch() string {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -40,8 +38,14 @@ func geminiCLIArch() string {
 	}
 }
 
-// GeminiCLIUserAgent returns a User-Agent string that matches the Gemini CLI format.
-// The model parameter is included in the UA; pass "" or "unknown" when the model is not applicable.
+// GeminiCLIUserAgent 返回匹配 Gemini CLI 格式的 User-Agent 字符串。
+// model 参数包含在 UA 中；不适用时传入 "" 或 "unknown"。
+//
+// 参数：
+//   - model: 模型名称
+//
+// 返回：
+//   - string: 格式化的 User-Agent 字符串
 func GeminiCLIUserAgent(model string) string {
 	if model == "" {
 		model = "unknown"
@@ -49,11 +53,11 @@ func GeminiCLIUserAgent(model string) string {
 	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; terminal)", GeminiCLIVersion, model, geminiCLIOS(), geminiCLIArch())
 }
 
-// ScrubProxyAndFingerprintHeaders removes all headers that could reveal
-// proxy infrastructure, client identity, or browser fingerprints from an
-// outgoing request. This ensures requests to upstream services look like they
-// originate directly from a native client rather than a third-party client
-// behind a reverse proxy.
+// ScrubProxyAndFingerprintHeaders 移除出站请求中可能暴露代理基础设施、客户端身份或浏览器指纹的所有头。
+// 确保发送到上游服务的请求看起来像是直接从原生客户端发出，而非来自反向代理后面的第三方客户端。
+//
+// 参数：
+//   - req: 要清理的 HTTP 请求
 func ScrubProxyAndFingerprintHeaders(req *http.Request) {
 	if req == nil {
 		return
@@ -96,16 +100,15 @@ func ScrubProxyAndFingerprintHeaders(req *http.Request) {
 	req.Header.Del("Accept-Encoding")
 }
 
-// EnsureHeader ensures that a header exists in the target header map by checking
-// multiple sources in order of priority: source headers, existing target headers,
-// and finally the default value. It only sets the header if it's not already present
-// and the value is not empty after trimming whitespace.
+// EnsureHeader 确保目标头映射中存在指定的头。
+// 按优先级检查多个来源：源头、现有目标头、默认值。
+// 仅在头不存在且值非空时设置。
 //
-// Parameters:
-//   - target: The target header map to modify
-//   - source: The source header map to check first (can be nil)
-//   - key: The header key to ensure
-//   - defaultValue: The default value to use if no other source provides a value
+// 参数：
+//   - target: 要修改的目标头映射
+//   - source: 优先检查的源头映射（可为 nil）
+//   - key: 头键名
+//   - defaultValue: 无其他来源时使用的默认值
 func EnsureHeader(target http.Header, source http.Header, key, defaultValue string) {
 	if target == nil {
 		return

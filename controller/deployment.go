@@ -1,3 +1,22 @@
+// Package controller - deployment.go
+// 该文件实现了 io.net GPU 容器部署管理的 API 控制器
+//
+// 通过 io.net Enterprise API 管理 GPU 容器部署，支持：
+// - 部署创建/更新/删除/延期
+// - 硬件类型查询
+// - 可用位置查询
+// - 价格估算
+// - 容器日志查看
+// - 集群名称管理
+//
+// 主要 API：
+// - GetAllDeployments：获取所有部署列表
+// - CreateDeployment：创建新部署
+// - GetDeployment：获取部署详情
+// - UpdateDeployment：更新部署配置
+// - DeleteDeployment：删除部署
+// - GetHardwareTypes：获取可用硬件类型
+// - GetPriceEstimation：获取价格估算
 package controller
 
 import (
@@ -13,6 +32,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getIoAPIKey 获取 io.net API 密钥
+//
+// 从系统配置中读取 io.net 的启用状态和 API 密钥
+//
+// 返回值：
+//   - string: API 密钥
+//   - bool: 是否成功获取（false 表示未启用或密钥为空）
 func getIoAPIKey(c *gin.Context) (string, bool) {
 	common.OptionMapRWMutex.RLock()
 	enabled := common.OptionMap["model_deployment.ionet.enabled"] == "true"
@@ -25,6 +51,9 @@ func getIoAPIKey(c *gin.Context) (string, bool) {
 	return apiKey, true
 }
 
+// GetModelDeploymentSettings 获取模型部署配置信息
+//
+// 返回 io.net 的启用状态、API 密钥配置状态和连接可用性
 func GetModelDeploymentSettings(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	enabled := common.OptionMap["model_deployment.ionet.enabled"] == "true"
@@ -39,6 +68,7 @@ func GetModelDeploymentSettings(c *gin.Context) {
 	})
 }
 
+// getIoClient 获取 io.net 标准客户端
 func getIoClient(c *gin.Context) (*ionet.Client, bool) {
 	apiKey, ok := getIoAPIKey(c)
 	if !ok {
@@ -47,6 +77,7 @@ func getIoClient(c *gin.Context) (*ionet.Client, bool) {
 	return ionet.NewClient(apiKey), true
 }
 
+// getIoEnterpriseClient 获取 io.net 企业版客户端
 func getIoEnterpriseClient(c *gin.Context) (*ionet.Client, bool) {
 	apiKey, ok := getIoAPIKey(c)
 	if !ok {
@@ -55,6 +86,9 @@ func getIoEnterpriseClient(c *gin.Context) (*ionet.Client, bool) {
 	return ionet.NewEnterpriseClient(apiKey), true
 }
 
+// TestIoNetConnection 测试 io.net API 连接
+//
+// 支持使用请求中的 API 密钥或系统配置的密钥进行测试
 func TestIoNetConnection(c *gin.Context) {
 	var req struct {
 		APIKey string `json:"api_key"`
@@ -117,6 +151,7 @@ func TestIoNetConnection(c *gin.Context) {
 	})
 }
 
+// requireDeploymentID 从路径参数中获取部署 ID
 func requireDeploymentID(c *gin.Context) (string, bool) {
 	deploymentID := strings.TrimSpace(c.Param("id"))
 	if deploymentID == "" {
@@ -126,6 +161,7 @@ func requireDeploymentID(c *gin.Context) (string, bool) {
 	return deploymentID, true
 }
 
+// requireContainerID 从路径参数中获取容器 ID
 func requireContainerID(c *gin.Context) (string, bool) {
 	containerID := strings.TrimSpace(c.Param("container_id"))
 	if containerID == "" {
@@ -135,6 +171,9 @@ func requireContainerID(c *gin.Context) (string, bool) {
 	return containerID, true
 }
 
+// mapIoNetDeployment 将 io.net 部署对象转换为 API 响应格式
+//
+// 包含硬件信息、时间剩余、完成百分比等详细信息
 func mapIoNetDeployment(d ionet.Deployment) map[string]interface{} {
 	var created int64
 	if d.CreatedAt.IsZero() {
@@ -186,6 +225,7 @@ func mapIoNetDeployment(d ionet.Deployment) map[string]interface{} {
 	}
 }
 
+// computeStatusCounts 计算各状态的部署数量统计
 func computeStatusCounts(total int, deployments []ionet.Deployment) map[string]int64 {
 	counts := map[string]int64{
 		"all": int64(total),
@@ -203,6 +243,9 @@ func computeStatusCounts(total int, deployments []ionet.Deployment) map[string]i
 	return counts
 }
 
+// GetAllDeployments 获取所有部署列表
+//
+// 支持分页和状态过滤
 func GetAllDeployments(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	client, ok := getIoEnterpriseClient(c)
@@ -240,6 +283,9 @@ func GetAllDeployments(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// SearchDeployments 搜索部署
+//
+// 支持按关键词搜索部署名称
 func SearchDeployments(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	client, ok := getIoEnterpriseClient(c)
@@ -293,6 +339,10 @@ func SearchDeployments(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// GetDeployment 获取部署详情
+//
+// 路径参数：
+//   - id: 部署 ID
 func GetDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -342,6 +392,9 @@ func GetDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// UpdateDeploymentName 更新部署名称
+//
+// 更新前会检查名称是否可用
 func UpdateDeploymentName(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -397,6 +450,9 @@ func UpdateDeploymentName(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// UpdateDeployment 更新部署配置
+//
+// 支持更新容器数量、GPU 配置等参数
 func UpdateDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -427,6 +483,9 @@ func UpdateDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// ExtendDeployment 延长部署时长
+//
+// 增加部署的计算时间
 func ExtendDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -466,6 +525,9 @@ func ExtendDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// DeleteDeployment 删除（终止）部署
+//
+// 提交终止请求，实际终止可能需要时间
 func DeleteDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -491,6 +553,7 @@ func DeleteDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// CreateDeployment 创建新的 GPU 容器部署
 func CreateDeployment(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -517,6 +580,9 @@ func CreateDeployment(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// GetHardwareTypes 获取可用的硬件类型列表
+//
+// 返回 GPU 型号、品牌和可用数量
 func GetHardwareTypes(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -537,6 +603,7 @@ func GetHardwareTypes(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// GetLocations 获取可用的部署位置列表
 func GetLocations(c *gin.Context) {
 	client, ok := getIoClient(c)
 	if !ok {
@@ -561,6 +628,11 @@ func GetLocations(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// GetAvailableReplicas 获取指定硬件的可用副本数
+//
+// 查询参数：
+//   - hardware_id: 硬件 ID
+//   - gpu_count: GPU 数量
 func GetAvailableReplicas(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -597,6 +669,7 @@ func GetAvailableReplicas(c *gin.Context) {
 	common.ApiSuccess(c, replicas)
 }
 
+// GetPriceEstimation 获取部署价格估算
 func GetPriceEstimation(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -618,6 +691,10 @@ func GetPriceEstimation(c *gin.Context) {
 	common.ApiSuccess(c, priceResp)
 }
 
+// CheckClusterNameAvailability 检查集群名称是否可用
+//
+// 查询参数：
+//   - name: 集群名称
 func CheckClusterNameAvailability(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -643,6 +720,9 @@ func CheckClusterNameAvailability(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// GetDeploymentLogs 获取部署容器日志
+//
+// 支持日志级别过滤、流过滤、时间范围和游标分页
 func GetDeploymentLogs(c *gin.Context) {
 	client, ok := getIoClient(c)
 	if !ok {
@@ -703,6 +783,7 @@ func GetDeploymentLogs(c *gin.Context) {
 	common.ApiSuccess(c, rawLogs)
 }
 
+// ListDeploymentContainers 列出部署的所有容器
 func ListDeploymentContainers(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {
@@ -758,6 +839,9 @@ func ListDeploymentContainers(c *gin.Context) {
 	common.ApiSuccess(c, response)
 }
 
+// GetContainerDetails 获取容器详细信息
+//
+// 包含状态、硬件信息、运行时间和事件列表
 func GetContainerDetails(c *gin.Context) {
 	client, ok := getIoEnterpriseClient(c)
 	if !ok {

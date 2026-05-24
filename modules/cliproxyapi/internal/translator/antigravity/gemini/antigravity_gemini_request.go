@@ -1,8 +1,14 @@
+// antigravity/gemini - antigravity_gemini_request.go
 // Package gemini provides request translation functionality for Gemini CLI to Gemini API compatibility.
-// It handles parsing and transforming Gemini CLI API requests into Gemini API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Gemini CLI API format and Gemini API's expected format.
+// 本文件提供 Gemini CLI API 请求到 Gemini API 格式的转换功能。
+// 负责解析和转换 Gemini CLI API 请求，提取模型信息、系统指令、消息内容和工具声明。
+// 主要功能包括：
+// 1. 从请求中提取内部 request 对象并重组为 Gemini API 格式
+// 2. 系统指令格式转换（system_instruction -> systemInstruction）
+// 3. 角色规范化（缺失或无效角色的默认值填充）
+// 4. 工具参数重命名（parameters -> parametersJsonSchema）
+// 5. 非 Claude 模型的 thoughtSignature 跳过标记注入
+// 6. CLI 工具响应格式修复和分组（fixCLIToolResponse）
 package gemini
 
 import (
@@ -24,6 +30,16 @@ import (
 // 2. Restructures the JSON to match Gemini API format
 // 3. Converts system instructions to the expected format
 // 4. Fixes CLI tool response format and grouping
+//
+// 将 Gemini API 请求转换为 Antigravity（Gemini CLI）格式。
+// 主要转换步骤：
+// 1. 从请求中提取模型信息并重组为 {"project":"","request":{},"model":""} 结构
+// 2. 调用 fixCLIToolResponse 修复 CLI 工具响应格式和分组
+// 3. 将 system_instruction 重命名为 systemInstruction
+// 4. 规范化 contents 中的角色（缺失或无效时自动填充）
+// 5. 将 function_declarations 中的 parameters 重命名为 parametersJsonSchema
+// 6. 为非 Claude 模型的 functionCall/thought/thoughtSignature 注入跳过标记
+// 7. 附加默认安全设置
 //
 // Parameters:
 //   - modelName: The name of the model to use for the request (unused in current implementation)
@@ -120,15 +136,16 @@ func ConvertGeminiRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	return common.AttachDefaultSafetySettings(rawJSON, "request.safetySettings")
 }
 
-// FunctionCallGroup represents a group of function calls and their responses
+// FunctionCallGroup 表示一组函数调用及其响应。
+// 用于在 fixCLIToolResponse 中跟踪待匹配的函数调用组。
 type FunctionCallGroup struct {
-	ResponsesNeeded int
-	CallNames       []string // ordered function call names for backfilling empty response names
+	ResponsesNeeded int      // 该组需要的响应数量
+	CallNames       []string // 有序的函数调用名称列表，用于回填空的响应名称
 }
 
-// parseFunctionResponseRaw attempts to normalize a function response part into a JSON object string.
-// Falls back to a minimal "functionResponse" object when parsing fails.
-// fallbackName is used when the response's own name is empty.
+// parseFunctionResponseRaw 尝试将函数响应部分规范化为 JSON 对象字符串。
+// 解析失败时回退到最小化的 "functionResponse" 对象。
+// fallbackName 在响应自身的 name 为空时使用。
 func parseFunctionResponseRaw(response gjson.Result, fallbackName string) string {
 	if response.IsObject() && gjson.Valid(response.Raw) {
 		raw := response.Raw
@@ -171,6 +188,12 @@ func parseFunctionResponseRaw(response gjson.Result, fallbackName string) string
 // with their corresponding responses, ensuring proper conversation flow and API compatibility.
 // It converts from a linear format (1.json) to a grouped format (2.json) where function calls
 // and their responses are properly associated and structured.
+//
+// 修复 CLI 工具响应格式并进行智能分组。
+// 将线性格式的函数调用和响应转换为分组格式，确保对话流的正确性和 API 兼容性。
+// 使用 FIFO 队列机制：当模型发出 functionCall 时创建待匹配组，
+// 当收到 functionResponse 时按顺序匹配最早的待匹配组，
+// 将匹配的响应合并为单个 "function" 角色内容。
 //
 // Parameters:
 //   - input: The input JSON string to be processed

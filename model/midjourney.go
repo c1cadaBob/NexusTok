@@ -1,3 +1,13 @@
+// Package model - midjourney.go
+// 该文件定义了 Midjourney 任务数据模型及相关操作
+//
+// 主要结构体：
+// - Midjourney：Midjourney 任务记录
+//
+// 核心功能：
+// - Midjourney 任务的创建、查询、更新
+// - 任务状态跟踪（提交、开始、完成）
+// - 任务进度查询
 package model
 
 type Midjourney struct {

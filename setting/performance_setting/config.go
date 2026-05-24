@@ -1,3 +1,10 @@
+// config.go — 性能相关配置管理
+// 职责：管理磁盘缓存和性能监控两大功能的配置。
+// 磁盘缓存用于将大请求体写入磁盘以节省内存；
+// 性能监控用于检测 CPU/内存/磁盘使用率并触发告警。
+// 配置变更时自动同步到 common 包供全局使用。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package performance_setting
 
 import (

@@ -1,3 +1,18 @@
+# Dockerfile.account-pool-sidecar - 账号池 Sidecar 容器
+#
+# 功能：
+# - 构建 CLIProxyAPI 账号池代理服务
+# - 提供账号池管理和 OAuth 认证功能
+# - 作为 NexusTok 的 Sidecar 容器运行
+#
+# 构建参数：
+#   VERSION - 版本号（默认: dev）
+#   COMMIT - 提交哈希（默认: none）
+#   BUILD_DATE - 构建日期（默认: unknown）
+#
+# 暴露端口：8317
+
+# 构建阶段
 FROM golang:1.26.1-alpine AS builder
 
 WORKDIR /build

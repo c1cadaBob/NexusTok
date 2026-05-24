@@ -1,3 +1,18 @@
+// Package controller - setup.go
+// 该文件实现了系统初始化设置的 API 控制器
+//
+// 系统初始化是首次运行时的必要步骤
+// 需要创建管理员账户和配置基础参数
+//
+// 初始化流程：
+// 1. 前端检查系统是否已初始化（GetSetup）
+// 2. 如果未初始化，显示初始化表单
+// 3. 用户提交管理员账户信息
+// 4. 后端创建管理员账户并完成初始化
+//
+// 主要 API：
+// - GetSetup：获取初始化状态
+// - SetupSystem：执行系统初始化
 package controller
 
 import (
@@ -10,24 +25,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Setup 系统初始化状态结构体
 type Setup struct {
-	Status       bool   `json:"status"`
-	RootInit     bool   `json:"root_init"`
-	DatabaseType string `json:"database_type"`
+	Status       bool   `json:"status"`       // 系统是否已完成初始化
+	RootInit     bool   `json:"root_init"`     // 管理员账户是否已创建
+	DatabaseType string `json:"database_type"` // 数据库类型
 }
 
+// SetupRequest 系统初始化请求结构体
 type SetupRequest struct {
-	Username           string `json:"username"`
-	Password           string `json:"password"`
-	ConfirmPassword    string `json:"confirmPassword"`
-	SelfUseModeEnabled bool   `json:"SelfUseModeEnabled"`
-	DemoSiteEnabled    bool   `json:"DemoSiteEnabled"`
+	Username           string `json:"username"`            // 管理员用户名
+	Password           string `json:"password"`            // 管理员密码
+	ConfirmPassword    string `json:"confirmPassword"`     // 确认密码
+	SelfUseModeEnabled bool   `json:"SelfUseModeEnabled"`  // 是否启用自用模式
+	DemoSiteEnabled    bool   `json:"DemoSiteEnabled"`     // 是否启用演示站点
 }
 
+// GetSetup 获取系统初始化状态
+//
+// 返回系统的初始化状态，包括：
+// - 是否已完成初始化
+// - 管理员账户是否已创建
+// - 数据库类型
+//
+// 参数：
+//   - c: Gin 上下文
 func GetSetup(c *gin.Context) {
 	setup := Setup{
 		Status: constant.Setup,
 	}
+	// 如果已完成初始化，直接返回
 	if constant.Setup {
 		c.JSON(200, gin.H{
 			"success": true,
@@ -35,7 +62,9 @@ func GetSetup(c *gin.Context) {
 		})
 		return
 	}
+	// 检查管理员账户是否存在
 	setup.RootInit = model.RootUserExists()
+	// 设置数据库类型
 	if common.UsingMySQL {
 		setup.DatabaseType = "mysql"
 	}

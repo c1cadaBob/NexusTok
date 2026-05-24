@@ -1,3 +1,13 @@
+// responses - gemini_openai-responses_request.go
+// Gemini 的 OpenAI Responses 请求转换器。
+// 将 OpenAI Responses API 格式的请求转换为 Gemini API 格式。
+// 处理内容包括：
+// 1. 系统指令转换（instructions -> systemInstruction）
+// 2. 消息数组规范化（函数调用和输出的配对排序）
+// 3. 多模态内容处理（文本、图片、音频）
+// 4. 工具定义转换（function -> functionDeclarations）
+// 5. 生成参数映射（max_output_tokens、temperature、top_p 等）
+// 6. 思考配置转换（reasoning.effort -> thinkingConfig）
 package responses
 
 import (
@@ -10,8 +20,28 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiResponsesThoughtSignature 是 Gemini Responses 格式中函数调用使用的思考签名占位符。
+// 用于在请求中为函数调用附加 thoughtSignature 字段，以满足 Gemini API 的验证要求。
 const geminiResponsesThoughtSignature = "skip_thought_signature_validator"
 
+// ConvertOpenAIResponsesRequestToGemini 将 OpenAI Responses 格式的请求转换为 Gemini API 格式。
+//
+// 转换流程：
+// 1. 构建基础 Gemini 请求结构（contents 数组）
+// 2. 提取系统指令并转换为 Gemini 的 systemInstruction
+// 3. 规范化输入消息中的函数调用和输出顺序
+// 4. 将各类消息（message、function_call、function_call_output、reasoning）转换为 Gemini contents
+// 5. 转换工具定义为 Gemini 的 functionDeclarations 格式
+// 6. 映射生成参数和思考配置
+// 7. 附加默认安全设置
+//
+// 参数：
+//   - modelName: 模型名称（当前实现中未使用，由外部设置）
+//   - inputRawJSON: 原始的 OpenAI Responses 格式 JSON 请求数据
+//   - stream: 是否为流式请求（当前实现中未使用）
+//
+// 返回值：
+//   - []byte: 转换后的 Gemini API 格式 JSON 请求数据
 func ConvertOpenAIResponsesRequestToGemini(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 

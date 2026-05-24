@@ -1,11 +1,11 @@
+// Package helps - claude_system_prompt.go
+// 包含 Claude Code 系统提示的静态部分（从 Claude Code v2.1.63 提取）。
+// 这些部分作为 system[] 块发送到 Anthropic 的 API。
+// 结构和内容必须与真实的 Claude Code 匹配以通过服务器端验证。
 package helps
 
-// Claude Code system prompt static sections (extracted from Claude Code v2.1.63).
-// These sections are sent as system[] blocks to Anthropic's API.
-// The structure and content must match real Claude Code to pass server-side validation.
-
-// ClaudeCodeIntro is the first system block after billing header and agent identifier.
-// Corresponds to getSimpleIntroSection() in prompts.ts.
+// ClaudeCodeIntro 是计费头和代理标识符之后的第一个系统块。
+// 对应 prompts.ts 中的 getSimpleIntroSection()。
 const ClaudeCodeIntro = `You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
 
 IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.`

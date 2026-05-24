@@ -1,7 +1,8 @@
+// Package config 为 CLI Proxy API 服务器提供配置管理功能。
+// 负责加载和解析 YAML 配置文件，并提供对应用程序设置的结构化访问，
+// 包括服务器端口、认证目录、调试设置、代理配置和 API 密钥等。
+//
 // Package config provides configuration management for the CLI Proxy API server.
-// It handles loading and parsing YAML configuration files, and provides structured
-// access to application settings including server port, authentication directory,
-// debug settings, proxy configuration, and API keys.
 package config
 
 import (
@@ -19,11 +20,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultPprofAddr 是 pprof 调试服务器的默认监听地址。
 const (
 	DefaultPprofAddr = "127.0.0.1:8316"
-	DefaultAuthDir   = "~/.cli-proxy-api"
+	// DefaultAuthDir 是认证令牌文件的默认存储目录。
+	DefaultAuthDir = "~/.cli-proxy-api"
 )
 
+// Config 表示应用程序的配置，从 YAML 文件加载。
+// 包含服务器设置、认证配置、API 密钥、代理设置等所有可配置项。
+//
 // Config represents the application's configuration, loaded from a YAML file.
 type Config struct {
 	SDKConfig `yaml:",inline"`
@@ -589,16 +595,17 @@ type OpenAICompatibilityModel struct {
 func (m OpenAICompatibilityModel) GetName() string  { return m.Name }
 func (m OpenAICompatibilityModel) GetAlias() string { return m.Alias }
 
-// LoadConfig reads a YAML configuration file from the given path,
-// unmarshals it into a Config struct, applies environment variable overrides,
-// and returns it.
+// LoadConfig 从给定路径读取 YAML 配置文件，将其反序列化为 Config 结构体，
+// 应用环境变量覆盖后返回。
 //
-// Parameters:
-//   - configFile: The path to the YAML configuration file
+// 参数:
+//   - configFile: YAML 配置文件的路径
 //
-// Returns:
-//   - *Config: The loaded configuration
-//   - error: An error if the configuration could not be loaded
+// 返回值:
+//   - *Config: 加载的配置
+//   - error: 配置加载失败时返回错误
+//
+// LoadConfig reads a YAML configuration file from the given path.
 func LoadConfig(configFile string) (*Config, error) {
 	return LoadConfigOptional(configFile, false)
 }

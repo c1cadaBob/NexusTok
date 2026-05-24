@@ -1,9 +1,24 @@
+// util - sanitize_test.go
+// 工具函数名称清理与恢复测试
+// 验证以下功能：
+// - SanitizeFunctionName：将函数名称转换为 Gemini API 兼容格式
+//   （仅允许字母、数字、下划线、点号、冒号、连字符，最长 64 字符）
+// - SanitizedToolNameMap：构建工具名称清理映射表
+// - RestoreSanitizedToolName：从映射表中恢复原始工具名称
 package util
 
 import (
 	"testing"
 )
 
+// TestSanitizeFunctionName 测试函数名称清理的各种场景：
+// - 正常名称保持不变
+// - 允许的特殊字符（点号、冒号、连字符）保持不变
+// - 非法字符替换为下划线
+// - 非 ASCII 字符替换为下划线
+// - 以数字或特殊字符开头时添加下划线前缀
+// - 超过 64 字符时截断
+// - 空字符串返回空字符串
 func TestSanitizeFunctionName(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -55,6 +70,11 @@ func TestSanitizeFunctionName(t *testing.T) {
 	}
 }
 
+// TestSanitizedToolNameMap 测试工具名称映射表的构建：
+// - 需要清理的工具（如 mcp/server/read）应出现在映射表中
+// - 不需要清理的工具（如 valid_tool）不应出现在映射表中
+// - 空输入或无工具时返回 nil
+// - 清理后名称冲突时保留第一个映射
 func TestSanitizedToolNameMap(t *testing.T) {
 	t.Run("returns map for tools needing sanitization", func(t *testing.T) {
 		raw := []byte(`{"tools":[
@@ -109,6 +129,11 @@ func TestSanitizedToolNameMap(t *testing.T) {
 	})
 }
 
+// TestRestoreSanitizedToolName 测试工具名称恢复功能：
+// - 已知的清理名称应恢复为原始名称
+// - 未知名称应原样返回（透传）
+// - nil 映射表时应原样返回
+// - 空名称应返回空字符串
 func TestRestoreSanitizedToolName(t *testing.T) {
 	m := map[string]string{
 		"mcp_server_read": "mcp/server/read",

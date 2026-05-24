@@ -1,3 +1,6 @@
+// auth - custom_headers_test.go
+// 该文件包含自定义头提取和应用函数的单元测试，验证从元数据中提取头信息、
+// 过滤空值和非字符串值、以及应用到 Auth Attributes 的正确性。
 package auth
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestExtractCustomHeadersFromMetadata 测试从元数据中提取自定义头的逻辑，
+// 验证键值去空白、过滤空键和空值、忽略非字符串类型值。
 func TestExtractCustomHeadersFromMetadata(t *testing.T) {
 	meta := map[string]any{
 		"headers": map[string]any{
@@ -22,6 +27,8 @@ func TestExtractCustomHeadersFromMetadata(t *testing.T) {
 	}
 }
 
+// TestApplyCustomHeadersFromMetadata 测试将元数据中的自定义头应用到 Auth 的 Attributes 中，
+// 验证新值覆盖旧值、空值不被应用、已有非头属性不被影响。
 func TestApplyCustomHeadersFromMetadata(t *testing.T) {
 	auth := &Auth{
 		Metadata: map[string]any{

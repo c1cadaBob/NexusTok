@@ -1,3 +1,18 @@
+// Package relay - mjproxy_handler.go
+// 本文件实现了 Midjourney 代理（MJ Proxy）请求的中继处理逻辑。
+// Midjourney 是一个 AI 绘画服务，本文件通过代理模式将 Midjourney 请求转发到上游服务，
+// 支持以下操作类型：
+//   - 想象（Imagine）：根据文本描述生成图片
+//   - 变换（Change）：对已有图片进行放大、变体等操作
+//   - 描述（Describe）：根据图片生成文本描述
+//   - 混合（Blend）：将多张图片混合
+//   - 面部交换（SwapFace）：使用 InsightFace 进行面部替换
+//   - 视频生成（Video）：根据图片生成视频
+//   - 任务查询（Task Fetch）：查询任务状态和结果
+//   - 图片代理（Image Proxy）：代理访问 Midjourney 生成的图片
+//   - 通知回调（Notify）：处理上游的任务状态更新通知
+//
+// 本文件还处理 Midjourney 特有的计费逻辑（按次计费、固定价格）和任务状态管理。
 package relay
 
 import (
@@ -25,6 +40,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RelayMidjourneyImage 处理 Midjourney 图片代理请求。
+// 通过任务 ID 查询 Midjourney 任务，获取图片 URL，然后代理访问并将图片流式传输给客户端。
+// 支持以下功能：
+//   - 根据渠道设置使用代理（Proxy）访问上游图片
+//   - SSRF 防护：验证图片 URL 的安全性
+//   - 自动识别 Content-Type 并设置响应头
+//
+// 参数：
+//   - c: Gin 上下文，URL 路径中包含任务 ID（:id）
 func RelayMidjourneyImage(c *gin.Context) {
 	taskId := c.Param("id")
 	midjourneyTask := model.GetByOnlyMJId(taskId)
@@ -87,6 +111,15 @@ func RelayMidjourneyImage(c *gin.Context) {
 	return
 }
 
+// RelayMidjourneyNotify 处理 Midjourney 任务状态通知回调。
+// 当上游 Midjourney 服务完成任务或状态发生变化时，通过此接口通知系统。
+// 更新任务的进度、提示词、时间戳、图片/视频 URL、状态和失败原因等字段。
+//
+// 参数：
+//   - c: Gin 上下文，请求体为 MidjourneyDto 格式
+//
+// 返回值：
+//   - *dto.MidjourneyResponse: 处理结果，成功时为 nil
 func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 	var midjRequest dto.MidjourneyDto
 	err := common.UnmarshalBodyReusable(c, &midjRequest)
@@ -130,6 +163,18 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 	return nil
 }
 
+// coverMidjourneyTaskDto 将数据库中的 Midjourney 模型对象转换为数据传输对象。
+// 处理以下特殊逻辑：
+//   - 若开启了 MjForwardUrlEnabled，将图片 URL 替换为本地代理地址（/mj/image/）
+//   - 非 SUCCESS 状态的图片 URL 添加随机参数以避免缓存
+//   - 解析 JSON 格式的 Buttons、VideoUrls 和 Properties 字段
+//
+// 参数：
+//   - c: Gin 上下文
+//   - originTask: 数据库中的 Midjourney 任务模型
+//
+// 返回值：
+//   - midjourneyTask: 转换后的 MidjourneyDto 数据传输对象
 func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjourneyTask dto.MidjourneyDto) {
 	midjourneyTask.MjId = originTask.MjId
 	midjourneyTask.Progress = originTask.Progress
@@ -179,6 +224,20 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 	return
 }
 
+// RelaySwapFace 处理 Midjourney 面部交换请求。
+// 使用 InsightFace 技术将源图片的面部替换到目标图片上。
+// 处理流程：
+//  1. 解析请求体，验证 sourceBase64 和 targetBase64 是否存在。
+//  2. 计算固定价格并检查用户配额是否充足。
+//  3. 转发请求到上游 Midjourney 服务。
+//  4. 成功后记录消费日志并更新配额。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - *dto.MidjourneyResponse: 处理结果，成功时为 nil
 func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyResponse {
 	var swapFaceRequest dto.SwapFaceRequest
 	err := common.UnmarshalBodyReusable(c, &swapFaceRequest)
@@ -283,6 +342,14 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	return nil
 }
 
+// RelayMidjourneyTaskImageSeed 查询 Midjourney 任务的图片种子值。
+// 通过任务 ID 查询原始任务，获取所属渠道信息，然后将请求转发到上游获取种子值。
+//
+// 参数：
+//   - c: Gin 上下文，URL 路径中包含任务 ID
+//
+// 返回值：
+//   - *dto.MidjourneyResponse: 处理结果，成功时为 nil
 func RelayMidjourneyTaskImageSeed(c *gin.Context) *dto.MidjourneyResponse {
 	taskId := c.Param("id")
 	userId := c.GetInt("id")
@@ -316,6 +383,19 @@ func RelayMidjourneyTaskImageSeed(c *gin.Context) *dto.MidjourneyResponse {
 	return nil
 }
 
+// RelayMidjourneyTask 处理 Midjourney 任务查询请求。
+// 支持两种查询模式：
+//   - RelayModeMidjourneyTaskFetch: 按任务 ID 查询单个任务。
+//   - RelayModeMidjourneyTaskFetchByCondition: 按条件批量查询（通过 ID 列表）。
+//
+// 查询结果将转换为客户端可读的 DTO 格式并以 JSON 返回。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - relayMode: 中继模式，决定查询方式
+//
+// 返回值：
+//   - *dto.MidjourneyResponse: 处理结果，成功时为 nil
 func RelayMidjourneyTask(c *gin.Context, relayMode int) *dto.MidjourneyResponse {
 	userId := c.GetInt("id")
 	var err error
@@ -381,6 +461,32 @@ func RelayMidjourneyTask(c *gin.Context, relayMode int) *dto.MidjourneyResponse 
 	return nil
 }
 
+// RelayMidjourneySubmit 处理 Midjourney 任务提交请求。
+// 这是 Midjourney 操作的核心函数，支持以下操作类型：
+//   - 想象（Imagine）：根据文本提示词生成图片
+//   - 变换（Change）：对已有图片进行放大(UPSCALE)、变体(VARIATION)等操作
+//   - 描述（Describe）：根据图片生成文本描述
+//   - 混合（Blend）：将多张图片混合生成新图
+//   - 缩短（Shorten）：缩短提示词长度
+//   - 编辑（Edits）：编辑已有图片
+//   - 上传（Upload）：上传图片素材
+//   - 视频（Video）：根据图片生成视频
+//   - 模态（Modal）：模态对话式操作
+//
+// 处理流程：
+//  1. 解析请求体并确定操作类型。
+//  2. 对于非想象类操作（放大/变换等），查找原始任务并锁定到原任务的渠道。
+//  3. 计算固定价格并检查用户配额。
+//  4. 转发请求到上游 Midjourney 服务。
+//  5. 处理各种返回码（1-成功、21-任务已存在、22-排队中、23-队列满、24-敏感词）。
+//  6. 记录任务信息到数据库，成功后进行计费结算。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - relayInfo: 中继信息
+//
+// 返回值：
+//   - *dto.MidjourneyResponse: 处理结果，成功时为 nil
 func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.MidjourneyResponse {
 	consumeQuota := true
 	var midjRequest dto.MidjourneyRequest
@@ -662,12 +768,21 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	return nil
 }
 
+// taskChangeParams 表示 Midjourney 变换操作的参数。
 type taskChangeParams struct {
-	ID     string
-	Action string
-	Index  int
+	ID     string // 任务 ID
+	Action string // 操作类型（如 UPSCALE、VARIATION 等）
+	Index  int    // 操作索引（如第几张图）
 }
 
+// getMjRequestPath 从请求路径中提取 Midjourney 代理的实际请求路径。
+// 处理包含 "/mj-" 前缀的特殊路径格式，提取 "/mj/" 之后的部分。
+//
+// 参数：
+//   - path: 原始请求路径
+//
+// 返回值：
+//   - string: 处理后的请求路径
 func getMjRequestPath(path string) string {
 	requestURL := path
 	if strings.Contains(requestURL, "/mj-") {

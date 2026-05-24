@@ -1,3 +1,7 @@
+// vertex - keyutil.go
+// 提供 Google Cloud 服务账号私钥的规范化和验证工具函数。
+// 处理各种格式的私钥（PKCS#1、PKCS#8），确保输出为标准的 RSA PRIVATE KEY PEM 格式。
+// 支持从损坏或非标准格式中恢复私钥数据。
 package vertex
 
 import (
@@ -10,9 +14,9 @@ import (
 	"strings"
 )
 
-// NormalizeServiceAccountJSON normalizes the given JSON-encoded service account payload.
-// It returns the normalized JSON (with sanitized private_key) or, if normalization fails,
-// the original bytes and the encountered error.
+// NormalizeServiceAccountJSON 规范化 JSON 编码的服务账号数据。
+// 解析 JSON，清理私钥格式，返回规范化的 JSON 字节。
+// 如果规范化失败，返回原始数据和错误。
 func NormalizeServiceAccountJSON(raw []byte) ([]byte, error) {
 	if len(raw) == 0 {
 		return raw, nil
@@ -32,8 +36,8 @@ func NormalizeServiceAccountJSON(raw []byte) ([]byte, error) {
 	return out, nil
 }
 
-// NormalizeServiceAccountMap returns a copy of the given service account map with
-// a sanitized private_key field that is guaranteed to contain a valid RSA PRIVATE KEY PEM block.
+// NormalizeServiceAccountMap 规范化服务账号 map 中的私钥字段。
+// 返回一个新的 map 副本，其中 private_key 字段已清理为有效的 RSA PRIVATE KEY PEM 格式。
 func NormalizeServiceAccountMap(sa map[string]any) (map[string]any, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("service account payload is empty")
@@ -54,6 +58,13 @@ func NormalizeServiceAccountMap(sa map[string]any) (map[string]any, error) {
 	return clone, nil
 }
 
+// sanitizePrivateKey 清理和规范化私钥字符串。
+// 处理步骤：
+// 1. 统一换行符（\r\n -> \n）
+// 2. 移除 ANSI 转义序列
+// 3. 验证 UTF-8 编码
+// 4. 如果不是有效 PEM，尝试从文本中重建
+// 5. 确保输出为 RSA PRIVATE KEY 格式
 func sanitizePrivateKey(raw string) (string, error) {
 	pk := strings.ReplaceAll(raw, "\r\n", "\n")
 	pk = strings.ReplaceAll(pk, "\r", "\n")
@@ -83,6 +94,11 @@ func sanitizePrivateKey(raw string) (string, error) {
 	return string(pem.EncodeToMemory(rsaBlock)), nil
 }
 
+// ensureRSAPrivateKey 确保 PEM 块包含有效的 RSA 私钥。
+// 支持的输入格式：
+// - "RSA PRIVATE KEY": 直接验证 PKCS#1 格式
+// - "PRIVATE KEY": 解析 PKCS#8 格式并转换为 PKCS#1
+// - 其他格式: 尝试自动检测并转换
 func ensureRSAPrivateKey(block *pem.Block) (*pem.Block, error) {
 	if block == nil {
 		return nil, fmt.Errorf("pem block is nil")
@@ -122,6 +138,8 @@ func ensureRSAPrivateKey(block *pem.Block) (*pem.Block, error) {
 	return nil, fmt.Errorf("private_key uses unsupported format")
 }
 
+// rebuildPEM 从损坏或非标准格式的文本中重建 PEM 块。
+// 提取 PEM 标记之间的 base64 数据，解码后重新编码为标准 PEM 格式。
 func rebuildPEM(raw string) (string, error) {
 	kind := "PRIVATE KEY"
 	if strings.Contains(raw, "RSA PRIVATE KEY") {
@@ -147,6 +165,8 @@ func rebuildPEM(raw string) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
+// filterBase64 从字符串中提取有效的 base64 字符。
+// 只保留 A-Z、a-z、0-9、+、/ 和 = 字符。
 func filterBase64(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -166,6 +186,10 @@ func filterBase64(s string) string {
 	return b.String()
 }
 
+// stripANSIEscape 从字符串中移除 ANSI 转义序列。
+// 处理常见的转义序列格式：
+// - OSC 序列（ESC]...BEL 或 ESC]...ESC\）
+// - CSI 序列（ESC[...字母）
 func stripANSIEscape(s string) string {
 	in := []rune(s)
 	var out []rune

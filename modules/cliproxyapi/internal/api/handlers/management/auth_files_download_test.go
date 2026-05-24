@@ -1,3 +1,5 @@
+// management - auth_files_download_test.go
+// 测试认证文件下载功能，包括正常下载和路径分隔符防护
 package management
 
 import (
@@ -12,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestDownloadAuthFile_ReturnsFile 测试正常下载认证文件
 func TestDownloadAuthFile_ReturnsFile(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -38,6 +41,7 @@ func TestDownloadAuthFile_ReturnsFile(t *testing.T) {
 	}
 }
 
+// TestDownloadAuthFile_RejectsPathSeparators 测试路径分隔符被拒绝（防止路径遍历攻击）
 func TestDownloadAuthFile_RejectsPathSeparators(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

@@ -1,3 +1,6 @@
+// 包 auth - auto_refresh_loop.go
+// 该文件实现了认证的自动刷新循环。
+// 使用最小堆管理认证的刷新调度，支持并发刷新、脏标记重调度和唤醒机制。
 package auth
 
 import (
@@ -10,20 +13,22 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// authAutoRefreshLoop 管理认证的自动刷新调度循环。
 type authAutoRefreshLoop struct {
-	manager     *Manager
-	interval    time.Duration
-	concurrency int
+	manager     *Manager        // 认证管理器引用
+	interval    time.Duration   // 检查间隔
+	concurrency int             // 最大并发刷新数
 
-	mu    sync.Mutex
-	queue refreshMinHeap
-	index map[string]*refreshHeapItem
-	dirty map[string]struct{}
+	mu    sync.Mutex                   // 保护堆和脏标记的互斥锁
+	queue refreshMinHeap               // 刷新调度最小堆
+	index map[string]*refreshHeapItem  // 认证 ID 到堆项的索引
+	dirty map[string]struct{}          // 需要重调度的认证 ID 集合
 
-	wakeCh chan struct{}
-	jobs   chan string
+	wakeCh chan struct{} // 唤醒信号通道
+	jobs   chan string   // 刷新任务通道
 }
 
+// newAuthAutoRefreshLoop 创建新的自动刷新循环实例。
 func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration, concurrency int) *authAutoRefreshLoop {
 	if interval <= 0 {
 		interval = refreshCheckInterval
@@ -46,6 +51,7 @@ func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration, concurrenc
 	}
 }
 
+// queueReschedule 将认证标记为需要重调度。
 func (l *authAutoRefreshLoop) queueReschedule(authID string) {
 	if l == nil || authID == "" {
 		return

@@ -1,3 +1,7 @@
+// auth - selector_test.go
+// 该文件包含认证选择器的广泛单元测试，涵盖 FillFirstSelector、RoundRobinSelector、
+// SessionAffinitySelector 的优先级、冷却、并发、Gemini CLI 凭据分组、
+// 会话 ID 提取、跨提供商隔离、多模态内容哈希等场景。
 package auth
 
 import (
@@ -14,6 +18,8 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestFillFirstSelectorPick_Deterministic 测试 FillFirstSelector 的选择结果确定性，
+// 验证在相同候选列表下始终选择同一个凭据。
 func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	t.Parallel()
 

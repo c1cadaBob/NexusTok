@@ -1,3 +1,9 @@
+// management - api_tools.go
+// 通用 API 调用代理和 OAuth Token 刷新工具。
+// 该模块提供以下功能：
+//   - APICall: 通用的 API 调用代理，支持指定认证记录、自定义头部和请求体
+//   - Gemini OAuth Token 刷新：使用 OAuth2 凭据刷新 Gemini CLI 的访问令牌
+//   - Antigravity OAuth Token 刷新：使用 OAuth2 凭据刷新 Antigravity 的访问令牌
 package management
 
 import (
@@ -21,6 +27,7 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// defaultAPICallTimeout 是 API 调用代理的默认超时时间。
 const defaultAPICallTimeout = 60 * time.Second
 
 var (

@@ -1,6 +1,7 @@
-// Package kimi provides authentication and token management functionality
-// for Kimi (Moonshot AI) services. It handles OAuth2 device flow token storage,
-// serialization, and retrieval for maintaining authenticated sessions with the Kimi API.
+// kimi - token.go
+// 包 kimi 提供 Kimi（Moonshot AI）服务的认证和令牌管理功能。
+// 该文件实现了 OAuth2 设备流程令牌的存储、序列化和持久化功能，
+// 用于维护与 Kimi API 的认证会话。
 package kimi
 
 import (
@@ -13,72 +14,81 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 )
 
-// KimiTokenStorage stores OAuth2 token information for Kimi API authentication.
+// KimiTokenStorage 存储 Kimi API 认证的 OAuth2 令牌信息。
 type KimiTokenStorage struct {
-	// AccessToken is the OAuth2 access token used for authenticating API requests.
+	// AccessToken 是用于认证 API 请求的 OAuth2 访问令牌
 	AccessToken string `json:"access_token"`
-	// RefreshToken is the OAuth2 refresh token used to obtain new access tokens.
+	// RefreshToken 是用于获取新访问令牌的 OAuth2 刷新令牌
 	RefreshToken string `json:"refresh_token"`
-	// TokenType is the type of token, typically "Bearer".
+	// TokenType 是令牌类型，通常为 "Bearer"
 	TokenType string `json:"token_type"`
-	// Scope is the OAuth2 scope granted to the token.
+	// Scope 是授予令牌的 OAuth2 权限范围
 	Scope string `json:"scope,omitempty"`
-	// DeviceID is the OAuth device flow identifier used for Kimi requests.
+	// DeviceID 是用于 Kimi 请求的 OAuth 设备流程标识符
 	DeviceID string `json:"device_id,omitempty"`
-	// Expired is the RFC3339 timestamp when the access token expires.
+	// Expired 是访问令牌过期的 RFC3339 时间戳
 	Expired string `json:"expired,omitempty"`
-	// Type indicates the authentication provider type, always "kimi" for this storage.
+	// Type 表示认证提供商类型，此存储始终为 "kimi"
 	Type string `json:"type"`
 
-	// Metadata holds arbitrary key-value pairs injected via hooks.
-	// It is not exported to JSON directly to allow flattening during serialization.
+	// Metadata 保存通过钩子注入的任意键值对。
+	// 不直接导出到 JSON，以允许在序列化时进行扁平化处理。
 	Metadata map[string]any `json:"-"`
 }
 
-// SetMetadata allows external callers to inject metadata into the storage before saving.
+// SetMetadata 允许外部调用者在保存之前向存储注入元数据。
+//
+// 参数：
+//   - meta: 要注入的元数据键值对
 func (ts *KimiTokenStorage) SetMetadata(meta map[string]any) {
 	ts.Metadata = meta
 }
 
-// KimiTokenData holds the raw OAuth token response from Kimi.
+// KimiTokenData 保存从 Kimi 获取的原始 OAuth 令牌响应。
 type KimiTokenData struct {
-	// AccessToken is the OAuth2 access token.
+	// AccessToken 是 OAuth2 访问令牌
 	AccessToken string `json:"access_token"`
-	// RefreshToken is the OAuth2 refresh token.
+	// RefreshToken 是 OAuth2 刷新令牌
 	RefreshToken string `json:"refresh_token"`
-	// TokenType is the type of token, typically "Bearer".
+	// TokenType 是令牌类型，通常为 "Bearer"
 	TokenType string `json:"token_type"`
-	// ExpiresAt is the Unix timestamp when the token expires.
+	// ExpiresAt 是令牌过期的 Unix 时间戳
 	ExpiresAt int64 `json:"expires_at"`
-	// Scope is the OAuth2 scope granted to the token.
+	// Scope 是授予令牌的 OAuth2 权限范围
 	Scope string `json:"scope"`
 }
 
-// KimiAuthBundle bundles authentication data for storage.
+// KimiAuthBundle 为存储捆绑认证数据。
 type KimiAuthBundle struct {
-	// TokenData contains the OAuth token information.
+	// TokenData 包含 OAuth 令牌信息
 	TokenData *KimiTokenData
-	// DeviceID is the device identifier used during OAuth device flow.
+	// DeviceID 是 OAuth 设备流程期间使用的设备标识符
 	DeviceID string
 }
 
-// DeviceCodeResponse represents Kimi's device code response.
+// DeviceCodeResponse 表示 Kimi 的设备代码响应。
 type DeviceCodeResponse struct {
-	// DeviceCode is the device verification code.
+	// DeviceCode 是设备验证代码
 	DeviceCode string `json:"device_code"`
-	// UserCode is the code the user must enter at the verification URI.
+	// UserCode 是用户必须在验证 URI 处输入的代码
 	UserCode string `json:"user_code"`
-	// VerificationURI is the URL where the user should enter the code.
+	// VerificationURI 是用户应输入代码的 URL
 	VerificationURI string `json:"verification_uri,omitempty"`
-	// VerificationURIComplete is the URL with the code pre-filled.
+	// VerificationURIComplete 是预填充代码的 URL
 	VerificationURIComplete string `json:"verification_uri_complete"`
-	// ExpiresIn is the number of seconds until the device code expires.
+	// ExpiresIn 是设备代码过期的秒数
 	ExpiresIn int `json:"expires_in"`
-	// Interval is the minimum number of seconds to wait between polling requests.
+	// Interval 是轮询请求之间的最小等待秒数
 	Interval int `json:"interval"`
 }
 
-// SaveTokenToFile serializes the Kimi token storage to a JSON file.
+// SaveTokenToFile 将 Kimi 令牌存储序列化为 JSON 文件。
+//
+// 参数：
+//   - authFilePath: 令牌文件应保存的完整路径
+//
+// 返回：
+//   - error: 操作失败时返回的错误，成功时返回 nil
 func (ts *KimiTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "kimi"
@@ -109,7 +119,11 @@ func (ts *KimiTokenStorage) SaveTokenToFile(authFilePath string) error {
 	return nil
 }
 
-// IsExpired checks if the token has expired.
+// IsExpired 检查令牌是否已过期。
+// 如果在刷新阈值内，则认为令牌已过期。
+//
+// 返回：
+//   - bool: 令牌已过期返回 true
 func (ts *KimiTokenStorage) IsExpired() bool {
 	if ts.Expired == "" {
 		return false // No expiry set, assume valid
@@ -122,7 +136,11 @@ func (ts *KimiTokenStorage) IsExpired() bool {
 	return time.Now().Add(time.Duration(refreshThresholdSeconds) * time.Second).After(t)
 }
 
-// NeedsRefresh checks if the token should be refreshed.
+// NeedsRefresh 检查令牌是否需要刷新。
+// 如果没有刷新令牌，则无法刷新；否则检查令牌是否已过期。
+//
+// 返回：
+//   - bool: 令牌需要刷新返回 true
 func (ts *KimiTokenStorage) NeedsRefresh() bool {
 	if ts.RefreshToken == "" {
 		return false // Can't refresh without refresh token

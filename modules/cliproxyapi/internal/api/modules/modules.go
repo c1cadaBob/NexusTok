@@ -1,5 +1,7 @@
-// Package modules provides a pluggable routing module system for extending
-// the API server with optional features without modifying core routing logic.
+// modules - modules.go
+// 可插拔路由模块系统。
+// 该模块提供了一个扩展 API 服务器的框架，允许通过独立的模块添加路由和功能，
+// 而无需修改核心路由逻辑。支持 V1（旧版）和 V2（推荐）两种模块接口。
 package modules
 
 import (
@@ -77,6 +79,9 @@ type RouteModuleV2 interface {
 //	if err := modules.RegisterModule(ctx, ampModule); err != nil {
 //	    log.Errorf("Failed to register module: %v", err)
 //	}
+// RegisterModule 辅助函数，自动检测模块实现的接口版本（V1 或 V2）并注册。
+// 优先尝试 V2 接口，如果模块未实现则降级到 V1 接口。
+// 如果模块两个接口都未实现，返回错误。
 func RegisterModule(ctx Context, mod interface{}) error {
 	// Try V2 interface first (preferred)
 	if v2, ok := mod.(RouteModuleV2); ok {

@@ -1,3 +1,10 @@
+// Package ionet - hardware.go
+// 该文件实现了 IO.NET 硬件资源查询功能
+//
+// 核心功能：
+// - GetAvailableReplicas：获取指定硬件的可用副本数
+// - 按位置查询可用资源
+// - 硬件规格查询
 package ionet
 
 import (

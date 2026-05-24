@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Antigravity 执行器的签名验证功能，包括严格模式和缓存模式。
 package executor
 
 import (
@@ -16,19 +18,20 @@ import (
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
+// testGeminiSignaturePayload 生成测试用的 Gemini 签名负载。
 func testGeminiSignaturePayload() string {
 	payload := append([]byte{0x0A}, bytes.Repeat([]byte{0x56}, 48)...)
 	return base64.StdEncoding.EncodeToString(payload)
 }
 
-// testFakeClaudeSignature returns a base64 string starting with 'E' that passes
-// the lightweight hasValidClaudeSignature check but has invalid protobuf content
-// (first decoded byte 0x12 is correct, but no valid protobuf field 2 follows),
-// so it fails deep validation in strict mode.
+// testFakeClaudeSignature 返回一个以 'E' 开头的 base64 字符串，
+// 能通过轻量级的 hasValidClaudeSignature 检查但 protobuf 内容无效，
+// 在严格模式下会失败深度验证。
 func testFakeClaudeSignature() string {
 	return base64.StdEncoding.EncodeToString([]byte{0x12, 0xFF, 0xFE, 0xFD})
 }
 
+// testAntigravityAuth 创建测试用的 Antigravity 认证对象。
 func testAntigravityAuth(baseURL string) *cliproxyauth.Auth {
 	return &cliproxyauth.Auth{
 		Attributes: map[string]string{
@@ -41,6 +44,7 @@ func testAntigravityAuth(baseURL string) *cliproxyauth.Auth {
 	}
 }
 
+// invalidClaudeThinkingPayload 返回包含无效签名的 Claude thinking 负载。
 func invalidClaudeThinkingPayload() []byte {
 	return []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
@@ -56,6 +60,8 @@ func invalidClaudeThinkingPayload() []byte {
 	}`)
 }
 
+// TestAntigravityExecutor_StrictBypassRejectsInvalidSignature 验证严格模式下
+// 无效签名在请求发送到上游之前被拒绝。
 func TestAntigravityExecutor_StrictBypassRejectsInvalidSignature(t *testing.T) {
 	previousCache := cache.SignatureCacheEnabled()
 	previousStrict := cache.SignatureBypassStrictMode()
@@ -129,6 +135,7 @@ func TestAntigravityExecutor_StrictBypassRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
+// TestAntigravityExecutor_NonStrictBypassSkipsPrecheck 验证非严格模式下跳过签名预检查。
 func TestAntigravityExecutor_NonStrictBypassSkipsPrecheck(t *testing.T) {
 	previousCache := cache.SignatureCacheEnabled()
 	previousStrict := cache.SignatureBypassStrictMode()
@@ -148,6 +155,7 @@ func TestAntigravityExecutor_NonStrictBypassSkipsPrecheck(t *testing.T) {
 	}
 }
 
+// TestAntigravityExecutor_CacheModeSkipsPrecheck 验证缓存模式下跳过签名预检查。
 func TestAntigravityExecutor_CacheModeSkipsPrecheck(t *testing.T) {
 	previous := cache.SignatureCacheEnabled()
 	cache.SetSignatureCacheEnabled(true)

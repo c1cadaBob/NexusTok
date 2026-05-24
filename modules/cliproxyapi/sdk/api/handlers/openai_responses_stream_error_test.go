@@ -1,3 +1,5 @@
+// handlers - openai_responses_stream_error_test.go
+// 测试 OpenAI Responses 流式错误数据块的构建功能。
 package handlers
 
 import (
@@ -6,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestBuildOpenAIResponsesStreamErrorChunk 测试基本的流式错误数据块构建。
 func TestBuildOpenAIResponsesStreamErrorChunk(t *testing.T) {
 	chunk := BuildOpenAIResponsesStreamErrorChunk(http.StatusInternalServerError, "unexpected EOF", 0)
 	var payload map[string]any
@@ -26,6 +29,7 @@ func TestBuildOpenAIResponsesStreamErrorChunk(t *testing.T) {
 	}
 }
 
+// TestBuildOpenAIResponsesStreamErrorChunkExtractsHTTPErrorBody 测试从 HTTP 错误体 JSON 中提取错误信息。
 func TestBuildOpenAIResponsesStreamErrorChunkExtractsHTTPErrorBody(t *testing.T) {
 	chunk := BuildOpenAIResponsesStreamErrorChunk(
 		http.StatusInternalServerError,

@@ -1,3 +1,7 @@
+// group.go - 用户分组管理服务
+// 本文件提供用户分组相关的查询和计算功能。
+// 包括用户可用分组列表获取、分组归属判断、自动分组配置、
+// 以及分组倍率查询等。支持特殊分组的添加和移除操作。
 package service
 
 import (
@@ -7,6 +11,13 @@ import (
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 )
 
+// GetUserUsableGroups 获取指定用户可使用的分组列表。
+// 基于系统全局可用分组列表，结合用户分组的特殊配置（添加/移除分组），
+// 返回该用户最终可用的分组映射表。
+// 参数:
+//   - userGroup: 用户所属分组名称
+// 返回值:
+//   - map[string]string: 分组名称 -> 分组描述 的映射
 func GetUserUsableGroups(userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
 	if userGroup != "" {
@@ -36,6 +47,12 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 	return groupsCopy
 }
 
+// GroupInUserUsableGroups 判断指定分组是否在用户的可用分组列表中。
+// 参数:
+//   - userGroup: 用户所属分组名称
+//   - groupName: 待检查的分组名称
+// 返回值:
+//   - bool: true 表示该分组在用户可用列表中
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userGroup)[groupName]
 	return ok

@@ -1,5 +1,14 @@
-// 用于迁移检测的旧键，该文件下个版本会删除
-
+// Package controller - console_migrate.go
+// 该文件实现了控制台配置的迁移功能
+//
+// 用于将旧版本的控制台配置迁移到新的 console_setting.* 命名空间
+// 迁移的配置项包括：
+//   - ApiInfo → console_setting.api_info
+//   - Announcements → console_setting.announcements
+//   - FAQ → console_setting.faq
+//   - UptimeKumaUrl + UptimeKumaSlug → console_setting.uptime_kuma_groups
+//
+// 迁移完成后会删除旧键记录，该文件在下个版本可能会被移除
 package controller
 
 import (
@@ -13,6 +22,15 @@ import (
 )
 
 // MigrateConsoleSetting 迁移旧的控制台相关配置到 console_setting.*
+//
+// 迁移逻辑：
+// 1. 读取所有配置项
+// 2. 逐项迁移到新的命名空间
+// 3. 删除旧键记录
+// 4. 重新加载配置缓存
+//
+// 参数：
+//   - c: Gin 上下文
 func MigrateConsoleSetting(c *gin.Context) {
 	// 读取全部 option
 	opts, err := model.AllOption()

@@ -1,3 +1,16 @@
+// httpapi - server.go
+// HTTP API 服务模块，提供 CPA Manager 使用量采集服务的 RESTful API。
+// 主要功能：
+//   - 健康检查和服务信息查询
+//   - 采集器状态和管理配置的读写
+//   - 初始连接设置（setup）
+//   - 使用量数据的查询、导出和导入
+//   - 模型价格管理（增删改查、从 LiteLLM 同步）
+//   - API Key 别名管理（CRUD）
+//   - 模型列表代理（转发到上游 CPA）
+//   - 管理面板（内嵌 HTML 或外部文件）
+//   - CORS 跨域支持
+//   - 管理接口代理（转发到上游 CPA）
 package httpapi
 
 import (
@@ -22,71 +35,89 @@ import (
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
 )
 
+// embeddedPanel 是内嵌的管理面板 HTML 文件。
+// 通过 go:embed 指令在编译时嵌入，作为外部文件不存在时的回退。
+//
 //go:embed web/management.html
 var embeddedPanel embed.FS
 
+// Server 是 HTTP API 服务的核心结构。
+// 封装了配置、存储层、采集管理器和启动时间。
 type Server struct {
-	cfg       config.Config
-	store     *store.Store
-	collector *collector.Manager
-	startedAt int64
+	cfg       config.Config    // 应用配置
+	store     *store.Store     // 数据存储层
+	collector *collector.Manager // 采集管理器
+	startedAt int64            // 服务启动时间戳（毫秒）
 }
 
+// setupSource 表示配置来源类型。
 type setupSource string
 
+// serviceID 服务标识符，用于健康检查和信息接口。
 const serviceID = "cpa-manager"
 
+// 配置来源常量定义
 const (
-	setupSourceNone setupSource = ""
-	setupSourceEnv  setupSource = "env"
-	setupSourceDB   setupSource = "db"
+	setupSourceNone setupSource = ""     // 未配置
+	setupSourceEnv  setupSource = "env"  // 环境变量
+	setupSourceDB   setupSource = "db"   // 数据库
 )
 
+// maxUsageImportBytes 导入请求体的最大大小限制（64MB）。
 const maxUsageImportBytes int64 = 64 * 1024 * 1024
 
+// modelPriceSyncSource 模型价格同步的数据源标识。
 const modelPriceSyncSource = "litellm"
 
+// modelPriceSyncURL LiteLLM 模型价格数据的远程 URL。
 var modelPriceSyncURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
+// setupRequest 表示初始连接设置的请求结构。
 type setupRequest struct {
-	CPAUpstreamURL               string `json:"cpaBaseUrl"`
-	ManagementKey                string `json:"managementKey"`
-	CollectorMode                string `json:"collectorMode"`
-	Queue                        string `json:"queue"`
-	PopSide                      string `json:"popSide"`
-	BatchSize                    int    `json:"batchSize"`
-	PollIntervalMS               int    `json:"pollIntervalMs"`
-	QueryLimit                   int    `json:"queryLimit"`
-	TLSSkipVerify                bool   `json:"tlsSkipVerify"`
-	EnsureUsageStatisticsEnabled *bool  `json:"ensureUsageStatisticsEnabled"`
-	RequestMonitoringEnabled     *bool  `json:"requestMonitoringEnabled"`
+	CPAUpstreamURL               string `json:"cpaBaseUrl"`                    // CPA 上游 URL
+	ManagementKey                string `json:"managementKey"`                 // 管理密钥
+	CollectorMode                string `json:"collectorMode"`                 // 采集模式
+	Queue                        string `json:"queue"`                         // 队列名称
+	PopSide                      string `json:"popSide"`                       // 弹出方向
+	BatchSize                    int    `json:"batchSize"`                     // 批次大小
+	PollIntervalMS               int    `json:"pollIntervalMs"`                // 轮询间隔（毫秒）
+	QueryLimit                   int    `json:"queryLimit"`                    // 查询限制
+	TLSSkipVerify                bool   `json:"tlsSkipVerify"`                 // TLS 跳过验证
+	EnsureUsageStatisticsEnabled *bool  `json:"ensureUsageStatisticsEnabled"`  // 是否确保上游启用使用量统计
+	RequestMonitoringEnabled     *bool  `json:"requestMonitoringEnabled"`      // 是否启用请求监控
 }
 
+// managerConfigResponse 表示管理配置查询的响应结构。
 type managerConfigResponse struct {
-	Config   store.ManagerConfig `json:"config"`
-	Source   string              `json:"source"`
-	CPAUsage *cpaUsageConfig     `json:"cpaUsage,omitempty"`
+	Config   store.ManagerConfig `json:"config"`             // 管理配置
+	Source   string              `json:"source"`             // 配置来源（env/db）
+	CPAUsage *cpaUsageConfig     `json:"cpaUsage,omitempty"` // 上游 CPA 的使用量配置
 }
 
+// cpaUsageConfig 表示上游 CPA 的使用量相关配置。
 type cpaUsageConfig struct {
-	UsageStatisticsEnabled          bool `json:"usageStatisticsEnabled"`
-	RedisUsageQueueRetentionSeconds int  `json:"redisUsageQueueRetentionSeconds"`
-	RetentionSourceDefault          bool `json:"retentionSourceDefault"`
+	UsageStatisticsEnabled          bool `json:"usageStatisticsEnabled"`          // 使用量统计是否启用
+	RedisUsageQueueRetentionSeconds int  `json:"redisUsageQueueRetentionSeconds"` // Redis 使用量队列保留秒数
+	RetentionSourceDefault          bool `json:"retentionSourceDefault"`          // 保留时间是否为默认值
 }
 
+// modelPricesRequest 表示模型价格保存的请求结构。
 type modelPricesRequest struct {
-	Prices map[string]store.ModelPrice `json:"prices"`
+	Prices map[string]store.ModelPrice `json:"prices"` // 模型价格映射
 }
 
+// modelPricesSyncRequest 表示模型价格同步的请求结构。
 type modelPricesSyncRequest struct {
-	Models []string `json:"models"`
+	Models []string `json:"models"` // 需要同步的模型列表（为空则同步全部）
 }
 
+// apiKeyAliasesRequest 表示 API Key 别名批量操作的请求结构。
 type apiKeyAliasesRequest struct {
-	Items              []store.APIKeyAlias `json:"items"`
-	ActiveAPIKeyHashes []string            `json:"activeApiKeyHashes,omitempty"`
+	Items              []store.APIKeyAlias `json:"items"`                        // 别名列表
+	ActiveAPIKeyHashes []string            `json:"activeApiKeyHashes,omitempty"` // 当前活跃的 API Key 哈希集合
 }
 
+// New 创建一个新的 HTTP API 服务器实例。
 func New(cfg config.Config, store *store.Store, collector *collector.Manager) *Server {
 	return &Server{
 		cfg:       cfg,
@@ -96,6 +127,15 @@ func New(cfg config.Config, store *store.Store, collector *collector.Manager) *S
 	}
 }
 
+// Handler 注册所有 HTTP 路由并返回 http.Handler。
+// 路由表：
+//   - GET /health: 健康检查
+//   - GET /status: 采集器状态查询（需认证）
+//   - GET /usage-service/info: 服务信息
+//   - GET/PUT /usage-service/config: 管理配置读写（需认证）
+//   - POST /setup: 初始连接设置
+//   - GET /management.html: 管理面板页面
+//   - /: 根路由，分发到子路由或代理
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.withCORS(s.handleHealth))
@@ -108,6 +148,16 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// handleRoot 是根路由处理器，根据路径分发请求到对应的子处理器。
+// 路由优先级：
+// 1. OPTIONS 预检请求
+// 2. /v0/management/model-prices* -> 模型价格管理
+// 3. /v0/management/api-key-aliases* -> API Key 别名管理
+// 4. /v0/management/usage* -> 使用量数据管理
+// 5. /v0/management/* -> 代理到上游 CPA
+// 6. /v1/models 或 /models -> 模型列表代理
+// 7. / -> 重定向到管理面板
+// 8. 其他 -> 404
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.writeCORS(w, r)
@@ -304,6 +354,12 @@ func (s *Server) handleManagerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleSetup 处理初始连接设置请求。
+// 验证管理密钥、连接到上游 CPA、保存配置并可选地启动采集器。
+// 安全策略：
+//   - 已有设置且来源为环境变量时拒绝修改
+//   - 更换上游 URL 时需要通过现有管理密钥认证
+//   - 同一上游更换密钥时需要验证新密钥的有效性
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -413,6 +469,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upstream": setup.CPAUpstreamURL})
 }
 
+// handleModelPrices 处理模型价格的 CRUD 和同步操作。
+//   - GET /v0/management/model-prices: 获取所有模型价格
+//   - PUT /v0/management/model-prices: 批量保存模型价格
+//   - POST /v0/management/model-prices/sync: 从 LiteLLM 同步模型价格
 func (s *Server) handleModelPrices(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeIfConfigured(w, r) {
 		return
@@ -480,6 +540,10 @@ func (s *Server) handleModelPrices(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleAPIKeyAliases 处理 API Key 别名的 CRUD 操作。
+//   - GET /v0/management/api-key-aliases: 获取所有别名
+//   - PUT /v0/management/api-key-aliases: 批量创建/更新别名
+//   - DELETE /v0/management/api-key-aliases/{hash}: 删除指定别名
 func (s *Server) handleAPIKeyAliases(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeIfConfigured(w, r) {
 		return
@@ -527,6 +591,9 @@ func (s *Server) handleAPIKeyAliases(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// fetchLiteLLMModelPrices 从 LiteLLM 远程数据源获取模型价格数据。
+// 返回模型价格映射和跳过的条目数。
+// 价格从 "per token" 转换为 "per million tokens"。
 func fetchLiteLLMModelPrices(ctx context.Context) (map[string]store.ModelPrice, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelPriceSyncURL, nil)
 	if err != nil {
@@ -592,6 +659,9 @@ func fetchLiteLLMModelPrices(ctx context.Context) (map[string]store.ModelPrice, 
 	return prices, skipped, nil
 }
 
+// selectModelPrices 从价格映射中选择指定模型的价格。
+// 如果 models 为空则返回全部价格。
+// 支持精确匹配和后缀匹配（如 "gpt-4o" 可匹配 "openai/gpt-4o"）。
 func selectModelPrices(prices map[string]store.ModelPrice, models []string) map[string]store.ModelPrice {
 	wanted := make([]string, 0, len(models))
 	seen := map[string]struct{}{}
@@ -655,6 +725,10 @@ func readFloat(entry map[string]any, key string) (float64, bool) {
 	}
 }
 
+// handleUsage 处理使用量数据的查询和导入。
+//   - GET /v0/management/usage: 获取最近的使用量事件（按端点和模型聚合）
+//   - GET /v0/management/usage/export: 导出为 JSONL 格式
+//   - POST /v0/management/usage/import: 导入使用量数据
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeIfConfigured(w, r) {
 		return
@@ -1029,6 +1103,8 @@ func setupRequestMonitoringEnabled(req setupRequest) bool {
 	return *req.RequestMonitoringEnabled
 }
 
+// authorizeIfConfigured 在已配置管理密钥时验证请求的 Authorization 头。
+// 未配置管理密钥时允许所有请求通过。返回 true 表示授权通过。
 func (s *Server) authorizeIfConfigured(w http.ResponseWriter, r *http.Request) bool {
 	setup, ok, err := s.resolveSetup(r.Context())
 	if err != nil {
@@ -1045,6 +1121,8 @@ func (s *Server) authorizeIfConfigured(w http.ResponseWriter, r *http.Request) b
 	return false
 }
 
+// authMatches 验证请求的 Authorization 头是否匹配管理密钥。
+// 要求 "Bearer {managementKey}" 格式。
 func authMatches(r *http.Request, managementKey string) bool {
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	if header == "" || managementKey == "" {
@@ -1057,6 +1135,8 @@ func authMatches(r *http.Request, managementKey string) bool {
 	return strings.TrimSpace(header[len(prefix):]) == managementKey
 }
 
+// withCORS 为处理器添加 CORS 支持的中间件。
+// 处理 OPTIONS 预检请求并设置 CORS 响应头。
 func (s *Server) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.writeCORS(w, r)
@@ -1068,6 +1148,8 @@ func (s *Server) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// writeCORS 设置 CORS 响应头。
+// 根据请求的 Origin 和配置的允许来源列表决定是否允许跨域。
 func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
 	if len(s.cfg.CORSOrigins) == 0 {
 		return
@@ -1090,6 +1172,8 @@ func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 }
 
+// validateCollectorAgainstCPA 验证采集器配置与上游 CPA 的兼容性。
+// 检查 pollIntervalMs 是否超过 CPA 的 Redis 使用量队列保留时间。
 func validateCollectorAgainstCPA(ctx context.Context, cfg store.ManagerConfig) error {
 	usageCfg, err := fetchCPAUsageConfig(ctx, cfg.CPAConnection.CPABaseURL, cfg.CPAConnection.ManagementKey)
 	if err != nil {
@@ -1108,6 +1192,8 @@ func validateCollectorAgainstCPA(ctx context.Context, cfg store.ManagerConfig) e
 	return nil
 }
 
+// validateManagementAPI 验证上游 CPA 管理接口的可访问性和密钥有效性。
+// 通过调用 /v0/management/config 接口验证。
 func validateManagementAPI(ctx context.Context, baseURL string, key string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v0/management/config", nil)
 	if err != nil {
@@ -1226,6 +1312,8 @@ func readIntField(raw map[string]any, keys ...string) (int, bool) {
 	return 0, false
 }
 
+// normalizeBaseURL 规范化上游 URL。
+// 自动补全协议前缀，去除尾部斜杠和多余的 /v0/management 路径。
 func normalizeBaseURL(raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -1240,20 +1328,25 @@ func normalizeBaseURL(raw string) string {
 	return value
 }
 
+// writeJSON 写入 JSON 格式的 HTTP 响应。
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+// writeError 写入包含错误信息和错误码的 JSON 响应。
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error(), "code": usageServiceErrorCode(err)})
 }
 
+// methodNotAllowed 返回 405 Method Not Allowed 错误响应。
 func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 }
 
+// usageServiceErrorCode 根据错误消息内容生成结构化的错误码。
+// 用于前端根据错误码进行国际化和错误处理。
 func usageServiceErrorCode(err error) string {
 	message := err.Error()
 	switch {

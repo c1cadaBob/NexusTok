@@ -1,3 +1,7 @@
+// cliproxy - service_oauth_model_alias_test.go
+// 该文件测试 OAuth 模型别名功能的正确性。
+// 验证模型重命名（替换模式）和分叉模式（保留原始模型并添加别名）的行为。
+
 package cliproxy
 
 import (
@@ -6,6 +10,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestApplyOAuthModelAlias_Rename 测试 OAuth 模型别名的替换模式。
+// 当 Fork 为 false 时，原始模型 ID 应被替换为别名。
 func TestApplyOAuthModelAlias_Rename(t *testing.T) {
 	cfg := &config.Config{
 		OAuthModelAlias: map[string][]config.OAuthModelAlias{
@@ -30,6 +36,8 @@ func TestApplyOAuthModelAlias_Rename(t *testing.T) {
 	}
 }
 
+// TestApplyOAuthModelAlias_ForkAddsAlias 测试 OAuth 模型别名的分叉模式。
+// 当 Fork 为 true 时，应保留原始模型并添加一个别名副本。
 func TestApplyOAuthModelAlias_ForkAddsAlias(t *testing.T) {
 	cfg := &config.Config{
 		OAuthModelAlias: map[string][]config.OAuthModelAlias{
@@ -57,6 +65,7 @@ func TestApplyOAuthModelAlias_ForkAddsAlias(t *testing.T) {
 	}
 }
 
+// TestApplyOAuthModelAlias_ForkAddsMultipleAliases 测试分叉模式支持为同一模型添加多个别名。
 func TestApplyOAuthModelAlias_ForkAddsMultipleAliases(t *testing.T) {
 	cfg := &config.Config{
 		OAuthModelAlias: map[string][]config.OAuthModelAlias{

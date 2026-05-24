@@ -1,5 +1,11 @@
-// Package amp implements the Amp CLI routing module, providing OAuth-based
-// integration with Amp CLI for ChatGPT and Anthropic subscriptions.
+// amp - amp.go
+// Amp CLI 路由模块的核心实现。
+// 该模块实现了 RouteModuleV2 接口，为 Amp CLI 提供：
+//   - 反向代理到 Amp 控制平面（用于 OAuth/管理）
+//   - 提供者特定的路由别名（/api/provider/{provider}/...）
+//   - 错误配置上游的自动 gzip 解压
+//   - 模型映射：将不可用模型路由到替代模型
+//   - 支持热重载的配置更新
 package amp
 
 import (

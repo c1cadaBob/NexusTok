@@ -1,3 +1,8 @@
+// 包 auth - selector.go
+// 该文件实现了多种认证选择策略，用于从可用凭据中选择最佳认证。
+// 包括轮询选择器（RoundRobinSelector）、填满优先选择器（FillFirstSelector）
+// 和会话亲和性选择器（SessionAffinitySelector）。
+// 还包含模型冷却错误、优先级分组、WebSocket 偏好和会话 ID 提取等功能。
 package auth
 
 import (
@@ -23,33 +28,41 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
-// RoundRobinSelector provides a simple provider scoped round-robin selection strategy.
-type RoundRobinSelector struct {
-	mu      sync.Mutex
-	cursors map[string]int
-	maxKeys int
+// Selector 定义了认证选择器的接口。
+type Selector interface {
+	// Pick 从可用认证列表中选择一个认证。
+	Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error)
 }
 
-// FillFirstSelector selects the first available credential (deterministic ordering).
-// This "burns" one account before moving to the next, which can help stagger
-// rolling-window subscription caps (e.g. chat message limits).
+// RoundRobinSelector 提供简单的提供商范围轮询选择策略。
+type RoundRobinSelector struct {
+	mu      sync.Mutex       // 保护游标映射的互斥锁
+	cursors map[string]int   // 提供商+模型到当前游标位置的映射
+	maxKeys int              // 游标映射的最大键数量
+}
+
+// FillFirstSelector 选择第一个可用凭据（确定性排序）。
+// 这种策略会"烧尽"一个账户再转到下一个，有助于错开滚动窗口订阅上限（如聊天消息限制）。
 type FillFirstSelector struct{}
 
+// blockReason 表示认证被阻止的原因类型。
 type blockReason int
 
 const (
-	blockReasonNone blockReason = iota
-	blockReasonCooldown
-	blockReasonDisabled
-	blockReasonOther
+	blockReasonNone     blockReason = iota // 未被阻止
+	blockReasonCooldown                    // 冷却中（配额超限）
+	blockReasonDisabled                    // 已禁用
+	blockReasonOther                       // 其他原因
 )
 
+// modelCooldownError 表示模型所有凭据都在冷却中的错误。
 type modelCooldownError struct {
-	model    string
-	resetIn  time.Duration
-	provider string
+	model    string        // 模型名称
+	resetIn  time.Duration // 重置倒计时
+	provider string        // 提供商名称
 }
 
+// newModelCooldownError 构造模型冷却错误实例。
 func newModelCooldownError(model, provider string, resetIn time.Duration) *modelCooldownError {
 	if resetIn < 0 {
 		resetIn = 0
@@ -61,6 +74,7 @@ func newModelCooldownError(model, provider string, resetIn time.Duration) *model
 	}
 }
 
+// Error 返回模型冷却错误的 JSON 格式消息。
 func (e *modelCooldownError) Error() string {
 	modelName := e.model
 	if modelName == "" {
@@ -98,10 +112,12 @@ func (e *modelCooldownError) Error() string {
 	return string(data)
 }
 
+// StatusCode 返回 HTTP 429 Too Many Requests 状态码。
 func (e *modelCooldownError) StatusCode() int {
 	return http.StatusTooManyRequests
 }
 
+// Headers 返回包含 Retry-After 的 HTTP 响应头。
 func (e *modelCooldownError) Headers() http.Header {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
@@ -113,6 +129,7 @@ func (e *modelCooldownError) Headers() http.Header {
 	return headers
 }
 
+// authPriority 从认证属性中提取优先级值。
 func authPriority(auth *Auth) int {
 	if auth == nil || auth.Attributes == nil {
 		return 0
@@ -128,6 +145,7 @@ func authPriority(auth *Auth) int {
 	return parsed
 }
 
+// canonicalModelKey 返回模型的规范键名（去除思考后缀）。
 func canonicalModelKey(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -141,6 +159,7 @@ func canonicalModelKey(model string) string {
 	return modelName
 }
 
+// authWebsocketsEnabled 检查认证是否启用了 WebSocket 支持。
 func authWebsocketsEnabled(auth *Auth) bool {
 	if auth == nil {
 		return false
@@ -173,6 +192,8 @@ func authWebsocketsEnabled(auth *Auth) bool {
 	return false
 }
 
+// preferCodexWebsocketAuths 当下游使用 WebSocket 且提供商为 Codex 时，
+// 优先选择启用了 WebSocket 的认证。
 func preferCodexWebsocketAuths(ctx context.Context, provider string, available []*Auth) []*Auth {
 	if len(available) == 0 {
 		return available
@@ -197,6 +218,7 @@ func preferCodexWebsocketAuths(ctx context.Context, provider string, available [
 	return available
 }
 
+// collectAvailableByPriority 按优先级分组收集可用的认证，并统计冷却中的认证数量。
 func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (available map[int][]*Auth, cooldownCount int, earliest time.Time) {
 	available = make(map[int][]*Auth)
 	for i := 0; i < len(auths); i++ {
@@ -217,6 +239,8 @@ func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (ava
 	return available, cooldownCount, earliest
 }
 
+// getAvailableAuths 获取指定模型的可用认证列表。
+// 返回最高优先级的认证；如果全部在冷却中，返回模型冷却错误。
 func getAvailableAuths(auths []*Auth, provider, model string, now time.Time) ([]*Auth, error) {
 	if len(auths) == 0 {
 		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
@@ -254,10 +278,9 @@ func getAvailableAuths(auths []*Auth, provider, model string, now time.Time) ([]
 	return available, nil
 }
 
-// Pick selects the next available auth for the provider in a round-robin manner.
-// For gemini-cli virtual auths (identified by the gemini_virtual_parent attribute),
-// a two-level round-robin is used: first cycling across credential groups (parent
-// accounts), then cycling within each group's project auths.
+// Pick 以轮询方式为提供商选择下一个可用认证。
+// 对于 gemini-cli 虚拟认证（通过 gemini_virtual_parent 属性标识），
+// 使用两级轮询：首先在凭据组（父账户）间循环，然后在每组的项目认证间循环。
 func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = opts
 	now := time.Now()
@@ -319,18 +342,18 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 	return available[index%len(available)], nil
 }
 
-// ensureCursorKey ensures the cursor map has capacity for the given key.
-// Must be called with s.mu held.
+// ensureCursorKey 确保游标映射有容量容纳给定的键。
+// 必须在持有 s.mu 的情况下调用。
 func (s *RoundRobinSelector) ensureCursorKey(key string, limit int) {
 	if _, ok := s.cursors[key]; !ok && len(s.cursors) >= limit {
 		s.cursors = make(map[string]int)
 	}
 }
 
-// groupByVirtualParent groups auths by their gemini_virtual_parent attribute.
-// Returns a map of parentID -> auths and a sorted slice of parent IDs for stable iteration.
-// Only auths with a non-empty gemini_virtual_parent are grouped; if any auth lacks
-// this attribute, nil/nil is returned so the caller falls back to flat round-robin.
+// groupByVirtualParent 按 gemini_virtual_parent 属性对认证进行分组。
+// 返回 parentID -> auths 映射和用于稳定迭代的排序后的 parent ID 切片。
+// 只有具有非空 gemini_virtual_parent 的认证才会被分组；
+// 如果任何认证缺少此属性，返回 nil/nil 以使调用方回退到扁平轮询。
 func groupByVirtualParent(auths []*Auth) (map[string][]*Auth, []string) {
 	if len(auths) == 0 {
 		return nil, nil
@@ -356,7 +379,7 @@ func groupByVirtualParent(auths []*Auth) (map[string][]*Auth, []string) {
 	return groups, parentOrder
 }
 
-// Pick selects the first available auth for the provider in a deterministic manner.
+// Pick 以确定性方式为提供商选择第一个可用认证。
 func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = opts
 	now := time.Now()
@@ -368,6 +391,8 @@ func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, op
 	return available[0], nil
 }
 
+// isAuthBlockedForModel 检查认证对指定模型是否被阻止。
+// 返回阻止状态、原因和最早可重试时间。
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
@@ -427,25 +452,24 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	return false, blockReasonNone, time.Time{}
 }
 
-// sessionPattern matches Claude Code user_id format:
-// user_{hash}_account__session_{uuid}
+// sessionPattern 匹配 Claude Code user_id 格式：user_{hash}_account__session_{uuid}
 var sessionPattern = regexp.MustCompile(`_session_([a-f0-9-]+)$`)
 
-// SessionAffinitySelector wraps another selector with session-sticky behavior.
-// It extracts session ID from multiple sources and maintains session-to-auth
-// mappings with automatic failover when the bound auth becomes unavailable.
+// SessionAffinitySelector 用会话粘性行为包装另一个选择器。
+// 它从多个来源提取会话 ID，并维护会话到认证的映射，
+// 当绑定的认证变为不可用时自动故障转移。
 type SessionAffinitySelector struct {
-	fallback Selector
-	cache    *SessionCache
+	fallback Selector      // 回退选择器
+	cache    *SessionCache // 会话缓存
 }
 
-// SessionAffinityConfig configures the session affinity selector.
+// SessionAffinityConfig 配置会话亲和性选择器。
 type SessionAffinityConfig struct {
-	Fallback Selector
-	TTL      time.Duration
+	Fallback Selector      // 回退选择器
+	TTL      time.Duration // 会话绑定的生存时间
 }
 
-// NewSessionAffinitySelector creates a new session-aware selector.
+// NewSessionAffinitySelector 创建新的会话感知选择器。
 func NewSessionAffinitySelector(fallback Selector) *SessionAffinitySelector {
 	return NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{
 		Fallback: fallback,
@@ -453,7 +477,7 @@ func NewSessionAffinitySelector(fallback Selector) *SessionAffinitySelector {
 	})
 }
 
-// NewSessionAffinitySelectorWithConfig creates a selector with custom configuration.
+// NewSessionAffinitySelectorWithConfig 使用自定义配置创建选择器。
 func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAffinitySelector {
 	if cfg.Fallback == nil {
 		cfg.Fallback = &RoundRobinSelector{}
@@ -467,20 +491,18 @@ func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAff
 	}
 }
 
-// Pick selects an auth with session affinity when possible.
-// Priority for session ID extraction:
-//  1. metadata.user_id (Claude Code format with _session_{uuid}) - highest priority
-//  2. X-Session-ID header
-//  3. Session_id header (Codex)
-//  4. X-Amp-Thread-Id header (Amp CLI thread ID)
-//  5. X-Client-Request-Id header (PI)
-//  6. metadata.user_id (non-Claude Code format)
-//  7. conversation_id field in request body
-//  8. Stable hash from first few messages content (fallback)
+// Pick 在可能的情况下以会话亲和性选择认证。
+// 会话 ID 提取优先级：
+//  1. metadata.user_id（Claude Code 格式 _session_{uuid}）- 最高优先级
+//  2. X-Session-ID 请求头
+//  3. Session_id 请求头（Codex）
+//  4. X-Amp-Thread-Id 请求头（Amp CLI 线程 ID）
+//  5. X-Client-Request-Id 请求头（PI）
+//  6. metadata.user_id（非 Claude Code 格式）
+//  7. 请求体中的 conversation_id 字段
+//  8. 前几条消息内容的稳定哈希（回退方案）
 //
-// Note: The cache key includes provider, session ID, and model to handle cases where
-// a session uses multiple models (e.g., gemini-2.5-pro and gemini-3-flash-preview)
-// that may be supported by different auth credentials, and to avoid cross-provider conflicts.
+// 注意：缓存键包含提供商、会话 ID 和模型，以处理会话使用多个模型的情况。
 func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	entry := selectorLogEntry(ctx)
 	primaryID, fallbackID := extractSessionIDs(opts.Headers, opts.OriginalRequest, opts.Metadata)
@@ -536,6 +558,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	return auth, nil
 }
 
+// selectorLogEntry 创建用于选择器日志的 logrus Entry。
 func selectorLogEntry(ctx context.Context) *log.Entry {
 	if ctx == nil {
 		return log.NewEntry(log.StandardLogger())
@@ -546,7 +569,7 @@ func selectorLogEntry(ctx context.Context) *log.Entry {
 	return log.NewEntry(log.StandardLogger())
 }
 
-// truncateSessionID shortens session ID for logging (first 8 chars + "...")
+// truncateSessionID 截断会话 ID 用于日志记录（前 8 字符 + "..."）。
 func truncateSessionID(id string) string {
 	if len(id) <= 20 {
 		return id
@@ -554,15 +577,15 @@ func truncateSessionID(id string) string {
 	return id[:8] + "..."
 }
 
-// Stop releases resources held by the selector.
+// Stop 释放选择器持有的资源。
 func (s *SessionAffinitySelector) Stop() {
 	if s.cache != nil {
 		s.cache.Stop()
 	}
 }
 
-// InvalidateAuth removes all session bindings for a specific auth.
-// Called when an auth becomes rate-limited or unavailable.
+// InvalidateAuth 移除特定认证的所有会话绑定。
+// 当认证变为速率限制或不可用时调用。
 func (s *SessionAffinitySelector) InvalidateAuth(authID string) {
 	if s.cache != nil {
 		s.cache.InvalidateAuth(authID)
@@ -584,9 +607,9 @@ func ExtractSessionID(headers http.Header, payload []byte, metadata map[string]a
 	return primary
 }
 
-// extractSessionIDs returns (primaryID, fallbackID) for session affinity.
-// primaryID: full hash including assistant response (stable after first turn)
-// fallbackID: short hash without assistant (used to inherit binding from first turn)
+// extractSessionIDs 返回 (primaryID, fallbackID) 用于会话亲和性。
+// primaryID: 包含助手响应的完整哈希（首轮后稳定）
+// fallbackID: 不含助手响应的短哈希（用于继承首轮绑定）
 func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]any) (string, string) {
 	// 1. metadata.user_id with Claude Code session format (highest priority)
 	if len(payload) > 0 {
@@ -654,6 +677,8 @@ func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]
 	return extractMessageHashIDs(payload)
 }
 
+// extractMessageHashIDs 从消息内容中提取哈希会话 ID。
+// 当无其他会话标识可用时作为回退方案。
 func extractMessageHashIDs(payload []byte) (primaryID, fallbackID string) {
 	var systemPrompt, firstUserMsg, firstAssistantMsg string
 
@@ -821,6 +846,7 @@ func extractMessageHashIDs(payload []byte) (primaryID, fallbackID string) {
 	return fullHash, shortHash
 }
 
+// computeSessionHash 计算会话内容的 FNV-64a 哈希。
 func computeSessionHash(systemPrompt, userMsg, assistantMsg string) string {
 	h := fnv.New64a()
 	if systemPrompt != "" {
@@ -835,6 +861,7 @@ func computeSessionHash(systemPrompt, userMsg, assistantMsg string) string {
 	return fmt.Sprintf("msg:%016x", h.Sum64())
 }
 
+// truncateString 截断字符串到最大长度。
 func truncateString(s string, maxLen int) string {
 	if len(s) > maxLen {
 		return s[:maxLen]
@@ -842,9 +869,8 @@ func truncateString(s string, maxLen int) string {
 	return s
 }
 
-// extractMessageContent extracts text content from a message content field.
-// Handles both string content and array content (multimodal messages).
-// For array content, extracts text from all text-type elements.
+// extractMessageContent 从消息内容字段中提取文本内容。
+// 支持字符串内容和数组内容（多模态消息）两种格式。
 func extractMessageContent(content gjson.Result) string {
 	// String content: "Hello world"
 	if content.Type == gjson.String {
@@ -873,6 +899,7 @@ func extractMessageContent(content gjson.Result) string {
 	return ""
 }
 
+// extractResponsesAPIContent 从 OpenAI Responses API 格式的内容数组中提取文本。
 func extractResponsesAPIContent(content gjson.Result) string {
 	if !content.IsArray() {
 		return ""
@@ -893,8 +920,8 @@ func extractResponsesAPIContent(content gjson.Result) string {
 	return ""
 }
 
-// extractSessionID is kept for backward compatibility.
-// Deprecated: Use ExtractSessionID instead.
+// extractSessionID 保留用于向后兼容。
+// 已弃用：请使用 ExtractSessionID 代替。
 func extractSessionID(payload []byte) string {
 	return ExtractSessionID(nil, payload, nil)
 }

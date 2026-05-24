@@ -1,3 +1,7 @@
+// 包 registry - model_updater.go
+// 该文件提供了模型目录的远程更新功能。
+// 从多个 URL 获取模型定义，检测变更并通知注册的回调函数。
+// 支持启动时和周期性刷新。
 package registry
 
 import (
@@ -15,34 +19,46 @@ import (
 )
 
 const (
-	modelsFetchTimeout    = 30 * time.Second
+	// modelsFetchTimeout 是获取远程模型定义的 HTTP 请求超时时间。
+	modelsFetchTimeout = 30 * time.Second
+	// modelsRefreshInterval 是周期性模型刷新的间隔时间。
 	modelsRefreshInterval = 3 * time.Hour
 )
 
+// modelsURLs 是获取模型定义的远程 URL 列表（按优先级排序）。
 var modelsURLs = []string{
 	"https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
 	"https://models.router-for.me/models.json",
 }
 
 //go:embed models/models.json
+// embeddedModelsJSON 是嵌入的默认模型定义 JSON 数据，作为远程获取失败时的回退。
 var embeddedModelsJSON []byte
 
+// modelStore 是模型目录的线程安全存储。
 type modelStore struct {
-	mu   sync.RWMutex
+	// mu 保护 data 的并发读写
+	mu sync.RWMutex
+	// data 存储当前的模型目录数据
 	data *staticModelsJSON
 }
 
+// modelsCatalogStore 是全局模型目录存储实例。
 var modelsCatalogStore = &modelStore{}
 
+// updaterOnce 确保模型更新器只启动一次。
 var updaterOnce sync.Once
 
-// ModelRefreshCallback is invoked when startup or periodic model refresh detects changes.
-// changedProviders contains the provider names whose model definitions changed.
+// ModelRefreshCallback 是模型刷新检测到变更时调用的回调函数类型。
+// changedProviders 包含模型定义发生变化的提供商名称。
 type ModelRefreshCallback func(changedProviders []string)
 
 var (
-	refreshCallbackMu     sync.Mutex
-	refreshCallback       ModelRefreshCallback
+	// refreshCallbackMu 保护回调函数的并发访问
+	refreshCallbackMu sync.Mutex
+	// refreshCallback 是注册的模型刷新回调函数
+	refreshCallback ModelRefreshCallback
+	// pendingRefreshChanges 存储在回调注册前检测到的待处理变更
 	pendingRefreshChanges []string
 )
 
@@ -80,11 +96,13 @@ func StartModelsUpdater(ctx context.Context) {
 	})
 }
 
+// runModelsUpdater 是模型更新器的主函数，先执行启动刷新再进入周期性刷新。
 func runModelsUpdater(ctx context.Context) {
 	tryStartupRefresh(ctx)
 	periodicRefresh(ctx)
 }
 
+// periodicRefresh 按固定间隔执行周期性模型刷新。
 func periodicRefresh(ctx context.Context) {
 	ticker := time.NewTicker(modelsRefreshInterval)
 	defer ticker.Stop()
@@ -112,6 +130,8 @@ func tryStartupRefresh(ctx context.Context) {
 	tryRefreshModels(ctx, "startup model refresh")
 }
 
+// tryRefreshModels 尝试从远程获取模型定义并与当前目录比较。
+// 检测到变更时通知注册的回调函数。
 func tryRefreshModels(ctx context.Context, label string) {
 	oldData := getModels()
 
@@ -248,6 +268,8 @@ func modelSectionChanged(a, b []*ModelInfo) bool {
 	return string(aj) != string(bj)
 }
 
+// notifyModelRefresh 通知注册的回调函数模型定义已变更。
+// 如果回调未注册，变更会被暂存等待后续通知。
 func notifyModelRefresh(changedProviders []string) {
 	if len(changedProviders) == 0 {
 		return
@@ -264,6 +286,7 @@ func notifyModelRefresh(changedProviders []string) {
 	cb(changedProviders)
 }
 
+// mergeProviderNames 合并两个提供商名称列表，去重并保持顺序。
 func mergeProviderNames(existing, incoming []string) []string {
 	if len(incoming) == 0 {
 		return existing
@@ -295,6 +318,7 @@ func mergeProviderNames(existing, incoming []string) []string {
 	return merged
 }
 
+// loadModelsFromBytes 从字节数据加载模型目录并更新全局存储。
 func loadModelsFromBytes(data []byte, source string) error {
 	var parsed staticModelsJSON
 	if err := json.Unmarshal(data, &parsed); err != nil {
@@ -310,12 +334,14 @@ func loadModelsFromBytes(data []byte, source string) error {
 	return nil
 }
 
+// getModels 获取当前模型目录数据的引用（线程安全）。
 func getModels() *staticModelsJSON {
 	modelsCatalogStore.mu.RLock()
 	defer modelsCatalogStore.mu.RUnlock()
 	return modelsCatalogStore.data
 }
 
+// validateModelsCatalog 验证模型目录数据的完整性和有效性。
 func validateModelsCatalog(data *staticModelsJSON) error {
 	if data == nil {
 		return fmt.Errorf("catalog is nil")
@@ -347,6 +373,8 @@ func validateModelsCatalog(data *staticModelsJSON) error {
 	return nil
 }
 
+// validateModelSection 验证单个提供商模型段的有效性。
+// 检查空 ID 和重复 ID。
 func validateModelSection(section string, models []*ModelInfo) error {
 	if len(models) == 0 {
 		log.Warnf("models catalog: %s section is empty, continuing without those model definitions", section)

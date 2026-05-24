@@ -1,3 +1,13 @@
+// auth - home_websocket_reuse_test.go
+// Home WebSocket 连接复用测试
+// 验证 Home 集群模式下的 WebSocket 连接复用机制：
+// - 固定认证（pinned auth）的 WebSocket 连接复用
+// - 会话级别的认证隔离
+// - 已尝试认证的排除
+// - 首次 Home 尝试后的认证清理
+// - 非 WebSocket 认证的复用限制
+// - Home 禁用时的清理行为
+// - 会话关闭时的清理行为
 package auth
 
 import (
@@ -10,6 +20,9 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestPickNextViaHomeReusesPinnedWebsocketAuthWithoutHomeDispatch 验证：
+// 当使用固定认证（pinned auth）且该认证支持 WebSocket 时，
+// pickNextViaHome 能够复用该认证而无需通过 Home 集群调度。
 func TestPickNextViaHomeReusesPinnedWebsocketAuthWithoutHomeDispatch(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -56,6 +69,9 @@ func TestPickNextViaHomeReusesPinnedWebsocketAuthWithoutHomeDispatch(t *testing.
 	}
 }
 
+// TestPickNextViaHomeKeepsSameAuthIDPayloadSessionScoped 验证：
+// 同一认证 ID 在不同会话中可以有不同的载荷（upstream model），
+// 会话级别的认证隔离确保各会话独立。
 func TestPickNextViaHomeKeepsSameAuthIDPayloadSessionScoped(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -111,6 +127,8 @@ func TestPickNextViaHomeKeepsSameAuthIDPayloadSessionScoped(t *testing.T) {
 	}
 }
 
+// TestPickNextViaHomeDoesNotReuseTriedPinnedWebsocketAuth 验证：
+// 已尝试过的固定认证不会被复用，返回 home_unavailable 错误。
 func TestPickNextViaHomeDoesNotReuseTriedPinnedWebsocketAuth(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -148,6 +166,8 @@ func TestPickNextViaHomeDoesNotReuseTriedPinnedWebsocketAuth(t *testing.T) {
 	}
 }
 
+// TestPickNextViaHomeDoesNotReusePinnedWebsocketAuthAfterFirstHomeAttempt 验证：
+// 首次 Home 尝试后，固定认证不会被复用。
 func TestPickNextViaHomeDoesNotReusePinnedWebsocketAuthAfterFirstHomeAttempt(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -184,6 +204,8 @@ func TestPickNextViaHomeDoesNotReusePinnedWebsocketAuthAfterFirstHomeAttempt(t *
 	}
 }
 
+// TestPickNextViaHomeDoesNotReusePinnedNonWebsocketAuth 验证：
+// 不支持 WebSocket 的固定认证不会被复用。
 func TestPickNextViaHomeDoesNotReusePinnedNonWebsocketAuth(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -221,6 +243,8 @@ func TestPickNextViaHomeDoesNotReusePinnedNonWebsocketAuth(t *testing.T) {
 	}
 }
 
+// TestHomeRuntimeAuthsClearWhenHomeDisabled 验证：
+// 当 Home 功能被禁用时，所有已记住的 Home 运行时认证被清除。
 func TestHomeRuntimeAuthsClearWhenHomeDisabled(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})
@@ -242,6 +266,9 @@ func TestHomeRuntimeAuthsClearWhenHomeDisabled(t *testing.T) {
 	}
 }
 
+// TestCloseExecutionSessionClearsHomeRuntimeAuthForSession 验证：
+// 关闭执行会话时，该会话的 Home 运行时认证被清除，
+// 不影响其他会话的认证。
 func TestCloseExecutionSessionClearsHomeRuntimeAuthForSession(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	auth := &Auth{

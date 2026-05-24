@@ -1,5 +1,7 @@
 //go:build windows
 
+// management - auth_files_download_windows_test.go
+// 测试 Windows 平台下认证文件下载的路径遍历防护，验证反斜杠路径分隔符被正确拒绝
 package management
 
 import (
@@ -14,6 +16,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestDownloadAuthFile_PreventsWindowsSlashTraversal 测试 Windows 路径遍历攻击被阻止
 func TestDownloadAuthFile_PreventsWindowsSlashTraversal(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

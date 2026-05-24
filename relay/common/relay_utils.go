@@ -1,3 +1,9 @@
+// Package common - relay_utils.go
+// 本文件提供了中继层的通用工具函数，包括：
+//   - HasPrompt / HasImage: 请求接口，用于抽象不同类型的请求。
+//   - GetFullRequestURL: 构建完整的上游请求 URL，支持 Cloudflare AI Gateway 特殊处理。
+//   - GetAPIVersion: 从请求中获取 API 版本号（主要用于 Azure 渠道）。
+//   - 任务请求验证: ValidateBasicTaskRequest、ValidateMultipartDirect 等，用于验证异步任务提交请求。
 package common
 
 import (
@@ -14,14 +20,29 @@ import (
 	"github.com/samber/lo"
 )
 
+// HasPrompt 定义了获取提示词的接口。
+// 用于抽象不同类型的请求对象（如 TaskSubmitReq）。
 type HasPrompt interface {
 	GetPrompt() string
 }
 
+// HasImage 定义了判断是否包含图片的接口。
 type HasImage interface {
 	HasImage() bool
 }
 
+// GetFullRequestURL 构建完整的上游请求 URL。
+// 将基础 URL 和请求路径拼接，并处理 Cloudflare AI Gateway 的特殊路径格式：
+//   - OpenAI: 移除 /v1 前缀
+//   - Azure: 移除 /openai/deployments 前缀
+//
+// 参数：
+//   - baseURL: 渠道的基础 URL
+//   - requestURL: 请求路径
+//   - channelType: 渠道类型
+//
+// 返回值：
+//   - string: 完整的请求 URL
 func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
 
@@ -36,6 +57,15 @@ func GetFullRequestURL(baseURL string, requestURL string, channelType int) strin
 	return fullRequestURL
 }
 
+// GetAPIVersion 从请求中获取 API 版本号。
+// 优先从 URL 查询参数 "api-version" 中获取，其次从上下文中获取。
+// 主要用于 Azure 渠道的 API 版本控制。
+//
+// 参数：
+//   - c: Gin 上下文
+//
+// 返回值：
+//   - string: API 版本号
 func GetAPIVersion(c *gin.Context) string {
 	query := c.Request.URL.Query()
 	apiVersion := query.Get("api-version")
@@ -45,6 +75,16 @@ func GetAPIVersion(c *gin.Context) string {
 	return apiVersion
 }
 
+// createTaskError 创建一个 TaskError 对象。
+//
+// 参数：
+//   - err: 原始错误
+//   - code: 错误代码
+//   - statusCode: HTTP 状态码
+//   - localError: 是否为本地错误（true 表示不需要转发到上游）
+//
+// 返回值：
+//   - *dto.TaskError: 任务错误对象
 func createTaskError(err error, code string, statusCode int, localError bool) *dto.TaskError {
 	return &dto.TaskError{
 		Code:       code,
@@ -55,10 +95,26 @@ func createTaskError(err error, code string, statusCode int, localError bool) *d
 	}
 }
 
+// storeTaskRequest 将任务请求存储到 Gin 上下文中。
+// 设置任务操作类型并将请求对象存入上下文，供后续处理函数使用。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - action: 任务操作类型
+//   - requestObj: 任务提交请求对象
 func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
 	info.Action = action
 	c.Set("task_request", requestObj)
 }
+// GetTaskRequest 从 Gin 上下文中获取之前存储的任务请求对象。
+//
+// 参数：
+//   - c: Gin 上下文
+//
+// 返回值：
+//   - TaskSubmitReq: 任务提交请求对象
+//   - error: 获取失败时的错误（上下文中不存在或类型断言失败）
 func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	v, exists := c.Get("task_request")
 	if !exists {
@@ -71,6 +127,13 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	return req, nil
 }
 
+// validatePrompt 验证提示词是否为空。
+//
+// 参数：
+//   - prompt: 待验证的提示词
+//
+// 返回值：
+//   - *dto.TaskError: 验证失败时返回错误，通过时返回 nil
 func validatePrompt(prompt string) *dto.TaskError {
 	if strings.TrimSpace(prompt) == "" {
 		return createTaskError(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest, true)
@@ -78,6 +141,18 @@ func validatePrompt(prompt string) *dto.TaskError {
 	return nil
 }
 
+// validateMultipartTaskRequest 验证 multipart/form-data 格式的任务提交请求。
+// 从表单数据中提取 prompt、model、mode、image、size、seconds 等字段，
+// 以及未识别的字段存入 metadata。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - action: 任务操作类型
+//
+// 返回值：
+//   - TaskSubmitReq: 解析后的任务提交请求
+//   - error: 解析过程中的错误
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
@@ -118,6 +193,17 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 	return req, nil
 }
 
+// ValidateMultipartDirect 验证直接的 JSON 格式任务提交请求。
+// 支持视频生成任务的特殊验证逻辑：
+//   - sora-2 模型：验证 size 和 seconds 参数
+//   - sora-2-pro 模型：支持更多分辨率选项
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - *dto.TaskError: 验证失败时返回错误，通过时返回 nil
 func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	var prompt string
 	var model string
@@ -181,6 +267,14 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	return nil
 }
 
+// isKnownTaskField 判断表单字段是否为已知的任务字段。
+// 用于在 multipart 请求中区分核心字段和需要存入 metadata 的额外字段。
+//
+// 参数：
+//   - field: 字段名称
+//
+// 返回值：
+//   - bool: 是否为已知字段
 func isKnownTaskField(field string) bool {
 	knownFields := map[string]bool{
 		"prompt":          true,
@@ -195,6 +289,20 @@ func isKnownTaskField(field string) bool {
 	return knownFields[field]
 }
 
+// ValidateBasicTaskRequest 验证基本的任务提交请求。
+// 支持两种内容类型：
+//   - multipart/form-data: 调用 validateMultipartTaskRequest 解析
+//   - application/json: 使用 UnmarshalBodyReusable 统一解析
+//
+// 验证完成后将请求对象存储到上下文中。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - action: 任务操作类型
+//
+// 返回值：
+//   - *dto.TaskError: 验证失败时返回错误，通过时返回 nil
 func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")

@@ -1,3 +1,5 @@
+// Package tui - client.go
+// 封装对管理 API 的 HTTP 调用，提供与服务器通信的客户端接口。
 package tui
 
 import (
@@ -11,6 +13,9 @@ import (
 	"time"
 )
 
+// Client 封装对管理 API 的 HTTP 调用。
+// 提供获取配置、认证文件、API 密钥和使用统计等功能。
+//
 // Client wraps HTTP calls to the management API.
 type Client struct {
 	baseURL   string

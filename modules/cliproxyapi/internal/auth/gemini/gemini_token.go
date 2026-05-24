@@ -1,3 +1,8 @@
+// Package gemini - gemini_token.go
+// 提供 Google Gemini AI 服务的认证与令牌管理功能。
+// 包括 OAuth2 令牌的存储结构、序列化、文件持久化，
+// 以及凭据文件命名规则，用于维护与 Gemini API 的已认证会话。
+//
 // Package gemini provides authentication and token management functionality
 // for Google's Gemini AI services. It handles OAuth2 token storage, serialization,
 // and retrieval for maintaining authenticated sessions with the Gemini API.

@@ -1,3 +1,7 @@
+// logging - gin_logger_test.go
+// 该文件包含 Gin 日志恢复中间件和 AI API 路径识别函数的单元测试，
+// 验证 GinLogrusRecovery 对 ErrAbortHandler 的重新抛出行为、
+// 常规 panic 的处理以及 isAIAPIPath 对图片和视频生成路径的识别。
 package logging
 
 import (
@@ -9,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TestGinLogrusRecoveryRepanicsErrAbortHandler 测试 GinLogrusRecovery 中间件对
+// http.ErrAbortHandler 的处理逻辑，验证该错误会被重新抛出而非被捕获。
 func TestGinLogrusRecoveryRepanicsErrAbortHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -41,6 +47,8 @@ func TestGinLogrusRecoveryRepanicsErrAbortHandler(t *testing.T) {
 	engine.ServeHTTP(recorder, req)
 }
 
+// TestGinLogrusRecoveryHandlesRegularPanic 测试 GinLogrusRecovery 中间件对普通 panic 的处理，
+// 验证非 ErrAbortHandler 类型的 panic 会被捕获并返回 500 状态码。
 func TestGinLogrusRecoveryHandlesRegularPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -59,6 +67,8 @@ func TestGinLogrusRecoveryHandlesRegularPanic(t *testing.T) {
 	}
 }
 
+// TestIsAIAPIPathIncludesImages 测试 isAIAPIPath 函数对图片生成、图片编辑、
+// 视频生成等 AI API 路径的识别能力。
 func TestIsAIAPIPathIncludesImages(t *testing.T) {
 	if !isAIAPIPath("/v1/images/generations") {
 		t.Fatalf("expected /v1/images/generations to be treated as AI API path")

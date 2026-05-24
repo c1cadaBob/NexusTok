@@ -1,3 +1,11 @@
+// chat_completions - antigravity_openai_response_test.go
+// Antigravity 的 OpenAI Chat Completions 格式响应转换器测试文件。
+// 包含以下测试用例：
+// 1. 工具调用的 finish_reason 不被后续 STOP 覆盖
+// 2. 普通文本的 finish_reason 为 stop
+// 3. MAX_TOKENS 的 finish_reason 为 max_tokens
+// 4. 工具调用优先级高于 MAX_TOKENS
+// 5. 中间数据块不设置 finish_reason
 package chat_completions
 
 import (
@@ -7,6 +15,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestFinishReasonToolCallsNotOverwritten 测试工具调用的 finish_reason 不被后续的 STOP 覆盖。
+// 验证当第一个 chunk 包含 functionCall 时，即使第二个 chunk 的 finishReason 为 STOP，
+// 最终的 finish_reason 仍为 "tool_calls"。
 func TestFinishReasonToolCallsNotOverwritten(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -45,6 +56,7 @@ func TestFinishReasonToolCallsNotOverwritten(t *testing.T) {
 	}
 }
 
+// TestFinishReasonStopForNormalText 测试普通文本响应的 finish_reason 为 "stop"。
 func TestFinishReasonStopForNormalText(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -64,6 +76,7 @@ func TestFinishReasonStopForNormalText(t *testing.T) {
 	}
 }
 
+// TestFinishReasonMaxTokens 测试 MAX_TOKENS 的 finish_reason 为 "max_tokens"。
 func TestFinishReasonMaxTokens(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -83,6 +96,8 @@ func TestFinishReasonMaxTokens(t *testing.T) {
 	}
 }
 
+// TestToolCallTakesPriorityOverMaxTokens 测试工具调用的优先级高于 MAX_TOKENS。
+// 验证当存在工具调用时，即使上游返回 MAX_TOKENS，finish_reason 仍为 "tool_calls"。
 func TestToolCallTakesPriorityOverMaxTokens(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -102,6 +117,8 @@ func TestToolCallTakesPriorityOverMaxTokens(t *testing.T) {
 	}
 }
 
+// TestNoFinishReasonOnIntermediateChunks 测试中间数据块不设置 finish_reason。
+// 验证只有在最终 chunk（同时有 finishReason 和 usageMetadata）时才设置 finish_reason。
 func TestNoFinishReasonOnIntermediateChunks(t *testing.T) {
 	ctx := context.Background()
 	var param any

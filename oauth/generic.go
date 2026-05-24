@@ -1,3 +1,17 @@
+// Package oauth - generic.go
+// 该文件实现了通用 OAuth 提供商（GenericOAuthProvider）
+//
+// 功能说明：
+// - 支持任意符合 OAuth 2.0 标准的提供商
+// - 可通过数据库配置自定义端点、字段映射、访问策略
+// - 支持多种认证方式（参数传递、Basic Auth）
+// - 支持访问策略（Access Policy）控制用户访问权限
+//
+// 访问策略系统：
+// - 支持 and/or 逻辑组合
+// - 支持 12 种操作符（eq、ne、gt、gte、lt、lte、in、not_in、contains、not_contains、exists、not_exists）
+// - 支持嵌套策略组
+// - 支持自定义拒绝消息模板
 package oauth
 
 import (
@@ -24,37 +38,46 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// AuthStyle defines how to send client credentials
+// AuthStyle 定义客户端凭证的传递方式
 const (
-	AuthStyleAutoDetect = 0 // Auto-detect based on server response
-	AuthStyleInParams   = 1 // Send client_id and client_secret as POST parameters
-	AuthStyleInHeader   = 2 // Send as Basic Auth header
+	AuthStyleAutoDetect = 0 // 自动检测：根据服务器响应自动选择认证方式
+	AuthStyleInParams   = 1 // 参数传递：将 client_id 和 client_secret 作为 POST 参数发送
+	AuthStyleInHeader   = 2 // Basic Auth：将 client_id:client_secret 编码为 Base64 放入 Authorization 头
 )
 
-// GenericOAuthProvider implements OAuth for custom/generic OAuth providers
+// GenericOAuthProvider 实现通用 OAuth 提供商
+// 支持任意符合 OAuth 2.0 标准的提供商，所有配置通过数据库动态管理
+// 适用于非内置的 OAuth 提供商（如企业 SSO、自建认证服务等）
 type GenericOAuthProvider struct {
-	config *model.CustomOAuthProvider
+	config *model.CustomOAuthProvider // 提供商配置，包含端点、密钥、字段映射等
 }
 
+// accessPolicy 表示访问策略的 JSON 结构
+// 支持 and/or 逻辑组合和嵌套策略组，用于控制哪些用户可以通过此提供商登录
 type accessPolicy struct {
-	Logic      string            `json:"logic"`
-	Conditions []accessCondition `json:"conditions"`
-	Groups     []accessPolicy    `json:"groups"`
+	Logic      string            `json:"logic"`      // 逻辑运算符："and"（全部满足）或 "or"（任一满足），默认为 "and"
+	Conditions []accessCondition `json:"conditions"` // 条件列表
+	Groups     []accessPolicy    `json:"groups"`     // 嵌套的策略组，支持多层嵌套
 }
 
+// accessCondition 表示访问策略中的单个条件
+// 通过字段路径、操作符和期望值来匹配用户信息
 type accessCondition struct {
-	Field string `json:"field"`
-	Op    string `json:"op"`
-	Value any    `json:"value"`
+	Field string `json:"field"` // JSON 字段路径（支持 gjson 语法，如 "email"、"organizations.#.name"）
+	Op    string `json:"op"`    // 操作符（eq、ne、gt、gte、lt、lte、in、not_in、contains、not_contains、exists、not_exists）
+	Value any    `json:"value"` // 期望值（可以是字符串、数字、布尔值或数组）
 }
 
+// accessPolicyFailure 记录访问策略评估失败的详细信息
+// 用于生成面向用户的拒绝消息模板
 type accessPolicyFailure struct {
-	Field    string
-	Op       string
-	Expected any
-	Current  any
+	Field    string // 失败的字段路径
+	Op       string // 使用的操作符
+	Expected any    // 期望的值
+	Current  any    // 实际的值
 }
 
+// supportedAccessPolicyOps 定义了所有支持的访问策略操作符
 var supportedAccessPolicyOps = []string{
 	"eq",
 	"ne",
@@ -70,23 +93,32 @@ var supportedAccessPolicyOps = []string{
 	"not_exists",
 }
 
-// NewGenericOAuthProvider creates a new generic OAuth provider from config
+// NewGenericOAuthProvider 根据数据库配置创建通用 OAuth 提供商实例
+// 参数：
+//   - config：自定义 OAuth 提供商的数据库配置（包含端点、密钥、字段映射等）
+// 返回值：初始化好的 GenericOAuthProvider 实例
 func NewGenericOAuthProvider(config *model.CustomOAuthProvider) *GenericOAuthProvider {
 	return &GenericOAuthProvider{config: config}
 }
 
+// GetName 返回提供商的显示名称
 func (p *GenericOAuthProvider) GetName() string {
 	return p.config.Name
 }
 
+// IsEnabled 检查提供商是否已启用
 func (p *GenericOAuthProvider) IsEnabled() bool {
 	return p.config.Enabled
 }
 
+// GetConfig 返回提供商的数据库配置对象
 func (p *GenericOAuthProvider) GetConfig() *model.CustomOAuthProvider {
 	return p.config
 }
 
+// ExchangeToken 使用授权码向提供商的 Token 端点交换访问令牌
+// 支持三种认证方式：参数传递（AuthStyleInParams）、Basic Auth（AuthStyleInHeader）、自动检测
+// 支持两种响应格式：JSON 和 URL-encoded（兼容 GitHub 等旧式提供商）
 func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c *gin.Context) (*OAuthToken, error) {
 	if code == "" {
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
@@ -199,6 +231,10 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 	}, nil
 }
 
+// GetUserInfo 使用访问令牌从提供商的 UserInfo 端点获取用户信息
+// 通过配置中的字段映射（UserIdField、UsernameField 等）提取用户数据
+// 支持 gjson 路径语法（如 "user.id"、"emails.#(primary==true).value"）
+// 如果配置了访问策略（Access Policy），还会评估用户是否满足访问条件
 func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAuthUser, error) {
 	logger.LogDebug(ctx, "[OAuth-Generic-%s] GetUserInfo: fetching user info from %s", p.config.Slug, p.config.UserInfoEndpoint)
 
@@ -290,10 +326,14 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	}, nil
 }
 
+// IsUserIDTaken 检查提供商用户 ID 是否已被系统中的其他账号关联
+// 查询 OAuth 绑定表（user_oauth_bindings）确认唯一性
 func (p *GenericOAuthProvider) IsUserIDTaken(providerUserID string) bool {
 	return model.IsProviderUserIdTaken(p.config.Id, providerUserID)
 }
 
+// FillUserByProviderID 通过提供商用户 ID 查找关联的系统用户
+// 从 OAuth 绑定表中查找匹配记录，然后填充完整的用户信息
 func (p *GenericOAuthProvider) FillUserByProviderID(user *model.User, providerUserID string) error {
 	foundUser, err := model.GetUserByOAuthBinding(p.config.Id, providerUserID)
 	if err != nil {
@@ -303,20 +343,28 @@ func (p *GenericOAuthProvider) FillUserByProviderID(user *model.User, providerUs
 	return nil
 }
 
+// SetProviderUserID 对于通用提供商为空操作
+// 通用提供商的 OAuth 绑定通过 user_oauth_bindings 表管理
+// 具体绑定逻辑在 OAuth 控制器中完成
 func (p *GenericOAuthProvider) SetProviderUserID(user *model.User, providerUserID string) {
 	// For generic providers, we store the binding in user_oauth_bindings table
 	// This is handled separately in the OAuth controller
 }
 
+// GetProviderPrefix 返回自动生成用户名时使用的前缀
+// 格式为 "{slug}_"，例如 "custom_sso_"
 func (p *GenericOAuthProvider) GetProviderPrefix() string {
 	return p.config.Slug + "_"
 }
 
-// GetProviderId returns the provider ID for binding purposes
+// GetProviderId 返回提供商的数据库 ID
+// 用于 OAuth 绑定表的关联查询
 func (p *GenericOAuthProvider) GetProviderId() int {
 	return p.config.Id
 }
 
+// normalizeAuthorizationTokenType 标准化 Authorization 头的令牌类型
+// 空值或 "Bearer"（不区分大小写）统一返回 "Bearer"
 func normalizeAuthorizationTokenType(tokenType string) string {
 	tokenType = strings.TrimSpace(tokenType)
 	if tokenType == "" || strings.EqualFold(tokenType, "Bearer") {
@@ -325,11 +373,14 @@ func normalizeAuthorizationTokenType(tokenType string) string {
 	return tokenType
 }
 
-// IsGenericProvider returns true for generic providers
+// IsGenericProvider 标识此提供商为通用提供商（非内置）
+// 用于在 OAuth 控制器中区分处理逻辑
 func (p *GenericOAuthProvider) IsGenericProvider() bool {
 	return true
 }
 
+// parseAccessPolicy 解析访问策略的 JSON 字符串
+// 返回验证后的策略对象，解析或验证失败时返回错误
 func parseAccessPolicy(raw string) (*accessPolicy, error) {
 	var policy accessPolicy
 	if err := common.UnmarshalJsonStr(raw, &policy); err != nil {
@@ -341,6 +392,9 @@ func parseAccessPolicy(raw string) (*accessPolicy, error) {
 	return &policy, nil
 }
 
+// validateAccessPolicy 验证访问策略的结构合法性
+// 检查逻辑运算符是否有效、是否至少有一个条件或子组
+// 递归验证嵌套的策略组
 func validateAccessPolicy(policy *accessPolicy) error {
 	if policy == nil {
 		return errors.New("policy is nil")
@@ -374,6 +428,9 @@ func validateAccessPolicy(policy *accessPolicy) error {
 	return nil
 }
 
+// validateAccessPolicy 验证单个访问条件的合法性
+// 检查字段路径非空、操作符是否在支持列表中
+// 对于 in/not_in 操作符，额外检查值是否为数组类型
 func validateAccessCondition(condition *accessCondition, index int) error {
 	if condition == nil {
 		return fmt.Errorf("condition[%d] is nil", index)
@@ -398,6 +455,11 @@ func validateAccessCondition(condition *accessCondition, index int) error {
 	return nil
 }
 
+// evaluateAccessPolicy 评估访问策略是否通过
+// 根据逻辑运算符（and/or）组合所有条件和子组的评估结果
+// 返回值：
+//   - bool：策略是否通过
+//   - *accessPolicyFailure：失败时返回第一个失败的条件详情
 func evaluateAccessPolicy(body string, policy *accessPolicy) (bool, *accessPolicyFailure) {
 	if policy == nil {
 		return true, nil
@@ -451,6 +513,9 @@ func evaluateAccessPolicy(body string, policy *accessPolicy) (bool, *accessPolic
 	return true, nil
 }
 
+// evaluateAccessCondition 评估单个访问条件
+// 从 JSON 响应体中提取字段值，根据操作符与期望值比较
+// 支持 12 种操作符：exists/not_exists/eq/ne/gt/gte/lt/lte/in/not_in/contains/not_contains
 func evaluateAccessCondition(body string, cond accessCondition) (bool, *accessPolicyFailure) {
 	path := cond.Field
 	op := cond.Op
@@ -493,10 +558,13 @@ func evaluateAccessCondition(body string, cond accessCondition) (bool, *accessPo
 	}
 }
 
+// normalizePolicyOp 标准化策略操作符（转小写、去空格）
 func normalizePolicyOp(op string) string {
 	return strings.ToLower(strings.TrimSpace(op))
 }
 
+// gjsonResultToValue 将 gjson.Result 转换为 Go 原生类型
+// 递归处理嵌套的 JSON 对象和数组，用于策略条件比较
 func gjsonResultToValue(result gjson.Result) any {
 	if !result.Exists() {
 		return nil
@@ -531,6 +599,9 @@ func gjsonResultToValue(result gjson.Result) any {
 	}
 }
 
+// compareAny 通用比较函数，支持数值和字符串比较
+// 优先尝试数值比较（toFloat），失败则回退到字符串比较
+// 返回值：-1（小于）、0（等于）、1（大于）
 func compareAny(left any, right any) int {
 	if lf, ok := toFloat(left); ok {
 		if rf, ok2 := toFloat(right); ok2 {
@@ -557,6 +628,9 @@ func compareAny(left any, right any) int {
 	}
 }
 
+// toFloat 将任意类型转换为 float64
+// 支持所有数值类型（int/uint/float 各种位宽）、json.Number 和字符串
+// 返回值：转换后的浮点数和是否成功
 func toFloat(v any) (float64, bool) {
 	switch value := v.(type) {
 	case float64:
@@ -597,6 +671,8 @@ func toFloat(v any) (float64, bool) {
 	return 0, false
 }
 
+// valueInSlice 检查当前值是否存在于期望值列表中
+// 用于 in/not_in 操作符的评估
 func valueInSlice(current any, expected any) bool {
 	list, ok := expected.([]any)
 	if !ok {
@@ -607,6 +683,9 @@ func valueInSlice(current any, expected any) bool {
 	})
 }
 
+// containsValue 检查当前值是否包含期望值
+// 对于字符串类型使用 strings.Contains，对于数组类型使用 lo.ContainsBy
+// 用于 contains/not_contains 操作符的评估
 func containsValue(current any, expected any) bool {
 	switch value := current.(type) {
 	case string:
@@ -620,6 +699,15 @@ func containsValue(current any, expected any) bool {
 	return false
 }
 
+// renderAccessDeniedMessage 渲染访问拒绝消息模板
+// 支持以下模板变量：
+//   - {{provider}}：提供商名称
+//   - {{field}}：失败的字段路径
+//   - {{op}}：使用的操作符
+//   - {{required}}：期望值
+//   - {{current}}：当前值
+//   - {{current.xxx}}：从用户 JSON 中提取的字段值（支持 gjson 路径）
+//   - {{required.xxx}}：从策略条件中提取的字段值
 func renderAccessDeniedMessage(template string, providerName string, body string, failure *accessPolicyFailure) string {
 	defaultMessage := "Access denied: your account does not meet this provider's access requirements."
 	message := strings.TrimSpace(template)

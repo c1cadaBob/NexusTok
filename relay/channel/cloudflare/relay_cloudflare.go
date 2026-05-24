@@ -1,24 +1,21 @@
+// Package cloudflare 实现 Cloudflare Workers AI API 的请求转换和响应处理。
+// 该文件包含对话请求转换、流式/非流式响应处理和语音转文字响应处理逻辑。
 package cloudflare
 
-import (
-	"bufio"
-	"encoding/json"
-	"io"
-	"net/http"
-	"strings"
-	"time"
+// 标准库导入
 
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/relay/helper"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/types"
-	"github.com/samber/lo"
+// 第三方库导入
 
-	"github.com/gin-gonic/gin"
-)
+// 项目内部导入
 
+// convertCf2CompletionsRequest 将 OpenAI 格式的通用请求转换为 Cloudflare Workers AI 格式。
+// 从 OpenAI 请求中提取 prompt、max_tokens、stream 和 temperature 参数。
+//
+// 参数:
+//   - textRequest: OpenAI 格式的通用请求
+//
+// 返回值:
+//   - *CfRequest: 转换后的 Cloudflare 请求
 func convertCf2CompletionsRequest(textRequest dto.GeneralOpenAIRequest) *CfRequest {
 	p, _ := textRequest.Prompt.(string)
 	return &CfRequest{
@@ -29,6 +26,19 @@ func convertCf2CompletionsRequest(textRequest dto.GeneralOpenAIRequest) *CfReque
 	}
 }
 
+// cfStreamHandler 处理 Cloudflare Workers AI 的流式对话响应。
+// 逐行读取 SSE 数据流，将 Cloudflare 格式的流式响应转换为 OpenAI 格式，
+// 并通过 helper.ObjectData 实时推送给客户端。
+// 处理完成后，根据响应文本计算 token 使用量，并在需要时发送最终的 usage 响应。
+//
+// 参数:
+//   - c: gin 请求上下文
+//   - info: 中继信息
+//   - resp: Cloudflare 上游 API 的 HTTP 响应
+//
+// 返回值:
+//   - *types.NexusTokError: 处理过程中的错误
+//   - *dto.Usage: token 使用量统计
 func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*types.NexusTokError, *dto.Usage) {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -90,6 +100,18 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 	return nil, usage
 }
 
+// cfHandler 处理 Cloudflare Workers AI 的非流式对话响应。
+// 读取完整响应体，将 Cloudflare 格式的响应转换为 OpenAI 格式，
+// 根据响应文本计算 token 使用量后写入客户端。
+//
+// 参数:
+//   - c: gin 请求上下文
+//   - info: 中继信息
+//   - resp: Cloudflare 上游 API 的 HTTP 响应
+//
+// 返回值:
+//   - *types.NexusTokError: 处理过程中的错误
+//   - *dto.Usage: token 使用量统计
 func cfHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*types.NexusTokError, *dto.Usage) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -119,6 +141,18 @@ func cfHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response)
 	return nil, usage
 }
 
+// cfSTTHandler 处理 Cloudflare Workers AI 的语音转文字（STT）响应。
+// 读取 Cloudflare 的语音识别响应，提取识别文本，转换为通用的 AudioResponse 格式后写入客户端。
+// 同时根据识别文本计算 token 使用量。
+//
+// 参数:
+//   - c: gin 请求上下文
+//   - info: 中继信息
+//   - resp: Cloudflare 上游 API 的 HTTP 响应
+//
+// 返回值:
+//   - *types.NexusTokError: 处理过程中的错误
+//   - *dto.Usage: token 使用量统计
 func cfSTTHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*types.NexusTokError, *dto.Usage) {
 	var cfResp CfAudioResponse
 	responseBody, err := io.ReadAll(resp.Body)

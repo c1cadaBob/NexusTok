@@ -1,3 +1,6 @@
+// auth - conductor_overrides_test.go
+// 该文件包含认证管理器的重试行为、模型支持错误、禁用冷却、请求作用域未找到处理等
+// 覆盖场景的单元测试。
 package auth
 
 import (
@@ -13,8 +16,11 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// requestScopedNotFoundMessage 是请求作用域未找到错误的示例消息。
 const requestScopedNotFoundMessage = "Item with id 'rs_0b5f3eb6f51f175c0169ca74e4a85881998539920821603a74' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input."
 
+// TestManager_ShouldRetryAfterError_RespectsAuthRequestRetryOverride 测试认证请求级别的
+// 重试配置覆盖是否被正确尊重。
 func TestManager_ShouldRetryAfterError_RespectsAuthRequestRetryOverride(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.SetRetryConfig(3, 30*time.Second, 0)

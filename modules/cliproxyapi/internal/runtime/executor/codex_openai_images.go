@@ -1,3 +1,5 @@
+// Package executor - codex_openai_images.go
+// 实现 Codex 的 OpenAI 图像生成功能，处理 /v1/images/generations 和 /v1/images/edits 端点。
 package executor
 
 import (

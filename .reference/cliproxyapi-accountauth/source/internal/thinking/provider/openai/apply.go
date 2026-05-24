@@ -1,8 +1,7 @@
-// Package openai implements thinking configuration for OpenAI/Codex models.
-//
-// OpenAI models use the reasoning_effort format with discrete levels
-// (low/medium/high). Some models support xhigh and none levels.
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-8
+// 包 openai - apply.go
+// 该文件实现了 OpenAI/Codex 模型的思考配置应用器。
+// OpenAI 模型使用 reasoning_effort 格式，支持离散级别（low/medium/high）。
+// 部分模型支持 xhigh 和 none 级别。
 package openai
 
 import (

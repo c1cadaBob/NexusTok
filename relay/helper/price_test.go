@@ -1,3 +1,6 @@
+// 本文件是 relay/helper 包中 ModelPriceHelper 函数的单元测试集。
+// 测试了分层计费（Tiered Billing）表达式场景下的预加载请求输入使用、
+// tier 估算和配额预消费计算等功能。
 package helper
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestModelPriceHelperTieredUsesPreloadedRequestInput 测试分层计费模式下使用预加载的请求输入，
+// 验证 tier 估算（stream 模式）和配额预消费计算（p*3=1500）的正确性。
 func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

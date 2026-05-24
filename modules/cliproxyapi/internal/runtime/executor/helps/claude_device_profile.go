@@ -1,3 +1,5 @@
+// Package helps - claude_device_profile.go
+// 实现 Claude 设备配置文件生成功能，用于构造设备标识和指纹信息。
 package helps
 
 import (

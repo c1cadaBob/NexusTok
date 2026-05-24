@@ -1,3 +1,6 @@
+// Package helps - cloak_obfuscate.go
+// 实现请求混淆功能，用于绕过内容过滤器。
+// 通过零宽字符替换敏感词来伪装 API 请求。
 package helps
 
 import (

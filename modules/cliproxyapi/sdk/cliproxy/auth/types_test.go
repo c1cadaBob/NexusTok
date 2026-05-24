@@ -1,3 +1,6 @@
+// auth - types_test.go
+// 该文件包含 Auth 核心类型的单元测试，验证 ToolPrefixDisabled、EnsureIndex、
+// RecentRequestsSnapshot 等方法的正确性。
 package auth
 
 import (
@@ -8,6 +11,8 @@ import (
 	"time"
 )
 
+// TestToolPrefixDisabled 测试 ToolPrefixDisabled 方法的各种输入场景，
+// 包括 nil auth、空 auth、布尔值、字符串值、kebab-case 键名等。
 func TestToolPrefixDisabled(t *testing.T) {
 	var a *Auth
 	if a.ToolPrefixDisabled() {
@@ -40,6 +45,9 @@ func TestToolPrefixDisabled(t *testing.T) {
 	}
 }
 
+// TestEnsureIndexUsesCredentialIdentity 测试 EnsureIndex 方法使用凭据身份信息生成索引，
+// 验证不同提供商、不同 base_url 的相同 API Key 生成不同索引，
+// 而相同配置不同 source 的凭据共享索引。
 func TestEnsureIndexUsesCredentialIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -103,6 +111,8 @@ func TestEnsureIndexUsesCredentialIdentity(t *testing.T) {
 	}
 }
 
+// TestEnsureIndexUsesOAuthTypeAndAbsolutePath 测试 OAuth 类型凭据的索引生成使用
+// 元数据中的 type 和文件的绝对路径，确保相对路径被正确解析。
 func TestEnsureIndexUsesOAuthTypeAndAbsolutePath(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +145,8 @@ func TestEnsureIndexUsesOAuthTypeAndAbsolutePath(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets 测试空的最近请求快照返回
+// 正确数量的时间桶（20 个），每个桶的时间标签格式正确且计数为零。
 func TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	a := &Auth{}
@@ -163,6 +175,7 @@ func TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotIncludesCounts 测试记录请求后快照中包含正确的成功和失败计数。
 func TestRecentRequestsSnapshotIncludesCounts(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	a := &Auth{}
@@ -181,6 +194,8 @@ func TestRecentRequestsSnapshotIncludesCounts(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotBucketAdvanceMovesCounts 测试时间桶推进时请求计数
+// 正确移动到新的桶中，旧桶保留历史计数。
 func TestRecentRequestsSnapshotBucketAdvanceMovesCounts(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	next := now.Add(10 * time.Minute)

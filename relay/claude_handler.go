@@ -1,3 +1,13 @@
+// Package relay - claude_handler.go
+// 该文件实现了 Claude API 的中继处理
+// Claude 是 Anthropic 公司的 AI 模型，使用 Messages API 格式
+//
+// Claude API 特点：
+// - 使用 Messages API（/v1/messages）
+// - 支持流式响应（SSE）
+// - 支持多模态（文本、图像）
+// - 支持工具调用（Function Calling）
+// - 支持 Thinking 扩展（扩展思考）
 package relay
 
 import (
@@ -8,74 +18,122 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/relay/helper"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/setting/model_setting"
-	"github.com/c1cada/NexusTok/setting/reasoning"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common"                    // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                   // 常量定义
+	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
+	relaycommon "github.com/c1cada/NexusTok/relay/common"   // 中继公共包
+	"github.com/c1cada/NexusTok/relay/helper"               // 中继辅助函数
+	"github.com/c1cada/NexusTok/service"                    // 服务层
+	"github.com/c1cada/NexusTok/setting/model_setting"      // 模型设置
+	"github.com/c1cada/NexusTok/setting/reasoning"          // 推理设置
+	"github.com/c1cada/NexusTok/types"                      // 类型定义
 
-	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin" // Gin 框架
 )
 
+// ClaudeHelper Claude API 中继处理函数
+// 处理 Claude Messages API 请求，包括：
+// 1. 请求验证和类型转换
+// 2. 模型映射
+// 3. 适配器初始化
+// 4. MaxTokens 默认值设置
+// 5. Thinking 扩展处理
+// 6. 请求转发和响应处理
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - newAPIError: 错误信息，成功返回 nil
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
-
+	// 初始化渠道元数据
 	info.InitChannelMeta(c)
 
+	// 类型断言：获取 Claude 请求
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
-
 	if !ok {
-		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.ClaudeRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("invalid request type, expected *dto.ClaudeRequest, got %T", info.Request),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 
+	// 深拷贝请求，避免修改原始请求
 	request, err := common.DeepCopy(claudeReq)
 	if err != nil {
-		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+		return types.NewError(
+			fmt.Errorf("failed to copy request to ClaudeRequest: %w", err),
+			types.ErrorCodeInvalidRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 
+	// 模型映射：将用户请求的模型映射到实际的上游模型
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
+	// 获取 API 适配器
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
-		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+		return types.NewError(
+			fmt.Errorf("invalid api type: %d", info.ApiType),
+			types.ErrorCodeInvalidApiType,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
+
+	// 初始化适配器
 	adaptor.Init(info)
 
+	// 设置 MaxTokens 默认值
 	if request.MaxTokens == nil || *request.MaxTokens == 0 {
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 		request.MaxTokens = &defaultMaxTokens
 	}
 
+	// 处理 Thinking 扩展（扩展思考）
+	// 检查是否是带有 effort 后缀的模型（如 claude-opus-4-6-high）
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
 		(strings.HasPrefix(request.Model, "claude-opus-4-6") || strings.HasPrefix(request.Model, "claude-opus-4-7")) {
+		// 设置基础模型名称
 		request.Model = baseModel
+
+		// 启用 Thinking 扩展（自适应模式）
 		request.Thinking = &dto.Thinking{
 			Type: "adaptive",
 		}
+
+		// 设置输出配置（effort 级别）
 		request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
+
+		// Opus 4.7 特殊处理
 		if strings.HasPrefix(request.Model, "claude-opus-4-7") {
-			// Opus 4.7 rejects non-default temperature/top_p/top_k with 400
-			// and defaults display to "omitted"; restore the 4.6 visible summary.
+			// Opus 4.7 不接受非默认的 temperature/top_p/top_k，会返回 400 错误
+			// 默认显示为 "omitted"；恢复 4.6 的可见摘要
 			request.Thinking.Display = "summarized"
 			request.Temperature = nil
 			request.TopP = nil
 			request.TopK = nil
 		} else {
+			// Opus 4.6 设置 temperature 为 1.0
 			request.Temperature = common.GetPointer[float64](1.0)
 		}
+
+		// 更新上游模型名称
 		info.UpstreamModelName = request.Model
 	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
 		strings.HasSuffix(request.Model, "-thinking") {
+		// 处理 -thinking 后缀的模型（Claude Thinking 适配器）
 		if request.Thinking == nil {
 			baseModel := strings.TrimSuffix(request.Model, "-thinking")
+
 			if strings.HasPrefix(baseModel, "claude-opus-4-7") {
-				// Opus 4.7 rejects thinking.type="enabled"; use adaptive at high effort.
+				// Opus 4.7 不接受 thinking.type="enabled"；使用自适应模式，高 effort
 				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
 				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
 				request.Temperature = nil

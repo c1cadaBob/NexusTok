@@ -1,3 +1,11 @@
+// gemini - relay-gemini-native.go
+// Gemini 原生格式的中继处理逻辑。
+// 本文件处理以 Gemini 原生格式（而非 OpenAI 兼容格式）发出的请求和响应，
+// 主要包括：
+//   - 非流式文本生成响应处理（GeminiTextGenerationHandler）
+//   - 原生嵌入响应处理（NativeGeminiEmbeddingHandler）
+//   - 流式文本生成响应处理（GeminiTextGenerationStreamHandler）
+// 这些处理器将 Gemini 原生响应透传给客户端，不做 OpenAI 格式转换。
 package gemini
 
 import (
@@ -17,6 +25,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GeminiTextGenerationHandler 处理 Gemini 原生格式的非流式文本生成响应。
+// 直接解析 Gemini API 返回的 JSON 响应，计算使用量统计，
+// 并将原始响应体透传给客户端（不做 OpenAI 格式转换）。
+// 当响应中无候选结果但存在 PromptFeedback.BlockReason 时，记录拒绝原因。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计（基于 UsageMetadata 计算）
+//   - *types.NexusTokError: 错误信息
 func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -49,6 +69,21 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 	return &usage, nil
 }
 
+// NativeGeminiEmbeddingHandler 处理 Gemini 原生格式的嵌入响应。
+// 支持两种嵌入模式：
+//   - 批量嵌入（batchEmbedContents）：解析为 GeminiBatchEmbeddingResponse
+//   - 单条嵌入（embedContent）：解析为 GeminiEmbeddingResponse
+//
+// 嵌入响应以 Gemini 原生格式透传给客户端，不做 OpenAI 格式转换。
+// Token 使用量通过 service.ResponseText2Usage 计算。
+// 参数:
+//   - c: Gin 上下文
+//   - resp: Gemini API 的 HTTP 响应
+//   - info: Relay 中继信息（包含 IsGeminiBatchEmbedding 标记）
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -82,6 +117,17 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 	return usage, nil
 }
 
+// GeminiTextGenerationStreamHandler 处理 Gemini 原生格式的流式文本生成响应。
+// 设置 SSE（Server-Sent Events）流式响应头，然后通过 geminiStreamHandler
+// 逐块处理流式数据。每块数据直接以原始格式发送给客户端（不做 OpenAI 格式转换）。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - resp: Gemini API 的 HTTP 流式响应
+//
+// 返回:
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息
 func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	helper.SetEventStreamHeaders(c)
 

@@ -1,3 +1,7 @@
+// cliproxy - service_xai_executor_binding_test.go
+// 该文件测试 xAI 执行器的绑定行为。
+// 验证 xAI 提供商正确绑定独立的 XAIExecutor，而非 CodexAutoExecutor。
+
 package cliproxy
 
 import (
@@ -8,6 +12,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestEnsureExecutorsForAuth_XAIBindsIndependentExecutor 测试 xAI 提供商是否正确绑定
+// 独立的 XAIExecutor，而非错误地使用 CodexAutoExecutor。
 func TestEnsureExecutorsForAuth_XAIBindsIndependentExecutor(t *testing.T) {
 	service := &Service{
 		cfg:         &config.Config{},

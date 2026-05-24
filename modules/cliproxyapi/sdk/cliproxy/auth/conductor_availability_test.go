@@ -1,3 +1,5 @@
+// auth - conductor_availability_test.go
+// 测试聚合可用性更新逻辑，验证 updateAggregatedAvailability 函数在各种状态下的行为。
 package auth
 
 import (
@@ -5,6 +7,8 @@ import (
 	"time"
 )
 
+// TestUpdateAggregatedAvailability_UnavailableWithoutNextRetryDoesNotBlockAuth 测试当模型标记为不可用
+// 但没有设置 NextRetryAfter 时，不会阻止整个认证。
 func TestUpdateAggregatedAvailability_UnavailableWithoutNextRetryDoesNotBlockAuth(t *testing.T) {
 	t.Parallel()
 
@@ -30,6 +34,8 @@ func TestUpdateAggregatedAvailability_UnavailableWithoutNextRetryDoesNotBlockAut
 	}
 }
 
+// TestUpdateAggregatedAvailability_FutureNextRetryBlocksAuth 测试当模型设置了未来的 NextRetryAfter 时，
+// 会正确阻止整个认证。
 func TestUpdateAggregatedAvailability_FutureNextRetryBlocksAuth(t *testing.T) {
 	t.Parallel()
 

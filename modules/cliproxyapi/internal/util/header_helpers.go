@@ -1,3 +1,6 @@
+// util - header_helpers.go
+// 本文件提供从认证属性映射中提取和应用自定义 HTTP 头的功能。
+// 支持通过 "header:" 前缀的键名来定义自定义请求头。
 package util
 
 import (
@@ -5,8 +8,13 @@ import (
 	"strings"
 )
 
-// ApplyCustomHeadersFromAttrs applies user-defined headers stored in the provided attributes map.
-// Custom headers override built-in defaults when conflicts occur.
+// ApplyCustomHeadersFromAttrs 从属性映射中提取自定义 HTTP 头并应用到请求中。
+// 属性中以 "header:" 为前缀的键会被识别为自定义头定义。
+// 自定义头会覆盖内置默认头。
+//
+// 参数：
+//   - r: 要应用自定义头的 HTTP 请求
+//   - attrs: 包含自定义头定义的属性映射
 func ApplyCustomHeadersFromAttrs(r *http.Request, attrs map[string]string) {
 	if r == nil {
 		return

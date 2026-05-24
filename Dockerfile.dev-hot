@@ -1,3 +1,18 @@
+# Dockerfile.dev-hot - NexusTok 热重载开发环境
+#
+# 功能：
+# - 提供 Go 开发环境（不编译，使用 go run）
+# - 配置国内 Go 模块代理
+# - 挂载源码目录实现热重载
+# - 配合 bin/docker-hot-backend.sh 使用
+#
+# 环境变量：
+#   GOPROXY - Go 模块代理（默认: goproxy.cn）
+#   GOSUMDB - Go 校验数据库
+#
+# 暴露端口：3000
+
+# 开发环境基础镜像
 FROM golang:1.26.1-alpine
 
 ENV PATH="/usr/local/go/bin:/tmp/go/bin:${PATH}" \

@@ -1,14 +1,14 @@
-// Package interfaces defines the core interfaces and shared structures for the CLI Proxy API server.
-// These interfaces provide a common contract for different components of the application,
-// such as AI service clients, API handlers, and data models.
+// interfaces - client_models.go
+// 本文件定义了 CLI Proxy API 服务器的核心接口和共享数据结构。
+// 包含 GCP 项目、消息内容、函数调用、生成配置等数据模型。
 package interfaces
 
 import (
 	"time"
 )
 
-// GCPProject represents the response structure for a Google Cloud project list request.
-// This structure is used when fetching available projects for a Google Cloud account.
+// GCPProject 表示 Google Cloud 项目列表请求的响应结构。
+// 用于获取 Google Cloud 账户的可用项目。
 type GCPProject struct {
 	// Projects is a list of Google Cloud projects accessible by the user.
 	Projects []GCPProjectProjects `json:"projects"`

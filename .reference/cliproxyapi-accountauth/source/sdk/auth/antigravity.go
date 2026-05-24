@@ -1,3 +1,7 @@
+// 包 auth - antigravity.go
+// 该文件实现了 Antigravity 提供商的 OAuth 认证流程。
+// 包括本地回调服务器启动、浏览器自动打开、授权码交换、
+// 用户信息获取和项目 ID 发现等功能。
 package auth
 
 import (
@@ -17,21 +21,37 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// AntigravityAuthenticator implements OAuth login for the antigravity provider.
+// AntigravityAuthenticator 实现了 Antigravity 提供商的 OAuth 登录认证器。
 type AntigravityAuthenticator struct{}
 
-// NewAntigravityAuthenticator constructs a new authenticator instance.
+// NewAntigravityAuthenticator 构造一个新的 Antigravity 认证实例。
+//
+// 返回:
+//   - Authenticator: Antigravity 认证器实例
 func NewAntigravityAuthenticator() Authenticator { return &AntigravityAuthenticator{} }
 
-// Provider returns the provider key for antigravity.
+// Provider 返回 Antigravity 提供商的标识名称。
 func (AntigravityAuthenticator) Provider() string { return "antigravity" }
 
-// RefreshLead instructs the manager to refresh five minutes before expiry.
+// RefreshLead 指示管理器在令牌过期前五分钟执行刷新。
+//
+// 返回:
+//   - *time.Duration: 提前刷新的时间间隔
 func (AntigravityAuthenticator) RefreshLead() *time.Duration {
 	return new(5 * time.Minute)
 }
 
-// Login launches a local OAuth flow to obtain antigravity tokens and persists them.
+// Login 启动本地 OAuth 流程以获取 Antigravity 令牌并持久化存储。
+// 流程包括：启动本地回调服务器、打开浏览器、等待授权回调、交换令牌、获取用户信息和项目 ID。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - cfg: 应用配置
+//   - opts: 登录选项
+//
+// 返回:
+//   - *coreauth.Auth: 认证结果，包含令牌和元数据
+//   - error: 登录失败时返回错误信息
 func (AntigravityAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
@@ -219,12 +239,24 @@ waitForCallback:
 	}, nil
 }
 
+// callbackResult 存储 OAuth 回调的解析结果。
 type callbackResult struct {
-	Code  string
-	Error string
-	State string
+	Code  string // 授权码
+	Error string // 错误信息
+	State string // 状态参数，用于防 CSRF 攻击
 }
 
+// startAntigravityCallbackServer 启动本地 HTTP 服务器用于接收 OAuth 回调。
+// 服务器监听指定端口，当收到回调请求时将结果发送到通道。
+//
+// 参数:
+//   - port: 监听端口（<=0 时使用默认端口）
+//
+// 返回:
+//   - *http.Server: HTTP 服务器实例
+//   - int: 实际监听的端口号
+//   - <-chan callbackResult: 回调结果通道
+//   - error: 服务器启动失败时返回错误信息
 func startAntigravityCallbackServer(port int) (*http.Server, int, <-chan callbackResult, error) {
 	if port <= 0 {
 		port = antigravity.CallbackPort
@@ -263,7 +295,17 @@ func startAntigravityCallbackServer(port int) (*http.Server, int, <-chan callbac
 	return srv, port, resultCh, nil
 }
 
-// FetchAntigravityProjectID exposes project discovery for external callers.
+// FetchAntigravityProjectID 暴露项目发现功能给外部调用者。
+// 通过访问令牌查询 GCP 项目 ID。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - accessToken: Antigravity 访问令牌
+//   - httpClient: HTTP 客户端（可为 nil 使用默认客户端）
+//
+// 返回:
+//   - string: GCP 项目 ID
+//   - error: 查询失败时返回错误信息
 func FetchAntigravityProjectID(ctx context.Context, accessToken string, httpClient *http.Client) (string, error) {
 	cfg := &config.Config{}
 	authSvc := antigravity.NewAntigravityAuth(cfg, httpClient)

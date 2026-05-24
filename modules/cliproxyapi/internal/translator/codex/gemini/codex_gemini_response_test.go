@@ -1,3 +1,5 @@
+// gemini - codex_gemini_response_test.go
+// 测试 Codex 响应格式到 Gemini 响应格式的流式/非流式转换逻辑，覆盖图片生成、输出回退和去重场景
 package gemini
 
 import (
@@ -7,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertCodexResponseToGemini_StreamEmptyOutputUsesOutputItemDoneMessageFallback 测试流式空输出时的回退机制
+// 当上游未提供顶层 output 数组时，应从 response.output_item.done 事件中回退提取完成内容
 func TestConvertCodexResponseToGemini_StreamEmptyOutputUsesOutputItemDoneMessageFallback(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"tools":[]}`)
@@ -34,6 +38,8 @@ func TestConvertCodexResponseToGemini_StreamEmptyOutputUsesOutputItemDoneMessage
 	}
 }
 
+// TestConvertCodexResponseToGemini_StreamPartialImageEmitsInlineData 测试流式部分图片的内联数据输出
+// 验证 partial_image 事件能正确转为 Gemini 的 inlineData 格式（含 base64 数据和 mimeType），且重复图片块被抑制
 func TestConvertCodexResponseToGemini_StreamPartialImageEmitsInlineData(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"tools":[]}`)
@@ -61,6 +67,8 @@ func TestConvertCodexResponseToGemini_StreamPartialImageEmitsInlineData(t *testi
 	}
 }
 
+// TestConvertCodexResponseToGemini_StreamImageGenerationCallDoneEmitsInlineData 测试图片生成完成事件的内联数据输出
+// 验证 output_item.done 中图片数据能正确转为 Gemini inlineData，且与最后部分图片重复时被抑制
 func TestConvertCodexResponseToGemini_StreamImageGenerationCallDoneEmitsInlineData(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"tools":[]}`)
@@ -92,6 +100,8 @@ func TestConvertCodexResponseToGemini_StreamImageGenerationCallDoneEmitsInlineDa
 	}
 }
 
+// TestConvertCodexResponseToGemini_NonStreamImageGenerationCallAddsInlineDataPart 测试非流式图片生成的内联数据部分
+// 验证非流式响应中 image_generation_call 输出能正确转为 Gemini 的 inlineData part
 func TestConvertCodexResponseToGemini_NonStreamImageGenerationCallAddsInlineDataPart(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"tools":[]}`)

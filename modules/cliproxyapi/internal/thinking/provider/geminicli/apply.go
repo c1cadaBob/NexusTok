@@ -1,7 +1,8 @@
-// Package geminicli implements thinking configuration for Gemini CLI API format.
+// geminicli - apply.go
+// 本文件实现了 Gemini CLI API 格式的 thinking 配置应用逻辑。
 //
-// Gemini CLI uses request.generationConfig.thinkingConfig.* path instead of
-// generationConfig.thinkingConfig.* used by standard Gemini API.
+// Gemini CLI 使用 request.generationConfig.thinkingConfig.* 路径，
+// 而标准 Gemini API 使用 generationConfig.thinkingConfig.* 路径。
 package geminicli
 
 import (
@@ -11,12 +12,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier applies thinking configuration for Gemini CLI API format.
+// Applier 实现了 Gemini CLI API 格式的 thinking 配置应用器。
 type Applier struct{}
 
 var _ thinking.ProviderApplier = (*Applier)(nil)
 
-// NewApplier creates a new Gemini CLI thinking applier.
+// NewApplier 创建一个新的 Gemini CLI thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

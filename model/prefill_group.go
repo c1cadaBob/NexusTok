@@ -1,3 +1,13 @@
+// Package model - prefill_group.go
+// 该文件定义了预填充分组（PrefillGroup）数据模型及相关操作
+//
+// 主要结构体：
+// - PrefillGroup：可复用的分组信息（模型组、标签组、端点组等）
+//
+// 核心功能：
+// - 预填充分组的增删改查
+// - 分组类型区分（model、tag、endpoint 等）
+// - JSON 数组存储分组项
 package model
 
 import (

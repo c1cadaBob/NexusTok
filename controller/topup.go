@@ -1,3 +1,18 @@
+// Package controller - topup.go
+// 该文件实现了充值相关的 API 控制器
+//
+// 充值功能允许用户购买 API 使用额度
+//
+// 支持的支付方式：
+// - EPay：易支付（支付宝、微信等）
+// - Stripe：国际信用卡支付
+// - Creem：Creem 支付
+// - Waffo：Waffo 支付
+//
+// 主要 API：
+// - GetTopUpInfo：获取充值信息（支付方式、最小金额等）
+// - TopUp：创建充值订单
+// - TopUpWebhook：支付回调处理
 package controller
 
 import (
@@ -21,7 +36,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// GetTopUpInfo 获取充值信息
+//
+// 返回可用的支付方式和充值规则
+//
+// 参数：
+//   - c: Gin 上下文
 func GetTopUpInfo(c *gin.Context) {
+	// 检查支付合规是否已确认
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 获取支付方式

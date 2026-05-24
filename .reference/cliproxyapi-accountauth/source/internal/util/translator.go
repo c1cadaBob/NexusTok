@@ -1,6 +1,6 @@
-// Package util provides utility functions for the CLI Proxy API server.
-// It includes helper functions for JSON manipulation, proxy configuration,
-// and other common operations used across the application.
+// 包 util - translator.go
+// 该文件提供了 JSON 操作的辅助函数，包括 JSON 遍历、键重命名、
+// 非标准 JSON 修复和工具名称映射等功能。
 package util
 
 import (
@@ -222,6 +222,7 @@ func FixJSON(input string) string {
 	return out.String()
 }
 
+// CanonicalToolName 返回工具名称的规范形式（去空白、去前导下划线、转小写）。
 func CanonicalToolName(name string) string {
 	canonical := strings.TrimSpace(name)
 	canonical = strings.TrimLeft(canonical, "_")
@@ -266,6 +267,7 @@ func ToolNameMapFromClaudeRequest(rawJSON []byte) map[string]string {
 	return out
 }
 
+// MapToolName 将工具名称映射回原始名称。无映射时返回原名称。
 func MapToolName(toolNameMap map[string]string, name string) string {
 	if name == "" || toolNameMap == nil {
 		return name

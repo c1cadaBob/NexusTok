@@ -1,3 +1,8 @@
+// claude.go — Claude 模型配置管理
+// 职责：定义和管理 Claude（Anthropic）模型的专属配置，包括自定义请求头、
+// 默认最大 token 数、思维链适配器开关及预算比例等设置。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package model_setting
 
 import (
@@ -48,6 +53,10 @@ func GetClaudeSettings() *ClaudeSettings {
 	return &claudeSettings
 }
 
+// WriteHeaders 将指定模型的自定义 Header 配置写入 HTTP 请求头。
+// 会与已有 Header 值进行合并，并自动去重（基于逗号分隔的值列表）。
+// originModel: 上游模型名称，用于查找对应的 Header 配置
+// httpHeader: 待写入的 HTTP 请求头指针
 func (c *ClaudeSettings) WriteHeaders(originModel string, httpHeader *http.Header) {
 	if headers, ok := c.HeadersSettings[originModel]; ok {
 		for headerKey, headerValues := range headers {
@@ -62,6 +71,8 @@ func (c *ClaudeSettings) WriteHeaders(originModel string, httpHeader *http.Heade
 	}
 }
 
+// normalizeHeaderListValues 对 Header 值列表进行标准化处理：
+// 按逗号拆分每个值，去除空白，去重，返回合并后的去重列表。
 func normalizeHeaderListValues(values []string) []string {
 	normalizedValues := make([]string, 0, len(values))
 	seenValues := make(map[string]struct{}, len(values))
@@ -81,6 +92,8 @@ func normalizeHeaderListValues(values []string) []string {
 	return normalizedValues
 }
 
+// GetDefaultMaxTokens 获取指定模型的默认最大 token 数。
+// 优先返回模型专属配置，若不存在则回退到 "default" 配置值。
 func (c *ClaudeSettings) GetDefaultMaxTokens(model string) int {
 	if maxTokens, ok := c.DefaultMaxTokens[model]; ok {
 		return maxTokens

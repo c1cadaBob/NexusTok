@@ -1,3 +1,6 @@
+// misc - credentials.go
+// 本文件提供了凭证管理相关的工具函数。
+// 处理 API 密钥、令牌等敏感凭证的操作。
 package misc
 
 import (

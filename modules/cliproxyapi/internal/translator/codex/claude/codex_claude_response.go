@@ -1,9 +1,10 @@
+// codex/claude - codex_claude_response.go
 // Package claude provides response translation functionality for Codex to Claude Code API compatibility.
-// This package handles the conversion of Codex API responses into Claude Code-compatible
-// Server-Sent Events (SSE) format, implementing a sophisticated state machine that manages
-// different response types including text content, thinking processes, and function calls.
-// The translation ensures proper sequencing of SSE events and maintains state across
-// multiple response chunks to provide a seamless streaming experience.
+// 本文件提供 Codex API 响应到 Claude Code API 格式的转换功能。
+// 实现了复杂的状态机，将 Codex API 响应转换为 Claude Code 兼容的 Server-Sent Events (SSE) 格式。
+// 支持文本内容、思考过程（reasoning/summary）和函数调用（function_call）等不同响应类型的处理，
+// 维护跨多个响应块的状态信息以确保正确的 SSE 事件排序。
+// 响应类型状态：0=无, 1=内容, 2=思考, 3=函数调用。
 package claude
 
 import (
@@ -17,21 +18,23 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 SSE 数据行的前缀标识，用于从原始响应中提取 JSON 数据。
 var (
 	dataTag = []byte("data:")
 )
 
-// ConvertCodexResponseToClaudeParams holds parameters for response conversion.
+// ConvertCodexResponseToClaudeParams 持有响应转换的状态参数。
+// 跟踪当前响应翻译过程的状态，确保 SSE 事件的正确排序和不同内容类型之间的状态转换。
 type ConvertCodexResponseToClaudeParams struct {
-	HasToolCall               bool
-	BlockIndex                int
-	HasReceivedArgumentsDelta bool
-	HasTextDelta              bool
-	TextBlockOpen             bool
-	ThinkingBlockOpen         bool
-	ThinkingStopPending       bool
-	ThinkingSignature         string
-	ThinkingSummarySeen       bool
+	HasToolCall               bool   // 是否观察到工具调用
+	BlockIndex                int    // 当前内容块索引
+	HasReceivedArgumentsDelta bool   // 是否已接收到参数增量数据
+	HasTextDelta              bool   // 是否已接收到文本增量数据
+	TextBlockOpen             bool   // 文本内容块是否已打开
+	ThinkingBlockOpen         bool   // 思考内容块是否已打开
+	ThinkingStopPending       bool   // 思考块停止是否待处理
+	ThinkingSignature         string // 思考签名（encrypted_content）
+	ThinkingSummarySeen       bool   // 是否已看到思考摘要
 }
 
 // ConvertCodexResponseToClaude performs sophisticated streaming response format conversion.
@@ -372,6 +375,9 @@ func ConvertCodexResponseToClaudeNonStream(_ context.Context, _ string, original
 	return out
 }
 
+// codexStopReason 从 Codex 响应数据中提取停止原因。
+// 优先使用 stop_reason 字段，其次检查 incomplete_details.reason，
+// 最后检查 stop_sequence。
 func codexStopReason(responseData gjson.Result) string {
 	if stopReason := responseData.Get("stop_reason"); stopReason.Exists() && stopReason.String() != "" {
 		if stopReason.String() == "stop" && codexStopSequence(responseData).String() != "" {
@@ -388,6 +394,8 @@ func codexStopReason(responseData gjson.Result) string {
 	return ""
 }
 
+// mapCodexStopReasonToClaude 将 Codex 停止原因映射为 Claude 停止原因。
+// 如果存在工具调用则返回 "tool_use"，否则按映射表转换。
 func mapCodexStopReasonToClaude(stopReason string, hasToolCall bool) string {
 	if hasToolCall {
 		return "tool_use"
@@ -409,10 +417,12 @@ func mapCodexStopReasonToClaude(stopReason string, hasToolCall bool) string {
 	}
 }
 
+// codexStopSequence 从 Codex 响应数据中提取停止序列。
 func codexStopSequence(responseData gjson.Result) gjson.Result {
 	return responseData.Get("stop_sequence")
 }
 
+// setClaudeStopSequence 在输出 JSON 中设置 Claude 停止序列（如果存在）。
 func setClaudeStopSequence(out []byte, path string, responseData gjson.Result) []byte {
 	if stopSequence := codexStopSequence(responseData); stopSequence.Exists() && stopSequence.String() != "" {
 		out, _ = sjson.SetRawBytes(out, path, []byte(stopSequence.Raw))
@@ -420,6 +430,9 @@ func setClaudeStopSequence(out []byte, path string, responseData gjson.Result) [
 	return out
 }
 
+// extractResponsesUsage 从 Codex 响应的 usage 字段中提取 Token 使用信息。
+// 返回输入 Token 数、输出 Token 数和缓存 Token 数。
+// 如果存在缓存 Token，会从输入 Token 中扣除已缓存部分。
 func extractResponsesUsage(usage gjson.Result) (int64, int64, int64) {
 	if !usage.Exists() || usage.Type == gjson.Null {
 		return 0, 0, 0
@@ -440,7 +453,8 @@ func extractResponsesUsage(usage gjson.Result) (int64, int64, int64) {
 	return inputTokens, outputTokens, cachedTokens
 }
 
-// buildReverseMapFromClaudeOriginalShortToOriginal builds a map[short]original from original Claude request tools.
+// buildReverseMapFromClaudeOriginalShortToOriginal 从原始 Claude 请求的工具声明中
+// 构建 map[short]original 映射，用于将 Codex 响应中的缩短工具名恢复为原始名称。
 func buildReverseMapFromClaudeOriginalShortToOriginal(original []byte) map[string]string {
 	tools := gjson.GetBytes(original, "tools")
 	rev := map[string]string{}
@@ -464,10 +478,13 @@ func buildReverseMapFromClaudeOriginalShortToOriginal(original []byte) map[strin
 	return rev
 }
 
+// ClaudeTokenCount 生成 Claude 格式的 Token 计数 JSON 响应。
 func ClaudeTokenCount(_ context.Context, count int64) []byte {
 	return translatorcommon.ClaudeInputTokensJSON(count)
 }
 
+// startCodexThinkingBlock 开始一个新的 Codex 思考内容块。
+// 如果思考块已打开则返回 nil，否则创建 content_block_start 事件并更新状态。
 func startCodexThinkingBlock(params *ConvertCodexResponseToClaudeParams) []byte {
 	if params.ThinkingBlockOpen {
 		return nil
@@ -481,6 +498,8 @@ func startCodexThinkingBlock(params *ConvertCodexResponseToClaudeParams) []byte 
 	return translatorcommon.AppendSSEEventBytes(nil, "content_block_start", template, 2)
 }
 
+// finalizeCodexSignatureOnlyThinkingBlock 在只有签名而无摘要文本时完成思考块。
+// 先开始思考块，然后立即完成它（仅包含签名）。
 func finalizeCodexSignatureOnlyThinkingBlock(params *ConvertCodexResponseToClaudeParams) []byte {
 	if params.ThinkingSignature == "" {
 		return nil
@@ -491,6 +510,9 @@ func finalizeCodexSignatureOnlyThinkingBlock(params *ConvertCodexResponseToClaud
 	return output
 }
 
+// finalizeCodexThinkingBlock 完成当前的 Codex 思考内容块。
+// 如果有签名则发送 signature_delta 事件，然后发送 content_block_stop 事件，
+// 并更新块索引和状态标记。
 func finalizeCodexThinkingBlock(params *ConvertCodexResponseToClaudeParams) []byte {
 	if !params.ThinkingBlockOpen {
 		return nil

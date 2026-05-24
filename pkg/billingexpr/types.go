@@ -1,3 +1,14 @@
+// Package billingexpr - types.go
+// 该文件定义了计费表达式系统的数据类型
+//
+// 主要类型：
+// - RequestInput：请求输入（头部和请求体）
+// - TokenParams：Token 维度参数（P、C 及可选的缓存 Token 维度）
+// - BillingSnapshot：计费快照（表达式、版本、配额转换系数）
+// - TieredResult：分层计费结果
+//
+// 用途：
+// - 在表达式编译、运行、结算各阶段传递数据
 package billingexpr
 
 import (

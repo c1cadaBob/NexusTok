@@ -1,3 +1,8 @@
+// management - config_auth_index.go
+// 配置 API Key 到运行时认证索引的映射。
+// 该模块将配置文件中的 API Key 条目与运行时认证管理器中的记录关联起来，
+// 为每个配置条目附加对应的 auth-index，便于管理面板展示认证状态。
+// 支持 Gemini、Claude、Codex、Vertex 和 OpenAI 兼容等所有提供者类型。
 package management
 
 import (
@@ -8,43 +13,52 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
 )
 
+// geminiKeyWithAuthIndex 带认证索引的 Gemini API Key 条目。
 type geminiKeyWithAuthIndex struct {
-	config.GeminiKey
-	AuthIndex string `json:"auth-index,omitempty"`
+	config.GeminiKey                    // 嵌入原始 Gemini Key 配置
+	AuthIndex       string `json:"auth-index,omitempty"` // 对应的运行时认证索引
 }
 
+// claudeKeyWithAuthIndex 带认证索引的 Claude API Key 条目。
 type claudeKeyWithAuthIndex struct {
-	config.ClaudeKey
-	AuthIndex string `json:"auth-index,omitempty"`
+	config.ClaudeKey                    // 嵌入原始 Claude Key 配置
+	AuthIndex        string `json:"auth-index,omitempty"` // 对应的运行时认证索引
 }
 
+// codexKeyWithAuthIndex 带认证索引的 Codex API Key 条目。
 type codexKeyWithAuthIndex struct {
-	config.CodexKey
-	AuthIndex string `json:"auth-index,omitempty"`
+	config.CodexKey                    // 嵌入原始 Codex Key 配置
+	AuthIndex       string `json:"auth-index,omitempty"` // 对应的运行时认证索引
 }
 
+// vertexCompatKeyWithAuthIndex 带认证索引的 Vertex 兼容 API Key 条目。
 type vertexCompatKeyWithAuthIndex struct {
-	config.VertexCompatKey
-	AuthIndex string `json:"auth-index,omitempty"`
+	config.VertexCompatKey                    // 嵌入原始 Vertex 兼容 Key 配置
+	AuthIndex              string `json:"auth-index,omitempty"` // 对应的运行时认证索引
 }
 
+// openAICompatibilityAPIKeyWithAuthIndex 带认证索引的 OpenAI 兼容 API Key 条目。
 type openAICompatibilityAPIKeyWithAuthIndex struct {
-	config.OpenAICompatibilityAPIKey
-	AuthIndex string `json:"auth-index,omitempty"`
+	config.OpenAICompatibilityAPIKey                    // 嵌入原始 OpenAI 兼容 API Key 配置
+	AuthIndex                       string `json:"auth-index,omitempty"` // 对应的运行时认证索引
 }
 
+// openAICompatibilityWithAuthIndex 带认证索引的 OpenAI 兼容配置条目。
 type openAICompatibilityWithAuthIndex struct {
-	Name          string                                   `json:"name"`
-	Priority      int                                      `json:"priority,omitempty"`
-	Disabled      bool                                     `json:"disabled"`
-	Prefix        string                                   `json:"prefix,omitempty"`
-	BaseURL       string                                   `json:"base-url"`
-	APIKeyEntries []openAICompatibilityAPIKeyWithAuthIndex `json:"api-key-entries,omitempty"`
-	Models        []config.OpenAICompatibilityModel        `json:"models,omitempty"`
-	Headers       map[string]string                        `json:"headers,omitempty"`
-	AuthIndex     string                                   `json:"auth-index,omitempty"`
+	Name          string                                   `json:"name"`                      // 提供者名称
+	Priority      int                                      `json:"priority,omitempty"`        // 优先级
+	Disabled      bool                                     `json:"disabled"`                  // 是否禁用
+	Prefix        string                                   `json:"prefix,omitempty"`          // 路径前缀
+	BaseURL       string                                   `json:"base-url"`                  // 基础 URL
+	APIKeyEntries []openAICompatibilityAPIKeyWithAuthIndex `json:"api-key-entries,omitempty"` // API Key 条目列表
+	Models        []config.OpenAICompatibilityModel        `json:"models,omitempty"`          // 模型列表
+	Headers       map[string]string                        `json:"headers,omitempty"`         // 自定义头部
+	AuthIndex     string                                   `json:"auth-index,omitempty"`      // 对应的运行时认证索引
 }
 
+// liveAuthIndexByID 构建认证 ID 到运行时认证索引的映射表。
+// 遍历认证管理器中的所有记录，提取 ID 和 Index 的对应关系。
+// 用于将配置文件中的 API Key 关联到运行时的认证索引。
 func (h *Handler) liveAuthIndexByID() map[string]string {
 	out := map[string]string{}
 	if h == nil {
@@ -77,6 +91,8 @@ func (h *Handler) liveAuthIndexByID() map[string]string {
 	return out
 }
 
+// geminiKeysWithAuthIndex 返回带认证索引的 Gemini API Key 列表。
+// 使用稳定的 ID 生成器将配置中的 API Key 映射到运行时认证索引。
 func (h *Handler) geminiKeysWithAuthIndex() []geminiKeyWithAuthIndex {
 	if h == nil {
 		return nil
@@ -106,6 +122,7 @@ func (h *Handler) geminiKeysWithAuthIndex() []geminiKeyWithAuthIndex {
 	return out
 }
 
+// claudeKeysWithAuthIndex 返回带认证索引的 Claude API Key 列表。
 func (h *Handler) claudeKeysWithAuthIndex() []claudeKeyWithAuthIndex {
 	if h == nil {
 		return nil
@@ -135,6 +152,7 @@ func (h *Handler) claudeKeysWithAuthIndex() []claudeKeyWithAuthIndex {
 	return out
 }
 
+// codexKeysWithAuthIndex 返回带认证索引的 Codex API Key 列表。
 func (h *Handler) codexKeysWithAuthIndex() []codexKeyWithAuthIndex {
 	if h == nil {
 		return nil
@@ -164,6 +182,7 @@ func (h *Handler) codexKeysWithAuthIndex() []codexKeyWithAuthIndex {
 	return out
 }
 
+// vertexCompatKeysWithAuthIndex 返回带认证索引的 Vertex 兼容 API Key 列表。
 func (h *Handler) vertexCompatKeysWithAuthIndex() []vertexCompatKeyWithAuthIndex {
 	if h == nil {
 		return nil
@@ -190,6 +209,8 @@ func (h *Handler) vertexCompatKeysWithAuthIndex() []vertexCompatKeyWithAuthIndex
 	return out
 }
 
+// openAICompatibilityWithAuthIndex 返回带认证索引的 OpenAI 兼容配置列表。
+// 对于有 API Key 条目的配置，每个条目都会单独映射认证索引。
 func (h *Handler) openAICompatibilityWithAuthIndex() []openAICompatibilityWithAuthIndex {
 	if h == nil {
 		return nil

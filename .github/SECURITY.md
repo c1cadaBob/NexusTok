@@ -1,5 +1,7 @@
 # Security Policy
 
+[中文版](SECURITY_CN.md)
+
 > [!IMPORTANT]
 > **Bulk Reporting Policy:** If you need to submit multiple vulnerability reports in bulk, **you must contact us first** ([support@c1cada.dev](mailto:support@c1cada.dev)) to coordinate the submission process. Uncoordinated bulk submissions have caused significant disruption to our team, and we will take the following actions:
 >

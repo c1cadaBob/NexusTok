@@ -1,3 +1,11 @@
+// Package oauth - oidc.go
+// 该文件实现了 OIDC（OpenID Connect）认证提供商
+//
+// 功能说明：
+// - 支持标准 OIDC 授权流程
+// - 支持 OIDC Discovery 自动发现端点
+// - 获取 OIDC 用户信息（sub、name、email 等）
+// - 实现 Provider 接口的所有方法
 package oauth
 
 import (
@@ -16,38 +24,47 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// init 在包初始化时自动注册 OIDC 提供商
 func init() {
 	Register("oidc", &OIDCProvider{})
 }
 
-// OIDCProvider implements OAuth for OIDC
+// OIDCProvider 实现标准 OpenID Connect 认证
+// OIDC 是基于 OAuth 2.0 的身份认证层，提供标准化的用户信息端点
 type OIDCProvider struct{}
 
+// oidcOAuthResponse 表示 OIDC Token 端点的响应
 type oidcOAuthResponse struct {
-	AccessToken  string `json:"access_token"`
-	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-	Scope        string `json:"scope"`
+	AccessToken  string `json:"access_token"`  // 访问令牌
+	IDToken      string `json:"id_token"`      // OIDC ID 令牌（JWT，包含用户身份声明）
+	RefreshToken string `json:"refresh_token"` // 刷新令牌
+	TokenType    string `json:"token_type"`    // 令牌类型
+	ExpiresIn    int    `json:"expires_in"`    // 过期时间（秒）
+	Scope        string `json:"scope"`         // 授权范围
 }
 
+// oidcUser 表示 OIDC UserInfo 端点的响应
+// 字段名遵循 OpenID Connect Core 1.0 规范
 type oidcUser struct {
-	OpenID            string `json:"sub"`
-	Email             string `json:"email"`
-	Name              string `json:"name"`
-	PreferredUsername string `json:"preferred_username"`
-	Picture           string `json:"picture"`
+	OpenID            string `json:"sub"`                // Subject：用户唯一标识（OIDC 标准字段）
+	Email             string `json:"email"`              // 邮箱地址
+	Name              string `json:"name"`               // 全名
+	PreferredUsername string `json:"preferred_username"` // 首选用户名
+	Picture           string `json:"picture"`            // 头像 URL
 }
 
+// GetName 返回提供商显示名称
 func (p *OIDCProvider) GetName() string {
 	return "OIDC"
 }
 
+// IsEnabled 检查 OIDC 是否已启用（从系统设置读取）
 func (p *OIDCProvider) IsEnabled() bool {
 	return system_setting.GetOIDCSettings().Enabled
 }
 
+// ExchangeToken 使用授权码向 OIDC Token 端点交换访问令牌
+// Token 端点地址从系统设置中读取（支持 OIDC Discovery 自动发现）
 func (p *OIDCProvider) ExchangeToken(ctx context.Context, code string, c *gin.Context) (*OAuthToken, error) {
 	if code == "" {
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
@@ -109,6 +126,9 @@ func (p *OIDCProvider) ExchangeToken(ctx context.Context, code string, c *gin.Co
 	}, nil
 }
 
+// GetUserInfo 使用访问令牌从 OIDC UserInfo 端点获取用户信息
+// UserInfo 端点地址从系统设置中读取
+// 使用 OIDC 标准字段（sub 作为用户唯一标识）
 func (p *OIDCProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAuthUser, error) {
 	settings := system_setting.GetOIDCSettings()
 
@@ -159,19 +179,23 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAu
 	}, nil
 }
 
+// IsUserIDTaken 检查 OIDC sub（Subject ID）是否已被其他账号关联
 func (p *OIDCProvider) IsUserIDTaken(providerUserID string) bool {
 	return model.IsOidcIdAlreadyTaken(providerUserID)
 }
 
+// FillUserByProviderID 通过 OIDC sub 查找并填充用户信息
 func (p *OIDCProvider) FillUserByProviderID(user *model.User, providerUserID string) error {
 	user.OidcId = providerUserID
 	return user.FillUserByOidcId()
 }
 
+// SetProviderUserID 将 OIDC sub 设置到用户模型
 func (p *OIDCProvider) SetProviderUserID(user *model.User, providerUserID string) {
 	user.OidcId = providerUserID
 }
 
+// GetProviderPrefix 返回 OIDC 用户名前缀 "oidc_"
 func (p *OIDCProvider) GetProviderPrefix() string {
 	return "oidc_"
 }

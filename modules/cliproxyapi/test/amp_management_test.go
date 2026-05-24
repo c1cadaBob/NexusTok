@@ -1,3 +1,12 @@
+// Package test - amp_management_test.go
+// AmpCode 管理 API 的端到端集成测试。
+// 测试覆盖了 AmpCode 配置的各个管理端点，包括：
+// - 上游 URL 的增删改查
+// - 上游 API 密钥的管理
+// - 本地主机限制设置
+// - 模型映射的增删改查（包括 PATCH 合并操作）
+// - 强制模型映射开关
+// - 状态持久化验证
 package test
 
 import (
@@ -14,11 +23,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// init 设置 Gin 为测试模式。
 func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// newAmpTestHandler creates a test handler with default ampcode configuration.
+// newAmpTestHandler 创建一个带有默认 AmpCode 配置的测试处理器。
+// 它在临时目录中创建配置文件，并返回处理器实例和配置文件路径。
+//
+// 参数:
+//   - t: 测试实例
+//
+// 返回值:
+//   - *management.Handler: 测试处理器实例
+//   - string: 配置文件路径
 func newAmpTestHandler(t *testing.T) (*management.Handler, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -44,7 +62,14 @@ func newAmpTestHandler(t *testing.T) (*management.Handler, string) {
 	return h, configPath
 }
 
-// setupAmpRouter creates a test router with all ampcode management endpoints.
+// setupAmpRouter 创建一个包含所有 AmpCode 管理端点的测试路由器。
+// 注册的端点包括：
+// - GET/PUT/DELETE /ampcode/upstream-url
+// - GET/PUT/DELETE /ampcode/upstream-api-key
+// - GET/PUT/PATCH/DELETE /ampcode/upstream-api-keys
+// - GET/PUT /ampcode/restrict-management-to-localhost
+// - GET/PUT/PATCH/DELETE /ampcode/model-mappings
+// - GET/PUT /ampcode/force-model-mappings
 func setupAmpRouter(h *management.Handler) *gin.Engine {
 	r := gin.New()
 	mgmt := r.Group("/v0/management")
@@ -72,7 +97,7 @@ func setupAmpRouter(h *management.Handler) *gin.Engine {
 	return r
 }
 
-// TestGetAmpCode verifies GET /v0/management/ampcode returns full ampcode config.
+// TestGetAmpCode 验证 GET /v0/management/ampcode 返回完整的 AmpCode 配置。
 func TestGetAmpCode(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -99,7 +124,7 @@ func TestGetAmpCode(t *testing.T) {
 	}
 }
 
-// TestGetAmpUpstreamURL verifies GET /v0/management/ampcode/upstream-url returns the upstream URL.
+// TestGetAmpUpstreamURL 验证 GET /v0/management/ampcode/upstream-url 返回上游 URL。
 func TestGetAmpUpstreamURL(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -122,7 +147,7 @@ func TestGetAmpUpstreamURL(t *testing.T) {
 	}
 }
 
-// TestPutAmpUpstreamURL verifies PUT /v0/management/ampcode/upstream-url updates the upstream URL.
+// TestPutAmpUpstreamURL 验证 PUT /v0/management/ampcode/upstream-url 更新上游 URL。
 func TestPutAmpUpstreamURL(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -138,7 +163,7 @@ func TestPutAmpUpstreamURL(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpUpstreamURL verifies DELETE /v0/management/ampcode/upstream-url clears the upstream URL.
+// TestDeleteAmpUpstreamURL 验证 DELETE /v0/management/ampcode/upstream-url 清除上游 URL。
 func TestDeleteAmpUpstreamURL(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -152,7 +177,7 @@ func TestDeleteAmpUpstreamURL(t *testing.T) {
 	}
 }
 
-// TestGetAmpUpstreamAPIKey verifies GET /v0/management/ampcode/upstream-api-key returns the API key.
+// TestGetAmpUpstreamAPIKey 验证 GET /v0/management/ampcode/upstream-api-key 返回 API 密钥。
 func TestGetAmpUpstreamAPIKey(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -176,7 +201,7 @@ func TestGetAmpUpstreamAPIKey(t *testing.T) {
 	}
 }
 
-// TestPutAmpUpstreamAPIKey verifies PUT /v0/management/ampcode/upstream-api-key updates the API key.
+// TestPutAmpUpstreamAPIKey 验证 PUT /v0/management/ampcode/upstream-api-key 更新 API 密钥。
 func TestPutAmpUpstreamAPIKey(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -192,6 +217,7 @@ func TestPutAmpUpstreamAPIKey(t *testing.T) {
 	}
 }
 
+// TestPutAmpUpstreamAPIKeys_PersistsAndReturns 验证 PUT upstream-api-keys 持久化并返回正确结果。
 func TestPutAmpUpstreamAPIKeys_PersistsAndReturns(t *testing.T) {
 	h, configPath := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -238,6 +264,7 @@ func TestPutAmpUpstreamAPIKeys_PersistsAndReturns(t *testing.T) {
 	}
 }
 
+// TestDeleteAmpUpstreamAPIKeys_ClearsAll 验证 DELETE upstream-api-keys 清除所有条目。
 func TestDeleteAmpUpstreamAPIKeys_ClearsAll(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -276,7 +303,7 @@ func TestDeleteAmpUpstreamAPIKeys_ClearsAll(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpUpstreamAPIKey verifies DELETE /v0/management/ampcode/upstream-api-key clears the API key.
+// TestDeleteAmpUpstreamAPIKey 验证 DELETE /v0/management/ampcode/upstream-api-key 清除 API 密钥。
 func TestDeleteAmpUpstreamAPIKey(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -290,7 +317,7 @@ func TestDeleteAmpUpstreamAPIKey(t *testing.T) {
 	}
 }
 
-// TestGetAmpRestrictManagementToLocalhost verifies GET returns the localhost restriction setting.
+// TestGetAmpRestrictManagementToLocalhost 验证 GET 返回本地主机限制设置。
 func TestGetAmpRestrictManagementToLocalhost(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -313,7 +340,7 @@ func TestGetAmpRestrictManagementToLocalhost(t *testing.T) {
 	}
 }
 
-// TestPutAmpRestrictManagementToLocalhost verifies PUT updates the localhost restriction setting.
+// TestPutAmpRestrictManagementToLocalhost 验证 PUT 更新本地主机限制设置。
 func TestPutAmpRestrictManagementToLocalhost(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -329,7 +356,7 @@ func TestPutAmpRestrictManagementToLocalhost(t *testing.T) {
 	}
 }
 
-// TestGetAmpModelMappings verifies GET /v0/management/ampcode/model-mappings returns all mappings.
+// TestGetAmpModelMappings 验证 GET /v0/management/ampcode/model-mappings 返回所有映射。
 func TestGetAmpModelMappings(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -356,7 +383,7 @@ func TestGetAmpModelMappings(t *testing.T) {
 	}
 }
 
-// TestPutAmpModelMappings verifies PUT /v0/management/ampcode/model-mappings replaces all mappings.
+// TestPutAmpModelMappings 验证 PUT /v0/management/ampcode/model-mappings 替换所有映射。
 func TestPutAmpModelMappings(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -372,7 +399,7 @@ func TestPutAmpModelMappings(t *testing.T) {
 	}
 }
 
-// TestPatchAmpModelMappings verifies PATCH updates existing mappings and adds new ones.
+// TestPatchAmpModelMappings 验证 PATCH 更新现有映射并添加新映射。
 func TestPatchAmpModelMappings(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -388,7 +415,7 @@ func TestPatchAmpModelMappings(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpModelMappings_Specific verifies DELETE removes specified mappings by "from" field.
+// TestDeleteAmpModelMappings_Specific 验证 DELETE 按 "from" 字段移除指定映射。
 func TestDeleteAmpModelMappings_Specific(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -404,7 +431,7 @@ func TestDeleteAmpModelMappings_Specific(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpModelMappings_All verifies DELETE with empty body removes all mappings.
+// TestDeleteAmpModelMappings_All 验证 DELETE 空请求体移除所有映射。
 func TestDeleteAmpModelMappings_All(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -418,7 +445,7 @@ func TestDeleteAmpModelMappings_All(t *testing.T) {
 	}
 }
 
-// TestGetAmpForceModelMappings verifies GET returns the force-model-mappings setting.
+// TestGetAmpForceModelMappings 验证 GET 返回 force-model-mappings 设置。
 func TestGetAmpForceModelMappings(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -441,7 +468,7 @@ func TestGetAmpForceModelMappings(t *testing.T) {
 	}
 }
 
-// TestPutAmpForceModelMappings verifies PUT updates the force-model-mappings setting.
+// TestPutAmpForceModelMappings 验证 PUT 更新 force-model-mappings 设置。
 func TestPutAmpForceModelMappings(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -457,7 +484,7 @@ func TestPutAmpForceModelMappings(t *testing.T) {
 	}
 }
 
-// TestPutAmpModelMappings_VerifyState verifies PUT replaces mappings and state is persisted.
+// TestPutAmpModelMappings_VerifyState 验证 PUT 替换映射后状态持久化正确。
 func TestPutAmpModelMappings_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -494,7 +521,7 @@ func TestPutAmpModelMappings_VerifyState(t *testing.T) {
 	}
 }
 
-// TestPatchAmpModelMappings_VerifyState verifies PATCH merges mappings correctly.
+// TestPatchAmpModelMappings_VerifyState 验证 PATCH 正确合并映射。
 func TestPatchAmpModelMappings_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -536,7 +563,7 @@ func TestPatchAmpModelMappings_VerifyState(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpModelMappings_VerifyState verifies DELETE removes specific mappings and keeps others.
+// TestDeleteAmpModelMappings_VerifyState 验证 DELETE 移除指定映射并保留其他映射。
 func TestDeleteAmpModelMappings_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -575,7 +602,7 @@ func TestDeleteAmpModelMappings_VerifyState(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpModelMappings_NonExistent verifies DELETE with non-existent mapping doesn't affect existing ones.
+// TestDeleteAmpModelMappings_NonExistent 验证 DELETE 不存在的映射不影响现有映射。
 func TestDeleteAmpModelMappings_NonExistent(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -604,7 +631,7 @@ func TestDeleteAmpModelMappings_NonExistent(t *testing.T) {
 	}
 }
 
-// TestPutAmpModelMappings_Empty verifies PUT with empty array clears all mappings.
+// TestPutAmpModelMappings_Empty 验证 PUT 空数组清除所有映射。
 func TestPutAmpModelMappings_Empty(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -633,7 +660,7 @@ func TestPutAmpModelMappings_Empty(t *testing.T) {
 	}
 }
 
-// TestPutAmpUpstreamURL_VerifyState verifies PUT updates upstream URL and persists state.
+// TestPutAmpUpstreamURL_VerifyState 验证 PUT 更新上游 URL 并持久化状态。
 func TestPutAmpUpstreamURL_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -662,7 +689,7 @@ func TestPutAmpUpstreamURL_VerifyState(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpUpstreamURL_VerifyState verifies DELETE clears upstream URL.
+// TestDeleteAmpUpstreamURL_VerifyState 验证 DELETE 清除上游 URL。
 func TestDeleteAmpUpstreamURL_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -689,7 +716,7 @@ func TestDeleteAmpUpstreamURL_VerifyState(t *testing.T) {
 	}
 }
 
-// TestPutAmpUpstreamAPIKey_VerifyState verifies PUT updates API key and persists state.
+// TestPutAmpUpstreamAPIKey_VerifyState 验证 PUT 更新 API 密钥并持久化状态。
 func TestPutAmpUpstreamAPIKey_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -718,7 +745,7 @@ func TestPutAmpUpstreamAPIKey_VerifyState(t *testing.T) {
 	}
 }
 
-// TestDeleteAmpUpstreamAPIKey_VerifyState verifies DELETE clears API key.
+// TestDeleteAmpUpstreamAPIKey_VerifyState 验证 DELETE 清除 API 密钥。
 func TestDeleteAmpUpstreamAPIKey_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -745,7 +772,7 @@ func TestDeleteAmpUpstreamAPIKey_VerifyState(t *testing.T) {
 	}
 }
 
-// TestPutAmpRestrictManagementToLocalhost_VerifyState verifies PUT updates localhost restriction.
+// TestPutAmpRestrictManagementToLocalhost_VerifyState 验证 PUT 更新本地主机限制。
 func TestPutAmpRestrictManagementToLocalhost_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -774,7 +801,7 @@ func TestPutAmpRestrictManagementToLocalhost_VerifyState(t *testing.T) {
 	}
 }
 
-// TestPutAmpForceModelMappings_VerifyState verifies PUT updates force-model-mappings setting.
+// TestPutAmpForceModelMappings_VerifyState 验证 PUT 更新 force-model-mappings 设置。
 func TestPutAmpForceModelMappings_VerifyState(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -803,7 +830,7 @@ func TestPutAmpForceModelMappings_VerifyState(t *testing.T) {
 	}
 }
 
-// TestPutBoolField_EmptyObject verifies PUT with empty object returns 400.
+// TestPutBoolField_EmptyObject 验证 PUT 空对象返回 400 错误。
 func TestPutBoolField_EmptyObject(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -819,7 +846,7 @@ func TestPutBoolField_EmptyObject(t *testing.T) {
 	}
 }
 
-// TestComplexMappingsWorkflow tests a full workflow: PUT, PATCH, DELETE, and GET.
+// TestComplexMappingsWorkflow 测试完整的工作流程：PUT、PATCH、DELETE 和 GET。
 func TestComplexMappingsWorkflow(t *testing.T) {
 	h, _ := newAmpTestHandler(t)
 	r := setupAmpRouter(h)
@@ -869,7 +896,7 @@ func TestComplexMappingsWorkflow(t *testing.T) {
 	}
 }
 
-// TestNilHandlerGetAmpCode verifies handler works with empty config.
+// TestNilHandlerGetAmpCode 验证处理器在空配置下正常工作。
 func TestNilHandlerGetAmpCode(t *testing.T) {
 	cfg := &config.Config{}
 	h := management.NewHandler(cfg, "", nil)
@@ -884,7 +911,7 @@ func TestNilHandlerGetAmpCode(t *testing.T) {
 	}
 }
 
-// TestEmptyConfigGetAmpModelMappings verifies GET returns empty array for fresh config.
+// TestEmptyConfigGetAmpModelMappings 验证 GET 对空配置返回空数组。
 func TestEmptyConfigGetAmpModelMappings(t *testing.T) {
 	cfg := &config.Config{}
 	tmpDir := t.TempDir()

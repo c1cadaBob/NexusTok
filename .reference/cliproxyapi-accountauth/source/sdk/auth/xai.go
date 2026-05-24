@@ -1,3 +1,6 @@
+// 包 auth - xai.go
+// 该文件实现了 xAI Grok 的 OAuth 回环（loopback）认证流程。
+// 包括本地回调服务器启动、PKCE 码生成、OIDC 发现、授权码交换和认证记录构建等功能。
 package auth
 
 import (
@@ -17,26 +20,42 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// XAIAuthenticator implements the xAI Grok OAuth loopback flow.
+// XAIAuthenticator 实现了 xAI Grok 的 OAuth 回环认证登录认证器。
 type XAIAuthenticator struct{}
 
-// NewXAIAuthenticator constructs a new xAI authenticator.
+// NewXAIAuthenticator 构造一个新的 xAI 认证器实例。
+//
+// 返回:
+//   - Authenticator: xAI 认证器实例
 func NewXAIAuthenticator() Authenticator {
 	return &XAIAuthenticator{}
 }
 
-// Provider returns the provider key for xAI.
+// Provider 返回 xAI 提供商的标识名称。
 func (XAIAuthenticator) Provider() string {
 	return "xai"
 }
 
-// RefreshLead instructs the manager to refresh before token expiry.
+// RefreshLead 指示管理器在令牌过期前执行刷新。
+//
+// 返回:
+//   - *time.Duration: 提前刷新的时间间隔
 func (XAIAuthenticator) RefreshLead() *time.Duration {
 	lead := xaiauth.RefreshLead()
 	return &lead
 }
 
-// Login launches a local OAuth flow to obtain xAI tokens and persists them.
+// Login 启动本地 OAuth 流程以获取 xAI 令牌并持久化存储。
+// 流程包括：OIDC 发现、PKCE 码生成、启动回调服务器、打开浏览器、等待授权回调、交换令牌。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - cfg: 应用配置
+//   - opts: 登录选项
+//
+// 返回:
+//   - *coreauth.Auth: 认证结果，包含令牌存储和元数据
+//   - error: 登录失败时返回错误信息
 func (a XAIAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
@@ -227,6 +246,17 @@ waitForCallback:
 	}, nil
 }
 
+// parseXAIManualCallbackToken 解析用户手动粘贴的 xAI 回调令牌。
+// 验证输入不包含 URL 格式（应仅粘贴令牌本身）。
+//
+// 参数:
+//   - input: 用户输入的令牌字符串
+//   - state: 期望的状态参数
+//
+// 返回:
+//   - callbackResult: 解析后的回调结果
+//   - bool: 是否成功解析
+//   - error: 解析失败时返回错误信息
 func parseXAIManualCallbackToken(input string, state string) (callbackResult, bool, error) {
 	token := strings.TrimSpace(input)
 	if token == "" {
@@ -238,6 +268,17 @@ func parseXAIManualCallbackToken(input string, state string) (callbackResult, bo
 	return callbackResult{Code: token, State: state}, true, nil
 }
 
+// startXAICallbackServer 启动本地 HTTP 服务器用于接收 xAI OAuth 回调。
+// 服务器监听指定端口（默认回环地址），当收到回调请求时将结果发送到通道。
+//
+// 参数:
+//   - port: 监听端口（<=0 时使用默认端口）
+//
+// 返回:
+//   - *http.Server: HTTP 服务器实例
+//   - int: 实际监听的端口号
+//   - <-chan callbackResult: 回调结果通道
+//   - error: 服务器启动失败时返回错误信息
 func startXAICallbackServer(port int) (*http.Server, int, <-chan callbackResult, error) {
 	if port <= 0 {
 		port = xaiauth.CallbackPort

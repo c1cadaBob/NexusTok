@@ -1,3 +1,6 @@
+// synthesizer - config_test.go
+// 测试配置合成器的功能，验证从配置文件生成认证条目的各种场景，
+// 包括 Gemini、Claude、Codex、OpenAI 兼容、Vertex 兼容等提供商的密钥合成。
 package synthesizer
 
 import (

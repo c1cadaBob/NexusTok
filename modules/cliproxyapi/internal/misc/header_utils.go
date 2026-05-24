@@ -19,6 +19,7 @@ const (
 )
 
 // geminiCLIOS maps Go runtime OS names to the Node.js-style platform strings used by Gemini CLI.
+// geminiCLIOS 将 Go 运行时操作系统名称映射为 Gemini CLI 使用的 Node.js 风格平台字符串。
 func geminiCLIOS() string {
 	switch runtime.GOOS {
 	case "windows":
@@ -29,6 +30,7 @@ func geminiCLIOS() string {
 }
 
 // geminiCLIArch maps Go runtime architecture names to the Node.js-style arch strings used by Gemini CLI.
+// geminiCLIArch 将 Go 运行时架构名称映射为 Gemini CLI 使用的 Node.js 风格架构字符串。
 func geminiCLIArch() string {
 	switch runtime.GOARCH {
 	case "amd64":

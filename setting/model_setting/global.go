@@ -1,3 +1,8 @@
+// global.go — 全局模型配置管理
+// 职责：定义和管理全局级别的模型配置，包括透传请求开关、思维链后缀模型黑名单、
+// 以及 ChatCompletions 到 Responses API 的转换策略等跨模型的通用设置。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package model_setting
 
 import (
@@ -7,14 +12,18 @@ import (
 	"github.com/c1cada/NexusTok/setting/config"
 )
 
+// ChatCompletionsToResponsesPolicy 定义 ChatCompletions 请求自动转换为 Responses API 的策略配置。
+// 可按渠道 ID、渠道类型、模型名称模式等维度控制转换行为。
 type ChatCompletionsToResponsesPolicy struct {
-	Enabled       bool     `json:"enabled"`
-	AllChannels   bool     `json:"all_channels"`
-	ChannelIDs    []int    `json:"channel_ids,omitempty"`
-	ChannelTypes  []int    `json:"channel_types,omitempty"`
-	ModelPatterns []string `json:"model_patterns,omitempty"`
+	Enabled       bool     `json:"enabled"`                  // 是否启用转换策略
+	AllChannels   bool     `json:"all_channels"`             // 是否对所有渠道生效
+	ChannelIDs    []int    `json:"channel_ids,omitempty"`    // 指定生效的渠道 ID 列表
+	ChannelTypes  []int    `json:"channel_types,omitempty"`  // 指定生效的渠道类型列表
+	ModelPatterns []string `json:"model_patterns,omitempty"` // 指定生效的模型名称模式列表
 }
 
+// IsChannelEnabled 判断指定渠道是否启用 ChatCompletions 到 Responses 的转换。
+// 依次检查：策略总开关 -> 全渠道开关 -> 渠道 ID 匹配 -> 渠道类型匹配。
 func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channelType int) bool {
 	if !p.Enabled {
 		return false
@@ -32,10 +41,11 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 	return false
 }
 
+// GlobalSettings 定义全局模型配置结构体，包含跨模型的通用设置。
 type GlobalSettings struct {
-	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`
-	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`
-	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`        // 是否启用请求透传模式
+	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`            // 需保留 thinking/-nothinking 等后缀的模型黑名单
+	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"` // ChatCompletions 转 Responses API 的策略
 }
 
 // 默认配置
@@ -59,6 +69,7 @@ func init() {
 	config.GlobalConfig.Register("global", &globalSettings)
 }
 
+// GetGlobalSettings 获取当前全局配置的指针。
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
 }

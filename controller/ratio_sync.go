@@ -1,3 +1,16 @@
+// Package controller - ratio_sync.go
+// 该文件实现了倍率同步功能的 API 控制器
+//
+// 倍率同步用于从上游渠道获取最新的模型倍率配置
+// 支持多种上游数据格式：
+// - type1: /api/ratio_config 格式（map 结构）
+// - type2: /api/pricing 格式（列表结构）
+// - type3: OpenRouter /v1/models 格式（USD 价格转换为倍率）
+// - type4: models.dev /api.json 格式（供应商定价元数据）
+//
+// 主要 API：
+// - FetchUpstreamRatios：从上游获取倍率数据并计算差异
+// - GetSyncableChannels：获取可同步的渠道列表
 package controller
 
 import (
@@ -28,23 +41,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 常量定义
 const (
-	defaultTimeoutSeconds       = 10
-	defaultEndpoint             = "/api/pricing"
-	maxConcurrentFetches        = 8
-	maxRatioConfigBytes         = 10 << 20 // 10MB
-	floatEpsilon                = 1e-9
-	officialRatioPresetID       = -100
-	officialRatioPresetName     = "官方倍率预设"
-	officialRatioPresetBaseURL  = "https://basellm.github.io"
-	modelsDevPresetID           = -101
-	modelsDevPresetName         = "models.dev 价格预设"
-	modelsDevPresetBaseURL      = "https://models.dev"
-	modelsDevHost               = "models.dev"
-	modelsDevPath               = "/api.json"
-	modelsDevInputCostRatioBase = 1000.0
+	defaultTimeoutSeconds       = 10              // 默认超时时间（秒）
+	defaultEndpoint             = "/api/pricing"  // 默认端点路径
+	maxConcurrentFetches        = 8               // 最大并发请求数
+	maxRatioConfigBytes         = 10 << 20        // 最大响应体大小（10MB）
+	floatEpsilon                = 1e-9            // 浮点数比较精度
+	officialRatioPresetID       = -100            // 官方倍率预设 ID
+	officialRatioPresetName     = "官方倍率预设"   // 官方倍率预设名称
+	officialRatioPresetBaseURL  = "https://basellm.github.io" // 官方预设基础 URL
+	modelsDevPresetID           = -101            // models.dev 预设 ID
+	modelsDevPresetName         = "models.dev 价格预设" // models.dev 预设名称
+	modelsDevPresetBaseURL      = "https://models.dev" // models.dev 基础 URL
+	modelsDevHost               = "models.dev"    // models.dev 主机名
+	modelsDevPath               = "/api.json"     // models.dev API 路径
+	modelsDevInputCostRatioBase = 1000.0          // models.dev 输入成本倍率基数
 )
 
+// nearlyEqual 比较两个浮点数是否近似相等
+//
+// 使用 floatEpsilon 作为精度阈值
 func nearlyEqual(a, b float64) bool {
 	if a > b {
 		return a-b < floatEpsilon
@@ -52,6 +69,7 @@ func nearlyEqual(a, b float64) bool {
 	return b-a < floatEpsilon
 }
 
+// valuesEqual 比较两个值是否相等（支持浮点数近似比较）
 func valuesEqual(a, b interface{}) bool {
 	af, aok := a.(float64)
 	bf, bok := b.(float64)
@@ -61,6 +79,7 @@ func valuesEqual(a, b interface{}) bool {
 	return a == b
 }
 
+// pricingSyncFields 可同步的定价字段列表
 var pricingSyncFields = []string{
 	"model_ratio",
 	"completion_ratio",
@@ -74,6 +93,7 @@ var pricingSyncFields = []string{
 	billing_setting.BillingExprField,
 }
 
+// numericPricingSyncFields 需要数值类型转换的字段映射
 var numericPricingSyncFields = map[string]bool{
 	"model_ratio":            true,
 	"completion_ratio":       true,
@@ -85,12 +105,14 @@ var numericPricingSyncFields = map[string]bool{
 	"model_price":            true,
 }
 
+// upstreamResult 上游请求结果结构体
 type upstreamResult struct {
 	Name string         `json:"name"`
 	Data map[string]any `json:"data,omitempty"`
 	Err  string         `json:"err,omitempty"`
 }
 
+// valueMap 将不同类型的 map 统一转换为 map[string]any
 func valueMap(value any) map[string]any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -104,6 +126,7 @@ func valueMap(value any) map[string]any {
 	}
 }
 
+// asFloat64 将各种数值类型转换为 float64
 func asFloat64(value any) (float64, bool) {
 	switch typed := value.(type) {
 	case float64:
@@ -122,6 +145,7 @@ func asFloat64(value any) (float64, bool) {
 	}
 }
 
+// normalizeSyncValue 标准化同步值（数值字段统一转为 float64）
 func normalizeSyncValue(field string, value any) any {
 	if numericPricingSyncFields[field] {
 		if parsed, ok := asFloat64(value); ok {
@@ -131,6 +155,7 @@ func normalizeSyncValue(field string, value any) any {
 	return value
 }
 
+// getLocalPricingSyncData 获取本地定价同步数据
 func getLocalPricingSyncData() map[string]any {
 	data := billing_setting.GetPricingSyncData(map[string]any(ratio_setting.GetExposedData()))
 	data["image_ratio"] = ratio_setting.GetImageRatioCopy()
@@ -139,6 +164,14 @@ func getLocalPricingSyncData() map[string]any {
 	return data
 }
 
+// FetchUpstreamRatios 从上游获取倍率数据并计算差异
+//
+// 支持三种数据源：
+// - 直接指定上游 URL
+// - 使用渠道 ID 从数据库获取上游 URL
+// - 使用预设（官方预设或 models.dev）
+//
+// 返回本地与上游的差异数据和测试结果
 func FetchUpstreamRatios(c *gin.Context) {
 	var req dto.UpstreamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -533,6 +566,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 	})
 }
 
+// buildDifferences 构建本地与上游的差异数据
+//
+// 比较本地数据和所有成功获取的上游数据，生成差异报告
+// 包含可信度检查：如果上游数据的 model_ratio=37.5 且 completion_ratio=1，则标记为不可信
 func buildDifferences(localData map[string]any, successfulChannels []struct {
 	name string
 	data map[string]any
@@ -695,10 +732,12 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	return differences
 }
 
+// roundRatioValue 四舍五入倍率值到 6 位小数
 func roundRatioValue(value float64) float64 {
 	return math.Round(value*1e6) / 1e6
 }
 
+// isModelsDevAPIEndpoint 检查 URL 是否为 models.dev API 端点
 func isModelsDevAPIEndpoint(rawURL string) bool {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -806,20 +845,24 @@ func convertOpenRouterToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+// modelsDevProvider models.dev 供应商数据结构体
 type modelsDevProvider struct {
 	Models map[string]modelsDevModel `json:"models"`
 }
 
+// modelsDevModel models.dev 模型数据结构体
 type modelsDevModel struct {
 	Cost modelsDevCost `json:"cost"`
 }
 
+// modelsDevCost models.dev 成本数据结构体
 type modelsDevCost struct {
 	Input     *float64 `json:"input"`
 	Output    *float64 `json:"output"`
 	CacheRead *float64 `json:"cache_read"`
 }
 
+// modelsDevCandidate models.dev 候选数据结构体（用于去重选择）
 type modelsDevCandidate struct {
 	Provider  string
 	Input     float64
@@ -827,6 +870,7 @@ type modelsDevCandidate struct {
 	CacheRead *float64
 }
 
+// cloneFloatPtr 克隆 float64 指针
 func cloneFloatPtr(v *float64) *float64 {
 	if v == nil {
 		return nil
@@ -835,6 +879,7 @@ func cloneFloatPtr(v *float64) *float64 {
 	return &out
 }
 
+// isValidNonNegativeCost 验证成本值是否有效（非负、非 NaN、非 Inf）
 func isValidNonNegativeCost(v float64) bool {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return false
@@ -842,6 +887,7 @@ func isValidNonNegativeCost(v float64) bool {
 	return v >= 0
 }
 
+// buildModelsDevCandidate 构建 models.dev 候选数据
 func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCandidate, bool) {
 	if cost.Input == nil {
 		return modelsDevCandidate{}, false
@@ -878,6 +924,9 @@ func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCand
 	}, true
 }
 
+// shouldReplaceModelsDevCandidate 判断是否应该替换当前候选
+//
+// 优先选择非零价格数据，价格相同时按供应商名称排序
 func shouldReplaceModelsDevCandidate(current, next modelsDevCandidate) bool {
 	currentNonZero := current.Input > 0
 	nextNonZero := next.Input > 0
@@ -984,6 +1033,9 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+// GetSyncableChannels 获取可同步的渠道列表
+//
+// 包含所有有 BaseURL 的渠道，以及官方预设和 models.dev 预设
 func GetSyncableChannels(c *gin.Context) {
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {

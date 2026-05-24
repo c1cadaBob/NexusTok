@@ -1,3 +1,7 @@
+// Package controller - channel.go
+// 该文件实现了渠道管理相关的控制器
+// 渠道是连接上游 AI 提供商的配置单元
+// 每个渠道包含 API 密钥、端点、支持的模型等信息
 package controller
 
 import (
@@ -9,25 +13,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/model"
-	relaychannel "github.com/c1cada/NexusTok/relay/channel"
-	"github.com/c1cada/NexusTok/relay/channel/gemini"
-	"github.com/c1cada/NexusTok/relay/channel/ollama"
-	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/common"                    // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                   // 常量定义
+	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
+	"github.com/c1cada/NexusTok/model"                      // 数据模型
+	relaychannel "github.com/c1cada/NexusTok/relay/channel" // 中继渠道
+	"github.com/c1cada/NexusTok/relay/channel/gemini"       // Gemini 渠道适配器
+	"github.com/c1cada/NexusTok/relay/channel/ollama"       // Ollama 渠道适配器
+	"github.com/c1cada/NexusTok/service"                    // 服务层
 
-	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin" // Gin 框架
 )
 
+// OpenAIModel OpenAI 模型结构体
+// 用于表示从上游获取的模型信息
 type OpenAIModel struct {
-	ID         string         `json:"id"`
-	Object     string         `json:"object"`
-	Created    int64          `json:"created"`
-	OwnedBy    string         `json:"owned_by"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	Permission []struct {
+	ID         string         `json:"id"`                   // 模型 ID
+	Object     string         `json:"object"`               // 对象类型
+	Created    int64          `json:"created"`              // 创建时间
+	OwnedBy    string         `json:"owned_by"`             // 所有者
+	Metadata   map[string]any `json:"metadata,omitempty"`   // 元数据
+	Permission []struct {                                    // 权限列表
 		ID                 string `json:"id"`
 		Object             string `json:"object"`
 		Created            int64  `json:"created"`
@@ -41,15 +47,24 @@ type OpenAIModel struct {
 		Group              string `json:"group"`
 		IsBlocking         bool   `json:"is_blocking"`
 	} `json:"permission"`
-	Root   string `json:"root"`
-	Parent string `json:"parent"`
+	Root   string `json:"root"`   // 根模型
+	Parent string `json:"parent"` // 父模型
 }
 
+// OpenAIModelsResponse OpenAI 模型列表响应结构体
 type OpenAIModelsResponse struct {
-	Data    []OpenAIModel `json:"data"`
-	Success bool          `json:"success"`
+	Data    []OpenAIModel `json:"data"`    // 模型列表
+	Success bool          `json:"success"` // 是否成功
 }
 
+// parseStatusFilter 解析状态过滤参数
+// 将字符串形式的状态转换为整数常量
+//
+// 参数：
+//   - statusParam: 状态字符串（enabled/disabled/1/0）
+//
+// 返回值：
+//   - int: 状态值（ChannelStatusEnabled=1, disabled=0, default=-1）
 func parseStatusFilter(statusParam string) int {
 	switch strings.ToLower(statusParam) {
 	case "enabled", "1":

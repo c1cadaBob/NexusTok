@@ -1,6 +1,10 @@
+// gemini/gemini - gemini_gemini_request.go
 // Package gemini provides in-provider request normalization for Gemini API.
-// It ensures incoming v1beta requests meet minimal schema requirements
-// expected by Google's Generative Language API.
+// 本文件提供 Gemini API 请求的同提供商标准化功能。
+// 确保传入的 v1beta 请求满足 Google Generative Language API 的最低模式要求，
+// 包括：为每个 content 添加默认角色（缺失或无效时）、工具参数重命名
+// （functionDeclarations -> function_declarations, parameters -> parametersJsonSchema）、
+// 为 functionCall 和 thoughtSignature 注入跳过标记、回填空的 functionResponse.name 等。
 package gemini
 
 import (
@@ -105,10 +109,10 @@ func ConvertGeminiRequestToGemini(_ string, inputRawJSON []byte, _ bool) []byte 
 	return out
 }
 
-// backfillEmptyFunctionResponseNames walks the contents array and for each
-// model turn containing functionCall parts, records the call names in order.
-// For the immediately following user/function turn containing functionResponse
-// parts, any empty name is replaced with the corresponding call name.
+// backfillEmptyFunctionResponseNames 遍历 contents 数组，为每个包含 functionCall 的 model 轮次
+// 记录调用名称。对于紧随其后的包含 functionResponse 的 user/function 轮次，
+// 将任何空的 name 替换为对应的调用名称。
+// Amp 等客户端可能发送空名称的函数响应，Gemini API 会拒绝这些请求。
 func backfillEmptyFunctionResponseNames(data []byte) []byte {
 	contents := gjson.GetBytes(data, "contents")
 	if !contents.Exists() {

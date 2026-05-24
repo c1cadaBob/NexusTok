@@ -1,3 +1,10 @@
+// Package middleware - body_cleanup.go
+// 该文件实现了请求体存储清理中间件
+//
+// 功能：
+// - 在每个 HTTP 请求处理完成后，自动清理该请求创建的 BodyStorage 资源
+// - 清理请求过程中下载的文件资源（如 URL 下载的图片等）
+// - 防止内存泄漏和临时文件堆积
 package middleware
 
 import (

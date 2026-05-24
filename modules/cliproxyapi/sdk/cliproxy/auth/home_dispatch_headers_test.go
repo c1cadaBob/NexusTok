@@ -1,3 +1,5 @@
+// auth - home_dispatch_headers_test.go
+// 该文件包含 homeDispatchHeaders 函数的单元测试，验证 Home 调度请求头的正确构建。
 package auth
 
 import (
@@ -6,11 +8,13 @@ import (
 	"testing"
 )
 
+// homeDispatchTestGinContext 是测试用的 Gin 上下文模拟实现。
 type homeDispatchTestGinContext struct {
-	values map[string]any
-	query  map[string]string
+	values map[string]any      // 上下文值映射
+	query  map[string]string   // URL 查询参数映射
 }
 
+// Get 从上下文中获取指定键的值。
 func (c homeDispatchTestGinContext) Get(key string) (any, bool) {
 	v, ok := c.values[key]
 	return v, ok

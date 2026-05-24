@@ -1,3 +1,6 @@
+// 本文件是 relay/common 包中 StreamStatus 结构体的单元测试集。
+// 覆盖了结束原因设置（首次生效、并发安全）、错误记录（基本功能、容量上限、并发安全）、
+// 正常结束判断和状态摘要生成等功能。
 package common
 
 import (
@@ -8,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestStreamStatus_SetEndReason_FirstWins 测试结束原因只接受第一次设置（sync.Once 语义）。
 func TestStreamStatus_SetEndReason_FirstWins(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -20,6 +24,7 @@ func TestStreamStatus_SetEndReason_FirstWins(t *testing.T) {
 	assert.Nil(t, s.EndError)
 }
 
+// TestStreamStatus_SetEndReason_WithError 测试带错误信息的结束原因设置。
 func TestStreamStatus_SetEndReason_WithError(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -31,12 +36,14 @@ func TestStreamStatus_SetEndReason_WithError(t *testing.T) {
 	assert.Equal(t, expectedErr, s.EndError)
 }
 
+// TestStreamStatus_SetEndReason_NilSafe 测试 nil 接收者的空指针安全性。
 func TestStreamStatus_SetEndReason_NilSafe(t *testing.T) {
 	t.Parallel()
 	var s *StreamStatus
 	s.SetEndReason(StreamEndReasonDone, nil)
 }
 
+// TestStreamStatus_SetEndReason_Concurrent 测试并发设置结束原因的安全性。
 func TestStreamStatus_SetEndReason_Concurrent(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -65,6 +72,7 @@ func TestStreamStatus_SetEndReason_Concurrent(t *testing.T) {
 	assert.NotEqual(t, StreamEndReasonNone, s.EndReason)
 }
 
+// TestStreamStatus_RecordError_Basic 测试基本的错误记录功能。
 func TestStreamStatus_RecordError_Basic(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -78,6 +86,7 @@ func TestStreamStatus_RecordError_Basic(t *testing.T) {
 	assert.Len(t, s.Errors, 3)
 }
 
+// TestStreamStatus_RecordError_CapAtMax 测试错误记录超过上限后仅递增计数器。
 func TestStreamStatus_RecordError_CapAtMax(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -90,12 +99,14 @@ func TestStreamStatus_RecordError_CapAtMax(t *testing.T) {
 	assert.Equal(t, 30, s.TotalErrorCount())
 }
 
+// TestStreamStatus_RecordError_NilSafe 测试 nil 接收者的错误记录空指针安全性。
 func TestStreamStatus_RecordError_NilSafe(t *testing.T) {
 	t.Parallel()
 	var s *StreamStatus
 	s.RecordError("should not panic")
 }
 
+// TestStreamStatus_RecordError_Concurrent 测试并发错误记录的安全性。
 func TestStreamStatus_RecordError_Concurrent(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -114,6 +125,7 @@ func TestStreamStatus_RecordError_Concurrent(t *testing.T) {
 	assert.LessOrEqual(t, len(s.Errors), maxStreamErrorEntries)
 }
 
+// TestStreamStatus_HasErrors_Empty 测试空状态下的 HasErrors 返回 false。
 func TestStreamStatus_HasErrors_Empty(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
@@ -121,6 +133,7 @@ func TestStreamStatus_HasErrors_Empty(t *testing.T) {
 	assert.Equal(t, 0, s.TotalErrorCount())
 }
 
+// TestStreamStatus_HasErrors_NilSafe 测试 nil 接收者的 HasErrors 空指针安全性。
 func TestStreamStatus_HasErrors_NilSafe(t *testing.T) {
 	t.Parallel()
 	var s *StreamStatus
@@ -128,6 +141,7 @@ func TestStreamStatus_HasErrors_NilSafe(t *testing.T) {
 	assert.Equal(t, 0, s.TotalErrorCount())
 }
 
+// TestStreamStatus_IsNormalEnd 测试各种结束原因的正常结束判断。
 func TestStreamStatus_IsNormalEnd(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -151,12 +165,14 @@ func TestStreamStatus_IsNormalEnd(t *testing.T) {
 	}
 }
 
+// TestStreamStatus_IsNormalEnd_NilSafe 测试 nil 接收者的 IsNormalEnd 空指针安全性。
 func TestStreamStatus_IsNormalEnd_NilSafe(t *testing.T) {
 	t.Parallel()
 	var s *StreamStatus
 	assert.True(t, s.IsNormalEnd())
 }
 
+// TestStreamStatus_Summary 测试状态摘要的生成格式。
 func TestStreamStatus_Summary(t *testing.T) {
 	t.Parallel()
 
@@ -175,6 +191,7 @@ func TestStreamStatus_Summary(t *testing.T) {
 	assert.Contains(t, summary2, "soft_errors=2")
 }
 
+// TestStreamStatus_Summary_NilSafe 测试 nil 接收者的 Summary 空指针安全性。
 func TestStreamStatus_Summary_NilSafe(t *testing.T) {
 	t.Parallel()
 	var s *StreamStatus

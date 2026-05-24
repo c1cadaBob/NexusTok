@@ -1,3 +1,6 @@
+// Package browser 提供跨平台的浏览器打开功能，用于在默认浏览器中打开 URL。
+// 它抽象了底层操作系统命令，提供了统一的简单接口。
+//
 // Package browser provides cross-platform functionality for opening URLs in the default web browser.
 // It abstracts the underlying operating system commands and provides a simple interface.
 package browser
@@ -11,15 +14,16 @@ import (
 	"github.com/skratchdot/open-golang/open"
 )
 
+// OpenURL 在默认浏览器中打开指定的 URL。
+// 首先尝试使用跨平台库 open-golang，如果失败则回退到操作系统特定的命令。
+//
+// 参数:
+//   - url: 要打开的 URL 地址
+//
+// 返回值:
+//   - error: 无法打开 URL 时返回错误，成功时返回 nil
+//
 // OpenURL opens the specified URL in the default web browser.
-// It first attempts to use a platform-agnostic library and falls back to
-// platform-specific commands if that fails.
-//
-// Parameters:
-//   - url: The URL to open.
-//
-// Returns:
-//   - An error if the URL cannot be opened, otherwise nil.
 func OpenURL(url string) error {
 	fmt.Printf("Attempting to open URL in browser: %s\n", url)
 
@@ -36,14 +40,16 @@ func OpenURL(url string) error {
 	return openURLPlatformSpecific(url)
 }
 
+// openURLPlatformSpecific 是一个辅助函数，使用操作系统特定的命令打开 URL。
+// 作为 OpenURL 的回退机制。
+//
+// 参数:
+//   - url: 要打开的 URL 地址
+//
+// 返回值:
+//   - error: 无法打开 URL 时返回错误，成功时返回 nil
+//
 // openURLPlatformSpecific is a helper function that opens a URL using OS-specific commands.
-// This serves as a fallback mechanism for OpenURL.
-//
-// Parameters:
-//   - url: The URL to open.
-//
-// Returns:
-//   - An error if the URL cannot be opened, otherwise nil.
 func openURLPlatformSpecific(url string) error {
 	var cmd *exec.Cmd
 
@@ -78,11 +84,14 @@ func openURLPlatformSpecific(url string) error {
 	return nil
 }
 
-// IsAvailable checks if the system has a command available to open a web browser.
-// It verifies the presence of necessary commands for the current operating system.
+// IsAvailable 检查系统是否有可用的命令来打开浏览器。
+// 它会验证当前操作系统上必要的命令是否存在。
 //
-// Returns:
-//   - true if a browser can be opened, false otherwise.
+// 返回值:
+//   - true: 如果可以打开浏览器
+//   - false: 如果没有可用的浏览器命令
+//
+// IsAvailable checks if the system has a command available to open a web browser.
 func IsAvailable() bool {
 	// First check if open-golang can work
 	testErr := open.Run("about:blank")
@@ -111,11 +120,14 @@ func IsAvailable() bool {
 	}
 }
 
-// GetPlatformInfo returns a map containing details about the current platform's
-// browser opening capabilities, including the OS, architecture, and available commands.
+// GetPlatformInfo 返回一个 map，包含当前平台的浏览器打开能力详情，
+// 包括操作系统、架构和可用命令信息。
 //
-// Returns:
-//   - A map with platform-specific browser support information.
+// 返回值:
+//   - map[string]interface{}: 包含平台特定浏览器支持信息的 map
+//
+// GetPlatformInfo returns a map containing details about the current platform's
+// browser opening capabilities.
 func GetPlatformInfo() map[string]interface{} {
 	info := map[string]interface{}{
 		"os":        runtime.GOOS,

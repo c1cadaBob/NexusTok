@@ -1,3 +1,9 @@
+// amp - fallback_handlers_test.go
+// AMP 回退处理器的单元测试。
+// 测试模型映射在回退处理器中的行为：
+// - 模型映射时保留思维后缀（thinking suffix）
+// - 映射后的模型名正确传递给下游处理器
+// - 响应中的模型名被重写为原始请求的模型名
 package amp
 
 import (
@@ -13,6 +19,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
+// TestFallbackHandler_ModelMapping_PreservesThinkingSuffixAndRewritesResponse 测试回退处理器中：
+// - 模型映射时保留思维后缀：gpt-5.2(xhigh) -> test/gpt-5.2(xhigh)
+// - 下游处理器看到映射后的模型名（含后缀）
+// - 响应中的模型名被重写回原始请求的模型名
 func TestFallbackHandler_ModelMapping_PreservesThinkingSuffixAndRewritesResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

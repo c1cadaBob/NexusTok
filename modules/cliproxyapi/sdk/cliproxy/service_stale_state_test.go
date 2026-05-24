@@ -1,3 +1,8 @@
+// cliproxy - service_stale_state_test.go
+// 该文件测试服务在认证删除后重新添加时的过期状态处理。
+// 验证 LastRefreshedAt、NextRefreshAfter 和 ModelStates 等运行时状态
+// 在删除-重新添加周期后被正确重置，防止过期数据残留。
+
 package cliproxy
 
 import (
@@ -10,6 +15,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestServiceApplyCoreAuthAddOrUpdate_DeleteReAddDoesNotInheritStaleRuntimeState 测试
+// 删除认证后重新添加时，不会继承过期的运行时状态（如 LastRefreshedAt、ModelStates 等）。
 func TestServiceApplyCoreAuthAddOrUpdate_DeleteReAddDoesNotInheritStaleRuntimeState(t *testing.T) {
 	service := &Service{
 		cfg:         &config.Config{},
@@ -100,6 +107,7 @@ func TestServiceApplyCoreAuthAddOrUpdate_DeleteReAddDoesNotInheritStaleRuntimeSt
 	}
 }
 
+// TestForceHomeRuntimeConfigEnablesUsageStatistics 测试 Home 运行时配置是否强制启用使用统计。
 func TestForceHomeRuntimeConfigEnablesUsageStatistics(t *testing.T) {
 	cfg := &config.Config{
 		UsageStatisticsEnabled: false,
@@ -112,6 +120,7 @@ func TestForceHomeRuntimeConfigEnablesUsageStatistics(t *testing.T) {
 	}
 }
 
+// TestApplyHomeOverlayForcesUsageStatisticsEnabled 测试 Home 配置覆盖是否强制启用使用统计。
 func TestApplyHomeOverlayForcesUsageStatisticsEnabled(t *testing.T) {
 	baseCfg := &config.Config{}
 	baseCfg.Home.Enabled = true

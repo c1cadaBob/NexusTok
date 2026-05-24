@@ -1,7 +1,13 @@
+// auth - custom_headers.go
+// 该文件实现了从认证凭据元数据中提取和应用自定义 HTTP 头的功能，
+// 允许在认证条目级别配置额外的请求头注入。
 package auth
 
 import "strings"
 
+// ExtractCustomHeadersFromMetadata 从认证元数据中提取自定义 HTTP 头映射。
+// 支持 map[string]string 和 map[string]any 两种格式的 headers 字段，
+// 自动去除键值的首尾空白并过滤空值。
 func ExtractCustomHeadersFromMetadata(metadata map[string]any) map[string]string {
 	if len(metadata) == 0 {
 		return nil
@@ -51,6 +57,8 @@ func ExtractCustomHeadersFromMetadata(metadata map[string]any) map[string]string
 	return out
 }
 
+// ApplyCustomHeadersFromMetadata 将认证元数据中的自定义头应用到认证凭据的 Attributes 中，
+// 以 "header:头名称" 为键存储，供后续请求构建时使用。
 func ApplyCustomHeadersFromMetadata(auth *Auth) {
 	if auth == nil || len(auth.Metadata) == 0 {
 		return

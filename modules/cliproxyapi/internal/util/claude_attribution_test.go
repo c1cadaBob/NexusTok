@@ -1,7 +1,13 @@
+// util - claude_attribution_test.go
+// 该文件包含 IsClaudeCodeAttributionSystemText 函数的单元测试，
+// 验证是否能正确识别 Claude Code 的计费归因系统文本（x-anthropic-billing-header）。
 package util
 
 import "testing"
 
+// TestIsClaudeCodeAttributionSystemText 测试各种输入场景下
+// IsClaudeCodeAttributionSystemText 函数的判断准确性，包括标准归因块、
+// 前导空白、普通系统提示和空文本等用例。
 func TestIsClaudeCodeAttributionSystemText(t *testing.T) {
 	tests := []struct {
 		name string

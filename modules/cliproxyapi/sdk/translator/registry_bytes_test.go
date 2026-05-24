@@ -1,3 +1,7 @@
+// translator - registry_bytes_test.go
+// 该文件包含翻译注册表的字节级操作测试。
+// 测试流式响应翻译、非流式响应翻译和 token 计数翻译的正确性。
+
 package translator
 
 import (
@@ -6,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestRegistryTranslateStreamReturnsByteChunks 测试流式响应翻译函数返回正确的字节数据块。
 func TestRegistryTranslateStreamReturnsByteChunks(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(FormatOpenAI, FormatGemini, nil, ResponseTransform{
@@ -23,6 +28,7 @@ func TestRegistryTranslateStreamReturnsByteChunks(t *testing.T) {
 	}
 }
 
+// TestRegistryTranslateNonStreamReturnsBytes 测试非流式响应翻译函数返回正确的字节数据。
 func TestRegistryTranslateNonStreamReturnsBytes(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(FormatOpenAI, FormatGemini, nil, ResponseTransform{
@@ -37,6 +43,7 @@ func TestRegistryTranslateNonStreamReturnsBytes(t *testing.T) {
 	}
 }
 
+// TestRegistryTranslateTokenCountReturnsBytes 测试 token 计数翻译函数返回正确的字节数据。
 func TestRegistryTranslateTokenCountReturnsBytes(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(FormatOpenAI, FormatGemini, nil, ResponseTransform{

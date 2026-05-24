@@ -1,3 +1,5 @@
+// Package cmd - anthropic_login.go
+// 提供 Anthropic Claude 的 OAuth 认证流程。
 package cmd
 
 import (
@@ -12,13 +14,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// DoClaudeLogin triggers the Claude OAuth flow through the shared authentication manager.
-// It initiates the OAuth authentication process for Anthropic Claude services and saves
-// the authentication tokens to the configured auth directory.
+// DoClaudeLogin 通过共享认证管理器触发 Claude OAuth 流程。
+// 启动 Anthropic Claude 服务的 OAuth 认证过程，并将认证令牌保存到配置的认证目录。
 //
-// Parameters:
-//   - cfg: The application configuration
-//   - options: Login options including browser behavior and prompts
+// 参数:
+//   - cfg: 应用程序配置
+//   - options: 登录选项，包括浏览器行为和提示
+//
+// DoClaudeLogin triggers the Claude OAuth flow through the shared authentication manager.
 func DoClaudeLogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {
 		options = &LoginOptions{}

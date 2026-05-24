@@ -1,6 +1,11 @@
-// Package middleware provides Gin HTTP middleware for the CLI Proxy API server.
-// It includes a sophisticated response writer wrapper designed to capture and log request and response data,
-// including support for streaming responses, without impacting latency.
+// middleware - response_writer.go
+// 响应写入器包装器，用于拦截和记录 HTTP 响应数据。
+// 该模块提供了一个增强的 gin.ResponseWriter 包装器，能够：
+//   - 捕获非流式响应的完整正文
+//   - 异步记录流式响应（SSE/text-event-stream）的每个数据块
+//   - 支持 TTFB（首字节时间）测量
+//   - 通过 Gin context 传递 API 级别的请求/响应数据
+//   - 仅在错误响应时记录日志的降级模式
 package middleware
 
 import (
@@ -14,9 +19,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 )
 
-const requestBodyOverrideContextKey = "REQUEST_BODY_OVERRIDE"
-const responseBodyOverrideContextKey = "RESPONSE_BODY_OVERRIDE"
-const websocketTimelineOverrideContextKey = "WEBSOCKET_TIMELINE_OVERRIDE"
+// Gin context 键常量，用于在处理器和中间件之间传递请求/响应数据。
+const requestBodyOverrideContextKey = "REQUEST_BODY_OVERRIDE"             // 请求体覆盖键
+const responseBodyOverrideContextKey = "RESPONSE_BODY_OVERRIDE"           // 响应体覆盖键
+const websocketTimelineOverrideContextKey = "WEBSOCKET_TIMELINE_OVERRIDE" // WebSocket 时间线覆盖键
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -99,6 +105,8 @@ func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
 	return n, err
 }
 
+// shouldBufferResponseBody 判断是否应该缓冲响应正文。
+// 日志功能启用时总是缓冲；logOnErrorOnly 模式下仅缓冲 4xx/5xx 错误响应。
 func (w *ResponseWriterWrapper) shouldBufferResponseBody() bool {
 	if w.logger != nil && w.logger.IsEnabled() {
 		return true
@@ -321,6 +329,7 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	return w.logRequest(w.extractRequestBody(c), finalStatusCode, w.cloneHeaders(), w.extractResponseBody(c), w.extractWebsocketTimeline(c), w.extractAPIRequest(c), w.extractAPIResponse(c), w.extractAPIWebsocketTimeline(c), w.extractAPIResponseTimestamp(c), slicesAPIResponseError, forceLog)
 }
 
+// cloneHeaders 深拷贝响应头部，防止后续修改影响已记录的日志数据。
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
 	w.ensureHeadersCaptured()
 
@@ -334,6 +343,8 @@ func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
 	return finalHeaders
 }
 
+// extractAPIRequest 从 Gin context 中提取 API 级别的请求数据。
+// 这些数据由上游处理器设置，代表实际发送给 AI 提供者的请求。
 func (w *ResponseWriterWrapper) extractAPIRequest(c *gin.Context) []byte {
 	apiRequest, isExist := c.Get("API_REQUEST")
 	if !isExist {
@@ -346,6 +357,8 @@ func (w *ResponseWriterWrapper) extractAPIRequest(c *gin.Context) []byte {
 	return data
 }
 
+// extractAPIResponse 从 Gin context 中提取 API 级别的响应数据。
+// 这些数据由上游处理器设置，代表 AI 提供者的实际响应。
 func (w *ResponseWriterWrapper) extractAPIResponse(c *gin.Context) []byte {
 	apiResponse, isExist := c.Get("API_RESPONSE")
 	if !isExist {
@@ -358,6 +371,7 @@ func (w *ResponseWriterWrapper) extractAPIResponse(c *gin.Context) []byte {
 	return data
 }
 
+// extractAPIWebsocketTimeline 从 Gin context 中提取 WebSocket 交互时间线数据。
 func (w *ResponseWriterWrapper) extractAPIWebsocketTimeline(c *gin.Context) []byte {
 	apiTimeline, isExist := c.Get("API_WEBSOCKET_TIMELINE")
 	if !isExist {
@@ -370,6 +384,7 @@ func (w *ResponseWriterWrapper) extractAPIWebsocketTimeline(c *gin.Context) []by
 	return bytes.Clone(data)
 }
 
+// extractAPIResponseTimestamp 从 Gin context 中提取 API 响应的时间戳。
 func (w *ResponseWriterWrapper) extractAPIResponseTimestamp(c *gin.Context) time.Time {
 	ts, isExist := c.Get("API_RESPONSE_TIMESTAMP")
 	if !isExist {
@@ -381,6 +396,7 @@ func (w *ResponseWriterWrapper) extractAPIResponseTimestamp(c *gin.Context) time
 	return time.Time{}
 }
 
+// extractRequestBody 提取请求正文，优先使用 context 中的覆盖值。
 func (w *ResponseWriterWrapper) extractRequestBody(c *gin.Context) []byte {
 	if body := extractBodyOverride(c, requestBodyOverrideContextKey); len(body) > 0 {
 		return body
@@ -391,6 +407,7 @@ func (w *ResponseWriterWrapper) extractRequestBody(c *gin.Context) []byte {
 	return nil
 }
 
+// extractResponseBody 提取响应正文，优先使用 context 中的覆盖值。
 func (w *ResponseWriterWrapper) extractResponseBody(c *gin.Context) []byte {
 	if body := extractBodyOverride(c, responseBodyOverrideContextKey); len(body) > 0 {
 		return body
@@ -401,10 +418,13 @@ func (w *ResponseWriterWrapper) extractResponseBody(c *gin.Context) []byte {
 	return bytes.Clone(w.body.Bytes())
 }
 
+// extractWebsocketTimeline 提取 WebSocket 交互时间线数据。
 func (w *ResponseWriterWrapper) extractWebsocketTimeline(c *gin.Context) []byte {
 	return extractBodyOverride(c, websocketTimelineOverrideContextKey)
 }
 
+// extractBodyOverride 从 Gin context 中提取指定键的正文覆盖值。
+// 支持 []byte 和 string 两种类型，返回深拷贝以防止后续修改。
 func extractBodyOverride(c *gin.Context, key string) []byte {
 	if c == nil {
 		return nil
@@ -426,6 +446,9 @@ func extractBodyOverride(c *gin.Context, key string) []byte {
 	return nil
 }
 
+// logRequest 将完整的请求和响应数据提交给日志记录器。
+// 优先使用带选项的 LogRequestWithOptions 接口（如果可用），
+// 否则降级使用标准的 LogRequest 接口。
 func (w *ResponseWriterWrapper) logRequest(requestBody []byte, statusCode int, headers map[string][]string, body, websocketTimeline, apiRequestBody, apiResponseBody, apiWebsocketTimeline []byte, apiResponseTimestamp time.Time, apiResponseErrors []*interfaces.ErrorMessage, forceLog bool) error {
 	if w.requestInfo == nil {
 		return nil

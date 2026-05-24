@@ -1,3 +1,5 @@
+// handlers - request_body.go
+// 提供请求体读取和解码功能，支持 zstd 压缩编码的请求体自动解码。
 package handlers
 
 import (
@@ -11,8 +13,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// ReadRequestBody reads the incoming request body and decodes supported
-// Content-Encoding values before handlers inspect JSON fields.
+// ReadRequestBody 读取请求体并在处理器检查 JSON 字段之前解码支持的 Content-Encoding 编码。
 func ReadRequestBody(c *gin.Context) ([]byte, error) {
 	raw, err := c.GetRawData()
 	if err != nil {
@@ -37,6 +38,7 @@ func ReadRequestBody(c *gin.Context) ([]byte, error) {
 	return decoded, nil
 }
 
+// decodeRequestBody 按照 Content-Encoding 头部的逆序逐层解码请求体。
 func decodeRequestBody(raw []byte, encoding string) ([]byte, error) {
 	parts := strings.Split(encoding, ",")
 	body := raw
@@ -58,6 +60,7 @@ func decodeRequestBody(raw []byte, encoding string) ([]byte, error) {
 	return body, nil
 }
 
+// decodeZstdRequestBody 使用 zstd 算法解码请求体。
 func decodeZstdRequestBody(raw []byte) ([]byte, error) {
 	decoder, err := zstd.NewReader(bytes.NewReader(raw))
 	if err != nil {

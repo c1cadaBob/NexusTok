@@ -1,3 +1,8 @@
+// image.go - 图片解码与处理工具
+// 本文件提供图片数据的解码和处理功能。
+// 包括：Base64 图片数据解码、Base64 文件数据解析（支持 data: URI 前缀）、
+// URL 图片下载与解码、多格式图片配置信息获取（JPEG、PNG、GIF、WebP、HEIF/HEIC）。
+// 支持渐进式读取策略，逐步增加读取量直到成功解码。
 package service
 
 import (
@@ -16,7 +21,13 @@ import (
 	"golang.org/x/image/webp"
 )
 
-// return image.Config, format, clean base64 string, error
+// DecodeBase64ImageData 解码 Base64 编码的图片数据。
+// 自动去除 data: URI 前缀，解码后获取图片配置信息（宽高、格式）。
+// 返回值:
+//   - image.Config: 图片配置信息（包含宽高）
+//   - string: 图片格式（如 "jpeg", "png", "gif" 等）
+//   - string: 清理后的纯 Base64 字符串
+//   - error: 解码过程中的错误
 func DecodeBase64ImageData(base64String string) (image.Config, string, string, error) {
 	// 去除base64数据的URL前缀（如果有）
 	if idx := strings.Index(base64String, ","); idx != -1 {
@@ -40,6 +51,15 @@ func DecodeBase64ImageData(base64String string) (image.Config, string, string, e
 	return config, format, base64String, err
 }
 
+// DecodeBase64FileData 解码 Base64 编码的文件数据。
+// 自动解析 data: URI 前缀中的 MIME 类型信息。
+// 如果无法从 URI 前缀中提取 MIME 类型，则回退到图片解码方式获取类型。
+// 参数:
+//   - base64String: Base64 编码的文件数据（可能包含 data: 前缀）
+// 返回值:
+//   - string: 文件的 MIME 类型
+//   - string: 清理后的纯 Base64 字符串
+//   - error: 解码过程中的错误
 func DecodeBase64FileData(base64String string) (string, string, error) {
 	var mimeType string
 	var idx int
@@ -65,7 +85,14 @@ func DecodeBase64FileData(base64String string) (string, string, error) {
 	return mimeType, base64String, nil
 }
 
-// GetImageFromUrl 获取图片的类型和base64编码的数据
+// GetImageFromUrl 从 URL 获取图片的 MIME 类型和 Base64 编码数据。
+// 会下载图片内容并限制大小，自动检测 Content-Type，支持 application/octet-stream 类型的回退解析。
+// 参数:
+//   - url: 图片的 URL 地址
+// 返回值:
+//   - mimeType: 图片的 MIME 类型
+//   - data: Base64 编码的图片数据
+//   - err: 下载或解析过程中的错误
 func GetImageFromUrl(url string) (mimeType string, data string, err error) {
 	resp, err := DoDownloadRequest(url)
 	if err != nil {
@@ -116,6 +143,15 @@ func GetImageFromUrl(url string) (mimeType string, data string, err error) {
 	return mimeType, data, nil
 }
 
+// DecodeUrlImageData 从 URL 下载图片并解码其配置信息（宽高、格式）。
+// 采用渐进式读取策略，按 8KB、24KB、64KB 逐步增加读取量，
+// 直到成功解码图片配置信息或读取失败。
+// 参数:
+//   - imageUrl: 图片的 URL 地址
+// 返回值:
+//   - image.Config: 图片配置信息（包含宽高）
+//   - string: 图片格式
+//   - error: 下载或解码过程中的错误
 func DecodeUrlImageData(imageUrl string) (image.Config, string, error) {
 	response, err := DoDownloadRequest(imageUrl)
 	if err != nil {
@@ -158,6 +194,15 @@ func DecodeUrlImageData(imageUrl string) (image.Config, string, error) {
 	return image.Config{}, "", err // 返回最后一个错误
 }
 
+// getImageConfig 从 io.Reader 中解码图片配置信息。
+// 支持多种图片格式：标准库格式（JPEG、PNG、GIF）、WebP、HEIF/HEIC。
+// 按优先级依次尝试不同解码器，返回第一个成功的解码结果。
+// 参数:
+//   - reader: 包含图片数据的 io.Reader
+// 返回值:
+//   - image.Config: 图片配置信息（包含宽高）
+//   - string: 图片格式
+//   - error: 解码过程中的错误
 func getImageConfig(reader io.Reader) (image.Config, string, error) {
 	// Read all data so we can retry with different decoders
 	data, readErr := io.ReadAll(reader)

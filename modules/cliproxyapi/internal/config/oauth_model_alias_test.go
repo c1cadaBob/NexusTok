@@ -1,7 +1,12 @@
+// config - oauth_model_alias_test.go
+// 该文件测试 OAuth 模型别名的清理（Sanitize）逻辑。
+// 测试覆盖了键值空格修剪和 Fork 标志保留，以及同一模型名称允许多个别名映射。
+
 package config
 
 import "testing"
 
+// TestSanitizeOAuthModelAlias_PreservesForkFlag 测试清理后键值被修剪空格且 Fork 标志保持不变。
 func TestSanitizeOAuthModelAlias_PreservesForkFlag(t *testing.T) {
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{
@@ -26,6 +31,7 @@ func TestSanitizeOAuthModelAlias_PreservesForkFlag(t *testing.T) {
 	}
 }
 
+// TestSanitizeOAuthModelAlias_AllowsMultipleAliasesForSameName 测试同一模型名称允许多个别名映射。
 func TestSanitizeOAuthModelAlias_AllowsMultipleAliasesForSameName(t *testing.T) {
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{

@@ -1,3 +1,6 @@
+// Package controller - user.go
+// 该文件实现了用户相关的控制器
+// 包括用户登录、注册、信息管理、2FA 验证等功能
 package controller
 
 import (
@@ -10,73 +13,103 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/i18n"
-	"github.com/c1cada/NexusTok/logger"
-	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/setting"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
+	"github.com/c1cada/NexusTok/common"    // 公共工具包
+	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
+	"github.com/c1cada/NexusTok/i18n"      // 国际化
+	"github.com/c1cada/NexusTok/logger"    // 日志
+	"github.com/c1cada/NexusTok/model"     // 数据模型
+	"github.com/c1cada/NexusTok/service"   // 服务层
+	"github.com/c1cada/NexusTok/setting"   // 设置
+	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营设置
 
-	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/constant"  // 常量
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-gonic/gin"
+	"github.com/gin-contrib/sessions" // 会话管理
+	"github.com/gin-gonic/gin"        // Gin 框架
 )
 
+// LoginRequest 登录请求结构体
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string `json:"username"` // 用户名
+	Password string `json:"password"` // 密码
 }
 
+// Login 用户登录控制器
+// 处理用户登录请求，支持密码登录和 2FA 验证
+//
+// 流程：
+// 1. 检查密码登录是否启用
+// 2. 解析登录请求
+// 3. 验证用户名和密码
+// 4. 检查是否需要 2FA 验证
+// 5. 创建会话并返回用户信息
+//
+// 参数：
+//   - c: Gin 上下文
 func Login(c *gin.Context) {
+	// 检查密码登录是否启用
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordLoginDisabled)
 		return
 	}
+
+	// 解析登录请求
 	var loginRequest LoginRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&loginRequest)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+
 	username := loginRequest.Username
 	password := loginRequest.Password
+
+	// 验证用户名和密码不为空
 	if username == "" || password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+
+	// 创建用户对象并验证
 	user := model.User{
 		Username: username,
 		Password: password,
 	}
+
+	// 验证用户凭据并填充用户信息
 	err = user.ValidateAndFill()
 	if err != nil {
+		// 根据错误类型返回不同的错误信息
 		switch {
 		case errors.Is(err, model.ErrDatabase):
+			// 数据库错误
 			common.SysLog(fmt.Sprintf("Login database error for user %s: %v", username, err))
 			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 		case errors.Is(err, model.ErrUserEmptyCredentials):
+			// 空凭据
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		default:
+			// 用户名或密码错误
 			common.ApiErrorI18n(c, i18n.MsgUserUsernameOrPasswordError)
 		}
 		return
 	}
 
-	// 检查是否启用2FA
+	// 检查是否启用 2FA（两步验证）
 	if model.IsTwoFAEnabled(user.Id) {
-		// 设置pending session，等待2FA验证
+		// 设置 pending session，等待 2FA 验证
 		session := sessions.Default(c)
 		session.Set("pending_username", user.Username)
 		session.Set("pending_user_id", user.Id)
+
+		// 保存会话
 		err := session.Save()
 		if err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
 			return
 		}
 
+		// 返回需要 2FA 验证的响应
 		c.JSON(http.StatusOK, gin.H{
 			"message": i18n.T(c, i18n.MsgUserRequire2FA),
 			"success": true,

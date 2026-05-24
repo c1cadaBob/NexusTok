@@ -1,3 +1,18 @@
+// chat_completions - codex_openai_request_test.go
+// Codex 的 OpenAI Chat Completions 格式请求转换器测试文件。
+// 包含以下测试用例：
+// 1. 基本工具调用转换（system + user + assistant(tool_calls) + tool result）
+// 2. 带内容的工具调用（assistant 同时有文本和 tool_calls）
+// 3. 多模态工具输出（text、image_url、file 类型）
+// 4. 无效结构化部分的回退处理
+// 5. 非字符串 JSON 内容处理（null、object）
+// 6. 并行多工具调用
+// 7. 无空 assistant 消息回归测试
+// 8. 多轮工具调用
+// 9. 工具名称截断（64 字符限制）
+// 10. 空字符串 content 处理
+// 11. call_id 匹配验证
+// 12. 工具定义转换验证
 package chat_completions
 
 import (
@@ -6,9 +21,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Basic tool-call: system + user + assistant(tool_calls, no content) + tool result.
-// Expects developer msg + user msg + function_call + function_call_output.
-// No empty assistant message should appear between user and function_call.
+// TestToolCallSimple 测试基本的工具调用转换。
+// 验证 system -> developer 角色转换、function_call 和 function_call_output 的正确生成。
+// 确保不产生空的 assistant 消息。
 func TestToolCallSimple(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -97,8 +112,8 @@ func TestToolCallSimple(t *testing.T) {
 	}
 }
 
-// Assistant has both text content and tool_calls — the message should
-// be emitted (non-empty content), followed by function_call items.
+// TestToolCallWithContent 测试 assistant 同时包含文本内容和 tool_calls 的转换。
+// 验证 assistant 消息被保留（非空内容），后面跟着 function_call 对象。
 func TestToolCallWithContent(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -176,6 +191,8 @@ func TestToolCallWithContent(t *testing.T) {
 	}
 }
 
+// TestToolCallOutputWithMultimodalContent 测试工具输出中包含多模态内容的转换。
+// 验证 text -> input_text、image_url -> input_image、file -> input_file 的正确转换。
 func TestToolCallOutputWithMultimodalContent(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -254,6 +271,8 @@ func TestToolCallOutputWithMultimodalContent(t *testing.T) {
 	}
 }
 
+// TestToolCallOutputFallsBackForInvalidStructuredParts 测试无效结构化部分的回退处理。
+// 验证缺少必要字段的 image_url、file 和未知类型都被回退为 input_text。
 func TestToolCallOutputFallsBackForInvalidStructuredParts(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -304,6 +323,8 @@ func TestToolCallOutputFallsBackForInvalidStructuredParts(t *testing.T) {
 	}
 }
 
+// TestToolCallOutputWithNonStringJSONContent 测试非字符串 JSON 内容的工具输出处理。
+// 验证 null 和 object 类型的 content 能够正确保留。
 func TestToolCallOutputWithNonStringJSONContent(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -352,8 +373,8 @@ func TestToolCallOutputWithNonStringJSONContent(t *testing.T) {
 	}
 }
 
-// Parallel tool calls: assistant invokes 3 tools at once, all call_ids
-// and outputs must be translated and paired correctly.
+// TestMultipleToolCalls 测试并行多工具调用的转换。
+// 验证 assistant 同时调用 3 个工具时，所有 call_id 和输出都能正确配对。
 func TestMultipleToolCalls(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -444,8 +465,8 @@ func TestMultipleToolCalls(t *testing.T) {
 	}
 }
 
-// Regression test for #2132: tool-call-only assistant messages (content:null)
-// must not produce an empty message item in the translated output.
+// TestNoSpuriousEmptyAssistantMessage 回归测试 #2132：仅包含工具调用的 assistant 消息（content:null）
+// 不应在转换后的输出中产生空的 message 对象。
 func TestNoSpuriousEmptyAssistantMessage(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -507,7 +528,8 @@ func TestNoSpuriousEmptyAssistantMessage(t *testing.T) {
 	}
 }
 
-// Two rounds of tool calling in one conversation, with a text reply in between.
+// TestMultiTurnToolCalling 测试多轮工具调用场景。
+// 验证两轮工具调用之间有文本回复时，所有项目都能正确转换和配对。
 func TestMultiTurnToolCalling(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -585,7 +607,8 @@ func TestMultiTurnToolCalling(t *testing.T) {
 	}
 }
 
-// Tool names over 64 chars get shortened, call_id stays the same.
+// TestToolNameShortening 测试超过 64 字符的工具名称截断。
+// 验证工具名称被正确截断，而 call_id 保持不变。
 func TestToolNameShortening(t *testing.T) {
 	longName := "a_very_long_tool_name_that_exceeds_sixty_four_characters_limit_here_test"
 	if len(longName) <= 64 {
@@ -657,7 +680,8 @@ func TestToolNameShortening(t *testing.T) {
 	}
 }
 
-// content:"" (empty string, not null) should be treated the same as null.
+// TestEmptyStringContent 测试 content 为空字符串（非 null）时的处理。
+// 验证空字符串 content 与 null 处理方式一致，不产生空的 assistant 消息。
 func TestEmptyStringContent(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -707,7 +731,7 @@ func TestEmptyStringContent(t *testing.T) {
 	}
 }
 
-// Every function_call_output must have a matching function_call by call_id.
+// TestCallIDsMatchBetweenCallAndOutput 验证每个 function_call_output 都有对应的 function_call 通过 call_id 匹配。
 func TestCallIDsMatchBetweenCallAndOutput(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",
@@ -771,7 +795,7 @@ func TestCallIDsMatchBetweenCallAndOutput(t *testing.T) {
 	}
 }
 
-// Tools array should carry over to the Responses format output.
+// TestToolsDefinitionTranslated 验证工具定义数组能够正确转换到 Responses 格式输出中。
 func TestToolsDefinitionTranslated(t *testing.T) {
 	input := []byte(`{
 		"model": "gpt-4o",

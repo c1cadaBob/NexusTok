@@ -1,3 +1,8 @@
+// codex - openai_auth_test.go
+// Codex OAuth 认证测试
+// 验证 Codex (OpenAI) 提供商的令牌刷新和代理配置功能：
+// - 非可重试错误（如 refresh_token_reused）只尝试一次
+// - 代理覆盖配置的正确应用
 package codex
 
 import (
@@ -11,12 +16,17 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// roundTripFunc 是用于测试的 HTTP Transport 实现。
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip 实现 http.RoundTripper 接口。
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce 验证：
+// 当令牌刷新返回非可重试错误（如 refresh_token_reused）时，
+// 即使配置了重试次数，也只尝试一次。
 func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
 	var calls int32
 	auth := &CodexAuth{
@@ -45,6 +55,9 @@ func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
 	}
 }
 
+// TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy 验证：
+// 当代理覆盖参数为 "direct" 时，即使全局配置了 HTTP 代理，
+// Codex 认证客户端也禁用代理。
 func TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://proxy.example.com:8080"}}
 	auth := NewCodexAuthWithProxyURL(cfg, "direct")

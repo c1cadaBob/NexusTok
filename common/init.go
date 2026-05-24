@@ -1,3 +1,14 @@
+// Package common - init.go
+// 该文件负责系统初始化和环境变量配置
+//
+// 初始化流程：
+// 1. 解析命令行参数（--port, --version, --help, --log-dir）
+// 2. 加载环境变量配置
+// 3. 验证会话密钥安全性
+// 4. 初始化日志目录
+// 5. 配置 TLS 安全选项
+// 6. 初始化 Redis 客户端（如果启用）
+// 7. 初始化数据库连接
 package common
 
 import (
@@ -12,16 +23,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/constant" // 常量定义
 )
 
+// 命令行参数定义
 var (
-	Port         = flag.Int("port", 3000, "the listening port")
-	PrintVersion = flag.Bool("version", false, "print version and exit")
-	PrintHelp    = flag.Bool("help", false, "print help and exit")
-	LogDir       = flag.String("log-dir", "./logs", "specify the log directory")
+	Port         = flag.Int("port", 3000, "the listening port")         // 监听端口
+	PrintVersion = flag.Bool("version", false, "print version and exit") // 打印版本
+	PrintHelp    = flag.Bool("help", false, "print help and exit")       // 打印帮助
+	LogDir       = flag.String("log-dir", "./logs", "specify the log directory") // 日志目录
 )
 
+// printHelp 打印帮助信息
 func printHelp() {
 	fmt.Println("NexusTok (Based on OneAPI) " + Version + " - The next-generation LLM gateway and AI asset management system supports multiple languages.")
 	fmt.Println("Original Project: OneAPI by JustSong - https://github.com/songquanpeng/one-api")
@@ -29,6 +42,23 @@ func printHelp() {
 	fmt.Println("Usage: nexustok [--port <port>] [--log-dir <log directory>] [--version] [--help]")
 }
 
+// InitEnv 初始化环境配置
+// 解析命令行参数和环境变量，设置全局配置
+//
+// 处理的配置项：
+// - VERSION: 版本号（环境变量覆盖）
+// - SESSION_SECRET: 会话密钥（必须修改默认值）
+// - SESSION_MAX_AGE: 会话最大存活时间
+// - CRYPTO_SECRET: 加密密钥
+// - SQLITE_PATH: SQLite 数据库路径
+// - LOG_DIR: 日志目录
+// - DEBUG: 调试模式
+// - MEMORY_CACHE_ENABLED: 内存缓存
+// - NODE_TYPE: 节点类型（master/slave）
+// - NODE_NAME: 节点名称
+// - TLS_INSECURE_SKIP_VERIFY: TLS 跳过验证
+// - REDIS_CONN_STRING: Redis 连接字符串
+// - SQL_DSN: 数据库连接字符串
 func InitEnv() {
 	flag.Parse()
 

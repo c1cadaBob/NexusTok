@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex WebSocket 执行器的各种功能，包括请求体构建、
+// 上游连接管理、头部配置和错误解析等。
 package executor
 
 import (
@@ -20,6 +23,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID 验证构建 WebSocket 请求体时
+// 保留 previous_response_id 字段，并将类型设置为 response.create。
 func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T) {
 	body := []byte(`{"model":"gpt-5-codex","previous_response_id":"resp-1","input":[{"type":"message","id":"msg-1"}]}`)
 
@@ -39,6 +44,8 @@ func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T)
 	}
 }
 
+// TestCodexWebsocketsExecutePreservesPreviousResponseIDUpstream 验证通过 WebSocket 执行时
+// previous_response_id 被正确传递到上游服务器。
 func TestCodexWebsocketsExecutePreservesPreviousResponseIDUpstream(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	capturedPayload := make(chan []byte, 1)
@@ -93,6 +100,8 @@ func TestCodexWebsocketsExecutePreservesPreviousResponseIDUpstream(t *testing.T)
 	}
 }
 
+// TestCodexWebsocketsUpstreamDisconnectChanSignalsOnInvalidate 验证当上游连接失效时
+// 断开连接通道能正确发出信号。
 func TestCodexWebsocketsUpstreamDisconnectChanSignalsOnInvalidate(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +160,8 @@ func TestCodexWebsocketsUpstreamDisconnectChanSignalsOnInvalidate(t *testing.T) 
 	}
 }
 
+// TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta 验证默认情况下
+// WebSocket 头部包含正确的 OpenAI-Beta、User-Agent 和 Originator 值。
 func TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta(t *testing.T) {
 	headers := applyCodexWebsocketHeaders(context.Background(), http.Header{}, nil, "", nil)
 
@@ -186,6 +197,8 @@ func TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta(t *testing.T) 
 	}
 }
 
+// TestApplyCodexWebsocketHeadersPassesThroughClientIdentityHeaders 验证客户端身份头
+// （如 Originator、User-Agent、Version 等）能正确透传到上游。
 func TestApplyCodexWebsocketHeadersPassesThroughClientIdentityHeaders(t *testing.T) {
 	auth := &cliproxyauth.Auth{
 		Provider: "codex",
@@ -225,6 +238,8 @@ func TestApplyCodexWebsocketHeadersPassesThroughClientIdentityHeaders(t *testing
 	}
 }
 
+// TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth 验证 OAuth 认证时
+// 使用配置中的默认 User-Agent 和 Beta 特性头。
 func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 	cfg := &config.Config{
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
@@ -250,6 +265,8 @@ func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 	}
 }
 
+// TestApplyCodexWebsocketHeadersPrefersExistingHeadersOverClientAndConfig 验证已存在的头部
+// 优先于客户端和配置中的头部值。
 func TestApplyCodexWebsocketHeadersPrefersExistingHeadersOverClientAndConfig(t *testing.T) {
 	cfg := &config.Config{
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
@@ -279,6 +296,8 @@ func TestApplyCodexWebsocketHeadersPrefersExistingHeadersOverClientAndConfig(t *
 	}
 }
 
+// TestApplyCodexWebsocketHeadersConfigUserAgentOverridesClientHeader 验证配置中的 User-Agent
+// 覆盖客户端请求头中的 User-Agent。
 func TestApplyCodexWebsocketHeadersConfigUserAgentOverridesClientHeader(t *testing.T) {
 	cfg := &config.Config{
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
@@ -305,6 +324,8 @@ func TestApplyCodexWebsocketHeadersConfigUserAgentOverridesClientHeader(t *testi
 	}
 }
 
+// TestApplyCodexWebsocketHeadersIgnoresConfigForAPIKeyAuth 验证 API Key 认证时
+// 忽略配置中的默认头部设置。
 func TestApplyCodexWebsocketHeadersIgnoresConfigForAPIKeyAuth(t *testing.T) {
 	cfg := &config.Config{
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
@@ -330,6 +351,8 @@ func TestApplyCodexWebsocketHeadersIgnoresConfigForAPIKeyAuth(t *testing.T) {
 	}
 }
 
+// TestApplyCodexWebsocketHeadersPreservesExplicitAPIKeyUserAgent 验证 API Key 认证时
+// 客户端显式设置的 User-Agent 和 Originator 被保留。
 func TestApplyCodexWebsocketHeadersPreservesExplicitAPIKeyUserAgent(t *testing.T) {
 	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"api_key": "sk-test"}}
 	ctx := contextWithGinHeaders(map[string]string{"User-Agent": "api-key-client/1.0", "Originator": "explicit-origin"})
@@ -344,6 +367,8 @@ func TestApplyCodexWebsocketHeadersPreservesExplicitAPIKeyUserAgent(t *testing.T
 	}
 }
 
+// TestApplyCodexPromptCacheHeadersSetsLowercaseSessionAndLegacyConversation 验证提示缓存头
+// 设置小写的 session_id 和遗留的 Conversation_id 头。
 func TestApplyCodexPromptCacheHeadersSetsLowercaseSessionAndLegacyConversation(t *testing.T) {
 	req := cliproxyexecutor.Request{Model: "gpt-5-codex", Payload: []byte(`{"prompt_cache_key":"cache-1"}`)}
 
@@ -360,6 +385,8 @@ func TestApplyCodexPromptCacheHeadersSetsLowercaseSessionAndLegacyConversation(t
 	}
 }
 
+// TestApplyCodexWebsocketHeadersUsesCanonicalAccountHeader 验证使用规范的
+// ChatGPT-Account-ID 头名称传递账户 ID。
 func TestApplyCodexWebsocketHeadersUsesCanonicalAccountHeader(t *testing.T) {
 	auth := &cliproxyauth.Auth{Provider: "codex", Metadata: map[string]any{"account_id": "acct-1"}}
 
@@ -377,6 +404,8 @@ func TestApplyCodexWebsocketHeadersUsesCanonicalAccountHeader(t *testing.T) {
 	}
 }
 
+// TestBuildCodexResponsesWebsocketURLRequiresHTTPURL 验证 WebSocket URL 构建
+// 要求输入为 HTTP/HTTPS URL，拒绝其他协议。
 func TestBuildCodexResponsesWebsocketURLRequiresHTTPURL(t *testing.T) {
 	if got, err := buildCodexResponsesWebsocketURL("https://example.com/backend/responses"); err != nil || got != "wss://example.com/backend/responses" {
 		t.Fatalf("https URL = %q, %v; want wss URL", got, err)
@@ -389,6 +418,8 @@ func TestBuildCodexResponsesWebsocketURLRequiresHTTPURL(t *testing.T) {
 	}
 }
 
+// TestParseCodexWebsocketErrorMarksConnectionLimitRetryable 验证 WebSocket 连接限制错误
+// 被标记为可重试，并包含正确的状态码和重试信息。
 func TestParseCodexWebsocketErrorMarksConnectionLimitRetryable(t *testing.T) {
 	err, ok := parseCodexWebsocketError([]byte(`{"type":"error","status":429,"error":{"code":"websocket_connection_limit_reached","message":"too many websockets"},"headers":{"retry-after":"1"}}`))
 	if !ok {
@@ -411,6 +442,8 @@ func TestParseCodexWebsocketErrorMarksConnectionLimitRetryable(t *testing.T) {
 	}
 }
 
+// TestParseCodexWebsocketErrorUsesUsageLimitRetryMetadata 验证使用限制错误
+// 使用 resets_in_seconds 元数据计算重试等待时间。
 func TestParseCodexWebsocketErrorUsesUsageLimitRetryMetadata(t *testing.T) {
 	err, ok := parseCodexWebsocketError([]byte(`{"type":"error","status":429,"body":{"error":{"type":"usage_limit_reached","message":"usage limit reached","resets_in_seconds":7}}}`))
 	if !ok {
@@ -426,6 +459,8 @@ func TestParseCodexWebsocketErrorUsesUsageLimitRetryMetadata(t *testing.T) {
 	}
 }
 
+// TestParseCodexWebsocketErrorPreservesWrappedBodyAndHeaders 验证 WebSocket 错误解析
+// 保留包装的 body 和 headers 信息。
 func TestParseCodexWebsocketErrorPreservesWrappedBodyAndHeaders(t *testing.T) {
 	err, ok := parseCodexWebsocketError([]byte(`{"type":"error","status":429,"body":{"error":{"code":"websocket_connection_limit_reached","type":"server_error","message":"too many websocket connections"}},"headers":{"x-request-id":"req-1"}}`))
 	if !ok {
@@ -452,6 +487,8 @@ func TestParseCodexWebsocketErrorPreservesWrappedBodyAndHeaders(t *testing.T) {
 	}
 }
 
+// TestApplyCodexHeadersUsesConfigUserAgentForOAuth 验证 HTTP 请求头部设置
+// 使用配置中的 User-Agent 用于 OAuth 认证。
 func TestApplyCodexHeadersUsesConfigUserAgentForOAuth(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
 	if err != nil {
@@ -481,6 +518,8 @@ func TestApplyCodexHeadersUsesConfigUserAgentForOAuth(t *testing.T) {
 	}
 }
 
+// TestApplyCodexHeadersPassesThroughClientIdentityHeaders 验证客户端身份头
+// 能正确透传到 HTTP 请求中。
 func TestApplyCodexHeadersPassesThroughClientIdentityHeaders(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
 	if err != nil {
@@ -513,6 +552,8 @@ func TestApplyCodexHeadersPassesThroughClientIdentityHeaders(t *testing.T) {
 	}
 }
 
+// TestApplyCodexHeadersDoesNotInjectClientOnlyHeadersByDefault 验证默认情况下
+// 不注入仅客户端使用的头部（如 Version、X-Codex-Turn-Metadata 等）。
 func TestApplyCodexHeadersDoesNotInjectClientOnlyHeadersByDefault(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
 	if err != nil {
@@ -532,6 +573,8 @@ func TestApplyCodexHeadersDoesNotInjectClientOnlyHeadersByDefault(t *testing.T) 
 	}
 }
 
+// contextWithGinHeaders 创建带有指定头部的 Gin 测试上下文。
+// 用于模拟客户端请求头部的测试辅助函数。
 func contextWithGinHeaders(headers map[string]string) context.Context {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -544,6 +587,8 @@ func contextWithGinHeaders(headers map[string]string) context.Context {
 	return context.WithValue(context.Background(), "gin", ginCtx)
 }
 
+// TestNewProxyAwareWebsocketDialerDirectDisablesProxy 验证当认证设置 ProxyURL 为 "direct" 时
+// WebSocket 拨号器禁用代理。
 func TestNewProxyAwareWebsocketDialerDirectDisablesProxy(t *testing.T) {
 	t.Parallel()
 

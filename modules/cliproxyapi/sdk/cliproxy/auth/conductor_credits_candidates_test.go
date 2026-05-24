@@ -1,3 +1,6 @@
+// auth - conductor_credits_candidates_test.go
+// 该文件包含 Antigravity 积分候选凭据发现的单元测试，验证在多个 Antigravity 凭据中
+// 优先选择已知有积分的凭据，其次是未知状态的凭据，最后是已知无积分的凭据。
 package auth
 
 import (
@@ -7,6 +10,8 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestFindAllAntigravityCreditsCandidateAuths_PrefersKnownCreditsThenUnknown 测试积分候选凭据
+// 的优先级排序：已知有积分 > 未知状态 > 已知无积分。
 func TestFindAllAntigravityCreditsCandidateAuths_PrefersKnownCreditsThenUnknown(t *testing.T) {
 	m := &Manager{
 		auths: map[string]*Auth{

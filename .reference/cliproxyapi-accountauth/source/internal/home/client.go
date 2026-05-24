@@ -1,3 +1,7 @@
+// 包 home - client.go
+// 该文件实现了 Home 控制平面的 Redis 客户端。
+// 提供与 Home 服务器的连接管理、配置获取、认证分发、使用量上报、
+// 集群发现和故障转移等功能。
 package home
 
 import (
@@ -23,41 +27,67 @@ import (
 )
 
 const (
-	redisKeyConfig     = "config"
+	// redisKeyConfig 是 Redis 中配置的键名
+	redisKeyConfig = "config"
+	// redisChannelConfig 是配置更新的 Redis 订阅频道
 	redisChannelConfig = "config"
-	redisKeyModels     = "models"
-	redisKeyUsage      = "usage"
+	// redisKeyModels 是 Redis 中模型列表的键名
+	redisKeyModels = "models"
+	// redisKeyUsage 是 Redis 中使用量数据的键名
+	redisKeyUsage = "usage"
+	// redisKeyRequestLog 是 Redis 中请求日志的键名
 	redisKeyRequestLog = "request-log"
 
-	homeReconnectInterval          = time.Second
+	// homeReconnectInterval 是重连间隔
+	homeReconnectInterval = time.Second
+	// homeReconnectFailoverThreshold 是触发故障转移的重连失败阈值
 	homeReconnectFailoverThreshold = 3
-	homeRedisOperationTimeout      = 3 * time.Second
+	// homeRedisOperationTimeout 是 Redis 操作超时时间
+	homeRedisOperationTimeout = 3 * time.Second
+	// homeSubscriptionReceiveTimeout 是订阅接收超时时间
 	homeSubscriptionReceiveTimeout = 3 * time.Second
-	redisChannelCluster            = "cluster"
+	// redisChannelCluster 是集群更新的 Redis 订阅频道
+	redisChannelCluster = "cluster"
 )
 
 var (
-	ErrDisabled       = errors.New("home client disabled")
-	ErrNotConnected   = errors.New("home not connected")
-	ErrEmptyResponse  = errors.New("home returned empty response")
-	ErrAuthNotFound   = errors.New("home auth not found")
+	// ErrDisabled 表示 Home 客户端已禁用
+	ErrDisabled = errors.New("home client disabled")
+	// ErrNotConnected 表示 Home 未连接
+	ErrNotConnected = errors.New("home not connected")
+	// ErrEmptyResponse 表示 Home 返回了空响应
+	ErrEmptyResponse = errors.New("home returned empty response")
+	// ErrAuthNotFound 表示 Home 未找到认证
+	ErrAuthNotFound = errors.New("home auth not found")
+	// ErrConfigNotFound 表示 Home 未找到配置
 	ErrConfigNotFound = errors.New("home config not found")
+	// ErrModelsNotFound 表示 Home 未找到模型
 	ErrModelsNotFound = errors.New("home models not found")
 )
 
+// clusterNode 表示集群中的一个节点。
 type clusterNode struct {
-	IP          string    `json:"ip"`
-	Port        int       `json:"port"`
-	ClientCount int       `json:"client_count"`
-	IsMaster    bool      `json:"is_master"`
-	LastSeenAt  time.Time `json:"last_seen_at"`
+	// IP 是节点的 IP 地址
+	IP string `json:"ip"`
+	// Port 是节点的端口
+	Port int `json:"port"`
+	// ClientCount 是节点的客户端数量
+	ClientCount int `json:"client_count"`
+	// IsMaster 指示节点是否为主节点
+	IsMaster bool `json:"is_master"`
+	// LastSeenAt 是节点最后可见时间
+	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
+// clusterNodesEnvelope 是集群节点响应的信封结构。
 type clusterNodesEnvelope struct {
-	OK    bool          `json:"ok"`
+	// OK 指示请求是否成功
+	OK bool `json:"ok"`
+	// Nodes 是集群节点列表
 	Nodes []clusterNode `json:"nodes"`
 }
 
+// Client 是 Home 控制平面的 Redis 客户端。
 type Client struct {
 	mu sync.Mutex
 
@@ -73,6 +103,7 @@ type Client struct {
 	reconnectFailures int
 }
 
+// New 创建新的 Home 客户端实例。
 func New(homeCfg config.HomeConfig) *Client {
 	return &Client{
 		homeCfg:  homeCfg,
@@ -81,6 +112,7 @@ func New(homeCfg config.HomeConfig) *Client {
 	}
 }
 
+// Enabled 检查 Home 客户端是否启用。
 func (c *Client) Enabled() bool {
 	if c == nil {
 		return false
@@ -90,6 +122,7 @@ func (c *Client) Enabled() bool {
 	return c.homeCfg.Enabled
 }
 
+// HeartbeatOK 检查 Home 心跳是否正常。
 func (c *Client) HeartbeatOK() bool {
 	if c == nil {
 		return false
@@ -100,6 +133,7 @@ func (c *Client) HeartbeatOK() bool {
 	return c.heartbeatOK.Load()
 }
 
+// Close 关闭 Home 客户端连接。
 func (c *Client) Close() {
 	if c == nil {
 		return
@@ -290,6 +324,7 @@ func (c *Client) subscriptionClient() (*redis.Client, error) {
 	return sub, nil
 }
 
+// Ping 向 Home 服务器发送 Ping 请求。
 func (c *Client) Ping(ctx context.Context) error {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -493,6 +528,7 @@ func (c *Client) resetReconnectFailures() {
 	c.mu.Unlock()
 }
 
+// GetConfig 从 Home 服务器获取配置。
 func (c *Client) GetConfig(ctx context.Context) ([]byte, error) {
 	c.refreshBestClusterNode(ctx)
 	cmd, errClient := c.commandClient()
@@ -512,6 +548,7 @@ func (c *Client) GetConfig(ctx context.Context) ([]byte, error) {
 	return raw, nil
 }
 
+// GetModels 从 Home 服务器获取模型列表。
 func (c *Client) GetModels(ctx context.Context) ([]byte, error) {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -569,6 +606,7 @@ func newAuthDispatchRequest(requestedModel string, sessionID string, headers htt
 	}
 }
 
+// RPopAuth 从 Home 服务器弹出认证信息。
 func (c *Client) RPopAuth(ctx context.Context, requestedModel string, sessionID string, headers http.Header, count int) ([]byte, error) {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -597,6 +635,7 @@ func (c *Client) RPopAuth(ctx context.Context, requestedModel string, sessionID 
 	return raw, nil
 }
 
+// GetRefreshAuth 从 Home 服务器获取刷新的认证信息。
 func (c *Client) GetRefreshAuth(ctx context.Context, authIndex string) ([]byte, error) {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -628,6 +667,7 @@ func (c *Client) GetRefreshAuth(ctx context.Context, authIndex string) ([]byte, 
 	return raw, nil
 }
 
+// LPushUsage 向 Home 服务器推送使用量数据。
 func (c *Client) LPushUsage(ctx context.Context, payload []byte) error {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -639,6 +679,7 @@ func (c *Client) LPushUsage(ctx context.Context, payload []byte) error {
 	return cmd.LPush(ctx, redisKeyUsage, payload).Err()
 }
 
+// RPushRequestLog 向 Home 服务器推送请求日志。
 func (c *Client) RPushRequestLog(ctx context.Context, payload []byte) error {
 	cmd, errClient := c.commandClient()
 	if errClient != nil {
@@ -669,12 +710,11 @@ func (c *Client) handleSubscriptionPayload(channel string, payload string, onCon
 	}
 }
 
-// StartConfigSubscriber connects to home, fetches config once via GET config, then subscribes to
-// the "config" channel to receive runtime config updates.
+// StartConfigSubscriber 连接到 Home，通过 GET config 获取一次配置，然后订阅
+// "config" 频道以接收运行时配置更新。
 //
-// The subscription connection is treated as the home heartbeat. HeartbeatOK is set to true only
-// after the initial GET config succeeds and the SUBSCRIBE connection is established. When the
-// subscription ends unexpectedly, HeartbeatOK becomes false and the loop reconnects.
+// 订阅连接被视为 Home 心跳。仅在初始 GET config 成功且 SUBSCRIBE 连接建立后，
+// HeartbeatOK 才设置为 true。当订阅意外结束时，HeartbeatOK 变为 false，循环重新连接。
 func (c *Client) StartConfigSubscriber(ctx context.Context, onConfig func([]byte) error) {
 	if c == nil {
 		return
@@ -787,6 +827,7 @@ func (c *Client) StartConfigSubscriber(ctx context.Context, onConfig func([]byte
 	}
 }
 
+// isTimeoutError 检查错误是否为超时错误。
 func isTimeoutError(err error) bool {
 	if err == nil {
 		return false
@@ -798,6 +839,7 @@ func isTimeoutError(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
+// sleepWithContext 在指定时间内休眠，支持上下文取消。
 func sleepWithContext(ctx context.Context, d time.Duration) {
 	if d <= 0 {
 		return

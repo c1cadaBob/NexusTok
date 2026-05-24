@@ -1,3 +1,6 @@
+// claude - anthropic_auth_test.go
+// 测试 Claude OAuth Token 刷新功能，包括 429 速率限制后的阻断重放保护
+// 和并发刷新请求的单飞（singleflight）去重机制。
 package claude
 
 import (
@@ -11,12 +14,16 @@ import (
 	"time"
 )
 
+// roundTripFunc 是一个函数类型，实现了 http.RoundTripper 接口，用于测试中模拟 HTTP 请求。
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip 实现 http.RoundTripper 接口，将请求委托给函数本身处理。
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestRefreshTokensWithRetry_429BlocksImmediateReplay 验证当 Token 刷新返回 429 状态码时，
+// 后续的刷新请求会被立即阻断，避免在限流窗口内重复发起上游请求。
 func TestRefreshTokensWithRetry_429BlocksImmediateReplay(t *testing.T) {
 	resetClaudeRefreshState()
 	defer resetClaudeRefreshState()
@@ -59,6 +66,8 @@ func TestRefreshTokensWithRetry_429BlocksImmediateReplay(t *testing.T) {
 	}
 }
 
+// TestRefreshTokens_DeduplicatesConcurrentRefresh 验证多个并发刷新请求会通过 singleflight 机制
+// 合并为单次上游请求，所有调用者共享相同的结果。
 func TestRefreshTokens_DeduplicatesConcurrentRefresh(t *testing.T) {
 	resetClaudeRefreshState()
 	defer resetClaudeRefreshState()

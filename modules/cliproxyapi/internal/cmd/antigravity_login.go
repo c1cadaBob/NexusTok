@@ -1,3 +1,5 @@
+// Package cmd - antigravity_login.go
+// 提供 Antigravity 提供商的 OAuth 认证流程。
 package cmd
 
 import (
@@ -9,6 +11,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// DoAntigravityLogin 触发 Antigravity 提供商的 OAuth 流程并保存令牌。
+//
+// 参数:
+//   - cfg: 应用程序配置
+//   - options: 登录选项，包括浏览器行为和提示
+//
 // DoAntigravityLogin triggers the OAuth flow for the antigravity provider and saves tokens.
 func DoAntigravityLogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {

@@ -1,3 +1,11 @@
+// Package controller - topup_waffo_pancake_test.go
+// 该文件包含 Waffo Pancake 充值控制器的单元测试
+//
+// 测试内容包括：
+// - 金额格式化（formatWaffoPancakeAmount）
+// - 充值金额计算（getWaffoPancakePayMoney）
+// - 支持不同配额显示类型（USD/CNY/TOKENS）
+// - 分组倍率和折扣计算
 package controller
 
 import (

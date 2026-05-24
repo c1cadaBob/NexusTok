@@ -1,6 +1,6 @@
-// Package claude provides authentication and token management functionality
-// for Anthropic's Claude AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Claude API.
+// claude - errors.go
+// 定义 Claude/Anthropic OAuth2 认证过程中的错误类型，包括 OAuth 错误和认证错误，
+// 以及预定义的常见错误变量和用户友好的错误消息映射。
 package claude
 
 import (
@@ -9,19 +9,19 @@ import (
 	"net/http"
 )
 
-// OAuthError represents an OAuth-specific error.
+// OAuthError 表示 OAuth 协议相关的错误。
 type OAuthError struct {
-	// Code is the OAuth error code.
+	// Code 是 OAuth 错误码
 	Code string `json:"error"`
-	// Description is a human-readable description of the error.
+	// Description 是错误的人类可读描述
 	Description string `json:"error_description,omitempty"`
-	// URI is a URI identifying a human-readable web page with information about the error.
+	// URI 指向包含错误信息的人类可读网页
 	URI string `json:"error_uri,omitempty"`
-	// StatusCode is the HTTP status code associated with the error.
+	// StatusCode 是与错误关联的 HTTP 状态码
 	StatusCode int `json:"-"`
 }
 
-// Error returns a string representation of the OAuth error.
+// Error 返回 OAuth 错误的字符串表示。
 func (e *OAuthError) Error() string {
 	if e.Description != "" {
 		return fmt.Sprintf("OAuth error %s: %s", e.Code, e.Description)
@@ -29,7 +29,7 @@ func (e *OAuthError) Error() string {
 	return fmt.Sprintf("OAuth error: %s", e.Code)
 }
 
-// NewOAuthError creates a new OAuth error with the specified code, description, and status code.
+// NewOAuthError 创建具有指定错误码、描述和状态码的新 OAuth 错误。
 func NewOAuthError(code, description string, statusCode int) *OAuthError {
 	return &OAuthError{
 		Code:        code,
@@ -38,19 +38,19 @@ func NewOAuthError(code, description string, statusCode int) *OAuthError {
 	}
 }
 
-// AuthenticationError represents authentication-related errors.
+// AuthenticationError 表示认证相关的错误。
 type AuthenticationError struct {
-	// Type is the type of authentication error.
+	// Type 是认证错误的类型
 	Type string `json:"type"`
-	// Message is a human-readable message describing the error.
+	// Message 是错误的人类可读消息
 	Message string `json:"message"`
-	// Code is the HTTP status code associated with the error.
+	// Code 是与错误关联的 HTTP 状态码
 	Code int `json:"code"`
-	// Cause is the underlying error that caused this authentication error.
+	// Cause 是导致此认证错误的底层错误
 	Cause error `json:"-"`
 }
 
-// Error returns a string representation of the authentication error.
+// Error 返回认证错误的字符串表示。
 func (e *AuthenticationError) Error() string {
 	if e.Cause != nil {
 		return fmt.Sprintf("%s: %s (caused by: %v)", e.Type, e.Message, e.Cause)
@@ -58,7 +58,7 @@ func (e *AuthenticationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }
 
-// Common authentication error types.
+// 常见认证错误类型。
 var (
 	// ErrTokenExpired = &AuthenticationError{
 	// 	Type:    "token_expired",
@@ -66,35 +66,35 @@ var (
 	// 	Code:    http.StatusUnauthorized,
 	// }
 
-	// ErrInvalidState represents an error for invalid OAuth state parameter.
+	// ErrInvalidState 表示 OAuth state 参数无效的错误。
 	ErrInvalidState = &AuthenticationError{
 		Type:    "invalid_state",
 		Message: "OAuth state parameter is invalid",
 		Code:    http.StatusBadRequest,
 	}
 
-	// ErrCodeExchangeFailed represents an error when exchanging authorization code for tokens fails.
+	// ErrCodeExchangeFailed 表示用授权码交换 Token 失败的错误。
 	ErrCodeExchangeFailed = &AuthenticationError{
 		Type:    "code_exchange_failed",
 		Message: "Failed to exchange authorization code for tokens",
 		Code:    http.StatusBadRequest,
 	}
 
-	// ErrServerStartFailed represents an error when starting the OAuth callback server fails.
+	// ErrServerStartFailed 表示启动 OAuth 回调服务器失败的错误。
 	ErrServerStartFailed = &AuthenticationError{
 		Type:    "server_start_failed",
 		Message: "Failed to start OAuth callback server",
 		Code:    http.StatusInternalServerError,
 	}
 
-	// ErrPortInUse represents an error when the OAuth callback port is already in use.
+	// ErrPortInUse 表示 OAuth 回调端口已被占用的错误。
 	ErrPortInUse = &AuthenticationError{
 		Type:    "port_in_use",
 		Message: "OAuth callback port is already in use",
 		Code:    13, // Special exit code for port-in-use
 	}
 
-	// ErrCallbackTimeout represents an error when waiting for OAuth callback times out.
+	// ErrCallbackTimeout 表示等待 OAuth 回调超时的错误。
 	ErrCallbackTimeout = &AuthenticationError{
 		Type:    "callback_timeout",
 		Message: "Timeout waiting for OAuth callback",
@@ -102,7 +102,7 @@ var (
 	}
 )
 
-// NewAuthenticationError creates a new authentication error with a cause based on a base error.
+// NewAuthenticationError 基于基础错误创建带有原因链的新认证错误。
 func NewAuthenticationError(baseErr *AuthenticationError, cause error) *AuthenticationError {
 	return &AuthenticationError{
 		Type:    baseErr.Type,
@@ -112,21 +112,21 @@ func NewAuthenticationError(baseErr *AuthenticationError, cause error) *Authenti
 	}
 }
 
-// IsAuthenticationError checks if an error is an authentication error.
+// IsAuthenticationError 检查错误是否为认证错误类型。
 func IsAuthenticationError(err error) bool {
 	var authenticationError *AuthenticationError
 	ok := errors.As(err, &authenticationError)
 	return ok
 }
 
-// IsOAuthError checks if an error is an OAuth error.
+// IsOAuthError 检查错误是否为 OAuth 错误类型。
 func IsOAuthError(err error) bool {
 	var oAuthError *OAuthError
 	ok := errors.As(err, &oAuthError)
 	return ok
 }
 
-// GetUserFriendlyMessage returns a user-friendly error message based on the error type.
+// GetUserFriendlyMessage 根据错误类型返回用户友好的错误消息。
 func GetUserFriendlyMessage(err error) string {
 	switch {
 	case IsAuthenticationError(err):

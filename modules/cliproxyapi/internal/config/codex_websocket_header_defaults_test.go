@@ -1,3 +1,7 @@
+// config - codex_websocket_header_defaults_test.go
+// 该文件测试 Codex WebSocket 头部默认配置的加载和空格修剪。
+// 验证 LoadConfigOptional 能正确解析 codex-header-defaults 并修剪值的首尾空格。
+
 package config
 
 import (
@@ -6,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestLoadConfigOptional_CodexHeaderDefaults 测试 Codex 头部默认配置加载后值被正确修剪空格。
 func TestLoadConfigOptional_CodexHeaderDefaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

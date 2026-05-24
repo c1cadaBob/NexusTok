@@ -1,7 +1,8 @@
+// codex/gemini-cli - codex_gemini-cli_response.go
 // Package geminiCLI provides response translation functionality for Codex to Gemini CLI API compatibility.
-// This package handles the conversion of Codex API responses into Gemini CLI-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Gemini CLI API clients.
+// 本文件提供 Codex API 响应到 Gemini CLI API 格式的转换功能。
+// 将 Codex 流式/非流式响应委托给 codex/gemini 包进行格式转换，
+// 然后在外层包裹 {"response": {...}} 结构以匹配 Gemini CLI API 响应格式。
 package geminiCLI
 
 import (
@@ -50,6 +51,7 @@ func ConvertCodexResponseToGeminiCLINonStream(ctx context.Context, modelName str
 	return translatorcommon.WrapGeminiCLIResponse(out)
 }
 
+// GeminiCLITokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiCLITokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }

@@ -1,3 +1,19 @@
+// Package common - ssrf_protection.go
+// 该文件实现了 SSRF（Server-Side Request Forgery）攻击防护
+//
+// SSRF 是一种攻击方式，攻击者通过构造恶意 URL，使服务器发起请求到内部网络或其他受限资源
+//
+// 防护措施：
+// - 协议限制：只允许 HTTP/HTTPS 协议
+// - 端口限制：可配置允许的端口范围
+// - IP 过滤：支持白名单/黑名单模式，阻止私有/保留 IP
+// - 域名过滤：支持白名单/黑名单模式，支持通配符匹配
+// - DNS 解析验证：可选对域名进行 DNS 解析后验证 IP
+//
+// 使用场景：
+// - Webhook URL 验证
+// - 上游 API 地址验证
+// - 用户自定义 URL 验证
 package common
 
 import (
@@ -8,25 +24,25 @@ import (
 	"strings"
 )
 
-// SSRFProtection SSRF防护配置
+// SSRFProtection SSRF 防护配置
 type SSRFProtection struct {
-	AllowPrivateIp         bool
-	DomainFilterMode       bool     // true: 白名单, false: 黑名单
-	DomainList             []string // domain format, e.g. example.com, *.example.com
-	IpFilterMode           bool     // true: 白名单, false: 黑名单
-	IpList                 []string // CIDR or single IP
-	AllowedPorts           []int    // 允许的端口范围
-	ApplyIPFilterForDomain bool     // 对域名启用IP过滤
+	AllowPrivateIp         bool     // 是否允许私有 IP 地址
+	DomainFilterMode       bool     // 域名过滤模式（true: 白名单, false: 黑名单）
+	DomainList             []string // 域名列表（支持通配符，如 *.example.com）
+	IpFilterMode           bool     // IP 过滤模式（true: 白名单, false: 黑名单）
+	IpList                 []string // IP/CIDR 列表
+	AllowedPorts           []int    // 允许的端口列表
+	ApplyIPFilterForDomain bool     // 是否对域名启用 IP 过滤（DNS 解析后验证）
 }
 
-// DefaultSSRFProtection 默认SSRF防护配置
+// DefaultSSRFProtection 默认 SSRF 防护配置
 var DefaultSSRFProtection = &SSRFProtection{
-	AllowPrivateIp:   false,
-	DomainFilterMode: true,
-	DomainList:       []string{},
-	IpFilterMode:     true,
-	IpList:           []string{},
-	AllowedPorts:     []int{},
+	AllowPrivateIp:   false,           // 默认不允许私有 IP
+	DomainFilterMode: true,            // 默认白名单模式
+	DomainList:       []string{},      // 默认空列表
+	IpFilterMode:     true,            // 默认白名单模式
+	IpList:           []string{},      // 默认空列表
+	AllowedPorts:     []int{},         // 默认允许所有端口
 }
 
 // privateIPv4Nets IPv4 私有/保留/特殊用途网段
@@ -75,7 +91,22 @@ var privateIPv6Nets = func() []net.IPNet {
 	return nets
 }()
 
-// isPrivateIP 检查IP是否为私有/保留/特殊用途地址
+// isPrivateIP 检查 IP 是否为私有/保留/特殊用途地址
+//
+// 检查范围：
+// - 未指定地址（0.0.0.0, ::）
+// - 回环地址（127.0.0.1, ::1）
+// - 链路本地地址（169.254.x.x, fe80::）
+// - IPv4 私有地址（10.x.x.x, 172.16.x.x, 192.168.x.x）
+// - IPv6 私有地址（fc00::/7）
+// - 组播地址
+// - 其他 IANA 保留地址
+//
+// 参数：
+//   - ip: 要检查的 IP 地址
+//
+// 返回值：
+//   - bool: 是否为私有/保留地址
 func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -93,6 +124,7 @@ func isPrivateIP(ip net.IP) bool {
 		return true
 	}
 
+	// IPv4 检查
 	if v4 := ip.To4(); v4 != nil {
 		for _, privateNet := range privateIPv4Nets {
 			if privateNet.Contains(v4) {
@@ -116,7 +148,17 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 // parsePortRanges 解析端口范围配置
-// 支持格式: "80", "443", "8000-9000"
+//
+// 支持的格式：
+// - 单个端口："80"
+// - 端口范围："8000-9000"
+//
+// 参数：
+//   - portConfigs: 端口配置字符串列表
+//
+// 返回值：
+//   - []int: 解析后的端口列表
+//   - error: 解析错误
 func parsePortRanges(portConfigs []string) ([]int, error) {
 	var ports []int
 
@@ -174,6 +216,12 @@ func parsePortRanges(portConfigs []string) ([]int, error) {
 }
 
 // isAllowedPort 检查端口是否被允许
+//
+// 参数：
+//   - port: 端口号
+//
+// 返回值：
+//   - bool: 是否允许
 func (p *SSRFProtection) isAllowedPort(port int) bool {
 	if len(p.AllowedPorts) == 0 {
 		return true // 如果没有配置端口限制，则允许所有端口
@@ -187,7 +235,16 @@ func (p *SSRFProtection) isAllowedPort(port int) bool {
 	return false
 }
 
-// isDomainWhitelisted 检查域名是否在白名单中
+// isDomainListed 检查域名是否在列表中
+//
+// 支持精确匹配和通配符匹配（*.example.com）
+//
+// 参数：
+//   - domain: 域名
+//   - list: 域名列表
+//
+// 返回值：
+//   - bool: 是否在列表中
 func isDomainListed(domain string, list []string) bool {
 	if len(list) == 0 {
 		return false
@@ -214,6 +271,15 @@ func isDomainListed(domain string, list []string) bool {
 	return false
 }
 
+// isDomainAllowed 检查域名是否允许访问
+//
+// 根据 DomainFilterMode 决定是白名单还是黑名单模式
+//
+// 参数：
+//   - domain: 域名
+//
+// 返回值：
+//   - bool: 是否允许
 func (p *SSRFProtection) isDomainAllowed(domain string) bool {
 	listed := isDomainListed(domain, p.DomainList)
 	if p.DomainFilterMode { // 白名单
@@ -223,8 +289,14 @@ func (p *SSRFProtection) isDomainAllowed(domain string) bool {
 	return !listed
 }
 
-// isIPWhitelisted 检查IP是否在白名单中
-
+// isIPListed 检查 IP 是否在列表中
+//
+// 参数：
+//   - ip: IP 地址
+//   - list: IP/CIDR 列表
+//
+// 返回值：
+//   - bool: 是否在列表中
 func isIPListed(ip net.IP, list []string) bool {
 	if len(list) == 0 {
 		return false
@@ -233,9 +305,19 @@ func isIPListed(ip net.IP, list []string) bool {
 	return IsIpInCIDRList(ip, list)
 }
 
-// IsIPAccessAllowed 检查IP是否允许访问
+// IsIPAccessAllowed 检查 IP 是否允许访问
+//
+// 检查流程：
+// 1. 如果是私有 IP 且不允许私有 IP，拒绝
+// 2. 根据 IpFilterMode 决定是白名单还是黑名单模式
+//
+// 参数：
+//   - ip: IP 地址
+//
+// 返回值：
+//   - bool: 是否允许
 func (p *SSRFProtection) IsIPAccessAllowed(ip net.IP) bool {
-	// 私有IP限制
+	// 私有 IP 限制
 	if isPrivateIP(ip) && !p.AllowPrivateIp {
 		return false
 	}
@@ -248,15 +330,30 @@ func (p *SSRFProtection) IsIPAccessAllowed(ip net.IP) bool {
 	return !listed
 }
 
-// ValidateURL 验证URL是否安全
+// ValidateURL 验证 URL 是否安全
+//
+// 验证流程：
+// 1. 解析 URL
+// 2. 检查协议（只允许 HTTP/HTTPS）
+// 3. 解析主机和端口
+// 4. 检查端口是否允许
+// 5. 如果是 IP，检查 IP 是否允许
+// 6. 如果是域名，检查域名是否允许
+// 7. 如果启用了 ApplyIPFilterForDomain，DNS 解析后检查 IP
+//
+// 参数：
+//   - urlStr: URL 字符串
+//
+// 返回值：
+//   - error: 验证错误（nil 表示安全）
 func (p *SSRFProtection) ValidateURL(urlStr string) error {
-	// 解析URL
+	// 解析 URL
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return fmt.Errorf("invalid URL format: %v", err)
 	}
 
-	// 只允许HTTP/HTTPS协议
+	// 只允许 HTTP/HTTPS 协议
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("unsupported protocol: %s (only http/https allowed)", u.Scheme)
 	}
@@ -305,12 +402,12 @@ func (p *SSRFProtection) ValidateURL(urlStr string) error {
 		return fmt.Errorf("domain in blacklist: %s", host)
 	}
 
-	// 若未启用对域名应用IP过滤，则到此通过
+	// 若未启用对域名应用 IP 过滤，则到此通过
 	if !p.ApplyIPFilterForDomain {
 		return nil
 	}
 
-	// 解析域名对应IP并检查
+	// 解析域名对应 IP 并检查
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %s: %v", host, err)
@@ -329,9 +426,25 @@ func (p *SSRFProtection) ValidateURL(urlStr string) error {
 	return nil
 }
 
-// ValidateURLWithFetchSetting 使用FetchSetting配置验证URL
+// ValidateURLWithFetchSetting 使用 FetchSetting 配置验证 URL
+//
+// 这是一个便捷函数，从配置参数创建 SSRFProtection 并验证 URL
+//
+// 参数：
+//   - urlStr: URL 字符串
+//   - enableSSRFProtection: 是否启用 SSRF 防护
+//   - allowPrivateIp: 是否允许私有 IP
+//   - domainFilterMode: 域名过滤模式（true: 白名单, false: 黑名单）
+//   - ipFilterMode: IP 过滤模式（true: 白名单, false: 黑名单）
+//   - domainList: 域名列表
+//   - ipList: IP/CIDR 列表
+//   - allowedPorts: 端口配置列表
+//   - applyIPFilterForDomain: 是否对域名启用 IP 过滤
+//
+// 返回值：
+//   - error: 验证错误
 func ValidateURLWithFetchSetting(urlStr string, enableSSRFProtection, allowPrivateIp bool, domainFilterMode bool, ipFilterMode bool, domainList, ipList, allowedPorts []string, applyIPFilterForDomain bool) error {
-	// 如果SSRF防护被禁用，直接返回成功
+	// 如果 SSRF 防护被禁用，直接返回成功
 	if !enableSSRFProtection {
 		return nil
 	}

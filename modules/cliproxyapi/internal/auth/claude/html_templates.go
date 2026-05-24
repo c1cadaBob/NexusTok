@@ -1,12 +1,11 @@
-// Package claude provides authentication and token management functionality
-// for Anthropic's Claude AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Claude API.
+// claude - html_templates.go
+// 定义 Claude OAuth 认证成功后的 HTML 页面模板，包括登录成功页面和
+// 附加设置提示页面的模板常量。
 package claude
 
-// LoginSuccessHtml is the HTML template displayed to users after successful OAuth authentication.
-// This template provides a user-friendly success page with options to close the window
-// or navigate to the Claude platform. It includes automatic window closing functionality
-// and keyboard accessibility features.
+// LoginSuccessHtml 是 OAuth 认证成功后向用户展示的 HTML 模板。
+// 该模板提供用户友好的成功页面，包含关闭窗口或跳转到 Claude 平台的选项，
+// 支持自动关闭窗口功能和键盘无障碍访问。
 const LoginSuccessHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -208,9 +207,8 @@ const LoginSuccessHtml = `<!DOCTYPE html>
 </body>
 </html>`
 
-// SetupNoticeHtml is the HTML template for the setup notice section.
-// This template is embedded within the success page to inform users about
-// additional setup steps required to complete their Claude account configuration.
+// SetupNoticeHtml 是附加设置提示部分的 HTML 模板。
+// 该模板嵌入在成功页面中，用于通知用户完成 Claude 账户配置所需的额外设置步骤。
 const SetupNoticeHtml = `
         <div class="setup-notice">
             <h3>Additional Setup Required</h3>

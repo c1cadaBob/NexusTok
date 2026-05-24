@@ -1,7 +1,17 @@
+// config - oauth_model_alias_test.go
+// OAuth 模型别名清理功能测试
+// 验证 SanitizeOAuthModelAlias 方法能够正确清理配置中的模型别名：
+// - 去除首尾空格
+// - 保留 Fork 标志
+// - 支持同一模型名称的多个别名映射
 package config
 
 import "testing"
 
+// TestSanitizeOAuthModelAlias_PreservesForkFlag 验证清理过程：
+// 1. 去除 provider 名称（如 "CoDeX" -> "codex"）和模型名称/别名的首尾空格
+// 2. 保留 Fork 标志为 true 的别名条目
+// 3. 保留 Fork 标志为 false（默认值）的别名条目
 func TestSanitizeOAuthModelAlias_PreservesForkFlag(t *testing.T) {
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{
@@ -26,6 +36,9 @@ func TestSanitizeOAuthModelAlias_PreservesForkFlag(t *testing.T) {
 	}
 }
 
+// TestSanitizeOAuthModelAlias_AllowsMultipleAliasesForSameName 验证
+// 同一个上游模型名称可以配置多个不同的别名（多对一映射），
+// 例如 gemini-claude-opus-4-5-thinking 可以同时映射到多个 Claude 模型别名。
 func TestSanitizeOAuthModelAlias_AllowsMultipleAliasesForSameName(t *testing.T) {
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{

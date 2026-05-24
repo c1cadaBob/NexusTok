@@ -1,3 +1,16 @@
+// Package billingexpr - run.go
+// 该文件实现了计费表达式的运行功能
+//
+// 核心功能：
+// - RunExpr：编译（带缓存）并执行表达式
+// - 表达式环境变量注入（Token 参数、请求信息）
+// - 表达式执行结果提取
+//
+// 表达式环境：
+// - p：输入 Token 数
+// - c：输出 Token 数
+// - cache_read：缓存读取 Token 数
+// - 其他可选维度
 package billingexpr
 
 import (

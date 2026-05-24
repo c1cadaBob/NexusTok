@@ -1,3 +1,8 @@
+// config - claude_header_defaults_test.go
+// Claude 请求头默认值配置测试
+// 验证 LoadConfigOptional 函数能够正确解析 claude-header-defaults 配置节，
+// 包括 User-Agent、版本号、操作系统、架构、超时时间等字段，
+// 并对所有字符串值进行首尾空格清理。
 package config
 
 import (
@@ -6,6 +11,10 @@ import (
 	"testing"
 )
 
+// TestLoadConfigOptional_ClaudeHeaderDefaults 测试 Claude 请求头默认值的加载：
+// 1. 从 YAML 配置文件中读取 claude-header-defaults 节
+// 2. 验证各字符串字段的首尾空格被正确去除
+// 3. 验证 StabilizeDeviceProfile 指针类型字段的解析（false 值）
 func TestLoadConfigOptional_ClaudeHeaderDefaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

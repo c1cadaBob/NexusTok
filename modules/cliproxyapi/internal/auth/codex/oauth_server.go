@@ -1,3 +1,7 @@
+// Package codex - oauth_server.go
+// 提供本地 OAuth 回调 HTTP 服务器。
+// 监听 OAuth 提供商的授权码回调，捕获认证参数以完成认证流程，
+// 包括启动/停止服务器、等待回调结果、处理成功页面等功能。
 package codex
 
 import (

@@ -1,6 +1,6 @@
-// Package claude provides authentication and token management functionality
-// for Anthropic's Claude AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Claude API.
+// claude - token.go
+// 提供 Claude/Anthropic OAuth 凭证的磁盘持久化功能，包括 ClaudeTokenStorage 结构体的
+// 序列化、文件写入、元数据合并等。
 package claude
 
 import (
@@ -12,61 +12,60 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 )
 
-// ClaudeTokenStorage stores OAuth2 token information for Anthropic Claude API authentication.
-// It maintains compatibility with the existing auth system while adding Claude-specific fields
-// for managing access tokens, refresh tokens, and user account information.
+// ClaudeTokenStorage 存储 Anthropic Claude API 认证所需的 OAuth2 Token 信息。
+// 它在保持与现有认证系统兼容的同时，增加了 Claude 特有的字段用于管理
+// 访问令牌、刷新令牌和用户账户信息。
 type ClaudeTokenStorage struct {
-	// IDToken is the JWT ID token containing user claims and identity information.
+	// IDToken 是包含用户声明和身份信息的 JWT ID 令牌
 	IDToken string `json:"id_token"`
 
-	// AccessToken is the OAuth2 access token used for authenticating API requests.
+	// AccessToken 是用于认证 API 请求的 OAuth2 访问令牌
 	AccessToken string `json:"access_token"`
 
-	// RefreshToken is used to obtain new access tokens when the current one expires.
+	// RefreshToken 用于在当前访问令牌过期时获取新的访问令牌
 	RefreshToken string `json:"refresh_token"`
 
-	// LastRefresh is the timestamp of the last token refresh operation.
+	// LastRefresh 是最近一次 Token 刷新操作的时间戳
 	LastRefresh string `json:"last_refresh"`
 
-	// Email is the Anthropic account email address associated with this token.
+	// Email 是与此 Token 关联的 Anthropic 账户邮箱地址
 	Email string `json:"email"`
 
-	// Type indicates the authentication provider type, always "claude" for this storage.
+	// Type 标识认证提供者类型，此存储始终为 "claude"
 	Type string `json:"type"`
 
-	// Expire is the timestamp when the current access token expires.
+	// Expire 是当前访问令牌的过期时间戳
 	Expire string `json:"expired"`
 
-	// Metadata holds arbitrary key-value pairs injected via hooks.
-	// It is not exported to JSON directly to allow flattening during serialization.
+	// Metadata 保存通过钩子注入的任意键值对。
+	// 不直接导出到 JSON，以便在序列化时进行扁平化处理。
 	Metadata map[string]any `json:"-"`
 }
 
-// SetMetadata allows external callers to inject metadata into the storage before saving.
+// SetMetadata 允许外部调用者在保存前向存储注入元数据。
 func (ts *ClaudeTokenStorage) SetMetadata(meta map[string]any) {
 	ts.Metadata = meta
 }
 
-// SaveTokenToFile serializes the Claude token storage to a JSON file.
-// This method creates the necessary directory structure and writes the token
-// data in JSON format to the specified file path for persistent storage.
-// It merges any injected metadata into the top-level JSON object.
+// SaveTokenToFile 将 Claude Token 存储序列化为 JSON 文件。
+// 该方法创建必要的目录结构，并以 JSON 格式将 Token 数据写入指定文件路径进行持久化存储。
+// 它会将注入的元数据合并到顶层 JSON 对象中。
 //
-// Parameters:
-//   - authFilePath: The full path where the token file should be saved
+// 参数:
+//   - authFilePath: Token 文件的完整保存路径
 //
-// Returns:
-//   - error: An error if the operation fails, nil otherwise
+// 返回值:
+//   - error: 操作失败时返回错误，成功时返回 nil
 func (ts *ClaudeTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "claude"
 
-	// Create directory structure if it doesn't exist
+	// 如果目录不存在则创建目录结构
 	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %v", err)
 	}
 
-	// Create the token file
+	// 创建 Token 文件
 	f, err := os.Create(authFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create token file: %w", err)
@@ -75,13 +74,13 @@ func (ts *ClaudeTokenStorage) SaveTokenToFile(authFilePath string) error {
 		_ = f.Close()
 	}()
 
-	// Merge metadata using helper
+	// 使用辅助函数合并元数据
 	data, errMerge := misc.MergeMetadata(ts, ts.Metadata)
 	if errMerge != nil {
 		return fmt.Errorf("failed to merge metadata: %w", errMerge)
 	}
 
-	// Encode and write the token data as JSON
+	// 将 Token 数据编码为 JSON 并写入文件
 	if err = json.NewEncoder(f).Encode(data); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}

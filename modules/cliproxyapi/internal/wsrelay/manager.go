@@ -1,3 +1,6 @@
+// wsrelay - manager.go
+// 本文件实现了 WebSocket 中继管理器，负责 WebSocket 连接的升级、会话管理和消息路由。
+// 管理器维护活跃会话的映射，支持将 HTTP 请求代理到连接的 WebSocket 客户端。
 package wsrelay
 
 import (
@@ -13,35 +16,48 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Manager exposes a websocket endpoint that proxies Gemini requests to
-// connected clients.
+// Manager 暴露一个 WebSocket 端点，将请求代理到已连接的客户端。
+// 它管理所有活跃的 WebSocket 会话，并提供消息发送和路由功能。
 type Manager struct {
+	// path 是 WebSocket 端点的 URL 路径。
 	path      string
+	// upgrader 是 WebSocket 连接升级器。
 	upgrader  websocket.Upgrader
+	// sessions 存储所有活跃会话，以会话 ID 为键。
 	sessions  map[string]*session
+	// sessMutex 保护 sessions 映射的并发访问。
 	sessMutex sync.RWMutex
 
+	// providerFactory 从 HTTP 请求中提取提供商标识。
 	providerFactory func(*http.Request) (string, error)
+	// onConnected 是会话建立连接时的回调函数。
 	onConnected     func(string)
+	// onDisconnected 是会话断开连接时的回调函数。
 	onDisconnected  func(string, error)
 
+	// 日志输出函数。
 	logDebugf func(string, ...any)
 	logInfof  func(string, ...any)
 	logWarnf  func(string, ...any)
 }
 
-// Options configures a Manager instance.
+// Options 配置 WebSocket 中继管理器的选项。
 type Options struct {
+	// Path 是 WebSocket 端点的 URL 路径，默认为 "/v1/ws"。
 	Path            string
+	// ProviderFactory 从 HTTP 请求中提取提供商标识的工厂函数。
 	ProviderFactory func(*http.Request) (string, error)
+	// OnConnected 是会话建立连接时的回调函数。
 	OnConnected     func(string)
+	// OnDisconnected 是会话断开连接时的回调函数。
 	OnDisconnected  func(string, error)
+	// 日志输出函数。
 	LogDebugf       func(string, ...any)
 	LogInfof        func(string, ...any)
 	LogWarnf        func(string, ...any)
 }
 
-// NewManager builds a websocket relay manager with the supplied options.
+// NewManager 使用提供的选项构建一个 WebSocket 中继管理器。
 func NewManager(opts Options) *Manager {
 	path := strings.TrimSpace(opts.Path)
 	if path == "" {

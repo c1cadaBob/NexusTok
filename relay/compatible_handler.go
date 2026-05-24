@@ -1,3 +1,8 @@
+// Package relay - compatible_handler.go
+// 本文件实现了 OpenAI 兼容的文本类请求处理入口（TextHelper）。
+// TextHelper 是 Chat Completions、Completions 等文本生成请求的统一中继处理函数，
+// 负责完整的请求生命周期：模型映射 → 适配器初始化 → 请求转换 → 上游调用 → 响应处理 → 计费结算。
+// 同时支持通过 Responses API 转发 Chat Completions 请求的特殊路径。
 package relay
 
 import (
@@ -23,6 +28,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TextHelper 是文本类请求（Chat Completions / Completions）的中继处理入口。
+// 处理流程：
+//  1. 初始化渠道元数据（InitChannelMeta）。
+//  2. 深拷贝请求并执行模型映射（ModelMappedHelper）。
+//  3. 处理 StreamOptions：若渠道不支持流式选项则置空；若配置了强制启用则自动填充。
+//  4. 判断是否走 "通过 Responses API 转发" 的特殊路径：
+//     - 若全局配置开启且渠道未使用 passthrough，先应用系统提示，
+//       再调用 chatCompletionsViaResponses 完成请求转发和计费。
+//  5. 常规路径下：根据是否使用 passthrough 模式，分别选择透传原始请求体或经过适配器转换。
+//  6. 应用参数覆盖（ParamOverride）、移除禁用字段（RemoveDisabledFields）。
+//  7. 通过适配器发送请求，处理错误响应和状态码映射。
+//  8. 根据响应中是否包含音频 token，分别调用 PostAudioConsumeQuota 或 PostTextConsumeQuota 进行计费。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息（RelayInfo），包含用户、令牌、渠道等元数据
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 

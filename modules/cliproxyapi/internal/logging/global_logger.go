@@ -1,3 +1,7 @@
+// logging - global_logger.go
+// 本文件提供全局日志系统的初始化和配置功能。
+// 包含自定义日志格式化器、日志输出切换（文件/控制台）、
+// 日志目录解析以及 Gin 框架日志集成等功能。
 package logging
 
 import (

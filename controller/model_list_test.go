@@ -1,3 +1,10 @@
+// Package controller - model_list_test.go
+// 该文件包含模型列表控制器的单元测试
+//
+// 测试内容包括：
+// - 分层计费模型在模型列表中的可见性
+// - Token 模型限制下的分层计费模型可见性
+// - 无效表达式的分层计费模型过滤
 package controller
 
 import (
@@ -20,10 +27,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// listModelsResponse 模型列表响应结构体
 type listModelsResponse struct {
-	Success bool               `json:"success"`
-	Data    []dto.OpenAIModels `json:"data"`
-	Object  string             `json:"object"`
+	Success bool               `json:"success"` // 是否成功
+	Data    []dto.OpenAIModels `json:"data"`    // 模型列表
+	Object  string             `json:"object"`  // 对象类型
 }
 
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {

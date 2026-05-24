@@ -1,3 +1,11 @@
+// Package dto - gemini_isstream_test.go
+// 该文件包含 Gemini 请求流式检测的单元测试
+//
+// 测试内容包括：
+// - streamGenerateContent 路径检测
+// - alt=sse 查询参数检测
+// - 非流式路径（generateContent、embedContent）检测
+// - 大小写敏感性测试
 package dto
 
 import (

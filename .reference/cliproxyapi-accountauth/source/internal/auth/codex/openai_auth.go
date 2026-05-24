@@ -1,7 +1,7 @@
-// Package codex provides authentication and token management for OpenAI's Codex API.
-// It handles the OAuth2 flow, including generating authorization URLs, exchanging
-// authorization codes for tokens, and refreshing expired tokens. The package also
-// defines data structures for storing and managing Codex authentication credentials.
+// codex - openai_auth.go
+// 包 codex 提供 OpenAI Codex API 的认证和令牌管理功能。
+// 该文件实现了完整的 OAuth2 PKCE 认证流程，包括生成授权 URL、
+// 用授权码换取令牌、刷新过期令牌以及令牌存储管理等功能。
 package codex
 
 import (
@@ -19,29 +19,47 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// OAuth configuration constants for OpenAI Codex
+// OpenAI Codex OAuth 配置常量。
+// 定义了 OAuth2 认证流程所需的端点 URL、客户端 ID 和重定向 URI。
 const (
-	AuthURL     = "https://auth.openai.com/oauth/authorize"
-	TokenURL    = "https://auth.openai.com/oauth/token"
-	ClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
+	// AuthURL 是 OpenAI OAuth 授权端点
+	AuthURL = "https://auth.openai.com/oauth/authorize"
+	// TokenURL 是 OpenAI OAuth 令牌端点
+	TokenURL = "https://auth.openai.com/oauth/token"
+	// ClientID 是 OAuth 应用的客户端标识符
+	ClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	// RedirectURI 是 OAuth 回调地址
 	RedirectURI = "http://localhost:1455/auth/callback"
 )
 
-// CodexAuth handles the OpenAI OAuth2 authentication flow.
-// It manages the HTTP client and provides methods for generating authorization URLs,
-// exchanging authorization codes for tokens, and refreshing access tokens.
+// CodexAuth 处理 OpenAI OAuth2 认证流程。
+// 管理 HTTP 客户端，并提供生成授权 URL、用授权码换取令牌和刷新访问令牌等方法。
 type CodexAuth struct {
+	// httpClient 是用于发送 HTTP 请求的客户端
 	httpClient *http.Client
 }
 
-// NewCodexAuth creates a new CodexAuth service instance.
-// It initializes an HTTP client with proxy settings from the provided configuration.
+// NewCodexAuth 创建一个新的 CodexAuth 服务实例。
+// 使用提供的配置初始化 HTTP 客户端，并设置代理。
+//
+// 参数：
+//   - cfg: 应用程序配置，包含代理设置
+//
+// 返回：
+//   - *CodexAuth: 新的 CodexAuth 服务实例
 func NewCodexAuth(cfg *config.Config) *CodexAuth {
 	return NewCodexAuthWithProxyURL(cfg, "")
 }
 
-// NewCodexAuthWithProxyURL creates a new CodexAuth service instance.
-// proxyURL takes precedence over cfg.ProxyURL when non-empty.
+// NewCodexAuthWithProxyURL 创建一个新的 CodexAuth 服务实例。
+// 当 proxyURL 非空时，优先使用它而非 cfg.ProxyURL。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//   - proxyURL: 可选的代理 URL，优先级高于配置文件中的代理设置
+//
+// 返回：
+//   - *CodexAuth: 新的 CodexAuth 服务实例
 func NewCodexAuthWithProxyURL(cfg *config.Config, proxyURL string) *CodexAuth {
 	effectiveProxyURL := strings.TrimSpace(proxyURL)
 	var sdkCfg config.SDKConfig
@@ -57,9 +75,16 @@ func NewCodexAuthWithProxyURL(cfg *config.Config, proxyURL string) *CodexAuth {
 	}
 }
 
-// GenerateAuthURL creates the OAuth authorization URL with PKCE (Proof Key for Code Exchange).
-// It constructs the URL with the necessary parameters, including the client ID,
-// response type, redirect URI, scopes, and PKCE challenge.
+// GenerateAuthURL 创建包含 PKCE 的 OAuth 授权 URL。
+// 构建包含客户端 ID、响应类型、重定向 URI、权限范围和 PKCE 挑战码的授权 URL。
+//
+// 参数：
+//   - state: 用于 CSRF 防护的随机状态参数
+//   - pkceCodes: PKCE 代码，用于安全的代码交换
+//
+// 返回：
+//   - string: 完整的授权 URL
+//   - error: PKCE 代码缺失时返回的错误
 func (o *CodexAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string, error) {
 	if pkceCodes == nil {
 		return "", fmt.Errorf("PKCE codes are required")
@@ -82,16 +107,33 @@ func (o *CodexAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string,
 	return authURL, nil
 }
 
-// ExchangeCodeForTokens exchanges an authorization code for access and refresh tokens.
-// It performs an HTTP POST request to the OpenAI token endpoint with the provided
-// authorization code and PKCE verifier.
+// ExchangeCodeForTokens 用授权码换取访问令牌和刷新令牌。
+// 向 OpenAI 令牌端点发送 HTTP POST 请求，将提供的授权码和 PKCE 验证器交换为令牌。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - code: 从 OAuth 回调获取的授权码
+//   - pkceCodes: 用于安全验证的 PKCE 代码
+//
+// 返回：
+//   - *CodexAuthBundle: 包含令牌的完整认证包
+//   - error: 令牌交换失败时返回的错误
 func (o *CodexAuth) ExchangeCodeForTokens(ctx context.Context, code string, pkceCodes *PKCECodes) (*CodexAuthBundle, error) {
 	return o.ExchangeCodeForTokensWithRedirect(ctx, code, RedirectURI, pkceCodes)
 }
 
-// ExchangeCodeForTokensWithRedirect exchanges an authorization code for tokens using
-// a caller-provided redirect URI. This supports alternate auth flows such as device
-// login while preserving the existing token parsing and storage behavior.
+// ExchangeCodeForTokensWithRedirect 使用调用方提供的重定向 URI 用授权码换取令牌。
+// 支持替代的认证流程（如设备登录），同时保留现有的令牌解析和存储行为。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - code: 从 OAuth 回调获取的授权码
+//   - redirectURI: 调用方提供的重定向 URI
+//   - pkceCodes: 用于安全验证的 PKCE 代码
+//
+// 返回：
+//   - *CodexAuthBundle: 包含令牌的完整认证包
+//   - error: 令牌交换失败时返回的错误
 func (o *CodexAuth) ExchangeCodeForTokensWithRedirect(ctx context.Context, code, redirectURI string, pkceCodes *PKCECodes) (*CodexAuthBundle, error) {
 	if pkceCodes == nil {
 		return nil, fmt.Errorf("PKCE codes are required for token exchange")
@@ -180,9 +222,16 @@ func (o *CodexAuth) ExchangeCodeForTokensWithRedirect(ctx context.Context, code,
 	return bundle, nil
 }
 
-// RefreshTokens refreshes an access token using a refresh token.
-// This method is called when an access token has expired. It makes a request to the
-// token endpoint to obtain a new set of tokens.
+// RefreshTokens 使用刷新令牌刷新访问令牌。
+// 当访问令牌过期时调用此方法，向令牌端点发送请求以获取新的令牌集。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - refreshToken: 用于获取新访问令牌的刷新令牌
+//
+// 返回：
+//   - *CodexTokenData: 包含新访问令牌的令牌数据
+//   - error: 令牌刷新失败时返回的错误
 func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*CodexTokenData, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
@@ -255,8 +304,14 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 	}, nil
 }
 
-// CreateTokenStorage creates a new CodexTokenStorage from a CodexAuthBundle.
-// It populates the storage struct with token data, user information, and timestamps.
+// CreateTokenStorage 从 CodexAuthBundle 创建 CodexTokenStorage。
+// 使用令牌数据、用户信息和时间戳填充存储结构。
+//
+// 参数：
+//   - bundle: 包含令牌数据的认证包
+//
+// 返回：
+//   - *CodexTokenStorage: 新的令牌存储实例
 func (o *CodexAuth) CreateTokenStorage(bundle *CodexAuthBundle) *CodexTokenStorage {
 	storage := &CodexTokenStorage{
 		IDToken:      bundle.TokenData.IDToken,
@@ -271,9 +326,17 @@ func (o *CodexAuth) CreateTokenStorage(bundle *CodexAuthBundle) *CodexTokenStora
 	return storage
 }
 
-// RefreshTokensWithRetry refreshes tokens with a built-in retry mechanism.
-// It attempts to refresh the tokens up to a specified maximum number of retries,
-// with an exponential backoff strategy to handle transient network errors.
+// RefreshTokensWithRetry 带内置重试机制的令牌刷新。
+// 尝试刷新令牌，最多重试指定次数，使用指数退避策略处理瞬态网络错误。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - refreshToken: 用于刷新的刷新令牌
+//   - maxRetries: 最大重试次数
+//
+// 返回：
+//   - *CodexTokenData: 刷新后的令牌数据
+//   - error: 所有重试尝试都失败时返回的错误
 func (o *CodexAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken string, maxRetries int) (*CodexTokenData, error) {
 	var lastErr error
 
@@ -303,6 +366,14 @@ func (o *CodexAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken str
 	return nil, fmt.Errorf("token refresh failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+// isNonRetryableRefreshErr 判断令牌刷新错误是否不可重试。
+// 检查错误消息中是否包含 "refresh_token_reused"，如果是则表示不可重试。
+//
+// 参数：
+//   - err: 要检查的错误
+//
+// 返回：
+//   - bool: 如果错误不可重试返回 true
 func isNonRetryableRefreshErr(err error) bool {
 	if err == nil {
 		return false
@@ -311,8 +382,12 @@ func isNonRetryableRefreshErr(err error) bool {
 	return strings.Contains(raw, "refresh_token_reused")
 }
 
-// UpdateTokenStorage updates an existing CodexTokenStorage with new token data.
-// This is typically called after a successful token refresh to persist the new credentials.
+// UpdateTokenStorage 使用新的令牌数据更新现有的 CodexTokenStorage。
+// 通常在成功刷新令牌后调用此方法，用于持久化新的凭证。
+//
+// 参数：
+//   - storage: 要更新的现有令牌存储
+//   - tokenData: 要应用的新令牌数据
 func (o *CodexAuth) UpdateTokenStorage(storage *CodexTokenStorage, tokenData *CodexTokenData) {
 	storage.IDToken = tokenData.IDToken
 	storage.AccessToken = tokenData.AccessToken

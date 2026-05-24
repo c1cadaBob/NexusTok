@@ -1,3 +1,11 @@
+// Package relay - responses_handler.go
+// 本文件实现了 OpenAI Responses API 请求的中继处理逻辑。
+// ResponsesHelper 处理两种请求格式：
+//   - 标准 Responses 请求（/v1/responses）
+//   - Responses 压缩请求（/v1/responses/compact），仅支持 OpenAI 和 Codex 类型
+//
+// Responses API 是 OpenAI 推出的新一代对话接口，支持内置工具（web_search 等）
+// 和更灵活的多轮对话管理（通过 previous_response_id）。
 package relay
 
 import (
@@ -20,6 +28,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ResponsesHelper 是 OpenAI Responses API 请求的中继处理函数。
+// 处理流程：
+//  1. 初始化渠道元数据。若为 compact 模式，验证 API 类型是否为 OpenAI 或 Codex。
+//  2. 类型断言请求为 *dto.OpenAIResponsesRequest 或 *dto.OpenAIResponsesCompactionRequest，
+//     后者会被转换为标准 ResponsesRequest 格式。
+//  3. 深拷贝请求并执行模型映射。
+//  4. 获取并初始化适配器。
+//  5. 根据 passthrough 模式选择请求体来源：
+//     - passthrough 模式：直接透传原始请求体。
+//     - 普通模式：通过适配器转换请求格式，移除禁用字段，应用参数覆盖。
+//  6. 通过适配器发送请求并解析响应。
+//  7. compact 模式下额外处理：重新计算价格并计费。
+//  8. 根据模型名称前缀（gpt-4o-audio）选择音频或文本计费路径。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {

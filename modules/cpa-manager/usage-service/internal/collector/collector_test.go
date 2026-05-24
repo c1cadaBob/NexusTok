@@ -1,3 +1,10 @@
+// collector - collector_test.go
+// 采集管理器（Manager）的单元测试。
+// 测试覆盖以下场景：
+//   - HTTP 队列消费流程：验证事件能通过 HTTP 接口拉取并正确入库，包括认证快照的补充
+//   - auto 模式降级：HTTP 队列不支持时自动降级到 RESP 模式
+//   - Redis Pub/Sub 订阅模式：验证事件能通过 SUBSCRIBE 订阅并正确入库
+//   - RESP 模拟服务器：提供最小 RESP 协议实现用于测试 SUBSCRIBE 消费
 package collector
 
 import (
@@ -19,6 +26,12 @@ import (
 	"github.com/seakee/cpa-manager/usage-service/internal/store"
 )
 
+// TestManagerConsumesHTTPUsageQueue 验证采集管理器通过 HTTP 队列消费使用量事件的完整流程。
+// 测试内容：
+// 1. 启动模拟的上游 CPA 服务（支持 auth-files 和 usage-queue 接口）
+// 2. 启动采集管理器，验证事件能被正确解析并入库
+// 3. 验证认证快照（account、label、project_id）被正确补充到事件中
+// 4. 验证采集器状态（transport、totalInserted）正确反映运行情况
 func TestManagerConsumesHTTPUsageQueue(t *testing.T) {
 	var calls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +109,9 @@ func TestManagerConsumesHTTPUsageQueue(t *testing.T) {
 	}
 }
 
+// TestManagerFallsBackToRESPWhenHTTPQueueUnsupported 验证 auto 模式下的降级行为。
+// 当上游不支持 HTTP usage-queue 接口（返回 404）时，采集器应自动降级到 RESP 模式。
+// 验证 transport 状态从 http 切换为 resp，并且最后错误信息包含 RESP 相关提示。
 func TestManagerFallsBackToRESPWhenHTTPQueueUnsupported(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(upstream.Close)
@@ -117,6 +133,8 @@ func TestManagerFallsBackToRESPWhenHTTPQueueUnsupported(t *testing.T) {
 	})
 }
 
+// newTestStore 创建一个临时的 SQLite 存储实例用于测试。
+// 数据库文件在测试结束后自动清理。
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "usage.sqlite"))
@@ -129,6 +147,8 @@ func newTestStore(t *testing.T) *store.Store {
 	return db
 }
 
+// testConfig 创建测试用的配置对象，使用临时目录存储数据库。
+// 参数 mode 指定采集模式（auto/http/resp/subscribe）。
 func testConfig(t *testing.T, mode string) config.Config {
 	t.Helper()
 	return config.Config{
@@ -141,6 +161,9 @@ func testConfig(t *testing.T, mode string) config.Config {
 	}
 }
 
+// waitFor 轮询等待指定条件满足，超时时间为 2 秒。
+// 每 10 毫秒检查一次条件，超时未满足则标记测试失败。
+// 用于异步操作的测试等待。
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -203,6 +226,9 @@ func startMockRESPServer(t *testing.T, payloads []string) (upstreamURL string) {
 	return "http://" + listener.Addr().String()
 }
 
+// readRESPCommand 从 RESP 连接中解析一条命令。
+// 按 RESP 协议格式读取数组头部（*N）和 N 个批量字符串（$N\r\n...）。
+// 返回命令参数列表。
 func readRESPCommand(reader *bufio.Reader) ([]string, error) {
 	header, err := reader.ReadString('\n')
 	if err != nil {
@@ -239,6 +265,12 @@ func readRESPCommand(reader *bufio.Reader) ([]string, error) {
 	return args, nil
 }
 
+// TestManagerConsumesSubscribeStream 验证采集管理器通过 Redis Pub/Sub 订阅模式消费使用量事件。
+// 测试流程：
+// 1. 启动模拟 RESP 服务端，发送一条使用量消息
+// 2. 以 subscribe 模式启动采集管理器
+// 3. 验证事件被正确接收并入库
+// 4. 验证采集器 transport 状态为 "subscribe"
 func TestManagerConsumesSubscribeStream(t *testing.T) {
 	payload := `{"timestamp":"2026-05-19T10:00:00Z","model":"gpt-test","endpoint":"POST /v1/chat/completions","input_tokens":10,"output_tokens":3}`
 	upstreamURL := startMockRESPServer(t, []string{payload})

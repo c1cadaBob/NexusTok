@@ -1,3 +1,12 @@
+// openai - relay-openai.go
+// OpenAI 渠道的核心中继处理文件。
+// 本文件实现了 OpenAI 兼容 API 的主要请求处理和响应逻辑，包括：
+// - 流式/非流式聊天补全响应处理（支持 OpenAI、Claude、Gemini 三种输出格式）
+// - TTS 流式音频响应处理
+// - WebSocket 实时对话（Realtime）双向代理和 token 计费
+// - 音频模型的特殊 usage 提取逻辑
+// - 各渠道类型的 cached_tokens 后处理（DeepSeek、智谱、Moonshot、llama.cpp 等）
+// - 带 usage 的通用响应处理（图片生成等）
 package openai
 
 import (
@@ -22,6 +31,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// sendStreamData 将流式数据发送给客户端，支持思考内容到普通内容的转换。
+// 该函数处理三种场景：
+//
+//  1. 无特殊处理：直接发送原始数据字符串
+//
+//  2. 强制格式化（forceFormat=true）：将数据解析为结构化响应后重新序列化发送
+//
+//  3. 思考内容转换（thinkToContent=true）：
+//     - 首次遇到思考内容时，在前面添加 "<think>\n" 标签
+//     - 当从思考内容切换到普通内容时，插入 "\n</think>\n" 标签
+//     - 将 reasoning_content 字段转换为普通 content 字段
+//     - 使用 ThinkingContentInfo 追踪转换状态（IsFirstThinkingContent、HasSentThinkingContent、SendLastThinkingContent）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含思考内容转换状态
+//   - data: 原始流式数据字符串
+//   - forceFormat: 是否强制重新格式化
+//   - thinkToContent: 是否启用思考内容转换
+//
+// 返回:
+//   - error: 处理或发送失败时的错误
 func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
 	if data == "" {
 		return nil
@@ -103,6 +134,35 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	return helper.ObjectData(c, lastStreamResponse)
 }
 
+// OaiStreamHandler 处理 OpenAI 兼容 API 的流式聊天补全响应。
+// 该函数是流式响应处理的核心入口，执行以下流程：
+//
+//  1. 验证响应有效性
+//  2. 使用 StreamScannerHandler 逐行扫描 SSE 数据：
+//     - 将上一行数据通过 HandleStreamFormat 发送给客户端（延迟一行发送）
+//     - 累积所有流式数据项用于后续 token 统计
+//     - 对音频模型特殊处理：保存倒数第二个数据项用于提取 usage
+//  3. 音频模型特殊处理：
+//     - 从倒数第二个流式数据项中提取 usage 信息
+//     - 音频模型的 usage 通常不在最后一个数据项中
+//  4. 处理最后一个数据项：
+//     - 提取响应 ID、创建时间、系统指纹、模型名称等元数据
+//     - 提取 token 使用量信息
+//  5. 发送最后一个响应（如果需要）
+//  6. 计算 token 使用量：
+//     - 如果上游未返回 usage，则根据累积的文本内容估算
+//     - 每个工具调用额外计算 7 个 token
+//  7. 应用各渠道类型的 usage 后处理
+//  8. 发送最终响应（包含 usage 统计和 [DONE] 标记）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 API 返回的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 处理过程中的错误
 func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
@@ -192,6 +252,31 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	return usage, nil
 }
 
+// OpenaiHandler 处理 OpenAI 兼容 API 的非流式聊天补全响应。
+// 该函数处理完整的（非流式）聊天补全响应，执行以下流程：
+//
+//  1. 读取并解析响应体
+//  2. 处理 OpenRouter Enterprise 特殊响应格式
+//  3. 检查上游返回的错误信息
+//  4. 检查 finish_reason 是否为 content_filter（内容审核拒绝）
+//  5. 处理 token 使用量：
+//     - 如果上游未返回 prompt_tokens，使用估算值
+//     - 如果 completion_tokens 也为 0，根据响应内容计算
+//  6. 应用各渠道类型的 usage 后处理
+//  7. 根据输出格式转换响应：
+//     - OpenAI 格式: 如果 usage 被修改则更新响应体，如果强制格式化则重新序列化
+//     - Claude 格式: 通过 service.ResponseOpenAI2Claude 转换
+//     - Gemini 格式: 通过 service.ResponseOpenAI2Gemini 转换
+//  8. 将最终响应写回客户端
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 API 返回的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 处理过程中的错误
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -299,6 +384,15 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	return &simpleResponse.Usage, nil
 }
 
+// streamTTSResponse 将 TTS（语音合成）的流式音频响应直接转发给客户端。
+// 该函数以 4096 字节为缓冲区，逐块读取上游响应并实时写入客户端。
+// 每写入一块数据后立即刷新缓冲区，确保客户端能实时接收音频数据。
+// 如果客户端不支持流式传输（http.Flusher 接口不可用），
+// 则回退到 io.Copy 一次性复制整个响应。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - resp: 上游 API 返回的 HTTP 响应（包含音频流）
 func streamTTSResponse(c *gin.Context, resp *http.Response) {
 	c.Writer.WriteHeaderNow()
 
@@ -332,6 +426,37 @@ func streamTTSResponse(c *gin.Context, resp *http.Response) {
 	}
 }
 
+// OpenaiRealtimeHandler 处理 OpenAI Realtime API 的 WebSocket 实时对话。
+// 该函数建立了客户端与上游 API 之间的双向 WebSocket 代理，实现：
+//
+// 双向消息转发：
+//   - 客户端 -> 上游: 客户端发送的消息转发到上游服务器
+//   - 上游 -> 客户端: 上游返回的消息转发回客户端
+//
+// Token 计费机制：
+//   - 客户端发送时：实时统计输入 token（文本 + 音频）
+//   - 上游 response.done 事件时：
+//     - 如果响应包含 usage 信息，直接使用上游的 usage 进行计费
+//     - 如果不包含 usage，使用本地统计的 token 数进行计费
+//   - 其他上游事件时：统计输出 token（文本 + 音频）
+//   - 每次计费完成后调用 preConsumeUsage 扣除配额
+//
+// 会话管理：
+//   - 监听 session.update 事件，提取工具定义
+//   - 监听 session.updated/created 事件，更新音频格式配置
+//
+// 生命周期管理：
+//   - 使用 gopool 启动两个 goroutine 分别处理双向通信
+//   - 通过 channel 监听连接关闭和错误事件
+//   - 会话结束时处理剩余的未计费 token
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含客户端和上游 WebSocket 连接
+//
+// 返回:
+//   - *types.NexusTokError: 处理过程中的错误
+//   - *dto.RealtimeUsage: 累计的实时对话 token 使用量
 func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.NexusTokError, *dto.RealtimeUsage) {
 	if info == nil || info.ClientWs == nil || info.TargetWs == nil {
 		return types.NewError(fmt.Errorf("invalid websocket connection"), types.ErrorCodeBadResponse), nil
@@ -539,6 +664,25 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	return nil, sumUsage
 }
 
+// preConsumeUsage 累加实时对话的 token 使用量并执行配额预扣除。
+// 该函数将当前批次的 usage 累加到 totalUsage 中，然后调用
+// service.PreWssConsumeQuota 执行 WebSocket 连接的配额预扣操作。
+//
+// 累加的 token 维度包括：
+//   - TotalTokens: 总 token 数
+//   - InputTokens: 输入 token 数
+//   - OutputTokens: 输出 token 数
+//   - InputTokenDetails: 输入详情（缓存 token、文本 token、音频 token）
+//   - OutputTokenDetails: 输出详情（文本 token、音频 token）
+//
+// 参数:
+//   - ctx: Gin 上下文
+//   - info: 中继信息
+//   - usage: 当前批次的 token 使用量
+//   - totalUsage: 累计的总使用量（会被更新）
+//
+// 返回:
+//   - error: 配额扣除失败时的错误
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
@@ -557,6 +701,30 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 	return err
 }
 
+// OpenaiHandlerWithUsage 处理带有 usage 信息的 OpenAI 兼容 API 响应。
+// 该函数主要用于图片生成/编辑等非聊天场景，这些场景的响应中通常直接包含 usage 信息。
+//
+// 处理流程：
+//  1. 读取完整的响应体
+//  2. 解析响应中的 usage 信息
+//  3. 将响应体写回客户端
+//  4. 标准化 usage 字段：
+//     - 将 InputTokens 合并到 PromptTokens
+//     - 将 OutputTokens 合并到 CompletionTokens
+//     - 合并 InputTokensDetails 中的图片和文本 token 详情
+//  5. 应用渠道类型的 usage 后处理
+//
+// 注意：一旦响应体已写入客户端，即使后续解析失败也不会返回错误，
+// 因为上游已消耗资源并返回了内容，仍应执行计费。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 API 返回的 HTTP 响应
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 处理过程中的错误
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -592,6 +760,29 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	return &usageResp.Usage, nil
 }
 
+// applyUsagePostProcessing 根据渠道类型对 usage 信息进行后处理。
+// 不同的上游 API 提供商对 cached_tokens 的返回位置和格式不同，
+// 该函数统一将其标准化到 PromptTokensDetails.CachedTokens 字段。
+//
+// 各渠道的 cached_tokens 提取策略：
+//   - DeepSeek: 从 prompt_cache_hit_tokens 字段提取
+//   - 智谱（Zhipu）: 按优先级从以下位置提取：
+//     1. input_tokens_details.cached_tokens
+//     2. usage.prompt_tokens_details.cached_tokens
+//     3. usage.cached_tokens
+//     4. usage.prompt_cache_hit_tokens
+//   - Moonshot: 按优先级从以下位置提取：
+//     1. input_tokens_details.cached_tokens
+//     2. choices[].usage.cached_tokens（非标准位置）
+//     3. usage.prompt_tokens_details.cached_tokens
+//     4. usage.cached_tokens
+//     5. usage.prompt_cache_hit_tokens
+//   - OpenAI（llama.cpp）: 从 timings.cache_n 字段提取
+//
+// 参数:
+//   - info: 中继信息，包含渠道类型
+//   - usage: token 使用量信息（会被更新）
+//   - responseBody: 原始响应体字节（用于从非标准位置提取 cached_tokens）
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
 	if info == nil || usage == nil {
 		return
@@ -635,6 +826,18 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 	}
 }
 
+// extractCachedTokensFromBody 从响应体中提取 cached_tokens。
+// 按以下优先级查找 cached_tokens：
+//  1. usage.prompt_tokens_details.cached_tokens（OpenAI 标准位置）
+//  2. usage.cached_tokens（部分 API 的简化位置）
+//  3. usage.prompt_cache_hit_tokens（DeepSeek 等 API 的命名）
+//
+// 参数:
+//   - body: 响应体字节
+//
+// 返回:
+//   - int: cached_tokens 数量
+//   - bool: 是否成功提取到 cached_tokens
 func extractCachedTokensFromBody(body []byte) (int, bool) {
 	if len(body) == 0 {
 		return 0, false
@@ -666,8 +869,17 @@ func extractCachedTokensFromBody(body []byte) (int, bool) {
 	return 0, false
 }
 
-// extractMoonshotCachedTokensFromBody 从Moonshot的非标准位置提取cached_tokens
-// Moonshot的流式响应格式: {"choices":[{"usage":{"cached_tokens":111}}]}
+// extractMoonshotCachedTokensFromBody 从 Moonshot 的非标准位置提取 cached_tokens。
+// Moonshot 的流式响应格式为 {"choices":[{"usage":{"cached_tokens":111}}]}，
+// 将 cached_tokens 放在 choices 数组的 usage 对象中。
+// 该函数遍历所有 choices，返回第一个有效的 cached_tokens 值。
+//
+// 参数:
+//   - body: 响应体字节
+//
+// 返回:
+//   - int: cached_tokens 数量
+//   - bool: 是否成功提取到 cached_tokens
 func extractMoonshotCachedTokensFromBody(body []byte) (int, bool) {
 	if len(body) == 0 {
 		return 0, false
@@ -695,7 +907,16 @@ func extractMoonshotCachedTokensFromBody(body []byte) (int, bool) {
 	return 0, false
 }
 
-// extractLlamaCachedTokensFromBody 从llama.cpp的非标准位置提取cache_n
+// extractLlamaCachedTokensFromBody 从 llama.cpp 的非标准位置提取缓存 token 数量。
+// llama.cpp 的响应格式为 {"timings":{"cache_n":123}}，
+// 将缓存 token 数量放在 timings.cache_n 字段中。
+//
+// 参数:
+//   - body: 响应体字节
+//
+// 返回:
+//   - int: 缓存 token 数量
+//   - bool: 是否成功提取到缓存 token 数量
 func extractLlamaCachedTokensFromBody(body []byte) (int, bool) {
 	if len(body) == 0 {
 		return 0, false

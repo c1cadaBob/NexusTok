@@ -1,3 +1,7 @@
+// file_decoder.go - 文件类型检测与解码工具
+// 本文件提供文件类型检测和文件数据获取的工具函数。
+// 包括：通过 URL 获取文件的 MIME 类型、从 URL 获取文件的 Base64 编码数据、
+// 以及根据文件扩展名推断 MIME 类型等功能。
 package service
 
 import (
@@ -156,6 +160,13 @@ func GetFileBase64FromUrl(c *gin.Context, url string, reason ...string) (*types.
 	}, nil
 }
 
+// GetMimeTypeByExtension 根据文件扩展名返回对应的 MIME 类型。
+// 支持文本、图片、音频、视频和文档等多种文件类型。
+// 未知扩展名返回 "application/octet-stream"。
+// 参数:
+//   - ext: 文件扩展名（不包含点号，如 "jpg", "png" 等）
+// 返回值:
+//   - string: 对应的 MIME 类型字符串
 func GetMimeTypeByExtension(ext string) string {
 	// Convert to lowercase for case-insensitive comparison
 	ext = strings.ToLower(ext)

@@ -1,3 +1,17 @@
+// util - gemini_schema_test.go
+// Gemini/Antigravity JSON Schema 清理功能测试
+// 验证 CleanJSONSchemaForAntigravity 和 CleanJSONSchemaForGemini 函数
+// 能够将标准 JSON Schema 转换为 Gemini API 兼容格式，包括：
+// - const 转换为 enum
+// - nullable 类型扁平化
+// - 约束字段（minItems/minLength 等）移至 description
+// - anyOf/oneOf/allOf 合并处理
+// - $ref 引用解析
+// - 空 schema 占位符注入
+// - format 字段移除
+// - 数值/布尔 enum 转字符串
+// - 扩展字段（x-*）清理
+// - uniqueItems 处理
 package util
 
 import (
@@ -9,6 +23,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCleanJSONSchemaForAntigravity_ConstToEnum 验证 JSON Schema 中的
+// const 关键字被转换为单值 enum 数组，因为 Antigravity API 不支持 const。
 func TestCleanJSONSchemaForAntigravity_ConstToEnum(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -34,6 +50,9 @@ func TestCleanJSONSchemaForAntigravity_ConstToEnum(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable 验证
+// 类型数组中的 null 类型被移除，字段添加 (nullable) 描述，
+// 并从 required 列表中移除该字段。
 func TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -616,6 +635,8 @@ func TestCleanJSONSchemaForAntigravity_MultipleNonNullTypes(t *testing.T) {
 	}
 }
 
+// compareJSON 是测试辅助函数，将两个 JSON 字符串解析为 map 后进行深度比较。
+// 忽略 JSON 键的顺序差异，仅比较结构和值是否相等。
 func compareJSON(t *testing.T, expectedJSON, actualJSON string) {
 	var expMap, actMap map[string]interface{}
 	errExp := json.Unmarshal([]byte(expectedJSON), &expMap)
@@ -636,6 +657,9 @@ func compareJSON(t *testing.T, expectedJSON, actualJSON string) {
 // Empty Schema Placeholder Tests
 // ============================================================================
 
+// TestCleanJSONSchemaForAntigravity_EmptySchemaPlaceholder 验证
+// 空的 object schema（无 properties）会被注入 reason 占位符属性，
+// 因为 Antigravity API 不接受完全空的 object 类型。
 func TestCleanJSONSchemaForAntigravity_EmptySchemaPlaceholder(t *testing.T) {
 	// Empty object schema with no properties should get a placeholder
 	input := `{
@@ -870,6 +894,9 @@ func TestCleanJSONSchemaForAntigravity_BooleanEnumToString(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields 验证
+// CleanJSONSchemaForGemini 函数移除 Gemini API 不支持的元数据字段，
+// 如 $schema、$id、prefill、enumTitles、patternProperties 等。
 func TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields(t *testing.T) {
 	input := `{
 		"$schema": "http://json-schema.org/draft-07/schema#",

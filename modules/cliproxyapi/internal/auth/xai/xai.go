@@ -1,3 +1,6 @@
+// xai - xai.go
+// 实现 xAI OAuth2 认证流程，包括 OIDC 发现、授权 URL 构建、授权码交换、
+// Token 刷新、JWT 身份解析等功能。
 package xai
 
 import (
@@ -16,17 +19,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// XAIAuth performs xAI OAuth discovery, token exchange, and refresh.
+// XAIAuth 执行 xAI OAuth 发现、Token 交换和刷新操作。
 type XAIAuth struct {
+	// httpClient 是用于 OAuth 请求的 HTTP 客户端
 	httpClient *http.Client
 }
 
-// NewXAIAuth creates an xAI OAuth helper using config proxy settings.
+// NewXAIAuth 创建使用配置代理设置的 xAI OAuth 辅助实例。
 func NewXAIAuth(cfg *config.Config) *XAIAuth {
 	return NewXAIAuthWithProxyURL(cfg, "")
 }
 
-// NewXAIAuthWithProxyURL creates an xAI OAuth helper with an explicit proxy URL.
+// NewXAIAuthWithProxyURL 创建使用显式代理 URL 的 xAI OAuth 辅助实例。
 func NewXAIAuthWithProxyURL(cfg *config.Config, proxyURL string) *XAIAuth {
 	effectiveProxyURL := strings.TrimSpace(proxyURL)
 	var sdkCfg config.SDKConfig
@@ -40,7 +44,7 @@ func NewXAIAuthWithProxyURL(cfg *config.Config, proxyURL string) *XAIAuth {
 	return &XAIAuth{httpClient: util.SetProxy(&sdkCfg, &http.Client{})}
 }
 
-// ValidateOAuthEndpoint validates an endpoint returned by xAI discovery.
+// ValidateOAuthEndpoint 验证 xAI 发现返回的端点是否合法（必须使用 HTTPS 且域名在 x.ai 下）。
 func ValidateOAuthEndpoint(rawURL string, field string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -60,7 +64,7 @@ func ValidateOAuthEndpoint(rawURL string, field string) (string, error) {
 	return rawURL, nil
 }
 
-// BuildAuthorizeURL builds the browser URL for xAI OAuth.
+// BuildAuthorizeURL 构建 xAI OAuth 浏览器授权 URL。
 func BuildAuthorizeURL(params AuthorizeURLParams) (string, error) {
 	endpoint, err := ValidateOAuthEndpoint(params.AuthorizationEndpoint, "authorization_endpoint")
 	if err != nil {
@@ -93,7 +97,7 @@ func BuildAuthorizeURL(params AuthorizeURLParams) (string, error) {
 	return endpoint + "?" + values.Encode(), nil
 }
 
-// Discover resolves xAI OAuth endpoints through OIDC discovery.
+// Discover 通过 OIDC 发现解析 xAI OAuth 端点。
 func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -137,7 +141,7 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 	return &Discovery{AuthorizationEndpoint: authorizationEndpoint, TokenEndpoint: tokenEndpoint}, nil
 }
 
-// ExchangeCodeForTokens exchanges an authorization code for xAI OAuth tokens.
+// ExchangeCodeForTokens 将授权码交换为 xAI OAuth Token。
 func (a *XAIAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI string, pkceCodes *PKCECodes, tokenEndpoint string) (*AuthBundle, error) {
 	if pkceCodes == nil {
 		return nil, fmt.Errorf("xai token exchange: PKCE codes are required")
@@ -175,7 +179,7 @@ func (a *XAIAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI s
 	}, nil
 }
 
-// RefreshTokens refreshes an xAI access token.
+// RefreshTokens 刷新 xAI 访问 Token。
 func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint string) (*TokenData, error) {
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, fmt.Errorf("xai token refresh: refresh token is required")
@@ -195,6 +199,7 @@ func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint
 	return a.postTokenForm(ctx, tokenEndpoint, form)
 }
 
+// postTokenForm 向 Token 端点发送表单 POST 请求并解析响应。
 func (a *XAIAuth) postTokenForm(ctx context.Context, tokenEndpoint string, form url.Values) (*TokenData, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -247,7 +252,7 @@ func (a *XAIAuth) postTokenForm(ctx context.Context, tokenEndpoint string, form 
 	}, nil
 }
 
-// CreateTokenStorage converts an auth bundle into persistable storage.
+// CreateTokenStorage 将认证包转换为可持久化的存储结构。
 func (a *XAIAuth) CreateTokenStorage(bundle *AuthBundle) *TokenStorage {
 	if bundle == nil {
 		return nil
@@ -270,6 +275,7 @@ func (a *XAIAuth) CreateTokenStorage(bundle *AuthBundle) *TokenStorage {
 	}
 }
 
+// parseJWTIdentity 从 JWT ID Token 中解析邮箱和 subject 声明。
 func parseJWTIdentity(token string) (email string, subject string) {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
@@ -294,6 +300,7 @@ func parseJWTIdentity(token string) (email string, subject string) {
 	return email, subject
 }
 
+// firstNonEmpty 返回参数列表中第一个非空字符串。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {

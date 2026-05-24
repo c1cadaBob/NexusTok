@@ -1,3 +1,5 @@
+// Package helps - user_id_cache.go
+// 实现用户 ID 缓存功能，用于管理 Claude 用户 ID 的缓存和生成。
 package helps
 
 import (

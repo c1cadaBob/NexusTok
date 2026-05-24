@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器的指令规范化功能，验证 null instructions 被正确处理。
 package executor
 
 import (
@@ -14,6 +16,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCodexExecutorExecuteNormalizesNullInstructions 验证执行请求时
+// null instructions 被规范化为空字符串。
 func TestCodexExecutorExecuteNormalizesNullInstructions(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
@@ -53,6 +57,8 @@ func TestCodexExecutorExecuteNormalizesNullInstructions(t *testing.T) {
 	}
 }
 
+// TestCodexExecutorExecuteStreamNormalizesNullInstructions 验证流式执行请求时
+// null instructions 被规范化为空字符串。
 func TestCodexExecutorExecuteStreamNormalizesNullInstructions(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
@@ -94,6 +100,8 @@ func TestCodexExecutorExecuteStreamNormalizesNullInstructions(t *testing.T) {
 	}
 }
 
+// TestCodexExecutorCountTokensTreatsNullInstructionsAsEmpty 验证计数令牌时
+// null instructions 和空字符串 instructions 产生相同的结果。
 func TestCodexExecutorCountTokensTreatsNullInstructionsAsEmpty(t *testing.T) {
 	executor := NewCodexExecutor(&config.Config{})
 

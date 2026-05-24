@@ -1,3 +1,16 @@
+// Package model - main.go
+// 该文件是数据模型层的核心文件
+// 负责数据库初始化、连接管理、表结构迁移等
+//
+// 支持的数据库：
+// - SQLite（默认，适合开发和小型部署）
+// - MySQL（>= 5.7.8，适合生产环境）
+// - PostgreSQL（>= 9.6，适合生产环境）
+//
+// 数据库兼容性说明：
+// - 使用 GORM 抽象层，避免直接使用 SQL
+// - 当需要 raw SQL 时，使用 commonGroupCol、commonKeyCol 等变量处理列名差异
+// - 布尔值处理：PostgreSQL 使用 true/false，MySQL/SQLite 使用 1/0
 package model
 
 import (
@@ -8,37 +21,48 @@ import (
 	"sync"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/common"   // 公共工具包
+	"github.com/c1cada/NexusTok/constant" // 常量定义
 
-	"github.com/glebarez/sqlite"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	"github.com/glebarez/sqlite"   // SQLite 驱动
+	"gorm.io/driver/mysql"         // MySQL 驱动
+	"gorm.io/driver/postgres"      // PostgreSQL 驱动
+	"gorm.io/gorm"                 // GORM ORM
 )
 
-var commonGroupCol string
-var commonKeyCol string
-var commonTrueVal string
-var commonFalseVal string
+// 数据库列名变量（根据数据库类型自动设置）
+// PostgreSQL 使用双引号 "group"，MySQL/SQLite 使用反引号 `group`
+var commonGroupCol string // group 列名（保留字需要特殊处理）
+var commonKeyCol string   // key 列名（保留字需要特殊处理）
+var commonTrueVal string  // 布尔真值（PostgreSQL: "true", MySQL/SQLite: "1"）
+var commonFalseVal string // 布尔假值（PostgreSQL: "false", MySQL/SQLite: "0"）
 
-var logKeyCol string
-var logGroupCol string
+// 日志数据库列名变量
+var logKeyCol string   // 日志数据库的 key 列名
+var logGroupCol string // 日志数据库的 group 列名
 
+// initCol 初始化数据库列名
+// 根据数据库类型设置不同的列名格式
+// PostgreSQL 使用双引号，MySQL/SQLite 使用反引号
 func initCol() {
-	// init common column names
+	// 初始化公共列名
 	if common.UsingPostgreSQL {
+		// PostgreSQL 使用双引号包裹保留字
 		commonGroupCol = `"group"`
 		commonKeyCol = `"key"`
 		commonTrueVal = "true"
 		commonFalseVal = "false"
 	} else {
+		// MySQL/SQLite 使用反引号包裹保留字
 		commonGroupCol = "`group`"
 		commonKeyCol = "`key`"
 		commonTrueVal = "1"
 		commonFalseVal = "0"
 	}
+
+	// 初始化日志数据库列名
 	if os.Getenv("LOG_SQL_DSN") != "" {
+		// 日志数据库与主数据库不同
 		switch common.LogSqlType {
 		case common.DatabaseTypePostgreSQL:
 			logGroupCol = `"group"`
@@ -57,23 +81,42 @@ func initCol() {
 			logKeyCol = commonKeyCol
 		}
 	}
-	// log sql type and database type
-	//common.SysLog("Using Log SQL Type: " + common.LogSqlType)
 }
 
+// DB 主数据库连接实例
 var DB *gorm.DB
 
+// LOG_DB 日志数据库连接实例
+// 可以与主数据库相同，也可以是独立的数据库
 var LOG_DB *gorm.DB
 
+// createRootAccountIfNeed 创建 Root 账户（如果需要）
+// 当系统中没有任何用户时，自动创建默认的 Root 用户
+//
+// 默认 Root 用户信息：
+// - 用户名：root
+// - 密码：123456（首次登录后应立即修改）
+// - 角色：Root 用户
+// - 状态：启用
+// - 配额：100000000（1亿）
+//
+// 返回值：
+//   - error: 错误信息，成功返回 nil
 func createRootAccountIfNeed() error {
 	var user User
-	//if user.Status != common.UserStatusEnabled {
+
+	// 检查是否存在用户
 	if err := DB.First(&user).Error; err != nil {
+		// 没有用户存在，创建 Root 用户
 		common.SysLog("no user exists, create a root user for you: username is root, password is 123456")
+
+		// 加密密码
 		hashedPassword, err := common.Password2Hash("123456")
 		if err != nil {
 			return err
 		}
+
+		// 创建 Root 用户
 		rootUser := User{
 			Username:    "root",
 			Password:    hashedPassword,
@@ -83,11 +126,16 @@ func createRootAccountIfNeed() error {
 			AccessToken: nil,
 			Quota:       100000000,
 		}
+
+		// 插入数据库
 		DB.Create(&rootUser)
 	}
+
 	return nil
 }
 
+// CheckSetup 检查系统设置状态
+// 首次运行时初始化系统设置
 func CheckSetup() {
 	setup := GetSetup()
 	if setup == nil {

@@ -1,7 +1,12 @@
+// config - home_test.go
+// 该文件测试 Home 模式配置的解析行为。
+// 验证 ParseConfigBytes 忽略 home 配置节（Home 模式仅通过环境变量启用）。
+
 package config
 
 import "testing"
 
+// TestParseConfigBytesIgnoresHomeConfig 测试 ParseConfigBytes 忽略配置文件中的 home 节。
 func TestParseConfigBytesIgnoresHomeConfig(t *testing.T) {
 	cfg, err := ParseConfigBytes([]byte(`
 home:

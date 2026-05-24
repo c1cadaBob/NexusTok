@@ -1,3 +1,7 @@
+// midjourney.go - Midjourney API 代理服务
+// 本文件提供 Midjourney 图像生成 API 的代理和请求处理功能。
+// 包括动作名称到模型名称的转换、Plus 动作到标准动作的映射、
+// 简化变更参数解析、以及 Midjourney HTTP 请求的转发等功能。
 package service
 
 import (
@@ -19,6 +23,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CovertMjpActionToModelName 将 Midjourney 动作名称转换为统一的模型名称格式。
+// 转换规则：前缀 "mj_" + 动作名称（小写），特殊动作 "swap_face" 保持原样。
+// 参数:
+//   - mjAction: Midjourney 动作名称（如 "IMAGINE", "UPSCALE" 等）
+// 返回值:
+//   - string: 转换后的模型名称
 func CovertMjpActionToModelName(mjAction string) string {
 	modelName := "mj_" + strings.ToLower(mjAction)
 	if mjAction == constant.MjActionSwapFace {
@@ -27,6 +37,16 @@ func CovertMjpActionToModelName(mjAction string) string {
 	return modelName
 }
 
+// GetMjRequestModel 根据 Relay 模式和 Midjourney 请求获取对应的模型名称。
+// 支持多种 Relay 模式（Imagine、Video、Edits、Describe、Blend 等），
+// 并处理 Plus 动作到标准动作的转换。
+// 参数:
+//   - relayMode: Relay 代理模式
+//   - midjRequest: Midjourney 请求对象
+// 返回值:
+//   - string: 模型名称
+//   - *dto.MidjourneyResponse: 错误响应（正常时为 nil）
+//   - bool: 是否成功获取模型名称
 func GetMjRequestModel(relayMode int, midjRequest *dto.MidjourneyRequest) (string, *dto.MidjourneyResponse, bool) {
 	action := ""
 	if relayMode == relayconstant.RelayModeMidjourneyAction {
@@ -74,6 +94,13 @@ func GetMjRequestModel(relayMode int, midjRequest *dto.MidjourneyRequest) (strin
 	return modelName, nil, true
 }
 
+// CoverPlusActionToNormalAction 将 Midjourney Plus 动作转换为标准动作。
+// 解析 customId 字段中的动作信息（如 "MJ::JOB::upsample::2::..."），
+// 映射为标准的 Midjourney 动作（UPSCALE、VARIATION、PAN 等）。
+// 参数:
+//   - midjRequest: Midjourney 请求对象（会被原地修改）
+// 返回值:
+//   - *dto.MidjourneyResponse: 错误响应（正常转换时返回 nil）
 func CoverPlusActionToNormalAction(midjRequest *dto.MidjourneyRequest) *dto.MidjourneyResponse {
 	// "customId": "MJ::JOB::upsample::2::3dbbd469-36af-4a0f-8f02-df6c579e7011"
 	customId := midjRequest.CustomId
@@ -133,6 +160,12 @@ func CoverPlusActionToNormalAction(midjRequest *dto.MidjourneyRequest) *dto.Midj
 	return nil
 }
 
+// ConvertSimpleChangeParams 解析简化格式的变更参数。
+// 支持格式："{taskId} {action}"，其中 action 可以是 U1-U4、V1-V4、R 等。
+// 参数:
+//   - content: 简化格式的变更参数字符串
+// 返回值:
+//   - *dto.MidjourneyRequest: 解析后的请求对象，解析失败返回 nil
 func ConvertSimpleChangeParams(content string) *dto.MidjourneyRequest {
 	split := strings.Split(content, " ")
 	if len(split) != 2 {
@@ -162,6 +195,17 @@ func ConvertSimpleChangeParams(content string) *dto.MidjourneyRequest {
 	return changeParams
 }
 
+// DoMidjourneyHttpRequest 向 Midjourney 上游服务发送 HTTP 请求。
+// 处理请求体的读取、accountFilter/notifyHook 字段过滤、
+// 模式参数清理（--fast/--relax/--turbo）、超时设置、认证头注入等。
+// 参数:
+//   - c: Gin 上下文
+//   - timeout: 请求超时时间
+//   - fullRequestURL: 完整的上游请求 URL
+// 返回值:
+//   - *dto.MidjourneyResponseWithStatusCode: 带状态码的 Midjourney 响应
+//   - []byte: 原始响应体
+//   - error: 请求过程中的错误
 func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
 	var nullBytes []byte
 	//var requestBody io.Reader

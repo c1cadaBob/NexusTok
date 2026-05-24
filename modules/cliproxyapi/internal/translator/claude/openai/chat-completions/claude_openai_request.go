@@ -1,8 +1,16 @@
-// Package openai provides request translation functionality for OpenAI to Claude Code API compatibility.
-// It handles parsing and transforming OpenAI Chat Completions API requests into Claude Code API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between OpenAI API format and Claude Code API's expected format.
+// chat_completions - claude_openai_request.go
+// Claude 的 OpenAI Chat Completions 请求转换器。
+// 将 OpenAI Chat Completions 格式的请求转换为 Claude Code API 格式。
+//
+// 转换内容包括：
+// 1. 模型名称映射和参数提取（max_tokens、temperature、top_p 等）
+// 2. 系统指令转换（system 消息 -> 顶层 system 数组）
+// 3. 消息内容转换（文本、图片、文件 -> Claude 格式）
+// 4. 工具调用和工具结果处理（tool_calls -> tool_use，tool -> tool_result）
+// 5. 思考配置（reasoning_effort -> thinking 配置）
+// 6. 工具定义转换（parameters -> input_schema）
+// 7. 工具选择转换（tool_choice -> Claude 格式）
+// 8. 停止序列和流式配置处理
 package chat_completions
 
 import (
@@ -21,28 +29,31 @@ import (
 )
 
 var (
-	user    = ""
+	// user 用户标识符，基于 account 和 session 的 SHA256 哈希生成
+	user = ""
+	// account 账户标识符，首次使用时自动生成 UUID
 	account = ""
+	// session 会话标识符，首次使用时自动生成 UUID
 	session = ""
 )
 
-// ConvertOpenAIRequestToClaude parses and transforms an OpenAI Chat Completions API request into Claude Code API format.
-// It extracts the model name, system instruction, message contents, and tool declarations
-// from the raw JSON request and returns them in the format expected by the Claude Code API.
-// The function performs comprehensive transformation including:
-// 1. Model name mapping and parameter extraction (max_tokens, temperature, top_p, etc.)
-// 2. Message content conversion from OpenAI to Claude Code format
-// 3. Tool call and tool result handling with proper ID mapping
-// 4. Image data conversion from OpenAI data URLs to Claude Code base64 format
-// 5. Stop sequence and streaming configuration handling
+// ConvertOpenAIRequestToClaude 将 OpenAI Chat Completions 请求转换为 Claude Code API 格式。
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data from the OpenAI API
-//   - stream: A boolean indicating if the request is for a streaming response
+// 转换流程：
+// 1. 生成用户/账户/会话标识符
+// 2. 转换思考配置（reasoning_effort -> thinking 配置）
+// 3. 映射生成参数（max_tokens、temperature、top_p、stop_sequences）
+// 4. 转换消息数组（system -> system 数组，user/assistant -> messages，tool -> tool_result）
+// 5. 转换工具定义（function -> input_schema）
+// 6. 转换工具选择（tool_choice -> Claude 格式）
 //
-// Returns:
-//   - []byte: The transformed request data in Claude Code API format
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Chat Completions 格式 JSON 请求数据
+//   - stream: 是否为流式请求
+//
+// 返回值：
+//   - []byte: 转换后的 Claude Code API 格式 JSON 请求数据
 func ConvertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 
@@ -330,6 +341,8 @@ func ConvertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream 
 	return out
 }
 
+// convertOpenAIContentPartToClaudePart 将 OpenAI 内容部分转换为 Claude 内容部分。
+// 支持 text、image_url 和 file 类型的转换。
 func convertOpenAIContentPartToClaudePart(part gjson.Result) string {
 	switch part.Get("type").String() {
 	case "text":
@@ -359,6 +372,8 @@ func convertOpenAIContentPartToClaudePart(part gjson.Result) string {
 	return ""
 }
 
+// convertOpenAIImageURLToClaudePart 将 OpenAI 图片 URL 转换为 Claude 图片内容部分。
+// 支持 data: URL（base64 编码）和普通 URL 两种格式。
 func convertOpenAIImageURLToClaudePart(imageURL string) string {
 	if imageURL == "" {
 		return ""
@@ -387,6 +402,8 @@ func convertOpenAIImageURLToClaudePart(imageURL string) string {
 	return string(imagePart)
 }
 
+// convertOpenAIToolResultContent 将 OpenAI 工具结果内容转换为 Claude 工具结果格式。
+// 返回转换后的内容字符串和是否为原始 JSON 的标志。
 func convertOpenAIToolResultContent(content gjson.Result) (string, bool) {
 	if !content.Exists() {
 		return "", false

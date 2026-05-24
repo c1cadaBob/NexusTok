@@ -1,3 +1,6 @@
+// auth - conductor_update_test.go
+// 测试 Manager.Update 方法在更新认证信息时是否正确保留 ModelStates 状态数据。
+// 覆盖场景包括：活跃认证继承、禁用认证不继承、活跃转禁用不继承、禁用转活跃不继承。
 package auth
 
 import (
@@ -5,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestManager_Update_PreservesModelStates 测试更新活跃认证时保留已有 ModelStates。
 func TestManager_Update_PreservesModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
@@ -48,6 +52,7 @@ func TestManager_Update_PreservesModelStates(t *testing.T) {
 	}
 }
 
+// TestManager_Update_DisabledExistingDoesNotInheritModelStates 测试更新已禁用认证时不继承旧的 ModelStates。
 func TestManager_Update_DisabledExistingDoesNotInheritModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
@@ -85,6 +90,7 @@ func TestManager_Update_DisabledExistingDoesNotInheritModelStates(t *testing.T) 
 	}
 }
 
+// TestManager_Update_ActiveToDisabledDoesNotInheritModelStates 测试从活跃状态转为禁用时不继承 ModelStates。
 func TestManager_Update_ActiveToDisabledDoesNotInheritModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
@@ -122,6 +128,7 @@ func TestManager_Update_ActiveToDisabledDoesNotInheritModelStates(t *testing.T) 
 	}
 }
 
+// TestManager_Update_DisabledToActiveDoesNotInheritStaleModelStates 测试从禁用状态转为活跃时不继承过期的 ModelStates。
 func TestManager_Update_DisabledToActiveDoesNotInheritStaleModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
@@ -158,6 +165,7 @@ func TestManager_Update_DisabledToActiveDoesNotInheritStaleModelStates(t *testin
 	}
 }
 
+// TestManager_Update_ActiveInheritsModelStates 测试活跃认证更新时继承 ModelStates。
 func TestManager_Update_ActiveInheritsModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 

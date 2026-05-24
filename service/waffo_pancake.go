@@ -1,88 +1,100 @@
+// waffo_pancake.go 实现了 Waffo Pancake 支付服务的集成。
+// 包括创建结账会话、Webhook 签名验证、RSA 密钥处理、
+// 请求签名构建和 Webhook 事件解析等功能。
 package service
 
 import (
-	"bytes"
-	"context"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
-	"fmt"
-	"io"
-	"math"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
+	"bytes"               // HTTP 请求体构建
+	"context"             // 请求上下文
+	"crypto"              // 哈希算法标识
+	"crypto/rsa"          // RSA 密码学操作
+	"crypto/sha256"       // SHA-256 哈希
+	"crypto/x509"         // 证书和密钥解析
+	"encoding/base64"     // Base64 编解码
+	"encoding/pem"        // PEM 格式编解码
+	"fmt"                 // 格式化输出
+	"io"                  // IO 操作
+	"math"                // 数学函数（Abs）
+	"net/http"            // HTTP 客户端
+	"strconv"             // 字符串转换
+	"strings"             // 字符串操作
+	"time"                // 时间操作
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/setting"
+	"github.com/c1cada/NexusTok/common"   // 公共工具：JSON 序列化等
+	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
+	"github.com/c1cada/NexusTok/model"     // 数据模型：TopUp 等
+	"github.com/c1cada/NexusTok/setting"   // 系统配置
 )
 
+// Waffo Pancake 支付服务的常量配置
 const (
-	waffoPancakeAuthBaseURL      = "https://waffo-pancake-auth-service.vercel.app"
-	waffoPancakeCheckoutPath     = "/v1/actions/checkout/create-session"
-	waffoPancakeDefaultTolerance = 5 * time.Minute
+	waffoPancakeAuthBaseURL      = "https://waffo-pancake-auth-service.vercel.app" // 认证服务基地址
+	waffoPancakeCheckoutPath     = "/v1/actions/checkout/create-session"            // 创建结账会话路径
+	waffoPancakeDefaultTolerance = 5 * time.Minute                                  // Webhook 时间戳容差（5分钟）
 )
 
+// WaffoPancakePriceSnapshot 结账价格快照
 type WaffoPancakePriceSnapshot struct {
-	Amount      string `json:"amount"`
-	TaxIncluded bool   `json:"taxIncluded"`
-	TaxCategory string `json:"taxCategory"`
+	Amount      string `json:"amount"`      // 金额
+	TaxIncluded bool   `json:"taxIncluded"` // 是否含税
+	TaxCategory string `json:"taxCategory"` // 税种分类
 }
 
+// WaffoPancakeCreateSessionParams 创建结账会话的请求参数
 type WaffoPancakeCreateSessionParams struct {
-	StoreID          string                     `json:"storeId"`
-	ProductID        string                     `json:"productId"`
-	ProductType      string                     `json:"productType"`
-	Currency         string                     `json:"currency"`
-	PriceSnapshot    *WaffoPancakePriceSnapshot `json:"priceSnapshot,omitempty"`
-	BuyerEmail       string                     `json:"buyerEmail,omitempty"`
-	SuccessURL       string                     `json:"successUrl,omitempty"`
-	ExpiresInSeconds *int                       `json:"expiresInSeconds,omitempty"`
+	StoreID          string                     `json:"storeId"`                    // 商店 ID
+	ProductID        string                     `json:"productId"`                  // 产品 ID
+	ProductType      string                     `json:"productType"`                // 产品类型
+	Currency         string                     `json:"currency"`                   // 货币代码
+	PriceSnapshot    *WaffoPancakePriceSnapshot `json:"priceSnapshot,omitempty"`    // 价格快照
+	BuyerEmail       string                     `json:"buyerEmail,omitempty"`       // 买家邮箱
+	SuccessURL       string                     `json:"successUrl,omitempty"`       // 支付成功回调 URL
+	ExpiresInSeconds *int                       `json:"expiresInSeconds,omitempty"` // 会话过期秒数
 }
 
+// WaffoPancakeCheckoutSession 结账会话响应
 type WaffoPancakeCheckoutSession struct {
-	SessionID   string `json:"sessionId"`
-	CheckoutURL string `json:"checkoutUrl"`
-	ExpiresAt   string `json:"expiresAt"`
-	OrderID     string `json:"orderId"`
+	SessionID   string `json:"sessionId"`   // 会话 ID
+	CheckoutURL string `json:"checkoutUrl"` // 结账页面 URL
+	ExpiresAt   string `json:"expiresAt"`   // 过期时间
+	OrderID     string `json:"orderId"`     // 订单 ID
 }
 
+// waffoPancakeAPIError API 错误响应
 type waffoPancakeAPIError struct {
-	Message string `json:"message"`
-	Layer   string `json:"layer"`
+	Message string `json:"message"` // 错误消息
+	Layer   string `json:"layer"`   // 错误层级
 }
 
+// waffoPancakeCreateSessionResponse 创建会话的 API 响应
 type waffoPancakeCreateSessionResponse struct {
-	Data   *WaffoPancakeCheckoutSession `json:"data"`
-	Errors []waffoPancakeAPIError       `json:"errors"`
+	Data   *WaffoPancakeCheckoutSession `json:"data"`    // 响应数据
+	Errors []waffoPancakeAPIError       `json:"errors"` // 错误列表
 }
 
+// waffoPancakeWebhookData Webhook 事件数据
 type waffoPancakeWebhookData struct {
-	ID          string          `json:"id"`
-	OrderID     string          `json:"orderId"`
-	BuyerEmail  string          `json:"buyerEmail"`
-	Currency    string          `json:"currency"`
-	Amount      dto.StringValue `json:"amount"`
-	TaxAmount   dto.StringValue `json:"taxAmount"`
-	ProductName string          `json:"productName"`
+	ID          string          `json:"id"`          // 事件数据 ID
+	OrderID     string          `json:"orderId"`     // 订单 ID
+	BuyerEmail  string          `json:"buyerEmail"`  // 买家邮箱
+	Currency    string          `json:"currency"`    // 货币代码
+	Amount      dto.StringValue `json:"amount"`      // 金额
+	TaxAmount   dto.StringValue `json:"taxAmount"`   // 税额
+	ProductName string          `json:"productName"` // 产品名称
 }
 
+// waffoPancakeWebhookEvent Webhook 事件对象
 type waffoPancakeWebhookEvent struct {
-	ID        string                  `json:"id"`
-	Timestamp string                  `json:"timestamp"`
-	EventType string                  `json:"eventType"`
-	EventID   string                  `json:"eventId"`
-	StoreID   string                  `json:"storeId"`
-	Mode      string                  `json:"mode"`
-	Data      waffoPancakeWebhookData `json:"data"`
+	ID        string                  `json:"id"`        // 事件 ID
+	Timestamp string                  `json:"timestamp"` // 事件时间戳
+	EventType string                  `json:"eventType"` // 事件类型
+	EventID   string                  `json:"eventId"`   // 事件唯一 ID
+	StoreID   string                  `json:"storeId"`   // 商店 ID
+	Mode      string                  `json:"mode"`      // 环境模式（test/prod）
+	Data      waffoPancakeWebhookData `json:"data"`      // 事件数据
 }
 
+// NormalizedEventType 返回标准化的事件类型字符串
 func (e *waffoPancakeWebhookEvent) NormalizedEventType() string {
 	if e == nil {
 		return ""
@@ -90,31 +102,46 @@ func (e *waffoPancakeWebhookEvent) NormalizedEventType() string {
 	return e.EventType
 }
 
+// CreateWaffoPancakeCheckoutSession 创建 Waffo Pancake 结账会话。
+// 构建请求体、RSA 签名后发送到 Waffo Pancake 认证服务。
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - params: 结账会话参数
+//
+// 返回：
+//   - *WaffoPancakeCheckoutSession: 包含会话 ID、结账 URL 等
+//   - error: 创建失败的错误信息
 func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancakeCreateSessionParams) (*WaffoPancakeCheckoutSession, error) {
 	if params == nil {
 		return nil, fmt.Errorf("missing checkout params")
 	}
 
+	// 序列化请求体
 	body, err := common.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("marshal Waffo Pancake checkout payload: %w", err)
 	}
 
+	// 标准化 RSA 私钥格式
 	privateKey, err := normalizeRSAPrivateKey(setting.WaffoPancakePrivateKey)
 	if err != nil {
 		return nil, err
 	}
 
+	// 生成时间戳和请求签名
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature, err := signWaffoPancakeRequest(http.MethodPost, waffoPancakeCheckoutPath, timestamp, string(body), privateKey)
 	if err != nil {
 		return nil, err
 	}
 
+	// 构建 HTTP 请求
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, waffoPancakeAuthBaseURL+waffoPancakeCheckoutPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build Waffo Pancake checkout request: %w", err)
 	}
+	// 设置请求头：认证、签名、环境
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Merchant-Id", setting.WaffoPancakeMerchantID)
 	req.Header.Set("X-Timestamp", timestamp)
@@ -131,6 +158,7 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	}
 	defer resp.Body.Close()
 
+	// 读取并解析响应
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read Waffo Pancake checkout response: %w", err)
@@ -140,32 +168,55 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	if err := common.Unmarshal(responseBody, &result); err != nil {
 		return nil, fmt.Errorf("decode Waffo Pancake checkout response: %w", err)
 	}
+	// 处理 HTTP 错误状态码
 	if resp.StatusCode >= http.StatusBadRequest {
 		if len(result.Errors) > 0 {
 			return nil, fmt.Errorf("Waffo Pancake error (%d): %s", resp.StatusCode, result.Errors[0].Message)
 		}
 		return nil, fmt.Errorf("Waffo Pancake checkout request failed with status %d", resp.StatusCode)
 	}
+	// 处理业务错误
 	if len(result.Errors) > 0 {
 		return nil, fmt.Errorf("Waffo Pancake error: %s", result.Errors[0].Message)
 	}
+	// 验证返回数据完整性
 	if result.Data == nil || result.Data.CheckoutURL == "" || strings.TrimSpace(result.Data.SessionID) == "" {
 		return nil, fmt.Errorf("Waffo Pancake returned empty checkout session")
 	}
 	return result.Data, nil
 }
 
+// VerifyConfiguredWaffoPancakeWebhook 验证 Waffo Pancake Webhook 请求的签名。
+// 自动从 payload 中检测环境（test/prod），并使用对应的公钥验证。
+//
+// 参数：
+//   - payload: Webhook 请求体（JSON 字符串）
+//   - signatureHeader: X-Waffo-Signature 请求头值
+//
+// 返回：
+//   - *waffoPancakeWebhookEvent: 解析后的 Webhook 事件
+//   - error: 验证失败的错误信息
 func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string) (*waffoPancakeWebhookEvent, error) {
 	environment := resolveWaffoPancakeWebhookEnvironment(payload)
 	return verifyWaffoPancakeWebhook(payload, signatureHeader, environment)
 }
 
+// ResolveWaffoPancakeTradeNo 从 Webhook 事件中解析订单号。
+// 验证订单号在数据库中存在且支付方式为 Waffo Pancake。
+//
+// 参数：
+//   - event: Webhook 事件对象
+//
+// 返回：
+//   - string: 订单号（trade_no）
+//   - error: 解析或验证失败的错误信息
 func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error) {
 	if event == nil {
 		return "", fmt.Errorf("missing webhook event")
 	}
 
 	if tradeNo := strings.TrimSpace(event.Data.OrderID); tradeNo != "" {
+		// 从数据库中查找对应的充值记录
 		topUp := model.GetTopUpByTradeNo(tradeNo)
 		if topUp != nil && topUp.PaymentMethod == model.PaymentMethodWaffoPancake {
 			return tradeNo, nil
@@ -176,20 +227,38 @@ func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error)
 	return "", fmt.Errorf("missing webhook orderId")
 }
 
+// normalizeRSAPrivateKey 标准化 RSA 私钥格式为 PEM 编码
 func normalizeRSAPrivateKey(raw string) (string, error) {
 	return normalizePEMKey(raw, "PRIVATE KEY", "RSA PRIVATE KEY")
 }
 
+// normalizeRSAPublicKey 标准化 RSA 公钥格式为 PEM 编码
 func normalizeRSAPublicKey(raw string) (string, error) {
 	return normalizePEMKey(raw, "PUBLIC KEY", "RSA PUBLIC KEY")
 }
 
+// normalizePEMKey 将密钥标准化为 PEM 格式。
+// 支持三种输入格式：
+//   - 完整 PEM 块：直接重新编码
+//   - 纯 Base64 (PKCS#8)：解码后检测格式并编码为 PEM
+//   - 纯 Base64 (PKCS#1)：解码后编码为对应 PEM 类型
+//
+// 参数：
+//   - raw: 原始密钥字符串
+//   - pkcs8Type: PKCS#8 格式的 PEM 类型标签
+//   - pkcs1Type: PKCS#1 格式的 PEM 类型标签
+//
+// 返回：
+//   - string: 标准化后的 PEM 格式密钥
+//   - error: 解析失败的错误信息
 func normalizePEMKey(raw string, pkcs8Type string, pkcs1Type string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("%s is empty", strings.ToLower(pkcs8Type))
 	}
 
+	// 处理转义换行符
 	normalized := strings.TrimSpace(strings.ReplaceAll(raw, `\n`, "\n"))
+	// 输入已是 PEM 格式时，解码后重新编码以标准化
 	if strings.Contains(normalized, "BEGIN ") {
 		block, _ := pem.Decode([]byte(normalized))
 		if block == nil {
@@ -198,11 +267,13 @@ func normalizePEMKey(raw string, pkcs8Type string, pkcs1Type string) (string, er
 		return string(pem.EncodeToMemory(block)), nil
 	}
 
+	// 输入为纯 Base64 时，解码为 DER
 	der, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(normalized, "\n", ""))
 	if err != nil {
 		return "", fmt.Errorf("invalid base64 encoded %s: %w", strings.ToLower(pkcs8Type), err)
 	}
 
+	// 自动检测 DER 格式：PKCS#8 或 PKCS#1
 	pemType := pkcs8Type
 	if pkcs8Type == "PRIVATE KEY" {
 		if _, err := x509.ParsePKCS8PrivateKey(der); err != nil {
@@ -225,12 +296,26 @@ func normalizePEMKey(raw string, pkcs8Type string, pkcs1Type string) (string, er
 	return string(pem.EncodeToMemory(&pem.Block{Type: pemType, Bytes: der})), nil
 }
 
+// signWaffoPancakeRequest 对 Waffo Pancake API 请求进行 RSA 签名。
+// 流程：构建规范化请求 -> SHA-256 哈希 -> RSA PKCS1v15 签名 -> Base64 编码。
+//
+// 参数：
+//   - method: HTTP 方法
+//   - path: 请求路径
+//   - timestamp: 时间戳
+//   - body: 请求体
+//   - privateKeyPEM: PEM 格式的 RSA 私钥
+//
+// 返回：
+//   - string: Base64 编码的签名
+//   - error: 签名失败的错误信息
 func signWaffoPancakeRequest(method string, path string, timestamp string, body string, privateKeyPEM string) (string, error) {
 	block, _ := pem.Decode([]byte(privateKeyPEM))
 	if block == nil {
 		return "", fmt.Errorf("invalid RSA private key PEM")
 	}
 
+	// 根据 PEM 类型解析私钥
 	var privateKey *rsa.PrivateKey
 	switch block.Type {
 	case "PRIVATE KEY":
@@ -253,8 +338,10 @@ func signWaffoPancakeRequest(method string, path string, timestamp string, body 
 		return "", fmt.Errorf("unsupported private key type: %s", block.Type)
 	}
 
+	// 构建规范化请求并计算 SHA-256 哈希
 	canonicalRequest := buildWaffoPancakeCanonicalRequest(method, path, timestamp, body)
 	digest := sha256.Sum256([]byte(canonicalRequest))
+	// RSA PKCS1v15 签名
 	signature, err := rsa.SignPKCS1v15(nil, privateKey, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", fmt.Errorf("sign Waffo Pancake request: %w", err)
@@ -262,6 +349,17 @@ func signWaffoPancakeRequest(method string, path string, timestamp string, body 
 	return base64.StdEncoding.EncodeToString(signature), nil
 }
 
+// buildWaffoPancakeCanonicalRequest 构建规范化请求字符串用于签名。
+// 格式为 "METHOD\nPATH\nTIMESTAMP\nBODY_HASH"。
+//
+// 参数：
+//   - method: HTTP 方法
+//   - path: 请求路径
+//   - timestamp: 时间戳
+//   - body: 请求体
+//
+// 返回：
+//   - string: 规范化请求字符串
 func buildWaffoPancakeCanonicalRequest(method string, path string, timestamp string, body string) string {
 	bodyHash := sha256.Sum256([]byte(body))
 	return fmt.Sprintf(
@@ -273,16 +371,29 @@ func buildWaffoPancakeCanonicalRequest(method string, path string, timestamp str
 	)
 }
 
+// verifyWaffoPancakeWebhook 验证 Waffo Pancake Webhook 的签名。
+// 从签名头中提取时间戳和签名值，验证时间戳在容差范围内，然后验证 RSA 签名。
+//
+// 参数：
+//   - payload: Webhook 请求体
+//   - signatureHeader: X-Waffo-Signature 请求头
+//   - environment: 环境标识（test/prod）
+//
+// 返回：
+//   - *waffoPancakeWebhookEvent: 解析后的事件
+//   - error: 验证失败的错误信息
 func verifyWaffoPancakeWebhook(payload string, signatureHeader string, environment string) (*waffoPancakeWebhookEvent, error) {
 	if signatureHeader == "" {
 		return nil, fmt.Errorf("missing X-Waffo-Signature header")
 	}
 
+	// 解析签名头中的时间戳和签名值
 	timestampPart, signaturePart := parseWaffoPancakeSignatureHeader(signatureHeader)
 	if timestampPart == "" || signaturePart == "" {
 		return nil, fmt.Errorf("malformed X-Waffo-Signature header")
 	}
 
+	// 验证时间戳在容差范围内（防止重放攻击）
 	timestampMs, err := strconv.ParseInt(timestampPart, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timestamp in X-Waffo-Signature header")
@@ -291,11 +402,13 @@ func verifyWaffoPancakeWebhook(payload string, signatureHeader string, environme
 		return nil, fmt.Errorf("webhook timestamp outside tolerance window")
 	}
 
+	// 构建签名输入并使用对应环境的公钥验证
 	signatureInput := fmt.Sprintf("%s.%s", timestampPart, payload)
 	if err := verifyWaffoPancakeWebhookWithKey(signatureInput, signaturePart, resolveWaffoPancakeWebhookPublicKey(environment)); err != nil {
 		return nil, fmt.Errorf("invalid webhook signature")
 	}
 
+	// 解析 Webhook 事件
 	var event waffoPancakeWebhookEvent
 	if err := common.Unmarshal([]byte(payload), &event); err != nil {
 		return nil, fmt.Errorf("parse Waffo Pancake webhook payload: %w", err)
@@ -303,6 +416,15 @@ func verifyWaffoPancakeWebhook(payload string, signatureHeader string, environme
 	return &event, nil
 }
 
+// parseWaffoPancakeSignatureHeader 解析 Waffo Pancake 的签名头。
+// 格式为 "t=<timestamp>,v1=<signature>"。
+//
+// 参数：
+//   - header: X-Waffo-Signature 头值
+//
+// 返回：
+//   - string: 时间戳部分
+//   - string: 签名部分
 func parseWaffoPancakeSignatureHeader(header string) (string, string) {
 	var timestampPart string
 	var signaturePart string
@@ -321,6 +443,8 @@ func parseWaffoPancakeSignatureHeader(header string) (string, string) {
 	return timestampPart, signaturePart
 }
 
+// resolveWaffoPancakeWebhookEnvironment 从 Webhook payload 中检测环境。
+// 优先从 payload 的 mode 字段读取，其次使用全局沙箱配置。
 func resolveWaffoPancakeWebhookEnvironment(payload string) string {
 	var envelope struct {
 		Mode string `json:"mode"`
@@ -345,6 +469,7 @@ func resolveWaffoPancakeWebhookEnvironment(payload string) string {
 	}
 }
 
+// resolveWaffoPancakeWebhookPublicKey 根据环境选择对应的 Webhook 验证公钥。
 func resolveWaffoPancakeWebhookPublicKey(environment string) string {
 	if environment == "prod" {
 		return strings.TrimSpace(setting.WaffoPancakeWebhookPublicKey)
@@ -352,7 +477,18 @@ func resolveWaffoPancakeWebhookPublicKey(environment string) string {
 	return strings.TrimSpace(setting.WaffoPancakeWebhookTestKey)
 }
 
+// verifyWaffoPancakeWebhookWithKey 使用指定公钥验证 Webhook 签名。
+// 流程：标准化公钥 -> 解析 PEM -> 计算 SHA-256 哈希 -> RSA PKCS1v15 验签。
+//
+// 参数：
+//   - signatureInput: 签名输入（"timestamp.payload"）
+//   - signaturePart: Base64 编码的签名值
+//   - rawPublicKey: 原始公钥字符串
+//
+// 返回：
+//   - error: 验证失败的错误信息
 func verifyWaffoPancakeWebhookWithKey(signatureInput string, signaturePart string, rawPublicKey string) error {
+	// 标准化公钥为 PEM 格式
 	publicKeyPEM, err := normalizeRSAPublicKey(rawPublicKey)
 	if err != nil {
 		return err
@@ -363,6 +499,7 @@ func verifyWaffoPancakeWebhookWithKey(signatureInput string, signaturePart strin
 		return fmt.Errorf("invalid RSA public key PEM")
 	}
 
+	// 根据 PEM 类型解析公钥
 	var publicKey *rsa.PublicKey
 	switch block.Type {
 	case "PUBLIC KEY":
@@ -385,11 +522,13 @@ func verifyWaffoPancakeWebhookWithKey(signatureInput string, signaturePart strin
 		return fmt.Errorf("unsupported public key type: %s", block.Type)
 	}
 
+	// Base64 解码签名
 	signature, err := base64.StdEncoding.DecodeString(signaturePart)
 	if err != nil {
 		return fmt.Errorf("decode webhook signature: %w", err)
 	}
 
+	// 计算签名输入的 SHA-256 哈希并验证签名
 	digest := sha256.Sum256([]byte(signatureInput))
 	if err := rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, digest[:], signature); err != nil {
 		return fmt.Errorf("verify webhook signature: %w", err)

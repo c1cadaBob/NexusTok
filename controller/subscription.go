@@ -1,3 +1,18 @@
+// Package controller - subscription.go
+// 该文件实现了订阅管理的 API 控制器
+//
+// 订阅功能允许用户按月/按年购买固定的 API 使用额度
+//
+// 主要 API：
+// - GetSubscriptionPlans：获取可用的订阅计划
+// - GetSubscriptionSelf：获取当前用户的订阅信息
+// - UpdateBillingPreference：更新计费偏好
+//
+// 计费偏好：
+// - subscription_first：优先使用订阅额度
+// - wallet_first：优先使用钱包余额
+// - subscription_only：只使用订阅额度
+// - wallet_only：只使用钱包余额
 package controller
 
 import (
@@ -12,29 +27,41 @@ import (
 	"gorm.io/gorm"
 )
 
-// ---- Shared types ----
+// ---- 共享类型 ----
 
+// SubscriptionPlanDTO 订阅计划数据传输对象
 type SubscriptionPlanDTO struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan model.SubscriptionPlan `json:"plan"` // 订阅计划详情
 }
 
+// BillingPreferenceRequest 计费偏好更新请求
 type BillingPreferenceRequest struct {
-	BillingPreference string `json:"billing_preference"`
+	BillingPreference string `json:"billing_preference"` // 计费偏好
 }
 
-// ---- User APIs ----
+// ---- 用户 API ----
 
+// GetSubscriptionPlans 获取可用的订阅计划列表
+//
+// 只返回启用的计划，按排序顺序排列
+//
+// 参数：
+//   - c: Gin 上下文
 func GetSubscriptionPlans(c *gin.Context) {
+	// 检查支付合规是否已确认
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiSuccess(c, []SubscriptionPlanDTO{})
 		return
 	}
 
+	// 查询所有启用的订阅计划
 	var plans []model.SubscriptionPlan
 	if err := model.DB.Where("enabled = ?", true).Order("sort_order desc, id desc").Find(&plans).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 构建响应
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
 	for _, p := range plans {
 		result = append(result, SubscriptionPlanDTO{
@@ -44,6 +71,12 @@ func GetSubscriptionPlans(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+// GetSubscriptionSelf 获取当前用户的订阅信息
+//
+// 包括当前订阅计划、计费偏好、使用情况等
+//
+// 参数：
+//   - c: Gin 上下文
 func GetSubscriptionSelf(c *gin.Context) {
 	userId := c.GetInt("id")
 	settingMap, _ := model.GetUserSetting(userId, false)

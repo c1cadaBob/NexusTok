@@ -1,3 +1,11 @@
+// amp - routes_test.go
+// AMP 模块路由注册的单元测试。
+// 测试以下路由功能：
+// - 管理路由（/api/internal、/api/user、/api/auth 等）的正确注册和代理转发
+// - 提供商别名路由（/api/provider/{openai,anthropic,google,groq}）的注册
+// - v1 和 v1beta 版本路由的注册
+// - 无认证中间件时的回退行为
+// - localhost 限制中间件的防欺骗和热重载功能
 package amp
 
 import (
@@ -9,6 +17,9 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 )
 
+// TestRegisterManagementRoutes 测试管理路由的注册：
+// 验证所有管理路径（/api/internal、/api/user、/api/auth、/api/meta 等）
+// 都能正确路由到代理处理器
 func TestRegisterManagementRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -86,6 +97,9 @@ func TestRegisterManagementRoutes(t *testing.T) {
 	}
 }
 
+// TestRegisterProviderAliases_AllProvidersRegistered 测试所有提供商别名路由的注册：
+// 验证 openai、anthropic、google、groq 等提供商的模型和 API 端点都已注册，
+// 且认证中间件被正确执行
 func TestRegisterProviderAliases_AllProvidersRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -138,6 +152,7 @@ func TestRegisterProviderAliases_AllProvidersRegistered(t *testing.T) {
 	}
 }
 
+// TestRegisterProviderAliases_DynamicModelsHandler 测试各提供商的动态模型处理器路由注册
 func TestRegisterProviderAliases_DynamicModelsHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -164,6 +179,8 @@ func TestRegisterProviderAliases_DynamicModelsHandler(t *testing.T) {
 	}
 }
 
+// TestRegisterProviderAliases_V1Routes 测试 v1 版本路由的注册：
+// 验证 /api/provider/{openai,anthropic}/v1/* 路径的正确注册
 func TestRegisterProviderAliases_V1Routes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -197,6 +214,8 @@ func TestRegisterProviderAliases_V1Routes(t *testing.T) {
 	}
 }
 
+// TestRegisterProviderAliases_V1BetaRoutes 测试 v1beta 版本路由的注册：
+// 验证 /api/provider/google/v1beta/* 路径的正确注册
 func TestRegisterProviderAliases_V1BetaRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -227,6 +246,8 @@ func TestRegisterProviderAliases_V1BetaRoutes(t *testing.T) {
 	}
 }
 
+// TestRegisterProviderAliases_NoAuthMiddleware 测试当认证中间件为 nil 时，
+// 路由仍应注册（使用回退的无操作认证）
 func TestRegisterProviderAliases_NoAuthMiddleware(t *testing.T) {
 	// Test that routes still register even if auth middleware is nil (fallback behavior)
 	gin.SetMode(gin.TestMode)
@@ -247,6 +268,11 @@ func TestRegisterProviderAliases_NoAuthMiddleware(t *testing.T) {
 	}
 }
 
+// TestLocalhostOnlyMiddleware_PreventsSpoofing 测试 localhost 限制中间件的防欺骗能力：
+// - 伪造的 X-Forwarded-For 头应被忽略
+// - 真实的 localhost IPv4/IPv6 连接应通过
+// - 远程 IPv4/IPv6 连接应被阻止
+// - 伪造的 IPv6 localhost 头应被忽略
 func TestLocalhostOnlyMiddleware_PreventsSpoofing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -331,6 +357,10 @@ func TestLocalhostOnlyMiddleware_PreventsSpoofing(t *testing.T) {
 	}
 }
 
+// TestLocalhostOnlyMiddleware_HotReload 测试 localhost 限制中间件的热重载功能：
+// - 启用时阻止远程请求
+// - 禁用后允许远程请求
+// - 重新启用后再次阻止远程请求
 func TestLocalhostOnlyMiddleware_HotReload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

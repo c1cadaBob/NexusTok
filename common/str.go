@@ -1,3 +1,14 @@
+// Package common - str.go
+// 该文件提供了字符串处理相关的工具函数
+//
+// 包含的功能：
+// - 字符串默认值处理
+// - 随机字符串生成
+// - JSON 和 Map 转换
+// - 字符串包含检查
+// - 零拷贝字符串/字节切片转换
+// - Base64 编码
+// - 敏感信息脱敏（URL、IP、邮箱、API Key）
 package common
 
 import (
@@ -13,13 +24,21 @@ import (
 )
 
 var (
-	maskURLPattern    = regexp.MustCompile(`(http|https)://[^\s/$.?#].[^\s]*`)
-	maskDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
-	maskIPPattern     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	// maskApiKeyPattern matches patterns like 'api_key:xxx' or "api_key:xxx" to mask the API key value
+	maskURLPattern    = regexp.MustCompile(`(http|https)://[^\s/$.?#].[^\s]*`)  // URL 匹配模式
+	maskDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`) // 域名匹配模式
+	maskIPPattern     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)      // IPv4 地址匹配模式
+	// maskApiKeyPattern 匹配 api_key:xxx 模式，用于脱敏 API Key
 	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
 )
 
+// GetStringIfEmpty 如果字符串为空则返回默认值
+//
+// 参数：
+//   - str: 要检查的字符串
+//   - defaultValue: 默认值
+//
+// 返回值：
+//   - string: 原字符串或默认值
 func GetStringIfEmpty(str string, defaultValue string) string {
 	if str == "" {
 		return defaultValue
@@ -27,6 +46,15 @@ func GetStringIfEmpty(str string, defaultValue string) string {
 	return str
 }
 
+// GetRandomString 生成指定长度的随机字母数字字符串
+//
+// 使用 lo.RandomString 生成，字符集为字母+数字
+//
+// 参数：
+//   - length: 字符串长度
+//
+// 返回值：
+//   - string: 随机字符串
 func GetRandomString(length int) string {
 	if length <= 0 {
 		return ""
@@ -34,6 +62,13 @@ func GetRandomString(length int) string {
 	return lo.RandomString(length, lo.AlphanumericCharset)
 }
 
+// MapToJsonStr 将 map 转换为 JSON 字符串
+//
+// 参数：
+//   - m: 要转换的 map
+//
+// 返回值：
+//   - string: JSON 字符串（失败返回空字符串）
 func MapToJsonStr(m map[string]interface{}) string {
 	bytes, err := json.Marshal(m)
 	if err != nil {
@@ -42,6 +77,14 @@ func MapToJsonStr(m map[string]interface{}) string {
 	return string(bytes)
 }
 
+// StrToMap 将 JSON 字符串转换为 map
+//
+// 参数：
+//   - str: JSON 字符串
+//
+// 返回值：
+//   - map[string]interface{}: 解析后的 map
+//   - error: 解析错误
 func StrToMap(str string) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	err := Unmarshal([]byte(str), &m)
@@ -51,6 +94,14 @@ func StrToMap(str string) (map[string]interface{}, error) {
 	return m, nil
 }
 
+// StrToJsonArray 将 JSON 字符串转换为数组
+//
+// 参数：
+//   - str: JSON 字符串
+//
+// 返回值：
+//   - []interface{}: 解析后的数组
+//   - error: 解析错误
 func StrToJsonArray(str string) ([]interface{}, error) {
 	var js []interface{}
 	err := json.Unmarshal([]byte(str), &js)
@@ -60,16 +111,19 @@ func StrToJsonArray(str string) ([]interface{}, error) {
 	return js, nil
 }
 
+// IsJsonArray 判断字符串是否为有效的 JSON 数组
 func IsJsonArray(str string) bool {
 	var js []interface{}
 	return json.Unmarshal([]byte(str), &js) == nil
 }
 
+// IsJsonObject 判断字符串是否为有效的 JSON 对象
 func IsJsonObject(str string) bool {
 	var js map[string]interface{}
 	return json.Unmarshal([]byte(str), &js) == nil
 }
 
+// String2Int 将字符串转换为整数（失败返回 0）
 func String2Int(str string) int {
 	num, err := strconv.Atoi(str)
 	if err != nil {
@@ -78,6 +132,7 @@ func String2Int(str string) int {
 	return num
 }
 
+// StringsContains 检查字符串切片中是否包含指定字符串
 func StringsContains(strs []string, str string) bool {
 	for _, s := range strs {
 		if s == str {
@@ -87,17 +142,28 @@ func StringsContains(strs []string, str string) bool {
 	return false
 }
 
-// StringToByteSlice []byte only read, panic on append
+// StringToByteSlice 零拷贝将字符串转换为字节切片
+//
+// 警告：返回的字节切片是只读的，追加操作会 panic
+// 这是一个性能优化函数，避免不必要的内存分配
+//
+// 参数：
+//   - s: 字符串
+//
+// 返回值：
+//   - []byte: 字节切片（只读）
 func StringToByteSlice(s string) []byte {
 	tmp1 := (*[2]uintptr)(unsafe.Pointer(&s))
 	tmp2 := [3]uintptr{tmp1[0], tmp1[1], tmp1[1]}
 	return *(*[]byte)(unsafe.Pointer(&tmp2))
 }
 
+// EncodeBase64 将字符串编码为 Base64
 func EncodeBase64(str string) string {
 	return base64.StdEncoding.EncodeToString([]byte(str))
 }
 
+// GetJsonString 将对象序列化为 JSON 字符串（失败返回空字符串）
 func GetJsonString(data any) string {
 	if data == nil {
 		return ""
@@ -106,7 +172,10 @@ func GetJsonString(data any) string {
 	return string(b)
 }
 
-// NormalizeBillingPreference clamps the billing preference to valid values.
+// NormalizeBillingPreference 规范化扣费策略
+//
+// 有效的值：subscription_first, wallet_first, subscription_only, wallet_only
+// 其他值默认为 subscription_first
 func NormalizeBillingPreference(pref string) string {
 	switch strings.TrimSpace(pref) {
 	case "subscription_first", "wallet_first", "subscription_only", "wallet_only":
@@ -116,26 +185,38 @@ func NormalizeBillingPreference(pref string) string {
 	}
 }
 
-// MaskEmail masks a user email to prevent PII leakage in logs
-// Returns "***masked***" if email is empty, otherwise shows only the domain part
+// MaskEmail 脱敏邮箱地址，防止日志中泄露 PII
+//
+// 示例：user@example.com → ***@example.com
+//
+// 参数：
+//   - email: 邮箱地址
+//
+// 返回值：
+//   - string: 脱敏后的邮箱
 func MaskEmail(email string) string {
 	if email == "" {
 		return "***masked***"
 	}
 
-	// Find the @ symbol
 	atIndex := strings.Index(email, "@")
 	if atIndex == -1 {
-		// No @ symbol found, return masked
 		return "***masked***"
 	}
 
-	// Return only the domain part with @ symbol
 	return "***@" + email[atIndex+1:]
 }
 
-// maskHostTail returns the tail parts of a domain/host that should be preserved.
-// It keeps 2 parts for likely country-code TLDs (e.g., co.uk, com.cn), otherwise keeps only the TLD.
+// maskHostTail 返回域名中应该保留的尾部部分
+//
+// 对于可能的国家代码顶级域名（如 co.uk, com.cn），保留 2 部分
+// 否则只保留顶级域名
+//
+// 参数：
+//   - parts: 域名分割后的部分
+//
+// 返回值：
+//   - []string: 应该保留的尾部部分
 func maskHostTail(parts []string) []string {
 	if len(parts) < 2 {
 		return parts
@@ -143,14 +224,22 @@ func maskHostTail(parts []string) []string {
 	lastPart := parts[len(parts)-1]
 	secondLastPart := parts[len(parts)-2]
 	if len(lastPart) == 2 && len(secondLastPart) <= 3 {
-		// Likely country code TLD like co.uk, com.cn
+		// 可能是国家代码顶级域名，如 co.uk, com.cn
 		return []string{secondLastPart, lastPart}
 	}
 	return []string{lastPart}
 }
 
-// maskHostForURL collapses subdomains and keeps only masked prefix + preserved tail.
-// Example: api.openai.com -> ***.com, sub.domain.co.uk -> ***.co.uk
+// maskHostForURL 对 URL 中的主机名进行脱敏
+//
+// 将子域名替换为 ***，保留顶级域名
+// 示例：api.openai.com → ***.com, sub.domain.co.uk → ***.co.uk
+//
+// 参数：
+//   - host: 主机名
+//
+// 返回值：
+//   - string: 脱敏后的主机名
 func maskHostForURL(host string) string {
 	parts := strings.Split(host, ".")
 	if len(parts) < 2 {
@@ -160,8 +249,16 @@ func maskHostForURL(host string) string {
 	return "***." + strings.Join(tail, ".")
 }
 
-// maskHostForPlainDomain masks a plain domain and reflects subdomain depth with multiple ***.
-// Example: openai.com -> ***.com, api.openai.com -> ***.***.com, sub.domain.co.uk -> ***.***.co.uk
+// maskHostForPlainDomain 对纯域名进行脱敏
+//
+// 用 *** 替换每个子域名部分，保留顶级域名
+// 示例：openai.com → ***.com, api.openai.com → ***.***.com
+//
+// 参数：
+//   - domain: 域名
+//
+// 返回值：
+//   - string: 脱敏后的域名
 func maskHostForPlainDomain(domain string) string {
 	parts := strings.Split(domain, ".")
 	if len(parts) < 2 {
@@ -176,17 +273,21 @@ func maskHostForPlainDomain(domain string) string {
 	return stars + "." + strings.Join(tail, ".")
 }
 
-// MaskSensitiveInfo masks sensitive information like URLs, IPs, and domain names in a string
-// Example:
-// http://example.com -> http://***.com
-// https://api.test.org/v1/users/123?key=secret -> https://***.org/***/***/?key=***
-// https://sub.domain.co.uk/path/to/resource -> https://***.co.uk/***/***
-// 192.168.1.1 -> ***.***.***.***
-// openai.com -> ***.com
-// www.openai.com -> ***.***.com
-// api.openai.com -> ***.***.com
+// MaskSensitiveInfo 对字符串中的敏感信息进行脱敏
+//
+// 脱敏范围：
+// - URL：http://example.com → http://***.com
+// - 域名：openai.com → ***.com
+// - IP 地址：192.168.1.1 → ***.***.***.***
+// - API Key：api_key:xxx → api_key:***
+//
+// 参数：
+//   - str: 包含敏感信息的字符串
+//
+// 返回值：
+//   - string: 脱敏后的字符串
 func MaskSensitiveInfo(str string) string {
-	// Mask URLs
+	// 脱敏 URL
 	str = maskURLPattern.ReplaceAllStringFunc(str, func(urlStr string) string {
 		u, err := url.Parse(urlStr)
 		if err != nil {
@@ -198,12 +299,11 @@ func MaskSensitiveInfo(str string) string {
 			return urlStr
 		}
 
-		// Mask host with unified logic
 		maskedHost := maskHostForURL(host)
 
 		result := u.Scheme + "://" + maskedHost
 
-		// Mask path
+		// 脱敏路径
 		if u.Path != "" && u.Path != "/" {
 			pathParts := strings.Split(strings.Trim(u.Path, "/"), "/")
 			maskedPathParts := make([]string, len(pathParts))
@@ -219,11 +319,10 @@ func MaskSensitiveInfo(str string) string {
 			result += "/"
 		}
 
-		// Mask query parameters
+		// 脱敏查询参数
 		if u.RawQuery != "" {
 			values, err := url.ParseQuery(u.RawQuery)
 			if err != nil {
-				// If can't parse query, just mask the whole query string
 				result += "?***"
 			} else {
 				maskedParams := make([]string, 0, len(values))
@@ -239,15 +338,15 @@ func MaskSensitiveInfo(str string) string {
 		return result
 	})
 
-	// Mask domain names without protocol (like openai.com, www.openai.com)
+	// 脱敏纯域名（无协议前缀）
 	str = maskDomainPattern.ReplaceAllStringFunc(str, func(domain string) string {
 		return maskHostForPlainDomain(domain)
 	})
 
-	// Mask IP addresses
+	// 脱敏 IP 地址
 	str = maskIPPattern.ReplaceAllString(str, "***.***.***.***")
 
-	// Mask API keys (e.g., "api_key:AIzaSyAAAaUooTUni8AdaOkSRMda30n_Q4vrV70" -> "api_key:***")
+	// 脱敏 API Key
 	str = maskApiKeyPattern.ReplaceAllString(str, "${1}api_key:***${3}")
 
 	return str

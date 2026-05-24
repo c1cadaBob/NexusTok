@@ -1,3 +1,5 @@
+// Package tui 提供基于终端的管理界面，使用 Bubble Tea 框架构建。
+// 包含仪表板、配置管理、认证文件管理、API 密钥管理、OAuth 管理和日志查看等功能。
 package tui
 
 import (
@@ -11,16 +13,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// 标签页标识符定义
 // Tab identifiers
 const (
-	tabDashboard = iota
-	tabConfig
-	tabAuthFiles
-	tabAPIKeys
-	tabOAuth
-	tabLogs
+	tabDashboard  = iota // 仪表板
+	tabConfig            // 配置
+	tabAuthFiles         // 认证文件
+	tabAPIKeys           // API 密钥
+	tabOAuth             // OAuth
+	tabLogs              // 日志
 )
 
+// App 是根 Bubble Tea 模型，包含所有标签页子模型。
+// 管理标签页切换、窗口大小调整和全局键盘事件处理。
+//
 // App is the root bubbletea model that contains all tab sub-models.
 type App struct {
 	activeTab int

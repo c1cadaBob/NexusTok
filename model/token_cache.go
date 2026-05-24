@@ -1,3 +1,15 @@
+// Package model - token_cache.go
+// 该文件实现了 API Token 的缓存机制
+//
+// 核心功能：
+// - Token 信息的 Redis 缓存（读写）
+// - Token 缓存的批量预热
+// - Token 缓存的失效和更新
+//
+// 缓存策略：
+// - 使用 Redis Hash 存储 Token 信息
+// - 支持缓存过期时间配置
+// - Token 变更时主动失效缓存
 package model
 
 import (

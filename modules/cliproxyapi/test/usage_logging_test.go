@@ -1,3 +1,7 @@
+// Package test - usage_logging_test.go
+// 使用量日志记录测试。
+// 测试 Gemini 执行器在处理零使用量响应时，是否正确地将使用量数据记录到队列中。
+// 验证即使上游返回的 token 数量为零，使用量统计数据也能被正确记录。
 package test
 
 import (
@@ -17,6 +21,12 @@ import (
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
+// TestGeminiExecutorRecordsSuccessfulZeroUsageInQueue 验证 Gemini 执行器在处理
+// 成功但使用量为零的响应时，是否正确地将使用量数据记录到 Redis 队列中。
+// 测试流程：
+// 1. 创建模拟的上游服务器，返回零使用量的响应
+// 2. 启用 Redis 队列和使用量统计
+// 3. 执行请求并验证使用量数据被正确记录
 func TestGeminiExecutorRecordsSuccessfulZeroUsageInQueue(t *testing.T) {
 	model := fmt.Sprintf("gemini-2.5-flash-zero-usage-%d", time.Now().UnixNano())
 	source := fmt.Sprintf("zero-usage-%d@example.com", time.Now().UnixNano())
@@ -68,6 +78,15 @@ func TestGeminiExecutorRecordsSuccessfulZeroUsageInQueue(t *testing.T) {
 	waitForQueuedUsageModelTotalTokens(t, "gemini", model, 0)
 }
 
+// waitForQueuedUsageModelTotalTokens 等待队列中出现指定模型的使用量数据，
+// 并验证 total_tokens 是否符合预期。
+// 超时时间为 2 秒，每 10 毫秒检查一次。
+//
+// 参数:
+//   - t: 测试实例
+//   - wantProvider: 期望的提供者名称
+//   - wantModel: 期望的模型名称
+//   - wantTokens: 期望的 total_tokens 值
 func waitForQueuedUsageModelTotalTokens(t *testing.T, wantProvider, wantModel string, wantTokens int64) {
 	t.Helper()
 
@@ -96,15 +115,31 @@ func waitForQueuedUsageModelTotalTokens(t *testing.T, wantProvider, wantModel st
 	t.Fatalf("timed out waiting for queued usage payload for provider=%q model=%q", wantProvider, wantModel)
 }
 
+// queuedUsagePayload 表示队列中的使用量数据结构。
 type queuedUsagePayload struct {
+	// Provider 是提供者名称（如 "gemini"）。
 	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Failed   bool   `json:"failed"`
-	Tokens   struct {
+	// Model 是模型名称。
+	Model string `json:"model"`
+	// Failed 表示请求是否失败。
+	Failed bool `json:"failed"`
+	// Tokens 包含 token 使用量信息。
+	Tokens struct {
+		// TotalTokens 是总 token 数量。
 		TotalTokens int64 `json:"total_tokens"`
 	} `json:"tokens"`
 }
 
+// parseQueuedUsagePayload 解析队列中的使用量数据。
+// 如果数据为空或解析失败，返回 false。
+//
+// 参数:
+//   - t: 测试实例
+//   - payload: 原始字节数据
+//
+// 返回值:
+//   - queuedUsagePayload: 解析后的使用量数据
+//   - bool: 解析是否成功
 func parseQueuedUsagePayload(t *testing.T, payload []byte) (queuedUsagePayload, bool) {
 	t.Helper()
 

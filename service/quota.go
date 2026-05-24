@@ -1,3 +1,22 @@
+// Package service - quota.go
+// 该文件实现了配额（Quota）管理和计费相关的核心服务
+//
+// 配额系统概述：
+// - 配额是系统内部的计量单位，用于衡量 API 调用的费用
+// - 配额计算基于多种因素：模型倍率、分组倍率、补全倍率、缓存倍率等
+// - 支持两种计费模式：
+//   1. 倍率模式：配额 = Token数 * 模型倍率 * 分组倍率 * 补全倍率
+//   2. 价格模式：配额 = 模型价格 * 配额单位 * 分组倍率
+//
+// 配额流转：
+// 1. PreConsumeBilling: 预扣费（请求前）
+// 2. PostConsumeQuota: 最终结算（请求后）
+// 3. 如果最终费用 < 预扣费用，退还差额
+//
+// 存储：
+// - 用户配额：存储在 user 表的 quota 字段
+// - Token 配额：存储在 token 表的 remain_quota 字段
+// - 消费日志：存储在 log 表
 package service
 
 import (
@@ -8,38 +27,51 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/pkg/billingexpr"
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/setting/ratio_setting"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common"                           // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                         // 常量定义
+	"github.com/c1cada/NexusTok/dto"                              // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                           // 日志
+	"github.com/c1cada/NexusTok/model"                            // 数据模型
+	"github.com/c1cada/NexusTok/pkg/billingexpr"                  // 计费表达式
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"     // 性能指标
+	relaycommon "github.com/c1cada/NexusTok/relay/common"         // 中继公共
+	"github.com/c1cada/NexusTok/setting/ratio_setting"            // 比率设置
+	"github.com/c1cada/NexusTok/types"                            // 类型定义
 
-	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/bytedance/gopkg/util/gopool" // 协程池
 
-	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
+	"github.com/gin-gonic/gin"         // Gin 框架
+	"github.com/shopspring/decimal"    // 高精度十进制运算
 )
 
+// TokenDetails Token 使用详情结构体
+// 区分文本 Token 和音频 Token
 type TokenDetails struct {
-	TextTokens  int
-	AudioTokens int
+	TextTokens  int // 文本 Token 数量
+	AudioTokens int // 音频 Token 数量
 }
 
+// QuotaInfo 配额计算信息结构体
+// 包含计算配额所需的所有信息
 type QuotaInfo struct {
-	InputDetails  TokenDetails
-	OutputDetails TokenDetails
-	ModelName     string
-	UsePrice      bool
-	ModelPrice    float64
-	ModelRatio    float64
-	GroupRatio    float64
+	InputDetails  TokenDetails // 输入 Token 详情
+	OutputDetails TokenDetails // 输出 Token 详情
+	ModelName     string       // 模型名称
+	UsePrice      bool         // 是否使用价格模式（而非倍率模式）
+	ModelPrice    float64      // 模型价格（价格模式使用）
+	ModelRatio    float64      // 模型倍率（倍率模式使用）
+	GroupRatio    float64      // 分组倍率
 }
 
+// hasCustomModelRatio 检查模型是否有自定义倍率
+// 如果模型不在默认倍率表中，或者当前倍率与默认倍率不同，则认为有自定义倍率
+//
+// 参数：
+//   - modelName: 模型名称
+//   - currentRatio: 当前倍率
+//
+// 返回值：
+//   - bool: 是否有自定义倍率
 func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 	defaultRatio, exists := ratio_setting.GetDefaultModelRatioMap()[modelName]
 	if !exists {
@@ -48,6 +80,16 @@ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 	return currentRatio != defaultRatio
 }
 
+// calculateAudioQuota 计算音频请求的配额
+// 支持两种计费模式：
+// 1. 价格模式：配额 = 模型价格 * 配额单位 * 分组倍率
+// 2. 倍率模式：配额 = (输入文本Token + 输出文本Token*补全倍率 + 输入音频Token*音频倍率 + 输出音频Token*音频倍率*音频补全倍率) * 模型倍率 * 分组倍率
+//
+// 参数：
+//   - info: 配额计算信息
+//
+// 返回值：
+//   - int: 计算得到的配额值
 func calculateAudioQuota(info QuotaInfo) int {
 	if info.UsePrice {
 		modelPrice := decimal.NewFromFloat(info.ModelPrice)
@@ -87,6 +129,16 @@ func calculateAudioQuota(info QuotaInfo) int {
 	return int(quota.Round(0).IntPart())
 }
 
+// PreWssConsumeQuota WebSocket 实时通信预扣配额
+// 在 WebSocket 连接建立时预扣配额，确保用户有足够的额度
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - usage: 实时通信使用量
+//
+// 返回值：
+//   - error: 预扣错误，nil 表示成功
 func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
 	if relayInfo.UsePrice {
 		return nil
@@ -155,6 +207,15 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	return nil
 }
 
+// PostWssConsumeQuota WebSocket 实时通信结算配额
+// 在 WebSocket 连接关闭时结算实际使用的配额
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - modelName: 模型名称
+//   - usage: 实时通信使用量
+//   - extraContent: 额外日志内容
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent string) {
 
@@ -257,6 +318,15 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	})
 }
 
+// CalcOpenRouterCacheCreateTokens 计算 OpenRouter 的缓存创建 Token 数
+// OpenRouter 的缓存创建 Token 不直接返回，需要通过费用反推计算
+//
+// 参数：
+//   - usage: 使用量信息
+//   - priceData: 价格数据
+//
+// 返回值：
+//   - int: 计算得到的缓存创建 Token 数
 func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData) int {
 	if priceData.CacheCreationRatio == 1 {
 		return 0
@@ -278,6 +348,14 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 		(promptCacheCreatePrice - quotaPrice)))
 }
 
+// PostAudioConsumeQuota 音频请求结算配额
+// 在音频请求完成后结算实际使用的配额
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - usage: 使用量信息
+//   - extraContent: 额外日志内容
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) {
 
 	var tieredUsedVars map[string]bool
@@ -382,6 +460,15 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	})
 }
 
+// PreConsumeTokenQuota 预扣 Token 配额
+// 在请求发送到上游之前，预扣 Token 的配额
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - quota: 预扣配额值
+//
+// 返回值：
+//   - error: 预扣错误，nil 表示成功
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
@@ -406,6 +493,23 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	return nil
 }
 
+// PostConsumeQuota 最终结算配额
+// 在请求完成后，根据实际使用量结算配额
+// 支持两种计费来源：钱包和订阅
+//
+// 结算逻辑：
+// 1. 根据计费来源（钱包/订阅）扣除配额
+// 2. 扣除 Token 配额
+// 3. 如果需要发送邮件，检查并发送配额通知
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - quota: 最终配额值
+//   - preConsumedQuota: 预扣配额值
+//   - sendEmail: 是否发送邮件通知
+//
+// 返回值：
+//   - error: 结算错误，nil 表示成功
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
 
 	// 1) Consume from wallet quota OR subscription item
@@ -452,6 +556,14 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 	return nil
 }
 
+// checkAndSendQuotaNotify 检查并发送配额不足通知
+// 当用户配额低于阈值时，通过配置的通知方式发送通知
+// 支持的通知方式：邮件、Bark、Gotify、Webhook
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - quota: 本次消费的配额
+//   - preConsumedQuota: 预扣配额
 func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int) {
 	gopool.Go(func() {
 		userSetting := relayInfo.UserSetting
@@ -500,6 +612,11 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 	})
 }
 
+// checkAndSendSubscriptionQuotaNotify 检查并发送订阅额度不足通知
+// 当订阅额度低于阈值时，通过配置的通知方式发送通知
+//
+// 参数：
+//   - relayInfo: 中继信息
 func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 	gopool.Go(func() {
 		if relayInfo == nil {

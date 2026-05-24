@@ -1,3 +1,6 @@
+// auth - api_key_model_alias_test.go
+// 该文件包含 API Key 模型别名查找和热重载的单元测试，验证通过配置中的
+// GeminiKey.Models 别名映射正确解析上游模型名称。
 package auth
 
 import (
@@ -7,6 +10,8 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestLookupAPIKeyUpstreamModel 测试通过 API Key 配置中的模型别名查找上游模型名称，
+// 验证别名匹配、后缀保留、热重载配置更新等功能。
 func TestLookupAPIKeyUpstreamModel(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{

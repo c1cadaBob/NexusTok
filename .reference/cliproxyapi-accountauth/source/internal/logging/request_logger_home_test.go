@@ -1,3 +1,8 @@
+// logging - request_logger_home_test.go
+// 请求日志 Home 转发功能测试
+// 验证 FileRequestLogger 在 Home 集群模式下的日志转发行为：
+// - 当请求日志启用且 Home 连接正常时，日志应转发到 Home 集群而非写入本地文件
+// - 当请求日志禁用时，强制错误日志应写入本地文件而非转发
 package logging
 
 import (
@@ -10,18 +15,26 @@ import (
 	"time"
 )
 
+// stubHomeRequestLogClient 是 Home 请求日志客户端的测试桩，
+// 用于模拟 Home 集群的心跳状态和日志推送功能。
 type stubHomeRequestLogClient struct {
-	heartbeatOK bool
-	pushed      [][]byte
+	heartbeatOK bool   // 模拟心跳是否正常
+	pushed      [][]byte // 记录已推送的日志数据
 }
 
+// HeartbeatOK 返回模拟的心跳状态。
 func (c *stubHomeRequestLogClient) HeartbeatOK() bool { return c.heartbeatOK }
 
+// RPushRequestLog 将日志数据推送到模拟的 Home 集群，
+// 使用 bytes.Clone 确保数据不会被后续修改影响。
 func (c *stubHomeRequestLogClient) RPushRequestLog(_ context.Context, payload []byte) error {
 	c.pushed = append(c.pushed, bytes.Clone(payload))
 	return nil
 }
 
+// TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled 验证：
+// 当请求日志启用且 Home 连接正常时，日志数据应仅转发到 Home 集群，
+// 本地日志目录中不应产生任何文件。同时验证转发的数据包含完整的请求头信息。
 func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.T) {
 	original := currentHomeRequestLogClient
 	defer func() {
@@ -93,6 +106,10 @@ func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.
 	}
 }
 
+// TestFileRequestLogger_HomeEnabled_DoesNotForwardForcedErrorLogsWhenRequestLogDisabled 验证：
+// 当请求日志禁用时，即使 Home 连接正常，强制错误日志（forceError=true）
+// 也不会转发到 Home 集群，而是写入本地日志文件。
+// 这确保了在请求日志关闭时，关键错误信息仍然被保留。
 func TestFileRequestLogger_HomeEnabled_DoesNotForwardForcedErrorLogsWhenRequestLogDisabled(t *testing.T) {
 	original := currentHomeRequestLogClient
 	defer func() {

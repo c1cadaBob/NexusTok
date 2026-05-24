@@ -1,8 +1,16 @@
-// Package openai provides response translation functionality for Claude Code to OpenAI API compatibility.
-// This package handles the conversion of Claude Code API responses into OpenAI Chat Completions-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by OpenAI API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, reasoning content, and usage metadata appropriately.
+// chat_completions - claude_openai_response.go
+// Claude 的 OpenAI Chat Completions 响应转换器。
+// 负责将 Claude Code API 的响应转换为 OpenAI Chat Completions 兼容的 JSON 格式。
+// 支持流式和非流式两种模式。
+//
+// 转换特性：
+// - 流式模式：处理 Claude 的 SSE 事件类型（message_start、content_block_start/delta/stop、
+//   message_delta、message_stop、ping、error）
+// - 非流式模式：聚合所有 Claude SSE 事件到单个 OpenAI 响应
+// - 工具调用：使用 ToolCallAccumulator 累积工具调用参数，在 content_block_stop 时完成
+// - 推理内容：将 Claude 的 thinking_delta 转换为 reasoning_content
+// - 用量映射：将 Claude 的 cache_read/cache_creation token 合并到 OpenAI 的 prompt_tokens 中
+// - 停止原因映射：end_turn -> stop，tool_use -> tool_calls，max_tokens -> length
 package chat_completions
 
 import (
@@ -16,35 +24,50 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 Claude SSE 事件的数据前缀标识。
 var (
 	dataTag = []byte("data:")
 )
 
-// ConvertAnthropicResponseToOpenAIParams holds parameters for response conversion
+// ConvertAnthropicResponseToOpenAIParams 保存 Claude 响应到 OpenAI 格式转换过程中的状态参数。
 type ConvertAnthropicResponseToOpenAIParams struct {
-	CreatedAt    int64
-	ResponseID   string
+	// CreatedAt 响应创建时间的 Unix 时间戳
+	CreatedAt int64
+	// ResponseID 响应唯一标识符
+	ResponseID string
+	// FinishReason 停止原因（已映射为 OpenAI 格式）
 	FinishReason string
-	Usage        claudeUsageTokens
-	// Tool calls accumulator for streaming
+	// Usage 用量统计数据
+	Usage claudeUsageTokens
+	// ToolCallsAccumulator 流式模式下的工具调用累积器，按内容块索引索引
 	ToolCallsAccumulator map[int]*ToolCallAccumulator
 }
 
+// claudeUsageTokens 保存 Claude API 的 token 用量数据。
 type claudeUsageTokens struct {
-	InputTokens              int64
-	OutputTokens             int64
+	// InputTokens 输入 token 数量
+	InputTokens int64
+	// OutputTokens 输出 token 数量
+	OutputTokens int64
+	// CacheCreationInputTokens 缓存创建输入 token 数量
 	CacheCreationInputTokens int64
-	CacheReadInputTokens     int64
-	HasUsage                 bool
+	// CacheReadInputTokens 缓存读取输入 token 数量
+	CacheReadInputTokens int64
+	// HasUsage 标记是否已接收到用量数据
+	HasUsage bool
 }
 
-// ToolCallAccumulator holds the state for accumulating tool call data
+// ToolCallAccumulator 保存流式工具调用的累积状态。
 type ToolCallAccumulator struct {
-	ID        string
-	Name      string
+	// ID 工具调用的唯一标识符
+	ID string
+	// Name 工具名称
+	Name string
+	// Arguments 累积的工具调用参数 JSON 字符串
 	Arguments strings.Builder
 }
 
+// Merge 将 Claude 的 usage 数据合并到当前用量统计中。
 func (u *claudeUsageTokens) Merge(usage gjson.Result) {
 	if !usage.Exists() {
 		return
@@ -64,6 +87,9 @@ func (u *claudeUsageTokens) Merge(usage gjson.Result) {
 	}
 }
 
+// OpenAIUsage 将 Claude 的 token 用量转换为 OpenAI 格式。
+// 计算方式：prompt_tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+// cached_tokens = cache_read_input_tokens
 func (u claudeUsageTokens) OpenAIUsage() (promptTokens, completionTokens, totalTokens, cachedTokens int64) {
 	cachedTokens = u.CacheReadInputTokens
 	promptTokens = u.InputTokens + u.CacheCreationInputTokens + cachedTokens
@@ -72,19 +98,28 @@ func (u claudeUsageTokens) OpenAIUsage() (promptTokens, completionTokens, totalT
 	return promptTokens, completionTokens, totalTokens, cachedTokens
 }
 
-// ConvertClaudeResponseToOpenAI converts Claude Code streaming response format to OpenAI Chat Completions format.
-// This function processes various Claude Code event types and transforms them into OpenAI-compatible JSON responses.
-// It handles text content, tool calls, reasoning content, and usage metadata, outputting responses that match
-// the OpenAI API format. The function supports incremental updates for streaming responses.
+// ConvertClaudeResponseToOpenAI 将 Claude Code 的流式响应转换为 OpenAI Chat Completions 流式格式。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response
-//   - rawJSON: The raw JSON response from the Claude Code API
-//   - param: A pointer to a parameter object for maintaining state between calls
+// 处理的 Claude 事件类型：
+// - message_start: 初始化响应元数据（ID、模型、创建时间）
+// - content_block_start: 开始新的内容块（text、tool_use、thinking）
+// - content_block_delta: 增量内容更新（text_delta、thinking_delta、input_json_delta）
+// - content_block_stop: 完成内容块，输出完整的工具调用
+// - message_delta: 更新停止原因和用量数据
+// - message_stop: 最终消息事件
+// - ping: 心跳事件（忽略）
+// - error: 错误事件
 //
-// Returns:
-//   - [][]byte: A slice of OpenAI-compatible JSON responses
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Claude 格式的原始响应 JSON 数据（data: 前缀格式）
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Chat Completions 格式的 SSE 事件数据切片
 func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &ConvertAnthropicResponseToOpenAIParams{
@@ -273,7 +308,8 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 	}
 }
 
-// mapAnthropicStopReasonToOpenAI maps Anthropic stop reasons to OpenAI stop reasons
+// mapAnthropicStopReasonToOpenAI 将 Anthropic 的停止原因映射为 OpenAI 的停止原因。
+// 映射规则：end_turn -> stop，tool_use -> tool_calls，max_tokens -> length，stop_sequence -> stop
 func mapAnthropicStopReasonToOpenAI(anthropicReason string) string {
 	switch anthropicReason {
 	case "end_turn":
@@ -289,19 +325,19 @@ func mapAnthropicStopReasonToOpenAI(anthropicReason string) string {
 	}
 }
 
-// ConvertClaudeResponseToOpenAINonStream converts a non-streaming Claude Code response to a non-streaming OpenAI response.
-// This function processes the complete Claude Code response and transforms it into a single OpenAI-compatible
-// JSON response. It handles message content, tool calls, reasoning content, and usage metadata, combining all
-// the information into a single response that matches the OpenAI API format.
+// ConvertClaudeResponseToOpenAINonStream 将 Claude 的非流式响应转换为 OpenAI Chat Completions 格式。
+// 遍历所有 Claude SSE 数据行，聚合文本、推理和工具调用内容，构建完整的 OpenAI 响应。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Claude Code API
-//   - param: A pointer to a parameter object for the conversion (unused in current implementation)
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Claude 格式的原始响应数据（多行 data: 格式）
+//   - _: 未使用的参数指针
 //
-// Returns:
-//   - []byte: An OpenAI-compatible JSON response containing all message content and metadata
+// 返回值：
+//   - []byte: OpenAI Chat Completions 格式的完整 JSON 响应数据
 func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	chunks := make([][]byte, 0)
 

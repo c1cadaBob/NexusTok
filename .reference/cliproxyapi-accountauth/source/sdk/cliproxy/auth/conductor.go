@@ -1,3 +1,7 @@
+// 包 auth - conductor.go
+// 该文件实现了认证编排器（Conductor），是认证系统的核心协调组件。
+// 管理认证的生命周期、执行提供商调用、处理令牌刷新、配额管理和错误恢复。
+// 包括 ProviderExecutor 接口定义、执行会话管理、刷新评估器等功能。
 package auth
 
 import (
@@ -27,53 +31,49 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ProviderExecutor defines the contract required by Manager to execute provider calls.
+// ProviderExecutor 定义了 Manager 执行提供商调用所需的契约。
 type ProviderExecutor interface {
-	// Identifier returns the provider key handled by this executor.
+	// Identifier 返回此执行器处理的提供商键。
 	Identifier() string
-	// Execute handles non-streaming execution and returns the provider response payload.
+	// Execute 处理非流式执行并返回提供商响应载荷。
 	Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
-	// ExecuteStream handles streaming execution and returns a StreamResult containing
-	// upstream headers and a channel of provider chunks.
+	// ExecuteStream 处理流式执行并返回包含上游头和提供商数据块通道的 StreamResult。
 	ExecuteStream(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error)
-	// Refresh attempts to refresh provider credentials and returns the updated auth state.
+	// Refresh 尝试刷新提供商凭据并返回更新后的认证状态。
 	Refresh(ctx context.Context, auth *Auth) (*Auth, error)
-	// CountTokens returns the token count for the given request.
+	// CountTokens 返回给定请求的令牌计数。
 	CountTokens(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
-	// HttpRequest injects provider credentials into the supplied HTTP request and executes it.
-	// Callers must close the response body when non-nil.
+	// HttpRequest 将提供商凭据注入到 HTTP 请求中并执行。
 	HttpRequest(ctx context.Context, auth *Auth, req *http.Request) (*http.Response, error)
 }
 
-// ExecutionSessionCloser allows executors to release per-session runtime resources.
+// ExecutionSessionCloser 允许执行器释放每个会话的运行时资源。
 type ExecutionSessionCloser interface {
 	CloseExecutionSession(sessionID string)
 }
 
 const (
-	homeAuthCountMetadataKey = "__cliproxy_home_auth_count"
-	// CloseAllExecutionSessionsID asks an executor to release all active execution sessions.
-	// Executors that do not support this marker may ignore it.
+	homeAuthCountMetadataKey = "__cliproxy_home_auth_count" // Home 认证计数元数据键
+	// CloseAllExecutionSessionsID 要求执行器释放所有活跃的执行会话。
+	// 不支持此标记的执行器可以忽略它。
 	CloseAllExecutionSessionsID = "__all_execution_sessions__"
 )
 
-// RefreshEvaluator allows runtime state to override refresh decisions.
+// RefreshEvaluator 允许运行时状态覆盖刷新决策。
 type RefreshEvaluator interface {
 	ShouldRefresh(now time.Time, auth *Auth) bool
 }
 
 const (
-	refreshCheckInterval  = 5 * time.Second
-	refreshMaxConcurrency = 16
-	refreshPendingBackoff = time.Minute
-	refreshFailureBackoff = 5 * time.Minute
-	// refreshIneffectiveBackoff throttles refresh attempts when an executor returns
-	// success but the auth still evaluates as needing refresh (e.g. token expiry
-	// wasn't updated). Without this guard, the auto-refresh loop can tight-loop and
-	// burn CPU at idle.
+	refreshCheckInterval  = 5 * time.Second     // 刷新检查间隔
+	refreshMaxConcurrency = 16                   // 最大并发刷新数
+	refreshPendingBackoff = time.Minute          // 刷新挂起重试退避
+	refreshFailureBackoff = 5 * time.Minute      // 刷新失败重试退避
+	// refreshIneffectiveBackoff 在执行器返回成功但认证仍需要刷新时节流刷新尝试。
+	// 没有此保护，自动刷新循环可能在空闲时紧密循环并消耗 CPU。
 	refreshIneffectiveBackoff = 30 * time.Second
-	quotaBackoffBase          = time.Second
-	quotaBackoffMax           = 30 * time.Minute
+	quotaBackoffBase          = time.Second       // 配额退避基础时间
+	quotaBackoffMax           = 30 * time.Minute  // 配额退避最大时间
 )
 
 var quotaCooldownDisabled atomic.Bool

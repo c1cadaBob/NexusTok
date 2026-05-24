@@ -1,3 +1,9 @@
+// Package model - missing_models.go
+// 该文件提供了缺失模型元数据的检测功能
+//
+// 核心功能：
+// - GetMissingModels：获取系统中引用但缺少元数据的模型列表
+// - 通过比对能力表（abilities）中的模型和元数据表（models）中的模型，找出缺失项
 package model
 
 // GetMissingModels returns model names that are referenced in the system

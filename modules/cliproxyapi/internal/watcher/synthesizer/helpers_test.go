@@ -1,3 +1,5 @@
+// synthesizer - helpers_test.go
+// 测试合成器辅助函数，包括稳定 ID 生成器、排除模型元数据应用、配置头部转换等。
 package synthesizer
 
 import (

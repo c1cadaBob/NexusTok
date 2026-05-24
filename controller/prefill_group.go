@@ -1,3 +1,13 @@
+// Package controller - prefill_group.go
+// 该文件实现了预填组管理的 API 控制器
+//
+// 预填组用于预配置模型参数模板，方便快速创建渠道
+//
+// 主要 API：
+// - GetPrefillGroups：获取预填组列表
+// - CreatePrefillGroup：创建预填组
+// - UpdatePrefillGroup：更新预填组
+// - DeletePrefillGroup：删除预填组
 package controller
 
 import (
@@ -9,7 +19,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetPrefillGroups 获取预填组列表，可通过 ?type=xxx 过滤
+// GetPrefillGroups 获取预填组列表
+//
+// 查询参数：
+//   - type: 组类型过滤
 func GetPrefillGroups(c *gin.Context) {
 	groupType := c.Query("type")
 	groups, err := model.GetAllPrefillGroups(groupType)
@@ -21,6 +34,8 @@ func GetPrefillGroups(c *gin.Context) {
 }
 
 // CreatePrefillGroup 创建新的预填组
+//
+// 创建前会检查组名称是否重复
 func CreatePrefillGroup(c *gin.Context) {
 	var g model.PrefillGroup
 	if err := c.ShouldBindJSON(&g); err != nil {
@@ -48,6 +63,8 @@ func CreatePrefillGroup(c *gin.Context) {
 }
 
 // UpdatePrefillGroup 更新预填组
+//
+// 更新前会检查组名称是否与其他组冲突
 func UpdatePrefillGroup(c *gin.Context) {
 	var g model.PrefillGroup
 	if err := c.ShouldBindJSON(&g); err != nil {
@@ -75,6 +92,9 @@ func UpdatePrefillGroup(c *gin.Context) {
 }
 
 // DeletePrefillGroup 删除预填组
+//
+// 路径参数：
+//   - id: 预填组 ID
 func DeletePrefillGroup(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)

@@ -1,3 +1,12 @@
+// helps - usage_helpers_test.go
+// Token 使用量解析辅助函数的单元测试。
+// 测试以下功能：
+// - OpenAI 使用量解析：chat/completions 和 responses 格式
+// - null usage 的忽略处理
+// - 流式使用量解析：OpenAI 和 Gemini CLI 格式
+// - Gemini CLI 使用量解析：顶层和嵌套的 usageMetadata
+// - UsageReporter 构建记录：延迟计算、请求模型别名、推理努力级别
+// - 附加模型记录的零 token 跳过
 package helps
 
 import (
@@ -8,6 +17,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// TestParseOpenAIUsageChatCompletions 测试 OpenAI chat/completions 格式的使用量解析：
+// 包含 prompt_tokens、completion_tokens、cached_tokens、reasoning_tokens
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":5}}}`)
 	detail := ParseOpenAIUsage(data)
@@ -28,6 +39,8 @@ func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIUsageResponses 测试 OpenAI responses 格式的使用量解析：
+// 包含 input_tokens、output_tokens、cached_tokens、reasoning_tokens
 func TestParseOpenAIUsageResponses(t *testing.T) {
 	data := []byte(`{"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":7},"output_tokens_details":{"reasoning_tokens":9}}}`)
 	detail := ParseOpenAIUsage(data)
@@ -48,6 +61,7 @@ func TestParseOpenAIUsageResponses(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIUsageIgnoresNullUsage 测试 null usage 返回零值 Detail
 func TestParseOpenAIUsageIgnoresNullUsage(t *testing.T) {
 	data := []byte(`{"usage":null}`)
 	detail := ParseOpenAIUsage(data)
@@ -56,6 +70,7 @@ func TestParseOpenAIUsageIgnoresNullUsage(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIStreamUsageIgnoresNullUsage 测试流式 null usage 返回 false
 func TestParseOpenAIStreamUsageIgnoresNullUsage(t *testing.T) {
 	line := []byte(`data: {"id":"chunk_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}],"usage":null}`)
 	if detail, ok := ParseOpenAIStreamUsage(line); ok {
@@ -63,6 +78,7 @@ func TestParseOpenAIStreamUsageIgnoresNullUsage(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIStreamUsageResponsesFields 测试 OpenAI responses 格式的流式使用量解析
 func TestParseOpenAIStreamUsageResponsesFields(t *testing.T) {
 	line := []byte(`data: {"id":"chunk_1","object":"chat.completion.chunk","choices":[],"usage":{"input_tokens":8,"output_tokens":5,"total_tokens":13,"input_tokens_details":{"cached_tokens":3},"output_tokens_details":{"reasoning_tokens":2}}}`)
 	detail, ok := ParseOpenAIStreamUsage(line)
@@ -86,6 +102,7 @@ func TestParseOpenAIStreamUsageResponsesFields(t *testing.T) {
 	}
 }
 
+// TestParseGeminiCLIUsage_TopLevelUsageMetadata 测试 Gemini CLI 顶层 usageMetadata 的解析
 func TestParseGeminiCLIUsage_TopLevelUsageMetadata(t *testing.T) {
 	data := []byte(`{"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"thoughtsTokenCount":3,"totalTokenCount":21,"cachedContentTokenCount":5}}`)
 	detail := ParseGeminiCLIUsage(data)
@@ -106,6 +123,8 @@ func TestParseGeminiCLIUsage_TopLevelUsageMetadata(t *testing.T) {
 	}
 }
 
+// TestParseGeminiCLIStreamUsage_ResponseSnakeCaseUsageMetadata 测试 Gemini CLI 流式响应中
+// 嵌套在 response 中的 usage_metadata 解析
 func TestParseGeminiCLIStreamUsage_ResponseSnakeCaseUsageMetadata(t *testing.T) {
 	line := []byte(`data: {"response":{"usage_metadata":{"promptTokenCount":13,"candidatesTokenCount":2,"totalTokenCount":15}}}`)
 	detail, ok := ParseGeminiCLIStreamUsage(line)
@@ -123,6 +142,8 @@ func TestParseGeminiCLIStreamUsage_ResponseSnakeCaseUsageMetadata(t *testing.T) 
 	}
 }
 
+// TestParseGeminiCLIStreamUsage_IgnoresTrafficTypeOnlyUsageMetadata 测试当 usageMetadata
+// 仅包含 trafficType 而无 token 计数时，返回 false
 func TestParseGeminiCLIStreamUsage_IgnoresTrafficTypeOnlyUsageMetadata(t *testing.T) {
 	line := []byte(`data: {"response":{"usageMetadata":{"trafficType":"ON_DEMAND"}}}`)
 	if detail, ok := ParseGeminiCLIStreamUsage(line); ok {
@@ -130,6 +151,7 @@ func TestParseGeminiCLIStreamUsage_IgnoresTrafficTypeOnlyUsageMetadata(t *testin
 	}
 }
 
+// TestUsageReporterBuildRecordIncludesLatency 测试构建的使用记录包含正确的延迟计算
 func TestUsageReporterBuildRecordIncludesLatency(t *testing.T) {
 	reporter := &UsageReporter{
 		provider:    "openai",
@@ -146,6 +168,7 @@ func TestUsageReporterBuildRecordIncludesLatency(t *testing.T) {
 	}
 }
 
+// TestUsageReporterBuildRecordIncludesRequestedModelAlias 测试构建的使用记录包含请求的模型别名
 func TestUsageReporterBuildRecordIncludesRequestedModelAlias(t *testing.T) {
 	ctx := usage.WithRequestedModelAlias(context.Background(), "client-gpt")
 	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
@@ -159,6 +182,7 @@ func TestUsageReporterBuildRecordIncludesRequestedModelAlias(t *testing.T) {
 	}
 }
 
+// TestUsageReporterBuildRecordIncludesReasoningEffort 测试构建的使用记录包含推理努力级别
 func TestUsageReporterBuildRecordIncludesReasoningEffort(t *testing.T) {
 	ctx := usage.WithReasoningEffort(context.Background(), "medium")
 	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
@@ -169,6 +193,8 @@ func TestUsageReporterBuildRecordIncludesReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens 测试附加模型记录：
+// 全零 token 使用量被跳过，非零 token 使用量被记录
 func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {
 	reporter := &UsageReporter{
 		provider:    "codex",

@@ -1,3 +1,8 @@
+// config - claude_header_defaults_test.go
+// 该文件测试 Claude 头部默认配置的加载和空格修剪。
+// 验证 LoadConfigOptional 能正确解析 claude-header-defaults 中的各字段
+//（UserAgent、PackageVersion、RuntimeVersion、OS、Arch、Timeout、StabilizeDeviceProfile）。
+
 package config
 
 import (
@@ -6,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestLoadConfigOptional_ClaudeHeaderDefaults 测试 Claude 头部默认配置加载后值被正确修剪空格，
+// 且 StabilizeDeviceProfile 指针类型正确解析。
 func TestLoadConfigOptional_ClaudeHeaderDefaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

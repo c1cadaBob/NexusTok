@@ -1,3 +1,10 @@
+// Package model - utils.go
+// 该文件提供了数据模型层的通用工具函数
+//
+// 核心功能：
+// - 批量更新机制：减少数据库写入频率
+// - Key 脱敏：用于日志展示
+// - SQL LIKE 模式转义：防止注入
 package model
 
 import (

@@ -1,3 +1,5 @@
+// Package tui - dashboard.go
+// 实现仪表板视图，显示服务器信息、统计卡片和配置概览。
 package tui
 
 import (
@@ -10,6 +12,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// dashboardModel 显示服务器信息、统计卡片和配置概览。
+// 包含视口模型、内容缓存和数据缓存以支持语言切换时的重新渲染。
+//
 // dashboardModel displays server info, stats cards, and config overview.
 type dashboardModel struct {
 	client   *Client

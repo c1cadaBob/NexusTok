@@ -1,16 +1,17 @@
+// Package claude 包含 Claude 渠道的单元测试。
+// 该文件测试 message_delta 事件中 usage 数据的补丁逻辑，
+// 确保在流式响应中正确合并和更新 token 使用量信息。
 package claude
 
-import (
-	"testing"
+// 标准库导入
 
-	"github.com/c1cada/NexusTok/dto"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/setting/model_setting"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
-)
+// 第三方库导入
 
+// 项目内部导入
+
+// TestPatchClaudeMessageDeltaUsageDataPreserveUnknownFields 测试 usage 数据补丁是否保留未知字段。
+// 验证在补丁 usage 数据时，原始 JSON 中的未知字段（如 vendor_meta）不会被丢弃，
+// 同时确保新增的 usage 字段（input_tokens、cache_read_input_tokens 等）被正确添加。
 func TestPatchClaudeMessageDeltaUsageDataPreserveUnknownFields(t *testing.T) {
 	originalData := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":53},"vendor_meta":{"trace_id":"trace_001"}}`
 	usage := &dto.ClaudeUsage{
@@ -30,6 +31,9 @@ func TestPatchClaudeMessageDeltaUsageDataPreserveUnknownFields(t *testing.T) {
 	require.EqualValues(t, 50, gjson.Get(patchedData, "usage.cache_creation_input_tokens").Int())
 }
 
+// TestPatchClaudeMessageDeltaUsageDataZeroValueChecks 测试 usage 数据补丁中的零值处理。
+// 验证当补丁数据中的某些字段值为 0 时，这些字段不会被写入最终 JSON，
+// 避免覆盖上游已经存在的非零值。
 func TestPatchClaudeMessageDeltaUsageDataZeroValueChecks(t *testing.T) {
 	originalData := `{"type":"message_delta","usage":{"output_tokens":53,"input_tokens":9,"cache_read_input_tokens":0}}`
 	usage := &dto.ClaudeUsage{
@@ -45,6 +49,11 @@ func TestPatchClaudeMessageDeltaUsageDataZeroValueChecks(t *testing.T) {
 	assert.False(t, gjson.Get(patchedData, "usage.cache_creation_input_tokens").Exists())
 }
 
+// TestShouldSkipClaudeMessageDeltaUsagePatch 测试是否应跳过 usage 数据补丁的判断逻辑。
+// 验证以下场景：
+//   - 全局启用 PassThrough 时应跳过补丁
+//   - 渠道级别启用 PassThroughBody 时应跳过补丁
+//   - 未启用 PassThrough 时不应跳过补丁
 func TestShouldSkipClaudeMessageDeltaUsagePatch(t *testing.T) {
 	originGlobalPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	t.Cleanup(func() {
@@ -63,6 +72,11 @@ func TestShouldSkipClaudeMessageDeltaUsagePatch(t *testing.T) {
 	}))
 }
 
+// TestBuildMessageDeltaPatchUsage 测试构建 message_delta 补丁 usage 数据的逻辑。
+// 包含以下子测试：
+//   - "merge missing fields from claudeInfo": 从 claudeInfo 中合并缺失的 usage 字段
+//   - "keep upstream non-zero values": 保留上游已有的非零值不被覆盖
+//   - "default aggregate cache creation to 5m when split missing": 当缺少分拆的缓存创建数据时，默认归入 5 分钟缓存
 func TestBuildMessageDeltaPatchUsage(t *testing.T) {
 	t.Run("merge missing fields from claudeInfo", func(t *testing.T) {
 		claudeResponse := &dto.ClaudeResponse{Usage: &dto.ClaudeUsage{OutputTokens: 53}}

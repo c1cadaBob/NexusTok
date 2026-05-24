@@ -1,3 +1,6 @@
+// store - postgresstore.go
+// 本文件实现了基于 PostgreSQL 数据库的令牌和配置持久化。
+// 使用独立的表存储配置和认证记录，支持事务性操作和并发访问。
 package store
 
 import (

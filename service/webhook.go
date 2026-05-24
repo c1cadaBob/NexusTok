@@ -1,3 +1,7 @@
+// webhook.go - Webhook 通知发送服务
+// 本文件提供 Webhook 通知的发送功能。
+// 支持 HMAC-SHA256 签名验证、Worker 代理模式和直连模式。
+// 直连模式下包含 SSRF 防护，确保 Webhook URL 的安全性。
 package service
 
 import (
@@ -15,7 +19,8 @@ import (
 	"github.com/c1cada/NexusTok/setting/system_setting"
 )
 
-// WebhookPayload webhook 通知的负载数据
+// WebhookPayload webhook 通知的负载数据结构
+// 包含通知类型、标题、内容、附加数据和时间戳
 type WebhookPayload struct {
 	Type      string        `json:"type"`
 	Title     string        `json:"title"`
@@ -24,14 +29,29 @@ type WebhookPayload struct {
 	Timestamp int64         `json:"timestamp"`
 }
 
-// generateSignature 生成 webhook 签名
+// generateSignature 使用 HMAC-SHA256 算法生成 Webhook 签名。
+// 签名用于验证 Webhook 请求的合法性，防止伪造请求。
+// 参数:
+//   - secret: 签名密钥
+//   - payload: 待签名的负载数据
+// 返回值:
+//   - string: 十六进制编码的签名字符串
 func generateSignature(secret string, payload []byte) string {
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write(payload)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// SendWebhookNotify 发送 webhook 通知
+// SendWebhookNotify 发送 Webhook 通知。
+// 处理通知内容中的占位符替换，构建 JSON 负载并通过 HTTP POST 发送。
+// 如果配置了 secret，会在请求头中添加 HMAC-SHA256 签名（X-Webhook-Signature）。
+// 支持 Worker 代理模式和直连模式，直连模式下包含 SSRF 防护。
+// 参数:
+//   - webhookURL: Webhook 接收地址
+//   - secret: 签名密钥（可为空，表示不签名）
+//   - data: 通知数据
+// 返回值:
+//   - error: 发送失败时返回错误
 func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error {
 	// 处理占位符
 	content := data.Content

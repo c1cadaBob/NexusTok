@@ -1,3 +1,6 @@
+// handlers - handlers_stream_bootstrap_test.go
+// 测试流式引导重试机制，验证首次字节前的重试、首次字节后不重试、固定认证、
+// 选择回调、OpenAI Responses JSON 验证、SSE 事件分割等场景。
 package handlers
 
 import (
@@ -15,6 +18,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// failOnceStreamExecutor 模拟首次调用失败、后续调用成功的流式执行器，用于测试引导重试。
 type failOnceStreamExecutor struct {
 	mu    sync.Mutex
 	calls int
@@ -79,6 +83,7 @@ func (e *failOnceStreamExecutor) Calls() int {
 	return e.calls
 }
 
+// payloadThenErrorStreamExecutor 模拟先返回数据再返回错误的流式执行器，用于测试首次字节后不重试。
 type payloadThenErrorStreamExecutor struct {
 	mu    sync.Mutex
 	calls int
@@ -131,14 +136,17 @@ func (e *payloadThenErrorStreamExecutor) Calls() int {
 	return e.calls
 }
 
+// authAwareStreamExecutor 记录每次调用的认证 ID 的流式执行器，用于测试固定认证和选择回调。
 type authAwareStreamExecutor struct {
 	mu      sync.Mutex
 	calls   int
 	authIDs []string
 }
 
+// invalidJSONStreamExecutor 返回无效 JSON 的流式执行器，用于测试 SSE 数据验证。
 type invalidJSONStreamExecutor struct{}
 
+// splitResponsesEventStreamExecutor 返回跨行分割的 SSE 事件的流式执行器，用于测试事件行合并。
 type splitResponsesEventStreamExecutor struct{}
 
 func (e *invalidJSONStreamExecutor) Identifier() string { return "codex" }

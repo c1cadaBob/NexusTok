@@ -1,3 +1,8 @@
+// Package claude - openai_claude_request_test.go
+// 测试 Claude 到 OpenAI 请求格式转换功能。
+// 覆盖 thinking 内容到 reasoning_content 的映射、系统消息处理、
+// 工具结果排序与内容格式、工具调用与文本混合消息的拆分策略、
+// 以及 Claude Code 归属信息的剥离等测试用例。
 package claude
 
 import (
@@ -246,8 +251,9 @@ func TestConvertClaudeRequestToOpenAI_ThinkingToReasoningContent(t *testing.T) {
 	}
 }
 
-// TestConvertClaudeRequestToOpenAI_ThinkingOnlyMessagePreserved tests AC3:
-// that a message with only thinking content is preserved (not dropped).
+// TestConvertClaudeRequestToOpenAI_ThinkingOnlyMessagePreserved 测试 AC3：
+// 仅包含 thinking 内容的消息应被保留（不被丢弃），
+// 并正确映射为 OpenAI 的 reasoning_content 字段。
 func TestConvertClaudeRequestToOpenAI_ThinkingOnlyMessagePreserved(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -292,6 +298,8 @@ func TestConvertClaudeRequestToOpenAI_ThinkingOnlyMessagePreserved(t *testing.T)
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_SystemMessageScenarios 测试系统消息的各种场景，
+// 包括无系统字段、空字符串、单字符串、数组格式及多文本块等情况
 func TestConvertClaudeRequestToOpenAI_SystemMessageScenarios(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -390,6 +398,9 @@ func TestConvertClaudeRequestToOpenAI_SystemMessageScenarios(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_ToolResultOrderAndContent 测试工具结果的排序：
+// OpenAI 要求 tool 消息必须紧跟在 assistant(tool_calls) 之后，
+// 用户消息中的非 tool_result 部分应被拆分到后续消息中
 func TestConvertClaudeRequestToOpenAI_ToolResultOrderAndContent(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -449,6 +460,8 @@ func TestConvertClaudeRequestToOpenAI_ToolResultOrderAndContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_ToolResultObjectContent 测试当工具结果内容为
+// JSON 对象时，应正确序列化为字符串
 func TestConvertClaudeRequestToOpenAI_ToolResultObjectContent(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -488,6 +501,8 @@ func TestConvertClaudeRequestToOpenAI_ToolResultObjectContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_ToolResultTextAndImageContent 测试工具结果中
+// 同时包含文本和图片内容时的格式转换
 func TestConvertClaudeRequestToOpenAI_ToolResultTextAndImageContent(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -547,6 +562,8 @@ func TestConvertClaudeRequestToOpenAI_ToolResultTextAndImageContent(t *testing.T
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_ToolResultURLImageOnly 测试工具结果中
+// 仅包含 URL 类型图片时的格式转换
 func TestConvertClaudeRequestToOpenAI_ToolResultURLImageOnly(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -596,6 +613,8 @@ func TestConvertClaudeRequestToOpenAI_ToolResultURLImageOnly(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_AssistantTextToolUseTextOrder 测试 assistant 消息中
+// text + tool_use + text 的混合顺序，应在同一消息中统一 content 和 tool_calls
 func TestConvertClaudeRequestToOpenAI_AssistantTextToolUseTextOrder(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -646,6 +665,9 @@ func TestConvertClaudeRequestToOpenAI_AssistantTextToolUseTextOrder(t *testing.T
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_AssistantThinkingToolUseThinkingSplit 测试
+// thinking + text + tool_use + thinking + text 的复杂混合消息，
+// 所有内容应在同一 assistant 消息中统一处理
 func TestConvertClaudeRequestToOpenAI_AssistantThinkingToolUseThinkingSplit(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -697,6 +719,8 @@ func TestConvertClaudeRequestToOpenAI_AssistantThinkingToolUseThinkingSplit(t *t
 	}
 }
 
+// TestConvertClaudeRequestToOpenAI_StripsClaudeCodeAttribution 测试 Claude Code
+// 归属信息头（x-anthropic-billing-header）应从系统消息中被剥离
 func TestConvertClaudeRequestToOpenAI_StripsClaudeCodeAttribution(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",

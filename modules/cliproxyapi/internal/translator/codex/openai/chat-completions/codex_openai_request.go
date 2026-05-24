@@ -1,9 +1,16 @@
-// Package openai provides utilities to translate OpenAI Chat Completions
-// request JSON into OpenAI Responses API request JSON using gjson/sjson.
-// It supports tools, multimodal text/image inputs, and Structured Outputs.
-// The package handles the conversion of OpenAI API requests into the format
-// expected by the OpenAI Responses API, including proper mapping of messages,
-// tools, and generation parameters.
+// chat_completions - codex_openai_request.go
+// Codex 的 OpenAI Chat Completions 格式请求转换器。
+// 将 OpenAI Chat Completions API 格式的请求转换为 Codex (OpenAI Responses API) 兼容的格式。
+//
+// 主要转换内容：
+// - 消息格式转换（Chat Completions messages -> Responses input 数组）
+// - system 角色转换为 developer 角色
+// - 工具调用格式转换（tool_calls -> function_call 顶层对象）
+// - 工具结果格式转换（tool -> function_call_output 顶层对象）
+// - 工具名称截断（64 字符限制，保留 mcp__ 前缀和最后一段）
+// - 多模态内容转换（text、image_url、file -> input_text、input_image、input_file）
+// - Structured Outputs 映射（response_format -> text.format）
+// - reasoning_effort 映射为 reasoning.effort
 package chat_completions
 
 import (
@@ -14,18 +21,23 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ConvertOpenAIRequestToCodex converts an OpenAI Chat Completions request JSON
-// into an OpenAI Responses API request JSON. The transformation follows the
-// examples defined in docs/2.md exactly, including tools, multi-turn dialog,
-// multimodal text/image handling, and Structured Outputs mapping.
+// ConvertOpenAIRequestToCodex 将 OpenAI Chat Completions 格式的请求转换为 Codex (Responses API) 格式。
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data from the OpenAI Chat Completions API
-//   - stream: A boolean indicating if the request is for a streaming response
+// 转换流程：
+// 1. 设置默认参数（stream、parallel_tool_calls、reasoning、include 等）
+// 2. 构建工具名称截断映射表（处理 64 字符限制）
+// 3. 提取系统指令并转换消息数组
+// 4. 转换工具定义（flatten function 字段）
+// 5. 转换工具选择（tool_choice）
+// 6. 映射 response_format 和 text 设置
 //
-// Returns:
-//   - []byte: The transformed request data in OpenAI Responses API format
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Chat Completions 格式 JSON 请求数据
+//   - stream: 是否为流式请求
+//
+// 返回值：
+//   - []byte: 转换后的 Codex (Responses API) 格式 JSON 请求数据
 func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 	// Start with empty JSON object
@@ -359,6 +371,11 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	return out
 }
 
+// setToolCallOutputContent 将工具调用的输出内容设置到 function_call_output 对象中。
+// 根据内容类型（字符串、数组、其他）进行不同的处理：
+// - 字符串：直接设置为 output 字段
+// - 数组：遍历每个元素转换为 Responses API 格式
+// - 其他：作为原始 JSON 设置
 func setToolCallOutputContent(funcOutput []byte, content gjson.Result) []byte {
 	switch {
 	case content.Type == gjson.String:
@@ -379,6 +396,12 @@ func setToolCallOutputContent(funcOutput []byte, content gjson.Result) []byte {
 	return funcOutput
 }
 
+// appendToolOutputContentPart 将单个工具输出内容部分追加到输出数组中。
+// 支持的类型转换：
+// - text -> input_text
+// - image_url -> input_image（支持 URL 和 file_id）
+// - file -> input_file（支持 file_id、file_data、file_url）
+// - 其他类型回退为 input_text（原始 JSON 文本）
 func appendToolOutputContentPart(output []byte, item gjson.Result) []byte {
 	switch item.Get("type").String() {
 	case "text":
@@ -432,6 +455,8 @@ func appendToolOutputContentPart(output []byte, item gjson.Result) []byte {
 	return output
 }
 
+// appendToolOutputFallbackPart 将无法识别的内容部分作为 input_text 回退追加到输出数组。
+// 将原始 JSON 或字符串值包装为 input_text 类型的内容部分。
 func appendToolOutputFallbackPart(output []byte, item gjson.Result) []byte {
 	text := item.Raw
 	if text == "" {
@@ -444,9 +469,9 @@ func appendToolOutputFallbackPart(output []byte, item gjson.Result) []byte {
 	return output
 }
 
-// shortenNameIfNeeded applies the simple shortening rule for a single name.
-// If the name length exceeds 64, it will try to preserve the "mcp__" prefix and last segment.
-// Otherwise it truncates to 64 characters.
+// shortenNameIfNeeded 对单个工具名称应用截断规则。
+// 如果名称长度超过 64 字符，尝试保留 "mcp__" 前缀和最后一段名称。
+// 否则直接截断到 64 字符。
 func shortenNameIfNeeded(name string) string {
 	const limit = 64
 	if len(name) <= limit {
@@ -466,9 +491,9 @@ func shortenNameIfNeeded(name string) string {
 	return name[:limit]
 }
 
-// buildShortNameMap generates unique short names (<=64) for the given list of names.
-// It preserves the "mcp__" prefix with the last segment when possible and ensures uniqueness
-// by appending suffixes like "~1", "~2" if needed.
+// buildShortNameMap 为给定的工具名称列表生成唯一的短名称（不超过 64 字符）。
+// 尽可能保留 "mcp__" 前缀和最后一段名称，如果出现重复则通过追加 "~1"、"~2" 等后缀确保唯一性。
+// 返回原始名称到短名称的映射表。
 func buildShortNameMap(names []string) map[string]string {
 	const limit = 64
 	used := map[string]struct{}{}

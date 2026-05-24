@@ -1,3 +1,16 @@
+// Package cachex - hybrid_cache.go
+// 该文件实现了混合缓存（HybridCache）功能
+//
+// 核心功能：
+// - 本地内存缓存 + Redis 双层缓存
+// - 支持缓存命名空间隔离
+// - 支持自定义值编解码器
+// - 支持缓存过期时间配置
+//
+// 缓存策略：
+// - 读取时优先从本地内存缓存获取
+// - 本地缓存未命中时从 Redis 获取
+// - 写入时同时更新本地缓存和 Redis
 package cachex
 
 import (
@@ -17,31 +30,37 @@ const (
 	defaultRedisDelTimeout  = 10 * time.Second
 )
 
+// HybridCacheConfig 混合缓存的配置结构体
+// 使用泛型参数 V 表示缓存值的类型
 type HybridCacheConfig[V any] struct {
-	Namespace Namespace
+	Namespace Namespace // 缓存命名空间，用于键隔离
 
-	// Redis is used when RedisEnabled returns true (or RedisEnabled is nil) and Redis is not nil.
-	Redis        *redis.Client
-	RedisCodec   ValueCodec[V]
-	RedisEnabled func() bool
+	// Redis 配置（当 Redis 启用时使用）
+	Redis        *redis.Client    // Redis 客户端实例
+	RedisCodec   ValueCodec[V]    // Redis 值编解码器
+	RedisEnabled func() bool      // 动态检查 Redis 是否启用的回调函数
 
-	// Memory builds a hot cache used when Redis is disabled. Keys stored in memory are fully namespaced.
-	Memory func() *hot.HotCache[string, V]
+	// 内存缓存配置（当 Redis 未启用时作为降级方案）
+	Memory func() *hot.HotCache[string, V] // 内存缓存工厂函数
 }
 
-// HybridCache is a small helper that uses Redis when enabled, otherwise falls back to in-memory hot cache.
+// HybridCache 实现本地内存缓存 + Redis 的双层缓存策略
+// 当 Redis 可用时使用 Redis 作为后端存储；当 Redis 不可用时降级为本地内存缓存
+// 泛型参数 V 表示缓存值的类型
 type HybridCache[V any] struct {
-	ns Namespace
+	ns Namespace // 缓存命名空间
 
-	redis        *redis.Client
-	redisCodec   ValueCodec[V]
-	redisEnabled func() bool
+	redis        *redis.Client         // Redis 客户端
+	redisCodec   ValueCodec[V]         // Redis 值编解码器
+	redisEnabled func() bool           // Redis 启用状态检查回调
 
-	memOnce sync.Once
-	memInit func() *hot.HotCache[string, V]
-	mem     *hot.HotCache[string, V]
+	memOnce sync.Once                  // 内存缓存初始化的单次执行保证
+	memInit func() *hot.HotCache[string, V] // 内存缓存工厂函数
+	mem     *hot.HotCache[string, V]  // 内存缓存实例
 }
 
+// NewHybridCache 创建一个新的混合缓存实例
+// 根据配置决定使用 Redis 还是本地内存缓存作为后端
 func NewHybridCache[V any](cfg HybridCacheConfig[V]) *HybridCache[V] {
 	return &HybridCache[V]{
 		ns:           cfg.Namespace,
@@ -52,10 +71,13 @@ func NewHybridCache[V any](cfg HybridCacheConfig[V]) *HybridCache[V] {
 	}
 }
 
+// FullKey 将原始键转换为带命名空间前缀的完整键
 func (c *HybridCache[V]) FullKey(key string) string {
 	return c.ns.FullKey(key)
 }
 
+// redisOn 检查 Redis 是否可用
+// 需要同时满足：Redis 客户端非空、编解码器非空、启用回调返回 true（或回调为 nil）
 func (c *HybridCache[V]) redisOn() bool {
 	if c.redis == nil || c.redisCodec == nil {
 		return false
@@ -66,6 +88,8 @@ func (c *HybridCache[V]) redisOn() bool {
 	return c.redisEnabled()
 }
 
+// memCache 获取或初始化内存缓存实例
+// 使用 sync.Once 保证只初始化一次
 func (c *HybridCache[V]) memCache() *hot.HotCache[string, V] {
 	c.memOnce.Do(func() {
 		if c.memInit == nil {
@@ -77,6 +101,12 @@ func (c *HybridCache[V]) memCache() *hot.HotCache[string, V] {
 	return c.mem
 }
 
+// Get 从缓存中获取值
+// 优先从 Redis 获取；如果 Redis 不可用，从本地内存缓存获取
+// 返回值：
+//   - value：缓存的值（未找到时为零值）
+//   - found：是否找到
+//   - err：读取错误
 func (c *HybridCache[V]) Get(key string) (value V, found bool, err error) {
 	full := c.ns.FullKey(key)
 	if full == "" {
@@ -108,6 +138,12 @@ func (c *HybridCache[V]) Get(key string) (value V, found bool, err error) {
 	return c.memCache().Get(full)
 }
 
+// SetWithTTL 设置缓存值（带过期时间）
+// 如果 Redis 可用，写入 Redis 并设置 TTL；否则写入本地内存缓存
+// 参数：
+//   - key：缓存键（不含命名空间前缀）
+//   - v：要缓存的值
+//   - ttl：过期时间
 func (c *HybridCache[V]) SetWithTTL(key string, v V, ttl time.Duration) error {
 	full := c.ns.FullKey(key)
 	if full == "" {
@@ -128,7 +164,8 @@ func (c *HybridCache[V]) SetWithTTL(key string, v V, ttl time.Duration) error {
 	return nil
 }
 
-// Keys returns keys with valid values. In Redis, it returns all matching keys.
+// Keys 返回所有有效缓存键
+// Redis 模式下使用 SCAN 命令遍历匹配的键；内存模式下返回本地缓存的所有键
 func (c *HybridCache[V]) Keys() ([]string, error) {
 	if c.redisOn() {
 		return c.scanKeys(c.ns.MatchPattern())
@@ -136,6 +173,8 @@ func (c *HybridCache[V]) Keys() ([]string, error) {
 	return c.memCache().Keys(), nil
 }
 
+// scanKeys 使用 Redis SCAN 命令遍历匹配指定模式的所有键
+// 使用游标迭代，每次获取 1000 个键，避免阻塞 Redis
 func (c *HybridCache[V]) scanKeys(match string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisScanTimeout)
 	defer cancel()
@@ -156,6 +195,8 @@ func (c *HybridCache[V]) scanKeys(match string) ([]string, error) {
 	return keys, nil
 }
 
+// Purge 清除当前命名空间下的所有缓存
+// Redis 模式下使用 SCAN + UNLINK 批量删除；内存模式下直接清除本地缓存
 func (c *HybridCache[V]) Purge() error {
 	if c.redisOn() {
 		keys, err := c.scanKeys(c.ns.MatchPattern())
@@ -173,6 +214,9 @@ func (c *HybridCache[V]) Purge() error {
 	return nil
 }
 
+// DeleteByPrefix 删除指定前缀下的所有缓存键
+// 自动添加命名空间前缀，支持嵌套前缀（如 "user:123"）
+// 返回实际删除的键数量
 func (c *HybridCache[V]) DeleteByPrefix(prefix string) (int, error) {
 	fullPrefix := c.ns.FullKey(prefix)
 	if fullPrefix == "" {
@@ -226,8 +270,10 @@ func (c *HybridCache[V]) DeleteByPrefix(prefix string) (int, error) {
 	return deleted, nil
 }
 
-// DeleteMany accepts either fully namespaced keys or raw keys and deletes them.
-// It returns a map keyed by fully namespaced keys.
+// DeleteMany 批量删除缓存键
+// 接受完整命名空间键或原始键，自动转换为完整键
+// Redis 模式下使用 Pipeline + UNLINK 非阻塞删除（比 DEL 更高效）
+// 返回值：以完整键为 key 的 map，value 表示该键是否被成功删除
 func (c *HybridCache[V]) DeleteMany(keys []string) (map[string]bool, error) {
 	res := make(map[string]bool, len(keys))
 	if len(keys) == 0 {
@@ -270,6 +316,9 @@ func (c *HybridCache[V]) DeleteMany(keys []string) (map[string]bool, error) {
 	return c.memCache().DeleteMany(fullKeys), nil
 }
 
+// Capacity 返回缓存的容量配置
+// Redis 模式下返回 (0, 0)（容量由 Redis 管理）
+// 内存模式下返回本地缓存的主缓存和缺失缓存容量
 func (c *HybridCache[V]) Capacity() (mainCacheCapacity int, missingCacheCapacity int) {
 	if c.redisOn() {
 		return 0, 0
@@ -277,6 +326,9 @@ func (c *HybridCache[V]) Capacity() (mainCacheCapacity int, missingCacheCapacity
 	return c.memCache().Capacity()
 }
 
+// Algorithm 返回缓存使用的淘汰算法名称
+// Redis 模式下返回 ("redis", "")
+// 内存模式下返回本地缓存的算法名称
 func (c *HybridCache[V]) Algorithm() (mainCacheAlgorithm string, missingCacheAlgorithm string) {
 	if c.redisOn() {
 		return "redis", ""

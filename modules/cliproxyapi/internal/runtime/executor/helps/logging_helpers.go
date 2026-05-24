@@ -1,3 +1,5 @@
+// Package helps - logging_helpers.go
+// 提供请求日志记录的辅助函数，用于记录请求和响应的详细信息。
 package helps
 
 import (

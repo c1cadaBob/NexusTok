@@ -1,3 +1,6 @@
+// diff - oauth_model_alias.go
+// 本文件实现了 OAuth 模型别名的变更检测功能。
+// 用于检测配置中 OAuth 模型别名映射的变化。
 package diff
 
 import (

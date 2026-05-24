@@ -1,3 +1,5 @@
+// diff - openai_compat_test.go
+// 测试 OpenAI 兼容配置的差异检测功能，包括提供商添加/移除/更新、键回退策略、签名生成等。
 package diff
 
 import (

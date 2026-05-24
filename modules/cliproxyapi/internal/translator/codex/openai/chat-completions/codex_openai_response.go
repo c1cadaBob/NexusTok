@@ -1,8 +1,17 @@
-// Package openai provides response translation functionality for Codex to OpenAI API compatibility.
-// This package handles the conversion of Codex API responses into OpenAI Chat Completions-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by OpenAI API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, reasoning content, and usage metadata appropriately.
+// chat_completions - codex_openai_response.go
+// Codex 的 OpenAI Chat Completions 格式响应转换器。
+// 负责将 Codex API 的响应转换为 OpenAI Chat Completions 兼容的 JSON 格式。
+// 支持流式和非流式两种模式。
+//
+// 转换特性：
+// - 流式模式：处理 Codex 的 SSE 事件类型（response.created、response.output_text.delta、
+//   response.reasoning_summary_text.delta/done、response.function_call_arguments.delta/done、
+//   response.output_item.added/done、response.image_generation_call.partial_image、response.completed）
+// - 非流式模式：从 response.completed 事件中聚合所有内容到单个 OpenAI 响应
+// - 工具调用：累积函数调用参数，支持 output_item.added 和 output_item.done 两种路径
+// - 推理内容：将 Codex 的 reasoning_summary_text 转换为 reasoning_content
+// - 图片生成：将 Codex 的 image_generation_call 转换为 delta.images 格式，支持 SHA256 去重
+// - 工具名称恢复：将截断的工具名称通过反向映射表恢复为原始名称
 package chat_completions
 
 import (
@@ -16,35 +25,50 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 Codex SSE 事件的数据前缀标识。
 var (
 	dataTag = []byte("data:")
 )
 
-// ConvertCliToOpenAIParams holds parameters for response conversion.
+// ConvertCliToOpenAIParams 保存 Codex 响应到 OpenAI 格式转换过程中的状态参数。
 type ConvertCliToOpenAIParams struct {
-	ResponseID                string
-	CreatedAt                 int64
-	Model                     string
-	FunctionCallIndex         int
+	// ResponseID 响应唯一标识符
+	ResponseID string
+	// CreatedAt 响应创建时间的 Unix 时间戳
+	CreatedAt int64
+	// Model 模型名称
+	Model string
+	// FunctionCallIndex 当前函数调用的索引（-1 表示尚未开始）
+	FunctionCallIndex int
+	// HasReceivedArgumentsDelta 标记是否已接收到函数调用参数的增量更新
 	HasReceivedArgumentsDelta bool
-	HasToolCallAnnounced      bool
-	LastImageHashByItemID     map[string][32]byte
+	// HasToolCallAnnounced 标记工具调用是否已通过 output_item.added 事件宣布
+	HasToolCallAnnounced bool
+	// LastImageHashByItemID 按项目 ID 索引的最后图片 SHA256 哈希，用于去重
+	LastImageHashByItemID map[string][32]byte
 }
 
-// ConvertCodexResponseToOpenAI translates a single chunk of a streaming response from the
-// Codex API format to the OpenAI Chat Completions streaming format.
-// It processes various Codex event types and transforms them into OpenAI-compatible JSON responses.
-// The function handles text content, tool calls, reasoning content, and usage metadata, outputting
-// responses that match the OpenAI API format. It supports incremental updates for streaming responses.
+// ConvertCodexResponseToOpenAI 将 Codex 的流式响应转换为 OpenAI Chat Completions 流式格式。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response
-//   - rawJSON: The raw JSON response from the Codex API
-//   - param: A pointer to a parameter object for maintaining state between calls
+// 处理的 Codex 事件类型：
+// - response.created: 初始化响应元数据（ID、模型、创建时间）
+// - response.output_text.delta: 增量文本内容
+// - response.reasoning_summary_text.delta/done: 推理/思考内容
+// - response.output_item.added: 新的输出项（function_call 或 image_generation_call）
+// - response.function_call_arguments.delta/done: 函数调用参数增量
+// - response.output_item.done: 输出项完成
+// - response.image_generation_call.partial_image: 图片生成增量
+// - response.completed: 响应完成（设置停止原因和用量）
 //
-// Returns:
-//   - [][]byte: A slice of OpenAI-compatible JSON responses
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据（用于工具名称恢复）
+//   - rawJSON: Codex 格式的原始响应 JSON 数据（data: 前缀格式）
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Chat Completions 格式的 SSE 事件数据切片
 func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &ConvertCliToOpenAIParams{
@@ -300,19 +324,18 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 	return [][]byte{template}
 }
 
-// ConvertCodexResponseToOpenAINonStream converts a non-streaming Codex response to a non-streaming OpenAI response.
-// This function processes the complete Codex response and transforms it into a single OpenAI-compatible
-// JSON response. It handles message content, tool calls, reasoning content, and usage metadata, combining all
-// the information into a single response that matches the OpenAI API format.
+// ConvertCodexResponseToOpenAINonStream 将 Codex 的非流式响应转换为 OpenAI Chat Completions 格式。
+// 从 response.completed 事件中提取所有内容，包括文本、推理、工具调用和图片，
+// 构建完整的 OpenAI 响应。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Codex API
-//   - param: A pointer to a parameter object for the conversion (unused in current implementation)
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据（用于工具名称恢复）
+//   - rawJSON: Codex 格式的原始响应数据
 //
-// Returns:
-//   - []byte: An OpenAI-compatible JSON response containing all message content and metadata
+// 返回值：
+//   - []byte: OpenAI Chat Completions 格式的完整 JSON 响应数据
 func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	rootResult := gjson.ParseBytes(rawJSON)
 	// Verify this is a response.completed event
@@ -481,8 +504,8 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 	return template
 }
 
-// buildReverseMapFromOriginalOpenAI builds a map of shortened tool name -> original tool name
-// from the original OpenAI-style request JSON using the same shortening logic.
+// buildReverseMapFromOriginalOpenAI 从原始 OpenAI 风格的请求 JSON 构建截断工具名称到原始名称的反向映射。
+// 使用与请求转换相同的截断逻辑，确保名称恢复的准确性。
 func buildReverseMapFromOriginalOpenAI(original []byte) map[string]string {
 	tools := gjson.GetBytes(original, "tools")
 	rev := map[string]string{}
@@ -512,6 +535,10 @@ func buildReverseMapFromOriginalOpenAI(original []byte) map[string]string {
 	return rev
 }
 
+// mimeTypeFromCodexOutputFormat 将 Codex 的图片输出格式转换为 MIME 类型字符串。
+// 支持的格式：png、jpg/jpeg、webp、gif。
+// 如果输入已包含 "/" 则视为完整 MIME 类型直接返回。
+// 默认返回 "image/png"。
 func mimeTypeFromCodexOutputFormat(outputFormat string) string {
 	if outputFormat == "" {
 		return "image/png"

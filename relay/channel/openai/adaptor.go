@@ -1,3 +1,12 @@
+// openai - adaptor.go
+// OpenAI 渠道的适配器实现文件。
+// Adaptor 结构体实现了 relay/channel 接口，负责：
+// - 将各种格式的请求（OpenAI、Claude、Gemini）转换为 OpenAI API 兼容格式
+// - 构建请求 URL（支持 Azure、自定义渠道等不同场景）
+// - 设置请求头（认证、组织、WebSocket 协议等）
+// - 处理音频（TTS/STT）、图片生成/编辑、嵌入、重排序等多模态请求
+// - 根据不同的 RelayMode 分发响应处理
+// - 管理模型列表和渠道名称
 package openai
 
 import (
@@ -35,11 +44,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Adaptor 是 OpenAI 渠道的适配器结构体。
+// 实现了中继（relay）系统的适配器接口，负责请求转换和响应处理。
+// 支持多种子渠道类型（OpenAI、Azure、OpenRouter、自定义等）。
 type Adaptor struct {
-	ChannelType    int
-	ResponseFormat string
+	ChannelType    int    // 渠道类型常量（如 constant.ChannelTypeOpenAI、constant.ChannelTypeAzure）
+	ResponseFormat string // 音频响应格式（在 STT 场景中用于指定输出格式）
 }
 
+// ConvertGeminiRequest 将 Gemini 格式的聊天请求转换为 OpenAI 格式。
+// 先通过 service.GeminiToOpenAIRequest 将 Gemini 请求转换为通用 OpenAI 请求，
+// 再调用 ConvertOpenAIRequest 进行进一步的格式适配和参数调整。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含渠道配置和请求上下文
+//   - request: Gemini 格式的聊天请求
+//
+// 返回:
+//   - any: 转换后的请求对象（可直接序列化发送到上游）
+//   - error: 转换失败时的错误
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	// 使用 service.GeminiToOpenAIRequest 转换请求格式
 	openaiRequest, err := service.GeminiToOpenAIRequest(request, info)
@@ -49,6 +73,19 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 	return a.ConvertOpenAIRequest(c, info, openaiRequest)
 }
 
+// ConvertClaudeRequest 将 Claude 格式的请求转换为 OpenAI 格式。
+// 先通过 service.ClaudeToOpenAIRequest 将 Claude 请求转换为通用 OpenAI 请求，
+// 如果上游支持 StreamOptions 且为流式请求，则自动启用 usage 统计。
+// 最后调用 ConvertOpenAIRequest 进行进一步的格式适配。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息，包含渠道配置
+//   - request: Claude 格式的请求对象
+//
+// 返回:
+//   - any: 转换后的请求对象
+//   - error: 转换失败时的错误
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
 	//if !strings.Contains(request.Model, "claude") {
 	//	return nil, fmt.Errorf("you are using openai channel type with path /v1/messages, only claude model supported convert, but got %s", request.Model)
@@ -81,6 +118,12 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	return a.ConvertOpenAIRequest(c, info, aiRequest)
 }
 
+// Init 初始化适配器，在请求处理开始前调用。
+// 设置渠道类型，并在启用了 thinking_to_content 功能时初始化 ThinkingContentInfo。
+// ThinkingContentInfo 用于追踪思考内容的转换状态（首次发送、已发送标记等）。
+//
+// 参数:
+//   - info: 中继信息，包含渠道配置和请求上下文
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 
@@ -94,6 +137,23 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	}
 }
 
+// GetRequestURL 根据渠道类型和请求模式构建完整的上游请求 URL。
+// 不同渠道类型的 URL 构建逻辑不同：
+//   - Azure: 使用部署路径格式 /openai/deployments/{model}/{task}?api-version={version}
+//     - 支持 Responses API（含 compact 模式），使用不同的 API 版本
+//     - 2025年5月10日后创建的渠道不再移除模型名中的点号
+//     - 支持 Realtime 模式的 WebSocket URL（wss://）
+//     - 支持 Claude 格式的请求路径转换
+//   - Custom: 支持 URL 中的 {model} 占位符替换
+//   - 其他渠道（OpenAI、OpenRouter 等）: 使用标准的完整请求路径
+//     - Claude/Gemini 格式的非 Responses 请求统一转发到 /v1/chat/completions
+//
+// 参数:
+//   - info: 中继信息，包含渠道类型、基础 URL、请求路径、模型名称等
+//
+// 返回:
+//   - string: 构建完成的完整请求 URL
+//   - error: URL 构建失败时的错误
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
@@ -172,6 +232,24 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	}
 }
 
+// SetupRequestHeader 设置发送到上游 API 的 HTTP 请求头。
+// 根据不同的渠道类型和请求模式设置不同的认证头：
+//   - Azure: 使用 api-key 头进行认证
+//   - OpenAI: 支持 OpenAI-Organization 头设置组织信息
+//   - Realtime 模式: 设置 Sec-WebSocket-Protocol 或 openai-beta 头
+//   - OpenRouter: 设置 HTTP-Referer 和 X-OpenRouter-Title 头
+//   - 其他渠道: 使用标准的 Bearer token 认证
+//
+// 如果请求中通过 HeadersOverride 指定了 Authorization 头，
+// 则跳过默认的 Authorization 设置，避免冲突。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - header: 要设置的 HTTP 请求头指针
+//   - info: 中继信息，包含 API 密钥、组织信息等
+//
+// 返回:
+//   - error: 设置失败时的错误（当前实现始终返回 nil）
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, header)
 	if info.ChannelType == constant.ChannelTypeAzure {
@@ -226,6 +304,32 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	return nil
 }
 
+// ConvertOpenAIRequest 对 OpenAI 格式的请求进行最终的格式适配和参数调整。
+// 根据不同的渠道类型和模型特性进行特殊处理：
+//
+//  1. 非 OpenAI/Azure 渠道：移除 StreamOptions 字段（不支持）
+//
+//  2. OpenRouter 渠道特殊处理：
+//     - 自动添加 usage 统计字段
+//     - 处理 -thinking 模型后缀（转换为 reasoning 参数）
+//     - 适配 Anthropic Claude 模型的 thinking 格式
+//     - 转换 ReasoningEffort 为 OpenRouter 的 reasoning 格式
+//
+//  3. o 系列和 GPT-5 系列模型特殊处理：
+//     - 将 MaxTokens 转换为 MaxCompletionTokens
+//     - o 系列模型：移除 Temperature 参数
+//     - GPT-5 系列：移除 Temperature、TopP、LogProbs 参数
+//     - 解析模型名称中的推理力度后缀（如 o3-mini-high）
+//     - 将 system 消息角色转换为 developer（o1-mini 和 o1-preview 除外）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - request: OpenAI 格式的通用请求对象
+//
+// 返回:
+//   - any: 适配后的请求对象
+//   - error: 适配失败时的错误
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
@@ -349,14 +453,53 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	return request, nil
 }
 
+// ConvertRerankRequest 将重排序请求转换为 OpenAI 格式。
+// OpenAI 格式的重排序请求无需额外转换，直接透传。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - relayMode: 中继模式
+//   - request: 重排序请求对象
+//
+// 返回:
+//   - any: 转换后的请求（原样返回）
+//   - error: 始终返回 nil
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
 	return request, nil
 }
 
+// ConvertEmbeddingRequest 将嵌入请求转换为 OpenAI 格式。
+// OpenAI 格式的嵌入请求无需额外转换，直接透传。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - request: 嵌入请求对象
+//
+// 返回:
+//   - any: 转换后的请求（原样返回）
+//   - error: 始终返回 nil
 func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
 	return request, nil
 }
 
+// ConvertAudioRequest 将音频请求转换为 OpenAI 格式。
+// 根据不同的中继模式使用不同的处理方式：
+//   - TTS（AudioSpeech）: 将请求序列化为 JSON 字节流
+//   - STT（AudioTranscription/AudioTranslation）: 构建 multipart/form-data 请求体
+//     - 包含 model 字段
+//     - 复制原始表单中的所有非文件字段
+//     - 处理音频文件上传（file 字段）
+//     - 自动设置 Content-Type 头（含 boundary）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - request: 音频请求对象
+//
+// 返回:
+//   - io.Reader: 请求体读取器
+//   - error: 转换失败时的错误
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	a.ResponseFormat = request.ResponseFormat
 	if info.RelayMode == relayconstant.RelayModeAudioSpeech {
@@ -423,6 +566,24 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+// ConvertImageRequest 将图片请求转换为 OpenAI 格式。
+// 根据不同的中继模式使用不同的处理方式：
+//   - ImagesEdits（图片编辑）: 构建 multipart/form-data 请求体
+//     - 包含 model 字段和所有非文件表单字段
+//     - 支持单张或多张图片上传（image 或 image[] 字段名）
+//     - 支持 mask 文件上传（用于指定编辑区域）
+//     - 自动检测图片 MIME 类型（JPEG、PNG、WebP）
+//     - 如果请求体已经是 JSON 格式，则直接返回
+//   - ImagesGenerations（图片生成）: 直接返回请求对象
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - request: 图片请求对象
+//
+// 返回:
+//   - any: 转换后的请求（JSON 对象或 multipart 请求体读取器）
+//   - error: 转换失败时的错误
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
@@ -554,6 +715,14 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+// isJSONRequest 判断请求的 Content-Type 是否为 application/json。
+// 用于在图片编辑等场景中区分 JSON 请求和 multipart 表单请求。
+//
+// 参数:
+//   - c: Gin 上下文
+//
+// 返回:
+//   - bool: 如果 Content-Type 以 "application/json" 开头则返回 true
 func isJSONRequest(c *gin.Context) bool {
 	if c == nil || c.Request == nil {
 		return false
@@ -561,7 +730,15 @@ func isJSONRequest(c *gin.Context) bool {
 	return strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json")
 }
 
-// detectImageMimeType determines the MIME type based on the file extension
+// detectImageMimeType 根据文件扩展名检测图片的 MIME 类型。
+// 支持的格式：JPEG（.jpg/.jpeg）、PNG（.png）、WebP（.webp）。
+// 对于无法识别的扩展名，默认返回 "image/png"。
+//
+// 参数:
+//   - filename: 文件名（含扩展名）
+//
+// 返回:
+//   - string: 对应的 MIME 类型字符串
 func detectImageMimeType(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
@@ -581,6 +758,18 @@ func detectImageMimeType(filename string) string {
 	}
 }
 
+// ConvertOpenAIResponsesRequest 对 OpenAI Responses API 的请求进行格式适配。
+// 主要处理模型名称中的推理力度后缀（如 o3-mini-high），
+// 将其解析为 Reasoning.Effort 参数并恢复原始模型名称。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息（可为 nil）
+//   - request: OpenAI Responses API 请求对象
+//
+// 返回:
+//   - any: 适配后的请求对象
+//   - error: 适配失败时的错误
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
@@ -600,6 +789,20 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	return request, nil
 }
 
+// DoRequest 根据请求模式选择合适的 HTTP 请求方式并发送到上游 API。
+// 不同的请求模式使用不同的请求方式：
+//   - 音频转录/翻译、图片编辑（非 JSON）: 使用 multipart/form-data 表单请求
+//   - Realtime 模式: 使用 WebSocket 连接
+//   - 其他模式: 使用标准的 API 请求（JSON body）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - requestBody: 请求体读取器
+//
+// 返回:
+//   - any: 响应对象（通常是 *http.Response）
+//   - error: 请求失败时的错误
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	if info.RelayMode == relayconstant.RelayModeAudioTranscription ||
 		info.RelayMode == relayconstant.RelayModeAudioTranslation ||
@@ -612,6 +815,25 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	}
 }
 
+// DoResponse 根据请求模式分发到对应的响应处理器。
+// 不同的请求模式使用不同的处理器：
+//   - Realtime: WebSocket 实时对话处理器
+//   - AudioSpeech: TTS 语音合成处理器
+//   - AudioTranslation/AudioTranscription: STT 语音识别处理器
+//   - ImagesGenerations/ImagesEdits: 图片生成/编辑处理器
+//   - Rerank: 重排序处理器
+//   - Responses: OpenAI Responses API 处理器（支持流式和非流式）
+//   - ResponsesCompact: Responses API 压缩模式处理器
+//   - 默认（聊天/补全）: 流式使用 OaiStreamHandler，非流式使用 OpenaiHandler
+//
+// 参数:
+//   - c: Gin 上下文
+//   - resp: 上游 API 返回的 HTTP 响应
+//   - info: 中继信息
+//
+// 返回:
+//   - usage: token 使用量信息（类型为 any，实际为 *dto.Usage 或 *dto.RealtimeUsage）
+//   - err: 处理过程中的错误
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NexusTokError) {
 	switch info.RelayMode {
 	case relayconstant.RelayModeRealtime:
@@ -644,6 +866,16 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	return
 }
 
+// GetModelList 获取当前渠道类型支持的模型列表。
+// 根据不同的子渠道类型返回对应的模型列表：
+//   - 360: ai360 渠道的模型列表
+//   - LingYiWanWu: 零一万物渠道的模型列表
+//   - Xinference: Xinference 渠道的模型列表
+//   - OpenRouter: OpenRouter 渠道的模型列表
+//   - 默认: 标准 OpenAI 模型列表
+//
+// 返回:
+//   - []string: 支持的模型名称列表
 func (a *Adaptor) GetModelList() []string {
 	switch a.ChannelType {
 	case constant.ChannelType360:
@@ -661,6 +893,16 @@ func (a *Adaptor) GetModelList() []string {
 	}
 }
 
+// GetChannelName 获取当前渠道类型的标识名称。
+// 根据不同的子渠道类型返回对应的渠道名称：
+//   - 360: "360"
+//   - LingYiWanWu: "lingyiwanwu"
+//   - Xinference: "xinference"
+//   - OpenRouter: "openrouter"
+//   - 默认: "openai"
+//
+// 返回:
+//   - string: 渠道标识名称
 func (a *Adaptor) GetChannelName() string {
 	switch a.ChannelType {
 	case constant.ChannelType360:

@@ -1,3 +1,11 @@
+// Package controller - codex_usage.go
+// 该文件实现了 Codex 渠道用量查询的 API 控制器
+//
+// Codex 用量查询通过调用上游 Wham API 获取用户的使用情况
+// 支持 OAuth 令牌自动刷新：当访问令牌过期时，使用刷新令牌获取新令牌
+//
+// 主要 API：
+// - GetCodexChannelUsage：获取指定 Codex 渠道的用量信息
 package controller
 
 import (
@@ -17,6 +25,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetCodexChannelUsage 获取 Codex 渠道的用量信息
+//
+// 查询流程：
+// 1. 验证渠道类型为 Codex 且非多密钥模式
+// 2. 解析 OAuth 凭证获取访问令牌和账户 ID
+// 3. 调用上游 Wham API 获取用量数据
+// 4. 如果返回 401/403，尝试使用刷新令牌获取新令牌后重试
+//
+// 路径参数：
+//   - id: 渠道 ID
 func GetCodexChannelUsage(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

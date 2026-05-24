@@ -1,3 +1,21 @@
+// Package controller - account_pool.go
+// 该文件实现了账号池管理的 API 控制器
+//
+// 账号池功能用于集中管理多个 AI 服务提供商的账号：
+// - 账号池分组（AccountPoolGroup）：按平台/认证方式分组管理账号
+// - 池账号（PoolAccount）：具体的账号凭证和配置
+//
+// 主要 API：
+// - 分组管理：创建、查询、更新、删除账号池分组
+// - 账号管理：创建、查询、更新、删除池账号
+// - 批量导入：支持批量导入多个账号
+// - OAuth 登录：支持通过 OAuth 流程添加账号
+// - 凭证刷新：支持刷新 OAuth 凭证
+//
+// 架构说明：
+// - Controller 层处理 HTTP 请求和响应
+// - 业务逻辑委托给 service 层
+// - 数据持久化委托给 model 层
 package controller
 
 import (
@@ -18,85 +36,92 @@ import (
 	"gorm.io/gorm"
 )
 
+// accountPoolGroupUpsertRequest 账号池分组创建/更新请求
 type accountPoolGroupUpsertRequest struct {
-	Name         string  `json:"name"`
-	Platform     string  `json:"platform"`
-	AuthType     string  `json:"auth_type"`
-	Status       *int    `json:"status"`
-	Strategy     string  `json:"strategy"`
-	Models       string  `json:"models"`
-	Group        string  `json:"group"`
-	ModelMapping *string `json:"model_mapping"`
-	Settings     string  `json:"settings"`
+	Name         string  `json:"name"`          // 分组名称
+	Platform     string  `json:"platform"`      // 平台标识（如 openai, anthropic）
+	AuthType     string  `json:"auth_type"`     // 认证类型（api_key, oauth 等）
+	Status       *int    `json:"status"`        // 状态（启用/禁用）
+	Strategy     string  `json:"strategy"`      // 调度策略（round_robin, random 等）
+	Models       string  `json:"models"`        // 支持的模型列表
+	Group        string  `json:"group"`         // 用户组
+	ModelMapping *string `json:"model_mapping"` // 模型映射
+	Settings     string  `json:"settings"`      // 其他配置
 }
 
+// poolAccountUpsertRequest 池账号创建/更新请求
 type poolAccountUpsertRequest struct {
-	Name               string  `json:"name"`
-	Platform           string  `json:"platform"`
-	AuthType           string  `json:"auth_type"`
-	Credentials        string  `json:"credentials"`
-	Status             *int    `json:"status"`
-	Schedulable        *bool   `json:"schedulable"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group"`
-	Priority           *int64  `json:"priority"`
-	Weight             *int    `json:"weight"`
-	MaxConcurrency     *int    `json:"max_concurrency"`
-	Proxy              string  `json:"proxy"`
-	BaseURL            *string `json:"base_url"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	Other              string  `json:"other"`
-	Setting            *string `json:"setting"`
-	OtherSettings      string  `json:"settings"`
-	ModelMapping       *string `json:"model_mapping"`
-	ParamOverride      *string `json:"param_override"`
-	HeaderOverride     *string `json:"header_override"`
-	StatusCodeMapping  *string `json:"status_code_mapping"`
+	Name               string  `json:"name"`                 // 账号名称
+	Platform           string  `json:"platform"`             // 平台标识
+	AuthType           string  `json:"auth_type"`            // 认证类型
+	Credentials        string  `json:"credentials"`          // 凭证（API Key 或 OAuth Token）
+	Status             *int    `json:"status"`               // 状态
+	Schedulable        *bool   `json:"schedulable"`          // 是否可调度
+	Models             string  `json:"models"`               // 支持的模型
+	Group              string  `json:"group"`                // 用户组
+	Priority           *int64  `json:"priority"`             // 优先级
+	Weight             *int    `json:"weight"`               // 权重
+	MaxConcurrency     *int    `json:"max_concurrency"`      // 最大并发数
+	Proxy              string  `json:"proxy"`                // 代理地址
+	BaseURL            *string `json:"base_url"`             // 基础 URL
+	OpenAIOrganization *string `json:"openai_organization"`  // OpenAI 组织 ID
+	Other              string  `json:"other"`                // 其他配置
+	Setting            *string `json:"setting"`              // 设置
+	OtherSettings      string  `json:"settings"`             // 其他设置
+	ModelMapping       *string `json:"model_mapping"`        // 模型映射
+	ParamOverride      *string `json:"param_override"`       // 参数覆盖
+	HeaderOverride     *string `json:"header_override"`      // 请求头覆盖
+	StatusCodeMapping  *string `json:"status_code_mapping"`  // 状态码映射
 }
 
+// poolAccountBatchRequest 池账号批量创建请求
 type poolAccountBatchRequest struct {
-	Credentials    string `json:"credentials"`
-	Keys           string `json:"keys"`
-	NamePrefix     string `json:"name_prefix"`
-	Platform       string `json:"platform"`
-	AuthType       string `json:"auth_type"`
-	Models         string `json:"models"`
-	Group          string `json:"group"`
-	Priority       int64  `json:"priority"`
-	Weight         int    `json:"weight"`
-	Status         int    `json:"status"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	Credentials    string `json:"credentials"`     // 批量凭证（每行一个）
+	Keys           string `json:"keys"`            // 批量密钥（兼容旧格式）
+	NamePrefix     string `json:"name_prefix"`     // 名称前缀
+	Platform       string `json:"platform"`        // 平台标识
+	AuthType       string `json:"auth_type"`       // 认证类型
+	Models         string `json:"models"`          // 支持的模型
+	Group          string `json:"group"`           // 用户组
+	Priority       int64  `json:"priority"`        // 优先级
+	Weight         int    `json:"weight"`          // 权重
+	Status         int    `json:"status"`          // 状态
+	MaxConcurrency int    `json:"max_concurrency"` // 最大并发数
 }
 
+// poolAccountStatusRequest 池账号状态更新请求
 type poolAccountStatusRequest struct {
-	Status        int    `json:"status"`
-	Reason        string `json:"reason"`
-	ClearCooldown bool   `json:"clear_cooldown"`
-	Schedulable   *bool  `json:"schedulable"`
+	Status        int    `json:"status"`         // 新状态
+	Reason        string `json:"reason"`         // 状态变更原因
+	ClearCooldown bool   `json:"clear_cooldown"` // 是否清除冷却时间
+	Schedulable   *bool  `json:"schedulable"`    // 是否可调度
 }
 
+// accountPoolCodexOAuthStartRequest Codex OAuth 开始请求
 type accountPoolCodexOAuthStartRequest struct {
-	PoolGroupId int    `json:"pool_group_id"`
-	Proxy       string `json:"proxy"`
+	PoolGroupId int    `json:"pool_group_id"` // 账号池分组 ID
+	Proxy       string `json:"proxy"`         // 代理地址
 }
 
+// accountPoolCodexOAuthCompleteRequest Codex OAuth 完成请求
 type accountPoolCodexOAuthCompleteRequest struct {
-	PoolGroupId int    `json:"pool_group_id"`
-	SessionId   string `json:"session_id"`
-	Input       string `json:"input"`
-	Name        string `json:"name"`
-	Proxy       string `json:"proxy"`
+	PoolGroupId int    `json:"pool_group_id"` // 账号池分组 ID
+	SessionId   string `json:"session_id"`    // 会话 ID
+	Input       string `json:"input"`         // 用户输入（如授权码）
+	Name        string `json:"name"`          // 账号名称
+	Proxy       string `json:"proxy"`         // 代理地址
 }
 
+// accountPoolProviderLoginRequest 账号池提供商登录请求
 type accountPoolProviderLoginRequest struct {
-	SessionId    string            `json:"session_id"`
-	Input        string            `json:"input"`
-	Name         string            `json:"name"`
-	Proxy        string            `json:"proxy"`
-	NoBrowser    bool              `json:"no_browser"`
-	ProjectID    string            `json:"project_id"`
-	CallbackPort int               `json:"callback_port"`
-	Metadata     map[string]string `json:"metadata"`
+	SessionId    string            `json:"session_id"`     // 会话 ID
+	Input        string            `json:"input"`          // 用户输入
+	Name         string            `json:"name"`           // 账号名称
+	Proxy        string            `json:"proxy"`          // 代理地址
+	NoBrowser    bool              `json:"no_browser"`     // 是否不自动打开浏览器
+	ProjectID    string            `json:"project_id"`     // 项目 ID
+	CallbackPort int               `json:"callback_port"`  // 回调端口
+	Metadata     map[string]string `json:"metadata"`       // 元数据
 }
 
 func ListAccountPoolGroups(c *gin.Context) {

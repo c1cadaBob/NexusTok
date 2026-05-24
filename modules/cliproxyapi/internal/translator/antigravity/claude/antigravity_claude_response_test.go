@@ -1,3 +1,8 @@
+// Package claude - antigravity_claude_response_test.go
+// 测试 Antigravity 到 Claude 响应格式转换功能。
+// 覆盖签名缓存机制的测试用例，包括参数初始化、thinking 文本累积、
+// 签名缓存与重置、多 thinking 块处理、
+// 以及文本与签名同块传输等边界场景。
 package claude
 
 import (
@@ -13,6 +18,8 @@ import (
 // Signature Caching Tests
 // ============================================================================
 
+// TestConvertAntigravityResponseToClaude_ParamsInitialized 测试首次响应块处理后
+// 参数应被正确初始化（HasFirstResponse 标记和 thinking 文本累积）
 func TestConvertAntigravityResponseToClaude_ParamsInitialized(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -47,6 +54,8 @@ func TestConvertAntigravityResponseToClaude_ParamsInitialized(t *testing.T) {
 	}
 }
 
+// TestConvertAntigravityResponseToClaude_ThinkingTextAccumulated 测试
+// 多个 thinking 块的文本应被正确累积
 func TestConvertAntigravityResponseToClaude_ThinkingTextAccumulated(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -96,6 +105,8 @@ func TestConvertAntigravityResponseToClaude_ThinkingTextAccumulated(t *testing.T
 	}
 }
 
+// TestConvertAntigravityResponseToClaude_SignatureCached 测试签名应被正确缓存，
+// 且缓存后 thinking 文本应被重置
 func TestConvertAntigravityResponseToClaude_SignatureCached(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -154,6 +165,8 @@ func TestConvertAntigravityResponseToClaude_SignatureCached(t *testing.T) {
 	}
 }
 
+// TestConvertAntigravityResponseToClaude_MultipleThinkingBlocks 测试
+// 多个独立 thinking 块的签名应分别缓存
 func TestConvertAntigravityResponseToClaude_MultipleThinkingBlocks(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -246,6 +259,9 @@ func TestConvertAntigravityResponseToClaude_MultipleThinkingBlocks(t *testing.T)
 	}
 }
 
+// TestConvertAntigravityResponseToClaude_TextAndSignatureInSameChunk 测试
+// 当 thinking 文本和签名在同一块中传输时，文本应先作为 thinking_delta 发出，
+// 然后再发出签名 delta，且缓存的签名应覆盖完整文本
 func TestConvertAntigravityResponseToClaude_TextAndSignatureInSameChunk(t *testing.T) {
 	cache.ClearSignatureCache("")
 
@@ -304,6 +320,8 @@ func TestConvertAntigravityResponseToClaude_TextAndSignatureInSameChunk(t *testi
 	}
 }
 
+// TestConvertAntigravityResponseToClaude_SignatureOnlyChunk 测试
+// 仅包含签名（无文本）的块应正确缓存签名
 func TestConvertAntigravityResponseToClaude_SignatureOnlyChunk(t *testing.T) {
 	cache.ClearSignatureCache("")
 

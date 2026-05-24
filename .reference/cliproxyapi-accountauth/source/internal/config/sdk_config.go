@@ -1,59 +1,56 @@
-// Package config provides configuration management for the CLI Proxy API server.
-// It handles loading and parsing YAML configuration files, and provides structured
-// access to application settings including server port, authentication directory,
-// debug settings, proxy configuration, and API keys.
+// 包 config - sdk_config.go
+// 该文件定义了 SDK 配置结构体，包含代理、图像生成、流式传输等设置。
 package config
 
-// SDKConfig represents the application's configuration, loaded from a YAML file.
+// SDKConfig 表示从 YAML 文件加载的应用程序 SDK 配置。
 type SDKConfig struct {
-	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
+	// ProxyURL 是用于出站请求的可选代理服务器 URL。
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
-	// DisableImageGeneration controls whether the built-in image_generation tool is injected/allowed.
+	// DisableImageGeneration 控制内置 image_generation 工具是否被注入/允许。
 	//
-	// Supported values:
-	//   - false (default): image_generation is enabled everywhere (normal behavior).
-	//   - true: image_generation is disabled everywhere. The server stops injecting it, removes it from request payloads,
-	//     and returns 404 for /v1/images/generations and /v1/images/edits.
-	//   - "chat": disable image_generation injection for all non-images endpoints (e.g. /v1/responses, /v1/chat/completions),
-	//     while keeping /v1/images/generations and /v1/images/edits enabled and preserving image_generation there.
+	// 支持的值：
+	//   - false（默认）：image_generation 在所有地方启用（正常行为）。
+	//   - true：image_generation 在所有地方禁用。服务器停止注入它，从请求有效负载中移除它，
+	//     并为 /v1/images/generations 和 /v1/images/edits 返回 404。
+	//   - "chat"：为所有非图像端点禁用 image_generation 注入（如 /v1/responses、/v1/chat/completions），
+	//     同时保持 /v1/images/generations 和 /v1/images/edits 启用并在那里保留 image_generation。
 	DisableImageGeneration DisableImageGenerationMode `yaml:"disable-image-generation" json:"disable-image-generation"`
 
-	// EnableGeminiCLIEndpoint controls whether Gemini CLI internal endpoints (/v1internal:*) are enabled.
-	// Default is false for safety; when false, /v1internal:* requests are rejected.
+	// EnableGeminiCLIEndpoint 控制 Gemini CLI 内部端点（/v1internal:*）是否启用。
+	// 默认为 false 以确保安全；为 false 时，/v1internal:* 请求被拒绝。
 	EnableGeminiCLIEndpoint bool `yaml:"enable-gemini-cli-endpoint" json:"enable-gemini-cli-endpoint"`
 
-	// ForceModelPrefix requires explicit model prefixes (e.g., "teamA/gemini-3-pro-preview")
-	// to target prefixed credentials. When false, unprefixed model requests may use prefixed
-	// credentials as well.
+	// ForceModelPrefix 要求显式模型前缀（如 "teamA/gemini-3-pro-preview"）
+	// 以定向到带前缀的凭证。为 false 时，无前缀的模型请求也可以使用带前缀的凭证。
 	ForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
 
-	// RequestLog enables or disables detailed request logging functionality.
+	// RequestLog 启用或禁用详细请求日志功能。
 	RequestLog bool `yaml:"request-log" json:"request-log"`
 
-	// APIKeys is a list of keys for authenticating clients to this proxy server.
+	// APIKeys 是用于认证客户端到此代理服务器的密钥列表。
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
-	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
-	// Default is false (disabled).
+	// PassthroughHeaders 控制上游响应头是否转发给下游客户端。
+	// 默认为 false（禁用）。
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`
 
-	// Streaming configures server-side streaming behavior (keep-alives and safe bootstrap retries).
+	// Streaming 配置服务器端流式行为（保活和安全引导重试）。
 	Streaming StreamingConfig `yaml:"streaming" json:"streaming"`
 
-	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
-	// <= 0 disables keep-alives. Value is in seconds.
+	// NonStreamKeepAliveInterval 控制非流式响应发出空行的频率。
+	// <= 0 禁用保活。值以秒为单位。
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
 }
 
-// StreamingConfig holds server streaming behavior configuration.
+// StreamingConfig 保存服务器流式行为配置。
 type StreamingConfig struct {
-	// KeepAliveSeconds controls how often the server emits SSE heartbeats (": keep-alive\n\n").
-	// <= 0 disables keep-alives. Default is 0.
+	// KeepAliveSeconds 控制服务器发出 SSE 心跳（": keep-alive\n\n"）的频率。
+	// <= 0 禁用保活。默认为 0。
 	KeepAliveSeconds int `yaml:"keepalive-seconds,omitempty" json:"keepalive-seconds,omitempty"`
 
-	// BootstrapRetries controls how many times the server may retry a streaming request before any bytes are sent,
-	// to allow auth rotation / transient recovery.
-	// <= 0 disables bootstrap retries. Default is 0.
+	// BootstrapRetries 控制服务器在发送任何字节之前可以重试流式请求的次数，
+	// 以允许认证轮换/瞬态恢复。
+	// <= 0 禁用引导重试。默认为 0。
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
 }

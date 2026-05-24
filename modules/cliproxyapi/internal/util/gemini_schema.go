@@ -11,8 +11,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// gjsonPathKeyReplacer 用于转义 gjson/sjson 路径中的特殊字符（.、*、?）。
 var gjsonPathKeyReplacer = strings.NewReplacer(".", "\\.", "*", "\\*", "?", "\\?")
 
+// placeholderReasonDescription 是空 schema 占位属性的默认描述文本。
 const placeholderReasonDescription = "Brief explanation of why you are calling this tool"
 
 // CleanJSONSchemaForAntigravity transforms a JSON schema to be compatible with Antigravity API.
@@ -171,6 +173,8 @@ func convertRefsToHints(jsonStr string) string {
 	return jsonStr
 }
 
+// convertConstToEnum 将 JSON Schema 中的 const 关键字转换为单元素的 enum 数组，
+// 以兼容不支持 const 语法的目标 API。
 func convertConstToEnum(jsonStr string) string {
 	for _, p := range findPaths(jsonStr, "const") {
 		val := gjson.Get(jsonStr, p)
@@ -211,6 +215,8 @@ func convertEnumValuesToStrings(jsonStr string) string {
 	return jsonStr
 }
 
+// addEnumHints 为枚举值数量在 2-10 之间的字段添加 "Allowed: val1, val2, ..." 格式的描述提示，
+// 帮助模型理解可接受的值范围。
 func addEnumHints(jsonStr string) string {
 	for _, p := range findPaths(jsonStr, "enum") {
 		arr := gjson.Get(jsonStr, p)
@@ -231,6 +237,8 @@ func addEnumHints(jsonStr string) string {
 	return jsonStr
 }
 
+// addAdditionalPropertiesHints 为 additionalProperties 设为 false 的对象添加
+// "No extra properties allowed" 描述提示，告知模型不允许添加额外属性。
 func addAdditionalPropertiesHints(jsonStr string) string {
 	for _, p := range findPaths(jsonStr, "additionalProperties") {
 		if gjson.Get(jsonStr, p).Type == gjson.False {
@@ -240,12 +248,16 @@ func addAdditionalPropertiesHints(jsonStr string) string {
 	return jsonStr
 }
 
+// unsupportedConstraints 列出了 Antigravity/Gemini API 不支持的 JSON Schema 约束关键字。
+// 这些约束在清洗过程中会被移除，并将值作为提示信息迁移到 description 字段中。
 var unsupportedConstraints = []string{
 	"minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
 	"pattern", "minItems", "maxItems", "uniqueItems", "format",
 	"default", "examples", // Claude rejects these in VALIDATED mode
 }
 
+// moveConstraintsToDescription 将不支持的约束关键字（如 minLength、maxItems 等）的值
+// 作为提示信息追加到 description 字段中，然后从 schema 中移除这些关键字。
 func moveConstraintsToDescription(jsonStr string) string {
 	pathsByField := findPathsByFields(jsonStr, unsupportedConstraints)
 	for _, key := range unsupportedConstraints {
@@ -264,6 +276,8 @@ func moveConstraintsToDescription(jsonStr string) string {
 	return jsonStr
 }
 
+// mergeAllOf 将 allOf 数组中的所有 properties 和 required 合并到父级对象中，
+// 然后移除 allOf 关键字。这是 JSON Schema allOf 语义的扁平化实现。
 func mergeAllOf(jsonStr string) string {
 	paths := findPaths(jsonStr, "allOf")
 	sortByDepth(paths)
@@ -301,6 +315,8 @@ func mergeAllOf(jsonStr string) string {
 	return jsonStr
 }
 
+// flattenAnyOfOneOf 将 anyOf/oneOf 数组展开为单个最佳匹配的 schema，
+// 并在 description 中添加 "Accepts: type1 | type2" 的备选类型提示。
 func flattenAnyOfOneOf(jsonStr string) string {
 	for _, key := range []string{"anyOf", "oneOf"} {
 		paths := findPaths(jsonStr, key)
@@ -334,6 +350,8 @@ func flattenAnyOfOneOf(jsonStr string) string {
 	return jsonStr
 }
 
+// selectBest 从 anyOf/oneOf 的备选项中选择最佳匹配（优先级：object > array > 其他类型 > null），
+// 并收集所有非 null 类型用于生成描述提示。
 func selectBest(items []gjson.Result) (bestIdx int, types []string) {
 	bestScore := -1
 	for i, item := range items {
@@ -361,6 +379,9 @@ func selectBest(items []gjson.Result) (bestIdx int, types []string) {
 	return
 }
 
+// flattenTypeArrays 将 type 数组（如 ["string", "null"]）扁平化为单个类型字符串，
+// 多种非 null 类型时添加 "Accepts: ..." 提示，包含 null 时添加 "(nullable)" 提示
+// 并从 required 中移除可空字段。
 func flattenTypeArrays(jsonStr string) string {
 	paths := findPaths(jsonStr, "type")
 	sortByDepth(paths)
@@ -436,6 +457,9 @@ func flattenTypeArrays(jsonStr string) string {
 	return jsonStr
 }
 
+// removeUnsupportedKeywords 移除所有目标 API 不支持的 schema 关键字，包括约束关键字、
+// $ref/definitions 等引用相关字段、以及 Gemini 不支持的元数据字段。
+// 同时调用 removeExtensionFields 移除 x-* 扩展字段。
 func removeUnsupportedKeywords(jsonStr string) string {
 	keywords := append(unsupportedConstraints,
 		"$schema", "$defs", "definitions", "const", "$ref", "$id", "additionalProperties",
@@ -505,6 +529,8 @@ func walkForExtensions(value gjson.Result, path string, paths *[]string) {
 	}
 }
 
+// cleanupRequiredFields 清理 required 数组，移除引用了不存在属性的条目，
+// 确保 required 中的每个字段都在 properties 中有定义。
 func cleanupRequiredFields(jsonStr string) string {
 	for _, p := range findPaths(jsonStr, "required") {
 		parentPath := trimSuffix(p, ".required")
@@ -604,14 +630,16 @@ func addEmptySchemaPlaceholder(jsonStr string) string {
 	return jsonStr
 }
 
-// --- Helpers ---
+// --- 辅助函数 ---
 
+// findPaths 在 JSON 字符串中查找指定字段名的所有路径。
 func findPaths(jsonStr, field string) []string {
 	var paths []string
 	Walk(gjson.Parse(jsonStr), "", field, &paths)
 	return paths
 }
 
+// findPathsByFields 在 JSON 字符串中批量查找多个字段名的路径，返回字段名到路径列表的映射。
 func findPathsByFields(jsonStr string, fields []string) map[string][]string {
 	set := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
@@ -622,6 +650,7 @@ func findPathsByFields(jsonStr string, fields []string) map[string][]string {
 	return paths
 }
 
+// walkForFields 递归遍历 JSON 结构，收集所有匹配指定字段集的路径。
 func walkForFields(value gjson.Result, path string, fields map[string]struct{}, paths map[string][]string) {
 	switch value.Type {
 	case gjson.JSON:
@@ -648,10 +677,13 @@ func walkForFields(value gjson.Result, path string, fields map[string]struct{}, 
 	}
 }
 
+// sortByDepth 按路径深度降序排序（深层路径在前），确保删除操作从最深层开始，
+// 避免浅层删除影响深层路径的定位。
 func sortByDepth(paths []string) {
 	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
 }
 
+// trimSuffix 移除路径末尾的指定后缀，若路径等于后缀（去除前导点号后）则返回空字符串。
 func trimSuffix(path, suffix string) string {
 	if path == strings.TrimPrefix(suffix, ".") {
 		return ""
@@ -659,6 +691,7 @@ func trimSuffix(path, suffix string) string {
 	return strings.TrimSuffix(path, suffix)
 }
 
+// joinPath 拼接 JSON 路径的基路径和后缀，基路径为空时直接返回后缀。
 func joinPath(base, suffix string) string {
 	if base == "" {
 		return suffix
@@ -666,6 +699,7 @@ func joinPath(base, suffix string) string {
 	return base + "." + suffix
 }
 
+// setRawAt 在指定路径设置原始 JSON 值，路径为空时直接返回值本身。
 func setRawAt(jsonStr, path, value string) string {
 	if path == "" {
 		return value
@@ -674,10 +708,13 @@ func setRawAt(jsonStr, path, value string) string {
 	return string(result)
 }
 
+// isPropertyDefinition 判断路径是否指向 properties 定义节点（而非属性值），
+// 用于避免误删名为约束关键字的属性。
 func isPropertyDefinition(path string) bool {
 	return path == "properties" || strings.HasSuffix(path, ".properties")
 }
 
+// descriptionPath 返回指定父路径下 description 字段的完整路径。
 func descriptionPath(parentPath string) string {
 	if parentPath == "" || parentPath == "@this" {
 		return "description"
@@ -685,6 +722,8 @@ func descriptionPath(parentPath string) string {
 	return parentPath + ".description"
 }
 
+// appendHint 将提示信息追加到指定路径的 description 字段中，
+// 若已有 description 则以 "(existing hint) (new hint)" 格式合并。
 func appendHint(jsonStr, parentPath, hint string) string {
 	descPath := parentPath + ".description"
 	if parentPath == "" || parentPath == "@this" {
@@ -699,6 +738,7 @@ func appendHint(jsonStr, parentPath, hint string) string {
 	return jsonStr
 }
 
+// appendHintRaw 将提示信息追加到原始 JSON 字符串的 description 字段中。
 func appendHintRaw(jsonRaw, hint string) string {
 	existing := gjson.Get(jsonRaw, "description").String()
 	if existing != "" {
@@ -709,6 +749,7 @@ func appendHintRaw(jsonRaw, hint string) string {
 	return jsonRaw
 }
 
+// getStrings 从 JSON 字符串中提取指定路径的字符串数组值。
 func getStrings(jsonStr, path string) []string {
 	var result []string
 	if arr := gjson.Get(jsonStr, path); arr.IsArray() {
@@ -719,6 +760,7 @@ func getStrings(jsonStr, path string) []string {
 	return result
 }
 
+// contains 检查字符串切片中是否包含指定的字符串。
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
@@ -728,6 +770,7 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+// orDefault 返回非空值本身，若为空字符串则返回默认值。
 func orDefault(val, def string) string {
 	if val == "" {
 		return def
@@ -735,6 +778,8 @@ func orDefault(val, def string) string {
 	return val
 }
 
+// escapeGJSONPathKey 转义 gjson/sjson 路径键中的特殊字符（.、*、?），
+// 确保包含这些字符的属性名能被正确解析。
 func escapeGJSONPathKey(key string) string {
 	if strings.IndexAny(key, ".*?") == -1 {
 		return key
@@ -742,6 +787,7 @@ func escapeGJSONPathKey(key string) string {
 	return gjsonPathKeyReplacer.Replace(key)
 }
 
+// unescapeGJSONPathKey 还原 gjson/sjson 路径键中的转义字符。
 func unescapeGJSONPathKey(key string) string {
 	if !strings.Contains(key, "\\") {
 		return key
@@ -759,6 +805,8 @@ func unescapeGJSONPathKey(key string) string {
 	return b.String()
 }
 
+// splitGJSONPath 将 gjson 路径按未转义的点号分割为各段，
+// 正确处理转义的点号（\.）不作为分隔符。
 func splitGJSONPath(path string) []string {
 	if path == "" {
 		return nil
@@ -787,6 +835,8 @@ func splitGJSONPath(path string) []string {
 	return parts
 }
 
+// mergeDescriptionRaw 合并父级 description 到子级 schema 的原始 JSON 中，
+// 存在子级 description 时以 "parent (child)" 格式合并。
 func mergeDescriptionRaw(schemaRaw, parentDesc string) string {
 	childDesc := gjson.Get(schemaRaw, "description").String()
 	switch {

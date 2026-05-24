@@ -1,3 +1,6 @@
+// auth - oauth_model_alias_test.go
+// 该文件包含 OAuth 模型别名解析的单元测试，验证后缀保留（如思考模型的 (8192) 后缀）、
+// 渠道隔离、大小写不敏感匹配等功能。
 package auth
 
 import (
@@ -6,6 +9,8 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestResolveOAuthUpstreamModel_SuffixPreservation 测试 OAuth 模型别名解析时
+// 后缀保留功能，验证数值后缀、级别后缀、思考后缀等在别名解析后仍被正确保留。
 func TestResolveOAuthUpstreamModel_SuffixPreservation(t *testing.T) {
 	t.Parallel()
 

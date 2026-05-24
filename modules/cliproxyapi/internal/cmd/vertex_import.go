@@ -1,3 +1,6 @@
+// Package cmd 包含 CLI 辅助工具。本文件实现了将 Vertex AI 服务账号 JSON
+// 导入到认证存储中作为专用的 "vertex" 凭据。
+//
 // Package cmd contains CLI helpers. This file implements importing a Vertex AI
 // service account JSON into the auth store as a dedicated "vertex" credential.
 package cmd
@@ -17,9 +20,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// DoVertexImport imports a Google Cloud service account key JSON and persists
-// it as a "vertex" provider credential. The file content is embedded in the auth
-// file to allow portable deployment across stores.
+// DoVertexImport 导入 Google Cloud 服务账号密钥 JSON 并将其作为 "vertex" 提供商凭据持久化。
+// 文件内容嵌入到认证文件中，以便在不同存储之间进行可移植部署。
+//
+// 参数:
+//   - cfg: 应用程序配置
+//   - keyPath: 服务账号密钥 JSON 文件路径
+//   - prefix: 可选的模型命名空间前缀
+//
+// DoVertexImport imports a Google Cloud service account key JSON.
 func DoVertexImport(cfg *config.Config, keyPath string, prefix string) {
 	if cfg == nil {
 		cfg = &config.Config{}

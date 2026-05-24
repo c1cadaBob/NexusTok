@@ -1,3 +1,7 @@
+// redisqueue - plugin_test.go
+// 该文件包含 usageQueuePlugin 的单元测试，验证使用量记录的队列载荷字段完整性、
+// 异步处理时的响应头快照、失败状态记录、Gin 上下文回收隔离等行为。
+// 同时包含多个测试辅助函数和辅助类型。
 package redisqueue
 
 import (
@@ -13,6 +17,9 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess 测试成功的使用量记录载荷中
+// 包含所有稳定字段（provider、model、alias、endpoint、request_id 等），
+// 验证敏感字段（user_api_key）不被包含，以及 failed 字段为 false。
 func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ctx := internallogging.WithRequestID(context.Background(), "ctx-request-id")
@@ -60,6 +67,8 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 	})
 }
 
+// TestUsageQueuePluginAsyncUsesRecordResponseHeaders 测试异步插件处理时使用的是
+// 记录发布时刻的响应头快照，而非后续被修改的响应头。
 func TestUsageQueuePluginAsyncUsesRecordResponseHeaders(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ctx := internallogging.WithRequestID(context.Background(), "ctx-request-id")
@@ -104,6 +113,8 @@ func TestUsageQueuePluginAsyncUsesRecordResponseHeaders(t *testing.T) {
 	})
 }
 
+// TestUsageQueuePluginPayloadIncludesStableFieldsAndFailureAndGinRequestID 测试失败请求的载荷
+// 包含正确的失败状态信息（failed=true、status_code、body）以及 Gin 请求 ID。
 func TestUsageQueuePluginPayloadIncludesStableFieldsAndFailureAndGinRequestID(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ctx := internallogging.WithRequestID(context.Background(), "gin-request-id")
@@ -146,6 +157,8 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndFailureAndGinRequestID(t 
 	})
 }
 
+// TestUsageQueuePluginAsyncIgnoresRecycledGinContext 测试异步处理时忽略被回收复用的
+// Gin 上下文，确保使用的是发布时刻的请求信息而非后续被修改的上下文。
 func TestUsageQueuePluginAsyncIgnoresRecycledGinContext(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ginCtx := newTestGinContext(t, http.MethodPost, "/v1/chat/completions", http.StatusOK)
@@ -195,6 +208,8 @@ func TestUsageQueuePluginAsyncIgnoresRecycledGinContext(t *testing.T) {
 	})
 }
 
+// withEnabledQueue 是测试辅助函数，在测试期间临时启用队列和使用量统计功能，
+// 测试结束后恢复原始状态。
 func withEnabledQueue(t *testing.T, fn func()) {
 	t.Helper()
 
@@ -214,6 +229,7 @@ func withEnabledQueue(t *testing.T, fn func()) {
 	fn()
 }
 
+// newTestGinContext 创建用于测试的 Gin 上下文，包含指定的 HTTP 方法、路径和状态码。
 func newTestGinContext(t *testing.T, method, path string, status int) *gin.Context {
 	t.Helper()
 
@@ -227,6 +243,7 @@ func newTestGinContext(t *testing.T, method, path string, status int) *gin.Conte
 	return ginCtx
 }
 
+// popSinglePayload 从队列中弹出单条载荷并反序列化为 map，若队列中不是恰好一条记录则测试失败。
 func popSinglePayload(t *testing.T) map[string]json.RawMessage {
 	t.Helper()
 
@@ -242,6 +259,7 @@ func popSinglePayload(t *testing.T) map[string]json.RawMessage {
 	return payload
 }
 
+// waitForSinglePayload 等待队列中出现单条载荷，在超时时间内轮询直到有数据可用。
 func waitForSinglePayload(t *testing.T, timeout time.Duration) map[string]json.RawMessage {
 	t.Helper()
 
@@ -265,6 +283,7 @@ func waitForSinglePayload(t *testing.T, timeout time.Duration) map[string]json.R
 	return nil
 }
 
+// requireStringField 断言载荷中指定键的字符串值等于期望值。
 func requireStringField(t *testing.T, payload map[string]json.RawMessage, key, want string) {
 	t.Helper()
 
@@ -281,6 +300,7 @@ func requireStringField(t *testing.T, payload map[string]json.RawMessage, key, w
 	}
 }
 
+// requireMissingField 断言载荷中不包含指定键。
 func requireMissingField(t *testing.T, payload map[string]json.RawMessage, key string) {
 	t.Helper()
 
@@ -289,12 +309,15 @@ func requireMissingField(t *testing.T, payload map[string]json.RawMessage, key s
 	}
 }
 
+// pluginFunc 是一个函数类型适配器，将普通函数适配为 usage 插件接口。
 type pluginFunc func(context.Context, coreusage.Record)
 
+// HandleUsage 实现 usage 插件接口，调用底层函数处理使用量记录。
 func (fn pluginFunc) HandleUsage(ctx context.Context, record coreusage.Record) {
 	fn(ctx, record)
 }
 
+// requireBoolField 断言载荷中指定键的布尔值等于期望值。
 func requireBoolField(t *testing.T, payload map[string]json.RawMessage, key string, want bool) {
 	t.Helper()
 
@@ -311,6 +334,7 @@ func requireBoolField(t *testing.T, payload map[string]json.RawMessage, key stri
 	}
 }
 
+// requireFailField 断言载荷中的 fail 对象包含期望的状态码和错误体。
 func requireFailField(t *testing.T, payload map[string]json.RawMessage, wantStatus int, wantBody string) {
 	t.Helper()
 
@@ -330,6 +354,7 @@ func requireFailField(t *testing.T, payload map[string]json.RawMessage, wantStat
 	}
 }
 
+// requireHeaderField 断言载荷中指定字段的 HTTP 头包含期望的键值对。
 func requireHeaderField(t *testing.T, payload map[string]json.RawMessage, field, key string, want []string) {
 	t.Helper()
 

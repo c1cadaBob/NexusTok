@@ -1,3 +1,20 @@
+// Package model - account_pool.go
+// 该文件定义了账号池（Account Pool）数据模型及相关操作
+//
+// 主要结构体：
+// - AccountPoolGroup：账号池分组，定义一组账号的公共配置和调度策略
+// - PoolAccount：池账号，存储单个账号的凭据和状态信息
+//
+// 常量定义：
+// - 认证类型（AuthType）：api_key、official_oauth、cookie、service_account、custom_json
+// - 分组来源（Source）：native（原生）、cliproxyapi（CLI 代理 API）
+// - 调度策略（Strategy）：round_robin（轮询）、weighted（加权）、fill_first（优先填满）、least_used（最少使用）
+//
+// 核心功能：
+// - 账号池分组和账号的增删改查
+// - 账号凭据的脱敏摘要生成
+// - 账号状态管理（启用/禁用/冷却中）
+// - 账号使用统计（配额、请求数、成功/失败计数）
 package model
 
 import (
@@ -9,90 +26,106 @@ import (
 )
 
 const (
-	AccountPoolAuthTypeAPIKey         = "api_key"
-	AccountPoolAuthTypeOfficialOAuth  = "official_oauth"
-	AccountPoolAuthTypeCookie         = "cookie"
+	// AccountPoolAuthTypeAPIKey API Key 认证方式
+	AccountPoolAuthTypeAPIKey = "api_key"
+	// AccountPoolAuthTypeOfficialOAuth 官方 OAuth 认证方式
+	AccountPoolAuthTypeOfficialOAuth = "official_oauth"
+	// AccountPoolAuthTypeCookie Cookie 认证方式
+	AccountPoolAuthTypeCookie = "cookie"
+	// AccountPoolAuthTypeServiceAccount 服务账号认证方式
 	AccountPoolAuthTypeServiceAccount = "service_account"
-	AccountPoolAuthTypeCustomJSON     = "custom_json"
+	// AccountPoolAuthTypeCustomJSON 自定义 JSON 认证方式
+	AccountPoolAuthTypeCustomJSON = "custom_json"
 
-	AccountPoolGroupSourceNative      = "native"
+	// AccountPoolGroupSourceNative 原生分组（手动创建）
+	AccountPoolGroupSourceNative = "native"
+	// AccountPoolGroupSourceCLIProxyAPI CLI 代理 API 来源
 	AccountPoolGroupSourceCLIProxyAPI = "cliproxyapi"
 
+	// AccountPoolStrategyRoundRobin 轮询调度策略
 	AccountPoolStrategyRoundRobin = "round_robin"
-	AccountPoolStrategyWeighted   = "weighted"
-	AccountPoolStrategyFillFirst  = "fill_first"
-	AccountPoolStrategyLeastUsed  = "least_used"
+	// AccountPoolStrategyWeighted 加权调度策略
+	AccountPoolStrategyWeighted = "weighted"
+	// AccountPoolStrategyFillFirst 优先填满调度策略
+	AccountPoolStrategyFillFirst = "fill_first"
+	// AccountPoolStrategyLeastUsed 最少使用调度策略
+	AccountPoolStrategyLeastUsed = "least_used"
 )
 
+// AccountPoolGroup 账号池分组模型
+// 定义一组账号的公共配置，包括平台、认证类型、调度策略等
 type AccountPoolGroup struct {
-	Id           int     `json:"id"`
-	Name         string  `json:"name" gorm:"type:varchar(255);index;not null"`
-	Platform     string  `json:"platform" gorm:"type:varchar(64);index;not null"`
-	AuthType     string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`
-	Source       string  `json:"source" gorm:"type:varchar(64);default:'native';index"`
-	ExternalKey  string  `json:"external_group_key" gorm:"column:external_group_key;type:varchar(255);index"`
-	Status       int     `json:"status" gorm:"default:1;index"`
-	Strategy     string  `json:"strategy" gorm:"type:varchar(64);default:'round_robin'"`
-	Models       string  `json:"models" gorm:"type:text"`
-	Group        string  `json:"group" gorm:"column:group;type:varchar(255);index"`
-	ModelMapping *string `json:"model_mapping" gorm:"type:text"`
-	Settings     string  `json:"settings" gorm:"type:text"`
-	CreatedTime  int64   `json:"created_time" gorm:"bigint"`
-	UpdatedTime  int64   `json:"updated_time" gorm:"bigint"`
+	Id           int     `json:"id"`                                                               // 分组 ID
+	Name         string  `json:"name" gorm:"type:varchar(255);index;not null"`                      // 分组名称
+	Platform     string  `json:"platform" gorm:"type:varchar(64);index;not null"`                   // 平台标识（如 openai、claude）
+	AuthType     string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                  // 认证类型
+	Source       string  `json:"source" gorm:"type:varchar(64);default:'native';index"`             // 分组来源
+	ExternalKey  string  `json:"external_group_key" gorm:"column:external_group_key;type:varchar(255);index"` // 外部分组标识
+	Status       int     `json:"status" gorm:"default:1;index"`                                    // 状态（1=启用，2=禁用）
+	Strategy     string  `json:"strategy" gorm:"type:varchar(64);default:'round_robin'"`            // 调度策略
+	Models       string  `json:"models" gorm:"type:text"`                                          // 支持的模型列表（逗号分隔）
+	Group        string  `json:"group" gorm:"column:group;type:varchar(255);index"`                 // 关联的渠道分组
+	ModelMapping *string `json:"model_mapping" gorm:"type:text"`                                    // 模型映射
+	Settings     string  `json:"settings" gorm:"type:text"`                                         // 额外设置（JSON）
+	CreatedTime  int64   `json:"created_time" gorm:"bigint"`                                        // 创建时间
+	UpdatedTime  int64   `json:"updated_time" gorm:"bigint"`                                        // 更新时间
 
-	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"`
+	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
 }
 
+// PoolAccount 池账号模型
+// 存储单个账号的凭据、状态和使用统计信息
 type PoolAccount struct {
-	Id                 int     `json:"id"`
-	PoolGroupId        int     `json:"pool_group_id" gorm:"index;not null"`
-	Name               string  `json:"name" gorm:"type:varchar(255);index;not null"`
-	Platform           string  `json:"platform" gorm:"type:varchar(64);index;not null"`
-	AuthType           string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`
-	Credentials        string  `json:"credentials" gorm:"type:text;not null"`
-	CredentialSummary  string  `json:"credential_summary" gorm:"type:text"`
-	CredentialProvider string  `json:"credential_provider" gorm:"type:varchar(64);index"`
-	CredentialLabel    string  `json:"credential_label" gorm:"type:varchar(255)"`
-	CredentialMetadata string  `json:"credential_metadata" gorm:"type:text"`
-	CredentialAttrs    string  `json:"credential_attributes" gorm:"column:credential_attributes;type:text"`
-	Status             int     `json:"status" gorm:"default:1;index"`
-	StatusMessage      string  `json:"status_message" gorm:"type:text"`
-	Schedulable        bool    `json:"schedulable" gorm:"default:true;index"`
-	Unavailable        bool    `json:"unavailable" gorm:"default:false;index"`
-	Models             string  `json:"models" gorm:"type:text"`
-	Group              string  `json:"group" gorm:"column:group;type:varchar(255);index"`
-	Priority           int64   `json:"priority" gorm:"bigint;default:0;index"`
-	Weight             int     `json:"weight" gorm:"default:1;index"`
-	MaxConcurrency     int     `json:"max_concurrency" gorm:"default:0"`
-	Proxy              string  `json:"proxy" gorm:"type:text"`
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	Other              string  `json:"other"`
-	Setting            *string `json:"setting" gorm:"type:text"`
-	OtherSettings      string  `json:"settings" gorm:"column:settings;type:text"`
-	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
-	ParamOverride      *string `json:"param_override" gorm:"type:text"`
-	HeaderOverride     *string `json:"header_override" gorm:"type:text"`
-	StatusCodeMapping  *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
-	LastUsedTime       int64   `json:"last_used_time" gorm:"bigint;default:0;index"`
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
-	RateLimitedUntil   int64   `json:"rate_limited_until" gorm:"bigint;default:0;index"`
-	OverloadUntil      int64   `json:"overload_until" gorm:"bigint;default:0;index"`
-	TempDisabledUntil  int64   `json:"temp_disabled_until" gorm:"bigint;default:0;index"`
-	DisabledReason     string  `json:"disabled_reason" gorm:"type:text"`
-	LastError          string  `json:"last_error" gorm:"type:text"`
-	QuotaSnapshot      string  `json:"quota_snapshot" gorm:"type:text"`
-	ModelStates        string  `json:"model_states" gorm:"type:text"`
-	LastRefreshedTime  int64   `json:"last_refreshed_time" gorm:"bigint;default:0;index"`
-	NextRefreshTime    int64   `json:"next_refresh_time" gorm:"bigint;default:0;index"`
-	NextRetryTime      int64   `json:"next_retry_time" gorm:"bigint;default:0;index"`
-	SuccessCount       int64   `json:"success_count" gorm:"bigint;default:0"`
-	FailedCount        int64   `json:"failed_count" gorm:"bigint;default:0"`
-	RecentRequests     string  `json:"recent_requests" gorm:"type:text"`
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
-	UpdatedTime        int64   `json:"updated_time" gorm:"bigint"`
+	Id                 int     `json:"id"`                                                               // 账号 ID
+	PoolGroupId        int     `json:"pool_group_id" gorm:"index;not null"`                              // 所属分组 ID
+	Name               string  `json:"name" gorm:"type:varchar(255);index;not null"`                      // 账号名称
+	Platform           string  `json:"platform" gorm:"type:varchar(64);index;not null"`                   // 平台标识
+	AuthType           string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                  // 认证类型
+	Credentials        string  `json:"credentials" gorm:"type:text;not null"`                             // 加密存储的凭据
+	CredentialSummary  string  `json:"credential_summary" gorm:"type:text"`                               // 凭据摘要（脱敏）
+	CredentialProvider string  `json:"credential_provider" gorm:"type:varchar(64);index"`                 // 凭据提供方
+	CredentialLabel    string  `json:"credential_label" gorm:"type:varchar(255)"`                         // 凭据标签
+	CredentialMetadata string  `json:"credential_metadata" gorm:"type:text"`                              // 凭据元数据（JSON）
+	CredentialAttrs    string  `json:"credential_attributes" gorm:"column:credential_attributes;type:text"` // 凭据属性（JSON）
+	Status             int     `json:"status" gorm:"default:1;index"`                                    // 状态
+	StatusMessage      string  `json:"status_message" gorm:"type:text"`                                   // 状态说明
+	Schedulable        bool    `json:"schedulable" gorm:"default:true;index"`                             // 是否可调度
+	Unavailable        bool    `json:"unavailable" gorm:"default:false;index"`                            // 是否不可用
+	Models             string  `json:"models" gorm:"type:text"`                                          // 支持的模型
+	Group              string  `json:"group" gorm:"column:group;type:varchar(255);index"`                 // 关联的渠道分组
+	Priority           int64   `json:"priority" gorm:"bigint;default:0;index"`                            // 优先级
+	Weight             int     `json:"weight" gorm:"default:1;index"`                                    // 权重
+	MaxConcurrency     int     `json:"max_concurrency" gorm:"default:0"`                                 // 最大并发数（0=不限）
+	Proxy              string  `json:"proxy" gorm:"type:text"`                                           // 代理地址
+	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`                        // 自定义 API 基础 URL
+	OpenAIOrganization *string `json:"openai_organization"`                                               // OpenAI 组织 ID
+	Other              string  `json:"other"`                                                            // 其他配置
+	Setting            *string `json:"setting" gorm:"type:text"`                                         // 账号级设置
+	OtherSettings      string  `json:"settings" gorm:"column:settings;type:text"`                         // 额外设置
+	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`                                    // 账号级模型映射
+	ParamOverride      *string `json:"param_override" gorm:"type:text"`                                   // 参数覆盖
+	HeaderOverride     *string `json:"header_override" gorm:"type:text"`                                  // 请求头覆盖
+	StatusCodeMapping  *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`          // 状态码映射
+	LastUsedTime       int64   `json:"last_used_time" gorm:"bigint;default:0;index"`                      // 最后使用时间
+	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`                                // 已用配额
+	RateLimitedUntil   int64   `json:"rate_limited_until" gorm:"bigint;default:0;index"`                   // 限流截止时间
+	OverloadUntil      int64   `json:"overload_until" gorm:"bigint;default:0;index"`                      // 过载截止时间
+	TempDisabledUntil  int64   `json:"temp_disabled_until" gorm:"bigint;default:0;index"`                  // 临时禁用截止时间
+	DisabledReason     string  `json:"disabled_reason" gorm:"type:text"`                                   // 禁用原因
+	LastError          string  `json:"last_error" gorm:"type:text"`                                        // 最近错误信息
+	QuotaSnapshot      string  `json:"quota_snapshot" gorm:"type:text"`                                    // 配额快照
+	ModelStates        string  `json:"model_states" gorm:"type:text"`                                      // 模型状态（JSON）
+	LastRefreshedTime  int64   `json:"last_refreshed_time" gorm:"bigint;default:0;index"`                  // 最后刷新时间
+	NextRefreshTime    int64   `json:"next_refresh_time" gorm:"bigint;default:0;index"`                    // 下次刷新时间
+	NextRetryTime      int64   `json:"next_retry_time" gorm:"bigint;default:0;index"`                      // 下次重试时间
+	SuccessCount       int64   `json:"success_count" gorm:"bigint;default:0"`                              // 成功请求数
+	FailedCount        int64   `json:"failed_count" gorm:"bigint;default:0"`                               // 失败请求数
+	RecentRequests     string  `json:"recent_requests" gorm:"type:text"`                                   // 最近请求记录
+	CreatedTime        int64   `json:"created_time" gorm:"bigint"`                                         // 创建时间
+	UpdatedTime        int64   `json:"updated_time" gorm:"bigint"`                                         // 更新时间
 }
 
+// BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
 func (group *AccountPoolGroup) BeforeCreate(tx *gorm.DB) error {
 	_ = tx
 	now := common.GetTimestamp()
@@ -104,6 +137,7 @@ func (group *AccountPoolGroup) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// BeforeUpdate GORM 钩子：更新前自动设置更新时间和规范化字段
 func (group *AccountPoolGroup) BeforeUpdate(tx *gorm.DB) error {
 	_ = tx
 	group.UpdatedTime = common.GetTimestamp()
@@ -111,6 +145,7 @@ func (group *AccountPoolGroup) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+// normalize 规范化分组字段（小写化、去空格、设置默认值）
 func (group *AccountPoolGroup) normalize() {
 	if group.Status == 0 {
 		group.Status = common.ChannelStatusEnabled
@@ -131,6 +166,7 @@ func (group *AccountPoolGroup) normalize() {
 	}
 }
 
+// BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
 func (account *PoolAccount) BeforeCreate(tx *gorm.DB) error {
 	_ = tx
 	now := common.GetTimestamp()
@@ -142,6 +178,7 @@ func (account *PoolAccount) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// BeforeUpdate GORM 钩子：更新前自动设置更新时间和规范化字段
 func (account *PoolAccount) BeforeUpdate(tx *gorm.DB) error {
 	_ = tx
 	account.UpdatedTime = common.GetTimestamp()
@@ -149,6 +186,7 @@ func (account *PoolAccount) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+// normalize 规范化账号字段（小写化、去空格、设置默认值）
 func (account *PoolAccount) normalize() {
 	if account.Status == 0 {
 		account.Status = common.ChannelStatusEnabled
@@ -168,6 +206,7 @@ func (account *PoolAccount) normalize() {
 	account.CredentialLabel = strings.TrimSpace(account.CredentialLabel)
 }
 
+// GetWeight 获取账号权重，最小为 1
 func (account *PoolAccount) GetWeight() int {
 	if account == nil || account.Weight <= 0 {
 		return 1
@@ -175,6 +214,8 @@ func (account *PoolAccount) GetWeight() int {
 	return account.Weight
 }
 
+// IsCoolingDown 判断账号是否处于冷却状态
+// 包含限流、过载、临时禁用、重试等待四种冷却条件
 func (account *PoolAccount) IsCoolingDown(now int64) bool {
 	if account == nil {
 		return true
@@ -182,6 +223,7 @@ func (account *PoolAccount) IsCoolingDown(now int64) bool {
 	return account.RateLimitedUntil > now || account.OverloadUntil > now || account.TempDisabledUntil > now || account.NextRetryTime > now
 }
 
+// GetDecryptedCredentials 解密并返回账号凭据
 func (account *PoolAccount) GetDecryptedCredentials() (string, error) {
 	if account == nil {
 		return "", nil
@@ -189,6 +231,7 @@ func (account *PoolAccount) GetDecryptedCredentials() (string, error) {
 	return common.DecryptSensitiveString(account.Credentials)
 }
 
+// GetCredentialProvider 获取凭据提供方名称，未设置时回退到平台名
 func (account *PoolAccount) GetCredentialProvider() string {
 	if account == nil {
 		return ""
@@ -200,6 +243,7 @@ func (account *PoolAccount) GetCredentialProvider() string {
 	return strings.ToLower(strings.TrimSpace(provider))
 }
 
+// GetCredentialLabel 获取凭据标签，未设置时回退到账号名称
 func (account *PoolAccount) GetCredentialLabel() string {
 	if account == nil {
 		return ""
@@ -211,6 +255,7 @@ func (account *PoolAccount) GetCredentialLabel() string {
 	return label
 }
 
+// GetBaseURL 获取账号的自定义 API 基础 URL，未设置时返回默认值
 func (account *PoolAccount) GetBaseURL(defaultBaseURL string) string {
 	if account != nil && account.BaseURL != nil && strings.TrimSpace(*account.BaseURL) != "" {
 		return *account.BaseURL
@@ -218,6 +263,7 @@ func (account *PoolAccount) GetBaseURL(defaultBaseURL string) string {
 	return defaultBaseURL
 }
 
+// GetModelMapping 获取账号的模型映射，未设置时返回默认值
 func (account *PoolAccount) GetModelMapping(defaultMapping string) string {
 	if account != nil && account.ModelMapping != nil && strings.TrimSpace(*account.ModelMapping) != "" {
 		return *account.ModelMapping
@@ -225,6 +271,7 @@ func (account *PoolAccount) GetModelMapping(defaultMapping string) string {
 	return defaultMapping
 }
 
+// GetStatusCodeMapping 获取账号的状态码映射，未设置时返回默认值
 func (account *PoolAccount) GetStatusCodeMapping(defaultMapping string) string {
 	if account != nil && account.StatusCodeMapping != nil && strings.TrimSpace(*account.StatusCodeMapping) != "" {
 		return *account.StatusCodeMapping
@@ -232,6 +279,7 @@ func (account *PoolAccount) GetStatusCodeMapping(defaultMapping string) string {
 	return defaultMapping
 }
 
+// GetSetting 获取账号的自定义设置，未设置时返回默认值
 func (account *PoolAccount) GetSetting(defaultSetting string) string {
 	if account != nil && account.Setting != nil && strings.TrimSpace(*account.Setting) != "" {
 		return *account.Setting
@@ -239,6 +287,7 @@ func (account *PoolAccount) GetSetting(defaultSetting string) string {
 	return defaultSetting
 }
 
+// GetOtherSettings 获取账号的额外设置，未设置时返回默认值
 func (account *PoolAccount) GetOtherSettings(defaultSettings string) string {
 	if account != nil && strings.TrimSpace(account.OtherSettings) != "" {
 		return account.OtherSettings
@@ -246,6 +295,7 @@ func (account *PoolAccount) GetOtherSettings(defaultSettings string) string {
 	return defaultSettings
 }
 
+// GetParamOverride 获取账号的参数覆盖配置，未设置时返回默认值
 func (account *PoolAccount) GetParamOverride(defaultOverride *string) *string {
 	if account != nil && account.ParamOverride != nil && strings.TrimSpace(*account.ParamOverride) != "" {
 		return account.ParamOverride
@@ -253,6 +303,7 @@ func (account *PoolAccount) GetParamOverride(defaultOverride *string) *string {
 	return defaultOverride
 }
 
+// GetHeaderOverride 获取账号的请求头覆盖配置，未设置时返回默认值
 func (account *PoolAccount) GetHeaderOverride(defaultOverride *string) *string {
 	if account != nil && account.HeaderOverride != nil && strings.TrimSpace(*account.HeaderOverride) != "" {
 		return account.HeaderOverride
@@ -260,6 +311,8 @@ func (account *PoolAccount) GetHeaderOverride(defaultOverride *string) *string {
 	return defaultOverride
 }
 
+// NormalizeAccountPoolCredentialSummary 规范化凭据摘要
+// 将凭据中的敏感字段（token、key）脱敏后生成摘要
 func NormalizeAccountPoolCredentialSummary(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -290,12 +343,15 @@ func NormalizeAccountPoolCredentialSummary(raw string) string {
 	return MaskTokenKey(raw)
 }
 
+// GetAccountPoolGroupById 根据 ID 获取账号池分组
 func GetAccountPoolGroupById(groupID int) (*AccountPoolGroup, error) {
 	group := &AccountPoolGroup{}
 	err := DB.Where("id = ?", groupID).First(group).Error
 	return group, err
 }
 
+// GetAccountPoolGroups 分页查询账号池分组列表
+// 支持按状态筛选和关键词搜索（名称、平台、认证类型、模型）
 func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]*AccountPoolGroup, int64, error) {
 	if page <= 0 {
 		page = 1
@@ -320,6 +376,8 @@ func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]
 	return groups, total, err
 }
 
+// AttachAccountPoolGroupStats 为分组列表附加账号统计信息
+// 统计每个分组下的账号总数、启用数、禁用数、冷却中数
 func AttachAccountPoolGroupStats(groups []*AccountPoolGroup) {
 	groupIDs := make([]int, 0, len(groups))
 	for _, group := range groups {
@@ -340,6 +398,8 @@ func AttachAccountPoolGroupStats(groups []*AccountPoolGroup) {
 	}
 }
 
+// CountPoolAccountsByGroupIDs 批量统计多个分组的账号状态
+// 返回 map[groupId]map[statusKey]count 的嵌套映射
 func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, error) {
 	result := make(map[int]map[string]int64)
 	uniqueIDs := make([]int, 0, len(groupIDs))
@@ -379,6 +439,7 @@ func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, erro
 	return result, nil
 }
 
+// newPoolAccountStats 创建空的池账号统计映射
 func newPoolAccountStats() map[string]int64 {
 	return map[string]int64{
 		"total":    0,
@@ -388,12 +449,15 @@ func newPoolAccountStats() map[string]int64 {
 	}
 }
 
+// GetPoolAccountById 根据 ID 获取池账号
 func GetPoolAccountById(accountID int) (*PoolAccount, error) {
 	account := &PoolAccount{}
 	err := DB.Where("id = ?", accountID).First(account).Error
 	return account, err
 }
 
+// GetPoolAccounts 分页查询池账号列表
+// 支持按状态筛选和关键词搜索（名称、凭据摘要、模型）
 func GetPoolAccounts(groupID int, page int, pageSize int, status int, search string) ([]*PoolAccount, int64, error) {
 	if page <= 0 {
 		page = 1
@@ -418,6 +482,8 @@ func GetPoolAccounts(groupID int, page int, pageSize int, status int, search str
 	return accounts, total, err
 }
 
+// UpdatePoolAccountStatus 更新池账号状态
+// 启用时自动清除限流、过载、临时禁用等状态
 func UpdatePoolAccountStatus(accountID int, status int, reason string, schedulable *bool) error {
 	updates := map[string]interface{}{
 		"status":          status,
@@ -442,6 +508,7 @@ func UpdatePoolAccountStatus(accountID int, status int, reason string, schedulab
 	return DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(updates).Error
 }
 
+// UpdatePoolAccountErrorState 更新池账号的错误状态字段
 func UpdatePoolAccountErrorState(accountID int, updates map[string]interface{}) error {
 	if accountID <= 0 || len(updates) == 0 {
 		return nil
@@ -449,6 +516,7 @@ func UpdatePoolAccountErrorState(accountID int, updates map[string]interface{}) 
 	return DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(updates).Error
 }
 
+// TouchPoolAccount 更新池账号的最后使用时间
 func TouchPoolAccount(accountID int) {
 	if accountID <= 0 {
 		return
@@ -458,6 +526,7 @@ func TouchPoolAccount(accountID int) {
 	}
 }
 
+// AddPoolAccountUsedQuota 增加池账号的已用配额
 func AddPoolAccountUsedQuota(accountID int, quota int64) {
 	if accountID <= 0 || quota <= 0 {
 		return
@@ -467,6 +536,8 @@ func AddPoolAccountUsedQuota(accountID int, quota int64) {
 	}
 }
 
+// RecordPoolAccountRequest 记录池账号的请求结果
+// 成功时增加成功计数并清除不可用状态，失败时增加失败计数
 func RecordPoolAccountRequest(accountID int, success bool, recentRequests string) {
 	if accountID <= 0 {
 		return

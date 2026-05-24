@@ -1,3 +1,8 @@
+// registry - model_registry_safety_test.go
+// 该文件测试模型注册表的安全性保障，确保返回的模型信息为深拷贝。
+// 测试覆盖了 GetModelInfo、GetModelsForClient、GetAvailableModelsByProvider 返回克隆副本、
+// 配额清理后缓存失效、supported_parameters 克隆以及静态模型定义查找的克隆行为。
+
 package registry
 
 import (
@@ -5,6 +10,7 @@ import (
 	"time"
 )
 
+// TestGetModelInfoReturnsClone 测试 GetModelInfo 返回的模型信息是深拷贝，修改不影响注册表。
 func TestGetModelInfoReturnsClone(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -29,6 +35,7 @@ func TestGetModelInfoReturnsClone(t *testing.T) {
 	}
 }
 
+// TestGetModelsForClientReturnsClones 测试 GetModelsForClient 返回的列表是克隆副本。
 func TestGetModelsForClientReturnsClones(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -56,6 +63,7 @@ func TestGetModelsForClientReturnsClones(t *testing.T) {
 	}
 }
 
+// TestGetAvailableModelsByProviderReturnsClones 测试 GetAvailableModelsByProvider 返回克隆副本。
 func TestGetAvailableModelsByProviderReturnsClones(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -83,6 +91,7 @@ func TestGetAvailableModelsByProviderReturnsClones(t *testing.T) {
 	}
 }
 
+// TestCleanupExpiredQuotasInvalidatesAvailableModelsCache 测试配额清理后可用模型缓存被正确失效。
 func TestCleanupExpiredQuotasInvalidatesAvailableModelsCache(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "openai", []*ModelInfo{{ID: "m1", Created: 1}})
@@ -110,6 +119,7 @@ func TestCleanupExpiredQuotasInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 }
 
+// TestGetAvailableModelsReturnsClonedSupportedParameters 测试 GetAvailableModels 返回的 supported_parameters 是克隆副本。
 func TestGetAvailableModelsReturnsClonedSupportedParameters(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "openai", []*ModelInfo{{
@@ -135,6 +145,7 @@ func TestGetAvailableModelsReturnsClonedSupportedParameters(t *testing.T) {
 	}
 }
 
+// TestLookupModelInfoReturnsCloneForStaticDefinitions 测试 LookupModelInfo 对静态模型定义返回克隆副本。
 func TestLookupModelInfoReturnsCloneForStaticDefinitions(t *testing.T) {
 	first := LookupModelInfo("claude-sonnet-4-6")
 	if first == nil || first.Thinking == nil || len(first.Thinking.Levels) == 0 {

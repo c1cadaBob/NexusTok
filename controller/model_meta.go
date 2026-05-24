@@ -1,3 +1,20 @@
+// Package controller - model_meta.go
+// 该文件实现了模型元数据管理的 API 控制器
+//
+// 模型元数据是系统中 AI 模型的配置信息，包括：
+// - 模型名称、描述、图标
+// - 支持的端点类型
+// - 关联的渠道
+// - 启用的用户分组
+// - 计费类型
+//
+// 主要 API：
+// - GetAllModelsMeta：获取模型列表（分页）
+// - SearchModelsMeta：搜索模型
+// - GetModelMeta：获取单个模型详情
+// - CreateModelMeta：创建模型
+// - UpdateModelMeta：更新模型
+// - DeleteModelMeta：删除模型
 package controller
 
 import (
@@ -14,6 +31,8 @@ import (
 )
 
 // GetAllModelsMeta 获取模型列表（分页）
+//
+// 返回模型列表和供应商计数统计
 func GetAllModelsMeta(c *gin.Context) {
 
 	pageInfo := common.GetPageQuery(c)
@@ -42,6 +61,12 @@ func GetAllModelsMeta(c *gin.Context) {
 }
 
 // SearchModelsMeta 搜索模型列表
+//
+// 支持按关键词和供应商过滤
+//
+// 查询参数：
+//   - keyword: 搜索关键词
+//   - vendor: 供应商名称过滤
 func SearchModelsMeta(c *gin.Context) {
 
 	keyword := c.Query("keyword")
@@ -61,6 +86,9 @@ func SearchModelsMeta(c *gin.Context) {
 }
 
 // GetModelMeta 根据 ID 获取单条模型信息
+//
+// 路径参数：
+//   - id: 模型 ID
 func GetModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -78,6 +106,9 @@ func GetModelMeta(c *gin.Context) {
 }
 
 // CreateModelMeta 新建模型
+//
+// 创建前会检查模型名称是否重复
+// 创建成功后会刷新定价缓存
 func CreateModelMeta(c *gin.Context) {
 	var m model.Model
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -106,6 +137,12 @@ func CreateModelMeta(c *gin.Context) {
 }
 
 // UpdateModelMeta 更新模型
+//
+// 支持两种模式：
+// - 全量更新：更新所有字段
+// - 状态更新：仅更新状态字段（status_only=true）
+//
+// 更新成功后会刷新定价缓存
 func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 
@@ -145,6 +182,8 @@ func UpdateModelMeta(c *gin.Context) {
 }
 
 // DeleteModelMeta 删除模型
+//
+// 删除成功后会刷新定价缓存
 func DeleteModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -160,7 +199,13 @@ func DeleteModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
-// enrichModels 批量填充附加信息：端点、渠道、分组、计费类型，避免 N+1 查询
+// enrichModels 批量填充附加信息：端点、渠道、分组、计费类型
+//
+// 避免 N+1 查询，提升列表接口性能
+// 支持精确匹配和规则匹配（前缀、后缀、包含）两种模型名称匹配方式
+//
+// 参数：
+//   - models: 模型列表
 func enrichModels(models []*model.Model) {
 	if len(models) == 0 {
 		return

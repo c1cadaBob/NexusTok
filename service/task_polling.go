@@ -1,3 +1,9 @@
+// task_polling.go - 异步任务轮询与状态更新
+// 本文件提供异步任务的轮询循环和状态更新功能。
+// 定期检查未完成的异步任务（视频生成、Suno 音乐等），
+// 从上游平台获取最新状态，并在任务完成时触发计费结算。
+// 包括超时任务清理、按平台分发更新、单任务状态同步、
+// 任务完成时的计费调整（退款或差额结算）等功能。
 package service
 
 import (
@@ -162,6 +168,16 @@ func UpdateSunoTasks(ctx context.Context, taskChannelM map[int][]string, taskM m
 	return nil
 }
 
+// updateSunoTasks 更新指定渠道的所有 Suno 任务状态。
+// 通过适配器批量查询上游平台的任务状态，更新本地任务记录。
+// 渠道信息获取失败时，将所有相关任务标记为失败。
+// 参数:
+//   - ctx: 上下文
+//   - channelId: 渠道 ID
+//   - taskIds: 上游任务 ID 列表
+//   - taskM: 上游任务 ID 到本地任务对象的映射
+// 返回值:
+//   - error: 更新过程中的错误
 func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM map[string]*model.Task) error {
 	logger.LogInfo(ctx, fmt.Sprintf("渠道 #%d 未完成的任务有: %d", channelId, len(taskIds)))
 	if len(taskIds) == 0 {
@@ -297,6 +313,17 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 	return nil
 }
 
+// updateVideoTasks 更新指定渠道的所有视频任务状态。
+// 遍历渠道下的所有未完成任务，逐个查询上游平台并更新状态。
+// 每个任务查询之间间隔 1 秒，避免触发上游平台的速率限制。
+// 参数:
+//   - ctx: 上下文
+//   - platform: 任务平台类型
+//   - channelId: 渠道 ID
+//   - taskIds: 上游任务 ID 列表
+//   - taskM: 上游任务 ID 到本地任务对象的映射
+// 返回值:
+//   - error: 更新过程中的错误
 func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
 	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
 	if len(taskIds) == 0 {
@@ -341,6 +368,19 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	return nil
 }
 
+// updateVideoSingleTask 更新单个视频任务的状态。
+// 通过适配器查询上游平台的任务状态，解析响应并更新本地任务记录。
+// 支持两种响应格式：NexusTok 标准格式和平台原生格式。
+// 任务到达终态（成功/失败）时，使用 CAS 更新防止并发冲突，
+// 并触发计费结算（成功时差额结算，失败时退款）。
+// 参数:
+//   - ctx: 上下文
+//   - adaptor: 任务轮询适配器
+//   - ch: 渠道信息
+//   - taskId: 上游任务 ID
+//   - taskM: 上游任务 ID 到本地任务对象的映射
+// 返回值:
+//   - error: 更新过程中的错误
 func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
 	baseURL := constant.ChannelBaseURLs[ch.Type]
 	if ch.GetBaseURL() != "" {
@@ -501,6 +541,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	return nil
 }
 
+// redactVideoResponseBody 脱敏视频响应体中的 Base64 数据。
+// 移除 bytesBase64Encoded 字段，截断过长的 video 字段，
+// 避免将大量 Base64 数据存储到数据库中。
+// 参数:
+//   - body: 原始响应体字节
+// 返回值:
+//   - []byte: 脱敏后的响应体字节
 func redactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
 	if err := common.Unmarshal(body, &m); err != nil {
@@ -527,6 +574,12 @@ func redactVideoResponseBody(body []byte) []byte {
 	return b
 }
 
+// truncateBase64 截断过长的 Base64 字符串，保留前 256 个字符。
+// 用于在存储到数据库前减少数据量。
+// 参数:
+//   - s: 原始 Base64 字符串
+// 返回值:
+//   - string: 截断后的字符串（超过 256 字符时追加 "..."）
 func truncateBase64(s string) string {
 	const maxKeep = 256
 	if len(s) <= maxKeep {

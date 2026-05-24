@@ -1,3 +1,11 @@
+// Package service - funding_source.go
+// 该文件定义了计费系统的资金来源抽象层
+//
+// 功能：
+// - 定义 FundingSource 接口，抽象预扣费的资金来源
+// - 实现 WalletFunding（钱包资金来源）
+// - 实现 SubscriptionFunding（订阅资金来源）
+// - 提供带重试机制的退款函数
 package service
 
 import (
@@ -26,13 +34,23 @@ type FundingSource interface {
 // WalletFunding — 钱包资金来源实现
 // ---------------------------------------------------------------------------
 
+// WalletFunding 钱包资金来源实现
+// 通过用户钱包余额进行预扣费和结算
 type WalletFunding struct {
 	userId   int
 	consumed int // 实际预扣的用户额度
 }
 
+// Source 返回资金来源标识
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
+// PreConsume 从钱包预扣指定额度
+//
+// 参数：
+//   - amount: 预扣额度
+//
+// 返回值：
+//   - error: 错误
 func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
@@ -44,6 +62,14 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	return nil
 }
 
+// Settle 根据差额调整钱包余额
+// 正数表示补扣，负数表示退还
+//
+// 参数：
+//   - delta: 差额
+//
+// 返回值：
+//   - error: 错误
 func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
@@ -54,6 +80,11 @@ func (w *WalletFunding) Settle(delta int) error {
 	return model.IncreaseUserQuota(w.userId, -delta, false)
 }
 
+// Refund 退还钱包中所有预扣费
+// 注意：IncreaseUserQuota 是非幂等操作，不能重试
+//
+// 返回值：
+//   - error: 错误
 func (w *WalletFunding) Refund() error {
 	if w.consumed <= 0 {
 		return nil
@@ -67,6 +98,8 @@ func (w *WalletFunding) Refund() error {
 // SubscriptionFunding — 订阅资金来源实现
 // ---------------------------------------------------------------------------
 
+// SubscriptionFunding 订阅资金来源实现
+// 通过用户订阅额度进行预扣费和结算
 type SubscriptionFunding struct {
 	requestId      string
 	userId         int
@@ -81,8 +114,17 @@ type SubscriptionFunding struct {
 	PlanTitle       string
 }
 
+// Source 返回资金来源标识
 func (s *SubscriptionFunding) Source() string { return BillingSourceSubscription }
 
+// PreConsume 从订阅额度预扣指定金额
+// amount 参数被忽略，使用内部 s.amount（已在构造时根据 preConsumedQuota 计算）
+//
+// 参数：
+//   - _: 预扣金额（忽略，使用内部 amount）
+//
+// 返回值：
+//   - error: 错误
 func (s *SubscriptionFunding) PreConsume(_ int) error {
 	// amount 参数被忽略，使用内部 s.amount（已在构造时根据 preConsumedQuota 计算）
 	res, err := model.PreConsumeUserSubscription(s.requestId, s.userId, s.modelName, 0, s.amount)
@@ -101,6 +143,14 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 	return nil
 }
 
+// Settle 根据差额调整订阅额度
+// 正数表示补扣，负数表示退还
+//
+// 参数：
+//   - delta: 差额
+//
+// 返回值：
+//   - error: 错误
 func (s *SubscriptionFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
@@ -108,6 +158,11 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
 }
 
+// Refund 退还订阅中所有预扣费
+// 使用 requestId 幂等保护，支持重试
+//
+// 返回值：
+//   - error: 错误
 func (s *SubscriptionFunding) Refund() error {
 	if s.preConsumed <= 0 {
 		return nil

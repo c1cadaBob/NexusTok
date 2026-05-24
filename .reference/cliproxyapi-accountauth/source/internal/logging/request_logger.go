@@ -1,6 +1,7 @@
-// Package logging provides request logging functionality for the CLI Proxy API server.
-// It handles capturing and storing detailed HTTP request and response data when enabled
-// through configuration, supporting both regular and streaming responses.
+// 包 logging - request_logger.go
+// 该文件提供了 HTTP 请求和响应的日志记录功能。
+// 支持将请求/响应数据写入文件或转发到 Home 控制平面，同时支持常规和流式响应。
+// 包含响应体的自动解压缩（gzip、deflate、brotli、zstd）和日志文件管理。
 package logging
 
 import (
@@ -30,13 +31,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 )
 
+// requestLogID 是用于生成请求日志文件顺序编号的原子计数器。
 var requestLogID atomic.Uint64
 
+// homeRequestLogClient 定义了 Home 控制平面请求日志客户端的接口。
+// 用于将请求日志转发到 Home 控制平面的 Redis 队列。
 type homeRequestLogClient interface {
+	// HeartbeatOK 检查 Home 客户端连接是否正常
 	HeartbeatOK() bool
+	// RPushRequestLog 将请求日志推送到 Home 的 Redis 列表
 	RPushRequestLog(ctx context.Context, payload []byte) error
 }
 
+// currentHomeRequestLogClient 是获取当前 Home 请求日志客户端的函数变量。
+// 默认返回全局 Home 客户端实例。
 var currentHomeRequestLogClient = func() homeRequestLogClient {
 	return home.Current()
 }
@@ -164,11 +172,23 @@ type FileRequestLogger struct {
 	homeEnabled bool
 }
 
+// homeRequestLogPayload 表示发送到 Home 控制平面的请求日志载荷结构。
+// 包含请求头和格式化后的请求日志文本。
 type homeRequestLogPayload struct {
-	Headers    map[string][]string `json:"headers,omitempty"`
-	RequestLog string              `json:"request_log,omitempty"`
+	// Headers 是原始请求头
+	Headers map[string][]string `json:"headers,omitempty"`
+	// RequestLog 是格式化后的完整请求日志文本
+	RequestLog string `json:"request_log,omitempty"`
 }
 
+// cloneHeaders 深拷贝 HTTP 请求头映射。
+// 跳过空键并复制每个值的切片，确保返回的映射与原始映射完全独立。
+//
+// 参数：
+//   - headers: 要拷贝的请求头映射
+//
+// 返回：
+//   - map[string][]string: 拷贝后的请求头映射，输入为空时返回 nil
 func cloneHeaders(headers map[string][]string) map[string][]string {
 	if len(headers) == 0 {
 		return nil
@@ -192,6 +212,16 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
+// forwardRequestLogToHome 将请求日志转发到 Home 控制平面。
+// 当 Home 功能未启用或客户端连接不可用时静默跳过。
+//
+// 参数：
+//   - ctx: 上下文
+//   - headers: 原始请求头
+//   - logText: 格式化后的请求日志文本
+//
+// 返回：
+//   - error: 转发失败时返回错误，成功或跳过时返回 nil
 func (l *FileRequestLogger) forwardRequestLogToHome(ctx context.Context, headers map[string][]string, logText string) error {
 	if l == nil || !l.homeEnabled {
 		return nil
@@ -241,8 +271,8 @@ func NewFileRequestLogger(enabled bool, logsDir string, configDir string, errorL
 	}
 }
 
-// SetHomeEnabled toggles home request-log forwarding.
-// When enabled, request logs are not written to disk and are instead forwarded to home via Redis RESP.
+// SetHomeEnabled 切换 Home 请求日志转发功能。
+// 启用后，请求日志不再写入磁盘，而是通过 Redis RESP 协议转发到 Home 控制平面。
 func (l *FileRequestLogger) SetHomeEnabled(enabled bool) {
 	if l == nil {
 		return
@@ -300,6 +330,8 @@ func (l *FileRequestLogger) LogRequestWithOptions(url, method string, requestHea
 	return l.logRequest(url, method, requestHeaders, body, statusCode, responseHeaders, response, websocketTimeline, apiRequest, apiResponse, apiWebsocketTimeline, apiResponseErrors, force, requestID, requestTimestamp, apiResponseTimestamp)
 }
 
+// logRequest 是 LogRequest 和 LogRequestWithOptions 的内部实现。
+// 根据配置决定写入文件或转发到 Home 控制平面。
 func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, websocketTimeline, apiRequest, apiResponse, apiWebsocketTimeline []byte, apiResponseErrors []*interfaces.ErrorMessage, force bool, requestID string, requestTimestamp, apiResponseTimestamp time.Time) error {
 	if !l.enabled && !force {
 		return nil
@@ -622,6 +654,14 @@ func (l *FileRequestLogger) cleanupOldErrorLogs() error {
 	return nil
 }
 
+// writeRequestBodyTempFile 将请求体写入临时文件，避免在内存中保留大型请求体。
+//
+// 参数：
+//   - body: 请求体数据
+//
+// 返回：
+//   - string: 临时文件路径
+//   - error: 写入失败时返回错误
 func (l *FileRequestLogger) writeRequestBodyTempFile(body []byte) (string, error) {
 	tmpFile, errCreate := os.CreateTemp(l.logsDir, "request-body-*.tmp")
 	if errCreate != nil {
@@ -641,6 +681,8 @@ func (l *FileRequestLogger) writeRequestBodyTempFile(body []byte) (string, error
 	return tmpPath, nil
 }
 
+// writeNonStreamingLog 将完整的非流式请求/响应日志写入指定的 io.Writer。
+// 按顺序写入：请求信息、WebSocket 时间线、API 请求、API 错误响应、API 响应、下游响应。
 func (l *FileRequestLogger) writeNonStreamingLog(
 	w io.Writer,
 	url, method string,
@@ -692,6 +734,8 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	return writeResponseSection(w, statusCode, true, responseHeaders, bytes.NewReader(response), decompressErr, true)
 }
 
+// writeRequestInfoWithBody 将请求信息和请求体写入日志。
+// 包括版本号、URL、方法、传输类型、时间戳、请求头和请求体。
 func writeRequestInfoWithBody(
 	w io.Writer,
 	url, method string,
@@ -784,6 +828,7 @@ func writeRequestInfoWithBody(
 	return nil
 }
 
+// countTrailingNewlinesBytes 计算字节切片末尾的连续换行符数量。
 func countTrailingNewlinesBytes(payload []byte) int {
 	count := 0
 	for i := len(payload) - 1; i >= 0; i-- {
@@ -795,6 +840,8 @@ func countTrailingNewlinesBytes(payload []byte) int {
 	return count
 }
 
+// writeSectionSpacing 在日志段之间写入适当的空行间距。
+// 确保各段之间有 3 个换行符的间距。
 func writeSectionSpacing(w io.Writer, trailingNewlines int) error {
 	missingNewlines := 3 - trailingNewlines
 	if missingNewlines <= 0 {
@@ -804,11 +851,16 @@ func writeSectionSpacing(w io.Writer, trailingNewlines int) error {
 	return errWrite
 }
 
+// trailingNewlineTrackingWriter 是一个 io.Writer 包装器，用于跟踪写入数据末尾的连续换行符数量。
+// 用于在写入请求体时精确计算尾部换行符，以确保日志格式正确。
 type trailingNewlineTrackingWriter struct {
-	writer           io.Writer
+	// writer 是被包装的底层写入器
+	writer io.Writer
+	// trailingNewlines 记录最近一次写入后末尾的连续换行符数量
 	trailingNewlines int
 }
 
+// Write 实现 io.Writer 接口，写入数据并跟踪尾部换行符。
 func (t *trailingNewlineTrackingWriter) Write(payload []byte) (int, error) {
 	written, errWrite := t.writer.Write(payload)
 	if written > 0 {
@@ -823,10 +875,13 @@ func (t *trailingNewlineTrackingWriter) Write(payload []byte) (int, error) {
 	return written, errWrite
 }
 
+// hasSectionPayload 检查字节切片是否包含有效内容（非空白）。
 func hasSectionPayload(payload []byte) bool {
 	return len(bytes.TrimSpace(payload)) > 0
 }
 
+// inferDownstreamTransport 根据请求头和 WebSocket 时间线推断下游传输协议。
+// 返回 "websocket" 或 "http"。
 func inferDownstreamTransport(headers map[string][]string, websocketTimeline []byte) string {
 	if hasSectionPayload(websocketTimeline) {
 		return "websocket"
@@ -843,6 +898,8 @@ func inferDownstreamTransport(headers map[string][]string, websocketTimeline []b
 	return "http"
 }
 
+// inferUpstreamTransport 根据 API 请求/响应数据和 WebSocket 时间线推断上游传输协议。
+// 返回 "websocket"、"http"、"websocket+http" 或空字符串。
 func inferUpstreamTransport(apiRequest, apiResponse, apiWebsocketTimeline []byte, _ []*interfaces.ErrorMessage) string {
 	hasHTTP := hasSectionPayload(apiRequest) || hasSectionPayload(apiResponse)
 	hasWS := hasSectionPayload(apiWebsocketTimeline)
@@ -858,6 +915,8 @@ func inferUpstreamTransport(apiRequest, apiResponse, apiWebsocketTimeline []byte
 	}
 }
 
+// writeAPISection 将 API 相关段（请求、响应、WebSocket 时间线等）写入日志。
+// 如果载荷已包含段头则直接写入，否则添加标准段头。
 func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, payload []byte, timestamp time.Time) error {
 	if len(payload) == 0 {
 		return nil
@@ -887,6 +946,8 @@ func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, pa
 	return nil
 }
 
+// writeAPIErrorResponses 将 API 错误响应列表写入日志。
+// 每个错误响应包含 HTTP 状态码和错误消息。
 func writeAPIErrorResponses(w io.Writer, apiResponseErrors []*interfaces.ErrorMessage) error {
 	for i := 0; i < len(apiResponseErrors); i++ {
 		if apiResponseErrors[i] == nil {
@@ -915,6 +976,7 @@ func writeAPIErrorResponses(w io.Writer, apiResponseErrors []*interfaces.ErrorMe
 	return nil
 }
 
+// writeResponseSection 将下游响应段写入日志，包括状态码、响应头和响应体。
 func writeResponseSection(w io.Writer, statusCode int, statusWritten bool, responseHeaders map[string][]string, responseReader io.Reader, decompressErr error, trailingNewline bool) error {
 	if _, errWrite := io.WriteString(w, "=== RESPONSE ===\n"); errWrite != nil {
 		return errWrite
@@ -964,6 +1026,8 @@ func writeResponseSection(w io.Writer, statusCode int, statusWritten bool, respo
 	return nil
 }
 
+// responseBodyStartsWithLeadingNewline 检查响应体是否以换行符开头。
+// 用于决定是否在响应头和响应体之间添加额外的换行。
 func responseBodyStartsWithLeadingNewline(reader *bufio.Reader) bool {
 	if reader == nil {
 		return false
@@ -1471,8 +1535,8 @@ func (w *FileStreamingLogWriter) Close() error {
 	return writeErr
 }
 
-// asyncWriter runs in a goroutine to buffer chunks from the channel.
-// It continuously reads chunks from the channel and appends them to a temp file for later assembly.
+// asyncWriter 在独立 goroutine 中运行，从通道读取响应块并写入临时文件。
+// 避免在内存中累积大型流式响应。
 func (w *FileStreamingLogWriter) asyncWriter() {
 	defer close(w.closeChan)
 
@@ -1507,6 +1571,8 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 	w.responseBodyFile = nil
 }
 
+// writeFinalLog 将所有缓冲数据按正确顺序写入最终日志文件。
+// 写入顺序：请求信息 -> API WebSocket 时间线 -> API 请求 -> API 响应 -> 下游响应。
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, nil, w.requestBodyPath, w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiResponse, w.apiWebsocketTimeline, nil), true); errWrite != nil {
 		return errWrite
@@ -1534,6 +1600,7 @@ func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseBodyFile, nil, false)
 }
 
+// cleanupTempFiles 清理请求体和响应体的临时文件。
 func (w *FileStreamingLogWriter) cleanupTempFiles() {
 	if w.requestBodyPath != "" {
 		if errRemove := os.Remove(w.requestBodyPath); errRemove != nil {
@@ -1613,28 +1680,48 @@ func (w *NoOpStreamingLogWriter) SetFirstChunkTimestamp(_ time.Time) {}
 //   - error: Always returns nil
 func (w *NoOpStreamingLogWriter) Close() error { return nil }
 
+// homeStreamingLogWriter 实现 StreamingLogWriter 接口，将流式日志转发到 Home 控制平面。
+// 与 FileStreamingLogWriter 不同，它在内存中缓冲响应数据，关闭时一次性推送到 Redis。
 type homeStreamingLogWriter struct {
-	url       string
-	method    string
+	// url 是请求 URL
+	url string
+	// method 是 HTTP 方法
+	method string
+	// timestamp 是流式日志初始化时的时间戳
 	timestamp time.Time
 
+	// requestHeaders 存储请求头
 	requestHeaders map[string][]string
-	requestBody    []byte
+	// requestBody 存储请求体
+	requestBody []byte
 
+	// chunkChan 是接收响应块的缓冲通道
 	chunkChan chan []byte
-	doneChan  chan struct{}
+	// doneChan 用于通知异步写入器已完成
+	doneChan chan struct{}
 
-	responseStatus   int
-	statusWritten    bool
-	responseHeaders  map[string][]string
-	responseBody     bytes.Buffer
-	apiRequest       []byte
-	apiResponse      []byte
+	// responseStatus 存储 HTTP 状态码
+	responseStatus int
+	// statusWritten 指示是否已记录非零状态码
+	statusWritten bool
+	// responseHeaders 存储响应头
+	responseHeaders map[string][]string
+	// responseBody 缓冲所有响应块
+	responseBody bytes.Buffer
+	// apiRequest 存储上游 API 请求数据
+	apiRequest []byte
+	// apiResponse 存储上游 API 响应数据
+	apiResponse []byte
+	// apiWebsocketTime 存储上游 WebSocket 事件时间线
 	apiWebsocketTime []byte
-	apiResponseTS    time.Time
-	firstChunkTS     time.Time
+	// apiResponseTS 记录收到 API 响应的时间戳
+	apiResponseTS time.Time
+	// firstChunkTS 记录收到第一个响应块的时间戳
+	firstChunkTS time.Time
 }
 
+// newHomeStreamingLogWriter 创建新的 Home 流式日志写入器。
+// 启动后台 goroutine 异步处理响应块。
 func newHomeStreamingLogWriter(url, method string, headers map[string][]string, body []byte, _ string) *homeStreamingLogWriter {
 	requestHeaders := make(map[string][]string, len(headers))
 	for key, values := range headers {
@@ -1657,6 +1744,7 @@ func newHomeStreamingLogWriter(url, method string, headers map[string][]string, 
 	return writer
 }
 
+// asyncWriter 在后台 goroutine 中运行，从通道接收响应块并追加到内存缓冲区。
 func (w *homeStreamingLogWriter) asyncWriter() {
 	defer close(w.doneChan)
 	for chunk := range w.chunkChan {
@@ -1667,6 +1755,8 @@ func (w *homeStreamingLogWriter) asyncWriter() {
 	}
 }
 
+// WriteChunkAsync 异步写入响应块（非阻塞）。
+// 如果通道已满则静默丢弃，避免阻塞调用方。
 func (w *homeStreamingLogWriter) WriteChunkAsync(chunk []byte) {
 	if w == nil || w.chunkChan == nil || len(chunk) == 0 {
 		return
@@ -1677,6 +1767,7 @@ func (w *homeStreamingLogWriter) WriteChunkAsync(chunk []byte) {
 	}
 }
 
+// WriteStatus 缓冲响应状态码和响应头。
 func (w *homeStreamingLogWriter) WriteStatus(status int, headers map[string][]string) error {
 	if w == nil || status == 0 {
 		return nil
@@ -1694,6 +1785,7 @@ func (w *homeStreamingLogWriter) WriteStatus(status int, headers map[string][]st
 	return nil
 }
 
+// WriteAPIRequest 缓冲上游 API 请求数据。
 func (w *homeStreamingLogWriter) WriteAPIRequest(apiRequest []byte) error {
 	if w == nil || len(apiRequest) == 0 {
 		return nil
@@ -1702,6 +1794,7 @@ func (w *homeStreamingLogWriter) WriteAPIRequest(apiRequest []byte) error {
 	return nil
 }
 
+// WriteAPIResponse 缓冲上游 API 响应数据。
 func (w *homeStreamingLogWriter) WriteAPIResponse(apiResponse []byte) error {
 	if w == nil || len(apiResponse) == 0 {
 		return nil
@@ -1710,6 +1803,7 @@ func (w *homeStreamingLogWriter) WriteAPIResponse(apiResponse []byte) error {
 	return nil
 }
 
+// WriteAPIWebsocketTimeline 缓冲上游 WebSocket 事件时间线。
 func (w *homeStreamingLogWriter) WriteAPIWebsocketTimeline(apiWebsocketTimeline []byte) error {
 	if w == nil || len(apiWebsocketTimeline) == 0 {
 		return nil
@@ -1718,6 +1812,7 @@ func (w *homeStreamingLogWriter) WriteAPIWebsocketTimeline(apiWebsocketTimeline 
 	return nil
 }
 
+// SetFirstChunkTimestamp 设置收到第一个响应块的时间戳。
 func (w *homeStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
 	if w == nil {
 		return
@@ -1728,6 +1823,8 @@ func (w *homeStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
 	}
 }
 
+// Close 完成日志记录并将完整日志推送到 Home 控制平面。
+// 等待异步写入器完成，组装完整日志后通过 Redis 推送。
 func (w *homeStreamingLogWriter) Close() error {
 	if w == nil {
 		return nil

@@ -1,3 +1,14 @@
+// Package model - user_oauth_binding.go
+// 该文件定义了用户 OAuth 绑定（UserOAuthBinding）数据模型及相关操作
+//
+// 主要结构体：
+// - UserOAuthBinding：用户与自定义 OAuth 提供商的绑定关系
+//
+// 核心功能：
+// - OAuth 绑定的创建、查询、删除
+// - 用户与 OAuth 账号的关联管理
+// - 支持每个用户每个提供商一个绑定
+// - 支持每个 OAuth 账号每个提供商一个绑定
 package model
 
 import (

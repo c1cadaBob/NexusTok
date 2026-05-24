@@ -1,3 +1,5 @@
+// 包 config - disable_image_generation_mode.go
+// 该文件定义了禁用图像生成的三态配置模式。
 package config
 
 import (
@@ -9,20 +11,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DisableImageGenerationMode is a tri-state config value for disable-image-generation.
+// DisableImageGenerationMode 是 disable-image-generation 的三态配置值。
 //
-// It supports:
-//   - false: enabled
-//   - true: disabled everywhere (including /v1/images/* endpoints)
-//   - "chat": disabled for all non-images endpoints, but enabled for /v1/images/generations and /v1/images/edits
+// 支持：
+//   - false: 启用
+//   - true: 在所有地方禁用（包括 /v1/images/* 端点）
+//   - "chat": 在所有非图像端点禁用，但在 /v1/images/generations 和 /v1/images/edits 启用
 type DisableImageGenerationMode int
 
 const (
+	// DisableImageGenerationOff 表示图像生成功能启用
 	DisableImageGenerationOff DisableImageGenerationMode = iota
+	// DisableImageGenerationAll 表示在所有端点禁用图像生成
 	DisableImageGenerationAll
+	// DisableImageGenerationChat 表示仅在非图像端点禁用图像生成
 	DisableImageGenerationChat
 )
 
+// String 返回 DisableImageGenerationMode 的字符串表示。
 func (m DisableImageGenerationMode) String() string {
 	switch m {
 	case DisableImageGenerationOff:
@@ -36,6 +42,7 @@ func (m DisableImageGenerationMode) String() string {
 	}
 }
 
+// MarshalYAML 实现 yaml.Marshaler 接口，将模式序列化为 YAML 值。
 func (m DisableImageGenerationMode) MarshalYAML() (any, error) {
 	switch m {
 	case DisableImageGenerationAll:
@@ -47,6 +54,7 @@ func (m DisableImageGenerationMode) MarshalYAML() (any, error) {
 	}
 }
 
+// UnmarshalYAML 实现 yaml.Unmarshaler 接口，从 YAML 节点反序列化模式。
 func (m *DisableImageGenerationMode) UnmarshalYAML(value *yaml.Node) error {
 	mode, err := parseDisableImageGenerationNode(value)
 	if err != nil {
@@ -56,6 +64,7 @@ func (m *DisableImageGenerationMode) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// MarshalJSON 实现 json.Marshaler 接口，将模式序列化为 JSON 值。
 func (m DisableImageGenerationMode) MarshalJSON() ([]byte, error) {
 	switch m {
 	case DisableImageGenerationAll:
@@ -67,6 +76,7 @@ func (m DisableImageGenerationMode) MarshalJSON() ([]byte, error) {
 	}
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler 接口，从 JSON 数据反序列化模式。
 func (m *DisableImageGenerationMode) UnmarshalJSON(data []byte) error {
 	mode, err := parseDisableImageGenerationJSON(data)
 	if err != nil {
@@ -76,12 +86,13 @@ func (m *DisableImageGenerationMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// parseDisableImageGenerationNode 从 YAML 节点解析禁用图像生成模式。
 func parseDisableImageGenerationNode(value *yaml.Node) (DisableImageGenerationMode, error) {
 	if value == nil {
 		return DisableImageGenerationOff, nil
 	}
 
-	// First try a typed bool decode (covers unquoted true/false and YAML 1.1 bools).
+	// 首先尝试类型化布尔解码（覆盖未引用的 true/false 和 YAML 1.1 布尔值）。
 	var b bool
 	if err := value.Decode(&b); err == nil && value.Kind == yaml.ScalarNode && value.ShortTag() == "!!bool" {
 		if b {
@@ -90,7 +101,7 @@ func parseDisableImageGenerationNode(value *yaml.Node) (DisableImageGenerationMo
 		return DisableImageGenerationOff, nil
 	}
 
-	// Fall back to string decoding (covers quoted "true"/"false" and "chat").
+	// 回退到字符串解码（覆盖带引号的 "true"/"false" 和 "chat"）。
 	var s string
 	if err := value.Decode(&s); err != nil {
 		return DisableImageGenerationOff, fmt.Errorf("invalid disable-image-generation value")
@@ -98,6 +109,7 @@ func parseDisableImageGenerationNode(value *yaml.Node) (DisableImageGenerationMo
 	return parseDisableImageGenerationString(s)
 }
 
+// parseDisableImageGenerationJSON 从 JSON 数据解析禁用图像生成模式。
 func parseDisableImageGenerationJSON(data []byte) (DisableImageGenerationMode, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -121,6 +133,7 @@ func parseDisableImageGenerationJSON(data []byte) (DisableImageGenerationMode, e
 	return parseDisableImageGenerationString(s)
 }
 
+// parseDisableImageGenerationString 从字符串解析禁用图像生成模式。
 func parseDisableImageGenerationString(s string) (DisableImageGenerationMode, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	switch s {

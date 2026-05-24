@@ -1,3 +1,10 @@
+// Package oauth - linuxdo.go
+// 该文件实现了 LinuxDo OAuth 认证提供商
+//
+// 功能说明：
+// - 支持 LinuxDo OAuth 2.0 授权流程
+// - 获取 LinuxDo 用户信息（ID、用户名、邮箱等）
+// - 实现 Provider 接口的所有方法
 package oauth
 
 import (
@@ -18,30 +25,38 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// init 在包初始化时自动注册 LinuxDo 提供商
 func init() {
 	Register("linuxdo", &LinuxDOProvider{})
 }
 
-// LinuxDOProvider implements OAuth for Linux DO
+// LinuxDOProvider 实现 LinuxDo OAuth 认证
+// LinuxDo 是一个中文技术社区，支持信任等级（Trust Level）验证
 type LinuxDOProvider struct{}
 
+// linuxdoUser 表示 LinuxDo 用户 API 的响应
 type linuxdoUser struct {
-	Id         int    `json:"id"`
-	Username   string `json:"username"`
-	Name       string `json:"name"`
-	Active     bool   `json:"active"`
-	TrustLevel int    `json:"trust_level"`
-	Silenced   bool   `json:"silenced"`
+	Id         int    `json:"id"`          // 用户 ID（永久不变）
+	Username   string `json:"username"`    // 用户名
+	Name       string `json:"name"`        // 显示名称
+	Active     bool   `json:"active"`      // 账号是否激活
+	TrustLevel int    `json:"trust_level"` // 信任等级（0-4，数字越大信任度越高）
+	Silenced   bool   `json:"silenced"`    // 是否被禁言
 }
 
+// GetName 返回提供商显示名称
 func (p *LinuxDOProvider) GetName() string {
 	return "Linux DO"
 }
 
+// IsEnabled 检查 LinuxDo OAuth 是否已启用（通过环境变量配置）
 func (p *LinuxDOProvider) IsEnabled() bool {
 	return common.LinuxDOOAuthEnabled
 }
 
+// ExchangeToken 使用授权码向 LinuxDo Token 端点交换访问令牌
+// 使用 Basic Auth 认证方式（client_id:client_secret 编码为 Base64）
+// 端点可通过环境变量 LINUX_DO_TOKEN_ENDPOINT 自定义
 func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin.Context) (*OAuthToken, error) {
 	if code == "" {
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
@@ -107,6 +122,10 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	}, nil
 }
 
+// GetUserInfo 使用访问令牌从 LinuxDo API 获取用户信息
+// 端点可通过环境变量 LINUX_DO_USER_ENDPOINT 自定义
+// 除了基本用户信息外，还会验证信任等级是否满足最低要求
+// 如果信任等级不足，返回 TrustLevelError
 func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAuthUser, error) {
 	userEndpoint := common.GetEnvOrDefaultString("LINUX_DO_USER_ENDPOINT", "https://connect.linux.do/api/user")
 
@@ -167,29 +186,35 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 	}, nil
 }
 
+// IsUserIDTaken 检查 LinuxDo ID 是否已被其他账号关联
 func (p *LinuxDOProvider) IsUserIDTaken(providerUserID string) bool {
 	return model.IsLinuxDOIdAlreadyTaken(providerUserID)
 }
 
+// FillUserByProviderID 通过 LinuxDo ID 查找并填充用户信息
 func (p *LinuxDOProvider) FillUserByProviderID(user *model.User, providerUserID string) error {
 	user.LinuxDOId = providerUserID
 	return user.FillUserByLinuxDOId()
 }
 
+// SetProviderUserID 将 LinuxDo ID 设置到用户模型
 func (p *LinuxDOProvider) SetProviderUserID(user *model.User, providerUserID string) {
 	user.LinuxDOId = providerUserID
 }
 
+// GetProviderPrefix 返回 LinuxDo 用户名前缀 "linuxdo_"
 func (p *LinuxDOProvider) GetProviderPrefix() string {
 	return "linuxdo_"
 }
 
-// TrustLevelError indicates the user's trust level is too low
+// TrustLevelError 表示用户信任等级不足的错误
+// 当 LinuxDo 用户的信任等级低于系统要求的最低等级时抛出
 type TrustLevelError struct {
-	Required int
-	Current  int
+	Required int // 系统要求的最低信任等级
+	Current  int // 用户当前的信任等级
 }
 
+// Error 实现 error 接口
 func (e *TrustLevelError) Error() string {
 	return "trust level too low"
 }

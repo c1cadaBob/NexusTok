@@ -1,3 +1,5 @@
+// claude - gemini_claude_request_test.go
+// 测试 Claude 请求格式到 Gemini 请求格式的转换逻辑，包括工具选择、图片内容、系统提示去重和空文本过滤
 package claude
 
 import (
@@ -6,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertClaudeRequestToGemini_ToolChoice_SpecificTool 测试指定工具选择模式下的转换
+// 验证 Claude 的 tool_choice（指定特定工具）能正确映射为 Gemini 的 functionCallingConfig.mode=ANY 并设置 allowedFunctionNames
 func TestConvertClaudeRequestToGemini_ToolChoice_SpecificTool(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gemini-3-flash-preview",
@@ -41,6 +45,8 @@ func TestConvertClaudeRequestToGemini_ToolChoice_SpecificTool(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToGemini_ImageContent 测试图片内容块的转换
+// 验证 Claude 格式的 base64 图片消息能正确转为 Gemini 的 inline_data 格式（含 mime_type 和 data 字段）
 func TestConvertClaudeRequestToGemini_ImageContent(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gemini-3-flash-preview",
@@ -79,6 +85,8 @@ func TestConvertClaudeRequestToGemini_ImageContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToGemini_StripsClaudeCodeAttribution 测试 Claude Code 归属标识的过滤
+// 验证系统提示中的 x-anthropic-billing-header 等归属标记在转换时被自动剥离，仅保留用户可见的系统提示
 func TestConvertClaudeRequestToGemini_StripsClaudeCodeAttribution(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",
@@ -107,6 +115,8 @@ func TestConvertClaudeRequestToGemini_StripsClaudeCodeAttribution(t *testing.T) 
 	}
 }
 
+// TestConvertClaudeRequestToGemini_SkipsEmptyTextParts 测试空文本内容块的过滤
+// 验证在转换过程中，内容数组中空文本部分（text=""）被自动跳过，仅保留有实际文本的部分
 func TestConvertClaudeRequestToGemini_SkipsEmptyTextParts(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet",

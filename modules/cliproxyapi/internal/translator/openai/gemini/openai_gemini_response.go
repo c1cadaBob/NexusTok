@@ -1,8 +1,13 @@
+// openai/gemini - openai_gemini_response.go
 // Package gemini provides response translation functionality for OpenAI to Gemini API.
-// This package handles the conversion of OpenAI Chat Completions API responses into Gemini API-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Gemini API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, and usage metadata appropriately.
+// 本文件提供 OpenAI API 响应到 Gemini API 格式的转换功能。
+// 处理流式和非流式响应，将 OpenAI Chat Completions API 响应转换为 Gemini API 兼容的 JSON 格式。
+// 主要功能包括：
+// 1. 流式响应：逐块转换文本内容、推理/思考内容（reasoning_content -> thought）、工具调用累积与输出
+// 2. 非流式响应：一次性转换完整响应，包括文本、推理、工具调用和使用量元数据
+// 3. 工具调用参数的容错解析（支持裸词值等非标准 JSON 格式）
+// 4. 完成原因映射（stop -> STOP, length -> MAX_TOKENS 等）
+// 5. 使用量元数据映射（包括推理 token 计数）
 package gemini
 
 import (
@@ -18,25 +23,37 @@ import (
 )
 
 // ConvertOpenAIResponseToGeminiParams holds parameters for response conversion
+// ConvertOpenAIResponseToGeminiParams 存储流式响应转换的状态参数。
+// 在流式处理过程中跨多个 chunk 累积工具调用和内容数据。
 type ConvertOpenAIResponseToGeminiParams struct {
 	// Tool calls accumulator for streaming
+	// 流式工具调用累积器，按工具索引存储未完成的工具调用数据
 	ToolCallsAccumulator map[int]*ToolCallAccumulator
 	// Content accumulator for streaming
+	// 流式文本内容累积器
 	ContentAccumulator strings.Builder
 	// Track if this is the first chunk
+	// 标记是否为第一个 chunk（用于处理 role 字段）
 	IsFirstChunk bool
 }
 
 // ToolCallAccumulator holds the state for accumulating tool call data
+// ToolCallAccumulator 存储单个工具调用的累积状态。
+// 在流式响应中，工具调用数据分多个 delta 到达，此结构用于累积完整数据。
 type ToolCallAccumulator struct {
-	ID        string
-	Name      string
-	Arguments strings.Builder
+	ID        string           // 工具调用的唯一标识符
+	Name      string           // 函数名称
+	Arguments strings.Builder  // 累积的函数参数 JSON 字符串
 }
 
 // ConvertOpenAIResponseToGemini converts OpenAI Chat Completions streaming response format to Gemini API format.
 // This function processes OpenAI streaming chunks and transforms them into Gemini-compatible JSON responses.
 // It handles text content, tool calls, and usage metadata, outputting responses that match the Gemini API format.
+//
+// 将 OpenAI Chat Completions 流式响应转换为 Gemini API 格式。
+// 处理逻辑包括：跳过 [DONE] 标记、提取 SSE data: 前缀、
+// 转换文本内容、累积工具调用 delta（在 finish_reason 时输出）、
+// 映射推理内容（reasoning_content -> thought）、映射完成原因和使用量元数据。
 //
 // Parameters:
 //   - ctx: The context for the request.
@@ -249,6 +266,8 @@ func ConvertOpenAIResponseToGemini(_ context.Context, _ string, originalRequestR
 }
 
 // mapOpenAIFinishReasonToGemini maps OpenAI finish reasons to Gemini finish reasons
+// 将 OpenAI 完成原因映射为 Gemini 完成原因。
+// 映射规则：stop -> STOP, length -> MAX_TOKENS, tool_calls -> STOP, content_filter -> SAFETY。
 func mapOpenAIFinishReasonToGemini(openAIReason string) string {
 	switch openAIReason {
 	case "stop":
@@ -266,6 +285,9 @@ func mapOpenAIFinishReasonToGemini(openAIReason string) string {
 
 // parseArgsToObjectRaw safely parses a JSON string of function arguments into an object JSON string.
 // It returns "{}" if the input is empty or cannot be parsed as a JSON object.
+// 安全地将函数参数 JSON 字符串解析为 JSON 对象字符串。
+// 先尝试严格 JSON 解析，失败后使用容错解析（处理裸词值等非标准格式），
+// 最终失败时返回空对象 "{}"。
 func parseArgsToObjectRaw(argsStr string) string {
 	trimmed := strings.TrimSpace(argsStr)
 	if trimmed == "" || trimmed == "{}" {
@@ -290,6 +312,8 @@ func parseArgsToObjectRaw(argsStr string) string {
 	return "{}"
 }
 
+// escapeSjsonPathKey 转义 sjson 路径中的特殊字符（反斜杠和点号），
+// 以确保 JSON 键名能正确用于 sjson 的路径表达式。
 func escapeSjsonPathKey(key string) string {
 	key = strings.ReplaceAll(key, `\`, `\\`)
 	key = strings.ReplaceAll(key, `.`, `\.`)
@@ -299,6 +323,9 @@ func escapeSjsonPathKey(key string) string {
 // tolerantParseJSONObjectRaw attempts to parse a JSON-like object string into a JSON object string, tolerating
 // bareword values (unquoted strings) commonly seen during streamed tool calls.
 // Example input: {"location": 北京, "unit": celsius}
+// 容错解析 JSON 对象字符串，支持裸词值（未加引号的字符串）。
+// 用于处理流式工具调用中常见的非标准 JSON 格式，如 {"location": 北京, "unit": celsius}。
+// 逐字符解析键值对，支持字符串、数字、布尔值、null、嵌套对象/数组和裸词值。
 func tolerantParseJSONObjectRaw(s string) string {
 	// Ensure we operate within the outermost braces if present
 	start := strings.Index(s, "{")
@@ -417,6 +444,8 @@ func tolerantParseJSONObjectRaw(s string) string {
 }
 
 // parseJSONStringRunes returns the JSON string token (including quotes) and the index just after it.
+// 从 rune 切片中解析 JSON 字符串 token（包含引号），返回 token 字符串和结束索引。
+// 处理转义字符（如 \"、\\ 等）。解析失败时返回 -1 作为索引。
 func parseJSONStringRunes(runes []rune, start int) (string, int) {
 	if start >= len(runes) || runes[start] != '"' {
 		return "", -1
@@ -440,6 +469,8 @@ func parseJSONStringRunes(runes []rune, start int) (string, int) {
 }
 
 // jsonStringTokenToRawString converts a JSON string token (including quotes) to a raw Go string value.
+// 将 JSON 字符串 token（含引号）转换为原始 Go 字符串值。
+// 使用 gjson 解析处理转义字符，失败时回退到去除首尾引号。
 func jsonStringTokenToRawString(token string) string {
 	r := gjson.Parse(token)
 	if r.Type == gjson.String {
@@ -454,6 +485,9 @@ func jsonStringTokenToRawString(token string) string {
 
 // captureBracketed captures a balanced JSON object/array starting at index i.
 // Returns the segment string and the index just after it; -1 if malformed.
+// 捕获从索引 i 开始的平衡 JSON 对象或数组。
+// 通过深度计数和字符串状态跟踪确保正确匹配嵌套的括号。
+// 返回段字符串和结束索引；格式错误时返回 -1。
 func captureBracketed(runes []rune, i int) (string, int) {
 	if i >= len(runes) {
 		return "", -1
@@ -506,6 +540,8 @@ func captureBracketed(runes []rune, i int) (string, int) {
 }
 
 // tryParseNumber attempts to parse a string as an int or float.
+// 尝试将字符串解析为数值类型。
+// 依次尝试 int64、uint64、float64，成功时返回解析后的值和 true。
 func tryParseNumber(s string) (interface{}, bool) {
 	if s == "" {
 		return nil, false
@@ -524,6 +560,11 @@ func tryParseNumber(s string) (interface{}, bool) {
 }
 
 // ConvertOpenAIResponseToGeminiNonStream converts a non-streaming OpenAI response to a non-streaming Gemini response.
+//
+// 将非流式 OpenAI 响应转换为 Gemini API 格式。
+// 处理完整的响应数据，包括：角色映射（assistant -> model）、
+// 推理内容（reasoning_content -> thought）、文本内容、
+// 工具调用（function -> functionCall）、完成原因和使用量元数据。
 //
 // Parameters:
 //   - ctx: The context for the request.
@@ -621,10 +662,13 @@ func ConvertOpenAIResponseToGeminiNonStream(_ context.Context, _ string, origina
 	return out
 }
 
+// GeminiTokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }
 
+// reasoningTokensFromUsage 从 OpenAI usage 对象中提取推理 token 数量。
+// 依次检查 completion_tokens_details.reasoning_tokens 和 output_tokens_details.reasoning_tokens 字段。
 func reasoningTokensFromUsage(usage gjson.Result) int64 {
 	if usage.Exists() {
 		if v := usage.Get("completion_tokens_details.reasoning_tokens"); v.Exists() {
@@ -637,6 +681,9 @@ func reasoningTokensFromUsage(usage gjson.Result) int64 {
 	return 0
 }
 
+// extractReasoningTexts 从 reasoning_content 节点中提取所有推理文本。
+// 支持字符串、数组和对象格式的递归提取。
+// 对象格式中优先取 text 字段，否则尝试将非对象原始值作为文本。
 func extractReasoningTexts(node gjson.Result) []string {
 	var texts []string
 	if !node.Exists() {

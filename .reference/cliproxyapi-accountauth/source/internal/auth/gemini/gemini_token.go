@@ -1,6 +1,7 @@
-// Package gemini provides authentication and token management functionality
-// for Google's Gemini AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Gemini API.
+// gemini - gemini_token.go
+// 包 gemini 提供 Google Gemini AI 服务的认证和令牌管理功能。
+// 该文件实现了 OAuth2 令牌的存储、序列化和持久化功能，
+// 用于维护与 Gemini API 的认证会话。
 package gemini
 
 import (
@@ -14,48 +15,50 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// GeminiTokenStorage stores OAuth2 token information for Google Gemini API authentication.
-// It maintains compatibility with the existing auth system while adding Gemini-specific fields
-// for managing access tokens, refresh tokens, and user account information.
+// GeminiTokenStorage 存储 Google Gemini API 认证的 OAuth2 令牌信息。
+// 维护与现有认证系统的兼容性，同时添加 Gemini 特定的字段，
+// 用于管理访问令牌、刷新令牌和用户账户信息。
 type GeminiTokenStorage struct {
-	// Token holds the raw OAuth2 token data, including access and refresh tokens.
+	// Token 保存原始的 OAuth2 令牌数据，包括访问令牌和刷新令牌
 	Token any `json:"token"`
 
-	// ProjectID is the Google Cloud Project ID associated with this token.
+	// ProjectID 是与此令牌关联的 Google Cloud 项目 ID
 	ProjectID string `json:"project_id"`
 
-	// Email is the email address of the authenticated user.
+	// Email 是已认证用户的电子邮件地址
 	Email string `json:"email"`
 
-	// Auto indicates if the project ID was automatically selected.
+	// Auto 指示项目 ID 是否为自动选择
 	Auto bool `json:"auto"`
 
-	// Checked indicates if the associated Cloud AI API has been verified as enabled.
+	// Checked 指示关联的 Cloud AI API 是否已验证为已启用
 	Checked bool `json:"checked"`
 
-	// Type indicates the authentication provider type, always "gemini" for this storage.
+	// Type 表示认证提供商类型，此存储始终为 "gemini"
 	Type string `json:"type"`
 
-	// Metadata holds arbitrary key-value pairs injected via hooks.
-	// It is not exported to JSON directly to allow flattening during serialization.
+	// Metadata 保存通过钩子注入的任意键值对。
+	// 不直接导出到 JSON，以允许在序列化时进行扁平化处理。
 	Metadata map[string]any `json:"-"`
 }
 
-// SetMetadata allows external callers to inject metadata into the storage before saving.
+// SetMetadata 允许外部调用者在保存之前向存储注入元数据。
+//
+// 参数：
+//   - meta: 要注入的元数据键值对
 func (ts *GeminiTokenStorage) SetMetadata(meta map[string]any) {
 	ts.Metadata = meta
 }
 
-// SaveTokenToFile serializes the Gemini token storage to a JSON file.
-// This method creates the necessary directory structure and writes the token
-// data in JSON format to the specified file path for persistent storage.
-// It merges any injected metadata into the top-level JSON object.
+// SaveTokenToFile 将 Gemini 令牌存储序列化为 JSON 文件。
+// 创建必要的目录结构，并以 JSON 格式将令牌数据写入指定的文件路径进行持久化存储。
+// 将注入的元数据合并到顶层 JSON 对象中。
 //
-// Parameters:
-//   - authFilePath: The full path where the token file should be saved
+// 参数：
+//   - authFilePath: 令牌文件应保存的完整路径
 //
-// Returns:
-//   - error: An error if the operation fails, nil otherwise
+// 返回：
+//   - error: 操作失败时返回的错误，成功时返回 nil
 func (ts *GeminiTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "gemini"
@@ -86,10 +89,18 @@ func (ts *GeminiTokenStorage) SaveTokenToFile(authFilePath string) error {
 	return nil
 }
 
-// CredentialFileName returns the filename used to persist Gemini CLI credentials.
-// When projectID represents multiple projects (comma-separated or literal ALL),
-// the suffix is normalized to "all" and a "gemini-" prefix is enforced to keep
-// web and CLI generated files consistent.
+// CredentialFileName 返回用于持久化 Gemini CLI 凭证的文件名。
+// 当 projectID 表示多个项目（逗号分隔或字面量 ALL）时，
+// 后缀规范化为 "all"，并强制使用 "gemini-" 前缀，
+// 以保持 Web 和 CLI 生成的文件一致性。
+//
+// 参数：
+//   - email: 用户的电子邮件地址
+//   - projectID: Google Cloud 项目 ID
+//   - includeProviderPrefix: 是否包含提供商前缀
+//
+// 返回：
+//   - string: 凭证文件的完整文件名
 func CredentialFileName(email, projectID string, includeProviderPrefix bool) string {
 	email = strings.TrimSpace(email)
 	project := strings.TrimSpace(projectID)

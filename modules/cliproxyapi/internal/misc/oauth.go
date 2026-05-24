@@ -1,3 +1,6 @@
+// misc - oauth.go
+// 本文件提供了 OAuth 认证相关的工具函数。
+// 处理 OAuth 流程中的通用操作和辅助功能。
 package misc
 
 import (

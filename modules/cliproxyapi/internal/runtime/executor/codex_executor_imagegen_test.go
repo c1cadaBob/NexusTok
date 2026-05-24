@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器的图片生成功能，包括工具注入和条件过滤。
 package executor
 
 import (
@@ -7,6 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestEnsureImageGenerationTool_NoTools 验证在没有 tools 字段时自动注入 image_generation 工具。
 func TestEnsureImageGenerationTool_NoTools(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"draw a cat"}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
@@ -27,6 +30,8 @@ func TestEnsureImageGenerationTool_NoTools(t *testing.T) {
 	}
 }
 
+// TestEnsureImageGenerationTool_ExistingToolsWithoutImageGen 验证已有工具但无 image_generation 时
+// 自动追加 image_generation 工具。
 func TestEnsureImageGenerationTool_ExistingToolsWithoutImageGen(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"function","name":"get_weather","parameters":{}}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
@@ -44,6 +49,7 @@ func TestEnsureImageGenerationTool_ExistingToolsWithoutImageGen(t *testing.T) {
 	}
 }
 
+// TestEnsureImageGenerationTool_AlreadyPresent 验证已存在 image_generation 工具时不会重复注入。
 func TestEnsureImageGenerationTool_AlreadyPresent(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"image_generation","output_format":"webp"},{"type":"function","name":"f1"}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
@@ -58,6 +64,7 @@ func TestEnsureImageGenerationTool_AlreadyPresent(t *testing.T) {
 	}
 }
 
+// TestEnsureImageGenerationTool_EmptyToolsArray 验证空 tools 数组时自动注入 image_generation 工具。
 func TestEnsureImageGenerationTool_EmptyToolsArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
@@ -72,6 +79,7 @@ func TestEnsureImageGenerationTool_EmptyToolsArray(t *testing.T) {
 	}
 }
 
+// TestEnsureImageGenerationTool_WebSearchAndImageGen 验证 web_search 工具与 image_generation 工具共存。
 func TestEnsureImageGenerationTool_WebSearchAndImageGen(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"web_search"}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
@@ -89,6 +97,8 @@ func TestEnsureImageGenerationTool_WebSearchAndImageGen(t *testing.T) {
 	}
 }
 
+// TestEnsureImageGenerationTool_GPT53CodexSparkDoesNotInjectTool 验证 gpt-5.3-codex-spark 模型
+// 不会注入 image_generation 工具。
 func TestEnsureImageGenerationTool_GPT53CodexSparkDoesNotInjectTool(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.3-codex-spark","input":"draw a cat"}`)
 	result := ensureImageGenerationTool(body, "gpt-5.3-codex-spark", nil)
@@ -101,6 +111,8 @@ func TestEnsureImageGenerationTool_GPT53CodexSparkDoesNotInjectTool(t *testing.T
 	}
 }
 
+// TestEnsureImageGenerationTool_FreeCodexAuthDoesNotInjectTool 验证免费 Codex 认证
+// 不会注入 image_generation 工具。
 func TestEnsureImageGenerationTool_FreeCodexAuthDoesNotInjectTool(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"draw a cat"}`)
 	freeAuth := &cliproxyauth.Auth{

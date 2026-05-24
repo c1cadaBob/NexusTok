@@ -1,7 +1,5 @@
-// Package gemini provides authentication and token management functionality
-// for Google's Gemini AI services. It handles OAuth2 authentication flows,
-// including obtaining tokens via web-based authorization, storing tokens,
-// and refreshing them when they expire.
+// Package gemini 提供 Google Gemini AI 服务的认证和令牌管理功能。
+// 处理 OAuth2 认证流程，包括通过 Web 授权获取令牌、存储令牌和过期时刷新令牌。
 package gemini
 
 import (
@@ -27,54 +25,54 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// OAuth configuration for Gemini.
+// Gemini 的 OAuth 配置，从环境变量读取客户端 ID 和密钥。
 var (
 	ClientID     = os.Getenv("GEMINI_OAUTH_CLIENT_ID")
 	ClientSecret = os.Getenv("GEMINI_OAUTH_CLIENT_SECRET")
 )
 
 const (
+	// DefaultCallbackPort 是 OAuth 回调服务器的默认端口。
 	DefaultCallbackPort = 8085
 )
 
-// OAuth scopes for Gemini authentication
+// Scopes 是 Gemini 认证所需的 OAuth 作用域列表。
 var Scopes = []string{
 	"https://www.googleapis.com/auth/cloud-platform",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
 }
 
-// GeminiAuth provides methods for handling the Gemini OAuth2 authentication flow.
-// It encapsulates the logic for obtaining, storing, and refreshing authentication tokens
-// for Google's Gemini AI services.
+// GeminiAuth 提供处理 Gemini OAuth2 认证流程的方法。
+// 封装了获取、存储和刷新 Google Gemini AI 服务认证令牌的逻辑。
 type GeminiAuth struct {
 }
 
-// WebLoginOptions customizes the interactive OAuth flow.
+// WebLoginOptions 自定义交互式 OAuth 流程的行为。
 type WebLoginOptions struct {
-	NoBrowser    bool
-	CallbackPort int
-	Prompt       func(string) (string, error)
+	NoBrowser    bool                       // NoBrowser 为 true 时不自动打开浏览器
+	CallbackPort int                        // CallbackPort 指定回调服务器端口
+	Prompt       func(string) (string, error) // Prompt 用于手动输入回调 URL 的提示函数
 }
 
-// NewGeminiAuth creates a new instance of GeminiAuth.
+// NewGeminiAuth 创建 GeminiAuth 的新实例。
 func NewGeminiAuth() *GeminiAuth {
 	return &GeminiAuth{}
 }
 
-// GetAuthenticatedClient configures and returns an HTTP client ready for making authenticated API calls.
-// It manages the entire OAuth2 flow, including handling proxies, loading existing tokens,
-// initiating a new web-based OAuth flow if necessary, and refreshing tokens.
+// GetAuthenticatedClient 配置并返回一个准备好进行认证 API 调用的 HTTP 客户端。
+// 管理整个 OAuth2 流程，包括处理代理、加载现有令牌、
+// 必要时发起新的 Web OAuth 流程以及刷新令牌。
 //
-// Parameters:
-//   - ctx: The context for the HTTP client
-//   - ts: The Gemini token storage containing authentication tokens
-//   - cfg: The configuration containing proxy settings
-//   - opts: Optional parameters to customize browser and prompt behavior
+// 参数：
+//   - ctx: HTTP 客户端的上下文
+//   - ts: 包含认证令牌的 Gemini 令牌存储
+//   - cfg: 包含代理设置的配置
+//   - opts: 自定义浏览器和提示行为的可选参数
 //
-// Returns:
-//   - *http.Client: An HTTP client configured with authentication
-//   - error: An error if the client configuration fails, nil otherwise
+// 返回：
+//   - *http.Client: 配置了认证的 HTTP 客户端
+//   - error: 客户端配置失败时的错误
 func (g *GeminiAuth) GetAuthenticatedClient(ctx context.Context, ts *GeminiTokenStorage, cfg *config.Config, opts *WebLoginOptions) (*http.Client, error) {
 	callbackPort := DefaultCallbackPort
 	if opts != nil && opts.CallbackPort > 0 {
@@ -129,18 +127,18 @@ func (g *GeminiAuth) GetAuthenticatedClient(ctx context.Context, ts *GeminiToken
 	return conf.Client(ctx, token), nil
 }
 
-// createTokenStorage creates a new GeminiTokenStorage object. It fetches the user's email
-// using the provided token and populates the storage structure.
+// createTokenStorage 创建新的 GeminiTokenStorage 对象。
+// 使用提供的令牌获取用户邮箱并填充存储结构。
 //
-// Parameters:
-//   - ctx: The context for the HTTP request
-//   - config: The OAuth2 configuration
-//   - token: The OAuth2 token to use for authentication
-//   - projectID: The Google Cloud Project ID to associate with this token
+// 参数：
+//   - ctx: HTTP 请求的上下文
+//   - config: OAuth2 配置
+//   - token: 用于认证的 OAuth2 令牌
+//   - projectID: 关联此令牌的 Google Cloud 项目 ID
 //
-// Returns:
-//   - *GeminiTokenStorage: A new token storage object with user information
-//   - error: An error if the token storage creation fails, nil otherwise
+// 返回：
+//   - *GeminiTokenStorage: 包含用户信息的新令牌存储对象
+//   - error: 令牌存储创建失败时的错误
 func (g *GeminiAuth) createTokenStorage(ctx context.Context, config *oauth2.Config, token *oauth2.Token, projectID string) (*GeminiTokenStorage, error) {
 	httpClient := config.Client(ctx, token)
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
@@ -194,19 +192,18 @@ func (g *GeminiAuth) createTokenStorage(ctx context.Context, config *oauth2.Conf
 	return &ts, nil
 }
 
-// getTokenFromWeb initiates the web-based OAuth2 authorization flow.
-// It starts a local HTTP server to listen for the callback from Google's auth server,
-// opens the user's browser to the authorization URL, and exchanges the received
-// authorization code for an access token.
+// getTokenFromWeb 发起基于 Web 的 OAuth2 授权流程。
+// 启动本地 HTTP 服务器监听 Google 认证服务器的回调，
+// 打开用户浏览器访问授权 URL，并将收到的授权码交换为访问令牌。
 //
-// Parameters:
-//   - ctx: The context for the HTTP client
-//   - config: The OAuth2 configuration
-//   - opts: Optional parameters to customize browser and prompt behavior
+// 参数：
+//   - ctx: HTTP 客户端的上下文
+//   - config: OAuth2 配置
+//   - opts: 自定义浏览器和提示行为的可选参数
 //
-// Returns:
-//   - *oauth2.Token: The OAuth2 token obtained from the authorization flow
-//   - error: An error if the token acquisition fails, nil otherwise
+// 返回：
+//   - *oauth2.Token: 从授权流程获取的 OAuth2 令牌
+//   - error: 令牌获取失败时的错误
 func (g *GeminiAuth) getTokenFromWeb(ctx context.Context, config *oauth2.Config, opts *WebLoginOptions) (*oauth2.Token, error) {
 	callbackPort := DefaultCallbackPort
 	if opts != nil && opts.CallbackPort > 0 {

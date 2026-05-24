@@ -1,3 +1,6 @@
+// 包 auth - claude.go
+// 该文件实现了 Anthropic Claude 账户的 OAuth 登录流程。
+// 包括 PKCE 码生成、本地回调服务器管理、授权码交换和令牌存储构建等功能。
 package auth
 
 import (
@@ -17,24 +20,43 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ClaudeAuthenticator implements the OAuth login flow for Anthropic Claude accounts.
+// ClaudeAuthenticator 实现了 Anthropic Claude 账户的 OAuth 登录认证器。
 type ClaudeAuthenticator struct {
-	CallbackPort int
+	CallbackPort int // OAuth 回调服务器监听端口，默认 54545
 }
 
-// NewClaudeAuthenticator constructs a Claude authenticator with default settings.
+// NewClaudeAuthenticator 使用默认设置构造一个 Claude 认证器实例。
+//
+// 返回:
+//   - *ClaudeAuthenticator: Claude 认证器实例（回调端口 54545）
 func NewClaudeAuthenticator() *ClaudeAuthenticator {
 	return &ClaudeAuthenticator{CallbackPort: 54545}
 }
 
+// Provider 返回 Claude 提供商的标识名称。
 func (a *ClaudeAuthenticator) Provider() string {
 	return "claude"
 }
 
+// RefreshLead 指示管理器在令牌过期前四小时执行刷新。
+//
+// 返回:
+//   - *time.Duration: 提前刷新的时间间隔
 func (a *ClaudeAuthenticator) RefreshLead() *time.Duration {
 	return new(4 * time.Hour)
 }
 
+// Login 执行 Claude 的完整 OAuth 登录流程。
+// 流程包括：PKCE 码生成、启动回调服务器、打开浏览器、等待授权回调、交换令牌和构建认证记录。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - cfg: 应用配置
+//   - opts: 登录选项
+//
+// 返回:
+//   - *coreauth.Auth: 认证结果，包含令牌存储和元数据
+//   - error: 登录失败时返回错误信息
 func (a *ClaudeAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")

@@ -1,3 +1,7 @@
+// codex/gemini - init.go
+// 本文件负责注册 Gemini 到 Codex 的翻译器。
+// 在 init 函数中调用 translator.Register 将请求转换函数和响应转换函数注册到翻译器注册表中，
+// 使得系统能够在 Gemini API 格式和 Codex API 格式之间进行双向转换。
 package gemini
 
 import (
@@ -6,15 +10,16 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/translator/translator"
 )
 
+// init 注册 Gemini 到 Codex 的翻译器，包括请求转换和响应转换（流式/非流式）以及 Token 计数函数。
 func init() {
 	translator.Register(
-		Gemini,
-		Codex,
-		ConvertGeminiRequestToCodex,
+		Gemini,                              // 源 API 类型：Gemini
+		Codex,                               // 目标 API 类型：Codex
+		ConvertGeminiRequestToCodex,         // 请求转换函数
 		interfaces.TranslateResponse{
-			Stream:     ConvertCodexResponseToGemini,
-			NonStream:  ConvertCodexResponseToGeminiNonStream,
-			TokenCount: GeminiTokenCount,
+			Stream:     ConvertCodexResponseToGemini,         // 流式响应转换函数
+			NonStream:  ConvertCodexResponseToGeminiNonStream, // 非流式响应转换函数
+			TokenCount: GeminiTokenCount,                      // Token 计数函数
 		},
 	)
 }

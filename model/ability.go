@@ -1,3 +1,19 @@
+// Package model - ability.go
+// 该文件定义了渠道能力（Ability）数据模型及相关操作
+//
+// 主要结构体：
+// - Ability：渠道能力表，记录渠道支持的模型及调度参数
+// - AbilityWithChannel：带渠道类型的联合查询结构体
+//
+// 核心功能：
+// - 渠道能力的增删改查
+// - 基于优先级和权重的渠道选择（加权随机）
+// - 渠道能力表的修复和重建（FixAbility）
+//
+// 数据表设计：
+// - 复合主键：group + model + channel_id
+// - 支持优先级（priority）和权重（weight）调度
+// - 支持标签（tag）分组管理
 package model
 
 import (
@@ -13,21 +29,28 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// Ability 渠道能力表模型
+// 记录某个渠道（Channel）支持的模型及调度参数
+// 复合主键：Group + Model + ChannelId
 type Ability struct {
-	Group     string  `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`
-	Model     string  `json:"model" gorm:"type:varchar(255);primaryKey;autoIncrement:false"`
-	ChannelId int     `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`
-	Enabled   bool    `json:"enabled"`
-	Priority  *int64  `json:"priority" gorm:"bigint;default:0;index"`
-	Weight    uint    `json:"weight" gorm:"default:0;index"`
-	Tag       *string `json:"tag" gorm:"index"`
+	Group     string  `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`          // 分组名称
+	Model     string  `json:"model" gorm:"type:varchar(255);primaryKey;autoIncrement:false"`         // 模型名称
+	ChannelId int     `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`                // 渠道 ID
+	Enabled   bool    `json:"enabled"`                                                               // 是否启用
+	Priority  *int64  `json:"priority" gorm:"bigint;default:0;index"`                                // 优先级（数值越大越优先）
+	Weight    uint    `json:"weight" gorm:"default:0;index"`                                         // 权重（同优先级内用于加权随机选择）
+	Tag       *string `json:"tag" gorm:"index"`                                                      // 标签（用于批量管理）
 }
 
+// AbilityWithChannel 带渠道类型的联合查询结构体
+// 用于查询能力时同时获取渠道类型信息
 type AbilityWithChannel struct {
 	Ability
-	ChannelType int `json:"channel_type"`
+	ChannelType int `json:"channel_type"` // 渠道类型
 }
 
+// GetAllEnableAbilityWithChannels 获取所有启用的能力记录及其渠道类型
+// 联合查询 abilities 和 channels 表，返回包含渠道类型的能力列表
 func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	var abilities []AbilityWithChannel
 	err := DB.Table("abilities").
@@ -38,6 +61,8 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	return abilities, err
 }
 
+// GetGroupEnabledModels 获取指定分组下所有启用的模型名称列表
+// 返回去重后的模型名称切片
 func GetGroupEnabledModels(group string) []string {
 	var models []string
 	// Find distinct models
@@ -45,6 +70,8 @@ func GetGroupEnabledModels(group string) []string {
 	return models
 }
 
+// GetEnabledModels 获取所有启用的模型名称列表（跨分组）
+// 返回去重后的模型名称切片
 func GetEnabledModels() []string {
 	var models []string
 	// Find distinct models
@@ -52,12 +79,16 @@ func GetEnabledModels() []string {
 	return models
 }
 
+// GetAllEnableAbilities 获取所有启用的能力记录
 func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)
 	return abilities
 }
 
+// getPriority 获取指定分组和模型在第 retry 次重试时应使用的优先级值
+// 优先级按降序排列，retry=0 使用最高优先级，retry=1 使用次高优先级，以此类推
+// 当 retry 超过可用优先级数量时，使用最低优先级
 func getPriority(group string, model string, retry int) (int, error) {
 
 	var priorities []int
@@ -88,6 +119,9 @@ func getPriority(group string, model string, retry int) (int, error) {
 	return priorityToUse, nil
 }
 
+// getChannelQuery 构建渠道能力查询条件
+// 根据 retry 次数确定优先级，返回对应的 GORM 查询对象
+// retry=0 时查询最高优先级，retry>0 时查询对应优先级
 func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
 	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, true, maxPrioritySubQuery)
@@ -103,6 +137,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 	return channelQuery, nil
 }
 
+// GetChannel 根据分组、模型和重试次数选择一个可用渠道
+// 使用加权随机选择算法：权重越高的渠道被选中的概率越大
+// 基础权重为 10，加上渠道自身的权重值
+// 返回 nil 表示没有可用渠道
 func GetChannel(group string, model string, retry int) (*Channel, error) {
 	var abilities []Ability
 
@@ -143,6 +181,10 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 	return &channel, err
 }
 
+// AddAbilities 为渠道添加能力记录
+// 将渠道支持的模型和分组组合写入能力表
+// 使用 ON CONFLICT DO NOTHING 避免重复插入
+// 支持分批插入（每批 50 条）以避免大事务
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
@@ -184,6 +226,7 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	return nil
 }
 
+// DeleteAbilities 删除渠道的所有能力记录
 func (channel *Channel) DeleteAbilities() error {
 	return DB.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 }
@@ -260,14 +303,17 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	return nil
 }
 
+// UpdateAbilityStatus 更新指定渠道所有能力的启用状态
 func UpdateAbilityStatus(channelId int, status bool) error {
 	return DB.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", status).Error
 }
 
+// UpdateAbilityStatusByTag 按标签批量更新能力的启用状态
 func UpdateAbilityStatusByTag(tag string, status bool) error {
 	return DB.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
 }
 
+// UpdateAbilityByTag 按标签更新能力的属性（标签、优先级、权重）
 func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uint) error {
 	ability := Ability{}
 	if newTag != nil {
@@ -282,8 +328,13 @@ func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uin
 	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
 }
 
+// fixLock 修复操作的互斥锁，防止并发修复导致数据不一致
 var fixLock = sync.Mutex{}
 
+// FixAbility 修复渠道能力表
+// 清空能力表后根据所有渠道的配置重新生成能力记录
+// 使用互斥锁保证同一时间只有一个修复任务运行
+// 返回值：成功数、失败数、错误
 func FixAbility() (int, int, error) {
 	lock := fixLock.TryLock()
 	if !lock {

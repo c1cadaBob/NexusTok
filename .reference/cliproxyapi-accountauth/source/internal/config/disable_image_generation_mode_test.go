@@ -1,3 +1,7 @@
+// config - disable_image_generation_mode_test.go
+// 图片生成禁用模式反序列化测试
+// 验证 DisableImageGenerationMode 类型能够正确从 YAML 和 JSON 格式反序列化，
+// 支持布尔值（true/false）和字符串值（"chat"）三种模式。
 package config
 
 import (
@@ -7,6 +11,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestDisableImageGenerationMode_UnmarshalYAML 测试 YAML 反序列化：
+// - false -> DisableImageGenerationOff（不禁用）
+// - true  -> DisableImageGenerationAll（全部禁用）
+// - "chat" -> DisableImageGenerationChat（仅聊天模式禁用）
 func TestDisableImageGenerationMode_UnmarshalYAML(t *testing.T) {
 	type wrapper struct {
 		V DisableImageGenerationMode `yaml:"disable-image-generation"`
@@ -43,6 +51,10 @@ func TestDisableImageGenerationMode_UnmarshalYAML(t *testing.T) {
 	}
 }
 
+// TestDisableImageGenerationMode_UnmarshalJSON 测试 JSON 反序列化：
+// - false -> DisableImageGenerationOff
+// - true  -> DisableImageGenerationAll
+// - "chat" -> DisableImageGenerationChat
 func TestDisableImageGenerationMode_UnmarshalJSON(t *testing.T) {
 	{
 		var v DisableImageGenerationMode

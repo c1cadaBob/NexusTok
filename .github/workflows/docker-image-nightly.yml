@@ -1,3 +1,19 @@
+# docker-image-nightly.yml - Nightly 每日构建 Docker 镜像
+#
+# 触发条件：
+# - 推送到 nightly 分支
+# - 手动触发
+#
+# 功能：
+# - 为 amd64 和 arm64 架构分别构建镜像
+# - 仅推送到 Docker Hub（不推送到 GHCR）
+# - 不启用 cosign 签名（provenance: false, sbom: false）
+# - 合并为多架构 manifest
+#
+# 镜像标签：
+# - c1cada/nexustok:nightly
+# - c1cada/nexustok:nightly-{YYYYMMDD}-{SHORT_SHA}
+
 name: Publish Docker image (nightly)
 
 on:

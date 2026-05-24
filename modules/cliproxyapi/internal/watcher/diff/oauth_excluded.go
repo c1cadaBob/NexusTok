@@ -1,3 +1,6 @@
+// diff - oauth_excluded.go
+// 本文件实现了 OAuth 排除模型的变更检测功能。
+// 用于检测配置中 OAuth 排除模型列表的变化。
 package diff
 
 import (

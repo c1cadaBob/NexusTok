@@ -1,3 +1,20 @@
+# release.yml - 跨平台二进制发布工作流
+#
+# 触发条件：
+# - 推送标签（排除 *-alpha* 标签）
+# - 手动触发
+#
+# 功能：
+# - 为 Linux、macOS、Windows 三个平台构建二进制文件
+# - 每个平台构建默认和经典两套前端
+# - 生成 SHA256 校验和
+# - 自动发布到 GitHub Releases
+#
+# 构建产物：
+# - Linux: nexustok-{VERSION}（amd64）, nexustok-arm64-{VERSION}
+# - macOS: nexustok-macos-{VERSION}
+# - Windows: nexustok-{VERSION}.exe
+
 name: Release (Linux, macOS, Windows)
 permissions:
   contents: write

@@ -1,3 +1,8 @@
+// Package relay - gemini_handler.go
+// 本文件实现了 Google Gemini 原生格式请求和 Gemini Embedding 请求的中继处理逻辑。
+// 包含两个主要处理函数：
+//   - GeminiHelper: 处理 Gemini Chat 请求，支持 thinking（思考）模式适配、系统提示注入等。
+//   - GeminiEmbeddingHandler: 处理 Gemini Embedding 请求，支持单条和批量嵌入。
 package relay
 
 import (
@@ -21,6 +26,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// isNoThinkingRequest 判断 Gemini 请求是否为 "非思考"（no-thinking）请求。
+// 当请求中设置了 ThinkingConfig 且 ThinkingBudget 为 0 时，视为非思考请求。
+// 非思考请求可以使用更低价格的 nothinking 模型进行计费。
+//
+// 参数：
+//   - req: Gemini Chat 请求对象
+//
+// 返回值：
+//   - bool: 若为非思考请求返回 true
 func isNoThinkingRequest(req *dto.GeminiChatRequest) bool {
 	if req.GenerationConfig.ThinkingConfig != nil && req.GenerationConfig.ThinkingConfig.ThinkingBudget != nil {
 		configBudget := req.GenerationConfig.ThinkingConfig.ThinkingBudget
@@ -32,6 +46,17 @@ func isNoThinkingRequest(req *dto.GeminiChatRequest) bool {
 	return false
 }
 
+// trimModelThinking 从模型名称中去除 thinking 相关的后缀。
+// 处理以下三种情况：
+//   - "-nothinking" 后缀：直接去除
+//   - "-thinking" 后缀：直接去除
+//   - "-thinking-数字" 后缀：去除数字部分，保留 "-thinking"
+//
+// 参数：
+//   - modelName: 原始模型名称
+//
+// 返回值：
+//   - string: 处理后的模型名称
 func trimModelThinking(modelName string) string {
 	// 去除模型名称中的 -nothinking 后缀
 	if strings.HasSuffix(modelName, "-nothinking") {
@@ -52,6 +77,24 @@ func trimModelThinking(modelName string) string {
 	return modelName
 }
 
+// GeminiHelper 是 Gemini Chat 请求的中继处理函数。
+// 处理流程：
+//  1. 初始化渠道元数据，类型断言并深拷贝请求。
+//  2. 执行模型映射（ModelMappedHelper）。
+//  3. 思考模式适配：若开启 ThinkingAdapterEnabled 且为非思考请求，
+//     尝试查找并使用 nothinking 模型的价格配置。
+//  4. 注入渠道系统提示（SystemPrompt）到 SystemInstructions 中。
+//  5. 清理空的系统指令。
+//  6. 根据是否使用 passthrough 模式选择请求体来源。
+//  7. 应用参数覆盖并发送请求。
+//  8. 处理响应错误、流式检测和计费结算。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 
@@ -199,6 +242,24 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	return nil
 }
 
+// GeminiEmbeddingHandler 是 Gemini Embedding 请求的中继处理函数。
+// 支持两种请求格式：
+//   - 单条嵌入：使用 dto.GeminiEmbeddingRequest
+//   - 批量嵌入（batchEmbedContents）：使用 dto.GeminiBatchEmbeddingRequest
+//
+// 处理流程：
+//  1. 根据请求路径判断是否为批量嵌入。
+//  2. 解析请求并提取输入文本。
+//  3. 执行模型映射并设置上游模型名称（添加 "models/" 前缀）。
+//  4. 应用参数覆盖，通过适配器发送请求。
+//  5. 处理响应并进行计费结算。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 

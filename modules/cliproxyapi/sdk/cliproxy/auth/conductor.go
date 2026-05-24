@@ -1,3 +1,7 @@
+// auth - conductor.go
+// 该文件是认证管理器的核心实现，包含凭据生命周期管理、执行路由、重试逻辑、
+// 模型别名解析、提供商轮换、流式处理、配额管理等功能。
+// Manager 结构体是整个认证系统的中枢，协调选择器、执行器、调度器之间的交互。
 package auth
 
 import (
@@ -28,62 +32,70 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ProviderExecutor defines the contract required by Manager to execute provider calls.
+// ProviderExecutor 定义 Manager 执行提供商调用所需的契约接口。
 type ProviderExecutor interface {
-	// Identifier returns the provider key handled by this executor.
+	// Identifier 返回此执行器处理的提供商键。
 	Identifier() string
-	// Execute handles non-streaming execution and returns the provider response payload.
+	// Execute 处理非流式执行并返回提供商响应载荷。
 	Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
-	// ExecuteStream handles streaming execution and returns a StreamResult containing
-	// upstream headers and a channel of provider chunks.
+	// ExecuteStream 处理流式执行并返回包含上游头信息和数据块通道的 StreamResult。
 	ExecuteStream(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error)
-	// Refresh attempts to refresh provider credentials and returns the updated auth state.
+	// Refresh 尝试刷新提供商凭据并返回更新后的认证状态。
 	Refresh(ctx context.Context, auth *Auth) (*Auth, error)
-	// CountTokens returns the token count for the given request.
+	// CountTokens 返回给定请求的令牌计数。
 	CountTokens(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
-	// HttpRequest injects provider credentials into the supplied HTTP request and executes it.
-	// Callers must close the response body when non-nil.
+	// HttpRequest 将提供商凭据注入到 HTTP 请求中并执行，调用者需关闭非 nil 的响应体。
 	HttpRequest(ctx context.Context, auth *Auth, req *http.Request) (*http.Response, error)
 }
 
-// ExecutionSessionCloser allows executors to release per-session runtime resources.
+// ExecutionSessionCloser 允许执行器释放每个会话的运行时资源。
 type ExecutionSessionCloser interface {
+	// CloseExecutionSession 关闭指定会话的执行资源。
 	CloseExecutionSession(sessionID string)
 }
 
 const (
+	// homeAuthCountMetadataKey 是 Home 调度的认证计数元数据键。
 	homeAuthCountMetadataKey = "__cliproxy_home_auth_count"
-	// CloseAllExecutionSessionsID asks an executor to release all active execution sessions.
-	// Executors that do not support this marker may ignore it.
+	// CloseAllExecutionSessionsID 指示执行器释放所有活跃的执行会话，
+	// 不支持此标记的执行器可忽略。
 	CloseAllExecutionSessionsID = "__all_execution_sessions__"
 )
 
-// RefreshEvaluator allows runtime state to override refresh decisions.
+// RefreshEvaluator 允许运行时状态覆盖刷新决策。
 type RefreshEvaluator interface {
+	// ShouldRefresh 判断当前是否应刷新认证凭据。
 	ShouldRefresh(now time.Time, auth *Auth) bool
 }
 
 const (
+	// refreshCheckInterval 是刷新检查的默认间隔。
 	refreshCheckInterval  = 5 * time.Second
+	// refreshMaxConcurrency 是最大并发刷新数。
 	refreshMaxConcurrency = 16
+	// refreshPendingBackoff 是刷新挂起时的退避时间。
 	refreshPendingBackoff = time.Minute
+	// refreshFailureBackoff 是刷新失败时的退避时间。
 	refreshFailureBackoff = 5 * time.Minute
-	// refreshIneffectiveBackoff throttles refresh attempts when an executor returns
-	// success but the auth still evaluates as needing refresh (e.g. token expiry
-	// wasn't updated). Without this guard, the auto-refresh loop can tight-loop and
-	// burn CPU at idle.
+	// refreshIneffectiveBackoff 节流当执行器返回成功但认证仍需刷新时的重试，
+	// 防止自动刷新循环在空闲时紧密循环消耗 CPU。
 	refreshIneffectiveBackoff = 30 * time.Second
+	// quotaBackoffBase 是配额冷却的基础退避时间。
 	quotaBackoffBase          = time.Second
+	// quotaBackoffMax 是配额冷却的最大退避时间。
 	quotaBackoffMax           = 30 * time.Minute
 )
 
+// quotaCooldownDisabled 是全局配额冷却禁用标志。
 var quotaCooldownDisabled atomic.Bool
 
-// SetQuotaCooldownDisabled toggles quota cooldown scheduling globally.
+// SetQuotaCooldownDisabled 全局切换配额冷却调度。
 func SetQuotaCooldownDisabled(disable bool) {
 	quotaCooldownDisabled.Store(disable)
 }
 
+// quotaCooldownDisabledForAuth 检查指定认证凭据是否禁用了配额冷却，
+// 优先使用凭据级别的覆盖设置，否则使用全局设置。
 func quotaCooldownDisabledForAuth(auth *Auth) bool {
 	if auth != nil {
 		if override, ok := auth.DisableCoolingOverride(); ok {
@@ -93,60 +105,62 @@ func quotaCooldownDisabledForAuth(auth *Auth) bool {
 	return quotaCooldownDisabled.Load()
 }
 
-// Result captures execution outcome used to adjust auth state.
+// Result 捕获执行结果，用于调整认证状态。
 type Result struct {
-	// AuthID references the auth that produced this result.
+	// AuthID 引用产生此结果的认证凭据。
 	AuthID string
-	// Provider is copied for convenience when emitting hooks.
+	// Provider 为方便触发钩子而复制的提供商名称。
 	Provider string
-	// Model is the upstream model identifier used for the request.
+	// Model 是请求使用的上游模型标识符。
 	Model string
-	// Success marks whether the execution succeeded.
+	// Success 标记执行是否成功。
 	Success bool
-	// RetryAfter carries a provider supplied retry hint (e.g. 429 retryDelay).
+	// RetryAfter 携带提供商提供的重试提示（如 429 的 retryDelay）。
 	RetryAfter *time.Duration
-	// Error describes the failure when Success is false.
+	// Error 在 Success 为 false 时描述失败原因。
 	Error *Error
 }
 
-// Selector chooses an auth candidate for execution.
+// Selector 定义为执行选择认证候选者的接口。
 type Selector interface {
+	// Pick 从候选列表中选择一个认证凭据。
 	Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error)
 }
 
-// StoppableSelector is an optional interface for selectors that hold resources.
-// Selectors that implement this interface will have Stop called during shutdown.
+// StoppableSelector 是持有资源的选择器的可选接口，
+// 实现此接口的选择器在关闭时会被调用 Stop。
 type StoppableSelector interface {
 	Selector
+	// Stop 释放选择器持有的资源。
 	Stop()
 }
 
-// Hook captures lifecycle callbacks for observing auth changes.
+// Hook 定义观察认证变更的生命周期回调接口。
 type Hook interface {
-	// OnAuthRegistered fires when a new auth is registered.
+	// OnAuthRegistered 在新认证注册时触发。
 	OnAuthRegistered(ctx context.Context, auth *Auth)
-	// OnAuthUpdated fires when an existing auth changes state.
+	// OnAuthUpdated 在现有认证状态变更时触发。
 	OnAuthUpdated(ctx context.Context, auth *Auth)
-	// OnResult fires when execution result is recorded.
+	// OnResult 在执行结果记录时触发。
 	OnResult(ctx context.Context, result Result)
 }
 
-// NoopHook provides optional hook defaults.
+// NoopHook 提供可选的 Hook 默认空实现。
 type NoopHook struct{}
 
-// OnAuthRegistered implements Hook.
+// OnAuthRegistered 实现 Hook 接口的空方法。
 func (NoopHook) OnAuthRegistered(context.Context, *Auth) {}
 
-// OnAuthUpdated implements Hook.
+// OnAuthUpdated 实现 Hook 接口的空方法。
 func (NoopHook) OnAuthUpdated(context.Context, *Auth) {}
 
-// OnResult implements Hook.
+// OnResult 实现 Hook 接口的空方法。
 func (NoopHook) OnResult(context.Context, Result) {}
 
-// Manager orchestrates auth lifecycle, selection, execution, and persistence.
+// Manager 编排认证生命周期、选择、执行和持久化，是整个认证系统的核心协调器。
 type Manager struct {
-	store     Store
-	executors map[string]ProviderExecutor
+	store     Store                       // 持久化存储接口
+	executors map[string]ProviderExecutor // 提供商名称到执行器的映射
 	selector  Selector
 	hook      Hook
 	mu        sync.RWMutex

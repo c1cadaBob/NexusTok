@@ -1,3 +1,11 @@
+// Package controller - payment_compliance.go
+// 该文件实现了支付合规确认的 API 控制器
+//
+// 支付功能需要管理员先确认合规声明才能启用
+// 确认信息包括：确认时间、确认用户、确认 IP、条款版本
+//
+// 主要 API：
+// - ConfirmPaymentCompliance：确认支付合规声明
 package controller
 
 import (
@@ -15,10 +23,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// PaymentComplianceRequest 支付合规确认请求结构体
 type PaymentComplianceRequest struct {
-	Confirmed bool `json:"confirmed"`
+	Confirmed bool `json:"confirmed"` // 是否确认合规声明
 }
 
+// requirePaymentCompliance 检查支付合规是否已确认
+//
+// 如果未确认，返回错误响应
+//
+// 返回值：
+//   - bool: 是否已确认
 func requirePaymentCompliance(c *gin.Context) bool {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
@@ -27,6 +42,16 @@ func requirePaymentCompliance(c *gin.Context) bool {
 	return true
 }
 
+// ConfirmPaymentCompliance 确认支付合规声明
+//
+// 记录确认信息到数据库，包括：
+// - 确认状态
+// - 条款版本
+// - 确认时间
+// - 确认用户 ID
+// - 确认 IP 地址
+//
+// 注意：API access token 不允许执行此操作，需要 dashboard 会话认证
 func ConfirmPaymentCompliance(c *gin.Context) {
 	if c.GetBool("use_access_token") {
 		c.JSON(http.StatusForbidden, gin.H{

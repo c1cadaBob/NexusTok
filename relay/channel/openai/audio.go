@@ -1,3 +1,8 @@
+// openai - audio.go
+// OpenAI 渠道的音频处理文件。
+// 本文件负责处理 OpenAI 兼容的音频 API 请求和响应，包括：
+// - TTS（Text-to-Speech）语音合成：处理流式和非流式响应，计算音频时长和 token 使用量
+// - STT（Speech-to-Text）语音识别：处理转录/翻译响应，提取 token 使用量
 package openai
 
 import (
@@ -18,6 +23,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OpenaiTTSHandler 处理 OpenAI TTS（Text-to-Speech）语音合成 API 的响应。
+// 该函数支持流式和非流式两种模式：
+//
+// 流式模式：
+//   - 使用 StreamScannerHandler 逐行扫描 SSE 数据
+//   - 从包含 usage 字段的数据中提取 token 使用量
+//   - 将每行数据实时转发给客户端
+//
+// 非流式模式：
+//   - 读取完整的音频响应体
+//   - 将音频数据写回客户端
+//   - 根据音频格式计算时长和 token 使用量：
+//   - PCM 格式：根据采样率（24kHz）、位深（16-bit）、声道数（1）直接计算
+//   - 其他格式（MP3 等）：通过 common.GetAudioDuration 解析文件头获取时长
+//   - token 计算公式：ceil(duration) / 60.0 * 1000（每分钟 1000 tokens）
+//   - 如果无法获取时长，按文件大小（KB）粗略估算
+//
+// 注意：一旦上游已写入响应头，后续的响应体读取失败被视为不可恢复错误，
+// 不会返回错误以触发外部重试（类似 nginx 负载均衡的重试策略）。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - resp: 上游 API 返回的 HTTP 响应
+//   - info: 中继信息，包含流式标记和请求信息
+//
+// 返回:
+//   - *dto.Usage: token 使用量信息
 func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) *dto.Usage {
 	// the status code has been judged before, if there is a body reading failure,
 	// it should be regarded as a non-recoverable error, so it should not return err for external retry.
@@ -114,6 +146,26 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	return usage
 }
 
+// OpenaiSTTHandler 处理 OpenAI STT（Speech-to-Text）语音识别 API 的响应。
+// 该函数处理音频转录（Transcription）和翻译（Translation）两种模式的响应。
+//
+// 处理流程：
+//  1. 读取上游 API 返回的完整响应体
+//  2. 将响应体写回客户端
+//  3. 尝试从响应中解析 usage 字段：
+//     - 如果存在有效的 TotalTokens，直接使用上游返回的 token 统计
+//     - 将 InputTokens 映射到 PromptTokens，OutputTokens 映射到 CompletionTokens
+//  4. 如果上游未返回 usage 信息，则使用估算的 prompt token 数作为 usage
+//
+// 参数:
+//   - c: Gin 上下文
+//   - resp: 上游 API 返回的 HTTP 响应
+//   - info: 中继信息，包含估算的 prompt token 数
+//   - responseFormat: 响应格式（用于日志记录等辅助用途）
+//
+// 返回:
+//   - *types.NexusTokError: 处理过程中的错误
+//   - *dto.Usage: token 使用量信息
 func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, responseFormat string) (*types.NexusTokError, *dto.Usage) {
 	defer service.CloseResponseBodyGracefully(resp)
 

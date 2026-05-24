@@ -1,3 +1,17 @@
+// resp - client.go
+// RESP（Redis Serialization Protocol）协议客户端实现。
+// 支持两种运行模式：
+//  1. 命令模式：通过 Do 方法发送命令并同步等待响应（AUTH、RPOP/LPOP 等）
+//  2. 订阅模式：通过 Subscribe 进入后，使用 ReadMessage 持续接收推送消息
+//
+// 协议实现覆盖 RESP 的五种数据类型：
+//   - Simple String（+）：单行文本
+//   - Error（-）：错误信息
+//   - Integer（:）：整数值
+//   - Bulk String（$）：带长度前缀的二进制安全字符串
+//   - Array（*）：嵌套数组
+//
+// 主要用于从 CPA 的 Redis 兼容接口消费使用量队列。
 package resp
 
 import (
@@ -13,16 +27,23 @@ import (
 	"time"
 )
 
+// Client 是 RESP 协议客户端。
+// 封装了底层 TCP 连接和 RESP 协议的读写操作。
 type Client struct {
-	conn       net.Conn
-	reader     *bufio.Reader
-	timeout    time.Duration
-	subscribed bool
+	conn       net.Conn      // 底层 TCP 连接
+	reader     *bufio.Reader // 带缓冲的读取器，用于高效解析 RESP 帧
+	timeout    time.Duration // 命令模式下的默认超时时间
+	subscribed bool          // 是否已进入订阅模式
 }
 
 // ErrUnsupportedSubscribe 表示上游不支持 SUBSCRIBE 命令（典型为 v7.0.7 之前的 CPA）。
+// 用于触发采集模式降级。
 var ErrUnsupportedSubscribe = errors.New("RESP server does not support SUBSCRIBE")
 
+// Dial 建立到上游 RESP 服务的 TCP 连接。
+// 支持 http 和 https 协议，https 时使用 TLS 加密连接。
+// 自动补全默认端口（http:80, https:443）。
+// 连接超时为 10 秒，命令超时默认 30 秒。
 func Dial(rawURL string, skipTLSVerify bool) (*Client, error) {
 	upstream, err := parseURL(rawURL)
 	if err != nil {
@@ -54,6 +75,7 @@ func Dial(rawURL string, skipTLSVerify bool) (*Client, error) {
 	return &Client{conn: conn, reader: bufio.NewReader(conn), timeout: 30 * time.Second}, nil
 }
 
+// Close 关闭底层 TCP 连接。对 nil 客户端或已关闭的连接安全调用。
 func (c *Client) Close() error {
 	if c == nil || c.conn == nil {
 		return nil
@@ -61,6 +83,9 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// Auth 向 RESP 服务端发送 AUTH 命令进行认证。
+// 成功时服务端返回 +OK，认证失败时返回错误。
+// 必须在任何其他命令之前调用。
 func (c *Client) Auth(key string) error {
 	value, err := c.Do("AUTH", key)
 	if err != nil {
@@ -72,6 +97,9 @@ func (c *Client) Auth(key string) error {
 	return nil
 }
 
+// Pop 从 Redis 队列中弹出指定数量的消息。
+// 参数 side 决定使用 LPOP（左侧弹出）还是 RPOP（右侧弹出）。
+// 返回值为消息字符串列表，队列为空时返回 nil。
 func (c *Client) Pop(queue string, side string, count int) ([]string, error) {
 	command := "RPOP"
 	if strings.EqualFold(side, "left") || strings.EqualFold(side, "lpop") {
@@ -103,6 +131,9 @@ func (c *Client) Pop(queue string, side string, count int) ([]string, error) {
 	}
 }
 
+// Do 发送一条 RESP 命令并同步等待响应。
+// 仅在命令模式下可用，订阅模式下调用会返回错误。
+// 响应类型根据 RESP 前缀自动解析（字符串、整数、批量字符串、数组等）。
 func (c *Client) Do(args ...string) (any, error) {
 	if c == nil || c.conn == nil {
 		return nil, errors.New("RESP client is closed")
@@ -220,6 +251,8 @@ func (c *Client) SetReadDeadline(t time.Time) error {
 	return c.conn.SetReadDeadline(t)
 }
 
+// encodeCommand 将命令参数编码为 RESP 协议格式的字节数组。
+// 格式：*{参数数量}\r\n${参数1长度}\r\n{参数1}\r\n...
 func encodeCommand(args []string) []byte {
 	var builder strings.Builder
 	builder.WriteByte('*')
@@ -235,6 +268,14 @@ func encodeCommand(args []string) []byte {
 	return []byte(builder.String())
 }
 
+// readValue 根据 RESP 前缀字节解析一个 RESP 值。
+// 支持的前缀：
+//   - '+' Simple String
+//   - '-' Error
+//   - ':' Integer
+//   - '$' Bulk String
+//   - '*' Array
+//   - '_' Null
 func (c *Client) readValue() (any, error) {
 	prefix, err := c.reader.ReadByte()
 	if err != nil {
@@ -267,6 +308,7 @@ func (c *Client) readValue() (any, error) {
 	}
 }
 
+// readLine 从连接中读取一行（以 \r\n 结尾），去除行终止符后返回。
 func (c *Client) readLine() (string, error) {
 	line, err := c.reader.ReadString('\n')
 	if err != nil {
@@ -275,6 +317,9 @@ func (c *Client) readLine() (string, error) {
 	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), nil
 }
 
+// readBulkString 读取 RESP 批量字符串（$-prefixed）。
+// 先读取长度行，再读取指定长度的数据和 \r\n 终止符。
+// 长度为 -1 时表示 null 批量字符串。
 func (c *Client) readBulkString() (any, error) {
 	line, err := c.readLine()
 	if err != nil {
@@ -294,6 +339,8 @@ func (c *Client) readBulkString() (any, error) {
 	return string(data[:length]), nil
 }
 
+// readArray 读取 RESP 数组（*-prefixed）。
+// 递归读取指定数量的 RESP 值。长度为 -1 时表示 null 数组。
 func (c *Client) readArray() (any, error) {
 	line, err := c.readLine()
 	if err != nil {
@@ -317,6 +364,8 @@ func (c *Client) readArray() (any, error) {
 	return result, nil
 }
 
+// parseURL 解析上游 URL，自动补全协议前缀并校验合法性。
+// 缺少协议时默认添加 http://。仅支持 http 和 https 协议。
 func parseURL(raw string) (*url.URL, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

@@ -1,3 +1,17 @@
+// Package helper - price.go
+// 本文件提供了模型定价和配额预消费计算的辅助函数，是计费系统的核心组成部分。
+// 主要功能包括：
+//   - ModelPriceHelper: 基于 Token 用量的标准定价计算（Chat Completions、Embedding 等）
+//   - ModelPriceHelperPerCall: 按次计费的定价计算（Midjourney、异步任务等）
+//   - modelPriceHelperTiered: 分层表达式计费的定价计算（支持动态定价表达式）
+//   - HasModelBillingConfig: 检查模型是否已配置计费信息
+//   - HandleGroupRatio: 处理用户分组的倍率调整
+//   - modelPriceNotConfiguredError: 生成模型未配置价格的错误信息
+//
+// 定价系统支持两种计费模式：
+//   - 倍率模式（Ratio）：基于模型倍率 * Token 数量计算配额
+//   - 固定价格模式（Price）：基于每千 Token 固定价格计算配额
+//   - 分层表达式模式（Tiered Expr）：基于动态定价表达式计算配额
 package helper
 
 import (
@@ -17,6 +31,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// modelPriceNotConfiguredError 生成模型价格未配置的错误信息。
+// 根据用户是否为管理员返回不同详细程度的错误提示：
+//   - 管理员：提示前往系统设置配置价格或开启自用模式
+//   - 普通用户：提示联系站点管理员
+//
+// 参数：
+//   - modelName: 未配置价格的模型名称
+//   - userId: 当前用户 ID，用于判断是否为管理员
+//
+// 返回值：
+//   - error: 包含中英双语的错误描述
 func modelPriceNotConfiguredError(modelName string, userId int) error {
 	if model.IsAdmin(userId) {
 		return fmt.Errorf(
@@ -32,10 +57,21 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 	)
 }
 
-// https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+// claudeCacheCreation1hMultiplier Claude 1 小时缓存写入价格的倍率系数。
+// 根据 Claude 官方文档，1 小时缓存的写入价格是 5 分钟缓存的 6/3.75 倍。
+// 参考：https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
 
-// HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
+// HandleGroupRatio 处理用户分组的倍率逻辑。
+// 检查上下文中是否存在 auto_group（自动分组选择结果），如果存在则更新 RelayInfo.UsingGroup。
+// 然后查找用户分组与使用分组之间的特殊倍率配置，如果不存在则使用分组的默认倍率。
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息，包含用户分组和使用分组信息
+//
+// 返回值：
+//   - types.GroupRatioInfo: 分组倍率信息，包含 GroupRatio（基础倍率）、GroupSpecialRatio（特殊倍率）、HasSpecialRatio（是否使用特殊倍率）
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
@@ -64,6 +100,27 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
+// ModelPriceHelper 计算基于 Token 用量的标准模型定价。
+// 支持两种计费模式：
+//   - 倍率模式（!usePrice）：预扣额度 = max(promptTokens, PreConsumedQuota) * 模型倍率 * 分组倍率
+//   - 固定价格模式（usePrice）：预扣额度 = 模型单价 * QuotaPerUnit * 分组倍率
+//
+// 计算过程中还会确定以下比率参数，用于后续结算：
+//   - completionRatio: 输出 Token 与输入 Token 的价格比率
+//   - cacheRatio: 缓存 Token 的价格比率
+//   - cacheCreationRatio: 缓存写入的价格比率（支持 5 分钟和 1 小时两种）
+//   - imageRatio: 图片的价格比率
+//   - audioRatio / audioCompletionRatio: 音频输入/输出的价格比率
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息，包含模型名称、用户信息等
+//   - promptTokens: 输入 Token 数量
+//   - meta: Token 计数元数据，包含 MaxTokens、ImagePriceRatio 等
+//
+// 返回值：
+//   - types.PriceData: 定价数据，包含所有比率和预扣额度
+//   - error: 模型未配置价格等错误
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
@@ -163,7 +220,20 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	return priceData, nil
 }
 
-// ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
+// ModelPriceHelperPerCall 按次/按量计费的定价计算函数。
+// 主要用于 Midjourney 图片生成、异步任务（视频/音乐生成）等非 Token 计费场景。
+// 计算逻辑：
+//  1. 优先使用模型固定价格（GetModelPrice）
+//  2. 其次使用默认价格表（GetDefaultModelPriceMap）
+//  3. 最后回退到模型倍率，以倍率的一半作为预扣额度
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息，包含模型名称
+//
+// 返回值：
+//   - types.PriceData: 定价数据，包含 Quota（预扣额度）和 ModelPrice
+//   - error: 模型未配置价格等错误
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
@@ -224,6 +294,17 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	return priceData, nil
 }
 
+// HasModelBillingConfig 检查指定模型是否已配置计费信息。
+// 按以下优先级检查：
+//  1. 是否有固定价格配置（GetModelPrice）
+//  2. 是否有模型倍率配置（GetModelRatio）
+//  3. 是否有分层表达式计费配置（tiered_expr 模式且表达式非空）
+//
+// 参数：
+//   - modelName: 模型名称
+//
+// 返回值：
+//   - bool: 是否已配置计费信息
 func HasModelBillingConfig(modelName string) bool {
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
@@ -238,6 +319,27 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
+// modelPriceHelperTiered 分层表达式计费的定价计算函数。
+// 使用 billingexpr 包提供的表达式引擎，根据请求参数（如 stream 模式）动态选择
+// 计费层（tier）并计算配额消耗。表达式支持条件判断、参数引用和层选择等高级功能。
+//
+// 计算流程：
+//  1. 获取模型的计费表达式字符串
+//  2. 解析请求输入（headers + body），用于表达式中的参数引用
+//  3. 运行表达式，获取原始成本（$/1M tokens）
+//  4. 将原始成本转换为配额：rawCost / 1M * QuotaPerUnit * GroupRatio
+//  5. 生成 BillingSnapshot 用于结算时的快照参考
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - promptTokens: 输入 Token 数量
+//   - meta: Token 计数元数据
+//   - groupRatioInfo: 分组倍率信息
+//
+// 返回值：
+//   - types.PriceData: 定价数据
+//   - error: 表达式不存在或运行失败等错误
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
 	exprStr, ok := billing_setting.GetBillingExpr(info.OriginModelName)
 	if !ok {

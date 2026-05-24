@@ -1,3 +1,14 @@
+// Package controller - subscription_payment_stripe.go
+// 该文件实现了 Stripe 支付平台的订阅购买 API 控制器
+//
+// Stripe 是全球领先的在线支付平台，支持信用卡、借记卡等多种支付方式
+// 功能包括：
+// - 创建 Stripe Checkout 订阅会话
+// - 生成 Stripe 支付链接
+// - 创建待处理订阅订单
+//
+// 主要 API：
+// - SubscriptionRequestStripePay：发起 Stripe 订阅支付
 package controller
 
 import (
@@ -16,10 +27,23 @@ import (
 	"github.com/thanhpk/randstr"
 )
 
+// SubscriptionStripePayRequest Stripe 订阅支付请求结构体
 type SubscriptionStripePayRequest struct {
-	PlanId int `json:"plan_id"`
+	PlanId int `json:"plan_id"` // 订阅套餐 ID
 }
 
+// SubscriptionRequestStripePay 发起 Stripe 订阅支付
+//
+// 流程：
+// 1. 检查支付合规性
+// 2. 验证套餐是否启用且配置了 StripePriceId
+// 3. 验证 Stripe API 密钥和 Webhook 密钥配置
+// 4. 检查用户购买次数限制
+// 5. 创建待处理订阅订单
+// 6. 调用 genStripeSubscriptionLink 生成 Stripe Checkout 支付链接
+//
+// 返回：
+//   - pay_link: Stripe Checkout 支付页面 URL
 func SubscriptionRequestStripePay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -109,6 +133,21 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	})
 }
 
+// genStripeSubscriptionLink 生成 Stripe Checkout 订阅支付链接
+//
+// 使用 Stripe Checkout Session API 创建订阅会话
+// 如果用户已有 Stripe Customer ID，关联到现有客户
+// 否则使用邮箱创建新客户
+//
+// 参数：
+//   - referenceId: 订单引用 ID
+//   - customerId: Stripe 客户 ID（可为空）
+//   - email: 用户邮箱（用于创建新客户）
+//   - priceId: Stripe Price ID
+//
+// 返回：
+//   - string: Stripe Checkout 支付页面 URL
+//   - error: 创建失败时返回错误
 func genStripeSubscriptionLink(referenceId string, customerId string, email string, priceId string) (string, error) {
 	stripe.Key = setting.StripeApiSecret
 

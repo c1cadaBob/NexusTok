@@ -1,9 +1,7 @@
-// Package claude provides HTTP handlers for Claude API code-related functionality.
-// This package implements Claude-compatible streaming chat completions with sophisticated
-// client rotation and quota management systems to ensure high availability and optimal
-// resource utilization across multiple backend clients. It handles request translation
-// between Claude API format and the underlying Gemini backend, providing seamless
-// API compatibility while maintaining robust error handling and connection management.
+// claude - code_handlers.go
+// 提供 Claude API 的 HTTP 处理器，支持消息对话、Token 计数和模型列表等功能。
+// 实现了 Claude 兼容的流式聊天完成，包含客户端轮转和配额管理系统，
+// 确保高可用性和跨多个后端客户端的最优资源利用。
 package claude
 
 import (
@@ -24,44 +22,34 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ClaudeCodeAPIHandler contains the handlers for Claude API endpoints.
-// It holds a pool of clients to interact with the backend service.
+// ClaudeCodeAPIHandler 是 Claude API 端点的处理器。
+// 包含基础 API 处理器，用于与后端服务交互。
 type ClaudeCodeAPIHandler struct {
 	*handlers.BaseAPIHandler
 }
 
-// NewClaudeCodeAPIHandler creates a new Claude API handlers instance.
-// It takes an BaseAPIHandler instance as input and returns a ClaudeCodeAPIHandler.
-//
-// Parameters:
-//   - apiHandlers: The base API handler instance.
-//
-// Returns:
-//   - *ClaudeCodeAPIHandler: A new Claude code API handler instance.
+// NewClaudeCodeAPIHandler 创建新的 Claude API 处理器实例。
 func NewClaudeCodeAPIHandler(apiHandlers *handlers.BaseAPIHandler) *ClaudeCodeAPIHandler {
 	return &ClaudeCodeAPIHandler{
 		BaseAPIHandler: apiHandlers,
 	}
 }
 
-// HandlerType returns the identifier for this handler implementation.
+// HandlerType 返回此处理器的类型标识符。
 func (h *ClaudeCodeAPIHandler) HandlerType() string {
 	return Claude
 }
 
-// Models returns a list of models supported by this handler.
+// Models 返回此处理器支持的模型列表。
+// 从全局注册表中动态获取可用的 Claude 模型。
 func (h *ClaudeCodeAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
 	modelRegistry := registry.GetGlobalRegistry()
 	return modelRegistry.GetAvailableModels("claude")
 }
 
-// ClaudeMessages handles Claude-compatible streaming chat completions.
-// This function implements a sophisticated client rotation and quota management system
-// to ensure high availability and optimal resource utilization across multiple backend clients.
-//
-// Parameters:
-//   - c: The Gin context for the request.
+// ClaudeMessages 处理 Claude 兼容的聊天完成请求。
+// 根据请求中的 stream 字段决定使用流式或非流式响应模式。
 func (h *ClaudeCodeAPIHandler) ClaudeMessages(c *gin.Context) {
 	// Extract raw JSON data from the incoming request
 	rawJSON, err := c.GetRawData()
@@ -85,12 +73,8 @@ func (h *ClaudeCodeAPIHandler) ClaudeMessages(c *gin.Context) {
 	}
 }
 
-// ClaudeMessages handles Claude-compatible streaming chat completions.
-// This function implements a sophisticated client rotation and quota management system
-// to ensure high availability and optimal resource utilization across multiple backend clients.
-//
-// Parameters:
-//   - c: The Gin context for the request.
+// ClaudeCountTokens 处理 Claude Token 计数请求。
+// 将请求转发到上游服务并返回 Token 计数结果。
 func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 	// Extract raw JSON data from the incoming request
 	rawJSON, err := c.GetRawData()
@@ -123,11 +107,8 @@ func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 	cliCancel()
 }
 
-// ClaudeModels handles the Claude models listing endpoint.
-// It returns a JSON response containing available Claude models and their specifications.
-//
-// Parameters:
-//   - c: The Gin context for the request.
+// ClaudeModels 处理 Claude 模型列表端点。
+// 返回包含可用 Claude 模型及其规格的 JSON 响应。
 func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
 	models := h.Models()
 	firstID := ""
@@ -149,15 +130,9 @@ func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
 	})
 }
 
-// handleNonStreamingResponse handles non-streaming content generation requests for Claude models.
-// This function processes the request synchronously and returns the complete generated
-// response in a single API call. It supports various generation parameters and
-// response formats.
-//
-// Parameters:
-//   - c: The Gin context for the request
-//   - modelName: The name of the Gemini model to use for content generation
-//   - rawJSON: The raw JSON request body containing generation parameters and content
+// handleNonStreamingResponse 处理非流式内容生成请求。
+// 同步处理请求并在单个 API 调用中返回完整的生成响应。
+// 支持 gzip 压缩响应的自动解压。
 func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
 	c.Header("Content-Type", "application/json")
 	alt := h.GetAlt(c)
@@ -200,13 +175,8 @@ func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSO
 	cliCancel()
 }
 
-// handleStreamingResponse streams Claude-compatible responses backed by Gemini.
-// It sets up SSE, selects a backend client with rotation/quota logic,
-// forwards chunks, and translates them to Claude CLI format.
-//
-// Parameters:
-//   - c: The Gin context for the request.
-//   - rawJSON: The raw JSON request body.
+// handleStreamingResponse 处理流式聊天完成请求。
+// 设置 SSE 头部，选择后端客户端，转发数据块并转换为 Claude CLI 格式。
 func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byte) {
 	// Get the http.Flusher interface to manually flush the response.
 	// This is crucial for streaming as it allows immediate sending of data chunks
@@ -282,6 +252,8 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 	}
 }
 
+// forwardClaudeStream 转发 Claude 流式响应到客户端。
+// 使用 ForwardStream 方法处理数据块和错误，将错误转换为 Claude 格式。
 func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
@@ -306,16 +278,23 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.
 	})
 }
 
+// claudeErrorDetail 存储 Claude API 错误的详细信息。
 type claudeErrorDetail struct {
+	// Type 是错误类型（如 "api_error"）
 	Type    string `json:"type"`
+	// Message 是错误描述信息
 	Message string `json:"message"`
 }
 
+// claudeErrorResponse 是 Claude API 错误响应的结构。
 type claudeErrorResponse struct {
+	// Type 是响应类型，固定为 "error"
 	Type  string            `json:"type"`
+	// Error 包含错误详细信息
 	Error claudeErrorDetail `json:"error"`
 }
 
+// toClaudeError 将 ErrorMessage 转换为 Claude 格式的错误响应。
 func (h *ClaudeCodeAPIHandler) toClaudeError(msg *interfaces.ErrorMessage) claudeErrorResponse {
 	return claudeErrorResponse{
 		Type: "error",

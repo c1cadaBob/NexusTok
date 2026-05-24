@@ -1,3 +1,12 @@
+// Package controller - linuxdo.go
+// 该文件实现了 Linux DO OAuth 登录和绑定的 API 控制器
+//
+// Linux DO 是一个中文技术社区，使用 OAuth 2.0 授权码流程
+// 支持信任等级验证：只有达到最低信任等级的用户才能注册
+//
+// 主要 API：
+// - LinuxdoOAuth：Linux DO OAuth 回调处理（登录/注册）
+// - LinuxDoBind：绑定 Linux DO 账户到现有用户
 package controller
 
 import (
@@ -18,15 +27,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// LinuxdoUser Linux DO 用户信息结构体
 type LinuxdoUser struct {
-	Id         int    `json:"id"`
-	Username   string `json:"username"`
-	Name       string `json:"name"`
-	Active     bool   `json:"active"`
-	TrustLevel int    `json:"trust_level"`
-	Silenced   bool   `json:"silenced"`
+	Id         int    `json:"id"`          // 用户 ID
+	Username   string `json:"username"`    // 用户名
+	Name       string `json:"name"`        // 显示名称
+	Active     bool   `json:"active"`      // 是否活跃
+	TrustLevel int    `json:"trust_level"` // 信任等级（0-4）
+	Silenced   bool   `json:"silenced"`    // 是否被禁言
 }
 
+// LinuxDoBind 将 Linux DO 账户绑定到当前登录用户
+//
+// 如果该 Linux DO 账户已被其他用户绑定，返回错误
 func LinuxDoBind(c *gin.Context) {
 	if !common.LinuxDOOAuthEnabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -78,6 +91,17 @@ func LinuxDoBind(c *gin.Context) {
 	})
 }
 
+// getLinuxdoUserInfoByCode 通过授权码获取 Linux DO 用户信息
+//
+// 使用 Basic Auth 方式获取访问令牌，然后获取用户信息
+//
+// 参数：
+//   - code: Linux DO OAuth 授权码
+//   - c: Gin 上下文（用于构建重定向 URI）
+//
+// 返回值：
+//   - *LinuxdoUser: Linux DO 用户信息
+//   - err: 错误信息
 func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error) {
 	if code == "" {
 		return nil, errors.New("invalid code")
@@ -155,6 +179,18 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	return &linuxdoUser, nil
 }
 
+// LinuxdoOAuth 处理 Linux DO OAuth 回调
+//
+// 根据会话状态判断是登录还是绑定操作：
+// - 如果会话中有用户名信息，执行绑定操作
+// - 否则执行登录/注册操作
+//
+// 注册时会验证用户的信任等级是否达到最低要求
+//
+// 查询参数：
+//   - code: OAuth 授权码
+//   - state: 状态参数（用于 CSRF 防护）
+//   - error: 错误码（授权失败时返回）
 func LinuxdoOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 

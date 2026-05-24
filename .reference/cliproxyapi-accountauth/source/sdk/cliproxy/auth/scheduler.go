@@ -1,3 +1,6 @@
+// 包 auth - scheduler.go
+// 该文件实现了认证调度器，管理提供商/模型级别的认证调度状态。
+// 包括调度策略（轮询、填满优先、自定义）、模型分片、就绪/冷却/阻止状态管理等功能。
 package auth
 
 import (
@@ -11,72 +14,72 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
-// schedulerStrategy identifies which built-in routing semantics the scheduler should apply.
+// schedulerStrategy 标识调度器应应用的内置路由语义。
 type schedulerStrategy int
 
 const (
-	schedulerStrategyCustom schedulerStrategy = iota
-	schedulerStrategyRoundRobin
-	schedulerStrategyFillFirst
+	schedulerStrategyCustom     schedulerStrategy = iota // 自定义选择器
+	schedulerStrategyRoundRobin                          // 轮询策略
+	schedulerStrategyFillFirst                           // 填满优先策略
 )
 
-// scheduledState describes how an auth currently participates in a model shard.
+// scheduledState 描述认证在模型分片中的当前参与状态。
 type scheduledState int
 
 const (
-	scheduledStateReady scheduledState = iota
-	scheduledStateCooldown
-	scheduledStateBlocked
-	scheduledStateDisabled
+	scheduledStateReady    scheduledState = iota // 就绪
+	scheduledStateCooldown                       // 冷却中
+	scheduledStateBlocked                        // 被阻止
+	scheduledStateDisabled                       // 已禁用
 )
 
-// authScheduler keeps the incremental provider/model scheduling state used by Manager.
+// authScheduler 保持 Manager 使用的增量提供商/模型调度状态。
 type authScheduler struct {
-	mu            sync.Mutex
-	strategy      schedulerStrategy
-	providers     map[string]*providerScheduler
-	authProviders map[string]string
-	mixedCursors  map[string]int
+	mu            sync.Mutex                          // 保护调度器状态的互斥锁
+	strategy      schedulerStrategy                   // 调度策略
+	providers     map[string]*providerScheduler        // 提供商调度器映射
+	authProviders map[string]string                    // 认证 ID 到提供商的映射
+	mixedCursors  map[string]int                       // 混合提供商的轮询游标
 }
 
-// providerScheduler stores auth metadata and model shards for a single provider.
+// providerScheduler 存储单个提供商的认证元数据和模型分片。
 type providerScheduler struct {
-	providerKey string
-	auths       map[string]*scheduledAuthMeta
-	modelShards map[string]*modelScheduler
+	providerKey string                          // 提供商键
+	auths       map[string]*scheduledAuthMeta   // 认证元数据映射
+	modelShards map[string]*modelScheduler      // 模型调度器映射
 }
 
-// scheduledAuthMeta stores the immutable scheduling fields derived from an auth snapshot.
+// scheduledAuthMeta 存储从认证快照派生的不可变调度字段。
 type scheduledAuthMeta struct {
-	auth              *Auth
-	providerKey       string
-	priority          int
-	virtualParent     string
-	websocketEnabled  bool
-	supportedModelSet map[string]struct{}
+	auth              *Auth                 // 认证记录引用
+	providerKey       string                // 提供商键
+	priority          int                   // 优先级
+	virtualParent     string                // 虚拟父账户标识
+	websocketEnabled  bool                  // 是否启用 WebSocket
+	supportedModelSet map[string]struct{}   // 支持的模型集合
 }
 
-// modelScheduler tracks ready and blocked auths for one provider/model combination.
+// modelScheduler 跟踪一个提供商/模型组合的就绪和阻止认证。
 type modelScheduler struct {
-	modelKey        string
-	entries         map[string]*scheduledAuth
-	priorityOrder   []int
-	readyByPriority map[int]*readyBucket
-	blocked         cooldownQueue
+	modelKey        string                          // 模型键
+	entries         map[string]*scheduledAuth       // 调度认证条目映射
+	priorityOrder   []int                           // 优先级排序列表
+	readyByPriority map[int]*readyBucket            // 按优先级分组的就绪桶
+	blocked         cooldownQueue                   // 冷却队列
 }
 
-// scheduledAuth stores the runtime scheduling state for a single auth inside a model shard.
+// scheduledAuth 存储模型分片中单个认证的运行时调度状态。
 type scheduledAuth struct {
-	meta        *scheduledAuthMeta
-	auth        *Auth
-	state       scheduledState
-	nextRetryAt time.Time
+	meta        *scheduledAuthMeta // 认证元数据引用
+	auth        *Auth              // 认证记录引用
+	state       scheduledState     // 当前调度状态
+	nextRetryAt time.Time          // 下次重试时间
 }
 
-// readyBucket keeps the ready views for one priority level.
+// readyBucket 保持一个优先级级别的就绪视图。
 type readyBucket struct {
-	all readyView
-	ws  readyView
+	all readyView // 所有就绪认证
+	ws  readyView // WebSocket 就绪认证
 }
 
 // readyView holds the selection order for flat or grouped round-robin traversal.

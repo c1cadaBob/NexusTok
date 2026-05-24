@@ -1,3 +1,5 @@
+// Package helps - cloak_utils.go
+// 提供请求伪装的工具函数，包括用户代理生成、请求头构造和身份伪装。
 package helps
 
 import (

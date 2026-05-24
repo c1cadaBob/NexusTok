@@ -1,3 +1,18 @@
+// responses - codex_openai-responses_request_test.go
+// Codex 的 OpenAI Responses 格式请求转换器测试文件。
+// 包含以下测试用例：
+// 1. system 角色到 developer 角色的基本转换
+// 2. 多个 system 消息的转换
+// 3. 无 system 消息时的保持不变
+// 4. 空 input 数组的处理
+// 5. 无 input 字段的请求处理
+// 6. 原始问题场景的端到端测试
+// 7. assistant 角色的保持不变
+// 8. web_search_preview 工具类型标准化
+// 9. 顶层 tool_choice 中的 preview 别名标准化
+// 10. user 字段的删除
+// 11. context_management 的移除兼容性
+// 12. truncation 的移除兼容性
 package responses
 
 import (
@@ -6,7 +21,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestConvertSystemRoleToDeveloper_BasicConversion tests the basic system -> developer role conversion
+// TestConvertSystemRoleToDeveloper_BasicConversion 测试基本的 system -> developer 角色转换。
+// 验证 system 角色被正确转换为 developer，而 user 角色保持不变。
 func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -46,7 +62,8 @@ func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_MultipleSystemMessages tests conversion with multiple system messages
+// TestConvertSystemRoleToDeveloper_MultipleSystemMessages 测试包含多个 system 消息时的转换。
+// 验证所有 system 角色都被转换为 developer，而 user 角色保持不变。
 func TestConvertSystemRoleToDeveloper_MultipleSystemMessages(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -90,7 +107,8 @@ func TestConvertSystemRoleToDeveloper_MultipleSystemMessages(t *testing.T) {
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_NoSystemMessages tests that requests without system messages are unchanged
+// TestConvertSystemRoleToDeveloper_NoSystemMessages 测试无 system 消息时请求保持不变。
+// 验证 user 和 assistant 角色都不会被修改。
 func TestConvertSystemRoleToDeveloper_NoSystemMessages(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -123,7 +141,7 @@ func TestConvertSystemRoleToDeveloper_NoSystemMessages(t *testing.T) {
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_EmptyInput tests that empty input arrays are handled correctly
+// TestConvertSystemRoleToDeveloper_EmptyInput 测试空 input 数组的正确处理。
 func TestConvertSystemRoleToDeveloper_EmptyInput(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -143,7 +161,8 @@ func TestConvertSystemRoleToDeveloper_EmptyInput(t *testing.T) {
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_NoInputField tests that requests without input field are unchanged
+// TestConvertSystemRoleToDeveloper_NoInputField 测试无 input 字段的请求处理。
+// 验证其他字段（如 stream、store）被正确设置。
 func TestConvertSystemRoleToDeveloper_NoInputField(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -165,7 +184,8 @@ func TestConvertSystemRoleToDeveloper_NoInputField(t *testing.T) {
 	}
 }
 
-// TestConvertOpenAIResponsesRequestToCodex_OriginalIssue tests the exact issue reported by the user
+// TestConvertOpenAIResponsesRequestToCodex_OriginalIssue 测试用户报告的原始问题场景。
+// 验证包含 system 角色字符串内容的请求能够正确转换。
 func TestConvertOpenAIResponsesRequestToCodex_OriginalIssue(t *testing.T) {
 	// This is the exact input that was failing with "System messages are not allowed"
 	inputJSON := []byte(`{
@@ -219,7 +239,7 @@ func TestConvertOpenAIResponsesRequestToCodex_OriginalIssue(t *testing.T) {
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_AssistantRole tests that assistant role is preserved
+// TestConvertSystemRoleToDeveloper_AssistantRole 测试 assistant 角色在转换过程中保持不变。
 func TestConvertSystemRoleToDeveloper_AssistantRole(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -264,6 +284,8 @@ func TestConvertSystemRoleToDeveloper_AssistantRole(t *testing.T) {
 	}
 }
 
+// TestConvertOpenAIResponsesRequestToCodex_NormalizesWebSearchPreview 测试 web_search_preview 系列工具类型的标准化。
+// 验证 web_search_preview 和 web_search_preview_2025_03_11 都被标准化为 web_search。
 func TestConvertOpenAIResponsesRequestToCodex_NormalizesWebSearchPreview(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.4-mini",
@@ -296,6 +318,8 @@ func TestConvertOpenAIResponsesRequestToCodex_NormalizesWebSearchPreview(t *test
 	}
 }
 
+// TestConvertOpenAIResponsesRequestToCodex_NormalizesTopLevelToolChoicePreviewAlias 测试顶层 tool_choice 中的 preview 别名标准化。
+// 验证 tool_choice.type 中的 web_search_preview_2025_03_11 被标准化为 web_search。
 func TestConvertOpenAIResponsesRequestToCodex_NormalizesTopLevelToolChoicePreviewAlias(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.4-mini",
@@ -310,6 +334,8 @@ func TestConvertOpenAIResponsesRequestToCodex_NormalizesTopLevelToolChoicePrevie
 	}
 }
 
+// TestUserFieldDeletion 测试 user 字段在转换后被正确删除。
+// Codex 上游不支持 user 字段，需要在转发前移除。
 func TestUserFieldDeletion(t *testing.T) {
 	inputJSON := []byte(`{  
 		"model": "gpt-5.2",  
@@ -327,6 +353,8 @@ func TestUserFieldDeletion(t *testing.T) {
 	}
 }
 
+// TestContextManagementCompactionCompatibility 测试 context_management 字段的移除兼容性。
+// Codex 上游不支持 context_management 参数，需要在转发前移除。
 func TestContextManagementCompactionCompatibility(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -350,6 +378,8 @@ func TestContextManagementCompactionCompatibility(t *testing.T) {
 	}
 }
 
+// TestTruncationRemovedForCodexCompatibility 测试 truncation 字段的移除兼容性。
+// Codex 上游不支持 truncation 参数，需要在转发前移除。
 func TestTruncationRemovedForCodexCompatibility(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",

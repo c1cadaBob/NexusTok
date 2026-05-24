@@ -1,13 +1,13 @@
-// Package main demonstrates how to create a custom AI provider executor
-// and integrate it with the CLI Proxy API server. This example shows how to:
-// - Create a custom executor that implements the Executor interface
-// - Register custom translators for request/response transformation
-// - Integrate the custom provider with the SDK server
-// - Register custom models in the model registry
+// Package main - custom-provider 示例
+// 演示如何创建自定义 AI 提供者执行器（Executor）并将其集成到 CLI Proxy API 服务器中。
+// 本示例展示了以下功能：
+// - 创建实现 Executor 接口的自定义执行器
+// - 注册自定义翻译器用于请求/响应转换
+// - 将自定义提供者与 SDK 服务器集成
+// - 在模型注册表中注册自定义模型
 //
-// This example uses a simple echo service (httpbin.org) as the upstream API
-// for demonstration purposes. In a real implementation, you would replace
-// this with your actual AI service provider.
+// 本示例使用简单的 echo 服务（httpbin.org）作为上游 API 进行演示。
+// 在实际实现中，您需要将其替换为实际的 AI 服务提供者。
 package main
 
 import (
@@ -34,20 +34,20 @@ import (
 	sdktr "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
+// 自定义提供者的常量定义。
 const (
-	// providerKey is the identifier for our custom provider.
+	// providerKey 是自定义提供者的唯一标识符。
 	providerKey = "myprov"
 
-	// fOpenAI represents the OpenAI chat format.
+	// fOpenAI 表示 OpenAI 聊天格式。
 	fOpenAI = sdktr.Format("openai.chat")
 
-	// fMyProv represents our custom provider's chat format.
+	// fMyProv 表示自定义提供者的聊天格式。
 	fMyProv = sdktr.Format("myprov.chat")
 )
 
-// init registers trivial translators for demonstration purposes.
-// In a real implementation, you would implement proper request/response
-// transformation logic between OpenAI format and your provider's format.
+// init 注册用于演示的简单翻译器。
+// 在实际实现中，您需要实现 OpenAI 格式与您的提供者格式之间的正确请求/响应转换逻辑。
 func init() {
 	sdktr.Register(fOpenAI, fMyProv,
 		func(model string, raw []byte, stream bool) []byte { return raw },
@@ -62,23 +62,23 @@ func init() {
 	)
 }
 
-// MyExecutor is a minimal provider implementation for demonstration purposes.
-// It implements the Executor interface to handle requests to a custom AI provider.
+// MyExecutor 是用于演示的最小化提供者实现。
+// 它实现了 Executor 接口，用于处理对自定义 AI 提供者的请求。
 type MyExecutor struct{}
 
-// Identifier returns the unique identifier for this executor.
+// Identifier 返回此执行器的唯一标识符。
 func (MyExecutor) Identifier() string { return providerKey }
 
-// PrepareRequest optionally injects credentials to raw HTTP requests.
-// This method is called before each request to allow the executor to modify
-// the HTTP request with authentication headers or other necessary modifications.
+// PrepareRequest 可选地向原始 HTTP 请求注入凭证。
+// 该方法在每次请求前被调用，允许执行器修改 HTTP 请求，
+// 添加认证头或其他必要的修改。
 //
-// Parameters:
-//   - req: The HTTP request to prepare
-//   - a: The authentication information
+// 参数:
+//   - req: 要准备的 HTTP 请求
+//   - a: 认证信息
 //
-// Returns:
-//   - error: An error if request preparation fails
+// 返回值:
+//   - error: 请求准备失败时返回错误
 func (MyExecutor) PrepareRequest(req *http.Request, a *coreauth.Auth) error {
 	if req == nil || a == nil {
 		return nil
@@ -91,6 +91,8 @@ func (MyExecutor) PrepareRequest(req *http.Request, a *coreauth.Auth) error {
 	return nil
 }
 
+// buildHTTPClient 根据认证信息中的代理 URL 构建 HTTP 客户端。
+// 如果未配置代理，则返回默认的 HTTP 客户端。
 func buildHTTPClient(a *coreauth.Auth) *http.Client {
 	if a == nil || strings.TrimSpace(a.ProxyURL) == "" {
 		return http.DefaultClient
@@ -102,6 +104,8 @@ func buildHTTPClient(a *coreauth.Auth) *http.Client {
 	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
 }
 
+// upstreamEndpoint 从认证信息中获取上游 API 端点地址。
+// 如果未配置，则返回默认的 echo 端点（httpbin.org/post）。
 func upstreamEndpoint(a *coreauth.Auth) string {
 	if a != nil && a.Attributes != nil {
 		if ep := strings.TrimSpace(a.Attributes["endpoint"]); ep != "" {
@@ -112,6 +116,7 @@ func upstreamEndpoint(a *coreauth.Auth) string {
 	return "https://httpbin.org/post"
 }
 
+// Execute 执行同步请求，将请求负载发送到上游 API 并返回响应。
 func (MyExecutor) Execute(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (clipexec.Response, error) {
 	client := buildHTTPClient(a)
 	endpoint := upstreamEndpoint(a)
@@ -140,6 +145,7 @@ func (MyExecutor) Execute(ctx context.Context, a *coreauth.Auth, req clipexec.Re
 	return clipexec.Response{Payload: body}, nil
 }
 
+// HttpRequest 执行原始 HTTP 请求，注入凭证后发送到上游 API。
 func (MyExecutor) HttpRequest(ctx context.Context, a *coreauth.Auth, req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("myprov executor: request is nil")
@@ -155,10 +161,12 @@ func (MyExecutor) HttpRequest(ctx context.Context, a *coreauth.Auth, req *http.R
 	return client.Do(httpReq)
 }
 
+// CountTokens 计算请求中的 token 数量（本示例中未实现）。
 func (MyExecutor) CountTokens(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
 	return clipexec.Response{}, errors.New("count tokens not implemented")
 }
 
+// ExecuteStream 执行流式请求，返回一个包含流式数据块的通道。
 func (MyExecutor) ExecuteStream(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (*clipexec.StreamResult, error) {
 	ch := make(chan clipexec.StreamChunk, 1)
 	go func() {
@@ -168,10 +176,14 @@ func (MyExecutor) ExecuteStream(ctx context.Context, a *coreauth.Auth, req clipe
 	return &clipexec.StreamResult{Chunks: ch}, nil
 }
 
+// Refresh 刷新认证信息（本示例中直接返回原始认证信息）。
 func (MyExecutor) Refresh(ctx context.Context, a *coreauth.Auth) (*coreauth.Auth, error) {
 	return a, nil
 }
 
+// main 是示例程序的入口函数。
+// 它加载配置、初始化认证管理器、注册自定义执行器和模型，
+// 然后启动 CLI Proxy API 服务器。
 func main() {
 	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {

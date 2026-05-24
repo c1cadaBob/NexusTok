@@ -1,6 +1,6 @@
-// Package logging provides Gin middleware for HTTP request logging and panic recovery.
-// It integrates Gin web framework with logrus for structured logging of HTTP requests,
-// responses, and error handling with panic recovery capabilities.
+// 包 logging - gin_logger.go
+// 该文件提供了 Gin 中间件，用于 HTTP 请求日志记录和 panic 恢复。
+// 将 Gin Web 框架与 logrus 集成，用于结构化记录 HTTP 请求、响应和错误处理。
 package logging
 
 import (
@@ -16,7 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// aiAPIPrefixes defines path prefixes for AI API requests that should have request ID tracking.
+// aiAPIPrefixes 定义了应该具有请求 ID 跟踪的 AI API 请求路径前缀。
 var aiAPIPrefixes = []string{
 	"/v1/chat/completions",
 	"/v1/completions",
@@ -29,26 +29,28 @@ var aiAPIPrefixes = []string{
 }
 
 const (
-	skipGinLogKey  = "__gin_skip_request_logging__"
+	// skipGinLogKey 是用于标记跳过日志记录的 Gin 上下文键
+	skipGinLogKey = "__gin_skip_request_logging__"
+	// creditsUsedKey 是用于标记使用积分的 Gin 上下文键
 	creditsUsedKey = "__antigravity_credits_used__"
 )
 
-// GinLogrusLogger returns a Gin middleware handler that logs HTTP requests and responses
-// using logrus. It captures request details including method, path, status code, latency,
-// client IP, and any error messages. Request ID is only added for AI API requests.
+// GinLogrusLogger 返回一个 Gin 中间件处理器，使用 logrus 记录 HTTP 请求和响应。
+// 捕获请求详细信息，包括方法、路径、状态码、延迟、客户端 IP 和任何错误消息。
+// 仅为 AI API 请求添加请求 ID。
 //
-// Output format (AI API): [2025-12-23 20:14:10] [info ] | a1b2c3d4 | 200 |       23.559s | ...
-// Output format (others): [2025-12-23 20:14:10] [info ] | -------- | 200 |       23.559s | ...
+// 输出格式（AI API）：[2025-12-23 20:14:10] [info ] | a1b2c3d4 | 200 |       23.559s | ...
+// 输出格式（其他）：  [2025-12-23 20:14:10] [info ] | -------- | 200 |       23.559s | ...
 //
-// Returns:
-//   - gin.HandlerFunc: A middleware handler for request logging
+// 返回：
+//   - gin.HandlerFunc: 用于请求日志记录的中间件处理器
 func GinLogrusLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
 		raw := util.MaskSensitiveQuery(c.Request.URL.RawQuery)
 
-		// Only generate request ID for AI API paths
+		// 仅为 AI API 路径生成请求 ID
 		var requestID string
 		if isAIAPIPath(path) {
 			requestID = GenerateRequestID()
@@ -103,7 +105,7 @@ func GinLogrusLogger() gin.HandlerFunc {
 	}
 }
 
-// isAIAPIPath checks if the given path is an AI API endpoint that should have request ID tracking.
+// isAIAPIPath 检查给定路径是否为应具有请求 ID 跟踪的 AI API 端点。
 func isAIAPIPath(path string) bool {
 	for _, prefix := range aiAPIPrefixes {
 		if strings.HasPrefix(path, prefix) {
@@ -113,16 +115,15 @@ func isAIAPIPath(path string) bool {
 	return false
 }
 
-// GinLogrusRecovery returns a Gin middleware handler that recovers from panics and logs
-// them using logrus. When a panic occurs, it captures the panic value, stack trace,
-// and request path, then returns a 500 Internal Server Error response to the client.
+// GinLogrusRecovery 返回一个 Gin 中间件处理器，用于从 panic 中恢复并使用 logrus 记录。
+// 当发生 panic 时，捕获 panic 值、堆栈跟踪和请求路径，然后向客户端返回 500 内部服务器错误响应。
 //
-// Returns:
-//   - gin.HandlerFunc: A middleware handler for panic recovery
+// 返回：
+//   - gin.HandlerFunc: 用于 panic 恢复的中间件处理器
 func GinLogrusRecovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		if err, ok := recovered.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-			// Let net/http handle ErrAbortHandler so the connection is aborted without noisy stack logs.
+			// 让 net/http 处理 ErrAbortHandler，以便连接被中止而不会产生嘈杂的堆栈日志。
 			panic(http.ErrAbortHandler)
 		}
 
@@ -136,8 +137,8 @@ func GinLogrusRecovery() gin.HandlerFunc {
 	})
 }
 
-// SkipGinRequestLogging marks the provided Gin context so that GinLogrusLogger
-// will skip emitting a log line for the associated request.
+// SkipGinRequestLogging 标记提供的 Gin 上下文，使 GinLogrusLogger
+// 跳过为关联的请求发出日志行。
 func SkipGinRequestLogging(c *gin.Context) {
 	if c == nil {
 		return

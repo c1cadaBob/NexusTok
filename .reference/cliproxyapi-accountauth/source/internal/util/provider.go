@@ -1,6 +1,6 @@
-// Package util provides utility functions used across the CLIProxyAPI application.
-// These functions handle common tasks such as determining AI service providers
-// from model names and managing HTTP proxies.
+// 包 util - provider.go
+// 该文件提供了 AI 服务提供商识别和 OpenAI 兼容性路由的辅助函数。
+// 包括从模型名称确定提供商、解析自动模型、API 密钥脱敏等功能。
 package util
 
 import (

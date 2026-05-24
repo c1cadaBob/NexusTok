@@ -1,15 +1,19 @@
+// thinking - text.go
+// 本文件提供了从响应内容中提取 thinking 文本的功能。
+// 支持多种格式：简单字符串、包装对象、Gemini 风格等。
 package thinking
 
 import (
 	"github.com/tidwall/gjson"
 )
 
-// GetThinkingText extracts the thinking text from a content part.
-// Handles various formats:
-// - Simple string: { "thinking": "text" } or { "text": "text" }
-// - Wrapped object: { "thinking": { "text": "text", "cache_control": {...} } }
-// - Gemini-style: { "thought": true, "text": "text" }
-// Returns the extracted text string.
+// GetThinkingText 从内容片段中提取 thinking 文本。
+// 支持以下格式：
+//   - 简单字符串：{ "thinking": "text" } 或 { "text": "text" }
+//   - 包装对象：{ "thinking": { "text": "text", "cache_control": {...} } }
+//   - Gemini 风格：{ "thought": true, "text": "text" }
+//
+// 返回提取的文本字符串。
 func GetThinkingText(part gjson.Result) string {
 	// Try direct text field first (Gemini-style)
 	if text := part.Get("text"); text.Exists() && text.Type == gjson.String {

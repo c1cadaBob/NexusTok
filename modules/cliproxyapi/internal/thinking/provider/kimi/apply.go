@@ -1,7 +1,8 @@
-// Package kimi implements thinking configuration for Kimi (Moonshot AI) models.
+// kimi - apply.go
+// 本文件实现了 Kimi（Moonshot AI）模型的 thinking 配置应用逻辑。
 //
-// Kimi models use the OpenAI-compatible reasoning_effort format for enabled thinking
-// levels, but use thinking.type=disabled when thinking is explicitly turned off.
+// Kimi 模型使用 OpenAI 兼容的 reasoning_effort 格式来启用 thinking 级别，
+// 但在显式关闭 thinking 时使用 thinking.type=disabled。
 package kimi
 
 import (
@@ -13,17 +14,17 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier implements thinking.ProviderApplier for Kimi models.
+// Applier 实现了 Kimi 模型的 thinking.ProviderApplier 接口。
 //
-// Kimi-specific behavior:
-//   - Enabled thinking: reasoning_effort (string levels)
-//   - Disabled thinking: thinking.type="disabled"
-//   - Supports budget-to-level conversion
+// Kimi 特有行为：
+//   - 启用 thinking：reasoning_effort（字符串级别）
+//   - 禁用 thinking：thinking.type="disabled"
+//   - 支持预算到级别的转换
 type Applier struct{}
 
 var _ thinking.ProviderApplier = (*Applier)(nil)
 
-// NewApplier creates a new Kimi thinking applier.
+// NewApplier 创建一个新的 Kimi thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

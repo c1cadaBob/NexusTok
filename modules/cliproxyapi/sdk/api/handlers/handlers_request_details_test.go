@@ -1,3 +1,5 @@
+// handlers - handlers_request_details_test.go
+// 测试请求详情解析功能，验证模型名称后缀保留、未知模型处理、auto 模型解析、图片模型拦截等场景。
 package handlers
 
 import (
@@ -12,6 +14,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestGetRequestDetails_PreservesSuffix 测试各种模型名称后缀（数值、级别、特殊值）被正确保留。
 func TestGetRequestDetails_PreservesSuffix(t *testing.T) {
 	modelRegistry := registry.GetGlobalRegistry()
 	now := time.Now().Unix()
@@ -119,6 +122,7 @@ func TestGetRequestDetails_PreservesSuffix(t *testing.T) {
 	}
 }
 
+// TestGetRequestDetails_ImageModelReturns503 测试图片模型（gpt-image-2）返回 503 错误并提示正确的端点路径。
 func TestGetRequestDetails_ImageModelReturns503(t *testing.T) {
 	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, coreauth.NewManager(nil, nil, nil))
 

@@ -1,3 +1,14 @@
+// Package ionet - client.go
+// 该文件实现了 IO.NET API 客户端的核心功能
+//
+// 核心功能：
+// - API 请求发送和响应处理
+// - 认证和授权
+// - 错误处理
+//
+// API 端点：
+// - 企业版：https://api.io.solutions/enterprise/v1/io-cloud/caas
+// - 标准版：https://api.io.solutions/v1/io-cloud/caas
 package ionet
 
 import (
@@ -16,12 +27,14 @@ const (
 	DefaultTimeout           = 30 * time.Second
 )
 
-// DefaultHTTPClient is the default HTTP client implementation
+// DefaultHTTPClient 是基于标准库 http.Client 的默认 HTTP 客户端实现
+// 实现了 HTTPClient 接口，用于发送 HTTP 请求到 IO.NET API
 type DefaultHTTPClient struct {
 	client *http.Client
 }
 
-// NewDefaultHTTPClient creates a new default HTTP client
+// NewDefaultHTTPClient 创建默认 HTTP 客户端实例
+// 参数 timeout 为请求超时时间
 func NewDefaultHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 	return &DefaultHTTPClient{
 		client: &http.Client{
@@ -30,7 +43,8 @@ func NewDefaultHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 	}
 }
 
-// Do executes an HTTP request
+// Do 执行 HTTP 请求并返回响应
+// 将内部 HTTPRequest 转换为标准库请求，发送后将响应转换为内部 HTTPResponse 格式
 func (c *DefaultHTTPClient) Do(req *HTTPRequest) (*HTTPResponse, error) {
 	httpReq, err := http.NewRequest(req.Method, req.URL, bytes.NewReader(req.Body))
 	if err != nil {

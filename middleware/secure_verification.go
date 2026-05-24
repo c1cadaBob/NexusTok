@@ -1,3 +1,20 @@
+// Package middleware - secure_verification.go
+// 该文件实现了安全验证中间件，用于保护敏感操作
+//
+// 功能说明：
+// - 检查用户是否在有效时间内通过了安全验证（如二次密码确认）
+// - 支持强制验证和可选验证两种模式
+// - 验证状态通过 Session 存储，有效期为 5 分钟
+//
+// 使用场景：
+// - 修改密码、删除账号等敏感操作前的安全确认
+// - 需要二次验证的管理操作
+//
+// 验证流程：
+// 1. 用户通过安全验证后，验证时间戳存储到 Session
+// 2. 敏感操作前调用 SecureVerificationRequired 中间件
+// 3. 中间件检查 Session 中的验证时间戳是否在有效期内
+// 4. 验证过期或未验证时返回 403 错误
 package middleware
 
 import (
@@ -77,6 +94,8 @@ func SecureVerificationRequired() gin.HandlerFunc {
 	}
 }
 
+// clearSecureVerificationSession 清除 Session 中的安全验证状态
+// 删除验证时间戳和验证方式，并保存 Session
 func clearSecureVerificationSession(session sessions.Session) {
 	session.Delete(SecureVerificationSessionKey)
 	session.Delete(secureVerificationMethodSessionKey)

@@ -1,3 +1,9 @@
+// auth - conductor_recent_requests_test.go
+// 最近请求统计测试
+// 验证 Manager.MarkResult 方法能够正确记录请求的统计数据：
+// - 成功/失败计数的累加
+// - 最近请求快照的桶分布
+// - 更新操作保留已有的统计数据
 package auth
 
 import (
@@ -6,6 +12,10 @@ import (
 	"time"
 )
 
+// TestManagerMarkResultRecordsRecentRequests 验证 MarkResult 方法：
+// - 成功请求增加 Success 计数
+// - 失败请求增加 Failed 计数
+// - 最近请求快照中正确反映这些计数
 func TestManagerMarkResultRecordsRecentRequests(t *testing.T) {
 	mgr := NewManager(nil, nil, nil)
 	auth := &Auth{
@@ -47,6 +57,8 @@ func TestManagerMarkResultRecordsRecentRequests(t *testing.T) {
 	}
 }
 
+// TestManagerUpdatePreservesRecentRequestsAndTotals 验证更新认证信息时，
+// 已有的请求统计数据不会丢失。
 func TestManagerUpdatePreservesRecentRequestsAndTotals(t *testing.T) {
 	mgr := NewManager(nil, nil, nil)
 	auth := &Auth{

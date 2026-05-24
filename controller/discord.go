@@ -1,3 +1,16 @@
+// Package controller - discord.go
+// 该文件实现了 Discord OAuth 登录和绑定的 API 控制器
+//
+// Discord OAuth 流程：
+// 1. 用户访问 Discord 授权页面
+// 2. 授权后回调到 DiscordOAuth
+// 3. 使用授权码获取访问令牌
+// 4. 获取 Discord 用户信息
+// 5. 登录或注册用户
+//
+// 主要 API：
+// - DiscordOAuth：Discord OAuth 回调处理（登录/注册）
+// - DiscordBind：绑定 Discord 账户到现有用户
 package controller
 
 import (
@@ -18,21 +31,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// DiscordResponse Discord OAuth 令牌响应结构体
 type DiscordResponse struct {
-	AccessToken  string `json:"access_token"`
-	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-	Scope        string `json:"scope"`
+	AccessToken  string `json:"access_token"`  // 访问令牌
+	IDToken      string `json:"id_token"`      // ID 令牌
+	RefreshToken string `json:"refresh_token"` // 刷新令牌
+	TokenType    string `json:"token_type"`    // 令牌类型
+	ExpiresIn    int    `json:"expires_in"`    // 过期时间（秒）
+	Scope        string `json:"scope"`         // 授权范围
 }
 
+// DiscordUser Discord 用户信息结构体
 type DiscordUser struct {
-	UID  string `json:"id"`
-	ID   string `json:"username"`
-	Name string `json:"global_name"`
+	UID  string `json:"id"`         // Discord 用户唯一 ID
+	ID   string `json:"username"`   // Discord 用户名
+	Name string `json:"global_name"` // Discord 全局显示名称
 }
 
+// getDiscordUserInfoByCode 通过授权码获取 Discord 用户信息
+//
+// 流程：
+// 1. 使用授权码交换访问令牌
+// 2. 使用访问令牌获取用户信息
+//
+// 参数：
+//   - code: Discord OAuth 授权码
+//
+// 返回值：
+//   - *DiscordUser: Discord 用户信息
+//   - err: 错误信息
 func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	if code == "" {
 		return nil, errors.New("无效的参数")
@@ -99,6 +126,15 @@ func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	return &discordUser, nil
 }
 
+// DiscordOAuth 处理 Discord OAuth 回调
+//
+// 根据会话状态判断是登录还是绑定操作：
+// - 如果会话中有用户名信息，执行绑定操作
+// - 否则执行登录/注册操作
+//
+// 查询参数：
+//   - code: OAuth 授权码
+//   - state: 状态参数（用于 CSRF 防护）
 func DiscordOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 	state := c.Query("state")
@@ -178,6 +214,9 @@ func DiscordOAuth(c *gin.Context) {
 	setupLogin(&user, c)
 }
 
+// DiscordBind 将 Discord 账户绑定到当前登录用户
+//
+// 如果该 Discord 账户已被其他用户绑定，返回错误
 func DiscordBind(c *gin.Context) {
 	if !system_setting.GetDiscordSettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{

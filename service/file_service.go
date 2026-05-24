@@ -1,3 +1,12 @@
+// file_service.go - 统一文件处理服务
+// 本文件提供文件下载、解码、缓存等功能的统一入口。
+// 核心功能包括：
+// - 统一的文件加载接口（LoadFileSource），支持 URL 和 Base64 两种来源
+// - 智能 MIME 类型检测（Content-Type、Content-Disposition、URL 扩展名、内容嗅探）
+// - 磁盘/内存缓存策略自动选择
+// - HEIF/HEIC 格式的特殊处理（Go 标准库不原生支持）
+// - 图片配置信息获取
+// - 请求结束时的资源自动清理
 package service
 
 import (

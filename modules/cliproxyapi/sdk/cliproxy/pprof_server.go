@@ -1,3 +1,8 @@
+// cliproxy - pprof_server.go
+// 该文件实现了可选的 pprof HTTP 调试服务器。
+// 支持动态启用/禁用、地址变更时的热重载，以及优雅关闭。
+// pprof 服务器提供 Go 运行时性能分析端点。
+
 package cliproxy
 
 import (
@@ -13,6 +18,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// pprofServer 管理可选的 pprof HTTP 调试服务器。
+// 支持动态启用/禁用和地址变更时的热重载。
 type pprofServer struct {
 	mu      sync.Mutex
 	server  *http.Server
@@ -20,10 +27,13 @@ type pprofServer struct {
 	enabled bool
 }
 
+// newPprofServer 创建一个新的 pprof 服务器实例。
 func newPprofServer() *pprofServer {
 	return &pprofServer{}
 }
 
+// applyPprofConfig 将 pprof 配置应用到服务实例。
+// 如果 pprof 服务器尚未初始化，则创建新实例。
 func (s *Service) applyPprofConfig(cfg *config.Config) {
 	if s == nil || cfg == nil {
 		return
@@ -34,6 +44,7 @@ func (s *Service) applyPprofConfig(cfg *config.Config) {
 	s.pprofServer.Apply(cfg)
 }
 
+// shutdownPprof 关闭 pprof 服务器。
 func (s *Service) shutdownPprof(ctx context.Context) error {
 	if s == nil || s.pprofServer == nil {
 		return nil
@@ -41,6 +52,8 @@ func (s *Service) shutdownPprof(ctx context.Context) error {
 	return s.pprofServer.Shutdown(ctx)
 }
 
+// Apply 根据配置启用或禁用 pprof 服务器。
+// 如果地址变更，会先停止旧服务器再启动新服务器。
 func (p *pprofServer) Apply(cfg *config.Config) {
 	if p == nil || cfg == nil {
 		return
@@ -78,6 +91,7 @@ func (p *pprofServer) Apply(cfg *config.Config) {
 	p.startServer(addr)
 }
 
+// Shutdown 优雅关闭 pprof 服务器，使用提供的上下文控制超时。
 func (p *pprofServer) Shutdown(ctx context.Context) error {
 	if p == nil {
 		return nil
@@ -95,6 +109,7 @@ func (p *pprofServer) Shutdown(ctx context.Context) error {
 	return p.stopServerWithContext(ctx, currentServer, currentAddr, "shutdown")
 }
 
+// startServer 在指定地址启动 pprof HTTP 服务器。
 func (p *pprofServer) startServer(addr string) {
 	mux := newPprofMux()
 	server := &http.Server{
@@ -124,10 +139,12 @@ func (p *pprofServer) startServer(addr string) {
 	}()
 }
 
+// stopServer 使用默认上下文停止 pprof 服务器。
 func (p *pprofServer) stopServer(server *http.Server, addr string, reason string) {
 	_ = p.stopServerWithContext(context.Background(), server, addr, reason)
 }
 
+// stopServerWithContext 使用提供的上下文停止 pprof 服务器。
 func (p *pprofServer) stopServerWithContext(ctx context.Context, server *http.Server, addr string, reason string) error {
 	if server == nil {
 		return nil
@@ -146,6 +163,7 @@ func (p *pprofServer) stopServerWithContext(ctx context.Context, server *http.Se
 	return nil
 }
 
+// newPprofMux 创建注册了所有标准 pprof 端点的 HTTP 路由复用器。
 func newPprofMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)

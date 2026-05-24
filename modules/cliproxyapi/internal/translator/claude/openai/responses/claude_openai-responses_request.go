@@ -1,3 +1,16 @@
+// responses - claude_openai-responses_request.go
+// Claude 的 OpenAI Responses 请求转换器。
+// 将 OpenAI Responses API 格式的请求转换为 Claude Messages API 格式。
+//
+// 转换内容包括：
+// 1. 系统指令转换（instructions -> 系统消息）
+// 2. 消息转换（input_text/output_text -> user/assistant 消息）
+// 3. 函数调用转换（function_call -> assistant tool_use）
+// 4. 函数输出转换（function_call_output -> user tool_result）
+// 5. 工具定义转换（parameters -> input_schema）
+// 6. 思考配置（reasoning.effort -> thinking 配置，支持自适应和预算模式）
+// 7. 工具选择转换（tool_choice -> Claude 格式）
+// 8. 命名空间工具展平和 Web 搜索工具转换
 package responses
 
 import (
@@ -16,21 +29,32 @@ import (
 )
 
 var (
-	user    = ""
+	// user 用户标识符，基于 account 和 session 的 SHA256 哈希生成
+	user = ""
+	// account 账户标识符，首次使用时自动生成 UUID
 	account = ""
+	// session 会话标识符，首次使用时自动生成 UUID
 	session = ""
 )
 
-// ConvertOpenAIResponsesRequestToClaude transforms an OpenAI Responses API request
-// into a Claude Messages API request using only gjson/sjson for JSON handling.
-// It supports:
-// - instructions -> system message
-// - input[].type==message with input_text/output_text -> user/assistant messages
+// ConvertOpenAIResponsesRequestToClaude 将 OpenAI Responses API 请求转换为 Claude Messages API 请求。
+//
+// 支持的转换包括：
+// - instructions -> 系统消息
+// - input[].type==message 中的 input_text/output_text -> user/assistant 消息
 // - function_call -> assistant tool_use
 // - function_call_output -> user tool_result
 // - tools[].parameters -> tools[].input_schema
 // - max_output_tokens -> max_tokens
-// - stream passthrough via parameter
+// - stream 参数透传
+//
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Responses 格式 JSON 请求数据
+//   - stream: 是否为流式请求
+//
+// 返回值：
+//   - []byte: 转换后的 Claude Messages API 格式 JSON 请求数据
 func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 
@@ -398,6 +422,8 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 	return out
 }
 
+// convertResponsesToolToClaudeTools 将 Responses 格式的工具定义转换为 Claude 工具定义。
+// 根据工具类型（function、namespace、web_search）分发到不同的转换函数。
 func convertResponsesToolToClaudeTools(tool gjson.Result, toolNameMap map[string]string) [][]byte {
 	toolType := strings.TrimSpace(tool.Get("type").String())
 	switch toolType {
@@ -425,6 +451,8 @@ func convertResponsesToolToClaudeTools(tool gjson.Result, toolNameMap map[string
 	return nil
 }
 
+// convertResponsesNamespaceToolToClaude 将命名空间工具展平为多个 Claude 工具定义。
+// 将 namespace 类型工具的子工具展平为独立的 Claude 工具，名称使用命名空间前缀限定。
 func convertResponsesNamespaceToolToClaude(tool gjson.Result, toolNameMap map[string]string) [][]byte {
 	namespaceName := strings.TrimSpace(tool.Get("name").String())
 	children := tool.Get("tools")
@@ -448,6 +476,8 @@ func convertResponsesNamespaceToolToClaude(tool gjson.Result, toolNameMap map[st
 	return out
 }
 
+// convertResponsesFunctionToolToClaude 将单个函数工具转换为 Claude 工具格式。
+// 将 OpenAI 的 parameters 字段映射为 Claude 的 input_schema 字段。
 func convertResponsesFunctionToolToClaude(tool gjson.Result, overrideName string) ([]byte, bool) {
 	name := strings.TrimSpace(overrideName)
 	if name == "" {
@@ -466,6 +496,8 @@ func convertResponsesFunctionToolToClaude(tool gjson.Result, overrideName string
 	return tJSON, true
 }
 
+// convertResponsesWebSearchToolToClaude 将 Web 搜索工具转换为 Claude 的 web_search 格式。
+// 支持 max_uses、allowed_domains 和 user_location 等配置。
 func convertResponsesWebSearchToolToClaude(tool gjson.Result) ([]byte, bool) {
 	if externalWebAccess := tool.Get("external_web_access"); externalWebAccess.Exists() && !externalWebAccess.Bool() {
 		return nil, false
@@ -489,6 +521,8 @@ func convertResponsesWebSearchToolToClaude(tool gjson.Result) ([]byte, bool) {
 	return tJSON, true
 }
 
+// responsesToolName 从工具定义中提取工具名称。
+// 优先从顶层 name 字段获取，如果不存在则从 function.name 获取。
 func responsesToolName(tool gjson.Result) string {
 	if name := strings.TrimSpace(tool.Get("name").String()); name != "" {
 		return name
@@ -496,6 +530,7 @@ func responsesToolName(tool gjson.Result) string {
 	return strings.TrimSpace(tool.Get("function.name").String())
 }
 
+// responsesToolDescription 从工具定义中提取工具描述。
 func responsesToolDescription(tool gjson.Result) string {
 	if description := tool.Get("description").String(); description != "" {
 		return description
@@ -503,6 +538,8 @@ func responsesToolDescription(tool gjson.Result) string {
 	return tool.Get("function.description").String()
 }
 
+// responsesToolParameters 从工具定义中提取参数定义。
+// 按优先级尝试多个路径：parameters、parametersJsonSchema、input_schema 等。
 func responsesToolParameters(tool gjson.Result) gjson.Result {
 	for _, path := range []string{
 		"parameters",
@@ -518,6 +555,8 @@ func responsesToolParameters(tool gjson.Result) gjson.Result {
 	return gjson.Result{}
 }
 
+// normalizeClaudeToolInputSchema 规范化 Claude 工具的输入 schema。
+// 确保 schema 包含 type 和 properties 字段，缺失时使用默认值。
 func normalizeClaudeToolInputSchema(parameters gjson.Result) []byte {
 	raw := strings.TrimSpace(parameters.Raw)
 	if raw == "" || raw == "null" || !gjson.Valid(raw) {
@@ -539,6 +578,8 @@ func normalizeClaudeToolInputSchema(parameters gjson.Result) []byte {
 	return schema
 }
 
+// qualifyResponsesNamespaceToolName 为命名空间子工具生成限定名称。
+// 将命名空间名称和子工具名称用 "__" 连接，如 "mcp__serena__list_dir"。
 func qualifyResponsesNamespaceToolName(namespaceName, childName string) string {
 	childName = strings.TrimSpace(childName)
 	if childName == "" || namespaceName == "" || strings.HasPrefix(childName, "mcp__") {
@@ -553,6 +594,8 @@ func qualifyResponsesNamespaceToolName(namespaceName, childName string) string {
 	return namespaceName + "__" + childName
 }
 
+// isUnsupportedOpenAIBuiltinToolType 判断是否为不支持的 OpenAI 内置工具类型。
+// 这些工具类型（image_generation、file_search 等）在 Claude 中没有对应实现。
 func isUnsupportedOpenAIBuiltinToolType(toolType string) bool {
 	switch toolType {
 	case "image_generation", "file_search", "code_interpreter", "computer_use_preview":

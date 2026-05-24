@@ -1,3 +1,6 @@
+// thinking - convert.go
+// 本文件实现了 thinking 配置的级别（Level）与预算（Budget）之间的双向转换逻辑。
+// 提供模型能力检测、级别映射、预算阈值计算等功能。
 package thinking
 
 import (
@@ -6,8 +9,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
-// levelToBudgetMap defines the standard Level → Budget mapping.
-// All keys are lowercase; lookups should use strings.ToLower.
+// levelToBudgetMap 定义了标准的 Level → Budget 映射关系。
+// 所有键均为小写形式，查找时应使用 strings.ToLower 进行转换。
 var levelToBudgetMap = map[string]int{
 	"none":    0,
 	"auto":    -1,

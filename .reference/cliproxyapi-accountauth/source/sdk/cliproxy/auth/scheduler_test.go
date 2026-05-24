@@ -1,3 +1,9 @@
+// auth - scheduler_test.go
+// 调度器核心功能测试
+// 验证 Manager 的调度器相关功能：
+// - 认证注册/注销后调度器条目的更新
+// - 模型选择器（Selector）的调用
+// - 调度器同步机制
 package auth
 
 import (
@@ -10,6 +16,7 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerTestExecutor 是用于调度器测试的空操作执行器。
 type schedulerTestExecutor struct{}
 
 func (schedulerTestExecutor) Identifier() string { return "test" }
@@ -34,6 +41,8 @@ func (schedulerTestExecutor) HttpRequest(ctx context.Context, auth *Auth, req *h
 	return nil, nil
 }
 
+// trackingSelector 是用于测试的选择器实现，
+// 记录每次 Pick 调用的次数和传入的认证 ID 列表。
 type trackingSelector struct {
 	calls      int
 	lastAuthID []string
@@ -70,6 +79,9 @@ func registerSchedulerModels(t *testing.T, provider string, model string, authID
 	})
 }
 
+// TestSchedulerPick_RoundRobinHighestPriority 验证：
+// RoundRobinSelector 在存在不同优先级认证时，优先选择高优先级组内的认证，
+// 并在高优先级组内按轮询顺序选择。
 func TestSchedulerPick_RoundRobinHighestPriority(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +107,8 @@ func TestSchedulerPick_RoundRobinHighestPriority(t *testing.T) {
 	}
 }
 
+// TestSchedulerPick_FillFirstSticksToFirstReady 验证：
+// FillFirstSelector 持续选择按 ID 排序的第一个就绪认证。
 func TestSchedulerPick_FillFirstSticksToFirstReady(t *testing.T) {
 	t.Parallel()
 
@@ -119,6 +133,8 @@ func TestSchedulerPick_FillFirstSticksToFirstReady(t *testing.T) {
 	}
 }
 
+// TestSchedulerPick_PromotesExpiredCooldownBeforePick 验证：
+// 当认证的冷却期已过期时，调度器会在选择前将其从冷却状态提升为就绪状态。
 func TestSchedulerPick_PromotesExpiredCooldownBeforePick(t *testing.T) {
 	t.Parallel()
 
@@ -151,6 +167,9 @@ func TestSchedulerPick_PromotesExpiredCooldownBeforePick(t *testing.T) {
 	}
 }
 
+// TestSchedulerPick_GeminiVirtualParentUsesTwoLevelRotation 验证：
+// Gemini CLI 凭证的虚拟父级（virtual parent）两级轮换机制：
+// 先在父级之间轮换，再在每个父级的子凭证之间轮换。
 func TestSchedulerPick_GeminiVirtualParentUsesTwoLevelRotation(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +201,8 @@ func TestSchedulerPick_GeminiVirtualParentUsesTwoLevelRotation(t *testing.T) {
 	}
 }
 
+// TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset 验证：
+// 在 WebSocket 上下文中，调度器优先选择支持 WebSocket 的认证。
 func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +229,9 @@ func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset(t *testing.T)
 	}
 }
 
+// TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledAcrossPriorities 验证：
+// 在 WebSocket 上下文中，即使低优先级认证支持 WebSocket，
+// 调度器也会优先选择它们而非高优先级的非 WebSocket 认证。
 func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledAcrossPriorities(t *testing.T) {
 	t.Parallel()
 
@@ -234,6 +258,9 @@ func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledAcrossPriorities(t *
 	}
 }
 
+// TestSchedulerPick_MixedProvidersUsesWeightedProviderRotationOverReadyCandidates 验证：
+// 混合提供商调度时，按加权轮换在不同提供商之间交替，
+// 同一提供商内按认证轮换选择。
 func TestSchedulerPick_MixedProvidersUsesWeightedProviderRotationOverReadyCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -263,6 +290,8 @@ func TestSchedulerPick_MixedProvidersUsesWeightedProviderRotationOverReadyCandid
 	}
 }
 
+// TestSchedulerPick_MixedProvidersPrefersHighestPriorityTier 验证：
+// 混合提供商调度时，优先选择高优先级提供商组。
 func TestSchedulerPick_MixedProvidersPrefersHighestPriorityTier(t *testing.T) {
 	t.Parallel()
 
@@ -298,6 +327,8 @@ func TestSchedulerPick_MixedProvidersPrefersHighestPriorityTier(t *testing.T) {
 	}
 }
 
+// TestManager_PickNextMixed_UsesWeightedProviderRotationBeforeCredentialRotation 验证：
+// Manager 的 pickNextMixed 方法使用加权提供商轮换优先于凭证轮换。
 func TestManager_PickNextMixed_UsesWeightedProviderRotationBeforeCredentialRotation(t *testing.T) {
 	t.Parallel()
 
@@ -333,6 +364,9 @@ func TestManager_PickNextMixed_UsesWeightedProviderRotationBeforeCredentialRotat
 	}
 }
 
+// TestManager_PickNextMixed_DisallowFreeAuthSkipsCodexFreePlan 验证：
+// 当 DisallowFreeAuthMetadataKey 设置为 true 时，
+// 调度器跳过免费计划（plan_type=free）的认证。
 func TestManager_PickNextMixed_DisallowFreeAuthSkipsCodexFreePlan(t *testing.T) {
 	t.Parallel()
 
@@ -366,6 +400,9 @@ func TestManager_PickNextMixed_DisallowFreeAuthSkipsCodexFreePlan(t *testing.T) 
 	}
 }
 
+// TestManagerCustomSelector_FallsBackToLegacyPath 验证：
+// 使用自定义选择器时，Manager 回退到旧路径（legacy path），
+// 直接调用选择器的 Pick 方法。
 func TestManagerCustomSelector_FallsBackToLegacyPath(t *testing.T) {
 	t.Parallel()
 
@@ -393,6 +430,9 @@ func TestManagerCustomSelector_FallsBackToLegacyPath(t *testing.T) {
 	}
 }
 
+// TestManager_InitializesSchedulerForBuiltInSelector 验证：
+// Manager 在创建时为内置选择器初始化调度器，
+// 且 SetSelector 能正确更新调度器策略。
 func TestManager_InitializesSchedulerForBuiltInSelector(t *testing.T) {
 	t.Parallel()
 
@@ -410,6 +450,9 @@ func TestManager_InitializesSchedulerForBuiltInSelector(t *testing.T) {
 	}
 }
 
+// TestManager_SchedulerTracksRegisterAndUpdate 验证：
+// 调度器能正确跟踪认证的注册和更新操作，
+// 禁用认证后调度器不再选择该认证。
 func TestManager_SchedulerTracksRegisterAndUpdate(t *testing.T) {
 	t.Parallel()
 
@@ -442,6 +485,8 @@ func TestManager_SchedulerTracksRegisterAndUpdate(t *testing.T) {
 	}
 }
 
+// TestManager_PickNextMixed_UsesSchedulerRotation 验证：
+// pickNextMixed 使用调度器轮换在不同提供商和认证之间交替选择。
 func TestManager_PickNextMixed_UsesSchedulerRotation(t *testing.T) {
 	t.Parallel()
 
@@ -477,6 +522,8 @@ func TestManager_PickNextMixed_UsesSchedulerRotation(t *testing.T) {
 	}
 }
 
+// TestManager_PickNextMixed_SkipsProvidersWithoutExecutors 验证：
+// pickNextMixed 跳过没有注册执行器的提供商。
 func TestManager_PickNextMixed_SkipsProvidersWithoutExecutors(t *testing.T) {
 	t.Parallel()
 
@@ -504,6 +551,9 @@ func TestManager_PickNextMixed_SkipsProvidersWithoutExecutors(t *testing.T) {
 	}
 }
 
+// TestManager_SchedulerTracksMarkResultCooldownAndRecovery 验证：
+// 调度器能正确跟踪 MarkResult 的冷却和恢复操作，
+// 冷却期间跳过该认证，恢复后重新参与轮换。
 func TestManager_SchedulerTracksMarkResultCooldownAndRecovery(t *testing.T) {
 	t.Parallel()
 

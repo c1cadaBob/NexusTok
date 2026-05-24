@@ -1,3 +1,5 @@
+// Package cmd - kimi_login.go
+// 提供 Kimi（月之暗面 AI）的设备流程 OAuth 认证。
 package cmd
 
 import (
@@ -9,13 +11,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// DoKimiLogin triggers the OAuth device flow for Kimi (Moonshot AI) and saves tokens.
-// It initiates the device flow authentication, displays the verification URL for the user,
-// and waits for authorization before saving the tokens.
+// DoKimiLogin 触发 Kimi（月之暗面 AI）的设备流程 OAuth 认证并保存令牌。
+// 启动设备流程认证，向用户显示验证 URL，并在保存令牌之前等待授权。
 //
-// Parameters:
-//   - cfg: The application configuration containing proxy and auth directory settings
-//   - options: Login options including browser behavior settings
+// 参数:
+//   - cfg: 包含代理和认证目录设置的应用程序配置
+//   - options: 登录选项，包括浏览器行为设置
+//
+// DoKimiLogin triggers the OAuth device flow for Kimi (Moonshot AI) and saves tokens.
 func DoKimiLogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {
 		options = &LoginOptions{}

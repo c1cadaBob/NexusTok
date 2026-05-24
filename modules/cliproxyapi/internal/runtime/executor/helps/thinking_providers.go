@@ -1,3 +1,6 @@
+// Package helps - thinking_providers.go
+// 导入所有思维/推理提供商的实现，通过空白导入触发提供商的注册。
+// 支持的提供商包括 Antigravity、Claude、Codex、Gemini、GeminiCLI、Kimi、OpenAI 和 xAI。
 package helps
 
 import (

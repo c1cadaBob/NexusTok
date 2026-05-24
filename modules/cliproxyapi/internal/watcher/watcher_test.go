@@ -1,3 +1,9 @@
+// watcher - watcher_test.go
+// 该文件测试配置文件监视器（Watcher）的各项功能。
+// 测试覆盖了认证排除模型元数据应用、API Key 客户端计数、认证规范化、
+// 提供商匹配、认证快照、配置热重载、客户端增删、事件处理、
+// 客户端更新调度、防抖逻辑、持久化、OAuth 提供商过滤等核心场景。
+
 package watcher
 
 import (
@@ -22,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestApplyAuthExcludedModelsMeta_APIKey 测试 API Key 认证的排除模型元数据应用。
 func TestApplyAuthExcludedModelsMeta_APIKey(t *testing.T) {
 	auth := &coreauth.Auth{Attributes: map[string]string{}}
 	cfg := &config.Config{}
@@ -38,6 +45,7 @@ func TestApplyAuthExcludedModelsMeta_APIKey(t *testing.T) {
 	}
 }
 
+// TestApplyAuthExcludedModelsMeta_OAuthProvider 测试 OAuth 提供商认证的排除模型元数据应用。
 func TestApplyAuthExcludedModelsMeta_OAuthProvider(t *testing.T) {
 	auth := &coreauth.Auth{
 		Provider:   "TestProv",
@@ -60,6 +68,7 @@ func TestApplyAuthExcludedModelsMeta_OAuthProvider(t *testing.T) {
 	}
 }
 
+// TestBuildAPIKeyClientsCounts 测试各提供商的 API Key 客户端计数正确。
 func TestBuildAPIKeyClientsCounts(t *testing.T) {
 	cfg := &config.Config{
 		GeminiKey: []config.GeminiKey{{APIKey: "g1"}, {APIKey: "g2"}},
@@ -79,6 +88,7 @@ func TestBuildAPIKeyClientsCounts(t *testing.T) {
 	}
 }
 
+// TestNormalizeAuthStripsTemporalFields 测试认证规范化移除时间相关字段和运行时数据。
 func TestNormalizeAuthStripsTemporalFields(t *testing.T) {
 	now := time.Now()
 	auth := &coreauth.Auth{
@@ -104,6 +114,7 @@ func TestNormalizeAuthStripsTemporalFields(t *testing.T) {
 	}
 }
 
+// TestMatchProvider 测试提供商名称匹配逻辑。
 func TestMatchProvider(t *testing.T) {
 	if _, ok := matchProvider("OpenAI", []string{"openai", "claude"}); !ok {
 		t.Fatal("expected match to succeed ignoring case")
@@ -113,6 +124,7 @@ func TestMatchProvider(t *testing.T) {
 	}
 }
 
+// TestSnapshotCoreAuths_ConfigAndAuthFiles 测试从配置文件和认证文件生成认证快照。
 func TestSnapshotCoreAuths_ConfigAndAuthFiles(t *testing.T) {
 	authDir := t.TempDir()
 	metadata := map[string]any{
@@ -207,6 +219,7 @@ func TestSnapshotCoreAuths_ConfigAndAuthFiles(t *testing.T) {
 	}
 }
 
+// TestReloadConfigIfChanged_TriggersOnChangeAndSkipsUnchanged 测试配置变更触发重载，未变更则跳过。
 func TestReloadConfigIfChanged_TriggersOnChangeAndSkipsUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -264,6 +277,7 @@ func TestReloadConfigIfChanged_TriggersOnChangeAndSkipsUnchanged(t *testing.T) {
 	}
 }
 
+// TestStartAndStopSuccess 测试 Watcher 的正常启动和停止。
 func TestStartAndStopSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -299,6 +313,7 @@ func TestStartAndStopSuccess(t *testing.T) {
 	}
 }
 
+// TestStartFailsWhenConfigMissing 测试配置文件缺失时启动失败。
 func TestStartFailsWhenConfigMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -321,6 +336,7 @@ func TestStartFailsWhenConfigMissing(t *testing.T) {
 	}
 }
 
+// TestDispatchRuntimeAuthUpdateEnqueuesAndUpdatesState 测试运行时认证更新入队并更新状态。
 func TestDispatchRuntimeAuthUpdateEnqueuesAndUpdatesState(t *testing.T) {
 	queue := make(chan AuthUpdate, 4)
 	w := &Watcher{}
@@ -360,6 +376,7 @@ func TestDispatchRuntimeAuthUpdateEnqueuesAndUpdatesState(t *testing.T) {
 	w.clientsMutex.RUnlock()
 }
 
+// TestAddOrUpdateClientSkipsUnchanged 测试未变更的客户端更新被跳过。
 func TestAddOrUpdateClientSkipsUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "sample.json")
@@ -387,6 +404,7 @@ func TestAddOrUpdateClientSkipsUnchanged(t *testing.T) {
 	}
 }
 
+// TestAddOrUpdateClientTriggersReloadAndHash 测试客户端更新触发重载和哈希计算。
 func TestAddOrUpdateClientTriggersReloadAndHash(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "sample.json")
@@ -416,6 +434,7 @@ func TestAddOrUpdateClientTriggersReloadAndHash(t *testing.T) {
 	}
 }
 
+// TestRemoveClientRemovesHash 测试移除客户端时同时移除对应的哈希值。
 func TestRemoveClientRemovesHash(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "sample.json")
@@ -441,6 +460,7 @@ func TestRemoveClientRemovesHash(t *testing.T) {
 	}
 }
 
+// TestAuthFileEventsDoNotInvokeSnapshotCoreAuths 测试认证文件事件不触发认证快照重建。
 func TestAuthFileEventsDoNotInvokeSnapshotCoreAuths(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "sample.json")
@@ -472,6 +492,7 @@ func TestAuthFileEventsDoNotInvokeSnapshotCoreAuths(t *testing.T) {
 	}
 }
 
+// TestAuthSliceToMap 测试认证切片到映射的转换逻辑。
 func TestAuthSliceToMap(t *testing.T) {
 	t.Parallel()
 
@@ -543,6 +564,7 @@ func TestAuthSliceToMap(t *testing.T) {
 	}
 }
 
+// TestTriggerServerUpdateCancelsPendingTimerOnImmediate 测试立即更新取消挂起的定时器。
 func TestTriggerServerUpdateCancelsPendingTimerOnImmediate(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{AuthDir: tmpDir}
@@ -583,6 +605,7 @@ func TestTriggerServerUpdateCancelsPendingTimerOnImmediate(t *testing.T) {
 	}
 }
 
+// TestShouldDebounceRemove 测试删除事件的防抖判断逻辑。
 func TestShouldDebounceRemove(t *testing.T) {
 	w := &Watcher{}
 	path := filepath.Clean("test.json")
@@ -603,6 +626,7 @@ func TestShouldDebounceRemove(t *testing.T) {
 	}
 }
 
+// TestAuthFileUnchangedUsesHash 测试认证文件未变更时使用哈希跳过处理。
 func TestAuthFileUnchangedUsesHash(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "sample.json")
@@ -633,6 +657,7 @@ func TestAuthFileUnchangedUsesHash(t *testing.T) {
 	}
 }
 
+// TestAuthFileUnchangedEmptyAndMissing 测试空文件和缺失文件的认证文件处理。
 func TestAuthFileUnchangedEmptyAndMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	emptyFile := filepath.Join(tmpDir, "empty.json")
@@ -655,6 +680,7 @@ func TestAuthFileUnchangedEmptyAndMissing(t *testing.T) {
 	}
 }
 
+// TestReloadClientsCachesAuthHashes 测试客户端重载缓存认证哈希值。
 func TestReloadClientsCachesAuthHashes(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "one.json")
@@ -675,6 +701,7 @@ func TestReloadClientsCachesAuthHashes(t *testing.T) {
 	}
 }
 
+// TestReloadClientsLogsConfigDiffs 测试客户端重载时记录配置差异日志。
 func TestReloadClientsLogsConfigDiffs(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldCfg := &config.Config{AuthDir: tmpDir, Port: 1, Debug: false}
@@ -694,11 +721,13 @@ func TestReloadClientsLogsConfigDiffs(t *testing.T) {
 	w.reloadClients(false, nil, false)
 }
 
+// TestReloadClientsHandlesNilConfig 测试配置为 nil 时客户端重载的处理。
 func TestReloadClientsHandlesNilConfig(t *testing.T) {
 	w := &Watcher{}
 	w.reloadClients(true, nil, false)
 }
 
+// TestReloadClientsFiltersProvidersWithNilCurrentAuths 测试重载时过滤当前认证为 nil 的提供商。
 func TestReloadClientsFiltersProvidersWithNilCurrentAuths(t *testing.T) {
 	tmp := t.TempDir()
 	w := &Watcher{
@@ -711,6 +740,7 @@ func TestReloadClientsFiltersProvidersWithNilCurrentAuths(t *testing.T) {
 	}
 }
 
+// TestSetAuthUpdateQueueNilResetsDispatch 测试设置认证更新队列为 nil 时重置调度。
 func TestSetAuthUpdateQueueNilResetsDispatch(t *testing.T) {
 	w := &Watcher{}
 	queue := make(chan AuthUpdate, 1)
@@ -724,6 +754,7 @@ func TestSetAuthUpdateQueueNilResetsDispatch(t *testing.T) {
 	}
 }
 
+// TestPersistAsyncEarlyReturns 测试异步持久化的提前返回条件。
 func TestPersistAsyncEarlyReturns(t *testing.T) {
 	var nilWatcher *Watcher
 	nilWatcher.persistConfigAsync()
@@ -749,6 +780,7 @@ func (p *errorPersister) PersistAuthFiles(context.Context, string, ...string) er
 	return fmt.Errorf("persist auth error")
 }
 
+// TestPersistAsyncErrorPaths 测试异步持久化的错误处理路径。
 func TestPersistAsyncErrorPaths(t *testing.T) {
 	p := &errorPersister{}
 	w := &Watcher{storePersister: p}
@@ -763,6 +795,7 @@ func TestPersistAsyncErrorPaths(t *testing.T) {
 	}
 }
 
+// TestStopConfigReloadTimerSafeWhenNil 测试定时器为 nil 时安全停止。
 func TestStopConfigReloadTimerSafeWhenNil(t *testing.T) {
 	w := &Watcher{}
 	w.stopConfigReloadTimer()
@@ -773,6 +806,7 @@ func TestStopConfigReloadTimerSafeWhenNil(t *testing.T) {
 	w.stopConfigReloadTimer()
 }
 
+// TestHandleEventRemovesAuthFile 测试文件删除事件正确移除认证文件。
 func TestHandleEventRemovesAuthFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	authFile := filepath.Join(tmpDir, "remove.json")
@@ -805,6 +839,7 @@ func TestHandleEventRemovesAuthFile(t *testing.T) {
 	}
 }
 
+// TestDispatchAuthUpdatesFlushesQueue 测试调度认证更新时刷新队列。
 func TestDispatchAuthUpdatesFlushesQueue(t *testing.T) {
 	queue := make(chan AuthUpdate, 4)
 	w := &Watcher{}
@@ -830,6 +865,7 @@ func TestDispatchAuthUpdatesFlushesQueue(t *testing.T) {
 	}
 }
 
+// TestDispatchLoopExitsOnContextDoneWhileSending 测试上下文取消时调度循环退出。
 func TestDispatchLoopExitsOnContextDoneWhileSending(t *testing.T) {
 	queue := make(chan AuthUpdate) // unbuffered to block sends
 	w := &Watcher{
@@ -857,6 +893,7 @@ func TestDispatchLoopExitsOnContextDoneWhileSending(t *testing.T) {
 	}
 }
 
+// TestProcessEventsHandlesEventErrorAndChannelClose 测试事件处理的错误和通道关闭。
 func TestProcessEventsHandlesEventErrorAndChannelClose(t *testing.T) {
 	w := &Watcher{
 		watcher: &fsnotify.Watcher{
@@ -890,6 +927,7 @@ func TestProcessEventsHandlesEventErrorAndChannelClose(t *testing.T) {
 	}
 }
 
+// TestProcessEventsReturnsWhenErrorsChannelClosed 测试错误通道关闭时事件处理返回。
 func TestProcessEventsReturnsWhenErrorsChannelClosed(t *testing.T) {
 	w := &Watcher{
 		watcher: &fsnotify.Watcher{
@@ -916,6 +954,7 @@ func TestProcessEventsReturnsWhenErrorsChannelClosed(t *testing.T) {
 	}
 }
 
+// TestHandleEventIgnoresUnrelatedFiles 测试不相关的文件事件被忽略。
 func TestHandleEventIgnoresUnrelatedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -942,6 +981,7 @@ func TestHandleEventIgnoresUnrelatedFiles(t *testing.T) {
 	}
 }
 
+// TestHandleEventConfigChangeSchedulesReload 测试配置文件变更事件调度重载。
 func TestHandleEventConfigChangeSchedulesReload(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -970,6 +1010,7 @@ func TestHandleEventConfigChangeSchedulesReload(t *testing.T) {
 	}
 }
 
+// TestHandleEventAuthWriteTriggersUpdate 测试认证文件写入事件触发更新。
 func TestHandleEventAuthWriteTriggersUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1000,6 +1041,7 @@ func TestHandleEventAuthWriteTriggersUpdate(t *testing.T) {
 	}
 }
 
+// TestHandleEventRemoveDebounceSkips 测试删除事件的防抖跳过逻辑。
 func TestHandleEventRemoveDebounceSkips(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1030,6 +1072,7 @@ func TestHandleEventRemoveDebounceSkips(t *testing.T) {
 	}
 }
 
+// TestHandleEventAtomicReplaceUnchangedSkips 测试原子替换未变更时跳过处理。
 func TestHandleEventAtomicReplaceUnchangedSkips(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1063,6 +1106,7 @@ func TestHandleEventAtomicReplaceUnchangedSkips(t *testing.T) {
 	}
 }
 
+// TestHandleEventAtomicReplaceChangedTriggersUpdate 测试原子替换变更时触发更新。
 func TestHandleEventAtomicReplaceChangedTriggersUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1097,6 +1141,7 @@ func TestHandleEventAtomicReplaceChangedTriggersUpdate(t *testing.T) {
 	}
 }
 
+// TestHandleEventRemoveUnknownFileIgnored 测试删除未知文件被忽略。
 func TestHandleEventRemoveUnknownFileIgnored(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1124,6 +1169,7 @@ func TestHandleEventRemoveUnknownFileIgnored(t *testing.T) {
 	}
 }
 
+// TestHandleEventRemoveKnownFileDeletes 测试删除已知文件正确处理。
 func TestHandleEventRemoveKnownFileDeletes(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1155,6 +1201,7 @@ func TestHandleEventRemoveKnownFileDeletes(t *testing.T) {
 	}
 }
 
+// TestNormalizeAuthPathAndDebounceCleanup 测试认证路径规范化和防抖清理。
 func TestNormalizeAuthPathAndDebounceCleanup(t *testing.T) {
 	w := &Watcher{}
 	if got := w.normalizeAuthPath("   "); got != "" {
@@ -1182,6 +1229,7 @@ func TestNormalizeAuthPathAndDebounceCleanup(t *testing.T) {
 	}
 }
 
+// TestRefreshAuthStateDispatchesRuntimeAuths 测试刷新认证状态并调度运行时认证。
 func TestRefreshAuthStateDispatchesRuntimeAuths(t *testing.T) {
 	queue := make(chan AuthUpdate, 8)
 	w := &Watcher{
@@ -1211,6 +1259,7 @@ func TestRefreshAuthStateDispatchesRuntimeAuths(t *testing.T) {
 	}
 }
 
+// TestAddOrUpdateClientEdgeCases 测试客户端增删的边界情况。
 func TestAddOrUpdateClientEdgeCases(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := tmpDir
@@ -1242,6 +1291,7 @@ func TestAddOrUpdateClientEdgeCases(t *testing.T) {
 	}
 }
 
+// TestLoadFileClientsWalkError 测试文件客户端加载的目录遍历错误。
 func TestLoadFileClientsWalkError(t *testing.T) {
 	tmpDir := t.TempDir()
 	noAccessDir := filepath.Join(tmpDir, "0noaccess")
@@ -1263,6 +1313,7 @@ func TestLoadFileClientsWalkError(t *testing.T) {
 	}
 }
 
+// TestReloadConfigIfChangedHandlesMissingAndEmpty 测试配置重载处理缺失和空文件。
 func TestReloadConfigIfChangedHandlesMissingAndEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1284,6 +1335,7 @@ func TestReloadConfigIfChangedHandlesMissingAndEmpty(t *testing.T) {
 	w.reloadConfigIfChanged() // empty file -> early return
 }
 
+// TestReloadConfigUsesMirroredAuthDir 测试配置重载使用镜像认证目录。
 func TestReloadConfigUsesMirroredAuthDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1315,6 +1367,7 @@ func TestReloadConfigUsesMirroredAuthDir(t *testing.T) {
 	}
 }
 
+// TestReloadConfigFiltersAffectedOAuthProviders 测试配置重载过滤受影响的 OAuth 提供商。
 func TestReloadConfigFiltersAffectedOAuthProviders(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1381,6 +1434,7 @@ func TestReloadConfigFiltersAffectedOAuthProviders(t *testing.T) {
 	}
 }
 
+// TestReloadConfigTriggersCallbackForMaxRetryCredentialsChange 测试最大重试凭据变更触发回调。
 func TestReloadConfigTriggersCallbackForMaxRetryCredentialsChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	authDir := filepath.Join(tmpDir, "auth")
@@ -1442,6 +1496,7 @@ func TestReloadConfigTriggersCallbackForMaxRetryCredentialsChange(t *testing.T) 
 	}
 }
 
+// TestStartFailsWhenAuthDirMissing 测试认证目录缺失时启动失败。
 func TestStartFailsWhenAuthDirMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -1465,6 +1520,7 @@ func TestStartFailsWhenAuthDirMissing(t *testing.T) {
 	}
 }
 
+// TestDispatchRuntimeAuthUpdateReturnsFalseWithoutQueue 测试无队列时运行时认证更新返回 false。
 func TestDispatchRuntimeAuthUpdateReturnsFalseWithoutQueue(t *testing.T) {
 	w := &Watcher{}
 	if ok := w.DispatchRuntimeAuthUpdate(AuthUpdate{Action: AuthUpdateActionAdd, Auth: &coreauth.Auth{ID: "a"}}); ok {
@@ -1475,6 +1531,7 @@ func TestDispatchRuntimeAuthUpdateReturnsFalseWithoutQueue(t *testing.T) {
 	}
 }
 
+// TestNormalizeAuthNil 测试 nil 认证对象的规范化处理。
 func TestNormalizeAuthNil(t *testing.T) {
 	if normalizeAuth(nil) != nil {
 		t.Fatal("expected normalizeAuth(nil) to return nil")
@@ -1507,6 +1564,7 @@ func (s *stubStore) PersistAuthFiles(_ context.Context, message string, paths ..
 }
 func (s *stubStore) AuthDir() string { return s.authDir }
 
+// TestNewWatcherDetectsPersisterAndAuthDir 测试新 Watcher 检测持久化器和认证目录。
 func TestNewWatcherDetectsPersisterAndAuthDir(t *testing.T) {
 	tmp := t.TempDir()
 	store := &stubStore{authDir: tmp}
@@ -1526,6 +1584,7 @@ func TestNewWatcherDetectsPersisterAndAuthDir(t *testing.T) {
 	}
 }
 
+// TestPersistConfigAndAuthAsyncInvokePersister 测试异步持久化配置和认证调用持久化器。
 func TestPersistConfigAndAuthAsyncInvokePersister(t *testing.T) {
 	w := &Watcher{
 		storePersister: &stubStore{},
@@ -1550,6 +1609,7 @@ func TestPersistConfigAndAuthAsyncInvokePersister(t *testing.T) {
 	}
 }
 
+// TestScheduleConfigReloadDebounces 测试配置重载的防抖调度。
 func TestScheduleConfigReloadDebounces(t *testing.T) {
 	tmp := t.TempDir()
 	authDir := tmp
@@ -1579,6 +1639,7 @@ func TestScheduleConfigReloadDebounces(t *testing.T) {
 	}
 }
 
+// TestPrepareAuthUpdatesLockedForceAndDelete 测试强制更新和删除的认证更新准备。
 func TestPrepareAuthUpdatesLockedForceAndDelete(t *testing.T) {
 	w := &Watcher{
 		currentAuths: map[string]*coreauth.Auth{
@@ -1603,6 +1664,7 @@ func TestPrepareAuthUpdatesLockedForceAndDelete(t *testing.T) {
 	}
 }
 
+// TestAuthEqualIgnoresTemporalFields 测试认证比较忽略时间相关字段。
 func TestAuthEqualIgnoresTemporalFields(t *testing.T) {
 	now := time.Now()
 	a := &coreauth.Auth{ID: "x", CreatedAt: now}
@@ -1612,6 +1674,7 @@ func TestAuthEqualIgnoresTemporalFields(t *testing.T) {
 	}
 }
 
+// TestDispatchLoopExitsWhenQueueNilAndContextCanceled 测试队列为 nil 且上下文取消时调度循环退出。
 func TestDispatchLoopExitsWhenQueueNilAndContextCanceled(t *testing.T) {
 	w := &Watcher{
 		dispatchCond:   nil,
@@ -1640,6 +1703,7 @@ func TestDispatchLoopExitsWhenQueueNilAndContextCanceled(t *testing.T) {
 	}
 }
 
+// TestReloadClientsFiltersOAuthProvidersWithoutRescan 测试重载时过滤不需要重新扫描的 OAuth 提供商。
 func TestReloadClientsFiltersOAuthProvidersWithoutRescan(t *testing.T) {
 	tmp := t.TempDir()
 	w := &Watcher{
@@ -1664,6 +1728,7 @@ func TestReloadClientsFiltersOAuthProvidersWithoutRescan(t *testing.T) {
 	}
 }
 
+// TestScheduleProcessEventsStopsOnContextDone 测试事件处理调度在上下文取消时停止。
 func TestScheduleProcessEventsStopsOnContextDone(t *testing.T) {
 	w := &Watcher{
 		watcher: &fsnotify.Watcher{

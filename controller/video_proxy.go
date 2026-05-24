@@ -1,3 +1,14 @@
+// Package controller - video_proxy.go
+// 该文件实现了视频代理的 API 控制器
+//
+// 视频代理用于将用户请求转发到上游视频服务，支持多种渠道类型：
+// - Gemini：使用 API Key 认证
+// - Vertex AI：使用 Service Account 认证
+// - OpenAI/Sora：使用 Bearer Token 认证
+// - 其他渠道：使用存储的视频 URL
+//
+// 主要 API：
+// - VideoProxy：代理视频内容请求
 package controller
 
 import (
@@ -20,7 +31,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// videoProxyError returns a standardized OpenAI-style error response.
+// videoProxyError 返回标准化的 OpenAI 风格错误响应
 func videoProxyError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{
 		"error": gin.H{
@@ -30,6 +41,21 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
+// VideoProxy 代理视频内容请求
+//
+// 流程：
+// 1. 验证任务 ID 和用户权限
+// 2. 检查任务状态是否为成功
+// 3. 根据渠道类型选择认证方式：
+//   - Gemini: 使用存储的 API Key
+//   - Vertex AI: 使用 Service Account
+//   - OpenAI/Sora: 使用渠道 Key
+//   - 其他: 使用存储的视频 URL
+//
+// 4. 处理 data: URL（base64 编码的视频）
+// 5. 验证 URL 安全性（SSRF 防护）
+// 6. 代理请求并流式传输响应
+// 7. 设置缓存头（24 小时）
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
@@ -171,6 +197,10 @@ func VideoProxy(c *gin.Context) {
 	}
 }
 
+// writeVideoDataURL 解码并写入 data: URL 格式的视频
+//
+// 支持的格式：data:{mimeType};base64,{base64Data}
+// 如果 MIME 类型为空，默认使用 video/mp4
 func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	parts := strings.SplitN(dataURL, ",", 2)
 	if len(parts) != 2 {

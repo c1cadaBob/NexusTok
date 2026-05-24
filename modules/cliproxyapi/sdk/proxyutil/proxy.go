@@ -1,3 +1,9 @@
+// proxyutil - proxy.go
+// 该文件提供代理配置解析和 HTTP transport 构建工具。
+// 支持多种代理模式：继承（使用环境变量）、直连（绕过代理）、
+// HTTP/HTTPS 代理和 SOCKS5/SOCKS5H 代理。
+// 还提供代理 URL 脱敏功能用于日志安全。
+
 package proxyutil
 
 import (
@@ -14,28 +20,32 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// Mode describes how a proxy setting should be interpreted.
+// Mode 描述代理设置的解释方式。
 type Mode int
 
 const (
-	// ModeInherit means no explicit proxy behavior was configured.
+	// ModeInherit 表示未配置显式代理行为，使用环境默认设置。
 	ModeInherit Mode = iota
-	// ModeDirect means outbound requests must bypass proxies explicitly.
+	// ModeDirect 表示出站请求必须显式绕过代理。
 	ModeDirect
-	// ModeProxy means a concrete proxy URL was configured.
+	// ModeProxy 表示配置了具体的代理 URL。
 	ModeProxy
-	// ModeInvalid means the proxy setting is present but malformed or unsupported.
+	// ModeInvalid 表示代理设置存在但格式错误或不支持。
 	ModeInvalid
 )
 
-// Setting is the normalized interpretation of a proxy configuration value.
+// Setting 是代理配置值的规范化解释结果。
 type Setting struct {
+	// Raw 原始代理配置字符串
 	Raw  string
+	// Mode 解析后的代理模式
 	Mode Mode
+	// URL 解析后的代理 URL（仅 ModeProxy 模式有效）
 	URL  *url.URL
 }
 
-// Parse normalizes a proxy configuration value into inherit, direct, or proxy modes.
+// Parse 将代理配置值规范化为继承、直连或代理模式。
+// 支持 "direct"、"none"（直连）、HTTP/HTTPS/SOCKS5/SOCKS5H 代理 URL。
 func Parse(raw string) (Setting, error) {
 	trimmed := strings.TrimSpace(raw)
 	setting := Setting{Raw: trimmed}
@@ -71,6 +81,7 @@ func Parse(raw string) (Setting, error) {
 	}
 }
 
+// cloneDefaultTransport 克隆默认 HTTP transport 的配置。
 func cloneDefaultTransport() *http.Transport {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok && transport != nil {
 		return transport.Clone()
@@ -78,14 +89,15 @@ func cloneDefaultTransport() *http.Transport {
 	return &http.Transport{}
 }
 
-// NewDirectTransport returns a transport that bypasses environment proxies.
+// NewDirectTransport 返回绕过环境代理的 HTTP transport。
 func NewDirectTransport() *http.Transport {
 	clone := cloneDefaultTransport()
 	clone.Proxy = nil
 	return clone
 }
 
-// BuildHTTPTransport constructs an HTTP transport for the provided proxy setting.
+// BuildHTTPTransport 根据代理配置字符串构建 HTTP transport。
+// 返回配置好代理的 transport、解析后的模式和可能的错误。
 func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 	setting, errParse := Parse(raw)
 	if errParse != nil {
@@ -124,7 +136,8 @@ func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 	}
 }
 
-// BuildDialer constructs a proxy dialer for settings that operate at the connection layer.
+// BuildDialer 根据代理配置字符串构建代理拨号器。
+// 用于在连接层操作的场景（如 WebSocket 连接）。
 func BuildDialer(raw string) (proxy.Dialer, Mode, error) {
 	setting, errParse := Parse(raw)
 	if errParse != nil {
@@ -150,11 +163,13 @@ func BuildDialer(raw string) (proxy.Dialer, Mode, error) {
 	}
 }
 
+// httpConnectDialer 实现 HTTP CONNECT 隧道代理拨号器。
 type httpConnectDialer struct {
 	proxyURL *url.URL
 	dialer   proxy.Dialer
 }
 
+// Dial 通过 HTTP CONNECT 方法建立隧道连接。
 func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 	proxyConn, errDial := d.dialer.Dial(network, proxyDialAddr(d.proxyURL))
 	if errDial != nil {
@@ -213,6 +228,7 @@ func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
+// proxyDialAddr 构建代理服务器的拨号地址。
 func proxyDialAddr(proxyURL *url.URL) string {
 	port := proxyURL.Port()
 	if port == "" {
@@ -224,6 +240,7 @@ func proxyDialAddr(proxyURL *url.URL) string {
 	return net.JoinHostPort(proxyURL.Hostname(), port)
 }
 
+// proxyAuthorization 构建 HTTP Basic 代理认证头。
 func proxyAuthorization(user *url.Userinfo) string {
 	username := user.Username()
 	password, _ := user.Password()
@@ -231,7 +248,7 @@ func proxyAuthorization(user *url.Userinfo) string {
 	return "Basic " + encoded
 }
 
-// Redact returns a log-safe proxy URL with credentials and path-like data removed.
+// Redact 返回脱敏后的代理 URL，移除凭据和路径信息，用于安全日志记录。
 func Redact(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -253,11 +270,14 @@ func Redact(raw string) string {
 	return redacted.String()
 }
 
+// bufferedConn 包装 net.Conn，在 bufio.Reader 中有缓冲数据时优先从缓冲区读取。
+// 用于处理 HTTP CONNECT 响应后残留在缓冲区中的数据。
 type bufferedConn struct {
 	net.Conn
 	reader *bufio.Reader
 }
 
+// Read 从缓冲区或底层连接读取数据。
 func (c *bufferedConn) Read(p []byte) (int, error) {
 	if c.reader.Buffered() > 0 {
 		return c.reader.Read(p)

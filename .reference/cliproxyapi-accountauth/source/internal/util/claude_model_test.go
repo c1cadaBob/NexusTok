@@ -1,7 +1,17 @@
+// util - claude_model_test.go
+// Claude 思考模型识别测试
+// 验证 IsClaudeThinkingModel 函数能够正确识别 Claude 的思考模型变体，
+// 同时排除非 Claude 模型和不带思考功能的 Claude 模型。
 package util
 
 import "testing"
 
+// TestIsClaudeThinkingModel 测试模型识别的各种场景：
+// - Claude 思考模型（如 claude-sonnet-4-5-thinking）应返回 true
+// - 大小写不敏感（Claude-Sonnet-4-5-Thinking 也应返回 true）
+// - 非思考 Claude 模型（如 claude-sonnet-4-5）应返回 false
+// - 非 Claude 模型（如 gemini-3-pro-thinking）应返回 false
+// - 空字符串应返回 false
 func TestIsClaudeThinkingModel(t *testing.T) {
 	tests := []struct {
 		name     string

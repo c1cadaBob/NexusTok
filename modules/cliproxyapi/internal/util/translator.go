@@ -1,6 +1,5 @@
-// Package util provides utility functions for the CLI Proxy API server.
-// It includes helper functions for JSON manipulation, proxy configuration,
-// and other common operations used across the application.
+// Package util 提供 CLI Proxy API 服务器的工具函数。
+// 包括 JSON 操作、代理配置等应用中常用的辅助函数。
 package util
 
 import (
@@ -13,17 +12,14 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Walk recursively traverses a JSON structure to find all occurrences of a specific field.
-// It builds paths to each occurrence and adds them to the provided paths slice.
+// Walk 递归遍历 JSON 结构，查找指定字段的所有出现位置。
+// 将找到的路径添加到 paths 切片中。使用点表示法构建路径。
 //
-// Parameters:
-//   - value: The gjson.Result object to traverse
-//   - path: The current path in the JSON structure (empty string for root)
-//   - field: The field name to search for
-//   - paths: Pointer to a slice where found paths will be stored
-//
-// The function works recursively, building dot-notation paths to each occurrence
-// of the specified field throughout the JSON structure.
+// 参数：
+//   - value: 要遍历的 gjson.Result 对象
+//   - path: 当前在 JSON 结构中的路径（根节点为空字符串）
+//   - field: 要搜索的字段名
+//   - paths: 用于存储找到路径的切片指针
 func Walk(value gjson.Result, path, field string, paths *[]string) {
 	switch value.Type {
 	case gjson.JSON:
@@ -53,21 +49,18 @@ func Walk(value gjson.Result, path, field string, paths *[]string) {
 	}
 }
 
-// RenameKey renames a key in a JSON string by moving its value to a new key path
-// and then deleting the old key path.
+// RenameKey 重命名 JSON 字符串中的键，将旧键路径的值移动到新键路径，然后删除旧键路径。
 //
-// Parameters:
-//   - jsonStr: The JSON string to modify
-//   - oldKeyPath: The dot-notation path to the key that should be renamed
-//   - newKeyPath: The dot-notation path where the value should be moved to
+// 参数：
+//   - jsonStr: 要修改的 JSON 字符串
+//   - oldKeyPath: 要重命名的键的点表示法路径
+//   - newKeyPath: 值要移动到的点表示法路径
 //
-// Returns:
-//   - string: The modified JSON string with the key renamed
-//   - error: An error if the operation fails
+// 返回：
+//   - string: 键重命名后的修改 JSON 字符串
+//   - error: 操作失败时的错误
 //
-// The function performs the rename in two steps:
-// 1. Sets the value at the new key path
-// 2. Deletes the old key path
+// 该函数分两步执行重命名：1. 在新键路径设置值；2. 删除旧键路径。
 func RenameKey(jsonStr, oldKeyPath, newKeyPath string) (string, error) {
 	value := gjson.Get(jsonStr, oldKeyPath)
 
@@ -88,24 +81,16 @@ func RenameKey(jsonStr, oldKeyPath, newKeyPath string) (string, error) {
 	return string(finalJSON), nil
 }
 
-// FixJSON converts non-standard JSON that uses single quotes for strings into
-// RFC 8259-compliant JSON by converting those single-quoted strings to
-// double-quoted strings with proper escaping.
+// FixJSON 将使用单引号的非标准 JSON 转换为符合 RFC 8259 的标准 JSON，
+// 将单引号字符串转换为双引号字符串并正确转义。
 //
-// Examples:
-//
-//	{'a': 1, 'b': '2'}      => {"a": 1, "b": "2"}
-//	{"t": 'He said "hi"'} => {"t": "He said \"hi\""}
-//
-// Rules:
-//   - Existing double-quoted JSON strings are preserved as-is.
-//   - Single-quoted strings are converted to double-quoted strings.
-//   - Inside converted strings, any double quote is escaped (\").
-//   - Common backslash escapes (\n, \r, \t, \b, \f, \\) are preserved.
-//   - \' inside single-quoted strings becomes a literal ' in the output (no
-//     escaping needed inside double quotes).
-//   - Unicode escapes (\uXXXX) inside single-quoted strings are forwarded.
-//   - The function does not attempt to fix other non-JSON features beyond quotes.
+// 规则：
+//   - 已有的双引号 JSON 字符串保持不变
+//   - 单引号字符串转换为双引号字符串
+//   - 转换后的字符串中双引号会被转义 (\")
+//   - 常见反斜杠转义 (\n, \r, \t, \b, \f, \\) 保留
+//   - 单引号字符串中的 \' 变为字面量 '
+//   - 单引号字符串中的 Unicode 转义 (\uXXXX) 转发保留
 func FixJSON(input string) string {
 	var out bytes.Buffer
 
@@ -222,14 +207,15 @@ func FixJSON(input string) string {
 	return out.String()
 }
 
+// CanonicalToolName 将工具名称规范化为小写形式，去除前导下划线和空白。
 func CanonicalToolName(name string) string {
 	canonical := strings.TrimSpace(name)
 	canonical = strings.TrimLeft(canonical, "_")
 	return strings.ToLower(canonical)
 }
 
-// ToolNameMapFromClaudeRequest returns a canonical-name -> original-name map extracted from a Claude request.
-// It is used to restore exact tool name casing for clients that require strict tool name matching (e.g. Claude Code).
+// ToolNameMapFromClaudeRequest 从 Claude 请求中提取规范名称到原始名称的映射表。
+// 用于为需要严格工具名称匹配的客户端（如 Claude Code）恢复精确的工具名大小写。
 func ToolNameMapFromClaudeRequest(rawJSON []byte) map[string]string {
 	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
 		return nil
@@ -266,6 +252,8 @@ func ToolNameMapFromClaudeRequest(rawJSON []byte) map[string]string {
 	return out
 }
 
+// MapToolName 根据工具名称映射表查找并返回映射后的工具名称。
+// 如果映射表中没有对应的映射，则返回原始名称。
 func MapToolName(toolNameMap map[string]string, name string) string {
 	if name == "" || toolNameMap == nil {
 		return name
@@ -276,10 +264,9 @@ func MapToolName(toolNameMap map[string]string, name string) string {
 	return name
 }
 
-// SanitizedToolNameMap builds a sanitized-name → original-name map from Claude request tools.
-// It is used to restore exact tool names for clients (e.g. Claude Code) after the proxy
-// sanitizes tool names for Gemini/Vertex API compatibility via SanitizeFunctionName.
-// Only entries where sanitization actually changes the name are included.
+// SanitizedToolNameMap 从 Claude 请求工具中构建净化名称到原始名称的映射表。
+// 用于在代理通过 SanitizeFunctionName 为 Gemini/Vertex API 兼容性净化工具名后，
+// 为客户端（如 Claude Code）恢复精确的工具名。仅包含净化后名称发生变化的条目。
 func SanitizedToolNameMap(rawJSON []byte) map[string]string {
 	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
 		return nil
@@ -314,9 +301,8 @@ func SanitizedToolNameMap(rawJSON []byte) map[string]string {
 	return out
 }
 
-// RestoreSanitizedToolName looks up a sanitized function name in the provided map
-// and returns the original client-facing name. If no mapping exists, it returns
-// the sanitized name unchanged.
+// RestoreSanitizedToolName 在映射表中查找已净化的函数名并返回原始的客户端名称。
+// 如果没有对应的映射，则返回净化后的名称不变。
 func RestoreSanitizedToolName(toolNameMap map[string]string, sanitizedName string) string {
 	if sanitizedName == "" || toolNameMap == nil {
 		return sanitizedName

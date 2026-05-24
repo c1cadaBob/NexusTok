@@ -1,3 +1,5 @@
+// management - config_lists_delete_keys_test.go
+// 测试配置列表中 API Key 的删除逻辑，包括重复 Key 需要 BaseURL 区分、精确匹配删除等场景
 package management
 
 import (
@@ -11,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// writeTestConfigFile 辅助函数，创建临时测试配置文件
 func writeTestConfigFile(t *testing.T) string {
 	t.Helper()
 
@@ -22,6 +25,7 @@ func writeTestConfigFile(t *testing.T) string {
 	return path
 }
 
+// TestDeleteGeminiKey_RequiresBaseURLWhenAPIKeyDuplicated 测试删除重复 Gemini Key 时需要 BaseURL
 func TestDeleteGeminiKey_RequiresBaseURLWhenAPIKeyDuplicated(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -50,6 +54,7 @@ func TestDeleteGeminiKey_RequiresBaseURLWhenAPIKeyDuplicated(t *testing.T) {
 	}
 }
 
+// TestDeleteGeminiKey_DeletesOnlyMatchingBaseURL 测试仅删除匹配 BaseURL 的 Gemini Key
 func TestDeleteGeminiKey_DeletesOnlyMatchingBaseURL(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -81,6 +86,7 @@ func TestDeleteGeminiKey_DeletesOnlyMatchingBaseURL(t *testing.T) {
 	}
 }
 
+// TestDeleteClaudeKey_DeletesEmptyBaseURLWhenExplicitlyProvided 测试删除空 BaseURL 的 Claude Key
 func TestDeleteClaudeKey_DeletesEmptyBaseURLWhenExplicitlyProvided(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -112,6 +118,7 @@ func TestDeleteClaudeKey_DeletesEmptyBaseURLWhenExplicitlyProvided(t *testing.T)
 	}
 }
 
+// TestDeleteVertexCompatKey_DeletesOnlyMatchingBaseURL 测试仅删除匹配 BaseURL 的 Vertex 兼容 Key
 func TestDeleteVertexCompatKey_DeletesOnlyMatchingBaseURL(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -143,6 +150,7 @@ func TestDeleteVertexCompatKey_DeletesOnlyMatchingBaseURL(t *testing.T) {
 	}
 }
 
+// TestDeleteCodexKey_RequiresBaseURLWhenAPIKeyDuplicated 测试删除重复 Codex Key 时需要 BaseURL
 func TestDeleteCodexKey_RequiresBaseURLWhenAPIKeyDuplicated(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

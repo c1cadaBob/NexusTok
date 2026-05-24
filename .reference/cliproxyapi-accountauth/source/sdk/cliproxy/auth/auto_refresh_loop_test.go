@@ -1,3 +1,9 @@
+// auth - auto_refresh_loop_test.go
+// 自动刷新循环测试
+// 验证令牌自动刷新调度逻辑：
+// - 禁用的认证不应被调度刷新
+// - 刷新提前量（RefreshLead）的计算
+// - 不同提供商的刷新策略
 package auth
 
 import (
@@ -6,10 +12,15 @@ import (
 	"time"
 )
 
+// testRefreshEvaluator 是用于测试的刷新评估器实现，
+// 始终返回 false（不刷新）。
 type testRefreshEvaluator struct{}
 
+// ShouldRefresh 始终返回 false，用于测试不触发实际刷新的场景。
 func (testRefreshEvaluator) ShouldRefresh(time.Time, *Auth) bool { return false }
 
+// setRefreshLeadFactory 是测试辅助函数，临时替换指定提供商的刷新提前量工厂函数，
+// 测试结束后自动恢复原始值。
 func setRefreshLeadFactory(t *testing.T, provider string, factory func() *time.Duration) {
 	t.Helper()
 	key := strings.ToLower(strings.TrimSpace(provider))
@@ -32,6 +43,8 @@ func setRefreshLeadFactory(t *testing.T, provider string, factory func() *time.D
 	})
 }
 
+// TestNextRefreshCheckAt_DisabledUnschedule 验证禁用的认证
+// 不会被调度到自动刷新循环中。
 func TestNextRefreshCheckAt_DisabledUnschedule(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	expiry := now.Add(time.Hour)

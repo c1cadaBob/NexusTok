@@ -1,3 +1,24 @@
+// Package controller - twofa.go
+// 该文件实现了两步验证（2FA）管理的 API 控制器
+//
+// 2FA 基于 TOTP（基于时间的一次性密码）协议实现
+// 功能包括：
+// - 2FA 初始化：生成密钥、二维码和备用码
+// - 2FA 启用/禁用
+// - 2FA 状态查询
+// - 备用码管理
+// - 登录时 2FA 验证
+// - 管理员强制禁用用户 2FA
+//
+// 主要 API：
+// - Setup2FA：初始化 2FA 设置
+// - Enable2FA：启用 2FA
+// - Disable2FA：禁用 2FA
+// - Get2FAStatus：获取 2FA 状态
+// - RegenerateBackupCodes：重新生成备用码
+// - Verify2FALogin：登录时验证 2FA
+// - Admin2FAStats：管理员获取 2FA 统计
+// - AdminDisable2FA：管理员强制禁用用户 2FA
 package controller
 
 import (
@@ -12,24 +33,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Setup2FARequest 设置2FA请求结构
+// Setup2FARequest 设置 2FA 请求结构体
 type Setup2FARequest struct {
-	Code string `json:"code" binding:"required"`
+	Code string `json:"code" binding:"required"` // TOTP 验证码
 }
 
-// Verify2FARequest 验证2FA请求结构
+// Verify2FARequest 验证 2FA 请求结构体
 type Verify2FARequest struct {
-	Code string `json:"code" binding:"required"`
+	Code string `json:"code" binding:"required"` // TOTP 验证码或备用码
 }
 
-// Setup2FAResponse 设置2FA响应结构
+// Setup2FAResponse 设置 2FA 响应结构体
 type Setup2FAResponse struct {
-	Secret      string   `json:"secret"`
-	QRCodeData  string   `json:"qr_code_data"`
-	BackupCodes []string `json:"backup_codes"`
+	Secret      string   `json:"secret"`       // TOTP 密钥
+	QRCodeData  string   `json:"qr_code_data"` // 二维码数据（otpauth:// URI）
+	BackupCodes []string `json:"backup_codes"`  // 备用码列表
 }
 
-// Setup2FA 初始化2FA设置
+// Setup2FA 初始化 2FA 设置
+//
+// 生成 TOTP 密钥、二维码和备用码
+// 如果用户已启用 2FA，返回错误
+//
+// 参数：
+//   - c: Gin 上下文
 func Setup2FA(c *gin.Context) {
 	userId := c.GetInt("id")
 
@@ -133,7 +160,9 @@ func Setup2FA(c *gin.Context) {
 	})
 }
 
-// Enable2FA 启用2FA
+// Enable2FA 启用 2FA
+//
+// 验证 TOTP 验证码后启用 2FA
 func Enable2FA(c *gin.Context) {
 	var req Setup2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -200,7 +229,9 @@ func Enable2FA(c *gin.Context) {
 	})
 }
 
-// Disable2FA 禁用2FA
+// Disable2FA 禁用 2FA
+//
+// 验证 TOTP 验证码或备用码后禁用 2FA
 func Disable2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -272,7 +303,9 @@ func Disable2FA(c *gin.Context) {
 	})
 }
 
-// Get2FAStatus 获取用户2FA状态
+// Get2FAStatus 获取用户 2FA 状态
+//
+// 返回是否启用、是否锁定、剩余备用码数量
 func Get2FAStatus(c *gin.Context) {
 	userId := c.GetInt("id")
 
@@ -309,6 +342,8 @@ func Get2FAStatus(c *gin.Context) {
 }
 
 // RegenerateBackupCodes 重新生成备用码
+//
+// 验证 TOTP 验证码后生成新的备用码
 func RegenerateBackupCodes(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -394,7 +429,10 @@ func RegenerateBackupCodes(c *gin.Context) {
 	})
 }
 
-// Verify2FALogin 登录时验证2FA
+// Verify2FALogin 登录时验证 2FA
+//
+// 从会话中获取待验证用户信息，验证 TOTP 验证码或备用码
+// 验证成功后完成登录流程
 func Verify2FALogin(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -485,7 +523,9 @@ func Verify2FALogin(c *gin.Context) {
 	setupLogin(user, c)
 }
 
-// Admin2FAStats 管理员获取2FA统计信息
+// Admin2FAStats 管理员获取 2FA 统计信息
+//
+// 返回系统中 2FA 的启用/禁用/锁定等统计数据
 func Admin2FAStats(c *gin.Context) {
 	stats, err := model.GetTwoFAStats()
 	if err != nil {
@@ -500,7 +540,13 @@ func Admin2FAStats(c *gin.Context) {
 	})
 }
 
-// AdminDisable2FA 管理员强制禁用用户2FA
+// AdminDisable2FA 管理员强制禁用用户 2FA
+//
+// 管理员可以强制禁用指定用户的 2FA，无需用户提供验证码
+// 不能操作同级或更高级用户的 2FA 设置
+//
+// 路径参数：
+//   - id: 用户 ID
 func AdminDisable2FA(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)

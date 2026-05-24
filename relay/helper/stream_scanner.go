@@ -1,3 +1,15 @@
+// Package helper - stream_scanner.go
+// 本文件提供了 SSE（Server-Sent Events）流式响应的扫描和处理框架。
+// StreamScannerHandler 是流式响应的核心处理函数，负责：
+//   - 从上游 HTTP 响应体中逐行扫描 SSE 数据
+//   - 解析 "data:" 前缀的数据行和 "[DONE]" 结束标记
+//   - 通过回调函数将解析后的数据传递给具体的渠道适配器处理
+//   - 管理流式响应的生命周期（超时、心跳 Ping、客户端断连、错误处理）
+//   - 使用 goroutine 池实现并发安全的数据处理和 Ping 发送
+//
+// 流式响应的结束原因（StreamEndReason）包括：
+//   - 正常结束：收到 [DONE] 标记或 EOF
+//   - 异常结束：超时、客户端断连、扫描错误、Ping 失败、panic
 package helper
 
 import (
@@ -22,11 +34,26 @@ import (
 )
 
 const (
-	InitialScannerBufferSize    = 64 << 10 // 64KB (64*1024)
+	// InitialScannerBufferSize bufio.Scanner 的初始缓冲区大小，设为 64KB。
+	// 该值作为 Scanner 的起始分配大小，大部分 SSE 行数据可在此范围内处理。
+	InitialScannerBufferSize = 64 << 10 // 64KB (64*1024)
+
+	// DefaultMaxScannerBufferSize bufio.Scanner 的最大缓冲区大小，默认 64MB。
+	// 当单行 SSE 数据超过初始缓冲区时，Scanner 会自动扩展至此上限。
+	// 可通过 constant.StreamScannerMaxBufferMB 配置项覆盖。
 	DefaultMaxScannerBufferSize = 64 << 20 // 64MB (64*1024*1024) default SSE buffer size
-	DefaultPingInterval         = 10 * time.Second
+
+	// DefaultPingInterval 默认的 SSE 心跳发送间隔，设为 10 秒。
+	// 用于在没有数据传输时保持连接活跃，防止代理或负载均衡器超时断开。
+	DefaultPingInterval = 10 * time.Second
 )
 
+// getScannerBufferSize 获取 Scanner 的最大缓冲区大小。
+// 优先使用 constant.StreamScannerMaxBufferMB 配置值（单位 MB），
+// 如果未配置（<=0）则使用 DefaultMaxScannerBufferSize（64MB）。
+//
+// 返回值：
+//   - int: 缓冲区大小（字节）
 func getScannerBufferSize() int {
 	if constant.StreamScannerMaxBufferMB > 0 {
 		return constant.StreamScannerMaxBufferMB << 20
@@ -34,6 +61,22 @@ func getScannerBufferSize() int {
 	return DefaultMaxScannerBufferSize
 }
 
+// StreamScannerHandler SSE 流式响应的核心扫描和处理函数。
+// 从上游 HTTP 响应体中扫描 SSE 数据流，解析后通过回调函数传递给渠道适配器。
+//
+// 内部架构包含三个并发 goroutine：
+//  1. Scanner goroutine: 逐行扫描上游响应体，解析 "data:" 行和 "[DONE]" 标记
+//  2. DataHandler goroutine: 接收解析后的数据，调用渠道特定的 dataHandler 回调处理
+//  3. Ping goroutine（可选）: 定期发送心跳注释保持连接活跃
+//
+// 所有 goroutine 通过 stopChan 协调退出，使用 writeMutex 保护并发写入安全。
+// 主循环通过 ticker 监控超时，通过 context 监控客户端断连。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - resp: 上游 HTTP 响应，包含 SSE 数据流
+//   - info: 中继信息，用于记录流状态、响应计数等
+//   - dataHandler: 数据处理回调函数，接收解析后的 SSE 数据行和 StreamResult
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
 
 	if resp == nil || dataHandler == nil {

@@ -1,8 +1,12 @@
+// checkin_setting.go — 签到功能配置
+// 职责：管理用户每日签到功能的开关与额度奖励范围。
+// 签到功能允许用户每日领取随机额度奖励，用于 API 调用消费。
+
 package operation_setting
 
 import "github.com/c1cada/NexusTok/setting/config"
 
-// CheckinSetting 签到功能配置
+// CheckinSetting 签到功能配置结构体
 type CheckinSetting struct {
 	Enabled  bool `json:"enabled"`   // 是否启用签到功能
 	MinQuota int  `json:"min_quota"` // 签到最小额度奖励

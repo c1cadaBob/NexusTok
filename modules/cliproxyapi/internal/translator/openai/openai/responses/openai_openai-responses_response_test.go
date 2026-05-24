@@ -1,3 +1,11 @@
+// responses - openai_openai-responses_response_test.go
+// OpenAI Chat Completions -> Responses 响应转换器测试文件。
+// 包含以下测试用例：
+// 1. response.completed 等待 [DONE] 标记（延迟 usage 收集）
+// 2. 多工具调用保持独立（不合并）
+// 3. 多 choice 工具调用使用不同的 output_index
+// 4. 混合消息和工具调用使用不同的 output_index
+// 5. function_call.done 和 response.completed 的 output 保持升序
 package responses
 
 import (
@@ -8,6 +16,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// parseOpenAIResponsesSSEEvent 解析 OpenAI Responses SSE 事件。
+// 从 SSE 格式的 chunk 中提取事件类型和 JSON 数据。
 func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Result) {
 	t.Helper()
 
@@ -24,6 +34,9 @@ func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Res
 	return event, gjson.Parse(dataLine)
 }
 
+// TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone 测试 response.completed 等待 [DONE] 标记。
+// 验证即使 finish_reason 已收到，response.completed 也会延迟到 [DONE] 才发送，
+// 以确保能够收集延迟发送的 usage 数据。
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone(t *testing.T) {
 	t.Parallel()
 
@@ -138,6 +151,8 @@ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompleted
 	}
 }
 
+// TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultipleToolCallsRemainSeparate 测试多工具调用保持独立。
+// 验证多个工具调用不会被合并，每个都有独立的 output_item.added 和 output_item.done 事件。
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultipleToolCallsRemainSeparate(t *testing.T) {
 	in := []string{
 		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
@@ -241,6 +256,8 @@ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultipleToolCalls
 	}
 }
 
+// TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultiChoiceToolCallsUseDistinctOutputIndexes 测试多 choice 工具调用使用不同的 output_index。
+// 验证不同 choice 中的工具调用分配到不同的 output_index。
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultiChoiceToolCallsUseDistinctOutputIndexes(t *testing.T) {
 	in := []string{
 		`data: {"id":"resp_multi_choice","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice0","type":"function","function":{"name":"glob","arguments":""}}]},"finish_reason":null},{"index":1,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
@@ -325,6 +342,8 @@ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultiChoiceToolCa
 	}
 }
 
+// TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MixedMessageAndToolUseDistinctOutputIndexes 测试混合消息和工具调用使用不同的 output_index。
+// 验证 message 类型和 function_call 类型的输出项分配到不同的 output_index。
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MixedMessageAndToolUseDistinctOutputIndexes(t *testing.T) {
 	in := []string{
 		`data: {"id":"resp_mixed","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":"hello","reasoning_content":null,"tool_calls":null},"finish_reason":null},{"index":1,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
@@ -371,6 +390,8 @@ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MixedMessageAndTo
 	}
 }
 
+// TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_FunctionCallDoneAndCompletedOutputStayAscending 测试 function_call.done 和 response.completed 的 output 保持升序。
+// 验证多个工具调用的 output_index 按升序排列，且 response.completed 中的 output 数组也保持升序。
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_FunctionCallDoneAndCompletedOutputStayAscending(t *testing.T) {
 	in := []string{
 		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_glob","type":"function","function":{"name":"glob","arguments":""}}]},"finish_reason":null}]}`,

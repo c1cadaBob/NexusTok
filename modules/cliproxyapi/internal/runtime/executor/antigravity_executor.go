@@ -1,6 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 本文件实现了 Antigravity 执行器，使用 OAuth 凭据将请求代理到 antigravity 上游。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// This file implements the Antigravity executor that proxies requests to the antigravity
-// upstream using OAuth credentials.
 package executor
 
 import (

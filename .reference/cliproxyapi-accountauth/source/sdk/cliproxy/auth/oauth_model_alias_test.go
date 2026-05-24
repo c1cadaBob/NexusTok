@@ -1,3 +1,12 @@
+// auth - oauth_model_alias_test.go
+// OAuth 模型别名功能测试
+// 验证基于 OAuth 配置的模型别名解析功能：
+// - 带后缀的别名解析（如 gemini-2.5-pro(8192) -> gemini-2.5-pro-exp-03-25(8192)）
+// - 各种后缀类型（数值、级别、auto、none）
+// - 大小写不敏感的别名查找
+// - 配置后缀优先级高于用户后缀
+// - Kimi 提供商的别名支持
+// - 空后缀和不完整后缀的处理
 package auth
 
 import (
@@ -6,6 +15,17 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestResolveOAuthUpstreamModel_SuffixPreservation 测试 OAuth 上游模型解析：
+// - 数值后缀保留（如 (8192)）
+// - 级别后缀保留（如 (high)）
+// - 无后缀时直接映射
+// - 配置后缀优先于用户后缀
+// - auto/none 后缀保留
+// - 大小写不敏感查找
+// - 未知模型返回空字符串
+// - 错误渠道返回空字符串
+// - 空后缀过滤
+// - 不完整后缀视为无后缀
 func TestResolveOAuthUpstreamModel_SuffixPreservation(t *testing.T) {
 	t.Parallel()
 
@@ -143,6 +163,7 @@ func TestResolveOAuthUpstreamModel_SuffixPreservation(t *testing.T) {
 	}
 }
 
+// createAuthForChannel 是测试辅助函数，根据渠道名称创建对应的 Auth 对象。
 func createAuthForChannel(channel string) *Auth {
 	switch channel {
 	case "gemini-cli":
@@ -164,6 +185,7 @@ func createAuthForChannel(channel string) *Auth {
 	}
 }
 
+// TestOAuthModelAliasChannel_Kimi 验证 Kimi 提供商的 OAuth 别名渠道名称正确。
 func TestOAuthModelAliasChannel_Kimi(t *testing.T) {
 	t.Parallel()
 
@@ -172,6 +194,8 @@ func TestOAuthModelAliasChannel_Kimi(t *testing.T) {
 	}
 }
 
+// TestApplyOAuthModelAlias_SuffixPreservation 验证 applyOAuthModelAlias 方法
+// 在应用别名映射时保留用户指定的后缀。
 func TestApplyOAuthModelAlias_SuffixPreservation(t *testing.T) {
 	t.Parallel()
 

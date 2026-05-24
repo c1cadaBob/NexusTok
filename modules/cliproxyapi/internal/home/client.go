@@ -1,3 +1,7 @@
+// home - client.go
+// 本文件实现了 Home 控制平面客户端，负责与控制平面 Redis 实例的通信。
+// 支持配置热更新、模型列表同步、使用统计上报、请求日志转发和认证令牌刷新等功能。
+// 客户端通过 Redis pub/sub 监听配置变更，并维护本地缓存以减少 Redis 查询。
 package home
 
 import (

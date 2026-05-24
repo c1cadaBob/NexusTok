@@ -1,3 +1,8 @@
+// cliproxy - service.go
+// 该文件是 CLI Proxy API 的核心服务实现。
+// 管理完整的生命周期，包括认证处理、文件监视、HTTP 服务器启动、
+// 模型注册、WebSocket 网关、Home 集群模式以及与各 AI 服务提供商的集成。
+
 // Package cliproxy provides the core service implementation for the CLI Proxy API.
 // It includes service lifecycle management, authentication handling, file watching,
 // and integration with various AI service providers through a unified interface.
@@ -29,9 +34,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Service wraps the proxy server lifecycle so external programs can embed the CLI proxy.
-// It manages the complete lifecycle including authentication, file watching, HTTP server,
-// and integration with various AI service providers.
+// Service 封装了代理服务器的生命周期，使外部程序可以嵌入 CLI 代理。
+// 管理完整的生命周期，包括认证、文件监视、HTTP 服务器以及与各 AI 服务提供商的集成。
 type Service struct {
 	// cfg holds the current application configuration.
 	cfg *config.Config
@@ -100,16 +104,13 @@ type Service struct {
 	homeCancel context.CancelFunc
 }
 
-// RegisterUsagePlugin registers a usage plugin on the global usage manager.
-// This allows external code to monitor API usage and token consumption.
-//
-// Parameters:
-//   - plugin: The usage plugin to register
+// RegisterUsagePlugin 在全局使用量管理器上注册使用量插件。
+// 允许外部代码监控 API 使用量和 Token 消耗。
 func (s *Service) RegisterUsagePlugin(plugin usage.Plugin) {
 	usage.RegisterPlugin(plugin)
 }
 
-// newDefaultAuthManager creates a default authentication manager with all supported providers.
+// newDefaultAuthManager 创建包含所有支持提供商的默认认证管理器。
 func newDefaultAuthManager() *sdkAuth.Manager {
 	return sdkAuth.NewManager(
 		sdkAuth.GetTokenStore(),
@@ -120,6 +121,7 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 	)
 }
 
+// ensureAuthUpdateQueue 确保认证更新队列已初始化并启动消费协程。
 func (s *Service) ensureAuthUpdateQueue(ctx context.Context) {
 	if s == nil {
 		return
@@ -135,6 +137,7 @@ func (s *Service) ensureAuthUpdateQueue(ctx context.Context) {
 	go s.consumeAuthUpdates(queueCtx)
 }
 
+// consumeAuthUpdates 持续消费认证更新队列中的事件，直到上下文取消。
 func (s *Service) consumeAuthUpdates(ctx context.Context) {
 	ctx = coreauth.WithSkipPersist(ctx)
 	for {
@@ -159,6 +162,7 @@ func (s *Service) consumeAuthUpdates(ctx context.Context) {
 	}
 }
 
+// emitAuthUpdate 发送认证更新事件，优先通过监视器调度，队列满时直接处理。
 func (s *Service) emitAuthUpdate(ctx context.Context, update watcher.AuthUpdate) {
 	if s == nil {
 		return
@@ -180,6 +184,7 @@ func (s *Service) emitAuthUpdate(ctx context.Context, update watcher.AuthUpdate)
 	s.handleAuthUpdate(ctx, update)
 }
 
+// handleAuthUpdate 处理单个认证更新事件，根据操作类型执行添加/修改或删除。
 func (s *Service) handleAuthUpdate(ctx context.Context, update watcher.AuthUpdate) {
 	if s == nil {
 		return
@@ -210,6 +215,7 @@ func (s *Service) handleAuthUpdate(ctx context.Context, update watcher.AuthUpdat
 	}
 }
 
+// ensureWebsocketGateway 确保 WebSocket 网关已初始化。
 func (s *Service) ensureWebsocketGateway() {
 	if s == nil {
 		return
@@ -228,6 +234,7 @@ func (s *Service) ensureWebsocketGateway() {
 	s.wsGateway = wsrelay.NewManager(opts)
 }
 
+// wsOnConnected 处理 WebSocket 连接建立事件，为 AIStudio 频道自动注册执行器。
 func (s *Service) wsOnConnected(channelID string) {
 	if s == nil || channelID == "" {
 		return
@@ -261,6 +268,7 @@ func (s *Service) wsOnConnected(channelID string) {
 	})
 }
 
+// wsOnDisconnected 处理 WebSocket 连接断开事件，清理相关资源。
 func (s *Service) wsOnDisconnected(channelID string, reason error) {
 	if s == nil || channelID == "" {
 		return
@@ -281,6 +289,7 @@ func (s *Service) wsOnDisconnected(channelID string, reason error) {
 	})
 }
 
+// applyCoreAuthAddOrUpdate 应用核心认证的添加或更新操作，包括模型注册和执行器绑定。
 func (s *Service) applyCoreAuthAddOrUpdate(ctx context.Context, auth *coreauth.Auth) {
 	if s == nil || s.coreManager == nil || auth == nil || auth.ID == "" {
 		return
@@ -330,6 +339,7 @@ func (s *Service) applyCoreAuthAddOrUpdate(ctx context.Context, auth *coreauth.A
 	s.coreManager.RefreshSchedulerEntry(auth.ID)
 }
 
+// applyCoreAuthRemoval 应用核心认证的移除操作，注销模型并清理相关资源。
 func (s *Service) applyCoreAuthRemoval(ctx context.Context, id string) {
 	if s == nil || id == "" {
 		return
@@ -351,6 +361,7 @@ func (s *Service) applyCoreAuthRemoval(ctx context.Context, id string) {
 	}
 }
 
+// applyRetryConfig 将重试配置应用到核心认证管理器。
 func (s *Service) applyRetryConfig(cfg *config.Config) {
 	if s == nil || s.coreManager == nil || cfg == nil {
 		return
@@ -359,6 +370,7 @@ func (s *Service) applyRetryConfig(cfg *config.Config) {
 	s.coreManager.SetRetryConfig(cfg.RequestRetry, maxInterval, cfg.MaxRetryCredentials)
 }
 
+// openAICompatInfoFromAuth 从认证记录中提取 OpenAI 兼容提供商信息。
 func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName string, ok bool) {
 	if a == nil {
 		return "", "", false
@@ -379,10 +391,12 @@ func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName 
 	return "", "", false
 }
 
+// ensureExecutorsForAuth 确保认证对应的执行器已注册。
 func (s *Service) ensureExecutorsForAuth(a *coreauth.Auth) {
 	s.ensureExecutorsForAuthWithMode(a, false)
 }
 
+// ensureExecutorsForAuthWithMode 确保认证对应的执行器已注册，支持强制替换模式。
 func (s *Service) ensureExecutorsForAuthWithMode(a *coreauth.Auth, forceReplace bool) {
 	if s == nil || s.coreManager == nil || a == nil {
 		return
@@ -445,6 +459,7 @@ func (s *Service) ensureExecutorsForAuthWithMode(a *coreauth.Auth, forceReplace 
 	}
 }
 
+// registerResolvedModelsForAuth 将解析后的模型列表注册到全局注册表。
 func (s *Service) registerResolvedModelsForAuth(a *coreauth.Auth, providerKey string, models []*ModelInfo) {
 	if a == nil || a.ID == "" {
 		return
@@ -456,7 +471,7 @@ func (s *Service) registerResolvedModelsForAuth(a *coreauth.Auth, providerKey st
 	GlobalModelRegistry().RegisterClient(a.ID, providerKey, models)
 }
 
-// rebindExecutors refreshes provider executors so they observe the latest configuration.
+// rebindExecutors 刷新提供商执行器以使用最新配置。
 func (s *Service) rebindExecutors() {
 	if s == nil || s.coreManager == nil {
 		return
@@ -474,6 +489,7 @@ func (s *Service) rebindExecutors() {
 	}
 }
 
+// applyConfigUpdate 应用配置更新，处理各项配置变更并触发相应的重载操作。
 func (s *Service) applyConfigUpdate(newCfg *config.Config) {
 	if s == nil {
 		return
@@ -564,6 +580,7 @@ func (s *Service) applyConfigUpdate(newCfg *config.Config) {
 	s.rebindExecutors()
 }
 
+// forceHomeRuntimeConfig 强制应用 Home 模式的运行时配置覆盖。
 func forceHomeRuntimeConfig(cfg *config.Config) {
 	if cfg == nil {
 		return
@@ -577,6 +594,7 @@ func forceHomeRuntimeConfig(cfg *config.Config) {
 	cfg.RemoteManagement.DisableControlPanel = true
 }
 
+// registerHomeExecutors 注册 Home 集群模式下的执行器。
 func (s *Service) registerHomeExecutors() {
 	if s == nil || s.coreManager == nil || s.cfg == nil {
 		return
@@ -595,6 +613,7 @@ func (s *Service) registerHomeExecutors() {
 	s.coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor("openai-compatibility", s.cfg))
 }
 
+// applyHomeOverlay 应用从 Home 服务器接收到的远程配置覆盖。
 func (s *Service) applyHomeOverlay(remoteCfg *config.Config) {
 	if s == nil || remoteCfg == nil {
 		return
@@ -618,6 +637,7 @@ func (s *Service) applyHomeOverlay(remoteCfg *config.Config) {
 	s.applyConfigUpdate(&merged)
 }
 
+// logHomeConfigChanges 记录 Home 配置变更的差异日志。
 func logHomeConfigChanges(oldCfg, newCfg *config.Config) {
 	if oldCfg == nil || newCfg == nil || !newCfg.Home.Enabled || (!oldCfg.Debug && !newCfg.Debug) {
 		return
@@ -638,6 +658,7 @@ func logHomeConfigChanges(oldCfg, newCfg *config.Config) {
 	}
 }
 
+// startHomeUsageForwarder 启动 Home 使用量转发器，将本地使用量数据上报到 Home 服务器。
 func (s *Service) startHomeUsageForwarder(ctx context.Context, client *home.Client) {
 	if s == nil || client == nil {
 		return
@@ -698,6 +719,7 @@ func (s *Service) startHomeUsageForwarder(ctx context.Context, client *home.Clie
 	}()
 }
 
+// startHomeSubscriber 启动 Home 配置订阅器，接收远程配置变更。
 func (s *Service) startHomeSubscriber(ctx context.Context) {
 	if s == nil {
 		return
@@ -741,15 +763,8 @@ func (s *Service) startHomeSubscriber(ctx context.Context) {
 	s.startHomeUsageForwarder(homeCtx, client)
 }
 
-// Run starts the service and blocks until the context is cancelled or the server stops.
-// It initializes all components including authentication, file watching, HTTP server,
-// and starts processing requests. The method blocks until the context is cancelled.
-//
-// Parameters:
-//   - ctx: The context for controlling the service lifecycle
-//
-// Returns:
-//   - error: An error if the service fails to start or run
+// Run 启动服务并阻塞直到上下文取消或服务器停止。
+// 初始化所有组件（认证、文件监视、HTTP 服务器）并开始处理请求。
 func (s *Service) Run(ctx context.Context) error {
 	if s == nil {
 		return fmt.Errorf("cliproxy: service is nil")
@@ -944,15 +959,8 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
-// Shutdown gracefully stops background workers and the HTTP server.
-// It ensures all resources are properly cleaned up and connections are closed.
-// The shutdown is idempotent and can be called multiple times safely.
-//
-// Parameters:
-//   - ctx: The context for controlling the shutdown timeout
-//
-// Returns:
-//   - error: An error if shutdown fails
+// Shutdown 优雅地停止后台工作线程和 HTTP 服务器。
+// 确保所有资源被正确清理，连接被关闭。关闭操作是幂等的，可安全多次调用。
 func (s *Service) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -1025,6 +1033,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	return shutdownErr
 }
 
+// ensureAuthDir 确保认证目录存在，不存在则创建。
 func (s *Service) ensureAuthDir() error {
 	info, err := os.Stat(s.cfg.AuthDir)
 	if err != nil {
@@ -1043,7 +1052,7 @@ func (s *Service) ensureAuthDir() error {
 	return nil
 }
 
-// registerModelsForAuth (re)binds provider models in the global registry using the core auth ID as client identifier.
+// registerModelsForAuth 将认证对应的提供商模型注册到全局注册表，使用核心认证 ID 作为客户端标识。
 func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	if a == nil || a.ID == "" {
 		return
@@ -1242,13 +1251,9 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	GlobalModelRegistry().UnregisterClient(a.ID)
 }
 
-// refreshModelRegistrationForAuth re-applies the latest model registration for
-// one auth and reconciles any concurrent auth changes that race with the
-// refresh. Callers are expected to pre-filter provider membership.
-//
-// Re-registration is deliberate: registry cooldown/suspension state is treated
-// as part of the previous registration snapshot and is cleared when the auth is
-// rebound to the refreshed model catalog.
+// refreshModelRegistrationForAuth 重新应用最新的模型注册并协调与刷新竞争的并发认证变更。
+// 重新注册是刻意的：注册表的冷却/暂停状态被视为先前注册快照的一部分，
+// 当认证重新绑定到刷新后的模型目录时会被清除。
 func (s *Service) refreshModelRegistrationForAuth(current *coreauth.Auth) bool {
 	if s == nil || s.coreManager == nil || current == nil || current.ID == "" {
 		return false
@@ -1277,9 +1282,8 @@ func (s *Service) refreshModelRegistrationForAuth(current *coreauth.Auth) bool {
 	return true
 }
 
-// latestAuthForModelRegistration returns the latest auth snapshot regardless of
-// provider membership. Callers use this after a registration attempt to restore
-// whichever state currently owns the client ID in the global registry.
+// latestAuthForModelRegistration 返回最新的认证快照，不考虑提供商成员资格。
+// 调用方在注册尝试后使用此函数恢复当前拥有全局注册表中客户端 ID 的状态。
 func (s *Service) latestAuthForModelRegistration(authID string) (*coreauth.Auth, bool) {
 	if s == nil || s.coreManager == nil || authID == "" {
 		return nil, false
@@ -1291,6 +1295,7 @@ func (s *Service) latestAuthForModelRegistration(authID string) (*coreauth.Auth,
 	return auth, true
 }
 
+// resolveConfigClaudeKey 从配置中解析与认证匹配的 Claude API Key。
 func (s *Service) resolveConfigClaudeKey(auth *coreauth.Auth) *config.ClaudeKey {
 	if auth == nil || s.cfg == nil {
 		return nil
@@ -1330,6 +1335,7 @@ func (s *Service) resolveConfigClaudeKey(auth *coreauth.Auth) *config.ClaudeKey 
 	return nil
 }
 
+// resolveConfigGeminiKey 从配置中解析与认证匹配的 Gemini API Key。
 func (s *Service) resolveConfigGeminiKey(auth *coreauth.Auth) *config.GeminiKey {
 	if auth == nil || s.cfg == nil {
 		return nil
@@ -1356,6 +1362,7 @@ func (s *Service) resolveConfigGeminiKey(auth *coreauth.Auth) *config.GeminiKey 
 	return nil
 }
 
+// resolveConfigVertexCompatKey 从配置中解析与认证匹配的 Vertex 兼容 API Key。
 func (s *Service) resolveConfigVertexCompatKey(auth *coreauth.Auth) *config.VertexCompatKey {
 	if auth == nil || s.cfg == nil {
 		return nil
@@ -1390,6 +1397,7 @@ func (s *Service) resolveConfigVertexCompatKey(auth *coreauth.Auth) *config.Vert
 	return nil
 }
 
+// resolveConfigCodexKey 从配置中解析与认证匹配的 Codex API Key。
 func (s *Service) resolveConfigCodexKey(auth *coreauth.Auth) *config.CodexKey {
 	if auth == nil || s.cfg == nil {
 		return nil
@@ -1416,6 +1424,7 @@ func (s *Service) resolveConfigCodexKey(auth *coreauth.Auth) *config.CodexKey {
 	return nil
 }
 
+// oauthExcludedModels 获取指定提供商和认证类型的 OAuth 排除模型列表。
 func (s *Service) oauthExcludedModels(provider, authKind string) []string {
 	cfg := s.cfg
 	if cfg == nil {
@@ -1429,6 +1438,7 @@ func (s *Service) oauthExcludedModels(provider, authKind string) []string {
 	return cfg.OAuthExcludedModels[providerKey]
 }
 
+// applyExcludedModels 从模型列表中过滤掉被排除的模型，支持通配符匹配。
 func applyExcludedModels(models []*ModelInfo, excluded []string) []*ModelInfo {
 	if len(models) == 0 || len(excluded) == 0 {
 		return models
@@ -1464,6 +1474,7 @@ func applyExcludedModels(models []*ModelInfo, excluded []string) []*ModelInfo {
 	return filtered
 }
 
+// applyModelPrefixes 为模型信息应用名称前缀。
 func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix bool) []*ModelInfo {
 	trimmedPrefix := strings.TrimSpace(prefix)
 	if trimmedPrefix == "" || len(models) == 0 {
@@ -1506,7 +1517,7 @@ func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix boo
 	return out
 }
 
-// matchWildcard performs case-insensitive wildcard matching where '*' matches any substring.
+// matchWildcard 执行不区分大小写的通配符匹配，'*' 匹配任意子串。
 func matchWildcard(pattern, value string) bool {
 	if pattern == "" {
 		return false
@@ -1555,6 +1566,7 @@ type modelEntry interface {
 	GetAlias() string
 }
 
+// buildOpenAICompatibilityConfigModels 从 OpenAI 兼容配置构建模型信息列表。
 func buildOpenAICompatibilityConfigModels(compat *config.OpenAICompatibility) []*ModelInfo {
 	if compat == nil || len(compat.Models) == 0 {
 		return nil
@@ -1592,6 +1604,7 @@ func buildOpenAICompatibilityConfigModels(compat *config.OpenAICompatibility) []
 	return models
 }
 
+// buildConfigModels 从配置模型条目构建通用的模型信息列表。
 func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*ModelInfo {
 	if len(models) == 0 {
 		return nil
@@ -1637,6 +1650,7 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*M
 	return out
 }
 
+// buildVertexCompatConfigModels 从 Vertex 兼容配置构建模型信息列表。
 func buildVertexCompatConfigModels(entry *config.VertexCompatKey) []*ModelInfo {
 	if entry == nil {
 		return nil
@@ -1644,6 +1658,7 @@ func buildVertexCompatConfigModels(entry *config.VertexCompatKey) []*ModelInfo {
 	return buildConfigModels(entry.Models, "google", "vertex")
 }
 
+// buildGeminiConfigModels 从 Gemini 配置构建模型信息列表。
 func buildGeminiConfigModels(entry *config.GeminiKey) []*ModelInfo {
 	if entry == nil {
 		return nil
@@ -1651,6 +1666,7 @@ func buildGeminiConfigModels(entry *config.GeminiKey) []*ModelInfo {
 	return buildConfigModels(entry.Models, "google", "gemini")
 }
 
+// buildClaudeConfigModels 从 Claude 配置构建模型信息列表。
 func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 	if entry == nil {
 		return nil
@@ -1658,6 +1674,7 @@ func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 	return buildConfigModels(entry.Models, "anthropic", "claude")
 }
 
+// buildCodexConfigModels 从 Codex 配置构建模型信息列表。
 func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {
 	if entry == nil {
 		return nil
@@ -1665,6 +1682,7 @@ func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {
 	return registry.WithCodexBuiltins(buildConfigModels(entry.Models, "openai", "openai"))
 }
 
+// rewriteModelInfoName 重写模型信息中的名称，将旧 ID 替换为新 ID。
 func rewriteModelInfoName(name, oldID, newID string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -1691,6 +1709,7 @@ func rewriteModelInfoName(name, oldID, newID string) string {
 	return name
 }
 
+// applyOAuthModelAlias 应用 OAuth 模型别名映射，为每个别名创建对应的模型信息副本。
 func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models []*ModelInfo) []*ModelInfo {
 	if cfg == nil || len(models) == 0 {
 		return models

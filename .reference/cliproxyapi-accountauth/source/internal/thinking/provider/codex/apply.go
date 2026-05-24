@@ -1,9 +1,7 @@
-// Package codex implements thinking configuration for Codex (OpenAI Responses API) models.
-//
-// Codex models use the reasoning.effort format with discrete levels
-// (low/medium/high). This is similar to OpenAI but uses nested field
-// "reasoning.effort" instead of "reasoning_effort".
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-8
+// 包 codex - apply.go
+// 该文件实现了 Codex（OpenAI Responses API）模型的思考配置应用器。
+// Codex 模型使用 reasoning.effort 格式，支持离散级别（low/medium/high）。
+// 与 OpenAI 类似但使用嵌套字段 "reasoning.effort" 而非 "reasoning_effort"。
 package codex
 
 import (

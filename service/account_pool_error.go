@@ -1,3 +1,9 @@
+// account_pool_error.go 实现了账号池账号的错误处理逻辑。
+// 当全局账号池中的账号在请求过程中发生错误时，根据错误类型采取不同的处理策略：
+// - 认证失败（401/403）或无效 Key：自动禁用账号并标记为不可调度
+// - 速率限制（429）：设置临时冷却时间
+// - 过载错误（529）：设置较短的冷却时间
+// 同时记录请求统计（成功/失败）到滑动窗口。
 package service
 
 import (
@@ -13,7 +19,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ProcessPoolAccountError 只更新全局账号池账号状态，不自动禁用整个渠道。
+// ProcessPoolAccountError 处理账号池账号的请求错误。
+// 只更新全局账号池账号的状态，不自动禁用整个渠道。
+// 处理策略：
+// - 认证失败或无效 Key：自动禁用账号，标记为不可调度
+// - 速率限制（429）：设置 rate_limited_until 冷却时间
+// - 过载（529）：设置 overload_until 冷却时间
+// 同时将当前账号从请求上下文中排除，以便重试时选择其他账号。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - channelError: 渠道错误信息，包含渠道 ID 和账号 ID
+//   - err: 具体的错误详情
 func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, err *types.NexusTokError) {
 	if err == nil || channelError.PoolAccountId <= 0 {
 		return
@@ -52,6 +69,12 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 	}
 }
 
+// recordPoolAccountRequestRuntime 记录账号池账号的请求统计。
+// 更新最近请求的滑动窗口统计和成功/失败计数。
+//
+// 参数：
+//   - accountID: 账号 ID
+//   - success: 请求是否成功
 func recordPoolAccountRequestRuntime(accountID int, success bool) {
 	if accountID <= 0 {
 		return

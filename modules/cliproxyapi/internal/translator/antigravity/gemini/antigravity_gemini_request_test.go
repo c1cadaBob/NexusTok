@@ -1,3 +1,8 @@
+// Package gemini - antigravity_gemini_request_test.go
+// 测试 Gemini 到 Antigravity 请求格式转换功能。
+// 覆盖 functionCall 和 text 部分的 thoughtSignature 替换（skip_thought_signature_validator）、
+// string 类型 thought 部分的处理、Claude 模型的跳过逻辑、
+// 并行 functionCall 的签名处理、以及 fixCLIToolResponse 的名称回填等功能。
 package gemini
 
 import (
@@ -7,6 +12,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnFunctionCall 测试
+// functionCall 上的客户端签名应被替换为 skip_thought_signature_validator
 func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnFunctionCall(t *testing.T) {
 	// Client signatures on Gemini function calls are not portable to Antigravity.
 	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
@@ -37,6 +44,8 @@ func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnFunctionCall
 	}
 }
 
+// TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnTextPart 测试
+// text 部分上的客户端签名应被替换为 skip_thought_signature_validator
 func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnTextPart(t *testing.T) {
 	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
 	inputJSON := []byte(fmt.Sprintf(`{
@@ -61,6 +70,8 @@ func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnTextPart(t *
 	}
 }
 
+// TestConvertGeminiRequestToAntigravity_AddsSkipSentinelToStringThoughtPart 测试
+// string 类型的 thought 部分应添加 skip_thought_signature_validator 标记
 func TestConvertGeminiRequestToAntigravity_AddsSkipSentinelToStringThoughtPart(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gemini-3-pro-preview",
@@ -84,6 +95,8 @@ func TestConvertGeminiRequestToAntigravity_AddsSkipSentinelToStringThoughtPart(t
 	}
 }
 
+// TestConvertGeminiRequestToAntigravity_SkipsUppercaseClaudeModel 测试
+// 大写开头的 Claude 模型名应跳过签名处理
 func TestConvertGeminiRequestToAntigravity_SkipsUppercaseClaudeModel(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "Claude-Test",
@@ -105,6 +118,8 @@ func TestConvertGeminiRequestToAntigravity_SkipsUppercaseClaudeModel(t *testing.
 	}
 }
 
+// TestConvertGeminiRequestToAntigravity_AddSkipSentinelToFunctionCall 测试
+// 无签名的 functionCall 应添加 skip_thought_signature_validator
 func TestConvertGeminiRequestToAntigravity_AddSkipSentinelToFunctionCall(t *testing.T) {
 	// functionCall without signature should get skip_thought_signature_validator
 	inputJSON := []byte(`{
@@ -130,6 +145,8 @@ func TestConvertGeminiRequestToAntigravity_AddSkipSentinelToFunctionCall(t *test
 	}
 }
 
+// TestConvertGeminiRequestToAntigravity_ParallelFunctionCalls 测试
+// 多个并行 functionCall 都应添加 skip_thought_signature_validator
 func TestConvertGeminiRequestToAntigravity_ParallelFunctionCalls(t *testing.T) {
 	// Multiple functionCalls should all get skip_thought_signature_validator
 	inputJSON := []byte(`{
@@ -162,6 +179,8 @@ func TestConvertGeminiRequestToAntigravity_ParallelFunctionCalls(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_PreservesFunctionResponseParts 测试
+// functionResponse 中的 parts 字段（含 inlineData）应被保留
 func TestFixCLIToolResponse_PreservesFunctionResponseParts(t *testing.T) {
 	// When functionResponse contains a "parts" field with inlineData (from Claude
 	// translator's image embedding), fixCLIToolResponse should preserve it as-is.
@@ -240,6 +259,8 @@ func TestFixCLIToolResponse_PreservesFunctionResponseParts(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_BackfillsEmptyFunctionResponseName 测试
+// 空名称的 functionResponse 应从对应的 functionCall 回填名称
 func TestFixCLIToolResponse_BackfillsEmptyFunctionResponseName(t *testing.T) {
 	// When the Amp client sends functionResponse with an empty name,
 	// fixCLIToolResponse should backfill it from the corresponding functionCall.
@@ -286,6 +307,8 @@ func TestFixCLIToolResponse_BackfillsEmptyFunctionResponseName(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_BackfillsMultipleEmptyNames 测试
+// 多个并行 functionResponse 的空名称都应被正确回填
 func TestFixCLIToolResponse_BackfillsMultipleEmptyNames(t *testing.T) {
 	// Parallel function calls: both responses have empty names.
 	input := `{
@@ -342,6 +365,8 @@ func TestFixCLIToolResponse_BackfillsMultipleEmptyNames(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_PreservesExistingName 测试
+// 已有有效名称的 functionResponse 应被保留不覆盖
 func TestFixCLIToolResponse_PreservesExistingName(t *testing.T) {
 	// When functionResponse already has a valid name, it should be preserved.
 	input := `{
@@ -387,6 +412,8 @@ func TestFixCLIToolResponse_PreservesExistingName(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_MoreResponsesThanCalls 测试
+// 当 functionResponse 数量超过 functionCall 数量时，多余的应被丢弃
 func TestFixCLIToolResponse_MoreResponsesThanCalls(t *testing.T) {
 	// If there are more function responses than calls, unmatched extras are discarded by grouping.
 	input := `{
@@ -434,6 +461,8 @@ func TestFixCLIToolResponse_MoreResponsesThanCalls(t *testing.T) {
 	}
 }
 
+// TestFixCLIToolResponse_MultipleGroupsFIFO 测试
+// 多个顺序 function call/response 组应按 FIFO 策略匹配
 func TestFixCLIToolResponse_MultipleGroupsFIFO(t *testing.T) {
 	// Two sequential function call groups should be matched FIFO.
 	input := `{

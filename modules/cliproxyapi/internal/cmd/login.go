@@ -1,6 +1,5 @@
-// Package cmd provides command-line interface functionality for the CLI Proxy API server.
-// It includes authentication flows for various AI service providers, service startup,
-// and other command-line operations.
+// Package cmd - login.go
+// 提供 Google Gemini 的 OAuth 认证流程，包括项目选择、用户注册和 API 启用检查。
 package cmd
 
 import (
@@ -38,14 +37,16 @@ func (e *projectSelectionRequiredError) Error() string {
 	return "gemini cli: project selection required"
 }
 
-// DoLogin handles Google Gemini authentication using the shared authentication manager.
-// It initiates the OAuth flow for Google Gemini services, performs the legacy CLI user setup,
-// and saves the authentication tokens to the configured auth directory.
+// DoLogin 处理 Google Gemini 认证，使用共享的认证管理器。
+// 启动 Google Gemini 服务的 OAuth 流程，执行传统 CLI 用户设置，
+// 并将认证令牌保存到配置的认证目录。
 //
-// Parameters:
-//   - cfg: The application configuration
-//   - projectID: Optional Google Cloud project ID for Gemini services
-//   - options: Login options including browser behavior and prompts
+// 参数:
+//   - cfg: 应用程序配置
+//   - projectID: 可选的 Google Cloud 项目 ID
+//   - options: 登录选项，包括浏览器行为和提示
+//
+// DoLogin handles Google Gemini authentication using the shared authentication manager.
 func DoLogin(cfg *config.Config, projectID string, options *LoginOptions) {
 	if options == nil {
 		options = &LoginOptions{}

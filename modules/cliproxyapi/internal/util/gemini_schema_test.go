@@ -1,3 +1,8 @@
+// util - gemini_schema_test.go
+// 该文件包含 CleanJSONSchemaForAntigravity 和 CleanJSONSchemaForGemini 函数的单元测试，
+// 验证 JSON Schema 清洗逻辑的正确性，包括 const 转 enum、类型扁平化、anyOf/oneOf 展开、
+// allOf 合并、$ref 处理、枚举提示、格式字段移除、数值枚举转字符串、空 schema 占位符、
+// 扩展字段移除等功能。
 package util
 
 import (
@@ -9,6 +14,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCleanJSONSchemaForAntigravity_ConstToEnum 测试将 JSON Schema 中的 const 关键字
+// 转换为 enum 数组的功能，确保 Antigravity API 兼容性。
 func TestCleanJSONSchemaForAntigravity_ConstToEnum(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -34,6 +41,9 @@ func TestCleanJSONSchemaForAntigravity_ConstToEnum(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable 测试类型数组扁平化逻辑，
+// 验证 ["string", "null"] 类型会被简化为 "string" 并添加 "(nullable)" 描述提示，
+// 同时从 required 数组中移除可空字段。
 func TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -66,6 +76,9 @@ func TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_ConstraintsToDescription 测试约束关键字移除逻辑，
+// 验证 minItems、minLength 等不被 Antigravity 支持的约束会被移除并作为提示信息
+// 迁移到 description 字段中。
 func TestCleanJSONSchemaForAntigravity_ConstraintsToDescription(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -102,6 +115,9 @@ func TestCleanJSONSchemaForAntigravity_ConstraintsToDescription(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_AnyOfFlattening_SmartSelection 测试 anyOf 展开的智能选择逻辑，
+// 验证在 null 和 object 类型之间会选择 object 作为主类型，
+// 并添加 "Accepts: null | object" 的描述提示。
 func TestCleanJSONSchemaForAntigravity_AnyOfFlattening_SmartSelection(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -139,6 +155,9 @@ func TestCleanJSONSchemaForAntigravity_AnyOfFlattening_SmartSelection(t *testing
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_OneOfFlattening 测试 oneOf 展开逻辑，
+// 验证在 string 和 integer 类型之间选择 string 作为主类型，
+// 并添加 "Accepts: string | integer" 的描述提示。
 func TestCleanJSONSchemaForAntigravity_OneOfFlattening(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -166,6 +185,8 @@ func TestCleanJSONSchemaForAntigravity_OneOfFlattening(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_AllOfMerging 测试 allOf 合并逻辑，
+// 验证多个 allOf 分支中的 properties 和 required 会被正确合并到父级对象中。
 func TestCleanJSONSchemaForAntigravity_AllOfMerging(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -198,6 +219,8 @@ func TestCleanJSONSchemaForAntigravity_AllOfMerging(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_RefHandling 测试 $ref 引用处理逻辑，
+// 验证 $ref 会被转换为带有 "See: TypeName" 描述提示的占位对象。
 func TestCleanJSONSchemaForAntigravity_RefHandling(t *testing.T) {
 	input := `{
 		"definitions": {
@@ -236,6 +259,8 @@ func TestCleanJSONSchemaForAntigravity_RefHandling(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_RefHandling_DescriptionEscaping 测试 $ref 处理时
+// description 中特殊字符（双引号、换行符）的转义是否正确保留。
 func TestCleanJSONSchemaForAntigravity_RefHandling_DescriptionEscaping(t *testing.T) {
 	input := `{
 		"definitions": {
@@ -277,6 +302,9 @@ func TestCleanJSONSchemaForAntigravity_RefHandling_DescriptionEscaping(t *testin
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_CyclicRefDefaults 测试循环 $ref 引用的处理逻辑，
+// 验证当 schema 存在自引用（如 Node 引用自身）时不会导致无限递归，
+// 并能正确生成带有类型和描述提示的结果。
 func TestCleanJSONSchemaForAntigravity_CyclicRefDefaults(t *testing.T) {
 	input := `{
 		"definitions": {
@@ -305,6 +333,8 @@ func TestCleanJSONSchemaForAntigravity_CyclicRefDefaults(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_RequiredCleanup 测试 required 数组清理逻辑，
+// 验证当 required 中包含不存在于 properties 中的字段名时，这些无效字段会被移除。
 func TestCleanJSONSchemaForAntigravity_RequiredCleanup(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -328,6 +358,8 @@ func TestCleanJSONSchemaForAntigravity_RequiredCleanup(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_AllOfMerging_DotKeys 测试包含点号的属性名在
+// allOf 合并时是否能正确处理，确保 sjson 路径转义不会产生伪键。
 func TestCleanJSONSchemaForAntigravity_AllOfMerging_DotKeys(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -360,6 +392,8 @@ func TestCleanJSONSchemaForAntigravity_AllOfMerging_DotKeys(t *testing.T) {
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_PropertyNameCollision 测试属性名与 schema 关键字冲突的情况，
+// 验证名为 "pattern" 的属性不会被误认为是约束关键字而被移除。
 func TestCleanJSONSchemaForAntigravity_PropertyNameCollision(t *testing.T) {
 	// A tool has an argument named "pattern" - should NOT be treated as a constraint
 	input := `{
@@ -395,6 +429,8 @@ func TestCleanJSONSchemaForAntigravity_PropertyNameCollision(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_DotKeys 测试包含点号的属性名在 $ref 处理时
+// 是否能正确转义，确保 sjson 路径操作不会因点号而产生错误分割。
 func TestCleanJSONSchemaForAntigravity_DotKeys(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -434,6 +470,8 @@ func TestCleanJSONSchemaForAntigravity_DotKeys(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_AnyOfAlternativeHints 测试 anyOf 展开后是否正确
+// 生成包含所有备选类型的 "Accepts:" 描述提示。
 func TestCleanJSONSchemaForAntigravity_AnyOfAlternativeHints(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -458,6 +496,8 @@ func TestCleanJSONSchemaForAntigravity_AnyOfAlternativeHints(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_NullableHint 测试可空类型提示是否正确追加到
+// 已有 description 中，并保留原始描述文本。
 func TestCleanJSONSchemaForAntigravity_NullableHint(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -480,6 +520,8 @@ func TestCleanJSONSchemaForAntigravity_NullableHint(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable_DotKey 测试包含点号的属性名在
+// 类型扁平化和可空处理时是否能正确工作。
 func TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable_DotKey(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -512,6 +554,8 @@ func TestCleanJSONSchemaForAntigravity_TypeFlattening_Nullable_DotKey(t *testing
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_EnumHint 测试枚举值提示生成功能，
+// 验证当 enum 值数量在 2-10 之间时会生成 "Allowed: ..." 格式的描述提示。
 func TestCleanJSONSchemaForAntigravity_EnumHint(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -534,6 +578,8 @@ func TestCleanJSONSchemaForAntigravity_EnumHint(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_AdditionalPropertiesHint 测试 additionalProperties 为 false 时
+// 是否正确生成 "No extra properties allowed" 描述提示。
 func TestCleanJSONSchemaForAntigravity_AdditionalPropertiesHint(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -550,6 +596,8 @@ func TestCleanJSONSchemaForAntigravity_AdditionalPropertiesHint(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_AnyOfFlattening_PreservesDescription 测试 anyOf 展开时
+// 父级和子级的 description 是否被正确合并保留。
 func TestCleanJSONSchemaForAntigravity_AnyOfFlattening_PreservesDescription(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -578,6 +626,8 @@ func TestCleanJSONSchemaForAntigravity_AnyOfFlattening_PreservesDescription(t *t
 	compareJSON(t, expected, result)
 }
 
+// TestCleanJSONSchemaForAntigravity_SingleEnumNoHint 测试单值枚举不生成 "Allowed:" 提示的逻辑，
+// 验证当 enum 只有一个值时不添加提示（因为选择是显而易见的）。
 func TestCleanJSONSchemaForAntigravity_SingleEnumNoHint(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -596,6 +646,8 @@ func TestCleanJSONSchemaForAntigravity_SingleEnumNoHint(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_MultipleNonNullTypes 测试多个非 null 类型的扁平化逻辑，
+// 验证 type 数组包含多种类型时生成 "Accepts: ..." 描述提示。
 func TestCleanJSONSchemaForAntigravity_MultipleNonNullTypes(t *testing.T) {
 	input := `{
 		"type": "object",
@@ -616,6 +668,8 @@ func TestCleanJSONSchemaForAntigravity_MultipleNonNullTypes(t *testing.T) {
 	}
 }
 
+// compareJSON 是测试辅助函数，将两个 JSON 字符串反序列化为 map 后进行深度比较，
+// 若不相等则输出格式化的差异信息。
 func compareJSON(t *testing.T, expectedJSON, actualJSON string) {
 	var expMap, actMap map[string]interface{}
 	errExp := json.Unmarshal([]byte(expectedJSON), &expMap)
@@ -636,6 +690,8 @@ func compareJSON(t *testing.T, expectedJSON, actualJSON string) {
 // Empty Schema Placeholder Tests
 // ============================================================================
 
+// TestCleanJSONSchemaForAntigravity_EmptySchemaPlaceholder 测试空对象 schema 的占位符添加逻辑，
+// 验证没有 properties 的 object 类型会自动添加 "reason" 占位属性。
 func TestCleanJSONSchemaForAntigravity_EmptySchemaPlaceholder(t *testing.T) {
 	// Empty object schema with no properties should get a placeholder
 	input := `{
@@ -653,6 +709,8 @@ func TestCleanJSONSchemaForAntigravity_EmptySchemaPlaceholder(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_EmptyPropertiesPlaceholder 测试空 properties 对象的占位符添加逻辑，
+// 验证 properties 为空对象时也会自动添加 "reason" 占位属性。
 func TestCleanJSONSchemaForAntigravity_EmptyPropertiesPlaceholder(t *testing.T) {
 	// Object with empty properties object
 	input := `{
@@ -668,6 +726,8 @@ func TestCleanJSONSchemaForAntigravity_EmptyPropertiesPlaceholder(t *testing.T) 
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_NonEmptySchemaUnchanged 测试非空 schema 不会被添加占位符，
+// 验证已有 properties 的 object 类型保持不变。
 func TestCleanJSONSchemaForAntigravity_NonEmptySchemaUnchanged(t *testing.T) {
 	// Schema with properties should NOT get placeholder
 	input := `{
@@ -690,6 +750,8 @@ func TestCleanJSONSchemaForAntigravity_NonEmptySchemaUnchanged(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_NestedEmptySchema 测试嵌套空对象 schema 的占位符添加逻辑，
+// 验证数组 items 中的空 object 也会被正确处理。
 func TestCleanJSONSchemaForAntigravity_NestedEmptySchema(t *testing.T) {
 	// Nested empty object in items should also get placeholder
 	input := `{
@@ -715,6 +777,8 @@ func TestCleanJSONSchemaForAntigravity_NestedEmptySchema(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_EmptySchemaWithDescription 测试带有 description 的空 schema，
+// 验证 description 被保留的同时仍会添加占位属性。
 func TestCleanJSONSchemaForAntigravity_EmptySchemaWithDescription(t *testing.T) {
 	// Empty schema with description should preserve description and add placeholder
 	input := `{
@@ -737,6 +801,8 @@ func TestCleanJSONSchemaForAntigravity_EmptySchemaWithDescription(t *testing.T) 
 // Format field handling (ad-hoc patch removal)
 // ============================================================================
 
+// TestCleanJSONSchemaForAntigravity_FormatFieldRemoval 测试 format 字段移除逻辑，
+// 验证 "format": "uri" 等格式字段被移除并转换为 "format: uri" 的描述提示。
 func TestCleanJSONSchemaForAntigravity_FormatFieldRemoval(t *testing.T) {
 	// format:"uri" should be removed and added as hint
 	input := `{
@@ -766,6 +832,8 @@ func TestCleanJSONSchemaForAntigravity_FormatFieldRemoval(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_FormatFieldNoDescription 测试无 description 时 format 字段的处理，
+// 验证即使没有原始 description 也会正确生成 format 提示。
 func TestCleanJSONSchemaForAntigravity_FormatFieldNoDescription(t *testing.T) {
 	// format without description should create description with hint
 	input := `{
@@ -790,6 +858,8 @@ func TestCleanJSONSchemaForAntigravity_FormatFieldNoDescription(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_MultipleFormats 测试多个 format 字段的批量处理，
+// 验证 uri、email、date-time 等多种格式字段都被正确移除并生成对应提示。
 func TestCleanJSONSchemaForAntigravity_MultipleFormats(t *testing.T) {
 	// Multiple format fields should all be handled
 	input := `{
@@ -819,6 +889,8 @@ func TestCleanJSONSchemaForAntigravity_MultipleFormats(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_NumericEnumToString 测试数值枚举值转字符串的逻辑，
+// 验证 Gemini API 要求的 enum 值类型限制（仅允许字符串类型）。
 func TestCleanJSONSchemaForAntigravity_NumericEnumToString(t *testing.T) {
 	// Gemini API requires enum values to be strings, not numbers
 	input := `{
@@ -849,6 +921,8 @@ func TestCleanJSONSchemaForAntigravity_NumericEnumToString(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForAntigravity_BooleanEnumToString 测试布尔枚举值转字符串的逻辑，
+// 验证 true/false 枚举值被转换为 "true"/"false" 字符串形式。
 func TestCleanJSONSchemaForAntigravity_BooleanEnumToString(t *testing.T) {
 	// Boolean enum values should also be converted to strings
 	input := `{
@@ -870,6 +944,9 @@ func TestCleanJSONSchemaForAntigravity_BooleanEnumToString(t *testing.T) {
 	}
 }
 
+// TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields 测试 Gemini 专用的 schema 清洗逻辑，
+// 验证 $schema、$id、prefill、enumTitles、patternProperties 等 Gemini 不支持的字段被正确移除，
+// 同时保留作为属性名的 "$id" 字段。
 func TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields(t *testing.T) {
 	input := `{
 		"$schema": "http://json-schema.org/draft-07/schema#",
@@ -921,6 +998,8 @@ func TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields(t *test
 	compareJSON(t, expected, result)
 }
 
+// TestRemoveExtensionFields 测试 x-* 扩展字段的移除逻辑，涵盖根级和嵌套级扩展字段移除、
+// 属性名为 "x-" 前缀时不被误删、$schema 等元字段保留、以及路径转义处理等场景。
 func TestRemoveExtensionFields(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1048,6 +1127,8 @@ func TestRemoveExtensionFields(t *testing.T) {
 }
 
 // uniqueItems should be stripped and moved to description hint (#2123).
+// TestCleanJSONSchemaForAntigravity_UniqueItemsStripped 测试 uniqueItems 约束的移除逻辑，
+// 验证 uniqueItems: true 被从 schema 中移除并作为 "uniqueItems: true" 提示追加到 description。
 func TestCleanJSONSchemaForAntigravity_UniqueItemsStripped(t *testing.T) {
 	input := `{
 		"type": "object",

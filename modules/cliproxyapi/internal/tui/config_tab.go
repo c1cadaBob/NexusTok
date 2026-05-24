@@ -1,3 +1,5 @@
+// Package tui - config_tab.go
+// 实现配置管理标签页，提供服务器配置的查看和编辑功能。
 package tui
 
 import (
@@ -11,6 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// configField 表示单个可编辑的配置字段。
+// 包含字段键名、当前值、输入类型和验证规则。
+//
 // configField represents a single editable config field.
 type configField struct {
 	label    string

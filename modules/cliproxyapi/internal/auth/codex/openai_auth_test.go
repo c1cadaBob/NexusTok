@@ -1,3 +1,6 @@
+// codex - openai_auth_test.go
+// 包含 Codex OAuth 认证功能的单元测试。
+// 测试刷新令牌重试逻辑和代理 URL 覆盖行为。
 package codex
 
 import (
@@ -11,12 +14,17 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// roundTripFunc 是一个函数类型，实现了 http.RoundTripper 接口。
+// 用于在测试中模拟 HTTP 请求。
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip 实现 http.RoundTripper 接口，执行模拟的 HTTP 请求。
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce 测试不可重试的刷新令牌错误只尝试一次。
+// 验证当遇到 refresh_token_reused 错误时，不会进行重试。
 func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
 	var calls int32
 	auth := &CodexAuth{
@@ -45,6 +53,8 @@ func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
 	}
 }
 
+// TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy 测试 "direct" 代理覆盖会禁用代理。
+// 验证当指定 "direct" 时，Transport 的 Proxy 函数为 nil。
 func TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://proxy.example.com:8080"}}
 	auth := NewCodexAuthWithProxyURL(cfg, "direct")
@@ -58,6 +68,8 @@ func TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy(t *testing.T) {
 	}
 }
 
+// TestNewCodexAuthWithProxyURL_OverrideProxyTakesPrecedence 测试代理 URL 覆盖优先于全局配置。
+// 验证指定的代理 URL 会覆盖全局配置中的代理设置。
 func TestNewCodexAuthWithProxyURL_OverrideProxyTakesPrecedence(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://global.example.com:8080"}}
 	auth := NewCodexAuthWithProxyURL(cfg, "http://override.example.com:8081")

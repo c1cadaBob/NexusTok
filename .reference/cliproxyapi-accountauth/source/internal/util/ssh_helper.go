@@ -1,6 +1,6 @@
-// Package util provides helper functions for SSH tunnel instructions and network-related tasks.
-// This includes detecting the appropriate IP address and printing commands
-// to help users connect to the local server from a remote machine.
+// 包 util - ssh_helper.go
+// 该文件提供了 SSH 隧道指令和网络相关任务的辅助函数。
+// 包括检测适当的 IP 地址和打印帮助用户从远程机器连接到本地服务器的命令。
 package util
 
 import (
@@ -15,6 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// ipServices 是用于获取公网 IP 地址的外部服务列表。
 var ipServices = []string{
 	"https://api.ipify.org",
 	"https://ifconfig.me/ip",

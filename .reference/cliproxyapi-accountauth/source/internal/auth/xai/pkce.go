@@ -1,3 +1,6 @@
+// 包 xai - pkce.go
+// 该文件实现了 xAI OAuth 流程所需的 PKCE（Proof Key for Code Exchange）码生成。
+// 包括生成随机验证码和对应的 SHA256 挑战码。
 package xai
 
 import (

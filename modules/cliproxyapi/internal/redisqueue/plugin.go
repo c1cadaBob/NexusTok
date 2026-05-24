@@ -1,3 +1,6 @@
+// redisqueue - plugin.go
+// 本文件实现了 Redis 队列的使用记录插件，负责将 AI API 请求的使用统计数据
+// 序列化后入队，供管理面板实时消费和展示。插件在 init 阶段自动注册到核心使用统计系统。
 package redisqueue
 
 import (
@@ -11,12 +14,22 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// init 在包初始化时将 usageQueuePlugin 注册到核心使用统计插件系统。
 func init() {
 	coreusage.RegisterPlugin(&usageQueuePlugin{})
 }
 
+// usageQueuePlugin 是使用统计队列插件的核心结构体，实现了 coreusage.Plugin 接口。
+// 当队列功能和使用统计开关均启用时，它会将每次请求的使用记录序列化为 JSON 并入队。
 type usageQueuePlugin struct{}
 
+// HandleUsage 处理一次 API 请求的使用记录。
+// 它从记录中提取模型名称、提供商、认证类型、token 统计等信息，
+// 构造 queuedUsageDetail 结构并序列化为 JSON 后推入队列。
+//
+// 参数：
+//   - ctx: 请求上下文，用于提取请求 ID、端点等信息
+//   - record: 核心使用统计数据记录
 func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Record) {
 	if p == nil {
 		return
@@ -103,6 +116,8 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	Enqueue(payload)
 }
 
+// queuedUsageDetail 是入队的完整使用记录结构体，包含请求详情和扩展的元数据字段。
+// 它嵌入了 requestDetail 并添加了提供商、模型、别名等请求级信息。
 type queuedUsageDetail struct {
 	requestDetail
 	Provider        string `json:"provider"`
@@ -115,6 +130,7 @@ type queuedUsageDetail struct {
 	ReasoningEffort string `json:"reasoning_effort"`
 }
 
+// requestDetail 记录单次 API 请求的详细信息，包括时间戳、延迟、token 统计和失败信息。
 type requestDetail struct {
 	Timestamp       time.Time   `json:"timestamp"`
 	LatencyMs       int64       `json:"latency_ms"`

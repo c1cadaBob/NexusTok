@@ -1,9 +1,9 @@
-// Package antigravity implements thinking configuration for Antigravity API format.
-//
-// Antigravity uses request.generationConfig.thinkingConfig.* path (same as gemini-cli)
-// but requires additional normalization for Claude models:
-//   - Ensure thinking budget < max_tokens
-//   - Remove thinkingConfig if budget < minimum allowed
+// antigravity - apply.go
+// 本文件实现了 Antigravity API 格式的 thinking 配置应用逻辑。
+// Antigravity 使用 request.generationConfig.thinkingConfig.* 路径（与 gemini-cli 相同），
+// 但需要对 Claude 模型进行额外的规范化处理：
+//   - 确保 thinking budget < max_tokens
+//   - 如果 budget 低于最小允许值，则移除 thinkingConfig
 package antigravity
 
 import (
@@ -15,12 +15,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier applies thinking configuration for Antigravity API format.
+// Applier 实现了 Antigravity API 格式的 thinking 配置应用器。
 type Applier struct{}
 
 var _ thinking.ProviderApplier = (*Applier)(nil)
 
-// NewApplier creates a new Antigravity thinking applier.
+// NewApplier 创建一个新的 Antigravity thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

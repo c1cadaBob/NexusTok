@@ -1,6 +1,7 @@
+// Package cmd 为 CLI Proxy API 服务器提供命令行界面功能。
+// 包含各种 AI 服务商的认证流程、服务启动和其他命令行操作。
+//
 // Package cmd provides command-line interface functionality for the CLI Proxy API server.
-// It includes authentication flows for various AI service providers, service startup,
-// and other command-line operations.
 package cmd
 
 import (
@@ -16,14 +17,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// StartService builds and runs the proxy service using the exported SDK.
-// It creates a new proxy service instance, sets up signal handling for graceful shutdown,
-// and starts the service with the provided configuration.
+// StartService 构建并运行代理服务（使用导出的 SDK）。
+// 创建新的代理服务实例，设置信号处理以实现优雅关闭，并使用提供的配置启动服务。
 //
-// Parameters:
-//   - cfg: The application configuration
-//   - configPath: The path to the configuration file
-//   - localPassword: Optional password accepted for local management requests
+// 参数:
+//   - cfg: 应用程序配置
+//   - configPath: 配置文件路径
+//   - localPassword: 可选的本地管理请求密码
+//
+// StartService builds and runs the proxy service using the exported SDK.
 func StartService(cfg *config.Config, configPath string, localPassword string) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
@@ -55,8 +57,14 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	}
 }
 
-// StartServiceBackground starts the proxy service in a background goroutine
-// and returns a cancel function for shutdown and a done channel.
+// StartServiceBackground 在后台 goroutine 中启动代理服务，
+// 返回一个用于关闭的 cancel 函数和一个 done 通道。
+//
+// 返回值:
+//   - cancel: 用于取消服务的函数
+//   - done: 服务完成时关闭的通道
+//
+// StartServiceBackground starts the proxy service in a background goroutine.
 func StartServiceBackground(cfg *config.Config, configPath string, localPassword string) (cancel func(), done <-chan struct{}) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
@@ -83,8 +91,10 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 	return cancelFn, doneCh
 }
 
-// WaitForCloudDeploy waits indefinitely for shutdown signals in cloud deploy mode
-// when no configuration file is available.
+// WaitForCloudDeploy 在云部署模式下无限等待关闭信号，
+// 当没有可用的配置文件时使用。API 服务器不会启动，等待配置注入。
+//
+// WaitForCloudDeploy waits indefinitely for shutdown signals in cloud deploy mode.
 func WaitForCloudDeploy() {
 	// Clarify that we are intentionally idle for configuration and not running the API server.
 	log.Info("Cloud deploy mode: No config found; standing by for configuration. API server is not started. Press Ctrl+C to exit.")

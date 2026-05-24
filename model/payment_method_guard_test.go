@@ -1,3 +1,9 @@
+// Package model - payment_method_guard_test.go
+// 该文件包含支付方式保护功能的单元测试
+//
+// 测试内容包括：
+// - 用户支付方式的验证和保护
+// - 防止删除正在使用的支付方式
 package model
 
 import (

@@ -1,3 +1,8 @@
+// Package kimi - token.go
+// 提供 Kimi（月之暗面/Moonshot AI）API 的令牌存储功能。
+// 定义了 KimiTokenStorage、KimiTokenData、KimiAuthBundle 等数据结构，
+// 用于管理 OAuth2 设备流程的令牌序列化、文件持久化和过期检测。
+//
 // Package kimi provides authentication and token management functionality
 // for Kimi (Moonshot AI) services. It handles OAuth2 device flow token storage,
 // serialization, and retrieval for maintaining authenticated sessions with the Kimi API.

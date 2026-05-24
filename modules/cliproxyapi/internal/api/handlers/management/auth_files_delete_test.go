@@ -1,3 +1,5 @@
+// management - auth_files_delete_test.go
+// 测试认证文件删除功能，包括使用管理器中的路径删除和回退到 auth 目录路径删除
 package management
 
 import (
@@ -15,6 +17,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestDeleteAuthFile_UsesAuthPathFromManager 测试删除认证文件时使用管理器中的路径
 func TestDeleteAuthFile_UsesAuthPathFromManager(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -99,6 +102,7 @@ func TestDeleteAuthFile_UsesAuthPathFromManager(t *testing.T) {
 	}
 }
 
+// TestDeleteAuthFile_FallbackToAuthDirPath 测试删除认证文件时回退到 auth 目录路径
 func TestDeleteAuthFile_FallbackToAuthDirPath(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

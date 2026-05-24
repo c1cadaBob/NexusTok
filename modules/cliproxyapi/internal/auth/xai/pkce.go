@@ -1,3 +1,5 @@
+// xai - pkce.go
+// 提供 PKCE（Proof Key for Code Exchange）码对生成功能，用于 OAuth2 授权码流程的安全增强。
 package xai
 
 import (

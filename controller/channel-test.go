@@ -1,3 +1,26 @@
+// Package controller - channel-test.go
+// 该文件实现了渠道测试功能
+//
+// 渠道测试用于验证渠道配置是否正确，以及上游服务是否可用
+//
+// 测试流程：
+// 1. 构建测试请求（根据模型类型选择合适的请求格式）
+// 2. 选择适配器并转换请求格式
+// 3. 发送请求到上游服务
+// 4. 解析响应并验证
+// 5. 记录测试结果和耗时
+//
+// 支持的测试类型：
+// - Chat Completion：文本对话测试
+// - Embedding：文本嵌入测试
+// - Image Generation：图像生成测试
+// - Rerank：重排序测试
+// - Responses：响应式 API 测试
+//
+// 自动测试：
+// - 支持定时自动测试所有渠道
+// - 测试失败可自动禁用渠道
+// - 测试成功可自动启用渠道
 package controller
 
 import (
@@ -37,10 +60,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// testResult 渠道测试结果
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NexusTokError
+	context     *gin.Context      // 测试上下文
+	localErr    error             // 本地错误
+	newAPIError *types.NexusTokError // API 错误
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {

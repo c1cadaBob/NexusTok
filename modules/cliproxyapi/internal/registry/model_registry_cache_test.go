@@ -1,7 +1,12 @@
+// registry - model_registry_cache_test.go
+// 该文件测试模型注册表的缓存机制。
+// 测试覆盖了 GetAvailableModels 返回克隆快照、注册/注销/暂停/恢复操作后缓存正确失效等场景。
+
 package registry
 
 import "testing"
 
+// TestGetAvailableModelsReturnsClonedSnapshots 测试 GetAvailableModels 返回的快照是独立的克隆副本。
 func TestGetAvailableModelsReturnsClonedSnapshots(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "OpenAI", []*ModelInfo{{ID: "m1", OwnedBy: "team-a", DisplayName: "Model One"}})
@@ -22,6 +27,8 @@ func TestGetAvailableModelsReturnsClonedSnapshots(t *testing.T) {
 	}
 }
 
+// TestGetAvailableModelsInvalidatesCacheOnRegistryChanges 测试注册表变更后缓存被正确失效。
+// 验证重新注册、暂停和恢复操作后 GetAvailableModels 返回最新数据。
 func TestGetAvailableModelsInvalidatesCacheOnRegistryChanges(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "OpenAI", []*ModelInfo{{ID: "m1", OwnedBy: "team-a", DisplayName: "Model One"}})

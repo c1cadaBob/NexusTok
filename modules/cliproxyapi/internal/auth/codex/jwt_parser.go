@@ -1,3 +1,7 @@
+// Package codex - jwt_parser.go
+// 提供 JWT（JSON Web Token）解析功能。
+// 用于解析 OpenAI ID 令牌，提取用户身份信息（邮箱、账户 ID、组织信息等），
+// 不执行密码学签名验证，仅对令牌内容进行内省。
 package codex
 
 import (

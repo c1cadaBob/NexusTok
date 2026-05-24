@@ -1,3 +1,7 @@
+// sensitive.go - 敏感词检测与替换服务
+// 本文件提供消息内容的敏感词检测和替换功能。
+// 基于 Aho-Corasick 多模式匹配算法，支持对聊天消息和纯文本进行敏感词过滤。
+// 敏感词列表由 setting.SensitiveWords 配置，匹配时忽略大小写。
 package service
 
 import (
@@ -8,6 +12,13 @@ import (
 	"github.com/c1cada/NexusTok/setting"
 )
 
+// CheckSensitiveMessages 检查消息列表中是否包含敏感词。
+// 遍历所有消息的文本内容（跳过图片类型），逐条进行敏感词检测。
+// 参数:
+//   - messages: 待检查的消息列表（dto.Message 数组）
+// 返回值:
+//   - []string: 检测到的敏感词列表（未检测到时为 nil）
+//   - error: 检测到敏感词时返回 "sensitive words detected" 错误
 func CheckSensitiveMessages(messages []dto.Message) ([]string, error) {
 	if len(messages) == 0 {
 		return nil, nil
@@ -32,6 +43,13 @@ func CheckSensitiveMessages(messages []dto.Message) ([]string, error) {
 	return nil, nil
 }
 
+// CheckSensitiveText 检查纯文本是否包含敏感词。
+// 这是 SensitiveWordContains 的便捷封装。
+// 参数:
+//   - text: 待检查的文本内容
+// 返回值:
+//   - bool: 是否包含敏感词
+//   - []string: 检测到的敏感词列表
 func CheckSensitiveText(text string) (bool, []string) {
 	return SensitiveWordContains(text)
 }

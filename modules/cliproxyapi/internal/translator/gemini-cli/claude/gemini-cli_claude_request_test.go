@@ -1,3 +1,8 @@
+// gemini-cli/claude - gemini-cli_claude_request_test.go
+// Claude Code API 请求到 Gemini CLI 格式转换的单元测试。
+// 验证 tool_choice 中特定工具选择（type="tool"）能否正确映射为
+// Gemini CLI 的 functionCallingConfig.mode="ANY" 以及 allowedFunctionNames。
+// 同时测试 Claude Code 归属头信息（x-anthropic-billing-header）的自动剥离。
 package claude
 
 import (
@@ -6,6 +11,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertClaudeRequestToCLI_ToolChoice_SpecificTool 测试当 Claude 请求的 tool_choice
+// 指定特定工具（type="tool", name="json"）时，转换后的 Gemini CLI 请求应包含：
+// - functionCallingConfig.mode 为 "ANY"
+// - allowedFunctionNames 仅包含指定的工具名称 "json"
 func TestConvertClaudeRequestToCLI_ToolChoice_SpecificTool(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gemini-3-flash-preview",
@@ -41,6 +50,9 @@ func TestConvertClaudeRequestToCLI_ToolChoice_SpecificTool(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCLI_StripsClaudeCodeAttribution 测试 Claude Code 归属头信息
+// （以 x-anthropic-billing-header: 开头的系统文本）会被自动剥离，
+// 仅保留用户实际编写的系统提示词。
 func TestConvertClaudeRequestToCLI_StripsClaudeCodeAttribution(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5",

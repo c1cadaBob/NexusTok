@@ -1,3 +1,8 @@
+// openai - openai_responses_websocket.go
+// 提供 OpenAI Responses API 的 WebSocket 传输层处理器。
+// 支持 response.create 和 response.append 两种请求类型，管理会话状态的累积与合并，
+// 处理增量输入模式、转录替换（compaction）、工具调用修复、auth 销定与故障转移，
+// 以及上游断连事件的监听和日志时间线记录。
 package openai
 
 import (
@@ -25,16 +30,18 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// WebSocket 协议常量定义
 const (
-	wsRequestTypeCreate  = "response.create"
-	wsRequestTypeAppend  = "response.append"
-	wsEventTypeError     = "error"
-	wsEventTypeCompleted = "response.completed"
-	wsDoneMarker         = "[DONE]"
-	wsTurnStateHeader    = "x-codex-turn-state"
-	wsTimelineBodyKey    = "WEBSOCKET_TIMELINE_OVERRIDE"
+	wsRequestTypeCreate  = "response.create"           // 创建新响应请求类型
+	wsRequestTypeAppend  = "response.append"           // 追加输入到已有响应的请求类型
+	wsEventTypeError     = "error"                     // 错误事件类型
+	wsEventTypeCompleted = "response.completed"        // 响应完成事件类型
+	wsDoneMarker         = "[DONE]"                    // 流结束标记
+	wsTurnStateHeader    = "x-codex-turn-state"        // Codex 会话轮次状态头
+	wsTimelineBodyKey    = "WEBSOCKET_TIMELINE_OVERRIDE" // 上下文中存储 WebSocket 时间线日志的键
 )
 
+// responsesWebsocketUpgrader WebSocket 连接升级器，允许所有来源的连接
 var responsesWebsocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
@@ -265,6 +272,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	}
 }
 
+// websocketClientAddress 从 Gin 上下文中获取客户端真实 IP 地址
 func websocketClientAddress(c *gin.Context) string {
 	if c == nil || c.Request == nil {
 		return ""
@@ -272,6 +280,7 @@ func websocketClientAddress(c *gin.Context) string {
 	return strings.TrimSpace(c.ClientIP())
 }
 
+// websocketUpgradeHeaders 构建 WebSocket 升级响应头，保留客户端的会话轮次状态
 func websocketUpgradeHeaders(req *http.Request) http.Header {
 	headers := http.Header{}
 	if req == nil {
@@ -286,10 +295,12 @@ func websocketUpgradeHeaders(req *http.Request) http.Header {
 	return headers
 }
 
+// normalizeResponsesWebsocketRequest 标准化 WebSocket 请求（默认允许增量输入和压缩回放）
 func normalizeResponsesWebsocketRequest(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte) ([]byte, []byte, *interfaces.ErrorMessage) {
 	return normalizeResponsesWebsocketRequestWithMode(rawJSON, lastRequest, lastResponseOutput, true, true)
 }
 
+// normalizeResponsesWebsocketRequestWithMode 标准化 WebSocket 请求，支持增量输入和压缩回放模式切换
 func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool, allowCompactionReplayBypass bool) ([]byte, []byte, *interfaces.ErrorMessage) {
 	requestType := strings.TrimSpace(gjson.GetBytes(rawJSON, "type").String())
 	switch requestType {
@@ -310,6 +321,7 @@ func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []by
 	}
 }
 
+// normalizeResponseCreateRequest 标准化首次 response.create 请求，移除 type 字段并强制 stream=true
 func normalizeResponseCreateRequest(rawJSON []byte) ([]byte, []byte, *interfaces.ErrorMessage) {
 	normalized, errDelete := sjson.DeleteBytes(rawJSON, "type")
 	if errDelete != nil {
@@ -330,6 +342,8 @@ func normalizeResponseCreateRequest(rawJSON []byte) ([]byte, []byte, *interfaces
 	return normalized, bytes.Clone(normalized), nil
 }
 
+// normalizeResponseSubsequentRequest 标准化后续请求（response.create 或 response.append），
+// 合并历史输入和响应输出，处理增量输入模式和转录替换场景
 func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool, allowCompactionReplayBypass bool) ([]byte, []byte, *interfaces.ErrorMessage) {
 	if len(lastRequest) == 0 {
 		return nil, lastRequest, &interfaces.ErrorMessage{
@@ -447,6 +461,8 @@ func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, last
 	return normalized, bytes.Clone(normalized), nil
 }
 
+// shouldReplaceWebsocketTranscript 判断输入是否包含转录替换标记（function_call 或 assistant 消息），
+// 用于检测压缩回放后的状态重置
 func shouldReplaceWebsocketTranscript(rawJSON []byte, nextInput gjson.Result) bool {
 	requestType := strings.TrimSpace(gjson.GetBytes(rawJSON, "type").String())
 	if requestType != wsRequestTypeCreate && requestType != wsRequestTypeAppend {
@@ -474,6 +490,7 @@ func shouldReplaceWebsocketTranscript(rawJSON []byte, nextInput gjson.Result) bo
 	return false
 }
 
+// normalizeResponseTranscriptReplacement 标准化转录替换请求，作为状态重置使用
 func normalizeResponseTranscriptReplacement(rawJSON []byte, lastRequest []byte) []byte {
 	normalized, errDelete := sjson.DeleteBytes(rawJSON, "type")
 	if errDelete != nil {
@@ -496,6 +513,7 @@ func normalizeResponseTranscriptReplacement(rawJSON []byte, lastRequest []byte) 
 	return bytes.Clone(normalized)
 }
 
+// dedupeFunctionCallsByCallID 按 call_id 去重工具调用项，保留每个 call_id 的首次出现
 func dedupeFunctionCallsByCallID(rawArray string) (string, error) {
 	rawArray = strings.TrimSpace(rawArray)
 	if rawArray == "" {
@@ -532,6 +550,7 @@ func dedupeFunctionCallsByCallID(rawArray string) (string, error) {
 	return string(out), nil
 }
 
+// websocketUpstreamSupportsIncrementalInput 检查上游 auth 是否支持 WebSocket 增量输入模式
 func websocketUpstreamSupportsIncrementalInput(attributes map[string]string, metadata map[string]any) bool {
 	if len(attributes) > 0 {
 		if raw := strings.TrimSpace(attributes["websockets"]); raw != "" {
@@ -561,6 +580,7 @@ func websocketUpstreamSupportsIncrementalInput(attributes map[string]string, met
 	return false
 }
 
+// websocketUpstreamSupportsIncrementalInputForModel 检查指定模型的所有可用上游是否支持增量输入
 func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsIncrementalInputForModel(modelName string) bool {
 	auths, _ := h.responsesWebsocketAvailableAuthsForModel(modelName)
 	for _, auth := range auths {
@@ -571,6 +591,7 @@ func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsIncrementalInputFor
 	return false
 }
 
+// websocketUpstreamSupportsCompactionReplayForModel 检查指定模型的所有上游是否都支持压缩回放
 func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsCompactionReplayForModel(modelName string) bool {
 	auths, _ := h.responsesWebsocketAvailableAuthsForModel(modelName)
 	if len(auths) == 0 {
@@ -584,6 +605,7 @@ func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsCompactionReplayFor
 	return true
 }
 
+// responsesWebsocketAvailableAuthsForModel 获取指定模型的可用上游 auth 列表
 func (h *OpenAIResponsesAPIHandler) responsesWebsocketAvailableAuthsForModel(modelName string) ([]*coreauth.Auth, string) {
 	if h == nil || h.AuthManager == nil {
 		return nil, ""
@@ -607,6 +629,7 @@ func (h *OpenAIResponsesAPIHandler) responsesWebsocketAvailableAuthsForModel(mod
 	return available, modelKey
 }
 
+// responsesWebsocketResolvedModelName 解析模型名称，处理 auto 模型别名和思维后缀
 func responsesWebsocketResolvedModelName(modelName string) string {
 	initialSuffix := thinking.ParseSuffix(modelName)
 	if initialSuffix.ModelName == "auto" {
@@ -619,6 +642,7 @@ func responsesWebsocketResolvedModelName(modelName string) string {
 	return util.ResolveAutoModel(modelName)
 }
 
+// responsesWebsocketProviderSetForModel 根据解析后的模型名获取对应的 provider 集合和模型键
 func responsesWebsocketProviderSetForModel(resolvedModelName string) (map[string]struct{}, string) {
 	parsed := thinking.ParseSuffix(resolvedModelName)
 	baseModel := strings.TrimSpace(parsed.ModelName)
@@ -641,6 +665,7 @@ func responsesWebsocketProviderSetForModel(resolvedModelName string) (map[string
 	return providerSet, modelKey
 }
 
+// responsesWebsocketAuthMatchesModel 判断 auth 是否匹配指定的 provider 集合和模型
 func responsesWebsocketAuthMatchesModel(auth *coreauth.Auth, providerSet map[string]struct{}, modelKey string, registryRef *registry.ModelRegistry, now time.Time) bool {
 	if auth == nil {
 		return false
@@ -655,6 +680,7 @@ func responsesWebsocketAuthMatchesModel(auth *coreauth.Auth, providerSet map[str
 	return responsesWebsocketAuthAvailableForModel(auth, modelKey, now)
 }
 
+// responsesWebsocketAuthSupportsCompactionReplay 判断 auth 是否支持压缩回放（仅 codex provider 支持）
 func responsesWebsocketAuthSupportsCompactionReplay(auth *coreauth.Auth) bool {
 	if auth == nil {
 		return false
@@ -662,6 +688,7 @@ func responsesWebsocketAuthSupportsCompactionReplay(auth *coreauth.Auth) bool {
 	return strings.EqualFold(strings.TrimSpace(auth.Provider), "codex")
 }
 
+// responsesWebsocketAuthAvailableForModel 判断 auth 对指定模型是否可用（未禁用、未冷却）
 func responsesWebsocketAuthAvailableForModel(auth *coreauth.Auth, modelName string, now time.Time) bool {
 	if auth == nil {
 		return false
@@ -693,6 +720,7 @@ func responsesWebsocketAuthAvailableForModel(auth *coreauth.Auth, modelName stri
 	return true
 }
 
+// shouldHandleResponsesWebsocketPrewarmLocally 判断是否应在本地处理预热请求（generate=false 且非增量输入模式）
 func shouldHandleResponsesWebsocketPrewarmLocally(rawJSON []byte, lastRequest []byte, allowIncrementalInputWithPreviousResponseID bool) bool {
 	if allowIncrementalInputWithPreviousResponseID || len(lastRequest) != 0 {
 		return false
@@ -704,6 +732,7 @@ func shouldHandleResponsesWebsocketPrewarmLocally(rawJSON []byte, lastRequest []
 	return generateResult.Exists() && !generateResult.Bool()
 }
 
+// writeResponsesWebsocketSyntheticPrewarm 向 WebSocket 客户端写入合成的预热响应（response.created + response.completed）
 func writeResponsesWebsocketSyntheticPrewarm(
 	c *gin.Context,
 	conn *websocket.Conn,
@@ -737,6 +766,7 @@ func writeResponsesWebsocketSyntheticPrewarm(
 	return nil
 }
 
+// syntheticResponsesWebsocketPrewarmPayloads 生成预热响应的 payload（created 和 completed 事件）
 func syntheticResponsesWebsocketPrewarmPayloads(requestJSON []byte) ([][]byte, error) {
 	responseID := "resp_prewarm_" + uuid.NewString()
 	createdAt := time.Now().Unix()
@@ -778,6 +808,7 @@ func syntheticResponsesWebsocketPrewarmPayloads(requestJSON []byte) ([][]byte, e
 	return [][]byte{createdPayload, completedPayload}, nil
 }
 
+// mergeJSONArrayRaw 合并两个 JSON 数组的原始字符串，返回合并后的 JSON 数组字符串
 func mergeJSONArrayRaw(existingRaw, appendRaw string) (string, error) {
 	existingRaw = strings.TrimSpace(existingRaw)
 	appendRaw = strings.TrimSpace(appendRaw)
@@ -841,6 +872,7 @@ func inputWithoutCompactionItems(input gjson.Result) string {
 	return "[" + strings.Join(filtered, ",") + "]"
 }
 
+// normalizeJSONArrayRaw 将原始字节规范化为 JSON 数组字符串，无效输入返回 "[]"
 func normalizeJSONArrayRaw(raw []byte) string {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
@@ -853,6 +885,8 @@ func normalizeJSONArrayRaw(raw []byte) string {
 	return "[]"
 }
 
+// forwardResponsesWebsocket 将上游流式响应转发到 WebSocket 客户端，
+// 处理事件类型识别、工具调用记录、错误写入和连接关闭
 func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 	c *gin.Context,
 	conn *websocket.Conn,
@@ -972,6 +1006,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 	}
 }
 
+// shouldReleaseResponsesWebsocketPinnedAuth 判断是否应释放已销定的 auth（收到 401/402/403/429 错误时）
 func shouldReleaseResponsesWebsocketPinnedAuth(errMsg *interfaces.ErrorMessage) bool {
 	if errMsg == nil {
 		return false
@@ -990,6 +1025,7 @@ func shouldReleaseResponsesWebsocketPinnedAuth(errMsg *interfaces.ErrorMessage) 
 	}
 }
 
+// responseCompletedOutputFromPayload 从 response.completed 事件中提取 output 数组
 func responseCompletedOutputFromPayload(payload []byte) []byte {
 	output := gjson.GetBytes(payload, "response.output")
 	if output.Exists() && output.IsArray() {
@@ -998,6 +1034,7 @@ func responseCompletedOutputFromPayload(payload []byte) []byte {
 	return []byte("[]")
 }
 
+// websocketJSONPayloadsFromChunk 从 WebSocket 响应块中解析出所有有效的 JSON payload（支持 SSE 和纯 JSON 格式）
 func websocketJSONPayloadsFromChunk(chunk []byte) [][]byte {
 	payloads := make([][]byte, 0, 2)
 	lines := bytes.Split(chunk, []byte("\n"))
@@ -1031,6 +1068,7 @@ func websocketJSONPayloadsFromChunk(chunk []byte) [][]byte {
 	return payloads
 }
 
+// writeResponsesWebsocketError 向 WebSocket 客户端写入错误事件响应
 func writeResponsesWebsocketError(conn *websocket.Conn, wsTimelineLog *strings.Builder, errMsg *interfaces.ErrorMessage) ([]byte, error) {
 	status := http.StatusInternalServerError
 	errText := http.StatusText(status)
@@ -1104,6 +1142,7 @@ func writeResponsesWebsocketError(conn *websocket.Conn, wsTimelineLog *strings.B
 	return payload, writeResponsesWebsocketPayload(conn, wsTimelineLog, payload, time.Now())
 }
 
+// appendWebsocketEvent 向构建器追加 WebSocket 事件日志条目
 func appendWebsocketEvent(builder *strings.Builder, eventType string, payload []byte) {
 	if builder == nil {
 		return
@@ -1122,6 +1161,7 @@ func appendWebsocketEvent(builder *strings.Builder, eventType string, payload []
 	builder.WriteString("\n")
 }
 
+// websocketPayloadEventType 从 payload 中提取事件类型字段
 func websocketPayloadEventType(payload []byte) string {
 	eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 	if eventType == "" {
@@ -1130,6 +1170,7 @@ func websocketPayloadEventType(payload []byte) string {
 	return eventType
 }
 
+// websocketPayloadPreview 生成 payload 的单行预览文本（换行符转义）
 func websocketPayloadPreview(payload []byte) string {
 	trimmedPayload := bytes.TrimSpace(payload)
 	if len(trimmedPayload) == 0 {
@@ -1140,10 +1181,12 @@ func websocketPayloadPreview(payload []byte) string {
 	return previewText
 }
 
+// setWebsocketTimelineBody 将 WebSocket 时间线日志存储到 Gin 上下文中
 func setWebsocketTimelineBody(c *gin.Context, body string) {
 	setWebsocketBody(c, wsTimelineBodyKey, body)
 }
 
+// setWebsocketBody 将字节数据存储到 Gin 上下文的指定键中
 func setWebsocketBody(c *gin.Context, key string, body string) {
 	if c == nil {
 		return
@@ -1155,11 +1198,13 @@ func setWebsocketBody(c *gin.Context, key string, body string) {
 	c.Set(key, []byte(trimmedBody))
 }
 
+// writeResponsesWebsocketPayload 向 WebSocket 连接写入 payload 并记录到时间线日志
 func writeResponsesWebsocketPayload(conn *websocket.Conn, wsTimelineLog *strings.Builder, payload []byte, timestamp time.Time) error {
 	appendWebsocketTimelineEvent(wsTimelineLog, "response", payload, timestamp)
 	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
+// appendWebsocketTimelineDisconnect 向时间线日志追加断连事件
 func appendWebsocketTimelineDisconnect(builder *strings.Builder, err error, timestamp time.Time) {
 	if err == nil {
 		return
@@ -1167,6 +1212,7 @@ func appendWebsocketTimelineDisconnect(builder *strings.Builder, err error, time
 	appendWebsocketTimelineEvent(builder, "disconnect", []byte(err.Error()), timestamp)
 }
 
+// appendWebsocketTimelineEvent 向时间线日志追加带时间戳的事件记录
 func appendWebsocketTimelineEvent(builder *strings.Builder, eventType string, payload []byte, timestamp time.Time) {
 	if builder == nil {
 		return
@@ -1188,6 +1234,7 @@ func appendWebsocketTimelineEvent(builder *strings.Builder, eventType string, pa
 	builder.WriteString("\n")
 }
 
+// markAPIResponseTimestamp 在 Gin 上下文中记录首个 API 响应的时间戳（仅首次有效）
 func markAPIResponseTimestamp(c *gin.Context) {
 	if c == nil {
 		return

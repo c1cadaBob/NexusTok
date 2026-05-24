@@ -1,3 +1,12 @@
+// amp - proxy.go
+// Amp 上游反向代理实现。
+// 该模块创建并配置 httputil.ReverseProxy 实例，用于将请求代理到 Amp 上游服务。
+// 主要功能包括：
+//   - 自动注入上游 API 密钥（替换客户端的认证信息）
+//   - 清理代理和浏览器指纹头部
+//   - 移除与客户端密钥匹配的查询参数凭据
+//   - 自动检测并解压未标记 Content-Encoding 的 gzip 响应
+//   - 客户端取消时的静默错误处理
 package amp
 
 import (
@@ -18,6 +27,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// removeQueryValuesMatching 从请求 URL 中移除指定键中值等于 match 的查询参数。
+// 如果移除后该键没有剩余值，则完全删除该键。用于防止客户端凭据泄露到上游。
 func removeQueryValuesMatching(req *http.Request, key string, match string) {
 	if req == nil || req.URL == nil || match == "" {
 		return
@@ -45,18 +56,26 @@ func removeQueryValuesMatching(req *http.Request, key string, match string) {
 	req.URL.RawQuery = q.Encode()
 }
 
-// readCloser wraps a reader and forwards Close to a separate closer.
-// Used to restore peeked bytes while preserving upstream body Close behavior.
+// readCloser 包装一个 reader 和一个独立的 closer。
+// 用于在恢复预读取字节的同时保持原始 body 的 Close 行为。
 type readCloser struct {
-	r io.Reader
-	c io.Closer
+	r io.Reader // 读取器，包含预读取的字节和原始 body
+	c io.Closer // 关闭器，指向原始 body 以确保正确的资源释放
 }
 
+// Read 从包装的读取器中读取数据。
 func (rc *readCloser) Read(p []byte) (int, error) { return rc.r.Read(p) }
-func (rc *readCloser) Close() error               { return rc.c.Close() }
 
-// createReverseProxy creates a reverse proxy handler for Amp upstream
-// with automatic gzip decompression via ModifyResponse
+// Close 关闭原始的 closer。
+func (rc *readCloser) Close() error { return rc.c.Close() }
+
+// createReverseProxy 创建一个用于 Amp 上游的反向代理处理器。
+// 配置内容包括：
+//   - Director: 注入上游 API 密钥，清理客户端认证信息和代理头部
+//   - ModifyResponse: 自动检测并解压未标记的 gzip 响应
+//   - ErrorHandler: 静默处理客户端取消，记录其他代理错误
+//
+// 参数 upstreamURL 为上游服务地址，secretSource 用于获取上游 API 密钥。
 func createReverseProxy(upstreamURL string, secretSource SecretSource) (*httputil.ReverseProxy, error) {
 	parsed, err := url.Parse(upstreamURL)
 	if err != nil {
@@ -202,10 +221,10 @@ func createReverseProxy(upstreamURL string, secretSource SecretSource) (*httputi
 	return proxy, nil
 }
 
-// isStreamingResponse detects if the response is streaming (SSE only)
-// Note: We only treat text/event-stream as streaming. Chunked transfer encoding
-// is a transport-level detail and doesn't mean we can't decompress the full response.
-// Many JSON APIs use chunked encoding for normal responses.
+// isStreamingResponse 检测响应是否为流式响应（仅 SSE）。
+// 注意：仅将 text/event-stream 视为真正的流式响应。
+// 分块传输编码（chunked）是传输层细节，不代表不能解压完整响应。
+// 许多 JSON API 使用分块编码传输普通响应。
 func isStreamingResponse(resp *http.Response) bool {
 	contentType := resp.Header.Get("Content-Type")
 
@@ -217,14 +236,15 @@ func isStreamingResponse(resp *http.Response) bool {
 	return false
 }
 
-// proxyHandler converts httputil.ReverseProxy to gin.HandlerFunc
+// proxyHandler 将 httputil.ReverseProxy 转换为 gin.HandlerFunc。
 func proxyHandler(proxy *httputil.ReverseProxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }
 
-// filterBetaFeatures removes a specific beta feature from comma-separated list
+// filterBetaFeatures 从逗号分隔的 beta 功能列表中移除指定功能。
+// 用于从 Anthropic-Beta 头部中过滤特定的 beta 特性。
 func filterBetaFeatures(header, featureToRemove string) string {
 	features := strings.Split(header, ",")
 	filtered := make([]string, 0, len(features))

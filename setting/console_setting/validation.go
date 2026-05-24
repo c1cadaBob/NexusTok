@@ -1,3 +1,8 @@
+// validation.go — 控制台配置校验与数据获取
+// 职责：对控制台各类面板配置（API 信息、系统公告、FAQ、Uptime Kuma 分组）
+// 进行格式校验、长度校验和安全性检查（防 XSS），并提供数据获取函数。
+// 校验规则包括：必填字段检查、URL 合法性验证、危险内容过滤、长度限制等。
+
 package console_setting
 
 import (
@@ -11,17 +16,27 @@ import (
 )
 
 var (
-	urlRegex       = regexp.MustCompile(`^https?://(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))(?:\:[0-9]{1,5})?(?:/.*)?$`)
+	// urlRegex URL 格式正则，匹配 http/https 协议的合法 URL
+	urlRegex = regexp.MustCompile(`^https?://(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))(?:\:[0-9]{1,5})?(?:/.*)?$`)
+	// dangerousChars 危险内容关键字列表，用于防止 XSS 攻击
 	dangerousChars = []string{"<script", "<iframe", "javascript:", "onload=", "onerror=", "onclick="}
-	validColors    = map[string]bool{
+	// validColors 合法的面板颜色集合
+	validColors = map[string]bool{
 		"blue": true, "green": true, "cyan": true, "purple": true, "pink": true,
 		"red": true, "orange": true, "amber": true, "yellow": true, "lime": true,
 		"light-green": true, "teal": true, "light-blue": true, "indigo": true,
 		"violet": true, "grey": true,
 	}
+	// slugRegex Slug 格式正则，仅允许字母、数字、下划线和连字符
 	slugRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
+// parseJSONArray 将 JSON 字符串解析为 Map 切片
+// 参数：
+//   - jsonStr: JSON 字符串
+//   - typeName: 类型名称，用于错误提示
+//
+// 返回值：解析后的 Map 切片，解析失败时返回错误
 func parseJSONArray(jsonStr string, typeName string) ([]map[string]interface{}, error) {
 	var list []map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &list); err != nil {
@@ -30,6 +45,13 @@ func parseJSONArray(jsonStr string, typeName string) ([]map[string]interface{}, 
 	return list, nil
 }
 
+// validateURL 校验 URL 格式是否合法
+// 参数：
+//   - urlStr: 待校验的 URL 字符串
+//   - index: 条目序号，用于错误提示
+//   - itemType: 条目类型名称，用于错误提示
+//
+// 返回值：校验失败时返回错误
 func validateURL(urlStr string, index int, itemType string) error {
 	if !urlRegex.MatchString(urlStr) {
 		return fmt.Errorf("第%d个%s的URL格式不正确", index, itemType)
@@ -40,6 +62,13 @@ func validateURL(urlStr string, index int, itemType string) error {
 	return nil
 }
 
+// checkDangerousContent 检查内容是否包含危险字符（XSS 防护）
+// 参数：
+//   - content: 待检查的内容字符串
+//   - index: 条目序号，用于错误提示
+//   - itemType: 条目类型名称，用于错误提示
+//
+// 返回值：发现危险内容时返回错误
 func checkDangerousContent(content string, index int, itemType string) error {
 	lower := strings.ToLower(content)
 	for _, d := range dangerousChars {
@@ -50,6 +79,11 @@ func checkDangerousContent(content string, index int, itemType string) error {
 	return nil
 }
 
+// getJSONList 将 JSON 字符串解析为 Map 切片，空字符串返回空切片（不报错）
+// 参数：
+//   - jsonStr: JSON 字符串
+//
+// 返回值：解析后的 Map 切片
 func getJSONList(jsonStr string) []map[string]interface{} {
 	if jsonStr == "" {
 		return []map[string]interface{}{}
@@ -59,6 +93,13 @@ func getJSONList(jsonStr string) []map[string]interface{} {
 	return list
 }
 
+// ValidateConsoleSettings 校验控制台配置的入口函数
+// 根据 settingType 分发到对应的校验函数
+// 参数：
+//   - settingsStr: JSON 格式的配置字符串
+//   - settingType: 配置类型，支持 "ApiInfo"、"Announcements"、"FAQ"、"UptimeKumaGroups"
+//
+// 返回值：校验失败时返回错误
 func ValidateConsoleSettings(settingsStr string, settingType string) error {
 	if settingsStr == "" {
 		return nil
@@ -78,6 +119,12 @@ func ValidateConsoleSettings(settingsStr string, settingType string) error {
 	}
 }
 
+// validateApiInfo 校验 API 信息配置
+// 校验项：必填字段（url/route/description/color）、URL 格式、颜色合法性、长度限制、危险内容
+// 参数：
+//   - apiInfoStr: JSON 格式的 API 信息字符串
+//
+// 返回值：校验失败时返回错误
 func validateApiInfo(apiInfoStr string) error {
 	apiInfoList, err := parseJSONArray(apiInfoStr, "API信息")
 	if err != nil {
@@ -134,10 +181,18 @@ func validateApiInfo(apiInfoStr string) error {
 	return nil
 }
 
+// GetApiInfo 获取 API 信息列表
+// 返回值：API 信息的 Map 切片
 func GetApiInfo() []map[string]interface{} {
 	return getJSONList(GetConsoleSetting().ApiInfo)
 }
 
+// validateAnnouncements 校验系统公告配置
+// 校验项：必填字段（content/publishDate）、发布日期格式（RFC3339）、类型合法性、长度限制
+// 参数：
+//   - announcementsStr: JSON 格式的系统公告字符串
+//
+// 返回值：校验失败时返回错误
 func validateAnnouncements(announcementsStr string) error {
 	list, err := parseJSONArray(announcementsStr, "系统公告")
 	if err != nil {
@@ -211,6 +266,11 @@ func validateFAQ(faqStr string) error {
 	return nil
 }
 
+// getPublishTime 从公告条目中提取发布时间
+// 参数：
+//   - item: 公告条目 Map
+//
+// 返回值：解析出的时间，解析失败返回零值时间
 func getPublishTime(item map[string]interface{}) time.Time {
 	if v, ok := item["publishDate"]; ok {
 		if s, ok2 := v.(string); ok2 {
@@ -222,6 +282,8 @@ func getPublishTime(item map[string]interface{}) time.Time {
 	return time.Time{}
 }
 
+// GetAnnouncements 获取系统公告列表，按发布时间降序排列
+// 返回值：排序后的公告 Map 切片
 func GetAnnouncements() []map[string]interface{} {
 	list := getJSONList(GetConsoleSetting().Announcements)
 	sort.SliceStable(list, func(i, j int) bool {
@@ -230,10 +292,18 @@ func GetAnnouncements() []map[string]interface{} {
 	return list
 }
 
+// GetFAQ 获取常见问题列表
+// 返回值：FAQ 的 Map 切片
 func GetFAQ() []map[string]interface{} {
 	return getJSONList(GetConsoleSetting().FAQ)
 }
 
+// validateUptimeKumaGroups 校验 Uptime Kuma 分组配置
+// 校验项：必填字段（categoryName/url/slug）、分类名称唯一性、URL 格式、Slug 格式、长度限制、危险内容
+// 参数：
+//   - groupsStr: JSON 格式的分组配置字符串
+//
+// 返回值：校验失败时返回错误
 func validateUptimeKumaGroups(groupsStr string) error {
 	groups, err := parseJSONArray(groupsStr, "Uptime Kuma分组配置")
 	if err != nil {
@@ -299,6 +369,8 @@ func validateUptimeKumaGroups(groupsStr string) error {
 	return nil
 }
 
+// GetUptimeKumaGroups 获取 Uptime Kuma 分组列表
+// 返回值：分组配置的 Map 切片
 func GetUptimeKumaGroups() []map[string]interface{} {
 	return getJSONList(GetConsoleSetting().UptimeKumaGroups)
 }

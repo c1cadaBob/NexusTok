@@ -1,9 +1,10 @@
-// Package config provides configuration management for the CLI Proxy API server.
-// It handles loading and parsing YAML configuration files, and provides structured
-// access to application settings including server port, authentication directory,
-// debug settings, proxy configuration, and API keys.
+// Package config - sdk_config.go
+// 定义 SDK 配置结构体，包含代理 URL、图像生成控制、API 密钥和流式传输设置。
 package config
 
+// SDKConfig 表示应用程序的 SDK 配置，从 YAML 文件加载。
+// 包含代理 URL、图像生成控制、API 密钥认证和流式传输行为等设置。
+//
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
@@ -46,14 +47,16 @@ type SDKConfig struct {
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
 }
 
+// StreamingConfig 持有服务器流式传输行为配置。
+// 控制 SSE 心跳频率和引导重试次数。
+//
 // StreamingConfig holds server streaming behavior configuration.
 type StreamingConfig struct {
-	// KeepAliveSeconds controls how often the server emits SSE heartbeats (": keep-alive\n\n").
-	// <= 0 disables keep-alives. Default is 0.
+	// KeepAliveSeconds 控制服务器发送 SSE 心跳的频率（": keep-alive\n\n"）。
+	// 小于等于 0 表示禁用心跳。默认值为 0。
 	KeepAliveSeconds int `yaml:"keepalive-seconds,omitempty" json:"keepalive-seconds,omitempty"`
 
-	// BootstrapRetries controls how many times the server may retry a streaming request before any bytes are sent,
-	// to allow auth rotation / transient recovery.
-	// <= 0 disables bootstrap retries. Default is 0.
+	// BootstrapRetries 控制在发送任何字节之前，服务器可以重试流式请求的次数，
+	// 以便进行认证轮换或瞬态恢复。小于等于 0 表示禁用引导重试。默认值为 0。
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
 }

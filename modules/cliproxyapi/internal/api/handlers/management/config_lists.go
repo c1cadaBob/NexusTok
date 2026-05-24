@@ -1,3 +1,8 @@
+// management - config_lists.go
+// 列表类型配置的通用管理端点。
+// 该模块提供字符串列表配置的 CRUD 操作，包括整体替换（PUT）、
+// 部分修改（PATCH：按索引替换、按值替换、追加、删除）等功能。
+// 支持 API Key 列表、兼容性配置、OAuth 设置、AmpCode 设置等多种列表类型。
 package management
 
 import (
@@ -9,7 +14,9 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
-// Generic helpers for list[string]
+// putStringList 通用的字符串列表整体替换方法。
+// 支持两种请求格式：直接数组或 {"items": [...]} 对象。
+// 替换后调用 after 回调（如有）并持久化配置。
 func (h *Handler) putStringList(c *gin.Context, set func([]string), after func()) {
 	data, err := c.GetRawData()
 	if err != nil {
@@ -34,6 +41,12 @@ func (h *Handler) putStringList(c *gin.Context, set func([]string), after func()
 	h.persist(c)
 }
 
+// patchStringList 通用的字符串列表部分修改方法。
+// 支持以下操作模式：
+//   - 按索引替换：指定 index 和 value
+//   - 按值替换：指定 old 和 new
+//   - 追加：仅指定 new
+//   - 删除：仅指定 old
 func (h *Handler) patchStringList(c *gin.Context, target *[]string, after func()) {
 	var body struct {
 		Old   *string `json:"old"`

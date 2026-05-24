@@ -1,3 +1,6 @@
+// diff - models_summary.go
+// 本文件实现了模型变更摘要的生成功能。
+// 提供模型列表的差异比较和摘要文本生成。
 package diff
 
 import (
@@ -9,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// GeminiModelsSummary 表示 Gemini 模型的摘要信息。
 type GeminiModelsSummary struct {
 	hash  string
 	count int

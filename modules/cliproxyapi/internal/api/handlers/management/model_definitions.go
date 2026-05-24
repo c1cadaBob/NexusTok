@@ -1,3 +1,7 @@
+// management - model_definitions.go
+// 静态模型定义查询端点。
+// 该模块提供按渠道（channel）查询静态模型元数据的接口，
+// 用于管理面板展示各渠道支持的模型列表及其属性。
 package management
 
 import (
@@ -8,8 +12,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
-// GetStaticModelDefinitions returns static model metadata for a given channel.
-// Channel is provided via path param (:channel) or query param (?channel=...).
+// GetStaticModelDefinitions 返回指定渠道的静态模型元数据。
+// 渠道名称可通过路径参数 (:channel) 或查询参数 (?channel=...) 提供。
+// 如果渠道名称为空或未知，返回相应的错误响应。
+// 返回的 JSON 包含渠道名称和模型定义列表。
 func (h *Handler) GetStaticModelDefinitions(c *gin.Context) {
 	channel := strings.TrimSpace(c.Param("channel"))
 	if channel == "" {

@@ -1,3 +1,9 @@
+// auth - types_test.go
+// 认证类型与索引功能测试
+// 验证 Auth 结构体的以下功能：
+// - ToolPrefixDisabled：工具前缀禁用标志的读取
+// - EnsureIndex：基于凭证身份生成稳定的认证索引
+// - RecentRequestsSnapshot：最近请求统计快照的生成
 package auth
 
 import (
@@ -8,6 +14,13 @@ import (
 	"time"
 )
 
+// TestToolPrefixDisabled 验证 ToolPrefixDisabled 方法的各种场景：
+// - nil auth 返回 false
+// - 空 auth 返回 false
+// - 布尔值 true 返回 true
+// - 字符串 "true" 返回 true
+// - kebab-case 键名也支持
+// - 布尔值 false 返回 false
 func TestToolPrefixDisabled(t *testing.T) {
 	var a *Auth
 	if a.ToolPrefixDisabled() {
@@ -40,6 +53,10 @@ func TestToolPrefixDisabled(t *testing.T) {
 	}
 }
 
+// TestEnsureIndexUsesCredentialIdentity 验证认证索引基于凭证身份生成：
+// - 相同 API key 但不同提供商应生成不同索引
+// - 相同提供商/key 但不同 base_url 应生成不同索引
+// - 相同提供商/key 不同 source 应共享索引
 func TestEnsureIndexUsesCredentialIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -103,6 +120,8 @@ func TestEnsureIndexUsesCredentialIdentity(t *testing.T) {
 	}
 }
 
+// TestEnsureIndexUsesOAuthTypeAndAbsolutePath 验证 OAuth 类型的认证索引
+// 使用 OAuth 类型和绝对文件路径作为索引种子。
 func TestEnsureIndexUsesOAuthTypeAndAbsolutePath(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +154,8 @@ func TestEnsureIndexUsesOAuthTypeAndAbsolutePath(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets 验证空认证的
+// 最近请求快照返回 20 个时间桶（每个 10 分钟），所有计数为 0。
 func TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	a := &Auth{}
@@ -163,6 +184,8 @@ func TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotIncludesCounts 验证记录请求后，
+// 快照中正确反映成功和失败的计数。
 func TestRecentRequestsSnapshotIncludesCounts(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	a := &Auth{}
@@ -181,6 +204,8 @@ func TestRecentRequestsSnapshotIncludesCounts(t *testing.T) {
 	}
 }
 
+// TestRecentRequestsSnapshotBucketAdvanceMovesCounts 验证当时间推进到
+// 下一个桶时，请求计数正确地出现在新的桶中，旧桶保持原值。
 func TestRecentRequestsSnapshotBucketAdvanceMovesCounts(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	next := now.Add(10 * time.Minute)

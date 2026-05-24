@@ -1,3 +1,5 @@
+// Package executor - openai_compat_executor.go
+// 实现 OpenAI 兼容执行器，处理使用 OpenAI API 格式的第三方服务商请求。
 package executor
 
 import (

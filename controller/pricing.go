@@ -1,3 +1,16 @@
+// Package controller - pricing.go
+// 该文件实现了定价信息查询和模型倍率重置的 API 控制器
+//
+// 定价信息包括：
+// - 模型列表及价格
+// - 供应商列表
+// - 分组倍率
+// - 可用分组
+// - 支持的端点类型
+//
+// 主要 API：
+// - GetPricing：获取定价信息
+// - ResetModelRatio：重置模型倍率为默认值
 package controller
 
 import (
@@ -9,6 +22,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// filterPricingByUsableGroups 根据用户可用分组过滤定价数据
+//
+// 如果定价项包含 "all" 分组，则所有用户都可见
+// 否则只有在用户可用分组列表中的定价项才可见
 func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
 	if len(pricing) == 0 {
 		return pricing
@@ -33,6 +50,10 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 	return filtered
 }
 
+// GetPricing 获取定价信息
+//
+// 返回用户可见的定价数据、供应商、分组倍率等信息
+// 如果用户已登录，会根据用户的分组过滤定价数据
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
@@ -76,6 +97,9 @@ func GetPricing(c *gin.Context) {
 	})
 }
 
+// ResetModelRatio 重置模型倍率为默认值
+//
+// 将 ModelRatio 配置项重置为系统默认值
 func ResetModelRatio(c *gin.Context) {
 	defaultStr := ratio_setting.DefaultModelRatio2JSONString()
 	err := model.UpdateOption("ModelRatio", defaultStr)

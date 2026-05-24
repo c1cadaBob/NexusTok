@@ -1,3 +1,7 @@
+// auth - scheduler_test.go
+// 该文件包含认证调度器的广泛单元测试，验证 round-robin、fill-first、优先级排序、
+// 冷却机制、混合提供商、账号池组过滤、自定义选择器回退等行为。
+// 同时包含多个测试辅助类型和函数。
 package auth
 
 import (
@@ -12,10 +16,13 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerTestExecutor 是测试用的空执行器实现，所有方法返回空结果。
 type schedulerTestExecutor struct{}
 
+// Identifier 返回测试执行器标识符 "test"。
 func (schedulerTestExecutor) Identifier() string { return "test" }
 
+// Execute 空实现，直接返回空响应。
 func (schedulerTestExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, nil
 }
@@ -36,8 +43,9 @@ func (schedulerTestExecutor) HttpRequest(ctx context.Context, auth *Auth, req *h
 	return nil, nil
 }
 
+// trackingSelector 是测试用的选择器，跟踪选择调用次数和选中的凭据 ID。
 type trackingSelector struct {
-	calls      int
+	calls      int // 调用次数
 	lastAuthID []string
 }
 

@@ -1,3 +1,6 @@
+// xai - xai.go
+// 包 xai 提供 xAI Grok 的 OAuth2 认证辅助功能。
+// 该文件实现了 xAI OAuth 发现、令牌交换和刷新等功能。
 package xai
 
 import (
@@ -16,17 +19,31 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// XAIAuth performs xAI OAuth discovery, token exchange, and refresh.
+// XAIAuth 执行 xAI OAuth 发现、令牌交换和刷新操作。
 type XAIAuth struct {
+	// httpClient 是用于发送 HTTP 请求的客户端
 	httpClient *http.Client
 }
 
-// NewXAIAuth creates an xAI OAuth helper using config proxy settings.
+// NewXAIAuth 使用配置代理设置创建 xAI OAuth 辅助器。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//
+// 返回：
+//   - *XAIAuth: 新的 xAI OAuth 辅助器实例
 func NewXAIAuth(cfg *config.Config) *XAIAuth {
 	return NewXAIAuthWithProxyURL(cfg, "")
 }
 
-// NewXAIAuthWithProxyURL creates an xAI OAuth helper with an explicit proxy URL.
+// NewXAIAuthWithProxyURL 使用显式代理 URL 创建 xAI OAuth 辅助器。
+//
+// 参数：
+//   - cfg: 应用程序配置
+//   - proxyURL: 代理 URL
+//
+// 返回：
+//   - *XAIAuth: 新的 xAI OAuth 辅助器实例
 func NewXAIAuthWithProxyURL(cfg *config.Config, proxyURL string) *XAIAuth {
 	effectiveProxyURL := strings.TrimSpace(proxyURL)
 	var sdkCfg config.SDKConfig
@@ -40,7 +57,16 @@ func NewXAIAuthWithProxyURL(cfg *config.Config, proxyURL string) *XAIAuth {
 	return &XAIAuth{httpClient: util.SetProxy(&sdkCfg, &http.Client{})}
 }
 
-// ValidateOAuthEndpoint validates an endpoint returned by xAI discovery.
+// ValidateOAuthEndpoint 验证 xAI 发现返回的端点。
+// 确保端点使用 HTTPS 协议且主机名属于 x.ai 域。
+//
+// 参数：
+//   - rawURL: 要验证的原始 URL
+//   - field: 字段名称，用于错误消息
+//
+// 返回：
+//   - string: 验证后的 URL
+//   - error: 验证失败时返回的错误
 func ValidateOAuthEndpoint(rawURL string, field string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -60,7 +86,15 @@ func ValidateOAuthEndpoint(rawURL string, field string) (string, error) {
 	return rawURL, nil
 }
 
-// BuildAuthorizeURL builds the browser URL for xAI OAuth.
+// BuildAuthorizeURL 构建 xAI OAuth 的浏览器授权 URL。
+// 包含所有必需的 OAuth 参数，如客户端 ID、重定向 URI、权限范围和 PKCE 挑战码。
+//
+// 参数：
+//   - params: 授权 URL 参数
+//
+// 返回：
+//   - string: 完整的授权 URL
+//   - error: 构建失败时返回的错误
 func BuildAuthorizeURL(params AuthorizeURLParams) (string, error) {
 	endpoint, err := ValidateOAuthEndpoint(params.AuthorizationEndpoint, "authorization_endpoint")
 	if err != nil {
@@ -93,7 +127,15 @@ func BuildAuthorizeURL(params AuthorizeURLParams) (string, error) {
 	return endpoint + "?" + values.Encode(), nil
 }
 
-// Discover resolves xAI OAuth endpoints through OIDC discovery.
+// Discover 通过 OIDC 发现解析 xAI OAuth 端点。
+// 从 xAI 的 OIDC 发现端点获取授权和令牌端点信息。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//
+// 返回：
+//   - *Discovery: 包含 OAuth 端点的发现结果
+//   - error: 发现失败时返回的错误
 func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -137,7 +179,19 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 	return &Discovery{AuthorizationEndpoint: authorizationEndpoint, TokenEndpoint: tokenEndpoint}, nil
 }
 
-// ExchangeCodeForTokens exchanges an authorization code for xAI OAuth tokens.
+// ExchangeCodeForTokens 用授权码交换 xAI OAuth 令牌。
+// 向 xAI 令牌端点发送请求，将授权码和 PKCE 验证器交换为访问令牌。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - code: 从 OAuth 回调获取的授权码
+//   - redirectURI: 重定向 URI
+//   - pkceCodes: PKCE 代码
+//   - tokenEndpoint: 令牌端点 URL
+//
+// 返回：
+//   - *AuthBundle: 认证包
+//   - error: 令牌交换失败时返回的错误
 func (a *XAIAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI string, pkceCodes *PKCECodes, tokenEndpoint string) (*AuthBundle, error) {
 	if pkceCodes == nil {
 		return nil, fmt.Errorf("xai token exchange: PKCE codes are required")
@@ -175,7 +229,17 @@ func (a *XAIAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI s
 	}, nil
 }
 
-// RefreshTokens refreshes an xAI access token.
+// RefreshTokens 刷新 xAI 访问令牌。
+// 使用刷新令牌向 xAI 令牌端点请求新的访问令牌。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - refreshToken: 刷新令牌
+//   - tokenEndpoint: 令牌端点 URL
+//
+// 返回：
+//   - *TokenData: 新的令牌数据
+//   - error: 刷新失败时返回的错误
 func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint string) (*TokenData, error) {
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, fmt.Errorf("xai token refresh: refresh token is required")
@@ -195,6 +259,17 @@ func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint
 	return a.postTokenForm(ctx, tokenEndpoint, form)
 }
 
+// postTokenForm 向令牌端点发送表单 POST 请求。
+// 处理令牌请求的通用逻辑，包括请求创建、响应解析和错误处理。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - tokenEndpoint: 令牌端点 URL
+//   - form: 表单数据
+//
+// 返回：
+//   - *TokenData: 令牌数据
+//   - error: 请求失败时返回的错误
 func (a *XAIAuth) postTokenForm(ctx context.Context, tokenEndpoint string, form url.Values) (*TokenData, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -247,7 +322,13 @@ func (a *XAIAuth) postTokenForm(ctx context.Context, tokenEndpoint string, form 
 	}, nil
 }
 
-// CreateTokenStorage converts an auth bundle into persistable storage.
+// CreateTokenStorage 将认证包转换为可持久化的存储。
+//
+// 参数：
+//   - bundle: 认证包
+//
+// 返回：
+//   - *TokenStorage: 令牌存储实例
 func (a *XAIAuth) CreateTokenStorage(bundle *AuthBundle) *TokenStorage {
 	if bundle == nil {
 		return nil
@@ -270,6 +351,15 @@ func (a *XAIAuth) CreateTokenStorage(bundle *AuthBundle) *TokenStorage {
 	}
 }
 
+// parseJWTIdentity 从 JWT 令牌中解析用户身份信息。
+// 提取电子邮件地址和主题标识符。
+//
+// 参数：
+//   - token: JWT 令牌字符串
+//
+// 返回：
+//   - email: 用户的电子邮件地址
+//   - subject: 用户的主题标识符
 func parseJWTIdentity(token string) (email string, subject string) {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
@@ -294,6 +384,14 @@ func parseJWTIdentity(token string) (email string, subject string) {
 	return email, subject
 }
 
+// firstNonEmpty 返回第一个非空的字符串。
+// 用于在多个可能的值中选择第一个有效的。
+//
+// 参数：
+//   - values: 要检查的字符串列表
+//
+// 返回：
+//   - string: 第一个非空的字符串，如果都为空则返回空字符串
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {

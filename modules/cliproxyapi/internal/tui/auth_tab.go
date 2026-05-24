@@ -1,3 +1,5 @@
+// Package tui - auth_tab.go
+// 实现认证文件管理标签页，提供认证文件的查看、编辑和管理功能。
 package tui
 
 import (
@@ -11,6 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// editableField 表示认证文件上的可编辑字段。
+// 包含字段标签、当前值和输入模型。
+//
 // editableField represents an editable field on an auth file.
 type editableField struct {
 	label string

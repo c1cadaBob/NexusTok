@@ -1,8 +1,10 @@
+// gemini/claude - gemini_claude_request.go
 // Package claude provides request translation functionality for Claude API.
-// It handles parsing and transforming Claude API requests into the internal client format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package also performs JSON data cleaning and transformation to ensure compatibility
-// between Claude API format and the internal client's expected format.
+// 本文件提供 Claude API 请求到 Gemini API 格式的转换功能。
+// 负责解析 Claude API 请求并将其转换为完整的 Gemini CLI 请求体，
+// 包括系统指令转换、消息内容映射（文本/工具调用/工具结果/图片）、
+// 工具声明转换以及思考配置（thinking）到 Gemini thinkingConfig 的映射。
+// 使用 gjson/sjson 进行所有 JSON 数据转换。
 package claude
 
 import (
@@ -16,6 +18,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiClaudeThoughtSignature 是用于跳过思考签名验证的哨兵值。
+// 当 Claude 工具调用没有有效的思考签名时，使用此值绕过验证。
 const geminiClaudeThoughtSignature = "skip_thought_signature_validator"
 
 // ConvertClaudeRequestToGemini parses a Claude API request and returns a complete
@@ -292,6 +296,8 @@ func ConvertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	return result
 }
 
+// toolNameFromClaudeToolUseID 从 Claude 工具使用 ID 中提取工具名称。
+// Claude 工具 ID 格式为 "toolName-counter"，此函数通过移除最后一个连字符后的部分来恢复原始工具名称。
 func toolNameFromClaudeToolUseID(toolUseID string) string {
 	parts := strings.Split(toolUseID, "-")
 	if len(parts) <= 1 {

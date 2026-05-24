@@ -1,3 +1,16 @@
+// Package controller - relay.go
+// 该文件实现了 AI API 中继的核心控制器
+// 负责处理所有 AI API 请求的转发、重试、计费和错误处理
+//
+// 核心流程：
+// 1. 解析和验证请求
+// 2. 生成中继信息（RelayInfo）
+// 3. 敏感词检查（可选）
+// 4. Token 计数和价格计算
+// 5. 预扣费
+// 6. 选择渠道并转发请求
+// 7. 处理响应和结算
+// 8. 错误处理和重试
 package controller
 
 import (
@@ -9,75 +22,131 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	"github.com/c1cada/NexusTok/middleware"
-	"github.com/c1cada/NexusTok/model"
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"
-	"github.com/c1cada/NexusTok/relay"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	relayconstant "github.com/c1cada/NexusTok/relay/constant"
-	"github.com/c1cada/NexusTok/relay/helper"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/setting"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common"                    // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                   // 常量定义
+	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                     // 日志
+	"github.com/c1cada/NexusTok/middleware"                  // 中间件
+	"github.com/c1cada/NexusTok/model"                      // 数据模型
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics" // 性能监控
+	"github.com/c1cada/NexusTok/relay"                      // 中继层
+	relaycommon "github.com/c1cada/NexusTok/relay/common"   // 中继公共包
+	relayconstant "github.com/c1cada/NexusTok/relay/constant" // 中继常量
+	"github.com/c1cada/NexusTok/relay/helper"               // 中继辅助函数
+	"github.com/c1cada/NexusTok/service"                    // 服务层
+	"github.com/c1cada/NexusTok/setting"                    // 设置
+	"github.com/c1cada/NexusTok/setting/operation_setting"  // 运营设置
+	"github.com/c1cada/NexusTok/types"                      // 类型定义
 
-	"github.com/bytedance/gopkg/util/gopool"
-	"github.com/samber/lo"
+	"github.com/bytedance/gopkg/util/gopool"  // 字节跳动协程池
+	"github.com/samber/lo"                     // Go 泛型工具库
 
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/gin-gonic/gin"        // Gin 框架
+	"github.com/gorilla/websocket"    // WebSocket 支持
 )
 
+// relayHandler 中继请求处理器
+// 根据中继模式（RelayMode）分发到不同的处理函数
+//
+// 支持的中继模式：
+// - 图像生成/编辑：ImageHelper
+// - 音频处理：AudioHelper（语音合成、翻译、转录）
+// - 重排序：RerankHelper
+// - 文本嵌入：EmbeddingHelper
+// - Responses API：ResponsesHelper
+// - 默认文本处理：TextHelper（聊天补全、文本补全）
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - *types.NexusTokError: 错误信息，成功返回 nil
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NexusTokError {
 	var err *types.NexusTokError
+
+	// 根据中继模式分发到对应的处理函数
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
+		// 图像生成和编辑
 		err = relay.ImageHelper(c, info)
 	case relayconstant.RelayModeAudioSpeech:
 		fallthrough
 	case relayconstant.RelayModeAudioTranslation:
 		fallthrough
 	case relayconstant.RelayModeAudioTranscription:
+		// 音频处理（语音合成、翻译、转录）
 		err = relay.AudioHelper(c, info)
 	case relayconstant.RelayModeRerank:
+		// 重排序
 		err = relay.RerankHelper(c, info)
 	case relayconstant.RelayModeEmbeddings:
+		// 文本嵌入
 		err = relay.EmbeddingHelper(c, info)
 	case relayconstant.RelayModeResponses, relayconstant.RelayModeResponsesCompact:
+		// Responses API
 		err = relay.ResponsesHelper(c, info)
 	default:
+		// 默认：文本处理（聊天补全、文本补全等）
 		err = relay.TextHelper(c, info)
 	}
+
 	return err
 }
 
+// geminiRelayHandler Gemini 中继请求处理器
+// 根据请求路径判断是嵌入请求还是普通请求
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息
+//
+// 返回值：
+//   - *types.NexusTokError: 错误信息，成功返回 nil
 func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NexusTokError {
 	var err *types.NexusTokError
+
+	// 根据请求路径判断处理类型
 	if strings.Contains(c.Request.URL.Path, "embed") {
+		// Gemini 嵌入请求
 		err = relay.GeminiEmbeddingHandler(c, info)
 	} else {
+		// Gemini 普通请求（聊天、生成等）
 		err = relay.GeminiHelper(c, info)
 	}
+
 	return err
 }
 
+// Relay 主中继入口函数
+// 这是所有 AI API 请求的核心处理函数，负责：
+// 1. WebSocket 升级（如果是 Realtime API）
+// 2. 请求验证和解析
+// 3. 中继信息生成
+// 4. 敏感词检查（可选）
+// 5. Token 计数和价格计算
+// 6. 预扣费
+// 7. 渠道选择和请求转发
+// 8. 重试机制
+// 9. 错误处理和结算
+//
+// 参数：
+//   - c: Gin 上下文
+//   - relayFormat: 中继格式（OpenAI、Claude、Gemini 等）
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
-
+	// 获取请求 ID，用于日志追踪
 	requestId := c.GetString(common.RequestIdKey)
-	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
+	// 错误变量和 WebSocket 连接
 	var (
 		newAPIError *types.NexusTokError
 		ws          *websocket.Conn
 	)
 
+	// 如果是 OpenAI Realtime API，需要升级为 WebSocket 连接
 	if relayFormat == types.RelayFormatOpenAIRealtime {
 		var err error
+		// 升级 HTTP 连接为 WebSocket
 		ws, err = upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			helper.WssError(c, ws, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry()).ToOpenAIError())
@@ -86,19 +155,27 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer ws.Close()
 	}
 
+	// 延迟错误处理：根据不同的中继格式返回对应的错误响应
 	defer func() {
 		if newAPIError != nil {
+			// 记录错误日志
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			// 在错误消息中附加请求 ID
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+
+			// 根据中继格式返回不同格式的错误响应
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
+				// WebSocket 错误
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 			case types.RelayFormatClaude:
+				// Claude 格式错误
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"type":  "error",
 					"error": newAPIError.ToClaudeError(),
 				})
 			default:
+				// OpenAI 格式错误（默认）
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"error": newAPIError.ToOpenAIError(),
 				})
@@ -106,9 +183,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	// ========================================
+	// 步骤 1：获取并验证请求
+	// ========================================
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
-		// Map "request body too large" to 413 so clients can handle it correctly
+		// 请求体过大返回 413
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
 			newAPIError = types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
 		} else {
@@ -117,15 +197,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	// ========================================
+	// 步骤 2：生成中继信息
+	// ========================================
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
 
+	// ========================================
+	// 步骤 3：敏感词检查和 Token 计数
+	// ========================================
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
-	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
+
+	// 优化：如果不需要 token 计数和敏感词检查，使用快速路径避免构建大字符串
 	var meta *types.TokenCountMeta
 	if needSensitiveCheck || needCountToken {
 		meta = request.GetTokenCountMeta()
@@ -133,6 +220,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		meta = fastTokenCountMetaForPricing(request)
 	}
 
+	// 敏感词检查
 	if needSensitiveCheck && meta != nil {
 		contains, words := service.CheckSensitiveText(meta.CombineText)
 		if contains {
@@ -142,33 +230,41 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
+	// ========================================
+	// 步骤 4：Token 计数和价格计算
+	// ========================================
 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 		return
 	}
 
+	// 设置预估的 prompt token 数量
 	relayInfo.SetEstimatePromptTokens(tokens)
 
+	// 获取模型价格信息
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
 
-	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
-
+	// ========================================
+	// 步骤 5：预扣费
+	// ========================================
 	if priceData.FreeModel {
+		// 免费模型跳过预扣费
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 	} else {
+		// 执行预扣费
 		newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
 		if newAPIError != nil {
 			return
 		}
 	}
 
+	// 延迟处理：如果请求失败，退还预扣的配额
 	defer func() {
-		// Only return quota if downstream failed and quota was actually pre-consumed
 		if newAPIError != nil {
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			if relayInfo.Billing != nil {
@@ -178,6 +274,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	// ========================================
+	// 步骤 6：重试机制和请求转发
+	// ========================================
 	retryParam := &service.RetryParam{
 		Ctx:        c,
 		TokenGroup: relayInfo.TokenGroup,
@@ -187,8 +286,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
+	// 重试循环
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
+
+		// 选择渠道
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -196,10 +298,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
+		// 记录使用的渠道
 		addUsedChannel(c, channel.Id)
+
+		// 获取请求体存储
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
-			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
 			} else {
@@ -209,8 +313,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.ReleaseSelectedPoolAccount(c)
 			break
 		}
+		// 重置请求体
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		// 根据中继格式分发到对应的处理函数
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -221,29 +327,38 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+
+		// 释放选中的账号
 		service.ReleaseSelectedChannelAccount(c)
 		service.ReleaseSelectedPoolAccount(c)
 
+		// 请求成功，退出重试循环
 		if newAPIError == nil {
 			relayInfo.LastError = nil
 			return
 		}
 
+		// 规范化违规费用错误
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
+		// 处理渠道错误（禁用渠道、记录日志等）
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
+		// 判断是否应该重试
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
 	}
 
+	// 记录重试日志
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+
+	// 如果请求失败，记录性能指标
 	if newAPIError != nil {
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)

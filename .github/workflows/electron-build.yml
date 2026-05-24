@@ -1,3 +1,17 @@
+# electron-build.yml - Electron 桌面应用构建和发布
+#
+# 触发条件：
+# - 推送正式版本标签（排除预发布标签 *-*、*-alpha*）
+# - 手动触发
+#
+# 功能：
+# - 构建前端和 Go 后端二进制
+# - 打包为 Electron 桌面应用（目前仅支持 Windows）
+# - 上传构建产物到 GitHub Releases
+#
+# 构建产物：
+# - Windows: electron/dist/*.exe
+
 name: Build Electron App
 
 on:

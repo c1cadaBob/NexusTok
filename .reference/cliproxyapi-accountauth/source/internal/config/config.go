@@ -1,7 +1,6 @@
-// Package config provides configuration management for the CLI Proxy API server.
-// It handles loading and parsing YAML configuration files, and provides structured
-// access to application settings including server port, authentication directory,
-// debug settings, proxy configuration, and API keys.
+// 包 config 提供 CLI Proxy API 服务器的配置管理功能。
+// 该文件处理 YAML 配置文件的加载和解析，提供对应用程序设置的结构化访问，
+// 包括服务器端口、认证目录、调试设置、代理配置和 API 密钥等。
 package config
 
 import (
@@ -20,621 +19,649 @@ import (
 )
 
 const (
+	// DefaultPanelGitHubRepository 是管理面板的默认 GitHub 仓库地址
 	DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
-	DefaultPprofAddr             = "127.0.0.1:8316"
-	DefaultAuthDir               = "~/.cli-proxy-api"
+	// DefaultPprofAddr 是 pprof 调试服务器的默认监听地址
+	DefaultPprofAddr = "127.0.0.1:8316"
+	// DefaultAuthDir 是认证令牌文件的默认存储目录
+	DefaultAuthDir = "~/.cli-proxy-api"
 )
 
-// Config represents the application's configuration, loaded from a YAML file.
+// Config 表示应用程序的配置，从 YAML 文件加载。
+// 包含服务器设置、认证配置、调试选项、API 密钥等所有配置项。
 type Config struct {
 	SDKConfig `yaml:",inline"`
-	// Host is the network host/interface on which the API server will bind.
-	// Default is empty ("") to bind all interfaces (IPv4 + IPv6). Use "127.0.0.1" or "localhost" for local-only access.
+	// Host 是 API 服务器绑定的网络主机/接口。
+	// 默认为空（""），绑定所有接口（IPv4 + IPv6）。使用 "127.0.0.1" 或 "localhost" 仅允许本地访问。
 	Host string `yaml:"host" json:"-"`
-	// Port is the network port on which the API server will listen.
+	// Port 是 API 服务器监听的网络端口。
 	Port int `yaml:"port" json:"-"`
 
-	// TLS config controls HTTPS server settings.
+	// TLS 配置控制 HTTPS 服务器设置。
 	TLS TLSConfig `yaml:"tls" json:"tls"`
 
-	// Home config is runtime-only and is populated from -home-jwt.
+	// Home 配置是运行时配置，从 -home-jwt 参数填充。
 	Home HomeConfig `yaml:"-" json:"-"`
 
-	// RemoteManagement nests management-related options under 'remote-management'.
+	// RemoteManagement 嵌套管理相关选项，位于 'remote-management' 配置项下。
 	RemoteManagement RemoteManagement `yaml:"remote-management" json:"-"`
 
-	// AuthDir is the directory where authentication token files are stored.
+	// AuthDir 是认证令牌文件的存储目录。
 	AuthDir string `yaml:"auth-dir" json:"-"`
 
-	// Debug enables or disables debug-level logging and other debug features.
+	// Debug 启用或禁用调试级别日志和其他调试功能。
 	Debug bool `yaml:"debug" json:"debug"`
 
-	// Pprof config controls the optional pprof HTTP debug server.
+	// Pprof 配置控制可选的 pprof HTTP 调试服务器。
 	Pprof PprofConfig `yaml:"pprof" json:"pprof"`
 
-	// CommercialMode disables high-overhead HTTP middleware features to minimize per-request memory usage.
+	// CommercialMode 禁用高开销的 HTTP 中间件功能，以最小化每请求内存使用。
 	CommercialMode bool `yaml:"commercial-mode" json:"commercial-mode"`
 
-	// LoggingToFile controls whether application logs are written to rotating files or stdout.
+	// LoggingToFile 控制应用程序日志是写入轮转文件还是标准输出。
 	LoggingToFile bool `yaml:"logging-to-file" json:"logging-to-file"`
 
-	// LogsMaxTotalSizeMB limits the total size (in MB) of log files under the logs directory.
-	// When exceeded, the oldest log files are deleted until within the limit. Set to 0 to disable.
+	// LogsMaxTotalSizeMB 限制日志目录下日志文件的总大小（MB）。
+	// 超出限制时，最旧的日志文件将被删除，直到在限制范围内。设置为 0 禁用。
 	LogsMaxTotalSizeMB int `yaml:"logs-max-total-size-mb" json:"logs-max-total-size-mb"`
 
-	// ErrorLogsMaxFiles limits the number of error log files retained when request logging is disabled.
-	// When exceeded, the oldest error log files are deleted. Default is 10. Set to 0 to disable cleanup.
+	// ErrorLogsMaxFiles 限制在禁用请求日志时保留的错误日志文件数量。
+	// 超出限制时，最旧的错误日志文件将被删除。默认为 10。设置为 0 禁用清理。
 	ErrorLogsMaxFiles int `yaml:"error-logs-max-files" json:"error-logs-max-files"`
 
-	// UsageStatisticsEnabled toggles in-memory usage aggregation; when false, usage data is discarded.
+	// UsageStatisticsEnabled 切换内存中的使用量聚合；为 false 时，使用数据将被丢弃。
 	UsageStatisticsEnabled bool `yaml:"usage-statistics-enabled" json:"usage-statistics-enabled"`
 
-	// RedisUsageQueueRetentionSeconds controls how long usage queue items are retained
-	// in memory for Management API consumers.
-	// Default: 60. Max: 3600.
+	// RedisUsageQueueRetentionSeconds 控制使用量队列项在内存中保留的时间
+	// 用于 Management API 消费者。
+	// 默认：60。最大：3600。
 	RedisUsageQueueRetentionSeconds int `yaml:"redis-usage-queue-retention-seconds" json:"redis-usage-queue-retention-seconds"`
 
-	// DisableCooling disables quota cooldown scheduling when true.
+	// DisableCooling 为 true 时禁用配额冷却调度。
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
 
-	// AuthAutoRefreshWorkers overrides the size of the core auth auto-refresh worker pool.
-	// When <= 0, the default worker count is used.
+	// AuthAutoRefreshWorkers 覆盖核心认证自动刷新工作池的大小。
+	// 当 <= 0 时，使用默认工作线程数。
 	AuthAutoRefreshWorkers int `yaml:"auth-auto-refresh-workers" json:"auth-auto-refresh-workers"`
 
-	// RequestRetry defines the retry times when the request failed.
+	// RequestRetry 定义请求失败时的重试次数。
 	RequestRetry int `yaml:"request-retry" json:"request-retry"`
-	// MaxRetryCredentials defines the maximum number of credentials to try for a failed request.
-	// Set to 0 or a negative value to keep trying all available credentials (legacy behavior).
+	// MaxRetryCredentials 定义失败请求尝试的最大凭证数量。
+	// 设置为 0 或负值将保持尝试所有可用凭证（旧行为）。
 	MaxRetryCredentials int `yaml:"max-retry-credentials" json:"max-retry-credentials"`
-	// MaxRetryInterval defines the maximum wait time in seconds before retrying a cooled-down credential.
+	// MaxRetryInterval 定义重试冷却凭证前的最大等待时间（秒）。
 	MaxRetryInterval int `yaml:"max-retry-interval" json:"max-retry-interval"`
 
-	// QuotaExceeded defines the behavior when a quota is exceeded.
+	// QuotaExceeded 定义配额超出时的行为。
 	QuotaExceeded QuotaExceeded `yaml:"quota-exceeded" json:"quota-exceeded"`
 
-	// Routing controls credential selection behavior.
+	// Routing 控制凭证选择行为。
 	Routing RoutingConfig `yaml:"routing" json:"routing"`
 
-	// WebsocketAuth enables or disables authentication for the WebSocket API.
+	// WebsocketAuth 启用或禁用 WebSocket API 的认证。
 	WebsocketAuth bool `yaml:"ws-auth" json:"ws-auth"`
 
-	// AntigravitySignatureCacheEnabled controls whether signature cache validation is enabled for thinking blocks.
-	// When true (default), cached signatures are preferred and validated.
-	// When false, client signatures are used directly after normalization (bypass mode).
+	// AntigravitySignatureCacheEnabled 控制是否为 thinking 块启用签名缓存验证。
+	// 为 true（默认）时，优先使用和验证缓存的签名。
+	// 为 false 时，规范化后直接使用客户端签名（旁路模式）。
 	AntigravitySignatureCacheEnabled *bool `yaml:"antigravity-signature-cache-enabled,omitempty" json:"antigravity-signature-cache-enabled,omitempty"`
 
+	// AntigravitySignatureBypassStrict 控制签名旁路模式的严格程度
 	AntigravitySignatureBypassStrict *bool `yaml:"antigravity-signature-bypass-strict,omitempty" json:"antigravity-signature-bypass-strict,omitempty"`
 
-	// GeminiKey defines Gemini API key configurations with optional routing overrides.
+	// GeminiKey 定义 Gemini API 密钥配置，可选路由覆盖。
 	GeminiKey []GeminiKey `yaml:"gemini-api-key" json:"gemini-api-key"`
 
-	// Codex defines a list of Codex API key configurations as specified in the YAML configuration file.
+	// CodexKey 定义 YAML 配置文件中指定的 Codex API 密钥配置列表。
 	CodexKey []CodexKey `yaml:"codex-api-key" json:"codex-api-key"`
 
-	// CodexHeaderDefaults configures fallback headers for Codex OAuth model requests.
-	// These are used only when the client does not send its own headers.
+	// CodexHeaderDefaults 配置 Codex OAuth 模型请求的回退头。
+	// 仅在客户端未发送自己的头时使用。
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`
 
-	// ClaudeKey defines a list of Claude API key configurations as specified in the YAML configuration file.
+	// ClaudeKey 定义 YAML 配置文件中指定的 Claude API 密钥配置列表。
 	ClaudeKey []ClaudeKey `yaml:"claude-api-key" json:"claude-api-key"`
 
-	// ClaudeHeaderDefaults configures default header values for Claude API requests.
-	// These are used as fallbacks when the client does not send its own headers.
+	// ClaudeHeaderDefaults 配置 Claude API 请求的默认头值。
+	// 在客户端未发送自己的头时作为回退使用。
 	ClaudeHeaderDefaults ClaudeHeaderDefaults `yaml:"claude-header-defaults" json:"claude-header-defaults"`
 
-	// OpenAICompatibility defines OpenAI API compatibility configurations for external providers.
+	// OpenAICompatibility 定义外部提供商的 OpenAI API 兼容配置。
 	OpenAICompatibility []OpenAICompatibility `yaml:"openai-compatibility" json:"openai-compatibility"`
 
-	// VertexCompatAPIKey defines Vertex AI-compatible API key configurations for third-party providers.
-	// Used for services that use Vertex AI-style paths but with simple API key authentication.
+	// VertexCompatAPIKey 定义第三方提供商的 Vertex AI 兼容 API 密钥配置。
+	// 用于使用 Vertex AI 风格路径但使用简单 API 密钥认证的服务。
 	VertexCompatAPIKey []VertexCompatKey `yaml:"vertex-api-key" json:"vertex-api-key"`
 
-	// AmpCode contains Amp CLI upstream configuration, management restrictions, and model mappings.
+	// AmpCode 包含 Amp CLI 上游配置、管理限制和模型映射。
 	AmpCode AmpCode `yaml:"ampcode" json:"ampcode"`
 
-	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
+	// OAuthExcludedModels 定义应用于 OAuth/文件认证条目的按提供商的全局模型排除。
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
 
-	// OAuthModelAlias defines global model name aliases for OAuth/file-backed auth channels.
-	// These aliases affect both model listing and model routing for supported channels:
-	// gemini-cli, vertex, aistudio, antigravity, claude, codex, kimi, xai.
+	// OAuthModelAlias 定义 OAuth/文件认证渠道的全局模型名称别名。
+	// 这些别名影响支持渠道的模型列表和模型路由：
+	// gemini-cli, vertex, aistudio, antigravity, claude, codex, kimi, xai。
 	//
-	// NOTE: This does not apply to existing per-credential model alias features under:
-	// gemini-api-key, codex-api-key, claude-api-key, openai-compatibility, vertex-api-key, and ampcode.
+	// 注意：这不适用于以下已有的每凭证模型别名功能：
+	// gemini-api-key, codex-api-key, claude-api-key, openai-compatibility, vertex-api-key, 和 ampcode。
 	OAuthModelAlias map[string][]OAuthModelAlias `yaml:"oauth-model-alias,omitempty" json:"oauth-model-alias,omitempty"`
 
-	// Payload defines default and override rules for provider payload parameters.
+	// Payload 定义提供商有效负载参数的默认值和覆盖规则。
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
+	// legacyMigrationPending 标记是否有待处理的旧版迁移
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
-// ClaudeHeaderDefaults configures default header values injected into Claude API requests.
-// In legacy mode, UserAgent/PackageVersion/RuntimeVersion/Timeout act as fallbacks when
-// the client omits them, while OS/Arch remain runtime-derived. When stabilized device
-// profiles are enabled, OS/Arch become the pinned platform baseline, while
-// UserAgent/PackageVersion/RuntimeVersion seed the upgradeable software fingerprint.
+// ClaudeHeaderDefaults 配置注入到 Claude API 请求中的默认头值。
+// 在传统模式下，UserAgent/PackageVersion/RuntimeVersion/Timeout 在客户端省略时作为回退，
+// 而 OS/Arch 保持运行时派生。当启用稳定设备配置文件时，OS/Arch 成为固定的平台基线，
+// 而 UserAgent/PackageVersion/RuntimeVersion 作为可升级的软件指纹种子。
 type ClaudeHeaderDefaults struct {
-	UserAgent              string `yaml:"user-agent" json:"user-agent"`
-	PackageVersion         string `yaml:"package-version" json:"package-version"`
-	RuntimeVersion         string `yaml:"runtime-version" json:"runtime-version"`
-	OS                     string `yaml:"os" json:"os"`
-	Arch                   string `yaml:"arch" json:"arch"`
-	Timeout                string `yaml:"timeout" json:"timeout"`
-	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
+	// UserAgent 是 HTTP User-Agent 头的默认值
+	UserAgent string `yaml:"user-agent" json:"user-agent"`
+	// PackageVersion 是 Claude 包版本的默认值
+	PackageVersion string `yaml:"package-version" json:"package-version"`
+	// RuntimeVersion 是运行时版本的默认值
+	RuntimeVersion string `yaml:"runtime-version" json:"runtime-version"`
+	// OS 是操作系统标识的默认值
+	OS string `yaml:"os" json:"os"`
+	// Arch 是架构标识的默认值
+	Arch string `yaml:"arch" json:"arch"`
+	// Timeout 是超时值的默认值
+	Timeout string `yaml:"timeout" json:"timeout"`
+	// StabilizeDeviceProfile 启用稳定设备配置文件模式
+	StabilizeDeviceProfile *bool `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
 }
 
-// CodexHeaderDefaults configures fallback header values injected into Codex
-// model requests for OAuth/file-backed auth when the client omits them.
-// UserAgent applies to HTTP and websocket requests; BetaFeatures only applies to websockets.
+// CodexHeaderDefaults 配置注入到 Codex 模型请求中的回退头值，
+// 用于 OAuth/文件认证，当客户端省略时使用。
+// UserAgent 适用于 HTTP 和 websocket 请求；BetaFeatures 仅适用于 websocket。
 type CodexHeaderDefaults struct {
-	UserAgent    string `yaml:"user-agent" json:"user-agent"`
+	// UserAgent 是 HTTP User-Agent 头的默认值
+	UserAgent string `yaml:"user-agent" json:"user-agent"`
+	// BetaFeatures 是 websocket Beta 特性头的默认值
 	BetaFeatures string `yaml:"beta-features" json:"beta-features"`
 }
 
-// TLSConfig holds HTTPS server settings.
+// TLSConfig 保存 HTTPS 服务器设置。
 type TLSConfig struct {
-	// Enable toggles HTTPS server mode.
+	// Enable 切换 HTTPS 服务器模式
 	Enable bool `yaml:"enable" json:"enable"`
-	// Cert is the path to the TLS certificate file.
+	// Cert 是 TLS 证书文件的路径
 	Cert string `yaml:"cert" json:"cert"`
-	// Key is the path to the TLS private key file.
+	// Key 是 TLS 私钥文件的路径
 	Key string `yaml:"key" json:"key"`
 }
 
-// PprofConfig holds pprof HTTP server settings.
+// PprofConfig 保存 pprof HTTP 服务器设置。
 type PprofConfig struct {
-	// Enable toggles the pprof HTTP debug server.
+	// Enable 切换 pprof HTTP 调试服务器
 	Enable bool `yaml:"enable" json:"enable"`
-	// Addr is the host:port address for the pprof HTTP server.
+	// Addr 是 pprof HTTP 服务器的 host:port 地址
 	Addr string `yaml:"addr" json:"addr"`
 }
 
-// RemoteManagement holds management API configuration under 'remote-management'.
+// RemoteManagement 保存 'remote-management' 下的管理 API 配置。
 type RemoteManagement struct {
-	// AllowRemote toggles remote (non-localhost) access to management API.
+	// AllowRemote 切换管理 API 的远程（非 localhost）访问
 	AllowRemote bool `yaml:"allow-remote"`
-	// SecretKey is the management key (plaintext or bcrypt hashed). YAML key intentionally 'secret-key'.
+	// SecretKey 是管理密钥（明文或 bcrypt 哈希）。YAML 键名故意为 'secret-key'。
 	SecretKey string `yaml:"secret-key"`
-	// DisableControlPanel skips serving and syncing the bundled management UI when true.
+	// DisableControlPanel 为 true 时跳过提供和同步捆绑的管理 UI。
 	DisableControlPanel bool `yaml:"disable-control-panel"`
-	// DisableAutoUpdatePanel disables automatic periodic background updates of the management panel asset from GitHub.
-	// When false (the default), the background updater remains enabled; when true, the panel is only downloaded on first access if missing.
+	// DisableAutoUpdatePanel 禁用管理面板资源的自动定期后台更新。
+	// 为 false（默认）时，后台更新器保持启用；为 true 时，面板仅在首次访问缺失时下载。
 	DisableAutoUpdatePanel bool `yaml:"disable-auto-update-panel"`
-	// PanelGitHubRepository overrides the GitHub repository used to fetch the management panel asset.
-	// Accepts either a repository URL (https://github.com/org/repo) or an API releases endpoint.
+	// PanelGitHubRepository 覆盖用于获取管理面板资源的 GitHub 仓库。
+	// 接受仓库 URL（https://github.com/org/repo）或 API releases 端点。
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
 }
 
-// QuotaExceeded defines the behavior when API quota limits are exceeded.
-// It provides configuration options for automatic failover mechanisms.
+// QuotaExceeded 定义 API 配额限制超出时的行为。
+// 提供自动故障转移机制的配置选项。
 type QuotaExceeded struct {
-	// SwitchProject indicates whether to automatically switch to another project when a quota is exceeded.
+	// SwitchProject 指示配额超出时是否自动切换到另一个项目
 	SwitchProject bool `yaml:"switch-project" json:"switch-project"`
 
-	// SwitchPreviewModel indicates whether to automatically switch to a preview model when a quota is exceeded.
+	// SwitchPreviewModel 指示配额超出时是否自动切换到预览模型
 	SwitchPreviewModel bool `yaml:"switch-preview-model" json:"switch-preview-model"`
 
-	// AntigravityCredits enables credits-based last-resort fallback for Claude models.
-	// When all free-tier auths are exhausted (429/503), the conductor retries with
-	// an auth that has available Google One AI credits.
+	// AntigravityCredits 启用基于积分的最后手段回退，用于 Claude 模型。
+	// 当所有免费层认证用尽（429/503）时，编排器使用具有可用 Google One AI 积分的认证重试。
 	AntigravityCredits bool `yaml:"antigravity-credits" json:"antigravity-credits"`
 }
 
-// RoutingConfig configures how credentials are selected for requests.
+// RoutingConfig 配置如何为请求选择凭证。
 type RoutingConfig struct {
-	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "fill-first".
+	// Strategy 选择凭证选择策略。
+	// 支持的值："round-robin"（默认），"fill-first"。
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
 
-	// SessionAffinity enables universal session-sticky routing for all clients.
-	// Session IDs are extracted from multiple sources:
-	// metadata.user_id (Claude Code session format), X-Session-ID, Session_id (Codex),
-	// X-Amp-Thread-Id (Amp CLI thread), X-Client-Request-Id (PI), metadata.user_id,
-	// conversation_id, or message hash.
-	// Automatic failover is always enabled when bound auth becomes unavailable.
+	// SessionAffinity 为所有客户端启用通用会话粘性路由。
+	// 会话 ID 从多个来源提取：
+	// metadata.user_id（Claude Code 会话格式），X-Session-ID，Session_id（Codex），
+	// X-Amp-Thread-Id（Amp CLI 线程），X-Client-Request-Id（PI），metadata.user_id，
+	// conversation_id 或消息哈希。
+	// 当绑定的认证不可用时，自动故障转移始终启用。
 	SessionAffinity bool `yaml:"session-affinity,omitempty" json:"session-affinity,omitempty"`
 
-	// SessionAffinityTTL specifies how long session-to-auth bindings are retained.
-	// Default: 1h. Accepts duration strings like "30m", "1h", "2h30m".
+	// SessionAffinityTTL 指定会话到认证绑定的保留时间。
+	// 默认：1h。接受持续时间字符串如 "30m"、"1h"、"2h30m"。
 	SessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
 }
 
-// OAuthModelAlias defines a model ID alias for a specific channel.
-// It maps the upstream model name (Name) to the client-visible alias (Alias).
-// When Fork is true, the alias is added as an additional model in listings while
-// keeping the original model ID available.
+// OAuthModelAlias 定义特定渠道的模型 ID 别名。
+// 将上游模型名称（Name）映射到客户端可见的别名（Alias）。
+// 当 Fork 为 true 时，别名作为附加模型添加到列表中，同时保持原始模型 ID 可用。
 type OAuthModelAlias struct {
-	Name  string `yaml:"name" json:"name"`
+	// Name 是上游模型名称
+	Name string `yaml:"name" json:"name"`
+	// Alias 是客户端可见的别名
 	Alias string `yaml:"alias" json:"alias"`
-	Fork  bool   `yaml:"fork,omitempty" json:"fork,omitempty"`
+	// Fork 指示是否保留原始模型 ID
+	Fork bool `yaml:"fork,omitempty" json:"fork,omitempty"`
 }
 
-// AmpModelMapping defines a model name mapping for Amp CLI requests.
-// When Amp requests a model that isn't available locally, this mapping
-// allows routing to an alternative model that IS available.
+// AmpModelMapping 定义 Amp CLI 请求的模型名称映射。
+// 当 Amp 请求本地不可用的模型时，此映射允许路由到可用的替代模型。
 type AmpModelMapping struct {
-	// From is the model name that Amp CLI requests (e.g., "claude-opus-4.5").
+	// From 是 Amp CLI 请求的模型名称（如 "claude-opus-4.5"）
 	From string `yaml:"from" json:"from"`
 
-	// To is the target model name to route to (e.g., "claude-sonnet-4").
-	// The target model must have available providers in the registry.
+	// To 是要路由到的目标模型名称（如 "claude-sonnet-4"）。
+	// 目标模型必须在注册表中有可用的提供商。
 	To string `yaml:"to" json:"to"`
 
-	// Regex indicates whether the 'from' field should be interpreted as a regular
-	// expression for matching model names. When true, this mapping is evaluated
-	// after exact matches and in the order provided. Defaults to false (exact match).
+	// Regex 指示 'from' 字段是否应被解释为用于匹配模型名称的正则表达式。
+	// 为 true 时，此映射在精确匹配之后按提供的顺序评估。默认为 false（精确匹配）。
 	Regex bool `yaml:"regex,omitempty" json:"regex,omitempty"`
 }
 
-// AmpCode groups Amp CLI integration settings including upstream routing,
-// optional overrides, management route restrictions, and model fallback mappings.
+// AmpCode 将 Amp CLI 集成设置分组，包括上游路由、可选覆盖、管理路由限制和模型回退映射。
 type AmpCode struct {
-	// UpstreamURL defines the upstream Amp control plane used for non-provider calls.
+	// UpstreamURL 定义用于非提供商调用的上游 Amp 控制平面
 	UpstreamURL string `yaml:"upstream-url" json:"upstream-url"`
 
-	// UpstreamAPIKey optionally overrides the Authorization header when proxying Amp upstream calls.
+	// UpstreamAPIKey 可选地在代理 Amp 上游调用时覆盖 Authorization 头
 	UpstreamAPIKey string `yaml:"upstream-api-key" json:"upstream-api-key"`
 
-	// UpstreamAPIKeys maps client API keys (from top-level api-keys) to upstream API keys.
-	// When a request is authenticated with one of the APIKeys, the corresponding UpstreamAPIKey
-	// is used for the upstream Amp request.
+	// UpstreamAPIKeys 将客户端 API 密钥（来自顶级 api-keys）映射到上游 API 密钥。
+	// 当请求使用其中一个 APIKeys 认证时，对应的 UpstreamAPIKey 用于上游 Amp 请求。
 	UpstreamAPIKeys []AmpUpstreamAPIKeyEntry `yaml:"upstream-api-keys,omitempty" json:"upstream-api-keys,omitempty"`
 
-	// RestrictManagementToLocalhost restricts Amp management routes (/api/user, /api/threads, etc.)
-	// to only accept connections from localhost (127.0.0.1, ::1). When true, prevents drive-by
-	// browser attacks and remote access to management endpoints. Default: false (API key auth is sufficient).
+	// RestrictManagementToLocalhost 将 Amp 管理路由（/api/user、/api/threads 等）
+	// 限制为仅接受来自 localhost（127.0.0.1、::1）的连接。为 true 时，防止浏览器攻击
+	// 和远程访问管理端点。默认：false（API 密钥认证已足够）。
 	RestrictManagementToLocalhost bool `yaml:"restrict-management-to-localhost" json:"restrict-management-to-localhost"`
 
-	// ModelMappings defines model name mappings for Amp CLI requests.
-	// When Amp requests a model that isn't available locally, these mappings
-	// allow routing to an alternative model that IS available.
+	// ModelMappings 定义 Amp CLI 请求的模型名称映射。
+	// 当 Amp 请求本地不可用的模型时，这些映射允许路由到可用的替代模型。
 	ModelMappings []AmpModelMapping `yaml:"model-mappings" json:"model-mappings"`
 
-	// ForceModelMappings when true, model mappings take precedence over local API keys.
-	// When false (default), local API keys are used first if available.
+	// ForceModelMappings 为 true 时，模型映射优先于本地 API 密钥。
+	// 为 false（默认）时，如果可用，优先使用本地 API 密钥。
 	ForceModelMappings bool `yaml:"force-model-mappings" json:"force-model-mappings"`
 }
 
-// AmpUpstreamAPIKeyEntry maps a set of client API keys to a specific upstream API key.
-// When a request is authenticated with one of the APIKeys, the corresponding UpstreamAPIKey
-// is used for the upstream Amp request.
+// AmpUpstreamAPIKeyEntry 将一组客户端 API 密钥映射到特定的上游 API 密钥。
+// 当请求使用其中一个 APIKeys 认证时，对应的 UpstreamAPIKey 用于上游 Amp 请求。
 type AmpUpstreamAPIKeyEntry struct {
-	// UpstreamAPIKey is the API key to use when proxying to the Amp upstream.
+	// UpstreamAPIKey 是代理到上游 Amp 时使用的 API 密钥
 	UpstreamAPIKey string `yaml:"upstream-api-key" json:"upstream-api-key"`
 
-	// APIKeys are the client API keys (from top-level api-keys) that map to this upstream key.
+	// APIKeys 是映射到此上游密钥的客户端 API 密钥（来自顶级 api-keys）
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 }
 
-// PayloadConfig defines default and override parameter rules applied to provider payloads.
+// PayloadConfig 定义应用于提供商有效负载的默认值和覆盖参数规则。
 type PayloadConfig struct {
-	// Default defines rules that only set parameters when they are missing in the payload.
+	// Default 定义仅在参数缺失时设置的规则
 	Default []PayloadRule `yaml:"default" json:"default"`
-	// DefaultRaw defines rules that set raw JSON values only when they are missing.
+	// DefaultRaw 定义仅在缺失时设置原始 JSON 值的规则
 	DefaultRaw []PayloadRule `yaml:"default-raw" json:"default-raw"`
-	// Override defines rules that always set parameters, overwriting any existing values.
+	// Override 定义始终设置参数的规则，覆盖任何现有值
 	Override []PayloadRule `yaml:"override" json:"override"`
-	// OverrideRaw defines rules that always set raw JSON values, overwriting any existing values.
+	// OverrideRaw 定义始终设置原始 JSON 值的规则，覆盖任何现有值
 	OverrideRaw []PayloadRule `yaml:"override-raw" json:"override-raw"`
-	// Filter defines rules that remove parameters from the payload by JSON path.
+	// Filter 定义通过 JSON 路径从有效负载中移除参数的规则
 	Filter []PayloadFilterRule `yaml:"filter" json:"filter"`
 }
 
-// PayloadFilterRule describes a rule to remove specific JSON paths from matching model payloads.
+// PayloadFilterRule 描述从匹配的模型有效负载中移除特定 JSON 路径的规则。
 type PayloadFilterRule struct {
-	// Models lists model entries with name pattern and protocol constraint.
+	// Models 列出带有名称模式和协议约束的模型条目
 	Models []PayloadModelRule `yaml:"models" json:"models"`
-	// Params lists JSON paths (gjson/sjson syntax) to remove from the payload.
+	// Params 列出要从有效负载中移除的 JSON 路径（gjson/sjson 语法）
 	Params []string `yaml:"params" json:"params"`
 }
 
-// PayloadRule describes a single rule targeting a list of models with parameter updates.
+// PayloadRule 描述针对模型列表的单个参数更新规则。
 type PayloadRule struct {
-	// Models lists model entries with name pattern and protocol constraint.
+	// Models 列出带有名称模式和协议约束的模型条目
 	Models []PayloadModelRule `yaml:"models" json:"models"`
-	// Params maps JSON paths (gjson/sjson syntax) to values written into the payload.
-	// For *-raw rules, values are treated as raw JSON fragments (strings are used as-is).
+	// Params 将 JSON 路径（gjson/sjson 语法）映射到写入有效负载的值。
+	// 对于 *-raw 规则，值被视为原始 JSON 片段（字符串按原样使用）。
 	Params map[string]any `yaml:"params" json:"params"`
 }
 
-// PayloadModelRule ties a model name pattern to a specific translator protocol.
+// PayloadModelRule 将模型名称模式绑定到特定的翻译器协议。
 type PayloadModelRule struct {
-	// Name is the model name or wildcard pattern (e.g., "gpt-*", "*-5", "gemini-*-pro").
+	// Name 是模型名称或通配符模式（如 "gpt-*"、"*-5"、"gemini-*-pro"）
 	Name string `yaml:"name" json:"name"`
-	// Protocol restricts the rule to a specific translator format (e.g., "gemini", "responses").
+	// Protocol 将规则限制为特定的翻译器格式（如 "gemini"、"responses"）
 	Protocol string `yaml:"protocol" json:"protocol"`
-	// Headers restricts the rule to requests whose headers match all configured wildcard patterns.
+	// Headers 将规则限制为请求头匹配所有配置的通配符模式的请求
 	Headers map[string]string `yaml:"headers" json:"headers"`
-	// FromProtocol restricts the rule to a specific source protocol (e.g., "gemini", "responses").
+	// FromProtocol 将规则限制为特定的源协议（如 "gemini"、"responses"）
 	FromProtocol string `yaml:"from-protocol" json:"from-protocol"`
-	// Match requires payload JSON paths to equal the configured values.
+	// Match 要求有效负载 JSON 路径等于配置的值
 	Match []map[string]any `yaml:"match" json:"match"`
-	// NotMatch requires payload JSON paths to not equal the configured values.
+	// NotMatch 要求有效负载 JSON 路径不等于配置的值
 	NotMatch []map[string]any `yaml:"not-match" json:"not-match"`
-	// Exist requires payload JSON paths to exist and not be null.
+	// Exist 要求有效负载 JSON 路径存在且不为 null
 	Exist []string `yaml:"exist" json:"exist"`
-	// NotExist requires payload JSON paths to be missing or null.
+	// NotExist 要求有效负载 JSON 路径缺失或为 null
 	NotExist []string `yaml:"not-exist" json:"not-exist"`
 }
 
-// CloakConfig configures request cloaking for non-Claude-Code clients.
-// Cloaking disguises API requests to appear as originating from the official Claude Code CLI.
+// CloakConfig 为非 Claude Code 客户端配置请求伪装。
+// 伪装将 API 请求伪装为来自官方 Claude Code CLI 的请求。
 type CloakConfig struct {
-	// Mode controls cloaking behavior: "auto" (default), "always", or "never".
-	// - "auto": cloak only when client is not Claude Code (based on User-Agent)
-	// - "always": always apply cloaking regardless of client
-	// - "never": never apply cloaking
+	// Mode 控制伪装行为："auto"（默认）、"always" 或 "never"。
+	// - "auto"：仅在客户端不是 Claude Code 时伪装（基于 User-Agent）
+	// - "always"：无论客户端如何都应用伪装
+	// - "never"：从不应用伪装
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 
-	// StrictMode controls how system prompts are handled when cloaking.
-	// - false (default): prepend Claude Code prompt to user system messages
-	// - true: strip all user system messages, keep only Claude Code prompt
+	// StrictMode 控制伪装时系统提示的处理方式。
+	// - false（默认）：将 Claude Code 提示添加到用户系统消息之前
+	// - true：移除所有用户系统消息，仅保留 Claude Code 提示
 	StrictMode bool `yaml:"strict-mode,omitempty" json:"strict-mode,omitempty"`
 
-	// SensitiveWords is a list of words to obfuscate with zero-width characters.
-	// This can help bypass certain content filters.
+	// SensitiveWords 是要用零宽字符混淆的单词列表。
+	// 这可以帮助绕过某些内容过滤器。
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 
-	// CacheUserID controls whether Claude user_id values are cached per API key.
-	// When false, a fresh random user_id is generated for every request.
+	// CacheUserID 控制是否按 API 密钥缓存 Claude user_id 值。
+	// 为 false 时，为每个请求生成新的随机 user_id。
 	CacheUserID *bool `yaml:"cache-user-id,omitempty" json:"cache-user-id,omitempty"`
 }
 
-// ClaudeKey represents the configuration for a Claude API key,
-// including the API key itself and an optional base URL for the API endpoint.
+// ClaudeKey 表示 Claude API 密钥的配置，
+// 包括 API 密钥本身和可选的 API 端点基础 URL。
 type ClaudeKey struct {
-	// APIKey is the authentication key for accessing Claude API services.
+	// APIKey 是访问 Claude API 服务的认证密钥
 	APIKey string `yaml:"api-key" json:"api-key"`
 
-	// Priority controls selection preference when multiple credentials match.
-	// Higher values are preferred; defaults to 0.
+	// Priority 控制多个凭证匹配时的选择偏好。
+	// 值越高越优先；默认为 0。
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
-	// Prefix optionally namespaces models for this credential (e.g., "teamA/claude-sonnet-4").
+	// Prefix 可选地为此凭证的模型命名空间化（如 "teamA/claude-sonnet-4"）。
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
-	// BaseURL is the base URL for the Claude API endpoint.
-	// If empty, the default Claude API URL will be used.
+	// BaseURL 是 Claude API 端点的基础 URL。
+	// 如果为空，将使用默认的 Claude API URL。
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
-	// ProxyURL overrides the global proxy setting for this API key if provided.
+	// ProxyURL 如果提供，覆盖此 API 密钥的全局代理设置。
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
-	// Models defines upstream model names and aliases for request routing.
+	// Models 定义请求路由的上游模型名称和别名。
 	Models []ClaudeModel `yaml:"models" json:"models"`
 
-	// Headers optionally adds extra HTTP headers for requests sent with this key.
+	// Headers 可选地为此密钥发送的请求添加额外的 HTTP 头。
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
-	// ExcludedModels lists model IDs that should be excluded for this provider.
+	// ExcludedModels 列出此提供商应排除的模型 ID。
 	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
 
-	// DisableCooling disables auth/model cooldown scheduling for this credential when true.
+	// DisableCooling 为 true 时禁用此凭证的认证/模型冷却调度。
 	DisableCooling bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
 
-	// Cloak configures request cloaking for non-Claude-Code clients.
+	// Cloak 为非 Claude Code 客户端配置请求伪装。
 	Cloak *CloakConfig `yaml:"cloak,omitempty" json:"cloak,omitempty"`
 
-	// ExperimentalCCHSigning enables opt-in final-body cch signing for cloaked
-	// Claude /v1/messages requests. It is disabled by default so upstream seed
-	// changes do not alter the proxy's legacy behavior.
+	// ExperimentalCCHSigning 启用可选的最终体 cch 签名，用于伪装的
+	// Claude /v1/messages 请求。默认禁用，因此上游种子更改不会改变代理的旧行为。
 	ExperimentalCCHSigning bool `yaml:"experimental-cch-signing,omitempty" json:"experimental-cch-signing,omitempty"`
 }
 
-func (k ClaudeKey) GetAPIKey() string  { return k.APIKey }
+// GetAPIKey 返回 Claude API 密钥。
+func (k ClaudeKey) GetAPIKey() string { return k.APIKey }
+
+// GetAPIKey 返回 Claude API 的基础 URL。
 func (k ClaudeKey) GetBaseURL() string { return k.BaseURL }
 
-// ClaudeModel describes a mapping between an alias and the actual upstream model name.
+// ClaudeModel 描述别名与实际上游模型名称之间的映射。
 type ClaudeModel struct {
-	// Name is the upstream model identifier used when issuing requests.
+	// Name 是发出请求时使用的上游模型标识符
 	Name string `yaml:"name" json:"name"`
 
-	// Alias is the client-facing model name that maps to Name.
+	// Alias 是映射到 Name 的客户端面向的模型名称
 	Alias string `yaml:"alias" json:"alias"`
 }
 
-func (m ClaudeModel) GetName() string  { return m.Name }
+// GetName 返回上游模型名称。
+func (m ClaudeModel) GetName() string { return m.Name }
+
+// GetAlias 返回客户端面向的模型别名。
 func (m ClaudeModel) GetAlias() string { return m.Alias }
 
-// CodexKey represents the configuration for a Codex API key,
-// including the API key itself and an optional base URL for the API endpoint.
+// CodexKey 表示 Codex API 密钥的配置，
+// 包括 API 密钥本身和可选的 API 端点基础 URL。
 type CodexKey struct {
-	// APIKey is the authentication key for accessing Codex API services.
+	// APIKey 是访问 Codex API 服务的认证密钥
 	APIKey string `yaml:"api-key" json:"api-key"`
 
-	// Priority controls selection preference when multiple credentials match.
-	// Higher values are preferred; defaults to 0.
+	// Priority 控制多个凭证匹配时的选择偏好。
+	// 值越高越优先；默认为 0。
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
-	// Prefix optionally namespaces models for this credential (e.g., "teamA/gpt-5-codex").
+	// Prefix 可选地为此凭证的模型命名空间化（如 "teamA/gpt-5-codex"）。
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
-	// BaseURL is the base URL for the Codex API endpoint.
-	// If empty, the default Codex API URL will be used.
+	// BaseURL 是 Codex API 端点的基础 URL。
+	// 如果为空，将使用默认的 Codex API URL。
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
-	// Websockets enables the Responses API websocket transport for this credential.
+	// Websockets 启用此凭证的 Responses API websocket 传输。
 	Websockets bool `yaml:"websockets,omitempty" json:"websockets,omitempty"`
 
-	// ProxyURL overrides the global proxy setting for this API key if provided.
+	// ProxyURL 如果提供，覆盖此 API 密钥的全局代理设置。
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
-	// Models defines upstream model names and aliases for request routing.
+	// Models 定义请求路由的上游模型名称和别名。
 	Models []CodexModel `yaml:"models" json:"models"`
 
-	// Headers optionally adds extra HTTP headers for requests sent with this key.
+	// Headers 可选地为此密钥发送的请求添加额外的 HTTP 头。
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
-	// ExcludedModels lists model IDs that should be excluded for this provider.
+	// ExcludedModels 列出此提供商应排除的模型 ID。
 	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
 
-	// DisableCooling disables auth/model cooldown scheduling for this credential when true.
+	// DisableCooling 为 true 时禁用此凭证的认证/模型冷却调度。
 	DisableCooling bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
 }
 
-func (k CodexKey) GetAPIKey() string  { return k.APIKey }
+// GetAPIKey 返回 Codex API 密钥。
+func (k CodexKey) GetAPIKey() string { return k.APIKey }
+
+// GetBaseURL 返回 Codex API 的基础 URL。
 func (k CodexKey) GetBaseURL() string { return k.BaseURL }
 
-// CodexModel describes a mapping between an alias and the actual upstream model name.
+// CodexModel 描述别名与实际上游模型名称之间的映射。
 type CodexModel struct {
-	// Name is the upstream model identifier used when issuing requests.
+	// Name 是发出请求时使用的上游模型标识符
 	Name string `yaml:"name" json:"name"`
 
-	// Alias is the client-facing model name that maps to Name.
+	// Alias 是映射到 Name 的客户端面向的模型名称
 	Alias string `yaml:"alias" json:"alias"`
 }
 
-func (m CodexModel) GetName() string  { return m.Name }
+// GetName 返回上游模型名称。
+func (m CodexModel) GetName() string { return m.Name }
+
+// GetAlias 返回客户端面向的模型别名。
 func (m CodexModel) GetAlias() string { return m.Alias }
 
-// GeminiKey represents the configuration for a Gemini API key,
-// including optional overrides for upstream base URL, proxy routing, and headers.
+// GeminiKey 表示 Gemini API 密钥的配置，
+// 包括上游基础 URL、代理路由和头的可选覆盖。
 type GeminiKey struct {
-	// APIKey is the authentication key for accessing Gemini API services.
+	// APIKey 是访问 Gemini API 服务的认证密钥
 	APIKey string `yaml:"api-key" json:"api-key"`
 
-	// Priority controls selection preference when multiple credentials match.
-	// Higher values are preferred; defaults to 0.
+	// Priority 控制多个凭证匹配时的选择偏好。
+	// 值越高越优先；默认为 0。
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
-	// Prefix optionally namespaces models for this credential (e.g., "teamA/gemini-3-pro-preview").
+	// Prefix 可选地为此凭证的模型命名空间化（如 "teamA/gemini-3-pro-preview"）。
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
-	// BaseURL optionally overrides the Gemini API endpoint.
+	// BaseURL 可选地覆盖 Gemini API 端点。
 	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
 
-	// ProxyURL optionally overrides the global proxy for this API key.
+	// ProxyURL 可选地覆盖此 API 密钥的全局代理。
 	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
 
-	// Models defines upstream model names and aliases for request routing.
+	// Models 定义请求路由的上游模型名称和别名。
 	Models []GeminiModel `yaml:"models,omitempty" json:"models,omitempty"`
 
-	// Headers optionally adds extra HTTP headers for requests sent with this key.
+	// Headers 可选地为此密钥发送的请求添加额外的 HTTP 头。
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
-	// ExcludedModels lists model IDs that should be excluded for this provider.
+	// ExcludedModels 列出此提供商应排除的模型 ID。
 	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
 
-	// DisableCooling disables auth/model cooldown scheduling for this credential when true.
+	// DisableCooling 为 true 时禁用此凭证的认证/模型冷却调度。
 	DisableCooling bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
 }
 
-func (k GeminiKey) GetAPIKey() string  { return k.APIKey }
+// GetAPIKey 返回 Gemini API 密钥。
+func (k GeminiKey) GetAPIKey() string { return k.APIKey }
+
+// GetBaseURL 返回 Gemini API 的基础 URL。
 func (k GeminiKey) GetBaseURL() string { return k.BaseURL }
 
-// GeminiModel describes a mapping between an alias and the actual upstream model name.
+// GeminiModel 描述别名与实际上游模型名称之间的映射。
 type GeminiModel struct {
-	// Name is the upstream model identifier used when issuing requests.
+	// Name 是发出请求时使用的上游模型标识符
 	Name string `yaml:"name" json:"name"`
 
-	// Alias is the client-facing model name that maps to Name.
+	// Alias 是映射到 Name 的客户端面向的模型名称
 	Alias string `yaml:"alias" json:"alias"`
 }
 
-func (m GeminiModel) GetName() string  { return m.Name }
+// GetName 返回上游模型名称。
+func (m GeminiModel) GetName() string { return m.Name }
+
+// GetAlias 返回客户端面向的模型别名。
 func (m GeminiModel) GetAlias() string { return m.Alias }
 
-// OpenAICompatibility represents the configuration for OpenAI API compatibility
-// with external providers, allowing model aliases to be routed through OpenAI API format.
+// OpenAICompatibility 表示与外部提供商的 OpenAI API 兼容配置，
+// 允许模型别名通过 OpenAI API 格式路由。
 type OpenAICompatibility struct {
-	// Name is the identifier for this OpenAI compatibility configuration.
+	// Name 是此 OpenAI 兼容配置的标识符
 	Name string `yaml:"name" json:"name"`
 
-	// Priority controls selection preference when multiple providers or credentials match.
-	// Higher values are preferred; defaults to 0.
+	// Priority 控制多个提供商或凭证匹配时的选择偏好。
+	// 值越高越优先；默认为 0。
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
-	// Disabled prevents this provider from being used for routing.
+	// Disabled 阻止此提供商用于路由。
 	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 
-	// Prefix optionally namespaces model aliases for this provider (e.g., "teamA/kimi-k2").
+	// Prefix 可选地为此提供商的模型别名命名空间化（如 "teamA/kimi-k2"）。
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
-	// BaseURL is the base URL for the external OpenAI-compatible API endpoint.
+	// BaseURL 是外部 OpenAI 兼容 API 端点的基础 URL。
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
-	// APIKeyEntries defines API keys with optional per-key proxy configuration.
+	// APIKeyEntries 定义带有可选的每密钥代理配置的 API 密钥。
 	APIKeyEntries []OpenAICompatibilityAPIKey `yaml:"api-key-entries,omitempty" json:"api-key-entries,omitempty"`
 
-	// Models defines the model configurations including aliases for routing.
+	// Models 定义包括路由别名的模型配置。
 	Models []OpenAICompatibilityModel `yaml:"models" json:"models"`
 
-	// Headers optionally adds extra HTTP headers for requests sent to this provider.
+	// Headers 可选地为此提供商发送的请求添加额外的 HTTP 头。
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
-	// DisableCooling disables auth/model cooldown scheduling for this provider when true.
+	// DisableCooling 为 true 时禁用此提供商的认证/模型冷却调度。
 	DisableCooling bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
 }
 
-// OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.
+// OpenAICompatibilityAPIKey 表示带有可选代理设置的 API 密钥配置。
 type OpenAICompatibilityAPIKey struct {
-	// APIKey is the authentication key for accessing the external API services.
+	// APIKey 是访问外部 API 服务的认证密钥
 	APIKey string `yaml:"api-key" json:"api-key"`
 
-	// ProxyURL overrides the global proxy setting for this API key if provided.
+	// ProxyURL 如果提供，覆盖此 API 密钥的全局代理设置。
 	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
 }
 
-// OpenAICompatibilityModel represents a model configuration for OpenAI compatibility,
-// including the actual model name and its alias for API routing.
+// OpenAICompatibilityModel 表示 OpenAI 兼容的模型配置，
+// 包括实际模型名称及其用于 API 路由的别名。
 type OpenAICompatibilityModel struct {
-	// Name is the actual model name used by the external provider.
+	// Name 是外部提供商使用的实际模型名称
 	Name string `yaml:"name" json:"name"`
 
-	// Alias is the model name alias that clients will use to reference this model.
+	// Alias 是客户端用于引用此模型的模型名称别名
 	Alias string `yaml:"alias" json:"alias"`
 
-	// Image marks this model as callable through /v1/images/generations and /v1/images/edits.
+	// Image 标记此模型可通过 /v1/images/generations 和 /v1/images/edits 调用。
 	Image bool `yaml:"image,omitempty" json:"image,omitempty"`
 
-	// Thinking configures the thinking/reasoning capability for this model.
-	// If nil, the model defaults to level-based reasoning with levels ["low", "medium", "high"].
+	// Thinking 配置此模型的思考/推理能力。
+	// 如果为 nil，模型默认使用基于级别的推理，级别为 ["low", "medium", "high"]。
 	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
 }
 
-func (m OpenAICompatibilityModel) GetName() string  { return m.Name }
+// GetName 返回实际模型名称。
+func (m OpenAICompatibilityModel) GetName() string { return m.Name }
+
+// GetAlias 返回模型别名。
 func (m OpenAICompatibilityModel) GetAlias() string { return m.Alias }
 
-// LoadConfig reads a YAML configuration file from the given path,
-// unmarshals it into a Config struct, applies environment variable overrides,
-// and returns it.
+// LoadConfig 从给定路径读取 YAML 配置文件，
+// 将其反序列化为 Config 结构体，应用环境变量覆盖，并返回。
 //
-// Parameters:
-//   - configFile: The path to the YAML configuration file
+// 参数：
+//   - configFile: YAML 配置文件的路径
 //
-// Returns:
-//   - *Config: The loaded configuration
-//   - error: An error if the configuration could not be loaded
+// 返回：
+//   - *Config: 加载的配置
+//   - error: 配置无法加载时返回的错误
 func LoadConfig(configFile string) (*Config, error) {
 	return LoadConfigOptional(configFile, false)
 }
 
-// LoadConfigOptional reads YAML from configFile.
-// If optional is true and the file is missing, it returns an empty Config.
-// If optional is true and the file is empty or invalid, it returns an empty Config.
+// LoadConfigOptional 从 configFile 读取 YAML。
+// 如果 optional 为 true 且文件不存在，返回空 Config。
+// 如果 optional 为 true 且文件为空或无效，返回空 Config。
 func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
-	// Read the entire configuration file into memory.
+	// 将整个配置文件读入内存。
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		if optional {
 			if os.IsNotExist(err) || errors.Is(err, syscall.EISDIR) {
-				// Missing and optional: return empty config (cloud deploy standby).
+				// 缺失且可选：返回空配置（云部署待机模式）。
 				return &Config{}, nil
 			}
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// In cloud deploy mode (optional=true), if file is empty or contains only whitespace, return empty config.
+	// 在云部署模式（optional=true）下，如果文件为空或仅包含空白，返回空配置。
 	if optional && len(data) == 0 {
 		return &Config{}, nil
 	}
 
-	// Unmarshal the YAML data into the Config struct.
+	// 将 YAML 数据反序列化为 Config 结构体。
 	var cfg Config
-	// Set defaults before unmarshal so that absent keys keep defaults.
-	cfg.Host = "" // Default empty: binds to all interfaces (IPv4 + IPv6)
+	// 在反序列化前设置默认值，以便缺失的键保留默认值。
+	cfg.Host = "" // 默认为空：绑定所有接口（IPv4 + IPv6）
 	cfg.LoggingToFile = false
 	cfg.LogsMaxTotalSizeMB = 0
 	cfg.ErrorLogsMaxFiles = 10
@@ -644,19 +671,19 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.DisableImageGeneration = DisableImageGenerationOff
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
-	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
+	cfg.AmpCode.RestrictManagementToLocalhost = false // 默认为 false：API 密钥认证已足够
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
-			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
+			// 在云部署模式下，如果 YAML 解析失败，返回空配置而不是错误。
 			return &Config{}, nil
 		}
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// NOTE: Startup legacy key migration is intentionally disabled.
-	// Reason: avoid mutating config.yaml during server startup.
-	// Re-enable the block below if automatic startup migration is needed again.
+	// 注意：启动时的旧版密钥迁移被故意禁用。
+	// 原因：避免在服务器启动期间修改 config.yaml。
+	// 如果需要再次自动启动迁移，请重新启用下面的代码块。
 	// var legacy legacyConfigData
 	// if errLegacy := yaml.Unmarshal(data, &legacy); errLegacy == nil {
 	// 	if cfg.migrateLegacyGeminiKeys(legacy.LegacyGeminiKeys) {
@@ -670,8 +697,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// 	}
 	// }
 
-	// Hash remote management key if plaintext is detected (nested)
-	// We consider a value to be already hashed if it looks like a bcrypt hash ($2a$, $2b$, or $2y$ prefix).
+	// 如果检测到明文远程管理密钥，则进行哈希处理（嵌套式）
+	// 如果值看起来像 bcrypt 哈希（$2a$、$2b$ 或 $2y$ 前缀），则认为已经哈希过。
 	if cfg.RemoteManagement.SecretKey != "" && !looksLikeBcrypt(cfg.RemoteManagement.SecretKey) {
 		hashed, errHash := hashSecret(cfg.RemoteManagement.SecretKey)
 		if errHash != nil {
@@ -679,8 +706,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		}
 		cfg.RemoteManagement.SecretKey = hashed
 
-		// Persist the hashed value back to the config file to avoid re-hashing on next startup.
-		// Preserve YAML comments and ordering; update only the nested key.
+		// 将哈希值持久化回配置文件，避免下次启动时重复哈希。
+		// 保留 YAML 注释和顺序；仅更新嵌套键。
 		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, []string{"remote-management", "secret-key"}, hashed)
 	}
 
@@ -713,39 +740,39 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		cfg.MaxRetryCredentials = 0
 	}
 
-	// Sanitize Gemini API key configuration and migrate legacy entries.
+	// 清理 Gemini API 密钥配置并迁移旧版条目。
 	cfg.SanitizeGeminiKeys()
 
-	// Sanitize Vertex-compatible API keys.
+	// 清理 Vertex 兼容 API 密钥。
 	cfg.SanitizeVertexCompatKeys()
 
-	// Sanitize Codex keys: drop entries without base-url
+	// 清理 Codex 密钥：丢弃没有 base-url 的条目
 	cfg.SanitizeCodexKeys()
 
-	// Sanitize Codex header defaults.
+	// 清理 Codex 头默认值。
 	cfg.SanitizeCodexHeaderDefaults()
 
-	// Sanitize Claude header defaults.
+	// 清理 Claude 头默认值。
 	cfg.SanitizeClaudeHeaderDefaults()
 
-	// Sanitize Claude key headers
+	// 清理 Claude 密钥头
 	cfg.SanitizeClaudeKeys()
 
-	// Sanitize OpenAI compatibility providers: drop entries without base-url
+	// 清理 OpenAI 兼容提供商：丢弃没有 base-url 的条目
 	cfg.SanitizeOpenAICompatibility()
 
-	// Normalize OAuth provider model exclusion map.
+	// 规范化 OAuth 提供商模型排除映射。
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 
-	// Normalize global OAuth model name aliases.
+	// 规范化全局 OAuth 模型名称别名。
 	cfg.SanitizeOAuthModelAlias()
 
-	// Validate raw payload rules and drop invalid entries.
+	// 验证原始有效负载规则并丢弃无效条目。
 	cfg.SanitizePayloadRules()
 
-	// NOTE: Legacy migration persistence is intentionally disabled together with
-	// startup legacy migration to keep startup read-only for config.yaml.
-	// Re-enable the block below if automatic startup migration is needed again.
+	// 注意：旧版迁移持久化与启动时旧版迁移一起被故意禁用，
+	// 以保持启动时对 config.yaml 的只读性。
+	// 如果需要再次自动启动迁移，请重新启用下面的代码块。
 	// if cfg.legacyMigrationPending {
 	// 	fmt.Println("Detected legacy configuration keys, attempting to persist the normalized config...")
 	// 	if !optional && configFile != "" {
@@ -758,11 +785,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// 	}
 	// }
 
-	// Return the populated configuration struct.
+	// 返回填充的配置结构体。
 	return &cfg, nil
 }
 
-// SanitizePayloadRules validates raw JSON payload rule params and drops invalid rules.
+// SanitizePayloadRules 验证原始 JSON 有效负载规则参数并丢弃无效规则。
 func (cfg *Config) SanitizePayloadRules() {
 	if cfg == nil {
 		return
@@ -771,6 +798,7 @@ func (cfg *Config) SanitizePayloadRules() {
 	cfg.Payload.OverrideRaw = sanitizePayloadRawRules(cfg.Payload.OverrideRaw, "override-raw")
 }
 
+// sanitizePayloadRawRules 验证原始 JSON 有效负载规则参数并丢弃无效规则。
 func sanitizePayloadRawRules(rules []PayloadRule, section string) []PayloadRule {
 	if len(rules) == 0 {
 		return rules
@@ -806,6 +834,7 @@ func sanitizePayloadRawRules(rules []PayloadRule, section string) []PayloadRule 
 	return out
 }
 
+// payloadRawString 将值转换为字节切片，用于原始 JSON 验证。
 func payloadRawString(value any) ([]byte, bool) {
 	switch typed := value.(type) {
 	case string:
@@ -817,8 +846,7 @@ func payloadRawString(value any) ([]byte, bool) {
 	}
 }
 
-// SanitizeCodexHeaderDefaults trims surrounding whitespace from the
-// configured Codex header fallback values.
+// SanitizeCodexHeaderDefaults 修剪配置的 Codex 头回退值的周围空白。
 func (cfg *Config) SanitizeCodexHeaderDefaults() {
 	if cfg == nil {
 		return
@@ -827,8 +855,7 @@ func (cfg *Config) SanitizeCodexHeaderDefaults() {
 	cfg.CodexHeaderDefaults.BetaFeatures = strings.TrimSpace(cfg.CodexHeaderDefaults.BetaFeatures)
 }
 
-// SanitizeClaudeHeaderDefaults trims surrounding whitespace from the
-// configured Claude fingerprint baseline values.
+// SanitizeClaudeHeaderDefaults 修剪配置的 Claude 指纹基线值的周围空白。
 func (cfg *Config) SanitizeClaudeHeaderDefaults() {
 	if cfg == nil {
 		return
@@ -841,9 +868,9 @@ func (cfg *Config) SanitizeClaudeHeaderDefaults() {
 	cfg.ClaudeHeaderDefaults.Timeout = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Timeout)
 }
 
-// SanitizeOAuthModelAlias normalizes and deduplicates global OAuth model name aliases.
-// It trims whitespace, normalizes channel keys to lower-case, drops empty entries,
-// allows multiple aliases per upstream name, and ensures aliases are unique within each channel.
+// SanitizeOAuthModelAlias 规范化和去重全局 OAuth 模型名称别名。
+// 修剪空白，将渠道键规范化为小写，丢弃空条目，
+// 允许每个上游名称有多个别名，并确保每个渠道内的别名唯一。
 func (cfg *Config) SanitizeOAuthModelAlias() {
 	if cfg == nil || len(cfg.OAuthModelAlias) == 0 {
 		return
@@ -879,9 +906,8 @@ func (cfg *Config) SanitizeOAuthModelAlias() {
 	cfg.OAuthModelAlias = out
 }
 
-// SanitizeOpenAICompatibility removes OpenAI-compatibility provider entries that are
-// not actionable, specifically those missing a BaseURL. It trims whitespace before
-// evaluation and preserves the relative order of remaining entries.
+// SanitizeOpenAICompatibility 移除不可操作的 OpenAI 兼容提供商条目，
+// 特别是缺少 BaseURL 的条目。在评估前修剪空白，并保留剩余条目的相对顺序。
 func (cfg *Config) SanitizeOpenAICompatibility() {
 	if cfg == nil || len(cfg.OpenAICompatibility) == 0 {
 		return
@@ -902,8 +928,8 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 	cfg.OpenAICompatibility = out
 }
 
-// SanitizeCodexKeys removes Codex API key entries missing a BaseURL.
-// It trims whitespace and preserves order for remaining entries.
+// SanitizeCodexKeys 移除缺少 BaseURL 的 Codex API 密钥条目。
+// 修剪空白并保留剩余条目的顺序。
 func (cfg *Config) SanitizeCodexKeys() {
 	if cfg == nil || len(cfg.CodexKey) == 0 {
 		return
@@ -923,7 +949,7 @@ func (cfg *Config) SanitizeCodexKeys() {
 	cfg.CodexKey = out
 }
 
-// SanitizeClaudeKeys normalizes headers for Claude credentials.
+// SanitizeClaudeKeys 规范化 Claude 凭证的头。
 func (cfg *Config) SanitizeClaudeKeys() {
 	if cfg == nil || len(cfg.ClaudeKey) == 0 {
 		return
@@ -936,8 +962,8 @@ func (cfg *Config) SanitizeClaudeKeys() {
 	}
 }
 
-// SanitizeGeminiKeys deduplicates and normalizes Gemini credentials.
-// It uses API key + base URL as the uniqueness key.
+// SanitizeGeminiKeys 去重和规范化 Gemini 凭证。
+// 使用 API 密钥 + 基础 URL 作为唯一性键。
 func (cfg *Config) SanitizeGeminiKeys() {
 	if cfg == nil {
 		return
@@ -966,6 +992,7 @@ func (cfg *Config) SanitizeGeminiKeys() {
 	cfg.GeminiKey = out
 }
 
+// normalizeModelPrefix 规范化模型前缀，修剪空白和斜杠。
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)
 	trimmed = strings.Trim(trimmed, "/")
@@ -978,12 +1005,12 @@ func normalizeModelPrefix(prefix string) string {
 	return trimmed
 }
 
-// looksLikeBcrypt returns true if the provided string appears to be a bcrypt hash.
+// looksLikeBcrypt 如果提供的字符串看起来像 bcrypt 哈希则返回 true。
 func looksLikeBcrypt(s string) bool {
 	return len(s) > 4 && (s[:4] == "$2a$" || s[:4] == "$2b$" || s[:4] == "$2y$")
 }
 
-// NormalizeHeaders trims header keys and values and removes empty pairs.
+// NormalizeHeaders 修剪头键和值并移除空对。
 func NormalizeHeaders(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		return nil
@@ -1003,8 +1030,8 @@ func NormalizeHeaders(headers map[string]string) map[string]string {
 	return clean
 }
 
-// NormalizeExcludedModels trims, lowercases, and deduplicates model exclusion patterns.
-// It preserves the order of first occurrences and drops empty entries.
+// NormalizeExcludedModels 修剪、小写化和去重模型排除模式。
+// 保留首次出现的顺序并丢弃空条目。
 func NormalizeExcludedModels(models []string) []string {
 	if len(models) == 0 {
 		return nil
@@ -1028,8 +1055,7 @@ func NormalizeExcludedModels(models []string) []string {
 	return out
 }
 
-// NormalizeOAuthExcludedModels cleans provider -> excluded models mappings by normalizing provider keys
-// and applying model exclusion normalization to each entry.
+// NormalizeOAuthExcludedModels 通过规范化提供商键和对每个条目应用模型排除规范化来清理提供商 -> 排除模型映射。
 func NormalizeOAuthExcludedModels(entries map[string][]string) map[string][]string {
 	if len(entries) == 0 {
 		return nil
@@ -1052,9 +1078,9 @@ func NormalizeOAuthExcludedModels(entries map[string][]string) map[string][]stri
 	return out
 }
 
-// hashSecret hashes the given secret using bcrypt.
+// hashSecret 使用 bcrypt 对给定的密钥进行哈希。
 func hashSecret(secret string) (string, error) {
-	// Use default cost for simplicity.
+	// 使用默认成本以保持简单。
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
 	if err != nil {
 		return "", err
@@ -1062,11 +1088,11 @@ func hashSecret(secret string) (string, error) {
 	return string(hashedBytes), nil
 }
 
-// SaveConfigPreserveComments writes the config back to YAML while preserving existing comments
-// and key ordering by loading the original file into a yaml.Node tree and updating values in-place.
+// SaveConfigPreserveComments 将配置写回 YAML，同时通过加载原始文件到 yaml.Node 树中
+// 并原地更新值来保留现有注释和键顺序。
 func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	persistCfg := cfg
-	// Load original YAML as a node tree to preserve comments and ordering.
+	// 加载原始 YAML 为节点树以保留注释和顺序。
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -1083,7 +1109,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 		return fmt.Errorf("expected root mapping node")
 	}
 
-	// Marshal the current cfg to YAML, then unmarshal to a yaml.Node we can merge from.
+	// 将当前 cfg 序列化为 YAML，然后反序列化为我们可以从中合并的 yaml.Node。
 	rendered, err := yaml.Marshal(persistCfg)
 	if err != nil {
 		return err
@@ -1099,7 +1125,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 		return fmt.Errorf("expected generated root mapping node")
 	}
 
-	// Remove deprecated sections before merging back the sanitized config.
+	// 在合并回清理后的配置之前移除已弃用的部分。
 	removeLegacyAuthBlock(original.Content[0])
 	removeLegacyOpenAICompatAPIKeys(original.Content[0])
 	removeLegacyAmpKeys(original.Content[0])
@@ -1108,11 +1134,11 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	pruneMappingToGeneratedKeys(original.Content[0], generated.Content[0], "oauth-excluded-models")
 	pruneMappingToGeneratedKeys(original.Content[0], generated.Content[0], "oauth-model-alias")
 
-	// Merge generated into original in-place, preserving comments/order of existing nodes.
+	// 将生成的合并到原始的原地，保留现有节点的注释/顺序。
 	mergeMappingPreserve(original.Content[0], generated.Content[0])
 	normalizeCollectionNodeStyles(original.Content[0])
 
-	// Write back.
+	// 写回文件。
 	f, err := os.Create(configFile)
 	if err != nil {
 		return err
@@ -1133,8 +1159,8 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	return err
 }
 
-// SaveConfigPreserveCommentsUpdateNestedScalar updates a nested scalar key path like ["a","b"]
-// while preserving comments and positions.
+// SaveConfigPreserveCommentsUpdateNestedScalar 更新嵌套标量键路径（如 ["a","b"]）
+// 同时保留注释和位置。
 func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []string, value string) error {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
@@ -1148,10 +1174,10 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 		return fmt.Errorf("invalid yaml document structure")
 	}
 	node := root.Content[0]
-	// descend mapping nodes following path
+	// 沿路径下降映射节点
 	for i, key := range path {
 		if i == len(path)-1 {
-			// set final scalar
+			// 设置最终标量
 			v := getOrCreateMapValue(node, key)
 			v.Kind = yaml.ScalarNode
 			v.Tag = "!!str"
@@ -1185,7 +1211,7 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 	return err
 }
 
-// NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.
+// NormalizeCommentIndentation 从独立的 YAML 注释行中移除缩进，使其保持左对齐。
 func NormalizeCommentIndentation(data []byte) []byte {
 	lines := bytes.Split(data, []byte("\n"))
 	changed := false
@@ -1206,8 +1232,8 @@ func NormalizeCommentIndentation(data []byte) []byte {
 	return bytes.Join(lines, []byte("\n"))
 }
 
-// getOrCreateMapValue finds the value node for a given key in a mapping node.
-// If not found, it appends a new key/value pair and returns the new value node.
+// getOrCreateMapValue 在映射节点中查找给定键的值节点。
+// 如果未找到，追加新的键/值对并返回新的值节点。
 func getOrCreateMapValue(mapNode *yaml.Node, key string) *yaml.Node {
 	if mapNode.Kind != yaml.MappingNode {
 		mapNode.Kind = yaml.MappingNode
@@ -1220,16 +1246,16 @@ func getOrCreateMapValue(mapNode *yaml.Node, key string) *yaml.Node {
 			return mapNode.Content[i+1]
 		}
 	}
-	// append new key/value
+	// 追加新的键/值
 	mapNode.Content = append(mapNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key})
 	val := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: ""}
 	mapNode.Content = append(mapNode.Content, val)
 	return val
 }
 
-// mergeMappingPreserve merges keys from src into dst mapping node while preserving
-// key order and comments of existing keys in dst. New keys are only added if their
-// value is non-zero and not a known default to avoid polluting the config with defaults.
+// mergeMappingPreserve 将 src 中的键合并到 dst 映射节点中，同时保留
+// dst 中现有键的键顺序和注释。仅当新键的值非零且不是已知默认值时才添加，
+// 以避免用默认值污染配置。
 func mergeMappingPreserve(dst, src *yaml.Node, path ...[]string) {
 	var currentPath []string
 	if len(path) > 0 {
@@ -1240,8 +1266,8 @@ func mergeMappingPreserve(dst, src *yaml.Node, path ...[]string) {
 		return
 	}
 	if dst.Kind != yaml.MappingNode || src.Kind != yaml.MappingNode {
-		// If kinds do not match, prefer replacing dst with src semantics in-place
-		// but keep dst node object to preserve any attached comments at the parent level.
+		// 如果类型不匹配，倾向于用 src 语义原地替换 dst
+		// 但保留 dst 节点对象以保留父级附加的任何注释。
 		copyNodeShallow(dst, src)
 		return
 	}
@@ -1251,11 +1277,11 @@ func mergeMappingPreserve(dst, src *yaml.Node, path ...[]string) {
 		idx := findMapKeyIndex(dst, sk.Value)
 		childPath := appendPath(currentPath, sk.Value)
 		if idx >= 0 {
-			// Merge into existing value node (always update, even to zero values)
+			// 合并到现有值节点（始终更新，即使是零值）
 			dv := dst.Content[idx+1]
 			mergeNodePreserve(dv, sv, childPath)
 		} else {
-			// New key: only add if value is non-zero and not a known default
+			// 新键：仅在值非零且不是已知默认值时添加
 			candidate := deepCopyNode(sv)
 			pruneKnownDefaultsInNewNode(childPath, candidate)
 			if isKnownDefaultValue(childPath, candidate) {
@@ -1266,9 +1292,8 @@ func mergeMappingPreserve(dst, src *yaml.Node, path ...[]string) {
 	}
 }
 
-// mergeNodePreserve merges src into dst for scalars, mappings and sequences while
-// reusing destination nodes to keep comments and anchors. For sequences, it updates
-// in-place by index.
+// mergeNodePreserve 将 src 合并到 dst 中用于标量、映射和序列，同时
+// 重用目标节点以保留注释和锚点。对于序列，按索引原地更新。
 func mergeNodePreserve(dst, src *yaml.Node, path ...[]string) {
 	var currentPath []string
 	if len(path) > 0 {
@@ -1285,9 +1310,9 @@ func mergeNodePreserve(dst, src *yaml.Node, path ...[]string) {
 		}
 		mergeMappingPreserve(dst, src, currentPath)
 	case yaml.SequenceNode:
-		// Preserve explicit null style if dst was null and src is empty sequence
+		// 如果 dst 为 null 且 src 为空序列，保留显式 null 样式
 		if dst.Kind == yaml.ScalarNode && dst.Tag == "!!null" && len(src.Content) == 0 {
-			// Keep as null to preserve original style
+			// 保持为 null 以保留原始样式
 			return
 		}
 		if dst.Kind != yaml.SequenceNode {
@@ -1296,7 +1321,7 @@ func mergeNodePreserve(dst, src *yaml.Node, path ...[]string) {
 			dst.Content = nil
 		}
 		reorderSequenceForMerge(dst, src)
-		// Update elements in place
+		// 原地更新元素
 		minContent := len(dst.Content)
 		if len(src.Content) < minContent {
 			minContent = len(src.Content)
@@ -1312,30 +1337,30 @@ func mergeNodePreserve(dst, src *yaml.Node, path ...[]string) {
 				pruneMissingMapKeys(dst.Content[i], src.Content[i])
 			}
 		}
-		// Append any extra items from src
+		// 追加 src 中的额外项
 		for i := len(dst.Content); i < len(src.Content); i++ {
 			dst.Content = append(dst.Content, deepCopyNode(src.Content[i]))
 		}
-		// Truncate if dst has extra items not in src
+		// 如果 dst 有 src 中没有的额外项，则截断
 		if len(src.Content) < len(dst.Content) {
 			dst.Content = dst.Content[:len(src.Content)]
 		}
 	case yaml.ScalarNode, yaml.AliasNode:
-		// For scalars, update Tag and Value but keep Style from dst to preserve quoting
+		// 对于标量，更新 Tag 和 Value 但从 dst 保留 Style 以保留引号
 		dst.Kind = src.Kind
 		dst.Tag = src.Tag
 		dst.Value = src.Value
-		// Keep dst.Style as-is intentionally
+		// 故意保留 dst.Style 不变
 	case 0:
-		// Unknown/empty kind; do nothing
+		// 未知/空类型；不执行任何操作
 	default:
-		// Fallback: replace shallowly
+		// 回退：浅层替换
 		copyNodeShallow(dst, src)
 	}
 }
 
-// findMapKeyIndex returns the index of key node in dst mapping (index of key, not value).
-// Returns -1 when not found.
+// findMapKeyIndex 返回 dst 映射中键节点的索引（键的索引，不是值）。
+// 未找到时返回 -1。
 func findMapKeyIndex(mapNode *yaml.Node, key string) int {
 	if mapNode == nil || mapNode.Kind != yaml.MappingNode {
 		return -1
@@ -1348,7 +1373,7 @@ func findMapKeyIndex(mapNode *yaml.Node, key string) int {
 	return -1
 }
 
-// appendPath appends a key to the path, returning a new slice to avoid modifying the original.
+// appendPath 将键追加到路径，返回新的切片以避免修改原始切片。
 func appendPath(path []string, key string) []string {
 	if len(path) == 0 {
 		return []string{key}
@@ -1359,23 +1384,22 @@ func appendPath(path []string, key string) []string {
 	return newPath
 }
 
-// isKnownDefaultValue returns true if the given node at the specified path
-// represents a known default value that should not be written to the config file.
-// This prevents non-zero defaults from polluting the config.
+// isKnownDefaultValue 如果给定节点在指定路径处表示不应写入配置文件的已知默认值则返回 true。
+// 这防止非零默认值污染配置。
 func isKnownDefaultValue(path []string, node *yaml.Node) bool {
-	// First check if it's a zero value
+	// 首先检查是否为零值
 	if isZeroValueNode(node) {
 		return true
 	}
 
-	// Match known non-zero defaults by exact dotted path.
+	// 通过精确的点分路径匹配已知的非零默认值。
 	if len(path) == 0 {
 		return false
 	}
 
 	fullPath := strings.Join(path, ".")
 
-	// Check string defaults
+	// 检查字符串默认值
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
 		switch fullPath {
 		case "pprof.addr":
@@ -1387,7 +1411,7 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		}
 	}
 
-	// Check integer defaults
+	// 检查整数默认值
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!int" {
 		switch fullPath {
 		case "error-logs-max-files":
@@ -1398,8 +1422,7 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 	return false
 }
 
-// pruneKnownDefaultsInNewNode removes default-valued descendants from a new node
-// before it is appended into the destination YAML tree.
+// pruneKnownDefaultsInNewNode 在新节点追加到目标 YAML 树之前移除默认值后代。
 func pruneKnownDefaultsInNewNode(path []string, node *yaml.Node) {
 	if node == nil {
 		return
@@ -1436,9 +1459,8 @@ func pruneKnownDefaultsInNewNode(path []string, node *yaml.Node) {
 	}
 }
 
-// isZeroValueNode returns true if the YAML node represents a zero/default value
-// that should not be written as a new key to preserve config cleanliness.
-// For mappings and sequences, recursively checks if all children are zero values.
+// isZeroValueNode 如果 YAML 节点表示不应作为新键写入以保持配置整洁的零/默认值则返回 true。
+// 对于映射和序列，递归检查所有子节点是否为零值。
 func isZeroValueNode(node *yaml.Node) bool {
 	if node == nil {
 		return true
@@ -1459,7 +1481,7 @@ func isZeroValueNode(node *yaml.Node) bool {
 		if len(node.Content) == 0 {
 			return true
 		}
-		// Check if all elements are zero values
+		// 检查所有元素是否为零值
 		for _, child := range node.Content {
 			if !isZeroValueNode(child) {
 				return false
@@ -1470,7 +1492,7 @@ func isZeroValueNode(node *yaml.Node) bool {
 		if len(node.Content) == 0 {
 			return true
 		}
-		// Check if all values are zero values (values are at odd indices)
+		// 检查所有值是否为零值（值位于奇数索引）
 		for i := 1; i < len(node.Content); i += 2 {
 			if !isZeroValueNode(node.Content[i]) {
 				return false
@@ -1481,7 +1503,7 @@ func isZeroValueNode(node *yaml.Node) bool {
 	return false
 }
 
-// deepCopyNode creates a deep copy of a yaml.Node graph.
+// deepCopyNode 创建 yaml.Node 图的深拷贝。
 func deepCopyNode(n *yaml.Node) *yaml.Node {
 	if n == nil {
 		return nil
@@ -1496,8 +1518,8 @@ func deepCopyNode(n *yaml.Node) *yaml.Node {
 	return &cp
 }
 
-// copyNodeShallow copies type/tag/value and resets content to match src, but
-// keeps the same destination node pointer to preserve parent relations/comments.
+// copyNodeShallow 复制类型/标签/值并重置内容以匹配 src，但
+// 保留相同的目标节点指针以保留父关系/注释。
 func copyNodeShallow(dst, src *yaml.Node) {
 	if dst == nil || src == nil {
 		return
@@ -1505,7 +1527,7 @@ func copyNodeShallow(dst, src *yaml.Node) {
 	dst.Kind = src.Kind
 	dst.Tag = src.Tag
 	dst.Value = src.Value
-	// Replace content with deep copy from src
+	// 用 src 的深拷贝替换内容
 	if len(src.Content) > 0 {
 		dst.Content = make([]*yaml.Node, len(src.Content))
 		for i := range src.Content {
@@ -1516,6 +1538,7 @@ func copyNodeShallow(dst, src *yaml.Node) {
 	}
 }
 
+// reorderSequenceForMerge 为合并重新排序序列，匹配现有元素与源元素。
 func reorderSequenceForMerge(dst, src *yaml.Node) {
 	if dst == nil || src == nil {
 		return
@@ -1538,6 +1561,7 @@ func reorderSequenceForMerge(dst, src *yaml.Node) {
 	dst.Content = ordered
 }
 
+// matchSequenceElement 在原始序列中匹配目标元素，返回匹配的索引。
 func matchSequenceElement(original []*yaml.Node, used []bool, target *yaml.Node) int {
 	if target == nil {
 		return -1
@@ -1569,7 +1593,7 @@ func matchSequenceElement(original []*yaml.Node, used []bool, target *yaml.Node)
 		}
 	default:
 	}
-	// Fallback to structural equality to preserve nodes lacking explicit identifiers.
+	// 回退到结构相等性以保留缺少显式标识符的节点。
 	for i := range original {
 		if used[i] || original[i] == nil {
 			continue
@@ -1581,6 +1605,7 @@ func matchSequenceElement(original []*yaml.Node, used []bool, target *yaml.Node)
 	return -1
 }
 
+// sequenceElementIdentity 返回序列元素的标识字符串，用于匹配。
 func sequenceElementIdentity(node *yaml.Node) string {
 	if node == nil || node.Kind != yaml.MappingNode {
 		return ""
@@ -1605,6 +1630,7 @@ func sequenceElementIdentity(node *yaml.Node) string {
 	return ""
 }
 
+// mappingScalarValue 从映射节点中获取指定键的标量值。
 func mappingScalarValue(node *yaml.Node, key string) string {
 	if node == nil || node.Kind != yaml.MappingNode {
 		return ""
@@ -1623,6 +1649,7 @@ func mappingScalarValue(node *yaml.Node, key string) string {
 	return ""
 }
 
+// nodesStructurallyEqual 检查两个 YAML 节点是否结构相等。
 func nodesStructurallyEqual(a, b *yaml.Node) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -1663,6 +1690,7 @@ func nodesStructurallyEqual(a, b *yaml.Node) bool {
 	}
 }
 
+// removeMapKey 从映射节点中移除指定键的键值对。
 func removeMapKey(mapNode *yaml.Node, key string) {
 	if mapNode == nil || mapNode.Kind != yaml.MappingNode || key == "" {
 		return
@@ -1675,6 +1703,7 @@ func removeMapKey(mapNode *yaml.Node, key string) {
 	}
 }
 
+// pruneMappingToGeneratedKeys 修剪映射以仅保留生成的键。
 func pruneMappingToGeneratedKeys(dstRoot, srcRoot *yaml.Node, key string) {
 	if key == "" || dstRoot == nil || srcRoot == nil {
 		return
@@ -1688,9 +1717,9 @@ func pruneMappingToGeneratedKeys(dstRoot, srcRoot *yaml.Node, key string) {
 	}
 	srcIdx := findMapKeyIndex(srcRoot, key)
 	if srcIdx < 0 {
-		// Keep an explicit empty mapping for oauth-model-alias when it was previously present.
-		// When users delete the last channel from oauth-model-alias via the management API,
-		// we want that deletion to persist across hot reloads and restarts.
+		// 当之前存在 oauth-model-alias 时，为其保留显式空映射。
+		// 当用户通过管理 API 删除 oauth-model-alias 中的最后一个渠道时，
+		// 我们希望该删除在热重载和重启之间持续存在。
 		if key == "oauth-model-alias" {
 			dstRoot.Content[dstIdx+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 			return
@@ -1718,6 +1747,7 @@ func pruneMappingToGeneratedKeys(dstRoot, srcRoot *yaml.Node, key string) {
 	pruneMissingMapKeys(dstVal, srcVal)
 }
 
+// pruneMissingMapKeys 从目标映射中移除源映射中不存在的键。
 func pruneMissingMapKeys(dstMap, srcMap *yaml.Node) {
 	if dstMap == nil || srcMap == nil || dstMap.Kind != yaml.MappingNode || srcMap.Kind != yaml.MappingNode {
 		return
@@ -1749,9 +1779,8 @@ func pruneMissingMapKeys(dstMap, srcMap *yaml.Node) {
 	}
 }
 
-// normalizeCollectionNodeStyles forces YAML collections to use block notation, keeping
-// lists and maps readable. Empty sequences retain flow style ([]) so empty list markers
-// remain compact.
+// normalizeCollectionNodeStyles 强制 YAML 集合使用块表示法，保持
+// 列表和映射可读。空序列保留流样式（[]），使空列表标记保持紧凑。
 func normalizeCollectionNodeStyles(node *yaml.Node) {
 	if node == nil {
 		return
@@ -1772,11 +1801,11 @@ func normalizeCollectionNodeStyles(node *yaml.Node) {
 			normalizeCollectionNodeStyles(node.Content[i])
 		}
 	default:
-		// Scalars keep their existing style to preserve quoting
+		// 标量保留其现有样式以保留引号
 	}
 }
 
-// Legacy migration helpers (move deprecated config keys into structured fields).
+// 旧版迁移辅助函数（将已弃用的配置键移入结构化字段）。
 type legacyConfigData struct {
 	LegacyGeminiKeys      []string                    `yaml:"generative-language-api-key"`
 	OpenAICompat          []legacyOpenAICompatibility `yaml:"openai-compatibility"`
@@ -1786,12 +1815,14 @@ type legacyConfigData struct {
 	AmpModelMappings      []AmpModelMapping           `yaml:"amp-model-mappings"`
 }
 
+// legacyOpenAICompatibility 表示旧版 OpenAI 兼容配置。
 type legacyOpenAICompatibility struct {
 	Name    string   `yaml:"name"`
 	BaseURL string   `yaml:"base-url"`
 	APIKeys []string `yaml:"api-keys"`
 }
 
+// migrateLegacyGeminiKeys 迁移旧版 Gemini API 密钥到新格式。
 func (cfg *Config) migrateLegacyGeminiKeys(legacy []string) bool {
 	if cfg == nil || len(legacy) == 0 {
 		return false
@@ -1820,6 +1851,7 @@ func (cfg *Config) migrateLegacyGeminiKeys(legacy []string) bool {
 	return changed
 }
 
+// migrateLegacyOpenAICompatibilityKeys 迁移旧版 OpenAI 兼容密钥到新格式。
 func (cfg *Config) migrateLegacyOpenAICompatibilityKeys(legacy []legacyOpenAICompatibility) bool {
 	if cfg == nil || len(cfg.OpenAICompatibility) == 0 || len(legacy) == 0 {
 		return false
@@ -1840,6 +1872,7 @@ func (cfg *Config) migrateLegacyOpenAICompatibilityKeys(legacy []legacyOpenAICom
 	return changed
 }
 
+// mergeLegacyOpenAICompatAPIKeys 合并旧版 OpenAI 兼容 API 密钥。
 func mergeLegacyOpenAICompatAPIKeys(entry *OpenAICompatibility, keys []string) bool {
 	if entry == nil || len(keys) == 0 {
 		return false
@@ -1868,6 +1901,7 @@ func mergeLegacyOpenAICompatAPIKeys(entry *OpenAICompatibility, keys []string) b
 	return changed
 }
 
+// findOpenAICompatTarget 在 OpenAI 兼容条目中查找目标条目。
 func findOpenAICompatTarget(entries []OpenAICompatibility, legacyName, legacyBase string) *OpenAICompatibility {
 	nameKey := strings.ToLower(strings.TrimSpace(legacyName))
 	baseKey := strings.ToLower(strings.TrimSpace(legacyBase))
@@ -1896,6 +1930,7 @@ func findOpenAICompatTarget(entries []OpenAICompatibility, legacyName, legacyBas
 	return nil
 }
 
+// migrateLegacyAmpConfig 迁移旧版 Amp 配置到新格式。
 func (cfg *Config) migrateLegacyAmpConfig(legacy *legacyConfigData) bool {
 	if cfg == nil || legacy == nil {
 		return false
@@ -1924,6 +1959,7 @@ func (cfg *Config) migrateLegacyAmpConfig(legacy *legacyConfigData) bool {
 	return changed
 }
 
+// removeLegacyOpenAICompatAPIKeys 从 YAML 树中移除旧版 OpenAI 兼容 API 密钥。
 func removeLegacyOpenAICompatAPIKeys(root *yaml.Node) {
 	if root == nil || root.Kind != yaml.MappingNode {
 		return
@@ -1943,6 +1979,7 @@ func removeLegacyOpenAICompatAPIKeys(root *yaml.Node) {
 	}
 }
 
+// removeLegacyAmpKeys 从 YAML 树中移除旧版 Amp 配置键。
 func removeLegacyAmpKeys(root *yaml.Node) {
 	if root == nil || root.Kind != yaml.MappingNode {
 		return
@@ -1953,6 +1990,7 @@ func removeLegacyAmpKeys(root *yaml.Node) {
 	removeMapKey(root, "amp-model-mappings")
 }
 
+// removeLegacyGenerativeLanguageKeys 从 YAML 树中移除旧版 Generative Language API 密钥。
 func removeLegacyGenerativeLanguageKeys(root *yaml.Node) {
 	if root == nil || root.Kind != yaml.MappingNode {
 		return
@@ -1960,6 +1998,7 @@ func removeLegacyGenerativeLanguageKeys(root *yaml.Node) {
 	removeMapKey(root, "generative-language-api-key")
 }
 
+// removeLegacyAuthBlock 从 YAML 树中移除旧版 auth 配置块。
 func removeLegacyAuthBlock(root *yaml.Node) {
 	if root == nil || root.Kind != yaml.MappingNode {
 		return

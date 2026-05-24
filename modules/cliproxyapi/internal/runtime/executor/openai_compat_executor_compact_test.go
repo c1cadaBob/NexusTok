@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 OpenAI 兼容执行器的紧凑请求、图片生成和流式输出等功能。
 package executor
 
 import (
@@ -19,6 +21,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestOpenAICompatExecutorCompactPassthrough 验证紧凑请求能正确透传到上游，
+// 路径为 /v1/responses/compact，且请求体包含 input 字段而非 messages。
 func TestOpenAICompatExecutorCompactPassthrough(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
@@ -62,6 +66,8 @@ func TestOpenAICompatExecutorCompactPassthrough(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatExecutorPayloadOverrideWinsOverThinkingSuffix 验证 PayloadOverride 配置
+// 优先于 thinking 后缀中的参数设置。
 func TestOpenAICompatExecutorPayloadOverrideWinsOverThinkingSuffix(t *testing.T) {
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +112,8 @@ func TestOpenAICompatExecutorPayloadOverrideWinsOverThinkingSuffix(t *testing.T)
 	}
 }
 
+// TestOpenAICompatExecutorImagesGenerationsPassthrough 验证图片生成请求能正确透传，
+// 模型名被替换为上游模型名，路径为 /v1/images/generations。
 func TestOpenAICompatExecutorImagesGenerationsPassthrough(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
@@ -155,6 +163,8 @@ func TestOpenAICompatExecutorImagesGenerationsPassthrough(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatExecutorImagesGenerationsStreamsUpstream 验证图片生成流式请求
+// 能正确设置 Accept 头为 text/event-stream 并透传 stream 标志。
 func TestOpenAICompatExecutorImagesGenerationsStreamsUpstream(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
@@ -218,6 +228,8 @@ func TestOpenAICompatExecutorImagesGenerationsStreamsUpstream(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatExecutorImagesEditsMultipartRewritesModel 验证图片编辑的 multipart 请求
+// 能正确替换模型名并保留文件内容和类型。
 func TestOpenAICompatExecutorImagesEditsMultipartRewritesModel(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -310,6 +322,8 @@ func TestOpenAICompatExecutorImagesEditsMultipartRewritesModel(t *testing.T) {
 	}
 }
 
+// TestRewriteOpenAICompatImagesMultipartPayloadPreservesStreamAndFileContentType 验证
+// multipart 负载重写时保留 stream 字段和文件 Content-Type。
 func TestRewriteOpenAICompatImagesMultipartPayloadPreservesStreamAndFileContentType(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -365,6 +379,8 @@ func TestRewriteOpenAICompatImagesMultipartPayloadPreservesStreamAndFileContentT
 	}
 }
 
+// TestOpenAICompatExecutorStreamRejectsPlainJSONAfterBlankLines 验证流式响应中
+// 空行后的纯 JSON 错误被正确识别并返回 502 状态码。
 func TestOpenAICompatExecutorStreamRejectsPlainJSONAfterBlankLines(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -407,6 +423,8 @@ func TestOpenAICompatExecutorStreamRejectsPlainJSONAfterBlankLines(t *testing.T)
 	}
 }
 
+// TestOpenAICompatExecutorStreamSkipsKeepAliveUntilDataLine 验证流式响应中
+// 保活注释和事件行被正确跳过，直到遇到 data 行。
 func TestOpenAICompatExecutorStreamSkipsKeepAliveUntilDataLine(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

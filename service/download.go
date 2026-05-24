@@ -1,3 +1,6 @@
+// download.go - 文件下载服务
+// 本文件提供通过 Worker 或直接 HTTP 请求下载文件的功能。
+// 支持 SSRF 防护、Worker 代理模式，以及自动选择下载方式。
 package service
 
 import (

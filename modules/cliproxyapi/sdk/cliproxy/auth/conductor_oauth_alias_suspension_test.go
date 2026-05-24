@@ -1,3 +1,6 @@
+// auth - conductor_oauth_alias_suspension_test.go
+// 该文件包含 OAuth 别名路由挂起行为的单元测试，验证当 OAuth 别名被路由到
+// 已阻塞的模型时能正确跳过并尝试其他可用凭据。
 package auth
 
 import (
@@ -13,16 +16,19 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// aliasRoutingExecutor 是测试用的执行器，记录每次执行的模型和别名信息。
 type aliasRoutingExecutor struct {
-	id string
+	id string // 执行器标识符
 
-	mu             sync.Mutex
-	executeModels  []string
-	executeAliases []string
+	mu             sync.Mutex   // 保护记录的互斥锁
+	executeModels  []string     // 执行的模型列表
+	executeAliases []string     // 执行的别名列表
 }
 
+// Identifier 返回执行器标识符。
 func (e *aliasRoutingExecutor) Identifier() string { return e.id }
 
+// Execute 记录请求的模型和别名信息，模拟执行操作。
 func (e *aliasRoutingExecutor) Execute(ctx context.Context, _ *Auth, req cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	e.mu.Lock()
 	e.executeModels = append(e.executeModels, req.Model)

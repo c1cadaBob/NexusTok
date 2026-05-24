@@ -1,8 +1,7 @@
-// Package claude provides request translation functionality for Claude Code API compatibility.
-// This package handles the conversion of Claude Code API requests into Gemini CLI-compatible
-// JSON format, transforming message contents, system instructions, and tool declarations
-// into the format expected by Gemini CLI API clients. It performs JSON data transformation
-// to ensure compatibility between Claude Code API format and Gemini CLI API's expected format.
+// gemini-cli/claude - gemini-cli_claude_request.go
+// 提供将 Claude Code API 请求转换为 Gemini CLI 兼容格式的功能。
+// 负责将 Claude 的消息内容、系统指令、工具声明、tool_choice、thinking 配置
+// 以及生成参数（temperature、top_p、top_k）映射为 Gemini CLI API 期望的 JSON 结构。
 package claude
 
 import (
@@ -14,33 +13,38 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiCLIClaudeThoughtSignature 是用于跳过思维签名验证的常量标记。
+// 在 Claude -> Gemini CLI 转换过程中，为 functionCall 和 thoughtSignature 部分
+// 添加此标记以绕过 Gemini CLI 的思维签名校验。
 const geminiCLIClaudeThoughtSignature = "skip_thought_signature_validator"
 
-// ConvertClaudeRequestToCLI parses and transforms a Claude Code API request into Gemini CLI API format.
-// It extracts the model name, system instruction, message contents, and tool declarations
-// from the raw JSON request and returns them in the format expected by the Gemini CLI API.
-// The function performs the following transformations:
-// 1. Extracts the model information from the request
-// 2. Restructures the JSON to match Gemini CLI API format
-// 3. Converts system instructions to the expected format
-// 4. Maps message contents with proper role transformations
-// 5. Handles tool declarations and tool choices
-// 6. Maps generation configuration parameters
+// ConvertClaudeRequestToCLI 将 Claude Code API 请求解析并转换为 Gemini CLI API 格式。
+// 从原始 JSON 请求中提取模型名称、系统指令、消息内容和工具声明，
+// 并按照 Gemini CLI API 期望的格式重新组织。
+// 执行以下转换步骤：
+// 1. 从请求中提取模型信息
+// 2. 重构 JSON 结构以匹配 Gemini CLI API 格式
+// 3. 将系统指令转换为 Gemini CLI 期望的格式
+// 4. 映射消息内容并进行角色转换（assistant -> model）
+// 5. 处理工具声明和工具选择（tool_choice）
+// 6. 映射生成配置参数（temperature、top_p、top_k）和 thinking 配置
+// 7. 附加默认安全设置
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data from the Claude Code API
-//   - stream: A boolean indicating if the request is for a streaming response (unused in current implementation)
+// 参数:
+//   - modelName: 用于请求的模型名称
+//   - inputRawJSON: 来自 Claude Code API 的原始 JSON 请求数据
+//   - _: 是否为流式响应（当前实现中未使用）
 //
-// Returns:
-//   - []byte: The transformed request data in Gemini CLI API format
+// 返回:
+//   - []byte: Gemini CLI API 格式的转换后请求数据
 func ConvertClaudeRequestToCLI(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 
-	// Build output Gemini CLI request JSON
+	// 构建输出的 Gemini CLI 请求 JSON 模板
 	out := []byte(`{"model":"","request":{"contents":[]}}`)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
+	// 处理系统指令：将 Claude 的 system 数组转换为 Gemini CLI 的 systemInstruction 格式
 	// system instruction
 	if systemResult := gjson.GetBytes(rawJSON, "system"); systemResult.IsArray() {
 		systemInstruction := []byte(`{"role":"user","parts":[]}`)
@@ -67,6 +71,7 @@ func ConvertClaudeRequestToCLI(modelName string, inputRawJSON []byte, _ bool) []
 		out, _ = sjson.SetBytes(out, "request.systemInstruction.parts.-1.text", systemResult.String())
 	}
 
+	// 处理消息内容：遍历 Claude 的 messages 数组，将角色和内容转换为 Gemini CLI 格式
 	// contents
 	if messagesResult := gjson.GetBytes(rawJSON, "messages"); messagesResult.IsArray() {
 		messagesResult.ForEach(func(_, messageResult gjson.Result) bool {
@@ -145,6 +150,7 @@ func ConvertClaudeRequestToCLI(modelName string, inputRawJSON []byte, _ bool) []
 		})
 	}
 
+	// 处理工具声明：将 Claude 的 tools 数组转换为 Gemini CLI 的 functionDeclarations 格式
 	// tools
 	if toolsResult := gjson.GetBytes(rawJSON, "tools"); toolsResult.IsArray() {
 		hasTools := false
@@ -176,6 +182,7 @@ func ConvertClaudeRequestToCLI(modelName string, inputRawJSON []byte, _ bool) []
 		}
 	}
 
+	// 处理工具选择：将 Claude 的 tool_choice 映射到 Gemini CLI 的 functionCallingConfig.mode
 	// tool_choice
 	toolChoiceResult := gjson.GetBytes(rawJSON, "tool_choice")
 	if toolChoiceResult.Exists() {
@@ -203,6 +210,7 @@ func ConvertClaudeRequestToCLI(modelName string, inputRawJSON []byte, _ bool) []
 		}
 	}
 
+	// 将 Anthropic thinking 配置映射到 Gemini CLI 的 thinkingConfig
 	// Map Anthropic thinking -> Gemini CLI thinkingConfig when enabled
 	// Translator only does format conversion, ApplyThinking handles model capability validation.
 	if t := gjson.GetBytes(rawJSON, "thinking"); t.Exists() && t.IsObject() {

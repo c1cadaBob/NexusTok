@@ -1,3 +1,6 @@
+// redisqueue - queue_test.go
+// 该文件包含使用量队列广播和订阅者行为的单元测试，验证 Enqueue 在有订阅者时
+// 直接广播而不入队、取消订阅后消息回退到队列、以及 SetEnabled(false) 关闭订阅者通道的行为。
 package redisqueue
 
 import (
@@ -5,6 +8,8 @@ import (
 	"time"
 )
 
+// TestEnqueueBroadcastsToUsageSubscribersAndSkipsQueue 测试 Enqueue 在存在使用量订阅者时
+// 将消息直接广播给所有订阅者而非入队，取消订阅后消息回退到队列存储。
 func TestEnqueueBroadcastsToUsageSubscribersAndSkipsQueue(t *testing.T) {
 	withEnabledQueue(t, func() {
 		first, unsubscribeFirst := SubscribeUsage()
@@ -32,6 +37,8 @@ func TestEnqueueBroadcastsToUsageSubscribersAndSkipsQueue(t *testing.T) {
 	})
 }
 
+// TestSetEnabledFalseClosesUsageSubscribers 测试调用 SetEnabled(false) 时
+// 所有使用量订阅者的通道会被正确关闭。
 func TestSetEnabledFalseClosesUsageSubscribers(t *testing.T) {
 	withEnabledQueue(t, func() {
 		subscriber, unsubscribe := SubscribeUsage()
@@ -50,6 +57,7 @@ func TestSetEnabledFalseClosesUsageSubscribers(t *testing.T) {
 	})
 }
 
+// requireUsageSubscriberPayload 断言订阅者通道在超时前接收到期望的载荷字符串。
 func requireUsageSubscriberPayload(t *testing.T, subscriber <-chan []byte, want string) {
 	t.Helper()
 

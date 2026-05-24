@@ -1,3 +1,8 @@
+// Package codex - pkce.go
+// 提供 OAuth2 PKCE（Proof Key for Code Exchange）代码生成功能。
+// 生成密码学安全的代码验证器（Code Verifier）及其对应的
+// SHA256 代码挑战（Code Challenge），符合 RFC 7636 规范。
+//
 // Package codex provides authentication and token management functionality
 // for OpenAI's Codex AI services. It handles OAuth2 PKCE (Proof Key for Code Exchange)
 // code generation for secure authentication flows.

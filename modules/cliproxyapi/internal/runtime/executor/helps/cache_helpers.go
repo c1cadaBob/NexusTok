@@ -1,3 +1,5 @@
+// Package helps 提供执行器的辅助工具函数。
+// 本文件实现了缓存相关的辅助功能，包括 Codex 缓存结构和缓存管理。
 package helps
 
 import (
@@ -5,6 +7,8 @@ import (
 	"time"
 )
 
+// CodexCache 表示 Codex 缓存条目，包含缓存 ID 和过期时间。
+// 用于缓存 Codex API 的响应数据以提高性能。
 type CodexCache struct {
 	ID     string
 	Expire time.Time

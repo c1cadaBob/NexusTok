@@ -1,19 +1,34 @@
+// Moka AI Embedding 请求和响应处理文件。
+// 负责将 OpenAI 格式的 Embedding 请求转换为 Moka AI 格式，
+// 并将 Moka AI 的 Embedding 响应转换为 OpenAI 兼容格式。
 package mokaai
 
+// 标准库导入
 import (
-	"encoding/json"
-	"io"
-	"net/http"
+	"encoding/json" // JSON 序列化/反序列化
+	"io"            // IO 读写接口
+	"net/http"      // HTTP 响应处理
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/dto"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/types"
+	// 项目内部依赖
+	"github.com/c1cada/NexusTok/common"                 // 公共工具函数（JSON 处理等）
+	"github.com/c1cada/NexusTok/dto"                    // 数据传输对象定义
+	relaycommon "github.com/c1cada/NexusTok/relay/common"  // Relay 通用模块
+	"github.com/c1cada/NexusTok/service"               // 服务层工具函数
+	"github.com/c1cada/NexusTok/types"                 // 公共类型定义
 
-	"github.com/gin-gonic/gin"
+	// 第三方依赖
+	"github.com/gin-gonic/gin" // Gin Web 框架
 )
 
+// embeddingRequestOpenAI2Moka 将 OpenAI 格式的 Embedding 请求转换为 Moka AI 格式。
+// 主要处理 input 字段的类型转换：
+// - string -> []string: 单个字符串转为字符串切片
+// - []string -> []string: 直接使用
+// - []interface{} -> []string: 遍历提取字符串元素
+// 参数:
+//   - request: OpenAI 格式的通用请求对象
+// 返回:
+//   - *dto.EmbeddingRequest: Moka AI 格式的 Embedding 请求
 func embeddingRequestOpenAI2Moka(request dto.GeneralOpenAIRequest) *dto.EmbeddingRequest {
 	var input []string // Change input to []string
 
@@ -35,6 +50,12 @@ func embeddingRequestOpenAI2Moka(request dto.GeneralOpenAIRequest) *dto.Embeddin
 	}
 }
 
+// embeddingResponseMoka2OpenAI 将 Moka AI 的 Embedding 响应转换为 OpenAI 格式。
+// 将 Moka AI 返回的嵌入数据列表转换为 OpenAI 兼容的响应结构。
+// 参数:
+//   - response: Moka AI 格式的 Embedding 响应
+// 返回:
+//   - *dto.OpenAIEmbeddingResponse: OpenAI 格式的 Embedding 响应
 func embeddingResponseMoka2OpenAI(response *dto.EmbeddingResponse) *dto.OpenAIEmbeddingResponse {
 	openAIEmbeddingResponse := dto.OpenAIEmbeddingResponse{
 		Object: "list",
@@ -52,6 +73,15 @@ func embeddingResponseMoka2OpenAI(response *dto.EmbeddingResponse) *dto.OpenAIEm
 	return &openAIEmbeddingResponse
 }
 
+// mokaEmbeddingHandler 处理 Moka AI Embedding API 的 HTTP 响应。
+// 流程：读取响应体 -> 解析 JSON -> 转换为 OpenAI 格式 -> 写入响应。
+// 参数:
+//   - c: Gin 上下文，用于写入响应
+//   - info: Relay 信息
+//   - resp: Moka AI API 返回的 HTTP 响应
+// 返回:
+//   - *dto.Usage: token 使用量信息
+//   - *types.NexusTokError: 错误信息
 func mokaEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	var baiduResponse dto.EmbeddingResponse
 	responseBody, err := io.ReadAll(resp.Body)

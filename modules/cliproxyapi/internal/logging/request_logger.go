@@ -1,6 +1,7 @@
-// Package logging provides request logging functionality for the CLI Proxy API server.
-// It handles capturing and storing detailed HTTP request and response data when enabled
-// through configuration, supporting both regular and streaming responses.
+// logging - request_logger.go
+// 本文件实现了 HTTP 请求和响应的详细日志记录功能。
+// 支持通过配置启用，可记录常规和流式 HTTP 请求/响应周期。
+// 提供基于文件的存储和 Home 远程转发两种模式。
 package logging
 
 import (

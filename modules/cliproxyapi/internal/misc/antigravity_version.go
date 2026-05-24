@@ -14,24 +14,35 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// antigravityReleasesURL 是 Antigravity 版本发布 API 的地址。
 const (
 	antigravityReleasesURL     = "https://antigravity-auto-updater-974169037036.us-central1.run.app/releases"
+	// antigravityFallbackVersion 是无法获取最新版本时使用的回退版本号。
 	antigravityFallbackVersion = "1.21.9"
+	// antigravityVersionCacheTTL 是版本缓存的过期时间。
 	antigravityVersionCacheTTL = 6 * time.Hour
+	// antigravityFetchTimeout 是获取版本信息的 HTTP 请求超时时间。
 	antigravityFetchTimeout    = 10 * time.Second
+	// AntigravityNodeAPIClientUA 是 Node.js API 客户端的 User-Agent 标识。
 	AntigravityNodeAPIClientUA = "google-api-nodejs-client/10.3.0"
+	// AntigravityGoogAPIClientUA 是 Google API 客户端的 User-Agent 标识。
 	AntigravityGoogAPIClientUA = "gl-node/22.21.1"
 )
 
+// antigravityRelease 表示 Antigravity 版本发布 API 返回的单条发布记录。
 type antigravityRelease struct {
-	Version     string `json:"version"`
-	ExecutionID string `json:"execution_id"`
+	Version     string `json:"version"`     // 版本号
+	ExecutionID string `json:"execution_id"` // 执行 ID
 }
 
 var (
+	// cachedAntigravityVersion 缓存的 Antigravity 最新版本号。
 	cachedAntigravityVersion = antigravityFallbackVersion
+	// antigravityVersionMu 保护版本缓存的读写锁。
 	antigravityVersionMu     sync.RWMutex
+	// antigravityVersionExpiry 版本缓存的过期时间点。
 	antigravityVersionExpiry time.Time
+	// antigravityUpdaterOnce 确保版本更新器只启动一次。
 	antigravityUpdaterOnce   sync.Once
 )
 
@@ -43,6 +54,7 @@ func StartAntigravityVersionUpdater(ctx context.Context) {
 	})
 }
 
+// runAntigravityVersionUpdater 是版本更新器的后台循环，按缓存 TTL 的一半间隔定期刷新版本信息。
 func runAntigravityVersionUpdater(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -65,6 +77,8 @@ func runAntigravityVersionUpdater(ctx context.Context) {
 	}
 }
 
+// refreshAntigravityVersion 从远程 API 获取最新版本并更新缓存，
+// 获取失败时若缓存已过期则使用回退版本。
 func refreshAntigravityVersion(ctx context.Context) {
 	version, errFetch := fetchAntigravityLatestVersion(ctx)
 
@@ -110,6 +124,8 @@ func AntigravityUserAgent() string {
 	return fmt.Sprintf("antigravity/%s darwin/arm64", AntigravityLatestVersion())
 }
 
+// antigravityBaseUserAgent 从 User-Agent 字符串中提取 Antigravity 基础部分，
+// 去除附加的 google-api-nodejs-client 等后缀。
 func antigravityBaseUserAgent(userAgent string) string {
 	userAgent = strings.TrimSpace(userAgent)
 	if userAgent == "" {
@@ -169,6 +185,8 @@ func AntigravityVersionFromUserAgent(userAgent string) string {
 	return rest
 }
 
+// fetchAntigravityLatestVersion 从 Antigravity 发布 API 获取最新版本号，
+// 返回第一个发布记录的版本字符串。
 func fetchAntigravityLatestVersion(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()

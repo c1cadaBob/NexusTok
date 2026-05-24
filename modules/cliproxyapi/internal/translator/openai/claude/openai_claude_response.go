@@ -1,8 +1,9 @@
+// openai/claude - openai_claude_response.go
 // Package claude provides response translation functionality for OpenAI to Anthropic API.
-// This package handles the conversion of OpenAI Chat Completions API responses into Anthropic API-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Anthropic API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, and usage metadata appropriately.
+// 本文件提供 OpenAI Chat Completions API 响应到 Anthropic API 格式的转换功能。
+// 支持流式和非流式模式，处理文本内容、工具调用和使用量元数据。
+// 流式模式下实现了复杂的状态机，管理不同内容类型的 SSE 事件排序，
+// 包括 thinking（reasoning_content）、text、tool_use 等内容块的生命周期管理。
 package claude
 
 import (
@@ -17,55 +18,56 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 SSE 数据行的前缀标识，用于从原始响应中提取 JSON 数据。
 var (
 	dataTag = []byte("data:")
 )
 
-// ConvertOpenAIResponseToAnthropicParams holds parameters for response conversion
+// ConvertOpenAIResponseToAnthropicParams 持有响应转换的状态参数。
+// 跟踪流式响应中各种内容块的状态，确保正确的 SSE 事件排序。
 type ConvertOpenAIResponseToAnthropicParams struct {
-	MessageID   string
-	Model       string
-	CreatedAt   int64
-	ToolNameMap map[string]string
-	// SawToolCall is true once at least one tool_use content_block_start has
-	// been emitted on the wire. Using raw upstream tool_calls presence here
-	// can produce stop_reason=tool_use with zero announced tool blocks.
+	MessageID   string            // 消息 ID
+	Model       string            // 模型名称
+	CreatedAt   int64             // 创建时间戳
+	ToolNameMap map[string]string // 工具名称映射表
+	// SawToolCall 为 true 表示至少已发出一个 tool_use content_block_start。
+	// 使用原始上游 tool_calls 存在性可能导致 stop_reason=tool_use 但没有已宣布的工具块。
 	SawToolCall bool
-	// Content accumulator for streaming
+	// ContentAccumulator 内容累积器，用于流式模式
 	ContentAccumulator strings.Builder
-	// Tool calls accumulator for streaming
+	// ToolCallsAccumulator 工具调用累积器，用于流式模式
 	ToolCallsAccumulator map[int]*ToolCallAccumulator
-	// Track if text content block has been started
+	// TextContentBlockStarted 跟踪文本内容块是否已开始
 	TextContentBlockStarted bool
-	// Track if thinking content block has been started
+	// ThinkingContentBlockStarted 跟踪思考内容块是否已开始
 	ThinkingContentBlockStarted bool
-	// Track finish reason for later use
+	// FinishReason 跟踪完成原因以供后续使用
 	FinishReason string
-	// Track if content blocks have been stopped
+	// ContentBlocksStopped 跟踪内容块是否已停止
 	ContentBlocksStopped bool
-	// Track if message_delta has been sent
+	// MessageDeltaSent 跟踪 message_delta 是否已发送
 	MessageDeltaSent bool
-	// Track if message_start has been sent
+	// MessageStarted 跟踪 message_start 是否已发送
 	MessageStarted bool
-	// Track if message_stop has been sent
+	// MessageStopSent 跟踪 message_stop 是否已发送
 	MessageStopSent bool
-	// Tool call content block index mapping
+	// ToolCallBlockIndexes 工具调用内容块索引映射
 	ToolCallBlockIndexes map[int]int
-	// Index assigned to text content block
+	// TextContentBlockIndex 文本内容块的索引
 	TextContentBlockIndex int
-	// Index assigned to thinking content block
+	// ThinkingContentBlockIndex 思考内容块的索引
 	ThinkingContentBlockIndex int
-	// Next available content block index
+	// NextContentBlockIndex 下一个可用的内容块索引
 	NextContentBlockIndex int
 }
 
-// ToolCallAccumulator holds the state for accumulating tool call data
+// ToolCallAccumulator 持有工具调用数据的累积状态。
+// 在流式模式下累积工具调用的 ID、名称和参数。
 type ToolCallAccumulator struct {
-	ID        string
-	Name      string
-	Arguments strings.Builder
-	// StartEmitted tracks whether content_block_start has already been sent
-	// for this tool index.
+	ID        string          // 工具调用 ID
+	Name      string          // 函数名称
+	Arguments strings.Builder // 累积的参数 JSON 字符串
+	// StartEmitted 跟踪是否已为此工具索引发送了 content_block_start
 	StartEmitted bool
 }
 
@@ -487,7 +489,7 @@ func convertOpenAINonStreamingToAnthropic(rawJSON []byte) [][]byte {
 	return [][]byte{out}
 }
 
-// mapOpenAIFinishReasonToAnthropic maps OpenAI finish reasons to Anthropic equivalents
+// mapOpenAIFinishReasonToAnthropic 将 OpenAI 完成原因映射为 Anthropic 等效值。
 func mapOpenAIFinishReasonToAnthropic(openAIReason string) string {
 	switch openAIReason {
 	case "stop":
@@ -505,6 +507,8 @@ func mapOpenAIFinishReasonToAnthropic(openAIReason string) string {
 	}
 }
 
+// toolContentBlockIndex 获取或分配工具调用的内容块索引。
+// 使用懒初始化策略，首次访问时分配新索引。
 func (p *ConvertOpenAIResponseToAnthropicParams) toolContentBlockIndex(openAIToolIndex int) int {
 	if idx, ok := p.ToolCallBlockIndexes[openAIToolIndex]; ok {
 		return idx
@@ -515,6 +519,8 @@ func (p *ConvertOpenAIResponseToAnthropicParams) toolContentBlockIndex(openAIToo
 	return idx
 }
 
+// collectOpenAIReasoningTexts 从 OpenAI 响应中收集推理/思考文本。
+// 支持字符串、数组和对象格式的推理内容。
 func collectOpenAIReasoningTexts(node gjson.Result) []string {
 	var texts []string
 	if !node.Exists() {
@@ -547,6 +553,7 @@ func collectOpenAIReasoningTexts(node gjson.Result) []string {
 	return texts
 }
 
+// stopThinkingContentBlock 停止思考内容块（如果已打开）。
 func stopThinkingContentBlock(param *ConvertOpenAIResponseToAnthropicParams, results *[][]byte) {
 	if !param.ThinkingContentBlockStarted {
 		return
@@ -558,6 +565,7 @@ func stopThinkingContentBlock(param *ConvertOpenAIResponseToAnthropicParams, res
 	param.ThinkingContentBlockIndex = -1
 }
 
+// emitMessageStopIfNeeded 在需要时发送 message_stop 事件（仅发送一次）。
 func emitMessageStopIfNeeded(param *ConvertOpenAIResponseToAnthropicParams, results *[][]byte) {
 	if param.MessageStopSent {
 		return
@@ -566,6 +574,7 @@ func emitMessageStopIfNeeded(param *ConvertOpenAIResponseToAnthropicParams, resu
 	param.MessageStopSent = true
 }
 
+// stopTextContentBlock 停止文本内容块（如果已打开）。
 func stopTextContentBlock(param *ConvertOpenAIResponseToAnthropicParams, results *[][]byte) {
 	if !param.TextContentBlockStarted {
 		return
@@ -577,6 +586,8 @@ func stopTextContentBlock(param *ConvertOpenAIResponseToAnthropicParams, results
 	param.TextContentBlockIndex = -1
 }
 
+// emitToolUseStart 发送工具使用的 content_block_start 事件。
+// 先停止当前的思考和文本内容块，然后开始新的工具使用块。
 func emitToolUseStart(param *ConvertOpenAIResponseToAnthropicParams, openAIToolIndex int, accumulator *ToolCallAccumulator, results *[][]byte) {
 	stopThinkingContentBlock(param, results)
 	stopTextContentBlock(param, results)
@@ -591,6 +602,7 @@ func emitToolUseStart(param *ConvertOpenAIResponseToAnthropicParams, openAIToolI
 	param.SawToolCall = true
 }
 
+// toolCallAccumulatorIndexes 返回工具调用累积器的有序索引列表。
 func toolCallAccumulatorIndexes(accumulators map[int]*ToolCallAccumulator) []int {
 	indexes := make([]int, 0, len(accumulators))
 	for index := range accumulators {
@@ -768,10 +780,14 @@ func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, origina
 	return out
 }
 
+// ClaudeTokenCount 生成 Claude 格式的 Token 计数 JSON 响应。
 func ClaudeTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.ClaudeInputTokensJSON(count)
 }
 
+// extractOpenAIUsage 从 OpenAI 响应的 usage 字段中提取 Token 使用信息。
+// 返回输入 Token 数、输出 Token 数和缓存 Token 数。
+// 如果存在缓存 Token，会从输入 Token 中扣除已缓存部分。
 func extractOpenAIUsage(usage gjson.Result) (int64, int64, int64) {
 	if !usage.Exists() || usage.Type == gjson.Null {
 		return 0, 0, 0

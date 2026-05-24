@@ -1,16 +1,40 @@
+// Package types - set.go
+// 该文件定义了泛型集合（Set）数据结构
+//
+// 主要类型：
+// - Set：基于 map 的泛型集合
+//
+// 核心功能：
+// - 支持任意可比较类型的元素
+// - 添加、删除、检查元素是否存在
+// - 获取集合大小和所有元素
 package types
 
+// Set 泛型集合数据结构
+// 基于 map 实现的集合，支持任意可比较类型的元素
+// 不保证元素的顺序
+//
+// 类型参数：
+//   - T: 元素类型，必须是可比较类型
 type Set[T comparable] struct {
-	items map[T]struct{}
+	items map[T]struct{} // 底层存储，使用空结构体节省内存
 }
 
-// NewSet 创建并返回一个新的 Set
+// NewSet 创建并返回一个新的空 Set
+//
+// 返回值：
+//   - *Set[T]: 新的 Set 实例
 func NewSet[T comparable]() *Set[T] {
 	return &Set[T]{
 		items: make(map[T]struct{}),
 	}
 }
 
+// Add 向 Set 中添加一个元素
+// 如果元素已存在，则操作为空
+//
+// 参数：
+//   - item: 要添加的元素
 func (s *Set[T]) Add(item T) {
 	s.items[item] = struct{}{}
 }

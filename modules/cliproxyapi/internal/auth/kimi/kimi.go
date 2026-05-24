@@ -1,3 +1,8 @@
+// Package kimi - kimi.go
+// 提供 Kimi（月之暗面/Moonshot AI）API 的 OAuth2 设备授权流程实现。
+// 遵循 RFC 8628 规范，包括请求设备码、轮询等待用户授权、
+// 令牌交换与刷新等功能，支持代理配置和自动重试。
+//
 // Package kimi provides authentication and token management for Kimi (Moonshot AI) API.
 // It handles the RFC 8628 OAuth2 Device Authorization Grant flow for secure authentication.
 package kimi
@@ -20,22 +25,23 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Kimi OAuth2 认证流程的常量配置
 const (
-	// kimiClientID is Kimi Code's OAuth client ID.
+	// kimiClientID 是 Kimi Code 的 OAuth 客户端 ID
 	kimiClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
-	// kimiOAuthHost is the OAuth server endpoint.
+	// kimiOAuthHost 是 Kimi OAuth 服务器端点
 	kimiOAuthHost = "https://auth.kimi.com"
-	// kimiDeviceCodeURL is the endpoint for requesting device codes.
+	// kimiDeviceCodeURL 是请求设备码的端点
 	kimiDeviceCodeURL = kimiOAuthHost + "/api/oauth/device_authorization"
-	// kimiTokenURL is the endpoint for exchanging device codes for tokens.
+	// kimiTokenURL 是用设备码换取令牌的端点
 	kimiTokenURL = kimiOAuthHost + "/api/oauth/token"
-	// KimiAPIBaseURL is the base URL for Kimi API requests.
+	// KimiAPIBaseURL 是 Kimi API 请求的基础 URL
 	KimiAPIBaseURL = "https://api.kimi.com/coding"
-	// defaultPollInterval is the default interval for polling token endpoint.
+	// defaultPollInterval 是轮询令牌端点的默认间隔
 	defaultPollInterval = 5 * time.Second
-	// maxPollDuration is the maximum time to wait for user authorization.
+	// maxPollDuration 是等待用户授权的最大时长
 	maxPollDuration = 15 * time.Minute
-	// refreshThresholdSeconds is when to refresh token before expiry (5 minutes).
+	// refreshThresholdSeconds 是令牌过期前的刷新阈值（5 分钟）
 	refreshThresholdSeconds = 300
 )
 

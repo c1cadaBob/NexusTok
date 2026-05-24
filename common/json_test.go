@@ -1,5 +1,8 @@
 package common
 
+// 本文件测试 JSON 工具函数 JsonRawMessageToString 的功能。
+// 该函数负责将 json.RawMessage 转换为普通字符串，处理对象、嵌套字符串、null 和空值等多种场景。
+
 import (
 	"encoding/json"
 	"testing"
@@ -7,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestJsonRawMessageToString 测试 JsonRawMessageToString 函数对不同类型输入的处理能力。
+// 覆盖场景包括：JSON 对象、被引号包裹的 JSON 字符串、null 值和 nil 输入。
 func TestJsonRawMessageToString(t *testing.T) {
 	tests := []struct {
 		name string
@@ -37,6 +42,7 @@ func TestJsonRawMessageToString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// 验证各种输入均能正确转换为目标字符串
 			require.Equal(t, tt.want, JsonRawMessageToString(tt.data))
 		})
 	}

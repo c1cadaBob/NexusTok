@@ -1,14 +1,24 @@
 #!/bin/bash
+# build.sh - NexusTok Electron 桌面应用构建脚本
+#
+# 功能：
+# - 构建前端（React + Rsbuild）
+# - 构建 Go 后端（根据操作系统选择构建目标）
+# - 构建 Electron 应用（macOS/Linux/Windows）
+#
+# 输出目录：electron/dist/
 
 set -e
 
 echo "Building NexusTok Electron App..."
 
+# 步骤 1：构建前端
 echo "Step 1: Building frontend..."
 cd ../web
 DISABLE_ESLINT_PLUGIN='true' bun run build
 cd ../electron
 
+# 步骤 2：根据操作系统构建 Go 后端和 Electron 应用
 echo "Step 2: Building Go backend..."
 cd ..
 

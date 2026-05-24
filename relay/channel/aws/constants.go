@@ -1,7 +1,18 @@
+// Package aws - constants.go
+// 该文件定义了 AWS Bedrock 渠道的常量和配置
+//
+// 包含：
+// - 模型 ID 映射（标准名称 -> Bedrock ARN 格式）
+// - 跨区域推理支持映射
+// - 区域前缀映射
+// - Nova 模型识别函数
 package aws
 
 import "strings"
 
+// awsModelIDMap 模型 ID 映射表
+// 将标准模型名称映射为 AWS Bedrock 的 ARN 格式模型 ID
+// 包含 Claude 系列和 Amazon Nova 系列模型
 var awsModelIDMap = map[string]string{
 	"claude-3-sonnet-20240229":   "anthropic.claude-3-sonnet-20240229-v1:0",
 	"claude-3-opus-20240229":     "anthropic.claude-3-opus-20240229-v1:0",
@@ -30,6 +41,9 @@ var awsModelIDMap = map[string]string{
 	"nova-sonic-v1:0":   "amazon.nova-sonic-v1:0",
 }
 
+// awsModelCanCrossRegionMap 模型跨区域推理支持映射
+// 记录每个模型支持的区域列表
+// 区域标识：us=美国, eu=欧洲, ap/apac=亚太
 var awsModelCanCrossRegionMap = map[string]map[string]bool{
 	"anthropic.claude-3-sonnet-20240229-v1:0": {
 		"us": true,
@@ -141,15 +155,26 @@ var awsModelCanCrossRegionMap = map[string]map[string]bool{
 	},
 }
 
+// awsRegionCrossModelPrefixMap 区域前缀映射
+// 用于跨区域推理时替换模型 ARN 中的区域前缀
 var awsRegionCrossModelPrefixMap = map[string]string{
-	"us": "us",
-	"eu": "eu",
-	"ap": "apac",
+	"us": "us",     // 美国区域
+	"eu": "eu",     // 欧洲区域
+	"ap": "apac",   // 亚太区域
 }
 
+// ChannelName 渠道名称标识
 var ChannelName = "aws"
 
-// 判断是否为Nova模型
+// isNovaModel 判断是否为 Amazon Nova 模型
+//
+// Nova 模型是 AWS 自研的基础模型系列
+//
+// 参数：
+//   - modelId: 模型 ID
+//
+// 返回值：
+//   - bool: 是否为 Nova 模型
 func isNovaModel(modelId string) bool {
 	return strings.Contains(modelId, "nova-")
 }

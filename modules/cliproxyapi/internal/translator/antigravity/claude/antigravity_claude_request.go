@@ -1,8 +1,13 @@
+// antigravity/claude - antigravity_claude_request.go
 // Package claude provides request translation functionality for Claude Code API compatibility.
-// This package handles the conversion of Claude Code API requests into Gemini CLI-compatible
-// JSON format, transforming message contents, system instructions, and tool declarations
-// into the format expected by Gemini CLI API clients. It performs JSON data transformation
-// to ensure compatibility between Claude Code API format and Gemini CLI API's expected format.
+// 本文件提供 Claude Code API 请求到 Antigravity（Gemini CLI）API 格式的转换功能。
+// 这是一个复杂的请求转换器，主要功能包括：
+// 1. 系统指令提取和格式转换
+// 2. 消息内容转换（thinking/文本/tool_use/tool_result/图片）
+// 3. 思考签名（thinkingSignature）的解析和验证（支持缓存模式和绕过模式）
+// 4. 工具声明和工具选择的映射
+// 5. 交错思考提示的注入（当工具和思考同时启用时）
+// 6. 模型轮次中 parts 的重排序（thinking 优先，functionCall 最后）
 package claude
 
 import (
@@ -17,6 +22,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// resolveThinkingSignature 解析思考签名，根据缓存模式或绕过模式选择不同的解析策略。
+// 缓存模式下从签名缓存中查找或验证；绕过模式下对签名进行格式规范化。
 func resolveThinkingSignature(modelName, thinkingText, rawSignature string) string {
 	if cache.SignatureCacheEnabled() {
 		return resolveCacheModeSignature(modelName, thinkingText, rawSignature)
@@ -24,6 +31,8 @@ func resolveThinkingSignature(modelName, thinkingText, rawSignature string) stri
 	return resolveBypassModeSignature(rawSignature)
 }
 
+// resolveCacheModeSignature 在缓存模式下解析思考签名。
+// 优先从签名缓存中查找与思考文本匹配的签名，其次验证客户端提供的签名。
 func resolveCacheModeSignature(modelName, thinkingText, rawSignature string) string {
 	if thinkingText != "" {
 		if cachedSig := cache.GetCachedSignature(modelName, thinkingText); cachedSig != "" {
@@ -49,6 +58,8 @@ func resolveCacheModeSignature(modelName, thinkingText, rawSignature string) str
 	return ""
 }
 
+// resolveBypassModeSignature 在绕过模式下解析思考签名。
+// 对原始签名进行格式规范化（normalizeClaudeBypassSignature），失败时返回空字符串。
 func resolveBypassModeSignature(rawSignature string) string {
 	if rawSignature == "" {
 		return ""
@@ -60,6 +71,8 @@ func resolveBypassModeSignature(rawSignature string) string {
 	return normalized
 }
 
+// hasResolvedThinkingSignature 检查是否已解析到有效的思考签名。
+// 缓存模式下通过缓存验证；绕过模式下检查签名是否非空。
 func hasResolvedThinkingSignature(modelName, signature string) bool {
 	if cache.SignatureCacheEnabled() {
 		return cache.HasValidSignature(modelName, signature)

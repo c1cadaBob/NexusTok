@@ -1,5 +1,6 @@
-// Package watcher watches config/auth files and triggers hot reloads.
-// It supports cross-platform fsnotify event handling.
+// watcher - watcher.go
+// 本文件实现了配置文件和认证文件的监听器，支持跨平台 fsnotify 事件处理。
+// 监听器监控配置文件和认证目录的变化，触发配置热重载和认证增量更新。
 package watcher
 
 import (

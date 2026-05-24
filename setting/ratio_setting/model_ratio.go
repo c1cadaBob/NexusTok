@@ -1,3 +1,14 @@
+// model_ratio.go — 模型定价比率与价格配置管理
+// 职责：管理所有 AI 模型的定价相关配置，包括：
+//   - ModelRatio：模型倍率（相对于基准价格的倍数）
+//   - CompletionRatio：输出 token 相对于输入 token 的价格倍率
+//   - ModelPrice：模型的固定价格（用于按次计费的模型）
+//   - ImageRatio：图片生成模型的倍率
+//   - AudioRatio / AudioCompletionRatio：音频模型的倍率
+//
+// 支持模型名通配符匹配（如 gpt-4-gizmo-*）和思考预算模型名规范化。
+// 所有 Map 均为线程安全的 RWMap，更新时自动刷新暴露数据缓存。
+
 package ratio_setting
 
 import (
@@ -8,21 +19,19 @@ import (
 	"github.com/c1cada/NexusTok/types"
 )
 
-// from songquanpeng/one-api
+// USD2RMB 美元兑人民币汇率（暂定值）
 const (
 	USD2RMB = 7.3 // 暂定 1 USD = 7.3 RMB
 	USD     = 500 // $0.002 = 1 -> $1 = 500
 	RMB     = USD / USD2RMB
 )
 
-// modelRatio
-// https://platform.openai.com/docs/models/model-endpoint-compatibility
-// https://cloud.baidu.com/doc/WENXINWORKSHOP/s/Blfmc9dlf
-// https://openai.com/pricing
-// TODO: when a NexusTok relay is enabled, check the pricing here
-// 1 === $0.002 / 1K tokens
-// 1 === ￥0.014 / 1k tokens
-
+// defaultModelRatio 默认的模型倍率配置
+// 计费单位：1 === $0.002 / 1K tokens === ￥0.014 / 1k tokens
+// 参考文档：
+//   - https://platform.openai.com/docs/models/model-endpoint-compatibility
+//   - https://cloud.baidu.com/doc/WENXINWORKSHOP/s/Blfmc9dlf
+//   - https://openai.com/pricing
 var defaultModelRatio = map[string]float64{
 	//"midjourney":                50,
 	"gpt-4-gizmo-*":  15,
@@ -276,6 +285,8 @@ var defaultModelRatio = map[string]float64{
 	"deepseek-ai/DeepSeek-V3.1":               0.8,
 }
 
+// defaultModelPrice 默认的模型固定价格配置（按次计费）
+// 适用于图片生成、音乐生成、视频生成等非 token 计费的模型
 var defaultModelPrice = map[string]float64{
 	"suno_music":                     0.1,
 	"suno_lyrics":                    0.01,
@@ -310,6 +321,7 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.1-fast-generate-preview":  0.15,
 }
 
+// defaultAudioRatio 默认的音频模型输入倍率配置
 var defaultAudioRatio = map[string]float64{
 	"gpt-4o-audio-preview":         16,
 	"gpt-4o-mini-audio-preview":    66.67,
@@ -318,6 +330,8 @@ var defaultAudioRatio = map[string]float64{
 	"gpt-4o-mini-tts":              25,
 }
 
+// defaultAudioCompletionRatio 默认的音频模型输出倍率配置
+// 值为 0 表示输出不计费（如 TTS 模型）
 var defaultAudioCompletionRatio = map[string]float64{
 	"gpt-4o-realtime":      2,
 	"gpt-4o-mini-realtime": 2,
@@ -328,10 +342,17 @@ var defaultAudioCompletionRatio = map[string]float64{
 	"tts-1-hd-1106":        0,
 }
 
+// modelPriceMap 线程安全的模型固定价格 Map
 var modelPriceMap = types.NewRWMap[string, float64]()
+
+// modelRatioMap 线程安全的模型倍率 Map
 var modelRatioMap = types.NewRWMap[string, float64]()
+
+// completionRatioMap 线程安全的输出倍率 Map
 var completionRatioMap = types.NewRWMap[string, float64]()
 
+// defaultCompletionRatio 默认的输出倍率配置
+// 输出 token 价格 = 输入 token 价格 * completionRatio
 var defaultCompletionRatio = map[string]float64{
 	"gpt-4-gizmo-*":  2,
 	"gpt-4o-gizmo-*": 3,
@@ -339,7 +360,8 @@ var defaultCompletionRatio = map[string]float64{
 	"gpt-image-1":    8,
 }
 
-// InitRatioSettings initializes all model related settings maps
+// InitRatioSettings 初始化所有模型定价相关的 Map
+// 将默认配置加载到各线程安全 Map 中
 func InitRatioSettings() {
 	modelPriceMap.AddAll(defaultModelPrice)
 	modelRatioMap.AddAll(defaultModelRatio)
@@ -351,19 +373,37 @@ func InitRatioSettings() {
 	audioCompletionRatioMap.AddAll(defaultAudioCompletionRatio)
 }
 
+// GetModelPriceMap 获取所有模型固定价格的副本
+// 返回值：模型名到价格的映射副本
 func GetModelPriceMap() map[string]float64 {
 	return modelPriceMap.ReadAll()
 }
 
+// ModelPrice2JSONString 将模型固定价格 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func ModelPrice2JSONString() string {
 	return modelPriceMap.MarshalJSONString()
 }
 
+// UpdateModelPriceByJSONString 从 JSON 字符串更新模型固定价格配置
+// 更新后会自动刷新暴露数据缓存
+// 参数：
+//   - jsonStr: JSON 格式的价格配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateModelPriceByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(modelPriceMap, jsonStr, InvalidateExposedDataCache)
 }
 
-// GetModelPrice 返回模型的价格，如果模型不存在则返回-1，false
+// GetModelPrice 获取指定模型的固定价格
+// 支持紧凑模型后缀的通配符匹配
+// 参数：
+//   - name: 模型名称
+//   - printErr: 未找到时是否打印错误日志
+//
+// 返回值：
+//   - float64: 模型价格
+//   - bool: 是否找到该模型的价格
 func GetModelPrice(name string, printErr bool) (float64, bool) {
 	name = FormatMatchingModelName(name)
 
@@ -388,11 +428,24 @@ func GetModelPrice(name string, printErr bool) (float64, bool) {
 	return -1, false
 }
 
+// UpdateModelRatioByJSONString 从 JSON 字符串更新模型倍率配置
+// 更新后会自动刷新暴露数据缓存
+// 参数：
+//   - jsonStr: JSON 格式的倍率配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateModelRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(modelRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
-// 处理带有思考预算的模型名称，方便统一定价
+// handleThinkingBudgetModel 处理带有思考预算的模型名称
+// 将带 thinking budget 参数的模型名规范化为通配符形式，方便统一定价
+// 参数：
+//   - name: 原始模型名
+//   - prefix: 模型前缀
+//   - wildcard: 通配符目标名称
+//
+// 返回值：规范化后的模型名
 func handleThinkingBudgetModel(name, prefix, wildcard string) string {
 	if strings.HasPrefix(name, prefix) && strings.Contains(name, "-thinking-") {
 		return wildcard
@@ -400,6 +453,15 @@ func handleThinkingBudgetModel(name, prefix, wildcard string) string {
 	return name
 }
 
+// GetModelRatio 获取指定模型的倍率
+// 支持紧凑模型后缀的通配符匹配，未找到时返回默认倍率 37.5
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：
+//   - float64: 模型倍率
+//   - bool: 是否找到该模型
+//   - string: 匹配后的模型名
 func GetModelRatio(name string) (float64, bool, string) {
 	name = FormatMatchingModelName(name)
 
@@ -416,6 +478,8 @@ func GetModelRatio(name string) (float64, bool, string) {
 	return ratio, true, name
 }
 
+// DefaultModelRatio2JSONString 将默认模型倍率配置序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func DefaultModelRatio2JSONString() string {
 	jsonBytes, err := common.Marshal(defaultModelRatio)
 	if err != nil {
@@ -424,22 +488,40 @@ func DefaultModelRatio2JSONString() string {
 	return string(jsonBytes)
 }
 
+// GetDefaultModelRatioMap 获取默认模型倍率 Map 的引用
+// 返回值：默认倍率 Map
 func GetDefaultModelRatioMap() map[string]float64 {
 	return defaultModelRatio
 }
 
+// GetDefaultModelPriceMap 获取默认模型固定价格 Map 的引用
+// 返回值：默认价格 Map
 func GetDefaultModelPriceMap() map[string]float64 {
 	return defaultModelPrice
 }
 
+// CompletionRatio2JSONString 将输出倍率 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func CompletionRatio2JSONString() string {
 	return completionRatioMap.MarshalJSONString()
 }
 
+// UpdateCompletionRatioByJSONString 从 JSON 字符串更新输出倍率配置
+// 更新后会自动刷新暴露数据缓存
+// 参数：
+//   - jsonStr: JSON 格式的输出倍率配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateCompletionRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(completionRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
+// GetCompletionRatio 获取指定模型的输出倍率
+// 优先查找自定义配置，然后查找硬编码的默认倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：输出倍率
 func GetCompletionRatio(name string) float64 {
 	name = FormatMatchingModelName(name)
 
@@ -458,11 +540,20 @@ func GetCompletionRatio(name string) float64 {
 	return hardCodedRatio
 }
 
+// CompletionRatioInfo 输出倍率信息结构体，包含倍率值和是否锁定
 type CompletionRatioInfo struct {
-	Ratio  float64 `json:"ratio"`
-	Locked bool    `json:"locked"`
+	// Ratio 输出倍率值
+	Ratio float64 `json:"ratio"`
+	// Locked 是否为硬编码锁定的倍率（不可通过配置覆盖）
+	Locked bool `json:"locked"`
 }
 
+// GetCompletionRatioInfo 获取指定模型的输出倍率详细信息
+// 区分硬编码锁定的倍率和可配置的倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：输出倍率信息
 func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 	name = FormatMatchingModelName(name)
 
@@ -496,6 +587,14 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 	}
 }
 
+// getHardcodedCompletionModelRatio 获取硬编码的模型输出倍率
+// 根据模型名称前缀匹配返回预设的输出倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：
+//   - float64: 输出倍率
+//   - bool: 是否为锁定的硬编码值（不可配置覆盖）
 func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 
 	isReservedModel := strings.HasSuffix(name, "-all") || strings.HasSuffix(name, "-gizmo-*")
@@ -626,6 +725,11 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 	return 1, false
 }
 
+// GetAudioRatio 获取指定音频模型的输入倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：音频输入倍率，未找到时默认返回 1
 func GetAudioRatio(name string) float64 {
 	name = FormatMatchingModelName(name)
 	if ratio, ok := audioRatioMap.Get(name); ok {
@@ -634,6 +738,11 @@ func GetAudioRatio(name string) float64 {
 	return 1
 }
 
+// GetAudioCompletionRatio 获取指定音频模型的输出倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：音频输出倍率，未找到时默认返回 1
 func GetAudioCompletionRatio(name string) float64 {
 	name = FormatMatchingModelName(name)
 	if ratio, ok := audioCompletionRatioMap.Get(name); ok {
@@ -642,37 +751,70 @@ func GetAudioCompletionRatio(name string) float64 {
 	return 1
 }
 
+// ContainsAudioRatio 判断指定音频模型是否配置了输入倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：存在则返回 true
 func ContainsAudioRatio(name string) bool {
 	name = FormatMatchingModelName(name)
 	_, ok := audioRatioMap.Get(name)
 	return ok
 }
 
+// ContainsAudioCompletionRatio 判断指定音频模型是否配置了输出倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：存在则返回 true
 func ContainsAudioCompletionRatio(name string) bool {
 	name = FormatMatchingModelName(name)
 	_, ok := audioCompletionRatioMap.Get(name)
 	return ok
 }
 
+// ModelRatio2JSONString 将模型倍率 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func ModelRatio2JSONString() string {
 	return modelRatioMap.MarshalJSONString()
 }
 
+// defaultImageRatio 默认的图片生成模型倍率配置
 var defaultImageRatio = map[string]float64{
 	"gpt-image-1": 2,
 }
+
+// imageRatioMap 线程安全的图片倍率 Map
 var imageRatioMap = types.NewRWMap[string, float64]()
+
+// audioRatioMap 线程安全的音频输入倍率 Map
 var audioRatioMap = types.NewRWMap[string, float64]()
+
+// audioCompletionRatioMap 线程安全的音频输出倍率 Map
 var audioCompletionRatioMap = types.NewRWMap[string, float64]()
 
+// ImageRatio2JSONString 将图片倍率 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func ImageRatio2JSONString() string {
 	return imageRatioMap.MarshalJSONString()
 }
 
+// UpdateImageRatioByJSONString 从 JSON 字符串更新图片倍率配置
+// 参数：
+//   - jsonStr: JSON 格式的图片倍率配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateImageRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonString(imageRatioMap, jsonStr)
 }
 
+// GetImageRatio 获取指定图片模型的倍率
+// 参数：
+//   - name: 模型名称
+//
+// 返回值：
+//   - float64: 图片倍率，未找到时默认返回 1
+//   - bool: 是否在配置中找到了该模型
 func GetImageRatio(name string) (float64, bool) {
 	ratio, ok := imageRatioMap.Get(name)
 	if !ok {
@@ -681,47 +823,81 @@ func GetImageRatio(name string) (float64, bool) {
 	return ratio, true
 }
 
+// AudioRatio2JSONString 将音频输入倍率 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func AudioRatio2JSONString() string {
 	return audioRatioMap.MarshalJSONString()
 }
 
+// UpdateAudioRatioByJSONString 从 JSON 字符串更新音频输入倍率配置
+// 更新后会自动刷新暴露数据缓存
+// 参数：
+//   - jsonStr: JSON 格式的音频倍率配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateAudioRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(audioRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
+// AudioCompletionRatio2JSONString 将音频输出倍率 Map 序列化为 JSON 字符串
+// 返回值：JSON 字符串
 func AudioCompletionRatio2JSONString() string {
 	return audioCompletionRatioMap.MarshalJSONString()
 }
 
+// UpdateAudioCompletionRatioByJSONString 从 JSON 字符串更新音频输出倍率配置
+// 更新后会自动刷新暴露数据缓存
+// 参数：
+//   - jsonStr: JSON 格式的音频输出倍率配置字符串
+//
+// 返回值：解析失败时返回错误
 func UpdateAudioCompletionRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(audioCompletionRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
+// GetModelRatioCopy 获取所有模型倍率的副本
+// 返回值：模型名到倍率的映射副本
 func GetModelRatioCopy() map[string]float64 {
 	return modelRatioMap.ReadAll()
 }
 
+// GetModelPriceCopy 获取所有模型固定价格的副本
+// 返回值：模型名到价格的映射副本
 func GetModelPriceCopy() map[string]float64 {
 	return modelPriceMap.ReadAll()
 }
 
+// GetCompletionRatioCopy 获取所有输出倍率的副本
+// 返回值：模型名到输出倍率的映射副本
 func GetCompletionRatioCopy() map[string]float64 {
 	return completionRatioMap.ReadAll()
 }
 
+// GetImageRatioCopy 获取所有图片倍率的副本
+// 返回值：模型名到图片倍率的映射副本
 func GetImageRatioCopy() map[string]float64 {
 	return imageRatioMap.ReadAll()
 }
 
+// GetAudioRatioCopy 获取所有音频输入倍率的副本
+// 返回值：模型名到音频倍率的映射副本
 func GetAudioRatioCopy() map[string]float64 {
 	return audioRatioMap.ReadAll()
 }
 
+// GetAudioCompletionRatioCopy 获取所有音频输出倍率的副本
+// 返回值：模型名到音频输出倍率的映射副本
 func GetAudioCompletionRatioCopy() map[string]float64 {
 	return audioCompletionRatioMap.ReadAll()
 }
 
-// 转换模型名，减少渠道必须配置各种带参数模型
+// FormatMatchingModelName 规范化模型名称，减少渠道配置的复杂度
+// 将带思考预算参数的 Gemini 模型名转换为通配符形式，
+// 将 gpt-4-gizmo/gpt-4o-gizmo 前缀的模型名转换为统配符形式
+// 参数：
+//   - name: 原始模型名称
+//
+// 返回值：规范化后的模型名称
 func FormatMatchingModelName(name string) string {
 
 	if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
@@ -741,7 +917,15 @@ func FormatMatchingModelName(name string) string {
 	return name
 }
 
-// result: 倍率or价格， usePrice， exist
+// GetModelRatioOrPrice 获取模型的倍率或固定价格
+// 优先返回固定价格，无固定价格时返回倍率
+// 参数：
+//   - model: 模型名称
+//
+// 返回值：
+//   - float64: 倍率或价格值
+//   - bool: 是否为固定价格（true）还是倍率（false）
+//   - bool: 是否在配置中找到该模型
 func GetModelRatioOrPrice(model string) (float64, bool, bool) { // price or ratio
 	price, usePrice := GetModelPrice(model, false)
 	if usePrice {

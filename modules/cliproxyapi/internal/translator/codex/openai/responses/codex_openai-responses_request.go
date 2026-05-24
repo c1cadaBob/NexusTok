@@ -1,3 +1,15 @@
+// responses - codex_openai-responses_request.go
+// Codex 的 OpenAI Responses 格式请求转换器。
+// 将 OpenAI Responses API 格式的请求转换为 Codex 兼容的格式。
+//
+// 主要转换内容：
+// - 将字符串类型的 input 转换为标准消息数组格式
+// - 设置 Codex 必需的默认参数（stream、store、parallel_tool_calls）
+// - 添加 reasoning.encrypted_content 到 include 字段
+// - 移除 Codex 不支持的字段（max_output_tokens、max_completion_tokens、temperature、top_p 等）
+// - 将 system 角色转换为 developer 角色
+// - 标准化内置工具类型别名（web_search_preview -> web_search）
+// - 移除 context_management 和 truncation 字段以兼容 Codex 上游
 package responses
 
 import (
@@ -8,6 +20,18 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// ConvertOpenAIResponsesRequestToCodex 将 OpenAI Responses API 格式的请求转换为 Codex 兼容格式。
+//
+// 转换步骤：
+// 1. 将字符串 input 转换为标准消息数组
+// 2. 强制设置 stream=true、store=false、parallel_tool_calls=true
+// 3. 添加 reasoning.encrypted_content 到 include 字段
+// 4. 移除 Codex 不支持的 token 限制和采样参数字段
+// 5. 处理 service_tier 字段（仅保留 priority 值）
+// 6. 移除不支持的 truncation 和 context_management 字段
+// 7. 删除 user 字段（Codex 上游不支持）
+// 8. 将 system 角色转换为 developer 角色
+// 9. 标准化内置工具类型别名
 func ConvertOpenAIResponsesRequestToCodex(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 
@@ -113,6 +137,9 @@ func normalizeCodexBuiltinTools(rawJSON []byte) []byte {
 	return result
 }
 
+// normalizeCodexBuiltinToolAtPath 标准化指定 JSON 路径处的内置工具类型。
+// 读取路径处的当前类型值，通过 normalizeCodexBuiltinToolType 映射为标准名称，
+// 如果有变化则更新该路径的值并记录调试日志。
 func normalizeCodexBuiltinToolAtPath(rawJSON []byte, path string) []byte {
 	currentType := gjson.GetBytes(rawJSON, path).String()
 	normalizedType := normalizeCodexBuiltinToolType(currentType)

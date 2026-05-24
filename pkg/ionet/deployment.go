@@ -1,3 +1,10 @@
+// Package ionet - deployment.go
+// 该文件实现了 IO.NET 部署管理功能
+//
+// 核心功能：
+// - DeployContainer：部署新的容器
+// - 部署配置管理
+// - 部署状态查询
 package ionet
 
 import (

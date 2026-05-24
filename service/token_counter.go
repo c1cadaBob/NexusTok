@@ -1,3 +1,12 @@
+// Package service - token_counter.go
+// 该文件实现了请求/响应的 Token 计数功能
+//
+// 功能：
+// - 图像 Token 计算（支持 Patch-based 和 Tile-based 两种算法）
+// - 文本 Token 统计（OpenAI 模型使用 tokenizer，其他模型使用估算）
+// - 音频 Token 计算（输入/输出）
+// - 实时会话（Realtime）Token 统计
+// - 请求总 Token 预估（包含文本、图像、音频、视频等多模态）
 package service
 
 import (
@@ -19,6 +28,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getImageToken 计算图像的 Token 数量
+//
+// 支持两种计算算法：
+// - Patch-based: 适用于 gpt-4.1-mini/nano、o4-mini、gpt-5-mini/nano 等模型，使用 32x32 补丁，上限 1536
+// - Tile-based: 适用于 gpt-4o/4.1/4.5/o1/o3 等模型，使用 512px 瓦片
+//
+// 参数：
+//   - c: Gin 上下文
+//   - fileMeta: 文件元数据（包含图片源和 detail 设置）
+//   - model: 模型名称
+//   - stream: 是否为流式模式
+//
+// 返回值：
+//   - int: 图像 Token 数量
+//   - error: 错误
 func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, stream bool) (int, error) {
 	if fileMeta == nil || fileMeta.Source == nil {
 		return 0, fmt.Errorf("image_url_is_nil")
@@ -178,6 +202,22 @@ func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, strea
 	return tiles*tileTokens + baseTokens, nil
 }
 
+// EstimateRequestToken 预估请求的 Token 总数
+//
+// 处理流程：
+// 1. 检查是否启用 Token 统计
+// 2. 音频转录/翻译模式：根据音频时长计算（每分钟 1000 token）
+// 3. 文本模式：统计文本 token + OpenAI 消息格式化开销
+// 4. 多模态文件：根据文件类型（图像/音频/视频/文件）累加 token
+//
+// 参数：
+//   - c: Gin 上下文
+//   - meta: Token 统计元数据（文本、文件、消息数等）
+//   - info: 中继信息
+//
+// 返回值：
+//   - int: 预估的 Token 总数
+//   - error: 错误
 func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relaycommon.RelayInfo) (int, error) {
 	// 是否统计token
 	if !constant.CountToken {
@@ -297,6 +337,25 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 	return tkm, nil
 }
 
+// CountTokenRealtime 统计实时会话（Realtime API）的 Token 数量
+//
+// 根据事件类型分别统计文本和音频 Token：
+// - SessionUpdate: 统计 instructions 文本 token
+// - ResponseAudioDelta: 统计输出音频 token
+// - ResponseAudioTranscriptionDelta/ResponseFunctionCallArgumentsDelta: 统计文本 token
+// - InputAudioBufferAppend: 统计输入音频 token
+// - ConversationItemCreated: 统计消息中的文本 token
+// - ResponseDone: 统计工具定义的 token
+//
+// 参数：
+//   - info: 中继信息
+//   - request: 实时事件请求
+//   - model: 模型名称
+//
+// 返回值：
+//   - int: 文本 Token 数量
+//   - int: 音频 Token 数量
+//   - error: 错误
 func CountTokenRealtime(info *relaycommon.RelayInfo, request dto.RealtimeEvent, model string) (int, int, error) {
 	audioToken := 0
 	textToken := 0
@@ -351,6 +410,17 @@ func CountTokenRealtime(info *relaycommon.RelayInfo, request dto.RealtimeEvent, 
 	return textToken, audioToken, nil
 }
 
+// CountTokenInput 统计任意类型输入的 Token 数量
+//
+// 支持的输入类型：string、[]string、[]interface{}
+// 其他类型会通过 fmt.Sprintf 转为字符串后计算
+//
+// 参数：
+//   - input: 输入内容
+//   - model: 模型名称
+//
+// 返回值：
+//   - int: Token 数量
 func CountTokenInput(input any, model string) int {
 	switch v := input.(type) {
 	case string:
@@ -371,6 +441,17 @@ func CountTokenInput(input any, model string) int {
 	return CountTokenInput(fmt.Sprintf("%v", input), model)
 }
 
+// CountAudioTokenInput 统计输入音频的 Token 数量
+//
+// 计算公式：duration / 60 * 100 / 0.06
+//
+// 参数：
+//   - audioBase64: Base64 编码的音频数据
+//   - audioFormat: 音频格式
+//
+// 返回值：
+//   - int: Token 数量
+//   - error: 错误
 func CountAudioTokenInput(audioBase64 string, audioFormat string) (int, error) {
 	if audioBase64 == "" {
 		return 0, nil
@@ -382,6 +463,17 @@ func CountAudioTokenInput(audioBase64 string, audioFormat string) (int, error) {
 	return int(duration / 60 * 100 / 0.06), nil
 }
 
+// CountAudioTokenOutput 统计输出音频的 Token 数量
+//
+// 计算公式：duration / 60 * 200 / 0.24
+//
+// 参数：
+//   - audioBase64: Base64 编码的音频数据
+//   - audioFormat: 音频格式
+//
+// 返回值：
+//   - int: Token 数量
+//   - error: 错误
 func CountAudioTokenOutput(audioBase64 string, audioFormat string) (int, error) {
 	if audioBase64 == "" {
 		return 0, nil

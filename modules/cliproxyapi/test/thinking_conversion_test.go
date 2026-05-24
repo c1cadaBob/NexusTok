@@ -1,3 +1,13 @@
+// Package test - thinking_conversion_test.go
+// 思考（Thinking）配置转换的端到端矩阵测试。
+// 测试在不同 AI 提供者格式之间转换时，思考配置（如推理努力级别、思考预算等）
+// 的正确转换行为。覆盖以下场景：
+// - 模型名称后缀解析（如 model(8192)、model(high)）
+// - 请求体参数转换（如 reasoning_effort、thinkingBudget）
+// - 跨协议语义映射（OpenAI <-> Gemini <-> Claude <-> Codex <-> Antigravity）
+// - 同协议透传
+// - Gemini 家族跨渠道一致性
+// - Claude 4.6 自适应思考
 package test
 
 import (
@@ -7,7 +17,7 @@ import (
 
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
 
-	// Import provider packages to trigger init() registration of ProviderAppliers
+	// 导入提供者包以触发 ProviderAppliers 的 init() 注册。
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/thinking/provider/antigravity"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/thinking/provider/claude"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/thinking/provider/codex"
@@ -23,24 +33,36 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// thinkingTestCase represents a common test case structure for both suffix and body tests.
+// thinkingTestCase 表示思考配置转换测试的通用测试用例结构。
+// 用于后缀测试和请求体测试两种场景。
 type thinkingTestCase struct {
-	name            string
-	from            string
-	to              string
-	model           string
-	inputJSON       string
-	expectField     string
-	expectValue     string
-	expectField2    string
-	expectValue2    string
+	// name 是测试用例的名称/编号。
+	name string
+	// from 是源 API 格式（如 "openai"、"gemini"、"claude"）。
+	from string
+	// to 是目标 API 格式。
+	to string
+	// model 是模型名称（可能包含后缀，如 "model(8192)"）。
+	model string
+	// inputJSON 是输入的请求 JSON 字符串。
+	inputJSON string
+	// expectField 是期望在输出中出现的 JSON 字段路径。
+	expectField string
+	// expectValue 是期望字段的值。
+	expectValue string
+	// expectField2 是第二个期望字段路径（可选）。
+	expectField2 string
+	// expectValue2 是第二个期望字段的值。
+	expectValue2 string
+	// includeThoughts 是期望的 includeThoughts 字段值（仅 Gemini 系列）。
 	includeThoughts string
-	expectErr       bool
+	// expectErr 表示是否期望测试返回错误。
+	expectErr bool
 }
 
-// TestThinkingE2EMatrix_Suffix tests the thinking configuration transformation using model name suffix.
-// Data flow: Input JSON → TranslateRequest → ApplyThinking → Validate Output
-// No helper functions are used; all test data is inline.
+// TestThinkingE2EMatrix_Suffix 测试使用模型名称后缀的思考配置转换。
+// 数据流：输入 JSON -> TranslateRequest -> ApplyThinking -> 验证输出。
+// 不使用辅助函数，所有测试数据内联定义。
 func TestThinkingE2EMatrix_Suffix(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	uid := fmt.Sprintf("thinking-e2e-suffix-%d", time.Now().UnixNano())
@@ -1145,8 +1167,8 @@ func TestThinkingE2EMatrix_Suffix(t *testing.T) {
 	runThinkingTests(t, cases)
 }
 
-// TestThinkingE2EMatrix_Body tests the thinking configuration transformation using request body parameters.
-// Data flow: Input JSON with thinking params → TranslateRequest → ApplyThinking → Validate Output
+// TestThinkingE2EMatrix_Body 测试使用请求体参数的思考配置转换。
+// 数据流：包含思考参数的输入 JSON -> TranslateRequest -> ApplyThinking -> 验证输出。
 func TestThinkingE2EMatrix_Body(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	uid := fmt.Sprintf("thinking-e2e-body-%d", time.Now().UnixNano())
@@ -2238,8 +2260,8 @@ func TestThinkingE2EMatrix_Body(t *testing.T) {
 	runThinkingTests(t, cases)
 }
 
-// TestThinkingE2EClaudeAdaptive_Body covers Group 3 cases in docs/thinking-e2e-test-cases.md.
-// It focuses on Claude 4.6 adaptive thinking and effort/level cross-protocol semantics (body-only).
+// TestThinkingE2EClaudeAdaptive_Body 覆盖 docs/thinking-e2e-test-cases.md 中的 Group 3 用例。
+// 专注于 Claude 4.6 自适应思考和 effort/level 跨协议语义（仅请求体）。
 func TestThinkingE2EClaudeAdaptive_Body(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	uid := fmt.Sprintf("thinking-e2e-claude-adaptive-%d", time.Now().UnixNano())
@@ -2737,7 +2759,18 @@ func TestThinkingE2EClaudeAdaptive_Body(t *testing.T) {
 	runThinkingTests(t, cases)
 }
 
-// getTestModels returns the shared model definitions for E2E tests.
+// getTestModels 返回 E2E 测试共享的模型定义列表。
+// 包含以下模型类型：
+// - level-model: 支持级别（minimal/low/medium/high）的模型
+// - level-subset-model: 支持部分级别（low/high）的模型
+// - gemini-budget-model: 支持预算（128-20000）的 Gemini 模型
+// - gemini-mixed-model: 支持混合模式（级别+预算）的 Gemini 模型
+// - claude-budget-model: 支持预算（1024-128000）的 Claude 模型
+// - claude-sonnet-4-6-model: Claude 4.6 Sonnet 模型
+// - claude-opus-4-6-model: Claude 4.6 Opus 模型
+// - antigravity-budget-model: 支持预算的 Antigravity 模型
+// - no-thinking-model: 不支持思考的模型
+// - user-defined-model: 用户自定义模型
 func getTestModels() []*registry.ModelInfo {
 	return []*registry.ModelInfo{
 		{
@@ -2839,7 +2872,12 @@ func getTestModels() []*registry.ModelInfo {
 	}
 }
 
-// runThinkingTests runs thinking test cases using the real data flow path.
+// runThinkingTests 使用真实数据流路径运行思考测试用例。
+// 对于每个测试用例：
+// 1. 解析模型名称后缀
+// 2. 执行请求格式转换（TranslateRequest）
+// 3. 应用思考配置（ApplyThinking）
+// 4. 验证输出字段是否符合预期
 func runThinkingTests(t *testing.T, cases []thinkingTestCase) {
 	for _, tc := range cases {
 		tc := tc

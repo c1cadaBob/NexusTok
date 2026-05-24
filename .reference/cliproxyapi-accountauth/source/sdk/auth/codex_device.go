@@ -1,3 +1,7 @@
+// 包 auth - codex_device.go
+// 该文件实现了 Codex 的设备认证流程（Device Flow）。
+// 当标准 OAuth 浏览器流程不可用时，用户可以通过设备码在外部设备上完成认证。
+// 包括设备码请求、轮询等待授权、令牌交换和认证记录构建等功能。
 package auth
 
 import (
@@ -22,38 +26,52 @@ import (
 )
 
 const (
-	codexLoginModeMetadataKey             = "codex_login_mode"
-	codexLoginModeDevice                  = "device"
-	codexDeviceUserCodeURL                = "https://auth.openai.com/api/accounts/deviceauth/usercode"
-	codexDeviceTokenURL                   = "https://auth.openai.com/api/accounts/deviceauth/token"
-	codexDeviceVerificationURL            = "https://auth.openai.com/codex/device"
-	codexDeviceTokenExchangeRedirectURI   = "https://auth.openai.com/deviceauth/callback"
-	codexDeviceTimeout                    = 15 * time.Minute
-	codexDeviceDefaultPollIntervalSeconds = 5
+	codexLoginModeMetadataKey             = "codex_login_mode"              // 登录模式元数据键
+	codexLoginModeDevice                  = "device"                        // 设备认证模式值
+	codexDeviceUserCodeURL                = "https://auth.openai.com/api/accounts/deviceauth/usercode" // 设备码请求端点
+	codexDeviceTokenURL                   = "https://auth.openai.com/api/accounts/deviceauth/token"    // 设备令牌轮询端点
+	codexDeviceVerificationURL            = "https://auth.openai.com/codex/device"                      // 设备验证页面 URL
+	codexDeviceTokenExchangeRedirectURI   = "https://auth.openai.com/deviceauth/callback"              // 令牌交换重定向 URI
+	codexDeviceTimeout                    = 15 * time.Minute // 设备认证超时时间
+	codexDeviceDefaultPollIntervalSeconds = 5                // 默认轮询间隔（秒）
 )
 
+// codexDeviceUserCodeRequest 是设备码请求的载荷结构体。
 type codexDeviceUserCodeRequest struct {
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id"` // OAuth 客户端 ID
 }
 
+// codexDeviceUserCodeResponse 是设备码请求的响应结构体。
 type codexDeviceUserCodeResponse struct {
-	DeviceAuthID string          `json:"device_auth_id"`
-	UserCode     string          `json:"user_code"`
-	UserCodeAlt  string          `json:"usercode"`
-	Interval     json.RawMessage `json:"interval"`
+
+// codexDeviceUserCodeResponse 是设备码请求的响应结构体。
+type codexDeviceUserCodeResponse struct {
+	DeviceAuthID string          `json:"device_auth_id"` // 设备认证 ID
+	UserCode     string          `json:"user_code"`      // 用户设备码
+	UserCodeAlt  string          `json:"usercode"`       // 用户设备码（备选字段名）
+	Interval     json.RawMessage `json:"interval"`       // 轮询间隔（秒，可为字符串或整数）
 }
 
+// codexDeviceTokenRequest 是设备令牌轮询请求的载荷结构体。
 type codexDeviceTokenRequest struct {
-	DeviceAuthID string `json:"device_auth_id"`
-	UserCode     string `json:"user_code"`
+	DeviceAuthID string `json:"device_auth_id"` // 设备认证 ID
+	UserCode     string `json:"user_code"`      // 用户设备码
 }
 
+// codexDeviceTokenResponse 是设备令牌轮询的响应结构体。
 type codexDeviceTokenResponse struct {
-	AuthorizationCode string `json:"authorization_code"`
-	CodeVerifier      string `json:"code_verifier"`
-	CodeChallenge     string `json:"code_challenge"`
+	AuthorizationCode string `json:"authorization_code"` // 授权码
+	CodeVerifier      string `json:"code_verifier"`      // PKCE 验证码
+	CodeChallenge     string `json:"code_challenge"`     // PKCE 挑战码
 }
 
+// shouldUseCodexDeviceFlow 检查登录选项是否指定了设备认证模式。
+//
+// 参数:
+//   - opts: 登录选项
+//
+// 返回:
+//   - bool: 如果使用设备认证模式返回 true
 func shouldUseCodexDeviceFlow(opts *LoginOptions) bool {
 	if opts == nil || opts.Metadata == nil {
 		return false
@@ -61,6 +79,17 @@ func shouldUseCodexDeviceFlow(opts *LoginOptions) bool {
 	return strings.EqualFold(strings.TrimSpace(opts.Metadata[codexLoginModeMetadataKey]), codexLoginModeDevice)
 }
 
+// loginWithDeviceFlow 执行 Codex 的设备认证流程。
+// 用户在浏览器中输入设备码完成认证后，系统自动获取授权码并交换令牌。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - cfg: 应用配置
+//   - opts: 登录选项
+//
+// 返回:
+//   - *coreauth.Auth: 认证结果
+//   - error: 认证失败时返回错误信息
 func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -125,6 +154,15 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
 	return a.buildAuthRecord(authSvc, authBundle)
 }
 
+// requestCodexDeviceUserCode 向 OpenAI 认证服务器请求设备码。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - client: HTTP 客户端
+//
+// 返回:
+//   - *codexDeviceUserCodeResponse: 设备码响应
+//   - error: 请求失败时返回错误信息
 func requestCodexDeviceUserCode(ctx context.Context, client *http.Client) (*codexDeviceUserCodeResponse, error) {
 	body, err := json.Marshal(codexDeviceUserCodeRequest{ClientID: codex.ClientID})
 	if err != nil {
@@ -168,6 +206,19 @@ func requestCodexDeviceUserCode(ctx context.Context, client *http.Client) (*code
 	return &parsed, nil
 }
 
+// pollCodexDeviceToken 轮询 OpenAI 认证服务器等待用户完成设备码认证。
+// 在超时前持续轮询，直到获得授权码或认证失败。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - client: HTTP 客户端
+//   - deviceAuthID: 设备认证 ID
+//   - userCode: 用户设备码
+//   - interval: 轮询间隔
+//
+// 返回:
+//   - *codexDeviceTokenResponse: 令牌响应（包含授权码和 PKCE 码）
+//   - error: 轮询超时或失败时返回错误信息
 func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID, userCode string, interval time.Duration) (*codexDeviceTokenResponse, error) {
 	deadline := time.Now().Add(codexDeviceTimeout)
 
@@ -226,6 +277,14 @@ func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID
 	}
 }
 
+// parseCodexDevicePollInterval 解析服务器返回的轮询间隔。
+// 支持字符串和整数两种格式，解析失败时返回默认值（5 秒）。
+//
+// 参数:
+//   - raw: 原始 JSON 值
+//
+// 返回:
+//   - time.Duration: 解析后的轮询间隔
 func parseCodexDevicePollInterval(raw json.RawMessage) time.Duration {
 	defaultInterval := time.Duration(codexDeviceDefaultPollIntervalSeconds) * time.Second
 	if len(raw) == 0 {
@@ -247,10 +306,27 @@ func parseCodexDevicePollInterval(raw json.RawMessage) time.Duration {
 	return defaultInterval
 }
 
+// codexDeviceIsSuccessStatus 检查 HTTP 状态码是否表示成功（2xx）。
+//
+// 参数:
+//   - code: HTTP 状态码
+//
+// 返回:
+//   - bool: 如果是 2xx 状态码返回 true
 func codexDeviceIsSuccessStatus(code int) bool {
 	return code >= 200 && code < 300
 }
 
+// buildAuthRecord 根据认证服务结果构建认证记录。
+// 从 JWT ID 令牌中提取计划类型和账户 ID，并生成文件名。
+//
+// 参数:
+//   - authSvc: Codex 认证服务
+//   - authBundle: 认证令牌包
+//
+// 返回:
+//   - *coreauth.Auth: 认证记录
+//   - error: 构建失败时返回错误信息
 func (a *CodexAuthenticator) buildAuthRecord(authSvc *codex.CodexAuth, authBundle *codex.CodexAuthBundle) (*coreauth.Auth, error) {
 	tokenStorage := authSvc.CreateTokenStorage(authBundle)
 

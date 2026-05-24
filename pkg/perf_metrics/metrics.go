@@ -1,3 +1,11 @@
+// Package perfmetrics - metrics.go
+// 该文件实现了性能指标的收集和聚合功能
+//
+// 核心功能：
+// - 请求性能数据的采集（延迟、TTFT、Token 数等）
+// - 按模型和分组聚合性能指标
+// - 支持时间桶（bucket）聚合
+// - 支持百分位数计算（P50、P95、P99）
 package perfmetrics
 
 import (
@@ -14,16 +22,28 @@ import (
 	"github.com/c1cada/NexusTok/setting/perf_metrics_setting"
 )
 
+// hotBuckets 存储当前活跃的时间桶（热数据）
+// 使用 sync.Map 保证高并发下的读写性能
+// key 为 bucketKey，value 为 *atomicBucket
 var hotBuckets sync.Map
 
-// seriesSchema is a stable client cache/schema marker. Do not change it when
-// hiding fields or making response-only privacy hardening changes.
+// seriesSchema 是客户端缓存/Schema 标识符
+// 当响应格式变化时（如隐藏字段），应更新此值使客户端刷新缓存
+// 但不要因为隐私硬化等仅影响响应的变更而修改
 const seriesSchema = "dbcd0a3c01b55203"
 
+// Init 初始化性能指标系统
+// 启动后台刷新 goroutine，定期将内存中的指标数据写入数据库
 func Init() {
 	go flushLoop()
 }
 
+// RecordRelaySample 从中继层的 RelayInfo 中提取性能数据并记录
+// 自动计算 TTFT（首 Token 延迟）和端到端延迟
+// 参数：
+//   - info：中继层的请求信息
+//   - success：请求是否成功
+//   - outputTokens：输出 Token 数
 func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
 	if info == nil {
 		return
@@ -54,6 +74,9 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 	})
 }
 
+// Record 记录一次请求的采样数据到内存时间桶
+// 如果性能指标功能未启用或模型名为空，则忽略
+// 数据同时写入本地内存桶和 Redis（如果启用）
 func Record(sample Sample) {
 	setting := perf_metrics_setting.GetSetting()
 	if !setting.Enabled || sample.Model == "" {
@@ -76,6 +99,9 @@ func Record(sample Sample) {
 	recordRedis(key, sample)
 }
 
+// Query 查询指定模型和分组的性能指标
+// 合并数据库中的历史数据和内存中的实时数据
+// 返回按时间桶组织的时间序列数据
 func Query(params QueryParams) (QueryResult, error) {
 	if params.Hours <= 0 {
 		params.Hours = 24
@@ -122,6 +148,9 @@ func Query(params QueryParams) (QueryResult, error) {
 	return buildQueryResult(params.Model, merged), nil
 }
 
+// QuerySummaryAll 查询所有模型的性能摘要
+// 合并数据库历史数据和内存实时数据，按请求量降序排列
+// 用于性能概览页面展示所有模型的汇总指标
 func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 	if hours <= 0 {
 		hours = 24
@@ -193,6 +222,8 @@ func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 	return SummaryAllResult{Models: models}, nil
 }
 
+// bucketStart 计算给定时间戳所在时间桶的起始时间
+// 时间桶大小由配置决定（默认 3600 秒 = 1 小时）
 func bucketStart(ts int64) int64 {
 	bucketSeconds := perf_metrics_setting.GetBucketSeconds()
 	if bucketSeconds <= 0 {
@@ -201,6 +232,8 @@ func bucketStart(ts int64) int64 {
 	return ts - (ts % bucketSeconds)
 }
 
+// mergeCounters 将一组计数器合并到汇总 map 中
+// 跳过请求总数为 0 的空计数器
 func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters) {
 	if value.requestCount == 0 {
 		return
@@ -216,6 +249,8 @@ func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters)
 	merged[key] = current
 }
 
+// buildQueryResult 将合并后的计数器数据构建为查询结果
+// 按分组聚合，每个分组内按时间排序生成时间序列
 func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResult {
 	groupBuckets := map[string]map[int64]counters{}
 	for key, value := range merged {
@@ -276,6 +311,7 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 	}
 }
 
+// bucketPoint 将单个时间桶的计数器数据转换为 BucketPoint
 func bucketPoint(ts int64, value counters) BucketPoint {
 	return BucketPoint{
 		Ts:           ts,
@@ -286,6 +322,7 @@ func bucketPoint(ts int64, value counters) BucketPoint {
 	}
 }
 
+// avg 计算平均值（整数除法），避免除零
 func avg(sum int64, count int64) int64 {
 	if count <= 0 {
 		return 0
@@ -293,6 +330,7 @@ func avg(sum int64, count int64) int64 {
 	return sum / count
 }
 
+// successRate 计算成功率（百分比），返回 0-100 之间的浮点数
 func successRate(value counters) float64 {
 	if value.requestCount <= 0 {
 		return 0
@@ -300,6 +338,8 @@ func successRate(value counters) float64 {
 	return float64(value.successCount) / float64(value.requestCount) * 100
 }
 
+// avgTps 计算平均 Token 生成速度（tokens/秒）
+// TPS = 输出 Token 总数 / (生成耗时总和 / 1000)
 func avgTps(value counters) float64 {
 	if value.outputTokens <= 0 || value.generationMs <= 0 {
 		return 0
@@ -307,6 +347,9 @@ func avgTps(value counters) float64 {
 	return float64(value.outputTokens) / (float64(value.generationMs) / 1000)
 }
 
+// recordRedis 将采样数据异步写入 Redis
+// 使用 Hash 结构存储，键格式为 "perf:{model}:{group}:{bucketTs}"
+// 设置 1 小时过期时间，避免 Redis 键无限增长
 func recordRedis(key bucketKey, sample Sample) {
 	if !common.RedisEnabled || common.RDB == nil {
 		return
@@ -335,6 +378,9 @@ func recordRedis(key bucketKey, sample Sample) {
 	_, _ = pipe.Exec(ctx)
 }
 
+// mergeRedisActiveBuckets 从 Redis 中读取当前活跃桶的数据并合并到查询结果
+// 仅在 Redis 启用且查询参数包含模型和分组时执行
+// 用于补充内存桶可能尚未刷新的最新数据
 func mergeRedisActiveBuckets(merged map[bucketKey]counters, params QueryParams, startTs int64, endTs int64) {
 	if !common.RedisEnabled || common.RDB == nil || params.Model == "" || params.Group == "" {
 		return
@@ -353,6 +399,8 @@ func mergeRedisActiveBuckets(merged map[bucketKey]counters, params QueryParams, 
 	mergeCounters(merged, key, redisCounters(values))
 }
 
+// redisBucketKey 生成 Redis 中时间桶的键名
+// 格式：perf:{model}:{group}:{bucketTs}
 func redisBucketKey(key bucketKey) string {
 	return fmt.Sprintf("perf:%s:%s:%d", key.model, key.group, key.bucketTs)
 }

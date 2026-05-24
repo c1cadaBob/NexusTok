@@ -1,6 +1,26 @@
+# docker-compose.hot.yml - NexusTok 热重载开发环境
+#
+# 功能：
+# - 前端：使用 Bun 监听文件变化并自动重新构建
+# - 后端：使用 Go 热重载脚本自动编译和重启
+# - 账号池：CLIProxyAPI 从源码热重载
+# - 数据库：PostgreSQL + Redis
+#
+# 使用方法：
+#   docker compose -f docker-compose.hot.yml up -d
+#
+# 访问地址：
+#   - 后端 API: http://localhost:3003
+#   - 前端开发: 文件修改后自动重新构建
+#
+# 环境变量：
+#   HOT_PORT - 后端 API 端口（默认: 3003）
+#   DOCKER_UID/DOCKER_GID - 容器内用户 ID
+
 name: nexustok-hot
 
 services:
+  # 前端构建监听服务（自动检测文件变化并重新构建）
   frontend-watch:
     image: oven/bun:1
     container_name: nexustok-frontend-watch
@@ -57,8 +77,8 @@ services:
       - hot-network
     restart: unless-stopped
 
+  # NexusTok 后端服务（热重载模式）
   nexustok:
-    build:
       context: .
       dockerfile: Dockerfile.dev-hot
     image: nexustok-api-hot:local
@@ -100,16 +120,14 @@ services:
       - hot-network
     restart: unless-stopped
 
+  # Redis 缓存服务
   redis:
-    image: redis:7-alpine
-    container_name: nexustok-hot-redis
     restart: unless-stopped
     networks:
       - hot-network
 
+  # PostgreSQL 数据库服务
   postgres:
-    image: postgres:15-alpine
-    container_name: nexustok-hot-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: root

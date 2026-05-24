@@ -1,8 +1,15 @@
-// Package openai provides response translation functionality for Gemini to OpenAI API compatibility.
-// This package handles the conversion of Gemini API responses into OpenAI Chat Completions-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by OpenAI API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, reasoning content, and usage metadata appropriately.
+// chat_completions - gemini_openai_response.go
+// Gemini 的 OpenAI Chat Completions 响应转换器。
+// 负责将 Gemini API 的响应转换为 OpenAI Chat Completions 兼容的 JSON 格式。
+// 支持流式和非流式两种模式。
+//
+// 转换特性：
+// - 流式模式：增量输出 SSE 事件，支持多候选（candidate_count > 1）
+// - 非流式模式：聚合所有内容到单个响应对象
+// - 工具调用：使用进程级唯一计数器生成函数调用 ID，支持多候选的独立索引
+// - 图片处理：将内联数据转换为 data: URL 格式
+// - 推理内容：区分思维内容（reasoning_content）和正文内容（content）
+// - 用量元数据：映射 Gemini 的 usageMetadata 到 OpenAI 的 usage 格式
 package chat_completions
 
 import (
@@ -19,31 +26,41 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// convertGeminiResponseToOpenAIChatParams holds parameters for response conversion.
+// convertGeminiResponseToOpenAIChatParams 保存流式响应转换过程中需要保持的状态参数。
 type convertGeminiResponseToOpenAIChatParams struct {
+	// UnixTimestamp 响应创建时间的 Unix 时间戳
 	UnixTimestamp int64
-	// FunctionIndex tracks tool call indices per candidate index to support multiple candidates.
-	FunctionIndex    map[int]int
+	// FunctionIndex 按候选索引跟踪工具调用索引，支持多候选场景
+	FunctionIndex map[int]int
+	// SanitizedNameMap 工具名称清理映射表，用于还原被清理过的函数名称
 	SanitizedNameMap map[string]string
 }
 
-// functionCallIDCounter provides a process-wide unique counter for function call identifiers.
+// functionCallIDCounter 提供进程级别的唯一函数调用标识符计数器。
+// 使用原子操作确保在并发场景下的线程安全性。
 var functionCallIDCounter uint64
 
-// ConvertGeminiResponseToOpenAI translates a single chunk of a streaming response from the
-// Gemini API format to the OpenAI Chat Completions streaming format.
-// It processes various Gemini event types and transforms them into OpenAI-compatible JSON responses.
-// The function handles text content, tool calls, reasoning content, and usage metadata, outputting
-// responses that match the OpenAI API format. It supports incremental updates for streaming responses.
+// ConvertGeminiResponseToOpenAI 将 Gemini API 的流式响应转换为 OpenAI Chat Completions 流式格式。
+// 支持多候选（candidate_count > 1），每个候选独立生成一个 SSE 事件。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Gemini API
-//   - param: A pointer to a parameter object for maintaining state between calls
+// 处理流程：
+// 1. 初始化或恢复流式转换状态
+// 2. 提取模型版本、创建时间和响应 ID
+// 3. 映射用量元数据（token 计数）
+// 4. 遍历所有候选，为每个候选独立处理内容部分
+// 5. 区分文本、函数调用和内联数据，生成对应的 SSE 事件
+// 6. 设置完成原因（tool_calls 或 stop/max_tokens）
 //
-// Returns:
-//   - [][]byte: A slice of OpenAI-compatible JSON responses
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据，用于获取工具名称映射
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Gemini 格式的原始响应 JSON 数据
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Chat Completions 格式的 SSE 事件数据切片
 func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	// Initialize parameters if nil.
 	if *param == nil {
@@ -257,19 +274,19 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 	return responseStrings
 }
 
-// ConvertGeminiResponseToOpenAINonStream converts a non-streaming Gemini response to a non-streaming OpenAI response.
-// This function processes the complete Gemini response and transforms it into a single OpenAI-compatible
-// JSON response. It handles message content, tool calls, reasoning content, and usage metadata, combining all
-// the information into a single response that matches the OpenAI API format.
+// ConvertGeminiResponseToOpenAINonStream 将 Gemini 的非流式响应转换为 OpenAI Chat Completions 格式。
+// 处理完整的 Gemini 响应，支持多候选，将所有内容聚合到单个 OpenAI 兼容的 JSON 响应中。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Gemini API
-//   - param: A pointer to a parameter object for the conversion (unused in current implementation)
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据，用于获取工具名称映射
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Gemini 格式的原始响应 JSON 数据
+//   - _: 未使用的参数指针
 //
-// Returns:
-//   - []byte: An OpenAI-compatible JSON response containing all message content and metadata
+// 返回值：
+//   - []byte: OpenAI Chat Completions 格式的完整 JSON 响应数据
 func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	sanitizedNameMap := util.SanitizedToolNameMap(originalRequestRawJSON)
 	var unixTimestamp int64

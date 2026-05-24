@@ -1,3 +1,15 @@
+// Package controller - topup_creem.go
+// 该文件实现了 Creem 支付平台的充值 API 控制器
+//
+// Creem 是一个支持多种货币（USD/CNY）的支付平台
+// 功能包括：
+// - 创建 Creem 充值支付链接
+// - 处理 Creem Webhook 支付回调
+// - 生成 Creem 结账会话
+//
+// 主要 API：
+// - RequestCreemPay：发起 Creem 充值支付
+// - CreemWebhook：处理 Creem 支付回调
 package controller
 
 import (
@@ -21,8 +33,10 @@ import (
 	"github.com/thanhpk/randstr"
 )
 
+// CreemSignatureHeader Creem Webhook 签名头名称
 const CreemSignatureHeader = "creem-signature"
 
+// creemAdaptor Creem 支付适配器实例
 var creemAdaptor = &CreemAdaptor{}
 
 // 生成HMAC-SHA256签名
@@ -47,19 +61,21 @@ func verifyCreemSignature(payload string, signature string, secret string) bool 
 	return hmac.Equal([]byte(signature), []byte(expectedSignature))
 }
 
+// CreemPayRequest Creem 充值支付请求结构体
 type CreemPayRequest struct {
-	ProductId     string `json:"product_id"`
-	PaymentMethod string `json:"payment_method"`
+	ProductId     string `json:"product_id"`     // 产品 ID
+	PaymentMethod string `json:"payment_method"` // 支付方式（必须为 "creem"）
 }
 
+// CreemProduct Creem 产品配置结构体
 type CreemProduct struct {
-	ProductId string  `json:"productId"`
-	Name      string  `json:"name"`
-	Price     float64 `json:"price"`
-	Currency  string  `json:"currency"`
-	Quota     int64   `json:"quota"`
+	ProductId string  `json:"productId"` // 产品 ID
+	Name      string  `json:"name"`      // 产品名称
+	Price     float64 `json:"price"`     // 价格
+	Quota     int64   `json:"quota"`     // 充值额度
 }
 
+// CreemAdaptor Creem 支付适配器
 type CreemAdaptor struct {
 }
 
@@ -141,6 +157,12 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	})
 }
 
+// RequestCreemPay 处理 Creem 充值支付请求
+//
+// 流程：
+// 1. 读取并记录请求体
+// 2. 解析请求参数
+// 3. 委托给 CreemAdaptor.RequestPay 处理
 func RequestCreemPay(c *gin.Context) {
 	var req CreemPayRequest
 
@@ -165,7 +187,9 @@ func RequestCreemPay(c *gin.Context) {
 	creemAdaptor.RequestPay(c, &req)
 }
 
-// 新的Creem Webhook结构体，匹配实际的webhook数据格式
+// CreemWebhookEvent Creem Webhook 事件结构体
+//
+// 匹配 Creem 实际发送的 Webhook 数据格式
 type CreemWebhookEvent struct {
 	Id        string `json:"id"`
 	EventType string `json:"eventType"`
@@ -226,6 +250,14 @@ type CreemWebhookEvent struct {
 	} `json:"object"`
 }
 
+// CreemWebhook 处理 Creem 支付回调
+//
+// 流程：
+// 1. 检查 Webhook 是否启用
+// 2. 读取请求体
+// 3. 验证签名（HMAC-SHA256）
+// 4. 解析 Webhook 事件
+// 5. 根据事件类型分发处理（目前仅处理 checkout.completed）
 func CreemWebhook(c *gin.Context) {
 	if !isCreemWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Creem webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -282,7 +314,15 @@ func CreemWebhook(c *gin.Context) {
 	}
 }
 
-// 处理支付完成事件
+// handleCheckoutCompleted 处理 Creem 支付完成事件
+//
+// 流程：
+// 1. 验证订单状态是否为 "paid"
+// 2. 获取订单引用 ID（request_id）
+// 3. 加锁处理订单
+// 4. 尝试完成订阅订单
+// 5. 如果不是订阅订单，处理一次性充值订单
+// 6. 调用 model.RechargeCreem 完成充值
 func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	// 验证订单状态
 	if event.Object.Order.Status != "paid" {
@@ -358,20 +398,37 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	c.Status(http.StatusOK)
 }
 
+// CreemCheckoutRequest Creem 结账请求结构体
 type CreemCheckoutRequest struct {
-	ProductId string `json:"product_id"`
-	RequestId string `json:"request_id"`
+	ProductId string `json:"product_id"` // 产品 ID
+	RequestId string `json:"request_id"` // 请求 ID（用作订单引用）
 	Customer  struct {
-		Email string `json:"email"`
+		Email string `json:"email"` // 客户邮箱
 	} `json:"customer"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"` // 元数据
 }
 
+// CreemCheckoutResponse Creem 结账响应结构体
 type CreemCheckoutResponse struct {
-	CheckoutUrl string `json:"checkout_url"`
-	Id          string `json:"id"`
+	CheckoutUrl string `json:"checkout_url"` // 结账页面 URL
+	Id          string `json:"id"`           // 结账会话 ID
 }
 
+// genCreemLink 生成 Creem 结账支付链接
+//
+// 调用 Creem API 创建结账会话
+// 根据配置选择生产环境或测试环境 API
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - referenceId: 订单引用 ID
+//   - product: 产品信息
+//   - email: 用户邮箱（用于预填充支付页面）
+//   - username: 用户名（存入元数据）
+//
+// 返回：
+//   - string: Creem 结账页面 URL
+//   - error: 创建失败时返回错误
 func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct, email string, username string) (string, error) {
 	if setting.CreemApiKey == "" {
 		return "", fmt.Errorf("未配置Creem API密钥")

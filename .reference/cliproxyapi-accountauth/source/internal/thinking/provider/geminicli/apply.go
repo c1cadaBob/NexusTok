@@ -1,7 +1,7 @@
-// Package geminicli implements thinking configuration for Gemini CLI API format.
-//
-// Gemini CLI uses request.generationConfig.thinkingConfig.* path instead of
-// generationConfig.thinkingConfig.* used by standard Gemini API.
+// 包 geminicli - apply.go
+// 该文件实现了 Gemini CLI API 格式的思考配置应用器。
+// Gemini CLI 使用 request.generationConfig.thinkingConfig.* 路径，
+// 而标准 Gemini API 使用 generationConfig.thinkingConfig.* 路径。
 package geminicli
 
 import (

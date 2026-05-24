@@ -1,3 +1,6 @@
+// diff - model_hash.go
+// 本文件实现了模型列表的哈希计算和变更检测功能。
+// 用于快速判断模型列表是否发生变化。
 package diff
 
 import (

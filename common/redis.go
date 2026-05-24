@@ -1,3 +1,16 @@
+// Package common - redis.go
+// 该文件实现了 Redis 客户端的初始化和常用操作
+//
+// Redis 在系统中的作用：
+// 1. 缓存：用户信息、渠道信息、Token 信息等
+// 2. 限流：API 请求频率限制
+// 3. 分布式锁：多节点部署时的并发控制
+// 4. 会话存储：用户会话信息
+//
+// 环境变量：
+// - REDIS_CONN_STRING: Redis 连接字符串（格式：redis://:password@host:port/db）
+// - REDIS_POOL_SIZE: 连接池大小（默认 10）
+// - SYNC_FREQUENCY: 同步频率（默认 60 秒）
 package common
 
 import (
@@ -9,18 +22,36 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	"gorm.io/gorm"
+	"github.com/go-redis/redis/v8" // Redis 客户端
+	"gorm.io/gorm"                 // GORM ORM
 )
 
+// RDB Redis 客户端实例
 var RDB *redis.Client
+
+// RedisEnabled 是否启用 Redis
 var RedisEnabled = true
 
+// RedisKeyCacheSeconds 获取 Redis Key 缓存时间（秒）
+//
+// 返回值：
+//   - int: 缓存时间（秒）
 func RedisKeyCacheSeconds() int {
 	return SyncFrequency
 }
 
-// InitRedisClient This function is called after init()
+// InitRedisClient 初始化 Redis 客户端
+// 在 init() 之后调用，连接 Redis 服务器并测试连接
+//
+// 初始化流程：
+// 1. 检查 REDIS_CONN_STRING 环境变量
+// 2. 解析 Redis 连接字符串
+// 3. 创建 Redis 客户端
+// 4. 测试连接（PING）
+// 5. 记录连接信息
+//
+// 返回值：
+//   - error: 初始化错误，nil 表示成功
 func InitRedisClient() (err error) {
 	if os.Getenv("REDIS_CONN_STRING") == "" {
 		RedisEnabled = false
@@ -53,6 +84,11 @@ func InitRedisClient() (err error) {
 	return err
 }
 
+// ParseRedisOption 解析 Redis 连接选项
+// 从环境变量中解析 Redis 连接配置
+//
+// 返回值：
+//   - *redis.Options: Redis 连接选项
 func ParseRedisOption() *redis.Options {
 	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
 	if err != nil {
@@ -61,6 +97,16 @@ func ParseRedisOption() *redis.Options {
 	return opt
 }
 
+// RedisSet 设置 Redis Key-Value
+// 支持设置过期时间
+//
+// 参数：
+//   - key: Redis Key
+//   - value: Redis Value
+//   - expiration: 过期时间（0 表示不过期）
+//
+// 返回值：
+//   - error: 操作错误
 func RedisSet(key string, value string, expiration time.Duration) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis SET: key=%s, value=%s, expiration=%v", key, value, expiration))
@@ -69,6 +115,14 @@ func RedisSet(key string, value string, expiration time.Duration) error {
 	return RDB.Set(ctx, key, value, expiration).Err()
 }
 
+// RedisGet 获取 Redis Key 对应的 Value
+//
+// 参数：
+//   - key: Redis Key
+//
+// 返回值：
+//   - string: Redis Value
+//   - error: 操作错误（Key 不存在返回 redis.Nil）
 func RedisGet(key string) (string, error) {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis GET: key=%s", key))
@@ -88,6 +142,13 @@ func RedisGet(key string) (string, error) {
 //	return RDB.GetSet(ctx, key, expiration).Result()
 //}
 
+// RedisDel 删除 Redis Key
+//
+// 参数：
+//   - key: Redis Key
+//
+// 返回值：
+//   - error: 操作错误
 func RedisDel(key string) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis DEL: key=%s", key))
@@ -96,6 +157,13 @@ func RedisDel(key string) error {
 	return RDB.Del(ctx, key).Err()
 }
 
+// RedisDelKey 删除 Redis Key（别名）
+//
+// 参数：
+//   - key: Redis Key
+//
+// 返回值：
+//   - error: 操作错误
 func RedisDelKey(key string) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis DEL Key: key=%s", key))

@@ -1,6 +1,6 @@
-// Package logging provides Gin middleware for HTTP request logging and panic recovery.
-// It integrates Gin web framework with logrus for structured logging of HTTP requests,
-// responses, and error handling with panic recovery capabilities.
+// logging - gin_logger.go
+// 本文件提供了 Gin 框架的 HTTP 请求日志和 panic 恢复中间件。
+// 集成 Gin 与 logrus，实现结构化的 HTTP 请求、响应和错误处理日志记录。
 package logging
 
 import (

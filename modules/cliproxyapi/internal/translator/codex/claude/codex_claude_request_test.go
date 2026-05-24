@@ -1,3 +1,8 @@
+// Package claude - codex_claude_request_test.go
+// 测试 Claude 到 Codex 请求格式转换功能。
+// 覆盖系统消息处理（developer 角色映射）、并行工具调用控制、
+// 长工具 ID 缩短、工具选择模式映射、网络搜索工具转换、
+// 以及 thinking 签名到 reasoning 项的转换等测试用例。
 package claude
 
 import (
@@ -8,6 +13,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertClaudeRequestToCodex_SystemMessageScenarios 测试系统消息到
+// Codex developer 角色的映射，包括无系统字段、空字符串、
+// 单字符串以及包含计费头过滤的数组格式
 func TestConvertClaudeRequestToCodex_SystemMessageScenarios(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -90,6 +98,7 @@ func TestConvertClaudeRequestToCodex_SystemMessageScenarios(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCodex_ParallelToolCalls 测试并行工具调用的启用/禁用控制
 func TestConvertClaudeRequestToCodex_ParallelToolCalls(t *testing.T) {
 	tests := []struct {
 		name                  string
@@ -136,6 +145,8 @@ func TestConvertClaudeRequestToCodex_ParallelToolCalls(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCodex_ShortenLongToolUseIDs 测试超过 64 字符的工具 ID
+// 应被缩短，且 function_call 和 function_call_output 的 ID 必须一致
 func TestConvertClaudeRequestToCodex_ShortenLongToolUseIDs(t *testing.T) {
 	longID := "toolu_" + strings.Repeat("a", 62)
 	if len(longID) <= 64 {
@@ -186,6 +197,8 @@ func TestConvertClaudeRequestToCodex_ShortenLongToolUseIDs(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCodex_ToolChoiceModeMapping 测试 Claude 工具选择模式到
+// Codex 格式的映射：any->required, none->none, auto->auto
 func TestConvertClaudeRequestToCodex_ToolChoiceModeMapping(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -230,6 +243,8 @@ func TestConvertClaudeRequestToCodex_ToolChoiceModeMapping(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCodex_ToolChoiceSpecificFunctionUsesConvertedName 测试
+// 指定工具选择时应使用转换后的工具名称（而非原始长名称）
 func TestConvertClaudeRequestToCodex_ToolChoiceSpecificFunctionUsesConvertedName(t *testing.T) {
 	longName := "mcp__server_with_a_very_long_name_that_exceeds_sixty_four_characters__search"
 	inputJSON := `{
@@ -257,6 +272,8 @@ func TestConvertClaudeRequestToCodex_ToolChoiceSpecificFunctionUsesConvertedName
 	}
 }
 
+// TestConvertClaudeRequestToCodex_WebSearchToolMapping 测试 Claude web_search 工具到
+// Codex 格式的转换，包括域名过滤和用户位置信息
 func TestConvertClaudeRequestToCodex_WebSearchToolMapping(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-3-opus",
@@ -298,6 +315,8 @@ func TestConvertClaudeRequestToCodex_WebSearchToolMapping(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeRequestToCodex_WebSearchToolChoiceUsesDeclaredTypedToolName 测试
+// 当同时存在 web_search 类型工具和普通同名工具时的 tool_choice 处理
 func TestConvertClaudeRequestToCodex_WebSearchToolChoiceUsesDeclaredTypedToolName(t *testing.T) {
 	inputJSON := `{
 		"model": "claude-opus-4-7",
@@ -320,6 +339,9 @@ func TestConvertClaudeRequestToCodex_WebSearchToolChoiceUsesDeclaredTypedToolNam
 	}
 }
 
+// TestConvertClaudeRequestToCodex_AssistantThinkingSignatureToReasoningItem 测试
+// 带签名的 assistant thinking 块应转换为 Codex reasoning 项，
+// 并正确处理签名映射和可见文本分离
 func TestConvertClaudeRequestToCodex_AssistantThinkingSignatureToReasoningItem(t *testing.T) {
 	signature := validCodexReasoningSignature()
 	inputJSON := `{
@@ -382,6 +404,8 @@ func TestConvertClaudeRequestToCodex_AssistantThinkingSignatureToReasoningItem(t
 	}
 }
 
+// TestConvertClaudeRequestToCodex_IgnoresNonCodexThinkingSignatures 测试
+// 非 Codex 格式的 thinking 签名（如用户角色或 Anthropic 原生签名）应被忽略
 func TestConvertClaudeRequestToCodex_IgnoresNonCodexThinkingSignatures(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -443,6 +467,7 @@ func TestConvertClaudeRequestToCodex_IgnoresNonCodexThinkingSignatures(t *testin
 	}
 }
 
+// countRequestInputItemsByType 统计请求输入中指定类型的项数量
 func countRequestInputItemsByType(result []byte, itemType string) int {
 	count := 0
 	gjson.GetBytes(result, "input").ForEach(func(_, item gjson.Result) bool {
@@ -454,6 +479,7 @@ func countRequestInputItemsByType(result []byte, itemType string) int {
 	return count
 }
 
+// validCodexReasoningSignature 生成一个有效的 Codex reasoning 签名用于测试
 func validCodexReasoningSignature() string {
 	raw := make([]byte, 1+8+16+16+32)
 	raw[0] = 0x80

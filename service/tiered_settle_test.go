@@ -1,3 +1,17 @@
+// 本文件测试分层计费结算（TryTieredSettle）功能，包括：
+// - 冻结请求输入的使用（参数探测影响计费）
+// - 表达式错误时的回退逻辑
+// - 预扣与结算的一致性（使用相同时应一致）
+// - 结算高于/低于预扣的场景
+// - 分层边界条件（精确边界、边界+1、零 token、超大 token）
+// - 缓存 token 对结算的影响
+// - 请求参数探测（service_tier 等）对计费层级的影响
+// - 分组比率缩放（正常、零值）
+// - 比率模式下的负面测试（nil snapshot、错误的 billing mode）
+// - 错误回退到估算配额
+// - BuildTieredTokenParams 的 token 归一化和比率对等性测试
+// - Len 计算（GPT vs Claude、基于 Len 的分层条件）
+// - 压力测试和基准测试
 package service
 
 import (
@@ -12,20 +26,21 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Claude Sonnet-style tiered expression: standard vs long-context
+// Claude Sonnet 风格的分层表达式：标准 vs 长上下文
 const sonnetTieredExpr = `p <= 200000 ? tier("standard", p * 1.5 + c * 7.5) : tier("long_context", p * 3 + c * 11.25)`
 
-// Simple flat expression
+// 简单扁平表达式
 const flatExpr = `tier("default", p * 2 + c * 10)`
 
-// Expression with cache tokens
+// 带缓存 token 的表达式
 const cacheExpr = `tier("default", p * 2 + c * 10 + cr * 0.2 + cc * 2.5 + cc1h * 4)`
 
-// Expression with request probes
+// 带请求参数探测的表达式
 const probeExpr = `param("service_tier") == "fast" ? tier("fast", p * 4 + c * 20) : tier("normal", p * 2 + c * 10)`
 
 const testQuotaPerUnit = 500_000.0
 
+// makeSnapshot 构建测试用的计费快照，包含表达式、分组比率、预估 token 数等。
 func makeSnapshot(expr string, groupRatio float64, estPrompt, estCompletion int) *billingexpr.BillingSnapshot {
 	return &billingexpr.BillingSnapshot{
 		BillingMode:               "tiered_expr",
@@ -38,6 +53,7 @@ func makeSnapshot(expr string, groupRatio float64, estPrompt, estCompletion int)
 	}
 }
 
+// makeRelayInfo 构建测试用的 RelayInfo，预计算估算配额并设置到快照中。
 func makeRelayInfo(expr string, groupRatio float64, estPrompt, estCompletion int) *relaycommon.RelayInfo {
 	snap := makeSnapshot(expr, groupRatio, estPrompt, estCompletion)
 	cost, trace, _ := billingexpr.RunExpr(expr, billingexpr.TokenParams{P: float64(estPrompt), C: float64(estCompletion)})
@@ -55,6 +71,8 @@ func makeRelayInfo(expr string, groupRatio float64, estPrompt, estCompletion int
 // Existing tests (preserved)
 // ---------------------------------------------------------------------------
 
+// TestTryTieredSettleUsesFrozenRequestInput 测试分层结算使用冻结的请求输入，
+// 验证参数探测（service_tier="fast"）正确影响计费层级。
 func TestTryTieredSettleUsesFrozenRequestInput(t *testing.T) {
 	exprStr := `param("service_tier") == "fast" ? tier("fast", p * 2) : tier("normal", p)`
 	relayInfo := &relaycommon.RelayInfo{
@@ -86,6 +104,8 @@ func TestTryTieredSettleUsesFrozenRequestInput(t *testing.T) {
 	}
 }
 
+// TestTryTieredSettleFallsBackToFrozenPreConsumeOnExprError 测试表达式错误时的回退逻辑，
+// 验证当表达式无效时，回退使用冻结的预扣配额（FinalPreConsumedQuota）。
 func TestTryTieredSettleFallsBackToFrozenPreConsumeOnExprError(t *testing.T) {
 	relayInfo := &relaycommon.RelayInfo{
 		FinalPreConsumedQuota: 321,
@@ -114,6 +134,8 @@ func TestTryTieredSettleFallsBackToFrozenPreConsumeOnExprError(t *testing.T) {
 // Pre-consume vs Post-consume consistency
 // ---------------------------------------------------------------------------
 
+// TestTryTieredSettle_PreConsumeMatchesPostConsume 测试预扣与结算的一致性，
+// 验证当实际 token 数与预估相同时，结算配额等于预扣配额。
 func TestTryTieredSettle_PreConsumeMatchesPostConsume(t *testing.T) {
 	info := makeRelayInfo(flatExpr, 1.0, 1000, 500)
 	params := billingexpr.TokenParams{P: 1000, C: 500}
@@ -131,6 +153,8 @@ func TestTryTieredSettle_PreConsumeMatchesPostConsume(t *testing.T) {
 	}
 }
 
+// TestTryTieredSettle_PostConsumeOverPreConsume 测试结算高于预扣的场景，
+// 验证当实际使用超过预估时，需要补扣差额。
 func TestTryTieredSettle_PostConsumeOverPreConsume(t *testing.T) {
 	info := makeRelayInfo(flatExpr, 1.0, 1000, 500)
 	preConsumed := info.FinalPreConsumedQuota // 3500
@@ -150,6 +174,8 @@ func TestTryTieredSettle_PostConsumeOverPreConsume(t *testing.T) {
 	}
 }
 
+// TestTryTieredSettle_PostConsumeUnderPreConsume 测试结算低于预扣的场景，
+// 验证当实际使用低于预估时，需要退还多扣部分。
 func TestTryTieredSettle_PostConsumeUnderPreConsume(t *testing.T) {
 	info := makeRelayInfo(flatExpr, 1.0, 1000, 500)
 	preConsumed := info.FinalPreConsumedQuota // 3500
@@ -173,6 +199,8 @@ func TestTryTieredSettle_PostConsumeUnderPreConsume(t *testing.T) {
 // Tiered boundary conditions
 // ---------------------------------------------------------------------------
 
+// TestTryTieredSettle_ExactBoundary 测试精确边界条件（p == 200000），
+// 验证在分层阈值上边界时使用 standard 层级。
 func TestTryTieredSettle_ExactBoundary(t *testing.T) {
 	info := makeRelayInfo(sonnetTieredExpr, 1.0, 200000, 1000)
 
@@ -190,6 +218,8 @@ func TestTryTieredSettle_ExactBoundary(t *testing.T) {
 	}
 }
 
+// TestTryTieredSettle_BoundaryPlusOne 测试边界+1条件（p == 200001），
+// 验证超过分层阈值时切换到 long_context 层级，且 CrossedTier 标记为 true。
 func TestTryTieredSettle_BoundaryPlusOne(t *testing.T) {
 	info := makeRelayInfo(sonnetTieredExpr, 1.0, 200000, 1000)
 

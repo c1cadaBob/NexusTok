@@ -1,3 +1,14 @@
+// Package controller - channel_upstream_update_test.go
+// 该文件包含渠道上游模型更新的单元测试
+//
+// 测试内容包括：
+// - 模型名称标准化（normalizeModelNames）
+// - 模型列表合并（mergeModelNames）
+// - 模型列表差集（subtractModelNames）
+// - 模型列表交集（intersectModelNames）
+// - 模型变更应用（applySelectedModelChanges）
+// - 上游模型变更收集（collectPendingUpstreamModelChangesFromModels）
+// - 模型映射标准化（normalizeChannelModelMapping）
 package controller
 
 import (

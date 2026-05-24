@@ -1,3 +1,6 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 xAI 执行器的请求塑形功能，包括响应 API 请求转换、思考后缀、工具过滤、
+// 图像生成端点、视频创建/检索端点以及不支持推理能力模型的处理。
 package executor
 
 import (
@@ -15,6 +18,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestXAIExecutorExecuteShapesResponsesRequest 验证 xAI 执行器对响应 API 请求的完整塑形能力，包括：
+// - 请求路径为 /responses
+// - 使用 OAuth access_token 作为 Bearer 认证
+// - x-grok-conv-id 头部从会话元数据中提取
+// - 不设置 Originator 和 Chatgpt-Account-Id 头部
+// - prompt_cache_key 从会话 ID 设置
+// - 强制 stream=true
+// - reasoning.effort 正确传递
+// - 连续 reasoning 项被合并
+// - reasoning content/encrypted_content 被移除，仅保留 summary
+// - tool_search 和 image_generation 类型工具被过滤
+// - apply_patch 自定义工具被移除
+// - namespace 命名空间工具被展平到顶层
+// - include 中的 reasoning.encrypted_content 被移除
 func TestXAIExecutorExecuteShapesResponsesRequest(t *testing.T) {
 	var gotPath string
 	var gotAuth string
@@ -157,6 +174,8 @@ func TestXAIExecutorExecuteShapesResponsesRequest(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorOmitsUnsupportedReasoningEffort 验证不支持推理能力的 xAI 模型
+// 在请求中会被移除 reasoning 字段，避免向不支持的模型发送无效参数。
 func TestXAIExecutorOmitsUnsupportedReasoningEffort(t *testing.T) {
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +215,8 @@ func TestXAIExecutorOmitsUnsupportedReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorAppliesThinkingSuffix 验证 xAI 执行器解析模型名称中的思考后缀（如 "grok-4.3(low)"），
+// 将其转换为 reasoning.effort 参数，并从模型名中移除后缀。
 func TestXAIExecutorAppliesThinkingSuffix(t *testing.T) {
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -238,6 +259,9 @@ func TestXAIExecutorAppliesThinkingSuffix(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteStreamFiltersToolSearchTool 验证流式执行模式下的工具过滤功能，
+// 确保 tool_search、image_generation、apply_patch 等不支持的工具被正确移除，
+// namespace 命名空间工具被展平，reasoning 项被正确合并和清理。
 func TestXAIExecutorExecuteStreamFiltersToolSearchTool(t *testing.T) {
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +359,8 @@ func TestXAIExecutorExecuteStreamFiltersToolSearchTool(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteImagesUsesImagesEndpoint 验证图像生成请求被正确路由到 /images/generations 端点，
+// 并正确传递认证头和 Accept 头，请求体保持原样。
 func TestXAIExecutorExecuteImagesUsesImagesEndpoint(t *testing.T) {
 	var gotPath string
 	var gotAuth string
@@ -394,6 +420,7 @@ func TestXAIExecutorExecuteImagesUsesImagesEndpoint(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteImagesUsesEditsEndpoint 验证图像编辑请求被正确路由到 /images/edits 端点。
 func TestXAIExecutorExecuteImagesUsesEditsEndpoint(t *testing.T) {
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +455,8 @@ func TestXAIExecutorExecuteImagesUsesEditsEndpoint(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteVideosCreate 验证视频创建请求使用 POST 方法发送到 /videos/generations 端点，
+// 正确传递认证头、幂等键头部，并保持请求体原样。
 func TestXAIExecutorExecuteVideosCreate(t *testing.T) {
 	var gotPath string
 	var gotMethod string
@@ -489,6 +518,8 @@ func TestXAIExecutorExecuteVideosCreate(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteVideosRetrieve 验证视频检索请求使用 GET 方法发送到 /videos/{request_id} 端点，
+// 并正确解析响应中的视频 URL 和状态信息。
 func TestXAIExecutorExecuteVideosRetrieve(t *testing.T) {
 	var gotPath string
 	var gotMethod string
@@ -528,6 +559,8 @@ func TestXAIExecutorExecuteVideosRetrieve(t *testing.T) {
 	}
 }
 
+// TestXAIExecutorExecuteVideosUsesNativeEndpointFromRequestPath 验证根据请求路径元数据
+// 将视频请求路由到正确的原生端点（generations、edits、extensions），所有路由均使用 POST 方法。
 func TestXAIExecutorExecuteVideosUsesNativeEndpointFromRequestPath(t *testing.T) {
 	tests := []struct {
 		name        string

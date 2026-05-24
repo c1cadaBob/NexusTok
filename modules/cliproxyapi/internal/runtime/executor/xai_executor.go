@@ -1,3 +1,5 @@
+// Package executor - xai_executor.go
+// 实现 xAI 执行器，处理 xAI API 的请求代理和认证。
 package executor
 
 import (

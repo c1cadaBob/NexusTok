@@ -1,10 +1,15 @@
+// Package tui - i18n.go
+// 提供 TUI 的简单国际化系统。支持的语言区域: "zh"（中文，默认）、"en"（英文）。
 package tui
 
-// i18n provides a simple internationalization system for the TUI.
-// Supported locales: "zh" (Chinese, default), "en" (English).
-
+// currentLocale 是当前活跃的语言区域代码。
 var currentLocale = "en"
 
+// SetLocale 更改活跃的语言区域。
+//
+// 参数:
+//   - locale: 语言区域代码（"zh" 或 "en"）
+//
 // SetLocale changes the active locale.
 func SetLocale(locale string) {
 	if _, ok := locales[locale]; ok {
@@ -12,11 +17,18 @@ func SetLocale(locale string) {
 	}
 }
 
+// CurrentLocale 返回当前活跃的语言区域代码。
+//
+// 返回值:
+//   - string: 当前语言区域代码
+//
 // CurrentLocale returns the active locale code.
 func CurrentLocale() string {
 	return currentLocale
 }
 
+// ToggleLocale 在中文和英文之间切换语言区域。
+//
 // ToggleLocale switches between zh and en.
 func ToggleLocale() {
 	if currentLocale == "zh" {
@@ -26,6 +38,15 @@ func ToggleLocale() {
 	}
 }
 
+// T 返回给定键的翻译字符串。
+// 如果当前语言区域没有对应的翻译，则回退到英文。
+//
+// 参数:
+//   - key: 翻译键
+//
+// 返回值:
+//   - string: 翻译后的字符串
+//
 // T returns the translated string for the given key.
 func T(key string) string {
 	if m, ok := locales[currentLocale]; ok {

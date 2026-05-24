@@ -1,6 +1,7 @@
-// Package registry provides centralized model management for all AI service providers.
-// It implements a dynamic model registry with reference counting to track active clients
-// and automatically hide models when no clients are available or when quota is exceeded.
+// registry - model_registry.go
+// 本文件实现了集中式的模型注册表，管理所有 AI 服务提供商的可用模型。
+// 通过引用计数追踪活跃客户端，当没有可用客户端或配额超限时自动隐藏模型。
+// 支持按提供商分组、配额超限追踪、客户端暂停/恢复等功能。
 package registry
 
 import (

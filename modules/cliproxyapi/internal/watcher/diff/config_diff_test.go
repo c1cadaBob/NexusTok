@@ -1,3 +1,6 @@
+// diff - config_diff_test.go
+// 测试配置变更详情的构建功能，验证所有配置字段（端口、认证目录、Gemini 密钥、AmpCode、
+// 远程管理、OAuth 排除模型、OpenAI 兼容等）的差异检测和格式化输出。
 package diff
 
 import (

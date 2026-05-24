@@ -1,3 +1,6 @@
+// synthesizer - file.go
+// 本文件实现了从 OAuth JSON 文件生成 Auth 条目的合成器。
+// 处理基于文件的认证和 Gemini 虚拟认证生成。
 package synthesizer
 
 import (
@@ -15,8 +18,8 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// FileSynthesizer generates Auth entries from OAuth JSON files.
-// It handles file-based authentication and Gemini virtual auth generation.
+// FileSynthesizer 从 OAuth JSON 文件生成 Auth 条目。
+// 处理基于文件的认证和 Gemini 虚拟认证生成。
 type FileSynthesizer struct{}
 
 // NewFileSynthesizer creates a new FileSynthesizer instance.

@@ -1,3 +1,5 @@
+// Package executor - kimi_executor.go
+// 实现 Kimi（月之暗面 AI）执行器，处理 Kimi API 的请求代理和认证。
 package executor
 
 import (

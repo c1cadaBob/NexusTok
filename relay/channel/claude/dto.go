@@ -1,3 +1,7 @@
+// Package claude 定义 Anthropic Claude API 的数据传输对象（DTO）。
+// 该文件包含 Claude API 请求和响应的结构体定义。
+// 注意：当前这些结构体定义已被注释掉，实际使用的 DTO 定义在 dto 包中。
+// 此文件保留作为历史参考，记录了 Claude API 的原始数据结构。
 package claude
 
 //

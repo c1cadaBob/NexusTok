@@ -1,3 +1,7 @@
+// Package gemini - antigravity_gemini_response_test.go
+// 测试 Antigravity 到 Gemini 响应格式转换功能。
+// 覆盖 usageMetadata 字段恢复（cpaUsageMetadata -> usageMetadata）、
+// 非流式和流式响应的转换测试用例。
 package gemini
 
 import (
@@ -5,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestRestoreUsageMetadata 测试将 cpaUsageMetadata 字段重命名为 usageMetadata，
+// 以及无该字段和空输入时的处理
 func TestRestoreUsageMetadata(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -38,6 +44,8 @@ func TestRestoreUsageMetadata(t *testing.T) {
 	}
 }
 
+// TestConvertAntigravityResponseToGeminiNonStream 测试非流式响应中
+// cpaUsageMetadata 的恢复和 usageMetadata 的保留
 func TestConvertAntigravityResponseToGeminiNonStream(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -66,6 +74,8 @@ func TestConvertAntigravityResponseToGeminiNonStream(t *testing.T) {
 	}
 }
 
+// TestConvertAntigravityResponseToGeminiStream 测试流式响应中
+// cpaUsageMetadata 的恢复
 func TestConvertAntigravityResponseToGeminiStream(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "alt", "")
 

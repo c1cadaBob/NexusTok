@@ -1,3 +1,5 @@
+// Package tui - oauth_tab.go
+// 实现 OAuth 管理标签页，提供 OAuth 服务商的登录和管理功能。
 package tui
 
 import (
@@ -11,6 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// oauthProvider 表示一个 OAuth 服务商选项。
+// 包含服务商名称、显示标签和登录状态。
+//
 // oauthProvider represents an OAuth provider option.
 type oauthProvider struct {
 	name    string

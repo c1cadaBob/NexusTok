@@ -1,3 +1,6 @@
+// middleware - response_writer_test.go
+// 测试 ResponseWriterWrapper 的请求体/响应体提取、覆盖机制、WebSocket 时间线提取、
+// 流式请求日志最终化等功能。
 package middleware
 
 import (

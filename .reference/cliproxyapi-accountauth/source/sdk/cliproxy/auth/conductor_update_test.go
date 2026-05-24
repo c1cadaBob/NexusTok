@@ -1,3 +1,7 @@
+// auth - conductor_update_test.go
+// Conductor 更新操作测试
+// 验证 Manager.Update 方法在更新认证信息时能够保留模型状态（ModelStates），
+// 包括配额退避级别（BackoffLevel）等运行时状态。
 package auth
 
 import (
@@ -5,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestManager_Update_PreservesModelStates 验证更新认证信息时，
+// 已有的模型状态（如配额退避级别）不会丢失。
 func TestManager_Update_PreservesModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 

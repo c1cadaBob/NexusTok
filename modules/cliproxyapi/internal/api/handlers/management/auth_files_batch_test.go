@@ -1,3 +1,5 @@
+// management - auth_files_batch_test.go
+// 测试认证文件的批量操作，包括批量上传 multipart 文件、无效 JSON 不覆盖现有文件、批量删除等
 package management
 
 import (
@@ -16,6 +18,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestUploadAuthFile_BatchMultipart 测试批量上传 multipart 认证文件
 func TestUploadAuthFile_BatchMultipart(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -84,6 +87,7 @@ func TestUploadAuthFile_BatchMultipart(t *testing.T) {
 	}
 }
 
+// TestUploadAuthFile_BatchMultipart_InvalidJSONDoesNotOverwriteExistingFile 测试无效 JSON 不覆盖现有文件
 func TestUploadAuthFile_BatchMultipart_InvalidJSONDoesNotOverwriteExistingFile(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -150,6 +154,7 @@ func TestUploadAuthFile_BatchMultipart_InvalidJSONDoesNotOverwriteExistingFile(t
 	}
 }
 
+// TestDeleteAuthFile_BatchQuery 测试批量删除认证文件
 func TestDeleteAuthFile_BatchQuery(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

@@ -1,3 +1,6 @@
+// openai - openai_responses_websocket_test.go
+// 测试 OpenAI Responses WebSocket 传输层的各种场景，包括流式传输、认证轮换、
+// 会话状态管理、压缩重放、固定认证故障转移、上游断开连接等
 package openai
 
 import (
@@ -23,17 +26,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// websocketCaptureExecutor WebSocket 测试用的捕获执行器，记录流式调用次数和载荷
 type websocketCaptureExecutor struct {
 	streamCalls int
 	payloads    [][]byte
 }
 
+// websocketCompactionCaptureExecutor WebSocket 压缩测试用的捕获执行器
 type websocketCompactionCaptureExecutor struct {
 	mu             sync.Mutex
 	streamPayloads [][]byte
 	compactPayload []byte
 }
 
+// orderedWebsocketSelector 按预定义顺序选择认证的选择器，用于测试认证轮换
 type orderedWebsocketSelector struct {
 	mu     sync.Mutex
 	order  []string
@@ -64,11 +70,13 @@ func (s *orderedWebsocketSelector) Pick(_ context.Context, _ string, _ string, _
 	return nil, errors.New("no auth available")
 }
 
+// websocketAuthCaptureExecutor 捕获认证 ID 的执行器，用于验证认证选择
 type websocketAuthCaptureExecutor struct {
 	mu      sync.Mutex
 	authIDs []string
 }
 
+// websocketPinnedFailoverExecutor 固定认证故障转移测试用的执行器
 type websocketPinnedFailoverExecutor struct {
 	mu       sync.Mutex
 	authIDs  []string
@@ -76,6 +84,7 @@ type websocketPinnedFailoverExecutor struct {
 	payloads map[string][][]byte
 }
 
+// websocketPinnedFailoverStatusError 带状态码的错误类型，用于测试故障转移
 type websocketPinnedFailoverStatusError struct {
 	status int
 	msg    string
@@ -85,6 +94,7 @@ func (e websocketPinnedFailoverStatusError) Error() string { return e.msg }
 
 func (e websocketPinnedFailoverStatusError) StatusCode() int { return e.status }
 
+// websocketUpstreamDisconnectExecutor 上游断开连接测试用的执行器
 type websocketUpstreamDisconnectExecutor struct {
 	mu         sync.Mutex
 	subscribed chan string

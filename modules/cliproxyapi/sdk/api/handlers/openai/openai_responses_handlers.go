@@ -1,9 +1,8 @@
-// Package openai provides HTTP handlers for OpenAIResponses API endpoints.
-// This package implements the OpenAIResponses-compatible API interface, including model listing
-// and chat completion functionality. It supports both streaming and non-streaming responses,
-// and manages a pool of clients to interact with backend services.
-// The handlers translate OpenAIResponses API requests to the appropriate backend format and
-// convert responses back to OpenAIResponses-compatible format.
+// openai - openai_responses_handlers.go
+// 提供 OpenAI Responses API 端点的 HTTP 处理器，支持流式和非流式响应。
+// 实现了 SSE（Server-Sent Events）帧组装器，用于将上游响应正确格式化为 OpenAI Responses 协议格式。
+// 包含 response.output_item.done 事件的采集与 response.completed 的修复逻辑，
+// 确保即使上游未在 completed 事件中携带 output 数组，也能正确填充。
 package openai
 
 import (
@@ -24,6 +23,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// writeResponsesSSEChunk 向写入器写入一个 SSE 块，并根据已有后缀智能补全换行符
 func writeResponsesSSEChunk(w io.Writer, chunk []byte) {
 	if w == nil || len(chunk) == 0 {
 		return
@@ -45,13 +45,16 @@ func writeResponsesSSEChunk(w io.Writer, chunk []byte) {
 	}
 }
 
+// responsesSSEFramer SSE 帧组装器，负责将零散的上游响应块拼装为完整的 SSE 帧，
+// 并在修复阶段采集 output_item.done 事件，在 response.completed 时回填 output 数组
 type responsesSSEFramer struct {
-	pending              []byte
-	outputItems          map[int][]byte
-	outputOrder          []int
-	unindexedOutputItems [][]byte
+	pending              []byte            // 缓冲区中待处理的不完整数据
+	outputItems          map[int][]byte    // 已采集的 output item，按 output_index 索引
+	outputOrder          []int             // output item 的索引顺序记录
+	unindexedOutputItems [][]byte          // 无索引的 output item 列表
 }
 
+// WriteChunk 将上游响应块写入帧组装器，在缓冲区中拼装完整的 SSE 帧后输出
 func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 	if len(chunk) == 0 {
 		return
@@ -80,6 +83,7 @@ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 	f.pending = f.pending[:0]
 }
 
+// Flush 将帧组装器中残留的未完成数据强制刷新输出
 func (f *responsesSSEFramer) Flush(w io.Writer) {
 	if len(f.pending) == 0 {
 		return
@@ -96,10 +100,12 @@ func (f *responsesSSEFramer) Flush(w io.Writer) {
 	f.pending = f.pending[:0]
 }
 
+// writeFrame 写入修复后的 SSE 帧到写入器
 func (f *responsesSSEFramer) writeFrame(w io.Writer, frame []byte) {
 	writeResponsesSSEChunk(w, f.repairFrame(frame))
 }
 
+// repairFrame 修复 SSE 帧：采集 output_item.done 事件并在 response.completed 时回填 output 数组
 func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	payload, ok := responsesSSEDataPayload(frame)
 	if !ok || len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || !json.Valid(payload) {
@@ -118,6 +124,7 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	return frame
 }
 
+// responsesSSEDataPayload 从 SSE 帧中提取 data: 行的有效负载
 func responsesSSEDataPayload(frame []byte) ([]byte, bool) {
 	var payload []byte
 	found := false
@@ -137,6 +144,7 @@ func responsesSSEDataPayload(frame []byte) ([]byte, bool) {
 	return payload, found
 }
 
+// responsesSSEFrameWithData 将新的 payload 替换到现有 SSE 帧中，保留非 data 行
 func responsesSSEFrameWithData(frame, payload []byte) []byte {
 	var out bytes.Buffer
 	for _, line := range bytes.Split(frame, []byte("\n")) {
@@ -157,6 +165,7 @@ func responsesSSEFrameWithData(frame, payload []byte) []byte {
 	return out.Bytes()
 }
 
+// recordOutputItem 从 response.output_item.done 事件中采集 output item，按索引存储
 func (f *responsesSSEFramer) recordOutputItem(payload []byte) {
 	item := gjson.GetBytes(payload, "item")
 	if !item.Exists() || !item.IsObject() || item.Get("type").String() == "" {
@@ -178,6 +187,8 @@ func (f *responsesSSEFramer) recordOutputItem(payload []byte) {
 	f.unindexedOutputItems = append(f.unindexedOutputItems, append([]byte(nil), item.Raw...))
 }
 
+// repairCompletedPayload 修复 response.completed 事件的 payload，
+// 当 output 数组为空但已采集到 output item 时，将采集的 item 按索引顺序回填
 func (f *responsesSSEFramer) repairCompletedPayload(payload []byte) []byte {
 	if len(f.outputOrder) == 0 && len(f.unindexedOutputItems) == 0 {
 		return payload
@@ -219,6 +230,7 @@ func (f *responsesSSEFramer) repairCompletedPayload(payload []byte) []byte {
 	return repaired
 }
 
+// responsesSSEFrameLen 计算缓冲区中第一个完整 SSE 帧的长度（支持 \n\n 和 \r\n\r\n 分隔符）
 func responsesSSEFrameLen(chunk []byte) int {
 	if len(chunk) == 0 {
 		return 0
@@ -240,6 +252,7 @@ func responsesSSEFrameLen(chunk []byte) int {
 	}
 }
 
+// responsesSSENeedsMoreData 判断当前缓冲区是否仅包含 event 字段而缺少 data 字段，需要等待更多数据
 func responsesSSENeedsMoreData(chunk []byte) bool {
 	trimmed := bytes.TrimSpace(chunk)
 	if len(trimmed) == 0 {
@@ -248,6 +261,7 @@ func responsesSSENeedsMoreData(chunk []byte) bool {
 	return responsesSSEHasField(trimmed, []byte("event:")) && !responsesSSEHasField(trimmed, []byte("data:"))
 }
 
+// responsesSSEHasField 检查 SSE 帧中是否包含指定前缀的字段行
 func responsesSSEHasField(chunk []byte, prefix []byte) bool {
 	s := chunk
 	for len(s) > 0 {
@@ -266,6 +280,7 @@ func responsesSSEHasField(chunk []byte, prefix []byte) bool {
 	return false
 }
 
+// responsesSSECanEmitWithoutDelimiter 判断缓冲区中的数据是否可以在没有帧分隔符的情况下安全输出
 func responsesSSECanEmitWithoutDelimiter(chunk []byte) bool {
 	trimmed := bytes.TrimSpace(chunk)
 	if len(trimmed) == 0 || responsesSSENeedsMoreData(trimmed) || !responsesSSEHasField(trimmed, []byte("data:")) {
@@ -274,6 +289,7 @@ func responsesSSECanEmitWithoutDelimiter(chunk []byte) bool {
 	return responsesSSEDataLinesValid(trimmed)
 }
 
+// responsesSSEDataLinesValid 验证 SSE 帧中所有 data 行的内容是否为合法 JSON
 func responsesSSEDataLinesValid(chunk []byte) bool {
 	s := chunk
 	for len(s) > 0 {
@@ -299,6 +315,7 @@ func responsesSSEDataLinesValid(chunk []byte) bool {
 	return true
 }
 
+// responsesSSENeedsLineBreak 判断在拼接 pending 和 chunk 时是否需要插入换行符
 func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
 	if len(pending) == 0 || len(chunk) == 0 {
 		return false

@@ -1,7 +1,13 @@
+// registry - model_definitions_test.go
+// 该文件测试静态模型定义的正确性。
+// 测试覆盖了 Codex 免费模型排除 gpt-5.5、Codex 付费层级包含 gpt-5.5、
+// xAI 内置视频模型、模型目录验证（允许缺失部分、拒绝无效定义）等场景。
+
 package registry
 
 import "testing"
 
+// TestCodexFreeModelsExcludeGPT55 测试 Codex 免费模型列表不包含 gpt-5.5。
 func TestCodexFreeModelsExcludeGPT55(t *testing.T) {
 	model := findModelInfo(GetCodexFreeModels(), "gpt-5.5")
 	if model != nil {
@@ -9,6 +15,7 @@ func TestCodexFreeModelsExcludeGPT55(t *testing.T) {
 	}
 }
 
+// TestCodexStaticModelsIncludeGPT55 测试 Codex 各付费层级（team/plus/pro）和静态查找均包含 gpt-5.5。
 func TestCodexStaticModelsIncludeGPT55(t *testing.T) {
 	tierModels := map[string][]*ModelInfo{
 		"team": GetCodexTeamModels(),
@@ -33,6 +40,7 @@ func TestCodexStaticModelsIncludeGPT55(t *testing.T) {
 	assertGPT55ModelInfo(t, "lookup", model)
 }
 
+// TestWithXAIBuiltinsAddsVideoModel 测试 WithXAIBuiltins 函数正确添加 xAI 内置视频模型。
 func TestWithXAIBuiltinsAddsVideoModel(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 	found := false
@@ -49,6 +57,7 @@ func TestWithXAIBuiltinsAddsVideoModel(t *testing.T) {
 	}
 }
 
+// TestValidateModelsCatalogAllowsMissingSections 测试模型目录验证允许某些部分为 nil。
 func TestValidateModelsCatalogAllowsMissingSections(t *testing.T) {
 	data := validTestModelsCatalog()
 	data.XAI = nil
@@ -58,6 +67,7 @@ func TestValidateModelsCatalogAllowsMissingSections(t *testing.T) {
 	}
 }
 
+// TestValidateModelsCatalogRejectsInvalidDefinitions 测试模型目录验证拒绝无效定义（如空 ID）。
 func TestValidateModelsCatalogRejectsInvalidDefinitions(t *testing.T) {
 	data := validTestModelsCatalog()
 	data.Claude = []*ModelInfo{{ID: ""}}
@@ -67,6 +77,7 @@ func TestValidateModelsCatalogRejectsInvalidDefinitions(t *testing.T) {
 	}
 }
 
+// validTestModelsCatalog 创建一个包含所有提供商有效测试模型的目录。
 func validTestModelsCatalog() *staticModelsJSON {
 	models := []*ModelInfo{{ID: "test-model"}}
 	return &staticModelsJSON{
@@ -85,6 +96,7 @@ func validTestModelsCatalog() *staticModelsJSON {
 	}
 }
 
+// findModelInfo 在模型列表中查找指定 ID 的模型信息。
 func findModelInfo(models []*ModelInfo, id string) *ModelInfo {
 	for _, model := range models {
 		if model != nil && model.ID == id {
@@ -94,6 +106,7 @@ func findModelInfo(models []*ModelInfo, id string) *ModelInfo {
 	return nil
 }
 
+// assertGPT55ModelInfo 断言 gpt-5.5 模型的各字段值正确。
 func assertGPT55ModelInfo(t *testing.T, source string, model *ModelInfo) {
 	t.Helper()
 

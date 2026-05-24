@@ -1,6 +1,7 @@
-// Package claude provides authentication and token management functionality
-// for Anthropic's Claude AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Claude API.
+// claude - oauth_server.go
+// 包 claude 提供 Anthropic Claude API 的认证和令牌管理功能。
+// 该文件实现了本地 OAuth 回调服务器，用于接收 OAuth 提供商的授权码响应，
+// 并捕获完成认证流程所需的参数。
 package claude
 
 import (
@@ -16,45 +17,42 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// OAuthServer handles the local HTTP server for OAuth callbacks.
-// It listens for the authorization code response from the OAuth provider
-// and captures the necessary parameters to complete the authentication flow.
+// OAuthServer 处理 OAuth 回调的本地 HTTP 服务器。
+// 监听来自 OAuth 提供商的授权码响应，并捕获完成认证流程所需的参数。
 type OAuthServer struct {
-	// server is the underlying HTTP server instance
+	// server 是底层的 HTTP 服务器实例
 	server *http.Server
-	// port is the port number on which the server listens
+	// port 是服务器监听的端口号
 	port int
-	// resultChan is a channel for sending OAuth results
+	// resultChan 是用于发送 OAuth 结果的通道
 	resultChan chan *OAuthResult
-	// errorChan is a channel for sending OAuth errors
+	// errorChan 是用于发送 OAuth 错误的通道
 	errorChan chan error
-	// mu is a mutex for protecting server state
+	// mu 是用于保护服务器状态的互斥锁
 	mu sync.Mutex
-	// running indicates whether the server is currently running
+	// running 指示服务器是否正在运行
 	running bool
 }
 
-// OAuthResult contains the result of the OAuth callback.
-// It holds either the authorization code and state for successful authentication
-// or an error message if the authentication failed.
+// OAuthResult 包含 OAuth 回调的结果。
+// 持有成功认证时的授权码和状态，或认证失败时的错误消息。
 type OAuthResult struct {
-	// Code is the authorization code received from the OAuth provider
+	// Code 是从 OAuth 提供商收到的授权码
 	Code string
-	// State is the state parameter used to prevent CSRF attacks
+	// State 是用于防止 CSRF 攻击的状态参数
 	State string
-	// Error contains any error message if the OAuth flow failed
+	// Error 包含 OAuth 流程失败时的错误消息
 	Error string
 }
 
-// NewOAuthServer creates a new OAuth callback server.
-// It initializes the server with the specified port and creates channels
-// for handling OAuth results and errors.
+// NewOAuthServer 创建一个新的 OAuth 回调服务器。
+// 使用指定的端口初始化服务器，并创建用于处理 OAuth 结果和错误的通道。
 //
-// Parameters:
-//   - port: The port number on which the server should listen
+// 参数：
+//   - port: 服务器监听的端口号
 //
-// Returns:
-//   - *OAuthServer: A new OAuthServer instance
+// 返回：
+//   - *OAuthServer: 新的 OAuthServer 实例
 func NewOAuthServer(port int) *OAuthServer {
 	return &OAuthServer{
 		port:       port,
@@ -63,12 +61,11 @@ func NewOAuthServer(port int) *OAuthServer {
 	}
 }
 
-// Start starts the OAuth callback server.
-// It sets up the HTTP handlers for the callback and success endpoints,
-// and begins listening on the specified port.
+// Start 启动 OAuth 回调服务器。
+// 设置回调和成功端点的 HTTP 处理器，并在指定端口上开始监听。
 //
-// Returns:
-//   - error: An error if the server fails to start
+// 返回：
+//   - error: 服务器启动失败时返回的错误
 func (s *OAuthServer) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,14 +105,14 @@ func (s *OAuthServer) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the OAuth callback server.
-// It performs a graceful shutdown of the HTTP server with a timeout.
+// Stop 优雅地停止 OAuth 回调服务器。
+// 使用超时上下文执行 HTTP 服务器的优雅关闭。
 //
-// Parameters:
-//   - ctx: The context for controlling the shutdown process
+// 参数：
+//   - ctx: 用于控制关闭过程的上下文
 //
-// Returns:
-//   - error: An error if the server fails to stop gracefully
+// 返回：
+//   - error: 服务器未能优雅停止时返回的错误
 func (s *OAuthServer) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,16 +134,15 @@ func (s *OAuthServer) Stop(ctx context.Context) error {
 	return err
 }
 
-// WaitForCallback waits for the OAuth callback with a timeout.
-// It blocks until either an OAuth result is received, an error occurs,
-// or the specified timeout is reached.
+// WaitForCallback 等待 OAuth 回调，带超时控制。
+// 阻塞直到收到 OAuth 结果、发生错误或达到指定的超时时间。
 //
-// Parameters:
-//   - timeout: The maximum time to wait for the callback
+// 参数：
+//   - timeout: 等待回调的最大时间
 //
-// Returns:
-//   - *OAuthResult: The OAuth result if successful
-//   - error: An error if the callback times out or an error occurs
+// 返回：
+//   - *OAuthResult: 成功时的 OAuth 结果
+//   - error: 回调超时或发生错误时返回的错误
 func (s *OAuthServer) WaitForCallback(timeout time.Duration) (*OAuthResult, error) {
 	select {
 	case result := <-s.resultChan:
@@ -158,13 +154,13 @@ func (s *OAuthServer) WaitForCallback(timeout time.Duration) (*OAuthResult, erro
 	}
 }
 
-// handleCallback handles the OAuth callback endpoint.
-// It extracts the authorization code and state from the callback URL,
-// validates the parameters, and sends the result to the waiting channel.
+// handleCallback 处理 OAuth 回调端点。
+// 从回调 URL 中提取授权码和状态参数，验证参数有效性，
+// 并将结果发送到等待通道。
 //
-// Parameters:
-//   - w: The HTTP response writer
-//   - r: The HTTP request
+// 参数：
+//   - w: HTTP 响应写入器
+//   - r: HTTP 请求
 func (s *OAuthServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Received OAuth callback")
 
@@ -222,12 +218,12 @@ func (s *OAuthServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/success", http.StatusFound)
 }
 
-// handleSuccess handles the success page endpoint.
-// It serves a user-friendly HTML page indicating that authentication was successful.
+// handleSuccess 处理成功页面端点。
+// 提供一个用户友好的 HTML 页面，指示认证已成功完成。
 //
-// Parameters:
-//   - w: The HTTP response writer
-//   - r: The HTTP request
+// 参数：
+//   - w: HTTP 响应写入器
+//   - r: HTTP 请求
 func (s *OAuthServer) handleSuccess(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Serving success page")
 
@@ -251,16 +247,15 @@ func (s *OAuthServer) handleSuccess(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// generateSuccessHTML creates the HTML content for the success page.
-// It customizes the page based on whether additional setup is required
-// and includes a link to the platform.
+// generateSuccessHTML 创建成功页面的 HTML 内容。
+// 根据是否需要额外设置来自定义页面内容，并包含平台链接。
 //
-// Parameters:
-//   - setupRequired: Whether additional setup is required after authentication
-//   - platformURL: The URL to the platform for additional setup
+// 参数：
+//   - setupRequired: 认证后是否需要额外设置
+//   - platformURL: 用于额外设置的平台 URL
 //
-// Returns:
-//   - string: The HTML content for the success page
+// 返回：
+//   - string: 成功页面的 HTML 内容
 func (s *OAuthServer) generateSuccessHTML(setupRequired bool, platformURL string) string {
 	html := LoginSuccessHtml
 
@@ -278,11 +273,11 @@ func (s *OAuthServer) generateSuccessHTML(setupRequired bool, platformURL string
 	return html
 }
 
-// sendResult sends the OAuth result to the waiting channel.
-// It ensures that the result is sent without blocking the handler.
+// sendResult 将 OAuth 结果发送到等待通道。
+// 确保结果发送不会阻塞处理器。
 //
-// Parameters:
-//   - result: The OAuth result to send
+// 参数：
+//   - result: 要发送的 OAuth 结果
 func (s *OAuthServer) sendResult(result *OAuthResult) {
 	select {
 	case s.resultChan <- result:
@@ -292,11 +287,11 @@ func (s *OAuthServer) sendResult(result *OAuthResult) {
 	}
 }
 
-// isPortAvailable checks if the specified port is available.
-// It attempts to listen on the port to determine availability.
+// isPortAvailable 检查指定端口是否可用。
+// 尝试在该端口上监听以确定其可用性。
 //
-// Returns:
-//   - bool: True if the port is available, false otherwise
+// 返回：
+//   - bool: 端口可用返回 true，否则返回 false
 func (s *OAuthServer) isPortAvailable() bool {
 	addr := fmt.Sprintf(":%d", s.port)
 	listener, err := net.Listen("tcp", addr)
@@ -309,10 +304,10 @@ func (s *OAuthServer) isPortAvailable() bool {
 	return true
 }
 
-// IsRunning returns whether the server is currently running.
+// IsRunning 返回服务器是否正在运行。
 //
-// Returns:
-//   - bool: True if the server is running, false otherwise
+// 返回：
+//   - bool: 服务器正在运行返回 true，否则返回 false
 func (s *OAuthServer) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

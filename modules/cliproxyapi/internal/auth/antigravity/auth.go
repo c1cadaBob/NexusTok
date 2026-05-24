@@ -1,3 +1,8 @@
+// Package antigravity - auth.go
+// 提供 Antigravity 提供商的 OAuth2 认证流程实现。
+// 包括构建授权 URL、用授权码换取令牌、获取用户信息、
+// 获取项目 ID（通过 loadCodeAssist API）以及用户注册（onboardUser）等功能。
+//
 // Package antigravity provides OAuth2 authentication functionality for the Antigravity provider.
 package antigravity
 
@@ -17,7 +22,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// TokenResponse represents OAuth token response from Google
+// TokenResponse 表示 Google OAuth 令牌响应结构
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -25,12 +30,13 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 }
 
-// userInfo represents Google user profile
+// userInfo 表示 Google 用户资料信息（仅包含邮箱字段）
 type userInfo struct {
 	Email string `json:"email"`
 }
 
-// AntigravityAuth handles Antigravity OAuth authentication
+// AntigravityAuth 处理 Antigravity 的 OAuth 认证流程，
+// 封装了 HTTP 客户端，提供令牌交换、用户信息获取和项目 ID 查询等功能。
 type AntigravityAuth struct {
 	httpClient *http.Client
 }
@@ -48,6 +54,7 @@ func NewAntigravityAuth(cfg *config.Config, httpClient *http.Client) *Antigravit
 	}
 }
 
+// loadCodeAssistUserAgent 获取 Antigravity Code Assist 的 User-Agent 字符串
 func (o *AntigravityAuth) loadCodeAssistUserAgent() string {
 	return misc.AntigravityLoadCodeAssistUserAgent("")
 }

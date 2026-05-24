@@ -1,3 +1,9 @@
+// amp - secret.go
+// Amp API 密钥管理模块。
+// 该模块提供多种密钥获取策略，支持配置优先级和缓存机制：
+//   - MultiSourceSecret: 多源密钥（配置 > 环境变量 > 文件），带 TTL 缓存
+//   - StaticSecretSource: 固定密钥（用于测试）
+//   - MappedSecretSource: 客户端到上游密钥映射，支持每个客户端使用不同的上游密钥
 package amp
 
 import (
@@ -14,32 +20,35 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// SecretSource provides Amp API keys with configurable precedence and caching
+// SecretSource 定义了 Amp API 密钥获取的接口。
+// 所有密钥源实现都必须实现此接口。
 type SecretSource interface {
+	// Get 获取 Amp API 密钥，支持上下文取消。
 	Get(ctx context.Context) (string, error)
 }
 
-// cachedSecret holds a secret value with expiration
+// cachedSecret 表示带过期时间的缓存密钥。
 type cachedSecret struct {
-	value     string
-	expiresAt time.Time
+	value     string    // 缓存的密钥值
+	expiresAt time.Time // 缓存过期时间
 }
 
-// MultiSourceSecret implements precedence-based secret lookup:
-// 1. Explicit config value (highest priority)
-// 2. Environment variable AMP_API_KEY
-// 3. File-based secret (lowest priority)
+// MultiSourceSecret 实现基于优先级的密钥查找，优先级从高到低为：
+//  1. 显式配置值（最高优先级）
+//  2. 环境变量 AMP_API_KEY
+//  3. 文件密钥（最低优先级，带缓存）
 type MultiSourceSecret struct {
-	explicitKey string
-	envKey      string
-	filePath    string
-	cacheTTL    time.Duration
+	explicitKey string        // 配置文件中显式指定的密钥
+	envKey      string        // 环境变量名称
+	filePath    string        // 密钥文件路径
+	cacheTTL    time.Duration // 缓存存活时间
 
-	mu    sync.RWMutex
-	cache *cachedSecret
+	mu    sync.RWMutex  // 保护缓存的读写锁
+	cache *cachedSecret // 当前缓存的密钥
 }
 
-// NewMultiSourceSecret creates a secret source with precedence and caching
+// NewMultiSourceSecret 创建一个多源密钥实例，默认从 ~/.local/share/amp/secrets.json 读取文件密钥。
+// cacheTTL 为 0 时默认使用 5 分钟缓存。
 func NewMultiSourceSecret(explicitKey string, cacheTTL time.Duration) *MultiSourceSecret {
 	if cacheTTL == 0 {
 		cacheTTL = 5 * time.Minute // Default 5 minute cache
@@ -56,7 +65,7 @@ func NewMultiSourceSecret(explicitKey string, cacheTTL time.Duration) *MultiSour
 	}
 }
 
-// NewMultiSourceSecretWithPath creates a secret source with a custom file path (for testing)
+// NewMultiSourceSecretWithPath 创建一个多源密钥实例，使用自定义文件路径（主要用于测试）。
 func NewMultiSourceSecretWithPath(explicitKey string, filePath string, cacheTTL time.Duration) *MultiSourceSecret {
 	if cacheTTL == 0 {
 		cacheTTL = 5 * time.Minute
@@ -70,8 +79,8 @@ func NewMultiSourceSecretWithPath(explicitKey string, filePath string, cacheTTL 
 	}
 }
 
-// Get retrieves the Amp API key using precedence: config > env > file
-// Results are cached for cacheTTL duration to avoid excessive file reads
+// Get 按优先级获取 Amp API 密钥：配置 > 环境变量 > 文件。
+// 文件密钥结果会被缓存 cacheTTL 时长，避免频繁读取文件系统。
 func (s *MultiSourceSecret) Get(ctx context.Context) (string, error) {
 	// Precedence 1: Explicit config key (highest priority, no caching needed)
 	if s.explicitKey != "" {
@@ -106,7 +115,9 @@ func (s *MultiSourceSecret) Get(ctx context.Context) (string, error) {
 	return key, nil
 }
 
-// readFromFile reads the Amp API key from the secrets file
+// readFromFile 从密钥文件中读取 Amp API 密钥。
+// 文件格式为 JSON，包含 "apiKey@https://ampcode.com/" 键。
+// 文件不存在不视为错误，返回空字符串。
 func (s *MultiSourceSecret) readFromFile() (string, error) {
 	content, err := os.ReadFile(s.filePath)
 	if err != nil {
@@ -125,7 +136,7 @@ func (s *MultiSourceSecret) readFromFile() (string, error) {
 	return key, nil
 }
 
-// updateCache updates the cached secret value
+// updateCache 更新缓存中的密钥值和过期时间。
 func (s *MultiSourceSecret) updateCache(value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,14 +146,14 @@ func (s *MultiSourceSecret) updateCache(value string) {
 	}
 }
 
-// InvalidateCache clears the cached secret, forcing a fresh read on next Get
+// InvalidateCache 清除缓存，强制下次 Get 时重新读取密钥。
 func (s *MultiSourceSecret) InvalidateCache() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cache = nil
 }
 
-// UpdateExplicitKey refreshes the config-provided key and clears cache.
+// UpdateExplicitKey 刷新配置提供的显式密钥并清除缓存。
 func (s *MultiSourceSecret) UpdateExplicitKey(key string) {
 	if s == nil {
 		return
@@ -153,31 +164,31 @@ func (s *MultiSourceSecret) UpdateExplicitKey(key string) {
 	s.mu.Unlock()
 }
 
-// StaticSecretSource returns a fixed API key (for testing)
+// StaticSecretSource 返回固定 API 密钥的密钥源，主要用于测试场景。
 type StaticSecretSource struct {
-	key string
+	key string // 固定的 API 密钥
 }
 
-// NewStaticSecretSource creates a secret source with a fixed key
+// NewStaticSecretSource 创建一个返回固定密钥的密钥源。
 func NewStaticSecretSource(key string) *StaticSecretSource {
 	return &StaticSecretSource{key: strings.TrimSpace(key)}
 }
 
-// Get returns the static API key
+// Get 返回静态 API 密钥，始终成功。
 func (s *StaticSecretSource) Get(ctx context.Context) (string, error) {
 	return s.key, nil
 }
 
-// MappedSecretSource wraps a default SecretSource and adds per-client API key mapping.
-// When a request context contains a client API key that matches a configured mapping,
-// the corresponding upstream key is returned. Otherwise, falls back to the default source.
+// MappedSecretSource 包装默认的 SecretSource，添加客户端到上游 API 密钥的映射功能。
+// 当请求上下文中包含匹配映射的客户端 API 密钥时，返回对应的上游密钥；
+// 否则降级到默认密钥源。
 type MappedSecretSource struct {
-	defaultSource SecretSource
-	mu            sync.RWMutex
-	lookup        map[string]string // clientKey -> upstreamKey
+	defaultSource SecretSource       // 默认密钥源，用于未匹配映射时的降级
+	mu            sync.RWMutex       // 保护映射表的读写锁
+	lookup        map[string]string  // 客户端密钥到上游密钥的映射表
 }
 
-// NewMappedSecretSource creates a MappedSecretSource wrapping the given default source.
+// NewMappedSecretSource 创建一个 MappedSecretSource 实例，包装给定的默认密钥源。
 func NewMappedSecretSource(defaultSource SecretSource) *MappedSecretSource {
 	return &MappedSecretSource{
 		defaultSource: defaultSource,
@@ -185,9 +196,9 @@ func NewMappedSecretSource(defaultSource SecretSource) *MappedSecretSource {
 	}
 }
 
-// Get retrieves the Amp API key, checking per-client mappings first.
-// If the request context contains a client API key that matches a configured mapping,
-// returns the corresponding upstream key. Otherwise, falls back to the default source.
+// Get 获取 Amp API 密钥，优先检查客户端到上游的密钥映射。
+// 如果请求上下文中的客户端密钥匹配映射，返回对应的上游密钥；
+// 否则降级到默认密钥源。
 func (s *MappedSecretSource) Get(ctx context.Context) (string, error) {
 	// Try to get client API key from request context
 	clientKey := getClientAPIKeyFromContext(ctx)
@@ -204,8 +215,8 @@ func (s *MappedSecretSource) Get(ctx context.Context) (string, error) {
 	return s.defaultSource.Get(ctx)
 }
 
-// UpdateMappings rebuilds the client-to-upstream key mapping from configuration entries.
-// If the same client key appears in multiple entries, logs a warning and uses the first one.
+// UpdateMappings 从配置条目重建客户端到上游密钥的映射表。
+// 如果同一客户端密钥出现在多个条目中，记录警告并使用第一个映射。
 func (s *MappedSecretSource) UpdateMappings(entries []config.AmpUpstreamAPIKeyEntry) {
 	newLookup := make(map[string]string)
 
@@ -233,14 +244,14 @@ func (s *MappedSecretSource) UpdateMappings(entries []config.AmpUpstreamAPIKeyEn
 	s.mu.Unlock()
 }
 
-// UpdateDefaultExplicitKey updates the explicit key on the underlying MultiSourceSecret (if applicable).
+// UpdateDefaultExplicitKey 更新底层 MultiSourceSecret 的显式密钥（如果适用）。
 func (s *MappedSecretSource) UpdateDefaultExplicitKey(key string) {
 	if ms, ok := s.defaultSource.(*MultiSourceSecret); ok {
 		ms.UpdateExplicitKey(key)
 	}
 }
 
-// InvalidateCache invalidates cache on the underlying MultiSourceSecret (if applicable).
+// InvalidateCache 使底层 MultiSourceSecret 的缓存失效（如果适用）。
 func (s *MappedSecretSource) InvalidateCache() {
 	if ms, ok := s.defaultSource.(*MultiSourceSecret); ok {
 		ms.InvalidateCache()

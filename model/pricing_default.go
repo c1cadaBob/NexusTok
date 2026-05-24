@@ -1,3 +1,9 @@
+// Package model - pricing_default.go
+// 该文件定义了默认的供应商映射规则
+//
+// 核心功能：
+// - 根据模型名称前缀自动匹配供应商（如 gpt -> OpenAI、claude -> Anthropic）
+// - 用于模型元数据的自动填充
 package model
 
 import (

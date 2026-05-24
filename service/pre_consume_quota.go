@@ -1,3 +1,7 @@
+// pre_consume_quota.go - 预扣费配额管理
+// 本文件提供请求处理前的配额预扣费和失败后的配额退还功能。
+// 预扣费机制在 AI API 请求开始前检查用户是否有足够配额，
+// 并根据用户额度和令牌额度的信任策略决定是否需要实际扣费。
 package service
 
 import (
@@ -14,6 +18,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ReturnPreConsumedQuota 退还已预扣的配额。
+// 当请求失败时调用，将预扣的配额异步退还给用户。
+// 参数:
+//   - c: Gin 上下文
+//   - relayInfo: Relay 请求信息（包含预扣费额度和用户信息）
 func ReturnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
 	if relayInfo.FinalPreConsumedQuota != 0 {
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 请求失败, 返还预扣费额度 %s", relayInfo.UserId, logger.FormatQuota(relayInfo.FinalPreConsumedQuota)))
@@ -28,8 +37,15 @@ func ReturnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
 	}
 }
 
-// PreConsumeQuota checks if the user has enough quota to pre-consume.
-// It returns the pre-consumed quota if successful, or an error if not.
+// PreConsumeQuota 在请求处理前预扣用户配额。
+// 检查用户配额是否充足，根据信任策略决定是否需要实际预扣。
+// 信任策略：当用户额度或令牌额度超过信任阈值时，不实际预扣费用。
+// 参数:
+//   - c: Gin 上下文
+//   - preConsumedQuota: 需要预扣的配额数量
+//   - relayInfo: Relay 请求信息
+// 返回值:
+//   - *types.NexusTokError: 预扣失败时返回错误，成功返回 nil
 func PreConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NexusTokError {
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 	if err != nil {

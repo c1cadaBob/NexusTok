@@ -1,4 +1,6 @@
-// Package util provides utility functions for the CLI Proxy API server.
+// 包 util - gemini_schema.go
+// 该文件提供了 JSON Schema 到 Gemini/Antigravity 兼容格式的转换功能。
+// 处理不支持的关键字、类型展平和模式简化。
 package util
 
 import (
@@ -11,8 +13,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// gjsonPathKeyReplacer 用于转义 gjson/sjson 路径语法中的特殊字符。
 var gjsonPathKeyReplacer = strings.NewReplacer(".", "\\.", "*", "\\*", "?", "\\?")
 
+// placeholderReasonDescription 是工具调用中 reason 参数的占位符描述。
 const placeholderReasonDescription = "Brief explanation of why you are calling this tool"
 
 // CleanJSONSchemaForAntigravity transforms a JSON schema to be compatible with Antigravity API.

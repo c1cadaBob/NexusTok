@@ -1,3 +1,13 @@
+// Package model - usedata_rankings.go
+// 该文件提供了使用数据排行榜功能
+//
+// 主要结构体：
+// - RankingQuotaTotal：按模型统计的总 Token 数
+// - RankingQuotaBucket：按时间桶统计的使用数据
+//
+// 核心功能：
+// - 模型使用量排行榜
+// - 按时间维度的使用趋势分析
 package model
 
 import (

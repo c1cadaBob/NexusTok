@@ -1,3 +1,7 @@
+// Package helper 提供了中继层的各种辅助函数。
+// 本文件负责从 HTTP 请求中解析并验证各种格式的 API 请求体。
+// 支持的请求格式包括：OpenAI 通用格式、Claude 格式、Gemini 格式、
+// OpenAI Responses 格式、图像生成格式、嵌入格式、Rerank 格式和音频格式。
 package helper
 
 import (
@@ -16,13 +20,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetAndValidateRequest 根据中继格式（RelayFormat）分发到对应的请求解析和验证函数。
+// 这是请求解析的入口函数，根据 format 参数路由到具体的处理函数。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - format: 中继格式标识（如 RelayFormatOpenAI、RelayFormatClaude 等）
+//
+// 返回值：
+//   - request: 解析后的请求对象（实现 dto.Request 接口）
+//   - err: 解析或验证过程中的错误
 func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dto.Request, err error) {
+	// 从 URL 路径推断中继模式
 	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 
 	switch format {
 	case types.RelayFormatOpenAI:
 		request, err = GetAndValidateTextRequest(c, relayMode)
 	case types.RelayFormatGemini:
+		// Gemini 有多种嵌入接口，需要根据路径区分
 		if strings.Contains(c.Request.URL.Path, ":embedContent") {
 			request, err = GetAndValidateGeminiEmbeddingRequest(c)
 		} else if strings.Contains(c.Request.URL.Path, ":batchEmbedContents") {
@@ -46,6 +62,7 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 	case types.RelayFormatOpenAIAudio:
 		request, err = GetAndValidAudioRequest(c, relayMode)
 	case types.RelayFormatOpenAIRealtime:
+		// 实时通信 API 不需要解析请求体
 		request = &dto.BaseRequest{}
 	default:
 		return nil, fmt.Errorf("unsupported relay format: %s", format)
@@ -53,6 +70,17 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 	return request, err
 }
 
+// GetAndValidAudioRequest 解析并验证音频相关请求（TTS、Whisper）。
+// 对于语音合成（AudioSpeech）和转录/翻译模式，都要求 model 字段非空。
+// 转录/翻译模式下如果未指定 responseFormat，默认设为 "json"。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - relayMode: 中继模式常量
+//
+// 返回值：
+//   - *dto.AudioRequest: 解析后的音频请求对象
+//   - error: 验证错误
 func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, error) {
 	audioRequest := &dto.AudioRequest{}
 	err := common.UnmarshalBodyReusable(c, audioRequest)
@@ -75,6 +103,15 @@ func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, 
 	return audioRequest, nil
 }
 
+// GetAndValidateRerankRequest 解析并验证 Rerank（重排序）请求。
+// 验证规则：query 字段和 documents 字段均不能为空。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//
+// 返回值：
+//   - *dto.RerankRequest: 解析后的 Rerank 请求对象
+//   - error: 验证错误
 func GetAndValidateRerankRequest(c *gin.Context) (*dto.RerankRequest, error) {
 	var rerankRequest *dto.RerankRequest
 	err := common.UnmarshalBodyReusable(c, &rerankRequest)
@@ -92,6 +129,17 @@ func GetAndValidateRerankRequest(c *gin.Context) (*dto.RerankRequest, error) {
 	return rerankRequest, nil
 }
 
+// GetAndValidateEmbeddingRequest 解析并验证嵌入（Embedding）请求。
+// 对于审核模式（Moderations），model 默认为 "omni-moderation-latest"；
+// 对于嵌入模式（Embeddings），model 默认从 URL 路径参数获取。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - relayMode: 中继模式常量
+//
+// 返回值：
+//   - *dto.EmbeddingRequest: 解析后的嵌入请求对象
+//   - error: 验证错误
 func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.EmbeddingRequest, error) {
 	var embeddingRequest *dto.EmbeddingRequest
 	err := common.UnmarshalBodyReusable(c, &embeddingRequest)
@@ -112,6 +160,15 @@ func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.Embeddi
 	return embeddingRequest, nil
 }
 
+// GetAndValidateResponsesRequest 解析并验证 OpenAI Responses API 请求。
+// 验证规则：model 和 input 字段均不能为空。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//
+// 返回值：
+//   - *dto.OpenAIResponsesRequest: 解析后的 Responses 请求对象
+//   - error: 验证错误
 func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest, error) {
 	request := &dto.OpenAIResponsesRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
@@ -127,6 +184,8 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	return request, nil
 }
 
+// GetAndValidateResponsesCompactionRequest 解析并验证 Responses 精简模式请求。
+// 验证规则：model 字段不能为空。
 func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIResponsesCompactionRequest, error) {
 	request := &dto.OpenAIResponsesCompactionRequest{}
 	if err := common.UnmarshalBodyReusable(c, request); err != nil {
@@ -138,6 +197,17 @@ func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIRespon
 	return request, nil
 }
 
+// GetAndValidOpenAIImageRequest 解析并验证 OpenAI 图像生成/编辑请求。
+// 支持两种输入方式：multipart/form-data（图像编辑）和 JSON body。
+// 针对不同模型（dall-e、dall-e-2、dall-e-3、gpt-image-1）有不同的参数验证规则。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - relayMode: 中继模式常量
+//
+// 返回值：
+//   - *dto.ImageRequest: 解析后的图像请求对象
+//   - error: 验证错误
 func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageRequest, error) {
 	imageRequest := &dto.ImageRequest{}
 
@@ -226,6 +296,15 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	return imageRequest, nil
 }
 
+// GetAndValidateClaudeRequest 解析并验证 Claude 格式的请求。
+// 验证规则：messages 和 model 字段均不能为空。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//
+// 返回值：
+//   - *dto.ClaudeRequest: 解析后的 Claude 请求对象
+//   - error: 验证错误
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {
 	textRequest = &dto.ClaudeRequest{}
 	err = common.UnmarshalBodyReusable(c, textRequest)
@@ -246,6 +325,18 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	return textRequest, nil
 }
 
+// GetAndValidateTextRequest 解析并验证 OpenAI 通用格式的文本请求。
+// 支持聊天补全、文本补全、嵌入、审核和编辑等多种中继模式。
+// 验证规则因模式而异，包括 model、messages、prompt、input、instruction 等字段。
+// 还支持 FIM（Fill-in-the-middle）请求，此时 messages 可选。
+//
+// 参数：
+//   - c: Gin 请求上下文
+//   - relayMode: 中继模式常量
+//
+// 返回值：
+//   - *dto.GeneralOpenAIRequest: 解析后的通用 OpenAI 请求对象
+//   - error: 验证错误
 func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenAIRequest, error) {
 	textRequest := &dto.GeneralOpenAIRequest{}
 	err := common.UnmarshalBodyReusable(c, textRequest)
@@ -304,6 +395,8 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 	return textRequest, nil
 }
 
+// GetAndValidateGeminiRequest 解析并验证 Gemini 格式的聊天请求。
+// 验证规则：contents 和 requests 字段不能同时为空。
 func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error) {
 	request := &dto.GeminiChatRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
@@ -321,6 +414,7 @@ func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error)
 	return request, nil
 }
 
+// GetAndValidateGeminiEmbeddingRequest 解析并验证 Gemini 单条嵌入请求。
 func GetAndValidateGeminiEmbeddingRequest(c *gin.Context) (*dto.GeminiEmbeddingRequest, error) {
 	request := &dto.GeminiEmbeddingRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
@@ -330,6 +424,7 @@ func GetAndValidateGeminiEmbeddingRequest(c *gin.Context) (*dto.GeminiEmbeddingR
 	return request, nil
 }
 
+// GetAndValidateGeminiBatchEmbeddingRequest 解析并验证 Gemini 批量嵌入请求。
 func GetAndValidateGeminiBatchEmbeddingRequest(c *gin.Context) (*dto.GeminiBatchEmbeddingRequest, error) {
 	request := &dto.GeminiBatchEmbeddingRequest{}
 	err := common.UnmarshalBodyReusable(c, request)

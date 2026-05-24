@@ -1,3 +1,6 @@
+// 包 thinking - convert.go
+// 该文件提供了思考级别和预算之间的转换功能。
+// 包括级别到预算的映射、预算到级别的映射、模型能力检测等。
 package thinking
 
 import (
@@ -6,8 +9,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
-// levelToBudgetMap defines the standard Level → Budget mapping.
-// All keys are lowercase; lookups should use strings.ToLower.
+// levelToBudgetMap 定义了标准级别到预算的映射表。
+// 所有键为小写；查找时应使用 strings.ToLower。
 var levelToBudgetMap = map[string]int{
 	"none":    0,
 	"auto":    -1,
@@ -44,16 +47,16 @@ func ConvertLevelToBudget(level string) (int, bool) {
 	return budget, ok
 }
 
-// BudgetThreshold constants define the upper bounds for each thinking level.
-// These are used by ConvertBudgetToLevel for range-based mapping.
+// BudgetThreshold 常量定义了每个思考级别的上限。
+// 用于 ConvertBudgetToLevel 的范围映射。
 const (
-	// ThresholdMinimal is the upper bound for "minimal" level (1-512)
+	// ThresholdMinimal 是 "minimal" 级别的上限（1-512）
 	ThresholdMinimal = 512
-	// ThresholdLow is the upper bound for "low" level (513-1024)
+	// ThresholdLow 是 "low" 级别的上限（513-1024）
 	ThresholdLow = 1024
-	// ThresholdMedium is the upper bound for "medium" level (1025-8192)
+	// ThresholdMedium 是 "medium" 级别的上限（1025-8192）
 	ThresholdMedium = 8192
-	// ThresholdHigh is the upper bound for "high" level (8193-24576)
+	// ThresholdHigh 是 "high" 级别的上限（8193-24576）
 	ThresholdHigh = 24576
 )
 
@@ -133,32 +136,29 @@ func MapToClaudeEffort(level string, supportsMax bool) (string, bool) {
 	}
 }
 
-// ModelCapability describes the thinking format support of a model.
+// ModelCapability 描述模型的思考格式支持能力。
 type ModelCapability int
 
 const (
-	// CapabilityUnknown indicates modelInfo is nil (passthrough behavior, internal use).
+	// CapabilityUnknown 表示 modelInfo 为 nil（透传行为，内部使用）。
 	CapabilityUnknown ModelCapability = iota - 1
-	// CapabilityNone indicates model doesn't support thinking (Thinking is nil).
+	// CapabilityNone 表示模型不支持思考（Thinking 为 nil）。
 	CapabilityNone
-	// CapabilityBudgetOnly indicates the model supports numeric budgets only.
+	// CapabilityBudgetOnly 表示模型仅支持数字预算。
 	CapabilityBudgetOnly
-	// CapabilityLevelOnly indicates the model supports discrete levels only.
+	// CapabilityLevelOnly 表示模型仅支持离散级别。
 	CapabilityLevelOnly
-	// CapabilityHybrid indicates the model supports both budgets and levels.
+	// CapabilityHybrid 表示模型同时支持预算和级别。
 	CapabilityHybrid
 )
 
-// detectModelCapability determines the thinking format capability of a model.
+// detectModelCapability 检测模型的思考格式支持能力。
 //
-// This is an internal function used by validation and conversion helpers.
-// It analyzes the model's ThinkingSupport configuration to classify the model:
-//   - CapabilityNone: modelInfo.Thinking is nil (model doesn't support thinking)
-//   - CapabilityBudgetOnly: Has Min/Max but no Levels (Claude, Gemini 2.5)
-//   - CapabilityLevelOnly: Has Levels but no Min/Max (OpenAI, Codex, Kimi)
-//   - CapabilityHybrid: Has both Min/Max and Levels (Gemini 3)
-//
-// Note: Returns a special sentinel value when modelInfo itself is nil (unknown model).
+// 根据模型的 ThinkingSupport 配置分类：
+//   - CapabilityNone: Thinking 为 nil（不支持思考）
+//   - CapabilityBudgetOnly: 有 Min/Max 但无 Levels（Claude、Gemini 2.5）
+//   - CapabilityLevelOnly: 有 Levels 但无 Min/Max（OpenAI、Codex、Kimi）
+//   - CapabilityHybrid: 同时有 Min/Max 和 Levels（Gemini 3）
 func detectModelCapability(modelInfo *registry.ModelInfo) ModelCapability {
 	if modelInfo == nil {
 		return CapabilityUnknown // sentinel for "passthrough" behavior

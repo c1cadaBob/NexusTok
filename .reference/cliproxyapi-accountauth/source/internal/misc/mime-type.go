@@ -1,12 +1,11 @@
-// Package misc provides miscellaneous utility functions and embedded data for the CLI Proxy API.
-// This package contains general-purpose helpers and embedded resources that do not fit into
-// more specific domain packages. It includes a comprehensive MIME type mapping for file operations.
+// 包 misc - mime-type.go
+// 该文件提供了文件扩展名到 MIME 类型的完整映射表。
+// 用于文件上传等操作中根据扩展名确定 Content-Type 头。
 package misc
 
-// MimeTypes is a comprehensive map of file extensions to their corresponding MIME types.
-// This map is used to determine the Content-Type header for file uploads and other
-// operations where the MIME type needs to be identified from a file extension.
-// The list is extensive to cover a wide range of common and uncommon file formats.
+// MimeTypes 是文件扩展名到对应 MIME 类型的完整映射表。
+// 用于文件上传等操作中根据扩展名确定 Content-Type 头。
+// 列表非常全面，涵盖常见和不常见的文件格式。
 var MimeTypes = map[string]string{
 	"ez":          "application/andrew-inset",
 	"aw":          "application/applixware",

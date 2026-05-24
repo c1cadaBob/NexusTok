@@ -1,39 +1,42 @@
+// codex - openai.go
+// 包 codex 提供 OpenAI Codex API 的认证功能。
+// 该文件定义了 Codex 认证流程中使用的核心数据结构，
+// 包括 PKCE 代码、令牌数据和认证包等。
 package codex
 
-// PKCECodes holds the verification codes for the OAuth2 PKCE (Proof Key for Code Exchange) flow.
-// PKCE is an extension to the Authorization Code flow to prevent CSRF and authorization code injection attacks.
+// PKCECodes 保存 OAuth2 PKCE（Proof Key for Code Exchange）流程的验证代码。
+// PKCE 是授权码流程的安全扩展，用于防止 CSRF 和授权码注入攻击。
 type PKCECodes struct {
-	// CodeVerifier is the cryptographically random string used to correlate
-	// the authorization request to the token request
+	// CodeVerifier 是用于关联授权请求和令牌请求的加密随机字符串
 	CodeVerifier string `json:"code_verifier"`
-	// CodeChallenge is the SHA256 hash of the code verifier, base64url-encoded
+	// CodeChallenge 是代码验证器的 SHA256 哈希值，经过 base64url 编码
 	CodeChallenge string `json:"code_challenge"`
 }
 
-// CodexTokenData holds the OAuth token information obtained from OpenAI.
-// It includes the ID token, access token, refresh token, and associated user details.
+// CodexTokenData 保存从 OpenAI 获取的 OAuth 令牌信息。
+// 包括 ID 令牌、访问令牌、刷新令牌和关联的用户详细信息。
 type CodexTokenData struct {
-	// IDToken is the JWT ID token containing user claims
+	// IDToken 是包含用户声明的 JWT ID 令牌
 	IDToken string `json:"id_token"`
-	// AccessToken is the OAuth2 access token for API access
+	// AccessToken 是用于 API 访问的 OAuth2 访问令牌
 	AccessToken string `json:"access_token"`
-	// RefreshToken is used to obtain new access tokens
+	// RefreshToken 是用于获取新访问令牌的刷新令牌
 	RefreshToken string `json:"refresh_token"`
-	// AccountID is the OpenAI account identifier
+	// AccountID 是 OpenAI 账户标识符
 	AccountID string `json:"account_id"`
-	// Email is the OpenAI account email
+	// Email 是 OpenAI 账户的电子邮件地址
 	Email string `json:"email"`
-	// Expire is the timestamp of the token expire
+	// Expire 是令牌过期的时间戳
 	Expire string `json:"expired"`
 }
 
-// CodexAuthBundle aggregates all authentication-related data after the OAuth flow is complete.
-// This includes the API key, token data, and the timestamp of the last refresh.
+// CodexAuthBundle 聚合了 OAuth 流程完成后的所有认证相关数据。
+// 包括 API 密钥、令牌数据和最后刷新时间戳。
 type CodexAuthBundle struct {
-	// APIKey is the OpenAI API key obtained from token exchange
+	// APIKey 是从令牌交换中获取的 OpenAI API 密钥
 	APIKey string `json:"api_key"`
-	// TokenData contains the OAuth tokens from the authentication flow
+	// TokenData 包含认证流程中的 OAuth 令牌
 	TokenData CodexTokenData `json:"token_data"`
-	// LastRefresh is the timestamp of the last token refresh
+	// LastRefresh 是最后刷新令牌的时间戳
 	LastRefresh string `json:"last_refresh"`
 }

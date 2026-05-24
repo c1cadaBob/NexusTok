@@ -1,3 +1,7 @@
+// management - vertex_import.go
+// Vertex AI 服务账号凭据导入端点。
+// 该模块处理 Vertex AI 服务账号 JSON 文件的上传和导入，
+// 将其转换为认证记录并保存到认证目录中。
 package management
 
 import (
@@ -13,7 +17,15 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// ImportVertexCredential handles uploading a Vertex service account JSON and saving it as an auth record.
+// ImportVertexCredential 处理 Vertex AI 服务账号 JSON 文件的上传。
+// 处理流程：
+//  1. 从 multipart 表单中读取上传的文件
+//  2. 解析并验证 JSON 格式
+//  3. 标准化服务账号字段
+//  4. 提取 project_id、client_email 和 location
+//  5. 创建认证记录并保存到认证目录
+//
+// 支持通过表单字段或查询参数指定 location，默认为 "us-central1"。
 func (h *Handler) ImportVertexCredential(c *gin.Context) {
 	if h == nil || h.cfg == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config unavailable"})
@@ -116,6 +128,8 @@ func (h *Handler) ImportVertexCredential(c *gin.Context) {
 	})
 }
 
+// valueAsString 将任意值转换为字符串。
+// nil 返回空字符串，字符串类型直接返回，其他类型使用 fmt.Sprint 转换。
 func valueAsString(v any) string {
 	if v == nil {
 		return ""
@@ -128,6 +142,9 @@ func valueAsString(v any) string {
 	}
 }
 
+// sanitizeVertexFilePart 清理用于文件名的字符串。
+// 替换路径分隔符和特殊字符为安全的字符（下划线或连字符）。
+// 空字符串返回默认值 "vertex"。
 func sanitizeVertexFilePart(s string) string {
 	out := strings.TrimSpace(s)
 	replacers := []string{"/", "_", "\\", "_", ":", "_", " ", "-"}
@@ -140,6 +157,8 @@ func sanitizeVertexFilePart(s string) string {
 	return out
 }
 
+// labelForVertex 生成 Vertex 凭据的显示标签。
+// 格式为 "project_id (email)"，仅有部分信息时相应简化。
 func labelForVertex(projectID, email string) string {
 	p := strings.TrimSpace(projectID)
 	e := strings.TrimSpace(email)

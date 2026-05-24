@@ -1,3 +1,7 @@
+// 包 auth - codex.go
+// 该文件实现了 Codex 账户的 OAuth 登录流程。
+// 包括 PKCE 码生成、本地 OAuth 服务器管理、授权码交换和认证记录构建等功能。
+// 支持标准浏览器流程和设备码流程两种认证方式。
 package auth
 
 import (
@@ -17,24 +21,43 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// CodexAuthenticator implements the OAuth login flow for Codex accounts.
+// CodexAuthenticator 实现了 Codex 账户的 OAuth 登录认证器。
 type CodexAuthenticator struct {
-	CallbackPort int
+	CallbackPort int // OAuth 回调服务器监听端口，默认 1455
 }
 
-// NewCodexAuthenticator constructs a Codex authenticator with default settings.
+// NewCodexAuthenticator 使用默认设置构造一个 Codex 认证器实例。
+//
+// 返回:
+//   - *CodexAuthenticator: Codex 认证器实例（回调端口 1455）
 func NewCodexAuthenticator() *CodexAuthenticator {
 	return &CodexAuthenticator{CallbackPort: 1455}
 }
 
+// Provider 返回 Codex 提供商的标识名称。
 func (a *CodexAuthenticator) Provider() string {
 	return "codex"
 }
 
+// RefreshLead 指示管理器在令牌过期前五天执行刷新。
+//
+// 返回:
+//   - *time.Duration: 提前刷新的时间间隔
 func (a *CodexAuthenticator) RefreshLead() *time.Duration {
 	return new(5 * 24 * time.Hour)
 }
 
+// Login 执行 Codex 的完整 OAuth 登录流程。
+// 如果登录选项指定了设备模式，则走设备认证流程；否则走标准浏览器 OAuth 流程。
+//
+// 参数:
+//   - ctx: 请求上下文
+//   - cfg: 应用配置
+//   - opts: 登录选项
+//
+// 返回:
+//   - *coreauth.Auth: 认证结果，包含令牌存储和元数据
+//   - error: 登录失败时返回错误信息
 func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")

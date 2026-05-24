@@ -1,3 +1,14 @@
+// Package controller - subscription_payment_creem.go
+// 该文件实现了 Creem 支付平台的订阅购买 API 控制器
+//
+// Creem 是一个支持多种货币（USD/CNY）的支付平台
+// 功能包括：
+// - 创建 Creem 订阅支付会话
+// - 生成 Creem 结账链接
+// - 创建待处理订阅订单
+//
+// 主要 API：
+// - SubscriptionRequestCreemPay：发起 Creem 订阅支付
 package controller
 
 import (
@@ -16,10 +27,24 @@ import (
 	"github.com/thanhpk/randstr"
 )
 
+// SubscriptionCreemPayRequest Creem 订阅支付请求结构体
 type SubscriptionCreemPayRequest struct {
-	PlanId int `json:"plan_id"`
+	PlanId int `json:"plan_id"` // 订阅套餐 ID
 }
 
+// SubscriptionRequestCreemPay 发起 Creem 订阅支付
+//
+// 流程：
+// 1. 检查支付合规性
+// 2. 验证套餐是否启用且配置了 CreemProductId
+// 3. 检查用户购买次数限制
+// 4. 创建待处理订阅订单
+// 5. 根据配额显示类型选择货币（USD/CNY）
+// 6. 调用 genCreemLink 生成 Creem 结账链接
+//
+// 返回：
+//   - checkout_url: Creem 结账页面 URL
+//   - order_id: 订单引用 ID
 func SubscriptionRequestCreemPay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return

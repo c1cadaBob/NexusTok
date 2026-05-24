@@ -1,3 +1,11 @@
+// chat_completions - claude_openai_request_test.go
+// Claude 的 OpenAI Chat Completions 请求转换器测试文件。
+// 包含以下测试用例：
+// 1. 工具结果文本和 Base64 图片转换测试
+// 2. 工具结果 URL 图片转换测试
+// 3. 系统角色转换为顶层 system 数组测试
+// 4. 多系统消息合并测试
+// 5. 仅系统输入保留回退用户消息测试
 package chat_completions
 
 import (
@@ -6,6 +14,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertOpenAIRequestToClaude_ToolResultTextAndBase64Image 测试工具结果中包含文本和 Base64 图片的转换。
+// 验证工具结果能够正确转换为 Claude 的 tool_result 格式，包括文本部分和图片部分。
 func TestConvertOpenAIRequestToClaude_ToolResultTextAndBase64Image(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",
@@ -80,6 +90,7 @@ func TestConvertOpenAIRequestToClaude_ToolResultTextAndBase64Image(t *testing.T)
 	}
 }
 
+// TestConvertOpenAIRequestToClaude_ToolResultURLImageOnly 测试工具结果中仅包含 URL 图片的转换。
 func TestConvertOpenAIRequestToClaude_ToolResultURLImageOnly(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",
@@ -136,6 +147,7 @@ func TestConvertOpenAIRequestToClaude_ToolResultURLImageOnly(t *testing.T) {
 	}
 }
 
+// TestConvertOpenAIRequestToClaude_SystemRoleBecomesTopLevelSystem 测试 system 角色消息转换为顶层 system 数组。
 func TestConvertOpenAIRequestToClaude_SystemRoleBecomesTopLevelSystem(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",
@@ -174,6 +186,7 @@ func TestConvertOpenAIRequestToClaude_SystemRoleBecomesTopLevelSystem(t *testing
 	}
 }
 
+// TestConvertOpenAIRequestToClaude_MultipleSystemMessagesMergedIntoTopLevelSystem 测试多个系统消息合并到顶层 system 数组。
 func TestConvertOpenAIRequestToClaude_MultipleSystemMessagesMergedIntoTopLevelSystem(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",
@@ -210,6 +223,8 @@ func TestConvertOpenAIRequestToClaude_MultipleSystemMessagesMergedIntoTopLevelSy
 	}
 }
 
+// TestConvertOpenAIRequestToClaude_SystemOnlyInputKeepsFallbackUserMessage 测试仅包含系统消息时保留回退用户消息。
+// 验证当输入仅包含系统消息时，会自动添加一个空的用户消息作为回退。
 func TestConvertOpenAIRequestToClaude_SystemOnlyInputKeepsFallbackUserMessage(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",

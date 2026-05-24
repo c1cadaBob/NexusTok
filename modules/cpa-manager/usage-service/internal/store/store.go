@@ -1,3 +1,15 @@
+// store - store.go
+// 数据存储层，使用 SQLite 持久化使用量事件和配置数据。
+// 核心功能：
+//   - 使用量事件的批量入库（INSERT OR IGNORE 去重）
+//   - 死信队列管理（解析失败的消息）
+//   - 应用配置的读写（setup、manager_config）
+//   - 模型价格管理（增删改查、从 LiteLLM 同步）
+//   - API Key 别名映射管理（支持活跃 hash 集合的孤儿清理）
+//   - 使用量事件的 JSONL 导出
+//
+// 数据库使用 WAL 模式和 FULL 同步策略，确保数据安全。
+// 表结构迁移通过 ensureUsageEventSnapshotColumns 实现增量列添加。
 package store
 
 import (
@@ -12,79 +24,98 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // 注册纯 Go 实现的 SQLite 驱动
 
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
 )
 
+// Setup 表示 CPA 连接的基础配置。
+// 存储在 settings 表中，key 为 "setup"。
 type Setup struct {
-	CPAUpstreamURL string `json:"cpaBaseUrl"`
-	ManagementKey  string `json:"managementKey,omitempty"`
-	Queue          string `json:"queue,omitempty"`
-	PopSide        string `json:"popSide,omitempty"`
+	CPAUpstreamURL string `json:"cpaBaseUrl"`            // CPA 上游服务的基础 URL
+	ManagementKey  string `json:"managementKey,omitempty"` // 管理接口认证密钥
+	Queue          string `json:"queue,omitempty"`         // 使用量队列名称
+	PopSide        string `json:"popSide,omitempty"`       // 队列弹出方向：left/right
 }
 
+// ManagerConfig 表示 CPA Manager 的完整管理配置。
+// 存储在 settings 表中，key 为 "manager_config_v1"。
 type ManagerConfig struct {
-	CPAConnection        ManagerCPAConnectionConfig        `json:"cpaConnection"`
-	Collector            ManagerCollectorConfig            `json:"collector"`
-	ExternalUsageService ManagerExternalUsageServiceConfig `json:"externalUsageService"`
-	UpdatedAtMS          int64                             `json:"updatedAtMs,omitempty"`
+	CPAConnection        ManagerCPAConnectionConfig        `json:"cpaConnection"`        // CPA 连接配置
+	Collector            ManagerCollectorConfig            `json:"collector"`            // 采集器配置
+	ExternalUsageService ManagerExternalUsageServiceConfig `json:"externalUsageService"` // 外部使用量服务配置
+	UpdatedAtMS          int64                             `json:"updatedAtMs,omitempty"` // 最后更新时间戳
 }
 
+// ManagerCPAConnectionConfig 表示 CPA 连接的认证信息。
 type ManagerCPAConnectionConfig struct {
-	CPABaseURL    string `json:"cpaBaseUrl"`
-	ManagementKey string `json:"managementKey,omitempty"`
+	CPABaseURL    string `json:"cpaBaseUrl"`            // CPA 上游基础 URL
+	ManagementKey string `json:"managementKey,omitempty"` // 管理接口认证密钥
 }
 
+// ManagerCollectorConfig 表示采集器的运行参数配置。
 type ManagerCollectorConfig struct {
-	Enabled        *bool  `json:"enabled,omitempty"`
-	CollectorMode  string `json:"collectorMode,omitempty"`
-	Queue          string `json:"queue,omitempty"`
-	PopSide        string `json:"popSide,omitempty"`
-	BatchSize      int    `json:"batchSize,omitempty"`
-	PollIntervalMS int    `json:"pollIntervalMs,omitempty"`
-	QueryLimit     int    `json:"queryLimit,omitempty"`
-	TLSSkipVerify  bool   `json:"tlsSkipVerify,omitempty"`
+	Enabled        *bool  `json:"enabled,omitempty"`        // 是否启用采集器（nil 视为 true）
+	CollectorMode  string `json:"collectorMode,omitempty"`  // 采集模式：auto/http/resp/subscribe
+	Queue          string `json:"queue,omitempty"`          // 队列名称
+	PopSide        string `json:"popSide,omitempty"`        // 弹出方向
+	BatchSize      int    `json:"batchSize,omitempty"`      // 批次大小
+	PollIntervalMS int    `json:"pollIntervalMs,omitempty"` // 轮询间隔（毫秒）
+	QueryLimit     int    `json:"queryLimit,omitempty"`     // 查询限制
+	TLSSkipVerify  bool   `json:"tlsSkipVerify,omitempty"`  // TLS 跳过验证
 }
 
+// ManagerExternalUsageServiceConfig 表示外部使用量服务的配置。
 type ManagerExternalUsageServiceConfig struct {
-	Enabled     bool   `json:"enabled"`
-	ServiceBase string `json:"serviceBase,omitempty"`
+	Enabled     bool   `json:"enabled"`             // 是否启用外部使用量服务
+	ServiceBase string `json:"serviceBase,omitempty"` // 外部服务的基础 URL
 }
 
+// InsertResult 表示批量入库操作的结果统计。
 type InsertResult struct {
-	Inserted int `json:"inserted"`
-	Skipped  int `json:"skipped"`
+	Inserted int `json:"inserted"` // 成功插入的新事件数
+	Skipped  int `json:"skipped"`  // 因重复而跳过的事件数
 }
 
+// ModelPrice 表示单个 AI 模型的价格配置。
+// 价格单位为每百万 token 的费用。
 type ModelPrice struct {
-	Prompt        float64 `json:"prompt"`
-	Completion    float64 `json:"completion"`
-	Cache         float64 `json:"cache"`
-	Source        string  `json:"source,omitempty"`
-	SourceModelID string  `json:"sourceModelId,omitempty"`
-	RawJSON       string  `json:"rawJson,omitempty"`
-	UpdatedAtMS   int64   `json:"updatedAtMs,omitempty"`
-	SyncedAtMS    *int64  `json:"syncedAtMs,omitempty"`
+	Prompt        float64 `json:"prompt"`                  // 输入/prompt 的单价（每百万 token）
+	Completion    float64 `json:"completion"`              // 输出/completion 的单价（每百万 token）
+	Cache         float64 `json:"cache"`                   // 缓存读取的单价（每百万 token）
+	Source        string  `json:"source,omitempty"`        // 价格来源（如 litellm）
+	SourceModelID string  `json:"sourceModelId,omitempty"` // 来源中的模型 ID
+	RawJSON       string  `json:"rawJson,omitempty"`       // 原始 JSON 数据
+	UpdatedAtMS   int64   `json:"updatedAtMs,omitempty"`   // 最后更新时间
+	SyncedAtMS    *int64  `json:"syncedAtMs,omitempty"`    // 最后同步时间
 }
 
+// ModelPriceSyncResult 表示模型价格同步操作的结果统计。
 type ModelPriceSyncResult struct {
-	Imported int `json:"imported"`
-	Skipped  int `json:"skipped"`
+	Imported int `json:"imported"` // 成功导入的价格数
+	Skipped  int `json:"skipped"`  // 跳过的价格数
 }
 
+// APIKeyAlias 表示 API Key 的别名映射。
+// 将 API Key 的哈希值映射到一个人类可读的别名。
 type APIKeyAlias struct {
-	APIKeyHash  string `json:"apiKeyHash"`
-	Alias       string `json:"alias"`
-	UpdatedAtMS int64  `json:"updatedAtMs"`
+	APIKeyHash  string `json:"apiKeyHash"`  // API Key 的 SHA-256 哈希值（64 位十六进制）
+	Alias       string `json:"alias"`       // 别名（最多 120 字符）
+	UpdatedAtMS int64  `json:"updatedAtMs"` // 最后更新时间
 }
 
+// Store 是数据存储层的核心结构。
+// 封装了 SQLite 数据库连接和所有数据访问操作。
 type Store struct {
-	db *sql.DB
+	db *sql.DB // SQLite 数据库连接
 }
 
+// managerConfigKey 是 ManagerConfig 在 settings 表中的存储键名。
 const managerConfigKey = "manager_config_v1"
 
+// Open 打开或创建 SQLite 数据库，并执行初始化操作。
+// 自动创建数据库所在目录，设置 WAL 模式、外键约束等 pragma，
+// 并创建所有必要的表和索引。
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -101,6 +132,7 @@ func Open(path string) (*Store, error) {
 	return store, nil
 }
 
+// Close 关闭数据库连接。对 nil Store 安全调用。
 func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
@@ -108,6 +140,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// init 初始化数据库：
+// 1. 设置 SQLite pragma（WAL 模式、FULL 同步、5 秒忙等待、外键约束）
+// 2. 创建所有必要的表（usage_events、dead_letter_events、settings、model_prices、api_key_aliases）
+// 3. 创建查询性能相关的索引
+// 4. 执行增量列迁移（添加 snapshot 相关列和 requested_model/resolved_model 列）
 func (s *Store) init() error {
 	statements := []string{
 		`pragma journal_mode = WAL`,
@@ -190,6 +227,10 @@ func (s *Store) init() error {
 	return nil
 }
 
+// ensureUsageEventSnapshotColumns 检查 usage_events 表是否包含所有需要的列，
+// 如果缺少则通过 ALTER TABLE ADD COLUMN 添加。
+// 该方法实现了增量迁移，兼容已有的旧数据库。
+// 需要添加的列包括认证快照字段和请求/解析模型字段。
 func (s *Store) ensureUsageEventSnapshotColumns() error {
 	rows, err := s.db.Query(`pragma table_info(usage_events)`)
 	if err != nil {
@@ -242,6 +283,9 @@ func (s *Store) ensureUsageEventSnapshotColumns() error {
 	return nil
 }
 
+// SaveSetup 保存 CPA 连接的基础配置到 settings 表。
+// 使用 UPSERT 语义（INSERT ON CONFLICT DO UPDATE）。
+// 要求 CPAUpstreamURL 和 ManagementKey 非空。
 func (s *Store) SaveSetup(ctx context.Context, setup Setup) error {
 	if setup.CPAUpstreamURL == "" || setup.ManagementKey == "" {
 		return errors.New("cpaBaseUrl and managementKey are required")
@@ -261,6 +305,11 @@ func (s *Store) SaveSetup(ctx context.Context, setup Setup) error {
 	return err
 }
 
+// LoadSetup 从 settings 表加载 CPA 连接的基础配置。
+// 返回值：
+//   - setup: 配置内容
+//   - ok: 配置是否存在
+//   - err: 读取或解析错误
 func (s *Store) LoadSetup(ctx context.Context) (Setup, bool, error) {
 	var raw string
 	err := s.db.QueryRowContext(ctx, `select value from settings where key = 'setup'`).Scan(&raw)
@@ -277,6 +326,8 @@ func (s *Store) LoadSetup(ctx context.Context) (Setup, bool, error) {
 	return setup, true, nil
 }
 
+// SaveManagerConfig 保存完整的管理配置到 settings 表。
+// 自动设置 UpdatedAtMS 为当前时间。
 func (s *Store) SaveManagerConfig(ctx context.Context, cfg ManagerConfig) error {
 	cfg.UpdatedAtMS = time.Now().UnixMilli()
 	data, err := json.Marshal(cfg)
@@ -295,6 +346,7 @@ func (s *Store) SaveManagerConfig(ctx context.Context, cfg ManagerConfig) error 
 	return err
 }
 
+// LoadManagerConfig 从 settings 表加载完整的管理配置。
 func (s *Store) LoadManagerConfig(ctx context.Context) (ManagerConfig, bool, error) {
 	var raw string
 	err := s.db.QueryRowContext(ctx, `select value from settings where key = ?`, managerConfigKey).Scan(&raw)
@@ -311,6 +363,8 @@ func (s *Store) LoadManagerConfig(ctx context.Context) (ManagerConfig, bool, err
 	return cfg, true, nil
 }
 
+// LoadModelPrices 从 model_prices 表加载所有模型价格配置。
+// 结果按模型名排序返回。
 func (s *Store) LoadModelPrices(ctx context.Context) (map[string]ModelPrice, error) {
 	rows, err := s.db.QueryContext(ctx, `select
 		model, prompt_per_1m, completion_per_1m, cache_per_1m, source, source_model_id, raw_json,
@@ -352,6 +406,8 @@ func (s *Store) LoadModelPrices(ctx context.Context) (map[string]ModelPrice, err
 	return prices, rows.Err()
 }
 
+// SaveModelPrices 批量保存模型价格配置（覆盖式）。
+// 在事务中先清空表再批量插入，确保数据一致性。
 func (s *Store) SaveModelPrices(ctx context.Context, prices map[string]ModelPrice) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -400,6 +456,10 @@ func (s *Store) SaveModelPrices(ctx context.Context, prices map[string]ModelPric
 	return tx.Commit()
 }
 
+// UpsertSyncedModelPrices 批量同步导入模型价格（UPSERT 语义）。
+// 已存在的模型更新价格，不存在的模型插入新记录。
+// 自动填充 Source、SourceModelID、UpdatedAtMS 和 SyncedAtMS 字段。
+// 验证失败的价格条目会被跳过并计入 Skipped。
 func (s *Store) UpsertSyncedModelPrices(ctx context.Context, prices map[string]ModelPrice) (ModelPriceSyncResult, error) {
 	if len(prices) == 0 {
 		return ModelPriceSyncResult{}, nil
@@ -467,6 +527,8 @@ func (s *Store) UpsertSyncedModelPrices(ctx context.Context, prices map[string]M
 	return result, nil
 }
 
+// LoadAPIKeyAliases 从 api_key_aliases 表加载所有别名映射。
+// 结果按别名（不区分大小写）和 API Key 哈希排序。
 func (s *Store) LoadAPIKeyAliases(ctx context.Context) ([]APIKeyAlias, error) {
 	rows, err := s.db.QueryContext(ctx, `select api_key_hash, alias, updated_at_ms
 		from api_key_aliases
@@ -602,6 +664,8 @@ func (s *Store) UpsertAPIKeyAliases(ctx context.Context, aliases []APIKeyAlias, 
 	return tx.Commit()
 }
 
+// DeleteAPIKeyAlias 根据 API Key 哈希删除别名映射。
+// 哈希值必须为 64 位十六进制字符串。
 func (s *Store) DeleteAPIKeyAlias(ctx context.Context, apiKeyHash string) error {
 	hash := strings.ToLower(strings.TrimSpace(apiKeyHash))
 	if !validAPIKeyHash(hash) {
@@ -611,6 +675,9 @@ func (s *Store) DeleteAPIKeyAlias(ctx context.Context, apiKeyHash string) error 
 	return err
 }
 
+// normalizeAPIKeyAlias 规范化 API Key 别名数据。
+// 验证哈希格式（64 位十六进制）、别名非空且不超过 120 字符，
+// 自动设置更新时间。
 func normalizeAPIKeyAlias(alias APIKeyAlias, now int64) (APIKeyAlias, error) {
 	hash := strings.ToLower(strings.TrimSpace(alias.APIKeyHash))
 	if !validAPIKeyHash(hash) {
@@ -631,10 +698,12 @@ func normalizeAPIKeyAlias(alias APIKeyAlias, now int64) (APIKeyAlias, error) {
 	return alias, nil
 }
 
+// normalizeAPIKeyAliasUniqueKey 生成别名的唯一性键（小写去空白）。
 func normalizeAPIKeyAliasUniqueKey(alias string) string {
 	return strings.ToLower(strings.TrimSpace(alias))
 }
 
+// validAPIKeyHash 验证 API Key 哈希值是否为合法的 64 位小写十六进制字符串。
 func validAPIKeyHash(value string) bool {
 	if len(value) != 64 {
 		return false
@@ -648,6 +717,8 @@ func validAPIKeyHash(value string) bool {
 	return true
 }
 
+// validateModelPrice 验证模型价格配置的合法性。
+// 模型名不能为空，所有价格值必须为非负有限数。
 func validateModelPrice(model string, price ModelPrice) error {
 	if model == "" {
 		return errors.New("model is required")
@@ -658,10 +729,14 @@ func validateModelPrice(model string, price ModelPrice) error {
 	return nil
 }
 
+// validPriceValue 验证价格值是否为合法的非负有限浮点数。
 func validPriceValue(value float64) bool {
 	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
+// InsertEvents 批量插入使用量事件到 usage_events 表。
+// 使用 INSERT OR IGNORE 语义，event_hash 冲突时自动跳过（不报错）。
+// 返回实际插入数和跳过数。
 func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertResult, error) {
 	if len(events) == 0 {
 		return InsertResult{}, nil
@@ -744,6 +819,8 @@ func (s *Store) InsertEvents(ctx context.Context, events []usage.Event) (InsertR
 	return result, nil
 }
 
+// AddDeadLetter 将解析失败的原始消息写入死信队列。
+// 记录原始 payload、错误信息和创建时间，便于后续排查。
 func (s *Store) AddDeadLetter(ctx context.Context, payload string, parseErr error) error {
 	_, err := s.db.ExecContext(
 		ctx,
@@ -755,6 +832,8 @@ func (s *Store) AddDeadLetter(ctx context.Context, payload string, parseErr erro
 	return err
 }
 
+// RecentEvents 查询最近的使用量事件。
+// 按时间戳降序返回，limit <= 0 时默认为 50000。
 func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, error) {
 	if limit <= 0 {
 		limit = 50000
@@ -848,6 +927,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]usage.Event, err
 	return events, rows.Err()
 }
 
+// Counts 返回 usage_events 和 dead_letter_events 表的记录总数。
 func (s *Store) Counts(ctx context.Context) (events int64, deadLetters int64, err error) {
 	if err = s.db.QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&events); err != nil {
 		return 0, 0, err
@@ -858,6 +938,8 @@ func (s *Store) Counts(ctx context.Context) (events int64, deadLetters int64, er
 	return events, deadLetters, nil
 }
 
+// ExportJSONL 将所有使用量事件导出为 JSONL（JSON Lines）格式。
+// 每行一个 JSON 对象，按时间正序排列（最早在前）。
 func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 	events, err := s.RecentEvents(ctx, 0)
 	if err != nil {
@@ -875,6 +957,8 @@ func (s *Store) ExportJSONL(ctx context.Context) ([]byte, error) {
 	return output, nil
 }
 
+// nullString 将空字符串转换为 nil（SQL NULL），非空字符串保持原值。
+// 用于数据库插入时的可空字段处理。
 func nullString(value string) any {
 	if value == "" {
 		return nil
@@ -882,6 +966,7 @@ func nullString(value string) any {
 	return value
 }
 
+// nullInt 将 nil 指针转换为 SQL NULL，非 nil 指针返回指向的值。
 func nullInt(value *int64) any {
 	if value == nil {
 		return nil
@@ -889,6 +974,8 @@ func nullInt(value *int64) any {
 	return *value
 }
 
+// nullPositiveInt64 将非正整数值转换为 SQL NULL。
+// 用于可选的时间戳字段（<= 0 表示无效）。
 func nullPositiveInt64(value int64) any {
 	if value <= 0 {
 		return nil
@@ -896,6 +983,7 @@ func nullPositiveInt64(value int64) any {
 	return value
 }
 
+// String 实现 fmt.Stringer 接口，返回 Setup 的可读表示。
 func (s Setup) String() string {
 	return fmt.Sprintf("upstream=%s queue=%s popSide=%s", s.CPAUpstreamURL, s.Queue, s.PopSide)
 }

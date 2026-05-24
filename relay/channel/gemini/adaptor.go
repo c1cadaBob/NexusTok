@@ -1,3 +1,11 @@
+// gemini - adaptor.go
+// Google Gemini 渠道的适配器实现。
+// 本文件实现了 relay/channel 包中定义的 Adaptor 接口，负责：
+//   - 将 OpenAI / Claude / Gemini 原生请求转换为 Gemini API 格式
+//   - 构建 Gemini API 的请求 URL（支持聊天、嵌入、图像生成等端点）
+//   - 设置 HTTP 请求头（包含 API Key 认证）
+//   - 将 Gemini API 的响应转换为 OpenAI 兼容格式
+//   - 处理文本生成、图像生成、嵌入等不同类型的请求和响应
 package gemini
 
 import (
@@ -20,9 +28,25 @@ import (
 	"github.com/samber/lo"
 )
 
+// Adaptor 是 Google Gemini 渠道的适配器结构体。
+// 实现了 relay/channel 包中定义的适配器接口，提供请求格式转换、URL 构建、
+// HTTP 头设置以及响应处理等能力。该结构体本身无状态，所有状态通过方法参数传递。
 type Adaptor struct {
 }
 
+// ConvertGeminiRequest 将 Gemini 原生格式的请求进行预处理。
+// 主要处理：
+//   - 如果第一条消息的 Role 为空，默认设置为 "user"
+//   - 对包含 YouTube 链接的 FileData，自动补充 "video/webm" 的 MimeType
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息（包含渠道配置、模型名称等）
+//   - request: Gemini 原生聊天请求
+//
+// 返回:
+//   - any: 处理后的请求对象（原样返回）
+//   - error: 错误信息，处理成功时为 nil
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	if len(request.Contents) > 0 {
 		for i, content := range request.Contents {
@@ -43,6 +67,16 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 	return request, nil
 }
 
+// ConvertClaudeRequest 将 Claude 格式的请求转换为 Gemini 格式。
+// 转换流程：Claude 格式 -> OpenAI 格式 -> Gemini 格式（通过 OpenAI 适配器中转）。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - req: Claude 格式的请求对象
+//
+// 返回:
+//   - any: 转换后的 Gemini 格式请求
+//   - error: 转换过程中的错误
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.ClaudeRequest) (any, error) {
 	adaptor := openai.Adaptor{}
 	oaiReq, err := adaptor.ConvertClaudeRequest(c, info, req)
@@ -52,11 +86,35 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	return a.ConvertOpenAIRequest(c, info, oaiReq.(*dto.GeneralOpenAIRequest))
 }
 
+// ConvertAudioRequest 将音频请求转换为 Gemini 格式。
+// 当前尚未实现，调用时会返回 "not implemented" 错误。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - request: 音频请求对象
+//
+// 返回:
+//   - io.Reader: 请求体读取器
+//   - error: 始终返回未实现错误
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
 }
 
+// ConvertImageRequest 将图像生成请求转换为 Gemini Imagen 格式。
+// 仅支持 imagen 系列模型。转换逻辑包括：
+//   - 将 OpenAI 的 size 参数转换为 Gemini 的 aspectRatio（宽高比）
+//   - 将 OpenAI 的 quality 参数映射为 Gemini 的 imageSize（1K 或 2K）
+//   - 支持直接传入宽高比格式（如 "16:9"）
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - request: OpenAI 格式的图像生成请求
+//
+// 返回:
+//   - any: Gemini Imagen 格式的请求对象
+//   - error: 模型不支持时返回错误
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return nil, errors.New("not supported model for image generation, only imagen models are supported")
@@ -123,10 +181,27 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	return geminiRequest, nil
 }
 
+// Init 初始化适配器。
+// 当前 Gemini 适配器无需额外初始化操作。
+// 参数:
+//   - info: Relay 中继信息
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 }
 
+// GetRequestURL 构建 Gemini API 的请求 URL。
+// 根据模型类型和请求模式，生成不同的 API 端点地址：
+//   - imagen 模型：使用 predict 端点
+//   - embedding 模型：使用 embedContent 或 batchEmbedContents 端点
+//   - 文本生成模型：使用 generateContent（非流式）或 streamGenerateContent（流式）端点
+//
+// 同时处理 Thinking 模型后缀的剥离（如 -thinking、-nothinking、-thinking-<budget>）。
+// 参数:
+//   - info: Relay 中继信息（包含模型名称、基础 URL、是否流式等）
+//
+// 返回:
+//   - string: 完整的 API 请求 URL
+//   - error: URL 构建过程中的错误
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled &&
@@ -170,12 +245,32 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
 }
 
+// SetupRequestHeader 设置 Gemini API 请求的 HTTP 头部。
+// 设置通用 API 请求头，并通过 x-goog-api-key 头传递 Google API 密钥。
+// 参数:
+//   - c: Gin 上下文
+//   - req: HTTP 请求头指针
+//   - info: Relay 中继信息（包含 API Key 等）
+//
+// 返回:
+//   - error: 设置过程中的错误
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("x-goog-api-key", info.ApiKey)
 	return nil
 }
 
+// ConvertOpenAIRequest 将 OpenAI 格式的请求转换为 Gemini 格式。
+// 调用 CovertOpenAI2Gemini 函数完成实际的格式转换，包括消息、工具、
+// 安全设置、思考配置等方面的适配。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - request: OpenAI 格式的请求对象
+//
+// 返回:
+//   - any: Gemini 格式的请求对象
+//   - error: 转换过程中的错误
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
@@ -189,10 +284,32 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	return geminiRequest, nil
 }
 
+// ConvertRerankRequest 将重排序请求转换为 Gemini 格式。
+// 当前 Gemini 渠道不支持重排序功能，返回 nil。
+// 参数:
+//   - c: Gin 上下文
+//   - relayMode: 中继模式
+//   - request: 重排序请求对象
+//
+// 返回:
+//   - any: 始终返回 nil
+//   - error: 始终返回 nil
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
 	return nil, nil
 }
 
+// ConvertEmbeddingRequest 将嵌入请求转换为 Gemini 批量嵌入格式。
+// 始终构建批量格式的请求（batchEmbedContents），支持以下模型的特殊参数：
+//   - text-embedding-004, gemini-embedding-exp-03-07, gemini-embedding-001：支持 outputDimensionality 参数
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息（会设置 IsGeminiBatchEmbedding = true）
+//   - request: OpenAI 格式的嵌入请求
+//
+// 返回:
+//   - any: Gemini 批量嵌入请求对象（包含 requests 数组）
+//   - error: 输入为空时返回错误
 func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
 	if request.Input == nil {
 		return nil, errors.New("input is required")
@@ -237,15 +354,50 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	}, nil
 }
 
+// ConvertOpenAIResponsesRequest 将 OpenAI Responses 格式的请求转换为 Gemini 格式。
+// 当前尚未实现，调用时会返回 "not implemented" 错误。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息
+//   - request: OpenAI Responses 格式的请求对象
+//
+// 返回:
+//   - any: 始终返回 nil
+//   - error: 始终返回未实现错误
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	// TODO implement me
 	return nil, errors.New("not implemented")
 }
 
+// DoRequest 执行向 Gemini API 的 HTTP 请求。
+// 通过 channel.DoApiRequest 通用方法发送请求，自动处理代理、超时等。
+// 参数:
+//   - c: Gin 上下文
+//   - info: Relay 中继信息（包含 URL、Header 等）
+//   - requestBody: 请求体 io.Reader
+//
+// 返回:
+//   - any: HTTP 响应对象
+//   - error: 请求过程中的错误
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
+// DoResponse 处理 Gemini API 的 HTTP 响应。
+// 根据请求类型和模型类型分发到不同的处理器：
+//   - Gemini 原生模式：嵌入 -> NativeGeminiEmbeddingHandler；流式 -> GeminiTextGenerationStreamHandler；非流式 -> GeminiTextGenerationHandler
+//   - imagen 模型：-> GeminiImageHandler
+//   - embedding 模型：-> GeminiEmbeddingHandler
+//   - 普通文本生成模型：流式 -> GeminiChatStreamHandler；非流式 -> GeminiChatHandler
+//
+// 参数:
+//   - c: Gin 上下文
+//   - resp: Gemini API 返回的 HTTP 响应
+//   - info: Relay 中继信息
+//
+// 返回:
+//   - usage: token 使用量统计
+//   - err: 错误信息
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NexusTokError) {
 	if info.RelayMode == constant.RelayModeGemini {
 		if strings.Contains(info.RequestURLPath, ":embedContent") ||
@@ -278,10 +430,18 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 }
 
+// GetModelList 返回 Gemini 渠道支持的模型列表。
+// 返回值来自 constant.go 中定义的 ModelList 变量。
+// 返回:
+//   - []string: 支持的模型名称列表
 func (a *Adaptor) GetModelList() []string {
 	return ModelList
 }
 
+// GetChannelName 返回渠道名称标识符。
+// 返回值为 "google gemini"，用于标识此适配器对应的上游渠道。
+// 返回:
+//   - string: 渠道名称
 func (a *Adaptor) GetChannelName() string {
 	return ChannelName
 }

@@ -1,65 +1,62 @@
+// thinking - errors.go
+// 该文件定义了思考配置处理过程中的错误类型和错误码。
+// 包括后缀格式错误、未知级别、模型不支持思考、级别不支持、预算超范围和提供商不匹配等。
+
 // Package thinking provides unified thinking configuration processing logic.
 package thinking
 
 import "net/http"
 
-// ErrorCode represents the type of thinking configuration error.
+// ErrorCode 表示思考配置错误的类型。
 type ErrorCode string
 
-// Error codes for thinking configuration processing.
+// 思考配置处理的错误码常量。
 const (
-	// ErrInvalidSuffix indicates the suffix format cannot be parsed.
-	// Example: "model(abc" (missing closing parenthesis)
+	// ErrInvalidSuffix 表示后缀格式无法解析。
+	// 示例："model(abc"（缺少右括号）
 	ErrInvalidSuffix ErrorCode = "INVALID_SUFFIX"
 
-	// ErrUnknownLevel indicates the level value is not in the valid list.
-	// Example: "model(ultra)" where "ultra" is not a valid level
+	// ErrUnknownLevel 表示级别值不在有效列表中。
+	// 示例："model(ultra)" 其中 "ultra" 不是有效级别
 	ErrUnknownLevel ErrorCode = "UNKNOWN_LEVEL"
 
-	// ErrThinkingNotSupported indicates the model does not support thinking.
-	// Example: claude-haiku-4-5 does not have thinking capability
+	// ErrThinkingNotSupported 表示模型不支持思考功能。
+	// 示例：claude-haiku-4-5 没有思考能力
 	ErrThinkingNotSupported ErrorCode = "THINKING_NOT_SUPPORTED"
 
-	// ErrLevelNotSupported indicates the model does not support level mode.
-	// Example: using level with a budget-only model
+	// ErrLevelNotSupported 表示模型不支持级别模式。
+	// 示例：对仅支持预算的模型使用级别模式
 	ErrLevelNotSupported ErrorCode = "LEVEL_NOT_SUPPORTED"
 
-	// ErrBudgetOutOfRange indicates the budget value is outside model range.
-	// Example: budget 64000 exceeds max 20000
+	// ErrBudgetOutOfRange 表示预算值超出模型允许范围。
+	// 示例：预算 64000 超过最大值 20000
 	ErrBudgetOutOfRange ErrorCode = "BUDGET_OUT_OF_RANGE"
 
-	// ErrProviderMismatch indicates the provider does not match the model.
-	// Example: applying Claude format to a Gemini model
+	// ErrProviderMismatch 表示提供商与模型不匹配。
+	// 示例：将 Claude 格式应用于 Gemini 模型
 	ErrProviderMismatch ErrorCode = "PROVIDER_MISMATCH"
 )
 
-// ThinkingError represents an error that occurred during thinking configuration processing.
-//
-// This error type provides structured information about the error, including:
-//   - Code: A machine-readable error code for programmatic handling
-//   - Message: A human-readable description of the error
-//   - Model: The model name related to the error (optional)
-//   - Details: Additional context information (optional)
+// ThinkingError 表示思考配置处理过程中发生的错误。
+// 提供结构化的错误信息，包括机器可读的错误码和人类可读的描述。
 type ThinkingError struct {
-	// Code is the machine-readable error code
+	// Code 机器可读的错误码
 	Code ErrorCode
-	// Message is the human-readable error description.
-	// Should be lowercase, no trailing period, with context if applicable.
+	// Message 人类可读的错误描述。应为小写，无尾随句号。
 	Message string
-	// Model is the model name related to this error (optional)
+	// Model 与此错误相关的模型名称（可选）
 	Model string
-	// Details contains additional context information (optional)
+	// Details 包含额外的上下文信息（可选）
 	Details map[string]interface{}
 }
 
-// Error implements the error interface.
-// Returns the message directly without code prefix.
-// Use Code field for programmatic error handling.
+// Error 实现 error 接口。直接返回消息，不包含错误码前缀。
+// 使用 Code 字段进行程序化错误处理。
 func (e *ThinkingError) Error() string {
 	return e.Message
 }
 
-// NewThinkingError creates a new ThinkingError with the given code and message.
+// NewThinkingError 创建带有给定错误码和消息的 ThinkingError。
 func NewThinkingError(code ErrorCode, message string) *ThinkingError {
 	return &ThinkingError{
 		Code:    code,
@@ -67,7 +64,7 @@ func NewThinkingError(code ErrorCode, message string) *ThinkingError {
 	}
 }
 
-// NewThinkingErrorWithModel creates a new ThinkingError with model context.
+// NewThinkingErrorWithModel 创建带有模型上下文的 ThinkingError。
 func NewThinkingErrorWithModel(code ErrorCode, message, model string) *ThinkingError {
 	return &ThinkingError{
 		Code:    code,
@@ -76,7 +73,7 @@ func NewThinkingErrorWithModel(code ErrorCode, message, model string) *ThinkingE
 	}
 }
 
-// StatusCode implements a portable status code interface for HTTP handlers.
+// StatusCode 实现可移植的状态码接口，供 HTTP 处理器使用。
 func (e *ThinkingError) StatusCode() int {
 	return http.StatusBadRequest
 }

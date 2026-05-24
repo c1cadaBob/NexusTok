@@ -1,5 +1,7 @@
-// Package claude provides authentication functionality for Anthropic's Claude API.
-// This file implements a custom HTTP transport using utls to bypass TLS fingerprinting.
+// claude - utls_transport.go
+// 包 claude 提供 Anthropic Claude API 的认证功能。
+// 该文件实现了使用 utls 的自定义 HTTP 传输层，用于绕过 TLS 指纹检测。
+// 使用 Chrome 浏览器的 TLS 指纹来规避 Anthropic 域名上的 Cloudflare 检测。
 package claude
 
 import (
@@ -15,20 +17,26 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// utlsRoundTripper implements http.RoundTripper using utls with Chrome fingerprint
-// to bypass Cloudflare's TLS fingerprinting on Anthropic domains.
+// utlsRoundTripper 实现了使用 utls 和 Chrome 指纹的 http.RoundTripper。
+// 用于绕过 Anthropic 域名上的 Cloudflare TLS 指纹检测。
 type utlsRoundTripper struct {
-	// mu protects the connections map and pending map
+	// mu 保护 connections 映射和 pending 映射
 	mu sync.Mutex
-	// connections caches HTTP/2 client connections per host
+	// connections 缓存每个主机的 HTTP/2 客户端连接
 	connections map[string]*http2.ClientConn
-	// pending tracks hosts that are currently being connected to (prevents race condition)
+	// pending 跟踪当前正在建立连接的主机（防止竞态条件）
 	pending map[string]*sync.Cond
-	// dialer is used to create network connections, supporting proxies
+	// dialer 用于创建网络连接，支持代理
 	dialer proxy.Dialer
 }
 
-// newUtlsRoundTripper creates a new utls-based round tripper with optional proxy support
+// newUtlsRoundTripper 创建一个新的基于 utls 的 round tripper，支持可选代理。
+//
+// 参数：
+//   - cfg: SDK 配置，包含代理设置
+//
+// 返回：
+//   - *utlsRoundTripper: 新的 utls round tripper 实例
 func newUtlsRoundTripper(cfg *config.SDKConfig) *utlsRoundTripper {
 	var dialer proxy.Dialer = proxy.Direct
 	if cfg != nil {
@@ -47,9 +55,16 @@ func newUtlsRoundTripper(cfg *config.SDKConfig) *utlsRoundTripper {
 	}
 }
 
-// getOrCreateConnection gets an existing connection or creates a new one.
-// It uses a per-host locking mechanism to prevent multiple goroutines from
-// creating connections to the same host simultaneously.
+// getOrCreateConnection 获取现有连接或创建新连接。
+// 使用每个主机的锁定机制来防止多个 goroutine 同时创建到同一主机的连接。
+//
+// 参数：
+//   - host: 目标主机名
+//   - addr: 目标地址（包含端口）
+//
+// 返回：
+//   - *http2.ClientConn: HTTP/2 客户端连接
+//   - error: 连接创建失败时返回的错误
 func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.ClientConn, error) {
 	t.mu.Lock()
 
@@ -95,9 +110,17 @@ func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.Clie
 	return h2Conn, nil
 }
 
-// createConnection creates a new HTTP/2 connection with Chrome TLS fingerprint.
-// Chrome's TLS fingerprint is closer to Node.js/OpenSSL (which real Claude Code uses)
-// than Firefox, reducing the mismatch between TLS layer and HTTP headers.
+// createConnection 创建带有 Chrome TLS 指纹的新 HTTP/2 连接。
+// Chrome 的 TLS 指纹更接近 Node.js/OpenSSL（真实 Claude Code 使用的），
+// 减少了 TLS 层和 HTTP 头之间的不匹配。
+//
+// 参数：
+//   - host: 目标主机名
+//   - addr: 目标地址（包含端口）
+//
+// 返回：
+//   - *http2.ClientConn: 新创建的 HTTP/2 客户端连接
+//   - error: 连接创建失败时返回的错误
 func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientConn, error) {
 	conn, err := t.dialer.Dial("tcp", addr)
 	if err != nil {
@@ -122,7 +145,15 @@ func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientCon
 	return h2Conn, nil
 }
 
-// RoundTrip implements http.RoundTripper
+// RoundTrip 实现 http.RoundTripper 接口。
+// 处理 HTTP 请求，获取或创建到目标主机的连接，并执行请求。
+//
+// 参数：
+//   - req: 要执行的 HTTP 请求
+//
+// 返回：
+//   - *http.Response: HTTP 响应
+//   - error: 请求执行失败时返回的错误
 func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Host
 	addr := host
@@ -152,9 +183,15 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// NewAnthropicHttpClient creates an HTTP client that bypasses TLS fingerprinting
-// for Anthropic domains by using utls with Chrome fingerprint.
-// It accepts optional SDK configuration for proxy settings.
+// NewAnthropicHttpClient 创建一个绕过 TLS 指纹检测的 HTTP 客户端。
+// 通过使用 utls 和 Chrome 指纹来规避 Anthropic 域名上的 Cloudflare 检测。
+// 接受可选的 SDK 配置用于代理设置。
+//
+// 参数：
+//   - cfg: SDK 配置，包含代理设置
+//
+// 返回：
+//   - *http.Client: 配置了自定义传输层的 HTTP 客户端
 func NewAnthropicHttpClient(cfg *config.SDKConfig) *http.Client {
 	return &http.Client{
 		Transport: newUtlsRoundTripper(cfg),

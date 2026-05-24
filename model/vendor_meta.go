@@ -1,3 +1,13 @@
+// Package model - vendor_meta.go
+// 该文件定义了供应商元数据（Vendor）数据模型及相关操作
+//
+// 主要结构体：
+// - Vendor：供应商信息（名称、图标、状态等）
+//
+// 核心功能：
+// - 供应商的增删改查
+// - 供应商与模型的关联关系
+// - 供应商图标管理（采用 @lobehub/icons）
 package model
 
 import (

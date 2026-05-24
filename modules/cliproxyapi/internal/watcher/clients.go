@@ -1,5 +1,6 @@
-// clients.go implements watcher client lifecycle logic and persistence helpers.
-// It reloads clients, handles incremental auth file changes, and persists updates when supported.
+// watcher - clients.go
+// 本文件实现了监听器的客户端生命周期管理和持久化辅助功能。
+// 负责客户端的重载、认证文件的增量变更处理以及变更的持久化。
 package watcher
 
 import (

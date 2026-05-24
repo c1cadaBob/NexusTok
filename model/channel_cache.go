@@ -1,3 +1,21 @@
+// Package model - channel_cache.go
+// 该文件实现了渠道数据的内存缓存机制
+//
+// 缓存数据结构：
+// - group2model2channels：分组 -> 模型 -> 渠道 ID 列表的映射（仅启用的渠道）
+// - channelsIDM：渠道 ID -> 渠道对象的映射（包含所有渠道）
+//
+// 核心功能：
+// - InitChannelCache：从数据库加载渠道和能力数据，构建内存缓存
+// - SyncChannelCache：定时同步渠道缓存（后台协程）
+// - GetRandomSatisfiedChannel：基于优先级和权重的加权随机渠道选择
+// - CacheGetChannel/CacheGetChannelInfo：从缓存获取渠道信息
+// - CacheUpdateChannelStatus/CacheUpdateChannel：更新缓存中的渠道状态
+//
+// 缓存特点：
+// - 使用读写锁（sync.RWMutex）保证并发安全
+// - 支持多 Key 轮询模式的索引保留
+// - 渠道按优先级降序排列，同优先级内按权重随机选择
 package model
 
 import (
@@ -14,10 +32,23 @@ import (
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 )
 
+// group2model2channels 分组 -> 模型 -> 渠道 ID 列表的映射（仅包含启用的渠道）
 var group2model2channels map[string]map[string][]int // enabled channel
-var channelsIDM map[int]*Channel                     // all channels include disabled
+
+// channelsIDM 渠道 ID -> 渠道对象的映射（包含所有渠道，含禁用的）
+var channelsIDM map[int]*Channel // all channels include disabled
+
+// channelSyncLock 渠道缓存的读写锁，保证并发安全
 var channelSyncLock sync.RWMutex
 
+// InitChannelCache 从数据库加载渠道和能力数据，构建内存缓存
+// 如果内存缓存未启用（common.MemoryCacheEnabled=false），则跳过
+// 构建过程：
+// 1. 加载所有渠道到 channelsIDM 映射
+// 2. 加载所有能力记录，提取分组信息
+// 3. 构建 group2model2channels 映射（仅启用的渠道）
+// 4. 按优先级降序排列每个模型的渠道列表
+// 5. 保留多 Key 轮询模式的索引信息
 func InitChannelCache() {
 	if !common.MemoryCacheEnabled {
 		return
@@ -85,6 +116,8 @@ func InitChannelCache() {
 	common.SysLog("channels synced from database")
 }
 
+// SyncChannelCache 定时同步渠道缓存（后台协程）
+// 每隔 frequency 秒从数据库重新加载渠道数据
 func SyncChannelCache(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
@@ -93,6 +126,13 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
+// GetRandomSatisfiedChannel 基于优先级和权重的加权随机渠道选择
+// 当内存缓存启用时从缓存选择，否则回退到数据库查询
+// 选择算法：
+// 1. 根据分组和模型查找可用渠道列表
+// 2. 按优先级分组，retry 参数决定使用哪个优先级
+// 3. 在目标优先级内，按权重进行加权随机选择
+// 4. 使用平滑因子处理权重差异过小的情况
 func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
@@ -190,6 +230,8 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	return nil, errors.New("channel not found")
 }
 
+// CacheGetChannel 从缓存获取渠道对象
+// 内存缓存未启用时回退到数据库查询
 func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)
@@ -204,6 +246,8 @@ func CacheGetChannel(id int) (*Channel, error) {
 	return c, nil
 }
 
+// CacheGetChannelInfo 从缓存获取渠道信息（ChannelInfo）
+// 内存缓存未启用时回退到数据库查询
 func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 	if !common.MemoryCacheEnabled {
 		channel, err := GetChannelById(id, true)
@@ -222,6 +266,8 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 	return &c.ChannelInfo, nil
 }
 
+// CacheUpdateChannelStatus 更新缓存中渠道的状态
+// 当渠道被禁用时，同时从 group2model2channels 中移除
 func CacheUpdateChannelStatus(id int, status int) {
 	if !common.MemoryCacheEnabled {
 		return
@@ -247,6 +293,7 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 }
 
+// CacheUpdateChannel 更新缓存中的渠道对象
 func CacheUpdateChannel(channel *Channel) {
 	if !common.MemoryCacheEnabled {
 		return

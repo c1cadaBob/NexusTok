@@ -1,3 +1,10 @@
+// management - logs.go
+// 日志查看和管理端点。
+// 该模块提供以下功能：
+//   - 日志行查看：支持增量加载、行数限制、时间过滤
+//   - 日志文件删除：按日期删除指定的日志文件
+//   - 错误日志列表：列出包含错误信息的日志文件
+//   - 请求日志下载：按请求 ID 下载完整的请求/响应日志
 package management
 
 import (
@@ -16,10 +23,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 )
 
+// 日志相关的常量定义。
 const (
-	defaultLogFileName      = "main.log"
-	logScannerInitialBuffer = 64 * 1024
-	logScannerMaxBuffer     = 8 * 1024 * 1024
+	defaultLogFileName      = "main.log"       // 默认日志文件名
+	logScannerInitialBuffer = 64 * 1024        // 日志扫描器初始缓冲区大小（64 KiB）
+	logScannerMaxBuffer     = 8 * 1024 * 1024  // 日志扫描器最大缓冲区大小（8 MiB）
 )
 
 // GetLogs returns log lines with optional incremental loading.

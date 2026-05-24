@@ -1,3 +1,9 @@
+// httpqueue - client_test.go
+// HTTP 使用量队列客户端的单元测试。
+// 测试覆盖以下场景：
+//   - 从 usage-queue 接口正确读取使用量事件（支持 JSON 对象和字符串两种格式）
+//   - 404 响应正确返回 ErrUnsupported 错误
+//   - 认证错误（401）与不支持错误的区分
 package httpqueue
 
 import (
@@ -9,6 +15,9 @@ import (
 	"testing"
 )
 
+// TestClientPopReadsUsageQueue 验证 Pop 方法能正确解析上游响应。
+// 响应包含三种类型：JSON 对象、JSON 字符串和 null 值。
+// 验证 null 值被过滤，对象和字符串被正确保留。
 func TestClientPopReadsUsageQueue(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v0/management/usage-queue" {
@@ -44,6 +53,8 @@ func TestClientPopReadsUsageQueue(t *testing.T) {
 	}
 }
 
+// TestClientPopClassifiesUnsupportedEndpoint 验证 404 响应返回 ErrUnsupported 错误。
+// 用于触发采集模式从 HTTP 降级到 RESP。
 func TestClientPopClassifiesUnsupportedEndpoint(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(upstream.Close)
@@ -54,6 +65,8 @@ func TestClientPopClassifiesUnsupportedEndpoint(t *testing.T) {
 	}
 }
 
+// TestClientPopKeepsAuthErrorsDistinct 验证认证错误（401）不会被误分类为 ErrUnsupported。
+// 确保 StatusError 的 StatusCode 正确记录，且与 ErrUnsupported 保持独立。
 func TestClientPopKeepsAuthErrorsDistinct(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad key", http.StatusUnauthorized)

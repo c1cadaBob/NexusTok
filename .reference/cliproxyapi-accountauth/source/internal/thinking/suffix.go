@@ -1,7 +1,6 @@
-// Package thinking provides unified thinking configuration processing.
-//
-// This file implements suffix parsing functionality for extracting
-// thinking configuration from model names in the format model(value).
+// 包 thinking - suffix.go
+// 该文件实现了模型名称中思考后缀的解析功能。
+// 支持从 model(value) 格式中提取思考配置。
 package thinking
 
 import (

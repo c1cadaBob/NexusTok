@@ -1,36 +1,51 @@
+// Package service 提供业务逻辑层服务
+// 本文件为 Waffo Pancake 支付集成的单元测试
 package service
 
 import (
-	"fmt"
-	"strings"
-	"testing"
-	"time"
+	"fmt"      // 格式化输出
+	"strings"  // 字符串操作
+	"testing"  // 测试框架
+	"time"     // 时间处理
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/setting"
-	"github.com/glebarez/sqlite"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
+	"github.com/c1cada/NexusTok/common"  // 公共工具包
+	"github.com/c1cada/NexusTok/model"   // 数据模型
+	"github.com/c1cada/NexusTok/setting" // 配置管理
+	"github.com/glebarez/sqlite"          // SQLite 驱动
+	"github.com/stretchr/testify/require" // 测试断言
+	"gorm.io/gorm"                       // ORM 框架
 )
 
+// setupWaffoPancakeTestDB 设置 Waffo Pancake 测试数据库
+// 创建内存 SQLite 数据库并自动迁移所需的表结构
+//
+// 参数：
+//   - t: 测试实例
+//
+// 返回值：
+//   - *gorm.DB: 初始化完成的数据库连接
 func setupWaffoPancakeTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	// 配置使用 SQLite 数据库
 	common.UsingSQLite = true
 	common.UsingMySQL = false
 	common.UsingPostgreSQL = false
 	common.RedisEnabled = false
 
+	// 创建内存数据库（使用测试名称作为唯一标识，避免并行测试冲突）
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 
+	// 设置全局数据库实例
 	model.DB = db
 	model.LOG_DB = db
 
+	// 自动迁移用户和充值表
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}))
 
+	// 注册清理函数，测试结束后关闭数据库连接
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -41,8 +56,11 @@ func setupWaffoPancakeTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// TestWaffoPancakeCreateSessionResponseParsesDocumentedPayload 测试 Waffo Pancake 创建会话响应的 JSON 解析
+// 验证官方文档中的标准响应格式能被正确解析
 func TestWaffoPancakeCreateSessionResponseParsesDocumentedPayload(t *testing.T) {
 	var result waffoPancakeCreateSessionResponse
+	// 解析官方文档示例的 JSON 响应
 	err := common.Unmarshal([]byte(`{
 		"data": {
 			"sessionId": "cs_550e8400-e29b-41d4-a716-446655440000",
@@ -53,12 +71,15 @@ func TestWaffoPancakeCreateSessionResponseParsesDocumentedPayload(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, result.Data)
 	require.Equal(t, "cs_550e8400-e29b-41d4-a716-446655440000", result.Data.SessionID)
-	require.Empty(t, result.Data.OrderID)
+	require.Empty(t, result.Data.OrderID) // 创建会话响应中不应包含 OrderID
 }
 
+// TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists 测试当本地订单存在时使用 Webhook 的 OrderID
+// 验证 Webhook 回调的 OrderID 能正确匹配本地订单
 func TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists(t *testing.T) {
 	db := setupWaffoPancakeTestDB(t)
 
+	// 创建待支付的充值订单
 	topUp := &model.TopUp{
 		UserId:        1,
 		Amount:        10,
@@ -70,6 +91,7 @@ func TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists(t *te
 	}
 	require.NoError(t, db.Create(topUp).Error)
 
+	// 使用 Webhook 回调的 OrderID 解析交易号
 	tradeNo, err := ResolveWaffoPancakeTradeNo(&waffoPancakeWebhookEvent{
 		Data: waffoPancakeWebhookData{
 			OrderID: "ORD_5dXBtmF2HLlHfbPNm0Wcnz",
@@ -79,9 +101,12 @@ func TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists(t *te
 	require.Equal(t, "ORD_5dXBtmF2HLlHfbPNm0Wcnz", tradeNo)
 }
 
+// TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown 测试当 Webhook OrderID 未知时解析失败
+// 验证当 Webhook 回调的 OrderID 在本地不存在时返回错误
 func TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown(t *testing.T) {
 	db := setupWaffoPancakeTestDB(t)
 
+	// 创建测试用户
 	user := &model.User{
 		Id:       42,
 		Email:    "buyer@example.com",
@@ -90,6 +115,7 @@ func TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown(t *testing.
 	}
 	require.NoError(t, db.Create(user).Error)
 
+	// 创建待支付的充值订单（使用不同的交易号）
 	topUp := &model.TopUp{
 		UserId:        user.Id,
 		Amount:        10,
@@ -101,6 +127,7 @@ func TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown(t *testing.
 	}
 	require.NoError(t, db.Create(topUp).Error)
 
+	// 使用未知的 OrderID 尝试解析，应返回错误
 	tradeNo, err := ResolveWaffoPancakeTradeNo(&waffoPancakeWebhookEvent{
 		Data: waffoPancakeWebhookData{
 			OrderID:    "ORD_unknown",
@@ -112,17 +139,21 @@ func TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown(t *testing.
 	require.Empty(t, tradeNo)
 }
 
+// TestResolveWaffoPancakeWebhookEnvironment 测试 Webhook 环境解析逻辑
+// 验证不同 mode 值和 sandbox 配置下的环境解析行为
 func TestResolveWaffoPancakeWebhookEnvironment(t *testing.T) {
+	// 保存原始 sandbox 配置，测试结束后恢复
 	originalSandbox := setting.WaffoPancakeSandbox
 	t.Cleanup(func() {
 		setting.WaffoPancakeSandbox = originalSandbox
 	})
 
+	// 定义测试用例：不同 mode 值和 sandbox 配置的组合
 	testCases := []struct {
-		name     string
-		payload  string
-		expected string
-		sandbox  bool
+		name     string // 测试用例名称
+		payload  string // Webhook 请求体 JSON
+		expected string // 期望的环境值
+		sandbox  bool   // sandbox 配置
 	}{
 		{
 			name:     "test mode",
@@ -138,15 +169,16 @@ func TestResolveWaffoPancakeWebhookEnvironment(t *testing.T) {
 			name:     "missing mode falls back to sandbox",
 			payload:  `{}`,
 			expected: "test",
-			sandbox:  true,
+			sandbox:  true, // sandbox 为 true 时，缺失 mode 回退到 test
 		},
 		{
 			name:     "invalid mode falls back to prod",
 			payload:  `{"mode":"staging"}`,
-			expected: "prod",
+			expected: "prod", // 无效的 mode 值回退到 prod
 		},
 	}
 
+	// 遍历执行所有测试用例
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			setting.WaffoPancakeSandbox = tc.sandbox

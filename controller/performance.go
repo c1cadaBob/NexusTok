@@ -1,3 +1,17 @@
+// Package controller - performance.go
+// 该文件实现了性能监控的 API 控制器
+//
+// 性能监控功能提供系统运行状态的实时数据：
+// - 缓存统计：文件数量、使用量、命中率
+// - 内存统计：已分配内存、GC 次数、Goroutine 数量
+// - 磁盘缓存：缓存目录信息
+// - 磁盘空间：总空间、可用空间、使用率
+// - 配置信息：缓存大小限制、过期时间等
+//
+// 主要 API：
+// - GetPerformanceStats：获取性能统计信息
+// - GetPerformanceConfig：获取性能配置
+// - UpdatePerformanceConfig：更新性能配置
 package controller
 
 import (
@@ -18,35 +32,35 @@ import (
 
 // PerformanceStats 性能统计信息
 type PerformanceStats struct {
-	// 缓存统计
+	// CacheStats 缓存统计
 	CacheStats common.DiskCacheStats `json:"cache_stats"`
-	// 系统内存统计
+	// MemoryStats 系统内存统计
 	MemoryStats MemoryStats `json:"memory_stats"`
-	// 磁盘缓存目录信息
+	// DiskCacheInfo 磁盘缓存目录信息
 	DiskCacheInfo DiskCacheInfo `json:"disk_cache_info"`
-	// 磁盘空间信息
+	// DiskSpaceInfo 磁盘空间信息
 	DiskSpaceInfo common.DiskSpaceInfo `json:"disk_space_info"`
-	// 配置信息
+	// Config 配置信息
 	Config PerformanceConfig `json:"config"`
 }
 
 // MemoryStats 内存统计
 type MemoryStats struct {
-	// 已分配内存（字节）
+	// Alloc 已分配内存（字节）
 	Alloc uint64 `json:"alloc"`
-	// 总分配内存（字节）
+	// TotalAlloc 总分配内存（字节）
 	TotalAlloc uint64 `json:"total_alloc"`
-	// 系统内存（字节）
+	// Sys 系统内存（字节）
 	Sys uint64 `json:"sys"`
-	// GC 次数
+	// NumGC GC 次数
 	NumGC uint32 `json:"num_gc"`
-	// Goroutine 数量
+	// NumGoroutine Goroutine 数量
 	NumGoroutine int `json:"num_goroutine"`
 }
 
 // DiskCacheInfo 磁盘缓存目录信息
 type DiskCacheInfo struct {
-	// 缓存目录路径
+	// Path 缓存目录路径
 	Path string `json:"path"`
 	// 目录是否存在
 	Exists bool `json:"exists"`

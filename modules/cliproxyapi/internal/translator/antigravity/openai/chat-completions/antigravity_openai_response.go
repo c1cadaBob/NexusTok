@@ -1,8 +1,15 @@
-// Package openai provides response translation functionality for Gemini CLI to OpenAI API compatibility.
-// This package handles the conversion of Gemini CLI API responses into OpenAI Chat Completions-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by OpenAI API clients. It supports both streaming and non-streaming modes,
-// handling text content, tool calls, reasoning content, and usage metadata appropriately.
+// chat_completions - antigravity_openai_response.go
+// Antigravity 的 OpenAI Chat Completions 格式响应转换器。
+// 负责将 Antigravity (Gemini CLI) API 的响应转换为 OpenAI Chat Completions 兼容的 JSON 格式。
+// 支持流式和非流式两种模式。
+//
+// 转换特性：
+// - 流式模式：处理 Gemini CLI 的响应结构（candidates、content.parts）
+// - 工具调用：使用 SawToolCall 标记追踪工具调用，优先级高于 MAX_TOKENS
+// - 推理内容：将 thought=true 的文本部分转换为 reasoning_content
+// - 图片内联：将 inlineData 转换为 data: URL 格式的图片
+// - 停止原因优先级：tool_calls > max_tokens > stop
+// - 非流式模式：委托给 Gemini 的非流式转换器处理
 package chat_completions
 
 import (
@@ -21,32 +28,42 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// convertCliResponseToOpenAIChatParams holds parameters for response conversion.
+// convertCliResponseToOpenAIChatParams 保存 Antigravity 响应到 OpenAI 格式转换过程中的状态参数。
 type convertCliResponseToOpenAIChatParams struct {
-	UnixTimestamp        int64
-	FunctionIndex        int
-	SawToolCall          bool   // Tracks if any tool call was seen in the entire stream
-	UpstreamFinishReason string // Caches the upstream finish reason for final chunk
-	SanitizedNameMap     map[string]string
+	// UnixTimestamp 响应创建时间的 Unix 时间戳
+	UnixTimestamp int64
+	// FunctionIndex 当前函数调用的索引
+	FunctionIndex int
+	// SawToolCall 标记在整个流中是否看到过工具调用（跨 chunk 持久化）
+	SawToolCall bool
+	// UpstreamFinishReason 缓存上游的停止原因，用于最终 chunk
+	UpstreamFinishReason string
+	// SanitizedNameMap 工具名称清理映射表，用于恢复原始工具名称
+	SanitizedNameMap map[string]string
 }
 
-// functionCallIDCounter provides a process-wide unique counter for function call identifiers.
+// functionCallIDCounter 提供进程范围内唯一的函数调用标识符计数器。
 var functionCallIDCounter uint64
 
-// ConvertAntigravityResponseToOpenAI translates a single chunk of a streaming response from the
-// Gemini CLI API format to the OpenAI Chat Completions streaming format.
-// It processes various Gemini CLI event types and transforms them into OpenAI-compatible JSON responses.
-// The function handles text content, tool calls, reasoning content, and usage metadata, outputting
-// responses that match the OpenAI API format. It supports incremental updates for streaming responses.
+// ConvertAntigravityResponseToOpenAI 将 Antigravity 的流式响应转换为 OpenAI Chat Completions 流式格式。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Gemini CLI API
-//   - param: A pointer to a parameter object for maintaining state between calls
+// 处理的响应内容：
+// - 文本内容（text -> content）
+// - 推理内容（thought=true 的 text -> reasoning_content）
+// - 工具调用（functionCall -> tool_calls）
+// - 内联图片（inlineData -> data: URL 格式的 images）
+// - 用量元数据（usageMetadata -> usage）
+// - 停止原因（优先级：tool_calls > max_tokens > stop）
 //
-// Returns:
-//   - [][]byte: A slice of OpenAI-compatible JSON responses
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据（用于工具名称恢复）
+//   - rawJSON: Antigravity 格式的原始响应 JSON 数据
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Chat Completions 格式的 SSE 事件数据切片
 func ConvertAntigravityResponseToOpenAI(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &convertCliResponseToOpenAIChatParams{
@@ -225,19 +242,19 @@ func ConvertAntigravityResponseToOpenAI(_ context.Context, _ string, originalReq
 	return [][]byte{template}
 }
 
-// ConvertAntigravityResponseToOpenAINonStream converts a non-streaming Gemini CLI response to a non-streaming OpenAI response.
-// This function processes the complete Gemini CLI response and transforms it into a single OpenAI-compatible
-// JSON response. It handles message content, tool calls, reasoning content, and usage metadata, combining all
-// the information into a single response that matches the OpenAI API format.
+// ConvertAntigravityResponseToOpenAINonStream 将 Antigravity 的非流式响应转换为 OpenAI Chat Completions 格式。
+// 从 Antigravity 的 "response" 包装中提取 Gemini 响应，然后委托给 Gemini 的非流式转换器处理。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response
-//   - rawJSON: The raw JSON response from the Gemini CLI API
-//   - param: A pointer to a parameter object for the conversion
+// 参数：
+//   - ctx: 请求上下文
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Antigravity 格式的原始响应数据（包含 "response" 包装）
+//   - param: 用于在多次调用之间保持状态的参数指针
 //
-// Returns:
-//   - []byte: An OpenAI-compatible JSON response containing all message content and metadata
+// 返回值：
+//   - []byte: OpenAI Chat Completions 格式的完整 JSON 响应数据
 func ConvertAntigravityResponseToOpenAINonStream(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []byte {
 	responseResult := gjson.GetBytes(rawJSON, "response")
 	if responseResult.Exists() {

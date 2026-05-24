@@ -1,3 +1,17 @@
+// Package controller - topup_waffo.go
+// 该文件实现了 Waffo 支付平台的充值 API 控制器
+//
+// Waffo 是一个支持多种支付方式和货币的国际支付平台
+// 功能包括：
+// - 创建 Waffo 充值支付订单
+// - 处理 Waffo Webhook 支付/退款/订阅回调
+// - 支持多种支付方式和货币
+// - 支持零小数位币种（如 JPY、KRW）
+//
+// 主要 API：
+// - RequestWaffoAmount：查询 Waffo 充值金额
+// - RequestWaffoPay：发起 Waffo 充值支付
+// - WaffoWebhook：处理 Waffo 支付回调
 package controller
 
 import (
@@ -22,6 +36,14 @@ import (
 	"github.com/waffo-com/waffo-go/types/order"
 )
 
+// getWaffoSDK 初始化 Waffo SDK
+//
+// 根据配置选择生产环境或沙箱环境
+// 使用对应的 API 密钥、私钥和公钥证书
+//
+// 返回：
+//   - *waffo.Waffo: Waffo SDK 实例
+//   - error: 初始化失败时返回错误
 func getWaffoSDK() (*waffo.Waffo, error) {
 	env := config.Sandbox
 	apiKey := setting.WaffoSandboxApiKey
@@ -48,10 +70,16 @@ func getWaffoSDK() (*waffo.Waffo, error) {
 	return waffo.New(cfg), nil
 }
 
+// getWaffoUserEmail 生成 Waffo 用户邮箱
+//
+// 使用用户 ID 生成占位邮箱，格式：{userId}@examples.com
 func getWaffoUserEmail(user *model.User) string {
 	return fmt.Sprintf("%d@examples.com", user.Id)
 }
 
+// getWaffoCurrency 获取 Waffo 支付货币
+//
+// 优先使用配置的货币，否则默认使用 USD
 func getWaffoCurrency() string {
 	if setting.WaffoCurrency != "" {
 		return setting.WaffoCurrency
@@ -64,6 +92,10 @@ var zeroDecimalCurrencies = map[string]bool{
 	"IDR": true, "JPY": true, "KRW": true, "VND": true,
 }
 
+// formatWaffoAmount 格式化 Waffo 支付金额
+//
+// 零小数位币种（IDR、JPY、KRW、VND）不带小数点
+// 其他币种保留两位小数
 func formatWaffoAmount(amount float64, currency string) string {
 	if zeroDecimalCurrencies[currency] {
 		return fmt.Sprintf("%.0f", amount)
@@ -71,9 +103,17 @@ func formatWaffoAmount(amount float64, currency string) string {
 	return fmt.Sprintf("%.2f", amount)
 }
 
-// getWaffoPayMoney converts the user-facing amount to USD for Waffo payment.
-// Waffo only accepts USD, so this function handles the conversion from different
-// display types (USD/CNY/TOKENS) to the actual USD amount to charge.
+// getWaffoPayMoney 计算 Waffo 充值支付金额（USD）
+//
+// Waffo 仅接受 USD 支付，此函数处理从不同显示类型（USD/CNY/TOKENS）到实际 USD 金额的转换
+// 计算公式：amount * unitPrice * topupGroupRatio * discount
+//
+// 参数：
+//   - amount: 充值数量
+//   - group: 用户分组
+//
+// 返回：
+//   - float64: 实际支付金额（USD）
 func getWaffoPayMoney(amount float64, group string) float64 {
 	originalAmount := amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -92,13 +132,17 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount
 }
 
+// WaffoPayRequest Waffo 充值支付请求结构体
 type WaffoPayRequest struct {
-	Amount         int64  `json:"amount"`
-	PayMethodIndex *int   `json:"pay_method_index"` // 服务端支付方式列表的索引，nil 表示由 Waffo 自动选择
-	PayMethodType  string `json:"pay_method_type"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
-	PayMethodName  string `json:"pay_method_name"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
+	Amount         int64  `json:"amount"`                    // 充值数量
+	PayMethodIndex *int   `json:"pay_method_index"`         // 服务端支付方式列表的索引，nil 表示由 Waffo 自动选择
+	PayMethodType  string `json:"pay_method_type"`          // Deprecated: 兼容旧前端，优先使用 pay_method_index
+	PayMethodName  string `json:"pay_method_name"`          // Deprecated: 兼容旧前端，优先使用 pay_method_index
 }
 
+// RequestWaffoAmount 查询 Waffo 充值金额
+//
+// 根据充值数量和用户分组计算实际支付金额（USD）
 func RequestWaffoAmount(c *gin.Context) {
 	var req WaffoPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -128,7 +172,17 @@ func RequestWaffoAmount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
 }
 
-// RequestWaffoPay 创建 Waffo 支付订单
+// RequestWaffoPay 发起 Waffo 充值支付
+//
+// 流程：
+// 1. 验证 Waffo 支付是否启用
+// 2. 验证充值数量和支付方式
+// 3. 计算实际支付金额（USD）
+// 4. 生成唯一订单号
+// 5. 创建本地待处理订单
+// 6. 初始化 Waffo SDK
+// 7. 调用 Waffo API 创建支付订单
+// 8. 返回支付跳转 URL
 func RequestWaffoPay(c *gin.Context) {
 	if !setting.WaffoEnabled {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "Waffo 支付未启用"})
@@ -308,14 +362,25 @@ type webhookPayloadWithSubInfo struct {
 	} `json:"result"`
 }
 
+// webhookSubscriptionInfo Webhook 订阅信息结构体
 type webhookSubscriptionInfo struct {
-	Period              string `json:"period,omitempty"`
-	MerchantRequest     string `json:"merchantRequest,omitempty"`
-	SubscriptionID      string `json:"subscriptionId,omitempty"`
-	SubscriptionRequest string `json:"subscriptionRequest,omitempty"`
+	Period              string `json:"period,omitempty"`              // 订阅周期
+	MerchantRequest     string `json:"merchantRequest,omitempty"`     // 商户请求 ID
+	SubscriptionID      string `json:"subscriptionId,omitempty"`      // 订阅 ID
+	SubscriptionRequest string `json:"subscriptionRequest,omitempty"` // 订阅请求 ID
 }
 
-// WaffoWebhook 处理 Waffo 回调通知（支付/退款/订阅）
+// WaffoWebhook 处理 Waffo 回调通知
+//
+// 支持的事件类型：
+// - PAYMENT_NOTIFICATION：支付完成通知（普通支付和订阅支付）
+//
+// 流程：
+// 1. 检查 Webhook 是否启用
+// 2. 读取请求体
+// 3. 初始化 Waffo SDK 并验证签名
+// 4. 解析 Webhook 事件
+// 5. 根据事件类型分发处理
 func WaffoWebhook(c *gin.Context) {
 	if !isWaffoWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -373,7 +438,14 @@ func WaffoWebhook(c *gin.Context) {
 	}
 }
 
-// handleWaffoPayment 处理支付完成通知
+// handleWaffoPayment 处理 Waffo 支付完成通知
+//
+// 流程：
+// 1. 验证订单状态是否为 PAY_SUCCESS
+// 2. 如果支付失败，标记订单为失败状态
+// 3. 加锁处理订单
+// 4. 调用 model.RechargeWaffo 完成充值
+// 5. 发送签名响应
 func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.PaymentNotificationResult) {
 	if result.OrderStatus != "PAY_SUCCESS" {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 订单状态非成功，忽略充值 trade_no=%s order_status=%s client_ip=%s", result.MerchantOrderID, result.OrderStatus, c.ClientIP()))
@@ -404,7 +476,9 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	sendWaffoWebhookResponse(c, wh, true, "")
 }
 
-// sendWaffoWebhookResponse 发送签名响应
+// sendWaffoWebhookResponse 发送 Waffo Webhook 签名响应
+//
+// 使用 Waffo SDK 构建成功或失败响应，并设置 X-SIGNATURE 签名头
 func sendWaffoWebhookResponse(c *gin.Context, wh *core.WebhookHandler, success bool, msg string) {
 	var body, sig string
 	if success {

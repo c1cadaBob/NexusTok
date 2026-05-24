@@ -1,3 +1,16 @@
+// responses - openai_openai-responses_request.go
+// OpenAI Responses -> Chat Completions 请求转换器。
+// 将 OpenAI Responses API 格式的请求转换为 OpenAI Chat Completions 格式。
+//
+// 主要转换内容：
+// - instructions 转换为 system 消息
+// - input 数组转换为 messages 数组
+// - function_call 合并为 assistant 的 tool_calls
+// - function_call_output 转换为 tool 消息
+// - 消息顺序保持：tool_calls 必须紧跟 tool 结果（延迟消息机制）
+// - developer 角色转换为 user 角色
+// - 工具定义从 Responses 格式转换为 Chat Completions 格式
+// - reasoning.effort 映射为 reasoning_effort
 package responses
 
 import (
@@ -7,25 +20,26 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ConvertOpenAIResponsesRequestToOpenAIChatCompletions converts OpenAI responses format to OpenAI chat completions format.
-// It transforms the OpenAI responses API format (with instructions and input array) into the standard
-// OpenAI chat completions format (with messages array and system content).
+// ConvertOpenAIResponsesRequestToOpenAIChatCompletions 将 OpenAI Responses API 格式的请求转换为 OpenAI Chat Completions 格式。
 //
-// The conversion handles:
-// 1. Model name and streaming configuration
-// 2. Instructions to system message conversion
-// 3. Input array to messages array transformation
-// 4. Tool definitions and tool choice conversion
-// 5. Function calls and function results handling
-// 6. Generation parameters mapping (max_tokens, reasoning, etc.)
+// 转换流程：
+// 1. 设置模型名称和流式配置
+// 2. 映射生成参数（max_output_tokens -> max_tokens、parallel_tool_calls）
+// 3. 转换 instructions 为 system 消息
+// 4. 转换 input 数组为 messages 数组
+// 5. 合并连续的 function_call 为 assistant 的 tool_calls
+// 6. 转换 function_call_output 为 tool 消息
+// 7. 处理消息顺序（延迟机制确保 tool_calls 和 tool 结果紧邻）
+// 8. 转换工具定义和工具选择
+// 9. 映射 reasoning.effort 为 reasoning_effort
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data in OpenAI responses format
-//   - stream: A boolean indicating if the request is for a streaming response
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Responses 格式 JSON 请求数据
+//   - stream: 是否为流式请求
 //
-// Returns:
-//   - []byte: The transformed request data in OpenAI chat completions format
+// 返回值：
+//   - []byte: 转换后的 OpenAI Chat Completions 格式 JSON 请求数据
 func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 	// Base OpenAI chat completions template with default values

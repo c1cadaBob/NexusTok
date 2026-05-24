@@ -1,3 +1,20 @@
+// Package controller - vendor_meta.go
+// 该文件实现了供应商（Vendor）元数据管理的 API 控制器
+//
+// 供应商是 AI 模型的提供方（如 OpenAI、Anthropic、Google 等）
+// 功能包括：
+// - 供应商列表查询（分页）
+// - 供应商搜索
+// - 供应商 CRUD 操作（创建、读取、更新、删除）
+// - 供应商名称唯一性检查
+//
+// 主要 API：
+// - GetAllVendors：获取供应商列表
+// - SearchVendors：搜索供应商
+// - GetVendorMeta：获取单个供应商
+// - CreateVendorMeta：创建供应商
+// - UpdateVendorMeta：更新供应商
+// - DeleteVendorMeta：删除供应商
 package controller
 
 import (

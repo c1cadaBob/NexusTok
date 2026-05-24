@@ -1,3 +1,17 @@
+// Package controller - swag_video.go
+// 该文件实现了视频生成的 API 控制器定义（Swagger 文档占位）
+//
+// 视频生成支持多种服务：
+// - 可灵AI (Kling): 文生视频、图生视频
+// - 即梦 (Jimeng): 火山引擎视频生成
+//
+// 主要 API：
+// - VideoGenerations：通用视频生成接口
+// - VideoGenerationsTaskId：查询视频生成任务
+// - KlingText2VideoGenerations：可灵文生视频
+// - KlingImage2VideoGenerations：可灵图生视频
+// - KlingImage2videoTaskId：可灵图生视频任务查询
+// - KlingText2videoTaskId：可灵文生视频任务查询
 package controller
 
 import (
@@ -57,31 +71,34 @@ func VideoGenerationsTaskId(c *gin.Context) {
 func KlingText2VideoGenerations(c *gin.Context) {
 }
 
+// KlingText2VideoRequest 可灵文生视频请求结构体
 type KlingText2VideoRequest struct {
-	ModelName      string              `json:"model_name,omitempty" example:"kling-v1"`
-	Prompt         string              `json:"prompt" binding:"required" example:"A cat playing piano in the garden"`
-	NegativePrompt string              `json:"negative_prompt,omitempty" example:"blurry, low quality"`
-	CfgScale       float64             `json:"cfg_scale,omitempty" example:"0.7"`
-	Mode           string              `json:"mode,omitempty" example:"std"`
-	CameraControl  *KlingCameraControl `json:"camera_control,omitempty"`
-	AspectRatio    string              `json:"aspect_ratio,omitempty" example:"16:9"`
-	Duration       string              `json:"duration,omitempty" example:"5"`
-	CallbackURL    string              `json:"callback_url,omitempty" example:"https://your.domain/callback"`
-	ExternalTaskId string              `json:"external_task_id,omitempty" example:"custom-task-001"`
+	ModelName      string              `json:"model_name,omitempty" example:"kling-v1"`                  // 模型名称
+	Prompt         string              `json:"prompt" binding:"required" example:"A cat playing piano in the garden"` // 正向提示词（必填）
+	NegativePrompt string              `json:"negative_prompt,omitempty" example:"blurry, low quality"`   // 反向提示词
+	CfgScale       float64             `json:"cfg_scale,omitempty" example:"0.7"`                         // 引导强度（0-1）
+	Mode           string              `json:"mode,omitempty" example:"std"`                              // 生成模式（std/Pro）
+	CameraControl  *KlingCameraControl `json:"camera_control,omitempty"`                                  // 镜头控制参数
+	AspectRatio    string              `json:"aspect_ratio,omitempty" example:"16:9"`                      // 视频宽高比
+	Duration       string              `json:"duration,omitempty" example:"5"`                             // 视频时长（秒）
+	CallbackURL    string              `json:"callback_url,omitempty" example:"https://your.domain/callback"` // 回调 URL
+	ExternalTaskId string              `json:"external_task_id,omitempty" example:"custom-task-001"`       // 外部任务 ID
 }
 
+// KlingCameraControl 可灵镜头控制参数
 type KlingCameraControl struct {
-	Type   string             `json:"type,omitempty" example:"simple"`
-	Config *KlingCameraConfig `json:"config,omitempty"`
+	Type   string             `json:"type,omitempty" example:"simple"` // 镜头类型（simple/advance）
+	Config *KlingCameraConfig `json:"config,omitempty"`                // 镜头配置
 }
 
+// KlingCameraConfig 可灵镜头配置参数
 type KlingCameraConfig struct {
-	Horizontal float64 `json:"horizontal,omitempty" example:"2.5"`
-	Vertical   float64 `json:"vertical,omitempty" example:"0"`
-	Pan        float64 `json:"pan,omitempty" example:"0"`
-	Tilt       float64 `json:"tilt,omitempty" example:"0"`
-	Roll       float64 `json:"roll,omitempty" example:"0"`
-	Zoom       float64 `json:"zoom,omitempty" example:"0"`
+	Horizontal float64 `json:"horizontal,omitempty" example:"2.5"` // 水平运动
+	Vertical   float64 `json:"vertical,omitempty" example:"0"`     // 垂直运动
+	Pan        float64 `json:"pan,omitempty" example:"0"`          // 水平摇镜
+	Tilt       float64 `json:"tilt,omitempty" example:"0"`         // 垂直摇镜
+	Roll       float64 `json:"roll,omitempty" example:"0"`         // 旋转
+	Zoom       float64 `json:"zoom,omitempty" example:"0"`         // 缩放
 }
 
 // KlingImage2VideoGenerations
@@ -101,18 +118,19 @@ type KlingCameraConfig struct {
 func KlingImage2VideoGenerations(c *gin.Context) {
 }
 
+// KlingImage2VideoRequest 可灵图生视频请求结构体
 type KlingImage2VideoRequest struct {
-	ModelName      string              `json:"model_name,omitempty" example:"kling-v2-master"`
-	Image          string              `json:"image" binding:"required" example:"https://h2.inkwai.com/bs2/upload-ylab-stunt/se/ai_portal_queue_mmu_image_upscale_aiweb/3214b798-e1b4-4b00-b7af-72b5b0417420_raw_image_0.jpg"`
-	Prompt         string              `json:"prompt,omitempty" example:"A cat playing piano in the garden"`
-	NegativePrompt string              `json:"negative_prompt,omitempty" example:"blurry, low quality"`
-	CfgScale       float64             `json:"cfg_scale,omitempty" example:"0.7"`
-	Mode           string              `json:"mode,omitempty" example:"std"`
-	CameraControl  *KlingCameraControl `json:"camera_control,omitempty"`
-	AspectRatio    string              `json:"aspect_ratio,omitempty" example:"16:9"`
-	Duration       string              `json:"duration,omitempty" example:"5"`
-	CallbackURL    string              `json:"callback_url,omitempty" example:"https://your.domain/callback"`
-	ExternalTaskId string              `json:"external_task_id,omitempty" example:"custom-task-002"`
+	ModelName      string              `json:"model_name,omitempty" example:"kling-v2-master"`            // 模型名称
+	Image          string              `json:"image" binding:"required" example:"https://h2.inkwai.com/bs2/upload-ylab-stunt/se/ai_portal_queue_mmu_image_upscale_aiweb/3214b798-e1b4-4b00-b7af-72b5b0417420_raw_image_0.jpg"` // 输入图片 URL（必填）
+	Prompt         string              `json:"prompt,omitempty" example:"A cat playing piano in the garden"` // 正向提示词
+	NegativePrompt string              `json:"negative_prompt,omitempty" example:"blurry, low quality"`   // 反向提示词
+	CfgScale       float64             `json:"cfg_scale,omitempty" example:"0.7"`                         // 引导强度（0-1）
+	Mode           string              `json:"mode,omitempty" example:"std"`                              // 生成模式（std/Pro）
+	CameraControl  *KlingCameraControl `json:"camera_control,omitempty"`                                  // 镜头控制参数
+	AspectRatio    string              `json:"aspect_ratio,omitempty" example:"16:9"`                      // 视频宽高比
+	Duration       string              `json:"duration,omitempty" example:"5"`                             // 视频时长（秒）
+	CallbackURL    string              `json:"callback_url,omitempty" example:"https://your.domain/callback"` // 回调 URL
+	ExternalTaskId string              `json:"external_task_id,omitempty" example:"custom-task-002"`       // 外部任务 ID
 }
 
 // KlingImage2videoTaskId godoc

@@ -1,3 +1,5 @@
+// kimi - apply_test.go
+// 测试 Kimi 提供商的思维推理配置应用逻辑，验证禁用模式、推理努力级别和用户自定义模型的行为
 package kimi
 
 import (
@@ -8,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestApply_ModeNone_UsesDisabledThinking 测试禁用模式使用 disabled 思维类型
 func TestApply_ModeNone_UsesDisabledThinking(t *testing.T) {
 	applier := NewApplier()
 	modelInfo := &registry.ModelInfo{
@@ -31,6 +34,7 @@ func TestApply_ModeNone_UsesDisabledThinking(t *testing.T) {
 	}
 }
 
+// TestApply_ModeLevel_UsesReasoningEffort 测试级别模式使用推理努力级别
 func TestApply_ModeLevel_UsesReasoningEffort(t *testing.T) {
 	applier := NewApplier()
 	modelInfo := &registry.ModelInfo{
@@ -51,6 +55,7 @@ func TestApply_ModeLevel_UsesReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestApply_UserDefinedModeNone_UsesDisabledThinking 测试用户自定义模型的禁用模式
 func TestApply_UserDefinedModeNone_UsesDisabledThinking(t *testing.T) {
 	applier := NewApplier()
 	modelInfo := &registry.ModelInfo{

@@ -1,3 +1,14 @@
+// Package model - redemption.go
+// 该文件定义了兑换码（Redemption）数据模型及相关操作
+//
+// 主要结构体：
+// - Redemption：兑换码记录
+//
+// 核心功能：
+// - 兑换码的创建、查询、删除
+// - 兑换码验证和兑换
+// - 支持批量创建兑换码
+// - 兑换码使用状态跟踪
 package model
 
 import (

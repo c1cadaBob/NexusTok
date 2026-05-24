@@ -1,3 +1,6 @@
+// 包 logging - log_dir_cleaner.go
+// 该文件提供了日志目录大小限制的自动清理功能。
+// 后台定期检查日志目录总大小，超过限制时自动删除最旧的日志文件。
 package logging
 
 import (
@@ -11,10 +14,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// logDirCleanerInterval 定义日志目录清理器的检查间隔。
 const logDirCleanerInterval = time.Minute
 
+// logDirCleanerCancel 是用于停止后台清理器的取消函数。
 var logDirCleanerCancel context.CancelFunc
 
+// configureLogDirCleanerLocked 配置并启动日志目录清理器。
+// 调用前必须持有 writerMu 锁。当 maxTotalSizeMB <= 0 时禁用清理。
+//
+// 参数：
+//   - logDir: 日志目录路径
+//   - maxTotalSizeMB: 日志目录最大总大小（MB），0 或负数表示不限制
+//   - protectedPath: 受保护的日志文件路径（不会被清理删除）
 func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB int, protectedPath string) {
 	stopLogDirCleanerLocked()
 
@@ -37,6 +49,8 @@ func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB int, protectedPa
 	go runLogDirCleaner(ctx, filepath.Clean(dir), maxBytes, strings.TrimSpace(protectedPath))
 }
 
+// stopLogDirCleanerLocked 停止正在运行的日志目录清理器。
+// 调用前必须持有 writerMu 锁。
 func stopLogDirCleanerLocked() {
 	if logDirCleanerCancel == nil {
 		return
@@ -45,6 +59,8 @@ func stopLogDirCleanerLocked() {
 	logDirCleanerCancel = nil
 }
 
+// runLogDirCleaner 是日志目录清理器的主循环。
+// 启动时立即执行一次清理，之后按固定间隔定期检查。
 func runLogDirCleaner(ctx context.Context, logDir string, maxBytes int64, protectedPath string) {
 	ticker := time.NewTicker(logDirCleanerInterval)
 	defer ticker.Stop()
@@ -71,6 +87,18 @@ func runLogDirCleaner(ctx context.Context, logDir string, maxBytes int64, protec
 	}
 }
 
+// enforceLogDirSizeLimit 执行一次日志目录大小限制检查。
+// 按修改时间从旧到新排序，依次删除最旧的日志文件直到总大小在限制范围内。
+// 受保护的文件不会被删除。
+//
+// 参数：
+//   - logDir: 日志目录路径
+//   - maxBytes: 最大总字节数
+//   - protectedPath: 受保护的文件路径
+//
+// 返回：
+//   - int: 删除的文件数量
+//   - error: 操作失败时返回错误
 func enforceLogDirSizeLimit(logDir string, maxBytes int64, protectedPath string) (int, error) {
 	if maxBytes <= 0 {
 		return 0, nil
@@ -156,6 +184,7 @@ func enforceLogDirSizeLimit(logDir string, maxBytes int64, protectedPath string)
 	return deleted, nil
 }
 
+// isLogFileName 检查文件名是否为日志文件（以 .log 或 .log.gz 结尾）。
 func isLogFileName(name string) bool {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

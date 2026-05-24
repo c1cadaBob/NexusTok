@@ -1,7 +1,7 @@
-// Package kimi implements thinking configuration for Kimi (Moonshot AI) models.
-//
-// Kimi models use the OpenAI-compatible reasoning_effort format for enabled thinking
-// levels, but use thinking.type=disabled when thinking is explicitly turned off.
+// 包 kimi - apply.go
+// 该文件实现了 Kimi（月之暗面 Moonshot AI）模型的思考配置应用器。
+// Kimi 模型使用 OpenAI 兼容的 reasoning_effort 格式表示启用的思考级别，
+// 但在显式关闭思考时使用 thinking.type=disabled。
 package kimi
 
 import (

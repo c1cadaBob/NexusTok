@@ -1,3 +1,6 @@
+// diff - config_diff.go
+// 本文件实现了配置文件变更的差异检测和摘要生成功能。
+// 用于比较新旧配置并生成人类可读的变更描述。
 package diff
 
 import (

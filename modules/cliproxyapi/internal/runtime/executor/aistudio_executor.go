@@ -1,6 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 本文件实现了 AI Studio 执行器，通过 websocket 支持的传输层路由 AI Studio 提供商的请求。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// This file implements the AI Studio executor that routes requests through a websocket-backed
-// transport for the AI Studio provider.
 package executor
 
 import (
@@ -25,6 +26,9 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// AIStudioExecutor 通过 websocket 支持的传输层路由 AI Studio 请求。
+// 负责处理 Google AI Studio 的 API 请求，包括认证、请求转换和响应处理。
+//
 // AIStudioExecutor routes AI Studio requests through a websocket-backed transport.
 type AIStudioExecutor struct {
 	provider string

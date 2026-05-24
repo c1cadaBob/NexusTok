@@ -1,3 +1,10 @@
+// Package ionet - container.go
+// 该文件实现了 IO.NET 容器管理功能
+//
+// 核心功能：
+// - ListContainers：获取部署的所有容器
+// - 容器生命周期管理
+// - 容器状态查询
 package ionet
 
 import (

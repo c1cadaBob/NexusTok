@@ -1,3 +1,6 @@
+// store - objectstore.go
+// 本文件实现了基于对象存储（兼容 S3/MinIO）的令牌和配置持久化。
+// 支持配置文件和认证文件的读取、写入、列表和删除操作。
 package store
 
 import (

@@ -1,5 +1,6 @@
-// dispatcher.go implements auth update dispatching and queue management.
-// It batches, deduplicates, and delivers auth updates to registered consumers.
+// watcher - dispatcher.go
+// 本文件实现了认证更新的分发和队列管理功能。
+// 负责对认证更新进行批量处理、去重和分发到已注册的消费者。
 package watcher
 
 import (

@@ -1,3 +1,7 @@
+// 包 home - certificate.go
+// 该文件实现了 Home 控制平面的 mTLS 证书管理功能。
+// 包括从 JWT 解析证书请求、创建 CSR、向 Home 服务器请求客户端证书、
+// 验证 CA 证书指纹等功能。
 package home
 
 import (
@@ -25,32 +29,58 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// homeCertificateRequestTimeout 是证书请求的超时时间
 const homeCertificateRequestTimeout = 30 * time.Second
 
+// homeJWTClaims 包含从 Home JWT 中解析的证书请求声明。
 type homeJWTClaims struct {
-	CertificateID    string `json:"certificate_id"`
-	ClusterID        string `json:"cluster_id"`
-	CAFingerprint    string `json:"ca_fingerprint"`
+	// CertificateID 是证书标识符
+	CertificateID string `json:"certificate_id"`
+	// ClusterID 是集群标识符
+	ClusterID string `json:"cluster_id"`
+	// CAFingerprint 是 CA 证书的 SHA256 指纹
+	CAFingerprint string `json:"ca_fingerprint"`
+	// EnrollmentSecret 是注册密钥
 	EnrollmentSecret string `json:"enrollment_secret"`
-	IP               string `json:"ip"`
-	Port             int    `json:"port"`
-	IssuedAt         int64  `json:"iat"`
+	// IP 是 Home 服务器的 IP 地址
+	IP string `json:"ip"`
+	// Port 是 Home 服务器的端口
+	Port int `json:"port"`
+	// IssuedAt 是 JWT 签发时间
+	IssuedAt int64 `json:"iat"`
 }
 
+// certificateRequestResponse 是证书请求的响应结构。
 type certificateRequestResponse struct {
-	OK          bool   `json:"ok"`
+	// OK 指示请求是否成功
+	OK bool `json:"ok"`
+	// Certificate 是客户端证书 PEM
 	Certificate string `json:"certificate"`
-	CA          string `json:"ca"`
+	// CA 是 CA 证书 PEM
+	CA string `json:"ca"`
 }
 
+// certificatePaths 存储证书文件的路径。
 type certificatePaths struct {
-	Dir        string
+	// Dir 是证书目录
+	Dir string
+	// ClientCert 是客户端证书文件路径
 	ClientCert string
-	ClientKey  string
-	CACert     string
+	// ClientKey 是客户端私钥文件路径
+	ClientKey string
+	// CACert 是 CA 证书文件路径
+	CACert string
 }
 
-// ConfigFromJWT prepares a Home config from the JWT and ensures local mTLS files exist.
+// ConfigFromJWT 从 JWT 准备 Home 配置并确保本地 mTLS 文件存在。
+//
+// 参数：
+//   - ctx: 请求的上下文
+//   - rawJWT: 原始 JWT 字符串
+//
+// 返回：
+//   - config.HomeConfig: Home 配置
+//   - error: 操作失败时返回的错误
 func ConfigFromJWT(ctx context.Context, rawJWT string) (config.HomeConfig, error) {
 	claims, errClaims := parseHomeJWTClaims(rawJWT)
 	if errClaims != nil {
@@ -77,6 +107,7 @@ func ConfigFromJWT(ctx context.Context, rawJWT string) (config.HomeConfig, error
 	}, nil
 }
 
+// parseHomeJWTClaims 从原始 JWT 字符串解析 Home JWT 声明。
 func parseHomeJWTClaims(rawJWT string) (homeJWTClaims, error) {
 	var claims homeJWTClaims
 	parts := strings.Split(strings.TrimSpace(rawJWT), ".")
@@ -108,6 +139,7 @@ func parseHomeJWTClaims(rawJWT string) (homeJWTClaims, error) {
 	return claims, nil
 }
 
+// decodeJWTPart 解码 JWT 部分，支持标准和原始 URL 编码。
 func decodeJWTPart(part string) ([]byte, error) {
 	if decoded, errDecode := base64.RawURLEncoding.DecodeString(part); errDecode == nil {
 		return decoded, nil
@@ -115,6 +147,7 @@ func decodeJWTPart(part string) ([]byte, error) {
 	return base64.URLEncoding.DecodeString(part)
 }
 
+// defaultCertificatePaths 返回默认的证书文件路径。
 func defaultCertificatePaths() (certificatePaths, error) {
 	homeDir, errHome := os.UserHomeDir()
 	if errHome != nil {
@@ -129,6 +162,7 @@ func defaultCertificatePaths() (certificatePaths, error) {
 	}, nil
 }
 
+// ensureHomeCertificateFiles 确保 Home 证书文件存在，如果不存在则创建。
 func ensureHomeCertificateFiles(ctx context.Context, claims homeJWTClaims, paths certificatePaths) error {
 	if fileExists(paths.ClientCert) && fileExists(paths.ClientKey) {
 		if !fileExists(paths.CACert) {
@@ -172,6 +206,7 @@ func ensureHomeCertificateFiles(ctx context.Context, claims homeJWTClaims, paths
 	return nil
 }
 
+// verifyCACertificateFile 验证 CA 证书文件的指纹。
 func verifyCACertificateFile(path string, expectedFingerprint string) error {
 	raw, errRead := os.ReadFile(path)
 	if errRead != nil {
@@ -180,6 +215,7 @@ func verifyCACertificateFile(path string, expectedFingerprint string) error {
 	return verifyCACertificatePEM(raw, expectedFingerprint)
 }
 
+// verifyCACertificatePEM 验证 CA 证书 PEM 的指纹。
 func verifyCACertificatePEM(raw []byte, expectedFingerprint string) error {
 	actual, errFingerprint := certificateFingerprintPEM(raw)
 	if errFingerprint != nil {
@@ -195,6 +231,7 @@ func verifyCACertificatePEM(raw []byte, expectedFingerprint string) error {
 	return nil
 }
 
+// certificateFingerprintPEM 计算 PEM 编码证书的 SHA256 指纹。
 func certificateFingerprintPEM(raw []byte) (string, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -208,6 +245,7 @@ func certificateFingerprintPEM(raw []byte) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// normalizeFingerprint 规范化指纹字符串，移除冒号和空格并转换为小写。
 func normalizeFingerprint(fingerprint string) string {
 	fingerprint = strings.TrimSpace(strings.ToLower(fingerprint))
 	fingerprint = strings.ReplaceAll(fingerprint, ":", "")
@@ -215,6 +253,7 @@ func normalizeFingerprint(fingerprint string) string {
 	return fingerprint
 }
 
+// loadOrCreateClientKey 加载或创建客户端 RSA 私钥。
 func loadOrCreateClientKey(path string) (*rsa.PrivateKey, error) {
 	if fileExists(path) {
 		raw, errRead := os.ReadFile(path)
@@ -241,6 +280,7 @@ func loadOrCreateClientKey(path string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
+// writeFile0600 以 0600 权限写入文件。
 func writeFile0600(path string, raw []byte) error {
 	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
 		return errWrite
@@ -248,6 +288,7 @@ func writeFile0600(path string, raw []byte) error {
 	return os.Chmod(path, 0o600)
 }
 
+// chmodCertificateFiles 设置证书文件的权限为 0600。
 func chmodCertificateFiles(paths certificatePaths) error {
 	for _, path := range []string{paths.ClientCert, paths.ClientKey, paths.CACert} {
 		if errChmod := os.Chmod(path, 0o600); errChmod != nil {
@@ -257,6 +298,7 @@ func chmodCertificateFiles(paths certificatePaths) error {
 	return nil
 }
 
+// parseRSAPrivateKeyPEM 解析 PEM 编码的 RSA 私钥。
 func parseRSAPrivateKeyPEM(raw []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil {
@@ -280,6 +322,7 @@ func parseRSAPrivateKeyPEM(raw []byte) (*rsa.PrivateKey, error) {
 	}
 }
 
+// createClientCSR 创建客户端证书签名请求。
 func createClientCSR(certificateID string, key *rsa.PrivateKey) ([]byte, error) {
 	certificateID = strings.TrimSpace(certificateID)
 	if certificateID == "" {
@@ -297,6 +340,7 @@ func createClientCSR(certificateID string, key *rsa.PrivateKey) ([]byte, error) 
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
 }
 
+// requestClientCertificate 向 Home 服务器请求客户端证书。
 func requestClientCertificate(ctx context.Context, claims homeJWTClaims, csrPEM []byte) (certificateRequestResponse, error) {
 	var response certificateRequestResponse
 	if ctx == nil {
@@ -331,6 +375,7 @@ func requestClientCertificate(ctx context.Context, claims homeJWTClaims, csrPEM 
 	return response, nil
 }
 
+// encodeRESPArray 编码 RESP 数组格式。
 func encodeRESPArray(args ...string) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("*")
@@ -346,6 +391,7 @@ func encodeRESPArray(args ...string) []byte {
 	return buf.Bytes()
 }
 
+// readRESPBulk 读取 RESP 批量字符串响应。
 func readRESPBulk(reader *bufio.Reader) ([]byte, error) {
 	prefix, errRead := reader.ReadByte()
 	if errRead != nil {
@@ -380,6 +426,7 @@ func readRESPBulk(reader *bufio.Reader) ([]byte, error) {
 	}
 }
 
+// fileExists 检查文件是否存在。
 func fileExists(path string) bool {
 	info, errStat := os.Stat(path)
 	return errStat == nil && !info.IsDir()

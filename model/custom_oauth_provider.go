@@ -1,3 +1,19 @@
+// Package model - custom_oauth_provider.go
+// 该文件定义了自定义 OAuth 提供商数据模型及相关操作
+//
+// 主要结构体：
+// - CustomOAuthProvider：自定义 OAuth 提供商配置
+//
+// 核心功能：
+// - 自定义 OAuth 提供商的增删改查
+// - 提供商配置验证（必填字段、Slug 格式、端点 URL）
+// - 访问策略（Access Policy）验证和评估
+// - 用户字段映射（支持 JSONPath 语法）
+//
+// 访问策略系统：
+// - 支持 and/or 逻辑组合
+// - 支持 eq、ne、gt、gte、lt、lte、in、not_in、contains、not_contains、exists、not_exists 操作符
+// - 支持嵌套策略组
 package model
 
 import (

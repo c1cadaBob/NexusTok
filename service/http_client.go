@@ -1,3 +1,7 @@
+// http_client.go - HTTP 客户端管理
+// 本文件提供 HTTP 客户端的初始化和管理功能。
+// 支持默认客户端和代理客户端（HTTP/HTTPS/SOCKS5 代理），
+// 包含 SSRF 防护的重定向检查、连接池配置、TLS 安全设置等。
 package service
 
 import (
@@ -15,12 +19,23 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// httpClient 默认的 HTTP 客户端实例
+// proxyClientLock 代理客户端缓存的互斥锁
+// proxyClients 按代理 URL 缓存的代理客户端映射表
 var (
 	httpClient      *http.Client
 	proxyClientLock sync.Mutex
 	proxyClients    = make(map[string]*http.Client)
 )
 
+// checkRedirect HTTP 重定向检查函数。
+// 在重定向时验证目标 URL 的安全性（SSRF 防护），
+// 并限制最大重定向次数为 10 次。
+// 参数:
+//   - req: 当前重定向请求
+//   - via: 已经过的请求列表
+// 返回值:
+//   - error: 安全检查失败或重定向次数超限时返回错误
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	fetchSetting := system_setting.GetFetchSetting()
 	urlStr := req.URL.String()
@@ -33,6 +48,9 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// InitHttpClient 初始化默认的 HTTP 客户端。
+// 配置连接池大小、HTTP/2 支持、代理设置、TLS 安全选项和超时时间。
+// 该函数应在应用启动时调用一次。
 func InitHttpClient() {
 	transport := &http.Transport{
 		MaxIdleConns:        common.RelayMaxIdleConns,
@@ -58,6 +76,9 @@ func InitHttpClient() {
 	}
 }
 
+// GetHttpClient 获取默认的 HTTP 客户端实例。
+// 返回值:
+//   - *http.Client: 初始化后的默认 HTTP 客户端
 func GetHttpClient() *http.Client {
 	return httpClient
 }
@@ -70,7 +91,8 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
 	return NewProxyHttpClient(proxyURL)
 }
 
-// ResetProxyClientCache 清空代理客户端缓存，确保下次使用时重新初始化
+// ResetProxyClientCache 清空代理客户端缓存，确保下次使用时重新初始化。
+// 关闭所有缓存客户端的空闲连接，释放网络资源。
 func ResetProxyClientCache() {
 	proxyClientLock.Lock()
 	defer proxyClientLock.Unlock()

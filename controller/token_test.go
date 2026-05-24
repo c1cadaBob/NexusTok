@@ -1,3 +1,11 @@
+// Package controller - token_test.go
+// 该文件包含 Token 控制器的单元测试
+//
+// 测试内容包括：
+// - Token 密钥列类型迁移（char(48) -> varchar(128)）
+// - Token 响应中密钥脱敏
+// - Token 列表、搜索、详情、更新的密钥脱敏
+// - Token 密钥获取接口的权限验证
 package controller
 
 import (
@@ -21,30 +29,35 @@ import (
 	"gorm.io/gorm"
 )
 
+// tokenAPIResponse Token API 响应结构体
 type tokenAPIResponse struct {
-	Success bool            `json:"success"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data"`
+	Success bool            `json:"success"` // 是否成功
+	Message string          `json:"message"` // 消息
+	Data    json.RawMessage `json:"data"`    // 数据
 }
 
+// tokenPageResponse Token 分页响应结构体
 type tokenPageResponse struct {
-	Items []tokenResponseItem `json:"items"`
+	Items []tokenResponseItem `json:"items"` // Token 列表
 }
 
+// tokenResponseItem Token 响应项
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID     int    `json:"id"`     // Token ID
+	Name   string `json:"name"`   // Token 名称
+	Key    string `json:"key"`    // Token 密钥（脱敏后）
+	Status int    `json:"status"` // Token 状态
 }
 
+// tokenKeyResponse Token 密钥响应结构体
 type tokenKeyResponse struct {
-	Key string `json:"key"`
+	Key string `json:"key"` // Token 完整密钥
 }
 
+// sqliteColumnInfo SQLite 列信息
 type sqliteColumnInfo struct {
-	Name string `gorm:"column:name"`
-	Type string `gorm:"column:type"`
+	Name string `gorm:"column:name"` // 列名
+	Type string `gorm:"column:type"` // 列类型
 }
 
 type legacyToken struct {

@@ -1,3 +1,10 @@
+// management - auth_files_patch_fields_test.go
+// 认证文件字段修补端点的单元测试。
+// 测试 PatchAuthFileFields 端点的以下功能：
+// - 合并 headers 字段并删除空值（空白字符串和空字符串被视为删除操作）
+// - headers 空映射的无操作处理（不删除现有 headers）
+// - 账号分组（account_group）的持久化和列表返回
+// - 多账号分组（account_groups）的支持，包括去重、修剪和清空操作
 package management
 
 import (
@@ -14,6 +21,12 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestPatchAuthFileFields_MergeHeadersAndDeleteEmptyValues 测试 headers 字段的合并和删除语义：
+// - 已存在的 header 值被新值覆盖（X-Old: old -> new）
+// - 新的 header 被添加（X-New: v）
+// - 值为空白字符串的 header 被视为删除操作（X-Remove: "  " -> 删除）
+// - 值为空字符串且不存在的 header 被忽略（X-Nope: "" -> 不添加）
+// 同时验证 prefix 和 proxy_url 的正确持久化，以及 metadata 中对应字段的同步更新。
 func TestPatchAuthFileFields_MergeHeadersAndDeleteEmptyValues(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -109,6 +122,9 @@ func TestPatchAuthFileFields_MergeHeadersAndDeleteEmptyValues(t *testing.T) {
 	}
 }
 
+// TestPatchAuthFileFields_HeadersEmptyMapIsNoop 测试当请求中包含空的 headers 映射时，
+// 现有的 headers 不会被删除。这是一种无操作（noop）场景，
+// 确保空映射不会意外清除已配置的 header。
 func TestPatchAuthFileFields_HeadersEmptyMapIsNoop(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -164,6 +180,9 @@ func TestPatchAuthFileFields_HeadersEmptyMapIsNoop(t *testing.T) {
 	}
 }
 
+// TestPatchAuthFileFields_AccountGroupIsPersistedAndListed 测试单个账号分组（account_group）的：
+// - 在 Attributes 和 Metadata 中的正确持久化
+// - 通过 buildAuthFileEntry 构建的列表项中同时返回 account_group、accountGroup 和 account_groups 三种格式
 func TestPatchAuthFileFields_AccountGroupIsPersistedAndListed(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -218,6 +237,12 @@ func TestPatchAuthFileFields_AccountGroupIsPersistedAndListed(t *testing.T) {
 	}
 }
 
+// TestPatchAuthFileFields_AccountGroupsSupportMultipleGroups 测试多账号分组（account_groups）功能：
+// - 支持传入分组名称数组，自动去重和修剪空白（"  testing  " -> "testing"）
+// - 重复的分组名称只保留第一个（"production" 出现两次 -> 只保留一个）
+// - 第一个分组自动设置为默认 account_group
+// - 在 Attributes 中以换行符分隔存储，在 Metadata 中以字符串数组存储
+// - 清空操作：传入空数组 [] 会清除所有分组相关字段
 func TestPatchAuthFileFields_AccountGroupsSupportMultipleGroups(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

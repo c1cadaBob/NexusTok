@@ -1,3 +1,9 @@
+// Package model - task_cas_test.go
+// 该文件包含任务 CAS（Compare-And-Swap）操作的单元测试
+//
+// 测试内容包括：
+// - 任务状态的原子更新
+// - 并发场景下的任务状态一致性
 package model
 
 import (

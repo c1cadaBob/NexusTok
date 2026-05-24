@@ -1,3 +1,11 @@
+// Package dto - openai_request_zero_value_test.go
+// 该文件包含 OpenAI 请求显式零值保留的单元测试
+//
+// 测试内容包括：
+// - GeneralOpenAIRequest 的显式零值（0、false）在 JSON 序列化后不被省略
+// - OpenAIResponsesRequest 的显式零值保留
+// 遵循 Rule 6：上游中继请求 DTO 保留显式零值
+// 使用指针类型 + omitempty 确保：字段缺失 => nil => 省略；字段显式设为零 => 非 nil => 保留
 package dto
 
 import (

@@ -1,5 +1,6 @@
-// Package browser provides cross-platform functionality for opening URLs in the default web browser.
-// It abstracts the underlying operating system commands and provides a simple interface.
+// 包 browser 提供跨平台的浏览器打开功能。
+// 该文件封装了底层操作系统的命令，提供统一的接口用于在默认浏览器中打开 URL。
+// 支持 macOS、Windows 和 Linux 系统，当首选库不可用时会自动回退到平台特定命令。
 package browser
 
 import (
@@ -11,19 +12,18 @@ import (
 	"github.com/skratchdot/open-golang/open"
 )
 
-// OpenURL opens the specified URL in the default web browser.
-// It first attempts to use a platform-agnostic library and falls back to
-// platform-specific commands if that fails.
+// OpenURL 在默认浏览器中打开指定的 URL。
+// 首先尝试使用跨平台的 open-golang 库，如果失败则回退到平台特定的命令。
 //
-// Parameters:
-//   - url: The URL to open.
+// 参数：
+//   - url: 要打开的 URL
 //
-// Returns:
-//   - An error if the URL cannot be opened, otherwise nil.
+// 返回：
+//   - error: 无法打开 URL 时返回的错误，成功时返回 nil
 func OpenURL(url string) error {
 	fmt.Printf("Attempting to open URL in browser: %s\n", url)
 
-	// Try using the open-golang library first
+	// 尝试使用 open-golang 库打开
 	err := open.Run(url)
 	if err == nil {
 		log.Debug("Successfully opened URL using open-golang library")
@@ -32,18 +32,18 @@ func OpenURL(url string) error {
 
 	log.Debugf("open-golang failed: %v, trying platform-specific commands", err)
 
-	// Fallback to platform-specific commands
+	// 回退到平台特定命令
 	return openURLPlatformSpecific(url)
 }
 
-// openURLPlatformSpecific is a helper function that opens a URL using OS-specific commands.
-// This serves as a fallback mechanism for OpenURL.
+// openURLPlatformSpecific 使用操作系统特定命令打开 URL 的辅助函数。
+// 作为 OpenURL 的回退机制，在 open-golang 库失败时使用。
 //
-// Parameters:
-//   - url: The URL to open.
+// 参数：
+//   - url: 要打开的 URL
 //
-// Returns:
-//   - An error if the URL cannot be opened, otherwise nil.
+// 返回：
+//   - error: 无法打开 URL 时返回的错误，成功时返回 nil
 func openURLPlatformSpecific(url string) error {
 	var cmd *exec.Cmd
 
@@ -53,7 +53,7 @@ func openURLPlatformSpecific(url string) error {
 	case "windows":
 		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	case "linux":
-		// Try common Linux browsers in order of preference
+		// 按优先级顺序尝试常见的 Linux 浏览器
 		browsers := []string{"xdg-open", "x-www-browser", "www-browser", "firefox", "chromium", "google-chrome"}
 		for _, browser := range browsers {
 			if _, err := exec.LookPath(browser); err == nil {
@@ -78,19 +78,19 @@ func openURLPlatformSpecific(url string) error {
 	return nil
 }
 
-// IsAvailable checks if the system has a command available to open a web browser.
-// It verifies the presence of necessary commands for the current operating system.
+// IsAvailable 检查系统是否有可用的命令来打开浏览器。
+// 验证当前操作系统上是否存在必要的浏览器打开命令。
 //
-// Returns:
-//   - true if a browser can be opened, false otherwise.
+// 返回：
+//   - bool: 如果可以打开浏览器返回 true，否则返回 false
 func IsAvailable() bool {
-	// First check if open-golang can work
+	// 首先检查 open-golang 库是否可用
 	testErr := open.Run("about:blank")
 	if testErr == nil {
 		return true
 	}
 
-	// Check platform-specific commands
+	// 检查平台特定的命令
 	switch runtime.GOOS {
 	case "darwin":
 		_, err := exec.LookPath("open")
@@ -111,11 +111,11 @@ func IsAvailable() bool {
 	}
 }
 
-// GetPlatformInfo returns a map containing details about the current platform's
-// browser opening capabilities, including the OS, architecture, and available commands.
+// GetPlatformInfo 返回包含当前平台浏览器打开能力详细信息的映射。
+// 包括操作系统、架构和可用命令等信息。
 //
-// Returns:
-//   - A map with platform-specific browser support information.
+// 返回：
+//   - map[string]interface{}: 包含平台特定浏览器支持信息的映射
 func GetPlatformInfo() map[string]interface{} {
 	info := map[string]interface{}{
 		"os":        runtime.GOOS,

@@ -1,3 +1,5 @@
+// management - auth_files_project_id_test.go
+// 测试认证文件列表中 project_id 字段的正确返回，包括从认证管理器和磁盘读取两种路径
 package management
 
 import (
@@ -14,6 +16,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestListAuthFiles_IncludesProjectIDFromManager 测试从认证管理器列出的认证文件包含 project_id
 func TestListAuthFiles_IncludesProjectIDFromManager(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -53,6 +56,7 @@ func TestListAuthFiles_IncludesProjectIDFromManager(t *testing.T) {
 	}
 }
 
+// TestListAuthFilesFromDisk_IncludesProjectID 测试从磁盘列出的认证文件包含 project_id
 func TestListAuthFilesFromDisk_IncludesProjectID(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
@@ -71,6 +75,7 @@ func TestListAuthFilesFromDisk_IncludesProjectID(t *testing.T) {
 	}
 }
 
+// firstAuthFileEntry 辅助函数，获取认证文件列表中的第一个条目
 func firstAuthFileEntry(t *testing.T, h *Handler) map[string]any {
 	t.Helper()
 

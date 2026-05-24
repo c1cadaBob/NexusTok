@@ -1,3 +1,8 @@
+// Package claude - codex_claude_response_test.go
+// 测试 Codex 到 Claude 响应格式转换功能。
+// 覆盖流式和非流式场景下 thinking 签名的传递、多部分推理的签名保留、
+// 签名推理的 thinking 块生成、工具 ID 缩短、停止原因映射、
+// 停止序列映射以及空输出回退等测试用例。
 package claude
 
 import (
@@ -8,6 +13,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestConvertCodexResponseToClaude_StreamThinkingIncludesSignature 测试
+// 流式场景下 thinking 块应包含来自 encrypted_content 的签名
 func TestConvertCodexResponseToClaude_StreamThinkingIncludesSignature(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -68,6 +75,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingIncludesSignature(t *testing
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamThinkingWithoutReasoningItemStillIncludesSignatureField 测试
+// 当没有 reasoning item 但有 summary 文本时，thinking 块仍应包含签名字段（但不带签名值）
 func TestConvertCodexResponseToClaude_StreamThinkingWithoutReasoningItemStillIncludesSignatureField(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -121,6 +130,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingWithoutReasoningItemStillInc
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamThinkingFinalizesPendingBlockBeforeNextSummaryPart 测试
+// 新的 summary part 开始前应先完成当前待处理的 thinking 块
 func TestConvertCodexResponseToClaude_StreamThinkingFinalizesPendingBlockBeforeNextSummaryPart(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -163,6 +174,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingFinalizesPendingBlockBeforeN
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamThinkingRetainsSignatureAcrossMultipartReasoning 测试
+// 多部分推理场景下签名应正确保留并为每个 thinking 块发出签名 delta
 func TestConvertCodexResponseToClaude_StreamThinkingRetainsSignatureAcrossMultipartReasoning(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -205,6 +218,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingRetainsSignatureAcrossMultip
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamThinkingUsesEarlyCapturedSignatureWhenDoneOmitsIt 测试
+// 当 output_item.done 中不包含签名时，应使用之前捕获的签名
 func TestConvertCodexResponseToClaude_StreamThinkingUsesEarlyCapturedSignatureWhenDoneOmitsIt(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -243,6 +258,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingUsesEarlyCapturedSignatureWh
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamThinkingUsesFinalDoneSignature 测试
+// 当 output_item.done 中包含最终签名时，应优先使用最终签名而非初始签名
 func TestConvertCodexResponseToClaude_StreamThinkingUsesFinalDoneSignature(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -297,6 +314,8 @@ func TestConvertCodexResponseToClaude_StreamThinkingUsesFinalDoneSignature(t *te
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamSignatureOnlyReasoningEmitsThinkingSignature 测试
+// 仅包含签名（无 summary 文本）的推理项应生成 thinking 块并发出签名 delta
 func TestConvertCodexResponseToClaude_StreamSignatureOnlyReasoningEmitsThinkingSignature(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -384,6 +403,8 @@ func TestConvertCodexResponseToClaude_StreamSignatureOnlyReasoningEmitsThinkingS
 	}
 }
 
+// TestConvertCodexResponseToClaudeNonStream_ThinkingIncludesSignature 测试
+// 非流式场景下 thinking 块应正确保留签名和思考文本
 func TestConvertCodexResponseToClaudeNonStream_ThinkingIncludesSignature(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -422,6 +443,8 @@ func TestConvertCodexResponseToClaudeNonStream_ThinkingIncludesSignature(t *test
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamEmptyOutputUsesOutputItemDoneMessageFallback 测试
+// 当没有常规输出事件时，应从 output_item.done 的 message 中提取文本内容
 func TestConvertCodexResponseToClaude_StreamEmptyOutputUsesOutputItemDoneMessageFallback(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"tools":[]}`)
@@ -459,6 +482,8 @@ func TestConvertCodexResponseToClaude_StreamEmptyOutputUsesOutputItemDoneMessage
 	}
 }
 
+// TestConvertCodexResponseToClaude_ShortensLongToolUseIDs 测试超过 64 字符的工具 ID
+// 在流式和非流式场景下均应被缩短
 func TestConvertCodexResponseToClaude_ShortensLongToolUseIDs(t *testing.T) {
 	longCallID := "call_" + strings.Repeat("a", 62)
 	if len(longCallID) <= 64 {
@@ -523,6 +548,8 @@ func TestConvertCodexResponseToClaude_ShortensLongToolUseIDs(t *testing.T) {
 	})
 }
 
+// TestConvertCodexResponseToClaude_StreamStopReasonMapping 测试流式场景下
+// Codex 停止原因到 Claude 格式的映射
 func TestConvertCodexResponseToClaude_StreamStopReasonMapping(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -582,6 +609,8 @@ func TestConvertCodexResponseToClaude_StreamStopReasonMapping(t *testing.T) {
 	}
 }
 
+// TestConvertCodexResponseToClaude_StreamStopSequenceMapping 测试流式场景下
+// 停止序列的映射
 func TestConvertCodexResponseToClaude_StreamStopSequenceMapping(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -600,6 +629,7 @@ func TestConvertCodexResponseToClaude_StreamStopSequenceMapping(t *testing.T) {
 	}
 }
 
+// TestConvertCodexResponseToClaudeNonStream_StopReasonMapping 测试非流式场景下的停止原因映射
 func TestConvertCodexResponseToClaudeNonStream_StopReasonMapping(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -678,6 +708,7 @@ func TestConvertCodexResponseToClaudeNonStream_StopReasonMapping(t *testing.T) {
 	}
 }
 
+// TestConvertCodexResponseToClaudeNonStream_StopSequenceMapping 测试非流式场景下的停止序列映射
 func TestConvertCodexResponseToClaudeNonStream_StopSequenceMapping(t *testing.T) {
 	ctx := context.Background()
 	originalRequest := []byte(`{"messages":[]}`)
@@ -704,6 +735,7 @@ func TestConvertCodexResponseToClaudeNonStream_StopSequenceMapping(t *testing.T)
 	}
 }
 
+// findClaudeStreamStopReason 从流式输出中查找 Claude message_delta 事件的 stop_reason
 func findClaudeStreamStopReason(outputs [][]byte) (string, bool) {
 	messageDelta, ok := findClaudeStreamMessageDelta(outputs)
 	if !ok {
@@ -712,6 +744,7 @@ func findClaudeStreamStopReason(outputs [][]byte) (string, bool) {
 	return messageDelta.Get("delta.stop_reason").String(), true
 }
 
+// findClaudeStreamMessageDelta 从流式输出中查找 message_delta 事件
 func findClaudeStreamMessageDelta(outputs [][]byte) (gjson.Result, bool) {
 	for _, out := range outputs {
 		for _, line := range strings.Split(string(out), "\n") {

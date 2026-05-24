@@ -1,3 +1,16 @@
+// Package model - pricing.go
+// 该文件定义了定价（Pricing）数据模型及相关操作
+//
+// 主要功能：
+// - 模型定价信息的管理和缓存
+// - 支持按模型、分组、计费类型查询定价
+// - 支持分组启用模型列表的缓存
+// - 支持模型支持端点的缓存
+//
+// 定价缓存：
+// - 使用读写锁保证并发安全
+// - 支持定时刷新和手动刷新
+// - 缓存包含：模型定价、分组启用模型、模型支持端点
 package model
 
 import (
@@ -15,34 +28,38 @@ import (
 	"github.com/c1cada/NexusTok/types"
 )
 
+// Pricing 模型定价信息
+// 包含模型的计费配置、倍率、分组启用信息等
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`
-	Description            string                  `json:"description,omitempty"`
-	Icon                   string                  `json:"icon,omitempty"`
-	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
-	QuotaType              int                     `json:"quota_type"`
-	ModelRatio             float64                 `json:"model_ratio"`
-	ModelPrice             float64                 `json:"model_price"`
-	OwnerBy                string                  `json:"owner_by"`
-	CompletionRatio        float64                 `json:"completion_ratio"`
-	CacheRatio             *float64                `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	BillingMode            string                  `json:"billing_mode,omitempty"`
-	BillingExpr            string                  `json:"billing_expr,omitempty"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	ModelName              string                  `json:"model_name"`                // 模型名称
+	Description            string                  `json:"description,omitempty"`     // 模型描述
+	Icon                   string                  `json:"icon,omitempty"`            // 模型图标
+	Tags                   string                  `json:"tags,omitempty"`            // 模型标签
+	VendorID               int                     `json:"vendor_id,omitempty"`       // 供应商 ID
+	QuotaType              int                     `json:"quota_type"`                // 计费类型
+	ModelRatio             float64                 `json:"model_ratio"`               // 模型倍率
+	ModelPrice             float64                 `json:"model_price"`               // 模型价格
+	OwnerBy                string                  `json:"owner_by"`                  // 所有者
+	CompletionRatio        float64                 `json:"completion_ratio"`          // 补全倍率
+	CacheRatio             *float64                `json:"cache_ratio,omitempty"`     // 缓存倍率
+	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"` // 创建缓存倍率
+	ImageRatio             *float64                `json:"image_ratio,omitempty"`     // 图片倍率
+	AudioRatio             *float64                `json:"audio_ratio,omitempty"`     // 音频倍率
+	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"` // 音频补全倍率
+	EnableGroup            []string                `json:"enable_groups"`             // 启用的分组列表
+	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`  // 支持的端点类型
+	BillingMode            string                  `json:"billing_mode,omitempty"`    // 计费模式
+	BillingExpr            string                  `json:"billing_expr,omitempty"`    // 计费表达式
+	PricingVersion         string                  `json:"pricing_version,omitempty"` // 定价版本
 }
 
+// PricingVendor 供应商定价信息
+// 用于定价查询时展示供应商信息
 type PricingVendor struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon,omitempty"`
+	ID          int    `json:"id"`                     // 供应商 ID
+	Name        string `json:"name"`                   // 供应商名称
+	Description string `json:"description,omitempty"`  // 供应商描述
+	Icon        string `json:"icon,omitempty"`         // 供应商图标
 }
 
 var (
@@ -63,6 +80,11 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
+// GetPricing 获取模型定价列表
+// 使用缓存机制，每分钟刷新一次或缓存为空时从数据库重新加载
+//
+// 返回值：
+//   - []Pricing: 定价列表
 func GetPricing() []Pricing {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
 		updatePricingLock.Lock()

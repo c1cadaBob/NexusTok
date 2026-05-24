@@ -1,50 +1,17 @@
+// antigravity/claude - signature_validation.go
 // Claude thinking signature validation for Antigravity bypass mode.
+// 本文件提供 Claude 思考签名的验证功能，用于 Antigravity 绕过模式。
 //
-// Spec reference: SIGNATURE-CHANNEL-SPEC.md
+// 签名编码检测（规范 §3）：
+// Claude 签名使用单层或双层 Base64 编码。原始字符串的首字符决定编码深度：
+//   - 'E' 前缀 → 单层：payload[0]==0x12, 前 6 位 = 000100 = base64 索引 4 = 'E'
+//   - 'R' 前缀 → 双层：inner[0]=='E' (0x45), 前 6 位 = 010001 = base64 索引 17 = 'R'
 //
-// # Encoding Detection (Spec §3)
+// 所有有效签名在发送到 Antigravity 后端前会被规范化为 R 形式（双层 base64）。
 //
-// Claude signatures use base64 encoding in one or two layers. The raw string's
-// first character determines the encoding depth — this is mathematically equivalent
-// to the spec's "decode first, check byte" approach:
-//
-//   - 'E' prefix → single-layer: payload[0]==0x12, first 6 bits = 000100 = base64 index 4 = 'E'
-//   - 'R' prefix → double-layer: inner[0]=='E' (0x45), first 6 bits = 010001 = base64 index 17 = 'R'
-//
-// All valid signatures are normalized to R-form (double-layer base64) before
-// sending to the Antigravity backend.
-//
-// # Protobuf Structure (Spec §4.1, §4.2) — strict mode only
-//
-// After base64 decoding to raw bytes (first byte must be 0x12):
-//
-//	Top-level protobuf
-//	├── Field 2 (bytes): container                    ← extractBytesField(payload, 2)
-//	│   ├── Field 1 (bytes): channel block            ← extractBytesField(container, 1)
-//	│   │   ├── Field 1 (varint): channel_id [required] → routing_class (11 | 12)
-//	│   │   ├── Field 2 (varint): infra      [optional] → infrastructure_class (aws=1 | google=2)
-//	│   │   ├── Field 3 (varint): version=2  [skipped]
-//	│   │   ├── Field 5 (bytes):  ECDSA sig  [skipped, per Spec §11]
-//	│   │   ├── Field 6 (bytes):  model_text [optional] → schema_features
-//	│   │   └── Field 7 (varint): unknown    [optional] → schema_features
-//	│   ├── Field 2 (bytes): nonce 12B       [skipped]
-//	│   ├── Field 3 (bytes): session 12B     [skipped]
-//	│   ├── Field 4 (bytes): SHA-384 48B     [skipped]
-//	│   └── Field 5 (bytes): metadata        [skipped, per Spec §11]
-//	└── Field 3 (varint): =1                 [skipped]
-//
-// # Output Dimensions (Spec §8)
-//
-//	routing_class:        routing_class_11 | routing_class_12 | unknown
-//	infrastructure_class: infra_default (absent) | infra_aws (1) | infra_google (2) | infra_unknown
-//	schema_features:      compact_schema (len 70-72, no f6/f7) | extended_model_tagged_schema (f6 exists) | unknown
-//	legacy_route_hint:    only for ch=11 — legacy_default_group | legacy_aws_group | legacy_vertex_direct/proxy
-//
-// # Compatibility
-//
-// Verified against all confirmed spec samples (Anthropic Max 20x, Azure, Vertex,
-// Bedrock) and legacy ch=11 signatures. Both single-layer (E) and double-layer (R)
-// encodings are supported. Historical cache-mode 'modelGroup#' prefixes are stripped.
+// Protobuf 结构（规范 §4.1, §4.2）— 仅严格模式：
+// Base64 解码后的原始字节（首字节必须为 0x12）包含嵌套的 protobuf 结构，
+// 包含通道 ID、基础设施类型、版本、ECDSA 签名、模型文本等字段。
 package claude
 
 import (
@@ -59,24 +26,25 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
+// maxBypassSignatureLen 是绕过模式签名的最大允许长度（32MB）。
 const maxBypassSignatureLen = 32 * 1024 * 1024
 
+// claudeSignatureTree 表示 Claude 签名的解析树结构。
+// 包含编码层数、通道 ID、路由类别、基础设施类别、模式特征等维度信息。
 type claudeSignatureTree struct {
-	EncodingLayers      int
-	ChannelID           uint64
-	Field2              *uint64
-	RoutingClass        string
-	InfrastructureClass string
-	SchemaFeatures      string
-	ModelText           string
-	LegacyRouteHint     string
-	HasField7           bool
+	EncodingLayers      int    // 编码层数（1=单层, 2=双层）
+	ChannelID           uint64 // 通道 ID（11 或 12）
+	Field2              *uint64 // Field 2 值（基础设施标识）
+	RoutingClass        string // 路由类别（routing_class_11, routing_class_12, unknown）
+	InfrastructureClass string // 基础设施类别（infra_default, infra_aws, infra_google, infra_unknown）
+	SchemaFeatures      string // 模式特征（compact_schema, extended_model_tagged_schema, unknown_schema_features）
+	ModelText           string // 模型文本
+	LegacyRouteHint     string // 旧版路由提示（仅 ch=11）
+	HasField7           bool   // 是否存在 Field 7
 }
 
-// StripInvalidSignatureThinkingBlocks removes thinking blocks whose signatures
-// are empty or not valid Claude format (must start with 'E' or 'R' after
-// stripping any cache prefix). These come from proxy-generated responses
-// (Antigravity/Gemini) where no real Claude signature exists.
+// StripEmptySignatureThinkingBlocks 移除签名为空或不是有效 Claude 格式（必须以 'E' 或 'R' 开头，
+// 去除缓存前缀后）的思考块。这些来自代理生成的响应（Antigravity/Gemini），其中不存在真正的 Claude 签名。
 func StripEmptySignatureThinkingBlocks(payload []byte) []byte {
 	messages := gjson.GetBytes(payload, "messages")
 	if !messages.IsArray() {
@@ -112,9 +80,8 @@ func StripEmptySignatureThinkingBlocks(payload []byte) []byte {
 	return payload
 }
 
-// hasValidClaudeSignature returns true if sig looks like a real Claude thinking
-// signature: non-empty and starts with 'E' or 'R' (after stripping optional
-// cache prefix like "modelGroup#").
+// hasValidClaudeSignature 检查签名是否看起来像真正的 Claude 思考签名：
+// 非空且以 'E' 或 'R' 开头（去除可选的缓存前缀如 "modelGroup#" 后）。
 func hasValidClaudeSignature(sig string) bool {
 	sig = strings.TrimSpace(sig)
 	if sig == "" {
@@ -129,6 +96,8 @@ func hasValidClaudeSignature(sig string) bool {
 	return sig[0] == 'E' || sig[0] == 'R'
 }
 
+// ValidateClaudeBypassSignatures 验证请求中所有 thinking 块的签名格式。
+// 遍历 messages 数组，对每个 thinking 类型的内容块验证其签名是否为有效的 Claude 格式。
 func ValidateClaudeBypassSignatures(inputRawJSON []byte) error {
 	messages := gjson.GetBytes(inputRawJSON, "messages")
 	if !messages.IsArray() {
@@ -162,6 +131,9 @@ func ValidateClaudeBypassSignatures(inputRawJSON []byte) error {
 	return nil
 }
 
+// normalizeClaudeBypassSignature 规范化 Claude 绕过模式签名。
+// 去除缓存前缀、检查长度限制，然后根据首字符（'R' 或 'E'）进行相应的验证和规范化。
+// 'E' 开头的单层签名会被编码为双层（R 形式）。
 func normalizeClaudeBypassSignature(rawSignature string) (string, error) {
 	sig := strings.TrimSpace(rawSignature)
 	if sig == "" {
@@ -196,6 +168,8 @@ func normalizeClaudeBypassSignature(rawSignature string) (string, error) {
 	}
 }
 
+// validateDoubleLayerSignature 验证双层 Base64 编码的签名。
+// 解码后检查内层是否以 'E' 开头，然后验证单层签名内容。
 func validateDoubleLayerSignature(sig string) error {
 	decoded, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
@@ -210,10 +184,14 @@ func validateDoubleLayerSignature(sig string) error {
 	return validateSingleLayerSignatureContent(string(decoded), 2)
 }
 
+// validateSingleLayerSignature 验证单层 Base64 编码的签名。
 func validateSingleLayerSignature(sig string) error {
 	return validateSingleLayerSignatureContent(sig, 1)
 }
 
+// validateSingleLayerSignatureContent 验证单层签名内容。
+// Base64 解码后检查首字节是否为 0x12（protobuf Field 2 标识）。
+// 严格模式下还会检查完整的 protobuf 结构。
 func validateSingleLayerSignatureContent(sig string, encodingLayers int) error {
 	decoded, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
@@ -232,6 +210,7 @@ func validateSingleLayerSignatureContent(sig string, encodingLayers int) error {
 	return err
 }
 
+// inspectDoubleLayerSignature 检查双层签名的完整结构，返回解析树。
 func inspectDoubleLayerSignature(sig string) (*claudeSignatureTree, error) {
 	decoded, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
@@ -246,10 +225,12 @@ func inspectDoubleLayerSignature(sig string) (*claudeSignatureTree, error) {
 	return inspectSingleLayerSignatureWithLayers(string(decoded), 2)
 }
 
+// inspectSingleLayerSignature 检查单层签名的完整结构，返回解析树。
 func inspectSingleLayerSignature(sig string) (*claudeSignatureTree, error) {
 	return inspectSingleLayerSignatureWithLayers(sig, 1)
 }
 
+// inspectSingleLayerSignatureWithLayers 检查单层签名的完整结构，指定编码层数。
 func inspectSingleLayerSignatureWithLayers(sig string, encodingLayers int) (*claudeSignatureTree, error) {
 	decoded, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
@@ -261,6 +242,8 @@ func inspectSingleLayerSignatureWithLayers(sig string, encodingLayers int) (*cla
 	return inspectClaudeSignaturePayload(decoded, encodingLayers)
 }
 
+// inspectClaudeSignaturePayload 检查 Claude 签名的有效载荷。
+// 从顶层 protobuf 中提取 Field 2 容器，然后检查其中的通道块。
 func inspectClaudeSignaturePayload(payload []byte, encodingLayers int) (*claudeSignatureTree, error) {
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("invalid Claude signature: empty payload")
@@ -279,6 +262,9 @@ func inspectClaudeSignaturePayload(payload []byte, encodingLayers int) (*claudeS
 	return inspectClaudeChannelBlock(channelBlock, encodingLayers)
 }
 
+// inspectClaudeChannelBlock 检查 Claude 通道块的 protobuf 字段。
+// 提取通道 ID（Field 1）、基础设施标识（Field 2）、模型文本（Field 6）等，
+// 并根据这些值确定路由类别、基础设施类别和模式特征。
 func inspectClaudeChannelBlock(channelBlock []byte, encodingLayers int) (*claudeSignatureTree, error) {
 	tree := &claudeSignatureTree{
 		EncodingLayers:      encodingLayers,
@@ -386,6 +372,7 @@ func inspectClaudeChannelBlock(channelBlock []byte, encodingLayers int) (*claude
 	return tree, nil
 }
 
+// extractBytesField 从 protobuf 消息中提取指定字段号的字节类型字段值。
 func extractBytesField(msg []byte, fieldNum protowire.Number, scope string) ([]byte, error) {
 	var value []byte
 	err := walkProtobufFields(msg, func(num protowire.Number, typ protowire.Type, raw []byte) error {
@@ -411,6 +398,7 @@ func extractBytesField(msg []byte, fieldNum protowire.Number, scope string) ([]b
 	return value, nil
 }
 
+// walkProtobufFields 遍历 protobuf 消息的所有字段，对每个字段调用 visit 回调函数。
 func walkProtobufFields(msg []byte, visit func(num protowire.Number, typ protowire.Type, raw []byte) error) error {
 	for offset := 0; offset < len(msg); {
 		num, typ, n := protowire.ConsumeTag(msg[offset:])
@@ -431,6 +419,7 @@ func walkProtobufFields(msg []byte, visit func(num protowire.Number, typ protowi
 	return nil
 }
 
+// decodeVarintField 解码 protobuf varint 类型的字段值。
 func decodeVarintField(raw []byte, label string) (uint64, error) {
 	value, n := protowire.ConsumeVarint(raw)
 	if n < 0 {
@@ -439,6 +428,7 @@ func decodeVarintField(raw []byte, label string) (uint64, error) {
 	return value, nil
 }
 
+// decodeBytesField 解码 protobuf bytes 类型的字段值。
 func decodeBytesField(raw []byte, label string) ([]byte, error) {
 	value, n := protowire.ConsumeBytes(raw)
 	if n < 0 {

@@ -1,3 +1,13 @@
+// httpapi - server_test.go
+// HTTP API 服务的单元测试。
+// 测试覆盖以下场景：
+//   - 模型列表代理：验证 Authorization 头和查询参数正确转发
+//   - 服务信息：验证配置状态的正确报告
+//   - 使用量导入：验证旧版导出格式的导入和去重
+//   - 设置接口：验证连接验证、密钥轮换、环境变量保护
+//   - 管理配置：验证读写、轮询间隔校验、subscribe 模式保留
+//   - 模型价格：验证保存、加载和 LiteLLM 同步
+//   - API Key 别名：验证 CRUD、唯一性约束和活跃 hash 迁移
 package httpapi
 
 import (
@@ -16,12 +26,15 @@ import (
 	"github.com/seakee/cpa-manager/usage-service/internal/store"
 )
 
+// observedRequest 记录代理转发时观察到的请求信息，用于测试验证。
 type observedRequest struct {
-	path  string
-	query string
-	auth  string
+	path  string // 请求路径
+	query string // 查询参数
+	auth  string // Authorization 头
 }
 
+// newTestHandler 创建测试用的 HTTP Handler。
+// 使用临时 SQLite 数据库，可选地保存初始 setup 配置。
 func newTestHandler(t *testing.T, upstreamURL string, saveSetup bool) http.Handler {
 	t.Helper()
 
@@ -55,6 +68,8 @@ func newTestHandler(t *testing.T, upstreamURL string, saveSetup bool) http.Handl
 	return New(cfg, db, manager).Handler()
 }
 
+// newTestHandlerWithConfig 使用自定义配置创建测试用的 HTTP Handler。
+// 允许直接设置 CPAUpstreamURL 和 ManagementKey（模拟环境变量配置）。
 func newTestHandlerWithConfig(t *testing.T, cfg config.Config) http.Handler {
 	t.Helper()
 
@@ -76,6 +91,9 @@ func newTestHandlerWithConfig(t *testing.T, cfg config.Config) http.Handler {
 	return New(cfg, db, manager).Handler()
 }
 
+// TestModelListProxyPreservesAuthorization 验证模型列表代理正确转发 Authorization 头、
+// 请求路径和查询参数到上游 CPA。
+// 同时测试 /v1/models 和 /models 两个路径。
 func TestModelListProxyPreservesAuthorization(t *testing.T) {
 	for _, path := range []string{"/v1/models", "/models"} {
 		t.Run(path, func(t *testing.T) {
@@ -124,6 +142,8 @@ func TestModelListProxyPreservesAuthorization(t *testing.T) {
 	}
 }
 
+// TestInfoReportsConfiguredState 验证 /usage-service/info 接口正确报告配置状态。
+// 未配置时 configured=false，已配置时 configured=true。
 func TestInfoReportsConfiguredState(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -160,6 +180,8 @@ func TestInfoReportsConfiguredState(t *testing.T) {
 	}
 }
 
+// TestUsageImportAcceptsLegacyExportAndSkipsDuplicates 验证旧版使用量导出格式的导入。
+// 第一次导入成功（added=1），第二次导入因 event_hash 重复被跳过（skipped=1）。
 func TestUsageImportAcceptsLegacyExportAndSkipsDuplicates(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	payload := `{
@@ -204,6 +226,7 @@ func TestUsageImportAcceptsLegacyExportAndSkipsDuplicates(t *testing.T) {
 	}
 }
 
+// postUsageImport 辅助函数：发送使用量导入请求并返回解析结果。
 func postUsageImport(t *testing.T, handler http.Handler, payload string) struct {
 	Format      string   `json:"format"`
 	Added       int      `json:"added"`
@@ -239,6 +262,7 @@ func postUsageImport(t *testing.T, handler http.Handler, payload string) struct 
 	return response
 }
 
+// TestModelListProxyRequiresSetup 验证未配置 setup 时模型列表代理返回 428 Precondition Required。
 func TestModelListProxyRequiresSetup(t *testing.T) {
 	handler := newTestHandler(t, "", false)
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -254,6 +278,8 @@ func TestModelListProxyRequiresSetup(t *testing.T) {
 	}
 }
 
+// TestSetupRejectsDifferentUpstreamWithoutExistingAuthorization 验证更换上游 URL 时
+// 需要通过现有管理密钥认证，否则返回 401 Unauthorized。
 func TestSetupRejectsDifferentUpstreamWithoutExistingAuthorization(t *testing.T) {
 	currentUpstream := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(currentUpstream.Close)
@@ -289,6 +315,8 @@ func TestSetupRejectsDifferentUpstreamWithoutExistingAuthorization(t *testing.T)
 	}
 }
 
+// TestSetupAllowsKeyRotationForSameUpstreamWithValidNewKey 验证同一上游更换密钥时，
+// 新密钥通过验证后可以成功保存，且后续请求使用新密钥认证。
 func TestSetupAllowsKeyRotationForSameUpstreamWithValidNewKey(t *testing.T) {
 	observed := make(chan observedRequest, 10)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +373,8 @@ func TestSetupAllowsKeyRotationForSameUpstreamWithValidNewKey(t *testing.T) {
 	}
 }
 
+// TestSetupRejectsKeyRotationWhenSetupIsEnvironmentManaged 验证当配置来源于环境变量时，
+// 通过 setup 接口更换密钥被拒绝（409 Conflict）。
 func TestSetupRejectsKeyRotationWhenSetupIsEnvironmentManaged(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer rotated-key" {
@@ -379,6 +409,8 @@ func TestSetupRejectsKeyRotationWhenSetupIsEnvironmentManaged(t *testing.T) {
 	}
 }
 
+// TestManagerConfigRejectsPollIntervalAboveRetention 验证当 pollIntervalMs 超过
+// 上游 CPA 的 Redis 使用量队列保留时间时，保存配置被拒绝。
 func TestManagerConfigRejectsPollIntervalAboveRetention(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer management-key" {
@@ -409,6 +441,8 @@ func TestManagerConfigRejectsPollIntervalAboveRetention(t *testing.T) {
 	}
 }
 
+// TestManagerConfigPreservesSubscribeCollectorMode 验证保存管理配置时
+// subscribe 采集模式被正确保留。
 func TestManagerConfigPreservesSubscribeCollectorMode(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer management-key" {
@@ -440,6 +474,8 @@ func TestManagerConfigPreservesSubscribeCollectorMode(t *testing.T) {
 	}
 }
 
+// TestManagerConfigReadsLegacySetup 验证 GET /usage-service/config 接口
+// 能正确读取旧版 setup 配置并返回 source=db。
 func TestManagerConfigReadsLegacySetup(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0/management/config" && r.Header.Get("Authorization") == "Bearer management-key" {
@@ -472,6 +508,8 @@ func TestManagerConfigReadsLegacySetup(t *testing.T) {
 	}
 }
 
+// TestSetupCanDisableRequestMonitoring 验证通过 setup 接口可以禁用请求监控。
+// 禁用后采集器状态为 stopped，管理配置中 enabled=false。
 func TestSetupCanDisableRequestMonitoring(t *testing.T) {
 	configCalls := 0
 	enableCalls := 0
@@ -534,6 +572,7 @@ func TestSetupCanDisableRequestMonitoring(t *testing.T) {
 	}
 }
 
+// TestModelPricesSaveAndLoad 验证模型价格的保存和加载功能。
 func TestModelPricesSaveAndLoad(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	body := bytes.NewBufferString(`{"prices":{"gpt-test":{"prompt":1.25,"completion":2.5,"cache":0.1}}}`)
@@ -574,6 +613,8 @@ func TestModelPricesSaveAndLoad(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAliasesSaveLoadAndDelete 验证 API Key 别名的创建、加载和删除。
+// 同时验证别名唯一性约束（不同 hash 不可使用相同别名）。
 func TestAPIKeyAliasesSaveLoadAndDelete(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -640,6 +681,9 @@ func TestAPIKeyAliasesSaveLoadAndDelete(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAliasesActiveHashesMigration 验证活跃 hash 集合的孤儿清理机制。
+// 场景：旧密钥被删除后，新密钥可复用其别名，孤儿记录被自动清理。
+// 验证真冲突（被占用方仍在活跃集合中）被正确拒绝。
 func TestAPIKeyAliasesActiveHashesMigration(t *testing.T) {
 	handler := newTestHandler(t, "http://example.test", true)
 	const orphanHash = "1111111111111111111111111111111111111111111111111111111111111111"
@@ -703,6 +747,9 @@ func TestAPIKeyAliasesActiveHashesMigration(t *testing.T) {
 	}
 }
 
+// TestModelPricesSyncFromLiteLLMFormat 验证从 LiteLLM 数据源同步模型价格。
+// 验证：chat 模型的价格正确转换（per token -> per million token），
+// image-only 模型被跳过，source 和 sourceModelId 元数据正确记录。
 func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -771,6 +818,8 @@ func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 	}
 }
 
+// closeFloat 判断两个浮点数是否足够接近（误差小于 1e-7）。
+// 用于浮点数价格的精度比较。
 func closeFloat(left float64, right float64) bool {
 	return math.Abs(left-right) < 0.0000001
 }

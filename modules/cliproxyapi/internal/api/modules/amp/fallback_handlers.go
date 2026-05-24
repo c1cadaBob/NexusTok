@@ -1,3 +1,10 @@
+// amp - fallback_handlers.go
+// Amp CLI 回退处理器和路由决策逻辑。
+// 该模块实现了 Amp CLI 请求的路由策略：
+//   - 本地提供者优先：检查是否有可用的本地 OAuth 提供者
+//   - 模型映射：如果请求的模型不可用，尝试映射到可用的替代模型
+//   - Amp 上游回退：当本地无可用提供者时，转发到 ampcode.com
+//   - 流式响应重写：在模型映射场景下重写响应中的模型名称
 package amp
 
 import (
@@ -15,24 +22,21 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// AmpRouteType represents the type of routing decision made for an Amp request
+// AmpRouteType 表示 Amp 请求的路由决策类型。
 type AmpRouteType string
 
+// 路由决策类型常量。
 const (
-	// RouteTypeLocalProvider indicates the request is handled by a local OAuth provider (free)
-	RouteTypeLocalProvider AmpRouteType = "LOCAL_PROVIDER"
-	// RouteTypeModelMapping indicates the request was remapped to another available model (free)
-	RouteTypeModelMapping AmpRouteType = "MODEL_MAPPING"
-	// RouteTypeAmpCredits indicates the request is forwarded to ampcode.com (uses Amp credits)
-	RouteTypeAmpCredits AmpRouteType = "AMP_CREDITS"
-	// RouteTypeNoProvider indicates no provider or fallback available
-	RouteTypeNoProvider AmpRouteType = "NO_PROVIDER"
+	RouteTypeLocalProvider AmpRouteType = "LOCAL_PROVIDER" // 本地 OAuth 提供者处理（免费）
+	RouteTypeModelMapping  AmpRouteType = "MODEL_MAPPING"  // 模型映射到其他可用模型（免费）
+	RouteTypeAmpCredits    AmpRouteType = "AMP_CREDITS"    // 转发到 ampcode.com（消耗 Amp 额度）
+	RouteTypeNoProvider    AmpRouteType = "NO_PROVIDER"    // 无可用提供者或回退
 )
 
-// MappedModelContextKey is the Gin context key for passing mapped model names.
+// MappedModelContextKey 是用于传递映射模型名称的 Gin context 键。
 const MappedModelContextKey = "mapped_model"
 
-// logAmpRouting logs the routing decision for an Amp request with structured fields
+// logAmpRouting 记录 Amp 请求的路由决策日志，包含结构化字段。
 func logAmpRouting(routeType AmpRouteType, requestedModel, resolvedModel, provider, path string) {
 	fields := log.Fields{
 		"component":       "amp-routing",

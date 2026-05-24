@@ -1,3 +1,20 @@
+# docker-image-alpha.yml - Alpha 预发布 Docker 镜像构建
+#
+# 触发条件：
+# - 推送到 alpha 分支
+# - 手动触发
+#
+# 功能：
+# - 为 amd64 和 arm64 架构分别构建镜像
+# - 推送到 Docker Hub 和 GitHub Container Registry (GHCR)
+# - 使用 cosign 进行镜像签名
+# - 合并为多架构 manifest
+#
+# 镜像标签：
+# - c1cada/nexustok:alpha
+# - c1cada/nexustok:alpha-{YYYYMMDD}-{SHORT_SHA}
+# - ghcr.io/{OWNER}/{REPO}:alpha
+
 name: Publish Docker image (alpha)
 
 on:

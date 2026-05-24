@@ -1,3 +1,14 @@
+// resp - client_test.go
+// RESP 协议客户端的单元测试。
+// 使用 net.Pipe 构造内存中的客户端/服务端连接对，不依赖真实网络。
+// 测试覆盖以下场景：
+//   - SUBSCRIBE 命令的成功响应解析
+//   - 不支持 SUBSCRIBE 命令时返回 ErrUnsupportedSubscribe
+//   - 订阅模式下 ReadMessage 正确解析 message 帧
+//   - 订阅模式下自动跳过 subscribe/unsubscribe/pong 控制帧
+//   - 未订阅时 ReadMessage 返回错误
+//   - 订阅模式下 SendSubscribePing 正确发送 PING 命令
+//   - 订阅模式下 Do 命令被拒绝
 package resp
 
 import (
@@ -46,6 +57,8 @@ func writeResponse(t *testing.T, server net.Conn, response string) {
 	}
 }
 
+// TestSubscribeSuccess 验证 SUBSCRIBE 命令成功时的响应解析。
+// 验证客户端正确进入订阅状态（subscribed=true）。
 func TestSubscribeSuccess(t *testing.T) {
 	client, server := newPipeClient(t)
 	done := make(chan error, 1)
@@ -64,6 +77,8 @@ func TestSubscribeSuccess(t *testing.T) {
 	}
 }
 
+// TestSubscribeUnsupportedFallsBack 验证当服务端不支持 SUBSCRIBE 命令时，
+// 返回 ErrUnsupportedSubscribe 错误且客户端不进入订阅状态。
 func TestSubscribeUnsupportedFallsBack(t *testing.T) {
 	client, server := newPipeClient(t)
 	done := make(chan error, 1)
@@ -83,6 +98,7 @@ func TestSubscribeUnsupportedFallsBack(t *testing.T) {
 	}
 }
 
+// TestReadMessagePayload 验证 ReadMessage 能正确解析 message 帧的频道名和消息内容。
 func TestReadMessagePayload(t *testing.T) {
 	client, server := newPipeClient(t)
 	client.subscribed = true
@@ -116,6 +132,8 @@ func TestReadMessagePayload(t *testing.T) {
 	}
 }
 
+// TestReadMessageSkipsControlFrames 验证 ReadMessage 能自动跳过 subscribe/unsubscribe/pong 控制帧，
+// 只返回实际的 message 帧数据。
 func TestReadMessageSkipsControlFrames(t *testing.T) {
 	client, server := newPipeClient(t)
 	client.subscribed = true
@@ -148,6 +166,7 @@ func TestReadMessageSkipsControlFrames(t *testing.T) {
 	}
 }
 
+// TestReadMessageRequiresSubscription 验证在未订阅状态下调用 ReadMessage 返回错误。
 func TestReadMessageRequiresSubscription(t *testing.T) {
 	client, _ := newPipeClient(t)
 	_, _, err := client.ReadMessage()
@@ -156,6 +175,7 @@ func TestReadMessageRequiresSubscription(t *testing.T) {
 	}
 }
 
+// TestSendSubscribePingWritesCommand 验证 SendSubscribePing 能正确发送 PING 命令。
 func TestSendSubscribePingWritesCommand(t *testing.T) {
 	client, server := newPipeClient(t)
 	client.subscribed = true
@@ -171,6 +191,8 @@ func TestSendSubscribePingWritesCommand(t *testing.T) {
 	}
 }
 
+// TestDoRejectedInSubscribeMode 验证在订阅模式下调用 Do 方法返回错误。
+// 订阅模式下只能使用 ReadMessage 和 SendSubscribePing。
 func TestDoRejectedInSubscribeMode(t *testing.T) {
 	client, _ := newPipeClient(t)
 	client.subscribed = true
@@ -180,6 +202,7 @@ func TestDoRejectedInSubscribeMode(t *testing.T) {
 }
 
 // itoa 是 strconv.Itoa 的本地等价物，保留测试自包含。
+// 将整数转换为十进制字符串表示。
 func itoa(value int) string {
 	if value == 0 {
 		return "0"

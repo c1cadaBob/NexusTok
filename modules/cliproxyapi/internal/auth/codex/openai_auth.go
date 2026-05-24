@@ -1,3 +1,8 @@
+// Package codex - openai_auth.go
+// 提供 OpenAI Codex API 的 OAuth2 认证流程实现。
+// 包括生成授权 URL（带 PKCE）、用授权码换取令牌、刷新过期令牌，
+// 以及创建和更新令牌存储结构等核心认证操作。
+//
 // Package codex provides authentication and token management for OpenAI's Codex API.
 // It handles the OAuth2 flow, including generating authorization URLs, exchanging
 // authorization codes for tokens, and refreshing expired tokens. The package also
@@ -19,11 +24,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// OAuth 配置常量，用于 OpenAI Codex 的 OAuth2 认证流程
 // OAuth configuration constants for OpenAI Codex
 const (
-	AuthURL     = "https://auth.openai.com/oauth/authorize"
-	TokenURL    = "https://auth.openai.com/oauth/token"
-	ClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
+	// AuthURL 是 OpenAI OAuth2 授权端点
+	AuthURL = "https://auth.openai.com/oauth/authorize"
+	// TokenURL 是 OpenAI OAuth2 令牌交换端点
+	TokenURL = "https://auth.openai.com/oauth/token"
+	// ClientID 是 Codex CLI 的 OAuth 客户端 ID
+	ClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	// RedirectURI 是 OAuth 回调重定向地址
 	RedirectURI = "http://localhost:1455/auth/callback"
 )
 
@@ -303,6 +313,8 @@ func (o *CodexAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken str
 	return nil, fmt.Errorf("token refresh failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+// isNonRetryableRefreshErr 判断令牌刷新错误是否为不可重试的错误。
+// 当错误信息包含 "refresh_token_reused" 时，说明刷新令牌已被重复使用，不应重试。
 func isNonRetryableRefreshErr(err error) bool {
 	if err == nil {
 		return false

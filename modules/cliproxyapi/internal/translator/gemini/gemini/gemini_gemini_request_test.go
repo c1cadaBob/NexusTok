@@ -1,3 +1,7 @@
+// Package gemini - gemini_gemini_request_test.go
+// 测试 Gemini 到 Gemini 请求格式转换功能。
+// 覆盖空 functionResponse 名称的回填功能，包括单个调用、
+// 并行调用、保留已有名称、响应多于调用、以及多组顺序调用等场景。
 package gemini
 
 import (
@@ -6,6 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestBackfillEmptyFunctionResponseNames_Single 测试单个空名称 functionResponse
+// 应从对应的 functionCall 回填名称
 func TestBackfillEmptyFunctionResponseNames_Single(t *testing.T) {
 	input := []byte(`{
 		"contents": [
@@ -32,6 +38,8 @@ func TestBackfillEmptyFunctionResponseNames_Single(t *testing.T) {
 	}
 }
 
+// TestBackfillEmptyFunctionResponseNames_Parallel 测试并行 functionResponse
+// 的空名称应按顺序从 functionCall 回填
 func TestBackfillEmptyFunctionResponseNames_Parallel(t *testing.T) {
 	input := []byte(`{
 		"contents": [
@@ -64,6 +72,8 @@ func TestBackfillEmptyFunctionResponseNames_Parallel(t *testing.T) {
 	}
 }
 
+// TestBackfillEmptyFunctionResponseNames_PreservesExisting 测试
+// 已有有效名称的 functionResponse 应被保留不覆盖
 func TestBackfillEmptyFunctionResponseNames_PreservesExisting(t *testing.T) {
 	input := []byte(`{
 		"contents": [
@@ -90,6 +100,8 @@ func TestBackfillEmptyFunctionResponseNames_PreservesExisting(t *testing.T) {
 	}
 }
 
+// TestConvertGeminiRequestToGemini_BackfillsEmptyName 测试通过完整转换流程
+// 回填空 functionResponse 名称
 func TestConvertGeminiRequestToGemini_BackfillsEmptyName(t *testing.T) {
 	input := []byte(`{
 		"contents": [
@@ -116,6 +128,9 @@ func TestConvertGeminiRequestToGemini_BackfillsEmptyName(t *testing.T) {
 	}
 }
 
+// TestBackfillEmptyFunctionResponseNames_MoreResponsesThanCalls 测试
+// 当 functionResponse 数量超过 functionCall 数量时，
+// 多余的响应名称应保持为空，不应导致 panic
 func TestBackfillEmptyFunctionResponseNames_MoreResponsesThanCalls(t *testing.T) {
 	// Extra responses beyond the call count should not panic and should be left unchanged.
 	input := []byte(`{
@@ -149,6 +164,8 @@ func TestBackfillEmptyFunctionResponseNames_MoreResponsesThanCalls(t *testing.T)
 	}
 }
 
+// TestBackfillEmptyFunctionResponseNames_MultipleGroups 测试
+// 多个顺序 call/response 组应各自正确回填名称
 func TestBackfillEmptyFunctionResponseNames_MultipleGroups(t *testing.T) {
 	// Two sequential call/response groups should each get correct names.
 	input := []byte(`{

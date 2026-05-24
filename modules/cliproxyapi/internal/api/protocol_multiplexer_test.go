@@ -1,3 +1,7 @@
+// api - protocol_multiplexer_test.go
+// 该文件测试协议多路复用器的行为。
+// 验证空闲 TCP 连接不会阻塞接受循环中的其他连接处理。
+
 package api
 
 import (
@@ -9,6 +13,8 @@ import (
 	"time"
 )
 
+// TestAcceptMuxNotBlockedByIdleConnection 测试空闲 TCP 连接不会阻塞接受循环。
+// 修复前，接受循环会在空闲连接的 Peek(1) 上阻塞，导致正常请求超时。
 func TestAcceptMuxNotBlockedByIdleConnection(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

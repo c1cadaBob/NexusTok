@@ -1,3 +1,13 @@
+// Package model - passkey.go
+// 该文件定义了 WebAuthn/Passkey 认证数据模型及相关操作
+//
+// 主要结构体：
+// - PasskeyCredential：Passkey 凭据存储
+//
+// 核心功能：
+// - Passkey 凭据的注册、查询、删除
+// - WebAuthn 协议的用户和凭据实现
+// - 支持多种设备和浏览器的 Passkey 认证
 package model
 
 import (
@@ -20,27 +30,34 @@ var (
 	ErrFriendlyPasskeyNotFound = errors.New("Passkey 验证失败，请重试或联系管理员")
 )
 
+// PasskeyCredential Passkey 凭据存储
+// 存储 WebAuthn/Passkey 认证所需的凭据信息
 type PasskeyCredential struct {
-	ID              int            `json:"id" gorm:"primaryKey"`
-	UserID          int            `json:"user_id" gorm:"uniqueIndex;not null"`
-	CredentialID    string         `json:"credential_id" gorm:"type:varchar(512);uniqueIndex;not null"` // base64 encoded
-	PublicKey       string         `json:"public_key" gorm:"type:text;not null"`                        // base64 encoded
-	AttestationType string         `json:"attestation_type" gorm:"type:varchar(255)"`
-	AAGUID          string         `json:"aaguid" gorm:"type:varchar(512)"` // base64 encoded
-	SignCount       uint32         `json:"sign_count" gorm:"default:0"`
-	CloneWarning    bool           `json:"clone_warning"`
-	UserPresent     bool           `json:"user_present"`
-	UserVerified    bool           `json:"user_verified"`
-	BackupEligible  bool           `json:"backup_eligible"`
-	BackupState     bool           `json:"backup_state"`
-	Transports      string         `json:"transports" gorm:"type:text"`
-	Attachment      string         `json:"attachment" gorm:"type:varchar(32)"`
-	LastUsedAt      *time.Time     `json:"last_used_at"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `json:"-" gorm:"index"`
+	ID              int            `json:"id" gorm:"primaryKey"`                                   // 凭据 ID
+	UserID          int            `json:"user_id" gorm:"uniqueIndex;not null"`                    // 用户 ID
+	CredentialID    string         `json:"credential_id" gorm:"type:varchar(512);uniqueIndex;not null"` // 凭据 ID（Base64 编码）
+	PublicKey       string         `json:"public_key" gorm:"type:text;not null"`                   // 公钥（Base64 编码）
+	AttestationType string         `json:"attestation_type" gorm:"type:varchar(255)"`              // 认证类型
+	AAGUID          string         `json:"aaguid" gorm:"type:varchar(512)"`                        // AAGUID（Base64 编码）
+	SignCount       uint32         `json:"sign_count" gorm:"default:0"`                            // 签名计数
+	CloneWarning    bool           `json:"clone_warning"`                                          // 克隆警告
+	UserPresent     bool           `json:"user_present"`                                           // 用户存在标志
+	UserVerified    bool           `json:"user_verified"`                                          // 用户验证标志
+	BackupEligible  bool           `json:"backup_eligible"`                                        // 可备份标志
+	BackupState     bool           `json:"backup_state"`                                           // 备份状态
+	Transports      string         `json:"transports" gorm:"type:text"`                            // 传输方式（JSON 数组）
+	Attachment      string         `json:"attachment" gorm:"type:varchar(32)"`                     // 附件类型
+	LastUsedAt      *time.Time     `json:"last_used_at"`                                           // 最后使用时间
+	CreatedAt       time.Time      `json:"created_at"`                                             // 创建时间
+	UpdatedAt       time.Time      `json:"updated_at"`                                             // 更新时间
+	DeletedAt       gorm.DeletedAt `json:"-" gorm:"index"`                                         // 软删除时间
 }
 
+// TransportList 获取传输方式列表
+// 将 JSON 格式的传输方式字符串转换为 WebAuthn 协议的传输方式列表
+//
+// 返回值：
+//   - []protocol.AuthenticatorTransport: 传输方式列表
 func (p *PasskeyCredential) TransportList() []protocol.AuthenticatorTransport {
 	if p == nil || strings.TrimSpace(p.Transports) == "" {
 		return nil
@@ -56,6 +73,11 @@ func (p *PasskeyCredential) TransportList() []protocol.AuthenticatorTransport {
 	return result
 }
 
+// SetTransports 设置传输方式
+// 将 WebAuthn 协议的传输方式列表转换为 JSON 格式存储
+//
+// 参数：
+//   - list: 传输方式列表
 func (p *PasskeyCredential) SetTransports(list []protocol.AuthenticatorTransport) {
 	if len(list) == 0 {
 		p.Transports = ""
@@ -72,6 +94,10 @@ func (p *PasskeyCredential) SetTransports(list []protocol.AuthenticatorTransport
 	p.Transports = string(encoded)
 }
 
+// ToWebAuthnCredential 将 PasskeyCredential 转换为 WebAuthn 协议的 Credential
+//
+// 返回值：
+//   - webauthn.Credential: WebAuthn 协议的凭据对象
 func (p *PasskeyCredential) ToWebAuthnCredential() webauthn.Credential {
 	flags := webauthn.CredentialFlags{
 		UserPresent:    p.UserPresent,
@@ -99,6 +125,14 @@ func (p *PasskeyCredential) ToWebAuthnCredential() webauthn.Credential {
 	}
 }
 
+// NewPasskeyCredentialFromWebAuthn 从 WebAuthn 协议的 Credential 创建 PasskeyCredential
+//
+// 参数：
+//   - userID: 用户 ID
+//   - credential: WebAuthn 协议的凭据对象
+//
+// 返回值：
+//   - *PasskeyCredential: Passkey 凭据对象，credential 为 nil 时返回 nil
 func NewPasskeyCredentialFromWebAuthn(userID int, credential *webauthn.Credential) *PasskeyCredential {
 	if credential == nil {
 		return nil
@@ -121,6 +155,11 @@ func NewPasskeyCredentialFromWebAuthn(userID int, credential *webauthn.Credentia
 	return passkey
 }
 
+// ApplyValidatedCredential 应用已验证的凭据信息
+// 更新 PasskeyCredential 的所有字段为 WebAuthn 凭据的值
+//
+// 参数：
+//   - credential: WebAuthn 协议的凭据对象
 func (p *PasskeyCredential) ApplyValidatedCredential(credential *webauthn.Credential) {
 	if credential == nil || p == nil {
 		return
@@ -139,6 +178,14 @@ func (p *PasskeyCredential) ApplyValidatedCredential(credential *webauthn.Creden
 	p.SetTransports(credential.Transport)
 }
 
+// GetPasskeyByUserID 根据用户 ID 获取 Passkey 凭据
+//
+// 参数：
+//   - userID: 用户 ID
+//
+// 返回值：
+//   - *PasskeyCredential: Passkey 凭据对象
+//   - error: 查询失败时返回错误（未找到返回 ErrPasskeyNotFound）
 func GetPasskeyByUserID(userID int) (*PasskeyCredential, error) {
 	if userID == 0 {
 		common.SysLog("GetPasskeyByUserID: empty user ID")
@@ -157,6 +204,14 @@ func GetPasskeyByUserID(userID int) (*PasskeyCredential, error) {
 	return &credential, nil
 }
 
+// GetPasskeyByCredentialID 根据凭据 ID 获取 Passkey 凭据
+//
+// 参数：
+//   - credentialID: 凭据 ID（字节数组）
+//
+// 返回值：
+//   - *PasskeyCredential: Passkey 凭据对象
+//   - error: 查询失败时返回错误
 func GetPasskeyByCredentialID(credentialID []byte) (*PasskeyCredential, error) {
 	if len(credentialID) == 0 {
 		common.SysLog("GetPasskeyByCredentialID: empty credential ID")
@@ -177,6 +232,14 @@ func GetPasskeyByCredentialID(credentialID []byte) (*PasskeyCredential, error) {
 	return &credential, nil
 }
 
+// UpsertPasskeyCredential 创建或更新 Passkey 凭据
+// 使用事务保证原子性：先删除用户已有凭据，再创建新凭据
+//
+// 参数：
+//   - credential: Passkey 凭据对象
+//
+// 返回值：
+//   - error: 操作失败时返回错误
 func UpsertPasskeyCredential(credential *PasskeyCredential) error {
 	if credential == nil {
 		common.SysLog("UpsertPasskeyCredential: nil credential provided")
@@ -196,6 +259,14 @@ func UpsertPasskeyCredential(credential *PasskeyCredential) error {
 	})
 }
 
+// DeletePasskeyByUserID 根据用户 ID 删除 Passkey 凭据
+// 使用硬删除（Unscoped）避免唯一索引冲突
+//
+// 参数：
+//   - userID: 用户 ID
+//
+// 返回值：
+//   - error: 删除失败时返回错误
 func DeletePasskeyByUserID(userID int) error {
 	if userID == 0 {
 		common.SysLog("DeletePasskeyByUserID: empty user ID")

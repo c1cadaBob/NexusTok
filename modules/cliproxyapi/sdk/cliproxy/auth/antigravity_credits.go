@@ -1,3 +1,6 @@
+// auth - antigravity_credits.go
+// 该文件实现了 Antigravity AI 积分的上下文传递、提示存储和可用性检查功能。
+// 用于在请求执行链中携带积分启用标志，并缓存每个认证凭据的积分状态。
 package auth
 
 import (
@@ -7,6 +10,7 @@ import (
 	"time"
 )
 
+// antigravityUseCreditsContextKey 是上下文中 Antigravity 积分启用标志的键类型。
 type antigravityUseCreditsContextKey struct{}
 
 // WithAntigravityCredits returns a child context that signals the executor to
@@ -24,16 +28,17 @@ func AntigravityCreditsRequested(ctx context.Context) bool {
 	return v
 }
 
-// AntigravityCreditsHint stores the latest known AI credits state for one auth.
+// AntigravityCreditsHint 存储单个认证凭据的最新 AI 积分状态信息。
 type AntigravityCreditsHint struct {
-	Known           bool
-	Available       bool
-	CreditAmount    float64
-	MinCreditAmount float64
-	PaidTierID      string
-	UpdatedAt       time.Time
+	Known           bool      // 是否已发现积分状态
+	Available       bool      // 积分是否可用
+	CreditAmount    float64   // 当前积分余额
+	MinCreditAmount float64   // 最低积分要求
+	PaidTierID      string    // 付费层级 ID
+	UpdatedAt       time.Time // 最后更新时间
 }
 
+// antigravityCreditsHintByAuth 存储每个认证凭据的积分提示信息（线程安全）。
 var antigravityCreditsHintByAuth sync.Map
 
 // SetAntigravityCreditsHint updates the latest known AI credits state for an auth.
@@ -72,6 +77,8 @@ func HasKnownAntigravityCreditsHint(authID string) bool {
 	return ok && hint.Known
 }
 
+// antigravityCreditsAvailableForModel 检查指定认证凭据对指定模型是否有可用的 Antigravity 积分。
+// 仅对 Antigravity 提供商的 Claude 模型有效。
 func antigravityCreditsAvailableForModel(auth *Auth, model string) bool {
 	if auth == nil {
 		return false

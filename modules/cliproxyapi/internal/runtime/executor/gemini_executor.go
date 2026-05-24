@@ -1,6 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 包含无状态执行器，处理 API 请求、流式响应、令牌计数和不同 AI 服务商的认证刷新。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// It includes stateless executors that handle API requests, streaming responses,
-// token counting, and authentication refresh for different AI service providers.
 package executor
 
 import (

@@ -1,4 +1,6 @@
-// Package xai provides OAuth2 authentication helpers for xAI Grok.
+// xai - types.go
+// 定义 xAI Grok OAuth2 认证所需的数据类型和常量，包括 OAuth 端点、PKCE 码、
+// 授权 URL 参数、OIDC 发现结果、Token 数据和认证包。
 package xai
 
 import "time"

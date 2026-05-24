@@ -1,3 +1,6 @@
+// misc - copy-example-config.go
+// 本文件提供了示例配置文件的复制功能。
+// 用于在初始化时将示例配置文件复制到目标位置。
 package misc
 
 import (

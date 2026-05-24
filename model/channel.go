@@ -1,3 +1,14 @@
+// Package model - channel.go
+// 该文件定义了渠道数据模型和相关操作
+//
+// 渠道是连接上游 AI 服务提供商的通道，包含：
+// - 基本信息：名称、类型、状态、权重
+// - 认证信息：API Key（支持单 Key 和多 Key 模式）
+// - 连接信息：Base URL、Organization
+// - 模型信息：支持的模型列表、模型映射
+// - 计费信息：已用额度、余额
+// - 高级设置：参数覆盖、头部覆盖、状态码映射
+// - 账号池配置：凭证模式、账号池组 ID
 package model
 
 import (
@@ -9,78 +20,83 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common"    // 公共工具包
+	"github.com/c1cada/NexusTok/constant"  // 常量定义
+	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
+	"github.com/c1cada/NexusTok/types"     // 类型定义
 
-	"github.com/samber/lo"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/samber/lo"  // Go 工具库
+	"gorm.io/gorm"          // GORM ORM
+	"gorm.io/gorm/clause"   // GORM 子句
 )
 
+// Channel 渠道数据模型
+// 代表一个上游 AI 服务提供商的连接通道
 type Channel struct {
-	Id                 int     `json:"id"`
-	Type               int     `json:"type" gorm:"default:0"`
-	Key                string  `json:"key" gorm:"not null"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	TestModel          *string `json:"test_model"`
-	Status             int     `json:"status" gorm:"default:1"`
-	Name               string  `json:"name" gorm:"index"`
-	Weight             *uint   `json:"weight" gorm:"default:0"`
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
-	TestTime           int64   `json:"test_time" gorm:"bigint"`
-	ResponseTime       int     `json:"response_time"` // in milliseconds
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	Other              string  `json:"other"`
-	Balance            float64 `json:"balance"` // in USD
-	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
-	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
-	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
-	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
-	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
-	AutoBan           *int    `json:"auto_ban" gorm:"default:1"`
-	OtherInfo         string  `json:"other_info"`
-	Tag               *string `json:"tag" gorm:"index"`
-	Setting           *string `json:"setting" gorm:"type:text"` // 渠道额外设置
-	ParamOverride     *string `json:"param_override" gorm:"type:text"`
-	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
-	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
-	// add after v0.8.5
-	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
+	Id                 int     `json:"id"`                                                                      // 渠道 ID
+	Type               int     `json:"type" gorm:"default:0"`                                                   // 渠道类型（见 constant/channel.go）
+	Key                string  `json:"key" gorm:"not null"`                                                     // API Key（单 Key 模式）
+	OpenAIOrganization *string `json:"openai_organization"`                                                     // OpenAI Organization ID
+	TestModel          *string `json:"test_model"`                                                              // 测试模型名称
+	Status             int     `json:"status" gorm:"default:1"`                                                 // 渠道状态（1=启用，2=禁用）
+	Name               string  `json:"name" gorm:"index"`                                                       // 渠道名称
+	Weight             *uint   `json:"weight" gorm:"default:0"`                                                 // 权重（用于负载均衡）
+	CreatedTime        int64   `json:"created_time" gorm:"bigint"`                                              // 创建时间
+	TestTime           int64   `json:"test_time" gorm:"bigint"`                                                 // 最后测试时间
+	ResponseTime       int     `json:"response_time"`                                                           // 响应时间（毫秒）
+	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`                              // 基础 URL
+	Other              string  `json:"other"`                                                                   // 其他配置（如 API 版本、区域等）
+	Balance            float64 `json:"balance"`                                                                 // 余额（美元）
+	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`                                      // 余额更新时间
+	Models             string  `json:"models"`                                                                  // 支持的模型列表（逗号分隔）
+	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`                          // 渠道分组
+	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`                                      // 已使用额度
+	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`                                          // 模型映射（JSON 格式）
+	StatusCodeMapping  *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`                // 状态码映射（JSON 格式）
+	Priority           *int64  `json:"priority" gorm:"bigint;default:0"`                                        // 优先级（数值越高越优先）
+	AutoBan            *int    `json:"auto_ban" gorm:"default:1"`                                               // 是否自动封禁（1=启用，0=禁用）
+	OtherInfo          string  `json:"other_info"`                                                              // 其他信息
+	Tag                *string `json:"tag" gorm:"index"`                                                        // 标签
+	Setting            *string `json:"setting" gorm:"type:text"`                                                // 渠道额外设置（JSON 格式）
+	ParamOverride      *string `json:"param_override" gorm:"type:text"`                                         // 参数覆盖（JSON 格式）
+	HeaderOverride     *string `json:"header_override" gorm:"type:text"`                                        // 请求头覆盖（JSON 格式）
+	Remark             *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`                       // 备注
+	// v0.8.5 之后添加
+	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"` // 渠道配置信息（JSON 格式）
 
-	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
+	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置（存储 Azure 版本等不需要检索的信息）
 
-	// cache info
-	Keys []string `json:"-" gorm:"-"`
+	// 缓存信息（不存储到数据库）
+	Keys []string `json:"-" gorm:"-"` // 解析后的 Key 列表
 
-	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"`
+	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"` // 渠道账号统计
 }
 
+// ChannelInfo 渠道配置信息结构体
+// 存储渠道的高级配置，以 JSON 格式存储在数据库中
 type ChannelInfo struct {
-	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
-	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
-	MultiKeyStatusList     map[int]int           `json:"multi_key_status_list"`               // key状态列表，key index -> status
-	MultiKeyDisabledReason map[int]string        `json:"multi_key_disabled_reason,omitempty"` // key禁用原因列表，key index -> reason
-	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
-	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
-	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
-	CredentialMode         string                `json:"credential_mode,omitempty"`       // single_key / multi_key / account_pool / global_account_pool
-	AccountPoolEnabled     bool                  `json:"account_pool_enabled,omitempty"`  // 是否启用账号池
-	AccountPoolMode        string                `json:"account_pool_mode,omitempty"`     // 账号池轮询策略
-	AccountPoolFallback    bool                  `json:"account_pool_fallback,omitempty"` // 账号池无可用账号时是否回退渠道凭证
-	AccountPoolGroupId     int                   `json:"account_pool_group_id,omitempty"` // 全局账号池组 ID
+	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多 Key 模式
+	MultiKeySize           int                   `json:"multi_key_size"`                      // 多 Key 模式下的 Key 数量
+	MultiKeyStatusList     map[int]int           `json:"multi_key_status_list"`               // Key 状态列表（Key 索引 -> 状态）
+	MultiKeyDisabledReason map[int]string        `json:"multi_key_disabled_reason,omitempty"` // Key 禁用原因列表（Key 索引 -> 原因）
+	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // Key 禁用时间列表（Key 索引 -> 时间）
+	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多 Key 模式下轮询的 Key 索引
+	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`                      // 多 Key 模式（轮询、随机等）
+	CredentialMode         string                `json:"credential_mode,omitempty"`           // 凭证模式：single_key / multi_key / account_pool / global_account_pool
+	AccountPoolEnabled     bool                  `json:"account_pool_enabled,omitempty"`      // 是否启用账号池
+	AccountPoolMode        string                `json:"account_pool_mode,omitempty"`         // 账号池轮询策略
+	AccountPoolFallback    bool                  `json:"account_pool_fallback,omitempty"`     // 账号池无可用账号时是否回退渠道凭证
+	AccountPoolGroupId     int                   `json:"account_pool_group_id,omitempty"`     // 全局账号池组 ID
 }
 
+// ChannelSortOptions 渠道排序选项
 type ChannelSortOptions struct {
-	SortBy    string
-	SortOrder string
-	IDSort    bool
+	SortBy    string // 排序字段（id、name、priority、balance、response_time、test_time）
+	SortOrder string // 排序方向（asc、desc）
+	IDSort    bool   // 是否按 ID 排序（作为二级排序）
 }
 
+// channelSortColumns 允许的排序字段映射
 var channelSortColumns = map[string]string{
 	"id":            "id",
 	"name":          "name",
@@ -90,6 +106,16 @@ var channelSortColumns = map[string]string{
 	"test_time":     "test_time",
 }
 
+// NewChannelSortOptions 创建渠道排序选项
+// 校验并规范化排序参数
+//
+// 参数：
+//   - sortBy: 排序字段
+//   - sortOrder: 排序方向
+//   - idSort: 是否按 ID 排序
+//
+// 返回值：
+//   - ChannelSortOptions: 规范化后的排序选项
 func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) ChannelSortOptions {
 	normalizedSortBy := strings.ToLower(strings.TrimSpace(sortBy))
 	normalizedSortOrder := strings.ToLower(strings.TrimSpace(sortOrder))
@@ -107,6 +133,13 @@ func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) Channel
 	}
 }
 
+// Apply 将排序选项应用到 GORM 查询
+//
+// 参数：
+//   - query: GORM 查询对象
+//
+// 返回值：
+//   - *gorm.DB: 应用排序后的查询对象
 func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
 	if columnName, ok := channelSortColumns[options.SortBy]; ok {
 		return query.Order(clause.OrderByColumn{
@@ -126,6 +159,15 @@ func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
 	})
 }
 
+// resolveChannelSortOptions 解析渠道排序选项
+// 如果没有提供排序选项，使用默认值
+//
+// 参数：
+//   - idSort: 是否按 ID 排序
+//   - sortOptions: 排序选项（可选）
+//
+// 返回值：
+//   - ChannelSortOptions: 解析后的排序选项
 func resolveChannelSortOptions(idSort bool, sortOptions []ChannelSortOptions) ChannelSortOptions {
 	if len(sortOptions) == 0 {
 		return NewChannelSortOptions("", "", idSort)
@@ -135,17 +177,34 @@ func resolveChannelSortOptions(idSort bool, sortOptions []ChannelSortOptions) Ch
 	return options
 }
 
-// Value implements driver.Valuer interface
+// Value 实现 driver.Valuer 接口
+// 将 ChannelInfo 序列化为 JSON 格式存储到数据库
+//
+// 返回值：
+//   - driver.Value: JSON 字节数据
+//   - error: 序列化错误
 func (c ChannelInfo) Value() (driver.Value, error) {
 	return common.Marshal(&c)
 }
 
-// Scan implements sql.Scanner interface
+// Scan 实现 sql.Scanner 接口
+// 从数据库读取 JSON 格式数据并反序列化为 ChannelInfo
+//
+// 参数：
+//   - value: 数据库值
+//
+// 返回值：
+//   - error: 反序列化错误
 func (c *ChannelInfo) Scan(value interface{}) error {
 	bytesValue, _ := value.([]byte)
 	return common.Unmarshal(bytesValue, c)
 }
 
+// GetKeys 获取渠道的 Key 列表
+// 将逗号分隔的 Key 字符串解析为切片
+//
+// 返回值：
+//   - []string: Key 列表
 func (channel *Channel) GetKeys() []string {
 	if channel.Key == "" {
 		return []string{}

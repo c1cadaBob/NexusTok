@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器的缓存辅助功能，验证提示缓存键的生成和稳定性。
 package executor
 
 import (
@@ -13,6 +15,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCodexExecutorCacheHelper_OpenAIChatCompletions_StablePromptCacheKeyFromAPIKey 验证
+// 基于 API Key 生成的提示缓存键在多次调用中保持稳定。
 func TestCodexExecutorCacheHelper_OpenAIChatCompletions_StablePromptCacheKeyFromAPIKey(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)

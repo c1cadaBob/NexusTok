@@ -1,3 +1,16 @@
+// Package controller - subscription_payment_epay.go
+// 该文件实现了 EPay 支付平台的订阅购买 API 控制器
+//
+// EPay 是一个开源支付系统，支持支付宝、微信支付等多种支付方式
+// 功能包括：
+// - 创建 EPay 订阅支付订单
+// - 处理 EPay 异步通知回调
+// - 处理 EPay 同步返回跳转
+//
+// 主要 API：
+// - SubscriptionRequestEpay：发起 EPay 订阅支付
+// - SubscriptionEpayNotify：处理 EPay 异步支付通知
+// - SubscriptionEpayReturn：处理 EPay 同步返回跳转
 package controller
 
 import (
@@ -16,11 +29,24 @@ import (
 	"github.com/samber/lo"
 )
 
+// SubscriptionEpayPayRequest EPay 订阅支付请求结构体
 type SubscriptionEpayPayRequest struct {
-	PlanId        int    `json:"plan_id"`
-	PaymentMethod string `json:"payment_method"`
+	PlanId        int    `json:"plan_id"`        // 订阅套餐 ID
+	PaymentMethod string `json:"payment_method"` // 支付方式（alipay、wxpay 等）
 }
 
+// SubscriptionRequestEpay 发起 EPay 订阅支付
+//
+// 流程：
+// 1. 检查支付合规性
+// 2. 验证套餐状态和支付方式
+// 3. 检查用户购买次数限制
+// 4. 创建待处理订阅订单
+// 5. 调用 EPay 客户端生成支付链接
+//
+// 返回：
+//   - data: EPay 支付表单参数
+//   - url: EPay 支付网关地址
 func SubscriptionRequestEpay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -115,6 +141,15 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
 }
 
+// SubscriptionEpayNotify 处理 EPay 异步支付通知回调
+//
+// EPay 在支付完成后会向此接口发送异步通知
+// 流程：
+// 1. 解析 POST 或 GET 请求参数
+// 2. 验证 EPay 签名
+// 3. 检查交易状态是否为成功
+// 4. 加锁处理订单，完成订阅订单状态更新
+// 5. 返回 "success" 确认接收通知
 func SubscriptionEpayNotify(c *gin.Context) {
 	var params map[string]string
 
@@ -168,8 +203,14 @@ func SubscriptionEpayNotify(c *gin.Context) {
 	_, _ = c.Writer.Write([]byte("success"))
 }
 
-// SubscriptionEpayReturn handles browser return after payment.
-// It verifies the payload and completes the order, then redirects to console.
+// SubscriptionEpayReturn 处理 EPay 同步返回跳转
+//
+// 用户在 EPay 支付完成后浏览器会跳转到此接口
+// 流程：
+// 1. 解析 POST 或 GET 请求参数
+// 2. 验证 EPay 签名
+// 3. 如果交易成功，完成订单并跳转到成功页面
+// 4. 否则跳转到失败或待处理页面
 func SubscriptionEpayReturn(c *gin.Context) {
 	var params map[string]string
 

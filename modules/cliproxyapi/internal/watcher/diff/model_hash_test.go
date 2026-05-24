@@ -1,3 +1,5 @@
+// diff - model_hash_test.go
+// 测试各类模型列表的哈希计算功能，验证确定性、归一化、去重、空值处理等行为。
 package diff
 
 import (

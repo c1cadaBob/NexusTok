@@ -1,3 +1,7 @@
+// auth - oauth_model_alias.go
+// 该文件实现了 OAuth 模型别名表的编译和解析功能，支持按渠道配置模型名称映射。
+// 用于在 OAuth 认证流程中将客户端请求的模型别名解析为上游实际模型名称，
+// 同时保留后缀（如思考模型的 (8192) 后缀）。
 package auth
 
 import (
@@ -7,16 +11,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 )
 
+// modelAliasEntry 定义模型别名条目的接口，提供获取名称和别名的方法。
 type modelAliasEntry interface {
-	GetName() string
-	GetAlias() string
+	GetName() string  // 获取上游模型名称
+	GetAlias() string // 获取客户端别名
 }
 
+// oauthModelAliasTable 存储编译后的 OAuth 模型别名映射表。
 type oauthModelAliasTable struct {
-	// reverse maps channel -> alias (lower) -> original upstream model name.
+	// reverse 映射渠道 -> 别名（小写） -> 原始上游模型名称。
 	reverse map[string]map[string]string
 }
 
+// compileOAuthModelAliasTable 将配置中的 OAuth 模型别名编译为高效的查找表。
+// 按渠道分组，将别名转为小写键以便不区分大小写查找。
 func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelAlias) *oauthModelAliasTable {
 	if len(aliases) == 0 {
 		return &oauthModelAliasTable{}

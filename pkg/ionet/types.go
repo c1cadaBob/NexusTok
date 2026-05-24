@@ -1,3 +1,13 @@
+// Package ionet - types.go
+// 该文件定义了 IO.NET API 客户端类型
+//
+// 主要类型：
+// - Client：IO.NET API 客户端
+// - HTTPClient：HTTP 客户端接口
+//
+// 用途：
+// - 与 IO.NET 云平台 API 交互
+// - 管理 GPU 容器和部署
 package ionet
 
 import (

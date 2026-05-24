@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Kimi 执行器的工具消息链接规范化和推理内容继承功能。
 package executor
 
 import (
@@ -6,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestNormalizeKimiToolMessageLinks_UsesCallIDFallback 验证当 tool 消息使用 call_id 时
+// 被正确转换为 tool_call_id。
 func TestNormalizeKimiToolMessageLinks_UsesCallIDFallback(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -25,6 +29,8 @@ func TestNormalizeKimiToolMessageLinks_UsesCallIDFallback(t *testing.T) {
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_InferSinglePendingID 验证当只有一个待处理的工具调用时
+// 自动推断 tool_call_id。
 func TestNormalizeKimiToolMessageLinks_InferSinglePendingID(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -44,6 +50,8 @@ func TestNormalizeKimiToolMessageLinks_InferSinglePendingID(t *testing.T) {
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_AmbiguousMissingIDIsNotInferred 验证当有多个待处理工具调用时
+// 不会自动推断 tool_call_id。
 func TestNormalizeKimiToolMessageLinks_AmbiguousMissingIDIsNotInferred(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -65,6 +73,8 @@ func TestNormalizeKimiToolMessageLinks_AmbiguousMissingIDIsNotInferred(t *testin
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_PreservesExistingToolCallID 验证已存在的 tool_call_id
+// 不会被覆盖。
 func TestNormalizeKimiToolMessageLinks_PreservesExistingToolCallID(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -84,6 +94,8 @@ func TestNormalizeKimiToolMessageLinks_PreservesExistingToolCallID(t *testing.T)
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_InheritsPreviousReasoningForAssistantToolCalls 验证
+// 带工具调用的 assistant 消息继承前一条 assistant 消息的推理内容。
 func TestNormalizeKimiToolMessageLinks_InheritsPreviousReasoningForAssistantToolCalls(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -103,6 +115,8 @@ func TestNormalizeKimiToolMessageLinks_InheritsPreviousReasoningForAssistantTool
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_InsertsFallbackReasoningWhenMissing 验证当缺少推理内容时
+// 插入默认的 "[reasoning unavailable]" 回退值。
 func TestNormalizeKimiToolMessageLinks_InsertsFallbackReasoningWhenMissing(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -124,6 +138,8 @@ func TestNormalizeKimiToolMessageLinks_InsertsFallbackReasoningWhenMissing(t *te
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_UsesContentAsReasoningFallback 验证当缺少推理内容时
+// 使用 content 作为推理内容的回退值。
 func TestNormalizeKimiToolMessageLinks_UsesContentAsReasoningFallback(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -142,6 +158,8 @@ func TestNormalizeKimiToolMessageLinks_UsesContentAsReasoningFallback(t *testing
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_ReplacesEmptyReasoningContent 验证空推理内容
+// 被替换为 content 的值。
 func TestNormalizeKimiToolMessageLinks_ReplacesEmptyReasoningContent(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -160,6 +178,8 @@ func TestNormalizeKimiToolMessageLinks_ReplacesEmptyReasoningContent(t *testing.
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_PreservesExistingAssistantReasoning 验证已存在的
+// assistant 推理内容不会被覆盖。
 func TestNormalizeKimiToolMessageLinks_PreservesExistingAssistantReasoning(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -178,6 +198,8 @@ func TestNormalizeKimiToolMessageLinks_PreservesExistingAssistantReasoning(t *te
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_RepairsIDsAndReasoningTogether 验证同时修复
+// 工具调用 ID 和推理内容的功能。
 func TestNormalizeKimiToolMessageLinks_RepairsIDsAndReasoningTogether(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -204,6 +226,8 @@ func TestNormalizeKimiToolMessageLinks_RepairsIDsAndReasoningTogether(t *testing
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_DropsEmptyAssistantWithoutToolLink 验证删除
+// 没有工具链接的空 assistant 消息。
 func TestNormalizeKimiToolMessageLinks_DropsEmptyAssistantWithoutToolLink(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -238,6 +262,8 @@ func TestNormalizeKimiToolMessageLinks_DropsEmptyAssistantWithoutToolLink(t *tes
 	}
 }
 
+// TestNormalizeKimiToolMessageLinks_PreservesAssistantWithToolLinkOrReasoning 验证保留
+// 有工具链接或推理内容的 assistant 消息。
 func TestNormalizeKimiToolMessageLinks_PreservesAssistantWithToolLinkOrReasoning(t *testing.T) {
 	body := []byte(`{
 		"messages":[

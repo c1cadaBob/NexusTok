@@ -1,9 +1,8 @@
-// Package codex implements thinking configuration for Codex (OpenAI Responses API) models.
+// codex - apply.go
+// 本文件实现了 Codex（OpenAI Responses API）模型的 thinking 配置应用逻辑。
 //
-// Codex models use the reasoning.effort format with discrete levels
-// (low/medium/high). This is similar to OpenAI but uses nested field
-// "reasoning.effort" instead of "reasoning_effort".
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-8
+// Codex 模型使用 reasoning.effort 格式，支持离散级别（low/medium/high）。
+// 与 OpenAI 类似，但使用嵌套字段 "reasoning.effort" 而非 "reasoning_effort"。
 package codex
 
 import (
@@ -13,17 +12,17 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier implements thinking.ProviderApplier for Codex models.
+// Applier 实现了 Codex 模型的 thinking.ProviderApplier 接口。
 //
-// Codex-specific behavior:
-//   - Output format: reasoning.effort (string: low/medium/high/xhigh)
-//   - Level-only mode: no numeric budget support
-//   - Some models support ZeroAllowed (gpt-5.1, gpt-5.2)
+// Codex 特有行为：
+//   - 输出格式：reasoning.effort（字符串：low/medium/high/xhigh）
+//   - 仅支持级别模式：不支持数字预算
+//   - 部分模型支持 ZeroAllowed（gpt-5.1、gpt-5.2）
 type Applier struct{}
 
 var _ thinking.ProviderApplier = (*Applier)(nil)
 
-// NewApplier creates a new Codex thinking applier.
+// NewApplier 创建一个新的 Codex thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

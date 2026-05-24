@@ -1,3 +1,10 @@
+// Package controller - misc.go
+// 该文件实现了杂项 API 控制器
+//
+// 包含各种系统状态、配置和辅助功能的 API：
+// - TestStatus：测试服务状态（数据库连接、HTTP 统计）
+// - GetStatus：获取系统状态和配置信息
+// - 其他辅助接口
 package controller
 
 import (
@@ -20,7 +27,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TestStatus 测试服务状态
+//
+// 检查数据库连接是否正常，并返回 HTTP 统计信息
+//
+// 返回值：
+//   - success: 服务是否正常
+//   - message: 状态消息
+//   - http_stats: HTTP 请求统计信息
 func TestStatus(c *gin.Context) {
+	// 检查数据库连接
 	err := model.PingDB()
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -29,7 +45,7 @@ func TestStatus(c *gin.Context) {
 		})
 		return
 	}
-	// 获取HTTP统计信息
+	// 获取 HTTP 统计信息
 	httpStats := middleware.GetStats()
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
@@ -39,13 +55,18 @@ func TestStatus(c *gin.Context) {
 	return
 }
 
+// GetStatus 获取系统状态和配置信息
+//
+// 返回系统的各种配置信息，用于前端展示和状态检查
 func GetStatus(c *gin.Context) {
-
+	// 获取控制台配置
 	cs := console_setting.GetConsoleSetting()
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 
+	// 获取 Passkey 配置
 	passkeySetting := system_setting.GetPasskeySettings()
+	// 获取法律信息配置
 	legalSetting := system_setting.GetLegalSettings()
 
 	data := gin.H{

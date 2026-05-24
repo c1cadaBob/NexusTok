@@ -1,3 +1,15 @@
+// Package controller - redemption.go
+// 该文件实现了兑换码管理的 API 控制器
+//
+// 兑换码功能允许用户通过兑换码获取 API 额度
+//
+// 主要 API：
+// - GetAllRedemptions：管理员获取所有兑换码
+// - SearchRedemptions：搜索兑换码
+// - GetRedemption：获取特定兑换码详情
+// - CreateRedemption：创建兑换码
+// - DeleteRedemption：删除兑换码
+// - RedeemCode：用户兑换兑换码
 package controller
 
 import (
@@ -13,6 +25,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetAllRedemptions 管理员获取所有兑换码
+//
+// 支持分页查询
+//
+// 参数：
+//   - c: Gin 上下文
 func GetAllRedemptions(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
@@ -26,6 +44,12 @@ func GetAllRedemptions(c *gin.Context) {
 	return
 }
 
+// SearchRedemptions 搜索兑换码
+//
+// 支持按关键词搜索
+//
+// 查询参数：
+//   - keyword: 搜索关键词
 func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
 	pageInfo := common.GetPageQuery(c)
@@ -40,6 +64,10 @@ func SearchRedemptions(c *gin.Context) {
 	return
 }
 
+// GetRedemption 获取特定兑换码详情
+//
+// 路径参数：
+//   - id: 兑换码 ID
 func GetRedemption(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

@@ -1,3 +1,18 @@
+// Package service - text_quota.go
+// 该文件实现了文本请求的配额计算和结算逻辑
+//
+// 文本配额计算的核心逻辑：
+// 1. 区分不同类型的 Token：普通文本、缓存、缓存创建、图像、音频
+// 2. 每种 Token 类型有不同的倍率
+// 3. 支持倍率模式和价格模式两种计费方式
+// 4. 支持工具调用附加费（Web Search、File Search、Image Generation 等）
+// 5. 支持阶梯计费（Tiered Billing）
+//
+// 配额计算公式（倍率模式）：
+// 配额 = (基础Token + 缓存Token*缓存倍率 + 图像Token*图像倍率 + 缓存创建Token*缓存创建倍率) * 模型倍率 * 分组倍率 + 输出Token*补全倍率*模型倍率*分组倍率 + 工具调用附加费
+//
+// 配额计算公式（价格模式）：
+// 配额 = 模型价格 * 配额单位 * 分组倍率 + 工具调用附加费
 package service
 
 import (
@@ -5,58 +20,69 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/pkg/billingexpr"
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common"                           // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                         // 常量定义
+	"github.com/c1cada/NexusTok/dto"                              // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                           // 日志
+	"github.com/c1cada/NexusTok/model"                            // 数据模型
+	"github.com/c1cada/NexusTok/pkg/billingexpr"                  // 计费表达式
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"     // 性能指标
+	relaycommon "github.com/c1cada/NexusTok/relay/common"         // 中继公共
+	"github.com/c1cada/NexusTok/setting/operation_setting"        // 运营设置
+	"github.com/c1cada/NexusTok/types"                            // 类型定义
 
-	"github.com/bytedance/gopkg/util/gopool"
-	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
+	"github.com/bytedance/gopkg/util/gopool" // 协程池
+	"github.com/gin-gonic/gin"               // Gin 框架
+	"github.com/shopspring/decimal"          // 高精度十进制运算
 )
 
+// textQuotaSummary 文本配额汇总结构体
+// 包含文本请求配额计算所需的所有信息
 type textQuotaSummary struct {
-	PromptTokens             int
-	CompletionTokens         int
-	TotalTokens              int
-	CacheTokens              int
-	CacheCreationTokens      int
-	CacheCreationTokens5m    int
-	CacheCreationTokens1h    int
-	ImageTokens              int
-	AudioTokens              int
-	ModelName                string
-	TokenName                string
-	UseTimeSeconds           int64
-	CompletionRatio          float64
-	CacheRatio               float64
-	ImageRatio               float64
-	ModelRatio               float64
-	GroupRatio               float64
-	ModelPrice               float64
-	CacheCreationRatio       float64
-	CacheCreationRatio5m     float64
-	CacheCreationRatio1h     float64
-	Quota                    int
-	IsClaudeUsageSemantic    bool
-	UsageSemantic            string
-	WebSearchPrice           float64
-	WebSearchCallCount       int
-	ClaudeWebSearchPrice     float64
-	ClaudeWebSearchCallCount int
-	FileSearchPrice          float64
-	FileSearchCallCount      int
-	AudioInputPrice          float64
-	ImageGenerationCallPrice float64
-	ToolCallSurchargeQuota   decimal.Decimal
+	PromptTokens             int     // 输入 Token 总数
+	CompletionTokens         int     // 输出 Token 总数
+	TotalTokens              int     // Token 总数
+	CacheTokens              int     // 缓存 Token 数
+	CacheCreationTokens      int     // 缓存创建 Token 总数
+	CacheCreationTokens5m    int     // 5分钟缓存创建 Token 数
+	CacheCreationTokens1h    int     // 1小时缓存创建 Token 数
+	ImageTokens              int     // 图像 Token 数
+	AudioTokens              int     // 音频 Token 数
+	ModelName                string  // 模型名称
+	TokenName                string  // Token 名称
+	UseTimeSeconds           int64   // 使用时长（秒）
+	CompletionRatio          float64 // 补全倍率
+	CacheRatio               float64 // 缓存倍率
+	ImageRatio               float64 // 图像倍率
+	ModelRatio               float64 // 模型倍率
+	GroupRatio               float64 // 分组倍率
+	ModelPrice               float64 // 模型价格（价格模式使用）
+	CacheCreationRatio       float64 // 缓存创建倍率
+	CacheCreationRatio5m     float64 // 5分钟缓存创建倍率
+	CacheCreationRatio1h     float64 // 1小时缓存创建倍率
+	Quota                    int     // 计算得到的配额值
+	IsClaudeUsageSemantic    bool    // 是否使用 Claude 语义的使用量
+	UsageSemantic            string  // 使用量语义类型（openai/anthropic）
+	WebSearchPrice           float64 // Web Search 单价
+	WebSearchCallCount       int     // Web Search 调用次数
+	ClaudeWebSearchPrice     float64 // Claude Web Search 单价
+	ClaudeWebSearchCallCount int     // Claude Web Search 调用次数
+	FileSearchPrice          float64 // File Search 单价
+	FileSearchCallCount      int     // File Search 调用次数
+	AudioInputPrice          float64 // 音频输入单价
+	ImageGenerationCallPrice float64 // 图像生成调用单价
+	ToolCallSurchargeQuota   decimal.Decimal // 工具调用附加费配额
 }
 
+// cacheWriteTokensTotal 计算缓写 Token 总数
+// 如果存在 5分钟/1小时 分离的缓存创建 Token，则返回它们的和
+// 否则返回缓存创建 Token 总数
+//
+// 参数：
+//   - summary: 文本配额汇总
+//
+// 返回值：
+//   - int: 缓写 Token 总数
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
 	if summary.CacheCreationTokens5m > 0 || summary.CacheCreationTokens1h > 0 {
 		splitCacheWriteTokens := summary.CacheCreationTokens5m + summary.CacheCreationTokens1h
@@ -68,6 +94,15 @@ func cacheWriteTokensTotal(summary textQuotaSummary) int {
 	return summary.CacheCreationTokens
 }
 
+// isLegacyClaudeDerivedOpenAIUsage 判断是否为旧版 Claude 派生的 OpenAI 使用量
+// 旧版格式中 Claude 的缓存创建 Token 可能以 OpenAI 格式返回
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - usage: 使用量信息
+//
+// 返回值：
+//   - bool: 是否为旧版 Claude 派生格式
 func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) bool {
 	if relayInfo == nil || usage == nil {
 		return false
@@ -81,6 +116,19 @@ func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *d
 	return usage.ClaudeCacheCreation5mTokens > 0 || usage.ClaudeCacheCreation1hTokens > 0
 }
 
+// calculateTextToolCallSurcharge 计算文本请求的工具调用附加费
+// 支持的工具调用：
+// 1. Web Search: 网页搜索（OpenAI 和 Claude 两种格式）
+// 2. File Search: 文件搜索
+// 3. Image Generation: 图像生成
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - summary: 文本配额汇总（会被修改）
+//
+// 返回值：
+//   - decimal.Decimal: 工具调用附加费配额
 func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) decimal.Decimal {
 	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
 	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -138,6 +186,17 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	return surcharge
 }
 
+// composeTieredTextQuota 组合阶梯计费的文本配额
+// 将阶梯计费结果与工具调用附加费组合
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - summary: 文本配额汇总
+//   - tieredQuota: 阶梯计费配额
+//   - tieredResult: 阶梯计费结果
+//
+// 返回值：
+//   - int: 组合后的配额值
 func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
 	if summary.ToolCallSurchargeQuota.IsZero() {
 		return tieredQuota
@@ -156,6 +215,21 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	return tieredQuota + int(summary.ToolCallSurchargeQuota.Round(0).IntPart())
 }
 
+// calculateTextQuotaSummary 计算文本配额汇总
+// 这是文本配额计算的核心函数，负责：
+// 1. 从 relayInfo 和 usage 中提取各种 Token 数量
+// 2. 处理 OpenRouter Claude 特殊计费逻辑
+// 3. 计算各种倍率和价格
+// 4. 计算工具调用附加费
+// 5. 根据倍率模式或价格模式计算最终配额
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - usage: 使用量信息
+//
+// 返回值：
+//   - textQuotaSummary: 文本配额汇总
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
@@ -309,6 +383,15 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	return summary
 }
 
+// usageSemanticFromUsage 从使用量信息中提取使用量语义类型
+// 返回值：openai 或 anthropic
+//
+// 参数：
+//   - relayInfo: 中继信息
+//   - usage: 使用量信息
+//
+// 返回值：
+//   - string: 使用量语义类型
 func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) string {
 	if usage != nil && usage.UsageSemantic != "" {
 		return usage.UsageSemantic
@@ -319,6 +402,23 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+// PostTextConsumeQuota 文本请求结算配额
+// 在文本请求完成后结算实际使用的配额
+//
+// 处理流程：
+// 1. 计算文本配额汇总
+// 2. 尝试阶梯计费结算
+// 3. 计算工具调用附加费
+// 4. 更新用户和渠道的使用量
+// 5. 结算计费
+// 6. 记录消费日志
+// 7. 记录性能指标
+//
+// 参数：
+//   - ctx: Gin 上下文
+//   - relayInfo: 中继信息
+//   - usage: 使用量信息
+//   - extraContent: 额外日志内容
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
 	if usage == nil {

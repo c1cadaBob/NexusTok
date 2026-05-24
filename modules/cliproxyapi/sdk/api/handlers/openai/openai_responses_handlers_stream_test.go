@@ -1,3 +1,6 @@
+// openai - openai_responses_handlers_stream_test.go
+// 包含 OpenAI Responses API 流式处理器的单元测试。
+// 测试 SSE 帧分隔、输出修复和流式转发行为。
 package openai
 
 import (
@@ -13,6 +16,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// newResponsesStreamTestHandler 创建用于流式测试的 Responses API 处理器。
+// 返回处理器、响应记录器、Gin 上下文和 Flusher。
 func newResponsesStreamTestHandler(t *testing.T) (*OpenAIResponsesAPIHandler, *httptest.ResponseRecorder, *gin.Context, http.Flusher) {
 	t.Helper()
 
@@ -32,6 +37,8 @@ func newResponsesStreamTestHandler(t *testing.T) (*OpenAIResponsesAPIHandler, *h
 	return h, recorder, c, flusher
 }
 
+// TestForwardResponsesStreamSeparatesDataOnlySSEChunks 测试流式转发正确分隔纯数据 SSE 帧。
+// 验证每个 SSE 事件被正确分隔，response.completed 事件包含正确的输出。
 func TestForwardResponsesStreamSeparatesDataOnlySSEChunks(t *testing.T) {
 	h, recorder, c, flusher := newResponsesStreamTestHandler(t)
 
@@ -60,6 +67,8 @@ func TestForwardResponsesStreamSeparatesDataOnlySSEChunks(t *testing.T) {
 	}
 }
 
+// TestForwardResponsesStreamRepairsEmptyCompletedOutputFromDoneItems 测试流式转发修复空的 completed 输出。
+// 验证当 response.completed 的 output 为空时，会从之前的 output_item.done 事件中恢复输出。
 func TestForwardResponsesStreamRepairsEmptyCompletedOutputFromDoneItems(t *testing.T) {
 	h, recorder, c, flusher := newResponsesStreamTestHandler(t)
 

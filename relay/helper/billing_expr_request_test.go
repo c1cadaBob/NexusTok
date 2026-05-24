@@ -1,3 +1,6 @@
+// 本文件是 relay/helper 包中计费表达式请求输入构建函数的单元测试集。
+// 测试了 ResolveIncomingBillingExprRequestInput 和 BuildBillingExprRequestInputFromRequest
+// 两个函数的请求体读取、请求头传递和 JSON 序列化功能。
 package helper
 
 import (
@@ -16,6 +19,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestResolveIncomingBillingExprRequestInput 测试从 Gin 上下文解析计费请求输入，
+// 验证请求体和请求头的正确传递。
 func TestResolveIncomingBillingExprRequestInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -37,6 +42,8 @@ func TestResolveIncomingBillingExprRequestInput(t *testing.T) {
 	require.Equal(t, "application/json", input.Headers["Content-Type"])
 }
 
+// TestBuildBillingExprRequestInputFromRequest 测试从已解析的请求对象构建计费输入，
+// 验证请求头和 JSON body 的正确序列化（包括指针字段的处理）。
 func TestBuildBillingExprRequestInputFromRequest(t *testing.T) {
 	request := &dto.GeneralOpenAIRequest{
 		Model:  "gemini-3.1-pro-preview",

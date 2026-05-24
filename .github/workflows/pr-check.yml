@@ -1,3 +1,17 @@
+# pr-check.yml - PR 质量检查工作流
+#
+# 功能：
+# - 检测纯 AI 生成内容（AI Slop）并自动关闭不合格 PR
+# - 验证 PR 是否遵循贡献模板
+# - 检测垃圾用户名和新注册账号
+#
+# 触发条件：
+# - PR 打开或重新打开时自动运行
+#
+# 处理方式：
+# - 不符合要求的 PR 会被添加 pr-check-failed 标签并自动关闭
+# - 使用 peakoss/anti-slop 工具进行质量检测
+
 name: PR Check
 
 permissions:

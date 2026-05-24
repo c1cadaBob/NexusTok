@@ -1,3 +1,5 @@
+// xai - xai_auth_test.go
+// 测试 xAI OAuth 认证功能，包括授权 URL 构建、端点验证、Token 刷新等。
 package xai
 
 import (

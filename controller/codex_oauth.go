@@ -1,3 +1,15 @@
+// Package controller - codex_oauth.go
+// 该文件实现了 Codex 渠道的 OAuth 授权流程
+//
+// Codex 是 OpenAI 的代码生成服务，使用 OAuth 2.0 授权码流程获取访问令牌
+// 支持两种模式：
+//   - 全局模式：生成密钥后由用户自行保存
+//   - 渠道模式：直接将密钥保存到指定渠道
+//
+// OAuth 流程：
+// 1. 调用 StartCodexOAuth 获取授权 URL
+// 2. 用户在浏览器中完成授权
+// 3. 调用 CompleteCodexOAuth 交换授权码获取令牌
 package controller
 
 import (
@@ -20,14 +32,40 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// codexOAuthCompleteRequest Codex OAuth 完成授权请求结构体
 type codexOAuthCompleteRequest struct {
-	Input string `json:"input"`
+	Input string `json:"input"` // 用户输入的授权信息（授权码或回调 URL）
 }
 
+// codexOAuthSessionKey 生成 Codex OAuth 会话键
+//
+// 使用渠道 ID 和字段名组合生成唯一的会话键，避免多渠道并发授权时数据冲突
+//
+// 参数：
+//   - channelID: 渠道 ID（0 表示全局模式）
+//   - field: 字段名称（state、verifier、created_at）
+//
+// 返回值：
+//   - string: 格式化的会话键
 func codexOAuthSessionKey(channelID int, field string) string {
 	return fmt.Sprintf("codex_oauth_%s_%d", field, channelID)
 }
 
+// parseCodexAuthorizationInput 解析用户输入的授权信息
+//
+// 支持多种输入格式：
+//   - code#state 格式（# 分隔）
+//   - 完整回调 URL（包含 code= 和 state= 参数）
+//   - 查询字符串格式（code=xxx&state=xxx）
+//   - 纯授权码字符串
+//
+// 参数：
+//   - input: 用户输入的授权信息
+//
+// 返回值：
+//   - code: 授权码
+//   - state: 状态参数
+//   - err: 解析错误
 func parseCodexAuthorizationInput(input string) (code string, state string, err error) {
 	v := strings.TrimSpace(input)
 	if v == "" {
@@ -59,10 +97,17 @@ func parseCodexAuthorizationInput(input string) (code string, state string, err 
 	return code, "", nil
 }
 
+// StartCodexOAuth 启动全局 Codex OAuth 授权流程
+//
+// 不关联特定渠道，生成的密钥将直接返回给用户
 func StartCodexOAuth(c *gin.Context) {
 	startCodexOAuthWithChannelID(c, 0)
 }
 
+// StartCodexOAuthForChannel 启动指定渠道的 Codex OAuth 授权流程
+//
+// 路径参数：
+//   - id: 渠道 ID
 func StartCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -72,6 +117,14 @@ func StartCodexOAuthForChannel(c *gin.Context) {
 	startCodexOAuthWithChannelID(c, channelID)
 }
 
+// startCodexOAuthWithChannelID 启动 Codex OAuth 授权流程的内部实现
+//
+// 创建 OAuth 授权流并将 state、verifier 保存到会话中
+// 如果指定了渠道 ID，会验证渠道类型是否为 Codex
+//
+// 参数：
+//   - c: Gin 上下文
+//   - channelID: 渠道 ID（0 表示全局模式）
 func startCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	if channelID > 0 {
 		ch, err := model.GetChannelById(channelID, false)
@@ -110,10 +163,15 @@ func startCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	})
 }
 
+// CompleteCodexOAuth 完成全局 Codex OAuth 授权
 func CompleteCodexOAuth(c *gin.Context) {
 	completeCodexOAuthWithChannelID(c, 0)
 }
 
+// CompleteCodexOAuthForChannel 完成指定渠道的 Codex OAuth 授权
+//
+// 路径参数：
+//   - id: 渠道 ID
 func CompleteCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -123,6 +181,18 @@ func CompleteCodexOAuthForChannel(c *gin.Context) {
 	completeCodexOAuthWithChannelID(c, channelID)
 }
 
+// completeCodexOAuthWithChannelID 完成 Codex OAuth 授权的内部实现
+//
+// 处理授权码交换流程：
+// 1. 解析用户输入获取授权码和 state
+// 2. 验证 state 是否与会话中保存的一致
+// 3. 使用授权码交换访问令牌
+// 4. 从 JWT 中提取账户 ID 和邮箱
+// 5. 根据模式保存或返回密钥
+//
+// 参数：
+//   - c: Gin 上下文
+//   - channelID: 渠道 ID（0 表示全局模式）
 func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	req := codexOAuthCompleteRequest{}
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -1,3 +1,5 @@
+// Package helps - session_id_cache.go
+// 实现会话 ID 缓存功能，用于管理客户端会话与认证的绑定关系。
 package helps
 
 import (

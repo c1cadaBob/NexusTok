@@ -1,3 +1,18 @@
+// Package controller - token.go
+// 该文件实现了 API Token 管理的 API 控制器
+//
+// API Token 是用户访问 AI 网关的凭证
+// 每个 Token 有独立的配额、模型限制和过期时间
+//
+// 主要 API：
+// - Token 列表：查询用户的 Token 列表
+// - Token 搜索：按关键词搜索 Token
+// - Token 详情：获取特定 Token 的详细信息
+// - Token 密钥：获取 Token 的原始密钥
+// - 创建 Token：创建新的 API Token
+// - 更新 Token：修改 Token 配置
+// - 删除 Token：删除 Token
+// - Token 状态：启用/禁用 Token
 package controller
 
 import (
@@ -14,6 +29,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// buildMaskedTokenResponse 构建脱敏后的 Token 响应
+//
+// 将 Token 密钥进行脱敏处理，防止泄露
+//
+// 参数：
+//   - token: 原始 Token
+//
+// 返回值：
+//   - *model.Token: 脱敏后的 Token
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
 		return nil
@@ -23,6 +47,13 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	return &maskedToken
 }
 
+// buildMaskedTokenResponses 批量构建脱敏后的 Token 响应
+//
+// 参数：
+//   - tokens: 原始 Token 列表
+//
+// 返回值：
+//   - []*model.Token: 脱敏后的 Token 列表
 func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	maskedTokens := make([]*model.Token, 0, len(tokens))
 	for _, token := range tokens {
@@ -31,6 +62,12 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	return maskedTokens
 }
 
+// GetAllTokens 获取用户的所有 Token
+//
+// 支持分页查询
+//
+// 参数：
+//   - c: Gin 上下文
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -45,6 +82,13 @@ func GetAllTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// SearchTokens 搜索用户的 Token
+//
+// 支持按关键词和 Token 密钥搜索
+//
+// 查询参数：
+//   - keyword: 搜索关键词
+//   - token: Token 密钥
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	keyword := c.Query("keyword")
@@ -62,6 +106,10 @@ func SearchTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// GetToken 获取特定 Token 的详情
+//
+// 路径参数：
+//   - id: Token ID
 func GetToken(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -77,6 +125,10 @@ func GetToken(c *gin.Context) {
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
+// GetTokenKey 获取 Token 的原始密钥
+//
+// 路径参数：
+//   - id: Token ID
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")

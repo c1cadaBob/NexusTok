@@ -1,3 +1,17 @@
+# sync-to-gitee.yml - 将 GitHub Release 同步到 Gitee
+#
+# 触发条件：
+# - 手动触发，指定要同步的 Release 标签
+#
+# 功能：
+# - 从 GitHub 获取指定 Release 的信息和附件
+# - 在 Gitee 创建对应的 Release
+# - 上传 Release 附件到 Gitee
+#
+# 配置要求：
+# - 需要设置 GITEE_TOKEN 仓库密钥
+# - 默认同步到 c1cada/NexusTok 仓库
+
 name: Sync Release to Gitee
 
 permissions:

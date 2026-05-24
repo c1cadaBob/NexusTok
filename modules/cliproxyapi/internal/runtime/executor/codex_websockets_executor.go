@@ -1,5 +1,7 @@
+// Package executor 为各种 AI 服务商提供运行时执行能力。
+// 本文件实现了使用 Responses API WebSocket 传输的 Codex 执行器。
+//
 // Package executor provides runtime execution capabilities for various AI service providers.
-// This file implements a Codex executor that uses the Responses API WebSocket transport.
 package executor
 
 import (

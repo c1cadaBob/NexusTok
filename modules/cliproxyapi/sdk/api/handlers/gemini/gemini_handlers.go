@@ -1,8 +1,7 @@
-// Package gemini provides HTTP handlers for Gemini API endpoints.
-// This package implements handlers for managing Gemini model operations including
-// model listing, content generation, streaming content generation, and token counting.
-// It serves as a proxy layer between clients and the Gemini backend service,
-// handling request translation, client management, and response processing.
+// gemini - gemini_handlers.go
+// 提供 Gemini API 端点的 HTTP 处理器。
+// 实现模型列表、内容生成、流式内容生成和 Token 计数等功能的处理器。
+// 作为客户端与 Gemini 后端服务之间的代理层，处理请求翻译、客户端管理和响应处理。
 package gemini
 
 import (
@@ -19,34 +18,35 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 )
 
-// GeminiAPIHandler contains the handlers for Gemini API endpoints.
-// It holds a pool of clients to interact with the backend service.
+// GeminiAPIHandler 是 Gemini API 端点的处理器。
+// 包含基础 API 处理器，用于与后端服务交互。
 type GeminiAPIHandler struct {
 	*handlers.BaseAPIHandler
 }
 
-// NewGeminiAPIHandler creates a new Gemini API handlers instance.
-// It takes an BaseAPIHandler instance as input and returns a GeminiAPIHandler.
+// NewGeminiAPIHandler 创建新的 Gemini API 处理器实例。
 func NewGeminiAPIHandler(apiHandlers *handlers.BaseAPIHandler) *GeminiAPIHandler {
 	return &GeminiAPIHandler{
 		BaseAPIHandler: apiHandlers,
 	}
 }
 
-// HandlerType returns the identifier for this handler implementation.
+// HandlerType 返回此处理器的类型标识符。
 func (h *GeminiAPIHandler) HandlerType() string {
 	return Gemini
 }
 
-// Models returns the Gemini-compatible model metadata supported by this handler.
+// Models 返回此处理器支持的 Gemini 兼容模型元数据。
+// 从全局注册表中动态获取可用的 Gemini 模型。
 func (h *GeminiAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
 	modelRegistry := registry.GetGlobalRegistry()
 	return modelRegistry.GetAvailableModels("gemini")
 }
 
-// GeminiModels handles the Gemini models listing endpoint.
-// It returns a JSON response containing available Gemini models and their specifications.
+// GeminiModels 处理 Gemini 模型列表端点。
+// 返回包含可用 Gemini 模型及其规格的 JSON 响应。
+// 模型名称会自动添加 "models/" 前缀以符合 Gemini API 规范。
 func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
 	rawModels := h.Models()
 	normalizedModels := make([]map[string]any, 0, len(rawModels))
@@ -77,8 +77,8 @@ func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
 	})
 }
 
-// GeminiGetHandler handles GET requests for specific Gemini model information.
-// It returns detailed information about a specific Gemini model based on the action parameter.
+// GeminiGetHandler 处理特定 Gemini 模型信息的 GET 请求。
+// 根据 action 参数返回特定 Gemini 模型的详细信息。
 func (h *GeminiAPIHandler) GeminiGetHandler(c *gin.Context) {
 	var request struct {
 		Action string `uri:"action" binding:"required"`

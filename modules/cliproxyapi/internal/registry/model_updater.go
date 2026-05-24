@@ -1,3 +1,7 @@
+// registry - model_updater.go
+// 本文件实现了模型目录的后台更新机制。
+// 支持启动时立即刷新和定期（每 3 小时）从远程获取最新的模型定义。
+// 当检测到模型变更时，通过回调通知已注册的监听器。
 package registry
 
 import (
@@ -15,10 +19,13 @@ import (
 )
 
 const (
-	modelsFetchTimeout    = 30 * time.Second
+	// modelsFetchTimeout 是从远程获取模型目录的超时时间。
+	modelsFetchTimeout = 30 * time.Second
+	// modelsRefreshInterval 是定期刷新模型目录的时间间隔。
 	modelsRefreshInterval = 3 * time.Hour
 )
 
+// modelsURLs 是模型目录的远程 URL 列表，按优先级排序。
 var modelsURLs = []string{
 	"https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
 	"https://models.router-for.me/models.json",

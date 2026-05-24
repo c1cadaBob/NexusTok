@@ -1,3 +1,24 @@
+// Package controller - oauth.go
+// 该文件实现了 OAuth 认证的 API 控制器
+//
+// OAuth 功能允许用户通过第三方服务登录：
+// - GitHub
+// - Discord
+// - LinuxDo
+// - WeChat
+// - Telegram
+// - 自定义 OIDC 提供商
+//
+// 主要 API：
+// - GenerateOAuthCode：生成 OAuth 状态码（CSRF 防护）
+// - HandleOAuth：处理 OAuth 回调
+//
+// OAuth 流程：
+// 1. 前端调用 GenerateOAuthCode 获取状态码
+// 2. 前端重定向到第三方授权页面
+// 3. 用户授权后，第三方重定向回回调地址
+// 4. 后端处理回调，验证状态码，获取用户信息
+// 5. 创建或关联用户账户，建立会话
 package controller
 
 import (
@@ -14,19 +35,36 @@ import (
 	"gorm.io/gorm"
 )
 
-// providerParams returns map with Provider key for i18n templates
+// providerParams 构建 i18n 模板参数
+//
+// 参数：
+//   - name: OAuth 提供商名称
+//
+// 返回值：
+//   - map[string]any: 包含 Provider 键的参数映射
 func providerParams(name string) map[string]any {
 	return map[string]any{"Provider": name}
 }
 
-// GenerateOAuthCode generates a state code for OAuth CSRF protection
+// GenerateOAuthCode 生成 OAuth 状态码用于 CSRF 防护
+//
+// 生成随机状态码并存储到会话中
+// 前端在重定向到第三方授权页面时需要携带此状态码
+//
+// 查询参数：
+//   - aff: 推荐码（可选）
+//
+// 返回值：
+//   - data: 随机状态码
 func GenerateOAuthCode(c *gin.Context) {
 	session := sessions.Default(c)
 	state := common.GetRandomString(12)
+	// 保存推荐码到会话
 	affCode := c.Query("aff")
 	if affCode != "" {
 		session.Set("aff", affCode)
 	}
+	// 保存状态码到会话
 	session.Set("oauth_state", state)
 	err := session.Save()
 	if err != nil {
@@ -40,7 +78,16 @@ func GenerateOAuthCode(c *gin.Context) {
 	})
 }
 
-// HandleOAuth handles OAuth callback for all standard OAuth providers
+// HandleOAuth 处理 OAuth 回调
+//
+// 处理所有标准 OAuth 提供商的回调请求
+//
+// 路径参数：
+//   - provider: OAuth 提供商名称
+//
+// 查询参数：
+//   - code: 授权码
+//   - state: 状态码（用于 CSRF 防护）
 func HandleOAuth(c *gin.Context) {
 	providerName := c.Param("provider")
 	provider := oauth.GetProvider(providerName)

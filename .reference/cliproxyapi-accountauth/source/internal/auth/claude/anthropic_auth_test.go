@@ -1,3 +1,9 @@
+// claude - anthropic_auth_test.go
+// Claude OAuth 令牌刷新测试
+// 验证 Claude 提供商的令牌刷新重试机制：
+// - 429 (Too Many Requests) 响应后阻止立即重试
+// - 非可重试错误只尝试一次
+// - 代理配置的正确应用
 package claude
 
 import (
@@ -11,12 +17,18 @@ import (
 	"time"
 )
 
+// roundTripFunc 是用于测试的 HTTP Transport 实现，
+// 允许通过函数闭包模拟 HTTP 响应。
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip 实现 http.RoundTripper 接口。
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestRefreshTokensWithRetry_429BlocksImmediateReplay 验证：
+// 当令牌刷新返回 429 状态码时，后续的刷新请求会被阻止，
+// 直到 Retry-After 指定的时间过去。
 func TestRefreshTokensWithRetry_429BlocksImmediateReplay(t *testing.T) {
 	resetClaudeRefreshState()
 	defer resetClaudeRefreshState()

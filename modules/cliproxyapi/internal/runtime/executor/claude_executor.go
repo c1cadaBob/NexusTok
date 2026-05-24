@@ -1,3 +1,5 @@
+// Package executor - claude_executor.go
+// 实现 Claude 执行器，处理 Anthropic Claude API 的请求代理和认证。
 package executor
 
 import (

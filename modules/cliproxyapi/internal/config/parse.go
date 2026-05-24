@@ -1,3 +1,6 @@
+// Package config - parse.go
+// 提供从字节数据解析配置的功能，与 LoadConfigOptional 执行相同的内存规范化，
+// 但不会将更改持久化到磁盘。
 package config
 
 import (
@@ -9,8 +12,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseConfigBytes parses a YAML configuration payload into Config and applies the same
-// in-memory normalizations as LoadConfigOptional, without persisting any changes to disk.
+// ParseConfigBytes 将 YAML 配置负载解析为 Config 结构体，并执行与 LoadConfigOptional
+// 相同的内存规范化，但不会将任何更改持久化到磁盘。
+//
+// 参数:
+//   - data: YAML 格式的配置字节数据
+//
+// 返回值:
+//   - *Config: 解析后的配置结构体
+//   - error: 解析失败时返回错误
+//
+// ParseConfigBytes parses a YAML configuration payload into Config.
 func ParseConfigBytes(data []byte) (*Config, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("config payload is empty")

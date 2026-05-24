@@ -1,3 +1,11 @@
+// Package controller - playground.go
+// 该文件实现了 Playground（在线测试）功能的 API 控制器
+//
+// Playground 允许已登录用户在不使用 API Token 的情况下测试 AI 模型
+// 通过创建临时 Token 并复用 Relay 通道实现
+//
+// 主要 API：
+// - Playground：处理 Playground 请求，转发到 Relay
 package controller
 
 import (
@@ -12,6 +20,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Playground 处理 Playground 请求
+//
+// 流程：
+// 1. 验证用户已登录（不支持 access token）
+// 2. 生成 Relay 信息
+// 3. 写入用户上下文
+// 4. 创建临时 Token
+// 5. 转发到 Relay 处理
+//
+// 参数：
+//   - c: Gin 上下文
 func Playground(c *gin.Context) {
 	var newAPIError *types.NexusTokError
 

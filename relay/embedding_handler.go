@@ -1,3 +1,7 @@
+// Package relay - embedding_handler.go
+// 本文件实现了文本向量化（Embedding）请求的中继处理逻辑。
+// EmbeddingHelper 负责将客户端的 Embedding 请求转发到上游 AI 服务，
+// 并完成请求转换、参数覆盖、响应解析和计费结算等完整流程。
 package relay
 
 import (
@@ -17,6 +21,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// EmbeddingHelper 是 Embedding（文本向量化）请求的中继处理函数。
+// 处理流程：
+//  1. 初始化渠道元数据（InitChannelMeta）。
+//  2. 类型断言并深拷贝请求为 *dto.EmbeddingRequest。
+//  3. 执行模型映射（ModelMappedHelper）。
+//  4. 获取并初始化对应 API 类型的适配器（Adaptor）。
+//  5. 通过适配器将请求转换为上游格式（ConvertEmbeddingRequest）。
+//  6. 应用参数覆盖（ParamOverride）。
+//  7. 通过适配器发送请求并解析响应（DoRequest / DoResponse）。
+//  8. 调用 PostTextConsumeQuota 进行文本计费结算。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息，包含用户、令牌、渠道等元数据
+//
+// 返回值：
+//   - newAPIError: 处理过程中的错误，成功时为 nil
 func EmbeddingHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NexusTokError) {
 	info.InitChannelMeta(c)
 

@@ -1,3 +1,5 @@
+// openai - openai_responses_handlers_stream_error_test.go
+// 测试 OpenAI Responses 流式传输中的终端错误处理，验证错误块使用 Responses 协议格式而非 HTTP 错误格式
 package openai
 
 import (
@@ -13,6 +15,7 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// TestForwardResponsesStreamTerminalErrorUsesResponsesErrorChunk 测试流式终端错误使用 Responses 错误块格式
 func TestForwardResponsesStreamTerminalErrorUsesResponsesErrorChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	base := handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)

@@ -1,3 +1,16 @@
+// Package controller - channel_account.go
+// 该文件实现了渠道账号管理的 API 控制器
+//
+// 渠道账号（Channel Account）是多密钥渠道中的单个账号
+// 每个账号有独立的 API 密钥、配置和状态
+//
+// 主要 API：
+// - 账号列表：查询渠道下的所有账号
+// - 创建账号：添加新的 API 密钥
+// - 批量创建：批量导入多个 API 密钥
+// - 更新账号：修改账号配置
+// - 删除账号：移除账号
+// - 状态管理：启用/禁用账号、清除冷却时间
 package controller
 
 import (
@@ -12,41 +25,44 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// channelAccountUpsertRequest 渠道账号创建/更新请求
 type channelAccountUpsertRequest struct {
-	Name              string  `json:"name"`
-	Key               string  `json:"key"`
-	Status            *int    `json:"status"`
-	Models            string  `json:"models"`
-	Group             string  `json:"group"`
-	Priority          *int64  `json:"priority"`
-	Weight            *int    `json:"weight"`
-	BaseURL           *string `json:"base_url"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	Other             string  `json:"other"`
-	Setting           *string `json:"setting"`
-	OtherSettings     string  `json:"settings"`
-	ModelMapping      *string `json:"model_mapping"`
-	ParamOverride     *string `json:"param_override"`
-	HeaderOverride    *string `json:"header_override"`
-	StatusCodeMapping *string `json:"status_code_mapping"`
-	MaxConcurrency    *int    `json:"max_concurrency"`
+	Name               string  `json:"name"`                 // 账号名称
+	Key                string  `json:"key"`                  // API 密钥
+	Status             *int    `json:"status"`               // 状态
+	Models             string  `json:"models"`               // 支持的模型
+	Group              string  `json:"group"`                // 用户组
+	Priority           *int64  `json:"priority"`             // 优先级
+	Weight             *int    `json:"weight"`               // 权重
+	BaseURL            *string `json:"base_url"`             // 基础 URL
+	OpenAIOrganization *string `json:"openai_organization"`  // OpenAI 组织 ID
+	Other              string  `json:"other"`                // 其他配置
+	Setting            *string `json:"setting"`              // 设置
+	OtherSettings      string  `json:"settings"`             // 其他设置
+	ModelMapping       *string `json:"model_mapping"`        // 模型映射
+	ParamOverride      *string `json:"param_override"`       // 参数覆盖
+	HeaderOverride     *string `json:"header_override"`      // 请求头覆盖
+	StatusCodeMapping  *string `json:"status_code_mapping"`  // 状态码映射
+	MaxConcurrency     *int    `json:"max_concurrency"`      // 最大并发数
 }
 
+// channelAccountBatchRequest 渠道账号批量创建请求
 type channelAccountBatchRequest struct {
-	Keys           string `json:"keys"`
-	NamePrefix     string `json:"name_prefix"`
-	Models         string `json:"models"`
-	Group          string `json:"group"`
-	Priority       int64  `json:"priority"`
-	Weight         int    `json:"weight"`
-	Status         int    `json:"status"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	Keys           string `json:"keys"`            // 批量密钥（每行一个）
+	NamePrefix     string `json:"name_prefix"`     // 名称前缀
+	Models         string `json:"models"`          // 支持的模型
+	Group          string `json:"group"`           // 用户组
+	Priority       int64  `json:"priority"`        // 优先级
+	Weight         int    `json:"weight"`          // 权重
+	Status         int    `json:"status"`          // 状态
+	MaxConcurrency int    `json:"max_concurrency"` // 最大并发数
 }
 
+// channelAccountStatusRequest 渠道账号状态更新请求
 type channelAccountStatusRequest struct {
-	Status        int    `json:"status"`
-	Reason        string `json:"reason"`
-	ClearCooldown bool   `json:"clear_cooldown"`
+	Status        int    `json:"status"`         // 新状态
+	Reason        string `json:"reason"`         // 状态变更原因
+	ClearCooldown bool   `json:"clear_cooldown"` // 是否清除冷却时间
 }
 
 func ListChannelAccounts(c *gin.Context) {

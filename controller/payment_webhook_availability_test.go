@@ -1,3 +1,12 @@
+// Package controller - payment_webhook_availability_test.go
+// 该文件包含支付 Webhook 可用性检查的单元测试
+//
+// 测试内容包括：
+// - Stripe Webhook 启用条件检查
+// - Creem Webhook 启用条件检查
+// - Waffo Webhook 启用条件检查
+// - Waffo Pancake Webhook 启用条件检查
+// - EPay Webhook 启用条件检查
 package controller
 
 import (

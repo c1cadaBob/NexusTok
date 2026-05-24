@@ -1,3 +1,25 @@
+// Package model - log.go
+// 该文件定义了操作日志（Log）数据模型及相关操作
+//
+// 主要结构体：
+// - Log：操作日志记录
+// - RecordConsumeLogParams：消费日志记录参数
+// - RecordTaskBillingLogParams：任务计费日志记录参数
+// - Stat：统计信息（配额、RPM、TPM）
+//
+// 日志类型常量：
+// - LogTypeTopup：充值日志
+// - LogTypeConsume：消费日志
+// - LogTypeManage：管理操作日志
+// - LogTypeSystem：系统日志
+// - LogTypeError：错误日志
+// - LogTypeRefund：退款日志
+//
+// 核心功能：
+// - 日志记录：支持多种类型的日志记录
+// - 日志查询：支持按用户、模型、时间范围等条件查询
+// - 统计分析：配额汇总、RPM（每分钟请求数）、TPM（每分钟 Token 数）
+// - 日志清理：支持按时间戳删除旧日志
 package model
 
 import (
@@ -51,6 +73,11 @@ const (
 	LogTypeRefund  = 6
 )
 
+// formatUserLogs 格式化用户日志（移除管理员敏感字段，设置序号）
+//
+// 参数：
+//   - logs: 日志列表
+//   - startIdx: 起始序号
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
@@ -67,12 +94,27 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	}
 }
 
+// GetLogByTokenId 根据 Token ID 获取最近的日志记录
+//
+// 参数：
+//   - tokenId: Token ID
+//
+// 返回值：
+//   - logs: 日志列表
+//   - err: 查询失败时返回错误
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
 
+// RecordLog 记录操作日志
+// 消费日志需要开启 LogConsumeEnabled 配置才会记录
+//
+// 参数：
+//   - userId: 用户 ID
+//   - logType: 日志类型（LogTypeTopup、LogTypeConsume 等）
+//   - content: 日志内容
 func RecordLog(userId int, logType int, content string) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
@@ -91,7 +133,13 @@ func RecordLog(userId int, logType int, content string) {
 	}
 }
 
-// RecordLogWithAdminInfo 记录操作日志，并将管理员相关信息存入 Other.admin_info，
+// RecordLogWithAdminInfo 记录操作日志，并将管理员相关信息存入 Other.admin_info
+//
+// 参数：
+//   - userId: 用户 ID
+//   - logType: 日志类型
+//   - content: 日志内容
+//   - adminInfo: 管理员信息（如服务器 IP、节点名称等）
 func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo map[string]interface{}) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
@@ -115,6 +163,15 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 	}
 }
 
+// RecordTopupLog 记录充值日志
+// 包含服务器 IP、节点名称、调用者 IP、支付方式等管理员信息
+//
+// 参数：
+//   - userId: 用户 ID
+//   - content: 日志内容
+//   - callerIp: 调用者 IP 地址
+//   - paymentMethod: 支付方式
+//   - callbackPaymentMethod: 回调支付方式
 func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
 	username, _ := GetUsernameById(userId, false)
 	adminInfo := map[string]interface{}{
@@ -143,6 +200,21 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
+// RecordErrorLog 记录错误日志
+// 包含请求上下文、渠道信息、模型信息等详细信息
+//
+// 参数：
+//   - c: Gin 上下文
+//   - userId: 用户 ID
+//   - channelId: 渠道 ID
+//   - modelName: 模型名称
+//   - tokenName: Token 名称
+//   - content: 错误内容
+//   - tokenId: Token ID
+//   - useTimeSeconds: 使用时间（秒）
+//   - isStream: 是否为流式请求
+//   - group: 用户组
+//   - other: 其他信息
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, content))

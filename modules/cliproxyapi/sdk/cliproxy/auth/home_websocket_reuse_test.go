@@ -1,3 +1,6 @@
+// auth - home_websocket_reuse_test.go
+// 该文件包含 Home WebSocket 认证复用的单元测试，验证会话亲和性绑定的凭据在
+// 无需 Home 调度时被正确复用、会话隔离、以及清理行为。
 package auth
 
 import (
@@ -10,6 +13,8 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestPickNextViaHomeReusesPinnedWebsocketAuthWithoutHomeDispatch 测试当 Home 启用时，
+// 会话亲和性绑定的 WebSocket 认证凭据在无需 Home 调度时被正确复用。
 func TestPickNextViaHomeReusesPinnedWebsocketAuthWithoutHomeDispatch(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.SetConfig(&internalconfig.Config{Home: internalconfig.HomeConfig{Enabled: true}})

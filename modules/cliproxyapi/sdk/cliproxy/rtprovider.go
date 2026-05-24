@@ -1,3 +1,8 @@
+// cliproxy - rtprovider.go
+// 该文件实现了默认的 HTTP RoundTripper 提供者。
+// 根据 Auth 的 ProxyURL 配置为每个认证条目创建独立的 HTTP transport，
+// 并按代理 URL 字符串缓存 transport 实例以避免重复创建。
+
 package cliproxy
 
 import (
@@ -10,18 +15,21 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// defaultRoundTripperProvider returns a per-auth HTTP RoundTripper based on
-// the Auth.ProxyURL value. It caches transports per proxy URL string.
+// defaultRoundTripperProvider 根据 Auth.ProxyURL 值为每个认证条目提供独立的 HTTP RoundTripper。
+// 按代理 URL 字符串缓存 transport 实例。
 type defaultRoundTripperProvider struct {
 	mu    sync.RWMutex
 	cache map[string]http.RoundTripper
 }
 
+// newDefaultRoundTripperProvider 创建默认的 RoundTripper 提供者实例。
 func newDefaultRoundTripperProvider() *defaultRoundTripperProvider {
 	return &defaultRoundTripperProvider{cache: make(map[string]http.RoundTripper)}
 }
 
-// RoundTripperFor implements coreauth.RoundTripperProvider.
+// RoundTripperFor 实现 coreauth.RoundTripperProvider 接口。
+// 根据 auth 的 ProxyURL 返回配置好代理的 HTTP transport。
+// "direct" 模式会绕过所有代理，空值返回 nil（使用默认 transport）。
 func (p *defaultRoundTripperProvider) RoundTripperFor(auth *coreauth.Auth) http.RoundTripper {
 	if auth == nil {
 		return nil

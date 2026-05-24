@@ -1,5 +1,6 @@
-// Package vertex provides token storage for Google Vertex AI Gemini via service account credentials.
-// It serialises service account JSON into an auth file that is consumed by the runtime executor.
+// vertex - vertex_credentials.go
+// 包 vertex 提供通过服务账户凭证访问 Google Vertex AI Gemini 的令牌存储功能。
+// 将服务账户 JSON 序列化为运行时执行器使用的认证文件。
 package vertex
 
 import (
@@ -12,32 +13,38 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// VertexCredentialStorage stores the service account JSON for Vertex AI access.
-// The content is persisted verbatim under the "service_account" key, together with
-// helper fields for project, location and email to improve logging and discovery.
+// VertexCredentialStorage 存储用于 Vertex AI 访问的服务账户 JSON。
+// 内容在 "service_account" 键下原样持久化，同时包含项目、位置和电子邮件等辅助字段，
+// 以改善日志记录和发现。
 type VertexCredentialStorage struct {
-	// ServiceAccount holds the parsed service account JSON content.
+	// ServiceAccount 保存解析后的服务账户 JSON 内容
 	ServiceAccount map[string]any `json:"service_account"`
 
-	// ProjectID is derived from the service account JSON (project_id).
+	// ProjectID 从服务账户 JSON 中派生（project_id）
 	ProjectID string `json:"project_id"`
 
-	// Email is the client_email from the service account JSON.
+	// Email 是服务账户 JSON 中的 client_email
 	Email string `json:"email"`
 
-	// Location optionally sets a default region (e.g., us-central1) for Vertex endpoints.
+	// Location 可选地为 Vertex 端点设置默认区域（如 us-central1）
 	Location string `json:"location,omitempty"`
 
-	// Type is the provider identifier stored alongside credentials. Always "vertex".
+	// Type 是与凭证一起存储的提供商标识符，始终为 "vertex"
 	Type string `json:"type"`
 
-	// Prefix optionally namespaces models for this credential (e.g., "teamA").
-	// This results in model names like "teamA/gemini-2.0-flash".
+	// Prefix 可选地为此凭证的模型命名空间化（如 "teamA"）。
+	// 这将导致模型名称如 "teamA/gemini-2.0-flash"。
 	Prefix string `json:"prefix,omitempty"`
 }
 
-// SaveTokenToFile writes the credential payload to the given file path in JSON format.
-// It ensures the parent directory exists and logs the operation for transparency.
+// SaveTokenToFile 以 JSON 格式将凭证有效负载写入给定的文件路径。
+// 确保父目录存在，并记录操作以保持透明度。
+//
+// 参数：
+//   - authFilePath: 凭证文件应保存的完整路径
+//
+// 返回：
+//   - error: 操作失败时返回的错误，成功时返回 nil
 func (s *VertexCredentialStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	if s == nil {

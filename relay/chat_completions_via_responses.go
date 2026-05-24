@@ -1,3 +1,9 @@
+// Package relay - chat_completions_via_responses.go
+// 本文件实现了通过 OpenAI Responses API 路径转发 Chat Completions 请求的功能。
+// 当全局配置开启 "通过 Responses API 转发 Chat Completions" 且渠道不使用 passthrough 模式时，
+// 系统会将 Chat Completions 请求转换为 OpenAI Responses API 格式发送给上游，
+// 再将 Responses API 的响应转换回 Chat Completions 格式返回给客户端。
+// 这种方式可以让某些仅支持 Responses API 的上游渠道同时服务 Chat Completions 请求。
 package relay
 
 import (
@@ -19,7 +25,81 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// applySystemPromptIfNeeded 根据渠道设置的系统提示(SystemPrompt)对请求进行预处理。
+// 处理逻辑如下：
+//  1. 若渠道未配置 SystemPrompt，则不做任何操作。
+//  2. 若请求中不包含系统角色消息，则在消息列表头部插入渠道的系统提示。
+//  3. 若请求中已包含系统角色消息且渠道允许覆盖(SystemPromptOverride)，
+//     则将渠道系统提示拼接到现有系统消息前面。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息，包含渠道设置等元数据
+//   - request: 原始的 OpenAI Chat Completions 请求
 func applySystemPromptIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if info == nil || request == nil {
+		return
+	}
+	if info.ChannelSetting.SystemPrompt == "" {
+		return
+	}
+
+	systemRole := request.GetSystemRoleName()
+
+	containSystemPrompt := false
+	for _, message := range request.Messages {
+		if message.Role == systemRole {
+			containSystemPrompt = true
+			break
+		}
+	}
+	if !containSystemPrompt {
+		systemMessage := dto.Message{
+			Role:    systemRole,
+			Content: info.ChannelSetting.SystemPrompt,
+		}
+		request.Messages = append([]dto.Message{systemMessage}, request.Messages...)
+		return
+	}
+
+	if !info.ChannelSetting.SystemPromptOverride {
+		return
+	}
+
+	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+	for i, message := range request.Messages {
+		if message.Role != systemRole {
+			continue
+		}
+		if message.IsStringContent() {
+			request.Messages[i].SetStringContent(info.ChannelSetting.SystemPrompt + "\n" + message.StringContent())
+			return
+		}
+		contents := message.ParseContent()
+		contents = append([]dto.MediaContent{
+			{
+				Type: dto.ContentTypeText,
+				Text: info.ChannelSetting.SystemPrompt,
+			},
+		}, contents...)
+		request.Messages[i].Content = contents
+		return
+	}
+}
+
+// chatCompletionsViaResponses 将 Chat Completions 请求通过 OpenAI Responses API 转发。
+// 该函数完成以下步骤：
+//  1. 序列化原始请求并移除禁用字段。
+//  2. 应用参数覆盖(ParamOverride)。
+//  3. 将请求转换为 OpenAI Responses API 格式。
+//  4. 临时将 RelayMode 切换为 Responses 模式，请求完成后恢复。
+//  5. 通过适配器发送请求并解析响应。
+//  6. 根据是否为流式响应分别调用对应的处理函数。
+//
+// 返回值：
+//   - *dto.Usage: 使用量统计
+//   - *types.NexusTokError: 错误信息（成功时为 nil）
+func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NexusTokError) {
 	if info == nil || request == nil {
 		return
 	}

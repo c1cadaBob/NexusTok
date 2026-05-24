@@ -1,4 +1,5 @@
-// Package thinking provides unified thinking configuration processing logic.
+// 包 thinking - errors.go
+// 该文件定义了思考配置处理中的错误类型和错误码。
 package thinking
 
 import "net/http"

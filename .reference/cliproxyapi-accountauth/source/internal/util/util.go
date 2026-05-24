@@ -1,6 +1,6 @@
-// Package util provides utility functions for the CLI Proxy API server.
-// It includes helper functions for logging configuration, file system operations,
-// and other common utilities used throughout the application.
+// 包 util - util.go
+// 该文件提供了通用工具函数，包括函数名清理、日志级别配置、
+// 认证目录解析、认证文件计数和可写路径检测等。
 package util
 
 import (
@@ -15,6 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// functionNameSanitizer 用于清理函数名中不符合 Gemini/Vertex AI 要求的字符。
 var functionNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_.:-]`)
 
 // SanitizeFunctionName ensures a function name matches the requirements for Gemini/Vertex AI.

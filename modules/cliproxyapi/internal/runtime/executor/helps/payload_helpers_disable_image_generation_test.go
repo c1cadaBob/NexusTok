@@ -1,3 +1,13 @@
+// helps - payload_helpers_disable_image_generation_test.go
+// 载荷配置中禁用图像生成功能的单元测试。
+// 测试以下功能：
+// - 全局禁用图像生成时移除 image_generation 工具和对应的 tool_choice
+// - 嵌套在 request 根路径下的工具移除
+// - 仅禁用聊天中的图像生成时，图片端点保留工具
+// - 载荷覆盖规则可以恢复被禁用的图像生成
+// - 请求头门控：通配符匹配和不匹配的处理
+// - FromProtocol 门控：根据源协议选择规则
+// - 载荷条件（match/notMatch/exist/notExist）的精确匹配和跳过
 package helps
 
 import (
@@ -8,6 +18,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntry 测试全局禁用图像生成时：
+// image_generation 类型的工具被移除，function 类型的工具被保留
 func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntry(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
@@ -29,6 +41,7 @@ func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntry(t *
 	}
 }
 
+// TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntryWithRoot 测试嵌套在 request 根路径下的工具移除
 func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntryWithRoot(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
@@ -50,6 +63,8 @@ func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolsEntryWith
 	}
 }
 
+// TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByType 测试当 tool_choice
+// 的 type 为 image_generation 时被移除
 func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByType(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
@@ -63,6 +78,8 @@ func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByTy
 	}
 }
 
+// TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByNameWithRoot 测试嵌套结构中
+// tool_choice 的 name 为 image_generation 时被移除
 func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByNameWithRoot(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
@@ -76,6 +93,8 @@ func TestApplyPayloadConfigWithRoot_DisableImageGeneration_RemovesToolChoiceByNa
 	}
 }
 
+// TestApplyPayloadConfigWithRoot_DisableImageGenerationChat_KeepsImageGenerationOnImagesEndpoints 测试仅禁用聊天中的图像生成时，
+// 图片端点（/v1/images/generations）保留 image_generation 工具和 tool_choice
 func TestApplyPayloadConfigWithRoot_DisableImageGenerationChat_KeepsImageGenerationOnImagesEndpoints(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationChat},
@@ -97,6 +116,8 @@ func TestApplyPayloadConfigWithRoot_DisableImageGenerationChat_KeepsImageGenerat
 	}
 }
 
+// TestApplyPayloadConfigWithRoot_DisableImageGeneration_PayloadOverrideCanRestoreImageGeneration 测试载荷覆盖规则
+// 可以恢复被全局禁用的图像生成工具
 func TestApplyPayloadConfigWithRoot_DisableImageGeneration_PayloadOverrideCanRestoreImageGeneration(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
@@ -134,6 +155,8 @@ func TestApplyPayloadConfigWithRoot_DisableImageGeneration_PayloadOverrideCanRes
 	}
 }
 
+// TestApplyPayloadConfigWithRequest_HeaderGateRequiresWildcardMatch 测试请求头门控：
+// 头值必须匹配通配符模式（如 tenant-*-region-*）才能应用规则
 func TestApplyPayloadConfigWithRequest_HeaderGateRequiresWildcardMatch(t *testing.T) {
 	cfg := &config.Config{
 		Payload: config.PayloadConfig{
@@ -171,6 +194,8 @@ func TestApplyPayloadConfigWithRequest_HeaderGateRequiresWildcardMatch(t *testin
 	}
 }
 
+// TestApplyPayloadConfigWithRequest_FromProtocolGateUsesSourceProtocol 测试 FromProtocol 门控：
+// 根据源协议（openai-response vs openai）选择匹配的规则
 func TestApplyPayloadConfigWithRequest_FromProtocolGateUsesSourceProtocol(t *testing.T) {
 	cfg := &config.Config{
 		Payload: config.PayloadConfig{
@@ -207,6 +232,8 @@ func TestApplyPayloadConfigWithRequest_FromProtocolGateUsesSourceProtocol(t *tes
 	}
 }
 
+// TestApplyPayloadConfigWithRequest_PayloadConditionsNarrowRule 测试载荷条件精确匹配：
+// match、notMatch、exist、notExist 条件全部满足时规则被应用
 func TestApplyPayloadConfigWithRequest_PayloadConditionsNarrowRule(t *testing.T) {
 	cfg := &config.Config{
 		Payload: config.PayloadConfig{
@@ -246,6 +273,8 @@ func TestApplyPayloadConfigWithRequest_PayloadConditionsNarrowRule(t *testing.T)
 	}
 }
 
+// TestApplyPayloadConfigWithRequest_PayloadConditionsSkipRule 测试载荷条件不满足时规则被跳过：
+// match 不匹配、notMatch 匹配、exist 缺失、exist 为 null、notExist 存在
 func TestApplyPayloadConfigWithRequest_PayloadConditionsSkipRule(t *testing.T) {
 	testCases := []struct {
 		name  string

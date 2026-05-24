@@ -1,3 +1,6 @@
+// auth - conductor_usage_test.go
+// 该文件包含上下文中请求模型别名和推理努力级别的单元测试，
+// 验证 contextWithRequestedModelAlias 函数正确传递元数据。
 package auth
 
 import (
@@ -8,6 +11,8 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// TestContextWithRequestedModelAliasIncludesReasoningEffort 测试上下文传递时
+// 请求模型别名和推理努力级别是否被正确包含。
 func TestContextWithRequestedModelAliasIncludesReasoningEffort(t *testing.T) {
 	ctx := contextWithRequestedModelAlias(context.Background(), cliproxyexecutor.Options{
 		Metadata: map[string]any{

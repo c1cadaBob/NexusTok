@@ -1,3 +1,5 @@
+// Package tui - loghook.go
+// 实现日志钩子，用于捕获日志条目并发送到通道以在 TUI 中显示。
 package tui
 
 import (
@@ -8,6 +10,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// LogHook 是一个 logrus 钩子，捕获日志条目并发送到通道。
+// 用于将日志输出重定向到 TUI 的日志查看标签页。
+//
 // LogHook is a logrus hook that captures log entries and sends them to a channel.
 type LogHook struct {
 	ch        chan string

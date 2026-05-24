@@ -1,3 +1,16 @@
+// Package i18n - keys.go
+// 该文件定义了后端国际化消息键常量
+//
+// 消息键分类：
+// - 通用错误消息（common.*）
+// - OAuth 相关消息（oauth.*）
+// - 用户相关消息（user.*）
+// - 渠道相关消息（channel.*）
+// - Token 相关消息（token.*）
+//
+// 使用方式：
+// - 在代码中使用常量而非硬编码字符串
+// - 通过 i18n.T(ctx, MsgKey) 获取翻译后的消息
 package i18n
 
 // Message keys for i18n translations

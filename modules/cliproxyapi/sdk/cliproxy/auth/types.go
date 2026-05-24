@@ -1,3 +1,7 @@
+// auth - types.go
+// 该文件定义了认证管理系统的核心类型，包括 Auth 凭据结构体、PostAuthHook 回调、
+// RequestInfo 请求信息、QuotaState 配额状态、ModelState 模型状态等。
+// Auth 结构体封装了凭据的完整生命周期状态，包括元数据、配额、错误、刷新时间等。
 package auth
 
 import (
@@ -16,18 +20,17 @@ import (
 	baseauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth"
 )
 
-// PostAuthHook defines a function that is called after an Auth record is created
-// but before it is persisted to storage. This allows for modification of the
-// Auth record (e.g., injecting metadata) based on external context.
+// PostAuthHook 定义在 Auth 记录创建后、持久化前调用的回调函数，
+// 允许根据外部上下文修改 Auth 记录（如注入元数据）。
 type PostAuthHook func(context.Context, *Auth) error
 
-// RequestInfo holds information extracted from the HTTP request.
-// It is injected into the context passed to PostAuthHook.
+// RequestInfo 保存从 HTTP 请求中提取的信息，注入到 PostAuthHook 的上下文中。
 type RequestInfo struct {
-	Query   url.Values
-	Headers http.Header
+	Query   url.Values  // URL 查询参数
+	Headers http.Header // HTTP 请求头
 }
 
+// requestInfoKey 是上下文中 RequestInfo 的键类型。
 type requestInfoKey struct{}
 
 // WithRequestInfo returns a new context with the given RequestInfo attached.
@@ -43,61 +46,61 @@ func GetRequestInfo(ctx context.Context) *RequestInfo {
 	return nil
 }
 
-// Auth encapsulates the runtime state and metadata associated with a single credential.
+// Auth 封装了单个凭据的运行时状态和元数据。
 type Auth struct {
-	// ID uniquely identifies the auth record across restarts.
+	// ID 是跨重启唯一标识认证记录的 ID。
 	ID string `json:"id"`
-	// Index is a stable runtime identifier derived from auth metadata (not persisted).
+	// Index 是从认证元数据派生的稳定运行时标识符（不持久化）。
 	Index string `json:"-"`
-	// Provider is the upstream provider key (e.g. "gemini", "claude").
+	// Provider 是上游提供商键（如 "gemini"、"claude"）。
 	Provider string `json:"provider"`
-	// Prefix optionally namespaces models for routing (e.g., "teamA/gemini-3-pro-preview").
+	// Prefix 可选地为路由模型添加命名空间前缀（如 "teamA/gemini-3-pro-preview"）。
 	Prefix string `json:"prefix,omitempty"`
-	// FileName stores the relative or absolute path of the backing auth file.
+	// FileName 存储底层认证文件的相对或绝对路径。
 	FileName string `json:"-"`
-	// Storage holds the token persistence implementation used during login flows.
+	// Storage 持有登录流程中使用的令牌持久化实现。
 	Storage baseauth.TokenStorage `json:"-"`
-	// Label is an optional human readable label for logging.
+	// Label 是用于日志的可选人类可读标签。
 	Label string `json:"label,omitempty"`
-	// Status is the lifecycle status managed by the AuthManager.
+	// Status 是由 AuthManager 管理的生命周期状态。
 	Status Status `json:"status"`
-	// StatusMessage holds a short description for the current status.
+	// StatusMessage 持有当前状态的简短描述。
 	StatusMessage string `json:"status_message,omitempty"`
-	// Disabled indicates the auth is intentionally disabled by operator.
+	// Disabled 表示认证被运营者有意禁用。
 	Disabled bool `json:"disabled"`
-	// Unavailable flags transient provider unavailability (e.g. quota exceeded).
+	// Unavailable 标记瞬时的提供商不可用状态（如配额耗尽）。
 	Unavailable bool `json:"unavailable"`
-	// ProxyURL overrides the global proxy setting for this auth if provided.
+	// ProxyURL 若提供则覆盖全局代理设置。
 	ProxyURL string `json:"proxy_url,omitempty"`
-	// Attributes stores provider specific metadata needed by executors (immutable configuration).
+	// Attributes 存储执行器所需的提供商特定元数据（不可变配置）。
 	Attributes map[string]string `json:"attributes,omitempty"`
-	// Metadata stores runtime mutable provider state (e.g. tokens, cookies).
+	// Metadata 存储运行时可变的提供商状态（如令牌、Cookie）。
 	Metadata map[string]any `json:"metadata,omitempty"`
-	// Quota captures recent quota information for load balancers.
+	// Quota 捕获最近的配额信息用于负载均衡。
 	Quota QuotaState `json:"quota"`
-	// LastError stores the last failure encountered while executing or refreshing.
+	// LastError 存储执行或刷新时遇到的最后一次失败。
 	LastError *Error `json:"last_error,omitempty"`
-	// CreatedAt is the creation timestamp in UTC.
+	// CreatedAt 是 UTC 创建时间戳。
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt is the last modification timestamp in UTC.
+	// UpdatedAt 是 UTC 最后修改时间戳。
 	UpdatedAt time.Time `json:"updated_at"`
-	// LastRefreshedAt records the last successful refresh time in UTC.
+	// LastRefreshedAt 记录最后一次成功刷新的 UTC 时间。
 	LastRefreshedAt time.Time `json:"last_refreshed_at"`
-	// NextRefreshAfter is the earliest time a refresh should retrigger.
+	// NextRefreshAfter 是下次刷新应触发的最早时间。
 	NextRefreshAfter time.Time `json:"next_refresh_after"`
-	// NextRetryAfter is the earliest time a retry should retrigger.
+	// NextRetryAfter 是下次重试应触发的最早时间。
 	NextRetryAfter time.Time `json:"next_retry_after"`
-	// ModelStates tracks per-model runtime availability data.
+	// ModelStates 跟踪每个模型的运行时可用性数据。
 	ModelStates map[string]*ModelState `json:"model_states,omitempty"`
 
-	// Runtime carries non-serialisable data used during execution (in-memory only).
+	// Runtime 携带执行期间使用的不可序列化数据（仅内存中）。
 	Runtime any `json:"-"`
 
-	Success int64 `json:"-"`
-	Failed  int64 `json:"-"`
+	Success int64 `json:"-"` // 成功执行次数
+	Failed  int64 `json:"-"` // 失败执行次数
 
-	recentRequests recentRequestRing `json:"-"`
-	indexAssigned  bool              `json:"-"`
+	recentRequests recentRequestRing `json:"-"` // 最近请求的环形缓冲区
+	indexAssigned  bool              `json:"-"` // 索引是否已分配
 }
 
 const (

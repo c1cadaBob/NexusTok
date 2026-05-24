@@ -1,3 +1,24 @@
+// Package middleware - model-rate-limit.go
+// 该文件实现了模型请求频率限制中间件
+//
+// 与全局限流不同，模型限流是基于用户 ID 的细粒度限流
+// 支持两种限制维度：
+// 1. 总请求数限制：限制时间窗口内的总请求次数（包括失败请求）
+// 2. 成功请求数限制：限制时间窗口内的成功请求次数
+//
+// 限流算法：
+// - 总请求数：使用令牌桶算法（Token Bucket）实现
+// - 成功请求数：使用滑动窗口算法实现
+//
+// 存储后端：
+// - Redis: 使用 go-redis 的 List 和令牌桶实现
+// - 内存: 使用 InMemoryRateLimiter 实现
+//
+// 配置项：
+// - MODEL_REQUEST_RATE_LIMIT_ENABLED: 是否启用模型请求限流
+// - MODEL_REQUEST_RATE_LIMIT_COUNT: 总请求数限制
+// - MODEL_REQUEST_RATE_LIMIT_SUCCESS_COUNT: 成功请求数限制
+// - MODEL_REQUEST_RATE_LIMIT_DURATION_MINUTES: 时间窗口（分钟）
 package middleware
 
 import (
@@ -7,21 +28,34 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/common/limiter"
-	"github.com/c1cada/NexusTok/constant"
-	"github.com/c1cada/NexusTok/setting"
+	"github.com/c1cada/NexusTok/common"           // 公共工具包
+	"github.com/c1cada/NexusTok/common/limiter"    // 令牌桶限流器
+	"github.com/c1cada/NexusTok/constant"          // 常量定义
+	"github.com/c1cada/NexusTok/setting"           // 配置管理
 
-	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/gin-gonic/gin"   // Gin 框架
+	"github.com/go-redis/redis/v8" // Redis 客户端
 )
 
+// 限流标识符常量
 const (
-	ModelRequestRateLimitCountMark        = "MRRL"
-	ModelRequestRateLimitSuccessCountMark = "MRRLS"
+	ModelRequestRateLimitCountMark        = "MRRL"  // 总请求数限流标识
+	ModelRequestRateLimitSuccessCountMark = "MRRLS" // 成功请求数限流标识
 )
 
-// 检查Redis中的请求限制
+// checkRedisRateLimit 检查 Redis 中的请求限制
+// 使用滑动窗口算法检查是否超过限流阈值
+//
+// 参数：
+//   - ctx: 上下文
+//   - rdb: Redis 客户端
+//   - key: Redis 键名
+//   - maxCount: 最大请求数（0 表示不限制）
+//   - duration: 时间窗口大小（秒）
+//
+// 返回值：
+//   - bool: 是否允许请求
+//   - error: 检查错误
 func checkRedisRateLimit(ctx context.Context, rdb *redis.Client, key string, maxCount int, duration int64) (bool, error) {
 	// 如果maxCount为0，表示不限制
 	if maxCount == 0 {
@@ -61,7 +95,14 @@ func checkRedisRateLimit(ctx context.Context, rdb *redis.Client, key string, max
 	return true, nil
 }
 
-// 记录Redis请求
+// recordRedisRequest 记录 Redis 请求
+// 将当前时间戳推入 List 头部，并截断 List 到最大长度
+//
+// 参数：
+//   - ctx: 上下文
+//   - rdb: Redis 客户端
+//   - key: Redis 键名
+//   - maxCount: 最大请求数（用于截断 List）
 func recordRedisRequest(ctx context.Context, rdb *redis.Client, key string, maxCount int) {
 	// 如果maxCount为0，不记录请求
 	if maxCount == 0 {
@@ -74,7 +115,24 @@ func recordRedisRequest(ctx context.Context, rdb *redis.Client, key string, maxC
 	rdb.Expire(ctx, key, time.Duration(setting.ModelRequestRateLimitDurationMinutes)*time.Minute)
 }
 
-// Redis限流处理器
+// redisRateLimitHandler Redis 限流处理器
+// 使用 Redis 实现双维度限流：
+// 1. 成功请求数限制（滑动窗口）
+// 2. 总请求数限制（令牌桶）
+//
+// 处理流程：
+// 1. 检查成功请求数限制
+// 2. 检查总请求数限制（当 totalMaxCount > 0 时）
+// 3. 处理请求
+// 4. 如果请求成功，记录成功请求
+//
+// 参数：
+//   - duration: 时间窗口大小（秒）
+//   - totalMaxCount: 总请求数限制（0 表示不限制）
+//   - successMaxCount: 成功请求数限制
+//
+// 返回值：
+//   - gin.HandlerFunc: 限流中间件函数
 func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userId := strconv.Itoa(c.GetInt("id"))
@@ -128,7 +186,22 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 	}
 }
 
-// 内存限流处理器
+// memoryRateLimitHandler 内存限流处理器
+// 使用内存计数器实现限流，适用于单机部署
+//
+// 处理流程：
+// 1. 检查总请求数限制（当 totalMaxCount > 0 时）
+// 2. 检查成功请求数限制
+// 3. 处理请求
+// 4. 如果请求成功，记录成功请求
+//
+// 参数：
+//   - duration: 时间窗口大小（秒）
+//   - totalMaxCount: 总请求数限制（0 表示不限制）
+//   - successMaxCount: 成功请求数限制
+//
+// 返回值：
+//   - gin.HandlerFunc: 限流中间件函数
 func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
 	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
 
@@ -164,6 +237,17 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 }
 
 // ModelRequestRateLimit 模型请求限流中间件
+// 基于用户 ID 的细粒度限流，支持总请求数和成功请求数两个维度
+//
+// 执行流程：
+// 1. 检查是否启用限流
+// 2. 计算限流参数（全局配置 + 分组配置覆盖）
+// 3. 根据存储类型选择限流处理器（Redis 或内存）
+//
+// 分组限流配置优先级：分组配置 > 全局配置
+//
+// 返回值：
+//   - func(c *gin.Context): 限流中间件函数
 func ModelRequestRateLimit() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 在每个请求时检查是否启用限流

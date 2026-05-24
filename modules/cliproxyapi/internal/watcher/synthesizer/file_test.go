@@ -1,3 +1,7 @@
+// synthesizer - file_test.go
+// 测试文件合成器的功能，验证从 JSON 认证文件生成认证条目的各种场景，
+// 包括有效文件解析、无效文件跳过、提供商映射、前缀验证、优先级解析、
+// 多项目 Gemini 虚拟认证合成、备注传播等。
 package synthesizer
 
 import (

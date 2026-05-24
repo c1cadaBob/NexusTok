@@ -1,3 +1,6 @@
+// handlers - stream_forwarder.go
+// 实现流式响应转发器，将上游提供商的流式数据块通过 SSE 协议转发给客户端。
+// 支持心跳保活、错误处理和自定义数据块写入。
 package handlers
 
 import (
@@ -8,24 +11,23 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 )
 
+// StreamForwardOptions 配置流式转发行为。
 type StreamForwardOptions struct {
-	// KeepAliveInterval overrides the configured streaming keep-alive interval.
-	// If nil, the configured default is used. If set to <= 0, keep-alives are disabled.
+	// KeepAliveInterval 覆盖配置的流式保活间隔。
+	// 如果为 nil 则使用配置默认值。如果设置为 <= 0 则禁用保活。
 	KeepAliveInterval *time.Duration
 
-	// WriteChunk writes a single data chunk to the response body. It should not flush.
+	// WriteChunk 将单个数据块写入响应体。不应刷新。
 	WriteChunk func(chunk []byte)
 
-	// WriteTerminalError writes an error payload to the response body when streaming fails
-	// after headers have already been committed. It should not flush.
+	// WriteTerminalError 在流式传输失败且头部已提交后将错误载荷写入响应体。不应刷新。
 	WriteTerminalError func(errMsg *interfaces.ErrorMessage)
 
-	// WriteDone optionally writes a terminal marker when the upstream data channel closes
-	// without an error (e.g. OpenAI's `[DONE]`). It should not flush.
+	// WriteDone 可选地在上游数据通道无错误关闭时写入终止标记（如 OpenAI 的 `[DONE]`）。不应刷新。
 	WriteDone func()
 
-	// WriteKeepAlive optionally writes a keep-alive heartbeat. It should not flush.
-	// When nil, a standard SSE comment heartbeat is used.
+	// WriteKeepAlive 可选地写入保活心跳。不应刷新。
+	// 为 nil 时使用标准 SSE 注释心跳。
 	WriteKeepAlive func()
 }
 

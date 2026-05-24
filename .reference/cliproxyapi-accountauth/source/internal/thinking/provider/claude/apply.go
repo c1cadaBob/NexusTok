@@ -1,11 +1,10 @@
-// Package claude implements thinking configuration scaffolding for Claude models.
+// 包 claude - apply.go
+// 该文件实现了 Claude 模型的思考配置应用器。
+// Claude 模型支持两种思考控制方式：
+//   - 手动思考：thinking.type="enabled" 配合 thinking.budget_tokens（令牌预算）
+//   - 自适应思考（Claude 4.6）：thinking.type="adaptive" 配合 output_config.effort（low/medium/high/max）
 //
-// Claude models support two thinking control styles:
-//   - Manual thinking: thinking.type="enabled" with thinking.budget_tokens (token budget)
-//   - Adaptive thinking (Claude 4.6): thinking.type="adaptive" with output_config.effort (low/medium/high/max)
-//
-// Some Claude models support ZeroAllowed (sonnet-4-5, opus-4-5), while older models do not.
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-6
+// 部分 Claude 模型支持 ZeroAllowed（sonnet-4-5、opus-4-5），旧模型不支持。
 package claude
 
 import (

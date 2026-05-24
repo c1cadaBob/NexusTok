@@ -1,3 +1,13 @@
+// auth - selector_test.go
+// 认证选择器测试
+// 验证各种认证选择策略的正确性：
+// - FillFirstSelector：按 ID 排序选择第一个可用认证
+// - RoundRobinSelector：轮询选择认证（支持优先级分组）
+// - SessionAffinitySelector：会话亲和性选择（同一会话固定同一认证）
+// - 模型冷却错误处理
+// - 并发安全性
+// - Gemini CLI 凭证分组调度
+// - 会话 ID 提取（支持多种格式）
 package auth
 
 import (
@@ -14,6 +24,8 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// TestFillFirstSelectorPick_Deterministic 验证 FillFirstSelector
+// 按认证 ID 排序后选择第一个可用认证，结果是确定性的。
 func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	t.Parallel()
 
@@ -36,6 +48,8 @@ func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_CyclesDeterministic 验证 RoundRobinSelector
+// 按轮询顺序选择认证，循环往复。
 func TestRoundRobinSelectorPick_CyclesDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -61,6 +75,8 @@ func TestRoundRobinSelectorPick_CyclesDeterministic(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_PriorityBuckets 验证 RoundRobinSelector
+// 的优先级分组功能：高优先级认证优先被选择，低优先级认证作为备选。
 func TestRoundRobinSelectorPick_PriorityBuckets(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +105,8 @@ func TestRoundRobinSelectorPick_PriorityBuckets(t *testing.T) {
 	}
 }
 
+// TestFillFirstSelectorPick_PriorityFallbackCooldown 验证：
+// 当高优先级认证处于冷却状态时，FillFirstSelector 回退到低优先级认证。
 func TestFillFirstSelectorPick_PriorityFallbackCooldown(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +142,7 @@ func TestFillFirstSelectorPick_PriorityFallbackCooldown(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_Concurrent 验证 RoundRobinSelector 在高并发场景下的安全性。
 func TestRoundRobinSelectorPick_Concurrent(t *testing.T) {
 	selector := &RoundRobinSelector{}
 	auths := []*Auth{
@@ -180,6 +199,9 @@ func TestRoundRobinSelectorPick_Concurrent(t *testing.T) {
 	}
 }
 
+// TestSelectorPick_AllCooldownReturnsModelCooldownError 验证：
+// 当所有认证都处于冷却状态时，选择器返回 modelCooldownError，
+// 包含 Retry-After 头和正确的错误格式。
 func TestSelectorPick_AllCooldownReturnsModelCooldownError(t *testing.T) {
 	t.Parallel()
 
@@ -283,6 +305,8 @@ func TestSelectorPick_AllCooldownReturnsModelCooldownError(t *testing.T) {
 	})
 }
 
+// TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsNotBlocked 验证：
+// 当认证标记为不可用但没有设置 NextRetryAfter 时，不被视为被阻止。
 func TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsNotBlocked(t *testing.T) {
 	t.Parallel()
 
@@ -313,6 +337,8 @@ func TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsNotBlocked(t *testin
 	}
 }
 
+// TestFillFirstSelectorPick_ThinkingSuffixFallsBackToBaseModelState 验证：
+// 带思考后缀的模型名（如 "test-model(high)"）能正确回退到基础模型的冷却状态。
 func TestFillFirstSelectorPick_ThinkingSuffixFallsBackToBaseModelState(t *testing.T) {
 	t.Parallel()
 
@@ -353,6 +379,8 @@ func TestFillFirstSelectorPick_ThinkingSuffixFallsBackToBaseModelState(t *testin
 	}
 }
 
+// TestRoundRobinSelectorPick_ThinkingSuffixSharesCursor 验证：
+// 带不同思考后缀的模型名共享同一轮询游标。
 func TestRoundRobinSelectorPick_ThinkingSuffixSharesCursor(t *testing.T) {
 	t.Parallel()
 
@@ -381,6 +409,7 @@ func TestRoundRobinSelectorPick_ThinkingSuffixSharesCursor(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_CursorKeyCap 验证 RoundRobinSelector 的游标键数量上限。
 func TestRoundRobinSelectorPick_CursorKeyCap(t *testing.T) {
 	t.Parallel()
 
@@ -405,6 +434,8 @@ func TestRoundRobinSelectorPick_CursorKeyCap(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_GeminiCLICredentialGrouping 验证：
+// Gemini CLI 凭证的两级轮换机制：先在凭证组之间交替，再在组内轮换项目。
 func TestRoundRobinSelectorPick_GeminiCLICredentialGrouping(t *testing.T) {
 	t.Parallel()
 
@@ -460,6 +491,11 @@ func TestRoundRobinSelectorPick_GeminiCLICredentialGrouping(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID 测试会话 ID 提取的各种场景：
+// - Claude Code 格式（metadata.user_id 中的 session）
+// - JSON 格式的 user_id（包含 session_id）
+// - conversation_id 格式
+// - 无元数据返回空字符串
 func TestExtractSessionID(t *testing.T) {
 	t.Parallel()
 
@@ -515,6 +551,8 @@ func TestExtractSessionID(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_SameSessionSameAuth 验证会话亲和性：
+// 同一会话的多次请求应选择同一个认证。
 func TestSessionAffinitySelector_SameSessionSameAuth(t *testing.T) {
 	t.Parallel()
 
@@ -552,6 +590,8 @@ func TestSessionAffinitySelector_SameSessionSameAuth(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_NoSessionFallback 验证：
+// 当没有会话信息时，回退到默认选择器（FillFirstSelector）。
 func TestSessionAffinitySelector_NoSessionFallback(t *testing.T) {
 	t.Parallel()
 
@@ -577,6 +617,8 @@ func TestSessionAffinitySelector_NoSessionFallback(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_DifferentSessionsDifferentAuths 验证：
+// 不同会话可以绑定到不同的认证，且各会话的绑定保持稳定。
 func TestSessionAffinitySelector_DifferentSessionsDifferentAuths(t *testing.T) {
 	t.Parallel()
 
@@ -613,6 +655,8 @@ func TestSessionAffinitySelector_DifferentSessionsDifferentAuths(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_SingleParentFallsBackToFlat 验证：
+// 当所有认证属于同一父级时，回退到普通轮询（无两级轮换）。
 func TestRoundRobinSelectorPick_SingleParentFallsBackToFlat(t *testing.T) {
 	t.Parallel()
 
@@ -649,6 +693,8 @@ func TestRoundRobinSelectorPick_SingleParentFallsBackToFlat(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_FailoverWhenAuthUnavailable 验证：
+// 当绑定的认证不可用时，会话亲和性选择器能够自动切换到其他可用认证。
 func TestSessionAffinitySelector_FailoverWhenAuthUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -700,6 +746,8 @@ func TestSessionAffinitySelector_FailoverWhenAuthUnavailable(t *testing.T) {
 	}
 }
 
+// TestRoundRobinSelectorPick_MixedVirtualAndNonVirtualFallsBackToFlat 验证：
+// 当认证列表中混合了虚拟父级和非虚拟认证时，回退到普通轮询。
 func TestRoundRobinSelectorPick_MixedVirtualAndNonVirtualFallsBackToFlat(t *testing.T) {
 	t.Parallel()
 
@@ -733,6 +781,8 @@ func TestRoundRobinSelectorPick_MixedVirtualAndNonVirtualFallsBackToFlat(t *test
 		}
 	}
 }
+// TestExtractSessionID_ClaudeCodePriorityOverHeader 验证：
+// Claude Code 的 metadata.user_id 优先级高于 X-Session-ID 请求头。
 func TestExtractSessionID_ClaudeCodePriorityOverHeader(t *testing.T) {
 	t.Parallel()
 
@@ -749,6 +799,8 @@ func TestExtractSessionID_ClaudeCodePriorityOverHeader(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_ClaudeCodePriorityOverIdempotencyKey 验证：
+// Claude Code 的 metadata.user_id 优先级高于 idempotency_key。
 func TestExtractSessionID_ClaudeCodePriorityOverIdempotencyKey(t *testing.T) {
 	t.Parallel()
 
@@ -763,6 +815,7 @@ func TestExtractSessionID_ClaudeCodePriorityOverIdempotencyKey(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_Headers 验证从 X-Session-ID 请求头提取会话 ID。
 func TestExtractSessionID_Headers(t *testing.T) {
 	t.Parallel()
 
@@ -776,6 +829,7 @@ func TestExtractSessionID_Headers(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_CodexSessionIDHeader 验证从 Session_id 请求头提取 Codex 会话 ID。
 func TestExtractSessionID_CodexSessionIDHeader(t *testing.T) {
 	t.Parallel()
 
@@ -789,6 +843,7 @@ func TestExtractSessionID_CodexSessionIDHeader(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_ClientRequestIDHeader 验证从 X-Client-Request-Id 请求头提取会话 ID。
 func TestExtractSessionID_ClientRequestIDHeader(t *testing.T) {
 	t.Parallel()
 
@@ -802,6 +857,8 @@ func TestExtractSessionID_ClientRequestIDHeader(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_CodexSessionIDPriorityOverClientRequestID 验证：
+// Session_id 请求头的优先级高于 X-Client-Request-Id。
 func TestExtractSessionID_CodexSessionIDPriorityOverClientRequestID(t *testing.T) {
 	t.Parallel()
 
@@ -816,6 +873,7 @@ func TestExtractSessionID_CodexSessionIDPriorityOverClientRequestID(t *testing.T
 	}
 }
 
+// TestExtractSessionID_AmpThreadId 验证从 X-Amp-Thread-Id 请求头提取会话 ID。
 func TestExtractSessionID_AmpThreadId(t *testing.T) {
 	t.Parallel()
 
@@ -829,6 +887,8 @@ func TestExtractSessionID_AmpThreadId(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_AmpThreadIdPriorityOverClientRequestID 验证：
+// X-Amp-Thread-Id 的优先级高于 X-Client-Request-Id。
 func TestExtractSessionID_AmpThreadIdPriorityOverClientRequestID(t *testing.T) {
 	t.Parallel()
 
@@ -884,6 +944,8 @@ func TestExtractSessionID_IdempotencyKey(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_MessageHashFallback 验证：
+// 当没有显式会话 ID 时，基于消息内容生成哈希作为会话 ID。
 func TestExtractSessionID_MessageHashFallback(t *testing.T) {
 	t.Parallel()
 
@@ -918,6 +980,8 @@ func TestExtractSessionID_MessageHashFallback(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_ClaudeAPITopLevelSystem 验证：
+// Claude API 顶层 system 字段（数组和字符串格式）的会话 ID 生成。
 func TestExtractSessionID_ClaudeAPITopLevelSystem(t *testing.T) {
 	t.Parallel()
 
@@ -959,6 +1023,7 @@ func TestExtractSessionID_ClaudeAPITopLevelSystem(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_GeminiFormat 验证 Gemini 格式（systemInstruction + contents）的会话 ID 生成。
 func TestExtractSessionID_GeminiFormat(t *testing.T) {
 	t.Parallel()
 
@@ -999,6 +1064,7 @@ func TestExtractSessionID_GeminiFormat(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_OpenAIResponsesAPI 验证 OpenAI Responses API 格式的会话 ID 生成。
 func TestExtractSessionID_OpenAIResponsesAPI(t *testing.T) {
 	t.Parallel()
 
@@ -1057,6 +1123,8 @@ func TestExtractSessionID_OpenAIResponsesAPI(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_ThreeScenarios 验证会话亲和性选择器在三种场景下的行为：
+// 新请求、第二轮对话、多轮对话，以及跨场景的绑定继承。
 func TestSessionAffinitySelector_ThreeScenarios(t *testing.T) {
 	t.Parallel()
 
@@ -1167,6 +1235,8 @@ func TestSessionAffinitySelector_ThreeScenarios(t *testing.T) {
 	})
 }
 
+// TestSessionAffinitySelector_MultiModelSession 验证：
+// 同一会话在不同模型上的绑定是独立的。
 func TestSessionAffinitySelector_MultiModelSession(t *testing.T) {
 	t.Parallel()
 
@@ -1227,6 +1297,7 @@ func TestSessionAffinitySelector_MultiModelSession(t *testing.T) {
 	}
 }
 
+// TestExtractSessionID_MultimodalContent 验证多模态内容的会话 ID 生成。
 func TestExtractSessionID_MultimodalContent(t *testing.T) {
 	t.Parallel()
 
@@ -1265,6 +1336,8 @@ func TestExtractSessionID_MultimodalContent(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_CrossProviderIsolation 验证：
+// 不同提供商的会话绑定是隔离的，同一会话在不同提供商上可以绑定到不同认证。
 func TestSessionAffinitySelector_CrossProviderIsolation(t *testing.T) {
 	t.Parallel()
 
@@ -1313,6 +1386,7 @@ func TestSessionAffinitySelector_CrossProviderIsolation(t *testing.T) {
 	}
 }
 
+// TestSessionCache_GetAndRefresh 验证会话缓存的获取和 TTL 刷新机制。
 func TestSessionCache_GetAndRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -1350,6 +1424,8 @@ func TestSessionCache_GetAndRefresh(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_RoundRobinDistribution 验证：
+// 不同会话的认证选择能均匀分布（轮询分配）。
 func TestSessionAffinitySelector_RoundRobinDistribution(t *testing.T) {
 	t.Parallel()
 
@@ -1387,6 +1463,7 @@ func TestSessionAffinitySelector_RoundRobinDistribution(t *testing.T) {
 	}
 }
 
+// TestSessionAffinitySelector_Concurrent 验证会话亲和性选择器在高并发场景下的安全性。
 func TestSessionAffinitySelector_Concurrent(t *testing.T) {
 	t.Parallel()
 

@@ -1,5 +1,10 @@
-// Package management provides the management API handlers and middleware
-// for configuring the server and managing auth files.
+// management - handler.go
+// 管理 API 的核心处理器和认证中间件。
+// 该模块提供管理 API 的基础架构，包括：
+//   - 管理密钥认证（支持 bcrypt 哈希、环境变量密码、本地密码三种方式）
+//   - IP 级别的失败尝试跟踪和自动封禁机制
+//   - 配置持久化和内存状态管理
+//   - 布尔值、整数、字符串等简单类型配置的通用更新方法
 package management
 
 import (
@@ -20,32 +25,36 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// attemptInfo 记录单个 IP 地址的认证失败尝试信息。
+// 用于实现暴力破解防护，当失败次数超过阈值时自动封禁该 IP。
 type attemptInfo struct {
-	count        int
-	blockedUntil time.Time
-	lastActivity time.Time // track last activity for cleanup
+	count        int       // 当前连续失败次数
+	blockedUntil time.Time // 封禁截止时间，零值表示未被封禁
+	lastActivity time.Time // 最后活动时间，用于清理长期不活跃的记录
 }
 
-// attemptCleanupInterval controls how often stale IP entries are purged
+// attemptCleanupInterval 控制清理过期 IP 记录的时间间隔。
 const attemptCleanupInterval = 1 * time.Hour
 
-// attemptMaxIdleTime controls how long an IP can be idle before cleanup
+// attemptMaxIdleTime 控制 IP 记录在无活动后保留的最长时间。
+// 超过此时间的记录将被自动清理以防止内存泄漏。
 const attemptMaxIdleTime = 2 * time.Hour
 
-// Handler aggregates config reference, persistence path and helpers.
+// Handler 是管理 API 的核心处理器，聚合了配置引用、持久化路径和各种辅助方法。
+// 它负责管理 API 的认证、配置读写、日志访问等功能。
 type Handler struct {
-	cfg                 *config.Config
-	configFilePath      string
-	mu                  sync.Mutex
-	attemptsMu          sync.Mutex
-	failedAttempts      map[string]*attemptInfo // keyed by client IP
-	authManager         *coreauth.Manager
-	tokenStore          coreauth.Store
-	localPassword       string
-	allowRemoteOverride bool
-	envSecret           string
-	logDir              string
-	postAuthHook        coreauth.PostAuthHook
+	cfg                 *config.Config          // 当前配置的内存引用
+	configFilePath      string                  // 配置文件的磁盘路径
+	mu                  sync.Mutex              // 保护配置读写的互斥锁
+	attemptsMu          sync.Mutex              // 保护失败尝试记录的互斥锁
+	failedAttempts      map[string]*attemptInfo // 按客户端 IP 索引的失败尝试记录
+	authManager         *coreauth.Manager       // 认证管理器，处理 OAuth 等认证流程
+	tokenStore          coreauth.Store          // OAuth token 存储
+	localPassword       string                  // 本地客户端密码（仅限 localhost 访问）
+	allowRemoteOverride bool                    // 是否允许远程管理（环境变量设置时为 true）
+	envSecret           string                  // 环境变量中的管理密钥
+	logDir              string                  // 日志文件目录路径
+	postAuthHook        coreauth.PostAuthHook   // 认证记录创建后的钩子函数
 }
 
 // NewHandler creates a new management handler instance.
@@ -297,7 +306,9 @@ func (h *Handler) persistLocked(c *gin.Context) bool {
 	return true
 }
 
-// Helper methods for simple types
+// updateBoolField 是一个通用的布尔值配置更新辅助方法。
+// 从请求 JSON 中解析 value 字段，调用 set 回调设置新值，然后持久化配置。
+// 如果请求体格式不正确或 value 为 nil，返回 400 错误。
 func (h *Handler) updateBoolField(c *gin.Context, set func(bool)) {
 	var body struct {
 		Value *bool `json:"value"`
@@ -310,6 +321,9 @@ func (h *Handler) updateBoolField(c *gin.Context, set func(bool)) {
 	h.persist(c)
 }
 
+// updateIntField 是一个通用的整数配置更新辅助方法。
+// 从请求 JSON 中解析 value 字段，调用 set 回调设置新值，然后持久化配置。
+// 如果请求体格式不正确或 value 为 nil，返回 400 错误。
 func (h *Handler) updateIntField(c *gin.Context, set func(int)) {
 	var body struct {
 		Value *int `json:"value"`
@@ -322,6 +336,9 @@ func (h *Handler) updateIntField(c *gin.Context, set func(int)) {
 	h.persist(c)
 }
 
+// updateStringField 是一个通用的字符串配置更新辅助方法。
+// 从请求 JSON 中解析 value 字段，调用 set 回调设置新值，然后持久化配置。
+// 如果请求体格式不正确或 value 为 nil，返回 400 错误。
 func (h *Handler) updateStringField(c *gin.Context, set func(string)) {
 	var body struct {
 		Value *string `json:"value"`

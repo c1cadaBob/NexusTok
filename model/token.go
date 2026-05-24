@@ -1,3 +1,13 @@
+// Package model - token.go
+// 该文件定义了 API Token 数据模型和相关操作
+//
+// API Token 是用户访问中继 API 的凭证，包含：
+// - 基本信息：名称、Key、状态
+// - 时间信息：创建时间、访问时间、过期时间
+// - 配额信息：剩余额度、已用额度、是否无限额度
+// - 模型限制：是否启用模型限制、允许的模型列表
+// - 安全限制：允许的 IP 地址列表
+// - 分组信息：Token 分组、是否跨分组重试
 package model
 
 import (
@@ -5,36 +15,48 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
-	"github.com/bytedance/gopkg/util/gopool"
-	"gorm.io/gorm"
+	"github.com/c1cada/NexusTok/common"                        // 公共工具包
+	"github.com/c1cada/NexusTok/setting/operation_setting"     // 运营设置
+	"github.com/bytedance/gopkg/util/gopool"                   // 协程池
+	"gorm.io/gorm"                                             // GORM ORM
 )
 
+// Token API Token 数据模型
+// 代表用户的一个 API 访问凭证
 type Token struct {
-	Id                 int            `json:"id"`
-	UserId             int            `json:"user_id" gorm:"index"`
-	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
-	Status             int            `json:"status" gorm:"default:1"`
-	Name               string         `json:"name" gorm:"index" `
-	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
-	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
-	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
-	UnlimitedQuota     bool           `json:"unlimited_quota"`
-	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
-	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
-	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
-	Group              string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	Id                 int            `json:"id"`                                                           // Token ID
+	UserId             int            `json:"user_id" gorm:"index"`                                        // 所属用户 ID
+	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`                     // Token Key（唯一索引）
+	Status             int            `json:"status" gorm:"default:1"`                                      // Token 状态（1=启用，2=禁用）
+	Name               string         `json:"name" gorm:"index" `                                           // Token 名称
+	CreatedTime        int64          `json:"created_time" gorm:"bigint"`                                   // 创建时间
+	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`                                  // 最后访问时间
+	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"`                        // 过期时间（-1 表示永不过期）
+	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`                                // 剩余额度
+	UnlimitedQuota     bool           `json:"unlimited_quota"`                                              // 是否无限额度
+	ModelLimitsEnabled bool           `json:"model_limits_enabled"`                                         // 是否启用模型限制
+	ModelLimits        string         `json:"model_limits" gorm:"type:text"`                                // 模型限制列表（JSON 格式）
+	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`                                  // 允许的 IP 地址列表（换行分隔）
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"`                                  // 已使用额度
+	Group              string         `json:"group" gorm:"default:''"`                                      // Token 分组
+	CrossGroupRetry    bool           `json:"cross_group_retry"`                                            // 是否跨分组重试（仅 auto 分组有效）
+	DeletedAt          gorm.DeletedAt `gorm:"index"`                                                        // 软删除时间
 }
 
+// Clean 清理 Token 的敏感信息
+// 将 Key 清空，用于安全场景
 func (token *Token) Clean() {
 	token.Key = ""
 }
 
+// MaskTokenKey 对 Token Key 进行脱敏处理
+// 保留前 4 位和后 4 位，中间用 * 替代
+//
+// 参数：
+//   - key: 原始 Token Key
+//
+// 返回值：
+//   - string: 脱敏后的 Token Key
 func MaskTokenKey(key string) string {
 	if key == "" {
 		return ""
@@ -48,14 +70,27 @@ func MaskTokenKey(key string) string {
 	return key[:4] + "**********" + key[len(key)-4:]
 }
 
+// GetFullKey 获取完整的 Token Key
+//
+// 返回值：
+//   - string: 完整的 Token Key
 func (token *Token) GetFullKey() string {
 	return token.Key
 }
 
+// GetMaskedKey 获取脱敏后的 Token Key
+//
+// 返回值：
+//   - string: 脱敏后的 Token Key
 func (token *Token) GetMaskedKey() string {
 	return MaskTokenKey(token.Key)
 }
 
+// GetIpLimits 获取 Token 允许的 IP 地址列表
+// 从换行分隔的字符串中解析出 IP 地址/CIDR 列表
+//
+// 返回值：
+//   - []string: IP 地址/CIDR 列表
 func (token *Token) GetIpLimits() []string {
 	// delete empty spaces
 	//split with \n
@@ -78,6 +113,17 @@ func (token *Token) GetIpLimits() []string {
 	return ipLimits
 }
 
+// GetAllUserTokens 获取用户的所有 Token
+// 按 ID 降序排列，支持分页
+//
+// 参数：
+//   - userId: 用户 ID
+//   - startIdx: 起始索引
+//   - num: 每页数量
+//
+// 返回值：
+//   - []*Token: Token 列表
+//   - error: 查询错误
 func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	var tokens []*Token
 	var err error
@@ -85,13 +131,22 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	return tokens, err
 }
 
-// sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式。
-// 规则：
-//  1. 转义 ! 和 _（使用 ! 作为 ESCAPE 字符，兼容 MySQL/PostgreSQL/SQLite）
-//  2. 连续的 % 合并为单个 %
-//  3. 最多允许 2 个 %
-//  4. 含 % 时（模糊搜索），去掉 % 后关键词长度必须 >= 2
-//  5. 不含 % 时按精确匹配
+// sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式
+// 防止 SQL 注入和恶意输入
+//
+// 校验规则：
+// 1. 转义 ! 和 _（使用 ! 作为 ESCAPE 字符，兼容 MySQL/PostgreSQL/SQLite）
+// 2. 连续的 % 合并为单个 %
+// 3. 最多允许 2 个 %
+// 4. 含 % 时（模糊搜索），去掉 % 后关键词长度必须 >= 2
+// 5. 不含 % 时按精确匹配
+//
+// 参数：
+//   - input: 用户输入的搜索模式
+//
+// 返回值：
+//   - string: 清洗后的搜索模式
+//   - error: 校验错误
 func sanitizeLikePattern(input string) (string, error) {
 	// 1. 先转义 ESCAPE 字符 ! 自身，再转义 _
 	//    使用 ! 而非 \ 作为 ESCAPE 字符，避免 MySQL 中反斜杠的字符串转义问题
@@ -122,8 +177,23 @@ func sanitizeLikePattern(input string) (string, error) {
 	return input, nil
 }
 
+// searchHardLimit 搜索结果硬限制
 const searchHardLimit = 100
 
+// SearchUserTokens 搜索用户的 Token
+// 支持按名称和 Key 搜索，支持模糊搜索和精确搜索
+//
+// 参数：
+//   - userId: 用户 ID
+//   - keyword: 名称关键词
+//   - token: Token Key 关键词
+//   - offset: 偏移量
+//   - limit: 每页数量
+//
+// 返回值：
+//   - tokens: Token 列表
+//   - total: 总数
+//   - err: 查询错误
 func SearchUserTokens(userId int, keyword string, token string, offset int, limit int) (tokens []*Token, total int64, err error) {
 	// model 层强制截断
 	if limit <= 0 || limit > searchHardLimit {

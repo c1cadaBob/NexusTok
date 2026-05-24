@@ -1,3 +1,6 @@
+// auth - conductor_scheduler_refresh_test.go
+// 该文件包含认证刷新和调度器条目重建的单元测试，验证认证凭据刷新后
+// 调度器条目正确更新、冷却恢复等行为。
 package auth
 
 import (
@@ -11,12 +14,15 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerProviderTestExecutor 是测试用的按提供商区分的执行器。
 type schedulerProviderTestExecutor struct {
-	provider string
+	provider string // 提供商标识
 }
 
+// Identifier 返回提供商标识。
 func (e schedulerProviderTestExecutor) Identifier() string { return e.provider }
 
+// Execute 模拟执行操作。
 func (e schedulerProviderTestExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, nil
 }

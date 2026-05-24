@@ -1,8 +1,15 @@
+// Package codex - html_templates.go
+// 定义 OAuth 认证成功后的 HTML 页面模板。
+// 包括认证成功页面和附加设置提示页面的 HTML 模板，
+// 用于在浏览器中向用户展示友好的认证结果。
 package codex
 
+// LoginSuccessHtml 是 OAuth2 认证成功后显示的 HTML 页面模板。
+// 包含成功图标、说明文字、倒计时自动关闭窗口功能，
+// 以及打开平台和关闭窗口的操作按钮。支持动态替换平台 URL 和设置提示。
+//
 // LoginSuccessHTML is the HTML template for the page shown after a successful
-// OAuth2 authentication with Codex. It informs the user that the authentication
-// was successful and provides a countdown timer to automatically close the window.
+// OAuth2 authentication with Codex.
 const LoginSuccessHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -204,9 +211,11 @@ const LoginSuccessHtml = `<!DOCTYPE html>
 </body>
 </html>`
 
+// SetupNoticeHtml 是附加设置提示的 HTML 片段模板。
+// 当认证成功后还需要用户完成额外配置时，在成功页面中显示此提示。
+//
 // SetupNoticeHTML is the HTML template for the section that provides instructions
-// for additional setup. This is displayed on the success page when further actions
-// are required from the user.
+// for additional setup.
 const SetupNoticeHtml = `
         <div class="setup-notice">
             <h3>Additional Setup Required</h3>

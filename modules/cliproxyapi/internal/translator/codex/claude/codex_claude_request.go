@@ -1,8 +1,10 @@
+// codex/claude - codex_claude_request.go
 // Package claude provides request translation functionality for Claude Code API compatibility.
-// It handles parsing and transforming Claude Code API requests into the internal client format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package also performs JSON data cleaning and transformation to ensure compatibility
-// between Claude Code API format and the internal client's expected format.
+// 本文件提供 Claude Code API 请求到 Codex API 格式的转换功能。
+// 负责解析 Claude Code API 请求并将其转换为 Codex 期望的格式，
+// 包括：系统消息转为 developer 输入、消息内容转换（文本/图片/tool_use/tool_result/thinking）、
+// 工具声明转换、web_search 工具映射、思考配置到 reasoning.effort 的映射等。
+// 还包含工具名称缩短逻辑以满足 Codex API 的 64 字符限制。
 package claude
 
 import (
@@ -333,6 +335,9 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 
 // isFernetLikeReasoningSignature checks only the encrypted_content envelope shape
 // observed in OpenAI reasoning signatures. It does not authenticate source or payload type.
+// 检查签名是否符合 Fernet 加密信封格式（OpenAI 推理签名的特征）。
+// 验证 base64 编码、版本字节（0x80）、最小长度和密文块对齐。
+// 不验证来源或负载类型。
 func isFernetLikeReasoningSignature(signature string) bool {
 	const (
 		fernetVersionLen = 1
@@ -366,6 +371,8 @@ func isFernetLikeReasoningSignature(signature string) bool {
 
 // shortenCodexCallIDIfNeeded keeps Claude tool IDs within the OpenAI Responses
 // API call_id limit while preserving a stable, low-collision mapping.
+// 将 Claude 工具 ID 缩短到 OpenAI Responses API 的 64 字符限制内。
+// 使用 SHA256 哈希生成 8 字节后缀，确保映射稳定且低碰撞。
 func shortenCodexCallIDIfNeeded(id string) string {
 	const limit = 64
 	if len(id) <= limit {
@@ -381,10 +388,14 @@ func shortenCodexCallIDIfNeeded(id string) string {
 	return id[:prefixLen] + suffix
 }
 
+// isClaudeWebSearchToolType 判断工具类型是否为 Claude 的 web_search 工具。
+// 支持 web_search_20250305 和 web_search_20260209 两种版本。
 func isClaudeWebSearchToolType(toolType string) bool {
 	return toolType == "web_search_20250305" || toolType == "web_search_20260209"
 }
 
+// buildClaudeWebSearchToolNameSet 构建 Claude web_search 工具名称集合。
+// 遍历工具列表，收集所有 web_search 类型工具的名称，用于后续 tool_choice 映射。
 func buildClaudeWebSearchToolNameSet(tools gjson.Result) map[string]struct{} {
 	names := map[string]struct{}{}
 	if !tools.IsArray() {
@@ -406,6 +417,10 @@ func buildClaudeWebSearchToolNameSet(tools gjson.Result) map[string]struct{} {
 	return names
 }
 
+// convertClaudeToolChoiceToCodex 将 Claude tool_choice 转换为 Codex 格式。
+// 映射规则：auto -> "auto", any -> "required", none -> "none",
+// tool (web_search) -> {"type":"web_search"}, tool (function) -> {"type":"function","name":"..."}。
+// 工具名称会通过 toolNameMap 进行缩短映射。
 func convertClaudeToolChoiceToCodex(toolChoice gjson.Result, toolNameMap map[string]string, webSearchToolNames map[string]struct{}) []byte {
 	if !toolChoice.Exists() || toolChoice.Type == gjson.Null {
 		return []byte(`"auto"`)
@@ -445,6 +460,8 @@ func convertClaudeToolChoiceToCodex(toolChoice gjson.Result, toolNameMap map[str
 	}
 }
 
+// convertClaudeWebSearchToolToCodex 将 Claude web_search 工具转换为 Codex web_search 格式。
+// 提取 allowed_domains 过滤器和 user_location 配置。
 func convertClaudeWebSearchToolToCodex(tool gjson.Result) []byte {
 	out := []byte(`{"type":"web_search"}`)
 	if allowedDomains := tool.Get("allowed_domains"); allowedDomains.Exists() && allowedDomains.IsArray() {
@@ -457,6 +474,9 @@ func convertClaudeWebSearchToolToCodex(tool gjson.Result) []byte {
 }
 
 // shortenNameIfNeeded applies a simple shortening rule for a single name.
+// 对单个工具名称应用简单的缩短规则。
+// 如果名称以 "mcp__" 开头且超过 64 字符，保留前缀和最后一段；
+// 否则直接截断到 64 字符。
 func shortenNameIfNeeded(name string) string {
 	const limit = 64
 	if len(name) <= limit {
@@ -476,6 +496,8 @@ func shortenNameIfNeeded(name string) string {
 }
 
 // buildShortNameMap ensures uniqueness of shortened names within a request.
+// 构建工具名称缩短映射表，确保缩短后的名称在请求内唯一。
+// 对于冲突的名称，自动添加 _1、_2 等后缀。
 func buildShortNameMap(names []string) map[string]string {
 	const limit = 64
 	used := map[string]struct{}{}
@@ -530,6 +552,8 @@ func buildShortNameMap(names []string) map[string]string {
 }
 
 // buildReverseMapFromClaudeOriginalToShort builds original->short map, used to map tool_use names to short.
+// 从 Claude 请求中提取工具名称列表，构建原始名称到缩短名称的反向映射。
+// 用于在处理 tool_use 时将原始工具名称映射为缩短后的名称。
 func buildReverseMapFromClaudeOriginalToShort(original []byte) map[string]string {
 	tools := gjson.GetBytes(original, "tools")
 	m := map[string]string{}
@@ -551,6 +575,8 @@ func buildReverseMapFromClaudeOriginalToShort(original []byte) map[string]string
 }
 
 // normalizeToolParameters ensures object schemas contain at least an empty properties map.
+// 规范化工具参数 schema，确保 object 类型至少包含空的 properties 映射。
+// 处理空值、null 和缺失 type 字段的情况。
 func normalizeToolParameters(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" || !gjson.Valid(raw) {

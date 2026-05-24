@@ -1,8 +1,12 @@
+// general_setting.go — 通用运维配置
+// 职责：管理站点级别的通用运维设置，包括文档链接、心跳间隔、
+// 额度展示类型（美元/人民币/Token/自定义货币）以及自定义货币的符号和汇率。
+
 package operation_setting
 
 import "github.com/c1cada/NexusTok/setting/config"
 
-// 额度展示类型
+// 额度展示类型常量
 const (
 	QuotaDisplayTypeUSD    = "USD"
 	QuotaDisplayTypeCNY    = "CNY"
@@ -10,10 +14,14 @@ const (
 	QuotaDisplayTypeCustom = "CUSTOM"
 )
 
+// GeneralSetting 通用运维配置结构体
 type GeneralSetting struct {
-	DocsLink            string `json:"docs_link"`
-	PingIntervalEnabled bool   `json:"ping_interval_enabled"`
-	PingIntervalSeconds int    `json:"ping_interval_seconds"`
+	// DocsLink 帮助文档链接地址
+	DocsLink string `json:"docs_link"`
+	// PingIntervalEnabled 是否启用心跳间隔检测
+	PingIntervalEnabled bool `json:"ping_interval_enabled"`
+	// PingIntervalSeconds 心跳间隔时间（秒）
+	PingIntervalSeconds int `json:"ping_interval_seconds"`
 	// 当前站点额度展示类型：USD / CNY / TOKENS
 	QuotaDisplayType string `json:"quota_display_type"`
 	// 自定义货币符号，用于 CUSTOM 展示类型
@@ -32,11 +40,13 @@ var generalSetting = GeneralSetting{
 	CustomCurrencyExchangeRate: 1.0,
 }
 
+// init 注册通用配置到全局配置管理器
 func init() {
 	// 注册到全局配置管理器
 	config.GlobalConfig.Register("general_setting", &generalSetting)
 }
 
+// GetGeneralSetting 获取通用运维配置
 func GetGeneralSetting() *GeneralSetting {
 	return &generalSetting
 }

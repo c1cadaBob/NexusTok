@@ -1,3 +1,6 @@
+// diff - openai_compat.go
+// 本文件实现了 OpenAI 兼容配置的变更检测功能。
+// 用于检测配置中 OpenAI 兼容渠道设置的变化。
 package diff
 
 import (

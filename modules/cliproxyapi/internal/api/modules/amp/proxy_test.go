@@ -1,3 +1,16 @@
+// amp - proxy_test.go
+// 反向代理（ReverseProxy）的单元测试。
+// 测试以下功能：
+// - 代理创建：有效和无效 URL
+// - 响应修改：gzip 解压、Content-Length 更新、流式响应跳过、分块 JSON 解压
+// - 请求头注入：X-Api-Key 和 Authorization 头
+// - 空密钥时不注入头
+// - 客户端凭据剥离：头部和查询参数中的客户端密钥被移除
+// - 映射密钥注入：根据请求上下文选择正确的上游密钥
+// - 错误处理：不可达上游返回 502、上下文取消返回空响应
+// - 完整往返测试：gzip 和普通 JSON
+// - 流式响应检测
+// - Beta 特性过滤
 package amp
 
 import (
@@ -14,7 +27,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
-// Helper: compress data with gzip
+// gzipBytes 是辅助函数，使用 gzip 压缩字节数据
 func gzipBytes(b []byte) []byte {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -23,7 +36,7 @@ func gzipBytes(b []byte) []byte {
 	return buf.Bytes()
 }
 
-// Helper: create a mock http.Response
+// mkResp 是辅助函数，创建模拟的 HTTP 响应对象
 func mkResp(status int, hdr http.Header, body []byte) *http.Response {
 	if hdr == nil {
 		hdr = http.Header{}
@@ -36,6 +49,7 @@ func mkResp(status int, hdr http.Header, body []byte) *http.Response {
 	}
 }
 
+// TestCreateReverseProxy_ValidURL 测试有效 URL 创建代理成功
 func TestCreateReverseProxy_ValidURL(t *testing.T) {
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource("key"))
 	if err != nil {
@@ -46,6 +60,7 @@ func TestCreateReverseProxy_ValidURL(t *testing.T) {
 	}
 }
 
+// TestCreateReverseProxy_InvalidURL 测试无效 URL 创建代理失败
 func TestCreateReverseProxy_InvalidURL(t *testing.T) {
 	_, err := createReverseProxy("://invalid", NewStaticSecretSource("key"))
 	if err == nil {
@@ -53,6 +68,13 @@ func TestCreateReverseProxy_InvalidURL(t *testing.T) {
 	}
 }
 
+// TestModifyResponse_GzipScenarios 测试各种 gzip 响应修改场景：
+// - 有效 gzip 自动解压（无 Content-Encoding 头时）
+// - 有 Content-Encoding 头时跳过解压
+// - 截断和损坏的 gzip 数据原样传递
+// - 非 gzip 数据原样传递
+// - 空和单字节 body 的处理
+// - 非 2xx 状态码的 gzip 也解压
 func TestModifyResponse_GzipScenarios(t *testing.T) {
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource("k"))
 	if err != nil {
@@ -158,6 +180,7 @@ func TestModifyResponse_GzipScenarios(t *testing.T) {
 	}
 }
 
+// TestModifyResponse_UpdatesContentLengthHeader 测试 gzip 解压后 Content-Length 头被更新为解压后的大小
 func TestModifyResponse_UpdatesContentLengthHeader(t *testing.T) {
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource("k"))
 	if err != nil {
@@ -196,6 +219,7 @@ func TestModifyResponse_UpdatesContentLengthHeader(t *testing.T) {
 	}
 }
 
+// TestModifyResponse_SkipsStreamingResponses 测试 SSE 流式响应不被解压
 func TestModifyResponse_SkipsStreamingResponses(t *testing.T) {
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource("k"))
 	if err != nil {
@@ -218,6 +242,7 @@ func TestModifyResponse_SkipsStreamingResponses(t *testing.T) {
 	})
 }
 
+// TestModifyResponse_DecompressesChunkedJSON 测试分块传输的 JSON 响应被解压
 func TestModifyResponse_DecompressesChunkedJSON(t *testing.T) {
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource("k"))
 	if err != nil {
@@ -241,6 +266,7 @@ func TestModifyResponse_DecompressesChunkedJSON(t *testing.T) {
 	})
 }
 
+// TestReverseProxy_InjectsHeaders 测试代理注入 X-Api-Key 和 Authorization 头
 func TestReverseProxy_InjectsHeaders(t *testing.T) {
 	gotHeaders := make(chan http.Header, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +301,7 @@ func TestReverseProxy_InjectsHeaders(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_EmptySecret 测试空密钥时不注入认证头
 func TestReverseProxy_EmptySecret(t *testing.T) {
 	gotHeaders := make(chan http.Header, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +337,11 @@ func TestReverseProxy_EmptySecret(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_StripsClientCredentialsFromHeadersAndQuery 测试客户端凭据剥离：
+// - X-Goog-Api-Key 头被移除
+// - Authorization 和 X-Api-Key 被替换为上游密钥
+// - 查询参数中匹配客户端密钥的 key 和 auth_token 被移除
+// - 非凭据查询参数被保留
 func TestReverseProxy_StripsClientCredentialsFromHeadersAndQuery(t *testing.T) {
 	type captured struct {
 		headers http.Header
@@ -374,6 +406,8 @@ func TestReverseProxy_StripsClientCredentialsFromHeadersAndQuery(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_InjectsMappedSecret_FromRequestContext 测试映射密钥注入：
+// 当请求上下文包含客户端密钥 k1 时，注入对应的上游密钥 u1
 func TestReverseProxy_InjectsMappedSecret_FromRequestContext(t *testing.T) {
 	gotHeaders := make(chan http.Header, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -419,6 +453,8 @@ func TestReverseProxy_InjectsMappedSecret_FromRequestContext(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_MappedSecret_FallsBackToDefault 测试当客户端密钥不匹配映射表时，
+// 回退到默认密钥源
 func TestReverseProxy_MappedSecret_FallsBackToDefault(t *testing.T) {
 	gotHeaders := make(chan http.Header, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -463,6 +499,7 @@ func TestReverseProxy_MappedSecret_FallsBackToDefault(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_ErrorHandler 测试上游不可达时返回 502 状态码和 amp_upstream_proxy_error 错误
 func TestReverseProxy_ErrorHandler(t *testing.T) {
 	// Point proxy to a non-routable address to trigger error
 	proxy, err := createReverseProxy("http://127.0.0.1:1", NewStaticSecretSource(""))
@@ -493,6 +530,7 @@ func TestReverseProxy_ErrorHandler(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_ErrorHandler_ContextCanceled 测试上下文取消时返回空响应体（无 JSON 错误响应）
 func TestReverseProxy_ErrorHandler_ContextCanceled(t *testing.T) {
 	// Test that context.Canceled errors return 499 without generic error response
 	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource(""))
@@ -517,6 +555,8 @@ func TestReverseProxy_ErrorHandler_ContextCanceled(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_FullRoundTrip_Gzip 测试完整的 gzip 请求往返：上游返回无 Content-Encoding 头的 gzip 数据，
+// 客户端应收到解压后的 JSON
 func TestReverseProxy_FullRoundTrip_Gzip(t *testing.T) {
 	// Upstream returns gzipped JSON without Content-Encoding header
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -548,6 +588,7 @@ func TestReverseProxy_FullRoundTrip_Gzip(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_FullRoundTrip_PlainJSON 测试普通 JSON 请求往返：数据原样传递
 func TestReverseProxy_FullRoundTrip_PlainJSON(t *testing.T) {
 	// Upstream returns plain JSON
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -580,6 +621,11 @@ func TestReverseProxy_FullRoundTrip_PlainJSON(t *testing.T) {
 	}
 }
 
+// TestIsStreamingResponse 测试流式响应检测：
+// - SSE (text/event-stream) 为流式
+// - 分块传输 (chunked) 不是流式（传输层协议）
+// - 普通 JSON 不是流式
+// - 空头不是流式
 func TestIsStreamingResponse(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -619,6 +665,8 @@ func TestIsStreamingResponse(t *testing.T) {
 	}
 }
 
+// TestFilterBetaFeatures 测试 Beta 特性过滤：
+// 从 anthropic-beta 头中移除指定的特性标记，保留其他特性
 func TestFilterBetaFeatures(t *testing.T) {
 	tests := []struct {
 		name            string

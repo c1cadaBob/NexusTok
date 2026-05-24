@@ -1,3 +1,19 @@
+// Package controller - option.go
+// 该文件实现了系统选项管理的 API 控制器
+//
+// 系统选项是键值对形式的配置，存储在数据库中
+// 支持动态修改，无需重启服务
+//
+// 选项分类：
+// - 计费相关：模型价格、配额倍率、完成比例等
+// - 支付相关：支付方式、合规设置等
+// - 安全相关：公钥配置等
+// - 运营相关：站点名称、公告等
+//
+// 主要 API：
+// - GetOptions：获取所有系统选项
+// - UpdateOption：更新单个选项
+// - UpdateOptions：批量更新选项
 package controller
 
 import (
@@ -18,6 +34,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// completionRatioMetaOptionKeys 需要特殊处理的计费相关选项键
+// 这些选项修改后需要更新配比配置
 var completionRatioMetaOptionKeys = []string{
 	"ModelPrice",
 	"ModelRatio",
@@ -29,10 +47,26 @@ var completionRatioMetaOptionKeys = []string{
 	"AudioCompletionRatio",
 }
 
+// isPaymentComplianceOptionKey 检查是否为支付合规选项
+//
+// 参数：
+//   - key: 选项键
+//
+// 返回值：
+//   - bool: 是否为支付合规选项
 func isPaymentComplianceOptionKey(key string) bool {
 	return strings.HasPrefix(key, "payment_setting.compliance_")
 }
 
+// isPositiveOptionValue 检查选项值是否为正数
+//
+// 支持整数和浮点数
+//
+// 参数：
+//   - value: 选项值字符串
+//
+// 返回值：
+//   - bool: 是否为正数
 func isPositiveOptionValue(value string) bool {
 	intValue, err := strconv.Atoi(strings.TrimSpace(value))
 	if err == nil {
@@ -42,6 +76,15 @@ func isPositiveOptionValue(value string) bool {
 	return err == nil && floatValue > 0
 }
 
+// isVisiblePublicKeyOption 检查是否为可见的公钥选项
+//
+// 这些选项的值可以在前端展示（非敏感信息）
+//
+// 参数：
+//   - key: 选项键
+//
+// 返回值：
+//   - bool: 是否为可见的公钥选项
 func isVisiblePublicKeyOption(key string) bool {
 	switch key {
 	case "WaffoPancakeWebhookPublicKey", "WaffoPancakeWebhookTestKey":

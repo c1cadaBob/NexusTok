@@ -1,3 +1,5 @@
+// handlers - header_filter_test.go
+// 测试上游响应头过滤功能，验证逐跳头部、安全敏感头部和网关头部被正确移除。
 package handlers
 
 import (
@@ -5,6 +7,8 @@ import (
 	"testing"
 )
 
+// TestFilterUpstreamHeaders_RemovesConnectionScopedHeaders 测试过滤器正确移除 Connection 头部
+// 中声明的逐跳头部以及其他安全敏感头部。
 func TestFilterUpstreamHeaders_RemovesConnectionScopedHeaders(t *testing.T) {
 	src := http.Header{}
 	src.Add("Connection", "keep-alive, x-hop-a, x-hop-b")
@@ -42,6 +46,7 @@ func TestFilterUpstreamHeaders_RemovesConnectionScopedHeaders(t *testing.T) {
 	}
 }
 
+// TestFilterUpstreamHeaders_ReturnsNilWhenAllHeadersBlocked 测试当所有头部都被过滤后返回 nil。
 func TestFilterUpstreamHeaders_ReturnsNilWhenAllHeadersBlocked(t *testing.T) {
 	src := http.Header{}
 	src.Add("Connection", "x-hop-a")

@@ -1,3 +1,12 @@
+// Package controller - telegram.go
+// 该文件实现了 Telegram 登录和绑定的 API 控制器
+//
+// Telegram 登录使用 Telegram Login Widget 进行身份验证
+// 通过 HMAC-SHA256 验证请求的合法性
+//
+// 主要 API：
+// - TelegramLogin：Telegram 登录处理
+// - TelegramBind：绑定 Telegram 账户到现有用户
 package controller
 
 import (
@@ -15,6 +24,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TelegramBind 将 Telegram 账户绑定到当前登录用户
+//
+// 验证 Telegram 授权数据后，将 Telegram ID 绑定到当前用户
+// 如果该 Telegram 账户已被其他用户绑定，返回错误
 func TelegramBind(c *gin.Context) {
 	if !common.TelegramOAuthEnabled {
 		c.JSON(200, gin.H{
@@ -69,6 +82,9 @@ func TelegramBind(c *gin.Context) {
 	c.Redirect(302, common.ThemeAwarePath("/console/personal"))
 }
 
+// TelegramLogin 处理 Telegram 登录
+//
+// 验证 Telegram 授权数据后，查找并登录对应用户
 func TelegramLogin(c *gin.Context) {
 	if !common.TelegramOAuthEnabled {
 		c.JSON(200, gin.H{
@@ -98,6 +114,21 @@ func TelegramLogin(c *gin.Context) {
 	setupLogin(&user, c)
 }
 
+// checkTelegramAuthorization 验证 Telegram 授权数据的合法性
+//
+// 使用 HMAC-SHA256 算法验证请求签名
+// 验证逻辑：
+// 1. 将所有参数（除 hash 外）按字母顺序排列
+// 2. 拼接为 key=value 格式
+// 3. 使用 Bot Token 的 SHA256 哈希作为 HMAC 密钥
+// 4. 计算 HMAC-SHA256 并与请求中的 hash 比较
+//
+// 参数：
+//   - params: 请求参数
+//   - token: Telegram Bot Token
+//
+// 返回值：
+//   - bool: 验证是否通过
 func checkTelegramAuthorization(params map[string][]string, token string) bool {
 	strs := []string{}
 	var hash = ""

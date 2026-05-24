@@ -1,5 +1,17 @@
-// Package openai provides request translation functionality for OpenAI to Gemini CLI API compatibility.
-// It converts OpenAI Chat Completions requests into Gemini CLI compatible JSON using gjson/sjson only.
+// chat_completions - antigravity_openai_request.go
+// Antigravity 的 OpenAI Chat Completions 格式请求转换器。
+// 将 OpenAI Chat Completions API 格式的请求转换为 Antigravity (Gemini CLI) 兼容的 JSON 格式。
+//
+// 主要转换内容：
+// - 模型名称映射和参数提取（temperature、top_p、top_k、max_tokens 等）
+// - reasoning_effort 转换为 thinkingConfig（thinkingBudget 或 thinkingLevel）
+// - 系统指令转换（system/developer 消息 -> systemInstruction）
+// - 消息内容转换（文本、图片、文件、音频 -> Gemini parts 格式）
+// - 工具调用和工具结果处理（tool_calls -> functionCall，tool -> functionResponse）
+// - 工具定义转换（function -> functionDeclarations，parameters -> parametersJsonSchema）
+// - 内置工具透传（google_search、code_execution、url_context）
+// - 模态映射（modalities -> responseModalities）
+// - 图片配置映射（image_config -> imageConfig）
 package chat_completions
 
 import (
@@ -14,18 +26,29 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiCLIFunctionThoughtSignature 是用于跳过思考签名验证的占位符值。
+// 在工具调用和图片数据中设置此值以绕过 Antigravity 的签名验证逻辑。
 const geminiCLIFunctionThoughtSignature = "skip_thought_signature_validator"
 
-// ConvertOpenAIRequestToAntigravity converts an OpenAI Chat Completions request (raw JSON)
-// into a complete Gemini CLI request JSON. All JSON construction uses sjson and lookups use gjson.
+// ConvertOpenAIRequestToAntigravity 将 OpenAI Chat Completions 格式的请求转换为 Antigravity (Gemini CLI) 格式。
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data from the OpenAI API
-//   - stream: A boolean indicating if the request is for a streaming response (unused in current implementation)
+// 转换流程：
+// 1. 设置默认参数和模型名称
+// 2. 转换 thinking 配置（reasoning_effort -> thinkingConfig）
+// 3. 映射生成参数（temperature、top_p、top_k、max_tokens、n 等）
+// 4. 映射模态和图片配置
+// 5. 转换消息数组（system -> systemInstruction，user/assistant -> contents，tool -> functionResponse）
+// 6. 转换工具定义（function -> functionDeclarations）
+// 7. 透传内置工具（google_search、code_execution、url_context）
+// 8. 附加默认安全设置
 //
-// Returns:
-//   - []byte: The transformed request data in Gemini CLI API format
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Chat Completions 格式 JSON 请求数据
+//   - stream: 是否为流式请求（当前实现中未使用）
+//
+// 返回值：
+//   - []byte: 转换后的 Antigravity (Gemini CLI) 格式 JSON 请求数据
 func ConvertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 	// Base envelope (no default thinkingConfig)
@@ -451,5 +474,6 @@ func ConvertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	return common.AttachDefaultSafetySettings(out, "request.safetySettings")
 }
 
-// itoa converts int to string without strconv import for few usages.
+// itoa 将整数转换为字符串，避免导入 strconv 包。
+// 用于构建 JSON 路径中的数组索引。
 func itoa(i int) string { return fmt.Sprintf("%d", i) }

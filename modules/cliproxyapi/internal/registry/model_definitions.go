@@ -1,5 +1,6 @@
-// Package registry provides model definitions and lookup helpers for various AI providers.
-// Static model metadata is loaded from the embedded models.json file and can be refreshed from network.
+// registry - model_definitions.go
+// 本文件提供了各 AI 服务商的静态模型定义和查找辅助函数。
+// 静态模型元数据从嵌入的 models.json 文件加载，也可从网络刷新。
 package registry
 
 import (
@@ -7,13 +8,17 @@ import (
 )
 
 const (
-	codexBuiltinImageModelID      = "gpt-image-2"
-	xaiBuiltinImageModelID        = "grok-imagine-image"
+	// codexBuiltinImageModelID 是 Codex 内置图像模型的 ID。
+	codexBuiltinImageModelID = "gpt-image-2"
+	// xaiBuiltinImageModelID 是 xAI 内置图像模型的 ID。
+	xaiBuiltinImageModelID = "grok-imagine-image"
+	// xaiBuiltinImageQualityModelID 是 xAI 内置高质量图像模型的 ID。
 	xaiBuiltinImageQualityModelID = "grok-imagine-image-quality"
-	xaiBuiltinVideoModelID        = "grok-imagine-video"
+	// xaiBuiltinVideoModelID 是 xAI 内置视频模型的 ID。
+	xaiBuiltinVideoModelID = "grok-imagine-video"
 )
 
-// staticModelsJSON mirrors the top-level structure of models.json.
+// staticModelsJSON 映射 models.json 的顶层结构。
 type staticModelsJSON struct {
 	Claude      []*ModelInfo `json:"claude"`
 	Gemini      []*ModelInfo `json:"gemini"`

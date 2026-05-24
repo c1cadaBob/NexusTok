@@ -1,3 +1,8 @@
+// Package claude - openai_claude_response_test.go
+// 测试 OpenAI 到 Claude 响应格式转换功能。
+// 覆盖流式场景下工具调用（tool_use）的各种边界情况，
+// 包括空工具名、null 工具名、重复名称、延迟 ID、
+// 混合抑制与有效工具、以及停止原因映射等测试用例。
 package claude
 
 import (
@@ -9,11 +14,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// sseEvent 表示一个 SSE（Server-Sent Events）事件，包含事件类型和负载数据
 type sseEvent struct {
 	Type    string
 	Payload string
 }
 
+// runStream 是流式响应测试的辅助函数，将多个数据块通过 ConvertOpenAIResponseToClaude 转换，
+// 并将结果解析为 SSE 事件列表
 func runStream(t *testing.T, originalReq string, chunks ...string) []sseEvent {
 	t.Helper()
 
@@ -59,6 +67,7 @@ func runStream(t *testing.T, originalReq string, chunks ...string) []sseEvent {
 	return events
 }
 
+// countByType 统计指定类型 SSE 事件的数量
 func countByType(events []sseEvent, typ string) int {
 	n := 0
 	for _, e := range events {
@@ -69,6 +78,7 @@ func countByType(events []sseEvent, typ string) int {
 	return n
 }
 
+// toolUseStarts 从事件列表中筛选出 tool_use 类型的 content_block_start 事件
 func toolUseStarts(events []sseEvent) []sseEvent {
 	var out []sseEvent
 	for _, e := range events {
@@ -82,6 +92,7 @@ func toolUseStarts(events []sseEvent) []sseEvent {
 	return out
 }
 
+// blockIndices 提取所有 content_block_start 事件的 index 值
 func blockIndices(events []sseEvent) []int64 {
 	var idx []int64
 	for _, e := range events {
@@ -92,6 +103,7 @@ func blockIndices(events []sseEvent) []int64 {
 	return idx
 }
 
+// lastStopReason 从事件列表中获取最后一个 message_delta 事件的 stop_reason
 func lastStopReason(events []sseEvent) string {
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Type == "message_delta" {
@@ -103,6 +115,8 @@ func lastStopReason(events []sseEvent) string {
 
 const streamReq = `{"stream":true}`
 
+// TestConvertOpenAIResponseToClaude_StreamIgnoresNullToolNameDelta 测试流式场景下
+// 当 OpenAI 返回 null 工具名的 delta 时，不会启动新的 content_block
 func TestConvertOpenAIResponseToClaude_StreamIgnoresNullToolNameDelta(t *testing.T) {
 	originalRequest := []byte(streamReq)
 	var param any
@@ -137,6 +151,8 @@ func TestConvertOpenAIResponseToClaude_StreamIgnoresNullToolNameDelta(t *testing
 	}
 }
 
+// TestStreamingTool_EmptyNameThroughout 测试当工具名在整个流式过程中始终为空字符串时，
+// 不应产生任何 tool_use 内容块
 func TestStreamingTool_EmptyNameThroughout(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","function":{"name":"","arguments":""}}]}}]}`,
@@ -158,6 +174,7 @@ func TestStreamingTool_EmptyNameThroughout(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_NullName 测试当工具名为 null 时，不应产生 tool_use 启动事件
 func TestStreamingTool_NullName(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","function":{"name":null,"arguments":""}}]}}]}`,
@@ -171,6 +188,7 @@ func TestStreamingTool_NullName(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_NonStringName 测试当工具名为非字符串类型（如数字）时的处理
 func TestStreamingTool_NonStringName(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","function":{"name":123,"arguments":""}}]}}]}`,
@@ -181,6 +199,8 @@ func TestStreamingTool_NonStringName(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_RepeatedName 测试当工具名在多个 delta 中重复出现时，
+// 只应产生一个 tool_use 启动事件
 func TestStreamingTool_RepeatedName(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","function":{"name":"do_it","arguments":""}}]}}]}`,
@@ -201,6 +221,8 @@ func TestStreamingTool_RepeatedName(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_MixedSuppressedAndValid 测试混合场景：一个空名工具被抑制，
+// 另一个有效工具正常产生 tool_use 事件
 func TestStreamingTool_MixedSuppressedAndValid(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[
@@ -227,6 +249,8 @@ func TestStreamingTool_MixedSuppressedAndValid(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_EmptyIDDeferStart 测试当工具 ID 为空时延迟启动，
+// 等待真实 ID 到达后再产生 content_block_start 事件
 func TestStreamingTool_EmptyIDDeferStart(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"","function":{"name":"do_it","arguments":""}}]}}]}`,
@@ -243,6 +267,8 @@ func TestStreamingTool_EmptyIDDeferStart(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_IDInDeltaWithoutFunction 测试当 ID 在不含 function 字段的 delta 中到达时，
+// 工具启动事件应正确合并 ID 和名称
 func TestStreamingTool_IDInDeltaWithoutFunction(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"function":{"name":"do_it"}}]}}]}`,
@@ -266,6 +292,8 @@ func TestStreamingTool_IDInDeltaWithoutFunction(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_StopReasonWithEmittedTool 测试当有已发出的工具时，
+// stop_reason 应映射为 "tool_use"
 func TestStreamingTool_StopReasonWithEmittedTool(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","function":{"name":"do_it","arguments":"{}"}}]}}]}`,
@@ -276,6 +304,8 @@ func TestStreamingTool_StopReasonWithEmittedTool(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_StopReasonWhenIDNeverArrives 测试当工具 ID 始终未到达时，
+// 系统应生成合成 ID 并正确处理停止原因
 func TestStreamingTool_StopReasonWhenIDNeverArrives(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"function":{"name":"do_it","arguments":""}}]}}]}`,
@@ -299,6 +329,8 @@ func TestStreamingTool_StopReasonWhenIDNeverArrives(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_BelatedStartsUseOpenAIToolIndexOrder 测试延迟启动的工具
+// 应按 OpenAI 工具索引顺序排列
 func TestStreamingTool_BelatedStartsUseOpenAIToolIndexOrder(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[
@@ -325,6 +357,8 @@ func TestStreamingTool_BelatedStartsUseOpenAIToolIndexOrder(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_LateIDAfterFinalization 测试在消息最终化之后到达的 ID
+// 不应在 message_stop 之后产生任何内容块事件
 func TestStreamingTool_LateIDAfterFinalization(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"function":{"name":"do_it"}}]}}]}`,
@@ -352,6 +386,7 @@ func TestStreamingTool_LateIDAfterFinalization(t *testing.T) {
 	}
 }
 
+// TestStreamingTool_StopReasonMixedSuppressedAndValid 测试混合抑制和有效工具时的停止原因
 func TestStreamingTool_StopReasonMixedSuppressedAndValid(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[

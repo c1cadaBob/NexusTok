@@ -1,3 +1,5 @@
+// diff - oauth_excluded_test.go
+// 测试 OAuth 排除模型和 Amp 模型映射的差异检测功能，验证归一化、去重和变更摘要。
 package diff
 
 import (

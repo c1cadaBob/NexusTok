@@ -1,3 +1,5 @@
+// Package helps - home_refresh.go
+// 实现 Home 控制平面的令牌刷新功能，用于自动刷新 OAuth 令牌。
 package helps
 
 import (

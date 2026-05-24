@@ -1,3 +1,5 @@
+// management - auth_files_recent_requests_test.go
+// 测试认证文件列表中最近请求统计（recent_requests）的正确返回，验证时间桶结构和计数
 package management
 
 import (
@@ -12,6 +14,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// TestListAuthFiles_IncludesRecentRequestsBuckets 测试认证文件列表包含最近请求时间桶
 func TestListAuthFiles_IncludesRecentRequestsBuckets(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)

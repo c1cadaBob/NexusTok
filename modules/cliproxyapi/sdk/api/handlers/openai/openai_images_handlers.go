@@ -1,3 +1,8 @@
+// openai - openai_images_handlers.go
+// 提供 OpenAI 兼容的图像生成和编辑 API 处理器。
+// 支持多种图像生成后端：xAI (Grok) 图像生成、OpenAI 原生图像工具（gpt-image-2）、
+// 以及 OpenAI 兼容的第三方图像模型。
+// 包含请求构建、响应转换、流式传输和 multipart 表单处理等功能。
 package openai
 
 import (
@@ -24,38 +29,65 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// 图像生成 API 的默认模型和配置常量
 const (
+	// defaultImagesMainModel 是通过 Responses API 生成图像时使用的主模型
 	defaultImagesMainModel      = "gpt-5.4-mini"
+	// defaultImagesToolModel 是 OpenAI 原生图像生成工具的默认模型
 	defaultImagesToolModel      = "gpt-image-2"
+	// defaultXAIImagesModel 是 xAI 图像生成的默认模型
 	defaultXAIImagesModel       = "grok-imagine-image"
+	// xaiImagesQualityModel 是 xAI 高质量图像生成模型
 	xaiImagesQualityModel       = "grok-imagine-image-quality"
+	// xaiImagesHandlerType 是图像处理器类型的标识符
 	xaiImagesHandlerType        = "openai-image"
+	// xaiImagesDefaultAspectRatio 是 xAI 图像的默认宽高比
 	xaiImagesDefaultAspectRatio = "1:1"
+	// xaiImagesDefaultResolution 是 xAI 图像的默认分辨率
 	xaiImagesDefaultResolution  = "1k"
+	// imagesGenerationsPath 是图像生成 API 的路径
 	imagesGenerationsPath       = "/v1/images/generations"
+	// imagesEditsPath 是图像编辑 API 的路径
 	imagesEditsPath             = "/v1/images/edits"
 )
 
+// imageCallResult 存储图像生成调用的结果数据。
 type imageCallResult struct {
+	// Result 是图像的 base64 编码数据
 	Result        string
+	// RevisedPrompt 是模型优化后的提示词
 	RevisedPrompt string
+	// OutputFormat 是输出格式（如 "png"、"jpeg"）
 	OutputFormat  string
+	// Size 是图像尺寸
 	Size          string
+	// Background 是背景类型（如 "transparent"、"auto"）
 	Background    string
+	// Quality 是图像质量设置
 	Quality       string
 }
 
+// sseFrameAccumulator 用于累积和解析 SSE（Server-Sent Events）帧数据。
+// 处理分块传输的数据，将不完整的帧缓存直到接收到完整的帧。
 type sseFrameAccumulator struct {
+	// pending 存储尚未解析完成的帧数据
 	pending []byte
 }
 
+// xaiImageResult 存储 xAI 图像生成的单个结果。
 type xaiImageResult struct {
+	// B64JSON 是 base64 编码的图像数据
 	B64JSON       string
+	// URL 是图像的访问 URL
 	URL           string
+	// RevisedPrompt 是模型优化后的提示词
 	RevisedPrompt string
+	// MimeType 是图像的 MIME 类型
 	MimeType      string
 }
 
+// AddChunk 将新的数据块添加到累积器中并尝试解析完整的帧。
+// 返回解析出的完整帧列表。如果数据不完整则缓存等待后续数据。
 func (a *sseFrameAccumulator) AddChunk(chunk []byte) [][]byte {
 	if len(chunk) == 0 {
 		return nil
@@ -89,6 +121,8 @@ func (a *sseFrameAccumulator) AddChunk(chunk []byte) [][]byte {
 	return frames
 }
 
+// Flush 刷新累积器中所有剩余的数据。
+// 在流结束时调用，将缓存的不完整帧也作为帧返回（如果可以安全发出）。
 func (a *sseFrameAccumulator) Flush() [][]byte {
 	if len(a.pending) == 0 {
 		return nil
@@ -116,6 +150,8 @@ func (a *sseFrameAccumulator) Flush() [][]byte {
 	return frames
 }
 
+// imagesModelParts 从模型名称中分离前缀和基础模型名。
+// 例如 "xai/grok-imagine-image" 返回 ("xai", "grok-imagine-image")。
 func imagesModelParts(model string) (prefix string, baseModel string) {
 	model = strings.TrimSpace(model)
 	if idx := strings.LastIndex(model, "/"); idx >= 0 && idx < len(model)-1 {
@@ -124,11 +160,14 @@ func imagesModelParts(model string) (prefix string, baseModel string) {
 	return "", model
 }
 
+// imagesModelBase 从模型名称中提取基础模型名称（小写形式）。
 func imagesModelBase(model string) string {
 	_, baseModel := imagesModelParts(model)
 	return strings.ToLower(strings.TrimSpace(baseModel))
 }
 
+// isXAIImagesModel 检查给定模型是否为 xAI 图像生成模型。
+// 支持的前缀包括 "xai"、"x-ai"、"grok" 或无前缀。
 func isXAIImagesModel(model string) bool {
 	prefix, baseModel := imagesModelParts(model)
 	baseModel = strings.ToLower(strings.TrimSpace(baseModel))
@@ -140,6 +179,8 @@ func isXAIImagesModel(model string) bool {
 	return prefix == "" || prefix == "xai" || prefix == "x-ai" || prefix == "grok"
 }
 
+// isSupportedImagesModel 检查给定模型是否为支持的图像生成模型。
+// 支持 gpt-image-2、xAI 图像模型和 OpenAI 兼容图像模型。
 func isSupportedImagesModel(model string) bool {
 	baseModel := imagesModelBase(model)
 	if baseModel == defaultImagesToolModel {
@@ -148,10 +189,13 @@ func isSupportedImagesModel(model string) bool {
 	return isXAIImagesModel(model) || isOpenAICompatImagesModel(model)
 }
 
+// isDefaultImagesToolModel 检查给定模型是否为默认的 OpenAI 图像工具模型。
 func isDefaultImagesToolModel(model string) bool {
 	return imagesModelBase(model) == defaultImagesToolModel
 }
 
+// isOpenAICompatImagesModel 检查给定模型是否为 OpenAI 兼容的图像模型。
+// 通过注册表查询模型信息，验证其类型是否为 OpenAIImageModelType。
 func isOpenAICompatImagesModel(model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -161,6 +205,8 @@ func isOpenAICompatImagesModel(model string) bool {
 	return info != nil && info.Type == registry.OpenAIImageModelType
 }
 
+// rejectUnsupportedImagesModel 检查模型是否受支持，如果不支持则返回 400 错误响应。
+// 返回 true 表示模型不受支持（已发送错误响应），false 表示模型受支持。
 func rejectUnsupportedImagesModel(c *gin.Context, model string) bool {
 	if isSupportedImagesModel(model) {
 		return false
@@ -175,6 +221,8 @@ func rejectUnsupportedImagesModel(c *gin.Context, model string) bool {
 	return true
 }
 
+// normalizeImagesResponseFormat 规范化图像响应格式。
+// "url" 返回 "url"，其他值（包括空值）返回 "b64_json"。
 func normalizeImagesResponseFormat(responseFormat string) string {
 	if strings.EqualFold(strings.TrimSpace(responseFormat), "url") {
 		return "url"
@@ -182,6 +230,8 @@ func normalizeImagesResponseFormat(responseFormat string) string {
 	return "b64_json"
 }
 
+// canonicalXAIImagesModel 将模型名称规范化为 xAI 图像生成的标准模型名称。
+// 如果基础模型是高质量模型，则返回高质量模型名称，否则返回默认模型。
 func canonicalXAIImagesModel(model string) string {
 	baseModel := imagesModelBase(model)
 	if baseModel == xaiImagesQualityModel {
@@ -190,6 +240,8 @@ func canonicalXAIImagesModel(model string) string {
 	return defaultXAIImagesModel
 }
 
+// xaiImagesAspectRatio 解析宽高比参数，支持多种格式（如 "1:1"、"square"、"landscape" 等）。
+// 如果参数无效则返回 fallback 值。
 func xaiImagesAspectRatio(raw string, fallback string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1:1", "square":
@@ -211,6 +263,8 @@ func xaiImagesAspectRatio(raw string, fallback string) string {
 	}
 }
 
+// xaiImagesAspectRatioFromSize 根据图像尺寸推断宽高比。
+// 支持的映射包括 1024x1024 -> 1:1、1792x1024 -> 16:9 等。
 func xaiImagesAspectRatioFromSize(size string, fallback string) string {
 	size = strings.ToLower(strings.TrimSpace(size))
 	switch size {
@@ -229,6 +283,8 @@ func xaiImagesAspectRatioFromSize(size string, fallback string) string {
 	}
 }
 
+// xaiImagesResolution 解析图像分辨率参数。
+// 支持 "1k" 和 "2k" 两种分辨率。如果尺寸包含 "2048" 则自动使用 "2k"。
 func xaiImagesResolution(raw string, size string, fallback string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1k", "2k":
@@ -240,12 +296,16 @@ func xaiImagesResolution(raw string, size string, fallback string) string {
 	return fallback
 }
 
+// xaiImagesRef 构建 xAI 图像引用的 JSON 对象。
+// 格式为 {"type":"image_url","url":"..."}。
 func xaiImagesRef(imageURL string) []byte {
 	ref := []byte(`{"type":"image_url","url":""}`)
 	ref, _ = sjson.SetBytes(ref, "url", strings.TrimSpace(imageURL))
 	return ref
 }
 
+// buildXAIImagesBaseRequest 构建 xAI 图像生成的基础请求体。
+// 包含 model、prompt、response_format、aspect_ratio、resolution 和 n 等参数。
 func buildXAIImagesBaseRequest(model string, prompt string, responseFormat string, aspectRatio string, resolution string, n int64) []byte {
 	req := []byte(`{}`)
 	req, _ = sjson.SetBytes(req, "model", canonicalXAIImagesModel(model))
@@ -263,6 +323,8 @@ func buildXAIImagesBaseRequest(model string, prompt string, responseFormat strin
 	return req
 }
 
+// buildXAIImagesGenerationsRequest 构建 xAI 图像生成请求。
+// 从原始 JSON 中提取 prompt、size、aspect_ratio、resolution 和 n 参数。
 func buildXAIImagesGenerationsRequest(rawJSON []byte, model string, responseFormat string) []byte {
 	prompt := strings.TrimSpace(gjson.GetBytes(rawJSON, "prompt").String())
 	size := strings.TrimSpace(gjson.GetBytes(rawJSON, "size").String())
@@ -279,6 +341,8 @@ func buildXAIImagesGenerationsRequest(rawJSON []byte, model string, responseForm
 	return buildXAIImagesBaseRequest(model, prompt, responseFormat, aspectRatio, resolution, n)
 }
 
+// buildXAIImagesEditRequest 构建 xAI 图像编辑请求。
+// 将多个图像作为参考图像添加到请求中。单个图像使用 image 字段，多个使用 images 数组。
 func buildXAIImagesEditRequest(model string, prompt string, images []string, responseFormat string, aspectRatio string, resolution string, n int64) []byte {
 	req := buildXAIImagesBaseRequest(model, prompt, responseFormat, aspectRatio, resolution, n)
 	trimmedImages := make([]string, 0, len(images))
@@ -297,6 +361,8 @@ func buildXAIImagesEditRequest(model string, prompt string, images []string, res
 	return req
 }
 
+// collectXAIImagesFromJSON 从 JSON 请求体中收集图像 URL。
+// 支持多种输入格式：image（字符串或对象）、images 数组等。
 func collectXAIImagesFromJSON(rawJSON []byte) []string {
 	var images []string
 	appendImage := func(url string) {
@@ -333,6 +399,8 @@ func collectXAIImagesFromJSON(rawJSON []byte) []string {
 	return images
 }
 
+// xaiImagesEditOptionsFromJSON 从 JSON 请求体中提取图像编辑选项。
+// 返回 aspect_ratio、resolution 和 n 参数。
 func xaiImagesEditOptionsFromJSON(rawJSON []byte) (aspectRatio string, resolution string, n int64) {
 	size := strings.TrimSpace(gjson.GetBytes(rawJSON, "size").String())
 	aspectRatio = xaiImagesAspectRatio(gjson.GetBytes(rawJSON, "aspect_ratio").String(), "")
@@ -344,6 +412,8 @@ func xaiImagesEditOptionsFromJSON(rawJSON []byte) (aspectRatio string, resolutio
 	return aspectRatio, resolution, n
 }
 
+// mimeTypeFromOutputFormat 将输出格式转换为 MIME 类型。
+// 支持 png、jpg/jpeg、webp 格式，默认返回 "image/png"。
 func mimeTypeFromOutputFormat(outputFormat string) string {
 	if outputFormat == "" {
 		return "image/png"
@@ -363,6 +433,9 @@ func mimeTypeFromOutputFormat(outputFormat string) string {
 	}
 }
 
+// multipartFileToDataURL 将上传的文件转换为 data URL 格式。
+// 格式为 "data:{mediaType};base64,{base64Data}"。
+// 如果文件没有 Content-Type，则自动检测。
 func multipartFileToDataURL(fileHeader *multipart.FileHeader) (string, error) {
 	if fileHeader == nil {
 		return "", fmt.Errorf("upload file is nil")
@@ -391,6 +464,8 @@ func multipartFileToDataURL(fileHeader *multipart.FileHeader) (string, error) {
 	return "data:" + mediaType + ";base64," + b64, nil
 }
 
+// buildOpenAICompatImagesJSONRequest 构建 OpenAI 兼容的 JSON 格式图像请求。
+// 设置模型名称和流式传输标志。
 func buildOpenAICompatImagesJSONRequest(rawJSON []byte, imageModel string, stream bool) []byte {
 	payload := rawJSON
 	if model := strings.TrimSpace(imageModel); model != "" {
@@ -404,6 +479,8 @@ func buildOpenAICompatImagesJSONRequest(rawJSON []byte, imageModel string, strea
 	return payload
 }
 
+// cloneMIMEHeader 深拷贝 MIME 头部。
+// 确保修改副本不会影响原始头部。
 func cloneMIMEHeader(src textproto.MIMEHeader) textproto.MIMEHeader {
 	dst := make(textproto.MIMEHeader, len(src))
 	for key, values := range src {
@@ -412,6 +489,8 @@ func cloneMIMEHeader(src textproto.MIMEHeader) textproto.MIMEHeader {
 	return dst
 }
 
+// buildOpenAICompatImagesMultipartRequest 构建 OpenAI 兼容的 multipart/form-data 格式图像请求。
+// 处理表单字段和文件上传，设置模型和流式传输标志。
 func buildOpenAICompatImagesMultipartRequest(form *multipart.Form, imageModel string, stream bool) ([]byte, string, error) {
 	if form == nil {
 		return nil, "", fmt.Errorf("multipart form is nil")
@@ -475,6 +554,7 @@ func buildOpenAICompatImagesMultipartRequest(form *multipart.Form, imageModel st
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// parseIntField 解析字符串为整数，失败时返回 fallback 值。
 func parseIntField(raw string, fallback int64) int64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -487,6 +567,8 @@ func parseIntField(raw string, fallback int64) int64 {
 	return v
 }
 
+// parseBoolField 解析字符串为布尔值。
+// 支持 "1"、"true"、"yes"、"on" 为 true，"0"、"false"、"no"、"off" 为 false。
 func parseBoolField(raw string, fallback bool) bool {
 	raw = strings.TrimSpace(strings.ToLower(raw))
 	if raw == "" {
@@ -502,6 +584,9 @@ func parseBoolField(raw string, fallback bool) bool {
 	}
 }
 
+// ImagesGenerations 处理 /v1/images/generations 路径的图像生成请求。
+// 支持多种后端：xAI 图像模型、OpenAI 原生图像工具、OpenAI 兼容图像模型。
+// 根据模型类型自动路由到相应的处理逻辑。
 func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 	if h != nil && h.BaseAPIHandler != nil && h.BaseAPIHandler.Cfg != nil && h.BaseAPIHandler.Cfg.DisableImageGeneration == internalconfig.DisableImageGenerationAll {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -606,6 +691,9 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 	h.collectImagesFromResponses(c, responsesReq, responseFormat)
 }
 
+// ImagesEdits 处理 /v1/images/edits 路径的图像编辑请求。
+// 支持 JSON 和 multipart/form-data 两种请求格式。
+// 根据 Content-Type 自动选择解析方式。
 func (h *OpenAIAPIHandler) ImagesEdits(c *gin.Context) {
 	if h != nil && h.BaseAPIHandler != nil && h.BaseAPIHandler.Cfg != nil && h.BaseAPIHandler.Cfg.DisableImageGeneration == internalconfig.DisableImageGenerationAll {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -630,6 +718,8 @@ func (h *OpenAIAPIHandler) ImagesEdits(c *gin.Context) {
 	})
 }
 
+// imagesEditsFromMultipart 处理 multipart/form-data 格式的图像编辑请求。
+// 解析表单字段和上传的图像文件，根据模型类型路由到相应处理逻辑。
 func (h *OpenAIAPIHandler) imagesEditsFromMultipart(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
@@ -794,6 +884,8 @@ func (h *OpenAIAPIHandler) imagesEditsFromMultipart(c *gin.Context) {
 	h.collectImagesFromResponses(c, responsesReq, responseFormat)
 }
 
+// imagesEditsFromJSON 处理 JSON 格式的图像编辑请求。
+// 解析请求体中的图像 URL、遮罩和编辑参数，根据模型类型路由到相应处理逻辑。
 func (h *OpenAIAPIHandler) imagesEditsFromJSON(c *gin.Context) {
 	rawJSON, err := handlers.ReadRequestBody(c)
 	if err != nil {
@@ -931,6 +1023,9 @@ func (h *OpenAIAPIHandler) imagesEditsFromJSON(c *gin.Context) {
 	h.collectImagesFromResponses(c, responsesReq, responseFormat)
 }
 
+// buildImagesResponsesRequest 构建通过 Responses API 生成图像的请求。
+// 使用主模型（gpt-5.4-mini）配合 image_generation 工具来生成图像。
+// 将 prompt 和可选的参考图像转换为 Responses API 的 input 格式。
 func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte) []byte {
 	req := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"model":"","store":false,"tool_choice":{"type":"image_generation"}}`)
 	mainModel := defaultImagesMainModel
@@ -967,6 +1062,8 @@ func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte
 	return req
 }
 
+// extractXAIImagesResponse 从 xAI 图像生成响应中提取结果数据。
+// 返回图像结果列表、创建时间、使用量数据和可能的错误。
 func extractXAIImagesResponse(payload []byte) (results []xaiImageResult, createdAt int64, usageRaw []byte, err error) {
 	if !json.Valid(payload) {
 		return nil, 0, nil, fmt.Errorf("upstream returned invalid image response JSON")
@@ -1009,6 +1106,8 @@ func extractXAIImagesResponse(payload []byte) (results []xaiImageResult, created
 	return results, createdAt, usageRaw, nil
 }
 
+// buildImagesAPIResponseFromXAI 将 xAI 图像响应转换为 OpenAI 兼容格式。
+// 根据 responseFormat 选择返回 URL 或 base64 编码的图像数据。
 func buildImagesAPIResponseFromXAI(payload []byte, responseFormat string) ([]byte, error) {
 	results, createdAt, usageRaw, err := extractXAIImagesResponse(payload)
 	if err != nil {
@@ -1045,6 +1144,7 @@ func buildImagesAPIResponseFromXAI(payload []byte, responseFormat string) ([]byt
 	return out, nil
 }
 
+// handleXAIImages 根据是否流式传输选择处理 xAI 图像请求的方式。
 func (h *OpenAIAPIHandler) handleXAIImages(c *gin.Context, xaiReq []byte, responseFormat string, streamPrefix string, stream bool) {
 	if stream {
 		h.streamXAIImages(c, xaiReq, responseFormat, streamPrefix)
@@ -1053,6 +1153,7 @@ func (h *OpenAIAPIHandler) handleXAIImages(c *gin.Context, xaiReq []byte, respon
 	h.collectXAIImages(c, xaiReq, responseFormat)
 }
 
+// handleOpenAICompatImages 根据是否流式传输选择处理 OpenAI 兼容图像请求的方式。
 func (h *OpenAIAPIHandler) handleOpenAICompatImages(c *gin.Context, compatReq []byte, imageModel string, responseFormat string, streamPrefix string, stream bool) {
 	if stream {
 		h.streamOpenAICompatImages(c, compatReq, imageModel)
@@ -1061,6 +1162,7 @@ func (h *OpenAIAPIHandler) handleOpenAICompatImages(c *gin.Context, compatReq []
 	h.collectImagesWithModel(c, compatReq, imageModel, responseFormat)
 }
 
+// handleRoutedImages 根据是否流式传输选择处理路由图像请求的方式。
 func (h *OpenAIAPIHandler) handleRoutedImages(c *gin.Context, imageReq []byte, imageModel string, stream bool) {
 	if stream {
 		h.streamRoutedImages(c, imageReq, imageModel)
@@ -1069,6 +1171,8 @@ func (h *OpenAIAPIHandler) handleRoutedImages(c *gin.Context, imageReq []byte, i
 	h.collectRoutedImages(c, imageReq, imageModel)
 }
 
+// collectRoutedImages 执行路由图像请求并返回非流式响应。
+// 通过认证管理器执行请求，写入上游响应头和响应体。
 func (h *OpenAIAPIHandler) collectRoutedImages(c *gin.Context, imageReq []byte, imageModel string) {
 	c.Header("Content-Type", "application/json")
 
@@ -1094,6 +1198,8 @@ func (h *OpenAIAPIHandler) collectRoutedImages(c *gin.Context, imageReq []byte, 
 	cliCancel(nil)
 }
 
+// streamRoutedImages 执行路由图像请求并返回流式响应。
+// 设置 SSE 头部，将上游数据流转发给客户端。
 func (h *OpenAIAPIHandler) streamRoutedImages(c *gin.Context, imageReq []byte, imageModel string) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1155,6 +1261,8 @@ func (h *OpenAIAPIHandler) streamRoutedImages(c *gin.Context, imageReq []byte, i
 	}
 }
 
+// forwardRawImageStream 转发原始图像流数据到客户端。
+// 处理数据块、错误和上下文取消，确保流的正确终止。
 func (h *OpenAIAPIHandler) forwardRawImageStream(ctx context.Context, c *gin.Context, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
 	emitError := func(errMsg *interfaces.ErrorMessage) {
 		if errMsg == nil {
@@ -1203,6 +1311,8 @@ func (h *OpenAIAPIHandler) forwardRawImageStream(ctx context.Context, c *gin.Con
 	}
 }
 
+// streamOpenAICompatImages 执行 OpenAI 兼容图像请求并返回流式响应。
+// 设置 SSE 头部，将上游数据流转发给客户端。
 func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []byte, imageModel string) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1281,11 +1391,15 @@ func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []
 	}
 }
 
+// collectXAIImages 执行 xAI 图像请求并返回非流式响应。
+// 从请求体中提取模型名称，调用 collectImagesWithModel 处理。
 func (h *OpenAIAPIHandler) collectXAIImages(c *gin.Context, xaiReq []byte, responseFormat string) {
 	model := strings.TrimSpace(gjson.GetBytes(xaiReq, "model").String())
 	h.collectImagesWithModel(c, xaiReq, model, responseFormat)
 }
 
+// collectImagesWithModel 执行图像请求并返回非流式响应。
+// 通过认证管理器执行请求，将 xAI 响应转换为 OpenAI 兼容格式。
 func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string) {
 	c.Header("Content-Type", "application/json")
 
@@ -1318,11 +1432,15 @@ func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byt
 	cliCancel(nil)
 }
 
+// streamXAIImages 执行 xAI 图像请求并返回流式响应。
+// 从请求体中提取模型名称，调用 streamImagesWithModel 处理。
 func (h *OpenAIAPIHandler) streamXAIImages(c *gin.Context, xaiReq []byte, responseFormat string, streamPrefix string) {
 	model := strings.TrimSpace(gjson.GetBytes(xaiReq, "model").String())
 	h.streamImagesWithModel(c, xaiReq, model, responseFormat, streamPrefix)
 }
 
+// streamImagesWithModel 执行图像请求并返回流式响应。
+// 通过认证管理器执行请求，将 xAI 响应转换为 SSE 格式的流式事件。
 func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string, streamPrefix string) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1390,6 +1508,8 @@ func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte
 	cliCancel(nil)
 }
 
+// collectImagesFromResponses 通过 Responses API 执行图像生成并返回非流式响应。
+// 使用流式接口收集完整的响应，然后返回结果。
 func (h *OpenAIAPIHandler) collectImagesFromResponses(c *gin.Context, responsesReq []byte, responseFormat string) {
 	c.Header("Content-Type", "application/json")
 
@@ -1419,6 +1539,8 @@ func (h *OpenAIAPIHandler) collectImagesFromResponses(c *gin.Context, responsesR
 	cliCancel()
 }
 
+// collectImagesFromResponsesStream 从 Responses API 的流式响应中收集图像结果。
+// 等待 response.completed 事件，提取图像数据并构建 OpenAI 兼容的响应格式。
 func collectImagesFromResponsesStream(ctx context.Context, data <-chan []byte, errs <-chan *interfaces.ErrorMessage, responseFormat string) ([]byte, *interfaces.ErrorMessage) {
 	acc := &sseFrameAccumulator{}
 
@@ -1490,6 +1612,8 @@ func collectImagesFromResponsesStream(ctx context.Context, data <-chan []byte, e
 	}
 }
 
+// extractImagesFromResponsesCompleted 从 Responses API 的 response.completed 事件中提取图像结果。
+// 返回图像结果列表、创建时间、使用量数据、第一个图像的元数据和可能的错误。
 func extractImagesFromResponsesCompleted(payload []byte) (results []imageCallResult, createdAt int64, usageRaw []byte, firstMeta imageCallResult, err error) {
 	if gjson.GetBytes(payload, "type").String() != "response.completed" {
 		return nil, 0, nil, imageCallResult{}, fmt.Errorf("unexpected event type")
@@ -1532,6 +1656,9 @@ func extractImagesFromResponsesCompleted(payload []byte) (results []imageCallRes
 	return results, createdAt, usageRaw, firstMeta, nil
 }
 
+// buildImagesAPIResponse 构建 OpenAI 兼容的图像 API 响应。
+// 根据 responseFormat 选择返回 URL 或 base64 编码的图像数据。
+// 包含背景、输出格式、质量和尺寸等元数据。
 func buildImagesAPIResponse(results []imageCallResult, createdAt int64, usageRaw []byte, firstMeta imageCallResult, responseFormat string) ([]byte, error) {
 	out := []byte(`{"created":0,"data":[]}`)
 	out, _ = sjson.SetBytes(out, "created", createdAt)
@@ -1575,6 +1702,8 @@ func buildImagesAPIResponse(results []imageCallResult, createdAt int64, usageRaw
 	return out, nil
 }
 
+// streamImagesFromResponses 通过 Responses API 执行图像生成并返回流式响应。
+// 设置 SSE 头部，将上游数据流转发给客户端。
 func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesReq []byte, responseFormat string, streamPrefix string) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1647,6 +1776,9 @@ func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesRe
 	}
 }
 
+// forwardImagesStream 转发 Responses API 的图像流到客户端。
+// 处理部分图像（partial_image）和完成事件（response.completed），
+// 将图像数据转换为 SSE 格式发送给客户端。
 func (h *OpenAIAPIHandler) forwardImagesStream(ctx context.Context, c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, firstChunk []byte, responseFormat string, streamPrefix string, writeEvent func(string, []byte)) {
 	acc := &sseFrameAccumulator{}
 

@@ -1,3 +1,10 @@
+// Package common - relay_info.go
+// 本文件定义了中继处理的核心数据结构 RelayInfo 及其相关类型和工厂函数。
+// RelayInfo 是整个请求中继过程中最核心的数据载体，贯穿请求的完整生命周期，
+// 包含用户信息、令牌信息、渠道元数据、计费数据、流式状态等所有上下文信息。
+//
+// 本文件还定义了各种 GenRelayInfo* 工厂函数，用于根据不同请求格式
+//（OpenAI、Claude、Gemini、Embedding、Responses 等）创建对应的 RelayInfo 实例。
 package common
 
 import (
@@ -20,79 +27,96 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// ThinkingContentInfo 跟踪 Claude thinking（思考）内容的发送状态。
+// 用于在流式响应中正确处理 thinking 内容块的生命周期。
 type ThinkingContentInfo struct {
-	IsFirstThinkingContent  bool
-	SendLastThinkingContent bool
-	HasSentThinkingContent  bool
+	IsFirstThinkingContent  bool // 是否为第一个 thinking 内容块
+	SendLastThinkingContent bool // 是否需要发送最后一个 thinking 内容块
+	HasSentThinkingContent  bool // 是否已发送过 thinking 内容
 }
 
+// 定义 Claude 消息类型的常量。
 const (
-	LastMessageTypeNone     = "none"
-	LastMessageTypeText     = "text"
-	LastMessageTypeTools    = "tools"
-	LastMessageTypeThinking = "thinking"
+	LastMessageTypeNone     = "none"     // 无消息
+	LastMessageTypeText     = "text"     // 文本消息
+	LastMessageTypeTools    = "tools"    // 工具调用消息
+	LastMessageTypeThinking = "thinking" // 思考内容消息
 )
 
+// ClaudeConvertInfo 存储 Claude 响应格式转换过程中的状态信息。
+// 用于在流式响应中跟踪 Claude 特有的消息块拼接和工具调用索引管理。
 type ClaudeConvertInfo struct {
-	LastMessagesType string
-	Index            int
-	Usage            *dto.Usage
-	FinishReason     string
-	Done             bool
+	LastMessagesType string     // 上一个消息块的类型（text/tools/thinking/none）
+	Index            int        // 当前消息块的索引
+	Usage            *dto.Usage // 累计使用量
+	FinishReason     string     // 结束原因
+	Done             bool       // 是否已完成
 
-	ToolCallBaseIndex      int
-	ToolCallMaxIndexOffset int
+	ToolCallBaseIndex      int // 工具调用的基础索引（用于多轮对话中的索引偏移）
+	ToolCallMaxIndexOffset int // 工具调用的最大索引偏移量
 }
 
+// RerankerInfo 存储 Rerank 请求的附加信息。
 type RerankerInfo struct {
-	Documents       []any
-	ReturnDocuments bool
+	Documents       []any // 待排序的文档列表
+	ReturnDocuments bool  // 是否在响应中返回文档内容
 }
 
+// BuildInToolInfo 存储 Responses API 中内置工具的使用信息。
 type BuildInToolInfo struct {
-	ToolName          string
-	CallCount         int
-	SearchContextSize string
+	ToolName          string // 工具名称（如 web_search_preview）
+	CallCount         int    // 工具调用次数
+	SearchContextSize string // 搜索上下文大小（如 medium、large）
 }
 
+// ResponsesUsageInfo 存储 Responses API 的使用统计信息。
 type ResponsesUsageInfo struct {
-	BuiltInTools map[string]*BuildInToolInfo
+	BuiltInTools map[string]*BuildInToolInfo // 内置工具的使用信息映射
 }
 
+// ChannelMeta 存储渠道的元数据信息。
+// 在每次请求开始时由 InitChannelMeta 初始化，包含渠道类型、ID、
+// 凭证模式、账号池信息、API 类型、版本等完整渠道配置。
 type ChannelMeta struct {
-	ChannelType          int
-	ChannelId            int
-	ChannelIsMultiKey    bool
-	ChannelMultiKeyIndex int
-	CredentialMode       string
-	ChannelAccountPool   bool
-	ChannelAccountId     int
-	ChannelAccountName   string
-	PoolGroupId          int
-	PoolGroupName        string
-	PoolAccountId        int
-	PoolAccountName      string
-	PoolAccountAuthType  string
-	ChannelBaseUrl       string
-	ApiType              int
-	ApiVersion           string
-	ApiKey               string
-	Organization         string
-	ChannelCreateTime    int64
-	ParamOverride        map[string]interface{}
-	HeadersOverride      map[string]interface{}
-	ChannelSetting       dto.ChannelSettings
-	ChannelOtherSettings dto.ChannelOtherSettings
-	UpstreamModelName    string
-	IsModelMapped        bool
-	SupportStreamOptions bool // 是否支持流式选项
+	ChannelType          int                    // 渠道类型（如 OpenAI、Azure、Claude 等）
+	ChannelId            int                    // 渠道 ID
+	ChannelIsMultiKey    bool                   // 是否为多密钥渠道
+	ChannelMultiKeyIndex int                    // 多密钥渠道的当前密钥索引
+	CredentialMode       string                 // 凭证模式
+	ChannelAccountPool   bool                   // 是否使用账号池
+	ChannelAccountId     int                    // 账号池中的账号 ID
+	ChannelAccountName   string                 // 账号名称
+	PoolGroupId          int                    // 账号池分组 ID
+	PoolGroupName        string                 // 账号池分组名称
+	PoolAccountId        int                    // 账号池账号 ID
+	PoolAccountName      string                 // 账号池账号名称
+	PoolAccountAuthType  string                 // 账号池账号的认证类型
+	ChannelBaseUrl       string                 // 渠道上游基础 URL
+	ApiType              int                    // API 类型（如 OpenAI、Claude、Gemini 等）
+	ApiVersion           string                 // API 版本（Azure 使用）
+	ApiKey               string                 // API 密钥
+	Organization         string                 // 组织标识（OpenAI 使用）
+	ChannelCreateTime    int64                  // 渠道创建时间戳
+	ParamOverride        map[string]interface{} // 参数覆盖配置
+	HeadersOverride      map[string]interface{} // 请求头覆盖配置
+	ChannelSetting       dto.ChannelSettings    // 渠道设置（如系统提示、passthrough 等）
+	ChannelOtherSettings dto.ChannelOtherSettings // 渠道其他设置（如禁用字段过滤）
+	UpstreamModelName    string                 // 上游模型名称（经过映射后）
+	IsModelMapped        bool                   // 是否发生了模型映射
+	SupportStreamOptions bool                   // 是否支持流式选项
 }
 
+// TokenCountMeta 存储 token 计数的元数据。
 type TokenCountMeta struct {
 	//promptTokens int
-	estimatePromptTokens int
+	estimatePromptTokens int // 预估的 prompt token 数量（在请求解析阶段估算）
 }
 
+// RelayInfo 是中继处理过程的核心数据载体，贯穿请求的完整生命周期。
+// 包含用户身份信息、令牌配置、请求参数、渠道元数据、计费状态、
+// 流式响应状态、格式转换链等所有上下文信息。
+// 该结构体在请求开始时创建，在整个中继过程中被传递和修改，
+// 最终在请求结束后用于计费结算和日志记录。
 type RelayInfo struct {
 	TokenId           int
 	TokenKey          string
@@ -189,6 +213,14 @@ type RelayInfo struct {
 	*TaskRelayInfo
 }
 
+// InitChannelMeta 从 Gin 上下文中初始化渠道元数据（ChannelMeta）。
+// 读取上下文中存储的渠道类型、ID、凭证模式、账号池信息、API 配置、
+// 参数覆盖、请求头覆盖等信息，并设置到 RelayInfo 的 ChannelMeta 字段中。
+// 同时根据渠道类型设置特殊的 ApiVersion（如 Azure 的 API 版本、Vertex 的区域）。
+// 初始化完成后还会重置请求对象的模型名称为渠道映射后的模型名。
+//
+// 参数：
+//   - c: Gin 上下文，包含中间件设置的各种渠道信息
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
@@ -251,6 +283,10 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 }
 
+// ToString 生成 RelayInfo 的可读字符串表示，用于日志记录和调试。
+// 包含请求格式、中继模式、流式状态、模型名称、用户信息（邮箱脱敏）、
+// 令牌信息（密钥脱敏）、时间指标、音频/实时信息、价格数据、渠道元数据（密钥脱敏）等。
+// 支持 nil 接收者调用，返回 "RelayInfo<nil>"。
 func (info *RelayInfo) ToString() string {
 	if info == nil {
 		return "RelayInfo<nil>"
@@ -326,7 +362,8 @@ func (info *RelayInfo) ToString() string {
 	return b.String()
 }
 
-// 定义支持流式选项的通道类型
+// streamSupportedChannels 定义了支持流式选项（StreamOptions）的渠道类型映射。
+// 只有在此映射中的渠道类型才会在请求中携带 StreamOptions 参数。
 var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeOpenAI:      true,
 	constant.ChannelTypeAnthropic:   true,
@@ -348,6 +385,15 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeSiliconFlow: true,
 }
 
+// GenRelayInfoWs 创建 WebSocket 实时通信请求的 RelayInfo 实例。
+// 默认设置音频格式为 pcm16，标记为首次请求。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - ws: 客户端的 WebSocket 连接
+//
+// 返回值：
+//   - *RelayInfo: 初始化后的中继信息
 func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {
 	info := genBaseRelayInfo(c, nil)
 	info.RelayFormat = types.RelayFormatOpenAIRealtime
@@ -358,6 +404,15 @@ func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {
 	return info
 }
 
+// GenRelayInfoClaude 创建 Claude 格式请求的 RelayInfo 实例。
+// 初始化 Claude 特有的转换信息（ClaudeConvertInfo）和 beta 查询标志。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - request: 请求对象
+//
+// 返回值：
+//   - *RelayInfo: 初始化后的中继信息
 func GenRelayInfoClaude(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatClaude
@@ -369,6 +424,8 @@ func GenRelayInfoClaude(c *gin.Context, request dto.Request) *RelayInfo {
 	return info
 }
 
+// GenRelayInfoRerank 创建 Rerank（文档重排序）请求的 RelayInfo 实例。
+// 初始化 RerankerInfo，包含文档列表和是否返回文档内容的配置。
 func GenRelayInfoRerank(c *gin.Context, request *dto.RerankRequest) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayMode = relayconstant.RelayModeRerank
@@ -380,18 +437,23 @@ func GenRelayInfoRerank(c *gin.Context, request *dto.RerankRequest) *RelayInfo {
 	return info
 }
 
+// GenRelayInfoOpenAIAudio 创建 OpenAI 音频请求的 RelayInfo 实例。
 func GenRelayInfoOpenAIAudio(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatOpenAIAudio
 	return info
 }
 
+// GenRelayInfoEmbedding 创建 Embedding（文本向量化）请求的 RelayInfo 实例。
 func GenRelayInfoEmbedding(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatEmbedding
 	return info
 }
 
+// GenRelayInfoResponses 创建 OpenAI Responses API 请求的 RelayInfo 实例。
+// 初始化 ResponsesUsageInfo，解析请求中的内置工具列表（如 web_search_preview），
+// 并记录每个工具的搜索上下文大小等配置。
 func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayMode = relayconstant.RelayModeResponses
@@ -420,6 +482,7 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) 
 	return info
 }
 
+// GenRelayInfoGemini 创建 Gemini 格式请求的 RelayInfo 实例。
 func GenRelayInfoGemini(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatGemini
@@ -428,18 +491,30 @@ func GenRelayInfoGemini(c *gin.Context, request dto.Request) *RelayInfo {
 	return info
 }
 
+// GenRelayInfoImage 创建图片生成请求的 RelayInfo 实例。
 func GenRelayInfoImage(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatOpenAIImage
 	return info
 }
 
+// GenRelayInfoOpenAI 创建 OpenAI 格式请求的 RelayInfo 实例。
 func GenRelayInfoOpenAI(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatOpenAI
 	return info
 }
 
+// genBaseRelayInfo 是所有 GenRelayInfo* 函数的基础实现。
+// 从 Gin 上下文中提取用户、令牌、请求等基本信息，构建基础的 RelayInfo 实例。
+// 处理 Playground 路径前缀、流式检测、请求 ID 生成等逻辑。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - request: 请求对象（WebSocket 模式下可为 nil）
+//
+// 返回值：
+//   - *RelayInfo: 基础中继信息实例
 func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 
 	//channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
@@ -523,6 +598,15 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	return info
 }
 
+// cloneRequestHeaders 从 Gin 上下文中克隆请求头映射。
+// 将所有非空的请求头键值对复制到新的映射中，键保持原始大小写。
+// 用于在参数覆盖的条件判断中引用请求头信息。
+//
+// 参数：
+//   - c: Gin 上下文
+//
+// 返回值：
+//   - map[string]string: 请求头映射，无请求头时返回 nil
 func cloneRequestHeaders(c *gin.Context) map[string]string {
 	if c == nil || c.Request == nil {
 		return nil
@@ -544,6 +628,20 @@ func cloneRequestHeaders(c *gin.Context) map[string]string {
 	return headers
 }
 
+// GenRelayInfo 是 RelayInfo 的统一工厂函数。
+// 根据 relayFormat 参数选择对应的 GenRelayInfo* 函数创建实例。
+// 支持的格式包括：OpenAI、OpenAIAudio、OpenAIImage、OpenAIRealtime（WebSocket）、
+// Claude、Rerank、Gemini、Embedding、OpenAIResponses、OpenAIResponsesCompaction、Task、MjProxy。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - relayFormat: 请求的中继格式类型
+//   - request: 请求对象
+//   - ws: WebSocket 连接（仅 OpenAIRealtime 格式使用）
+//
+// 返回值：
+//   - *RelayInfo: 初始化后的中继信息
+//   - error: 创建过程中的错误（如格式不支持或类型断言失败）
 func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Request, ws *websocket.Conn) (*RelayInfo, error) {
 	var info *RelayInfo
 	var err error
@@ -600,6 +698,8 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
 	return info, nil
 }
 
+// InitRequestConversionChain 初始化请求格式转换链。
+// 若转换链为空，则以当前 RelayFormat 作为链的起始节点。
 func (info *RelayInfo) InitRequestConversionChain() {
 	if info == nil {
 		return
@@ -613,6 +713,9 @@ func (info *RelayInfo) InitRequestConversionChain() {
 	info.RequestConversionChain = []types.RelayFormat{info.RelayFormat}
 }
 
+// AppendRequestConversion 向请求格式转换链中追加一个新的格式。
+// 如果链为空则初始化；如果新格式与链尾相同则不重复追加。
+// 用于记录请求在中继过程中经历的格式转换路径（如 openai -> claude）。
 func (info *RelayInfo) AppendRequestConversion(format types.RelayFormat) {
 	if info == nil {
 		return
@@ -631,6 +734,11 @@ func (info *RelayInfo) AppendRequestConversion(format types.RelayFormat) {
 	info.RequestConversionChain = append(info.RequestConversionChain, format)
 }
 
+// GetFinalRequestRelayFormat 获取最终发送到上游的请求格式。
+// 按优先级返回：
+//  1. 显式设置的 FinalRequestRelayFormat（由 adaptor 设置）。
+//  2. 转换链的最后一个格式。
+//  3. 原始 RelayFormat。
 func (info *RelayInfo) GetFinalRequestRelayFormat() types.RelayFormat {
 	if info == nil {
 		return ""
@@ -644,6 +752,7 @@ func (info *RelayInfo) GetFinalRequestRelayFormat() types.RelayFormat {
 	return info.RelayFormat
 }
 
+// GenRelayInfoResponsesCompaction 创建 Responses 压缩请求的 RelayInfo 实例。
 func GenRelayInfoResponsesCompaction(c *gin.Context, request *dto.OpenAIResponsesCompactionRequest) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	if info.RelayMode == relayconstant.RelayModeUnknown {
@@ -657,14 +766,18 @@ func GenRelayInfoResponsesCompaction(c *gin.Context, request *dto.OpenAIResponse
 //	info.promptTokens = promptTokens
 //}
 
+// SetEstimatePromptTokens 设置预估的 prompt token 数量。
 func (info *RelayInfo) SetEstimatePromptTokens(promptTokens int) {
 	info.estimatePromptTokens = promptTokens
 }
 
+// GetEstimatePromptTokens 获取预估的 prompt token 数量。
 func (info *RelayInfo) GetEstimatePromptTokens() int {
 	return info.estimatePromptTokens
 }
 
+// SetFirstResponseTime 记录首次响应时间。
+// 使用 sync.Once 语义，仅第一次调用生效。用于计算请求的首字节延迟（TTFB）。
 func (info *RelayInfo) SetFirstResponseTime() {
 	if info.isFirstResponse {
 		info.FirstResponseTime = time.Now()
@@ -672,25 +785,31 @@ func (info *RelayInfo) SetFirstResponseTime() {
 	}
 }
 
+// HasSendResponse 判断是否已收到上游的首个响应。
+// 通过比较 FirstResponseTime 和 StartTime 判断。
 func (info *RelayInfo) HasSendResponse() bool {
 	return info.FirstResponseTime.After(info.StartTime)
 }
 
+// TaskRelayInfo 存储异步任务（Task）请求的附加信息。
+// 包含任务操作类型、原始任务 ID、公开任务 ID 和计费控制等。
 type TaskRelayInfo struct {
-	Action       string
-	OriginTaskID string
+	Action       string // 任务操作类型（如 generate、remix、video 等）
+	OriginTaskID string // 原始任务 ID（remix/continuation 操作时使用）
 	// PublicTaskID 是提交时预生成的 task_xxxx 格式公开 ID，
 	// 供 DoResponse 在返回给客户端时使用（避免暴露上游真实 ID）。
 	PublicTaskID string
 
-	ConsumeQuota bool
+	ConsumeQuota bool // 是否需要消费配额
 
 	// LockedChannel holds the full channel object when the request is bound to
 	// a specific channel (e.g., remix on origin task's channel). Stored as any
 	// to avoid an import cycle with model; callers type-assert to *model.Channel.
-	LockedChannel any
+	LockedChannel any // 锁定的渠道对象（remix 操作时绑定到原任务渠道）
 }
 
+// TaskSubmitReq 是异步任务提交请求的数据结构。
+// 支持 JSON 反序列化，其中 duration 和 metadata 字段支持多种格式（数字/字符串）。
 type TaskSubmitReq struct {
 	Prompt         string                 `json:"prompt"`
 	Model          string                 `json:"model,omitempty"`
@@ -704,14 +823,18 @@ type TaskSubmitReq struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// GetPrompt 获取任务提交请求的提示词。
 func (t *TaskSubmitReq) GetPrompt() string {
 	return t.Prompt
 }
 
+// HasImage 判断任务提交请求是否包含图片输入。
 func (t *TaskSubmitReq) HasImage() bool {
 	return len(t.Images) > 0
 }
 
+// UnmarshalJSON 自定义 JSON 反序列化，处理 duration 和 metadata 字段的多格式兼容。
+// duration 支持 int 和 string 两种格式；metadata 支持直接对象和 JSON 字符串两种格式。
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
@@ -758,6 +881,8 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+// UnmarshalMetadata 将 TaskSubmitReq 的 metadata 字段反序列化为指定类型。
+// 用于各 adaptor 将通用的 metadata 映射为特定平台的参数结构。
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	metadata := t.Metadata
 	if metadata != nil {
@@ -773,6 +898,8 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	return nil
 }
 
+// TaskInfo 表示异步任务的状态信息。
+// 由上游任务适配器返回，包含任务状态、进度、结果 URL 等。
 type TaskInfo struct {
 	Code             int    `json:"code"`
 	TaskID           string `json:"task_id"`
@@ -785,6 +912,13 @@ type TaskInfo struct {
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
 }
 
+// FailTaskInfo 创建一个失败状态的 TaskInfo。
+//
+// 参数：
+//   - reason: 失败原因
+//
+// 返回值：
+//   - *TaskInfo: 失败状态的任务信息
 func FailTaskInfo(reason string) *TaskInfo {
 	return &TaskInfo{
 		Status: "FAILURE",
@@ -792,13 +926,27 @@ func FailTaskInfo(reason string) *TaskInfo {
 	}
 }
 
-// RemoveDisabledFields 从请求 JSON 数据中移除渠道设置中禁用的字段
-// service_tier: 服务层级字段，可能导致额外计费（OpenAI、Claude、Responses API 支持）
-// inference_geo: Claude 数据驻留推理区域字段（仅 Claude 支持，默认过滤）
-// speed: Claude 推理速度模式字段（仅 Claude 支持，默认过滤）
-// store: 数据存储授权字段，涉及用户隐私（仅 OpenAI、Responses API 支持，默认允许透传，禁用后可能导致 Codex 无法使用）
-// safety_identifier: 安全标识符，用于向 OpenAI 报告违规用户（仅 OpenAI 支持，涉及用户隐私）
-// stream_options.include_obfuscation: 响应流混淆控制字段（仅 OpenAI Responses API 支持）
+// RemoveDisabledFields 从请求 JSON 数据中移除渠道设置中禁用的字段。
+// 这些字段可能带来安全风险或额外计费，需要根据渠道配置决定是否过滤。
+//
+// 支持过滤的字段：
+//   - service_tier: 服务层级字段，可能导致额外计费（OpenAI、Claude、Responses API 支持）
+//   - inference_geo: Claude 数据驻留推理区域字段（仅 Claude 支持，默认过滤）
+//   - speed: Claude 推理速度模式字段（仅 Claude 支持，默认过滤）
+//   - store: 数据存储授权字段，涉及用户隐私（仅 OpenAI、Responses API 支持，默认允许透传）
+//   - safety_identifier: 安全标识符，用于向 OpenAI 报告违规用户（仅 OpenAI 支持，默认过滤）
+//   - stream_options.include_obfuscation: 响应流混淆控制字段（仅 OpenAI Responses API 支持）
+//
+// 当全局或渠道级的 passthrough 模式启用时，跳过所有过滤。
+//
+// 参数：
+//   - jsonData: 原始请求体 JSON
+//   - channelOtherSettings: 渠道的其他设置（控制各字段的过滤行为）
+//   - channelPassThroughEnabled: 渠道级 passthrough 是否启用
+//
+// 返回值：
+//   - []byte: 过滤后的 JSON
+//   - error: 处理过程中的错误
 func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOtherSettings, channelPassThroughEnabled bool) ([]byte, error) {
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || channelPassThroughEnabled {
 		return jsonData, nil
@@ -869,8 +1017,16 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 	return jsonDataAfter, nil
 }
 
-// RemoveGeminiDisabledFields removes disabled fields from Gemini request JSON data
-// Currently supports removing functionResponse.id field which Vertex AI does not support
+// RemoveGeminiDisabledFields 从 Gemini 请求 JSON 中移除不兼容的字段。
+// 当前主要处理 functionResponse.id 字段，因为 Vertex AI 不支持该字段。
+// 仅在 Gemini 设置中启用了 RemoveFunctionResponseIdEnabled 时生效。
+//
+// 参数：
+//   - jsonData: 原始请求体 JSON
+//
+// 返回值：
+//   - []byte: 处理后的 JSON
+//   - error: 处理过程中的错误
 func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 	if !model_setting.GetGeminiSettings().RemoveFunctionResponseIdEnabled {
 		return jsonData, nil

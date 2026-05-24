@@ -1,3 +1,8 @@
+// gemini.go — Gemini 模型配置管理
+// 职责：定义和管理 Gemini（Google）模型的专属配置，包括安全设置、API 版本映射、
+// 图像生成支持模型列表、思维链适配器开关及工具调用签名等设置。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package model_setting
 
 import (
@@ -66,6 +71,8 @@ func GetGeminiVersionSetting(key string) string {
 	return geminiSettings.VersionSettings["default"]
 }
 
+// IsGeminiModelSupportImagine 判断指定模型是否支持图像生成功能。
+// 通过遍历 SupportedImagineModels 列表进行匹配。
 func IsGeminiModelSupportImagine(model string) bool {
 	for _, v := range geminiSettings.SupportedImagineModels {
 		if v == model {

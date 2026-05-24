@@ -1,6 +1,5 @@
-// Package util provides utility functions used across the CLIProxyAPI application.
-// These functions handle common tasks such as determining AI service providers
-// from model names and managing HTTP proxies.
+// Package util 提供 CLIProxyAPI 应用中使用的工具函数。
+// 包括根据模型名确定 AI 服务提供商和管理 HTTP 代理等辅助函数。
 package util
 
 import (
@@ -12,23 +11,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// GetProviderName determines all AI service providers capable of serving a registered model.
-// It first queries the global model registry to retrieve the providers backing the supplied model name.
-// When the model has not been registered yet, it falls back to legacy string heuristics to infer
-// potential providers.
+// GetProviderName 确定能够服务指定模型的所有 AI 服务提供商。
+// 首先查询全局模型注册表获取支持该模型的提供商，如果模型未注册则回退到传统字符串启发式推断。
 //
-// Supported providers include (but are not limited to):
-//   - "gemini" for Google's Gemini family
-//   - "codex" for OpenAI GPT-compatible providers
-//   - "claude" for Anthropic models
-//   - "openai-compatibility" for external OpenAI-compatible providers
+// 支持的提供商包括（但不限于）：
+//   - "gemini" 用于 Google Gemini 系列
+//   - "codex" 用于 OpenAI GPT 兼容提供商
+//   - "claude" 用于 Anthropic 模型
+//   - "openai-compatibility" 用于外部 OpenAI 兼容提供商
 //
-// Parameters:
-//   - modelName: The name of the model to identify providers for.
-//   - cfg: The application configuration containing OpenAI compatibility settings.
+// 参数：
+//   - modelName: 要识别提供商的模型名称
 //
-// Returns:
-//   - []string: All provider identifiers capable of serving the model, ordered by preference.
+// 返回：
+//   - []string: 能够服务该模型的所有提供商标识符，按优先级排序
 func GetProviderName(modelName string) []string {
 	if modelName == "" {
 		return nil
@@ -59,14 +55,14 @@ func GetProviderName(modelName string) []string {
 	return providers
 }
 
-// ResolveAutoModel resolves the "auto" model name to an actual available model.
-// It uses an empty handler type to get any available model from the registry.
+// ResolveAutoModel 将 "auto" 模型名解析为实际可用的模型。
+// 使用空处理器类型从注册表中获取任意可用模型。
 //
-// Parameters:
-//   - modelName: The model name to check (should be "auto")
+// 参数：
+//   - modelName: 要检查的模型名（应为 "auto"）
 //
-// Returns:
-//   - string: The resolved model name, or the original if not "auto" or resolution fails
+// 返回：
+//   - string: 解析后的模型名，如果不是 "auto" 或解析失败则返回原始名称
 func ResolveAutoModel(modelName string) string {
 	if modelName != "auto" {
 		return modelName
@@ -83,15 +79,14 @@ func ResolveAutoModel(modelName string) string {
 	return firstModel
 }
 
-// IsOpenAICompatibilityAlias checks if the given model name is an alias
-// configured for OpenAI compatibility routing.
+// IsOpenAICompatibilityAlias 检查给定模型名是否是 OpenAI 兼容性路由配置的别名。
 //
-// Parameters:
-//   - modelName: The model name to check
-//   - cfg: The application configuration containing OpenAI compatibility settings
+// 参数：
+//   - modelName: 要检查的模型名
+//   - cfg: 包含 OpenAI 兼容性设置的应用配置
 //
-// Returns:
-//   - bool: True if the model name is an OpenAI compatibility alias, false otherwise
+// 返回：
+//   - bool: 如果模型名是 OpenAI 兼容别名则返回 true
 func IsOpenAICompatibilityAlias(modelName string, cfg *config.Config) bool {
 	if cfg == nil {
 		return false
@@ -110,16 +105,15 @@ func IsOpenAICompatibilityAlias(modelName string, cfg *config.Config) bool {
 	return false
 }
 
-// GetOpenAICompatibilityConfig returns the OpenAI compatibility configuration
-// and model details for the given alias.
+// GetOpenAICompatibilityConfig 返回给定别名对应的 OpenAI 兼容性配置和模型详情。
 //
-// Parameters:
-//   - alias: The model alias to find configuration for
-//   - cfg: The application configuration containing OpenAI compatibility settings
+// 参数：
+//   - alias: 要查找配置的模型别名
+//   - cfg: 包含 OpenAI 兼容性设置的应用配置
 //
-// Returns:
-//   - *config.OpenAICompatibility: The matching compatibility configuration, or nil if not found
-//   - *config.OpenAICompatibilityModel: The matching model configuration, or nil if not found
+// 返回：
+//   - *config.OpenAICompatibility: 匹配的兼容性配置，未找到则为 nil
+//   - *config.OpenAICompatibilityModel: 匹配的模型配置，未找到则为 nil
 func GetOpenAICompatibilityConfig(alias string, cfg *config.Config) (*config.OpenAICompatibility, *config.OpenAICompatibilityModel) {
 	if cfg == nil {
 		return nil, nil
@@ -138,16 +132,15 @@ func GetOpenAICompatibilityConfig(alias string, cfg *config.Config) (*config.Ope
 	return nil, nil
 }
 
-// InArray checks if a string exists in a slice of strings.
-// It iterates through the slice and returns true if the target string is found,
-// otherwise it returns false.
+// InArray 检查字符串是否存在于字符串切片中。
+// 遍历切片，找到目标字符串则返回 true，否则返回 false。
 //
-// Parameters:
-//   - hystack: The slice of strings to search in
-//   - needle: The string to search for
+// 参数：
+//   - hystack: 要搜索的字符串切片
+//   - needle: 要查找的字符串
 //
-// Returns:
-//   - bool: True if the string is found, false otherwise
+// 返回：
+//   - bool: 找到则返回 true，否则返回 false
 func InArray(hystack []string, needle string) bool {
 	for _, item := range hystack {
 		if needle == item {
@@ -157,13 +150,13 @@ func InArray(hystack []string, needle string) bool {
 	return false
 }
 
-// HideAPIKey obscures an API key for logging purposes, showing only the first and last few characters.
+// HideAPIKey 模糊处理 API 密钥用于日志记录，仅显示前几个和后几个字符。
 //
-// Parameters:
-//   - apiKey: The API key to hide.
+// 参数：
+//   - apiKey: 要模糊处理的 API 密钥
 //
-// Returns:
-//   - string: The obscured API key.
+// 返回：
+//   - string: 模糊处理后的 API 密钥
 func HideAPIKey(apiKey string) string {
 	if len(apiKey) > 8 {
 		return apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
@@ -175,15 +168,15 @@ func HideAPIKey(apiKey string) string {
 	return apiKey
 }
 
-// maskAuthorizationHeader masks the Authorization header value while preserving the auth type prefix.
-// Common formats: "Bearer <token>", "Basic <credentials>", "ApiKey <key>", etc.
-// It preserves the prefix (e.g., "Bearer ") and only masks the token/credential part.
+// MaskAuthorizationHeader 模糊处理 Authorization 头的值，同时保留认证类型前缀。
+// 常见格式如 "Bearer <token>"、"Basic <credentials>"、"ApiKey <key>" 等。
+// 保留前缀（如 "Bearer "），仅模糊处理令牌/凭证部分。
 //
-// Parameters:
-//   - value: The Authorization header value
+// 参数：
+//   - value: Authorization 头的值
 //
-// Returns:
-//   - string: The masked Authorization value with prefix preserved
+// 返回：
+//   - string: 保留前缀的模糊处理 Authorization 值
 func MaskAuthorizationHeader(value string) string {
 	parts := strings.SplitN(strings.TrimSpace(value), " ", 2)
 	if len(parts) < 2 {
@@ -192,19 +185,19 @@ func MaskAuthorizationHeader(value string) string {
 	return parts[0] + " " + HideAPIKey(parts[1])
 }
 
-// MaskSensitiveHeaderValue masks sensitive header values while preserving expected formats.
+// MaskSensitiveHeaderValue 根据头名称模糊处理敏感头值，同时保留预期格式。
 //
-// Behavior by header key (case-insensitive):
-//   - "Authorization": Preserve the auth type prefix (e.g., "Bearer ") and mask only the credential part.
-//   - Headers containing "api-key": Mask the entire value using HideAPIKey.
-//   - Others: Return the original value unchanged.
+// 按头名称（不区分大小写）的行为：
+//   - "Authorization": 保留认证类型前缀（如 "Bearer "），仅模糊处理凭证部分
+//   - 包含 "api-key" 的头: 使用 HideAPIKey 模糊处理整个值
+//   - 其他: 原样返回值
 //
-// Parameters:
-//   - key:   The HTTP header name to inspect (case-insensitive matching).
-//   - value: The header value to mask when sensitive.
+// 参数：
+//   - key: 要检查的 HTTP 头名称（不区分大小写）
+//   - value: 敏感时要模糊处理的头值
 //
-// Returns:
-//   - string: The masked value according to the header type; unchanged if not sensitive.
+// 返回：
+//   - string: 根据头类型模糊处理后的值；非敏感则不变
 func MaskSensitiveHeaderValue(key, value string) string {
 	lowerKey := strings.ToLower(strings.TrimSpace(key))
 	switch {
@@ -220,7 +213,7 @@ func MaskSensitiveHeaderValue(key, value string) string {
 	}
 }
 
-// MaskSensitiveQuery masks sensitive query parameters, e.g. auth_token, within the raw query string.
+// MaskSensitiveQuery 模糊处理原始查询字符串中的敏感查询参数（如 auth_token）。
 func MaskSensitiveQuery(raw string) string {
 	if raw == "" {
 		return ""
@@ -258,6 +251,8 @@ func MaskSensitiveQuery(raw string) string {
 	return strings.Join(parts, "&")
 }
 
+// shouldMaskQueryParam 判断查询参数是否需要模糊处理。
+// 包含 key、api-key、apikey、api_key、token、secret 的参数需要模糊处理。
 func shouldMaskQueryParam(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {

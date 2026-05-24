@@ -1,3 +1,6 @@
+// auth - auto_refresh_loop.go
+// 该文件实现了认证凭据的自动刷新循环，使用最小堆调度器按到期时间排序刷新任务。
+// 支持并发刷新、脏标记跟踪、动态重调度等功能，确保 OAuth 令牌等凭据在过期前被及时刷新。
 package auth
 
 import (
@@ -10,20 +13,22 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// authAutoRefreshLoop 管理认证凭据的自动刷新调度，使用最小堆按刷新时间排序。
 type authAutoRefreshLoop struct {
-	manager     *Manager
-	interval    time.Duration
-	concurrency int
+	manager     *Manager        // 认证管理器引用
+	interval    time.Duration   // 默认刷新检查间隔
+	concurrency int             // 最大并发刷新数
 
-	mu    sync.Mutex
-	queue refreshMinHeap
-	index map[string]*refreshHeapItem
-	dirty map[string]struct{}
+	mu    sync.Mutex                // 保护队列和脏标记的互斥锁
+	queue refreshMinHeap            // 按刷新时间排序的最小堆
+	index map[string]*refreshHeapItem // 认证 ID 到堆项的索引
+	dirty map[string]struct{}        // 需要重新调度的脏标记集合
 
-	wakeCh chan struct{}
-	jobs   chan string
+	wakeCh chan struct{} // 唤醒主循环的信号通道
+	jobs   chan string   // 刷新任务分发通道
 }
 
+// newAuthAutoRefreshLoop 创建新的自动刷新循环实例。
 func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration, concurrency int) *authAutoRefreshLoop {
 	if interval <= 0 {
 		interval = refreshCheckInterval
@@ -46,6 +51,7 @@ func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration, concurrenc
 	}
 }
 
+// queueReschedule 将认证 ID 标记为脏并唤醒主循环重新调度。
 func (l *authAutoRefreshLoop) queueReschedule(authID string) {
 	if l == nil || authID == "" {
 		return
@@ -59,6 +65,7 @@ func (l *authAutoRefreshLoop) queueReschedule(authID string) {
 	}
 }
 
+// run 启动刷新循环，创建指定数量的工作协程并开始主调度循环。
 func (l *authAutoRefreshLoop) run(ctx context.Context) {
 	if l == nil || l.manager == nil {
 		return
@@ -75,6 +82,7 @@ func (l *authAutoRefreshLoop) run(ctx context.Context) {
 	l.loop(ctx)
 }
 
+// worker 是刷新工作协程的主循环，从 jobs 通道接收认证 ID 并执行刷新。
 func (l *authAutoRefreshLoop) worker(ctx context.Context) {
 	for {
 		select {
@@ -90,6 +98,7 @@ func (l *authAutoRefreshLoop) worker(ctx context.Context) {
 	}
 }
 
+// rebuild 重建刷新队列，遍历所有认证凭据计算下次刷新时间并重新入堆。
 func (l *authAutoRefreshLoop) rebuild(now time.Time) {
 	type entry struct {
 		id   string
@@ -119,6 +128,7 @@ func (l *authAutoRefreshLoop) rebuild(now time.Time) {
 	l.mu.Unlock()
 }
 
+// loop 是主调度循环，监听唤醒信号和定时器事件，处理到期的刷新任务。
 func (l *authAutoRefreshLoop) loop(ctx context.Context) {
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {
@@ -149,6 +159,7 @@ func (l *authAutoRefreshLoop) loop(ctx context.Context) {
 	}
 }
 
+// resetTimer 根据堆顶元素的刷新时间重置定时器。
 func (l *authAutoRefreshLoop) resetTimer(timer *time.Timer, timerCh *<-chan time.Time, now time.Time) {
 	next, ok := l.peek()
 	if !ok {
@@ -176,6 +187,7 @@ func (l *authAutoRefreshLoop) resetTimer(timer *time.Timer, timerCh *<-chan time
 	*timerCh = timer.C
 }
 
+// peek 返回堆顶元素的刷新时间，不移除元素。
 func (l *authAutoRefreshLoop) peek() (time.Time, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -185,6 +197,7 @@ func (l *authAutoRefreshLoop) peek() (time.Time, bool) {
 	return l.queue[0].next, true
 }
 
+// handleDue 处理所有到期的刷新任务。
 func (l *authAutoRefreshLoop) handleDue(ctx context.Context, now time.Time) {
 	due := l.popDue(now)
 	if len(due) == 0 {
@@ -198,6 +211,7 @@ func (l *authAutoRefreshLoop) handleDue(ctx context.Context, now time.Time) {
 	}
 }
 
+// popDue 从堆中弹出所有到期的认证 ID。
 func (l *authAutoRefreshLoop) popDue(now time.Time) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -218,6 +232,7 @@ func (l *authAutoRefreshLoop) popDue(now time.Time) []string {
 	return due
 }
 
+// handleDueAuth 处理单个到期认证凭据的刷新逻辑，判断是否需要刷新并提交到工作队列。
 func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, authID string) {
 	if authID == "" {
 		return
@@ -271,6 +286,7 @@ func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, 
 	}
 }
 
+// applyDirty 处理所有脏标记的认证凭据，重新计算刷新时间并更新堆。
 func (l *authAutoRefreshLoop) applyDirty(now time.Time) {
 	dirty := l.drainDirty()
 	if len(dirty) == 0 {
@@ -291,6 +307,7 @@ func (l *authAutoRefreshLoop) applyDirty(now time.Time) {
 	}
 }
 
+// drainDirty 取出并清空所有脏标记的认证 ID 列表。
 func (l *authAutoRefreshLoop) drainDirty() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -305,6 +322,7 @@ func (l *authAutoRefreshLoop) drainDirty() []string {
 	return out
 }
 
+// upsert 插入或更新堆中指定认证 ID 的刷新时间。
 func (l *authAutoRefreshLoop) upsert(authID string, next time.Time) {
 	if authID == "" || next.IsZero() {
 		return
@@ -321,6 +339,7 @@ func (l *authAutoRefreshLoop) upsert(authID string, next time.Time) {
 	l.index[authID] = item
 }
 
+// remove 从堆中移除指定认证 ID 的刷新项。
 func (l *authAutoRefreshLoop) remove(authID string) {
 	if authID == "" {
 		return
@@ -335,6 +354,8 @@ func (l *authAutoRefreshLoop) remove(authID string) {
 	delete(l.index, authID)
 }
 
+// nextRefreshCheckAt 计算指定认证凭据的下次刷新检查时间，
+// 综合考虑认证失败状态、账号类型、首选刷新间隔和过期时间等因素。
 func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time.Time, bool) {
 	if auth == nil {
 		return time.Time{}, false
@@ -414,16 +435,20 @@ func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time
 	return now, true
 }
 
+// refreshHeapItem 表示刷新调度堆中的单个条目，包含认证 ID、下次刷新时间和堆索引。
 type refreshHeapItem struct {
-	id    string
-	next  time.Time
-	index int
+	id    string    // 认证凭据 ID
+	next  time.Time // 下次刷新时间
+	index int       // 在堆中的索引
 }
 
+// refreshMinHeap 是按刷新时间排序的最小堆实现。
 type refreshMinHeap []*refreshHeapItem
 
+// Len 返回堆中元素数量。
 func (h refreshMinHeap) Len() int { return len(h) }
 
+// Less 比较两个元素的刷新时间，用于堆排序。
 func (h refreshMinHeap) Less(i, j int) bool {
 	return h[i].next.Before(h[j].next)
 }

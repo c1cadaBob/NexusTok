@@ -1,3 +1,8 @@
+// auth - custom_headers_test.go
+// 自定义请求头功能测试
+// 验证从认证元数据中提取和应用自定义请求头的功能：
+// - ExtractCustomHeadersFromMetadata：从 metadata 中提取 headers 映射
+// - ApplyCustomHeadersFromMetadata：将自定义请求头应用到认证属性中
 package auth
 
 import (
@@ -5,6 +10,11 @@ import (
 	"testing"
 )
 
+// TestExtractCustomHeadersFromMetadata 验证从元数据中提取自定义请求头：
+// - 去除键名和值的首尾空格
+// - 忽略空键名
+// - 忽略纯空格的值
+// - 将数值类型转换为字符串
 func TestExtractCustomHeadersFromMetadata(t *testing.T) {
 	meta := map[string]any{
 		"headers": map[string]any{
@@ -22,6 +32,10 @@ func TestExtractCustomHeadersFromMetadata(t *testing.T) {
 	}
 }
 
+// TestApplyCustomHeadersFromMetadata 验证应用自定义请求头：
+// - 新的请求头覆盖已有的同名属性
+// - 空值的请求头不被应用
+// - 非请求头属性保持不变
 func TestApplyCustomHeadersFromMetadata(t *testing.T) {
 	auth := &Auth{
 		Metadata: map[string]any{

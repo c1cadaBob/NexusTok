@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器在流式和非流式模式下处理空 completion 输出时回退到 output_item.done 事件的功能。
 package executor
 
 import (
@@ -15,6 +17,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestCodexExecutorExecute_EmptyStreamCompletionOutputUsesOutputItemDone 验证非流式执行在
+// response.completed 事件中 output 为空时，从 response.output_item.done 事件中提取内容作为最终响应。
 func TestCodexExecutorExecute_EmptyStreamCompletionOutputUsesOutputItemDone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -46,6 +50,8 @@ func TestCodexExecutorExecute_EmptyStreamCompletionOutputUsesOutputItemDone(t *t
 	}
 }
 
+// TestCodexExecutorExecuteStream_EmptyStreamCompletionOutputUsesOutputItemDone 验证流式执行在
+// response.completed 事件中 output 为空时，从 response.output_item.done 事件中提取内容作为最终流式响应。
 func TestCodexExecutorExecuteStream_EmptyStreamCompletionOutputUsesOutputItemDone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

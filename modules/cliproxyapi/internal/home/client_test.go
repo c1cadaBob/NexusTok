@@ -1,3 +1,6 @@
+// home - client_test.go
+// 该文件包含 Home 客户端的单元测试，验证认证调度请求的序列化、
+// Redis TLS 配置选项、集群节点刷新、以及故障转移行为。
 package home
 
 import (
@@ -10,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestAuthDispatchRequestIncludesCount 测试认证调度请求序列化后包含 count 字段。
 func TestAuthDispatchRequestIncludesCount(t *testing.T) {
 	req := newAuthDispatchRequest("gpt-5.4", "session-1", http.Header{"Authorization": {"Bearer test"}}, 2)
 
@@ -27,6 +31,7 @@ func TestAuthDispatchRequestIncludesCount(t *testing.T) {
 	}
 }
 
+// TestAuthDispatchRequestDefaultsCountToOne 测试认证调度请求在未指定 count 时默认值为 1。
 func TestAuthDispatchRequestDefaultsCountToOne(t *testing.T) {
 	req := newAuthDispatchRequest("gpt-5.4", "", nil, 0)
 
@@ -35,6 +40,7 @@ func TestAuthDispatchRequestDefaultsCountToOne(t *testing.T) {
 	}
 }
 
+// TestRedisOptionsHomeTLSDisabled 测试当 TLS 未启用时 Redis 连接选项不包含 TLS 配置。
 func TestRedisOptionsHomeTLSDisabled(t *testing.T) {
 	client := New(config.HomeConfig{
 		Enabled: true,
@@ -57,6 +63,8 @@ func TestRedisOptionsHomeTLSDisabled(t *testing.T) {
 	}
 }
 
+// TestRedisOptionsHomeTLSEnabledUsesSeedHostAsServerName 测试 TLS 启用时使用种子主机名
+// 作为 ServerName，即使实际连接地址已被替换为 IP。
 func TestRedisOptionsHomeTLSEnabledUsesSeedHostAsServerName(t *testing.T) {
 	client := New(config.HomeConfig{
 		Enabled: true,
@@ -86,6 +94,8 @@ func TestRedisOptionsHomeTLSEnabledUsesSeedHostAsServerName(t *testing.T) {
 	}
 }
 
+// TestRedisOptionsHomeTLSEnabledUsesExplicitServerName 测试 TLS 启用时使用显式配置的
+// ServerName 和 InsecureSkipVerify 选项。
 func TestRedisOptionsHomeTLSEnabledUsesExplicitServerName(t *testing.T) {
 	client := New(config.HomeConfig{
 		Enabled: true,
@@ -116,6 +126,8 @@ func TestRedisOptionsHomeTLSEnabledUsesExplicitServerName(t *testing.T) {
 	}
 }
 
+// TestRefreshClusterNodesDisabledSkipsRedisCommand 测试当集群发现被禁用时，
+// refreshClusterNodes 跳过 Redis 命令且不初始化客户端。
 func TestRefreshClusterNodesDisabledSkipsRedisCommand(t *testing.T) {
 	client := New(config.HomeConfig{
 		Enabled:                 true,
@@ -136,6 +148,8 @@ func TestRefreshClusterNodesDisabledSkipsRedisCommand(t *testing.T) {
 	}
 }
 
+// TestFailoverAfterReconnectFailureDisabledDoesNotSwitchToClusterNode 测试当集群发现被禁用时，
+// 即使重连失败次数达到阈值也不会切换到集群节点。
 func TestFailoverAfterReconnectFailureDisabledDoesNotSwitchToClusterNode(t *testing.T) {
 	client := New(config.HomeConfig{
 		Enabled:                 true,

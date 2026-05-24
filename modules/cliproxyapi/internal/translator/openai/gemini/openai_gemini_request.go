@@ -1,8 +1,13 @@
+// openai/gemini - openai_gemini_request.go
 // Package gemini provides request translation functionality for Gemini to OpenAI API.
-// It handles parsing and transforming Gemini API requests into OpenAI Chat Completions API format,
-// extracting model information, generation config, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Gemini API format and OpenAI API's expected format.
+// 本文件提供 Gemini API 请求到 OpenAI Chat Completions API 格式的转换功能。
+// 负责解析 Gemini API 请求并将其转换为 OpenAI 期望的格式，
+// 包括：模型名称映射、生成配置转换（temperature/maxOutputTokens/topP/topK/stopSequences）、
+// 系统指令转换（systemInstruction/system_instruction -> system message）、
+// 消息内容处理（文本/图片/functionCall/functionResponse）、
+// 工具声明转换（functionDeclarations -> tools）、工具选择映射、
+// 思考配置（thinkingConfig）到 reasoning_effort 的映射等。
+// 使用 FIFO 队列机制匹配 functionCall ID 与 functionResponse。
 package gemini
 
 import (
@@ -19,6 +24,11 @@ import (
 // ConvertGeminiRequestToOpenAI parses and transforms a Gemini API request into OpenAI Chat Completions API format.
 // It extracts the model name, generation config, message contents, and tool declarations
 // from the raw JSON request and returns them in the format expected by the OpenAI API.
+// 将 Gemini API 请求转换为 OpenAI Chat Completions API 格式。
+// 包括：模型映射、生成配置（temperature/maxOutputTokens/topP 等）转换、
+// 系统指令转换为 system message、消息内容（文本/图片/functionCall/functionResponse）处理、
+// 工具声明（functionDeclarations -> tools）和工具选择映射、
+// 思考配置（thinkingConfig）到 reasoning_effort 的映射。
 func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 	// Base OpenAI Chat Completions API template

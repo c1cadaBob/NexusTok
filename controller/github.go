@@ -1,3 +1,16 @@
+// Package controller - github.go
+// 该文件实现了 GitHub OAuth 登录和绑定的 API 控制器
+//
+// GitHub OAuth 流程：
+// 1. 用户访问 GitHub 授权页面
+// 2. 授权后回调到 GitHubOAuth
+// 3. 使用授权码获取访问令牌
+// 4. 获取 GitHub 用户信息
+// 5. 登录或注册用户
+//
+// 主要 API：
+// - GitHubOAuth：GitHub OAuth 回调处理（登录/注册）
+// - GitHubBind：绑定 GitHub 账户到现有用户
 package controller
 
 import (
@@ -16,18 +29,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GitHubOAuthResponse GitHub OAuth 令牌响应结构体
 type GitHubOAuthResponse struct {
-	AccessToken string `json:"access_token"`
-	Scope       string `json:"scope"`
-	TokenType   string `json:"token_type"`
+	AccessToken string `json:"access_token"` // 访问令牌
+	Scope       string `json:"scope"`        // 授权范围
+	TokenType   string `json:"token_type"`   // 令牌类型
 }
 
+// GitHubUser GitHub 用户信息结构体
 type GitHubUser struct {
-	Login string `json:"login"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Login string `json:"login"` // GitHub 用户名
+	Name  string `json:"name"`  // 显示名称
+	Email string `json:"email"` // 邮箱地址
 }
 
+// getGitHubUserInfoByCode 通过授权码获取 GitHub 用户信息
+//
+// 流程：
+// 1. 使用授权码交换访问令牌
+// 2. 使用访问令牌获取用户信息
+//
+// 参数：
+//   - code: GitHub OAuth 授权码
+//
+// 返回值：
+//   - *GitHubUser: GitHub 用户信息
+//   - err: 错误信息
 func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	if code == "" {
 		return nil, errors.New("无效的参数")
@@ -79,6 +106,15 @@ func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	return &githubUser, nil
 }
 
+// GitHubOAuth 处理 GitHub OAuth 回调
+//
+// 根据会话状态判断是登录还是绑定操作：
+// - 如果会话中有用户名信息，执行绑定操作
+// - 否则执行登录/注册操作
+//
+// 查询参数：
+//   - code: OAuth 授权码
+//   - state: 状态参数（用于 CSRF 防护）
 func GitHubOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 	state := c.Query("state")
@@ -173,6 +209,9 @@ func GitHubOAuth(c *gin.Context) {
 	setupLogin(&user, c)
 }
 
+// GitHubBind 将 GitHub 账户绑定到当前登录用户
+//
+// 如果该 GitHub 账户已被其他用户绑定，返回错误
 func GitHubBind(c *gin.Context) {
 	if !common.GitHubOAuthEnabled {
 		c.JSON(http.StatusOK, gin.H{

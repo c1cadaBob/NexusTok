@@ -1,3 +1,7 @@
+// Package xai 的文本补全响应处理文件。
+// 负责将 xAI（Grok）API 的流式和非流式响应转换为 OpenAI 兼容格式。
+// xAI 的响应格式基本兼容 OpenAI，但在 usage 计算上有特殊处理：
+// 需要手动计算 CompletionTokens（TotalTokens - PromptTokens）。
 package xai
 
 import (
@@ -16,6 +20,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// streamResponseXAI2OpenAI 将 xAI 的流式响应转换为 OpenAI 格式。
+// 将 xAI 响应中的 Usage.CompletionTokens 替换为从上下文累积的值，
+// 以确保跨多个 chunk 的 token 计数准确。
+// 参数:
+//   - xAIResp: xAI 格式的流式响应
+//   - usage: 当前累积的 token 使用量
+// 返回:
+//   - *dto.ChatCompletionsStreamResponse: OpenAI 格式的流式响应
 func streamResponseXAI2OpenAI(xAIResp *dto.ChatCompletionsStreamResponse, usage *dto.Usage) *dto.ChatCompletionsStreamResponse {
 	if xAIResp == nil {
 		return nil
@@ -35,6 +47,20 @@ func streamResponseXAI2OpenAI(xAIResp *dto.ChatCompletionsStreamResponse, usage 
 	return openAIResp
 }
 
+// xAIStreamHandler 处理 xAI API 的流式聊天响应。
+// 逐块解析 SSE 数据，将 xAI 格式的 usage 转换为 OpenAI 格式，
+// 并通过 EventSource 流式推送给客户端。
+// 特殊处理：
+//   - 如果上游返回了流式 usage，直接使用其值计算 CompletionTokens
+//   - 如果上游未返回 usage，使用 ResponseText2Usage 函数估算
+//   - 工具调用数量额外加 7 个 token/次
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 HTTP 响应
+// 返回:
+//   - *dto.Usage: token 使用量统计
+//   - *types.NexusTokError: 处理过程中的错误信息
 func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	usage := &dto.Usage{}
 	var responseTextBuilder strings.Builder
@@ -77,6 +103,17 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	return usage, nil
 }
 
+// xAIHandler 处理 xAI API 的非流式聊天响应。
+// 读取完整的响应体，修正 usage 中的 CompletionTokens 和 TextTokens 字段
+// （xAI 返回 TotalTokens 但不单独返回 CompletionTokens），
+// 然后将修正后的 JSON 重新写入客户端。
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继信息
+//   - resp: 上游 HTTP 响应
+// 返回:
+//   - *dto.Usage: token 使用量统计
+//   - *types.NexusTokError: 处理过程中的错误信息
 func xAIHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 

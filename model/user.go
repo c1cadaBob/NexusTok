@@ -1,3 +1,14 @@
+// Package model - user.go
+// 该文件定义了用户数据模型和相关操作
+//
+// 用户是系统的核心实体，包含：
+// - 基本信息：用户名、密码、邮箱、显示名
+// - 认证信息：GitHub/Discord/OIDC/WeChat/Telegram ID、Access Token
+// - 配额信息：总额度、已用额度、请求次数
+// - 分组信息：用户所属分组（影响可用模型和倍率）
+// - 邀请信息：邀请码、邀请人数、邀请奖励额度
+// - 设置信息：用户个性化设置（JSON 格式）
+// - 支付信息：Stripe 客户 ID
 package model
 
 import (
@@ -8,53 +19,60 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
+	"github.com/c1cada/NexusTok/common"                        // 公共工具包
+	"github.com/c1cada/NexusTok/dto"                           // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                        // 日志
+	"github.com/c1cada/NexusTok/setting/operation_setting"     // 运营设置
 
-	"github.com/bytedance/gopkg/util/gopool"
-	"gorm.io/gorm"
+	"github.com/bytedance/gopkg/util/gopool" // 协程池
+	"gorm.io/gorm"                           // GORM ORM
 )
 
+// UserNameMaxLength 用户名最大长度
 const UserNameMaxLength = 20
 
-// User if you add sensitive fields, don't forget to clean them in setupLogin function.
-// Otherwise, the sensitive information will be saved on local storage in plain text!
+// User 用户数据模型
+// 注意：如果添加敏感字段，不要忘记在 setupLogin 函数中清理
+// 否则敏感信息会以明文形式保存在本地存储中！
 type User struct {
-	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`                                    // this field is only for Email verification, don't save it to database!
-	AccessToken      *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	Id               int            `json:"id"`                                                    // 用户 ID
+	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`       // 用户名（唯一索引）
+	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`    // 密码（哈希后存储）
+	OriginalPassword string         `json:"original_password" gorm:"-:all"`                       // 原始密码（仅用于密码修改验证，不存储到数据库）
+	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`          // 显示名称
+	Role             int            `json:"role" gorm:"type:int;default:1"`                       // 用户角色（1=普通用户，10=管理员，100=Root）
+	Status           int            `json:"status" gorm:"type:int;default:1"`                     // 用户状态（1=启用，2=禁用）
+	Email            string         `json:"email" gorm:"index" validate:"max=50"`                 // 邮箱地址
+	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`              // GitHub ID（OAuth 关联）
+	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`            // Discord ID（OAuth 关联）
+	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`                  // OIDC ID（OAuth 关联）
+	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`              // 微信 ID（OAuth 关联）
+	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`          // Telegram ID（OAuth 关联）
+	VerificationCode string         `json:"verification_code" gorm:"-:all"`                       // 邮箱验证码（仅用于邮箱验证，不存储到数据库）
+	AccessToken      *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"` // 系统管理用 Access Token
+	Quota            int            `json:"quota" gorm:"type:int;default:0"`                      // 用户总额度
+	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // 已使用额度
+	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`             // 请求次数
+	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`      // 用户分组
+	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"` // 邀请码
+	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"` // 邀请人数
+	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"` // 邀请剩余额度
 	AffHistoryQuota  int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt        gorm.DeletedAt `gorm:"index"`
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`   // 邀请人 ID
+	DeletedAt        gorm.DeletedAt `gorm:"index"`                                                 // 软删除时间
+	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`          // Linux DO ID（OAuth 关联）
+	Setting          string         `json:"setting" gorm:"type:text;column:setting"`              // 用户设置（JSON 格式）
+	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"` // 备注
+	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"` // Stripe 客户 ID
+	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`   // 创建时间
+	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`  // 最后登录时间
 }
 
+// ToBaseUser 将用户转换为基础用户信息（用于缓存）
+// 基础用户信息只包含请求处理所需的关键字段
+//
+// 返回值：
+//   - *UserBase: 基础用户信息
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:       user.Id,
@@ -68,6 +86,11 @@ func (user *User) ToBaseUser() *UserBase {
 	return cache
 }
 
+// GetAccessToken 获取用户的 Access Token
+// 如果 Access Token 为空，返回空字符串
+//
+// 返回值：
+//   - string: Access Token
 func (user *User) GetAccessToken() string {
 	if user.AccessToken == nil {
 		return ""
@@ -75,10 +98,19 @@ func (user *User) GetAccessToken() string {
 	return *user.AccessToken
 }
 
+// SetAccessToken 设置用户的 Access Token
+//
+// 参数：
+//   - token: Access Token
 func (user *User) SetAccessToken(token string) {
 	user.AccessToken = &token
 }
 
+// GetSetting 获取用户的设置
+// 从 JSON 格式的设置字符串中解析出 UserSetting 对象
+//
+// 返回值：
+//   - dto.UserSetting: 用户设置对象
 func (user *User) GetSetting() dto.UserSetting {
 	setting := dto.UserSetting{}
 	if user.Setting != "" {
@@ -90,6 +122,11 @@ func (user *User) GetSetting() dto.UserSetting {
 	return setting
 }
 
+// SetSetting 设置用户的设置
+// 将 UserSetting 对象序列化为 JSON 格式存储
+//
+// 参数：
+//   - setting: 用户设置对象
 func (user *User) SetSetting(setting dto.UserSetting) {
 	settingBytes, err := json.Marshal(setting)
 	if err != nil {
@@ -99,7 +136,19 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 	user.Setting = string(settingBytes)
 }
 
-// 根据用户角色生成默认的边栏配置
+// generateDefaultSidebarConfigForRole 根据用户角色生成默认的边栏配置
+// 不同角色的用户可以看到不同的菜单项
+//
+// 角色权限：
+// - 普通用户：聊天、控制台、个人中心
+// - 管理员：普通用户功能 + 管理员区域（不含系统设置）
+// - Root 用户：所有功能
+//
+// 参数：
+//   - userRole: 用户角色
+//
+// 返回值：
+//   - string: JSON 格式的边栏配置
 func generateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig := map[string]interface{}{}
 

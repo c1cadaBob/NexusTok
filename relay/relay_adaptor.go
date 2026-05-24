@@ -1,3 +1,6 @@
+// Package relay 实现了 AI API 中继/代理的核心路由逻辑。
+// 本文件负责根据 API 类型（如 OpenAI、Claude、Gemini 等）和任务平台类型，
+// 创建并返回对应的上游渠道适配器（Adaptor）实例。
 package relay
 
 import (
@@ -50,6 +53,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetAdaptor 根据 API 类型常量获取对应的上游渠道适配器。
+// 该函数是渠道适配器的工厂方法，通过 switch-case 将 API 类型映射到具体的适配器实现。
+//
+// 参数：
+//   - apiType: API 类型常量（如 constant.APITypeOpenAI、constant.APITypeAnthropic 等）
+//
+// 返回值：
+//   - channel.Adaptor: 对应的渠道适配器实例；若 apiType 不匹配任何已知类型则返回 nil
 func GetAdaptor(apiType int) channel.Adaptor {
 	switch apiType {
 	case constant.APITypeAli:
@@ -124,6 +135,14 @@ func GetAdaptor(apiType int) channel.Adaptor {
 	return nil
 }
 
+// GetTaskPlatform 从 Gin 上下文中提取任务平台标识。
+// 优先使用 channel_type 整数字段（转换为字符串），若不存在则使用 platform 字符串字段。
+//
+// 参数：
+//   - c: Gin 请求上下文，包含渠道类型等信息
+//
+// 返回值：
+//   - constant.TaskPlatform: 任务平台标识字符串
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {
@@ -132,6 +151,15 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	return constant.TaskPlatform(c.GetString("platform"))
 }
 
+// GetTaskAdaptor 根据任务平台标识获取对应的异步任务适配器。
+// 支持两种匹配方式：一是直接匹配字符串平台名（如 Suno），
+// 二是将平台字符串解析为渠道类型整数后进行匹配（如阿里云、可灵、即梦等）。
+//
+// 参数：
+//   - platform: 任务平台标识
+//
+// 返回值：
+//   - channel.TaskAdaptor: 对应的任务适配器实例；若不匹配则返回 nil
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	switch platform {
 	//case constant.APITypeAIProxyLibrary:

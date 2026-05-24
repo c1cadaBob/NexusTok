@@ -1,3 +1,8 @@
+// cache - signature_cache.go
+// 本文件实现了 thinking block 签名的缓存机制，主要用于 Antigravity/Claude 等
+// 需要在多轮对话中携带 thinking 签名的模型。缓存采用两级结构：
+// 第一级以模型分组（如 "claude"、"gemini"）为键，第二级以文本内容的 SHA256 哈希为键。
+// 支持滑动过期、后台清理和 bypass 模式。
 package cache
 
 import (
@@ -11,9 +16,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// SignatureEntry holds a cached thinking signature with timestamp
+// SignatureEntry 缓存中的一条签名记录，包含签名值和最后更新时间。
 type SignatureEntry struct {
+	// Signature 是签名的实际值。
 	Signature string
+	// Timestamp 是签名最后被访问或写入的时间，用于滑动过期判断。
 	Timestamp time.Time
 }
 

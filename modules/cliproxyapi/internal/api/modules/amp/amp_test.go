@@ -1,3 +1,12 @@
+// amp - amp_test.go
+// AMP（API Management Proxy）模块的核心功能单元测试。
+// 测试模块的以下关键行为：
+// - 模块名称和初始化
+// - 注册流程：有上游 URL 时启用代理、无上游 URL 时禁用代理但仍注册别名路由
+// - 无效上游 URL 的错误处理
+// - 配置更新时的缓存失效机制
+// - 认证中间件的回退行为
+// - 多上游 API Key 配置变更检测（含重复键和空白键的处理）
 package amp
 
 import (
@@ -15,6 +24,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 )
 
+// TestAmpModule_Name 测试模块名称应返回 "amp-routing"
 func TestAmpModule_Name(t *testing.T) {
 	m := New()
 	if m.Name() != "amp-routing" {
@@ -22,6 +32,10 @@ func TestAmpModule_Name(t *testing.T) {
 	}
 }
 
+// TestAmpModule_New 测试 NewLegacy 构造函数：
+// - accessManager 和 authMiddleware 正确设置
+// - enabled 初始为 false
+// - proxy 初始为 nil
 func TestAmpModule_New(t *testing.T) {
 	accessManager := sdkaccess.NewManager()
 	authMiddleware := func(c *gin.Context) { c.Next() }
@@ -42,6 +56,9 @@ func TestAmpModule_New(t *testing.T) {
 	}
 }
 
+// TestAmpModule_Register_WithUpstream 测试提供有效上游 URL 时的注册流程：
+// - 模块应被启用
+// - proxy 和 secretSource 应被初始化
 func TestAmpModule_Register_WithUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -78,6 +95,10 @@ func TestAmpModule_Register_WithUpstream(t *testing.T) {
 	}
 }
 
+// TestAmpModule_Register_WithoutUpstream 测试没有上游 URL 时的注册流程：
+// - 注册不应返回错误
+// - 模块应被禁用，proxy 不应初始化
+// - 但提供商别名路由仍然应被注册（确保路由始终可用）
 func TestAmpModule_Register_WithoutUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -115,6 +136,7 @@ func TestAmpModule_Register_WithoutUpstream(t *testing.T) {
 	}
 }
 
+// TestAmpModule_Register_InvalidUpstream 测试无效上游 URL 时注册应返回错误
 func TestAmpModule_Register_InvalidUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -136,6 +158,8 @@ func TestAmpModule_Register_InvalidUpstream(t *testing.T) {
 	}
 }
 
+// TestAmpModule_OnConfigUpdated_CacheInvalidation 测试配置更新时缓存失效机制：
+// 先预热缓存，然后更新配置，验证缓存被清除（变为 nil）
 func TestAmpModule_OnConfigUpdated_CacheInvalidation(t *testing.T) {
 	tmpDir := t.TempDir()
 	p := filepath.Join(tmpDir, "secrets.json")
@@ -169,6 +193,7 @@ func TestAmpModule_OnConfigUpdated_CacheInvalidation(t *testing.T) {
 	}
 }
 
+// TestAmpModule_OnConfigUpdated_NotEnabled 测试禁用状态下配置更新不应返回错误或 panic
 func TestAmpModule_OnConfigUpdated_NotEnabled(t *testing.T) {
 	m := &AmpModule{enabled: false}
 
@@ -178,6 +203,8 @@ func TestAmpModule_OnConfigUpdated_NotEnabled(t *testing.T) {
 	}
 }
 
+// TestAmpModule_OnConfigUpdated_URLRemoved 测试上游 URL 被移除时的配置更新：
+// 应记录警告但不返回错误
 func TestAmpModule_OnConfigUpdated_URLRemoved(t *testing.T) {
 	m := &AmpModule{enabled: true}
 	ms := NewMultiSourceSecret("", 0)
@@ -191,6 +218,8 @@ func TestAmpModule_OnConfigUpdated_URLRemoved(t *testing.T) {
 	}
 }
 
+// TestAmpModule_OnConfigUpdated_NonMultiSourceSecret 测试当 secretSource 是 StaticSecretSource 时，
+// OnConfigUpdated 不应 panic
 func TestAmpModule_OnConfigUpdated_NonMultiSourceSecret(t *testing.T) {
 	// Test that OnConfigUpdated doesn't panic with StaticSecretSource
 	m := &AmpModule{enabled: true}
@@ -204,6 +233,8 @@ func TestAmpModule_OnConfigUpdated_NonMultiSourceSecret(t *testing.T) {
 	}
 }
 
+// TestAmpModule_AuthMiddleware_Fallback 测试当模块没有设置认证中间件时，
+// getAuthMiddleware 应返回一个回退中间件（非 nil），且该中间件应允许请求通过
 func TestAmpModule_AuthMiddleware_Fallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -235,6 +266,7 @@ func TestAmpModule_AuthMiddleware_Fallback(t *testing.T) {
 	}
 }
 
+// TestAmpModule_SecretSource_FromConfig 测试配置中的显式 API Key 能通过 secretSource 正确返回
 func TestAmpModule_SecretSource_FromConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -275,6 +307,8 @@ func TestAmpModule_SecretSource_FromConfig(t *testing.T) {
 	}
 }
 
+// TestAmpModule_ProviderAliasesAlwaysRegistered 测试无论是否有上游 URL，
+// 提供商别名路由都应始终被注册
 func TestAmpModule_ProviderAliasesAlwaysRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -313,6 +347,8 @@ func TestAmpModule_ProviderAliasesAlwaysRegistered(t *testing.T) {
 	}
 }
 
+// TestAmpModule_hasUpstreamAPIKeysChanged_DetectsRemovedKeyWithDuplicateInput 测试当新配置中
+// 包含重复键（k1, k1）但移除了旧键（k2）时，变更检测应正确识别差异
 func TestAmpModule_hasUpstreamAPIKeysChanged_DetectsRemovedKeyWithDuplicateInput(t *testing.T) {
 	m := &AmpModule{}
 
@@ -332,6 +368,8 @@ func TestAmpModule_hasUpstreamAPIKeysChanged_DetectsRemovedKeyWithDuplicateInput
 	}
 }
 
+// TestAmpModule_hasUpstreamAPIKeysChanged_IgnoresEmptyAndWhitespaceKeys 测试变更检测
+// 应忽略空白和空字符串键的差异
 func TestAmpModule_hasUpstreamAPIKeysChanged_IgnoresEmptyAndWhitespaceKeys(t *testing.T) {
 	m := &AmpModule{}
 

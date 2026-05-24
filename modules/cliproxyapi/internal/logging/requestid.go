@@ -1,3 +1,7 @@
+// logging - requestid.go
+// 本文件提供请求 ID 的生成和在 context 中的存取功能。
+// 请求 ID 用于在日志中关联同一请求的所有处理步骤，方便问题排查。
+// 同时支持标准 context 和 Gin 框架 context 两种存储方式。
 package logging
 
 import (
@@ -8,13 +12,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// requestIDKey is the context key for storing/retrieving request IDs.
+// requestIDKey 是用于在标准 context 中存储请求 ID 的键类型。
 type requestIDKey struct{}
 
-// ginRequestIDKey is the Gin context key for request IDs.
+// ginRequestIDKey 是用于在 Gin context 中存储请求 ID 的键名。
 const ginRequestIDKey = "__request_id__"
 
-// GenerateRequestID creates a new 8-character hex request ID.
+// GenerateRequestID 生成一个新的 8 字符十六进制随机请求 ID。
+// 使用加密安全的随机数生成器确保 ID 的唯一性。
+//
+// 返回值：
+//   - string: 8 字符的十六进制请求 ID
 func GenerateRequestID() string {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
@@ -23,13 +31,25 @@ func GenerateRequestID() string {
 	return hex.EncodeToString(b)
 }
 
-// WithRequestID returns a new context with the request ID attached.
+// WithRequestID 将请求 ID 存入标准 context 中。
+//
+// 参数：
+//   - ctx: 父 context
+//   - requestID: 要存入的请求 ID
+//
+// 返回值：
+//   - context.Context: 包含请求 ID 的新 context
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, requestIDKey{}, requestID)
 }
 
-// GetRequestID retrieves the request ID from the context.
-// Returns empty string if not found.
+// GetRequestID 从标准 context 中获取请求 ID。
+//
+// 参数：
+//   - ctx: 包含请求 ID 的 context
+//
+// 返回值：
+//   - string: 请求 ID，未找到时返回空字符串
 func GetRequestID(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -40,14 +60,24 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-// SetGinRequestID stores the request ID in the Gin context.
+// SetGinRequestID 将请求 ID 存入 Gin context 中。
+//
+// 参数：
+//   - c: Gin context
+//   - requestID: 要存入的请求 ID
 func SetGinRequestID(c *gin.Context, requestID string) {
 	if c != nil {
 		c.Set(ginRequestIDKey, requestID)
 	}
 }
 
-// GetGinRequestID retrieves the request ID from the Gin context.
+// GetGinRequestID 从 Gin context 中获取请求 ID。
+//
+// 参数：
+//   - c: Gin context
+//
+// 返回值：
+//   - string: 请求 ID，未找到时返回空字符串
 func GetGinRequestID(c *gin.Context) string {
 	if c == nil {
 		return ""

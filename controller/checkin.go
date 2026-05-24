@@ -1,3 +1,12 @@
+// Package controller - checkin.go
+// 该文件实现了用户签到功能的 API 控制器
+//
+// 签到功能允许用户每日签到获取 API 额度奖励
+// 系统管理员可通过配置启用/禁用签到功能，并设置奖励额度范围
+//
+// 主要 API：
+// - GetCheckinStatus：获取用户签到状态和历史记录
+// - DoCheckin：执行用户签到操作
 package controller
 
 import (
@@ -13,6 +22,14 @@ import (
 )
 
 // GetCheckinStatus 获取用户签到状态和历史记录
+//
+// 返回当前用户的签到配置（是否启用、奖励额度范围）和指定月份的签到统计
+//
+// 查询参数：
+//   - month: 查询月份，格式为 "2006-01"，默认为当前月份
+//
+// 参数：
+//   - c: Gin 上下文
 func GetCheckinStatus(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {
@@ -44,6 +61,12 @@ func GetCheckinStatus(c *gin.Context) {
 }
 
 // DoCheckin 执行用户签到
+//
+// 调用 model.UserCheckin 完成签到，返回获得的奖励额度
+// 签到成功后会记录操作日志
+//
+// 参数：
+//   - c: Gin 上下文
 func DoCheckin(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {

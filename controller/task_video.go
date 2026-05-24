@@ -1,3 +1,18 @@
+// Package controller - task_video.go
+// 该文件实现了视频生成任务的轮询更新逻辑
+//
+// 功能包括：
+// - 批量更新视频任务状态
+// - 单个视频任务状态查询和更新
+// - 任务成功时的按 token 重新计费（补扣费/退还）
+// - 任务失败时的自动退款
+// - 响应体脱敏（移除 base64 数据）
+//
+// 主要函数：
+// - UpdateVideoTaskAll：批量更新指定平台的所有视频任务
+// - updateVideoTaskAll：更新单个渠道的所有视频任务
+// - updateVideoSingleTask：更新单个视频任务
+// - redactVideoResponseBody：脱敏视频响应体
 package controller
 
 import (
@@ -18,6 +33,16 @@ import (
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 )
 
+// UpdateVideoTaskAll 批量更新指定平台的所有视频任务
+//
+// 遍历所有渠道的任务 ID 列表，逐个渠道更新任务状态
+// 单个渠道的更新失败不会影响其他渠道
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - platform: 任务平台（如 kling、jimeng）
+//   - taskChannelM: 渠道 ID -> 任务 ID 列表的映射
+//   - taskM: 任务 ID -> 任务对象的映射
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
 		if err := updateVideoTaskAll(ctx, platform, channelId, taskIds, taskM); err != nil {
@@ -27,6 +52,19 @@ func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, tas
 	return nil
 }
 
+// updateVideoTaskAll 更新单个渠道的所有视频任务
+//
+// 流程：
+// 1. 获取渠道信息
+// 2. 初始化任务适配器
+// 3. 遍历任务 ID 列表，逐个更新任务状态
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - platform: 任务平台
+//   - channelId: 渠道 ID
+//   - taskIds: 任务 ID 列表
+//   - taskM: 任务 ID -> 任务对象的映射
 func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
 	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
 	if len(taskIds) == 0 {
@@ -62,6 +100,27 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	return nil
 }
 
+// updateVideoSingleTask 更新单个视频任务
+//
+// 流程：
+// 1. 调用适配器的 FetchTask 查询上游任务状态
+// 2. 解析响应（支持 NexusTok 标准格式和原生格式）
+// 3. 根据任务状态更新进度：
+//   - submitted: 10%
+//   - queued: 20%
+//   - in_progress: 30%
+//   - success: 100%，触发按 token 重新计费
+//   - failure: 100%，触发自动退款
+//
+// 4. 更新任务记录到数据库
+// 5. 处理退款逻辑（防止重复退款）
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - adaptor: 任务适配器
+//   - channel: 渠道信息
+//   - taskId: 任务 ID
+//   - taskM: 任务 ID -> 任务对象的映射
 func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, channel *model.Channel, taskId string, taskM map[string]*model.Task) error {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
@@ -278,6 +337,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	return nil
 }
 
+// redactVideoResponseBody 脱敏视频响应体
+//
+// 移除响应中的 base64 编码数据，避免存储大量二进制数据
+// 处理逻辑：
+// - 删除 response.bytesBase64Encoded 字段
+// - 截断 response.video 中的 base64 数据
+// - 删除 response.videos 中每个元素的 bytesBase64Encoded 字段
+//
+// 参数：
+//   - body: 原始响应体
+//
+// 返回：
+//   - []byte: 脱敏后的响应体
 func redactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -304,6 +376,15 @@ func redactVideoResponseBody(body []byte) []byte {
 	return b
 }
 
+// truncateBase64 截断 base64 字符串
+//
+// 保留前 maxKeep 个字符，超过部分用 "..." 替代
+//
+// 参数：
+//   - s: base64 字符串
+//
+// 返回：
+//   - string: 截断后的字符串
 func truncateBase64(s string) string {
 	const maxKeep = 256
 	if len(s) <= maxKeep {

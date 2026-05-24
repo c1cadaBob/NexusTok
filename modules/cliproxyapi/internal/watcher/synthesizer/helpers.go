@@ -1,3 +1,6 @@
+// synthesizer - helpers.go
+// 本文件提供了认证合成的辅助工具函数。
+// 包含稳定 ID 生成器、认证条目创建辅助函数等。
 package synthesizer
 
 import (
@@ -12,20 +15,20 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// StableIDGenerator generates stable, deterministic IDs for auth entries.
-// It uses SHA256 hashing with collision handling via counters.
-// It is not safe for concurrent use.
+// StableIDGenerator 生成稳定、确定性的认证条目 ID。
+// 使用 SHA256 哈希和计数器处理冲突。
+// 不支持并发使用。
 type StableIDGenerator struct {
 	counters map[string]int
 }
 
-// NewStableIDGenerator creates a new StableIDGenerator instance.
+// NewStableIDGenerator 创建一个新的 StableIDGenerator 实例。
 func NewStableIDGenerator() *StableIDGenerator {
 	return &StableIDGenerator{counters: make(map[string]int)}
 }
 
-// Next generates a stable ID based on the kind and parts.
-// Returns the full ID (kind:hash) and the short hash portion.
+// Next 基于 kind 和 parts 生成稳定的 ID。
+// 返回完整 ID（kind:hash）和短哈希部分。
 func (g *StableIDGenerator) Next(kind string, parts ...string) (string, string) {
 	if g == nil {
 		return kind + ":000000000000", "000000000000"

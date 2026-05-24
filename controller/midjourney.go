@@ -1,3 +1,17 @@
+// Package controller - midjourney.go
+// 该文件实现了 Midjourney 图像生成任务管理的 API 控制器
+//
+// Midjourney 是一个 AI 图像生成服务，通过中转 API 进行调用
+// 本文件主要功能：
+// - 后台任务轮询：定期检查未完成的 Midjourney 任务状态
+// - 任务状态同步：将上游任务状态同步到本地数据库
+// - 额度退还：任务失败时自动退还用户额度
+// - 任务查询：管理员和用户查询任务列表
+//
+// 主要 API：
+// - GetAllMidjourney：管理员获取所有任务列表
+// - GetUserMidjourney：用户获取自己的任务列表
+// - UpdateMidjourneyTaskBulk：后台任务状态轮询（非 API，启动时运行）
 package controller
 
 import (
@@ -20,6 +34,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// UpdateMidjourneyTaskBulk 批量更新 Midjourney 任务状态
+//
+// 此函数作为后台协程运行，每 15 秒轮询一次未完成的任务
+// 处理逻辑：
+// 1. 获取所有未完成的任务
+// 2. 按渠道分组，批量查询上游状态
+// 3. 更新本地任务状态
+// 4. 失败的任务自动退还用户额度
+// 5. 超过 1 小时未完成的任务标记为失败
 func UpdateMidjourneyTaskBulk() {
 	//imageModel := "midjourney"
 	ctx := context.TODO()
@@ -199,6 +222,16 @@ func UpdateMidjourneyTaskBulk() {
 	}
 }
 
+// checkMjTaskNeedUpdate 检查 Midjourney 任务是否需要更新
+//
+// 比较旧任务和新任务的各个字段，判断是否有变化
+//
+// 参数：
+//   - oldTask: 本地存储的旧任务
+//   - newTask: 从上游获取的新任务状态
+//
+// 返回值：
+//   - bool: 是否需要更新
 func checkMjTaskNeedUpdate(oldTask *model.Midjourney, newTask dto.MidjourneyDto) bool {
 	if oldTask.Code != 1 {
 		return true
@@ -254,6 +287,15 @@ func checkMjTaskNeedUpdate(oldTask *model.Midjourney, newTask dto.MidjourneyDto)
 	return false
 }
 
+// GetAllMidjourney 管理员获取所有 Midjourney 任务列表
+//
+// 支持分页和多种过滤条件
+//
+// 查询参数：
+//   - channel_id: 渠道 ID 过滤
+//   - mj_id: Midjourney 任务 ID 过滤
+//   - start_timestamp: 开始时间戳过滤
+//   - end_timestamp: 结束时间戳过滤
 func GetAllMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
@@ -279,6 +321,14 @@ func GetAllMidjourney(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// GetUserMidjourney 用户获取自己的 Midjourney 任务列表
+//
+// 支持分页和时间范围过滤
+//
+// 查询参数：
+//   - mj_id: Midjourney 任务 ID 过滤
+//   - start_timestamp: 开始时间戳过滤
+//   - end_timestamp: 结束时间戳过滤
 func GetUserMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 

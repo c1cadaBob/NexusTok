@@ -1,3 +1,10 @@
+// responses - gemini_openai-responses_response_test.go
+// Gemini 的 OpenAI Responses 响应转换器测试文件。
+// 包含以下测试用例：
+// 1. 文本聚合测试：验证 Vertex 风格的流式响应能够正确解包和聚合文本
+// 2. 推理加密内容测试：验证 thoughtSignature 能够正确传递到 encrypted_content 字段
+// 3. 函数调用事件顺序测试：验证多个函数调用的事件顺序和参数正确性
+// 4. 响应输出排序测试：验证 response.output 中各输出项的顺序正确
 package responses
 
 import (
@@ -8,6 +15,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// parseSSEEvent 解析 SSE 事件数据，提取事件类型和 JSON 数据。
+// 用于测试中将 SSE 格式的输出解析为可断言的结构。
 func parseSSEEvent(t *testing.T, chunk []byte) (string, gjson.Result) {
 	t.Helper()
 
@@ -24,6 +33,13 @@ func parseSSEEvent(t *testing.T, chunk []byte) (string, gjson.Result) {
 	return event, gjson.Parse(dataLine)
 }
 
+// TestConvertGeminiResponseToOpenAIResponses_UnwrapAndAggregateText 测试 Vertex 风格 Gemini 流式响应的文本聚合。
+// 验证：
+// - 响应能够正确解包 "response" 封装层
+// - output_text.done 包含完整的聚合文本
+// - 事件顺序正确（textDone < partDone < messageDone < funcAdded）
+// - 函数调用事件包含正确的名称和参数
+// - response.completed 包含正确的响应 ID、指令回显和缓存 token 数
 func TestConvertGeminiResponseToOpenAIResponses_UnwrapAndAggregateText(t *testing.T) {
 	// Vertex-style Gemini stream wraps the actual response payload under "response".
 	// This test ensures we unwrap and that output_text.done contains the full text.
@@ -153,6 +169,10 @@ func TestConvertGeminiResponseToOpenAIResponses_UnwrapAndAggregateText(t *testin
 	}
 }
 
+// TestConvertGeminiResponseToOpenAIResponses_ReasoningEncryptedContent 测试推理内容的加密签名传递。
+// 验证：
+// - thoughtSignature 能够正确传递到 response.output_item.added 和 response.output_item.done 的 encrypted_content 字段
+// - 推理文本内容能够正确聚合
 func TestConvertGeminiResponseToOpenAIResponses_ReasoningEncryptedContent(t *testing.T) {
 	sig := "RXE0RENrZ0lDeEFDR0FJcVFOZDdjUzlleGFuRktRdFcvSzNyZ2MvWDNCcDQ4RmxSbGxOWUlOVU5kR1l1UHMrMGdkMVp0Vkg3ekdKU0g4YVljc2JjN3lNK0FrdGpTNUdqamI4T3Z0VVNETzdQd3pmcFhUOGl3U3hXUEJvTVFRQ09mWTFyMEtTWGZxUUlJakFqdmFGWk83RW1XRlBKckJVOVpkYzdDKw=="
 	in := []string{
@@ -194,6 +214,12 @@ func TestConvertGeminiResponseToOpenAIResponses_ReasoningEncryptedContent(t *tes
 	}
 }
 
+// TestConvertGeminiResponseToOpenAIResponses_FunctionCallEventOrder 测试多个函数调用的事件顺序。
+// 验证：
+// - 每个函数调用的事件顺序：added -> argsDelta -> argsDone -> itemDone
+// - 不同函数调用之间不重叠（前一个 itemDone 在下一个 added 之前）
+// - response.output 中包含所有 3 个函数调用，且参数正确
+// - response.completed 在最后一个 itemDone 之后
 func TestConvertGeminiResponseToOpenAIResponses_FunctionCallEventOrder(t *testing.T) {
 	in := []string{
 		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"tool0"}}]}}],"modelVersion":"test-model","responseId":"req_vrtx_1"},"traceId":"t1"}`,
@@ -299,6 +325,12 @@ func TestConvertGeminiResponseToOpenAIResponses_FunctionCallEventOrder(t *testin
 	}
 }
 
+// TestConvertGeminiResponseToOpenAIResponses_ResponseOutputOrdering 测试响应输出项的排序。
+// 验证：
+// - 函数调用在消息之前完成（posFuncDone < posMsgAdded）
+// - response.output[0] 为 function_call 类型
+// - response.output[1] 为 message 类型，且文本内容正确
+// - response.completed 在消息添加之后
 func TestConvertGeminiResponseToOpenAIResponses_ResponseOutputOrdering(t *testing.T) {
 	in := []string{
 		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"tool0","args":{"x":"y"}}}]}}],"modelVersion":"test-model","responseId":"req_vrtx_2"},"traceId":"t2"}`,

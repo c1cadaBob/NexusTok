@@ -1,9 +1,9 @@
-// Package claude provides response translation functionality for Claude Code API compatibility.
-// This package handles the conversion of backend client responses into Claude Code-compatible
-// Server-Sent Events (SSE) format, implementing a sophisticated state machine that manages
-// different response types including text content, thinking processes, and function calls.
-// The translation ensures proper sequencing of SSE events and maintains state across
-// multiple response chunks to provide a seamless streaming experience.
+// gemini-cli/claude - gemini-cli_claude_response.go
+// 提供将 Gemini CLI 响应转换为 Claude Code API 兼容格式的功能。
+// 实现了一个复杂的状态机，管理不同响应类型（文本内容、思维过程、函数调用）
+// 的转换，确保 SSE 事件的正确排序和跨多个响应块的状态维护。
+// 流式响应遵循 Claude Code API 规范，包括 message_start、content_block_start/delta/stop、
+// message_delta 和 message_stop 等 SSE 事件类型。
 package claude
 
 import (
@@ -20,38 +20,41 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Params holds parameters for response conversion and maintains state across streaming chunks.
-// This structure tracks the current state of the response translation process to ensure
-// proper sequencing of SSE events and transitions between different content types.
+// Params 保存响应转换的参数，并在流式传输块之间维护状态。
+// 此结构跟踪响应翻译过程的当前状态，确保 SSE 事件的正确排序
+// 以及不同内容类型之间的状态转换。
 type Params struct {
-	HasFirstResponse bool // Indicates if the initial message_start event has been sent
-	ResponseType     int  // Current response type: 0=none, 1=content, 2=thinking, 3=function
-	ResponseIndex    int  // Index counter for content blocks in the streaming response
-	HasContent       bool // Tracks whether any content (text, thinking, or tool use) has been output
+	HasFirstResponse bool              // 标记 message_start 事件是否已发送
+	ResponseType     int               // 当前响应类型：0=无, 1=文本内容, 2=思维过程, 3=函数调用
+	ResponseIndex    int               // 流式响应中内容块的索引计数器
+	HasContent       bool              // 跟踪是否已输出任何内容（文本、思维或工具使用）
 
-	// Reverse map: sanitized Gemini function name → original Claude tool name.
+	// 反向映射：清理后的 Gemini 函数名 -> 原始 Claude 工具名称
 	ToolNameMap map[string]string
 }
 
-// toolUseIDCounter provides a process-wide unique counter for tool use identifiers.
+// toolUseIDCounter 提供进程范围内唯一的工具使用标识符计数器，
+// 用于生成唯一的 tool_use ID（格式：函数名-时间戳-计数器值）。
 var toolUseIDCounter uint64
 
-// ConvertGeminiCLIResponseToClaude performs sophisticated streaming response format conversion.
-// This function implements a complex state machine that translates backend client responses
-// into Claude Code-compatible Server-Sent Events (SSE) format. It manages different response types
-// and handles state transitions between content blocks, thinking processes, and function calls.
+// ConvertGeminiCLIResponseToClaude 执行复杂的流式响应格式转换。
+// 实现了一个状态机，将 Gemini CLI API 响应转换为 Claude Code 兼容的
+// Server-Sent Events (SSE) 格式。管理不同的响应类型并在内容块、
+// 思维过程和函数调用之间处理状态转换。
 //
-// Response type states: 0=none, 1=content, 2=thinking, 3=function
-// The function maintains state across multiple calls to ensure proper SSE event sequencing.
+// 响应类型状态: 0=无, 1=文本内容, 2=思维过程, 3=函数调用
+// 函数在多次调用之间维护状态，确保正确的 SSE 事件排序。
 //
-// Parameters:
-//   - ctx: The context for the request, used for cancellation and timeout handling
-//   - modelName: The name of the model being used for the response (unused in current implementation)
-//   - rawJSON: The raw JSON response from the Gemini CLI API
-//   - param: A pointer to a parameter object for maintaining state between calls
+// 参数:
+//   - ctx: 请求上下文，用于取消和超时处理
+//   - modelName: 响应使用的模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据，用于工具名称映射
+//   - requestRawJSON: 请求的 JSON 数据
+//   - rawJSON: Gemini CLI API 的原始 JSON 响应
+//   - param: 指向参数对象的指针，用于在调用之间维护状态
 //
-// Returns:
-//   - [][]byte: A slice of bytes, each containing a Claude Code-compatible SSE payload.
+// 返回:
+//   - [][]byte: 字节切片，每个元素包含一个 Claude Code 兼容的 SSE 负载
 func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &Params{
@@ -62,6 +65,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 		}
 	}
 
+	// 收到 [DONE] 标记时，如果有内容已输出则发送 message_stop 事件结束流式会话
 	if bytes.Equal(rawJSON, []byte("[DONE]")) {
 		// Only send message_stop if we have actually output content
 		if (*param).(*Params).HasContent {
@@ -70,20 +74,23 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 		return [][]byte{}
 	}
 
-	// Track whether tools are being used in this response chunk
+	// 追踪当前响应块中是否使用了工具
 	usedTool := false
 	output := make([]byte, 0, 1024)
 	appendEvent := func(event, payload string) {
 		output = translatorcommon.AppendSSEEventString(output, event, payload, 3)
 	}
 
+	// 初始化流式会话：仅在第一个响应块时发送 message_start 事件
 	// Initialize the streaming session with a message_start event
 	// This is only sent for the very first response chunk to establish the streaming session
 	if !(*param).(*Params).HasFirstResponse {
+		// 根据 Claude Code API 规范创建初始消息结构模板，包含默认值
 		// Create the initial message structure with default values according to Claude Code API specification
 		// This follows the Claude Code API specification for streaming message initialization
 		messageStartTemplate := []byte(`{"type":"message_start","message":{"id":"msg_1nZdL29xx5MUA1yADyHTEsnR8uuvGzszyY","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}`)
 
+		// 从 Gemini CLI 响应中提取元数据，覆盖模板中的默认值
 		// Override default values with actual response metadata if available from the Gemini CLI response
 		if modelVersionResult := gjson.GetBytes(rawJSON, "response.modelVersion"); modelVersionResult.Exists() {
 			messageStartTemplate, _ = sjson.SetBytes(messageStartTemplate, "message.model", modelVersionResult.String())
@@ -96,6 +103,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 		(*param).(*Params).HasFirstResponse = true
 	}
 
+	// 处理 Gemini CLI 响应中的 parts 数组，每个 part 可能包含文本、思维或函数调用
 	// Process the response parts array from the backend client
 	// Each part can contain text content, thinking content, or function calls
 	partsResult := gjson.GetBytes(rawJSON, "response.candidates.0.content.parts")
@@ -104,20 +112,25 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 		for i := 0; i < len(partResults); i++ {
 			partResult := partResults[i]
 
+			// 提取每种类型的内容
 			// Extract the different types of content from each part
 			partTextResult := partResult.Get("text")
 			functionCallResult := partResult.Get("functionCall")
 
+			// 处理文本内容（包括常规内容和思维内容）
 			// Handle text content (both regular content and thinking)
 			if partTextResult.Exists() {
+				// 处理思维内容（AI 内部推理过程）
 				// Process thinking content (internal reasoning)
 				if partResult.Get("thought").Bool() {
+					// 延续现有思维块：如果已处于思维状态，继续追加思维内容
 					// Continue existing thinking block if already in thinking state
 					if (*param).(*Params).ResponseType == 2 {
 						data, _ := sjson.SetBytes([]byte(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":""}}`, (*param).(*Params).ResponseIndex)), "delta.thinking", partTextResult.String())
 						appendEvent("content_block_delta", string(data))
 						(*param).(*Params).HasContent = true
 					} else {
+						// 从其他状态转换到思维状态：先关闭当前内容块
 						// Transition from another state to thinking
 						// First, close any existing content block
 						if (*param).(*Params).ResponseType != 0 {
@@ -130,6 +143,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 							(*param).(*Params).ResponseIndex++
 						}
 
+						// 启动新的思维内容块
 						// Start a new thinking content block
 						appendEvent("content_block_start", fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":""}}`, (*param).(*Params).ResponseIndex))
 						data, _ := sjson.SetBytes([]byte(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":""}}`, (*param).(*Params).ResponseIndex)), "delta.thinking", partTextResult.String())
@@ -138,6 +152,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 						(*param).(*Params).HasContent = true
 					}
 				} else {
+					// 处理常规文本内容（用户可见输出）
 					// Process regular text content (user-visible output)
 					// Continue existing text block if already in content state
 					if (*param).(*Params).ResponseType == 1 {
@@ -145,6 +160,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 						appendEvent("content_block_delta", string(data))
 						(*param).(*Params).HasContent = true
 					} else {
+						// 从其他状态转换到文本内容状态
 						// Transition from another state to text content
 						// First, close any existing content block
 						if (*param).(*Params).ResponseType != 0 {
@@ -157,6 +173,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 							(*param).(*Params).ResponseIndex++
 						}
 
+						// 启动新的文本内容块
 						// Start a new text content block
 						appendEvent("content_block_start", fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, (*param).(*Params).ResponseIndex))
 						data, _ := sjson.SetBytes([]byte(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":""}}`, (*param).(*Params).ResponseIndex)), "delta.text", partTextResult.String())
@@ -166,11 +183,13 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 					}
 				}
 			} else if functionCallResult.Exists() {
+				// 处理 AI 模型的函数/工具调用请求，格式化为 Claude Code API 兼容格式
 				// Handle function/tool calls from the AI model
 				// This processes tool usage requests and formats them for Claude Code API compatibility
 				usedTool = true
 				fcName := util.RestoreSanitizedToolName((*param).(*Params).ToolNameMap, functionCallResult.Get("name").String())
 
+				// 切换到函数调用时的状态转换：先关闭现有的函数调用块
 				// Handle state transitions when switching to function calls
 				// Close any existing function call block first
 				if (*param).(*Params).ResponseType == 3 {
@@ -192,6 +211,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 					(*param).(*Params).ResponseIndex++
 				}
 
+				// 启动新的工具使用内容块，创建 Claude Code 格式的函数调用结构
 				// Start a new tool use content block
 				// This creates the structure for a function call in Claude Code format
 				// Create the tool use block with unique ID and function details
@@ -211,16 +231,21 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 	}
 
 	usageResult := gjson.GetBytes(rawJSON, "response.usageMetadata")
+	// 处理使用量元数据和完成原因
 	// Process usage metadata and finish reason when present in the response
 	if usageResult.Exists() && bytes.Contains(rawJSON, []byte(`"finishReason"`)) {
 		if candidatesTokenCountResult := usageResult.Get("candidatesTokenCount"); candidatesTokenCountResult.Exists() {
+			// 仅在有内容输出时才发送最终事件
 			// Only send final events if we have actually output content
 			if (*param).(*Params).HasContent {
+				// 关闭最终内容块
 				// Close the final content block
 				appendEvent("content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, (*param).(*Params).ResponseIndex))
 
+				// 创建包含适当停止原因的 message_delta 模板
 				// Create the message delta template with appropriate stop reason
 				template := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}`)
+				// 如果使用了工具则设置 tool_use 停止原因
 				// Set tool_use stop reason if tools were used in this response
 				if usedTool {
 					template = []byte(`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}`)
@@ -228,6 +253,7 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 					template = []byte(`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}`)
 				}
 
+				// 将思维 token 数量计入输出 token 总数
 				// Include thinking tokens in output token count if present
 				thoughtsTokenCount := usageResult.Get("thoughtsTokenCount").Int()
 				template, _ = sjson.SetBytes(template, "usage.output_tokens", candidatesTokenCountResult.Int()+thoughtsTokenCount)
@@ -241,16 +267,20 @@ func ConvertGeminiCLIResponseToClaude(_ context.Context, _ string, originalReque
 	return [][]byte{output}
 }
 
-// ConvertGeminiCLIResponseToClaudeNonStream converts a non-streaming Gemini CLI response to a non-streaming Claude response.
+// ConvertGeminiCLIResponseToClaudeNonStream 将非流式的 Gemini CLI 响应转换为非流式的 Claude 响应。
+// 将完整的 Gemini CLI 响应解析后，按照 Claude Code API 格式重组为单个 JSON 响应，
+// 包含文本内容、思维内容和工具调用的正确结构。
 //
-// Parameters:
-//   - ctx: The context for the request.
-//   - modelName: The name of the model.
-//   - rawJSON: The raw JSON response from the Gemini CLI API.
-//   - param: A pointer to a parameter object for the conversion.
+// 参数:
+//   - ctx: 请求上下文
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据，用于工具名称映射
+//   - requestRawJSON: 请求的 JSON 数据
+//   - rawJSON: Gemini CLI API 的原始 JSON 响应
+//   - _: 转换参数（当前未使用）
 //
-// Returns:
-//   - []byte: A Claude-compatible JSON response.
+// 返回:
+//   - []byte: Claude Code 兼容的 JSON 响应
 func ConvertGeminiCLIResponseToClaudeNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	toolNameMap := util.SanitizedToolNameMap(originalRequestRawJSON)
 	_ = requestRawJSON
@@ -353,6 +383,8 @@ func ConvertGeminiCLIResponseToClaudeNonStream(_ context.Context, _ string, orig
 	return out
 }
 
+// ClaudeTokenCount 生成 Claude 格式的输入 token 计数 JSON 响应。
+// 用于在流式传输开始前报告输入 token 数量。
 func ClaudeTokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.ClaudeInputTokensJSON(count)
 }

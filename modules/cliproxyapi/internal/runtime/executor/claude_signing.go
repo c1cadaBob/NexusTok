@@ -1,3 +1,5 @@
+// Package executor - claude_signing.go
+// 实现 Claude 请求签名功能，用于验证和生成 Claude API 请求的加密签名。
 package executor
 
 import (

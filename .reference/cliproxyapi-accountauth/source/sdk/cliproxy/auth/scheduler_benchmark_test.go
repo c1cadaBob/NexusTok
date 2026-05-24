@@ -1,3 +1,10 @@
+// auth - scheduler_benchmark_test.go
+// 调度器性能基准测试
+// 测试 Manager.pickNext 和 pickNextMixed 方法在不同规模下的性能：
+// - 500/1000 个认证凭证的单提供商调度
+// - 带优先级的调度
+// - 混合提供商的调度
+// - pickNext + MarkResult 组合操作的性能
 package auth
 
 import (
@@ -10,6 +17,7 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// schedulerBenchmarkExecutor 是用于基准测试的空操作执行器。
 type schedulerBenchmarkExecutor struct {
 	id string
 }

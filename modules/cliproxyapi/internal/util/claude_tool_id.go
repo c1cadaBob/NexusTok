@@ -1,3 +1,6 @@
+// util - claude_tool_id.go
+// 本文件提供了 Claude 工具 ID 相关的工具函数。
+// 处理 Claude 工具调用 ID 的生成和验证。
 package util
 
 import (

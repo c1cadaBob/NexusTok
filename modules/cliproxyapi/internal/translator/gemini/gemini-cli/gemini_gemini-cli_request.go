@@ -1,8 +1,10 @@
-// Package gemini provides request translation functionality for Claude API.
-// It handles parsing and transforming Claude API requests into the internal client format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package also performs JSON data cleaning and transformation to ensure compatibility
-// between Claude API format and the internal client's expected format.
+// gemini/gemini-cli - gemini_gemini-cli_request.go
+// Package geminiCLI provides request translation functionality for Claude API.
+// 本文件提供 Gemini CLI API 请求到 Gemini API 格式的转换功能。
+// 负责从 Gemini CLI 请求中提取内部 request 对象，恢复模型信息，
+// 将 systemInstruction 重命名为 system_instruction，并附加默认安全设置。
+// 同时处理工具参数的 parameters 到 parametersJsonSchema 重命名，
+// 以及为模型轮次中的 functionCall 部分注入 thoughtSignature 跳过标记。
 package geminiCLI
 
 import (
@@ -14,9 +16,13 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// PrepareClaudeRequest parses and transforms a Claude API request into internal client format.
-// It extracts the model name, system instruction, message contents, and tool declarations
-// from the raw JSON request and returns them in the format expected by the internal client.
+// ConvertGeminiCLIRequestToGemini parses and transforms a Gemini CLI API request into Gemini API format.
+// 将 Gemini CLI API 请求转换为 Gemini API 格式。
+// 从 CLI 请求中提取内部 request 对象，恢复模型信息，
+// 将 systemInstruction 重命名为 system_instruction，
+// 将 parameters 重命名为 parametersJsonSchema，
+// 为模型轮次中的 functionCall/thoughtSignature 注入跳过标记，
+// 并附加默认安全设置。
 func ConvertGeminiCLIRequestToGemini(_ string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 	modelResult := gjson.GetBytes(rawJSON, "model")

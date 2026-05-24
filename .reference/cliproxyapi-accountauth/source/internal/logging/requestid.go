@@ -1,3 +1,5 @@
+// 包 logging - requestid.go
+// 该文件提供了请求 ID 的生成和管理功能。
 package logging
 
 import (
@@ -8,13 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// requestIDKey is the context key for storing/retrieving request IDs.
+// requestIDKey 是用于存储/检索请求 ID 的上下文键。
 type requestIDKey struct{}
 
-// ginRequestIDKey is the Gin context key for request IDs.
+// ginRequestIDKey 是 Gin 上下文中请求 ID 的键。
 const ginRequestIDKey = "__request_id__"
 
-// GenerateRequestID creates a new 8-character hex request ID.
+// GenerateRequestID 创建新的 8 字符十六进制请求 ID。
 func GenerateRequestID() string {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
@@ -23,13 +25,13 @@ func GenerateRequestID() string {
 	return hex.EncodeToString(b)
 }
 
-// WithRequestID returns a new context with the request ID attached.
+// WithRequestID 返回附加了请求 ID 的新上下文。
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, requestIDKey{}, requestID)
 }
 
-// GetRequestID retrieves the request ID from the context.
-// Returns empty string if not found.
+// GetRequestID 从上下文中检索请求 ID。
+// 未找到时返回空字符串。
 func GetRequestID(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -40,14 +42,14 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-// SetGinRequestID stores the request ID in the Gin context.
+// SetGinRequestID 在 Gin 上下文中存储请求 ID。
 func SetGinRequestID(c *gin.Context, requestID string) {
 	if c != nil {
 		c.Set(ginRequestIDKey, requestID)
 	}
 }
 
-// GetGinRequestID retrieves the request ID from the Gin context.
+// GetGinRequestID 从 Gin 上下文中检索请求 ID。
 func GetGinRequestID(c *gin.Context) string {
 	if c == nil {
 		return ""

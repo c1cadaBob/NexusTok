@@ -1,15 +1,21 @@
-// Package interfaces provides type aliases for backwards compatibility with translator functions.
-// It defines common interface types used throughout the CLI Proxy API for request and response
-// transformation operations, maintaining compatibility with the SDK translator package.
+// interfaces - types.go
+// 本文件提供了翻译器函数类型的向后兼容别名。
+// 定义了 CLI Proxy API 中用于请求和响应转换操作的通用接口类型，
+// 与 SDK 翻译器包保持兼容。
 package interfaces
 
 import sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 
-// Backwards compatible aliases for translator function types.
+// 以下是翻译器函数类型的向后兼容别名。
+
+// TranslateRequestFunc 是请求转换函数的类型别名。
 type TranslateRequestFunc = sdktranslator.RequestTransform
 
+// TranslateResponseFunc 是响应流转换函数的类型别名。
 type TranslateResponseFunc = sdktranslator.ResponseStreamTransform
 
+// TranslateResponseNonStreamFunc 是非流式响应转换函数的类型别名。
 type TranslateResponseNonStreamFunc = sdktranslator.ResponseNonStreamTransform
 
+// TranslateResponse 是响应转换的类型别名。
 type TranslateResponse = sdktranslator.ResponseTransform

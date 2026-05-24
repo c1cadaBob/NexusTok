@@ -1,20 +1,26 @@
-# Frontend Development - Backend built from local source
+# docker-compose.dev.yml - NexusTok 前端开发环境
 #
-# Usage:
+# 功能：
+# - 从本地源码构建后端（Dockerfile.dev）
+# - 前端使用独立的开发服务器（bun run dev）
+# - 自动代理 API 请求到后端
+#
+# 使用方法：
 #   1. docker compose -f docker-compose.dev.yml up -d
 #   2. cd web && bun install && bun run dev
-#   3. Open http://localhost:3001 (Rsbuild dev server, API auto-proxied to :3000)
+#   3. 访问 http://localhost:3001（Rsbuild 开发服务器，API 自动代理到 :3000）
 #
-# Rebuild backend after Go code changes:
+# 重新构建后端（Go 代码修改后）：
 #   docker compose -f docker-compose.dev.yml up -d --build nexustok
 #
-# Stop:
+# 停止服务：
 #   docker compose -f docker-compose.dev.yml down
 #
-# Reset data:
+# 重置数据：
 #   docker compose -f docker-compose.dev.yml down -v
 
 services:
+  # NexusTok 后端服务（从本地源码构建）
   nexustok:
     build:
       context: .
@@ -46,9 +52,8 @@ services:
     networks:
       - dev-network
 
+  # PostgreSQL 数据库服务
   postgres:
-    image: postgres:15-alpine
-    container_name: nexustok-dev-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: root

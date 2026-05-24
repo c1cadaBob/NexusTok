@@ -1,3 +1,13 @@
+// Package dto - claude.go
+// 该文件定义了 Claude API 的请求和响应数据传输对象（DTO）
+// Claude 是 Anthropic 公司的 AI 模型，使用 Messages API 格式
+//
+// Claude API 特点：
+// - 使用 Messages API（/v1/messages）
+// - 支持流式响应（SSE）
+// - 支持多模态（文本、图像）
+// - 支持工具调用（Tool Use）
+// - 支持 Thinking 扩展（扩展思考）
 package dto
 
 import (
@@ -5,41 +15,66 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/types"
+	"github.com/c1cada/NexusTok/common" // 公共工具包
+	"github.com/c1cada/NexusTok/types"   // 类型定义
 
-	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin" // Gin 框架
 )
 
+// ClaudeMetadata Claude 元数据结构体
 type ClaudeMetadata struct {
-	UserId string `json:"user_id"`
+	UserId string `json:"user_id"` // 用户 ID
 }
 
+// ClaudeMediaMessage Claude 媒体消息结构体
+// 用于表示 Claude API 中的各种消息类型（文本、图像、工具调用等）
 type ClaudeMediaMessage struct {
-	Type         string               `json:"type,omitempty"`
-	Text         *string              `json:"text,omitempty"`
-	Model        string               `json:"model,omitempty"`
-	Source       *ClaudeMessageSource `json:"source,omitempty"`
-	Usage        *ClaudeUsage         `json:"usage,omitempty"`
-	StopReason   *string              `json:"stop_reason,omitempty"`
-	PartialJson  *string              `json:"partial_json,omitempty"`
-	Role         string               `json:"role,omitempty"`
-	Thinking     *string              `json:"thinking,omitempty"`
-	Signature    string               `json:"signature,omitempty"`
-	Delta        string               `json:"delta,omitempty"`
-	CacheControl json.RawMessage      `json:"cache_control,omitempty"`
-	// tool_calls
-	Id        string `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Input     any    `json:"input,omitempty"`
-	Content   any    `json:"content,omitempty"`
-	ToolUseId string `json:"tool_use_id,omitempty"`
+	// 基础字段
+	Type         string               `json:"type,omitempty"`          // 消息类型（text/image/tool_use/tool_result）
+	Text         *string              `json:"text,omitempty"`          // 文本内容
+	Model        string               `json:"model,omitempty"`         // 模型名称
+	Role         string               `json:"role,omitempty"`          // 角色（user/assistant）
+
+	// 媒体源
+	Source       *ClaudeMessageSource `json:"source,omitempty"`        // 媒体源（图像等）
+
+	// 使用量和停止原因
+	Usage        *ClaudeUsage         `json:"usage,omitempty"`         // 使用量统计
+	StopReason   *string              `json:"stop_reason,omitempty"`   // 停止原因
+
+	// JSON 相关
+	PartialJson  *string              `json:"partial_json,omitempty"`  // 部分 JSON（流式）
+
+	// Thinking 扩展
+	Thinking     *string              `json:"thinking,omitempty"`      // 思考内容
+	Signature    string               `json:"signature,omitempty"`     // 签名
+
+	// 流式增量
+	Delta        string               `json:"delta,omitempty"`         // 增量内容
+
+	// 缓存控制
+	CacheControl json.RawMessage      `json:"cache_control,omitempty"` // 缓存控制
+
+	// 工具调用相关字段
+	Id        string `json:"id,omitempty"`         // 工具调用 ID
+	Name      string `json:"name,omitempty"`       // 工具名称
+	Input     any    `json:"input,omitempty"`      // 工具输入
+	Content   any    `json:"content,omitempty"`    // 内容
+	ToolUseId string `json:"tool_use_id,omitempty"` // 工具使用 ID
 }
 
+// SetText 设置文本内容
+//
+// 参数：
+//   - s: 文本内容
 func (c *ClaudeMediaMessage) SetText(s string) {
 	c.Text = &s
 }
 
+// GetText 获取文本内容
+//
+// 返回值：
+//   - string: 文本内容，如果为 nil 返回空字符串
 func (c *ClaudeMediaMessage) GetText() string {
 	if c.Text == nil {
 		return ""
@@ -47,6 +82,10 @@ func (c *ClaudeMediaMessage) GetText() string {
 	return *c.Text
 }
 
+// IsStringContent 判断内容是否为字符串类型
+//
+// 返回值：
+//   - bool: 是否为字符串类型
 func (c *ClaudeMediaMessage) IsStringContent() bool {
 	if c.Content == nil {
 		return false
@@ -58,14 +97,22 @@ func (c *ClaudeMediaMessage) IsStringContent() bool {
 	return false
 }
 
+// GetStringContent 获取字符串形式的内容
+// 支持字符串和数组两种格式的内容
+//
+// 返回值：
+//   - string: 字符串形式的内容
 func (c *ClaudeMediaMessage) GetStringContent() string {
 	if c.Content == nil {
 		return ""
 	}
+
 	switch c.Content.(type) {
 	case string:
+		// 直接返回字符串
 		return c.Content.(string)
 	case []any:
+		// 遍历数组，提取文本内容
 		var contentStr string
 		for _, contentItem := range c.Content.([]any) {
 			contentMap, ok := contentItem.(map[string]any)

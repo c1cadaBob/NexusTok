@@ -1,3 +1,12 @@
+// convert.go 实现了不同 AI API 格式之间的请求和响应转换。
+// 支持以下转换路径：
+// - Claude 请求 -> OpenAI 请求（ClaudeToOpenAIRequest）
+// - OpenAI 流式响应 -> Claude 流式响应（StreamResponseOpenAI2Claude）
+// - OpenAI 非流式响应 -> Claude 非流式响应（ResponseOpenAI2Claude）
+// - Gemini 请求 -> OpenAI 请求（GeminiToOpenAIRequest）
+// - OpenAI 非流式响应 -> Gemini 响应（ResponseOpenAI2Gemini）
+// - OpenAI 流式响应 -> Gemini 流式响应（StreamResponseOpenAI2Gemini）
+// 这些转换使得 NexusTok 可以在不同 API 格式之间无缝中继请求。
 package service
 
 import (
@@ -14,6 +23,22 @@ import (
 	"github.com/samber/lo"
 )
 
+// ClaudeToOpenAIRequest 将 Claude API 请求转换为 OpenAI API 格式。
+// 转换内容包括：
+// - 基础参数映射（model、temperature、max_tokens、top_p、top_k、stream）
+// - 系统消息转换（支持字符串和数组两种格式）
+// - 多模态内容转换（文本、图片、工具调用、工具结果）
+// - 工具定义转换（Claude tools -> OpenAI function calls）
+// - 特殊处理 OpenRouter 渠道的 reasoning 和 verbosity 参数
+// - 特殊处理 thinking 后缀模型名
+//
+// 参数：
+//   - claudeRequest: Claude 格式的请求体
+//   - info: Relay 信息（包含渠道类型、模型名等）
+//
+// 返回：
+//   - *dto.GeneralOpenAIRequest: OpenAI 格式的请求体
+//   - error: 转换错误
 func ClaudeToOpenAIRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
 	openAIRequest := dto.GeneralOpenAIRequest{
 		Model:       claudeRequest.Model,
@@ -216,6 +241,8 @@ func ClaudeToOpenAIRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.Re
 	return &openAIRequest, nil
 }
 
+// generateStopBlock 生成 Claude 流式响应中的 content_block_stop 事件。
+// 用于关闭指定索引的内容块。
 func generateStopBlock(index int) *dto.ClaudeResponse {
 	return &dto.ClaudeResponse{
 		Type:  "content_block_stop",
@@ -223,6 +250,13 @@ func generateStopBlock(index int) *dto.ClaudeResponse {
 	}
 }
 
+// buildClaudeUsageFromOpenAIUsage 将 OpenAI 格式的用量信息转换为 Claude 格式。
+// 映射关系：
+// - PromptTokens -> InputTokens
+// - CompletionTokens -> OutputTokens
+// - CachedCreationTokens -> CacheCreationInputTokens
+// - CachedTokens -> CacheReadInputTokens
+// 同时处理 5 分钟和 1 小时缓存创建 token 的拆分。
 func buildClaudeUsageFromOpenAIUsage(oaiUsage *dto.Usage) *dto.ClaudeUsage {
 	if oaiUsage == nil {
 		return nil
@@ -247,11 +281,35 @@ func buildClaudeUsageFromOpenAIUsage(oaiUsage *dto.Usage) *dto.ClaudeUsage {
 	return usage
 }
 
+// NormalizeCacheCreationSplit 规范化缓存创建 token 的拆分。
+// 将总 token 数减去 5 分钟和 1 小时的已知分配后，剩余部分归入 5 分钟桶。
+//
+// 参数：
+//   - totalTokens: 缓存创建 token 总数
+//   - tokens5m: 5 分钟缓存的 token 数
+//   - tokens1h: 1 小时缓存的 token 数
+//
+// 返回：
+//   - int: 调整后的 5 分钟缓存 token 数
+//   - int: 1 小时缓存 token 数
 func NormalizeCacheCreationSplit(totalTokens int, tokens5m int, tokens1h int) (int, int) {
 	remainder := lo.Max([]int{totalTokens - tokens5m - tokens1h, 0})
 	return tokens5m + remainder, tokens1h
 }
 
+// StreamResponseOpenAI2Claude 将 OpenAI 流式响应转换为 Claude 流式 SSE 事件序列。
+// 遵循 Anthropic 的 SSE 流式状态机：
+// message_start -> (content_block_start -> content_block_delta* -> content_block_stop)* -> message_delta -> message_stop
+//
+// 处理的事件类型：
+// - message_start: 流开始事件，包含初始 usage
+// - content_block_start: 内容块开始（text/thinking/tool_use）
+// - content_block_delta: 内容块增量（text_delta/thinking_delta/input_json_delta）
+// - content_block_stop: 内容块结束
+// - message_delta: 消息级别增量（包含最终 usage 和 stop_reason）
+// - message_stop: 流结束事件
+//
+// 支持多工具并行调用的流式转换，以及 thinking（推理）内容的处理。
 func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamResponse, info *relaycommon.RelayInfo) []*dto.ClaudeResponse {
 	if info.ClaudeConvertInfo.Done {
 		return nil
@@ -604,6 +662,11 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 	return claudeResponses
 }
 
+// ResponseOpenAI2Claude 将 OpenAI 非流式响应转换为 Claude 格式。
+// 转换内容包括：
+// - 选择（choices）转换为内容块（text 或 tool_use）
+// - 完成原因映射（stop_reason）
+// - 用量信息转换
 func ResponseOpenAI2Claude(openAIResponse *dto.OpenAITextResponse, info *relaycommon.RelayInfo) *dto.ClaudeResponse {
 	var stopReason string
 	contents := make([]dto.ClaudeMediaMessage, 0)
@@ -643,10 +706,14 @@ func ResponseOpenAI2Claude(openAIResponse *dto.OpenAITextResponse, info *relayco
 	return claudeResponse
 }
 
+// stopReasonOpenAI2Claude 将 OpenAI 的完成原因映射为 Claude 的停止原因。
+// 委托给 reasonmap 包中的映射函数。
 func stopReasonOpenAI2Claude(reason string) string {
 	return reasonmap.OpenAIFinishReasonToClaudeStopReason(reason)
 }
 
+// toJSONString 将任意值序列化为 JSON 字符串。
+// 序列化失败时返回空对象 "{}"。
 func toJSONString(v interface{}) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -655,6 +722,21 @@ func toJSONString(v interface{}) string {
 	return string(b)
 }
 
+// GeminiToOpenAIRequest 将 Gemini API 请求转换为 OpenAI API 格式。
+// 转换内容包括：
+// - 消息内容转换（文本、图片、工具调用、工具响应）
+// - 角色映射（model -> assistant）
+// - 生成参数映射（temperature、top_p、top_k、max_output_tokens 等）
+// - 工具定义转换（Gemini function_declarations -> OpenAI tools）
+// - 系统指令转换为 system 消息
+//
+// 参数：
+//   - geminiRequest: Gemini 格式的请求体
+//   - info: Relay 信息
+//
+// 返回：
+//   - *dto.GeneralOpenAIRequest: OpenAI 格式的请求体
+//   - error: 转换错误
 func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
 	openaiRequest := &dto.GeneralOpenAIRequest{
 		Model:  info.UpstreamModelName,
@@ -801,6 +883,8 @@ func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycomm
 	return openaiRequest, nil
 }
 
+// convertGeminiRoleToOpenAI 将 Gemini 消息角色映射为 OpenAI 角色。
+// 映射关系：user -> user, model -> assistant, function -> tool, 其他 -> user
 func convertGeminiRoleToOpenAI(geminiRole string) string {
 	switch geminiRole {
 	case "user":
@@ -814,6 +898,8 @@ func convertGeminiRoleToOpenAI(geminiRole string) string {
 	}
 }
 
+// extractTextFromGeminiParts 从 Gemini 消息的 Parts 中提取所有文本内容。
+// 将多个 Part 的 Text 字段用换行符连接。
 func extractTextFromGeminiParts(parts []dto.GeminiPart) string {
 	var texts []string
 	for _, part := range parts {
@@ -824,7 +910,12 @@ func extractTextFromGeminiParts(parts []dto.GeminiPart) string {
 	return strings.Join(texts, "\n")
 }
 
-// ResponseOpenAI2Gemini 将 OpenAI 响应转换为 Gemini 格式
+// ResponseOpenAI2Gemini 将 OpenAI 非流式响应转换为 Gemini 格式。
+// 转换内容包括：
+// - 选择（choices）转换为候选（candidates）
+// - 完成原因映射（stop -> STOP, length -> MAX_TOKENS 等）
+// - 消息内容转换（文本和工具调用）
+// - 用量信息转换
 func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info *relaycommon.RelayInfo) *dto.GeminiChatResponse {
 	geminiResponse := &dto.GeminiChatResponse{
 		Candidates: make([]dto.GeminiChatCandidate, 0, len(openAIResponse.Choices)),
@@ -903,7 +994,9 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info *relayco
 	return geminiResponse
 }
 
-// StreamResponseOpenAI2Gemini 将 OpenAI 流式响应转换为 Gemini 格式
+// StreamResponseOpenAI2Gemini 将 OpenAI 流式响应转换为 Gemini 格式。
+// 与非流式版本类似，但处理的是增量数据。
+// 跳过没有实际内容且没有结束标志的空响应（OpenAI 流响应开头的空数据）。
 func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamResponse, info *relaycommon.RelayInfo) *dto.GeminiChatResponse {
 	// 检查是否有实际内容或结束标志
 	hasContent := false

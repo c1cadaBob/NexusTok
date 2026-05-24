@@ -1,3 +1,8 @@
+// registry - model_registry_safety_test.go
+// 模型注册表数据安全测试
+// 验证 ModelRegistry 的各种查询方法返回的是数据副本（clone）而非原始引用，
+// 防止调用者通过修改返回值来影响注册表中的共享数据。
+// 这是并发安全的关键保障。
 package registry
 
 import (
@@ -5,6 +10,8 @@ import (
 	"time"
 )
 
+// TestGetModelInfoReturnsClone 验证 GetModelInfo 返回的 ModelInfo 是深拷贝：
+// 修改返回对象的 DisplayName 和 Thinking.Levels 不应影响注册表中的原始数据。
 func TestGetModelInfoReturnsClone(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -29,6 +36,7 @@ func TestGetModelInfoReturnsClone(t *testing.T) {
 	}
 }
 
+// TestGetModelsForClientReturnsClones 验证 GetModelsForClient 返回的模型列表是深拷贝。
 func TestGetModelsForClientReturnsClones(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -56,6 +64,7 @@ func TestGetModelsForClientReturnsClones(t *testing.T) {
 	}
 }
 
+// TestGetAvailableModelsByProviderReturnsClones 验证按提供商查询的可用模型列表是深拷贝。
 func TestGetAvailableModelsByProviderReturnsClones(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
@@ -83,6 +92,9 @@ func TestGetAvailableModelsByProviderReturnsClones(t *testing.T) {
 	}
 }
 
+// TestCleanupExpiredQuotasInvalidatesAvailableModelsCache 验证：
+// 当配额冷却期过期后，CleanupExpiredQuotas 方法能够正确清理过期状态，
+// 并使可用模型缓存失效，确保后续查询返回最新状态。
 func TestCleanupExpiredQuotasInvalidatesAvailableModelsCache(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "openai", []*ModelInfo{{ID: "m1", Created: 1}})
@@ -110,6 +122,9 @@ func TestCleanupExpiredQuotasInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 }
 
+// TestGetAvailableModelsReturnsClonedSupportedParameters 验证
+// GetAvailableModels 返回的 supported_parameters 切片是深拷贝，
+// 修改返回值不会影响缓存中的原始数据。
 func TestGetAvailableModelsReturnsClonedSupportedParameters(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "openai", []*ModelInfo{{
@@ -135,6 +150,9 @@ func TestGetAvailableModelsReturnsClonedSupportedParameters(t *testing.T) {
 	}
 }
 
+// TestLookupModelInfoReturnsCloneForStaticDefinitions 验证
+// LookupModelInfo 函数对静态模型定义也返回深拷贝，
+// 修改返回值不会影响全局静态模型定义。
 func TestLookupModelInfoReturnsCloneForStaticDefinitions(t *testing.T) {
 	first := LookupModelInfo("claude-sonnet-4-6")
 	if first == nil || first.Thinking == nil || len(first.Thinking.Levels) == 0 {

@@ -1,3 +1,6 @@
+// kimi - kimi_proxy_test.go
+// 包含 Kimi 设备流程客户端代理配置的单元测试。
+// 测试代理 URL 覆盖和直接连接模式的行为。
 package kimi
 
 import (
@@ -7,6 +10,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestNewDeviceFlowClientWithDeviceIDAndProxyURL_OverrideDirectDisablesProxy 测试 "direct" 代理覆盖会禁用代理。
+// 验证当指定 "direct" 时，Transport 的 Proxy 函数为 nil。
 func TestNewDeviceFlowClientWithDeviceIDAndProxyURL_OverrideDirectDisablesProxy(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://proxy.example.com:8080"}}
 	client := NewDeviceFlowClientWithDeviceIDAndProxyURL(cfg, "device-1", "direct")
@@ -20,6 +25,8 @@ func TestNewDeviceFlowClientWithDeviceIDAndProxyURL_OverrideDirectDisablesProxy(
 	}
 }
 
+// TestNewDeviceFlowClientWithDeviceIDAndProxyURL_OverrideProxyTakesPrecedence 测试代理 URL 覆盖优先于全局配置。
+// 验证指定的代理 URL 会覆盖全局配置中的代理设置。
 func TestNewDeviceFlowClientWithDeviceIDAndProxyURL_OverrideProxyTakesPrecedence(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://global.example.com:8080"}}
 	client := NewDeviceFlowClientWithDeviceIDAndProxyURL(cfg, "device-1", "http://override.example.com:8081")

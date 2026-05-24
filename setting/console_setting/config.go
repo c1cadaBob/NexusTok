@@ -1,7 +1,15 @@
+// config.go — 控制台展示配置管理
+// 职责：管理前端控制台面板的展示配置，包括 API 信息、
+// Uptime Kuma 分组、系统公告和常见问题（FAQ）四个面板的
+// 数据内容与启用状态。
+// 通过 config.GlobalConfig 注册实现持久化存储。
+
 package console_setting
 
 import "github.com/c1cada/NexusTok/setting/config"
 
+// ConsoleSetting 控制台展示配置结构体
+// 各字段均为 JSON 字符串格式，存储面板数据；对应的 Enabled 字段控制面板显隐
 type ConsoleSetting struct {
 	ApiInfo              string `json:"api_info"`              // 控制台 API 信息 (JSON 数组字符串)
 	UptimeKumaGroups     string `json:"uptime_kuma_groups"`    // Uptime Kuma 分组配置 (JSON 数组字符串)

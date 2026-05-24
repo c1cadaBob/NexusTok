@@ -1,3 +1,6 @@
+// auth - openai_compat_pool_test.go
+// 该文件包含 OpenAI 兼容别名池轮换的单元测试，验证在单个认证条目内
+// 多个 API Key 的轮换选择、回退逻辑、以及挂起行为。
 package auth
 
 import (
@@ -12,12 +15,13 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
+// openAICompatPoolExecutor 是测试用的执行器，记录模型和 Key 使用情况。
 type openAICompatPoolExecutor struct {
-	id string
+	id string // 执行器标识符
 
-	mu                sync.Mutex
-	executeModels     []string
-	countModels       []string
+	mu                sync.Mutex   // 保护记录的互斥锁
+	executeModels     []string     // 执行的模型列表
+	countModels       []string     // 计数的模型列表
 	streamModels      []string
 	executeErrors     map[string]error
 	countErrors       map[string]error

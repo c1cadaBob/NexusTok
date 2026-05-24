@@ -1,3 +1,8 @@
+// 本文件是 relay/common 包中参数覆盖（Param Override）功能的单元测试集。
+// 覆盖了各种操作模式（set、delete、trim_prefix、trim_suffix、replace、regex_replace、
+// move、copy、prepend、append、ensure_prefix、ensure_suffix、trim_space、to_lower、to_upper、
+// return_error、prune_objects、set_header、copy_header、move_header、pass_headers、sync_fields 等），
+// 以及条件执行（conditions）、通配符路径（wildcard path）、上下文注入等高级功能。
 package common
 
 import (
@@ -14,6 +19,7 @@ import (
 	"github.com/samber/lo"
 )
 
+// TestApplyParamOverrideTrimPrefix 测试 trim_prefix 操作：移除 model 字段值的 "openai/" 前缀。
 func TestApplyParamOverrideTrimPrefix(t *testing.T) {
 	// trim_prefix example:
 	// {"operations":[{"path":"model","mode":"trim_prefix","value":"openai/"}]}
@@ -35,6 +41,7 @@ func TestApplyParamOverrideTrimPrefix(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideTrimSuffix 测试 trim_suffix 操作：移除 model 字段值的 "-latest" 后缀。
 func TestApplyParamOverrideTrimSuffix(t *testing.T) {
 	// trim_suffix example:
 	// {"operations":[{"path":"model","mode":"trim_suffix","value":"-latest"}]}
@@ -56,6 +63,7 @@ func TestApplyParamOverrideTrimSuffix(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideTrimNoop 测试 trim_prefix 操作的空操作情况：当前缀不存在时不做任何修改。
 func TestApplyParamOverrideTrimNoop(t *testing.T) {
 	// trim_prefix no-op example:
 	// {"operations":[{"path":"model","mode":"trim_prefix","value":"openai/"}]}
@@ -77,6 +85,7 @@ func TestApplyParamOverrideTrimNoop(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideMixedLegacyAndOperations 测试传统覆盖与 operations 混合使用：两者同时生效。
 func TestApplyParamOverrideMixedLegacyAndOperations(t *testing.T) {
 	input := []byte(`{"model":"openai/gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -98,6 +107,7 @@ func TestApplyParamOverrideMixedLegacyAndOperations(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.2,"top_p":0.95}`, string(out))
 }
 
+// TestApplyParamOverrideMixedLegacyAndOperationsConflictPrefersOperations 测试冲突时 operations 优先于传统覆盖。
 func TestApplyParamOverrideMixedLegacyAndOperationsConflictPrefersOperations(t *testing.T) {
 	input := []byte(`{"model":"openai/gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -119,6 +129,7 @@ func TestApplyParamOverrideMixedLegacyAndOperationsConflictPrefersOperations(t *
 	assertJSONEqual(t, `{"model":"op-model","temperature":0.2}`, string(out))
 }
 
+// TestApplyParamOverrideTrimRequiresValue 测试 trim_prefix 操作缺少 value 时应返回错误。
 func TestApplyParamOverrideTrimRequiresValue(t *testing.T) {
 	// trim_prefix requires value example:
 	// {"operations":[{"path":"model","mode":"trim_prefix"}]}
@@ -138,6 +149,7 @@ func TestApplyParamOverrideTrimRequiresValue(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideReplace 测试 replace 操作：将 model 中的 "openai/" 替换为空字符串。
 func TestApplyParamOverrideReplace(t *testing.T) {
 	// replace example:
 	// {"operations":[{"path":"model","mode":"replace","from":"openai/","to":""}]}
@@ -160,6 +172,7 @@ func TestApplyParamOverrideReplace(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4o-mini","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideRegexReplace 测试 regex_replace 操作：使用正则表达式替换 model 前缀。
 func TestApplyParamOverrideRegexReplace(t *testing.T) {
 	// regex_replace example:
 	// {"operations":[{"path":"model","mode":"regex_replace","from":"^gpt-","to":"openai/gpt-"}]}
@@ -182,6 +195,7 @@ func TestApplyParamOverrideRegexReplace(t *testing.T) {
 	assertJSONEqual(t, `{"model":"openai/gpt-4o-mini","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideReplaceRequiresFrom 测试 replace 操作缺少 from 参数时应返回错误。
 func TestApplyParamOverrideReplaceRequiresFrom(t *testing.T) {
 	// replace requires from example:
 	// {"operations":[{"path":"model","mode":"replace"}]}
@@ -201,6 +215,7 @@ func TestApplyParamOverrideReplaceRequiresFrom(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideRegexReplaceRequiresPattern 测试 regex_replace 操作缺少 pattern 时应返回错误。
 func TestApplyParamOverrideRegexReplaceRequiresPattern(t *testing.T) {
 	// regex_replace requires from(pattern) example:
 	// {"operations":[{"path":"model","mode":"regex_replace"}]}
@@ -220,6 +235,7 @@ func TestApplyParamOverrideRegexReplaceRequiresPattern(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideDelete 测试 delete 操作：删除 temperature 字段。
 func TestApplyParamOverrideDelete(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -245,6 +261,7 @@ func TestApplyParamOverrideDelete(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideDeleteWildcardPath 测试通配符路径的 delete 操作：批量删除 tools 数组中每个元素的 input_examples。
 func TestApplyParamOverrideDeleteWildcardPath(t *testing.T) {
 	input := []byte(`{"tools":[{"type":"bash","custom":{"input_examples":["a"],"other":1}},{"type":"code","custom":{"input_examples":["b"]}},{"type":"noop","custom":{"other":2}}]}`)
 	override := map[string]interface{}{
@@ -263,6 +280,7 @@ func TestApplyParamOverrideDeleteWildcardPath(t *testing.T) {
 	assertJSONEqual(t, `{"tools":[{"type":"bash","custom":{"other":1}},{"type":"code","custom":{}},{"type":"noop","custom":{"other":2}}]}`, string(out))
 }
 
+// TestApplyParamOverrideSetWildcardPath 测试通配符路径的 set 操作：批量设置 tools 数组中每个元素的 enabled 字段。
 func TestApplyParamOverrideSetWildcardPath(t *testing.T) {
 	input := []byte(`{"tools":[{"custom":{"tag":"A"}},{"custom":{"tag":"B"}},{"custom":{"tag":"C"}}]}`)
 	override := map[string]interface{}{
@@ -302,6 +320,7 @@ func TestApplyParamOverrideSetWildcardPath(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideTrimSpaceWildcardPath 测试通配符路径的 trim_space 操作：批量去除 tools 中每个元素 name 字段的首尾空格。
 func TestApplyParamOverrideTrimSpaceWildcardPath(t *testing.T) {
 	input := []byte(`{"tools":[{"custom":{"name":" alpha "}},{"custom":{"name":" beta"}},{"custom":{"name":"gamma "}}]}`)
 	override := map[string]interface{}{
@@ -341,6 +360,7 @@ func TestApplyParamOverrideTrimSpaceWildcardPath(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideDeleteWildcardEqualsIndexedPaths 验证通配符路径 delete 操作与逐个索引路径操作的结果一致性。
 func TestApplyParamOverrideDeleteWildcardEqualsIndexedPaths(t *testing.T) {
 	input := []byte(`{"tools":[{"custom":{"input_examples":["a"],"other":1}},{"custom":{"input_examples":["b"],"other":2}},{"custom":{"input_examples":["c"],"other":3}}]}`)
 
@@ -375,6 +395,7 @@ func TestApplyParamOverrideDeleteWildcardEqualsIndexedPaths(t *testing.T) {
 	assertJSONEqual(t, string(indexedOut), string(wildcardOut))
 }
 
+// TestApplyParamOverrideSetWildcardKeepOrigin 测试通配符 set 操作的 keep_origin 选项：已有值的字段不被覆盖。
 func TestApplyParamOverrideSetWildcardKeepOrigin(t *testing.T) {
 	input := []byte(`{"tools":[{"custom":{"tag":"A"}},{"custom":{"tag":"B","enabled":false}},{"custom":{"tag":"C"}}]}`)
 	override := map[string]interface{}{
@@ -416,6 +437,7 @@ func TestApplyParamOverrideSetWildcardKeepOrigin(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideTrimSpaceMultiWildcardPath 测试多级通配符路径的 trim_space 操作。
 func TestApplyParamOverrideTrimSpaceMultiWildcardPath(t *testing.T) {
 	input := []byte(`{"tools":[{"custom":{"items":[{"name":" alpha "},{"name":" beta "}]}},{"custom":{"items":[{"name":" gamma"}]}}]}`)
 	override := map[string]interface{}{
@@ -463,6 +485,7 @@ func TestApplyParamOverrideTrimSpaceMultiWildcardPath(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSet 测试 set 操作：设置 temperature 为 0.1。
 func TestApplyParamOverrideSet(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -482,6 +505,7 @@ func TestApplyParamOverrideSet(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideSetWithDescriptionKeepsCompatibility 测试带 description 字段的 set 操作与不带 description 的行为一致性。
 func TestApplyParamOverrideSetWithDescriptionKeepsCompatibility(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	overrideWithoutDesc := map[string]interface{}{
@@ -518,6 +542,7 @@ func TestApplyParamOverrideSetWithDescriptionKeepsCompatibility(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.1}`, string(outWithDesc))
 }
 
+// TestApplyParamOverrideSetKeepOrigin 测试 set 操作的 keep_origin 选项：当字段已有值时不覆盖。
 func TestApplyParamOverrideSetKeepOrigin(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -538,6 +563,7 @@ func TestApplyParamOverrideSetKeepOrigin(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideMove 测试 move 操作：将 model 字段移动到 meta.model 路径下。
 func TestApplyParamOverrideMove(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","meta":{"x":1}}`)
 	override := map[string]interface{}{
@@ -557,6 +583,7 @@ func TestApplyParamOverrideMove(t *testing.T) {
 	assertJSONEqual(t, `{"meta":{"x":1,"model":"gpt-4"}}`, string(out))
 }
 
+// TestApplyParamOverrideMoveMissingSource 测试 move 操作源字段不存在时应返回错误。
 func TestApplyParamOverrideMoveMissingSource(t *testing.T) {
 	input := []byte(`{"meta":{"x":1}}`)
 	override := map[string]interface{}{
@@ -575,6 +602,7 @@ func TestApplyParamOverrideMoveMissingSource(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverridePrependAppendString 测试 prepend 和 append 操作的字符串拼接：在 model 前添加 "openai/"，后添加 "-latest"。
 func TestApplyParamOverridePrependAppendString(t *testing.T) {
 	input := []byte(`{"model":"gpt-4"}`)
 	override := map[string]interface{}{
@@ -599,6 +627,7 @@ func TestApplyParamOverridePrependAppendString(t *testing.T) {
 	assertJSONEqual(t, `{"model":"openai/gpt-4-latest"}`, string(out))
 }
 
+// TestApplyParamOverridePrependAppendArray 测试 prepend 和 append 操作的数组拼接。
 func TestApplyParamOverridePrependAppendArray(t *testing.T) {
 	input := []byte(`{"arr":[1,2]}`)
 	override := map[string]interface{}{
@@ -623,6 +652,7 @@ func TestApplyParamOverridePrependAppendArray(t *testing.T) {
 	assertJSONEqual(t, `{"arr":[0,1,2,3,4]}`, string(out))
 }
 
+// TestApplyParamOverrideAppendObjectMergeKeepOrigin 测试对象类型的 append 操作配合 keep_origin：已有键的值不被覆盖。
 func TestApplyParamOverrideAppendObjectMergeKeepOrigin(t *testing.T) {
 	input := []byte(`{"obj":{"a":1}}`)
 	override := map[string]interface{}{
@@ -646,6 +676,7 @@ func TestApplyParamOverrideAppendObjectMergeKeepOrigin(t *testing.T) {
 	assertJSONEqual(t, `{"obj":{"a":1,"b":3}}`, string(out))
 }
 
+// TestApplyParamOverrideAppendObjectMergeOverride 测试对象类型的 append 操作默认覆盖已有键的值。
 func TestApplyParamOverrideAppendObjectMergeOverride(t *testing.T) {
 	input := []byte(`{"obj":{"a":1}}`)
 	override := map[string]interface{}{
@@ -668,6 +699,7 @@ func TestApplyParamOverrideAppendObjectMergeOverride(t *testing.T) {
 	assertJSONEqual(t, `{"obj":{"a":2,"b":3}}`, string(out))
 }
 
+// TestApplyParamOverrideConditionORDefault 测试条件执行的默认 OR 逻辑：任一条件满足即执行操作。
 func TestApplyParamOverrideConditionORDefault(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -699,6 +731,7 @@ func TestApplyParamOverrideConditionORDefault(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideConditionAND 测试条件执行的 AND 逻辑：所有条件都满足才执行操作。
 func TestApplyParamOverrideConditionAND(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -731,6 +764,7 @@ func TestApplyParamOverrideConditionAND(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideConditionInvert 测试条件的 invert（取反）选项：条件满足时反而不执行操作。
 func TestApplyParamOverrideConditionInvert(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","temperature":0.7}`)
 	override := map[string]interface{}{
@@ -758,6 +792,7 @@ func TestApplyParamOverrideConditionInvert(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideConditionPassMissingKey 测试 pass_missing_key 选项：当条件引用的字段不存在时视为条件通过。
 func TestApplyParamOverrideConditionPassMissingKey(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -785,6 +820,7 @@ func TestApplyParamOverrideConditionPassMissingKey(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideConditionFromContext 测试从上下文（ctx）中读取条件值：请求体中没有 model 字段，但上下文中有。
 func TestApplyParamOverrideConditionFromContext(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -814,6 +850,7 @@ func TestApplyParamOverrideConditionFromContext(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideNegativeIndexPath 测试负数索引路径：arr.-1 表示数组最后一个元素。
 func TestApplyParamOverrideNegativeIndexPath(t *testing.T) {
 	input := []byte(`{"arr":[{"model":"a"},{"model":"b"}]}`)
 	override := map[string]interface{}{
@@ -833,6 +870,7 @@ func TestApplyParamOverrideNegativeIndexPath(t *testing.T) {
 	assertJSONEqual(t, `{"arr":[{"model":"a"},{"model":"c"}]}`, string(out))
 }
 
+// TestApplyParamOverrideRegexReplaceInvalidPattern 测试无效正则表达式时应返回错误。
 func TestApplyParamOverrideRegexReplaceInvalidPattern(t *testing.T) {
 	// regex_replace invalid pattern example:
 	// {"operations":[{"path":"model","mode":"regex_replace","from":"(","to":"x"}]}
@@ -854,6 +892,7 @@ func TestApplyParamOverrideRegexReplaceInvalidPattern(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideCopy 测试 copy 操作：将 model 字段复制到 original_model。
 func TestApplyParamOverrideCopy(t *testing.T) {
 	// copy example:
 	// {"operations":[{"mode":"copy","from":"model","to":"original_model"}]}
@@ -875,6 +914,7 @@ func TestApplyParamOverrideCopy(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","original_model":"gpt-4","temperature":0.7}`, string(out))
 }
 
+// TestApplyParamOverrideCopyMissingSource 测试 copy 操作源字段不存在时应返回错误。
 func TestApplyParamOverrideCopyMissingSource(t *testing.T) {
 	// copy missing source example:
 	// {"operations":[{"mode":"copy","from":"model","to":"original_model"}]}
@@ -895,6 +935,7 @@ func TestApplyParamOverrideCopyMissingSource(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideCopyRequiresFromTo 测试 copy 操作缺少 from/to 参数时应返回错误。
 func TestApplyParamOverrideCopyRequiresFromTo(t *testing.T) {
 	// copy requires from/to example:
 	// {"operations":[{"mode":"copy"}]}
@@ -913,6 +954,7 @@ func TestApplyParamOverrideCopyRequiresFromTo(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideEnsurePrefix 测试 ensure_prefix 操作：当 model 缺少 "openai/" 前缀时自动添加。
 func TestApplyParamOverrideEnsurePrefix(t *testing.T) {
 	// ensure_prefix example:
 	// {"operations":[{"path":"model","mode":"ensure_prefix","value":"openai/"}]}
@@ -934,6 +976,7 @@ func TestApplyParamOverrideEnsurePrefix(t *testing.T) {
 	assertJSONEqual(t, `{"model":"openai/gpt-4"}`, string(out))
 }
 
+// TestApplyParamOverrideEnsurePrefixNoop 测试 ensure_prefix 操作的空操作：当前缀已存在时不重复添加。
 func TestApplyParamOverrideEnsurePrefixNoop(t *testing.T) {
 	// ensure_prefix no-op example:
 	// {"operations":[{"path":"model","mode":"ensure_prefix","value":"openai/"}]}
@@ -955,6 +998,7 @@ func TestApplyParamOverrideEnsurePrefixNoop(t *testing.T) {
 	assertJSONEqual(t, `{"model":"openai/gpt-4"}`, string(out))
 }
 
+// TestApplyParamOverrideEnsureSuffix 测试 ensure_suffix 操作：当 model 缺少 "-latest" 后缀时自动添加。
 func TestApplyParamOverrideEnsureSuffix(t *testing.T) {
 	// ensure_suffix example:
 	// {"operations":[{"path":"model","mode":"ensure_suffix","value":"-latest"}]}
@@ -976,6 +1020,7 @@ func TestApplyParamOverrideEnsureSuffix(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4-latest"}`, string(out))
 }
 
+// TestApplyParamOverrideEnsureSuffixNoop 测试 ensure_suffix 操作的空操作：当后缀已存在时不重复添加。
 func TestApplyParamOverrideEnsureSuffixNoop(t *testing.T) {
 	// ensure_suffix no-op example:
 	// {"operations":[{"path":"model","mode":"ensure_suffix","value":"-latest"}]}
@@ -997,6 +1042,7 @@ func TestApplyParamOverrideEnsureSuffixNoop(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4-latest"}`, string(out))
 }
 
+// TestApplyParamOverrideEnsureRequiresValue 测试 ensure_prefix 操作缺少 value 时应返回错误。
 func TestApplyParamOverrideEnsureRequiresValue(t *testing.T) {
 	// ensure_prefix requires value example:
 	// {"operations":[{"path":"model","mode":"ensure_prefix"}]}
@@ -1016,6 +1062,7 @@ func TestApplyParamOverrideEnsureRequiresValue(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideTrimSpace 测试 trim_space 操作：去除 model 字段值的首尾空格和换行符。
 func TestApplyParamOverrideTrimSpace(t *testing.T) {
 	// trim_space example:
 	// {"operations":[{"path":"model","mode":"trim_space"}]}
@@ -1036,6 +1083,7 @@ func TestApplyParamOverrideTrimSpace(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4"}`, string(out))
 }
 
+// TestApplyParamOverrideToLower 测试 to_lower 操作：将 model 字段值转为小写。
 func TestApplyParamOverrideToLower(t *testing.T) {
 	// to_lower example:
 	// {"operations":[{"path":"model","mode":"to_lower"}]}
@@ -1056,6 +1104,7 @@ func TestApplyParamOverrideToLower(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4"}`, string(out))
 }
 
+// TestApplyParamOverrideToUpper 测试 to_upper 操作：将 model 字段值转为大写。
 func TestApplyParamOverrideToUpper(t *testing.T) {
 	// to_upper example:
 	// {"operations":[{"path":"model","mode":"to_upper"}]}
@@ -1076,6 +1125,7 @@ func TestApplyParamOverrideToUpper(t *testing.T) {
 	assertJSONEqual(t, `{"model":"GPT-4"}`, string(out))
 }
 
+// TestApplyParamOverrideReturnError 测试 return_error 操作：在满足条件时强制返回指定的错误响应。
 func TestApplyParamOverrideReturnError(t *testing.T) {
 	input := []byte(`{"model":"gemini-2.5-pro"}`)
 	override := map[string]interface{}{
@@ -1125,6 +1175,7 @@ func TestApplyParamOverrideReturnError(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverridePruneObjectsByTypeString 测试 prune_objects 操作：按 type 字符串值递归删除匹配的对象。
 func TestApplyParamOverridePruneObjectsByTypeString(t *testing.T) {
 	input := []byte(`{
 		"messages":[
@@ -1171,6 +1222,7 @@ func TestApplyParamOverridePruneObjectsByTypeString(t *testing.T) {
 	}`, string(out))
 }
 
+// TestApplyParamOverridePruneObjectsWhereAndPath 测试 prune_objects 操作的 where + path 组合：在指定路径下按条件删除对象。
 func TestApplyParamOverridePruneObjectsWhereAndPath(t *testing.T) {
 	input := []byte(`{
 		"a":{"items":[{"type":"redacted_thinking","id":1},{"type":"output_text","id":2}]},
@@ -1200,6 +1252,7 @@ func TestApplyParamOverridePruneObjectsWhereAndPath(t *testing.T) {
 	}`, string(out))
 }
 
+// TestApplyParamOverrideNormalizeThinkingSignatureUnsupported 测试不支持的 normalize_thinking_signature 操作应返回错误。
 func TestApplyParamOverrideNormalizeThinkingSignatureUnsupported(t *testing.T) {
 	input := []byte(`{"items":[{"type":"redacted_thinking"}]}`)
 	override := map[string]interface{}{
@@ -1216,6 +1269,7 @@ func TestApplyParamOverrideNormalizeThinkingSignatureUnsupported(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideConditionFromRetryAndLastErrorContext 测试基于重试索引和上一次错误的条件执行。
 func TestApplyParamOverrideConditionFromRetryAndLastErrorContext(t *testing.T) {
 	info := &RelayInfo{
 		RetryIndex: 1,
@@ -1258,6 +1312,7 @@ func TestApplyParamOverrideConditionFromRetryAndLastErrorContext(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideConditionFromRequestHeaders 测试基于请求头的条件执行。
 func TestApplyParamOverrideConditionFromRequestHeaders(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1289,6 +1344,7 @@ func TestApplyParamOverrideConditionFromRequestHeaders(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideSetHeaderAndUseInLaterCondition 测试 set_header 操作设置的头信息可在后续条件中引用。
 func TestApplyParamOverrideSetHeaderAndUseInLaterCondition(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1320,6 +1376,7 @@ func TestApplyParamOverrideSetHeaderAndUseInLaterCondition(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideCopyHeaderFromRequestHeaders 测试 copy_header 操作从请求头复制到 header_override。
 func TestApplyParamOverrideCopyHeaderFromRequestHeaders(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1356,6 +1413,7 @@ func TestApplyParamOverrideCopyHeaderFromRequestHeaders(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverridePassHeadersSkipsMissingHeaders 测试 pass_headers 操作跳过不存在的请求头。
 func TestApplyParamOverridePassHeadersSkipsMissingHeaders(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1390,6 +1448,7 @@ func TestApplyParamOverridePassHeadersSkipsMissingHeaders(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideCopyHeaderSkipsMissingSource 测试 copy_header 操作在源头不存在时跳过。
 func TestApplyParamOverrideCopyHeaderSkipsMissingSource(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1422,6 +1481,7 @@ func TestApplyParamOverrideCopyHeaderSkipsMissingSource(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideMoveHeaderSkipsMissingSource 测试 move_header 操作在源头不存在时跳过。
 func TestApplyParamOverrideMoveHeaderSkipsMissingSource(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1454,6 +1514,7 @@ func TestApplyParamOverrideMoveHeaderSkipsMissingSource(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSyncFieldsHeaderToJSON 测试 sync_fields 操作：从请求头同步值到 JSON body。
 func TestApplyParamOverrideSyncFieldsHeaderToJSON(t *testing.T) {
 	input := []byte(`{"model":"gpt-4"}`)
 	override := map[string]interface{}{
@@ -1478,6 +1539,7 @@ func TestApplyParamOverrideSyncFieldsHeaderToJSON(t *testing.T) {
 	assertJSONEqual(t, `{"model":"gpt-4","prompt_cache_key":"sess-123"}`, string(out))
 }
 
+// TestApplyParamOverrideSyncFieldsJSONToHeader 测试 sync_fields 操作：从 JSON body 同步值到请求头。
 func TestApplyParamOverrideSyncFieldsJSONToHeader(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","prompt_cache_key":"cache-abc"}`)
 	override := map[string]interface{}{
@@ -1506,6 +1568,7 @@ func TestApplyParamOverrideSyncFieldsJSONToHeader(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSyncFieldsNoChangeWhenBothExist 测试 sync_fields 操作：两侧都有值时不进行同步。
 func TestApplyParamOverrideSyncFieldsNoChangeWhenBothExist(t *testing.T) {
 	input := []byte(`{"model":"gpt-4","prompt_cache_key":"cache-body"}`)
 	override := map[string]interface{}{
@@ -1537,6 +1600,7 @@ func TestApplyParamOverrideSyncFieldsNoChangeWhenBothExist(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSyncFieldsInvalidTarget 测试 sync_fields 操作的无效目标前缀应返回错误。
 func TestApplyParamOverrideSyncFieldsInvalidTarget(t *testing.T) {
 	input := []byte(`{"model":"gpt-4"}`)
 	override := map[string]interface{}{
@@ -1555,6 +1619,7 @@ func TestApplyParamOverrideSyncFieldsInvalidTarget(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSetHeaderKeepOrigin 测试 set_header 操作的 keep_origin 选项。
 func TestApplyParamOverrideSetHeaderKeepOrigin(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1586,6 +1651,7 @@ func TestApplyParamOverrideSetHeaderKeepOrigin(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapRewritesCommaSeparatedHeader 测试 set_header 操作的 map 值模式：重写逗号分隔的 header 值。
 func TestApplyParamOverrideSetHeaderMapRewritesCommaSeparatedHeader(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1620,6 +1686,7 @@ func TestApplyParamOverrideSetHeaderMapRewritesCommaSeparatedHeader(t *testing.T
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapDeleteWholeHeaderWhenAllTokensCleared 测试当所有 token 都被设为 nil 时整个 header 被删除。
 func TestApplyParamOverrideSetHeaderMapDeleteWholeHeaderWhenAllTokensCleared(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1654,6 +1721,7 @@ func TestApplyParamOverrideSetHeaderMapDeleteWholeHeaderWhenAllTokensCleared(t *
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapAppendsTokens 测试 $append 操作：追加新的 header token 并去重。
 func TestApplyParamOverrideSetHeaderMapAppendsTokens(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1688,6 +1756,7 @@ func TestApplyParamOverrideSetHeaderMapAppendsTokens(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapAppendsTokensWhenHeaderMissing 测试 $append 操作在 header 不存在时创建新 header。
 func TestApplyParamOverrideSetHeaderMapAppendsTokensWhenHeaderMissing(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1718,6 +1787,7 @@ func TestApplyParamOverrideSetHeaderMapAppendsTokensWhenHeaderMissing(t *testing
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDropsUndeclaredTokens 测试 $keep_only_declared 选项：移除未声明的 token。
 func TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDropsUndeclaredTokens(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1754,6 +1824,7 @@ func TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDropsUndeclaredTokens(t *
 	}
 }
 
+// TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDeletesHeaderWhenNothingDeclaredMatches 测试 $keep_only_declared 当无声明 token 匹配时删除整个 header。
 func TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDeletesHeaderWhenNothingDeclaredMatches(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1789,6 +1860,7 @@ func TestApplyParamOverrideSetHeaderMapKeepOnlyDeclaredDeletesHeaderWhenNothingD
 	}
 }
 
+// TestApplyParamOverrideConditionsObjectShorthand 测试 conditions 的对象简写语法。
 func TestApplyParamOverrideConditionsObjectShorthand(t *testing.T) {
 	input := []byte(`{"temperature":0.7}`)
 	override := map[string]interface{}{
@@ -1819,6 +1891,7 @@ func TestApplyParamOverrideConditionsObjectShorthand(t *testing.T) {
 	assertJSONEqual(t, `{"temperature":0.1}`, string(out))
 }
 
+// TestApplyParamOverrideWithRelayInfoSyncRuntimeHeaders 测试 ApplyParamOverrideWithRelayInfo 的运行时头同步功能。
 func TestApplyParamOverrideWithRelayInfoSyncRuntimeHeaders(t *testing.T) {
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{
@@ -1863,6 +1936,7 @@ func TestApplyParamOverrideWithRelayInfoSyncRuntimeHeaders(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideWithRelayInfoMixedLegacyAndOperations 测试 RelayInfo 中传统覆盖与 operations 混合使用。
 func TestApplyParamOverrideWithRelayInfoMixedLegacyAndOperations(t *testing.T) {
 	info := &RelayInfo{
 		RequestHeaders: map[string]string{
@@ -1901,6 +1975,7 @@ func TestApplyParamOverrideWithRelayInfoMixedLegacyAndOperations(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideWithRelayInfoMoveAndCopyHeaders 测试通过 RelayInfo 执行 move_header 和 copy_header 操作。
 func TestApplyParamOverrideWithRelayInfoMoveAndCopyHeaders(t *testing.T) {
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{
@@ -1940,6 +2015,7 @@ func TestApplyParamOverrideWithRelayInfoMoveAndCopyHeaders(t *testing.T) {
 	}
 }
 
+// TestApplyParamOverrideWithRelayInfoSetHeaderMapRewritesAnthropicBeta 测试通过 RelayInfo 重写 anthropic-beta header。
 func TestApplyParamOverrideWithRelayInfoSetHeaderMapRewritesAnthropicBeta(t *testing.T) {
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{
@@ -1974,6 +2050,7 @@ func TestApplyParamOverrideWithRelayInfoSetHeaderMapRewritesAnthropicBeta(t *tes
 	}
 }
 
+// TestGetEffectiveHeaderOverrideUsesRuntimeOverrideAsFinalResult 测试运行时头覆盖作为最终结果使用。
 func TestGetEffectiveHeaderOverrideUsesRuntimeOverrideAsFinalResult(t *testing.T) {
 	info := &RelayInfo{
 		UseRuntimeHeadersOverride: true,
@@ -1997,6 +2074,7 @@ func TestGetEffectiveHeaderOverrideUsesRuntimeOverrideAsFinalResult(t *testing.T
 	}
 }
 
+// TestRemoveDisabledFieldsSkipWhenChannelPassThroughEnabled 测试渠道级 pass-through 启用时跳过字段过滤。
 func TestRemoveDisabledFieldsSkipWhenChannelPassThroughEnabled(t *testing.T) {
 	input := `{
 		"service_tier":"flex",
@@ -2013,6 +2091,7 @@ func TestRemoveDisabledFieldsSkipWhenChannelPassThroughEnabled(t *testing.T) {
 	assertJSONEqual(t, input, string(out))
 }
 
+// TestRemoveDisabledFieldsSkipWhenGlobalPassThroughEnabled 测试全局 pass-through 启用时跳过字段过滤。
 func TestRemoveDisabledFieldsSkipWhenGlobalPassThroughEnabled(t *testing.T) {
 	original := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	model_setting.GetGlobalSettings().PassThroughRequestEnabled = true
@@ -2034,6 +2113,7 @@ func TestRemoveDisabledFieldsSkipWhenGlobalPassThroughEnabled(t *testing.T) {
 	assertJSONEqual(t, input, string(out))
 }
 
+// TestRemoveDisabledFieldsDefaultFiltering 测试默认的禁用字段过滤行为。
 func TestRemoveDisabledFieldsDefaultFiltering(t *testing.T) {
 	input := `{
 		"service_tier":"flex",
@@ -2053,6 +2133,7 @@ func TestRemoveDisabledFieldsDefaultFiltering(t *testing.T) {
 	assertJSONEqual(t, `{"cache_control":{"type":"ephemeral"},"store":true}`, string(out))
 }
 
+// TestRemoveDisabledFieldsAllowInferenceGeo 测试允许 inference_geo 字段通过过滤。
 func TestRemoveDisabledFieldsAllowInferenceGeo(t *testing.T) {
 	input := `{
 		"inference_geo":"eu",
@@ -2069,6 +2150,7 @@ func TestRemoveDisabledFieldsAllowInferenceGeo(t *testing.T) {
 	assertJSONEqual(t, `{"inference_geo":"eu","store":true}`, string(out))
 }
 
+// TestRemoveDisabledFieldsAllowSpeed 测试允许 speed 字段通过过滤。
 func TestRemoveDisabledFieldsAllowSpeed(t *testing.T) {
 	input := `{
 		"speed":"fast",
@@ -2085,6 +2167,7 @@ func TestRemoveDisabledFieldsAllowSpeed(t *testing.T) {
 	assertJSONEqual(t, `{"speed":"fast","store":true}`, string(out))
 }
 
+// TestApplyParamOverrideWithRelayInfoRecordsOperationAuditInDebugMode 测试调试模式下记录所有操作审计日志。
 func TestApplyParamOverrideWithRelayInfoRecordsOperationAuditInDebugMode(t *testing.T) {
 	originalDebugEnabled := common2.DebugEnabled
 	common2.DebugEnabled = true
@@ -2141,6 +2224,7 @@ func TestApplyParamOverrideWithRelayInfoRecordsOperationAuditInDebugMode(t *test
 	}
 }
 
+// TestApplyParamOverrideWithRelayInfoRecordsOnlyKeyOperationsWhenDebugDisabled 测试非调试模式下仅记录关键操作审计日志。
 func TestApplyParamOverrideWithRelayInfoRecordsOnlyKeyOperationsWhenDebugDisabled(t *testing.T) {
 	originalDebugEnabled := common2.DebugEnabled
 	common2.DebugEnabled = false
@@ -2184,6 +2268,7 @@ func TestApplyParamOverrideWithRelayInfoRecordsOnlyKeyOperationsWhenDebugDisable
 	}
 }
 
+// assertJSONEqual 辅助函数：比较两个 JSON 字符串是否语义相等（忽略键顺序和空白差异）。
 func assertJSONEqual(t *testing.T, want, got string) {
 	t.Helper()
 

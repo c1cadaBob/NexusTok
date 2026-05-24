@@ -1,6 +1,6 @@
-// Package claude provides OAuth2 authentication functionality for Anthropic's Claude API.
-// This package implements the complete OAuth2 flow with PKCE (Proof Key for Code Exchange)
-// for secure authentication with Claude API, including token exchange, refresh, and storage.
+// claude - anthropic_auth.go
+// 实现 Claude/Anthropic OAuth2 认证流程，包括 PKCE 授权 URL 构建、授权码交换、
+// Token 刷新（带 singleflight 去重和指数退避重试）、429 限流阻断等功能。
 package claude
 
 import (
@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// OAuth configuration constants for Claude/Anthropic
+// Claude/Anthropic OAuth 配置常量。
 const (
 	AuthURL     = "https://claude.ai/oauth/authorize"
 	TokenURL    = "https://api.anthropic.com/v1/oauth/token"
@@ -32,25 +32,35 @@ const (
 )
 
 var (
+	// claudeRefreshGroup 用于对并发刷新请求进行 singleflight 去重
 	claudeRefreshGroup singleflight.Group
-	claudeRefreshMu    sync.Mutex
+	// claudeRefreshMu 保护 claudeRefreshBlock 的互斥锁
+	claudeRefreshMu sync.Mutex
+	// claudeRefreshBlock 记录每个 refresh token 被 429 限流阻断后的解封时间
 	claudeRefreshBlock = make(map[string]time.Time)
 )
 
+// refreshHTTPError 表示 Token 刷新过程中的 HTTP 错误。
 type refreshHTTPError struct {
-	status    int
-	message   string
+	// status 是 HTTP 状态码
+	status int
+	// message 是错误消息内容
+	message string
+	// retryable 标识此错误是否可重试
 	retryable bool
 }
 
+// Error 返回 HTTP 刷新错误的字符串表示。
 func (e *refreshHTTPError) Error() string {
 	return fmt.Sprintf("token refresh failed with status %d: %s", e.status, e.message)
 }
 
+// Retryable 返回此错误是否可重试。
 func (e *refreshHTTPError) Retryable() bool {
 	return e != nil && e.retryable
 }
 
+// resetClaudeRefreshState 重置 Claude Token 刷新的全局状态（用于测试）。
 func resetClaudeRefreshState() {
 	claudeRefreshMu.Lock()
 	defer claudeRefreshMu.Unlock()
@@ -58,24 +68,28 @@ func resetClaudeRefreshState() {
 	claudeRefreshGroup = singleflight.Group{}
 }
 
+// claudeRefreshBlockedUntil 返回指定 refresh token 的阻断截止时间。
 func claudeRefreshBlockedUntil(refreshToken string) time.Time {
 	claudeRefreshMu.Lock()
 	defer claudeRefreshMu.Unlock()
 	return claudeRefreshBlock[refreshToken]
 }
 
+// setClaudeRefreshBlockedUntil 设置指定 refresh token 的阻断截止时间。
 func setClaudeRefreshBlockedUntil(refreshToken string, until time.Time) {
 	claudeRefreshMu.Lock()
 	defer claudeRefreshMu.Unlock()
 	claudeRefreshBlock[refreshToken] = until
 }
 
+// clearClaudeRefreshBlockedUntil 清除指定 refresh token 的阻断状态。
 func clearClaudeRefreshBlockedUntil(refreshToken string) {
 	claudeRefreshMu.Lock()
 	defer claudeRefreshMu.Unlock()
 	delete(claudeRefreshBlock, refreshToken)
 }
 
+// clampClaudeRefreshBackoff 将退避时长限制在最小和最大值之间。
 func clampClaudeRefreshBackoff(d time.Duration) time.Duration {
 	if d < claudeRefreshMinBackoff {
 		return claudeRefreshMinBackoff
@@ -86,6 +100,8 @@ func clampClaudeRefreshBackoff(d time.Duration) time.Duration {
 	return d
 }
 
+// parseClaudeRetryAfter 从 HTTP 响应头中解析 Retry-After 或 Retry-After-Ms 值，
+// 返回经过钳制的退避时长。
 func parseClaudeRetryAfter(resp *http.Response) time.Duration {
 	if resp == nil {
 		return claudeRefreshMinBackoff
@@ -106,6 +122,7 @@ func parseClaudeRetryAfter(resp *http.Response) time.Duration {
 	return claudeRefreshMinBackoff
 }
 
+// isClaudeRefreshRetryable 检查 Token 刷新错误是否可重试。
 func isClaudeRefreshRetryable(err error) bool {
 	var httpErr *refreshHTTPError
 	if errors.As(err, &httpErr) {
@@ -114,8 +131,8 @@ func isClaudeRefreshRetryable(err error) bool {
 	return true
 }
 
-// tokenResponse represents the response structure from Anthropic's OAuth token endpoint.
-// It contains access token, refresh token, and associated user/organization information.
+// tokenResponse 表示 Anthropic OAuth Token 端点的响应结构。
+// 包含访问令牌、刷新令牌及关联的用户/组织信息。
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -131,28 +148,26 @@ type tokenResponse struct {
 	} `json:"account"`
 }
 
-// ClaudeAuth handles Anthropic OAuth2 authentication flow.
-// It provides methods for generating authorization URLs, exchanging codes for tokens,
-// and refreshing expired tokens using PKCE for enhanced security.
+// ClaudeAuth 处理 Anthropic OAuth2 认证流程。
+// 提供生成授权 URL、用授权码交换 Token、以及使用 PKCE 安全刷新过期 Token 的方法。
 type ClaudeAuth struct {
 	httpClient *http.Client
 }
 
-// NewClaudeAuth creates a new Anthropic authentication service.
-// It initializes the HTTP client with a custom TLS transport that uses Firefox
-// fingerprint to bypass Cloudflare's TLS fingerprinting on Anthropic domains.
+// NewClaudeAuth 创建新的 Anthropic 认证服务实例。
+// 使用自定义 TLS 传输层（Chrome 指纹）绕过 Anthropic 域名上的 Cloudflare TLS 指纹检测。
 //
-// Parameters:
-//   - cfg: The application configuration containing proxy settings
+// 参数:
+//   - cfg: 包含代理设置的应用配置
 //
-// Returns:
-//   - *ClaudeAuth: A new Claude authentication service instance
+// 返回值:
+//   - *ClaudeAuth: 新的 Claude 认证服务实例
 func NewClaudeAuth(cfg *config.Config) *ClaudeAuth {
 	return NewClaudeAuthWithProxyURL(cfg, "")
 }
 
-// NewClaudeAuthWithProxyURL creates a new Anthropic authentication service with a proxy override.
-// proxyURL takes precedence over cfg.ProxyURL when non-empty.
+// NewClaudeAuthWithProxyURL 创建带有显式代理 URL 覆盖的 Anthropic 认证服务实例。
+// 当 proxyURL 非空时，其优先级高于 cfg.ProxyURL。
 func NewClaudeAuthWithProxyURL(cfg *config.Config, proxyURL string) *ClaudeAuth {
 	effectiveProxyURL := strings.TrimSpace(proxyURL)
 	var sdkCfg *config.SDKConfig
@@ -168,25 +183,24 @@ func NewClaudeAuthWithProxyURL(cfg *config.Config, proxyURL string) *ClaudeAuth 
 		sdkCfg = &sdkCfgCopy
 	}
 
-	// Use custom HTTP client with Firefox TLS fingerprint to bypass
-	// Cloudflare's bot detection on Anthropic domains
+	// 使用自定义 HTTP 客户端（Chrome TLS 指纹）绕过
+	// Anthropic 域名上的 Cloudflare 机器人检测
 	return &ClaudeAuth{
 		httpClient: NewAnthropicHttpClient(sdkCfg),
 	}
 }
 
-// GenerateAuthURL creates the OAuth authorization URL with PKCE.
-// This method generates a secure authorization URL including PKCE challenge codes
-// for the OAuth2 flow with Anthropic's API.
+// GenerateAuthURL 创建带有 PKCE 的 OAuth 授权 URL。
+// 该方法生成包含 PKCE 挑战码的安全授权 URL，用于 Anthropic API 的 OAuth2 流程。
 //
-// Parameters:
-//   - state: A random state parameter for CSRF protection
-//   - pkceCodes: The PKCE codes for secure code exchange
+// 参数:
+//   - state: 用于 CSRF 防护的随机 state 参数
+//   - pkceCodes: 用于安全代码交换的 PKCE 码对
 //
-// Returns:
-//   - string: The complete authorization URL
-//   - string: The state parameter for verification
-//   - error: An error if PKCE codes are missing or URL generation fails
+// 返回值:
+//   - string: 完整的授权 URL
+//   - string: 用于验证的 state 参数
+//   - error: PKCE 码缺失或 URL 生成失败时返回错误
 func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string, string, error) {
 	if pkceCodes == nil {
 		return "", "", fmt.Errorf("PKCE codes are required")
@@ -207,15 +221,15 @@ func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string
 	return authURL, state, nil
 }
 
-// parseCodeAndState extracts the authorization code and state from the callback response.
-// It handles the parsing of the code parameter which may contain additional fragments.
+// parseCodeAndState 从回调响应中提取授权码和 state 参数。
+// 处理可能包含额外片段的 code 参数。
 //
-// Parameters:
-//   - code: The raw code parameter from the OAuth callback
+// 参数:
+//   - code: OAuth 回调中的原始 code 参数
 //
-// Returns:
-//   - parsedCode: The extracted authorization code
-//   - parsedState: The extracted state parameter if present
+// 返回值:
+//   - parsedCode: 提取的授权码
+//   - parsedState: 提取的 state 参数（如果存在）
 func (c *ClaudeAuth) parseCodeAndState(code string) (parsedCode, parsedState string) {
 	splits := strings.Split(code, "#")
 	parsedCode = splits[0]
@@ -225,26 +239,26 @@ func (c *ClaudeAuth) parseCodeAndState(code string) (parsedCode, parsedState str
 	return
 }
 
-// ExchangeCodeForTokens exchanges authorization code for access tokens.
-// This method implements the OAuth2 token exchange flow using PKCE for security.
-// It sends the authorization code along with PKCE verifier to get access and refresh tokens.
+// ExchangeCodeForTokens 将授权码交换为访问令牌。
+// 该方法实现使用 PKCE 安全验证的 OAuth2 Token 交换流程，
+// 将授权码与 PKCE Verifier 一起发送以获取访问令牌和刷新令牌。
 //
-// Parameters:
-//   - ctx: The context for the request
-//   - code: The authorization code received from OAuth callback
-//   - state: The state parameter for verification
-//   - pkceCodes: The PKCE codes for secure verification
+// 参数:
+//   - ctx: 请求的上下文
+//   - code: 从 OAuth 回调收到的授权码
+//   - state: 用于验证的 state 参数
+//   - pkceCodes: 用于安全验证的 PKCE 码对
 //
-// Returns:
-//   - *ClaudeAuthBundle: The complete authentication bundle with tokens
-//   - error: An error if token exchange fails
+// 返回值:
+//   - *ClaudeAuthBundle: 包含 Token 的完整认证包
+//   - error: Token 交换失败时返回错误
 func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state string, pkceCodes *PKCECodes) (*ClaudeAuthBundle, error) {
 	if pkceCodes == nil {
 		return nil, fmt.Errorf("PKCE codes are required for token exchange")
 	}
 	newCode, newState := o.parseCodeAndState(code)
 
-	// Prepare token exchange request
+	// 准备 Token 交换请求
 	reqBody := map[string]interface{}{
 		"code":          newCode,
 		"state":         state,
@@ -254,7 +268,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 		"code_verifier": pkceCodes.CodeVerifier,
 	}
 
-	// Include state if present
+	// 如果存在 state 则包含
 	if newState != "" {
 		reqBody["state"] = newState
 	}
@@ -299,7 +313,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	// Create token data
+	// 创建 Token 数据
 	tokenData := ClaudeTokenData{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
@@ -307,7 +321,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 		Expire:       time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
 	}
 
-	// Create auth bundle
+	// 创建认证包
 	bundle := &ClaudeAuthBundle{
 		TokenData:   tokenData,
 		LastRefresh: time.Now().Format(time.RFC3339),
@@ -316,17 +330,17 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 	return bundle, nil
 }
 
-// RefreshTokens refreshes the access token using the refresh token.
-// This method exchanges a valid refresh token for a new access token,
-// extending the user's authenticated session.
+// RefreshTokens 使用刷新令牌刷新访问令牌。
+// 该方法用有效的刷新令牌交换新的访问令牌，延长用户的认证会话。
+// 内部使用 singleflight 机制对并发刷新请求进行去重。
 //
-// Parameters:
-//   - ctx: The context for the request
-//   - refreshToken: The refresh token to use for getting new access token
+// 参数:
+//   - ctx: 请求的上下文
+//   - refreshToken: 用于获取新访问令牌的刷新令牌
 //
-// Returns:
-//   - *ClaudeTokenData: The new token data with updated access token
-//   - error: An error if token refresh fails
+// 返回值:
+//   - *ClaudeTokenData: 包含更新后访问令牌的新 Token 数据
+//   - error: Token 刷新失败时返回错误
 func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*ClaudeTokenData, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
@@ -352,6 +366,7 @@ func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*C
 	return tokenData, nil
 }
 
+// refreshTokensSingleFlight 是 singleflight 保护下的实际刷新逻辑。
 func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken string) (*ClaudeTokenData, error) {
 	if blockedUntil := claudeRefreshBlockedUntil(refreshToken); blockedUntil.After(time.Now()) {
 		return nil, &refreshHTTPError{
@@ -425,15 +440,14 @@ func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken
 	}, nil
 }
 
-// CreateTokenStorage creates a new ClaudeTokenStorage from auth bundle and user info.
-// This method converts the authentication bundle into a token storage structure
-// suitable for persistence and later use.
+// CreateTokenStorage 从认证包和用户信息创建新的 ClaudeTokenStorage。
+// 该方法将认证包转换为适合持久化的 Token 存储结构。
 //
-// Parameters:
-//   - bundle: The authentication bundle containing token data
+// 参数:
+//   - bundle: 包含 Token 数据的认证包
 //
-// Returns:
-//   - *ClaudeTokenStorage: A new token storage instance
+// 返回值:
+//   - *ClaudeTokenStorage: 新的 Token 存储实例
 func (o *ClaudeAuth) CreateTokenStorage(bundle *ClaudeAuthBundle) *ClaudeTokenStorage {
 	storage := &ClaudeTokenStorage{
 		AccessToken:  bundle.TokenData.AccessToken,
@@ -446,24 +460,23 @@ func (o *ClaudeAuth) CreateTokenStorage(bundle *ClaudeAuthBundle) *ClaudeTokenSt
 	return storage
 }
 
-// RefreshTokensWithRetry refreshes tokens with automatic retry logic.
-// This method implements exponential backoff retry logic for token refresh operations,
-// providing resilience against temporary network or service issues.
+// RefreshTokensWithRetry 带自动重试逻辑的 Token 刷新。
+// 该方法实现了指数退避重试逻辑，为 Token 刷新操作提供对临时网络或服务问题的弹性。
 //
-// Parameters:
-//   - ctx: The context for the request
-//   - refreshToken: The refresh token to use
-//   - maxRetries: The maximum number of retry attempts
+// 参数:
+//   - ctx: 请求的上下文
+//   - refreshToken: 用于刷新的刷新令牌
+//   - maxRetries: 最大重试次数
 //
-// Returns:
-//   - *ClaudeTokenData: The refreshed token data
-//   - error: An error if all retry attempts fail
+// 返回值:
+//   - *ClaudeTokenData: 刷新后的 Token 数据
+//   - error: 所有重试尝试均失败时返回错误
 func (o *ClaudeAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken string, maxRetries int) (*ClaudeTokenData, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Wait before retry
+			// 重试前等待
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -486,13 +499,12 @@ func (o *ClaudeAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken st
 	return nil, fmt.Errorf("token refresh failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// UpdateTokenStorage updates an existing token storage with new token data.
-// This method refreshes the token storage with newly obtained access and refresh tokens,
-// updating timestamps and expiration information.
+// UpdateTokenStorage 使用新的 Token 数据更新已有的 Token 存储。
+// 该方法用新获取的访问令牌和刷新令牌刷新 Token 存储，更新时间戳和过期信息。
 //
-// Parameters:
-//   - storage: The existing token storage to update
-//   - tokenData: The new token data to apply
+// 参数:
+//   - storage: 需要更新的已有 Token 存储
+//   - tokenData: 要应用的新 Token 数据
 func (o *ClaudeAuth) UpdateTokenStorage(storage *ClaudeTokenStorage, tokenData *ClaudeTokenData) {
 	storage.AccessToken = tokenData.AccessToken
 	storage.RefreshToken = tokenData.RefreshToken

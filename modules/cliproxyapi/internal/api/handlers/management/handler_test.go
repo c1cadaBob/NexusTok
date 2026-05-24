@@ -1,3 +1,5 @@
+// management - handler_test.go
+// 测试管理处理器的认证逻辑，包括 IP 封禁机制（多次失败后阻止正确密钥）
 package management
 
 import (
@@ -8,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+// TestAuthenticateManagementKey_LocalhostIPBan_BlocksCorrectKeyDuringBan 测试 IP 封禁期间阻止正确密钥
 func TestAuthenticateManagementKey_LocalhostIPBan_BlocksCorrectKeyDuringBan(t *testing.T) {
 	h := &Handler{
 		cfg:            &config.Config{},

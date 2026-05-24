@@ -1,3 +1,18 @@
+// Package model - checkin.go
+// 该文件定义了用户签到（Check-in）数据模型及相关操作
+//
+// 主要结构体：
+// - Checkin：签到记录（含用户 ID、签到日期、奖励额度）
+// - CheckinRecord：API 返回的签到记录（不含敏感字段）
+//
+// 核心功能：
+// - 每日签到：用户每天可签到一次，获得随机额度奖励
+// - 签到记录查询：支持按日期范围查询
+// - 签到统计：累计签到次数、累计获得额度
+//
+// 数据库兼容性：
+// - MySQL/PostgreSQL：使用事务保证签到记录创建和额度增加的原子性
+// - SQLite：不支持嵌套事务，使用顺序操作 + 手动回滚
 package model
 
 import (
@@ -25,6 +40,7 @@ type CheckinRecord struct {
 	QuotaAwarded int    `json:"quota_awarded"`
 }
 
+// TableName 指定签到记录表名
 func (Checkin) TableName() string {
 	return "checkins"
 }

@@ -1,3 +1,7 @@
+// 包 proxyutil - proxy.go
+// 该文件提供了代理配置解析和连接构建的工具函数。
+// 支持 HTTP、HTTPS 和 SOCKS5 代理协议，包括代理设置解析、
+// HTTP 传输层构建、连接层拨号器构建和代理 URL 脱敏等功能。
 package proxyutil
 
 import (
@@ -14,28 +18,36 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// Mode describes how a proxy setting should be interpreted.
+// Mode 描述代理设置的解释方式。
 type Mode int
 
 const (
-	// ModeInherit means no explicit proxy behavior was configured.
+	// ModeInherit 表示未配置显式代理行为，继承环境默认设置。
 	ModeInherit Mode = iota
-	// ModeDirect means outbound requests must bypass proxies explicitly.
+	// ModeDirect 表示出站请求必须显式绕过代理，直接连接。
 	ModeDirect
-	// ModeProxy means a concrete proxy URL was configured.
+	// ModeProxy 表示配置了具体的代理 URL。
 	ModeProxy
-	// ModeInvalid means the proxy setting is present but malformed or unsupported.
+	// ModeInvalid 表示代理设置存在但格式错误或不支持。
 	ModeInvalid
 )
 
-// Setting is the normalized interpretation of a proxy configuration value.
+// Setting 是代理配置值的规范化解释结果。
 type Setting struct {
-	Raw  string
-	Mode Mode
-	URL  *url.URL
+	Raw  string   // 原始代理配置字符串
+	Mode Mode     // 解析后的代理模式
+	URL  *url.URL // 解析后的代理 URL（仅 ModeProxy 模式下有效）
 }
 
-// Parse normalizes a proxy configuration value into inherit, direct, or proxy modes.
+// Parse 将代理配置值规范化为继承、直连或代理模式。
+// 支持 "direct"/"none" 关键字、以及 socks5://、http://、https:// 等协议前缀。
+//
+// 参数:
+//   - raw: 原始代理配置字符串
+//
+// 返回:
+//   - Setting: 解析后的代理设置
+//   - error: 解析失败时返回错误信息
 func Parse(raw string) (Setting, error) {
 	trimmed := strings.TrimSpace(raw)
 	setting := Setting{Raw: trimmed}
@@ -71,6 +83,7 @@ func Parse(raw string) (Setting, error) {
 	}
 }
 
+// cloneDefaultTransport 克隆默认 HTTP 传输层配置，避免修改全局默认值。
 func cloneDefaultTransport() *http.Transport {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok && transport != nil {
 		return transport.Clone()
@@ -78,14 +91,27 @@ func cloneDefaultTransport() *http.Transport {
 	return &http.Transport{}
 }
 
-// NewDirectTransport returns a transport that bypasses environment proxies.
+// NewDirectTransport 返回一个绕过环境代理的 HTTP 传输层。
+// 其 Proxy 字段设为 nil，确保所有请求直接连接目标服务器。
+//
+// 返回:
+//   - *http.Transport: 直连模式的 HTTP 传输层
 func NewDirectTransport() *http.Transport {
 	clone := cloneDefaultTransport()
 	clone.Proxy = nil
 	return clone
 }
 
-// BuildHTTPTransport constructs an HTTP transport for the provided proxy setting.
+// BuildHTTPTransport 根据代理设置构建 HTTP 传输层。
+// 对于 SOCKS5 代理，创建自定义拨号器；对于 HTTP/HTTPS 代理，使用标准 ProxyURL。
+//
+// 参数:
+//   - raw: 原始代理配置字符串
+//
+// 返回:
+//   - *http.Transport: 构建的传输层（ModeInherit 时为 nil）
+//   - Mode: 解析后的代理模式
+//   - error: 构建失败时返回错误信息
 func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 	setting, errParse := Parse(raw)
 	if errParse != nil {
@@ -124,7 +150,16 @@ func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 	}
 }
 
-// BuildDialer constructs a proxy dialer for settings that operate at the connection layer.
+// BuildDialer 根据代理设置构建连接层拨号器。
+// 对于 HTTP/HTTPS 代理返回 httpConnectDialer，对于 SOCKS5 代理返回标准代理拨号器。
+//
+// 参数:
+//   - raw: 原始代理配置字符串
+//
+// 返回:
+//   - proxy.Dialer: 构建的拨号器（ModeInherit 时为 nil）
+//   - Mode: 解析后的代理模式
+//   - error: 构建失败时返回错误信息
 func BuildDialer(raw string) (proxy.Dialer, Mode, error) {
 	setting, errParse := Parse(raw)
 	if errParse != nil {
@@ -150,11 +185,23 @@ func BuildDialer(raw string) (proxy.Dialer, Mode, error) {
 	}
 }
 
+// httpConnectDialer 实现了通过 HTTP CONNECT 方法建立隧道的代理拨号器。
+// 支持 HTTP 和 HTTPS 代理服务器的连接建立。
 type httpConnectDialer struct {
-	proxyURL *url.URL
-	dialer   proxy.Dialer
+	proxyURL *url.URL     // 代理服务器 URL
+	dialer   proxy.Dialer // 底层拨号器
 }
 
+// Dial 通过 HTTP CONNECT 方法建立到目标地址的隧道连接。
+// 对于 HTTPS 代理，先建立 TLS 连接再发送 CONNECT 请求。
+//
+// 参数:
+//   - network: 网络类型（如 "tcp"）
+//   - addr: 目标地址（host:port 格式）
+//
+// 返回:
+//   - net.Conn: 建立的连接
+//   - error: 连接失败时返回错误信息
 func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 	proxyConn, errDial := d.dialer.Dial(network, proxyDialAddr(d.proxyURL))
 	if errDial != nil {
@@ -213,6 +260,14 @@ func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
+// proxyDialAddr 根据代理 URL 构建拨号地址（host:port 格式）。
+// 未指定端口时，HTTP 默认使用 80，HTTPS 默认使用 443。
+//
+// 参数:
+//   - proxyURL: 代理服务器 URL
+//
+// 返回:
+//   - string: 格式化的拨号地址
 func proxyDialAddr(proxyURL *url.URL) string {
 	port := proxyURL.Port()
 	if port == "" {
@@ -224,6 +279,14 @@ func proxyDialAddr(proxyURL *url.URL) string {
 	return net.JoinHostPort(proxyURL.Hostname(), port)
 }
 
+// proxyAuthorization 根据用户信息生成 Proxy-Authorization 请求头值。
+// 使用 Basic 认证方式，将用户名和密码进行 Base64 编码。
+//
+// 参数:
+//   - user: 包含用户名和密码的 Userinfo 对象
+//
+// 返回:
+//   - string: "Basic <base64>" 格式的认证字符串
 func proxyAuthorization(user *url.Userinfo) string {
 	username := user.Username()
 	password, _ := user.Password()
@@ -231,7 +294,13 @@ func proxyAuthorization(user *url.Userinfo) string {
 	return "Basic " + encoded
 }
 
-// Redact returns a log-safe proxy URL with credentials and path-like data removed.
+// Redact 返回脱敏后的代理 URL，移除凭据和路径信息，适用于日志记录。
+//
+// 参数:
+//   - raw: 原始代理 URL 字符串
+//
+// 返回:
+//   - string: 脱敏后的 URL，凭据替换为 "redacted"；无效 URL 返回 "<invalid proxy URL>"
 func Redact(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -253,11 +322,22 @@ func Redact(raw string) string {
 	return redacted.String()
 }
 
+// bufferedConn 包装了 net.Conn，在读取时优先从缓冲区读取。
+// 用于 HTTP CONNECT 隧道建立后，缓冲区中可能残留的响应数据不被丢失。
 type bufferedConn struct {
 	net.Conn
-	reader *bufio.Reader
+	reader *bufio.Reader // 带缓冲的读取器
 }
 
+// Read 从缓冲区或底层连接读取数据。
+// 优先读取缓冲区中的残留数据，缓冲区为空后回退到底层连接。
+//
+// 参数:
+//   - p: 读取数据的目标缓冲区
+//
+// 返回:
+//   - int: 读取的字节数
+//   - error: 读取失败时返回错误信息
 func (c *bufferedConn) Read(p []byte) (int, error) {
 	if c.reader.Buffered() > 0 {
 		return c.reader.Read(p)

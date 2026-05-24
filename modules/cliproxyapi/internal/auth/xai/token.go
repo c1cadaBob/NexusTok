@@ -1,3 +1,6 @@
+// xai - token.go
+// 提供 xAI OAuth 凭证的磁盘持久化功能，包括 TokenStorage 结构体的序列化、
+// 文件写入、凭证文件名生成等。
 package xai
 
 import (
@@ -12,7 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// TokenStorage stores xAI OAuth credentials on disk.
+// TokenStorage 将 xAI OAuth 凭证存储到磁盘。
 type TokenStorage struct {
 	Type          string `json:"type"`
 	AccessToken   string `json:"access_token"`
@@ -32,12 +35,12 @@ type TokenStorage struct {
 	Metadata map[string]any `json:"-"`
 }
 
-// SetMetadata allows the token store to merge status fields before saving.
+// SetMetadata 允许 token 存储在保存前合并状态字段。
 func (ts *TokenStorage) SetMetadata(meta map[string]any) {
 	ts.Metadata = meta
 }
 
-// SaveTokenToFile writes xAI credentials to a JSON auth file.
+// SaveTokenToFile 将 xAI 凭证写入 JSON 认证文件。
 func (ts *TokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "xai"
@@ -67,7 +70,7 @@ func (ts *TokenStorage) SaveTokenToFile(authFilePath string) error {
 	return nil
 }
 
-// CredentialFileName returns the filename used for xAI credentials.
+// CredentialFileName 返回 xAI 凭证使用的文件名，优先使用邮箱，其次使用 subject，最后使用时间戳。
 func CredentialFileName(email, subject string) string {
 	email = sanitizeFileSegment(email)
 	if email != "" {
@@ -80,6 +83,7 @@ func CredentialFileName(email, subject string) string {
 	return fmt.Sprintf("xai-%d.json", time.Now().UnixMilli())
 }
 
+// sanitizeFileSegment 清理文件名段，只保留字母、数字和少量安全字符。
 func sanitizeFileSegment(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

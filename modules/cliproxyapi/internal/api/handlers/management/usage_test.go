@@ -1,3 +1,5 @@
+// management - usage_test.go
+// 测试使用量队列的弹出功能，验证请求数量限制和无效计数处理
 package management
 
 import (
@@ -10,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 )
 
+// TestGetUsageQueuePopsRequestedRecords 测试使用量队列弹出指定数量的记录
 func TestGetUsageQueuePopsRequestedRecords(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	withManagementUsageQueue(t, func() {
@@ -45,6 +48,7 @@ func TestGetUsageQueuePopsRequestedRecords(t *testing.T) {
 	})
 }
 
+// TestGetUsageQueueInvalidCountDoesNotPop 测试无效计数不弹出记录
 func TestGetUsageQueueInvalidCountDoesNotPop(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	withManagementUsageQueue(t, func() {
@@ -68,6 +72,7 @@ func TestGetUsageQueueInvalidCountDoesNotPop(t *testing.T) {
 	})
 }
 
+// withManagementUsageQueue 辅助函数，临时启用使用量队列进行测试
 func withManagementUsageQueue(t *testing.T, fn func()) {
 	t.Helper()
 
@@ -83,6 +88,7 @@ func withManagementUsageQueue(t *testing.T, fn func()) {
 	fn()
 }
 
+// requireRecordID 辅助函数，验证记录的 ID 字段
 func requireRecordID(t *testing.T, raw json.RawMessage, want int) {
 	t.Helper()
 

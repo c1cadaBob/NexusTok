@@ -1,5 +1,15 @@
-// Package openai provides request translation functionality for OpenAI to Gemini CLI API compatibility.
-// It converts OpenAI Chat Completions requests into Gemini CLI compatible JSON using gjson/sjson only.
+// chat_completions - gemini-cli_openai_request.go
+// Gemini CLI 的 OpenAI Chat Completions 请求转换器。
+// 将 OpenAI Chat Completions 格式的请求转换为 Gemini CLI 兼容的 JSON 格式。
+// 所有 JSON 构建使用 sjson，查询使用 gjson。
+//
+// 转换内容包括：
+// 1. 模型名称和生成参数（temperature、top_p、top_k 等）
+// 2. 思考配置（reasoning_effort -> thinkingConfig）
+// 3. 系统指令和消息历史转换
+// 4. 多模态内容处理（文本、图片、文件）
+// 5. 工具定义和函数调用转换
+// 6. 安全设置附加
 package chat_completions
 
 import (
@@ -14,18 +24,30 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// geminiCLIFunctionThoughtSignature 是 Gemini CLI 函数调用中使用的思考签名占位符。
+// 用于在请求中为函数调用和内联数据附加 thoughtSignature 字段，
+// 以满足 Gemini CLI API 对思考签名验证的要求。
 const geminiCLIFunctionThoughtSignature = "skip_thought_signature_validator"
 
-// ConvertOpenAIRequestToGeminiCLI converts an OpenAI Chat Completions request (raw JSON)
-// into a complete Gemini CLI request JSON. All JSON construction uses sjson and lookups use gjson.
+// ConvertOpenAIRequestToGeminiCLI 将 OpenAI Chat Completions 请求转换为 Gemini CLI 请求格式。
+// 所有 JSON 构建使用 sjson，查询使用 gjson。
 //
-// Parameters:
-//   - modelName: The name of the model to use for the request
-//   - rawJSON: The raw JSON request data from the OpenAI API
-//   - stream: A boolean indicating if the request is for a streaming response (unused in current implementation)
+// 转换流程：
+// 1. 构建基础请求结构（model、generationConfig）
+// 2. 转换思考配置（reasoning_effort -> thinkingConfig）
+// 3. 映射生成参数（temperature、top_p、top_k、candidateCount、modalities）
+// 4. 处理图片配置（image_config -> imageConfig）
+// 5. 转换消息数组为 Gemini 的 contents 和 systemInstruction
+// 6. 转换工具定义为 Gemini 的 functionDeclarations
+// 7. 附加默认安全设置
 //
-// Returns:
-//   - []byte: The transformed request data in Gemini CLI API format
+// 参数：
+//   - modelName: 模型名称
+//   - inputRawJSON: 原始的 OpenAI Chat Completions 格式 JSON 请求数据
+//   - _: 是否为流式请求（当前实现中未使用）
+//
+// 返回值：
+//   - []byte: 转换后的 Gemini CLI 格式 JSON 请求数据
 func ConvertOpenAIRequestToGeminiCLI(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 	// Base envelope (no default thinkingConfig)
@@ -397,5 +419,5 @@ func ConvertOpenAIRequestToGeminiCLI(modelName string, inputRawJSON []byte, _ bo
 	return common.AttachDefaultSafetySettings(out, "request.safetySettings")
 }
 
-// itoa converts int to string without strconv import for few usages.
+// itoa 将整数转换为字符串，避免为少量使用场景引入 strconv 包。
 func itoa(i int) string { return fmt.Sprintf("%d", i) }

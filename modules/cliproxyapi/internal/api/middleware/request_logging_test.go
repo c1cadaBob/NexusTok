@@ -1,3 +1,5 @@
+// middleware - request_logging_test.go
+// 测试请求日志中间件的辅助函数，包括请求方法过滤、请求体捕获条件、zstd 压缩体解码等功能。
 package middleware
 
 import (

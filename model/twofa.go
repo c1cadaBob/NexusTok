@@ -1,3 +1,14 @@
+// Package model - twofa.go
+// 该文件定义了两步验证（2FA）数据模型及相关操作
+//
+// 主要结构体：
+// - TwoFA：用户 2FA 设置
+// - TwoFABackupCode：2FA 备份码
+//
+// 核心功能：
+// - TOTP（基于时间的一次性密码）验证
+// - 2FA 的启用、禁用、验证
+// - 备份码的生成、查询、使用
 package model
 
 import (

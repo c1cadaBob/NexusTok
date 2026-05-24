@@ -1,8 +1,10 @@
+// codex/gemini - codex_gemini_request.go
 // Package gemini provides request translation functionality for Codex to Gemini API compatibility.
-// It handles parsing and transforming Codex API requests into Gemini API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Codex API format and Gemini API's expected format.
+// 本文件提供 Gemini API 请求到 Codex API 格式的转换功能。
+// 负责解析 Gemini API 请求并将其转换为 Codex 期望的格式，
+// 包括：模型名称映射、系统指令转为 developer 输入、消息内容转换（文本/函数调用/函数响应）、
+// 工具声明转换、工具名称缩短（满足 64 字符限制）、思考配置到 reasoning.effort 的映射等。
+// 使用 FIFO 队列机制匹配函数调用 ID 与函数响应。
 package gemini
 
 import (
@@ -295,6 +297,9 @@ func ConvertGeminiRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 }
 
 // shortenNameIfNeeded applies the simple shortening rule for a single name.
+// 对单个工具名称应用简单的缩短规则。
+// 如果名称以 "mcp__" 开头且超过 64 字符，保留前缀和最后一段；
+// 否则直接截断到 64 字符。
 func shortenNameIfNeeded(name string) string {
 	const limit = 64
 	if len(name) <= limit {
@@ -314,6 +319,8 @@ func shortenNameIfNeeded(name string) string {
 }
 
 // buildShortNameMap ensures uniqueness of shortened names within a request.
+// 构建工具名称缩短映射表，确保缩短后的名称在请求内唯一。
+// 对于冲突的名称，自动添加 _1、_2 等后缀。
 func buildShortNameMap(names []string) map[string]string {
 	const limit = 64
 	used := map[string]struct{}{}

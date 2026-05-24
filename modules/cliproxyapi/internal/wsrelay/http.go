@@ -1,3 +1,7 @@
+// wsrelay - http.go
+// 本文件实现了通过 WebSocket 中继执行 HTTP 请求的功能。
+// 支持流式和非流式两种请求模式，将 HTTP 请求序列化后通过 WebSocket 发送到客户端，
+// 并将客户端的响应反序列化为 HTTP 响应返回给调用方。
 package wsrelay
 
 import (
@@ -11,31 +15,44 @@ import (
 	"github.com/google/uuid"
 )
 
-// HTTPRequest represents a proxied HTTP request delivered to websocket clients.
+// HTTPRequest 表示通过 WebSocket 代理的 HTTP 请求。
 type HTTPRequest struct {
+	// Method 是 HTTP 请求方法（GET、POST 等）。
 	Method  string
+	// URL 是请求的目标 URL。
 	URL     string
+	// Headers 是请求头。
 	Headers http.Header
+	// Body 是请求体。
 	Body    []byte
 }
 
-// HTTPResponse captures the response relayed back from websocket clients.
+// HTTPResponse 表示从 WebSocket 客户端中继回来的 HTTP 响应。
 type HTTPResponse struct {
+	// Status 是 HTTP 响应状态码。
 	Status  int
+	// Headers 是响应头。
 	Headers http.Header
+	// Body 是响应体。
 	Body    []byte
 }
 
-// StreamEvent represents a streaming response event from clients.
+// StreamEvent 表示来自客户端的流式响应事件。
 type StreamEvent struct {
+	// Type 是事件类型（如 "stream_start"、"stream_chunk"、"stream_end"）。
 	Type    string
+	// Payload 是事件的数据负载。
 	Payload []byte
+	// Status 是 HTTP 状态码。
 	Status  int
+	// Headers 是响应头。
 	Headers http.Header
+	// Err 是事件中携带的错误信息。
 	Err     error
 }
 
-// NonStream executes a non-streaming HTTP request using the websocket provider.
+// NonStream 通过 WebSocket 中继执行非流式 HTTP 请求。
+// 等待完整的响应返回后一次性返回。
 func (m *Manager) NonStream(ctx context.Context, provider string, req *HTTPRequest) (*HTTPResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("wsrelay: request is nil")

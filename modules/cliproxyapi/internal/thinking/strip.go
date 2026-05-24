@@ -1,4 +1,6 @@
-// Package thinking provides unified thinking configuration processing.
+// thinking - strip.go
+// 本文件实现了从请求体中移除 thinking 配置字段的功能。
+// 当模型不支持 thinking 但请求中包含 thinking 配置时，静默移除配置以防止上游 API 错误。
 package thinking
 
 import (

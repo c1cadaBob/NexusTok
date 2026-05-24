@@ -1,3 +1,7 @@
+// cliproxy - watcher.go
+// 该文件提供默认的文件监视器工厂实现。
+// 将内部 Watcher 包装为 WatcherWrapper，代理所有方法调用。
+
 package cliproxy
 
 import (
@@ -8,6 +12,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// defaultWatcherFactory 是默认的文件监视器工厂函数。
+// 创建内部 Watcher 实例并将其方法包装为 WatcherWrapper 的函数字段。
 func defaultWatcherFactory(configPath, authDir string, reload func(*config.Config)) (*WatcherWrapper, error) {
 	w, err := watcher.NewWatcher(configPath, authDir, reload)
 	if err != nil {

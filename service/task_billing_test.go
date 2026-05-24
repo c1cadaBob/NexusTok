@@ -1,3 +1,9 @@
+// 本文件测试任务计费相关的完整流程，包括：
+// - 任务配额退还（RefundTaskQuota）：钱包模式和订阅模式下的退还、零配额跳过、无 Token 场景
+// - 任务配额重算（RecalculateTaskQuota）：正差额补扣、负差额退还、零差额跳过、实际配额为零的处理
+// - CAS 保护的计费流程：模拟 updateVideoSingleTask 的状态流转，验证 CAS 竞态保护防止重复退款/扣费
+// - 按次计费（PerCallBilling）：跳过适配器调整和 token 数量重算
+// - 非按次计费：适配器调整正常生效
 package service
 
 import (
@@ -17,6 +23,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// TestMain 初始化测试环境：创建内存 SQLite 数据库，迁移所有需要的表，
+// 并设置全局配置（禁用 Redis、启用日志记录等）。
 func TestMain(m *testing.M) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -55,6 +63,7 @@ func TestMain(m *testing.M) {
 // Seed helpers
 // ---------------------------------------------------------------------------
 
+// truncate 清理测试数据的辅助函数，通过注册 Cleanup 在测试结束后删除所有表数据。
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -68,12 +77,14 @@ func truncate(t *testing.T) {
 	})
 }
 
+// seedUser 创建测试用户，设置初始配额。
 func seedUser(t *testing.T, id int, quota int) {
 	t.Helper()
 	user := &model.User{Id: id, Username: "test_user", Quota: quota, Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 }
 
+// seedToken 创建测试 Token，设置剩余配额。
 func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
 	t.Helper()
 	token := &model.Token{
@@ -88,6 +99,7 @@ func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
 	require.NoError(t, model.DB.Create(token).Error)
 }
 
+// seedSubscription 创建测试订阅，设置总额和已用金额。
 func seedSubscription(t *testing.T, id int, userId int, amountTotal int64, amountUsed int64) {
 	t.Helper()
 	sub := &model.UserSubscription{
@@ -102,12 +114,14 @@ func seedSubscription(t *testing.T, id int, userId int, amountTotal int64, amoun
 	require.NoError(t, model.DB.Create(sub).Error)
 }
 
+// seedChannel 创建测试渠道。
 func seedChannel(t *testing.T, id int) {
 	t.Helper()
 	ch := &model.Channel{Id: id, Name: "test_channel", Key: "sk-test", Status: common.ChannelStatusEnabled}
 	require.NoError(t, model.DB.Create(ch).Error)
 }
 
+// makeTask 构造测试用的 Task 对象，包含计费源、订阅 ID、Token ID 等私有数据。
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
 	return &model.Task{
 		TaskID:    "task_" + time.Now().Format("150405.000"),
@@ -139,6 +153,7 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 // Read-back helpers
 // ---------------------------------------------------------------------------
 
+// getUserQuota 从数据库读取用户当前配额。
 func getUserQuota(t *testing.T, id int) int {
 	t.Helper()
 	var user model.User
@@ -146,6 +161,7 @@ func getUserQuota(t *testing.T, id int) int {
 	return user.Quota
 }
 
+// getTokenRemainQuota 从数据库读取 Token 剩余配额。
 func getTokenRemainQuota(t *testing.T, id int) int {
 	t.Helper()
 	var token model.Token
@@ -153,6 +169,7 @@ func getTokenRemainQuota(t *testing.T, id int) int {
 	return token.RemainQuota
 }
 
+// getTokenUsedQuota 从数据库读取 Token 已用配额。
 func getTokenUsedQuota(t *testing.T, id int) int {
 	t.Helper()
 	var token model.Token
@@ -160,6 +177,7 @@ func getTokenUsedQuota(t *testing.T, id int) int {
 	return token.UsedQuota
 }
 
+// getSubscriptionUsed 从数据库读取订阅已用金额。
 func getSubscriptionUsed(t *testing.T, id int) int64 {
 	t.Helper()
 	var sub model.UserSubscription
@@ -167,6 +185,7 @@ func getSubscriptionUsed(t *testing.T, id int) int64 {
 	return sub.AmountUsed
 }
 
+// getLastLog 从数据库读取最近一条日志记录。
 func getLastLog(t *testing.T) *model.Log {
 	t.Helper()
 	var log model.Log
@@ -177,6 +196,7 @@ func getLastLog(t *testing.T) *model.Log {
 	return &log
 }
 
+// countLogs 统计数据库中的日志记录总数。
 func countLogs(t *testing.T) int64 {
 	t.Helper()
 	var count int64
@@ -188,6 +208,8 @@ func countLogs(t *testing.T) int64 {
 // RefundTaskQuota tests
 // ===========================================================================
 
+// TestRefundTaskQuota_Wallet 测试钱包模式下的任务配额退还：
+// 退还后用户配额应增加、Token 剩余配额应增加、已用配额应减少，并生成退还日志。
 func TestRefundTaskQuota_Wallet(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -219,6 +241,8 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, "test-model", log.ModelName)
 }
 
+// TestRefundTaskQuota_Subscription 测试订阅模式下的任务配额退还：
+// 退还后订阅已用金额应减少、Token 退还，并生成退还日志。
 func TestRefundTaskQuota_Subscription(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -248,6 +272,8 @@ func TestRefundTaskQuota_Subscription(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
+// TestRefundTaskQuota_ZeroQuota 测试零配额任务的退还处理：
+// 配额为 0 时应跳过退还逻辑，不改变用户配额，不生成日志。
 func TestRefundTaskQuota_ZeroQuota(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -266,6 +292,8 @@ func TestRefundTaskQuota_ZeroQuota(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestRefundTaskQuota_NoToken 测试无 Token 关联时的退还处理：
+// 仅退还用户配额，不涉及 Token 操作，仍生成退还日志。
 func TestRefundTaskQuota_NoToken(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -293,6 +321,8 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 // RecalculateTaskQuota tests
 // ===========================================================================
 
+// TestRecalculate_PositiveDelta 测试正差额重算（实际配额 > 预扣配额）：
+// 补扣差额部分，用户和 Token 配额减少，任务配额更新为实际值，生成消费日志。
 func TestRecalculate_PositiveDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -326,6 +356,8 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
 }
 
+// TestRecalculate_NegativeDelta 测试负差额重算（实际配额 < 预扣配额）：
+// 退还多扣部分，用户和 Token 配额增加，任务配额更新为实际值，生成退还日志。
 func TestRecalculate_NegativeDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -359,6 +391,8 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	assert.Equal(t, preConsumed-actualQuota, log.Quota)
 }
 
+// TestRecalculate_ZeroDelta 测试零差额重算（实际配额 == 预扣配额）：
+// 无需调整，不改变用户配额，不生成日志。
 func TestRecalculate_ZeroDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -379,6 +413,8 @@ func TestRecalculate_ZeroDelta(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestRecalculate_ActualQuotaZero 测试实际配额为零时的处理：
+// 提前返回，不改变用户配额，不生成日志。
 func TestRecalculate_ActualQuotaZero(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -397,6 +433,8 @@ func TestRecalculate_ActualQuotaZero(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestRecalculate_Subscription_NegativeDelta 测试订阅模式下的负差额重算：
+// 退还多扣部分到订阅已用金额和 Token，任务配额更新，生成退还日志。
 func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -437,6 +475,9 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 // simulatePollBilling reproduces the CAS + billing logic from updateVideoSingleTask.
 // It takes a persisted task (already in DB), applies the new status, and performs
 // the conditional update + billing exactly as the polling loop does.
+// simulatePollBilling 模拟 updateVideoSingleTask 中的 CAS + 计费逻辑：
+// 根据新状态决定是否退还或结算，使用 CAS 乐观锁保护状态转换，
+// 确保同一任务不会被多次退还或结算。
 func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.TaskStatus, actualQuota int) {
 	snap := task.Snapshot()
 
@@ -483,6 +524,8 @@ func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.
 	}
 }
 
+// TestCASGuardedRefund_Win 测试 CAS 竞态成功时的退还流程：
+// 当前进程赢得 CAS 竞争，任务状态更新为 FAILURE，退还操作正常执行。
 func TestCASGuardedRefund_Win(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -515,6 +558,9 @@ func TestCASGuardedRefund_Win(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
+// TestCASGuardedRefund_Lose 测试 CAS 竞态失败时的退还保护：
+// 另一个进程已将任务标记为 FAILURE，当前进程的 CAS 失败，
+// 退还操作不执行，防止重复退还（用户配额和 Token 不变）。
 func TestCASGuardedRefund_Lose(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -547,6 +593,8 @@ func TestCASGuardedRefund_Lose(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestCASGuardedSettle_Win 测试 CAS 竞态成功时的结算流程：
+// 任务状态更新为 SUCCESS，按实际配额结算，退还多扣部分。
 func TestCASGuardedSettle_Win(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -579,6 +627,8 @@ func TestCASGuardedSettle_Win(t *testing.T) {
 	assert.Equal(t, actualQuota, task.Quota)
 }
 
+// TestNonTerminalUpdate_NoBilling 测试非终态更新（进度变化但未完成）：
+// 任务仍为 IN_PROGRESS 状态，不触发退还或结算，仅更新进度字段。
 func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -613,6 +663,7 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 // Mock adaptor for settleTaskBillingOnComplete tests
 // ===========================================================================
 
+// mockAdaptor 模拟任务适配器，用于测试 AdjustBillingOnComplete 的调用行为。
 type mockAdaptor struct {
 	adjustReturn int
 }
@@ -630,6 +681,8 @@ func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.Task
 // PerCallBilling tests — settleTaskBillingOnComplete
 // ===========================================================================
 
+// TestSettle_PerCallBilling_SkipsAdaptorAdjust 测试按次计费模式下跳过适配器调整：
+// 即使适配器返回了调整值，按次计费模式下也不会执行调整，配额保持预扣值不变。
 func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -657,6 +710,8 @@ func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestSettle_PerCallBilling_SkipsTotalTokens 测试按次计费模式下跳过 token 数量重算：
+// 即使任务结果包含 TotalTokens，按次计费模式下也不会据此重算配额。
 func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -684,6 +739,8 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+// TestSettle_NonPerCall_AdaptorAdjustWorks 测试非按次计费模式下适配器调整正常生效：
+// 适配器返回的调整值会被应用，退还多扣部分，任务配额更新为适配器返回值。
 func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

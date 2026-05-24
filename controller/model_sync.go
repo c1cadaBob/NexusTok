@@ -1,3 +1,16 @@
+// Package controller - model_sync.go
+// 该文件实现了上游模型同步功能的 API 控制器
+//
+// 从远程元数据仓库同步模型和供应商信息到本地数据库
+// 支持：
+// - 自动创建缺失的模型和供应商
+// - 选择性覆盖更新本地已有模型的字段
+// - ETag 缓存减少网络请求
+// - 多语言支持（en、zh-CN、zh-TW、ja）
+//
+// 主要 API：
+// - SyncUpstreamModels：同步上游模型与供应商
+// - SyncUpstreamPreview：预览上游与本地的差异
 package controller
 
 import (
@@ -20,12 +33,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// 上游地址
+// 上游地址常量
 const (
-	upstreamModelsURL  = "https://basellm.github.io/llm-metadata/api/newapi/models.json"
-	upstreamVendorsURL = "https://basellm.github.io/llm-metadata/api/newapi/vendors.json"
+	upstreamModelsURL  = "https://basellm.github.io/llm-metadata/api/newapi/models.json"  // 模型数据 URL
+	upstreamVendorsURL = "https://basellm.github.io/llm-metadata/api/newapi/vendors.json" // 供应商数据 URL
 )
 
+// normalizeLocale 标准化语言代码
+//
+// 支持的语言：en、zh-CN、zh-TW、ja
 func normalizeLocale(locale string) (string, bool) {
 	l := strings.ToLower(strings.TrimSpace(locale))
 	switch l {
@@ -36,10 +52,21 @@ func normalizeLocale(locale string) (string, bool) {
 	}
 }
 
+// getUpstreamBase 获取上游基础 URL
+//
+// 可通过环境变量 SYNC_UPSTREAM_BASE 覆盖
 func getUpstreamBase() string {
 	return common.GetEnvOrDefaultString("SYNC_UPSTREAM_BASE", "https://basellm.github.io/llm-metadata")
 }
 
+// getUpstreamURLs 根据语言获取上游数据 URL
+//
+// 参数：
+//   - locale: 语言代码
+//
+// 返回值：
+//   - modelsURL: 模型数据 URL
+//   - vendorsURL: 供应商数据 URL
 func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
 	base := strings.TrimRight(getUpstreamBase(), "/")
 	if l, ok := normalizeLocale(locale); ok && l != "" {
@@ -49,12 +76,14 @@ func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
 	return fmt.Sprintf("%s/api/newapi/models.json", base), fmt.Sprintf("%s/api/newapi/vendors.json", base)
 }
 
+// upstreamEnvelope 上游 API 响应信封结构体
 type upstreamEnvelope[T any] struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Data    []T    `json:"data"`
 }
 
+// upstreamModel 上游模型数据结构体
 type upstreamModel struct {
 	Description string          `json:"description"`
 	Endpoints   json.RawMessage `json:"endpoints"`
@@ -66,6 +95,7 @@ type upstreamModel struct {
 	VendorName  string          `json:"vendor_name"`
 }
 
+// upstreamVendor 上游供应商数据结构体
 type upstreamVendor struct {
 	Description string `json:"description"`
 	Icon        string `json:"icon"`
@@ -73,22 +103,28 @@ type upstreamVendor struct {
 	Status      int    `json:"status"`
 }
 
+// ETag 和响应体缓存，用于条件请求优化
 var (
-	etagCache  = make(map[string]string)
-	bodyCache  = make(map[string][]byte)
-	cacheMutex sync.RWMutex
+	etagCache  = make(map[string]string)  // URL -> ETag 映射
+	bodyCache  = make(map[string][]byte)  // URL -> 响应体缓存
+	cacheMutex sync.RWMutex               // 缓存读写锁
 )
 
+// overwriteField 覆盖字段配置
 type overwriteField struct {
 	ModelName string   `json:"model_name"`
 	Fields    []string `json:"fields"`
 }
 
+// syncRequest 同步请求结构体
 type syncRequest struct {
 	Overwrite []overwriteField `json:"overwrite"`
 	Locale    string           `json:"locale"`
 }
 
+// newHTTPClient 创建优化的 HTTP 客户端
+//
+// 配置了连接池、超时和 GitHub.io 的 IPv4/IPv6 回退策略
 func newHTTPClient() *http.Client {
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 10)
 	dialer := &net.Dialer{Timeout: time.Duration(timeoutSec) * time.Second}
@@ -123,6 +159,7 @@ var (
 	httpClient     *http.Client
 )
 
+// getHTTPClient 获取单例 HTTP 客户端
 func getHTTPClient() *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = newHTTPClient()
@@ -130,6 +167,18 @@ func getHTTPClient() *http.Client {
 	return httpClient
 }
 
+// fetchJSON 从上游获取 JSON 数据
+//
+// 支持：
+// - ETag 条件请求（304 Not Modified）
+// - 自动重试与指数退避
+// - 响应体大小限制
+// - 信封格式和纯数组格式自动识别
+//
+// 参数：
+//   - ctx: 上下文
+//   - url: 请求 URL
+//   - out: 输出结构体
 func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T]) error {
 	var lastErr error
 	attempts := common.GetEnvOrDefault("SYNC_HTTP_RETRY", 3)
@@ -234,6 +283,9 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 	return lastErr
 }
 
+// ensureVendorID 确保供应商存在，不存在则创建
+//
+// 返回供应商 ID，使用本地缓存避免重复查询
 func ensureVendorID(vendorName string, vendorByName map[string]upstreamVendor, vendorIDCache map[string]int, createdVendors *int) int {
 	if vendorName == "" {
 		return 0
@@ -468,6 +520,7 @@ func SyncUpstreamModels(c *gin.Context) {
 	})
 }
 
+// containsField 检查字段列表中是否包含指定字段（忽略大小写）
 func containsField(fields []string, key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	for _, f := range fields {
@@ -478,6 +531,7 @@ func containsField(fields []string, key string) bool {
 	return false
 }
 
+// coalesce 返回第一个非空字符串
 func coalesce(a, b string) string {
 	if strings.TrimSpace(a) != "" {
 		return a
@@ -485,6 +539,7 @@ func coalesce(a, b string) string {
 	return b
 }
 
+// chooseStatus 选择状态值，优先使用主值，主值为 0 时使用备选值
 func chooseStatus(primary, fallback int) int {
 	if primary == 0 && fallback != 0 {
 		return fallback
@@ -495,7 +550,9 @@ func chooseStatus(primary, fallback int) int {
 	return 1
 }
 
-// SyncUpstreamPreview 预览上游与本地的差异（仅用于弹窗选择）
+// SyncUpstreamPreview 预览上游与本地的差异
+//
+// 返回缺失模型列表和冲突字段详情，用于同步前的确认弹窗
 func SyncUpstreamPreview(c *gin.Context) {
 	// 1) 拉取上游数据
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)

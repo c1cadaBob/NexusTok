@@ -1,3 +1,8 @@
+// auth - conductor_usage_test.go
+// Conductor 使用上下文传递测试
+// 验证 contextWithRequestedModelAlias 函数能够正确将
+// 请求模型别名和推理努力级别（reasoning effort）传递到上下文中，
+// 供下游计费和使用统计使用。
 package auth
 
 import (
@@ -8,6 +13,8 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
+// TestContextWithRequestedModelAliasIncludesReasoningEffort 验证
+// 上下文中正确包含请求模型别名和推理努力级别。
 func TestContextWithRequestedModelAliasIncludesReasoningEffort(t *testing.T) {
 	ctx := contextWithRequestedModelAlias(context.Background(), cliproxyexecutor.Options{
 		Metadata: map[string]any{

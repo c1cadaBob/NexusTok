@@ -1,7 +1,7 @@
-// Package xai implements thinking configuration for xAI Grok Responses API models.
-//
-// xAI models use the OpenAI Responses API compatible reasoning.effort format
-// with discrete levels.
+// 包 xai - apply.go
+// 该文件实现了 xAI Grok Responses API 模型的思考配置应用器。
+// xAI 模型使用 OpenAI Responses API 兼容的 reasoning.effort 格式，支持离散级别。
+// 通过嵌入 codex.Applier 复用 Codex 的实现逻辑。
 package xai
 
 import (

@@ -1,3 +1,7 @@
+// registry - model_registry_hook_test.go
+// 该文件测试模型注册表的钩子（Hook）机制。
+// 测试覆盖了注册/注销钩子的调用、钩子不阻塞注册操作、钩子 panic 不影响注册表等场景。
+
 package registry
 
 import (
@@ -7,6 +11,7 @@ import (
 	"time"
 )
 
+// newTestModelRegistry 创建用于测试的空模型注册表实例。
 func newTestModelRegistry() *ModelRegistry {
 	return &ModelRegistry{
 		models:           make(map[string]*ModelRegistration),
@@ -17,30 +22,36 @@ func newTestModelRegistry() *ModelRegistry {
 	}
 }
 
+// registeredCall 记录 OnModelsRegistered 钩子的调用参数。
 type registeredCall struct {
 	provider string
 	clientID string
 	models   []*ModelInfo
 }
 
+// unregisteredCall 记录 OnModelsUnregistered 钩子的调用参数。
 type unregisteredCall struct {
 	provider string
 	clientID string
 }
 
+// capturingHook 是一个捕获钩子调用参数的测试替身。
 type capturingHook struct {
 	registeredCh   chan registeredCall
 	unregisteredCh chan unregisteredCall
 }
 
+// OnModelsRegistered 将注册事件推送到 registeredCh 通道。
 func (h *capturingHook) OnModelsRegistered(ctx context.Context, provider, clientID string, models []*ModelInfo) {
 	h.registeredCh <- registeredCall{provider: provider, clientID: clientID, models: models}
 }
 
+// OnModelsUnregistered 将注销事件推送到 unregisteredCh 通道。
 func (h *capturingHook) OnModelsUnregistered(ctx context.Context, provider, clientID string) {
 	h.unregisteredCh <- unregisteredCall{provider: provider, clientID: clientID}
 }
 
+// TestModelRegistryHook_OnModelsRegisteredCalled 测试注册模型时 OnModelsRegistered 钩子被正确调用。
 func TestModelRegistryHook_OnModelsRegisteredCalled(t *testing.T) {
 	r := newTestModelRegistry()
 	hook := &capturingHook{
@@ -77,6 +88,7 @@ func TestModelRegistryHook_OnModelsRegisteredCalled(t *testing.T) {
 	}
 }
 
+// TestModelRegistryHook_OnModelsUnregisteredCalled 测试注销模型时 OnModelsUnregistered 钩子被正确调用。
 func TestModelRegistryHook_OnModelsUnregisteredCalled(t *testing.T) {
 	r := newTestModelRegistry()
 	hook := &capturingHook{
@@ -107,11 +119,13 @@ func TestModelRegistryHook_OnModelsUnregisteredCalled(t *testing.T) {
 	}
 }
 
+// blockingHook 是一个会阻塞的测试钩子，用于验证钩子不阻塞注册操作。
 type blockingHook struct {
 	started chan struct{}
 	unblock chan struct{}
 }
 
+// OnModelsRegistered 阻塞直到 unblock 通道被关闭，模拟慢钩子。
 func (h *blockingHook) OnModelsRegistered(ctx context.Context, provider, clientID string, models []*ModelInfo) {
 	select {
 	case <-h.started:
@@ -121,8 +135,10 @@ func (h *blockingHook) OnModelsRegistered(ctx context.Context, provider, clientI
 	<-h.unblock
 }
 
+// OnModelsUnregistered 空实现，满足接口要求。
 func (h *blockingHook) OnModelsUnregistered(ctx context.Context, provider, clientID string) {}
 
+// TestModelRegistryHook_DoesNotBlockRegisterClient 测试钩子执行不会阻塞 RegisterClient 操作。
 func TestModelRegistryHook_DoesNotBlockRegisterClient(t *testing.T) {
 	r := newTestModelRegistry()
 	hook := &blockingHook{
@@ -155,11 +171,13 @@ func TestModelRegistryHook_DoesNotBlockRegisterClient(t *testing.T) {
 	}
 }
 
+// panicHook 是一个会 panic 的测试钩子，用于验证钩子 panic 不影响注册表。
 type panicHook struct {
 	registeredCalled   chan struct{}
 	unregisteredCalled chan struct{}
 }
 
+// OnModelsRegistered 发送通知后触发 panic。
 func (h *panicHook) OnModelsRegistered(ctx context.Context, provider, clientID string, models []*ModelInfo) {
 	if h.registeredCalled != nil {
 		h.registeredCalled <- struct{}{}
@@ -167,6 +185,7 @@ func (h *panicHook) OnModelsRegistered(ctx context.Context, provider, clientID s
 	panic("boom")
 }
 
+// OnModelsUnregistered 发送通知后触发 panic。
 func (h *panicHook) OnModelsUnregistered(ctx context.Context, provider, clientID string) {
 	if h.unregisteredCalled != nil {
 		h.unregisteredCalled <- struct{}{}
@@ -174,6 +193,7 @@ func (h *panicHook) OnModelsUnregistered(ctx context.Context, provider, clientID
 	panic("boom")
 }
 
+// TestModelRegistryHook_PanicDoesNotAffectRegistry 测试钩子中的 panic 不会影响注册表的正常工作。
 func TestModelRegistryHook_PanicDoesNotAffectRegistry(t *testing.T) {
 	r := newTestModelRegistry()
 	hook := &panicHook{

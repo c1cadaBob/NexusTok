@@ -1,3 +1,5 @@
+// Package config - disable_image_generation_mode.go
+// 定义图像生成功能的三态配置模式，支持完全禁用、仅聊天端点禁用和完全启用三种状态。
 package config
 
 import (
@@ -9,17 +11,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DisableImageGenerationMode is a tri-state config value for disable-image-generation.
+// DisableImageGenerationMode 是 disable-image-generation 配置的三态值类型。
 //
-// It supports:
-//   - false: enabled
-//   - true: disabled everywhere (including /v1/images/* endpoints)
-//   - "chat": disabled for all non-images endpoints, but enabled for /v1/images/generations and /v1/images/edits
+// 支持以下值:
+//   - false: 启用图像生成（默认）
+//   - true: 完全禁用图像生成（包括 /v1/images/* 端点）
+//   - "chat": 仅对非图像端点禁用，但保留 /v1/images/generations 和 /v1/images/edits 端点
+//
+// DisableImageGenerationMode is a tri-state config value for disable-image-generation.
 type DisableImageGenerationMode int
 
 const (
+	// DisableImageGenerationOff 表示图像生成功能完全启用。
 	DisableImageGenerationOff DisableImageGenerationMode = iota
+	// DisableImageGenerationAll 表示图像生成功能完全禁用。
 	DisableImageGenerationAll
+	// DisableImageGenerationChat 表示仅在聊天端点禁用图像生成。
 	DisableImageGenerationChat
 )
 

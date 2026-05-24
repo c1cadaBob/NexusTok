@@ -1,5 +1,6 @@
-// Package registry provides model definitions and lookup helpers for various AI providers.
-// Static model metadata is loaded from the embedded models.json file and can be refreshed from network.
+// 包 registry - model_definitions.go
+// 该文件提供了各 AI 提供商的静态模型定义和查找辅助函数。
+// 静态模型元数据从嵌入的 models.json 文件加载，也可从网络刷新。
 package registry
 
 import (
@@ -7,13 +8,18 @@ import (
 )
 
 const (
-	codexBuiltinImageModelID      = "gpt-image-2"
-	xaiBuiltinImageModelID        = "grok-imagine-image"
+	// codexBuiltinImageModelID 是 Codex 内置图像模型的 ID。
+	codexBuiltinImageModelID = "gpt-image-2"
+	// xaiBuiltinImageModelID 是 xAI 内置图像模型的 ID。
+	xaiBuiltinImageModelID = "grok-imagine-image"
+	// xaiBuiltinImageQualityModelID 是 xAI 内置高质量图像模型的 ID。
 	xaiBuiltinImageQualityModelID = "grok-imagine-image-quality"
-	xaiBuiltinVideoModelID        = "grok-imagine-video"
+	// xaiBuiltinVideoModelID 是 xAI 内置视频模型的 ID。
+	xaiBuiltinVideoModelID = "grok-imagine-video"
 )
 
-// staticModelsJSON mirrors the top-level structure of models.json.
+// staticModelsJSON 映射 models.json 的顶层结构。
+// 每个字段对应一个提供商的模型列表。
 type staticModelsJSON struct {
 	Claude      []*ModelInfo `json:"claude"`
 	Gemini      []*ModelInfo `json:"gemini"`
@@ -29,79 +35,79 @@ type staticModelsJSON struct {
 	XAI         []*ModelInfo `json:"xai"`
 }
 
-// GetClaudeModels returns the standard Claude model definitions.
+// GetClaudeModels 返回标准 Claude 模型定义列表（深拷贝）。
 func GetClaudeModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Claude)
 }
 
-// GetGeminiModels returns the standard Gemini model definitions.
+// GetGeminiModels 返回标准 Gemini 模型定义列表（深拷贝）。
 func GetGeminiModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Gemini)
 }
 
-// GetGeminiVertexModels returns Gemini model definitions for Vertex AI.
+// GetGeminiVertexModels 返回 Vertex AI 的 Gemini 模型定义列表（深拷贝）。
 func GetGeminiVertexModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Vertex)
 }
 
-// GetGeminiCLIModels returns Gemini model definitions for the Gemini CLI.
+// GetGeminiCLIModels 返回 Gemini CLI 的模型定义列表（深拷贝）。
 func GetGeminiCLIModels() []*ModelInfo {
 	return cloneModelInfos(getModels().GeminiCLI)
 }
 
-// GetAIStudioModels returns model definitions for AI Studio.
+// GetAIStudioModels 返回 AI Studio 的模型定义列表（深拷贝）。
 func GetAIStudioModels() []*ModelInfo {
 	return cloneModelInfos(getModels().AIStudio)
 }
 
-// GetCodexFreeModels returns model definitions for the Codex free plan tier.
+// GetCodexFreeModels 返回 Codex 免费计划的模型定义列表（深拷贝，含内置模型）。
 func GetCodexFreeModels() []*ModelInfo {
 	return WithCodexBuiltins(cloneModelInfos(getModels().CodexFree))
 }
 
-// GetCodexTeamModels returns model definitions for the Codex team plan tier.
+// GetCodexTeamModels 返回 Codex 团队计划的模型定义列表（深拷贝，含内置模型）。
 func GetCodexTeamModels() []*ModelInfo {
 	return WithCodexBuiltins(cloneModelInfos(getModels().CodexTeam))
 }
 
-// GetCodexPlusModels returns model definitions for the Codex plus plan tier.
+// GetCodexPlusModels 返回 Codex Plus 计划的模型定义列表（深拷贝，含内置模型）。
 func GetCodexPlusModels() []*ModelInfo {
 	return WithCodexBuiltins(cloneModelInfos(getModels().CodexPlus))
 }
 
-// GetCodexProModels returns model definitions for the Codex pro plan tier.
+// GetCodexProModels 返回 Codex Pro 计划的模型定义列表（深拷贝，含内置模型）。
 func GetCodexProModels() []*ModelInfo {
 	return WithCodexBuiltins(cloneModelInfos(getModels().CodexPro))
 }
 
-// GetKimiModels returns the standard Kimi (Moonshot AI) model definitions.
+// GetKimiModels 返回 Kimi（Moonshot AI）模型定义列表（深拷贝）。
 func GetKimiModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Kimi)
 }
 
-// GetAntigravityModels returns the standard Antigravity model definitions.
+// GetAntigravityModels 返回 Antigravity 模型定义列表（深拷贝）。
 func GetAntigravityModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Antigravity)
 }
 
-// GetXAIModels returns the standard xAI Grok model definitions.
+// GetXAIModels 返回 xAI Grok 模型定义列表（深拷贝，含内置图像/视频模型）。
 func GetXAIModels() []*ModelInfo {
 	return WithXAIBuiltins(cloneModelInfos(getModels().XAI))
 }
 
-// WithCodexBuiltins injects hard-coded Codex-only model definitions that should
-// not depend on remote models.json updates. Built-ins replace any matching IDs
-// already present in the provided slice.
+// WithCodexBuiltins 向模型列表注入硬编码的 Codex 内置模型定义。
+// 内置模型不依赖远程 models.json 更新。已存在的匹配 ID 会被替换。
 func WithCodexBuiltins(models []*ModelInfo) []*ModelInfo {
 	return upsertModelInfos(models, codexBuiltinImageModelInfo())
 }
 
-// WithXAIBuiltins injects hard-coded xAI image/video model definitions that should
-// not depend on remote models.json updates.
+// WithXAIBuiltins 向模型列表注入硬编码的 xAI 图像/视频模型定义。
+// 内置模型不依赖远程 models.json 更新。
 func WithXAIBuiltins(models []*ModelInfo) []*ModelInfo {
 	return upsertModelInfos(models, xaiBuiltinImageModelInfo(), xaiBuiltinImageQualityModelInfo(), xaiBuiltinVideoModelInfo())
 }
 
+// codexBuiltinImageModelInfo 返回 Codex 内置图像模型 gpt-image-2 的 ModelInfo。
 func codexBuiltinImageModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          codexBuiltinImageModelID,
@@ -114,6 +120,7 @@ func codexBuiltinImageModelInfo() *ModelInfo {
 	}
 }
 
+// xaiBuiltinImageModelInfo 返回 xAI 内置图像模型 grok-imagine-image 的 ModelInfo。
 func xaiBuiltinImageModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinImageModelID,
@@ -127,6 +134,7 @@ func xaiBuiltinImageModelInfo() *ModelInfo {
 	}
 }
 
+// xaiBuiltinImageQualityModelInfo 返回 xAI 内置高质量图像模型 grok-imagine-image-quality 的 ModelInfo。
 func xaiBuiltinImageQualityModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinImageQualityModelID,
@@ -140,6 +148,7 @@ func xaiBuiltinImageQualityModelInfo() *ModelInfo {
 	}
 }
 
+// xaiBuiltinVideoModelInfo 返回 xAI 内置视频模型 grok-imagine-video 的 ModelInfo。
 func xaiBuiltinVideoModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinVideoModelID,
@@ -153,6 +162,8 @@ func xaiBuiltinVideoModelInfo() *ModelInfo {
 	}
 }
 
+// upsertModelInfos 将额外的模型定义插入到列表中，替换已存在的匹配 ID。
+// 返回合并后的新列表，不修改原始切片。
 func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 	if len(extras) == 0 {
 		return models
@@ -199,7 +210,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 	return filtered
 }
 
-// cloneModelInfos returns a shallow copy of the slice with each element deep-cloned.
+// cloneModelInfos 返回切片的浅拷贝，每个元素进行深拷贝。
 func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 	if len(models) == 0 {
 		return nil
@@ -211,19 +222,10 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 	return out
 }
 
-// GetStaticModelDefinitionsByChannel returns static model definitions for a given channel/provider.
-// It returns nil when the channel is unknown.
+// GetStaticModelDefinitionsByChannel 根据渠道/提供商名称返回静态模型定义。
+// 未知渠道返回 nil。
 //
-// Supported channels:
-//   - claude
-//   - gemini
-//   - vertex
-//   - gemini-cli
-//   - aistudio
-//   - codex
-//   - kimi
-//   - antigravity
-//   - xai
+// 支持的渠道：claude、gemini、vertex、gemini-cli、aistudio、codex、kimi、antigravity、xai
 func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	key := strings.ToLower(strings.TrimSpace(channel))
 	switch key {
@@ -250,8 +252,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	}
 }
 
-// LookupStaticModelInfo searches all static model definitions for a model by ID.
-// Returns nil if no matching model is found.
+// LookupStaticModelInfo 在所有静态模型定义中按 ID 搜索模型。
+// 未找到时返回 nil。
 func LookupStaticModelInfo(modelID string) *ModelInfo {
 	if modelID == "" {
 		return nil

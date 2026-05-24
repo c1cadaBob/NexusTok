@@ -1,3 +1,5 @@
+// Package tui - logs_tab.go
+// 实现日志查看标签页，显示来自钩子/API 源的实时日志行。
 package tui
 
 import (
@@ -9,6 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// logsTabModel 显示来自钩子/API 源的实时日志行。
+// 包含日志缓冲区、自动滚动控制和过滤功能。
+//
 // logsTabModel displays real-time log lines from hook/API source.
 type logsTabModel struct {
 	client     *Client

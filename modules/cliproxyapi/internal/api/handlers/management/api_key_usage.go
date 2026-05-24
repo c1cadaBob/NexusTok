@@ -1,3 +1,8 @@
+// management - api_key_usage.go
+// API Key 使用统计端点。
+// 该模块提供查询所有内存中 API Key 类型认证记录的使用统计数据，
+// 按提供者（provider）分组，按 "base_url|api_key" 键索引，
+// 包含成功/失败计数和最近请求的时间桶分布。
 package management
 
 import (
@@ -9,12 +14,16 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+// apiKeyUsageEntry 表示单个 API Key 的使用统计数据。
+// 包含累计的成功/失败次数和按时间桶分布的最近请求统计。
 type apiKeyUsageEntry struct {
-	Success        int64                          `json:"success"`
-	Failed         int64                          `json:"failed"`
-	RecentRequests []coreauth.RecentRequestBucket `json:"recent_requests"`
+	Success        int64                          `json:"success"`         // 累计成功请求数
+	Failed         int64                          `json:"failed"`          // 累计失败请求数
+	RecentRequests []coreauth.RecentRequestBucket `json:"recent_requests"` // 按时间桶分布的最近请求统计
 }
 
+// mergeRecentRequestBuckets 合并两个最近请求时间桶数组。
+// 逐桶累加成功和失败计数。当两个数组长度不同时，只合并公共部分。
 func mergeRecentRequestBuckets(dst, src []coreauth.RecentRequestBucket) []coreauth.RecentRequestBucket {
 	if len(dst) == 0 {
 		return src
@@ -40,8 +49,10 @@ func mergeRecentRequestBuckets(dst, src []coreauth.RecentRequestBucket) []coreau
 	return dst
 }
 
-// GetAPIKeyUsage returns recent request buckets for all in-memory api_key auths,
-// grouped by provider and keyed by "base_url|api_key".
+// GetAPIKeyUsage 返回所有内存中 API Key 类型认证记录的使用统计数据。
+// 响应按提供者名称分组，每个提供者内按 "base_url|api_key" 复合键索引。
+// 每个条目包含累计的成功/失败次数和按时间桶分布的最近请求统计。
+// 如果同一复合键有多条认证记录，会自动合并统计数据。
 func (h *Handler) GetAPIKeyUsage(c *gin.Context) {
 	if h == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "handler not initialized"})

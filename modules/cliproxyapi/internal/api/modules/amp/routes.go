@@ -1,3 +1,12 @@
+// amp - routes.go
+// Amp CLI 路由注册和中间件。
+// 该模块负责注册 Amp CLI 所需的所有路由，包括：
+//   - 管理路由（/api/*）：代理到 Amp 上游控制平面
+//   - 提供者别名路由（/api/provider/{provider}/*）：多提供者 API 兼容
+//   - 根级路由（/threads、/auth、/docs 等）：CLI 界面和认证流程
+//   - Gemini v1beta1 路径桥接：将非标准路径转换为标准 Gemini 处理器格式
+//
+// 安全中间件包括：CORS 禁用、localhost 限制、API Key 认证、客户端密钥注入。
 package amp
 
 import (
@@ -17,12 +26,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// clientAPIKeyContextKey is the context key used to pass the client API key
-// from gin.Context to the request context for SecretSource lookup.
+// clientAPIKeyContextKey 是用于在请求上下文中传递客户端 API Key 的上下文键。
+// 从 gin.Context["userApiKey"] 传递到 request.Context，供 SecretSource 查询使用。
 type clientAPIKeyContextKey struct{}
 
-// clientAPIKeyMiddleware injects the authenticated client API key from gin.Context["userApiKey"]
-// into the request context so that SecretSource can look it up for per-client upstream routing.
+// clientAPIKeyMiddleware 将认证后的客户端 API Key 从 gin.Context 注入到请求上下文中。
+// 这使得 SecretSource.Get(ctx) 可以读取客户端密钥，用于每个客户端的上游路由。
 func clientAPIKeyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract the client API key from gin context (set by AuthMiddleware)
@@ -37,8 +46,8 @@ func clientAPIKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// getClientAPIKeyFromContext retrieves the client API key from request context.
-// Returns empty string if not present.
+// getClientAPIKeyFromContext 从请求上下文中获取客户端 API Key。
+// 如果上下文中不存在，返回空字符串。
 func getClientAPIKeyFromContext(ctx context.Context) string {
 	if val := ctx.Value(clientAPIKeyContextKey{}); val != nil {
 		if keyStr, ok := val.(string); ok {
@@ -48,8 +57,9 @@ func getClientAPIKeyFromContext(ctx context.Context) string {
 	return ""
 }
 
-// localhostOnlyMiddleware returns a middleware that dynamically checks the module's
-// localhost restriction setting. This allows hot-reload of the restriction without restarting.
+// localhostOnlyMiddleware 返回一个动态检查 localhost 限制设置的中间件。
+// 支持热重载：运行时修改限制设置无需重启服务。
+// 使用 TCP 连接的实际 RemoteAddr 进行验证，防止通过 X-Forwarded-For 等头部伪造。
 func (m *AmpModule) localhostOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check current setting (hot-reloadable)
@@ -92,8 +102,8 @@ func (m *AmpModule) localhostOnlyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// noCORSMiddleware disables CORS for management routes to prevent browser-based attacks.
-// This overwrites any global CORS headers set by the server.
+// noCORSMiddleware 禁用管理路由的 CORS，防止基于浏览器的攻击。
+// 会覆盖服务器设置的任何全局 CORS 头部。OPTIONS 预检请求直接返回 403。
 func noCORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Remove CORS headers to prevent cross-origin access from browsers
@@ -112,8 +122,8 @@ func noCORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// managementAvailabilityMiddleware short-circuits management routes when the upstream
-// proxy is disabled, preventing noisy localhost warnings and accidental exposure.
+// managementAvailabilityMiddleware 在上游代理不可用时短路管理路由，
+// 避免产生噪音的 localhost 警告和意外暴露。
 func (m *AmpModule) managementAvailabilityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if m.getProxy() == nil {
@@ -127,7 +137,9 @@ func (m *AmpModule) managementAvailabilityMiddleware() gin.HandlerFunc {
 	}
 }
 
-// wrapManagementAuth skips auth for selected management paths while keeping authentication elsewhere.
+// wrapManagementAuth 包装认证中间件，对指定前缀的路径跳过认证。
+// 匹配前缀的路径（如 /threads、/auth、/docs、/settings）直接放行，
+// 其他路径继续执行认证逻辑。
 func wrapManagementAuth(auth gin.HandlerFunc, prefixes ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -141,10 +153,14 @@ func wrapManagementAuth(auth gin.HandlerFunc, prefixes ...string) gin.HandlerFun
 	}
 }
 
-// registerManagementRoutes registers Amp management proxy routes
-// These routes proxy through to the Amp control plane for OAuth, user management, etc.
-// Uses dynamic middleware and proxy getter for hot-reload support.
-// The auth middleware validates Authorization header against configured API keys.
+// registerManagementRoutes 注册 Amp 管理代理路由。
+// 这些路由将请求代理到 Amp 控制平面，用于 OAuth、用户管理等功能。
+// 路由组包括：
+//   - /api/*: 管理 API 路由（需要认证和 localhost 限制）
+//   - /threads、/auth、/docs 等: 根级路由（支持部分路径跳过认证）
+//   - /api/provider/google/v1beta1/*: Gemini v1beta1 路径桥接
+//
+// 使用动态中间件和代理获取器以支持热重载。
 func (m *AmpModule) registerManagementRoutes(engine *gin.Engine, baseHandler *handlers.BaseAPIHandler, auth gin.HandlerFunc) {
 	ampAPI := engine.Group("/api")
 
@@ -257,12 +273,15 @@ func (m *AmpModule) registerManagementRoutes(engine *gin.Engine, baseHandler *ha
 	})
 }
 
-// registerProviderAliases registers /api/provider/{provider}/... routes
-// These allow Amp CLI to route requests like:
+// registerProviderAliases 注册 /api/provider/{provider}/... 路由。
+// 这些路由允许 Amp CLI 按提供者名称路由请求，支持以下路径格式：
+//   - /api/provider/openai/v1/chat/completions
+//   - /api/provider/anthropic/v1/messages
+//   - /api/provider/google/v1beta/models
 //
-//	/api/provider/openai/v1/chat/completions
-//	/api/provider/anthropic/v1/messages
-//	/api/provider/google/v1beta/models
+// 每个路由都包含回退处理逻辑：当本地没有可用的提供者时，
+// 自动转发到 Amp 上游代理（ampcode.com）。
+// 同时支持模型映射，将不可用的模型重定向到替代模型。
 func (m *AmpModule) registerProviderAliases(engine *gin.Engine, baseHandler *handlers.BaseAPIHandler, auth gin.HandlerFunc) {
 	// Create handler instances for different providers
 	openaiHandlers := openai.NewOpenAIAPIHandler(baseHandler)

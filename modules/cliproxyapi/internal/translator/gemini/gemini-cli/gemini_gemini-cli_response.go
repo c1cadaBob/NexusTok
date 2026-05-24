@@ -1,7 +1,8 @@
+// gemini/gemini-cli - gemini_gemini-cli_response.go
 // Package gemini_cli provides response translation functionality for Gemini API to Gemini CLI API.
-// This package handles the conversion of Gemini API responses into Gemini CLI-compatible
-// JSON format, transforming streaming events and non-streaming responses into the format
-// expected by Gemini CLI API clients.
+// 本文件提供 Gemini API 响应到 Gemini CLI API 格式的转换功能。
+// 将 Gemini 流式/非流式响应包装为 Gemini CLI 期望的单行 JSON 格式，
+// 即在原始响应外层包裹 {"response": {...}} 结构。
 package geminiCLI
 
 import (
@@ -12,6 +13,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dataTag 是 SSE 数据行的前缀标识，用于从原始响应中提取 JSON 数据。
 var dataTag = []byte("data:")
 
 // ConvertGeminiResponseToGeminiCLI converts Gemini streaming response format to Gemini CLI single-line JSON format.
@@ -55,6 +57,7 @@ func ConvertGeminiResponseToGeminiCLINonStream(_ context.Context, _ string, orig
 	return rawJSON
 }
 
+// GeminiCLITokenCount 生成 Gemini 格式的 Token 计数 JSON 响应。
 func GeminiCLITokenCount(ctx context.Context, count int64) []byte {
 	return translatorcommon.GeminiTokenCountJSON(count)
 }

@@ -1,8 +1,8 @@
-// Package openai implements thinking configuration for OpenAI/Codex models.
+// openai - apply.go
+// 本文件实现了 OpenAI/Codex 模型的 thinking 配置应用逻辑。
 //
-// OpenAI models use the reasoning_effort format with discrete levels
-// (low/medium/high). Some models support xhigh and none levels.
-// See: _bmad-output/planning-artifacts/architecture.md#Epic-8
+// OpenAI 模型使用 reasoning_effort 格式，支持离散级别（low/medium/high）。
+// 部分模型支持 xhigh 和 none 级别。
 package openai
 
 import (
@@ -12,17 +12,17 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Applier implements thinking.ProviderApplier for OpenAI models.
+// Applier 实现了 OpenAI 模型的 thinking.ProviderApplier 接口。
 //
-// OpenAI-specific behavior:
-//   - Output format: reasoning_effort (string: low/medium/high/xhigh)
-//   - Level-only mode: no numeric budget support
-//   - Some models support ZeroAllowed (gpt-5.1, gpt-5.2)
+// OpenAI 特有行为：
+//   - 输出格式：reasoning_effort（字符串：low/medium/high/xhigh）
+//   - 仅支持级别模式：不支持数字预算
+//   - 部分模型支持 ZeroAllowed（gpt-5.1、gpt-5.2）
 type Applier struct{}
 
 var _ thinking.ProviderApplier = (*Applier)(nil)
 
-// NewApplier creates a new OpenAI thinking applier.
+// NewApplier 创建一个新的 OpenAI thinking 应用器。
 func NewApplier() *Applier {
 	return &Applier{}
 }

@@ -1,3 +1,16 @@
+// amp - response_rewriter_test.go
+// 响应重写器（ResponseRewriter）的单元测试。
+// 测试以下功能：
+// - 非流式响应中的模型名重写（顶层、response.model、response.created）
+// - 无模型字段时的无操作处理
+// - 空原始模型名时的跳过处理
+// - 流式 SSE 响应中的模型名重写
+// - 多事件块和 message.model 的重写
+// - 思维内容块的保留和签名注入
+// - 请求体清理：移除无效签名的 thinking 块、剥离 tool_use 块的签名
+// - 工具名称规范化：bash->Bash、read->Read 等大小写修正
+// - 流式和非流式工具名称规范化
+// - 已正确大小写的工具名和未知工具名的无操作处理
 package amp
 
 import (
@@ -5,6 +18,7 @@ import (
 	"testing"
 )
 
+// TestRewriteModelInResponse_TopLevel 测试顶层 model 字段的重写
 func TestRewriteModelInResponse_TopLevel(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -17,6 +31,7 @@ func TestRewriteModelInResponse_TopLevel(t *testing.T) {
 	}
 }
 
+// TestRewriteModelInResponse_ResponseModel 测试 response.completed 事件中的 model 重写
 func TestRewriteModelInResponse_ResponseModel(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -29,6 +44,7 @@ func TestRewriteModelInResponse_ResponseModel(t *testing.T) {
 	}
 }
 
+// TestRewriteModelInResponse_ResponseCreated 测试 response.created 事件中的 model 重写
 func TestRewriteModelInResponse_ResponseCreated(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -41,6 +57,7 @@ func TestRewriteModelInResponse_ResponseCreated(t *testing.T) {
 	}
 }
 
+// TestRewriteModelInResponse_NoModelField 测试无 model 字段时的无操作处理
 func TestRewriteModelInResponse_NoModelField(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -52,6 +69,7 @@ func TestRewriteModelInResponse_NoModelField(t *testing.T) {
 	}
 }
 
+// TestRewriteModelInResponse_EmptyOriginalModel 测试空原始模型名时的跳过处理
 func TestRewriteModelInResponse_EmptyOriginalModel(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: ""}
 
@@ -63,6 +81,7 @@ func TestRewriteModelInResponse_EmptyOriginalModel(t *testing.T) {
 	}
 }
 
+// TestRewriteStreamChunk_SSEWithResponseModel 测试 SSE 流式响应中的 model 重写
 func TestRewriteStreamChunk_SSEWithResponseModel(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -75,6 +94,7 @@ func TestRewriteStreamChunk_SSEWithResponseModel(t *testing.T) {
 	}
 }
 
+// TestRewriteStreamChunk_MultipleEvents 测试多事件块中的 model 重写
 func TestRewriteStreamChunk_MultipleEvents(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "gpt-5.2-codex"}
 
@@ -89,6 +109,7 @@ func TestRewriteStreamChunk_MultipleEvents(t *testing.T) {
 	}
 }
 
+// TestRewriteStreamChunk_MessageModel 测试 message.model 字段的重写
 func TestRewriteStreamChunk_MessageModel(t *testing.T) {
 	rw := &ResponseRewriter{originalModel: "claude-opus-4.5"}
 
@@ -101,6 +122,9 @@ func TestRewriteStreamChunk_MessageModel(t *testing.T) {
 	}
 }
 
+// TestRewriteStreamChunk_PreservesThinkingWithSignatureInjection 测试流式模式下：
+// - 思维内容块被保留（不被抑制），避免破坏 SSE 索引对齐和 TUI 渲染
+// - 思维和 tool_use 块中注入签名字段
 func TestRewriteStreamChunk_PreservesThinkingWithSignatureInjection(t *testing.T) {
 	rw := &ResponseRewriter{}
 
@@ -127,6 +151,11 @@ func TestRewriteStreamChunk_PreservesThinkingWithSignatureInjection(t *testing.T
 	}
 }
 
+// TestSanitizeAmpRequestBody_RemovesWhitespaceAndNonStringSignatures 测试请求体清理：
+// - 仅含空白的签名的 thinking 块被移除
+// - 非字符串签名（数字）的 thinking 块被移除
+// - 有效签名的 thinking 块被保留
+// - 非 thinking 内容被保留
 func TestSanitizeAmpRequestBody_RemovesWhitespaceAndNonStringSignatures(t *testing.T) {
 	input := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"drop-whitespace","signature":"   "},{"type":"thinking","thinking":"drop-number","signature":123},{"type":"thinking","thinking":"keep-valid","signature":"valid-signature"},{"type":"text","text":"keep-text"}]}]}`)
 	result := SanitizeAmpRequestBody(input)
@@ -145,6 +174,7 @@ func TestSanitizeAmpRequestBody_RemovesWhitespaceAndNonStringSignatures(t *testi
 	}
 }
 
+// TestSanitizeAmpRequestBody_StripsSignatureFromToolUseBlocks 测试从 tool_use 块中剥离签名字段
 func TestSanitizeAmpRequestBody_StripsSignatureFromToolUseBlocks(t *testing.T) {
 	input := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"thought","signature":"valid-sig"},{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"cmd":"ls"},"signature":""}]}]}`)
 	result := SanitizeAmpRequestBody(input)
@@ -160,6 +190,8 @@ func TestSanitizeAmpRequestBody_StripsSignatureFromToolUseBlocks(t *testing.T) {
 	}
 }
 
+// TestSanitizeAmpRequestBody_MixedInvalidThinkingAndToolUseSignature 测试混合场景：
+// 无效 thinking 块被移除，tool_use 块的签名被剥离
 func TestSanitizeAmpRequestBody_MixedInvalidThinkingAndToolUseSignature(t *testing.T) {
 	input := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"drop-me","signature":""},{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"cmd":"ls"},"signature":""}]}]}`)
 	result := SanitizeAmpRequestBody(input)
@@ -175,7 +207,9 @@ func TestSanitizeAmpRequestBody_MixedInvalidThinkingAndToolUseSignature(t *testi
 	}
 }
 
-func TestNormalizeAmpToolNames_NonStreaming(t *testing.T) {
+// TestNormalizeAmpToolNames_NonStream 测试非流式模式下的工具名称规范化：
+// bash->Bash、read->Read
+func TestNormalizeAmpToolNames_NonStream(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_use","id":"toolu_01","name":"bash","input":{"cmd":"ls"}},{"type":"tool_use","id":"toolu_02","name":"read","input":{"path":"/tmp"}},{"type":"text","text":"hello"}]}`)
 	result := normalizeAmpToolNames(input)
 
@@ -190,6 +224,7 @@ func TestNormalizeAmpToolNames_NonStreaming(t *testing.T) {
 	}
 }
 
+// TestNormalizeAmpToolNames_Streaming 测试流式模式下的工具名称规范化
 func TestNormalizeAmpToolNames_Streaming(t *testing.T) {
 	input := []byte(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","name":"grep","id":"toolu_01","input":{}}}`)
 	result := normalizeAmpToolNames(input)
@@ -199,6 +234,7 @@ func TestNormalizeAmpToolNames_Streaming(t *testing.T) {
 	}
 }
 
+// TestNormalizeAmpToolNames_AlreadyCorrect 测试已正确大小写的工具名不做修改
 func TestNormalizeAmpToolNames_AlreadyCorrect(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"cmd":"ls"}}]}`)
 	result := normalizeAmpToolNames(input)
@@ -208,6 +244,7 @@ func TestNormalizeAmpToolNames_AlreadyCorrect(t *testing.T) {
 	}
 }
 
+// TestNormalizeAmpToolNames_GlobPreserved 测试 glob 工具名保持小写不修改
 func TestNormalizeAmpToolNames_GlobPreserved(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_use","id":"toolu_01","name":"glob","input":{"pattern":"*.go"}}]}`)
 	result := normalizeAmpToolNames(input)
@@ -217,6 +254,7 @@ func TestNormalizeAmpToolNames_GlobPreserved(t *testing.T) {
 	}
 }
 
+// TestNormalizeAmpToolNames_UnknownToolUntouched 测试未知工具名不做修改
 func TestNormalizeAmpToolNames_UnknownToolUntouched(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_use","id":"toolu_01","name":"edit_file","input":{"path":"/tmp/x"}}]}`)
 	result := normalizeAmpToolNames(input)
@@ -226,6 +264,7 @@ func TestNormalizeAmpToolNames_UnknownToolUntouched(t *testing.T) {
 	}
 }
 
+// contains 是字节切片包含检查的辅助函数
 func contains(data, substr []byte) bool {
 	for i := 0; i <= len(data)-len(substr); i++ {
 		if string(data[i:i+len(substr)]) == string(substr) {

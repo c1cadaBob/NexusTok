@@ -1,3 +1,11 @@
+// aws - relay-aws.go
+// AWS Bedrock 渠道的核心中继处理逻辑实现。
+// 本文件包含与 AWS Bedrock API 交互的底层函数，包括:
+//   - AWS SDK 客户端的创建和初始化（支持 API Key 和 AKSK 两种认证方式）
+//   - 请求的构建和发送（通过 InvokeModel / InvokeModelWithResponseStream API）
+//   - 响应的解析和转换（包括 Claude 模型和 Nova 模型的非流式/流式响应处理）
+//   - 跨区域推理支持（Cross-Region Inference）
+//   - 请求透传（Pass-Through）功能支持
 package aws
 
 import (
@@ -29,7 +37,14 @@ import (
 	"github.com/aws/smithy-go/auth/bearer"
 )
 
-// getAwsErrorStatusCode extracts HTTP status code from AWS SDK error
+// getAwsErrorStatusCode 从 AWS SDK 错误中提取 HTTP 状态码。
+// AWS SDK 的错误可能实现了 HTTPStatusCode() int 接口，通过类型断言尝试提取。
+// 如果无法确定状态码，默认返回 500 (Internal Server Error)。
+//
+// 参数:
+//   - err: AWS SDK 返回的错误
+//
+// 返回: HTTP 状态码整数值。
 func getAwsErrorStatusCode(err error) int {
 	// Check for HTTP response error which contains status code
 	var httpErr interface{ HTTPStatusCode() int }
@@ -40,6 +55,12 @@ func getAwsErrorStatusCode(err error) int {
 	return http.StatusInternalServerError
 }
 
+// newAwsInvokeContext 创建 AWS Bedrock API 调用的上下文。
+// 如果全局配置的 RelayTimeout 大于 0，则创建带超时的上下文；
+// 否则返回无超时的 Background 上下文。
+// 超时时间由 common.RelayTimeout 配置（单位: 秒）。
+//
+// 返回: 带超时的上下文和取消函数。
 func newAwsInvokeContext() (context.Context, context.CancelFunc) {
 	if common.RelayTimeout <= 0 {
 		return context.Background(), func() {}
@@ -47,6 +68,21 @@ func newAwsInvokeContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
 }
 
+// newAwsClient 创建并初始化 AWS Bedrock Runtime SDK 客户端。
+// 根据 info.ApiKey 的格式决定认证方式:
+//   - 格式 "<api-key>|<region>" (2 段): 使用 Bearer Token 认证（API Key 模式）。
+//     api-key 作为 Bearer Token，region 作为 AWS 区域。
+//   - 格式 "<access-key>|<secret-key>|<region>" (3 段): 使用 AWS AKSK 认证（AKSK 模式）。
+//     access-key 和 secret-key 作为 AWS 静态凭证，region 作为 AWS 区域。
+//   - 其他格式: 返回 "invalid aws secret key" 错误。
+//
+// 如果渠道配置了代理（Proxy），则通过代理创建 HTTP 客户端；否则使用默认 HTTP 客户端。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息，包含 API Key 和渠道配置
+//
+// 返回: AWS Bedrock Runtime 客户端和错误信息。
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	var (
 		httpClient *http.Client
@@ -88,6 +124,25 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 	return client, nil
 }
 
+// doAwsClientRequest 通过 AWS SDK 客户端执行 Bedrock API 请求（AKSK 模式）。
+// 处理流程:
+//   1. 创建 AWS SDK 客户端（通过 newAwsClient）
+//   2. 获取对应的 AWS 模型 ID
+//   3. 检查是否支持跨区域推理（Cross-Region Inference），如支持则转换模型 ID
+//   4. 设置请求头（包括 header override）
+//   5. 根据模型类型构建不同的请求体:
+//   - Nova 模型: 解码请求体为 NovaRequest 格式，构造 InvokeModelInput
+//   - Claude 模型: 通过 formatRequest 格式化请求体，然后根据是否流式请求:
+//   - 流式请求: 构造 InvokeModelWithResponseStreamInput
+//   - 非流式请求: 构造 InvokeModelInput
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息
+//   - a: AWS 适配器实例，用于保存客户端和请求状态
+//   - requestBody: 原始请求体的 io.Reader
+//
+// 返回: nil 和 nil（请求体已保存在适配器中，由 DoResponse 处理实际调用）或错误信息。
 func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor, requestBody io.Reader) (any, error) {
 	awsCli, err := newAwsClient(c, info)
 	if err != nil {
@@ -170,7 +225,19 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 	}
 }
 
-// buildAwsRequestBody prepares the payload for AWS requests, applying passthrough rules when enabled.
+// buildAwsRequestBody 构建 AWS Bedrock 请求的 JSON 序列化负载。
+// 支持两种模式:
+//   - 透传模式（Pass-Through）: 当全局设置 PassThroughRequestEnabled 或渠道设置
+//     PassThroughBodyEnabled 为 true 时，直接从请求体存储中获取原始 JSON，
+//     删除 "model" 和 "stream" 字段后透传给上游。这允许客户端直接控制请求参数。
+//   - 标准模式: 将格式化后的 awsClaudeReq 结构体序列化为 JSON。
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息
+//   - awsClaudeReq: 格式化后的请求体（标准模式使用）
+//
+// 返回: JSON 序列化后的字节数组和错误信息。
 func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeReq any) ([]byte, error) {
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
@@ -192,6 +259,14 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 	return common.Marshal(awsClaudeReq)
 }
 
+// getAwsRegionPrefix 从 AWS 区域 ID 中提取区域前缀。
+// 例如 "us-east-1" 提取出 "us"，"ap-northeast-1" 提取出 "ap"。
+// 区域前缀用于判断是否支持跨区域推理以及选择跨区域模型前缀。
+//
+// 参数:
+//   - awsRegionId: AWS 区域 ID（如 "us-east-1"）
+//
+// 返回: 区域前缀字符串。
 func getAwsRegionPrefix(awsRegionId string) string {
 	parts := strings.Split(awsRegionId, "-")
 	regionPrefix := ""
@@ -201,11 +276,31 @@ func getAwsRegionPrefix(awsRegionId string) string {
 	return regionPrefix
 }
 
+// awsModelCanCrossRegion 判断指定的 AWS 模型在给定区域前缀下是否支持跨区域推理。
+// 通过查询 awsModelCanCrossRegionMap 映射表来确定。
+// 跨区域推理允许在一个区域中调用另一个区域中可用的模型。
+//
+// 参数:
+//   - awsModelId: AWS Bedrock 模型 ID
+//   - awsRegionPrefix: AWS 区域前缀（如 "us"、"ap"）
+//
+// 返回: 是否支持跨区域推理。
 func awsModelCanCrossRegion(awsModelId, awsRegionPrefix string) bool {
 	regionSet, exists := awsModelCanCrossRegionMap[awsModelId]
 	return exists && regionSet[awsRegionPrefix]
 }
 
+// awsModelCrossRegion 为支持跨区域推理的模型添加区域前缀。
+// 通过查询 awsRegionCrossModelPrefixMap 映射表获取对应区域前缀的模型前缀，
+// 然后将前缀和原始模型 ID 用 "." 连接，形成跨区域模型 ID。
+// 例如: 区域前缀 "us" + 模型 ID "anthropic.claude-3-sonnet-20240229-v1:0"
+//   - 变为 "us.anthropic.claude-3-sonnet-20240229-v1:0"
+//
+// 参数:
+//   - awsModelId: 原始 AWS Bedrock 模型 ID
+//   - awsRegionPrefix: AWS 区域前缀
+//
+// 返回: 跨区域模型 ID，如果找不到对应前缀则返回原始模型 ID。
 func awsModelCrossRegion(awsModelId, awsRegionPrefix string) string {
 	modelPrefix, find := awsRegionCrossModelPrefixMap[awsRegionPrefix]
 	if !find {
@@ -214,6 +309,14 @@ func awsModelCrossRegion(awsModelId, awsRegionPrefix string) string {
 	return modelPrefix + "." + awsModelId
 }
 
+// getAwsModelID 将请求中的模型名称映射为 AWS Bedrock 的模型 ID。
+// 通过查询 awsModelIDMap 映射表进行转换。
+// 如果映射表中不存在对应模型名称，则直接返回原始模型名称（允许用户直接传入 AWS 模型 ID）。
+//
+// 参数:
+//   - requestModel: 请求中的模型名称（如 "claude-3-sonnet"）
+//
+// 返回: AWS Bedrock 模型 ID（如 "anthropic.claude-3-sonnet-20240229-v1:0"）。
 func getAwsModelID(requestModel string) string {
 	if awsModelIDName, ok := awsModelIDMap[requestModel]; ok {
 		return awsModelIDName
@@ -221,6 +324,21 @@ func getAwsModelID(requestModel string) string {
 	return requestModel
 }
 
+// awsHandler 处理 AWS Bedrock Claude 模型的非流式（同步）响应。
+// 处理流程:
+//   1. 创建带超时的上下文
+//   2. 通过 AWS SDK 的 InvokeModel API 发起同步调用
+//   3. 如果调用失败，提取 HTTP 状态码并返回 OpenAI 格式的错误
+//   4. 初始化 Claude 响应信息结构体（包含响应 ID、创建时间、模型名称等）
+//   5. 将上游的 Content-Type 头复制到客户端响应头
+//   6. 委托 claude.HandleClaudeResponseData 解析响应体并写入客户端
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息
+//   - a: AWS 适配器实例，包含已构建的请求体（AwsReq）
+//
+// 返回: NexusTok 错误（如有）和 Token 用量信息。
 func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NexusTokError, *dto.Usage) {
 
 	ctx, cancel := newAwsInvokeContext()
@@ -252,6 +370,25 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	return nil, claudeInfo.Usage
 }
 
+// awsStreamHandler 处理 AWS Bedrock Claude 模型的流式（SSE）响应。
+// 处理流程:
+//   1. 创建带超时的上下文
+//   2. 通过 AWS SDK 的 InvokeModelWithResponseStream API 发起流式调用
+//   3. 如果调用失败，提取 HTTP 状态码并返回 OpenAI 格式的错误
+//   4. 获取响应流并确保在函数返回时关闭
+//   5. 初始化 Claude 响应信息结构体
+//   6. 遍历流中的事件:
+//   - ResponseStreamMemberChunk: 收到数据块，记录首次响应时间并处理响应数据
+//   - UnknownUnionMember: 未知事件类型，返回错误
+//   - 其他: 未知或空事件类型，返回错误
+//   7. 流结束后调用 claude.HandleStreamFinalResponse 发送最终响应
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息
+//   - a: AWS 适配器实例，包含已构建的请求体（AwsReq）
+//
+// 返回: NexusTok 错误（如有）和 Token 用量信息。
 func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NexusTokError, *dto.Usage) {
 	ctx, cancel := newAwsInvokeContext()
 	defer cancel()
@@ -293,7 +430,23 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	return nil, claudeInfo.Usage
 }
 
-// Nova模型处理函数
+// handleNovaRequest 处理 Amazon Nova 模型的非流式请求。
+// 处理流程:
+//   1. 创建带超时的上下文
+//   2. 通过 AWS SDK 的 InvokeModel API 发起同步调用
+//   3. 如果调用失败，提取 HTTP 状态码并返回 OpenAI 格式的错误
+//   4. 解析 Nova 模型返回的 JSON 响应体，提取:
+//   - output.message.content[].text: 生成的文本内容
+//   - usage: Token 使用量（inputTokens、outputTokens、totalTokens）
+//   5. 将 Nova 格式的响应转换为 OpenAI 兼容的格式（OpenAITextResponse）
+//   6. 通过 Gin 的 JSON 方法将响应写入客户端
+//
+// 参数:
+//   - c: Gin 上下文
+//   - info: 中继请求的元数据信息
+//   - a: AWS 适配器实例，包含已构建的请求体（AwsReq）
+//
+// 返回: NexusTok 错误（如有）和 Token 用量信息。
 func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NexusTokError, *dto.Usage) {
 
 	ctx, cancel := newAwsInvokeContext()

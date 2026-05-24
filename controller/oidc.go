@@ -1,3 +1,12 @@
+// Package controller - oidc.go
+// 该文件实现了 OpenID Connect (OIDC) 登录和绑定的 API 控制器
+//
+// OIDC 是基于 OAuth 2.0 的身份认证协议
+// 支持标准的 OIDC Discovery 和 UserInfo 端点
+//
+// 主要 API：
+// - OidcAuth：OIDC OAuth 回调处理（登录/注册）
+// - OidcBind：绑定 OIDC 账户到现有用户
 package controller
 
 import (
@@ -18,23 +27,37 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// OidcResponse OIDC 令牌响应结构体
 type OidcResponse struct {
-	AccessToken  string `json:"access_token"`
-	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-	Scope        string `json:"scope"`
+	AccessToken  string `json:"access_token"`  // 访问令牌
+	IDToken      string `json:"id_token"`      // ID 令牌
+	RefreshToken string `json:"refresh_token"` // 刷新令牌
+	TokenType    string `json:"token_type"`    // 令牌类型
+	ExpiresIn    int    `json:"expires_in"`    // 过期时间（秒）
+	Scope        string `json:"scope"`         // 授权范围
 }
 
+// OidcUser OIDC 用户信息结构体
 type OidcUser struct {
-	OpenID            string `json:"sub"`
-	Email             string `json:"email"`
-	Name              string `json:"name"`
-	PreferredUsername string `json:"preferred_username"`
-	Picture           string `json:"picture"`
+	OpenID            string `json:"sub"`                // 用户唯一标识
+	Email             string `json:"email"`              // 邮箱地址
+	Name              string `json:"name"`               // 显示名称
+	PreferredUsername string `json:"preferred_username"` // 首选用户名
+	Picture           string `json:"picture"`            // 头像 URL
 }
 
+// getOidcUserInfoByCode 通过授权码获取 OIDC 用户信息
+//
+// 流程：
+// 1. 使用授权码交换访问令牌
+// 2. 使用访问令牌获取 UserInfo 端点的用户信息
+//
+// 参数：
+//   - code: OIDC OAuth 授权码
+//
+// 返回值：
+//   - *OidcUser: OIDC 用户信息
+//   - err: 错误信息
 func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 	if code == "" {
 		return nil, errors.New("无效的参数")
@@ -101,6 +124,15 @@ func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 	return &oidcUser, nil
 }
 
+// OidcAuth 处理 OIDC OAuth 回调
+//
+// 根据会话状态判断是登录还是绑定操作：
+// - 如果会话中有用户名信息，执行绑定操作
+// - 否则执行登录/注册操作
+//
+// 查询参数：
+//   - code: OAuth 授权码
+//   - state: 状态参数（用于 CSRF 防护）
 func OidcAuth(c *gin.Context) {
 	session := sessions.Default(c)
 	state := c.Query("state")
@@ -181,6 +213,9 @@ func OidcAuth(c *gin.Context) {
 	setupLogin(&user, c)
 }
 
+// OidcBind 将 OIDC 账户绑定到当前登录用户
+//
+// 如果该 OIDC 账户已被其他用户绑定，返回错误
 func OidcBind(c *gin.Context) {
 	if !system_setting.GetOIDCSettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{

@@ -1,3 +1,13 @@
+// Package model - usedata.go
+// 该文件定义了使用数据（QuotaData）数据模型及相关操作
+//
+// 主要结构体：
+// - QuotaData：配额使用数据（柱状图数据）
+//
+// 核心功能：
+// - 使用数据的记录和查询
+// - 按用户、模型、时间范围统计使用量
+// - 支持数据导出和排行榜功能
 package model
 
 import (
@@ -9,18 +19,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// QuotaData 柱状图数据
+// QuotaData 配额使用数据（柱状图数据）
+// 用于统计用户的 API 使用量，支持按用户、模型、时间维度聚合
 type QuotaData struct {
-	Id        int    `json:"id"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
-	TokenUsed int    `json:"token_used" gorm:"default:0"`
-	Count     int    `json:"count" gorm:"default:0"`
-	Quota     int    `json:"quota" gorm:"default:0"`
+	Id        int    `json:"id"`                                           // 数据 ID
+	UserID    int    `json:"user_id" gorm:"index"`                        // 用户 ID
+	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"` // 用户名
+	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"` // 模型名称
+	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"` // 创建时间
+	TokenUsed int    `json:"token_used" gorm:"default:0"`                 // 使用的 Token 数量
+	Count     int    `json:"count" gorm:"default:0"`                      // 请求次数
+	Quota     int    `json:"quota" gorm:"default:0"`                      // 使用的配额
 }
 
+// UpdateQuotaData 定时更新使用数据（后台协程）
+// 根据 DataExportInterval 配置定期将内存缓存的使用数据写入数据库
 func UpdateQuotaData() {
 	for {
 		if common.DataExportEnabled {
@@ -31,9 +44,23 @@ func UpdateQuotaData() {
 	}
 }
 
+// CacheQuotaData 内存缓存的使用数据
+// 用于批量写入数据库，减少数据库 IO
 var CacheQuotaData = make(map[string]*QuotaData)
+
+// CacheQuotaDataLock 使用数据缓存锁
 var CacheQuotaDataLock = sync.Mutex{}
 
+// logQuotaDataCache 将使用数据记录到内存缓存
+// 如果缓存中已存在相同键的数据，则累加 TokenUsed、Count、Quota
+//
+// 参数：
+//   - userId: 用户 ID
+//   - username: 用户名
+//   - modelName: 模型名称
+//   - quota: 使用的配额
+//   - createdAt: 创建时间
+//   - tokenUsed: 使用的 Token 数量
 func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int) {
 	key := fmt.Sprintf("%d-%s-%s-%d", userId, username, modelName, createdAt)
 	quotaData, ok := CacheQuotaData[key]

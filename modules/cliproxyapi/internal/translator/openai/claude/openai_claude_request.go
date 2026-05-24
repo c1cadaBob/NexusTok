@@ -1,8 +1,10 @@
+// openai/claude - openai_claude_request.go
 // Package claude provides request translation functionality for Anthropic to OpenAI API.
-// It handles parsing and transforming Anthropic API requests into OpenAI Chat Completions API format,
-// extracting model information, system instructions, message contents, and tool declarations.
-// The package performs JSON data transformation to ensure compatibility
-// between Anthropic API format and OpenAI API's expected format.
+// 本文件提供 Claude/Anthropic API 请求到 OpenAI Chat Completions API 格式的转换功能。
+// 负责解析 Claude API 请求并将其转换为 OpenAI 期望的格式，
+// 包括：模型名称映射、系统消息转换、消息内容处理（文本/图片/thinking/tool_use/tool_result）、
+// 工具声明转换（input_schema -> parameters）、工具选择映射、
+// 思考配置到 reasoning_effort 的映射等。
 package claude
 
 import (
@@ -329,6 +331,8 @@ func ConvertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	return out
 }
 
+// convertClaudeContentPart 将 Claude 内容部分转换为 OpenAI 格式。
+// 支持 text 和 image 类型的转换，返回转换后的 JSON 字符串和是否成功。
 func convertClaudeContentPart(part gjson.Result) (string, bool) {
 	partType := part.Get("type").String()
 
@@ -380,6 +384,9 @@ func convertClaudeContentPart(part gjson.Result) (string, bool) {
 	}
 }
 
+// convertClaudeToolResultContent 将 Claude 工具结果内容转换为 OpenAI 格式。
+// 支持字符串、数组（包含文本和图片）和对象类型的转换。
+// 返回转换后的内容字符串和是否为原始 JSON（true 表示需要 SetRawBytes）。
 func convertClaudeToolResultContent(content gjson.Result) (string, bool) {
 	if !content.Exists() {
 		return "", false

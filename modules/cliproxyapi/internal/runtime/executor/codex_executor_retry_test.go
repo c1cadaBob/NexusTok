@@ -1,3 +1,5 @@
+// Package executor 提供 CLI Proxy API 运行时执行器的测试。
+// 本文件测试 Codex 执行器的重试逻辑和错误分类功能，包括重试时间解析和已知错误码映射。
 package executor
 
 import (
@@ -8,9 +10,12 @@ import (
 	"time"
 )
 
+// TestParseCodexRetryAfter 验证从 Codex 429 错误响应中解析重试等待时间的各种场景。
+// 覆盖 resets_in_seconds 字段、resets_at 优先级、过期 resets_at 回退、非 429 状态码和非 usage_limit_reached 错误类型。
 func TestParseCodexRetryAfter(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 
+	// "resets_in_seconds" 子用例：验证从错误响应中提取 resets_in_seconds 字段作为重试时间。
 	t.Run("resets_in_seconds", func(t *testing.T) {
 		body := []byte(`{"error":{"type":"usage_limit_reached","resets_in_seconds":123}}`)
 		retryAfter := parseCodexRetryAfter(http.StatusTooManyRequests, body, now)
@@ -22,6 +27,7 @@ func TestParseCodexRetryAfter(t *testing.T) {
 		}
 	})
 
+	// "prefers resets_at" 子用例：验证当同时存在 resets_at 和 resets_in_seconds 时优先使用 resets_at。
 	t.Run("prefers resets_at", func(t *testing.T) {
 		resetAt := now.Add(5 * time.Minute).Unix()
 		body := []byte(`{"error":{"type":"usage_limit_reached","resets_at":` + itoa(resetAt) + `,"resets_in_seconds":1}}`)
@@ -34,6 +40,7 @@ func TestParseCodexRetryAfter(t *testing.T) {
 		}
 	})
 
+	// "fallback when resets_at is past" 子用例：验证当 resets_at 已过期时回退到 resets_in_seconds。
 	t.Run("fallback when resets_at is past", func(t *testing.T) {
 		resetAt := now.Add(-1 * time.Minute).Unix()
 		body := []byte(`{"error":{"type":"usage_limit_reached","resets_at":` + itoa(resetAt) + `,"resets_in_seconds":77}}`)
@@ -46,6 +53,7 @@ func TestParseCodexRetryAfter(t *testing.T) {
 		}
 	})
 
+	// "non-429 status code" 子用例：验证非 429 状态码不解析重试时间。
 	t.Run("non-429 status code", func(t *testing.T) {
 		body := []byte(`{"error":{"type":"usage_limit_reached","resets_in_seconds":30}}`)
 		if got := parseCodexRetryAfter(http.StatusBadRequest, body, now); got != nil {
@@ -53,6 +61,7 @@ func TestParseCodexRetryAfter(t *testing.T) {
 		}
 	})
 
+	// "non usage_limit_reached error type" 子用例：验证非 usage_limit_reached 错误类型不解析重试时间。
 	t.Run("non usage_limit_reached error type", func(t *testing.T) {
 		body := []byte(`{"error":{"type":"server_error","resets_in_seconds":30}}`)
 		if got := parseCodexRetryAfter(http.StatusTooManyRequests, body, now); got != nil {
@@ -61,6 +70,8 @@ func TestParseCodexRetryAfter(t *testing.T) {
 	})
 }
 
+// TestNewCodexStatusErrTreatsCapacityAsRetryableRateLimit 验证当 Codex 返回模型容量不足错误时，
+// 状态码被转换为 429（可重试的速率限制），且不设置显式重试时间。
 func TestNewCodexStatusErrTreatsCapacityAsRetryableRateLimit(t *testing.T) {
 	body := []byte(`{"error":{"message":"Selected model is at capacity. Please try a different model."}}`)
 
@@ -74,6 +85,8 @@ func TestNewCodexStatusErrTreatsCapacityAsRetryableRateLimit(t *testing.T) {
 	}
 }
 
+// TestNewCodexStatusErrClassifiesKnownCodexFailures 验证已知的 Codex 失败场景被正确分类为对应的错误码，
+// 包括上下文长度超限、思考签名无效、前序响应缺失和认证失败。
 func TestNewCodexStatusErrClassifiesKnownCodexFailures(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -129,6 +142,7 @@ func TestNewCodexStatusErrClassifiesKnownCodexFailures(t *testing.T) {
 	}
 }
 
+// TestNewCodexStatusErrPreservesUnclassifiedErrors 验证未被识别分类的错误保持原始状态码和响应体不变。
 func TestNewCodexStatusErrPreservesUnclassifiedErrors(t *testing.T) {
 	body := []byte(`{"error":{"message":"documentation mentions too many tokens, but this is a billing configuration failure","type":"server_error","code":"billing_config_error"}}`)
 
@@ -142,6 +156,7 @@ func TestNewCodexStatusErrPreservesUnclassifiedErrors(t *testing.T) {
 	}
 }
 
+// assertCodexErrorCode 辅助函数：验证错误响应体中的 error.type 和 error.code 字段是否符合预期。
 func assertCodexErrorCode(t *testing.T, raw string, wantType string, wantCode string) {
 	t.Helper()
 
@@ -162,6 +177,7 @@ func assertCodexErrorCode(t *testing.T, raw string, wantType string, wantCode st
 	}
 }
 
+// itoa 辅助函数：将 int64 转换为十进制字符串，用于在测试 JSON 中嵌入时间戳。
 func itoa(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

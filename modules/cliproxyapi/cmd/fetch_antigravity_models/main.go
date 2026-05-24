@@ -1,16 +1,16 @@
-// Command fetch_antigravity_models connects to the Antigravity API using the
-// stored auth credentials and saves the dynamically fetched model list to a
-// JSON file for inspection or offline use.
+// Package main - fetch_antigravity_models.go
+// 该命令行工具用于从 Antigravity API 动态获取可用的模型列表，
+// 并将结果保存为 JSON 文件，供离线检查或静态模型定义使用。
 //
-// Usage:
+// 用法:
 //
 //	go run ./cmd/fetch_antigravity_models [flags]
 //
-// Flags:
+// 参数:
 //
-//	--auths-dir <path>  Directory containing auth JSON files (default: "auths")
-//	--output    <path>  Output JSON file path             (default: "antigravity_models.json")
-//	--pretty            Pretty-print the output JSON      (default: true)
+//	--auths-dir <path>  存放认证 JSON 文件的目录（默认: "auths"）
+//	--output    <path>  输出 JSON 文件路径（默认: "antigravity_models.json"）
+//	--pretty            是否格式化输出 JSON（默认: true）
 package main
 
 import (
@@ -34,37 +34,57 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Antigravity API 的基础 URL 常量，包含生产环境、日常环境和沙箱环境的地址。
+// 模型列表的请求路径为 /v1internal:fetchAvailableModels。
 const (
-	antigravityBaseURLDaily        = "https://daily-cloudcode-pa.googleapis.com"
+	// antigravityBaseURLDaily 是 Antigravity 日常云代码服务的 API 基础地址。
+	antigravityBaseURLDaily = "https://daily-cloudcode-pa.googleapis.com"
+	// antigravitySandboxBaseURLDaily 是 Antigravity 沙箱环境的日常云代码服务 API 基础地址。
 	antigravitySandboxBaseURLDaily = "https://daily-cloudcode-pa.sandbox.googleapis.com"
-	antigravityBaseURLProd         = "https://cloudcode-pa.googleapis.com"
-	antigravityModelsPath          = "/v1internal:fetchAvailableModels"
+	// antigravityBaseURLProd 是 Antigravity 生产环境的云代码服务 API 基础地址。
+	antigravityBaseURLProd = "https://cloudcode-pa.googleapis.com"
+	// antigravityModelsPath 是获取可用模型列表的 API 路径。
+	antigravityModelsPath = "/v1internal:fetchAvailableModels"
 )
 
+// init 初始化共享日志记录器，并设置日志级别为 Info。
 func init() {
 	logging.SetupBaseLogger()
 	log.SetLevel(log.InfoLevel)
 }
 
-// modelOutput wraps the fetched model list with fetch metadata.
+// modelOutput 是模型列表的输出包装结构，包含获取到的模型数组及元数据。
 type modelOutput struct {
+	// Models 是从 Antigravity API 获取的模型条目列表。
 	Models []modelEntry `json:"models"`
 }
 
-// modelEntry contains only the fields we want to keep for static model definitions.
+// modelEntry 包含静态模型定义所需的精简字段信息。
 type modelEntry struct {
-	ID                  string `json:"id"`
-	Object              string `json:"object"`
-	OwnedBy             string `json:"owned_by"`
-	Type                string `json:"type"`
-	DisplayName         string `json:"display_name"`
-	Name                string `json:"name"`
-	Description         string `json:"description"`
-	ContextLength       int    `json:"context_length,omitempty"`
-	MaxCompletionTokens int    `json:"max_completion_tokens,omitempty"`
+	// ID 是模型的唯一标识符。
+	ID string `json:"id"`
+	// Object 是对象类型，固定为 "model"。
+	Object string `json:"object"`
+	// OwnedBy 是模型的拥有者/提供者标识。
+	OwnedBy string `json:"owned_by"`
+	// Type 是模型的类型分类。
+	Type string `json:"type"`
+	// DisplayName 是模型的显示名称。
+	DisplayName string `json:"display_name"`
+	// Name 是模型的内部名称。
+	Name string `json:"name"`
+	// Description 是模型的描述信息。
+	Description string `json:"description"`
+	// ContextLength 是模型支持的最大上下文长度（token 数）。
+	ContextLength int `json:"context_length,omitempty"`
+	// MaxCompletionTokens 是模型支持的最大输出 token 数。
+	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
 }
 
+// main 是程序入口函数，负责解析命令行参数、加载认证文件、
+// 调用 Antigravity API 获取模型列表，并将结果保存为 JSON 文件。
 func main() {
+	// 命令行参数变量。
 	var authsDir string
 	var outputPath string
 	var pretty bool
@@ -160,6 +180,16 @@ func main() {
 	fmt.Printf("Model list saved to: %s\n", outputPath)
 }
 
+// fetchModels 从 Antigravity API 获取可用模型列表。
+// 它会依次尝试生产环境、日常环境和沙箱环境的 API 地址。
+// 使用认证信息中的 access_token 进行身份验证。
+//
+// 参数:
+//   - ctx: 上下文，用于控制请求超时
+//   - auth: 认证信息，包含 access_token 和可选的 project_id
+//
+// 返回值:
+//   - []modelEntry: 获取到的模型条目列表，失败时返回 nil
 func fetchModels(ctx context.Context, auth *coreauth.Auth) []modelEntry {
 	accessToken := metaStringValue(auth.Metadata, "access_token")
 	if accessToken == "" {
@@ -259,6 +289,15 @@ func fetchModels(ctx context.Context, auth *coreauth.Auth) []modelEntry {
 	return nil
 }
 
+// metaStringValue 从元数据 map 中提取指定键的字符串值。
+// 如果 map 为 nil 或键不存在，返回空字符串。
+//
+// 参数:
+//   - m: 元数据 map
+//   - key: 要查找的键名
+//
+// 返回值:
+//   - string: 键对应的字符串值，不存在时返回空字符串
 func metaStringValue(m map[string]interface{}, key string) string {
 	if m == nil {
 		return ""

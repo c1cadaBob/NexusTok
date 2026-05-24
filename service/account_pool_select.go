@@ -1,3 +1,7 @@
+// account_pool_select.go 实现了全局账号池的账号选择和调度逻辑。
+// 包括账号候选过滤、优先级排序、负载均衡策略（轮询、最少使用、先填满、加权随机）、
+// 并发控制（基于 Redis 或内存的信号量）、游标管理等功能。
+// 是账号池请求调度的核心模块。
 package service
 
 import (
@@ -19,16 +23,36 @@ import (
 )
 
 var (
+	// ErrNoAvailablePoolAccount 表示账号池中没有可用的账号。
 	ErrNoAvailablePoolAccount = errors.New("账号池无可用账号")
 
-	poolAccountCursorMu sync.Mutex
-	poolAccountCursors  = map[string]uint64{}
+	poolAccountCursorMu sync.Mutex          // 游标映射表的互斥锁
+	poolAccountCursors  = map[string]uint64{} // 轮询游标映射表，key 为分组+模型组合
 
-	poolAccountConcurrencyMu sync.Mutex
-	poolAccountConcurrency   = map[int]int{}
+	poolAccountConcurrencyMu sync.Mutex      // 并发计数映射表的互斥锁
+	poolAccountConcurrency   = map[int]int{}  // 账号并发计数映射表，key 为账号 ID
 )
 
 // SelectPoolAccount 从渠道引用的全局账号池组里选择一个可调度账号。
+// 选择流程：
+// 1. 获取渠道关联的账号池分组
+// 2. 查询分组下所有启用且可调度的账号
+// 3. 过滤掉已排除的、冷却中的、不支持当前模型或分组的账号
+// 4. 按优先级排序，取最高优先级的候选集
+// 5. 使用负载均衡策略从候选集中选择一个账号
+// 6. 尝试预留并发槽位，失败则排除并重试
+//
+// 参数：
+//   - c: Gin 请求上下文（用于存储排除列表和并发预留状态）
+//   - channel: 渠道信息
+//   - modelName: 请求的模型名称
+//   - usingGroup: 使用的分组标识
+//   - relayMode: Relay 模式（当前未使用）
+//
+// 返回：
+//   - *model.AccountPoolGroup: 账号池分组信息
+//   - *model.PoolAccount: 选中的账号
+//   - error: 选择失败时返回错误
 func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string, usingGroup string, relayMode int) (*model.AccountPoolGroup, *model.PoolAccount, error) {
 	_ = relayMode
 	if channel == nil || channel.ChannelInfo.AccountPoolGroupId <= 0 {
@@ -101,6 +125,8 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	return group, nil, ErrNoAvailablePoolAccount
 }
 
+// sortPoolAccountCandidates 对账号池候选账号进行排序。
+// 排序规则：优先级降序 > 最少使用策略下按已用配额升序 > ID 升序。
 func sortPoolAccountCandidates(accounts []*model.PoolAccount, strategy string) {
 	strategy = strings.TrimSpace(strategy)
 	sort.SliceStable(accounts, func(i, j int) bool {
@@ -114,6 +140,12 @@ func sortPoolAccountCandidates(accounts []*model.PoolAccount, strategy string) {
 	})
 }
 
+// pickPoolAccount 根据分组的负载均衡策略从候选账号中选择一个。
+// 支持的策略：
+// - fill_first: 先填满，直接返回第一个账号
+// - least_used: 最少使用，直接返回第一个（已按配额排序）
+// - round_robin: 轮询，使用游标循环选择
+// - weighted: 加权轮询，根据账号权重分配
 func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccount, usingGroup string, modelName string) *model.PoolAccount {
 	if len(accounts) == 0 {
 		return nil
@@ -135,6 +167,9 @@ func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccoun
 	return pickPoolAccountByCursor(accounts, cursor, strategy == model.AccountPoolStrategyWeighted)
 }
 
+// pickPoolAccountByCursor 使用游标和加权算法从候选账号中选择一个。
+// 计算所有账号的总权重，用游标对总权重取模得到偏移量，
+// 然后遍历账号列表，累减权重直到偏移量为负，返回对应账号。
 func pickPoolAccountByCursor(accounts []*model.PoolAccount, cursor uint64, weighted bool) *model.PoolAccount {
 	totalWeight := 0
 	for _, account := range accounts {
@@ -161,6 +196,8 @@ func pickPoolAccountByCursor(accounts []*model.PoolAccount, cursor uint64, weigh
 	return accounts[0]
 }
 
+// buildPoolAccountCursorKey 构建轮询游标的缓存键。
+// 格式：nexustok:account_pool:cursor:{groupID}:{usingGroup}:{modelName}
 func buildPoolAccountCursorKey(groupID int, usingGroup string, modelName string) string {
 	canonicalModel := ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if canonicalModel == "" {
@@ -172,6 +209,8 @@ func buildPoolAccountCursorKey(groupID int, usingGroup string, modelName string)
 	return fmt.Sprintf("nexustok:account_pool:cursor:%d:%s:%s", groupID, usingGroup, canonicalModel)
 }
 
+// nextPoolAccountCursor 获取并递增轮询游标。
+// 优先使用 Redis 原子递增，Redis 不可用时回退到内存计数器。
 func nextPoolAccountCursor(key string) uint64 {
 	if common.RedisEnabled && common.RDB != nil {
 		value, err := common.RDB.Incr(context.Background(), key).Result()
@@ -187,6 +226,8 @@ func nextPoolAccountCursor(key string) uint64 {
 	return cursor
 }
 
+// ExcludePoolAccountForRequest 将账号添加到当前请求的排除列表中。
+// 被排除的账号在后续重试时不会被选中。
 func ExcludePoolAccountForRequest(c *gin.Context, accountID int) {
 	if c == nil || accountID <= 0 {
 		return
@@ -196,6 +237,7 @@ func ExcludePoolAccountForRequest(c *gin.Context, accountID int) {
 	common.SetContextKey(c, constant.ContextKeyPoolAccountExcludedIds, excluded)
 }
 
+// GetExcludedPoolAccountIds 获取当前请求上下文中的排除账号 ID 集合。
 func GetExcludedPoolAccountIds(c *gin.Context) map[int]bool {
 	if c == nil {
 		return map[int]bool{}
@@ -208,6 +250,9 @@ func GetExcludedPoolAccountIds(c *gin.Context) map[int]bool {
 	return map[int]bool{}
 }
 
+// ReservePoolAccount 尝试为账号预留并发槽位。
+// 如果账号没有设置最大并发限制（MaxConcurrency <= 0），直接返回成功。
+// 否则通过信号量机制检查并预留一个并发槽位。
 func ReservePoolAccount(c *gin.Context, account *model.PoolAccount) bool {
 	if account == nil {
 		return false
@@ -223,6 +268,8 @@ func ReservePoolAccount(c *gin.Context, account *model.PoolAccount) bool {
 	return false
 }
 
+// ReleaseSelectedPoolAccount 释放当前请求预留的账号并发槽位。
+// 在请求完成（成功或失败）后调用，恢复账号的可用并发数。
 func ReleaseSelectedPoolAccount(c *gin.Context) {
 	if c == nil {
 		return
@@ -239,6 +286,9 @@ func ReleaseSelectedPoolAccount(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyPoolAccountReserved, false)
 }
 
+// reservePoolAccountConcurrency 底层并发预留实现。
+// 优先使用 Redis 原子操作，Redis 不可用时回退到内存计数器。
+// 使用 INCR + EXPIRE 实现带自动过期的计数器。
 func reservePoolAccountConcurrency(accountID int, maxConcurrency int) bool {
 	if accountID <= 0 || maxConcurrency <= 0 {
 		return true
@@ -267,6 +317,8 @@ func reservePoolAccountConcurrency(accountID int, maxConcurrency int) bool {
 	return true
 }
 
+// releasePoolAccountConcurrency 释放账号的并发槽位。
+// 优先使用 Redis DECR，Redis 不可用时回退到内存计数器。
 func releasePoolAccountConcurrency(accountID int) {
 	if accountID <= 0 {
 		return
@@ -287,6 +339,9 @@ func releasePoolAccountConcurrency(accountID int) {
 }
 
 // BuildPoolAccountChannelKey 将账号池凭证转换成现有 adaptor 可理解的 channel key。
+// 对于官方 OAuth 类型的账号，委托给对应的 Provider 构建密钥；
+// 对于 API Key 类型的账号，尝试从 JSON 中提取 api_key/key/access_token 字段；
+// 其他情况直接返回解密后的原始凭证。
 func BuildPoolAccountChannelKey(account *model.PoolAccount) (string, error) {
 	if account == nil {
 		return "", ErrNoAvailablePoolAccount
@@ -320,6 +375,9 @@ func BuildPoolAccountChannelKey(account *model.PoolAccount) (string, error) {
 	return raw, nil
 }
 
+// poolAccountSupportsModel 检查账号是否支持指定的模型。
+// 优先使用账号级别的模型列表，其次使用分组级别的模型列表。
+// 空列表表示支持所有模型。
 func poolAccountSupportsModel(account *model.PoolAccount, group *model.AccountPoolGroup, modelName string) bool {
 	models := account.Models
 	if strings.TrimSpace(models) == "" && group != nil {
@@ -332,6 +390,9 @@ func poolAccountSupportsModel(account *model.PoolAccount, group *model.AccountPo
 	return matchesModelList(modelList, modelName)
 }
 
+// poolAccountSupportsGroup 检查账号是否属于指定的使用分组。
+// 优先使用账号级别的分组，其次使用分组级别的分组。
+// 空列表或通配符 "*" 表示属于所有分组。
 func poolAccountSupportsGroup(account *model.PoolAccount, group *model.AccountPoolGroup, usingGroup string) bool {
 	if strings.TrimSpace(usingGroup) == "" {
 		return true
@@ -352,6 +413,8 @@ func poolAccountSupportsGroup(account *model.PoolAccount, group *model.AccountPo
 	return false
 }
 
+// removePoolAccount 从账号列表中移除指定 ID 的账号。
+// 返回移除后的新切片（不修改原切片）。
 func removePoolAccount(accounts []*model.PoolAccount, accountID int) []*model.PoolAccount {
 	for i, account := range accounts {
 		if account != nil && account.Id == accountID {

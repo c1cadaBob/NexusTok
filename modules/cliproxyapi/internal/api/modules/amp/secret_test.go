@@ -1,3 +1,14 @@
+// amp - secret_test.go
+// 多源密钥（MultiSourceSecret）和映射密钥（MappedSecretSource）的单元测试。
+// 测试以下功能：
+// - 多源密钥的优先级顺序：配置 > 环境变量 > 文件
+// - 缓存行为：TTL 内返回缓存值、过期后重新读取、手动失效
+// - 文件处理：缺失文件、无效 JSON、缺失键、空值的处理
+// - 并发安全性：多协程同时读取的稳定性
+// - 静态密钥源的正确行为
+// - 空结果缓存：避免重复读取不存在的文件
+// - 映射密钥源：根据客户端 API Key 选择对应的上游密钥
+// - 重复客户端键的处理：第一个映射获胜并记录警告
 package amp
 
 import (
@@ -14,6 +25,9 @@ import (
 	"github.com/sirupsen/logrus/hooks/test"
 )
 
+// TestMultiSourceSecret_PrecedenceOrder 测试多源密钥的优先级顺序：
+// 配置键 > 环境变量 AMP_API_KEY > 文件中的 apiKey@https://ampcode.com/ 键。
+// 空白字符串被视为未设置，自动回退到下一个优先级。
 func TestMultiSourceSecret_PrecedenceOrder(t *testing.T) {
 	ctx := context.Background()
 
@@ -59,6 +73,10 @@ func TestMultiSourceSecret_PrecedenceOrder(t *testing.T) {
 	}
 }
 
+// TestMultiSourceSecret_CacheBehavior 测试缓存行为：
+// - TTL 内返回缓存值（v1），即使文件已更新（v2）
+// - TTL 过期后返回新值（v2）
+// - InvalidateCache 强制立即重新读取（v3）
 func TestMultiSourceSecret_CacheBehavior(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -107,6 +125,11 @@ func TestMultiSourceSecret_CacheBehavior(t *testing.T) {
 	}
 }
 
+// TestMultiSourceSecret_FileHandling 测试各种文件异常情况：
+// - 缺失文件不返回错误
+// - 无效 JSON 返回错误
+// - JSON 中缺失目标键返回空字符串
+// - 空白值返回空字符串（修剪后为空）
 func TestMultiSourceSecret_FileHandling(t *testing.T) {
 	ctx := context.Background()
 
@@ -167,6 +190,8 @@ func TestMultiSourceSecret_FileHandling(t *testing.T) {
 	})
 }
 
+// TestMultiSourceSecret_Concurrency 测试并发安全性：
+// 50 个协程同时调用 Get 100 次，验证返回值一致且无错误
 func TestMultiSourceSecret_Concurrency(t *testing.T) {
 	tmpDir := t.TempDir()
 	p := filepath.Join(tmpDir, "secrets.json")
@@ -210,6 +235,10 @@ func TestMultiSourceSecret_Concurrency(t *testing.T) {
 	}
 }
 
+// TestStaticSecretSource 测试静态密钥源的行为：
+// - 返回提供的密钥
+// - 修剪空白
+// - 空字符串返回空
 func TestStaticSecretSource(t *testing.T) {
 	ctx := context.Background()
 
@@ -247,8 +276,11 @@ func TestStaticSecretSource(t *testing.T) {
 	})
 }
 
+// TestMultiSourceSecret_CacheEmptyResult 测试空结果缓存：
+// 缺失文件的结果应被缓存，避免重复文件读取。
+// 文件创建后，在缓存过期前仍返回空值，过期后才读取新文件。
+// Test that missing file results are cached to avoid repeated file reads
 func TestMultiSourceSecret_CacheEmptyResult(t *testing.T) {
-	// Test that missing file results are cached to avoid repeated file reads
 	tmpDir := t.TempDir()
 	p := filepath.Join(tmpDir, "nonexistent.json")
 
@@ -283,6 +315,9 @@ func TestMultiSourceSecret_CacheEmptyResult(t *testing.T) {
 	}
 }
 
+// TestMappedSecretSource_UsesMappingFromContext 测试映射密钥源：
+// 当客户端 API Key（k1）匹配映射表中的条目时，返回对应的上游密钥（u1）；
+// 不匹配时回退到默认密钥源（default）。
 func TestMappedSecretSource_UsesMappingFromContext(t *testing.T) {
 	defaultSource := NewStaticSecretSource("default")
 	s := NewMappedSecretSource(defaultSource)
@@ -312,6 +347,8 @@ func TestMappedSecretSource_UsesMappingFromContext(t *testing.T) {
 	}
 }
 
+// TestMappedSecretSource_DuplicateClientKey_FirstWins 测试当同一客户端键出现在多个映射条目中时，
+// 第一个映射条目获胜（u1 而非 u2）
 func TestMappedSecretSource_DuplicateClientKey_FirstWins(t *testing.T) {
 	defaultSource := NewStaticSecretSource("default")
 	s := NewMappedSecretSource(defaultSource)
@@ -336,6 +373,8 @@ func TestMappedSecretSource_DuplicateClientKey_FirstWins(t *testing.T) {
 	}
 }
 
+// TestMappedSecretSource_DuplicateClientKey_LogsWarning 测试当同一客户端键出现在多个映射条目中时，
+// 应记录警告日志
 func TestMappedSecretSource_DuplicateClientKey_LogsWarning(t *testing.T) {
 	hook := test.NewLocal(log.StandardLogger())
 	defer hook.Reset()

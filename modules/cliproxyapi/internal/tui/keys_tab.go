@@ -1,3 +1,5 @@
+// Package tui - keys_tab.go
+// 实现 API 密钥管理标签页，提供 API 密钥的查看、添加、编辑和删除功能。
 package tui
 
 import (
@@ -11,6 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// keysTabModel 显示和管理 API 密钥。
+// 支持密钥的查看、添加、编辑和删除操作。
+//
 // keysTabModel displays and manages API keys.
 type keysTabModel struct {
 	client   *Client

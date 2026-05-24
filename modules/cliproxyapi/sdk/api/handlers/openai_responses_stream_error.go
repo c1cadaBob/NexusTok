@@ -1,3 +1,6 @@
+// handlers - openai_responses_stream_error.go
+// 构建 OpenAI Responses API 流式错误数据块。
+// 当流式传输过程中发生错误时，生成符合 OpenAI Responses SSE 协议的错误事件。
 package handlers
 
 import (
@@ -7,13 +10,19 @@ import (
 	"strings"
 )
 
+// openAIResponsesStreamErrorChunk 表示 OpenAI Responses 流式错误事件的数据结构。
 type openAIResponsesStreamErrorChunk struct {
+	// Type 是事件类型，固定为 "error"
 	Type           string `json:"type"`
+	// Code 是错误代码
 	Code           string `json:"code"`
+	// Message 是错误描述信息
 	Message        string `json:"message"`
+	// SequenceNumber 是事件序列号
 	SequenceNumber int    `json:"sequence_number"`
 }
 
+// openAIResponsesStreamErrorCode 根据 HTTP 状态码返回对应的 OpenAI 错误代码字符串。
 func openAIResponsesStreamErrorCode(status int) string {
 	switch status {
 	case http.StatusUnauthorized:

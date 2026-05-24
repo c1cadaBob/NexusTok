@@ -1,16 +1,17 @@
-// Package synthesizer provides auth synthesis strategies for the watcher package.
-// It implements the Strategy pattern to support multiple auth sources:
-// - ConfigSynthesizer: generates Auth entries from config API keys
-// - FileSynthesizer: generates Auth entries from OAuth JSON files
+// synthesizer - interface.go
+// 本文件定义了认证合成策略的接口。
+// 实现了策略模式以支持多种认证来源：
+//   - ConfigSynthesizer：从配置 API 密钥生成 Auth 条目
+//   - FileSynthesizer：从 OAuth JSON 文件生成 Auth 条目
 package synthesizer
 
 import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// AuthSynthesizer defines the interface for generating Auth entries from various sources.
+// AuthSynthesizer 定义了从各种来源生成 Auth 条目的接口。
 type AuthSynthesizer interface {
-	// Synthesize generates Auth entries from the given context.
-	// Returns a slice of Auth pointers and any error encountered.
+	// Synthesize 从给定上下文生成 Auth 条目。
+	// 返回 Auth 指针切片和遇到的任何错误。
 	Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, error)
 }

@@ -149,6 +149,15 @@ func (s *BillingSession) GetPreConsumedQuota() int {
 	return s.preConsumedQuota
 }
 
+// Reserve 在流式传输过程中补充预扣费额度。
+// 当实际消耗超过初始预扣时，从资金来源和令牌额度中补充扣除差额。
+// 仅在会话未结算、未退款、非信任模式时执行。
+//
+// 参数：
+//   - targetQuota: 目标预扣额度
+//
+// 返回：
+//   - error: 预留失败时返回错误
 func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -229,6 +238,8 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NexusTokEr
 	return nil
 }
 
+// reserveFunding 从资金来源中预留额度。
+// 根据资金来源类型（钱包或订阅）执行不同的扣减逻辑。
 func (s *BillingSession) reserveFunding(delta int) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
@@ -253,6 +264,8 @@ func (s *BillingSession) reserveFunding(delta int) error {
 	}
 }
 
+// rollbackFundingReserve 回滚资金来源的预留额度。
+// 在令牌预留失败时调用，恢复资金来源的余额。
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
@@ -268,6 +281,8 @@ func (s *BillingSession) rollbackFundingReserve(delta int) {
 	}
 }
 
+// reserveToken 从令牌额度中预留指定的增量。
+// Playground 模式下跳过（不扣令牌额度）。
 func (s *BillingSession) reserveToken(delta int) error {
 	if delta <= 0 || s.relayInfo.IsPlayground {
 		return nil

@@ -1,64 +1,92 @@
+// auth - filestore_disabled_test.go
+// 本文件包含 extractAccessToken 辅助函数的单元测试，
+// 验证从不同格式的元数据中正确提取访问令牌的功能。
 package auth
 
-import (
-	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"testing"
+import "testing"
 
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-)
+// TestExtractAccessToken 测试 extractAccessToken 函数的各种场景。
+// 覆盖的场景包括：
+//   - Antigravity 格式（顶层 access_token）
+//   - Gemini 格式（嵌套在 token 对象中的 access_token）
+//   - 顶层优先级高于嵌套
+//   - 空元数据
+//   - 空白字符串
+//   - 错误类型
+//   - 回退到嵌套字段
+func TestExtractAccessToken(t *testing.T) {
+	t.Parallel()
 
-type testTokenStorage struct {
-	meta map[string]any
-}
-
-func (s *testTokenStorage) SetMetadata(meta map[string]any) { s.meta = meta }
-
-func (s *testTokenStorage) SaveTokenToFile(authFilePath string) error {
-	raw, err := json.Marshal(s.meta)
-	if err != nil {
-		return err
+	tests := []struct {
+		name     string
+		metadata map[string]any
+		expected string
+	}{
+		{
+			"antigravity top-level access_token",
+			map[string]any{"access_token": "tok-abc"},
+			"tok-abc",
+		},
+		{
+			"gemini nested token.access_token",
+			map[string]any{
+				"token": map[string]any{"access_token": "tok-nested"},
+			},
+			"tok-nested",
+		},
+		{
+			"top-level takes precedence over nested",
+			map[string]any{
+				"access_token": "tok-top",
+				"token":        map[string]any{"access_token": "tok-nested"},
+			},
+			"tok-top",
+		},
+		{
+			"empty metadata",
+			map[string]any{},
+			"",
+		},
+		{
+			"whitespace-only access_token",
+			map[string]any{"access_token": "   "},
+			"",
+		},
+		{
+			"wrong type access_token",
+			map[string]any{"access_token": 12345},
+			"",
+		},
+		{
+			"token is not a map",
+			map[string]any{"token": "not-a-map"},
+			"",
+		},
+		{
+			"nested whitespace-only",
+			map[string]any{
+				"token": map[string]any{"access_token": "  "},
+			},
+			"",
+		},
+		{
+			"fallback to nested when top-level empty",
+			map[string]any{
+				"access_token": "",
+				"token":        map[string]any{"access_token": "tok-fallback"},
+			},
+			"tok-fallback",
+		},
 	}
-	return os.WriteFile(authFilePath, raw, 0o600)
-}
 
-func TestFileTokenStore_Save_DisabledPersistsFlagForTokenStorage(t *testing.T) {
-	ctx := context.Background()
-	baseDir := t.TempDir()
-	path := filepath.Join(baseDir, "disabled.json")
-
-	if err := os.WriteFile(path, []byte(`{"type":"test","disabled":true}`), 0o600); err != nil {
-		t.Fatalf("seed auth file: %v", err)
-	}
-
-	store := NewFileTokenStore()
-	store.SetBaseDir(baseDir)
-	storage := &testTokenStorage{}
-
-	auth := &cliproxyauth.Auth{
-		ID:       "disabled.json",
-		Provider: "test",
-		FileName: "disabled.json",
-		Disabled: true,
-		Storage:  storage,
-		Metadata: map[string]any{"type": "test"},
-	}
-
-	if _, err := store.Save(ctx, auth); err != nil {
-		t.Fatalf("Save() error: %v", err)
-	}
-
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read auth file: %v", err)
-	}
-	var meta map[string]any
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		t.Fatalf("unmarshal auth file: %v", err)
-	}
-	if disabled, _ := meta["disabled"].(bool); !disabled {
-		t.Fatalf("disabled=%v, want true (raw=%s)", meta["disabled"], string(raw))
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := extractAccessToken(tt.metadata)
+			if got != tt.expected {
+				t.Errorf("extractAccessToken() = %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }

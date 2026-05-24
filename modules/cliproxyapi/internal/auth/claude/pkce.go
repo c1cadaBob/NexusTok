@@ -1,6 +1,6 @@
-// Package claude provides authentication and token management functionality
-// for Anthropic's Claude AI services. It handles OAuth2 token storage, serialization,
-// and retrieval for maintaining authenticated sessions with the Claude API.
+// claude - pkce.go
+// 提供 Claude/Anthropic OAuth2 PKCE（Proof Key for Code Exchange）码对生成功能，
+// 用于 OAuth2 授权码流程的安全增强，遵循 RFC 7636 规范。
 package claude
 
 import (
@@ -10,22 +10,20 @@ import (
 	"fmt"
 )
 
-// GeneratePKCECodes generates a PKCE code verifier and challenge pair
-// following RFC 7636 specifications for OAuth 2.0 PKCE extension.
-// This provides additional security for the OAuth flow by ensuring that
-// only the client that initiated the request can exchange the authorization code.
+// GeneratePKCECodes 生成符合 RFC 7636 规范的 PKCE CodeVerifier/CodeChallenge 码对。
+// 通过确保只有发起请求的客户端才能交换授权码，为 OAuth 流程提供额外安全性。
 //
-// Returns:
-//   - *PKCECodes: A struct containing the code verifier and challenge
-//   - error: An error if the generation fails, nil otherwise
+// 返回值:
+//   - *PKCECodes: 包含 CodeVerifier 和 CodeChallenge 的结构体
+//   - error: 生成失败时返回错误，成功时返回 nil
 func GeneratePKCECodes() (*PKCECodes, error) {
-	// Generate code verifier: 43-128 characters, URL-safe
+	// 生成 CodeVerifier：43-128 个字符，URL 安全
 	codeVerifier, err := generateCodeVerifier()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate code verifier: %w", err)
 	}
 
-	// Generate code challenge using S256 method
+	// 使用 S256 方法生成 CodeChallenge
 	codeChallenge := generateCodeChallenge(codeVerifier)
 
 	return &PKCECodes{
@@ -34,22 +32,20 @@ func GeneratePKCECodes() (*PKCECodes, error) {
 	}, nil
 }
 
-// generateCodeVerifier creates a cryptographically random string
-// of 128 characters using URL-safe base64 encoding
+// generateCodeVerifier 创建一个 128 字符的加密随机字符串，使用 URL 安全 Base64 编码。
 func generateCodeVerifier() (string, error) {
-	// Generate 96 random bytes (will result in 128 base64 characters)
+	// 生成 96 字节随机数据（编码后产生 128 个 Base64 字符）
 	bytes := make([]byte, 96)
 	_, err := rand.Read(bytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
-	// Encode to URL-safe base64 without padding
+	// 编码为 URL 安全 Base64，无填充
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(bytes), nil
 }
 
-// generateCodeChallenge creates a SHA256 hash of the code verifier
-// and encodes it using URL-safe base64 encoding without padding
+// generateCodeChallenge 对 CodeVerifier 进行 SHA256 哈希，并使用 URL 安全 Base64 编码（无填充）。
 func generateCodeChallenge(codeVerifier string) string {
 	hash := sha256.Sum256([]byte(codeVerifier))
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hash[:])

@@ -1,3 +1,14 @@
+// responses - claude_openai-responses_response.go
+// Claude 的 OpenAI Responses 响应转换器。
+// 负责将 Claude Messages API 的 SSE 流式响应和非流式响应转换为 OpenAI Responses 格式。
+//
+// 转换特性：
+// - 流式模式：将 Claude 的 SSE 事件（message_start、content_block_start/delta/stop 等）
+//   转换为 OpenAI Responses 格式的 SSE 事件
+// - 非流式模式：聚合所有 Claude SSE 事件到单个 OpenAI Responses JSON 对象
+// - 推理内容：将 Claude 的 thinking 类型内容块转换为 reasoning 类型输出项
+// - 函数调用：将 Claude 的 tool_use 内容块转换为 function_call 类型输出项
+// - 用量聚合：合并 message_start 和 message_delta 中的 usage 数据
 package responses
 
 import (
@@ -13,35 +24,57 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// claudeToResponsesState 保存 Claude 到 OpenAI Responses 流式转换过程中的状态。
 type claudeToResponsesState struct {
-	Seq          int
-	ResponseID   string
-	CreatedAt    int64
+	// Seq 事件序列号
+	Seq int
+	// ResponseID 响应唯一标识符
+	ResponseID string
+	// CreatedAt 响应创建时间的 Unix 时间戳
+	CreatedAt int64
+	// CurrentMsgID 当前消息的唯一标识符
 	CurrentMsgID string
-	CurrentFCID  string
-	InTextBlock  bool
-	InFuncBlock  bool
-	FuncArgsBuf  map[int]*strings.Builder // index -> args
-	// function call bookkeeping for output aggregation
-	FuncNames   map[int]string // index -> function name
-	FuncCallIDs map[int]string // index -> call id
-	// message text aggregation
-	TextBuf        strings.Builder
+	// CurrentFCID 当前函数调用的唯一标识符
+	CurrentFCID string
+	// InTextBlock 标记是否正在处理文本内容块
+	InTextBlock bool
+	// InFuncBlock 标记是否正在处理函数调用内容块
+	InFuncBlock bool
+	// FuncArgsBuf 各函数调用的参数缓冲区，键为内容块索引
+	FuncArgsBuf map[int]*strings.Builder
+	// FuncNames 各函数调用的函数名，键为内容块索引
+	FuncNames map[int]string
+	// FuncCallIDs 各函数调用的唯一标识符，键为内容块索引
+	FuncCallIDs map[int]string
+	// message text aggregation 消息文本聚合相关字段
+	// TextBuf 累积的完整文本内容
+	TextBuf strings.Builder
+	// CurrentTextBuf 当前内容块的文本缓冲区
 	CurrentTextBuf strings.Builder
-	// reasoning state
-	ReasoningActive    bool
-	ReasoningItemID    string
-	ReasoningBuf       strings.Builder
+	// reasoning state 推理内容状态
+	// ReasoningActive 标记是否正在处理推理内容
+	ReasoningActive bool
+	// ReasoningItemID 推理输出项的唯一标识符
+	ReasoningItemID string
+	// ReasoningBuf 累积的推理文本内容
+	ReasoningBuf strings.Builder
+	// ReasoningPartAdded 标记是否已添加推理摘要部分
 	ReasoningPartAdded bool
-	ReasoningIndex     int
-	// usage aggregation
-	InputTokens  int64
+	// ReasoningIndex 推理内容在输出数组中的索引
+	ReasoningIndex int
+	// usage aggregation 用量聚合相关字段
+	// InputTokens 输入 token 数量
+	InputTokens int64
+	// OutputTokens 输出 token 数量
 	OutputTokens int64
-	UsageSeen    bool
+	// UsageSeen 标记是否已接收到用量数据
+	UsageSeen bool
 }
 
+// dataTag 是 Claude SSE 事件的数据前缀标识。
 var dataTag = []byte("data:")
 
+// pickRequestJSON 选择最佳可用的请求 JSON 数据。
 func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
 	if len(originalRequestRawJSON) > 0 && gjson.ValidBytes(originalRequestRawJSON) {
 		return originalRequestRawJSON
@@ -52,11 +85,31 @@ func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
 	return nil
 }
 
+// emitEvent 将事件名称和载荷组合为 SSE 格式的事件数据。
 func emitEvent(event string, payload []byte) []byte {
 	return translatorcommon.SSEEventData(event, payload)
 }
 
-// ConvertClaudeResponseToOpenAIResponses converts Claude SSE to OpenAI Responses SSE events.
+// ConvertClaudeResponseToOpenAIResponses 将 Claude SSE 流式响应转换为 OpenAI Responses SSE 事件。
+//
+// 处理的 Claude 事件类型：
+// - message_start: 初始化响应状态，发射 response.created 和 response.in_progress
+// - content_block_start: 开始新的内容块（text、tool_use、thinking）
+// - content_block_delta: 增量内容更新（text_delta、input_json_delta、thinking_delta）
+// - content_block_stop: 完成内容块，发射 done 事件
+// - message_delta: 更新用量数据
+// - message_stop: 完成响应，发射 response.completed
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - modelName: 模型名称
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Claude 格式的原始响应 JSON 数据（data: 前缀格式）
+//   - param: 用于在多次调用之间保持状态的参数指针
+//
+// 返回值：
+//   - [][]byte: OpenAI Responses 格式的 SSE 事件数据切片
 func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &claudeToResponsesState{FuncArgsBuf: make(map[int]*strings.Builder), FuncNames: make(map[int]string), FuncCallIDs: make(map[int]string)}
@@ -440,7 +493,19 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 	return out
 }
 
-// ConvertClaudeResponseToOpenAIResponsesNonStream aggregates Claude SSE into a single OpenAI Responses JSON.
+// ConvertClaudeResponseToOpenAIResponsesNonStream 将 Claude 的非流式响应聚合为单个 OpenAI Responses JSON 对象。
+// 遍历所有 Claude SSE 数据行，聚合文本、推理和函数调用内容，构建完整的 Responses 对象。
+//
+// 参数：
+//   - ctx: 请求上下文（当前实现中未使用）
+//   - modelName: 模型名称（当前实现中未使用）
+//   - originalRequestRawJSON: 原始请求的 JSON 数据
+//   - requestRawJSON: 经过转换的请求 JSON 数据
+//   - rawJSON: Claude 格式的原始响应数据（多行 data: 格式）
+//   - _: 未使用的参数指针
+//
+// 返回值：
+//   - []byte: OpenAI Responses 格式的完整 JSON 响应数据
 func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
 	// Aggregate Claude SSE lines into a single OpenAI Responses JSON (non-stream)
 	// We follow the same aggregation logic as the streaming variant but produce

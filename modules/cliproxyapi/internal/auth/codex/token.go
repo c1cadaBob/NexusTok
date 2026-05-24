@@ -1,3 +1,8 @@
+// Package codex - token.go
+// 提供 OpenAI Codex API 的令牌存储功能。
+// 定义了 CodexTokenStorage 结构体，用于管理 OAuth2 令牌的序列化与文件持久化，
+// 包括 ID 令牌、访问令牌、刷新令牌及用户账户信息。
+//
 // Package codex provides authentication and token management functionality
 // for OpenAI's Codex AI services. It handles OAuth2 token storage, serialization,
 // and retrieval for maintaining authenticated sessions with the Codex API.

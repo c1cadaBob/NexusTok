@@ -1,3 +1,21 @@
+// Package middleware - performance.go
+// 该文件实现了系统性能监控中间件
+//
+// 功能说明：
+// - 在请求处理前检查系统资源使用情况
+// - 当 CPU、内存或磁盘使用率超过配置阈值时，拒绝新请求
+// - 根据请求路径返回不同格式的错误响应：
+//   - /v1/messages 路径返回 Claude 格式错误
+//   - 其他路径返回 OpenAI 格式错误
+//
+// 配置来源：
+// - 通过 common.GetPerformanceMonitorConfig() 获取性能监控配置
+// - 配置项包括：是否启用、CPU 阈值、内存阈值、磁盘阈值
+//
+// 监控指标：
+// - CPU 使用率（百分比）
+// - 内存使用率（百分比）
+// - 磁盘使用率（百分比）
 package middleware
 
 import (
@@ -10,7 +28,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SystemPerformanceCheck 检查系统性能中间件
+// SystemPerformanceCheck 系统性能检查中间件工厂函数
+// 创建并返回一个 Gin 中间件，在请求处理前检查系统资源使用情况
+//
+// 错误响应格式：
+// - /v1/messages 路径：Claude API 错误格式（ToClaudeError）
+// - 其他路径：OpenAI API 错误格式（ToOpenAIError）
+//
+// 返回 HTTP 503 Service Unavailable 当系统资源超限时
 func SystemPerformanceCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 仅检查 Relay 接口 (/v1, /v1beta 等)
@@ -37,7 +62,12 @@ func SystemPerformanceCheck() gin.HandlerFunc {
 	}
 }
 
-// checkSystemPerformance 检查系统性能是否超过阈值
+// checkSystemPerformance 检查系统性能是否超过配置阈值
+// 依次检查 CPU、内存、磁盘使用率，任一超限即返回错误
+//
+// 返回值：
+//   - nil：系统资源正常，可以处理请求
+//   - *types.NexusTokError：资源超限错误，包含 HTTP 503 状态码和错误信息
 func checkSystemPerformance() *types.NexusTokError {
 	config := common.GetPerformanceMonitorConfig()
 	if !config.Enabled {

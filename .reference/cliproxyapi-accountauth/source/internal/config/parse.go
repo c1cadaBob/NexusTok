@@ -1,3 +1,5 @@
+// 包 config - parse.go
+// 该文件提供了从字节数据解析配置的功能，用于管理 API 热重载。
 package config
 
 import (
@@ -9,16 +11,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseConfigBytes parses a YAML configuration payload into Config and applies the same
-// in-memory normalizations as LoadConfigOptional, without persisting any changes to disk.
+// ParseConfigBytes 将 YAML 配置有效负载解析为 Config，并应用与 LoadConfigOptional 相同的
+// 内存规范化，但不将任何更改持久化到磁盘。
 func ParseConfigBytes(data []byte) (*Config, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("config payload is empty")
 	}
 
 	var cfg Config
-	// Keep defaults aligned with LoadConfigOptional.
-	cfg.Host = "" // Default empty: binds to all interfaces (IPv4 + IPv6)
+	// 保持与 LoadConfigOptional 一致的默认值。
+	cfg.Host = "" // 默认为空：绑定所有接口（IPv4 + IPv6）
 	cfg.LoggingToFile = false
 	cfg.LogsMaxTotalSizeMB = 0
 	cfg.ErrorLogsMaxFiles = 10
@@ -28,14 +30,14 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.DisableImageGeneration = DisableImageGenerationOff
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
-	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
+	cfg.AmpCode.RestrictManagementToLocalhost = false // 默认为 false：API 密钥认证已足够
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config payload: %w", err)
 	}
 
-	// Hash remote management key if plaintext is detected (nested), but do NOT persist.
+	// 如果检测到明文远程管理密钥则进行哈希处理（嵌套式），但不持久化。
 	if cfg.RemoteManagement.SecretKey != "" && !looksLikeBcrypt(cfg.RemoteManagement.SecretKey) {
 		hashed, errHash := bcrypt.GenerateFromPassword([]byte(cfg.RemoteManagement.SecretKey), bcrypt.DefaultCost)
 		if errHash != nil {
@@ -73,7 +75,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 		cfg.MaxRetryCredentials = 0
 	}
 
-	// Apply the same sanitization pipeline.
+	// 应用相同的清理管道。
 	cfg.SanitizeGeminiKeys()
 	cfg.SanitizeVertexCompatKeys()
 	cfg.SanitizeCodexKeys()

@@ -1,5 +1,6 @@
-// events.go implements fsnotify event handling for config and auth file changes.
-// It normalizes paths, debounces noisy events, and triggers reload/update logic.
+// watcher - events.go
+// 本文件实现了 fsnotify 文件系统事件的处理逻辑。
+// 负责路径规范化、事件去抖、以及触发配置重载和认证文件增量更新。
 package watcher
 
 import (

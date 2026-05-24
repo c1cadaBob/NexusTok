@@ -1,3 +1,6 @@
+// store - gitstore_test.go
+// 该文件包含 GitTokenStore 的分支管理功能的单元测试，验证远程仓库克隆、
+// 分支切换、远程 HEAD 跟踪、分支推进等功能的正确性。
 package store
 
 import (
@@ -14,11 +17,14 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
+// testBranchSpec 定义测试用的分支规格，包含分支名称和文件内容。
 type testBranchSpec struct {
-	name     string
-	contents string
+	name     string // 分支名称
+	contents string // 分支中的文件内容
 }
 
+// TestEnsureRepositoryUsesRemoteDefaultBranchWhenBranchNotConfigured 测试当未显式配置分支时，
+// GitTokenStore 应使用远程仓库的默认分支（trunk），并在后续调用时跟踪远程 HEAD 变更。
 func TestEnsureRepositoryUsesRemoteDefaultBranchWhenBranchNotConfigured(t *testing.T) {
 	root := t.TempDir()
 	remoteDir := setupGitRemoteRepository(t, root, "trunk",

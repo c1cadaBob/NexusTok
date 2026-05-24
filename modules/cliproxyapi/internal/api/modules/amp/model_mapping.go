@@ -1,5 +1,7 @@
-// Package amp provides model mapping functionality for routing Amp CLI requests
-// to alternative models when the requested model is not available locally.
+// amp - model_mapping.go
+// Amp CLI 请求的模型映射功能。
+// 当请求的模型在本地不可用时，该模块可以将其重定向到可用的替代模型。
+// 支持精确匹配和正则表达式两种映射方式，以及 thinking 后缀的保留和优先级处理。
 package amp
 
 import (
@@ -165,7 +167,8 @@ func (m *DefaultModelMapper) GetMappings() map[string]string {
 	return result
 }
 
+// regexMapping 表示一条正则表达式映射规则。
 type regexMapping struct {
-	re *regexp.Regexp
-	to string
+	re *regexp.Regexp // 编译后的正则表达式
+	to string         // 目标模型名称
 }

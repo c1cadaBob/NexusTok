@@ -1,4 +1,6 @@
-// Package thinking provides unified thinking configuration processing logic.
+// 包 thinking - validate.go
+// 该文件提供了思考配置的验证和规范化功能。
+// 包括模型能力检测、预算/级别自动转换、范围钳制等。
 package thinking
 
 import (
@@ -210,11 +212,11 @@ func convertAutoToMidRange(config ThinkingConfig, support *registry.ThinkingSupp
 	return config
 }
 
-// standardLevelOrder defines the canonical ordering of thinking levels from lowest to highest.
+// standardLevelOrder 定义了从低到高的标准思考级别顺序。
 var standardLevelOrder = []ThinkingLevel{LevelMinimal, LevelLow, LevelMedium, LevelHigh, LevelXHigh, LevelMax}
 
-// clampLevel clamps the given level to the nearest supported level.
-// On tie, prefers the lower level.
+// clampLevel 将给定级别钳制到最接近的支持级别。
+// 相等距离时优先选择较低级别。
 func clampLevel(level ThinkingLevel, modelInfo *registry.ModelInfo, provider string) ThinkingLevel {
 	model := "unknown"
 	var supported []string
@@ -258,7 +260,7 @@ func clampLevel(level ThinkingLevel, modelInfo *registry.ModelInfo, provider str
 	return level
 }
 
-// clampBudget clamps a budget value to the model's supported range.
+// clampBudget 将预算值钳制到模型支持的范围内。
 func clampBudget(value int, modelInfo *registry.ModelInfo, provider string) int {
 	model := "unknown"
 	support := (*registry.ThinkingSupport)(nil)
@@ -335,8 +337,8 @@ func normalizeLevels(levels []string) []string {
 	return out
 }
 
-// isBudgetCapableProvider returns true if the provider supports budget-based thinking.
-// These providers may also support level-based thinking (hybrid models).
+// isBudgetCapableProvider 返回提供商是否支持基于预算的思考。
+// 这些提供商也可能支持基于级别的思考（混合模型）。
 func isBudgetCapableProvider(provider string) bool {
 	switch provider {
 	case "gemini", "gemini-cli", "antigravity", "claude":
@@ -346,6 +348,7 @@ func isBudgetCapableProvider(provider string) bool {
 	}
 }
 
+// isGeminiFamily 返回提供商是否属于 Gemini 系列。
 func isGeminiFamily(provider string) bool {
 	switch provider {
 	case "gemini", "gemini-cli", "antigravity":
@@ -355,6 +358,7 @@ func isGeminiFamily(provider string) bool {
 	}
 }
 
+// isOpenAIFamily 返回提供商是否属于 OpenAI 系列。
 func isOpenAIFamily(provider string) bool {
 	switch provider {
 	case "openai", "openai-response", "codex", "xai":
@@ -364,6 +368,7 @@ func isOpenAIFamily(provider string) bool {
 	}
 }
 
+// isSameProviderFamily 返回两个提供商是否属于同一系列。
 func isSameProviderFamily(from, to string) bool {
 	if from == to {
 		return true
@@ -379,6 +384,7 @@ func abs(x int) int {
 	return x
 }
 
+// logClamp 记录预算钳制的调试日志。
 func logClamp(provider, model string, original, clampedTo, min, max int) {
 	log.WithFields(log.Fields{
 		"provider":       provider,

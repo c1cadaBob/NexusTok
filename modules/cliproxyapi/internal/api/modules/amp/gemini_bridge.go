@@ -1,3 +1,11 @@
+// amp - gemini_bridge.go
+// AMP CLI Gemini 路径格式桥接处理器。
+// 该模块将 AMP CLI 的非标准 Gemini API 路径格式转换为标准格式：
+//   - AMP 格式：/publishers/google/models/{model}:{method}
+//   - 标准格式：/models/{model}:{method}
+//
+// 通过从路径中提取 model:method 部分并设置为 :action 参数，
+// 使标准 Gemini 处理器能够正确处理 AMP CLI 的请求。
 package amp
 
 import (
@@ -6,16 +14,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// createGeminiBridgeHandler creates a handler that bridges AMP CLI's non-standard Gemini paths
-// to our standard Gemini handler by rewriting the request context.
+// createGeminiBridgeHandler 创建一个桥接处理器，将 AMP CLI 的非标准 Gemini 路径
+// 重写为标准格式。
 //
-// AMP CLI format: /publishers/google/models/gemini-3-pro-preview:streamGenerateContent
-// Standard format: /models/gemini-3-pro-preview:streamGenerateContent
+// 路径转换逻辑：
+//  1. 从 catch-all 参数中获取完整路径
+//  2. 查找 "/models/" 前缀，提取其后的 model:method 部分
+//  3. 如果存在模型映射，替换为映射后的模型名
+//  4. 将提取的部分设置为 :action 参数供 Gemini 处理器使用
 //
-// This extracts the model+method from the AMP path and sets it as the :action parameter
-// so the standard Gemini handler can process it.
-//
-// The handler parameter should be a Gemini-compatible handler that expects the :action param.
+// 参数 handler 应为期望 :action 参数的 Gemini 兼容处理器。
 func createGeminiBridgeHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get the full path from the catch-all parameter

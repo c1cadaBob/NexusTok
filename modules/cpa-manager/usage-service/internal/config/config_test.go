@@ -1,3 +1,10 @@
+// config - config_test.go
+// 配置加载模块的单元测试。
+// 测试覆盖以下场景：
+//   - 默认配置文件的自动创建
+//   - JSON 配置文件的读取和相对路径解析
+//   - 环境变量对配置文件值的覆盖
+//   - 采集模式的规范化处理
 package config
 
 import (
@@ -8,6 +15,9 @@ import (
 	"time"
 )
 
+// TestLoadCreatesDefaultConfig 验证当配置文件不存在时，
+// Load 函数能自动创建包含默认值的配置文件，
+// 并返回正确的默认配置（HTTP 地址和数据库路径）。
 func TestLoadCreatesDefaultConfig(t *testing.T) {
 	clearConfigEnv(t)
 	dir := t.TempDir()
@@ -34,6 +44,8 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	}
 }
 
+// TestLoadReadsConfigAndResolvesRelativePaths 验证配置文件中所有字段的正确加载，
+// 包括相对路径的解析（dataDir、managementKeyFile、panelPath 均基于配置文件目录解析）。
 func TestLoadReadsConfigAndResolvesRelativePaths(t *testing.T) {
 	clearConfigEnv(t)
 	dir := t.TempDir()
@@ -94,6 +106,8 @@ func TestLoadReadsConfigAndResolvesRelativePaths(t *testing.T) {
 	}
 }
 
+// TestLoadEnvOverridesConfig 验证环境变量能正确覆盖配置文件中的值。
+// 测试 HTTP_ADDR、USAGE_DATA_DIR、CPA_MANAGEMENT_KEY、USAGE_BATCH_SIZE 的覆盖行为。
 func TestLoadEnvOverridesConfig(t *testing.T) {
 	clearConfigEnv(t)
 	dir := t.TempDir()
@@ -130,6 +144,8 @@ func TestLoadEnvOverridesConfig(t *testing.T) {
 	}
 }
 
+// TestNormalizeCollectorMode 验证采集模式字符串的规范化行为。
+// 包括大小写不敏感、空白处理、无效值回退到 auto。
 func TestNormalizeCollectorMode(t *testing.T) {
 	cases := []struct {
 		input string
@@ -151,6 +167,7 @@ func TestNormalizeCollectorMode(t *testing.T) {
 	}
 }
 
+// clearConfigEnv 清除所有与配置相关的环境变量，确保测试间互不干扰。
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{

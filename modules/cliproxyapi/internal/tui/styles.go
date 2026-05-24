@@ -1,25 +1,30 @@
+// Package tui 提供基于终端的管理界面。
+// 本文件定义了 TUI 的样式常量和颜色配置。
+//
 // Package tui provides a terminal-based management interface for CLIProxyAPI.
 package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// 颜色调色板定义
 // Color palette
 var (
-	colorPrimary   = lipgloss.Color("#7C3AED") // violet
-	colorSecondary = lipgloss.Color("#6366F1") // indigo
-	colorSuccess   = lipgloss.Color("#22C55E") // green
-	colorWarning   = lipgloss.Color("#EAB308") // yellow
-	colorError     = lipgloss.Color("#EF4444") // red
-	colorInfo      = lipgloss.Color("#3B82F6") // blue
-	colorMuted     = lipgloss.Color("#6B7280") // gray
-	colorBg        = lipgloss.Color("#1E1E2E") // dark bg
-	colorSurface   = lipgloss.Color("#313244") // slightly lighter
-	colorText      = lipgloss.Color("#CDD6F4") // light text
-	colorSubtext   = lipgloss.Color("#A6ADC8") // dimmer text
-	colorBorder    = lipgloss.Color("#45475A") // border
-	colorHighlight = lipgloss.Color("#F5C2E7") // pink highlight
+	colorPrimary   = lipgloss.Color("#7C3AED") // 紫罗兰色 - violet
+	colorSecondary = lipgloss.Color("#6366F1") // 靛蓝色 - indigo
+	colorSuccess   = lipgloss.Color("#22C55E") // 绿色 - green
+	colorWarning   = lipgloss.Color("#EAB308") // 黄色 - yellow
+	colorError     = lipgloss.Color("#EF4444") // 红色 - red
+	colorInfo      = lipgloss.Color("#3B82F6") // 蓝色 - blue
+	colorMuted     = lipgloss.Color("#6B7280") // 灰色 - gray
+	colorBg        = lipgloss.Color("#1E1E2E") // 深色背景 - dark bg
+	colorSurface   = lipgloss.Color("#313244") // 稍浅表面色 - slightly lighter
+	colorText      = lipgloss.Color("#CDD6F4") // 浅色文本 - light text
+	colorSubtext   = lipgloss.Color("#A6ADC8") // 暗色文本 - dimmer text
+	colorBorder    = lipgloss.Color("#45475A") // 边框色 - border
+	colorHighlight = lipgloss.Color("#F5C2E7") // 粉色高亮 - pink highlight
 )
 
+// 标签栏样式定义
 // Tab bar styles
 var (
 	tabActiveStyle = lipgloss.NewStyle().

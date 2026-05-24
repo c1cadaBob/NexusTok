@@ -1,3 +1,6 @@
+// openai - openai_images_handlers_test.go
+// 包含 OpenAI 图像生成处理器的单元测试。
+// 测试模型验证、请求构建、响应解析和端点行为。
 package openai
 
 import (
@@ -19,6 +22,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// performImagesEndpointRequest 执行图像端点的测试请求。
+// 创建一个临时的 Gin 路由器，发送请求并返回响应记录器。
 func performImagesEndpointRequest(t *testing.T, endpointPath string, contentType string, body io.Reader, handler gin.HandlerFunc) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -35,6 +40,8 @@ func performImagesEndpointRequest(t *testing.T, endpointPath string, contentType
 	return resp
 }
 
+// assertUnsupportedImagesModelResponse 验证不支持的图像模型返回正确的错误响应。
+// 检查状态码为 400，错误消息包含模型名称和错误类型为 "invalid_request_error"。
 func assertUnsupportedImagesModelResponse(t *testing.T, resp *httptest.ResponseRecorder, model string) {
 	t.Helper()
 
@@ -52,6 +59,8 @@ func assertUnsupportedImagesModelResponse(t *testing.T, resp *httptest.ResponseR
 	}
 }
 
+// TestImagesModelValidationAllowsGPTImage2AndXAIModels 测试图像模型验证允许 gpt-image-2 和 xAI 模型。
+// 验证支持的模型包括 gpt-image-2、grok-imagine-image 及其带前缀的变体。
 func TestImagesModelValidationAllowsGPTImage2AndXAIModels(t *testing.T) {
 	for _, model := range []string{"gpt-image-2", "codex/gpt-image-2", "grok-imagine-image", "xai/grok-imagine-image", "grok-imagine-image-quality", "xai/grok-imagine-image-quality"} {
 		if !isSupportedImagesModel(model) {
@@ -66,6 +75,8 @@ func TestImagesModelValidationAllowsGPTImage2AndXAIModels(t *testing.T) {
 	}
 }
 
+// TestImagesModelValidationAllowsOpenAICompatImageModels 测试图像模型验证允许 OpenAI 兼容图像模型。
+// 验证注册为 OpenAIImageModelType 的模型被识别为支持的图像模型。
 func TestImagesModelValidationAllowsOpenAICompatImageModels(t *testing.T) {
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "test-openai-compat-image-model-validation"
@@ -85,6 +96,8 @@ func TestImagesModelValidationAllowsOpenAICompatImageModels(t *testing.T) {
 	}
 }
 
+// TestBuildXAIImagesGenerationsRequest 测试构建 xAI 图像生成请求。
+// 验证模型名称规范化、宽高比转换、分辨率设置等参数处理。
 func TestBuildXAIImagesGenerationsRequest(t *testing.T) {
 	rawJSON := []byte(`{"model":"xai/grok-imagine-image-quality","prompt":"abstract art","aspect_ratio":"landscape","resolution":"2k","n":2,"response_format":"url"}`)
 

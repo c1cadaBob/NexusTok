@@ -1,3 +1,18 @@
+// Package claude - relay-claude.go
+//
+// Claude 渠道中继适配器，负责在 OpenAI 格式与 Anthropic Claude 格式之间进行请求/响应的双向转换。
+//
+// 核心功能：
+//   - RequestOpenAI2ClaudeMessage：将 OpenAI 格式的聊天补全请求转换为 Claude API 格式，包括消息、工具、
+//     思维链（thinking）、Web 搜索等参数的映射。
+//   - StreamResponseClaude2OpenAI / ResponseClaude2OpenAI：将 Claude 的流式/非流式响应转换为 OpenAI 格式。
+//   - FormatClaudeResponseInfo：在流式传输过程中逐步累积 Claude 的 usage 信息。
+//   - HandleStreamResponseData / HandleStreamFinalResponse：处理 Claude 流式 SSE 数据并向客户端转发。
+//   - ClaudeStreamHandler / ClaudeHandler：流式与非流式响应的顶层入口函数。
+//   - mapToolChoice：将 OpenAI 的 tool_choice 参数映射为 Claude 的 tool_choice 格式。
+//
+// 本文件同时支持两种中继格式（RelayFormatOpenAI 和 RelayFormatClaude），并处理 Bedrock 等上游
+// 返回的 message_delta 缺少完整 usage 字段的兼容性问题。
 package claude
 
 import (
@@ -25,16 +40,29 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// Web 搜索工具的 max_uses 参数常量。
+// Anthropic Claude 的 web_search 工具通过 max_uses 控制最大搜索次数，
+// 对应 OpenAI 的 search_context_size（low/medium/high）映射到不同的搜索次数上限。
 const (
-	WebSearchMaxUsesLow    = 1
+	// WebSearchMaxUsesLow 对应 search_context_size="low"，最多执行 1 次搜索。
+	WebSearchMaxUsesLow = 1
+	// WebSearchMaxUsesMedium 对应 search_context_size="medium"，最多执行 5 次搜索。
 	WebSearchMaxUsesMedium = 5
-	WebSearchMaxUsesHigh   = 10
+	// WebSearchMaxUsesHigh 对应 search_context_size="high"，最多执行 10 次搜索。
+	WebSearchMaxUsesHigh = 10
 )
 
+// stopReasonClaude2OpenAI 将 Claude 的停止原因（stop_reason）转换为 OpenAI 的完成原因（finish_reason）。
+// Claude 使用 "end_turn"、"max_tokens"、"tool_use"、"refusal" 等停止原因，
+// OpenAI 使用 "stop"、"length"、"tool_calls"、"content_filter" 等完成原因。
+// 该函数委托给 reasonmap 包中的映射表进行转换。
 func stopReasonClaude2OpenAI(reason string) string {
 	return reasonmap.ClaudeStopReasonToOpenAIFinishReason(reason)
 }
 
+// maybeMarkClaudeRefusal 检查 Claude 响应的停止原因是否为 "refusal"（拒绝），
+// 如果是，则在 Gin 上下文中设置管理员拒绝原因标记，用于审计和计费排除。
+// 该函数是安全的：当 gin.Context 为 nil 时直接返回，不会引发 panic。
 func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	if c == nil {
 		return
@@ -44,6 +72,42 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
+// RequestOpenAI2ClaudeMessage 将 OpenAI 格式的聊天补全请求转换为 Claude API 格式。
+//
+// 该函数是请求转换的核心入口，处理以下映射：
+//
+//  1. 工具（Tools）：将 OpenAI 的 function calling 工具定义转换为 Claude 的 tool 格式，
+//     包括 input_schema 的提取（type、properties、required 及额外字段）。
+//
+//  2. Web 搜索工具：如果请求中包含 web_search_options，自动注入 Claude 的 web_search_20250305 工具，
+//     并将 search_context_size（low/medium/high）映射为 max_uses，同时处理 user_location 的转换。
+//
+//  3. 请求参数：映射 temperature、top_p、top_k、max_tokens、stream、stop_sequences 等参数。
+//     如果客户端未指定 max_tokens，使用 Claude 配置中的默认值。
+//
+//  4. 思维链（Thinking）：支持三种模式：
+//     a) Effort 后缀模式：如 claude-opus-4-6-low，从模型名提取 effort level，使用 adaptive thinking。
+//        Opus 4.7 特殊处理：使用 summarized display 并清空 temperature/top_p/top_k。
+//     b) -thinking 后缀模式：如 claude-3-5-sonnet-thinking，启用 extended thinking，
+//        BudgetTokens 为 max_tokens 的可配置百分比（默认 80%）。
+//     c) reasoning_effort 参数：直接映射为固定 BudgetTokens（low=1280, medium=2048, high=4096）。
+//     d) reasoning 对象：通过 openrouter.RequestReasoning 结构的 max_tokens 覆盖 BudgetTokens。
+//
+//  5. 消息转换：
+//     - system 消息：提取为 Claude 的 system 数组字段，支持纯文本和复合内容。
+//     - 连续同角色消息合并（tool 角色除外）。
+//     - 首条消息非 user 时自动插入占位 user 消息（Claude 要求首条消息必须为 user）。
+//     - tool 角色消息转换为 user 消息 + tool_result 内容块。
+//     - 图片和 PDF 文件：通过 base64 编码转换为 Claude 的 image/document 内容块。
+//     - assistant 消息中的 tool_calls 转换为 tool_use 内容块。
+//
+// 参数：
+//   - c: Gin 上下文，用于文件服务访问（图片/PDF 获取）
+//   - textRequest: OpenAI 格式的请求体
+//
+// 返回值：
+//   - *dto.ClaudeRequest: 转换后的 Claude 格式请求
+//   - error: 转换过程中的错误，成功则为 nil
 func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
 	claudeTools := make([]any, 0, len(textRequest.Tools))
 
@@ -153,6 +217,16 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		claudeRequest.MaxTokens = &defaultMaxTokens
 	}
 
+	// ---- 思维链（Thinking）处理 ----
+	// 优先级从高到低依次为：
+	// 1. Effort 后缀模式（如 claude-opus-4-6-low）- 仅限 Opus 4.6/4.7
+	// 2. -thinking 后缀模式（如 claude-3-5-sonnet-thinking）- 通用 Claude 模型
+	// 3. reasoning_effort 参数 - 低/中/高三档
+	// 4. reasoning 对象 - 自定义 max_tokens
+
+	// 模式一：Effort 后缀模式。
+	// 从模型名中提取 effort level（如 "low"、"medium"、"high"），使用 Claude 的 adaptive thinking。
+	// 例如 claude-opus-4-6-low -> baseModel="claude-opus-4-6", effortLevel="low"
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
 		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") || strings.HasPrefix(textRequest.Model, "claude-opus-4-7")) {
 		claudeRequest.Model = baseModel
@@ -171,6 +245,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			claudeRequest.TopP = nil
 			claudeRequest.Temperature = common.GetPointer[float64](1.0)
 		}
+	// 模式二：-thinking 后缀模式。
+	// 当 ThinkingAdapterEnabled 配置启用且模型名以 "-thinking" 结尾时，自动启用 extended thinking。
+	// 例如 claude-3-5-sonnet-thinking -> trimmedModel="claude-3-5-sonnet"
 	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
 		strings.HasSuffix(textRequest.Model, "-thinking") {
 
@@ -203,6 +280,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
+	// 模式三：reasoning_effort 参数。
+	// 直接映射为固定 BudgetTokens：low=1280, medium=2048, high=4096。
 	if textRequest.ReasoningEffort != "" {
 		switch textRequest.ReasoningEffort {
 		case "low":
@@ -223,7 +302,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
-	// 指定了 reasoning 参数,覆盖 budgetTokens
+	// 模式四：reasoning 对象（来自 OpenRouter 等中间层）。
+	// 通过 reasoning.max_tokens 字段直接设置 BudgetTokens，会覆盖前面模式三的设置。
 	if textRequest.Reasoning != nil {
 		var reasoning openrouter.RequestReasoning
 		if err := common.Unmarshal(textRequest.Reasoning, &reasoning); err != nil {
@@ -252,6 +332,12 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			claudeRequest.StopSequences = stopSequences
 		}
 	}
+	// ---- 消息预处理阶段 ----
+	// 将 OpenAI 消息列表进行规范化处理：
+	// 1. 空角色默认填充为 "user"
+	// 2. 保留 tool 角色的 tool_call_id 和 assistant 角色的 tool_calls
+	// 3. 合并连续同角色消息（tool 角色除外），避免 Claude API 拒绝请求
+	// 4. 空内容消息填充为 "..." 占位符（Claude 不接受空内容）
 	formatMessages := make([]dto.Message, 0)
 	lastMessage := dto.Message{
 		Role: "tool",
@@ -284,6 +370,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		lastMessage = fmtMessage
 	}
 
+	// ---- Claude 消息格式转换阶段 ----
+	// 将预处理后的 OpenAI 消息转换为 Claude 的消息格式：
+	// - system 消息累积到 systemMessages 数组（Claude 的 system 是顶层字段，非消息）
+	// - 非 system 消息转换为 ClaudeMessage 结构
+	// - 首条消息非 user 时自动插入占位 user 消息（Claude 要求）
+	// - tool 角色消息合并到前一条 user 消息中（Claude 的 tool_result 必须在 user 消息内）
+	// - 图片/PDF 内容转换为 base64 编码的 image/document 内容块
+	// - assistant 消息中的 tool_calls 转换为 tool_use 内容块
 	claudeMessages := make([]dto.ClaudeMessage, 0)
 	isFirstMessage := true
 	// 初始化system消息数组，用于累积多个system消息
@@ -434,6 +528,21 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	return &claudeRequest, nil
 }
 
+// StreamResponseClaude2OpenAI 将 Claude 的流式 SSE 响应事件转换为 OpenAI 的 chat.completion.chunk 格式。
+//
+// Claude 的流式响应包含以下事件类型，分别映射为：
+//   - "message_start"：消息开始事件，提取 response id、model，初始化空 delta。
+//   - "content_block_start"：内容块开始事件，处理 text 块的首段文本和 tool_use 块的工具调用初始化。
+//   - "content_block_delta"：内容块增量事件，处理以下子类型：
+//     * text：文本增量
+//     * input_json_delta：工具调用参数的 JSON 增量
+//     * thinking_delta：思维链增量（映射为 reasoning_content）
+//     * signature_delta：签名增量（加密内容，输出换行占位）
+//   - "message_delta"：消息结束事件，提取 stop_reason 并转换为 OpenAI 的 finish_reason。
+//   - "message_stop"：消息停止事件，返回 nil（由外部处理结束）。
+//
+// 工具调用（tool_use）通过 fcIdx 计算索引，兼容多工具并行调用场景。
+// 当存在工具调用时，清除 delta.content 以兼容 LobeOpenAI 等衍生应用。
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
 	var response dto.ChatCompletionsStreamResponse
 	response.Object = "chat.completion.chunk"
@@ -518,6 +627,16 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 	return &response
 }
 
+// ResponseClaude2OpenAI 将 Claude 的非流式（一次性）完整响应转换为 OpenAI 的 chat.completion 格式。
+//
+// 处理逻辑：
+//   - 遍历 claudeResponse.Content 中的所有内容块，按类型分别处理：
+//     * "tool_use"：提取工具调用的 id、name 和 input 参数（JSON 序列化为字符串）。
+//     * "thinking"：提取思维链明文内容，映射为 reasoning_content 字段。
+//     * "text"：提取最终响应文本。
+//   - 如果 content[0] 包含 Thinking 字段，单独提取为 choice 级别的 reasoning_content。
+//   - 将 Claude 的 stop_reason 通过 stopReasonClaude2OpenAI 转换为 finish_reason。
+//   - 生成标准的 OpenAI 响应结构，包括 id（使用 Claude 原始 id）、object、created、model、choices。
 func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextResponse {
 	choices := make([]dto.OpenAITextResponseChoice, 0)
 	fullTextResponse := dto.OpenAITextResponse{
@@ -581,6 +700,18 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	return &fullTextResponse
 }
 
+// ClaudeResponseInfo 用于在 Claude 流式响应处理过程中累积和追踪响应信息。
+//
+// 在流式传输过程中，Claude 的响应被拆分为多个 SSE 事件，该结构体作为上下文状态，
+// 逐步收集各事件中的数据，最终形成完整的 usage 统计和响应文本。
+//
+// 字段说明：
+//   - ResponseId: 响应唯一标识，来自 message_start 事件中的 message.id。
+//   - Created: 响应创建时间戳（Unix 秒），在 ClaudeStreamHandler 中初始化。
+//   - Model: 实际使用的模型名称，来自 message_start 事件中的 message.model。
+//   - ResponseText: 累积的响应文本（包含 thinking 和 text 内容），用于最终的 usage 估算兜底。
+//   - Usage: 累积的 token 用量统计，包含 prompt_tokens、completion_tokens、缓存相关字段等。
+//   - Done: 标记响应是否已完成（收到 message_delta 事件时置为 true）。
 type ClaudeResponseInfo struct {
 	ResponseId   string
 	Created      int64
@@ -590,6 +721,16 @@ type ClaudeResponseInfo struct {
 	Done         bool
 }
 
+// cacheCreationTokensForOpenAIUsage 计算用于 OpenAI 风格 usage 显示的缓存创建 token 总数。
+//
+// 缓存创建 token 有两种来源：
+//   - 分拆缓存（split cache）：ClaudeCacheCreation5mTokens + ClaudeCacheCreation1hTokens，
+//     分别代表 5 分钟和 1 小时过期的缓存创建 token 数。
+//   - 聚合缓存（aggregate cache）：PromptTokensDetails.CachedCreationTokens，
+//     是上游返回的缓存创建 token 总数。
+//
+// 优先使用分拆缓存之和；如果分拆缓存为 0，则回退到聚合缓存。
+// 如果聚合缓存大于分拆缓存之和（可能包含其他类型的缓存创建 token），则使用聚合缓存。
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
 	if usage == nil {
 		return 0
@@ -604,6 +745,16 @@ func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
 	return splitCacheCreationTokens
 }
 
+// buildOpenAIStyleUsageFromClaudeUsage 将 Claude 的 usage 统计转换为 OpenAI 风格的 usage 格式。
+//
+// 转换逻辑：
+//   - 归一化缓存创建 token 的分拆（5m + 1h）与聚合值之间的关系。
+//   - 计算总输入 token = prompt_tokens + cached_tokens + cache_creation_tokens。
+//   - 同时设置 PromptTokens 和 InputTokens（OpenAI 新旧两种字段名）。
+//   - 计算 TotalTokens = totalInputTokens + completionTokens。
+//   - 设置 UsageSemantic = "openai"、UsageSource = "anthropic"，用于下游标识用量来源。
+//
+// 返回值为 usage 的浅拷贝，不会修改原始 usage 对象。
 func buildOpenAIStyleUsageFromClaudeUsage(usage *dto.Usage) dto.Usage {
 	if usage == nil {
 		return dto.Usage{}
@@ -624,6 +775,17 @@ func buildOpenAIStyleUsageFromClaudeUsage(usage *dto.Usage) dto.Usage {
 	return clone
 }
 
+// buildMessageDeltaPatchUsage 构建用于修补 message_delta 事件 usage 字段的 ClaudeUsage 对象。
+//
+// 背景：某些上游（如 AWS Bedrock）的 message_delta 事件中 usage 可能缺少 input_tokens、
+// cache_read_input_tokens、cache_creation_input_tokens 等字段，但这些字段在 message_start
+// 事件中已经返回过。此函数将 message_start 已获取的 usage 数据与 message_delta 的 usage 合并，
+// 生成完整的 usage 数据，用于后续的 JSON 补丁操作。
+//
+// 合并规则：
+//   - 如果 message_delta 的 InputTokens 为 0 但 claudeInfo 中有 PromptTokens，则使用 claudeInfo 的值。
+//   - cache_read_input_tokens 和 cache_creation_input_tokens 同理。
+//   - 缓存创建的 5m/1h 分拆值进行归一化处理。
 func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ClaudeUsage {
 	usage := &dto.ClaudeUsage{}
 	if claudeResponse != nil && claudeResponse.Usage != nil {
@@ -667,6 +829,17 @@ func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo 
 	return usage
 }
 
+// shouldSkipClaudeMessageDeltaUsagePatch 判断是否应该跳过对 message_delta usage 的补丁操作。
+//
+// 当全局的 PassThroughRequestEnabled 启用（透传模式）或渠道级别的 PassThroughBodyEnabled 启用时，
+// 上游响应体将被原样透传给客户端，因此不需要也不应修改 usage 数据。
+//
+// 参数：
+//   - info: 中继信息，包含渠道级别的配置
+//
+// 返回值：
+//   - true: 跳过补丁（透传模式）
+//   - false: 需要执行补丁
 func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
 		return true
@@ -677,6 +850,18 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 	return info.ChannelSetting.PassThroughBodyEnabled
 }
 
+// patchClaudeMessageDeltaUsageData 使用 sjson 对 message_delta 事件的原始 JSON 字符串进行补丁操作，
+// 填充上游缺失的 usage 字段。
+//
+// 补丁的字段包括：
+//   - usage.input_tokens
+//   - usage.cache_read_input_tokens
+//   - usage.cache_creation_input_tokens
+//   - usage.cache_creation.ephemeral_5m_input_tokens
+//   - usage.cache_creation.ephemeral_1h_input_tokens
+//
+// 仅在上游未返回该字段或值为 0 时才进行填充，避免覆盖上游的有效数据。
+// 使用 sjson/gjson 库直接操作 JSON 字符串，避免完整的反序列化/序列化开销。
 func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
 	if data == "" || usage == nil {
 		return data
@@ -694,6 +879,15 @@ func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) strin
 	return data
 }
 
+// setMessageDeltaUsageInt 是 patchClaudeMessageDeltaUsageData 的辅助函数，
+// 用于在 JSON 字符串中设置单个整数值。
+//
+// 仅在以下条件同时满足时才写入：
+//   - localValue > 0（本地值有效）
+//   - 上游字段不存在或上游值为 0（不覆盖已有值）
+//
+// 使用 gjson.Get 读取上游值，sjson.Set 写入补丁值。
+// 任何错误均静默处理（返回原始 data），确保不中断流式传输。
 func setMessageDeltaUsageInt(data string, path string, localValue int) string {
 	if localValue <= 0 {
 		return data
@@ -711,6 +905,29 @@ func setMessageDeltaUsageInt(data string, path string, localValue int) string {
 	return patchedData
 }
 
+// FormatClaudeResponseInfo 在 Claude 流式传输过程中逐步累积响应信息到 claudeInfo。
+//
+// 该函数是流式 usage 追踪的核心，根据 Claude SSE 事件类型分别处理：
+//
+//   - "message_start"：消息开始，提取 response id、model、以及初始 usage（包含 input_tokens、
+//     cache_read_input_tokens、cache_creation_input_tokens 和分拆的 5m/1h 缓存 token）。
+//
+//   - "content_block_delta"：内容块增量，将 text 和 thinking 内容追加到 ResponseText 中，
+//     用于后续的 usage 估算兜底。
+//
+//   - "message_delta"：消息结束事件，提取最终 usage（仅覆盖非零值，避免丢失 message_start 的数据），
+//     计算 TotalTokens，并将 Done 标记为 true。
+//
+//   - "content_block_start"：内容块开始事件，仅用于同步 oaiResponse 的元数据，不累积 usage。
+//
+// 参数：
+//   - claudeResponse: 当前 SSE 事件的解析结果
+//   - oaiResponse: OpenAI 格式的流式响应（可选），用于同步 id/created/model 等元数据
+//   - claudeInfo: 累积的状态结构体（不可为 nil）
+//
+// 返回值：
+//   - true: 事件被成功处理
+//   - false: claudeInfo 为 nil 或事件类型不被识别
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
 	if claudeInfo == nil {
 		return false
@@ -783,6 +1000,26 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return true
 }
 
+// HandleStreamResponseData 处理单条 Claude 流式 SSE 数据，并根据中继格式转发给客户端。
+//
+// 处理流程：
+//  1. 将原始 JSON 字符串解析为 dto.ClaudeResponse。
+//  2. 检查错误响应：如果上游返回了 Claude 错误（error 类型），直接返回对应的 NexusTokError。
+//  3. 检查 refusal 拒绝：如果 stop_reason 为 "refusal"，在上下文中标记拒绝原因。
+//  4. 根据中继格式分别处理：
+//     - RelayFormatClaude：直接透传 Claude 原始格式，但对 message_delta 的 usage 进行补丁
+//       （解决 Bedrock 等上游缺失字段的问题），然后通过 helper.ClaudeChunkData 发送。
+//     - RelayFormatOpenAI：调用 StreamResponseClaude2OpenAI 转换为 OpenAI 格式，
+//       通过 FormatClaudeResponseInfo 累积 usage，最后通过 helper.ObjectData 发送。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - info: 中继信息（包含中继格式、渠道设置等）
+//   - claudeInfo: 流式 usage 累积状态
+//   - data: 原始 JSON 字符串
+//
+// 返回值：
+//   - *types.NexusTokError: 处理错误，成功则为 nil
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NexusTokError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
@@ -830,6 +1067,18 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	return nil
 }
 
+// HandleStreamFinalResponse 在 Claude 流式传输结束后处理最终的 usage 统计和结束标记。
+//
+// 处理逻辑：
+//  1. 检查 usage 完整性：如果 completion_tokens 为 0 或 Done 为 false，
+//     说明上游可能未正确返回 usage（某些上游场景下常见）。
+//     此时通过 service.ResponseText2Usage 基于累积的响应文本进行 token 估算作为兜底，
+//     仅补充缺失字段，不覆盖 message_start 已获取的 cache 字段。
+//  2. 设置 UsageSemantic = "anthropic" 标识用量来源。
+//  3. 根据中继格式分别处理：
+//     - RelayFormatClaude：无需额外操作（流式数据已在 HandleStreamResponseData 中逐块发送）。
+//     - RelayFormatOpenAI：如果需要包含 usage（ShouldIncludeUsage），将 Claude usage 转换为
+//       OpenAI 格式并发送最终的 usage chunk，然后发送 [DONE] 结束标记。
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
 	if claudeInfo.Usage.PromptTokens == 0 {
 		//上游出错
@@ -868,6 +1117,23 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	}
 }
 
+// ClaudeStreamHandler 是 Claude 流式响应处理的顶层入口函数。
+//
+// 完整的流式处理流程：
+//  1. 初始化 ClaudeResponseInfo，填充 response id、created timestamp、model 等元数据。
+//  2. 使用 helper.StreamScannerHandler 逐行读取 SSE 数据流。
+//  3. 对每条 SSE 数据调用 HandleStreamResponseData 进行解析、转换和转发。
+//  4. 如果处理过程中出错，通过 sr.Stop(err) 停止扫描。
+//  5. 流式传输结束后调用 HandleStreamFinalResponse 处理最终 usage 和结束标记。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - resp: 上游 Claude API 的 HTTP 响应
+//   - info: 中继信息
+//
+// 返回值：
+//   - *dto.Usage: 最终的 token 用量统计
+//   - *types.NexusTokError: 处理错误，成功则为 nil
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NexusTokError) {
 	claudeInfo := &ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
@@ -891,6 +1157,19 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	return claudeInfo.Usage, nil
 }
 
+// HandleClaudeResponseData 处理 Claude 的非流式（一次性）完整响应数据。
+//
+// 处理流程：
+//  1. 将原始字节数据解析为 dto.ClaudeResponse。
+//  2. 检查错误响应和 refusal 拒绝标记。
+//  3. 提取 usage 统计：input_tokens、output_tokens、cache 相关字段、分拆的 5m/1h 缓存 token。
+//  4. 根据中继格式分别处理：
+//     - RelayFormatOpenAI：调用 ResponseClaude2OpenAI 转换为 OpenAI 格式，
+//       附带转换后的 usage，然后 JSON 序列化。
+//     - RelayFormatClaude：直接使用原始响应数据。
+//  5. 特殊处理：如果响应中包含 web_search_requests（服务器端工具用量），
+//     设置到 gin.Context 中用于计费。
+//  6. 通过 service.IOCopyBytesGracefully 将响应数据写入客户端。
 func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, httpResp *http.Response, data []byte) *types.NexusTokError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.Unmarshal(data, &claudeResponse)
@@ -935,6 +1214,23 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	return nil
 }
 
+// ClaudeHandler 是 Claude 非流式响应处理的顶层入口函数。
+//
+// 处理流程：
+//  1. 延迟关闭上游响应体（defer service.CloseResponseBodyGracefully）。
+//  2. 初始化 ClaudeResponseInfo。
+//  3. 使用 io.ReadAll 一次性读取整个响应体。
+//  4. 调试模式下打印响应体内容。
+//  5. 委托给 HandleClaudeResponseData 进行解析、转换和响应。
+//
+// 参数：
+//   - c: Gin 上下文
+//   - resp: 上游 Claude API 的 HTTP 响应
+//   - info: 中继信息
+//
+// 返回值：
+//   - *dto.Usage: 最终的 token 用量统计
+//   - *types.NexusTokError: 处理错误，成功则为 nil
 func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -959,6 +1255,20 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 	return claudeInfo.Usage, nil
 }
 
+// mapToolChoice 将 OpenAI 格式的 tool_choice 参数映射为 Claude 格式的 ClaudeToolChoice。
+//
+// OpenAI 与 Claude 的 tool_choice 映射关系：
+//   - "auto"      -> type: "auto"        （模型自动决定是否调用工具）
+//   - "required"  -> type: "any"          （强制模型至少调用一个工具）
+//   - "none"      -> type: "none"         （禁止调用任何工具）
+//   - {"function":{"name":"xxx"}} -> type: "tool", name: "xxx"（强制调用指定工具）
+//
+// 并行工具调用（parallel_tool_calls）处理：
+//   - 如果 tool_choice 为 nil 但 parallelToolCalls 有值，创建默认 auto 类型。
+//   - 将 OpenAI 的 parallel_tool_calls（true=允许并行）反转为 Claude 的
+//     disable_parallel_tool_use（true=禁止并行）。
+//   - 特殊情况：当 tool_choice.type 为 "none" 时，不设置 disable_parallel_tool_use，
+//     因为 Anthropic schema 不允许 none 类型携带额外字段。
 func mapToolChoice(toolChoice any, parallelToolCalls *bool) *dto.ClaudeToolChoice {
 	var claudeToolChoice *dto.ClaudeToolChoice
 

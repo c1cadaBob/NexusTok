@@ -1,3 +1,7 @@
+// logging - log_dir_cleaner_test.go
+// 日志目录大小限制清理功能测试
+// 验证 enforceLogDirSizeLimit 函数能够按照文件修改时间从旧到新的顺序
+// 删除日志文件，直到目录总大小不超过指定限制。受保护的文件不应被删除。
 package logging
 
 import (
@@ -7,6 +11,9 @@ import (
 	"time"
 )
 
+// TestEnforceLogDirSizeLimitDeletesOldest 验证清理逻辑：
+// 当目录中有 3 个文件（各 60 字节），限制为 120 字节时，
+// 应删除最旧的文件（old.log），保留较新的文件（mid.log）和受保护的文件（main.log）。
 func TestEnforceLogDirSizeLimitDeletesOldest(t *testing.T) {
 	dir := t.TempDir()
 
@@ -34,6 +41,9 @@ func TestEnforceLogDirSizeLimitDeletesOldest(t *testing.T) {
 	}
 }
 
+// TestEnforceLogDirSizeLimitSkipsProtected 验证受保护文件不会被删除：
+// 即使受保护的文件（main.log）大小超过限制，清理过程也只会删除其他文件，
+// 不会触碰受保护的文件。
 func TestEnforceLogDirSizeLimitSkipsProtected(t *testing.T) {
 	dir := t.TempDir()
 
@@ -57,6 +67,8 @@ func TestEnforceLogDirSizeLimitSkipsProtected(t *testing.T) {
 	}
 }
 
+// writeLogFile 是测试辅助函数，创建指定大小的日志文件并设置其修改时间。
+// 这允许测试通过修改时间来控制文件的清理顺序。
 func writeLogFile(t *testing.T, path string, size int, modTime time.Time) {
 	t.Helper()
 

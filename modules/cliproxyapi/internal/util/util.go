@@ -15,6 +15,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// functionNameSanitizer 用于匹配工具名称中的非法字符（非字母、数字、下划线、点、冒号、连字符），
+// 将其替换为下划线以满足 Gemini/Vertex AI 的命名要求。
 var functionNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_.:-]`)
 
 // SanitizeFunctionName ensures a function name matches the requirements for Gemini/Vertex AI.

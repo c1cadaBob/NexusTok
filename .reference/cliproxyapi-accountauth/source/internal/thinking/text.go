@@ -1,3 +1,6 @@
+// 包 thinking - text.go
+// 该文件提供了从响应内容中提取思考文本的功能。
+// 支持多种格式：简单字符串、包装对象、Gemini 风格等。
 package thinking
 
 import (

@@ -1,3 +1,5 @@
+// Package cmd - openai_login.go
+// 提供 OpenAI Codex 的 OAuth 认证流程和登录选项定义。
 package cmd
 
 import (
@@ -12,27 +14,29 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// LoginOptions 包含登录过程的选项。
+// 为认证流程提供配置，包括浏览器行为和交互式提示功能。
+//
 // LoginOptions contains options for the login processes.
-// It provides configuration for authentication flows including browser behavior
-// and interactive prompting capabilities.
 type LoginOptions struct {
-	// NoBrowser indicates whether to skip opening the browser automatically.
+	// NoBrowser 表示是否跳过自动打开浏览器。
 	NoBrowser bool
 
-	// CallbackPort overrides the local OAuth callback port when set (>0).
+	// CallbackPort 覆盖本地 OAuth 回调端口（当设置且 >0 时生效）。
 	CallbackPort int
 
-	// Prompt allows the caller to provide interactive input when needed.
+	// Prompt 允许调用者在需要时提供交互式输入。
 	Prompt func(prompt string) (string, error)
 }
 
-// DoCodexLogin triggers the Codex OAuth flow through the shared authentication manager.
-// It initiates the OAuth authentication process for OpenAI Codex services and saves
-// the authentication tokens to the configured auth directory.
+// DoCodexLogin 通过共享认证管理器触发 Codex OAuth 流程。
+// 启动 OpenAI Codex 服务的 OAuth 认证过程，并将认证令牌保存到配置的认证目录。
 //
-// Parameters:
-//   - cfg: The application configuration
-//   - options: Login options including browser behavior and prompts
+// 参数:
+//   - cfg: 应用程序配置
+//   - options: 登录选项，包括浏览器行为和提示
+//
+// DoCodexLogin triggers the Codex OAuth flow through the shared authentication manager.
 func DoCodexLogin(cfg *config.Config, options *LoginOptions) {
 	if options == nil {
 		options = &LoginOptions{}

@@ -1,3 +1,10 @@
+// amp - gemini_bridge_test.go
+// Gemini Bridge 处理器的单元测试。
+// 测试 Gemini API 桥接处理器的行为：
+// - action 参数的正确提取（模型名:操作名）
+// - 模型映射时 action 参数的替换
+// - 映射保留操作方法（streamGenerateContent 等）
+// - 无效路径返回 400 状态码
 package amp
 
 import (
@@ -8,6 +15,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TestCreateGeminiBridgeHandler_ActionParameterExtraction 测试 Gemini Bridge 处理器的 action 参数提取：
+// - 无映射时使用 URL 中的原始模型名
+// - 有映射时用映射后的模型名替换 URL 中的模型名
+// - 映射保留操作方法（streamGenerateContent）
 func TestCreateGeminiBridgeHandler_ActionParameterExtraction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -72,6 +83,7 @@ func TestCreateGeminiBridgeHandler_ActionParameterExtraction(t *testing.T) {
 	}
 }
 
+// TestCreateGeminiBridgeHandler_InvalidPath 测试无效路径返回 400 状态码
 func TestCreateGeminiBridgeHandler_InvalidPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
