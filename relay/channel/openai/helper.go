@@ -1,34 +1,6 @@
 package openai
 
 import (
-	"encoding/json"
-	"strings"
-
-	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/dto"
-	"github.com/c1cada/NexusTok/logger"
-	relaycommon "github.com/c1cada/NexusTok/relay/common"
-	relayconstant "github.com/c1cada/NexusTok/relay/constant"
-	"github.com/c1cada/NexusTok/relay/helper"
-	"github.com/c1cada/NexusTok/service"
-	"github.com/c1cada/NexusTok/types"
-
-	"github.com/samber/lo"
-
-	"github.com/gin-gonic/gin"
-)
-
-// openai - helper.go
-// OpenAI 渠道的辅助函数文件。
-// 本文件提供了流式响应处理的核心辅助功能，包括：
-// - 多格式流式数据分发（OpenAI、Claude、Gemini 三种格式）
-// - 流式响应的 token 统计和文本累积
-// - 最终响应的处理和发送（包含 usage 统计）
-// - Responses API 的流式数据转发
-package openai
-
-import (
-	"encoding/json"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -214,12 +186,12 @@ func processTokens(relayMode int, streamItems []string, responseTextBuilder *str
 //   - error: 解析失败时的错误
 func processChatCompletions(streamResp string, streamItems []string, responseTextBuilder *strings.Builder, toolCount *int) error {
 	var streamResponses []dto.ChatCompletionsStreamResponse
-	if err := json.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
+	if err := common.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
 		// 一次性解析失败，逐个解析
 		common.SysLog("error unmarshalling stream response: " + err.Error())
 		for _, item := range streamItems {
 			var streamResponse dto.ChatCompletionsStreamResponse
-			if err := json.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
+			if err := common.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
 				return err
 			}
 			if err := ProcessStreamResponse(streamResponse, responseTextBuilder, toolCount); err != nil {
@@ -262,12 +234,12 @@ func processChatCompletions(streamResp string, streamItems []string, responseTex
 //   - error: 解析失败时的错误（逐个解析时跳过失败项）
 func processCompletions(streamResp string, streamItems []string, responseTextBuilder *strings.Builder) error {
 	var streamResponses []dto.CompletionsStreamResponse
-	if err := json.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
+	if err := common.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
 		// 一次性解析失败，逐个解析
 		common.SysLog("error unmarshalling stream response: " + err.Error())
 		for _, item := range streamItems {
 			var streamResponse dto.CompletionsStreamResponse
-			if err := json.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
+			if err := common.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
 				continue
 			}
 			for _, choice := range streamResponse.Choices {

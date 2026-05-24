@@ -55,6 +55,7 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 直接拼接基础 URL 和请求路径。
 // 参数:
 //   - info: 包含基础 URL 和请求路径的中继信息
+//
 // 返回:
 //   - string: 完整的请求 URL
 //   - error: 始终返回 nil
@@ -68,8 +69,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 //   - c: Gin 上下文
 //   - req: HTTP 请求头指针
 //   - info: 包含 API Key 等信息的中继信息
+//
 // 返回:
 //   - error: 始终返回 nil
+func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	return nil
@@ -81,9 +84,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - request: OpenAI 格式的通用请求
+//
 // 返回:
 //   - any: 原始请求（直接透传）
 //   - error: 请求为 nil 时返回错误
+func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -110,9 +115,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - requestBody: 请求体 io.Reader
+//
 // 返回:
 //   - any: 原始响应
 //   - error: 请求失败时返回错误
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
@@ -122,9 +129,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 //   - c: Gin 上下文
 //   - resp: 上游 HTTP 响应
 //   - info: 中继信息
+//
 // 返回:
 //   - usage: token 使用量
 //   - err: 处理过程中的错误信息
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NexusTokError) {
 	if info.IsStream {
 		usage, err = openai.OaiStreamHandler(c, info, resp)
 	} else {
@@ -143,5 +152,6 @@ func (a *Adaptor) GetModelList() []string {
 // GetChannelName 返回渠道名称标识 "submodel"。
 // 返回:
 //   - string: 渠道名称
+func (a *Adaptor) GetChannelName() string {
 	return ChannelName
 }

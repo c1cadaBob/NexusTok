@@ -9,7 +9,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,8 +35,10 @@ import (
 // 参数:
 //   - a: 腾讯云适配器实例
 //   - request: OpenAI 格式的通用请求
+//
 // 返回:
 //   - *TencentChatRequest: 转换后的腾讯云请求体
+func requestOpenAI2Tencent(a *Adaptor, request dto.GeneralOpenAIRequest) *TencentChatRequest {
 	messages := make([]*TencentMessage, 0, len(request.Messages))
 	for i := 0; i < len(request.Messages); i++ {
 		message := request.Messages[i]
@@ -62,8 +63,10 @@ import (
 // 提取 ID、消息内容、finish_reason 和 token 使用量。
 // 参数:
 //   - response: 腾讯云响应结构体
+//
 // 返回:
 //   - *dto.OpenAITextResponse: OpenAI 格式的文本响应
+func responseTencent2OpenAI(response *TencentChatResponse) *dto.OpenAITextResponse {
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      response.Id,
 		Object:  "chat.completion",
@@ -92,8 +95,10 @@ import (
 // 提取增量内容（delta）和 finish_reason。
 // 参数:
 //   - TencentResponse: 腾讯云流式响应结构体
+//
 // 返回:
 //   - *dto.ChatCompletionsStreamResponse: OpenAI 格式的流式响应
+func streamResponseTencent2OpenAI(TencentResponse *TencentChatResponse) *dto.ChatCompletionsStreamResponse {
 	response := dto.ChatCompletionsStreamResponse{
 		Object:  "chat.completion.chunk",
 		Created: common.GetTimestamp(),
@@ -117,9 +122,11 @@ import (
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - resp: 上游 HTTP 响应
+//
 // 返回:
 //   - *dto.Usage: token 使用量统计
 //   - *types.NexusTokError: 处理过程中的错误信息
+func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	var responseText string
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -168,16 +175,18 @@ import (
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - resp: 上游 HTTP 响应
+//
 // 返回:
 //   - *dto.Usage: token 使用量统计
 //   - *types.NexusTokError: 处理过程中的错误信息
+func tencentHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	var tencentSb TencentChatResponseSB
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
 	service.CloseResponseBodyGracefully(resp)
-	err = json.Unmarshal(responseBody, &tencentSb)
+	err = common.Unmarshal(responseBody, &tencentSb)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -202,11 +211,13 @@ import (
 // 格式为 "AppID|SecretId|SecretKey"，三个字段用竖线分隔。
 // 参数:
 //   - config: 配置字符串
+//
 // 返回:
 //   - appId: 腾讯云应用 ID
 //   - secretId: 腾讯云 Secret ID
 //   - secretKey: 腾讯云 Secret Key
 //   - err: 解析失败时返回错误
+func parseTencentConfig(config string) (appId int64, secretId string, secretKey string, err error) {
 	parts := strings.Split(config, "|")
 	if len(parts) != 3 {
 		err = errors.New("invalid tencent config")
@@ -222,8 +233,10 @@ import (
 // 用于 TC3 签名中的请求体哈希和规范请求哈希。
 // 参数:
 //   - s: 待哈希的字符串
+//
 // 返回:
 //   - string: SHA256 十六进制编码字符串
+func sha256hex(s string) string {
 	b := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(b[:])
 }
@@ -233,8 +246,10 @@ import (
 // 参数:
 //   - s: 待签名的消息
 //   - key: HMAC 密钥
+//
 // 返回:
 //   - string: HMAC-SHA256 认证码原始字节的字符串表示
+func hmacSha256(s, key string) string {
 	hashed := hmac.New(sha256.New, []byte(key))
 	hashed.Write([]byte(s))
 	return string(hashed.Sum(nil))
@@ -251,8 +266,10 @@ import (
 //   - adaptor: 适配器实例（包含 Action、Timestamp 等元数据）
 //   - secId: 腾讯云 Secret ID
 //   - secKey: 腾讯云 Secret Key
+//
 // 返回:
 //   - string: Authorization 头的值
+func getTencentSign(req TencentChatRequest, adaptor *Adaptor, secId, secKey string) string {
 	// build canonical request string
 	host := "hunyuan.tencentcloudapi.com"
 	httpRequestMethod := "POST"
@@ -261,7 +278,7 @@ import (
 	canonicalHeaders := fmt.Sprintf("content-type:%s\nhost:%s\nx-tc-action:%s\n",
 		"application/json", host, strings.ToLower(adaptor.Action))
 	signedHeaders := "content-type;host;x-tc-action"
-	payload, _ := json.Marshal(req)
+	payload, _ := common.Marshal(req)
 	hashedRequestPayload := sha256hex(string(payload))
 	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
 		httpRequestMethod,

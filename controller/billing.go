@@ -10,11 +10,11 @@
 package controller
 
 import (
-	“github.com/c1cada/NexusTok/common”
-	“github.com/c1cada/NexusTok/model”
-	“github.com/c1cada/NexusTok/setting/operation_setting”
-	“github.com/c1cada/NexusTok/types”
-	“github.com/gin-gonic/gin”
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
+	"github.com/c1cada/NexusTok/types"
+	"github.com/gin-gonic/gin"
 )
 
 // GetSubscription 获取用户订阅信息
@@ -42,14 +42,14 @@ func GetSubscription(c *gin.Context) {
 	// 根据配置决定查询 Token 级别还是用户级别的配额
 	if common.DisplayTokenStatEnabled {
 		// Token 级别：查询指定 Token 的配额
-		tokenId := c.GetInt(“token_id”)
+		tokenId := c.GetInt("token_id")
 		token, err = model.GetTokenById(tokenId)
 		expiredTime = token.ExpiredTime
 		remainQuota = token.RemainQuota
 		usedQuota = token.UsedQuota
 	} else {
 		// 用户级别：查询用户的总配额
-		userId := c.GetInt(“id”)
+		userId := c.GetInt("id")
 		remainQuota, err = model.GetUserQuota(userId, false)
 		usedQuota, err = model.GetUserUsedQuota(userId)
 	}
@@ -62,10 +62,10 @@ func GetSubscription(c *gin.Context) {
 	if err != nil {
 		openAIError := types.OpenAIError{
 			Message: err.Error(),
-			Type:    “upstream_error”,
+			Type:    "upstream_error",
 		}
 		c.JSON(200, gin.H{
-			“error”: openAIError,
+			"error": openAIError,
 		})
 		return
 	}
@@ -95,7 +95,7 @@ func GetSubscription(c *gin.Context) {
 
 	// 构建 OpenAI 兼容的订阅响应
 	subscription := OpenAISubscriptionResponse{
-		Object:             “billing_subscription”,
+		Object:             "billing_subscription",
 		HasPaymentMethod:   true,
 		SoftLimitUSD:       amount,
 		HardLimitUSD:       amount,
@@ -120,11 +120,11 @@ func GetUsage(c *gin.Context) {
 
 	// 根据配置决定查询 Token 级别还是用户级别的使用量
 	if common.DisplayTokenStatEnabled {
-		tokenId := c.GetInt(“token_id”)
+		tokenId := c.GetInt("token_id")
 		token, err = model.GetTokenById(tokenId)
 		quota = token.UsedQuota
 	} else {
-		userId := c.GetInt(“id”)
+		userId := c.GetInt("id")
 		quota, err = model.GetUserUsedQuota(userId)
 	}
 
@@ -132,10 +132,10 @@ func GetUsage(c *gin.Context) {
 	if err != nil {
 		openAIError := types.OpenAIError{
 			Message: err.Error(),
-			Type:    “nexustok_error”,
+			Type:    "nexustok_error",
 		}
 		c.JSON(200, gin.H{
-			“error”: openAIError,
+			"error": openAIError,
 		})
 		return
 	}
@@ -154,7 +154,7 @@ func GetUsage(c *gin.Context) {
 	// 构建 OpenAI 兼容的使用量响应
 	// 注意：TotalUsage 单位为”分”，需要乘以 100
 	usage := OpenAIUsageResponse{
-		Object:     “list”,
+		Object:     "list",
 		TotalUsage: amount * 100,
 	}
 	c.JSON(200, usage)

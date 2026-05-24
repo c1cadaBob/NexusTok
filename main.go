@@ -4,38 +4,38 @@
 package main
 
 import (
-	"bytes"   // 字节操作，用于处理嵌入的静态资源
-	"embed"   // Go 1.16+ 嵌入文件系统功能
-	"fmt"     // 格式化输出
-	"log"     // 日志包
+	"bytes"    // 字节操作，用于处理嵌入的静态资源
+	"embed"    // Go 1.16+ 嵌入文件系统功能
+	"fmt"      // 格式化输出
+	"log"      // 日志包
 	"net/http" // HTTP 服务
-	"os"      // 操作系统功能，环境变量读取
-	"strconv" // 字符串转换
-	"strings" // 字符串操作
-	"time"    // 时间处理
+	"os"       // 操作系统功能，环境变量读取
+	"strconv"  // 字符串转换
+	"strings"  // 字符串操作
+	"time"     // 时间处理
 
 	// 项目内部包导入
-	"github.com/c1cada/NexusTok/common"      // 公共工具包：配置、缓存、Redis、日志等
-	"github.com/c1cada/NexusTok/constant"    // 常量定义：API 类型、渠道类型等
-	"github.com/c1cada/NexusTok/controller"  // 控制器层：请求处理器
-	"github.com/c1cada/NexusTok/i18n"        // 国际化支持
-	"github.com/c1cada/NexusTok/logger"      // 日志配置
-	"github.com/c1cada/NexusTok/middleware"  // 中间件：认证、限流、CORS 等
-	"github.com/c1cada/NexusTok/model"       // 数据模型层：GORM ORM
-	"github.com/c1cada/NexusTok/oauth"       // OAuth 认证实现
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics" // 性能监控指标
-	"github.com/c1cada/NexusTok/relay"       // AI API 中继/代理层
-	"github.com/c1cada/NexusTok/router"      // 路由配置
-	"github.com/c1cada/NexusTok/service"     // 服务层：业务逻辑
+	"github.com/c1cada/NexusTok/common"                        // 公共工具包：配置、缓存、Redis、日志等
+	"github.com/c1cada/NexusTok/constant"                      // 常量定义：API 类型、渠道类型等
+	"github.com/c1cada/NexusTok/controller"                    // 控制器层：请求处理器
+	"github.com/c1cada/NexusTok/i18n"                          // 国际化支持
+	"github.com/c1cada/NexusTok/logger"                        // 日志配置
+	"github.com/c1cada/NexusTok/middleware"                    // 中间件：认证、限流、CORS 等
+	"github.com/c1cada/NexusTok/model"                         // 数据模型层：GORM ORM
+	"github.com/c1cada/NexusTok/oauth"                         // OAuth 认证实现
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"  // 性能监控指标
+	"github.com/c1cada/NexusTok/relay"                         // AI API 中继/代理层
+	"github.com/c1cada/NexusTok/router"                        // 路由配置
+	"github.com/c1cada/NexusTok/service"                       // 服务层：业务逻辑
 	_ "github.com/c1cada/NexusTok/setting/performance_setting" // 性能设置（init 自动加载）
 	"github.com/c1cada/NexusTok/setting/ratio_setting"         // 比率/定价设置
 
 	// 第三方依赖包
-	"github.com/bytedance/gopkg/util/gopool"        // 字节跳动高性能协程池
-	"github.com/gin-contrib/sessions"                // Gin 会话管理
-	"github.com/gin-contrib/sessions/cookie"         // 基于 Cookie 的会话存储
-	"github.com/gin-gonic/gin"                       // Gin Web 框架
-	"github.com/joho/godotenv"                       // .env 文件加载
+	"github.com/bytedance/gopkg/util/gopool" // 字节跳动高性能协程池
+	"github.com/gin-contrib/sessions"        // Gin 会话管理
+	"github.com/gin-contrib/sessions/cookie" // 基于 Cookie 的会话存储
+	"github.com/gin-gonic/gin"               // Gin Web 框架
+	"github.com/joho/godotenv"               // .env 文件加载
 
 	_ "net/http/pprof" // 性能分析工具（通过环境变量 ENABLE_PPROF 启用）
 )
@@ -153,7 +153,7 @@ func main() {
 
 	// 启动自动测试渠道任务
 	// 定期检测渠道的可用性
-	go controller.AutomaticallyTestTasks()
+	go controller.AutomaticallyTestChannels()
 
 	// 启动 Codex 凭证自动刷新任务
 	// 每 10 分钟检查一次，凭证将在 1 天内过期时自动刷新
@@ -259,11 +259,11 @@ func main() {
 	// 使用 Cookie 存储会话数据，配置安全选项
 	store := cookie.NewStore([]byte(common.SessionSecret))
 	store.Options(sessions.Options{
-		Path:     "/",                              // Cookie 路径
-		MaxAge:   common.SessionMaxAge,             // 会话过期时间（秒）
-		HttpOnly: true,                             // 仅 HTTP 访问，防止 XSS
-		Secure:   false,                            // 是否仅 HTTPS（生产环境应设为 true）
-		SameSite: http.SameSiteStrictMode,          // SameSite 策略，防止 CSRF
+		Path:     "/",                     // Cookie 路径
+		MaxAge:   common.SessionMaxAge,    // 会话过期时间（秒）
+		HttpOnly: true,                    // 仅 HTTP 访问，防止 XSS
+		Secure:   false,                   // 是否仅 HTTPS（生产环境应设为 true）
+		SameSite: http.SameSiteStrictMode, // SameSite 策略，防止 CSRF
 	})
 	// 注册会话中间件，会话名称为 "session"
 	server.Use(sessions.Sessions("session", store))
@@ -278,11 +278,11 @@ func main() {
 	// 设置路由
 	// 将所有 API 路由、静态文件路由注册到 Gin 引擎
 	router.SetRouter(server, router.ThemeAssets{
-		DefaultBuildFS:      buildFS,           // 默认主题资源
-		DefaultIndexPage:    indexPage,         // 默认主题入口页
-		ClassicBuildFS:      classicBuildFS,    // 经典主题资源
-		ClassicIndexPage:    classicIndexPage,  // 经典主题入口页
-		CPAManagerBuildFS:   cpaManagerBuildFS, // CPA 管理器资源
+		DefaultBuildFS:      buildFS,             // 默认主题资源
+		DefaultIndexPage:    indexPage,           // 默认主题入口页
+		ClassicBuildFS:      classicBuildFS,      // 经典主题资源
+		ClassicIndexPage:    classicIndexPage,    // 经典主题入口页
+		CPAManagerBuildFS:   cpaManagerBuildFS,   // CPA 管理器资源
 		CPAManagerIndexPage: cpaManagerIndexPage, // CPA 管理器入口页
 	})
 

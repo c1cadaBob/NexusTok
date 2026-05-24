@@ -18,21 +18,21 @@ import (
 // 以下是协议中使用的位域类型定义，用于二进制消息头的解析和构建。
 
 type (
-	EventType         int32  // 事件类型，标识消息的业务语义
-	MsgType           uint8  // 消息类型，标识消息的整体类别（如客户端请求、服务端响应、错误等）
-	MsgTypeFlagBits   uint8  // 消息类型标志位，标识是否有事件头、是否有序列号等
-	VersionBits       uint8  // 协议版本号
-	HeaderSizeBits    uint8  // 头部大小（以 4 字节为单位）
-	SerializationBits uint8  // 序列化方式（JSON 等）
-	CompressionBits   uint8  // 压缩方式（无压缩等）
+	EventType         int32 // 事件类型，标识消息的业务语义
+	MsgType           uint8 // 消息类型，标识消息的整体类别（如客户端请求、服务端响应、错误等）
+	MsgTypeFlagBits   uint8 // 消息类型标志位，标识是否有事件头、是否有序列号等
+	VersionBits       uint8 // 协议版本号
+	HeaderSizeBits    uint8 // 头部大小（以 4 字节为单位）
+	SerializationBits uint8 // 序列化方式（JSON 等）
+	CompressionBits   uint8 // 压缩方式（无压缩等）
 )
 
 // 消息类型标志位常量，用于 MsgTypeFlagBits。
 const (
-	MsgTypeFlagNoSeq       MsgTypeFlagBits = 0      // 无序列号
-	MsgTypeFlagPositiveSeq MsgTypeFlagBits = 0b1    // 正序列号（有序消息）
-	MsgTypeFlagNegativeSeq MsgTypeFlagBits = 0b11   // 负序列号（用于标识最后一条消息）
-	MsgTypeFlagWithEvent   MsgTypeFlagBits = 0b100  // 包含事件头
+	MsgTypeFlagNoSeq       MsgTypeFlagBits = 0     // 无序列号
+	MsgTypeFlagPositiveSeq MsgTypeFlagBits = 0b1   // 正序列号（有序消息）
+	MsgTypeFlagNegativeSeq MsgTypeFlagBits = 0b11  // 负序列号（用于标识最后一条消息）
+	MsgTypeFlagWithEvent   MsgTypeFlagBits = 0b100 // 包含事件头
 )
 
 // 协议版本常量。
@@ -68,6 +68,7 @@ const (
 // String 返回消息类型的可读字符串表示，用于日志和调试。
 // 返回:
 //   - string: 消息类型名称
+func (t MsgType) String() string {
 	switch t {
 	case MsgTypeFullClientRequest:
 		return "MsgType_FullClientRequest"
@@ -92,16 +93,16 @@ const (
 	EventType_None EventType = 0 // 空事件
 
 	// 连接生命周期事件
-	EventType_StartConnection  EventType = 1   // 开始连接
-	EventType_FinishConnection EventType = 2   // 结束连接
+	EventType_StartConnection    EventType = 1  // 开始连接
+	EventType_FinishConnection   EventType = 2  // 结束连接
 	EventType_ConnectionStarted  EventType = 50 // 连接已建立
 	EventType_ConnectionFailed   EventType = 51 // 连接失败
 	EventType_ConnectionFinished EventType = 52 // 连接已完成
 
 	// 会话生命周期事件
-	EventType_StartSession  EventType = 100 // 开始会话
-	EventType_CancelSession EventType = 101 // 取消会话
-	EventType_FinishSession EventType = 102 // 结束会话
+	EventType_StartSession    EventType = 100 // 开始会话
+	EventType_CancelSession   EventType = 101 // 取消会话
+	EventType_FinishSession   EventType = 102 // 结束会话
 	EventType_SessionStarted  EventType = 150 // 会话已开始
 	EventType_SessionCanceled EventType = 151 // 会话已取消
 	EventType_SessionFinished EventType = 152 // 会话已完成
@@ -129,14 +130,14 @@ const (
 	EventType_ASREnded    EventType = 459 // ASR 结束
 
 	// 对话事件
-	EventType_ChatTTSText EventType = 500 // 对话 TTS 文本
+	EventType_ChatTTSText  EventType = 500 // 对话 TTS 文本
 	EventType_ChatResponse EventType = 550 // 对话响应
 	EventType_ChatEnded    EventType = 559 // 对话结束
 
 	// 字幕事件
-	EventType_SourceSubtitleStart    EventType = 650 // 源字幕开始
-	EventType_SourceSubtitleResponse EventType = 651 // 源字幕响应
-	EventType_SourceSubtitleEnd      EventType = 652 // 源字幕结束
+	EventType_SourceSubtitleStart         EventType = 650 // 源字幕开始
+	EventType_SourceSubtitleResponse      EventType = 651 // 源字幕响应
+	EventType_SourceSubtitleEnd           EventType = 652 // 源字幕结束
 	EventType_TranslationSubtitleStart    EventType = 653 // 翻译字幕开始
 	EventType_TranslationSubtitleResponse EventType = 654 // 翻译字幕响应
 	EventType_TranslationSubtitleEnd      EventType = 655 // 翻译字幕结束
@@ -145,6 +146,7 @@ const (
 // String 返回事件类型的可读字符串表示，用于日志和调试。
 // 返回:
 //   - string: 事件类型名称
+func (t EventType) String() string {
 	switch t {
 	case EventType_None:
 		return "EventType_None"
@@ -248,9 +250,11 @@ type Message struct {
 // 先从第二个字节提取消息类型和标志位，创建 Message 实例，再进行完整反序列化。
 // 参数:
 //   - data: 原始字节数据
+//
 // 返回:
 //   - *Message: 解析后的消息实例
 //   - error: 数据过短或解析失败时返回错误
+func NewMessageFromBytes(data []byte) (*Message, error) {
 	if len(data) < 3 {
 		return nil, fmt.Errorf("data too short: expected at least 3 bytes, got %d", len(data))
 	}
@@ -274,9 +278,11 @@ type Message struct {
 // 参数:
 //   - msgType: 消息类型
 //   - flag: 消息类型标志
+//
 // 返回:
 //   - *Message: 新创建的消息实例
 //   - error: 始终返回 nil
+func NewMessage(msgType MsgType, flag MsgTypeFlagBits) (*Message, error) {
 	return &Message{
 		MsgType:       msgType,
 		MsgTypeFlag:   flag,
@@ -291,6 +297,7 @@ type Message struct {
 // 根据消息类型和标志位，展示不同的信息（如序列号、载荷大小、错误码等）。
 // 返回:
 //   - string: 消息的格式化描述
+func (m *Message) String() string {
 	switch m.MsgType {
 	case MsgTypeAudioOnlyServer, MsgTypeAudioOnlyClient:
 		if m.MsgTypeFlag == MsgTypeFlagPositiveSeq || m.MsgTypeFlag == MsgTypeFlagNegativeSeq {
@@ -313,6 +320,7 @@ type Message struct {
 // 返回:
 //   - []byte: 序列化后的字节数组
 //   - error: 序列化失败时返回错误
+func (m *Message) Marshal() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	header := []uint8{
@@ -348,8 +356,10 @@ type Message struct {
 // 解析顺序：头部 -> 读取器列表（根据消息类型动态确定）-> 校验无剩余数据。
 // 参数:
 //   - data: 原始字节数据
+//
 // 返回:
 //   - error: 反序列化失败时返回错误
+func (m *Message) Unmarshal(data []byte) error {
 	buf := bytes.NewBuffer(data)
 
 	versionAndHeaderSize, err := buf.ReadByte()
@@ -404,6 +414,7 @@ type Message struct {
 // 返回:
 //   - writers: 写入函数列表
 //   - error: 不支持的消息类型时返回错误
+func (m *Message) writers() (writers []func(*bytes.Buffer) error, _ error) {
 	if m.MsgTypeFlag == MsgTypeFlagWithEvent {
 		writers = append(writers, m.writeEvent, m.writeSessionID)
 	}
@@ -482,6 +493,7 @@ func (m *Message) writePayload(buf *bytes.Buffer) error {
 // 返回:
 //   - readers: 读取函数列表
 //   - error: 不支持的消息类型时返回错误
+func (m *Message) readers() (readers []func(*bytes.Buffer) error, _ error) {
 	switch m.MsgType {
 	case MsgTypeFullClientRequest, MsgTypeFullServerResponse, MsgTypeFrontEndResultServer, MsgTypeAudioOnlyClient, MsgTypeAudioOnlyServer:
 		if m.MsgTypeFlag == MsgTypeFlagPositiveSeq || m.MsgTypeFlag == MsgTypeFlagNegativeSeq {
@@ -581,9 +593,11 @@ func (m *Message) readPayload(buf *bytes.Buffer) error {
 // 仅接受二进制或文本类型的 WebSocket 消息。
 // 参数:
 //   - conn: WebSocket 连接
+//
 // 返回:
 //   - *Message: 解析后的消息实例
 //   - error: 接收或解析失败时返回错误
+func ReceiveMessage(conn *websocket.Conn) (*Message, error) {
 	mt, frame, err := conn.ReadMessage()
 	if err != nil {
 		return nil, err
@@ -603,8 +617,10 @@ func (m *Message) readPayload(buf *bytes.Buffer) error {
 // 参数:
 //   - conn: WebSocket 连接
 //   - payload: 请求载荷数据（通常是 JSON 序列化的请求体）
+//
 // 返回:
 //   - error: 创建、序列化或发送失败时返回错误
+func FullClientRequest(conn *websocket.Conn, payload []byte) error {
 	msg, err := NewMessage(MsgTypeFullClientRequest, MsgTypeFlagNoSeq)
 	if err != nil {
 		return err

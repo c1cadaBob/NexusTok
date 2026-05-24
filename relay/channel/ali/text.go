@@ -2,7 +2,11 @@
 // 该文件负责将 OpenAI 格式的请求参数适配为阿里云 DashScope API 的参数规范。
 package ali
 
-// 项目内部导入
+import (
+	"github.com/c1cada/NexusTok/dto"
+
+	"github.com/samber/lo"
+)
 
 // 参考文档: https://help.aliyun.com/document_detail/613695.html
 

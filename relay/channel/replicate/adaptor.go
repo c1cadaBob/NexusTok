@@ -5,7 +5,6 @@ package replicate
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,9 +44,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 如果未设置基础 URL，则使用默认的 Replicate API 地址。
 // 参数:
 //   - info: 包含基础 URL 和请求路径的中继信息
+//
 // 返回:
 //   - string: 完整的请求 URL
 //   - error: 构建失败时返回错误
+func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info == nil {
 		return "", errors.New("replicate adaptor: relay info is nil")
 	}
@@ -67,8 +68,10 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文
 //   - req: HTTP 请求头指针
 //   - info: 包含 API Key 等信息的中继信息
+//
 // 返回:
 //   - error: 设置失败时返回错误（如缺少 API Key）
+func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	if info == nil {
 		return errors.New("replicate adaptor: relay info is nil")
 	}
@@ -95,9 +98,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文
 //   - info: 中继信息，包含上游模型名、中继模式等
 //   - request: 统一的图片请求结构体
+//
 // 返回:
 //   - any: 转换后的 Replicate 请求体（包含 input 字段）
 //   - error: 转换失败时返回错误
+func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if info == nil {
 		return nil, errors.New("replicate adaptor: relay info is nil")
 	}
@@ -144,7 +149,7 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 	if len(request.OutputFormat) > 0 {
 		var outputFormat string
-		if err := json.Unmarshal(request.OutputFormat, &outputFormat); err == nil && strings.TrimSpace(outputFormat) != "" {
+		if err := common.Unmarshal(request.OutputFormat, &outputFormat); err == nil && strings.TrimSpace(outputFormat) != "" {
 			inputPayload["output_format"] = outputFormat
 		}
 	}
@@ -209,9 +214,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - requestBody: 请求体 io.Reader
+//
 // 返回:
 //   - any: 原始响应
 //   - error: 请求失败时返回错误
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
@@ -222,9 +229,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文
 //   - resp: 上游 HTTP 响应
 //   - info: 中继信息
+//
 // 返回:
 //   - any: 使用量信息（Usage）
 //   - *types.NexusTokError: 错误信息
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NexusTokError) {
 	if resp == nil {
 		return nil, types.NewError(errors.New("replicate adaptor: empty response"), types.ErrorCodeBadResponse)
 	}
@@ -343,21 +352,25 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // GetModelList 返回 Replicate 渠道支持的模型列表。
 // 返回:
 //   - []string: 模型名称切片
+func (a *Adaptor) GetModelList() []string {
 	return ModelList
 }
 
 // GetChannelName 返回渠道名称标识 "replicate"。
 // 返回:
 //   - string: 渠道名称
+func (a *Adaptor) GetChannelName() string {
 	return ChannelName
 }
 
 // downloadImagesToBase64 批量下载图片并转换为 base64 编码字符串。
 // 参数:
 //   - urls: 图片 URL 列表
+//
 // 返回:
 //   - []string: base64 编码的图片数据列表
 //   - error: 下载或转换失败时返回错误
+func downloadImagesToBase64(urls []string) ([]string, error) {
 	results := make([]string, 0, len(urls))
 	for _, url := range urls {
 		if strings.TrimSpace(url) == "" {
@@ -378,11 +391,13 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 不支持的比例会计算最简比后判断，仍不匹配则返回 custom + 归一化宽高。
 // 参数:
 //   - size: OpenAI 格式的尺寸字符串，如 "1792x1024"
+//
 // 返回:
 //   - aspect: 宽高比字符串，如 "16:9" 或 "custom"
 //   - width: 自定义宽度（仅 aspect="custom" 时有效）
 //   - height: 自定义高度（仅 aspect="custom" 时有效）
 //   - ok: 是否成功映射
+func mapOpenAISizeToFlux(size string) (aspect string, width int, height int, ok bool) {
 	parts := strings.Split(size, "x")
 	if len(parts) != 2 {
 		return "", 0, 0, false
@@ -422,9 +437,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 参数:
 //   - w: 宽度
 //   - h: 高度
+//
 // 返回:
 //   - int: 约简后的宽度
 //   - int: 约简后的高度
+func reduceRatio(w int, h int) (int, int) {
 	g := gcd(w, h)
 	if g == 0 {
 		return w, h
@@ -437,8 +454,10 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 参数:
 //   - a: 第一个整数
 //   - b: 第二个整数
+//
 // 返回:
 //   - int: 最大公约数
+func gcd(a int, b int) int {
 	for b != 0 {
 		a, b = b, a%b
 	}
@@ -452,8 +471,10 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 范围限制为 [256, 1440]，并按 32 的步长进行四舍五入对齐。
 // 参数:
 //   - value: 原始尺寸值
+//
 // 返回:
 //   - int: 归一化后的尺寸值
+func normalizeFluxDimension(value int) int {
 	const (
 		minDim = 256
 		maxDim = 1440
@@ -489,9 +510,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文，包含 multipart form 数据
 //   - info: 中继信息，包含基础 URL 和 API Key
 //   - fieldCandidates: 候选的表单字段名列表
+//
 // 返回:
 //   - string: 上传成功后返回的文件 GET URL
 //   - error: 上传失败时返回错误
+func uploadFileFromForm(c *gin.Context, info *relaycommon.RelayInfo, fieldCandidates ...string) (string, error) {
 	if info == nil {
 		return "", errors.New("replicate adaptor: relay info is nil")
 	}

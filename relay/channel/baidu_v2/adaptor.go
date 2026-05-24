@@ -3,11 +3,22 @@
 // 该文件主要处理 V2 特有的请求 URL 构建、请求头设置和搜索增强功能。
 package baidu_v2
 
-// 标准库导入
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 
-// 第三方库导入
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/relay/channel"
+	"github.com/c1cada/NexusTok/relay/channel/openai"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/types"
 
-// 项目内部导入
+	"github.com/gin-gonic/gin"
+)
 
 // Adaptor 是百度文心一言 V2 渠道的适配器结构体。
 // 实现了 channel.Adaptor 接口，大部分功能委托给 OpenAI 适配器处理。

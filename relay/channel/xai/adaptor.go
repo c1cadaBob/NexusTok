@@ -53,9 +53,11 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - request: 统一的图片请求结构体
+//
 // 返回:
 //   - any: 转换后的 xAI 图片请求体
 //   - error: 始终返回 nil
+func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	xaiRequest := ImageRequest{
 		Model:          request.Model,
 		Prompt:         request.Prompt,
@@ -74,9 +76,11 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // GetRequestURL 构建 xAI API 的完整请求 URL。
 // 参数:
 //   - info: 包含基础 URL 和请求路径的中继信息
+//
 // 返回:
 //   - string: 完整的请求 URL
 //   - error: 始终返回 nil
+func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
 }
 
@@ -86,8 +90,10 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 //   - c: Gin 上下文
 //   - req: HTTP 请求头指针
 //   - info: 包含 API Key 的中继信息
+//
 // 返回:
 //   - error: 始终返回 nil
+func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	return nil
@@ -97,15 +103,18 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 特殊处理逻辑：
 // 1. 搜索增强模式：模型名以 "-search" 结尾时，去除后缀并添加 search_parameters
 // 2. grok-3-mini 推理模型：
-//    - 将 MaxTokens 转换为 MaxCompletionTokens（xAI 推理模型要求）
-//    - 处理 "-high"/"-low" 后缀设置 reasoning_effort 参数
+//   - 将 MaxTokens 转换为 MaxCompletionTokens（xAI 推理模型要求）
+//   - 处理 "-high"/"-low" 后缀设置 reasoning_effort 参数
+//
 // 参数:
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - request: OpenAI 格式的通用请求
+//
 // 返回:
 //   - any: 转换后的请求体（可能是结构体或 map）
 //   - error: 请求为 nil 时返回错误
+func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -153,9 +162,11 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 //   - c: Gin 上下文
 //   - info: 中继信息
 //   - request: OpenAI Responses 格式请求
+//
 // 返回:
 //   - any: 转换后的请求体
 //   - error: 始终返回 nil
+func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	if request.Model == "" && info != nil {
 		request.Model = info.UpstreamModelName
 	}
@@ -176,9 +187,11 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 //   - c: Gin 上下文
 //   - resp: 上游 HTTP 响应
 //   - info: 中继信息
+//
 // 返回:
 //   - usage: token 使用量
 //   - err: 处理过程中的错误信息
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NexusTokError) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
 		usage, err = openai.OpenaiHandlerWithUsage(c, info, resp)
@@ -201,11 +214,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 // GetModelList 返回 xAI 渠道支持的模型列表。
 // 返回:
 //   - []string: 模型名称切片（包含语言模型、搜索变体、推理变体、图片和视频模型）
+func (a *Adaptor) GetModelList() []string {
 	return ModelList
 }
 
 // GetChannelName 返回渠道名称标识 "xai"。
 // 返回:
 //   - string: 渠道名称
+func (a *Adaptor) GetChannelName() string {
 	return ChannelName
 }

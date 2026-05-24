@@ -2,9 +2,12 @@
 // 包含请求和响应的结构体定义，用于与百度文心一言 API 进行 JSON 序列化/反序列化。
 package baidu
 
-// 标准库导入
+import (
+	"encoding/json"
+	"time"
 
-// 项目内部导入
+	"github.com/c1cada/NexusTok/dto"
+)
 
 // BaiduMessage 表示百度文心一言 API 的消息结构。
 // 每条消息包含角色（role）和内容（content）两个字段。
@@ -44,15 +47,15 @@ type BaiduChatResponse struct {
 	IsTruncated      bool      `json:"is_truncated"`       // 结果是否被截断
 	NeedClearHistory bool      `json:"need_clear_history"` // 是否需要清理对话历史
 	Usage            dto.Usage `json:"usage"`              // token 使用量统计
-	Error                                        // 内嵌错误信息
+	Error                      // 内嵌错误信息
 }
 
 // BaiduChatStreamResponse 表示百度文心一言对话 API 的流式响应结构。
 // 在非流式响应基础上增加了句子 ID 和结束标记。
 type BaiduChatStreamResponse struct {
-	BaiduChatResponse                    // 内嵌非流式响应结构
-	SentenceId int  `json:"sentence_id"` // 句子 ID，用于标识流式输出中的每个片段
-	IsEnd      bool `json:"is_end"`      // 是否为最后一个流式响应片段
+	BaiduChatResponse      // 内嵌非流式响应结构
+	SentenceId        int  `json:"sentence_id"` // 句子 ID，用于标识流式输出中的每个片段
+	IsEnd             bool `json:"is_end"`      // 是否为最后一个流式响应片段
 }
 
 // BaiduEmbeddingRequest 表示百度文心一言向量化 API 的请求结构。
@@ -74,17 +77,17 @@ type BaiduEmbeddingResponse struct {
 	Created int64                `json:"created"` // 创建时间戳
 	Data    []BaiduEmbeddingData `json:"data"`    // 向量数据列表
 	Usage   dto.Usage            `json:"usage"`   // token 使用量统计
-	Error                                         // 内嵌错误信息
+	Error                        // 内嵌错误信息
 }
 
 // BaiduAccessToken 表示百度 API 的 OAuth Access Token 信息。
 // 用于百度文心一言 API 的身份认证。
 type BaiduAccessToken struct {
-	AccessToken      string    `json:"access_token"`                 // 访问令牌
-	Error            string    `json:"error,omitempty"`              // 错误类型
-	ErrorDescription string    `json:"error_description,omitempty"`  // 错误描述
-	ExpiresIn        int64     `json:"expires_in,omitempty"`         // 令牌有效期（秒）
-	ExpiresAt        time.Time `json:"-"`                            // 令牌过期时间（不参与 JSON 序列化）
+	AccessToken      string    `json:"access_token"`                // 访问令牌
+	Error            string    `json:"error,omitempty"`             // 错误类型
+	ErrorDescription string    `json:"error_description,omitempty"` // 错误描述
+	ExpiresIn        int64     `json:"expires_in,omitempty"`        // 令牌有效期（秒）
+	ExpiresAt        time.Time `json:"-"`                           // 令牌过期时间（不参与 JSON 序列化）
 }
 
 // BaiduTokenResponse 表示百度 Token 接口的响应结构。

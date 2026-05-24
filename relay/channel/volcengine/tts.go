@@ -6,7 +6,6 @@ package volcengine
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	// 项目内部依赖
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/dto"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/types"
@@ -46,29 +46,29 @@ type VolcengineTTSUser struct {
 
 // VolcengineTTSAudio 是 TTS 请求中的音频配置。
 type VolcengineTTSAudio struct {
-	VoiceType        string  `json:"voice_type"`                   // 音色类型标识
-	Encoding         string  `json:"encoding"`                     // 音频编码格式（mp3、wav、ogg_opus、pcm）
-	SpeedRatio       float64 `json:"speed_ratio"`                  // 语速比例
-	Rate             int     `json:"rate"`                         // 采样率
-	Bitrate          int     `json:"bitrate,omitempty"`            // 比特率
-	LoudnessRatio    float64 `json:"loudness_ratio,omitempty"`     // 音量比例
-	EnableEmotion    bool    `json:"enable_emotion,omitempty"`     // 是否启用情感
-	Emotion          string  `json:"emotion,omitempty"`            // 情感类型
-	EmotionScale     float64 `json:"emotion_scale,omitempty"`      // 情感强度
-	ExplicitLanguage string  `json:"explicit_language,omitempty"`  // 显式语言
-	ContextLanguage  string  `json:"context_language,omitempty"`   // 上下文语言
+	VoiceType        string  `json:"voice_type"`                  // 音色类型标识
+	Encoding         string  `json:"encoding"`                    // 音频编码格式（mp3、wav、ogg_opus、pcm）
+	SpeedRatio       float64 `json:"speed_ratio"`                 // 语速比例
+	Rate             int     `json:"rate"`                        // 采样率
+	Bitrate          int     `json:"bitrate,omitempty"`           // 比特率
+	LoudnessRatio    float64 `json:"loudness_ratio,omitempty"`    // 音量比例
+	EnableEmotion    bool    `json:"enable_emotion,omitempty"`    // 是否启用情感
+	Emotion          string  `json:"emotion,omitempty"`           // 情感类型
+	EmotionScale     float64 `json:"emotion_scale,omitempty"`     // 情感强度
+	ExplicitLanguage string  `json:"explicit_language,omitempty"` // 显式语言
+	ContextLanguage  string  `json:"context_language,omitempty"`  // 上下文语言
 }
 
 // VolcengineTTSReqInfo 是 TTS 请求中的请求参数。
 type VolcengineTTSReqInfo struct {
-	ReqID           string                   `json:"reqid"`                     // 请求唯一标识
-	Text            string                   `json:"text"`                      // 待合成的文本内容
-	Operation       string                   `json:"operation"`                 // 操作类型（如 "query"）
-	Model           string                   `json:"model,omitempty"`           // 模型名称
-	TextType        string                   `json:"text_type,omitempty"`       // 文本类型（如 "ssml"）
+	ReqID           string                   `json:"reqid"`                      // 请求唯一标识
+	Text            string                   `json:"text"`                       // 待合成的文本内容
+	Operation       string                   `json:"operation"`                  // 操作类型（如 "query"）
+	Model           string                   `json:"model,omitempty"`            // 模型名称
+	TextType        string                   `json:"text_type,omitempty"`        // 文本类型（如 "ssml"）
 	SilenceDuration float64                  `json:"silence_duration,omitempty"` // 静音时长
 	WithTimestamp   interface{}              `json:"with_timestamp,omitempty"`   // 是否返回时间戳
-	ExtraParam      *VolcengineTTSExtraParam `json:"extra_param,omitempty"`     // 额外参数
+	ExtraParam      *VolcengineTTSExtraParam `json:"extra_param,omitempty"`      // 额外参数
 }
 
 // VolcengineTTSExtraParam 是 TTS 请求的额外参数配置。
@@ -129,10 +129,12 @@ var responseFormatToEncodingMap = map[string]string{
 // 格式为 "AppID|AccessToken"，两个字段用竖线分隔。
 // 参数:
 //   - apiKey: API Key 配置字符串
+//
 // 返回:
 //   - appID: 应用 ID
 //   - token: 访问令牌
 //   - err: 格式不正确时返回错误
+func parseVolcengineAuth(apiKey string) (appID, token string, err error) {
 	parts := strings.Split(apiKey, "|")
 	if len(parts) != 2 {
 		return "", "", errors.New("invalid api key format, expected: appid|access_token")
@@ -144,8 +146,10 @@ var responseFormatToEncodingMap = map[string]string{
 // 如果映射表中不存在，则直接返回原始值（支持直接传入火山引擎音色标识）。
 // 参数:
 //   - openAIVoice: OpenAI 音色名称
+//
 // 返回:
 //   - string: 火山引擎音色标识
+func mapVoiceType(openAIVoice string) string {
 	if voice, ok := openAIToVolcengineVoiceMap[openAIVoice]; ok {
 		return voice
 	}
@@ -156,8 +160,10 @@ var responseFormatToEncodingMap = map[string]string{
 // 不支持的格式默认降级为 mp3。
 // 参数:
 //   - responseFormat: OpenAI 响应格式（如 "mp3"、"opus" 等）
+//
 // 返回:
 //   - string: 火山引擎编码格式
+func mapEncoding(responseFormat string) string {
 	if encoding, ok := responseFormatToEncodingMap[responseFormat]; ok {
 		return encoding
 	}
@@ -167,8 +173,10 @@ var responseFormatToEncodingMap = map[string]string{
 // getContentTypeByEncoding 根据音频编码格式返回对应的 HTTP Content-Type。
 // 参数:
 //   - encoding: 音频编码格式
+//
 // 返回:
 //   - string: MIME 类型字符串
+func getContentTypeByEncoding(encoding string) string {
 	contentTypeMap := map[string]string{
 		"mp3":      "audio/mpeg",
 		"ogg_opus": "audio/ogg",
@@ -189,9 +197,11 @@ var responseFormatToEncodingMap = map[string]string{
 //   - resp: 上游 HTTP 响应
 //   - info: 中继信息
 //   - encoding: 音频编码格式
+//
 // 返回:
 //   - usage: token 使用量
 //   - err: 处理过程中的错误信息
+func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, encoding string) (usage any, err *types.NexusTokError) {
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		return nil, types.NewErrorWithStatusCode(
@@ -203,7 +213,7 @@ var responseFormatToEncodingMap = map[string]string{
 	defer resp.Body.Close()
 
 	var volcResp VolcengineTTSResponse
-	if unmarshalErr := json.Unmarshal(body, &volcResp); unmarshalErr != nil {
+	if unmarshalErr := common.Unmarshal(body, &volcResp); unmarshalErr != nil {
 		return nil, types.NewErrorWithStatusCode(
 			errors.New("failed to parse volcengine response"),
 			types.ErrorCodeBadResponseBody,
@@ -244,6 +254,7 @@ var responseFormatToEncodingMap = map[string]string{
 // generateRequestID 生成唯一的请求 ID（UUID v4）。
 // 返回:
 //   - string: UUID 格式的请求 ID
+func generateRequestID() string {
 	return uuid.New().String()
 }
 
@@ -257,9 +268,11 @@ var responseFormatToEncodingMap = map[string]string{
 //   - volcRequest: 火山引擎 TTS 请求体
 //   - info: 中继信息
 //   - encoding: 音频编码格式
+//
 // 返回:
 //   - usage: token 使用量
 //   - err: 处理过程中的错误信息
+func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest VolcengineTTSRequest, info *relaycommon.RelayInfo, encoding string) (usage any, err *types.NexusTokError) {
 	_, token, parseErr := parseVolcengineAuth(info.ApiKey)
 	if parseErr != nil {
 		return nil, types.NewErrorWithStatusCode(
@@ -289,7 +302,7 @@ var responseFormatToEncodingMap = map[string]string{
 	}
 	defer conn.Close()
 
-	payload, marshalErr := json.Marshal(volcRequest)
+	payload, marshalErr := common.Marshal(volcRequest)
 	if marshalErr != nil {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to marshal request: %w", marshalErr),

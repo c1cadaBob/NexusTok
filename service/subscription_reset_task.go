@@ -34,8 +34,8 @@ const (
 
 // 使用 sync.Once 和 atomic 确保任务只启动一次且不会并发执行
 var (
-	subscriptionResetOnce    sync.Once   // 确保定时任务只初始化一次
-	subscriptionResetRunning atomic.Bool // 任务运行状态标记，防止并发执行
+	subscriptionResetOnce    sync.Once    // 确保定时任务只初始化一次
+	subscriptionResetRunning atomic.Bool  // 任务运行状态标记，防止并发执行
 	subscriptionCleanupLast  atomic.Int64 // 上次清理预消费记录的时间戳（Unix 秒）
 )
 
@@ -94,7 +94,6 @@ func runSubscriptionQuotaResetOnce() {
 	// 第二步：分批处理需要重置配额的订阅
 	for {
 		n, err := model.ResetDueSubscriptions(subscriptionResetBatchSize)
-	for {
 		if err != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("subscription quota reset task failed: %v", err))
 			return
@@ -107,6 +106,7 @@ func runSubscriptionQuotaResetOnce() {
 			break
 		}
 	}
+
 	// 第三步：定期清理过期的预消费记录（保留 7 天内的记录）
 	lastCleanup := time.Unix(subscriptionCleanupLast.Load(), 0)
 	if time.Since(lastCleanup) >= subscriptionCleanupInterval {

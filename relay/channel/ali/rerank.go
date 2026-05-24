@@ -2,11 +2,18 @@
 // 该文件负责将 OpenAI 格式的重排序请求转换为阿里云格式，并处理阿里云的重排序响应。
 package ali
 
-// 标准库导入
+import (
+	"io"
+	"net/http"
 
-// 第三方库导入
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/dto"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/types"
 
-// 项目内部导入
+	"github.com/gin-gonic/gin"
+)
 
 // ConvertRerankRequest 将通用的重排序请求转换为阿里云重排序 API 的请求格式。
 // 如果客户端未指定 returnDocuments 参数，默认设置为 true 以返回文档内容。
@@ -54,7 +61,7 @@ func RerankHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 	service.CloseResponseBodyGracefully(resp)
 
 	var aliResponse AliRerankResponse
-	err = json.Unmarshal(responseBody, &aliResponse)
+	err = common.Unmarshal(responseBody, &aliResponse)
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
 	}
@@ -78,7 +85,7 @@ func RerankHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 		Usage:   usage,
 	}
 
-	jsonResponse, err := json.Marshal(rerankResponse)
+	jsonResponse, err := common.Marshal(rerankResponse)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}

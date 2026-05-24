@@ -3,11 +3,21 @@
 // OpenAI 格式到 Claude Messages API 格式的请求转换和响应处理。
 package claude
 
-// 标准库导入
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 
-// 第三方库导入
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/relay/channel"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/model_setting"
+	"github.com/c1cada/NexusTok/types"
 
-// 项目内部导入
+	"github.com/gin-gonic/gin"
+)
 
 // Adaptor 是 Claude 渠道的适配器结构体。
 // 实现了 channel.Adaptor 接口，提供从 OpenAI 格式到 Claude Messages API 格式的请求转换能力。

@@ -2,11 +2,17 @@
 // 该文件负责将 OpenAI 格式的图像请求转换为阿里云 WanX（万象）图像模型的请求格式。
 package ali
 
-// 标准库导入
+import (
+	"fmt"
+	"strings"
 
-// 第三方库导入
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/dto"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
 
-// 项目内部导入
+	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
+)
 
 // oaiFormEdit2WanxImageEdit 将 OpenAI 格式的图像编辑请求转换为阿里云 WanX 万象图像编辑请求。
 // 从 gin.Context 中解析表单数据和 Base64 编码的图像，构建阿里云图像生成 API 请求体。

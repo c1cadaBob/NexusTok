@@ -5,15 +5,15 @@
 package router
 
 import (
-	"embed"       // Go 嵌入文件系统
-	"net/http"    // HTTP 状态码
-	"strings"     // 字符串操作
+	"embed"    // Go 嵌入文件系统
+	"net/http" // HTTP 状态码
+	"strings"  // 字符串操作
 
 	"github.com/c1cada/NexusTok/common"     // 公共工具包
 	"github.com/c1cada/NexusTok/controller" // 控制器
-	"github.com/c1cada/NexusTok/middleware"  // 中间件
+	"github.com/c1cada/NexusTok/middleware" // 中间件
 
-	"github.com/gin-contrib/gzip"    // gzip 压缩
+	"github.com/gin-contrib/gzip"     // gzip 压缩
 	"github.com/gin-contrib/sessions" // 会话管理
 	"github.com/gin-contrib/static"   // 静态文件服务
 	"github.com/gin-gonic/gin"        // Gin 框架

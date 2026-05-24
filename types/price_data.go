@@ -23,22 +23,22 @@ type GroupRatioInfo struct {
 // 包含模型计费所需的所有价格和倍率信息
 // 用于计算 API 调用的实际费用
 type PriceData struct {
-	FreeModel            bool             // 是否为免费模型
-	ModelPrice           float64          // 模型基础价格（按次计费时使用）
-	ModelRatio           float64          // 模型倍率（相对基准模型的倍数）
-	CompletionRatio      float64          // 补全 Token 倍率（相对于提示 Token 的倍数）
-	CacheRatio           float64          // 缓存命中倍率（缓存 Token 的折扣倍数）
-	CreationCacheRatio   float64          // 缓存创建倍率（创建缓存的额外费用倍数）
-	CreationCache5mRatio float64          // 5 分钟缓存创建倍率
-	CreationCache1hRatio float64          // 1 小时缓存创建倍率
-	ImageRatio           float64          // 图片倍率
-	AudioRatio           float64          // 音频倍率
-	AudioCompletionRatio float64          // 音频补全倍率
+	FreeModel            bool               // 是否为免费模型
+	ModelPrice           float64            // 模型基础价格（按次计费时使用）
+	ModelRatio           float64            // 模型倍率（相对基准模型的倍数）
+	CompletionRatio      float64            // 补全 Token 倍率（相对于提示 Token 的倍数）
+	CacheRatio           float64            // 缓存命中倍率（缓存 Token 的折扣倍数）
+	CacheCreationRatio   float64            // 缓存创建倍率（创建缓存的额外费用倍数）
+	CacheCreation5mRatio float64            // 5 分钟缓存创建倍率
+	CacheCreation1hRatio float64            // 1 小时缓存创建倍率
+	ImageRatio           float64            // 图片倍率
+	AudioRatio           float64            // 音频倍率
+	AudioCompletionRatio float64            // 音频补全倍率
 	OtherRatios          map[string]float64 // 其他自定义倍率（如视频、文件等）
-	UsePrice             bool             // 是否使用固定价格计费（而非按 Token 计费）
-	Quota                int              // 按次计费的最终额度（如 Midjourney、Task 类型）
-	QuotaToPreConsume    int              // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo   // 用户组倍率信息
+	UsePrice             bool               // 是否使用固定价格计费（而非按 Token 计费）
+	Quota                int                // 按次计费的最终额度（如 Midjourney、Task 类型）
+	QuotaToPreConsume    int                // 按量计费的预消耗额度
+	GroupRatioInfo       GroupRatioInfo     // 用户组倍率信息
 }
 
 // AddOtherRatio 添加自定义倍率

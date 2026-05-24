@@ -2,7 +2,7 @@
 // 包含请求和响应的结构体定义，用于与 Cloudflare AI API 进行 JSON 序列化/反序列化。
 package cloudflare
 
-// 项目内部导入
+import "github.com/c1cada/NexusTok/dto"
 
 // CfRequest 表示 Cloudflare Workers AI 对话 API 的请求结构。
 // 支持两种模式：对话模式（使用 messages）和补全模式（使用 prompt）。

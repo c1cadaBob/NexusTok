@@ -100,57 +100,6 @@ func applySystemPromptIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, requ
 //   - *dto.Usage: 使用量统计
 //   - *types.NexusTokError: 错误信息（成功时为 nil）
 func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NexusTokError) {
-	if info == nil || request == nil {
-		return
-	}
-	if info.ChannelSetting.SystemPrompt == "" {
-		return
-	}
-
-	systemRole := request.GetSystemRoleName()
-
-	containSystemPrompt := false
-	for _, message := range request.Messages {
-		if message.Role == systemRole {
-			containSystemPrompt = true
-			break
-		}
-	}
-	if !containSystemPrompt {
-		systemMessage := dto.Message{
-			Role:    systemRole,
-			Content: info.ChannelSetting.SystemPrompt,
-		}
-		request.Messages = append([]dto.Message{systemMessage}, request.Messages...)
-		return
-	}
-
-	if !info.ChannelSetting.SystemPromptOverride {
-		return
-	}
-
-	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
-	for i, message := range request.Messages {
-		if message.Role != systemRole {
-			continue
-		}
-		if message.IsStringContent() {
-			request.Messages[i].SetStringContent(info.ChannelSetting.SystemPrompt + "\n" + message.StringContent())
-			return
-		}
-		contents := message.ParseContent()
-		contents = append([]dto.MediaContent{
-			{
-				Type: dto.ContentTypeText,
-				Text: info.ChannelSetting.SystemPrompt,
-			},
-		}, contents...)
-		request.Messages[i].Content = contents
-		return
-	}
-}
-
-func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NexusTokError) {
 	chatJSON, err := common.Marshal(request)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

@@ -22,7 +22,6 @@ import (
 	"github.com/c1cada/NexusTok/logger"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/setting"
-	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/thanhpk/randstr"
 )
@@ -126,21 +125,10 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		return
 	}
 
-	// Reuse Creem checkout generator by building a lightweight product reference.
-	currency := "USD"
-	switch operation_setting.GetGeneralSetting().QuotaDisplayType {
-	case operation_setting.QuotaDisplayTypeCNY:
-		currency = "CNY"
-	case operation_setting.QuotaDisplayTypeUSD:
-		currency = "USD"
-	default:
-		currency = "USD"
-	}
 	product := &CreemProduct{
 		ProductId: plan.CreemProductId,
 		Name:      plan.Title,
 		Price:     plan.PriceAmount,
-		Currency:  currency,
 		Quota:     0,
 	}
 

@@ -15,18 +15,6 @@ import (
 	"github.com/gin-gonic/gin" // Gin Web 框架
 )
 
-// ThemeAssets 前端主题资源结构体
-// 包含所有前端主题的嵌入文件系统和入口页面
-// 用于支持多主题切换功能
-type ThemeAssets struct {
-	DefaultBuildFS      embed.FS // 默认主题的完整前端资源文件系统
-	DefaultIndexPage    []byte   // 默认主题的入口 HTML 页面
-	ClassicBuildFS      embed.FS // 经典主题的完整前端资源文件系统
-	ClassicIndexPage    []byte   // 经典主题的入口 HTML 页面
-	CPAManagerBuildFS   embed.FS // CPA 管理器模块的前端资源文件系统
-	CPAManagerIndexPage []byte   // CPA 管理器模块的入口 HTML 页面
-}
-
 // SetRouter 设置所有 HTTP 路由
 // 这是路由配置的主入口函数，负责注册所有路由组：
 // 1. API 路由 - 用户认证、渠道管理、令牌管理等

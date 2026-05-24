@@ -3,11 +3,21 @@
 // 请求格式转换和响应处理等核心适配逻辑。
 package baidu
 
-// 标准库导入
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 
-// 第三方库导入
+	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/relay/channel"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	relayconstant "github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/types"
 
-// 项目内部导入
+	"github.com/gin-gonic/gin"
+)
 
 // Adaptor 是百度文心一言渠道的适配器结构体。
 // 实现了 channel.Adaptor 接口，提供从 OpenAI 格式到百度文心一言格式的请求转换能力。
@@ -25,8 +35,7 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 // 当前未实现，直接 panic（应改为返回错误）。
 func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
 	//TODO implement me
-	panic("implement me")
-	return nil, nil
+	return nil, errors.New("not implemented")
 }
 
 // ConvertAudioRequest 将音频请求转换为百度格式。
@@ -53,7 +62,8 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // 根据模型名称确定 API 路径后缀（对话/向量化），并拼接 access_token 认证参数。
 //
 // 百度文心一言 API 的 URL 格式为:
-//   {baseUrl}/rpc/2.0/ai_custom/v1/wenxinworkshop/{suffix}?access_token={token}
+//
+//	{baseUrl}/rpc/2.0/ai_custom/v1/wenxinworkshop/{suffix}?access_token={token}
 //
 // 参数:
 //   - info: 中继信息，包含渠道基础 URL、模型名称和 API Key
@@ -230,7 +240,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		err, usage = baiduStreamHandler(c, info, resp)
 	} else {
 		switch info.RelayMode {
-		case constant.RelayModeEmbeddings:
+		case relayconstant.RelayModeEmbeddings:
 			err, usage = baiduEmbeddingHandler(c, info, resp)
 		default:
 			err, usage = baiduHandler(c, info, resp)

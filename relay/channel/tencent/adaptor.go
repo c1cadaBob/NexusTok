@@ -43,8 +43,7 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 // ConvertClaudeRequest 未实现，腾讯云渠道不支持 Claude 格式请求。
 func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
 	//TODO implement me
-	panic("implement me")
-	return nil, nil
+	return nil, errors.New("not implemented")
 }
 
 // ConvertAudioRequest 未实现，腾讯云渠道不支持音频请求。
@@ -63,6 +62,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 // 设置 API 操作类型为 "ChatCompletions"、版本为 "2023-09-01"，并记录当前时间戳。
 // 参数:
 //   - info: 中继请求的上下文信息
+func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	a.Action = "ChatCompletions"
 	a.Version = "2023-09-01"
 	a.Timestamp = common.GetTimestamp()
@@ -72,9 +72,11 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 // 腾讯云 API 采用统一端点，URL 为基础 URL 加上 "/"。
 // 参数:
 //   - info: 包含基础 URL 的中继信息
+//
 // 返回:
 //   - string: 完整的请求 URL
 //   - error: 始终返回 nil
+func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	return fmt.Sprintf("%s/", info.ChannelBaseUrl), nil
 }
 
@@ -85,8 +87,10 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 //   - c: Gin 上下文
 //   - req: HTTP 请求头指针
 //   - info: 中继信息
+//
 // 返回:
 //   - error: 始终返回 nil
+func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", a.Sign)
 	req.Set("X-TC-Action", a.Action)
@@ -101,9 +105,11 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 //   - c: Gin 上下文，用于获取渠道密钥
 //   - info: 中继信息
 //   - request: OpenAI 格式的通用请求
+//
 // 返回:
 //   - any: 转换后的腾讯云请求体
 //   - error: 配置解析或签名计算失败时返回错误
+func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -138,6 +144,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 // DoRequest 执行实际的 HTTP API 请求，委托给通用的 DoApiRequest 方法。
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
@@ -147,9 +154,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 //   - c: Gin 上下文
 //   - resp: 上游 HTTP 响应
 //   - info: 中继信息
+//
 // 返回:
 //   - usage: token 使用量
 //   - err: 处理过程中的错误信息
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NexusTokError) {
 	if info.IsStream {
 		usage, err = tencentStreamHandler(c, info, resp)
 	} else {
@@ -161,11 +170,13 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 // GetModelList 返回腾讯云混元渠道支持的模型列表。
 // 返回:
 //   - []string: 模型名称切片
+func (a *Adaptor) GetModelList() []string {
 	return ModelList
 }
 
 // GetChannelName 返回渠道名称标识 "tencent"。
 // 返回:
 //   - string: 渠道名称
+func (a *Adaptor) GetChannelName() string {
 	return ChannelName
 }
