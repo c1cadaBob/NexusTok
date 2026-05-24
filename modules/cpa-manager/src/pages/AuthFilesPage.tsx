@@ -51,7 +51,6 @@ import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
-import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
@@ -281,13 +280,11 @@ export function AuthFilesPage() {
 
   const {
     excluded,
-    excludedError,
     modelAlias,
     modelAliasError,
     allProviderModels,
     loadExcluded,
     loadModelAlias,
-    deleteExcluded,
     deleteModelAlias,
     handleMappingUpdate,
     handleDeleteLink,
@@ -661,21 +658,6 @@ export function AuthFilesPage() {
       );
     },
     [showNotification, t]
-  );
-
-  const openExcludedEditor = useCallback(
-    (provider?: string) => {
-      const providerValue = (provider || (filter !== 'all' ? String(filter) : '')).trim();
-      const params = new URLSearchParams();
-      if (providerValue) {
-        params.set('provider', providerValue);
-      }
-      const nextSearch = params.toString();
-      navigate(`/auth-files/oauth-excluded${nextSearch ? `?${nextSearch}` : ''}`, {
-        state: { fromAuthFiles: true },
-      });
-    },
-    [filter, navigate]
   );
 
   const openModelAliasEditor = useCallback(
@@ -1103,15 +1085,6 @@ export function AuthFilesPage() {
           </div>
         </div>
       </section>
-
-      <OAuthExcludedCard
-        disableControls={disableControls}
-        excludedError={excludedError}
-        excluded={excluded}
-        onAdd={() => openExcludedEditor()}
-        onEdit={openExcludedEditor}
-        onDelete={deleteExcluded}
-      />
 
       <OAuthModelAliasCard
         disableControls={disableControls}
