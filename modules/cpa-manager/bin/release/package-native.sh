@@ -30,7 +30,7 @@ binary_name="cpa-manager"
 
 # 检查前端构建产物是否存在
 if [ ! -f "${web_html}" ]; then
-  echo "missing ${web_html}; run npm run build first" >&2
+  echo "missing ${web_html}; run npm run build:standalone first" >&2
   exit 1
 fi
 

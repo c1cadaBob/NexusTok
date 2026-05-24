@@ -348,9 +348,11 @@ npm run dev
 npm run type-check
 npm run lint
 npm run build
+npm run build:standalone
 ```
 
-Open `http://localhost:5173`, then connect to your CLI Proxy API backend instance.
+Inside the NexusTok repository, `npm run build` defaults to the embedded account-pool manager build, so the page does not fall back to the standalone CPAMC login when hosted by NexusTok.
+Use `npm run dev` or `npm run build:standalone` when you need to run CPAMC separately and connect to a CLI Proxy API backend instance.
 
 Usage Service:
 

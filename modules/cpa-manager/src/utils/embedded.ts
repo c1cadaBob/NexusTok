@@ -1,4 +1,10 @@
-export const isNexusTokEmbedded = import.meta.env.VITE_NEXUSTOK_EMBEDDED === 'true';
+const cpaManagerMode = (import.meta.env.VITE_CPA_MANAGER_MODE || '').trim().toLowerCase();
+const embeddedFlag = (import.meta.env.VITE_NEXUSTOK_EMBEDDED || '').trim().toLowerCase();
+
+// NexusTok 仓库内的 CPAMC 默认作为账号池管理模块嵌入主项目运行。
+// 只有显式设置 VITE_NEXUSTOK_EMBEDDED=false 或 VITE_CPA_MANAGER_MODE=standalone 时，
+// 才恢复 CPAMC 原本的独立登录模式；这样直接执行 npm run build 也不会生成需要重复登录的页面。
+export const isNexusTokEmbedded = embeddedFlag !== 'false' && cpaManagerMode !== 'standalone';
 
 export const NEXUSTOK_EMBEDDED_API_BASE = '/api/account-pool/management';
 

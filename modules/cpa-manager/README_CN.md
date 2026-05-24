@@ -344,9 +344,11 @@ npm run dev
 npm run type-check
 npm run lint
 npm run build
+npm run build:standalone
 ```
 
-打开 `http://localhost:5173`，然后连接到你的 CLI Proxy API 后端实例。
+在 NexusTok 仓库内，`npm run build` 默认生成嵌入式账号池管理页面，避免嵌入主项目后再次出现 CPAMC 独立登录页。
+如需单独运行 CPAMC 并连接到你的 CLI Proxy API 后端实例，使用 `npm run dev` 或 `npm run build:standalone`。
 
 Usage Service：
 
