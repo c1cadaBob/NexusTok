@@ -52,6 +52,10 @@
   }
 }
 
+.loginCredentialButton {
+  white-space: nowrap;
+}
+
 .titleWrapper {
   display: flex;
   align-items: center;
@@ -149,6 +153,88 @@
 
 .providerSectionCard {
   scroll-margin-top: 24px;
+}
+
+.oauthModalTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-sm;
+  min-width: 0;
+}
+
+.oauthModalTitleIcon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.oauthModalContent {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+
+  :global(.status-badge) {
+    align-self: flex-start;
+    margin-bottom: 0;
+  }
+}
+
+.oauthModalHint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.oauthModalField {
+  :global(.input:disabled) {
+    background-color: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+  }
+}
+
+.oauthModalActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-sm;
+}
+
+.oauthAuthUrlBox {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+  padding: $spacing-md;
+  border: 1px dashed var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+}
+
+.oauthAuthUrlLabel {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.oauthAuthUrlValue {
+  max-width: 100%;
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.oauthCallbackSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
 }
 
 .providerNavContainer {

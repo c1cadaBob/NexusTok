@@ -19,9 +19,19 @@ import {
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
-import type { QuotaSortMode } from '@/components/quota/quotaConfigs';
+import { OAuthLoginModal, quotaOAuthProviders } from '@/components/oauth/OAuthLoginModal';
+import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
+import type { OAuthProvider } from '@/services/api/oauth';
 import type { AuthFileItem } from '@/types';
 import styles from './QuotaPage.module.scss';
+
+const QUOTA_OAUTH_PROVIDER_MAP: Record<QuotaType, OAuthProvider> = {
+  codex: 'codex',
+  claude: 'anthropic',
+  antigravity: 'antigravity',
+  'gemini-cli': 'gemini-cli',
+  kimi: 'kimi',
+};
 
 export function QuotaPage() {
   const { t } = useTranslation();
@@ -32,6 +42,7 @@ export function QuotaPage() {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<QuotaSortMode>('default');
+  const [loginProvider, setLoginProvider] = useState<OAuthProvider | null>(null);
 
   const disableControls = connectionStatus !== 'connected';
   const sortOptions = useMemo(
@@ -78,6 +89,21 @@ export function QuotaPage() {
     loadConfig();
   }, [loadFiles, loadConfig]);
 
+  const getLoginLabel = useCallback(
+    (type: QuotaType) => {
+      const provider = QUOTA_OAUTH_PROVIDER_MAP[type];
+      const definition = quotaOAuthProviders.find((item) => item.id === provider);
+      return t('quota_management.login_provider', {
+        provider: definition ? t(definition.titleKey) : provider,
+      });
+    },
+    [t]
+  );
+
+  const openLoginModal = useCallback((type: QuotaType) => {
+    setLoginProvider(QUOTA_OAUTH_PROVIDER_MAP[type]);
+  }, []);
+
   return (
     <div className={styles.container}>
       <div className={styles.pageHeader}>
@@ -120,6 +146,8 @@ export function QuotaPage() {
         disabled={disableControls}
         searchQuery={searchQuery}
         sortMode={sortMode}
+        onLogin={() => openLoginModal(CODEX_CONFIG.type)}
+        loginLabel={getLoginLabel(CODEX_CONFIG.type)}
       />
       <QuotaSection
         config={CLAUDE_CONFIG}
@@ -128,6 +156,8 @@ export function QuotaPage() {
         disabled={disableControls}
         searchQuery={searchQuery}
         sortMode={sortMode}
+        onLogin={() => openLoginModal(CLAUDE_CONFIG.type)}
+        loginLabel={getLoginLabel(CLAUDE_CONFIG.type)}
       />
       <QuotaSection
         config={ANTIGRAVITY_CONFIG}
@@ -136,6 +166,8 @@ export function QuotaPage() {
         disabled={disableControls}
         searchQuery={searchQuery}
         sortMode={sortMode}
+        onLogin={() => openLoginModal(ANTIGRAVITY_CONFIG.type)}
+        loginLabel={getLoginLabel(ANTIGRAVITY_CONFIG.type)}
       />
       <QuotaSection
         config={GEMINI_CLI_CONFIG}
@@ -144,6 +176,8 @@ export function QuotaPage() {
         disabled={disableControls}
         searchQuery={searchQuery}
         sortMode={sortMode}
+        onLogin={() => openLoginModal(GEMINI_CLI_CONFIG.type)}
+        loginLabel={getLoginLabel(GEMINI_CLI_CONFIG.type)}
       />
       <QuotaSection
         config={KIMI_CONFIG}
@@ -152,8 +186,16 @@ export function QuotaPage() {
         disabled={disableControls}
         searchQuery={searchQuery}
         sortMode={sortMode}
+        onLogin={() => openLoginModal(KIMI_CONFIG.type)}
+        loginLabel={getLoginLabel(KIMI_CONFIG.type)}
       />
       <QuotaProviderNav />
+      <OAuthLoginModal
+        provider={loginProvider}
+        open={Boolean(loginProvider)}
+        onClose={() => setLoginProvider(null)}
+        onSuccess={loadFiles}
+      />
     </div>
   );
 }

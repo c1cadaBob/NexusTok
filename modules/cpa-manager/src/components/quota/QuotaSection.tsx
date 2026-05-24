@@ -109,6 +109,8 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   disabled: boolean;
   searchQuery?: string;
   sortMode?: QuotaSortMode;
+  onLogin?: () => void;
+  loginLabel?: string;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -117,7 +119,9 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   loading,
   disabled,
   searchQuery = '',
-  sortMode = 'default'
+  sortMode = 'default',
+  onLogin,
+  loginLabel
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -318,6 +322,18 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   );
 
   const isRefreshing = sectionLoading || loading;
+  const loginButton =
+    onLogin && loginLabel ? (
+      <Button
+        variant="secondary"
+        size="sm"
+        className={styles.loginCredentialButton}
+        onClick={onLogin}
+        disabled={disabled}
+      >
+        {loginLabel}
+      </Button>
+    ) : null;
 
   return (
     <Card
@@ -326,6 +342,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       id={`quota-provider-${config.type}`}
       extra={
         <div className={styles.headerActions}>
+          {loginButton}
           <div className={styles.viewModeToggle}>
             <Button
               variant="secondary"
@@ -374,6 +391,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         <EmptyState
           title={t(`${config.i18nPrefix}.empty_title`)}
           description={t(`${config.i18nPrefix}.empty_desc`)}
+          action={loginButton}
         />
       ) : displayFiles.length === 0 ? (
         <EmptyState
