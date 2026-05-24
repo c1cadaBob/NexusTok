@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useAuthStore } from '@/stores';
+import { useAuthStore, useThemeStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -17,10 +17,12 @@ import {
   IconChartLine,
   IconCrosshair,
   IconInfo,
+  IconRefreshCw,
   IconScrollText,
   IconSearch,
 } from '@/components/ui/icons';
 import {
+  QuotaCard,
   QuotaProviderNav,
   QuotaSection,
   ANTIGRAVITY_CONFIG,
@@ -29,6 +31,7 @@ import {
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
+import { useGridColumns } from '@/components/quota/useGridColumns';
 import { OAuthLoginModal } from '@/components/oauth/OAuthLoginModal';
 import { VertexImportModal } from '@/components/oauth/VertexImportModal';
 import type { QuotaSortMode, QuotaType } from '@/components/quota/quotaConfigs';
@@ -75,6 +78,12 @@ type SupplementalProviderDefinition = {
   actionLabelKey: string;
   actionProviderTitleKey?: string;
 };
+
+type SupplementalViewMode = 'paged' | 'all';
+
+const SUPPLEMENTAL_GRID_MIN_WIDTH = 380;
+const SUPPLEMENTAL_MAX_ITEMS_PER_PAGE = 25;
+const SUPPLEMENTAL_MAX_SHOW_ALL_THRESHOLD = 30;
 
 // 配额页只保留账号池日常维护所需的运行诊断入口。
 // OAuth 登录入口下沉到对应供应商额度区块的右上角，和额度刷新、分页切换放在同一操作区；
@@ -146,6 +155,12 @@ const SUPPLEMENTAL_PROVIDERS: SupplementalProviderDefinition[] = [
   },
 ];
 
+const SUPPLEMENTAL_CARD_CLASS_MAP: Record<SupplementalProviderId, string> = {
+  xai: styles.xaiCard,
+  vertex: styles.vertexCard,
+  kiro: styles.kiroCard,
+};
+
 const normalizeProviderKey = (value: unknown): string => {
   const key = String(value ?? '').trim().toLowerCase().replace(/_/g, '-');
   if (key === 'x-ai' || key === 'grok') return 'xai';
@@ -185,27 +200,13 @@ const matchesCredentialSearch = (file: AuthFileItem, normalizedSearchQuery: stri
   );
 };
 
-const getCredentialSubtitle = (file: AuthFileItem): string => {
-  const candidates = [
-    file.account,
-    file.email,
-    file.projectId,
-    file.project_id,
-    file.authIndex,
-    file['auth_index'],
-  ];
-  for (const candidate of candidates) {
-    const text = stringifySearchValue(candidate)[0];
-    if (text) return text;
-  }
-  return '';
-};
-
 interface SupplementalProviderSectionProps {
   definition: SupplementalProviderDefinition;
   files: AuthFileItem[];
+  loading: boolean;
   disabled: boolean;
   searchQuery: string;
+  onRefresh: () => Promise<void>;
   onAction: (definition: SupplementalProviderDefinition) => void;
   getActionLabel: (definition: SupplementalProviderDefinition) => string;
 }
@@ -213,12 +214,19 @@ interface SupplementalProviderSectionProps {
 function SupplementalProviderSection({
   definition,
   files,
+  loading,
   disabled,
   searchQuery,
+  onRefresh,
   onAction,
   getActionLabel,
 }: SupplementalProviderSectionProps) {
   const { t } = useTranslation();
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const [columns, gridRef] = useGridColumns(SUPPLEMENTAL_GRID_MIN_WIDTH);
+  const [viewMode, setViewMode] = useState<SupplementalViewMode>('paged');
+  const [page, setPage] = useState(1);
+  const [showTooManyWarning, setShowTooManyWarning] = useState(false);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const providerFiles = useMemo(
     () =>
@@ -233,6 +241,41 @@ function SupplementalProviderSection({
     () => providerFiles.filter((file) => matchesCredentialSearch(file, normalizedSearchQuery)),
     [normalizedSearchQuery, providerFiles]
   );
+  const showAllAllowed = displayFiles.length <= SUPPLEMENTAL_MAX_SHOW_ALL_THRESHOLD;
+  const effectiveViewMode: SupplementalViewMode =
+    viewMode === 'all' && showAllAllowed ? 'all' : 'paged';
+  const pageSize =
+    effectiveViewMode === 'all'
+      ? Math.max(1, displayFiles.length)
+      : Math.min(columns * 3, SUPPLEMENTAL_MAX_ITEMS_PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(displayFiles.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = useMemo(() => {
+    if (effectiveViewMode === 'all') return displayFiles;
+    const start = (currentPage - 1) * pageSize;
+    return displayFiles.slice(start, start + pageSize);
+  }, [currentPage, displayFiles, effectiveViewMode, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [definition.id, displayFiles.length, effectiveViewMode, normalizedSearchQuery, pageSize]);
+
+  useEffect(() => {
+    if (showAllAllowed) return;
+    if (viewMode !== 'all') return;
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setViewMode('paged');
+      setShowTooManyWarning(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showAllAllowed, viewMode]);
+
   const titleNode = (
     <div className={styles.titleWrapper}>
       <span>{t(definition.titleKey)}</span>
@@ -244,12 +287,11 @@ function SupplementalProviderSection({
     </div>
   );
   const isReserved = definition.action === 'reserved';
+  const isRefreshing = loading;
 
   return (
     <Card
-      className={`${styles.providerSectionCard} ${styles.supplementalProviderCard} ${
-        styles[`${definition.id}Card`]
-      }`}
+      className={styles.providerSectionCard}
       id={`quota-provider-${definition.id}`}
       title={titleNode}
       extra={
@@ -264,6 +306,47 @@ function SupplementalProviderSection({
           >
             {getActionLabel(definition)}
           </Button>
+          <div className={styles.viewModeToggle}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={`${styles.viewModeButton} ${
+                effectiveViewMode === 'paged' ? styles.viewModeButtonActive : ''
+              }`}
+              onClick={() => setViewMode('paged')}
+            >
+              {t('auth_files.view_mode_paged')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={`${styles.viewModeButton} ${
+                effectiveViewMode === 'all' ? styles.viewModeButtonActive : ''
+              }`}
+              onClick={() => {
+                if (showAllAllowed) {
+                  setViewMode('all');
+                } else {
+                  setShowTooManyWarning(true);
+                }
+              }}
+            >
+              {t('auth_files.view_mode_all')}
+            </Button>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            className={styles.refreshAllButton}
+            onClick={() => void onRefresh()}
+            disabled={disabled || isRefreshing}
+            loading={isRefreshing}
+            title={t('quota_management.refresh_all_credentials')}
+            aria-label={t('quota_management.refresh_all_credentials')}
+          >
+            {!isRefreshing && <IconRefreshCw size={16} />}
+            {t('quota_management.refresh_all_credentials')}
+          </Button>
         </div>
       }
     >
@@ -275,25 +358,57 @@ function SupplementalProviderSection({
           description={t('quota_management.search_empty_desc')}
         />
       ) : (
-        <div className={styles.supplementalCredentialSection}>
-          <p className={styles.supplementalProviderHint}>{t(definition.hintKey)}</p>
-          <div className={styles.supplementalCredentialList}>
-            {displayFiles.map((file) => {
-              const subtitle = getCredentialSubtitle(file);
-              return (
-                <div key={file.name} className={styles.supplementalCredentialItem}>
-                  <div className={styles.supplementalCredentialMain}>
-                    <span className={styles.supplementalCredentialName}>{file.name}</span>
-                    {subtitle && (
-                      <span className={styles.supplementalCredentialMeta}>{subtitle}</span>
-                    )}
-                  </div>
-                  <span className={styles.supplementalCredentialType}>
-                    {t(`auth_files.type_${definition.id}`, { defaultValue: definition.id })}
-                  </span>
-                </div>
-              );
-            })}
+        <>
+          <div ref={gridRef} className={styles.supplementalCredentialGrid}>
+            {pageItems.map((item) => (
+              <QuotaCard
+                key={item.name}
+                item={item}
+                resolvedTheme={resolvedTheme}
+                i18nPrefix={`${definition.id}_quota`}
+                cardIdleMessageKey={definition.hintKey}
+                cardClassName={SUPPLEMENTAL_CARD_CLASS_MAP[definition.id]}
+                defaultType={definition.id}
+                renderQuotaItems={() => null}
+              />
+            ))}
+          </div>
+          {displayFiles.length > pageSize && effectiveViewMode === 'paged' && (
+            <div className={styles.pagination}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage <= 1}
+              >
+                {t('auth_files.pagination_prev')}
+              </Button>
+              <div className={styles.pageInfo}>
+                {t('auth_files.pagination_info', {
+                  current: currentPage,
+                  total: totalPages,
+                  count: displayFiles.length
+                })}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage >= totalPages}
+              >
+                {t('auth_files.pagination_next')}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+      {showTooManyWarning && (
+        <div className={styles.warningOverlay} onClick={() => setShowTooManyWarning(false)}>
+          <div className={styles.warningModal} onClick={(e) => e.stopPropagation()}>
+            <p>{t('auth_files.too_many_files_warning')}</p>
+            <Button variant="primary" size="sm" onClick={() => setShowTooManyWarning(false)}>
+              {t('common.confirm')}
+            </Button>
           </div>
         </div>
       )}
@@ -513,8 +628,10 @@ export function QuotaPage() {
           key={definition.id}
           definition={definition}
           files={files}
+          loading={loading}
           disabled={disableControls}
           searchQuery={searchQuery}
+          onRefresh={handleHeaderRefresh}
           onAction={handleSupplementalAction}
           getActionLabel={getSupplementalActionLabel}
         />

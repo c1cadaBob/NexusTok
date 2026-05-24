@@ -1,8 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 /**
- * Hook to calculate the number of grid columns based on container width and item min-width.
- * Returns [columns, refCallback].
+ * 根据网格容器宽度和卡片最小宽度计算当前列数。
+ *
+ * 这个 hook 主要服务配额页的分页体验：页面在宽屏下可以展示多列卡片，
+ * 在窄屏下会收敛为单列。分页大小需要跟随实际列数调整，才能保持
+ * “每页约三行”的视觉节奏，避免窗口变宽后单页仍然只显示少量卡片，
+ * 或窗口变窄后一次塞入过多卡片导致滚动体验变差。
+ *
+ * 返回值包含当前列数和 ref callback；调用方把 ref 挂到 grid 容器上即可。
  */
 export function useGridColumns(
     itemMinWidth: number,
