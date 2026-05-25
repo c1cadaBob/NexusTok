@@ -39,8 +39,8 @@ import (
 // ModelRequest 模型请求结构体
 // 从请求体中解析出的模型信息，用于渠道选择
 type ModelRequest struct {
-	Model string `json:"model"`               // 请求的模型名称，如 "gpt-4"、"claude-3-opus"
-	Group string `json:"group,omitempty"`      // 请求的分组（仅 Playground 使用）
+	Model string `json:"model"`           // 请求的模型名称，如 "gpt-4"、"claude-3-opus"
+	Group string `json:"group,omitempty"` // 请求的分组（仅 Playground 使用）
 }
 
 // Distribute 渠道分发中间件
@@ -54,153 +54,199 @@ type ModelRequest struct {
 // 返回值：gin.HandlerFunc 中间件函数
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		var channel *model.Channel
-		// 检查是否指定了特定渠道（管理员功能）
-		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
-		// 从请求中解析模型信息
-		modelRequest, shouldSelectChannel, err := getModelRequest(c)
-		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		channel, ok := PrepareRelayChannelContext(c)
+		if !ok {
 			return
 		}
-		if ok {
-			// ========== 管理员指定了特定渠道 ==========
-			id, err := strconv.Atoi(channelId.(string))
-			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
-				return
-			}
-			channel, err = model.GetChannelById(id, true)
-			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
-				return
-			}
-			// 检查渠道是否启用
-			if channel.Status != common.ChannelStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-				return
-			}
-		} else {
-			// ========== 自动选择渠道 ==========
-			// 检查令牌是否启用了模型限制
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// 令牌模型限制列表为空，表示所有模型都被禁止访问
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				// 匹配模型名称（包括 GPTs 和 thinking-* 前缀的模型）
-				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model)
-				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-					return
-				}
-			}
-
-			if shouldSelectChannel {
-				if modelRequest.Model == "" {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
-					return
-				}
-				var selectGroup string
-				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				// Playground 路径特殊处理：允许用户在请求中指定分组
-				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
-					playgroundRequest := &dto.PlayGroundRequest{}
-					err = common.UnmarshalBodyReusable(c, playgroundRequest)
-					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
-						return
-					}
-					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
-							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
-							return
-						}
-						usingGroup = playgroundRequest.Group
-						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
-					}
-				}
-
-				// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
-				// 如果之前对该模型的成功请求使用过某个渠道，优先复用该渠道
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil {
-						if preferred.Status != common.ChannelStatusEnabled {
-							// 亲和性渠道已禁用
-							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-								return
-							}
-						} else if usingGroup == "auto" {
-							// auto 分组：遍历用户可用的自动分组，找到第一个支持该模型的分组
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
-								}
-							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							// 普通分组：检查渠道是否在该分组中支持该模型
-							channel = preferred
-							selectGroup = usingGroup
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
-						}
-					}
-				}
-
-				// ========== 随机选择渠道（兜底逻辑） ==========
-				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:        c,
-						ModelName:  modelRequest.Model,
-						TokenGroup: usingGroup,
-						Retry:      common.GetPointer(0),
-					})
-					if err != nil {
-						showGroup := usingGroup
-						if usingGroup == "auto" {
-							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
-						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
-						return
-					}
-					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
-						return
-					}
-				}
-			}
-		}
-		// 记录请求开始时间（用于计费和日志）
-		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		// 将选中渠道的配置信息写入上下文
-		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
-			abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
-			return
-		}
-		// 请求结束后释放选中的账号资源
+		// 请求结束后释放选中的账号资源。这里保留在中间件层做释放，保证所有标准
+		// Relay 路由、Playground 路由以及后续新增的入口都不会遗留账号并发占用。
 		defer service.ReleaseSelectedChannelAccount(c)
 		defer service.ReleaseSelectedPoolAccount(c)
 		c.Next()
-		// 请求成功后记录渠道亲和性（用于下次请求优先选择）
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+		RecordRelayChannelAffinityIfSucceeded(c, channel)
+	}
+}
+
+// PrepareRelayChannelContext 为一次 Relay 请求完成渠道选择并写入上下文。
+//
+// 该函数从 Distribute 中间件中抽出，供 CPAMC 嵌入式 api-call 这类“已经
+// 通过 NexusTok session 完成管理员鉴权，但仍需要复用主 Relay 链路”的入口调用。
+// 它保持与标准 TokenAuth -> Distribute 链路相同的不变量：
+// - 根据请求体或路径解析模型；
+// - 检查 Token 模型限制；
+// - 按用户分组、渠道亲和性和随机策略选择渠道；
+// - 将渠道 Key、BaseURL、参数覆盖、账号池上下文等写入 Gin context。
+//
+// 如果准备失败，本函数会直接写入 OpenAI 兼容错误响应并 Abort，调用方只需要
+// 根据返回的 ok 判断是否继续执行 Relay。
+func PrepareRelayChannelContext(c *gin.Context) (*model.Channel, bool) {
+	var channel *model.Channel
+	// 检查是否指定了特定渠道（管理员功能）
+	channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+	// 从请求中解析模型信息
+	modelRequest, shouldSelectChannel, err := getModelRequest(c)
+	if err != nil {
+		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		return nil, false
+	}
+	if ok {
+		// ========== 管理员指定了特定渠道 ==========
+		id, err := strconv.Atoi(channelId.(string))
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+			return nil, false
 		}
+		channel, err = model.GetChannelById(id, true)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+			return nil, false
+		}
+		// 检查渠道是否启用
+		if channel.Status != common.ChannelStatusEnabled {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+			return nil, false
+		}
+	} else {
+		selected, selectOk := selectRelayChannel(c, modelRequest, shouldSelectChannel)
+		if !selectOk {
+			return nil, false
+		}
+		channel = selected
+	}
+	// 记录请求开始时间（用于计费和日志）
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+	// 将选中渠道的配置信息写入上下文
+	if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+		abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+		return nil, false
+	}
+	return channel, true
+}
+
+// selectRelayChannel 按标准分发规则为请求选择渠道。
+//
+// 该函数只负责“自动选路”分支，管理员指定 specific_channel_id 的路径仍由
+// PrepareRelayChannelContext 直接处理。拆分出来是为了让中间件和 CPAMC
+// 内部重放请求共用同一套模型限制、分组、亲和性和随机选路逻辑。
+func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelectChannel bool) (*model.Channel, bool) {
+	var channel *model.Channel
+	var selectGroup string
+	var err error
+
+	// ========== 自动选择渠道 ==========
+	// 检查令牌是否启用了模型限制
+	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+	if modelLimitEnable {
+		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		if !ok {
+			// 令牌模型限制列表为空，表示所有模型都被禁止访问
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+			return nil, false
+		}
+		var tokenModelLimit map[string]bool
+		tokenModelLimit, ok = s.(map[string]bool)
+		if !ok {
+			tokenModelLimit = map[string]bool{}
+		}
+		// 匹配模型名称（包括 GPTs 和 thinking-* 前缀的模型）
+		matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model)
+		if _, ok := tokenModelLimit[matchName]; !ok {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+			return nil, false
+		}
+	}
+
+	if !shouldSelectChannel {
+		return nil, true
+	}
+	if modelRequest.Model == "" {
+		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
+		return nil, false
+	}
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	// Playground 路径特殊处理：允许用户在请求中指定分组
+	if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
+		playgroundRequest := &dto.PlayGroundRequest{}
+		err = common.UnmarshalBodyReusable(c, playgroundRequest)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+			return nil, false
+		}
+		if playgroundRequest.Group != "" {
+			if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+				return nil, false
+			}
+			usingGroup = playgroundRequest.Group
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+		}
+	}
+
+	// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
+	// 如果之前对该模型的成功请求使用过某个渠道，优先复用该渠道
+	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+		preferred, err := model.CacheGetChannel(preferredChannelID)
+		if err == nil && preferred != nil {
+			if preferred.Status != common.ChannelStatusEnabled {
+				// 亲和性渠道已禁用
+				if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
+					return nil, false
+				}
+			} else if usingGroup == "auto" {
+				// auto 分组：遍历用户可用的自动分组，找到第一个支持该模型的分组
+				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+				autoGroups := service.GetUserAutoGroup(userGroup)
+				for _, g := range autoGroups {
+					if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+						selectGroup = g
+						common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+						channel = preferred
+						service.MarkChannelAffinityUsed(c, g, preferred.Id)
+						break
+					}
+				}
+			} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+				// 普通分组：检查渠道是否在该分组中支持该模型
+				channel = preferred
+				selectGroup = usingGroup
+				service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+			}
+		}
+	}
+
+	// ========== 随机选择渠道（兜底逻辑） ==========
+	if channel == nil {
+		channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+			Ctx:        c,
+			ModelName:  modelRequest.Model,
+			TokenGroup: usingGroup,
+			Retry:      common.GetPointer(0),
+		})
+		if err != nil {
+			showGroup := usingGroup
+			if usingGroup == "auto" {
+				showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+			}
+			message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+			return nil, false
+		}
+		if channel == nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+			return nil, false
+		}
+	}
+	return channel, true
+}
+
+// RecordRelayChannelAffinityIfSucceeded 在请求成功后记录渠道亲和性。
+//
+// 该函数独立出来，是为了让非标准 Gin 中间件链（例如 CPAMC api-call 在
+// NexusTok 后端内部重放到主 Relay）也能在成功时复用相同的亲和性记录规则。
+func RecordRelayChannelAffinityIfSucceeded(c *gin.Context, channel *model.Channel) {
+	if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+		service.RecordChannelAffinity(c, channel.Id)
 	}
 }
 
@@ -433,10 +479,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 // 处理逻辑：
 // 1. 设置渠道基础信息（ID、名称、类型等）
 // 2. 根据凭证模式（CredentialMode）选择认证方式：
-//    - SingleKey: 使用渠道自身的 Key
-//    - MultiKey: 使用渠道的多个 Key 中的下一个
-//    - AccountPool: 使用渠道关联的账号池中的账号
-//    - GlobalAccountPool: 使用全局账号池中的账号
+//   - SingleKey: 使用渠道自身的 Key
+//   - MultiKey: 使用渠道的多个 Key 中的下一个
+//   - AccountPool: 使用渠道关联的账号池中的账号
+//   - GlobalAccountPool: 使用全局账号池中的账号
+//
 // 3. 将渠道配置（设置、覆盖参数、模型映射等）写入上下文
 //
 // 参数：

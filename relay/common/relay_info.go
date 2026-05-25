@@ -4,7 +4,7 @@
 // 包含用户信息、令牌信息、渠道元数据、计费数据、流式状态等所有上下文信息。
 //
 // 本文件还定义了各种 GenRelayInfo* 工厂函数，用于根据不同请求格式
-//（OpenAI、Claude、Gemini、Embedding、Responses 等）创建对应的 RelayInfo 实例。
+// （OpenAI、Claude、Gemini、Embedding、Responses 等）创建对应的 RelayInfo 实例。
 package common
 
 import (
@@ -78,32 +78,32 @@ type ResponsesUsageInfo struct {
 // 在每次请求开始时由 InitChannelMeta 初始化，包含渠道类型、ID、
 // 凭证模式、账号池信息、API 类型、版本等完整渠道配置。
 type ChannelMeta struct {
-	ChannelType          int                    // 渠道类型（如 OpenAI、Azure、Claude 等）
-	ChannelId            int                    // 渠道 ID
-	ChannelIsMultiKey    bool                   // 是否为多密钥渠道
-	ChannelMultiKeyIndex int                    // 多密钥渠道的当前密钥索引
-	CredentialMode       string                 // 凭证模式
-	ChannelAccountPool   bool                   // 是否使用账号池
-	ChannelAccountId     int                    // 账号池中的账号 ID
-	ChannelAccountName   string                 // 账号名称
-	PoolGroupId          int                    // 账号池分组 ID
-	PoolGroupName        string                 // 账号池分组名称
-	PoolAccountId        int                    // 账号池账号 ID
-	PoolAccountName      string                 // 账号池账号名称
-	PoolAccountAuthType  string                 // 账号池账号的认证类型
-	ChannelBaseUrl       string                 // 渠道上游基础 URL
-	ApiType              int                    // API 类型（如 OpenAI、Claude、Gemini 等）
-	ApiVersion           string                 // API 版本（Azure 使用）
-	ApiKey               string                 // API 密钥
-	Organization         string                 // 组织标识（OpenAI 使用）
-	ChannelCreateTime    int64                  // 渠道创建时间戳
-	ParamOverride        map[string]interface{} // 参数覆盖配置
-	HeadersOverride      map[string]interface{} // 请求头覆盖配置
-	ChannelSetting       dto.ChannelSettings    // 渠道设置（如系统提示、passthrough 等）
+	ChannelType          int                      // 渠道类型（如 OpenAI、Azure、Claude 等）
+	ChannelId            int                      // 渠道 ID
+	ChannelIsMultiKey    bool                     // 是否为多密钥渠道
+	ChannelMultiKeyIndex int                      // 多密钥渠道的当前密钥索引
+	CredentialMode       string                   // 凭证模式
+	ChannelAccountPool   bool                     // 是否使用账号池
+	ChannelAccountId     int                      // 账号池中的账号 ID
+	ChannelAccountName   string                   // 账号名称
+	PoolGroupId          int                      // 账号池分组 ID
+	PoolGroupName        string                   // 账号池分组名称
+	PoolAccountId        int                      // 账号池账号 ID
+	PoolAccountName      string                   // 账号池账号名称
+	PoolAccountAuthType  string                   // 账号池账号的认证类型
+	ChannelBaseUrl       string                   // 渠道上游基础 URL
+	ApiType              int                      // API 类型（如 OpenAI、Claude、Gemini 等）
+	ApiVersion           string                   // API 版本（Azure 使用）
+	ApiKey               string                   // API 密钥
+	Organization         string                   // 组织标识（OpenAI 使用）
+	ChannelCreateTime    int64                    // 渠道创建时间戳
+	ParamOverride        map[string]interface{}   // 参数覆盖配置
+	HeadersOverride      map[string]interface{}   // 请求头覆盖配置
+	ChannelSetting       dto.ChannelSettings      // 渠道设置（如系统提示、passthrough 等）
 	ChannelOtherSettings dto.ChannelOtherSettings // 渠道其他设置（如禁用字段过滤）
-	UpstreamModelName    string                 // 上游模型名称（经过映射后）
-	IsModelMapped        bool                   // 是否发生了模型映射
-	SupportStreamOptions bool                   // 是否支持流式选项
+	UpstreamModelName    string                   // 上游模型名称（经过映射后）
+	IsModelMapped        bool                     // 是否发生了模型映射
+	SupportStreamOptions bool                     // 是否支持流式选项
 }
 
 // TokenCountMeta 存储 token 计数的元数据。
@@ -589,6 +589,16 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
 		info.RequestURLPath = "/v1" + info.RequestURLPath
 	}
+	if c.GetBool("account_pool_main_relay") {
+		// CPAMC 嵌入式 api-call 已经通过 NexusTok 管理员 session 完成鉴权，
+		// 这里将它标记为 Playground 语义，目的是复用主项目完整 Relay 规则
+		// 的同时避免要求浏览器或 CPAMC 保存额外的 NexusTok API Token。
+		//
+		// 该标记只跳过 Token 余额扣减；用户钱包或订阅仍会按主 Relay 的
+		// 预扣费、结算和日志逻辑处理。因此 CPAMC 发起的模型测试请求不会
+		// 绕过主项目的渠道选择、参数覆盖、敏感词、计费和使用日志。
+		info.IsPlayground = true
+	}
 
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {
@@ -881,6 +891,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
 // UnmarshalMetadata 将 TaskSubmitReq 的 metadata 字段反序列化为指定类型。
 // 用于各 adaptor 将通用的 metadata 映射为特定平台的参数结构。
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
