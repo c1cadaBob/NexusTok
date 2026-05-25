@@ -148,8 +148,7 @@
     "monitoring_center": "Request Monitoring",
     "account_inspection": "Account Inspection",
     "config_management": "Config Panel",
-    "logs": "Logs Viewer",
-    "system_info": "Management Center Info"
+    "logs": "Logs Viewer"
   },
   "account_groups": {
     "title": "Account Groups",
@@ -1241,7 +1240,6 @@
     "clear_filters": "Clear Filters",
     "open_usage": "Open Usage Stats",
     "open_logs": "Open Logs",
-    "open_system": "Open System Info",
     "open_manager_config": "Open CPA-Manager Configuration",
     "active_credentials": "Active Credentials",
     "unavailable_auth_meta": "{{count}} credentials are currently unavailable",
@@ -2015,29 +2013,6 @@
     "sort_name_asc": "Name A-Z",
     "sort_plan_desc": "Plan high to low",
     "sort_plan_asc": "Plan low to high"
-  },
-  "system_info": {
-    "title": "Management Center Info",
-    "about_title": "CLI Proxy API Management Center",
-    "connection_status_title": "Connection Status",
-    "api_status_label": "API Status:",
-    "config_status_label": "Config Status:",
-    "last_update_label": "Last Update:",
-    "cache_data": "Cache Data",
-    "real_time_data": "Real-time Data",
-    "not_loaded": "Not Loaded",
-    "seconds_ago": "seconds ago",
-    "models_title": "Available Models",
-    "models_desc": "Shows the /models response and uses saved API keys for auth automatically.",
-    "models_loading": "Loading available models...",
-    "models_empty": "No models returned by /models",
-    "models_error": "Failed to load model list",
-    "models_count": "{{count}} available models",
-    "version_unknown": "Unknown",
-    "clear_login_title": "Local Login Data",
-    "clear_login_desc": "Clear locally saved login data and sign out.",
-    "clear_login_button": "Clear login data",
-    "clear_login_confirm": "Clear local login data and sign out now?"
   },
   "notification": {
     "debug_updated": "Debug settings updated",

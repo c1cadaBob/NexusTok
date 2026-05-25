@@ -9,7 +9,6 @@ import { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';
 import { CodexInspectionPage } from '@/pages/CodexInspectionPage';
 import { ConfigPage } from '@/pages/ConfigPage';
 import { LogsPage } from '@/pages/LogsPage';
-import { SystemPage } from '@/pages/SystemPage';
 
 const mainRoutes = [
   { path: '/', element: <DashboardPage /> },
@@ -29,7 +28,7 @@ const mainRoutes = [
   { path: '/monitoring/codex-inspection', element: <Navigate to="/monitoring/inspection" replace /> },
   { path: '/config', element: <ConfigPage /> },
   { path: '/logs', element: <LogsPage /> },
-  { path: '/system', element: <SystemPage /> },
+  { path: '/system', element: <Navigate to="/" replace /> },
   { path: '*', element: <Navigate to="/" replace /> },
 ];
 

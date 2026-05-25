@@ -520,20 +520,3 @@ export function IconSidebarLogs({ size = 20, ...props }: IconProps) {
     </svg>
   );
 }
-
-export function IconSidebarSystem({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...sidebarSvgProps} width={size} height={size} {...props}>
-      <rect x="6" y="6" width="12" height="12" rx="2" />
-      <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" fillOpacity="0.12" />
-      <path d="M6 10H3" />
-      <path d="M6 14H3" />
-      <path d="M21 10h-3" />
-      <path d="M21 14h-3" />
-      <path d="M10 6V3" />
-      <path d="M14 6V3" />
-      <path d="M10 21v-3" />
-      <path d="M14 21v-3" />
-    </svg>
-  );
-}

@@ -146,8 +146,7 @@
     "monitoring_center": "Мониторинг запросов",
     "account_inspection": "Проверка аккаунтов",
     "config_management": "Панель конфигурации",
-    "logs": "Просмотр логов",
-    "system_info": "Информация системы"
+    "logs": "Просмотр логов"
   },
   "account_groups": {
     "title": "Группы аккаунтов",
@@ -1236,7 +1235,6 @@
     "clear_filters": "Сбросить фильтры",
     "open_usage": "Открыть статистику",
     "open_logs": "Открыть логи",
-    "open_system": "Открыть сведения о системе",
     "open_manager_config": "Открыть конфигурацию CPA-Manager",
     "active_credentials": "Активные credentials",
     "unavailable_auth_meta": "{{count}} credentials сейчас недоступны",
@@ -2010,29 +2008,6 @@
     "sort_name_asc": "Имя A-Z",
     "sort_plan_desc": "План от высокого",
     "sort_plan_asc": "План от низкого"
-  },
-  "system_info": {
-    "title": "Информация о центре управления",
-    "about_title": "CLI Proxy API Management Center",
-    "connection_status_title": "Статус подключения",
-    "api_status_label": "Статус API:",
-    "config_status_label": "Статус конфигурации:",
-    "last_update_label": "Последнее обновление:",
-    "cache_data": "Данные из кэша",
-    "real_time_data": "Данные в реальном времени",
-    "not_loaded": "Не загружено",
-    "seconds_ago": "секунд назад",
-    "models_title": "Доступные модели",
-    "models_desc": "Показывает ответ /models и автоматически использует сохранённые API-ключи для авторизации.",
-    "models_loading": "Загрузка доступных моделей...",
-    "models_empty": "Сервис /models не вернул модели",
-    "models_error": "Не удалось загрузить список моделей",
-    "models_count": "Доступно моделей: {{count}}",
-    "version_unknown": "Неизвестно",
-    "clear_login_title": "Локальные данные входа",
-    "clear_login_desc": "Очистите локально сохранённые данные входа и выполните выход.",
-    "clear_login_button": "Очистить данные входа",
-    "clear_login_confirm": "Очистить локальные данные входа и выйти?"
   },
   "notification": {
     "debug_updated": "Настройки отладки обновлены",

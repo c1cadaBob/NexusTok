@@ -146,8 +146,7 @@
     "monitoring_center": "請求監控",
     "account_inspection": "帳號巡檢",
     "config_management": "設定面板",
-    "logs": "記錄檢視",
-    "system_info": "中心資訊"
+    "logs": "記錄檢視"
   },
   "account_groups": {
     "title": "帳號分組",
@@ -1265,7 +1264,6 @@
     "clear_filters": "清空篩選",
     "open_usage": "開啟使用統計",
     "open_logs": "開啟記錄檢視",
-    "open_system": "開啟中心資訊",
     "open_manager_config": "開啟 CPA-Manager 設定",
     "active_credentials": "活躍憑證",
     "unavailable_auth_meta": "{{count}} 個憑證目前不可用",
@@ -2039,29 +2037,6 @@
     "sort_name_asc": "名稱 A-Z",
     "sort_plan_desc": "方案高到低",
     "sort_plan_asc": "方案低到高"
-  },
-  "system_info": {
-    "title": "管理中心資訊",
-    "about_title": "CLI Proxy API Management Center",
-    "connection_status_title": "連線狀態",
-    "api_status_label": "API 狀態:",
-    "config_status_label": "設定狀態:",
-    "last_update_label": "最後更新:",
-    "cache_data": "快取資料",
-    "real_time_data": "即時資料",
-    "not_loaded": "未載入",
-    "seconds_ago": "秒前",
-    "models_title": "可用模型清單",
-    "models_desc": "展示 /models 回傳的模型，並自動使用伺服器儲存的 API Key 進行驗證。",
-    "models_loading": "正在載入可用模型...",
-    "models_empty": "未從 /models 取得到模型資料",
-    "models_error": "取得模型清單失敗",
-    "models_count": "可用模型 {{count}} 個",
-    "version_unknown": "未知",
-    "clear_login_title": "本地登入資訊",
-    "clear_login_desc": "清理本地儲存的登入資訊並登出。",
-    "clear_login_button": "清理登入資訊",
-    "clear_login_confirm": "確認清理本地登入資訊並登出？"
   },
   "notification": {
     "debug_updated": "除錯設定已更新",
