@@ -2947,21 +2947,78 @@ export function MonitoringCenterPage() {
           <p className={styles.description}>{t('monitoring.console_subtitle')}</p>
         </div>
 
-        <div className={styles.statusBar}>
-          <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
-            <span className={styles.statusDot} aria-hidden="true" />
-            {connectionLabel}
-          </span>
-          <div className={styles.statusMeta}>
-            <span>
-              {t('monitoring.last_sync')}:{' '}
-              {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(i18n.language) : '--'}
+        <div className={styles.headerToolsRow}>
+          <div className={styles.statusBar}>
+            <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
+              <span className={styles.statusDot} aria-hidden="true" />
+              {connectionLabel}
             </span>
-            <span className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}>
-              {`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}
-            </span>
-            <span>{`${t('monitoring.total_calls')}: ${formatCompactNumber(scopedSummary.totalCalls)}`}</span>
+            <div className={styles.statusMeta}>
+              <span>
+                {t('monitoring.last_sync')}:{' '}
+                {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(i18n.language) : '--'}
+              </span>
+              <span className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}>
+                {`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}
+              </span>
+              <span>{`${t('monitoring.total_calls')}: ${formatCompactNumber(scopedSummary.totalCalls)}`}</span>
+            </div>
           </div>
+
+          <section className={styles.actionBar} aria-label={t('common.action')}>
+            <div className={styles.actionGroup}>
+              <button
+                type="button"
+                className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
+                onClick={() => void handleUsageExport()}
+                disabled={!usageServiceAvailable || usageExporting || usageImporting}
+                title={
+                  usageServiceAvailable
+                    ? t('usage_stats.export')
+                    : t('usage_stats.import_export_requires_usage_service')
+                }
+              >
+                <IconDownload size={16} />
+                <span>{usageExporting ? t('common.loading') : t('usage_stats.export')}</span>
+              </button>
+              <button
+                type="button"
+                className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
+                onClick={handleUsageImportClick}
+                disabled={!usageServiceAvailable || usageExporting || usageImporting}
+                title={
+                  usageServiceAvailable
+                    ? t('usage_stats.import')
+                    : t('usage_stats.import_export_requires_usage_service')
+                }
+              >
+                <IconFileText size={16} />
+                <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
+              </button>
+              <input
+                ref={usageImportInputRef}
+                type="file"
+                accept=".json,.jsonl,.ndjson,.txt,application/json,application/x-ndjson,text/plain"
+                style={{ display: 'none' }}
+                onChange={handleUsageImportChange}
+              />
+              <Link
+                to="/monitoring/codex-inspection"
+                className={`${styles.actionButton} ${styles.quickNavLink}`}
+              >
+                <IconChartLine size={16} />
+                <span>{t('monitoring.codex_inspection_entry')}</span>
+                <IconExternalLink size={14} />
+              </Link>
+              {config?.loggingToFile ? (
+                <Link to="/logs" className={`${styles.actionButton} ${styles.quickNavLink}`}>
+                  <IconFileText size={16} />
+                  <span>{t('monitoring.open_logs')}</span>
+                  <IconExternalLink size={14} />
+                </Link>
+              ) : null}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -2978,61 +3035,6 @@ export function MonitoringCenterPage() {
           </Link>
         </div>
       ) : null}
-
-      <section className={styles.actionBar} aria-label={t('common.action')}>
-        <div className={styles.actionGroup}>
-          <button
-            type="button"
-            className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
-            onClick={() => void handleUsageExport()}
-            disabled={!usageServiceAvailable || usageExporting || usageImporting}
-            title={
-              usageServiceAvailable
-                ? t('usage_stats.export')
-                : t('usage_stats.import_export_requires_usage_service')
-            }
-          >
-            <IconDownload size={16} />
-            <span>{usageExporting ? t('common.loading') : t('usage_stats.export')}</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
-            onClick={handleUsageImportClick}
-            disabled={!usageServiceAvailable || usageExporting || usageImporting}
-            title={
-              usageServiceAvailable
-                ? t('usage_stats.import')
-                : t('usage_stats.import_export_requires_usage_service')
-            }
-          >
-            <IconFileText size={16} />
-            <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
-          </button>
-          <input
-            ref={usageImportInputRef}
-            type="file"
-            accept=".json,.jsonl,.ndjson,.txt,application/json,application/x-ndjson,text/plain"
-            style={{ display: 'none' }}
-            onChange={handleUsageImportChange}
-          />
-          <Link
-            to="/monitoring/codex-inspection"
-            className={`${styles.actionButton} ${styles.quickNavLink}`}
-          >
-            <IconChartLine size={16} />
-            <span>{t('monitoring.codex_inspection_entry')}</span>
-            <IconExternalLink size={14} />
-          </Link>
-          {config?.loggingToFile ? (
-            <Link to="/logs" className={`${styles.actionButton} ${styles.quickNavLink}`}>
-              <IconFileText size={16} />
-              <span>{t('monitoring.open_logs')}</span>
-              <IconExternalLink size={14} />
-            </Link>
-          ) : null}
-        </div>
-      </section>
 
       <MonitoringPanel className={styles.toolbarPanel}>
         <div className={styles.controlBar}>

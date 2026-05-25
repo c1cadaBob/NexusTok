@@ -30,9 +30,16 @@
 
 .headerShell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.headerToolsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -61,10 +68,11 @@
 .statusBar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 10px;
   flex-wrap: wrap;
-  min-width: min(100%, 520px);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .statusDot {
@@ -78,7 +86,7 @@
 .statusMeta {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
@@ -220,14 +228,16 @@
 .actionBar {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 16px;
+  flex: 0 1 auto;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 20px;
-  background: var(--monitor-surface);
-  box-shadow: var(--shadow);
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .actionGroup {
@@ -3214,8 +3224,9 @@
 }
 
 @container monitoring-page (max-width: 1240px) {
-  .headerShell {
-    grid-template-columns: 1fr;
+  .headerToolsRow {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .statusBar,
@@ -3353,6 +3364,11 @@
 
   .headerShell {
     gap: 14px;
+  }
+
+  .headerToolsRow {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .pageHeader {
