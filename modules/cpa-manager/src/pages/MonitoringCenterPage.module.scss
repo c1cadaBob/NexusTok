@@ -916,24 +916,20 @@
 }
 
 .summaryHero {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
 }
 
 .summarySub {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
 }
 
 .summaryHero > .summaryCard {
   grid-column: span 2;
 }
 
-.summarySub > .summaryCard:nth-child(1),
-.summarySub > .summaryCard:nth-child(2) {
+.summaryHero > .summaryCard:nth-child(4),
+.summarySub > .summaryCard {
   grid-column: span 3;
-}
-
-.summarySub > .summaryCard:nth-child(3) {
-  grid-column: span 2;
 }
 
 .summaryHero,
