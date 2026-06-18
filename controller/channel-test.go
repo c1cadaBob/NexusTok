@@ -62,8 +62,8 @@ import (
 
 // testResult 渠道测试结果
 type testResult struct {
-	context     *gin.Context      // 测试上下文
-	localErr    error             // 本地错误
+	context     *gin.Context         // 测试上下文
+	localErr    error                // 本地错误
 	newAPIError *types.NexusTokError // API 错误
 }
 
@@ -674,6 +674,66 @@ func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
 	return channel != nil && channel.Type == constant.ChannelTypeCodex
 }
 
+// formatChannelTestFailureMessage 将上游/Sidecar 的底层错误转换成管理员可操作的提示。
+//
+// 渠道测试经常会经过账号池、CPAMC/CLIProxyAPI 或上游模型服务。底层错误体可能是多层
+// JSON 转义后的 `auth_unavailable`、`Unauthorized` 等信息，直接展示会让管理员难以判断
+// 是 NexusTok 登录态问题、渠道 Key 问题，还是账号池授权问题。这里仅改写展示文案，
+// 不改变原始日志和错误码，便于排查时仍能从日志看到完整响应。
+func formatChannelTestFailureMessage(channel *model.Channel, modelName string, err error) string {
+	if err == nil {
+		return ""
+	}
+	rawMessage := strings.TrimSpace(err.Error())
+	lowerMessage := strings.ToLower(rawMessage)
+	if rawMessage == "" {
+		return "渠道测试失败：上游返回空错误"
+	}
+
+	isAuthUnavailable := strings.Contains(lowerMessage, "auth_unavailable") ||
+		strings.Contains(lowerMessage, "authentication_error") ||
+		strings.Contains(lowerMessage, "unauthorized") ||
+		strings.Contains(lowerMessage, "bad response status code 401")
+	if !isAuthUnavailable {
+		return rawMessage
+	}
+
+	modelPart := strings.TrimSpace(modelName)
+	if modelPart == "" && channel != nil {
+		models := channel.GetModels()
+		if len(models) > 0 {
+			modelPart = strings.TrimSpace(models[0])
+		}
+	}
+	if modelPart == "" {
+		modelPart = "当前模型"
+	}
+
+	if channel != nil && channel.IsGlobalAccountPoolEnabled() {
+		groupHint := ""
+		if channel.ChannelInfo.AccountPoolGroupId > 0 {
+			groupHint = fmt.Sprintf("，账号池组 ID：%d", channel.ChannelInfo.AccountPoolGroupId)
+		}
+		return fmt.Sprintf(
+			"渠道测试失败：%s 在全局账号池中没有可用授权%s。请在账号池管理器中检查该分组是否有启用且未过期的账号，并确认账号套餐/权限支持该模型。",
+			modelPart,
+			groupHint,
+		)
+	}
+
+	if channel != nil && channel.IsChannelAccountPoolEnabled() {
+		return fmt.Sprintf(
+			"渠道测试失败：%s 在渠道账号池中没有可用授权。请检查账号池账号是否启用、未过期，并确认账号权限支持该模型。",
+			modelPart,
+		)
+	}
+
+	return fmt.Sprintf(
+		"渠道测试失败：上游认证失败，模型 %s 返回 401 Unauthorized。请检查渠道 API Key、Base URL、模型权限或上游账号状态。",
+		modelPart,
+	)
+}
+
 func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	if len(jsonBytes) == 0 {
 		return ""
@@ -863,7 +923,7 @@ func TestChannel(c *gin.Context) {
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
-			"message": result.localErr.Error(),
+			"message": formatChannelTestFailureMessage(channel, testModel, result.localErr),
 			"time":    0.0,
 		}
 		if result.newAPIError != nil {
@@ -879,7 +939,7 @@ func TestChannel(c *gin.Context) {
 	if result.newAPIError != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success":    false,
-			"message":    result.newAPIError.Error(),
+			"message":    formatChannelTestFailureMessage(channel, testModel, result.newAPIError),
 			"time":       consumedTime,
 			"error_code": result.newAPIError.GetErrorCode(),
 		})

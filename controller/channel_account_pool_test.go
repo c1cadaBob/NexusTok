@@ -7,6 +7,7 @@
 package controller
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -140,4 +141,29 @@ func TestValidateChannelGlobalAccountPoolRejectsNativeGroup(t *testing.T) {
 	err := validateChannel(channel, true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "账号池模式只能选择 CPAMC 中已创建的账号组")
+}
+
+func TestFormatChannelTestFailureMessageForGlobalAccountPoolAuthUnavailable(t *testing.T) {
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeGlobalAccountPool,
+		Models: "gpt-5.4,gpt-5.5",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeGlobalAccountPool,
+			AccountPoolGroupId: 2,
+		},
+	}
+
+	message := formatChannelTestFailureMessage(
+		channel,
+		"gpt-5.5",
+		errors.New(`bad response status code 401, message: {"detail":"Unauthorized"}, body: {"error":{"message":"{\"detail\":\"Unauthorized\"}","type":"authentication_error","code":"auth_unavailable"}}`),
+	)
+
+	require.Contains(t, message, "gpt-5.5")
+	require.Contains(t, message, "全局账号池")
+	require.Contains(t, message, "账号池组 ID：2")
+	require.Contains(t, message, "套餐/权限支持该模型")
+	require.NotContains(t, message, "bad response status code")
+	require.NotContains(t, message, "auth_unavailable")
 }
