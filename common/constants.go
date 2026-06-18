@@ -17,7 +17,7 @@ import (
 // 系统信息
 // ========================================
 
-const StaticLogoURL = "/logo.png?v=0526e262" // 静态 Logo URL，版本参数用于刷新浏览器中的旧图缓存
+const StaticLogoURL = "/logo.png?v=205619f5" // 静态 Logo URL，版本参数用于刷新浏览器中的旧图缓存
 
 var StartTime = time.Now().Unix() // 系统启动时间（Unix 时间戳，秒）
 var Version = "v0.0.0"            // 系统版本号（构建时自动替换，无需手动修改）

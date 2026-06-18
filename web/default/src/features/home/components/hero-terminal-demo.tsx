@@ -202,14 +202,15 @@ export function HeroTerminalDemo() {
   const accent = ACCENT_CLASSES[demo.accent]
 
   return (
-    <div className='w-full'>
+    <div className='mx-auto mt-16 w-full max-w-2xl'>
       <div
         className={cn(
-          'bg-background/95 overflow-hidden backdrop-blur-sm',
-          'dark:bg-background/95'
+          'overflow-hidden rounded-2xl border backdrop-blur-sm',
+          'border-border/60 bg-white/95 shadow-[0_20px_50px_-25px_rgba(15,23,42,0.18)]',
+          'dark:border-white/[0.06] dark:bg-[#0b0f17]/95 dark:shadow-[0_20px_60px_-25px_rgba(0,0,0,0.7)]'
         )}
       >
-        {/* 顶部协议切换条，用固定高度避免不同 API 示例切换时页面跳动。 */}
+        {/* Tab strip */}
         <div
           className={cn(
             'flex items-center gap-1 border-b px-2 sm:gap-1.5 sm:px-3',
@@ -242,7 +243,7 @@ export function HeroTerminalDemo() {
           </div>
         </div>
 
-        {/* 当前请求地址行，跟随选中的 API 示例同步变化。 */}
+        {/* Endpoint row */}
         <div
           className={cn(
             'flex items-center gap-2.5 border-b px-5 py-3',
@@ -267,16 +268,16 @@ export function HeroTerminalDemo() {
           </code>
         </div>
 
-        {/* 请求与响应区域使用固定网格，避免切换示例时上下布局抖动。 */}
-        <div className='grid h-[380px] grid-rows-[220px_minmax(0,1fr)] font-mono text-[12px] leading-[1.55] sm:text-[12.5px]'>
-          {/* 请求内容 */}
+        {/* Body — fixed rows so neither block shifts when switching demos */}
+        <div className='grid h-[400px] grid-rows-[235px_minmax(0,1fr)] font-mono text-[12.5px] leading-[1.55]'>
+          {/* Request */}
           <RequestBlock demo={demo} transitioning={transitioning} />
 
-          {/* 响应内容 */}
+          {/* Response */}
           <ResponseBlock demo={demo} transitioning={transitioning} />
         </div>
 
-        {/* 底部指标展示延迟、token 和估算成本。 */}
+        {/* Footer metrics */}
         <div
           className={cn(
             'flex items-center justify-between border-t px-5 py-2.5',
