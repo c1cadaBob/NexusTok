@@ -323,6 +323,33 @@ journalctl -u nexustok -f
 
 Web 静态资源路由会根据 `common.GetTheme()` 选择默认前端或经典前端。根路径和 SPA 路由由 `router/web-router.go` 的 `NoRoute` 回退到对应主题的 `index.html`。
 
+## 后台定时任务
+
+主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、账号池凭据刷新、Codex 凭据刷新、上游模型巡检，以及 models.dev 模型目录同步。
+
+models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.json` 拉取公开模型目录，并补齐本地缺失的模型和供应商。该任务只创建本地不存在的记录，不覆盖管理员手动编辑的模型描述、图标、标签、供应商、状态或价格倍率。
+
+相关环境变量：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MODELS_DEV_AUTO_SYNC_ENABLED` | `true` | 是否启用 models.dev 每日模型目录同步 |
+| `MODELS_DEV_AUTO_SYNC_TIME` | `02:00` | 每日运行时间，格式 `HH:mm`，使用进程当前时区 |
+| `MODELS_DEV_SYNC_BASE` | `https://models.dev` | models.dev 基础地址；内网镜像或代理可覆盖 |
+
+日志中出现以下内容表示任务已经启动：
+
+```text
+models.dev model sync task started: time=02:00 source=https://models.dev/catalog.json
+```
+
+如果需要临时关闭自动同步：
+
+```yaml
+environment:
+  - MODELS_DEV_AUTO_SYNC_ENABLED=false
+```
+
 ## 常用排障
 
 ### 页面没有变化或仍显示旧版首页
@@ -458,6 +485,36 @@ ACCOUNT_POOL_USAGE_SERVICE_URL=http://account-pool-usage:18317
 | `classic` | `/assets/...` |
 
 如果资源路径不存在，说明构建产物和当前主题不匹配，或 Go 二进制嵌入的是旧产物。重新构建对应前端并重新编译后端。
+
+### models.dev 模型目录没有自动同步
+
+检查任务是否启动：
+
+```bash
+docker logs --tail 200 nexustok | grep 'models.dev model sync'
+```
+
+热重载环境：
+
+```bash
+docker logs --tail 200 nexustok-api-hot | grep 'models.dev model sync'
+```
+
+检查项：
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| 没有启动日志 | 非主节点或 `MODELS_DEV_AUTO_SYNC_ENABLED=false` | 确认主服务节点和环境变量 |
+| 提示 `invalid MODELS_DEV_AUTO_SYNC_TIME` | 时间格式不是 `HH:mm` 或超出范围 | 改为例如 `02:00`、`03:30` |
+| 拉取失败 | 服务器无法访问 `https://models.dev/catalog.json` | 检查 DNS、代理、防火墙，或配置 `MODELS_DEV_SYNC_BASE` |
+| 同步后模型没有变化 | 本地已存在这些模型，任务不会覆盖已有记录 | 在后台模型页面检查模型是否已存在，必要时使用手动编辑或覆盖同步 |
+
+管理员也可以通过后台登录态调用预览接口确认 models.dev 源是否可访问：
+
+```bash
+curl -H "NexusTok-User: <管理员用户ID>" \
+  "http://127.0.0.1:3000/api/models/sync_upstream/preview?source=models.dev"
+```
 
 ## 更新流程
 
