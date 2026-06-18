@@ -18,66 +18,35 @@ For commercial licensing, please contact support@c1cada.dev
 */
 
 import {
-  Button,
-  Input,
-  ScrollItem,
-  ScrollList,
-  Typography,
-} from '@douyinfe/semi-ui';
-import {
   IconCopy,
   IconFile,
   IconGithubLogo,
   IconPlay,
 } from '@douyinfe/semi-icons';
 import { Link } from 'react-router-dom';
-import {
-  AzureAI,
-  Claude,
-  Cohere,
-  DeepSeek,
-  Gemini,
-  Grok,
-  Hunyuan,
-  Midjourney,
-  Minimax,
-  Moonshot,
-  OpenAI,
-  Qingyan,
-  Qwen,
-  Spark,
-  Suno,
-  Volcengine,
-  Wenxin,
-  Xinference,
-  XAI,
-  Zhipu,
-} from '@lobehub/icons';
 import { DEFAULT_ENDPOINT } from '../../constants/common.constant';
 
-const { Text } = Typography;
-
-const PROVIDER_ICONS = [
-  { name: 'Moonshot', icon: Moonshot },
-  { name: 'OpenAI', icon: OpenAI },
-  { name: 'xAI', icon: XAI },
-  { name: 'Zhipu', icon: Zhipu.Color },
-  { name: 'VolcEngine', icon: Volcengine.Color },
-  { name: 'Cohere', icon: Cohere.Color },
-  { name: 'Claude', icon: Claude.Color },
-  { name: 'Gemini', icon: Gemini.Color },
-  { name: 'Suno', icon: Suno },
-  { name: 'MiniMax', icon: Minimax.Color },
-  { name: 'Wenxin', icon: Wenxin.Color },
-  { name: 'Spark', icon: Spark.Color },
-  { name: 'Qingyan', icon: Qingyan.Color },
-  { name: 'DeepSeek', icon: DeepSeek.Color },
-  { name: 'Qwen', icon: Qwen.Color },
-  { name: 'Midjourney', icon: Midjourney },
-  { name: 'Grok', icon: Grok },
-  { name: 'Azure AI', icon: AzureAI.Color },
-  { name: 'Hunyuan', icon: Hunyuan.Color },
-  { name: 'Xinference', icon: Xinference.Color },
+const PROVIDER_NAMES = [
+  'Moonshot',
+  'OpenAI',
+  'xAI',
+  'Zhipu',
+  'VolcEngine',
+  'Cohere',
+  'Claude',
+  'Gemini',
+  'Suno',
+  'MiniMax',
+  'Wenxin',
+  'Spark',
+  'Qingyan',
+  'DeepSeek',
+  'Qwen',
+  'Midjourney',
+  'Grok',
+  'Azure AI',
+  'Hunyuan',
+  'Xinference',
 ];
 
 const FEATURE_ITEMS = [
@@ -115,7 +84,6 @@ const RESPONSE_PREVIEW = `{
 export function ClassicHomeLanding(props) {
   const {
     t,
-    isChinese,
     isMobile,
     serverAddress,
     endpointItems,
@@ -129,11 +97,11 @@ export function ClassicHomeLanding(props) {
 
   const currentEndpoint =
     endpointItems[endpointIndex]?.value || DEFAULT_ENDPOINT;
-  const providerIcons = PROVIDER_ICONS.slice(0, isMobile ? 12 : 18);
+  const providerNames = PROVIDER_NAMES.slice(0, isMobile ? 12 : 20);
   const requestPreview = buildRequestPreview(serverAddress, currentEndpoint);
   const heroStats = [
     {
-      value: `${PROVIDER_ICONS.length}+`,
+      value: `${PROVIDER_NAMES.length}+`,
       label: t('支持众多的大模型供应商'),
     },
     {
@@ -147,216 +115,232 @@ export function ClassicHomeLanding(props) {
   ];
 
   return (
-    <div className='w-full overflow-x-hidden'>
-      {/* 首页首屏使用熟悉的 classic 组件，但改成更聚焦的产品化布局。 */}
-      <div className='relative min-h-[calc(100vh-60px)] overflow-hidden border-b border-semi-color-border bg-semi-color-bg-0 px-4 pb-12 pt-20 md:px-8 md:pb-16 md:pt-24'>
-        <div className='pointer-events-none absolute inset-0 -z-0 bg-[linear-gradient(to_right,var(--semi-color-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--semi-color-border)_1px,transparent_1px)] bg-[size:5rem_5rem] opacity-[0.08]' />
-        <div className='pointer-events-none absolute inset-x-0 top-0 -z-0 h-96 bg-[linear-gradient(to_bottom,var(--semi-color-fill-0),transparent)]' />
+    <div
+      className='w-full overflow-x-hidden bg-[#FFFFFF] text-[#111111]'
+      style={{
+        fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+        letterSpacing: 0,
+      }}
+    >
+      {/* Swiss 方向用网格线、编号和单一蓝色强调信息结构，避免再依赖渐变和软阴影。 */}
+      <section className='relative overflow-hidden border-b border-[#111111] bg-[#F7F7F8] px-4 pb-12 pt-20 md:px-8 md:pb-16 md:pt-24'>
+        <div className='pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,#D9D9DE_1px,transparent_1px),linear-gradient(to_bottom,#D9D9DE_1px,transparent_1px)] bg-[size:64px_64px] opacity-70' />
 
-        <div className='relative z-10 mx-auto grid w-full max-w-7xl min-w-0 items-center gap-10 lg:grid-cols-[minmax(0,0.98fr)_minmax(0,1.02fr)] lg:gap-14'>
-          <div className='w-full min-w-0 max-w-2xl'>
-            <div className='mb-5 inline-flex items-center gap-2 rounded-lg border border-semi-color-border bg-semi-color-fill-0 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-semi-color-text-1'>
-              <span className='h-2 w-2 rounded-full bg-semi-color-primary' />
-              API Gateway
+        <div className='relative mx-auto grid w-full max-w-7xl min-w-0 gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-12'>
+          <div className='grid min-w-0 gap-6 sm:grid-cols-[72px_minmax(0,1fr)]'>
+            <div className='hidden border-l border-r border-[#111111] sm:block'>
+              <div className='px-3 py-4 text-5xl font-black leading-none text-[#002FA7]'>
+                01
+              </div>
+              <div className='border-t border-[#111111] px-3 py-4 text-xs font-bold'>
+                NexusTok
+              </div>
             </div>
 
-            <h1
-              className={`text-4xl font-bold leading-[1.05] text-semi-color-text-0 md:text-5xl lg:text-6xl ${isChinese ? 'tracking-wide md:tracking-wider' : ''}`}
-            >
-              {t('统一的')}
-              <br />
-              <span className='shine-text'>{t('大模型接口网关')}</span>
-            </h1>
+            <div className='min-w-0'>
+              <div className='mb-5 inline-flex border border-[#111111] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#002FA7]'>
+                API Gateway
+              </div>
 
-            <p className='mt-6 max-w-xl text-base leading-7 text-semi-color-text-1 md:text-lg'>
-              {t('多模型统一接入，只需将基址替换为：')}
-            </p>
+              <h1 className='max-w-3xl text-5xl font-black leading-[0.98] text-[#111111] md:text-6xl lg:text-7xl'>
+                {t('统一的')}
+                <br />
+                <span className='text-[#002FA7]'>{t('大模型接口网关')}</span>
+              </h1>
 
-            <div className='mt-6 w-full max-w-xl rounded-lg border border-semi-color-border bg-semi-color-bg-0 p-1 shadow-[0_18px_50px_-36px_rgba(15,23,42,0.5)]'>
-              <Input
-                readonly
-                value={serverAddress}
-                className='w-full !rounded-lg'
-                size={isMobile ? 'default' : 'large'}
-                suffix={
-                  <div className='flex min-w-0 items-center gap-2'>
-                    <div className='hidden min-w-0 max-w-[180px] md:block'>
-                      <ScrollList
-                        bodyHeight={32}
-                        style={{ border: 'unset', boxShadow: 'unset' }}
-                      >
-                        <ScrollItem
-                          mode='wheel'
-                          cycled={true}
-                          list={endpointItems}
-                          selectedIndex={endpointIndex}
-                          onSelect={({ index }) => setEndpointIndex(index)}
-                        />
-                      </ScrollList>
-                    </div>
-                    <Button
-                      type='primary'
-                      onClick={handleCopyBaseURL}
-                      icon={<IconCopy />}
-                      className='!rounded-lg'
-                    />
-                  </div>
-                }
-              />
-            </div>
+              <p className='mt-6 max-w-xl text-base leading-7 text-[#333333] md:text-lg'>
+                {t('多模型统一接入，只需将基址替换为：')}
+              </p>
 
-            <div className='mt-8 flex flex-wrap items-center gap-3'>
-              <Link to='/console'>
-                <Button
-                  theme='solid'
-                  type='primary'
-                  size={isMobile ? 'default' : 'large'}
-                  className='!rounded-lg px-7 py-2'
-                  icon={<IconPlay />}
-                >
-                  {t('获取密钥')}
-                </Button>
-              </Link>
-              {isDemoSiteMode && version ? (
-                <Button
-                  size={isMobile ? 'default' : 'large'}
-                  className='flex items-center !rounded-lg px-6 py-2'
-                  icon={<IconGithubLogo />}
-                  onClick={() =>
-                    window.open('https://github.com/c1cada/NexusTok', '_blank')
-                  }
-                >
-                  {version}
-                </Button>
-              ) : (
-                docsLink && (
-                  <Button
-                    size={isMobile ? 'default' : 'large'}
-                    className='flex items-center !rounded-lg px-6 py-2'
-                    icon={<IconFile />}
-                    onClick={() => window.open(docsLink, '_blank')}
+              <div className='mt-8 w-full max-w-2xl border border-[#111111] bg-[#FFFFFF]'>
+                <div className='grid grid-cols-[minmax(0,1fr)_48px]'>
+                  <input
+                    id='classic-home-base-url'
+                    name='base_url'
+                    aria-label={t('API地址')}
+                    readOnly
+                    value={serverAddress}
+                    className='h-12 min-w-0 border-0 bg-[#FFFFFF] px-4 font-mono text-sm text-[#111111] outline-none md:text-base'
+                  />
+                  <button
+                    aria-label={t('复制')}
+                    type='button'
+                    onClick={handleCopyBaseURL}
+                    className='flex h-12 w-12 items-center justify-center border-l border-[#111111] bg-[#002FA7] text-[#FFFFFF] transition-colors hover:bg-[#111111]'
                   >
-                    {t('文档')}
-                  </Button>
-                )
-              )}
-            </div>
-
-            <div className='mt-8 grid gap-3 sm:grid-cols-3'>
-              {FEATURE_ITEMS.map((item) => (
-                <div
-                  key={item.title}
-                  className='rounded-lg border border-semi-color-border bg-semi-color-bg-0 px-4 py-3 shadow-[0_10px_32px_-24px_rgba(15,23,42,0.45)]'
+                    <IconCopy />
+                  </button>
+                </div>
+                <select
+                  id='classic-home-endpoint'
+                  name='endpoint'
+                  aria-label={t('API端点')}
+                  value={endpointIndex}
+                  onChange={(event) =>
+                    setEndpointIndex(Number(event.target.value))
+                  }
+                  className='h-11 w-full border-0 border-t border-[#111111] bg-[#F7F7F8] px-4 font-mono text-sm text-[#002FA7] outline-none'
                 >
-                  <div className='text-sm font-semibold text-semi-color-text-0'>
-                    {item.title}
+                  {endpointItems.map((item, index) => (
+                    <option key={item.value} value={index}>
+                      {item.value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className='mt-8 flex flex-wrap items-center gap-3'>
+                <Link
+                  to='/console'
+                  className='inline-flex h-12 items-center gap-2 border border-[#002FA7] bg-[#002FA7] px-6 text-sm font-bold text-[#FFFFFF] transition-colors hover:bg-[#111111]'
+                >
+                  <IconPlay />
+                  {t('获取密钥')}
+                </Link>
+                {isDemoSiteMode && version ? (
+                  <button
+                    type='button'
+                    className='inline-flex h-12 items-center gap-2 border border-[#111111] bg-[#FFFFFF] px-5 text-sm font-bold text-[#111111] transition-colors hover:bg-[#111111] hover:text-[#FFFFFF]'
+                    onClick={() =>
+                      window.open(
+                        'https://github.com/c1cada/NexusTok',
+                        '_blank',
+                      )
+                    }
+                  >
+                    <IconGithubLogo />
+                    {version}
+                  </button>
+                ) : (
+                  docsLink && (
+                    <button
+                      type='button'
+                      className='inline-flex h-12 items-center gap-2 border border-[#111111] bg-[#FFFFFF] px-5 text-sm font-bold text-[#111111] transition-colors hover:bg-[#111111] hover:text-[#FFFFFF]'
+                      onClick={() => window.open(docsLink, '_blank')}
+                    >
+                      <IconFile />
+                      {t('文档')}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className='mt-8 grid border-l border-t border-[#111111] bg-[#FFFFFF] sm:grid-cols-3'>
+                {FEATURE_ITEMS.map((item, index) => (
+                  <div
+                    key={item.title}
+                    className='min-h-[92px] border-b border-r border-[#111111] px-4 py-4'
+                  >
+                    <div className='text-2xl font-black text-[#002FA7]'>
+                      {String(index + 1).padStart(2, '0')}
+                    </div>
+                    <div className='mt-3 text-sm font-bold text-[#111111]'>
+                      {item.title}
+                    </div>
+                    <div className='mt-1 truncate font-mono text-xs text-[#555555]'>
+                      {item.desc}
+                    </div>
                   </div>
-                  <div className='mt-1 truncate font-mono text-xs text-semi-color-text-2'>
-                    {item.desc}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className='min-w-0'>
-            <div className='rounded-lg border border-semi-color-border bg-semi-color-bg-0 p-3 shadow-[0_28px_80px_-42px_rgba(15,23,42,0.55)]'>
-              <div className='rounded-lg border border-semi-color-border bg-semi-color-fill-0 px-4 py-3'>
-                <div className='flex items-center justify-between gap-4'>
-                  <div className='min-w-0'>
-                    <div className='text-xs font-bold uppercase tracking-[0.18em] text-semi-color-text-0'>
-                      API Gateway
-                    </div>
-                    <div className='mt-1 truncate font-mono text-xs text-semi-color-text-2'>
-                      {currentEndpoint}
-                    </div>
-                  </div>
-                  <div className='shrink-0 rounded-lg bg-semi-color-bg-0 px-3 py-1 font-mono text-xs font-semibold text-semi-color-primary'>
-                    200 OK
-                  </div>
+          <aside className='min-w-0 border border-[#111111] bg-[#FFFFFF]'>
+            <div className='grid border-b border-[#111111] sm:grid-cols-[minmax(0,1fr)_180px]'>
+              <div className='min-w-0 px-5 py-4'>
+                <div className='text-4xl font-black leading-none text-[#002FA7]'>
+                  02
+                </div>
+                <div className='mt-3 text-sm font-bold text-[#111111]'>
+                  API Gateway
+                </div>
+                <div className='mt-1 truncate font-mono text-xs text-[#555555]'>
+                  {currentEndpoint}
                 </div>
               </div>
-
-              <div className='mt-3 overflow-hidden rounded-lg border border-semi-color-border bg-semi-color-bg-0'>
-                <div className='flex items-center gap-2 border-b border-semi-color-border px-4 py-3 text-xs'>
-                  <span className='rounded-lg bg-semi-color-primary px-3 py-1 font-semibold text-semi-color-bg-0'>
-                    {t('请求')}
-                  </span>
-                  <span className='rounded-lg px-3 py-1 text-semi-color-text-2'>
-                    {t('响应')}
-                  </span>
-                  <span className='ml-auto hidden text-semi-color-text-2 sm:inline'>
-                    128 ms · {t('流式')}
-                  </span>
-                </div>
-
-                <div className='grid min-h-[360px] grid-rows-[1fr_auto] font-mono text-xs leading-6'>
-                  <div className='px-5 py-5'>
-                    <div className='mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-semi-color-text-2'>
-                      {t('请求')}
-                    </div>
-                    <pre className='overflow-x-auto whitespace-pre-wrap text-semi-color-text-1'>
-                      {requestPreview}
-                    </pre>
-                  </div>
-
-                  <div className='border-t border-semi-color-border bg-semi-color-fill-0 px-5 py-4'>
-                    <div className='mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-semi-color-text-2'>
-                      {t('响应')}
-                    </div>
-                    <pre className='overflow-x-auto whitespace-pre-wrap text-semi-color-text-1'>
-                      {RESPONSE_PREVIEW}
-                    </pre>
-                  </div>
-                </div>
+              <div className='flex items-center border-t border-[#111111] bg-[#002FA7] px-5 py-4 text-sm font-bold text-[#FFFFFF] sm:border-l sm:border-t-0'>
+                {t('示例')} 200 OK
               </div>
             </div>
-          </div>
+
+            <div className='grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] border-b border-[#111111] text-sm font-bold'>
+              <div className='border-r border-[#111111] bg-[#002FA7] px-4 py-3 text-[#FFFFFF]'>
+                {t('请求')}
+              </div>
+              <div className='border-r border-[#111111] px-4 py-3 text-[#111111]'>
+                {t('响应')}
+              </div>
+              <div className='hidden px-4 py-3 text-[#555555] sm:block'>
+                {t('流式')}
+              </div>
+            </div>
+
+            <div className='grid min-h-[420px] grid-rows-[1fr_auto] font-mono text-xs leading-6'>
+              <div className='px-5 py-5'>
+                <div className='mb-4 flex items-center justify-between gap-4 border-b border-[#D9D9DE] pb-3 font-sans text-xs font-bold text-[#002FA7]'>
+                  <span>{t('请求路径')}</span>
+                  <span className='truncate font-mono text-[#111111]'>
+                    {currentEndpoint}
+                  </span>
+                </div>
+                <pre className='overflow-x-auto whitespace-pre-wrap text-[#111111]'>
+                  {requestPreview}
+                </pre>
+              </div>
+
+              <div className='border-t border-[#111111] bg-[#F7F7F8] px-5 py-5'>
+                <div className='mb-4 border-b border-[#D9D9DE] pb-3 font-sans text-xs font-bold text-[#002FA7]'>
+                  {t('示例')} {t('响应')}
+                </div>
+                <pre className='overflow-x-auto whitespace-pre-wrap text-[#111111]'>
+                  {RESPONSE_PREVIEW}
+                </pre>
+              </div>
+            </div>
+          </aside>
         </div>
 
-        <div className='relative z-10 mx-auto mt-10 max-w-7xl'>
-          <div className='grid overflow-hidden rounded-lg border border-semi-color-border bg-semi-color-bg-0 shadow-[0_18px_60px_-38px_rgba(15,23,42,0.5)] md:grid-cols-3'>
-            {heroStats.map((item) => (
+        <div className='relative mx-auto mt-10 grid max-w-7xl border-l border-t border-[#111111] bg-[#FFFFFF] md:grid-cols-3'>
+          {heroStats.map((item, index) => (
+            <div
+              key={item.label}
+              className='min-h-[132px] border-b border-r border-[#111111] px-5 py-5 text-left'
+            >
+              <div className='text-sm font-bold text-[#002FA7]'>
+                {String(index + 3).padStart(2, '0')}
+              </div>
+              <div className='mt-4 text-4xl font-black leading-none text-[#111111] md:text-5xl'>
+                {item.value}
+              </div>
+              <div className='mt-2 truncate text-sm text-[#555555]'>
+                {item.label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className='relative mx-auto mt-10 max-w-7xl'>
+          <div className='mb-4 flex items-end justify-between gap-4 border-b border-[#111111] pb-3'>
+            <h2 className='text-xl font-black text-[#111111] md:text-2xl'>
+              {t('支持众多的大模型供应商')}
+            </h2>
+            <span className='hidden text-4xl font-black leading-none text-[#002FA7] sm:block'>
+              05
+            </span>
+          </div>
+          <div className='grid border-l border-t border-[#111111] bg-[#FFFFFF] sm:grid-cols-4 lg:grid-cols-5'>
+            {providerNames.map((name) => (
               <div
-                key={item.label}
-                className='flex min-h-[96px] flex-col items-center justify-center border-b border-semi-color-border px-4 py-5 text-center last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0'
+                key={name}
+                className='flex min-h-[52px] items-center border-b border-r border-[#111111] px-4 text-sm font-bold text-[#111111]'
               >
-                <div className='text-2xl font-bold text-semi-color-text-0 md:text-3xl'>
-                  {item.value}
-                </div>
-                <div className='mt-1 max-w-[220px] truncate text-xs text-semi-color-text-2'>
-                  {item.label}
-                </div>
+                {name}
               </div>
             ))}
           </div>
         </div>
-
-        <div className='relative z-10 mx-auto mt-10 max-w-6xl text-center'>
-          <Text type='tertiary' className='text-base md:text-lg'>
-            {t('支持众多的大模型供应商')}
-          </Text>
-          <div className='mt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-4 md:gap-5'>
-            {providerIcons.map((provider) => {
-              const ProviderIcon = provider.icon;
-              return (
-                <div
-                  key={provider.name}
-                  className='flex h-12 w-12 items-center justify-center rounded-lg border border-semi-color-border bg-semi-color-bg-0 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.45)]'
-                  title={provider.name}
-                >
-                  <ProviderIcon size={isMobile ? 28 : 34} />
-                </div>
-              );
-            })}
-            <div className='flex h-12 w-12 items-center justify-center rounded-lg border border-semi-color-border bg-semi-color-fill-0'>
-              <Typography.Text className='!text-lg font-bold'>
-                30+
-              </Typography.Text>
-            </div>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
   );
 }

@@ -29,7 +29,7 @@ import NoticeModal from '../../components/layout/NoticeModal';
 import { ClassicHomeLanding } from './ClassicHomeLanding';
 
 const Home = () => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [statusState] = useContext(StatusContext);
   const actualTheme = useActualTheme();
   const [homePageContentLoaded, setHomePageContentLoaded] = useState(false);
@@ -42,8 +42,6 @@ const Home = () => {
     statusState?.status?.server_address || `${window.location.origin}`;
   const endpointItems = API_ENDPOINTS.map((e) => ({ value: e }));
   const [endpointIndex, setEndpointIndex] = useState(0);
-  const isChinese = i18n.language.startsWith('zh');
-
   const displayHomePageContent = async () => {
     try {
       setHomePageContent(localStorage.getItem('home_page_content') || '');
@@ -128,7 +126,6 @@ const Home = () => {
         />
         <ClassicHomeLanding
           t={t}
-          isChinese={isChinese}
           isMobile={isMobile}
           serverAddress={serverAddress}
           endpointItems={endpointItems}
