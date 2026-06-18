@@ -32,6 +32,7 @@ import { getStatus } from '@/lib/api'
 import '@/lib/dayjs'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import { handleServerError } from '@/lib/handle-server-error'
+import { DEFAULT_LOGO } from '@/lib/constants'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
@@ -41,8 +42,7 @@ import { routeTree } from './routeTree.gen'
 // Styles
 import './styles/index.css'
 
-// Ensure VChart theme is initialized before any chart mounts (prevents white default theme flash)
-// VChart theme is driven by our ThemeProvider (html.light/html.dark) via per-chart `theme` prop.
+// VChart 主题由 ThemeProvider 驱动；这里保留初始化顺序，避免图表首帧闪成默认浅色主题。
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -109,10 +109,11 @@ declare module '@tanstack/react-router' {
 
 // Render the app
 const rootElement = document.getElementById('root')!
-// Set document.title and favicon from cached status, then refresh from network
+// 先用缓存状态更新标题，再从网络刷新；Logo 始终固定为随包发布的 /logo.png。
 ;(function initSystemBranding() {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
+    applyFaviconToDom(DEFAULT_LOGO)
     const apply = (name: string) => {
       document.title = name
       const metaTitle = document.querySelector(
@@ -126,7 +127,6 @@ const rootElement = document.getElementById('root')!
       if (saved) {
         const s = JSON.parse(saved)
         if (s?.system_name) apply(s.system_name)
-        if (s?.logo) applyFaviconToDom(s.logo)
       }
     } catch {
       /* empty */
@@ -142,7 +142,7 @@ const rootElement = document.getElementById('root')!
             /* empty */
           }
         }
-        if (s?.logo) applyFaviconToDom(s.logo as string)
+        applyFaviconToDom(DEFAULT_LOGO)
       })
       .catch(() => {
         /* empty */

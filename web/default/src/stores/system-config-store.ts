@@ -23,17 +23,17 @@ import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 export type CurrencyDisplayType = 'USD' | 'CNY' | 'TOKENS' | 'CUSTOM'
 
 export interface CurrencyConfig {
-  /** Whether to render quota values as currency instead of raw units */
+  /** 是否把额度值渲染为货币，而不是原始单位。 */
   displayInCurrency: boolean
-  /** Currency presentation strategy configured by the admin */
+  /** 管理员配置的额度展示策略。 */
   quotaDisplayType: CurrencyDisplayType
-  /** Number of quota units that equal one USD */
+  /** 多少额度单位等于 1 USD。 */
   quotaPerUnit: number
-  /** Exchange rate from USD to the configured local currency */
+  /** USD 到系统内置本地货币的汇率。 */
   usdExchangeRate: number
-  /** Custom currency symbol configured by the admin (used when type === CUSTOM) */
+  /** 管理员配置的自定义货币符号，仅在 type === CUSTOM 时使用。 */
   customCurrencySymbol: string
-  /** Exchange rate from USD to the custom currency (used when type === CUSTOM) */
+  /** USD 到自定义货币的汇率，仅在 type === CUSTOM 时使用。 */
   customCurrencyExchangeRate: number
 }
 
@@ -65,8 +65,10 @@ interface SystemConfigState {
 }
 
 /**
- * System configuration store with automatic persistence
- * Manages system name, logo, footer HTML and loading states
+ * 系统配置状态存储。
+ *
+ * 仅持久化展示配置和加载状态；Logo 始终使用 DEFAULT_LOGO，避免旧 localStorage
+ * 或后端历史配置在用户刷新后重新覆盖当前随包发布的品牌图。
  */
 export const useSystemConfigStore = create<SystemConfigState>()(
   persist(
@@ -83,6 +85,7 @@ export const useSystemConfigStore = create<SystemConfigState>()(
           config: {
             ...state.config,
             ...newConfig,
+            logo: DEFAULT_LOGO,
             currency: {
               ...state.config.currency,
               ...(newConfig.currency ?? {}),
@@ -95,8 +98,11 @@ export const useSystemConfigStore = create<SystemConfigState>()(
     {
       name: 'system-config-storage',
       partialize: (state) => ({
-        config: state.config,
-        loadedLogoUrl: state.loadedLogoUrl,
+        config: {
+          ...state.config,
+          logo: DEFAULT_LOGO,
+        },
+        loadedLogoUrl: DEFAULT_LOGO,
       }),
     }
   )

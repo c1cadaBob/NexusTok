@@ -84,7 +84,9 @@ func GetStatus(c *gin.Context) {
 		"telegram_bot_name":           common.TelegramBotName,
 		"theme":                       system_setting.GetThemeSettings().Frontend,
 		"system_name":                 common.SystemName,
-		"logo":                        common.Logo,
+		// 前端品牌图标统一使用随静态资源发布的 Logo。这里不再透传数据库中可能遗留的
+		// Logo 配置，版本参数用于让浏览器绕过旧 /logo.png 缓存并立即加载最新品牌资产。
+		"logo":                        common.StaticLogoURL,
 		"footer_html":                 common.Footer,
 		"wechat_qrcode":               common.WeChatAccountQRCodeImageURL,
 		"wechat_login":                common.WeChatAuthEnabled,

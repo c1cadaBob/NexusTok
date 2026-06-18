@@ -17,11 +17,13 @@ import (
 // 系统信息
 // ========================================
 
+const StaticLogoURL = "/logo.png?v=205619f5" // 静态 Logo URL，版本参数用于刷新浏览器中的旧图缓存
+
 var StartTime = time.Now().Unix() // 系统启动时间（Unix 时间戳，秒）
 var Version = "v0.0.0"            // 系统版本号（构建时自动替换，无需手动修改）
 var SystemName = "NexusTok"       // 系统名称
 var Footer = ""                   // 页脚文本
-var Logo = ""                     // Logo URL
+var Logo = StaticLogoURL          // Logo URL，保留给历史配置加载流程使用；前端状态接口使用 StaticLogoURL 避免旧配置覆盖
 var TopUpLink = ""                // 充值链接
 
 // ========================================

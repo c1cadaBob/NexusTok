@@ -22,7 +22,8 @@ For commercial licensing, please contact support@c1cada.dev
 
 // System Configuration Defaults
 export const DEFAULT_SYSTEM_NAME = 'NexusTok'
-export const DEFAULT_LOGO = '/logo.png'
+// Logo 固定使用随包发布的静态文件；版本参数用于绕过浏览器和 CDN 中的旧图缓存。
+export const DEFAULT_LOGO = '/logo.png?v=205619f5'
 
 // LocalStorage Keys
 export const STORAGE_KEYS = {

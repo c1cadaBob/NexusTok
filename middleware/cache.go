@@ -8,6 +8,8 @@
 package middleware
 
 import (
+	"strings" // 字符串操作
+
 	"github.com/gin-gonic/gin" // Gin 框架
 )
 
@@ -34,7 +36,16 @@ import (
 func Cache() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 首页不缓存，确保获取最新的 HTML
-		if c.Request.RequestURI == "/" {
+		requestPath := c.Request.URL.Path
+		if requestPath == "/" {
+			c.Header("Cache-Control", "no-cache")
+		} else if requestPath == "/logo.png" || requestPath == "/favicon.ico" {
+			// Logo 和 favicon 是稳定文件名的品牌资源，不能像带哈希的 JS/CSS 一样长期强缓存；
+			// 否则换图后浏览器会继续显示旧图，直到一周缓存自然过期。
+			c.Header("Cache-Control", "no-cache")
+		} else if strings.HasPrefix(requestPath, "/account-pool/manager/") &&
+			(strings.HasSuffix(requestPath, "/logo.png") || strings.HasSuffix(requestPath, "/favicon.ico")) {
+			// CPA 管理页嵌在子路径下时，浏览器可能请求同名品牌资源，也保持可重新验证。
 			c.Header("Cache-Control", "no-cache")
 		} else {
 			// 其他资源缓存 1 周

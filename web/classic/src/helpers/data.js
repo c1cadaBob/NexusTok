@@ -20,7 +20,8 @@ For commercial licensing, please contact support@c1cada.dev
 export function setStatusData(data) {
   localStorage.setItem('status', JSON.stringify(data));
   localStorage.setItem('system_name', data.system_name);
-  localStorage.setItem('logo', data.logo);
+  // 品牌图标统一使用随包发布的静态文件，并通过版本参数绕过旧 /logo.png 缓存。
+  localStorage.setItem('logo', '/logo.png?v=205619f5');
   localStorage.setItem('footer_html', data.footer_html);
   localStorage.setItem('quota_per_unit', data.quota_per_unit);
   // 兼容：保留旧字段，同时写入新的额度展示类型
