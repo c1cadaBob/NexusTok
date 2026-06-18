@@ -46,6 +46,7 @@ docs/
 
 | 文档 | 说明 |
 |------|------|
+| [installation/deployment.md](installation/deployment.md) | 启动方式、部署模式、热重载链路和常见排障 |
 | [installation/BT.md](installation/BT.md) | 宝塔面板安装教程 |
 
 ### 配置说明

@@ -108,6 +108,8 @@ docker run --name nexustok -d --restart always \
 
 ### 🔧 部署方式
 
+📘 **维护手册：** [启动与部署维护手册](./docs/installation/deployment.md) 汇总了生产部署、热重载环境、二进制部署、主题切换和常见排障流程。
+
 <details>
 <summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
 
