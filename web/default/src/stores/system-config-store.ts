@@ -97,6 +97,25 @@ export const useSystemConfigStore = create<SystemConfigState>()(
     }),
     {
       name: 'system-config-storage',
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<SystemConfigState>
+
+        return {
+          ...currentState,
+          config: {
+            ...currentState.config,
+            ...(persisted.config ?? {}),
+            logo: DEFAULT_LOGO,
+            currency: {
+              ...currentState.config.currency,
+              ...(persisted.config?.currency ?? {}),
+            },
+          },
+          // 旧版本可能已经把带旧版本号的 Logo 写入 localStorage。
+          // 持久化合并时强制归一，确保首屏和 favicon 都使用当前随包发布的品牌图。
+          loadedLogoUrl: DEFAULT_LOGO,
+        }
+      },
       partialize: (state) => ({
         config: {
           ...state.config,

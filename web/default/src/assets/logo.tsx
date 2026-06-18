@@ -16,27 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { type SVGProps } from 'react'
+import { type ComponentPropsWithoutRef } from 'react'
 import { cn } from '@/lib/utils'
+import { DEFAULT_LOGO } from '@/lib/constants'
 
-export function Logo({ className, ...props }: SVGProps<SVGSVGElement>) {
+export function Logo({
+  className,
+  alt = 'NexusTok',
+  ...props
+}: ComponentPropsWithoutRef<'img'>) {
   return (
-    <svg
+    <img
       id='nexustok-logo'
-      viewBox='0 0 24 24'
-      xmlns='http://www.w3.org/2000/svg'
-      height='24'
-      width='24'
-      fill='none'
-      stroke='currentColor'
-      strokeWidth='2'
-      strokeLinecap='round'
-      strokeLinejoin='round'
+      src={DEFAULT_LOGO}
+      alt={alt}
       className={cn('size-6', className)}
       {...props}
-    >
-      <title>NexusTok</title>
-      <path d='M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3' />
-    </svg>
+    />
   )
 }
