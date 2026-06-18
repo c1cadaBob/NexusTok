@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, BookOpen, LayoutDashboard } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { AnimateInView } from '@/components/animate-in-view'
@@ -30,52 +30,45 @@ interface CTAProps {
 export function CTA(props: CTAProps) {
   const { t } = useTranslation()
 
-  if (props.isAuthenticated) {
-    return null
-  }
-
   return (
-    <section className='relative z-10 overflow-hidden px-6 py-24 md:py-32'>
-      {/* Gradient mesh background */}
-      <div
-        aria-hidden
-        className='absolute inset-0 -z-10 opacity-20 dark:opacity-[0.08]'
-        style={{
-          background: [
-            'radial-gradient(ellipse 50% 50% at 30% 50%, oklch(0.7 0.15 250 / 70%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 40% at 70% 40%, oklch(0.65 0.12 200 / 50%) 0%, transparent 70%)',
-          ].join(', '),
-        }}
-      />
-
-      <AnimateInView
-        className='mx-auto max-w-2xl text-center'
-        animation='scale-in'
-      >
-        <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-4xl'>
-          {t('Ready to simplify')}
-          <br />
-          <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-            {t('your AI integration?')}
-          </span>
-        </h2>
-        <p className='text-muted-foreground/80 mx-auto mt-5 max-w-md text-sm leading-relaxed md:text-base'>
-          {t(
-            'Deploy your own gateway and start routing requests through your configured upstream services.'
-          )}
-        </p>
-        <div className='mt-8 flex items-center justify-center gap-3'>
-          <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
-            {t('Get Started')}
-            <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
-          </Button>
-          <Button
-            variant='outline'
-            className='border-border/50 hover:border-border hover:bg-muted/50 rounded-lg'
-            render={<Link to='/pricing' />}
-          >
-            {t('View Pricing')}
-          </Button>
+    <section className='px-6 py-14 md:py-16'>
+      <AnimateInView className='mx-auto max-w-7xl'>
+        <div className='bg-card grid gap-6 rounded-lg border p-5 shadow-xs md:grid-cols-[1fr_auto] md:items-center md:p-6'>
+          <div className='flex flex-col gap-2'>
+            <h2 className='text-xl font-semibold tracking-tight md:text-2xl'>
+              {props.isAuthenticated
+                ? t('Continue operating your gateway')
+                : t('Start with the control plane')}
+            </h2>
+            <p className='text-muted-foreground max-w-2xl text-sm leading-relaxed'>
+              {props.isAuthenticated
+                ? t(
+                    'Open the dashboard to review channels, usage, users, and billing settings.'
+                  )
+                : t(
+                    'Create an account, add a channel, issue a key, and route your first compatible API request.'
+                  )}
+            </p>
+          </div>
+          <div className='flex flex-col gap-2 sm:flex-row md:justify-end'>
+            {props.isAuthenticated ? (
+              <Button render={<Link to='/dashboard' />}>
+                <LayoutDashboard data-icon='inline-start' />
+                {t('Go to Dashboard')}
+              </Button>
+            ) : (
+              <>
+                <Button render={<Link to='/sign-up' />}>
+                  {t('Get Started')}
+                  <ArrowRight data-icon='inline-end' />
+                </Button>
+                <Button variant='outline' render={<Link to='/pricing' />}>
+                  <BookOpen data-icon='inline-start' />
+                  {t('View Pricing')}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </AnimateInView>
     </section>
