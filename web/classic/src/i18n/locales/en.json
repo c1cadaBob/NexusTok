@@ -3047,6 +3047,7 @@
     "请检查渠道配置或刷新重试": "Please check the channel configuration or refresh and try again",
     "请检查表单填写是否正确": "Please check if the form is filled out correctly",
     "请检查输入": "Please check your input",
+    "请求": "Request",
     "请求体 JSON": "Request Body JSON",
     "请求体内存缓存": "Request Body Memory Cache",
     "请求体磁盘缓存": "Request Body Disk Cache",
