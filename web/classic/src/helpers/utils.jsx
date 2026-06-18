@@ -53,7 +53,7 @@ export function getSystemName() {
 }
 
 export function getLogo() {
-  return '/logo.png?v=205619f5';
+  return '/logo.png?v=0526e262';
 }
 
 export function getUserIdFromLocalStorage() {

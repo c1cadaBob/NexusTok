@@ -23,7 +23,7 @@ import {
   IconSidebarOauth,
   IconSidebarQuota,
 } from '@/components/ui/icons';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import { INLINE_LOGO_URL } from '@/assets/logoInline';
 import {
   useAuthStore,
   useConfigStore,
@@ -335,7 +335,7 @@ export function MainLayout() {
         >
           <div className="sidebar-brand" title={fullBrandName}>
             <div className="sidebar-brand-main">
-              <img src={INLINE_LOGO_JPEG} alt="CPAMC logo" className="sidebar-brand-logo" />
+              <img src={INLINE_LOGO_URL} alt="CPAMC logo" className="sidebar-brand-logo" />
               {showSidebarLabels && <span className="sidebar-brand-title">{abbrBrandName}</span>}
             </div>
             <button

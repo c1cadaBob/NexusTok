@@ -33,7 +33,7 @@ import {
 } from '@/utils/connection';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import { INLINE_LOGO_URL } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { resolveUsageServiceLoginMode } from './loginMode';
 import styles from './LoginPage.module.scss';
@@ -393,7 +393,7 @@ export function LoginPage() {
         {showSplash ? (
           /* 启动动画 */
           <div className={styles.splashContent}>
-            <img src={INLINE_LOGO_JPEG} alt="CPAMC" className={styles.splashLogo} />
+            <img src={INLINE_LOGO_URL} alt="CPAMC" className={styles.splashLogo} />
             <h1 className={styles.splashTitle}>{t('splash.title')}</h1>
             <p className={styles.splashSubtitle}>{t('splash.subtitle')}</p>
             <div className={styles.splashLoader}>
@@ -409,7 +409,7 @@ export function LoginPage() {
           >
             {/* Logo */}
             {!usageServiceNeedsSetup && (
-              <img src={INLINE_LOGO_JPEG} alt="Logo" className={styles.logo} />
+              <img src={INLINE_LOGO_URL} alt="Logo" className={styles.logo} />
             )}
 
             {/* 登录表单卡片 */}
@@ -428,7 +428,7 @@ export function LoginPage() {
                       ariaLabel={t('language.switch')}
                     />
                   </div>
-                  <img src={INLINE_LOGO_JPEG} alt="Logo" className={styles.setupLogo} />
+                  <img src={INLINE_LOGO_URL} alt="Logo" className={styles.setupLogo} />
                   <h1>CPA Manager</h1>
                   <p>{t('login.setup_title')}</p>
                 </div>
