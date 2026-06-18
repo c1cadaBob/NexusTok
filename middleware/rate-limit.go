@@ -44,6 +44,34 @@ var defNext = func(c *gin.Context) {
 	c.Next()
 }
 
+var staticAssetWebRateLimitExemptPaths = map[string]struct{}{
+	"/favicon.ico":          {},
+	"/logo.png":             {},
+	"/robots.txt":           {},
+	"/pay-apple.png":        {},
+	"/pay-card.png":         {},
+	"/pay-google.png":       {},
+	"/azure_model_name.png": {},
+	"/cover-4.webp":         {},
+	"/ratio.png":            {},
+}
+
+var staticAssetWebRateLimitExemptExts = []string{
+	".js",
+	".css",
+	".map",
+	".woff",
+	".woff2",
+	".ttf",
+	".png",
+	".jpg",
+	".jpeg",
+	".webp",
+	".svg",
+	".ico",
+	".txt",
+}
+
 // redisRateLimiter Redis 限流实现
 // 使用 Redis List 实现滑动窗口限流
 //
@@ -148,6 +176,48 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 	}
 }
 
+// isStaticAssetWebRateLimitExemptPath 判断当前 Web 路径是否是前端构建出的静态资源。
+//
+// default 主题的 Rsbuild 构建会把路由模块拆成大量 /static/js/async/*.js 分片，
+// classic 主题的 Vite 构建也会生成 /assets/* 资源。浏览器首次打开或连续切换页面时，
+// 这些哈希资源会在短时间内集中请求；如果全部计入默认 60 次 / 180 秒的 IP 级
+// GlobalWebRateLimit，静态分片会被 429 拦截，TanStack Router 的动态 import 随后会
+// 失败并渲染通用 500 页面。静态资源没有业务写入能力，且由文件名哈希和缓存头控制版本，
+// 因此这里仅把明确的构建产物与根级站点资源从 Web 页面访问限流中排除。
+//
+// 动态页面、认证页、后台页面和 API 路径仍然保留原有全局限流；后端接口自身也继续走
+// GlobalAPIRateLimit，不受这里的静态资源豁免影响。
+func isStaticAssetWebRateLimitExemptPath(path string) bool {
+	normalizedPath := strings.TrimSpace(path)
+	if normalizedPath == "" {
+		return false
+	}
+
+	if strings.HasPrefix(normalizedPath, "/api") ||
+		strings.HasPrefix(normalizedPath, "/v1") ||
+		strings.HasPrefix(normalizedPath, "/dashboard") {
+		return false
+	}
+
+	if strings.HasPrefix(normalizedPath, "/static/") ||
+		strings.HasPrefix(normalizedPath, "/assets/") {
+		return true
+	}
+
+	if _, ok := staticAssetWebRateLimitExemptPaths[normalizedPath]; ok {
+		return true
+	}
+
+	lowerPath := strings.ToLower(normalizedPath)
+	for _, ext := range staticAssetWebRateLimitExemptExts {
+		if strings.HasSuffix(lowerPath, ext) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // isAccountPoolEmbeddedWebRateLimitExemptPath 判断当前 Web 路径是否属于账号池嵌入模块的受保护代理。
 //
 // CPAMC 嵌入 NexusTok 后会保留原模块的轮询行为：请求监控页会周期性访问
@@ -207,7 +277,8 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
 		limiter := rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
 		return func(c *gin.Context) {
-			if isAccountPoolEmbeddedWebRateLimitExemptPath(c.Request.URL.Path) {
+			if isStaticAssetWebRateLimitExemptPath(c.Request.URL.Path) ||
+				isAccountPoolEmbeddedWebRateLimitExemptPath(c.Request.URL.Path) {
 				c.Next()
 				return
 			}
