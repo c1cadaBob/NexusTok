@@ -67,3 +67,46 @@ func TestNormalizeMetadata_TopLevelTokenWins(t *testing.T) {
 		t.Fatalf("access token = %q, want top-level", got)
 	}
 }
+
+// TestIsAccessTokenOnlyCredential 验证 Codex AT-only 判断只命中有 access_token、
+// 但没有 refresh_token 的短期 Bearer 凭据。
+func TestIsAccessTokenOnlyCredential(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		metadata map[string]any
+		want     bool
+	}{
+		{
+			name:     "access token without refresh token",
+			metadata: map[string]any{"type": "codex", "access_token": "access-token"},
+			want:     true,
+		},
+		{
+			name:     "access token with refresh token",
+			metadata: map[string]any{"type": "codex", "access_token": "access-token", "refresh_token": "refresh-token"},
+			want:     false,
+		},
+		{
+			name:     "nested legacy access token without refresh token",
+			metadata: map[string]any{"type": "codex", "token_data": map[string]any{"access_token": "access-token"}},
+			want:     true,
+		},
+		{
+			name:     "api key auth",
+			metadata: map[string]any{"type": "codex", "api_key": "codex-api-key"},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsAccessTokenOnlyCredential(tt.metadata); got != tt.want {
+				t.Fatalf("IsAccessTokenOnlyCredential() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

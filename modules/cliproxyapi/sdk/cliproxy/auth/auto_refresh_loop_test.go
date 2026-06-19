@@ -79,6 +79,31 @@ func TestNextRefreshCheckAt_APIKeyUnschedule(t *testing.T) {
 	}
 }
 
+// TestNextRefreshCheckAt_AccessTokenOnlyUnschedule 测试 AT-only 凭据不进入自动刷新调度。
+//
+// 这类凭据仍会参与真实请求调度，但没有 refresh_token，后台刷新没有可执行动作；
+// 是否失效由真实请求的 Unauthorized 结果来标记。
+func TestNextRefreshCheckAt_AccessTokenOnlyUnschedule(t *testing.T) {
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:       "codex-at-only",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"credential_mode": "access_token_only",
+			"refreshable":     "false",
+		},
+		Metadata: map[string]any{
+			"email":             "x@example.com",
+			"access_token":      "access-token",
+			"access_token_only": true,
+			"expired":           now.Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	if _, ok := nextRefreshCheckAt(now, auth, 15*time.Minute); ok {
+		t.Fatalf("nextRefreshCheckAt() ok = true, want false")
+	}
+}
+
 // TestNextRefreshCheckAt_NextRefreshAfterGate 测试 NextRefreshAfter 门控时间优先于其他计算。
 func TestNextRefreshCheckAt_NextRefreshAfterGate(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)

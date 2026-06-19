@@ -69,9 +69,6 @@ var (
 	callbackForwarders    = make(map[int]*callbackForwarder)      // 按端口索引的回调转发器映射
 	errAuthFileMustBeJSON = errors.New("auth file must be .json") // 认证文件必须为 JSON 格式的错误
 	errAuthFileNotFound   = errors.New("auth file not found")     // 认证文件未找到的错误
-	// errCodexOAuthRefreshTokenRequired 表示导入的 Codex OAuth/Bearer 文件缺少
-	// refresh_token，运行时无法在 access_token 失效或被上游拒绝后自动恢复。
-	errCodexOAuthRefreshTokenRequired = errors.New(codex.MissingRefreshTokenMessage)
 )
 
 // extractLastRefreshTimestamp 从认证元数据中提取最后刷新时间戳
@@ -808,10 +805,6 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "file must be .json"})
 				return
 			}
-			if errors.Is(errUpload, errCodexOAuthRefreshTokenRequired) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errUpload.Error()})
-				return
-			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": errUpload.Error()})
 			return
 		}
@@ -868,10 +861,6 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	if err = h.writeAuthFile(ctx, filepath.Base(name), data); err != nil {
-		if errors.Is(err, errCodexOAuthRefreshTokenRequired) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -1054,10 +1043,8 @@ func normalizeImportedAuthFileData(data []byte) ([]byte, error) {
 		normalized = codex.NormalizeMetadata(metadata)
 		normalizedChanged = true
 	}
-	if err := validateImportedCodexOAuthMetadata(normalized); err != nil {
-		return nil, err
-	}
-	if !normalizedChanged {
+	modeChanged := markCodexCredentialMode(normalized)
+	if !normalizedChanged && !modeChanged {
 		return data, nil
 	}
 	raw, errMarshal := json.Marshal(normalized)
@@ -1067,22 +1054,37 @@ func normalizeImportedAuthFileData(data []byte) ([]byte, error) {
 	return raw, nil
 }
 
-// validateImportedCodexOAuthMetadata 校验 Codex OAuth/Bearer 类认证文件的最低可运行条件。
+// markCodexCredentialMode 标记 Codex OAuth/Bearer 凭据是否只能依赖 access_token。
 //
-// Codex OAuth 的 access_token 是短期 Bearer 凭据，当前自动刷新链路只依赖
-// refresh_token 获取新令牌。仅从 ChatGPT session 导出的 JSON 可能带有
-// access_token/session_token，却没有 refresh_token；这类文件导入后看起来会处于
-// active 状态，但第一次请求上游可能立即返回 Unauthorized，且运行时没有办法自动恢复。
-// 因此导入阶段就拒绝这类“不可维护”的 OAuth 文件。纯 codex-api-key 形态不含
-// access_token，不走这里的限制。
-func validateImportedCodexOAuthMetadata(metadata map[string]any) error {
+// 有些导出来源不提供 refresh_token，只能使用短期 access_token。管理端允许这类
+// 凭据导入并参与调度，但必须把不可自动刷新的事实写进元数据，供自动刷新调度和
+// 后续问题排查使用；一旦 access_token 过期或上游返回 Unauthorized，用户需要
+// 重新导入新凭据。带 refresh_token 的完整 OAuth 凭据会清理这些短期模式标记。
+func markCodexCredentialMode(metadata map[string]any) bool {
 	if len(metadata) == 0 {
-		return nil
+		return false
 	}
-	if !codex.MissingRefreshTokenForOAuth(metadata) {
-		return nil
+	if codex.IsAccessTokenOnlyCredential(metadata) {
+		changed := metadata["credential_mode"] != "access_token_only" || metadata["access_token_only"] != true || metadata["refreshable"] != false
+		metadata["credential_mode"] = "access_token_only"
+		metadata["access_token_only"] = true
+		metadata["refreshable"] = false
+		return changed
 	}
-	return errCodexOAuthRefreshTokenRequired
+	changed := false
+	if _, ok := metadata["access_token_only"]; ok {
+		delete(metadata, "access_token_only")
+		changed = true
+	}
+	if _, ok := metadata["credential_mode"]; ok {
+		delete(metadata, "credential_mode")
+		changed = true
+	}
+	if _, ok := metadata["refreshable"]; ok {
+		delete(metadata, "refreshable")
+		changed = true
+	}
+	return changed
 }
 
 // codexMetadataNeedsNormalization 判断 Codex 认证文件是否包含当前运行态不直接识别的旧结构。
@@ -1327,6 +1329,13 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
 		if planType := codex.ExtractPlanType(metadata); planType != "" {
 			attr["plan_type"] = planType
+		}
+		markCodexCredentialMode(metadata)
+		if codex.IsAccessTokenOnlyCredential(metadata) {
+			attr["credential_mode"] = "access_token_only"
+			attr["refreshable"] = "false"
+		} else if codex.ExtractRefreshToken(metadata) != "" {
+			attr["refreshable"] = "true"
 		}
 	}
 	auth := &coreauth.Auth{

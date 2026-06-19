@@ -666,11 +666,6 @@ const convertSessionToCpaAuthJson = (record: JsonRecord, now: Date): JsonRecord 
     token?.refresh_token,
     credentials?.refresh_token
   );
-  if (!refreshToken) {
-    throw new AuthJsonConversionError(
-      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
-    );
-  }
   const inputIdToken = firstNonEmptyString(
     record.idToken,
     record.id_token,
@@ -720,6 +715,7 @@ const convertSessionToCpaAuthJson = (record: JsonRecord, now: Date): JsonRecord 
   const idToken =
     isUnsafeIdToken(inputIdToken) ? undefined : firstNonEmptyString(inputIdToken);
   const name = firstNonEmpty(email, record.name, 'ChatGPT Account');
+  const accessTokenOnly = !refreshToken;
 
   return stripUnavailable({
     type: 'codex',
@@ -732,6 +728,9 @@ const convertSessionToCpaAuthJson = (record: JsonRecord, now: Date): JsonRecord 
     id_token: idToken,
     access_token: accessToken,
     refresh_token: refreshToken,
+    credential_mode: accessTokenOnly ? 'access_token_only' : undefined,
+    access_token_only: accessTokenOnly ? true : undefined,
+    refreshable: accessTokenOnly ? false : undefined,
     session_token: sessionToken,
     last_refresh: normalizeTimestamp(now),
     expired: expiresAt,

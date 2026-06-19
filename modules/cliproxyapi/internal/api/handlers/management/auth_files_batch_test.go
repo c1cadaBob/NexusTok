@@ -155,9 +155,9 @@ func TestUploadAuthFile_BatchMultipart_InvalidJSONDoesNotOverwriteExistingFile(t
 	}
 }
 
-// TestUploadAuthFile_RawCodexOAuthMissingRefreshTokenReturnsBadRequest 验证管理 API
-// 对缺少 refresh_token 的 Codex OAuth 文件返回 400，并且不会落盘。
-func TestUploadAuthFile_RawCodexOAuthMissingRefreshTokenReturnsBadRequest(t *testing.T) {
+// TestUploadAuthFile_RawCodexAccessTokenOnlyReturnsOK 验证管理 API 允许导入
+// 缺少 refresh_token 的 Codex AT-only 文件，并写入不可刷新标记。
+func TestUploadAuthFile_RawCodexAccessTokenOnlyReturnsOK(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	gin.SetMode(gin.TestMode)
 
@@ -173,14 +173,25 @@ func TestUploadAuthFile_RawCodexOAuthMissingRefreshTokenReturnsBadRequest(t *tes
 
 	h.UploadAuthFile(ctx)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d with body %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "missing refresh_token") {
-		t.Fatalf("expected missing refresh_token message, got %s", rec.Body.String())
+	data, errRead := os.ReadFile(filepath.Join(authDir, "codex-session.json"))
+	if errRead != nil {
+		t.Fatalf("expected AT-only file to be written: %v", errRead)
 	}
-	if _, err := os.Stat(filepath.Join(authDir, "codex-session.json")); !os.IsNotExist(err) {
-		t.Fatalf("expected rejected file not to be written, stat err: %v", err)
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("failed to decode stored auth file: %v", err)
+	}
+	if got, _ := metadata["credential_mode"].(string); got != "access_token_only" {
+		t.Fatalf("credential_mode = %q, want access_token_only", got)
+	}
+	if got, _ := metadata["access_token_only"].(bool); !got {
+		t.Fatalf("access_token_only = %v, want true", got)
+	}
+	if got, _ := metadata["refreshable"].(bool); got {
+		t.Fatalf("refreshable = %v, want false", got)
 	}
 }
 

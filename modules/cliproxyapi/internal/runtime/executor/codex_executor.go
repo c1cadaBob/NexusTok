@@ -731,6 +731,15 @@ func (e *CodexExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*
 	// Use unified key in files
 	auth.Metadata["expired"] = td.Expire
 	auth.Metadata["type"] = "codex"
+	// 成功使用 refresh_token 刷新后，该凭据已经不再是 AT-only 模式。
+	delete(auth.Metadata, "credential_mode")
+	delete(auth.Metadata, "access_token_only")
+	delete(auth.Metadata, "refreshable")
+	if auth.Attributes != nil {
+		delete(auth.Attributes, "credential_mode")
+		delete(auth.Attributes, "access_token_only")
+		auth.Attributes["refreshable"] = "true"
+	}
 	now := time.Now().Format(time.RFC3339)
 	auth.Metadata["last_refresh"] = now
 	return auth, nil

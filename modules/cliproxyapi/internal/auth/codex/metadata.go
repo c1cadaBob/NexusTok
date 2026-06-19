@@ -10,8 +10,10 @@ package codex
 import "strings"
 
 const (
-	// MissingRefreshTokenMessage 是导入/加载 Codex OAuth 凭据时缺少刷新令牌的统一提示。
-	MissingRefreshTokenMessage = "codex oauth auth file is missing refresh_token; export a full Codex OAuth credential or sign in via Codex OAuth"
+	// AccessTokenOnlyCredentialMessage 是 Codex 账号只包含 access_token 时的统一提示。
+	// 这类凭据可以用于请求，但不能自动刷新；access_token 过期或上游返回 401 后，
+	// 需要重新导入新的 access_token 或使用带 refresh_token 的完整 OAuth 凭据。
+	AccessTokenOnlyCredentialMessage = "codex auth file is access_token-only; it can be used until the access_token expires or upstream returns unauthorized, then re-import a fresh credential"
 )
 
 var codexTokenContainers = []string{"token_data", "tokenData", "TokenData", "token", "Token"}
@@ -58,12 +60,12 @@ func ExtractRefreshToken(metadata map[string]any) string {
 	return extractCodexString(metadata, "refresh_token", []string{"refreshToken"}, codexTokenContainers, "refresh_token", "refreshToken")
 }
 
-// MissingRefreshTokenForOAuth 判断 Codex OAuth/Bearer 类凭据是否缺少 refresh_token。
+// IsAccessTokenOnlyCredential 判断 Codex OAuth/Bearer 类凭据是否只能依赖 access_token。
 //
-// 带 access_token 的 Codex 文件表示短期 OAuth Bearer 凭据；如果没有 refresh_token，
-// 运行时既无法在 access_token 过期前刷新，也无法在上游 Unauthorized 后恢复。
-// 纯 codex-api-key 文件不包含 access_token，因此不受该规则限制。
-func MissingRefreshTokenForOAuth(metadata map[string]any) bool {
+// 有些导出来源无法提供 refresh_token，只能提供短期 access_token。系统允许这类凭据
+// 导入并参与调度，但必须标记为不可自动刷新，避免自动刷新循环把“无刷新动作”误判为成功。
+// 纯 codex-api-key 文件不包含 access_token，因此不属于此类。
+func IsAccessTokenOnlyCredential(metadata map[string]any) bool {
 	return ExtractAccessToken(metadata) != "" && ExtractRefreshToken(metadata) == ""
 }
 

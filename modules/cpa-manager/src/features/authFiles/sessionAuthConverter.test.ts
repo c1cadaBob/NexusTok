@@ -97,20 +97,28 @@ describe('convertAuthJsonInput', () => {
     });
   });
 
-  it('rejects ChatGPT session JSON without refreshToken', () => {
-    expect(() =>
-      convertAuthJsonInputRaw(
-        JSON.stringify({
-          user: { email: 'session@example.com' },
-          account: { id: 'session-account' },
-          accessToken: 'access-token',
-          sessionToken: 'session-token',
-        }),
-        'session'
-      )
-    ).toThrow(
-      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
+  it('converts ChatGPT session JSON without refreshToken to access-token-only auth', () => {
+    const result = convertAuthJsonInputRaw(
+      JSON.stringify({
+        user: { email: 'session@example.com' },
+        account: { id: 'session-account' },
+        accessToken: 'access-token',
+        sessionToken: 'session-token',
+      }),
+      'session'
     );
+
+    expect(result).toMatchObject({
+      type: 'codex',
+      email: 'session@example.com',
+      account_id: 'session-account',
+      access_token: 'access-token',
+      session_token: 'session-token',
+      credential_mode: 'access_token_only',
+      access_token_only: true,
+      refreshable: false,
+    });
+    expect(result).not.toHaveProperty('refresh_token');
   });
 
   it('omits id_token instead of synthesizing an unsigned token when idToken is missing', () => {
@@ -1065,20 +1073,25 @@ describe('convertAuthJsonInput', () => {
     expect(result).toHaveProperty('refresh_token', 'refresh-token');
   });
 
-  it('rejects a session object with a non-string refresh token', () => {
-    expect(() =>
-      convertAuthJsonInputRaw(
-        JSON.stringify({
-          user: { email: 'session@example.com' },
-          account: { id: 'session-account' },
-          accessToken: 'access-token',
-          refreshToken: 123,
-        }),
-        'session'
-      )
-    ).toThrow(
-      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
+  it('treats a non-string refresh token as access-token-only auth', () => {
+    const result = convertAuthJsonInputRaw(
+      JSON.stringify({
+        user: { email: 'session@example.com' },
+        account: { id: 'session-account' },
+        accessToken: 'access-token',
+        refreshToken: 123,
+      }),
+      'session'
     );
+
+    expect(result).toMatchObject({
+      type: 'codex',
+      access_token: 'access-token',
+      credential_mode: 'access_token_only',
+      access_token_only: true,
+      refreshable: false,
+    });
+    expect(result).not.toHaveProperty('refresh_token');
   });
 
   it('preserves optional token fields when string values are present', () => {

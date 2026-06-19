@@ -197,13 +197,14 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 		status = coreauth.StatusDisabled
 	}
 	statusMessage := ""
-	if provider == "codex" && codex.MissingRefreshTokenForOAuth(metadata) {
-		// 旧的 ChatGPT session 导出文件可能只有 access_token/session_token，没有 refresh_token。
-		// 这类 OAuth Bearer 凭据无法自动刷新，重启扫描时必须从调度器中移除，同时在管理页保留
-		// 明确原因，避免账号看起来 active 但第一次请求就 Unauthorized。
-		disabled = true
-		status = coreauth.StatusDisabled
-		statusMessage = codex.MissingRefreshTokenMessage
+	accessTokenOnly := provider == "codex" && codex.IsAccessTokenOnlyCredential(metadata)
+	if accessTokenOnly {
+		// 有些导出来源只能提供短期 access_token，无法提供 refresh_token。此类凭据仍可
+		// 正常参与调度和请求，但系统必须明确记录“不可自动刷新”，避免自动刷新循环把
+		// 无刷新动作误判为成功；一旦上游返回 Unauthorized，现有错误路径会标记账号异常。
+		metadata["credential_mode"] = "access_token_only"
+		metadata["access_token_only"] = true
+		metadata["refreshable"] = false
 	}
 
 	// Read per-account excluded models from the OAuth JSON file.
@@ -250,6 +251,12 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	if groups := normalizeAccountGroupsFromMetadata(metadata); len(groups) > 0 {
 		a.Attributes["account_groups"] = strings.Join(groups, "\n")
 		a.Attributes["account_group"] = groups[0]
+	}
+	if accessTokenOnly {
+		a.Attributes["credential_mode"] = "access_token_only"
+		a.Attributes["refreshable"] = "false"
+	} else if provider == "codex" && codex.ExtractRefreshToken(metadata) != "" {
+		a.Attributes["refreshable"] = "true"
 	}
 	coreauth.ApplyCustomHeadersFromMetadata(a)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")

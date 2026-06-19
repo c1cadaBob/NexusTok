@@ -4,7 +4,6 @@ package management
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,25 +106,44 @@ func TestWriteAuthFile_ExistingRecordClearsImportedRuntimeState(t *testing.T) {
 	}
 }
 
-// TestWriteAuthFile_CodexOAuthMissingRefreshTokenIsRejected 验证导入阶段会拒绝
-// 只有 access_token/session_token、没有 refresh_token 的 Codex OAuth 文件。
-// 这类文件通常来自 ChatGPT session 导出，无法自动刷新，首次真实请求上游
-// Unauthorized 后也没有可恢复路径，因此不能写入磁盘或注册成看似可用的账号。
-func TestWriteAuthFile_CodexOAuthMissingRefreshTokenIsRejected(t *testing.T) {
+// TestWriteAuthFile_CodexAccessTokenOnlyAuthIsImported 验证只有 access_token、
+// 没有 refresh_token 的 Codex 文件可以导入，但会被标记为 AT-only。
+//
+// 这类文件通常来自不提供 RT 的导出来源。它们仍可用于真实请求，但不能后台自动刷新；
+// access_token 过期或上游返回 Unauthorized 后，需要重新导入新凭据。
+func TestWriteAuthFile_CodexAccessTokenOnlyAuthIsImported(t *testing.T) {
 	authDir := t.TempDir()
 	manager := coreauth.NewManager(nil, nil, nil)
 	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
 
 	data := []byte(`{"type":"codex","email":"session@example.com","access_token":"access-token","session_token":"session-token","refresh_token":""}`)
-	err := h.writeAuthFile(coreauth.WithSkipPersist(context.Background()), "codex-session.json", data)
-	if !errors.Is(err, errCodexOAuthRefreshTokenRequired) {
-		t.Fatalf("writeAuthFile error = %v, want errCodexOAuthRefreshTokenRequired", err)
+	if err := h.writeAuthFile(coreauth.WithSkipPersist(context.Background()), "codex-session.json", data); err != nil {
+		t.Fatalf("writeAuthFile returned error: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(authDir, "codex-session.json")); !os.IsNotExist(statErr) {
-		t.Fatalf("expected rejected auth file not to be written, stat err: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(authDir, "codex-session.json")); statErr != nil {
+		t.Fatalf("expected AT-only auth file to be written, stat err: %v", statErr)
 	}
-	if _, ok := manager.GetByID("codex-session.json"); ok {
-		t.Fatalf("expected rejected auth not to be registered")
+	updated, ok := manager.GetByID("codex-session.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected AT-only auth to be registered")
+	}
+	if updated.Disabled || updated.Status != coreauth.StatusActive {
+		t.Fatalf("expected AT-only auth to stay active, disabled=%v status=%q", updated.Disabled, updated.Status)
+	}
+	if got, _ := updated.Metadata["credential_mode"].(string); got != "access_token_only" {
+		t.Fatalf("metadata credential_mode = %q, want access_token_only", got)
+	}
+	if got, _ := updated.Metadata["access_token_only"].(bool); !got {
+		t.Fatalf("metadata access_token_only = %v, want true", got)
+	}
+	if got, _ := updated.Metadata["refreshable"].(bool); got {
+		t.Fatalf("metadata refreshable = %v, want false", got)
+	}
+	if got := updated.Attributes["credential_mode"]; got != "access_token_only" {
+		t.Fatalf("attribute credential_mode = %q, want access_token_only", got)
+	}
+	if got := updated.Attributes["refreshable"]; got != "false" {
+		t.Fatalf("attribute refreshable = %q, want false", got)
 	}
 }
 

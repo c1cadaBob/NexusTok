@@ -15,14 +15,14 @@ import (
 
 // authAutoRefreshLoop 管理认证凭据的自动刷新调度，使用最小堆按刷新时间排序。
 type authAutoRefreshLoop struct {
-	manager     *Manager        // 认证管理器引用
-	interval    time.Duration   // 默认刷新检查间隔
-	concurrency int             // 最大并发刷新数
+	manager     *Manager      // 认证管理器引用
+	interval    time.Duration // 默认刷新检查间隔
+	concurrency int           // 最大并发刷新数
 
-	mu    sync.Mutex                // 保护队列和脏标记的互斥锁
-	queue refreshMinHeap            // 按刷新时间排序的最小堆
+	mu    sync.Mutex                  // 保护队列和脏标记的互斥锁
+	queue refreshMinHeap              // 按刷新时间排序的最小堆
 	index map[string]*refreshHeapItem // 认证 ID 到堆项的索引
-	dirty map[string]struct{}        // 需要重新调度的脏标记集合
+	dirty map[string]struct{}         // 需要重新调度的脏标记集合
 
 	wakeCh chan struct{} // 唤醒主循环的信号通道
 	jobs   chan string   // 刷新任务分发通道
@@ -363,6 +363,9 @@ func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time
 	if hasUnauthorizedAuthFailure(auth) {
 		return time.Time{}, false
 	}
+	if authAccessTokenOnly(auth) {
+		return time.Time{}, false
+	}
 
 	accountType, _ := auth.AccountInfo()
 	if accountType == "api_key" {
@@ -433,6 +436,80 @@ func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time
 		return dueAt, true
 	}
 	return now, true
+}
+
+// authAccessTokenOnly 判断认证是否只能使用短期 access_token，不能自动刷新。
+//
+// 该标记主要用于 Codex AT-only 凭据：它们可以被调度执行真实请求，但没有
+// refresh_token，后台自动刷新没有可执行动作。这里同时读取 attributes 和 metadata，
+// 以兼容管理端上传、文件 watcher 合成以及未来持久化恢复的不同入口。
+func authAccessTokenOnly(auth *Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if stringFlag(auth.Attributes, "access_token_only") || stringFlag(auth.Attributes, "at_only") {
+		return true
+	}
+	if mode := strings.TrimSpace(auth.Attributes["credential_mode"]); strings.EqualFold(mode, "access_token_only") {
+		return true
+	}
+	if metadataFlag(auth.Metadata, "access_token_only", "at_only") {
+		return true
+	}
+	if mode := metadataString(auth.Metadata, "credential_mode"); strings.EqualFold(mode, "access_token_only") {
+		return true
+	}
+	return false
+}
+
+func stringFlag(values map[string]string, keys ...string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, key := range keys {
+		switch strings.ToLower(strings.TrimSpace(values[key])) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	}
+	return false
+}
+
+func metadataString(values map[string]any, key string) string {
+	if len(values) == 0 || key == "" {
+		return ""
+	}
+	if value, ok := values[key]; ok {
+		switch typed := value.(type) {
+		case string:
+			return strings.TrimSpace(typed)
+		}
+	}
+	return ""
+}
+
+func metadataFlag(values map[string]any, keys ...string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case bool:
+			if typed {
+				return true
+			}
+		case string:
+			switch strings.ToLower(strings.TrimSpace(typed)) {
+			case "1", "true", "yes", "on":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // refreshHeapItem 表示刷新调度堆中的单个条目，包含认证 ID、下次刷新时间和堆索引。

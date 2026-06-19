@@ -203,7 +203,7 @@ func TestFileSynthesizer_Synthesize_SkipsInvalidFiles(t *testing.T) {
 	}
 }
 
-func TestFileSynthesizer_Synthesize_CodexOAuthMissingRefreshTokenDisabled(t *testing.T) {
+func TestFileSynthesizer_Synthesize_CodexAccessTokenOnlyStaysActive(t *testing.T) {
 	tempDir := t.TempDir()
 
 	authData := map[string]any{
@@ -232,14 +232,26 @@ func TestFileSynthesizer_Synthesize_CodexOAuthMissingRefreshTokenDisabled(t *tes
 	if len(auths) != 1 {
 		t.Fatalf("expected 1 auth, got %d", len(auths))
 	}
-	if !auths[0].Disabled {
-		t.Fatalf("expected auth to be disabled")
+	if auths[0].Disabled {
+		t.Fatalf("expected AT-only auth to stay enabled")
 	}
-	if auths[0].Status != coreauth.StatusDisabled {
-		t.Fatalf("status = %q, want %q", auths[0].Status, coreauth.StatusDisabled)
+	if auths[0].Status != coreauth.StatusActive {
+		t.Fatalf("status = %q, want %q", auths[0].Status, coreauth.StatusActive)
 	}
-	if !strings.Contains(auths[0].StatusMessage, "missing refresh_token") {
-		t.Fatalf("status_message = %q, want missing refresh_token hint", auths[0].StatusMessage)
+	if auths[0].StatusMessage != "" {
+		t.Fatalf("status_message = %q, want empty", auths[0].StatusMessage)
+	}
+	if got := auths[0].Attributes["credential_mode"]; got != "access_token_only" {
+		t.Fatalf("credential_mode attribute = %q, want access_token_only", got)
+	}
+	if got := auths[0].Attributes["refreshable"]; got != "false" {
+		t.Fatalf("refreshable attribute = %q, want false", got)
+	}
+	if got, _ := auths[0].Metadata["access_token_only"].(bool); !got {
+		t.Fatalf("access_token_only metadata = %v, want true", got)
+	}
+	if got, _ := auths[0].Metadata["refreshable"].(bool); got {
+		t.Fatalf("refreshable metadata = %v, want false", got)
 	}
 }
 
