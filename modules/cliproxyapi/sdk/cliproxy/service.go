@@ -304,15 +304,12 @@ func (s *Service) applyCoreAuthAddOrUpdate(ctx context.Context, auth *coreauth.A
 	var err error
 	if existing, ok := s.coreManager.GetByID(auth.ID); ok {
 		auth.CreatedAt = existing.CreatedAt
-		if !existing.Disabled && existing.Status != coreauth.StatusDisabled && !auth.Disabled && auth.Status != coreauth.StatusDisabled {
-			auth.LastRefreshedAt = existing.LastRefreshedAt
-			auth.NextRefreshAfter = existing.NextRefreshAfter
-			if len(auth.ModelStates) == 0 && len(existing.ModelStates) > 0 {
-				auth.ModelStates = existing.ModelStates
-			}
-		}
 		op = "update"
-		_, err = s.coreManager.Update(ctx, auth)
+		if shouldUseImportedFileUpdate(auth) {
+			_, err = s.coreManager.UpdateFromImportedFile(ctx, auth)
+		} else {
+			_, err = s.coreManager.Update(ctx, auth)
+		}
 	} else {
 		_, err = s.coreManager.Register(ctx, auth)
 	}
@@ -337,6 +334,27 @@ func (s *Service) applyCoreAuthAddOrUpdate(ctx context.Context, auth *coreauth.A
 	// have an empty supportedModelSet (because Register/Update upserts into the
 	// scheduler before registerModelsForAuth runs) and are invisible to the scheduler.
 	s.coreManager.RefreshSchedulerEntry(auth.ID)
+}
+
+// shouldUseImportedFileUpdate 判断当前认证是否来自磁盘认证文件。
+//
+// 只有这类认证在被重新导入或被 watcher 重新合成时，才需要显式清理旧的 Unauthorized、
+// 退避时间和模型级失败状态。配置项生成的 API key 使用 config: 前缀，不属于这条路径；
+// 纯运行态认证通常也不会带真实的文件 path，因此不会误入这里。
+func shouldUseImportedFileUpdate(auth *coreauth.Auth) bool {
+	if auth == nil || auth.Disabled {
+		return false
+	}
+	if auth.Attributes == nil {
+		return false
+	}
+	if path := strings.TrimSpace(auth.Attributes["path"]); path != "" {
+		return true
+	}
+	if source := strings.TrimSpace(auth.Attributes["source"]); source != "" {
+		return !strings.HasPrefix(strings.ToLower(source), "config:")
+	}
+	return false
 }
 
 // applyCoreAuthRemoval 应用核心认证的移除操作，注销模型并清理相关资源。

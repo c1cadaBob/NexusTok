@@ -7,6 +7,7 @@ package cliproxy
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -104,6 +105,75 @@ func TestServiceApplyCoreAuthAddOrUpdate_DeleteReAddDoesNotInheritStaleRuntimeSt
 	}
 	if models := registry.GetGlobalRegistry().GetModelsForClient(authID); len(models) == 0 {
 		t.Fatalf("expected re-added auth to re-register models in global registry")
+	}
+}
+
+// TestServiceApplyCoreAuthAddOrUpdate_ImportedFileAuthClearsStaleRuntimeState 测试文件型认证更新时
+// 会走“重导专用”更新入口，从而清理旧的 Unauthorized、冷却时间和模型级错误状态。
+func TestServiceApplyCoreAuthAddOrUpdate_ImportedFileAuthClearsStaleRuntimeState(t *testing.T) {
+	service := &Service{
+		cfg:         &config.Config{},
+		coreManager: coreauth.NewManager(nil, nil, nil),
+	}
+
+	authID := "service-imported-file-auth"
+	modelID := "stale-model"
+	lastRefreshedAt := time.Date(2026, time.April, 1, 8, 0, 0, 0, time.UTC)
+	nextRefreshAfter := lastRefreshedAt.Add(30 * time.Minute)
+	importedPath := filepath.Join(t.TempDir(), "claude.json")
+
+	service.coreManager.Register(context.Background(), &coreauth.Auth{
+		ID:               authID,
+		Provider:         "claude",
+		Status:           coreauth.StatusError,
+		StatusMessage:    "Unauthorized",
+		Unavailable:      true,
+		LastRefreshedAt:  lastRefreshedAt,
+		NextRefreshAfter: nextRefreshAfter,
+		NextRetryAfter:   nextRefreshAfter,
+		ModelStates: map[string]*coreauth.ModelState{
+			modelID: {
+				Status:         coreauth.StatusError,
+				StatusMessage:  "Unauthorized",
+				Unavailable:    true,
+				NextRetryAfter: nextRefreshAfter,
+				LastError:      &coreauth.Error{Code: "unauthorized", Message: "Unauthorized", HTTPStatus: 401},
+			},
+		},
+		Metadata: map[string]any{"type": "claude"},
+	})
+
+	service.applyCoreAuthAddOrUpdate(context.Background(), &coreauth.Auth{
+		ID:       authID,
+		Provider: "claude",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"path": importedPath,
+		},
+		Metadata: map[string]any{"type": "claude"},
+	})
+
+	updated, ok := service.coreManager.GetByID(authID)
+	if !ok || updated == nil {
+		t.Fatalf("expected updated auth to be present")
+	}
+	if updated.Status != coreauth.StatusActive {
+		t.Fatalf("expected updated auth to be active, got %v", updated.Status)
+	}
+	if !updated.LastRefreshedAt.IsZero() {
+		t.Fatalf("expected LastRefreshedAt to be cleared, got %v", updated.LastRefreshedAt)
+	}
+	if !updated.NextRefreshAfter.IsZero() {
+		t.Fatalf("expected NextRefreshAfter to be cleared, got %v", updated.NextRefreshAfter)
+	}
+	if !updated.NextRetryAfter.IsZero() {
+		t.Fatalf("expected NextRetryAfter to be cleared, got %v", updated.NextRetryAfter)
+	}
+	if updated.StatusMessage != "" || updated.Unavailable {
+		t.Fatalf("expected clean availability, status_message=%q unavailable=%v", updated.StatusMessage, updated.Unavailable)
+	}
+	if len(updated.ModelStates) != 0 {
+		t.Fatalf("expected ModelStates to be cleared, got %d entries", len(updated.ModelStates))
 	}
 }
 

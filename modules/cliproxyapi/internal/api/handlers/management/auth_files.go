@@ -50,23 +50,23 @@ var lastRefreshKeys = []string{"last_refresh", "lastRefresh", "last_refreshed_at
 
 // OAuth 回调端口和 Gemini CLI 端点常量
 const (
-	anthropicCallbackPort = 54545  // Anthropic OAuth 回调端口
-	geminiCallbackPort    = 8085   // Gemini OAuth 回调端口
-	codexCallbackPort     = 1455   // Codex OAuth 回调端口
+	anthropicCallbackPort = 54545                                 // Anthropic OAuth 回调端口
+	geminiCallbackPort    = 8085                                  // Gemini OAuth 回调端口
+	codexCallbackPort     = 1455                                  // Codex OAuth 回调端口
 	geminiCLIEndpoint     = "https://cloudcode-pa.googleapis.com" // Gemini CLI API 端点
-	geminiCLIVersion      = "v1internal" // Gemini CLI API 版本
+	geminiCLIVersion      = "v1internal"                          // Gemini CLI API 版本
 )
 
 // callbackForwarder OAuth 回调转发器，用于将本地回调端口的请求转发到管理服务器
 type callbackForwarder struct {
-	provider string       // 提供商名称
-	server   *http.Server // HTTP 服务器实例
+	provider string        // 提供商名称
+	server   *http.Server  // HTTP 服务器实例
 	done     chan struct{} // 服务器关闭信号
 }
 
 var (
-	callbackForwardersMu  sync.Mutex                        // 回调转发器映射的互斥锁
-	callbackForwarders    = make(map[int]*callbackForwarder) // 按端口索引的回调转发器映射
+	callbackForwardersMu  sync.Mutex                              // 回调转发器映射的互斥锁
+	callbackForwarders    = make(map[int]*callbackForwarder)      // 按端口索引的回调转发器映射
 	errAuthFileMustBeJSON = errors.New("auth file must be .json") // 认证文件必须为 JSON 格式的错误
 	errAuthFileNotFound   = errors.New("auth file not found")     // 认证文件未找到的错误
 )
@@ -1247,11 +1247,6 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	if h != nil && h.authManager != nil {
 		if existing, ok := h.authManager.GetByID(authID); ok {
 			auth.CreatedAt = existing.CreatedAt
-			if !hasLastRefresh {
-				auth.LastRefreshedAt = existing.LastRefreshedAt
-			}
-			auth.NextRefreshAfter = existing.NextRefreshAfter
-			auth.Runtime = existing.Runtime
 		}
 	}
 	coreauth.ApplyCustomHeadersFromMetadata(auth)
@@ -1265,7 +1260,7 @@ func (h *Handler) upsertAuthRecord(ctx context.Context, auth *coreauth.Auth) err
 	}
 	if existing, ok := h.authManager.GetByID(auth.ID); ok {
 		auth.CreatedAt = existing.CreatedAt
-		_, err := h.authManager.Update(ctx, auth)
+		_, err := h.authManager.UpdateFromImportedFile(ctx, auth)
 		return err
 	}
 	_, err := h.authManager.Register(ctx, auth)

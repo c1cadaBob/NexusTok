@@ -70,7 +70,7 @@ type RefreshEvaluator interface {
 
 const (
 	// refreshCheckInterval 是刷新检查的默认间隔。
-	refreshCheckInterval  = 5 * time.Second
+	refreshCheckInterval = 5 * time.Second
 	// refreshMaxConcurrency 是最大并发刷新数。
 	refreshMaxConcurrency = 16
 	// refreshPendingBackoff 是刷新挂起时的退避时间。
@@ -81,9 +81,9 @@ const (
 	// 防止自动刷新循环在空闲时紧密循环消耗 CPU。
 	refreshIneffectiveBackoff = 30 * time.Second
 	// quotaBackoffBase 是配额冷却的基础退避时间。
-	quotaBackoffBase          = time.Second
+	quotaBackoffBase = time.Second
 	// quotaBackoffMax 是配额冷却的最大退避时间。
-	quotaBackoffMax           = 30 * time.Minute
+	quotaBackoffMax = 30 * time.Minute
 )
 
 // quotaCooldownDisabled 是全局配额冷却禁用标志。
@@ -1195,6 +1195,75 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	return auth.Clone(), nil
+}
+
+// UpdateFromImportedFile 用从认证文件重新构建的记录替换现有认证，并清理旧运行态。
+//
+// 普通 Update 会在活跃认证热更新时保留 ModelStates、成功/失败计数和最近请求窗口，
+// 这能避免配置字段小改动时丢失运行时熔断信息。但管理端上传或覆盖认证文件时，
+// 操作语义是“重新信任磁盘上的这份凭据”。如果继续继承旧的 Unauthorized、cooldown、
+// per-model 错误或失败计数，用户重新导入有效凭据后仍可能被旧状态拦住，账号组选择器也会
+// 继续认为该账号不可用。该方法只服务文件导入/重导路径，显式保留稳定身份字段，
+// 同时让新的凭据以干净运行态重新进入调度器。
+func (m *Manager) UpdateFromImportedFile(ctx context.Context, auth *Auth) (*Auth, error) {
+	if auth == nil || auth.ID == "" {
+		return nil, nil
+	}
+	auth = auth.Clone()
+	now := time.Now()
+
+	m.mu.Lock()
+	if existing, ok := m.auths[auth.ID]; ok && existing != nil {
+		if !auth.indexAssigned && auth.Index == "" {
+			auth.Index = existing.Index
+			auth.indexAssigned = existing.indexAssigned
+		}
+		auth.CreatedAt = existing.CreatedAt
+	}
+	resetImportedFileRuntimeState(auth, now)
+	auth.EnsureIndex()
+	authClone := auth.Clone()
+	m.auths[auth.ID] = authClone
+	m.mu.Unlock()
+	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
+	if m.scheduler != nil {
+		m.scheduler.upsertAuth(authClone)
+	}
+	m.queueRefreshReschedule(auth.ID)
+	_ = m.persist(ctx, auth)
+	m.hook.OnAuthUpdated(ctx, auth.Clone())
+	return auth.Clone(), nil
+}
+
+// resetImportedFileRuntimeState 清空文件重导前积累的运行态错误。
+// 这些字段来自执行、刷新、配额退避和选择器调度，不属于磁盘凭据的事实内容；
+// 上传/覆盖认证文件后必须重新从真实请求结果推导，否则旧的 401/429 会持续污染账号可用性。
+func resetImportedFileRuntimeState(auth *Auth, now time.Time) {
+	if auth == nil {
+		return
+	}
+	auth.StatusMessage = ""
+	auth.Unavailable = false
+	auth.Quota = QuotaState{}
+	auth.LastError = nil
+	auth.NextRefreshAfter = time.Time{}
+	auth.NextRetryAfter = time.Time{}
+	auth.ModelStates = nil
+	if !strings.EqualFold(strings.TrimSpace(auth.Attributes["runtime_only"]), "true") {
+		auth.Runtime = nil
+	}
+	auth.Success = 0
+	auth.Failed = 0
+	auth.recentRequests = recentRequestRing{}
+	if auth.Disabled || auth.Status == StatusDisabled {
+		auth.Status = StatusDisabled
+	} else {
+		auth.Status = StatusActive
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	auth.UpdatedAt = now
 }
 
 // Load resets manager state from the backing store.

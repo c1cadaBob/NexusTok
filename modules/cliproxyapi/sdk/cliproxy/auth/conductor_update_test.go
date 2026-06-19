@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // TestManager_Update_PreservesModelStates 测试更新活跃认证时保留已有 ModelStates。
@@ -208,5 +209,93 @@ func TestManager_Update_ActiveInheritsModelStates(t *testing.T) {
 	}
 	if state.Quota.BackoffLevel != backoffLevel {
 		t.Fatalf("expected BackoffLevel to be %d, got %d", backoffLevel, state.Quota.BackoffLevel)
+	}
+}
+
+// TestManager_UpdateFromImportedFile_ClearsRuntimeState 测试认证文件重导时会清理旧的运行态错误。
+// 普通 Update 需要保留活跃认证的 ModelStates；但文件重导代表用户重新提供了凭据，
+// 旧的 Unauthorized、重试冷却和失败计数不能继续阻止账号被选择器使用。
+func TestManager_UpdateFromImportedFile_ClearsRuntimeState(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+
+	createdAt := time.Now().Add(-time.Hour)
+	retryAt := time.Now().Add(time.Hour)
+	model := "gpt-5.5"
+	auth := &Auth{
+		ID:             "codex.json",
+		Provider:       "codex",
+		Status:         StatusError,
+		StatusMessage:  "Unauthorized",
+		Unavailable:    true,
+		CreatedAt:      createdAt,
+		NextRetryAfter: retryAt,
+		Quota:          QuotaState{Exceeded: true, Reason: "auth", BackoffLevel: 4, NextRecoverAt: retryAt},
+		LastError:      &Error{Code: "unauthorized", Message: "Unauthorized", HTTPStatus: 401},
+		ModelStates: map[string]*ModelState{
+			model: {
+				Status:         StatusError,
+				StatusMessage:  "Unauthorized",
+				Unavailable:    true,
+				NextRetryAfter: retryAt,
+				LastError:      &Error{Code: "unauthorized", Message: "Unauthorized", HTTPStatus: 401},
+				Quota:          QuotaState{Exceeded: true, Reason: "auth", BackoffLevel: 3, NextRecoverAt: retryAt},
+				UpdatedAt:      retryAt,
+			},
+		},
+		Metadata: map[string]any{"type": "codex", "email": "old@example.com"},
+	}
+	if _, errRegister := m.Register(WithSkipPersist(context.Background()), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	m.MarkResult(context.Background(), Result{AuthID: "codex.json", Provider: "codex", Model: model, Success: false})
+
+	imported := &Auth{
+		ID:       "codex.json",
+		Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "email": "new@example.com", "refresh_token": "fresh"},
+	}
+	if _, errUpdate := m.UpdateFromImportedFile(WithSkipPersist(context.Background()), imported); errUpdate != nil {
+		t.Fatalf("UpdateFromImportedFile returned error: %v", errUpdate)
+	}
+
+	updated, ok := m.GetByID("codex.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	if updated.Status != StatusActive {
+		t.Fatalf("status = %q, want %q", updated.Status, StatusActive)
+	}
+	if updated.StatusMessage != "" || updated.Unavailable {
+		t.Fatalf("expected auth availability to be clean, status_message=%q unavailable=%v", updated.StatusMessage, updated.Unavailable)
+	}
+	if updated.LastError != nil {
+		t.Fatalf("expected LastError to be cleared, got %#v", updated.LastError)
+	}
+	if !updated.NextRetryAfter.IsZero() || !updated.NextRefreshAfter.IsZero() {
+		t.Fatalf("expected retry/refresh cooldowns to be cleared, retry=%v refresh=%v", updated.NextRetryAfter, updated.NextRefreshAfter)
+	}
+	if updated.Quota != (QuotaState{}) {
+		t.Fatalf("expected quota state to be cleared, got %#v", updated.Quota)
+	}
+	if len(updated.ModelStates) != 0 {
+		t.Fatalf("expected ModelStates to be cleared, got %d entries", len(updated.ModelStates))
+	}
+	if updated.Success != 0 || updated.Failed != 0 {
+		t.Fatalf("expected counters to be reset, success=%d failed=%d", updated.Success, updated.Failed)
+	}
+	var bucketSuccess int64
+	var bucketFailed int64
+	for _, bucket := range updated.RecentRequestsSnapshot(time.Now()) {
+		bucketSuccess += bucket.Success
+		bucketFailed += bucket.Failed
+	}
+	if bucketSuccess != 0 || bucketFailed != 0 {
+		t.Fatalf("expected recent request buckets to be reset, success=%d failed=%d", bucketSuccess, bucketFailed)
+	}
+	if !updated.CreatedAt.Equal(createdAt) {
+		t.Fatalf("expected CreatedAt to be preserved, got %v want %v", updated.CreatedAt, createdAt)
+	}
+	if got, _ := updated.Metadata["email"].(string); got != "new@example.com" {
+		t.Fatalf("metadata email = %q, want new@example.com", got)
 	}
 }
