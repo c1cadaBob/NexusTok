@@ -327,7 +327,7 @@ Web 静态资源路由会根据 `common.GetTheme()` 选择默认前端或经典�
 
 主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、账号池凭据刷新、Codex 凭据刷新、上游模型巡检，以及 models.dev 模型目录同步。
 
-models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.json` 拉取公开模型目录，并补齐本地缺失的模型和供应商。该任务只创建本地不存在的记录，不覆盖管理员手动编辑的模型描述、图标、标签、供应商、状态或价格倍率。
+models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.json` 拉取公开模型目录，并补齐本地缺失的模型和供应商。同步时会优先采用 canonical models 的归属方作为本地“供应商”，避免把 Vivgrid 之类的服务商误写成 OpenAI、Anthropic 这类模型原厂。该任务会补齐缺失模型，并在 `sync_official=1` 的官方记录上纠正供应商归属；其它人工维护字段仍保持不动。
 
 相关环境变量：
 
@@ -508,6 +508,7 @@ docker logs --tail 200 nexustok-api-hot | grep 'models.dev model sync'
 | 提示 `invalid MODELS_DEV_AUTO_SYNC_TIME` | 时间格式不是 `HH:mm` 或超出范围 | 改为例如 `02:00`、`03:30` |
 | 拉取失败 | 服务器无法访问 `https://models.dev/catalog.json` | 检查 DNS、代理、防火墙，或配置 `MODELS_DEV_SYNC_BASE` |
 | 同步后模型没有变化 | 本地已存在这些模型，任务不会覆盖已有记录 | 在后台模型页面检查模型是否已存在，必要时使用手动编辑或覆盖同步 |
+| 供应商显示成 Vivgrid | 旧数据是在 canonical 归属修复前同步的，或未走 canonical models 路径 | 重新执行 models.dev 同步预览并对相关模型应用覆盖，或在后台模型页手动修正供应商 |
 
 管理员也可以通过后台登录态调用预览接口确认 models.dev 源是否可访问：
 

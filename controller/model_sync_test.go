@@ -122,6 +122,59 @@ func TestConvertModelsDevCatalogPrefersDirectProvider(t *testing.T) {
 	require.Contains(t, models[0].Tags, "400K")
 }
 
+func TestConvertModelsDevCatalogPrefersCanonicalOwner(t *testing.T) {
+	catalog := &modelsDevCatalog{
+		Models: map[string]modelsDevCatalogModel{
+			"openai/gpt-5.5": {
+				ID:               "openai/gpt-5.5",
+				Name:             "GPT-5.5",
+				Reasoning:        true,
+				ToolCall:         true,
+				StructuredOutput: true,
+				Attachment:       true,
+				Status:           "active",
+				Modalities: modelsDevCatalogModalities{
+					Input:  []string{"text", "image", "pdf"},
+					Output: []string{"text"},
+				},
+				Limit: modelsDevCatalogLimit{Context: 1050000, Output: 128000},
+			},
+		},
+		Providers: map[string]modelsDevCatalogProvider{
+			"openai": {
+				ID:   "openai",
+				Name: "OpenAI",
+				Doc:  "https://platform.openai.com/docs/models",
+			},
+			"vivgrid": {
+				ID:   "vivgrid",
+				Name: "Vivgrid",
+				Doc:  "https://docs.vivgrid.com/models",
+				Models: map[string]modelsDevCatalogModel{
+					"gpt-5.5": {
+						ID:   "gpt-5.5",
+						Name: "GPT-5.5",
+					},
+				},
+			},
+		},
+	}
+
+	vendors, models := convertModelsDevCatalog(catalog)
+
+	require.Len(t, vendors, 1)
+	require.Equal(t, "OpenAI", vendors[0].Name)
+	require.Equal(t, "OpenAI.Color", vendors[0].Icon)
+
+	require.Len(t, models, 1)
+	require.Equal(t, "gpt-5.5", models[0].ModelName)
+	require.Equal(t, "OpenAI", models[0].VendorName)
+	require.Equal(t, "OpenAI.Color", models[0].Icon)
+	require.Contains(t, models[0].Tags, "Reasoning")
+	require.Contains(t, models[0].Tags, "Vision")
+	require.Contains(t, models[0].Tags, "1M")
+}
+
 func TestConvertModelsDevCatalogMapsDeprecatedToDisabled(t *testing.T) {
 	catalog := &modelsDevCatalog{
 		Providers: map[string]modelsDevCatalogProvider{
@@ -148,26 +201,47 @@ func TestConvertModelsDevCatalogMapsDeprecatedToDisabled(t *testing.T) {
 func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	db := setupModelSyncTestDB(t)
 	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-5.5": {
+				"id": "openai/gpt-5.5",
+				"name": "GPT-5.5",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			},
+			"openai/old-model": {
+				"id": "openai/old-model",
+				"name": "Old Model",
+				"status": "deprecated"
+			}
+		},
 		"providers": {
 			"openai": {
 				"id": "openai",
 				"name": "OpenAI",
 				"doc": "https://platform.openai.com/docs/models",
 				"models": {
-					"gpt-5": {
-						"id": "gpt-5",
-						"name": "GPT-5",
-						"reasoning": true,
-						"tool_call": true,
-						"structured_output": true,
-						"attachment": true,
-						"modalities": {"input": ["text", "image"], "output": ["text"]},
-						"limit": {"context": 400000, "output": 128000}
+					"gpt-5.5": {
+						"id": "gpt-5.5",
+						"name": "GPT-5.5"
 					},
 					"old-model": {
 						"id": "old-model",
-						"name": "Old Model",
-						"status": "deprecated"
+						"name": "Old Model"
+					}
+				}
+			},
+			"vivgrid": {
+				"id": "vivgrid",
+				"name": "Vivgrid",
+				"doc": "https://docs.vivgrid.com/models",
+				"models": {
+					"gpt-5.5": {
+						"id": "gpt-5.5",
+						"name": "GPT-5.5"
 					}
 				}
 			}
@@ -186,7 +260,7 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.Equal(t, "OpenAI.Color", vendor.Icon)
 
 	var gpt model.Model
-	require.NoError(t, db.Where("model_name = ?", "gpt-5").First(&gpt).Error)
+	require.NoError(t, db.Where("model_name = ?", "gpt-5.5").First(&gpt).Error)
 	require.Equal(t, vendor.Id, gpt.VendorID)
 	require.Equal(t, 1, gpt.Status)
 	require.Equal(t, 1, gpt.SyncOfficial)
@@ -200,6 +274,151 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, second.CreatedModels)
 	require.Empty(t, second.SkippedModels)
+}
+
+func TestSyncUpstreamModelsCoreCorrectsExistingModelsDevVendor(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+
+	openaiVendor := &model.Vendor{
+		Name:   "OpenAI",
+		Icon:   "OpenAI.Color",
+		Status: 1,
+	}
+	require.NoError(t, openaiVendor.Insert())
+
+	vivgridVendor := &model.Vendor{
+		Name:   "Vivgrid",
+		Icon:   "Vivgrid",
+		Status: 1,
+	}
+	require.NoError(t, vivgridVendor.Insert())
+
+	wrongVendorModel := &model.Model{
+		ModelName:    "gpt-5.5",
+		VendorID:     vivgridVendor.Id,
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, wrongVendorModel.Insert())
+
+	existingModel := &model.Model{
+		ModelName:    "old-model",
+		VendorID:     openaiVendor.Id,
+		Status:       0,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, existingModel.Insert())
+
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-5.5": {
+				"id": "openai/gpt-5.5",
+				"name": "GPT-5.5",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			},
+			"openai/old-model": {
+				"id": "openai/old-model",
+				"name": "Old Model",
+				"status": "deprecated"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"doc": "https://platform.openai.com/docs/models"
+			},
+			"vivgrid": {
+				"id": "vivgrid",
+				"name": "Vivgrid",
+				"doc": "https://docs.vivgrid.com/models"
+			}
+		}
+	}`)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{Source: syncSourceModelsDev}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.CreatedModels)
+	require.Equal(t, 1, result.UpdatedModels)
+	require.Contains(t, result.UpdatedList, "gpt-5.5")
+
+	var gpt model.Model
+	require.NoError(t, db.Where("model_name = ?", "gpt-5.5").First(&gpt).Error)
+	require.Equal(t, openaiVendor.Id, gpt.VendorID)
+}
+
+func TestSyncUpstreamModelsCoreSkipsNonOfficialVendorCorrection(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+
+	openaiVendor := &model.Vendor{
+		Name:   "OpenAI",
+		Icon:   "OpenAI.Color",
+		Status: 1,
+	}
+	require.NoError(t, openaiVendor.Insert())
+
+	vivgridVendor := &model.Vendor{
+		Name:   "Vivgrid",
+		Icon:   "Vivgrid",
+		Status: 1,
+	}
+	require.NoError(t, vivgridVendor.Insert())
+
+	localModel := &model.Model{
+		ModelName:    "gpt-5.5",
+		VendorID:     vivgridVendor.Id,
+		Status:       1,
+		SyncOfficial: 0,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, localModel.Insert())
+
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-5.5": {
+				"id": "openai/gpt-5.5",
+				"name": "GPT-5.5",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			},
+			"openai/old-model": {
+				"id": "openai/old-model",
+				"name": "Old Model",
+				"status": "deprecated"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"doc": "https://platform.openai.com/docs/models"
+			}
+		}
+	}`)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{Source: syncSourceModelsDev}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CreatedModels)
+	require.Equal(t, 0, result.UpdatedModels)
+
+	var gpt model.Model
+	require.NoError(t, db.Where("model_name = ?", "gpt-5.5").First(&gpt).Error)
+	require.Equal(t, vivgridVendor.Id, gpt.VendorID)
+
+	var old model.Model
+	require.NoError(t, db.Where("model_name = ?", "old-model").First(&old).Error)
+	require.Equal(t, openaiVendor.Id, old.VendorID)
 }
 
 func TestBuildSyncSourceInfoModelsDevAliases(t *testing.T) {

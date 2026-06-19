@@ -143,9 +143,11 @@ type upstreamVendor struct {
 // modelsDevCatalog 是 models.dev /catalog.json 的最小解析结构。
 //
 // catalog 同时包含 provider-agnostic 的 canonical models 和 provider 目录；
-// 本项目真正发起请求时使用的是各 provider 下的模型 ID，因此自动同步以
-// Providers[*].Models 为准，避免把仅用于归档/展示的规范模型名误当成可请求名称。
+// 本地“供应商”字段应优先跟随 canonical models 的归属方，而不是把 serving provider
+// 误写成模型供应商。这样像 openai/gpt-5.5 这类 canonical 模型，即使由 Vivgrid
+// 等服务商提供，也会正确归属到 OpenAI。
 type modelsDevCatalog struct {
+	Models    map[string]modelsDevCatalogModel    `json:"models"`
 	Providers map[string]modelsDevCatalogProvider `json:"providers"`
 }
 
@@ -481,8 +483,8 @@ func fetchModelsDevCatalog(ctx context.Context, catalogURL string) (*modelsDevCa
 	if err := common.Unmarshal(buf, &catalog); err != nil {
 		return nil, err
 	}
-	if len(catalog.Providers) == 0 {
-		return nil, errors.New("models.dev catalog providers is empty")
+	if len(catalog.Models) == 0 && len(catalog.Providers) == 0 {
+		return nil, errors.New("models.dev catalog is empty")
 	}
 	return &catalog, nil
 }
@@ -490,12 +492,103 @@ func fetchModelsDevCatalog(ctx context.Context, catalogURL string) (*modelsDevCa
 // convertModelsDevCatalog 将 models.dev catalog 转成本项目现有同步流程使用的结构。
 //
 // 转换规则：
-// 1. provider 目录中的模型 ID 才视为可请求模型名称；
-// 2. 同名模型可能由多个聚合商提供，按 provider ID 字典序稳定保留第一条，避免每日同步反复改归属；
-// 3. deprecated 模型默认仍创建但状态为禁用，便于历史日志、价格表和管理员手动启用排查；
-// 4. tags 和 description 只来自公开元数据，不写入价格倍率，价格由独立 ratio sync 链路处理。
+// 1. 优先使用 canonical models 生成本地模型，保证供应商归属落到模型原厂；
+// 2. canonical key 的前缀视为归属方，例如 openai/gpt-5.5 -> OpenAI；
+// 3. 若 canonical models 缺失，则回退到 provider 目录，以兼容旧测试或降级数据；
+// 4. deprecated 模型默认仍创建但状态为禁用，便于历史日志、价格表和管理员手动启用排查；
+// 5. tags 和 description 只来自公开元数据，不写入价格倍率，价格由独立 ratio sync 链路处理。
 func convertModelsDevCatalog(catalog *modelsDevCatalog) ([]upstreamVendor, []upstreamModel) {
-	if catalog == nil || len(catalog.Providers) == 0 {
+	if catalog == nil {
+		return nil, nil
+	}
+
+	if len(catalog.Models) > 0 {
+		return convertModelsDevCatalogFromCanonical(catalog)
+	}
+
+	return convertModelsDevCatalogFromProviders(catalog)
+}
+
+// convertModelsDevCatalogFromCanonical 使用 canonical models 生成同步结果。
+//
+// canonical models 的 key 一般形如 "openai/gpt-5.5"，其中前缀是模型归属方，
+// 后缀是本地实际要保存和请求的模型名。这样即使某个模型同时出现在 Vivgrid
+// 之类的服务商目录里，本地供应商也会保持为 OpenAI，而不是被服务商覆盖。
+func convertModelsDevCatalogFromCanonical(catalog *modelsDevCatalog) ([]upstreamVendor, []upstreamModel) {
+	ownerSet := make(map[string]struct{})
+	modelKeys := make([]string, 0, len(catalog.Models))
+	for canonicalKey := range catalog.Models {
+		modelKeys = append(modelKeys, canonicalKey)
+		ownerID, _ := splitModelsDevCanonicalKey(canonicalKey)
+		if ownerID != "" {
+			ownerSet[ownerID] = struct{}{}
+		}
+	}
+	sort.Slice(modelKeys, func(i, j int) bool {
+		ownerI, modelI := splitModelsDevCanonicalKey(modelKeys[i])
+		ownerJ, modelJ := splitModelsDevCanonicalKey(modelKeys[j])
+		pi := modelsDevProviderPriority(ownerI)
+		pj := modelsDevProviderPriority(ownerJ)
+		if pi != pj {
+			return pi < pj
+		}
+		if ownerI != ownerJ {
+			return ownerI < ownerJ
+		}
+		return modelI < modelJ
+	})
+
+	ownerIDs := make([]string, 0, len(ownerSet))
+	for ownerID := range ownerSet {
+		ownerIDs = append(ownerIDs, ownerID)
+	}
+	sortModelsDevProviderIDs(ownerIDs)
+
+	vendors := make([]upstreamVendor, 0, len(ownerIDs))
+	for _, ownerID := range ownerIDs {
+		provider, providerName := modelsDevCanonicalOwnerProvider(catalog, ownerID)
+		vendors = append(vendors, upstreamVendor{
+			Description: buildModelsDevVendorDescription(provider),
+			Icon:        modelsDevCatalogProviderIcon(ownerID, providerName),
+			Name:        providerName,
+			Status:      1,
+		})
+	}
+
+	models := make([]upstreamModel, 0, len(modelKeys))
+	seenModels := make(map[string]struct{})
+	for _, canonicalKey := range modelKeys {
+		def := catalog.Models[canonicalKey]
+		ownerID, modelName := splitModelsDevCanonicalKey(canonicalKey)
+		if modelName == "" {
+			modelName = strings.TrimSpace(def.ID)
+		}
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seenModels[modelName]; exists {
+			continue
+		}
+		seenModels[modelName] = struct{}{}
+
+		_, providerName := modelsDevCanonicalOwnerProvider(catalog, ownerID)
+		models = append(models, upstreamModel{
+			Description: buildModelsDevModelDescription(providerName, def),
+			Icon:        modelsDevCatalogProviderIcon(ownerID, providerName),
+			ModelName:   modelName,
+			NameRule:    model.NameRuleExact,
+			Status:      modelsDevModelStatus(def.Status),
+			Tags:        buildModelsDevModelTags(def),
+			VendorName:  providerName,
+		})
+	}
+
+	return vendors, models
+}
+
+// convertModelsDevCatalogFromProviders 是 models.dev canonical 数据缺失时的降级兼容路径。
+func convertModelsDevCatalogFromProviders(catalog *modelsDevCatalog) ([]upstreamVendor, []upstreamModel) {
+	if len(catalog.Providers) == 0 {
 		return nil, nil
 	}
 
@@ -556,6 +649,43 @@ func convertModelsDevCatalog(catalog *modelsDevCatalog) ([]upstreamVendor, []ups
 	return vendors, models
 }
 
+// splitModelsDevCanonicalKey 将 canonical key 拆成归属方和模型名。
+//
+// 例如 openai/gpt-5.5 会拆成 (openai, gpt-5.5)；如果没有斜杠，则归属方为空，
+// 模型名直接使用原始 key，方便兼容退化数据。
+func splitModelsDevCanonicalKey(key string) (ownerID, modelID string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", ""
+	}
+	if ownerID, modelID, ok := strings.Cut(key, "/"); ok {
+		return strings.TrimSpace(ownerID), strings.TrimSpace(modelID)
+	}
+	return "", key
+}
+
+// modelsDevCanonicalOwnerProvider 返回 canonical 模型归属方的 provider 元数据与展示名。
+func modelsDevCanonicalOwnerProvider(catalog *modelsDevCatalog, ownerID string) (modelsDevCatalogProvider, string) {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return modelsDevCatalogProvider{}, ""
+	}
+
+	provider, ok := catalog.Providers[ownerID]
+	if !ok {
+		return modelsDevCatalogProvider{ID: ownerID}, ownerID
+	}
+	provider.ID = strings.TrimSpace(provider.ID)
+	if provider.ID == "" {
+		provider.ID = ownerID
+	}
+	provider.Name = strings.TrimSpace(provider.Name)
+	if provider.Name == "" {
+		provider.Name = ownerID
+	}
+	return provider, provider.Name
+}
+
 // sortModelsDevProviderIDs 按稳定优先级排序 provider。
 //
 // 多个 provider 可能暴露相同模型名。优先保留模型原厂或常见直接提供商，
@@ -605,7 +735,11 @@ func buildModelsDevModelDescription(providerName string, def modelsDevCatalogMod
 		displayName = "This model"
 	}
 
-	parts := []string{fmt.Sprintf("%s is an AI model provided by %s.", displayName, providerName)}
+	if strings.TrimSpace(providerName) == "" {
+		providerName = "models.dev"
+	}
+
+	parts := []string{fmt.Sprintf("%s is an AI model from %s.", displayName, providerName)}
 	if def.Limit.Context > 0 {
 		parts = append(parts, fmt.Sprintf("Context window: %d tokens.", def.Limit.Context))
 	}
@@ -837,7 +971,10 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 		if err != nil {
 			return nil, err
 		}
-		if len(missing) == 0 {
+		// models.dev 同步除了补齐缺失模型，还承担 canonical 供应商纠偏职责。
+		// 即使本地没有缺失模型，也要继续拉取上游数据，保证像 gpt-5.5 这类
+		// 误绑定到 Vivgrid 的记录能在后续同步中修正回 OpenAI。
+		if len(missing) == 0 && sourceInfo.Source != syncSourceModelsDev {
 			return emptyResult, nil
 		}
 	}
@@ -874,6 +1011,15 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 
 	// 本地缓存：vendorName -> id
 	vendorIDCache := make(map[string]int)
+
+	// models.dev 既要补齐缺失项，也要纠正已存在官方模型的供应商归属。
+	// 这里单独扫描一遍已存在的 official 记录，避免它们因为“不是缺失模型”
+	// 而被完全跳过。
+	if sourceInfo.Source == syncSourceModelsDev {
+		if err := syncModelsDevCanonicalVendorMappings(vendorByName, modelByName, vendorIDCache, result); err != nil {
+			return nil, err
+		}
+	}
 
 	for _, name := range targetNames {
 		if len(name) > 128 {
@@ -980,6 +1126,43 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 		}
 	}
 	return result, nil
+}
+
+// syncModelsDevCanonicalVendorMappings 纠正 models.dev 已存在官方模型的供应商归属。
+//
+// 这个步骤只作用于 sync_official != 0 的记录，避免覆盖管理员明确关闭官方同步的模型。
+// 当前仅修正供应商字段，因为 models.dev 的 canonical 归属语义是“原厂归属方”，
+// 不是服务商；其它字段仍保持原有同步规则，避免不必要地扩大覆盖面。
+func syncModelsDevCanonicalVendorMappings(
+	vendorByName map[string]upstreamVendor,
+	modelByName map[string]upstreamModel,
+	vendorIDCache map[string]int,
+	result *syncUpstreamResult,
+) error {
+	for name, up := range modelByName {
+		var local model.Model
+		if err := model.DB.Where("model_name = ?", name).First(&local).Error; err != nil {
+			continue
+		}
+		if local.SyncOfficial == 0 {
+			continue
+		}
+
+		newVendorID := ensureVendorID(up.VendorName, vendorByName, vendorIDCache, &result.CreatedVendors)
+		if newVendorID == 0 || local.VendorID == newVendorID {
+			continue
+		}
+
+		local.VendorID = newVendorID
+		if err := local.Update(); err != nil {
+			common.SysError("failed to correct models.dev synced model vendor " + name + ": " + err.Error())
+			continue
+		}
+
+		result.UpdatedModels++
+		result.UpdatedList = append(result.UpdatedList, name)
+	}
+	return nil
 }
 
 // buildSyncTargetModelNames 计算本轮需要创建的模型名称。
