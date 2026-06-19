@@ -128,3 +128,42 @@ func TestEnsureImageGenerationTool_FreeCodexAuthDoesNotInjectTool(t *testing.T) 
 		t.Fatalf("expected no tools for free codex auth, got %s", gjson.GetBytes(result, "tools").Raw)
 	}
 }
+
+// TestCodexCreds_LegacyTokenDataFallback 验证执行器能从旧 token_data 结构中读取访问令牌。
+func TestCodexCreds_LegacyTokenDataFallback(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{
+			"token_data": map[string]any{
+				"access_token": "legacy-access",
+			},
+		},
+	}
+
+	apiKey, _ := codexCreds(auth)
+	if apiKey != "legacy-access" {
+		t.Fatalf("apiKey = %q, want legacy-access", apiKey)
+	}
+}
+
+// TestEnsureImageGenerationTool_FreeCodexPlanFromMetadataDoesNotInjectTool 验证旧导入结构中
+// plan_type 只存在于元数据时，也会被识别为免费账号。
+func TestEnsureImageGenerationTool_FreeCodexPlanFromMetadataDoesNotInjectTool(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"draw a cat"}`)
+	freeAuth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{
+			"token_data": map[string]any{
+				"plan_type": "free",
+			},
+		},
+	}
+	result := ensureImageGenerationTool(body, "gpt-5.4", freeAuth)
+
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no tools for free codex auth, got %s", gjson.GetBytes(result, "tools").Raw)
+	}
+}

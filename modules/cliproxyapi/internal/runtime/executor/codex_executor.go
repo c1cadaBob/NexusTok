@@ -707,12 +707,7 @@ func (e *CodexExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*
 	if auth == nil {
 		return nil, statusErr{code: 500, msg: "codex executor: auth is nil"}
 	}
-	var refreshToken string
-	if auth.Metadata != nil {
-		if v, ok := auth.Metadata["refresh_token"].(string); ok && v != "" {
-			refreshToken = v
-		}
-	}
+	refreshToken := codexauth.ExtractRefreshToken(auth.Metadata)
 	if refreshToken == "" {
 		return auth, nil
 	}
@@ -905,13 +900,20 @@ var imageGenToolJSON = []byte(`{"type":"image_generation","output_format":"png"}
 var imageGenToolArrayJSON = []byte(`[{"type":"image_generation","output_format":"png"}]`)
 
 func isCodexFreePlanAuth(auth *cliproxyauth.Auth) bool {
-	if auth == nil || auth.Attributes == nil {
+	if auth == nil {
 		return false
 	}
 	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(auth.Attributes["plan_type"]), "free")
+	planType := ""
+	if auth.Attributes != nil {
+		planType = strings.TrimSpace(auth.Attributes["plan_type"])
+	}
+	if planType == "" {
+		planType = codexauth.ExtractPlanType(auth.Metadata)
+	}
+	return strings.EqualFold(strings.TrimSpace(planType), "free")
 }
 
 func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth.Auth) []byte {
@@ -1013,9 +1015,7 @@ func codexCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 		baseURL = a.Attributes["base_url"]
 	}
 	if apiKey == "" && a.Metadata != nil {
-		if v, ok := a.Metadata["access_token"].(string); ok {
-			apiKey = v
-		}
+		apiKey = codexauth.ExtractAccessToken(a.Metadata)
 	}
 	return
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
@@ -1161,6 +1162,9 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		codexPlanType := ""
 		if a.Attributes != nil {
 			codexPlanType = strings.TrimSpace(a.Attributes["plan_type"])
+		}
+		if codexPlanType == "" {
+			codexPlanType = codexauth.ExtractPlanType(a.Metadata)
 		}
 		switch strings.ToLower(codexPlanType) {
 		case "pro":

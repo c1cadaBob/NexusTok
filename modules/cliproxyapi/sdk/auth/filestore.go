@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -249,6 +250,9 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 	if provider == "" {
 		provider = "unknown"
 	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		metadata = codex.NormalizeMetadata(metadata)
+	}
 	// 对 Antigravity 和 Gemini 类型，自动补充缺失的 GCP 项目 ID
 	if provider == "antigravity" || provider == "gemini" {
 		projectID := ""
@@ -305,11 +309,26 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 		LastRefreshedAt:  time.Time{},
 		NextRefreshAfter: time.Time{},
 	}
-	if email, ok := metadata["email"].(string); ok && email != "" {
+	if email := strings.TrimSpace(codexEmailForFileStore(provider, metadata)); email != "" {
 		auth.Attributes["email"] = email
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if planType := codex.ExtractPlanType(metadata); planType != "" {
+			auth.Attributes["plan_type"] = planType
+		}
 	}
 	cliproxyauth.ApplyCustomHeadersFromMetadata(auth)
 	return auth, nil
+}
+
+func codexEmailForFileStore(provider string, metadata map[string]any) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		return codex.ExtractEmail(metadata)
+	}
+	if email, ok := metadata["email"].(string); ok {
+		return email
+	}
+	return ""
 }
 
 // idFor 根据文件路径和基础目录生成认证记录的 ID。
@@ -371,6 +390,11 @@ func (s *FileTokenStore) labelFor(metadata map[string]any) string {
 	if metadata == nil {
 		return ""
 	}
+	if provider, _ := metadata["type"].(string); strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if email := codex.ExtractEmail(metadata); email != "" {
+			return email
+		}
+	}
 	if v, ok := metadata["label"].(string); ok && v != "" {
 		return v
 	}
@@ -394,6 +418,7 @@ func (s *FileTokenStore) baseDirSnapshot() string {
 // 支持两种格式：
 //   - 顶层 "access_token" 字段（Antigravity 格式）
 //   - 嵌套在 "token" 对象中的 "access_token" 字段（Gemini 格式）
+//   - 嵌套在 "token_data" 对象中的 "access_token" 字段（Codex 历史格式）
 //
 // 顶层字段优先级高于嵌套字段。
 func extractAccessToken(metadata map[string]any) string {
@@ -408,6 +433,9 @@ func extractAccessToken(metadata map[string]any) string {
 				return v
 			}
 		}
+	}
+	if v := codex.ExtractAccessToken(metadata); v != "" {
+		return v
 	}
 	return ""
 }

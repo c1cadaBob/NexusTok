@@ -1007,6 +1007,10 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 			dst = abs
 		}
 	}
+	data, err := normalizeImportedAuthFileData(data)
+	if err != nil {
+		return err
+	}
 	auth, err := h.buildAuthFromFileData(dst, data)
 	if err != nil {
 		return err
@@ -1018,6 +1022,56 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 		return err
 	}
 	return nil
+}
+
+// normalizeImportedAuthFileData 对上传的认证文件做一次兼容性归一化。
+//
+// Codex 历史文件可能把 OAuth 凭据放在 token_data/token 嵌套对象中，而当前执行器、
+// 自动刷新和管理页展示都以顶层 access_token/refresh_token/id_token 为事实来源。
+// 导入时直接写入归一化后的 JSON，可以保证热加载和重启加载看到的是同一份可用结构。
+func normalizeImportedAuthFileData(data []byte) ([]byte, error) {
+	metadata := make(map[string]any)
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("invalid auth file: %w", err)
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringValue(metadata, "type")), "codex") {
+		return data, nil
+	}
+	if !codexMetadataNeedsNormalization(metadata) {
+		return data, nil
+	}
+	normalized := codex.NormalizeMetadata(metadata)
+	raw, errMarshal := json.Marshal(normalized)
+	if errMarshal != nil {
+		return nil, fmt.Errorf("failed to normalize auth file: %w", errMarshal)
+	}
+	return raw, nil
+}
+
+// codexMetadataNeedsNormalization 判断 Codex 认证文件是否包含当前运行态不直接识别的旧结构。
+func codexMetadataNeedsNormalization(metadata map[string]any) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	if codex.ExtractAccessToken(metadata) != "" && strings.TrimSpace(stringValue(metadata, "access_token")) == "" {
+		return true
+	}
+	if codex.ExtractRefreshToken(metadata) != "" && strings.TrimSpace(stringValue(metadata, "refresh_token")) == "" {
+		return true
+	}
+	if codex.ExtractIDToken(metadata) != "" && strings.TrimSpace(stringValue(metadata, "id_token")) == "" {
+		return true
+	}
+	if codex.ExtractEmail(metadata) != "" && strings.TrimSpace(stringValue(metadata, "email")) == "" {
+		return true
+	}
+	if codex.ExtractAccountID(metadata) != "" && strings.TrimSpace(stringValue(metadata, "account_id")) == "" {
+		return true
+	}
+	if codex.ExtractPlanType(metadata) != "" && strings.TrimSpace(stringValue(metadata, "plan_type")) == "" {
+		return true
+	}
+	return false
 }
 
 // requestedAuthFileNamesForDelete 从请求中提取要删除的认证文件名列表
@@ -1212,6 +1266,9 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("invalid auth file: %w", err)
 	}
+	if strings.EqualFold(strings.TrimSpace(stringValue(metadata, "type")), "codex") {
+		metadata = codex.NormalizeMetadata(metadata)
+	}
 	provider, _ := metadata["type"].(string)
 	if provider == "" {
 		provider = "unknown"
@@ -1229,6 +1286,11 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	attr := map[string]string{
 		"path":   path,
 		"source": path,
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if planType := codex.ExtractPlanType(metadata); planType != "" {
+			attr["plan_type"] = planType
+		}
 	}
 	auth := &coreauth.Auth{
 		ID:         authID,

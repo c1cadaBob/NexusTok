@@ -20,6 +20,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -580,6 +581,9 @@ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Aut
 	if provider == "" {
 		provider = "unknown"
 	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		metadata = codexauth.NormalizeMetadata(metadata)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat auth file: %w", err)
@@ -592,6 +596,14 @@ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Aut
 	attr := map[string]string{"path": path}
 	if email := strings.TrimSpace(valueAsString(metadata["email"])); email != "" {
 		attr["email"] = email
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if email := codexauth.ExtractEmail(metadata); email != "" {
+			attr["email"] = email
+		}
+		if planType := codexauth.ExtractPlanType(metadata); planType != "" {
+			attr["plan_type"] = planType
+		}
 	}
 	auth := &cliproxyauth.Auth{
 		ID:               rel,

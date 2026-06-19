@@ -150,6 +150,9 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	if t == "" {
 		return nil
 	}
+	if strings.EqualFold(strings.TrimSpace(t), "codex") {
+		metadata = codex.NormalizeMetadata(metadata)
+	}
 	provider := strings.ToLower(t)
 	if provider == "gemini" {
 		provider = "gemini-cli"
@@ -157,6 +160,11 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	label := provider
 	if email, _ := metadata["email"].(string); email != "" {
 		label = email
+	}
+	if provider == "codex" {
+		if email := codex.ExtractEmail(metadata); email != "" {
+			label = email
+		}
 	}
 	// Use relative path under authDir as ID to stay consistent with the file-based token store.
 	id := fullPath
@@ -237,12 +245,8 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
 	// For codex auth files, extract plan_type from the JWT id_token.
 	if provider == "codex" {
-		if idTokenRaw, ok := metadata["id_token"].(string); ok && strings.TrimSpace(idTokenRaw) != "" {
-			if claims, errParse := codex.ParseJWTToken(idTokenRaw); errParse == nil && claims != nil {
-				if pt := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); pt != "" {
-					a.Attributes["plan_type"] = pt
-				}
-			}
+		if planType := codex.ExtractPlanType(metadata); planType != "" {
+			a.Attributes["plan_type"] = planType
 		}
 	}
 	if provider == "gemini-cli" {

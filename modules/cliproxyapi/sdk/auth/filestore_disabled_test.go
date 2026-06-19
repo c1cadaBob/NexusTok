@@ -35,6 +35,13 @@ func TestExtractAccessToken(t *testing.T) {
 			"tok-nested",
 		},
 		{
+			"codex legacy token_data.access_token",
+			map[string]any{
+				"token_data": map[string]any{"access_token": "tok-token-data"},
+			},
+			"tok-token-data",
+		},
+		{
 			"top-level takes precedence over nested",
 			map[string]any{
 				"access_token": "tok-top",
@@ -76,6 +83,14 @@ func TestExtractAccessToken(t *testing.T) {
 				"token":        map[string]any{"access_token": "tok-fallback"},
 			},
 			"tok-fallback",
+		},
+		{
+			"fallback to token_data when top-level empty",
+			map[string]any{
+				"access_token": "",
+				"token_data":   map[string]any{"access_token": "tok-token-data-fallback"},
+			},
+			"tok-token-data-fallback",
 		},
 	}
 

@@ -76,3 +76,43 @@ func TestFileTokenStore_Save_DisabledPersistsFlagForTokenStorage(t *testing.T) {
 		t.Fatalf("disabled=%v, want true (raw=%s)", meta["disabled"], string(raw))
 	}
 }
+
+// TestFileTokenStore_ReadAuthFile_CodexLegacyTokenData 验证重启或文件扫描加载旧 Codex
+// token_data 文件时，会构建出执行器可直接使用的扁平元数据。
+func TestFileTokenStore_ReadAuthFile_CodexLegacyTokenData(t *testing.T) {
+	baseDir := t.TempDir()
+	path := filepath.Join(baseDir, "codex-legacy.json")
+	raw := []byte(`{
+		"type":"codex",
+		"token_data":{
+			"access_token":"legacy-access",
+			"refresh_token":"legacy-refresh",
+			"email":"legacy@example.com"
+		},
+		"plan_type":"plus"
+	}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write legacy auth file: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	auth, err := store.readAuthFile(path, baseDir)
+	if err != nil {
+		t.Fatalf("readAuthFile returned error: %v", err)
+	}
+	if auth == nil {
+		t.Fatalf("expected auth to be loaded")
+	}
+	if got, _ := auth.Metadata["access_token"].(string); got != "legacy-access" {
+		t.Fatalf("metadata access_token = %q, want legacy-access", got)
+	}
+	if got, _ := auth.Metadata["refresh_token"].(string); got != "legacy-refresh" {
+		t.Fatalf("metadata refresh_token = %q, want legacy-refresh", got)
+	}
+	if got := auth.Attributes["email"]; got != "legacy@example.com" {
+		t.Fatalf("attributes email = %q, want legacy@example.com", got)
+	}
+	if got := auth.Attributes["plan_type"]; got != "plus" {
+		t.Fatalf("attributes plan_type = %q, want plus", got)
+	}
+}

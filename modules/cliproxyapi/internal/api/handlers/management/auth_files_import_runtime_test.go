@@ -4,6 +4,7 @@ package management
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -102,5 +103,61 @@ func TestWriteAuthFile_ExistingRecordClearsImportedRuntimeState(t *testing.T) {
 	}
 	if got, _ := updated.Metadata["refresh_token"].(string); got != "fresh-token" {
 		t.Fatalf("metadata refresh_token = %q, want fresh-token", got)
+	}
+}
+
+// TestWriteAuthFile_CodexLegacyTokenDataIsFlattened 验证管理端导入旧 Codex
+// token_data 文件时，会同时归一化磁盘文件和内存认证记录。
+func TestWriteAuthFile_CodexLegacyTokenDataIsFlattened(t *testing.T) {
+	authDir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	data := []byte(`{
+		"type":"codex",
+		"token_data":{
+			"access_token":"legacy-access",
+			"refresh_token":"legacy-refresh",
+			"id_token":"legacy-id-token",
+			"email":"legacy@example.com",
+			"account_id":"acct_legacy",
+			"expired":"2030-01-01T00:00:00Z"
+		},
+		"plan_type":"plus"
+	}`)
+	if err := h.writeAuthFile(coreauth.WithSkipPersist(context.Background()), "codex-legacy.json", data); err != nil {
+		t.Fatalf("writeAuthFile returned error: %v", err)
+	}
+
+	updated, ok := manager.GetByID("codex-legacy.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected imported auth record to exist")
+	}
+	if got, _ := updated.Metadata["access_token"].(string); got != "legacy-access" {
+		t.Fatalf("metadata access_token = %q, want legacy-access", got)
+	}
+	if got, _ := updated.Metadata["refresh_token"].(string); got != "legacy-refresh" {
+		t.Fatalf("metadata refresh_token = %q, want legacy-refresh", got)
+	}
+	if got, _ := updated.Metadata["id_token"].(string); got != "legacy-id-token" {
+		t.Fatalf("metadata id_token = %q, want legacy-id-token", got)
+	}
+	if got, _ := updated.Metadata["email"].(string); got != "legacy@example.com" {
+		t.Fatalf("metadata email = %q, want legacy@example.com", got)
+	}
+	if got := updated.Attributes["plan_type"]; got != "plus" {
+		t.Fatalf("attributes plan_type = %q, want plus", got)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(authDir, "codex-legacy.json"))
+	if err != nil {
+		t.Fatalf("read normalized auth file: %v", err)
+	}
+	rebuilt, err := h.buildAuthFromFileData(filepath.Join(authDir, "codex-legacy.json"), raw)
+	if err != nil {
+		t.Fatalf("buildAuthFromFileData returned error: %v", err)
+	}
+	if got, _ := rebuilt.Metadata["access_token"].(string); got != "legacy-access" {
+		t.Fatalf("rebuilt metadata access_token = %q, want legacy-access", got)
 	}
 }

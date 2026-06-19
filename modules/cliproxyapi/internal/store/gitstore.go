@@ -21,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/plumbing/transport/http"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -478,6 +479,9 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, 
 	if provider == "" {
 		provider = "unknown"
 	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		metadata = codexauth.NormalizeMetadata(metadata)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat file: %w", err)
@@ -498,6 +502,14 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, 
 	}
 	if email, ok := metadata["email"].(string); ok && email != "" {
 		auth.Attributes["email"] = email
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if email := codexauth.ExtractEmail(metadata); email != "" {
+			auth.Attributes["email"] = email
+		}
+		if planType := codexauth.ExtractPlanType(metadata); planType != "" {
+			auth.Attributes["plan_type"] = planType
+		}
 	}
 	cliproxyauth.ApplyCustomHeadersFromMetadata(auth)
 	if disabled, ok := metadata["disabled"].(bool); ok && disabled {
