@@ -163,7 +163,7 @@ func TestFormatChannelTestFailureMessageForGlobalAccountPoolAuthUnavailable(t *t
 	require.Contains(t, message, "gpt-5.5")
 	require.Contains(t, message, "全局账号池")
 	require.Contains(t, message, "账号池组 ID：2")
-	require.Contains(t, message, "套餐/权限支持该模型")
+	require.Contains(t, message, "重新登录或刷新授权")
 	require.NotContains(t, message, "bad response status code")
 	require.NotContains(t, message, "auth_unavailable")
 }

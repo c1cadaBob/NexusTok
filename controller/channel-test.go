@@ -715,7 +715,7 @@ func formatChannelTestFailureMessage(channel *model.Channel, modelName string, e
 			groupHint = fmt.Sprintf("，账号池组 ID：%d", channel.ChannelInfo.AccountPoolGroupId)
 		}
 		return fmt.Sprintf(
-			"渠道测试失败：%s 在全局账号池中没有可用授权%s。请在账号池管理器中检查该分组是否有启用且未过期的账号，并确认账号套餐/权限支持该模型。",
+			"渠道测试失败：%s 在全局账号池中没有可用授权%s。请在账号池管理器中检查该分组是否有启用且未过期、未被标记为不可用的账号；如果账号本应支持该模型，优先考虑重新登录或刷新授权后再试。",
 			modelPart,
 			groupHint,
 		)
@@ -723,7 +723,7 @@ func formatChannelTestFailureMessage(channel *model.Channel, modelName string, e
 
 	if channel != nil && channel.IsChannelAccountPoolEnabled() {
 		return fmt.Sprintf(
-			"渠道测试失败：%s 在渠道账号池中没有可用授权。请检查账号池账号是否启用、未过期，并确认账号权限支持该模型。",
+			"渠道测试失败：%s 在渠道账号池中没有可用授权。请检查账号池账号是否启用、未过期、未被标记为不可用；如果账号本应支持该模型，优先考虑重新登录或刷新授权后再试。",
 			modelPart,
 		)
 	}
