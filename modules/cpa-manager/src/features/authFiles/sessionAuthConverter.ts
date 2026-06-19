@@ -666,6 +666,11 @@ const convertSessionToCpaAuthJson = (record: JsonRecord, now: Date): JsonRecord 
     token?.refresh_token,
     credentials?.refresh_token
   );
+  if (!refreshToken) {
+    throw new AuthJsonConversionError(
+      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
+    );
+  }
   const inputIdToken = firstNonEmptyString(
     record.idToken,
     record.id_token,

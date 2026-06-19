@@ -203,6 +203,86 @@ func TestFileSynthesizer_Synthesize_SkipsInvalidFiles(t *testing.T) {
 	}
 }
 
+func TestFileSynthesizer_Synthesize_CodexOAuthMissingRefreshTokenDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+
+	authData := map[string]any{
+		"type":          "codex",
+		"email":         "session@example.com",
+		"access_token":  "access-token",
+		"session_token": "session-token",
+	}
+	data, _ := json.Marshal(authData)
+	if err := os.WriteFile(filepath.Join(tempDir, "codex-session.json"), data, 0644); err != nil {
+		t.Fatalf("failed to write auth file: %v", err)
+	}
+
+	synth := NewFileSynthesizer()
+	ctx := &SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(auths))
+	}
+	if !auths[0].Disabled {
+		t.Fatalf("expected auth to be disabled")
+	}
+	if auths[0].Status != coreauth.StatusDisabled {
+		t.Fatalf("status = %q, want %q", auths[0].Status, coreauth.StatusDisabled)
+	}
+	if !strings.Contains(auths[0].StatusMessage, "missing refresh_token") {
+		t.Fatalf("status_message = %q, want missing refresh_token hint", auths[0].StatusMessage)
+	}
+}
+
+func TestFileSynthesizer_Synthesize_CodexOAuthWithRefreshTokenActive(t *testing.T) {
+	tempDir := t.TempDir()
+
+	authData := map[string]any{
+		"type":          "codex",
+		"email":         "session@example.com",
+		"access_token":  "access-token",
+		"refresh_token": "refresh-token",
+	}
+	data, _ := json.Marshal(authData)
+	if err := os.WriteFile(filepath.Join(tempDir, "codex-session.json"), data, 0644); err != nil {
+		t.Fatalf("failed to write auth file: %v", err)
+	}
+
+	synth := NewFileSynthesizer()
+	ctx := &SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(auths))
+	}
+	if auths[0].Disabled {
+		t.Fatalf("expected auth to remain enabled")
+	}
+	if auths[0].Status != coreauth.StatusActive {
+		t.Fatalf("status = %q, want %q", auths[0].Status, coreauth.StatusActive)
+	}
+	if auths[0].StatusMessage != "" {
+		t.Fatalf("status_message = %q, want empty", auths[0].StatusMessage)
+	}
+}
+
 func TestFileSynthesizer_Synthesize_SkipsDirectories(t *testing.T) {
 	tempDir := t.TempDir()
 

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -151,6 +152,35 @@ func TestUploadAuthFile_BatchMultipart_InvalidJSONDoesNotOverwriteExistingFile(t
 	}
 	if string(betaData) != files[1].content {
 		t.Fatalf("expected beta auth file content %q, got %q", files[1].content, string(betaData))
+	}
+}
+
+// TestUploadAuthFile_RawCodexOAuthMissingRefreshTokenReturnsBadRequest 验证管理 API
+// 对缺少 refresh_token 的 Codex OAuth 文件返回 400，并且不会落盘。
+func TestUploadAuthFile_RawCodexOAuthMissingRefreshTokenReturnsBadRequest(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	authDir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	body := strings.NewReader(`{"type":"codex","email":"session@example.com","access_token":"access-token","session_token":"session-token"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v0/management/auth-files?name=codex-session.json", body)
+	ctx.Request = req
+
+	h.UploadAuthFile(ctx)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d with body %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing refresh_token") {
+		t.Fatalf("expected missing refresh_token message, got %s", rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(authDir, "codex-session.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected rejected file not to be written, stat err: %v", err)
 	}
 }
 

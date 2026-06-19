@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  convertAuthJsonInput,
+  convertAuthJsonInput as convertAuthJsonInputRaw,
   getDefaultSessionAuthFileName,
 } from '@/features/authFiles/sessionAuthConverter';
 
@@ -17,6 +17,34 @@ const buildSignedJwt = (
   header: Record<string, unknown> = { alg: 'HS256', typ: 'JWT' },
   signature = 'signature'
 ) => `${encodeBase64UrlJson(header)}.${encodeBase64UrlJson(payload)}.${signature}`;
+
+const withDefaultRefreshToken = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withDefaultRefreshToken);
+  if (!value || typeof value !== 'object') return value;
+
+  const record = value as Record<string, unknown>;
+  const next = Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, withDefaultRefreshToken(item)])
+  ) as Record<string, unknown>;
+  const hasAccessToken =
+    (typeof record.accessToken === 'string' && record.accessToken.trim() !== '') ||
+    (typeof record.access_token === 'string' && record.access_token.trim() !== '');
+  const hasRefreshToken =
+    (typeof record.refreshToken === 'string' && record.refreshToken.trim() !== '') ||
+    (typeof record.refresh_token === 'string' && record.refresh_token.trim() !== '');
+  if (hasAccessToken && !hasRefreshToken) {
+    next.refreshToken = 'refresh-token';
+  }
+  return next;
+};
+
+const sessionJson = (value: unknown) => JSON.stringify(withDefaultRefreshToken(value));
+
+const convertAuthJsonInput = (
+  text: string,
+  type: Parameters<typeof convertAuthJsonInputRaw>[1],
+  now?: Parameters<typeof convertAuthJsonInputRaw>[2]
+) => convertAuthJsonInputRaw(type === 'session' ? sessionJson(JSON.parse(text)) : text, type, now);
 
 describe('convertAuthJsonInput', () => {
   it('keeps a CPA auth JSON object unchanged', () => {
@@ -62,10 +90,27 @@ describe('convertAuthJsonInput', () => {
       plan_type: 'pro',
       chatgpt_plan_type: 'pro',
       access_token: accessToken,
+      refresh_token: 'refresh-token',
       session_token: 'session-token',
       last_refresh: '2026-05-11T08:00:00.000Z',
       expired: '2027-01-15T08:00:00.000Z',
     });
+  });
+
+  it('rejects ChatGPT session JSON without refreshToken', () => {
+    expect(() =>
+      convertAuthJsonInputRaw(
+        JSON.stringify({
+          user: { email: 'session@example.com' },
+          account: { id: 'session-account' },
+          accessToken: 'access-token',
+          sessionToken: 'session-token',
+        }),
+        'session'
+      )
+    ).toThrow(
+      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
+    );
   });
 
   it('omits id_token instead of synthesizing an unsigned token when idToken is missing', () => {
@@ -1002,22 +1047,38 @@ describe('convertAuthJsonInput', () => {
     });
   });
 
-  it('omits optional token fields when their values are not strings', () => {
+  it('omits optional sessionToken and idToken fields when their values are not strings', () => {
     const result = convertAuthJsonInput(
       JSON.stringify({
         user: { email: 'session@example.com' },
         account: { id: 'session-account' },
         accessToken: 'access-token',
         sessionToken: true,
-        refreshToken: 123,
+        refreshToken: 'refresh-token',
         idToken: false,
       }),
       'session'
     );
 
     expect(result).not.toHaveProperty('session_token');
-    expect(result).not.toHaveProperty('refresh_token');
     expect(result).not.toHaveProperty('id_token');
+    expect(result).toHaveProperty('refresh_token', 'refresh-token');
+  });
+
+  it('rejects a session object with a non-string refresh token', () => {
+    expect(() =>
+      convertAuthJsonInputRaw(
+        JSON.stringify({
+          user: { email: 'session@example.com' },
+          account: { id: 'session-account' },
+          accessToken: 'access-token',
+          refreshToken: 123,
+        }),
+        'session'
+      )
+    ).toThrow(
+      'ChatGPT session JSON is missing refreshToken; please export a full Codex OAuth credential or sign in via Codex OAuth'
+    );
   });
 
   it('preserves optional token fields when string values are present', () => {

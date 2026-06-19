@@ -196,17 +196,27 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	if disabled {
 		status = coreauth.StatusDisabled
 	}
+	statusMessage := ""
+	if provider == "codex" && codex.MissingRefreshTokenForOAuth(metadata) {
+		// 旧的 ChatGPT session 导出文件可能只有 access_token/session_token，没有 refresh_token。
+		// 这类 OAuth Bearer 凭据无法自动刷新，重启扫描时必须从调度器中移除，同时在管理页保留
+		// 明确原因，避免账号看起来 active 但第一次请求就 Unauthorized。
+		disabled = true
+		status = coreauth.StatusDisabled
+		statusMessage = codex.MissingRefreshTokenMessage
+	}
 
 	// Read per-account excluded models from the OAuth JSON file.
 	perAccountExcluded := extractExcludedModelsFromMetadata(metadata)
 
 	a := &coreauth.Auth{
-		ID:       id,
-		Provider: provider,
-		Label:    label,
-		Prefix:   prefix,
-		Status:   status,
-		Disabled: disabled,
+		ID:            id,
+		Provider:      provider,
+		Label:         label,
+		Prefix:        prefix,
+		Status:        status,
+		StatusMessage: statusMessage,
+		Disabled:      disabled,
 		Attributes: map[string]string{
 			"source": fullPath,
 			"path":   fullPath,

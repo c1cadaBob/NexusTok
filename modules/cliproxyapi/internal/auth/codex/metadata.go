@@ -9,6 +9,11 @@ package codex
 
 import "strings"
 
+const (
+	// MissingRefreshTokenMessage 是导入/加载 Codex OAuth 凭据时缺少刷新令牌的统一提示。
+	MissingRefreshTokenMessage = "codex oauth auth file is missing refresh_token; export a full Codex OAuth credential or sign in via Codex OAuth"
+)
+
 var codexTokenContainers = []string{"token_data", "tokenData", "TokenData", "token", "Token"}
 
 // NormalizeMetadata 规范化 Codex 认证文件元数据。
@@ -51,6 +56,15 @@ func ExtractAccessToken(metadata map[string]any) string {
 // ExtractRefreshToken 从元数据中提取 Codex 的刷新令牌。
 func ExtractRefreshToken(metadata map[string]any) string {
 	return extractCodexString(metadata, "refresh_token", []string{"refreshToken"}, codexTokenContainers, "refresh_token", "refreshToken")
+}
+
+// MissingRefreshTokenForOAuth 判断 Codex OAuth/Bearer 类凭据是否缺少 refresh_token。
+//
+// 带 access_token 的 Codex 文件表示短期 OAuth Bearer 凭据；如果没有 refresh_token，
+// 运行时既无法在 access_token 过期前刷新，也无法在上游 Unauthorized 后恢复。
+// 纯 codex-api-key 文件不包含 access_token，因此不受该规则限制。
+func MissingRefreshTokenForOAuth(metadata map[string]any) bool {
+	return ExtractAccessToken(metadata) != "" && ExtractRefreshToken(metadata) == ""
 }
 
 // ExtractIDToken 从元数据中提取 Codex 的 ID 令牌。

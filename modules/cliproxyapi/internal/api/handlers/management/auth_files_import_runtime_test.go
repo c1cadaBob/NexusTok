@@ -4,6 +4,7 @@ package management
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,6 +104,51 @@ func TestWriteAuthFile_ExistingRecordClearsImportedRuntimeState(t *testing.T) {
 	}
 	if got, _ := updated.Metadata["refresh_token"].(string); got != "fresh-token" {
 		t.Fatalf("metadata refresh_token = %q, want fresh-token", got)
+	}
+}
+
+// TestWriteAuthFile_CodexOAuthMissingRefreshTokenIsRejected 验证导入阶段会拒绝
+// 只有 access_token/session_token、没有 refresh_token 的 Codex OAuth 文件。
+// 这类文件通常来自 ChatGPT session 导出，无法自动刷新，首次真实请求上游
+// Unauthorized 后也没有可恢复路径，因此不能写入磁盘或注册成看似可用的账号。
+func TestWriteAuthFile_CodexOAuthMissingRefreshTokenIsRejected(t *testing.T) {
+	authDir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	data := []byte(`{"type":"codex","email":"session@example.com","access_token":"access-token","session_token":"session-token","refresh_token":""}`)
+	err := h.writeAuthFile(coreauth.WithSkipPersist(context.Background()), "codex-session.json", data)
+	if !errors.Is(err, errCodexOAuthRefreshTokenRequired) {
+		t.Fatalf("writeAuthFile error = %v, want errCodexOAuthRefreshTokenRequired", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(authDir, "codex-session.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected rejected auth file not to be written, stat err: %v", statErr)
+	}
+	if _, ok := manager.GetByID("codex-session.json"); ok {
+		t.Fatalf("expected rejected auth not to be registered")
+	}
+}
+
+// TestWriteAuthFile_CodexAPIKeyAuthDoesNotRequireRefreshToken 验证 API key 形态的
+// Codex 文件不会被 OAuth refresh_token 规则误伤。
+func TestWriteAuthFile_CodexAPIKeyAuthDoesNotRequireRefreshToken(t *testing.T) {
+	authDir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	data := []byte(`{"type":"codex","api_key":"codex-api-key","base_url":"https://example.test"}`)
+	if err := h.writeAuthFile(coreauth.WithSkipPersist(context.Background()), "codex-api-key.json", data); err != nil {
+		t.Fatalf("writeAuthFile returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(authDir, "codex-api-key.json")); err != nil {
+		t.Fatalf("expected API key auth file to be written: %v", err)
+	}
+	updated, ok := manager.GetByID("codex-api-key.json")
+	if !ok || updated == nil {
+		t.Fatalf("expected API key auth record to exist")
+	}
+	if got, _ := updated.Metadata["api_key"].(string); got != "codex-api-key" {
+		t.Fatalf("metadata api_key = %q, want codex-api-key", got)
 	}
 }
 
