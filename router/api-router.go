@@ -585,6 +585,8 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.GET("/missing", controller.GetMissingModels)                  // 获取缺失模型
 			modelsRoute.GET("/", controller.GetAllModelsMeta)                         // 获取所有模型元数据
 			modelsRoute.GET("/search", controller.SearchModelsMeta)                   // 搜索模型元数据
+			modelsRoute.GET("/:id/pricing", controller.GetModelPricingConfig)         // 获取单个模型定价配置
+			modelsRoute.PUT("/:id/pricing", controller.UpdateModelPricingConfig)      // 更新单个模型定价配置
 			modelsRoute.GET("/:id", controller.GetModelMeta)                          // 获取单个模型元数据
 			modelsRoute.POST("/", controller.CreateModelMeta)                         // 创建模型元数据
 			modelsRoute.PUT("/", controller.UpdateModelMeta)                          // 更新模型元数据

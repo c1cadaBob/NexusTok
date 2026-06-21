@@ -18,7 +18,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/c1cada/NexusTok/model"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // GetAllModelsMeta 获取模型列表（分页）
@@ -156,6 +156,16 @@ func UpdateModelMeta(c *gin.Context) {
 		return
 	}
 
+	var oldModelName string
+	if !statusOnly {
+		var existing model.Model
+		if err := model.DB.Select("model_name").First(&existing, m.Id).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		oldModelName = existing.ModelName
+	}
+
 	if statusOnly {
 		// 只更新状态，防止误清空其他字段
 		if err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error; err != nil {
@@ -172,7 +182,13 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 
-		if err := m.Update(); err != nil {
+		err := model.DB.Transaction(func(tx *gorm.DB) error {
+			if err := m.UpdateWithDB(tx); err != nil {
+				return err
+			}
+			return model.RenameModelPricingConfigWithDB(tx, oldModelName, m.ModelName)
+		})
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
@@ -237,7 +253,7 @@ func enrichModels(models []*model.Model) {
 			mm := models[idx]
 			if mm.Endpoints == "" {
 				eps := model.GetModelSupportEndpointTypes(mm.ModelName)
-				if b, err := json.Marshal(eps); err == nil {
+				if b, err := common.Marshal(eps); err == nil {
 					mm.Endpoints = string(b)
 				}
 			}
@@ -327,7 +343,7 @@ func enrichModels(models []*model.Model) {
 			for et := range es {
 				eps = append(eps, et)
 			}
-			if b, err := json.Marshal(eps); err == nil {
+			if b, err := common.Marshal(eps); err == nil {
 				mm.Endpoints = string(b)
 			}
 		}
@@ -372,4 +388,50 @@ func enrichModels(models []*model.Model) {
 		mm.MatchedModels = names
 		mm.MatchedCount = len(names)
 	}
+}
+
+// GetModelPricingConfig 获取单个模型的聚合定价配置。
+// 响应包含实际生效值和该模型名的直接覆盖值，方便前端区分继承与显式配置。
+func GetModelPricingConfig(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	config, err := model.GetModelPricingConfigByID(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, config)
+}
+
+// UpdateModelPricingConfig 保存单个模型的聚合定价配置。
+// 该接口只负责模型级核心定价，不处理工具调用等高级全局价格。
+func UpdateModelPricingConfig(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	var m model.Model
+	if err := model.DB.First(&m, id).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	var req model.ModelPricingUpdateRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	if err := model.SaveModelPricingConfig(m.ModelName, req); err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	common.ApiSuccess(c, model.BuildModelPricingConfig(m.Id, m.ModelName))
 }

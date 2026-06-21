@@ -129,6 +129,40 @@ export interface GetModelResponse {
   data?: Model
 }
 
+export type ModelPricingMode = 'ratio' | 'fixed' | 'tiered_expr'
+
+export interface ModelPricingValues {
+  model_price?: number
+  model_ratio?: number
+  input_price_per_million?: number
+  output_price_per_million?: number
+  completion_ratio?: number
+  cache_ratio?: number
+  create_cache_ratio?: number
+  image_ratio?: number
+  audio_ratio?: number
+  audio_completion_ratio?: number
+  billing_expr?: string
+}
+
+export interface ModelPricingConfig {
+  model_id: number
+  model_name: string
+  billing_mode: ModelPricingMode
+  effective: ModelPricingValues
+  override: ModelPricingValues
+}
+
+export interface GetModelPricingResponse {
+  success: boolean
+  message?: string
+  data?: ModelPricingConfig
+}
+
+export type UpdateModelPricingRequest = Partial<ModelPricingValues> & {
+  billing_mode: ModelPricingMode
+}
+
 /**
  * Get vendors response
  */

@@ -115,9 +115,19 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 // 返回值：
 //   - error: 更新失败时返回错误
 func (mi *Model) Update() error {
+	return mi.UpdateWithDB(DB)
+}
+
+// UpdateWithDB 使用指定数据库上下文更新模型元数据记录。
+// 该方法保留与 Update 相同的字段集合，并允许调用方传入事务对象，
+// 用于和模型定价键迁移等关联操作保持一致提交。
+func (mi *Model) UpdateWithDB(db *gorm.DB) error {
 	mi.UpdatedTime = common.GetTimestamp()
+	if db == nil {
+		db = DB
+	}
 	// 使用 Select 强制更新所有字段，包括零值
-	return DB.Model(&Model{}).Where("id = ?", mi.Id).
+	return db.Model(&Model{}).Where("id = ?", mi.Id).
 		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").
 		Updates(mi).Error
 }

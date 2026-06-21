@@ -20,6 +20,8 @@ import { memo, useCallback, useState } from 'react'
 import { type UseFormReturn } from 'react-hook-form'
 import { Code2, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { Link } from '@tanstack/react-router'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -82,6 +84,18 @@ export const ModelRatioForm = memo(function ModelRatioForm({
 
   return (
     <div className='space-y-6'>
+      <Alert>
+        <AlertTitle>{t('Advanced bulk pricing')}</AlertTitle>
+        <AlertDescription>
+          {t(
+            'Use this page for batch pricing changes. For a single model, edit pricing from the model management page.'
+          )}{' '}
+          <Link to='/models' className='underline underline-offset-4'>
+            {t('Open model management')}
+          </Link>
+        </AlertDescription>
+      </Alert>
+
       <div className='flex justify-end'>
         <Button variant='outline' size='sm' onClick={toggleEditMode}>
           {editMode === 'visual' ? (

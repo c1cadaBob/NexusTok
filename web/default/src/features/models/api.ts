@@ -35,6 +35,8 @@ import type {
   SyncOverwritePayload,
   DeploymentSettingsResponse,
   ListDeploymentsResponse,
+  GetModelPricingResponse,
+  UpdateModelPricingRequest,
 } from './types'
 
 // ============================================================================
@@ -86,6 +88,27 @@ export async function updateModel(
   data: Partial<Model> & { id: number }
 ): Promise<{ success: boolean; message?: string; data?: Model }> {
   const res = await api.put('/api/models/', data)
+  return res.data
+}
+
+/**
+ * 获取模型级定价配置
+ */
+export async function getModelPricing(
+  id: number
+): Promise<GetModelPricingResponse> {
+  const res = await api.get(`/api/models/${id}/pricing`)
+  return res.data
+}
+
+/**
+ * 更新模型级定价配置
+ */
+export async function updateModelPricing(
+  id: number,
+  data: UpdateModelPricingRequest
+): Promise<GetModelPricingResponse> {
+  const res = await api.put(`/api/models/${id}/pricing`, data)
   return res.data
 }
 
