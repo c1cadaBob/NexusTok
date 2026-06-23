@@ -56,8 +56,9 @@ export function PricingSettings() {
       <div className='min-h-0 flex-1 px-4 pt-6 pb-4'>
         <div className='h-full w-full overflow-y-auto scroll-smooth pe-4 pb-12'>
           <RatioSettingsCard
-            titleKey='Model Pricing Groups'
-            descriptionKey='Configure model, caching, and group ratios used for billing'
+            titleKey='Group & Tool Pricing'
+            descriptionKey='Configure group ratios and tool prices used for billing'
+            visibleTabs={['groups', 'tool-prices']}
             modelDefaults={getModelDefaults(settings)}
             groupDefaults={getGroupDefaults(settings)}
             toolPricesDefault={settings['tool_price_setting.prices']}

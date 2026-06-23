@@ -129,10 +129,8 @@ export function SidebarModulesSection({
         description: t('Manage official-account pools and CLIProxyAPI runtime.'),
       },
       pricing: {
-        title: t('Model Pricing Groups'),
-        description: t(
-          'Configure model, caching, and group ratios used for billing'
-        ),
+        title: t('Group & Tool Pricing'),
+        description: t('Configure group ratios and tool prices used for billing'),
       },
       models: {
         title: t('Models'),
