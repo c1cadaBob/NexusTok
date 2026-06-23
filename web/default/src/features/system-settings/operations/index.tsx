@@ -105,7 +105,7 @@ export function OperationsSettings() {
 
   return (
     <div className='flex h-full w-full flex-1 flex-col'>
-      <div className='faded-bottom h-full w-full overflow-y-auto scroll-smooth pe-4 pb-12'>
+      <div className='h-full w-full overflow-y-auto scroll-smooth pe-4 pb-12'>
         <div className='space-y-4'>{sectionContent}</div>
       </div>
     </div>
