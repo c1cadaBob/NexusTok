@@ -2342,7 +2342,7 @@
     "渠道的高级配置选项": "Advanced channel configuration options",
     "渠道管理": "Channel Management",
     "账号池管理": "Account Pool Management",
-    "CLIProxyAPI 账号池运行时": "CLIProxyAPI account-pool runtime",
+    "原生账号池与凭证调度": "Native account pools and credential scheduling",
     "渠道行为": "Channel Behavior",
     "渠道额外设置": "Channel extra settings",
     "源地址": "Source address",

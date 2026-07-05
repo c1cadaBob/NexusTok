@@ -17,92 +17,202 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { THEME_WOOL_PAPER, useActualTheme, useTheme } from '../../context/Theme';
+import { Button, Card, Space, Table, Tag, Typography } from '@douyinfe/semi-ui';
+import { IconRefresh } from '@douyinfe/semi-icons';
+import { API, showError } from '../../helpers';
 
-const ACCOUNT_POOL_MANAGER_URL = '/account-pool/manager/?embeddedFrame=true';
-const ACCOUNT_POOL_PREFERENCES_EVENT = 'nexustok:account-pool-preferences';
-const ACCOUNT_POOL_READY_EVENT = 'nexustok:account-pool-ready';
-const PREFERENCE_SYNC_RETRY_DELAYS = [0, 100, 300, 700, 1500, 3000, 5000];
+const { Text, Title } = Typography;
+
+const PAGE_SIZE = 20;
+
+const normalizeStats = (stats = {}) => ({
+  total: Number(stats.total || 0),
+  enabled: Number(stats.enabled || 0),
+  disabled: Number(stats.disabled || 0),
+  cooldown: Number(stats.cooldown || 0),
+});
+
+const formatTime = (value) => {
+  const timestamp = Number(value || 0);
+  if (!timestamp) return '-';
+  return new Date(timestamp * 1000).toLocaleString();
+};
 
 const AccountPool = () => {
-  const { i18n, t } = useTranslation();
-  const iframeRef = useRef(null);
-  const theme = useTheme();
-  const actualTheme = useActualTheme();
+  const { t } = useTranslation();
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const syncPreferencesToFrame = useCallback(() => {
-    const target = iframeRef.current?.contentWindow;
-    if (!target) return;
+  const fetchGroups = useCallback(
+    async (nextPage = page) => {
+      setLoading(true);
+      try {
+        const res = await API.get('/api/account-pool/groups', {
+          disableDuplicate: true,
+          params: { p: nextPage, page_size: PAGE_SIZE },
+          skipErrorHandler: true,
+        });
+        const payload = res.data?.data || {};
+        setGroups(Array.isArray(payload.items) ? payload.items : []);
+        setPage(Number(payload.page || nextPage));
+        setTotal(Number(payload.total || 0));
+      } catch (error) {
+        showError(error);
+        setGroups([]);
+        setTotal(0);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page],
+  );
 
-    target.postMessage(
+  useEffect(() => {
+    fetchGroups(1);
+    // 账号池页面首次进入时只加载第一页；翻页由 Table 的 onPageChange 主动触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const summary = useMemo(
+    () =>
+      groups.reduce(
+        (acc, group) => {
+          const stats = normalizeStats(group?.stats);
+          acc.total += stats.total;
+          acc.enabled += stats.enabled;
+          acc.disabled += stats.disabled;
+          acc.cooldown += stats.cooldown;
+          return acc;
+        },
+        { total: 0, enabled: 0, disabled: 0, cooldown: 0 },
+      ),
+    [groups],
+  );
+
+  const columns = useMemo(
+    () => [
       {
-        type: ACCOUNT_POOL_PREFERENCES_EVENT,
-        language: i18n.language,
-        lang: i18n.language,
-        resolvedTheme: actualTheme,
-        themeMode: actualTheme,
-        themePreset: theme === THEME_WOOL_PAPER ? THEME_WOOL_PAPER : 'default',
+        title: t('名称'),
+        dataIndex: 'name',
+        render: (name, record) => (
+          <Space vertical spacing={2} align='start'>
+            <Text strong>{name || '-'}</Text>
+            <Space spacing={4}>
+              <Tag color='green'>native</Tag>
+              <Text type='tertiary' size='small'>
+                {record.platform || '-'} / {record.auth_type || '-'}
+              </Text>
+            </Space>
+          </Space>
+        ),
       },
-      window.location.origin,
-    );
-  }, [actualTheme, i18n.language, theme]);
-
-  const schedulePreferenceSync = useCallback(() => {
-    const timers = PREFERENCE_SYNC_RETRY_DELAYS.map((delay) =>
-      window.setTimeout(syncPreferencesToFrame, delay),
-    );
-
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [syncPreferencesToFrame]);
-
-  useEffect(() => {
-    return schedulePreferenceSync();
-  }, [schedulePreferenceSync]);
-
-  useEffect(() => {
-    const handleLanguageChanged = () => schedulePreferenceSync();
-    i18n.on('languageChanged', handleLanguageChanged);
-    return () => i18n.off('languageChanged', handleLanguageChanged);
-  }, [i18n, schedulePreferenceSync]);
-
-  useEffect(() => {
-    const handleFrameMessage = (event) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type !== ACCOUNT_POOL_READY_EVENT) return;
-      schedulePreferenceSync();
-    };
-
-    window.addEventListener('message', handleFrameMessage);
-    return () => window.removeEventListener('message', handleFrameMessage);
-  }, [schedulePreferenceSync]);
+      {
+        title: t('账号池策略'),
+        dataIndex: 'strategy',
+        render: (strategy) => strategy || '-',
+      },
+      {
+        title: t('模型'),
+        dataIndex: 'models',
+        render: (models) => models || '-',
+      },
+      {
+        title: t('状态'),
+        dataIndex: 'status',
+        render: (status) =>
+          Number(status) === 1 ? (
+            <Tag color='green'>{t('启用')}</Tag>
+          ) : (
+            <Tag color='red'>{t('禁用')}</Tag>
+          ),
+      },
+      {
+        title: t('总数'),
+        dataIndex: 'stats',
+        render: (stats) => {
+          const normalized = normalizeStats(stats);
+          return (
+            <Space spacing={6} wrap>
+              <Tag>{normalized.total}</Tag>
+              <Tag color='green'>
+                {t('启用')} {normalized.enabled}
+              </Tag>
+              <Tag color='red'>
+                {t('禁用')} {normalized.disabled}
+              </Tag>
+              <Tag color='orange'>
+                {t('冷却中')} {normalized.cooldown}
+              </Tag>
+            </Space>
+          );
+        },
+      },
+      {
+        title: t('更新时间'),
+        dataIndex: 'updated_time',
+        render: formatTime,
+      },
+    ],
+    [t],
+  );
 
   return (
-    <div
-      style={{
-        height: 'calc(100vh - 88px)',
-        marginTop: 40,
-        minHeight: 0,
-        overflow: 'hidden',
-        width: '100%',
-      }}
-    >
-      <iframe
-        ref={iframeRef}
-        title={t('账号池管理')}
-        src={ACCOUNT_POOL_MANAGER_URL}
-        allow='clipboard-read; clipboard-write'
-        onLoad={schedulePreferenceSync}
-        style={{
-          width: '100%',
-          height: '100%',
-          border: 0,
-          display: 'block',
-          background: 'var(--semi-color-bg-0)',
-        }}
-      />
+    <div style={{ padding: '32px 24px 40px' }}>
+      <Card
+        bordered={false}
+        bodyStyle={{ padding: 24 }}
+        headerStyle={{ padding: '22px 24px 0' }}
+        title={
+          <Space vertical spacing={8} align='start'>
+            <Title heading={4} style={{ margin: 0 }}>
+              {t('账号池管理')}
+            </Title>
+            <Space spacing={8} wrap>
+              <Tag color='blue'>
+                {t('总数')} {summary.total}
+              </Tag>
+              <Tag color='green'>
+                {t('启用')} {summary.enabled}
+              </Tag>
+              <Tag color='red'>
+                {t('禁用')} {summary.disabled}
+              </Tag>
+              <Tag color='orange'>
+                {t('冷却中')} {summary.cooldown}
+              </Tag>
+            </Space>
+          </Space>
+        }
+        headerExtraContent={
+          <Button
+            icon={<IconRefresh />}
+            loading={loading}
+            onClick={() => fetchGroups(page)}
+            theme='borderless'
+          >
+            {t('刷新')}
+          </Button>
+        }
+      >
+        <Table
+          columns={columns}
+          dataSource={groups}
+          empty={t('暂无数据')}
+          loading={loading}
+          pagination={{
+            currentPage: page,
+            pageSize: PAGE_SIZE,
+            total,
+            showSizeChanger: false,
+            onPageChange: (nextPage) => fetchGroups(nextPage),
+          }}
+          rowKey='id'
+        />
+      </Card>
     </div>
   );
 };

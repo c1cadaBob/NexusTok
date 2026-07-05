@@ -610,12 +610,12 @@ const EditChannelModal = (props) => {
 
   const formatAccountPoolGroupOption = (group) => {
     const stats = group?.stats || {};
-    const sourceLabel = group?.source === 'cliproxyapi' ? 'CPAMC' : group?.platform;
+    const sourceLabel = group?.platform || '-';
     const total = Number(stats.total || 0);
     const enabled = Number(stats.enabled || 0);
     return {
       value: Number(group.id),
-      label: `${group.name} · ${sourceLabel || '-'} / ${group.auth_type || '-'} · ${enabled}/${total}`,
+      label: `${group.name} · ${sourceLabel} / ${group.auth_type || '-'} · ${enabled}/${total}`,
     };
   };
 

@@ -298,7 +298,7 @@ const NotificationSettings = ({
         {
           key: 'account_pool',
           title: t('账号池管理'),
-          description: t('CLIProxyAPI 账号池运行时'),
+          description: t('原生账号池与凭证调度'),
         },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
