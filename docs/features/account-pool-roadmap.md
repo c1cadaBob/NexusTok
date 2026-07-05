@@ -6,6 +6,16 @@
 
 更新时间：2026-07-05
 
+## 原生账号池唯一目标
+
+项目已弃用 CPAMC/CLIProxyAPI/Sidecar 账号池路径。后续账号池功能只围绕 NexusTok 原生能力完善：
+
+1. 账号池组、账号、认证文件、调度状态都由 NexusTok 主服务和主数据库维护。
+2. 渠道账号池模式只应绑定原生 `AccountPoolGroup`，并通过本地 `PoolAccount` 完成选号和凭证注入。
+3. Relay 热路径不得依赖 CPAMC/CLIProxyAPI 的外部分组、内部管理 key 或 sidecar 转发。
+4. 既有 CPAMC/CLIProxyAPI 兼容代码属于待清理遗留路径，不能作为新增功能、校验逻辑或前端选项的依据。
+5. 文档、测试和页面文案应统一表达“账号池 = 原生账号池”，避免继续引导用户配置外部 sidecar。
+
 ## 总目标
 
 账号池不是“能添加账号”的页面功能，而是一套可管理、可调度、可恢复、可观测、可扩展的凭证调度系统。
@@ -200,9 +210,9 @@
 
 每次继续实现时，先检查这些点：
 
-1. `controller/channel.go` 是否允许渠道绑定原生账号池组和兼容 CPAMC 组。
-2. `controller/account_pool.go` 的分组选项是否返回可用于渠道配置的账号池组。
-3. `middleware/distributor.go` 是否在 `global_account_pool` 模式下正确调用 `SelectPoolAccount`。
+1. `controller/channel.go` 是否允许渠道绑定原生账号池组，并移除 CPAMC/CLIProxyAPI 来源限制。
+2. `controller/account_pool.go` 的分组选项是否返回原生可调度账号池组。
+3. `middleware/distributor.go` 是否在账号池模式下正确调用本地 `SelectPoolAccount`，且不走 sidecar 转发。
 4. `service/account_pool_select.go` 是否过滤冷却、禁用、不可调度、模型不匹配、用户组不匹配和超并发账号。
 5. `service/account_pool_error.go` 是否在失败时排除当前账号、记录失败并设置冷却。
 6. `service/account_pool_quota.go` 是否在成功结算后记录使用量。

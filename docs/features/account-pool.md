@@ -2,12 +2,9 @@
 
 账号池管理共享的上游账号凭据，支持多个渠道引用同一池中的账号，实现凭据共享、负载均衡、并发控制、自动刷新和认证文件级维护。
 
-当前项目同时保留两条路径：
+当前项目只使用 **原生账号池**：由 NexusTok 主服务直接管理 `AccountPoolGroup`、`PoolAccount` 和 `AccountPoolAuthFile`，数据保存在主数据库中，Relay 热路径直接从本地账号池选择账号。
 
-- **原生账号池**：由 NexusTok 主服务直接管理 `AccountPoolGroup`、`PoolAccount` 和 `AccountPoolAuthFile`，数据保存在主数据库中，Relay 热路径直接从本地账号池选择账号。
-- **CLIProxyAPI / CPA-Manager 兼容路径**：用于继续接入旧的 Sidecar 管理器和请求监控服务，适合迁移过渡或仍依赖外部管理器能力的部署。
-
-新功能优先围绕原生账号池演进。认证文件导入后会生成可调度的 `PoolAccount`，因此渠道只需要绑定账号池分组即可使用导入的官方账号或 API Key。
+CPAMC/CLIProxyAPI/Sidecar 账号池路径已弃用，后续不再作为渠道配置、调度、测试或文档目标。认证文件导入后会生成可调度的 `PoolAccount`，因此渠道只需要绑定原生账号池分组即可使用导入的官方账号或 API Key。
 
 ## 架构概览
 
@@ -46,7 +43,7 @@
 | 来源 | 说明 |
 |------|------|
 | `native` | NexusTok 主服务原生维护的分组 |
-| `cliproxyapi` | 从 CLIProxyAPI Sidecar 同步或引用的兼容分组 |
+| `cliproxyapi` | 旧 Sidecar 兼容来源，已弃用，后续应迁移为 `native` |
 
 ### 池账号（PoolAccount）
 
@@ -423,7 +420,7 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 4. 账号凭据会被转换为现有 provider adaptor 可识别的 channel key 或 OAuth 凭据。
 5. 调用完成后释放并发槽位，并在结算阶段记录账号池维度用量。
 
-如果渠道引用的是 `cliproxyapi` 来源分组，`global_account_pool` 兼容模式会把请求转发到 CLIProxyAPI Sidecar，并通过内部头指定外部分组。原生 `native` 分组不依赖 Sidecar。
+渠道账号池模式只应引用原生 `native` 分组。旧的 `cliproxyapi` 来源分组不再作为新渠道配置目标，应迁移为原生认证文件和原生池账号。
 
 ## 使用流程
 
@@ -443,14 +440,15 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 3. 在渠道配置中引用账号池分组。
 4. 后续可按账号刷新凭据、重置运行时状态、调整状态或删除账号。
 
-### 兼容旧 Sidecar
+### 旧 Sidecar 迁移
 
-1. 保持 `ACCOUNT_POOL_CLI_PROXY_URL`、`ACCOUNT_POOL_CLI_PROXY_MANAGEMENT_KEY` 和 `ACCOUNT_POOL_CLI_PROXY_RELAY_KEY` 配置可用。
-2. 通过 CPA-Manager 或同步任务维护 CLIProxyAPI 分组。
-3. NexusTok 中引用 `cliproxyapi` 来源分组。
-4. Relay 通过 Sidecar 完成实际账号选择和请求转发。
+CPAMC/CLIProxyAPI/Sidecar 路径已弃用。历史部署如果仍存在 `cliproxyapi` 来源分组，应按以下方式迁移：
 
-该路径用于兼容历史部署。新账号建议优先落到原生账号池，便于后续统一管理、审计和调度。
+1. 导出或整理旧系统中的账号凭据。
+2. 通过原生认证文件导入入口写入 NexusTok。
+3. 生成原生 `PoolAccount` 并归属到原生 `AccountPoolGroup`。
+4. 修改渠道配置，绑定新的原生账号池分组。
+5. 确认 Relay 调用不再依赖 Sidecar 地址、管理 key 或外部分组头。
 
 ## 安全与迁移注意事项
 
@@ -459,7 +457,7 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 - 编辑认证文件级 `account_groups`、`models`、`proxy`、`base_url`、`priority`、`weight`、`max_concurrency`、`status` 会同步到关联池账号。
 - 认证文件删除默认会删除关联池账号，避免残留可调度凭据；需要保留账号时显式传 `delete_account=false`。
 - 从外部账号管理器迁移时，优先确认 provider、认证类型、代理和分组语义是否能一一映射。Sub2api 批量导出包可以直接导入；其它来源的批量格式如无法识别，应先拆分为单个认证对象。
-- 单容器部署不启动 CLIProxyAPI Sidecar，但原生 `native` 账号池和认证文件 API 仍由主服务提供。只有继续使用 `cliproxyapi` 兼容路径时才需要 Sidecar。
+- 单容器部署不需要启动 CLIProxyAPI Sidecar；账号池和认证文件 API 均由 NexusTok 主服务提供。
 
 ## 关键文件
 
@@ -470,7 +468,7 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 | `service/account_pool_select.go` | 账号选择与负载均衡 |
 | `service/account_pool_refresh_task.go` | 凭据刷新任务 |
 | `service/account_pool_quota.go` | 配额管理 |
-| `service/account_pool_cliproxy.go` | CLIProxyAPI Sidecar 兼容集成 |
+| `service/account_pool_cliproxy.go` | 旧 CLIProxyAPI 兼容代码，待迁移清理 |
 | `service/accountauth/` | 认证提供者实现 |
 | `service/codex_oauth.go` | Codex OAuth 2.0 流程 |
 | `service/codex_credential_refresh.go` | 凭据刷新逻辑 |
