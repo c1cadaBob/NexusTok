@@ -14,7 +14,7 @@ NexusTok 后端是单个 Go 服务，前端有三套构建产物会被嵌入到 
 
 Go 入口文件 `main.go` 使用 `//go:embed` 嵌入以上构建产物。生产部署时只需要运行最终的 `nexustok` 二进制或 Docker 镜像，不需要额外提供前端文件。
 
-账号池现在包含主服务内置的原生能力和历史 Sidecar 兼容能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；`modules/cpa-manager`、CLIProxyAPI 和 CPA Usage Service 仍用于兼容旧的外置账号池管理器与请求监控链路。新账号建议优先使用原生账号池，旧 Sidecar 可作为过渡保留。
+账号池现在包含主服务内置的原生能力和历史 Sidecar 兼容能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；默认前端账号池页面的 **Auth Files** 视图可导入原生、`sub2`、`newapi` 和 Sub2api 批量 JSON 凭据。`modules/cpa-manager`、CLIProxyAPI 和 CPA Usage Service 仍用于兼容旧的外置账号池管理器与请求监控链路。新账号建议优先使用原生账号池，旧 Sidecar 可作为过渡保留。
 
 运行时主题由配置项 `theme.frontend` 控制：
 

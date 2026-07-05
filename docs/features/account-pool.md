@@ -102,6 +102,7 @@
 | `BaseURL` | 文件级基础地址覆盖 |
 | `Priority` | 文件级优先级，会同步到关联账号 |
 | `Weight` | 文件级权重，会同步到关联账号 |
+| `MaxConcurrency` | 文件级最大并发数，会同步到关联账号，`0` 表示不限制 |
 
 导入认证文件时，系统会同时保存两份加密数据：
 
@@ -126,7 +127,12 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
 
 ## 认证文件格式
 
-原生认证文件导入接口接受单个 JSON 对象。支持三类常见形态：
+原生认证文件导入支持两种入口：
+
+- `POST /api/account-pool/auth-files`：导入单个 JSON 认证对象。
+- `POST /api/account-pool/auth-files/import`：自动识别单个 JSON 认证对象或 Sub2api 批量导出包，并返回统一的导入统计。
+
+单个认证对象支持三类常见形态：
 
 ### 原生凭据对象
 
@@ -140,7 +146,8 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
   "models": ["gpt-5-codex"],
   "proxy_url": "http://user:pass@proxy.example.com:8080",
   "priority": 10,
-  "weight": 2
+  "weight": 2,
+  "max_concurrency": 3
 }
 ```
 
@@ -185,7 +192,56 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
 }
 ```
 
-当前原生接口面向“单个认证对象”导入。Sub2api 的 `sub2api-data` / `sub2api-bundle` 这类包含 `accounts[]` 和 `proxies[]` 的批量导出包，后续应通过批量导入能力统一映射；在该能力完成前，可以先把每个账号拆成单个认证对象导入。
+### Sub2api 批量导出包
+
+`POST /api/account-pool/auth-files/import` 可以直接导入 Sub2api 的 `sub2api-data` / `sub2api-bundle` 导出包，也会识别顶层同时包含 `accounts[]` 和 `proxies[]` 的数据包。
+
+```json
+{
+  "type": "sub2api-data",
+  "version": 1,
+  "proxies": [
+    {
+      "proxy_key": "proxy-a",
+      "protocol": "socks5",
+      "host": "127.0.0.1",
+      "port": 1080,
+      "username": "user",
+      "password": "pass"
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Codex account 1",
+      "platform": "openai",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "eyJ...",
+        "refresh_token": "...",
+        "id_token": "eyJ..."
+      },
+      "proxy_key": "proxy-a",
+      "concurrency": 2,
+      "priority": 1,
+      "rate_multiplier": 1,
+      "auto_pause_on_expired": true
+    }
+  ]
+}
+```
+
+Sub2api 字段会按以下规则映射到原生账号池：
+
+| Sub2api 字段 | NexusTok 字段 | 说明 |
+|--------------|---------------|------|
+| `accounts[].name` | `AccountPoolAuthFile.Name` / `PoolAccount.Name` | 账号和认证文件显示名称 |
+| `accounts[].platform` | `Provider` / `Platform` | `grok`、`x.ai`、`x-ai` 会归一化为 `xai`；OpenAI OAuth 会映射为 `codex` |
+| `accounts[].type` | `AuthType` | `oauth` → `official_oauth`，`apikey` / `api-key` → `api_key`，`service_account` / `service-account` / `bedrock` → `service_account`，其它类型 → `custom_json` |
+| `accounts[].credentials` | 规范化凭据 JSON | 加密后写入关联 `PoolAccount.Credentials` |
+| `accounts[].proxy_key` + `proxies[]` | `Proxy` | 自动组装为 `protocol://user:pass@host:port` |
+| `accounts[].concurrency` | `MaxConcurrency` | `0` 表示不限制 |
+| `accounts[].priority` | `Priority` | Sub2api 是数值越小越优先；NexusTok 是数值越大越优先，导入时会保存为负数以保持相对顺序 |
+| `notes`、`expires_at`、`rate_multiplier`、`auto_pause_on_expired`、`extra` | `CredentialMetadata` | 作为元数据保留，便于追溯和后续扩展 |
 
 ## 认证文件 API
 
@@ -195,6 +251,7 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
 |------|------|------|
 | `GET` | `/auth-files` | 分页查询认证文件 |
 | `POST` | `/auth-files` | 导入认证文件，并生成关联池账号 |
+| `POST` | `/auth-files/import` | 自动导入单个认证对象或 Sub2api 批量包 |
 | `GET` | `/auth-files/:auth_file_id` | 获取单个认证文件摘要 |
 | `PUT` | `/auth-files/:auth_file_id` | 更新认证文件或文件级调度字段 |
 | `DELETE` | `/auth-files/:auth_file_id` | 删除认证文件，默认同时删除关联池账号 |
@@ -222,7 +279,18 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
   "proxy": "http://user:pass@proxy.example.com:8080",
   "priority": 10,
   "weight": 2,
+  "max_concurrency": 3,
   "status": 1
+}
+```
+
+批量导入请求示例：
+
+```json
+{
+  "content": "{\"type\":\"sub2api-data\",\"version\":1,\"accounts\":[{\"name\":\"Codex account 1\",\"platform\":\"openai\",\"type\":\"oauth\",\"credentials\":{\"access_token\":\"eyJ...\",\"refresh_token\":\"...\"}}],\"proxies\":[]}",
+  "group_name": "官方账号池",
+  "skip_duplicates": true
 }
 ```
 
@@ -244,9 +312,46 @@ Codex 认证文件会自动识别并归一化 `access_token`、`refresh_token`�
 | `base_url` | API 基础地址覆盖 |
 | `priority` | 优先级 |
 | `weight` | 权重 |
+| `max_concurrency` | 最大并发数，`0` 表示不限制 |
 | `status` | 状态 |
+| `skip_duplicates` | 仅 `/auth-files/import` 使用，批量导入时遇到重复文件摘要是否跳过；默认跳过 |
 
-更新接口中 `content` 为空时，只修改文件级字段，并同步到关联的 `PoolAccount`；`content` 非空时，会重新解析凭据、替换加密原文和账号凭据，并重置相关运行时错误字段。
+批量导入响应示例：
+
+```json
+{
+  "created": 2,
+  "skipped": 1,
+  "failed": 1,
+  "items": [
+    {
+      "auth_file": {
+        "id": 101,
+        "name": "Codex account 1",
+        "provider": "codex",
+        "pool_account_id": 201
+      },
+      "account": {
+        "id": 201,
+        "name": "Codex account 1"
+      },
+      "group": {
+        "id": 8,
+        "name": "官方账号池"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "index": 3,
+      "name": "Bad account",
+      "message": "auth file does not contain credential fields"
+    }
+  ]
+}
+```
+
+更新接口中 `content` 为空时，只修改文件级字段，并同步到关联的 `PoolAccount`；`content` 非空时，会重新解析凭据、替换加密原文和账号凭据，并重置相关运行时错误字段。文件级 `account_groups`、`models`、`proxy`、`base_url`、`priority`、`weight`、`max_concurrency` 和 `status` 都会同步到关联账号。
 
 删除接口默认同时删除关联池账号：
 
@@ -324,8 +429,8 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 
 ### 原生认证文件导入
 
-1. 准备单个 JSON 认证文件，可以是原生凭据对象，也可以是 `sub2` / `newapi` 包装对象。
-2. 调用 `POST /api/account-pool/auth-files`，可指定 `pool_group_id`，也可传 `group_name` 让系统自动创建或复用分组。
+1. 准备 JSON 认证文件，可以是原生凭据对象、`sub2` / `newapi` 包装对象，也可以是 Sub2api 批量导出包。
+2. 在默认前端进入账号池页面的 **Auth Files** 视图导入；也可以直接调用 `POST /api/account-pool/auth-files/import`，可指定 `pool_group_id`，也可传 `group_name` 让系统自动创建或复用分组。
 3. 系统保存加密原文，生成关联 `PoolAccount`。
 4. 在渠道配置中引用该账号池分组。
 5. 请求到达时，系统自动从池中选择账号。
@@ -351,9 +456,9 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 
 - 认证文件原文和账号凭据均加密保存，接口响应只返回脱敏摘要。
 - `FileDigest` 用原始 JSON 内容计算，用于阻止重复导入完全相同的认证文件。
-- 编辑认证文件级 `account_groups`、`models`、`proxy`、`base_url`、`priority`、`weight`、`status` 会同步到关联池账号。
+- 编辑认证文件级 `account_groups`、`models`、`proxy`、`base_url`、`priority`、`weight`、`max_concurrency`、`status` 会同步到关联池账号。
 - 认证文件删除默认会删除关联池账号，避免残留可调度凭据；需要保留账号时显式传 `delete_account=false`。
-- 从外部账号管理器迁移时，优先确认 provider、认证类型、代理和分组语义是否能一一映射。批量导出包如包含多个账号，应拆分或等待批量导入能力。
+- 从外部账号管理器迁移时，优先确认 provider、认证类型、代理和分组语义是否能一一映射。Sub2api 批量导出包可以直接导入；其它来源的批量格式如无法识别，应先拆分为单个认证对象。
 - 单容器部署不启动 CLIProxyAPI Sidecar，但原生 `native` 账号池和认证文件 API 仍由主服务提供。只有继续使用 `cliproxyapi` 兼容路径时才需要 Sidecar。
 
 ## 关键文件
