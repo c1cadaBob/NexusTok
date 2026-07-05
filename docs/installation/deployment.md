@@ -10,9 +10,11 @@ NexusTok 后端是单个 Go 服务，前端有三套构建产物会被嵌入到 
 |------|------|----------|----------|------|
 | 默认前端 | `web/default` | Bun + Rsbuild | `web/default/dist` | 新版 React 19 前端 |
 | 经典前端 | `web/classic` | Bun + Vite | `web/classic/dist` | 经典 Semi UI 前端 |
-| 账号池管理器 | `modules/cpa-manager` | npm/Bun + Vite | `modules/cpa-manager/dist` | `/account-pool/manager/` 嵌入页面 |
+| 账号池管理器 | `modules/cpa-manager` | npm/Bun + Vite | `modules/cpa-manager/dist` | `/account-pool/manager/` 兼容嵌入页面 |
 
 Go 入口文件 `main.go` 使用 `//go:embed` 嵌入以上构建产物。生产部署时只需要运行最终的 `nexustok` 二进制或 Docker 镜像，不需要额外提供前端文件。
+
+账号池现在包含主服务内置的原生能力和历史 Sidecar 兼容能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；`modules/cpa-manager`、CLIProxyAPI 和 CPA Usage Service 仍用于兼容旧的外置账号池管理器与请求监控链路。新账号建议优先使用原生账号池，旧 Sidecar 可作为过渡保留。
 
 运行时主题由配置项 `theme.frontend` 控制：
 
@@ -56,8 +58,8 @@ docker-compose up -d
 | NexusTok | `nexustok` | `3000` | `3000` | 主 Web、管理后台和 Relay API |
 | Redis | `redis` | `6379` | 不对外暴露 | 缓存、限流、分布式状态 |
 | PostgreSQL | `postgres` | `5432` | 不对外暴露 | 主数据库 |
-| CLIProxyAPI | `nexustok-account-pool` | `8317` | 不对外暴露 | 账号池 Sidecar |
-| CPA Usage | `nexustok-account-pool-usage` | `18317` | 不对外暴露 | 账号池请求监控服务 |
+| CLIProxyAPI | `nexustok-account-pool` | `8317` | 不对外暴露 | 账号池 Sidecar，兼容旧外置管理器 |
+| CPA Usage | `nexustok-account-pool-usage` | `18317` | 不对外暴露 | 账号池请求监控服务，兼容旧管理器 |
 
 常用命令：
 
@@ -125,7 +127,7 @@ docker run --name nexustok -d --restart always \
   c1cada/nexustok:latest
 ```
 
-单容器模式不会自动启动内置账号池 Sidecar 和 CPA Usage Service。需要账号池功能时，优先使用 `docker-compose.yml`。
+单容器模式不会自动启动 CLIProxyAPI Sidecar 和 CPA Usage Service。原生账号池分组、池账号和认证文件 API 仍可直接使用；只有继续使用 `cliproxyapi` 兼容分组、CPA-Manager 旧管理器或请求监控服务时，才需要优先使用 `docker-compose.yml`。
 
 ## 从源码构建生产镜像
 
@@ -133,7 +135,7 @@ docker run --name nexustok -d --restart always \
 
 1. 构建默认前端：`web/default -> web/default/dist`
 2. 构建经典前端：`web/classic -> web/classic/dist`
-3. 构建账号池管理器：`modules/cpa-manager -> modules/cpa-manager/dist`
+3. 构建兼容账号池管理器：`modules/cpa-manager -> modules/cpa-manager/dist`
 4. 编译 Go 后端并嵌入上述构建产物
 5. 输出精简运行镜像
 
@@ -318,14 +320,14 @@ journalctl -u nexustok -f
 4. 加载系统选项到内存，包括 `theme.frontend`。
 5. 初始化定价数据、日志数据库和 Redis。
 6. 初始化监控、i18n、OAuth、Relay 通道。
-7. 注册 API 路由、Web 静态资源路由和账号池管理器路由。
+7. 注册 API 路由、Web 静态资源路由、原生账号池路由和兼容账号池管理器路由。
 8. 启动 HTTP 服务，默认监听 `3000`。
 
 Web 静态资源路由会根据 `common.GetTheme()` 选择默认前端或经典前端。根路径和 SPA 路由由 `router/web-router.go` 的 `NoRoute` 回退到对应主题的 `index.html`。
 
 ## 后台定时任务
 
-主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、账号池凭据刷新、Codex 凭据刷新、上游模型巡检，以及 models.dev 模型目录同步。
+主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、原生账号池凭据刷新、Codex 凭据刷新、上游模型巡检，以及 models.dev 模型目录同步。
 
 models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.json` 拉取公开模型目录，并补齐本地缺失的模型和供应商。同步时会优先采用 canonical models 的归属方作为本地“供应商”，避免把 Vivgrid 之类的服务商误写成 OpenAI、Anthropic 这类模型原厂。该任务会补齐缺失模型，并在 `sync_official=1` 的官方记录上纠正供应商归属；其它人工维护字段仍保持不动。
 
@@ -462,9 +464,13 @@ volumes:
   - ./logs:/app/logs
 ```
 
-### 账号池管理器不可用
+### 账号池管理器或 Sidecar 不可用
 
-检查 Sidecar 和 Usage Service：
+如果使用的是原生账号池认证文件、原生分组和主服务内的池账号 API，先检查主服务日志和 `/api/account-pool/*` 接口，不需要依赖下面两个 Sidecar 容器。
+
+如果使用的是 CPA-Manager 旧管理器、`cliproxyapi` 来源分组或请求监控服务，再检查 Sidecar 和 Usage Service：
+
+检查命令：
 
 ```bash
 docker logs --tail 200 nexustok-account-pool

@@ -84,7 +84,7 @@ docs/
 | [features/provider-adaptor.md](features/provider-adaptor.md) | 渠道适配器系统 — 40+ 上游提供商的请求/响应转换 |
 | [features/billing-expression.md](features/billing-expression.md) | 计费表达式系统 — 表达式定义模型计费逻辑 |
 | [features/channel-routing.md](features/channel-routing.md) | 渠道选择与亲和性路由 — 分发、粘滞路由、跨分组重试 |
-| [features/account-pool.md](features/account-pool.md) | 账号池系统 — 共享凭据管理、负载均衡、自动刷新 |
+| [features/account-pool.md](features/account-pool.md) | 账号池系统 — 原生认证文件、共享凭据管理、负载均衡、自动刷新 |
 | [features/streaming-sse.md](features/streaming-sse.md) | 流式响应与 SSE 处理 — StreamScanner、WebSocket |
 | [features/model-config.md](features/model-config.md) | 模型配置系统 — 分提供商设置、Thinking 适配器 |
 | [features/model-sync-pricing.md](features/model-sync-pricing.md) | 模型同步与价格同步 — 上游模型目录、models.dev provider 价格、手动价格保护 |
