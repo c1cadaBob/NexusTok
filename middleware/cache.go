@@ -7,29 +7,25 @@
 // - 其他资源：缓存 1 周（max-age=604800），包括 JS、CSS、图片等静态资源
 package middleware
 
-import (
-	"strings" // 字符串操作
-
-	"github.com/gin-gonic/gin" // Gin 框架
-)
+import "github.com/gin-gonic/gin" // Gin 框架
 
 // Cache 缓存控制中间件
 // 根据请求路径设置不同的缓存策略
 //
 // 缓存策略说明：
 // 1. 首页（/）：设置为 no-cache
-//    - 浏览器每次都会向服务器验证缓存是否过期
-//    - 确保用户总是获取最新的 HTML（SPA 入口页面）
-//    - 因为 HTML 中引用的 JS/CSS 文件名可能随版本变化
+//   - 浏览器每次都会向服务器验证缓存是否过期
+//   - 确保用户总是获取最新的 HTML（SPA 入口页面）
+//   - 因为 HTML 中引用的 JS/CSS 文件名可能随版本变化
 //
 // 2. 其他资源：设置为 max-age=604800（1 周）
-//    - 浏览器会直接使用缓存，不会向服务器验证
-//    - 适用于静态资源（JS、CSS、图片、字体等）
-//    - 这些资源的文件名通常包含哈希值，内容变化时文件名也会变化
+//   - 浏览器会直接使用缓存，不会向服务器验证
+//   - 适用于静态资源（JS、CSS、图片、字体等）
+//   - 这些资源的文件名通常包含哈希值，内容变化时文件名也会变化
 //
 // 3. Cache-Version 头：
-//    - 用于强制刷新 CDN 缓存
-//    - 当需要清除 CDN 缓存时，修改这个值即可
+//   - 用于强制刷新 CDN 缓存
+//   - 当需要清除 CDN 缓存时，修改这个值即可
 //
 // 返回值：
 //   - func(c *gin.Context): Gin 中间件函数
@@ -42,10 +38,6 @@ func Cache() func(c *gin.Context) {
 		} else if requestPath == "/logo.png" || requestPath == "/favicon.ico" {
 			// Logo 和 favicon 是稳定文件名的品牌资源，不能像带哈希的 JS/CSS 一样长期强缓存；
 			// 否则换图后浏览器会继续显示旧图，直到一周缓存自然过期。
-			c.Header("Cache-Control", "no-cache")
-		} else if strings.HasPrefix(requestPath, "/account-pool/manager/") &&
-			(strings.HasSuffix(requestPath, "/logo.png") || strings.HasSuffix(requestPath, "/favicon.ico")) {
-			// CPA 管理页嵌在子路径下时，浏览器可能请求同名品牌资源，也保持可重新验证。
 			c.Header("Cache-Control", "no-cache")
 		} else {
 			// 其他资源缓存 1 周

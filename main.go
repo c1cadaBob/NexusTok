@@ -56,12 +56,6 @@ var classicBuildFS embed.FS // 经典主题的完整前端资源文件系统
 //go:embed web/classic/dist/index.html
 var classicIndexPage []byte // 经典主题的入口 HTML 页面
 
-//go:embed modules/cpa-manager/dist
-var cpaManagerBuildFS embed.FS // CPA 管理器模块的前端资源文件系统
-
-//go:embed modules/cpa-manager/dist/index.html
-var cpaManagerIndexPage []byte // CPA 管理器模块的入口 HTML 页面
-
 // main 是应用程序的入口函数
 // 负责初始化所有资源、启动后台任务、配置 HTTP 服务器并监听端口
 func main() {
@@ -282,12 +276,10 @@ func main() {
 	// 设置路由
 	// 将所有 API 路由、静态文件路由注册到 Gin 引擎
 	router.SetRouter(server, router.ThemeAssets{
-		DefaultBuildFS:      buildFS,             // 默认主题资源
-		DefaultIndexPage:    indexPage,           // 默认主题入口页
-		ClassicBuildFS:      classicBuildFS,      // 经典主题资源
-		ClassicIndexPage:    classicIndexPage,    // 经典主题入口页
-		CPAManagerBuildFS:   cpaManagerBuildFS,   // CPA 管理器资源
-		CPAManagerIndexPage: cpaManagerIndexPage, // CPA 管理器入口页
+		DefaultBuildFS:   buildFS,          // 默认主题资源
+		DefaultIndexPage: indexPage,        // 默认主题入口页
+		ClassicBuildFS:   classicBuildFS,   // 经典主题资源
+		ClassicIndexPage: classicIndexPage, // 经典主题入口页
 	})
 
 	// 获取服务端口

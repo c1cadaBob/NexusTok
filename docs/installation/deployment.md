@@ -4,17 +4,16 @@
 
 ## 总览
 
-NexusTok 后端是单个 Go 服务，前端有三套构建产物会被嵌入到 Go 二进制中：
+NexusTok 后端是单个 Go 服务，前端有两套构建产物会被嵌入到 Go 二进制中：
 
 | 前端 | 目录 | 构建工具 | 嵌入路径 | 用途 |
 |------|------|----------|----------|------|
 | 默认前端 | `web/default` | Bun + Rsbuild | `web/default/dist` | 新版 React 19 前端 |
 | 经典前端 | `web/classic` | Bun + Vite | `web/classic/dist` | 经典 Semi UI 前端 |
-| 账号池管理器 | `modules/cpa-manager` | npm/Bun + Vite | `modules/cpa-manager/dist` | `/account-pool/manager/` 兼容嵌入页面 |
 
 Go 入口文件 `main.go` 使用 `//go:embed` 嵌入以上构建产物。生产部署时只需要运行最终的 `nexustok` 二进制或 Docker 镜像，不需要额外提供前端文件。
 
-账号池现在包含主服务内置的原生能力和历史 Sidecar 兼容能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；默认前端账号池页面的 **Auth Files** 视图可导入原生、`sub2`、`newapi` 和 Sub2api 批量 JSON 凭据。`modules/cpa-manager`、CLIProxyAPI 和 CPA Usage Service 仍用于兼容旧的外置账号池管理器与请求监控链路。新账号建议优先使用原生账号池，旧 Sidecar 可作为过渡保留。
+账号池已收敛为主服务内置的原生能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；默认前端账号池页面的 **Auth Files** 视图可导入原生、`sub2`、`newapi` 和 Sub2api 批量 JSON 凭据。CPAMC/CLIProxyAPI/Sidecar 管理器不再作为运行时入口，也不会在默认部署中启动。
 
 运行时主题由配置项 `theme.frontend` 控制：
 
@@ -58,8 +57,6 @@ docker-compose up -d
 | NexusTok | `nexustok` | `3000` | `3000` | 主 Web、管理后台和 Relay API |
 | Redis | `redis` | `6379` | 不对外暴露 | 缓存、限流、分布式状态 |
 | PostgreSQL | `postgres` | `5432` | 不对外暴露 | 主数据库 |
-| CLIProxyAPI | `nexustok-account-pool` | `8317` | 不对外暴露 | 账号池 Sidecar，兼容旧外置管理器 |
-| CPA Usage | `nexustok-account-pool-usage` | `18317` | 不对外暴露 | 账号池请求监控服务，兼容旧管理器 |
 
 常用命令：
 
@@ -69,12 +66,6 @@ docker compose ps
 
 # 查看主服务日志
 docker logs -f nexustok
-
-# 查看账号池 Sidecar 日志
-docker logs -f nexustok-account-pool
-
-# 查看请求监控服务日志
-docker logs -f nexustok-account-pool-usage
 
 # 重启主服务
 docker compose restart nexustok
@@ -96,8 +87,6 @@ docker compose down -v
 | `REDIS_CONN_STRING` | `environment` | Redis 连接串 |
 | PostgreSQL 密码 | `postgres.environment` | 默认 `123456` 只能用于本地测试 |
 | Redis 密码 | `redis.command` | 默认 `123456` 只能用于本地测试 |
-| `ACCOUNT_POOL_MANAGEMENT_KEY` | `.env` 或环境变量 | 账号池内部管理密钥，生产必须改 |
-| `ACCOUNT_POOL_CLI_PROXY_RELAY_KEY` | `.env` 或环境变量 | 账号池 Relay 密钥，生产必须改 |
 
 ## 单容器部署
 
@@ -127,7 +116,7 @@ docker run --name nexustok -d --restart always \
   c1cada/nexustok:latest
 ```
 
-单容器模式不会自动启动 CLIProxyAPI Sidecar 和 CPA Usage Service。原生账号池分组、池账号和认证文件 API 仍可直接使用；只有继续使用 `cliproxyapi` 兼容分组、CPA-Manager 旧管理器或请求监控服务时，才需要优先使用 `docker-compose.yml`。
+单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
 
 ## 从源码构建生产镜像
 
@@ -135,9 +124,8 @@ docker run --name nexustok -d --restart always \
 
 1. 构建默认前端：`web/default -> web/default/dist`
 2. 构建经典前端：`web/classic -> web/classic/dist`
-3. 构建兼容账号池管理器：`modules/cpa-manager -> modules/cpa-manager/dist`
-4. 编译 Go 后端并嵌入上述构建产物
-5. 输出精简运行镜像
+3. 编译 Go 后端并嵌入上述构建产物
+4. 输出精简运行镜像
 
 构建命令：
 
@@ -219,8 +207,6 @@ docker compose -f docker-compose.hot.yml up -d --build
 |------|--------|------|
 | 主服务 | `nexustok-api-hot` | 宿主机 `3003` -> 容器 `3000` |
 | 前端构建监听 | `nexustok-frontend-watch` | 不暴露端口 |
-| 账号池 Sidecar | `nexustok-account-pool-hot` | Docker 网络内 `8317` |
-| CPA Usage | `nexustok-account-pool-usage-hot` | Docker 网络内 `18317` |
 | PostgreSQL | `nexustok-hot-pg` | Docker 网络内 `5432` |
 | Redis | `nexustok-hot-redis` | Docker 网络内 `6379` |
 
@@ -464,31 +450,21 @@ volumes:
   - ./logs:/app/logs
 ```
 
-### 账号池管理器或 Sidecar 不可用
+### 原生账号池接口不可用
 
-如果使用的是原生账号池认证文件、原生分组和主服务内的池账号 API，先检查主服务日志和 `/api/account-pool/*` 接口，不需要依赖下面两个 Sidecar 容器。
+账号池认证文件、原生分组和池账号 API 都由 NexusTok 主服务提供。排障时先检查主服务日志和 `/api/account-pool/*` 接口：
 
-如果使用的是 CPA-Manager 旧管理器、`cliproxyapi` 来源分组或请求监控服务，再检查 Sidecar 和 Usage Service：
-
-检查命令：
+检查命令示例：
 
 ```bash
-docker logs --tail 200 nexustok-account-pool
-docker logs --tail 200 nexustok-account-pool-usage
+docker logs --tail 200 nexustok
+curl -sS http://127.0.0.1:3000/api/status
 ```
 
-热重载环境对应容器：
+热重载环境对应主服务容器：
 
 ```bash
-docker logs --tail 200 nexustok-account-pool-hot
-docker logs --tail 200 nexustok-account-pool-usage-hot
-```
-
-确认主服务环境变量指向 Docker 网络内地址：
-
-```yaml
-ACCOUNT_POOL_CLI_PROXY_URL=http://cliproxyapi:8317
-ACCOUNT_POOL_USAGE_SERVICE_URL=http://account-pool-usage:18317
+docker logs --tail 200 nexustok-api-hot
 ```
 
 ### 静态资源 404

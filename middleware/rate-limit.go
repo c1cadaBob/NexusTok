@@ -218,58 +218,6 @@ func isStaticAssetWebRateLimitExemptPath(path string) bool {
 	return false
 }
 
-// isAccountPoolEmbeddedWebRateLimitExemptPath 判断当前 Web 路径是否属于账号池嵌入模块的受保护代理。
-//
-// CPAMC 嵌入 NexusTok 后会保留原模块的轮询行为：请求监控页会周期性访问
-// /usage-service、/status、/v0/management/usage、/v0/management/api-key-aliases 等同源路径，
-// 账号巡检页也会在一次批量巡检中连续访问管理代理。上述路由后续仍会经过
-// accountPoolManagerSessionAuth 做管理员会话校验，并由 NexusTok 服务端注入内部管理密钥；
-// 如果继续计入面向普通网页访问的 IP 级 GlobalWebRateLimit，管理员页面停留几分钟后
-// 会把自己限流成 429，导致账号巡检和请求监控都无法稳定使用。
-//
-// 这里只豁免账号池嵌入模块的页面资源和 Usage Service 同源代理，不影响普通前端页面、
-// 登录、注册、静态资源、Relay API 等路径的全局限流。
-func isAccountPoolEmbeddedWebRateLimitExemptPath(path string) bool {
-	normalizedPath := strings.TrimSpace(path)
-	if normalizedPath == "" {
-		return false
-	}
-
-	if strings.HasPrefix(normalizedPath, "/account-pool/manager") ||
-		strings.HasPrefix(normalizedPath, "/usage-service") {
-		return true
-	}
-
-	if normalizedPath == "/status" {
-		return true
-	}
-
-	for _, prefix := range []string{
-		"/v0/management/usage",
-		"/v0/management/model-prices",
-		"/v0/management/api-key-aliases",
-	} {
-		if normalizedPath == prefix || strings.HasPrefix(normalizedPath, prefix+"/") {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isAccountPoolEmbeddedAPIRateLimitExemptPath 判断当前 API 路径是否属于账号池管理代理。
-//
-// /api/account-pool/management/* 是浏览器访问 CLIProxyAPI management API 的唯一受保护入口。
-// 账号巡检会针对每个账号调用 /api-call，账号导入、禁用、删除也会经过该代理；这些请求都
-// 已经由 middleware.AdminAuth 校验管理员权限，真正的 CLIProxyAPI management key 只在服务端
-// 转发时注入。将它们从 IP 级 GlobalAPIRateLimit 中排除，可以避免一次正常批量巡检因为请求
-// 数较多而被主项目误判为滥用，同时仍保留路由自身的管理员权限边界。
-func isAccountPoolEmbeddedAPIRateLimitExemptPath(path string) bool {
-	normalizedPath := strings.TrimSpace(path)
-	return normalizedPath == "/api/account-pool/management" ||
-		strings.HasPrefix(normalizedPath, "/api/account-pool/management/")
-}
-
 // GlobalWebRateLimit 全局 Web 请求限流中间件
 // 对所有 Web 请求进行基于 IP 的频率限制
 // 配置项：GLOBAL_WEB_RATE_LIMIT_ENABLE、GLOBAL_WEB_RATE_LIMIT_NUM、GLOBAL_WEB_RATE_LIMIT_DURATION
@@ -277,8 +225,7 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
 		limiter := rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
 		return func(c *gin.Context) {
-			if isStaticAssetWebRateLimitExemptPath(c.Request.URL.Path) ||
-				isAccountPoolEmbeddedWebRateLimitExemptPath(c.Request.URL.Path) {
+			if isStaticAssetWebRateLimitExemptPath(c.Request.URL.Path) {
 				c.Next()
 				return
 			}
@@ -295,10 +242,6 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
 		limiter := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
 		return func(c *gin.Context) {
-			if isAccountPoolEmbeddedAPIRateLimitExemptPath(c.Request.URL.Path) {
-				c.Next()
-				return
-			}
 			limiter(c)
 		}
 	}
