@@ -2349,7 +2349,7 @@
     "Manage model ratios, groups, subscriptions, redemption codes, and wallet balances.": "モデル倍率、グループ、サブスクリプション、引換コード、ウォレット残高を管理します。",
     "Manage multi-key status and configuration for this channel": "このチャネルのマルチキーのステータスと構成を管理する",
     "Manage official login accounts and expose account groups to channels.": "Manage official login accounts and expose account groups to channels.",
-    "Manage official-account pools and CLIProxyAPI runtime.": "公式アカウントプールと CLIProxyAPI ランタイムを管理します。",
+    "Manage native account pools and credential scheduling.": "ネイティブアカウントプールと認証情報のスケジューリングを管理します。",
     "Manage Ollama Models": "オラマモデルの管理",
     "Manage redemption codes for quota top-up": "クォータのチャージ用の引き換えコードを管理する",
     "Manage server log files. Log files accumulate over time; regular cleanup is recommended to free disk space.": "サーバーログファイルを管理します。ログファイルは時間とともに蓄積されるため、定期的なクリーンアップでディスク容量を解放することを推奨します。",

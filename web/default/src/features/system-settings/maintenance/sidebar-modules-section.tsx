@@ -126,7 +126,7 @@ export function SidebarModulesSection({
       },
       account_pool: {
         title: t('Account Pool Management'),
-        description: t('Manage official-account pools and CLIProxyAPI runtime.'),
+        description: t('Manage native account pools and credential scheduling.'),
       },
       pricing: {
         title: t('Group & Tool Pricing'),

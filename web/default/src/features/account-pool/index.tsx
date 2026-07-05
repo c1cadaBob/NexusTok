@@ -719,7 +719,6 @@ export function AccountPool() {
           </div>
           <div className='divide-border divide-y'>
             {groups.map((group) => {
-              const isMirrorGroup = group.source === 'cliproxyapi'
               return (
                 <button
                   key={group.id}
@@ -738,8 +737,7 @@ export function AccountPool() {
                         {group.name}
                       </div>
                       <div className='text-muted-foreground truncate text-xs'>
-                        {isMirrorGroup ? 'CPAMC' : group.platform} /{' '}
-                        {group.auth_type}
+                        {group.platform} / {group.auth_type}
                       </div>
                     </div>
                     <StatusBadge

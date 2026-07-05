@@ -470,16 +470,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		if group == nil || group.Status != common.ChannelStatusEnabled {
 			return fmt.Errorf("账号池组未启用")
 		}
-		// global_account_pool 是“CPAMC/CLIProxyAPI 账号组作为上游凭证”的模式，
-		// 请求最终会转发到 CLIProxyAPI sidecar，并通过 external_group_key 进行组过滤。
-		// NexusTok 原生 native 分组只服务旧的本地账号池管理，无法让 sidecar 选择官方账号；
-		// 因此这里必须拒绝 native 分组，避免用户明明没有在 CPAMC 创建分组却能保存渠道。
-		groupKey := strings.TrimSpace(group.ExternalKey)
-		if groupKey == "" {
-			groupKey = strings.TrimSpace(group.Name)
-		}
-		if !service.IsCLIProxyAccountPoolGroup(group) || groupKey == "" {
-			return fmt.Errorf("账号池模式只能选择 CPAMC 中已创建的账号组")
+		// 账号池模式已经收敛为 NexusTok 原生实现。渠道只允许绑定本地数据库中
+		// 由 AccountPoolGroup/PoolAccount 管理的原生分组，避免新请求继续依赖已弃用的
+		// CPAMC/CLIProxyAPI/Sidecar 外部分组和中转密钥。
+		source := strings.TrimSpace(group.Source)
+		if source != "" && !strings.EqualFold(source, model.AccountPoolGroupSourceNative) {
+			return fmt.Errorf("账号池模式只能选择原生账号池组")
 		}
 	}
 

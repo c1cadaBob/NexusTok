@@ -2349,7 +2349,7 @@
     "Manage model ratios, groups, subscriptions, redemption codes, and wallet balances.": "Управляйте коэффициентами моделей, группами, подписками, кодами пополнения и балансами кошельков.",
     "Manage multi-key status and configuration for this channel": "Управление статусом и конфигурацией нескольких ключей для этого канала",
     "Manage official login accounts and expose account groups to channels.": "Manage official login accounts and expose account groups to channels.",
-    "Manage official-account pools and CLIProxyAPI runtime.": "Управление пулами официальных аккаунтов и средой выполнения CLIProxyAPI.",
+    "Manage native account pools and credential scheduling.": "Управление нативными пулами аккаунтов и планированием учетных данных.",
     "Manage Ollama Models": "Управление моделями Ollama",
     "Manage redemption codes for quota top-up": "Управление кодами активации для пополнения квоты",
     "Manage server log files. Log files accumulate over time; regular cleanup is recommended to free disk space.": "Управление файлами журналов сервера. Файлы журналов накапливаются со временем; рекомендуется регулярная очистка.",

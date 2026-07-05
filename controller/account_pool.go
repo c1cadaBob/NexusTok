@@ -101,44 +101,44 @@ type poolAccountStatusRequest struct {
 // content 是 JSON 文件原文，系统会加密保存原文并生成关联 PoolAccount；其余字段用于
 // 覆盖 JSON 中的文件级配置，方便 sub2/newapi 等包装格式缺少本地调度字段时补齐。
 type accountPoolAuthFileImportRequest struct {
-	Name          string   `json:"name"`           // 文件显示名称
-	Content       string   `json:"content"`        // JSON 认证文件原文
-	PoolGroupID   int      `json:"pool_group_id"`  // 指定账号池分组
-	GroupName     string   `json:"group_name"`     // 自动创建分组时使用的名称
-	Provider      string   `json:"provider"`       // 覆盖 provider
-	Platform      string   `json:"platform"`       // 覆盖本地平台
-	AuthType      string   `json:"auth_type"`      // 覆盖认证类型
-	AccountGroup  string   `json:"account_group"`  // 单一调用分组
-	AccountGroups []string `json:"account_groups"` // 多调用分组
-	Models        string   `json:"models"`         // 模型限制
-	Proxy         string   `json:"proxy"`          // 文件级代理
-	BaseURL       *string  `json:"base_url"`       // 基础 URL
-	Priority      *int64   `json:"priority"`       // 优先级
-	Weight        *int     `json:"weight"`         // 权重
-	MaxConcurrency *int    `json:"max_concurrency"` // 最大并发数
-	Status        *int     `json:"status"`         // 状态
-	SkipDuplicates *bool   `json:"skip_duplicates"` // 批量导入时是否跳过重复文件
+	Name           string   `json:"name"`            // 文件显示名称
+	Content        string   `json:"content"`         // JSON 认证文件原文
+	PoolGroupID    int      `json:"pool_group_id"`   // 指定账号池分组
+	GroupName      string   `json:"group_name"`      // 自动创建分组时使用的名称
+	Provider       string   `json:"provider"`        // 覆盖 provider
+	Platform       string   `json:"platform"`        // 覆盖本地平台
+	AuthType       string   `json:"auth_type"`       // 覆盖认证类型
+	AccountGroup   string   `json:"account_group"`   // 单一调用分组
+	AccountGroups  []string `json:"account_groups"`  // 多调用分组
+	Models         string   `json:"models"`          // 模型限制
+	Proxy          string   `json:"proxy"`           // 文件级代理
+	BaseURL        *string  `json:"base_url"`        // 基础 URL
+	Priority       *int64   `json:"priority"`        // 优先级
+	Weight         *int     `json:"weight"`          // 权重
+	MaxConcurrency *int     `json:"max_concurrency"` // 最大并发数
+	Status         *int     `json:"status"`          // 状态
+	SkipDuplicates *bool    `json:"skip_duplicates"` // 批量导入时是否跳过重复文件
 }
 
 // accountPoolAuthFileUpdateRequest 原生认证文件更新请求。
 // content 为空时只修改文件级调度字段；content 非空时重新解析凭据并更新关联账号凭证。
 type accountPoolAuthFileUpdateRequest struct {
-	Name          *string  `json:"name"`
-	Content       *string  `json:"content"`
-	PoolGroupID   *int     `json:"pool_group_id"`
-	GroupName     *string  `json:"group_name"`
-	Provider      *string  `json:"provider"`
-	Platform      *string  `json:"platform"`
-	AuthType      *string  `json:"auth_type"`
-	AccountGroup  *string  `json:"account_group"`
-	AccountGroups []string `json:"account_groups"`
-	Models        *string  `json:"models"`
-	Proxy         *string  `json:"proxy"`
-	BaseURL       *string  `json:"base_url"`
-	Priority      *int64   `json:"priority"`
-	Weight        *int     `json:"weight"`
-	MaxConcurrency *int    `json:"max_concurrency"`
-	Status        *int     `json:"status"`
+	Name           *string  `json:"name"`
+	Content        *string  `json:"content"`
+	PoolGroupID    *int     `json:"pool_group_id"`
+	GroupName      *string  `json:"group_name"`
+	Provider       *string  `json:"provider"`
+	Platform       *string  `json:"platform"`
+	AuthType       *string  `json:"auth_type"`
+	AccountGroup   *string  `json:"account_group"`
+	AccountGroups  []string `json:"account_groups"`
+	Models         *string  `json:"models"`
+	Proxy          *string  `json:"proxy"`
+	BaseURL        *string  `json:"base_url"`
+	Priority       *int64   `json:"priority"`
+	Weight         *int     `json:"weight"`
+	MaxConcurrency *int     `json:"max_concurrency"`
+	Status         *int     `json:"status"`
 }
 
 // accountPoolCodexOAuthStartRequest Codex OAuth 开始请求
@@ -171,14 +171,12 @@ type accountPoolProviderLoginRequest struct {
 func ListAccountPoolGroups(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	status, _ := strconv.Atoi(c.Query("status"))
-	syncCLIProxyGroupsForList(c)
 	groups, total, err := model.GetAccountPoolGroups(pageInfo.GetPage(), pageInfo.GetPageSize(), status, c.Query("search"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.AttachAccountPoolGroupStats(groups)
-	attachCLIProxyGroupStats(c, groups)
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, accountPoolGroupResponse(group))
@@ -189,14 +187,15 @@ func ListAccountPoolGroups(c *gin.Context) {
 }
 
 func ListAccountPoolGroupOptions(c *gin.Context) {
-	syncCLIProxyGroupsForList(c)
 	var groups []*model.AccountPoolGroup
-	if err := model.DB.Where("status = ? AND source = ?", common.ChannelStatusEnabled, model.AccountPoolGroupSourceCLIProxyAPI).Order("id DESC").Find(&groups).Error; err != nil {
+	if err := model.DB.
+		Where("status = ? AND (source = ? OR source = '')", common.ChannelStatusEnabled, model.AccountPoolGroupSourceNative).
+		Order("id DESC").
+		Find(&groups).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.AttachAccountPoolGroupStats(groups)
-	attachCLIProxyGroupStats(c, groups)
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
 		if item, ok := accountPoolGroupOptionResponse(group); ok {
@@ -501,21 +500,21 @@ func CreateAccountPoolAuthFile(c *gin.Context) {
 		return
 	}
 	result, err := service.ImportAccountPoolAuthFile(service.AccountPoolAuthFileImportOptions{
-		Name:          req.Name,
-		Content:       req.Content,
-		PoolGroupID:   req.PoolGroupID,
-		GroupName:     req.GroupName,
-		Provider:      req.Provider,
-		Platform:      req.Platform,
-		AuthType:      req.AuthType,
-		AccountGroups: mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
-		Models:        req.Models,
-		Proxy:         req.Proxy,
-		BaseURL:       req.BaseURL,
-		Priority:      req.Priority,
-		Weight:        req.Weight,
+		Name:           req.Name,
+		Content:        req.Content,
+		PoolGroupID:    req.PoolGroupID,
+		GroupName:      req.GroupName,
+		Provider:       req.Provider,
+		Platform:       req.Platform,
+		AuthType:       req.AuthType,
+		AccountGroups:  mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
+		Models:         req.Models,
+		Proxy:          req.Proxy,
+		BaseURL:        req.BaseURL,
+		Priority:       req.Priority,
+		Weight:         req.Weight,
 		MaxConcurrency: req.MaxConcurrency,
-		Status:        req.Status,
+		Status:         req.Status,
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -536,21 +535,21 @@ func ImportAccountPoolAuthFiles(c *gin.Context) {
 	}
 	result, err := service.ImportAccountPoolAuthFiles(service.AccountPoolAuthFileBatchImportOptions{
 		AccountPoolAuthFileImportOptions: service.AccountPoolAuthFileImportOptions{
-			Name:          req.Name,
-			Content:       req.Content,
-			PoolGroupID:   req.PoolGroupID,
-			GroupName:     req.GroupName,
-			Provider:      req.Provider,
-			Platform:      req.Platform,
-			AuthType:      req.AuthType,
-			AccountGroups: mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
-			Models:        req.Models,
-			Proxy:         req.Proxy,
-			BaseURL:       req.BaseURL,
-			Priority:      req.Priority,
-			Weight:        req.Weight,
+			Name:           req.Name,
+			Content:        req.Content,
+			PoolGroupID:    req.PoolGroupID,
+			GroupName:      req.GroupName,
+			Provider:       req.Provider,
+			Platform:       req.Platform,
+			AuthType:       req.AuthType,
+			AccountGroups:  mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
+			Models:         req.Models,
+			Proxy:          req.Proxy,
+			BaseURL:        req.BaseURL,
+			Priority:       req.Priority,
+			Weight:         req.Weight,
 			MaxConcurrency: req.MaxConcurrency,
-			Status:        req.Status,
+			Status:         req.Status,
 		},
 		SkipDuplicates: skipDuplicates,
 	})
@@ -585,20 +584,20 @@ func UpdateAccountPoolAuthFile(c *gin.Context) {
 		return
 	}
 	opts := service.AccountPoolAuthFileUpdateOptions{
-		Name:        req.Name,
-		Content:     req.Content,
-		PoolGroupID: req.PoolGroupID,
-		GroupName:   req.GroupName,
-		Provider:    req.Provider,
-		Platform:    req.Platform,
-		AuthType:    req.AuthType,
-		Models:      req.Models,
-		Proxy:       req.Proxy,
-		BaseURL:     req.BaseURL,
-		Priority:    req.Priority,
-		Weight:      req.Weight,
+		Name:           req.Name,
+		Content:        req.Content,
+		PoolGroupID:    req.PoolGroupID,
+		GroupName:      req.GroupName,
+		Provider:       req.Provider,
+		Platform:       req.Platform,
+		AuthType:       req.AuthType,
+		Models:         req.Models,
+		Proxy:          req.Proxy,
+		BaseURL:        req.BaseURL,
+		Priority:       req.Priority,
+		Weight:         req.Weight,
 		MaxConcurrency: req.MaxConcurrency,
-		Status:      req.Status,
+		Status:         req.Status,
 	}
 	if req.AccountGroups != nil || req.AccountGroup != nil {
 		groups := mergeAccountPoolAuthFileGroups(req.AccountGroups, stringPointerValue(req.AccountGroup))
@@ -1450,24 +1449,15 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 }
 
 // accountPoolGroupOptionResponse 构造渠道表单可选择的账号池组响应。
-// 这里刻意只暴露 CPAMC/CLIProxyAPI 同步出来、并且当前至少包含一个真实账号的镜像组：
-//   - NexusTok 原生 native 分组用于旧的本地账号池管理，不能代表 CPAMC 的官方账号组；
-//   - 渠道的 global_account_pool 模式会把请求转发给 CLIProxyAPI sidecar，因此必须绑定
-//     source=cliproxyapi 且 external_group_key 可用于下游组过滤的分组；
-//   - 如果 CPAMC 里没有创建分组，统计 total 会是 0，此时返回空选项，避免用户误以为
-//     可以选择一个并不存在的上游账号组。
+// 原生账号池是当前唯一的账号池运行目标：渠道绑定分组后，Relay 会在本地数据库中
+// 查询该组下的 PoolAccount 并完成调度。这里不再同步或过滤外部 Sidecar 分组，只要求
+// 分组启用且至少包含一个账号，避免用户选到空组后保存了不可运行的渠道。
 func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool) {
 	if group == nil || group.Status != common.ChannelStatusEnabled {
 		return nil, false
 	}
-	if !service.IsCLIProxyAccountPoolGroup(group) {
-		return nil, false
-	}
-	groupKey := strings.TrimSpace(group.ExternalKey)
-	if groupKey == "" {
-		groupKey = strings.TrimSpace(group.Name)
-	}
-	if groupKey == "" {
+	source := strings.TrimSpace(group.Source)
+	if source != "" && !strings.EqualFold(source, model.AccountPoolGroupSourceNative) {
 		return nil, false
 	}
 	stats := group.Stats

@@ -48,12 +48,11 @@ func TestValidateChannelGlobalAccountPoolAllowsEmptyKeyAndBaseURL(t *testing.T) 
 	setupAccountPoolChannelTestDB(t)
 
 	group := &model.AccountPoolGroup{
-		Name:        "codex-main",
-		Platform:    "codex",
-		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
-		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
-		ExternalKey: "codex-main",
-		Status:      common.ChannelStatusEnabled,
+		Name:     "codex-main",
+		Platform: "codex",
+		AuthType: model.AccountPoolAuthTypeOfficialOAuth,
+		Source:   model.AccountPoolGroupSourceNative,
+		Status:   common.ChannelStatusEnabled,
 	}
 	require.NoError(t, model.DB.Create(group).Error)
 
@@ -71,7 +70,7 @@ func TestValidateChannelGlobalAccountPoolAllowsEmptyKeyAndBaseURL(t *testing.T) 
 	require.NoError(t, validateChannel(channel, true))
 }
 
-func TestAccountPoolGroupOptionResponseOnlyReturnsSchedulableCLIProxyGroup(t *testing.T) {
+func TestAccountPoolGroupOptionResponseReturnsNativeGroupsWithAccounts(t *testing.T) {
 	nativeGroup := &model.AccountPoolGroup{
 		Id:       1,
 		Name:     "local-only",
@@ -82,10 +81,11 @@ func TestAccountPoolGroupOptionResponseOnlyReturnsSchedulableCLIProxyGroup(t *te
 		Stats:    map[string]int64{"total": 3, "enabled": 3},
 	}
 	item, ok := accountPoolGroupOptionResponse(nativeGroup)
-	require.False(t, ok)
-	require.Nil(t, item)
+	require.True(t, ok)
+	require.Equal(t, nativeGroup.Id, item["id"])
+	require.Equal(t, model.AccountPoolGroupSourceNative, item["source"])
 
-	emptyCLIProxyGroup := &model.AccountPoolGroup{
+	legacyGroup := &model.AccountPoolGroup{
 		Id:          2,
 		Name:        "empty-remote",
 		Platform:    "codex",
@@ -95,12 +95,12 @@ func TestAccountPoolGroupOptionResponseOnlyReturnsSchedulableCLIProxyGroup(t *te
 		Status:      common.ChannelStatusEnabled,
 		Stats:       map[string]int64{"total": 0, "enabled": 0},
 	}
-	item, ok = accountPoolGroupOptionResponse(emptyCLIProxyGroup)
+	item, ok = accountPoolGroupOptionResponse(legacyGroup)
 	require.False(t, ok)
 	require.Nil(t, item)
 
-	activeCLIProxyGroup := &model.AccountPoolGroup{
-		Id:          3,
+	activeLegacyGroup := &model.AccountPoolGroup{
+		Id:          4,
 		Name:        "remote-main",
 		Platform:    "codex",
 		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
@@ -109,21 +109,36 @@ func TestAccountPoolGroupOptionResponseOnlyReturnsSchedulableCLIProxyGroup(t *te
 		Status:      common.ChannelStatusEnabled,
 		Stats:       map[string]int64{"total": 2, "enabled": 1},
 	}
-	item, ok = accountPoolGroupOptionResponse(activeCLIProxyGroup)
+	item, ok = accountPoolGroupOptionResponse(activeLegacyGroup)
+	require.False(t, ok)
+	require.Nil(t, item)
+
+	activeNativeGroup := &model.AccountPoolGroup{
+		Id:          3,
+		Name:        "native-main",
+		Platform:    "codex",
+		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
+		Source:      model.AccountPoolGroupSourceNative,
+		ExternalKey: "",
+		Status:      common.ChannelStatusEnabled,
+		Stats:       map[string]int64{"total": 2, "enabled": 1},
+	}
+	item, ok = accountPoolGroupOptionResponse(activeNativeGroup)
 	require.True(t, ok)
-	require.Equal(t, activeCLIProxyGroup.Id, item["id"])
-	require.Equal(t, model.AccountPoolGroupSourceCLIProxyAPI, item["source"])
+	require.Equal(t, activeNativeGroup.Id, item["id"])
+	require.Equal(t, model.AccountPoolGroupSourceNative, item["source"])
 }
 
-func TestValidateChannelGlobalAccountPoolRejectsNativeGroup(t *testing.T) {
+func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {
 	setupAccountPoolChannelTestDB(t)
 
 	group := &model.AccountPoolGroup{
-		Name:     "local-only",
-		Platform: "codex",
-		AuthType: model.AccountPoolAuthTypeAPIKey,
-		Source:   model.AccountPoolGroupSourceNative,
-		Status:   common.ChannelStatusEnabled,
+		Name:        "remote-only",
+		Platform:    "codex",
+		AuthType:    model.AccountPoolAuthTypeAPIKey,
+		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
+		ExternalKey: "remote-only",
+		Status:      common.ChannelStatusEnabled,
 	}
 	require.NoError(t, model.DB.Create(group).Error)
 
@@ -140,7 +155,7 @@ func TestValidateChannelGlobalAccountPoolRejectsNativeGroup(t *testing.T) {
 
 	err := validateChannel(channel, true)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "账号池模式只能选择 CPAMC 中已创建的账号组")
+	require.Contains(t, err.Error(), "账号池模式只能选择原生账号池组")
 }
 
 func TestFormatChannelTestFailureMessageForGlobalAccountPoolAuthUnavailable(t *testing.T) {

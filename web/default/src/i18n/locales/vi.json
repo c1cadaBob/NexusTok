@@ -2349,7 +2349,7 @@
     "Manage model ratios, groups, subscriptions, redemption codes, and wallet balances.": "Quản lý tỷ lệ model, nhóm, gói đăng ký, mã đổi thưởng và số dư ví.",
     "Manage multi-key status and configuration for this channel": "Quản lý trạng thái và cấu hình đa khóa cho kênh này",
     "Manage official login accounts and expose account groups to channels.": "Manage official login accounts and expose account groups to channels.",
-    "Manage official-account pools and CLIProxyAPI runtime.": "Quản lý nhóm tài khoản chính thức và runtime CLIProxyAPI.",
+    "Manage native account pools and credential scheduling.": "Quản lý nhóm tài khoản gốc và điều phối thông tin xác thực.",
     "Manage Ollama Models": "Quản lý mô hình Ollama",
     "Manage redemption codes for quota top-up": "Quản lý mã quy đổi để nạp thêm hạn mức",
     "Manage server log files. Log files accumulate over time; regular cleanup is recommended to free disk space.": "Quản lý tệp nhật ký máy chủ. Tệp nhật ký tích lũy theo thời gian; nên dọn dẹp định kỳ để giải phóng dung lượng đĩa.",

@@ -29,7 +29,7 @@ export const STATIC_I18N_KEYS = [
   'Account Pool Management',
   'Open Account Pool Management',
   'Opening account pool management...',
-  'Manage official-account pools and CLIProxyAPI runtime.',
+  'Manage native account pools and credential scheduling.',
 
   // Workspace
   'System Settings',

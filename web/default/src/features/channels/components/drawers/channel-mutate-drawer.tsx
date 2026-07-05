@@ -460,9 +460,7 @@ export function ChannelMutateDrawer({
     () =>
       accountPoolGroupsData?.data?.map((group) => ({
         value: String(group.id),
-        label: `${group.name} · ${
-          group.source === 'cliproxyapi' ? 'CPAMC' : group.platform
-        }/${group.auth_type}`,
+        label: `${group.name} · ${group.platform}/${group.auth_type}`,
       })) ?? [],
     [accountPoolGroupsData]
   )

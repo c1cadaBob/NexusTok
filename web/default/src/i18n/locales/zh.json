@@ -2349,7 +2349,7 @@
     "Manage model ratios, groups, subscriptions, redemption codes, and wallet balances.": "管理模型倍率、分组、订阅、兑换码和钱包余额。",
     "Manage multi-key status and configuration for this channel": "管理此渠道的多密钥状态和配置",
     "Manage official login accounts and expose account groups to channels.": "管理官方登录账号，并将账号组开放给渠道引用。",
-    "Manage official-account pools and CLIProxyAPI runtime.": "管理官方账号池与 CLIProxyAPI 运行时。",
+    "Manage native account pools and credential scheduling.": "管理原生账号池与凭证调度。",
     "Manage Ollama Models": "管理 Ollama 模型",
     "Manage redemption codes for quota top-up": "管理用于配额充值的兑换码",
     "Manage server log files. Log files accumulate over time; regular cleanup is recommended to free disk space.": "管理服务器运行日志文件。日志文件会随运行时间不断累积，建议定期清理以释放磁盘空间。",

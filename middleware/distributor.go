@@ -541,20 +541,6 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		if err != nil || group == nil || group.Status != common.ChannelStatusEnabled {
 			return types.NewErrorWithStatusCode(service.ErrNoAvailablePoolAccount, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 		}
-		if service.IsCLIProxyAccountPoolGroup(group) {
-			applyCLIProxyAccountPoolContext(c, channel, group)
-			common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
-			common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
-			common.SetContextKey(c, constant.ContextKeyChannelKey, service.AccountPoolCLIProxyRelayKey())
-			common.SetContextKey(c, constant.ContextKeyChannelAccountPool, true)
-			common.SetContextKey(c, constant.ContextKeyPoolGroupId, group.Id)
-			common.SetContextKey(c, constant.ContextKeyPoolGroupName, group.Name)
-			common.SetContextKey(c, constant.ContextKeyPoolAccountId, 0)
-			common.SetContextKey(c, constant.ContextKeyPoolAccountName, strings.TrimSpace(group.ExternalKey))
-			common.SetContextKey(c, constant.ContextKeyPoolAccountAuthType, model.AccountPoolGroupSourceCLIProxyAPI)
-			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
-			return nil
-		}
 		group, account, err := service.SelectPoolAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
 		if err != nil {
 			if !channel.ChannelInfo.AccountPoolFallback {
