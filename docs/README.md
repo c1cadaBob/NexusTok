@@ -87,6 +87,7 @@ docs/
 | [features/account-pool.md](features/account-pool.md) | 账号池系统 — 共享凭据管理、负载均衡、自动刷新 |
 | [features/streaming-sse.md](features/streaming-sse.md) | 流式响应与 SSE 处理 — StreamScanner、WebSocket |
 | [features/model-config.md](features/model-config.md) | 模型配置系统 — 分提供商设置、Thinking 适配器 |
+| [features/model-sync-pricing.md](features/model-sync-pricing.md) | 模型同步与价格同步 — 上游模型目录、models.dev provider 价格、手动价格保护 |
 | [features/auth-rate-limit.md](features/auth-rate-limit.md) | 认证与限流中间件 — 多方式认证、模型级限流 |
 | [features/hybrid-cache.md](features/hybrid-cache.md) | 混合缓存系统 — Redis + 内存 LRU 双层缓存 |
 

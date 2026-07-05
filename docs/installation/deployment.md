@@ -336,6 +336,7 @@ models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.j
 | `MODELS_DEV_AUTO_SYNC_ENABLED` | `true` | 是否启用 models.dev 每日模型目录同步 |
 | `MODELS_DEV_AUTO_SYNC_TIME` | `02:00` | 每日运行时间，格式 `HH:mm`，使用进程当前时区 |
 | `MODELS_DEV_SYNC_BASE` | `https://models.dev` | models.dev 基础地址；内网镜像或代理可覆盖 |
+| `MODELS_DEV_PRICING_PROVIDER_ORDER` | 空 | 自动价格同步的 provider 降级顺序，逗号分隔，例如 `openai,anthropic,google,azure` |
 
 日志中出现以下内容表示任务已经启动：
 
@@ -349,6 +350,15 @@ models.dev model sync task started: time=02:00 source=https://models.dev/catalog
 environment:
   - MODELS_DEV_AUTO_SYNC_ENABLED=false
 ```
+
+如果需要固定自动价格同步的 provider 优先级：
+
+```yaml
+environment:
+  - MODELS_DEV_PRICING_PROVIDER_ORDER=openai,anthropic,google,azure
+```
+
+手动同步和价格策略的完整说明见 [模型同步与价格同步](../features/model-sync-pricing.md)。
 
 ## 常用排障
 
@@ -509,6 +519,8 @@ docker logs --tail 200 nexustok-api-hot | grep 'models.dev model sync'
 | 拉取失败 | 服务器无法访问 `https://models.dev/catalog.json` | 检查 DNS、代理、防火墙，或配置 `MODELS_DEV_SYNC_BASE` |
 | 同步后模型没有变化 | 本地已存在这些模型，任务不会覆盖已有记录 | 在后台模型页面检查模型是否已存在，必要时使用手动编辑或覆盖同步 |
 | 供应商显示成 Vivgrid | 旧数据是在 canonical 归属修复前同步的，或未走 canonical models 路径 | 重新执行 models.dev 同步预览并对相关模型应用覆盖，或在后台模型页手动修正供应商 |
+| 价格没有被覆盖 | 模型已有手动价格或历史 options 覆盖，自动同步默认保护本地配置 | 在后台手动同步时开启“允许覆盖手动定价”，或检查 `ModelPricingSource` |
+| provider 价格不是期望来源 | 未配置 provider 降级顺序，或 provider ID/name 没有匹配 | 设置 `MODELS_DEV_PRICING_PROVIDER_ORDER`，后台每行一个 provider，环境变量用逗号分隔 |
 
 管理员也可以通过后台登录态调用预览接口确认 models.dev 源是否可访问：
 
