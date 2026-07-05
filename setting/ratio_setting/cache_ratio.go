@@ -123,6 +123,7 @@ var defaultCreateCacheRatio = map[string]float64{
 
 // cacheRatioMap 线程安全的缓存读取比率 Map
 var cacheRatioMap = types.NewRWMap[string, float64]()
+
 // createCacheRatioMap 线程安全的创建缓存比率 Map
 var createCacheRatioMap = types.NewRWMap[string, float64]()
 
@@ -142,6 +143,19 @@ func CacheRatio2JSONString() string {
 // 返回值：JSON 字符串
 func CreateCacheRatio2JSONString() string {
 	return createCacheRatioMap.MarshalJSONString()
+}
+
+// GetDefaultCacheRatioMap 返回内置缓存读取倍率配置的副本。
+// 该函数用于区分“系统默认值”和“管理员持久化覆盖值”，避免上游价格同步
+// 把内置默认价格误判为手动确认价。
+func GetDefaultCacheRatioMap() map[string]float64 {
+	return copyFloatMap(defaultCacheRatio)
+}
+
+// GetDefaultCreateCacheRatioMap 返回内置缓存写入倍率配置的副本。
+// 调用方只能读取副本，不能修改包内默认值。
+func GetDefaultCreateCacheRatioMap() map[string]float64 {
+	return copyFloatMap(defaultCreateCacheRatio)
 }
 
 // UpdateCacheRatioByJSONString 从 JSON 字符串更新缓存读取比率配置

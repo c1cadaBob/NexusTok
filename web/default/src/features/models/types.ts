@@ -151,6 +151,12 @@ export interface ModelPricingConfig {
   billing_mode: ModelPricingMode
   effective: ModelPricingValues
   override: ModelPricingValues
+  source?: {
+    kind: 'manual' | 'upstream' | string
+    provider?: string
+    source?: string
+    updated_at?: number
+  }
 }
 
 export interface GetModelPricingResponse {
@@ -223,7 +229,10 @@ export interface SyncUpstreamResponse {
     created_models?: number
     updated_models?: number
     created_vendors?: number
+    pricing_updated?: number
+    pricing_skipped?: number
     skipped_models?: string[]
+    pricing_list?: string[]
   }
 }
 
@@ -329,7 +338,13 @@ export type SyncLocale = 'zh' | 'en' | 'ja'
 /**
  * Sync upstream source
  */
-export type SyncSource = 'official' | 'config'
+export type SyncSource = 'official' | 'models.dev' | 'config'
+
+export interface SyncPricingPolicy {
+  enabled: boolean
+  overwrite_manual?: boolean
+  provider_order?: string[]
+}
 
 // ============================================================================
 // Model Deployments Types

@@ -488,16 +488,30 @@ func DefaultModelRatio2JSONString() string {
 	return string(jsonBytes)
 }
 
-// GetDefaultModelRatioMap 获取默认模型倍率 Map 的引用
-// 返回值：默认倍率 Map
-func GetDefaultModelRatioMap() map[string]float64 {
-	return defaultModelRatio
+func copyFloatMap(source map[string]float64) map[string]float64 {
+	copied := make(map[string]float64, len(source))
+	for key, value := range source {
+		copied[key] = value
+	}
+	return copied
 }
 
-// GetDefaultModelPriceMap 获取默认模型固定价格 Map 的引用
-// 返回值：默认价格 Map
+// GetDefaultModelRatioMap 获取默认模型倍率 Map 的副本。
+// 返回值：默认倍率 Map 副本，调用方修改不会影响包内默认配置。
+func GetDefaultModelRatioMap() map[string]float64 {
+	return copyFloatMap(defaultModelRatio)
+}
+
+// GetDefaultModelPriceMap 获取默认模型固定价格 Map 的副本。
+// 返回值：默认价格 Map 副本。
 func GetDefaultModelPriceMap() map[string]float64 {
-	return defaultModelPrice
+	return copyFloatMap(defaultModelPrice)
+}
+
+// GetDefaultCompletionRatioMap 获取默认输出倍率 Map 的副本。
+// 用于区分系统内置倍率和管理员持久化覆盖倍率。
+func GetDefaultCompletionRatioMap() map[string]float64 {
+	return copyFloatMap(defaultCompletionRatio)
 }
 
 // CompletionRatio2JSONString 将输出倍率 Map 序列化为 JSON 字符串
@@ -799,6 +813,11 @@ func ImageRatio2JSONString() string {
 	return imageRatioMap.MarshalJSONString()
 }
 
+// GetDefaultImageRatioMap 获取默认图片倍率 Map 的副本。
+func GetDefaultImageRatioMap() map[string]float64 {
+	return copyFloatMap(defaultImageRatio)
+}
+
 // UpdateImageRatioByJSONString 从 JSON 字符串更新图片倍率配置
 // 参数：
 //   - jsonStr: JSON 格式的图片倍率配置字符串
@@ -829,6 +848,11 @@ func AudioRatio2JSONString() string {
 	return audioRatioMap.MarshalJSONString()
 }
 
+// GetDefaultAudioRatioMap 获取默认音频输入倍率 Map 的副本。
+func GetDefaultAudioRatioMap() map[string]float64 {
+	return copyFloatMap(defaultAudioRatio)
+}
+
 // UpdateAudioRatioByJSONString 从 JSON 字符串更新音频输入倍率配置
 // 更新后会自动刷新暴露数据缓存
 // 参数：
@@ -843,6 +867,11 @@ func UpdateAudioRatioByJSONString(jsonStr string) error {
 // 返回值：JSON 字符串
 func AudioCompletionRatio2JSONString() string {
 	return audioCompletionRatioMap.MarshalJSONString()
+}
+
+// GetDefaultAudioCompletionRatioMap 获取默认音频输出倍率 Map 的副本。
+func GetDefaultAudioCompletionRatioMap() map[string]float64 {
+	return copyFloatMap(defaultAudioCompletionRatio)
 }
 
 // UpdateAudioCompletionRatioByJSONString 从 JSON 字符串更新音频输出倍率配置

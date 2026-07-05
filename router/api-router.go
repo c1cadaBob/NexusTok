@@ -339,6 +339,12 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			// 提供商和分组管理
 			accountPoolRoute.GET("/providers", controller.ListAccountPoolProviders)       // 获取账号池提供商列表
+			accountPoolRoute.GET("/auth-files", controller.ListAccountPoolAuthFiles)      // 获取原生认证文件列表
+			accountPoolRoute.POST("/auth-files", controller.CreateAccountPoolAuthFile)    // 导入原生认证文件
+			accountPoolRoute.POST("/auth-files/import", controller.ImportAccountPoolAuthFiles) // 自动导入单个或批量认证文件
+			accountPoolRoute.GET("/auth-files/:auth_file_id", controller.GetAccountPoolAuthFile) // 获取单个原生认证文件
+			accountPoolRoute.PUT("/auth-files/:auth_file_id", controller.UpdateAccountPoolAuthFile) // 更新原生认证文件
+			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile) // 删除原生认证文件
 			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)             // 获取账号池分组列表
 			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)           // 创建账号池分组
 			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions) // 获取账号池分组选项

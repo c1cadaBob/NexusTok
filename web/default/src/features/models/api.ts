@@ -37,6 +37,7 @@ import type {
   ListDeploymentsResponse,
   GetModelPricingResponse,
   UpdateModelPricingRequest,
+  SyncPricingPolicy,
 } from './types'
 
 // ============================================================================
@@ -211,6 +212,7 @@ export async function syncUpstream(params?: {
   locale?: SyncLocale
   source?: SyncSource
   overwrite?: SyncOverwritePayload[]
+  pricing?: SyncPricingPolicy
 }): Promise<SyncUpstreamResponse> {
   const res = await api.post('/api/models/sync_upstream', params)
   return res.data
@@ -245,6 +247,7 @@ export async function applyUpstreamOverwrite(params: {
   overwrite: SyncOverwritePayload[]
   locale?: SyncLocale
   source?: SyncSource
+  pricing?: SyncPricingPolicy
 }): Promise<SyncUpstreamResponse> {
   return syncUpstream(params)
 }

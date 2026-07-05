@@ -4,6 +4,7 @@
 // 主要结构体：
 // - AccountPoolGroup：账号池分组，定义一组账号的公共配置和调度策略
 // - PoolAccount：池账号，存储单个账号的凭据和状态信息
+// - AccountPoolAuthFile：账号池认证文件，保存 JSON 凭据原文和文件级调度配置
 //
 // 常量定义：
 // - 认证类型（AuthType）：api_key、official_oauth、cookie、service_account、custom_json
@@ -50,6 +51,13 @@ const (
 	AccountPoolStrategyFillFirst = "fill_first"
 	// AccountPoolStrategyLeastUsed 最少使用调度策略
 	AccountPoolStrategyLeastUsed = "least_used"
+
+	// AccountPoolAuthFileFormatNative 原生 JSON 认证文件格式
+	AccountPoolAuthFileFormatNative = "native"
+	// AccountPoolAuthFileFormatSub2 sub2 导出的 JSON 包装格式
+	AccountPoolAuthFileFormatSub2 = "sub2"
+	// AccountPoolAuthFileFormatNewAPI NewAPI 导出的 JSON 包装格式
+	AccountPoolAuthFileFormatNewAPI = "newapi"
 )
 
 // AccountPoolGroup 账号池分组模型
@@ -125,6 +133,38 @@ type PoolAccount struct {
 	UpdatedTime        int64   `json:"updated_time" gorm:"bigint"`                                         // 更新时间
 }
 
+// AccountPoolAuthFile 账号池认证文件模型。
+// 该模型把“导入的 JSON 文件”提升为一等管理对象：原文加密保存，列表和调度只使用
+// 脱敏摘要及文件级配置。PoolAccount 仍是热路径实际调度对象，PoolAccountId 用来
+// 关联由该文件生成的账号，后续编辑分组、代理、优先级时可同步更新到调度层。
+type AccountPoolAuthFile struct {
+	Id                int     `json:"id"`                                                                  // 认证文件 ID
+	Name              string  `json:"name" gorm:"type:varchar(255);index;not null"`                         // 文件显示名称
+	SourcePlatform    string  `json:"source_platform" gorm:"type:varchar(64);index"`                        // 来源平台，如 sub2、newapi、native
+	Format            string  `json:"format" gorm:"type:varchar(64);default:'native';index"`                // 解析格式标识
+	Provider          string  `json:"provider" gorm:"type:varchar(64);index;not null"`                      // 凭据提供方，如 codex、xai
+	Platform          string  `json:"platform" gorm:"type:varchar(64);index;not null"`                      // 本地调度平台，通常与 Provider 一致
+	AuthType          string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                     // 认证类型
+	PoolGroupId       int     `json:"pool_group_id" gorm:"index;not null"`                                  // 关联账号池分组
+	PoolAccountId     int     `json:"pool_account_id" gorm:"index"`                                         // 由该文件生成的池账号
+	Status            int     `json:"status" gorm:"default:1;index"`                                        // 状态（1=启用，2=禁用）
+	FileDigest        string  `json:"file_digest" gorm:"type:varchar(64);uniqueIndex"`                      // 原始 JSON 内容 SHA256，用于去重
+	EncryptedContent  string  `json:"-" gorm:"type:text;not null"`                                          // 加密后的认证文件原文
+	CredentialSummary string  `json:"credential_summary" gorm:"type:text"`                                  // 凭据摘要（脱敏）
+	CredentialMetadata string `json:"credential_metadata" gorm:"type:text"`                                  // 解析出的元数据 JSON
+	CredentialAttrs   string  `json:"credential_attributes" gorm:"column:credential_attributes;type:text"`   // 解析出的属性 JSON
+	AccountGroups     string  `json:"account_groups" gorm:"type:text"`                                      // 文件级调用分组，逗号分隔
+	Models            string  `json:"models" gorm:"type:text"`                                              // 文件级模型限制，逗号分隔
+	Proxy             string  `json:"proxy" gorm:"type:text"`                                               // 文件级代理
+	BaseURL           *string `json:"base_url" gorm:"column:base_url;default:''"`                           // 文件级基础 URL 覆盖
+	Priority          int64   `json:"priority" gorm:"bigint;default:0;index"`                               // 文件级优先级
+	Weight            int     `json:"weight" gorm:"default:1;index"`                                        // 文件级权重
+	MaxConcurrency    int     `json:"max_concurrency" gorm:"default:0"`                                     // 文件级最大并发数（0=不限）
+	LastImportedTime  int64   `json:"last_imported_time" gorm:"bigint;default:0;index"`                     // 最近导入时间
+	CreatedTime       int64   `json:"created_time" gorm:"bigint"`                                           // 创建时间
+	UpdatedTime       int64   `json:"updated_time" gorm:"bigint"`                                           // 更新时间
+}
+
 // BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
 func (group *AccountPoolGroup) BeforeCreate(tx *gorm.DB) error {
 	_ = tx
@@ -184,6 +224,61 @@ func (account *PoolAccount) BeforeUpdate(tx *gorm.DB) error {
 	account.UpdatedTime = common.GetTimestamp()
 	account.normalize()
 	return nil
+}
+
+// BeforeCreate GORM 钩子：创建认证文件前设置时间戳并规范化字段。
+func (authFile *AccountPoolAuthFile) BeforeCreate(tx *gorm.DB) error {
+	_ = tx
+	now := common.GetTimestamp()
+	if authFile.CreatedTime == 0 {
+		authFile.CreatedTime = now
+	}
+	authFile.UpdatedTime = now
+	if authFile.LastImportedTime == 0 {
+		authFile.LastImportedTime = now
+	}
+	authFile.normalize()
+	return nil
+}
+
+// BeforeUpdate GORM 钩子：更新认证文件前刷新时间戳并规范化字段。
+func (authFile *AccountPoolAuthFile) BeforeUpdate(tx *gorm.DB) error {
+	_ = tx
+	authFile.UpdatedTime = common.GetTimestamp()
+	authFile.normalize()
+	return nil
+}
+
+// normalize 规范化认证文件字段，保证列表筛选和调度字段稳定。
+func (authFile *AccountPoolAuthFile) normalize() {
+	if authFile.Status == 0 {
+		authFile.Status = common.ChannelStatusEnabled
+	}
+	authFile.Name = strings.TrimSpace(authFile.Name)
+	authFile.SourcePlatform = strings.ToLower(strings.TrimSpace(authFile.SourcePlatform))
+	authFile.Format = strings.ToLower(strings.TrimSpace(authFile.Format))
+	if authFile.Format == "" {
+		authFile.Format = AccountPoolAuthFileFormatNative
+	}
+	authFile.Provider = strings.ToLower(strings.TrimSpace(authFile.Provider))
+	authFile.Platform = strings.ToLower(strings.TrimSpace(authFile.Platform))
+	if authFile.Platform == "" {
+		authFile.Platform = authFile.Provider
+	}
+	authFile.AuthType = strings.ToLower(strings.TrimSpace(authFile.AuthType))
+	if authFile.AuthType == "" {
+		authFile.AuthType = AccountPoolAuthTypeCustomJSON
+	}
+	if authFile.Weight <= 0 {
+		authFile.Weight = 1
+	}
+	if authFile.MaxConcurrency < 0 {
+		authFile.MaxConcurrency = 0
+	}
+	authFile.FileDigest = strings.TrimSpace(authFile.FileDigest)
+	authFile.AccountGroups = normalizeAccountPoolCSV(authFile.AccountGroups)
+	authFile.Models = normalizeAccountPoolCSV(authFile.Models)
+	authFile.Proxy = strings.TrimSpace(authFile.Proxy)
 }
 
 // normalize 规范化账号字段（小写化、去空格、设置默认值）
@@ -456,6 +551,46 @@ func GetPoolAccountById(accountID int) (*PoolAccount, error) {
 	return account, err
 }
 
+// GetAccountPoolAuthFileById 根据 ID 获取认证文件。
+func GetAccountPoolAuthFileById(authFileID int) (*AccountPoolAuthFile, error) {
+	authFile := &AccountPoolAuthFile{}
+	err := DB.Where("id = ?", authFileID).First(authFile).Error
+	return authFile, err
+}
+
+// GetAccountPoolAuthFiles 分页查询原生账号池认证文件。
+// 支持按状态、账号池分组、提供方和关键词筛选，便于后台把“文件”和“生成账号”
+// 分开管理，同时仍能定位到实际调度对象。
+func GetAccountPoolAuthFiles(page int, pageSize int, status int, poolGroupID int, provider string, search string) ([]*AccountPoolAuthFile, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	query := DB.Model(&AccountPoolAuthFile{})
+	if status > 0 {
+		query = query.Where("status = ?", status)
+	}
+	if poolGroupID > 0 {
+		query = query.Where("pool_group_id = ?", poolGroupID)
+	}
+	if strings.TrimSpace(provider) != "" {
+		query = query.Where("provider = ? OR platform = ?", strings.ToLower(strings.TrimSpace(provider)), strings.ToLower(strings.TrimSpace(provider)))
+	}
+	if strings.TrimSpace(search) != "" {
+		like := "%" + strings.TrimSpace(search) + "%"
+		query = query.Where("name LIKE ? OR provider LIKE ? OR platform LIKE ? OR source_platform LIKE ? OR credential_summary LIKE ? OR account_groups LIKE ?", like, like, like, like, like, like)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	authFiles := []*AccountPoolAuthFile{}
+	err := query.Order("id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&authFiles).Error
+	return authFiles, total, err
+}
+
 // GetPoolAccounts 分页查询池账号列表
 // 支持按状态筛选和关键词搜索（名称、凭据摘要、模型）
 func GetPoolAccounts(groupID int, page int, pageSize int, status int, search string) ([]*PoolAccount, int64, error) {
@@ -480,6 +615,34 @@ func GetPoolAccounts(groupID int, page int, pageSize int, status int, search str
 	accounts := []*PoolAccount{}
 	err := query.Order("priority DESC").Order("id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&accounts).Error
 	return accounts, total, err
+}
+
+func normalizeAccountPoolCSV(value string) string {
+	parts := splitAccountPoolCSV(value)
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ",")
+}
+
+func splitAccountPoolCSV(value string) []string {
+	seen := map[string]struct{}{}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == ';'
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.Join(strings.Fields(strings.TrimSpace(part)), " ")
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+	}
+	return result
 }
 
 // UpdatePoolAccountStatus 更新池账号状态

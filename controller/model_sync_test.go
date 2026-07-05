@@ -12,6 +12,9 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/billing_setting"
+	"github.com/c1cada/NexusTok/setting/config"
+	"github.com/c1cada/NexusTok/setting/ratio_setting"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -34,6 +37,8 @@ func setupModelSyncTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 
 	require.NoError(t, db.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	resetModelSyncPricingState(t)
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -43,6 +48,55 @@ func setupModelSyncTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func resetModelSyncPricingState(t *testing.T) {
+	t.Helper()
+	common.OptionMapRWMutex.Lock()
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateCacheRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateCreateCacheRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateImageRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateAudioRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateAudioCompletionRatioByJSONString("{}"))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": "{}",
+		"billing_setting.billing_expr": "{}",
+	}))
+	require.Equal(t, billing_setting.BillingModeRatio, billing_setting.GetBillingMode("__pricing_reset__"))
+	require.NoError(t, model.SetModelPricingSource("__pricing_reset__", model.ModelPricingSource{}))
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = map[string]string{}
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateCacheRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateCreateCacheRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateImageRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateAudioRatioByJSONString("{}"))
+		require.NoError(t, ratio_setting.UpdateAudioCompletionRatioByJSONString("{}"))
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+			"billing_setting.billing_mode": "{}",
+			"billing_setting.billing_expr": "{}",
+		}))
+	})
+}
+
+func f64ptr(value float64) *float64 {
+	return &value
+}
+
+func requireFloatMapValue(t *testing.T, got map[string]float64, key string, want float64) {
+	t.Helper()
+	value, ok := got[key]
+	require.True(t, ok, "missing key %s in %v", key, got)
+	require.InDelta(t, want, value, 0.0000001)
 }
 
 // withModelsDevTestServer 使用本地 HTTP 服务替代 models.dev，避免单元测试依赖外网。
@@ -274,6 +328,260 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, second.CreatedModels)
 	require.Empty(t, second.SkippedModels)
+}
+
+func TestSyncUpstreamModelsCoreAppliesModelsDevPricingProviderOrder(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-sync-priced": {
+				"id": "openai/gpt-sync-priced",
+				"name": "GPT Sync Priced"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"models": {
+					"gpt-sync-priced": {
+						"id": "gpt-sync-priced",
+						"cost": {
+							"input": 2,
+							"output": 8,
+							"cache_read": 0.5,
+							"cache_write": 2.5,
+							"input_audio": 3,
+							"output_audio": 12
+						}
+					}
+				}
+			},
+			"azure": {
+				"id": "azure",
+				"name": "Azure",
+				"models": {
+					"gpt-sync-priced": {
+						"id": "gpt-sync-priced",
+						"cost": {
+							"input": 1,
+							"output": 3,
+							"cache_read": 0.1,
+							"cache_write": 1.25,
+							"input_audio": 2,
+							"output_audio": 10
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:       true,
+			ProviderOrder: []string{"azure", "openai"},
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CreatedModels)
+	require.Equal(t, 1, result.PricingUpdated)
+	require.Contains(t, result.PricingList, "gpt-sync-priced")
+
+	var saved model.Model
+	require.NoError(t, db.Where("model_name = ?", "gpt-sync-priced").First(&saved).Error)
+
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-sync-priced", 0.5)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-sync-priced", 3)
+	requireFloatMapValue(t, ratio_setting.GetCacheRatioCopy(), "gpt-sync-priced", 0.1)
+	requireFloatMapValue(t, ratio_setting.GetCreateCacheRatioCopy(), "gpt-sync-priced", 1.25)
+	requireFloatMapValue(t, ratio_setting.GetAudioRatioCopy(), "gpt-sync-priced", 2)
+	requireFloatMapValue(t, ratio_setting.GetAudioCompletionRatioCopy(), "gpt-sync-priced", 5)
+
+	pricing := model.BuildModelPricingConfig(saved.Id, "gpt-sync-priced")
+	require.NotNil(t, pricing.Source)
+	require.Equal(t, model.ModelPricingSourceUpstream, pricing.Source.Kind)
+	require.Equal(t, "azure", pricing.Source.Provider)
+}
+
+func TestSyncUpstreamModelsCoreKeepsManualPricingByDefault(t *testing.T) {
+	_ = setupModelSyncTestDB(t)
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-manual-price": {
+				"id": "openai/gpt-manual-price",
+				"name": "GPT Manual Price"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"models": {
+					"gpt-manual-price": {
+						"id": "gpt-manual-price",
+						"cost": {
+							"input": 2,
+							"output": 8
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	local := &model.Model{
+		ModelName:    "gpt-manual-price",
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, local.Insert())
+	require.NoError(t, model.SaveModelPricingConfig("gpt-manual-price", model.ModelPricingUpdateRequest{
+		BillingMode:           model.ModelPricingModeRatio,
+		InputPricePerMillion:  f64ptr(9),
+		OutputPricePerMillion: f64ptr(18),
+	}))
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled: true,
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.PricingUpdated)
+	require.GreaterOrEqual(t, result.PricingSkipped, 1)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-manual-price", 4.5)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-manual-price", 2)
+	require.Equal(t, model.ModelPricingSourceManual, model.GetModelPricingSourceCopy()["gpt-manual-price"].Kind)
+
+	result, err = syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:         true,
+			OverwriteManual: true,
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.PricingUpdated)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-manual-price", 1)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-manual-price", 4)
+	require.Equal(t, model.ModelPricingSourceUpstream, model.GetModelPricingSourceCopy()["gpt-manual-price"].Kind)
+}
+
+func TestSyncUpstreamModelsCoreKeepsLegacyOverridePricingByDefault(t *testing.T) {
+	_ = setupModelSyncTestDB(t)
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-legacy-price": {
+				"id": "openai/gpt-legacy-price",
+				"name": "GPT Legacy Price"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"models": {
+					"gpt-legacy-price": {
+						"id": "gpt-legacy-price",
+						"cost": {
+							"input": 2,
+							"output": 8
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	local := &model.Model{
+		ModelName:    "gpt-legacy-price",
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, local.Insert())
+	require.NoError(t, model.UpdateOption("ModelRatio", `{"gpt-legacy-price":4.5}`))
+	require.NoError(t, model.UpdateOption("CompletionRatio", `{"gpt-legacy-price":2}`))
+	require.Empty(t, model.GetModelPricingSourceCopy()["gpt-legacy-price"].Kind)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled: true,
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.PricingUpdated)
+	require.GreaterOrEqual(t, result.PricingSkipped, 1)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-legacy-price", 4.5)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-legacy-price", 2)
+
+	result, err = syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:         true,
+			OverwriteManual: true,
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.PricingUpdated)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-legacy-price", 1)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-legacy-price", 4)
+	require.Equal(t, model.ModelPricingSourceUpstream, model.GetModelPricingSourceCopy()["gpt-legacy-price"].Kind)
+}
+
+func TestSyncUpstreamModelsCoreDoesNotTreatPersistedDefaultsAsManualPricing(t *testing.T) {
+	_ = setupModelSyncTestDB(t)
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-5-mini": {
+				"id": "openai/gpt-5-mini",
+				"name": "GPT-5 Mini"
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"models": {
+					"gpt-5-mini": {
+						"id": "gpt-5-mini",
+						"cost": {
+							"input": 1,
+							"output": 4
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	local := &model.Model{
+		ModelName:    "gpt-5-mini",
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, local.Insert())
+	require.NoError(t, model.UpdateOption("ModelRatio", ratio_setting.DefaultModelRatio2JSONString()))
+	require.Empty(t, model.GetModelPricingSourceCopy()["gpt-5-mini"].Kind)
+	require.NotContains(t, model.GetModelPricingOverrideModelSet(), "gpt-5-mini")
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled: true,
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.PricingUpdated)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-5-mini", 0.5)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-5-mini", 4)
+	require.Equal(t, model.ModelPricingSourceUpstream, model.GetModelPricingSourceCopy()["gpt-5-mini"].Kind)
 }
 
 func TestSyncUpstreamModelsCoreCorrectsExistingModelsDevVendor(t *testing.T) {

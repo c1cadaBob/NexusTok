@@ -15,10 +15,10 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -33,6 +33,26 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// rawJSONMessage 只作为延迟解析字段的字节容器使用，实际 JSON 解析仍通过 common.* 完成。
+type rawJSONMessage []byte
+
+// UnmarshalJSON 保留原始 JSON 字节，避免 endpoints 这类结构不固定的字段被提前解析。
+func (m *rawJSONMessage) UnmarshalJSON(data []byte) error {
+	if m == nil {
+		return nil
+	}
+	*m = append((*m)[0:0], data...)
+	return nil
+}
+
+// MarshalJSON 按原样输出原始 JSON 字节；空值输出 null。
+func (m rawJSONMessage) MarshalJSON() ([]byte, error) {
+	if len(m) == 0 {
+		return []byte("null"), nil
+	}
+	return m, nil
+}
 
 // 上游地址常量
 const (
@@ -122,14 +142,14 @@ type upstreamEnvelope[T any] struct {
 
 // upstreamModel 上游模型数据结构体
 type upstreamModel struct {
-	Description string          `json:"description"`
-	Endpoints   json.RawMessage `json:"endpoints"`
-	Icon        string          `json:"icon"`
-	ModelName   string          `json:"model_name"`
-	NameRule    int             `json:"name_rule"`
-	Status      int             `json:"status"`
-	Tags        string          `json:"tags"`
-	VendorName  string          `json:"vendor_name"`
+	Description string         `json:"description"`
+	Endpoints   rawJSONMessage `json:"endpoints"`
+	Icon        string         `json:"icon"`
+	ModelName   string         `json:"model_name"`
+	NameRule    int            `json:"name_rule"`
+	Status      int            `json:"status"`
+	Tags        string         `json:"tags"`
+	VendorName  string         `json:"vendor_name"`
 }
 
 // upstreamVendor 上游供应商数据结构体
@@ -175,6 +195,19 @@ type modelsDevCatalogModel struct {
 	Status           string                     `json:"status"`
 	Modalities       modelsDevCatalogModalities `json:"modalities"`
 	Limit            modelsDevCatalogLimit      `json:"limit"`
+	Cost             modelsDevCatalogCost       `json:"cost"`
+}
+
+// modelsDevCatalogCost 是 models.dev provider 模型中的价格结构。
+// 当前公开数据使用真实美元价，单位通常是 $ / 1M tokens；本地保存时会转为
+// 现有 ratio 配置，保证 relay 热路径不需要变更。
+type modelsDevCatalogCost struct {
+	Input       *float64 `json:"input"`
+	Output      *float64 `json:"output"`
+	CacheRead   *float64 `json:"cache_read"`
+	CacheWrite  *float64 `json:"cache_write"`
+	InputAudio  *float64 `json:"input_audio"`
+	OutputAudio *float64 `json:"output_audio"`
 }
 
 // modelsDevCatalogModalities 表示模型输入输出模态。
@@ -206,14 +239,26 @@ type syncUpstreamOptions struct {
 	CreateAllUpstream bool
 }
 
+// syncPricingPolicyRequest 描述模型同步时是否同时应用上游价格。
+// provider_order 是管理员指定的降级链，例如 openai -> azure -> openrouter；
+// overwrite_manual=false 时，用户在模型页手动确认过的价格永远优先。
+type syncPricingPolicyRequest struct {
+	Enabled         bool     `json:"enabled"`
+	OverwriteManual bool     `json:"overwrite_manual"`
+	ProviderOrder   []string `json:"provider_order"`
+}
+
 // syncUpstreamResult 是同步核心返回的结构化结果。
 type syncUpstreamResult struct {
 	CreatedModels  int            `json:"created_models"`
 	CreatedVendors int            `json:"created_vendors"`
 	UpdatedModels  int            `json:"updated_models"`
+	PricingUpdated int            `json:"pricing_updated,omitempty"`
+	PricingSkipped int            `json:"pricing_skipped,omitempty"`
 	SkippedModels  []string       `json:"skipped_models"`
 	CreatedList    []string       `json:"created_list"`
 	UpdatedList    []string       `json:"updated_list"`
+	PricingList    []string       `json:"pricing_list,omitempty"`
 	Source         syncSourceInfo `json:"source"`
 }
 
@@ -232,9 +277,21 @@ type overwriteField struct {
 
 // syncRequest 同步请求结构体
 type syncRequest struct {
-	Overwrite []overwriteField `json:"overwrite"`
-	Locale    string           `json:"locale"`
-	Source    string           `json:"source"`
+	Overwrite []overwriteField         `json:"overwrite"`
+	Locale    string                   `json:"locale"`
+	Source    string                   `json:"source"`
+	Pricing   syncPricingPolicyRequest `json:"pricing"`
+}
+
+type modelsDevPricingCandidate struct {
+	ProviderID   string
+	ProviderName string
+	Input        float64
+	Output       *float64
+	CacheRead    *float64
+	CacheWrite   *float64
+	InputAudio   *float64
+	OutputAudio  *float64
 }
 
 // newHTTPClient 创建优化的 HTTP 客户端
@@ -507,6 +564,91 @@ func convertModelsDevCatalog(catalog *modelsDevCatalog) ([]upstreamVendor, []ups
 	}
 
 	return convertModelsDevCatalogFromProviders(catalog)
+}
+
+// extractModelsDevPricingCandidates 从 catalog 的 provider 目录提取每个模型的价格候选。
+// canonical models 只描述模型能力和归属方；实际价格在 provider 维度，必须保留
+// provider 顺序供管理员配置降级策略。
+func extractModelsDevPricingCandidates(catalog *modelsDevCatalog) map[string][]modelsDevPricingCandidate {
+	result := make(map[string][]modelsDevPricingCandidate)
+	if catalog == nil || len(catalog.Providers) == 0 {
+		return result
+	}
+
+	providerIDs := make([]string, 0, len(catalog.Providers))
+	for providerID := range catalog.Providers {
+		providerIDs = append(providerIDs, providerID)
+	}
+	sortModelsDevProviderIDs(providerIDs)
+
+	for _, providerID := range providerIDs {
+		provider := catalog.Providers[providerID]
+		providerName := strings.TrimSpace(provider.Name)
+		if providerName == "" {
+			providerName = providerID
+		}
+		modelIDs := make([]string, 0, len(provider.Models))
+		for modelID := range provider.Models {
+			modelIDs = append(modelIDs, modelID)
+		}
+		sort.Strings(modelIDs)
+
+		for _, modelID := range modelIDs {
+			def := provider.Models[modelID]
+			modelName := strings.TrimSpace(def.ID)
+			if modelName == "" {
+				modelName = modelID
+			}
+			candidate, ok := buildModelsDevPricingCandidate(providerID, providerName, def.Cost)
+			if !ok {
+				continue
+			}
+			result[modelName] = append(result[modelName], candidate)
+		}
+	}
+	return result
+}
+
+// buildModelsDevPricingCandidate 将 models.dev 价格转换为可应用候选。
+// input 是 ratio 模式的基准价格，缺失时无法换算本地倍率；input=0 且 output>0
+// 也无法用旧 ratio 结构表达，因此跳过并交给下一 provider 降级。
+func buildModelsDevPricingCandidate(providerID, providerName string, cost modelsDevCatalogCost) (modelsDevPricingCandidate, bool) {
+	if cost.Input == nil || !isValidSyncCost(*cost.Input) {
+		return modelsDevPricingCandidate{}, false
+	}
+	input := *cost.Input
+	output := cloneValidSyncCost(cost.Output)
+	if input == 0 && output != nil && *output > 0 {
+		return modelsDevPricingCandidate{}, false
+	}
+	inputAudio := cloneValidSyncCost(cost.InputAudio)
+	outputAudio := cloneValidSyncCost(cost.OutputAudio)
+	if inputAudio != nil && *inputAudio == 0 && outputAudio != nil && *outputAudio > 0 {
+		return modelsDevPricingCandidate{}, false
+	}
+
+	return modelsDevPricingCandidate{
+		ProviderID:   strings.TrimSpace(providerID),
+		ProviderName: strings.TrimSpace(providerName),
+		Input:        input,
+		Output:       output,
+		CacheRead:    cloneValidSyncCost(cost.CacheRead),
+		CacheWrite:   cloneValidSyncCost(cost.CacheWrite),
+		InputAudio:   inputAudio,
+		OutputAudio:  outputAudio,
+	}, true
+}
+
+func cloneValidSyncCost(value *float64) *float64 {
+	if value == nil || !isValidSyncCost(*value) {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func isValidSyncCost(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
 }
 
 // convertModelsDevCatalogFromCanonical 使用 canonical models 生成同步结果。
@@ -949,6 +1091,25 @@ func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVend
 	}
 }
 
+// fetchSyncUpstreamDataWithPricing 在普通模型元数据之外返回 models.dev 价格候选。
+// 官方仓库暂无统一 provider 价格结构，因此非 models.dev 来源返回空候选。
+func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]upstreamVendor, []upstreamModel, map[string][]modelsDevPricingCandidate, syncSourceInfo, error) {
+	sourceInfo := buildSyncSourceInfo(req)
+	switch sourceInfo.Source {
+	case syncSourceModelsDev:
+		catalog, err := fetchModelsDevCatalog(ctx, sourceInfo.CatalogURL)
+		if err != nil {
+			return nil, nil, nil, sourceInfo, err
+		}
+		vendors, models := convertModelsDevCatalog(catalog)
+		pricing := extractModelsDevPricingCandidates(catalog)
+		return vendors, models, pricing, sourceInfo, nil
+	default:
+		vendors, models, sourceInfo, err := fetchSyncUpstreamData(ctx, req)
+		return vendors, models, nil, sourceInfo, err
+	}
+}
+
 // syncUpstreamModelsCore 执行模型目录同步。
 //
 // HTTP 手动同步和每日 models.dev 自动同步共用该函数，确保写库规则一致：
@@ -979,7 +1140,7 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 		}
 	}
 
-	vendors, upstreamModels, sourceInfo, err := fetchSyncUpstreamData(ctx, req)
+	vendors, upstreamModels, pricingCandidates, sourceInfo, err := fetchSyncUpstreamDataWithPricing(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1006,6 +1167,7 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 		SkippedModels: make([]string, 0),
 		CreatedList:   make([]string, 0),
 		UpdatedList:   make([]string, 0),
+		PricingList:   make([]string, 0),
 		Source:        sourceInfo,
 	}
 
@@ -1125,7 +1287,199 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 			})
 		}
 	}
+	if shouldApplySyncPricing(req, sourceInfo, pricingCandidates) {
+		applyModelsDevPricingPolicy(req.Pricing, pricingCandidates, result)
+	}
 	return result, nil
+}
+
+func shouldApplySyncPricing(req syncRequest, sourceInfo syncSourceInfo, pricingCandidates map[string][]modelsDevPricingCandidate) bool {
+	if sourceInfo.Source != syncSourceModelsDev || len(pricingCandidates) == 0 {
+		return false
+	}
+	return req.Pricing.Enabled
+}
+
+// applyModelsDevPricingPolicy 按管理员配置的 provider 顺序将上游价格写入模型定价。
+// 规则：
+// 1. 只处理本地已存在的模型，避免价格孤儿键；
+// 2. manual 来源默认最高优先级，除非 overwrite_manual=true；
+// 3. provider_order 中先命中的 provider 生效，未配置时使用 models.dev provider 稳定排序；
+// 4. 保存为 ratio 模式，保持 relay 热路径和 /api/pricing 结构不变。
+func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, candidates map[string][]modelsDevPricingCandidate, result *syncUpstreamResult) {
+	if result == nil || len(candidates) == 0 {
+		return
+	}
+	modelNames := make([]string, 0, len(candidates))
+	for modelName := range candidates {
+		modelNames = append(modelNames, modelName)
+	}
+	sort.Strings(modelNames)
+
+	var existing []model.Model
+	if err := model.DB.Where("model_name IN ?", modelNames).Find(&existing).Error; err != nil {
+		common.SysError("failed to load models for pricing sync: " + err.Error())
+		return
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, item := range existing {
+		existingSet[item.ModelName] = struct{}{}
+	}
+
+	currentSources := model.GetModelPricingSourceCopy()
+	existingOverrides := model.GetModelPricingOverrideModelSet()
+	updates := make(map[string]model.ModelPricingUpdateRequest)
+	sources := make(map[string]model.ModelPricingSource)
+	for _, modelName := range modelNames {
+		if _, ok := existingSet[modelName]; !ok {
+			result.PricingSkipped++
+			continue
+		}
+		if shouldPreserveLocalPricing(policy, currentSources[modelName], existingOverrides, modelName) {
+			result.PricingSkipped++
+			continue
+		}
+		candidate, ok := selectModelsDevPricingCandidate(candidates[modelName], policy.ProviderOrder)
+		if !ok {
+			result.PricingSkipped++
+			continue
+		}
+		update, ok := buildPricingUpdateFromModelsDevCandidate(candidate)
+		if !ok {
+			result.PricingSkipped++
+			continue
+		}
+		updates[modelName] = update
+		sources[modelName] = model.ModelPricingSource{
+			Kind:      model.ModelPricingSourceUpstream,
+			Provider:  candidate.ProviderID,
+			Source:    syncSourceModelsDev,
+			UpdatedAt: time.Now().Unix(),
+		}
+	}
+
+	if len(updates) == 0 {
+		return
+	}
+	if err := model.SaveModelPricingConfigBatch(updates, sources); err != nil {
+		common.SysError("failed to save models.dev pricing sync: " + err.Error())
+		return
+	}
+	result.PricingUpdated += len(updates)
+	for modelName := range updates {
+		result.PricingList = append(result.PricingList, modelName)
+	}
+	sort.Strings(result.PricingList)
+}
+
+func shouldPreserveLocalPricing(policy syncPricingPolicyRequest, source model.ModelPricingSource, existingOverrides map[string]struct{}, modelName string) bool {
+	if policy.OverwriteManual {
+		return false
+	}
+	switch strings.TrimSpace(source.Kind) {
+	case model.ModelPricingSourceManual:
+		return true
+	case model.ModelPricingSourceUpstream:
+		return false
+	case "":
+		// 历史版本没有来源元数据，但只要 options 已经有模型级定价覆盖，
+		// 就按管理员手工配置保护，避免每日同步上线后静默改价。
+		_, ok := existingOverrides[modelName]
+		return ok
+	default:
+		// 未知来源可能来自后续导入器或第三方扩展，默认不让上游自动覆盖。
+		return true
+	}
+}
+
+func selectModelsDevPricingCandidate(candidates []modelsDevPricingCandidate, providerOrder []string) (modelsDevPricingCandidate, bool) {
+	if len(candidates) == 0 {
+		return modelsDevPricingCandidate{}, false
+	}
+	for _, provider := range normalizeProviderOrder(providerOrder) {
+		for _, candidate := range candidates {
+			if providerMatches(candidate, provider) {
+				return candidate, true
+			}
+		}
+	}
+	return candidates[0], true
+}
+
+func normalizeProviderOrder(providerOrder []string) []string {
+	seen := make(map[string]struct{}, len(providerOrder))
+	result := make([]string, 0, len(providerOrder))
+	for _, item := range providerOrder {
+		key := strings.ToLower(strings.TrimSpace(item))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, key)
+	}
+	return result
+}
+
+func providerMatches(candidate modelsDevPricingCandidate, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return false
+	}
+	return strings.ToLower(strings.TrimSpace(candidate.ProviderID)) == provider ||
+		strings.ToLower(strings.TrimSpace(candidate.ProviderName)) == provider
+}
+
+func buildPricingUpdateFromModelsDevCandidate(candidate modelsDevPricingCandidate) (model.ModelPricingUpdateRequest, bool) {
+	input := candidate.Input
+	if !isValidSyncCost(input) {
+		return model.ModelPricingUpdateRequest{}, false
+	}
+	update := model.ModelPricingUpdateRequest{
+		BillingMode:          model.ModelPricingModeRatio,
+		InputPricePerMillion: &input,
+	}
+	if candidate.Output != nil {
+		output := *candidate.Output
+		update.OutputPricePerMillion = &output
+	}
+	if ratio := relativePricingRatio(candidate.CacheRead, input); ratio != nil {
+		update.CacheRatio = ratio
+	}
+	if ratio := relativePricingRatio(candidate.CacheWrite, input); ratio != nil {
+		update.CreateCacheRatio = ratio
+	}
+	if ratio := relativePricingRatio(candidate.InputAudio, input); ratio != nil {
+		update.AudioRatio = ratio
+	}
+	if candidate.OutputAudio != nil && candidate.InputAudio != nil && *candidate.InputAudio > 0 {
+		audioCompletionRatio := roundSyncRatio(*candidate.OutputAudio / *candidate.InputAudio)
+		update.AudioCompletionRatio = &audioCompletionRatio
+	}
+	return update, true
+}
+
+func relativePricingRatio(value *float64, base float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	var ratio float64
+	if base == 0 {
+		if *value != 0 {
+			return nil
+		}
+		ratio = 0
+	} else {
+		ratio = *value / base
+	}
+	ratio = roundSyncRatio(ratio)
+	return &ratio
+}
+
+func roundSyncRatio(value float64) float64 {
+	return math.Round(value*1e6) / 1e6
 }
 
 // syncModelsDevCanonicalVendorMappings 纠正 models.dev 已存在官方模型的供应商归属。

@@ -18,12 +18,13 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { GripVertical, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,8 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from '@/components/status-badge'
 import { syncUpstream, previewUpstreamDiff } from '../../api'
 import { getSyncLocaleOptions, getSyncSourceOptions } from '../../constants'
@@ -45,6 +48,8 @@ type SyncWizardDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
+
+const DEFAULT_PROVIDER_ORDER = ['openai', 'anthropic', 'google', 'azure']
 
 export function SyncWizardDialog({
   open,
@@ -60,7 +65,12 @@ export function SyncWizardDialog({
   } = useModels()
   const isMobile = useIsMobile()
   const [locale, setLocale] = useState<SyncLocale>('zh')
-  const [source, setSource] = useState<SyncSource>('official')
+  const [source, setSource] = useState<SyncSource>('models.dev')
+  const [syncPricing, setSyncPricing] = useState(true)
+  const [overwriteManualPricing, setOverwriteManualPricing] = useState(false)
+  const [providerOrderText, setProviderOrderText] = useState(
+    DEFAULT_PROVIDER_ORDER.join('\n')
+  )
   const [isSyncing, setIsSyncing] = useState(false)
 
   // Get translated options
@@ -76,15 +86,29 @@ export function SyncWizardDialog({
       setSource(
         preferredSource && !preferredSource.disabled
           ? (preferredSource.value as SyncSource)
-          : 'official'
+          : 'models.dev'
       )
+      setSyncPricing(true)
+      setOverwriteManualPricing(false)
+      setProviderOrderText(DEFAULT_PROVIDER_ORDER.join('\n'))
     }
   }, [open, syncWizardOptions, SYNC_SOURCE_OPTIONS])
+
+  const providerOrder = providerOrderText
+    .split(/[\n,]/)
+    .map((provider) => provider.trim())
+    .filter(Boolean)
+  const canSyncPricing = source === 'models.dev'
 
   const handleSync = async () => {
     setIsSyncing(true)
     try {
-      setSyncWizardOptions({ locale, source })
+      const pricing = {
+        enabled: canSyncPricing && syncPricing,
+        overwrite_manual: overwriteManualPricing,
+        provider_order: providerOrder,
+      }
+      setSyncWizardOptions({ locale, source, pricing })
       const previewRes = await previewUpstreamDiff({ locale, source })
 
       if (!previewRes.success) {
@@ -95,7 +119,9 @@ export function SyncWizardDialog({
 
       if (conflicts.length > 0) {
         toast.warning(
-          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`
+          t('Found {{count}} conflicts. Please resolve them first.', {
+            count: conflicts.length,
+          })
         )
         setUpstreamConflicts(conflicts)
         setOpen('upstream-conflict')
@@ -103,13 +129,31 @@ export function SyncWizardDialog({
       }
 
       // No conflicts, proceed with sync
-      const response = await syncUpstream({ locale, source })
+      const response = await syncUpstream({
+        locale,
+        source,
+        pricing,
+      })
 
       if (response.success) {
-        const { created_models, created_vendors, updated_models } =
-          response.data || {}
+        const {
+          created_models,
+          created_vendors,
+          updated_models,
+          pricing_updated,
+          pricing_skipped,
+        } = response.data || {}
         toast.success(
-          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`
+          t(
+            'Sync completed. Created {{created}} models, updated {{updated}}, added {{vendors}} vendors, applied pricing to {{priced}} models, skipped {{skipped}} prices.',
+            {
+              created: created_models || 0,
+              updated: updated_models || 0,
+              vendors: created_vendors || 0,
+              priced: pricing_updated || 0,
+              skipped: pricing_skipped || 0,
+            }
+          )
         )
         queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
         queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
@@ -182,7 +226,14 @@ export function SyncWizardDialog({
                           <span className='font-medium'>{option.label}</span>
                           {option.value === 'official' && (
                             <StatusBadge
-                              label='Default'
+                              label={t('Legacy')}
+                              variant='neutral'
+                              copyable={false}
+                            />
+                          )}
+                          {option.value === 'models.dev' && (
+                            <StatusBadge
+                              label={t('Recommended')}
                               variant='neutral'
                               copyable={false}
                             />
@@ -209,7 +260,7 @@ export function SyncWizardDialog({
               {SYNC_LOCALE_OPTIONS.map((option) => (
                 <div
                   key={option.value}
-                  className='flex items-center space-x-2 rounded-lg border p-3'
+                  className='flex items-center gap-2 rounded-lg border p-3'
                 >
                   <RadioGroupItem
                     value={option.value}
@@ -226,10 +277,93 @@ export function SyncWizardDialog({
             </RadioGroup>
           </div>
 
+          <div className='flex flex-col gap-3'>
+            <div>
+              <Label className='text-base'>{t('Pricing sync strategy')}</Label>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Manual pricing stays highest priority. Upstream providers are tried in the order below.'
+                )}
+              </p>
+            </div>
+
+            <div className='rounded-lg border p-4'>
+              <div className='flex items-start justify-between gap-4'>
+                <div className='flex min-w-0 items-start gap-3'>
+                  <ShieldCheck className='mt-0.5 h-4 w-4 shrink-0 text-muted-foreground' />
+                  <div className='min-w-0'>
+                    <div className='font-medium'>{t('Apply upstream pricing')}</div>
+                    <p className='text-muted-foreground text-sm'>
+                      {t(
+                        'Write selected provider prices into the model pricing settings during sync.'
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={canSyncPricing && syncPricing}
+                  disabled={!canSyncPricing}
+                  onCheckedChange={(checked) => setSyncPricing(!!checked)}
+                />
+              </div>
+
+              <div className='mt-4 flex items-start justify-between gap-4 border-t pt-4'>
+                <div className='min-w-0'>
+                  <div className='font-medium'>
+                    {t('Allow overwriting manual pricing')}
+                  </div>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Keep disabled unless you intentionally want upstream prices to replace manually confirmed model prices.'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={overwriteManualPricing}
+                  disabled={!canSyncPricing || !syncPricing}
+                  onCheckedChange={(checked) =>
+                    setOverwriteManualPricing(!!checked)
+                  }
+                />
+              </div>
+
+              <div className='mt-4 border-t pt-4'>
+                <div className='mb-2 flex items-center justify-between gap-3'>
+                  <Label htmlFor='provider-order'>
+                    {t('Provider fallback order')}
+                  </Label>
+                  <Badge variant='outline'>
+                    {t('{{count}} providers', { count: providerOrder.length })}
+                  </Badge>
+                </div>
+                <div className='flex gap-2'>
+                  <div className='text-muted-foreground flex w-6 shrink-0 justify-center pt-2'>
+                    <GripVertical className='h-4 w-4' />
+                  </div>
+                  <Textarea
+                    id='provider-order'
+                    value={providerOrderText}
+                    disabled={!canSyncPricing || !syncPricing}
+                    onChange={(event) =>
+                      setProviderOrderText(event.target.value)
+                    }
+                    placeholder={'openai\nanthropic\ngoogle\nazure'}
+                    className='min-h-28 font-mono text-sm'
+                  />
+                </div>
+                <p className='text-muted-foreground mt-2 text-sm'>
+                  {t(
+                    'One provider ID per line. If none match, the first valid models.dev provider price is used.'
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className='bg-muted/50 rounded-lg border p-4'>
             <p className='text-muted-foreground text-sm'>
               {t(
-                'The sync will fetch missing models and vendors from the selected source. Existing records are updated only when you approve conflicts.'
+                'The sync fetches missing models and vendors. Existing metadata records are updated only when you approve conflicts.'
               )}
             </p>
           </div>
@@ -246,7 +380,7 @@ export function SyncWizardDialog({
           <Button onClick={handleSync} disabled={isSyncing}>
             {isSyncing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             <RefreshCw className='mr-2 h-4 w-4' />
-            {isSyncing ? 'Syncing...' : 'Sync Now'}
+            {isSyncing ? t('Syncing...') : t('Sync Now')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -4,7 +4,8 @@
 // 任务目标：
 // - 每天凌晨从 https://models.dev/catalog.json 拉取公开模型目录；
 // - 只创建本地尚不存在的模型和供应商，不覆盖管理员手动编辑；
-// - 不修改价格倍率、渠道能力、用户配置等业务数据；
+// - 同步 provider 价格到模型级定价配置，但默认不覆盖管理员手动确认过的价格；
+// - 不修改渠道能力、用户配置等业务数据；
 // - 仅在主节点运行，避免多实例部署时重复写库。
 package controller
 
@@ -79,19 +80,45 @@ func runModelsDevSyncTaskOnce() {
 	ctx, cancel := context.WithTimeout(context.Background(), modelsDevSyncDefaultTimeout)
 	defer cancel()
 
-	result, err := syncUpstreamModelsCore(ctx, syncRequest{Source: syncSourceModelsDev}, syncUpstreamOptions{CreateAllUpstream: true})
+	result, err := syncUpstreamModelsCore(ctx, syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:         true,
+			OverwriteManual: false,
+			ProviderOrder:   parseModelsDevProviderOrderEnv(),
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("models.dev model sync failed: %v", err))
 		return
 	}
 	logger.LogInfo(ctx, fmt.Sprintf(
-		"models.dev model sync completed: created_models=%d created_vendors=%d updated_models=%d skipped_models=%d source=%s",
+		"models.dev model sync completed: created_models=%d created_vendors=%d updated_models=%d pricing_updated=%d pricing_skipped=%d skipped_models=%d source=%s",
 		result.CreatedModels,
 		result.CreatedVendors,
 		result.UpdatedModels,
+		result.PricingUpdated,
+		result.PricingSkipped,
 		len(result.SkippedModels),
 		result.Source.CatalogURL,
 	))
+}
+
+// parseModelsDevProviderOrderEnv 读取自动同步的价格 provider 降级链。
+// 例如 MODELS_DEV_PRICING_PROVIDER_ORDER=openai,azure,openrouter。
+func parseModelsDevProviderOrderEnv() []string {
+	raw := common.GetEnvOrDefaultString("MODELS_DEV_PRICING_PROVIDER_ORDER", "")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	order := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			order = append(order, trimmed)
+		}
+	}
+	return order
 }
 
 // parseDailyScheduleTime 解析每日任务时间，格式为 HH:mm。

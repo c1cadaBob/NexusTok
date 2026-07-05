@@ -426,6 +426,7 @@ export function UpstreamConflictDialog({
         overwrite: payload,
         locale: syncWizardOptions.locale,
         source: syncWizardOptions.source,
+        pricing: syncWizardOptions.pricing,
       })
 
       if (response.success) {

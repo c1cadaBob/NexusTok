@@ -59,6 +59,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
@@ -83,6 +84,7 @@ import {
   updatePoolAccount,
   updatePoolAccountStatus,
 } from './api'
+import { AuthFilesPanel } from './components/auth-files-panel'
 import type {
   AccountPoolGroup,
   AccountPoolGroupPayload,
@@ -222,6 +224,9 @@ export function AccountPool() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
+  const [activeView, setActiveView] = useState<'accounts' | 'auth-files'>(
+    'accounts'
+  )
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
   const [groupFormOpen, setGroupFormOpen] = useState(false)
   const [groupForm, setGroupForm] = useState<GroupFormState>(emptyGroupForm)
@@ -253,7 +258,7 @@ export function AccountPool() {
   const selectedGroup = groups.find((group) => group.id === selectedGroupId)
 
   useEffect(() => {
-    if (!selectedGroupId && groups.length > 0) {
+    if (!selectedGroupId && groups.length > 0 && activeView === 'accounts') {
       setSelectedGroupId(groups[0].id)
       return
     }
@@ -264,7 +269,7 @@ export function AccountPool() {
     ) {
       setSelectedGroupId(groups[0].id)
     }
-  }, [groups, selectedGroupId])
+  }, [activeView, groups, selectedGroupId])
 
   const accountsQuery = useQuery({
     queryKey: accountPoolQueryKeys.accounts(selectedGroupId ?? 0, { page }),
@@ -774,246 +779,283 @@ export function AccountPool() {
         </section>
 
         <section className='border-border bg-background min-w-0 rounded-lg border'>
-          <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
-            <div className='min-w-0'>
-              <div className='truncate text-sm font-semibold'>
-                {selectedGroup?.name ?? t('Account Pool')}
+          <Tabs
+            value={activeView}
+            onValueChange={(value) =>
+              setActiveView(value as 'accounts' | 'auth-files')
+            }
+            className='flex min-h-0 flex-col'
+          >
+            <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
+              <div className='min-w-0'>
+                <div className='truncate text-sm font-semibold'>
+                  {activeView === 'accounts'
+                    ? (selectedGroup?.name ?? t('Account Pool'))
+                    : t('Auth Files')}
+                </div>
+                <div className='text-muted-foreground text-xs'>
+                  {activeView === 'accounts'
+                    ? selectedGroup
+                      ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')}`
+                      : t('Select an account group')
+                    : t(
+                        'Manage imported JSON credentials and their linked pool accounts'
+                      )}
+                </div>
               </div>
-              <div className='text-muted-foreground text-xs'>
-                {selectedGroup
-                  ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')}`
-                  : t('Select an account group')}
+              <TabsList>
+                <TabsTrigger value='accounts'>{t('Pool Accounts')}</TabsTrigger>
+                <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
+              </TabsList>
+              <div className='flex flex-wrap gap-2'>
+                {activeView === 'accounts' && selectedGroup && (
+                  <>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => openEditGroup(selectedGroup)}
+                    >
+                      <Pencil className='mr-2 h-4 w-4' />
+                      {t('Edit Group')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => void deleteGroup(selectedGroup)}
+                    >
+                      <Trash2 className='mr-2 h-4 w-4' />
+                      {t('Delete')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={startCodexOAuth}
+                    >
+                      <ShieldCheck className='mr-2 h-4 w-4' />
+                      {t('Codex OAuth')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={startCodexDevice}
+                    >
+                      <Smartphone className='mr-2 h-4 w-4' />
+                      {t('Codex Device')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => setBatchOpen(true)}
+                    >
+                      <Upload className='mr-2 h-4 w-4' />
+                      {t('Batch Import')}
+                    </Button>
+                    <Button size='sm' onClick={openCreateAccount}>
+                      <Plus className='mr-2 h-4 w-4' />
+                      {t('Add Account')}
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
-            <div className='flex flex-wrap gap-2'>
-              {selectedGroup && (
-                <>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => openEditGroup(selectedGroup)}
-                  >
-                    <Pencil className='mr-2 h-4 w-4' />
-                    {t('Edit Group')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => void deleteGroup(selectedGroup)}
-                  >
-                    <Trash2 className='mr-2 h-4 w-4' />
-                    {t('Delete')}
-                  </Button>
-                  <Button variant='outline' size='sm' onClick={startCodexOAuth}>
-                    <ShieldCheck className='mr-2 h-4 w-4' />
-                    {t('Codex OAuth')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={startCodexDevice}
-                  >
-                    <Smartphone className='mr-2 h-4 w-4' />
-                    {t('Codex Device')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => setBatchOpen(true)}
-                  >
-                    <Upload className='mr-2 h-4 w-4' />
-                    {t('Batch Import')}
-                  </Button>
-                  <Button size='sm' onClick={openCreateAccount}>
-                    <Plus className='mr-2 h-4 w-4' />
-                    {t('Add Account')}
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
 
-          <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
-            <div>
-              <div className='text-muted-foreground text-xs'>{t('Total')}</div>
-              <div className='font-medium'>{stats?.total ?? 0}</div>
-            </div>
-            <div>
-              <div className='text-muted-foreground text-xs'>
-                {t('Available')}
+            <TabsContent value='accounts' className='m-0 min-h-0'>
+              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Total')}
+                  </div>
+                  <div className='font-medium'>{stats?.total ?? 0}</div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Available')}
+                  </div>
+                  <div className='font-medium'>{stats?.enabled ?? 0}</div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Disabled')}
+                  </div>
+                  <div className='font-medium'>{stats?.disabled ?? 0}</div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Cooldown')}
+                  </div>
+                  <div className='font-medium'>{stats?.cooldown ?? 0}</div>
+                </div>
               </div>
-              <div className='font-medium'>{stats?.enabled ?? 0}</div>
-            </div>
-            <div>
-              <div className='text-muted-foreground text-xs'>
-                {t('Disabled')}
-              </div>
-              <div className='font-medium'>{stats?.disabled ?? 0}</div>
-            </div>
-            <div>
-              <div className='text-muted-foreground text-xs'>
-                {t('Cooldown')}
-              </div>
-              <div className='font-medium'>{stats?.cooldown ?? 0}</div>
-            </div>
-          </div>
 
-          <div className='overflow-x-auto'>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('Name')}</TableHead>
-                  <TableHead>{t('Credential')}</TableHead>
-                  <TableHead>{t('Models')}</TableHead>
-                  <TableHead>{t('Status')}</TableHead>
-                  <TableHead>{t('Last Used')}</TableHead>
-                  <TableHead>{t('Actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {accounts.map((account) => (
-                  <TableRow key={account.id}>
-                    <TableCell>
-                      <div className='font-medium'>{account.name}</div>
-                      <div className='text-muted-foreground text-xs'>
-                        #{account.id} ·{' '}
-                        {account.credential_provider || account.platform} /{' '}
-                        {account.auth_type}
-                      </div>
-                      <div className='text-muted-foreground text-xs'>
-                        {t('Success')}: {account.success_count ?? 0} ·{' '}
-                        {t('Failed')}: {account.failed_count ?? 0}
-                      </div>
-                    </TableCell>
-                    <TableCell className='max-w-[260px] truncate text-xs'>
-                      {formatCredentialSummary(account.credential_summary)}
-                    </TableCell>
-                    <TableCell className='max-w-[220px] truncate text-xs'>
-                      {account.models || t('Inherited')}
-                    </TableCell>
-                    <TableCell>
-                      <div className='flex flex-col gap-1'>
-                        <StatusBadge
-                          label={statusLabel(account, nowSeconds, t)}
-                          variant={statusVariant(account, nowSeconds)}
-                          copyable={false}
-                        />
-                        <span className='text-muted-foreground text-xs'>
-                          {cooldownText(account, nowSeconds)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className='text-xs'>
-                      {account.last_used_time
-                        ? formatTimestamp(account.last_used_time)
-                        : '-'}
-                      {account.next_refresh_time ? (
-                        <div className='text-muted-foreground mt-1'>
-                          {t('Next refresh')}:&nbsp;
-                          {formatTimestamp(account.next_refresh_time)}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <div className='flex flex-wrap gap-1.5'>
-                        <Button
-                          variant='ghost'
-                          size='icon-sm'
-                          onClick={() => openEditAccount(account)}
-                        >
-                          <Pencil className='h-4 w-4' />
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='icon-sm'
-                          onClick={() =>
-                            void setAccountEnabled(
-                              account,
-                              account.status !== CHANNEL_STATUS.ENABLED ||
-                                !account.schedulable
-                            )
-                          }
-                        >
-                          {account.status === CHANNEL_STATUS.ENABLED &&
-                          account.schedulable ? (
-                            <PowerOff className='h-4 w-4' />
-                          ) : (
-                            <Power className='h-4 w-4' />
-                          )}
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='icon-sm'
-                          onClick={() => void clearCooldown(account)}
-                        >
-                          <RefreshCw className='h-4 w-4' />
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='icon-sm'
-                          onClick={() => void resetRuntime(account)}
-                        >
-                          <RotateCcw className='h-4 w-4' />
-                        </Button>
-                        {account.platform === 'codex' &&
-                          account.auth_type === 'official_oauth' && (
+              <div className='overflow-x-auto'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Name')}</TableHead>
+                      <TableHead>{t('Credential')}</TableHead>
+                      <TableHead>{t('Models')}</TableHead>
+                      <TableHead>{t('Status')}</TableHead>
+                      <TableHead>{t('Last Used')}</TableHead>
+                      <TableHead>{t('Actions')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.map((account) => (
+                      <TableRow key={account.id}>
+                        <TableCell>
+                          <div className='font-medium'>{account.name}</div>
+                          <div className='text-muted-foreground text-xs'>
+                            #{account.id} ·{' '}
+                            {account.credential_provider || account.platform} /{' '}
+                            {account.auth_type}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {t('Success')}: {account.success_count ?? 0} ·{' '}
+                            {t('Failed')}: {account.failed_count ?? 0}
+                          </div>
+                        </TableCell>
+                        <TableCell className='max-w-[260px] truncate text-xs'>
+                          {formatCredentialSummary(account.credential_summary)}
+                        </TableCell>
+                        <TableCell className='max-w-[220px] truncate text-xs'>
+                          {account.models || t('Inherited')}
+                        </TableCell>
+                        <TableCell>
+                          <div className='flex flex-col gap-1'>
+                            <StatusBadge
+                              label={statusLabel(account, nowSeconds, t)}
+                              variant={statusVariant(account, nowSeconds)}
+                              copyable={false}
+                            />
+                            <span className='text-muted-foreground text-xs'>
+                              {cooldownText(account, nowSeconds)}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className='text-xs'>
+                          {account.last_used_time
+                            ? formatTimestamp(account.last_used_time)
+                            : '-'}
+                          {account.next_refresh_time ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Next refresh')}:&nbsp;
+                              {formatTimestamp(account.next_refresh_time)}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <div className='flex flex-wrap gap-1.5'>
                             <Button
                               variant='ghost'
                               size='icon-sm'
-                              onClick={() => void refreshCredential(account)}
+                              onClick={() => openEditAccount(account)}
                             >
-                              <ShieldCheck className='h-4 w-4' />
+                              <Pencil className='h-4 w-4' />
                             </Button>
-                          )}
-                        <Button
-                          variant='ghost'
-                          size='icon-sm'
-                          onClick={() => void deleteAccount(account)}
-                        >
-                          <Trash2 className='h-4 w-4' />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!accountsQuery.isLoading && accounts.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className='h-24 text-center'>
-                      {t('No accounts found')}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-          <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
-            <span className='text-muted-foreground'>
-              {t('Page {{page}} of {{total}}', {
-                page,
-                total: totalPages,
-              })}
-            </span>
-            <div className='flex gap-2'>
-              <Button
-                variant='outline'
-                size='sm'
-                disabled={page <= 1}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                {t('Previous')}
-              </Button>
-              <Button
-                variant='outline'
-                size='sm'
-                disabled={page >= totalPages}
-                onClick={() =>
-                  setPage((current) => Math.min(totalPages, current + 1))
-                }
-              >
-                {t('Next')}
-              </Button>
-            </div>
-          </div>
+                            <Button
+                              variant='ghost'
+                              size='icon-sm'
+                              onClick={() =>
+                                void setAccountEnabled(
+                                  account,
+                                  account.status !== CHANNEL_STATUS.ENABLED ||
+                                    !account.schedulable
+                                )
+                              }
+                            >
+                              {account.status === CHANNEL_STATUS.ENABLED &&
+                              account.schedulable ? (
+                                <PowerOff className='h-4 w-4' />
+                              ) : (
+                                <Power className='h-4 w-4' />
+                              )}
+                            </Button>
+                            <Button
+                              variant='ghost'
+                              size='icon-sm'
+                              onClick={() => void clearCooldown(account)}
+                            >
+                              <RefreshCw className='h-4 w-4' />
+                            </Button>
+                            <Button
+                              variant='ghost'
+                              size='icon-sm'
+                              onClick={() => void resetRuntime(account)}
+                            >
+                              <RotateCcw className='h-4 w-4' />
+                            </Button>
+                            {account.platform === 'codex' &&
+                              account.auth_type === 'official_oauth' && (
+                                <Button
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  onClick={() =>
+                                    void refreshCredential(account)
+                                  }
+                                >
+                                  <ShieldCheck className='h-4 w-4' />
+                                </Button>
+                              )}
+                            <Button
+                              variant='ghost'
+                              size='icon-sm'
+                              onClick={() => void deleteAccount(account)}
+                            >
+                              <Trash2 className='h-4 w-4' />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!accountsQuery.isLoading && accounts.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className='h-24 text-center'>
+                          {t('No accounts found')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Page {{page}} of {{total}}', {
+                    page,
+                    total: totalPages,
+                  })}
+                </span>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={page <= 1}
+                    onClick={() =>
+                      setPage((current) => Math.max(1, current - 1))
+                    }
+                  >
+                    {t('Previous')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={page >= totalPages}
+                    onClick={() =>
+                      setPage((current) => Math.min(totalPages, current + 1))
+                    }
+                  >
+                    {t('Next')}
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value='auth-files' className='m-0 min-h-0'>
+              <AuthFilesPanel
+                groups={groups}
+                selectedGroupId={selectedGroupId}
+                onSelectGroup={setSelectedGroupId}
+              />
+            </TabsContent>
+          </Tabs>
         </section>
       </div>
 

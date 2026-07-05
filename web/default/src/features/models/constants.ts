@@ -195,6 +195,12 @@ export function getSyncSourceOptions(t: TFunction) {
       disabled: false,
     },
     {
+      label: 'Models.dev',
+      value: 'models.dev' as SyncSource,
+      description: t('Sync model metadata and provider pricing from models.dev.'),
+      disabled: false,
+    },
+    {
       label: t('Configuration File'),
       value: 'config' as SyncSource,
       description: t('Upload or reference a local configuration file.'),

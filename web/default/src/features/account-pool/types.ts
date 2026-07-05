@@ -92,6 +92,34 @@ export type PoolAccount = {
   updated_time: number
 }
 
+export type AccountPoolAuthFile = {
+  id: number
+  name: string
+  source_platform: string
+  format: string
+  provider: string
+  platform: string
+  auth_type: string
+  pool_group_id: number
+  pool_account_id: number
+  status: number
+  file_digest: string
+  credential_summary: string
+  credential_metadata: string
+  credential_attributes: string
+  account_group?: string
+  account_groups: string[]
+  models: string
+  proxy: string
+  base_url?: string | null
+  priority: number
+  weight: number
+  max_concurrency: number
+  last_imported_time: number
+  created_time: number
+  updated_time: number
+}
+
 export type AccountRuntimeView = {
   status: string
   status_message?: string
@@ -163,6 +191,65 @@ export type PoolAccountBatchPayload = {
   weight?: number
   status?: number
   max_concurrency?: number
+}
+
+export type AccountPoolAuthFilePayload = {
+  name?: string
+  content: string
+  pool_group_id?: number
+  group_name?: string
+  provider?: string
+  platform?: string
+  auth_type?: string
+  account_group?: string
+  account_groups?: string[]
+  models?: string
+  proxy?: string
+  base_url?: string | null
+  priority?: number
+  weight?: number
+  max_concurrency?: number
+  status?: number
+  skip_duplicates?: boolean
+}
+
+export type AccountPoolAuthFileUpdatePayload = {
+  name?: string
+  content?: string
+  pool_group_id?: number
+  group_name?: string
+  provider?: string
+  platform?: string
+  auth_type?: string
+  account_group?: string
+  account_groups?: string[]
+  models?: string
+  proxy?: string
+  base_url?: string | null
+  priority?: number
+  weight?: number
+  max_concurrency?: number
+  status?: number
+}
+
+export type AccountPoolAuthFileMutationResult = {
+  auth_file: AccountPoolAuthFile
+  account: PoolAccount
+  group: AccountPoolGroup
+}
+
+export type AccountPoolAuthFileImportError = {
+  index: number
+  name?: string
+  message: string
+}
+
+export type AccountPoolAuthFileBatchImportResult = {
+  created: number
+  skipped: number
+  failed: number
+  items: AccountPoolAuthFileMutationResult[]
+  errors: AccountPoolAuthFileImportError[]
 }
 
 export type AccountPoolGroupOption = {

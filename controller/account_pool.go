@@ -97,6 +97,50 @@ type poolAccountStatusRequest struct {
 	Schedulable   *bool  `json:"schedulable"`    // 是否可调度
 }
 
+// accountPoolAuthFileImportRequest 原生认证文件导入请求。
+// content 是 JSON 文件原文，系统会加密保存原文并生成关联 PoolAccount；其余字段用于
+// 覆盖 JSON 中的文件级配置，方便 sub2/newapi 等包装格式缺少本地调度字段时补齐。
+type accountPoolAuthFileImportRequest struct {
+	Name          string   `json:"name"`           // 文件显示名称
+	Content       string   `json:"content"`        // JSON 认证文件原文
+	PoolGroupID   int      `json:"pool_group_id"`  // 指定账号池分组
+	GroupName     string   `json:"group_name"`     // 自动创建分组时使用的名称
+	Provider      string   `json:"provider"`       // 覆盖 provider
+	Platform      string   `json:"platform"`       // 覆盖本地平台
+	AuthType      string   `json:"auth_type"`      // 覆盖认证类型
+	AccountGroup  string   `json:"account_group"`  // 单一调用分组
+	AccountGroups []string `json:"account_groups"` // 多调用分组
+	Models        string   `json:"models"`         // 模型限制
+	Proxy         string   `json:"proxy"`          // 文件级代理
+	BaseURL       *string  `json:"base_url"`       // 基础 URL
+	Priority      *int64   `json:"priority"`       // 优先级
+	Weight        *int     `json:"weight"`         // 权重
+	MaxConcurrency *int    `json:"max_concurrency"` // 最大并发数
+	Status        *int     `json:"status"`         // 状态
+	SkipDuplicates *bool   `json:"skip_duplicates"` // 批量导入时是否跳过重复文件
+}
+
+// accountPoolAuthFileUpdateRequest 原生认证文件更新请求。
+// content 为空时只修改文件级调度字段；content 非空时重新解析凭据并更新关联账号凭证。
+type accountPoolAuthFileUpdateRequest struct {
+	Name          *string  `json:"name"`
+	Content       *string  `json:"content"`
+	PoolGroupID   *int     `json:"pool_group_id"`
+	GroupName     *string  `json:"group_name"`
+	Provider      *string  `json:"provider"`
+	Platform      *string  `json:"platform"`
+	AuthType      *string  `json:"auth_type"`
+	AccountGroup  *string  `json:"account_group"`
+	AccountGroups []string `json:"account_groups"`
+	Models        *string  `json:"models"`
+	Proxy         *string  `json:"proxy"`
+	BaseURL       *string  `json:"base_url"`
+	Priority      *int64   `json:"priority"`
+	Weight        *int     `json:"weight"`
+	MaxConcurrency *int    `json:"max_concurrency"`
+	Status        *int     `json:"status"`
+}
+
 // accountPoolCodexOAuthStartRequest Codex OAuth 开始请求
 type accountPoolCodexOAuthStartRequest struct {
 	PoolGroupId int    `json:"pool_group_id"` // 账号池分组 ID
@@ -432,6 +476,170 @@ func ListAccountPoolProviders(c *gin.Context) {
 	common.ApiSuccess(c, accountauth.DefaultManager().Providers())
 }
 
+func ListAccountPoolAuthFiles(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	status, _ := strconv.Atoi(c.Query("status"))
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	authFiles, total, err := model.GetAccountPoolAuthFiles(pageInfo.GetPage(), pageInfo.GetPageSize(), status, poolGroupID, c.Query("provider"), c.Query("search"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(authFiles))
+	for _, authFile := range authFiles {
+		items = append(items, accountPoolAuthFileResponse(authFile))
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func CreateAccountPoolAuthFile(c *gin.Context) {
+	var req accountPoolAuthFileImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := service.ImportAccountPoolAuthFile(service.AccountPoolAuthFileImportOptions{
+		Name:          req.Name,
+		Content:       req.Content,
+		PoolGroupID:   req.PoolGroupID,
+		GroupName:     req.GroupName,
+		Provider:      req.Provider,
+		Platform:      req.Platform,
+		AuthType:      req.AuthType,
+		AccountGroups: mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
+		Models:        req.Models,
+		Proxy:         req.Proxy,
+		BaseURL:       req.BaseURL,
+		Priority:      req.Priority,
+		Weight:        req.Weight,
+		MaxConcurrency: req.MaxConcurrency,
+		Status:        req.Status,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, accountPoolAuthFileResultResponse(result))
+}
+
+func ImportAccountPoolAuthFiles(c *gin.Context) {
+	var req accountPoolAuthFileImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	skipDuplicates := true
+	if req.SkipDuplicates != nil {
+		skipDuplicates = *req.SkipDuplicates
+	}
+	result, err := service.ImportAccountPoolAuthFiles(service.AccountPoolAuthFileBatchImportOptions{
+		AccountPoolAuthFileImportOptions: service.AccountPoolAuthFileImportOptions{
+			Name:          req.Name,
+			Content:       req.Content,
+			PoolGroupID:   req.PoolGroupID,
+			GroupName:     req.GroupName,
+			Provider:      req.Provider,
+			Platform:      req.Platform,
+			AuthType:      req.AuthType,
+			AccountGroups: mergeAccountPoolAuthFileGroups(req.AccountGroups, req.AccountGroup),
+			Models:        req.Models,
+			Proxy:         req.Proxy,
+			BaseURL:       req.BaseURL,
+			Priority:      req.Priority,
+			Weight:        req.Weight,
+			MaxConcurrency: req.MaxConcurrency,
+			Status:        req.Status,
+		},
+		SkipDuplicates: skipDuplicates,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, accountPoolAuthFileBatchImportResponse(result))
+}
+
+func GetAccountPoolAuthFile(c *gin.Context) {
+	authFileID, ok := parseAccountPoolAuthFileIDParam(c)
+	if !ok {
+		return
+	}
+	authFile, err := model.GetAccountPoolAuthFileById(authFileID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, accountPoolAuthFileResponse(authFile))
+}
+
+func UpdateAccountPoolAuthFile(c *gin.Context) {
+	authFileID, ok := parseAccountPoolAuthFileIDParam(c)
+	if !ok {
+		return
+	}
+	var req accountPoolAuthFileUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	opts := service.AccountPoolAuthFileUpdateOptions{
+		Name:        req.Name,
+		Content:     req.Content,
+		PoolGroupID: req.PoolGroupID,
+		GroupName:   req.GroupName,
+		Provider:    req.Provider,
+		Platform:    req.Platform,
+		AuthType:    req.AuthType,
+		Models:      req.Models,
+		Proxy:       req.Proxy,
+		BaseURL:     req.BaseURL,
+		Priority:    req.Priority,
+		Weight:      req.Weight,
+		MaxConcurrency: req.MaxConcurrency,
+		Status:      req.Status,
+	}
+	if req.AccountGroups != nil || req.AccountGroup != nil {
+		groups := mergeAccountPoolAuthFileGroups(req.AccountGroups, stringPointerValue(req.AccountGroup))
+		opts.AccountGroups = &groups
+	}
+	result, err := service.UpdateAccountPoolAuthFile(authFileID, opts)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, accountPoolAuthFileResultResponse(result))
+}
+
+func DeleteAccountPoolAuthFile(c *gin.Context) {
+	authFileID, ok := parseAccountPoolAuthFileIDParam(c)
+	if !ok {
+		return
+	}
+	deleteAccount := strings.ToLower(strings.TrimSpace(c.DefaultQuery("delete_account", "true"))) != "false"
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var authFile model.AccountPoolAuthFile
+		if err := tx.Where("id = ?", authFileID).First(&authFile).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", authFileID).Delete(&model.AccountPoolAuthFile{}).Error; err != nil {
+			return err
+		}
+		if deleteAccount && authFile.PoolAccountId > 0 {
+			if err := tx.Where("id = ?", authFile.PoolAccountId).Delete(&model.PoolAccount{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
 func StartAccountPoolProviderOAuth(c *gin.Context) {
 	groupID, ok := parsePoolGroupIDParam(c)
 	if !ok {
@@ -719,6 +927,15 @@ func parsePoolAccountIDParam(c *gin.Context) (int, bool) {
 		return 0, false
 	}
 	return accountID, true
+}
+
+func parseAccountPoolAuthFileIDParam(c *gin.Context) (int, bool) {
+	authFileID, err := strconv.Atoi(c.Param("auth_file_id"))
+	if err != nil || authFileID <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid auth file id"})
+		return 0, false
+	}
+	return authFileID, true
 }
 
 func ensureAccountPoolGroupExists(c *gin.Context, groupID int) bool {
@@ -1269,6 +1486,80 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 	}, true
 }
 
+func accountPoolAuthFileResultResponse(result *service.AccountPoolAuthFileImportResult) gin.H {
+	if result == nil {
+		return gin.H{}
+	}
+	return gin.H{
+		"auth_file": accountPoolAuthFileResponse(result.AuthFile),
+		"account":   poolAccountResponse(result.Account),
+		"group":     accountPoolGroupResponse(result.Group),
+	}
+}
+
+func accountPoolAuthFileBatchImportResponse(result *service.AccountPoolAuthFileBatchImportResult) gin.H {
+	if result == nil {
+		return gin.H{}
+	}
+	items := make([]gin.H, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, accountPoolAuthFileResultResponse(item))
+	}
+	errors := make([]gin.H, 0, len(result.Errors))
+	for _, item := range result.Errors {
+		errors = append(errors, gin.H{
+			"index":   item.Index,
+			"name":    item.Name,
+			"message": item.Message,
+		})
+	}
+	return gin.H{
+		"created": result.Created,
+		"skipped": result.Skipped,
+		"failed":  result.Failed,
+		"items":   items,
+		"errors":  errors,
+	}
+}
+
+func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
+	if authFile == nil {
+		return gin.H{}
+	}
+	groups := splitAccountPoolAuthFileGroups(authFile.AccountGroups)
+	accountGroup := ""
+	if len(groups) > 0 {
+		accountGroup = groups[0]
+	}
+	return gin.H{
+		"id":                    authFile.Id,
+		"name":                  authFile.Name,
+		"source_platform":       authFile.SourcePlatform,
+		"format":                authFile.Format,
+		"provider":              authFile.Provider,
+		"platform":              authFile.Platform,
+		"auth_type":             authFile.AuthType,
+		"pool_group_id":         authFile.PoolGroupId,
+		"pool_account_id":       authFile.PoolAccountId,
+		"status":                authFile.Status,
+		"file_digest":           authFile.FileDigest,
+		"credential_summary":    authFile.CredentialSummary,
+		"credential_metadata":   authFile.CredentialMetadata,
+		"credential_attributes": authFile.CredentialAttrs,
+		"account_group":         accountGroup,
+		"account_groups":        groups,
+		"models":                authFile.Models,
+		"proxy":                 authFile.Proxy,
+		"base_url":              authFile.BaseURL,
+		"priority":              authFile.Priority,
+		"weight":                authFile.Weight,
+		"max_concurrency":       authFile.MaxConcurrency,
+		"last_imported_time":    authFile.LastImportedTime,
+		"created_time":          authFile.CreatedTime,
+		"updated_time":          authFile.UpdatedTime,
+	}
+}
+
 func poolAccountResponse(account *model.PoolAccount) gin.H {
 	if account == nil {
 		return gin.H{}
@@ -1326,6 +1617,46 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 
 func accountPoolCodexOAuthSessionKey(groupID int, field string) string {
 	return fmt.Sprintf("account_pool_codex_oauth_%s_%d", field, groupID)
+}
+
+func mergeAccountPoolAuthFileGroups(groups []string, single string) []string {
+	values := append([]string{}, groups...)
+	if strings.TrimSpace(single) != "" {
+		values = append(values, single)
+	}
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, part := range splitAccountPoolAuthFileGroups(value) {
+			if _, ok := seen[part]; ok {
+				continue
+			}
+			seen[part] = struct{}{}
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func splitAccountPoolAuthFileGroups(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == ';'
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.Join(strings.Fields(strings.TrimSpace(part)), " ")
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func buildCodexPoolAccount(group *model.AccountPoolGroup, name string, proxy string, tokenRes *service.CodexOAuthTokenResult) (*model.PoolAccount, error) {

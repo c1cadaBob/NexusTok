@@ -18,6 +18,11 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { api } from '@/lib/api'
 import type {
+  AccountPoolAuthFile,
+  AccountPoolAuthFileBatchImportResult,
+  AccountPoolAuthFileMutationResult,
+  AccountPoolAuthFilePayload,
+  AccountPoolAuthFileUpdatePayload,
   AccountPoolGroup,
   AccountPoolGroupOption,
   AccountPoolGroupPayload,
@@ -35,6 +40,8 @@ import type {
 export const accountPoolQueryKeys = {
   groups: (params?: unknown) => ['account-pool', 'groups', params] as const,
   groupOptions: () => ['account-pool', 'groups', 'options'] as const,
+  authFiles: (params?: unknown) =>
+    ['account-pool', 'auth-files', params] as const,
   providers: () => ['account-pool', 'providers'] as const,
   loginSession: (sessionId: string) =>
     ['account-pool', 'login-sessions', sessionId] as const,
@@ -63,6 +70,50 @@ export async function getAccountPoolGroupOptions(): Promise<
   ApiResponse<AccountPoolGroupOption[]>
 > {
   const res = await api.get('/api/account-pool/groups/options')
+  return res.data
+}
+
+export async function getAccountPoolAuthFiles(params: {
+  p?: number
+  page_size?: number
+  status?: number
+  pool_group_id?: number
+  provider?: string
+  search?: string
+}): Promise<ApiResponse<PageResponse<AccountPoolAuthFile>>> {
+  const res = await api.get('/api/account-pool/auth-files', { params })
+  return res.data
+}
+
+export async function createAccountPoolAuthFile(
+  data: AccountPoolAuthFilePayload
+): Promise<ApiResponse<AccountPoolAuthFileMutationResult>> {
+  const res = await api.post('/api/account-pool/auth-files', data)
+  return res.data
+}
+
+export async function importAccountPoolAuthFiles(
+  data: AccountPoolAuthFilePayload
+): Promise<ApiResponse<AccountPoolAuthFileBatchImportResult>> {
+  const res = await api.post('/api/account-pool/auth-files/import', data)
+  return res.data
+}
+
+export async function updateAccountPoolAuthFile(
+  authFileId: number,
+  data: AccountPoolAuthFileUpdatePayload
+): Promise<ApiResponse<AccountPoolAuthFileMutationResult>> {
+  const res = await api.put(`/api/account-pool/auth-files/${authFileId}`, data)
+  return res.data
+}
+
+export async function deleteAccountPoolAuthFile(
+  authFileId: number,
+  deleteAccount = true
+): Promise<ApiResponse<null>> {
+  const res = await api.delete(`/api/account-pool/auth-files/${authFileId}`, {
+    params: { delete_account: deleteAccount },
+  })
   return res.data
 }
 
