@@ -7,7 +7,12 @@
 // - 其他资源：缓存 1 周（max-age=604800），包括 JS、CSS、图片等静态资源
 package middleware
 
-import "github.com/gin-gonic/gin" // Gin 框架
+import (
+	"os"      // 环境变量
+	"strings" // 路径前缀判断
+
+	"github.com/gin-gonic/gin" // Gin 框架
+)
 
 // Cache 缓存控制中间件
 // 根据请求路径设置不同的缓存策略
@@ -38,6 +43,11 @@ func Cache() func(c *gin.Context) {
 		} else if requestPath == "/logo.png" || requestPath == "/favicon.ico" {
 			// Logo 和 favicon 是稳定文件名的品牌资源，不能像带哈希的 JS/CSS 一样长期强缓存；
 			// 否则换图后浏览器会继续显示旧图，直到一周缓存自然过期。
+			c.Header("Cache-Control", "no-cache")
+		} else if os.Getenv("NEXUSTOK_HOT_RELOAD") == "true" &&
+			(strings.HasPrefix(requestPath, "/static/") || strings.HasPrefix(requestPath, "/assets/")) {
+			// 热更新模式会使用稳定文件名发布前端产物，不能按生产环境的一周强缓存处理；
+			// 否则浏览器可能继续持有旧 JS/CSS，与新 HTML 组合后出现无样式或运行时错误。
 			c.Header("Cache-Control", "no-cache")
 		} else {
 			// 其他资源缓存 1 周

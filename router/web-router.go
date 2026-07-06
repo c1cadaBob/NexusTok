@@ -81,6 +81,9 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 			strings.HasPrefix(requestPath, "/static/") ||
 			requestPath == "/favicon.ico" ||
 			requestPath == "/logo.png" {
+			// 缺失的静态资源不能被浏览器或代理强缓存；否则一次构建窗口期里的 404
+			// 可能持续污染后续刷新，表现为页面结构存在但样式或脚本长期缺失。
+			c.Header("Cache-Control", "no-cache")
 			controller.RelayNotFound(c)
 			return
 		}

@@ -36,28 +36,7 @@ services:
       npm_config_registry: https://registry.npmmirror.com
     volumes:
       - .:/app
-    command: >
-      sh -lc '
-        set -eu
-        mkdir -p /app/.cache/bun /app/.cache/home /app/.cache/tmp
-        ensure_deps() {
-          project_dir="$$1"
-          build_bin="$$2"
-          cd "$$project_dir"
-          if [ ! -x "node_modules/.bin/$$build_bin" ]; then
-            echo "[hot] installing dependencies for $$project_dir"
-            bun install --frozen-lockfile
-          else
-            echo "[hot] using existing dependencies for $$project_dir"
-          fi
-        }
-        ensure_deps /app/web/default rsbuild
-        ensure_deps /app/web/classic vite
-        cd /app
-        (cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
-        (cd web/classic && VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
-        wait
-      '
+    command: ["/app/bin/docker-hot-frontend.sh"]
     restart: unless-stopped
 
   # NexusTok 后端服务（热重载模式）
@@ -83,6 +62,7 @@ services:
       GIN_MODE: release
       GOPROXY: https://goproxy.cn,https://goproxy.io,direct
       GOSUMDB: sum.golang.google.cn
+      NEXUSTOK_HOT_RELOAD: "true"
       DEBUG: "false"
       BATCH_UPDATE_ENABLED: "true"
       NODE_NAME: nexustok-hot-node-1

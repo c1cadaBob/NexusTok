@@ -65,6 +65,9 @@ export default defineConfig({
     },
   },
   build: {
+    // 热更新容器会先构建到临时目录，再发布到 Go embed 使用的 dist，
+    // 避免后端编译时读取到半成品静态资源。
+    outDir: process.env.NEXUSTOK_DIST_ROOT || 'dist',
     rollupOptions: {
       output: {
         manualChunks: {

@@ -9,7 +9,13 @@ build
 *.db-journal
 logs
 web/default/dist
+web/default/dist.hot
+web/default/dist.next
+web/default/dist.prev
 web/classic/dist
+web/classic/dist.hot
+web/classic/dist.next
+web/classic/dist.prev
 web/node_modules
 web/dist
 .env

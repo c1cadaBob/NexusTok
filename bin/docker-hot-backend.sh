@@ -19,6 +19,12 @@ APP_PID=""
 LAST_SNAPSHOT=""
 # 重载检查间隔（秒）
 RELOAD_INTERVAL=${HOT_RELOAD_INTERVAL:-2}
+# 前端发布锁与发布标记。默认主题是当前热更新开发主界面，必须等待发布标记；
+# 经典主题可能构建较慢，只要已有稳定 dist 即可先恢复服务，后续经典主题发布标记
+# 变化时会再次触发后端重编译。
+FRONTEND_LOCK_FILE=${HOT_FRONTEND_LOCK_FILE:-/app/tmp/frontend-dist-publish.lock}
+DEFAULT_HOT_MARKER=/app/web/default/dist/.nexustok-hot-dist
+CLASSIC_HOT_MARKER=/app/web/classic/dist/.nexustok-hot-dist
 
 # cleanup_app 清理当前运行的后端进程
 cleanup_app() {
@@ -38,8 +44,11 @@ trap cleanup EXIT INT TERM
 
 # wait_for_dist 等待前端构建产物就绪
 wait_for_dist() {
-  until [ -f /app/web/default/dist/index.html ] && [ -f /app/web/classic/dist/index.html ]; do
-    echo "[hot] waiting for production frontend dist..."
+  until [ -f /app/web/default/dist/index.html ] && \
+    [ -f /app/web/classic/dist/index.html ] && \
+    [ -f "${DEFAULT_HOT_MARKER}" ] && \
+    [ ! -f "${FRONTEND_LOCK_FILE}" ]; do
+    echo "[hot] waiting for published frontend dist..."
     sleep 2
   done
 }
@@ -64,8 +73,8 @@ snapshot() {
       -name '*.go' -o \
       -name 'go.mod' -o \
       -name 'go.sum' -o \
-      -path '/app/web/default/dist/*' -o \
-      -path '/app/web/classic/dist/*' \
+      -path "${DEFAULT_HOT_MARKER}" -o \
+      -path "${CLASSIC_HOT_MARKER}" \
     \) -print \
     | sort \
     | while IFS= read -r file; do
@@ -101,6 +110,7 @@ build_and_restart() {
 wait_for_dist
 
 while :; do
+  wait_for_dist
   CURRENT_SNAPSHOT=$(snapshot)
 
   if [ "${CURRENT_SNAPSHOT}" != "${LAST_SNAPSHOT}" ] || [ -z "${APP_PID}" ]; then
