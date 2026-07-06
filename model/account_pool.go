@@ -398,6 +398,7 @@ func (account *PoolAccount) GetDailyLimitAction(group *AccountPoolGroup) string 
 type PoolAccount struct {
 	Id                 int     `json:"id"`                                                                  // 账号 ID
 	PoolGroupId        int     `json:"pool_group_id" gorm:"index;not null"`                                 // 所属分组 ID
+	AuthFileId         int     `json:"auth_file_id" gorm:"index;default:0"`                                 // 来源认证文件 ID；同一凭证分配到多个账号组时，各组内调度实例共享该 ID
 	Name               string  `json:"name" gorm:"type:varchar(255);index;not null"`                        // 账号名称
 	Platform           string  `json:"platform" gorm:"type:varchar(64);index;not null"`                     // 平台标识
 	AuthType           string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                    // 认证类型
@@ -1697,7 +1698,10 @@ func GetAccountPoolAuthFiles(page int, pageSize int, status int, poolGroupID int
 		query = query.Where("status = ?", status)
 	}
 	if poolGroupID > 0 {
-		query = query.Where("pool_group_id = ?", poolGroupID)
+		linkedAuthFiles := DB.Model(&PoolAccount{}).
+			Select("auth_file_id").
+			Where("pool_group_id = ? AND auth_file_id > ?", poolGroupID, 0)
+		query = query.Where("pool_group_id = ? OR id IN (?)", poolGroupID, linkedAuthFiles)
 	}
 	if strings.TrimSpace(provider) != "" {
 		query = query.Where("provider = ? OR platform = ?", strings.ToLower(strings.TrimSpace(provider)), strings.ToLower(strings.TrimSpace(provider)))

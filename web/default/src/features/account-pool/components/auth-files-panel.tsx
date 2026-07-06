@@ -223,9 +223,10 @@ function formatCompactCredentialSummary(summary: string): string {
 }
 
 function assignedGroups(authFile: AccountPoolAuthFile): string[] {
-  const groups = authFile.account_groups?.filter(Boolean) ?? []
+  const groups = authFile.pool_group_names?.filter(Boolean) ?? []
   if (groups.length > 0) return groups
-  if (authFile.account_group) return [authFile.account_group]
+  const groupIds = authFile.pool_group_ids?.filter((id) => id > 0) ?? []
+  if (groupIds.length > 0) return groupIds.map((id) => `#${id}`)
   if (authFile.pool_group_id > 0) return [`#${authFile.pool_group_id}`]
   return []
 }
@@ -283,10 +284,14 @@ function accountTitle(
   fullSummary: string,
   t: (key: string) => string
 ): string {
+  const accountIDs =
+    authFile.pool_account_ids && authFile.pool_account_ids.length > 0
+      ? authFile.pool_account_ids.map((id) => `#${id}`).join(', ')
+      : authFile.pool_account_id > 0
+        ? `#${authFile.pool_account_id}`
+        : '-'
   return [
-    `${t('Account')}: ${
-      authFile.pool_account_id > 0 ? `#${authFile.pool_account_id}` : '-'
-    }`,
+    `${t('Account')}: ${accountIDs}`,
     `${t('File')}: ${authFile.name} (#${authFile.id})`,
     fullSummary,
   ]
@@ -623,9 +628,14 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     className='min-w-[150px] max-w-[220px] truncate text-xs font-medium'
                     title={[
                       assignedGroupsTitle(authFile),
-                      authFile.pool_account_id > 0
-                        ? `${t('Account')}: #${authFile.pool_account_id}`
-                        : '',
+                      authFile.pool_account_ids &&
+                      authFile.pool_account_ids.length > 0
+                        ? `${t('Account')}: ${authFile.pool_account_ids
+                            .map((id) => `#${id}`)
+                            .join(', ')}`
+                        : authFile.pool_account_id > 0
+                          ? `${t('Account')}: #${authFile.pool_account_id}`
+                          : '',
                     ]
                       .filter(Boolean)
                       .join('\n')}

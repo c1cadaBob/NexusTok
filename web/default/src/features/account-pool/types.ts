@@ -74,6 +74,7 @@ export type AccountPoolGroup = {
 export type PoolAccount = {
   id: number
   pool_group_id: number
+  auth_file_id?: number
   name: string
   platform: string
   auth_type: string
@@ -208,6 +209,9 @@ export type AccountPoolAuthFile = {
   auth_type: string
   pool_group_id: number
   pool_account_id: number
+  pool_group_ids?: number[]
+  pool_group_names?: string[]
+  pool_account_ids?: number[]
   status: number
   file_digest: string
   credential_summary: string
@@ -315,6 +319,32 @@ export type PoolAccountBatchPayload = {
   daily_request_limit?: number
   daily_quota_limit?: number
   daily_limit_action?: string
+}
+
+export type PoolAccountAttachPayload = {
+  auth_file_ids?: number[]
+  source_group_id?: number
+  skip_existing?: boolean
+}
+
+export type AccountPoolAttachAccountItem = {
+  auth_file_id?: number
+  auth_file_name?: string
+  source_id?: number
+  account_id?: number
+  account_name?: string
+  group_id: number
+  success: boolean
+  skipped: boolean
+  message?: string
+}
+
+export type AccountPoolAttachAccountsResult = {
+  total: number
+  created: number
+  skipped: number
+  failed: number
+  items: AccountPoolAttachAccountItem[]
 }
 
 export type PoolAccountBatchStatusPayload = {

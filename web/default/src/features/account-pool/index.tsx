@@ -21,7 +21,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
   AlertTriangle,
+  Copy,
   Download,
+  FileJson,
+  KeyRound,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -83,6 +86,7 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
 import {
   accountPoolQueryKeys,
+  attachPoolAccountsToGroup,
   batchCreatePoolAccounts,
   batchDeletePoolAccounts,
   batchUpdatePoolAccountStatus,
@@ -96,6 +100,7 @@ import {
   exportPoolAccounts,
   exportAccountPoolStateLogs,
   getAccountPoolLoginSession,
+  getAccountPoolAuthFiles,
   getAccountPoolGroups,
   getAccountPoolHealth,
   getAccountPoolProviders,
@@ -123,6 +128,7 @@ import {
 } from './section-registry'
 import type {
   AccountPoolAbnormalAccount,
+  AccountPoolAuthFile,
   AccountPoolCheckTask,
   AccountPoolCheckTaskStatus,
   AccountPoolGroup,
@@ -177,6 +183,8 @@ type AccountFormState = {
   dailyLimitAction: string
   proxy: string
 }
+
+type AccountAddMode = 'credentials' | 'group' | 'manual'
 
 type AccountPoolView =
   | 'health'
@@ -548,6 +556,37 @@ function accountRowTitle(
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function authFilePoolGroupNames(authFile: AccountPoolAuthFile): string[] {
+  const names = authFile.pool_group_names?.filter(Boolean) ?? []
+  if (names.length > 0) return names
+  const ids = authFile.pool_group_ids?.filter((id) => id > 0) ?? []
+  if (ids.length > 0) return ids.map((id) => `#${id}`)
+  if (authFile.pool_group_id > 0) return [`#${authFile.pool_group_id}`]
+  return []
+}
+
+function authFileAssignedToGroup(
+  authFile: AccountPoolAuthFile,
+  groupId: number | null
+): boolean {
+  if (!groupId) return false
+  if (authFile.pool_group_ids?.includes(groupId)) return true
+  return authFile.pool_group_id === groupId
+}
+
+function authFileSourceLabel(authFile: AccountPoolAuthFile): string {
+  return [authFile.provider || authFile.platform, authFile.auth_type]
+    .filter(Boolean)
+    .join(' / ')
+}
+
+function authFileGroupLabel(authFile: AccountPoolAuthFile): string {
+  const groups = authFilePoolGroupNames(authFile)
+  if (groups.length === 0) return '-'
+  const visible = groups.slice(0, 2).join(', ')
+  return groups.length > 2 ? `${visible} +${groups.length - 2}` : visible
 }
 
 function accountStatusReason(
@@ -963,6 +1002,11 @@ export function AccountPool() {
   const [accountFormOpen, setAccountFormOpen] = useState(false)
   const [accountForm, setAccountForm] =
     useState<AccountFormState>(emptyAccountForm)
+  const [accountAddMode, setAccountAddMode] =
+    useState<AccountAddMode>('credentials')
+  const [credentialSearch, setCredentialSearch] = useState('')
+  const [selectedAuthFileIds, setSelectedAuthFileIds] = useState<number[]>([])
+  const [sourceGroupId, setSourceGroupId] = useState<string>('')
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchCredentials, setBatchCredentials] = useState('')
   const [codexInputOpen, setCodexInputOpen] = useState(false)
@@ -993,6 +1037,10 @@ export function AccountPool() {
 
   const groups = groupsQuery.data?.data?.items ?? []
   const selectedGroup = groups.find((group) => group.id === selectedGroupId)
+  const sourceGroupOptions = groups.filter((group) => group.id !== selectedGroupId)
+  const selectedSourceGroup = sourceGroupOptions.find(
+    (group) => String(group.id) === sourceGroupId
+  )
 
   useEffect(() => {
     if (!selectedGroupId && groups.length > 0 && activeSection === 'groups') {
@@ -1048,8 +1096,50 @@ export function AccountPool() {
     enabled: Boolean(selectedGroupId),
   })
 
+  const attachCredentialsQuery = useQuery({
+    queryKey: accountPoolQueryKeys.authFiles({
+      p: 1,
+      page_size: 200,
+      attach_group_id: selectedGroupId ?? 0,
+    }),
+    queryFn: () =>
+      getAccountPoolAuthFiles({
+        p: 1,
+        page_size: 200,
+      }),
+    enabled: accountFormOpen && !accountForm.id && Boolean(selectedGroupId),
+  })
+
   const accountItems = accountsQuery.data?.data?.accounts.items
   const accounts = useMemo(() => accountItems ?? [], [accountItems])
+  const attachCredentials = attachCredentialsQuery.data?.data?.items ?? []
+  const filteredAttachCredentials = useMemo(() => {
+    const needle = credentialSearch.trim().toLowerCase()
+    if (!needle) return attachCredentials
+    return attachCredentials.filter((authFile) =>
+      [
+        authFile.name,
+        authFile.provider,
+        authFile.platform,
+        authFile.auth_type,
+        authFile.subscription_type,
+        authFile.credential_summary,
+        authFilePoolGroupNames(authFile).join(' '),
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(needle))
+    )
+  }, [attachCredentials, credentialSearch])
+  const selectableAttachCredentialIds = filteredAttachCredentials
+    .filter(
+      (authFile) => !authFileAssignedToGroup(authFile, selectedGroupId ?? null)
+    )
+    .map((authFile) => authFile.id)
+  const allAttachCredentialsSelected =
+    selectableAttachCredentialIds.length > 0 &&
+    selectableAttachCredentialIds.every((id) =>
+      selectedAuthFileIds.includes(id)
+    )
   const accountPage = accountsQuery.data?.data?.accounts
   const stats = accountsQuery.data?.data?.stats ?? selectedGroup?.stats
   const accountIdsOnPage = useMemo(
@@ -1413,6 +1503,10 @@ export function AccountPool() {
       platform: selectedGroup?.platform ?? '',
       authType: selectedGroup?.auth_type ?? '',
     })
+    setAccountAddMode('credentials')
+    setCredentialSearch('')
+    setSelectedAuthFileIds([])
+    setSourceGroupId('')
     setAccountFormOpen(true)
   }
 
@@ -1434,11 +1528,86 @@ export function AccountPool() {
       dailyLimitAction: account.daily_limit_action || 'inherit',
       proxy: account.proxy || '',
     })
+    setAccountAddMode('manual')
     setAccountFormOpen(true)
+  }
+
+  const toggleAuthFileSelection = (authFileId: number, checked: boolean) => {
+    setSelectedAuthFileIds((current) => {
+      if (checked) {
+        return current.includes(authFileId)
+          ? current
+          : [...current, authFileId]
+      }
+      return current.filter((id) => id !== authFileId)
+    })
+  }
+
+  const toggleAllAttachCredentials = (checked: boolean) => {
+    if (!checked) {
+      setSelectedAuthFileIds((current) =>
+        current.filter((id) => !selectableAttachCredentialIds.includes(id))
+      )
+      return
+    }
+    setSelectedAuthFileIds((current) => [
+      ...current,
+      ...selectableAttachCredentialIds.filter((id) => !current.includes(id)),
+    ])
+  }
+
+  const submitAttachAccounts = async () => {
+    if (!selectedGroupId) return
+    if (accountAddMode === 'credentials' && selectedAuthFileIds.length === 0) {
+      toast.error(t('Select at least one credential'))
+      return
+    }
+    if (accountAddMode === 'group' && !sourceGroupId) {
+      toast.error(t('Select a source account group'))
+      return
+    }
+    setActionLoading(true)
+    try {
+      const response = await attachPoolAccountsToGroup(selectedGroupId, {
+        auth_file_ids:
+          accountAddMode === 'credentials' ? selectedAuthFileIds : undefined,
+        source_group_id:
+          accountAddMode === 'group' ? Number(sourceGroupId) : undefined,
+        skip_existing: true,
+      })
+      if (!response.success) throw new Error(response.message)
+      toast.success(
+        t('Added {{created}} account(s), skipped {{skipped}}', {
+          created: response.data?.created ?? 0,
+          skipped: response.data?.skipped ?? 0,
+        })
+      )
+      if ((response.data?.failed ?? 0) > 0) {
+        const firstError = response.data?.items?.find(
+          (item) => !item.success && !item.skipped
+        )
+        toast.error(firstError?.message ?? t('Some accounts failed to add'))
+      }
+      setAccountFormOpen(false)
+      setSelectedAuthFileIds([])
+      setSourceGroupId('')
+      setCredentialSearch('')
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const submitAccount = async () => {
     if (!selectedGroupId) return
+    if (!accountForm.id && accountAddMode !== 'manual') {
+      await submitAttachAccounts()
+      return
+    }
     if (!accountForm.name.trim()) {
       toast.error(t('Name is required'))
       return
@@ -4163,212 +4332,433 @@ export function AccountPool() {
       </Dialog>
 
       <Dialog open={accountFormOpen} onOpenChange={setAccountFormOpen}>
-        <DialogContent className='sm:max-w-xl'>
+        <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>
           <DialogHeader>
             <DialogTitle>
               {t(accountForm.id ? 'Edit Account' : 'Add Account')}
             </DialogTitle>
             <DialogDescription>
-              {t(
-                'Credentials are encrypted at rest and never returned in full.'
-              )}
+              {accountForm.id
+                ? t(
+                    'Credentials are encrypted at rest and never returned in full.'
+                  )
+                : t(
+                    'Select credentials, reuse another account group, or add one manually.'
+                  )}
             </DialogDescription>
           </DialogHeader>
-          <div className='grid gap-3 sm:grid-cols-2'>
-            <Input
-              placeholder={t('Account name')}
-              value={accountForm.name}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder={t('Platform')}
-              value={accountForm.platform}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  platform: event.target.value,
-                }))
-              }
-            />
-            <Select
-              items={authTypeOptions.map((value) => ({ value, label: value }))}
-              value={accountForm.authType}
-              onValueChange={(value) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  authType: value ?? '',
-                }))
-              }
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {authTypeOptions.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder={t('Proxy')}
-              value={accountForm.proxy}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  proxy: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder={t('Models')}
-              value={accountForm.models}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  models: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder={t('Group')}
-              value={accountForm.group}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  group: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder={t('Priority')}
-              value={accountForm.priority}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  priority: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder={t('Weight')}
-              value={accountForm.weight}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  weight: event.target.value,
-                }))
-              }
-            />
-            <Input
-              type='number'
-              min='0'
-              inputMode='numeric'
-              placeholder={t('Max concurrency')}
-              value={accountForm.maxConcurrency}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  maxConcurrency: event.target.value,
-                }))
-              }
-            />
-            <Input
-              type='number'
-              min='0'
-              inputMode='numeric'
-              placeholder={t('Rate limit RPM')}
-              value={accountForm.rateLimitRpm}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  rateLimitRpm: event.target.value,
-                }))
-              }
-            />
-            <Input
-              type='number'
-              min='0'
-              inputMode='numeric'
-              placeholder={t('Daily request limit')}
-              value={accountForm.dailyRequestLimit}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  dailyRequestLimit: event.target.value,
-                }))
-              }
-            />
-            <Input
-              type='number'
-              min='0'
-              inputMode='numeric'
-              placeholder={t('Daily quota limit')}
-              value={accountForm.dailyQuotaLimit}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  dailyQuotaLimit: event.target.value,
-                }))
-              }
-            />
-            <Select
-              items={accountDailyLimitActionOptions.map((value) => ({
-                value,
-                label: dailyLimitActionLabel(value, t),
-              }))}
-              value={accountForm.dailyLimitAction}
-              onValueChange={(value) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  dailyLimitAction: value ?? 'inherit',
-                }))
-              }
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue placeholder={t('Daily limit action')} />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {accountDailyLimitActionOptions.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {dailyLimitActionLabel(value, t)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <Textarea
-              className='sm:col-span-2'
-              rows={5}
-              placeholder={
-                accountForm.id
-                  ? t('Leave empty to keep existing credential')
-                  : t('Credentials')
-              }
-              value={accountForm.credentials}
-              onChange={(event) =>
-                setAccountForm((current) => ({
-                  ...current,
-                  credentials: event.target.value,
-                }))
-              }
-            />
-          </div>
+          <Tabs
+            value={accountForm.id ? 'manual' : accountAddMode}
+            onValueChange={(value) => setAccountAddMode(value as AccountAddMode)}
+          >
+            {!accountForm.id && (
+              <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+                <TabsTrigger value='credentials'>
+                  <FileJson data-icon='inline-start' />
+                  {t('Select Credentials')}
+                </TabsTrigger>
+                <TabsTrigger value='group'>
+                  <Copy data-icon='inline-start' />
+                  {t('Reuse Group')}
+                </TabsTrigger>
+                <TabsTrigger value='manual'>
+                  <KeyRound data-icon='inline-start' />
+                  {t('Manual')}
+                </TabsTrigger>
+              </TabsList>
+            )}
+
+            <TabsContent value='credentials' className='mt-3 space-y-3'>
+              <div className='flex flex-col gap-2 sm:flex-row'>
+                <Input
+                  className='sm:max-w-xs'
+                  placeholder={t('Search credentials')}
+                  value={credentialSearch}
+                  onChange={(event) => setCredentialSearch(event.target.value)}
+                />
+                <Button
+                  variant='outline'
+                  type='button'
+                  onClick={() =>
+                    toggleAllAttachCredentials(!allAttachCredentialsSelected)
+                  }
+                  disabled={selectableAttachCredentialIds.length === 0}
+                >
+                  {allAttachCredentialsSelected
+                    ? t('Clear selection')
+                    : t('Select visible')}
+                </Button>
+                <div className='text-muted-foreground flex items-center text-sm'>
+                  {t('{{count}} selected', {
+                    count: selectedAuthFileIds.length,
+                  })}
+                </div>
+              </div>
+              <div className='border-border max-h-[360px] overflow-y-auto rounded-md border'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className='w-10'>
+                        <Checkbox
+                          checked={allAttachCredentialsSelected}
+                          onCheckedChange={(checked) =>
+                            toggleAllAttachCredentials(Boolean(checked))
+                          }
+                          disabled={selectableAttachCredentialIds.length === 0}
+                          aria-label={t('Select all')}
+                        />
+                      </TableHead>
+                      <TableHead>{t('Account')}</TableHead>
+                      <TableHead>{t('Source')}</TableHead>
+                      <TableHead>{t('Type')}</TableHead>
+                      <TableHead>{t('Account Groups')}</TableHead>
+                      <TableHead>{t('Status')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredAttachCredentials.map((authFile) => {
+                      const alreadyAssigned = authFileAssignedToGroup(
+                        authFile,
+                        selectedGroupId ?? null
+                      )
+                      const fullSummary = formatCredentialSummary(
+                        authFile.credential_summary
+                      )
+                      return (
+                        <TableRow key={authFile.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedAuthFileIds.includes(
+                                authFile.id
+                              )}
+                              disabled={alreadyAssigned}
+                              onCheckedChange={(checked) =>
+                                toggleAuthFileSelection(
+                                  authFile.id,
+                                  Boolean(checked)
+                                )
+                              }
+                              aria-label={t('Select row')}
+                            />
+                          </TableCell>
+                          <TableCell className='min-w-[220px] max-w-[320px]'>
+                            <div
+                              className='truncate font-medium'
+                              title={fullSummary}
+                            >
+                              {formatAccountIdentity(
+                                authFile.credential_summary,
+                                authFile.name
+                              )}
+                            </div>
+                            <div className='text-muted-foreground truncate text-xs'>
+                              {authFile.name} · #{authFile.id}
+                            </div>
+                          </TableCell>
+                          <TableCell className='min-w-[140px] text-xs'>
+                            {authFileSourceLabel(authFile) || '-'}
+                          </TableCell>
+                          <TableCell className='min-w-[90px] text-xs'>
+                            {authFile.subscription_type || '-'}
+                          </TableCell>
+                          <TableCell
+                            className='min-w-[150px] max-w-[220px] truncate text-xs'
+                            title={authFilePoolGroupNames(authFile).join(', ')}
+                          >
+                            {authFileGroupLabel(authFile)}
+                          </TableCell>
+                          <TableCell className='min-w-[120px]'>
+                            <StatusBadge
+                              label={
+                                alreadyAssigned
+                                  ? t('Already in group')
+                                  : t('Available')
+                              }
+                              variant={alreadyAssigned ? 'neutral' : 'success'}
+                              copyable={false}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                    {!attachCredentialsQuery.isLoading &&
+                      filteredAttachCredentials.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className='h-24 text-center'>
+                            {t('No credentials found')}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    {attachCredentialsQuery.isLoading && (
+                      <TableRow>
+                        <TableCell colSpan={6} className='h-24 text-center'>
+                          {t('Loading')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value='group' className='mt-3 space-y-3'>
+              <Select
+                items={sourceGroupOptions.map((group) => ({
+                  value: String(group.id),
+                  label: group.name,
+                }))}
+                value={sourceGroupId}
+                onValueChange={(value) => setSourceGroupId(value ?? '')}
+              >
+                <SelectTrigger className='w-full'>
+                  <SelectValue placeholder={t('Source account group')} />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    {sourceGroupOptions.map((group) => (
+                      <SelectItem key={group.id} value={String(group.id)}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <div className='border-border grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-3'>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Source')}
+                  </div>
+                  <div className='truncate font-medium'>
+                    {selectedSourceGroup?.name || '-'}
+                  </div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Total accounts')}
+                  </div>
+                  <div className='font-medium'>
+                    {formatUsageNumber(selectedSourceGroup?.stats?.total ?? 0)}
+                  </div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Available accounts')}
+                  </div>
+                  <div className='font-medium'>
+                    {formatUsageNumber(
+                      selectedSourceGroup?.stats?.enabled ?? 0
+                    )}
+                  </div>
+                </div>
+              </div>
+              {sourceGroupOptions.length === 0 && (
+                <div className='text-muted-foreground text-sm'>
+                  {t('No other account groups available')}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value='manual' className='mt-3'>
+              <div className='grid gap-3 sm:grid-cols-2'>
+                <Input
+                  placeholder={t('Account name')}
+                  value={accountForm.name}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder={t('Platform')}
+                  value={accountForm.platform}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      platform: event.target.value,
+                    }))
+                  }
+                />
+                <Select
+                  items={authTypeOptions.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                  value={accountForm.authType}
+                  onValueChange={(value) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      authType: value ?? '',
+                    }))
+                  }
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {authTypeOptions.map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {value}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder={t('Proxy')}
+                  value={accountForm.proxy}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      proxy: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder={t('Models')}
+                  value={accountForm.models}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      models: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder={t('Group')}
+                  value={accountForm.group}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      group: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder={t('Priority')}
+                  value={accountForm.priority}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      priority: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder={t('Weight')}
+                  value={accountForm.weight}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      weight: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  type='number'
+                  min='0'
+                  inputMode='numeric'
+                  placeholder={t('Max concurrency')}
+                  value={accountForm.maxConcurrency}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      maxConcurrency: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  type='number'
+                  min='0'
+                  inputMode='numeric'
+                  placeholder={t('Rate limit RPM')}
+                  value={accountForm.rateLimitRpm}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      rateLimitRpm: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  type='number'
+                  min='0'
+                  inputMode='numeric'
+                  placeholder={t('Daily request limit')}
+                  value={accountForm.dailyRequestLimit}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      dailyRequestLimit: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  type='number'
+                  min='0'
+                  inputMode='numeric'
+                  placeholder={t('Daily quota limit')}
+                  value={accountForm.dailyQuotaLimit}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      dailyQuotaLimit: event.target.value,
+                    }))
+                  }
+                />
+                <Select
+                  items={accountDailyLimitActionOptions.map((value) => ({
+                    value,
+                    label: dailyLimitActionLabel(value, t),
+                  }))}
+                  value={accountForm.dailyLimitAction}
+                  onValueChange={(value) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      dailyLimitAction: value ?? 'inherit',
+                    }))
+                  }
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue placeholder={t('Daily limit action')} />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {accountDailyLimitActionOptions.map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {dailyLimitActionLabel(value, t)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Textarea
+                  className='sm:col-span-2'
+                  rows={5}
+                  placeholder={
+                    accountForm.id
+                      ? t('Leave empty to keep existing credential')
+                      : t('Credentials')
+                  }
+                  value={accountForm.credentials}
+                  onChange={(event) =>
+                    setAccountForm((current) => ({
+                      ...current,
+                      credentials: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
           <DialogFooter>
             <Button onClick={submitAccount} disabled={actionLoading}>
               {actionLoading && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
-              {t('Save')}
+              {t(accountForm.id || accountAddMode === 'manual' ? 'Save' : 'Add')}
             </Button>
           </DialogFooter>
         </DialogContent>

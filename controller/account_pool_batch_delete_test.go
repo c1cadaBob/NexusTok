@@ -200,6 +200,41 @@ func TestDeletePoolAccountDetachesLinkedAuthFile(t *testing.T) {
 	require.Equal(t, 0, logs[0].AfterStatus)
 }
 
+func TestDeletePoolAccountKeepsAuthFileWhenOtherGroupUsesIt(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	sourceGroup := createBatchStatusGroup(t, "single-delete-shared-source")
+	targetGroup := createBatchStatusGroup(t, "single-delete-shared-target")
+	sourceAccount := createBatchStatusAccount(t, sourceGroup.Id, "single-delete-shared-source-account")
+	targetAccount := createBatchStatusAccount(t, targetGroup.Id, "single-delete-shared-target-account")
+	authFile := createBatchDeleteAuthFile(t, sourceGroup.Id, sourceAccount.Id, "single-delete-shared-auth")
+	require.NoError(t, model.DB.Model(sourceAccount).Update("auth_file_id", authFile.Id).Error)
+	require.NoError(t, model.DB.Model(targetAccount).Update("auth_file_id", authFile.Id).Error)
+	sourceAccount.AuthFileId = authFile.Id
+	targetAccount.AuthFileId = authFile.Id
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/account-pool/accounts/"+strconv.Itoa(targetAccount.Id), nil)
+	ctx.Params = gin.Params{{Key: "account_id", Value: strconv.Itoa(targetAccount.Id)}}
+	ctx.Set("username", "single-shared-detach-tester")
+
+	DeletePoolAccount(ctx)
+
+	var apiResponse struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &apiResponse))
+	require.True(t, apiResponse.Success, apiResponse.Message)
+	err := model.DB.Where("id = ?", targetAccount.Id).First(&model.PoolAccount{}).Error
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	var updatedAuthFile model.AccountPoolAuthFile
+	require.NoError(t, model.DB.Where("id = ?", authFile.Id).First(&updatedAuthFile).Error)
+	require.Equal(t, sourceAccount.Id, updatedAuthFile.PoolAccountId)
+	require.Equal(t, common.ChannelStatusEnabled, updatedAuthFile.Status)
+}
+
 func TestBatchDeletePoolAccountsDetachesLinkedAuthFiles(t *testing.T) {
 	setupAccountPoolBatchStatusTest(t)
 	group := createBatchStatusGroup(t, "batch-delete-detach")

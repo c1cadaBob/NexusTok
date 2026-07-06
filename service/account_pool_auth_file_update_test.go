@@ -87,6 +87,7 @@ func TestUpdateAccountPoolAuthFileRecreatesMissingLinkedAccount(t *testing.T) {
 	require.NotNil(t, updated.Account)
 	require.NotZero(t, updated.AuthFile.PoolAccountId)
 	require.Equal(t, updated.AuthFile.PoolAccountId, updated.Account.Id)
+	require.Equal(t, updated.AuthFile.Id, updated.Account.AuthFileId)
 	require.Equal(t, group.Id, updated.Account.PoolGroupId)
 	require.Equal(t, common.ChannelStatusEnabled, updated.AuthFile.Status)
 	require.Equal(t, common.ChannelStatusEnabled, updated.Account.Status)

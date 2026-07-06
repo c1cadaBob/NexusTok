@@ -115,6 +115,14 @@ type poolAccountBatchRequest struct {
 	DailyLimitAction  string `json:"daily_limit_action"`  // 每日限制耗尽处理策略，空值表示继承分组
 }
 
+// poolAccountAttachRequest 描述把已有凭证或其他账号组账号添加到当前账号组的请求。
+// auth_file_ids 用于从“凭证”列表批量选择；source_group_id 用于复用另一个账号组的同一批账号。
+type poolAccountAttachRequest struct {
+	AuthFileIDs   []int `json:"auth_file_ids"`   // 待添加的认证文件 ID 列表
+	SourceGroupID int   `json:"source_group_id"` // 可选，复制该账号组下的账号到当前组
+	SkipExisting  *bool `json:"skip_existing"`   // 是否跳过目标组中已存在的同源凭证，默认 true
+}
+
 // poolAccountStatusRequest 池账号状态更新请求
 type poolAccountStatusRequest struct {
 	Status        int    `json:"status"`         // 新状态
@@ -586,6 +594,33 @@ func BatchCreatePoolAccounts(c *gin.Context) {
 	})
 }
 
+func AttachPoolAccountsToGroup(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	var req poolAccountAttachRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	skipExisting := true
+	if req.SkipExisting != nil {
+		skipExisting = *req.SkipExisting
+	}
+	result, err := service.AttachAccountPoolAccounts(service.AccountPoolAttachAccountsOptions{
+		TargetGroupID: groupID,
+		AuthFileIDs:   req.AuthFileIDs,
+		SourceGroupID: req.SourceGroupID,
+		SkipExisting:  skipExisting,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
 func GetPoolAccount(c *gin.Context) {
 	accountID, ok := parsePoolAccountIDParam(c)
 	if !ok {
@@ -650,7 +685,7 @@ func DeletePoolAccount(c *gin.Context) {
 		if result.Error != nil {
 			return result.Error
 		}
-		return detachAccountPoolAuthFilesForDeletedAccount(tx, accountID)
+		return detachAccountPoolAuthFilesForDeletedAccount(tx, before)
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -1026,28 +1061,35 @@ func DeleteAccountPoolAuthFile(c *gin.Context) {
 		return
 	}
 	deleteAccount := strings.ToLower(strings.TrimSpace(c.DefaultQuery("delete_account", "true"))) != "false"
-	var deletedAccountBefore *model.PoolAccount
+	deletedAccountsBefore := make([]*model.PoolAccount, 0)
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var authFile model.AccountPoolAuthFile
 		if err := tx.Where("id = ?", authFileID).First(&authFile).Error; err != nil {
 			return err
 		}
-		if deleteAccount && authFile.PoolAccountId > 0 {
-			var account model.PoolAccount
-			if err := tx.Where("id = ?", authFile.PoolAccountId).First(&account).Error; err == nil {
-				accountCopy := account
-				deletedAccountBefore = &accountCopy
-			} else if err != gorm.ErrRecordNotFound {
+		if deleteAccount {
+			accounts, err := loadAccountsLinkedToAuthFile(tx, &authFile)
+			if err != nil {
 				return err
 			}
+			deletedAccountsBefore = accounts
 		}
 		if err := tx.Where("id = ?", authFileID).Delete(&model.AccountPoolAuthFile{}).Error; err != nil {
 			return err
 		}
-		if deletedAccountBefore != nil {
-			if err := tx.Where("id = ?", deletedAccountBefore.Id).Delete(&model.PoolAccount{}).Error; err != nil {
+		if deleteAccount && len(deletedAccountsBefore) > 0 {
+			accountIDs := make([]int, 0, len(deletedAccountsBefore))
+			for _, account := range deletedAccountsBefore {
+				accountIDs = append(accountIDs, account.Id)
+			}
+			if err := tx.Where("id IN ?", accountIDs).Delete(&model.PoolAccount{}).Error; err != nil {
 				return err
 			}
+		}
+		if !deleteAccount {
+			return tx.Model(&model.PoolAccount{}).
+				Where("auth_file_id = ?", authFileID).
+				Update("auth_file_id", 0).Error
 		}
 		return nil
 	})
@@ -1055,8 +1097,8 @@ func DeleteAccountPoolAuthFile(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if deletedAccountBefore != nil {
-		recordPoolAccountStateFromController(c, deletedAccountBefore.Id, model.PoolAccountStateActionManualDelete, "删除认证文件时同步删除关联账号", deletedAccountBefore)
+	for _, account := range deletedAccountsBefore {
+		recordPoolAccountStateFromController(c, account.Id, model.PoolAccountStateActionManualDelete, "删除认证文件时同步删除关联账号", account)
 	}
 	common.ApiSuccess(c, nil)
 }
@@ -1830,7 +1872,7 @@ func applySinglePoolAccountBatchDelete(c *gin.Context, groupID int, account *mod
 			return nil
 		}
 		deleted = true
-		return detachAccountPoolAuthFilesForDeletedAccount(tx, account.Id)
+		return detachAccountPoolAuthFilesForDeletedAccount(tx, account)
 	})
 	if err != nil {
 		item.Message = err.Error()
@@ -1846,19 +1888,80 @@ func applySinglePoolAccountBatchDelete(c *gin.Context, groupID int, account *mod
 	return item
 }
 
-func detachAccountPoolAuthFilesForDeletedAccount(tx *gorm.DB, accountID int) error {
-	if tx == nil || accountID <= 0 {
+func loadAccountsLinkedToAuthFile(tx *gorm.DB, authFile *model.AccountPoolAuthFile) ([]*model.PoolAccount, error) {
+	if tx == nil || authFile == nil || authFile.Id <= 0 {
+		return nil, nil
+	}
+	var accounts []*model.PoolAccount
+	query := tx.Where("auth_file_id = ?", authFile.Id)
+	if authFile.PoolAccountId > 0 {
+		query = query.Or("id = ?", authFile.PoolAccountId)
+	}
+	if err := query.Order("id ASC").Find(&accounts).Error; err != nil {
+		return nil, err
+	}
+	seen := map[int]struct{}{}
+	result := make([]*model.PoolAccount, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil || account.Id <= 0 {
+			continue
+		}
+		if _, ok := seen[account.Id]; ok {
+			continue
+		}
+		seen[account.Id] = struct{}{}
+		result = append(result, account)
+	}
+	return result, nil
+}
+
+func detachAccountPoolAuthFilesForDeletedAccount(tx *gorm.DB, account *model.PoolAccount) error {
+	if tx == nil || account == nil || account.Id <= 0 {
 		return nil
 	}
-	// 删除池账号时保留认证文件的加密原文，避免把管理员导入的凭据备份和来源记录一并误删。
-	// 清空关联账号 ID 并禁用认证文件后，页面不会再把它展示成可调度账号；管理员仍可重新粘贴
-	// JSON 内容来生成新的 PoolAccount，或手动删除这份认证文件。
-	return tx.Model(&model.AccountPoolAuthFile{}).
-		Where("pool_account_id = ?", accountID).
-		Updates(map[string]interface{}{
-			"pool_account_id": 0,
-			"status":          common.ChannelStatusManuallyDisabled,
-		}).Error
+	authFileIDs := make([]int, 0, 2)
+	if account.AuthFileId > 0 {
+		authFileIDs = append(authFileIDs, account.AuthFileId)
+	}
+	if account.AuthFileId <= 0 {
+		var authFile model.AccountPoolAuthFile
+		if err := tx.Select("id").Where("pool_account_id = ?", account.Id).First(&authFile).Error; err == nil {
+			authFileIDs = append(authFileIDs, authFile.Id)
+		} else if err != gorm.ErrRecordNotFound {
+			return err
+		}
+	}
+	for _, authFileID := range authFileIDs {
+		var remaining model.PoolAccount
+		err := tx.Select("id").
+			Where("auth_file_id = ?", authFileID).
+			Order("id ASC").
+			First(&remaining).Error
+		if err == nil {
+			// 同一凭证仍被其他账号组使用时，只把认证文件的主账号指针切到仍存在的实例。
+			// 这样删除某个组内账号不会把凭证页记录置灰，也不会影响其他组继续调度。
+			if err := tx.Model(&model.AccountPoolAuthFile{}).
+				Where("id = ? AND pool_account_id = ?", authFileID, account.Id).
+				Update("pool_account_id", remaining.Id).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+		// 删除池账号时仍保留认证文件的加密原文，避免把管理员导入的凭据备份和来源记录一并误删。
+		// 只有该凭证已经没有其他组内调度实例时，才清空主账号 ID 并禁用认证文件。
+		if err := tx.Model(&model.AccountPoolAuthFile{}).
+			Where("id = ? OR pool_account_id = ?", authFileID, account.Id).
+			Updates(map[string]interface{}{
+				"pool_account_id": 0,
+				"status":          common.ChannelStatusManuallyDisabled,
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyPoolAccountBatchStatus(c *gin.Context, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchStatusRequest) *poolAccountBatchStatusResult {
@@ -2985,11 +3088,91 @@ func normalizeAccountPoolSubscriptionType(raw string) string {
 	}
 }
 
+func accountPoolAuthFileUsageRefs(authFile *model.AccountPoolAuthFile) ([]int, []string, []int) {
+	if authFile == nil || authFile.Id <= 0 || model.DB == nil {
+		return nil, nil, nil
+	}
+	var accounts []model.PoolAccount
+	query := model.DB.Select("id", "pool_group_id").Where("auth_file_id = ?", authFile.Id)
+	if authFile.PoolAccountId > 0 {
+		query = query.Or("id = ?", authFile.PoolAccountId)
+	}
+	if err := query.Order("id ASC").Find(&accounts).Error; err != nil {
+		return fallbackAccountPoolAuthFileUsageRefs(authFile)
+	}
+	groupSeen := map[int]struct{}{}
+	accountSeen := map[int]struct{}{}
+	groupIDs := make([]int, 0, len(accounts)+1)
+	accountIDs := make([]int, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Id > 0 {
+			if _, ok := accountSeen[account.Id]; !ok {
+				accountSeen[account.Id] = struct{}{}
+				accountIDs = append(accountIDs, account.Id)
+			}
+		}
+		if account.PoolGroupId > 0 {
+			if _, ok := groupSeen[account.PoolGroupId]; !ok {
+				groupSeen[account.PoolGroupId] = struct{}{}
+				groupIDs = append(groupIDs, account.PoolGroupId)
+			}
+		}
+	}
+	if len(groupIDs) == 0 && authFile.PoolGroupId > 0 {
+		groupIDs = append(groupIDs, authFile.PoolGroupId)
+	}
+	if len(accountIDs) == 0 && authFile.PoolAccountId > 0 {
+		accountIDs = append(accountIDs, authFile.PoolAccountId)
+	}
+	groupNames := accountPoolGroupNamesByIDs(groupIDs)
+	return groupIDs, groupNames, accountIDs
+}
+
+func fallbackAccountPoolAuthFileUsageRefs(authFile *model.AccountPoolAuthFile) ([]int, []string, []int) {
+	groupIDs := []int{}
+	accountIDs := []int{}
+	if authFile.PoolGroupId > 0 {
+		groupIDs = append(groupIDs, authFile.PoolGroupId)
+	}
+	if authFile.PoolAccountId > 0 {
+		accountIDs = append(accountIDs, authFile.PoolAccountId)
+	}
+	return groupIDs, accountPoolGroupNamesByIDs(groupIDs), accountIDs
+}
+
+func accountPoolGroupNamesByIDs(groupIDs []int) []string {
+	if len(groupIDs) == 0 || model.DB == nil {
+		return nil
+	}
+	var groups []model.AccountPoolGroup
+	if err := model.DB.Select("id", "name").Where("id IN ?", groupIDs).Find(&groups).Error; err != nil {
+		names := make([]string, 0, len(groupIDs))
+		for _, groupID := range groupIDs {
+			names = append(names, fmt.Sprintf("#%d", groupID))
+		}
+		return names
+	}
+	nameByID := map[int]string{}
+	for _, group := range groups {
+		nameByID[group.Id] = group.Name
+	}
+	names := make([]string, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if name := strings.TrimSpace(nameByID[groupID]); name != "" {
+			names = append(names, name)
+			continue
+		}
+		names = append(names, fmt.Sprintf("#%d", groupID))
+	}
+	return names
+}
+
 func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
 	if authFile == nil {
 		return gin.H{}
 	}
 	groups := splitAccountPoolAuthFileGroups(authFile.AccountGroups)
+	poolGroupIDs, poolGroupNames, poolAccountIDs := accountPoolAuthFileUsageRefs(authFile)
 	accountGroup := ""
 	if len(groups) > 0 {
 		accountGroup = groups[0]
@@ -3004,6 +3187,9 @@ func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
 		"auth_type":          authFile.AuthType,
 		"pool_group_id":      authFile.PoolGroupId,
 		"pool_account_id":    authFile.PoolAccountId,
+		"pool_group_ids":     poolGroupIDs,
+		"pool_group_names":   poolGroupNames,
+		"pool_account_ids":   poolAccountIDs,
 		"status":             authFile.Status,
 		"file_digest":        authFile.FileDigest,
 		"credential_summary": authFile.CredentialSummary,
@@ -3029,6 +3215,7 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 	return gin.H{
 		"id":                  account.Id,
 		"pool_group_id":       account.PoolGroupId,
+		"auth_file_id":        account.AuthFileId,
 		"name":                account.Name,
 		"platform":            account.Platform,
 		"auth_type":           account.AuthType,

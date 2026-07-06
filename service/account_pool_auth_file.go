@@ -116,6 +116,37 @@ type AccountPoolAuthFileImportError struct {
 	Message string `json:"message"`
 }
 
+// AccountPoolAttachAccountsOptions 描述把已有凭证或账号组账号挂到目标账号组的请求。
+// AuthFileIDs 用于“从凭证选择”，SourceGroupID 用于“复用其他账号组”；两者至少提供一个。
+type AccountPoolAttachAccountsOptions struct {
+	TargetGroupID int
+	AuthFileIDs   []int
+	SourceGroupID int
+	SkipExisting  bool
+}
+
+// AccountPoolAttachAccountItem 描述一次凭证/账号复制中的单条结果。
+type AccountPoolAttachAccountItem struct {
+	AuthFileID   int    `json:"auth_file_id,omitempty"`
+	AuthFileName string `json:"auth_file_name,omitempty"`
+	SourceID     int    `json:"source_id,omitempty"`
+	AccountID    int    `json:"account_id,omitempty"`
+	AccountName  string `json:"account_name,omitempty"`
+	GroupID      int    `json:"group_id"`
+	Success      bool   `json:"success"`
+	Skipped      bool   `json:"skipped"`
+	Message      string `json:"message,omitempty"`
+}
+
+// AccountPoolAttachAccountsResult 汇总批量分配账号到组的结果。
+type AccountPoolAttachAccountsResult struct {
+	Total   int                             `json:"total"`
+	Created int                             `json:"created"`
+	Skipped int                             `json:"skipped"`
+	Failed  int                             `json:"failed"`
+	Items   []*AccountPoolAttachAccountItem `json:"items"`
+}
+
 type accountPoolAuthFileCandidate struct {
 	name   string
 	format string
@@ -353,6 +384,10 @@ func ImportAccountPoolAuthFile(opts AccountPoolAuthFileImportOptions) (*AccountP
 		if err := tx.Create(authFile).Error; err != nil {
 			return err
 		}
+		if err := tx.Model(account).Update("auth_file_id", authFile.Id).Error; err != nil {
+			return err
+		}
+		account.AuthFileId = authFile.Id
 		result.AuthFile = authFile
 		result.Account = account
 		result.Group = group
@@ -498,6 +533,7 @@ func UpdateAccountPoolAuthFile(authFileID int, opts AccountPoolAuthFileUpdateOpt
 				// 只有在本次请求重新提供 JSON 内容并成功解析出凭据时，才创建新的 PoolAccount；
 				// 普通字段补丁不凭空生成账号，避免把缺少明文凭据的记录错误放回调度层。
 				newAccount := buildPoolAccountFromParsedAuthFile(group, parsed, encryptedCredential, metadataJSON, attrsJSON)
+				newAccount.AuthFileId = authFileID
 				if err := tx.Create(newAccount).Error; err != nil {
 					return err
 				}
@@ -506,6 +542,7 @@ func UpdateAccountPoolAuthFile(authFileID int, opts AccountPoolAuthFileUpdateOpt
 			}
 			accountUpdates = mergeStringAnyMaps(accountUpdates, map[string]interface{}{
 				"pool_group_id":         group.Id,
+				"auth_file_id":          authFileID,
 				"name":                  parsed.Name,
 				"platform":              parsed.Platform,
 				"auth_type":             parsed.AuthType,
@@ -572,6 +609,443 @@ func UpdateAccountPoolAuthFile(authFileID int, opts AccountPoolAuthFileUpdateOpt
 		return nil, err
 	}
 	return result, nil
+}
+
+// AttachAccountPoolAccounts 把已有凭证或来源账号组中的账号复制为目标组的调度实例。
+// 当前账号池热路径仍以 PoolAccount.pool_group_id 选择账号，因此这里创建的是目标组内
+// 独立的 PoolAccount 行；这些行通过 auth_file_id 指向同一份凭证，便于凭证页展示和去重。
+func AttachAccountPoolAccounts(opts AccountPoolAttachAccountsOptions) (*AccountPoolAttachAccountsResult, error) {
+	if opts.TargetGroupID <= 0 {
+		return nil, fmt.Errorf("target account pool group is required")
+	}
+	authFileIDs := normalizePositiveIDs(opts.AuthFileIDs)
+	if len(authFileIDs) == 0 && opts.SourceGroupID <= 0 {
+		return nil, fmt.Errorf("auth_file_ids or source_group_id is required")
+	}
+	result := &AccountPoolAttachAccountsResult{
+		Items: make([]*AccountPoolAttachAccountItem, 0, len(authFileIDs)),
+	}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		targetGroup := &model.AccountPoolGroup{}
+		if err := tx.Where("id = ?", opts.TargetGroupID).First(targetGroup).Error; err != nil {
+			return err
+		}
+		existing, err := loadTargetPoolAccountIdentities(tx, targetGroup.Id)
+		if err != nil {
+			return err
+		}
+		if len(authFileIDs) > 0 {
+			authFiles, err := loadAccountPoolAuthFilesByIDs(tx, authFileIDs)
+			if err != nil {
+				return err
+			}
+			for _, authFileID := range authFileIDs {
+				result.Total++
+				authFile := authFiles[authFileID]
+				item := attachAuthFileToTargetGroup(tx, targetGroup, authFileID, authFile, existing, opts.SkipExisting)
+				appendAttachAccountResult(result, item)
+			}
+		}
+		if opts.SourceGroupID > 0 {
+			if opts.SourceGroupID == targetGroup.Id {
+				return fmt.Errorf("source group cannot be the same as target group")
+			}
+			if err := ensureAccountPoolGroupExistsTx(tx, opts.SourceGroupID); err != nil {
+				return err
+			}
+			var sourceAccounts []model.PoolAccount
+			if err := tx.Where("pool_group_id = ?", opts.SourceGroupID).
+				Order("priority DESC").
+				Order("id DESC").
+				Find(&sourceAccounts).Error; err != nil {
+				return err
+			}
+			for index := range sourceAccounts {
+				result.Total++
+				item := copyPoolAccountToTargetGroup(tx, targetGroup, &sourceAccounts[index], existing, opts.SkipExisting)
+				appendAttachAccountResult(result, item)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+type targetPoolAccountIdentities struct {
+	authFileIDs map[int]struct{}
+	summaries   map[string]struct{}
+}
+
+func loadTargetPoolAccountIdentities(tx *gorm.DB, groupID int) (*targetPoolAccountIdentities, error) {
+	var accounts []model.PoolAccount
+	if err := tx.Select("auth_file_id", "credential_summary").
+		Where("pool_group_id = ?", groupID).
+		Find(&accounts).Error; err != nil {
+		return nil, err
+	}
+	identities := &targetPoolAccountIdentities{
+		authFileIDs: map[int]struct{}{},
+		summaries:   map[string]struct{}{},
+	}
+	for _, account := range accounts {
+		identities.add(account.AuthFileId, account.CredentialSummary)
+	}
+	return identities, nil
+}
+
+func (identities *targetPoolAccountIdentities) add(authFileID int, summary string) {
+	if identities == nil {
+		return
+	}
+	if authFileID > 0 {
+		identities.authFileIDs[authFileID] = struct{}{}
+	}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		identities.summaries[summary] = struct{}{}
+	}
+}
+
+func (identities *targetPoolAccountIdentities) contains(authFileID int, summary string) bool {
+	if identities == nil {
+		return false
+	}
+	if authFileID > 0 {
+		if _, ok := identities.authFileIDs[authFileID]; ok {
+			return true
+		}
+	}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		_, ok := identities.summaries[summary]
+		return ok
+	}
+	return false
+}
+
+func loadAccountPoolAuthFilesByIDs(tx *gorm.DB, authFileIDs []int) (map[int]*model.AccountPoolAuthFile, error) {
+	result := map[int]*model.AccountPoolAuthFile{}
+	if len(authFileIDs) == 0 {
+		return result, nil
+	}
+	var authFiles []model.AccountPoolAuthFile
+	if err := tx.Where("id IN ?", authFileIDs).Find(&authFiles).Error; err != nil {
+		return nil, err
+	}
+	for index := range authFiles {
+		authFile := authFiles[index]
+		result[authFile.Id] = &authFile
+	}
+	return result, nil
+}
+
+func attachAuthFileToTargetGroup(tx *gorm.DB, targetGroup *model.AccountPoolGroup, authFileID int, authFile *model.AccountPoolAuthFile, existing *targetPoolAccountIdentities, skipExisting bool) *AccountPoolAttachAccountItem {
+	item := &AccountPoolAttachAccountItem{
+		AuthFileID: authFileID,
+		GroupID:    targetGroup.Id,
+	}
+	if authFile == nil || authFile.Id <= 0 {
+		item.Message = "credential not found"
+		return item
+	}
+	item.AuthFileName = authFile.Name
+	if skipExisting && existing.contains(authFile.Id, authFile.CredentialSummary) {
+		item.Skipped = true
+		item.Message = "credential already exists in target group"
+		return item
+	}
+	account, err := buildPoolAccountFromStoredAuthFile(authFile, targetGroup.Id)
+	if err != nil {
+		item.Message = err.Error()
+		return item
+	}
+	if err := tx.Create(account).Error; err != nil {
+		item.Message = err.Error()
+		return item
+	}
+	if authFile.PoolAccountId <= 0 {
+		if err := tx.Model(authFile).Update("pool_account_id", account.Id).Error; err != nil {
+			item.Message = err.Error()
+			return item
+		}
+	}
+	existing.add(authFile.Id, account.CredentialSummary)
+	item.AccountID = account.Id
+	item.AccountName = account.Name
+	item.Success = true
+	return item
+}
+
+func copyPoolAccountToTargetGroup(tx *gorm.DB, targetGroup *model.AccountPoolGroup, source *model.PoolAccount, existing *targetPoolAccountIdentities, skipExisting bool) *AccountPoolAttachAccountItem {
+	item := &AccountPoolAttachAccountItem{
+		GroupID: targetGroup.Id,
+	}
+	if source == nil || source.Id <= 0 {
+		item.Message = "source account not found"
+		return item
+	}
+	item.SourceID = source.Id
+	item.AccountName = source.Name
+	authFile, err := resolvePoolAccountAuthFile(tx, source)
+	if err != nil {
+		item.Message = err.Error()
+		return item
+	}
+	if authFile != nil {
+		source.AuthFileId = authFile.Id
+		item.AuthFileID = authFile.Id
+		item.AuthFileName = authFile.Name
+	}
+	if skipExisting && existing.contains(source.AuthFileId, source.CredentialSummary) {
+		item.Skipped = true
+		item.Message = "account already exists in target group"
+		return item
+	}
+	account := clonePoolAccountForTargetGroup(source, targetGroup.Id)
+	if err := tx.Create(account).Error; err != nil {
+		item.Message = err.Error()
+		return item
+	}
+	if authFile != nil && authFile.PoolAccountId <= 0 {
+		if err := tx.Model(authFile).Update("pool_account_id", account.Id).Error; err != nil {
+			item.Message = err.Error()
+			return item
+		}
+	}
+	existing.add(account.AuthFileId, account.CredentialSummary)
+	item.AccountID = account.Id
+	item.AccountName = account.Name
+	item.Success = true
+	return item
+}
+
+func buildPoolAccountFromStoredAuthFile(authFile *model.AccountPoolAuthFile, targetGroupID int) (*model.PoolAccount, error) {
+	if authFile == nil || authFile.Id <= 0 {
+		return nil, fmt.Errorf("credential is required")
+	}
+	credentialJSON, metadataJSON, attrsJSON, err := credentialPayloadFromStoredAuthFile(authFile)
+	if err != nil {
+		return nil, err
+	}
+	encryptedCredential, err := common.EncryptSensitiveString(credentialJSON)
+	if err != nil {
+		return nil, err
+	}
+	status := authFile.Status
+	if status <= 0 {
+		status = common.ChannelStatusEnabled
+	}
+	return &model.PoolAccount{
+		PoolGroupId:        targetGroupID,
+		AuthFileId:         authFile.Id,
+		Name:               authFile.Name,
+		Platform:           authFile.Platform,
+		AuthType:           authFile.AuthType,
+		Credentials:        encryptedCredential,
+		CredentialSummary:  authFile.CredentialSummary,
+		CredentialProvider: authFile.Provider,
+		CredentialLabel:    authFile.Name,
+		CredentialMetadata: metadataJSON,
+		CredentialAttrs:    attrsJSON,
+		Status:             status,
+		Schedulable:        status == common.ChannelStatusEnabled,
+		Models:             authFile.Models,
+		Group:              authFile.AccountGroups,
+		Priority:           authFile.Priority,
+		Weight:             authFile.Weight,
+		MaxConcurrency:     authFile.MaxConcurrency,
+		Proxy:              authFile.Proxy,
+		BaseURL:            cloneStringPointer(authFile.BaseURL),
+		LastRefreshedTime:  common.GetTimestamp(),
+	}, nil
+}
+
+func credentialPayloadFromStoredAuthFile(authFile *model.AccountPoolAuthFile) (string, string, string, error) {
+	metadataJSON := strings.TrimSpace(authFile.CredentialMetadata)
+	attrsJSON := strings.TrimSpace(authFile.CredentialAttrs)
+	if metadataJSON != "" {
+		if attrsJSON == "" {
+			attrsJSON = "{}"
+		}
+		return metadataJSON, metadataJSON, attrsJSON, nil
+	}
+	raw, err := common.DecryptSensitiveString(authFile.EncryptedContent)
+	if err != nil {
+		return "", "", "", err
+	}
+	priority := authFile.Priority
+	weight := authFile.Weight
+	maxConcurrency := authFile.MaxConcurrency
+	status := authFile.Status
+	parsed, err := ParseAccountPoolAuthFile(raw, AccountPoolAuthFileImportOptions{
+		Name:           authFile.Name,
+		Provider:       authFile.Provider,
+		Platform:       authFile.Platform,
+		AuthType:       authFile.AuthType,
+		AccountGroups:  normalizeAccountPoolAuthGroups(authFile.AccountGroups),
+		Models:         authFile.Models,
+		Proxy:          authFile.Proxy,
+		BaseURL:        authFile.BaseURL,
+		Priority:       &priority,
+		Weight:         &weight,
+		MaxConcurrency: &maxConcurrency,
+		Status:         &status,
+	})
+	if err != nil {
+		return "", "", "", err
+	}
+	metadataJSON, attrsJSON, err = encodeAuthFileMetadata(parsed.Metadata, parsed.Attributes)
+	if err != nil {
+		return "", "", "", err
+	}
+	return parsed.CredentialJSON, metadataJSON, attrsJSON, nil
+}
+
+func resolvePoolAccountAuthFile(tx *gorm.DB, account *model.PoolAccount) (*model.AccountPoolAuthFile, error) {
+	if tx == nil || account == nil || account.Id <= 0 {
+		return nil, nil
+	}
+	var authFile model.AccountPoolAuthFile
+	if account.AuthFileId > 0 {
+		if err := tx.Where("id = ?", account.AuthFileId).First(&authFile).Error; err == nil {
+			return &authFile, nil
+		} else if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+	if err := tx.Where("pool_account_id = ?", account.Id).First(&authFile).Error; err == nil {
+		if account.AuthFileId != authFile.Id {
+			if updateErr := tx.Model(account).Update("auth_file_id", authFile.Id).Error; updateErr != nil {
+				return nil, updateErr
+			}
+		}
+		return &authFile, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	if strings.TrimSpace(account.CredentialSummary) == "" {
+		return nil, nil
+	}
+	query := tx.Where("credential_summary = ?", account.CredentialSummary)
+	if strings.TrimSpace(account.CredentialProvider) != "" {
+		query = query.Where("provider = ?", strings.ToLower(strings.TrimSpace(account.CredentialProvider)))
+	}
+	if strings.TrimSpace(account.Platform) != "" {
+		query = query.Where("platform = ?", strings.ToLower(strings.TrimSpace(account.Platform)))
+	}
+	if strings.TrimSpace(account.AuthType) != "" {
+		query = query.Where("auth_type = ?", strings.ToLower(strings.TrimSpace(account.AuthType)))
+	}
+	if err := query.Order("id ASC").First(&authFile).Error; err == nil {
+		if updateErr := tx.Model(account).Update("auth_file_id", authFile.Id).Error; updateErr != nil {
+			return nil, updateErr
+		}
+		return &authFile, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func clonePoolAccountForTargetGroup(source *model.PoolAccount, targetGroupID int) *model.PoolAccount {
+	status := source.Status
+	if status <= 0 {
+		status = common.ChannelStatusEnabled
+	}
+	return &model.PoolAccount{
+		PoolGroupId:        targetGroupID,
+		AuthFileId:         source.AuthFileId,
+		Name:               source.Name,
+		Platform:           source.Platform,
+		AuthType:           source.AuthType,
+		Credentials:        source.Credentials,
+		CredentialSummary:  source.CredentialSummary,
+		CredentialProvider: source.CredentialProvider,
+		CredentialLabel:    source.CredentialLabel,
+		CredentialMetadata: source.CredentialMetadata,
+		CredentialAttrs:    source.CredentialAttrs,
+		Status:             status,
+		StatusMessage:      source.StatusMessage,
+		Schedulable:        source.Schedulable,
+		Unavailable:        false,
+		Models:             source.Models,
+		Group:              source.Group,
+		Priority:           source.Priority,
+		Weight:             source.Weight,
+		MaxConcurrency:     source.MaxConcurrency,
+		RateLimitRpm:       source.RateLimitRpm,
+		DailyRequestLimit:  source.DailyRequestLimit,
+		DailyQuotaLimit:    source.DailyQuotaLimit,
+		DailyLimitAction:   source.DailyLimitAction,
+		Proxy:              source.Proxy,
+		BaseURL:            cloneStringPointer(source.BaseURL),
+		OpenAIOrganization: cloneStringPointer(source.OpenAIOrganization),
+		Other:              source.Other,
+		Setting:            cloneStringPointer(source.Setting),
+		OtherSettings:      source.OtherSettings,
+		ModelMapping:       cloneStringPointer(source.ModelMapping),
+		ParamOverride:      cloneStringPointer(source.ParamOverride),
+		HeaderOverride:     cloneStringPointer(source.HeaderOverride),
+		StatusCodeMapping:  cloneStringPointer(source.StatusCodeMapping),
+		DisabledReason:     source.DisabledReason,
+		LastRefreshedTime:  source.LastRefreshedTime,
+		NextRefreshTime:    source.NextRefreshTime,
+	}
+}
+
+func appendAttachAccountResult(result *AccountPoolAttachAccountsResult, item *AccountPoolAttachAccountItem) {
+	if result == nil || item == nil {
+		return
+	}
+	result.Items = append(result.Items, item)
+	if item.Success {
+		result.Created++
+		return
+	}
+	if item.Skipped {
+		result.Skipped++
+		return
+	}
+	result.Failed++
+}
+
+func normalizePositiveIDs(ids []int) []int {
+	seen := map[int]struct{}{}
+	result := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func ensureAccountPoolGroupExistsTx(tx *gorm.DB, groupID int) error {
+	if groupID <= 0 {
+		return fmt.Errorf("account pool group is required")
+	}
+	var count int64
+	if err := tx.Model(&model.AccountPoolGroup{}).Where("id = ?", groupID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func buildAccountPoolAuthFileBatchItems(opts AccountPoolAuthFileBatchImportOptions) ([]accountPoolAuthFileBatchItem, []AccountPoolAuthFileImportError, bool, error) {

@@ -27,6 +27,7 @@ import type {
   AccountPoolBatchCheckResult,
   AccountPoolBatchStatusResult,
   AccountPoolCheckResult,
+  AccountPoolAttachAccountsResult,
   AccountPoolCheckTask,
   AccountPoolCheckTaskCleanupPayload,
   AccountPoolCheckTaskCleanupResult,
@@ -46,6 +47,7 @@ import type {
   ApiResponse,
   PageResponse,
   PoolAccount,
+  PoolAccountAttachPayload,
   PoolAccountBatchDeletePayload,
   PoolAccountBatchPayload,
   PoolAccountBatchStatusPayload,
@@ -291,6 +293,17 @@ export async function batchCreatePoolAccounts(
 ): Promise<ApiResponse<{ created: number; skipped: number }>> {
   const res = await api.post(
     `/api/account-pool/groups/${groupId}/accounts/batch`,
+    data
+  )
+  return res.data
+}
+
+export async function attachPoolAccountsToGroup(
+  groupId: number,
+  data: PoolAccountAttachPayload
+): Promise<ApiResponse<AccountPoolAttachAccountsResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/attach`,
     data
   )
   return res.data

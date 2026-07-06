@@ -425,7 +425,37 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := ensureAccountPoolAuthFileLinks(); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+// ensureAccountPoolAuthFileLinks 回填旧版认证文件与池账号之间的反向来源 ID。
+// 早期版本只在 AccountPoolAuthFile.pool_account_id 上保存“主账号”指针，PoolAccount
+// 自身不知道来源认证文件。现在一个凭证可以分配到多个账号组，每个组内调度实例都需要
+// auth_file_id 来做去重、删除保护和凭证列表聚合；这里仅修复已有主账号，不改变运行统计。
+func ensureAccountPoolAuthFileLinks() error {
+	if DB == nil || !DB.Migrator().HasColumn(&PoolAccount{}, "auth_file_id") {
+		return nil
+	}
+	var authFiles []AccountPoolAuthFile
+	if err := DB.Select("id", "pool_account_id").
+		Where("pool_account_id > ?", 0).
+		Find(&authFiles).Error; err != nil {
+		return err
+	}
+	for _, authFile := range authFiles {
+		if authFile.Id <= 0 || authFile.PoolAccountId <= 0 {
+			continue
+		}
+		if err := DB.Model(&PoolAccount{}).
+			Where("id = ? AND auth_file_id = ?", authFile.PoolAccountId, 0).
+			Update("auth_file_id", authFile.Id).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
