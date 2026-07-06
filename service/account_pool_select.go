@@ -29,12 +29,16 @@ var (
 	ErrNoAvailablePoolAccount = errors.New("账号池无可用账号")
 	// ErrPoolAccountGroupConcurrencyExceeded 表示账号池分组级并发槽位已满。
 	ErrPoolAccountGroupConcurrencyExceeded = errors.New("账号池组并发已满")
+	// ErrPoolAccountConcurrencyExceeded 表示账号池组内可候选账号的并发槽位都已满。
+	ErrPoolAccountConcurrencyExceeded = errors.New("账号池账号并发已满")
 	// ErrPoolAccountGroupRateLimitExceeded 表示账号池分组每分钟请求频率已达到上限。
 	ErrPoolAccountGroupRateLimitExceeded = errors.New("账号池分组请求频率已达到上限")
 	// ErrPoolAccountRateLimitExceeded 表示单个账号每分钟请求频率已达到上限。
 	ErrPoolAccountRateLimitExceeded = errors.New("账号池账号请求频率已达到上限")
 	// ErrPoolAccountPreflightCheckRequired 表示强制近期检测模式下没有账号拥有有效检测结果。
 	ErrPoolAccountPreflightCheckRequired = errors.New("账号池账号缺少近期检测结果")
+	// ErrPoolAccountWaitTimeout 表示等待空闲账号超过分组配置的安全超时时间。
+	ErrPoolAccountWaitTimeout = errors.New("等待账号池空闲账号超时")
 
 	poolAccountCursorMu sync.Mutex            // 游标映射表的互斥锁
 	poolAccountCursors  = map[string]uint64{} // 轮询游标映射表，key 为分组+模型组合
@@ -62,6 +66,8 @@ var (
 	startPoolAccountPreflightWarmupTask = StartPoolAccountCheckTask
 	// poolAccountPreflightWarmupAsync 负责把预热任务创建移出请求关键路径；测试会替换为同步执行以便断言。
 	poolAccountPreflightWarmupAsync = func(fn func()) { gopool.Go(fn) }
+	// poolAccountNoAvailableRetryInterval 是等待空闲账号时的重试间隔；测试会临时缩短它来避免慢测。
+	poolAccountNoAvailableRetryInterval = 100 * time.Millisecond
 )
 
 const (
@@ -95,6 +101,33 @@ type poolGroupRateCounter struct {
 //   - *model.PoolAccount: 选中的账号
 //   - error: 选择失败时返回错误
 func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string, usingGroup string, relayMode int) (*model.AccountPoolGroup, *model.PoolAccount, error) {
+	var waitDeadline time.Time
+	for {
+		excludedBeforeAttempt := clonePoolAccountExcludedIds(c)
+		group, account, err := selectPoolAccountOnce(c, channel, modelName, usingGroup, relayMode)
+		if err == nil {
+			return group, account, nil
+		}
+		if !shouldWaitForPoolAccountAvailability(group, err) {
+			return group, nil, err
+		}
+		if waitDeadline.IsZero() {
+			waitDeadline = time.Now().Add(time.Duration(group.GetNoAvailableWaitSeconds()) * time.Second)
+		}
+		if !time.Now().Before(waitDeadline) {
+			return group, nil, fmt.Errorf("%w: %v", ErrPoolAccountWaitTimeout, err)
+		}
+		restorePoolAccountExcludedIds(c, excludedBeforeAttempt)
+		if waitErr := waitForNextPoolAccountAvailabilityAttempt(c, waitDeadline); waitErr != nil {
+			return group, nil, waitErr
+		}
+	}
+}
+
+// selectPoolAccountOnce 执行一次账号池选号尝试。
+// 外层 SelectPoolAccount 只负责处理“并发满时短暂等待”的可选策略；本函数保持原有热路径语义：
+// 能立即选到账号就返回账号，非短暂资源不足或配置错误则返回明确错误。
+func selectPoolAccountOnce(c *gin.Context, channel *model.Channel, modelName string, usingGroup string, relayMode int) (*model.AccountPoolGroup, *model.PoolAccount, error) {
 	_ = relayMode
 	if channel == nil || channel.ChannelInfo.AccountPoolGroupId <= 0 {
 		return nil, nil, ErrNoAvailablePoolAccount
@@ -235,11 +268,75 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		}
 		ExcludePoolAccountForRequest(c, account.Id)
 		availableTopAccounts = removePoolAccount(availableTopAccounts, account.Id)
+		lastAccountReserveErr = ErrPoolAccountConcurrencyExceeded
 	}
 	if lastAccountReserveErr != nil {
 		return group, nil, lastAccountReserveErr
 	}
 	return group, nil, ErrNoAvailablePoolAccount
+}
+
+// shouldWaitForPoolAccountAvailability 判断错误是否适合通过短等待恢复。
+// 等待只覆盖分组/账号并发满这种随请求释放而恢复的状态；额度、RPM、冷却、禁用和检测缺失
+// 都需要管理员或时间窗口处理，继续立即返回原错误，避免无意义地拖慢 Relay 请求。
+func shouldWaitForPoolAccountAvailability(group *model.AccountPoolGroup, err error) bool {
+	if group == nil || err == nil {
+		return false
+	}
+	if group.GetNoAvailableAction() != model.AccountPoolNoAvailableActionWait {
+		return false
+	}
+	return errors.Is(err, ErrPoolAccountGroupConcurrencyExceeded) || errors.Is(err, ErrPoolAccountConcurrencyExceeded)
+}
+
+// waitForNextPoolAccountAvailabilityAttempt 等待下一次选号尝试。
+// 如果客户端请求上下文已经取消，立即返回取消错误，避免后台继续占用请求 goroutine。
+func waitForNextPoolAccountAvailabilityAttempt(c *gin.Context, deadline time.Time) error {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return ErrPoolAccountWaitTimeout
+	}
+	interval := poolAccountNoAvailableRetryInterval
+	if interval <= 0 {
+		interval = 100 * time.Millisecond
+	}
+	if remaining < interval {
+		interval = remaining
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	if c == nil || c.Request == nil || c.Request.Context() == nil {
+		<-timer.C
+		return nil
+	}
+	select {
+	case <-timer.C:
+		return nil
+	case <-c.Request.Context().Done():
+		return c.Request.Context().Err()
+	}
+}
+
+// clonePoolAccountExcludedIds 复制当前请求已有的排除列表。
+// 等待策略会在单次尝试中临时排除并发已满的账号；重试前必须恢复快照，
+// 否则这些账号即使释放了并发槽位，也会被当前请求继续跳过。
+func clonePoolAccountExcludedIds(c *gin.Context) map[int]bool {
+	source := GetExcludedPoolAccountIds(c)
+	cloned := make(map[int]bool, len(source))
+	for accountID, excluded := range source {
+		cloned[accountID] = excluded
+	}
+	return cloned
+}
+
+func restorePoolAccountExcludedIds(c *gin.Context, excluded map[int]bool) {
+	if c == nil {
+		return
+	}
+	if excluded == nil {
+		excluded = map[int]bool{}
+	}
+	common.SetContextKey(c, constant.ContextKeyPoolAccountExcludedIds, excluded)
 }
 
 // poolAccountNeedsPreflightCheck 判断账号最近一次检测结果是否已过期。

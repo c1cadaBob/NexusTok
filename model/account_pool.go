@@ -144,6 +144,15 @@ const (
 	AccountPoolPreflightCheckDefaultLimit = 20
 	// AccountPoolPreflightCheckMaxLimit 表示运行前预热任务单次最多允许覆盖的账号数量。
 	AccountPoolPreflightCheckMaxLimit = AccountPoolAutoCheckMaxLimit
+
+	// AccountPoolNoAvailableActionFail 表示账号池短暂没有空闲账号时立即返回错误。
+	AccountPoolNoAvailableActionFail = "fail"
+	// AccountPoolNoAvailableActionWait 表示账号池短暂没有空闲账号时在安全超时内等待空闲槽位。
+	AccountPoolNoAvailableActionWait = "wait"
+	// AccountPoolNoAvailableDefaultWaitSeconds 表示等待策略的默认超时时间。
+	AccountPoolNoAvailableDefaultWaitSeconds = 5
+	// AccountPoolNoAvailableMaxWaitSeconds 表示等待策略允许配置的最大超时时间。
+	AccountPoolNoAvailableMaxWaitSeconds = 30
 )
 
 var (
@@ -200,9 +209,13 @@ type AccountPoolGroup struct {
 	// PreflightCheckFreshnessMinutes 是最近一次检测结果的有效期，单位分钟；小于等于 0 时回退到默认 24 小时。
 	PreflightCheckFreshnessMinutes int `json:"preflight_check_freshness_minutes" gorm:"default:1440"`
 	// PreflightCheckLimit 是运行前预热任务最多覆盖的账号数；预热只创建后台检测任务，不在热路径同步检测。
-	PreflightCheckLimit int   `json:"preflight_check_limit" gorm:"default:20"`
-	CreatedTime         int64 `json:"created_time" gorm:"bigint"` // 创建时间
-	UpdatedTime         int64 `json:"updated_time" gorm:"bigint"` // 更新时间
+	PreflightCheckLimit int `json:"preflight_check_limit" gorm:"default:20"`
+	// NoAvailableAction 控制分组或账号并发满时的处理方式。默认 fail 保持旧分组立即失败的行为。
+	NoAvailableAction string `json:"no_available_action" gorm:"type:varchar(32);default:'fail'"`
+	// NoAvailableWaitSeconds 是 wait 策略的最长等待秒数，调度层会限制到安全上限。
+	NoAvailableWaitSeconds int   `json:"no_available_wait_seconds" gorm:"default:0"`
+	CreatedTime            int64 `json:"created_time" gorm:"bigint"` // 创建时间
+	UpdatedTime            int64 `json:"updated_time" gorm:"bigint"` // 更新时间
 
 	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
 }
@@ -339,6 +352,46 @@ func (group *AccountPoolGroup) GetPreflightCheckLimit() int {
 		return AccountPoolPreflightCheckDefaultLimit
 	}
 	return NormalizeAccountPoolPreflightCheckLimit(group.PreflightCheckLimit)
+}
+
+// NormalizeAccountPoolNoAvailableAction 规范化无空闲账号处理策略。
+// 默认 fail 保持历史行为；wait 只用于短暂并发满场景，不表示完整任务队列。
+func NormalizeAccountPoolNoAvailableAction(action string) string {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == AccountPoolNoAvailableActionWait {
+		return AccountPoolNoAvailableActionWait
+	}
+	return AccountPoolNoAvailableActionFail
+}
+
+// NormalizeAccountPoolNoAvailableWaitSeconds 规范化无空闲账号等待超时时间。
+// 等待会占用当前 Relay 请求连接，因此必须有保守上限，避免误配置造成请求长时间堆积。
+func NormalizeAccountPoolNoAvailableWaitSeconds(seconds int) int {
+	if seconds <= 0 {
+		return AccountPoolNoAvailableDefaultWaitSeconds
+	}
+	if seconds > AccountPoolNoAvailableMaxWaitSeconds {
+		return AccountPoolNoAvailableMaxWaitSeconds
+	}
+	return seconds
+}
+
+// GetNoAvailableAction 返回账号池组的无空闲账号处理策略。
+// 旧数据字段为空时按 fail 处理，确保升级后不会改变已有渠道的延迟和错误行为。
+func (group *AccountPoolGroup) GetNoAvailableAction() string {
+	if group == nil {
+		return AccountPoolNoAvailableActionFail
+	}
+	return NormalizeAccountPoolNoAvailableAction(group.NoAvailableAction)
+}
+
+// GetNoAvailableWaitSeconds 返回 wait 策略的最长等待秒数。
+// 即使数据库保存了异常值，调度层也只会使用规范化后的安全范围。
+func (group *AccountPoolGroup) GetNoAvailableWaitSeconds() int {
+	if group == nil {
+		return AccountPoolNoAvailableDefaultWaitSeconds
+	}
+	return NormalizeAccountPoolNoAvailableWaitSeconds(group.NoAvailableWaitSeconds)
 }
 
 // NormalizeAccountPoolDailyLimitAction 规范化每日限制耗尽后的处理策略。

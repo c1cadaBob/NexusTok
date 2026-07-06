@@ -24,7 +24,9 @@ func setupAccountPoolSelectTest(t *testing.T) {
 	originalRandomIntn := poolAccountRandomIntn
 	originalPreflightWarmupTask := startPoolAccountPreflightWarmupTask
 	originalPreflightWarmupAsync := poolAccountPreflightWarmupAsync
+	originalNoAvailableRetryInterval := poolAccountNoAvailableRetryInterval
 	common.RedisEnabled = false
+	poolAccountNoAvailableRetryInterval = 5 * time.Millisecond
 	poolAccountConcurrencyMu.Lock()
 	poolAccountConcurrency = map[int]int{}
 	poolAccountConcurrencyMu.Unlock()
@@ -48,6 +50,7 @@ func setupAccountPoolSelectTest(t *testing.T) {
 		poolAccountRandomIntn = originalRandomIntn
 		startPoolAccountPreflightWarmupTask = originalPreflightWarmupTask
 		poolAccountPreflightWarmupAsync = originalPreflightWarmupAsync
+		poolAccountNoAvailableRetryInterval = originalNoAvailableRetryInterval
 		poolAccountConcurrencyMu.Lock()
 		poolAccountConcurrency = map[int]int{}
 		poolAccountConcurrencyMu.Unlock()
@@ -397,6 +400,115 @@ func TestSelectPoolAccountRespectsGroupMaxConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, selectedAccount)
 	ReleaseSelectedPoolAccount(thirdCtx)
+}
+
+func TestSelectPoolAccountWaitsForIdleAccountConcurrency(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-concurrency-wait")
+	group.NoAvailableAction = model.AccountPoolNoAvailableActionWait
+	group.NoAvailableWaitSeconds = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "wait-account")
+	account.MaxConcurrency = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	require.True(t, common.GetContextKeyBool(firstCtx, constant.ContextKeyPoolAccountReserved))
+
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ReleaseSelectedPoolAccount(firstCtx)
+		close(released)
+	}()
+
+	secondCtx := newPoolSelectTestContext()
+	_, selectedAccount, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(secondCtx)
+	<-released
+}
+
+func TestSelectPoolAccountWaitsForIdleGroupConcurrency(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-group-concurrency-wait")
+	group.MaxConcurrency = 1
+	group.NoAvailableAction = model.AccountPoolNoAvailableActionWait
+	group.NoAvailableWaitSeconds = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "group-wait-account")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	require.True(t, common.GetContextKeyBool(firstCtx, constant.ContextKeyPoolGroupReserved))
+
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ReleaseSelectedPoolAccount(firstCtx)
+		close(released)
+	}()
+
+	secondCtx := newPoolSelectTestContext()
+	_, selectedAccount, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(secondCtx)
+	<-released
+}
+
+func TestSelectPoolAccountWaitTimesOutWhenAccountStaysBusy(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-concurrency-timeout")
+	group.NoAvailableAction = model.AccountPoolNoAvailableActionWait
+	group.NoAvailableWaitSeconds = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "timeout-account")
+	account.MaxConcurrency = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	defer ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, ErrPoolAccountWaitTimeout))
+}
+
+func TestSelectPoolAccountWaitDoesNotHideRateLimitError(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-rpm-no-wait")
+	group.NoAvailableAction = model.AccountPoolNoAvailableActionWait
+	group.NoAvailableWaitSeconds = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "rpm-no-wait-account")
+	account.RateLimitRpm = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	startedAt := time.Now()
+	secondCtx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, ErrPoolAccountRateLimitExceeded))
+	require.Less(t, time.Since(startedAt), 500*time.Millisecond)
 }
 
 func TestSelectPoolAccountRespectsGroupRateLimit(t *testing.T) {

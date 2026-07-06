@@ -34,6 +34,8 @@ export type AccountPoolDailyLimitState = {
 
 export type AccountPoolPreflightCheckMode = 'off' | 'warmup' | 'require_recent'
 
+export type AccountPoolNoAvailableAction = 'fail' | 'wait'
+
 export type AccountPoolGroup = {
   id: number
   name: string
@@ -66,6 +68,8 @@ export type AccountPoolGroup = {
   preflight_check_mode: AccountPoolPreflightCheckMode | string
   preflight_check_freshness_minutes: number
   preflight_check_limit: number
+  no_available_action: AccountPoolNoAvailableAction | string
+  no_available_wait_seconds: number
   created_time: number
   updated_time: number
   stats?: AccountPoolStats
@@ -274,6 +278,8 @@ export type AccountPoolGroupPayload = {
   preflight_check_mode?: AccountPoolPreflightCheckMode | string
   preflight_check_freshness_minutes?: number
   preflight_check_limit?: number
+  no_available_action?: AccountPoolNoAvailableAction | string
+  no_available_wait_seconds?: number
 }
 
 export type PoolAccountPayload = {
@@ -536,6 +542,8 @@ export type AccountPoolGroupOption = {
   preflight_check_mode?: AccountPoolPreflightCheckMode | string
   preflight_check_freshness_minutes?: number
   preflight_check_limit?: number
+  no_available_action?: AccountPoolNoAvailableAction | string
+  no_available_wait_seconds?: number
   stats?: AccountPoolStats
 }
 

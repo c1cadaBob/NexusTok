@@ -239,6 +239,38 @@ func TestAccountPoolGroupResponseIncludesPreflightCheckSettings(t *testing.T) {
 	require.Equal(t, 6, option["preflight_check_limit"])
 }
 
+func TestAccountPoolGroupResponseIncludesNoAvailableSettings(t *testing.T) {
+	group := &model.AccountPoolGroup{
+		Id:                     22,
+		Name:                   "no-available-response",
+		Platform:               "codex",
+		AuthType:               model.AccountPoolAuthTypeAPIKey,
+		Source:                 model.AccountPoolGroupSourceNative,
+		Status:                 common.ChannelStatusEnabled,
+		NoAvailableAction:      model.AccountPoolNoAvailableActionWait,
+		NoAvailableWaitSeconds: 12,
+	}
+
+	item := accountPoolGroupResponse(group)
+	require.Equal(t, model.AccountPoolNoAvailableActionWait, item["no_available_action"])
+	require.Equal(t, 12, item["no_available_wait_seconds"])
+
+	option, ok := accountPoolGroupOptionResponse(&model.AccountPoolGroup{
+		Id:                     23,
+		Name:                   "no-available-option",
+		Platform:               "codex",
+		AuthType:               model.AccountPoolAuthTypeAPIKey,
+		Source:                 model.AccountPoolGroupSourceNative,
+		Status:                 common.ChannelStatusEnabled,
+		NoAvailableAction:      model.AccountPoolNoAvailableActionWait,
+		NoAvailableWaitSeconds: 7,
+		Stats:                  map[string]int64{"total": 1, "enabled": 1},
+	})
+	require.True(t, ok)
+	require.Equal(t, model.AccountPoolNoAvailableActionWait, option["no_available_action"])
+	require.Equal(t, 7, option["no_available_wait_seconds"])
+}
+
 func TestPoolAccountResponseIncludesDailyLimitAction(t *testing.T) {
 	account := &model.PoolAccount{
 		Id:               12,
@@ -372,6 +404,29 @@ func TestAccountPoolGroupRequestNormalizesPreflightCheckSettings(t *testing.T) {
 	require.Equal(t, model.AccountPoolPreflightCheckModeWarmup, updates["preflight_check_mode"])
 	require.Equal(t, 45, updates["preflight_check_freshness_minutes"])
 	require.Equal(t, model.AccountPoolPreflightCheckDefaultLimit, updates["preflight_check_limit"])
+}
+
+func TestAccountPoolGroupRequestNormalizesNoAvailableSettings(t *testing.T) {
+	tooLargeWait := 120
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:                   "no-available-request",
+		Platform:               "codex",
+		NoAvailableAction:      model.AccountPoolNoAvailableActionWait,
+		NoAvailableWaitSeconds: &tooLargeWait,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.AccountPoolNoAvailableActionWait, group.NoAvailableAction)
+	require.Equal(t, model.AccountPoolNoAvailableMaxWaitSeconds, group.NoAvailableWaitSeconds)
+
+	negativeWait := -1
+	updates, err := accountPoolGroupUpdateMap(accountPoolGroupUpsertRequest{
+		NoAvailableAction:      "unexpected",
+		NoAvailableWaitSeconds: &negativeWait,
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.AccountPoolNoAvailableActionFail, updates["no_available_action"])
+	require.Equal(t, model.AccountPoolNoAvailableDefaultWaitSeconds, updates["no_available_wait_seconds"])
 }
 
 func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {

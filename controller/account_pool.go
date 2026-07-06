@@ -65,6 +65,10 @@ type accountPoolGroupUpsertRequest struct {
 	PreflightCheckFreshnessMinutes *int `json:"preflight_check_freshness_minutes"`
 	// PreflightCheckLimit 是运行前预热任务最多覆盖的账号数。
 	PreflightCheckLimit *int `json:"preflight_check_limit"`
+	// NoAvailableAction 控制分组或账号并发满时立即失败还是短暂等待。
+	NoAvailableAction string `json:"no_available_action"`
+	// NoAvailableWaitSeconds 是等待策略的最长等待秒数。
+	NoAvailableWaitSeconds *int `json:"no_available_wait_seconds"`
 }
 
 // poolAccountUpsertRequest 池账号创建/更新请求
@@ -2365,6 +2369,11 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 	if req.PreflightCheckLimit != nil {
 		preflightCheckLimit = model.NormalizeAccountPoolPreflightCheckLimit(*req.PreflightCheckLimit)
 	}
+	noAvailableAction := model.NormalizeAccountPoolNoAvailableAction(req.NoAvailableAction)
+	noAvailableWaitSeconds := model.NormalizeAccountPoolNoAvailableWaitSeconds(0)
+	if req.NoAvailableWaitSeconds != nil {
+		noAvailableWaitSeconds = model.NormalizeAccountPoolNoAvailableWaitSeconds(*req.NoAvailableWaitSeconds)
+	}
 	settings := accountPoolGroupRequestSettings(req)
 	return &model.AccountPoolGroup{
 		Name:                           name,
@@ -2388,6 +2397,8 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 		PreflightCheckMode:             preflightCheckMode,
 		PreflightCheckFreshnessMinutes: preflightCheckFreshnessMinutes,
 		PreflightCheckLimit:            preflightCheckLimit,
+		NoAvailableAction:              noAvailableAction,
+		NoAvailableWaitSeconds:         noAvailableWaitSeconds,
 	}, nil
 }
 
@@ -2459,6 +2470,12 @@ func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) (map[string]in
 	}
 	if req.PreflightCheckLimit != nil {
 		updates["preflight_check_limit"] = model.NormalizeAccountPoolPreflightCheckLimit(*req.PreflightCheckLimit)
+	}
+	if strings.TrimSpace(req.NoAvailableAction) != "" {
+		updates["no_available_action"] = model.NormalizeAccountPoolNoAvailableAction(req.NoAvailableAction)
+	}
+	if req.NoAvailableWaitSeconds != nil {
+		updates["no_available_wait_seconds"] = model.NormalizeAccountPoolNoAvailableWaitSeconds(*req.NoAvailableWaitSeconds)
 	}
 	if req.ModelMapping != nil {
 		updates["model_mapping"] = *req.ModelMapping
@@ -2839,6 +2856,8 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		"preflight_check_mode":              group.GetPreflightCheckMode(),
 		"preflight_check_freshness_minutes": group.GetPreflightCheckFreshnessMinutes(),
 		"preflight_check_limit":             group.GetPreflightCheckLimit(),
+		"no_available_action":               group.GetNoAvailableAction(),
+		"no_available_wait_seconds":         group.GetNoAvailableWaitSeconds(),
 		"created_time":                      group.CreatedTime,
 		"updated_time":                      group.UpdatedTime,
 		"stats":                             group.Stats,
@@ -2891,6 +2910,8 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 		"preflight_check_mode":              group.GetPreflightCheckMode(),
 		"preflight_check_freshness_minutes": group.GetPreflightCheckFreshnessMinutes(),
 		"preflight_check_limit":             group.GetPreflightCheckLimit(),
+		"no_available_action":               group.GetNoAvailableAction(),
+		"no_available_wait_seconds":         group.GetNoAvailableWaitSeconds(),
 		"stats":                             group.Stats,
 	}, true
 }

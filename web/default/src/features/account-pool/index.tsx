@@ -135,6 +135,7 @@ import type {
   AccountPoolGroupHealth,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
+  AccountPoolNoAvailableAction,
   AccountPoolPreflightCheckMode,
   AccountPoolStateLogBulkAuditSummary,
   PoolAccount,
@@ -164,6 +165,8 @@ type GroupFormState = {
   preflightCheckMode: AccountPoolPreflightCheckMode
   preflightCheckFreshnessMinutes: string
   preflightCheckLimit: string
+  noAvailableAction: AccountPoolNoAvailableAction
+  noAvailableWaitSeconds: string
 }
 
 type AccountFormState = {
@@ -240,6 +243,8 @@ const emptyGroupForm: GroupFormState = {
   preflightCheckMode: 'off',
   preflightCheckFreshnessMinutes: '1440',
   preflightCheckLimit: '20',
+  noAvailableAction: 'fail',
+  noAvailableWaitSeconds: '5',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -289,6 +294,10 @@ const preflightCheckModeOptions: AccountPoolPreflightCheckMode[] = [
   'off',
   'warmup',
   'require_recent',
+]
+const noAvailableActionOptions: AccountPoolNoAvailableAction[] = [
+  'fail',
+  'wait',
 ]
 const checkTaskStatusFilterOptions: CheckTaskStatusFilter[] = [
   'all',
@@ -676,6 +685,16 @@ function preflightCheckModeLabel(
   return t('Preflight off')
 }
 
+function noAvailableActionLabel(
+  action: string | undefined,
+  t: (key: string) => string
+): string {
+  if (action === 'wait') {
+    return t('Wait for idle account')
+  }
+  return t('Fail immediately')
+}
+
 function groupPreflightCheckSummary(
   group: AccountPoolGroup,
   t: (key: string, options?: Record<string, unknown>) => string
@@ -693,6 +712,18 @@ function groupPreflightCheckSummary(
       limit: group.preflight_check_limit || 20,
     }),
   ].join(' · ')
+}
+
+function groupNoAvailableSummary(
+  group: AccountPoolGroup,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  if (group.no_available_action === 'wait') {
+    return t('Wait up to {{seconds}}s for idle account', {
+      seconds: group.no_available_wait_seconds || 5,
+    })
+  }
+  return t('Fail immediately when no idle account')
 }
 
 function groupAutoCheckSummary(
@@ -1416,6 +1447,9 @@ export function AccountPool() {
         group.preflight_check_freshness_minutes || 1440
       ),
       preflightCheckLimit: String(group.preflight_check_limit || 20),
+      noAvailableAction:
+        group.no_available_action === 'wait' ? 'wait' : 'fail',
+      noAvailableWaitSeconds: String(group.no_available_wait_seconds || 5),
     })
     setGroupFormOpen(true)
   }
@@ -1451,6 +1485,10 @@ export function AccountPool() {
           groupForm.preflightCheckFreshnessMinutes
         ),
         preflight_check_limit: numberOrZero(groupForm.preflightCheckLimit),
+        no_available_action: groupForm.noAvailableAction,
+        no_available_wait_seconds: numberOrZero(
+          groupForm.noAvailableWaitSeconds
+        ),
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -2282,10 +2320,14 @@ export function AccountPool() {
                       title={`${groupAutoCheckSummary(
                         selectedGroup,
                         t
-                      )} · ${groupPreflightCheckSummary(selectedGroup, t)}`}
+                      )} · ${groupPreflightCheckSummary(
+                        selectedGroup,
+                        t
+                      )} · ${groupNoAvailableSummary(selectedGroup, t)}`}
                     >
                       {groupAutoCheckSummary(selectedGroup, t)} ·{' '}
-                      {groupPreflightCheckSummary(selectedGroup, t)}
+                      {groupPreflightCheckSummary(selectedGroup, t)} ·{' '}
+                      {groupNoAvailableSummary(selectedGroup, t)}
                     </span>
                   </div>
                 ) : null}
@@ -4302,6 +4344,50 @@ export function AccountPool() {
                 setGroupForm((current) => ({
                   ...current,
                   preflightCheckLimit: event.target.value,
+                }))
+              }
+            />
+            <Select
+              items={noAvailableActionOptions.map((value) => ({
+                value,
+                label: noAvailableActionLabel(value, t),
+              }))}
+              value={groupForm.noAvailableAction}
+              onValueChange={(value) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  noAvailableAction:
+                    (value as AccountPoolNoAvailableAction | null) ?? 'fail',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder={t('No idle account action')} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {noAvailableActionOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {noAvailableActionLabel(value, t)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              id='account-pool-group-no-available-wait-seconds'
+              name='no_available_wait_seconds'
+              type='number'
+              min='1'
+              max='30'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Idle account wait seconds')}
+              value={groupForm.noAvailableWaitSeconds}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  noAvailableWaitSeconds: event.target.value,
                 }))
               }
             />
