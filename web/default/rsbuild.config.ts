@@ -79,13 +79,12 @@ export default defineConfig(({ envMode }) => {
       // extracted license files, which some distributions require for open-source compliance.
     },
     performance: {
-      // Remove console in production
+      // 生产环境移除 console 输出，减少前端包体和运行时噪音。
       removeConsole: isProd ? ['log'] : false,
-      // Speed up repeated `rsbuild build` (local + CI when node_modules/.cache is preserved).
-      // @see https://v2.rsbuild.dev/config/performance/build-cache
-      buildCache: {
-        cacheDigest: [process.env.VITE_REACT_APP_VERSION],
-      },
+      // 禁用持久化构建缓存。该产物会被 Go embed 进后端二进制，HTML 中注入的
+      // CSS/JS hash 必须与 dist 中真实文件完全一致；Rspack 持久化缓存曾在热更新
+      // 容器中留下旧 CSS hash，导致页面加载不到样式。
+      buildCache: false,
     },
     tools: {
       rspack: {
