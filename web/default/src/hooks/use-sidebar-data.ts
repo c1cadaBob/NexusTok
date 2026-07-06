@@ -41,6 +41,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
+import { getAccountPoolSectionNavItems } from '@/features/account-pool/section-registry'
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
@@ -132,8 +133,9 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Account Pool Management'),
-            url: '/account-pool',
+            activeUrls: ['/account-pool'],
             icon: DatabaseZap,
+            items: getAccountPoolSectionNavItems(t),
           },
           {
             title: t('Models'),

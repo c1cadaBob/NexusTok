@@ -18,10 +18,12 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
   AlertTriangle,
   Download,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
   Power,
@@ -47,6 +49,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -68,6 +77,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
@@ -105,6 +115,12 @@ import {
   updatePoolAccountStatus,
 } from './api'
 import { AuthFilesPanel } from './components/auth-files-panel'
+import {
+  ACCOUNT_POOL_DEFAULT_SECTION,
+  ACCOUNT_POOL_SECTION_IDS,
+  type AccountPoolSectionId,
+  isAccountPoolSectionId,
+} from './section-registry'
 import type {
   AccountPoolAbnormalAccount,
   AccountPoolCheckTask,
@@ -118,6 +134,8 @@ import type {
   PoolAccount,
   PoolAccountPayload,
 } from './types'
+
+const route = getRouteApi('/_authenticated/account-pool/$section')
 
 type GroupFormState = {
   id?: number
@@ -167,6 +185,10 @@ type AccountPoolView =
   | 'usage-logs'
   | 'state-logs'
   | 'check-tasks'
+type AccountPoolLogView = Extract<
+  AccountPoolView,
+  'usage-logs' | 'state-logs' | 'check-tasks'
+>
 type UsageLogStatusFilter = 'all' | 'success' | 'failed'
 type CheckTaskStatusFilter = 'all' | AccountPoolCheckTaskStatus
 type StateLogActionFilter =
@@ -290,6 +312,55 @@ const stateLogSourceFilterOptions: StateLogSourceFilter[] = [
   'auto_refresh',
 ]
 
+const accountPoolSectionMeta: Record<
+  AccountPoolSectionId,
+  { titleKey: string; descriptionKey: string }
+> = {
+  overview: {
+    titleKey: 'Overview',
+    descriptionKey: 'Review account pool health and recent exceptions.',
+  },
+  credentials: {
+    titleKey: 'Account Credentials',
+    descriptionKey:
+      'Manage imported account credentials as reusable pool resources.',
+  },
+  groups: {
+    titleKey: 'Groups',
+    descriptionKey:
+      'Configure pool groups, scheduling policies, and linked accounts.',
+  },
+  history: {
+    titleKey: 'Logs & History',
+    descriptionKey: 'Inspect usage records, state changes, and check tasks.',
+  },
+}
+
+const accountPoolLogViews: AccountPoolLogView[] = [
+  'usage-logs',
+  'state-logs',
+  'check-tasks',
+]
+
+function accountPoolViewFromSection(
+  section: AccountPoolSectionId,
+  logView: AccountPoolLogView
+): AccountPoolView {
+  if (section === 'overview') return 'health'
+  if (section === 'credentials') return 'auth-files'
+  if (section === 'history') return logView
+  return 'accounts'
+}
+
+function accountPoolLogViewLabel(
+  view: AccountPoolLogView,
+  t: (key: string) => string
+): string {
+  if (view === 'state-logs') return t('State Logs')
+  if (view === 'check-tasks') return t('Check History')
+  return t('Usage Logs')
+}
+
 function numberOrZero(value: string): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return 0
@@ -385,6 +456,42 @@ function formatCredentialSummary(summary: string): string {
   }
 }
 
+function limitInlineText(value: string, maxLength = 96): string {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength)}...`
+}
+
+function formatCompactCredentialSummary(summary: string): string {
+  const fullSummary = formatCredentialSummary(summary)
+  if (fullSummary === '-') return fullSummary
+
+  const parts = fullSummary.split(' | ').filter(Boolean)
+  const preferredKeys = ['email', 'account_id', 'access_token', 'api_key']
+  const preferredParts = preferredKeys
+    .map((key) => parts.find((part) => part.startsWith(`${key}:`)))
+    .filter((part): part is string => Boolean(part))
+
+  const compactParts = preferredParts.length > 0 ? preferredParts : parts
+  return limitInlineText(compactParts.slice(0, 2).join(' · '))
+}
+
+function accountStatusReason(
+  account: PoolAccount,
+  nowSeconds: number,
+  t: (key: string) => string
+): string {
+  const coolingUntil = cooldownText(account, nowSeconds)
+  if (coolingUntil !== '-') {
+    return `${t('Cooling until')}: ${coolingUntil}`
+  }
+  return (
+    account.status_message ||
+    account.disabled_reason ||
+    account.last_error ||
+    (account.unavailable ? t('Unavailable') : '')
+  )
+}
+
 function formatUsageDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return '-'
   if (seconds < 60) return `${seconds}s`
@@ -452,23 +559,6 @@ function groupPreflightCheckSummary(
       limit: group.preflight_check_limit || 20,
     }),
   ].join(' · ')
-}
-
-function groupLimitSummary(
-  group: AccountPoolGroup,
-  t: (key: string) => string
-): string {
-  const parts = [
-    `${t('Max concurrency')}: ${formatLimitValue(group.max_concurrency, t)}`,
-    `${t('RPM')}: ${formatLimitValue(group.rate_limit_rpm, t)}`,
-    `${t('Daily requests')}: ${formatLimitValue(group.daily_request_limit, t)}`,
-    `${t('Daily quota')}: ${formatLimitValue(group.daily_quota_limit, t)}`,
-    `${t('Limit action')}: ${dailyLimitActionLabel(
-      group.daily_limit_action || 'cooldown',
-      t
-    )}`,
-  ]
-  return parts.join(' · ')
 }
 
 function groupAutoCheckSummary(
@@ -625,27 +715,6 @@ function abnormalAccountStatusLabel(
   return t('Attention')
 }
 
-function accountLimitSummary(
-  account: PoolAccount,
-  t: (key: string) => string
-): string {
-  const parts = [
-    `${t('Max concurrency')}: ${formatLimitValue(account.max_concurrency, t)}`,
-    `${t('RPM')}: ${formatLimitValue(account.rate_limit_rpm, t)}`,
-    `${t('Daily requests')}: ${formatUsageNumber(
-      account.daily_request_count
-    )} / ${formatLimitValue(account.daily_request_limit, t)}`,
-    `${t('Daily quota')}: ${formatUsageNumber(
-      account.daily_used_quota
-    )} / ${formatLimitValue(account.daily_quota_limit, t)}`,
-    `${t('Limit action')}: ${dailyLimitActionLabel(
-      account.daily_limit_action || 'inherit',
-      t
-    )}`,
-  ]
-  return parts.join(' · ')
-}
-
 function poolAccountStatusText(
   status: number,
   schedulable: boolean,
@@ -767,9 +836,16 @@ function bulkAuditSampleText(
 
 export function AccountPool() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
+  const params = route.useParams()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
-  const [activeView, setActiveView] = useState<AccountPoolView>('accounts')
+  const activeSection =
+    params.section && isAccountPoolSectionId(params.section)
+      ? params.section
+      : ACCOUNT_POOL_DEFAULT_SECTION
+  const [logView, setLogView] = useState<AccountPoolLogView>('usage-logs')
+  const activeView = accountPoolViewFromSection(activeSection, logView)
   const [usageLogPage, setUsageLogPage] = useState(1)
   const [usageLogStatus, setUsageLogStatus] =
     useState<UsageLogStatusFilter>('all')
@@ -824,7 +900,7 @@ export function AccountPool() {
   const selectedGroup = groups.find((group) => group.id === selectedGroupId)
 
   useEffect(() => {
-    if (!selectedGroupId && groups.length > 0 && activeView === 'accounts') {
+    if (!selectedGroupId && groups.length > 0 && activeSection === 'groups') {
       setSelectedGroupId(groups[0].id)
       return
     }
@@ -835,7 +911,37 @@ export function AccountPool() {
     ) {
       setSelectedGroupId(groups[0].id)
     }
-  }, [activeView, groups, selectedGroupId])
+  }, [activeSection, groups, selectedGroupId])
+
+  const handleSectionChange = useCallback(
+    (section: string) => {
+      void navigate({
+        to: '/account-pool/$section',
+        params: { section: section as AccountPoolSectionId },
+      })
+    },
+    [navigate]
+  )
+
+  const sectionMeta =
+    accountPoolSectionMeta[activeSection] ??
+    accountPoolSectionMeta[ACCOUNT_POOL_DEFAULT_SECTION]
+  const logViewTabs = (
+    <div className='border-border border-b p-3'>
+      <Tabs
+        value={logView}
+        onValueChange={(value) => setLogView(value as AccountPoolLogView)}
+      >
+        <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+          {accountPoolLogViews.map((view) => (
+            <TabsTrigger key={view} value={view}>
+              {accountPoolLogViewLabel(view, t)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+    </div>
+  )
 
   const accountsQuery = useQuery({
     queryKey: accountPoolQueryKeys.accounts(selectedGroupId ?? 0, { page }),
@@ -886,12 +992,11 @@ export function AccountPool() {
     () => ({
       p: usageLogPage,
       page_size: 10,
-      pool_group_id: selectedGroupId ?? undefined,
       success:
         usageLogStatus === 'all' ? undefined : usageLogStatus === 'success',
       search: usageLogSearch.trim() || undefined,
     }),
-    [selectedGroupId, usageLogPage, usageLogSearch, usageLogStatus]
+    [usageLogPage, usageLogSearch, usageLogStatus]
   )
   const usageLogsQuery = useQuery({
     queryKey: accountPoolQueryKeys.usageLogs(usageLogParams),
@@ -908,12 +1013,11 @@ export function AccountPool() {
   )
   const stateLogFilterParams = useMemo(
     () => ({
-      pool_group_id: selectedGroupId ?? undefined,
       action: stateLogAction === 'all' ? undefined : stateLogAction,
       source: stateLogSource === 'all' ? undefined : stateLogSource,
       search: stateLogSearch.trim() || undefined,
     }),
-    [selectedGroupId, stateLogAction, stateLogSearch, stateLogSource]
+    [stateLogAction, stateLogSearch, stateLogSource]
   )
   const stateLogParams = useMemo(
     () => ({
@@ -946,11 +1050,10 @@ export function AccountPool() {
     () => ({
       p: checkTaskPage,
       page_size: 10,
-      pool_group_id: selectedGroupId ?? undefined,
       status: checkTaskStatus === 'all' ? undefined : checkTaskStatus,
       search: checkTaskSearch.trim() || undefined,
     }),
-    [checkTaskPage, checkTaskSearch, checkTaskStatus, selectedGroupId]
+    [checkTaskPage, checkTaskSearch, checkTaskStatus]
   )
   const checkTasksQuery = useQuery({
     queryKey: accountPoolQueryKeys.checkTasks(checkTaskParams),
@@ -982,15 +1085,15 @@ export function AccountPool() {
 
   useEffect(() => {
     setUsageLogPage(1)
-  }, [selectedGroupId, usageLogSearch, usageLogStatus])
+  }, [usageLogSearch, usageLogStatus])
 
   useEffect(() => {
     setStateLogPage(1)
-  }, [selectedGroupId, stateLogAction, stateLogSearch, stateLogSource])
+  }, [stateLogAction, stateLogSearch, stateLogSource])
 
   useEffect(() => {
     setCheckTaskPage(1)
-  }, [checkTaskSearch, checkTaskStatus, selectedGroupId])
+  }, [checkTaskSearch, checkTaskStatus])
 
   useEffect(() => {
     const currentPageIds = new Set(
@@ -1658,7 +1761,7 @@ export function AccountPool() {
     if (task.pool_group_id) {
       setSelectedGroupId(task.pool_group_id)
     }
-    setActiveView('accounts')
+    handleSectionChange('groups')
   }
 
   const resetRuntime = async (account: PoolAccount) => {
@@ -1779,317 +1882,304 @@ export function AccountPool() {
         <div>
           <h1 className='text-xl font-semibold'>{t('Account Pool')}</h1>
           <p className='text-muted-foreground text-sm'>
-            {t(
-              'Manage official login accounts and expose account groups to channels.'
-            )}
+            {t('Manage native account pools and credential scheduling.')}
           </p>
         </div>
         <div className='flex flex-wrap gap-2'>
           <Button variant='outline' onClick={() => void refreshAll()}>
-            <RefreshCw className='mr-2 h-4 w-4' />
+            <RefreshCw data-icon='inline-start' />
             {t('Refresh')}
           </Button>
-          <Button onClick={openCreateGroup}>
-            <Plus className='mr-2 h-4 w-4' />
-            {t('New Group')}
-          </Button>
+          {activeSection === 'groups' ? (
+            <Button onClick={openCreateGroup}>
+              <Plus data-icon='inline-start' />
+              {t('New Group')}
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      <div className='grid min-h-0 flex-1 gap-4 lg:grid-cols-[340px_minmax(0,1fr)]'>
-        <section className='border-border bg-background min-h-[260px] rounded-lg border'>
-          <div className='border-border flex items-center justify-between border-b p-3'>
-            <div className='text-sm font-medium'>{t('Account Groups')}</div>
-            {groupsQuery.isLoading && (
-              <Loader2 className='h-4 w-4 animate-spin' />
-            )}
-          </div>
-          <div className='divide-border divide-y'>
-            {groups.map((group) => {
-              return (
-                <button
-                  key={group.id}
-                  type='button'
-                  className={`hover:bg-muted/60 flex w-full flex-col gap-2 px-3 py-3 text-left ${
-                    selectedGroupId === group.id ? 'bg-muted' : ''
-                  }`}
-                  onClick={() => {
-                    setSelectedGroupId(group.id)
-                    setPage(1)
-                  }}
-                >
-                  <div className='flex items-start justify-between gap-2'>
-                    <div className='min-w-0'>
-                      <div className='truncate text-sm font-medium'>
-                        {group.name}
+      <div
+        className={cn(
+          'grid min-h-0 flex-1 gap-4',
+          activeSection === 'groups'
+            ? 'lg:grid-cols-[320px_minmax(0,1fr)]'
+            : 'lg:grid-cols-1'
+        )}
+      >
+        {activeSection === 'groups' ? (
+          <section className='border-border bg-background min-h-[260px] rounded-lg border'>
+            <div className='border-border flex items-center justify-between border-b p-3'>
+              <div className='text-sm font-medium'>{t('Groups')}</div>
+              {groupsQuery.isLoading && (
+                <Loader2 className='size-4 animate-spin' />
+              )}
+            </div>
+            <div className='divide-border divide-y'>
+              {groups.map((group) => {
+                return (
+                  <button
+                    key={group.id}
+                    type='button'
+                    className={cn(
+                      'hover:bg-muted/60 flex w-full flex-col gap-2 px-3 py-3 text-left',
+                      selectedGroupId === group.id && 'bg-muted'
+                    )}
+                    onClick={() => {
+                      setSelectedGroupId(group.id)
+                      setPage(1)
+                    }}
+                  >
+                    <div className='flex items-start justify-between gap-2'>
+                      <div className='min-w-0'>
+                        <div className='truncate text-sm font-medium'>
+                          {group.name}
+                        </div>
+                        <div className='text-muted-foreground truncate text-xs'>
+                          {group.platform} / {group.auth_type}
+                        </div>
                       </div>
-                      <div className='text-muted-foreground truncate text-xs'>
-                        {group.platform} / {group.auth_type}
-                      </div>
+                      <StatusBadge
+                        label={groupStatusLabel(group, t)}
+                        variant={groupStatusVariant(group)}
+                        copyable={false}
+                      />
                     </div>
-                    <StatusBadge
-                      label={groupStatusLabel(group, t)}
-                      variant={groupStatusVariant(group)}
-                      copyable={false}
-                    />
-                  </div>
-                  <div className='text-muted-foreground flex gap-3 text-xs'>
-                    <span>
-                      {t('Total')}: {group.stats?.total ?? 0}
-                    </span>
-                    <span>
-                      {t('Available')}: {group.stats?.enabled ?? 0}
-                    </span>
-                    <span>
-                      {t('Cooldown')}: {group.stats?.cooldown ?? 0}
-                    </span>
-                  </div>
-                  {group.daily_limit_state?.limited ? (
-                    <div className='text-warning flex items-center gap-1 text-xs'>
-                      <AlertTriangle className='h-3.5 w-3.5 shrink-0' />
-                      <span className='truncate'>
-                        {groupDailyLimitSummary(group, t)}
+                    <div className='text-muted-foreground flex gap-3 text-xs'>
+                      <span>
+                        {t('Total')}: {group.stats?.total ?? 0}
                       </span>
+                      <span>
+                        {t('Available')}: {group.stats?.enabled ?? 0}
+                      </span>
+                      {(group.stats?.disabled ?? 0) > 0 ? (
+                        <span>
+                          {t('Disabled')}: {group.stats?.disabled ?? 0}
+                        </span>
+                      ) : null}
                     </div>
-                  ) : null}
-                  <div className='text-muted-foreground truncate text-xs'>
-                    {groupLimitSummary(group, t)}
-                  </div>
-                  <div className='text-muted-foreground truncate text-xs'>
-                    {groupAutoCheckSummary(group, t)}
-                  </div>
-                  <div className='text-muted-foreground truncate text-xs'>
-                    {groupPreflightCheckSummary(group, t)}
-                  </div>
-                </button>
-              )
-            })}
-            {!groupsQuery.isLoading && groups.length === 0 && (
-              <div className='text-muted-foreground p-6 text-center text-sm'>
-                {t('No account groups found')}
-              </div>
-            )}
-          </div>
-        </section>
+                    {group.daily_limit_state?.limited ? (
+                      <div className='text-warning flex items-center gap-1 text-xs'>
+                        <AlertTriangle className='size-3.5 shrink-0' />
+                        <span className='truncate'>
+                          {groupDailyLimitSummary(group, t)}
+                        </span>
+                      </div>
+                    ) : null}
+                  </button>
+                )
+              })}
+              {!groupsQuery.isLoading && groups.length === 0 && (
+                <div className='text-muted-foreground p-6 text-center text-sm'>
+                  {t('No account groups found')}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
 
         <section className='border-border bg-background min-w-0 rounded-lg border'>
           <Tabs
             value={activeView}
-            onValueChange={(value) => setActiveView(value as AccountPoolView)}
             className='flex min-h-0 flex-col'
           >
             <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
-              <div className='min-w-0'>
+              <div className='flex min-w-0 flex-col gap-2'>
                 <div className='truncate text-sm font-semibold'>
-                  {activeView === 'health'
-                    ? t('Health')
-                    : activeView === 'accounts'
-                      ? (selectedGroup?.name ?? t('Account Pool'))
-                      : activeView === 'auth-files'
-                        ? t('Auth Files')
-                        : activeView === 'usage-logs'
-                          ? t('Usage Logs')
-                          : activeView === 'state-logs'
-                            ? t('State Logs')
-                            : t('Check History')}
+                  {t(sectionMeta.titleKey)}
                 </div>
                 <div className='text-muted-foreground text-xs'>
-                  {activeView === 'health'
-                    ? t('Account pool health across all native groups')
-                    : activeView === 'accounts'
-                      ? selectedGroup
-                        ? `${strategyLabel(selectedGroup.strategy, t)} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
-                            selectedGroup.max_concurrency > 0
-                              ? selectedGroup.max_concurrency
-                              : t('Unlimited')
-                          } · ${groupAutoCheckSummary(selectedGroup, t)} · ${groupPreflightCheckSummary(
-                            selectedGroup,
-                            t
-                          )}`
-                        : t('Select an account group')
-                      : activeView === 'auth-files'
-                        ? t(
-                            'Manage imported JSON credentials and their linked pool accounts'
-                          )
-                        : activeView === 'usage-logs'
-                          ? selectedGroup
-                            ? t('Showing usage records for the selected group')
-                            : t('Showing usage records for all groups')
-                          : activeView === 'state-logs'
-                            ? selectedGroup
-                              ? t(
-                                  'Showing state changes for the selected group'
-                                )
-                              : t('Showing state changes for all groups')
-                            : selectedGroup
-                              ? t('Showing check tasks for the selected group')
-                              : t('Showing check tasks for all groups')}
+                  {t(sectionMeta.descriptionKey)}
                 </div>
+                {activeSection === 'groups' && selectedGroup ? (
+                  <div className='flex flex-wrap items-center gap-2 text-xs'>
+                    <StatusBadge
+                      label={groupStatusLabel(selectedGroup, t)}
+                      variant={groupStatusVariant(selectedGroup)}
+                      copyable={false}
+                    />
+                    <span className='text-muted-foreground'>
+                      {t('Available')}: {stats?.enabled ?? 0}
+                    </span>
+                    <span className='text-muted-foreground'>
+                      {t('Total')}: {stats?.total ?? 0}
+                    </span>
+                    <span className='text-muted-foreground'>
+                      {strategyLabel(selectedGroup.strategy, t)}
+                    </span>
+                    <span className='text-muted-foreground truncate'>
+                      {selectedGroup.models || t('All Models')}
+                    </span>
+                  </div>
+                ) : null}
               </div>
-              <TabsList>
-                <TabsTrigger value='health'>{t('Health')}</TabsTrigger>
-                <TabsTrigger value='accounts'>{t('Pool Accounts')}</TabsTrigger>
-                <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
-                <TabsTrigger value='usage-logs'>{t('Usage Logs')}</TabsTrigger>
-                <TabsTrigger value='state-logs'>{t('State Logs')}</TabsTrigger>
-                <TabsTrigger value='check-tasks'>
-                  {t('Check History')}
-                </TabsTrigger>
-              </TabsList>
-              <div className='flex flex-wrap gap-2'>
-                {activeView === 'health' && (
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => void healthQuery.refetch()}
-                  >
-                    <RefreshCw data-icon='inline-start' />
-                    {t('Refresh health')}
-                  </Button>
-                )}
-                {activeView === 'usage-logs' && (
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => void usageLogsQuery.refetch()}
-                  >
-                    <RefreshCw data-icon='inline-start' />
-                    {t('Refresh')}
-                  </Button>
-                )}
-                {activeView === 'state-logs' && (
-                  <>
+              <div className='flex flex-col gap-2 lg:items-end'>
+                <Tabs
+                  value={activeSection}
+                  onValueChange={handleSectionChange}
+                >
+                  <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+                    {ACCOUNT_POOL_SECTION_IDS.map((section) => (
+                      <TabsTrigger key={section} value={section}>
+                        {t(accountPoolSectionMeta[section].titleKey)}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+                <div className='flex flex-wrap justify-start gap-2 lg:justify-end'>
+                  {activeView === 'health' && (
                     <Button
                       variant='outline'
                       size='sm'
-                      onClick={() => {
-                        void stateLogsQuery.refetch()
-                        void stateLogAuditQuery.refetch()
-                      }}
+                      onClick={() => void healthQuery.refetch()}
+                    >
+                      <RefreshCw data-icon='inline-start' />
+                      {t('Refresh health')}
+                    </Button>
+                  )}
+                  {activeView === 'usage-logs' && (
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => void usageLogsQuery.refetch()}
                     >
                       <RefreshCw data-icon='inline-start' />
                       {t('Refresh')}
                     </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={stateLogExporting}
-                      onClick={() => void exportStateLogs()}
-                    >
-                      {stateLogExporting ? (
-                        <Loader2
-                          data-icon='inline-start'
-                          className='animate-spin'
+                  )}
+                  {activeView === 'state-logs' && (
+                    <>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => {
+                          void stateLogsQuery.refetch()
+                          void stateLogAuditQuery.refetch()
+                        }}
+                      >
+                        <RefreshCw data-icon='inline-start' />
+                        {t('Refresh')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={stateLogExporting}
+                        onClick={() => void exportStateLogs()}
+                      >
+                        {stateLogExporting ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <Download data-icon='inline-start' />
+                        )}
+                        {t('Export audit')}
+                      </Button>
+                    </>
+                  )}
+                  {activeView === 'check-tasks' && (
+                    <>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void checkTasksQuery.refetch()}
+                      >
+                        <RefreshCw data-icon='inline-start' />
+                        {t('Refresh')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={checkTaskCleaning}
+                        onClick={() => void cleanupCheckTasks()}
+                      >
+                        {checkTaskCleaning ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <Trash2 data-icon='inline-start' />
+                        )}
+                        {t('Cleanup')}
+                      </Button>
+                    </>
+                  )}
+                  {activeView === 'accounts' && selectedGroup && (
+                    <>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={
+                          batchChecking ||
+                          selectedGroupCheckTaskActive ||
+                          accountTotal <= 0
+                        }
+                        onClick={() => void checkSelectedGroupAccounts()}
+                      >
+                        {batchChecking || selectedGroupCheckTaskActive ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <Stethoscope data-icon='inline-start' />
+                        )}
+                        {t('Check Group')}
+                      </Button>
+                      <Button size='sm' onClick={openCreateAccount}>
+                        <Plus data-icon='inline-start' />
+                        {t('Add Account')}
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button variant='outline' size='sm'>
+                              <MoreHorizontal data-icon='inline-start' />
+                              {t('More')}
+                            </Button>
+                          }
                         />
-                      ) : (
-                        <Download data-icon='inline-start' />
-                      )}
-                      {t('Export audit')}
-                    </Button>
-                  </>
-                )}
-                {activeView === 'check-tasks' && (
-                  <>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => void checkTasksQuery.refetch()}
-                    >
-                      <RefreshCw data-icon='inline-start' />
-                      {t('Refresh')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={checkTaskCleaning}
-                      onClick={() => void cleanupCheckTasks()}
-                    >
-                      {checkTaskCleaning ? (
-                        <Loader2
-                          data-icon='inline-start'
-                          className='animate-spin'
-                        />
-                      ) : (
-                        <Trash2 data-icon='inline-start' />
-                      )}
-                      {t('Cleanup')}
-                    </Button>
-                  </>
-                )}
-                {activeView === 'accounts' && selectedGroup && (
-                  <>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => openEditGroup(selectedGroup)}
-                    >
-                      <Pencil className='mr-2 h-4 w-4' />
-                      {t('Edit Group')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => void deleteGroup(selectedGroup)}
-                    >
-                      <Trash2 className='mr-2 h-4 w-4' />
-                      {t('Delete')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={startCodexOAuth}
-                    >
-                      <ShieldCheck className='mr-2 h-4 w-4' />
-                      {t('Codex OAuth')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={startCodexDevice}
-                    >
-                      <Smartphone className='mr-2 h-4 w-4' />
-                      {t('Codex Device')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => setBatchOpen(true)}
-                    >
-                      <Upload className='mr-2 h-4 w-4' />
-                      {t('Batch Import')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={actionLoading || accountTotal <= 0}
-                      onClick={() => void exportAccounts()}
-                    >
-                      <Download className='mr-2 h-4 w-4' />
-                      {t('Export Accounts')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        batchChecking ||
-                        selectedGroupCheckTaskActive ||
-                        accountTotal <= 0
-                      }
-                      onClick={() => void checkSelectedGroupAccounts()}
-                    >
-                      {batchChecking || selectedGroupCheckTaskActive ? (
-                        <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                      ) : (
-                        <Stethoscope className='mr-2 h-4 w-4' />
-                      )}
-                      {t('Check Group')}
-                    </Button>
-                    <Button size='sm' onClick={openCreateAccount}>
-                      <Plus className='mr-2 h-4 w-4' />
-                      {t('Add Account')}
-                    </Button>
-                  </>
-                )}
+                        <DropdownMenuContent align='end' className='w-48'>
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              onClick={() => openEditGroup(selectedGroup)}
+                            >
+                              <Pencil />
+                              {t('Edit Group')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => void deleteGroup(selectedGroup)}
+                            >
+                              <Trash2 />
+                              {t('Delete')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={startCodexOAuth}>
+                              <ShieldCheck />
+                              {t('Codex OAuth')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={startCodexDevice}>
+                              <Smartphone />
+                              {t('Codex Device')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setBatchOpen(true)}>
+                              <Upload />
+                              {t('Batch Import')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={actionLoading || accountTotal <= 0}
+                              onClick={() => void exportAccounts()}
+                            >
+                              <Download />
+                              {t('Export Accounts')}
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -2604,7 +2694,7 @@ export function AccountPool() {
                         void batchUpdateSelectedAccountStatus('enable')
                       }
                     >
-                      <Power className='mr-2 h-4 w-4' />
+                      <Power data-icon='inline-start' />
                       {t('Enable selected accounts')}
                     </Button>
                     <Button
@@ -2617,7 +2707,7 @@ export function AccountPool() {
                         void batchUpdateSelectedAccountStatus('disable')
                       }
                     >
-                      <PowerOff className='mr-2 h-4 w-4' />
+                      <PowerOff data-icon='inline-start' />
                       {t('Disable selected accounts')}
                     </Button>
                     <Button
@@ -2630,7 +2720,7 @@ export function AccountPool() {
                         void batchUpdateSelectedAccountStatus('clear_cooldown')
                       }
                     >
-                      <RefreshCw className='mr-2 h-4 w-4' />
+                      <RefreshCw data-icon='inline-start' />
                       {t('Clear cooldown')}
                     </Button>
                     <Button
@@ -2641,7 +2731,7 @@ export function AccountPool() {
                       }
                       onClick={() => void exportAccounts(selectedAccountIds)}
                     >
-                      <Download className='mr-2 h-4 w-4' />
+                      <Download data-icon='inline-start' />
                       {t('Export selected accounts')}
                     </Button>
                     <Button
@@ -2652,7 +2742,7 @@ export function AccountPool() {
                       }
                       onClick={() => void batchDeleteSelectedAccounts()}
                     >
-                      <Trash2 className='mr-2 h-4 w-4' />
+                      <Trash2 data-icon='inline-start' />
                       {t('Delete selected accounts')}
                     </Button>
                   </div>
@@ -2673,160 +2763,227 @@ export function AccountPool() {
                           aria-label={t('Select all')}
                         />
                       </TableHead>
-                      <TableHead>{t('Name')}</TableHead>
-                      <TableHead>{t('Credential')}</TableHead>
-                      <TableHead>{t('Models')}</TableHead>
+                      <TableHead>{t('Account')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
+                      <TableHead>{t('Usage')}</TableHead>
                       <TableHead>{t('Last Used')}</TableHead>
                       <TableHead>{t('Actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {accounts.map((account) => (
-                      <TableRow key={account.id}>
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedAccountIds.includes(account.id)}
-                            onCheckedChange={(checked) =>
-                              toggleAccountSelection(
-                                account.id,
-                                Boolean(checked)
-                              )
-                            }
-                            aria-label={t('Select row')}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className='font-medium'>{account.name}</div>
-                          <div className='text-muted-foreground text-xs'>
-                            #{account.id} ·{' '}
-                            {account.credential_provider || account.platform} /{' '}
-                            {account.auth_type}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {t('Success')}: {account.success_count ?? 0} ·{' '}
-                            {t('Failed')}: {account.failed_count ?? 0}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {accountLimitSummary(account, t)}
-                          </div>
-                        </TableCell>
-                        <TableCell className='max-w-[260px] truncate text-xs'>
-                          {formatCredentialSummary(account.credential_summary)}
-                        </TableCell>
-                        <TableCell className='max-w-[220px] truncate text-xs'>
-                          {account.models || t('Inherited')}
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex flex-col gap-1'>
-                            <StatusBadge
-                              label={statusLabel(account, nowSeconds, t)}
-                              variant={statusVariant(account, nowSeconds)}
-                              copyable={false}
-                            />
-                            <span className='text-muted-foreground text-xs'>
-                              {cooldownText(account, nowSeconds)}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className='text-xs'>
-                          {account.last_used_time
-                            ? formatTimestamp(account.last_used_time)
-                            : '-'}
-                          {account.next_refresh_time ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Next refresh')}:&nbsp;
-                              {formatTimestamp(account.next_refresh_time)}
-                            </div>
-                          ) : null}
-                          {account.last_checked_time ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Last check time')}:&nbsp;
-                              {formatTimestamp(account.last_checked_time)}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex flex-wrap gap-1.5'>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => openEditAccount(account)}
-                            >
-                              <Pencil className='h-4 w-4' />
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() =>
-                                void setAccountEnabled(
-                                  account,
-                                  account.status !== CHANNEL_STATUS.ENABLED ||
-                                    !account.schedulable
+                    {accounts.map((account) => {
+                      const fullCredentialSummary = formatCredentialSummary(
+                        account.credential_summary
+                      )
+                      const compactCredentialSummary =
+                        formatCompactCredentialSummary(
+                          account.credential_summary
+                        )
+                      const statusReason = accountStatusReason(
+                        account,
+                        nowSeconds,
+                        t
+                      )
+                      const accountEnabled =
+                        account.status === CHANNEL_STATUS.ENABLED &&
+                        account.schedulable
+
+                      return (
+                        <TableRow key={account.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedAccountIds.includes(account.id)}
+                              onCheckedChange={(checked) =>
+                                toggleAccountSelection(
+                                  account.id,
+                                  Boolean(checked)
                                 )
                               }
+                              aria-label={t('Select row')}
+                            />
+                          </TableCell>
+                          <TableCell className='min-w-[280px] max-w-[420px]'>
+                            <div className='truncate font-medium'>
+                              {account.name}
+                            </div>
+                            <div className='text-muted-foreground truncate text-xs'>
+                              #{account.id} ·{' '}
+                              {account.credential_provider ||
+                                account.platform}{' '}
+                              / {account.auth_type}
+                            </div>
+                            <div
+                              className='text-muted-foreground truncate text-xs'
+                              title={fullCredentialSummary}
                             >
-                              {account.status === CHANNEL_STATUS.ENABLED &&
-                              account.schedulable ? (
-                                <PowerOff className='h-4 w-4' />
-                              ) : (
-                                <Power className='h-4 w-4' />
-                              )}
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => void clearCooldown(account)}
-                            >
-                              <RefreshCw className='h-4 w-4' />
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              aria-label={t('Check Account')}
-                              title={t('Check Account')}
-                              disabled={checkingAccountId === account.id}
-                              onClick={() => void checkAccount(account)}
-                            >
-                              {checkingAccountId === account.id ? (
-                                <Loader2 className='h-4 w-4 animate-spin' />
-                              ) : (
-                                <Stethoscope className='h-4 w-4' />
-                              )}
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => void resetRuntime(account)}
-                            >
-                              <RotateCcw className='h-4 w-4' />
-                            </Button>
-                            {account.platform === 'codex' &&
-                              account.auth_type === 'official_oauth' && (
-                                <Button
-                                  variant='ghost'
-                                  size='icon-sm'
-                                  onClick={() =>
-                                    void refreshCredential(account)
-                                  }
+                              {compactCredentialSummary}
+                            </div>
+                            {account.models ? (
+                              <div className='text-muted-foreground truncate text-xs'>
+                                {t('Models')}: {account.models}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className='min-w-[160px]'>
+                            <div className='flex flex-col gap-1'>
+                              <StatusBadge
+                                label={statusLabel(account, nowSeconds, t)}
+                                variant={statusVariant(account, nowSeconds)}
+                                copyable={false}
+                              />
+                              {statusReason ? (
+                                <span
+                                  className='text-muted-foreground max-w-[220px] truncate text-xs'
+                                  title={statusReason}
                                 >
-                                  <ShieldCheck className='h-4 w-4' />
-                                </Button>
+                                  {limitInlineText(statusReason, 80)}
+                                </span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell className='min-w-[230px] text-xs'>
+                            <div>
+                              {t('Success')}: {account.success_count ?? 0} ·{' '}
+                              {t('Failed')}: {account.failed_count ?? 0}
+                            </div>
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Daily requests')}:&nbsp;
+                              {formatUsageNumber(
+                                account.daily_request_count
+                              )}{' '}
+                              /{' '}
+                              {formatLimitValue(
+                                account.daily_request_limit,
+                                t
                               )}
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => void deleteAccount(account)}
-                            >
-                              <Trash2 className='h-4 w-4' />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            </div>
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Max concurrency')}:&nbsp;
+                              {formatLimitValue(account.max_concurrency, t)}
+                              {' · '}
+                              {t('RPM')}:&nbsp;
+                              {formatLimitValue(account.rate_limit_rpm, t)}
+                            </div>
+                          </TableCell>
+                          <TableCell className='min-w-[220px] text-xs'>
+                            <div>
+                              {account.last_used_time
+                                ? formatTimestamp(account.last_used_time)
+                                : '-'}
+                            </div>
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Last check time')}:&nbsp;
+                              {account.last_checked_time
+                                ? formatTimestamp(account.last_checked_time)
+                                : '-'}
+                            </div>
+                            {account.next_refresh_time ? (
+                              <div className='text-muted-foreground mt-1'>
+                                {t('Next refresh')}:&nbsp;
+                                {formatTimestamp(account.next_refresh_time)}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className='min-w-[120px]'>
+                            <div className='flex flex-nowrap gap-1.5'>
+                              <Button
+                                variant='ghost'
+                                size='icon-sm'
+                                aria-label={t('Check Account')}
+                                title={t('Check Account')}
+                                disabled={checkingAccountId === account.id}
+                                onClick={() => void checkAccount(account)}
+                              >
+                                {checkingAccountId === account.id ? (
+                                  <Loader2 className='animate-spin' />
+                                ) : (
+                                  <Stethoscope />
+                                )}
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon-sm'
+                                aria-label={
+                                  accountEnabled ? t('Disable') : t('Enable')
+                                }
+                                title={
+                                  accountEnabled ? t('Disable') : t('Enable')
+                                }
+                                onClick={() =>
+                                  void setAccountEnabled(
+                                    account,
+                                    !accountEnabled
+                                  )
+                                }
+                              >
+                                {accountEnabled ? <PowerOff /> : <Power />}
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  render={
+                                    <Button
+                                      variant='ghost'
+                                      size='icon-sm'
+                                      aria-label={t('More')}
+                                      title={t('More')}
+                                    >
+                                      <MoreHorizontal />
+                                    </Button>
+                                  }
+                                />
+                                <DropdownMenuContent
+                                  align='end'
+                                  className='w-44'
+                                >
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuItem
+                                      onClick={() => openEditAccount(account)}
+                                    >
+                                      <Pencil />
+                                      {t('Edit')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => void clearCooldown(account)}
+                                    >
+                                      <RefreshCw />
+                                      {t('Clear cooldown')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => void resetRuntime(account)}
+                                    >
+                                      <RotateCcw />
+                                      {t('Reset runtime')}
+                                    </DropdownMenuItem>
+                                    {account.platform === 'codex' &&
+                                      account.auth_type ===
+                                        'official_oauth' && (
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            void refreshCredential(account)
+                                          }
+                                        >
+                                          <ShieldCheck />
+                                          {t('Refresh credential')}
+                                        </DropdownMenuItem>
+                                      )}
+                                    <DropdownMenuItem
+                                      variant='destructive'
+                                      onClick={() => void deleteAccount(account)}
+                                    >
+                                      <Trash2 />
+                                      {t('Delete')}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                     {!accountsQuery.isLoading && accounts.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className='h-24 text-center'>
+                        <TableCell colSpan={6} className='h-24 text-center'>
                           {t('No accounts found')}
                         </TableCell>
                       </TableRow>
@@ -2866,13 +3023,10 @@ export function AccountPool() {
               </div>
             </TabsContent>
             <TabsContent value='auth-files' className='m-0 min-h-0'>
-              <AuthFilesPanel
-                groups={groups}
-                selectedGroupId={selectedGroupId}
-                onSelectGroup={setSelectedGroupId}
-              />
+              <AuthFilesPanel groups={groups} />
             </TabsContent>
             <TabsContent value='usage-logs' className='m-0 min-h-0'>
+              {logViewTabs}
               <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
                 <div className='flex flex-wrap gap-2'>
                   <Button
@@ -3032,6 +3186,7 @@ export function AccountPool() {
               </div>
             </TabsContent>
             <TabsContent value='state-logs' className='m-0 min-h-0'>
+              {logViewTabs}
               <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
                 <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
                   <Select
@@ -3367,6 +3522,7 @@ export function AccountPool() {
               </div>
             </TabsContent>
             <TabsContent value='check-tasks' className='m-0 min-h-0'>
+              {logViewTabs}
               <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
                 <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
                   <Select

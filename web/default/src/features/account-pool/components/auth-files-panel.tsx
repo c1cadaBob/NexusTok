@@ -68,8 +68,6 @@ import type {
 
 type AuthFilesPanelProps = {
   groups: AccountPoolGroup[]
-  selectedGroupId: number | null
-  onSelectGroup: (groupId: number | null) => void
 }
 
 type AuthFileFormState = {
@@ -153,6 +151,128 @@ function formatCredentialSummary(summary: string): string {
   }
 }
 
+function credentialSummaryRecord(
+  summary: string
+): Record<string, unknown> | null {
+  if (!summary) return null
+  try {
+    const parsed = JSON.parse(summary) as Record<string, unknown>
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function summaryStringValue(
+  record: Record<string, unknown> | null,
+  keys: string[]
+): string {
+  if (!record) return ''
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value)
+    }
+  }
+  return ''
+}
+
+function shortenMiddle(value: string, head = 12, tail = 6): string {
+  if (value.length <= head + tail + 3) return value
+  return `${value.slice(0, head)}...${value.slice(-tail)}`
+}
+
+function maskSecret(value: string): string {
+  if (value.length <= 12) return shortenMiddle(value, 4, 4)
+  return `${value.slice(0, 6)}...${value.slice(-4)}`
+}
+
+function limitInlineText(value: string, maxLength = 64): string {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength)}...`
+}
+
+function formatCompactCredentialSummary(summary: string): string {
+  const record = credentialSummaryRecord(summary)
+  const email = summaryStringValue(record, [
+    'email',
+    'account',
+    'username',
+    'client_email',
+  ])
+  if (email) return limitInlineText(email)
+
+  const accountId = summaryStringValue(record, [
+    'account_id',
+    'id',
+    'user_id',
+    'subject',
+  ])
+  if (accountId) return `account_id: ${shortenMiddle(accountId)}`
+
+  const secret = summaryStringValue(record, [
+    'api_key',
+    'access_token',
+    'refresh_token',
+    'session_token',
+  ])
+  if (secret) return maskSecret(secret)
+
+  return limitInlineText(formatCredentialSummary(summary))
+}
+
+function assignedGroups(authFile: AccountPoolAuthFile): string[] {
+  const groups = authFile.account_groups?.filter(Boolean) ?? []
+  if (groups.length > 0) return groups
+  if (authFile.account_group) return [authFile.account_group]
+  if (authFile.pool_group_id > 0) return [`#${authFile.pool_group_id}`]
+  return []
+}
+
+function assignedGroupsText(authFile: AccountPoolAuthFile): string {
+  const groups = assignedGroups(authFile)
+  if (groups.length === 0) return '-'
+  const visibleGroups = groups.slice(0, 2).join(', ')
+  return groups.length > 2
+    ? `${visibleGroups} +${groups.length - 2}`
+    : visibleGroups
+}
+
+function assignedGroupsTitle(authFile: AccountPoolAuthFile): string {
+  const groups = assignedGroups(authFile)
+  return groups.length > 0 ? groups.join(', ') : '-'
+}
+
+function sourceText(authFile: AccountPoolAuthFile): string {
+  return [authFile.platform, authFile.auth_type].filter(Boolean).join(' / ')
+}
+
+function ruleText(
+  authFile: AccountPoolAuthFile,
+  t: (key: string) => string
+): string {
+  const models = authFile.models || t('Inherited')
+  const concurrency =
+    authFile.max_concurrency > 0
+      ? `${t('Max concurrency')}: ${authFile.max_concurrency}`
+      : ''
+  return [limitInlineText(models, 36), concurrency].filter(Boolean).join(' · ')
+}
+
+function ruleTitle(
+  authFile: AccountPoolAuthFile,
+  t: (key: string) => string
+): string {
+  return [
+    `${t('Models')}: ${authFile.models || t('Inherited')}`,
+    `${t('Max concurrency')}: ${authFile.max_concurrency || 0}`,
+    `${t('Priority')}: ${authFile.priority}`,
+    `${t('Weight')}: ${authFile.weight}`,
+    `${t('Proxy')}: ${authFile.proxy || '-'}`,
+  ].join('\n')
+}
+
 function authFileFormFromRow(authFile: AccountPoolAuthFile): AuthFileFormState {
   return {
     id: authFile.id,
@@ -177,15 +297,13 @@ function authFileFormFromRow(authFile: AccountPoolAuthFile): AuthFileFormState {
   }
 }
 
-export function AuthFilesPanel({
-  groups,
-  selectedGroupId,
-  onSelectGroup,
-}: AuthFilesPanelProps) {
+export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [page, setPage] = useState(1)
+  const [groupFilterId, setGroupFilterId] = useState<number | null>(null)
+  const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState<AuthFileFormState>(emptyForm)
   const [actionLoading, setActionLoading] = useState(false)
@@ -194,9 +312,10 @@ export function AuthFilesPanel({
     () => ({
       p: page,
       page_size: 10,
-      pool_group_id: selectedGroupId || undefined,
+      pool_group_id: groupFilterId || undefined,
+      search: search.trim() || undefined,
     }),
-    [page, selectedGroupId]
+    [groupFilterId, page, search]
   )
 
   const authFilesQuery = useQuery({
@@ -219,7 +338,7 @@ export function AuthFilesPanel({
   const openImport = () => {
     setForm({
       ...emptyForm,
-      poolGroupId: selectedGroupId ? String(selectedGroupId) : 'auto',
+      poolGroupId: groupFilterId ? String(groupFilterId) : 'auto',
     })
     setFormOpen(true)
   }
@@ -315,7 +434,7 @@ export function AuthFilesPanel({
 
   const deleteAuthFile = async (authFile: AccountPoolAuthFile) => {
     if (
-      !window.confirm(t('Delete this auth file and its linked pool account?'))
+      !window.confirm(t('Delete this credential and its linked pool account?'))
     ) {
       return
     }
@@ -357,15 +476,22 @@ export function AuthFilesPanel({
       <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
         <div className='min-w-0'>
           <div className='truncate text-sm font-semibold'>
-            {t('Auth Files')}
+            {t('Account Credentials')}
           </div>
           <div className='text-muted-foreground text-xs'>
-            {selectedGroupId
-              ? t('Showing auth files linked to the selected group')
-              : t('Showing all auth files')}
+            {t('Showing all imported account credentials by default.')}
           </div>
         </div>
         <div className='flex flex-wrap gap-2'>
+          <Input
+            className='w-[220px]'
+            placeholder={t('Search credentials')}
+            value={search}
+            onChange={(event) => {
+              setPage(1)
+              setSearch(event.target.value)
+            }}
+          />
           <Select
             items={[
               { value: 'all', label: t('All Groups') },
@@ -374,14 +500,14 @@ export function AuthFilesPanel({
                 label: group.name,
               })),
             ]}
-            value={selectedGroupId ? String(selectedGroupId) : 'all'}
+            value={groupFilterId ? String(groupFilterId) : 'all'}
             onValueChange={(value) => {
               setPage(1)
               if (!value || value === 'all') {
-                onSelectGroup(null)
+                setGroupFilterId(null)
                 return
               }
-              onSelectGroup(Number(value))
+              setGroupFilterId(Number(value))
             }}
           >
             <SelectTrigger className='w-[180px]'>
@@ -411,7 +537,7 @@ export function AuthFilesPanel({
           </Button>
           <Button onClick={openImport}>
             <Upload data-icon='inline-start' />
-            {t('Import Auth File')}
+            {t('Import Credential')}
           </Button>
         </div>
       </div>
@@ -420,95 +546,112 @@ export function AuthFilesPanel({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t('Name')}</TableHead>
-              <TableHead>{t('Provider')}</TableHead>
+              <TableHead>{t('Credential')}</TableHead>
+              <TableHead>{t('Source')}</TableHead>
               <TableHead>{t('Groups')}</TableHead>
-              <TableHead>{t('Dispatch')}</TableHead>
+              <TableHead>{t('Rules')}</TableHead>
               <TableHead>{t('Status')}</TableHead>
               <TableHead>{t('Actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {authFiles.map((authFile) => (
-              <TableRow key={authFile.id}>
-                <TableCell>
-                  <div className='font-medium'>{authFile.name}</div>
-                  <div className='text-muted-foreground text-xs'>
-                    #{authFile.id} · {authFile.format || 'native'} ·{' '}
-                    {formatCredentialSummary(authFile.credential_summary)}
-                  </div>
-                  <div className='text-muted-foreground text-xs'>
-                    {authFile.pool_account_id > 0
-                      ? `${t('Account')}: #${authFile.pool_account_id}`
-                      : t('Linked account removed')}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className='text-sm'>{authFile.provider}</div>
-                  <div className='text-muted-foreground text-xs'>
-                    {authFile.platform} / {authFile.auth_type}
-                  </div>
-                </TableCell>
-                <TableCell className='max-w-[220px] truncate text-xs'>
-                  {authFile.account_groups?.length
-                    ? authFile.account_groups.join(', ')
-                    : '-'}
-                </TableCell>
-                <TableCell className='max-w-[280px] text-xs'>
-                  <div className='truncate'>
-                    {t('Models')}: {authFile.models || t('Inherited')}
-                  </div>
-                  <div className='truncate'>
-                    {t('Proxy')}: {authFile.proxy || '-'}
-                  </div>
-                  <div>
-                    {t('Priority')}: {authFile.priority} · {t('Weight')}:{' '}
-                    {authFile.weight} · {t('Max concurrency')}:{' '}
-                    {authFile.max_concurrency || 0}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className='flex flex-col gap-1'>
-                    <StatusBadge
-                      label={
-                        authFile.status === CHANNEL_STATUS.ENABLED
-                          ? t('Enabled')
-                          : t('Disabled')
-                      }
-                      variant={authFileStatusVariant(authFile)}
-                      copyable={false}
-                    />
-                    <span className='text-muted-foreground text-xs'>
-                      {authFile.last_imported_time
-                        ? formatTimestamp(authFile.last_imported_time)
-                        : '-'}
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className='flex flex-wrap gap-1.5'>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => openEdit(authFile)}
+            {authFiles.map((authFile) => {
+              const fullSummary = formatCredentialSummary(
+                authFile.credential_summary
+              )
+              const groupText = assignedGroupsText(authFile)
+              const sourceSummary = sourceText(authFile)
+              const ruleSummary = ruleText(authFile, t)
+
+              return (
+                <TableRow key={authFile.id}>
+                  <TableCell className='min-w-[280px] max-w-[440px]'>
+                    <div className='truncate font-medium'>{authFile.name}</div>
+                    <div
+                      className='text-muted-foreground truncate text-xs'
+                      title={fullSummary}
                     >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => void deleteAuthFile(authFile)}
+                      #{authFile.id} ·{' '}
+                      {formatCompactCredentialSummary(
+                        authFile.credential_summary
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className='min-w-[150px] max-w-[190px]'>
+                    <div className='truncate text-sm'>
+                      {authFile.provider || '-'}
+                    </div>
+                    <div
+                      className='text-muted-foreground truncate text-xs'
+                      title={sourceSummary}
                     >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+                      {sourceSummary || '-'}
+                    </div>
+                  </TableCell>
+                  <TableCell
+                    className='min-w-[150px] max-w-[220px] text-xs'
+                    title={assignedGroupsTitle(authFile)}
+                  >
+                    <div className='truncate font-medium'>{groupText}</div>
+                    <div className='text-muted-foreground mt-1 truncate'>
+                      {authFile.pool_account_id > 0
+                        ? `${t('Account')}: #${authFile.pool_account_id}`
+                        : t('Linked account removed')}
+                    </div>
+                  </TableCell>
+                  <TableCell
+                    className='min-w-[190px] max-w-[260px] truncate text-xs'
+                    title={ruleTitle(authFile, t)}
+                  >
+                    {ruleSummary || '-'}
+                  </TableCell>
+                  <TableCell className='min-w-[140px]'>
+                    <div className='flex flex-col gap-1'>
+                      <StatusBadge
+                        label={
+                          authFile.status === CHANNEL_STATUS.ENABLED
+                            ? t('Enabled')
+                            : t('Disabled')
+                        }
+                        variant={authFileStatusVariant(authFile)}
+                        copyable={false}
+                      />
+                      <span className='text-muted-foreground text-xs'>
+                        {authFile.last_imported_time
+                          ? formatTimestamp(authFile.last_imported_time)
+                          : '-'}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className='min-w-[96px]'>
+                    <div className='flex flex-nowrap gap-1.5'>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        aria-label={t('Edit')}
+                        title={t('Edit')}
+                        onClick={() => openEdit(authFile)}
+                      >
+                        <Pencil />
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        aria-label={t('Delete')}
+                        title={t('Delete')}
+                        onClick={() => void deleteAuthFile(authFile)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
             {!authFilesQuery.isLoading && authFiles.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className='h-24 text-center'>
-                  {t('No auth files found')}
+                  {t('No credentials found')}
                 </TableCell>
               </TableRow>
             )}
@@ -549,7 +692,7 @@ export function AuthFilesPanel({
         <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>
           <DialogHeader>
             <DialogTitle>
-              {t(form.id ? 'Edit Auth File' : 'Import Auth File')}
+              {t(form.id ? 'Edit Credential' : 'Import Credential')}
             </DialogTitle>
             <DialogDescription>
               {t(

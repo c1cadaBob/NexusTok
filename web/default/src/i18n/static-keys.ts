@@ -30,6 +30,12 @@ export const STATIC_I18N_KEYS = [
   'Open Account Pool Management',
   'Opening account pool management...',
   'Manage native account pools and credential scheduling.',
+  'Account Credentials',
+  'Logs & History',
+  'Review account pool health and recent exceptions.',
+  'Manage imported account credentials as reusable pool resources.',
+  'Configure pool groups, scheduling policies, and linked accounts.',
+  'Inspect usage records, state changes, and check tasks.',
 
   // Workspace
   'System Settings',
@@ -127,6 +133,7 @@ export const STATIC_I18N_KEYS = [
   'Operation successful',
   'Page {{page}} of {{total}}',
   'Pool',
+  'Reset runtime',
   'Legacy Channel Account Pool',
   'Legacy channel account pool mode is kept for existing channels.',
   'Rotate keys stored on this channel using the multi-key list.',

@@ -19,18 +19,25 @@ For commercial licensing, please contact support@c1cada.dev
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
-import { ACCOUNT_POOL_DEFAULT_SECTION } from '@/features/account-pool/section-registry'
+import { AccountPool } from '@/features/account-pool'
+import {
+  ACCOUNT_POOL_DEFAULT_SECTION,
+  isAccountPoolSectionId,
+} from '@/features/account-pool/section-registry'
 
-export const Route = createFileRoute('/_authenticated/account-pool/')({
-  beforeLoad: () => {
+export const Route = createFileRoute('/_authenticated/account-pool/$section')({
+  beforeLoad: ({ params }) => {
     const { auth } = useAuthStore.getState()
     if (!auth.user || auth.user.role < ROLE.ADMIN) {
       throw redirect({ to: '/403' })
     }
-    throw redirect({
-      to: '/account-pool/$section',
-      params: { section: ACCOUNT_POOL_DEFAULT_SECTION },
-      replace: true,
-    })
+    if (!isAccountPoolSectionId(params.section)) {
+      throw redirect({
+        to: '/account-pool/$section',
+        params: { section: ACCOUNT_POOL_DEFAULT_SECTION },
+        replace: true,
+      })
+    }
   },
+  component: AccountPool,
 })
