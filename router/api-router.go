@@ -334,24 +334,26 @@ func SetApiRouter(router *gin.Engine) {
 		accountPoolRoute.Use(middleware.AdminAuth())
 		{
 			// 提供商和分组管理
-			accountPoolRoute.GET("/providers", controller.ListAccountPoolProviders)                    // 获取账号池提供商列表
-			accountPoolRoute.GET("/auth-files", controller.ListAccountPoolAuthFiles)                   // 获取原生认证文件列表
-			accountPoolRoute.POST("/auth-files", controller.CreateAccountPoolAuthFile)                 // 导入原生认证文件
-			accountPoolRoute.POST("/auth-files/import", controller.ImportAccountPoolAuthFiles)         // 自动导入单个或批量认证文件
-			accountPoolRoute.GET("/auth-files/:auth_file_id", controller.GetAccountPoolAuthFile)       // 获取单个原生认证文件
-			accountPoolRoute.PUT("/auth-files/:auth_file_id", controller.UpdateAccountPoolAuthFile)    // 更新原生认证文件
-			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile) // 删除原生认证文件
-			accountPoolRoute.GET("/health", controller.GetAccountPoolHealth)                           // 获取原生账号池健康概览
-			accountPoolRoute.GET("/usage-logs", controller.ListAccountPoolUsageLogs)                   // 查询原生账号池使用日志
-			accountPoolRoute.GET("/state-logs", controller.ListAccountPoolStateLogs)                   // 查询原生账号池状态变更日志
-			accountPoolRoute.GET("/check-tasks", controller.ListPoolAccountCheckTasks)                 // 查询账号池检测任务历史
-			accountPoolRoute.POST("/check-tasks/cleanup", controller.CleanupPoolAccountCheckTasks)     // 清理账号池检测任务历史
-			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)                          // 获取账号池分组列表
-			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)                        // 创建账号池分组
-			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions)            // 获取账号池分组选项
-			accountPoolRoute.GET("/groups/:id", controller.GetAccountPoolGroup)                        // 获取单个账号池分组
-			accountPoolRoute.PUT("/groups/:id", controller.UpdateAccountPoolGroup)                     // 更新账号池分组
-			accountPoolRoute.DELETE("/groups/:id", controller.DeleteAccountPoolGroup)                  // 删除账号池分组
+			accountPoolRoute.GET("/providers", controller.ListAccountPoolProviders)                          // 获取账号池提供商列表
+			accountPoolRoute.GET("/auth-files", controller.ListAccountPoolAuthFiles)                         // 获取原生认证文件列表
+			accountPoolRoute.POST("/auth-files", controller.CreateAccountPoolAuthFile)                       // 导入原生认证文件
+			accountPoolRoute.POST("/auth-files/import", controller.ImportAccountPoolAuthFiles)               // 自动导入单个或批量认证文件
+			accountPoolRoute.GET("/auth-files/:auth_file_id", controller.GetAccountPoolAuthFile)             // 获取单个原生认证文件
+			accountPoolRoute.PUT("/auth-files/:auth_file_id", controller.UpdateAccountPoolAuthFile)          // 更新原生认证文件
+			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile)       // 删除原生认证文件
+			accountPoolRoute.GET("/health", controller.GetAccountPoolHealth)                                 // 获取原生账号池健康概览
+			accountPoolRoute.GET("/usage-logs", controller.ListAccountPoolUsageLogs)                         // 查询原生账号池使用日志
+			accountPoolRoute.GET("/state-logs/audit-summary", controller.GetAccountPoolStateLogAuditSummary) // 获取原生账号池状态审计聚合
+			accountPoolRoute.GET("/state-logs/export", controller.ExportAccountPoolStateLogs)                // 安全导出原生账号池状态审计日志
+			accountPoolRoute.GET("/state-logs", controller.ListAccountPoolStateLogs)                         // 查询原生账号池状态变更日志
+			accountPoolRoute.GET("/check-tasks", controller.ListPoolAccountCheckTasks)                       // 查询账号池检测任务历史
+			accountPoolRoute.POST("/check-tasks/cleanup", controller.CleanupPoolAccountCheckTasks)           // 清理账号池检测任务历史
+			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)                                // 获取账号池分组列表
+			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)                              // 创建账号池分组
+			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions)                  // 获取账号池分组选项
+			accountPoolRoute.GET("/groups/:id", controller.GetAccountPoolGroup)                              // 获取单个账号池分组
+			accountPoolRoute.PUT("/groups/:id", controller.UpdateAccountPoolGroup)                           // 更新账号池分组
+			accountPoolRoute.DELETE("/groups/:id", controller.DeleteAccountPoolGroup)                        // 删除账号池分组
 
 			// OAuth 和设备授权流程
 			accountPoolRoute.POST("/groups/:id/oauth/:provider/start", controller.StartAccountPoolProviderOAuth)       // 开始提供商 OAuth

@@ -84,10 +84,12 @@ import {
   deleteAccountPoolGroup,
   deletePoolAccount,
   exportPoolAccounts,
+  exportAccountPoolStateLogs,
   getAccountPoolLoginSession,
   getAccountPoolGroups,
   getAccountPoolHealth,
   getAccountPoolProviders,
+  getAccountPoolStateLogAuditSummary,
   getAccountPoolStateLogs,
   getAccountPoolUsageLogs,
   getPoolAccountCheckTask,
@@ -112,6 +114,7 @@ import type {
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
   AccountPoolPreflightCheckMode,
+  AccountPoolStateLogBulkAuditSummary,
   PoolAccount,
   PoolAccountPayload,
 } from './types'
@@ -166,6 +169,26 @@ type AccountPoolView =
   | 'check-tasks'
 type UsageLogStatusFilter = 'all' | 'success' | 'failed'
 type CheckTaskStatusFilter = 'all' | AccountPoolCheckTaskStatus
+type StateLogActionFilter =
+  | 'all'
+  | 'manual_status'
+  | 'manual_clear_cooldown'
+  | 'manual_delete'
+  | 'runtime_reset'
+  | 'check_succeeded'
+  | 'check_failed'
+  | 'relay_error'
+  | 'daily_limit_cooling'
+  | 'daily_limit_recovered'
+  | 'daily_limit_disabled'
+  | 'refresh_succeeded'
+  | 'refresh_failed'
+type StateLogSourceFilter =
+  | 'all'
+  | 'admin'
+  | 'relay'
+  | 'daily_limit'
+  | 'auto_refresh'
 
 const emptyGroupForm: GroupFormState = {
   name: '',
@@ -243,6 +266,28 @@ const checkTaskStatusFilterOptions: CheckTaskStatusFilter[] = [
   'running',
   'completed',
   'failed',
+]
+const stateLogActionFilterOptions: StateLogActionFilter[] = [
+  'all',
+  'manual_status',
+  'manual_clear_cooldown',
+  'manual_delete',
+  'runtime_reset',
+  'check_succeeded',
+  'check_failed',
+  'relay_error',
+  'daily_limit_cooling',
+  'daily_limit_recovered',
+  'daily_limit_disabled',
+  'refresh_succeeded',
+  'refresh_failed',
+]
+const stateLogSourceFilterOptions: StateLogSourceFilter[] = [
+  'all',
+  'admin',
+  'relay',
+  'daily_limit',
+  'auto_refresh',
 ]
 
 function numberOrZero(value: string): number {
@@ -663,6 +708,7 @@ function stateLogActionLabel(
   const labels: Record<string, string> = {
     manual_status: t('Manual status change'),
     manual_clear_cooldown: t('Manual cooldown clear'),
+    manual_delete: t('Manual delete'),
     runtime_reset: t('Runtime reset'),
     check_succeeded: t('Check succeeded'),
     check_failed: t('Check failed'),
@@ -676,6 +722,49 @@ function stateLogActionLabel(
   return labels[action] || action || t('Unknown')
 }
 
+function stateLogActionFilterLabel(
+  action: StateLogActionFilter,
+  t: (key: string) => string
+): string {
+  if (action === 'all') return t('All actions')
+  return stateLogActionLabel(action, t)
+}
+
+function stateLogSourceLabel(
+  source: string,
+  t: (key: string) => string
+): string {
+  const labels: Record<string, string> = {
+    admin: t('Admin operations'),
+    relay: t('Relay runtime'),
+    daily_limit: t('Daily limit automation'),
+    auto_refresh: t('Auto refresh'),
+  }
+  return labels[source] || source || t('Unknown')
+}
+
+function stateLogSourceFilterLabel(
+  source: StateLogSourceFilter,
+  t: (key: string) => string
+): string {
+  if (source === 'all') return t('All sources')
+  return stateLogSourceLabel(source, t)
+}
+
+function bulkAuditSampleText(
+  operation: AccountPoolStateLogBulkAuditSummary,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const names = (operation.sample_accounts ?? [])
+    .map((account) => account.name || `#${account.id}`)
+    .filter(Boolean)
+  if (names.length === 0) return '-'
+  const extra = Math.max(0, operation.account_count - names.length)
+  return extra > 0
+    ? `${names.join(', ')} ${t('+{{count}} more', { count: extra })}`
+    : names.join(', ')
+}
+
 export function AccountPool() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -687,6 +776,11 @@ export function AccountPool() {
   const [usageLogSearch, setUsageLogSearch] = useState('')
   const [stateLogPage, setStateLogPage] = useState(1)
   const [stateLogSearch, setStateLogSearch] = useState('')
+  const [stateLogAction, setStateLogAction] =
+    useState<StateLogActionFilter>('all')
+  const [stateLogSource, setStateLogSource] =
+    useState<StateLogSourceFilter>('all')
+  const [stateLogExporting, setStateLogExporting] = useState(false)
   const [checkTaskPage, setCheckTaskPage] = useState(1)
   const [checkTaskStatus, setCheckTaskStatus] =
     useState<CheckTaskStatusFilter>('all')
@@ -812,22 +906,36 @@ export function AccountPool() {
       (usageLogPageInfo?.total ?? 0) / (usageLogPageInfo?.page_size ?? 10)
     )
   )
-  const stateLogParams = useMemo(
+  const stateLogFilterParams = useMemo(
     () => ({
-      p: stateLogPage,
-      page_size: 10,
       pool_group_id: selectedGroupId ?? undefined,
+      action: stateLogAction === 'all' ? undefined : stateLogAction,
+      source: stateLogSource === 'all' ? undefined : stateLogSource,
       search: stateLogSearch.trim() || undefined,
     }),
-    [selectedGroupId, stateLogPage, stateLogSearch]
+    [selectedGroupId, stateLogAction, stateLogSearch, stateLogSource]
+  )
+  const stateLogParams = useMemo(
+    () => ({
+      ...stateLogFilterParams,
+      p: stateLogPage,
+      page_size: 10,
+    }),
+    [stateLogFilterParams, stateLogPage]
   )
   const stateLogsQuery = useQuery({
     queryKey: accountPoolQueryKeys.stateLogs(stateLogParams),
     queryFn: () => getAccountPoolStateLogs(stateLogParams),
     enabled: activeView === 'state-logs',
   })
+  const stateLogAuditQuery = useQuery({
+    queryKey: accountPoolQueryKeys.stateLogAuditSummary(stateLogFilterParams),
+    queryFn: () => getAccountPoolStateLogAuditSummary(stateLogFilterParams),
+    enabled: activeView === 'state-logs',
+  })
   const stateLogPageInfo = stateLogsQuery.data?.data
   const stateLogs = stateLogPageInfo?.items ?? []
+  const stateLogAuditSummary = stateLogAuditQuery.data?.data
   const stateLogTotalPages = Math.max(
     1,
     Math.ceil(
@@ -878,7 +986,7 @@ export function AccountPool() {
 
   useEffect(() => {
     setStateLogPage(1)
-  }, [selectedGroupId, stateLogSearch])
+  }, [selectedGroupId, stateLogAction, stateLogSearch, stateLogSource])
 
   useEffect(() => {
     setCheckTaskPage(1)
@@ -1239,6 +1347,36 @@ export function AccountPool() {
       )
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  const exportStateLogs = async () => {
+    setStateLogExporting(true)
+    try {
+      const response = await exportAccountPoolStateLogs({
+        ...stateLogFilterParams,
+        limit: 1000,
+      })
+      if (!response.success || !response.data) {
+        throw new Error(response.message)
+      }
+      const exportedAt =
+        response.data.exported_at || Math.floor(Date.now() / 1000)
+      const filename = `${safeDownloadName(
+        selectedGroup?.name ?? 'all-groups'
+      )}-state-audit-${exportedAt}.json`
+      downloadJsonFile(filename, response.data)
+      toast.success(
+        t('Exported {{count}} audit log(s)', {
+          count: response.data.exported,
+        })
+      )
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setStateLogExporting(false)
     }
   }
 
@@ -1820,14 +1958,35 @@ export function AccountPool() {
                   </Button>
                 )}
                 {activeView === 'state-logs' && (
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() => void stateLogsQuery.refetch()}
-                  >
-                    <RefreshCw data-icon='inline-start' />
-                    {t('Refresh')}
-                  </Button>
+                  <>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => {
+                        void stateLogsQuery.refetch()
+                        void stateLogAuditQuery.refetch()
+                      }}
+                    >
+                      <RefreshCw data-icon='inline-start' />
+                      {t('Refresh')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={stateLogExporting}
+                      onClick={() => void exportStateLogs()}
+                    >
+                      {stateLogExporting ? (
+                        <Loader2
+                          data-icon='inline-start'
+                          className='animate-spin'
+                        />
+                      ) : (
+                        <Download data-icon='inline-start' />
+                      )}
+                      {t('Export audit')}
+                    </Button>
+                  </>
                 )}
                 {activeView === 'check-tasks' && (
                   <>
@@ -2873,15 +3032,214 @@ export function AccountPool() {
               </div>
             </TabsContent>
             <TabsContent value='state-logs' className='m-0 min-h-0'>
-              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+              <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
+                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+                  <Select
+                    items={stateLogActionFilterOptions.map((value) => ({
+                      value,
+                      label: stateLogActionFilterLabel(value, t),
+                    }))}
+                    value={stateLogAction}
+                    onValueChange={(value) =>
+                      setStateLogAction(
+                        (value as StateLogActionFilter | null) ?? 'all'
+                      )
+                    }
+                  >
+                    <SelectTrigger className='w-full sm:w-[220px]'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {stateLogActionFilterOptions.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {stateLogActionFilterLabel(value, t)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    items={stateLogSourceFilterOptions.map((value) => ({
+                      value,
+                      label: stateLogSourceFilterLabel(value, t),
+                    }))}
+                    value={stateLogSource}
+                    onValueChange={(value) =>
+                      setStateLogSource(
+                        (value as StateLogSourceFilter | null) ?? 'all'
+                      )
+                    }
+                  >
+                    <SelectTrigger className='w-full sm:w-[200px]'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {stateLogSourceFilterOptions.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {stateLogSourceFilterLabel(value, t)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Input
-                  className='md:max-w-xs'
+                  className='lg:max-w-xs'
                   placeholder={t(
                     'Search account, action, source, actor, or reason'
                   )}
                   value={stateLogSearch}
                   onChange={(event) => setStateLogSearch(event.target.value)}
                 />
+              </div>
+              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
+                {[
+                  {
+                    label: t('Audit logs'),
+                    value: formatUsageNumber(stateLogAuditSummary?.total ?? 0),
+                  },
+                  {
+                    label: t('Manual changes'),
+                    value: formatUsageNumber(
+                      stateLogAuditSummary?.manual_total ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Automatic changes'),
+                    value: formatUsageNumber(
+                      stateLogAuditSummary?.automatic_total ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Affected accounts'),
+                    value: formatUsageNumber(
+                      stateLogAuditSummary?.affected_accounts ?? 0
+                    ),
+                  },
+                ].map((metric) => (
+                  <div key={metric.label} className='min-w-0'>
+                    <div className='text-muted-foreground truncate text-xs'>
+                      {metric.label}
+                    </div>
+                    <div className='truncate font-medium'>{metric.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className='border-border grid grid-cols-1 border-b lg:grid-cols-3'>
+                <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
+                  <div className='text-sm font-medium'>
+                    {t('Action summary')}
+                  </div>
+                  {(stateLogAuditSummary?.action_stats ?? [])
+                    .slice(0, 5)
+                    .map((bucket) => (
+                      <div
+                        key={bucket.key || 'unknown-action'}
+                        className='flex items-center justify-between gap-2 text-xs'
+                      >
+                        <div className='min-w-0'>
+                          <div className='truncate font-medium'>
+                            {stateLogActionLabel(bucket.key, t)}
+                          </div>
+                          <div className='text-muted-foreground'>
+                            {bucket.latest_at
+                              ? formatTimestamp(bucket.latest_at)
+                              : '-'}
+                          </div>
+                        </div>
+                        <Badge variant='secondary'>
+                          {formatUsageNumber(bucket.total)}
+                        </Badge>
+                      </div>
+                    ))}
+                  {!stateLogAuditQuery.isLoading &&
+                    (stateLogAuditSummary?.action_stats ?? []).length === 0 && (
+                      <div className='text-muted-foreground text-xs'>
+                        {t('No audit summary yet')}
+                      </div>
+                    )}
+                </div>
+                <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
+                  <div className='text-sm font-medium'>
+                    {t('Source summary')}
+                  </div>
+                  {(stateLogAuditSummary?.source_stats ?? [])
+                    .slice(0, 5)
+                    .map((bucket) => (
+                      <div
+                        key={bucket.key || 'unknown-source'}
+                        className='flex items-center justify-between gap-2 text-xs'
+                      >
+                        <div className='min-w-0'>
+                          <div className='truncate font-medium'>
+                            {stateLogSourceLabel(bucket.key, t)}
+                          </div>
+                          <div className='text-muted-foreground'>
+                            {bucket.latest_at
+                              ? formatTimestamp(bucket.latest_at)
+                              : '-'}
+                          </div>
+                        </div>
+                        <Badge variant='secondary'>
+                          {formatUsageNumber(bucket.total)}
+                        </Badge>
+                      </div>
+                    ))}
+                  {!stateLogAuditQuery.isLoading &&
+                    (stateLogAuditSummary?.source_stats ?? []).length === 0 && (
+                      <div className='text-muted-foreground text-xs'>
+                        {t('No audit summary yet')}
+                      </div>
+                    )}
+                </div>
+                <div className='flex flex-col gap-2 p-3'>
+                  <div className='text-sm font-medium'>
+                    {t('Recent bulk operations')}
+                  </div>
+                  {(stateLogAuditSummary?.recent_bulk_operations ?? [])
+                    .slice(0, 3)
+                    .map((operation, index) => (
+                      <div
+                        key={`${operation.request_id || operation.last_at}-${index}`}
+                        className='border-border flex flex-col gap-1 border-t pt-2 text-xs first:border-t-0 first:pt-0'
+                      >
+                        <div className='flex items-center justify-between gap-2'>
+                          <span className='min-w-0 truncate font-medium'>
+                            {stateLogActionLabel(operation.action, t)}
+                          </span>
+                          <Badge variant='secondary'>
+                            {t('{{count}} accounts affected', {
+                              count: operation.account_count,
+                            })}
+                          </Badge>
+                        </div>
+                        <div className='text-muted-foreground truncate'>
+                          {formatTimestamp(operation.last_at)} ·{' '}
+                          {stateLogSourceLabel(operation.source, t)}
+                          {operation.actor
+                            ? ` · ${t('Actor')}: ${operation.actor}`
+                            : ''}
+                        </div>
+                        <div className='text-muted-foreground break-words'>
+                          {bulkAuditSampleText(operation, t)}
+                        </div>
+                        {operation.request_id ? (
+                          <div className='text-muted-foreground truncate'>
+                            {t('Request')}: {operation.request_id}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  {!stateLogAuditQuery.isLoading &&
+                    (stateLogAuditSummary?.recent_bulk_operations ?? [])
+                      .length === 0 && (
+                      <div className='text-muted-foreground text-xs'>
+                        {t('No bulk operations found')}
+                      </div>
+                    )}
+                </div>
               </div>
               <div className='overflow-x-auto'>
                 <Table>

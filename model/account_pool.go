@@ -21,6 +21,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -649,6 +650,57 @@ type PoolAccountStateLogFilter struct {
 	Search         string
 	StartIdx       int
 	Limit          int
+	// MaxLimit 允许调用方为导出等只读场景提高单次读取上限；为空时保持普通列表接口最多 100 条。
+	MaxLimit int
+}
+
+// PoolAccountStateLogAuditBucket 是状态日志按动作、来源或操作者聚合后的统计项。
+type PoolAccountStateLogAuditBucket struct {
+	Key      string `json:"key"`
+	Total    int64  `json:"total"`
+	LatestAt int64  `json:"latest_at"`
+}
+
+// PoolAccountStateLogAuditAccountRef 是批量审计摘要中的账号引用。
+// 只返回账号 ID 和名称，避免把状态日志列表扩展成凭据或运行时配置导出通道。
+type PoolAccountStateLogAuditAccountRef struct {
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// PoolAccountStateLogBulkAuditSummary 汇总同一批状态变更操作。
+//
+// 批量启用、禁用、清冷却、批量删除和后台检测任务都会为多个账号写入多条状态日志；
+// 这里按 request_id 优先聚合。没有 request_id 的历史日志按分钟、动作、来源、分组和原因做保守聚合，
+// 只返回影响账号数大于 1 的摘要，避免把普通单账号操作误展示成批量事件。
+type PoolAccountStateLogBulkAuditSummary struct {
+	Action         string                                `json:"action"`
+	Source         string                                `json:"source"`
+	Actor          string                                `json:"actor"`
+	Reason         string                                `json:"reason"`
+	RequestId      string                                `json:"request_id,omitempty"`
+	PoolGroupId    int                                   `json:"pool_group_id"`
+	PoolGroupName  string                                `json:"pool_group_name"`
+	AccountCount   int                                   `json:"account_count"`
+	FirstAt        int64                                 `json:"first_at"`
+	LastAt         int64                                 `json:"last_at"`
+	SampleAccounts []*PoolAccountStateLogAuditAccountRef `json:"sample_accounts"`
+}
+
+// PoolAccountStateLogAuditSummary 是账号池状态日志的审计概览。
+//
+// 该结构只基于已脱敏的状态日志生成，用于管理页面快速回答：
+// 最近发生了哪些类型的操作、来自哪些系统来源、是否存在批量操作，以及影响账号规模。
+type PoolAccountStateLogAuditSummary struct {
+	GeneratedAt          int64                                  `json:"generated_at"`
+	Total                int64                                  `json:"total"`
+	ManualTotal          int64                                  `json:"manual_total"`
+	AutomaticTotal       int64                                  `json:"automatic_total"`
+	AffectedAccounts     int64                                  `json:"affected_accounts"`
+	ActionStats          []*PoolAccountStateLogAuditBucket      `json:"action_stats"`
+	SourceStats          []*PoolAccountStateLogAuditBucket      `json:"source_stats"`
+	ActorStats           []*PoolAccountStateLogAuditBucket      `json:"actor_stats"`
+	RecentBulkOperations []*PoolAccountStateLogBulkAuditSummary `json:"recent_bulk_operations"`
 }
 
 // BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
@@ -1994,22 +2046,18 @@ func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
 	}
 }
 
-// GetPoolAccountStateLogs 分页查询账号池账号状态变更日志。
-func GetPoolAccountStateLogs(filter PoolAccountStateLogFilter) ([]*PoolAccountStateLog, int64, error) {
+func poolAccountStateLogDB() (*gorm.DB, error) {
 	logDB := LOG_DB
 	if logDB == nil {
 		logDB = DB
 	}
 	if logDB == nil {
-		return nil, 0, gorm.ErrInvalidDB
+		return nil, gorm.ErrInvalidDB
 	}
-	if filter.Limit <= 0 {
-		filter.Limit = 20
-	}
-	if filter.Limit > 100 {
-		filter.Limit = 100
-	}
-	query := logDB.Model(&PoolAccountStateLog{})
+	return logDB, nil
+}
+
+func applyPoolAccountStateLogFilter(query *gorm.DB, filter PoolAccountStateLogFilter) *gorm.DB {
 	if filter.PoolGroupId > 0 {
 		query = query.Where("pool_group_id = ?", filter.PoolGroupId)
 	}
@@ -2035,11 +2083,207 @@ func GetPoolAccountStateLogs(filter PoolAccountStateLogFilter) ([]*PoolAccountSt
 		like := "%" + strings.TrimSpace(filter.Search) + "%"
 		query = query.Where("(pool_group_name LIKE ? OR pool_account_name LIKE ? OR action LIKE ? OR source LIKE ? OR actor LIKE ? OR reason LIKE ? OR after_status_message LIKE ? OR after_disabled_reason LIKE ?)", like, like, like, like, like, like, like, like)
 	}
+	return query
+}
+
+func normalizePoolAccountStateLogLimit(filter PoolAccountStateLogFilter) int {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	maxLimit := filter.MaxLimit
+	if maxLimit <= 0 {
+		maxLimit = 100
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit
+}
+
+// GetPoolAccountStateLogs 分页查询账号池账号状态变更日志。
+func GetPoolAccountStateLogs(filter PoolAccountStateLogFilter) ([]*PoolAccountStateLog, int64, error) {
+	logDB, err := poolAccountStateLogDB()
+	if err != nil {
+		return nil, 0, err
+	}
+	limit := normalizePoolAccountStateLogLimit(filter)
+	query := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	logs := []*PoolAccountStateLog{}
-	err := query.Order("id DESC").Limit(filter.Limit).Offset(filter.StartIdx).Find(&logs).Error
+	err = query.Order("id DESC").Limit(limit).Offset(filter.StartIdx).Find(&logs).Error
 	return logs, total, err
+}
+
+// GetPoolAccountStateLogAuditSummary 聚合账号池状态日志的审计概览。
+func GetPoolAccountStateLogAuditSummary(filter PoolAccountStateLogFilter) (*PoolAccountStateLogAuditSummary, error) {
+	logDB, err := poolAccountStateLogDB()
+	if err != nil {
+		return nil, err
+	}
+	summary := &PoolAccountStateLogAuditSummary{
+		GeneratedAt: common.GetTimestamp(),
+	}
+	if err := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter).Count(&summary.Total).Error; err != nil {
+		return nil, err
+	}
+	if err := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter).Where("source = ?", "admin").Count(&summary.ManualTotal).Error; err != nil {
+		return nil, err
+	}
+	if err := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter).Where("source <> ?", "admin").Count(&summary.AutomaticTotal).Error; err != nil {
+		return nil, err
+	}
+	if err := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter).Distinct("pool_account_id").Count(&summary.AffectedAccounts).Error; err != nil {
+		return nil, err
+	}
+	summary.ActionStats, err = getPoolAccountStateLogBuckets(logDB, filter, "action", false, 20)
+	if err != nil {
+		return nil, err
+	}
+	summary.SourceStats, err = getPoolAccountStateLogBuckets(logDB, filter, "source", false, 20)
+	if err != nil {
+		return nil, err
+	}
+	summary.ActorStats, err = getPoolAccountStateLogBuckets(logDB, filter, "actor", true, 20)
+	if err != nil {
+		return nil, err
+	}
+	summary.RecentBulkOperations, err = getPoolAccountStateLogBulkSummaries(filter, 8)
+	if err != nil {
+		return nil, err
+	}
+	return summary, nil
+}
+
+type poolAccountStateLogBucketRow struct {
+	BucketKey string `gorm:"column:bucket_key"`
+	Total     int64  `gorm:"column:total"`
+	LatestAt  int64  `gorm:"column:latest_at"`
+}
+
+func getPoolAccountStateLogBuckets(logDB *gorm.DB, filter PoolAccountStateLogFilter, column string, excludeEmpty bool, limit int) ([]*PoolAccountStateLogAuditBucket, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	query := applyPoolAccountStateLogFilter(logDB.Model(&PoolAccountStateLog{}), filter)
+	if excludeEmpty {
+		query = query.Where(column+" <> ?", "")
+	}
+	rows := []*poolAccountStateLogBucketRow{}
+	selectClause := fmt.Sprintf("%s AS bucket_key, COUNT(*) AS total, MAX(created_at) AS latest_at", column)
+	if err := query.Select(selectClause).Group(column).Order("COUNT(*) DESC").Order("MAX(created_at) DESC").Limit(limit).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	buckets := make([]*PoolAccountStateLogAuditBucket, 0, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		buckets = append(buckets, &PoolAccountStateLogAuditBucket{
+			Key:      row.BucketKey,
+			Total:    row.Total,
+			LatestAt: row.LatestAt,
+		})
+	}
+	return buckets, nil
+}
+
+type poolAccountStateLogBulkAccumulator struct {
+	summary     *PoolAccountStateLogBulkAuditSummary
+	accountSeen map[int]bool
+}
+
+func getPoolAccountStateLogBulkSummaries(filter PoolAccountStateLogFilter, limit int) ([]*PoolAccountStateLogBulkAuditSummary, error) {
+	logs, _, err := GetPoolAccountStateLogs(PoolAccountStateLogFilter{
+		PoolGroupId:    filter.PoolGroupId,
+		PoolAccountId:  filter.PoolAccountId,
+		Action:         filter.Action,
+		Source:         filter.Source,
+		Actor:          filter.Actor,
+		StartTimestamp: filter.StartTimestamp,
+		EndTimestamp:   filter.EndTimestamp,
+		Search:         filter.Search,
+		Limit:          1000,
+		MaxLimit:       1000,
+	})
+	if err != nil {
+		return nil, err
+	}
+	grouped := map[string]*poolAccountStateLogBulkAccumulator{}
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		key := poolAccountStateLogBulkKey(log)
+		acc := grouped[key]
+		if acc == nil {
+			acc = &poolAccountStateLogBulkAccumulator{
+				summary: &PoolAccountStateLogBulkAuditSummary{
+					Action:         log.Action,
+					Source:         log.Source,
+					Actor:          log.Actor,
+					Reason:         log.Reason,
+					RequestId:      log.RequestId,
+					PoolGroupId:    log.PoolGroupId,
+					PoolGroupName:  log.PoolGroupName,
+					FirstAt:        log.CreatedAt,
+					LastAt:         log.CreatedAt,
+					SampleAccounts: make([]*PoolAccountStateLogAuditAccountRef, 0, 6),
+				},
+				accountSeen: map[int]bool{},
+			}
+			grouped[key] = acc
+		}
+		acc.add(log)
+	}
+	summaries := make([]*PoolAccountStateLogBulkAuditSummary, 0, len(grouped))
+	for _, acc := range grouped {
+		if acc == nil || acc.summary == nil || acc.summary.AccountCount <= 1 {
+			continue
+		}
+		summaries = append(summaries, acc.summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].LastAt == summaries[j].LastAt {
+			return summaries[i].AccountCount > summaries[j].AccountCount
+		}
+		return summaries[i].LastAt > summaries[j].LastAt
+	})
+	if limit > 0 && len(summaries) > limit {
+		summaries = summaries[:limit]
+	}
+	return summaries, nil
+}
+
+func poolAccountStateLogBulkKey(log *PoolAccountStateLog) string {
+	if strings.TrimSpace(log.RequestId) != "" {
+		return strings.Join([]string{log.RequestId, log.Action, log.Source}, "|")
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%d|%d", log.Action, log.Source, log.Actor, log.Reason, log.PoolGroupId, log.CreatedAt/60)
+}
+
+func (acc *poolAccountStateLogBulkAccumulator) add(log *PoolAccountStateLog) {
+	if acc == nil || acc.summary == nil || log == nil {
+		return
+	}
+	if log.CreatedAt < acc.summary.FirstAt {
+		acc.summary.FirstAt = log.CreatedAt
+	}
+	if log.CreatedAt > acc.summary.LastAt {
+		acc.summary.LastAt = log.CreatedAt
+	}
+	if log.PoolAccountId <= 0 || acc.accountSeen[log.PoolAccountId] {
+		return
+	}
+	acc.accountSeen[log.PoolAccountId] = true
+	acc.summary.AccountCount = len(acc.accountSeen)
+	if len(acc.summary.SampleAccounts) < 6 {
+		acc.summary.SampleAccounts = append(acc.summary.SampleAccounts, &PoolAccountStateLogAuditAccountRef{
+			Id:   log.PoolAccountId,
+			Name: log.PoolAccountName,
+		})
+	}
 }

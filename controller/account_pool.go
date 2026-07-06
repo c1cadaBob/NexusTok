@@ -198,6 +198,48 @@ type poolAccountBatchExportResult struct {
 	Accounts                []*poolAccountExportItem `json:"accounts"`
 }
 
+// poolAccountStateLogAuditExportResult 是账号池状态审计日志的安全导出结果。
+// 状态日志只包含账号状态快照和操作原因，不包含凭证明文；这里仍使用独立导出 DTO，
+// 避免未来模型字段增加时被导出接口意外透出。
+type poolAccountStateLogAuditExportResult struct {
+	ExportedAt              int64                            `json:"exported_at"`
+	Format                  string                           `json:"format"`
+	Total                   int64                            `json:"total"`
+	Exported                int                              `json:"exported"`
+	Limit                   int                              `json:"limit"`
+	Filters                 gin.H                            `json:"filters"`
+	SensitiveFieldsRedacted []string                         `json:"sensitive_fields_redacted"`
+	Logs                    []*poolAccountStateLogExportItem `json:"logs"`
+}
+
+// poolAccountStateLogExportItem 是单条状态审计日志的导出快照。
+type poolAccountStateLogExportItem struct {
+	ID                   int    `json:"id"`
+	CreatedAt            int64  `json:"created_at"`
+	PoolGroupID          int    `json:"pool_group_id"`
+	PoolGroupName        string `json:"pool_group_name"`
+	PoolAccountID        int    `json:"pool_account_id"`
+	PoolAccountName      string `json:"pool_account_name"`
+	PoolAccountAuthType  string `json:"pool_account_auth_type"`
+	Action               string `json:"action"`
+	Source               string `json:"source"`
+	Actor                string `json:"actor"`
+	Reason               string `json:"reason"`
+	BeforeStatus         int    `json:"before_status"`
+	AfterStatus          int    `json:"after_status"`
+	BeforeSchedulable    bool   `json:"before_schedulable"`
+	AfterSchedulable     bool   `json:"after_schedulable"`
+	BeforeUnavailable    bool   `json:"before_unavailable"`
+	AfterUnavailable     bool   `json:"after_unavailable"`
+	BeforeNextRetryTime  int64  `json:"before_next_retry_time"`
+	AfterNextRetryTime   int64  `json:"after_next_retry_time"`
+	BeforeStatusMessage  string `json:"before_status_message"`
+	AfterStatusMessage   string `json:"after_status_message"`
+	BeforeDisabledReason string `json:"before_disabled_reason"`
+	AfterDisabledReason  string `json:"after_disabled_reason"`
+	RequestID            string `json:"request_id,omitempty"`
+}
+
 // poolAccountExportItem 是单个账号的安全导出快照。
 // 这里有意不复用 PoolAccount 模型，避免未来模型新增敏感字段时被导出接口意外透出。
 type poolAccountExportItem struct {
@@ -823,22 +865,7 @@ func ListAccountPoolUsageLogs(c *gin.Context) {
 
 func ListAccountPoolStateLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
-	poolAccountID, _ := strconv.Atoi(c.Query("pool_account_id"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	logs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
-		PoolGroupId:    poolGroupID,
-		PoolAccountId:  poolAccountID,
-		Action:         c.Query("action"),
-		Source:         c.Query("source"),
-		Actor:          c.Query("actor"),
-		StartTimestamp: startTimestamp,
-		EndTimestamp:   endTimestamp,
-		Search:         c.Query("search"),
-		StartIdx:       pageInfo.GetStartIdx(),
-		Limit:          pageInfo.GetPageSize(),
-	})
+	logs, total, err := model.GetPoolAccountStateLogs(accountPoolStateLogFilterFromQuery(c, pageInfo.GetStartIdx(), pageInfo.GetPageSize()))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -846,6 +873,33 @@ func ListAccountPoolStateLogs(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func GetAccountPoolStateLogAuditSummary(c *gin.Context) {
+	summary, err := model.GetPoolAccountStateLogAuditSummary(accountPoolStateLogFilterFromQuery(c, 0, 0))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, summary)
+}
+
+func ExportAccountPoolStateLogs(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	filter := accountPoolStateLogFilterFromQuery(c, 0, limit)
+	filter.MaxLimit = 1000
+	logs, total, err := model.GetPoolAccountStateLogs(filter)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildPoolAccountStateLogAuditExportResult(filter, logs, total, limit))
 }
 
 func CreateAccountPoolAuthFile(c *gin.Context) {
@@ -1580,6 +1634,99 @@ func buildPoolAccountBatchExportResult(group *model.AccountPoolGroup, accounts [
 			"recent_requests",
 		},
 		Accounts: items,
+	}
+}
+
+func accountPoolStateLogFilterFromQuery(c *gin.Context, startIdx int, limit int) model.PoolAccountStateLogFilter {
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	poolAccountID, _ := strconv.Atoi(c.Query("pool_account_id"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	return model.PoolAccountStateLogFilter{
+		PoolGroupId:    poolGroupID,
+		PoolAccountId:  poolAccountID,
+		Action:         c.Query("action"),
+		Source:         c.Query("source"),
+		Actor:          c.Query("actor"),
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+		Search:         c.Query("search"),
+		StartIdx:       startIdx,
+		Limit:          limit,
+	}
+}
+
+func buildPoolAccountStateLogAuditExportResult(filter model.PoolAccountStateLogFilter, logs []*model.PoolAccountStateLog, total int64, limit int) *poolAccountStateLogAuditExportResult {
+	items := make([]*poolAccountStateLogExportItem, 0, len(logs))
+	for _, log := range logs {
+		items = append(items, poolAccountStateLogExportItemFromLog(log))
+	}
+	return &poolAccountStateLogAuditExportResult{
+		ExportedAt: common.GetTimestamp(),
+		Format:     "nexustok_account_pool_state_audit_export_v1",
+		Total:      total,
+		Exported:   len(items),
+		Limit:      limit,
+		Filters: gin.H{
+			"pool_group_id":   filter.PoolGroupId,
+			"pool_account_id": filter.PoolAccountId,
+			"action":          strings.TrimSpace(filter.Action),
+			"source":          strings.TrimSpace(filter.Source),
+			"actor":           strings.TrimSpace(filter.Actor),
+			"start_timestamp": filter.StartTimestamp,
+			"end_timestamp":   filter.EndTimestamp,
+			"search":          strings.TrimSpace(filter.Search),
+		},
+		SensitiveFieldsRedacted: []string{
+			"credentials",
+			"credential_metadata",
+			"credential_attributes",
+			"proxy",
+			"base_url",
+			"other",
+			"setting",
+			"settings",
+			"model_mapping",
+			"param_override",
+			"header_override",
+			"status_code_mapping",
+			"quota_snapshot",
+			"model_states",
+			"recent_requests",
+		},
+		Logs: items,
+	}
+}
+
+func poolAccountStateLogExportItemFromLog(log *model.PoolAccountStateLog) *poolAccountStateLogExportItem {
+	if log == nil {
+		return &poolAccountStateLogExportItem{}
+	}
+	return &poolAccountStateLogExportItem{
+		ID:                   log.Id,
+		CreatedAt:            log.CreatedAt,
+		PoolGroupID:          log.PoolGroupId,
+		PoolGroupName:        log.PoolGroupName,
+		PoolAccountID:        log.PoolAccountId,
+		PoolAccountName:      log.PoolAccountName,
+		PoolAccountAuthType:  log.PoolAccountAuthType,
+		Action:               log.Action,
+		Source:               log.Source,
+		Actor:                log.Actor,
+		Reason:               log.Reason,
+		BeforeStatus:         log.BeforeStatus,
+		AfterStatus:          log.AfterStatus,
+		BeforeSchedulable:    log.BeforeSchedulable,
+		AfterSchedulable:     log.AfterSchedulable,
+		BeforeUnavailable:    log.BeforeUnavailable,
+		AfterUnavailable:     log.AfterUnavailable,
+		BeforeNextRetryTime:  log.BeforeNextRetryTime,
+		AfterNextRetryTime:   log.AfterNextRetryTime,
+		BeforeStatusMessage:  log.BeforeStatusMessage,
+		AfterStatusMessage:   log.AfterStatusMessage,
+		BeforeDisabledReason: log.BeforeDisabledReason,
+		AfterDisabledReason:  log.AfterDisabledReason,
+		RequestID:            log.RequestId,
 	}
 }
 

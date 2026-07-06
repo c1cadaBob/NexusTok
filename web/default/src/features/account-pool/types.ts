@@ -667,3 +667,53 @@ export type AccountPoolStateLog = {
   after_disabled_reason: string
   request_id?: string
 }
+
+export type AccountPoolStateLogAuditBucket = {
+  key: string
+  total: number
+  latest_at: number
+}
+
+export type AccountPoolStateLogAuditAccountRef = {
+  id: number
+  name: string
+}
+
+export type AccountPoolStateLogBulkAuditSummary = {
+  action: string
+  source: string
+  actor: string
+  reason: string
+  request_id?: string
+  pool_group_id: number
+  pool_group_name: string
+  account_count: number
+  first_at: number
+  last_at: number
+  sample_accounts: AccountPoolStateLogAuditAccountRef[]
+}
+
+export type AccountPoolStateLogAuditSummary = {
+  generated_at: number
+  total: number
+  manual_total: number
+  automatic_total: number
+  affected_accounts: number
+  action_stats: AccountPoolStateLogAuditBucket[]
+  source_stats: AccountPoolStateLogAuditBucket[]
+  actor_stats: AccountPoolStateLogAuditBucket[]
+  recent_bulk_operations: AccountPoolStateLogBulkAuditSummary[]
+}
+
+export type AccountPoolStateLogExportItem = AccountPoolStateLog
+
+export type AccountPoolStateLogAuditExportResult = {
+  exported_at: number
+  format: string
+  total: number
+  exported: number
+  limit: number
+  filters: Record<string, unknown>
+  sensitive_fields_redacted: string[]
+  logs: AccountPoolStateLogExportItem[]
+}

@@ -40,6 +40,8 @@ import type {
   AccountPoolLoginStartResult,
   AccountPoolProvider,
   AccountPoolStateLog,
+  AccountPoolStateLogAuditExportResult,
+  AccountPoolStateLogAuditSummary,
   AccountPoolUsageLog,
   ApiResponse,
   PageResponse,
@@ -67,6 +69,8 @@ export const accountPoolQueryKeys = {
     ['account-pool', 'usage-logs', params] as const,
   stateLogs: (params?: unknown) =>
     ['account-pool', 'state-logs', params] as const,
+  stateLogAuditSummary: (params?: unknown) =>
+    ['account-pool', 'state-logs', 'audit-summary', params] as const,
   checkTasks: (params?: unknown) =>
     ['account-pool', 'check-tasks', params] as const,
 }
@@ -222,6 +226,37 @@ export async function getAccountPoolStateLogs(params: {
   search?: string
 }): Promise<ApiResponse<PageResponse<AccountPoolStateLog>>> {
   const res = await api.get('/api/account-pool/state-logs', { params })
+  return res.data
+}
+
+export async function getAccountPoolStateLogAuditSummary(params: {
+  pool_group_id?: number
+  pool_account_id?: number
+  action?: string
+  source?: string
+  actor?: string
+  start_timestamp?: number
+  end_timestamp?: number
+  search?: string
+}): Promise<ApiResponse<AccountPoolStateLogAuditSummary>> {
+  const res = await api.get('/api/account-pool/state-logs/audit-summary', {
+    params,
+  })
+  return res.data
+}
+
+export async function exportAccountPoolStateLogs(params: {
+  pool_group_id?: number
+  pool_account_id?: number
+  action?: string
+  source?: string
+  actor?: string
+  start_timestamp?: number
+  end_timestamp?: number
+  search?: string
+  limit?: number
+}): Promise<ApiResponse<AccountPoolStateLogAuditExportResult>> {
+  const res = await api.get('/api/account-pool/state-logs/export', { params })
   return res.data
 }
 
