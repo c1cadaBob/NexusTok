@@ -363,6 +363,8 @@ func SetApiRouter(router *gin.Engine) {
 			accountPoolRoute.POST("/groups/:id/accounts/export", controller.BatchExportPoolAccounts)              // 安全导出账号清单
 			accountPoolRoute.POST("/groups/:id/accounts/delete", controller.BatchDeletePoolAccounts)              // 批量删除账号
 			accountPoolRoute.POST("/groups/:id/accounts/check", controller.CheckPoolAccountsInGroup)              // 批量检测分组账号
+			accountPoolRoute.POST("/groups/:id/accounts/check-tasks", controller.StartPoolAccountCheckTask)       // 启动后台批量检测任务
+			accountPoolRoute.GET("/check-tasks/:check_task_id", controller.GetPoolAccountCheckTask)               // 查询后台检测任务
 			accountPoolRoute.GET("/login-sessions/:session_id", controller.GetAccountPoolLoginSession)            // 获取登录会话
 			accountPoolRoute.POST("/login-sessions/:session_id/cancel", controller.CancelAccountPoolLoginSession) // 取消登录会话
 			accountPoolRoute.GET("/accounts/:account_id", controller.GetPoolAccount)                              // 获取单个账号

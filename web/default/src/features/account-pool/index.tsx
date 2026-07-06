@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -47,6 +48,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -74,7 +76,6 @@ import {
   batchDeletePoolAccounts,
   batchUpdatePoolAccountStatus,
   checkPoolAccount,
-  checkPoolAccountsInGroup,
   completeAccountPoolProviderOAuth,
   createAccountPoolGroup,
   createPoolAccount,
@@ -86,17 +87,20 @@ import {
   getAccountPoolProviders,
   getAccountPoolStateLogs,
   getAccountPoolUsageLogs,
+  getPoolAccountCheckTask,
   getPoolAccounts,
   refreshPoolAccountCredential,
   resetPoolAccountRuntime,
   startAccountPoolProviderDevice,
   startAccountPoolProviderOAuth,
+  startPoolAccountCheckTask,
   updateAccountPoolGroup,
   updatePoolAccount,
   updatePoolAccountStatus,
 } from './api'
 import { AuthFilesPanel } from './components/auth-files-panel'
 import type {
+  AccountPoolCheckTask,
   AccountPoolGroup,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
@@ -433,6 +437,38 @@ function poolAccountStatusText(
   return t('Enabled')
 }
 
+function isAccountPoolCheckTaskActive(
+  status: AccountPoolCheckTask['status'] | undefined
+): boolean {
+  return status === 'queued' || status === 'running'
+}
+
+function checkTaskStatusLabel(
+  status: AccountPoolCheckTask['status'] | undefined,
+  t: (key: string) => string
+): string {
+  if (status === 'queued') return t('Queued')
+  if (status === 'running') return t('Running')
+  if (status === 'completed') return t('Completed')
+  if (status === 'failed') return t('Failed')
+  return t('Unknown')
+}
+
+function checkTaskBadgeVariant(
+  status: AccountPoolCheckTask['status'] | undefined
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'failed') return 'destructive'
+  if (status === 'completed') return 'default'
+  if (status === 'running') return 'secondary'
+  return 'outline'
+}
+
+function checkTaskProgressValue(task: AccountPoolCheckTask | null): number {
+  if (!task?.total) return 0
+  const progressed = Math.min(task.total, task.checked + task.skipped)
+  return Math.round((progressed / task.total) * 100)
+}
+
 function stateLogActionLabel(
   action: string,
   t: (key: string) => string
@@ -484,6 +520,8 @@ export function AccountPool() {
     null
   )
   const [batchChecking, setBatchChecking] = useState(false)
+  const [checkTask, setCheckTask] = useState<AccountPoolCheckTask | null>(null)
+  const [checkTaskPolling, setCheckTaskPolling] = useState(false)
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([])
 
   const groupsQuery = useQuery({
@@ -544,6 +582,15 @@ export function AccountPool() {
     selectedAccountsOnPage.length > 0 && !allAccountsOnPageSelected
   const selectedGroupDailyLimitTitle = groupDailyLimitTitle(selectedGroup, t)
   const accountTotal = accountPage?.total ?? stats?.total ?? accounts.length
+  const checkTaskBelongsToSelectedGroup =
+    Boolean(checkTask) && checkTask?.pool_group_id === selectedGroupId
+  const selectedGroupCheckTask = checkTaskBelongsToSelectedGroup
+    ? checkTask
+    : null
+  const selectedGroupCheckTaskActive = isAccountPoolCheckTaskActive(
+    selectedGroupCheckTask?.status
+  )
+  const checkTaskProgress = checkTaskProgressValue(selectedGroupCheckTask)
   const totalPages = Math.max(
     1,
     Math.ceil((accountPage?.total ?? 0) / (accountPage?.page_size ?? 10))
@@ -639,10 +686,73 @@ export function AccountPool() {
     return () => window.clearInterval(timer)
   }, [deviceSession, deviceSessionOpen, t])
 
-  const refreshAll = async () => {
+  const refreshAll = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['account-pool'] })
     await queryClient.invalidateQueries({ queryKey: ['channels'] })
-  }
+  }, [queryClient])
+
+  useEffect(() => {
+    if (!checkTask?.id || !isAccountPoolCheckTaskActive(checkTask.status)) {
+      return
+    }
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const pollTask = async () => {
+      setCheckTaskPolling(true)
+      try {
+        const response = await getPoolAccountCheckTask(checkTask.id)
+        if (cancelled) return
+        if (!response.success || !response.data) {
+          throw new Error(response.message || t('Operation failed'))
+        }
+        const nextTask = response.data
+        setCheckTask(nextTask)
+        if (!isAccountPoolCheckTaskActive(nextTask.status)) {
+          if (nextTask.status === 'completed') {
+            const message = t(
+              'Checked {{checked}} account(s): {{success}} passed, {{failed}} failed',
+              {
+                checked: nextTask.checked,
+                success: nextTask.success,
+                failed: nextTask.failed,
+              }
+            )
+            if (nextTask.failed > 0) {
+              toast.warning(message)
+            } else {
+              toast.success(message)
+            }
+          } else {
+            toast.error(nextTask.message || t('Account check task failed'))
+          }
+          await refreshAll()
+          return
+        }
+        timer = window.setTimeout(() => void pollTask(), 1800)
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(
+            error instanceof Error ? error.message : t('Operation failed')
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckTaskPolling(false)
+        }
+      }
+    }
+
+    timer = window.setTimeout(() => void pollTask(), 1200)
+
+    return () => {
+      cancelled = true
+      if (timer) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [checkTask?.id, checkTask?.status, refreshAll, t])
 
   const openCreateGroup = () => {
     setGroupForm(emptyGroupForm)
@@ -1097,26 +1207,20 @@ export function AccountPool() {
       toast.info(t('No accounts found'))
       return
     }
+    if (selectedGroupCheckTaskActive) {
+      toast.info(t('Account check task is already running'))
+      return
+    }
     setBatchChecking(true)
     try {
-      const response = await checkPoolAccountsInGroup(selectedGroupId, {
+      const response = await startPoolAccountCheckTask(selectedGroupId, {
         limit: 100,
       })
       if (!response.success) throw new Error(response.message)
-      const message = t(
-        'Checked {{checked}} account(s): {{success}} passed, {{failed}} failed',
-        {
-          checked: response.data?.checked ?? 0,
-          success: response.data?.success ?? 0,
-          failed: response.data?.failed ?? 0,
-        }
-      )
-      if ((response.data?.failed ?? 0) > 0) {
-        toast.warning(message)
-      } else {
-        toast.success(message)
+      if (response.data) {
+        setCheckTask(response.data)
       }
-      await refreshAll()
+      toast.success(t('Account check task started'))
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('Operation failed')
@@ -1451,10 +1555,14 @@ export function AccountPool() {
                     <Button
                       variant='outline'
                       size='sm'
-                      disabled={batchChecking || accountTotal <= 0}
+                      disabled={
+                        batchChecking ||
+                        selectedGroupCheckTaskActive ||
+                        accountTotal <= 0
+                      }
                       onClick={() => void checkSelectedGroupAccounts()}
                     >
-                      {batchChecking ? (
+                      {batchChecking || selectedGroupCheckTaskActive ? (
                         <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                       ) : (
                         <Stethoscope className='mr-2 h-4 w-4' />
@@ -1544,6 +1652,60 @@ export function AccountPool() {
                   </div>
                 </div>
               </div>
+
+              {selectedGroupCheckTask ? (
+                <div className='border-border flex flex-col gap-2 border-b p-3 text-sm'>
+                  <div className='flex flex-wrap items-center justify-between gap-2'>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <span className='font-medium'>{t('Check task')}</span>
+                      <Badge
+                        variant={checkTaskBadgeVariant(
+                          selectedGroupCheckTask.status
+                        )}
+                      >
+                        {checkTaskStatusLabel(
+                          selectedGroupCheckTask.status,
+                          t
+                        )}
+                      </Badge>
+                      {checkTaskPolling ? (
+                        <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
+                      ) : null}
+                    </div>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('{{checked}}/{{total}} checked', {
+                        checked:
+                          selectedGroupCheckTask.checked +
+                          selectedGroupCheckTask.skipped,
+                        total: selectedGroupCheckTask.total,
+                      })}
+                    </span>
+                  </div>
+                  <Progress value={checkTaskProgress} />
+                  <div className='text-muted-foreground flex flex-wrap gap-3 text-xs'>
+                    <span>
+                      {t('{{success}} passed', {
+                        success: selectedGroupCheckTask.success,
+                      })}
+                    </span>
+                    <span>
+                      {t('{{failed}} failed', {
+                        failed: selectedGroupCheckTask.failed,
+                      })}
+                    </span>
+                    <span>
+                      {t('{{skipped}} skipped', {
+                        skipped: selectedGroupCheckTask.skipped,
+                      })}
+                    </span>
+                    {selectedGroupCheckTask.message ? (
+                      <span className='max-w-full truncate'>
+                        {selectedGroupCheckTask.message}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               {accounts.length > 0 ? (
                 <div className='border-border flex flex-col gap-2 border-b p-3 text-sm md:flex-row md:items-center md:justify-between'>

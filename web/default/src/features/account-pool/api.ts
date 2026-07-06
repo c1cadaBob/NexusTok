@@ -27,6 +27,7 @@ import type {
   AccountPoolBatchCheckResult,
   AccountPoolBatchStatusResult,
   AccountPoolCheckResult,
+  AccountPoolCheckTask,
   AccountPoolExportResult,
   AccountPoolGroup,
   AccountPoolGroupOption,
@@ -316,6 +317,24 @@ export async function checkPoolAccountsInGroup(
     `/api/account-pool/groups/${groupId}/accounts/check`,
     data
   )
+  return res.data
+}
+
+export async function startPoolAccountCheckTask(
+  groupId: number,
+  data?: { account_ids?: number[]; limit?: number }
+): Promise<ApiResponse<AccountPoolCheckTask>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/check-tasks`,
+    data
+  )
+  return res.data
+}
+
+export async function getPoolAccountCheckTask(
+  taskId: number
+): Promise<ApiResponse<AccountPoolCheckTask>> {
+  const res = await api.get(`/api/account-pool/check-tasks/${taskId}`)
   return res.data
 }
 

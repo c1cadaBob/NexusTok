@@ -114,6 +114,15 @@ const (
 	PoolAccountStateActionRefreshSucceeded = "refresh_succeeded"
 	// PoolAccountStateActionRefreshFailed 表示自动刷新失败并标记账号不可用。
 	PoolAccountStateActionRefreshFailed = "refresh_failed"
+
+	// PoolAccountCheckTaskStatusQueued 表示账号检测任务已入队，等待后台 worker 执行。
+	PoolAccountCheckTaskStatusQueued = "queued"
+	// PoolAccountCheckTaskStatusRunning 表示账号检测任务正在执行。
+	PoolAccountCheckTaskStatusRunning = "running"
+	// PoolAccountCheckTaskStatusCompleted 表示账号检测任务已完成；其中仍可能包含检测失败的账号。
+	PoolAccountCheckTaskStatusCompleted = "completed"
+	// PoolAccountCheckTaskStatusFailed 表示账号检测任务因内部错误中断，未能完成全部账号检测。
+	PoolAccountCheckTaskStatusFailed = "failed"
 )
 
 var (
@@ -451,6 +460,32 @@ type PoolAccountStateLog struct {
 	RequestId            string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_pool_account_state_request_id"`
 }
 
+// PoolAccountCheckTask 记录一次后台账号可用性检测任务。
+//
+// 任务表存放在主业务库中，而不是 LOG_DB：后台检测任务需要被管理页面轮询查询，并且
+// 任务状态会随着 worker 执行持续更新。ResultsJSON 只保存脱敏后的检测结果列表，
+// 不保存账号凭证原文；AccountIds 使用逗号分隔 ID，避免依赖数据库专用 JSON 类型。
+type PoolAccountCheckTask struct {
+	Id            int    `json:"id"`
+	PoolGroupId   int    `json:"pool_group_id" gorm:"index:idx_pool_account_check_task_group"`
+	PoolGroupName string `json:"pool_group_name" gorm:"type:varchar(255)"`
+	Status        string `json:"status" gorm:"type:varchar(32);index:idx_pool_account_check_task_status"`
+	Actor         string `json:"actor" gorm:"type:varchar(255);index"`
+	RequestId     string `json:"request_id,omitempty" gorm:"type:varchar(64);index"`
+	AccountIds    string `json:"account_ids" gorm:"type:text"`
+	Total         int    `json:"total" gorm:"default:0"`
+	Checked       int    `json:"checked" gorm:"default:0"`
+	Success       int    `json:"success" gorm:"default:0"`
+	Failed        int    `json:"failed" gorm:"default:0"`
+	Skipped       int    `json:"skipped" gorm:"default:0"`
+	Message       string `json:"message" gorm:"type:text"`
+	ResultsJSON   string `json:"-" gorm:"column:results_json;type:text"`
+	StartedTime   int64  `json:"started_time" gorm:"bigint;default:0"`
+	FinishedTime  int64  `json:"finished_time" gorm:"bigint;default:0"`
+	CreatedTime   int64  `json:"created_time" gorm:"bigint;index:idx_pool_account_check_task_created"`
+	UpdatedTime   int64  `json:"updated_time" gorm:"bigint"`
+}
+
 // PoolAccountStateLogRecord 描述一次账号状态变更日志写入请求。
 // Before 可选；传入时会保存变更前快照，未传入则只保存变更后的账号当前状态。
 type PoolAccountStateLogRecord struct {
@@ -586,6 +621,26 @@ func (authFile *AccountPoolAuthFile) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+// BeforeCreate GORM 钩子：创建后台检测任务前设置时间戳并规范化状态。
+func (task *PoolAccountCheckTask) BeforeCreate(tx *gorm.DB) error {
+	_ = tx
+	now := common.GetTimestamp()
+	if task.CreatedTime == 0 {
+		task.CreatedTime = now
+	}
+	task.UpdatedTime = now
+	task.normalize()
+	return nil
+}
+
+// BeforeUpdate GORM 钩子：更新后台检测任务前刷新更新时间并规范化计数字段。
+func (task *PoolAccountCheckTask) BeforeUpdate(tx *gorm.DB) error {
+	_ = tx
+	task.UpdatedTime = common.GetTimestamp()
+	task.normalize()
+	return nil
+}
+
 // normalize 规范化认证文件字段，保证列表筛选和调度字段稳定。
 func (authFile *AccountPoolAuthFile) normalize() {
 	if authFile.Status == 0 {
@@ -616,6 +671,42 @@ func (authFile *AccountPoolAuthFile) normalize() {
 	authFile.AccountGroups = normalizeAccountPoolCSV(authFile.AccountGroups)
 	authFile.Models = normalizeAccountPoolCSV(authFile.Models)
 	authFile.Proxy = strings.TrimSpace(authFile.Proxy)
+}
+
+// normalize 规范化后台检测任务字段，避免旧数据或部分更新写入非法状态和负数统计。
+func (task *PoolAccountCheckTask) normalize() {
+	task.PoolGroupName = strings.TrimSpace(task.PoolGroupName)
+	task.Status = strings.ToLower(strings.TrimSpace(task.Status))
+	switch task.Status {
+	case PoolAccountCheckTaskStatusQueued, PoolAccountCheckTaskStatusRunning, PoolAccountCheckTaskStatusCompleted, PoolAccountCheckTaskStatusFailed:
+	default:
+		task.Status = PoolAccountCheckTaskStatusQueued
+	}
+	task.Actor = strings.TrimSpace(task.Actor)
+	task.RequestId = strings.TrimSpace(task.RequestId)
+	task.AccountIds = normalizeAccountPoolCSV(task.AccountIds)
+	task.Message = strings.TrimSpace(task.Message)
+	if task.Total < 0 {
+		task.Total = 0
+	}
+	if task.Checked < 0 {
+		task.Checked = 0
+	}
+	if task.Success < 0 {
+		task.Success = 0
+	}
+	if task.Failed < 0 {
+		task.Failed = 0
+	}
+	if task.Skipped < 0 {
+		task.Skipped = 0
+	}
+	if task.StartedTime < 0 {
+		task.StartedTime = 0
+	}
+	if task.FinishedTime < 0 {
+		task.FinishedTime = 0
+	}
 }
 
 // normalize 规范化账号字段（小写化、去空格、设置默认值）

@@ -73,10 +73,14 @@ func (fakeCheckRefreshProvider) Summarize(raw string) string {
 
 func setupAccountPoolCheckTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}, &model.PoolAccountCheckTask{}))
+	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_check_tasks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM account_pool_groups").Error)
 	t.Cleanup(func() {
+		_ = model.DB.Exec("DELETE FROM pool_account_check_tasks").Error
+		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error
 		_ = model.DB.Exec("DELETE FROM account_pool_groups").Error
 	})
@@ -246,4 +250,140 @@ func TestCheckPoolAccountsInGroupSummarizesResults(t *testing.T) {
 	require.Equal(t, 1, result.Failed)
 	require.Equal(t, 0, result.Skipped)
 	require.Len(t, result.Items, 2)
+}
+
+func TestStartPoolAccountCheckTaskRunsQueuedBackgroundCheck(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	accounts := []*model.PoolAccount{
+		{
+			PoolGroupId:        group.Id,
+			Name:               "check-task-ok",
+			Platform:           "codex",
+			AuthType:           model.AccountPoolAuthTypeAPIKey,
+			CredentialProvider: "codex",
+			Credentials:        encryptedCheckCredential(t, `{"api_key":"sk-task-ok"}`),
+			Status:             common.ChannelStatusEnabled,
+			Schedulable:        true,
+		},
+		{
+			PoolGroupId:        group.Id,
+			Name:               "check-task-bad",
+			Platform:           "codex",
+			AuthType:           model.AccountPoolAuthTypeOfficialOAuth,
+			CredentialProvider: "codex",
+			Credentials:        encryptedCheckCredential(t, `{"access_token":"missing-refresh-token"}`),
+			Status:             common.ChannelStatusEnabled,
+			Schedulable:        true,
+		},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+
+	task, err := StartPoolAccountCheckTask(AccountPoolCheckTaskOptions{
+		PoolGroupID: group.Id,
+		Limit:       10,
+		Actor:       "check-task-tester",
+		RequestID:   "req-check-task",
+	})
+	require.NoError(t, err)
+	require.NotZero(t, task.ID)
+	require.Equal(t, model.PoolAccountCheckTaskStatusQueued, task.Status)
+	require.Equal(t, 2, task.Total)
+
+	var finalTask *AccountPoolCheckTaskView
+	require.Eventually(t, func() bool {
+		loaded, loadErr := GetPoolAccountCheckTask(task.ID)
+		if loadErr != nil {
+			return false
+		}
+		finalTask = loaded
+		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
+	}, 2*time.Second, 20*time.Millisecond)
+
+	require.Equal(t, 2, finalTask.Total)
+	require.Equal(t, 2, finalTask.Checked)
+	require.Equal(t, 1, finalTask.Success)
+	require.Equal(t, 1, finalTask.Failed)
+	require.Equal(t, 0, finalTask.Skipped)
+	require.Len(t, finalTask.Items, 2)
+	require.NotContains(t, finalTask.Message, "sk-task-ok")
+	require.NotZero(t, finalTask.StartedTime)
+	require.NotZero(t, finalTask.FinishedTime)
+
+	successLogs, successTotal, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolGroupId: group.Id,
+		Action:      model.PoolAccountStateActionCheckSucceeded,
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, successTotal)
+	require.Len(t, successLogs, 1)
+	require.Equal(t, "check-task-tester", successLogs[0].Actor)
+	require.Equal(t, "req-check-task", successLogs[0].RequestId)
+
+	failedLogs, failedTotal, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolGroupId: group.Id,
+		Action:      model.PoolAccountStateActionCheckFailed,
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, failedTotal)
+	require.Len(t, failedLogs, 1)
+	require.Equal(t, "check-task-tester", failedLogs[0].Actor)
+	require.Equal(t, "req-check-task", failedLogs[0].RequestId)
+}
+
+func TestStartPoolAccountCheckTaskUsesSelectedAccountIDs(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	accountA := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               "check-task-selected-a",
+		Platform:           "codex",
+		AuthType:           model.AccountPoolAuthTypeAPIKey,
+		CredentialProvider: "codex",
+		Credentials:        encryptedCheckCredential(t, `{"api_key":"sk-selected-a"}`),
+		Status:             common.ChannelStatusEnabled,
+		Schedulable:        true,
+	}
+	accountB := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               "check-task-selected-b",
+		Platform:           "codex",
+		AuthType:           model.AccountPoolAuthTypeAPIKey,
+		CredentialProvider: "codex",
+		Credentials:        encryptedCheckCredential(t, `{"api_key":"sk-selected-b"}`),
+		Status:             common.ChannelStatusEnabled,
+		Schedulable:        true,
+	}
+	require.NoError(t, model.DB.Create(accountA).Error)
+	require.NoError(t, model.DB.Create(accountB).Error)
+	missingAccountID := accountB.Id + 9999
+
+	task, err := StartPoolAccountCheckTask(AccountPoolCheckTaskOptions{
+		PoolGroupID: group.Id,
+		AccountIDs:  []int{accountB.Id, missingAccountID, accountA.Id, accountB.Id, 0},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int{accountB.Id, missingAccountID, accountA.Id}, task.AccountIDs)
+	require.Equal(t, 3, task.Total)
+
+	var finalTask *AccountPoolCheckTaskView
+	require.Eventually(t, func() bool {
+		loaded, loadErr := GetPoolAccountCheckTask(task.ID)
+		if loadErr != nil {
+			return false
+		}
+		finalTask = loaded
+		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
+	}, 2*time.Second, 20*time.Millisecond)
+
+	require.Equal(t, 3, finalTask.Total)
+	require.Equal(t, 2, finalTask.Checked)
+	require.Equal(t, 2, finalTask.Success)
+	require.Equal(t, 1, finalTask.Skipped)
+	require.Equal(t, []int{accountB.Id, missingAccountID, accountA.Id}, finalTask.AccountIDs)
+	require.Len(t, finalTask.Items, 3)
+	require.Equal(t, missingAccountID, finalTask.Items[1].AccountID)
+	require.False(t, finalTask.Items[1].Checked)
 }

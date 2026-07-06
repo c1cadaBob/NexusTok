@@ -441,6 +441,33 @@ export type AccountPoolBatchCheckResult = {
   items: AccountPoolCheckResult[]
 }
 
+export type AccountPoolCheckTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+
+export type AccountPoolCheckTask = {
+  id: number
+  pool_group_id: number
+  pool_group_name: string
+  status: AccountPoolCheckTaskStatus
+  actor?: string
+  request_id?: string
+  account_ids: number[]
+  total: number
+  checked: number
+  success: number
+  failed: number
+  skipped: number
+  message: string
+  items: AccountPoolCheckResult[]
+  started_time: number
+  finished_time: number
+  created_time: number
+  updated_time: number
+}
+
 export type AccountPoolLoginStartResult = {
   session_id: string
   provider: string

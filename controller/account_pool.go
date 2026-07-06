@@ -1292,6 +1292,46 @@ func CheckPoolAccountsInGroup(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+func StartPoolAccountCheckTask(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	var req poolAccountCheckRequest
+	if !bindOptionalPoolAccountCheckRequest(c, &req) {
+		return
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit, _ = strconv.Atoi(c.DefaultQuery("limit", "100"))
+	}
+	task, err := service.StartPoolAccountCheckTask(service.AccountPoolCheckTaskOptions{
+		PoolGroupID: groupID,
+		AccountIDs:  req.AccountIDs,
+		Limit:       limit,
+		Actor:       strings.TrimSpace(c.GetString("username")),
+		RequestID:   strings.TrimSpace(c.GetString(common.RequestIdKey)),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, task)
+}
+
+func GetPoolAccountCheckTask(c *gin.Context) {
+	taskID, ok := parsePoolAccountCheckTaskIDParam(c)
+	if !ok {
+		return
+	}
+	task, err := service.GetPoolAccountCheckTask(taskID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, task)
+}
+
 func recordPoolAccountStateFromController(c *gin.Context, accountID int, action string, reason string, before *model.PoolAccount) {
 	if accountID <= 0 {
 		return
@@ -1699,6 +1739,15 @@ func parseAccountPoolAuthFileIDParam(c *gin.Context) (int, bool) {
 		return 0, false
 	}
 	return authFileID, true
+}
+
+func parsePoolAccountCheckTaskIDParam(c *gin.Context) (int, bool) {
+	taskID, err := strconv.Atoi(c.Param("check_task_id"))
+	if err != nil || taskID <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid account check task id"})
+		return 0, false
+	}
+	return taskID, true
 }
 
 func parseAccountPoolUsageSuccess(value string) *bool {
