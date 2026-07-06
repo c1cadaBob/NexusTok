@@ -33,6 +33,7 @@ import type {
   AccountPoolCheckTaskListParams,
   AccountPoolExportResult,
   AccountPoolGroup,
+  AccountPoolHealthSummary,
   AccountPoolGroupOption,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
@@ -57,6 +58,7 @@ export const accountPoolQueryKeys = {
   authFiles: (params?: unknown) =>
     ['account-pool', 'auth-files', params] as const,
   providers: () => ['account-pool', 'providers'] as const,
+  health: (params?: unknown) => ['account-pool', 'health', params] as const,
   loginSession: (sessionId: string) =>
     ['account-pool', 'login-sessions', sessionId] as const,
   accounts: (groupId: number, params?: unknown) =>
@@ -90,6 +92,15 @@ export async function getAccountPoolGroupOptions(): Promise<
   ApiResponse<AccountPoolGroupOption[]>
 > {
   const res = await api.get('/api/account-pool/groups/options')
+  return res.data
+}
+
+export async function getAccountPoolHealth(params?: {
+  pool_group_id?: number
+  abnormal_limit?: number
+  audit_limit?: number
+}): Promise<ApiResponse<AccountPoolHealthSummary>> {
+  const res = await api.get('/api/account-pool/health', { params })
   return res.data
 }
 

@@ -57,6 +57,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -65,7 +66,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from '@/components/status-badge'
@@ -86,6 +86,7 @@ import {
   exportPoolAccounts,
   getAccountPoolLoginSession,
   getAccountPoolGroups,
+  getAccountPoolHealth,
   getAccountPoolProviders,
   getAccountPoolStateLogs,
   getAccountPoolUsageLogs,
@@ -103,9 +104,11 @@ import {
 } from './api'
 import { AuthFilesPanel } from './components/auth-files-panel'
 import type {
+  AccountPoolAbnormalAccount,
   AccountPoolCheckTask,
   AccountPoolCheckTaskStatus,
   AccountPoolGroup,
+  AccountPoolGroupHealth,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
   AccountPoolPreflightCheckMode,
@@ -155,6 +158,7 @@ type AccountFormState = {
 }
 
 type AccountPoolView =
+  | 'health'
   | 'accounts'
   | 'auth-files'
   | 'usage-logs'
@@ -269,10 +273,7 @@ function downloadJsonFile(filename: string, data: unknown) {
   URL.revokeObjectURL(url)
 }
 
-function strategyLabel(
-  strategy: string,
-  t: (key: string) => string
-): string {
+function strategyLabel(strategy: string, t: (key: string) => string): string {
   const labelKey = strategyLabelKeys[strategy]
   if (!labelKey) return strategy || '-'
   return t(labelKey)
@@ -349,6 +350,14 @@ function formatUsageDuration(seconds: number): string {
 
 function formatUsageNumber(value: number): string {
   return new Intl.NumberFormat().format(value || 0)
+}
+
+function formatPercent(value: number | undefined): string {
+  const normalized = Number.isFinite(value) ? (value ?? 0) : 0
+  return new Intl.NumberFormat(undefined, {
+    style: 'percent',
+    maximumFractionDigits: 1,
+  }).format(normalized)
 }
 
 function formatLimitValue(value: number, t: (key: string) => string): string {
@@ -483,6 +492,92 @@ function groupStatusLabel(
     return t('Daily limit reached')
   }
   return t('Enabled')
+}
+
+function healthGroupVariant(
+  group: AccountPoolGroupHealth
+): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (group.status !== CHANNEL_STATUS.ENABLED) {
+    return 'danger'
+  }
+  if (group.daily_limit_state?.limited) {
+    return 'warning'
+  }
+  if ((group.stats?.total ?? 0) > 0 && group.availability_rate <= 0) {
+    return 'danger'
+  }
+  if (group.availability_rate < 1) {
+    return 'warning'
+  }
+  return 'success'
+}
+
+function healthGroupLabel(
+  group: AccountPoolGroupHealth,
+  t: (key: string) => string
+): string {
+  if (group.status !== CHANNEL_STATUS.ENABLED) {
+    return t('Disabled')
+  }
+  if (group.daily_limit_state?.limited) {
+    return t('Daily limit reached')
+  }
+  if ((group.stats?.total ?? 0) > 0 && group.availability_rate <= 0) {
+    return t('Unavailable')
+  }
+  if (group.availability_rate < 1) {
+    return t('Attention')
+  }
+  return t('Enabled')
+}
+
+function healthGroupAutomationSummary(
+  group: AccountPoolGroupHealth,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const autoCheck = group.auto_check_enabled
+    ? t('Auto check every {{minutes}} min', {
+        minutes: group.auto_check_interval_minutes || 60,
+      })
+    : t('Auto check off')
+  return [
+    autoCheck,
+    preflightCheckModeLabel(group.preflight_check_mode, t),
+  ].join(' · ')
+}
+
+function abnormalAccountVariant(
+  account: AccountPoolAbnormalAccount,
+  nowSeconds: number
+): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (account.cooling_until > nowSeconds) {
+    return 'warning'
+  }
+  if (
+    account.status !== CHANNEL_STATUS.ENABLED ||
+    !account.schedulable ||
+    account.unavailable
+  ) {
+    return 'danger'
+  }
+  return 'neutral'
+}
+
+function abnormalAccountStatusLabel(
+  account: AccountPoolAbnormalAccount,
+  nowSeconds: number,
+  t: (key: string) => string
+): string {
+  if (account.cooling_until > nowSeconds) {
+    return t('Cooling Down')
+  }
+  if (account.status !== CHANNEL_STATUS.ENABLED || !account.schedulable) {
+    return t('Disabled')
+  }
+  if (account.unavailable) {
+    return t('Unavailable')
+  }
+  return t('Attention')
 }
 
 function accountLimitSummary(
@@ -762,6 +857,20 @@ export function AccountPool() {
       (checkTaskPageInfo?.total ?? 0) / (checkTaskPageInfo?.page_size ?? 10)
     )
   )
+  const healthParams = useMemo(
+    () => ({
+      abnormal_limit: 10,
+      audit_limit: 10,
+    }),
+    []
+  )
+  const healthQuery = useQuery({
+    queryKey: accountPoolQueryKeys.health(healthParams),
+    queryFn: () => getAccountPoolHealth(healthParams),
+    enabled: activeView === 'health',
+  })
+  const health = healthQuery.data?.data
+  const healthTotals = health?.totals
 
   useEffect(() => {
     setUsageLogPage(1)
@@ -900,9 +1009,7 @@ export function AccountPool() {
       dailyQuotaLimit: String(group.daily_quota_limit || 0),
       dailyLimitAction: group.daily_limit_action || 'cooldown',
       autoCheckEnabled: Boolean(group.auto_check_enabled),
-      autoCheckIntervalMinutes: String(
-        group.auto_check_interval_minutes || 60
-      ),
+      autoCheckIntervalMinutes: String(group.auto_check_interval_minutes || 60),
       autoCheckLimit: String(group.auto_check_limit || 100),
       preflightCheckMode:
         group.preflight_check_mode === 'warmup' ||
@@ -1636,46 +1743,53 @@ export function AccountPool() {
             <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
               <div className='min-w-0'>
                 <div className='truncate text-sm font-semibold'>
-                  {activeView === 'accounts'
-                    ? (selectedGroup?.name ?? t('Account Pool'))
-                    : activeView === 'auth-files'
-                      ? t('Auth Files')
-                      : activeView === 'usage-logs'
-                        ? t('Usage Logs')
-                        : activeView === 'state-logs'
-                          ? t('State Logs')
-                          : t('Check History')}
+                  {activeView === 'health'
+                    ? t('Health')
+                    : activeView === 'accounts'
+                      ? (selectedGroup?.name ?? t('Account Pool'))
+                      : activeView === 'auth-files'
+                        ? t('Auth Files')
+                        : activeView === 'usage-logs'
+                          ? t('Usage Logs')
+                          : activeView === 'state-logs'
+                            ? t('State Logs')
+                            : t('Check History')}
                 </div>
                 <div className='text-muted-foreground text-xs'>
-                  {activeView === 'accounts'
-                    ? selectedGroup
-                      ? `${strategyLabel(selectedGroup.strategy, t)} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
-                          selectedGroup.max_concurrency > 0
-                            ? selectedGroup.max_concurrency
-                            : t('Unlimited')
-                        } · ${groupAutoCheckSummary(selectedGroup, t)} · ${groupPreflightCheckSummary(
-                          selectedGroup,
-                          t
-                        )}`
-                      : t('Select an account group')
-                    : activeView === 'auth-files'
-                      ? t(
-                          'Manage imported JSON credentials and their linked pool accounts'
-                        )
-                      : activeView === 'usage-logs'
-                        ? selectedGroup
-                          ? t('Showing usage records for the selected group')
-                          : t('Showing usage records for all groups')
-                        : activeView === 'state-logs'
+                  {activeView === 'health'
+                    ? t('Account pool health across all native groups')
+                    : activeView === 'accounts'
+                      ? selectedGroup
+                        ? `${strategyLabel(selectedGroup.strategy, t)} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
+                            selectedGroup.max_concurrency > 0
+                              ? selectedGroup.max_concurrency
+                              : t('Unlimited')
+                          } · ${groupAutoCheckSummary(selectedGroup, t)} · ${groupPreflightCheckSummary(
+                            selectedGroup,
+                            t
+                          )}`
+                        : t('Select an account group')
+                      : activeView === 'auth-files'
+                        ? t(
+                            'Manage imported JSON credentials and their linked pool accounts'
+                          )
+                        : activeView === 'usage-logs'
                           ? selectedGroup
-                            ? t('Showing state changes for the selected group')
-                            : t('Showing state changes for all groups')
-                          : selectedGroup
-                            ? t('Showing check tasks for the selected group')
-                            : t('Showing check tasks for all groups')}
+                            ? t('Showing usage records for the selected group')
+                            : t('Showing usage records for all groups')
+                          : activeView === 'state-logs'
+                            ? selectedGroup
+                              ? t(
+                                  'Showing state changes for the selected group'
+                                )
+                              : t('Showing state changes for all groups')
+                            : selectedGroup
+                              ? t('Showing check tasks for the selected group')
+                              : t('Showing check tasks for all groups')}
                 </div>
               </div>
               <TabsList>
+                <TabsTrigger value='health'>{t('Health')}</TabsTrigger>
                 <TabsTrigger value='accounts'>{t('Pool Accounts')}</TabsTrigger>
                 <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
                 <TabsTrigger value='usage-logs'>{t('Usage Logs')}</TabsTrigger>
@@ -1685,6 +1799,16 @@ export function AccountPool() {
                 </TabsTrigger>
               </TabsList>
               <div className='flex flex-wrap gap-2'>
+                {activeView === 'health' && (
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void healthQuery.refetch()}
+                  >
+                    <RefreshCw data-icon='inline-start' />
+                    {t('Refresh health')}
+                  </Button>
+                )}
                 {activeView === 'usage-logs' && (
                   <Button
                     variant='outline'
@@ -1722,7 +1846,10 @@ export function AccountPool() {
                       onClick={() => void cleanupCheckTasks()}
                     >
                       {checkTaskCleaning ? (
-                        <Loader2 data-icon='inline-start' className='animate-spin' />
+                        <Loader2
+                          data-icon='inline-start'
+                          className='animate-spin'
+                        />
                       ) : (
                         <Trash2 data-icon='inline-start' />
                       )}
@@ -1807,6 +1934,344 @@ export function AccountPool() {
               </div>
             </div>
 
+            <TabsContent value='health' className='m-0 min-h-0'>
+              <div className='border-border text-muted-foreground grid grid-cols-1 gap-1 border-b p-3 text-xs lg:grid-cols-2'>
+                <span className='min-w-0'>
+                  {t('Generated at')}:&nbsp;
+                  {health?.generated_at
+                    ? formatTimestamp(health.generated_at)
+                    : '-'}
+                </span>
+                <span className='min-w-0 lg:text-right'>
+                  {t('Window')}:&nbsp;
+                  {health?.window_start
+                    ? formatTimestamp(health.window_start)
+                    : '-'}
+                  {' - '}
+                  {health?.window_end
+                    ? formatTimestamp(health.window_end)
+                    : '-'}
+                </span>
+              </div>
+              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-5 xl:grid-cols-10'>
+                {[
+                  {
+                    label: t('Total accounts'),
+                    value: formatUsageNumber(healthTotals?.total_accounts ?? 0),
+                  },
+                  {
+                    label: t('Available accounts'),
+                    value: formatUsageNumber(
+                      healthTotals?.available_accounts ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Disabled accounts'),
+                    value: formatUsageNumber(
+                      healthTotals?.disabled_accounts ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Cooldown accounts'),
+                    value: formatUsageNumber(
+                      healthTotals?.cooldown_accounts ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Unavailable accounts'),
+                    value: formatUsageNumber(
+                      healthTotals?.unavailable_accounts ?? 0
+                    ),
+                  },
+                  {
+                    label: t('Today requests'),
+                    value: formatUsageNumber(healthTotals?.today_requests ?? 0),
+                  },
+                  {
+                    label: t('Today failures'),
+                    value: formatUsageNumber(healthTotals?.today_failures ?? 0),
+                  },
+                  {
+                    label: t('Success rate'),
+                    value: formatPercent(healthTotals?.success_rate),
+                  },
+                  {
+                    label: t('Availability rate'),
+                    value: formatPercent(healthTotals?.availability_rate),
+                  },
+                  {
+                    label: t('Limited groups'),
+                    value: formatUsageNumber(
+                      healthTotals?.limited_group_count ?? 0
+                    ),
+                  },
+                ].map((metric) => (
+                  <div key={metric.label} className='min-w-0'>
+                    <div className='text-muted-foreground truncate text-xs'>
+                      {metric.label}
+                    </div>
+                    <div className='truncate font-medium'>{metric.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className='border-border border-b'>
+                <div className='flex items-center justify-between gap-2 p-3'>
+                  <div className='text-sm font-medium'>{t('Group health')}</div>
+                  {healthQuery.isFetching ? (
+                    <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
+                  ) : null}
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Group')}</TableHead>
+                      <TableHead>{t('Available rate')}</TableHead>
+                      <TableHead>{t('Today requests')}</TableHead>
+                      <TableHead>{t('Today failures')}</TableHead>
+                      <TableHead>{t('Success rate')}</TableHead>
+                      <TableHead>{t('Status')}</TableHead>
+                      <TableHead>{t('Automation')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(health?.groups ?? []).map((group) => (
+                      <TableRow key={group.id}>
+                        <TableCell className='min-w-[200px]'>
+                          <div className='text-sm font-medium'>
+                            {group.name || `#${group.id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {group.platform} / {group.auth_type} ·{' '}
+                            {strategyLabel(group.strategy, t)}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          <div className='font-medium'>
+                            {formatPercent(group.availability_rate)}
+                          </div>
+                          <div className='text-muted-foreground mt-1'>
+                            {formatUsageNumber(group.stats?.enabled ?? 0)} /{' '}
+                            {formatUsageNumber(group.stats?.total ?? 0)}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[130px] text-xs'>
+                          {formatUsageNumber(group.today_requests)}
+                        </TableCell>
+                        <TableCell className='min-w-[130px] text-xs'>
+                          {formatUsageNumber(group.today_failures)}
+                        </TableCell>
+                        <TableCell className='min-w-[120px] text-xs'>
+                          {formatPercent(group.success_rate)}
+                        </TableCell>
+                        <TableCell className='min-w-[150px]'>
+                          <div className='flex flex-col gap-1'>
+                            <StatusBadge
+                              label={healthGroupLabel(group, t)}
+                              variant={healthGroupVariant(group)}
+                              copyable={false}
+                            />
+                            {group.daily_limit_state?.limited ? (
+                              <span className='text-muted-foreground text-xs'>
+                                {group.daily_limit_state.next_reset_time
+                                  ? `${t('Next daily reset')}: ${formatTimestamp(
+                                      group.daily_limit_state.next_reset_time
+                                    )}`
+                                  : group.daily_limit_state.reason || '-'}
+                              </span>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[260px] text-xs'>
+                          {healthGroupAutomationSummary(group, t)}
+                          {group.auto_check_next_time ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Next auto check')}:&nbsp;
+                              {formatTimestamp(group.auto_check_next_time)}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!healthQuery.isLoading &&
+                      (health?.groups ?? []).length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className='h-24 text-center'>
+                            {t('No account groups found')}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    {healthQuery.isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className='h-24 text-center'>
+                          {t('Loading')}
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className='border-border border-b'>
+                <div className='p-3 text-sm font-medium'>
+                  {t('Recent abnormal accounts')}
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Account')}</TableHead>
+                      <TableHead>{t('Status')}</TableHead>
+                      <TableHead>{t('Reason')}</TableHead>
+                      <TableHead>{t('Cooling until')}</TableHead>
+                      <TableHead>{t('Failure rate')}</TableHead>
+                      <TableHead>{t('Last Used')}</TableHead>
+                      <TableHead>{t('Last check time')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(health?.recent_abnormal_accounts ?? []).map((account) => (
+                      <TableRow key={account.id}>
+                        <TableCell className='min-w-[220px]'>
+                          <div className='text-sm font-medium'>
+                            {account.name || `#${account.id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {account.pool_group_name ||
+                              `#${account.pool_group_id}`}
+                            {' · '}
+                            {account.credential_provider ||
+                              account.platform ||
+                              '-'}
+                            {' / '}
+                            {account.auth_type || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[140px]'>
+                          <StatusBadge
+                            label={abnormalAccountStatusLabel(
+                              account,
+                              nowSeconds,
+                              t
+                            )}
+                            variant={abnormalAccountVariant(
+                              account,
+                              nowSeconds
+                            )}
+                            copyable={false}
+                          />
+                        </TableCell>
+                        <TableCell className='max-w-[320px] min-w-[240px] text-xs break-words'>
+                          {account.reason ||
+                            account.last_error ||
+                            account.status_message ||
+                            account.disabled_reason ||
+                            '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {account.cooling_until > nowSeconds
+                            ? formatTimestamp(account.cooling_until)
+                            : '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[130px] text-xs'>
+                          {formatPercent(account.failure_rate)}
+                          <div className='text-muted-foreground mt-1'>
+                            {t('Success')}: {account.success_count} ·{' '}
+                            {t('Failed')}: {account.failed_count}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {account.last_used_time
+                            ? formatTimestamp(account.last_used_time)
+                            : '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {account.last_checked_time
+                            ? formatTimestamp(account.last_checked_time)
+                            : '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!healthQuery.isLoading &&
+                      (health?.recent_abnormal_accounts ?? []).length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className='h-24 text-center'>
+                            {t('No abnormal accounts found')}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div>
+                <div className='p-3 text-sm font-medium'>
+                  {t('Recent state changes')}
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Time')}</TableHead>
+                      <TableHead>{t('Account')}</TableHead>
+                      <TableHead>{t('Action')}</TableHead>
+                      <TableHead>{t('After state')}</TableHead>
+                      <TableHead>{t('Reason')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(health?.recent_state_logs ?? []).map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {formatTimestamp(log.created_at)}
+                          <div className='text-muted-foreground mt-1'>
+                            {log.request_id || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[200px]'>
+                          <div className='text-sm font-medium'>
+                            {log.pool_account_name || `#${log.pool_account_id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
+                            {log.pool_account_auth_type || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[180px] text-xs'>
+                          {stateLogActionLabel(log.action, t)}
+                          <div className='text-muted-foreground mt-1'>
+                            {t('Source')}: {log.source || '-'}
+                            {log.actor ? ` · ${t('Actor')}: ${log.actor}` : ''}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[180px] text-xs'>
+                          {poolAccountStatusText(
+                            log.after_status,
+                            log.after_schedulable,
+                            log.after_unavailable,
+                            t
+                          )}
+                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                            {log.after_status_message ||
+                              log.after_disabled_reason ||
+                              '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='max-w-[320px] min-w-[220px] text-xs break-words'>
+                          {log.reason || '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!healthQuery.isLoading &&
+                      (health?.recent_state_logs ?? []).length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className='h-24 text-center'>
+                            {t('No recent state changes found')}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
             <TabsContent value='accounts' className='m-0 min-h-0'>
               {selectedGroupDailyLimitTitle ? (
                 <div className='border-warning/30 bg-warning/10 text-warning flex gap-2 border-b px-3 py-2 text-sm'>
@@ -1921,10 +2386,7 @@ export function AccountPool() {
                           selectedGroupCheckTask.status
                         )}
                       >
-                        {checkTaskStatusLabel(
-                          selectedGroupCheckTask.status,
-                          t
-                        )}
+                        {checkTaskStatusLabel(selectedGroupCheckTask.status, t)}
                       </Badge>
                       {checkTaskPolling ? (
                         <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />

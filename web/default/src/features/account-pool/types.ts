@@ -127,6 +127,77 @@ export type PoolAccount = {
   updated_time: number
 }
 
+export type AccountPoolHealthTotals = {
+  group_count: number
+  limited_group_count: number
+  total_accounts: number
+  available_accounts: number
+  disabled_accounts: number
+  cooldown_accounts: number
+  unavailable_accounts: number
+  today_requests: number
+  today_successes: number
+  today_failures: number
+  success_rate: number
+  availability_rate: number
+}
+
+export type AccountPoolGroupHealth = {
+  id: number
+  name: string
+  platform: string
+  auth_type: string
+  status: number
+  strategy: string
+  stats: AccountPoolStats
+  daily_limit_state: AccountPoolDailyLimitState
+  auto_check_enabled: boolean
+  auto_check_interval_minutes: number
+  auto_check_next_time: number
+  auto_check_last_task_id: number
+  preflight_check_mode: AccountPoolPreflightCheckMode | string
+  preflight_check_freshness_minutes: number
+  today_requests: number
+  today_successes: number
+  today_failures: number
+  success_rate: number
+  availability_rate: number
+}
+
+export type AccountPoolAbnormalAccount = {
+  id: number
+  pool_group_id: number
+  pool_group_name: string
+  name: string
+  platform: string
+  auth_type: string
+  credential_provider: string
+  status: number
+  schedulable: boolean
+  unavailable: boolean
+  cooling_until: number
+  reason: string
+  status_message: string
+  disabled_reason: string
+  last_error: string
+  last_checked_time: number
+  last_used_time: number
+  next_retry_time: number
+  success_count: number
+  failed_count: number
+  failure_rate: number
+}
+
+export type AccountPoolHealthSummary = {
+  generated_at: number
+  window_start: number
+  window_end: number
+  totals: AccountPoolHealthTotals
+  groups: AccountPoolGroupHealth[]
+  recent_abnormal_accounts: AccountPoolAbnormalAccount[]
+  recent_state_logs: AccountPoolStateLog[]
+}
+
 export type AccountPoolAuthFile = {
   id: number
   name: string
