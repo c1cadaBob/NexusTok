@@ -468,9 +468,15 @@ export function ChannelMutateDrawer({
         const dailyLimitSuffix = group.daily_limit_state?.limited
           ? ` · ${dailyLimitLabel}`
           : ''
+        const preflightSuffix =
+          group.preflight_check_mode === 'warmup'
+            ? ` · ${t('Warm up stale accounts')}`
+            : group.preflight_check_mode === 'require_recent'
+              ? ` · ${t('Require recent check')}`
+              : ''
         return {
           value: String(group.id),
-          label: `${group.name} · ${group.platform}/${group.auth_type}${dailyLimitSuffix}`,
+          label: `${group.name} · ${group.platform}/${group.auth_type}${dailyLimitSuffix}${preflightSuffix}`,
         }
       }) ?? [],
     [accountPoolGroupsData, t]

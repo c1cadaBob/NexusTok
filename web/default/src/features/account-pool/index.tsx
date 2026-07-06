@@ -108,6 +108,7 @@ import type {
   AccountPoolGroup,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
+  AccountPoolPreflightCheckMode,
   PoolAccount,
   PoolAccountPayload,
 } from './types'
@@ -130,6 +131,9 @@ type GroupFormState = {
   autoCheckEnabled: boolean
   autoCheckIntervalMinutes: string
   autoCheckLimit: string
+  preflightCheckMode: AccountPoolPreflightCheckMode
+  preflightCheckFreshnessMinutes: string
+  preflightCheckLimit: string
 }
 
 type AccountFormState = {
@@ -176,6 +180,9 @@ const emptyGroupForm: GroupFormState = {
   autoCheckEnabled: false,
   autoCheckIntervalMinutes: '60',
   autoCheckLimit: '100',
+  preflightCheckMode: 'off',
+  preflightCheckFreshnessMinutes: '1440',
+  preflightCheckLimit: '20',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -221,6 +228,11 @@ const strategyLabelKeys: Record<string, string> = {
 }
 const dailyLimitActionOptions = ['cooldown', 'disable']
 const accountDailyLimitActionOptions = ['inherit', ...dailyLimitActionOptions]
+const preflightCheckModeOptions: AccountPoolPreflightCheckMode[] = [
+  'off',
+  'warmup',
+  'require_recent',
+]
 const checkTaskStatusFilterOptions: CheckTaskStatusFilter[] = [
   'all',
   'queued',
@@ -354,6 +366,38 @@ function dailyLimitActionLabel(
     return t('Inherit group')
   }
   return t('Cooldown until reset')
+}
+
+function preflightCheckModeLabel(
+  mode: string | undefined,
+  t: (key: string) => string
+): string {
+  if (mode === 'warmup') {
+    return t('Warm up stale accounts')
+  }
+  if (mode === 'require_recent') {
+    return t('Require recent check')
+  }
+  return t('Preflight off')
+}
+
+function groupPreflightCheckSummary(
+  group: AccountPoolGroup,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const mode = group.preflight_check_mode || 'off'
+  if (mode === 'off') {
+    return t('Preflight off')
+  }
+  return [
+    preflightCheckModeLabel(mode, t),
+    t('Fresh within {{minutes}} min', {
+      minutes: group.preflight_check_freshness_minutes || 1440,
+    }),
+    t('Preflight limit {{limit}}', {
+      limit: group.preflight_check_limit || 20,
+    }),
+  ].join(' · ')
 }
 
 function groupLimitSummary(
@@ -860,6 +904,15 @@ export function AccountPool() {
         group.auto_check_interval_minutes || 60
       ),
       autoCheckLimit: String(group.auto_check_limit || 100),
+      preflightCheckMode:
+        group.preflight_check_mode === 'warmup' ||
+        group.preflight_check_mode === 'require_recent'
+          ? group.preflight_check_mode
+          : 'off',
+      preflightCheckFreshnessMinutes: String(
+        group.preflight_check_freshness_minutes || 1440
+      ),
+      preflightCheckLimit: String(group.preflight_check_limit || 20),
     })
     setGroupFormOpen(true)
   }
@@ -890,6 +943,11 @@ export function AccountPool() {
           groupForm.autoCheckIntervalMinutes
         ),
         auto_check_limit: numberOrZero(groupForm.autoCheckLimit),
+        preflight_check_mode: groupForm.preflightCheckMode,
+        preflight_check_freshness_minutes: numberOrZero(
+          groupForm.preflightCheckFreshnessMinutes
+        ),
+        preflight_check_limit: numberOrZero(groupForm.preflightCheckLimit),
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -1555,6 +1613,9 @@ export function AccountPool() {
                   <div className='text-muted-foreground truncate text-xs'>
                     {groupAutoCheckSummary(group, t)}
                   </div>
+                  <div className='text-muted-foreground truncate text-xs'>
+                    {groupPreflightCheckSummary(group, t)}
+                  </div>
                 </button>
               )
             })}
@@ -1592,7 +1653,10 @@ export function AccountPool() {
                           selectedGroup.max_concurrency > 0
                             ? selectedGroup.max_concurrency
                             : t('Unlimited')
-                        } · ${groupAutoCheckSummary(selectedGroup, t)}`
+                        } · ${groupAutoCheckSummary(selectedGroup, t)} · ${groupPreflightCheckSummary(
+                          selectedGroup,
+                          t
+                        )}`
                       : t('Select an account group')
                     : activeView === 'auth-files'
                       ? t(
@@ -1771,6 +1835,7 @@ export function AccountPool() {
               {selectedGroup ? (
                 <div className='border-border text-muted-foreground flex flex-wrap gap-3 border-b p-3 text-xs'>
                   <span>{groupAutoCheckSummary(selectedGroup, t)}</span>
+                  <span>{groupPreflightCheckSummary(selectedGroup, t)}</span>
                   {selectedGroup.auto_check_enabled ? (
                     <>
                       <span>
@@ -2904,6 +2969,66 @@ export function AccountPool() {
                 setGroupForm((current) => ({
                   ...current,
                   autoCheckLimit: event.target.value,
+                }))
+              }
+            />
+            <Select
+              items={preflightCheckModeOptions.map((value) => ({
+                value,
+                label: preflightCheckModeLabel(value, t),
+              }))}
+              value={groupForm.preflightCheckMode}
+              onValueChange={(value) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  preflightCheckMode:
+                    (value as AccountPoolPreflightCheckMode | null) ?? 'off',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder={t('Preflight check')} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {preflightCheckModeOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {preflightCheckModeLabel(value, t)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              id='account-pool-group-preflight-check-freshness-minutes'
+              name='preflight_check_freshness_minutes'
+              type='number'
+              min='1'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Preflight freshness minutes')}
+              value={groupForm.preflightCheckFreshnessMinutes}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  preflightCheckFreshnessMinutes: event.target.value,
+                }))
+              }
+            />
+            <Input
+              id='account-pool-group-preflight-check-limit'
+              name='preflight_check_limit'
+              type='number'
+              min='1'
+              max='100'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Preflight check account limit')}
+              value={groupForm.preflightCheckLimit}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  preflightCheckLimit: event.target.value,
                 }))
               }
             />
