@@ -120,6 +120,8 @@ const (
 	ContextKeyPoolAccountExcludedIds ContextKey = "pool_account_excluded_ids"
 	// ContextKeyPoolAccountReserved 账号池账号保留标记
 	ContextKeyPoolAccountReserved ContextKey = "pool_account_reserved"
+	// ContextKeyPoolGroupReserved 账号池分组并发槽位保留标记
+	ContextKeyPoolGroupReserved ContextKey = "pool_group_reserved"
 )
 
 // 自动分组相关键

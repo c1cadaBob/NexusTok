@@ -21,9 +21,24 @@ import (
 //   - poolAccountID: 全局账号池账号 ID（全局账号池模式）
 //   - quota: 本次消耗的配额值
 func AddSelectedAccountUsedQuota(channelAccountID int, poolAccountID int, quota int64) {
+	AddSelectedAccountUsedQuotaWithGroup(channelAccountID, 0, poolAccountID, quota)
+}
+
+// AddSelectedAccountUsedQuotaWithGroup 累加已选中账号及其账号池分组的使用配额。
+// poolGroupID 由 RelayInfo 直接传入时优先使用；异步任务等旧路径只持有账号 ID 时，
+// 会回查 PoolAccount 获得分组 ID，保证组级配额统计尽量不漏记。
+func AddSelectedAccountUsedQuotaWithGroup(channelAccountID int, poolGroupID int, poolAccountID int, quota int64) {
 	if poolAccountID > 0 {
 		if quota > 0 {
 			model.AddPoolAccountUsedQuota(poolAccountID, quota)
+			if poolGroupID <= 0 {
+				if account, err := model.GetPoolAccountById(poolAccountID); err == nil && account != nil {
+					poolGroupID = account.PoolGroupId
+				}
+			}
+			if poolGroupID > 0 {
+				model.AddAccountPoolGroupUsedQuota(poolGroupID, quota)
+			}
 		}
 		recordPoolAccountRequestRuntime(poolAccountID, true)
 		return
@@ -46,7 +61,7 @@ func AddRelayAccountUsedQuota(relayInfo *relaycommon.RelayInfo, quota int64) {
 	if relayInfo == nil {
 		return
 	}
-	AddSelectedAccountUsedQuota(relayInfo.ChannelAccountId, relayInfo.PoolAccountId, quota)
+	AddSelectedAccountUsedQuotaWithGroup(relayInfo.ChannelAccountId, relayInfo.PoolGroupId, relayInfo.PoolAccountId, quota)
 }
 
 // poolAccountUsageLogRecordFromContext 从请求上下文构造账号池使用日志快照。

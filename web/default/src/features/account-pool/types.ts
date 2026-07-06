@@ -37,6 +37,14 @@ export type AccountPoolGroup = {
   group: string
   model_mapping?: string | null
   settings: string
+  max_concurrency: number
+  rate_limit_rpm: number
+  daily_request_limit: number
+  daily_quota_limit: number
+  daily_request_count: number
+  used_quota: number
+  daily_used_quota: number
+  daily_reset_time: number
   created_time: number
   updated_time: number
   stats?: AccountPoolStats
@@ -155,6 +163,10 @@ export type AccountPoolGroupPayload = {
   group?: string
   model_mapping?: string | null
   settings?: string
+  max_concurrency?: number
+  rate_limit_rpm?: number
+  daily_request_limit?: number
+  daily_quota_limit?: number
 }
 
 export type PoolAccountPayload = {

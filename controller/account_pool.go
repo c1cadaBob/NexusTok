@@ -39,15 +39,19 @@ import (
 
 // accountPoolGroupUpsertRequest 账号池分组创建/更新请求
 type accountPoolGroupUpsertRequest struct {
-	Name         string  `json:"name"`          // 分组名称
-	Platform     string  `json:"platform"`      // 平台标识（如 openai, anthropic）
-	AuthType     string  `json:"auth_type"`     // 认证类型（api_key, oauth 等）
-	Status       *int    `json:"status"`        // 状态（启用/禁用）
-	Strategy     string  `json:"strategy"`      // 调度策略（round_robin, random 等）
-	Models       string  `json:"models"`        // 支持的模型列表
-	Group        string  `json:"group"`         // 用户组
-	ModelMapping *string `json:"model_mapping"` // 模型映射
-	Settings     string  `json:"settings"`      // 其他配置
+	Name              string  `json:"name"`                // 分组名称
+	Platform          string  `json:"platform"`            // 平台标识（如 openai, anthropic）
+	AuthType          string  `json:"auth_type"`           // 认证类型（api_key, oauth 等）
+	Status            *int    `json:"status"`              // 状态（启用/禁用）
+	Strategy          string  `json:"strategy"`            // 调度策略（round_robin, random 等）
+	Models            string  `json:"models"`              // 支持的模型列表
+	Group             string  `json:"group"`               // 用户组
+	ModelMapping      *string `json:"model_mapping"`       // 模型映射
+	Settings          string  `json:"settings"`            // 其他配置
+	MaxConcurrency    *int    `json:"max_concurrency"`     // 分组最大并发数，0 表示不限
+	RateLimitRpm      *int    `json:"rate_limit_rpm"`      // 分组每分钟最大请求数，0 表示不限
+	DailyRequestLimit *int64  `json:"daily_request_limit"` // 分组每日最大请求数，0 表示不限
+	DailyQuotaLimit   *int64  `json:"daily_quota_limit"`   // 分组每日最大配额消耗，0 表示不限
 }
 
 // poolAccountUpsertRequest 池账号创建/更新请求
@@ -260,7 +264,11 @@ func UpdateAccountPoolGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	updates := accountPoolGroupUpdateMap(req)
+	updates, err := accountPoolGroupUpdateMap(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if len(updates) == 0 {
 		common.ApiSuccess(c, accountPoolGroupResponse(group))
 		return
@@ -1264,21 +1272,42 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 	if req.Status != nil && *req.Status > 0 {
 		status = *req.Status
 	}
+	maxConcurrency := 0
+	if req.MaxConcurrency != nil && *req.MaxConcurrency > 0 {
+		maxConcurrency = *req.MaxConcurrency
+	}
+	rateLimitRpm := 0
+	if req.RateLimitRpm != nil && *req.RateLimitRpm > 0 {
+		rateLimitRpm = *req.RateLimitRpm
+	}
+	dailyRequestLimit := int64(0)
+	if req.DailyRequestLimit != nil && *req.DailyRequestLimit > 0 {
+		dailyRequestLimit = *req.DailyRequestLimit
+	}
+	dailyQuotaLimit := int64(0)
+	if req.DailyQuotaLimit != nil && *req.DailyQuotaLimit > 0 {
+		dailyQuotaLimit = *req.DailyQuotaLimit
+	}
+	settings := accountPoolGroupRequestSettings(req)
 	return &model.AccountPoolGroup{
-		Name:         name,
-		Platform:     platform,
-		AuthType:     authType,
-		Source:       model.AccountPoolGroupSourceNative,
-		Status:       status,
-		Strategy:     strategy,
-		Models:       strings.TrimSpace(req.Models),
-		Group:        strings.TrimSpace(req.Group),
-		ModelMapping: req.ModelMapping,
-		Settings:     strings.TrimSpace(req.Settings),
+		Name:              name,
+		Platform:          platform,
+		AuthType:          authType,
+		Source:            model.AccountPoolGroupSourceNative,
+		Status:            status,
+		Strategy:          strategy,
+		Models:            strings.TrimSpace(req.Models),
+		Group:             strings.TrimSpace(req.Group),
+		ModelMapping:      req.ModelMapping,
+		Settings:          settings,
+		MaxConcurrency:    maxConcurrency,
+		RateLimitRpm:      rateLimitRpm,
+		DailyRequestLimit: dailyRequestLimit,
+		DailyQuotaLimit:   dailyQuotaLimit,
 	}, nil
 }
 
-func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) map[string]interface{} {
+func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) (map[string]interface{}, error) {
 	updates := map[string]interface{}{}
 	if strings.TrimSpace(req.Name) != "" {
 		updates["name"] = strings.TrimSpace(req.Name)
@@ -1297,11 +1326,77 @@ func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) map[string]int
 	}
 	updates["models"] = strings.TrimSpace(req.Models)
 	updates["group"] = strings.TrimSpace(req.Group)
-	updates["settings"] = strings.TrimSpace(req.Settings)
+	updates["settings"] = accountPoolGroupRequestSettings(req)
+	if req.MaxConcurrency != nil {
+		maxConcurrency := 0
+		if *req.MaxConcurrency > 0 {
+			maxConcurrency = *req.MaxConcurrency
+		}
+		updates["max_concurrency"] = maxConcurrency
+	}
+	if req.RateLimitRpm != nil {
+		rateLimitRpm := 0
+		if *req.RateLimitRpm > 0 {
+			rateLimitRpm = *req.RateLimitRpm
+		}
+		updates["rate_limit_rpm"] = rateLimitRpm
+	}
+	if req.DailyRequestLimit != nil {
+		dailyRequestLimit := int64(0)
+		if *req.DailyRequestLimit > 0 {
+			dailyRequestLimit = *req.DailyRequestLimit
+		}
+		updates["daily_request_limit"] = dailyRequestLimit
+	}
+	if req.DailyQuotaLimit != nil {
+		dailyQuotaLimit := int64(0)
+		if *req.DailyQuotaLimit > 0 {
+			dailyQuotaLimit = *req.DailyQuotaLimit
+		}
+		updates["daily_quota_limit"] = dailyQuotaLimit
+	}
 	if req.ModelMapping != nil {
 		updates["model_mapping"] = *req.ModelMapping
 	}
-	return updates
+	return updates, nil
+}
+
+// accountPoolGroupRequestSettings 返回保存到分组 settings 的 JSON 字符串。
+// 历史版本曾把 max_concurrency 写在 settings JSON 中；新版本已有明确列。
+// 当请求显式携带 max_concurrency 时，新列应成为唯一来源，否则用户把新字段设为 0
+// 想取消限制时，旧 settings.max_concurrency 会继续兜底生效，导致页面语义和调度行为不一致。
+func accountPoolGroupRequestSettings(req accountPoolGroupUpsertRequest) string {
+	settings := strings.TrimSpace(req.Settings)
+	if req.MaxConcurrency == nil {
+		return settings
+	}
+	return removeAccountPoolGroupSetting(settings, "max_concurrency")
+}
+
+// removeAccountPoolGroupSetting 从 settings JSON 对象中移除指定键。
+// settings 是面向高级用户的扩展配置，可能为空或包含历史手写内容；解析失败时保持原文，
+// 避免因为兼容清理逻辑阻断其他字段的保存。
+func removeAccountPoolGroupSetting(settings string, key string) string {
+	settings = strings.TrimSpace(settings)
+	if settings == "" || strings.TrimSpace(key) == "" {
+		return settings
+	}
+	values := map[string]interface{}{}
+	if err := common.UnmarshalJsonStr(settings, &values); err != nil {
+		return settings
+	}
+	if _, ok := values[key]; !ok {
+		return settings
+	}
+	delete(values, key)
+	if len(values) == 0 {
+		return ""
+	}
+	encoded, err := common.Marshal(values)
+	if err != nil {
+		return settings
+	}
+	return string(encoded)
 }
 
 func buildPoolAccountFromRequest(group *model.AccountPoolGroup, req poolAccountUpsertRequest) (*model.PoolAccount, error) {
@@ -1539,21 +1634,29 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"id":                 group.Id,
-		"name":               group.Name,
-		"platform":           group.Platform,
-		"auth_type":          group.AuthType,
-		"source":             group.Source,
-		"external_group_key": group.ExternalKey,
-		"status":             group.Status,
-		"strategy":           group.Strategy,
-		"models":             group.Models,
-		"group":              group.Group,
-		"model_mapping":      group.ModelMapping,
-		"settings":           group.Settings,
-		"created_time":       group.CreatedTime,
-		"updated_time":       group.UpdatedTime,
-		"stats":              group.Stats,
+		"id":                  group.Id,
+		"name":                group.Name,
+		"platform":            group.Platform,
+		"auth_type":           group.AuthType,
+		"source":              group.Source,
+		"external_group_key":  group.ExternalKey,
+		"status":              group.Status,
+		"strategy":            group.Strategy,
+		"models":              group.Models,
+		"group":               group.Group,
+		"model_mapping":       group.ModelMapping,
+		"settings":            group.Settings,
+		"max_concurrency":     group.GetMaxConcurrency(),
+		"rate_limit_rpm":      group.RateLimitRpm,
+		"daily_request_limit": group.DailyRequestLimit,
+		"daily_quota_limit":   group.DailyQuotaLimit,
+		"daily_request_count": group.DailyRequestCount,
+		"used_quota":          group.UsedQuota,
+		"daily_used_quota":    group.DailyUsedQuota,
+		"daily_reset_time":    group.DailyResetTime,
+		"created_time":        group.CreatedTime,
+		"updated_time":        group.UpdatedTime,
+		"stats":               group.Stats,
 	}
 }
 
@@ -1574,14 +1677,22 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 		return nil, false
 	}
 	return gin.H{
-		"id":                 group.Id,
-		"name":               group.Name,
-		"platform":           group.Platform,
-		"auth_type":          group.AuthType,
-		"source":             group.Source,
-		"external_group_key": group.ExternalKey,
-		"strategy":           group.Strategy,
-		"stats":              group.Stats,
+		"id":                  group.Id,
+		"name":                group.Name,
+		"platform":            group.Platform,
+		"auth_type":           group.AuthType,
+		"source":              group.Source,
+		"external_group_key":  group.ExternalKey,
+		"strategy":            group.Strategy,
+		"max_concurrency":     group.GetMaxConcurrency(),
+		"rate_limit_rpm":      group.RateLimitRpm,
+		"daily_request_limit": group.DailyRequestLimit,
+		"daily_quota_limit":   group.DailyQuotaLimit,
+		"daily_request_count": group.DailyRequestCount,
+		"used_quota":          group.UsedQuota,
+		"daily_used_quota":    group.DailyUsedQuota,
+		"daily_reset_time":    group.DailyResetTime,
+		"stats":               group.Stats,
 	}, true
 }
 

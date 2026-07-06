@@ -19,8 +19,10 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"gorm.io/gorm"
@@ -60,25 +62,75 @@ const (
 	AccountPoolAuthFileFormatNewAPI = "newapi"
 )
 
+var (
+	// ErrAccountPoolGroupDailyRequestLimitExceeded 表示账号池分组当天可调度请求次数已耗尽。
+	ErrAccountPoolGroupDailyRequestLimitExceeded = errors.New("账号池分组今日请求次数已用尽")
+	// ErrAccountPoolGroupDailyQuotaLimitExceeded 表示账号池分组当天可用配额已耗尽。
+	ErrAccountPoolGroupDailyQuotaLimitExceeded = errors.New("账号池分组今日额度已用尽")
+)
+
+// AccountPoolGroupSettings 保存历史版本写入 Settings JSON 的分组级调度设置。
+// 新增组级限制应优先使用 AccountPoolGroup 的明确列；此结构只负责兼容旧数据。
+type AccountPoolGroupSettings struct {
+	MaxConcurrency int `json:"max_concurrency"` // 分组最大并发数，0 表示不限
+}
+
 // AccountPoolGroup 账号池分组模型
 // 定义一组账号的公共配置，包括平台、认证类型、调度策略等
 type AccountPoolGroup struct {
-	Id           int     `json:"id"`                                                                          // 分组 ID
-	Name         string  `json:"name" gorm:"type:varchar(255);index;not null"`                                // 分组名称
-	Platform     string  `json:"platform" gorm:"type:varchar(64);index;not null"`                             // 平台标识（如 openai、claude）
-	AuthType     string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                            // 认证类型
-	Source       string  `json:"source" gorm:"type:varchar(64);default:'native';index"`                       // 分组来源
-	ExternalKey  string  `json:"external_group_key" gorm:"column:external_group_key;type:varchar(255);index"` // 外部分组标识
-	Status       int     `json:"status" gorm:"default:1;index"`                                               // 状态（1=启用，2=禁用）
-	Strategy     string  `json:"strategy" gorm:"type:varchar(64);default:'round_robin'"`                      // 调度策略
-	Models       string  `json:"models" gorm:"type:text"`                                                     // 支持的模型列表（逗号分隔）
-	Group        string  `json:"group" gorm:"column:group;type:varchar(255);index"`                           // 关联的渠道分组
-	ModelMapping *string `json:"model_mapping" gorm:"type:text"`                                              // 模型映射
-	Settings     string  `json:"settings" gorm:"type:text"`                                                   // 额外设置（JSON）
-	CreatedTime  int64   `json:"created_time" gorm:"bigint"`                                                  // 创建时间
-	UpdatedTime  int64   `json:"updated_time" gorm:"bigint"`                                                  // 更新时间
+	Id                int     `json:"id"`                                                                          // 分组 ID
+	Name              string  `json:"name" gorm:"type:varchar(255);index;not null"`                                // 分组名称
+	Platform          string  `json:"platform" gorm:"type:varchar(64);index;not null"`                             // 平台标识（如 openai、claude）
+	AuthType          string  `json:"auth_type" gorm:"type:varchar(64);index;not null"`                            // 认证类型
+	Source            string  `json:"source" gorm:"type:varchar(64);default:'native';index"`                       // 分组来源
+	ExternalKey       string  `json:"external_group_key" gorm:"column:external_group_key;type:varchar(255);index"` // 外部分组标识
+	Status            int     `json:"status" gorm:"default:1;index"`                                               // 状态（1=启用，2=禁用）
+	Strategy          string  `json:"strategy" gorm:"type:varchar(64);default:'round_robin'"`                      // 调度策略
+	Models            string  `json:"models" gorm:"type:text"`                                                     // 支持的模型列表（逗号分隔）
+	Group             string  `json:"group" gorm:"column:group;type:varchar(255);index"`                           // 关联的渠道分组
+	ModelMapping      *string `json:"model_mapping" gorm:"type:text"`                                              // 模型映射
+	Settings          string  `json:"settings" gorm:"type:text"`                                                   // 额外设置（JSON）
+	MaxConcurrency    int     `json:"max_concurrency" gorm:"default:0"`                                            // 分组最大并发数（0=不限）
+	RateLimitRpm      int     `json:"rate_limit_rpm" gorm:"default:0"`                                             // 分组每分钟最大请求数（0=不限）
+	DailyRequestLimit int64   `json:"daily_request_limit" gorm:"bigint;default:0"`                                 // 分组每日最大请求数（0=不限）
+	DailyQuotaLimit   int64   `json:"daily_quota_limit" gorm:"bigint;default:0"`                                   // 分组每日最大配额消耗（0=不限）
+	DailyRequestCount int64   `json:"daily_request_count" gorm:"bigint;default:0"`                                 // 当日已分配请求数
+	UsedQuota         int64   `json:"used_quota" gorm:"bigint;default:0"`                                          // 分组累计消耗配额
+	DailyUsedQuota    int64   `json:"daily_used_quota" gorm:"bigint;default:0"`                                    // 当日已消耗配额
+	DailyResetTime    int64   `json:"daily_reset_time" gorm:"bigint;default:0;index"`                              // 当日统计窗口开始时间
+	CreatedTime       int64   `json:"created_time" gorm:"bigint"`                                                  // 创建时间
+	UpdatedTime       int64   `json:"updated_time" gorm:"bigint"`                                                  // 更新时间
 
 	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
+}
+
+// GetSettings 解析账号池分组级调度设置。
+// Settings 为空或 JSON 非法时返回零值配置，调用方应把零值视为“不限制”，
+// 这样旧数据不会因为设置缺失而影响调度。
+func (group *AccountPoolGroup) GetSettings() AccountPoolGroupSettings {
+	settings := AccountPoolGroupSettings{}
+	if group == nil || strings.TrimSpace(group.Settings) == "" {
+		return settings
+	}
+	if err := common.UnmarshalJsonStr(group.Settings, &settings); err != nil {
+		return AccountPoolGroupSettings{}
+	}
+	if settings.MaxConcurrency < 0 {
+		settings.MaxConcurrency = 0
+	}
+	return settings
+}
+
+// GetMaxConcurrency 返回账号池分组最大并发限制。
+// 返回 0 表示该分组不限制并发；大于 0 时，整个分组内所有账号共享该并发上限。
+func (group *AccountPoolGroup) GetMaxConcurrency() int {
+	if group == nil {
+		return 0
+	}
+	if group.MaxConcurrency > 0 {
+		return group.MaxConcurrency
+	}
+	return group.GetSettings().MaxConcurrency
 }
 
 // PoolAccount 池账号模型
@@ -288,6 +340,30 @@ func (group *AccountPoolGroup) normalize() {
 	group.Strategy = strings.ToLower(strings.TrimSpace(group.Strategy))
 	if group.Strategy == "" {
 		group.Strategy = AccountPoolStrategyRoundRobin
+	}
+	if group.MaxConcurrency < 0 {
+		group.MaxConcurrency = 0
+	}
+	if group.RateLimitRpm < 0 {
+		group.RateLimitRpm = 0
+	}
+	if group.DailyRequestLimit < 0 {
+		group.DailyRequestLimit = 0
+	}
+	if group.DailyQuotaLimit < 0 {
+		group.DailyQuotaLimit = 0
+	}
+	if group.DailyRequestCount < 0 {
+		group.DailyRequestCount = 0
+	}
+	if group.UsedQuota < 0 {
+		group.UsedQuota = 0
+	}
+	if group.DailyUsedQuota < 0 {
+		group.DailyUsedQuota = 0
+	}
+	if group.DailyResetTime < 0 {
+		group.DailyResetTime = 0
 	}
 }
 
@@ -528,6 +604,105 @@ func GetAccountPoolGroupById(groupID int) (*AccountPoolGroup, error) {
 	group := &AccountPoolGroup{}
 	err := DB.Where("id = ?", groupID).First(group).Error
 	return group, err
+}
+
+// AccountPoolDailyWindowStart 返回账号池每日统计窗口的开始时间。
+// 当前实现以服务器本地时区的当天零点为窗口起点，和系统现有“每日任务”语义保持一致。
+func AccountPoolDailyWindowStart(now time.Time) int64 {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	local := now.Local()
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	return start.Unix()
+}
+
+// ResetAccountPoolGroupDailyUsageIfNeeded 在每日窗口切换时重置分组日用量。
+// 使用条件更新避免并发请求重复覆盖新窗口中的计数；返回值表示本次是否实际执行了重置。
+func ResetAccountPoolGroupDailyUsageIfNeeded(groupID int, now time.Time) (bool, error) {
+	if groupID <= 0 {
+		return false, nil
+	}
+	windowStart := AccountPoolDailyWindowStart(now)
+	result := DB.Model(&AccountPoolGroup{}).
+		Where("id = ? AND (daily_reset_time = 0 OR daily_reset_time < ?)", groupID, windowStart).
+		Updates(map[string]interface{}{
+			"daily_request_count": 0,
+			"daily_used_quota":    0,
+			"daily_reset_time":    windowStart,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// ReserveAccountPoolGroupRequest 在请求真正拿到账号前预占一次分组每日请求额度。
+// 这里的“请求数”表示分组当天被调度的次数，用于防止热路径在并发下突破每日请求上限。
+func ReserveAccountPoolGroupRequest(groupID int) error {
+	if groupID <= 0 {
+		return nil
+	}
+	if _, err := ResetAccountPoolGroupDailyUsageIfNeeded(groupID, time.Now()); err != nil {
+		return err
+	}
+	var limit int64
+	if err := DB.Model(&AccountPoolGroup{}).Where("id = ?", groupID).Select("daily_request_limit").Find(&limit).Error; err != nil {
+		return err
+	}
+	if limit <= 0 {
+		return DB.Model(&AccountPoolGroup{}).
+			Where("id = ?", groupID).
+			Update("daily_request_count", gorm.Expr("daily_request_count + ?", 1)).Error
+	}
+	result := DB.Model(&AccountPoolGroup{}).
+		Where("id = ? AND daily_request_count < daily_request_limit", groupID).
+		Update("daily_request_count", gorm.Expr("daily_request_count + ?", 1))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrAccountPoolGroupDailyRequestLimitExceeded
+	}
+	return nil
+}
+
+// CheckAccountPoolGroupDailyQuotaLimit 检查账号池分组每日配额是否仍可调度。
+// daily_quota_limit 为 0 表示不限制；达到上限后，热路径停止选择该分组账号，
+// 防止已耗尽额度的账号池组继续进入上游调用。
+func CheckAccountPoolGroupDailyQuotaLimit(groupID int) error {
+	if groupID <= 0 {
+		return nil
+	}
+	if _, err := ResetAccountPoolGroupDailyUsageIfNeeded(groupID, time.Now()); err != nil {
+		return err
+	}
+	var group AccountPoolGroup
+	if err := DB.Select("id", "daily_quota_limit", "daily_used_quota").Where("id = ?", groupID).First(&group).Error; err != nil {
+		return err
+	}
+	if group.DailyQuotaLimit > 0 && group.DailyUsedQuota >= group.DailyQuotaLimit {
+		return ErrAccountPoolGroupDailyQuotaLimitExceeded
+	}
+	return nil
+}
+
+// AddAccountPoolGroupUsedQuota 累加账号池分组的累计配额和当日配额。
+// 请求数在选号时预占；这里仅记录实际结算出的配额消耗，避免无 usage 的失败请求污染额度。
+func AddAccountPoolGroupUsedQuota(groupID int, quota int64) {
+	if groupID <= 0 || quota <= 0 {
+		return
+	}
+	if _, err := ResetAccountPoolGroupDailyUsageIfNeeded(groupID, time.Now()); err != nil {
+		common.SysLog(fmt.Sprintf("failed to reset account pool group daily usage before quota update: group_id=%d, error=%v", groupID, err))
+	}
+	updates := map[string]interface{}{
+		"used_quota":       gorm.Expr("used_quota + ?", quota),
+		"daily_used_quota": gorm.Expr("daily_used_quota + ?", quota),
+	}
+	if err := DB.Model(&AccountPoolGroup{}).Where("id = ?", groupID).Updates(updates).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to update account pool group used quota: group_id=%d, quota=%d, error=%v", groupID, quota, err))
+	}
 }
 
 // GetAccountPoolGroups 分页查询账号池分组列表

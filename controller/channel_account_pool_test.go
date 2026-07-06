@@ -129,6 +129,41 @@ func TestAccountPoolGroupOptionResponseReturnsNativeGroupsWithAccounts(t *testin
 	require.Equal(t, model.AccountPoolGroupSourceNative, item["source"])
 }
 
+func TestAccountPoolGroupRequestSettingsDropsLegacyMaxConcurrencyWhenExplicit(t *testing.T) {
+	zero := 0
+	settings := accountPoolGroupRequestSettings(accountPoolGroupUpsertRequest{
+		Settings:       `{"max_concurrency":2,"retry_interval":30}`,
+		MaxConcurrency: &zero,
+	})
+
+	require.JSONEq(t, `{"retry_interval":30}`, settings)
+
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:           "native-limit",
+		Platform:       "codex",
+		Settings:       `{"max_concurrency":2}`,
+		MaxConcurrency: &zero,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, group.MaxConcurrency)
+	require.Empty(t, group.Settings)
+	require.Equal(t, 0, group.GetMaxConcurrency())
+}
+
+func TestAccountPoolGroupRequestSettingsKeepsLegacyMaxConcurrencyWhenFieldAbsent(t *testing.T) {
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:     "legacy-limit",
+		Platform: "codex",
+		Settings: `{"max_concurrency":2}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, group.MaxConcurrency)
+	require.JSONEq(t, `{"max_concurrency":2}`, group.Settings)
+	require.Equal(t, 2, group.GetMaxConcurrency())
+}
+
 func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {
 	setupAccountPoolChannelTestDB(t)
 

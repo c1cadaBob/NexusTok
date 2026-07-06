@@ -25,13 +25,28 @@ import (
 var (
 	// ErrNoAvailablePoolAccount 表示账号池中没有可用的账号。
 	ErrNoAvailablePoolAccount = errors.New("账号池无可用账号")
+	// ErrPoolAccountGroupConcurrencyExceeded 表示账号池分组级并发槽位已满。
+	ErrPoolAccountGroupConcurrencyExceeded = errors.New("账号池组并发已满")
+	// ErrPoolAccountGroupRateLimitExceeded 表示账号池分组每分钟请求频率已达到上限。
+	ErrPoolAccountGroupRateLimitExceeded = errors.New("账号池分组请求频率已达到上限")
 
-	poolAccountCursorMu sync.Mutex          // 游标映射表的互斥锁
+	poolAccountCursorMu sync.Mutex            // 游标映射表的互斥锁
 	poolAccountCursors  = map[string]uint64{} // 轮询游标映射表，key 为分组+模型组合
 
 	poolAccountConcurrencyMu sync.Mutex      // 并发计数映射表的互斥锁
-	poolAccountConcurrency   = map[int]int{}  // 账号并发计数映射表，key 为账号 ID
+	poolAccountConcurrency   = map[int]int{} // 账号并发计数映射表，key 为账号 ID
+
+	poolGroupConcurrencyMu sync.Mutex      // 分组并发计数映射表的互斥锁
+	poolGroupConcurrency   = map[int]int{} // 分组并发计数映射表，key 为分组 ID
+
+	poolGroupRateMu       sync.Mutex                       // 分组 RPM 窗口映射表的互斥锁
+	poolGroupRateCounters = map[int]poolGroupRateCounter{} // 分组 RPM 窗口计数，key 为分组 ID
 )
+
+type poolGroupRateCounter struct {
+	window int64
+	count  int
+}
 
 // SelectPoolAccount 从渠道引用的全局账号池组里选择一个可调度账号。
 // 选择流程：
@@ -64,6 +79,20 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	}
 	if group == nil || group.Status != common.ChannelStatusEnabled {
 		return group, nil, ErrNoAvailablePoolAccount
+	}
+	nowTime := time.Now()
+	if reset, err := model.ResetAccountPoolGroupDailyUsageIfNeeded(group.Id, nowTime); err != nil {
+		return group, nil, err
+	} else if reset {
+		group.DailyRequestCount = 0
+		group.DailyUsedQuota = 0
+		group.DailyResetTime = model.AccountPoolDailyWindowStart(nowTime)
+	}
+	if group.DailyRequestLimit > 0 && group.DailyRequestCount >= group.DailyRequestLimit {
+		return group, nil, model.ErrAccountPoolGroupDailyRequestLimitExceeded
+	}
+	if group.DailyQuotaLimit > 0 && group.DailyUsedQuota >= group.DailyQuotaLimit {
+		return group, nil, model.ErrAccountPoolGroupDailyQuotaLimitExceeded
 	}
 
 	usingGroup = resolveChannelAccountUsingGroup(c, usingGroup)
@@ -98,6 +127,19 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	if len(candidates) == 0 {
 		return group, nil, ErrNoAvailablePoolAccount
 	}
+	groupReserved := false
+	if group.GetMaxConcurrency() > 0 {
+		if !reservePoolGroupForRequest(c, group) {
+			return group, nil, ErrPoolAccountGroupConcurrencyExceeded
+		}
+		groupReserved = true
+	}
+	releaseGroupOnFailure := true
+	defer func() {
+		if groupReserved && releaseGroupOnFailure {
+			releaseReservedPoolGroup(c)
+		}
+	}()
 
 	sortPoolAccountCandidates(candidates, group.Strategy)
 	topPriority := candidates[0].Priority
@@ -116,7 +158,12 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 			return group, nil, ErrNoAvailablePoolAccount
 		}
 		if ReservePoolAccount(c, account) {
+			if err := reservePoolGroupUsageLimit(group); err != nil {
+				ReleaseSelectedPoolAccount(c)
+				return group, nil, err
+			}
 			model.TouchPoolAccount(account.Id)
+			releaseGroupOnFailure = false
 			return group, account, nil
 		}
 		ExcludePoolAccountForRequest(c, account.Id)
@@ -268,22 +315,138 @@ func ReservePoolAccount(c *gin.Context, account *model.PoolAccount) bool {
 	return false
 }
 
-// ReleaseSelectedPoolAccount 释放当前请求预留的账号并发槽位。
-// 在请求完成（成功或失败）后调用，恢复账号的可用并发数。
+// reservePoolGroupForRequest 尝试为账号池分组预留一个并发槽位。
+// 分组级限制作用于整个组内所有账号，用于控制一组账号同时被 Relay 占用的总量。
+// 成功预留后会把分组 ID 和保留标记写入请求上下文，确保请求成功、失败或重试时能统一释放。
+func reservePoolGroupForRequest(c *gin.Context, group *model.AccountPoolGroup) bool {
+	if group == nil {
+		return false
+	}
+	maxConcurrency := group.GetMaxConcurrency()
+	if maxConcurrency <= 0 {
+		return true
+	}
+	if c == nil {
+		return false
+	}
+	if reservePoolGroupConcurrency(group.Id, maxConcurrency) {
+		common.SetContextKey(c, constant.ContextKeyPoolGroupReserved, true)
+		common.SetContextKey(c, constant.ContextKeyPoolGroupId, group.Id)
+		return true
+	}
+	return false
+}
+
+// reservePoolGroupUsageLimit 在账号已经预留成功后检查并预占分组级请求额度。
+// 调用时机放在账号级并发预留之后：只有真实拿到账号的请求才会消耗每日请求次数；
+// 如果每日请求数已满，调用方会释放刚预留的账号和分组并发槽位。
+func reservePoolGroupUsageLimit(group *model.AccountPoolGroup) error {
+	if group == nil {
+		return nil
+	}
+	if err := model.CheckAccountPoolGroupDailyQuotaLimit(group.Id); err != nil {
+		return err
+	}
+	if !reservePoolGroupRateLimit(group.Id, group.RateLimitRpm) {
+		return ErrPoolAccountGroupRateLimitExceeded
+	}
+	if err := model.ReserveAccountPoolGroupRequest(group.Id); err != nil {
+		releasePoolGroupRateLimit(group.Id, group.RateLimitRpm)
+		return err
+	}
+	return nil
+}
+
+// reservePoolGroupRateLimit 按自然分钟预占账号池分组的请求频率额度。
+// Redis 可用时使用分钟窗口 key 做原子计数；没有 Redis 时回退到进程内计数器。
+// 该限制只在请求已经拿到具体账号后消耗，避免无可用账号的尝试污染 RPM 统计。
+func reservePoolGroupRateLimit(groupID int, rpm int) bool {
+	if groupID <= 0 || rpm <= 0 {
+		return true
+	}
+	window := time.Now().Unix() / 60
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:group_rate:%d:%d", groupID, window)
+		value, err := common.RDB.Incr(context.Background(), key).Result()
+		if err == nil {
+			if value == 1 {
+				_ = common.RDB.Expire(context.Background(), key, 2*time.Minute).Err()
+			}
+			if value <= int64(rpm) {
+				return true
+			}
+			_ = common.RDB.Decr(context.Background(), key).Err()
+			return false
+		}
+		common.SysLog(fmt.Sprintf("failed to reserve pool group rate limit in redis, fallback to memory: group_id=%d, error=%v", groupID, err))
+	}
+	poolGroupRateMu.Lock()
+	defer poolGroupRateMu.Unlock()
+	counter := poolGroupRateCounters[groupID]
+	if counter.window != window {
+		counter = poolGroupRateCounter{window: window}
+	}
+	if counter.count >= rpm {
+		poolGroupRateCounters[groupID] = counter
+		return false
+	}
+	counter.count++
+	poolGroupRateCounters[groupID] = counter
+	return true
+}
+
+// releasePoolGroupRateLimit 回滚本请求刚预占的账号池分组 RPM 计数。
+// 只有在 RPM 预占已经成功、但后续每日请求额度等检查失败时调用；
+// 正常完成的请求不释放 RPM，因为频率限制统计的是一分钟内实际进入热路径的请求量。
+func releasePoolGroupRateLimit(groupID int, rpm int) {
+	if groupID <= 0 || rpm <= 0 {
+		return
+	}
+	window := time.Now().Unix() / 60
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:group_rate:%d:%d", groupID, window)
+		if _, err := common.RDB.Decr(context.Background(), key).Result(); err == nil {
+			return
+		}
+	}
+	poolGroupRateMu.Lock()
+	defer poolGroupRateMu.Unlock()
+	counter := poolGroupRateCounters[groupID]
+	if counter.window != window || counter.count <= 1 {
+		delete(poolGroupRateCounters, groupID)
+		return
+	}
+	counter.count--
+	poolGroupRateCounters[groupID] = counter
+}
+
+// ReleaseSelectedPoolAccount 释放当前请求预留的账号和分组并发槽位。
+// 在请求完成（成功或失败）后调用，恢复账号和分组的可用并发数。
 func ReleaseSelectedPoolAccount(c *gin.Context) {
 	if c == nil {
 		return
 	}
-	if !common.GetContextKeyBool(c, constant.ContextKeyPoolAccountReserved) {
-		return
-	}
-	accountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId)
-	if accountID <= 0 {
+	if common.GetContextKeyBool(c, constant.ContextKeyPoolAccountReserved) {
+		accountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId)
+		if accountID > 0 {
+			releasePoolAccountConcurrency(accountID)
+		}
 		common.SetContextKey(c, constant.ContextKeyPoolAccountReserved, false)
+	}
+	releaseReservedPoolGroup(c)
+}
+
+// releaseReservedPoolGroup 释放当前请求预留的账号池分组并发槽位。
+// 该函数既用于请求结束释放，也用于“分组已占用但账号级并发全部失败”的回滚路径。
+func releaseReservedPoolGroup(c *gin.Context) {
+	if c == nil || !common.GetContextKeyBool(c, constant.ContextKeyPoolGroupReserved) {
 		return
 	}
-	releasePoolAccountConcurrency(accountID)
-	common.SetContextKey(c, constant.ContextKeyPoolAccountReserved, false)
+	groupID := common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId)
+	if groupID > 0 {
+		releasePoolGroupConcurrency(groupID)
+	}
+	common.SetContextKey(c, constant.ContextKeyPoolGroupReserved, false)
 }
 
 // reservePoolAccountConcurrency 底层并发预留实现。
@@ -336,6 +499,56 @@ func releasePoolAccountConcurrency(accountID int) {
 		return
 	}
 	poolAccountConcurrency[accountID]--
+}
+
+// reservePoolGroupConcurrency 底层分组并发预留实现。
+// Redis 可用时使用带 TTL 的原子计数器；Redis 不可用时回退到进程内计数器。
+func reservePoolGroupConcurrency(groupID int, maxConcurrency int) bool {
+	if groupID <= 0 || maxConcurrency <= 0 {
+		return true
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:group_concurrency:%d", groupID)
+		value, err := common.RDB.Incr(context.Background(), key).Result()
+		if err == nil {
+			if value == 1 {
+				_ = common.RDB.Expire(context.Background(), key, 10*time.Minute).Err()
+			}
+			if value <= int64(maxConcurrency) {
+				return true
+			}
+			_ = common.RDB.Decr(context.Background(), key).Err()
+			return false
+		}
+		common.SysLog(fmt.Sprintf("failed to reserve pool group concurrency in redis, fallback to memory: group_id=%d, error=%v", groupID, err))
+	}
+	poolGroupConcurrencyMu.Lock()
+	defer poolGroupConcurrencyMu.Unlock()
+	if poolGroupConcurrency[groupID] >= maxConcurrency {
+		return false
+	}
+	poolGroupConcurrency[groupID]++
+	return true
+}
+
+// releasePoolGroupConcurrency 释放账号池分组的并发槽位。
+func releasePoolGroupConcurrency(groupID int) {
+	if groupID <= 0 {
+		return
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:group_concurrency:%d", groupID)
+		if _, err := common.RDB.Decr(context.Background(), key).Result(); err == nil {
+			return
+		}
+	}
+	poolGroupConcurrencyMu.Lock()
+	defer poolGroupConcurrencyMu.Unlock()
+	if poolGroupConcurrency[groupID] <= 1 {
+		delete(poolGroupConcurrency, groupID)
+		return
+	}
+	poolGroupConcurrency[groupID]--
 }
 
 // BuildPoolAccountChannelKey 将账号池凭证转换成现有 adaptor 可理解的 channel key。

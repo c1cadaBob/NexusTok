@@ -107,6 +107,10 @@ type GroupFormState = {
   group: string
   modelMapping: string
   settings: string
+  maxConcurrency: string
+  rateLimitRpm: string
+  dailyRequestLimit: string
+  dailyQuotaLimit: string
 }
 
 type AccountFormState = {
@@ -135,6 +139,10 @@ const emptyGroupForm: GroupFormState = {
   group: '',
   modelMapping: '',
   settings: '',
+  maxConcurrency: '0',
+  rateLimitRpm: '0',
+  dailyRequestLimit: '0',
+  dailyQuotaLimit: '0',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -237,6 +245,23 @@ function formatUsageDuration(seconds: number): string {
 
 function formatUsageNumber(value: number): string {
   return new Intl.NumberFormat().format(value || 0)
+}
+
+function formatLimitValue(value: number, t: (key: string) => string): string {
+  return value > 0 ? formatUsageNumber(value) : t('Unlimited')
+}
+
+function groupLimitSummary(
+  group: AccountPoolGroup,
+  t: (key: string) => string
+): string {
+  const parts = [
+    `${t('Max concurrency')}: ${formatLimitValue(group.max_concurrency, t)}`,
+    `${t('RPM')}: ${formatLimitValue(group.rate_limit_rpm, t)}`,
+    `${t('Daily requests')}: ${formatLimitValue(group.daily_request_limit, t)}`,
+    `${t('Daily quota')}: ${formatLimitValue(group.daily_quota_limit, t)}`,
+  ]
+  return parts.join(' · ')
 }
 
 export function AccountPool() {
@@ -391,6 +416,10 @@ export function AccountPool() {
       group: group.group,
       modelMapping: group.model_mapping ?? '',
       settings: group.settings ?? '',
+      maxConcurrency: String(group.max_concurrency || 0),
+      rateLimitRpm: String(group.rate_limit_rpm || 0),
+      dailyRequestLimit: String(group.daily_request_limit || 0),
+      dailyQuotaLimit: String(group.daily_quota_limit || 0),
     })
     setGroupFormOpen(true)
   }
@@ -411,6 +440,10 @@ export function AccountPool() {
         group: groupForm.group.trim(),
         model_mapping: groupForm.modelMapping.trim(),
         settings: groupForm.settings.trim(),
+        max_concurrency: numberOrZero(groupForm.maxConcurrency),
+        rate_limit_rpm: numberOrZero(groupForm.rateLimitRpm),
+        daily_request_limit: numberOrZero(groupForm.dailyRequestLimit),
+        daily_quota_limit: numberOrZero(groupForm.dailyQuotaLimit),
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -880,6 +913,9 @@ export function AccountPool() {
                       {t('Cooldown')}: {group.stats?.cooldown ?? 0}
                     </span>
                   </div>
+                  <div className='text-muted-foreground truncate text-xs'>
+                    {groupLimitSummary(group, t)}
+                  </div>
                 </button>
               )
             })}
@@ -909,7 +945,11 @@ export function AccountPool() {
                 <div className='text-muted-foreground text-xs'>
                   {activeView === 'accounts'
                     ? selectedGroup
-                      ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')}`
+                      ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
+                          selectedGroup.max_concurrency > 0
+                            ? selectedGroup.max_concurrency
+                            : t('Unlimited')
+                        }`
                       : t('Select an account group')
                     : activeView === 'auth-files'
                       ? t(
@@ -1001,7 +1041,7 @@ export function AccountPool() {
             </div>
 
             <TabsContent value='accounts' className='m-0 min-h-0'>
-              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
+              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
                 <div>
                   <div className='text-muted-foreground text-xs'>
                     {t('Total')}
@@ -1025,6 +1065,29 @@ export function AccountPool() {
                     {t('Cooldown')}
                   </div>
                   <div className='font-medium'>{stats?.cooldown ?? 0}</div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Daily requests')}
+                  </div>
+                  <div className='font-medium'>
+                    {formatUsageNumber(selectedGroup?.daily_request_count ?? 0)}
+                    {' / '}
+                    {formatLimitValue(
+                      selectedGroup?.daily_request_limit ?? 0,
+                      t
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className='text-muted-foreground text-xs'>
+                    {t('Daily quota')}
+                  </div>
+                  <div className='font-medium'>
+                    {formatUsageNumber(selectedGroup?.daily_used_quota ?? 0)}
+                    {' / '}
+                    {formatLimitValue(selectedGroup?.daily_quota_limit ?? 0, t)}
+                  </div>
                 </div>
               </div>
 
@@ -1486,6 +1549,58 @@ export function AccountPool() {
                 setGroupForm((current) => ({
                   ...current,
                   modelMapping: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Group max concurrency')}
+              value={groupForm.maxConcurrency}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  maxConcurrency: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Rate limit RPM')}
+              value={groupForm.rateLimitRpm}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  rateLimitRpm: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Daily request limit')}
+              value={groupForm.dailyRequestLimit}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  dailyRequestLimit: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Daily quota limit')}
+              value={groupForm.dailyQuotaLimit}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  dailyQuotaLimit: event.target.value,
                 }))
               }
             />
