@@ -851,11 +851,19 @@ func resolvePoolChannelSetting(channel *model.Channel, group *model.AccountPoolG
 			common.SysLog(fmt.Sprintf("failed to unmarshal account pool group setting: group_id=%d, error=%v", group.Id, err))
 		}
 	}
-	if account == nil || account.Setting == nil || strings.TrimSpace(*account.Setting) == "" {
+	if account == nil {
 		return setting
 	}
-	if err := common.Unmarshal([]byte(*account.Setting), &setting); err != nil {
-		common.SysLog(fmt.Sprintf("failed to unmarshal pool account setting: account_id=%d, error=%v", account.Id, err))
+	if account.Setting != nil && strings.TrimSpace(*account.Setting) != "" {
+		if err := common.Unmarshal([]byte(*account.Setting), &setting); err != nil {
+			common.SysLog(fmt.Sprintf("failed to unmarshal pool account setting: account_id=%d, error=%v", account.Id, err))
+		}
+	}
+	// 账号池账号的 Proxy 是导入文件或登录流程产生的账号级网络配置。
+	// Relay 发送上游请求只读取 ChannelSettings.Proxy，因此必须在这里把独立字段合并进去；
+	// 否则像 Sub2api 导入的账号即使保存了代理，也会在热路径中退回容器直连上游。
+	if proxy := strings.TrimSpace(account.Proxy); proxy != "" {
+		setting.Proxy = proxy
 	}
 	return setting
 }

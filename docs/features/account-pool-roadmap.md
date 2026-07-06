@@ -282,6 +282,26 @@
 2. 已经被旧逻辑标记为不可用的账号，需要重新执行单账号检测或批量检测，检测成功后会清除旧错误和冷却状态。
 3. 账号池组元信息应与组内账号保持一致，例如 Codex 官方 OAuth 账号组不应配置成无关平台或 API key 类型，否则后续筛选和展示可能继续产生歧义。
 
+### 2026-07-06：修复账号池代理注入与 Codex 渠道测试
+
+已复盘“Sub2api 测试成功，但 NexusTok 渠道测试失败”的后续链路：
+
+1. 渠道 `11111` 原先是 OpenAI 渠道，但绑定的是 Sub2api 导入的 Codex 官方 OAuth 账号池；OpenAI 渠道会把账号池生成的 Codex OAuth JSON 当成 OpenAI API key 发送到 `api.openai.com`，上游会返回 `invalid_api_key`。
+2. 账号池账号虽然保存了 `proxy`，但 Relay 热路径只读取 `ChannelSettings.Proxy`；原实现没有把 `PoolAccount.proxy` 合并进去，导致请求先绕过账号代理直连上游并超时。
+3. Codex 渠道的测试端点应走 `/v1/responses`，且 ChatGPT Codex 后端要求 `stream=true`；手动渠道测试如果按 UI 开关传入非流式，会被上游拒绝为 `Stream must be set to true`。
+
+已完成的修复目标：
+
+1. 账号池账号进入 Relay 上下文时，将 `PoolAccount.proxy` 合并到 `ChannelSettings.Proxy`，并保持“账号池账号 > 账号池组 > 渠道”的配置优先级。
+2. Codex 渠道测试在后端强制启用流式模式，避免手动测试时因为 UI 开关关闭而产生误判。
+3. 已新增测试覆盖账号池代理注入和 Codex 渠道测试流式决策。
+
+运行配置注意事项：
+
+1. Codex 官方 OAuth 账号池应绑定 Codex 渠道，不应绑定 OpenAI 渠道。
+2. 账号池组元信息需要与组内账号保持一致，例如本次测试分组应为 `platform=codex`、`auth_type=official_oauth`。
+3. 修正运行配置后，`gpt-5.5` 渠道测试已通过，实际选中账号池账号并返回 `Hi! How can I help you today?`。
+
 ### 2026-07-06：账号组级资源限制闭环
 
 已补齐原生账号池分组级基础资源限制：

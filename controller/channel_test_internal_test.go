@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/pkg/billingexpr"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/types"
@@ -74,4 +76,11 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.Equal(t, "tiered_expr", other["billing_mode"])
 	require.Equal(t, "base", other["matched_tier"])
 	require.NotEmpty(t, other["expr_b64"])
+}
+
+func TestShouldUseStreamForChannelTestForcesCodexStream(t *testing.T) {
+	require.True(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeCodex}, false))
+	require.True(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeCodex}, true))
+	require.False(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeOpenAI}, false))
+	require.True(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeOpenAI}, true))
 }

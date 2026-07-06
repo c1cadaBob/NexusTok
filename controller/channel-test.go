@@ -81,6 +81,16 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	return normalized
 }
 
+// shouldUseStreamForChannelTest 统一决定渠道测试是否启用流式模式。
+// Codex 后端的 responses 接口要求 stream=true；手动测试时前端开关可能关闭，
+// 因此后端在这里强制启用，避免管理员看到“非流式测试失败”的误导性结果。
+func shouldUseStreamForChannelTest(channel *model.Channel, requested bool) bool {
+	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		return true
+	}
+	return requested
+}
+
 func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
@@ -115,6 +125,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 			}
 		}
 	}
+	isStream = shouldUseStreamForChannelTest(channel, isStream)
 
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
 
