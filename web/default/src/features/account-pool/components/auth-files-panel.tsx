@@ -273,6 +273,22 @@ function ruleTitle(
   ].join('\n')
 }
 
+function accountTitle(
+  authFile: AccountPoolAuthFile,
+  fullSummary: string,
+  t: (key: string) => string
+): string {
+  return [
+    `${t('Account')}: ${
+      authFile.pool_account_id > 0 ? `#${authFile.pool_account_id}` : '-'
+    }`,
+    `${t('File')}: ${authFile.name} (#${authFile.id})`,
+    fullSummary,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function authFileFormFromRow(authFile: AccountPoolAuthFile): AuthFileFormState {
   return {
     id: authFile.id,
@@ -546,7 +562,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t('Credential')}</TableHead>
+              <TableHead>{t('Account')}</TableHead>
               <TableHead>{t('Source')}</TableHead>
               <TableHead>{t('Groups')}</TableHead>
               <TableHead>{t('Rules')}</TableHead>
@@ -559,6 +575,8 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
               const fullSummary = formatCredentialSummary(
                 authFile.credential_summary
               )
+              const accountSummary =
+                formatCompactCredentialSummary(authFile.credential_summary)
               const groupText = assignedGroupsText(authFile)
               const sourceSummary = sourceText(authFile)
               const ruleSummary = ruleText(authFile, t)
@@ -566,15 +584,17 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
               return (
                 <TableRow key={authFile.id}>
                   <TableCell className='min-w-[280px] max-w-[440px]'>
-                    <div className='truncate font-medium'>{authFile.name}</div>
+                    <div
+                      className='truncate font-medium'
+                      title={accountTitle(authFile, fullSummary, t)}
+                    >
+                      {accountSummary === '-' ? authFile.name : accountSummary}
+                    </div>
                     <div
                       className='text-muted-foreground truncate text-xs'
-                      title={fullSummary}
+                      title={`${t('File')}: ${authFile.name} (#${authFile.id})`}
                     >
-                      #{authFile.id} ·{' '}
-                      {formatCompactCredentialSummary(
-                        authFile.credential_summary
-                      )}
+                      {t('File')}: {authFile.name} · #{authFile.id}
                     </div>
                   </TableCell>
                   <TableCell className='min-w-[150px] max-w-[190px]'>
@@ -589,15 +609,17 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     </div>
                   </TableCell>
                   <TableCell
-                    className='min-w-[150px] max-w-[220px] text-xs'
-                    title={assignedGroupsTitle(authFile)}
-                  >
-                    <div className='truncate font-medium'>{groupText}</div>
-                    <div className='text-muted-foreground mt-1 truncate'>
-                      {authFile.pool_account_id > 0
+                    className='min-w-[150px] max-w-[220px] truncate text-xs font-medium'
+                    title={[
+                      assignedGroupsTitle(authFile),
+                      authFile.pool_account_id > 0
                         ? `${t('Account')}: #${authFile.pool_account_id}`
-                        : t('Linked account removed')}
-                    </div>
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join('\n')}
+                  >
+                    {groupText}
                   </TableCell>
                   <TableCell
                     className='min-w-[190px] max-w-[260px] truncate text-xs'
