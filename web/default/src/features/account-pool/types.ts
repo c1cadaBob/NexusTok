@@ -252,6 +252,27 @@ export type AccountPoolBatchStatusResult = {
   items: AccountPoolBatchStatusItem[]
 }
 
+export type PoolAccountBatchDeletePayload = {
+  account_ids: number[]
+  reason?: string
+}
+
+export type AccountPoolBatchDeleteItem = {
+  account_id: number
+  account_name?: string
+  success: boolean
+  skipped: boolean
+  message?: string
+}
+
+export type AccountPoolBatchDeleteResult = {
+  total: number
+  deleted: number
+  skipped: number
+  failed: number
+  items: AccountPoolBatchDeleteItem[]
+}
+
 export type AccountPoolAuthFilePayload = {
   name?: string
   content: string

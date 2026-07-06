@@ -23,6 +23,7 @@ import type {
   AccountPoolAuthFileMutationResult,
   AccountPoolAuthFilePayload,
   AccountPoolAuthFileUpdatePayload,
+  AccountPoolBatchDeleteResult,
   AccountPoolBatchCheckResult,
   AccountPoolBatchStatusResult,
   AccountPoolCheckResult,
@@ -37,6 +38,7 @@ import type {
   ApiResponse,
   PageResponse,
   PoolAccount,
+  PoolAccountBatchDeletePayload,
   PoolAccountBatchPayload,
   PoolAccountBatchStatusPayload,
   PoolAccountPayload,
@@ -263,6 +265,17 @@ export async function batchUpdatePoolAccountStatus(
 ): Promise<ApiResponse<AccountPoolBatchStatusResult>> {
   const res = await api.post(
     `/api/account-pool/groups/${groupId}/accounts/status`,
+    data
+  )
+  return res.data
+}
+
+export async function batchDeletePoolAccounts(
+  groupId: number,
+  data: PoolAccountBatchDeletePayload
+): Promise<ApiResponse<AccountPoolBatchDeleteResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/delete`,
     data
   )
   return res.data

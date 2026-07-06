@@ -94,6 +94,8 @@ const (
 	PoolAccountStateActionManualStatus = "manual_status"
 	// PoolAccountStateActionManualClearCooldown 表示管理员手动清理冷却状态。
 	PoolAccountStateActionManualClearCooldown = "manual_clear_cooldown"
+	// PoolAccountStateActionManualDelete 表示管理员手动删除账号。
+	PoolAccountStateActionManualDelete = "manual_delete"
 	// PoolAccountStateActionRuntimeReset 表示管理员重置账号运行时统计和错误状态。
 	PoolAccountStateActionRuntimeReset = "runtime_reset"
 	// PoolAccountStateActionCheckSucceeded 表示人工检测成功并恢复账号健康状态。
@@ -1686,17 +1688,26 @@ func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
 		return
 	}
 	after, err := GetPoolAccountById(record.PoolAccountId)
-	if err != nil || after == nil {
+	before := record.Before
+	if err != nil {
+		after = nil
+	}
+	if after == nil && before == nil {
 		common.SysLog(fmt.Sprintf("failed to load pool account state after update: account_id=%d, error=%v", record.PoolAccountId, err))
 		return
 	}
+	// 删除账号后无法再读取 after 快照；此时使用调用方传入的 before 快照保留账号归属、
+	// 名称和变更前状态，after 字段保持零值，便于审计页面明确识别“账号已被删除”。
+	snapshot := after
+	if snapshot == nil {
+		snapshot = before
+	}
 	groupName := ""
-	if after.PoolGroupId > 0 {
-		if group, groupErr := GetAccountPoolGroupById(after.PoolGroupId); groupErr == nil && group != nil {
+	if snapshot.PoolGroupId > 0 {
+		if group, groupErr := GetAccountPoolGroupById(snapshot.PoolGroupId); groupErr == nil && group != nil {
 			groupName = group.Name
 		}
 	}
-	before := record.Before
 	action := strings.TrimSpace(record.Action)
 	if action == "" {
 		action = "unknown"
@@ -1707,22 +1718,24 @@ func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
 	}
 	log := &PoolAccountStateLog{
 		CreatedAt:           common.GetTimestamp(),
-		PoolGroupId:         after.PoolGroupId,
+		PoolGroupId:         snapshot.PoolGroupId,
 		PoolGroupName:       groupName,
-		PoolAccountId:       after.Id,
-		PoolAccountName:     after.Name,
-		PoolAccountAuthType: after.AuthType,
+		PoolAccountId:       snapshot.Id,
+		PoolAccountName:     snapshot.Name,
+		PoolAccountAuthType: snapshot.AuthType,
 		Action:              action,
 		Source:              source,
 		Actor:               strings.TrimSpace(record.Actor),
 		Reason:              strings.TrimSpace(record.Reason),
 		RequestId:           strings.TrimSpace(record.RequestId),
-		AfterStatus:         after.Status,
-		AfterSchedulable:    after.Schedulable,
-		AfterUnavailable:    after.Unavailable,
-		AfterNextRetryTime:  after.NextRetryTime,
-		AfterStatusMessage:  after.StatusMessage,
-		AfterDisabledReason: after.DisabledReason,
+	}
+	if after != nil {
+		log.AfterStatus = after.Status
+		log.AfterSchedulable = after.Schedulable
+		log.AfterUnavailable = after.Unavailable
+		log.AfterNextRetryTime = after.NextRetryTime
+		log.AfterStatusMessage = after.StatusMessage
+		log.AfterDisabledReason = after.DisabledReason
 	}
 	if before != nil {
 		log.BeforeStatus = before.Status

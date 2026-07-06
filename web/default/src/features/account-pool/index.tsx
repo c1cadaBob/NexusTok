@@ -70,6 +70,7 @@ import { formatTimestamp } from '@/features/channels/lib'
 import {
   accountPoolQueryKeys,
   batchCreatePoolAccounts,
+  batchDeletePoolAccounts,
   batchUpdatePoolAccountStatus,
   checkPoolAccount,
   checkPoolAccountsInGroup,
@@ -893,6 +894,47 @@ export function AccountPool() {
     }
   }
 
+  const batchDeleteSelectedAccounts = async () => {
+    if (!selectedGroupId) return
+    if (selectedAccountIds.length === 0) {
+      toast.info(t('No accounts selected'))
+      return
+    }
+    if (
+      !window.confirm(t('Are you sure you want to delete selected accounts?'))
+    ) {
+      return
+    }
+    setActionLoading(true)
+    try {
+      const response = await batchDeletePoolAccounts(selectedGroupId, {
+        account_ids: [...selectedAccountIds],
+      })
+      if (!response.success) throw new Error(response.message)
+      const message = t(
+        'Deleted {{deleted}} account(s), skipped {{skipped}}, failed {{failed}}',
+        {
+          deleted: response.data?.deleted ?? 0,
+          skipped: response.data?.skipped ?? 0,
+          failed: response.data?.failed ?? 0,
+        }
+      )
+      if ((response.data?.failed ?? 0) > 0) {
+        toast.warning(message)
+      } else {
+        toast.success(message)
+      }
+      setSelectedAccountIds([])
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const setAccountEnabled = async (account: PoolAccount, enabled: boolean) => {
     setActionLoading(true)
     try {
@@ -1482,6 +1524,17 @@ export function AccountPool() {
                     >
                       <RefreshCw className='mr-2 h-4 w-4' />
                       {t('Clear cooldown')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={
+                        actionLoading || selectedAccountIds.length === 0
+                      }
+                      onClick={() => void batchDeleteSelectedAccounts()}
+                    >
+                      <Trash2 className='mr-2 h-4 w-4' />
+                      {t('Delete selected accounts')}
                     </Button>
                   </div>
                 </div>

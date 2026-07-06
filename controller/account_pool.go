@@ -139,6 +139,31 @@ type poolAccountBatchStatusResult struct {
 	Items   []*poolAccountBatchStatusItem `json:"items"`
 }
 
+// poolAccountBatchDeleteRequest 池账号批量删除请求。
+// account_ids 必须来自当前分组；接口逐个校验归属，避免跨组误删。
+type poolAccountBatchDeleteRequest struct {
+	AccountIDs []int  `json:"account_ids"` // 待删除的账号 ID 列表
+	Reason     string `json:"reason"`      // 删除原因，用于状态审计日志
+}
+
+// poolAccountBatchDeleteItem 描述批量删除操作中单个账号的结果。
+type poolAccountBatchDeleteItem struct {
+	AccountID   int    `json:"account_id"`
+	AccountName string `json:"account_name,omitempty"`
+	Success     bool   `json:"success"`
+	Skipped     bool   `json:"skipped"`
+	Message     string `json:"message,omitempty"`
+}
+
+// poolAccountBatchDeleteResult 汇总批量删除操作结果。
+type poolAccountBatchDeleteResult struct {
+	Total   int                           `json:"total"`
+	Deleted int                           `json:"deleted"`
+	Skipped int                           `json:"skipped"`
+	Failed  int                           `json:"failed"`
+	Items   []*poolAccountBatchDeleteItem `json:"items"`
+}
+
 // poolAccountCheckRequest 池账号人工检测请求。
 // account_ids 用于批量检测指定账号；为空时按 limit 检测当前分组前 N 个账号。
 type poolAccountCheckRequest struct {
@@ -217,7 +242,7 @@ type accountPoolProviderLoginRequest struct {
 	Metadata     map[string]string `json:"metadata"`      // 元数据
 }
 
-const poolAccountBatchStatusLimit = 100
+const poolAccountBatchOperationLimit = 100
 
 func ListAccountPoolGroups(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
@@ -477,10 +502,16 @@ func DeletePoolAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before, err := model.GetPoolAccountById(accountID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if err := model.DB.Where("id = ?", accountID).Delete(&model.PoolAccount{}).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionManualDelete, "管理员删除账号", before)
 	common.ApiSuccess(c, nil)
 }
 
@@ -536,13 +567,13 @@ func BatchUpdatePoolAccountStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	accountIDs := normalizePoolAccountBatchStatusIDs(req.AccountIDs)
+	accountIDs := normalizePoolAccountBatchOperationIDs(req.AccountIDs)
 	if len(accountIDs) == 0 {
 		common.ApiErrorMsg(c, "account_ids is required")
 		return
 	}
-	if len(accountIDs) > poolAccountBatchStatusLimit {
-		common.ApiErrorMsg(c, fmt.Sprintf("account_ids cannot exceed %d", poolAccountBatchStatusLimit))
+	if len(accountIDs) > poolAccountBatchOperationLimit {
+		common.ApiErrorMsg(c, fmt.Sprintf("account_ids cannot exceed %d", poolAccountBatchOperationLimit))
 		return
 	}
 	if req.Status <= 0 && !req.ClearCooldown {
@@ -550,12 +581,44 @@ func BatchUpdatePoolAccountStatus(c *gin.Context) {
 		return
 	}
 
-	accounts, err := loadPoolAccountsForBatchStatus(groupID, accountIDs)
+	accounts, err := loadPoolAccountsForBatchOperation(groupID, accountIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	result := applyPoolAccountBatchStatus(c, accounts, accountIDs, req)
+	common.ApiSuccess(c, result)
+}
+
+func BatchDeletePoolAccounts(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	if !ensureAccountPoolGroupExists(c, groupID) {
+		return
+	}
+	var req poolAccountBatchDeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	accountIDs := normalizePoolAccountBatchOperationIDs(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		common.ApiErrorMsg(c, "account_ids is required")
+		return
+	}
+	if len(accountIDs) > poolAccountBatchOperationLimit {
+		common.ApiErrorMsg(c, fmt.Sprintf("account_ids cannot exceed %d", poolAccountBatchOperationLimit))
+		return
+	}
+
+	accounts, err := loadPoolAccountsForBatchOperation(groupID, accountIDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := applyPoolAccountBatchDelete(c, groupID, accounts, accountIDs, req)
 	common.ApiSuccess(c, result)
 }
 
@@ -1156,7 +1219,7 @@ func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRe
 	return true
 }
 
-func normalizePoolAccountBatchStatusIDs(accountIDs []int) []int {
+func normalizePoolAccountBatchOperationIDs(accountIDs []int) []int {
 	if len(accountIDs) == 0 {
 		return nil
 	}
@@ -1172,7 +1235,7 @@ func normalizePoolAccountBatchStatusIDs(accountIDs []int) []int {
 	return result
 }
 
-func loadPoolAccountsForBatchStatus(groupID int, accountIDs []int) (map[int]*model.PoolAccount, error) {
+func loadPoolAccountsForBatchOperation(groupID int, accountIDs []int) (map[int]*model.PoolAccount, error) {
 	accounts := []*model.PoolAccount{}
 	if err := model.DB.
 		Where("pool_group_id = ? AND id IN ?", groupID, accountIDs).
@@ -1188,6 +1251,56 @@ func loadPoolAccountsForBatchStatus(groupID int, accountIDs []int) (map[int]*mod
 		result[account.Id] = account
 	}
 	return result, nil
+}
+
+func applyPoolAccountBatchDelete(c *gin.Context, groupID int, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchDeleteRequest) *poolAccountBatchDeleteResult {
+	result := &poolAccountBatchDeleteResult{
+		Total: len(accountIDs),
+		Items: make([]*poolAccountBatchDeleteItem, 0, len(accountIDs)),
+	}
+	for _, accountID := range accountIDs {
+		account := accounts[accountID]
+		if account == nil {
+			result.Skipped++
+			result.Items = append(result.Items, &poolAccountBatchDeleteItem{
+				AccountID: accountID,
+				Skipped:   true,
+				Message:   "account not found in group",
+			})
+			continue
+		}
+		item := applySinglePoolAccountBatchDelete(c, groupID, account, req)
+		result.Items = append(result.Items, item)
+		if item.Success {
+			result.Deleted++
+		} else if item.Skipped {
+			result.Skipped++
+		} else {
+			result.Failed++
+		}
+	}
+	return result
+}
+
+func applySinglePoolAccountBatchDelete(c *gin.Context, groupID int, account *model.PoolAccount, req poolAccountBatchDeleteRequest) *poolAccountBatchDeleteItem {
+	item := &poolAccountBatchDeleteItem{
+		AccountID:   account.Id,
+		AccountName: account.Name,
+	}
+	before := *account
+	result := model.DB.Where("id = ? AND pool_group_id = ?", account.Id, groupID).Delete(&model.PoolAccount{})
+	if result.Error != nil {
+		item.Message = result.Error.Error()
+		return item
+	}
+	if result.RowsAffected == 0 {
+		item.Skipped = true
+		item.Message = "account not found in group"
+		return item
+	}
+	recordPoolAccountStateFromController(c, account.Id, model.PoolAccountStateActionManualDelete, poolAccountBatchDeleteReason(req), &before)
+	item.Success = true
+	return item
 }
 
 func applyPoolAccountBatchStatus(c *gin.Context, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchStatusRequest) *poolAccountBatchStatusResult {
@@ -1247,6 +1360,14 @@ func applySinglePoolAccountBatchStatus(c *gin.Context, account *model.PoolAccoun
 	recordPoolAccountStateFromController(c, account.Id, action, reason, &before)
 	item.Success = true
 	return item
+}
+
+func poolAccountBatchDeleteReason(req poolAccountBatchDeleteRequest) string {
+	reason := strings.TrimSpace(req.Reason)
+	if reason != "" {
+		return reason
+	}
+	return "批量删除账号"
 }
 
 func poolAccountBatchStatusReason(req poolAccountBatchStatusRequest) string {
