@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  AlertTriangle,
   Loader2,
   Pencil,
   Plus,
@@ -270,6 +271,57 @@ function groupLimitSummary(
   return parts.join(' · ')
 }
 
+function groupDailyLimitTitle(
+  group: AccountPoolGroup | undefined,
+  t: (key: string) => string
+): string {
+  if (!group?.daily_limit_state?.limited) return ''
+  if (group.daily_limit_state.limit_type === 'daily_request') {
+    return t('Daily request limit reached')
+  }
+  if (group.daily_limit_state.limit_type === 'daily_quota') {
+    return t('Daily quota limit reached')
+  }
+  return t('Daily limit reached')
+}
+
+function groupDailyLimitSummary(
+  group: AccountPoolGroup | undefined,
+  t: (key: string) => string
+): string {
+  const title = groupDailyLimitTitle(group, t)
+  if (!title) return ''
+  const nextReset = group?.daily_limit_state?.next_reset_time
+  return nextReset
+    ? `${title} · ${t('Next daily reset')}: ${formatTimestamp(nextReset)}`
+    : title
+}
+
+function groupStatusVariant(
+  group: AccountPoolGroup
+): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (group.status !== CHANNEL_STATUS.ENABLED) {
+    return 'danger'
+  }
+  if (group.daily_limit_state?.limited) {
+    return 'warning'
+  }
+  return 'success'
+}
+
+function groupStatusLabel(
+  group: AccountPoolGroup,
+  t: (key: string) => string
+): string {
+  if (group.status !== CHANNEL_STATUS.ENABLED) {
+    return t('Disabled')
+  }
+  if (group.daily_limit_state?.limited) {
+    return t('Daily limit reached')
+  }
+  return t('Enabled')
+}
+
 function accountLimitSummary(
   account: PoolAccount,
   t: (key: string) => string
@@ -357,6 +409,7 @@ export function AccountPool() {
   const accounts = accountsQuery.data?.data?.accounts.items ?? []
   const accountPage = accountsQuery.data?.data?.accounts
   const stats = accountsQuery.data?.data?.stats ?? selectedGroup?.stats
+  const selectedGroupDailyLimitTitle = groupDailyLimitTitle(selectedGroup, t)
   const accountTotal = accountPage?.total ?? stats?.total ?? accounts.length
   const totalPages = Math.max(
     1,
@@ -918,16 +971,8 @@ export function AccountPool() {
                       </div>
                     </div>
                     <StatusBadge
-                      label={
-                        group.status === CHANNEL_STATUS.ENABLED
-                          ? t('Enabled')
-                          : t('Disabled')
-                      }
-                      variant={
-                        group.status === CHANNEL_STATUS.ENABLED
-                          ? 'success'
-                          : 'danger'
-                      }
+                      label={groupStatusLabel(group, t)}
+                      variant={groupStatusVariant(group)}
                       copyable={false}
                     />
                   </div>
@@ -942,6 +987,14 @@ export function AccountPool() {
                       {t('Cooldown')}: {group.stats?.cooldown ?? 0}
                     </span>
                   </div>
+                  {group.daily_limit_state?.limited ? (
+                    <div className='text-warning flex items-center gap-1 text-xs'>
+                      <AlertTriangle className='h-3.5 w-3.5 shrink-0' />
+                      <span className='truncate'>
+                        {groupDailyLimitSummary(group, t)}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className='text-muted-foreground truncate text-xs'>
                     {groupLimitSummary(group, t)}
                   </div>
@@ -1070,6 +1123,30 @@ export function AccountPool() {
             </div>
 
             <TabsContent value='accounts' className='m-0 min-h-0'>
+              {selectedGroupDailyLimitTitle ? (
+                <div className='border-warning/30 bg-warning/10 text-warning flex gap-2 border-b px-3 py-2 text-sm'>
+                  <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0' />
+                  <div className='min-w-0'>
+                    <div className='font-medium'>
+                      {selectedGroupDailyLimitTitle}
+                    </div>
+                    <div className='text-xs'>
+                      {t(
+                        'Relay will stop selecting accounts from this group until the next daily reset.'
+                      )}
+                      {selectedGroup?.daily_limit_state?.next_reset_time ? (
+                        <>
+                          {' '}
+                          {t('Next daily reset')}:&nbsp;
+                          {formatTimestamp(
+                            selectedGroup.daily_limit_state.next_reset_time
+                          )}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
                 <div>
                   <div className='text-muted-foreground text-xs'>

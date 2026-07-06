@@ -9,6 +9,7 @@ package controller
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
@@ -127,6 +128,60 @@ func TestAccountPoolGroupOptionResponseReturnsNativeGroupsWithAccounts(t *testin
 	require.True(t, ok)
 	require.Equal(t, activeNativeGroup.Id, item["id"])
 	require.Equal(t, model.AccountPoolGroupSourceNative, item["source"])
+}
+
+func TestAccountPoolGroupResponseIncludesDailyLimitState(t *testing.T) {
+	now := time.Now()
+	group := &model.AccountPoolGroup{
+		Id:                8,
+		Name:              "daily-request-limited",
+		Platform:          "codex",
+		AuthType:          model.AccountPoolAuthTypeAPIKey,
+		Source:            model.AccountPoolGroupSourceNative,
+		Status:            common.ChannelStatusEnabled,
+		DailyRequestLimit: 2,
+		DailyRequestCount: 2,
+		DailyQuotaLimit:   10,
+		DailyUsedQuota:    3,
+		DailyResetTime:    model.AccountPoolDailyWindowStart(now),
+	}
+
+	item := accountPoolGroupResponse(group)
+	state, ok := item["daily_limit_state"].(model.AccountPoolDailyLimitState)
+	require.True(t, ok)
+	require.True(t, state.Limited)
+	require.Equal(t, model.AccountPoolDailyLimitTypeRequest, state.LimitType)
+	require.Equal(t, model.AccountPoolGroupDailyRequestLimitStatusMessage, state.Reason)
+	require.Greater(t, state.NextResetTime, state.WindowStart)
+	require.EqualValues(t, 2, item["daily_request_count"])
+	require.EqualValues(t, 3, item["daily_used_quota"])
+}
+
+func TestAccountPoolGroupResponseUsesCurrentDailyWindowForStaleUsage(t *testing.T) {
+	now := time.Now()
+	group := &model.AccountPoolGroup{
+		Id:                9,
+		Name:              "stale-daily-limit",
+		Platform:          "codex",
+		AuthType:          model.AccountPoolAuthTypeAPIKey,
+		Source:            model.AccountPoolGroupSourceNative,
+		Status:            common.ChannelStatusEnabled,
+		DailyRequestLimit: 1,
+		DailyRequestCount: 1,
+		DailyQuotaLimit:   10,
+		DailyUsedQuota:    10,
+		DailyResetTime:    model.AccountPoolDailyWindowStart(now.Add(-24 * time.Hour)),
+	}
+
+	item := accountPoolGroupResponse(group)
+	state, ok := item["daily_limit_state"].(model.AccountPoolDailyLimitState)
+	require.True(t, ok)
+	require.False(t, state.Limited)
+	require.Empty(t, state.LimitType)
+	require.Equal(t, model.AccountPoolDailyWindowStart(now), state.WindowStart)
+	require.EqualValues(t, 0, item["daily_request_count"])
+	require.EqualValues(t, 0, item["daily_used_quota"])
+	require.EqualValues(t, model.AccountPoolDailyWindowStart(now), item["daily_reset_time"])
 }
 
 func TestAccountPoolGroupRequestSettingsDropsLegacyMaxConcurrencyWhenExplicit(t *testing.T) {

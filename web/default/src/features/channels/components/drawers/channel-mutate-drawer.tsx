@@ -458,11 +458,22 @@ export function ChannelMutateDrawer({
 
   const accountPoolGroupOptions = useMemo(
     () =>
-      accountPoolGroupsData?.data?.map((group) => ({
-        value: String(group.id),
-        label: `${group.name} · ${group.platform}/${group.auth_type}`,
-      })) ?? [],
-    [accountPoolGroupsData]
+      accountPoolGroupsData?.data?.map((group) => {
+        const dailyLimitLabel =
+          group.daily_limit_state?.limit_type === 'daily_request'
+            ? t('Daily request limit reached')
+            : group.daily_limit_state?.limit_type === 'daily_quota'
+              ? t('Daily quota limit reached')
+              : t('Daily limit reached')
+        const dailyLimitSuffix = group.daily_limit_state?.limited
+          ? ` · ${dailyLimitLabel}`
+          : ''
+        return {
+          value: String(group.id),
+          label: `${group.name} · ${group.platform}/${group.auth_type}${dailyLimitSuffix}`,
+        }
+      }) ?? [],
+    [accountPoolGroupsData, t]
   )
 
   // 将用户分组转换成多选组件选项，同时保留当前渠道已有但接口暂未返回的历史分组。

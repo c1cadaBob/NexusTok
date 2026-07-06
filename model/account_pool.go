@@ -61,6 +61,14 @@ const (
 	// AccountPoolAuthFileFormatNewAPI NewAPI 导出的 JSON 包装格式
 	AccountPoolAuthFileFormatNewAPI = "newapi"
 
+	// AccountPoolDailyLimitTypeRequest 表示每日请求次数限制。
+	AccountPoolDailyLimitTypeRequest = "daily_request"
+	// AccountPoolDailyLimitTypeQuota 表示每日额度限制。
+	AccountPoolDailyLimitTypeQuota = "daily_quota"
+	// AccountPoolGroupDailyRequestLimitStatusMessage 表示分组因当日请求次数耗尽而停止调度。
+	AccountPoolGroupDailyRequestLimitStatusMessage = "账号池分组今日请求次数已用尽，次日自动恢复"
+	// AccountPoolGroupDailyQuotaLimitStatusMessage 表示分组因当日额度耗尽而停止调度。
+	AccountPoolGroupDailyQuotaLimitStatusMessage = "账号池分组今日额度已用尽，次日自动恢复"
 	// PoolAccountDailyRequestLimitStatusMessage 表示账号因当日请求次数耗尽进入临时冷却。
 	// 该状态由账号池每日窗口自动恢复逻辑清除，不能作为人工禁用原因长期保存。
 	PoolAccountDailyRequestLimitStatusMessage = "账号池账号今日请求次数已用尽，次日自动恢复"
@@ -663,6 +671,57 @@ func AccountPoolDailyWindowStart(now time.Time) int64 {
 func AccountPoolNextDailyWindowStart(now time.Time) int64 {
 	windowStart := AccountPoolDailyWindowStart(now)
 	return time.Unix(windowStart, 0).Local().AddDate(0, 0, 1).Unix()
+}
+
+// AccountPoolDailyLimitState 描述账号池每日限制在当前窗口内的状态。
+// 该结构用于管理接口和前端展示，避免前端根据中文错误文本推断限制类型。
+type AccountPoolDailyLimitState struct {
+	Limited       bool   `json:"limited"`                   // 当前每日窗口是否已经达到限制
+	LimitType     string `json:"limit_type,omitempty"`      // daily_request 或 daily_quota
+	Reason        string `json:"reason,omitempty"`          // 管理员可直接阅读的状态原因
+	WindowStart   int64  `json:"window_start"`              // 当前每日统计窗口开始时间
+	NextResetTime int64  `json:"next_reset_time,omitempty"` // 下一次每日窗口开始时间
+}
+
+// AccountPoolGroupEffectiveDailyUsage 返回分组在当前每日窗口内用于展示和判断的有效用量。
+// 如果数据库中仍保存上一窗口的计数，这里只在内存中归零，避免列表页展示过期的“已耗尽”状态；
+// 热路径仍会通过 ResetAccountPoolGroupDailyUsageIfNeeded 执行真实重置，保证调度并发安全。
+func AccountPoolGroupEffectiveDailyUsage(group *AccountPoolGroup, now time.Time) (int64, int64, int64) {
+	if group == nil {
+		return 0, 0, AccountPoolDailyWindowStart(now)
+	}
+	windowStart := AccountPoolDailyWindowStart(now)
+	if group.DailyResetTime == 0 || group.DailyResetTime < windowStart {
+		return 0, 0, windowStart
+	}
+	return group.DailyRequestCount, group.DailyUsedQuota, group.DailyResetTime
+}
+
+// AccountPoolGroupDailyLimitState 返回账号池分组的每日请求/额度限制状态。
+// 每日请求限制优先于每日额度限制，与 SelectPoolAccount 进入候选筛选前的判断顺序保持一致。
+func AccountPoolGroupDailyLimitState(group *AccountPoolGroup, now time.Time) AccountPoolDailyLimitState {
+	windowStart := AccountPoolDailyWindowStart(now)
+	state := AccountPoolDailyLimitState{
+		WindowStart:   windowStart,
+		NextResetTime: AccountPoolNextDailyWindowStart(now),
+	}
+	if group == nil {
+		return state
+	}
+	dailyRequestCount, dailyUsedQuota, effectiveResetTime := AccountPoolGroupEffectiveDailyUsage(group, now)
+	state.WindowStart = effectiveResetTime
+	if group.DailyRequestLimit > 0 && dailyRequestCount >= group.DailyRequestLimit {
+		state.Limited = true
+		state.LimitType = AccountPoolDailyLimitTypeRequest
+		state.Reason = AccountPoolGroupDailyRequestLimitStatusMessage
+		return state
+	}
+	if group.DailyQuotaLimit > 0 && dailyUsedQuota >= group.DailyQuotaLimit {
+		state.Limited = true
+		state.LimitType = AccountPoolDailyLimitTypeQuota
+		state.Reason = AccountPoolGroupDailyQuotaLimitStatusMessage
+	}
+	return state
 }
 
 // ResetAccountPoolGroupDailyUsageIfNeeded 在每日窗口切换时重置分组日用量。

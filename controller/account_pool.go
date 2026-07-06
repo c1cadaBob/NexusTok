@@ -1698,6 +1698,9 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 	if group == nil {
 		return gin.H{}
 	}
+	now := time.Now()
+	dailyRequestCount, dailyUsedQuota, dailyResetTime := model.AccountPoolGroupEffectiveDailyUsage(group, now)
+	dailyLimitState := model.AccountPoolGroupDailyLimitState(group, now)
 	return gin.H{
 		"id":                  group.Id,
 		"name":                group.Name,
@@ -1715,10 +1718,11 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		"rate_limit_rpm":      group.RateLimitRpm,
 		"daily_request_limit": group.DailyRequestLimit,
 		"daily_quota_limit":   group.DailyQuotaLimit,
-		"daily_request_count": group.DailyRequestCount,
+		"daily_request_count": dailyRequestCount,
 		"used_quota":          group.UsedQuota,
-		"daily_used_quota":    group.DailyUsedQuota,
-		"daily_reset_time":    group.DailyResetTime,
+		"daily_used_quota":    dailyUsedQuota,
+		"daily_reset_time":    dailyResetTime,
+		"daily_limit_state":   dailyLimitState,
 		"created_time":        group.CreatedTime,
 		"updated_time":        group.UpdatedTime,
 		"stats":               group.Stats,
@@ -1741,6 +1745,9 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 	if stats == nil || stats["total"] <= 0 {
 		return nil, false
 	}
+	now := time.Now()
+	dailyRequestCount, dailyUsedQuota, dailyResetTime := model.AccountPoolGroupEffectiveDailyUsage(group, now)
+	dailyLimitState := model.AccountPoolGroupDailyLimitState(group, now)
 	return gin.H{
 		"id":                  group.Id,
 		"name":                group.Name,
@@ -1753,10 +1760,11 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 		"rate_limit_rpm":      group.RateLimitRpm,
 		"daily_request_limit": group.DailyRequestLimit,
 		"daily_quota_limit":   group.DailyQuotaLimit,
-		"daily_request_count": group.DailyRequestCount,
+		"daily_request_count": dailyRequestCount,
 		"used_quota":          group.UsedQuota,
-		"daily_used_quota":    group.DailyUsedQuota,
-		"daily_reset_time":    group.DailyResetTime,
+		"daily_used_quota":    dailyUsedQuota,
+		"daily_reset_time":    dailyResetTime,
+		"daily_limit_state":   dailyLimitState,
 		"stats":               group.Stats,
 	}, true
 }

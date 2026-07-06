@@ -24,6 +24,14 @@ export type AccountPoolStats = {
   unavailable?: number
 }
 
+export type AccountPoolDailyLimitState = {
+  limited: boolean
+  limit_type?: 'daily_request' | 'daily_quota' | string
+  reason?: string
+  window_start: number
+  next_reset_time?: number
+}
+
 export type AccountPoolGroup = {
   id: number
   name: string
@@ -45,6 +53,7 @@ export type AccountPoolGroup = {
   used_quota: number
   daily_used_quota: number
   daily_reset_time: number
+  daily_limit_state?: AccountPoolDailyLimitState
   created_time: number
   updated_time: number
   stats?: AccountPoolStats
@@ -281,6 +290,7 @@ export type AccountPoolGroupOption = {
   source?: 'native' | 'cliproxyapi' | string
   external_group_key?: string
   strategy: string
+  daily_limit_state?: AccountPoolDailyLimitState
   stats?: AccountPoolStats
 }
 
