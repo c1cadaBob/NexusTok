@@ -113,6 +113,7 @@ type GroupFormState = {
   rateLimitRpm: string
   dailyRequestLimit: string
   dailyQuotaLimit: string
+  dailyLimitAction: string
 }
 
 type AccountFormState = {
@@ -129,6 +130,7 @@ type AccountFormState = {
   rateLimitRpm: string
   dailyRequestLimit: string
   dailyQuotaLimit: string
+  dailyLimitAction: string
   proxy: string
 }
 
@@ -148,6 +150,7 @@ const emptyGroupForm: GroupFormState = {
   rateLimitRpm: '0',
   dailyRequestLimit: '0',
   dailyQuotaLimit: '0',
+  dailyLimitAction: 'cooldown',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -163,6 +166,7 @@ const emptyAccountForm: AccountFormState = {
   rateLimitRpm: '0',
   dailyRequestLimit: '0',
   dailyQuotaLimit: '0',
+  dailyLimitAction: 'inherit',
   proxy: '',
 }
 
@@ -175,6 +179,8 @@ const authTypeOptions = [
 ]
 
 const strategyOptions = ['round_robin', 'weighted', 'fill_first', 'least_used']
+const dailyLimitActionOptions = ['cooldown', 'disable']
+const accountDailyLimitActionOptions = ['inherit', ...dailyLimitActionOptions]
 
 function numberOrZero(value: string): number {
   const parsed = Number(value)
@@ -259,6 +265,19 @@ function formatLimitValue(value: number, t: (key: string) => string): string {
   return value > 0 ? formatUsageNumber(value) : t('Unlimited')
 }
 
+function dailyLimitActionLabel(
+  action: string | undefined,
+  t: (key: string) => string
+): string {
+  if (action === 'disable') {
+    return t('Auto disable')
+  }
+  if (action === 'inherit' || !action) {
+    return t('Inherit group')
+  }
+  return t('Cooldown until reset')
+}
+
 function groupLimitSummary(
   group: AccountPoolGroup,
   t: (key: string) => string
@@ -268,6 +287,10 @@ function groupLimitSummary(
     `${t('RPM')}: ${formatLimitValue(group.rate_limit_rpm, t)}`,
     `${t('Daily requests')}: ${formatLimitValue(group.daily_request_limit, t)}`,
     `${t('Daily quota')}: ${formatLimitValue(group.daily_quota_limit, t)}`,
+    `${t('Limit action')}: ${dailyLimitActionLabel(
+      group.daily_limit_action || 'cooldown',
+      t
+    )}`,
   ]
   return parts.join(' · ')
 }
@@ -336,6 +359,10 @@ function accountLimitSummary(
     `${t('Daily quota')}: ${formatUsageNumber(
       account.daily_used_quota
     )} / ${formatLimitValue(account.daily_quota_limit, t)}`,
+    `${t('Limit action')}: ${dailyLimitActionLabel(
+      account.daily_limit_action || 'inherit',
+      t
+    )}`,
   ]
   return parts.join(' · ')
 }
@@ -368,6 +395,7 @@ function stateLogActionLabel(
     relay_error: t('Relay error'),
     daily_limit_cooling: t('Daily limit cooling'),
     daily_limit_recovered: t('Daily limit recovered'),
+    daily_limit_disabled: t('Daily limit auto disabled'),
     refresh_succeeded: t('Credential refresh succeeded'),
     refresh_failed: t('Credential refresh failed'),
   }
@@ -559,6 +587,7 @@ export function AccountPool() {
       rateLimitRpm: String(group.rate_limit_rpm || 0),
       dailyRequestLimit: String(group.daily_request_limit || 0),
       dailyQuotaLimit: String(group.daily_quota_limit || 0),
+      dailyLimitAction: group.daily_limit_action || 'cooldown',
     })
     setGroupFormOpen(true)
   }
@@ -583,6 +612,7 @@ export function AccountPool() {
         rate_limit_rpm: numberOrZero(groupForm.rateLimitRpm),
         daily_request_limit: numberOrZero(groupForm.dailyRequestLimit),
         daily_quota_limit: numberOrZero(groupForm.dailyQuotaLimit),
+        daily_limit_action: groupForm.dailyLimitAction,
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -653,6 +683,7 @@ export function AccountPool() {
       rateLimitRpm: String(account.rate_limit_rpm || 0),
       dailyRequestLimit: String(account.daily_request_limit || 0),
       dailyQuotaLimit: String(account.daily_quota_limit || 0),
+      dailyLimitAction: account.daily_limit_action || 'inherit',
       proxy: account.proxy || '',
     })
     setAccountFormOpen(true)
@@ -683,6 +714,7 @@ export function AccountPool() {
         rate_limit_rpm: numberOrZero(accountForm.rateLimitRpm),
         daily_request_limit: numberOrZero(accountForm.dailyRequestLimit),
         daily_quota_limit: numberOrZero(accountForm.dailyQuotaLimit),
+        daily_limit_action: accountForm.dailyLimitAction,
         proxy: accountForm.proxy.trim(),
         status: CHANNEL_STATUS.ENABLED,
         schedulable: true,
@@ -1927,6 +1959,32 @@ export function AccountPool() {
                 }))
               }
             />
+            <Select
+              items={dailyLimitActionOptions.map((value) => ({
+                value,
+                label: dailyLimitActionLabel(value, t),
+              }))}
+              value={groupForm.dailyLimitAction}
+              onValueChange={(value) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  dailyLimitAction: value ?? 'cooldown',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder={t('Daily limit action')} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {dailyLimitActionOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {dailyLimitActionLabel(value, t)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <Textarea
               className='sm:col-span-2'
               placeholder={t('Settings JSON')}
@@ -2108,6 +2166,32 @@ export function AccountPool() {
                 }))
               }
             />
+            <Select
+              items={accountDailyLimitActionOptions.map((value) => ({
+                value,
+                label: dailyLimitActionLabel(value, t),
+              }))}
+              value={accountForm.dailyLimitAction}
+              onValueChange={(value) =>
+                setAccountForm((current) => ({
+                  ...current,
+                  dailyLimitAction: value ?? 'inherit',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder={t('Daily limit action')} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {accountDailyLimitActionOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {dailyLimitActionLabel(value, t)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <Textarea
               className='sm:col-span-2'
               rows={5}

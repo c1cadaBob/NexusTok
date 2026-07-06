@@ -52,6 +52,7 @@ type accountPoolGroupUpsertRequest struct {
 	RateLimitRpm      *int    `json:"rate_limit_rpm"`      // 分组每分钟最大请求数，0 表示不限
 	DailyRequestLimit *int64  `json:"daily_request_limit"` // 分组每日最大请求数，0 表示不限
 	DailyQuotaLimit   *int64  `json:"daily_quota_limit"`   // 分组每日最大配额消耗，0 表示不限
+	DailyLimitAction  string  `json:"daily_limit_action"`  // 账号继承的每日限制耗尽处理策略
 }
 
 // poolAccountUpsertRequest 池账号创建/更新请求
@@ -70,6 +71,7 @@ type poolAccountUpsertRequest struct {
 	RateLimitRpm       *int    `json:"rate_limit_rpm"`      // 每分钟最大请求数，0 表示不限
 	DailyRequestLimit  *int64  `json:"daily_request_limit"` // 每日最大请求数，0 表示不限
 	DailyQuotaLimit    *int64  `json:"daily_quota_limit"`   // 每日最大配额消耗，0 表示不限
+	DailyLimitAction   string  `json:"daily_limit_action"`  // 每日限制耗尽处理策略，空值表示继承分组
 	Proxy              string  `json:"proxy"`               // 代理地址
 	BaseURL            *string `json:"base_url"`            // 基础 URL
 	OpenAIOrganization *string `json:"openai_organization"` // OpenAI 组织 ID
@@ -98,6 +100,7 @@ type poolAccountBatchRequest struct {
 	RateLimitRpm      int    `json:"rate_limit_rpm"`      // 每分钟最大请求数，0 表示不限
 	DailyRequestLimit int64  `json:"daily_request_limit"` // 每日最大请求数，0 表示不限
 	DailyQuotaLimit   int64  `json:"daily_quota_limit"`   // 每日最大配额消耗，0 表示不限
+	DailyLimitAction  string `json:"daily_limit_action"`  // 每日限制耗尽处理策略，空值表示继承分组
 }
 
 // poolAccountStatusRequest 池账号状态更新请求
@@ -1371,6 +1374,7 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 	if req.DailyQuotaLimit != nil && *req.DailyQuotaLimit > 0 {
 		dailyQuotaLimit = *req.DailyQuotaLimit
 	}
+	dailyLimitAction := model.NormalizeAccountPoolDailyLimitAction(req.DailyLimitAction, false)
 	settings := accountPoolGroupRequestSettings(req)
 	return &model.AccountPoolGroup{
 		Name:              name,
@@ -1387,6 +1391,7 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 		RateLimitRpm:      rateLimitRpm,
 		DailyRequestLimit: dailyRequestLimit,
 		DailyQuotaLimit:   dailyQuotaLimit,
+		DailyLimitAction:  dailyLimitAction,
 	}, nil
 }
 
@@ -1437,6 +1442,9 @@ func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) (map[string]in
 			dailyQuotaLimit = *req.DailyQuotaLimit
 		}
 		updates["daily_quota_limit"] = dailyQuotaLimit
+	}
+	if strings.TrimSpace(req.DailyLimitAction) != "" {
+		updates["daily_limit_action"] = model.NormalizeAccountPoolDailyLimitAction(req.DailyLimitAction, false)
 	}
 	if req.ModelMapping != nil {
 		updates["model_mapping"] = *req.ModelMapping
@@ -1525,6 +1533,7 @@ func buildPoolAccountFromRequest(group *model.AccountPoolGroup, req poolAccountU
 	if req.DailyQuotaLimit != nil && *req.DailyQuotaLimit > 0 {
 		dailyQuotaLimit = *req.DailyQuotaLimit
 	}
+	dailyLimitAction := model.NormalizeAccountPoolDailyLimitAction(req.DailyLimitAction, true)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "账号"
@@ -1554,6 +1563,7 @@ func buildPoolAccountFromRequest(group *model.AccountPoolGroup, req poolAccountU
 		RateLimitRpm:       rateLimitRpm,
 		DailyRequestLimit:  dailyRequestLimit,
 		DailyQuotaLimit:    dailyQuotaLimit,
+		DailyLimitAction:   dailyLimitAction,
 		Proxy:              strings.TrimSpace(req.Proxy),
 		BaseURL:            req.BaseURL,
 		OpenAIOrganization: req.OpenAIOrganization,
@@ -1631,6 +1641,9 @@ func poolAccountUpdateMap(req poolAccountUpsertRequest) (map[string]interface{},
 		}
 		updates["daily_quota_limit"] = dailyQuotaLimit
 	}
+	if strings.TrimSpace(req.DailyLimitAction) != "" {
+		updates["daily_limit_action"] = model.NormalizeAccountPoolDailyLimitAction(req.DailyLimitAction, true)
+	}
 	if req.BaseURL != nil {
 		updates["base_url"] = *req.BaseURL
 	}
@@ -1704,6 +1717,7 @@ func createPoolAccountsFromCredentials(group *model.AccountPoolGroup, req poolAc
 	if dailyQuotaLimit < 0 {
 		dailyQuotaLimit = 0
 	}
+	dailyLimitAction := model.NormalizeAccountPoolDailyLimitAction(req.DailyLimitAction, true)
 	accounts := make([]model.PoolAccount, 0, len(credentials))
 	skipped := 0
 	for _, credential := range credentials {
@@ -1733,6 +1747,7 @@ func createPoolAccountsFromCredentials(group *model.AccountPoolGroup, req poolAc
 			RateLimitRpm:      rateLimitRpm,
 			DailyRequestLimit: dailyRequestLimit,
 			DailyQuotaLimit:   dailyQuotaLimit,
+			DailyLimitAction:  dailyLimitAction,
 		})
 	}
 	if len(accounts) == 0 {
@@ -1795,6 +1810,7 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		"rate_limit_rpm":      group.RateLimitRpm,
 		"daily_request_limit": group.DailyRequestLimit,
 		"daily_quota_limit":   group.DailyQuotaLimit,
+		"daily_limit_action":  group.GetDailyLimitAction(),
 		"daily_request_count": dailyRequestCount,
 		"used_quota":          group.UsedQuota,
 		"daily_used_quota":    dailyUsedQuota,
@@ -1837,6 +1853,7 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 		"rate_limit_rpm":      group.RateLimitRpm,
 		"daily_request_limit": group.DailyRequestLimit,
 		"daily_quota_limit":   group.DailyQuotaLimit,
+		"daily_limit_action":  group.GetDailyLimitAction(),
 		"daily_request_count": dailyRequestCount,
 		"used_quota":          group.UsedQuota,
 		"daily_used_quota":    dailyUsedQuota,
@@ -1943,6 +1960,7 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 		"rate_limit_rpm":      account.RateLimitRpm,
 		"daily_request_limit": account.DailyRequestLimit,
 		"daily_quota_limit":   account.DailyQuotaLimit,
+		"daily_limit_action":  model.NormalizeAccountPoolDailyLimitAction(account.DailyLimitAction, true),
 		"daily_request_count": account.DailyRequestCount,
 		"daily_used_quota":    account.DailyUsedQuota,
 		"daily_reset_time":    account.DailyResetTime,

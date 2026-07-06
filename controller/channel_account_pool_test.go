@@ -143,6 +143,7 @@ func TestAccountPoolGroupResponseIncludesDailyLimitState(t *testing.T) {
 		DailyRequestCount: 2,
 		DailyQuotaLimit:   10,
 		DailyUsedQuota:    3,
+		DailyLimitAction:  model.AccountPoolDailyLimitActionDisable,
 		DailyResetTime:    model.AccountPoolDailyWindowStart(now),
 	}
 
@@ -155,6 +156,23 @@ func TestAccountPoolGroupResponseIncludesDailyLimitState(t *testing.T) {
 	require.Greater(t, state.NextResetTime, state.WindowStart)
 	require.EqualValues(t, 2, item["daily_request_count"])
 	require.EqualValues(t, 3, item["daily_used_quota"])
+	require.Equal(t, model.AccountPoolDailyLimitActionDisable, item["daily_limit_action"])
+}
+
+func TestPoolAccountResponseIncludesDailyLimitAction(t *testing.T) {
+	account := &model.PoolAccount{
+		Id:               12,
+		PoolGroupId:      8,
+		Name:             "daily-limit-action-account",
+		Platform:         "codex",
+		AuthType:         model.AccountPoolAuthTypeAPIKey,
+		Status:           common.ChannelStatusEnabled,
+		Schedulable:      true,
+		DailyLimitAction: model.AccountPoolDailyLimitActionDisable,
+	}
+
+	item := poolAccountResponse(account)
+	require.Equal(t, model.AccountPoolDailyLimitActionDisable, item["daily_limit_action"])
 }
 
 func TestAccountPoolGroupResponseUsesCurrentDailyWindowForStaleUsage(t *testing.T) {

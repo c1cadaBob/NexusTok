@@ -49,6 +49,7 @@ export type AccountPoolGroup = {
   rate_limit_rpm: number
   daily_request_limit: number
   daily_quota_limit: number
+  daily_limit_action: string
   daily_request_count: number
   used_quota: number
   daily_used_quota: number
@@ -80,6 +81,7 @@ export type PoolAccount = {
   rate_limit_rpm: number
   daily_request_limit: number
   daily_quota_limit: number
+  daily_limit_action: string
   daily_request_count: number
   proxy: string
   base_url?: string | null
@@ -178,6 +180,7 @@ export type AccountPoolGroupPayload = {
   rate_limit_rpm?: number
   daily_request_limit?: number
   daily_quota_limit?: number
+  daily_limit_action?: string
 }
 
 export type PoolAccountPayload = {
@@ -195,6 +198,7 @@ export type PoolAccountPayload = {
   rate_limit_rpm?: number
   daily_request_limit?: number
   daily_quota_limit?: number
+  daily_limit_action?: string
   proxy?: string
   base_url?: string | null
   openai_organization?: string | null
@@ -221,6 +225,7 @@ export type PoolAccountBatchPayload = {
   rate_limit_rpm?: number
   daily_request_limit?: number
   daily_quota_limit?: number
+  daily_limit_action?: string
 }
 
 export type AccountPoolAuthFilePayload = {

@@ -123,8 +123,8 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 			continue
 		}
 		if err := model.PoolAccountDailyLimitError(account, nowTime); err != nil {
-			if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, nowTime); markErr != nil {
-				common.SysLog(fmt.Sprintf("failed to mark pool account daily limit cooling: account_id=%d, error=%v", account.Id, markErr))
+			if markErr := model.MarkPoolAccountDailyLimitExceeded(account.Id, err, nowTime); markErr != nil {
+				common.SysLog(fmt.Sprintf("failed to mark pool account daily limit exceeded: account_id=%d, error=%v", account.Id, markErr))
 			}
 			lastAccountLimitErr = err
 			continue
@@ -357,8 +357,8 @@ func reservePoolAccountUsageLimit(account *model.PoolAccount) error {
 		return nil
 	}
 	if err := model.CheckPoolAccountDailyQuotaLimit(account.Id); err != nil {
-		if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, time.Now()); markErr != nil {
-			common.SysLog(fmt.Sprintf("failed to mark pool account daily quota cooling: account_id=%d, error=%v", account.Id, markErr))
+		if markErr := model.MarkPoolAccountDailyLimitExceeded(account.Id, err, time.Now()); markErr != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily quota exceeded: account_id=%d, error=%v", account.Id, markErr))
 		}
 		return err
 	}
@@ -367,8 +367,8 @@ func reservePoolAccountUsageLimit(account *model.PoolAccount) error {
 	}
 	if err := model.ReservePoolAccountRequest(account.Id); err != nil {
 		releasePoolAccountRateLimit(account.Id, account.RateLimitRpm)
-		if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, time.Now()); markErr != nil {
-			common.SysLog(fmt.Sprintf("failed to mark pool account daily request cooling: account_id=%d, error=%v", account.Id, markErr))
+		if markErr := model.MarkPoolAccountDailyLimitExceeded(account.Id, err, time.Now()); markErr != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily request exceeded: account_id=%d, error=%v", account.Id, markErr))
 		}
 		return err
 	}

@@ -15,7 +15,8 @@ import (
 
 func setupAccountPoolSelectTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}))
+	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM account_pool_groups").Error)
 	originalRedisEnabled := common.RedisEnabled
@@ -52,6 +53,7 @@ func setupAccountPoolSelectTest(t *testing.T) {
 		poolGroupRateMu.Lock()
 		poolGroupRateCounters = map[int]poolGroupRateCounter{}
 		poolGroupRateMu.Unlock()
+		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error
 		_ = model.DB.Exec("DELETE FROM account_pool_groups").Error
 	})
@@ -316,6 +318,53 @@ func TestSelectPoolAccountRespectsAccountDailyRequestLimit(t *testing.T) {
 	require.EqualValues(t, 0, stats[group.Id]["enabled"])
 }
 
+func TestSelectPoolAccountDailyRequestLimitCanAutoDisable(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-request-disable")
+	group.DailyLimitAction = model.AccountPoolDailyLimitActionDisable
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "daily-request-disable-account")
+	account.DailyRequestLimit = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, model.ErrPoolAccountDailyRequestLimitExceeded))
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updatedAccount.Status)
+	require.False(t, updatedAccount.Schedulable)
+	require.True(t, updatedAccount.Unavailable)
+	require.Equal(t, model.PoolAccountDailyRequestLimitAutoDisabledStatusMessage, updatedAccount.StatusMessage)
+	require.Equal(t, model.PoolAccountDailyRequestLimitAutoDisabledStatusMessage, updatedAccount.LastError)
+	require.Equal(t, model.PoolAccountDailyRequestLimitAutoDisabledStatusMessage, updatedAccount.DisabledReason)
+	require.EqualValues(t, 0, updatedAccount.NextRetryTime)
+
+	stats, err := model.CountPoolAccountsByGroupIDs([]int{group.Id})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, stats[group.Id]["disabled"])
+	require.EqualValues(t, 0, stats[group.Id]["cooldown"])
+
+	stateLogs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolAccountId: account.Id,
+		Action:        model.PoolAccountStateActionDailyLimitDisabled,
+		Limit:         10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, stateLogs, 1)
+	require.Equal(t, "daily_limit", stateLogs[0].Source)
+	require.Equal(t, model.PoolAccountDailyRequestLimitAutoDisabledStatusMessage, stateLogs[0].Reason)
+}
+
 func TestSelectPoolAccountSkipsAccountDailyRequestLimit(t *testing.T) {
 	setupAccountPoolSelectTest(t)
 	group := createSelectablePoolGroup(t, "codex-account-daily-request-skip")
@@ -435,6 +484,26 @@ func TestAddSelectedAccountUsedQuotaMarksAccountDailyQuotaCooling(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, account.Id, selectedAccount.Id)
 	ReleaseSelectedPoolAccount(recoveredCtx)
+}
+
+func TestAddSelectedAccountUsedQuotaCanAutoDisableOnDailyQuotaLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-quota-disable")
+	account := createSelectablePoolAccount(t, group, "daily-quota-disable-account")
+	account.DailyQuotaLimit = 10
+	account.DailyLimitAction = model.AccountPoolDailyLimitActionDisable
+	require.NoError(t, model.DB.Save(account).Error)
+
+	AddSelectedAccountUsedQuota(0, account.Id, 10)
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 10, updatedAccount.DailyUsedQuota)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updatedAccount.Status)
+	require.False(t, updatedAccount.Schedulable)
+	require.True(t, updatedAccount.Unavailable)
+	require.Equal(t, model.PoolAccountDailyQuotaLimitAutoDisabledStatusMessage, updatedAccount.StatusMessage)
+	require.EqualValues(t, 0, updatedAccount.NextRetryTime)
 }
 
 func TestReservePoolAccountUsageLimitRollsBackRateLimitWhenDailyRequestExceeded(t *testing.T) {
