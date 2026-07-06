@@ -438,7 +438,9 @@ export function AuthFilesPanel({
                     {formatCredentialSummary(authFile.credential_summary)}
                   </div>
                   <div className='text-muted-foreground text-xs'>
-                    {t('Account')}: #{authFile.pool_account_id || '-'}
+                    {authFile.pool_account_id > 0
+                      ? `${t('Account')}: #${authFile.pool_account_id}`
+                      : t('Linked account removed')}
                   </div>
                 </TableCell>
                 <TableCell>

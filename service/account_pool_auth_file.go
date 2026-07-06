@@ -1,9 +1,9 @@
 // account_pool_auth_file.go 实现原生账号池认证文件的解析与导入。
 //
-// 认证文件是从 CLIProxyAPI sidecar 迁回 NexusTok 主项目的关键抽象：管理员导入
-// 一份 JSON 文件后，系统会保存加密原文、解析文件级分组/代理/优先级，并生成一个
-// PoolAccount 参与现有调度热路径。这样可以逐步替代外部管理器，同时不重写 relay
-// 选择、并发控制和错误冷却逻辑。
+// 认证文件是 NexusTok 原生账号池的一等管理对象：管理员导入一份 JSON 文件后，
+// 系统会保存加密原文、解析文件级分组/代理/优先级，并生成一个 PoolAccount 参与
+// 现有调度热路径。认证文件负责保留凭据来源和可恢复入口，PoolAccount 负责实际调度、
+// 并发控制和错误冷却逻辑。
 package service
 
 import (
@@ -25,21 +25,21 @@ import (
 
 // AccountPoolAuthFileImportOptions 描述导入认证文件时可由管理员覆盖的文件级配置。
 type AccountPoolAuthFileImportOptions struct {
-	Name          string   // 文件显示名称
-	Content       string   // JSON 认证文件原文
-	PoolGroupID   int      // 显式指定账号池分组；为空时按 provider 自动创建或复用
-	GroupName     string   // 自动创建分组时使用的名称
-	Provider      string   // 覆盖解析出的 provider
-	Platform      string   // 覆盖解析出的本地平台
-	AuthType      string   // 覆盖解析出的认证类型
-	AccountGroups []string // 文件级调用分组
-	Models        string   // 文件级模型限制
-	Proxy         string   // 文件级代理
-	BaseURL       *string  // 文件级基础 URL
-	Priority      *int64   // 文件级优先级
-	Weight        *int     // 文件级权重
-	MaxConcurrency *int    // 文件级最大并发数
-	Status        *int     // 文件状态，同时同步到生成账号
+	Name           string   // 文件显示名称
+	Content        string   // JSON 认证文件原文
+	PoolGroupID    int      // 显式指定账号池分组；为空时按 provider 自动创建或复用
+	GroupName      string   // 自动创建分组时使用的名称
+	Provider       string   // 覆盖解析出的 provider
+	Platform       string   // 覆盖解析出的本地平台
+	AuthType       string   // 覆盖解析出的认证类型
+	AccountGroups  []string // 文件级调用分组
+	Models         string   // 文件级模型限制
+	Proxy          string   // 文件级代理
+	BaseURL        *string  // 文件级基础 URL
+	Priority       *int64   // 文件级优先级
+	Weight         *int     // 文件级权重
+	MaxConcurrency *int     // 文件级最大并发数
+	Status         *int     // 文件状态，同时同步到生成账号
 }
 
 // AccountPoolAuthFileBatchImportOptions 描述批量导入认证文件时的行为。
@@ -53,21 +53,21 @@ type AccountPoolAuthFileBatchImportOptions struct {
 // AccountPoolAuthFileUpdateOptions 描述认证文件编辑请求。
 // Content 为空时只更新文件级调度字段；Content 非空时会重新解析并替换生成账号的凭据。
 type AccountPoolAuthFileUpdateOptions struct {
-	Name          *string
-	Content       *string
-	PoolGroupID   *int
-	GroupName     *string
-	Provider      *string
-	Platform      *string
-	AuthType      *string
-	AccountGroups *[]string
-	Models        *string
-	Proxy         *string
-	BaseURL       *string
-	Priority      *int64
-	Weight        *int
+	Name           *string
+	Content        *string
+	PoolGroupID    *int
+	GroupName      *string
+	Provider       *string
+	Platform       *string
+	AuthType       *string
+	AccountGroups  *[]string
+	Models         *string
+	Proxy          *string
+	BaseURL        *string
+	Priority       *int64
+	Weight         *int
 	MaxConcurrency *int
-	Status        *int
+	Status         *int
 }
 
 // ParsedAccountPoolAuthFile 是认证文件解析后的规范化结果。
@@ -102,9 +102,9 @@ type AccountPoolAuthFileImportResult struct {
 
 // AccountPoolAuthFileBatchImportResult 汇总批量导入结果。
 type AccountPoolAuthFileBatchImportResult struct {
-	Created int                              `json:"created"`
-	Skipped int                              `json:"skipped"`
-	Failed  int                              `json:"failed"`
+	Created int                                `json:"created"`
+	Skipped int                                `json:"skipped"`
+	Failed  int                                `json:"failed"`
 	Items   []*AccountPoolAuthFileImportResult `json:"items"`
 	Errors  []AccountPoolAuthFileImportError   `json:"errors,omitempty"`
 }
@@ -194,7 +194,7 @@ var accountPoolKnownSourcePlatforms = map[string]string{
 
 // ParseAccountPoolAuthFile 将多来源 JSON 认证文件解析为本地统一结构。
 // 支持两类输入：
-// 1. CLIProxyAPI 风格：顶层包含 type、access_token/api_key、proxy_url、account_groups；
+// 1. 原生凭据对象：顶层包含 type、access_token/api_key、proxy_url、account_groups；
 // 2. sub2/newapi 等包装：顶层描述来源平台，auth/credential/data/account 中放真实凭据。
 func ParseAccountPoolAuthFile(raw string, opts AccountPoolAuthFileImportOptions) (*ParsedAccountPoolAuthFile, error) {
 	trimmed := strings.TrimSpace(raw)
@@ -493,33 +493,44 @@ func UpdateAccountPoolAuthFile(authFileID int, opts AccountPoolAuthFileUpdateOpt
 			if parsed.BaseURL != nil {
 				updates["base_url"] = *parsed.BaseURL
 			}
+			if account.Id == 0 {
+				// 认证文件可能因为管理员删除池账号而保留为“无关联账号”的恢复记录。
+				// 只有在本次请求重新提供 JSON 内容并成功解析出凭据时，才创建新的 PoolAccount；
+				// 普通字段补丁不凭空生成账号，避免把缺少明文凭据的记录错误放回调度层。
+				newAccount := buildPoolAccountFromParsedAuthFile(group, parsed, encryptedCredential, metadataJSON, attrsJSON)
+				if err := tx.Create(newAccount).Error; err != nil {
+					return err
+				}
+				account = *newAccount
+				updates["pool_account_id"] = newAccount.Id
+			}
 			accountUpdates = mergeStringAnyMaps(accountUpdates, map[string]interface{}{
-				"pool_group_id":          group.Id,
-				"name":                   parsed.Name,
-				"platform":               parsed.Platform,
-				"auth_type":              parsed.AuthType,
-				"credentials":            encryptedCredential,
-				"credential_summary":     parsed.CredentialSummary,
-				"credential_provider":    parsed.Provider,
-				"credential_label":       parsed.Name,
-				"credential_metadata":    metadataJSON,
-				"credential_attributes":  attrsJSON,
-				"status":                 parsed.Status,
-				"schedulable":            parsed.Status == common.ChannelStatusEnabled,
-				"models":                 parsed.Models,
-				"group":                  strings.Join(parsed.AccountGroups, ","),
-				"proxy":                  parsed.Proxy,
-				"priority":               parsed.Priority,
-				"weight":                 parsed.Weight,
-				"max_concurrency":        parsed.MaxConcurrency,
-				"unavailable":            false,
-				"last_error":             "",
-				"status_message":         "",
-				"last_refreshed_time":    common.GetTimestamp(),
-				"next_retry_time":        0,
-				"rate_limited_until":     0,
-				"overload_until":         0,
-				"temp_disabled_until":    0,
+				"pool_group_id":         group.Id,
+				"name":                  parsed.Name,
+				"platform":              parsed.Platform,
+				"auth_type":             parsed.AuthType,
+				"credentials":           encryptedCredential,
+				"credential_summary":    parsed.CredentialSummary,
+				"credential_provider":   parsed.Provider,
+				"credential_label":      parsed.Name,
+				"credential_metadata":   metadataJSON,
+				"credential_attributes": attrsJSON,
+				"status":                parsed.Status,
+				"schedulable":           parsed.Status == common.ChannelStatusEnabled,
+				"models":                parsed.Models,
+				"group":                 strings.Join(parsed.AccountGroups, ","),
+				"proxy":                 parsed.Proxy,
+				"priority":              parsed.Priority,
+				"weight":                parsed.Weight,
+				"max_concurrency":       parsed.MaxConcurrency,
+				"unavailable":           false,
+				"last_error":            "",
+				"status_message":        "",
+				"last_refreshed_time":   common.GetTimestamp(),
+				"next_retry_time":       0,
+				"rate_limited_until":    0,
+				"overload_until":        0,
+				"temp_disabled_until":   0,
 			})
 			if parsed.BaseURL != nil {
 				accountUpdates["base_url"] = *parsed.BaseURL
@@ -1149,28 +1160,28 @@ func buildPoolAccountFromParsedAuthFile(group *model.AccountPoolGroup, parsed *P
 
 func buildAccountPoolAuthFileRecord(group *model.AccountPoolGroup, account *model.PoolAccount, parsed *ParsedAccountPoolAuthFile, encryptedContent string, metadataJSON string, attrsJSON string) *model.AccountPoolAuthFile {
 	return &model.AccountPoolAuthFile{
-		Name:              parsed.Name,
-		SourcePlatform:    parsed.SourcePlatform,
-		Format:            parsed.Format,
-		Provider:          parsed.Provider,
-		Platform:          parsed.Platform,
-		AuthType:          parsed.AuthType,
-		PoolGroupId:       group.Id,
-		PoolAccountId:     account.Id,
-		Status:            parsed.Status,
-		FileDigest:        parsed.FileDigest,
-		EncryptedContent:  encryptedContent,
-		CredentialSummary: parsed.CredentialSummary,
+		Name:               parsed.Name,
+		SourcePlatform:     parsed.SourcePlatform,
+		Format:             parsed.Format,
+		Provider:           parsed.Provider,
+		Platform:           parsed.Platform,
+		AuthType:           parsed.AuthType,
+		PoolGroupId:        group.Id,
+		PoolAccountId:      account.Id,
+		Status:             parsed.Status,
+		FileDigest:         parsed.FileDigest,
+		EncryptedContent:   encryptedContent,
+		CredentialSummary:  parsed.CredentialSummary,
 		CredentialMetadata: metadataJSON,
-		CredentialAttrs:   attrsJSON,
-		AccountGroups:     strings.Join(parsed.AccountGroups, ","),
-		Models:            parsed.Models,
-		Proxy:             parsed.Proxy,
-		BaseURL:           parsed.BaseURL,
-		Priority:          parsed.Priority,
-		Weight:            parsed.Weight,
-		MaxConcurrency:    parsed.MaxConcurrency,
-		LastImportedTime:  common.GetTimestamp(),
+		CredentialAttrs:    attrsJSON,
+		AccountGroups:      strings.Join(parsed.AccountGroups, ","),
+		Models:             parsed.Models,
+		Proxy:              parsed.Proxy,
+		BaseURL:            parsed.BaseURL,
+		Priority:           parsed.Priority,
+		Weight:             parsed.Weight,
+		MaxConcurrency:     parsed.MaxConcurrency,
+		LastImportedTime:   common.GetTimestamp(),
 	}
 }
 

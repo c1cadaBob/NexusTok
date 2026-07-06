@@ -30,7 +30,7 @@ func setupAccountPoolBatchStatusTest(t *testing.T) {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}))
+	require.NoError(t, db.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.AccountPoolAuthFile{}, &model.PoolAccountStateLog{}))
 	t.Cleanup(func() {
 		model.DB = oldDB
 		model.LOG_DB = oldLogDB

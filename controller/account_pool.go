@@ -581,7 +581,14 @@ func DeletePoolAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := model.DB.Where("id = ?", accountID).Delete(&model.PoolAccount{}).Error; err != nil {
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Where("id = ?", accountID).Delete(&model.PoolAccount{})
+		if result.Error != nil {
+			return result.Error
+		}
+		return detachAccountPoolAuthFilesForDeletedAccount(tx, accountID)
+	})
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -927,16 +934,26 @@ func DeleteAccountPoolAuthFile(c *gin.Context) {
 		return
 	}
 	deleteAccount := strings.ToLower(strings.TrimSpace(c.DefaultQuery("delete_account", "true"))) != "false"
+	var deletedAccountBefore *model.PoolAccount
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var authFile model.AccountPoolAuthFile
 		if err := tx.Where("id = ?", authFileID).First(&authFile).Error; err != nil {
 			return err
 		}
+		if deleteAccount && authFile.PoolAccountId > 0 {
+			var account model.PoolAccount
+			if err := tx.Where("id = ?", authFile.PoolAccountId).First(&account).Error; err == nil {
+				accountCopy := account
+				deletedAccountBefore = &accountCopy
+			} else if err != gorm.ErrRecordNotFound {
+				return err
+			}
+		}
 		if err := tx.Where("id = ?", authFileID).Delete(&model.AccountPoolAuthFile{}).Error; err != nil {
 			return err
 		}
-		if deleteAccount && authFile.PoolAccountId > 0 {
-			if err := tx.Where("id = ?", authFile.PoolAccountId).Delete(&model.PoolAccount{}).Error; err != nil {
+		if deletedAccountBefore != nil {
+			if err := tx.Where("id = ?", deletedAccountBefore.Id).Delete(&model.PoolAccount{}).Error; err != nil {
 				return err
 			}
 		}
@@ -945,6 +962,9 @@ func DeleteAccountPoolAuthFile(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if deletedAccountBefore != nil {
+		recordPoolAccountStateFromController(c, deletedAccountBefore.Id, model.PoolAccountStateActionManualDelete, "删除认证文件时同步删除关联账号", deletedAccountBefore)
 	}
 	common.ApiSuccess(c, nil)
 }
@@ -1519,12 +1539,23 @@ func applySinglePoolAccountBatchDelete(c *gin.Context, groupID int, account *mod
 		AccountName: account.Name,
 	}
 	before := *account
-	result := model.DB.Where("id = ? AND pool_group_id = ?", account.Id, groupID).Delete(&model.PoolAccount{})
-	if result.Error != nil {
-		item.Message = result.Error.Error()
+	deleted := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Where("id = ? AND pool_group_id = ?", account.Id, groupID).Delete(&model.PoolAccount{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		deleted = true
+		return detachAccountPoolAuthFilesForDeletedAccount(tx, account.Id)
+	})
+	if err != nil {
+		item.Message = err.Error()
 		return item
 	}
-	if result.RowsAffected == 0 {
+	if !deleted {
 		item.Skipped = true
 		item.Message = "account not found in group"
 		return item
@@ -1532,6 +1563,21 @@ func applySinglePoolAccountBatchDelete(c *gin.Context, groupID int, account *mod
 	recordPoolAccountStateFromController(c, account.Id, model.PoolAccountStateActionManualDelete, poolAccountBatchDeleteReason(req), &before)
 	item.Success = true
 	return item
+}
+
+func detachAccountPoolAuthFilesForDeletedAccount(tx *gorm.DB, accountID int) error {
+	if tx == nil || accountID <= 0 {
+		return nil
+	}
+	// 删除池账号时保留认证文件的加密原文，避免把管理员导入的凭据备份和来源记录一并误删。
+	// 清空关联账号 ID 并禁用认证文件后，页面不会再把它展示成可调度账号；管理员仍可重新粘贴
+	// JSON 内容来生成新的 PoolAccount，或手动删除这份认证文件。
+	return tx.Model(&model.AccountPoolAuthFile{}).
+		Where("pool_account_id = ?", accountID).
+		Updates(map[string]interface{}{
+			"pool_account_id": 0,
+			"status":          common.ChannelStatusManuallyDisabled,
+		}).Error
 }
 
 func applyPoolAccountBatchStatus(c *gin.Context, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchStatusRequest) *poolAccountBatchStatusResult {

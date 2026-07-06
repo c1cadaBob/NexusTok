@@ -40,6 +40,26 @@ func decodeAccountPoolBatchDeleteResponse(t *testing.T, recorder *httptest.Respo
 	return response
 }
 
+func createBatchDeleteAuthFile(t *testing.T, groupID int, accountID int, name string) *model.AccountPoolAuthFile {
+	t.Helper()
+	authFile := &model.AccountPoolAuthFile{
+		Name:              name,
+		SourcePlatform:    model.AccountPoolAuthFileFormatNative,
+		Format:            model.AccountPoolAuthFileFormatNative,
+		Provider:          "codex",
+		Platform:          "codex",
+		AuthType:          model.AccountPoolAuthTypeAPIKey,
+		PoolGroupId:       groupID,
+		PoolAccountId:     accountID,
+		Status:            common.ChannelStatusEnabled,
+		FileDigest:        name + "-digest",
+		EncryptedContent:  "encrypted-auth-file-content",
+		CredentialSummary: "sk-***test",
+	}
+	require.NoError(t, model.DB.Create(authFile).Error)
+	return authFile
+}
+
 func TestBatchDeletePoolAccountsDeletesOnlyAccountsInGroup(t *testing.T) {
 	setupAccountPoolBatchStatusTest(t)
 	group := createBatchStatusGroup(t, "batch-delete-main")
@@ -135,6 +155,111 @@ func TestDeletePoolAccountWritesStateLog(t *testing.T) {
 	require.Equal(t, group.Id, logs[0].PoolGroupId)
 	require.Equal(t, account.Name, logs[0].PoolAccountName)
 	require.Equal(t, "single-delete-tester", logs[0].Actor)
+	require.Equal(t, common.ChannelStatusEnabled, logs[0].BeforeStatus)
+	require.Equal(t, 0, logs[0].AfterStatus)
+}
+
+func TestDeletePoolAccountDetachesLinkedAuthFile(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	group := createBatchStatusGroup(t, "single-delete-detach")
+	account := createBatchStatusAccount(t, group.Id, "single-delete-detach-account")
+	authFile := createBatchDeleteAuthFile(t, group.Id, account.Id, "single-delete-detach-auth")
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/account-pool/accounts/"+strconv.Itoa(account.Id), nil)
+	ctx.Params = gin.Params{{Key: "account_id", Value: strconv.Itoa(account.Id)}}
+	ctx.Set("username", "single-detach-tester")
+
+	DeletePoolAccount(ctx)
+
+	var apiResponse struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &apiResponse))
+	require.True(t, apiResponse.Success, apiResponse.Message)
+	err := model.DB.Where("id = ?", account.Id).First(&model.PoolAccount{}).Error
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	var updatedAuthFile model.AccountPoolAuthFile
+	require.NoError(t, model.DB.Where("id = ?", authFile.Id).First(&updatedAuthFile).Error)
+	require.Zero(t, updatedAuthFile.PoolAccountId)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updatedAuthFile.Status)
+
+	logs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolAccountId: account.Id,
+		Action:        model.PoolAccountStateActionManualDelete,
+		Search:        "管理员删除账号",
+		Limit:         10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, logs, 1)
+	require.Equal(t, "single-detach-tester", logs[0].Actor)
+	require.Equal(t, common.ChannelStatusEnabled, logs[0].BeforeStatus)
+	require.Equal(t, 0, logs[0].AfterStatus)
+}
+
+func TestBatchDeletePoolAccountsDetachesLinkedAuthFiles(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	group := createBatchStatusGroup(t, "batch-delete-detach")
+	accountA := createBatchStatusAccount(t, group.Id, "batch-delete-detach-a")
+	accountB := createBatchStatusAccount(t, group.Id, "batch-delete-detach-b")
+	authFileA := createBatchDeleteAuthFile(t, group.Id, accountA.Id, "batch-delete-detach-auth-a")
+	authFileB := createBatchDeleteAuthFile(t, group.Id, accountB.Id, "batch-delete-detach-auth-b")
+
+	ctx, recorder := newAccountPoolBatchDeleteContext(t, group.Id, gin.H{
+		"account_ids": []int{accountA.Id, accountB.Id},
+		"reason":      "批量删除解除关联测试",
+	})
+	BatchDeletePoolAccounts(ctx)
+
+	response := decodeAccountPoolBatchDeleteResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, 2, response.Data.Deleted)
+	for _, authFileID := range []int{authFileA.Id, authFileB.Id} {
+		var authFile model.AccountPoolAuthFile
+		require.NoError(t, model.DB.Where("id = ?", authFileID).First(&authFile).Error)
+		require.Zero(t, authFile.PoolAccountId)
+		require.Equal(t, common.ChannelStatusManuallyDisabled, authFile.Status)
+	}
+}
+
+func TestDeleteAccountPoolAuthFileWritesLinkedAccountDeleteLog(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	group := createBatchStatusGroup(t, "delete-auth-file-log")
+	account := createBatchStatusAccount(t, group.Id, "delete-auth-file-account")
+	authFile := createBatchDeleteAuthFile(t, group.Id, account.Id, "delete-auth-file")
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/account-pool/auth-files/"+strconv.Itoa(authFile.Id)+"?delete_account=true", nil)
+	ctx.Params = gin.Params{{Key: "auth_file_id", Value: strconv.Itoa(authFile.Id)}}
+	ctx.Set("username", "auth-file-delete-tester")
+
+	DeleteAccountPoolAuthFile(ctx)
+
+	var apiResponse struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &apiResponse))
+	require.True(t, apiResponse.Success, apiResponse.Message)
+	err := model.DB.Where("id = ?", authFile.Id).First(&model.AccountPoolAuthFile{}).Error
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	err = model.DB.Where("id = ?", account.Id).First(&model.PoolAccount{}).Error
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	logs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolAccountId: account.Id,
+		Action:        model.PoolAccountStateActionManualDelete,
+		Search:        "删除认证文件时同步删除关联账号",
+		Limit:         10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, logs, 1)
+	require.Equal(t, "auth-file-delete-tester", logs[0].Actor)
+	require.Equal(t, account.Name, logs[0].PoolAccountName)
 	require.Equal(t, common.ChannelStatusEnabled, logs[0].BeforeStatus)
 	require.Equal(t, 0, logs[0].AfterStatus)
 }
