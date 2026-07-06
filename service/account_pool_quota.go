@@ -29,6 +29,7 @@ func AddSelectedAccountUsedQuota(channelAccountID int, poolAccountID int, quota 
 // 会回查 PoolAccount 获得分组 ID，保证组级配额统计尽量不漏记。
 func AddSelectedAccountUsedQuotaWithGroup(channelAccountID int, poolGroupID int, poolAccountID int, quota int64) {
 	if poolAccountID > 0 {
+		recordPoolAccountRequestRuntime(poolAccountID, true)
 		if quota > 0 {
 			model.AddPoolAccountUsedQuota(poolAccountID, quota)
 			if poolGroupID <= 0 {
@@ -40,7 +41,6 @@ func AddSelectedAccountUsedQuotaWithGroup(channelAccountID int, poolGroupID int,
 				model.AddAccountPoolGroupUsedQuota(poolGroupID, quota)
 			}
 		}
-		recordPoolAccountRequestRuntime(poolAccountID, true)
 		return
 	}
 	if quota == 0 {

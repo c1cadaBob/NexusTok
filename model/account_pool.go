@@ -60,6 +60,13 @@ const (
 	AccountPoolAuthFileFormatSub2 = "sub2"
 	// AccountPoolAuthFileFormatNewAPI NewAPI 导出的 JSON 包装格式
 	AccountPoolAuthFileFormatNewAPI = "newapi"
+
+	// PoolAccountDailyRequestLimitStatusMessage 表示账号因当日请求次数耗尽进入临时冷却。
+	// 该状态由账号池每日窗口自动恢复逻辑清除，不能作为人工禁用原因长期保存。
+	PoolAccountDailyRequestLimitStatusMessage = "账号池账号今日请求次数已用尽，次日自动恢复"
+	// PoolAccountDailyQuotaLimitStatusMessage 表示账号因当日额度耗尽进入临时冷却。
+	// 该状态由账号池每日窗口自动恢复逻辑清除，不能作为人工禁用原因长期保存。
+	PoolAccountDailyQuotaLimitStatusMessage = "账号池账号今日额度已用尽，次日自动恢复"
 )
 
 var (
@@ -651,6 +658,13 @@ func AccountPoolDailyWindowStart(now time.Time) int64 {
 	return start.Unix()
 }
 
+// AccountPoolNextDailyWindowStart 返回下一次账号池每日统计窗口的开始时间。
+// 每日请求数和每日配额耗尽时，账号会临时冷却到这个时间点，窗口切换后自动恢复调度资格。
+func AccountPoolNextDailyWindowStart(now time.Time) int64 {
+	windowStart := AccountPoolDailyWindowStart(now)
+	return time.Unix(windowStart, 0).Local().AddDate(0, 0, 1).Unix()
+}
+
 // ResetAccountPoolGroupDailyUsageIfNeeded 在每日窗口切换时重置分组日用量。
 // 使用条件更新避免并发请求重复覆盖新窗口中的计数；返回值表示本次是否实际执行了重置。
 func ResetAccountPoolGroupDailyUsageIfNeeded(groupID int, now time.Time) (bool, error) {
@@ -757,7 +771,13 @@ func ResetPoolAccountDailyUsageIfNeeded(accountID int, now time.Time) (bool, err
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	reset := result.RowsAffected > 0
+	if reset {
+		if err := ClearPoolAccountDailyLimitCooling(accountID); err != nil {
+			return true, err
+		}
+	}
+	return reset, nil
 }
 
 // PoolAccountDailyLimitError 返回账号当前是否已经达到账号级每日请求或每日配额限制。
@@ -772,6 +792,13 @@ func PoolAccountDailyLimitError(account *PoolAccount, now time.Time) error {
 		account.DailyRequestCount = 0
 		account.DailyUsedQuota = 0
 		account.DailyResetTime = AccountPoolDailyWindowStart(now)
+		if IsPoolAccountDailyLimitCooling(account) {
+			account.Unavailable = false
+			account.StatusMessage = ""
+			account.LastError = ""
+			account.DisabledReason = ""
+			account.NextRetryTime = 0
+		}
 	}
 	if account.DailyRequestLimit > 0 && account.DailyRequestCount >= account.DailyRequestLimit {
 		return ErrPoolAccountDailyRequestLimitExceeded
@@ -780,6 +807,75 @@ func PoolAccountDailyLimitError(account *PoolAccount, now time.Time) error {
 		return ErrPoolAccountDailyQuotaLimitExceeded
 	}
 	return nil
+}
+
+// PoolAccountDailyLimitReason 将账号每日请求/额度错误转换成可展示的临时冷却原因。
+// 返回空字符串表示该错误不属于每日限制，不应由每日窗口恢复逻辑处理。
+func PoolAccountDailyLimitReason(limitErr error) string {
+	switch {
+	case errors.Is(limitErr, ErrPoolAccountDailyRequestLimitExceeded):
+		return PoolAccountDailyRequestLimitStatusMessage
+	case errors.Is(limitErr, ErrPoolAccountDailyQuotaLimitExceeded):
+		return PoolAccountDailyQuotaLimitStatusMessage
+	default:
+		return ""
+	}
+}
+
+// IsPoolAccountDailyLimitCooling 判断账号当前不可用状态是否由每日请求/额度耗尽策略写入。
+// 该判断只识别账号池自己写入的固定状态文本，避免误清人工禁用或真实上游错误。
+func IsPoolAccountDailyLimitCooling(account *PoolAccount) bool {
+	if account == nil {
+		return false
+	}
+	return isPoolAccountDailyLimitReason(account.StatusMessage) || isPoolAccountDailyLimitReason(account.DisabledReason)
+}
+
+func isPoolAccountDailyLimitReason(reason string) bool {
+	reason = strings.TrimSpace(reason)
+	return reason == PoolAccountDailyRequestLimitStatusMessage || reason == PoolAccountDailyQuotaLimitStatusMessage
+}
+
+// MarkPoolAccountDailyLimitCooling 将账号标记为“今日限制耗尽，次日自动恢复”的临时冷却状态。
+// 该状态不会改写 status 或 schedulable，只通过 unavailable 和 next_retry_time 阻止继续调度；
+// 每日窗口重置时 ClearPoolAccountDailyLimitCooling 会只清理这种固定原因的状态。
+func MarkPoolAccountDailyLimitCooling(accountID int, limitErr error, now time.Time) error {
+	if accountID <= 0 {
+		return nil
+	}
+	reason := PoolAccountDailyLimitReason(limitErr)
+	if reason == "" {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	recoverAt := AccountPoolNextDailyWindowStart(now)
+	return DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(map[string]interface{}{
+		"unavailable":     true,
+		"status_message":  reason,
+		"last_error":      reason,
+		"disabled_reason": reason,
+		"next_retry_time": recoverAt,
+	}).Error
+}
+
+// ClearPoolAccountDailyLimitCooling 清理由每日请求/额度耗尽策略写入的临时冷却状态。
+// 只有状态原因仍然是固定的每日限制文本时才会清理，避免跨天恢复误伤其它故障状态。
+func ClearPoolAccountDailyLimitCooling(accountID int) error {
+	if accountID <= 0 {
+		return nil
+	}
+	reasons := []string{PoolAccountDailyRequestLimitStatusMessage, PoolAccountDailyQuotaLimitStatusMessage}
+	return DB.Model(&PoolAccount{}).
+		Where("id = ? AND (status_message IN ? OR disabled_reason IN ?)", accountID, reasons, reasons).
+		Updates(map[string]interface{}{
+			"unavailable":     false,
+			"status_message":  "",
+			"last_error":      "",
+			"disabled_reason": "",
+			"next_retry_time": 0,
+		}).Error
 }
 
 // ReservePoolAccountRequest 在账号被真正选中前预占一次账号级每日请求额度。
@@ -922,11 +1018,19 @@ func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, erro
 			result[account.PoolGroupId] = stats
 		}
 		stats["total"]++
-		if account.Status == common.ChannelStatusEnabled && account.Schedulable && !account.Unavailable {
+		if account.Unavailable {
+			stats["unavailable"]++
+		}
+		if account.Status != common.ChannelStatusEnabled || !account.Schedulable {
+			stats["disabled"]++
+			continue
+		}
+		if account.IsCoolingDown(now) {
+			stats["cooldown"]++
+			continue
+		}
+		if !account.Unavailable {
 			stats["enabled"]++
-			if account.IsCoolingDown(now) {
-				stats["cooldown"]++
-			}
 		} else {
 			stats["disabled"]++
 		}
@@ -937,10 +1041,11 @@ func CountPoolAccountsByGroupIDs(groupIDs []int) (map[int]map[string]int64, erro
 // newPoolAccountStats 创建空的池账号统计映射
 func newPoolAccountStats() map[string]int64 {
 	return map[string]int64{
-		"total":    0,
-		"enabled":  0,
-		"disabled": 0,
-		"cooldown": 0,
+		"total":       0,
+		"enabled":     0,
+		"disabled":    0,
+		"cooldown":    0,
+		"unavailable": 0,
 	}
 }
 
@@ -1105,6 +1210,17 @@ func AddPoolAccountUsedQuota(accountID int, quota int64) {
 	}
 	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(updates).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to update pool account used_quota: account_id=%d, quota=%d, error=%v", accountID, quota, err))
+	}
+	var account PoolAccount
+	if err := DB.Select("id", "daily_quota_limit", "daily_used_quota").
+		Where("id = ?", accountID).First(&account).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to check pool account daily quota after quota update: account_id=%d, error=%v", accountID, err))
+		return
+	}
+	if account.DailyQuotaLimit > 0 && account.DailyUsedQuota >= account.DailyQuotaLimit {
+		if err := MarkPoolAccountDailyLimitCooling(accountID, ErrPoolAccountDailyQuotaLimitExceeded, time.Now()); err != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily quota cooling: account_id=%d, error=%v", accountID, err))
+		}
 	}
 }
 

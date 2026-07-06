@@ -301,6 +301,19 @@ func TestSelectPoolAccountRespectsAccountDailyRequestLimit(t *testing.T) {
 	secondCtx := newPoolSelectTestContext()
 	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
 	require.True(t, errors.Is(err, model.ErrPoolAccountDailyRequestLimitExceeded))
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.True(t, updatedAccount.Unavailable)
+	require.Equal(t, model.PoolAccountDailyRequestLimitStatusMessage, updatedAccount.StatusMessage)
+	require.Equal(t, model.PoolAccountDailyRequestLimitStatusMessage, updatedAccount.LastError)
+	require.Equal(t, model.AccountPoolNextDailyWindowStart(time.Now()), updatedAccount.NextRetryTime)
+
+	stats, err := model.CountPoolAccountsByGroupIDs([]int{group.Id})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, stats[group.Id]["cooldown"])
+	require.EqualValues(t, 1, stats[group.Id]["unavailable"])
+	require.EqualValues(t, 0, stats[group.Id]["enabled"])
 }
 
 func TestSelectPoolAccountSkipsAccountDailyRequestLimit(t *testing.T) {
@@ -367,6 +380,11 @@ func TestSelectPoolAccountResetsAccountDailyUsageWindow(t *testing.T) {
 	account.DailyRequestCount = 1
 	account.DailyUsedQuota = 10
 	account.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now().Add(-24 * time.Hour))
+	account.Unavailable = true
+	account.StatusMessage = model.PoolAccountDailyRequestLimitStatusMessage
+	account.LastError = model.PoolAccountDailyRequestLimitStatusMessage
+	account.DisabledReason = model.PoolAccountDailyRequestLimitStatusMessage
+	account.NextRetryTime = model.AccountPoolNextDailyWindowStart(time.Now().Add(-24 * time.Hour))
 	require.NoError(t, model.DB.Save(account).Error)
 	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
 
@@ -381,6 +399,42 @@ func TestSelectPoolAccountResetsAccountDailyUsageWindow(t *testing.T) {
 	require.Equal(t, int64(1), updatedAccount.DailyRequestCount)
 	require.Equal(t, int64(0), updatedAccount.DailyUsedQuota)
 	require.Equal(t, model.AccountPoolDailyWindowStart(time.Now()), updatedAccount.DailyResetTime)
+	require.False(t, updatedAccount.Unavailable)
+	require.Equal(t, "", updatedAccount.StatusMessage)
+	require.Equal(t, "", updatedAccount.LastError)
+	require.Equal(t, int64(0), updatedAccount.NextRetryTime)
+}
+
+func TestAddSelectedAccountUsedQuotaMarksAccountDailyQuotaCooling(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-quota-cooling")
+	account := createSelectablePoolAccount(t, group, "daily-quota-cooling-account")
+	account.DailyQuotaLimit = 10
+	require.NoError(t, model.DB.Save(account).Error)
+
+	AddSelectedAccountUsedQuota(0, account.Id, 10)
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 10, updatedAccount.DailyUsedQuota)
+	require.True(t, updatedAccount.Unavailable)
+	require.Equal(t, model.PoolAccountDailyQuotaLimitStatusMessage, updatedAccount.StatusMessage)
+	require.Equal(t, model.PoolAccountDailyQuotaLimitStatusMessage, updatedAccount.LastError)
+	require.Equal(t, model.AccountPoolNextDailyWindowStart(time.Now()), updatedAccount.NextRetryTime)
+
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+	ctx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, model.ErrPoolAccountDailyQuotaLimitExceeded))
+
+	require.NoError(t, model.DB.Model(&model.PoolAccount{}).Where("id = ?", account.Id).Updates(map[string]interface{}{
+		"daily_reset_time": model.AccountPoolDailyWindowStart(time.Now().Add(-24 * time.Hour)),
+	}).Error)
+	recoveredCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(recoveredCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(recoveredCtx)
 }
 
 func TestReservePoolAccountUsageLimitRollsBackRateLimitWhenDailyRequestExceeded(t *testing.T) {

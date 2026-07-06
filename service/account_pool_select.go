@@ -119,11 +119,17 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		if excluded[account.Id] {
 			continue
 		}
-		if account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.Unavailable || account.IsCoolingDown(now) {
+		if account.Status != common.ChannelStatusEnabled || !account.Schedulable {
 			continue
 		}
 		if err := model.PoolAccountDailyLimitError(account, nowTime); err != nil {
+			if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, nowTime); markErr != nil {
+				common.SysLog(fmt.Sprintf("failed to mark pool account daily limit cooling: account_id=%d, error=%v", account.Id, markErr))
+			}
 			lastAccountLimitErr = err
+			continue
+		}
+		if account.Unavailable || account.IsCoolingDown(now) {
 			continue
 		}
 		if !poolAccountSupportsModel(account, group, modelName) {
@@ -351,6 +357,9 @@ func reservePoolAccountUsageLimit(account *model.PoolAccount) error {
 		return nil
 	}
 	if err := model.CheckPoolAccountDailyQuotaLimit(account.Id); err != nil {
+		if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, time.Now()); markErr != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily quota cooling: account_id=%d, error=%v", account.Id, markErr))
+		}
 		return err
 	}
 	if !reservePoolAccountRateLimit(account.Id, account.RateLimitRpm) {
@@ -358,6 +367,9 @@ func reservePoolAccountUsageLimit(account *model.PoolAccount) error {
 	}
 	if err := model.ReservePoolAccountRequest(account.Id); err != nil {
 		releasePoolAccountRateLimit(account.Id, account.RateLimitRpm)
+		if markErr := model.MarkPoolAccountDailyLimitCooling(account.Id, err, time.Now()); markErr != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily request cooling: account_id=%d, error=%v", account.Id, markErr))
+		}
 		return err
 	}
 	return nil

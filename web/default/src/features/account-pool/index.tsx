@@ -187,9 +187,6 @@ function statusVariant(
   if (account.status !== CHANNEL_STATUS.ENABLED || !account.schedulable) {
     return 'danger'
   }
-  if (account.unavailable) {
-    return 'danger'
-  }
   if (
     account.rate_limited_until > nowSeconds ||
     account.overload_until > nowSeconds ||
@@ -197,6 +194,9 @@ function statusVariant(
     account.next_retry_time > nowSeconds
   ) {
     return 'warning'
+  }
+  if (account.unavailable) {
+    return 'danger'
   }
   return 'success'
 }
@@ -209,11 +209,11 @@ function statusLabel(
   if (account.status !== CHANNEL_STATUS.ENABLED || !account.schedulable) {
     return t('Disabled')
   }
-  if (account.unavailable) {
-    return t('Unavailable')
-  }
   if (statusVariant(account, nowSeconds) === 'warning') {
     return t('Cooling Down')
+  }
+  if (account.unavailable) {
+    return t('Unavailable')
   }
   return t('Enabled')
 }
