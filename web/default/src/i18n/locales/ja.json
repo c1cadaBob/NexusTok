@@ -3513,6 +3513,7 @@
     "Return per-token log probabilities": "トークンごとの対数確率を返します",
     "Return to dashboard": "ダッシュボードに戻る",
     "Return vector embeddings for inputs": "入力に対してベクトル埋め込みを返却",
+    "Result": "結果",
     "Reveal API key": "APIキーを表示",
     "Reveal key": "キーを表示",
     "Revenue": "収益",

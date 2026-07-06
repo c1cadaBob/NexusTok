@@ -3513,6 +3513,7 @@
     "Return per-token log probabilities": "返回每个 token 的对数概率",
     "Return to dashboard": "返回仪表盘",
     "Return vector embeddings for inputs": "为输入返回向量嵌入",
+    "Result": "结果",
     "Reveal API key": "显示 API 密钥",
     "Reveal key": "显示密钥",
     "Revenue": "收入",

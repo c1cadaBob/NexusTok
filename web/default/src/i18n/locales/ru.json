@@ -3513,6 +3513,7 @@
     "Return per-token log probabilities": "Возвращать логарифмические вероятности по токенам",
     "Return to dashboard": "Вернуться на панель управления",
     "Return vector embeddings for inputs": "Возвращать векторные эмбеддинги для входных данных",
+    "Result": "Результат",
     "Reveal API key": "Показать API ключ",
     "Reveal key": "Показать ключ",
     "Revenue": "Доход",
