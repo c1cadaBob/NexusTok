@@ -456,6 +456,11 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before, err := model.GetPoolAccountById(accountID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var req poolAccountStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
@@ -472,6 +477,7 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionManualClearCooldown, req.Reason, before)
 		common.ApiSuccess(c, nil)
 		return
 	}
@@ -490,6 +496,7 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 			"temp_disabled_until": 0,
 		})
 	}
+	recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionManualStatus, req.Reason, before)
 	common.ApiSuccess(c, nil)
 }
 
@@ -538,6 +545,33 @@ func ListAccountPoolUsageLogs(c *gin.Context) {
 		Search:            c.Query("search"),
 		StartIdx:          pageInfo.GetStartIdx(),
 		Limit:             pageInfo.GetPageSize(),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(logs)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func ListAccountPoolStateLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	poolAccountID, _ := strconv.Atoi(c.Query("pool_account_id"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	logs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolGroupId:    poolGroupID,
+		PoolAccountId:  poolAccountID,
+		Action:         c.Query("action"),
+		Source:         c.Query("source"),
+		Actor:          c.Query("actor"),
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+		Search:         c.Query("search"),
+		StartIdx:       pageInfo.GetStartIdx(),
+		Limit:          pageInfo.GetPageSize(),
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -819,6 +853,11 @@ func ResetPoolAccountRuntime(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before, getErr := model.GetPoolAccountById(accountID)
+	if getErr != nil {
+		common.ApiError(c, getErr)
+		return
+	}
 	err := model.UpdatePoolAccountErrorState(accountID, map[string]interface{}{
 		"unavailable":         false,
 		"status_message":      "",
@@ -839,6 +878,7 @@ func ResetPoolAccountRuntime(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionRuntimeReset, "重置账号运行时状态", before)
 	common.ApiSuccess(c, nil)
 }
 
@@ -958,6 +998,7 @@ func RefreshPoolAccountCredential(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionRefreshSucceeded, "管理员手动刷新账号凭据成功", account)
 	updated, err := model.GetPoolAccountById(accountID)
 	if err != nil {
 		common.ApiError(c, err)
@@ -976,6 +1017,7 @@ func CheckPoolAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordPoolAccountCheckStateFromController(c, result)
 	common.ApiSuccess(c, result)
 }
 
@@ -1003,7 +1045,42 @@ func CheckPoolAccountsInGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for _, item := range result.Items {
+		recordPoolAccountCheckStateFromController(c, item)
+	}
 	common.ApiSuccess(c, result)
+}
+
+func recordPoolAccountStateFromController(c *gin.Context, accountID int, action string, reason string, before *model.PoolAccount) {
+	if accountID <= 0 {
+		return
+	}
+	actor := ""
+	requestID := ""
+	if c != nil {
+		actor = strings.TrimSpace(c.GetString("username"))
+		requestID = strings.TrimSpace(c.GetString(common.RequestIdKey))
+	}
+	model.RecordPoolAccountStateLog(model.PoolAccountStateLogRecord{
+		PoolAccountId: accountID,
+		Action:        action,
+		Source:        "admin",
+		Actor:         actor,
+		Reason:        reason,
+		RequestId:     requestID,
+		Before:        before,
+	})
+}
+
+func recordPoolAccountCheckStateFromController(c *gin.Context, result *service.AccountPoolCheckResult) {
+	if result == nil || !result.Checked || result.AccountID <= 0 {
+		return
+	}
+	action := model.PoolAccountStateActionCheckFailed
+	if result.Success {
+		action = model.PoolAccountStateActionCheckSucceeded
+	}
+	recordPoolAccountStateFromController(c, result.AccountID, action, result.Message, nil)
 }
 
 func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRequest) bool {

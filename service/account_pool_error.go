@@ -40,6 +40,7 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 
 	reason := err.ErrorWithStatusCode()
 	recordPoolAccountUsageFailure(c, channelError, err, reason)
+	before, _ := model.GetPoolAccountById(channelError.PoolAccountId)
 	updates := map[string]interface{}{
 		"last_error":     reason,
 		"status_message": reason,
@@ -67,7 +68,20 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 
 	if updateErr := model.UpdatePoolAccountErrorState(channelError.PoolAccountId, updates); updateErr != nil {
 		common.SysLog("failed to update pool account error state: " + updateErr.Error())
+		return
 	}
+	requestID := ""
+	if c != nil {
+		requestID = c.GetString(common.RequestIdKey)
+	}
+	model.RecordPoolAccountStateLog(model.PoolAccountStateLogRecord{
+		PoolAccountId: channelError.PoolAccountId,
+		Action:        model.PoolAccountStateActionRelayError,
+		Source:        "relay",
+		Reason:        reason,
+		RequestId:     requestID,
+		Before:        before,
+	})
 }
 
 // recordPoolAccountUsageFailure 记录原生账号池账号失败日志。

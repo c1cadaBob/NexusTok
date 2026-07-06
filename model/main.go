@@ -310,6 +310,7 @@ func migrateDB() error {
 		&PoolAccount{},
 		&AccountPoolAuthFile{},
 		&PoolAccountUsageLog{},
+		&PoolAccountStateLog{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -364,6 +365,7 @@ func migrateDBFast() error {
 		{&PoolAccount{}, "PoolAccount"},
 		{&AccountPoolAuthFile{}, "AccountPoolAuthFile"},
 		{&PoolAccountUsageLog{}, "PoolAccountUsageLog"},
+		{&PoolAccountStateLog{}, "PoolAccountStateLog"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
@@ -431,6 +433,9 @@ func migrateLOGDB() error {
 		return err
 	}
 	if err = LOG_DB.AutoMigrate(&PoolAccountUsageLog{}); err != nil {
+		return err
+	}
+	if err = LOG_DB.AutoMigrate(&PoolAccountStateLog{}); err != nil {
 		return err
 	}
 	return nil

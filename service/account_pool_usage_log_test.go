@@ -17,12 +17,14 @@ import (
 
 func setupAccountPoolUsageLogTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.PoolAccount{}, &model.PoolAccountUsageLog{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.PoolAccount{}, &model.PoolAccountUsageLog{}, &model.PoolAccountStateLog{}))
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_usage_logs").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	t.Cleanup(func() {
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_usage_logs").Error
+		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 	})
 }
 
@@ -129,4 +131,18 @@ func TestProcessPoolAccountErrorRecordsUsageFailure(t *testing.T) {
 	require.NoError(t, getErr)
 	require.Equal(t, int64(1), updated.FailedCount)
 	require.NotEmpty(t, updated.LastError)
+
+	stateLogs, stateTotal, stateErr := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolAccountId: account.Id,
+		Action:        model.PoolAccountStateActionRelayError,
+		Limit:         10,
+	})
+	require.NoError(t, stateErr)
+	require.Equal(t, int64(1), stateTotal)
+	require.Len(t, stateLogs, 1)
+	require.Equal(t, model.PoolAccountStateActionRelayError, stateLogs[0].Action)
+	require.Equal(t, "relay", stateLogs[0].Source)
+	require.False(t, stateLogs[0].BeforeUnavailable)
+	require.True(t, stateLogs[0].AfterUnavailable)
+	require.NotEmpty(t, stateLogs[0].Reason)
 }

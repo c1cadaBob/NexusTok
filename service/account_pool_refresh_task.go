@@ -122,10 +122,18 @@ func runAccountPoolCredentialAutoRefreshOnce() {
 				markPoolAccountRefreshFailed(account, err) // 标记刷新失败，设置重试延迟
 				continue
 			}
+			before := *account
 			if err := updatePoolAccountCredentialFromAuth(account, credential); err != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("account pool credential auto-refresh: account_id=%d update failed: %v", account.Id, err))
 				continue
 			}
+			model.RecordPoolAccountStateLog(model.PoolAccountStateLogRecord{
+				PoolAccountId: account.Id,
+				Action:        model.PoolAccountStateActionRefreshSucceeded,
+				Source:        "auto_refresh",
+				Reason:        "账号凭据自动刷新成功",
+				Before:        &before,
+			})
 			refreshed++
 		}
 	}
@@ -144,6 +152,7 @@ func runAccountPoolCredentialAutoRefreshOnce() {
 // 参数:
 //   - account: 账号池账户
 //   - now: 当前时间戳（Unix 秒）
+//
 // 返回值:
 //   - bool: 是否需要刷新
 func shouldRefreshPoolAccountCredential(account *model.PoolAccount, now int64) bool {
@@ -165,6 +174,7 @@ func shouldRefreshPoolAccountCredential(account *model.PoolAccount, now int64) b
 // 参数:
 //   - account: 账号池账户
 //   - credential: 凭据提供者返回的凭据信息
+//
 // 返回值:
 //   - error: 更新失败时返回错误
 func updatePoolAccountCredentialFromAuth(account *model.PoolAccount, credential *accountauth.AccountCredential) error {
@@ -219,6 +229,7 @@ func markPoolAccountRefreshFailed(account *model.PoolAccount, err error) {
 		return
 	}
 	reason := err.Error()
+	before, _ := model.GetPoolAccountById(account.Id)
 	// 计算下次重试时间：当前时间 + 重试延迟
 	nextRetry := common.GetTimestamp() + int64(accountPoolRefreshRetryDelay.Seconds())
 	// 更新账户错误状态
@@ -229,13 +240,22 @@ func markPoolAccountRefreshFailed(account *model.PoolAccount, err error) {
 		"next_retry_time": nextRetry,
 	}); updateErr != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf("account pool credential auto-refresh: account_id=%d mark failed: %v", account.Id, updateErr))
+		return
 	}
+	model.RecordPoolAccountStateLog(model.PoolAccountStateLogRecord{
+		PoolAccountId: account.Id,
+		Action:        model.PoolAccountStateActionRefreshFailed,
+		Source:        "auto_refresh",
+		Reason:        reason,
+		Before:        before,
+	})
 }
 
 // timestampOrZero 将 time.Time 转换为 Unix 时间戳
 // 如果时间为零值则返回 0
 // 参数:
 //   - t: 时间
+//
 // 返回值:
 //   - int64: Unix 时间戳（秒），零值时间返回 0
 func timestampOrZero(t time.Time) int64 {

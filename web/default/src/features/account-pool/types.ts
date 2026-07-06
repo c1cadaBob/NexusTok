@@ -377,3 +377,30 @@ export type AccountPoolUsageLog = {
   upstream_request_id?: string
   retry_index: number
 }
+
+export type AccountPoolStateLog = {
+  id: number
+  created_at: number
+  pool_group_id: number
+  pool_group_name: string
+  pool_account_id: number
+  pool_account_name: string
+  pool_account_auth_type: string
+  action: string
+  source: string
+  actor: string
+  reason: string
+  before_status: number
+  after_status: number
+  before_schedulable: boolean
+  after_schedulable: boolean
+  before_unavailable: boolean
+  after_unavailable: boolean
+  before_next_retry_time: number
+  after_next_retry_time: number
+  before_status_message: string
+  after_status_message: string
+  before_disabled_reason: string
+  after_disabled_reason: string
+  request_id?: string
+}

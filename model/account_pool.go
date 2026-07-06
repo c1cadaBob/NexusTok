@@ -75,6 +75,27 @@ const (
 	// PoolAccountDailyQuotaLimitStatusMessage 表示账号因当日额度耗尽进入临时冷却。
 	// 该状态由账号池每日窗口自动恢复逻辑清除，不能作为人工禁用原因长期保存。
 	PoolAccountDailyQuotaLimitStatusMessage = "账号池账号今日额度已用尽，次日自动恢复"
+
+	// PoolAccountStateActionManualStatus 表示管理员手动修改账号启用/禁用状态。
+	PoolAccountStateActionManualStatus = "manual_status"
+	// PoolAccountStateActionManualClearCooldown 表示管理员手动清理冷却状态。
+	PoolAccountStateActionManualClearCooldown = "manual_clear_cooldown"
+	// PoolAccountStateActionRuntimeReset 表示管理员重置账号运行时统计和错误状态。
+	PoolAccountStateActionRuntimeReset = "runtime_reset"
+	// PoolAccountStateActionCheckSucceeded 表示人工检测成功并恢复账号健康状态。
+	PoolAccountStateActionCheckSucceeded = "check_succeeded"
+	// PoolAccountStateActionCheckFailed 表示人工检测失败并标记账号不可用。
+	PoolAccountStateActionCheckFailed = "check_failed"
+	// PoolAccountStateActionRelayError 表示 Relay 热路径遇到上游错误并更新账号状态。
+	PoolAccountStateActionRelayError = "relay_error"
+	// PoolAccountStateActionDailyLimitCooling 表示账号达到每日限制并进入次日冷却。
+	PoolAccountStateActionDailyLimitCooling = "daily_limit_cooling"
+	// PoolAccountStateActionDailyLimitRecovered 表示每日窗口重置后清理账号每日限制冷却。
+	PoolAccountStateActionDailyLimitRecovered = "daily_limit_recovered"
+	// PoolAccountStateActionRefreshSucceeded 表示凭据刷新成功并恢复账号状态。
+	PoolAccountStateActionRefreshSucceeded = "refresh_succeeded"
+	// PoolAccountStateActionRefreshFailed 表示自动刷新失败并标记账号不可用。
+	PoolAccountStateActionRefreshFailed = "refresh_failed"
 )
 
 var (
@@ -325,6 +346,63 @@ type PoolAccountUsageLogFilter struct {
 	Search            string
 	StartIdx          int
 	Limit             int
+}
+
+// PoolAccountStateLog 记录账号池账号状态的每一次人工或自动变更。
+//
+// 状态日志和使用日志分开保存：使用日志关注“某次请求是否成功”，状态日志关注“账号为何被禁用、
+// 冷却、恢复或重置”。字段全部使用普通列，方便 SQLite、MySQL 和 PostgreSQL 统一筛选。
+type PoolAccountStateLog struct {
+	Id                   int    `json:"id"`
+	CreatedAt            int64  `json:"created_at" gorm:"bigint;index:idx_pool_account_state_created_at"`
+	PoolGroupId          int    `json:"pool_group_id" gorm:"index:idx_pool_account_state_group"`
+	PoolGroupName        string `json:"pool_group_name" gorm:"type:varchar(255)"`
+	PoolAccountId        int    `json:"pool_account_id" gorm:"index:idx_pool_account_state_account"`
+	PoolAccountName      string `json:"pool_account_name" gorm:"type:varchar(255)"`
+	PoolAccountAuthType  string `json:"pool_account_auth_type" gorm:"type:varchar(64);index"`
+	Action               string `json:"action" gorm:"type:varchar(64);index"`
+	Source               string `json:"source" gorm:"type:varchar(64);index"`
+	Actor                string `json:"actor" gorm:"type:varchar(255);index"`
+	Reason               string `json:"reason" gorm:"type:text"`
+	BeforeStatus         int    `json:"before_status" gorm:"default:0"`
+	AfterStatus          int    `json:"after_status" gorm:"default:0"`
+	BeforeSchedulable    bool   `json:"before_schedulable" gorm:"default:false"`
+	AfterSchedulable     bool   `json:"after_schedulable" gorm:"default:false"`
+	BeforeUnavailable    bool   `json:"before_unavailable" gorm:"default:false"`
+	AfterUnavailable     bool   `json:"after_unavailable" gorm:"default:false"`
+	BeforeNextRetryTime  int64  `json:"before_next_retry_time" gorm:"bigint;default:0"`
+	AfterNextRetryTime   int64  `json:"after_next_retry_time" gorm:"bigint;default:0"`
+	BeforeStatusMessage  string `json:"before_status_message" gorm:"type:text"`
+	AfterStatusMessage   string `json:"after_status_message" gorm:"type:text"`
+	BeforeDisabledReason string `json:"before_disabled_reason" gorm:"type:text"`
+	AfterDisabledReason  string `json:"after_disabled_reason" gorm:"type:text"`
+	RequestId            string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_pool_account_state_request_id"`
+}
+
+// PoolAccountStateLogRecord 描述一次账号状态变更日志写入请求。
+// Before 可选；传入时会保存变更前快照，未传入则只保存变更后的账号当前状态。
+type PoolAccountStateLogRecord struct {
+	PoolAccountId int
+	Action        string
+	Source        string
+	Actor         string
+	Reason        string
+	RequestId     string
+	Before        *PoolAccount
+}
+
+// PoolAccountStateLogFilter 是账号状态日志的分页筛选条件。
+type PoolAccountStateLogFilter struct {
+	PoolGroupId    int
+	PoolAccountId  int
+	Action         string
+	Source         string
+	Actor          string
+	StartTimestamp int64
+	EndTimestamp   int64
+	Search         string
+	StartIdx       int
+	Limit          int
 }
 
 // BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
@@ -909,14 +987,28 @@ func MarkPoolAccountDailyLimitCooling(accountID int, limitErr error, now time.Ti
 	if now.IsZero() {
 		now = time.Now()
 	}
+	before, _ := GetPoolAccountById(accountID)
 	recoverAt := AccountPoolNextDailyWindowStart(now)
-	return DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(map[string]interface{}{
+	shouldRecord := before == nil || !IsPoolAccountDailyLimitCooling(before) || before.NextRetryTime != recoverAt
+	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(map[string]interface{}{
 		"unavailable":     true,
 		"status_message":  reason,
 		"last_error":      reason,
 		"disabled_reason": reason,
 		"next_retry_time": recoverAt,
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	if shouldRecord {
+		RecordPoolAccountStateLog(PoolAccountStateLogRecord{
+			PoolAccountId: accountID,
+			Action:        PoolAccountStateActionDailyLimitCooling,
+			Source:        "daily_limit",
+			Reason:        reason,
+			Before:        before,
+		})
+	}
+	return nil
 }
 
 // ClearPoolAccountDailyLimitCooling 清理由每日请求/额度耗尽策略写入的临时冷却状态。
@@ -925,8 +1017,12 @@ func ClearPoolAccountDailyLimitCooling(accountID int) error {
 	if accountID <= 0 {
 		return nil
 	}
+	before, err := GetPoolAccountById(accountID)
+	if err != nil || !IsPoolAccountDailyLimitCooling(before) {
+		return err
+	}
 	reasons := []string{PoolAccountDailyRequestLimitStatusMessage, PoolAccountDailyQuotaLimitStatusMessage}
-	return DB.Model(&PoolAccount{}).
+	result := DB.Model(&PoolAccount{}).
 		Where("id = ? AND (status_message IN ? OR disabled_reason IN ?)", accountID, reasons, reasons).
 		Updates(map[string]interface{}{
 			"unavailable":     false,
@@ -934,7 +1030,20 @@ func ClearPoolAccountDailyLimitCooling(accountID int) error {
 			"last_error":      "",
 			"disabled_reason": "",
 			"next_retry_time": 0,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		RecordPoolAccountStateLog(PoolAccountStateLogRecord{
+			PoolAccountId: accountID,
+			Action:        PoolAccountStateActionDailyLimitRecovered,
+			Source:        "daily_limit",
+			Reason:        "每日窗口已重置，清理账号每日限制冷却状态",
+			Before:        before,
+		})
+	}
+	return nil
 }
 
 // ReservePoolAccountRequest 在账号被真正选中前预占一次账号级每日请求额度。
@@ -1406,6 +1515,121 @@ func GetPoolAccountUsageLogs(filter PoolAccountUsageLogFilter) ([]*PoolAccountUs
 		return nil, 0, err
 	}
 	logs := []*PoolAccountUsageLog{}
+	err := query.Order("id DESC").Limit(filter.Limit).Offset(filter.StartIdx).Find(&logs).Error
+	return logs, total, err
+}
+
+// RecordPoolAccountStateLog 写入账号池账号状态变更日志。
+// 日志写入失败不应影响热路径、检测任务或管理员操作，因此失败时只写系统日志。
+func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
+	if record.PoolAccountId <= 0 {
+		return
+	}
+	logDB := LOG_DB
+	if logDB == nil {
+		logDB = DB
+	}
+	if logDB == nil {
+		return
+	}
+	after, err := GetPoolAccountById(record.PoolAccountId)
+	if err != nil || after == nil {
+		common.SysLog(fmt.Sprintf("failed to load pool account state after update: account_id=%d, error=%v", record.PoolAccountId, err))
+		return
+	}
+	groupName := ""
+	if after.PoolGroupId > 0 {
+		if group, groupErr := GetAccountPoolGroupById(after.PoolGroupId); groupErr == nil && group != nil {
+			groupName = group.Name
+		}
+	}
+	before := record.Before
+	action := strings.TrimSpace(record.Action)
+	if action == "" {
+		action = "unknown"
+	}
+	source := strings.TrimSpace(record.Source)
+	if source == "" {
+		source = "system"
+	}
+	log := &PoolAccountStateLog{
+		CreatedAt:           common.GetTimestamp(),
+		PoolGroupId:         after.PoolGroupId,
+		PoolGroupName:       groupName,
+		PoolAccountId:       after.Id,
+		PoolAccountName:     after.Name,
+		PoolAccountAuthType: after.AuthType,
+		Action:              action,
+		Source:              source,
+		Actor:               strings.TrimSpace(record.Actor),
+		Reason:              strings.TrimSpace(record.Reason),
+		RequestId:           strings.TrimSpace(record.RequestId),
+		AfterStatus:         after.Status,
+		AfterSchedulable:    after.Schedulable,
+		AfterUnavailable:    after.Unavailable,
+		AfterNextRetryTime:  after.NextRetryTime,
+		AfterStatusMessage:  after.StatusMessage,
+		AfterDisabledReason: after.DisabledReason,
+	}
+	if before != nil {
+		log.BeforeStatus = before.Status
+		log.BeforeSchedulable = before.Schedulable
+		log.BeforeUnavailable = before.Unavailable
+		log.BeforeNextRetryTime = before.NextRetryTime
+		log.BeforeStatusMessage = before.StatusMessage
+		log.BeforeDisabledReason = before.DisabledReason
+	}
+	if err := logDB.Create(log).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to record pool account state log: account_id=%d, action=%s, error=%v", record.PoolAccountId, action, err))
+	}
+}
+
+// GetPoolAccountStateLogs 分页查询账号池账号状态变更日志。
+func GetPoolAccountStateLogs(filter PoolAccountStateLogFilter) ([]*PoolAccountStateLog, int64, error) {
+	logDB := LOG_DB
+	if logDB == nil {
+		logDB = DB
+	}
+	if logDB == nil {
+		return nil, 0, gorm.ErrInvalidDB
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 20
+	}
+	if filter.Limit > 100 {
+		filter.Limit = 100
+	}
+	query := logDB.Model(&PoolAccountStateLog{})
+	if filter.PoolGroupId > 0 {
+		query = query.Where("pool_group_id = ?", filter.PoolGroupId)
+	}
+	if filter.PoolAccountId > 0 {
+		query = query.Where("pool_account_id = ?", filter.PoolAccountId)
+	}
+	if strings.TrimSpace(filter.Action) != "" {
+		query = query.Where("action = ?", strings.TrimSpace(filter.Action))
+	}
+	if strings.TrimSpace(filter.Source) != "" {
+		query = query.Where("source = ?", strings.TrimSpace(filter.Source))
+	}
+	if strings.TrimSpace(filter.Actor) != "" {
+		query = query.Where("actor = ?", strings.TrimSpace(filter.Actor))
+	}
+	if filter.StartTimestamp > 0 {
+		query = query.Where("created_at >= ?", filter.StartTimestamp)
+	}
+	if filter.EndTimestamp > 0 {
+		query = query.Where("created_at <= ?", filter.EndTimestamp)
+	}
+	if strings.TrimSpace(filter.Search) != "" {
+		like := "%" + strings.TrimSpace(filter.Search) + "%"
+		query = query.Where("(pool_group_name LIKE ? OR pool_account_name LIKE ? OR action LIKE ? OR source LIKE ? OR actor LIKE ? OR reason LIKE ? OR after_status_message LIKE ? OR after_disabled_reason LIKE ?)", like, like, like, like, like, like, like, like)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	logs := []*PoolAccountStateLog{}
 	err := query.Order("id DESC").Limit(filter.Limit).Offset(filter.StartIdx).Find(&logs).Error
 	return logs, total, err
 }

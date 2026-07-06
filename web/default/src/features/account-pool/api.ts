@@ -31,6 +31,7 @@ import type {
   AccountPoolLoginSession,
   AccountPoolLoginStartResult,
   AccountPoolProvider,
+  AccountPoolStateLog,
   AccountPoolUsageLog,
   ApiResponse,
   PageResponse,
@@ -52,6 +53,8 @@ export const accountPoolQueryKeys = {
     ['account-pool', 'groups', groupId, 'accounts', params] as const,
   usageLogs: (params?: unknown) =>
     ['account-pool', 'usage-logs', params] as const,
+  stateLogs: (params?: unknown) =>
+    ['account-pool', 'state-logs', params] as const,
 }
 
 export async function getAccountPoolProviders(): Promise<
@@ -180,6 +183,22 @@ export async function getAccountPoolUsageLogs(params: {
   search?: string
 }): Promise<ApiResponse<PageResponse<AccountPoolUsageLog>>> {
   const res = await api.get('/api/account-pool/usage-logs', { params })
+  return res.data
+}
+
+export async function getAccountPoolStateLogs(params: {
+  p?: number
+  page_size?: number
+  pool_group_id?: number
+  pool_account_id?: number
+  action?: string
+  source?: string
+  actor?: string
+  start_timestamp?: number
+  end_timestamp?: number
+  search?: string
+}): Promise<ApiResponse<PageResponse<AccountPoolStateLog>>> {
+  const res = await api.get('/api/account-pool/state-logs', { params })
   return res.data
 }
 

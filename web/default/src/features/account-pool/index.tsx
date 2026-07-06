@@ -79,6 +79,7 @@ import {
   getAccountPoolLoginSession,
   getAccountPoolGroups,
   getAccountPoolProviders,
+  getAccountPoolStateLogs,
   getAccountPoolUsageLogs,
   getPoolAccounts,
   refreshPoolAccountCredential,
@@ -131,7 +132,7 @@ type AccountFormState = {
   proxy: string
 }
 
-type AccountPoolView = 'accounts' | 'auth-files' | 'usage-logs'
+type AccountPoolView = 'accounts' | 'auth-files' | 'usage-logs' | 'state-logs'
 type UsageLogStatusFilter = 'all' | 'success' | 'failed'
 
 const emptyGroupForm: GroupFormState = {
@@ -339,6 +340,40 @@ function accountLimitSummary(
   return parts.join(' · ')
 }
 
+function poolAccountStatusText(
+  status: number,
+  schedulable: boolean,
+  unavailable: boolean,
+  t: (key: string) => string
+): string {
+  if (status !== CHANNEL_STATUS.ENABLED || !schedulable) {
+    return t('Disabled')
+  }
+  if (unavailable) {
+    return t('Unavailable')
+  }
+  return t('Enabled')
+}
+
+function stateLogActionLabel(
+  action: string,
+  t: (key: string) => string
+): string {
+  const labels: Record<string, string> = {
+    manual_status: t('Manual status change'),
+    manual_clear_cooldown: t('Manual cooldown clear'),
+    runtime_reset: t('Runtime reset'),
+    check_succeeded: t('Check succeeded'),
+    check_failed: t('Check failed'),
+    relay_error: t('Relay error'),
+    daily_limit_cooling: t('Daily limit cooling'),
+    daily_limit_recovered: t('Daily limit recovered'),
+    refresh_succeeded: t('Credential refresh succeeded'),
+    refresh_failed: t('Credential refresh failed'),
+  }
+  return labels[action] || action || t('Unknown')
+}
+
 export function AccountPool() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -348,6 +383,8 @@ export function AccountPool() {
   const [usageLogStatus, setUsageLogStatus] =
     useState<UsageLogStatusFilter>('all')
   const [usageLogSearch, setUsageLogSearch] = useState('')
+  const [stateLogPage, setStateLogPage] = useState(1)
+  const [stateLogSearch, setStateLogSearch] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
   const [groupFormOpen, setGroupFormOpen] = useState(false)
   const [groupForm, setGroupForm] = useState<GroupFormState>(emptyGroupForm)
@@ -442,10 +479,36 @@ export function AccountPool() {
       (usageLogPageInfo?.total ?? 0) / (usageLogPageInfo?.page_size ?? 10)
     )
   )
+  const stateLogParams = useMemo(
+    () => ({
+      p: stateLogPage,
+      page_size: 10,
+      pool_group_id: selectedGroupId ?? undefined,
+      search: stateLogSearch.trim() || undefined,
+    }),
+    [selectedGroupId, stateLogPage, stateLogSearch]
+  )
+  const stateLogsQuery = useQuery({
+    queryKey: accountPoolQueryKeys.stateLogs(stateLogParams),
+    queryFn: () => getAccountPoolStateLogs(stateLogParams),
+    enabled: activeView === 'state-logs',
+  })
+  const stateLogPageInfo = stateLogsQuery.data?.data
+  const stateLogs = stateLogPageInfo?.items ?? []
+  const stateLogTotalPages = Math.max(
+    1,
+    Math.ceil(
+      (stateLogPageInfo?.total ?? 0) / (stateLogPageInfo?.page_size ?? 10)
+    )
+  )
 
   useEffect(() => {
     setUsageLogPage(1)
   }, [selectedGroupId, usageLogSearch, usageLogStatus])
+
+  useEffect(() => {
+    setStateLogPage(1)
+  }, [selectedGroupId, stateLogSearch])
 
   useEffect(() => {
     if (!deviceSessionOpen || !deviceSession?.session_id) return
@@ -1022,7 +1085,9 @@ export function AccountPool() {
                     ? (selectedGroup?.name ?? t('Account Pool'))
                     : activeView === 'auth-files'
                       ? t('Auth Files')
-                      : t('Usage Logs')}
+                      : activeView === 'usage-logs'
+                        ? t('Usage Logs')
+                        : t('State Logs')}
                 </div>
                 <div className='text-muted-foreground text-xs'>
                   {activeView === 'accounts'
@@ -1037,15 +1102,20 @@ export function AccountPool() {
                       ? t(
                           'Manage imported JSON credentials and their linked pool accounts'
                         )
-                      : selectedGroup
-                        ? t('Showing usage records for the selected group')
-                        : t('Showing usage records for all groups')}
+                      : activeView === 'usage-logs'
+                        ? selectedGroup
+                          ? t('Showing usage records for the selected group')
+                          : t('Showing usage records for all groups')
+                        : selectedGroup
+                          ? t('Showing state changes for the selected group')
+                          : t('Showing state changes for all groups')}
                 </div>
               </div>
               <TabsList>
                 <TabsTrigger value='accounts'>{t('Pool Accounts')}</TabsTrigger>
                 <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
                 <TabsTrigger value='usage-logs'>{t('Usage Logs')}</TabsTrigger>
+                <TabsTrigger value='state-logs'>{t('State Logs')}</TabsTrigger>
               </TabsList>
               <div className='flex flex-wrap gap-2'>
                 {activeView === 'usage-logs' && (
@@ -1053,6 +1123,16 @@ export function AccountPool() {
                     variant='outline'
                     size='sm'
                     onClick={() => void usageLogsQuery.refetch()}
+                  >
+                    <RefreshCw data-icon='inline-start' />
+                    {t('Refresh')}
+                  </Button>
+                )}
+                {activeView === 'state-logs' && (
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void stateLogsQuery.refetch()}
                   >
                     <RefreshCw data-icon='inline-start' />
                     {t('Refresh')}
@@ -1541,6 +1621,140 @@ export function AccountPool() {
                     onClick={() =>
                       setUsageLogPage((current) =>
                         Math.min(usageLogTotalPages, current + 1)
+                      )
+                    }
+                  >
+                    {t('Next')}
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value='state-logs' className='m-0 min-h-0'>
+              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+                <Input
+                  className='md:max-w-xs'
+                  placeholder={t('Search account, action, source, actor, or reason')}
+                  value={stateLogSearch}
+                  onChange={(event) => setStateLogSearch(event.target.value)}
+                />
+              </div>
+              <div className='overflow-x-auto'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Time')}</TableHead>
+                      <TableHead>{t('Account')}</TableHead>
+                      <TableHead>{t('Action')}</TableHead>
+                      <TableHead>{t('Before state')}</TableHead>
+                      <TableHead>{t('After state')}</TableHead>
+                      <TableHead>{t('Reason')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stateLogs.map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {formatTimestamp(log.created_at)}
+                          <div className='text-muted-foreground mt-1'>
+                            {log.request_id || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[190px]'>
+                          <div className='text-sm font-medium'>
+                            {log.pool_account_name || `#${log.pool_account_id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
+                            {log.pool_account_auth_type || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[170px]'>
+                          <div className='text-sm'>
+                            {stateLogActionLabel(log.action, t)}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {t('Source')}: {log.source || '-'}
+                            {log.actor ? ` · ${t('Actor')}: ${log.actor}` : ''}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[180px] text-xs'>
+                          {poolAccountStatusText(
+                            log.before_status,
+                            log.before_schedulable,
+                            log.before_unavailable,
+                            t
+                          )}
+                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                            {log.before_status_message ||
+                              log.before_disabled_reason ||
+                              '-'}
+                          </div>
+                          {log.before_next_retry_time > 0 ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Next retry')}:&nbsp;
+                              {formatTimestamp(log.before_next_retry_time)}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className='min-w-[180px] text-xs'>
+                          {poolAccountStatusText(
+                            log.after_status,
+                            log.after_schedulable,
+                            log.after_unavailable,
+                            t
+                          )}
+                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                            {log.after_status_message ||
+                              log.after_disabled_reason ||
+                              '-'}
+                          </div>
+                          {log.after_next_retry_time > 0 ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Next retry')}:&nbsp;
+                              {formatTimestamp(log.after_next_retry_time)}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className='max-w-[280px] break-words text-xs'>
+                          {log.reason || '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!stateLogsQuery.isLoading && stateLogs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className='h-24 text-center'>
+                          {t('No state logs found')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Page {{page}} of {{total}}', {
+                    page: stateLogPage,
+                    total: stateLogTotalPages,
+                  })}
+                </span>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={stateLogPage <= 1}
+                    onClick={() =>
+                      setStateLogPage((current) => Math.max(1, current - 1))
+                    }
+                  >
+                    {t('Previous')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={stateLogPage >= stateLogTotalPages}
+                    onClick={() =>
+                      setStateLogPage((current) =>
+                        Math.min(stateLogTotalPages, current + 1)
                       )
                     }
                   >
