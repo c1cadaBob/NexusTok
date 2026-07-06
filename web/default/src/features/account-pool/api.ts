@@ -24,6 +24,7 @@ import type {
   AccountPoolAuthFilePayload,
   AccountPoolAuthFileUpdatePayload,
   AccountPoolBatchCheckResult,
+  AccountPoolBatchStatusResult,
   AccountPoolCheckResult,
   AccountPoolGroup,
   AccountPoolGroupOption,
@@ -37,6 +38,7 @@ import type {
   PageResponse,
   PoolAccount,
   PoolAccountBatchPayload,
+  PoolAccountBatchStatusPayload,
   PoolAccountPayload,
   AccountPoolStats,
 } from './types'
@@ -250,6 +252,17 @@ export async function updatePoolAccountStatus(
 ): Promise<ApiResponse<null>> {
   const res = await api.post(
     `/api/account-pool/accounts/${accountId}/status`,
+    data
+  )
+  return res.data
+}
+
+export async function batchUpdatePoolAccountStatus(
+  groupId: number,
+  data: PoolAccountBatchStatusPayload
+): Promise<ApiResponse<AccountPoolBatchStatusResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/status`,
     data
   )
   return res.data

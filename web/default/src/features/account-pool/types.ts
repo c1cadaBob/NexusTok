@@ -228,6 +228,30 @@ export type PoolAccountBatchPayload = {
   daily_limit_action?: string
 }
 
+export type PoolAccountBatchStatusPayload = {
+  account_ids: number[]
+  status?: number
+  reason?: string
+  clear_cooldown?: boolean
+  schedulable?: boolean
+}
+
+export type AccountPoolBatchStatusItem = {
+  account_id: number
+  account_name?: string
+  success: boolean
+  skipped: boolean
+  message?: string
+}
+
+export type AccountPoolBatchStatusResult = {
+  total: number
+  updated: number
+  skipped: number
+  failed: number
+  items: AccountPoolBatchStatusItem[]
+}
+
 export type AccountPoolAuthFilePayload = {
   name?: string
   content: string

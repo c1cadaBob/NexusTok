@@ -36,6 +36,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -69,6 +70,7 @@ import { formatTimestamp } from '@/features/channels/lib'
 import {
   accountPoolQueryKeys,
   batchCreatePoolAccounts,
+  batchUpdatePoolAccountStatus,
   checkPoolAccount,
   checkPoolAccountsInGroup,
   completeAccountPoolProviderOAuth,
@@ -433,6 +435,7 @@ export function AccountPool() {
     null
   )
   const [batchChecking, setBatchChecking] = useState(false)
+  const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([])
 
   const groupsQuery = useQuery({
     queryKey: accountPoolQueryKeys.groups({ page_size: 100 }),
@@ -471,9 +474,25 @@ export function AccountPool() {
     enabled: Boolean(selectedGroupId),
   })
 
-  const accounts = accountsQuery.data?.data?.accounts.items ?? []
+  const accountItems = accountsQuery.data?.data?.accounts.items
+  const accounts = useMemo(() => accountItems ?? [], [accountItems])
   const accountPage = accountsQuery.data?.data?.accounts
   const stats = accountsQuery.data?.data?.stats ?? selectedGroup?.stats
+  const accountIdsOnPage = useMemo(
+    () => accounts.map((account) => account.id),
+    [accounts]
+  )
+  const accountIdsOnPageKey = accountIdsOnPage.join(',')
+  const selectedAccountsOnPage = selectedAccountIds.filter((accountId) =>
+    accountIdsOnPage.includes(accountId)
+  )
+  const allAccountsOnPageSelected =
+    accountIdsOnPage.length > 0 &&
+    accountIdsOnPage.every((accountId) =>
+      selectedAccountIds.includes(accountId)
+    )
+  const someAccountsOnPageSelected =
+    selectedAccountsOnPage.length > 0 && !allAccountsOnPageSelected
   const selectedGroupDailyLimitTitle = groupDailyLimitTitle(selectedGroup, t)
   const accountTotal = accountPage?.total ?? stats?.total ?? accounts.length
   const totalPages = Math.max(
@@ -487,9 +506,7 @@ export function AccountPool() {
       page_size: 10,
       pool_group_id: selectedGroupId ?? undefined,
       success:
-        usageLogStatus === 'all'
-          ? undefined
-          : usageLogStatus === 'success',
+        usageLogStatus === 'all' ? undefined : usageLogStatus === 'success',
       search: usageLogSearch.trim() || undefined,
     }),
     [selectedGroupId, usageLogPage, usageLogSearch, usageLogStatus]
@@ -537,6 +554,17 @@ export function AccountPool() {
   useEffect(() => {
     setStateLogPage(1)
   }, [selectedGroupId, stateLogSearch])
+
+  useEffect(() => {
+    const currentPageIds = new Set(
+      accountIdsOnPageKey
+        ? accountIdsOnPageKey.split(',').map((accountId) => Number(accountId))
+        : []
+    )
+    setSelectedAccountIds((current) =>
+      current.filter((accountId) => currentPageIds.has(accountId))
+    )
+  }, [accountIdsOnPageKey])
 
   useEffect(() => {
     if (!deviceSessionOpen || !deviceSession?.session_id) return
@@ -756,6 +784,81 @@ export function AccountPool() {
       )
       setBatchOpen(false)
       setBatchCredentials('')
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const toggleAccountSelection = (accountId: number, checked: boolean) => {
+    setSelectedAccountIds((current) => {
+      if (checked) {
+        if (current.includes(accountId)) return current
+        return [...current, accountId]
+      }
+      return current.filter((id) => id !== accountId)
+    })
+  }
+
+  const toggleAllAccountsOnPage = (checked: boolean) => {
+    setSelectedAccountIds((current) => {
+      if (!checked) {
+        return current.filter(
+          (accountId) => !accountIdsOnPage.includes(accountId)
+        )
+      }
+      const next = [...current]
+      for (const accountId of accountIdsOnPage) {
+        if (!next.includes(accountId)) {
+          next.push(accountId)
+        }
+      }
+      return next
+    })
+  }
+
+  const batchUpdateSelectedAccountStatus = async (
+    action: 'enable' | 'disable' | 'clear_cooldown'
+  ) => {
+    if (!selectedGroupId) return
+    if (selectedAccountIds.length === 0) {
+      toast.info(t('No accounts selected'))
+      return
+    }
+    setActionLoading(true)
+    try {
+      const accountIds = [...selectedAccountIds]
+      const response = await batchUpdatePoolAccountStatus(selectedGroupId, {
+        account_ids: accountIds,
+        status:
+          action === 'clear_cooldown'
+            ? undefined
+            : action === 'enable'
+              ? CHANNEL_STATUS.ENABLED
+              : CHANNEL_STATUS.MANUAL_DISABLED,
+        schedulable:
+          action === 'clear_cooldown' ? undefined : action === 'enable',
+        clear_cooldown: action === 'clear_cooldown',
+      })
+      if (!response.success) throw new Error(response.message)
+      const message = t(
+        'Updated {{updated}} account(s), skipped {{skipped}}, failed {{failed}}',
+        {
+          updated: response.data?.updated ?? 0,
+          skipped: response.data?.skipped ?? 0,
+          failed: response.data?.failed ?? 0,
+        }
+      )
+      if ((response.data?.failed ?? 0) > 0) {
+        toast.warning(message)
+      } else {
+        toast.success(message)
+      }
+      setSelectedAccountIds([])
       await refreshAll()
     } catch (error) {
       toast.error(
@@ -1309,10 +1412,71 @@ export function AccountPool() {
                 </div>
               </div>
 
+              {accounts.length > 0 ? (
+                <div className='border-border flex flex-col gap-2 border-b p-3 text-sm md:flex-row md:items-center md:justify-between'>
+                  <span className='text-muted-foreground'>
+                    {t('{{count}} account(s) selected', {
+                      count: selectedAccountIds.length,
+                    })}
+                  </span>
+                  <div className='flex flex-wrap gap-2'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={
+                        actionLoading || selectedAccountIds.length === 0
+                      }
+                      onClick={() =>
+                        void batchUpdateSelectedAccountStatus('enable')
+                      }
+                    >
+                      <Power className='mr-2 h-4 w-4' />
+                      {t('Enable selected accounts')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={
+                        actionLoading || selectedAccountIds.length === 0
+                      }
+                      onClick={() =>
+                        void batchUpdateSelectedAccountStatus('disable')
+                      }
+                    >
+                      <PowerOff className='mr-2 h-4 w-4' />
+                      {t('Disable selected accounts')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={
+                        actionLoading || selectedAccountIds.length === 0
+                      }
+                      onClick={() =>
+                        void batchUpdateSelectedAccountStatus('clear_cooldown')
+                      }
+                    >
+                      <RefreshCw className='mr-2 h-4 w-4' />
+                      {t('Clear cooldown')}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
               <div className='overflow-x-auto'>
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className='w-10'>
+                        <Checkbox
+                          checked={allAccountsOnPageSelected}
+                          indeterminate={someAccountsOnPageSelected}
+                          onCheckedChange={(checked) =>
+                            toggleAllAccountsOnPage(Boolean(checked))
+                          }
+                          aria-label={t('Select all')}
+                        />
+                      </TableHead>
                       <TableHead>{t('Name')}</TableHead>
                       <TableHead>{t('Credential')}</TableHead>
                       <TableHead>{t('Models')}</TableHead>
@@ -1324,6 +1488,18 @@ export function AccountPool() {
                   <TableBody>
                     {accounts.map((account) => (
                       <TableRow key={account.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedAccountIds.includes(account.id)}
+                            onCheckedChange={(checked) =>
+                              toggleAccountSelection(
+                                account.id,
+                                Boolean(checked)
+                              )
+                            }
+                            aria-label={t('Select row')}
+                          />
+                        </TableCell>
                         <TableCell>
                           <div className='font-medium'>{account.name}</div>
                           <div className='text-muted-foreground text-xs'>
@@ -1454,7 +1630,7 @@ export function AccountPool() {
                     ))}
                     {!accountsQuery.isLoading && accounts.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center'>
+                        <TableCell colSpan={7} className='h-24 text-center'>
                           {t('No accounts found')}
                         </TableCell>
                       </TableRow>
@@ -1504,9 +1680,7 @@ export function AccountPool() {
               <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
                 <div className='flex flex-wrap gap-2'>
                   <Button
-                    variant={
-                      usageLogStatus === 'all' ? 'secondary' : 'outline'
-                    }
+                    variant={usageLogStatus === 'all' ? 'secondary' : 'outline'}
                     size='sm'
                     onClick={() => setUsageLogStatus('all')}
                   >
@@ -1604,7 +1778,7 @@ export function AccountPool() {
                               copyable={false}
                             />
                             {!log.success && (
-                              <div className='text-muted-foreground max-w-[260px] break-words text-xs'>
+                              <div className='text-muted-foreground max-w-[260px] text-xs break-words'>
                                 {log.status_code ? `${log.status_code} · ` : ''}
                                 {log.error_message || log.error_code || '-'}
                               </div>
@@ -1665,7 +1839,9 @@ export function AccountPool() {
               <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
                 <Input
                   className='md:max-w-xs'
-                  placeholder={t('Search account, action, source, actor, or reason')}
+                  placeholder={t(
+                    'Search account, action, source, actor, or reason'
+                  )}
                   value={stateLogSearch}
                   onChange={(event) => setStateLogSearch(event.target.value)}
                 />
@@ -1747,7 +1923,7 @@ export function AccountPool() {
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell className='max-w-[280px] break-words text-xs'>
+                        <TableCell className='max-w-[280px] text-xs break-words'>
                           {log.reason || '-'}
                         </TableCell>
                       </TableRow>

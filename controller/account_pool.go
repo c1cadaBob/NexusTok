@@ -111,6 +111,34 @@ type poolAccountStatusRequest struct {
 	Schedulable   *bool  `json:"schedulable"`    // 是否可调度
 }
 
+// poolAccountBatchStatusRequest 池账号批量状态更新请求。
+// account_ids 必须来自当前分组；接口会逐个校验归属，避免跨组误操作。
+type poolAccountBatchStatusRequest struct {
+	AccountIDs    []int  `json:"account_ids"`    // 待更新的账号 ID 列表
+	Status        int    `json:"status"`         // 新状态；仅清冷却时可为 0
+	Reason        string `json:"reason"`         // 状态变更原因
+	ClearCooldown bool   `json:"clear_cooldown"` // 是否同步清除冷却和临时不可用状态
+	Schedulable   *bool  `json:"schedulable"`    // 是否可调度
+}
+
+// poolAccountBatchStatusItem 描述批量状态操作中单个账号的结果。
+type poolAccountBatchStatusItem struct {
+	AccountID   int    `json:"account_id"`
+	AccountName string `json:"account_name,omitempty"`
+	Success     bool   `json:"success"`
+	Skipped     bool   `json:"skipped"`
+	Message     string `json:"message,omitempty"`
+}
+
+// poolAccountBatchStatusResult 汇总批量状态操作结果。
+type poolAccountBatchStatusResult struct {
+	Total   int                           `json:"total"`
+	Updated int                           `json:"updated"`
+	Skipped int                           `json:"skipped"`
+	Failed  int                           `json:"failed"`
+	Items   []*poolAccountBatchStatusItem `json:"items"`
+}
+
 // poolAccountCheckRequest 池账号人工检测请求。
 // account_ids 用于批量检测指定账号；为空时按 limit 检测当前分组前 N 个账号。
 type poolAccountCheckRequest struct {
@@ -188,6 +216,8 @@ type accountPoolProviderLoginRequest struct {
 	CallbackPort int               `json:"callback_port"` // 回调端口
 	Metadata     map[string]string `json:"metadata"`      // 元数据
 }
+
+const poolAccountBatchStatusLimit = 100
 
 func ListAccountPoolGroups(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
@@ -470,13 +500,7 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 		return
 	}
 	if req.ClearCooldown && req.Status == 0 {
-		err := model.UpdatePoolAccountErrorState(accountID, map[string]interface{}{
-			"rate_limited_until":  0,
-			"overload_until":      0,
-			"temp_disabled_until": 0,
-			"disabled_reason":     req.Reason,
-		})
-		if err != nil {
+		if err := clearPoolAccountCooldownState(accountID, req.Reason); err != nil {
 			common.ApiError(c, err)
 			return
 		}
@@ -493,14 +517,46 @@ func UpdatePoolAccountStatus(c *gin.Context) {
 		return
 	}
 	if req.ClearCooldown {
-		_ = model.UpdatePoolAccountErrorState(accountID, map[string]interface{}{
-			"rate_limited_until":  0,
-			"overload_until":      0,
-			"temp_disabled_until": 0,
-		})
+		_ = clearPoolAccountCooldownState(accountID, req.Reason)
 	}
 	recordPoolAccountStateFromController(c, accountID, model.PoolAccountStateActionManualStatus, req.Reason, before)
 	common.ApiSuccess(c, nil)
+}
+
+func BatchUpdatePoolAccountStatus(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	if !ensureAccountPoolGroupExists(c, groupID) {
+		return
+	}
+	var req poolAccountBatchStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	accountIDs := normalizePoolAccountBatchStatusIDs(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		common.ApiErrorMsg(c, "account_ids is required")
+		return
+	}
+	if len(accountIDs) > poolAccountBatchStatusLimit {
+		common.ApiErrorMsg(c, fmt.Sprintf("account_ids cannot exceed %d", poolAccountBatchStatusLimit))
+		return
+	}
+	if req.Status <= 0 && !req.ClearCooldown {
+		common.ApiErrorMsg(c, "status is required")
+		return
+	}
+
+	accounts, err := loadPoolAccountsForBatchStatus(groupID, accountIDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := applyPoolAccountBatchStatus(c, accounts, accountIDs, req)
+	common.ApiSuccess(c, result)
 }
 
 func ListAccountPoolProviders(c *gin.Context) {
@@ -1098,6 +1154,126 @@ func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRe
 		return false
 	}
 	return true
+}
+
+func normalizePoolAccountBatchStatusIDs(accountIDs []int) []int {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+	seen := map[int]bool{}
+	result := make([]int, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 || seen[accountID] {
+			continue
+		}
+		seen[accountID] = true
+		result = append(result, accountID)
+	}
+	return result
+}
+
+func loadPoolAccountsForBatchStatus(groupID int, accountIDs []int) (map[int]*model.PoolAccount, error) {
+	accounts := []*model.PoolAccount{}
+	if err := model.DB.
+		Where("pool_group_id = ? AND id IN ?", groupID, accountIDs).
+		Order("id ASC").
+		Find(&accounts).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[int]*model.PoolAccount, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		result[account.Id] = account
+	}
+	return result, nil
+}
+
+func applyPoolAccountBatchStatus(c *gin.Context, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchStatusRequest) *poolAccountBatchStatusResult {
+	result := &poolAccountBatchStatusResult{
+		Total: len(accountIDs),
+		Items: make([]*poolAccountBatchStatusItem, 0, len(accountIDs)),
+	}
+	for _, accountID := range accountIDs {
+		account := accounts[accountID]
+		if account == nil {
+			result.Skipped++
+			result.Items = append(result.Items, &poolAccountBatchStatusItem{
+				AccountID: accountID,
+				Skipped:   true,
+				Message:   "account not found in group",
+			})
+			continue
+		}
+		item := applySinglePoolAccountBatchStatus(c, account, req)
+		result.Items = append(result.Items, item)
+		if item.Success {
+			result.Updated++
+		} else if item.Skipped {
+			result.Skipped++
+		} else {
+			result.Failed++
+		}
+	}
+	return result
+}
+
+func applySinglePoolAccountBatchStatus(c *gin.Context, account *model.PoolAccount, req poolAccountBatchStatusRequest) *poolAccountBatchStatusItem {
+	item := &poolAccountBatchStatusItem{
+		AccountID:   account.Id,
+		AccountName: account.Name,
+	}
+	before := *account
+	reason := poolAccountBatchStatusReason(req)
+	action := model.PoolAccountStateActionManualStatus
+	if req.ClearCooldown && req.Status == 0 {
+		action = model.PoolAccountStateActionManualClearCooldown
+		if err := clearPoolAccountCooldownState(account.Id, reason); err != nil {
+			item.Message = err.Error()
+			return item
+		}
+		recordPoolAccountStateFromController(c, account.Id, action, reason, &before)
+		item.Success = true
+		return item
+	}
+	if err := model.UpdatePoolAccountStatus(account.Id, req.Status, reason, req.Schedulable); err != nil {
+		item.Message = err.Error()
+		return item
+	}
+	if req.ClearCooldown {
+		_ = clearPoolAccountCooldownState(account.Id, reason)
+	}
+	recordPoolAccountStateFromController(c, account.Id, action, reason, &before)
+	item.Success = true
+	return item
+}
+
+func poolAccountBatchStatusReason(req poolAccountBatchStatusRequest) string {
+	reason := strings.TrimSpace(req.Reason)
+	if reason != "" {
+		return reason
+	}
+	if req.ClearCooldown && req.Status == 0 {
+		return "批量清理账号冷却状态"
+	}
+	return "批量修改账号状态"
+}
+
+func clearPoolAccountCooldownState(accountID int, reason string) error {
+	// 清冷却是管理员恢复账号参与调度的显式操作，因此同时清理所有临时冷却时间、
+	// next_retry_time 和临时不可用标记；如果账号仍处于手动禁用或自动禁用状态，
+	// status/schedulable 会继续阻止它进入调度候选集，不会被该操作绕过。
+	return model.UpdatePoolAccountErrorState(accountID, map[string]interface{}{
+		"rate_limited_until":  0,
+		"overload_until":      0,
+		"temp_disabled_until": 0,
+		"next_retry_time":     0,
+		"unavailable":         false,
+		"last_error":          "",
+		"status_message":      "",
+		"disabled_reason":     strings.TrimSpace(reason),
+	})
 }
 
 func parsePoolGroupIDParam(c *gin.Context) (int, bool) {
