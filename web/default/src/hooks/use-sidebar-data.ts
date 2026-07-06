@@ -127,12 +127,12 @@ export function useSidebarData(): SidebarData {
         title: t('Admin'),
         items: [
           {
-            title: t('Channels'),
+            title: t('Upstream Channels'),
             url: '/channels',
             icon: Radio,
           },
           {
-            title: t('Account Pool Management'),
+            title: t('Account Pool'),
             activeUrls: ['/account-pool'],
             icon: DatabaseZap,
             items: getAccountPoolSectionNavItems(t),

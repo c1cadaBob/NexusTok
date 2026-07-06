@@ -43,14 +43,14 @@ const ACCOUNT_POOL_SECTIONS = [
   },
   {
     id: 'groups',
-    titleKey: 'Groups',
+    titleKey: 'Account Groups',
     descriptionKey:
       'Configure pool groups, scheduling policies, and linked accounts.',
     build: () => null,
   },
   {
     id: 'history',
-    titleKey: 'Logs & History',
+    titleKey: 'Account Records',
     descriptionKey: 'Inspect usage records, state changes, and check tasks.',
     build: () => null,
   },

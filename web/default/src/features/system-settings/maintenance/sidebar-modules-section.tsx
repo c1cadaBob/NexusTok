@@ -121,11 +121,11 @@ export function SidebarModulesSection({
     },
     admin: {
       channel: {
-        title: t('Channels'),
+        title: t('Upstream Channels'),
         description: t('Configure upstream providers and routing.'),
       },
       account_pool: {
-        title: t('Account Pool Management'),
+        title: t('Account Pool'),
         description: t('Manage native account pools and credential scheduling.'),
       },
       pricing: {

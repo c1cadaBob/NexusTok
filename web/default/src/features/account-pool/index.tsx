@@ -326,12 +326,12 @@ const accountPoolSectionMeta: Record<
       'Manage imported account credentials as reusable pool resources.',
   },
   groups: {
-    titleKey: 'Groups',
+    titleKey: 'Account Groups',
     descriptionKey:
       'Configure pool groups, scheduling policies, and linked accounts.',
   },
   history: {
-    titleKey: 'Logs & History',
+    titleKey: 'Account Records',
     descriptionKey: 'Inspect usage records, state changes, and check tasks.',
   },
 }
@@ -2005,7 +2005,7 @@ export function AccountPool() {
         {activeSection === 'groups' ? (
           <section className='border-border bg-background min-h-[260px] rounded-lg border'>
             <div className='border-border flex items-center justify-between border-b p-3'>
-              <div className='text-sm font-medium'>{t('Groups')}</div>
+              <div className='text-sm font-medium'>{t('Account Groups')}</div>
               {groupsQuery.isLoading && (
                 <Loader2 className='size-4 animate-spin' />
               )}
