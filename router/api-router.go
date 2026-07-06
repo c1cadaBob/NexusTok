@@ -358,12 +358,14 @@ func SetApiRouter(router *gin.Engine) {
 			accountPoolRoute.GET("/groups/:id/accounts", controller.ListPoolAccounts)                             // 获取分组账号列表
 			accountPoolRoute.POST("/groups/:id/accounts", controller.CreatePoolAccount)                           // 创建账号
 			accountPoolRoute.POST("/groups/:id/accounts/batch", controller.BatchCreatePoolAccounts)               // 批量创建账号
+			accountPoolRoute.POST("/groups/:id/accounts/check", controller.CheckPoolAccountsInGroup)              // 批量检测分组账号
 			accountPoolRoute.GET("/login-sessions/:session_id", controller.GetAccountPoolLoginSession)            // 获取登录会话
 			accountPoolRoute.POST("/login-sessions/:session_id/cancel", controller.CancelAccountPoolLoginSession) // 取消登录会话
 			accountPoolRoute.GET("/accounts/:account_id", controller.GetPoolAccount)                              // 获取单个账号
 			accountPoolRoute.PUT("/accounts/:account_id", controller.UpdatePoolAccount)                           // 更新账号
 			accountPoolRoute.DELETE("/accounts/:account_id", controller.DeletePoolAccount)                        // 删除账号
 			accountPoolRoute.POST("/accounts/:account_id/status", controller.UpdatePoolAccountStatus)             // 更新账号状态
+			accountPoolRoute.POST("/accounts/:account_id/check", controller.CheckPoolAccount)                     // 检测单个账号可用性
 			accountPoolRoute.POST("/accounts/:account_id/refresh", controller.RefreshPoolAccountCredential)       // 刷新账号凭证
 			accountPoolRoute.POST("/accounts/:account_id/runtime/reset", controller.ResetPoolAccountRuntime)      // 重置账号运行时
 

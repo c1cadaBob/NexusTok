@@ -123,6 +123,7 @@ type PoolAccount struct {
 	LastError          string  `json:"last_error" gorm:"type:text"`                                         // 最近错误信息
 	QuotaSnapshot      string  `json:"quota_snapshot" gorm:"type:text"`                                     // 配额快照
 	ModelStates        string  `json:"model_states" gorm:"type:text"`                                       // 模型状态（JSON）
+	LastCheckedTime    int64   `json:"last_checked_time" gorm:"bigint;default:0;index"`                     // 最后人工检测时间
 	LastRefreshedTime  int64   `json:"last_refreshed_time" gorm:"bigint;default:0;index"`                   // 最后刷新时间
 	NextRefreshTime    int64   `json:"next_refresh_time" gorm:"bigint;default:0;index"`                     // 下次刷新时间
 	NextRetryTime      int64   `json:"next_retry_time" gorm:"bigint;default:0;index"`                       // 下次重试时间

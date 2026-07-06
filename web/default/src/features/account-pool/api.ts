@@ -23,6 +23,8 @@ import type {
   AccountPoolAuthFileMutationResult,
   AccountPoolAuthFilePayload,
   AccountPoolAuthFileUpdatePayload,
+  AccountPoolBatchCheckResult,
+  AccountPoolCheckResult,
   AccountPoolGroup,
   AccountPoolGroupOption,
   AccountPoolGroupPayload,
@@ -238,6 +240,24 @@ export async function refreshPoolAccountCredential(
   accountId: number
 ): Promise<ApiResponse<PoolAccount>> {
   const res = await api.post(`/api/account-pool/accounts/${accountId}/refresh`)
+  return res.data
+}
+
+export async function checkPoolAccount(
+  accountId: number
+): Promise<ApiResponse<AccountPoolCheckResult>> {
+  const res = await api.post(`/api/account-pool/accounts/${accountId}/check`)
+  return res.data
+}
+
+export async function checkPoolAccountsInGroup(
+  groupId: number,
+  data?: { account_ids?: number[]; limit?: number }
+): Promise<ApiResponse<AccountPoolBatchCheckResult>> {
+  const res = await api.post(
+    `/api/account-pool/groups/${groupId}/accounts/check`,
+    data
+  )
   return res.data
 }
 

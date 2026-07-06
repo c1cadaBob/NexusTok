@@ -21,6 +21,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,6 +96,13 @@ type poolAccountStatusRequest struct {
 	Reason        string `json:"reason"`         // 状态变更原因
 	ClearCooldown bool   `json:"clear_cooldown"` // 是否清除冷却时间
 	Schedulable   *bool  `json:"schedulable"`    // 是否可调度
+}
+
+// poolAccountCheckRequest 池账号人工检测请求。
+// account_ids 用于批量检测指定账号；为空时按 limit 检测当前分组前 N 个账号。
+type poolAccountCheckRequest struct {
+	AccountIDs []int `json:"account_ids"` // 指定检测的账号 ID 列表
+	Limit      int   `json:"limit"`       // 未指定账号 ID 时的最大检测数量
 }
 
 // accountPoolAuthFileImportRequest 原生认证文件导入请求。
@@ -804,6 +812,7 @@ func ResetPoolAccountRuntime(c *gin.Context) {
 		"quota_snapshot":      "",
 		"model_states":        "",
 		"recent_requests":     "",
+		"last_checked_time":   0,
 		"success_count":       0,
 		"failed_count":        0,
 		"rate_limited_until":  0,
@@ -941,6 +950,60 @@ func RefreshPoolAccountCredential(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, poolAccountResponse(updated))
+}
+
+func CheckPoolAccount(c *gin.Context) {
+	accountID, ok := parsePoolAccountIDParam(c)
+	if !ok {
+		return
+	}
+	result, err := service.CheckPoolAccount(c.Request.Context(), accountID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func CheckPoolAccountsInGroup(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	var req poolAccountCheckRequest
+	if !bindOptionalPoolAccountCheckRequest(c, &req) {
+		return
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit, _ = strconv.Atoi(c.DefaultQuery("limit", "100"))
+	}
+	var result *service.AccountPoolBatchCheckResult
+	var err error
+	if len(req.AccountIDs) > 0 {
+		result, err = service.CheckPoolAccountsByIDs(c.Request.Context(), groupID, req.AccountIDs)
+	} else {
+		result, err = service.CheckPoolAccountsInGroup(c.Request.Context(), groupID, limit)
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRequest) bool {
+	if c == nil || c.Request == nil || req == nil {
+		return true
+	}
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	if err := common.DecodeJson(c.Request.Body, req); err != nil && err != io.EOF {
+		common.ApiError(c, err)
+		return false
+	}
+	return true
 }
 
 func parsePoolGroupIDParam(c *gin.Context) (int, bool) {
@@ -1639,6 +1702,7 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 		"last_error":            account.LastError,
 		"quota_snapshot":        account.QuotaSnapshot,
 		"model_states":          account.ModelStates,
+		"last_checked_time":     account.LastCheckedTime,
 		"last_refreshed_time":   account.LastRefreshedTime,
 		"next_refresh_time":     account.NextRefreshTime,
 		"next_retry_time":       account.NextRetryTime,

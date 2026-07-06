@@ -28,6 +28,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Smartphone,
+  Stethoscope,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -67,6 +68,8 @@ import { formatTimestamp } from '@/features/channels/lib'
 import {
   accountPoolQueryKeys,
   batchCreatePoolAccounts,
+  checkPoolAccount,
+  checkPoolAccountsInGroup,
   completeAccountPoolProviderOAuth,
   createAccountPoolGroup,
   createPoolAccount,
@@ -261,6 +264,10 @@ export function AccountPool() {
   const [deviceSession, setDeviceSession] =
     useState<AccountPoolLoginSession | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [checkingAccountId, setCheckingAccountId] = useState<number | null>(
+    null
+  )
+  const [batchChecking, setBatchChecking] = useState(false)
 
   const groupsQuery = useQuery({
     queryKey: accountPoolQueryKeys.groups({ page_size: 100 }),
@@ -302,6 +309,7 @@ export function AccountPool() {
   const accounts = accountsQuery.data?.data?.accounts.items ?? []
   const accountPage = accountsQuery.data?.data?.accounts
   const stats = accountsQuery.data?.data?.stats ?? selectedGroup?.stats
+  const accountTotal = accountPage?.total ?? stats?.total ?? accounts.length
   const totalPages = Math.max(
     1,
     Math.ceil((accountPage?.total ?? 0) / (accountPage?.page_size ?? 10))
@@ -622,6 +630,65 @@ export function AccountPool() {
     }
   }
 
+  const checkAccount = async (account: PoolAccount) => {
+    setCheckingAccountId(account.id)
+    try {
+      const response = await checkPoolAccount(account.id)
+      if (!response.success) throw new Error(response.message)
+      if (response.data?.success) {
+        toast.success(t('Account check passed'))
+      } else {
+        toast.error(
+          t('Account check failed: {{message}}', {
+            message: response.data?.message || t('Unknown error'),
+          })
+        )
+      }
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setCheckingAccountId(null)
+    }
+  }
+
+  const checkSelectedGroupAccounts = async () => {
+    if (!selectedGroupId) return
+    if (accountTotal <= 0) {
+      toast.info(t('No accounts found'))
+      return
+    }
+    setBatchChecking(true)
+    try {
+      const response = await checkPoolAccountsInGroup(selectedGroupId, {
+        limit: 100,
+      })
+      if (!response.success) throw new Error(response.message)
+      const message = t(
+        'Checked {{checked}} account(s): {{success}} passed, {{failed}} failed',
+        {
+          checked: response.data?.checked ?? 0,
+          success: response.data?.success ?? 0,
+          failed: response.data?.failed ?? 0,
+        }
+      )
+      if ((response.data?.failed ?? 0) > 0) {
+        toast.warning(message)
+      } else {
+        toast.success(message)
+      }
+      await refreshAll()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setBatchChecking(false)
+    }
+  }
+
   const resetRuntime = async (account: PoolAccount) => {
     setActionLoading(true)
     try {
@@ -911,6 +978,19 @@ export function AccountPool() {
                       <Upload className='mr-2 h-4 w-4' />
                       {t('Batch Import')}
                     </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                      disabled={batchChecking || accountTotal <= 0}
+                        onClick={() => void checkSelectedGroupAccounts()}
+                      >
+                      {batchChecking ? (
+                        <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                      ) : (
+                        <Stethoscope className='mr-2 h-4 w-4' />
+                      )}
+                      {t('Check Group')}
+                    </Button>
                     <Button size='sm' onClick={openCreateAccount}>
                       <Plus className='mr-2 h-4 w-4' />
                       {t('Add Account')}
@@ -1003,6 +1083,12 @@ export function AccountPool() {
                               {formatTimestamp(account.next_refresh_time)}
                             </div>
                           ) : null}
+                          {account.last_checked_time ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Last check time')}:&nbsp;
+                              {formatTimestamp(account.last_checked_time)}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <div className='flex flex-wrap gap-1.5'>
@@ -1037,6 +1123,20 @@ export function AccountPool() {
                               onClick={() => void clearCooldown(account)}
                             >
                               <RefreshCw className='h-4 w-4' />
+                            </Button>
+                            <Button
+                              variant='ghost'
+                              size='icon-sm'
+                              aria-label={t('Check Account')}
+                              title={t('Check Account')}
+                              disabled={checkingAccountId === account.id}
+                              onClick={() => void checkAccount(account)}
+                            >
+                              {checkingAccountId === account.id ? (
+                                <Loader2 className='h-4 w-4 animate-spin' />
+                              ) : (
+                                <Stethoscope className='h-4 w-4' />
+                              )}
                             </Button>
                             <Button
                               variant='ghost'

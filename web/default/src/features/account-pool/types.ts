@@ -81,6 +81,7 @@ export type PoolAccount = {
   last_error: string
   quota_snapshot: string
   model_states: string
+  last_checked_time: number
   last_refreshed_time: number
   next_refresh_time: number
   next_retry_time: number
@@ -269,6 +270,28 @@ export type AccountPoolProvider = {
   supports_oauth: boolean
   supports_device: boolean
   supports_refresh: boolean
+}
+
+export type AccountPoolCheckResult = {
+  account_id: number
+  account_name: string
+  pool_group_id: number
+  provider: string
+  checked: boolean
+  success: boolean
+  message: string
+  checked_at: number
+  refreshed: boolean
+  next_retry_time?: number
+}
+
+export type AccountPoolBatchCheckResult = {
+  total: number
+  checked: number
+  success: number
+  failed: number
+  skipped: number
+  items: AccountPoolCheckResult[]
 }
 
 export type AccountPoolLoginStartResult = {
