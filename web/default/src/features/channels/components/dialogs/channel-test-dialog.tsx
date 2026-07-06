@@ -339,25 +339,28 @@ export function ChannelTestDialog({
           }
 
           if (result.status === 'success') {
+            const successLabel =
+              typeof result.responseTime === 'number'
+                ? `${t('Success')} - ${formatResponseTime(result.responseTime, t)}`
+                : t('Success')
             return (
               <div className='flex flex-col gap-1 text-xs'>
                 <StatusBadge
-                  label='Success'
+                  label={successLabel}
                   variant='success'
                   copyable={false}
                 />
-                {typeof result.responseTime === 'number' && (
-                  <span className='text-muted-foreground'>
-                    {formatResponseTime(result.responseTime, t)}
-                  </span>
-                )}
               </div>
             )
           }
 
           return (
             <div className='flex flex-col gap-1 text-xs'>
-              <StatusBadge label='Failed' variant='danger' copyable={false} />
+              <StatusBadge
+                label={t('Failed')}
+                variant='danger'
+                copyable={false}
+              />
               {result.error && (
                 <span className='text-muted-foreground break-all'>
                   {result.error}

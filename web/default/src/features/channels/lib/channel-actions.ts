@@ -201,7 +201,7 @@ export async function handleUpdateTagField(
 }
 
 /**
- * Test channel connectivity
+ * 测试渠道连通性，并把后端返回的响应耗时传回调用方。
  */
 export async function handleTestChannel(
   id: number,
@@ -226,9 +226,13 @@ export async function handleTestChannel(
 
   try {
     const response = await testChannel(id, payload)
+    const responseTime =
+      typeof response.time === 'number'
+        ? Math.round(response.time * 1000)
+        : response.data?.response_time
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.TESTED))
-      onTestComplete?.(true, response.data?.response_time)
+      onTestComplete?.(true, responseTime)
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED))
       onTestComplete?.(false, undefined, response.message, response.error_code)
