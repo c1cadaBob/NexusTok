@@ -1998,7 +1998,7 @@ export function AccountPool() {
         className={cn(
           'grid min-h-0 flex-1 gap-4',
           activeSection === 'groups'
-            ? 'lg:grid-cols-[320px_minmax(0,1fr)]'
+            ? 'lg:grid-cols-[260px_minmax(0,1fr)]'
             : 'lg:grid-cols-1'
         )}
       >
@@ -2026,7 +2026,7 @@ export function AccountPool() {
                     }}
                   >
                     <div className='flex items-start justify-between gap-2'>
-                      <div className='min-w-0'>
+                      <div className='min-w-0 flex-1'>
                         <div className='truncate text-sm font-medium'>
                           {group.name}
                         </div>
@@ -2038,6 +2038,7 @@ export function AccountPool() {
                         label={groupStatusLabel(group, t)}
                         variant={groupStatusVariant(group)}
                         copyable={false}
+                        className='shrink-0'
                       />
                     </div>
                     <div className='text-muted-foreground flex gap-3 text-xs'>
