@@ -251,6 +251,16 @@ type poolAccountCheckRequest struct {
 	Limit      int   `json:"limit"`       // 未指定账号 ID 时的最大检测数量
 }
 
+// poolAccountCheckTaskCleanupRequest 检测任务历史清理请求。
+// statuses 只接受 completed/failed；queued/running 即使传入也会被 service 层忽略，避免
+// 管理员清理历史时删除仍在队列或正在执行的检测任务。
+type poolAccountCheckTaskCleanupRequest struct {
+	PoolGroupID     int      `json:"pool_group_id"`    // 可选，限制只清理某个账号池分组
+	BeforeTimestamp int64    `json:"before_timestamp"` // 可选，默认清理 7 天前完成的终态任务
+	Statuses        []string `json:"statuses"`         // 可选，默认 completed + failed
+	Limit           int      `json:"limit"`            // 可选，单次最多由 service 层限制
+}
+
 // accountPoolAuthFileImportRequest 原生认证文件导入请求。
 // content 是 JSON 文件原文，系统会加密保存原文并生成关联 PoolAccount；其余字段用于
 // 覆盖 JSON 中的文件级配置，方便 sub2/newapi 等包装格式缺少本地调度字段时补齐。
@@ -1338,6 +1348,48 @@ func GetPoolAccountCheckTask(c *gin.Context) {
 	common.ApiSuccess(c, task)
 }
 
+func ListPoolAccountCheckTasks(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	tasks, total, err := service.ListPoolAccountCheckTasks(service.AccountPoolCheckTaskFilter{
+		PoolGroupID:    poolGroupID,
+		Status:         c.Query("status"),
+		Actor:          c.Query("actor"),
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+		Search:         c.Query("search"),
+		StartIdx:       pageInfo.GetStartIdx(),
+		Limit:          pageInfo.GetPageSize(),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(tasks)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func CleanupPoolAccountCheckTasks(c *gin.Context) {
+	var req poolAccountCheckTaskCleanupRequest
+	if !bindOptionalPoolAccountCheckTaskCleanupRequest(c, &req) {
+		return
+	}
+	deleted, err := service.CleanupPoolAccountCheckTasks(service.AccountPoolCheckTaskRetentionOptions{
+		PoolGroupID:     req.PoolGroupID,
+		BeforeTimestamp: req.BeforeTimestamp,
+		Statuses:        req.Statuses,
+		Limit:           req.Limit,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"deleted": deleted})
+}
+
 func recordPoolAccountStateFromController(c *gin.Context, accountID int, action string, reason string, before *model.PoolAccount) {
 	if accountID <= 0 {
 		return
@@ -1371,6 +1423,20 @@ func recordPoolAccountCheckStateFromController(c *gin.Context, result *service.A
 }
 
 func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRequest) bool {
+	if c == nil || c.Request == nil || req == nil {
+		return true
+	}
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	if err := common.DecodeJson(c.Request.Body, req); err != nil && err != io.EOF {
+		common.ApiError(c, err)
+		return false
+	}
+	return true
+}
+
+func bindOptionalPoolAccountCheckTaskCleanupRequest(c *gin.Context, req *poolAccountCheckTaskCleanupRequest) bool {
 	if c == nil || c.Request == nil || req == nil {
 		return true
 	}

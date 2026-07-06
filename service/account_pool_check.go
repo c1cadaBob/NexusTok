@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	accountPoolCheckTimeout       = 30 * time.Second
-	accountPoolCheckBatchLimit    = 100
-	accountPoolCheckRetryDelay    = 5 * time.Minute
-	accountPoolCheckTaskQueueSize = 100
-	accountPoolCheckRecoveryLimit = 100
+	accountPoolCheckTimeout                 = 30 * time.Second
+	accountPoolCheckBatchLimit              = 100
+	accountPoolCheckRetryDelay              = 5 * time.Minute
+	accountPoolCheckTaskQueueSize           = 100
+	accountPoolCheckRecoveryLimit           = 100
+	accountPoolCheckTaskListLimit           = 100
+	accountPoolCheckTaskCleanupDefaultLimit = 500
+	accountPoolCheckTaskCleanupMaxLimit     = 1000
 
 	accountPoolCheckTaskRecoveredMessage   = "account check task recovered and requeued after service restart"
 	accountPoolCheckTaskInterruptedMessage = "account check task failed because service restarted while it was running"
@@ -67,6 +70,30 @@ type AccountPoolCheckTaskOptions struct {
 	Limit       int
 	Actor       string
 	RequestID   string
+}
+
+// AccountPoolCheckTaskFilter 描述检测任务历史列表筛选条件。
+// StartTimestamp 和 EndTimestamp 作用于任务创建时间，便于管理员追溯一段时间内由
+// 手动检测或自动检测创建的任务。Search 会匹配任务 ID、分组名、操作者、请求 ID 和消息。
+type AccountPoolCheckTaskFilter struct {
+	PoolGroupID    int
+	Status         string
+	Actor          string
+	StartTimestamp int64
+	EndTimestamp   int64
+	Search         string
+	StartIdx       int
+	Limit          int
+}
+
+// AccountPoolCheckTaskRetentionOptions 描述检测任务历史保留清理条件。
+// 清理只允许作用于 completed / failed 终态任务，queued / running 代表队列或 worker
+// 仍可能持有该任务，不能被保留策略删除。
+type AccountPoolCheckTaskRetentionOptions struct {
+	PoolGroupID     int
+	BeforeTimestamp int64
+	Statuses        []string
+	Limit           int
 }
 
 // AccountPoolCheckTaskView 是后台检测任务面向 API 和前端的脱敏视图。
@@ -300,6 +327,104 @@ func GetPoolAccountCheckTask(taskID int) (*AccountPoolCheckTaskView, error) {
 		return nil, err
 	}
 	return PoolAccountCheckTaskPublicView(task), nil
+}
+
+// ListPoolAccountCheckTasks 分页查询后台检测任务历史。
+// 响应统一走 PoolAccountCheckTaskPublicView，确保数据库中的 results_json 原始字段不会被
+// 直接暴露给前端；即使旧数据里混入未知字段，转换到强类型结果时也会被丢弃。
+func ListPoolAccountCheckTasks(filter AccountPoolCheckTaskFilter) ([]*AccountPoolCheckTaskView, int64, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 20
+	}
+	if filter.Limit > accountPoolCheckTaskListLimit {
+		filter.Limit = accountPoolCheckTaskListLimit
+	}
+	query := model.DB.Model(&model.PoolAccountCheckTask{})
+	if filter.PoolGroupID > 0 {
+		query = query.Where("pool_group_id = ?", filter.PoolGroupID)
+	}
+	if status := normalizePoolAccountCheckTaskStatus(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if strings.TrimSpace(filter.Actor) != "" {
+		query = query.Where("actor = ?", strings.TrimSpace(filter.Actor))
+	}
+	if filter.StartTimestamp > 0 {
+		query = query.Where("created_time >= ?", filter.StartTimestamp)
+	}
+	if filter.EndTimestamp > 0 {
+		query = query.Where("created_time <= ?", filter.EndTimestamp)
+	}
+	if strings.TrimSpace(filter.Search) != "" {
+		search := strings.TrimSpace(filter.Search)
+		like := "%" + search + "%"
+		query = query.Where("(pool_group_name LIKE ? OR actor LIKE ? OR request_id LIKE ? OR message LIKE ? OR id = ?)", like, like, like, like, parsePositiveInt(search))
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tasks := []*model.PoolAccountCheckTask{}
+	if err := query.
+		Order("created_time DESC").
+		Order("id DESC").
+		Limit(filter.Limit).
+		Offset(filter.StartIdx).
+		Find(&tasks).Error; err != nil {
+		return nil, 0, err
+	}
+	views := make([]*AccountPoolCheckTaskView, 0, len(tasks))
+	for _, task := range tasks {
+		views = append(views, PoolAccountCheckTaskPublicView(task))
+	}
+	return views, total, nil
+}
+
+// CleanupPoolAccountCheckTasks 删除符合保留策略的历史检测任务。
+// 为兼容 SQLite、MySQL 和 PostgreSQL，清理会先按条件查询有限数量的 ID，再按 ID 集合删除；
+// 不直接依赖数据库方言不一致的 DELETE LIMIT。
+func CleanupPoolAccountCheckTasks(opts AccountPoolCheckTaskRetentionOptions) (int, error) {
+	statuses := normalizePoolAccountCheckTaskCleanupStatuses(opts.Statuses)
+	if len(opts.Statuses) == 0 {
+		statuses = []string{
+			model.PoolAccountCheckTaskStatusCompleted,
+			model.PoolAccountCheckTaskStatusFailed,
+		}
+	} else if len(statuses) == 0 {
+		return 0, nil
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = accountPoolCheckTaskCleanupDefaultLimit
+	}
+	if limit > accountPoolCheckTaskCleanupMaxLimit {
+		limit = accountPoolCheckTaskCleanupMaxLimit
+	}
+	if opts.BeforeTimestamp <= 0 {
+		opts.BeforeTimestamp = common.GetTimestamp() - int64((7 * 24 * time.Hour).Seconds())
+	}
+	query := model.DB.Model(&model.PoolAccountCheckTask{}).
+		Where("status IN ?", statuses).
+		Where("finished_time > 0 AND finished_time < ?", opts.BeforeTimestamp)
+	if opts.PoolGroupID > 0 {
+		query = query.Where("pool_group_id = ?", opts.PoolGroupID)
+	}
+	var taskIDs []int
+	if err := query.
+		Order("finished_time ASC").
+		Order("id ASC").
+		Limit(limit).
+		Pluck("id", &taskIDs).Error; err != nil {
+		return 0, err
+	}
+	if len(taskIDs) == 0 {
+		return 0, nil
+	}
+	tx := model.DB.Where("id IN ?", taskIDs).Delete(&model.PoolAccountCheckTask{})
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	return int(tx.RowsAffected), nil
 }
 
 // PoolAccountCheckTaskPublicView 将任务模型转换为 API 响应；ResultsJSON 只包含脱敏检测结果。
@@ -749,4 +874,47 @@ func splitAccountPoolCheckTaskIDs(value string) []int {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func normalizePoolAccountCheckTaskStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case model.PoolAccountCheckTaskStatusQueued:
+		return model.PoolAccountCheckTaskStatusQueued
+	case model.PoolAccountCheckTaskStatusRunning:
+		return model.PoolAccountCheckTaskStatusRunning
+	case model.PoolAccountCheckTaskStatusCompleted:
+		return model.PoolAccountCheckTaskStatusCompleted
+	case model.PoolAccountCheckTaskStatusFailed:
+		return model.PoolAccountCheckTaskStatusFailed
+	default:
+		return ""
+	}
+}
+
+func normalizePoolAccountCheckTaskCleanupStatuses(statuses []string) []string {
+	if len(statuses) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		normalized := normalizePoolAccountCheckTaskStatus(status)
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		if normalized != model.PoolAccountCheckTaskStatusCompleted && normalized != model.PoolAccountCheckTaskStatusFailed {
+			continue
+		}
+		seen[normalized] = true
+		result = append(result, normalized)
+	}
+	return result
+}
+
+func parsePositiveInt(value string) int {
+	id, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }

@@ -343,6 +343,8 @@ func SetApiRouter(router *gin.Engine) {
 			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile) // 删除原生认证文件
 			accountPoolRoute.GET("/usage-logs", controller.ListAccountPoolUsageLogs)                   // 查询原生账号池使用日志
 			accountPoolRoute.GET("/state-logs", controller.ListAccountPoolStateLogs)                   // 查询原生账号池状态变更日志
+			accountPoolRoute.GET("/check-tasks", controller.ListPoolAccountCheckTasks)                 // 查询账号池检测任务历史
+			accountPoolRoute.POST("/check-tasks/cleanup", controller.CleanupPoolAccountCheckTasks)     // 清理账号池检测任务历史
 			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)                          // 获取账号池分组列表
 			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)                        // 创建账号池分组
 			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions)            // 获取账号池分组选项

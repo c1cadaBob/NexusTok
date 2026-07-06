@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service/accountauth"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type fakeCheckRefreshProvider struct{}
@@ -105,6 +107,12 @@ func encryptedCheckCredential(t *testing.T, raw string) string {
 	encrypted, err := common.EncryptSensitiveString(raw)
 	require.NoError(t, err)
 	return encrypted
+}
+
+func createCheckTaskHistoryRecord(t *testing.T, task *model.PoolAccountCheckTask) *model.PoolAccountCheckTask {
+	t.Helper()
+	require.NoError(t, model.DB.Create(task).Error)
+	return task
 }
 
 func TestCheckPoolAccountMarksBasicCredentialAvailable(t *testing.T) {
@@ -479,4 +487,246 @@ func TestRecoverPoolAccountCheckTasksArchivesRunningTask(t *testing.T) {
 	require.Contains(t, loaded.Message, "service restarted")
 	require.Equal(t, startedAt, loaded.StartedTime)
 	require.NotZero(t, loaded.FinishedTime)
+}
+
+func TestListPoolAccountCheckTasksFiltersSearchesAndRedactsResultsJSON(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	otherGroup := &model.AccountPoolGroup{
+		Name:     "codex-check-other",
+		Platform: "codex",
+		AuthType: model.AccountPoolAuthTypeAPIKey,
+		Source:   model.AccountPoolGroupSourceNative,
+		Status:   common.ChannelStatusEnabled,
+		Strategy: model.AccountPoolStrategyRoundRobin,
+	}
+	require.NoError(t, model.DB.Create(otherGroup).Error)
+	resultsJSON := `[{"account_id":101,"account_name":"history-safe","pool_group_id":1,"checked":true,"success":true,"message":"safe result","credential":"secret-result-json-field"}]`
+	oldTask := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		Actor:         "history-actor",
+		RequestId:     "req-history-a",
+		AccountIds:    joinAccountPoolCheckTaskIDs([]int{101}),
+		Total:         1,
+		Checked:       1,
+		Success:       1,
+		Message:       "first history task",
+		ResultsJSON:   resultsJSON,
+		StartedTime:   100,
+		FinishedTime:  120,
+		CreatedTime:   1000,
+	})
+	newTask := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusFailed,
+		Actor:         "history-actor",
+		RequestId:     "req-history-b",
+		Total:         2,
+		Checked:       1,
+		Failed:        1,
+		Skipped:       1,
+		Message:       "needle failed task",
+		StartedTime:   200,
+		FinishedTime:  240,
+		CreatedTime:   2000,
+	})
+	_ = createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   otherGroup.Id,
+		PoolGroupName: otherGroup.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		Actor:         "other-actor",
+		RequestId:     "req-history-other",
+		Total:         1,
+		Checked:       1,
+		Success:       1,
+		Message:       "other group task",
+		StartedTime:   300,
+		FinishedTime:  320,
+		CreatedTime:   3000,
+	})
+
+	tasks, total, err := ListPoolAccountCheckTasks(AccountPoolCheckTaskFilter{
+		PoolGroupID: group.Id,
+		Actor:       "history-actor",
+		StartIdx:    0,
+		Limit:       10,
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.Len(t, tasks, 2)
+	require.Equal(t, newTask.Id, tasks[0].ID)
+	require.Equal(t, oldTask.Id, tasks[1].ID)
+
+	failedTasks, failedTotal, err := ListPoolAccountCheckTasks(AccountPoolCheckTaskFilter{
+		PoolGroupID: group.Id,
+		Status:      model.PoolAccountCheckTaskStatusFailed,
+		Search:      "needle",
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, failedTotal)
+	require.Len(t, failedTasks, 1)
+	require.Equal(t, newTask.Id, failedTasks[0].ID)
+
+	byID, byIDTotal, err := ListPoolAccountCheckTasks(AccountPoolCheckTaskFilter{
+		Search: strconv.Itoa(oldTask.Id),
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, byIDTotal, int64(1))
+	require.NotEmpty(t, byID)
+
+	pageTasks, pageTotal, err := ListPoolAccountCheckTasks(AccountPoolCheckTaskFilter{
+		PoolGroupID: group.Id,
+		StartIdx:    1,
+		Limit:       1,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, pageTotal)
+	require.Len(t, pageTasks, 1)
+	require.Equal(t, oldTask.Id, pageTasks[0].ID)
+
+	raw, err := common.Marshal(tasks[1])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "results_json")
+	require.NotContains(t, string(raw), "secret-result-json-field")
+	require.Len(t, tasks[1].Items, 1)
+	require.Equal(t, "safe result", tasks[1].Items[0].Message)
+}
+
+func TestCleanupPoolAccountCheckTasksOnlyDeletesTerminalFinishedTasks(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	otherGroup := &model.AccountPoolGroup{
+		Name:     "codex-check-cleanup-other",
+		Platform: "codex",
+		AuthType: model.AccountPoolAuthTypeAPIKey,
+		Source:   model.AccountPoolGroupSourceNative,
+		Status:   common.ChannelStatusEnabled,
+		Strategy: model.AccountPoolStrategyRoundRobin,
+	}
+	require.NoError(t, model.DB.Create(otherGroup).Error)
+	now := common.GetTimestamp()
+	completedOld := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		FinishedTime:  now - 3600,
+		CreatedTime:   now - 3600,
+		Message:       "old completed",
+	})
+	failedOld := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusFailed,
+		FinishedTime:  now - 3500,
+		CreatedTime:   now - 3500,
+		Message:       "old failed",
+	})
+	queuedOld := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusQueued,
+		FinishedTime:  now - 3400,
+		CreatedTime:   now - 3400,
+		Message:       "old queued",
+	})
+	runningOld := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusRunning,
+		FinishedTime:  now - 3300,
+		CreatedTime:   now - 3300,
+		Message:       "old running",
+	})
+	newTerminal := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		FinishedTime:  now + 10,
+		CreatedTime:   now + 10,
+		Message:       "new completed",
+	})
+	otherTerminal := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   otherGroup.Id,
+		PoolGroupName: otherGroup.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		FinishedTime:  now - 3200,
+		CreatedTime:   now - 3200,
+		Message:       "other completed",
+	})
+
+	deleted, err := CleanupPoolAccountCheckTasks(AccountPoolCheckTaskRetentionOptions{
+		PoolGroupID:     group.Id,
+		BeforeTimestamp: now,
+		Statuses: []string{
+			model.PoolAccountCheckTaskStatusCompleted,
+			model.PoolAccountCheckTaskStatusFailed,
+			model.PoolAccountCheckTaskStatusQueued,
+			model.PoolAccountCheckTaskStatusRunning,
+		},
+		Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+
+	deleted, err = CleanupPoolAccountCheckTasks(AccountPoolCheckTaskRetentionOptions{
+		PoolGroupID:     group.Id,
+		BeforeTimestamp: now,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+
+	for _, taskID := range []int{completedOld.Id, failedOld.Id} {
+		err = model.DB.Where("id = ?", taskID).First(&model.PoolAccountCheckTask{}).Error
+		require.Error(t, err)
+		require.Equal(t, gorm.ErrRecordNotFound, err)
+	}
+	for _, taskID := range []int{queuedOld.Id, runningOld.Id, newTerminal.Id, otherTerminal.Id} {
+		err = model.DB.Where("id = ?", taskID).First(&model.PoolAccountCheckTask{}).Error
+		require.NoError(t, err)
+	}
+}
+
+func TestCleanupPoolAccountCheckTasksDoesNotFallbackWhenOnlyActiveStatusesRequested(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	now := common.GetTimestamp()
+	completed := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusCompleted,
+		FinishedTime:  now - 3600,
+		CreatedTime:   now - 3600,
+		Message:       "completed should stay",
+	})
+	queued := createCheckTaskHistoryRecord(t, &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusQueued,
+		FinishedTime:  now - 3500,
+		CreatedTime:   now - 3500,
+		Message:       "queued should stay",
+	})
+
+	deleted, err := CleanupPoolAccountCheckTasks(AccountPoolCheckTaskRetentionOptions{
+		PoolGroupID:     group.Id,
+		BeforeTimestamp: now,
+		Statuses: []string{
+			model.PoolAccountCheckTaskStatusQueued,
+			model.PoolAccountCheckTaskStatusRunning,
+		},
+		Limit: 10,
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	for _, taskID := range []int{completed.Id, queued.Id} {
+		require.NoError(t, model.DB.Where("id = ?", taskID).First(&model.PoolAccountCheckTask{}).Error)
+	}
 }

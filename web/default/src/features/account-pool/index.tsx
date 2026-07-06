@@ -77,6 +77,7 @@ import {
   batchDeletePoolAccounts,
   batchUpdatePoolAccountStatus,
   checkPoolAccount,
+  cleanupPoolAccountCheckTasks,
   completeAccountPoolProviderOAuth,
   createAccountPoolGroup,
   createPoolAccount,
@@ -90,6 +91,7 @@ import {
   getAccountPoolUsageLogs,
   getPoolAccountCheckTask,
   getPoolAccounts,
+  listPoolAccountCheckTasks,
   refreshPoolAccountCredential,
   resetPoolAccountRuntime,
   startAccountPoolProviderDevice,
@@ -102,6 +104,7 @@ import {
 import { AuthFilesPanel } from './components/auth-files-panel'
 import type {
   AccountPoolCheckTask,
+  AccountPoolCheckTaskStatus,
   AccountPoolGroup,
   AccountPoolGroupPayload,
   AccountPoolLoginSession,
@@ -147,8 +150,14 @@ type AccountFormState = {
   proxy: string
 }
 
-type AccountPoolView = 'accounts' | 'auth-files' | 'usage-logs' | 'state-logs'
+type AccountPoolView =
+  | 'accounts'
+  | 'auth-files'
+  | 'usage-logs'
+  | 'state-logs'
+  | 'check-tasks'
 type UsageLogStatusFilter = 'all' | 'success' | 'failed'
+type CheckTaskStatusFilter = 'all' | AccountPoolCheckTaskStatus
 
 const emptyGroupForm: GroupFormState = {
   name: '',
@@ -212,6 +221,13 @@ const strategyLabelKeys: Record<string, string> = {
 }
 const dailyLimitActionOptions = ['cooldown', 'disable']
 const accountDailyLimitActionOptions = ['inherit', ...dailyLimitActionOptions]
+const checkTaskStatusFilterOptions: CheckTaskStatusFilter[] = [
+  'all',
+  'queued',
+  'running',
+  'completed',
+  'failed',
+]
 
 function numberOrZero(value: string): number {
   const parsed = Number(value)
@@ -478,6 +494,14 @@ function checkTaskStatusLabel(
   return t('Unknown')
 }
 
+function checkTaskStatusFilterLabel(
+  status: CheckTaskStatusFilter,
+  t: (key: string) => string
+): string {
+  if (status === 'all') return t('All statuses')
+  return checkTaskStatusLabel(status, t)
+}
+
 function checkTaskBadgeVariant(
   status: AccountPoolCheckTask['status'] | undefined
 ): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -524,6 +548,11 @@ export function AccountPool() {
   const [usageLogSearch, setUsageLogSearch] = useState('')
   const [stateLogPage, setStateLogPage] = useState(1)
   const [stateLogSearch, setStateLogSearch] = useState('')
+  const [checkTaskPage, setCheckTaskPage] = useState(1)
+  const [checkTaskStatus, setCheckTaskStatus] =
+    useState<CheckTaskStatusFilter>('all')
+  const [checkTaskSearch, setCheckTaskSearch] = useState('')
+  const [checkTaskCleaning, setCheckTaskCleaning] = useState(false)
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
   const [groupFormOpen, setGroupFormOpen] = useState(false)
   const [groupForm, setGroupForm] = useState<GroupFormState>(emptyGroupForm)
@@ -666,6 +695,29 @@ export function AccountPool() {
       (stateLogPageInfo?.total ?? 0) / (stateLogPageInfo?.page_size ?? 10)
     )
   )
+  const checkTaskParams = useMemo(
+    () => ({
+      p: checkTaskPage,
+      page_size: 10,
+      pool_group_id: selectedGroupId ?? undefined,
+      status: checkTaskStatus === 'all' ? undefined : checkTaskStatus,
+      search: checkTaskSearch.trim() || undefined,
+    }),
+    [checkTaskPage, checkTaskSearch, checkTaskStatus, selectedGroupId]
+  )
+  const checkTasksQuery = useQuery({
+    queryKey: accountPoolQueryKeys.checkTasks(checkTaskParams),
+    queryFn: () => listPoolAccountCheckTasks(checkTaskParams),
+    enabled: activeView === 'check-tasks',
+  })
+  const checkTaskPageInfo = checkTasksQuery.data?.data
+  const checkTasks = checkTaskPageInfo?.items ?? []
+  const checkTaskTotalPages = Math.max(
+    1,
+    Math.ceil(
+      (checkTaskPageInfo?.total ?? 0) / (checkTaskPageInfo?.page_size ?? 10)
+    )
+  )
 
   useEffect(() => {
     setUsageLogPage(1)
@@ -674,6 +726,10 @@ export function AccountPool() {
   useEffect(() => {
     setStateLogPage(1)
   }, [selectedGroupId, stateLogSearch])
+
+  useEffect(() => {
+    setCheckTaskPage(1)
+  }, [checkTaskSearch, checkTaskStatus, selectedGroupId])
 
   useEffect(() => {
     const currentPageIds = new Set(
@@ -1264,6 +1320,44 @@ export function AccountPool() {
     }
   }
 
+  const cleanupCheckTasks = async () => {
+    const confirmed = window.confirm(
+      t('Clean completed and failed check tasks older than 7 days?')
+    )
+    if (!confirmed) return
+    setCheckTaskCleaning(true)
+    try {
+      const beforeTimestamp = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
+      const response = await cleanupPoolAccountCheckTasks({
+        pool_group_id: selectedGroupId ?? undefined,
+        before_timestamp: beforeTimestamp,
+        statuses: ['completed', 'failed'],
+        limit: 500,
+      })
+      if (!response.success) throw new Error(response.message)
+      toast.success(
+        t('Cleaned {{count}} check task(s)', {
+          count: response.data?.deleted ?? 0,
+        })
+      )
+      await checkTasksQuery.refetch()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setCheckTaskCleaning(false)
+    }
+  }
+
+  const viewCheckTask = (task: AccountPoolCheckTask) => {
+    setCheckTask(task)
+    if (task.pool_group_id) {
+      setSelectedGroupId(task.pool_group_id)
+    }
+    setActiveView('accounts')
+  }
+
   const resetRuntime = async (account: PoolAccount) => {
     setActionLoading(true)
     try {
@@ -1487,7 +1581,9 @@ export function AccountPool() {
                       ? t('Auth Files')
                       : activeView === 'usage-logs'
                         ? t('Usage Logs')
-                        : t('State Logs')}
+                        : activeView === 'state-logs'
+                          ? t('State Logs')
+                          : t('Check History')}
                 </div>
                 <div className='text-muted-foreground text-xs'>
                   {activeView === 'accounts'
@@ -1506,9 +1602,13 @@ export function AccountPool() {
                         ? selectedGroup
                           ? t('Showing usage records for the selected group')
                           : t('Showing usage records for all groups')
-                        : selectedGroup
-                          ? t('Showing state changes for the selected group')
-                          : t('Showing state changes for all groups')}
+                        : activeView === 'state-logs'
+                          ? selectedGroup
+                            ? t('Showing state changes for the selected group')
+                            : t('Showing state changes for all groups')
+                          : selectedGroup
+                            ? t('Showing check tasks for the selected group')
+                            : t('Showing check tasks for all groups')}
                 </div>
               </div>
               <TabsList>
@@ -1516,6 +1616,9 @@ export function AccountPool() {
                 <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
                 <TabsTrigger value='usage-logs'>{t('Usage Logs')}</TabsTrigger>
                 <TabsTrigger value='state-logs'>{t('State Logs')}</TabsTrigger>
+                <TabsTrigger value='check-tasks'>
+                  {t('Check History')}
+                </TabsTrigger>
               </TabsList>
               <div className='flex flex-wrap gap-2'>
                 {activeView === 'usage-logs' && (
@@ -1537,6 +1640,31 @@ export function AccountPool() {
                     <RefreshCw data-icon='inline-start' />
                     {t('Refresh')}
                   </Button>
+                )}
+                {activeView === 'check-tasks' && (
+                  <>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => void checkTasksQuery.refetch()}
+                    >
+                      <RefreshCw data-icon='inline-start' />
+                      {t('Refresh')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={checkTaskCleaning}
+                      onClick={() => void cleanupCheckTasks()}
+                    >
+                      {checkTaskCleaning ? (
+                        <Loader2 data-icon='inline-start' className='animate-spin' />
+                      ) : (
+                        <Trash2 data-icon='inline-start' />
+                      )}
+                      {t('Cleanup')}
+                    </Button>
+                  </>
                 )}
                 {activeView === 'accounts' && selectedGroup && (
                   <>
@@ -2345,6 +2473,181 @@ export function AccountPool() {
                     onClick={() =>
                       setStateLogPage((current) =>
                         Math.min(stateLogTotalPages, current + 1)
+                      )
+                    }
+                  >
+                    {t('Next')}
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value='check-tasks' className='m-0 min-h-0'>
+              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+                  <Select
+                    items={checkTaskStatusFilterOptions.map((value) => ({
+                      value,
+                      label: checkTaskStatusFilterLabel(value, t),
+                    }))}
+                    value={checkTaskStatus}
+                    onValueChange={(value) =>
+                      setCheckTaskStatus(
+                        (value as CheckTaskStatusFilter | null) ?? 'all'
+                      )
+                    }
+                  >
+                    <SelectTrigger className='w-full sm:w-[180px]'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {checkTaskStatusFilterOptions.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {checkTaskStatusFilterLabel(value, t)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Input
+                  className='md:max-w-xs'
+                  placeholder={t(
+                    'Search task, group, actor, request, or message'
+                  )}
+                  value={checkTaskSearch}
+                  onChange={(event) => setCheckTaskSearch(event.target.value)}
+                />
+              </div>
+              <div className='overflow-x-auto'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Task')}</TableHead>
+                      <TableHead>{t('Group')}</TableHead>
+                      <TableHead>{t('Status')}</TableHead>
+                      <TableHead>{t('Progress')}</TableHead>
+                      <TableHead>{t('Result')}</TableHead>
+                      <TableHead>{t('Actor')}</TableHead>
+                      <TableHead>{t('Created')}</TableHead>
+                      <TableHead>{t('Finished')}</TableHead>
+                      <TableHead>{t('Message')}</TableHead>
+                      <TableHead>{t('Action')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {checkTasks.map((task) => (
+                      <TableRow key={task.id}>
+                        <TableCell className='min-w-[90px] text-sm font-medium'>
+                          #{task.id}
+                          {task.request_id ? (
+                            <div className='text-muted-foreground mt-1 max-w-[160px] truncate text-xs'>
+                              {task.request_id}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className='min-w-[170px]'>
+                          <div className='text-sm'>
+                            {task.pool_group_name || `#${task.pool_group_id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            #{task.pool_group_id}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[120px]'>
+                          <Badge variant={checkTaskBadgeVariant(task.status)}>
+                            {checkTaskStatusLabel(task.status, t)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {t('{{checked}}/{{total}} checked', {
+                            checked: task.checked + task.skipped,
+                            total: task.total,
+                          })}
+                          <div className='text-muted-foreground mt-1'>
+                            {task.total > 0
+                              ? `${checkTaskProgressValue(task)}%`
+                              : '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[170px] text-xs'>
+                          <div>
+                            {t('{{success}} passed', {
+                              success: task.success,
+                            })}
+                          </div>
+                          <div className='text-muted-foreground mt-1'>
+                            {t('{{failed}} failed', {
+                              failed: task.failed,
+                            })}
+                            {' · '}
+                            {t('{{skipped}} skipped', {
+                              skipped: task.skipped,
+                            })}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[140px] text-xs'>
+                          {task.actor || '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {task.created_time
+                            ? formatTimestamp(task.created_time)
+                            : '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {task.finished_time
+                            ? formatTimestamp(task.finished_time)
+                            : '-'}
+                        </TableCell>
+                        <TableCell className='max-w-[300px] min-w-[220px] text-xs break-words'>
+                          {task.message || '-'}
+                        </TableCell>
+                        <TableCell className='min-w-[100px]'>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => viewCheckTask(task)}
+                          >
+                            {t('View')}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!checkTasksQuery.isLoading && checkTasks.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={10} className='h-24 text-center'>
+                          {t('No check tasks found')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Page {{page}} of {{total}}', {
+                    page: checkTaskPage,
+                    total: checkTaskTotalPages,
+                  })}
+                </span>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={checkTaskPage <= 1}
+                    onClick={() =>
+                      setCheckTaskPage((current) => Math.max(1, current - 1))
+                    }
+                  >
+                    {t('Previous')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={checkTaskPage >= checkTaskTotalPages}
+                    onClick={() =>
+                      setCheckTaskPage((current) =>
+                        Math.min(checkTaskTotalPages, current + 1)
                       )
                     }
                   >

@@ -483,6 +483,28 @@ export type AccountPoolCheckTask = {
   updated_time: number
 }
 
+export type AccountPoolCheckTaskListParams = {
+  p?: number
+  page_size?: number
+  pool_group_id?: number
+  status?: AccountPoolCheckTaskStatus
+  actor?: string
+  start_timestamp?: number
+  end_timestamp?: number
+  search?: string
+}
+
+export type AccountPoolCheckTaskCleanupPayload = {
+  pool_group_id?: number
+  before_timestamp?: number
+  statuses?: AccountPoolCheckTaskStatus[]
+  limit?: number
+}
+
+export type AccountPoolCheckTaskCleanupResult = {
+  deleted: number
+}
+
 export type AccountPoolLoginStartResult = {
   session_id: string
   provider: string

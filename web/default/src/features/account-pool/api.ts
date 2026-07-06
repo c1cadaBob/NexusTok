@@ -28,6 +28,9 @@ import type {
   AccountPoolBatchStatusResult,
   AccountPoolCheckResult,
   AccountPoolCheckTask,
+  AccountPoolCheckTaskCleanupPayload,
+  AccountPoolCheckTaskCleanupResult,
+  AccountPoolCheckTaskListParams,
   AccountPoolExportResult,
   AccountPoolGroup,
   AccountPoolGroupOption,
@@ -62,6 +65,8 @@ export const accountPoolQueryKeys = {
     ['account-pool', 'usage-logs', params] as const,
   stateLogs: (params?: unknown) =>
     ['account-pool', 'state-logs', params] as const,
+  checkTasks: (params?: unknown) =>
+    ['account-pool', 'check-tasks', params] as const,
 }
 
 export async function getAccountPoolProviders(): Promise<
@@ -206,6 +211,20 @@ export async function getAccountPoolStateLogs(params: {
   search?: string
 }): Promise<ApiResponse<PageResponse<AccountPoolStateLog>>> {
   const res = await api.get('/api/account-pool/state-logs', { params })
+  return res.data
+}
+
+export async function listPoolAccountCheckTasks(
+  params: AccountPoolCheckTaskListParams
+): Promise<ApiResponse<PageResponse<AccountPoolCheckTask>>> {
+  const res = await api.get('/api/account-pool/check-tasks', { params })
+  return res.data
+}
+
+export async function cleanupPoolAccountCheckTasks(
+  data: AccountPoolCheckTaskCleanupPayload
+): Promise<ApiResponse<AccountPoolCheckTaskCleanupResult>> {
+  const res = await api.post('/api/account-pool/check-tasks/cleanup', data)
   return res.data
 }
 
