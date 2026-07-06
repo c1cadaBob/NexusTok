@@ -156,6 +156,9 @@ func main() {
 	// 启动账号池凭证自动刷新任务
 	service.StartAccountPoolCredentialAutoRefreshTask()
 
+	// 恢复服务重启前遗留的账号池后台检测任务
+	service.StartPoolAccountCheckTaskRecovery()
+
 	// 启动账号池自动可用性检测任务
 	service.StartAccountPoolAutoCheckTask()
 

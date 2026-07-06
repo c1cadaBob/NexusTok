@@ -23,11 +23,16 @@ const (
 	accountPoolCheckBatchLimit    = 100
 	accountPoolCheckRetryDelay    = 5 * time.Minute
 	accountPoolCheckTaskQueueSize = 100
+	accountPoolCheckRecoveryLimit = 100
+
+	accountPoolCheckTaskRecoveredMessage   = "account check task recovered and requeued after service restart"
+	accountPoolCheckTaskInterruptedMessage = "account check task failed because service restarted while it was running"
 )
 
 var (
 	accountPoolCheckTaskQueue      = make(chan int, accountPoolCheckTaskQueueSize)
 	accountPoolCheckTaskWorkerOnce sync.Once
+	accountPoolCheckRecoveryOnce   sync.Once
 )
 
 // AccountPoolCheckResult 描述一次账号可用性检测的结果。
@@ -84,6 +89,38 @@ type AccountPoolCheckTaskView struct {
 	FinishedTime  int64                     `json:"finished_time"`
 	CreatedTime   int64                     `json:"created_time"`
 	UpdatedTime   int64                     `json:"updated_time"`
+}
+
+// AccountPoolCheckTaskRecoveryResult 描述服务启动时对遗留后台检测任务的恢复结果。
+// QueuedRecovered 代表已重新放回内存队列的 queued 任务数量；RunningArchived 代表因旧进程
+// 中断而归档为 failed 的 running 任务数量。running 任务不自动重跑，是为了避免重复写入账号
+// 状态日志或二次刷新 OAuth 凭据这类有副作用的操作。
+type AccountPoolCheckTaskRecoveryResult struct {
+	QueuedRecovered int
+	RunningArchived int
+}
+
+// StartPoolAccountCheckTaskRecovery 恢复服务重启前遗留的后台检测任务。
+// 检测任务的执行队列在进程内存中，服务重启后 queued 任务会失去队列投递状态；running
+// 任务则代表旧进程已经中断。该入口只在主节点执行一次，避免多实例同时恢复同一批任务。
+func StartPoolAccountCheckTaskRecovery() {
+	accountPoolCheckRecoveryOnce.Do(func() {
+		if !common.IsMasterNode {
+			return
+		}
+		result, err := recoverPoolAccountCheckTasks()
+		if err != nil {
+			common.SysLog(fmt.Sprintf("failed to recover pool account check tasks: %v", err))
+			return
+		}
+		if result.QueuedRecovered > 0 || result.RunningArchived > 0 {
+			common.SysLog(fmt.Sprintf(
+				"pool account check task recovery completed: queued_recovered=%d, running_archived=%d",
+				result.QueuedRecovered,
+				result.RunningArchived,
+			))
+		}
+	})
 }
 
 // CheckPoolAccount 手动检测单个原生账号池账号。
@@ -179,6 +216,78 @@ func StartPoolAccountCheckTask(opts AccountPoolCheckTaskOptions) (*AccountPoolCh
 		return nil, err
 	}
 	return PoolAccountCheckTaskPublicView(task), nil
+}
+
+func recoverPoolAccountCheckTasks() (AccountPoolCheckTaskRecoveryResult, error) {
+	result := AccountPoolCheckTaskRecoveryResult{}
+	now := common.GetTimestamp()
+	archived, err := archiveInterruptedPoolAccountCheckTasks(now)
+	if err != nil {
+		return result, err
+	}
+	result.RunningArchived = archived
+
+	recovered, err := requeuePendingPoolAccountCheckTasks()
+	if err != nil {
+		return result, err
+	}
+	result.QueuedRecovered = recovered
+	return result, nil
+}
+
+func archiveInterruptedPoolAccountCheckTasks(now int64) (int, error) {
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	tx := model.DB.Model(&model.PoolAccountCheckTask{}).
+		Where("status = ?", model.PoolAccountCheckTaskStatusRunning).
+		Updates(map[string]interface{}{
+			"status":        model.PoolAccountCheckTaskStatusFailed,
+			"message":       accountPoolCheckTaskInterruptedMessage,
+			"finished_time": now,
+		})
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	return int(tx.RowsAffected), nil
+}
+
+func requeuePendingPoolAccountCheckTasks() (int, error) {
+	var tasks []*model.PoolAccountCheckTask
+	if err := model.DB.
+		Where("status = ?", model.PoolAccountCheckTaskStatusQueued).
+		Order("id ASC").
+		Limit(accountPoolCheckRecoveryLimit).
+		Find(&tasks).Error; err != nil {
+		return 0, err
+	}
+	recovered := 0
+	for _, task := range tasks {
+		if task == nil || task.Id <= 0 {
+			continue
+		}
+		if err := markPoolAccountCheckTaskRecovered(task.Id); err != nil {
+			return recovered, err
+		}
+		if err := enqueuePoolAccountCheckTask(task.Id); err != nil {
+			return recovered, err
+		}
+		recovered++
+	}
+	return recovered, nil
+}
+
+func markPoolAccountCheckTaskRecovered(taskID int) error {
+	if taskID <= 0 {
+		return fmt.Errorf("check task id is required")
+	}
+	return model.DB.Model(&model.PoolAccountCheckTask{}).
+		Where("id = ? AND status = ?", taskID, model.PoolAccountCheckTaskStatusQueued).
+		Updates(map[string]interface{}{
+			"message":       accountPoolCheckTaskRecoveredMessage,
+			"started_time":  0,
+			"finished_time": 0,
+		}).Error
 }
 
 // GetPoolAccountCheckTask 查询后台检测任务并返回脱敏视图。

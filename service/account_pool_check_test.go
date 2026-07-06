@@ -387,3 +387,96 @@ func TestStartPoolAccountCheckTaskUsesSelectedAccountIDs(t *testing.T) {
 	require.Equal(t, missingAccountID, finalTask.Items[1].AccountID)
 	require.False(t, finalTask.Items[1].Checked)
 }
+
+func TestRecoverPoolAccountCheckTasksRequeuesQueuedTask(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	account := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               "check-task-recovered",
+		Platform:           "codex",
+		AuthType:           model.AccountPoolAuthTypeAPIKey,
+		CredentialProvider: "codex",
+		Credentials:        encryptedCheckCredential(t, `{"api_key":"sk-recovered"}`),
+		Status:             common.ChannelStatusEnabled,
+		Schedulable:        true,
+	}
+	require.NoError(t, model.DB.Create(account).Error)
+	task := &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusQueued,
+		Actor:         "recovery-tester",
+		RequestId:     "req-recovery-queued",
+		AccountIds:    joinAccountPoolCheckTaskIDs([]int{account.Id}),
+		Total:         1,
+		Message:       "waiting before restart",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	recovery, err := recoverPoolAccountCheckTasks()
+
+	require.NoError(t, err)
+	require.Equal(t, 1, recovery.QueuedRecovered)
+	require.Zero(t, recovery.RunningArchived)
+
+	var finalTask *AccountPoolCheckTaskView
+	require.Eventually(t, func() bool {
+		loaded, loadErr := GetPoolAccountCheckTask(task.Id)
+		if loadErr != nil {
+			return false
+		}
+		finalTask = loaded
+		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
+	}, 2*time.Second, 20*time.Millisecond)
+
+	require.Equal(t, 1, finalTask.Total)
+	require.Equal(t, 1, finalTask.Checked)
+	require.Equal(t, 1, finalTask.Success)
+	require.Zero(t, finalTask.Failed)
+	require.NotZero(t, finalTask.StartedTime)
+	require.NotZero(t, finalTask.FinishedTime)
+
+	logs, total, err := model.GetPoolAccountStateLogs(model.PoolAccountStateLogFilter{
+		PoolGroupId: group.Id,
+		Action:      model.PoolAccountStateActionCheckSucceeded,
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, logs, 1)
+	require.Equal(t, "recovery-tester", logs[0].Actor)
+	require.Equal(t, "req-recovery-queued", logs[0].RequestId)
+}
+
+func TestRecoverPoolAccountCheckTasksArchivesRunningTask(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	startedAt := common.GetTimestamp() - 30
+	task := &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusRunning,
+		Actor:         "recovery-tester",
+		RequestId:     "req-recovery-running",
+		AccountIds:    joinAccountPoolCheckTaskIDs([]int{12345}),
+		Total:         1,
+		Checked:       1,
+		StartedTime:   startedAt,
+		Message:       "running before restart",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	recovery, err := recoverPoolAccountCheckTasks()
+
+	require.NoError(t, err)
+	require.Zero(t, recovery.QueuedRecovered)
+	require.Equal(t, 1, recovery.RunningArchived)
+
+	loaded, err := GetPoolAccountCheckTask(task.Id)
+	require.NoError(t, err)
+	require.Equal(t, model.PoolAccountCheckTaskStatusFailed, loaded.Status)
+	require.Contains(t, loaded.Message, "service restarted")
+	require.Equal(t, startedAt, loaded.StartedTime)
+	require.NotZero(t, loaded.FinishedTime)
+}
