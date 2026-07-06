@@ -20,6 +20,7 @@ For commercial licensing, please contact support@c1cada.dev
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/public-sans';
+@import '@fontsource-variable/noto-sans-sc';
 
 @import './theme.css';
 @import './theme-presets.css';
@@ -41,30 +42,47 @@ For commercial licensing, please contact support@c1cada.dev
     scrollbar-color: var(--border) transparent;
   }
   html {
-    @apply overflow-x-hidden font-sans;
+    @apply overflow-x-hidden;
+    font-family: var(--app-font-sans);
   }
   body {
-    @apply bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar min-h-svh w-full font-sans;
+    @apply bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar min-h-svh w-full;
+    font-family: var(--app-font-sans);
   }
 
-  /* Keep sticky headers stable while primitives lock body scrolling. */
+  /* Base UI 锁定滚动时，保持粘性页头位置稳定。 */
   body[data-scroll-locked] {
     overflow: unset !important;
   }
 
-  /* Cursor pointer for buttons */
+  /* 可点击按钮统一使用 pointer，禁用态保持默认反馈。 */
   button:not(:disabled),
   [role='button']:not(:disabled) {
     cursor: pointer;
   }
 
-  /* Prevent focus zoom on mobile devices */
+  /* 移动端输入框低于 16px 时会触发焦点缩放，这里保持表单可读。 */
   @media screen and (max-width: 767px) {
     input,
     select,
     textarea {
       font-size: 16px !important;
     }
+  }
+}
+
+@layer utilities {
+  .font-sans {
+    font-family: var(--app-font-sans) !important;
+  }
+
+  .font-inter,
+  .font-system {
+    font-family: var(--app-font-inter) !important;
+  }
+
+  .font-manrope {
+    font-family: var(--app-font-manrope) !important;
   }
 }
 
