@@ -475,6 +475,81 @@ function formatCompactCredentialSummary(summary: string): string {
   return limitInlineText(compactParts.slice(0, 2).join(' · '))
 }
 
+function credentialSummaryRecord(
+  summary: string
+): Record<string, unknown> | null {
+  if (!summary) return null
+  try {
+    const parsed = JSON.parse(summary) as Record<string, unknown>
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function summaryStringValue(
+  record: Record<string, unknown> | null,
+  keys: string[]
+): string {
+  if (!record) return ''
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value)
+    }
+  }
+  return ''
+}
+
+function shortenMiddle(value: string, head = 12, tail = 6): string {
+  if (value.length <= head + tail + 3) return value
+  return `${value.slice(0, head)}...${value.slice(-tail)}`
+}
+
+function formatAccountIdentity(summary: string, fallback: string): string {
+  const record = credentialSummaryRecord(summary)
+  const email = summaryStringValue(record, [
+    'email',
+    'account',
+    'username',
+    'client_email',
+  ])
+  if (email) return limitInlineText(email, 64)
+
+  const accountId = summaryStringValue(record, [
+    'account_id',
+    'id',
+    'user_id',
+    'subject',
+  ])
+  if (accountId) return `account_id: ${shortenMiddle(accountId)}`
+
+  const compact = formatCompactCredentialSummary(summary)
+  return compact === '-' ? fallback : compact
+}
+
+function poolAccountFileLabel(account: PoolAccount): string {
+  return account.credential_label || account.name || `#${account.id}`
+}
+
+function accountRowTitle(
+  account: PoolAccount,
+  fullSummary: string,
+  t: (key: string) => string
+): string {
+  return [
+    `${t('Account')}: #${account.id}`,
+    `${t('File')}: ${poolAccountFileLabel(account)}`,
+    `${account.credential_provider || account.platform || '-'} / ${
+      account.auth_type || '-'
+    }`,
+    fullSummary,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function accountStatusReason(
   account: PoolAccount,
   nowSeconds: number,
@@ -490,6 +565,26 @@ function accountStatusReason(
     account.last_error ||
     (account.unavailable ? t('Unavailable') : '')
   )
+}
+
+function visibleAccountStatusReason(
+  account: PoolAccount,
+  nowSeconds: number,
+  t: (key: string) => string
+): string {
+  const reason = accountStatusReason(account, nowSeconds, t)
+  if (!reason) return ''
+
+  const isHealthy =
+    account.status === CHANNEL_STATUS.ENABLED &&
+    account.schedulable &&
+    !account.unavailable &&
+    cooldownText(account, nowSeconds) === '-'
+
+  if (isHealthy && reason.toLowerCase() === 'credential is available') {
+    return ''
+  }
+  return reason
 }
 
 function formatUsageDuration(seconds: number): string {
@@ -1947,10 +2042,8 @@ export function AccountPool() {
                     </div>
                     <div className='text-muted-foreground flex gap-3 text-xs'>
                       <span>
-                        {t('Total')}: {group.stats?.total ?? 0}
-                      </span>
-                      <span>
-                        {t('Available')}: {group.stats?.enabled ?? 0}
+                        {t('Available')}: {group.stats?.enabled ?? 0} /{' '}
+                        {group.stats?.total ?? 0}
                       </span>
                       {(group.stats?.disabled ?? 0) > 0 ? (
                         <span>
@@ -1986,10 +2079,14 @@ export function AccountPool() {
             <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
               <div className='flex min-w-0 flex-col gap-2'>
                 <div className='truncate text-sm font-semibold'>
-                  {t(sectionMeta.titleKey)}
+                  {activeSection === 'groups' && selectedGroup
+                    ? selectedGroup.name
+                    : t(sectionMeta.titleKey)}
                 </div>
                 <div className='text-muted-foreground text-xs'>
-                  {t(sectionMeta.descriptionKey)}
+                  {activeSection === 'groups' && selectedGroup
+                    ? `${selectedGroup.platform} / ${selectedGroup.auth_type}`
+                    : t(sectionMeta.descriptionKey)}
                 </div>
                 {activeSection === 'groups' && selectedGroup ? (
                   <div className='flex flex-wrap items-center gap-2 text-xs'>
@@ -2009,6 +2106,16 @@ export function AccountPool() {
                     </span>
                     <span className='text-muted-foreground truncate'>
                       {selectedGroup.models || t('All Models')}
+                    </span>
+                    <span
+                      className='text-muted-foreground truncate'
+                      title={`${groupAutoCheckSummary(
+                        selectedGroup,
+                        t
+                      )} · ${groupPreflightCheckSummary(selectedGroup, t)}`}
+                    >
+                      {groupAutoCheckSummary(selectedGroup, t)} ·{' '}
+                      {groupPreflightCheckSummary(selectedGroup, t)}
                     </span>
                   </div>
                 ) : null}
@@ -2546,35 +2653,6 @@ export function AccountPool() {
                   </div>
                 </div>
               ) : null}
-              {selectedGroup ? (
-                <div className='border-border text-muted-foreground flex flex-wrap gap-3 border-b p-3 text-xs'>
-                  <span>{groupAutoCheckSummary(selectedGroup, t)}</span>
-                  <span>{groupPreflightCheckSummary(selectedGroup, t)}</span>
-                  {selectedGroup.auto_check_enabled ? (
-                    <>
-                      <span>
-                        {t('Last auto check')}:&nbsp;
-                        {selectedGroup.auto_check_last_time
-                          ? formatTimestamp(selectedGroup.auto_check_last_time)
-                          : '-'}
-                      </span>
-                      <span>
-                        {t('Next auto check')}:&nbsp;
-                        {selectedGroup.auto_check_next_time
-                          ? formatTimestamp(selectedGroup.auto_check_next_time)
-                          : '-'}
-                      </span>
-                      {selectedGroup.auto_check_last_task_id ? (
-                        <span>
-                          {t('Last auto check task #{{id}}', {
-                            id: selectedGroup.auto_check_last_task_id,
-                          })}
-                        </span>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
               <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
                 <div>
                   <div className='text-muted-foreground text-xs'>
@@ -2602,7 +2680,7 @@ export function AccountPool() {
                 </div>
                 <div>
                   <div className='text-muted-foreground text-xs'>
-                    {t('Daily requests')}
+                    {t('Today requests')}
                   </div>
                   <div className='font-medium'>
                     {formatUsageNumber(selectedGroup?.daily_request_count ?? 0)}
@@ -2676,7 +2754,7 @@ export function AccountPool() {
                 </div>
               ) : null}
 
-              {accounts.length > 0 ? (
+              {accounts.length > 0 && selectedAccountIds.length > 0 ? (
                 <div className='border-border flex flex-col gap-2 border-b p-3 text-sm md:flex-row md:items-center md:justify-between'>
                   <span className='text-muted-foreground'>
                     {t('{{count}} account(s) selected', {
@@ -2749,8 +2827,8 @@ export function AccountPool() {
                 </div>
               ) : null}
 
-              <div className='overflow-x-auto'>
-                <Table>
+              <div className='min-w-0'>
+                <Table className='min-w-[760px] table-fixed'>
                   <TableHeader>
                     <TableRow>
                       <TableHead className='w-10'>
@@ -2763,11 +2841,15 @@ export function AccountPool() {
                           aria-label={t('Select all')}
                         />
                       </TableHead>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Usage')}</TableHead>
-                      <TableHead>{t('Last Used')}</TableHead>
-                      <TableHead>{t('Actions')}</TableHead>
+                      <TableHead className='w-[34%]'>{t('Account')}</TableHead>
+                      <TableHead className='w-[13%]'>{t('Status')}</TableHead>
+                      <TableHead className='w-[18%]'>{t('Usage')}</TableHead>
+                      <TableHead className='w-[23%]'>
+                        {t('Last Used')}
+                      </TableHead>
+                      <TableHead className='w-[104px] text-right'>
+                        {t('Actions')}
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2775,11 +2857,12 @@ export function AccountPool() {
                       const fullCredentialSummary = formatCredentialSummary(
                         account.credential_summary
                       )
-                      const compactCredentialSummary =
-                        formatCompactCredentialSummary(
-                          account.credential_summary
-                        )
-                      const statusReason = accountStatusReason(
+                      const accountIdentity = formatAccountIdentity(
+                        account.credential_summary,
+                        account.name
+                      )
+                      const accountFileLabel = poolAccountFileLabel(account)
+                      const statusReason = visibleAccountStatusReason(
                         account,
                         nowSeconds,
                         t
@@ -2802,21 +2885,22 @@ export function AccountPool() {
                               aria-label={t('Select row')}
                             />
                           </TableCell>
-                          <TableCell className='min-w-[280px] max-w-[420px]'>
-                            <div className='truncate font-medium'>
-                              {account.name}
-                            </div>
-                            <div className='text-muted-foreground truncate text-xs'>
-                              #{account.id} ·{' '}
-                              {account.credential_provider ||
-                                account.platform}{' '}
-                              / {account.auth_type}
+                          <TableCell className='min-w-0'>
+                            <div
+                              className='truncate font-medium'
+                              title={accountRowTitle(
+                                account,
+                                fullCredentialSummary,
+                                t
+                              )}
+                            >
+                              {accountIdentity}
                             </div>
                             <div
                               className='text-muted-foreground truncate text-xs'
-                              title={fullCredentialSummary}
+                              title={`${t('File')}: ${accountFileLabel}`}
                             >
-                              {compactCredentialSummary}
+                              {t('File')}: {accountFileLabel}
                             </div>
                             {account.models ? (
                               <div className='text-muted-foreground truncate text-xs'>
@@ -2824,7 +2908,7 @@ export function AccountPool() {
                               </div>
                             ) : null}
                           </TableCell>
-                          <TableCell className='min-w-[160px]'>
+                          <TableCell className='min-w-0'>
                             <div className='flex flex-col gap-1'>
                               <StatusBadge
                                 label={statusLabel(account, nowSeconds, t)}
@@ -2833,7 +2917,7 @@ export function AccountPool() {
                               />
                               {statusReason ? (
                                 <span
-                                  className='text-muted-foreground max-w-[220px] truncate text-xs'
+                                  className='text-muted-foreground max-w-full truncate text-xs'
                                   title={statusReason}
                                 >
                                   {limitInlineText(statusReason, 80)}
@@ -2841,13 +2925,33 @@ export function AccountPool() {
                               ) : null}
                             </div>
                           </TableCell>
-                          <TableCell className='min-w-[230px] text-xs'>
-                            <div>
-                              {t('Success')}: {account.success_count ?? 0} ·{' '}
-                              {t('Failed')}: {account.failed_count ?? 0}
-                            </div>
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Daily requests')}:&nbsp;
+                          <TableCell
+                            className='min-w-0 text-xs'
+                            title={[
+                              `${t('Daily requests')}: ${formatUsageNumber(
+                                account.daily_request_count
+                              )} / ${formatLimitValue(
+                                account.daily_request_limit,
+                                t
+                              )}`,
+                              `${t('Max concurrency')}: ${formatLimitValue(
+                                account.max_concurrency,
+                                t
+                              )}`,
+                              `${t('RPM')}: ${formatLimitValue(
+                                account.rate_limit_rpm,
+                                t
+                              )}`,
+                              `${t('Daily quota')}: ${formatUsageNumber(
+                                account.daily_used_quota
+                              )} / ${formatLimitValue(
+                                account.daily_quota_limit,
+                                t
+                              )}`,
+                            ].join('\n')}
+                          >
+                            <div className='truncate'>
+                              {t('Request')}:&nbsp;
                               {formatUsageNumber(
                                 account.daily_request_count
                               )}{' '}
@@ -2857,35 +2961,58 @@ export function AccountPool() {
                                 t
                               )}
                             </div>
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Max concurrency')}:&nbsp;
-                              {formatLimitValue(account.max_concurrency, t)}
-                              {' · '}
-                              {t('RPM')}:&nbsp;
-                              {formatLimitValue(account.rate_limit_rpm, t)}
+                            <div className='text-muted-foreground mt-1 truncate'>
+                              {t('Success')}: {account.success_count ?? 0} ·{' '}
+                              {t('Failed')}: {account.failed_count ?? 0}
                             </div>
                           </TableCell>
-                          <TableCell className='min-w-[220px] text-xs'>
-                            <div>
+                          <TableCell
+                            className='min-w-0 text-xs'
+                            title={[
+                              `${t('Last Used')}: ${
+                                account.last_used_time
+                                  ? formatTimestamp(account.last_used_time)
+                                  : '-'
+                              }`,
+                              `${t('Last check time')}: ${
+                                account.last_checked_time
+                                  ? formatTimestamp(account.last_checked_time)
+                                  : '-'
+                              }`,
+                              account.next_refresh_time
+                                ? `${t('Next refresh')}: ${formatTimestamp(
+                                    account.next_refresh_time
+                                  )}`
+                                : '',
+                            ]
+                              .filter(Boolean)
+                              .join('\n')}
+                          >
+                            <div className='truncate'>
                               {account.last_used_time
                                 ? formatTimestamp(account.last_used_time)
                                 : '-'}
                             </div>
-                            <div className='text-muted-foreground mt-1'>
+                            <div className='text-muted-foreground mt-1 truncate'>
                               {t('Last check time')}:&nbsp;
                               {account.last_checked_time
                                 ? formatTimestamp(account.last_checked_time)
                                 : '-'}
                             </div>
                             {account.next_refresh_time ? (
-                              <div className='text-muted-foreground mt-1'>
+                              <div
+                                className='text-muted-foreground mt-1 truncate'
+                                title={`${t('Next refresh')}: ${formatTimestamp(
+                                  account.next_refresh_time
+                                )}`}
+                              >
                                 {t('Next refresh')}:&nbsp;
                                 {formatTimestamp(account.next_refresh_time)}
                               </div>
                             ) : null}
                           </TableCell>
-                          <TableCell className='min-w-[120px]'>
-                            <div className='flex flex-nowrap gap-1.5'>
+                          <TableCell className='w-[104px]'>
+                            <div className='flex flex-nowrap justify-end gap-1.5'>
                               <Button
                                 variant='ghost'
                                 size='icon-sm'
