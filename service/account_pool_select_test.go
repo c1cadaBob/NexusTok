@@ -66,6 +66,66 @@ func newPoolSelectTestContext() *gin.Context {
 	return c
 }
 
+func TestSelectPoolAccountPrefersHigherSuccessRate(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-success-rate")
+	group.Strategy = model.AccountPoolStrategySuccessRate
+	require.NoError(t, model.DB.Save(group).Error)
+	lowSuccessAccount := createSelectablePoolAccount(t, group, "success-rate-low")
+	lowSuccessAccount.SuccessCount = 1
+	lowSuccessAccount.FailedCount = 9
+	require.NoError(t, model.DB.Save(lowSuccessAccount).Error)
+	highSuccessAccount := createSelectablePoolAccount(t, group, "success-rate-high")
+	highSuccessAccount.SuccessCount = 8
+	highSuccessAccount.FailedCount = 2
+	require.NoError(t, model.DB.Save(highSuccessAccount).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, highSuccessAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountSuccessRateRespectsPriority(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-success-rate-priority")
+	group.Strategy = model.AccountPoolStrategySuccessRate
+	require.NoError(t, model.DB.Save(group).Error)
+	highSuccessAccount := createSelectablePoolAccount(t, group, "success-rate-lower-priority")
+	highSuccessAccount.SuccessCount = 20
+	highSuccessAccount.FailedCount = 0
+	highSuccessAccount.Priority = 0
+	require.NoError(t, model.DB.Save(highSuccessAccount).Error)
+	highPriorityAccount := createSelectablePoolAccount(t, group, "success-rate-higher-priority")
+	highPriorityAccount.SuccessCount = 1
+	highPriorityAccount.FailedCount = 9
+	highPriorityAccount.Priority = 10
+	require.NoError(t, model.DB.Save(highPriorityAccount).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, highPriorityAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSortPoolAccountCandidatesSuccessRateTieBreakers(t *testing.T) {
+	accounts := []*model.PoolAccount{
+		{Id: 1, SuccessCount: 1, FailedCount: 1},
+		{Id: 2, SuccessCount: 4, FailedCount: 4},
+		{Id: 3, SuccessCount: 0, FailedCount: 0},
+	}
+
+	sortPoolAccountCandidates(accounts, model.AccountPoolStrategySuccessRate)
+
+	require.Equal(t, 2, accounts[0].Id)
+	require.Equal(t, 1, accounts[1].Id)
+	require.Equal(t, 3, accounts[2].Id)
+}
+
 func TestSelectPoolAccountRespectsGroupMaxConcurrency(t *testing.T) {
 	setupAccountPoolSelectTest(t)
 	group := &model.AccountPoolGroup{

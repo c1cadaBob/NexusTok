@@ -180,7 +180,20 @@ const authTypeOptions = [
   'custom_json',
 ]
 
-const strategyOptions = ['round_robin', 'weighted', 'fill_first', 'least_used']
+const strategyOptions = [
+  'round_robin',
+  'weighted',
+  'fill_first',
+  'least_used',
+  'success_rate',
+]
+const strategyLabelKeys: Record<string, string> = {
+  round_robin: 'Round robin',
+  weighted: 'Weighted',
+  fill_first: 'Fill first',
+  least_used: 'Least used',
+  success_rate: 'Success rate first',
+}
 const dailyLimitActionOptions = ['cooldown', 'disable']
 const accountDailyLimitActionOptions = ['inherit', ...dailyLimitActionOptions]
 
@@ -188,6 +201,15 @@ function numberOrZero(value: string): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return 0
   return parsed
+}
+
+function strategyLabel(
+  strategy: string,
+  t: (key: string) => string
+): string {
+  const labelKey = strategyLabelKeys[strategy]
+  if (!labelKey) return strategy || '-'
+  return t(labelKey)
 }
 
 function statusVariant(
@@ -1227,7 +1249,7 @@ export function AccountPool() {
                 <div className='text-muted-foreground text-xs'>
                   {activeView === 'accounts'
                     ? selectedGroup
-                      ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
+                      ? `${strategyLabel(selectedGroup.strategy, t)} · ${selectedGroup.models || t('All Models')} · ${t('Group concurrency')}: ${
                           selectedGroup.max_concurrency > 0
                             ? selectedGroup.max_concurrency
                             : t('Unlimited')
@@ -2030,7 +2052,10 @@ export function AccountPool() {
               </SelectContent>
             </Select>
             <Select
-              items={strategyOptions.map((value) => ({ value, label: value }))}
+              items={strategyOptions.map((value) => ({
+                value,
+                label: strategyLabel(value, t),
+              }))}
               value={groupForm.strategy}
               onValueChange={(value) =>
                 setGroupForm((current) => ({
@@ -2046,7 +2071,7 @@ export function AccountPool() {
                 <SelectGroup>
                   {strategyOptions.map((value) => (
                     <SelectItem key={value} value={value}>
-                      {value}
+                      {strategyLabel(value, t)}
                     </SelectItem>
                   ))}
                 </SelectGroup>

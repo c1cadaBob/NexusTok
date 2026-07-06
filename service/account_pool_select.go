@@ -1,5 +1,5 @@
 // account_pool_select.go 实现了全局账号池的账号选择和调度逻辑。
-// 包括账号候选过滤、优先级排序、负载均衡策略（轮询、最少使用、先填满、加权随机）、
+// 包括账号候选过滤、优先级排序、负载均衡策略（轮询、最少使用、先填满、成功率优先、加权随机）、
 // 并发控制（基于 Redis 或内存的信号量）、游标管理等功能。
 // 是账号池请求调度的核心模块。
 package service
@@ -207,7 +207,11 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 }
 
 // sortPoolAccountCandidates 对账号池候选账号进行排序。
-// 排序规则：优先级降序 > 最少使用策略下按已用配额升序 > ID 升序。
+// 排序规则：
+//  1. 始终先按账号优先级降序排列，确保管理员显式配置的优先级高于策略偏好。
+//  2. least_used 策略在同优先级内按已用配额升序排列。
+//  3. success_rate 策略在同优先级内按带先验的成功率降序排列，避免新账号因样本不足被极端化处理。
+//  4. 其它策略保持 ID 升序，供轮询和加权策略获得稳定候选顺序。
 func sortPoolAccountCandidates(accounts []*model.PoolAccount, strategy string) {
 	strategy = strings.TrimSpace(strategy)
 	sort.SliceStable(accounts, func(i, j int) bool {
@@ -217,14 +221,53 @@ func sortPoolAccountCandidates(accounts []*model.PoolAccount, strategy string) {
 		if strategy == model.AccountPoolStrategyLeastUsed && accounts[i].UsedQuota != accounts[j].UsedQuota {
 			return accounts[i].UsedQuota < accounts[j].UsedQuota
 		}
+		if strategy == model.AccountPoolStrategySuccessRate {
+			leftScore := poolAccountSuccessRateScore(accounts[i])
+			rightScore := poolAccountSuccessRateScore(accounts[j])
+			if leftScore != rightScore {
+				return leftScore > rightScore
+			}
+			leftSuccess := nonNegativePoolAccountCount(accounts[i].SuccessCount)
+			rightSuccess := nonNegativePoolAccountCount(accounts[j].SuccessCount)
+			if leftSuccess != rightSuccess {
+				return leftSuccess > rightSuccess
+			}
+			leftFailed := nonNegativePoolAccountCount(accounts[i].FailedCount)
+			rightFailed := nonNegativePoolAccountCount(accounts[j].FailedCount)
+			if leftFailed != rightFailed {
+				return leftFailed < rightFailed
+			}
+		}
 		return accounts[i].Id < accounts[j].Id
 	})
+}
+
+// poolAccountSuccessRateScore 返回账号成功率优先策略使用的带先验评分。
+// 使用 (success + 1) / (success + failed + 2) 可以把没有历史请求的新账号视为 50% 的中性账号，
+// 避免 0 成功/0 失败被误判为 0% 或 100%，也能在样本较少时降低偶然成功或失败的影响。
+func poolAccountSuccessRateScore(account *model.PoolAccount) float64 {
+	if account == nil {
+		return 0
+	}
+	success := float64(nonNegativePoolAccountCount(account.SuccessCount))
+	failed := float64(nonNegativePoolAccountCount(account.FailedCount))
+	return (success + 1) / (success + failed + 2)
+}
+
+// nonNegativePoolAccountCount 兜底清理历史异常计数。
+// 正常路径只会累加成功和失败次数；这里保留防御逻辑，避免人工修库产生负数后影响排序。
+func nonNegativePoolAccountCount(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 // pickPoolAccount 根据分组的负载均衡策略从候选账号中选择一个。
 // 支持的策略：
 // - fill_first: 先填满，直接返回第一个账号
 // - least_used: 最少使用，直接返回第一个（已按配额排序）
+// - success_rate: 成功率优先，直接返回第一个（已按成功率排序）
 // - round_robin: 轮询，使用游标循环选择
 // - weighted: 加权轮询，根据账号权重分配
 func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccount, usingGroup string, modelName string) *model.PoolAccount {
@@ -240,7 +283,7 @@ func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccoun
 	switch strategy {
 	case model.AccountPoolStrategyFillFirst:
 		return accounts[0]
-	case model.AccountPoolStrategyLeastUsed:
+	case model.AccountPoolStrategyLeastUsed, model.AccountPoolStrategySuccessRate:
 		return accounts[0]
 	}
 	cursorKey := buildPoolAccountCursorKey(groupID, usingGroup, modelName)
