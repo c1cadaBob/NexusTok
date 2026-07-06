@@ -16,6 +16,7 @@ web/dist
 one-api
 new-api
 nexustok
+NexusTok
 /__debug_bin*
 .DS_Store
 tiktoken_cache

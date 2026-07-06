@@ -23,6 +23,12 @@ func setupAccountPoolSelectTest(t *testing.T) {
 	poolAccountConcurrencyMu.Lock()
 	poolAccountConcurrency = map[int]int{}
 	poolAccountConcurrencyMu.Unlock()
+	poolAccountCursorMu.Lock()
+	poolAccountCursors = map[string]uint64{}
+	poolAccountCursorMu.Unlock()
+	poolAccountRateMu.Lock()
+	poolAccountRateCounters = map[int]poolGroupRateCounter{}
+	poolAccountRateMu.Unlock()
 	poolGroupConcurrencyMu.Lock()
 	poolGroupConcurrency = map[int]int{}
 	poolGroupConcurrencyMu.Unlock()
@@ -34,6 +40,12 @@ func setupAccountPoolSelectTest(t *testing.T) {
 		poolAccountConcurrencyMu.Lock()
 		poolAccountConcurrency = map[int]int{}
 		poolAccountConcurrencyMu.Unlock()
+		poolAccountCursorMu.Lock()
+		poolAccountCursors = map[string]uint64{}
+		poolAccountCursorMu.Unlock()
+		poolAccountRateMu.Lock()
+		poolAccountRateCounters = map[int]poolGroupRateCounter{}
+		poolAccountRateMu.Unlock()
 		poolGroupConcurrencyMu.Lock()
 		poolGroupConcurrency = map[int]int{}
 		poolGroupConcurrencyMu.Unlock()
@@ -212,11 +224,201 @@ func TestAddSelectedAccountUsedQuotaUpdatesPoolGroupQuota(t *testing.T) {
 
 	AddSelectedAccountUsedQuota(0, account.Id, 7)
 
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), updatedAccount.UsedQuota)
+	require.Equal(t, int64(7), updatedAccount.DailyUsedQuota)
+	require.Equal(t, model.AccountPoolDailyWindowStart(time.Now()), updatedAccount.DailyResetTime)
+
 	updated, err := model.GetAccountPoolGroupById(group.Id)
 	require.NoError(t, err)
 	require.Equal(t, int64(7), updated.UsedQuota)
 	require.Equal(t, int64(7), updated.DailyUsedQuota)
 	require.Equal(t, model.AccountPoolDailyWindowStart(time.Now()), updated.DailyResetTime)
+}
+
+func TestSelectPoolAccountRespectsAccountRateLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-rpm")
+	account := createSelectablePoolAccount(t, group, "rpm-account")
+	account.RateLimitRpm = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, ErrPoolAccountRateLimitExceeded))
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, updatedAccount.DailyRequestCount)
+}
+
+func TestSelectPoolAccountSwitchesWhenAccountRateLimitExceeded(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-rpm-switch")
+	group.Strategy = model.AccountPoolStrategyFillFirst
+	require.NoError(t, model.DB.Save(group).Error)
+	firstAccount := createSelectablePoolAccount(t, group, "rpm-account-a")
+	firstAccount.RateLimitRpm = 1
+	require.NoError(t, model.DB.Save(firstAccount).Error)
+	secondAccount := createSelectablePoolAccount(t, group, "rpm-account-b")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, firstAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, selectedAccount, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, secondAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(secondCtx)
+}
+
+func TestSelectPoolAccountRespectsAccountDailyRequestLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-request")
+	account := createSelectablePoolAccount(t, group, "daily-request-account")
+	account.DailyRequestLimit = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, _, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, model.ErrPoolAccountDailyRequestLimitExceeded))
+}
+
+func TestSelectPoolAccountSkipsAccountDailyRequestLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-request-skip")
+	group.Strategy = model.AccountPoolStrategyFillFirst
+	require.NoError(t, model.DB.Save(group).Error)
+	limitedAccount := createSelectablePoolAccount(t, group, "daily-request-limited-account")
+	limitedAccount.DailyRequestLimit = 1
+	limitedAccount.DailyRequestCount = 1
+	limitedAccount.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now())
+	require.NoError(t, model.DB.Save(limitedAccount).Error)
+	fallbackAccount := createSelectablePoolAccount(t, group, "daily-request-fallback-account")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, fallbackAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountRespectsAccountDailyQuotaLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-quota")
+	account := createSelectablePoolAccount(t, group, "daily-quota-account")
+	account.DailyQuotaLimit = 10
+	account.DailyUsedQuota = 10
+	account.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now())
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, _, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, model.ErrPoolAccountDailyQuotaLimitExceeded))
+}
+
+func TestSelectPoolAccountSkipsAccountDailyQuotaLimit(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-quota-skip")
+	group.Strategy = model.AccountPoolStrategyFillFirst
+	require.NoError(t, model.DB.Save(group).Error)
+	limitedAccount := createSelectablePoolAccount(t, group, "daily-quota-limited-account")
+	limitedAccount.DailyQuotaLimit = 10
+	limitedAccount.DailyUsedQuota = 10
+	limitedAccount.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now())
+	require.NoError(t, model.DB.Save(limitedAccount).Error)
+	fallbackAccount := createSelectablePoolAccount(t, group, "daily-quota-fallback-account")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, fallbackAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountResetsAccountDailyUsageWindow(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-daily-reset")
+	account := createSelectablePoolAccount(t, group, "daily-reset-account")
+	account.DailyRequestLimit = 1
+	account.DailyQuotaLimit = 10
+	account.DailyRequestCount = 1
+	account.DailyUsedQuota = 10
+	account.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now().Add(-24 * time.Hour))
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updatedAccount.DailyRequestCount)
+	require.Equal(t, int64(0), updatedAccount.DailyUsedQuota)
+	require.Equal(t, model.AccountPoolDailyWindowStart(time.Now()), updatedAccount.DailyResetTime)
+}
+
+func TestReservePoolAccountUsageLimitRollsBackRateLimitWhenDailyRequestExceeded(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-rpm-rollback")
+	account := createSelectablePoolAccount(t, group, "rpm-rollback-account")
+	account.RateLimitRpm = 1
+	account.DailyRequestLimit = 1
+	account.DailyRequestCount = 1
+	account.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now())
+	require.NoError(t, model.DB.Save(account).Error)
+
+	err := reservePoolAccountUsageLimit(account)
+	require.True(t, errors.Is(err, model.ErrPoolAccountDailyRequestLimitExceeded))
+	require.True(t, reservePoolAccountRateLimit(account.Id, account.RateLimitRpm))
+}
+
+func TestSelectPoolAccountRollsBackAccountUsageWhenGroupLimitFails(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-account-group-rpm-rollback")
+	group.RateLimitRpm = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "group-rpm-rollback-account")
+	account.RateLimitRpm = 1
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	require.True(t, reservePoolGroupRateLimit(group.Id, group.RateLimitRpm))
+
+	ctx := newPoolSelectTestContext()
+	_, _, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, ErrPoolAccountGroupRateLimitExceeded))
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyPoolGroupReserved))
+
+	updatedAccount, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, updatedAccount.DailyRequestCount)
+	require.True(t, reservePoolAccountRateLimit(account.Id, account.RateLimitRpm))
 }
 
 func createSelectablePoolGroup(t *testing.T, name string) *model.AccountPoolGroup {

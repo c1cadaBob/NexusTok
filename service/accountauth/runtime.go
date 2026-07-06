@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common" // 公共工具：JSON、时间戳等
-	"github.com/c1cada/NexusTok/model"   // 数据模型：PoolAccount 等
+	"github.com/c1cada/NexusTok/model"  // 数据模型：PoolAccount 等
 )
 
 // 最近请求统计的滑动窗口配置
@@ -153,20 +153,18 @@ func RuntimeView(account *model.PoolAccount) *AccountRuntimeView {
 		return nil
 	}
 	return &AccountRuntimeView{
-		Status:             accountRuntimeStatus(account),
-		StatusMessage:      account.StatusMessage,
-		Unavailable:        account.Unavailable,
-		Quota:              ParseQuotaState(account.QuotaSnapshot),
-		ModelStates:        ParseModelStates(account.ModelStates),
-		RecentRequests:     RecentRequestsSnapshot(account.RecentRequests, time.Now()),
-		LastError:          parseProviderError(account.LastError),
-		LastRefreshedTime:  account.LastRefreshedTime,
-		NextRefreshTime:    account.NextRefreshTime,
-		NextRetryTime:      account.NextRetryTime,
-		SuccessCount:       account.SuccessCount,
-		FailedCount:        account.FailedCount,
-		CredentialMetadata: ParseMetadata(account.CredentialMetadata),
-		CredentialAttrs:    ParseAttributes(account.CredentialAttrs),
+		Status:            accountRuntimeStatus(account),
+		StatusMessage:     account.StatusMessage,
+		Unavailable:       account.Unavailable,
+		Quota:             ParseQuotaState(account.QuotaSnapshot),
+		ModelStates:       ParseModelStates(account.ModelStates),
+		RecentRequests:    RecentRequestsSnapshot(account.RecentRequests, time.Now()),
+		LastError:         parseProviderError(account.LastError),
+		LastRefreshedTime: account.LastRefreshedTime,
+		NextRefreshTime:   account.NextRefreshTime,
+		NextRetryTime:     account.NextRetryTime,
+		SuccessCount:      account.SuccessCount,
+		FailedCount:       account.FailedCount,
 	}
 }
 

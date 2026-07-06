@@ -124,6 +124,9 @@ type AccountFormState = {
   priority: string
   weight: string
   maxConcurrency: string
+  rateLimitRpm: string
+  dailyRequestLimit: string
+  dailyQuotaLimit: string
   proxy: string
 }
 
@@ -155,6 +158,9 @@ const emptyAccountForm: AccountFormState = {
   priority: '0',
   weight: '1',
   maxConcurrency: '0',
+  rateLimitRpm: '0',
+  dailyRequestLimit: '0',
+  dailyQuotaLimit: '0',
   proxy: '',
 }
 
@@ -260,6 +266,23 @@ function groupLimitSummary(
     `${t('RPM')}: ${formatLimitValue(group.rate_limit_rpm, t)}`,
     `${t('Daily requests')}: ${formatLimitValue(group.daily_request_limit, t)}`,
     `${t('Daily quota')}: ${formatLimitValue(group.daily_quota_limit, t)}`,
+  ]
+  return parts.join(' · ')
+}
+
+function accountLimitSummary(
+  account: PoolAccount,
+  t: (key: string) => string
+): string {
+  const parts = [
+    `${t('Max concurrency')}: ${formatLimitValue(account.max_concurrency, t)}`,
+    `${t('RPM')}: ${formatLimitValue(account.rate_limit_rpm, t)}`,
+    `${t('Daily requests')}: ${formatUsageNumber(
+      account.daily_request_count
+    )} / ${formatLimitValue(account.daily_request_limit, t)}`,
+    `${t('Daily quota')}: ${formatUsageNumber(
+      account.daily_used_quota
+    )} / ${formatLimitValue(account.daily_quota_limit, t)}`,
   ]
   return parts.join(' · ')
 }
@@ -511,6 +534,9 @@ export function AccountPool() {
       priority: String(account.priority),
       weight: String(account.weight || 1),
       maxConcurrency: String(account.max_concurrency || 0),
+      rateLimitRpm: String(account.rate_limit_rpm || 0),
+      dailyRequestLimit: String(account.daily_request_limit || 0),
+      dailyQuotaLimit: String(account.daily_quota_limit || 0),
       proxy: account.proxy || '',
     })
     setAccountFormOpen(true)
@@ -538,6 +564,9 @@ export function AccountPool() {
         priority: numberOrZero(accountForm.priority),
         weight: numberOrZero(accountForm.weight),
         max_concurrency: numberOrZero(accountForm.maxConcurrency),
+        rate_limit_rpm: numberOrZero(accountForm.rateLimitRpm),
+        daily_request_limit: numberOrZero(accountForm.dailyRequestLimit),
+        daily_quota_limit: numberOrZero(accountForm.dailyQuotaLimit),
         proxy: accountForm.proxy.trim(),
         status: CHANNEL_STATUS.ENABLED,
         schedulable: true,
@@ -1018,12 +1047,12 @@ export function AccountPool() {
                       <Upload className='mr-2 h-4 w-4' />
                       {t('Batch Import')}
                     </Button>
-                      <Button
-                        variant='outline'
-                        size='sm'
+                    <Button
+                      variant='outline'
+                      size='sm'
                       disabled={batchChecking || accountTotal <= 0}
-                        onClick={() => void checkSelectedGroupAccounts()}
-                      >
+                      onClick={() => void checkSelectedGroupAccounts()}
+                    >
                       {batchChecking ? (
                         <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                       ) : (
@@ -1116,6 +1145,9 @@ export function AccountPool() {
                           <div className='text-muted-foreground text-xs'>
                             {t('Success')}: {account.success_count ?? 0} ·{' '}
                             {t('Failed')}: {account.failed_count ?? 0}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {accountLimitSummary(account, t)}
                           </div>
                         </TableCell>
                         <TableCell className='max-w-[260px] truncate text-xs'>
@@ -1734,13 +1766,54 @@ export function AccountPool() {
               }
             />
             <Input
-              className='sm:col-span-2'
+              type='number'
+              min='0'
+              inputMode='numeric'
               placeholder={t('Max concurrency')}
               value={accountForm.maxConcurrency}
               onChange={(event) =>
                 setAccountForm((current) => ({
                   ...current,
                   maxConcurrency: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Rate limit RPM')}
+              value={accountForm.rateLimitRpm}
+              onChange={(event) =>
+                setAccountForm((current) => ({
+                  ...current,
+                  rateLimitRpm: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Daily request limit')}
+              value={accountForm.dailyRequestLimit}
+              onChange={(event) =>
+                setAccountForm((current) => ({
+                  ...current,
+                  dailyRequestLimit: event.target.value,
+                }))
+              }
+            />
+            <Input
+              type='number'
+              min='0'
+              inputMode='numeric'
+              placeholder={t('Daily quota limit')}
+              value={accountForm.dailyQuotaLimit}
+              onChange={(event) =>
+                setAccountForm((current) => ({
+                  ...current,
+                  dailyQuotaLimit: event.target.value,
                 }))
               }
             />

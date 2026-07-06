@@ -59,8 +59,6 @@ export type PoolAccount = {
   credential_summary: string
   credential_provider: string
   credential_label: string
-  credential_metadata: string
-  credential_attributes: string
   status: number
   status_message: string
   schedulable: boolean
@@ -70,6 +68,10 @@ export type PoolAccount = {
   priority: number
   weight: number
   max_concurrency: number
+  rate_limit_rpm: number
+  daily_request_limit: number
+  daily_quota_limit: number
+  daily_request_count: number
   proxy: string
   base_url?: string | null
   openai_organization?: string | null
@@ -82,6 +84,8 @@ export type PoolAccount = {
   status_code_mapping?: string | null
   last_used_time: number
   used_quota: number
+  daily_used_quota: number
+  daily_reset_time: number
   rate_limited_until: number
   overload_until: number
   temp_disabled_until: number
@@ -114,8 +118,6 @@ export type AccountPoolAuthFile = {
   status: number
   file_digest: string
   credential_summary: string
-  credential_metadata: string
-  credential_attributes: string
   account_group?: string
   account_groups: string[]
   models: string
@@ -181,6 +183,9 @@ export type PoolAccountPayload = {
   priority?: number
   weight?: number
   max_concurrency?: number
+  rate_limit_rpm?: number
+  daily_request_limit?: number
+  daily_quota_limit?: number
   proxy?: string
   base_url?: string | null
   openai_organization?: string | null
@@ -204,6 +209,9 @@ export type PoolAccountBatchPayload = {
   weight?: number
   status?: number
   max_concurrency?: number
+  rate_limit_rpm?: number
+  daily_request_limit?: number
+  daily_quota_limit?: number
 }
 
 export type AccountPoolAuthFilePayload = {

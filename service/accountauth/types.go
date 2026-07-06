@@ -77,7 +77,7 @@ type LoginSessionView struct {
 
 // LoginCompleteRequest 登录完成请求
 type LoginCompleteRequest struct {
-	SessionID   string       `json:"session_id"`   // 登录会话 ID
+	SessionID   string       `json:"session_id"`    // 登录会话 ID
 	PoolGroupID int          `json:"pool_group_id"` // 账号池分组 ID
 	Name        string       `json:"name"`          // 账号名称
 	Input       string       `json:"input"`         // 用户输入（回调 URL 或授权码等）
@@ -86,48 +86,46 @@ type LoginCompleteRequest struct {
 
 // LoginCompleteResult 登录完成结果
 type LoginCompleteResult struct {
-	AccountID int                 `json:"account_id"`         // 新建或关联的账号 ID
-	Account   *AccountCredential  `json:"account,omitempty"`  // 账号凭证
-	Runtime   *AccountRuntimeView `json:"runtime,omitempty"`  // 账号运行时视图
+	AccountID int                 `json:"account_id"`        // 新建或关联的账号 ID
+	Account   *AccountCredential  `json:"account,omitempty"` // 账号凭证
+	Runtime   *AccountRuntimeView `json:"runtime,omitempty"` // 账号运行时视图
 }
 
 // AccountCredential 账号凭证对象，存储认证信息和元数据
 type AccountCredential struct {
-	Provider        string            `json:"provider"`                  // 提供者名称（如 codex）
-	AuthType        string            `json:"auth_type"`                 // 认证类型（如 official_oauth）
-	Label           string            `json:"label"`                     // 显示标签
-	Credentials     string            `json:"credentials"`               // 加密存储的凭证 JSON
-	Summary         string            `json:"summary"`                   // 凭证摘要（用于界面展示）
-	Metadata        map[string]any    `json:"metadata,omitempty"`        // 元数据（邮箱、账号 ID 等）
-	Attributes      map[string]string `json:"attributes,omitempty"`      // 属性键值对
-	ExpiresAt       time.Time         `json:"expires_at,omitempty"`      // 令牌过期时间
+	Provider        string            `json:"provider"`                    // 提供者名称（如 codex）
+	AuthType        string            `json:"auth_type"`                   // 认证类型（如 official_oauth）
+	Label           string            `json:"label"`                       // 显示标签
+	Credentials     string            `json:"credentials"`                 // 加密存储的凭证 JSON
+	Summary         string            `json:"summary"`                     // 凭证摘要（用于界面展示）
+	Metadata        map[string]any    `json:"metadata,omitempty"`          // 元数据（邮箱、账号 ID 等）
+	Attributes      map[string]string `json:"attributes,omitempty"`        // 属性键值对
+	ExpiresAt       time.Time         `json:"expires_at,omitempty"`        // 令牌过期时间
 	LastRefreshedAt time.Time         `json:"last_refreshed_at,omitempty"` // 上次刷新时间
 	NextRefreshAt   time.Time         `json:"next_refresh_at,omitempty"`   // 下次计划刷新时间
 }
 
 // AccountRuntimeView 账号运行时视图，汇总展示账号的完整运行状态
 type AccountRuntimeView struct {
-	Status             string                    `json:"status"`                          // 运行时状态
-	StatusMessage      string                    `json:"status_message,omitempty"`        // 状态附加消息
-	Unavailable        bool                      `json:"unavailable"`                     // 是否不可用
-	Quota              QuotaState                `json:"quota"`                           // 配额状态
-	ModelStates        map[string]*ModelState    `json:"model_states,omitempty"`          // 各模型的状态
-	RecentRequests     []RecentRequestBucket     `json:"recent_requests,omitempty"`       // 最近请求统计
-	LastError          *ProviderError            `json:"last_error,omitempty"`            // 最近一次错误
-	LastRefreshedTime  int64                     `json:"last_refreshed_time,omitempty"`   // 上次刷新时间
-	NextRefreshTime    int64                     `json:"next_refresh_time,omitempty"`     // 下次刷新时间
-	NextRetryTime      int64                     `json:"next_retry_time,omitempty"`       // 下次重试时间
-	SuccessCount       int64                     `json:"success_count"`                   // 成功请求总数
-	FailedCount        int64                     `json:"failed_count"`                    // 失败请求总数
-	CredentialMetadata map[string]any            `json:"credential_metadata,omitempty"`   // 凭证元数据
-	CredentialAttrs    map[string]string         `json:"credential_attributes,omitempty"` // 凭证属性
-	Extra              map[string]map[string]any `json:"extra,omitempty"`                 // 扩展字段
+	Status            string                    `json:"status"`                        // 运行时状态
+	StatusMessage     string                    `json:"status_message,omitempty"`      // 状态附加消息
+	Unavailable       bool                      `json:"unavailable"`                   // 是否不可用
+	Quota             QuotaState                `json:"quota"`                         // 配额状态
+	ModelStates       map[string]*ModelState    `json:"model_states,omitempty"`        // 各模型的状态
+	RecentRequests    []RecentRequestBucket     `json:"recent_requests,omitempty"`     // 最近请求统计
+	LastError         *ProviderError            `json:"last_error,omitempty"`          // 最近一次错误
+	LastRefreshedTime int64                     `json:"last_refreshed_time,omitempty"` // 上次刷新时间
+	NextRefreshTime   int64                     `json:"next_refresh_time,omitempty"`   // 下次刷新时间
+	NextRetryTime     int64                     `json:"next_retry_time,omitempty"`     // 下次重试时间
+	SuccessCount      int64                     `json:"success_count"`                 // 成功请求总数
+	FailedCount       int64                     `json:"failed_count"`                  // 失败请求总数
+	Extra             map[string]map[string]any `json:"extra,omitempty"`               // 扩展字段
 }
 
 // QuotaState 配额状态，记录配额是否超限及相关信息
 type QuotaState struct {
-	Exceeded      bool      `json:"exceeded"`               // 是否已超限
-	Reason        string    `json:"reason,omitempty"`       // 超限原因
+	Exceeded      bool      `json:"exceeded"`                  // 是否已超限
+	Reason        string    `json:"reason,omitempty"`          // 超限原因
 	NextRecoverAt time.Time `json:"next_recover_at,omitempty"` // 下次配额恢复时间
 	BackoffLevel  int       `json:"backoff_level,omitempty"`   // 退避等级
 }
@@ -145,9 +143,9 @@ type ModelState struct {
 
 // ProviderError 上游提供者返回的错误信息
 type ProviderError struct {
-	Code       string `json:"code,omitempty"`       // 错误码
-	Message    string `json:"message,omitempty"`    // 错误消息
-	Retryable  bool   `json:"retryable"`            // 是否可重试
+	Code       string `json:"code,omitempty"`        // 错误码
+	Message    string `json:"message,omitempty"`     // 错误消息
+	Retryable  bool   `json:"retryable"`             // 是否可重试
 	HTTPStatus int    `json:"http_status,omitempty"` // HTTP 状态码
 }
 

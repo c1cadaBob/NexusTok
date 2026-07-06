@@ -29,12 +29,17 @@ var (
 	ErrPoolAccountGroupConcurrencyExceeded = errors.New("账号池组并发已满")
 	// ErrPoolAccountGroupRateLimitExceeded 表示账号池分组每分钟请求频率已达到上限。
 	ErrPoolAccountGroupRateLimitExceeded = errors.New("账号池分组请求频率已达到上限")
+	// ErrPoolAccountRateLimitExceeded 表示单个账号每分钟请求频率已达到上限。
+	ErrPoolAccountRateLimitExceeded = errors.New("账号池账号请求频率已达到上限")
 
 	poolAccountCursorMu sync.Mutex            // 游标映射表的互斥锁
 	poolAccountCursors  = map[string]uint64{} // 轮询游标映射表，key 为分组+模型组合
 
 	poolAccountConcurrencyMu sync.Mutex      // 并发计数映射表的互斥锁
 	poolAccountConcurrency   = map[int]int{} // 账号并发计数映射表，key 为账号 ID
+
+	poolAccountRateMu       sync.Mutex                       // 账号 RPM 窗口映射表的互斥锁
+	poolAccountRateCounters = map[int]poolGroupRateCounter{} // 账号 RPM 窗口计数，key 为账号 ID
 
 	poolGroupConcurrencyMu sync.Mutex      // 分组并发计数映射表的互斥锁
 	poolGroupConcurrency   = map[int]int{} // 分组并发计数映射表，key 为分组 ID
@@ -106,6 +111,7 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	}
 
 	candidates := make([]*model.PoolAccount, 0, len(accounts))
+	var lastAccountLimitErr error
 	for _, account := range accounts {
 		if account == nil {
 			continue
@@ -114,6 +120,10 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 			continue
 		}
 		if account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.Unavailable || account.IsCoolingDown(now) {
+			continue
+		}
+		if err := model.PoolAccountDailyLimitError(account, nowTime); err != nil {
+			lastAccountLimitErr = err
 			continue
 		}
 		if !poolAccountSupportsModel(account, group, modelName) {
@@ -125,6 +135,9 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		candidates = append(candidates, account)
 	}
 	if len(candidates) == 0 {
+		if lastAccountLimitErr != nil {
+			return group, nil, lastAccountLimitErr
+		}
 		return group, nil, ErrNoAvailablePoolAccount
 	}
 	groupReserved := false
@@ -152,13 +165,25 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	}
 
 	availableTopAccounts := append([]*model.PoolAccount(nil), topAccounts...)
+	var lastAccountReserveErr error
 	for len(availableTopAccounts) > 0 {
 		account := pickPoolAccount(group, availableTopAccounts, usingGroup, modelName)
 		if account == nil {
+			if lastAccountReserveErr != nil {
+				return group, nil, lastAccountReserveErr
+			}
 			return group, nil, ErrNoAvailablePoolAccount
 		}
 		if ReservePoolAccount(c, account) {
+			if err := reservePoolAccountUsageLimit(account); err != nil {
+				releaseReservedPoolAccount(c)
+				ExcludePoolAccountForRequest(c, account.Id)
+				availableTopAccounts = removePoolAccount(availableTopAccounts, account.Id)
+				lastAccountReserveErr = err
+				continue
+			}
 			if err := reservePoolGroupUsageLimit(group); err != nil {
+				releasePoolAccountUsageReservation(account)
 				ReleaseSelectedPoolAccount(c)
 				return group, nil, err
 			}
@@ -168,6 +193,9 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		}
 		ExcludePoolAccountForRequest(c, account.Id)
 		availableTopAccounts = removePoolAccount(availableTopAccounts, account.Id)
+	}
+	if lastAccountReserveErr != nil {
+		return group, nil, lastAccountReserveErr
 	}
 	return group, nil, ErrNoAvailablePoolAccount
 }
@@ -315,6 +343,96 @@ func ReservePoolAccount(c *gin.Context, account *model.PoolAccount) bool {
 	return false
 }
 
+// reservePoolAccountUsageLimit 在账号并发槽位已经预留后检查并预占账号级请求额度。
+// 账号级 RPM、每日请求数和每日配额都只约束单个账号；如果当前账号超限，
+// 调度层会排除它并继续尝试同组内其它候选账号。
+func reservePoolAccountUsageLimit(account *model.PoolAccount) error {
+	if account == nil {
+		return nil
+	}
+	if err := model.CheckPoolAccountDailyQuotaLimit(account.Id); err != nil {
+		return err
+	}
+	if !reservePoolAccountRateLimit(account.Id, account.RateLimitRpm) {
+		return ErrPoolAccountRateLimitExceeded
+	}
+	if err := model.ReservePoolAccountRequest(account.Id); err != nil {
+		releasePoolAccountRateLimit(account.Id, account.RateLimitRpm)
+		return err
+	}
+	return nil
+}
+
+// releasePoolAccountUsageReservation 回滚还没有进入上游调用的账号级用量预占。
+// 仅在账号已成功预占、但后续分组级限制拒绝请求时调用；请求进入上游后不回滚。
+func releasePoolAccountUsageReservation(account *model.PoolAccount) {
+	if account == nil {
+		return
+	}
+	model.ReleasePoolAccountRequest(account.Id)
+	releasePoolAccountRateLimit(account.Id, account.RateLimitRpm)
+}
+
+// reservePoolAccountRateLimit 按自然分钟预占单账号请求频率额度。
+// Redis 可用时使用分钟窗口 key 做原子计数；没有 Redis 时回退到进程内计数器。
+func reservePoolAccountRateLimit(accountID int, rpm int) bool {
+	if accountID <= 0 || rpm <= 0 {
+		return true
+	}
+	window := time.Now().Unix() / 60
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:account_rate:%d:%d", accountID, window)
+		value, err := common.RDB.Incr(context.Background(), key).Result()
+		if err == nil {
+			if value == 1 {
+				_ = common.RDB.Expire(context.Background(), key, 2*time.Minute).Err()
+			}
+			if value <= int64(rpm) {
+				return true
+			}
+			_ = common.RDB.Decr(context.Background(), key).Err()
+			return false
+		}
+		common.SysLog(fmt.Sprintf("failed to reserve pool account rate limit in redis, fallback to memory: account_id=%d, error=%v", accountID, err))
+	}
+	poolAccountRateMu.Lock()
+	defer poolAccountRateMu.Unlock()
+	counter := poolAccountRateCounters[accountID]
+	if counter.window != window {
+		counter = poolGroupRateCounter{window: window}
+	}
+	if counter.count >= rpm {
+		poolAccountRateCounters[accountID] = counter
+		return false
+	}
+	counter.count++
+	poolAccountRateCounters[accountID] = counter
+	return true
+}
+
+// releasePoolAccountRateLimit 回滚本请求刚预占的单账号 RPM 计数。
+func releasePoolAccountRateLimit(accountID int, rpm int) {
+	if accountID <= 0 || rpm <= 0 {
+		return
+	}
+	window := time.Now().Unix() / 60
+	if common.RedisEnabled && common.RDB != nil {
+		key := fmt.Sprintf("nexustok:account_pool:account_rate:%d:%d", accountID, window)
+		if _, err := common.RDB.Decr(context.Background(), key).Result(); err == nil {
+			return
+		}
+	}
+	poolAccountRateMu.Lock()
+	defer poolAccountRateMu.Unlock()
+	counter := poolAccountRateCounters[accountID]
+	if counter.window != window || counter.count <= 1 {
+		delete(poolAccountRateCounters, accountID)
+		return
+	}
+	counter.count--
+	poolAccountRateCounters[accountID] = counter
+}
+
 // reservePoolGroupForRequest 尝试为账号池分组预留一个并发槽位。
 // 分组级限制作用于整个组内所有账号，用于控制一组账号同时被 Relay 占用的总量。
 // 成功预留后会把分组 ID 和保留标记写入请求上下文，确保请求成功、失败或重试时能统一释放。
@@ -426,14 +544,23 @@ func ReleaseSelectedPoolAccount(c *gin.Context) {
 	if c == nil {
 		return
 	}
+	releaseReservedPoolAccount(c)
+	releaseReservedPoolGroup(c)
+}
+
+// releaseReservedPoolAccount 释放当前请求预留的账号并发槽位。
+func releaseReservedPoolAccount(c *gin.Context) {
+	if c == nil {
+		return
+	}
 	if common.GetContextKeyBool(c, constant.ContextKeyPoolAccountReserved) {
 		accountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId)
 		if accountID > 0 {
 			releasePoolAccountConcurrency(accountID)
 		}
 		common.SetContextKey(c, constant.ContextKeyPoolAccountReserved, false)
+		common.SetContextKey(c, constant.ContextKeyPoolAccountId, 0)
 	}
-	releaseReservedPoolGroup(c)
 }
 
 // releaseReservedPoolGroup 释放当前请求预留的账号池分组并发槽位。

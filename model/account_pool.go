@@ -67,6 +67,10 @@ var (
 	ErrAccountPoolGroupDailyRequestLimitExceeded = errors.New("账号池分组今日请求次数已用尽")
 	// ErrAccountPoolGroupDailyQuotaLimitExceeded 表示账号池分组当天可用配额已耗尽。
 	ErrAccountPoolGroupDailyQuotaLimitExceeded = errors.New("账号池分组今日额度已用尽")
+	// ErrPoolAccountDailyRequestLimitExceeded 表示单个账号当天可调度请求次数已耗尽。
+	ErrPoolAccountDailyRequestLimitExceeded = errors.New("账号池账号今日请求次数已用尽")
+	// ErrPoolAccountDailyQuotaLimitExceeded 表示单个账号当天可用配额已耗尽。
+	ErrPoolAccountDailyQuotaLimitExceeded = errors.New("账号池账号今日额度已用尽")
 )
 
 // AccountPoolGroupSettings 保存历史版本写入 Settings JSON 的分组级调度设置。
@@ -156,6 +160,12 @@ type PoolAccount struct {
 	Priority           int64   `json:"priority" gorm:"bigint;default:0;index"`                              // 优先级
 	Weight             int     `json:"weight" gorm:"default:1;index"`                                       // 权重
 	MaxConcurrency     int     `json:"max_concurrency" gorm:"default:0"`                                    // 最大并发数（0=不限）
+	RateLimitRpm       int     `json:"rate_limit_rpm" gorm:"default:0"`                                     // 每分钟最大请求数（0=不限）
+	DailyRequestLimit  int64   `json:"daily_request_limit" gorm:"bigint;default:0"`                         // 每日最大请求数（0=不限）
+	DailyQuotaLimit    int64   `json:"daily_quota_limit" gorm:"bigint;default:0"`                           // 每日最大配额消耗（0=不限）
+	DailyRequestCount  int64   `json:"daily_request_count" gorm:"bigint;default:0"`                         // 当日已分配请求数
+	DailyUsedQuota     int64   `json:"daily_used_quota" gorm:"bigint;default:0"`                            // 当日已消耗配额
+	DailyResetTime     int64   `json:"daily_reset_time" gorm:"bigint;default:0;index"`                      // 当日统计窗口开始时间
 	Proxy              string  `json:"proxy" gorm:"type:text"`                                              // 代理地址
 	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`                          // 自定义 API 基础 URL
 	OpenAIOrganization *string `json:"openai_organization"`                                                 // OpenAI 组织 ID
@@ -459,6 +469,30 @@ func (account *PoolAccount) normalize() {
 	if account.CredentialProvider == "" {
 		account.CredentialProvider = account.Platform
 	}
+	if account.MaxConcurrency < 0 {
+		account.MaxConcurrency = 0
+	}
+	if account.RateLimitRpm < 0 {
+		account.RateLimitRpm = 0
+	}
+	if account.DailyRequestLimit < 0 {
+		account.DailyRequestLimit = 0
+	}
+	if account.DailyQuotaLimit < 0 {
+		account.DailyQuotaLimit = 0
+	}
+	if account.DailyRequestCount < 0 {
+		account.DailyRequestCount = 0
+	}
+	if account.UsedQuota < 0 {
+		account.UsedQuota = 0
+	}
+	if account.DailyUsedQuota < 0 {
+		account.DailyUsedQuota = 0
+	}
+	if account.DailyResetTime < 0 {
+		account.DailyResetTime = 0
+	}
 	account.CredentialLabel = strings.TrimSpace(account.CredentialLabel)
 }
 
@@ -705,6 +739,112 @@ func AddAccountPoolGroupUsedQuota(groupID int, quota int64) {
 	}
 }
 
+// ResetPoolAccountDailyUsageIfNeeded 在每日窗口切换时重置单个账号的日用量。
+// 这里不修改账号的启用状态，只清空账号池自身的日统计和临时日限额提示；
+// 其它风控、失败冷却或人工禁用状态仍由对应字段独立控制。
+func ResetPoolAccountDailyUsageIfNeeded(accountID int, now time.Time) (bool, error) {
+	if accountID <= 0 {
+		return false, nil
+	}
+	windowStart := AccountPoolDailyWindowStart(now)
+	result := DB.Model(&PoolAccount{}).
+		Where("id = ? AND (daily_reset_time = 0 OR daily_reset_time < ?)", accountID, windowStart).
+		Updates(map[string]interface{}{
+			"daily_request_count": 0,
+			"daily_used_quota":    0,
+			"daily_reset_time":    windowStart,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// PoolAccountDailyLimitError 返回账号当前是否已经达到账号级每日请求或每日配额限制。
+// 调用前会尝试切换每日窗口，保证跨天后的账号能自动恢复参与调度。
+func PoolAccountDailyLimitError(account *PoolAccount, now time.Time) error {
+	if account == nil {
+		return nil
+	}
+	if reset, err := ResetPoolAccountDailyUsageIfNeeded(account.Id, now); err != nil {
+		return err
+	} else if reset {
+		account.DailyRequestCount = 0
+		account.DailyUsedQuota = 0
+		account.DailyResetTime = AccountPoolDailyWindowStart(now)
+	}
+	if account.DailyRequestLimit > 0 && account.DailyRequestCount >= account.DailyRequestLimit {
+		return ErrPoolAccountDailyRequestLimitExceeded
+	}
+	if account.DailyQuotaLimit > 0 && account.DailyUsedQuota >= account.DailyQuotaLimit {
+		return ErrPoolAccountDailyQuotaLimitExceeded
+	}
+	return nil
+}
+
+// ReservePoolAccountRequest 在账号被真正选中前预占一次账号级每日请求额度。
+// 该计数表示账号当天进入 Relay 热路径的次数；即使未配置上限也会记录实际使用次数，
+// 便于前端展示“今日请求数 / 无限制”。
+func ReservePoolAccountRequest(accountID int) error {
+	if accountID <= 0 {
+		return nil
+	}
+	if _, err := ResetPoolAccountDailyUsageIfNeeded(accountID, time.Now()); err != nil {
+		return err
+	}
+	var limit int64
+	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Select("daily_request_limit").Find(&limit).Error; err != nil {
+		return err
+	}
+	if limit <= 0 {
+		return DB.Model(&PoolAccount{}).
+			Where("id = ?", accountID).
+			Update("daily_request_count", gorm.Expr("daily_request_count + ?", 1)).Error
+	}
+	result := DB.Model(&PoolAccount{}).
+		Where("id = ? AND daily_request_count < daily_request_limit", accountID).
+		Update("daily_request_count", gorm.Expr("daily_request_count + ?", 1))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrPoolAccountDailyRequestLimitExceeded
+	}
+	return nil
+}
+
+// ReleasePoolAccountRequest 回滚一次尚未进入上游调用的账号级请求预占。
+// 仅用于选号后续环节失败的内部补偿；请求已经交给上游后，无论成功失败都不应回滚。
+func ReleasePoolAccountRequest(accountID int) {
+	if accountID <= 0 {
+		return
+	}
+	if err := DB.Model(&PoolAccount{}).
+		Where("id = ? AND daily_request_count > 0", accountID).
+		Update("daily_request_count", gorm.Expr("daily_request_count - ?", 1)).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to rollback pool account daily request: account_id=%d, error=%v", accountID, err))
+	}
+}
+
+// CheckPoolAccountDailyQuotaLimit 检查单个账号每日配额是否仍可调度。
+// daily_quota_limit 为 0 表示不限制；达到上限后，调度层会跳过该账号并尝试其它账号。
+func CheckPoolAccountDailyQuotaLimit(accountID int) error {
+	if accountID <= 0 {
+		return nil
+	}
+	if _, err := ResetPoolAccountDailyUsageIfNeeded(accountID, time.Now()); err != nil {
+		return err
+	}
+	var account PoolAccount
+	if err := DB.Select("id", "daily_quota_limit", "daily_used_quota").Where("id = ?", accountID).First(&account).Error; err != nil {
+		return err
+	}
+	if account.DailyQuotaLimit > 0 && account.DailyUsedQuota >= account.DailyQuotaLimit {
+		return ErrPoolAccountDailyQuotaLimitExceeded
+	}
+	return nil
+}
+
 // GetAccountPoolGroups 分页查询账号池分组列表
 // 支持按状态筛选和关键词搜索（名称、平台、认证类型、模型）
 func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]*AccountPoolGroup, int64, error) {
@@ -949,12 +1089,21 @@ func TouchPoolAccount(accountID int) {
 	}
 }
 
-// AddPoolAccountUsedQuota 增加池账号的已用配额
+// AddPoolAccountUsedQuota 增加池账号的累计配额和当日配额。
+// 账号级每日配额限制依赖 daily_used_quota；每次结算前先确保日窗口已切换，
+// 避免跨天后的用量继续累加到旧窗口。
 func AddPoolAccountUsedQuota(accountID int, quota int64) {
 	if accountID <= 0 || quota <= 0 {
 		return
 	}
-	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error; err != nil {
+	if _, err := ResetPoolAccountDailyUsageIfNeeded(accountID, time.Now()); err != nil {
+		common.SysLog(fmt.Sprintf("failed to reset pool account daily usage before quota update: account_id=%d, error=%v", accountID, err))
+	}
+	updates := map[string]interface{}{
+		"used_quota":       gorm.Expr("used_quota + ?", quota),
+		"daily_used_quota": gorm.Expr("daily_used_quota + ?", quota),
+	}
+	if err := DB.Model(&PoolAccount{}).Where("id = ?", accountID).Updates(updates).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to update pool account used_quota: account_id=%d, quota=%d, error=%v", accountID, quota, err))
 	}
 }

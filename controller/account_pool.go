@@ -67,6 +67,9 @@ type poolAccountUpsertRequest struct {
 	Priority           *int64  `json:"priority"`            // 优先级
 	Weight             *int    `json:"weight"`              // 权重
 	MaxConcurrency     *int    `json:"max_concurrency"`     // 最大并发数
+	RateLimitRpm       *int    `json:"rate_limit_rpm"`      // 每分钟最大请求数，0 表示不限
+	DailyRequestLimit  *int64  `json:"daily_request_limit"` // 每日最大请求数，0 表示不限
+	DailyQuotaLimit    *int64  `json:"daily_quota_limit"`   // 每日最大配额消耗，0 表示不限
 	Proxy              string  `json:"proxy"`               // 代理地址
 	BaseURL            *string `json:"base_url"`            // 基础 URL
 	OpenAIOrganization *string `json:"openai_organization"` // OpenAI 组织 ID
@@ -81,17 +84,20 @@ type poolAccountUpsertRequest struct {
 
 // poolAccountBatchRequest 池账号批量创建请求
 type poolAccountBatchRequest struct {
-	Credentials    string `json:"credentials"`     // 批量凭证（每行一个）
-	Keys           string `json:"keys"`            // 批量密钥（兼容旧格式）
-	NamePrefix     string `json:"name_prefix"`     // 名称前缀
-	Platform       string `json:"platform"`        // 平台标识
-	AuthType       string `json:"auth_type"`       // 认证类型
-	Models         string `json:"models"`          // 支持的模型
-	Group          string `json:"group"`           // 用户组
-	Priority       int64  `json:"priority"`        // 优先级
-	Weight         int    `json:"weight"`          // 权重
-	Status         int    `json:"status"`          // 状态
-	MaxConcurrency int    `json:"max_concurrency"` // 最大并发数
+	Credentials       string `json:"credentials"`         // 批量凭证（每行一个）
+	Keys              string `json:"keys"`                // 批量密钥（兼容旧格式）
+	NamePrefix        string `json:"name_prefix"`         // 名称前缀
+	Platform          string `json:"platform"`            // 平台标识
+	AuthType          string `json:"auth_type"`           // 认证类型
+	Models            string `json:"models"`              // 支持的模型
+	Group             string `json:"group"`               // 用户组
+	Priority          int64  `json:"priority"`            // 优先级
+	Weight            int    `json:"weight"`              // 权重
+	Status            int    `json:"status"`              // 状态
+	MaxConcurrency    int    `json:"max_concurrency"`     // 最大并发数
+	RateLimitRpm      int    `json:"rate_limit_rpm"`      // 每分钟最大请求数，0 表示不限
+	DailyRequestLimit int64  `json:"daily_request_limit"` // 每日最大请求数，0 表示不限
+	DailyQuotaLimit   int64  `json:"daily_quota_limit"`   // 每日最大配额消耗，0 表示不限
 }
 
 // poolAccountStatusRequest 池账号状态更新请求
@@ -1427,8 +1433,20 @@ func buildPoolAccountFromRequest(group *model.AccountPoolGroup, req poolAccountU
 		weight = *req.Weight
 	}
 	maxConcurrency := 0
-	if req.MaxConcurrency != nil {
+	if req.MaxConcurrency != nil && *req.MaxConcurrency > 0 {
 		maxConcurrency = *req.MaxConcurrency
+	}
+	rateLimitRpm := 0
+	if req.RateLimitRpm != nil && *req.RateLimitRpm > 0 {
+		rateLimitRpm = *req.RateLimitRpm
+	}
+	dailyRequestLimit := int64(0)
+	if req.DailyRequestLimit != nil && *req.DailyRequestLimit > 0 {
+		dailyRequestLimit = *req.DailyRequestLimit
+	}
+	dailyQuotaLimit := int64(0)
+	if req.DailyQuotaLimit != nil && *req.DailyQuotaLimit > 0 {
+		dailyQuotaLimit = *req.DailyQuotaLimit
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -1456,6 +1474,9 @@ func buildPoolAccountFromRequest(group *model.AccountPoolGroup, req poolAccountU
 		Priority:           priority,
 		Weight:             weight,
 		MaxConcurrency:     maxConcurrency,
+		RateLimitRpm:       rateLimitRpm,
+		DailyRequestLimit:  dailyRequestLimit,
+		DailyQuotaLimit:    dailyQuotaLimit,
 		Proxy:              strings.TrimSpace(req.Proxy),
 		BaseURL:            req.BaseURL,
 		OpenAIOrganization: req.OpenAIOrganization,
@@ -1506,7 +1527,32 @@ func poolAccountUpdateMap(req poolAccountUpsertRequest) (map[string]interface{},
 		updates["weight"] = *req.Weight
 	}
 	if req.MaxConcurrency != nil {
-		updates["max_concurrency"] = *req.MaxConcurrency
+		maxConcurrency := 0
+		if *req.MaxConcurrency > 0 {
+			maxConcurrency = *req.MaxConcurrency
+		}
+		updates["max_concurrency"] = maxConcurrency
+	}
+	if req.RateLimitRpm != nil {
+		rateLimitRpm := 0
+		if *req.RateLimitRpm > 0 {
+			rateLimitRpm = *req.RateLimitRpm
+		}
+		updates["rate_limit_rpm"] = rateLimitRpm
+	}
+	if req.DailyRequestLimit != nil {
+		dailyRequestLimit := int64(0)
+		if *req.DailyRequestLimit > 0 {
+			dailyRequestLimit = *req.DailyRequestLimit
+		}
+		updates["daily_request_limit"] = dailyRequestLimit
+	}
+	if req.DailyQuotaLimit != nil {
+		dailyQuotaLimit := int64(0)
+		if *req.DailyQuotaLimit > 0 {
+			dailyQuotaLimit = *req.DailyQuotaLimit
+		}
+		updates["daily_quota_limit"] = dailyQuotaLimit
 	}
 	if req.BaseURL != nil {
 		updates["base_url"] = *req.BaseURL
@@ -1565,6 +1611,22 @@ func createPoolAccountsFromCredentials(group *model.AccountPoolGroup, req poolAc
 	if weight <= 0 {
 		weight = 1
 	}
+	maxConcurrency := req.MaxConcurrency
+	if maxConcurrency < 0 {
+		maxConcurrency = 0
+	}
+	rateLimitRpm := req.RateLimitRpm
+	if rateLimitRpm < 0 {
+		rateLimitRpm = 0
+	}
+	dailyRequestLimit := req.DailyRequestLimit
+	if dailyRequestLimit < 0 {
+		dailyRequestLimit = 0
+	}
+	dailyQuotaLimit := req.DailyQuotaLimit
+	if dailyQuotaLimit < 0 {
+		dailyQuotaLimit = 0
+	}
 	accounts := make([]model.PoolAccount, 0, len(credentials))
 	skipped := 0
 	for _, credential := range credentials {
@@ -1590,7 +1652,10 @@ func createPoolAccountsFromCredentials(group *model.AccountPoolGroup, req poolAc
 			Group:             strings.TrimSpace(req.Group),
 			Priority:          req.Priority,
 			Weight:            weight,
-			MaxConcurrency:    req.MaxConcurrency,
+			MaxConcurrency:    maxConcurrency,
+			RateLimitRpm:      rateLimitRpm,
+			DailyRequestLimit: dailyRequestLimit,
+			DailyQuotaLimit:   dailyQuotaLimit,
 		})
 	}
 	if len(accounts) == 0 {
@@ -1742,31 +1807,29 @@ func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
 		accountGroup = groups[0]
 	}
 	return gin.H{
-		"id":                    authFile.Id,
-		"name":                  authFile.Name,
-		"source_platform":       authFile.SourcePlatform,
-		"format":                authFile.Format,
-		"provider":              authFile.Provider,
-		"platform":              authFile.Platform,
-		"auth_type":             authFile.AuthType,
-		"pool_group_id":         authFile.PoolGroupId,
-		"pool_account_id":       authFile.PoolAccountId,
-		"status":                authFile.Status,
-		"file_digest":           authFile.FileDigest,
-		"credential_summary":    authFile.CredentialSummary,
-		"credential_metadata":   authFile.CredentialMetadata,
-		"credential_attributes": authFile.CredentialAttrs,
-		"account_group":         accountGroup,
-		"account_groups":        groups,
-		"models":                authFile.Models,
-		"proxy":                 authFile.Proxy,
-		"base_url":              authFile.BaseURL,
-		"priority":              authFile.Priority,
-		"weight":                authFile.Weight,
-		"max_concurrency":       authFile.MaxConcurrency,
-		"last_imported_time":    authFile.LastImportedTime,
-		"created_time":          authFile.CreatedTime,
-		"updated_time":          authFile.UpdatedTime,
+		"id":                 authFile.Id,
+		"name":               authFile.Name,
+		"source_platform":    authFile.SourcePlatform,
+		"format":             authFile.Format,
+		"provider":           authFile.Provider,
+		"platform":           authFile.Platform,
+		"auth_type":          authFile.AuthType,
+		"pool_group_id":      authFile.PoolGroupId,
+		"pool_account_id":    authFile.PoolAccountId,
+		"status":             authFile.Status,
+		"file_digest":        authFile.FileDigest,
+		"credential_summary": authFile.CredentialSummary,
+		"account_group":      accountGroup,
+		"account_groups":     groups,
+		"models":             authFile.Models,
+		"proxy":              authFile.Proxy,
+		"base_url":           authFile.BaseURL,
+		"priority":           authFile.Priority,
+		"weight":             authFile.Weight,
+		"max_concurrency":    authFile.MaxConcurrency,
+		"last_imported_time": authFile.LastImportedTime,
+		"created_time":       authFile.CreatedTime,
+		"updated_time":       authFile.UpdatedTime,
 	}
 }
 
@@ -1775,54 +1838,58 @@ func poolAccountResponse(account *model.PoolAccount) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"id":                    account.Id,
-		"pool_group_id":         account.PoolGroupId,
-		"name":                  account.Name,
-		"platform":              account.Platform,
-		"auth_type":             account.AuthType,
-		"credential_summary":    account.CredentialSummary,
-		"credential_provider":   account.CredentialProvider,
-		"credential_label":      account.CredentialLabel,
-		"credential_metadata":   account.CredentialMetadata,
-		"credential_attributes": account.CredentialAttrs,
-		"status":                account.Status,
-		"status_message":        account.StatusMessage,
-		"schedulable":           account.Schedulable,
-		"unavailable":           account.Unavailable,
-		"models":                account.Models,
-		"group":                 account.Group,
-		"priority":              account.Priority,
-		"weight":                account.Weight,
-		"max_concurrency":       account.MaxConcurrency,
-		"proxy":                 account.Proxy,
-		"base_url":              account.BaseURL,
-		"openai_organization":   account.OpenAIOrganization,
-		"other":                 account.Other,
-		"setting":               account.Setting,
-		"settings":              account.OtherSettings,
-		"model_mapping":         account.ModelMapping,
-		"param_override":        account.ParamOverride,
-		"header_override":       account.HeaderOverride,
-		"status_code_mapping":   account.StatusCodeMapping,
-		"last_used_time":        account.LastUsedTime,
-		"used_quota":            account.UsedQuota,
-		"rate_limited_until":    account.RateLimitedUntil,
-		"overload_until":        account.OverloadUntil,
-		"temp_disabled_until":   account.TempDisabledUntil,
-		"disabled_reason":       account.DisabledReason,
-		"last_error":            account.LastError,
-		"quota_snapshot":        account.QuotaSnapshot,
-		"model_states":          account.ModelStates,
-		"last_checked_time":     account.LastCheckedTime,
-		"last_refreshed_time":   account.LastRefreshedTime,
-		"next_refresh_time":     account.NextRefreshTime,
-		"next_retry_time":       account.NextRetryTime,
-		"success_count":         account.SuccessCount,
-		"failed_count":          account.FailedCount,
-		"recent_requests":       account.RecentRequests,
-		"runtime":               accountauth.RuntimeView(account),
-		"created_time":          account.CreatedTime,
-		"updated_time":          account.UpdatedTime,
+		"id":                  account.Id,
+		"pool_group_id":       account.PoolGroupId,
+		"name":                account.Name,
+		"platform":            account.Platform,
+		"auth_type":           account.AuthType,
+		"credential_summary":  account.CredentialSummary,
+		"credential_provider": account.CredentialProvider,
+		"credential_label":    account.CredentialLabel,
+		"status":              account.Status,
+		"status_message":      account.StatusMessage,
+		"schedulable":         account.Schedulable,
+		"unavailable":         account.Unavailable,
+		"models":              account.Models,
+		"group":               account.Group,
+		"priority":            account.Priority,
+		"weight":              account.Weight,
+		"max_concurrency":     account.MaxConcurrency,
+		"rate_limit_rpm":      account.RateLimitRpm,
+		"daily_request_limit": account.DailyRequestLimit,
+		"daily_quota_limit":   account.DailyQuotaLimit,
+		"daily_request_count": account.DailyRequestCount,
+		"daily_used_quota":    account.DailyUsedQuota,
+		"daily_reset_time":    account.DailyResetTime,
+		"proxy":               account.Proxy,
+		"base_url":            account.BaseURL,
+		"openai_organization": account.OpenAIOrganization,
+		"other":               account.Other,
+		"setting":             account.Setting,
+		"settings":            account.OtherSettings,
+		"model_mapping":       account.ModelMapping,
+		"param_override":      account.ParamOverride,
+		"header_override":     account.HeaderOverride,
+		"status_code_mapping": account.StatusCodeMapping,
+		"last_used_time":      account.LastUsedTime,
+		"used_quota":          account.UsedQuota,
+		"rate_limited_until":  account.RateLimitedUntil,
+		"overload_until":      account.OverloadUntil,
+		"temp_disabled_until": account.TempDisabledUntil,
+		"disabled_reason":     account.DisabledReason,
+		"last_error":          account.LastError,
+		"quota_snapshot":      account.QuotaSnapshot,
+		"model_states":        account.ModelStates,
+		"last_checked_time":   account.LastCheckedTime,
+		"last_refreshed_time": account.LastRefreshedTime,
+		"next_refresh_time":   account.NextRefreshTime,
+		"next_retry_time":     account.NextRetryTime,
+		"success_count":       account.SuccessCount,
+		"failed_count":        account.FailedCount,
+		"recent_requests":     account.RecentRequests,
+		"runtime":             accountauth.RuntimeView(account),
+		"created_time":        account.CreatedTime,
+		"updated_time":        account.UpdatedTime,
 	}
 }
 
