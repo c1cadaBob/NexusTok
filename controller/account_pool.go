@@ -164,6 +164,80 @@ type poolAccountBatchDeleteResult struct {
 	Items   []*poolAccountBatchDeleteItem `json:"items"`
 }
 
+// poolAccountBatchExportRequest 池账号导出请求。
+// account_ids 为空时导出当前分组全部账号；非空时只导出当前分组中匹配的账号。
+type poolAccountBatchExportRequest struct {
+	AccountIDs []int `json:"account_ids"` // 可选的账号 ID 列表
+}
+
+// poolAccountBatchExportResult 是账号池安全导出结果。
+// 导出结果只包含调度、状态、统计和脱敏凭证摘要，不包含明文凭据、OAuth 元数据、
+// 代理地址、请求覆盖配置等可能包含敏感信息的字段。
+type poolAccountBatchExportResult struct {
+	ExportedAt              int64                    `json:"exported_at"`
+	Format                  string                   `json:"format"`
+	PoolGroup               gin.H                    `json:"pool_group"`
+	Total                   int                      `json:"total"`
+	Exported                int                      `json:"exported"`
+	Skipped                 int                      `json:"skipped"`
+	SkippedAccountIDs       []int                    `json:"skipped_account_ids,omitempty"`
+	CredentialsExported     bool                     `json:"credentials_exported"`
+	SensitiveFieldsRedacted []string                 `json:"sensitive_fields_redacted"`
+	Accounts                []*poolAccountExportItem `json:"accounts"`
+}
+
+// poolAccountExportItem 是单个账号的安全导出快照。
+// 这里有意不复用 PoolAccount 模型，避免未来模型新增敏感字段时被导出接口意外透出。
+type poolAccountExportItem struct {
+	ID                   int     `json:"id"`
+	PoolGroupID          int     `json:"pool_group_id"`
+	Name                 string  `json:"name"`
+	Platform             string  `json:"platform"`
+	AuthType             string  `json:"auth_type"`
+	CredentialSummary    string  `json:"credential_summary"`
+	CredentialProvider   string  `json:"credential_provider"`
+	CredentialLabel      string  `json:"credential_label"`
+	Status               int     `json:"status"`
+	StatusMessage        string  `json:"status_message"`
+	Schedulable          bool    `json:"schedulable"`
+	Unavailable          bool    `json:"unavailable"`
+	Models               string  `json:"models"`
+	Group                string  `json:"group"`
+	Priority             int64   `json:"priority"`
+	Weight               int     `json:"weight"`
+	MaxConcurrency       int     `json:"max_concurrency"`
+	RateLimitRpm         int     `json:"rate_limit_rpm"`
+	DailyRequestLimit    int64   `json:"daily_request_limit"`
+	DailyQuotaLimit      int64   `json:"daily_quota_limit"`
+	DailyLimitAction     string  `json:"daily_limit_action"`
+	DailyRequestCount    int64   `json:"daily_request_count"`
+	DailyUsedQuota       int64   `json:"daily_used_quota"`
+	DailyResetTime       int64   `json:"daily_reset_time"`
+	ProxyConfigured      bool    `json:"proxy_configured"`
+	BaseURLConfigured    bool    `json:"base_url_configured"`
+	OpenAIOrganization   *string `json:"openai_organization,omitempty"`
+	HasOtherSettings     bool    `json:"has_other_settings"`
+	HasModelMapping      bool    `json:"has_model_mapping"`
+	HasParamOverride     bool    `json:"has_param_override"`
+	HasHeaderOverride    bool    `json:"has_header_override"`
+	HasStatusCodeMapping bool    `json:"has_status_code_mapping"`
+	LastUsedTime         int64   `json:"last_used_time"`
+	UsedQuota            int64   `json:"used_quota"`
+	RateLimitedUntil     int64   `json:"rate_limited_until"`
+	OverloadUntil        int64   `json:"overload_until"`
+	TempDisabledUntil    int64   `json:"temp_disabled_until"`
+	DisabledReason       string  `json:"disabled_reason"`
+	LastError            string  `json:"last_error"`
+	LastCheckedTime      int64   `json:"last_checked_time"`
+	LastRefreshedTime    int64   `json:"last_refreshed_time"`
+	NextRefreshTime      int64   `json:"next_refresh_time"`
+	NextRetryTime        int64   `json:"next_retry_time"`
+	SuccessCount         int64   `json:"success_count"`
+	FailedCount          int64   `json:"failed_count"`
+	CreatedTime          int64   `json:"created_time"`
+	UpdatedTime          int64   `json:"updated_time"`
+}
+
 // poolAccountCheckRequest 池账号人工检测请求。
 // account_ids 用于批量检测指定账号；为空时按 limit 检测当前分组前 N 个账号。
 type poolAccountCheckRequest struct {
@@ -619,6 +693,31 @@ func BatchDeletePoolAccounts(c *gin.Context) {
 		return
 	}
 	result := applyPoolAccountBatchDelete(c, groupID, accounts, accountIDs, req)
+	common.ApiSuccess(c, result)
+}
+
+func BatchExportPoolAccounts(c *gin.Context) {
+	groupID, ok := parsePoolGroupIDParam(c)
+	if !ok {
+		return
+	}
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var req poolAccountBatchExportRequest
+	if !bindOptionalPoolAccountExportRequest(c, &req) {
+		return
+	}
+	accountIDs := normalizePoolAccountBatchOperationIDs(req.AccountIDs)
+	accounts, skippedAccountIDs, total, err := loadPoolAccountsForBatchExport(groupID, accountIDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.AttachAccountPoolGroupStats([]*model.AccountPoolGroup{group})
+	result := buildPoolAccountBatchExportResult(group, accounts, skippedAccountIDs, total)
 	common.ApiSuccess(c, result)
 }
 
@@ -1219,6 +1318,20 @@ func bindOptionalPoolAccountCheckRequest(c *gin.Context, req *poolAccountCheckRe
 	return true
 }
 
+func bindOptionalPoolAccountExportRequest(c *gin.Context, req *poolAccountBatchExportRequest) bool {
+	if c == nil || c.Request == nil || req == nil {
+		return true
+	}
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	if err := common.DecodeJson(c.Request.Body, req); err != nil && err != io.EOF {
+		common.ApiError(c, err)
+		return false
+	}
+	return true
+}
+
 func normalizePoolAccountBatchOperationIDs(accountIDs []int) []int {
 	if len(accountIDs) == 0 {
 		return nil
@@ -1251,6 +1364,124 @@ func loadPoolAccountsForBatchOperation(groupID int, accountIDs []int) (map[int]*
 		result[account.Id] = account
 	}
 	return result, nil
+}
+
+func loadPoolAccountsForBatchExport(groupID int, accountIDs []int) ([]*model.PoolAccount, []int, int, error) {
+	accounts := []*model.PoolAccount{}
+	if len(accountIDs) == 0 {
+		if err := model.DB.
+			Where("pool_group_id = ?", groupID).
+			Order("id ASC").
+			Find(&accounts).Error; err != nil {
+			return nil, nil, 0, err
+		}
+		return accounts, nil, len(accounts), nil
+	}
+	accountMap, err := loadPoolAccountsForBatchOperation(groupID, accountIDs)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	result := make([]*model.PoolAccount, 0, len(accountMap))
+	skippedAccountIDs := make([]int, 0)
+	for _, accountID := range accountIDs {
+		account := accountMap[accountID]
+		if account == nil {
+			skippedAccountIDs = append(skippedAccountIDs, accountID)
+			continue
+		}
+		result = append(result, account)
+	}
+	return result, skippedAccountIDs, len(accountIDs), nil
+}
+
+func buildPoolAccountBatchExportResult(group *model.AccountPoolGroup, accounts []*model.PoolAccount, skippedAccountIDs []int, total int) *poolAccountBatchExportResult {
+	items := make([]*poolAccountExportItem, 0, len(accounts))
+	for _, account := range accounts {
+		items = append(items, poolAccountExportItemFromAccount(account))
+	}
+	return &poolAccountBatchExportResult{
+		ExportedAt:          common.GetTimestamp(),
+		Format:              "nexustok_account_pool_safe_export_v1",
+		PoolGroup:           accountPoolGroupResponse(group),
+		Total:               total,
+		Exported:            len(items),
+		Skipped:             len(skippedAccountIDs),
+		SkippedAccountIDs:   skippedAccountIDs,
+		CredentialsExported: false,
+		SensitiveFieldsRedacted: []string{
+			"credentials",
+			"credential_metadata",
+			"credential_attributes",
+			"proxy",
+			"base_url",
+			"other",
+			"setting",
+			"settings",
+			"model_mapping",
+			"param_override",
+			"header_override",
+			"status_code_mapping",
+			"quota_snapshot",
+			"model_states",
+			"recent_requests",
+		},
+		Accounts: items,
+	}
+}
+
+func poolAccountExportItemFromAccount(account *model.PoolAccount) *poolAccountExportItem {
+	if account == nil {
+		return &poolAccountExportItem{}
+	}
+	return &poolAccountExportItem{
+		ID:                   account.Id,
+		PoolGroupID:          account.PoolGroupId,
+		Name:                 account.Name,
+		Platform:             account.Platform,
+		AuthType:             account.AuthType,
+		CredentialSummary:    account.CredentialSummary,
+		CredentialProvider:   account.CredentialProvider,
+		CredentialLabel:      account.CredentialLabel,
+		Status:               account.Status,
+		StatusMessage:        account.StatusMessage,
+		Schedulable:          account.Schedulable,
+		Unavailable:          account.Unavailable,
+		Models:               account.Models,
+		Group:                account.Group,
+		Priority:             account.Priority,
+		Weight:               account.Weight,
+		MaxConcurrency:       account.MaxConcurrency,
+		RateLimitRpm:         account.RateLimitRpm,
+		DailyRequestLimit:    account.DailyRequestLimit,
+		DailyQuotaLimit:      account.DailyQuotaLimit,
+		DailyLimitAction:     model.NormalizeAccountPoolDailyLimitAction(account.DailyLimitAction, true),
+		DailyRequestCount:    account.DailyRequestCount,
+		DailyUsedQuota:       account.DailyUsedQuota,
+		DailyResetTime:       account.DailyResetTime,
+		ProxyConfigured:      strings.TrimSpace(account.Proxy) != "",
+		BaseURLConfigured:    account.BaseURL != nil && strings.TrimSpace(*account.BaseURL) != "",
+		OpenAIOrganization:   account.OpenAIOrganization,
+		HasOtherSettings:     strings.TrimSpace(account.Other) != "" || strings.TrimSpace(account.OtherSettings) != "" || (account.Setting != nil && strings.TrimSpace(*account.Setting) != ""),
+		HasModelMapping:      account.ModelMapping != nil && strings.TrimSpace(*account.ModelMapping) != "",
+		HasParamOverride:     account.ParamOverride != nil && strings.TrimSpace(*account.ParamOverride) != "",
+		HasHeaderOverride:    account.HeaderOverride != nil && strings.TrimSpace(*account.HeaderOverride) != "",
+		HasStatusCodeMapping: account.StatusCodeMapping != nil && strings.TrimSpace(*account.StatusCodeMapping) != "",
+		LastUsedTime:         account.LastUsedTime,
+		UsedQuota:            account.UsedQuota,
+		RateLimitedUntil:     account.RateLimitedUntil,
+		OverloadUntil:        account.OverloadUntil,
+		TempDisabledUntil:    account.TempDisabledUntil,
+		DisabledReason:       account.DisabledReason,
+		LastError:            account.LastError,
+		LastCheckedTime:      account.LastCheckedTime,
+		LastRefreshedTime:    account.LastRefreshedTime,
+		NextRefreshTime:      account.NextRefreshTime,
+		NextRetryTime:        account.NextRetryTime,
+		SuccessCount:         account.SuccessCount,
+		FailedCount:          account.FailedCount,
+		CreatedTime:          account.CreatedTime,
+		UpdatedTime:          account.UpdatedTime,
+	}
 }
 
 func applyPoolAccountBatchDelete(c *gin.Context, groupID int, accounts map[int]*model.PoolAccount, accountIDs []int, req poolAccountBatchDeleteRequest) *poolAccountBatchDeleteResult {

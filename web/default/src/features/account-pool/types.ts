@@ -273,6 +273,73 @@ export type AccountPoolBatchDeleteResult = {
   items: AccountPoolBatchDeleteItem[]
 }
 
+export type PoolAccountExportPayload = {
+  account_ids?: number[]
+}
+
+export type AccountPoolExportAccount = {
+  id: number
+  pool_group_id: number
+  name: string
+  platform: string
+  auth_type: string
+  credential_summary: string
+  credential_provider: string
+  credential_label: string
+  status: number
+  status_message: string
+  schedulable: boolean
+  unavailable: boolean
+  models: string
+  group: string
+  priority: number
+  weight: number
+  max_concurrency: number
+  rate_limit_rpm: number
+  daily_request_limit: number
+  daily_quota_limit: number
+  daily_limit_action: string
+  daily_request_count: number
+  daily_used_quota: number
+  daily_reset_time: number
+  proxy_configured: boolean
+  base_url_configured: boolean
+  openai_organization?: string | null
+  has_other_settings: boolean
+  has_model_mapping: boolean
+  has_param_override: boolean
+  has_header_override: boolean
+  has_status_code_mapping: boolean
+  last_used_time: number
+  used_quota: number
+  rate_limited_until: number
+  overload_until: number
+  temp_disabled_until: number
+  disabled_reason: string
+  last_error: string
+  last_checked_time: number
+  last_refreshed_time: number
+  next_refresh_time: number
+  next_retry_time: number
+  success_count: number
+  failed_count: number
+  created_time: number
+  updated_time: number
+}
+
+export type AccountPoolExportResult = {
+  exported_at: number
+  format: string
+  pool_group: AccountPoolGroup
+  total: number
+  exported: number
+  skipped: number
+  skipped_account_ids?: number[]
+  credentials_exported: boolean
+  sensitive_fields_redacted: string[]
+  accounts: AccountPoolExportAccount[]
+}
+
 export type AccountPoolAuthFilePayload = {
   name?: string
   content: string

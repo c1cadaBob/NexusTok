@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
+  Download,
   Loader2,
   Pencil,
   Plus,
@@ -79,6 +80,7 @@ import {
   createPoolAccount,
   deleteAccountPoolGroup,
   deletePoolAccount,
+  exportPoolAccounts,
   getAccountPoolLoginSession,
   getAccountPoolGroups,
   getAccountPoolProviders,
@@ -204,6 +206,28 @@ function numberOrZero(value: string): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return 0
   return parsed
+}
+
+function safeDownloadName(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'account-pool'
+}
+
+function downloadJsonFile(filename: string, data: unknown) {
+  const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], {
+    type: 'application/json',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function strategyLabel(
@@ -819,6 +843,40 @@ export function AccountPool() {
     }
   }
 
+  const exportAccounts = async (accountIds?: number[]) => {
+    if (!selectedGroupId || !selectedGroup) return
+    if (accountIds && accountIds.length === 0) {
+      toast.info(t('No accounts selected'))
+      return
+    }
+    setActionLoading(true)
+    try {
+      const response = await exportPoolAccounts(selectedGroupId, {
+        account_ids: accountIds,
+      })
+      if (!response.success || !response.data) {
+        throw new Error(response.message)
+      }
+      const exportedAt =
+        response.data.exported_at || Math.floor(Date.now() / 1000)
+      const filename = `${safeDownloadName(
+        selectedGroup.name
+      )}-accounts-${exportedAt}.json`
+      downloadJsonFile(filename, response.data)
+      toast.success(
+        t('Exported {{count}} account(s)', {
+          count: response.data.exported,
+        })
+      )
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const toggleAccountSelection = (accountId: number, checked: boolean) => {
     setSelectedAccountIds((current) => {
       if (checked) {
@@ -1384,6 +1442,15 @@ export function AccountPool() {
                     <Button
                       variant='outline'
                       size='sm'
+                      disabled={actionLoading || accountTotal <= 0}
+                      onClick={() => void exportAccounts()}
+                    >
+                      <Download className='mr-2 h-4 w-4' />
+                      {t('Export Accounts')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
                       disabled={batchChecking || accountTotal <= 0}
                       onClick={() => void checkSelectedGroupAccounts()}
                     >
@@ -1524,6 +1591,17 @@ export function AccountPool() {
                     >
                       <RefreshCw className='mr-2 h-4 w-4' />
                       {t('Clear cooldown')}
+                    </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={
+                        actionLoading || selectedAccountIds.length === 0
+                      }
+                      onClick={() => void exportAccounts(selectedAccountIds)}
+                    >
+                      <Download className='mr-2 h-4 w-4' />
+                      {t('Export selected accounts')}
                     </Button>
                     <Button
                       variant='outline'
