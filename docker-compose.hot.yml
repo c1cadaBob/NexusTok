@@ -14,7 +14,7 @@
 #
 # 环境变量：
 #   HOT_PORT - 后端 API 端口（默认: 3003）
-#   DOCKER_UID/DOCKER_GID - 容器内用户 ID
+#   DOCKER_UID/DOCKER_GID - 容器内用户 ID（默认使用当前开发容器常见的 1000:1000）
 
 name: nexustok-hot
 
@@ -23,12 +23,13 @@ services:
   frontend-watch:
     image: oven/bun:1
     container_name: nexustok-frontend-watch
-    user: "${DOCKER_UID:-1002}:${DOCKER_GID:-1003}"
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     working_dir: /app
     environment:
       BUN_INSTALL_CACHE_DIR: /app/.cache/bun
       DISABLE_ESLINT_PLUGIN: "true"
       HOME: /app/.cache/home
+      NEXUSTOK_HOT_RELOAD: "true"
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
       NODE_ENV: production
       TMPDIR: /app/.cache/tmp
@@ -39,10 +40,19 @@ services:
       sh -lc '
         set -eu
         mkdir -p /app/.cache/bun /app/.cache/home /app/.cache/tmp
-        cd /app/web/default
-        bun install --frozen-lockfile
-        cd /app/web/classic
-        bun install --frozen-lockfile
+        ensure_deps() {
+          project_dir="$$1"
+          build_bin="$$2"
+          cd "$$project_dir"
+          if [ ! -x "node_modules/.bin/$$build_bin" ]; then
+            echo "[hot] installing dependencies for $$project_dir"
+            bun install --frozen-lockfile
+          else
+            echo "[hot] using existing dependencies for $$project_dir"
+          fi
+        }
+        ensure_deps /app/web/default rsbuild
+        ensure_deps /app/web/classic vite
         cd /app
         (cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
         (cd web/classic && VITE_REACT_APP_VERSION=$$(cat /app/VERSION) bun run build -- --watch) &
@@ -57,7 +67,7 @@ services:
       dockerfile: Dockerfile.dev-hot
     image: nexustok-api-hot:local
     container_name: nexustok-api-hot
-    user: "${DOCKER_UID:-1002}:${DOCKER_GID:-1003}"
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     working_dir: /app
     command: ["/app/bin/docker-hot-backend.sh"]
     ports:

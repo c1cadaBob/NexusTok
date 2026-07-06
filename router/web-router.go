@@ -70,10 +70,17 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 		// 设置路由标签
 		c.Set(middleware.RouteTagKey, "web")
 
-		// 如果是 API 或静态资源请求，返回 404
-		if strings.HasPrefix(c.Request.RequestURI, "/v1") ||
-			strings.HasPrefix(c.Request.RequestURI, "/api") ||
-			strings.HasPrefix(c.Request.RequestURI, "/assets") {
+		// 如果是 API 或静态资源请求，返回 404。
+		// 这里必须覆盖 /static/*，否则旧 HTML 引用已被新构建清理的 hash 资源时，
+		// NoRoute 会把 index.html 当作 CSS/JS 返回，浏览器表现为“页面结构存在但样式丢失”。
+		// 静态资源缺失应当明确失败，避免被 SPA 回退静默掩盖真实原因。
+		requestPath := c.Request.URL.Path
+		if strings.HasPrefix(requestPath, "/v1") ||
+			strings.HasPrefix(requestPath, "/api") ||
+			strings.HasPrefix(requestPath, "/assets") ||
+			strings.HasPrefix(requestPath, "/static/") ||
+			requestPath == "/favicon.ico" ||
+			requestPath == "/logo.png" {
 			controller.RelayNotFound(c)
 			return
 		}

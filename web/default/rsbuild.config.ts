@@ -14,6 +14,7 @@ export default defineConfig(({ envMode }) => {
     'http://localhost:3000'
 
   const isProd = envMode === 'production'
+  const isHotReloadBuild = process.env.NEXUSTOK_HOT_RELOAD === 'true'
   const devProxy = Object.fromEntries(
     (['/api', '/mj', '/pg'] as const).map((key) => [
       key,
@@ -74,6 +75,10 @@ export default defineConfig(({ envMode }) => {
       distPath: {
         root: 'dist',
       },
+      // 热更新容器使用 Go embed 托管构建产物：前端 watch 产物和后端重编译之间
+      // 会有一个很短的时间差。关闭文件名 hash 后，旧 HTML 仍能请求到新产物，
+      // 避免开发联调时出现“HTML 旧、CSS/JS 文件已被清理”的无样式页面。
+      filenameHash: isHotReloadBuild ? false : true,
       // Rely on Rsbuild default legalComments ("linked" → per-chunk *.LICENSE.txt) in all modes.
       // Do not set "none" in production: that strips minifier-preserved third-party notices and
       // extracted license files, which some distributions require for open-source compliance.
