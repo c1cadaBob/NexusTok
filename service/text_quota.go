@@ -20,16 +20,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"                           // 公共工具包
-	"github.com/c1cada/NexusTok/constant"                         // 常量定义
-	"github.com/c1cada/NexusTok/dto"                              // 数据传输对象
-	"github.com/c1cada/NexusTok/logger"                           // 日志
-	"github.com/c1cada/NexusTok/model"                            // 数据模型
-	"github.com/c1cada/NexusTok/pkg/billingexpr"                  // 计费表达式
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"     // 性能指标
-	relaycommon "github.com/c1cada/NexusTok/relay/common"         // 中继公共
-	"github.com/c1cada/NexusTok/setting/operation_setting"        // 运营设置
-	"github.com/c1cada/NexusTok/types"                            // 类型定义
+	"github.com/c1cada/NexusTok/common"                       // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                     // 常量定义
+	"github.com/c1cada/NexusTok/dto"                          // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                       // 日志
+	"github.com/c1cada/NexusTok/model"                        // 数据模型
+	"github.com/c1cada/NexusTok/pkg/billingexpr"              // 计费表达式
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics" // 性能指标
+	relaycommon "github.com/c1cada/NexusTok/relay/common"     // 中继公共
+	"github.com/c1cada/NexusTok/setting/operation_setting"    // 运营设置
+	"github.com/c1cada/NexusTok/types"                        // 类型定义
 
 	"github.com/bytedance/gopkg/util/gopool" // 协程池
 	"github.com/gin-gonic/gin"               // Gin 框架
@@ -39,38 +39,38 @@ import (
 // textQuotaSummary 文本配额汇总结构体
 // 包含文本请求配额计算所需的所有信息
 type textQuotaSummary struct {
-	PromptTokens             int     // 输入 Token 总数
-	CompletionTokens         int     // 输出 Token 总数
-	TotalTokens              int     // Token 总数
-	CacheTokens              int     // 缓存 Token 数
-	CacheCreationTokens      int     // 缓存创建 Token 总数
-	CacheCreationTokens5m    int     // 5分钟缓存创建 Token 数
-	CacheCreationTokens1h    int     // 1小时缓存创建 Token 数
-	ImageTokens              int     // 图像 Token 数
-	AudioTokens              int     // 音频 Token 数
-	ModelName                string  // 模型名称
-	TokenName                string  // Token 名称
-	UseTimeSeconds           int64   // 使用时长（秒）
-	CompletionRatio          float64 // 补全倍率
-	CacheRatio               float64 // 缓存倍率
-	ImageRatio               float64 // 图像倍率
-	ModelRatio               float64 // 模型倍率
-	GroupRatio               float64 // 分组倍率
-	ModelPrice               float64 // 模型价格（价格模式使用）
-	CacheCreationRatio       float64 // 缓存创建倍率
-	CacheCreationRatio5m     float64 // 5分钟缓存创建倍率
-	CacheCreationRatio1h     float64 // 1小时缓存创建倍率
-	Quota                    int     // 计算得到的配额值
-	IsClaudeUsageSemantic    bool    // 是否使用 Claude 语义的使用量
-	UsageSemantic            string  // 使用量语义类型（openai/anthropic）
-	WebSearchPrice           float64 // Web Search 单价
-	WebSearchCallCount       int     // Web Search 调用次数
-	ClaudeWebSearchPrice     float64 // Claude Web Search 单价
-	ClaudeWebSearchCallCount int     // Claude Web Search 调用次数
-	FileSearchPrice          float64 // File Search 单价
-	FileSearchCallCount      int     // File Search 调用次数
-	AudioInputPrice          float64 // 音频输入单价
-	ImageGenerationCallPrice float64 // 图像生成调用单价
+	PromptTokens             int             // 输入 Token 总数
+	CompletionTokens         int             // 输出 Token 总数
+	TotalTokens              int             // Token 总数
+	CacheTokens              int             // 缓存 Token 数
+	CacheCreationTokens      int             // 缓存创建 Token 总数
+	CacheCreationTokens5m    int             // 5分钟缓存创建 Token 数
+	CacheCreationTokens1h    int             // 1小时缓存创建 Token 数
+	ImageTokens              int             // 图像 Token 数
+	AudioTokens              int             // 音频 Token 数
+	ModelName                string          // 模型名称
+	TokenName                string          // Token 名称
+	UseTimeSeconds           int64           // 使用时长（秒）
+	CompletionRatio          float64         // 补全倍率
+	CacheRatio               float64         // 缓存倍率
+	ImageRatio               float64         // 图像倍率
+	ModelRatio               float64         // 模型倍率
+	GroupRatio               float64         // 分组倍率
+	ModelPrice               float64         // 模型价格（价格模式使用）
+	CacheCreationRatio       float64         // 缓存创建倍率
+	CacheCreationRatio5m     float64         // 5分钟缓存创建倍率
+	CacheCreationRatio1h     float64         // 1小时缓存创建倍率
+	Quota                    int             // 计算得到的配额值
+	IsClaudeUsageSemantic    bool            // 是否使用 Claude 语义的使用量
+	UsageSemantic            string          // 使用量语义类型（openai/anthropic）
+	WebSearchPrice           float64         // Web Search 单价
+	WebSearchCallCount       int             // Web Search 调用次数
+	ClaudeWebSearchPrice     float64         // Claude Web Search 单价
+	ClaudeWebSearchCallCount int             // Claude Web Search 调用次数
+	FileSearchPrice          float64         // File Search 单价
+	FileSearchCallCount      int             // File Search 调用次数
+	AudioInputPrice          float64         // 音频输入单价
+	ImageGenerationCallPrice float64         // 图像生成调用单价
 	ToolCallSurchargeQuota   decimal.Decimal // 工具调用附加费配额
 }
 
@@ -469,6 +469,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 		AddRelayAccountUsedQuota(relayInfo, int64(summary.Quota))
+		RecordRelayPoolAccountUsageSuccess(ctx, relayInfo, summary.PromptTokens, summary.CompletionTokens, summary.Quota, int(summary.UseTimeSeconds))
 	}
 
 	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {

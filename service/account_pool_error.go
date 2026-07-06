@@ -39,6 +39,7 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 	common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, channelError.ChannelId)
 
 	reason := err.ErrorWithStatusCode()
+	recordPoolAccountUsageFailure(c, channelError, err, reason)
 	updates := map[string]interface{}{
 		"last_error":     reason,
 		"status_message": reason,
@@ -67,6 +68,29 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 	if updateErr := model.UpdatePoolAccountErrorState(channelError.PoolAccountId, updates); updateErr != nil {
 		common.SysLog("failed to update pool account error state: " + updateErr.Error())
 	}
+}
+
+// recordPoolAccountUsageFailure 记录原生账号池账号失败日志。
+// 失败日志在同一请求重试前写入，便于管理员看到“哪个账号失败、为什么失败、随后是否切换到别的账号”。
+func recordPoolAccountUsageFailure(c *gin.Context, channelError types.ChannelError, err *types.NexusTokError, reason string) {
+	if c == nil || err == nil || channelError.PoolAccountId <= 0 {
+		return
+	}
+	record := poolAccountUsageLogRecordFromContext(c, nil, false)
+	record.PoolGroupId = channelError.PoolGroupId
+	record.PoolGroupName = channelError.PoolGroupName
+	record.PoolAccountId = channelError.PoolAccountId
+	record.PoolAccountName = channelError.PoolAccountName
+	record.PoolAccountAuthType = channelError.PoolAccountAuthType
+	record.ChannelId = channelError.ChannelId
+	record.ChannelName = channelError.ChannelName
+	record.StatusCode = err.StatusCode
+	record.ErrorCode = string(err.GetErrorCode())
+	record.ErrorMessage = err.MaskSensitiveErrorWithStatusCode()
+	if record.ErrorMessage == "" {
+		record.ErrorMessage = reason
+	}
+	model.RecordPoolAccountUsageLog(record)
 }
 
 // recordPoolAccountRequestRuntime 记录账号池账号的请求统计。

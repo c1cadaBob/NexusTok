@@ -75,6 +75,7 @@ import {
   getAccountPoolLoginSession,
   getAccountPoolGroups,
   getAccountPoolProviders,
+  getAccountPoolUsageLogs,
   getPoolAccounts,
   refreshPoolAccountCredential,
   resetPoolAccountRuntime,
@@ -118,6 +119,9 @@ type AccountFormState = {
   maxConcurrency: string
   proxy: string
 }
+
+type AccountPoolView = 'accounts' | 'auth-files' | 'usage-logs'
+type UsageLogStatusFilter = 'all' | 'success' | 'failed'
 
 const emptyGroupForm: GroupFormState = {
   name: '',
@@ -220,13 +224,27 @@ function formatCredentialSummary(summary: string): string {
   }
 }
 
+function formatUsageDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return '-'
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`
+}
+
+function formatUsageNumber(value: number): string {
+  return new Intl.NumberFormat().format(value || 0)
+}
+
 export function AccountPool() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
-  const [activeView, setActiveView] = useState<'accounts' | 'auth-files'>(
-    'accounts'
-  )
+  const [activeView, setActiveView] = useState<AccountPoolView>('accounts')
+  const [usageLogPage, setUsageLogPage] = useState(1)
+  const [usageLogStatus, setUsageLogStatus] =
+    useState<UsageLogStatusFilter>('all')
+  const [usageLogSearch, setUsageLogSearch] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
   const [groupFormOpen, setGroupFormOpen] = useState(false)
   const [groupForm, setGroupForm] = useState<GroupFormState>(emptyGroupForm)
@@ -289,6 +307,36 @@ export function AccountPool() {
     Math.ceil((accountPage?.total ?? 0) / (accountPage?.page_size ?? 10))
   )
   const nowSeconds = useMemo(() => Math.floor(Date.now() / 1000), [accounts])
+  const usageLogParams = useMemo(
+    () => ({
+      p: usageLogPage,
+      page_size: 10,
+      pool_group_id: selectedGroupId ?? undefined,
+      success:
+        usageLogStatus === 'all'
+          ? undefined
+          : usageLogStatus === 'success',
+      search: usageLogSearch.trim() || undefined,
+    }),
+    [selectedGroupId, usageLogPage, usageLogSearch, usageLogStatus]
+  )
+  const usageLogsQuery = useQuery({
+    queryKey: accountPoolQueryKeys.usageLogs(usageLogParams),
+    queryFn: () => getAccountPoolUsageLogs(usageLogParams),
+    enabled: activeView === 'usage-logs',
+  })
+  const usageLogPageInfo = usageLogsQuery.data?.data
+  const usageLogs = usageLogPageInfo?.items ?? []
+  const usageLogTotalPages = Math.max(
+    1,
+    Math.ceil(
+      (usageLogPageInfo?.total ?? 0) / (usageLogPageInfo?.page_size ?? 10)
+    )
+  )
+
+  useEffect(() => {
+    setUsageLogPage(1)
+  }, [selectedGroupId, usageLogSearch, usageLogStatus])
 
   useEffect(() => {
     if (!deviceSessionOpen || !deviceSession?.session_id) return
@@ -779,9 +827,7 @@ export function AccountPool() {
         <section className='border-border bg-background min-w-0 rounded-lg border'>
           <Tabs
             value={activeView}
-            onValueChange={(value) =>
-              setActiveView(value as 'accounts' | 'auth-files')
-            }
+            onValueChange={(value) => setActiveView(value as AccountPoolView)}
             className='flex min-h-0 flex-col'
           >
             <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
@@ -789,23 +835,40 @@ export function AccountPool() {
                 <div className='truncate text-sm font-semibold'>
                   {activeView === 'accounts'
                     ? (selectedGroup?.name ?? t('Account Pool'))
-                    : t('Auth Files')}
+                    : activeView === 'auth-files'
+                      ? t('Auth Files')
+                      : t('Usage Logs')}
                 </div>
                 <div className='text-muted-foreground text-xs'>
                   {activeView === 'accounts'
                     ? selectedGroup
                       ? `${selectedGroup.strategy} · ${selectedGroup.models || t('All Models')}`
                       : t('Select an account group')
-                    : t(
-                        'Manage imported JSON credentials and their linked pool accounts'
-                      )}
+                    : activeView === 'auth-files'
+                      ? t(
+                          'Manage imported JSON credentials and their linked pool accounts'
+                        )
+                      : selectedGroup
+                        ? t('Showing usage records for the selected group')
+                        : t('Showing usage records for all groups')}
                 </div>
               </div>
               <TabsList>
                 <TabsTrigger value='accounts'>{t('Pool Accounts')}</TabsTrigger>
                 <TabsTrigger value='auth-files'>{t('Auth Files')}</TabsTrigger>
+                <TabsTrigger value='usage-logs'>{t('Usage Logs')}</TabsTrigger>
               </TabsList>
               <div className='flex flex-wrap gap-2'>
+                {activeView === 'usage-logs' && (
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void usageLogsQuery.refetch()}
+                  >
+                    <RefreshCw data-icon='inline-start' />
+                    {t('Refresh')}
+                  </Button>
+                )}
                 {activeView === 'accounts' && selectedGroup && (
                   <>
                     <Button
@@ -1052,6 +1115,167 @@ export function AccountPool() {
                 selectedGroupId={selectedGroupId}
                 onSelectGroup={setSelectedGroupId}
               />
+            </TabsContent>
+            <TabsContent value='usage-logs' className='m-0 min-h-0'>
+              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    variant={
+                      usageLogStatus === 'all' ? 'secondary' : 'outline'
+                    }
+                    size='sm'
+                    onClick={() => setUsageLogStatus('all')}
+                  >
+                    {t('All')}
+                  </Button>
+                  <Button
+                    variant={
+                      usageLogStatus === 'success' ? 'secondary' : 'outline'
+                    }
+                    size='sm'
+                    onClick={() => setUsageLogStatus('success')}
+                  >
+                    {t('Success')}
+                  </Button>
+                  <Button
+                    variant={
+                      usageLogStatus === 'failed' ? 'secondary' : 'outline'
+                    }
+                    size='sm'
+                    onClick={() => setUsageLogStatus('failed')}
+                  >
+                    {t('Failed')}
+                  </Button>
+                </div>
+                <Input
+                  className='md:max-w-xs'
+                  placeholder={t(
+                    'Search account, channel, model, user, or error'
+                  )}
+                  value={usageLogSearch}
+                  onChange={(event) => setUsageLogSearch(event.target.value)}
+                />
+              </div>
+              <div className='overflow-x-auto'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Time')}</TableHead>
+                      <TableHead>{t('Account')}</TableHead>
+                      <TableHead>{t('Channel')}</TableHead>
+                      <TableHead>{t('Model')}</TableHead>
+                      <TableHead>{t('Usage')}</TableHead>
+                      <TableHead>{t('Result')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {usageLogs.map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell className='min-w-[150px] text-xs'>
+                          {formatTimestamp(log.created_at)}
+                          <div className='text-muted-foreground mt-1'>
+                            {log.request_id || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[190px]'>
+                          <div className='text-sm font-medium'>
+                            {log.pool_account_name || `#${log.pool_account_id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
+                            {log.pool_account_auth_type || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[160px]'>
+                          <div className='text-sm'>
+                            {log.channel_name || `#${log.channel_id}`}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {log.username || '-'} / {log.token_name || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[160px] text-xs'>
+                          {log.model_name || '-'}
+                          {log.group ? (
+                            <div className='text-muted-foreground mt-1'>
+                              {t('Group')}: {log.group}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className='min-w-[160px] text-xs'>
+                          {t('Quota')}: {formatUsageNumber(log.quota)}
+                          <div className='text-muted-foreground mt-1'>
+                            {t('Tokens')}:&nbsp;
+                            {formatUsageNumber(
+                              log.prompt_tokens + log.completion_tokens
+                            )}
+                            &nbsp;· {formatUsageDuration(log.use_time)}
+                          </div>
+                        </TableCell>
+                        <TableCell className='min-w-[200px]'>
+                          <div className='flex flex-col gap-1'>
+                            <StatusBadge
+                              label={log.success ? t('Success') : t('Failed')}
+                              variant={log.success ? 'success' : 'danger'}
+                              copyable={false}
+                            />
+                            {!log.success && (
+                              <div className='text-muted-foreground max-w-[260px] break-words text-xs'>
+                                {log.status_code ? `${log.status_code} · ` : ''}
+                                {log.error_message || log.error_code || '-'}
+                              </div>
+                            )}
+                            {log.retry_index > 0 && (
+                              <div className='text-muted-foreground text-xs'>
+                                {t('Retry')}: {log.retry_index}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!usageLogsQuery.isLoading && usageLogs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className='h-24 text-center'>
+                          {t('No usage logs found')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Page {{page}} of {{total}}', {
+                    page: usageLogPage,
+                    total: usageLogTotalPages,
+                  })}
+                </span>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={usageLogPage <= 1}
+                    onClick={() =>
+                      setUsageLogPage((current) => Math.max(1, current - 1))
+                    }
+                  >
+                    {t('Previous')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={usageLogPage >= usageLogTotalPages}
+                    onClick={() =>
+                      setUsageLogPage((current) =>
+                        Math.min(usageLogTotalPages, current + 1)
+                      )
+                    }
+                  >
+                    {t('Next')}
+                  </Button>
+                </div>
+              </div>
             </TabsContent>
           </Tabs>
         </section>

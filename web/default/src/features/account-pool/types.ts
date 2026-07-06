@@ -294,3 +294,33 @@ export type AccountPoolLoginSession = {
   expires_at?: number
   poll_interval?: number
 }
+
+export type AccountPoolUsageLog = {
+  id: number
+  created_at: number
+  pool_group_id: number
+  pool_group_name: string
+  pool_account_id: number
+  pool_account_name: string
+  pool_account_auth_type: string
+  channel_id: number
+  channel_name: string
+  model_name: string
+  user_id: number
+  username: string
+  token_id: number
+  token_name: string
+  group: string
+  quota: number
+  prompt_tokens: number
+  completion_tokens: number
+  use_time: number
+  is_stream: boolean
+  success: boolean
+  status_code: number
+  error_code: string
+  error_message: string
+  request_id?: string
+  upstream_request_id?: string
+  retry_index: number
+}

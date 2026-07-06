@@ -24,10 +24,10 @@ import (
 	"github.com/c1cada/NexusTok/common"   // 公共工具包
 	"github.com/c1cada/NexusTok/constant" // 常量定义
 
-	"github.com/glebarez/sqlite"   // SQLite 驱动
-	"gorm.io/driver/mysql"         // MySQL 驱动
-	"gorm.io/driver/postgres"      // PostgreSQL 驱动
-	"gorm.io/gorm"                 // GORM ORM
+	"github.com/glebarez/sqlite" // SQLite 驱动
+	"gorm.io/driver/mysql"       // MySQL 驱动
+	"gorm.io/driver/postgres"    // PostgreSQL 驱动
+	"gorm.io/gorm"               // GORM ORM
 )
 
 // 数据库列名变量（根据数据库类型自动设置）
@@ -309,6 +309,7 @@ func migrateDB() error {
 		&AccountPoolGroup{},
 		&PoolAccount{},
 		&AccountPoolAuthFile{},
+		&PoolAccountUsageLog{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -362,6 +363,7 @@ func migrateDBFast() error {
 		{&AccountPoolGroup{}, "AccountPoolGroup"},
 		{&PoolAccount{}, "PoolAccount"},
 		{&AccountPoolAuthFile{}, "AccountPoolAuthFile"},
+		{&PoolAccountUsageLog{}, "PoolAccountUsageLog"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
@@ -426,6 +428,9 @@ func migrateDBFast() error {
 func migrateLOGDB() error {
 	var err error
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
+		return err
+	}
+	if err = LOG_DB.AutoMigrate(&PoolAccountUsageLog{}); err != nil {
 		return err
 	}
 	return nil

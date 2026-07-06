@@ -493,6 +493,39 @@ func ListAccountPoolAuthFiles(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+func ListAccountPoolUsageLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	poolAccountID, _ := strconv.Atoi(c.Query("pool_account_id"))
+	channelID, _ := strconv.Atoi(c.Query("channel_id"))
+	userID, _ := strconv.Atoi(c.Query("user_id"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	success := parseAccountPoolUsageSuccess(c.Query("success"))
+	logs, total, err := model.GetPoolAccountUsageLogs(model.PoolAccountUsageLogFilter{
+		PoolGroupId:       poolGroupID,
+		PoolAccountId:     poolAccountID,
+		ChannelId:         channelID,
+		UserId:            userID,
+		Success:           success,
+		StartTimestamp:    startTimestamp,
+		EndTimestamp:      endTimestamp,
+		ModelName:         c.Query("model_name"),
+		RequestId:         c.Query("request_id"),
+		UpstreamRequestId: c.Query("upstream_request_id"),
+		Search:            c.Query("search"),
+		StartIdx:          pageInfo.GetStartIdx(),
+		Limit:             pageInfo.GetPageSize(),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(logs)
+	common.ApiSuccess(c, pageInfo)
+}
+
 func CreateAccountPoolAuthFile(c *gin.Context) {
 	var req accountPoolAuthFileImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -935,6 +968,19 @@ func parseAccountPoolAuthFileIDParam(c *gin.Context) (int, bool) {
 		return 0, false
 	}
 	return authFileID, true
+}
+
+func parseAccountPoolUsageSuccess(value string) *bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "success", "succeeded":
+		result := true
+		return &result
+	case "false", "0", "failed", "failure", "error":
+		result := false
+		return &result
+	default:
+		return nil
+	}
 }
 
 func ensureAccountPoolGroupExists(c *gin.Context, groupID int) bool {

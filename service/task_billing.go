@@ -68,6 +68,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
 	AddRelayAccountUsedQuota(info, int64(info.PriceData.Quota))
+	RecordRelayPoolAccountUsageSuccess(c, info, 0, 0, info.PriceData.Quota, 0)
 }
 
 // ---------------------------------------------------------------------------
