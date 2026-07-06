@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
@@ -32,6 +33,8 @@ var (
 	ErrPoolAccountGroupRateLimitExceeded = errors.New("账号池分组请求频率已达到上限")
 	// ErrPoolAccountRateLimitExceeded 表示单个账号每分钟请求频率已达到上限。
 	ErrPoolAccountRateLimitExceeded = errors.New("账号池账号请求频率已达到上限")
+	// ErrPoolAccountPreflightCheckRequired 表示强制近期检测模式下没有账号拥有有效检测结果。
+	ErrPoolAccountPreflightCheckRequired = errors.New("账号池账号缺少近期检测结果")
 
 	poolAccountCursorMu sync.Mutex            // 游标映射表的互斥锁
 	poolAccountCursors  = map[string]uint64{} // 轮询游标映射表，key 为分组+模型组合
@@ -48,9 +51,22 @@ var (
 	poolGroupRateMu       sync.Mutex                       // 分组 RPM 窗口映射表的互斥锁
 	poolGroupRateCounters = map[int]poolGroupRateCounter{} // 分组 RPM 窗口计数，key 为分组 ID
 
+	poolAccountPreflightWarmupMu   sync.Mutex
+	poolAccountPreflightWarmupLast = map[int]int64{} // 运行前预热最近触发时间，key 为分组 ID
+
 	// poolAccountRandomIntn 为随机调度策略生成随机索引。
 	// 测试会临时替换该函数，让“随机策略使用指定索引”的行为可稳定验证。
 	poolAccountRandomIntn = rand.Intn
+
+	// startPoolAccountPreflightWarmupTask 创建运行前预热检测任务；测试会替换它来避免真实执行后台检测。
+	startPoolAccountPreflightWarmupTask = StartPoolAccountCheckTask
+	// poolAccountPreflightWarmupAsync 负责把预热任务创建移出请求关键路径；测试会替换为同步执行以便断言。
+	poolAccountPreflightWarmupAsync = func(fn func()) { gopool.Go(fn) }
+)
+
+const (
+	poolAccountPreflightWarmupThrottleSeconds int64  = 5 * 60
+	accountPoolPreflightWarmupActor           string = "system:preflight"
 )
 
 type poolGroupRateCounter struct {
@@ -116,6 +132,9 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	}
 
 	candidates := make([]*model.PoolAccount, 0, len(accounts))
+	preflightWarmupAccountIDs := make([]int, 0)
+	preflightEligibleCount := 0
+	preflightSkippedCount := 0
 	var lastAccountLimitErr error
 	for _, account := range accounts {
 		if account == nil {
@@ -143,9 +162,21 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		if !poolAccountSupportsGroup(account, group, usingGroup) {
 			continue
 		}
+		preflightEligibleCount++
+		if poolAccountNeedsPreflightCheck(group, account, now) {
+			preflightWarmupAccountIDs = append(preflightWarmupAccountIDs, account.Id)
+			if group.GetPreflightCheckMode() == model.AccountPoolPreflightCheckModeRequireRecent {
+				preflightSkippedCount++
+				continue
+			}
+		}
 		candidates = append(candidates, account)
 	}
+	triggerPoolAccountPreflightWarmup(c, group, preflightWarmupAccountIDs, now)
 	if len(candidates) == 0 {
+		if preflightEligibleCount > 0 && preflightEligibleCount == preflightSkippedCount {
+			return group, nil, ErrPoolAccountPreflightCheckRequired
+		}
 		if lastAccountLimitErr != nil {
 			return group, nil, lastAccountLimitErr
 		}
@@ -209,6 +240,104 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 		return group, nil, lastAccountReserveErr
 	}
 	return group, nil, ErrNoAvailablePoolAccount
+}
+
+// poolAccountNeedsPreflightCheck 判断账号最近一次检测结果是否已过期。
+// 该函数只读取 last_checked_time，不会执行真实检测；真实凭据刷新或健康探测全部交给后台检测任务，
+// 避免 Relay 请求因为 OAuth refresh、网络探测或上游抖动而在选号阶段被阻塞。
+func poolAccountNeedsPreflightCheck(group *model.AccountPoolGroup, account *model.PoolAccount, now int64) bool {
+	if group == nil || account == nil {
+		return false
+	}
+	mode := group.GetPreflightCheckMode()
+	if mode == model.AccountPoolPreflightCheckModeOff {
+		return false
+	}
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	freshnessSeconds := int64(group.GetPreflightCheckFreshnessMinutes()) * 60
+	if account.LastCheckedTime <= 0 {
+		return true
+	}
+	return account.LastCheckedTime < now-freshnessSeconds
+}
+
+// triggerPoolAccountPreflightWarmup 为检测结果过期的候选账号创建后台检测任务。
+// warmup 模式下它只预热后续请求，不影响本次选择；require_recent 模式下即使本次没有新鲜账号，
+// 也会触发一次预热，让账号在后台检测成功后能够自动重新回到可调度候选集。
+func triggerPoolAccountPreflightWarmup(c *gin.Context, group *model.AccountPoolGroup, accountIDs []int, now int64) {
+	if group == nil || group.Id <= 0 || len(accountIDs) == 0 {
+		return
+	}
+	if group.GetPreflightCheckMode() == model.AccountPoolPreflightCheckModeOff {
+		return
+	}
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	normalizedIDs := normalizePoolAccountPreflightWarmupIDs(accountIDs, group.GetPreflightCheckLimit())
+	if len(normalizedIDs) == 0 {
+		return
+	}
+	if !reservePoolAccountPreflightWarmupTrigger(group.Id, now) {
+		return
+	}
+	groupID := group.Id
+	requestID := poolAccountPreflightWarmupRequestID(c, groupID, now)
+	poolAccountPreflightWarmupAsync(func() {
+		if _, err := startPoolAccountPreflightWarmupTask(AccountPoolCheckTaskOptions{
+			PoolGroupID: groupID,
+			AccountIDs:  normalizedIDs,
+			Limit:       len(normalizedIDs),
+			Actor:       accountPoolPreflightWarmupActor,
+			RequestID:   requestID,
+		}); err != nil {
+			common.SysLog(fmt.Sprintf("failed to start pool account preflight warmup task: group_id=%d, error=%v", groupID, err))
+		}
+	})
+}
+
+func normalizePoolAccountPreflightWarmupIDs(accountIDs []int, limit int) []int {
+	limit = model.NormalizeAccountPoolPreflightCheckLimit(limit)
+	seen := map[int]bool{}
+	result := make([]int, 0, limit)
+	for _, accountID := range accountIDs {
+		if accountID <= 0 || seen[accountID] {
+			continue
+		}
+		seen[accountID] = true
+		result = append(result, accountID)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func reservePoolAccountPreflightWarmupTrigger(groupID int, now int64) bool {
+	if groupID <= 0 {
+		return false
+	}
+	poolAccountPreflightWarmupMu.Lock()
+	defer poolAccountPreflightWarmupMu.Unlock()
+	last := poolAccountPreflightWarmupLast[groupID]
+	if last > 0 && now-last < poolAccountPreflightWarmupThrottleSeconds {
+		return false
+	}
+	poolAccountPreflightWarmupLast[groupID] = now
+	return true
+}
+
+func poolAccountPreflightWarmupRequestID(c *gin.Context, groupID int, now int64) string {
+	requestID := ""
+	if c != nil {
+		requestID = strings.TrimSpace(c.GetString(common.RequestIdKey))
+	}
+	if requestID != "" {
+		return requestID + ":account-pool-preflight"
+	}
+	return fmt.Sprintf("account-pool-preflight-%d-%d", groupID, now)
 }
 
 // sortPoolAccountCandidates 对账号池候选账号进行排序。

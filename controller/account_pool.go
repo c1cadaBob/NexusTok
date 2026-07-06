@@ -59,6 +59,12 @@ type accountPoolGroupUpsertRequest struct {
 	AutoCheckIntervalMinutes *int `json:"auto_check_interval_minutes"`
 	// AutoCheckLimit 是单次自动检测最多覆盖的账号数；超过全局上限时由模型层截断。
 	AutoCheckLimit *int `json:"auto_check_limit"`
+	// PreflightCheckMode 控制 Relay 选号前是否根据最近检测结果过滤或预热账号。
+	PreflightCheckMode string `json:"preflight_check_mode"`
+	// PreflightCheckFreshnessMinutes 是 last_checked_time 的有效窗口，单位分钟。
+	PreflightCheckFreshnessMinutes *int `json:"preflight_check_freshness_minutes"`
+	// PreflightCheckLimit 是运行前预热任务最多覆盖的账号数。
+	PreflightCheckLimit *int `json:"preflight_check_limit"`
 }
 
 // poolAccountUpsertRequest 池账号创建/更新请求
@@ -2084,26 +2090,38 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 		autoCheckLimit = *req.AutoCheckLimit
 		autoCheckLimit = model.NormalizeAccountPoolAutoCheckLimit(autoCheckLimit)
 	}
+	preflightCheckMode := model.NormalizeAccountPoolPreflightCheckMode(req.PreflightCheckMode)
+	preflightCheckFreshnessMinutes := model.NormalizeAccountPoolPreflightCheckFreshnessMinutes(0)
+	if req.PreflightCheckFreshnessMinutes != nil {
+		preflightCheckFreshnessMinutes = model.NormalizeAccountPoolPreflightCheckFreshnessMinutes(*req.PreflightCheckFreshnessMinutes)
+	}
+	preflightCheckLimit := model.NormalizeAccountPoolPreflightCheckLimit(0)
+	if req.PreflightCheckLimit != nil {
+		preflightCheckLimit = model.NormalizeAccountPoolPreflightCheckLimit(*req.PreflightCheckLimit)
+	}
 	settings := accountPoolGroupRequestSettings(req)
 	return &model.AccountPoolGroup{
-		Name:                     name,
-		Platform:                 platform,
-		AuthType:                 authType,
-		Source:                   model.AccountPoolGroupSourceNative,
-		Status:                   status,
-		Strategy:                 strategy,
-		Models:                   strings.TrimSpace(req.Models),
-		Group:                    strings.TrimSpace(req.Group),
-		ModelMapping:             req.ModelMapping,
-		Settings:                 settings,
-		MaxConcurrency:           maxConcurrency,
-		RateLimitRpm:             rateLimitRpm,
-		DailyRequestLimit:        dailyRequestLimit,
-		DailyQuotaLimit:          dailyQuotaLimit,
-		DailyLimitAction:         dailyLimitAction,
-		AutoCheckEnabled:         autoCheckEnabled,
-		AutoCheckIntervalMinutes: autoCheckIntervalMinutes,
-		AutoCheckLimit:           autoCheckLimit,
+		Name:                           name,
+		Platform:                       platform,
+		AuthType:                       authType,
+		Source:                         model.AccountPoolGroupSourceNative,
+		Status:                         status,
+		Strategy:                       strategy,
+		Models:                         strings.TrimSpace(req.Models),
+		Group:                          strings.TrimSpace(req.Group),
+		ModelMapping:                   req.ModelMapping,
+		Settings:                       settings,
+		MaxConcurrency:                 maxConcurrency,
+		RateLimitRpm:                   rateLimitRpm,
+		DailyRequestLimit:              dailyRequestLimit,
+		DailyQuotaLimit:                dailyQuotaLimit,
+		DailyLimitAction:               dailyLimitAction,
+		AutoCheckEnabled:               autoCheckEnabled,
+		AutoCheckIntervalMinutes:       autoCheckIntervalMinutes,
+		AutoCheckLimit:                 autoCheckLimit,
+		PreflightCheckMode:             preflightCheckMode,
+		PreflightCheckFreshnessMinutes: preflightCheckFreshnessMinutes,
+		PreflightCheckLimit:            preflightCheckLimit,
 	}, nil
 }
 
@@ -2166,6 +2184,15 @@ func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) (map[string]in
 	}
 	if req.AutoCheckLimit != nil {
 		updates["auto_check_limit"] = model.NormalizeAccountPoolAutoCheckLimit(*req.AutoCheckLimit)
+	}
+	if strings.TrimSpace(req.PreflightCheckMode) != "" {
+		updates["preflight_check_mode"] = model.NormalizeAccountPoolPreflightCheckMode(req.PreflightCheckMode)
+	}
+	if req.PreflightCheckFreshnessMinutes != nil {
+		updates["preflight_check_freshness_minutes"] = model.NormalizeAccountPoolPreflightCheckFreshnessMinutes(*req.PreflightCheckFreshnessMinutes)
+	}
+	if req.PreflightCheckLimit != nil {
+		updates["preflight_check_limit"] = model.NormalizeAccountPoolPreflightCheckLimit(*req.PreflightCheckLimit)
 	}
 	if req.ModelMapping != nil {
 		updates["model_mapping"] = *req.ModelMapping
@@ -2515,37 +2542,40 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 	dailyRequestCount, dailyUsedQuota, dailyResetTime := model.AccountPoolGroupEffectiveDailyUsage(group, now)
 	dailyLimitState := model.AccountPoolGroupDailyLimitState(group, now)
 	return gin.H{
-		"id":                          group.Id,
-		"name":                        group.Name,
-		"platform":                    group.Platform,
-		"auth_type":                   group.AuthType,
-		"source":                      group.Source,
-		"external_group_key":          group.ExternalKey,
-		"status":                      group.Status,
-		"strategy":                    group.Strategy,
-		"models":                      group.Models,
-		"group":                       group.Group,
-		"model_mapping":               group.ModelMapping,
-		"settings":                    group.Settings,
-		"max_concurrency":             group.GetMaxConcurrency(),
-		"rate_limit_rpm":              group.RateLimitRpm,
-		"daily_request_limit":         group.DailyRequestLimit,
-		"daily_quota_limit":           group.DailyQuotaLimit,
-		"daily_limit_action":          group.GetDailyLimitAction(),
-		"daily_request_count":         dailyRequestCount,
-		"used_quota":                  group.UsedQuota,
-		"daily_used_quota":            dailyUsedQuota,
-		"daily_reset_time":            dailyResetTime,
-		"daily_limit_state":           dailyLimitState,
-		"auto_check_enabled":          group.AutoCheckEnabled,
-		"auto_check_interval_minutes": group.GetAutoCheckIntervalMinutes(),
-		"auto_check_limit":            group.GetAutoCheckLimit(),
-		"auto_check_last_time":        group.AutoCheckLastTime,
-		"auto_check_next_time":        group.AutoCheckNextTime,
-		"auto_check_last_task_id":     group.AutoCheckLastTaskId,
-		"created_time":                group.CreatedTime,
-		"updated_time":                group.UpdatedTime,
-		"stats":                       group.Stats,
+		"id":                                group.Id,
+		"name":                              group.Name,
+		"platform":                          group.Platform,
+		"auth_type":                         group.AuthType,
+		"source":                            group.Source,
+		"external_group_key":                group.ExternalKey,
+		"status":                            group.Status,
+		"strategy":                          group.Strategy,
+		"models":                            group.Models,
+		"group":                             group.Group,
+		"model_mapping":                     group.ModelMapping,
+		"settings":                          group.Settings,
+		"max_concurrency":                   group.GetMaxConcurrency(),
+		"rate_limit_rpm":                    group.RateLimitRpm,
+		"daily_request_limit":               group.DailyRequestLimit,
+		"daily_quota_limit":                 group.DailyQuotaLimit,
+		"daily_limit_action":                group.GetDailyLimitAction(),
+		"daily_request_count":               dailyRequestCount,
+		"used_quota":                        group.UsedQuota,
+		"daily_used_quota":                  dailyUsedQuota,
+		"daily_reset_time":                  dailyResetTime,
+		"daily_limit_state":                 dailyLimitState,
+		"auto_check_enabled":                group.AutoCheckEnabled,
+		"auto_check_interval_minutes":       group.GetAutoCheckIntervalMinutes(),
+		"auto_check_limit":                  group.GetAutoCheckLimit(),
+		"auto_check_last_time":              group.AutoCheckLastTime,
+		"auto_check_next_time":              group.AutoCheckNextTime,
+		"auto_check_last_task_id":           group.AutoCheckLastTaskId,
+		"preflight_check_mode":              group.GetPreflightCheckMode(),
+		"preflight_check_freshness_minutes": group.GetPreflightCheckFreshnessMinutes(),
+		"preflight_check_limit":             group.GetPreflightCheckLimit(),
+		"created_time":                      group.CreatedTime,
+		"updated_time":                      group.UpdatedTime,
+		"stats":                             group.Stats,
 	}
 }
 
@@ -2569,30 +2599,33 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 	dailyRequestCount, dailyUsedQuota, dailyResetTime := model.AccountPoolGroupEffectiveDailyUsage(group, now)
 	dailyLimitState := model.AccountPoolGroupDailyLimitState(group, now)
 	return gin.H{
-		"id":                          group.Id,
-		"name":                        group.Name,
-		"platform":                    group.Platform,
-		"auth_type":                   group.AuthType,
-		"source":                      group.Source,
-		"external_group_key":          group.ExternalKey,
-		"strategy":                    group.Strategy,
-		"max_concurrency":             group.GetMaxConcurrency(),
-		"rate_limit_rpm":              group.RateLimitRpm,
-		"daily_request_limit":         group.DailyRequestLimit,
-		"daily_quota_limit":           group.DailyQuotaLimit,
-		"daily_limit_action":          group.GetDailyLimitAction(),
-		"daily_request_count":         dailyRequestCount,
-		"used_quota":                  group.UsedQuota,
-		"daily_used_quota":            dailyUsedQuota,
-		"daily_reset_time":            dailyResetTime,
-		"daily_limit_state":           dailyLimitState,
-		"auto_check_enabled":          group.AutoCheckEnabled,
-		"auto_check_interval_minutes": group.GetAutoCheckIntervalMinutes(),
-		"auto_check_limit":            group.GetAutoCheckLimit(),
-		"auto_check_last_time":        group.AutoCheckLastTime,
-		"auto_check_next_time":        group.AutoCheckNextTime,
-		"auto_check_last_task_id":     group.AutoCheckLastTaskId,
-		"stats":                       group.Stats,
+		"id":                                group.Id,
+		"name":                              group.Name,
+		"platform":                          group.Platform,
+		"auth_type":                         group.AuthType,
+		"source":                            group.Source,
+		"external_group_key":                group.ExternalKey,
+		"strategy":                          group.Strategy,
+		"max_concurrency":                   group.GetMaxConcurrency(),
+		"rate_limit_rpm":                    group.RateLimitRpm,
+		"daily_request_limit":               group.DailyRequestLimit,
+		"daily_quota_limit":                 group.DailyQuotaLimit,
+		"daily_limit_action":                group.GetDailyLimitAction(),
+		"daily_request_count":               dailyRequestCount,
+		"used_quota":                        group.UsedQuota,
+		"daily_used_quota":                  dailyUsedQuota,
+		"daily_reset_time":                  dailyResetTime,
+		"daily_limit_state":                 dailyLimitState,
+		"auto_check_enabled":                group.AutoCheckEnabled,
+		"auto_check_interval_minutes":       group.GetAutoCheckIntervalMinutes(),
+		"auto_check_limit":                  group.GetAutoCheckLimit(),
+		"auto_check_last_time":              group.AutoCheckLastTime,
+		"auto_check_next_time":              group.AutoCheckNextTime,
+		"auto_check_last_task_id":           group.AutoCheckLastTaskId,
+		"preflight_check_mode":              group.GetPreflightCheckMode(),
+		"preflight_check_freshness_minutes": group.GetPreflightCheckFreshnessMinutes(),
+		"preflight_check_limit":             group.GetPreflightCheckLimit(),
+		"stats":                             group.Stats,
 	}, true
 }
 

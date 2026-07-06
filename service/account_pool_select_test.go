@@ -15,12 +15,15 @@ import (
 
 func setupAccountPoolSelectTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}, &model.PoolAccountCheckTask{}))
+	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_check_tasks").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM account_pool_groups").Error)
 	originalRedisEnabled := common.RedisEnabled
 	originalRandomIntn := poolAccountRandomIntn
+	originalPreflightWarmupTask := startPoolAccountPreflightWarmupTask
+	originalPreflightWarmupAsync := poolAccountPreflightWarmupAsync
 	common.RedisEnabled = false
 	poolAccountConcurrencyMu.Lock()
 	poolAccountConcurrency = map[int]int{}
@@ -37,9 +40,14 @@ func setupAccountPoolSelectTest(t *testing.T) {
 	poolGroupRateMu.Lock()
 	poolGroupRateCounters = map[int]poolGroupRateCounter{}
 	poolGroupRateMu.Unlock()
+	poolAccountPreflightWarmupMu.Lock()
+	poolAccountPreflightWarmupLast = map[int]int64{}
+	poolAccountPreflightWarmupMu.Unlock()
 	t.Cleanup(func() {
 		common.RedisEnabled = originalRedisEnabled
 		poolAccountRandomIntn = originalRandomIntn
+		startPoolAccountPreflightWarmupTask = originalPreflightWarmupTask
+		poolAccountPreflightWarmupAsync = originalPreflightWarmupAsync
 		poolAccountConcurrencyMu.Lock()
 		poolAccountConcurrency = map[int]int{}
 		poolAccountConcurrencyMu.Unlock()
@@ -55,6 +63,10 @@ func setupAccountPoolSelectTest(t *testing.T) {
 		poolGroupRateMu.Lock()
 		poolGroupRateCounters = map[int]poolGroupRateCounter{}
 		poolGroupRateMu.Unlock()
+		poolAccountPreflightWarmupMu.Lock()
+		poolAccountPreflightWarmupLast = map[int]int64{}
+		poolAccountPreflightWarmupMu.Unlock()
+		_ = model.DB.Exec("DELETE FROM pool_account_check_tasks").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error
 		_ = model.DB.Exec("DELETE FROM account_pool_groups").Error
@@ -126,6 +138,103 @@ func TestSortPoolAccountCandidatesSuccessRateTieBreakers(t *testing.T) {
 	require.Equal(t, 2, accounts[0].Id)
 	require.Equal(t, 1, accounts[1].Id)
 	require.Equal(t, 3, accounts[2].Id)
+}
+
+func TestSelectPoolAccountPreflightOffAllowsUncheckedAccount(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-preflight-off")
+	account := createSelectablePoolAccount(t, group, "preflight-off-account")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountPreflightRequireRecentSkipsStaleAccount(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-preflight-require-recent")
+	group.Strategy = model.AccountPoolStrategyFillFirst
+	group.PreflightCheckMode = model.AccountPoolPreflightCheckModeRequireRecent
+	group.PreflightCheckFreshnessMinutes = 60
+	require.NoError(t, model.DB.Save(group).Error)
+	staleAccount := createSelectablePoolAccount(t, group, "preflight-stale-account")
+	staleAccount.LastCheckedTime = common.GetTimestamp() - int64(2*time.Hour/time.Second)
+	require.NoError(t, model.DB.Save(staleAccount).Error)
+	freshAccount := createSelectablePoolAccount(t, group, "preflight-fresh-account")
+	freshAccount.LastCheckedTime = common.GetTimestamp()
+	require.NoError(t, model.DB.Save(freshAccount).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, freshAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountPreflightRequireRecentReturnsErrorAndStartsWarmup(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-preflight-require-error")
+	group.PreflightCheckMode = model.AccountPoolPreflightCheckModeRequireRecent
+	group.PreflightCheckFreshnessMinutes = 60
+	group.PreflightCheckLimit = 2
+	require.NoError(t, model.DB.Save(group).Error)
+	account := createSelectablePoolAccount(t, group, "preflight-require-stale")
+	account.LastCheckedTime = common.GetTimestamp() - int64(2*time.Hour/time.Second)
+	require.NoError(t, model.DB.Save(account).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+	calls := make([]AccountPoolCheckTaskOptions, 0)
+	poolAccountPreflightWarmupAsync = func(fn func()) { fn() }
+	startPoolAccountPreflightWarmupTask = func(opts AccountPoolCheckTaskOptions) (*AccountPoolCheckTaskView, error) {
+		calls = append(calls, opts)
+		return &AccountPoolCheckTaskView{ID: len(calls), Total: len(opts.AccountIDs)}, nil
+	}
+
+	ctx := newPoolSelectTestContext()
+	ctx.Set(common.RequestIdKey, "req-preflight-require")
+	_, _, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.True(t, errors.Is(err, ErrPoolAccountPreflightCheckRequired))
+	require.Len(t, calls, 1)
+	require.Equal(t, accountPoolPreflightWarmupActor, calls[0].Actor)
+	require.Equal(t, "req-preflight-require:account-pool-preflight", calls[0].RequestID)
+	require.Equal(t, []int{account.Id}, calls[0].AccountIDs)
+}
+
+func TestSelectPoolAccountPreflightWarmupAllowsStaleAndThrottles(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-preflight-warmup")
+	group.PreflightCheckMode = model.AccountPoolPreflightCheckModeWarmup
+	group.PreflightCheckFreshnessMinutes = 60
+	group.PreflightCheckLimit = 1
+	require.NoError(t, model.DB.Save(group).Error)
+	firstAccount := createSelectablePoolAccount(t, group, "preflight-warmup-a")
+	secondAccount := createSelectablePoolAccount(t, group, "preflight-warmup-b")
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+	calls := make([]AccountPoolCheckTaskOptions, 0)
+	poolAccountPreflightWarmupAsync = func(fn func()) { fn() }
+	startPoolAccountPreflightWarmupTask = func(opts AccountPoolCheckTaskOptions) (*AccountPoolCheckTaskView, error) {
+		calls = append(calls, opts)
+		return &AccountPoolCheckTaskView{ID: len(calls), Total: len(opts.AccountIDs)}, nil
+	}
+
+	firstCtx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(firstCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.NotNil(t, selectedAccount)
+	ReleaseSelectedPoolAccount(firstCtx)
+
+	secondCtx := newPoolSelectTestContext()
+	_, selectedAccount, err = SelectPoolAccount(secondCtx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.NotNil(t, selectedAccount)
+	ReleaseSelectedPoolAccount(secondCtx)
+
+	require.Len(t, calls, 1)
+	require.Equal(t, []int{firstAccount.Id}, calls[0].AccountIDs)
+	require.NotContains(t, calls[0].AccountIDs, secondAccount.Id)
 }
 
 func TestSelectPoolAccountRandomUsesRandomIndex(t *testing.T) {

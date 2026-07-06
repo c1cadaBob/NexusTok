@@ -130,6 +130,19 @@ const (
 	AccountPoolAutoCheckDefaultLimit = 100
 	// AccountPoolAutoCheckMaxLimit 表示每次自动检测最多允许覆盖的账号数量。
 	AccountPoolAutoCheckMaxLimit = 100
+
+	// AccountPoolPreflightCheckModeOff 表示请求运行前不检查账号最近检测时间，保持旧调度行为。
+	AccountPoolPreflightCheckModeOff = "off"
+	// AccountPoolPreflightCheckModeWarmup 表示发现候选账号检测结果过期时异步创建后台检测任务，本次请求仍可继续调度。
+	AccountPoolPreflightCheckModeWarmup = "warmup"
+	// AccountPoolPreflightCheckModeRequireRecent 表示只允许最近检测结果仍在有效期内的账号进入调度候选集。
+	AccountPoolPreflightCheckModeRequireRecent = "require_recent"
+	// AccountPoolPreflightCheckDefaultFreshnessMinutes 表示运行前检测结果默认有效期，默认 24 小时。
+	AccountPoolPreflightCheckDefaultFreshnessMinutes = 1440
+	// AccountPoolPreflightCheckDefaultLimit 表示运行前预热任务默认最多检测的账号数量。
+	AccountPoolPreflightCheckDefaultLimit = 20
+	// AccountPoolPreflightCheckMaxLimit 表示运行前预热任务单次最多允许覆盖的账号数量。
+	AccountPoolPreflightCheckMaxLimit = AccountPoolAutoCheckMaxLimit
 )
 
 var (
@@ -181,8 +194,14 @@ type AccountPoolGroup struct {
 	AutoCheckLastTime   int64 `json:"auto_check_last_time" gorm:"bigint;default:0"`       // 最近一次自动检测任务创建时间
 	AutoCheckNextTime   int64 `json:"auto_check_next_time" gorm:"bigint;default:0;index"` // 下次自动检测任务计划时间
 	AutoCheckLastTaskId int   `json:"auto_check_last_task_id" gorm:"default:0"`           // 最近一次自动检测任务 ID
-	CreatedTime         int64 `json:"created_time" gorm:"bigint"`                         // 创建时间
-	UpdatedTime         int64 `json:"updated_time" gorm:"bigint"`                         // 更新时间
+	// PreflightCheckMode 控制 Relay 热路径在选择账号前如何处理“检测结果过期”的账号。
+	PreflightCheckMode string `json:"preflight_check_mode" gorm:"type:varchar(32);default:'off'"`
+	// PreflightCheckFreshnessMinutes 是最近一次检测结果的有效期，单位分钟；小于等于 0 时回退到默认 24 小时。
+	PreflightCheckFreshnessMinutes int `json:"preflight_check_freshness_minutes" gorm:"default:1440"`
+	// PreflightCheckLimit 是运行前预热任务最多覆盖的账号数；预热只创建后台检测任务，不在热路径同步检测。
+	PreflightCheckLimit int   `json:"preflight_check_limit" gorm:"default:20"`
+	CreatedTime         int64 `json:"created_time" gorm:"bigint"` // 创建时间
+	UpdatedTime         int64 `json:"updated_time" gorm:"bigint"` // 更新时间
 
 	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
 }
@@ -239,6 +258,41 @@ func NormalizeAccountPoolAutoCheckLimit(limit int) int {
 	return limit
 }
 
+// NormalizeAccountPoolPreflightCheckMode 规范化运行前检测策略。
+// 空值和未知值都回退到 off，确保历史分组或异常请求不会意外改变 Relay 热路径准入规则。
+func NormalizeAccountPoolPreflightCheckMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case AccountPoolPreflightCheckModeWarmup:
+		return AccountPoolPreflightCheckModeWarmup
+	case AccountPoolPreflightCheckModeRequireRecent:
+		return AccountPoolPreflightCheckModeRequireRecent
+	default:
+		return AccountPoolPreflightCheckModeOff
+	}
+}
+
+// NormalizeAccountPoolPreflightCheckFreshnessMinutes 规范化运行前检测结果有效期。
+// 该值只用于判断 last_checked_time 是否足够新；非法值统一回退到 24 小时，避免误把所有账号过滤掉。
+func NormalizeAccountPoolPreflightCheckFreshnessMinutes(minutes int) int {
+	if minutes <= 0 {
+		return AccountPoolPreflightCheckDefaultFreshnessMinutes
+	}
+	return minutes
+}
+
+// NormalizeAccountPoolPreflightCheckLimit 规范化运行前预热任务账号数量上限。
+// 预热复用后台检测任务队列，限制单次覆盖数量可以避免某个请求把大分组全部投入检测。
+func NormalizeAccountPoolPreflightCheckLimit(limit int) int {
+	if limit <= 0 {
+		return AccountPoolPreflightCheckDefaultLimit
+	}
+	if limit > AccountPoolPreflightCheckMaxLimit {
+		return AccountPoolPreflightCheckMaxLimit
+	}
+	return limit
+}
+
 // GetAutoCheckIntervalMinutes 返回分组自动检测间隔。
 // 历史数据或 API 请求可能写入 0/负数；这里统一回退到默认 60 分钟，避免调度器出现
 // 立即重复创建任务的忙循环。
@@ -257,6 +311,33 @@ func (group *AccountPoolGroup) GetAutoCheckLimit() int {
 		return AccountPoolAutoCheckDefaultLimit
 	}
 	return NormalizeAccountPoolAutoCheckLimit(group.AutoCheckLimit)
+}
+
+// GetPreflightCheckMode 返回分组运行前检测策略。
+// 默认 off 保持旧行为；只有管理员显式选择 warmup 或 require_recent 时，调度层才会读取 last_checked_time。
+func (group *AccountPoolGroup) GetPreflightCheckMode() string {
+	if group == nil {
+		return AccountPoolPreflightCheckModeOff
+	}
+	return NormalizeAccountPoolPreflightCheckMode(group.PreflightCheckMode)
+}
+
+// GetPreflightCheckFreshnessMinutes 返回最近检测结果有效期。
+// 运行前检测只依赖已存在的检测时间，不会在热路径同步刷新凭据；该窗口用于定义“近期”的业务边界。
+func (group *AccountPoolGroup) GetPreflightCheckFreshnessMinutes() int {
+	if group == nil {
+		return AccountPoolPreflightCheckDefaultFreshnessMinutes
+	}
+	return NormalizeAccountPoolPreflightCheckFreshnessMinutes(group.PreflightCheckFreshnessMinutes)
+}
+
+// GetPreflightCheckLimit 返回运行前预热任务账号数量上限。
+// warmup 和 require_recent 模式发现过期账号时都会复用该上限创建后台检测任务。
+func (group *AccountPoolGroup) GetPreflightCheckLimit() int {
+	if group == nil {
+		return AccountPoolPreflightCheckDefaultLimit
+	}
+	return NormalizeAccountPoolPreflightCheckLimit(group.PreflightCheckLimit)
 }
 
 // NormalizeAccountPoolDailyLimitAction 规范化每日限制耗尽后的处理策略。
@@ -645,6 +726,9 @@ func (group *AccountPoolGroup) normalize() {
 	if group.AutoCheckLastTaskId < 0 {
 		group.AutoCheckLastTaskId = 0
 	}
+	group.PreflightCheckMode = NormalizeAccountPoolPreflightCheckMode(group.PreflightCheckMode)
+	group.PreflightCheckFreshnessMinutes = NormalizeAccountPoolPreflightCheckFreshnessMinutes(group.PreflightCheckFreshnessMinutes)
+	group.PreflightCheckLimit = NormalizeAccountPoolPreflightCheckLimit(group.PreflightCheckLimit)
 }
 
 // BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段

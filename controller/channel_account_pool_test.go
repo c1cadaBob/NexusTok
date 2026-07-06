@@ -203,6 +203,42 @@ func TestAccountPoolGroupResponseIncludesAutoCheckSettings(t *testing.T) {
 	require.Equal(t, 100, option["auto_check_last_task_id"])
 }
 
+func TestAccountPoolGroupResponseIncludesPreflightCheckSettings(t *testing.T) {
+	group := &model.AccountPoolGroup{
+		Id:                             20,
+		Name:                           "preflight-response",
+		Platform:                       "codex",
+		AuthType:                       model.AccountPoolAuthTypeAPIKey,
+		Source:                         model.AccountPoolGroupSourceNative,
+		Status:                         common.ChannelStatusEnabled,
+		PreflightCheckMode:             model.AccountPoolPreflightCheckModeRequireRecent,
+		PreflightCheckFreshnessMinutes: 30,
+		PreflightCheckLimit:            4,
+	}
+
+	item := accountPoolGroupResponse(group)
+	require.Equal(t, model.AccountPoolPreflightCheckModeRequireRecent, item["preflight_check_mode"])
+	require.Equal(t, 30, item["preflight_check_freshness_minutes"])
+	require.Equal(t, 4, item["preflight_check_limit"])
+
+	option, ok := accountPoolGroupOptionResponse(&model.AccountPoolGroup{
+		Id:                             21,
+		Name:                           "preflight-option",
+		Platform:                       "codex",
+		AuthType:                       model.AccountPoolAuthTypeAPIKey,
+		Source:                         model.AccountPoolGroupSourceNative,
+		Status:                         common.ChannelStatusEnabled,
+		PreflightCheckMode:             model.AccountPoolPreflightCheckModeWarmup,
+		PreflightCheckFreshnessMinutes: 90,
+		PreflightCheckLimit:            6,
+		Stats:                          map[string]int64{"total": 1, "enabled": 1},
+	})
+	require.True(t, ok)
+	require.Equal(t, model.AccountPoolPreflightCheckModeWarmup, option["preflight_check_mode"])
+	require.Equal(t, 90, option["preflight_check_freshness_minutes"])
+	require.Equal(t, 6, option["preflight_check_limit"])
+}
+
 func TestPoolAccountResponseIncludesDailyLimitAction(t *testing.T) {
 	account := &model.PoolAccount{
 		Id:               12,
@@ -307,6 +343,35 @@ func TestAccountPoolGroupRequestNormalizesAutoCheckSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, updates["auto_check_enabled"])
 	require.Equal(t, model.AccountPoolAutoCheckDefaultLimit, updates["auto_check_limit"])
+}
+
+func TestAccountPoolGroupRequestNormalizesPreflightCheckSettings(t *testing.T) {
+	tooLargeLimit := 200
+	zeroFreshness := 0
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:                           "preflight-request",
+		Platform:                       "codex",
+		PreflightCheckMode:             model.AccountPoolPreflightCheckModeRequireRecent,
+		PreflightCheckFreshnessMinutes: &zeroFreshness,
+		PreflightCheckLimit:            &tooLargeLimit,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.AccountPoolPreflightCheckModeRequireRecent, group.PreflightCheckMode)
+	require.Equal(t, model.AccountPoolPreflightCheckDefaultFreshnessMinutes, group.PreflightCheckFreshnessMinutes)
+	require.Equal(t, model.AccountPoolPreflightCheckMaxLimit, group.PreflightCheckLimit)
+
+	negativeLimit := -1
+	freshness := 45
+	updates, err := accountPoolGroupUpdateMap(accountPoolGroupUpsertRequest{
+		PreflightCheckMode:             model.AccountPoolPreflightCheckModeWarmup,
+		PreflightCheckFreshnessMinutes: &freshness,
+		PreflightCheckLimit:            &negativeLimit,
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.AccountPoolPreflightCheckModeWarmup, updates["preflight_check_mode"])
+	require.Equal(t, 45, updates["preflight_check_freshness_minutes"])
+	require.Equal(t, model.AccountPoolPreflightCheckDefaultLimit, updates["preflight_check_limit"])
 }
 
 func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {
