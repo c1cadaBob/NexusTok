@@ -19,24 +19,24 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common" // 公共工具：JSON 序列化等
-	"github.com/c1cada/NexusTok/model"   // 数据模型：账号池、账号等
+	"github.com/c1cada/NexusTok/model"  // 数据模型：账号池、账号等
 )
 
 // Codex OAuth 认证相关的常量定义
 const (
-	codexProvider                = "codex"                                                        // 提供者标识
-	codexOAuthClientID           = "app_EMoamEEZ73f0CkXaXp7hrann"                                // OAuth 客户端 ID
-	codexOAuthAuthorizeURL       = "https://auth.openai.com/oauth/authorize"                      // OAuth 授权页面地址
-	codexOAuthTokenURL           = "https://auth.openai.com/oauth/token"                          // OAuth Token 交换地址
-	codexOAuthRedirectURI        = "http://localhost:1455/auth/callback"                           // OAuth 回调地址（本地）
-	codexDeviceRedirectURI       = "https://auth.openai.com/deviceauth/callback"                  // Device 流程回调地址
-	codexDeviceUserCodeURL       = "https://auth.openai.com/api/accounts/deviceauth/usercode"     // Device 流程获取 user_code 的地址
-	codexDeviceTokenURL          = "https://auth.openai.com/api/accounts/deviceauth/token"        // Device 流程轮询 token 的地址
-	codexDeviceVerificationURL   = "https://auth.openai.com/codex/device"                         // Device 流程用户验证页面
-	codexOAuthScope              = "openid profile email offline_access"                           // OAuth 请求的权限范围
-	codexJWTClaimPath            = "https://api.openai.com/auth"                                  // JWT 中 OpenAI 自定义 claims 路径
-	codexDeviceDefaultInterval   = 5 * time.Second                                                // Device 流程默认轮询间隔
-	codexDeviceSessionExpiration = 15 * time.Minute                                               // Device 流程会话过期时间
+	codexProvider                = "codex"                                                    // 提供者标识
+	codexOAuthClientID           = "app_EMoamEEZ73f0CkXaXp7hrann"                             // OAuth 客户端 ID
+	codexOAuthAuthorizeURL       = "https://auth.openai.com/oauth/authorize"                  // OAuth 授权页面地址
+	codexOAuthTokenURL           = "https://auth.openai.com/oauth/token"                      // OAuth Token 交换地址
+	codexOAuthRedirectURI        = "http://localhost:1455/auth/callback"                      // OAuth 回调地址（本地）
+	codexDeviceRedirectURI       = "https://auth.openai.com/deviceauth/callback"              // Device 流程回调地址
+	codexDeviceUserCodeURL       = "https://auth.openai.com/api/accounts/deviceauth/usercode" // Device 流程获取 user_code 的地址
+	codexDeviceTokenURL          = "https://auth.openai.com/api/accounts/deviceauth/token"    // Device 流程轮询 token 的地址
+	codexDeviceVerificationURL   = "https://auth.openai.com/codex/device"                     // Device 流程用户验证页面
+	codexOAuthScope              = "openid profile email offline_access"                      // OAuth 请求的权限范围
+	codexJWTClaimPath            = "https://api.openai.com/auth"                              // JWT 中 OpenAI 自定义 claims 路径
+	codexDeviceDefaultInterval   = 5 * time.Second                                            // Device 流程默认轮询间隔
+	codexDeviceSessionExpiration = 15 * time.Minute                                           // Device 流程会话过期时间
 )
 
 // CodexProvider 实现了 Provider 接口，提供 Codex (OpenAI) 的认证能力
@@ -347,8 +347,8 @@ func (p *CodexProvider) Refresh(ctx context.Context, account *model.PoolAccount)
 	if err != nil {
 		return nil, err
 	}
-	var oauthKey codexOAuthKey
-	if err := common.UnmarshalJsonStr(raw, &oauthKey); err != nil {
+	oauthKey, err := parseCodexOAuthKey(raw)
+	if err != nil {
 		return nil, fmt.Errorf("codex oauth credential is invalid")
 	}
 	if strings.TrimSpace(oauthKey.RefreshToken) == "" {
@@ -382,12 +382,117 @@ func (p *CodexProvider) BuildChannelKey(account *model.PoolAccount) (string, err
 	if strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("codex account credential is empty")
 	}
-	return raw, nil
+	oauthKey, err := parseCodexOAuthKey(raw)
+	if err != nil {
+		return "", fmt.Errorf("codex channel credential is invalid")
+	}
+	if strings.TrimSpace(oauthKey.AccessToken) == "" {
+		return "", fmt.Errorf("codex channel: access_token is required")
+	}
+	if strings.TrimSpace(oauthKey.AccountID) == "" {
+		return "", fmt.Errorf("codex channel: account_id is required")
+	}
+	// Sub2api 导出的 access-token-only 凭据会带有大量额外字段和数字型过期时间。
+	// 这里统一压缩为 Codex relay adaptor 可解析的最小 OAuth JSON，避免热路径被无关字段类型绊倒。
+	data, err := common.Marshal(oauthKey)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // Summarize 将原始凭证转换为简短的摘要字符串，用于界面展示
 func (p *CodexProvider) Summarize(raw string) string {
 	return model.NormalizeAccountPoolCredentialSummary(raw)
+}
+
+// parseCodexOAuthKey 以宽松方式解析 Codex OAuth 凭据。
+// 原生 OAuth 登录写入的是字符串型 expired，而 Sub2api 导出的 access-token-only
+// 凭据常把 expired/expires_at 写成 Unix 数字，并且可能只提供 access_token 而没有
+// refresh_token。直接反序列化到 codexOAuthKey 会因为字段类型不一致失败，因此这里先
+// 解析为 map，再提取热路径真正需要的字段。
+func parseCodexOAuthKey(raw string) (*codexOAuthKey, error) {
+	var payload map[string]any
+	if err := common.UnmarshalJsonStr(raw, &payload); err != nil {
+		return nil, err
+	}
+	key := &codexOAuthKey{
+		IDToken:      readCodexOAuthString(payload, "id_token", "idToken"),
+		AccessToken:  readCodexOAuthString(payload, "access_token", "accessToken"),
+		RefreshToken: readCodexOAuthString(payload, "refresh_token", "refreshToken"),
+		AccountID:    readCodexOAuthString(payload, "account_id", "accountId", "chatgpt_account_id"),
+		LastRefresh:  readCodexOAuthString(payload, "last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt"),
+		Email:        readCodexOAuthString(payload, "email"),
+		Type:         firstNonEmptyCodexOAuthString(readCodexOAuthString(payload, "type"), readCodexOAuthString(payload, "provider"), readCodexOAuthString(payload, "platform")),
+		Expired:      readCodexOAuthString(payload, "expired", "expires_at", "expiresAt", "expiry", "expires"),
+	}
+	if strings.TrimSpace(key.AccountID) == "" {
+		if accountID, ok := extractCodexAccountIDFromJWT(key.AccessToken); ok {
+			key.AccountID = accountID
+		}
+	}
+	if strings.TrimSpace(key.Email) == "" {
+		if email, ok := extractEmailFromJWT(key.AccessToken); ok {
+			key.Email = email
+		}
+	}
+	if strings.TrimSpace(key.Type) == "" {
+		key.Type = codexProvider
+	}
+	return key, nil
+}
+
+// readCodexOAuthString 从 Codex OAuth 凭据中读取字符串字段。
+// 外部导入来源可能使用不同字段名，也可能把过期时间写成数字；这里统一转成字符串，
+// 让 refresh 和 relay key 构造共享同一套兼容规则。
+func readCodexOAuthString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return trimmed
+			}
+		case fmt.Stringer:
+			if trimmed := strings.TrimSpace(typed.String()); trimmed != "" {
+				return trimmed
+			}
+		case float64:
+			if typed > 0 {
+				return strconv.FormatInt(int64(typed), 10)
+			}
+		case int:
+			if typed > 0 {
+				return strconv.Itoa(typed)
+			}
+		case int64:
+			if typed > 0 {
+				return strconv.FormatInt(typed, 10)
+			}
+		case bool:
+			return strconv.FormatBool(typed)
+		default:
+			text := strings.TrimSpace(fmt.Sprintf("%v", typed))
+			if text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// firstNonEmptyCodexOAuthString 返回第一个非空字符串。
+// 用于在 type、provider、platform 等等价字段之间选择稳定的凭据类型。
+func firstNonEmptyCodexOAuthString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // buildCredential 根据 token 交换结果构建完整的账号凭证对象。
@@ -478,7 +583,7 @@ type codexDeviceUserCodeResponse struct {
 	DeviceAuthID string `json:"device_auth_id"` // 设备授权会话 ID
 	UserCode     string `json:"user_code"`      // 用户需要输入的验证码
 	UserCodeAlt  string `json:"usercode"`       // 备选字段名（兼容不同 API 版本）
-	Interval     any    `json:"interval"`        // 建议的轮询间隔（秒）
+	Interval     any    `json:"interval"`       // 建议的轮询间隔（秒）
 }
 
 // codexDeviceTokenResponse 表示 Device Code 流程中服务器返回的 token 响应
@@ -711,7 +816,7 @@ func requestCodexToken(ctx context.Context, client *http.Client, form url.Values
 		AccessToken:  strings.TrimSpace(payload.AccessToken),
 		RefreshToken: strings.TrimSpace(payload.RefreshToken),
 		// 根据 expires_in 计算绝对过期时间
-		ExpiresAt:    time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
+		ExpiresAt: time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
 	}, nil
 }
 
@@ -731,16 +836,16 @@ func buildCodexAuthorizeURL(state string, challenge string) (string, error) {
 		return "", err
 	}
 	q := u.Query()
-	q.Set("response_type", "code")                              // 授权码模式
-	q.Set("client_id", codexOAuthClientID)                      // 客户端 ID
-	q.Set("redirect_uri", codexOAuthRedirectURI)                // 回调地址
-	q.Set("scope", codexOAuthScope)                             // 权限范围
-	q.Set("code_challenge", challenge)                          // PKCE 挑战码
-	q.Set("code_challenge_method", "S256")                      // PKCE 编码方式
-	q.Set("state", state)                                       // 防 CSRF 状态值
-	q.Set("id_token_add_organizations", "true")                 // 请求获取组织信息
-	q.Set("codex_cli_simplified_flow", "true")                  // Codex CLI 简化流程标志
-	q.Set("originator", "codex_cli_rs")                         // 来源标识
+	q.Set("response_type", "code")               // 授权码模式
+	q.Set("client_id", codexOAuthClientID)       // 客户端 ID
+	q.Set("redirect_uri", codexOAuthRedirectURI) // 回调地址
+	q.Set("scope", codexOAuthScope)              // 权限范围
+	q.Set("code_challenge", challenge)           // PKCE 挑战码
+	q.Set("code_challenge_method", "S256")       // PKCE 编码方式
+	q.Set("state", state)                        // 防 CSRF 状态值
+	q.Set("id_token_add_organizations", "true")  // 请求获取组织信息
+	q.Set("codex_cli_simplified_flow", "true")   // Codex CLI 简化流程标志
+	q.Set("originator", "codex_cli_rs")          // 来源标识
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }

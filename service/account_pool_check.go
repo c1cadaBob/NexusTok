@@ -723,7 +723,7 @@ func checkPoolAccount(ctx context.Context, account *model.PoolAccount) (*Account
 	provider, ok := accountauth.DefaultManager().Provider(result.Provider)
 	checkCtx, cancel := context.WithTimeout(ctx, accountPoolCheckTimeout)
 	defer cancel()
-	if ok && account.AuthType == model.AccountPoolAuthTypeOfficialOAuth && provider.RefreshLead() != nil {
+	if ok && account.AuthType == model.AccountPoolAuthTypeOfficialOAuth && provider.RefreshLead() != nil && poolAccountCredentialAllowsRefresh(account) {
 		credential, refreshErr := provider.Refresh(checkCtx, account)
 		if refreshErr != nil {
 			markPoolAccountCheckFailed(account, checkedAt, refreshErr)

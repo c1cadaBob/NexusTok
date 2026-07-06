@@ -159,6 +159,9 @@ func shouldRefreshPoolAccountCredential(account *model.PoolAccount, now int64) b
 	if account == nil || strings.TrimSpace(account.Credentials) == "" {
 		return false
 	}
+	if !poolAccountCredentialAllowsRefresh(account) {
+		return false
+	}
 	if account.NextRetryTime > now {
 		return false
 	}

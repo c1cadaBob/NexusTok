@@ -259,6 +259,29 @@
 4. 更完整的健康看板、批量状态修改、导入导出和操作审计。
 5. 更细的调度策略验收测试，包括成功率优先和额度不足跳过。
 
+### 2026-07-06：兼容 Sub2api access-token-only Codex 账号
+
+已确认 Sub2api 可测试成功、但 NexusTok 原生账号池检测失败的根因：
+
+1. Sub2api 导出的 Codex 账号是 `credential_mode=access_token_only`，通常只有当前可用的 `access_token`，没有可刷新用的 `refresh_token`。
+2. Sub2api 的测试流程直接使用当前 `access_token` 调模型，因此只要 token 仍在有效期内就能成功。
+3. NexusTok 原生账号池之前把 `official_oauth` 账号统一当作可刷新 OAuth 账号处理，检测和后台自动刷新会先调用 provider refresh；对 access-token-only 账号来说，这一步必然失败。
+4. Sub2api 凭据里的 `expired`/`expires_at` 可能是 Unix 数字，而原生 Codex OAuth 结构原先按字符串解析，也会导致凭据被误判为无效。
+
+已完成的修复目标：
+
+1. Codex OAuth 凭据解析改为宽松读取，兼容 `expired`/`expires_at` 为数字或字符串，并支持 `account_id`、`accountId`、`chatgpt_account_id` 等字段名。
+2. Codex 账号构造 relay channel key 时，会把外部导入凭据规范化为最小 OAuth JSON，只保留 relay 热路径需要的字段，避免额外元数据影响请求。
+3. 对明确标记 `credential_mode=access_token_only` 或 `refreshable=false` 的官方 OAuth 账号，人工检测和后台自动刷新会跳过 refresh，改为验证凭据能否构造可调用 key。
+4. 保持原生 OAuth 登录账号默认可刷新，避免影响已有带 `refresh_token` 的账号。
+5. 新增单元测试覆盖 access-token-only 账号检测成功、自动刷新跳过、Codex key 规范化和缺少 `refresh_token` 时的明确错误。
+
+后续注意事项：
+
+1. access-token-only 账号无法长期自动续期，过期后需要重新导入或补齐真正可刷新的 OAuth 凭据。
+2. 已经被旧逻辑标记为不可用的账号，需要重新执行单账号检测或批量检测，检测成功后会清除旧错误和冷却状态。
+3. 账号池组元信息应与组内账号保持一致，例如 Codex 官方 OAuth 账号组不应配置成无关平台或 API key 类型，否则后续筛选和展示可能继续产生歧义。
+
 ### 2026-07-06：账号组级资源限制闭环
 
 已补齐原生账号池分组级基础资源限制：

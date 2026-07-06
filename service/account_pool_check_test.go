@@ -184,6 +184,63 @@ func TestCheckPoolAccountMarksInvalidCredentialUnavailable(t *testing.T) {
 	require.EqualValues(t, 1, updated.FailedCount)
 }
 
+func TestCheckPoolAccountAcceptsAccessTokenOnlyOAuthCredential(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	account := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               "check-access-token-only",
+		Platform:           "codex",
+		AuthType:           model.AccountPoolAuthTypeOfficialOAuth,
+		CredentialProvider: "codex",
+		Credentials: encryptedCheckCredential(t, `{
+			"access_token": "access-token",
+			"account_id": "account-id",
+			"expired": 1791103379,
+			"credential_mode": "access_token_only",
+			"refreshable": false,
+			"type": "codex"
+		}`),
+		CredentialMetadata: `{"credential_mode":"access_token_only","refreshable":false}`,
+		CredentialAttrs:    `{"credential_mode":"access_token_only","refreshable":"false"}`,
+		Status:             common.ChannelStatusAutoDisabled,
+		Schedulable:        false,
+		Unavailable:        true,
+		LastError:          "old refresh error",
+		NextRetryTime:      common.GetTimestamp() + 3600,
+	}
+	require.NoError(t, model.DB.Create(account).Error)
+
+	result, err := CheckPoolAccount(context.Background(), account.Id)
+
+	require.NoError(t, err)
+	require.True(t, result.Checked)
+	require.True(t, result.Success)
+	require.False(t, result.Refreshed)
+	require.Equal(t, "credential is available", result.Message)
+
+	updated, err := model.GetPoolAccountById(account.Id)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.False(t, updated.Unavailable)
+	require.Empty(t, updated.LastError)
+	require.Zero(t, updated.NextRetryTime)
+	require.NotZero(t, updated.LastCheckedTime)
+	require.EqualValues(t, 1, updated.SuccessCount)
+}
+
+func TestShouldRefreshPoolAccountCredentialSkipsAccessTokenOnly(t *testing.T) {
+	account := &model.PoolAccount{
+		AuthType:        model.AccountPoolAuthTypeOfficialOAuth,
+		Credentials:     "encrypted-or-plain",
+		CredentialAttrs: `{"credential_mode":"access_token_only","refreshable":"false"}`,
+		NextRefreshTime: 0,
+	}
+
+	require.False(t, shouldRefreshPoolAccountCredential(account, common.GetTimestamp()))
+}
+
 func TestCheckPoolAccountKeepsManualDisabledAccountUnschedulableAfterRefresh(t *testing.T) {
 	setupAccountPoolCheckTest(t)
 	accountauth.RegisterProvider(fakeCheckRefreshProvider{})
