@@ -65,6 +65,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from '@/components/status-badge'
@@ -123,6 +124,9 @@ type GroupFormState = {
   dailyRequestLimit: string
   dailyQuotaLimit: string
   dailyLimitAction: string
+  autoCheckEnabled: boolean
+  autoCheckIntervalMinutes: string
+  autoCheckLimit: string
 }
 
 type AccountFormState = {
@@ -160,6 +164,9 @@ const emptyGroupForm: GroupFormState = {
   dailyRequestLimit: '0',
   dailyQuotaLimit: '0',
   dailyLimitAction: 'cooldown',
+  autoCheckEnabled: false,
+  autoCheckIntervalMinutes: '60',
+  autoCheckLimit: '100',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -348,6 +355,23 @@ function groupLimitSummary(
     )}`,
   ]
   return parts.join(' · ')
+}
+
+function groupAutoCheckSummary(
+  group: AccountPoolGroup,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  if (!group.auto_check_enabled) {
+    return t('Auto check off')
+  }
+  return [
+    t('Auto check every {{minutes}} min', {
+      minutes: group.auto_check_interval_minutes || 60,
+    }),
+    t('Auto check limit {{limit}}', {
+      limit: group.auto_check_limit || 100,
+    }),
+  ].join(' · ')
 }
 
 function groupDailyLimitTitle(
@@ -775,6 +799,11 @@ export function AccountPool() {
       dailyRequestLimit: String(group.daily_request_limit || 0),
       dailyQuotaLimit: String(group.daily_quota_limit || 0),
       dailyLimitAction: group.daily_limit_action || 'cooldown',
+      autoCheckEnabled: Boolean(group.auto_check_enabled),
+      autoCheckIntervalMinutes: String(
+        group.auto_check_interval_minutes || 60
+      ),
+      autoCheckLimit: String(group.auto_check_limit || 100),
     })
     setGroupFormOpen(true)
   }
@@ -800,6 +829,11 @@ export function AccountPool() {
         daily_request_limit: numberOrZero(groupForm.dailyRequestLimit),
         daily_quota_limit: numberOrZero(groupForm.dailyQuotaLimit),
         daily_limit_action: groupForm.dailyLimitAction,
+        auto_check_enabled: groupForm.autoCheckEnabled,
+        auto_check_interval_minutes: numberOrZero(
+          groupForm.autoCheckIntervalMinutes
+        ),
+        auto_check_limit: numberOrZero(groupForm.autoCheckLimit),
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -1424,6 +1458,9 @@ export function AccountPool() {
                   <div className='text-muted-foreground truncate text-xs'>
                     {groupLimitSummary(group, t)}
                   </div>
+                  <div className='text-muted-foreground truncate text-xs'>
+                    {groupAutoCheckSummary(group, t)}
+                  </div>
                 </button>
               )
             })}
@@ -1459,7 +1496,7 @@ export function AccountPool() {
                           selectedGroup.max_concurrency > 0
                             ? selectedGroup.max_concurrency
                             : t('Unlimited')
-                        }`
+                        } · ${groupAutoCheckSummary(selectedGroup, t)}`
                       : t('Select an account group')
                     : activeView === 'auth-files'
                       ? t(
@@ -1601,6 +1638,34 @@ export function AccountPool() {
                       ) : null}
                     </div>
                   </div>
+                </div>
+              ) : null}
+              {selectedGroup ? (
+                <div className='border-border text-muted-foreground flex flex-wrap gap-3 border-b p-3 text-xs'>
+                  <span>{groupAutoCheckSummary(selectedGroup, t)}</span>
+                  {selectedGroup.auto_check_enabled ? (
+                    <>
+                      <span>
+                        {t('Last auto check')}:&nbsp;
+                        {selectedGroup.auto_check_last_time
+                          ? formatTimestamp(selectedGroup.auto_check_last_time)
+                          : '-'}
+                      </span>
+                      <span>
+                        {t('Next auto check')}:&nbsp;
+                        {selectedGroup.auto_check_next_time
+                          ? formatTimestamp(selectedGroup.auto_check_next_time)
+                          : '-'}
+                      </span>
+                      {selectedGroup.auto_check_last_task_id ? (
+                        <span>
+                          {t('Last auto check task #{{id}}', {
+                            id: selectedGroup.auto_check_last_task_id,
+                          })}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
               ) : null}
               <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
@@ -2393,7 +2458,10 @@ export function AccountPool() {
               }
             />
             <Textarea
+              id='account-pool-group-model-mapping'
+              name='model_mapping'
               className='sm:col-span-2'
+              autoComplete='off'
               placeholder={t('Model Mapping')}
               value={groupForm.modelMapping}
               onChange={(event) =>
@@ -2481,8 +2549,66 @@ export function AccountPool() {
                 </SelectGroup>
               </SelectContent>
             </Select>
+            <div className='flex items-center justify-between gap-4 rounded-lg border p-3 sm:col-span-2'>
+              <div>
+                <div className='text-sm font-medium'>{t('Auto check')}</div>
+                <div className='text-muted-foreground text-xs'>
+                  {groupForm.autoCheckEnabled
+                    ? t('Auto check enabled')
+                    : t('Auto check off')}
+                </div>
+              </div>
+              <Switch
+                id='account-pool-group-auto-check-enabled'
+                name='auto_check_enabled'
+                aria-label={t('Auto check')}
+                checked={groupForm.autoCheckEnabled}
+                onCheckedChange={(checked) =>
+                  setGroupForm((current) => ({
+                    ...current,
+                    autoCheckEnabled: !!checked,
+                  }))
+                }
+              />
+            </div>
+            <Input
+              id='account-pool-group-auto-check-interval-minutes'
+              name='auto_check_interval_minutes'
+              type='number'
+              min='1'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Auto check interval minutes')}
+              value={groupForm.autoCheckIntervalMinutes}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  autoCheckIntervalMinutes: event.target.value,
+                }))
+              }
+            />
+            <Input
+              id='account-pool-group-auto-check-limit'
+              name='auto_check_limit'
+              type='number'
+              min='1'
+              max='100'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Auto check account limit')}
+              value={groupForm.autoCheckLimit}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  autoCheckLimit: event.target.value,
+                }))
+              }
+            />
             <Textarea
+              id='account-pool-group-settings'
+              name='settings'
               className='sm:col-span-2'
+              autoComplete='off'
               placeholder={t('Settings JSON')}
               value={groupForm.settings}
               onChange={(event) =>

@@ -159,6 +159,50 @@ func TestAccountPoolGroupResponseIncludesDailyLimitState(t *testing.T) {
 	require.Equal(t, model.AccountPoolDailyLimitActionDisable, item["daily_limit_action"])
 }
 
+func TestAccountPoolGroupResponseIncludesAutoCheckSettings(t *testing.T) {
+	group := &model.AccountPoolGroup{
+		Id:                       18,
+		Name:                     "auto-check-response",
+		Platform:                 "codex",
+		AuthType:                 model.AccountPoolAuthTypeAPIKey,
+		Source:                   model.AccountPoolGroupSourceNative,
+		Status:                   common.ChannelStatusEnabled,
+		AutoCheckEnabled:         true,
+		AutoCheckIntervalMinutes: 15,
+		AutoCheckLimit:           3,
+		AutoCheckLastTime:        1700000000,
+		AutoCheckNextTime:        1700000900,
+		AutoCheckLastTaskId:      99,
+	}
+
+	item := accountPoolGroupResponse(group)
+	require.Equal(t, true, item["auto_check_enabled"])
+	require.Equal(t, 15, item["auto_check_interval_minutes"])
+	require.Equal(t, 3, item["auto_check_limit"])
+	require.EqualValues(t, 1700000000, item["auto_check_last_time"])
+	require.EqualValues(t, 1700000900, item["auto_check_next_time"])
+	require.Equal(t, 99, item["auto_check_last_task_id"])
+
+	option, ok := accountPoolGroupOptionResponse(&model.AccountPoolGroup{
+		Id:                       19,
+		Name:                     "auto-check-option",
+		Platform:                 "codex",
+		AuthType:                 model.AccountPoolAuthTypeAPIKey,
+		Source:                   model.AccountPoolGroupSourceNative,
+		Status:                   common.ChannelStatusEnabled,
+		AutoCheckEnabled:         true,
+		AutoCheckIntervalMinutes: 20,
+		AutoCheckLimit:           5,
+		AutoCheckLastTaskId:      100,
+		Stats:                    map[string]int64{"total": 1, "enabled": 1},
+	})
+	require.True(t, ok)
+	require.Equal(t, true, option["auto_check_enabled"])
+	require.Equal(t, 20, option["auto_check_interval_minutes"])
+	require.Equal(t, 5, option["auto_check_limit"])
+	require.Equal(t, 100, option["auto_check_last_task_id"])
+}
+
 func TestPoolAccountResponseIncludesDailyLimitAction(t *testing.T) {
 	account := &model.PoolAccount{
 		Id:               12,
@@ -235,6 +279,34 @@ func TestAccountPoolGroupRequestSettingsKeepsLegacyMaxConcurrencyWhenFieldAbsent
 	require.Equal(t, 0, group.MaxConcurrency)
 	require.JSONEq(t, `{"max_concurrency":2}`, group.Settings)
 	require.Equal(t, 2, group.GetMaxConcurrency())
+}
+
+func TestAccountPoolGroupRequestNormalizesAutoCheckSettings(t *testing.T) {
+	enabled := true
+	tooLargeLimit := 200
+	zeroInterval := 0
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:                     "auto-check-request",
+		Platform:                 "codex",
+		AutoCheckEnabled:         &enabled,
+		AutoCheckIntervalMinutes: &zeroInterval,
+		AutoCheckLimit:           &tooLargeLimit,
+	})
+
+	require.NoError(t, err)
+	require.True(t, group.AutoCheckEnabled)
+	require.Equal(t, model.AccountPoolAutoCheckDefaultIntervalMinutes, group.AutoCheckIntervalMinutes)
+	require.Equal(t, model.AccountPoolAutoCheckMaxLimit, group.AutoCheckLimit)
+
+	disabled := false
+	negativeLimit := -1
+	updates, err := accountPoolGroupUpdateMap(accountPoolGroupUpsertRequest{
+		AutoCheckEnabled: &disabled,
+		AutoCheckLimit:   &negativeLimit,
+	})
+	require.NoError(t, err)
+	require.Equal(t, false, updates["auto_check_enabled"])
+	require.Equal(t, model.AccountPoolAutoCheckDefaultLimit, updates["auto_check_limit"])
 }
 
 func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {

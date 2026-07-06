@@ -55,6 +55,12 @@ export type AccountPoolGroup = {
   daily_used_quota: number
   daily_reset_time: number
   daily_limit_state?: AccountPoolDailyLimitState
+  auto_check_enabled: boolean
+  auto_check_interval_minutes: number
+  auto_check_limit: number
+  auto_check_last_time: number
+  auto_check_next_time: number
+  auto_check_last_task_id: number
   created_time: number
   updated_time: number
   stats?: AccountPoolStats
@@ -181,6 +187,9 @@ export type AccountPoolGroupPayload = {
   daily_request_limit?: number
   daily_quota_limit?: number
   daily_limit_action?: string
+  auto_check_enabled?: boolean
+  auto_check_interval_minutes?: number
+  auto_check_limit?: number
 }
 
 export type PoolAccountPayload = {
@@ -408,6 +417,12 @@ export type AccountPoolGroupOption = {
   external_group_key?: string
   strategy: string
   daily_limit_state?: AccountPoolDailyLimitState
+  auto_check_enabled?: boolean
+  auto_check_interval_minutes?: number
+  auto_check_limit?: number
+  auto_check_last_time?: number
+  auto_check_next_time?: number
+  auto_check_last_task_id?: number
   stats?: AccountPoolStats
 }
 

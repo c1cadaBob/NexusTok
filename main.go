@@ -156,6 +156,9 @@ func main() {
 	// 启动账号池凭证自动刷新任务
 	service.StartAccountPoolCredentialAutoRefreshTask()
 
+	// 启动账号池自动可用性检测任务
+	service.StartAccountPoolAutoCheckTask()
+
 	// 启动订阅配额重置任务
 	// 支持每日、每周、每月、自定义周期的配额重置
 	service.StartSubscriptionQuotaResetTask()

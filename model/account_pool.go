@@ -123,6 +123,13 @@ const (
 	PoolAccountCheckTaskStatusCompleted = "completed"
 	// PoolAccountCheckTaskStatusFailed 表示账号检测任务因内部错误中断，未能完成全部账号检测。
 	PoolAccountCheckTaskStatusFailed = "failed"
+
+	// AccountPoolAutoCheckDefaultIntervalMinutes 表示分组自动检测的默认间隔。
+	AccountPoolAutoCheckDefaultIntervalMinutes = 60
+	// AccountPoolAutoCheckDefaultLimit 表示每次自动检测默认覆盖的账号数量上限。
+	AccountPoolAutoCheckDefaultLimit = 100
+	// AccountPoolAutoCheckMaxLimit 表示每次自动检测最多允许覆盖的账号数量。
+	AccountPoolAutoCheckMaxLimit = 100
 )
 
 var (
@@ -166,8 +173,16 @@ type AccountPoolGroup struct {
 	UsedQuota         int64   `json:"used_quota" gorm:"bigint;default:0"`                                          // 分组累计消耗配额
 	DailyUsedQuota    int64   `json:"daily_used_quota" gorm:"bigint;default:0"`                                    // 当日已消耗配额
 	DailyResetTime    int64   `json:"daily_reset_time" gorm:"bigint;default:0;index"`                              // 当日统计窗口开始时间
-	CreatedTime       int64   `json:"created_time" gorm:"bigint"`                                                  // 创建时间
-	UpdatedTime       int64   `json:"updated_time" gorm:"bigint"`                                                  // 更新时间
+	AutoCheckEnabled  bool    `json:"auto_check_enabled" gorm:"default:false;index"`                               // 是否启用分组级账号可用性定时检测
+	// AutoCheckIntervalMinutes 是自动检测间隔，单位为分钟；小于等于 0 时会回退到安全默认值。
+	AutoCheckIntervalMinutes int `json:"auto_check_interval_minutes" gorm:"default:60"`
+	// AutoCheckLimit 是单次自动检测最多覆盖的账号数，过大时会被限制到全局安全上限。
+	AutoCheckLimit      int   `json:"auto_check_limit" gorm:"default:100"`
+	AutoCheckLastTime   int64 `json:"auto_check_last_time" gorm:"bigint;default:0"`       // 最近一次自动检测任务创建时间
+	AutoCheckNextTime   int64 `json:"auto_check_next_time" gorm:"bigint;default:0;index"` // 下次自动检测任务计划时间
+	AutoCheckLastTaskId int   `json:"auto_check_last_task_id" gorm:"default:0"`           // 最近一次自动检测任务 ID
+	CreatedTime         int64 `json:"created_time" gorm:"bigint"`                         // 创建时间
+	UpdatedTime         int64 `json:"updated_time" gorm:"bigint"`                         // 更新时间
 
 	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
 }
@@ -199,6 +214,49 @@ func (group *AccountPoolGroup) GetMaxConcurrency() int {
 		return group.MaxConcurrency
 	}
 	return group.GetSettings().MaxConcurrency
+}
+
+// NormalizeAccountPoolAutoCheckIntervalMinutes 规范化分组自动检测间隔。
+// 自动检测调度器按分钟级扫描，间隔必须为正数；旧数据或错误请求写入 0/负数时，
+// 统一回退到默认值，避免任务被每一轮扫描反复创建。
+func NormalizeAccountPoolAutoCheckIntervalMinutes(minutes int) int {
+	if minutes <= 0 {
+		return AccountPoolAutoCheckDefaultIntervalMinutes
+	}
+	return minutes
+}
+
+// NormalizeAccountPoolAutoCheckLimit 规范化单次自动检测账号数量。
+// 自动检测复用后台检测任务队列，单任务需要受固定上限保护，避免一个大分组长期占用
+// worker 并拖慢管理员手动检测。
+func NormalizeAccountPoolAutoCheckLimit(limit int) int {
+	if limit <= 0 {
+		return AccountPoolAutoCheckDefaultLimit
+	}
+	if limit > AccountPoolAutoCheckMaxLimit {
+		return AccountPoolAutoCheckMaxLimit
+	}
+	return limit
+}
+
+// GetAutoCheckIntervalMinutes 返回分组自动检测间隔。
+// 历史数据或 API 请求可能写入 0/负数；这里统一回退到默认 60 分钟，避免调度器出现
+// 立即重复创建任务的忙循环。
+func (group *AccountPoolGroup) GetAutoCheckIntervalMinutes() int {
+	if group == nil {
+		return AccountPoolAutoCheckDefaultIntervalMinutes
+	}
+	return NormalizeAccountPoolAutoCheckIntervalMinutes(group.AutoCheckIntervalMinutes)
+}
+
+// GetAutoCheckLimit 返回单次自动检测账号数量上限。
+// 自动检测最终会创建后台检测任务，单任务最多检测 100 个账号；此处和任务层保持同一上限，
+// 防止定时扫描在大分组上长时间占用 worker。
+func (group *AccountPoolGroup) GetAutoCheckLimit() int {
+	if group == nil {
+		return AccountPoolAutoCheckDefaultLimit
+	}
+	return NormalizeAccountPoolAutoCheckLimit(group.AutoCheckLimit)
 }
 
 // NormalizeAccountPoolDailyLimitAction 规范化每日限制耗尽后的处理策略。
@@ -575,6 +633,17 @@ func (group *AccountPoolGroup) normalize() {
 	}
 	if group.DailyResetTime < 0 {
 		group.DailyResetTime = 0
+	}
+	group.AutoCheckIntervalMinutes = NormalizeAccountPoolAutoCheckIntervalMinutes(group.AutoCheckIntervalMinutes)
+	group.AutoCheckLimit = NormalizeAccountPoolAutoCheckLimit(group.AutoCheckLimit)
+	if group.AutoCheckLastTime < 0 {
+		group.AutoCheckLastTime = 0
+	}
+	if group.AutoCheckNextTime < 0 {
+		group.AutoCheckNextTime = 0
+	}
+	if group.AutoCheckLastTaskId < 0 {
+		group.AutoCheckLastTaskId = 0
 	}
 }
 
