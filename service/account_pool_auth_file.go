@@ -952,6 +952,7 @@ func normalizeCodexAuthFileMetadata(metadata map[string]any) map[string]any {
 	copyAuthFileStringField(normalized, "id_token", []string{"idToken"}, []string{"token_data", "tokenData", "token"}, "id_token", "idToken")
 	copyAuthFileStringField(normalized, "email", nil, []string{"token_data", "tokenData", "token"}, "email")
 	copyAuthFileStringField(normalized, "account_id", []string{"accountId"}, []string{"token_data", "tokenData", "token"}, "account_id", "accountId")
+	copyAuthFileStringField(normalized, "plan_type", []string{"planType", "chatgpt_plan_type", "chatgptPlanType"}, []string{"token_data", "tokenData", "token", "extra"}, "plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType")
 	copyAuthFileAnyField(normalized, "last_refresh", []string{"lastRefresh", "last_refreshed_at", "lastRefreshedAt"}, []string{"token_data", "tokenData", "token"}, "last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt")
 	copyAuthFileAnyField(normalized, "expired", []string{"expire", "expires_at", "expiresAt", "expiry", "expires"}, []string{"token_data", "tokenData", "token"}, "expired", "expire", "expires_at", "expiresAt", "expiry", "expires")
 
@@ -967,6 +968,14 @@ func normalizeCodexAuthFileMetadata(metadata map[string]any) map[string]any {
 		for _, token := range []string{readAuthFileString(normalized, "id_token"), readAuthFileString(normalized, "access_token")} {
 			if email, ok := ExtractEmailFromJWT(token); ok {
 				normalized["email"] = email
+				break
+			}
+		}
+	}
+	if strings.TrimSpace(readAuthFileString(normalized, "plan_type")) == "" {
+		for _, token := range []string{readAuthFileString(normalized, "id_token"), readAuthFileString(normalized, "access_token")} {
+			if planType, ok := ExtractCodexPlanTypeFromJWT(token); ok {
+				normalized["plan_type"] = planType
 				break
 			}
 		}

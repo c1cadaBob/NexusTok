@@ -2828,6 +2828,163 @@ func accountPoolAuthFileBatchImportResponse(result *service.AccountPoolAuthFileB
 	}
 }
 
+var accountPoolSubscriptionTypeMetadataPaths = [][]string{
+	{"plan_type"},
+	{"planType"},
+	{"chatgpt_plan_type"},
+	{"chatgptPlanType"},
+	{"account_type"},
+	{"accountType"},
+	{"subscription_type"},
+	{"subscriptionType"},
+	{"subscription_plan"},
+	{"subscriptionPlan"},
+	{"tier_id"},
+	{"tierId"},
+	{"account", "plan_type"},
+	{"account", "planType"},
+	{"entitlement", "subscription_plan"},
+	{"entitlement", "subscriptionPlan"},
+	{"subscription", "plan_type"},
+	{"subscription", "planType"},
+	{"subscription", "type"},
+	{"extra", "plan_type"},
+	{"extra", "planType"},
+	{"extra", "chatgpt_plan_type"},
+	{"extra", "chatgptPlanType"},
+	{"extra", "account", "plan_type"},
+	{"extra", "entitlement", "subscription_plan"},
+	{"extra", "subscription", "plan_type"},
+	{"extra", "tier_id"},
+	{"extra", "tierId"},
+}
+
+// accountPoolAuthFileSubscriptionType 从认证文件元数据中派生账号订阅类型。
+// 该值只用于管理页展示，不作为权限或调度判定的唯一依据。这里优先读取导入文件中
+// 已存在的 plan_type / subscription_plan / tier_id 等字段；如果是 Codex/OpenAI
+// OAuth 凭据且元数据缺少显式字段，则尝试从 JWT payload 的 chatgpt_plan_type 中补全。
+func accountPoolAuthFileSubscriptionType(authFile *model.AccountPoolAuthFile) string {
+	if authFile == nil {
+		return ""
+	}
+	metadata := parseAccountPoolAuthFileMetadata(authFile.CredentialMetadata)
+	if value := accountPoolSubscriptionTypeFromMetadata(metadata); value != "" {
+		return value
+	}
+	if accountPoolAuthFileLooksLikeCodex(authFile) {
+		for _, path := range [][]string{
+			{"id_token"},
+			{"access_token"},
+			{"token_data", "id_token"},
+			{"token_data", "access_token"},
+			{"tokenData", "idToken"},
+			{"tokenData", "accessToken"},
+			{"token", "id_token"},
+			{"token", "access_token"},
+		} {
+			token := accountPoolMetadataStringAtPath(metadata, path...)
+			if planType, ok := service.ExtractCodexPlanTypeFromJWT(token); ok {
+				return normalizeAccountPoolSubscriptionType(planType)
+			}
+		}
+	}
+	// 兼容历史摘要：如果后续摘要中加入非敏感 plan_type，这里无需再改前端。
+	summary := parseAccountPoolAuthFileMetadata(authFile.CredentialSummary)
+	return accountPoolSubscriptionTypeFromMetadata(summary)
+}
+
+func parseAccountPoolAuthFileMetadata(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var metadata map[string]any
+	if err := common.UnmarshalJsonStr(raw, &metadata); err != nil {
+		return nil
+	}
+	return metadata
+}
+
+func accountPoolSubscriptionTypeFromMetadata(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, path := range accountPoolSubscriptionTypeMetadataPaths {
+		if value := normalizeAccountPoolSubscriptionType(accountPoolMetadataStringAtPath(metadata, path...)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func accountPoolMetadataStringAtPath(metadata map[string]any, path ...string) string {
+	if len(metadata) == 0 || len(path) == 0 {
+		return ""
+	}
+	var current any = metadata
+	for _, key := range path {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		value, ok := obj[key]
+		if !ok || value == nil {
+			return ""
+		}
+		current = value
+	}
+	switch value := current.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		return strings.TrimSpace(strconv.FormatFloat(value, 'f', -1, 64))
+	case int:
+		return strconv.Itoa(value)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", value))
+	}
+}
+
+func accountPoolAuthFileLooksLikeCodex(authFile *model.AccountPoolAuthFile) bool {
+	for _, value := range []string{authFile.Provider, authFile.Platform} {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "codex", "openai":
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAccountPoolSubscriptionType(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.Trim(value, `"'`)
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	if value == "" || value == "<nil>" {
+		return ""
+	}
+	switch value {
+	case "chatgptplus", "chatgpt_plus", "plus":
+		return "plus"
+	case "chatgptpro", "chatgpt_pro", "professional", "pro":
+		return "pro"
+	case "chatgptteam", "chatgpt_team", "team":
+		return "team"
+	case "self_serve_business", "self_serve_business_usage_based", "business":
+		return "business"
+	case "edu", "education", "chatgpt_k12", "k_12", "k12":
+		return "k12"
+	case "google_one_free", "aistudio_free", "free":
+		return "free"
+	case "google_ai_pro", "aistudio_paid":
+		return "pro"
+	case "gcp_enterprise", "enterprise":
+		return "enterprise"
+	default:
+		return value
+	}
+}
+
 func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
 	if authFile == nil {
 		return gin.H{}
@@ -2850,6 +3007,7 @@ func accountPoolAuthFileResponse(authFile *model.AccountPoolAuthFile) gin.H {
 		"status":             authFile.Status,
 		"file_digest":        authFile.FileDigest,
 		"credential_summary": authFile.CredentialSummary,
+		"subscription_type":  accountPoolAuthFileSubscriptionType(authFile),
 		"account_group":      accountGroup,
 		"account_groups":     groups,
 		"models":             authFile.Models,

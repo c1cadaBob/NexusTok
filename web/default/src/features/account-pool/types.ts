@@ -211,6 +211,7 @@ export type AccountPoolAuthFile = {
   status: number
   file_digest: string
   credential_summary: string
+  subscription_type?: string
   account_group?: string
   account_groups: string[]
   models: string

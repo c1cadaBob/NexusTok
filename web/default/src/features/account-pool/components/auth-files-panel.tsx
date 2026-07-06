@@ -248,6 +248,11 @@ function sourceText(authFile: AccountPoolAuthFile): string {
   return [authFile.platform, authFile.auth_type].filter(Boolean).join(' / ')
 }
 
+function subscriptionTypeText(authFile: AccountPoolAuthFile): string {
+  const value = authFile.subscription_type?.trim()
+  return value ? limitInlineText(value, 28) : '-'
+}
+
 function ruleText(
   authFile: AccountPoolAuthFile,
   t: (key: string) => string
@@ -489,16 +494,8 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
 
   return (
     <div className='flex min-h-0 flex-col'>
-      <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
-        <div className='min-w-0'>
-          <div className='truncate text-sm font-semibold'>
-            {t('Account Credentials')}
-          </div>
-          <div className='text-muted-foreground text-xs'>
-            {t('Showing all imported account credentials by default.')}
-          </div>
-        </div>
-        <div className='flex flex-wrap gap-2'>
+      <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-end'>
+        <div className='flex flex-wrap gap-2 lg:justify-end'>
           <Input
             className='w-[220px]'
             placeholder={t('Search credentials')}
@@ -564,6 +561,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
             <TableRow>
               <TableHead>{t('Account')}</TableHead>
               <TableHead>{t('Source')}</TableHead>
+              <TableHead>{t('Type')}</TableHead>
               <TableHead>{t('Groups')}</TableHead>
               <TableHead>{t('Rules')}</TableHead>
               <TableHead>{t('Status')}</TableHead>
@@ -579,6 +577,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                 formatCompactCredentialSummary(authFile.credential_summary)
               const groupText = assignedGroupsText(authFile)
               const sourceSummary = sourceText(authFile)
+              const subscriptionType = subscriptionTypeText(authFile)
               const ruleSummary = ruleText(authFile, t)
 
               return (
@@ -607,6 +606,18 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     >
                       {sourceSummary || '-'}
                     </div>
+                  </TableCell>
+                  <TableCell
+                    className='min-w-[90px] max-w-[130px]'
+                    title={`${t('Type')}: ${subscriptionType}`}
+                  >
+                    {subscriptionType === '-' ? (
+                      <span className='text-muted-foreground text-xs'>-</span>
+                    ) : (
+                      <span className='border-border bg-muted/50 inline-flex max-w-full items-center rounded-md border px-2 py-0.5 text-xs font-medium'>
+                        <span className='truncate'>{subscriptionType}</span>
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell
                     className='min-w-[150px] max-w-[220px] truncate text-xs font-medium'
@@ -672,7 +683,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
             })}
             {!authFilesQuery.isLoading && authFiles.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className='h-24 text-center'>
+                <TableCell colSpan={7} className='h-24 text-center'>
                   {t('No credentials found')}
                 </TableCell>
               </TableRow>

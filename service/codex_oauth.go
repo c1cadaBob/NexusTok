@@ -8,8 +8,8 @@ package service
 import (
 	// 标准库
 	"context"
-	"crypto/rand"    // 用于生成安全随机数（state、PKCE verifier）
-	"crypto/sha256"  // 用于 PKCE code_challenge 的 SHA256 哈希
+	"crypto/rand"     // 用于生成安全随机数（state、PKCE verifier）
+	"crypto/sha256"   // 用于 PKCE code_challenge 的 SHA256 哈希
 	"encoding/base64" // 用于 PKCE 和 JWT 的 Base64 编解码
 	"errors"
 	"fmt"
@@ -24,13 +24,13 @@ import (
 
 // Codex OAuth 2.0 相关常量定义
 const (
-	codexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann" // OAuth 客户端 ID
+	codexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"            // OAuth 客户端 ID
 	codexOAuthAuthorizeURL = "https://auth.openai.com/oauth/authorize" // OAuth 授权页面 URL
 	codexOAuthTokenURL     = "https://auth.openai.com/oauth/token"     // OAuth Token 端点 URL
-	codexOAuthRedirectURI  = "http://localhost:1455/auth/callback"      // OAuth 回调地址
-	codexOAuthScope        = "openid profile email offline_access"       // OAuth 请求的权限范围
-	codexJWTClaimPath      = "https://api.openai.com/auth"              // JWT claims 中 Codex 认证信息的路径
-	defaultHTTPTimeout     = 20 * time.Second                           // 默认 HTTP 请求超时时间
+	codexOAuthRedirectURI  = "http://localhost:1455/auth/callback"     // OAuth 回调地址
+	codexOAuthScope        = "openid profile email offline_access"     // OAuth 请求的权限范围
+	codexJWTClaimPath      = "https://api.openai.com/auth"             // JWT claims 中 Codex 认证信息的路径
+	defaultHTTPTimeout     = 20 * time.Second                          // 默认 HTTP 请求超时时间
 )
 
 // CodexOAuthTokenResult 表示 OAuth Token 交换/刷新的结果
@@ -53,6 +53,7 @@ type CodexOAuthAuthorizationFlow struct {
 // 参数:
 //   - ctx: 上下文，用于控制请求超时和取消
 //   - refreshToken: 用于刷新访问令牌的 refresh_token
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含新的 access_token、refresh_token 和过期时间
 //   - error: 刷新失败时返回错误
@@ -65,6 +66,7 @@ func RefreshCodexOAuthToken(ctx context.Context, refreshToken string) (*CodexOAu
 //   - ctx: 上下文，用于控制请求超时和取消
 //   - refreshToken: 用于刷新访问令牌的 refresh_token
 //   - proxyURL: 代理服务器地址，为空则不使用代理
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含新的 access_token、refresh_token 和过期时间
 //   - error: 刷新失败时返回错误
@@ -81,6 +83,7 @@ func RefreshCodexOAuthTokenWithProxy(ctx context.Context, refreshToken string, p
 //   - ctx: 上下文，用于控制请求超时和取消
 //   - code: OAuth 授权码
 //   - verifier: PKCE code_verifier，用于验证授权请求
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含 access_token、refresh_token 和过期时间
 //   - error: 交换失败时返回错误
@@ -94,6 +97,7 @@ func ExchangeCodexAuthorizationCode(ctx context.Context, code string, verifier s
 //   - code: OAuth 授权码
 //   - verifier: PKCE code_verifier，用于验证授权请求
 //   - proxyURL: 代理服务器地址，为空则不使用代理
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含 access_token、refresh_token 和过期时间
 //   - error: 交换失败时返回错误
@@ -139,6 +143,7 @@ func CreateCodexOAuthAuthorizationFlow() (*CodexOAuthAuthorizationFlow, error) {
 //   - tokenURL: OAuth Token 端点地址
 //   - clientID: OAuth 客户端 ID
 //   - refreshToken: 刷新令牌
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含新的 access_token、refresh_token 和过期时间
 //   - error: 刷新失败时返回错误
@@ -210,6 +215,7 @@ func refreshCodexOAuthToken(
 //   - code: OAuth 授权码
 //   - verifier: PKCE code_verifier
 //   - redirectURI: 回调地址，需与授权请求中的一致
+//
 // 返回值:
 //   - *CodexOAuthTokenResult: 包含 access_token、refresh_token 和过期时间
 //   - error: 交换失败时返回错误
@@ -277,6 +283,7 @@ func exchangeCodexAuthorizationCode(
 // 如果指定了代理地址，则创建带代理的客户端；否则返回默认客户端
 // 参数:
 //   - proxyURL: 代理服务器地址，为空则不使用代理
+//
 // 返回值:
 //   - *http.Client: 配置好超时和代理的 HTTP 客户端
 //   - error: 创建代理客户端失败时返回错误
@@ -298,6 +305,7 @@ func getCodexOAuthHTTPClient(proxyURL string) (*http.Client, error) {
 // 参数:
 //   - state: 随机 state 参数，用于防止 CSRF 攻击
 //   - challenge: PKCE code_challenge，由 verifier 经 SHA256 哈希得到
+//
 // 返回值:
 //   - string: 完整的授权 URL
 //   - error: URL 解析失败时返回错误
@@ -307,13 +315,13 @@ func buildCodexAuthorizeURL(state string, challenge string) (string, error) {
 		return "", err
 	}
 	q := u.Query()
-	q.Set("response_type", "code")           // 使用授权码模式
+	q.Set("response_type", "code") // 使用授权码模式
 	q.Set("client_id", codexOAuthClientID)
 	q.Set("redirect_uri", codexOAuthRedirectURI)
 	q.Set("scope", codexOAuthScope)
-	q.Set("code_challenge", challenge)        // PKCE code_challenge
-	q.Set("code_challenge_method", "S256")    // 使用 SHA256 方法生成 challenge
-	q.Set("state", state)                     // 防 CSRF 的随机 state
+	q.Set("code_challenge", challenge)          // PKCE code_challenge
+	q.Set("code_challenge_method", "S256")      // 使用 SHA256 方法生成 challenge
+	q.Set("state", state)                       // 防 CSRF 的随机 state
 	q.Set("id_token_add_organizations", "true") // 请求 ID Token 中包含组织信息
 	q.Set("codex_cli_simplified_flow", "true")  // 使用 Codex CLI 简化流程
 	q.Set("originator", "codex_cli_rs")         // 标识请求来源
@@ -324,6 +332,7 @@ func buildCodexAuthorizeURL(state string, challenge string) (string, error) {
 // createStateHex 生成指定字节数的随机十六进制字符串，用作 OAuth state 参数
 // 参数:
 //   - nBytes: 随机字节数
+//
 // 返回值:
 //   - string: 十六进制编码的随机字符串
 //   - error: 随机数生成失败时返回错误
@@ -360,6 +369,7 @@ func generatePKCEPair() (verifier string, challenge string, err error) {
 // 解析 JWT 的 payload 部分，从 "https://api.openai.com/auth" 路径下提取 "chatgpt_account_id"
 // 参数:
 //   - token: JWT 令牌字符串
+//
 // 返回值:
 //   - string: Codex 账户 ID
 //   - bool: 是否成功提取
@@ -395,6 +405,7 @@ func ExtractCodexAccountIDFromJWT(token string) (string, bool) {
 // 解析 JWT 的 payload 部分，提取顶层 "email" 字段
 // 参数:
 //   - token: JWT 令牌字符串
+//
 // 返回值:
 //   - string: 邮箱地址
 //   - bool: 是否成功提取
@@ -418,11 +429,47 @@ func ExtractEmailFromJWT(token string) (string, bool) {
 	return s, true
 }
 
+// ExtractCodexPlanTypeFromJWT 从 JWT 令牌中提取 ChatGPT 订阅类型。
+// Codex/OpenAI OAuth 令牌会把 ChatGPT 账号信息放在自定义 claims 路径下，
+// 其中 chatgpt_plan_type 表示账号订阅档位，例如 free、plus、pro、team、k12。
+// 本函数只解码 JWT payload，不验证签名；调用方只能把结果用于后台展示或调度辅助，
+// 不能把它当作安全鉴权依据。
+func ExtractCodexPlanTypeFromJWT(token string) (string, bool) {
+	claims, ok := decodeJWTClaims(token)
+	if !ok {
+		return "", false
+	}
+	raw, ok := claims[codexJWTClaimPath]
+	if !ok {
+		return "", false
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	for _, key := range []string{"chatgpt_plan_type", "plan_type"} {
+		value, ok := obj[key]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			return text, true
+		}
+	}
+	return "", false
+}
+
 // decodeJWTClaims 解析 JWT 令牌的 payload 部分为 claims 映射
 // JWT 由三部分组成（header.payload.signature），本函数解码中间的 payload 部分
 // 注意：此函数不验证签名，仅做解码提取
 // 参数:
 //   - token: JWT 令牌字符串
+//
 // 返回值:
 //   - map[string]any: 解析后的 claims 键值对
 //   - bool: 是否成功解析
