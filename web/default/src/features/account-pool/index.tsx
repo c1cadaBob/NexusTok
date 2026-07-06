@@ -182,6 +182,7 @@ const authTypeOptions = [
 
 const strategyOptions = [
   'round_robin',
+  'random',
   'weighted',
   'fill_first',
   'least_used',
@@ -189,6 +190,7 @@ const strategyOptions = [
 ]
 const strategyLabelKeys: Record<string, string> = {
   round_robin: 'Round robin',
+  random: 'Random',
   weighted: 'Weighted',
   fill_first: 'Fill first',
   least_used: 'Least used',

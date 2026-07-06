@@ -1,5 +1,5 @@
 // account_pool_select.go 实现了全局账号池的账号选择和调度逻辑。
-// 包括账号候选过滤、优先级排序、负载均衡策略（轮询、最少使用、先填满、成功率优先、加权随机）、
+// 包括账号候选过滤、优先级排序、负载均衡策略（轮询、随机、最少使用、先填满、成功率优先、加权轮询）、
 // 并发控制（基于 Redis 或内存的信号量）、游标管理等功能。
 // 是账号池请求调度的核心模块。
 package service
@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -46,6 +47,10 @@ var (
 
 	poolGroupRateMu       sync.Mutex                       // 分组 RPM 窗口映射表的互斥锁
 	poolGroupRateCounters = map[int]poolGroupRateCounter{} // 分组 RPM 窗口计数，key 为分组 ID
+
+	// poolAccountRandomIntn 为随机调度策略生成随机索引。
+	// 测试会临时替换该函数，让“随机策略使用指定索引”的行为可稳定验证。
+	poolAccountRandomIntn = rand.Intn
 )
 
 type poolGroupRateCounter struct {
@@ -211,7 +216,7 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 //  1. 始终先按账号优先级降序排列，确保管理员显式配置的优先级高于策略偏好。
 //  2. least_used 策略在同优先级内按已用配额升序排列。
 //  3. success_rate 策略在同优先级内按带先验的成功率降序排列，避免新账号因样本不足被极端化处理。
-//  4. 其它策略保持 ID 升序，供轮询和加权策略获得稳定候选顺序。
+//  4. 其它策略保持 ID 升序，供轮询、随机和加权策略获得稳定候选顺序。
 func sortPoolAccountCandidates(accounts []*model.PoolAccount, strategy string) {
 	strategy = strings.TrimSpace(strategy)
 	sort.SliceStable(accounts, func(i, j int) bool {
@@ -268,6 +273,7 @@ func nonNegativePoolAccountCount(value int64) int64 {
 // - fill_first: 先填满，直接返回第一个账号
 // - least_used: 最少使用，直接返回第一个（已按配额排序）
 // - success_rate: 成功率优先，直接返回第一个（已按成功率排序）
+// - random: 随机，从当前最高优先级候选集合中随机返回一个账号
 // - round_robin: 轮询，使用游标循环选择
 // - weighted: 加权轮询，根据账号权重分配
 func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccount, usingGroup string, modelName string) *model.PoolAccount {
@@ -285,10 +291,25 @@ func pickPoolAccount(group *model.AccountPoolGroup, accounts []*model.PoolAccoun
 		return accounts[0]
 	case model.AccountPoolStrategyLeastUsed, model.AccountPoolStrategySuccessRate:
 		return accounts[0]
+	case model.AccountPoolStrategyRandom:
+		return pickPoolAccountRandom(accounts)
 	}
 	cursorKey := buildPoolAccountCursorKey(groupID, usingGroup, modelName)
 	cursor := nextPoolAccountCursor(cursorKey)
 	return pickPoolAccountByCursor(accounts, cursor, strategy == model.AccountPoolStrategyWeighted)
+}
+
+// pickPoolAccountRandom 从候选账号中随机选择一个账号。
+// 调用方已经把候选集限制在最高优先级账号内，因此随机策略不会绕过管理员配置的优先级边界。
+func pickPoolAccountRandom(accounts []*model.PoolAccount) *model.PoolAccount {
+	if len(accounts) == 0 {
+		return nil
+	}
+	index := poolAccountRandomIntn(len(accounts))
+	if index < 0 || index >= len(accounts) {
+		return accounts[0]
+	}
+	return accounts[index]
 }
 
 // pickPoolAccountByCursor 使用游标和加权算法从候选账号中选择一个。

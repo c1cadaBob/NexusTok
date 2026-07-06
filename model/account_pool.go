@@ -9,7 +9,7 @@
 // 常量定义：
 // - 认证类型（AuthType）：api_key、official_oauth、cookie、service_account、custom_json
 // - 分组来源（Source）：native（原生）、cliproxyapi（CLI 代理 API）
-// - 调度策略（Strategy）：round_robin（轮询）、weighted（加权）、fill_first（优先填满）、least_used（最少使用）、success_rate（成功率优先）
+// - 调度策略（Strategy）：round_robin（轮询）、random（随机）、weighted（加权）、fill_first（优先填满）、least_used（最少使用）、success_rate（成功率优先）
 //
 // 核心功能：
 // - 账号池分组和账号的增删改查
@@ -47,6 +47,8 @@ const (
 
 	// AccountPoolStrategyRoundRobin 轮询调度策略
 	AccountPoolStrategyRoundRobin = "round_robin"
+	// AccountPoolStrategyRandom 随机调度策略
+	AccountPoolStrategyRandom = "random"
 	// AccountPoolStrategyWeighted 加权调度策略
 	AccountPoolStrategyWeighted = "weighted"
 	// AccountPoolStrategyFillFirst 优先填满调度策略

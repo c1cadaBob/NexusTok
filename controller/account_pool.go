@@ -43,7 +43,7 @@ type accountPoolGroupUpsertRequest struct {
 	Platform          string  `json:"platform"`            // 平台标识（如 openai, anthropic）
 	AuthType          string  `json:"auth_type"`           // 认证类型（api_key, oauth 等）
 	Status            *int    `json:"status"`              // 状态（启用/禁用）
-	Strategy          string  `json:"strategy"`            // 调度策略（round_robin, random 等）
+	Strategy          string  `json:"strategy"`            // 调度策略（round_robin、random、weighted、fill_first、least_used、success_rate 等）
 	Models            string  `json:"models"`              // 支持的模型列表
 	Group             string  `json:"group"`               // 用户组
 	ModelMapping      *string `json:"model_mapping"`       // 模型映射

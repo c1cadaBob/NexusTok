@@ -20,6 +20,7 @@ func setupAccountPoolSelectTest(t *testing.T) {
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM account_pool_groups").Error)
 	originalRedisEnabled := common.RedisEnabled
+	originalRandomIntn := poolAccountRandomIntn
 	common.RedisEnabled = false
 	poolAccountConcurrencyMu.Lock()
 	poolAccountConcurrency = map[int]int{}
@@ -38,6 +39,7 @@ func setupAccountPoolSelectTest(t *testing.T) {
 	poolGroupRateMu.Unlock()
 	t.Cleanup(func() {
 		common.RedisEnabled = originalRedisEnabled
+		poolAccountRandomIntn = originalRandomIntn
 		poolAccountConcurrencyMu.Lock()
 		poolAccountConcurrency = map[int]int{}
 		poolAccountConcurrencyMu.Unlock()
@@ -124,6 +126,106 @@ func TestSortPoolAccountCandidatesSuccessRateTieBreakers(t *testing.T) {
 	require.Equal(t, 2, accounts[0].Id)
 	require.Equal(t, 1, accounts[1].Id)
 	require.Equal(t, 3, accounts[2].Id)
+}
+
+func TestSelectPoolAccountRandomUsesRandomIndex(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-random-index")
+	group.Strategy = model.AccountPoolStrategyRandom
+	require.NoError(t, model.DB.Save(group).Error)
+	firstAccount := createSelectablePoolAccount(t, group, "random-account-a")
+	secondAccount := createSelectablePoolAccount(t, group, "random-account-b")
+	poolAccountRandomIntn = func(n int) int {
+		require.Equal(t, 2, n)
+		return 1
+	}
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, secondAccount.Id, selectedAccount.Id)
+	require.NotEqual(t, firstAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountRandomRespectsPriority(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-random-priority")
+	group.Strategy = model.AccountPoolStrategyRandom
+	require.NoError(t, model.DB.Save(group).Error)
+	lowPriorityAccount := createSelectablePoolAccount(t, group, "random-low-priority")
+	lowPriorityAccount.Priority = 0
+	require.NoError(t, model.DB.Save(lowPriorityAccount).Error)
+	highPriorityAccount := createSelectablePoolAccount(t, group, "random-high-priority")
+	highPriorityAccount.Priority = 10
+	require.NoError(t, model.DB.Save(highPriorityAccount).Error)
+	poolAccountRandomIntn = func(n int) int {
+		require.Equal(t, 1, n)
+		return 0
+	}
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, highPriorityAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
+}
+
+func TestSelectPoolAccountWeightedHonorsWeights(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-weighted-sequence")
+	group.Strategy = model.AccountPoolStrategyWeighted
+	require.NoError(t, model.DB.Save(group).Error)
+	firstAccount := createSelectablePoolAccount(t, group, "weighted-account-a")
+	firstAccount.Weight = 2
+	require.NoError(t, model.DB.Save(firstAccount).Error)
+	secondAccount := createSelectablePoolAccount(t, group, "weighted-account-b")
+	secondAccount.Weight = 1
+	require.NoError(t, model.DB.Save(secondAccount).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	selectedIDs := make([]int, 0, 6)
+	for i := 0; i < 6; i++ {
+		ctx := newPoolSelectTestContext()
+		_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+		require.NoError(t, err)
+		selectedIDs = append(selectedIDs, selectedAccount.Id)
+		ReleaseSelectedPoolAccount(ctx)
+	}
+
+	require.Equal(t, []int{
+		firstAccount.Id,
+		firstAccount.Id,
+		secondAccount.Id,
+		firstAccount.Id,
+		firstAccount.Id,
+		secondAccount.Id,
+	}, selectedIDs)
+}
+
+func TestSelectPoolAccountWeightedSkipsDailyQuotaLimitedAccount(t *testing.T) {
+	setupAccountPoolSelectTest(t)
+	group := createSelectablePoolGroup(t, "codex-weighted-quota-skip")
+	group.Strategy = model.AccountPoolStrategyWeighted
+	require.NoError(t, model.DB.Save(group).Error)
+	limitedAccount := createSelectablePoolAccount(t, group, "weighted-quota-limited")
+	limitedAccount.Weight = 100
+	limitedAccount.DailyQuotaLimit = 10
+	limitedAccount.DailyUsedQuota = 10
+	limitedAccount.DailyResetTime = model.AccountPoolDailyWindowStart(time.Now())
+	require.NoError(t, model.DB.Save(limitedAccount).Error)
+	fallbackAccount := createSelectablePoolAccount(t, group, "weighted-quota-fallback")
+	fallbackAccount.Weight = 1
+	require.NoError(t, model.DB.Save(fallbackAccount).Error)
+	channel := &model.Channel{ChannelInfo: model.ChannelInfo{AccountPoolGroupId: group.Id}}
+
+	ctx := newPoolSelectTestContext()
+	_, selectedAccount, err := SelectPoolAccount(ctx, channel, "gpt-4o", "default", 0)
+	require.NoError(t, err)
+	require.Equal(t, fallbackAccount.Id, selectedAccount.Id)
+	ReleaseSelectedPoolAccount(ctx)
 }
 
 func TestSelectPoolAccountRespectsGroupMaxConcurrency(t *testing.T) {
