@@ -754,6 +754,22 @@ func ListAccountPoolProviders(c *gin.Context) {
 	common.ApiSuccess(c, accountauth.DefaultManager().Providers())
 }
 
+func GetAccountPoolHealth(c *gin.Context) {
+	poolGroupID, _ := strconv.Atoi(c.Query("pool_group_id"))
+	abnormalLimit, _ := strconv.Atoi(c.Query("abnormal_limit"))
+	auditLimit, _ := strconv.Atoi(c.Query("audit_limit"))
+	summary, err := model.GetAccountPoolHealthSummary(model.AccountPoolHealthOptions{
+		PoolGroupID:   poolGroupID,
+		AbnormalLimit: abnormalLimit,
+		AuditLimit:    auditLimit,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, summary)
+}
+
 func ListAccountPoolAuthFiles(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	status, _ := strconv.Atoi(c.Query("status"))

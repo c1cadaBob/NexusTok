@@ -341,6 +341,7 @@ func SetApiRouter(router *gin.Engine) {
 			accountPoolRoute.GET("/auth-files/:auth_file_id", controller.GetAccountPoolAuthFile)       // 获取单个原生认证文件
 			accountPoolRoute.PUT("/auth-files/:auth_file_id", controller.UpdateAccountPoolAuthFile)    // 更新原生认证文件
 			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile) // 删除原生认证文件
+			accountPoolRoute.GET("/health", controller.GetAccountPoolHealth)                           // 获取原生账号池健康概览
 			accountPoolRoute.GET("/usage-logs", controller.ListAccountPoolUsageLogs)                   // 查询原生账号池使用日志
 			accountPoolRoute.GET("/state-logs", controller.ListAccountPoolStateLogs)                   // 查询原生账号池状态变更日志
 			accountPoolRoute.GET("/check-tasks", controller.ListPoolAccountCheckTasks)                 // 查询账号池检测任务历史
