@@ -16,6 +16,7 @@
 | [auth-rate-limit.md](auth-rate-limit.md) | 认证与限流中间件 — 多方式认证、模型级限流、安全验证 |
 | [hybrid-cache.md](hybrid-cache.md) | 混合缓存系统 — Redis + 内存 LRU 双层缓存 |
 | [new-api-main-diff-analysis.md](new-api-main-diff-analysis.md) | new-api-main 对比分析 — 功能、页面、基础设施差异与 NexusTok 原生化路线 |
+| [new-api-main-diff-inventory.md](new-api-main-diff-inventory.md) | new-api-main 全量差异索引 — 可重复生成的文件级差异清单和统计口径 |
 
 ## 阅读建议
 

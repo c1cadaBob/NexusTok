@@ -51,6 +51,11 @@ var UpdateTask bool
 // 超过此大小的请求将被拒绝
 var MaxRequestBodyMB int
 
+// AnonymousRequestBodyLimitKB 匿名接口请求体大小限制（KB）
+// 该限制只用于注册、登录、支付 Webhook 等未认证入口，用于在进入业务解析前
+// 拦截异常大请求，避免匿名流量绕过登录态消耗内存和 CPU。设置为 0 或负数表示禁用。
+var AnonymousRequestBodyLimitKB int
+
 // AzureDefaultAPIVersion Azure OpenAI 默认 API 版本
 // 例如：2024-02-15-preview
 var AzureDefaultAPIVersion string

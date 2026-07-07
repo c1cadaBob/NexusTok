@@ -62,7 +62,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`/api/system-task/*` | 缺少统一框架，账号池检测任务为独立实现 | 作为 P1 原生化重点，把日志清理、账号池批量检测、渠道批量测试、模型同步任务统一迁入。 |
 | 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 缺少 | 引入 `NODE_NAME`、主从节点、CPU/内存/磁盘/版本心跳，为多节点账号池调度和任务锁提供观测。 |
 | 后台任务锁 | `SystemTaskLock`、租约续期、过期失败标记 | 缺少 | 用数据库锁实现跨节点互斥，必须兼容 SQLite/MySQL/PostgreSQL；任务 handler 要支持 context cancellation。 |
-| 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 缺少 | 用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可配置。 |
+| 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用。 |
 | 顶栏模块鉴权 | `middleware/header_nav.go` | NexusTok 默认价格/排行更偏 TryUserAuth | 让公开页模块支持 `enabled + requireAuth`，页面隐藏和接口鉴权一致。 |
 | 额度饱和保护 | `common/quota_math.go`、`QuotaClamp`、相关测试 | NexusTok 未见同等集中实现 | 将所有计费路径的裸 `int(...)`、`math.Round(...)` 转换收敛到统一 helper，并把饱和事件写入 admin-only 日志。 |
 | 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 缺少或分散 | 所有远程拉取 URL、Discovery、模型同步、文件解析入口统一走 SSRF 保护客户端。 |
@@ -278,6 +278,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 ## 附录：精确差异清单
 
+文件级全量索引见 `docs/features/new-api-main-diff-inventory.md`。主文档负责解释功能、页面和原生化路线；inventory 文档负责记录可重复生成的全量文件清单、统计口径和目录分布，避免把几千个同路径实现差异直接塞进主文档。
+
 ### 默认前端路由文件
 
 NexusTok 独有：
@@ -477,7 +479,7 @@ NexusTok 独有 API 族：
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | P2 引入。 |
 | `/api/subscription/balance/pay` | 余额购买订阅 | P2 引入。 |
 | `/api/subscription/admin/*/reset` | 订阅重置 | P2 引入。 |
-| `/api/waffo-pancake/webhook/:env` | Waffo Pancake 分环境 webhook | 评估是否替换 NexusTok 当前 webhook 形态。 |
+| `/api/waffo-pancake/webhook`、`/api/waffo-pancake/webhook/:env` | Waffo Pancake webhook | NexusTok 已有无环境路径的支付实现，应先补齐无环境回调路由；分环境路径后续评估。 |
 | `/api/option/waffo-pancake/*` | Waffo Pancake catalog/pair/product 绑定 | P2 引入为设置向导。 |
 
 ## 验收建议
@@ -490,3 +492,10 @@ NexusTok 独有 API 族：
 4. 前端新增文案走 i18n，默认前端用 Bun 执行 `bun run typecheck` 和必要的 `bun run i18n:sync`。
 5. 涉及页面、交互、接口或联调时，用 MCP 浏览器真实验证页面、请求、响应和控制台。
 6. 每个独立功能点单独提交，提交信息使用中文。
+
+## 已落地原生化记录
+
+| 日期 | 能力 | 文件 | 说明 |
+|------|------|------|------|
+| 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
+| 2026-07-07 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go`、`router/api-router.go` | 吸收 new-api-main 的匿名入口保护，并补齐 NexusTok 现有 Waffo Pancake webhook 路由。 |

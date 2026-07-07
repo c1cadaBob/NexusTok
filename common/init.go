@@ -28,9 +28,9 @@ import (
 
 // 命令行参数定义
 var (
-	Port         = flag.Int("port", 3000, "the listening port")         // 监听端口
-	PrintVersion = flag.Bool("version", false, "print version and exit") // 打印版本
-	PrintHelp    = flag.Bool("help", false, "print help and exit")       // 打印帮助
+	Port         = flag.Int("port", 3000, "the listening port")                  // 监听端口
+	PrintVersion = flag.Bool("version", false, "print version and exit")         // 打印版本
+	PrintHelp    = flag.Bool("help", false, "print help and exit")               // 打印帮助
 	LogDir       = flag.String("log-dir", "./logs", "specify the log directory") // 日志目录
 )
 
@@ -169,6 +169,8 @@ func initConstantEnv() {
 	constant.StreamScannerMaxBufferMB = GetEnvOrDefault("STREAM_SCANNER_MAX_BUFFER_MB", 128)
 	// MaxRequestBodyMB 请求体最大大小（解压后），用于防止超大请求/zip bomb导致内存暴涨
 	constant.MaxRequestBodyMB = GetEnvOrDefault("MAX_REQUEST_BODY_MB", 128)
+	// AnonymousRequestBodyLimitKB 限制匿名 POST 入口的请求体大小，避免登录、注册、Webhook 等入口被超大请求压垮。
+	constant.AnonymousRequestBodyLimitKB = GetEnvOrDefault("ANONYMOUS_REQUEST_BODY_LIMIT_KB", 512)
 	// ForceStreamOption 覆盖请求参数，强制返回usage信息
 	constant.ForceStreamOption = GetEnvOrDefaultBool("FORCE_STREAM_OPTION", true)
 	constant.CountToken = GetEnvOrDefaultBool("CountToken", true)

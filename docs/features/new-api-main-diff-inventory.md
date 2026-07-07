@@ -1,0 +1,150 @@
+# NexusTok 与 new-api-main 全量文件差异索引
+
+本文是 `new-api-main-diff-analysis.md` 的可复核补充，用来回答“是否覆盖所有差异”。主文档按功能和页面解释差异，本文记录文件级差异的生成方式、统计口径和分类规则。因为两个仓库同路径但内容不同的文件超过千个，本文不直接内嵌所有路径，而是提供可重复生成的清单。
+
+## 统计口径
+
+对比目录：
+
+| 项目 | 路径 |
+|------|------|
+| NexusTok | `/opt/project/NexusTok` |
+| new-api-main | `/opt/project/new-api-main` |
+
+忽略范围：
+
+| 模式 | 原因 |
+|------|------|
+| `node_modules` | 依赖目录，不代表项目功能。 |
+| `dist`、`build` | 构建产物，可由源码再生成。 |
+| `tmp`、`logs`、`*.log` | 临时文件和运行日志。 |
+
+当前快照统计：
+
+| 差异类别 | 文件数 | 说明 |
+|----------|--------|------|
+| NexusTok 独有 | 1052 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及本次新增的差异索引脚本和请求体限制测试。 |
+| new-api-main 独有 | 254 | 主要来自 Authz、SystemTask、SystemInfo、QuotaMath、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。 |
+| 同路径但内容不同 | 1849 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异。 |
+
+## 重新生成清单
+
+在 NexusTok 根目录执行：
+
+```bash
+./scripts/compare-new-api-main.sh
+```
+
+默认输出到：
+
+```text
+tmp/new-api-main-diff/
+```
+
+生成文件：
+
+| 文件 | 内容 |
+|------|------|
+| `nexustok-files.txt` | NexusTok 参与对比的全部文件。 |
+| `new-api-main-files.txt` | new-api-main 参与对比的全部文件。 |
+| `nexustok-only.txt` | 只在 NexusTok 存在的文件。 |
+| `new-api-main-only.txt` | 只在 new-api-main 存在的文件。 |
+| `common-files.txt` | 两边同路径都存在的文件。 |
+| `common-changed.txt` | 两边同路径都存在但内容不同的文件。 |
+| `summary.md` | 三类差异数量和顶层目录分布。 |
+
+如果 new-api-main 路径不同，可以覆盖环境变量：
+
+```bash
+NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
+```
+
+## 顶层目录分布
+
+### NexusTok 独有文件
+
+| 顶层目录 | 文件数 | 主要含义 |
+|----------|--------|----------|
+| `modules` | 894 | NexusTok 内嵌账号池/CLIProxy/CPA 管理相关模块，是本项目账号池方向的重要原生资产。 |
+| `web` | 53 | 默认前端账号池、计费设置、classic 账号池/计费页、数据表格旧结构等。 |
+| `service` | 34 | 账号池服务、渠道账号服务、Codex OAuth、openai compat 等。 |
+| `docs` | 27 | NexusTok 自有功能文档、SDK 文档和差异索引。 |
+| `controller` | 20 | 账号池、渠道账号、Codex OAuth、OAuth provider、模型同步任务等控制器。 |
+| `model` | 7 | 账号池、账号池健康、渠道账号、模型定价配置。 |
+| `middleware` | 4 | NexusTok 自有中间件测试、请求体限制测试和分发相关能力。 |
+| `common` | 3 | 会话密钥、secret 等公共工具。 |
+| 其它 | 10 | 账号池 sidecar Docker、热更新脚本、差异生成脚本、service 文件等。 |
+
+### new-api-main 独有文件
+
+| 顶层目录 | 文件数 | 主要含义 |
+|----------|--------|----------|
+| `web` | 151 | SystemInfo 页面、DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。 |
+| `service` | 26 | Authz、SystemTask、SystemInstance、ProtectedFetch、RelayConvert、额度饱和测试。 |
+| `relay` | 21 | OpenAI Realtime/Image、Gemini Responses、Advanced Custom、更多 Relay 测试。 |
+| `model` | 15 | Authz、Casbin、SystemTask、SystemInstance、Flow、Locking、ClickHouse 测试。 |
+| `controller` | 10 | Authz、ChannelAuthz、SystemTask、SystemInfo、审计、订阅 Waffo Pancake 等。 |
+| `common` | 7 | QuotaMath、节点身份、邮件 NTLM 等。匿名请求体限制已在 NexusTok 落地，但实现语义按本项目调整。 |
+| `middleware` | 3 | 审计、HeaderNav 等。匿名请求体限制已在 NexusTok 落地，但测试仍按本项目补充。 |
+| `router` | 3 | Authz 路由、Channel 路由拆分及测试。 |
+| 其它 | 18 | 多语言 README、Electron 文档、poster、计费表达式测试等。 |
+
+### 同路径但内容不同
+
+| 顶层目录 | 文件数 | 主要含义 |
+|----------|--------|----------|
+| `web` | 1262 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收。 |
+| `relay` | 196 | Relay 能力、请求转换、测试覆盖和上游协议支持差异。 |
+| `controller` | 66 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异。 |
+| `service` | 56 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异。 |
+| `setting` | 49 | 系统设置、计费设置、支付设置、模型设置差异。 |
+| `common` | 47 | 公共工具、SSRF、请求体、配额、环境初始化差异。 |
+| `model` | 38 | 数据模型、日志、订阅、用户、渠道、任务等差异。 |
+| `dto` | 29 | 请求/响应 DTO 差异，迁移时必须遵守显式零值规则。 |
+| `middleware` | 22 | 鉴权、限流、日志、请求处理等中间件差异。 |
+| `pkg` | 18 | 计费表达式、缓存、内部包实现差异。 |
+| 其它 | 66 | 路由、i18n、electron、构建和仓库元数据差异。 |
+
+## 重点目录精细统计
+
+| 目录 | NexusTok 独有 | new-api-main 独有 | 同路径不同 | 处理策略 |
+|------|---------------|-------------------|------------|----------|
+| `router` | 0 | 3 | 6 | 引入 Authz/Channel 路由拆分前，保持现有路由稳定。 |
+| `controller` | 20 | 10 | 66 | 账号池控制器保留；new-api-main 治理类控制器按 P1/P2 原生化。 |
+| `service` | 34 | 26 | 56 | 账号池服务保留；Authz/SystemTask/ProtectedFetch/QuotaMath 分批迁移。 |
+| `model` | 7 | 15 | 38 | 迁移新模型时必须确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容。 |
+| `middleware` | 4 | 3 | 22 | 请求体限制已吸收；审计和 HeaderNav 需要配套权限/设置。 |
+| `common` | 3 | 7 | 47 | 请求体限制已吸收；QuotaMath、SSRF/Fetch 安全仍为优先吸收项。 |
+| `relay` | 0 | 21 | 196 | 逐协议迁移，必须补测试并检查 StreamOptions 支持。 |
+| `setting` | 0 | 1 | 49 | 不直接覆盖设置结构，按页面和 API 逐项合并。 |
+| `pkg` | 0 | 1 | 18 | 涉及计费表达式时继续遵守 `pkg/billingexpr/expr.md`。 |
+| `web/default/src/routes` | 3 | 2 | 59 | 页面清单已在主文档逐路由列出。 |
+| `web/default/src/features` | 21 | 74 | 528 | 账号池/计费保留；SystemInfo、DataTable、UsageLogs、Playground 分批吸收。 |
+| `web/default/src/components` | 15 | 56 | 155 | 优先迁移安全渲染、通用表格布局、Dialog/Drawer 长表单布局。 |
+| `web/default/src/hooks` | 0 | 1 | 20 | `use-sidebar-view` 可服务多层设置和系统信息。 |
+| `web/default/src/lib` | 0 | 4 | 27 | Admin permissions、frontend cache、content format 可按治理能力迁移。 |
+| `web/classic/src` | 4 | 2 | 397 | Classic 保留账号池/计费入口；退场提示低优先级。 |
+
+## 页面级覆盖结论
+
+默认前端路由文件只有 5 个独有页面入口：
+
+| 项目 | 独有路由文件 | 页面 |
+|------|--------------|------|
+| NexusTok | `_authenticated/account-pool/index.tsx` | `/account-pool` |
+| NexusTok | `_authenticated/account-pool/$section.tsx` | `/account-pool/:section` |
+| NexusTok | `_authenticated/pricing-settings/index.tsx` | `/pricing-settings` |
+| new-api-main | `(auth)/register.tsx` | `/register` 兼容页 |
+| new-api-main | `_authenticated/system-info/index.tsx` | `/system-info` |
+
+其它默认前端页面大多是“同路径但实现不同”，已经在主文档按路由、feature 目录和组件能力列出。后续迁移时应以同路径页面为单位做局部对比，而不是简单复制 new-api-main 文件。
+
+Classic 前端没有 new-api-main 独有业务页面。NexusTok 独有 classic 账号池页和计费设置页必须保留，new-api-main 的 classic 差异主要是退场提示和主题 helper。
+
+## 原生化执行原则
+
+1. 对独有文件差异，先判断是 NexusTok 原生优势还是 new-api-main 优势；NexusTok 账号池相关文件默认保留。
+2. 对同路径不同文件，不做整文件覆盖；先定位页面/接口的业务意图，再把优势能力抽成 NexusTok 原生实现。
+3. 后端新增能力必须遵守本项目 JSON 封装、三数据库兼容、中文注释和提交规范。
+4. 前端新增页面必须先确认后端接口已经原生化，新增文案走 i18n。
+5. 每完成一个独立能力，更新主差异文档或本文的迁移状态，形成可审计的演进轨迹。

@@ -45,14 +45,15 @@ func SetApiRouter(router *gin.Engine) {
 	// 注册全局 API 限流中间件
 	// 防止 API 被滥用
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
+	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	{
 		// ========================================
 		// 公开接口 - 无需认证
 		// ========================================
 
 		// 系统设置相关
-		apiRouter.GET("/setup", controller.GetSetup)   // 获取系统设置状态
-		apiRouter.POST("/setup", controller.PostSetup) // 提交初始设置
+		apiRouter.GET("/setup", controller.GetSetup)                              // 获取系统设置状态
+		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup) // 提交初始设置
 
 		// 系统状态相关
 		apiRouter.GET("/status", controller.GetStatus)                  // 获取系统状态
@@ -90,7 +91,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		// 密码重置相关
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
-		apiRouter.POST("/user/reset", middleware.CriticalRateLimit(), controller.ResetPassword)
+		apiRouter.POST("/user/reset", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.ResetPassword)
 
 		// ========================================
 		// OAuth 路由 - 特定路由必须在 :provider 通配符之前
@@ -100,11 +101,11 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/state", middleware.CriticalRateLimit(), controller.GenerateOAuthCode)
 
 		// 邮箱绑定
-		apiRouter.POST("/oauth/email/bind", middleware.CriticalRateLimit(), controller.EmailBind)
+		apiRouter.POST("/oauth/email/bind", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.EmailBind)
 
 		// 非标准 OAuth（微信、Telegram）- 保持原有路由
 		apiRouter.GET("/oauth/wechat", middleware.CriticalRateLimit(), controller.WeChatAuth)
-		apiRouter.POST("/oauth/wechat/bind", middleware.CriticalRateLimit(), controller.WeChatBind)
+		apiRouter.POST("/oauth/wechat/bind", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.CriticalRateLimit(), controller.TelegramLogin)
 		apiRouter.GET("/oauth/telegram/bind", middleware.CriticalRateLimit(), controller.TelegramBind)
 
@@ -117,9 +118,10 @@ func SetApiRouter(router *gin.Engine) {
 		// ========================================
 		// 支付网关 Webhook 回调（无需认证）
 		// ========================================
-		apiRouter.POST("/stripe/webhook", controller.StripeWebhook) // Stripe 支付回调
-		apiRouter.POST("/creem/webhook", controller.CreemWebhook)   // Creem 支付回调
-		apiRouter.POST("/waffo/webhook", controller.WaffoWebhook)   // Waffo 支付回调
+		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)              // Stripe 支付回调
+		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)                // Creem 支付回调
+		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)                // Waffo 支付回调
+		apiRouter.POST("/waffo-pancake/webhook", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook) // Waffo Pancake 支付回调
 
 		// 通用安全验证路由（需要用户认证）
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)
@@ -130,19 +132,19 @@ func SetApiRouter(router *gin.Engine) {
 		userRoute := apiRouter.Group("/user")
 		{
 			// 用户认证相关（公开接口，但有频率限制）
-			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register) // 用户注册
-			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Login)       // 用户登录
-			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), controller.Verify2FALogin)                       // 两步验证登录
+			userRoute.POST("/register", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Register) // 用户注册
+			userRoute.POST("/login", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Login)       // 用户登录
+			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.Verify2FALogin)                       // 两步验证登录
 
 			// Passkey（WebAuthn）登录
-			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), controller.PasskeyLoginBegin)   // 开始 Passkey 登录
-			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), controller.PasskeyLoginFinish) // 完成 Passkey 登录
+			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.PasskeyLoginBegin)   // 开始 Passkey 登录
+			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.PasskeyLoginFinish) // 完成 Passkey 登录
 
 			// 用户登出
 			userRoute.GET("/logout", controller.Logout)
 
 			// 易支付回调（无需认证）
-			userRoute.POST("/epay/notify", controller.EpayNotify)
+			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 
 			// 获取用户组列表（公开）
@@ -269,10 +271,10 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		// 订阅支付回调（无需认证）
-		apiRouter.POST("/subscription/epay/notify", controller.SubscriptionEpayNotify)
+		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
-		apiRouter.POST("/subscription/epay/return", controller.SubscriptionEpayReturn)
+		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
 
 		// ========================================
 		// 系统选项路由组 - /api/option（需要 root 权限）
