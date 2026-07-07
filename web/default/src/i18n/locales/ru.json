@@ -4150,6 +4150,7 @@
     "Subscription": "Подписка",
     "Subscription Billing": "Биллинг подписки",
     "Subscription First": "Подписка в приоритете",
+    "Subscription maintenance": "Обслуживание подписок",
     "Subscription Management": "Управление подписками",
     "Subscription Only": "Только подписка",
     "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.",

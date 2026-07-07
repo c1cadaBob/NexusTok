@@ -1,16 +1,17 @@
 // subscription_reset_task.go
-// 本文件实现了订阅配额重置的定时任务。
+// 本文件实现了订阅配额维护任务。
 // 该任务定期执行以下维护操作：
 // 1. 将到期的订阅标记为过期状态
 // 2. 重置需要周期性重置的订阅配额
 // 3. 清理过期的预消费记录（每 30 分钟执行一次）
-// 仅在主节点上运行，避免多实例重复操作。
+// 调度和执行统一接入 SystemTask，避免多实例重复操作，并让 Root 可以观察任务历史。
 
 package service
 
 import (
 	// 标准库
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -20,9 +21,6 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/logger"
 	"github.com/c1cada/NexusTok/model"
-
-	// 第三方库：字节跳动的轻量级协程池
-	"github.com/bytedance/gopkg/util/gopool"
 )
 
 // 订阅维护任务的配置常量
@@ -39,82 +37,238 @@ var (
 	subscriptionCleanupLast  atomic.Int64 // 上次清理预消费记录的时间戳（Unix 秒）
 )
 
-// StartSubscriptionQuotaResetTask 启动订阅配额重置定时任务
-// 仅在主节点上运行，使用 sync.Once 确保只启动一次
-// 启动后立即执行一次维护，之后按配置的间隔定期执行
+// SubscriptionMaintenanceState 是订阅维护任务的可观察进度状态。
+//
+// 订阅维护无法在执行前可靠统计所有待处理行数，因此状态按阶段推进：先处理过期订阅，
+// 再重置周期额度，最后按清理间隔删除预消费幂等记录。计数字段在每批处理后写入，便于
+// Root 在系统任务面板看到任务是否仍在推进。
+type SubscriptionMaintenanceState struct {
+	Phase          string `json:"phase"`
+	Expired        int    `json:"expired"`
+	Reset          int    `json:"reset"`
+	CleanupRan     bool   `json:"cleanup_ran"`
+	CleanupDeleted int64  `json:"cleanup_deleted"`
+	Progress       int    `json:"progress"`
+}
+
+// SubscriptionMaintenanceResult 是订阅维护任务完成后的聚合结果。
+type SubscriptionMaintenanceResult struct {
+	Expired        int   `json:"expired"`
+	Reset          int   `json:"reset"`
+	CleanupRan     bool  `json:"cleanup_ran"`
+	CleanupDeleted int64 `json:"cleanup_deleted"`
+	Skipped        bool  `json:"skipped,omitempty"`
+}
+
+type subscriptionMaintenanceHandler struct{}
+
+func (subscriptionMaintenanceHandler) Type() string {
+	return model.SystemTaskTypeSubscriptionMaintenance
+}
+
+func (subscriptionMaintenanceHandler) Enabled() bool {
+	return true
+}
+
+func (subscriptionMaintenanceHandler) Interval() time.Duration {
+	return subscriptionResetTickInterval
+}
+
+func (subscriptionMaintenanceHandler) NewPayload() any {
+	return nil
+}
+
+func (subscriptionMaintenanceHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	result, err := RunSubscriptionMaintenanceOnce(ctx, func(state SubscriptionMaintenanceState) error {
+		return model.UpdateSystemTaskState(task.TaskID, runnerID, state)
+	})
+	if err != nil {
+		if errors.Is(err, model.ErrSystemTaskLockLost) {
+			logSystemTaskLockError(ctx, task, err)
+			return
+		}
+		if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, result, err.Error()); finishErr != nil {
+			logSystemTaskLockError(ctx, task, finishErr)
+		}
+		return
+	}
+	if err := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, result, ""); err != nil {
+		logSystemTaskLockError(ctx, task, err)
+	}
+}
+
+func init() {
+	RegisterSystemTaskHandler(subscriptionMaintenanceHandler{})
+}
+
+// StartSubscriptionQuotaResetTask 兼容旧启动入口，并创建一次订阅维护系统任务。
+//
+// 周期调度由 subscriptionMaintenanceHandler 交给 SystemTask scheduler 完成；这里仅在
+// 主节点启动时确保有一条首次执行的 pending 任务。这样订阅过期、额度重置和预消费记录
+// 清理都会进入统一任务历史，并复用数据库租约处理多节点互斥。
 func StartSubscriptionQuotaResetTask() {
 	subscriptionResetOnce.Do(func() {
 		if !common.IsMasterNode {
 			return
 		}
-		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("subscription quota reset task started: tick=%s", subscriptionResetTickInterval))
-			ticker := time.NewTicker(subscriptionResetTickInterval)
-			defer ticker.Stop()
-
-			runSubscriptionQuotaResetOnce()
-			for range ticker.C {
-				runSubscriptionQuotaResetOnce()
-			}
-		})
+		task, created, err := enqueueSubscriptionMaintenanceSystemTask()
+		if err != nil {
+			logger.LogWarn(context.Background(), fmt.Sprintf("subscription maintenance system task enqueue failed: %v", err))
+			return
+		}
+		if created {
+			logger.LogInfo(context.Background(), fmt.Sprintf("subscription maintenance system task queued: task_id=%s tick=%s", task.TaskID, subscriptionResetTickInterval))
+		}
 	})
 }
 
-// runSubscriptionQuotaResetOnce 执行一次订阅配额维护
-// 使用 atomic.Bool 的 CAS 操作防止并发执行
+func enqueueSubscriptionMaintenanceSystemTask() (*model.SystemTask, bool, error) {
+	activeTask, err := model.GetActiveSystemTask(model.SystemTaskTypeSubscriptionMaintenance)
+	if err != nil {
+		return nil, false, err
+	}
+	if activeTask != nil {
+		return activeTask, false, nil
+	}
+
+	latestTask, err := model.GetLatestSystemTask(model.SystemTaskTypeSubscriptionMaintenance)
+	if err != nil {
+		return nil, false, err
+	}
+	if latestTask != nil && common.GetTimestamp()-latestTask.UpdatedAt < int64(subscriptionResetTickInterval.Seconds()) {
+		return latestTask, false, nil
+	}
+
+	task, err := model.CreateSystemTask(model.SystemTaskTypeSubscriptionMaintenance, nil, nil)
+	if err != nil {
+		activeTask, activeErr := model.GetActiveSystemTask(model.SystemTaskTypeSubscriptionMaintenance)
+		if activeErr == nil && activeTask != nil {
+			return activeTask, false, nil
+		}
+		return nil, false, err
+	}
+	notifySystemTaskRunner()
+	return task, true, nil
+}
+
+// RunSubscriptionMaintenanceOnce 执行一次订阅配额维护。
+//
+// 使用 atomic.Bool 的 CAS 操作保留进程内防重入保护；跨节点互斥由 SystemTaskLock 提供。
 // 执行流程：
 // 1. 分批处理到期订阅的过期标记
 // 2. 分批处理需要重置配额的订阅
 // 3. 定期清理过期的预消费记录
-func runSubscriptionQuotaResetOnce() {
+func RunSubscriptionMaintenanceOnce(ctx context.Context, report func(SubscriptionMaintenanceState) error) (SubscriptionMaintenanceResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := SubscriptionMaintenanceResult{}
 	if !subscriptionResetRunning.CompareAndSwap(false, true) {
-		return
+		result.Skipped = true
+		return result, nil
 	}
 	defer subscriptionResetRunning.Store(false)
 
-	ctx := context.Background()
-	totalReset := 0   // 重置配额的订阅总数
-	totalExpired := 0 // 标记过期的订阅总数
-
 	// 第一步：分批处理到期订阅的过期标记
+	state := SubscriptionMaintenanceState{Phase: "expire", Progress: 5}
+	if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+		return result, err
+	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		n, err := model.ExpireDueSubscriptions(subscriptionResetBatchSize)
 		if err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("subscription expire task failed: %v", err))
-			return
+			return result, err
 		}
 		if n == 0 {
 			break
 		}
-		totalExpired += n
+		result.Expired += n
+		state.Expired = result.Expired
+		state.Progress = 30
+		if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+			return result, err
+		}
 		if n < subscriptionResetBatchSize {
 			break
 		}
 	}
+
 	// 第二步：分批处理需要重置配额的订阅
+	state.Phase = "reset"
+	state.Progress = 55
+	if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+		return result, err
+	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		n, err := model.ResetDueSubscriptions(subscriptionResetBatchSize)
 		if err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("subscription quota reset task failed: %v", err))
-			return
+			return result, err
 		}
 		if n == 0 {
 			break
 		}
-		totalReset += n
+		result.Reset += n
+		state.Reset = result.Reset
+		state.Progress = 75
+		if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+			return result, err
+		}
 		if n < subscriptionResetBatchSize {
 			break
 		}
 	}
 
 	// 第三步：定期清理过期的预消费记录（保留 7 天内的记录）
+	state.Phase = "cleanup"
+	state.Progress = 90
+	if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+		return result, err
+	}
 	lastCleanup := time.Unix(subscriptionCleanupLast.Load(), 0)
 	if time.Since(lastCleanup) >= subscriptionCleanupInterval {
-		if _, err := model.CleanupSubscriptionPreConsumeRecords(7 * 24 * 3600); err == nil {
-			subscriptionCleanupLast.Store(time.Now().Unix()) // 更新上次清理时间
+		if err := ctx.Err(); err != nil {
+			return result, err
 		}
+		deleted, err := model.CleanupSubscriptionPreConsumeRecords(7 * 24 * 3600)
+		if err != nil {
+			return result, err
+		}
+		result.CleanupRan = true
+		result.CleanupDeleted = deleted
+		subscriptionCleanupLast.Store(time.Now().Unix()) // 更新上次清理时间
 	}
-	if common.DebugEnabled && (totalReset > 0 || totalExpired > 0) {
-		logger.LogDebug(ctx, "subscription maintenance: reset_count=%d, expired_count=%d", totalReset, totalExpired)
+
+	state.Phase = "finished"
+	state.Expired = result.Expired
+	state.Reset = result.Reset
+	state.CleanupRan = result.CleanupRan
+	state.CleanupDeleted = result.CleanupDeleted
+	state.Progress = 100
+	if err := reportSubscriptionMaintenanceState(report, state); err != nil {
+		return result, err
+	}
+	if common.DebugEnabled && (result.Reset > 0 || result.Expired > 0 || result.CleanupDeleted > 0) {
+		logger.LogDebug(ctx, "subscription maintenance: reset_count=%d, expired_count=%d, cleanup_deleted=%d", result.Reset, result.Expired, result.CleanupDeleted)
+	}
+	return result, nil
+}
+
+func reportSubscriptionMaintenanceState(report func(SubscriptionMaintenanceState) error, state SubscriptionMaintenanceState) error {
+	if report == nil {
+		return nil
+	}
+	return report(state)
+}
+
+// runSubscriptionQuotaResetOnce 保留给旧内部调用路径使用，实际启动调度已迁入 SystemTask。
+func runSubscriptionQuotaResetOnce() {
+	if _, err := RunSubscriptionMaintenanceOnce(context.Background(), nil); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("subscription maintenance task failed: %v", err))
 	}
 }

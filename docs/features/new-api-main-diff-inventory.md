@@ -24,8 +24,8 @@
 | 差异类别 | 文件数 | 说明 |
 |----------|--------|------|
 | NexusTok 独有 | 1060 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及差异索引脚本、请求体限制测试和 NexusTok 原生 SystemInfo/SystemTask 路由与测试。 |
-| new-api-main 独有 | 226 | 主要来自 Authz、SystemTask 其它业务 handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理/批量渠道测试/上游模型同步后端、SystemTask 前端面板、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
-| 同路径但内容不同 | 1877 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner、SystemTask 前端面板、channel_test/model_update handler 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
+| new-api-main 独有 | 226 | 主要来自 Authz、SystemTask 其它业务 handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理/批量渠道测试/上游模型同步/订阅维护后端、SystemTask 前端面板、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
+| 同路径但内容不同 | 1877 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner、SystemTask 前端面板、channel_test/model_update/subscription_maintenance handler 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
 
 ## 重新生成清单
 
@@ -81,7 +81,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | 顶层目录 | 文件数 | 主要含义 |
 |----------|--------|----------|
 | `web` | 145 | DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。SystemInfo/SystemTask 默认前端观测页已转为同路径实现差异。 |
-| `service` | 20 | Authz、SystemTask 其它业务 handlers、RelayConvert、任务轮询测试等。SystemInstance 最小心跳层、SystemTask runner/日志清理/批量渠道测试/上游模型同步、ProtectedFetch 与额度饱和审计已按 NexusTok 边界原生化。 |
+| `service` | 20 | Authz、SystemTask 其它业务 handlers、RelayConvert、任务轮询测试等。SystemInstance 最小心跳层、SystemTask runner/日志清理/批量渠道测试/上游模型同步/订阅维护、ProtectedFetch 与额度饱和审计已按 NexusTok 边界原生化。 |
 | `relay` | 21 | OpenAI Realtime/Image、Gemini Responses、Advanced Custom、更多 Relay 测试。 |
 | `model` | 11 | Authz、Casbin、Flow、Locking、ClickHouse 测试。SystemInstance、SystemTask 与日志脱敏测试已按 NexusTok 语义补齐。 |
 | `controller` | 5 | Authz、审计、订阅 Waffo Pancake 等；SystemInfo 实例列表接口、SystemTask 只读接口和批量渠道测试 handler 已按 Root 只读/系统任务边界落地。 |
@@ -96,8 +96,8 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |----------|--------|----------|
 | `web` | 1268 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收；SystemInfo/SystemTask 默认前端已落地后转为同路径差异。 |
 | `relay` | 196 | Relay 能力、请求转换、测试覆盖和上游协议支持差异。 |
-| `controller` | 71 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异；批量渠道测试和上游模型同步已接入 SystemTask handler，继续保留为同路径实现差异。 |
-| `service` | 62 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异；SystemTask runner、日志清理、批量渠道测试、上游模型同步和额度饱和审计已落地为同路径差异。 |
+| `controller` | 71 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异；批量渠道测试、上游模型同步和订阅维护已接入 SystemTask handler，继续保留为同路径实现差异。 |
+| `service` | 62 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异；SystemTask runner、日志清理、批量渠道测试、上游模型同步、订阅维护和额度饱和审计已落地为同路径差异。 |
 | `setting` | 49 | 系统设置、计费设置、支付设置、模型设置差异。 |
 | `common` | 50 | 公共工具、SSRF、请求体、配额、环境初始化差异；SSRF 已增加 Dial 阶段保护 helper，QuotaMath 已落地为 NexusTok 原生版本，但与 new-api-main 仍有实现边界差异。 |
 | `model` | 42 | 数据模型、日志、订阅、用户、渠道、任务等差异；日志清理批量删除和日志脱敏测试已落地为同路径差异。 |
@@ -112,7 +112,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |------|---------------|-------------------|------------|----------|
 | `router` | 4 | 1 | 8 | 渠道、系统信息和系统任务路由已抽出并保持现有权限行为；Codex 用量 reset API 已挂载，Authz 权限表和账号池路由拆分继续分批推进。 |
 | `controller` | 20 | 5 | 71 | 账号池控制器保留；ChannelAuthz 已先按 Root 兜底吸收渠道敏感字段 fail-closed，Codex 用量 reset、系统实例列表、SystemTask 只读接口、批量渠道测试 handler 和上游模型同步 handler 已补，剩余治理类控制器按 P1/P2 原生化。 |
-| `service` | 36 | 20 | 62 | 账号池服务保留；ProtectedFetch、SystemInstance 心跳、SystemTask runner/日志清理/批量渠道测试/上游模型同步和额度饱和审计已按本项目边界迁移，工具调用附加费、违规费用、充值入账、视频任务、渠道测试和 Codex 用量 reset 已补保护/接口，Authz/SystemTask 其它业务 handler 继续分批推进。 |
+| `service` | 36 | 20 | 62 | 账号池服务保留；ProtectedFetch、SystemInstance 心跳、SystemTask runner/日志清理/批量渠道测试/上游模型同步/订阅维护和额度饱和审计已按本项目边界迁移，工具调用附加费、违规费用、充值入账、视频任务、渠道测试和 Codex 用量 reset 已补保护/接口，Authz/SystemTask 其它业务 handler 继续分批推进。 |
 | `model` | 9 | 11 | 42 | SystemInstance 与 SystemTask 已确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容并落地；日志清理批量删除已改为先查 ID 再删除以保持三库一致；迁移后续 Flow/Authz 新模型时仍需逐项确认三库兼容。 |
 | `middleware` | 4 | 1 | 24 | 请求体限制与 HeaderNav 模块鉴权已吸收；全局审计需要配套权限/设置。 |
 | `common` | 3 | 4 | 50 | 请求体限制已吸收；SSRF/Fetch 安全已补 Dial 阶段保护；QuotaMath 已吸收为 NexusTok 原生 helper，后续继续覆盖剩余裸转换。 |

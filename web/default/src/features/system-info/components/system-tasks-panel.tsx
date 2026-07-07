@@ -73,6 +73,7 @@ const TYPE_LABEL: Record<string, string> = {
   midjourney_poll: 'Drawing task polling',
   async_task_poll: 'Async task polling',
   account_pool_check: 'Account pool check',
+  subscription_maintenance: 'Subscription maintenance',
 }
 
 function isActiveStatus(status: SystemTaskStatus) {

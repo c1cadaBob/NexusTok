@@ -21,12 +21,13 @@ const (
 	SystemTaskStatusSucceeded SystemTaskStatus = "succeeded"
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
 
-	SystemTaskTypeLogCleanup       = "log_cleanup"
-	SystemTaskTypeChannelTest      = "channel_test"
-	SystemTaskTypeModelUpdate      = "model_update"
-	SystemTaskTypeMidjourneyPoll   = "midjourney_poll"
-	SystemTaskTypeAsyncTaskPoll    = "async_task_poll"
-	SystemTaskTypeAccountPoolCheck = "account_pool_check"
+	SystemTaskTypeLogCleanup              = "log_cleanup"
+	SystemTaskTypeChannelTest             = "channel_test"
+	SystemTaskTypeModelUpdate             = "model_update"
+	SystemTaskTypeMidjourneyPoll          = "midjourney_poll"
+	SystemTaskTypeAsyncTaskPoll           = "async_task_poll"
+	SystemTaskTypeAccountPoolCheck        = "account_pool_check"
+	SystemTaskTypeSubscriptionMaintenance = "subscription_maintenance"
 )
 
 var (
