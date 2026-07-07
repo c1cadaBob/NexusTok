@@ -98,6 +98,40 @@ func TestSystemTaskCreateDecodeAndActiveLifecycle(t *testing.T) {
 	require.NotEmpty(t, nextTask.TaskID)
 }
 
+func TestSystemTaskCustomActiveKeyAllowsSameTypeQueue(t *testing.T) {
+	setupSystemTaskTestDB(t)
+
+	first, err := CreateSystemTaskWithActiveKey(SystemTaskTypeAccountPoolCheck, "account_pool_check:1", map[string]int{"check_task_id": 1}, nil)
+	require.NoError(t, err)
+	second, err := CreateSystemTaskWithActiveKey(SystemTaskTypeAccountPoolCheck, "account_pool_check:2", map[string]int{"check_task_id": 2}, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, first.TaskID, second.TaskID)
+
+	activeFirst, err := GetActiveSystemTaskByActiveKey("account_pool_check:1")
+	require.NoError(t, err)
+	require.NotNil(t, activeFirst)
+	require.Equal(t, first.TaskID, activeFirst.TaskID)
+
+	_, err = CreateSystemTaskWithActiveKey(SystemTaskTypeAccountPoolCheck, "account_pool_check:1", nil, nil)
+	require.Error(t, err)
+
+	claimedFirst, claimed, err := ClaimSystemTask(first.ID, SystemTaskTypeAccountPoolCheck, "runner-a", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Equal(t, first.TaskID, claimedFirst.TaskID)
+
+	_, claimed, err = ClaimSystemTask(second.ID, SystemTaskTypeAccountPoolCheck, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.False(t, claimed)
+
+	require.NoError(t, FinishSystemTask(first.TaskID, "runner-a", SystemTaskStatusSucceeded, nil, ""))
+
+	claimedSecond, claimed, err := ClaimSystemTask(second.ID, SystemTaskTypeAccountPoolCheck, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Equal(t, second.TaskID, claimedSecond.TaskID)
+}
+
 func TestSystemTaskExpiredLockCanBeReclaimed(t *testing.T) {
 	setupSystemTaskTestDB(t)
 

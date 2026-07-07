@@ -182,6 +182,9 @@ func runSystemTaskClaimPass(runnerID string) {
 			runWithLeaseHeartbeat(dispatchTask, runnerID, func(ctx context.Context) {
 				dispatchHandler.Run(ctx, dispatchTask, runnerID)
 			})
+			// 同一 Type 可能存在多条使用不同 ActiveKey 排队的任务，例如账号池检测。
+			// 单个 handler 完成后主动唤醒下一轮 claim，避免等待完整 idle interval 才处理队列下一项。
+			notifySystemTaskRunner()
 		})
 	}
 }

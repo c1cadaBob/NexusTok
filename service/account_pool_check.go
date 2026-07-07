@@ -22,7 +22,6 @@ const (
 	accountPoolCheckTimeout                 = 30 * time.Second
 	accountPoolCheckBatchLimit              = 100
 	accountPoolCheckRetryDelay              = 5 * time.Minute
-	accountPoolCheckTaskQueueSize           = 100
 	accountPoolCheckRecoveryLimit           = 100
 	accountPoolCheckTaskListLimit           = 100
 	accountPoolCheckTaskCleanupDefaultLimit = 500
@@ -30,12 +29,12 @@ const (
 
 	accountPoolCheckTaskRecoveredMessage   = "account check task recovered and requeued after service restart"
 	accountPoolCheckTaskInterruptedMessage = "account check task failed because service restarted while it was running"
+	accountPoolCheckTaskRunningMessage     = "account check task is running"
+	accountPoolCheckTaskCompletedMessage   = "account check task completed"
 )
 
 var (
-	accountPoolCheckTaskQueue      = make(chan int, accountPoolCheckTaskQueueSize)
-	accountPoolCheckTaskWorkerOnce sync.Once
-	accountPoolCheckRecoveryOnce   sync.Once
+	accountPoolCheckRecoveryOnce sync.Once
 )
 
 // AccountPoolCheckResult 描述一次账号可用性检测的结果。
@@ -118,18 +117,42 @@ type AccountPoolCheckTaskView struct {
 	UpdatedTime   int64                     `json:"updated_time"`
 }
 
+// AccountPoolCheckSystemTaskPayload 记录 SystemTask 与账号池检测任务的绑定关系。
+//
+// 一个 `account_pool_check` 系统任务只执行一个 PoolAccountCheckTask；多个检测任务
+// 可以各自创建 pending 系统任务排队，但执行租约仍按 `account_pool_check` 类型串行获取。
+type AccountPoolCheckSystemTaskPayload struct {
+	CheckTaskID int `json:"check_task_id"`
+}
+
+// AccountPoolCheckSystemTaskResult 是系统任务完成后保存的检测摘要。
+//
+// 账号级明细仍只保存在 PoolAccountCheckTask.ResultsJSON 中，SystemTask 结果只放聚合计数，
+// 方便 `/system-info` 做全局观测时避免透出账号名称、provider 或错误细节。
+type AccountPoolCheckSystemTaskResult struct {
+	CheckTaskID int    `json:"check_task_id"`
+	Status      string `json:"status"`
+	Total       int    `json:"total"`
+	Checked     int    `json:"checked"`
+	Success     int    `json:"success"`
+	Failed      int    `json:"failed"`
+	Skipped     int    `json:"skipped"`
+	Message     string `json:"message"`
+}
+
 // AccountPoolCheckTaskRecoveryResult 描述服务启动时对遗留后台检测任务的恢复结果。
-// QueuedRecovered 代表已重新放回内存队列的 queued 任务数量；RunningArchived 代表因旧进程
-// 中断而归档为 failed 的 running 任务数量。running 任务不自动重跑，是为了避免重复写入账号
-// 状态日志或二次刷新 OAuth 凭据这类有副作用的操作。
+// QueuedRecovered 代表已重新创建 SystemTask 执行入口的 queued 任务数量；RunningArchived
+// 代表因旧进程中断而归档为 failed 的 running 任务数量。running 任务不自动重跑，是为了
+// 避免重复写入账号状态日志或二次刷新 OAuth 凭据这类有副作用的操作。
 type AccountPoolCheckTaskRecoveryResult struct {
 	QueuedRecovered int
 	RunningArchived int
 }
 
 // StartPoolAccountCheckTaskRecovery 恢复服务重启前遗留的后台检测任务。
-// 检测任务的执行队列在进程内存中，服务重启后 queued 任务会失去队列投递状态；running
-// 任务则代表旧进程已经中断。该入口只在主节点执行一次，避免多实例同时恢复同一批任务。
+// 检测任务的执行入口由 SystemTask 持久化承载；服务重启后 queued 任务会重新确保对应
+// 系统任务存在，running 任务则代表旧进程已经中断。该入口只在主节点执行一次，避免
+// 多实例同时恢复同一批任务。
 func StartPoolAccountCheckTaskRecovery() {
 	accountPoolCheckRecoveryOnce.Do(func() {
 		if !common.IsMasterNode {
@@ -211,7 +234,7 @@ func CheckPoolAccountsInGroup(ctx context.Context, groupID int, limit int) (*Acc
 	return checkPoolAccountList(ctx, accounts), nil
 }
 
-// StartPoolAccountCheckTask 创建后台检测任务并立即启动 worker。
+// StartPoolAccountCheckTask 创建后台检测任务并确保 SystemTask 执行入口存在。
 //
 // 任务创建阶段会固定本次要检测的账号 ID 快照。这样即使管理员随后增删账号，任务进度
 // 仍然可复现；执行时如果账号已被删除，会作为 skipped 记录在结果中。
@@ -239,7 +262,8 @@ func StartPoolAccountCheckTask(opts AccountPoolCheckTaskOptions) (*AccountPoolCh
 	if err := model.DB.Create(task).Error; err != nil {
 		return nil, err
 	}
-	if err := enqueuePoolAccountCheckTask(task.Id); err != nil {
+	if _, _, err := ensurePoolAccountCheckSystemTask(task.Id); err != nil {
+		failPoolAccountCheckTask(task.Id, fmt.Sprintf("account check task failed to enqueue: %v", err))
 		return nil, err
 	}
 	return PoolAccountCheckTaskPublicView(task), nil
@@ -293,15 +317,32 @@ func requeuePendingPoolAccountCheckTasks() (int, error) {
 		if task == nil || task.Id <= 0 {
 			continue
 		}
+		if err := releaseClaimedPoolAccountCheckSystemTask(task.Id); err != nil {
+			return recovered, err
+		}
 		if err := markPoolAccountCheckTaskRecovered(task.Id); err != nil {
 			return recovered, err
 		}
-		if err := enqueuePoolAccountCheckTask(task.Id); err != nil {
+		if _, _, err := ensurePoolAccountCheckSystemTask(task.Id); err != nil {
 			return recovered, err
 		}
 		recovered++
 	}
 	return recovered, nil
+}
+
+func releaseClaimedPoolAccountCheckSystemTask(taskID int) error {
+	activeTask, err := model.GetActiveSystemTaskByActiveKey(poolAccountCheckSystemTaskActiveKey(taskID))
+	if err != nil || activeTask == nil {
+		return err
+	}
+	if activeTask.Status != model.SystemTaskStatusRunning {
+		return nil
+	}
+	if err := model.MarkSystemTaskLeaseExpired(activeTask.TaskID); err != nil {
+		return err
+	}
+	return model.ReleaseSystemTaskLock(activeTask.TaskID, activeTask.LockedBy)
 }
 
 func markPoolAccountCheckTaskRecovered(taskID int) error {
@@ -513,54 +554,145 @@ func loadPoolAccountIDsForCheckTask(groupID int, requestedIDs []int, limit int) 
 	return result, nil
 }
 
-func runPoolAccountCheckTask(taskID int) {
+func ensurePoolAccountCheckSystemTask(taskID int) (*model.SystemTask, bool, error) {
 	if taskID <= 0 {
-		return
+		return nil, false, fmt.Errorf("check task id is required")
+	}
+	activeKey := poolAccountCheckSystemTaskActiveKey(taskID)
+	activeTask, err := model.GetActiveSystemTaskByActiveKey(activeKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if activeTask != nil {
+		return activeTask, false, nil
+	}
+
+	view, err := GetPoolAccountCheckTask(taskID)
+	if err != nil {
+		return nil, false, err
+	}
+	task, err := model.CreateSystemTaskWithActiveKey(
+		model.SystemTaskTypeAccountPoolCheck,
+		activeKey,
+		AccountPoolCheckSystemTaskPayload{CheckTaskID: taskID},
+		SystemTaskProgress{
+			Total:     view.Total,
+			Processed: view.Checked + view.Skipped,
+			Progress:  accountPoolCheckProgress(view.Checked+view.Skipped, view.Total),
+		},
+	)
+	if err != nil {
+		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(activeKey)
+		if activeErr == nil && activeTask != nil {
+			return activeTask, false, nil
+		}
+		return nil, false, err
+	}
+	notifySystemTaskRunner()
+	return task, true, nil
+}
+
+func poolAccountCheckSystemTaskActiveKey(taskID int) string {
+	return fmt.Sprintf("%s:%d", model.SystemTaskTypeAccountPoolCheck, taskID)
+}
+
+// RunPoolAccountCheckSystemTask 执行一条已排队的账号池检测任务。
+//
+// 该函数由 account_pool_check SystemTask handler 调用；PoolAccountCheckTask 继续作为账号池
+// 页面和专用历史接口的业务任务记录，SystemTask 负责跨节点认领、租约、进度和全局观测。
+// report 回调只写入聚合进度，账号级明细仍通过 PoolAccountCheckTask 的脱敏视图查询。
+func RunPoolAccountCheckSystemTask(ctx context.Context, taskID int, report func(processed, total int)) (summary AccountPoolCheckSystemTaskResult, err error) {
+	if taskID <= 0 {
+		return summary, fmt.Errorf("check task id is required")
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			common.SysLog(fmt.Sprintf("pool account check task panic: task_id=%d, error=%v", taskID, recovered))
-			failPoolAccountCheckTask(taskID, fmt.Sprintf("account check task failed: %v", recovered))
+			err = fmt.Errorf("account check task failed: %v", recovered)
+			failPoolAccountCheckTask(taskID, err.Error())
 		}
 	}()
-	startedAt := common.GetTimestamp()
-	if err := model.DB.Model(&model.PoolAccountCheckTask{}).
-		Where("id = ?", taskID).
-		Updates(map[string]interface{}{
-			"status":       model.PoolAccountCheckTaskStatusRunning,
-			"started_time": startedAt,
-			"message":      "account check task is running",
-		}).Error; err != nil {
-		common.SysLog(fmt.Sprintf("failed to start pool account check task: task_id=%d, error=%v", taskID, err))
+
+	task, terminal, err := startPoolAccountCheckTaskRun(taskID)
+	if err != nil {
 		failPoolAccountCheckTask(taskID, fmt.Sprintf("account check task failed to start: %v", err))
-		return
+		return summary, err
 	}
-	task := &model.PoolAccountCheckTask{}
-	if err := model.DB.Where("id = ?", taskID).First(task).Error; err != nil {
-		common.SysLog(fmt.Sprintf("failed to load pool account check task: task_id=%d, error=%v", taskID, err))
-		failPoolAccountCheckTask(taskID, fmt.Sprintf("account check task failed to load: %v", err))
-		return
+	if terminal {
+		return poolAccountCheckSystemTaskResult(task), nil
 	}
 	accountIDs := splitAccountPoolCheckTaskIDs(task.AccountIds)
 	result := &AccountPoolBatchCheckResult{
 		Total: len(accountIDs),
 		Items: make([]*AccountPoolCheckResult, 0, len(accountIDs)),
 	}
+	if report != nil {
+		report(0, result.Total)
+	}
 	for _, accountID := range accountIDs {
-		item := runPoolAccountCheckTaskItem(task.PoolGroupId, accountID)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			message := fmt.Sprintf("account check task cancelled: %v", ctxErr)
+			failPoolAccountCheckTask(taskID, message)
+			return poolAccountCheckSystemTaskResultFromBatch(taskID, model.PoolAccountCheckTaskStatusFailed, result, message), ctxErr
+		}
+		item := runPoolAccountCheckTaskItem(ctx, task.PoolGroupId, accountID)
 		result.Items = append(result.Items, item)
 		accumulatePoolAccountCheckTaskResult(result, item)
 		recordPoolAccountCheckTaskState(task, item)
-		if err := updatePoolAccountCheckTaskProgress(taskID, model.PoolAccountCheckTaskStatusRunning, result, "account check task is running", 0); err != nil {
+		processed := len(result.Items)
+		if err := updatePoolAccountCheckTaskProgress(taskID, model.PoolAccountCheckTaskStatusRunning, result, accountPoolCheckTaskRunningMessage, 0); err != nil {
 			common.SysLog(fmt.Sprintf("failed to update pool account check task progress: task_id=%d, error=%v", taskID, err))
 		}
+		if report != nil {
+			report(processed, result.Total)
+		}
 	}
-	message := "account check task completed"
+	message := accountPoolCheckTaskCompletedMessage
 	if result.Failed > 0 {
 		message = "account check task completed with failed accounts"
 	}
 	if err := updatePoolAccountCheckTaskProgress(taskID, model.PoolAccountCheckTaskStatusCompleted, result, message, common.GetTimestamp()); err != nil {
 		common.SysLog(fmt.Sprintf("failed to finish pool account check task: task_id=%d, error=%v", taskID, err))
+		return poolAccountCheckSystemTaskResultFromBatch(taskID, model.PoolAccountCheckTaskStatusFailed, result, err.Error()), err
+	}
+	if report != nil {
+		report(result.Total, result.Total)
+	}
+	return poolAccountCheckSystemTaskResultFromBatch(taskID, model.PoolAccountCheckTaskStatusCompleted, result, message), nil
+}
+
+func runPoolAccountCheckTask(taskID int) {
+	if _, err := RunPoolAccountCheckSystemTask(context.Background(), taskID, nil); err != nil {
+		common.SysLog(fmt.Sprintf("pool account check task failed: task_id=%d, error=%v", taskID, err))
+	}
+}
+
+func startPoolAccountCheckTaskRun(taskID int) (*model.PoolAccountCheckTask, bool, error) {
+	startedAt := common.GetTimestamp()
+	tx := model.DB.Model(&model.PoolAccountCheckTask{}).
+		Where("id = ? AND status = ?", taskID, model.PoolAccountCheckTaskStatusQueued).
+		Updates(map[string]interface{}{
+			"status":       model.PoolAccountCheckTaskStatusRunning,
+			"started_time": startedAt,
+			"message":      accountPoolCheckTaskRunningMessage,
+		})
+	if tx.Error != nil {
+		return nil, false, tx.Error
+	}
+	task := &model.PoolAccountCheckTask{}
+	if err := model.DB.Where("id = ?", taskID).First(task).Error; err != nil {
+		return nil, false, err
+	}
+	if tx.RowsAffected > 0 {
+		return task, false, nil
+	}
+	switch task.Status {
+	case model.PoolAccountCheckTaskStatusCompleted, model.PoolAccountCheckTaskStatusFailed:
+		return task, true, nil
+	case model.PoolAccountCheckTaskStatusRunning:
+		return task, false, fmt.Errorf("account check task is already running")
+	default:
+		return task, false, fmt.Errorf("account check task is not queued: status=%s", task.Status)
 	}
 }
 
@@ -577,7 +709,7 @@ func failPoolAccountCheckTask(taskID int, message string) {
 		}).Error
 }
 
-func runPoolAccountCheckTaskItem(groupID int, accountID int) *AccountPoolCheckResult {
+func runPoolAccountCheckTaskItem(ctx context.Context, groupID int, accountID int) *AccountPoolCheckResult {
 	account := &model.PoolAccount{}
 	if err := model.DB.Where("id = ? AND pool_group_id = ?", accountID, groupID).First(account).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -592,11 +724,56 @@ func runPoolAccountCheckTaskItem(groupID int, accountID int) *AccountPoolCheckRe
 		}
 		return accountPoolCheckErrorResult(&model.PoolAccount{Id: accountID, PoolGroupId: groupID}, err)
 	}
-	item, err := checkPoolAccount(context.Background(), account)
+	item, err := checkPoolAccount(ctx, account)
 	if err != nil {
 		item = accountPoolCheckErrorResult(account, err)
 	}
 	return item
+}
+
+func poolAccountCheckSystemTaskResult(task *model.PoolAccountCheckTask) AccountPoolCheckSystemTaskResult {
+	if task == nil {
+		return AccountPoolCheckSystemTaskResult{}
+	}
+	return AccountPoolCheckSystemTaskResult{
+		CheckTaskID: task.Id,
+		Status:      task.Status,
+		Total:       task.Total,
+		Checked:     task.Checked,
+		Success:     task.Success,
+		Failed:      task.Failed,
+		Skipped:     task.Skipped,
+		Message:     task.Message,
+	}
+}
+
+func poolAccountCheckSystemTaskResultFromBatch(taskID int, status string, result *AccountPoolBatchCheckResult, message string) AccountPoolCheckSystemTaskResult {
+	if result == nil {
+		result = &AccountPoolBatchCheckResult{Items: []*AccountPoolCheckResult{}}
+	}
+	return AccountPoolCheckSystemTaskResult{
+		CheckTaskID: taskID,
+		Status:      status,
+		Total:       result.Total,
+		Checked:     result.Checked,
+		Success:     result.Success,
+		Failed:      result.Failed,
+		Skipped:     result.Skipped,
+		Message:     common.MaskSensitiveInfo(message),
+	}
+}
+
+func accountPoolCheckProgress(processed int, total int) int {
+	if total <= 0 {
+		return 100
+	}
+	if processed <= 0 {
+		return 0
+	}
+	if processed >= total {
+		return 100
+	}
+	return processed * 100 / total
 }
 
 func accumulatePoolAccountCheckTaskResult(result *AccountPoolBatchCheckResult, item *AccountPoolCheckResult) {
@@ -637,35 +814,6 @@ func updatePoolAccountCheckTaskProgress(taskID int, status string, result *Accou
 		updates["finished_time"] = finishedAt
 	}
 	return model.DB.Model(&model.PoolAccountCheckTask{}).Where("id = ?", taskID).Updates(updates).Error
-}
-
-func enqueuePoolAccountCheckTask(taskID int) error {
-	if taskID <= 0 {
-		return fmt.Errorf("check task id is required")
-	}
-	accountPoolCheckTaskWorkerOnce.Do(func() {
-		go runPoolAccountCheckTaskWorker()
-	})
-	select {
-	case accountPoolCheckTaskQueue <- taskID:
-		return nil
-	default:
-		message := "account check task queue is full"
-		_ = model.DB.Model(&model.PoolAccountCheckTask{}).
-			Where("id = ?", taskID).
-			Updates(map[string]interface{}{
-				"status":        model.PoolAccountCheckTaskStatusFailed,
-				"message":       message,
-				"finished_time": common.GetTimestamp(),
-			}).Error
-		return fmt.Errorf("%s", message)
-	}
-}
-
-func runPoolAccountCheckTaskWorker() {
-	for taskID := range accountPoolCheckTaskQueue {
-		runPoolAccountCheckTask(taskID)
-	}
 }
 
 func recordPoolAccountCheckTaskState(task *model.PoolAccountCheckTask, item *AccountPoolCheckResult) {

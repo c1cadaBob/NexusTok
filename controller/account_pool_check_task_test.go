@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -156,4 +157,50 @@ func TestCleanupPoolAccountCheckTasksControllerKeepsActiveTasks(t *testing.T) {
 	for _, taskID := range []int{queued.Id, running.Id} {
 		require.NoError(t, model.DB.Where("id = ?", taskID).First(&model.PoolAccountCheckTask{}).Error)
 	}
+}
+
+func TestAccountPoolCheckSystemTaskHandlerCompletesDomainTask(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.PoolAccountCheckTask{}, &model.SystemTask{}, &model.SystemTaskLock{}))
+	group := createBatchStatusGroup(t, "controller-check-task-handler")
+	account := createBatchStatusAccount(t, group.Id, "controller-check-task-handler-account")
+	encryptedCredential, err := common.EncryptSensitiveString(`{"api_key":"sk-controller-handler"}`)
+	require.NoError(t, err)
+	account.Credentials = encryptedCredential
+	account.CredentialProvider = "codex"
+	require.NoError(t, model.DB.Save(account).Error)
+
+	checkTask, err := service.StartPoolAccountCheckTask(service.AccountPoolCheckTaskOptions{
+		PoolGroupID: group.Id,
+		AccountIDs:  []int{account.Id},
+		Actor:       "controller-system-task-handler",
+		RequestID:   "req-controller-system-task-handler",
+	})
+	require.NoError(t, err)
+
+	systemTask, err := model.GetActiveSystemTaskByActiveKey("account_pool_check:" + strconv.Itoa(checkTask.ID))
+	require.NoError(t, err)
+	require.NotNil(t, systemTask)
+	claimedTask, claimed, err := model.ClaimSystemTask(systemTask.ID, model.SystemTaskTypeAccountPoolCheck, "runner-account-pool-check", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	accountPoolCheckHandler{}.Run(context.Background(), claimedTask, "runner-account-pool-check")
+
+	finishedSystemTask, err := model.GetSystemTaskByTaskID(systemTask.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, finishedSystemTask)
+	require.Equal(t, model.SystemTaskStatusSucceeded, finishedSystemTask.Status)
+	require.Nil(t, finishedSystemTask.ActiveKey)
+
+	var result service.AccountPoolCheckSystemTaskResult
+	require.NoError(t, finishedSystemTask.DecodeResult(&result))
+	require.Equal(t, checkTask.ID, result.CheckTaskID)
+	require.Equal(t, model.PoolAccountCheckTaskStatusCompleted, result.Status)
+	require.Equal(t, 1, result.Success)
+
+	finishedCheckTask, err := service.GetPoolAccountCheckTask(checkTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.PoolAccountCheckTaskStatusCompleted, finishedCheckTask.Status)
+	require.Equal(t, 1, finishedCheckTask.Success)
 }

@@ -72,11 +72,12 @@ func TestRunAccountPoolAutoCheckOnceStartsDueGroupTask(t *testing.T) {
 	require.Contains(t, task.RequestID, "account-pool-auto-check-")
 	require.Equal(t, 2, task.Total)
 	require.Equal(t, []int{accounts[0].Id, accounts[1].Id}, task.AccountIDs)
+	require.Equal(t, model.PoolAccountCheckTaskStatusQueued, task.Status)
 
-	require.Eventually(t, func() bool {
-		loaded, loadErr := GetPoolAccountCheckTask(updated.AutoCheckLastTaskId)
-		return loadErr == nil && loaded.Status == model.PoolAccountCheckTaskStatusCompleted
-	}, 2*time.Second, 20*time.Millisecond)
+	systemTask, err := model.GetActiveSystemTaskByActiveKey(poolAccountCheckSystemTaskActiveKey(task.ID))
+	require.NoError(t, err)
+	require.NotNil(t, systemTask)
+	require.Equal(t, model.SystemTaskTypeAccountPoolCheck, systemTask.Type)
 }
 
 func TestRunAccountPoolAutoCheckOnceSkipsDisabledAndNotDueGroups(t *testing.T) {

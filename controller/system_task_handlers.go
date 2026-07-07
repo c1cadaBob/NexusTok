@@ -19,6 +19,7 @@ import (
 func init() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
+	service.RegisterSystemTaskHandler(accountPoolCheckHandler{})
 }
 
 // channelTestHandler 执行批量渠道测试任务。
@@ -127,6 +128,34 @@ func (modelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runne
 			runErr = context.Canceled
 		}
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, runErr)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// accountPoolCheckHandler 执行账号池后台检测任务。
+//
+// 账号池检测保留原有 PoolAccountCheckTask 业务历史和页面接口；SystemTask 只负责跨节点
+// 串行认领、租约续期、进度写入和全局任务面板观测，避免账号池模块继续维护独立内存队列。
+type accountPoolCheckHandler struct{}
+
+func (accountPoolCheckHandler) Type() string {
+	return model.SystemTaskTypeAccountPoolCheck
+}
+
+func (accountPoolCheckHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := service.AccountPoolCheckSystemTaskPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	summary, err := service.RunPoolAccountCheckSystemTask(ctx, payload.CheckTaskID, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
+	if summary.Status == model.PoolAccountCheckTaskStatusFailed {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, fmt.Errorf("%s", summary.Message))
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)

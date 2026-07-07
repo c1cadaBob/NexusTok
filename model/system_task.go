@@ -32,6 +32,7 @@ const (
 var (
 	ErrSystemTaskLockLost          = errors.New("system task lock lost")
 	errSystemTaskTypeRequired      = errors.New("system task type is required")
+	errSystemTaskActiveKeyTooLong  = errors.New("system task active key is too long")
 	errSystemTaskTerminalStatus    = errors.New("system task finish status must be succeeded or failed")
 	errSystemTaskRunnerIDRequired  = errors.New("system task runner id is required")
 	errSystemTaskLockUntilRequired = errors.New("system task lock_until is required")
@@ -120,8 +121,23 @@ func GenerateSystemTaskID() (string, error) {
 // 同类型任务处于 pending/running 时会占用 ActiveKey，数据库唯一索引会阻止重复创建。
 // 调用方应在捕获唯一索引错误后查询 GetActiveSystemTask，以便返回已存在任务。
 func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, error) {
+	return CreateSystemTaskWithActiveKey(taskType, taskType, payload, state)
+}
+
+// CreateSystemTaskWithActiveKey 创建一条 pending 系统任务，并使用调用方指定的 ActiveKey。
+//
+// ActiveKey 只负责 pending/running 阶段的去重范围；任务执行租约仍按 Type 维度获取。
+// 这让账号池检测这类“允许多条同类型任务排队、但同一时刻只能执行一条”的场景可以
+// 为每个业务任务使用独立 ActiveKey，同时继续复用 SystemTaskLock 的跨节点互斥能力。
+func CreateSystemTaskWithActiveKey(taskType string, activeKey string, payload any, state any) (*SystemTask, error) {
 	if taskType == "" {
 		return nil, errSystemTaskTypeRequired
+	}
+	if activeKey == "" {
+		activeKey = taskType
+	}
+	if len(activeKey) > 64 {
+		return nil, errSystemTaskActiveKeyTooLong
 	}
 	taskID, err := GenerateSystemTaskID()
 	if err != nil {
@@ -136,7 +152,6 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		return nil, err
 	}
 
-	activeKey := taskType
 	task := &SystemTask{
 		TaskID:    taskID,
 		Type:      taskType,
@@ -167,6 +182,27 @@ func GetSystemTaskByTaskID(taskID string) (*SystemTask, error) {
 func GetActiveSystemTask(taskType string) (*SystemTask, error) {
 	var task SystemTask
 	err := DB.Where("type = ? AND status IN ?", taskType, activeSystemTaskStatuses()).
+		Order("id desc").
+		First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
+// GetActiveSystemTaskByActiveKey 查询指定 ActiveKey 当前对应的 pending/running 任务。
+//
+// 该入口用于业务任务和 SystemTask 之间的一对一绑定，例如账号池检测任务重启恢复时，
+// 如果旧的系统任务记录仍处于活动状态，就直接复用它而不是创建重复执行入口。
+func GetActiveSystemTaskByActiveKey(activeKey string) (*SystemTask, error) {
+	if activeKey == "" {
+		return nil, nil
+	}
+	var task SystemTask
+	err := DB.Where("active_key = ? AND status IN ?", activeKey, activeSystemTaskStatuses()).
 		Order("id desc").
 		First(&task).Error
 	if err != nil {

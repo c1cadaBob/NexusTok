@@ -15,7 +15,9 @@ import (
 
 func setupAccountPoolSelectTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}, &model.PoolAccountCheckTask{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}, &model.PoolAccountCheckTask{}, &model.SystemTask{}, &model.SystemTaskLock{}))
+	require.NoError(t, model.DB.Exec("DELETE FROM system_task_locks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM system_tasks").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_check_tasks").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
@@ -69,6 +71,8 @@ func setupAccountPoolSelectTest(t *testing.T) {
 		poolAccountPreflightWarmupMu.Lock()
 		poolAccountPreflightWarmupLast = map[int]int64{}
 		poolAccountPreflightWarmupMu.Unlock()
+		_ = model.DB.Exec("DELETE FROM system_task_locks").Error
+		_ = model.DB.Exec("DELETE FROM system_tasks").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_check_tasks").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error

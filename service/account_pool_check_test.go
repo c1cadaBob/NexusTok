@@ -75,12 +75,23 @@ func (fakeCheckRefreshProvider) Summarize(raw string) string {
 
 func setupAccountPoolCheckTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountPoolGroup{}, &model.PoolAccount{}, &model.PoolAccountStateLog{}, &model.PoolAccountCheckTask{}))
+	require.NoError(t, model.DB.AutoMigrate(
+		&model.AccountPoolGroup{},
+		&model.PoolAccount{},
+		&model.PoolAccountStateLog{},
+		&model.PoolAccountCheckTask{},
+		&model.SystemTask{},
+		&model.SystemTaskLock{},
+	))
+	require.NoError(t, model.DB.Exec("DELETE FROM system_task_locks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM system_tasks").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_check_tasks").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_account_state_logs").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM pool_accounts").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM account_pool_groups").Error)
 	t.Cleanup(func() {
+		_ = model.DB.Exec("DELETE FROM system_task_locks").Error
+		_ = model.DB.Exec("DELETE FROM system_tasks").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_check_tasks").Error
 		_ = model.DB.Exec("DELETE FROM pool_account_state_logs").Error
 		_ = model.DB.Exec("DELETE FROM pool_accounts").Error
@@ -355,15 +366,20 @@ func TestStartPoolAccountCheckTaskRunsQueuedBackgroundCheck(t *testing.T) {
 	require.Equal(t, model.PoolAccountCheckTaskStatusQueued, task.Status)
 	require.Equal(t, 2, task.Total)
 
-	var finalTask *AccountPoolCheckTaskView
-	require.Eventually(t, func() bool {
-		loaded, loadErr := GetPoolAccountCheckTask(task.ID)
-		if loadErr != nil {
-			return false
-		}
-		finalTask = loaded
-		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
-	}, 2*time.Second, 20*time.Millisecond)
+	systemTask, err := model.GetActiveSystemTaskByActiveKey(poolAccountCheckSystemTaskActiveKey(task.ID))
+	require.NoError(t, err)
+	require.NotNil(t, systemTask)
+	var payload AccountPoolCheckSystemTaskPayload
+	require.NoError(t, systemTask.DecodePayload(&payload))
+	require.Equal(t, task.ID, payload.CheckTaskID)
+
+	summary, err := RunPoolAccountCheckSystemTask(context.Background(), task.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, task.ID, summary.CheckTaskID)
+	require.Equal(t, model.PoolAccountCheckTaskStatusCompleted, summary.Status)
+
+	finalTask, err := GetPoolAccountCheckTask(task.ID)
+	require.NoError(t, err)
 
 	require.Equal(t, 2, finalTask.Total)
 	require.Equal(t, 2, finalTask.Checked)
@@ -433,15 +449,10 @@ func TestStartPoolAccountCheckTaskUsesSelectedAccountIDs(t *testing.T) {
 	require.Equal(t, []int{accountB.Id, missingAccountID, accountA.Id}, task.AccountIDs)
 	require.Equal(t, 3, task.Total)
 
-	var finalTask *AccountPoolCheckTaskView
-	require.Eventually(t, func() bool {
-		loaded, loadErr := GetPoolAccountCheckTask(task.ID)
-		if loadErr != nil {
-			return false
-		}
-		finalTask = loaded
-		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
-	}, 2*time.Second, 20*time.Millisecond)
+	_, err = RunPoolAccountCheckSystemTask(context.Background(), task.ID, nil)
+	require.NoError(t, err)
+	finalTask, err := GetPoolAccountCheckTask(task.ID)
+	require.NoError(t, err)
 
 	require.Equal(t, 3, finalTask.Total)
 	require.Equal(t, 2, finalTask.Checked)
@@ -485,15 +496,14 @@ func TestRecoverPoolAccountCheckTasksRequeuesQueuedTask(t *testing.T) {
 	require.Equal(t, 1, recovery.QueuedRecovered)
 	require.Zero(t, recovery.RunningArchived)
 
-	var finalTask *AccountPoolCheckTaskView
-	require.Eventually(t, func() bool {
-		loaded, loadErr := GetPoolAccountCheckTask(task.Id)
-		if loadErr != nil {
-			return false
-		}
-		finalTask = loaded
-		return loaded.Status == model.PoolAccountCheckTaskStatusCompleted
-	}, 2*time.Second, 20*time.Millisecond)
+	systemTask, err := model.GetActiveSystemTaskByActiveKey(poolAccountCheckSystemTaskActiveKey(task.Id))
+	require.NoError(t, err)
+	require.NotNil(t, systemTask)
+
+	_, err = RunPoolAccountCheckSystemTask(context.Background(), task.Id, nil)
+	require.NoError(t, err)
+	finalTask, err := GetPoolAccountCheckTask(task.Id)
+	require.NoError(t, err)
 
 	require.Equal(t, 1, finalTask.Total)
 	require.Equal(t, 1, finalTask.Checked)
@@ -512,6 +522,59 @@ func TestRecoverPoolAccountCheckTasksRequeuesQueuedTask(t *testing.T) {
 	require.Len(t, logs, 1)
 	require.Equal(t, "recovery-tester", logs[0].Actor)
 	require.Equal(t, "req-recovery-queued", logs[0].RequestId)
+}
+
+func TestRecoverPoolAccountCheckTasksReplacesClaimedSystemTask(t *testing.T) {
+	setupAccountPoolCheckTest(t)
+	group := createCheckTestGroup(t)
+	account := &model.PoolAccount{
+		PoolGroupId:        group.Id,
+		Name:               "check-task-claimed-system-task",
+		Platform:           "codex",
+		AuthType:           model.AccountPoolAuthTypeAPIKey,
+		CredentialProvider: "codex",
+		Credentials:        encryptedCheckCredential(t, `{"api_key":"sk-claimed-system-task"}`),
+		Status:             common.ChannelStatusEnabled,
+		Schedulable:        true,
+	}
+	require.NoError(t, model.DB.Create(account).Error)
+	task := &model.PoolAccountCheckTask{
+		PoolGroupId:   group.Id,
+		PoolGroupName: group.Name,
+		Status:        model.PoolAccountCheckTaskStatusQueued,
+		Actor:         "recovery-claimed-tester",
+		RequestId:     "req-recovery-claimed",
+		AccountIds:    joinAccountPoolCheckTaskIDs([]int{account.Id}),
+		Total:         1,
+		Message:       "waiting with claimed system task",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	systemTask, _, err := ensurePoolAccountCheckSystemTask(task.Id)
+	require.NoError(t, err)
+	claimedTask, claimed, err := model.ClaimSystemTask(systemTask.ID, model.SystemTaskTypeAccountPoolCheck, "runner-before-restart", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	recovery, err := recoverPoolAccountCheckTasks()
+	require.NoError(t, err)
+	require.Equal(t, 1, recovery.QueuedRecovered)
+
+	oldSystemTask, err := model.GetSystemTaskByTaskID(claimedTask.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, model.SystemTaskStatusFailed, oldSystemTask.Status)
+	require.Nil(t, oldSystemTask.ActiveKey)
+
+	requeuedSystemTask, err := model.GetActiveSystemTaskByActiveKey(poolAccountCheckSystemTaskActiveKey(task.Id))
+	require.NoError(t, err)
+	require.NotNil(t, requeuedSystemTask)
+	require.NotEqual(t, claimedTask.TaskID, requeuedSystemTask.TaskID)
+
+	_, err = RunPoolAccountCheckSystemTask(context.Background(), task.Id, nil)
+	require.NoError(t, err)
+	finalTask, err := GetPoolAccountCheckTask(task.Id)
+	require.NoError(t, err)
+	require.Equal(t, model.PoolAccountCheckTaskStatusCompleted, finalTask.Status)
+	require.Equal(t, 1, finalTask.Success)
 }
 
 func TestRecoverPoolAccountCheckTasksArchivesRunningTask(t *testing.T) {

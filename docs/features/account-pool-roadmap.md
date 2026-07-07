@@ -751,7 +751,7 @@ MCP 浏览器打开本地热更新页面和远端页面时，`/static/css/index.
 已补齐原生账号池后台检测任务在服务重启后的恢复/归档策略：
 
 1. 服务启动时会执行 `StartPoolAccountCheckTaskRecovery`，只在主节点恢复一次，避免多实例同时处理同一批任务。
-2. 数据库中遗留的 `queued` 检测任务会重新投递到进程内检测队列，继续复用原后台 worker 执行，账号 ID 快照、操作者和 request_id 保持不变。
+2. 数据库中遗留的 `queued` 检测任务会重新确保对应 `account_pool_check` SystemTask 执行入口存在，账号 ID 快照、操作者和 request_id 保持不变。
 3. 数据库中遗留的 `running` 检测任务会归档为 `failed`，失败原因明确为“服务运行中重启导致任务中断”，避免管理员页面长期显示运行中。
 4. `running` 任务不自动重跑，避免检测中途已经写入账号状态日志或刷新 OAuth 凭据后被重复执行；管理员可根据 failed 状态重新发起检测。
 5. 已增加服务层测试覆盖 queued 任务重启后重新跑完、running 任务重启后失败归档。
@@ -760,6 +760,17 @@ MCP 浏览器打开本地热更新页面和远端页面时，`/static/css/index.
 
 1. 任务运行前的可选检测/预热策略。
 2. 更完整的健康看板和操作审计展示。
+
+### 2026-07-07：账号池检测迁入 SystemTask
+
+已将账号池后台检测任务的执行层迁入统一 SystemTask，但继续保持账号池页面和接口契约：
+
+1. `StartPoolAccountCheckTask` 仍先创建 `PoolAccountCheckTask` 业务任务并返回原脱敏视图，前端 `/account-pool` 的状态条、检测历史和轮询接口无需改造。
+2. 每个业务检测任务会创建一条 `account_pool_check` SystemTask，ActiveKey 使用 `account_pool_check:{check_task_id}`，允许多个检测任务排队。
+3. SystemTask 执行租约仍按 `account_pool_check` 类型串行获取，避免多节点同时刷新同一批账号凭据或重复写入状态日志。
+4. SystemTask 进度只写入 `{total, processed, progress}`，结果只保存 `check_task_id` 和通过/失败/跳过等聚合计数；账号级明细继续保存在 `PoolAccountCheckTask.ResultsJSON` 并由账号池接口脱敏返回。
+5. 重启恢复时，queued 业务任务会重新确保系统任务入口存在；如果旧系统任务已被认领但业务任务还停留 queued，会先释放旧系统任务再重新排队，避免页面长期停在 queued。
+6. 保留 `running` 业务任务重启后归档为 `failed` 的策略，防止已经执行过部分账号检测、OAuth 刷新或状态日志写入的任务被自动重复执行。
 
 ### 2026-07-06：账号池检测任务历史与保留清理
 
