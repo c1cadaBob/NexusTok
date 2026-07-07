@@ -485,6 +485,10 @@ func InitResources() error {
 	// 用于 Root 查看当前部署节点、主从角色、版本和资源快照
 	service.StartSystemInstanceReporter()
 
+	// 启动系统任务执行器
+	// 用于异步执行日志清理等耗时后台任务，并通过数据库租约避免多节点重复执行。
+	service.StartSystemTaskRunner()
+
 	// 初始化国际化 (i18n) 支持
 	// 加载多语言翻译文件，配置语言检测
 	err = i18n.Init()

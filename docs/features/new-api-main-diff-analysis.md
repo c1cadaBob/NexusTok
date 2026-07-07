@@ -59,7 +59,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已部分落地 | 已抽出 NexusTok 原生 `registerChannelRoutes` 并补路由结构测试，当前仍保持 AdminAuth/RootAuth 行为；后续接入 Authz 后再将读、操作、写、敏感写拆成权限表，账号池路由也应采用同样模式。 |
 | 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；完整 Authz 上线前敏感写暂映射为 Root 权限。账号池表单分类待后续跟进。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
-| 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`/api/system-task/*` | 后端模型、租约锁和 Root 只读查询接口已落地；runner/创建入口尚未接入，账号池检测任务仍为独立实现 | 下一步接入任务 runner 与真实 handler，再把日志清理、账号池批量检测、渠道批量测试、模型同步任务统一迁入。 |
+| 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`/api/system-task/*` | 后端模型、租约锁、runner、Root 查询接口和日志清理任务入口已落地；账号池检测任务仍为独立实现 | 下一步补系统任务前端面板，并把账号池批量检测、渠道批量测试、模型同步等任务继续迁入统一 runner。 |
 | 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 后端心跳、Root 只读接口和默认前端 `/system-info` 实例面板已落地 | 已引入 `NODE_NAME`/主机名兜底、主从节点、CPU/内存/磁盘/版本心跳和实例页面；后续在同页补 SystemTask 任务面板。 |
 | 后台任务锁 | `SystemTaskLock`、租约续期、过期失败标记 | 已按 NexusTok 三库兼容模型原生化 | 已用数据库锁实现跨节点互斥、租约续期、过期失败标记和锁丢失保护；后续任务 handler 要支持 context cancellation。 |
 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用。 |
@@ -203,16 +203,15 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ### P1：统一后台任务和系统信息
 
 1. `SystemInstance` 后端心跳、Root 只读 `/api/system-info/instances` 和默认前端 `/system-info` 实例面板已落地。
-2. `SystemTask`、`SystemTaskLock` 后端模型和 Root 只读 `/api/system-task/list`、`/api/system-task/current`、`/api/system-task/:task_id` 已落地，并通过 SQLite 测试与 MCP 接口验证。
-3. 下一步补 SystemTask runner、任务 handler 注册和默认前端系统任务面板。
+2. `SystemTask`、`SystemTaskLock` 后端模型、runner、Root 只读 `/api/system-task/list`、`/api/system-task/current`、`/api/system-task/:task_id` 已落地，并通过 SQLite 测试与 MCP 接口验证。
+3. 日志清理已接入 `POST /api/system-task/log-cleanup`，由 runner 异步执行并写入进度与结果。
 4. 迁移候选任务：
    - 账号池批量检测；
-   - 日志清理；
    - 批量渠道测试；
    - 上游模型同步；
    - 订阅周期重置；
    - Midjourney/异步任务轮询。
-5. 系统任务 runner 后续应只在主节点调度，但允许多节点心跳展示所有实例。
+5. 下一步补默认前端系统任务面板；runner 已在主节点启动，但允许多节点心跳展示所有实例。
 
 ### P1：安全边界
 
@@ -445,18 +444,18 @@ wallet
 | router | `authz-router.go` | 权限 catalog API | P1 |
 | router | `channel-router.go`、`channel_router_test.go` | 渠道路由权限表和测试 | P1 |
 | controller | `audit.go`、`authz.go`、`channel_authz.go` | 审计、权限 catalog、渠道敏感字段分类 | P1 |
-| controller | `system_task.go`、`system_task_handlers.go` | 系统任务 API | 只读查询接口已原生化；handler 创建入口待接入。 |
+| controller | `system_task.go`、`system_task_handlers.go` | 系统任务 API | 查询接口和日志清理创建入口已原生化；其它 handler 待接入。 |
 | controller | `system_info.go` | 系统实例列表 API | 已按 NexusTok Root 只读接口和默认前端实例面板原生化。 |
 | controller | `subscription_payment_waffo_pancake.go` | 订阅 Waffo Pancake 支付 | P2 |
 | controller | `usedata_flow_test.go` | 流量账本接口测试 | P2 |
 | model | `authz_role.go`、`casbin_rule.go` | 权限存储 | P1 |
-| model | `system_task.go` | 系统任务 | 已原生化 SystemTask/SystemTaskLock，runner 仍待接入。 |
+| model | `system_task.go` | 系统任务 | 已原生化 SystemTask/SystemTaskLock 与日志清理 runner。 |
 | model | `system_instance.go` | 系统实例心跳 | 已按 NexusTok 三库兼容模型原生化。 |
 | model | `locking.go` | 通用锁能力 | P1/P2，需确认是否仍需要独立于 SystemTaskLock 的通用锁。 |
 | model | `usedata_flow.go` | 分组/渠道/用户流量聚合 | P2 |
 | model | `clickhouse_log_test.go` | ClickHouse 日志兼容测试 | P3/可选 |
 | service | `authz/*` | Casbin 权限服务 | P1 |
-| service | `system_task.go` | 任务 runner | P1 |
+| service | `system_task.go` | 任务 runner | runner 和日志清理 handler 已原生化；渠道测试/模型同步/异步轮询 handler 待接入。 |
 | service | `system_instance.go` | 节点心跳 runner | 已按 NexusTok `NODE_NAME`/主机名兜底和资源快照原生化。 |
 | service | `protected_fetch_client.go` | SSRF 保护 HTTP client | P1 |
 | service | `relayconvert/*` | Relay 格式转换整理 | P3 |
@@ -477,7 +476,7 @@ NexusTok 独有 API 族：
 | API 前缀 | 能力 | 处理 |
 |----------|------|------|
 | `/api/authz/catalog` | 权限资源/角色 catalog | P1 引入。 |
-| `/api/system-task/*` | 后台任务创建、查询、当前任务 | 查询和当前任务接口已引入；创建接口需等真实 handler/runner 接入后开放。 |
+| `/api/system-task/*` | 后台任务创建、查询、当前任务 | 查询、当前任务和日志清理创建入口已引入；其它创建接口需等真实 handler 接入后开放。 |
 | `/api/system-info/instances` | 多节点实例心跳 | 后端和默认前端实例面板已引入。 |
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | P2 引入。 |
 | `/api/subscription/balance/pay` | 余额购买订阅 | P2 引入。 |
@@ -516,3 +515,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 系统实例心跳后端 | `model/system_instance.go`、`service/system_instance.go`、`controller/system_info.go`、`router/system-info-router.go` | 引入 NexusTok 原生 SystemInstance 心跳：启动后定时上报节点名、主从角色、版本、系统资源和最后心跳；新增 Root 只读 `/api/system-info/instances`，为后续 `/system-info` 页面和 SystemTask 观测打底。 |
 | 2026-07-07 | 系统信息实例页面 | `web/default/src/features/system-info/*`、`web/default/src/routes/_authenticated/system-info/index.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端新增 Root-only `/system-info` 页面，展示节点状态、角色、CPU/内存/存储、版本、runtime、启动时间和最近心跳，支持自动刷新与手动刷新。 |
 | 2026-07-07 | 系统任务只读后端 | `model/system_task.go`、`controller/system_task.go`、`router/system-task-router.go` | 引入 NexusTok 原生 SystemTask/SystemTaskLock 模型、三库兼容迁移、Root 只读 `/api/system-task/list`、`/api/system-task/current`、`/api/system-task/:task_id` 和锁生命周期测试；暂不开放创建接口，等待真实 runner/handler 接入。 |
+| 2026-07-07 | 系统任务 runner 与日志清理 | `service/system_task.go`、`controller/system_task.go`、`model/log.go`、`main.go` | 引入主节点 SystemTask runner、handler 注册、租约 heartbeat、过期租约清理和日志清理 handler；新增 `POST /api/system-task/log-cleanup`，日志清理改为异步任务执行并写入 processed/remaining/progress/result。 |

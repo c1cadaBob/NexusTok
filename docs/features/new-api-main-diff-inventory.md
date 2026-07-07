@@ -23,9 +23,9 @@
 
 | 差异类别 | 文件数 | 说明 |
 |----------|--------|------|
-| NexusTok 独有 | 1059 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及差异索引脚本、请求体限制测试和 NexusTok 原生 SystemInfo/SystemTask 路由与测试。 |
-| new-api-main 独有 | 230 | 主要来自 Authz、SystemTask runner/handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask 只读后端、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
-| 同路径但内容不同 | 1873 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
+| NexusTok 独有 | 1060 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及差异索引脚本、请求体限制测试和 NexusTok 原生 SystemInfo/SystemTask 路由与测试。 |
+| new-api-main 独有 | 228 | 主要来自 Authz、SystemTask 其它业务 handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理后端、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
+| 同路径但内容不同 | 1875 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
 
 ## 重新生成清单
 
@@ -67,20 +67,21 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |----------|--------|----------|
 | `modules` | 894 | NexusTok 内嵌账号池/CLIProxy/CPA 管理相关模块，是本项目账号池方向的重要原生资产。 |
 | `web` | 53 | 默认前端账号池、计费设置、classic 账号池/计费页、数据表格旧结构等。 |
-| `service` | 34 | 账号池服务、渠道账号服务、Codex OAuth、openai compat 等。 |
+| `service` | 36 | 账号池服务、渠道账号服务、Codex OAuth、openai compat、SystemTask runner 等。 |
 | `docs` | 27 | NexusTok 自有功能文档、SDK 文档和差异索引。 |
 | `controller` | 20 | 账号池、渠道账号、Codex OAuth、OAuth provider、模型同步任务等控制器。 |
-| `model` | 7 | 账号池、账号池健康、渠道账号、模型定价配置。 |
+| `model` | 9 | 账号池、账号池健康、渠道账号、模型定价配置、日志清理测试等。 |
+| `router` | 4 | 渠道路由、系统信息路由、系统任务路由及对应测试。 |
 | `middleware` | 4 | NexusTok 自有中间件测试、请求体限制测试和分发相关能力。 |
 | `common` | 3 | 会话密钥、secret 等公共工具。 |
-| 其它 | 10 | 账号池 sidecar Docker、热更新脚本、差异生成脚本、service 文件等。 |
+| 其它 | 14 | 账号池 sidecar Docker、热更新脚本、差异生成脚本、服务配置等。 |
 
 ### new-api-main 独有文件
 
 | 顶层目录 | 文件数 | 主要含义 |
 |----------|--------|----------|
-| `web` | 151 | SystemInfo 页面、DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。 |
-| `service` | 22 | Authz、SystemTask runner/handlers、RelayConvert、任务轮询测试等。SystemInstance 最小心跳层、ProtectedFetch 与额度饱和审计已按 NexusTok 边界原生化。 |
+| `web` | 146 | SystemTask 面板、DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。 |
+| `service` | 20 | Authz、SystemTask 其它业务 handlers、RelayConvert、任务轮询测试等。SystemInstance 最小心跳层、SystemTask runner/日志清理、ProtectedFetch 与额度饱和审计已按 NexusTok 边界原生化。 |
 | `relay` | 21 | OpenAI Realtime/Image、Gemini Responses、Advanced Custom、更多 Relay 测试。 |
 | `model` | 11 | Authz、Casbin、Flow、Locking、ClickHouse 测试。SystemInstance、SystemTask 与日志脱敏测试已按 NexusTok 语义补齐。 |
 | `controller` | 6 | Authz、SystemTask handlers/创建入口、审计、订阅 Waffo Pancake 等；SystemInfo 实例列表接口和 SystemTask 只读接口已按 Root 只读能力落地。 |
@@ -95,15 +96,15 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |----------|--------|----------|
 | `web` | 1262 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收。 |
 | `relay` | 196 | Relay 能力、请求转换、测试覆盖和上游协议支持差异。 |
-| `controller` | 66 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异。 |
-| `service` | 59 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异；额度饱和审计已落地为同路径差异。 |
+| `controller` | 70 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异。 |
+| `service` | 62 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异；SystemTask runner 和额度饱和审计已落地为同路径差异。 |
 | `setting` | 49 | 系统设置、计费设置、支付设置、模型设置差异。 |
 | `common` | 50 | 公共工具、SSRF、请求体、配额、环境初始化差异；SSRF 已增加 Dial 阶段保护 helper，QuotaMath 已落地为 NexusTok 原生版本，但与 new-api-main 仍有实现边界差异。 |
-| `model` | 39 | 数据模型、日志、订阅、用户、渠道、任务等差异；日志脱敏测试已落地为同路径差异。 |
+| `model` | 42 | 数据模型、日志、订阅、用户、渠道、任务等差异；日志清理批量删除和日志脱敏测试已落地为同路径差异。 |
 | `dto` | 29 | 请求/响应 DTO 差异，迁移时必须遵守显式零值规则。 |
 | `middleware` | 22 | 鉴权、限流、日志、请求处理等中间件差异。 |
 | `pkg` | 18 | 计费表达式、缓存、内部包实现差异。 |
-| 其它 | 66 | 路由、i18n、electron、构建和仓库元数据差异。 |
+| 其它 | 68 | 路由、i18n、electron、构建和仓库元数据差异。 |
 
 ## 重点目录精细统计
 
@@ -111,8 +112,8 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |------|---------------|-------------------|------------|----------|
 | `router` | 4 | 1 | 8 | 渠道、系统信息和系统任务路由已抽出并保持现有权限行为；Codex 用量 reset API 已挂载，Authz 权限表和账号池路由拆分继续分批推进。 |
 | `controller` | 20 | 6 | 70 | 账号池控制器保留；ChannelAuthz 已先按 Root 兜底吸收渠道敏感字段 fail-closed，Codex 用量 reset、系统实例列表和 SystemTask 只读接口已补，剩余治理类控制器按 P1/P2 原生化。 |
-| `service` | 36 | 22 | 60 | 账号池服务保留；ProtectedFetch、SystemInstance 心跳和额度饱和审计已按本项目边界迁移，工具调用附加费、违规费用、充值入账、视频任务、渠道测试和 Codex 用量 reset 已补保护/接口，Authz/SystemTask runner 继续分批推进。 |
-| `model` | 8 | 11 | 42 | SystemInstance 与 SystemTask 已确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容并落地；迁移后续 Flow/Authz 新模型时仍需逐项确认三库兼容。 |
+| `service` | 36 | 20 | 62 | 账号池服务保留；ProtectedFetch、SystemInstance 心跳、SystemTask runner/日志清理和额度饱和审计已按本项目边界迁移，工具调用附加费、违规费用、充值入账、视频任务、渠道测试和 Codex 用量 reset 已补保护/接口，Authz/SystemTask 其它业务 handler 继续分批推进。 |
+| `model` | 9 | 11 | 42 | SystemInstance 与 SystemTask 已确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容并落地；日志清理批量删除已改为先查 ID 再删除以保持三库一致；迁移后续 Flow/Authz 新模型时仍需逐项确认三库兼容。 |
 | `middleware` | 4 | 1 | 24 | 请求体限制与 HeaderNav 模块鉴权已吸收；全局审计需要配套权限/设置。 |
 | `common` | 3 | 4 | 50 | 请求体限制已吸收；SSRF/Fetch 安全已补 Dial 阶段保护；QuotaMath 已吸收为 NexusTok 原生 helper，后续继续覆盖剩余裸转换。 |
 | `relay` | 0 | 21 | 196 | 逐协议迁移，必须补测试并检查 StreamOptions 支持。 |

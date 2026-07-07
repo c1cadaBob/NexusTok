@@ -20,6 +20,7 @@ func TestRegisterSystemTaskRoutesKeepsHandlers(t *testing.T) {
 
 	registerSystemTaskRoutes(api)
 
+	assertRouteHandler(t, engine, http.MethodPost, "/api/system-task/log-cleanup", controller.CreateLogCleanupSystemTask)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/list", controller.ListSystemTasks)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/current", controller.GetCurrentSystemTask)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/:task_id", controller.GetSystemTask)

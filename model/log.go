@@ -618,17 +618,60 @@ func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64,
 			return total, ctx.Err()
 		}
 
-		result := LOG_DB.Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
-		if nil != result.Error {
-			return total, result.Error
+		rowsAffected, err := DeleteOldLogBatch(ctx, targetTimestamp, limit)
+		if nil != err {
+			return total, err
 		}
 
-		total += result.RowsAffected
+		total += rowsAffected
 
-		if result.RowsAffected < int64(limit) {
+		if rowsAffected < int64(limit) {
 			break
 		}
 	}
 
 	return total, nil
+}
+
+// CountOldLog 统计目标时间戳之前的日志数量。
+//
+// SystemTask 日志清理任务用该函数初始化和刷新进度。查询使用 LOG_DB.WithContext，
+// 让后台任务在租约丢失或服务关闭时可以尽快响应 context cancellation。
+func CountOldLog(ctx context.Context, targetTimestamp int64) (int64, error) {
+	var total int64
+	err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("created_at < ?", targetTimestamp).Count(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// DeleteOldLogBatch 删除一批目标时间戳之前的日志。
+//
+// limit 小于等于 0 时回退到 100，保持旧版 DeleteOldLog 的批量粒度。这里不使用
+// 数据库方言专用 SQL，避免破坏 SQLite、MySQL 和 PostgreSQL 三库兼容性。
+func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	var ids []int
+	if err := LOG_DB.WithContext(ctx).
+		Model(&Log{}).
+		Where("created_at < ?", targetTimestamp).
+		Order("id asc").
+		Limit(limit).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := LOG_DB.WithContext(ctx).Where("id IN ?", ids).Delete(&Log{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }

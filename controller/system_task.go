@@ -9,9 +9,30 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service"
 
 	"github.com/gin-gonic/gin"
 )
+
+// CreateLogCleanupSystemTask 创建日志清理系统任务。
+//
+// 日志清理可能删除大量历史记录，不能再绑定到一次 HTTP 请求内同步执行；
+// 该接口只创建任务并立即返回，由 SystemTask runner 按租约异步执行。
+func CreateLogCleanupSystemTask(c *gin.Context) {
+	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
+	if targetTimestamp == 0 {
+		common.ApiErrorMsg(c, "target timestamp is required")
+		return
+	}
+
+	task, err := service.StartLogCleanupTask(targetTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	common.ApiSuccess(c, task.ToResponse())
+}
 
 // GetCurrentSystemTask 返回指定类型当前活跃的系统任务。
 func GetCurrentSystemTask(c *gin.Context) {

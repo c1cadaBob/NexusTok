@@ -15,6 +15,7 @@ func registerSystemTaskRoutes(apiRouter *gin.RouterGroup) {
 	systemTaskRoute := apiRouter.Group("/system-task")
 	systemTaskRoute.Use(middleware.RootAuth())
 	{
+		systemTaskRoute.POST("/log-cleanup", controller.CreateLogCleanupSystemTask)
 		systemTaskRoute.GET("/list", controller.ListSystemTasks)
 		systemTaskRoute.GET("/current", controller.GetCurrentSystemTask)
 		systemTaskRoute.GET("/:task_id", controller.GetSystemTask)
