@@ -440,7 +440,16 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		session, apiErr := trySubscription()
 		if apiErr != nil {
 			if apiErr.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
-				return tryWallet()
+				// 订阅套餐可声明额度耗尽后不允许钱包兜底。检查使用购买时写入
+				// UserSubscription 的策略快照，避免管理员后来修改套餐影响已购买订阅。
+				allowOverflow, overflowErr := model.UserActiveSubscriptionsAllowWalletOverflow(relayInfo.UserId)
+				if overflowErr != nil {
+					return nil, types.NewError(overflowErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+				}
+				if allowOverflow {
+					return tryWallet()
+				}
+				return nil, apiErr
 			}
 			return nil, apiErr
 		}

@@ -25,6 +25,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/pkg/cachex"
 	"github.com/samber/hot"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -173,6 +174,14 @@ type SubscriptionPlan struct {
 	Enabled   bool `json:"enabled" gorm:"default:true"`
 	SortOrder int  `json:"sort_order" gorm:"type:int;default:0"`
 
+	// AllowBalancePay 控制用户是否可直接使用钱包余额购买该订阅套餐。
+	// 使用指针是为了兼容历史数据：nil 表示旧套餐未显式配置，业务上按 true 处理。
+	AllowBalancePay *bool `json:"allow_balance_pay" gorm:"default:true"`
+
+	// AllowWalletOverflow 控制订阅额度耗尽后是否允许继续回退扣钱包余额。
+	// 购买时会快照到 UserSubscription，避免管理员改套餐影响已购买订阅的不变量。
+	AllowWalletOverflow *bool `json:"allow_wallet_overflow" gorm:"default:true"`
+
 	StripePriceId  string `json:"stripe_price_id" gorm:"type:varchar(128);default:''"`
 	CreemProductId string `json:"creem_product_id" gorm:"type:varchar(128);default:''"`
 
@@ -194,6 +203,7 @@ type SubscriptionPlan struct {
 }
 
 func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
+	p.NormalizeDefaults()
 	now := common.GetTimestamp()
 	p.CreatedAt = now
 	p.UpdatedAt = now
@@ -203,6 +213,19 @@ func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
 func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 	p.UpdatedAt = common.GetTimestamp()
 	return nil
+}
+
+// NormalizeDefaults 补齐历史套餐新增字段的默认语义。
+//
+// 这两个字段都是从 new-api-main 吸收的支付/计费策略开关。旧数据没有列值时，
+// 应保持原有行为：允许余额购买、订阅额度耗尽后允许按用户偏好回退钱包。
+func (p *SubscriptionPlan) NormalizeDefaults() {
+	if p.AllowBalancePay == nil {
+		p.AllowBalancePay = common.GetPointer(true)
+	}
+	if p.AllowWalletOverflow == nil {
+		p.AllowWalletOverflow = common.GetPointer(true)
+	}
 }
 
 // Subscription order (payment -> webhook -> create UserSubscription)
@@ -264,6 +287,13 @@ type UserSubscription struct {
 
 	UpgradeGroup  string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
 	PrevUserGroup string `json:"prev_user_group" gorm:"type:varchar(64);default:''"`
+
+	// AllowWalletOverflow 是购买时的套餐策略快照。
+	// 只要任意一个活跃订阅显式禁止钱包溢出，subscription_first 下订阅额度不足就不再回退钱包。
+	//
+	// 使用指针是为了让 GORM 能区分“显式 false”和“历史数据没有该字段”。
+	// 若使用 bool + default:true，Create 时 false 会被 GORM 当作零值省略，最终写入数据库默认 true。
+	AllowWalletOverflow *bool `json:"allow_wallet_overflow" gorm:"default:true"`
 
 	CreatedAt int64 `json:"created_at" gorm:"bigint"`
 	UpdatedAt int64 `json:"updated_at" gorm:"bigint"`
@@ -456,6 +486,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 	if plan == nil || plan.Id == 0 {
 		return nil, errors.New("invalid plan")
 	}
+	plan.NormalizeDefaults()
 	if userId <= 0 {
 		return nil, errors.New("invalid user id")
 	}
@@ -470,7 +501,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, errors.New("已达到该套餐购买上限")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := getDBTimestampTx(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -498,20 +529,21 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		}
 	}
 	sub := &UserSubscription{
-		UserId:        userId,
-		PlanId:        plan.Id,
-		AmountTotal:   plan.TotalAmount,
-		AmountUsed:    0,
-		StartTime:     now.Unix(),
-		EndTime:       endUnix,
-		Status:        "active",
-		Source:        source,
-		LastResetTime: lastReset,
-		NextResetTime: nextReset,
-		UpgradeGroup:  upgradeGroup,
-		PrevUserGroup: prevGroup,
-		CreatedAt:     common.GetTimestamp(),
-		UpdatedAt:     common.GetTimestamp(),
+		UserId:              userId,
+		PlanId:              plan.Id,
+		AmountTotal:         plan.TotalAmount,
+		AmountUsed:          0,
+		StartTime:           now.Unix(),
+		EndTime:             endUnix,
+		Status:              "active",
+		Source:              source,
+		LastResetTime:       lastReset,
+		NextResetTime:       nextReset,
+		UpgradeGroup:        upgradeGroup,
+		PrevUserGroup:       prevGroup,
+		AllowWalletOverflow: plan.AllowWalletOverflow,
+		CreatedAt:           common.GetTimestamp(),
+		UpdatedAt:           common.GetTimestamp(),
 	}
 	if err := tx.Create(sub).Error; err != nil {
 		return nil, err
@@ -591,6 +623,117 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		msg := fmt.Sprintf("订阅购买成功，套餐: %s，支付金额: %.2f，支付方式: %s", logPlanTitle, logMoney, logPaymentMethod)
 		RecordLog(logUserId, LogTypeTopup, msg)
 	}
+	return nil
+}
+
+func calcSubscriptionBalanceQuota(priceAmount float64) (int, error) {
+	if priceAmount < 0 {
+		return 0, errors.New("套餐价格不能为负数")
+	}
+	if priceAmount == 0 {
+		return 0, nil
+	}
+	if common.QuotaPerUnit <= 0 {
+		return 0, errors.New("额度单位配置错误")
+	}
+	quotaDecimal := decimal.NewFromFloat(priceAmount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Ceil()
+	quota, clamp := common.QuotaFromDecimalTruncatedChecked(quotaDecimal)
+	if clamp != nil {
+		return 0, fmt.Errorf("套餐余额价格换算额度超出范围: %s", clamp.Kind)
+	}
+	if quota < 0 {
+		return 0, errors.New("套餐余额价格换算额度无效")
+	}
+	return quota, nil
+}
+
+// PurchaseSubscriptionWithBalance 在一个事务内完成钱包扣款、订阅创建和成功订单落账。
+//
+// 余额购买与第三方支付订单共用 SubscriptionOrder，便于后续在订阅订单维度审计来源；
+// 同时直接扣用户钱包额度，不写入 TopUp，避免把“消费余额”误展示为“充值到账”。
+func PurchaseSubscriptionWithBalance(userId int, planId int) error {
+	if userId <= 0 || planId <= 0 {
+		return errors.New("invalid userId or planId")
+	}
+
+	var logPlanTitle string
+	var logMoney float64
+	var chargedQuota int
+	var upgradeGroup string
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		plan, err := getSubscriptionPlanByIdTx(tx, planId)
+		if err != nil {
+			return err
+		}
+		plan.NormalizeDefaults()
+		if !plan.Enabled {
+			return errors.New("套餐未启用")
+		}
+		if !*plan.AllowBalancePay {
+			return errors.New("该套餐不允许使用余额兑换")
+		}
+
+		requiredQuota, err := calcSubscriptionBalanceQuota(plan.PriceAmount)
+		if err != nil {
+			return err
+		}
+
+		var user User
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userId).First(&user).Error; err != nil {
+			return err
+		}
+		if requiredQuota > 0 && user.Quota < requiredQuota {
+			return errors.New("余额不足")
+		}
+		if requiredQuota > 0 {
+			if err := tx.Model(&User{}).Where("id = ?", userId).
+				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
+				return err
+			}
+		}
+
+		if _, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance); err != nil {
+			return err
+		}
+
+		now := common.GetTimestamp()
+		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
+		order := &SubscriptionOrder{
+			UserId:          userId,
+			PlanId:          plan.Id,
+			Money:           plan.PriceAmount,
+			TradeNo:         tradeNo,
+			PaymentMethod:   PaymentMethodBalance,
+			PaymentProvider: PaymentProviderBalance,
+			Status:          common.TopUpStatusSuccess,
+			CreateTime:      now,
+			CompleteTime:    now,
+			ProviderPayload: fmt.Sprintf("charged_quota=%d", requiredQuota),
+		}
+		if err := tx.Create(order).Error; err != nil {
+			return err
+		}
+
+		logPlanTitle = plan.Title
+		logMoney = plan.PriceAmount
+		chargedQuota = requiredQuota
+		upgradeGroup = strings.TrimSpace(plan.UpgradeGroup)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if chargedQuota > 0 {
+		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
+			common.SysLog("failed to decrease user quota cache after subscription balance purchase: " + err.Error())
+		}
+	}
+	if upgradeGroup != "" {
+		_ = UpdateUserGroupCache(userId, upgradeGroup)
+	}
+	msg := fmt.Sprintf("使用余额购买订阅成功，套餐: %s，支付金额: %.2f，扣除额度: %d", logPlanTitle, logMoney, chargedQuota)
+	RecordLog(userId, LogTypeTopup, msg)
 	return nil
 }
 
@@ -708,6 +851,27 @@ func HasActiveUserSubscription(userId int) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// UserActiveSubscriptionsAllowWalletOverflow 判断用户活跃订阅是否允许钱包兜底。
+//
+// 规则采用“任意严格订阅阻断”：
+//   - 没有活跃订阅时返回 true，让调用方可按原有钱包路径处理；
+//   - 只要一个活跃订阅的快照 allow_wallet_overflow=false，就禁止 subscription_first
+//     在订阅额度不足后继续消耗钱包，避免套餐承诺被其它订阅绕过。
+func UserActiveSubscriptionsAllowWalletOverflow(userId int) (bool, error) {
+	if userId <= 0 {
+		return false, errors.New("invalid userId")
+	}
+	now := common.GetTimestamp()
+	var strictCount int64
+	if err := DB.Model(&UserSubscription{}).
+		Where("user_id = ? AND status = ? AND end_time > ? AND allow_wallet_overflow = ?",
+			userId, "active", now, false).
+		Count(&strictCount).Error; err != nil {
+		return false, err
+	}
+	return strictCount == 0, nil
 }
 
 // GetAllUserSubscriptions returns all subscriptions (active and expired) for a user.

@@ -39,6 +39,11 @@ type BillingPreferenceRequest struct {
 	BillingPreference string `json:"billing_preference"` // 计费偏好
 }
 
+// SubscriptionBalancePayRequest 表示用户使用钱包余额购买订阅套餐的请求。
+type SubscriptionBalancePayRequest struct {
+	PlanId int `json:"plan_id"` // 订阅套餐 ID
+}
+
 // ---- 用户 API ----
 
 // GetSubscriptionPlans 获取可用的订阅计划列表
@@ -64,6 +69,7 @@ func GetSubscriptionPlans(c *gin.Context) {
 	// 构建响应
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
 	for _, p := range plans {
+		p.NormalizeDefaults()
 		result = append(result, SubscriptionPlanDTO{
 			Plan: p,
 		})
@@ -125,6 +131,28 @@ func UpdateSubscriptionPreference(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"billing_preference": pref})
 }
 
+// SubscriptionRequestBalancePay 使用用户钱包余额购买订阅套餐。
+//
+// 扣余额、创建订阅、创建成功订单在模型层同一事务完成；控制器只负责鉴权后的参数校验
+// 与统一响应，避免不同支付入口重复实现购买次数、套餐状态和缓存一致性细节。
+func SubscriptionRequestBalancePay(c *gin.Context) {
+	if !requirePaymentCompliance(c) {
+		return
+	}
+
+	userId := c.GetInt("id")
+	var req SubscriptionBalancePayRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	if err := model.PurchaseSubscriptionWithBalance(userId, req.PlanId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
 // ---- Admin APIs ----
 
 func AdminListSubscriptionPlans(c *gin.Context) {
@@ -135,6 +163,7 @@ func AdminListSubscriptionPlans(c *gin.Context) {
 	}
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
 	for _, p := range plans {
+		p.NormalizeDefaults()
 		result = append(result, SubscriptionPlanDTO{
 			Plan: p,
 		})
@@ -287,6 +316,12 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 			"quota_reset_period":         req.Plan.QuotaResetPeriod,
 			"quota_reset_custom_seconds": req.Plan.QuotaResetCustomSeconds,
 			"updated_at":                 common.GetTimestamp(),
+		}
+		if req.Plan.AllowBalancePay != nil {
+			updateMap["allow_balance_pay"] = *req.Plan.AllowBalancePay
+		}
+		if req.Plan.AllowWalletOverflow != nil {
+			updateMap["allow_wallet_overflow"] = *req.Plan.AllowWalletOverflow
 		}
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err

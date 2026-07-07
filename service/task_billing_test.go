@@ -51,7 +51,10 @@ func TestMain(m *testing.M) {
 		&model.Log{},
 		&model.Channel{},
 		&model.TopUp{},
+		&model.SubscriptionPlan{},
+		&model.SubscriptionOrder{},
 		&model.UserSubscription{},
+		&model.SubscriptionPreConsumeRecord{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -73,7 +76,10 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM logs")
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM top_ups")
+		model.DB.Exec("DELETE FROM subscription_plans")
+		model.DB.Exec("DELETE FROM subscription_orders")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
 	})
 }
 
@@ -103,13 +109,14 @@ func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
 func seedSubscription(t *testing.T, id int, userId int, amountTotal int64, amountUsed int64) {
 	t.Helper()
 	sub := &model.UserSubscription{
-		Id:          id,
-		UserId:      userId,
-		AmountTotal: amountTotal,
-		AmountUsed:  amountUsed,
-		Status:      "active",
-		StartTime:   time.Now().Unix(),
-		EndTime:     time.Now().Add(30 * 24 * time.Hour).Unix(),
+		Id:                  id,
+		UserId:              userId,
+		AmountTotal:         amountTotal,
+		AmountUsed:          amountUsed,
+		Status:              "active",
+		StartTime:           time.Now().Unix(),
+		EndTime:             time.Now().Add(30 * 24 * time.Hour).Unix(),
+		AllowWalletOverflow: common.GetPointer(true),
 	}
 	require.NoError(t, model.DB.Create(sub).Error)
 }

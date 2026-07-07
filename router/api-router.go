@@ -245,12 +245,13 @@ func SetApiRouter(router *gin.Engine) {
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())
 		{
-			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)                                               // 获取订阅计划列表
-			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)                                                 // 获取当前用户订阅
-			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)                             // 更新订阅偏好
-			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)        // 易支付订阅
-			subscriptionRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestStripePay) // Stripe 订阅
-			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)   // Creem 订阅
+			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)                                                 // 获取订阅计划列表
+			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)                                                   // 获取当前用户订阅
+			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)                               // 更新订阅偏好
+			subscriptionRoute.POST("/balance/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestBalancePay) // 余额购买订阅
+			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)          // 易支付订阅
+			subscriptionRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestStripePay)   // Stripe 订阅
+			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)     // Creem 订阅
 		}
 
 		// 管理员订阅管理路由（需要管理员权限）

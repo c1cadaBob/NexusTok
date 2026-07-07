@@ -72,8 +72,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | 缺少部分文件 | 逐个核对上游协议支持，再按 channel 能力原生接入。 |
 | Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 缺少 | 可作为高级渠道改写能力参考，但必须接入 NexusTok 的参数覆盖、安全过滤和计费快照。 |
 | Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
-| 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | NexusTok 订阅购买缺少余额支付入口 | 可原生化为钱包余额购买订阅，并明确余额不足、退款和订阅重置语义。 |
-| 订阅钱包溢出控制 | `allow_wallet_overflow` | NexusTok 缺少 | 用于控制订阅额度耗尽后是否继续消耗钱包，建议加入计划字段。 |
+| 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；`allow_balance_pay` 控制套餐是否允许余额购买。前端按钮/表单待接入。 |
+| 订阅钱包溢出控制 | `allow_wallet_overflow` | 后端已落地 | 已在套餐与用户订阅快照保存钱包溢出策略；`subscription_first` 下订阅额度不足时，任一活跃订阅禁止溢出即阻断钱包 fallback。前端管理字段待接入。 |
 | 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 缺少 | 默认前端可据此隐藏不可操作按钮，减少 403 弹窗。 |
 
 ## 默认前端页面差异
@@ -256,10 +256,11 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 ### P2：订阅和支付体验
 
-1. 增加订阅余额支付 `POST /api/subscription/balance/pay`，复用钱包扣费和订阅创建事务。
-2. 增加 `allow_balance_pay` 和 `allow_wallet_overflow`：
+1. 订阅余额支付后端已落地：`POST /api/subscription/balance/pay` 复用钱包扣费和订阅创建事务，成功后写入订阅订单和用户日志，余额不足、套餐禁用、购买上限与第三方支付入口保持一致。
+2. `allow_balance_pay` 和 `allow_wallet_overflow` 后端已落地：
    - `allow_balance_pay` 控制是否允许用余额购买套餐；
-   - `allow_wallet_overflow` 控制套餐额度用尽后是否继续消耗钱包。
+   - `allow_wallet_overflow` 在购买时快照到用户订阅，控制套餐额度用尽后是否继续消耗钱包；
+   - 后续需要默认前端套餐表单和用户订阅页展示这两个字段。
 3. Waffo Pancake 保留 NexusTok 当前充值链路，吸收 new-api-main 的 catalog/pair/product 绑定向导，减少手填 Store/Product ID 的错误。
 4. 订阅管理页补齐重置计划/重置用户订阅能力，并走 SystemTask 或明确的同步事务边界。
 
@@ -541,3 +542,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 订阅维护系统任务 | `service/subscription_reset_task.go`、`model/system_task.go`、`web/default/src/features/system-info/components/system-tasks-panel.tsx` | 订阅过期、周期额度重置和预消费记录清理从独立 ticker 迁入 `subscription_maintenance` SystemTask；启动入口只创建首次任务，周期执行由 scheduler 和数据库租约统一管理，并在 `/system-info` 以六语标签展示任务类型。 |
 | 2026-07-07 | Midjourney 与异步任务轮询系统任务 | `controller/midjourney.go`、`service/task_polling.go`、`main.go` | 绘图任务和通用异步任务轮询从独立无限 goroutine 迁入 `midjourney_poll`/`async_task_poll` SystemTask；旧启动入口只负责创建首次任务，周期执行由 scheduler 和数据库租约统一管理。保留 Midjourney 失败退款、通用任务超时清理、Suno/视频任务分发和差额结算路径，并补充空上游任务 ID 修复、handler 完成和启动入队测试。 |
 | 2026-07-07 | 流量账本查询后端 | `model/usedata.go`、`controller/usedata.go`、`router/api-router.go` | 扩展 `quota_data` 记录 node/token/group/channel 维度，新增 `/api/data/flow` 与 `/api/data/flow/self` 聚合接口；Root 可看节点、Token 和渠道，Admin 隐藏 Token/节点，普通用户仅查看自己的 Token/group/model 聚合，为后续 dashboard Sankey 图提供后端数据。 |
+| 2026-07-07 | 订阅余额支付与钱包溢出控制后端 | `model/subscription.go`、`controller/subscription.go`、`router/api-router.go`、`service/billing_session.go`、`service/quota.go` | 新增套餐 `allow_balance_pay`、`allow_wallet_overflow` 和用户订阅钱包溢出快照，提供 `/api/subscription/balance/pay` 余额购买订阅接口；余额扣款、订阅创建和成功订单在同一事务内完成，`subscription_first` 在订阅额度不足时按活跃订阅快照决定是否允许钱包 fallback。 |

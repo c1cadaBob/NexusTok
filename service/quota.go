@@ -485,7 +485,15 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	//if relayInfo.TokenUnlimited {
 	//	return nil
 	//}
-	token, err := model.GetTokenByKey(relayInfo.TokenKey, false)
+	var token *model.Token
+	var err error
+	if relayInfo.TokenId > 0 {
+		// RelayInfo 在认证阶段已经固定 TokenId。预扣费优先按主键读取，
+		// 只在兼容旧调用方缺少 TokenId 时退回 key 查询，避免计费路径依赖保留字列名拼接。
+		token, err = model.GetTokenById(relayInfo.TokenId)
+	} else {
+		token, err = model.GetTokenByKey(relayInfo.TokenKey, false)
+	}
 	if err != nil {
 		return err
 	}
