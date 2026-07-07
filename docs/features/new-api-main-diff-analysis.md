@@ -56,7 +56,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
 | 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | 缺少 | 引入 NexusTok 原生 `AdminPermission` 能力，先覆盖渠道、账号池、用户、模型、订阅、系统设置六类资源。 |
-| 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | NexusTok 仍在 `api-router.go` 里直接挂 AdminAuth/RootAuth | 抽出 `registerChannelRoutes`，将读、操作、写、敏感写拆开；账号池路由也应采用同样模式。 |
+| 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已部分落地 | 已抽出 NexusTok 原生 `registerChannelRoutes` 并补路由结构测试，当前仍保持 AdminAuth/RootAuth 行为；后续接入 Authz 后再将读、操作、写、敏感写拆成权限表，账号池路由也应采用同样模式。 |
 | 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；完整 Authz 上线前敏感写暂映射为 Root 权限。账号池表单分类待后续跟进。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`/api/system-task/*` | 缺少统一框架，账号池检测任务为独立实现 | 作为 P1 原生化重点，把日志清理、账号池批量检测、渠道批量测试、模型同步任务统一迁入。 |
@@ -193,8 +193,9 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
    - 动作建议：`read`、`operate`、`write`、`sensitive_write`、`export`。
    - 先让 Root 拥有全部权限，Admin 默认拥有非敏感操作，再支持用户级 override。
 2. 拆分路由注册：
-   - 学习 `new-api-main/router/channel-router.go`，把渠道和账号池从巨型 `api-router.go` 抽出。
-   - 每条写接口绑定权限常量，补 route permission 测试。
+   - 渠道路由已先从巨型 `api-router.go` 抽出到 `router/channel-router.go`，保持现有权限行为不变。
+   - 后续学习 `new-api-main/router/channel-router.go` 的权限表模式，为每条写接口绑定权限常量，并补 route permission 测试。
+   - 账号池路由仍在主路由文件中，待 Authz 设计稳定后再抽出。
 3. 引入全局操作审计：
    - 账号池仍保留专用状态日志。
    - 其它管理写操作走中间件兜底审计，使用稳定 action + params，前端本地化展示。
@@ -506,3 +507,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 视频任务与渠道测试额度保护 | `controller/task_video.go`、`controller/channel-test.go`、`controller/channel_test_internal_test.go` | 视频任务 token 重算改用 checked float 转换并记录管理员审计；渠道测试日志改用统一 `QuotaRound` 并注入 quota saturation，同时把视频响应脱敏 JSON 处理切到 `common.*`。 |
 | 2026-07-07 | 顶栏模块后端鉴权 | `middleware/header_nav.go`、`router/api-router.go`、`middleware/header_nav_test.go` | 吸收 HeaderNavModuleAuth，使 pricing/rankings 公开 API 与前端导航 `enabled/requireAuth` 配置保持一致；pricing 关联的 perf-metrics 对匿名访问做同源控制。 |
 | 2026-07-07 | 渠道敏感字段 fail-closed | `controller/channel_authz.go`、`controller/channel.go`、`controller/channel_authz_test.go` | 更新渠道时按原始请求字段判断敏感写：Key、BaseURL、请求覆盖、设置、凭证模式和未知字段默认需要敏感权限；完整 Authz 前暂以 Root 权限兜底，普通 Admin 仍可更新模型、分组、优先级等运营字段。 |
+| 2026-07-07 | 渠道路由注册拆分 | `router/channel-router.go`、`router/channel_router_test.go`、`router/api-router.go` | 将 `/api/channel` 路由从主 API 路由中抽出，保持现有 AdminAuth/RootAuth 行为不变，并为后续 Authz 权限表接入提供单一落点。 |
