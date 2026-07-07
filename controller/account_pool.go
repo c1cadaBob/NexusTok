@@ -69,6 +69,14 @@ type accountPoolGroupUpsertRequest struct {
 	NoAvailableAction string `json:"no_available_action"`
 	// NoAvailableWaitSeconds 是等待策略的最长等待秒数。
 	NoAvailableWaitSeconds *int `json:"no_available_wait_seconds"`
+	// TaskMaxConcurrency 控制同一账号池组内同一 platform + action 的异步任务提交并发，0 表示不限。
+	TaskMaxConcurrency *int `json:"task_max_concurrency"`
+	// TaskRateLimitRpm 控制同一账号池组内同一 platform + action 的异步任务每分钟提交数，0 表示不限。
+	TaskRateLimitRpm *int `json:"task_rate_limit_rpm"`
+	// TaskLimitAction 控制任务提交并发满时立即失败还是在当前请求内短暂等待。
+	TaskLimitAction string `json:"task_limit_action"`
+	// TaskLimitWaitSeconds 是任务提交并发满时 wait 策略的最长等待秒数。
+	TaskLimitWaitSeconds *int `json:"task_limit_wait_seconds"`
 }
 
 // poolAccountUpsertRequest 池账号创建/更新请求
@@ -2376,6 +2384,19 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 	if req.NoAvailableWaitSeconds != nil {
 		noAvailableWaitSeconds = model.NormalizeAccountPoolNoAvailableWaitSeconds(*req.NoAvailableWaitSeconds)
 	}
+	taskMaxConcurrency := 0
+	if req.TaskMaxConcurrency != nil && *req.TaskMaxConcurrency > 0 {
+		taskMaxConcurrency = *req.TaskMaxConcurrency
+	}
+	taskRateLimitRpm := 0
+	if req.TaskRateLimitRpm != nil && *req.TaskRateLimitRpm > 0 {
+		taskRateLimitRpm = *req.TaskRateLimitRpm
+	}
+	taskLimitAction := model.NormalizeAccountPoolTaskLimitAction(req.TaskLimitAction)
+	taskLimitWaitSeconds := model.NormalizeAccountPoolTaskLimitWaitSeconds(0)
+	if req.TaskLimitWaitSeconds != nil {
+		taskLimitWaitSeconds = model.NormalizeAccountPoolTaskLimitWaitSeconds(*req.TaskLimitWaitSeconds)
+	}
 	settings := accountPoolGroupRequestSettings(req)
 	return &model.AccountPoolGroup{
 		Name:                           name,
@@ -2401,6 +2422,10 @@ func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model
 		PreflightCheckLimit:            preflightCheckLimit,
 		NoAvailableAction:              noAvailableAction,
 		NoAvailableWaitSeconds:         noAvailableWaitSeconds,
+		TaskMaxConcurrency:             taskMaxConcurrency,
+		TaskRateLimitRpm:               taskRateLimitRpm,
+		TaskLimitAction:                taskLimitAction,
+		TaskLimitWaitSeconds:           taskLimitWaitSeconds,
 	}, nil
 }
 
@@ -2478,6 +2503,26 @@ func accountPoolGroupUpdateMap(req accountPoolGroupUpsertRequest) (map[string]in
 	}
 	if req.NoAvailableWaitSeconds != nil {
 		updates["no_available_wait_seconds"] = model.NormalizeAccountPoolNoAvailableWaitSeconds(*req.NoAvailableWaitSeconds)
+	}
+	if req.TaskMaxConcurrency != nil {
+		taskMaxConcurrency := 0
+		if *req.TaskMaxConcurrency > 0 {
+			taskMaxConcurrency = *req.TaskMaxConcurrency
+		}
+		updates["task_max_concurrency"] = taskMaxConcurrency
+	}
+	if req.TaskRateLimitRpm != nil {
+		taskRateLimitRpm := 0
+		if *req.TaskRateLimitRpm > 0 {
+			taskRateLimitRpm = *req.TaskRateLimitRpm
+		}
+		updates["task_rate_limit_rpm"] = taskRateLimitRpm
+	}
+	if strings.TrimSpace(req.TaskLimitAction) != "" {
+		updates["task_limit_action"] = model.NormalizeAccountPoolTaskLimitAction(req.TaskLimitAction)
+	}
+	if req.TaskLimitWaitSeconds != nil {
+		updates["task_limit_wait_seconds"] = model.NormalizeAccountPoolTaskLimitWaitSeconds(*req.TaskLimitWaitSeconds)
 	}
 	if req.ModelMapping != nil {
 		updates["model_mapping"] = *req.ModelMapping
@@ -2860,6 +2905,10 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 		"preflight_check_limit":             group.GetPreflightCheckLimit(),
 		"no_available_action":               group.GetNoAvailableAction(),
 		"no_available_wait_seconds":         group.GetNoAvailableWaitSeconds(),
+		"task_max_concurrency":              group.GetTaskMaxConcurrency(),
+		"task_rate_limit_rpm":               group.GetTaskRateLimitRpm(),
+		"task_limit_action":                 group.GetTaskLimitAction(),
+		"task_limit_wait_seconds":           group.GetTaskLimitWaitSeconds(),
 		"created_time":                      group.CreatedTime,
 		"updated_time":                      group.UpdatedTime,
 		"stats":                             group.Stats,
@@ -2914,6 +2963,10 @@ func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool)
 		"preflight_check_limit":             group.GetPreflightCheckLimit(),
 		"no_available_action":               group.GetNoAvailableAction(),
 		"no_available_wait_seconds":         group.GetNoAvailableWaitSeconds(),
+		"task_max_concurrency":              group.GetTaskMaxConcurrency(),
+		"task_rate_limit_rpm":               group.GetTaskRateLimitRpm(),
+		"task_limit_action":                 group.GetTaskLimitAction(),
+		"task_limit_wait_seconds":           group.GetTaskLimitWaitSeconds(),
 		"stats":                             group.Stats,
 	}, true
 }

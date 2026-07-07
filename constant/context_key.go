@@ -122,6 +122,10 @@ const (
 	ContextKeyPoolAccountReserved ContextKey = "pool_account_reserved"
 	// ContextKeyPoolGroupReserved 账号池分组并发槽位保留标记
 	ContextKeyPoolGroupReserved ContextKey = "pool_group_reserved"
+	// ContextKeyPoolTaskReserved 账号池异步任务提交级并发槽位保留标记
+	ContextKeyPoolTaskReserved ContextKey = "pool_task_reserved"
+	// ContextKeyPoolTaskLimitKey 账号池异步任务提交级限流键
+	ContextKeyPoolTaskLimitKey ContextKey = "pool_task_limit_key"
 )
 
 // 自动分组相关键

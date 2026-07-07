@@ -167,6 +167,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
+	if _, err := service.ReserveAccountPoolTaskLimit(c, service.AccountPoolTaskLimitOptions{
+		PoolGroupID: info.ChannelMeta.PoolGroupId,
+		Platform:    string(platform),
+		Action:      info.Action,
+	}); err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "account_pool_task_limited", http.StatusTooManyRequests)
+	}
+	defer service.ReleaseAccountPoolTaskLimit(c)
 
 	// 2. 确定模型名称
 	modelName := info.OriginModelName

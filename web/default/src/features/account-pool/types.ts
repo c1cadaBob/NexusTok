@@ -36,6 +36,8 @@ export type AccountPoolPreflightCheckMode = 'off' | 'warmup' | 'require_recent'
 
 export type AccountPoolNoAvailableAction = 'fail' | 'wait'
 
+export type AccountPoolTaskLimitAction = 'fail' | 'wait'
+
 export type AccountPoolGroup = {
   id: number
   name: string
@@ -70,6 +72,10 @@ export type AccountPoolGroup = {
   preflight_check_limit: number
   no_available_action: AccountPoolNoAvailableAction | string
   no_available_wait_seconds: number
+  task_max_concurrency: number
+  task_rate_limit_rpm: number
+  task_limit_action: AccountPoolTaskLimitAction | string
+  task_limit_wait_seconds: number
   created_time: number
   updated_time: number
   stats?: AccountPoolStats
@@ -280,6 +286,10 @@ export type AccountPoolGroupPayload = {
   preflight_check_limit?: number
   no_available_action?: AccountPoolNoAvailableAction | string
   no_available_wait_seconds?: number
+  task_max_concurrency?: number
+  task_rate_limit_rpm?: number
+  task_limit_action?: AccountPoolTaskLimitAction | string
+  task_limit_wait_seconds?: number
 }
 
 export type PoolAccountPayload = {
@@ -544,6 +554,10 @@ export type AccountPoolGroupOption = {
   preflight_check_limit?: number
   no_available_action?: AccountPoolNoAvailableAction | string
   no_available_wait_seconds?: number
+  task_max_concurrency?: number
+  task_rate_limit_rpm?: number
+  task_limit_action?: AccountPoolTaskLimitAction | string
+  task_limit_wait_seconds?: number
   stats?: AccountPoolStats
 }
 

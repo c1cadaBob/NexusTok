@@ -271,6 +271,46 @@ func TestAccountPoolGroupResponseIncludesNoAvailableSettings(t *testing.T) {
 	require.Equal(t, 7, option["no_available_wait_seconds"])
 }
 
+func TestAccountPoolGroupResponseIncludesTaskLimitSettings(t *testing.T) {
+	group := &model.AccountPoolGroup{
+		Id:                   24,
+		Name:                 "task-limit-response",
+		Platform:             "codex",
+		AuthType:             model.AccountPoolAuthTypeAPIKey,
+		Source:               model.AccountPoolGroupSourceNative,
+		Status:               common.ChannelStatusEnabled,
+		TaskMaxConcurrency:   2,
+		TaskRateLimitRpm:     9,
+		TaskLimitAction:      model.AccountPoolTaskLimitActionWait,
+		TaskLimitWaitSeconds: 8,
+	}
+
+	item := accountPoolGroupResponse(group)
+	require.Equal(t, 2, item["task_max_concurrency"])
+	require.Equal(t, 9, item["task_rate_limit_rpm"])
+	require.Equal(t, model.AccountPoolTaskLimitActionWait, item["task_limit_action"])
+	require.Equal(t, 8, item["task_limit_wait_seconds"])
+
+	option, ok := accountPoolGroupOptionResponse(&model.AccountPoolGroup{
+		Id:                   25,
+		Name:                 "task-limit-option",
+		Platform:             "codex",
+		AuthType:             model.AccountPoolAuthTypeAPIKey,
+		Source:               model.AccountPoolGroupSourceNative,
+		Status:               common.ChannelStatusEnabled,
+		TaskMaxConcurrency:   3,
+		TaskRateLimitRpm:     10,
+		TaskLimitAction:      model.AccountPoolTaskLimitActionWait,
+		TaskLimitWaitSeconds: 6,
+		Stats:                map[string]int64{"total": 1, "enabled": 1},
+	})
+	require.True(t, ok)
+	require.Equal(t, 3, option["task_max_concurrency"])
+	require.Equal(t, 10, option["task_rate_limit_rpm"])
+	require.Equal(t, model.AccountPoolTaskLimitActionWait, option["task_limit_action"])
+	require.Equal(t, 6, option["task_limit_wait_seconds"])
+}
+
 func TestPoolAccountResponseIncludesDailyLimitAction(t *testing.T) {
 	account := &model.PoolAccount{
 		Id:               12,
@@ -427,6 +467,41 @@ func TestAccountPoolGroupRequestNormalizesNoAvailableSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.AccountPoolNoAvailableActionFail, updates["no_available_action"])
 	require.Equal(t, model.AccountPoolNoAvailableDefaultWaitSeconds, updates["no_available_wait_seconds"])
+}
+
+func TestAccountPoolGroupRequestNormalizesTaskLimitSettings(t *testing.T) {
+	tooLargeWait := 120
+	taskConcurrency := 2
+	taskRate := 10
+	group, err := buildAccountPoolGroupFromRequest(accountPoolGroupUpsertRequest{
+		Name:                 "task-limit-request",
+		Platform:             "codex",
+		TaskMaxConcurrency:   &taskConcurrency,
+		TaskRateLimitRpm:     &taskRate,
+		TaskLimitAction:      model.AccountPoolTaskLimitActionWait,
+		TaskLimitWaitSeconds: &tooLargeWait,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, group.TaskMaxConcurrency)
+	require.Equal(t, 10, group.TaskRateLimitRpm)
+	require.Equal(t, model.AccountPoolTaskLimitActionWait, group.TaskLimitAction)
+	require.Equal(t, model.AccountPoolTaskLimitMaxWaitSeconds, group.TaskLimitWaitSeconds)
+
+	negativeConcurrency := -1
+	negativeRate := -2
+	negativeWait := -3
+	updates, err := accountPoolGroupUpdateMap(accountPoolGroupUpsertRequest{
+		TaskMaxConcurrency:   &negativeConcurrency,
+		TaskRateLimitRpm:     &negativeRate,
+		TaskLimitAction:      "unexpected",
+		TaskLimitWaitSeconds: &negativeWait,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, updates["task_max_concurrency"])
+	require.Equal(t, 0, updates["task_rate_limit_rpm"])
+	require.Equal(t, model.AccountPoolTaskLimitActionFail, updates["task_limit_action"])
+	require.Equal(t, model.AccountPoolTaskLimitDefaultWaitSeconds, updates["task_limit_wait_seconds"])
 }
 
 func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {

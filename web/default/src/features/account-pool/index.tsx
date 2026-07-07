@@ -140,6 +140,7 @@ import type {
   AccountPoolNoAvailableAction,
   AccountPoolPreflightCheckMode,
   AccountPoolStateLogBulkAuditSummary,
+  AccountPoolTaskLimitAction,
   PoolAccount,
   PoolAccountPayload,
 } from './types'
@@ -169,6 +170,10 @@ type GroupFormState = {
   preflightCheckLimit: string
   noAvailableAction: AccountPoolNoAvailableAction
   noAvailableWaitSeconds: string
+  taskMaxConcurrency: string
+  taskRateLimitRpm: string
+  taskLimitAction: AccountPoolTaskLimitAction
+  taskLimitWaitSeconds: string
 }
 
 type AccountFormState = {
@@ -247,6 +252,10 @@ const emptyGroupForm: GroupFormState = {
   preflightCheckLimit: '20',
   noAvailableAction: 'fail',
   noAvailableWaitSeconds: '5',
+  taskMaxConcurrency: '0',
+  taskRateLimitRpm: '0',
+  taskLimitAction: 'fail',
+  taskLimitWaitSeconds: '5',
 }
 
 const emptyAccountForm: AccountFormState = {
@@ -301,6 +310,7 @@ const noAvailableActionOptions: AccountPoolNoAvailableAction[] = [
   'fail',
   'wait',
 ]
+const taskLimitActionOptions: AccountPoolTaskLimitAction[] = ['fail', 'wait']
 const checkTaskStatusFilterOptions: CheckTaskStatusFilter[] = [
   'all',
   'queued',
@@ -705,6 +715,16 @@ function noAvailableActionLabel(
   return t('Fail immediately')
 }
 
+function taskLimitActionLabel(
+  action: string | undefined,
+  t: (key: string) => string
+): string {
+  if (action === 'wait') {
+    return t('Wait for task slot')
+  }
+  return t('Fail immediately')
+}
+
 function groupPreflightCheckSummary(
   group: AccountPoolGroup,
   t: (key: string, options?: Record<string, unknown>) => string
@@ -734,6 +754,34 @@ function groupNoAvailableSummary(
     })
   }
   return t('Fail immediately when no idle account')
+}
+
+function groupTaskLimitSummary(
+  group: AccountPoolGroup,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const concurrency = group.task_max_concurrency || 0
+  const rpm = group.task_rate_limit_rpm || 0
+  if (concurrency <= 0 && rpm <= 0) {
+    return t('Task submit limit off')
+  }
+  const parts: string[] = []
+  if (concurrency > 0) {
+    parts.push(
+      group.task_limit_action === 'wait'
+        ? t('Task concurrency {{limit}}, wait {{seconds}}s', {
+            limit: concurrency,
+            seconds: group.task_limit_wait_seconds || 5,
+          })
+        : t('Task concurrency {{limit}}, fail immediately', {
+            limit: concurrency,
+          })
+    )
+  }
+  if (rpm > 0) {
+    parts.push(t('Task RPM {{limit}}', { limit: rpm }))
+  }
+  return parts.join(' · ')
 }
 
 function groupAutoCheckSummary(
@@ -1524,6 +1572,10 @@ export function AccountPool() {
       noAvailableAction:
         group.no_available_action === 'wait' ? 'wait' : 'fail',
       noAvailableWaitSeconds: String(group.no_available_wait_seconds || 5),
+      taskMaxConcurrency: String(group.task_max_concurrency || 0),
+      taskRateLimitRpm: String(group.task_rate_limit_rpm || 0),
+      taskLimitAction: group.task_limit_action === 'wait' ? 'wait' : 'fail',
+      taskLimitWaitSeconds: String(group.task_limit_wait_seconds || 5),
     })
     setGroupFormOpen(true)
   }
@@ -1563,6 +1615,10 @@ export function AccountPool() {
         no_available_wait_seconds: numberOrZero(
           groupForm.noAvailableWaitSeconds
         ),
+        task_max_concurrency: numberOrZero(groupForm.taskMaxConcurrency),
+        task_rate_limit_rpm: numberOrZero(groupForm.taskRateLimitRpm),
+        task_limit_action: groupForm.taskLimitAction,
+        task_limit_wait_seconds: numberOrZero(groupForm.taskLimitWaitSeconds),
       }
       const response = groupForm.id
         ? await updateAccountPoolGroup(groupForm.id, payload)
@@ -2397,11 +2453,15 @@ export function AccountPool() {
                       )} · ${groupPreflightCheckSummary(
                         selectedGroup,
                         t
-                      )} · ${groupNoAvailableSummary(selectedGroup, t)}`}
+                      )} · ${groupNoAvailableSummary(
+                        selectedGroup,
+                        t
+                      )} · ${groupTaskLimitSummary(selectedGroup, t)}`}
                     >
                       {groupAutoCheckSummary(selectedGroup, t)} ·{' '}
                       {groupPreflightCheckSummary(selectedGroup, t)} ·{' '}
-                      {groupNoAvailableSummary(selectedGroup, t)}
+                      {groupNoAvailableSummary(selectedGroup, t)} ·{' '}
+                      {groupTaskLimitSummary(selectedGroup, t)}
                     </span>
                   </div>
                 ) : null}
@@ -4593,6 +4653,82 @@ export function AccountPool() {
                 setGroupForm((current) => ({
                   ...current,
                   noAvailableWaitSeconds: event.target.value,
+                }))
+              }
+            />
+            <Input
+              id='account-pool-group-task-max-concurrency'
+              name='task_max_concurrency'
+              type='number'
+              min='0'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Task submit concurrency')}
+              value={groupForm.taskMaxConcurrency}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  taskMaxConcurrency: event.target.value,
+                }))
+              }
+            />
+            <Input
+              id='account-pool-group-task-rate-limit-rpm'
+              name='task_rate_limit_rpm'
+              type='number'
+              min='0'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Task submit RPM')}
+              value={groupForm.taskRateLimitRpm}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  taskRateLimitRpm: event.target.value,
+                }))
+              }
+            />
+            <Select
+              items={taskLimitActionOptions.map((value) => ({
+                value,
+                label: taskLimitActionLabel(value, t),
+              }))}
+              value={groupForm.taskLimitAction}
+              onValueChange={(value) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  taskLimitAction:
+                    (value as AccountPoolTaskLimitAction | null) ?? 'fail',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder={t('Task concurrency action')} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {taskLimitActionOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {taskLimitActionLabel(value, t)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              id='account-pool-group-task-limit-wait-seconds'
+              name='task_limit_wait_seconds'
+              type='number'
+              min='1'
+              max='30'
+              inputMode='numeric'
+              autoComplete='off'
+              placeholder={t('Task wait seconds')}
+              value={groupForm.taskLimitWaitSeconds}
+              onChange={(event) =>
+                setGroupForm((current) => ({
+                  ...current,
+                  taskLimitWaitSeconds: event.target.value,
                 }))
               }
             />

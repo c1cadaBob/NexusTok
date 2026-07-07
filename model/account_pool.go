@@ -153,6 +153,15 @@ const (
 	AccountPoolNoAvailableDefaultWaitSeconds = 5
 	// AccountPoolNoAvailableMaxWaitSeconds 表示等待策略允许配置的最大超时时间。
 	AccountPoolNoAvailableMaxWaitSeconds = 30
+
+	// AccountPoolTaskLimitActionFail 表示异步任务提交并发满时立即返回错误。
+	AccountPoolTaskLimitActionFail = "fail"
+	// AccountPoolTaskLimitActionWait 表示异步任务提交并发满时在安全超时内等待槽位。
+	AccountPoolTaskLimitActionWait = "wait"
+	// AccountPoolTaskLimitDefaultWaitSeconds 表示任务提交等待策略的默认超时时间。
+	AccountPoolTaskLimitDefaultWaitSeconds = 5
+	// AccountPoolTaskLimitMaxWaitSeconds 表示任务提交等待策略允许配置的最大超时时间。
+	AccountPoolTaskLimitMaxWaitSeconds = 30
 )
 
 var (
@@ -213,9 +222,17 @@ type AccountPoolGroup struct {
 	// NoAvailableAction 控制分组或账号并发满时的处理方式。默认 fail 保持旧分组立即失败的行为。
 	NoAvailableAction string `json:"no_available_action" gorm:"type:varchar(32);default:'fail'"`
 	// NoAvailableWaitSeconds 是 wait 策略的最长等待秒数，调度层会限制到安全上限。
-	NoAvailableWaitSeconds int   `json:"no_available_wait_seconds" gorm:"default:0"`
-	CreatedTime            int64 `json:"created_time" gorm:"bigint"` // 创建时间
-	UpdatedTime            int64 `json:"updated_time" gorm:"bigint"` // 更新时间
+	NoAvailableWaitSeconds int `json:"no_available_wait_seconds" gorm:"default:0"`
+	// TaskMaxConcurrency 限制同一账号池组内同一 platform + action 的异步任务提交并发。
+	TaskMaxConcurrency int `json:"task_max_concurrency" gorm:"default:0"`
+	// TaskRateLimitRpm 限制同一账号池组内同一 platform + action 的异步任务每分钟提交次数。
+	TaskRateLimitRpm int `json:"task_rate_limit_rpm" gorm:"default:0"`
+	// TaskLimitAction 控制任务提交并发满时立即失败还是短暂等待。RPM 超限始终立即失败。
+	TaskLimitAction string `json:"task_limit_action" gorm:"type:varchar(32);default:'fail'"`
+	// TaskLimitWaitSeconds 是任务提交并发满时 wait 策略的最长等待秒数。
+	TaskLimitWaitSeconds int   `json:"task_limit_wait_seconds" gorm:"default:0"`
+	CreatedTime          int64 `json:"created_time" gorm:"bigint"` // 创建时间
+	UpdatedTime          int64 `json:"updated_time" gorm:"bigint"` // 更新时间
 
 	Stats map[string]int64 `json:"stats,omitempty" gorm:"-"` // 统计信息（非持久化，运行时附加）
 }
@@ -392,6 +409,65 @@ func (group *AccountPoolGroup) GetNoAvailableWaitSeconds() int {
 		return AccountPoolNoAvailableDefaultWaitSeconds
 	}
 	return NormalizeAccountPoolNoAvailableWaitSeconds(group.NoAvailableWaitSeconds)
+}
+
+// NormalizeAccountPoolTaskLimitAction 规范化异步任务提交并发满时的处理策略。
+// 默认 fail 保持历史行为；wait 只表示在当前 HTTP 请求内短暂等待任务提交槽位，
+// 不代表任务已经进入持久化队列，也不会把账号占用延长到上游异步任务完成。
+func NormalizeAccountPoolTaskLimitAction(action string) string {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == AccountPoolTaskLimitActionWait {
+		return AccountPoolTaskLimitActionWait
+	}
+	return AccountPoolTaskLimitActionFail
+}
+
+// NormalizeAccountPoolTaskLimitWaitSeconds 规范化任务提交等待超时时间。
+// 等待会占用当前 Relay 请求连接，因此必须保持保守上限，避免误配置造成连接堆积。
+func NormalizeAccountPoolTaskLimitWaitSeconds(seconds int) int {
+	if seconds <= 0 {
+		return AccountPoolTaskLimitDefaultWaitSeconds
+	}
+	if seconds > AccountPoolTaskLimitMaxWaitSeconds {
+		return AccountPoolTaskLimitMaxWaitSeconds
+	}
+	return seconds
+}
+
+// GetTaskMaxConcurrency 返回异步任务提交级最大并发限制。
+// 返回 0 表示不限制；该限制按账号池分组和任务 platform + action 维度生效。
+func (group *AccountPoolGroup) GetTaskMaxConcurrency() int {
+	if group == nil || group.TaskMaxConcurrency <= 0 {
+		return 0
+	}
+	return group.TaskMaxConcurrency
+}
+
+// GetTaskRateLimitRpm 返回异步任务提交级每分钟频率限制。
+// 返回 0 表示不限制；达到上限时立即返回 429，不等待下一个自然分钟窗口。
+func (group *AccountPoolGroup) GetTaskRateLimitRpm() int {
+	if group == nil || group.TaskRateLimitRpm <= 0 {
+		return 0
+	}
+	return group.TaskRateLimitRpm
+}
+
+// GetTaskLimitAction 返回异步任务提交并发满时的处理策略。
+// 旧数据字段为空时按 fail 处理，确保升级后不会改变已有任务提交延迟。
+func (group *AccountPoolGroup) GetTaskLimitAction() string {
+	if group == nil {
+		return AccountPoolTaskLimitActionFail
+	}
+	return NormalizeAccountPoolTaskLimitAction(group.TaskLimitAction)
+}
+
+// GetTaskLimitWaitSeconds 返回任务提交并发等待超时时间。
+// 即使数据库保存异常值，调度层也只使用规范化后的安全范围。
+func (group *AccountPoolGroup) GetTaskLimitWaitSeconds() int {
+	if group == nil {
+		return AccountPoolTaskLimitDefaultWaitSeconds
+	}
+	return NormalizeAccountPoolTaskLimitWaitSeconds(group.TaskLimitWaitSeconds)
 }
 
 // NormalizeAccountPoolDailyLimitAction 规范化每日限制耗尽后的处理策略。
@@ -836,6 +912,16 @@ func (group *AccountPoolGroup) normalize() {
 	group.PreflightCheckMode = NormalizeAccountPoolPreflightCheckMode(group.PreflightCheckMode)
 	group.PreflightCheckFreshnessMinutes = NormalizeAccountPoolPreflightCheckFreshnessMinutes(group.PreflightCheckFreshnessMinutes)
 	group.PreflightCheckLimit = NormalizeAccountPoolPreflightCheckLimit(group.PreflightCheckLimit)
+	group.NoAvailableAction = NormalizeAccountPoolNoAvailableAction(group.NoAvailableAction)
+	group.NoAvailableWaitSeconds = NormalizeAccountPoolNoAvailableWaitSeconds(group.NoAvailableWaitSeconds)
+	if group.TaskMaxConcurrency < 0 {
+		group.TaskMaxConcurrency = 0
+	}
+	if group.TaskRateLimitRpm < 0 {
+		group.TaskRateLimitRpm = 0
+	}
+	group.TaskLimitAction = NormalizeAccountPoolTaskLimitAction(group.TaskLimitAction)
+	group.TaskLimitWaitSeconds = NormalizeAccountPoolTaskLimitWaitSeconds(group.TaskLimitWaitSeconds)
 }
 
 // BeforeCreate GORM 钩子：创建前自动设置时间和规范化字段
