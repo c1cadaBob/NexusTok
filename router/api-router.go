@@ -389,6 +389,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		registerChannelRoutes(apiRouter)
+		registerSystemInfoRoutes(apiRouter)
 
 		// ========================================
 		// Token 路由组 - /api/token（需要用户认证）

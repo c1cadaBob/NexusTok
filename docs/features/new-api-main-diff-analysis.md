@@ -46,7 +46,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 账号池 OAuth/设备授权 | `/groups/:id/oauth/:provider/start`、`/device/:provider/start`、Codex OAuth | 缺少 | 作为 NexusTok 原生凭据接入入口，后续抽象为 provider registry。 |
 | 渠道账号 | `model/channel_account.go`、`controller/channel_account.go`、`service/channel_account_*` | 缺少 | 与账号池区分：渠道账号适合单渠道多 Key，账号池适合跨渠道共享和调度。 |
 | 渠道账号池绑定 | `constant/channel_credential_mode.go`、渠道 `account_pool_group_id` | 缺少 | 保留为 Relay 热路径原生能力，后续统一校验分组状态、平台和认证类型。 |
-| Codex 渠道 OAuth | `controller/codex_oauth.go`、`service/codex_oauth.go` | 后端 reset-credits 已补 | 保留 NexusTok 的渠道和账号池双入口；渠道侧已补齐 `/codex/usage/reset-credits` 与 `/codex/usage/reset` 后端 API，默认/经典前端弹窗交互待后续合并。 |
+| Codex 渠道 OAuth | `controller/codex_oauth.go`、`service/codex_oauth.go` | 渠道侧用量重置已落地 | 保留 NexusTok 的渠道和账号池双入口；渠道侧已补齐 `/codex/usage/reset-credits` 与 `/codex/usage/reset` 后端 API，并已在默认前端 Codex 用量弹窗接入 reset credits 明细、确认重置和重置后刷新。Classic 前端同等体验可低优先级补齐。 |
 | 账号池任务级限制 | `service/account_pool_task_limit.go` | 缺少 | 继续围绕任务类 Relay 做并发/频率/等待策略，不与普通渠道限流混淆。 |
 | 模型定价配置表 | `model/model_pricing_config.go` | 缺少 | 保留，用于承载 NexusTok 独立计费配置和后续表达式定价演进。 |
 | 账号池文档 | `docs/features/account-pool.md`、`account-pool-roadmap.md` | 缺少同等文档 | 继续作为账号池开发准绳。 |
@@ -60,7 +60,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；完整 Authz 上线前敏感写暂映射为 Root 权限。账号池表单分类待后续跟进。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`/api/system-task/*` | 缺少统一框架，账号池检测任务为独立实现 | 作为 P1 原生化重点，把日志清理、账号池批量检测、渠道批量测试、模型同步任务统一迁入。 |
-| 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 缺少 | 引入 `NODE_NAME`、主从节点、CPU/内存/磁盘/版本心跳，为多节点账号池调度和任务锁提供观测。 |
+| 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 后端最小层已落地 | 已引入 `NODE_NAME`/主机名兜底、主从节点、CPU/内存/磁盘/版本心跳和 Root 只读实例列表接口；后续补默认前端 `/system-info` 页面并与 SystemTask 观测合并。 |
 | 后台任务锁 | `SystemTaskLock`、租约续期、过期失败标记 | 缺少 | 用数据库锁实现跨节点互斥，必须兼容 SQLite/MySQL/PostgreSQL；任务 handler 要支持 context cancellation。 |
 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用。 |
 | 顶栏模块鉴权 | `middleware/header_nav.go` | 已落地 | 已让 `/api/pricing`、`/api/rankings` 和 pricing 辅助性能接口跟随 `HeaderNavModules.enabled/requireAuth`，页面隐藏和接口鉴权一致。 |
@@ -204,7 +204,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 1. 引入 `SystemTask`、`SystemTaskLock`、`SystemInstance` 三个模型，并确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容。
 2. 新增 `/api/system-task/list`、`/api/system-task/current`、`/api/system-task/:task_id`。
-3. 新增 `/api/system-info/instances` 和默认前端 `/system-info` 页面。
+3. `/api/system-info/instances` 后端心跳和 Root 只读接口已落地；下一步新增默认前端 `/system-info` 页面并接入实例列表。
 4. 迁移候选任务：
    - 账号池批量检测；
    - 日志清理；
@@ -445,16 +445,19 @@ wallet
 | router | `authz-router.go` | 权限 catalog API | P1 |
 | router | `channel-router.go`、`channel_router_test.go` | 渠道路由权限表和测试 | P1 |
 | controller | `audit.go`、`authz.go`、`channel_authz.go` | 审计、权限 catalog、渠道敏感字段分类 | P1 |
-| controller | `system_info.go`、`system_task.go`、`system_task_handlers.go` | 系统信息和系统任务 API | P1 |
+| controller | `system_task.go`、`system_task_handlers.go` | 系统任务 API | P1 |
+| controller | `system_info.go` | 系统实例列表 API | 已按 NexusTok Root 只读接口原生化，前端页面待接入。 |
 | controller | `subscription_payment_waffo_pancake.go` | 订阅 Waffo Pancake 支付 | P2 |
 | controller | `usedata_flow_test.go` | 流量账本接口测试 | P2 |
 | model | `authz_role.go`、`casbin_rule.go` | 权限存储 | P1 |
-| model | `system_instance.go`、`system_task.go` | 系统实例和任务 | P1 |
+| model | `system_task.go` | 系统任务 | P1 |
+| model | `system_instance.go` | 系统实例心跳 | 已按 NexusTok 三库兼容模型原生化。 |
 | model | `locking.go` | 通用锁能力 | P1/P2，需确认是否可被 SystemTaskLock 覆盖。 |
 | model | `usedata_flow.go` | 分组/渠道/用户流量聚合 | P2 |
 | model | `clickhouse_log_test.go` | ClickHouse 日志兼容测试 | P3/可选 |
 | service | `authz/*` | Casbin 权限服务 | P1 |
-| service | `system_instance.go`、`system_task.go` | 心跳和任务 runner | P1 |
+| service | `system_task.go` | 任务 runner | P1 |
+| service | `system_instance.go` | 节点心跳 runner | 已按 NexusTok `NODE_NAME`/主机名兜底和资源快照原生化。 |
 | service | `protected_fetch_client.go` | SSRF 保护 HTTP client | P1 |
 | service | `relayconvert/*` | Relay 格式转换整理 | P3 |
 | service | `task_polling_test.go` | 异步任务轮询测试 | P2 |
@@ -467,7 +470,7 @@ NexusTok 独有 API 族：
 |----------|------|------|
 | `/api/account-pool/*` | 原生账号池、认证文件、组、账号、检测、健康、状态审计、使用日志 | 保留并扩展权限。 |
 | `/api/channel/:id/accounts*` | 渠道账号管理 | 保留，与账号池形成互补。 |
-| `/api/channel/codex/oauth/*`、`/api/channel/:id/codex/oauth/*`、`/api/channel/:id/codex/usage/*` | Codex 渠道 OAuth 与用量查询 | 保留；后端已补 reset-credits 查询和 reset 消费接口，前端弹窗待合并。 |
+| `/api/channel/codex/oauth/*`、`/api/channel/:id/codex/oauth/*`、`/api/channel/:id/codex/usage/*` | Codex 渠道 OAuth 与用量查询 | 保留；后端已补 reset-credits 查询和 reset 消费接口，默认前端 Codex 用量弹窗已接入重置额度明细和确认重置流程。 |
 
 `new-api-main` 独有或更完整 API 族：
 
@@ -475,7 +478,7 @@ NexusTok 独有 API 族：
 |----------|------|------|
 | `/api/authz/catalog` | 权限资源/角色 catalog | P1 引入。 |
 | `/api/system-task/*` | 后台任务创建、查询、当前任务 | P1 引入并承接账号池检测。 |
-| `/api/system-info/instances` | 多节点实例心跳 | P1 引入。 |
+| `/api/system-info/instances` | 多节点实例心跳 | 后端已引入，默认前端 `/system-info` 页面待接入。 |
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | P2 引入。 |
 | `/api/subscription/balance/pay` | 余额购买订阅 | P2 引入。 |
 | `/api/subscription/admin/*/reset` | 订阅重置 | P2 引入。 |
@@ -509,3 +512,5 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 渠道敏感字段 fail-closed | `controller/channel_authz.go`、`controller/channel.go`、`controller/channel_authz_test.go` | 更新渠道时按原始请求字段判断敏感写：Key、BaseURL、请求覆盖、设置、凭证模式和未知字段默认需要敏感权限；完整 Authz 前暂以 Root 权限兜底，普通 Admin 仍可更新模型、分组、优先级等运营字段。 |
 | 2026-07-07 | 渠道路由注册拆分 | `router/channel-router.go`、`router/channel_router_test.go`、`router/api-router.go` | 将 `/api/channel` 路由从主 API 路由中抽出，保持现有 AdminAuth/RootAuth 行为不变，并为后续 Authz 权限表接入提供单一落点。 |
 | 2026-07-07 | Codex 用量重置后端 API | `controller/codex_usage.go`、`service/codex_wham_usage.go`、`router/channel-router.go`、`service/codex_wham_usage_test.go` | 复用 Codex WHAM 用量查询链路，补齐 reset credits 查询和消耗一次重置额度的后端接口；请求头、路径和 reset 消费请求体已用 httptest 覆盖。 |
+| 2026-07-07 | Codex 用量重置默认前端 | `web/default/src/features/channels/api.ts`、`web/default/src/features/channels/components/dialogs/codex-usage-dialog.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端 Codex 用量弹窗已接入 reset credits 查询、明细折叠区、确认重置和重置后刷新；新增文案已补齐 en/zh/fr/ja/ru/vi。 |
+| 2026-07-07 | 系统实例心跳后端 | `model/system_instance.go`、`service/system_instance.go`、`controller/system_info.go`、`router/system-info-router.go` | 引入 NexusTok 原生 SystemInstance 心跳：启动后定时上报节点名、主从角色、版本、系统资源和最后心跳；新增 Root 只读 `/api/system-info/instances`，为后续 `/system-info` 页面和 SystemTask 观测打底。 |

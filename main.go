@@ -481,6 +481,10 @@ func InitResources() error {
 	// 监控 CPU、内存、磁盘等系统资源使用情况
 	common.StartSystemMonitor()
 
+	// 启动系统实例心跳上报
+	// 用于 Root 查看当前部署节点、主从角色、版本和资源快照
+	service.StartSystemInstanceReporter()
+
 	// 初始化国际化 (i18n) 支持
 	// 加载多语言翻译文件，配置语言检测
 	err = i18n.Init()
