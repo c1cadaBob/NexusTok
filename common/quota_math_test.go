@@ -39,6 +39,13 @@ func TestQuotaFromDecimal(t *testing.T) {
 	assert.Equal(t, MinQuota, QuotaFromDecimal(decimal.NewFromInt(-2000).Mul(decimal.NewFromFloat(1.8446744073686647e19))))
 }
 
+func TestQuotaFromDecimalTruncated(t *testing.T) {
+	assert.Equal(t, 42, QuotaFromDecimalTruncated(decimal.NewFromFloat(42.9)))
+	assert.Equal(t, -42, QuotaFromDecimalTruncated(decimal.NewFromFloat(-42.9)))
+	assert.Equal(t, MaxQuota, QuotaFromDecimalTruncated(decimal.NewFromInt(2000).Mul(decimal.NewFromFloat(1.8446744073686647e19))))
+	assert.Equal(t, MinQuota, QuotaFromDecimalTruncated(decimal.NewFromInt(-2000).Mul(decimal.NewFromFloat(1.8446744073686647e19))))
+}
+
 func TestQuotaFromFloatChecked(t *testing.T) {
 	quota, clamp := QuotaFromFloatChecked(42.9)
 	assert.Equal(t, 42, quota)
@@ -95,6 +102,19 @@ func TestQuotaFromDecimalChecked(t *testing.T) {
 	assert.Equal(t, MaxQuota, quota)
 	if assert.NotNil(t, clamp) {
 		assert.Equal(t, "QuotaFromDecimal", clamp.Op)
+		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+	}
+}
+
+func TestQuotaFromDecimalTruncatedChecked(t *testing.T) {
+	quota, clamp := QuotaFromDecimalTruncatedChecked(decimal.NewFromFloat(41.7))
+	assert.Equal(t, 41, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaFromDecimalTruncatedChecked(decimal.NewFromInt(2000).Mul(decimal.NewFromFloat(1.8446744073686647e19)))
+	assert.Equal(t, MaxQuota, quota)
+	if assert.NotNil(t, clamp) {
+		assert.Equal(t, "QuotaFromDecimalTruncated", clamp.Op)
 		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
 	}
 }

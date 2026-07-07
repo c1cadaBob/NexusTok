@@ -29,3 +29,20 @@ func TestFormatUserLogsStripsQuotaSaturationAdminInfo(t *testing.T) {
 	_, hasAdminInfo := formatted["admin_info"]
 	require.False(t, hasAdminInfo)
 }
+
+func TestBuildTopupAdminInfoMergesExtraAudit(t *testing.T) {
+	extra := map[string]interface{}{
+		"quota_saturation": (&common.QuotaClamp{
+			Op:      "QuotaFromDecimalTruncated",
+			Kind:    common.QuotaClampOverflow,
+			Clamped: common.MaxQuota,
+		}).AuditMap(),
+	}
+
+	adminInfo := buildTopupAdminInfo("127.0.0.1", "epay", "epay", extra)
+
+	require.Equal(t, "127.0.0.1", adminInfo["caller_ip"])
+	require.Equal(t, "epay", adminInfo["payment_method"])
+	require.Equal(t, "epay", adminInfo["callback_payment_method"])
+	require.NotNil(t, adminInfo["quota_saturation"])
+}

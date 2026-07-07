@@ -101,7 +101,7 @@ func QuotaRoundChecked(value float64) (int, *QuotaClamp) {
 }
 
 // QuotaFromDecimal 将 decimal 配额四舍五入为 int，并对异常大值执行饱和保护。
-// 适用于充值、文本结算和工具调用附加费等使用 decimal 累加的路径。
+// 适用于文本结算和工具调用附加费等历史语义为“四舍五入”的路径。
 func QuotaFromDecimal(value decimal.Decimal) int {
 	quota, _ := QuotaFromDecimalChecked(value)
 	return quota
@@ -111,4 +111,18 @@ func QuotaFromDecimal(value decimal.Decimal) int {
 func QuotaFromDecimalChecked(value decimal.Decimal) (int, *QuotaClamp) {
 	rounded, _ := value.Round(0).Float64()
 	return saturateQuota(rounded, "QuotaFromDecimal")
+}
+
+// QuotaFromDecimalTruncated 将 decimal 配额按向零截断语义转为 int，并执行饱和保护。
+// 适用于充值入账等历史上使用 decimal.IntPart() 的路径，避免把 1.9 这类边界值
+// 四舍五入为 2，从而改变用户实际到账额度。
+func QuotaFromDecimalTruncated(value decimal.Decimal) int {
+	quota, _ := QuotaFromDecimalTruncatedChecked(value)
+	return quota
+}
+
+// QuotaFromDecimalTruncatedChecked 与 QuotaFromDecimalTruncated 相同，但在发生饱和时返回 clamp 信息。
+func QuotaFromDecimalTruncatedChecked(value decimal.Decimal) (int, *QuotaClamp) {
+	truncated, _ := value.Truncate(0).Float64()
+	return saturateQuota(truncated, "QuotaFromDecimalTruncated")
 }
