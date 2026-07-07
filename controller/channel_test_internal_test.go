@@ -78,6 +78,33 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.NotEmpty(t, other["expr_b64"])
 }
 
+func TestBuildTestLogOtherIncludesQuotaSaturation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+		QuotaClamp: &common.QuotaClamp{
+			Op:      "QuotaRound",
+			Kind:    common.QuotaClampOverflow,
+			Clamped: common.MaxQuota,
+		},
+	}
+	priceData := types.PriceData{
+		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+	}
+	usage := &dto.Usage{}
+
+	other := buildTestLogOther(ctx, info, priceData, usage, nil)
+
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	saturation, ok := adminInfo["quota_saturation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "QuotaRound", saturation["op"])
+	require.Equal(t, common.QuotaClampOverflow, saturation["kind"])
+}
+
 func TestShouldUseStreamForChannelTestForcesCodexStream(t *testing.T) {
 	require.True(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeCodex}, false))
 	require.True(t, shouldUseStreamForChannelTest(&model.Channel{Type: constant.ChannelTypeCodex}, true))

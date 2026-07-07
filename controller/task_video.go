@@ -17,7 +17,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -212,7 +211,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if taskResult.TotalTokens > 0 {
 			// 获取模型名称
 			var taskData map[string]interface{}
-			if err := json.Unmarshal(task.Data, &taskData); err == nil {
+			if err := common.Unmarshal(task.Data, &taskData); err == nil {
 				if modelName, ok := taskData["model"].(string); ok && modelName != "" {
 					// 获取模型价格和倍率
 					modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
@@ -237,8 +236,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								finalGroupRatio = groupRatio
 							}
 
-							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio
-							actualQuota := int(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
+							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio。
+							// 上游返回 tokens、管理员模型倍率和分组倍率共同决定该值，统一使用
+							// QuotaFromFloatChecked 防止极端组合在 int 转换时溢出成负数。
+							actualQuota, clamp := common.QuotaFromFloatChecked(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
+							if clamp != nil {
+								logger.LogWarn(ctx, fmt.Sprintf("视频任务额度换算触发饱和保护 task=%s op=%s kind=%s original=%g clamped=%d user=%d",
+									task.TaskID, clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, task.UserId))
+							}
 
 							// 计算差额
 							preConsumedQuota := task.Quota
@@ -352,7 +357,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 //   - []byte: 脱敏后的响应体
 func redactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := common.Unmarshal(body, &m); err != nil {
 		return body
 	}
 	resp, _ := m["response"].(map[string]any)
@@ -369,7 +374,7 @@ func redactVideoResponseBody(body []byte) []byte {
 			}
 		}
 	}
-	b, err := json.Marshal(m)
+	b, err := common.Marshal(m)
 	if err != nil {
 		return body
 	}
