@@ -162,30 +162,14 @@ func main() {
 	// 支持每日、每周、每月、自定义周期的配额重置
 	service.StartSubscriptionQuotaResetTask()
 
-	// 设置任务轮询适配器工厂函数
-	// 打破 service -> relay 的导入循环依赖
-	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
-		a := relay.GetTaskAdaptor(platform)
-		if a == nil {
-			return nil
-		}
-		return a
-	}
-
 	// 启动 models.dev 模型目录每日同步任务
 	// 每天凌晨只补齐本地缺失的模型和供应商，不覆盖管理员手动编辑
 	controller.StartModelsDevSyncTask()
 
-	// 如果是主节点且需要更新任务，启动批量更新协程
+	// 如果是主节点且需要更新任务，创建首次系统任务；后续周期由 SystemTask scheduler 调度。
 	if common.IsMasterNode && constant.UpdateTask {
-		// 使用字节跳动的高性能协程池执行 Midjourney 任务批量更新
-		gopool.Go(func() {
-			controller.UpdateMidjourneyTaskBulk()
-		})
-		// 使用协程池执行通用任务批量更新
-		gopool.Go(func() {
-			controller.UpdateTaskBulk()
-		})
+		controller.UpdateMidjourneyTaskBulk()
+		controller.UpdateTaskBulk()
 	}
 
 	// 如果启用了批量更新功能
@@ -476,6 +460,16 @@ func InitResources() error {
 	// 启动系统实例心跳上报
 	// 用于 Root 查看当前部署节点、主从角色、版本和资源快照
 	service.StartSystemInstanceReporter()
+
+	// 设置任务轮询适配器工厂函数
+	// SystemTask runner 可能在启动后立即调度异步任务轮询，因此必须在 runner 启动前注入。
+	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
+		a := relay.GetTaskAdaptor(platform)
+		if a == nil {
+			return nil
+		}
+		return a
+	}
 
 	// 启动系统任务执行器
 	// 用于异步执行日志清理等耗时后台任务，并通过数据库租约避免多节点重复执行。

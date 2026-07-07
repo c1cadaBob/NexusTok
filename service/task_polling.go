@@ -27,6 +27,8 @@ import (
 	"github.com/samber/lo"
 )
 
+const asyncTaskPollingInterval = 15 * time.Second
+
 // TaskPollingAdaptor 定义轮询所需的最小适配器接口，避免 service -> relay 的循环依赖
 type TaskPollingAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
@@ -41,17 +43,61 @@ type TaskPollingAdaptor interface {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+// AsyncTaskPollSummary 是通用异步任务轮询的一次执行摘要。
+type AsyncTaskPollSummary struct {
+	TimedOut      int            `json:"timed_out"`
+	NullTaskIDs   int            `json:"null_task_ids"`
+	Pending       int            `json:"pending"`
+	Platforms     map[string]int `json:"platforms,omitempty"`
+	DispatchCount int            `json:"dispatch_count"`
+}
+
+type asyncTaskPollHandler struct{}
+
+func (asyncTaskPollHandler) Type() string {
+	return model.SystemTaskTypeAsyncTaskPoll
+}
+
+func (asyncTaskPollHandler) Enabled() bool {
+	return constant.UpdateTask
+}
+
+func (asyncTaskPollHandler) Interval() time.Duration {
+	return asyncTaskPollingInterval
+}
+
+func (asyncTaskPollHandler) NewPayload() any {
+	return nil
+}
+
+func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := RunAsyncTaskPollingOnce(ctx, NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, summary, err.Error()); finishErr != nil {
+			logSystemTaskLockError(ctx, task, finishErr)
+		}
+		return
+	}
+	if err := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, summary, ""); err != nil {
+		logSystemTaskLockError(ctx, task, err)
+	}
+}
+
+func init() {
+	RegisterSystemTaskHandler(asyncTaskPollHandler{})
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
-func sweepTimedOutTasks(ctx context.Context) {
+func sweepTimedOutTasks(ctx context.Context) int {
 	if constant.TaskTimeoutMinutes <= 0 {
-		return
+		return 0
 	}
 	cutoff := time.Now().Unix() - int64(constant.TaskTimeoutMinutes)*60
 	tasks := model.GetTimedOutUnfinishedTasks(cutoff, 100)
 	if len(tasks) == 0 {
-		return
+		return 0
 	}
 
 	const legacyTaskCutoff int64 = 1740182400 // 2026-02-22 00:00:00 UTC
@@ -91,75 +137,129 @@ func sweepTimedOutTasks(ctx context.Context) {
 	if timedOutCount > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("sweepTimedOutTasks: timed out %d tasks", timedOutCount))
 	}
+	return timedOutCount
 }
 
-// TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
+// TaskPollingLoop 兼容旧启动入口，并创建一次通用异步任务轮询系统任务。
+//
+// 后续周期调度由 asyncTaskPollHandler 交给 SystemTask scheduler 完成，避免多实例部署时
+// 每个进程都运行独立 goroutine 重复轮询同一批异步任务。
 func TaskPollingLoop() {
-	for {
-		time.Sleep(time.Duration(15) * time.Second)
-		common.SysLog("任务进度轮询开始")
-		ctx := context.TODO()
-		sweepTimedOutTasks(ctx)
-		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
-		platformTask := make(map[constant.TaskPlatform][]*model.Task)
-		for _, t := range allTasks {
-			platformTask[t.Platform] = append(platformTask[t.Platform], t)
-		}
-		for platform, tasks := range platformTask {
-			if len(tasks) == 0 {
-				continue
-			}
-			taskChannelM := make(map[int][]string)
-			taskM := make(map[string]*model.Task)
-			nullTaskIds := make([]int64, 0)
-			for _, task := range tasks {
-				upstreamID := task.GetUpstreamTaskID()
-				if upstreamID == "" {
-					// 统计失败的未完成任务
-					nullTaskIds = append(nullTaskIds, task.ID)
-					continue
-				}
-				taskM[upstreamID] = task
-				taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
-			}
-			if len(nullTaskIds) > 0 {
-				err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
-					"status":   "FAILURE",
-					"progress": "100%",
-				})
-				if err != nil {
-					logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
-				} else {
-					logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
-				}
-			}
-			if len(taskChannelM) == 0 {
-				continue
-			}
-
-			DispatchPlatformUpdate(platform, taskChannelM, taskM)
-		}
-		common.SysLog("任务进度轮询完成")
+	if !common.IsMasterNode || !constant.UpdateTask {
+		return
+	}
+	if _, _, err := EnqueueSystemTask(model.SystemTaskTypeAsyncTaskPoll, nil); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("async task poll system task enqueue failed: %v", err))
 	}
 }
 
+// RunAsyncTaskPollingOnce 执行一次通用异步任务轮询。
+//
+// 该函数保留旧轮询主体：先清理超时任务，再按平台和渠道分组查询上游状态。SystemTask
+// handler 会每次调用一个 pass，进度只反映本次已分发的平台数量；任务级成功、失败和计费
+// 结算仍由原有 UpdateSunoTasks/UpdateVideoTasks 路径负责。
+func RunAsyncTaskPollingOnce(ctx context.Context, report func(processed, total int)) (AsyncTaskPollSummary, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	common.SysLog("任务进度轮询开始")
+	defer common.SysLog("任务进度轮询完成")
+
+	summary := AsyncTaskPollSummary{
+		Platforms: map[string]int{},
+	}
+	summary.TimedOut = sweepTimedOutTasks(ctx)
+	allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
+	summary.Pending = len(allTasks)
+	platformTask := make(map[constant.TaskPlatform][]*model.Task)
+	for _, t := range allTasks {
+		platformTask[t.Platform] = append(platformTask[t.Platform], t)
+	}
+	totalPlatforms := len(platformTask)
+	processedPlatforms := 0
+	if report != nil {
+		report(0, totalPlatforms)
+	}
+	for platform, tasks := range platformTask {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		if len(tasks) == 0 {
+			continue
+		}
+		taskChannelM := make(map[int][]string)
+		taskM := make(map[string]*model.Task)
+		nullTaskIds := make([]int64, 0)
+		for _, task := range tasks {
+			upstreamID := task.GetUpstreamTaskID()
+			if upstreamID == "" {
+				// 统计失败的未完成任务
+				nullTaskIds = append(nullTaskIds, task.ID)
+				continue
+			}
+			taskM[upstreamID] = task
+			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
+		}
+		if len(nullTaskIds) > 0 {
+			err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
+				"status":   "FAILURE",
+				"progress": "100%",
+			})
+			if err != nil {
+				logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
+				return summary, err
+			}
+			summary.NullTaskIDs += len(nullTaskIds)
+			logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
+		}
+		if len(taskChannelM) > 0 {
+			summary.Platforms[string(platform)] = len(tasks)
+			summary.DispatchCount++
+			if err := DispatchPlatformUpdate(ctx, platform, taskChannelM, taskM); err != nil {
+				return summary, err
+			}
+		}
+		processedPlatforms++
+		if report != nil {
+			report(processedPlatforms, totalPlatforms)
+		}
+	}
+	if report != nil {
+		report(totalPlatforms, totalPlatforms)
+	}
+	return summary, nil
+}
+
 // DispatchPlatformUpdate 按平台分发轮询更新
-func DispatchPlatformUpdate(platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) {
+func DispatchPlatformUpdate(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch platform {
 	case constant.TaskPlatformMidjourney:
 		// MJ 轮询由其自身处理，这里预留入口
 	case constant.TaskPlatformSuno:
-		_ = UpdateSunoTasks(context.Background(), taskChannelM, taskM)
+		if err := UpdateSunoTasks(ctx, taskChannelM, taskM); err != nil {
+			return err
+		}
 	default:
-		if err := UpdateVideoTasks(context.Background(), platform, taskChannelM, taskM); err != nil {
+		if err := UpdateVideoTasks(ctx, platform, taskChannelM, taskM); err != nil {
 			common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
+			return err
 		}
 	}
+	return ctx.Err()
 }
 
 // UpdateSunoTasks 按渠道更新所有 Suno 任务
 func UpdateSunoTasks(ctx context.Context, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for channelId, taskIds := range taskChannelM {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := updateSunoTasks(ctx, channelId, taskIds, taskM)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("渠道 #%d 更新异步任务失败: %s", channelId, err.Error()))
@@ -176,6 +276,7 @@ func UpdateSunoTasks(ctx context.Context, taskChannelM map[int][]string, taskM m
 //   - channelId: 渠道 ID
 //   - taskIds: 上游任务 ID 列表
 //   - taskM: 上游任务 ID 到本地任务对象的映射
+//
 // 返回值:
 //   - error: 更新过程中的错误
 func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM map[string]*model.Task) error {
@@ -306,6 +407,9 @@ func taskNeedsUpdate(oldTask *model.Task, newTask dto.SunoDataResponse) bool {
 // UpdateVideoTasks 按渠道更新所有视频任务
 func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := updateVideoTasks(ctx, platform, channelId, taskIds, taskM); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
 		}
@@ -322,6 +426,7 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 //   - channelId: 渠道 ID
 //   - taskIds: 上游任务 ID 列表
 //   - taskM: 上游任务 ID 到本地任务对象的映射
+//
 // 返回值:
 //   - error: 更新过程中的错误
 func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
@@ -359,6 +464,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
 	for _, taskId := range taskIds {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
 		}
@@ -379,6 +487,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 //   - ch: 渠道信息
 //   - taskId: 上游任务 ID
 //   - taskM: 上游任务 ID 到本地任务对象的映射
+//
 // 返回值:
 //   - error: 更新过程中的错误
 func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
@@ -546,6 +655,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 // 避免将大量 Base64 数据存储到数据库中。
 // 参数:
 //   - body: 原始响应体字节
+//
 // 返回值:
 //   - []byte: 脱敏后的响应体字节
 func redactVideoResponseBody(body []byte) []byte {
@@ -578,6 +688,7 @@ func redactVideoResponseBody(body []byte) []byte {
 // 用于在存储到数据库前减少数据量。
 // 参数:
 //   - s: 原始 Base64 字符串
+//
 // 返回值:
 //   - string: 截断后的字符串（超过 256 字符时追加 "..."）
 func truncateBase64(s string) string {
