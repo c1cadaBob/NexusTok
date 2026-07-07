@@ -188,6 +188,11 @@ type RelayInfo struct {
 
 	PriceData types.PriceData
 
+	// QuotaClamp 在本次请求的配额换算触发 int32 饱和保护时记录首个事件。
+	// 后续消费/任务日志会把它写入 other.admin_info.quota_saturation，
+	// 普通用户视图会移除 admin_info，避免暴露内部计费异常细节。
+	QuotaClamp *common.QuotaClamp
+
 	// TieredBillingSnapshot is a frozen snapshot of tiered billing rules
 	// captured at pre-consume time. Non-nil only when billing mode is "tiered_expr".
 	TieredBillingSnapshot *billingexpr.BillingSnapshot
@@ -211,6 +216,16 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+}
+
+// NoteQuotaClamp 记录本次请求首次发生的配额饱和事件。
+// 同一次请求可能在预扣、结算、附加费组合等多个阶段触发饱和；保留首次事件
+// 能更接近根因，也避免后续兜底转换覆盖早期异常信号。
+func (info *RelayInfo) NoteQuotaClamp(clamp *common.QuotaClamp) {
+	if info == nil || clamp == nil || info.QuotaClamp != nil {
+		return
+	}
+	info.QuotaClamp = clamp
 }
 
 // InitChannelMeta 从 Gin 上下文中初始化渠道元数据（ChannelMeta）。

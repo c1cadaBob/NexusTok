@@ -11,17 +11,52 @@ package service
 
 import (
 	"encoding/base64" // Base64 编码（用于编码计费表达式）
-	"strings"         // 字符串操作
+	"fmt"
+	"strings" // 字符串操作
 
-	"github.com/c1cada/NexusTok/common"                      // 项目公共工具包
-	"github.com/c1cada/NexusTok/constant"                    // 常量定义（上下文键、Relay 格式等）
-	"github.com/c1cada/NexusTok/dto"                         // 数据传输对象（Usage、RealtimeUsage 等）
-	"github.com/c1cada/NexusTok/pkg/billingexpr"             // 计费表达式引擎
-	relaycommon "github.com/c1cada/NexusTok/relay/common"    // Relay 通用类型（RelayInfo 等）
-	"github.com/c1cada/NexusTok/types"                       // 类型定义（Relay 格式、PriceData 等）
+	"github.com/c1cada/NexusTok/common"                   // 项目公共工具包
+	"github.com/c1cada/NexusTok/constant"                 // 常量定义（上下文键、Relay 格式等）
+	"github.com/c1cada/NexusTok/dto"                      // 数据传输对象（Usage、RealtimeUsage 等）
+	"github.com/c1cada/NexusTok/logger"                   // 日志
+	"github.com/c1cada/NexusTok/pkg/billingexpr"          // 计费表达式引擎
+	relaycommon "github.com/c1cada/NexusTok/relay/common" // Relay 通用类型（RelayInfo 等）
+	"github.com/c1cada/NexusTok/types"                    // 类型定义（Relay 格式、PriceData 等）
 
 	"github.com/gin-gonic/gin" // Gin Web 框架
 )
+
+// AttachQuotaSaturationToOther 将配额饱和事件写入 other.admin_info.quota_saturation。
+// admin_info 会在普通用户日志视图中被整体移除，因此这里适合存放计费异常、
+// 配置错误或攻击流量相关的管理员审计信息。clamp 为空表示本次请求没有饱和事件。
+func AttachQuotaSaturationToOther(other map[string]interface{}, clamp *common.QuotaClamp) {
+	if other == nil || clamp == nil {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = map[string]interface{}{}
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["quota_saturation"] = clamp.AuditMap()
+}
+
+// AttachQuotaSaturation 将 RelayInfo 上记录的首个配额饱和事件附加到消费日志。
+// 调用点应位于 RecordConsumeLog/RecordTaskBillingLog 之前，确保日志和后端警告
+// 同时包含 op、kind、原始值、饱和值以及请求所属用户/模型。
+func AttachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || relayInfo.QuotaClamp == nil {
+		return
+	}
+	clamp := relayInfo.QuotaClamp
+	AttachQuotaSaturationToOther(other, clamp)
+	message := fmt.Sprintf("配额换算触发饱和保护：op=%s kind=%s original=%g clamped=%d user=%d model=%s",
+		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.OriginModelName)
+	if ctx != nil {
+		logger.LogWarn(ctx, message)
+		return
+	}
+	common.SysLog(message)
+}
 
 // appendRequestPath 将请求路径追加到附加信息映射中。
 // 优先从 Gin 上下文中获取请求路径，如果不可用则从 RelayInfo 中获取。
@@ -73,6 +108,7 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 //   - cacheRatio: 缓存 Token 的价格比率
 //   - modelPrice: 模型固定价格
 //   - userGroupRatio: 用户分组比率
+//
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
@@ -148,12 +184,12 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	other["admin_info"] = adminInfo
 	// 追加各类附加信息
-	appendRequestPath(ctx, relayInfo, other)          // 请求路径
-	appendRequestConversionChain(relayInfo, other)     // 请求格式转换链
-	appendFinalRequestFormat(relayInfo, other)         // 最终请求格式
-	appendBillingInfo(relayInfo, other)                // 计费模式信息
-	appendParamOverrideInfo(relayInfo, other)          // 参数覆盖审计
-	appendStreamStatus(relayInfo, other)               // 流式状态
+	appendRequestPath(ctx, relayInfo, other)       // 请求路径
+	appendRequestConversionChain(relayInfo, other) // 请求格式转换链
+	appendFinalRequestFormat(relayInfo, other)     // 最终请求格式
+	appendBillingInfo(relayInfo, other)            // 计费模式信息
+	appendParamOverrideInfo(relayInfo, other)      // 参数覆盖审计
+	appendStreamStatus(relayInfo, other)           // 流式状态
 	return other
 }
 
@@ -329,6 +365,7 @@ func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other map[string
 //   - audioCompletionRatio: 音频补全比率
 //   - modelPrice: 模型价格
 //   - userGroupRatio: 用户分组比率
+//
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
 func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
@@ -359,6 +396,7 @@ func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 //   - audioCompletionRatio: 音频补全比率
 //   - modelPrice: 模型价格
 //   - userGroupRatio: 用户分组比率
+//
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
 func GenerateAudioOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
@@ -392,6 +430,7 @@ func GenerateAudioOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 //   - cacheCreationRatio1h: 1 小时缓存创建价格比率
 //   - modelPrice: 模型价格
 //   - userGroupRatio: 用户分组比率
+//
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
 func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
@@ -424,6 +463,7 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 // 参数:
 //   - relayInfo: Relay 请求信息
 //   - priceData: 价格数据（包含模型价格和分组比率信息）
+//
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
 func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PriceData) map[string]interface{} {

@@ -8,7 +8,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
+	stdjson "encoding/json"
 	"net/http"
 	"os"
 	"testing"
@@ -130,7 +130,7 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 		Quota:     quota,
 		Status:    model.TaskStatus(model.TaskStatusInProgress),
 		Group:     "default",
-		Data:      json.RawMessage(`{}`),
+		Data:      stdjson.RawMessage(`{}`),
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 		Properties: model.Properties{
@@ -354,6 +354,40 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+}
+
+func TestRecalculate_AttachesQuotaSaturation(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 30, 30, 30
+	const initQuota, preConsumed = 10000, 2000
+	const actualQuota = 3000
+	const tokenRemain = 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-recalc-clamp", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	clamp := &common.QuotaClamp{
+		Op:      "QuotaFromFloat",
+		Kind:    common.QuotaClampOverflow,
+		Clamped: common.MaxQuota,
+	}
+
+	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment", clamp)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	saturation, ok := adminInfo["quota_saturation"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "QuotaFromFloat", saturation["op"])
+	require.Equal(t, common.QuotaClampOverflow, saturation["kind"])
 }
 
 // TestRecalculate_NegativeDelta 测试负差额重算（实际配额 < 预扣配额）：

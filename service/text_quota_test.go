@@ -9,10 +9,12 @@
 package service
 
 import (
+	"math"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/pkg/billingexpr"
@@ -77,7 +79,7 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, messageSummary.CacheCreationTokens5m, chatSummary.CacheCreationTokens5m)
 	require.Equal(t, messageSummary.CacheCreationTokens1h, chatSummary.CacheCreationTokens1h)
 	require.True(t, chatSummary.IsClaudeUsageSemantic) // 应识别为 Claude 语义
-	require.Equal(t, 1488, chatSummary.Quota)           // 预期配额值
+	require.Equal(t, 1488, chatSummary.Quota)          // 预期配额值
 }
 
 // TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios 测试分离式缓存创建比率的应用，
@@ -159,9 +161,9 @@ func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t 
 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
-	require.True(t, summary.IsClaudeUsageSemantic)   // 应识别为 Claude 语义
+	require.True(t, summary.IsClaudeUsageSemantic)       // 应识别为 Claude 语义
 	require.Equal(t, "anthropic", summary.UsageSemantic) // 语义标记保持为 "anthropic"
-	require.Equal(t, 1488, summary.Quota)              // 配额与 Chat 格式一致
+	require.Equal(t, 1488, summary.Quota)                // 配额与 Chat 格式一致
 }
 
 // TestCacheWriteTokensTotal 测试缓存写入 token 总数的计算函数，
@@ -392,7 +394,37 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 	})
 
 	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart()) // 工具调用附加费
-	require.Equal(t, 14000, quota) // 总配额 = 分层配额 + 附加费
+	require.Equal(t, 14000, quota)                                                    // 总配额 = 分层配额 + 附加费
+}
+
+func TestCalculateTextQuotaSummaryRecordsQuotaClamp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "quota-clamp-model",
+		PriceData: types.PriceData{
+			UsePrice:   true,
+			ModelPrice: 1.8446744073686647e19,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     1,
+		CompletionTokens: 1,
+		TotalTokens:      2,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, math.MaxInt32, summary.Quota)
+	require.NotNil(t, relayInfo.QuotaClamp)
+	require.Equal(t, common.QuotaClampOverflow, relayInfo.QuotaClamp.Kind)
+	require.Equal(t, common.MaxQuota, relayInfo.QuotaClamp.Clamped)
 }
 
 // TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges 测试分层计费回退路径下的工具调用附加费保留，
@@ -469,5 +501,5 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 	quota := composeTieredTextQuota(relayInfo, summary, preConsumedFallback, nil)
 
 	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart()) // 附加费基于 groupRatio 计算
-	require.Equal(t, 14500, quota) // 总配额 = 预扣回退值 + 附加费
+	require.Equal(t, 14500, quota)                                                    // 总配额 = 预扣回退值 + 附加费
 }

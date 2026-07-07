@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/pkg/billingexpr"
 )
 
@@ -381,6 +382,33 @@ func TestComputeTieredQuota_SameTier(t *testing.T) {
 	}
 	if result.CrossedTier {
 		t.Error("expected crossed_tier=false (both standard)")
+	}
+}
+
+func TestComputeTieredQuotaRecordsClamp(t *testing.T) {
+	expr := `tier("base", p * 1.8446744073686647e19)`
+	snap := &billingexpr.BillingSnapshot{
+		BillingMode:   "tiered_expr",
+		ExprString:    expr,
+		ExprHash:      billingexpr.ExprHashString(expr),
+		GroupRatio:    1,
+		QuotaPerUnit:  500_000,
+		EstimatedTier: "base",
+	}
+
+	result, err := billingexpr.ComputeTieredQuota(snap, billingexpr.TokenParams{P: 1})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ActualQuotaAfterGroup != common.MaxQuota {
+		t.Fatalf("quota = %d, want %d", result.ActualQuotaAfterGroup, common.MaxQuota)
+	}
+	if result.Clamp == nil {
+		t.Fatal("expected clamp to be recorded")
+	}
+	if result.Clamp.Kind != common.QuotaClampOverflow {
+		t.Fatalf("clamp kind = %s, want %s", result.Clamp.Kind, common.QuotaClampOverflow)
 	}
 }
 

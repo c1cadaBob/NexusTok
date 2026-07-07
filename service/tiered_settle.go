@@ -3,8 +3,8 @@
 package service
 
 import (
-	"github.com/c1cada/NexusTok/dto"                // 数据传输对象
-	"github.com/c1cada/NexusTok/pkg/billingexpr"    // 计费表达式引擎
+	"github.com/c1cada/NexusTok/dto"                      // 数据传输对象
+	"github.com/c1cada/NexusTok/pkg/billingexpr"          // 计费表达式引擎
 	relaycommon "github.com/c1cada/NexusTok/relay/common" // 中继通用类型
 )
 
@@ -29,11 +29,11 @@ type TieredResultWrapper = billingexpr.TieredResult
 //   - billingexpr.TokenParams: 标准化后的 token 参数
 func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool) billingexpr.TokenParams {
 	// 提取各类 token 数量
-	p := float64(usage.PromptTokens)       // 输入 token 总数
-	c := float64(usage.CompletionTokens)    // 输出 token 总数
-	cr := float64(usage.PromptTokensDetails.CachedTokens)      // 缓存读取 token 数
+	p := float64(usage.PromptTokens)                                // 输入 token 总数
+	c := float64(usage.CompletionTokens)                            // 输出 token 总数
+	cr := float64(usage.PromptTokensDetails.CachedTokens)           // 缓存读取 token 数
 	cc5m := float64(usage.PromptTokensDetails.CachedCreationTokens) // 5 分钟缓存创建 token 数
-	cc1h := float64(0)                                             // 1 小时缓存创建 token 数
+	cc1h := float64(0)                                              // 1 小时缓存创建 token 数
 
 	// Anthropic 语义的用量需要特殊处理缓存创建 token
 	if usage.UsageSemantic == "anthropic" {
@@ -41,8 +41,8 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 		cc5m = float64(usage.ClaudeCacheCreation5mTokens)
 	}
 
-	img := float64(usage.PromptTokensDetails.ImageTokens)    // 输入图片 token 数
-	ai := float64(usage.PromptTokensDetails.AudioTokens)     // 输入音频 token 数
+	img := float64(usage.PromptTokensDetails.ImageTokens)     // 输入图片 token 数
+	ai := float64(usage.PromptTokensDetails.AudioTokens)      // 输入音频 token 数
 	imgO := float64(usage.CompletionTokenDetails.ImageTokens) // 输出图片 token 数
 	ao := float64(usage.CompletionTokenDetails.AudioTokens)   // 输出音频 token 数
 
@@ -93,9 +93,9 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 		Len:  inputLen, // 总输入上下文长度
 		CR:   cr,       // 缓存读取 token 数
 		CC:   cc5m,     // 5 分钟缓存创建 token 数
-		CC1h: cc1h,    // 1 小时缓存创建 token 数
+		CC1h: cc1h,     // 1 小时缓存创建 token 数
 		Img:  img,      // 输入图片 token 数
-		ImgO: imgO,    // 输出图片 token 数
+		ImgO: imgO,     // 输出图片 token 数
 		AI:   ai,       // 输入音频 token 数
 		AO:   ao,       // 输出音频 token 数
 	}
@@ -131,6 +131,10 @@ func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenP
 		}
 		return true, quota, nil
 	}
+
+	// 如果表达式结算阶段触发了配额饱和保护，将事件暂存到 RelayInfo，
+	// 后续消费日志会把它写入 admin_info.quota_saturation 供管理员审计。
+	relayInfo.NoteQuotaClamp(tr.Clamp)
 
 	// 返回计算后的实际配额
 	return true, tr.ActualQuotaAfterGroup, &tr

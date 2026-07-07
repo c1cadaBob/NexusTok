@@ -13,18 +13,19 @@
 // 4. 返回分层计费结果
 package billingexpr
 
-// quotaConversion converts raw expression output to quota based on the
-// expression version. This is the central dispatch point for future versions
-// that may use a different conversion formula.
+import "github.com/c1cada/NexusTok/common"
+
+// quotaConversion 根据表达式版本将原始表达式输出转换为配额。
+// 这是未来表达式版本切换不同换算公式的统一分发点。
 func quotaConversion(exprOutput float64, snap *BillingSnapshot) float64 {
 	switch snap.ExprVersion {
-	default: // v1: coefficients are $/1M tokens prices
+	default: // v1：表达式系数表示 $/1M tokens 的真实价格
 		return exprOutput / 1_000_000 * snap.QuotaPerUnit
 	}
 }
 
-// ComputeTieredQuota runs the Expr from a frozen BillingSnapshot against
-// actual token counts and returns the settlement result.
+// ComputeTieredQuota 使用冻结的 BillingSnapshot 和实际 token 数运行表达式，
+// 并返回结算结果。
 func ComputeTieredQuota(snap *BillingSnapshot, params TokenParams) (TieredResult, error) {
 	return ComputeTieredQuotaWithRequest(snap, params, RequestInput{})
 }
@@ -36,7 +37,7 @@ func ComputeTieredQuotaWithRequest(snap *BillingSnapshot, params TokenParams, re
 	}
 
 	quotaBeforeGroup := quotaConversion(cost, snap)
-	afterGroup := QuotaRound(quotaBeforeGroup * snap.GroupRatio)
+	afterGroup, clamp := common.QuotaRoundChecked(quotaBeforeGroup * snap.GroupRatio)
 	crossed := trace.MatchedTier != snap.EstimatedTier
 
 	return TieredResult{
@@ -44,5 +45,6 @@ func ComputeTieredQuotaWithRequest(snap *BillingSnapshot, params TokenParams, re
 		ActualQuotaAfterGroup:  afterGroup,
 		MatchedTier:            trace.MatchedTier,
 		CrossedTier:            crossed,
+		Clamp:                  clamp,
 	}, nil
 }

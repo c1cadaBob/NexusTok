@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/pkg/billingexpr"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
@@ -101,6 +102,39 @@ func TestTryTieredSettleUsesFrozenRequestInput(t *testing.T) {
 	}
 	if result == nil || result.MatchedTier != "fast" {
 		t.Fatalf("matched tier = %v, want fast", result)
+	}
+}
+
+func TestTryTieredSettleRecordsQuotaClamp(t *testing.T) {
+	exprStr := `tier("base", p * 1.8446744073686647e19)`
+	relayInfo := &relaycommon.RelayInfo{
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:              "tiered_expr",
+			ExprString:               exprStr,
+			ExprHash:                 billingexpr.ExprHashString(exprStr),
+			GroupRatio:               1,
+			EstimatedQuotaAfterGroup: 10,
+			EstimatedTier:            "base",
+			QuotaPerUnit:             testQuotaPerUnit,
+		},
+	}
+
+	ok, quota, result := TryTieredSettle(relayInfo, billingexpr.TokenParams{P: 1})
+
+	if !ok {
+		t.Fatal("expected tiered settle to apply")
+	}
+	if quota != common.MaxQuota {
+		t.Fatalf("quota = %d, want %d", quota, common.MaxQuota)
+	}
+	if result == nil || result.Clamp == nil {
+		t.Fatal("expected clamp result")
+	}
+	if relayInfo.QuotaClamp == nil {
+		t.Fatal("expected RelayInfo to record clamp")
+	}
+	if relayInfo.QuotaClamp.Kind != common.QuotaClampOverflow {
+		t.Fatalf("clamp kind = %s, want %s", relayInfo.QuotaClamp.Kind, common.QuotaClampOverflow)
 	}
 }
 

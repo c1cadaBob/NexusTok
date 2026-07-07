@@ -5,8 +5,8 @@
 // - 配额是系统内部的计量单位，用于衡量 API 调用的费用
 // - 配额计算基于多种因素：模型倍率、分组倍率、补全倍率、缓存倍率等
 // - 支持两种计费模式：
-//   1. 倍率模式：配额 = Token数 * 模型倍率 * 分组倍率 * 补全倍率
-//   2. 价格模式：配额 = 模型价格 * 配额单位 * 分组倍率
+//  1. 倍率模式：配额 = Token数 * 模型倍率 * 分组倍率 * 补全倍率
+//  2. 价格模式：配额 = 模型价格 * 配额单位 * 分组倍率
 //
 // 配额流转：
 // 1. PreConsumeBilling: 预扣费（请求前）
@@ -27,21 +27,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"                           // 公共工具包
-	"github.com/c1cada/NexusTok/constant"                         // 常量定义
-	"github.com/c1cada/NexusTok/dto"                              // 数据传输对象
-	"github.com/c1cada/NexusTok/logger"                           // 日志
-	"github.com/c1cada/NexusTok/model"                            // 数据模型
-	"github.com/c1cada/NexusTok/pkg/billingexpr"                  // 计费表达式
-	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"     // 性能指标
-	relaycommon "github.com/c1cada/NexusTok/relay/common"         // 中继公共
-	"github.com/c1cada/NexusTok/setting/ratio_setting"            // 比率设置
-	"github.com/c1cada/NexusTok/types"                            // 类型定义
+	"github.com/c1cada/NexusTok/common"                       // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                     // 常量定义
+	"github.com/c1cada/NexusTok/dto"                          // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                       // 日志
+	"github.com/c1cada/NexusTok/model"                        // 数据模型
+	"github.com/c1cada/NexusTok/pkg/billingexpr"              // 计费表达式
+	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics" // 性能指标
+	relaycommon "github.com/c1cada/NexusTok/relay/common"     // 中继公共
+	"github.com/c1cada/NexusTok/setting/ratio_setting"        // 比率设置
+	"github.com/c1cada/NexusTok/types"                        // 类型定义
 
 	"github.com/bytedance/gopkg/util/gopool" // 协程池
 
-	"github.com/gin-gonic/gin"         // Gin 框架
-	"github.com/shopspring/decimal"    // 高精度十进制运算
+	"github.com/gin-gonic/gin"      // Gin 框架
+	"github.com/shopspring/decimal" // 高精度十进制运算
 )
 
 // TokenDetails Token 使用详情结构体
@@ -90,14 +90,15 @@ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 //
 // 返回值：
 //   - int: 计算得到的配额值
-func calculateAudioQuota(info QuotaInfo) int {
+//   - *common.QuotaClamp: 若配额转换触发饱和保护，则返回审计信息；正常路径返回 nil
+func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 	if info.UsePrice {
 		modelPrice := decimal.NewFromFloat(info.ModelPrice)
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		groupRatio := decimal.NewFromFloat(info.GroupRatio)
 
 		quota := modelPrice.Mul(quotaPerUnit).Mul(groupRatio)
-		return int(quota.IntPart())
+		return common.QuotaFromDecimalChecked(quota)
 	}
 
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(info.ModelName))
@@ -126,7 +127,7 @@ func calculateAudioQuota(info QuotaInfo) int {
 		quota = decimal.NewFromInt(1)
 	}
 
-	return int(quota.Round(0).IntPart())
+	return common.QuotaFromDecimalChecked(quota)
 }
 
 // PreWssConsumeQuota WebSocket 实时通信预扣配额
@@ -189,7 +190,8 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		GroupRatio: actualGroupRatio,
 	}
 
-	quota := calculateAudioQuota(quotaInfo)
+	quota, clamp := calculateAudioQuota(quotaInfo)
+	relayInfo.NoteQuotaClamp(clamp)
 
 	if userQuota < quota {
 		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
@@ -261,7 +263,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		GroupRatio: groupRatio,
 	}
 
-	quota := calculateAudioQuota(quotaInfo)
+	quota, clamp := calculateAudioQuota(quotaInfo)
+	relayInfo.NoteQuotaClamp(clamp)
 	if tieredOk {
 		quota = tieredQuota
 	}
@@ -302,6 +305,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AttachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -400,7 +404,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		GroupRatio: groupRatio,
 	}
 
-	quota := calculateAudioQuota(quotaInfo)
+	quota, clamp := calculateAudioQuota(quotaInfo)
+	relayInfo.NoteQuotaClamp(clamp)
 	if tieredOk {
 		quota = tieredQuota
 	}
@@ -441,6 +446,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AttachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
