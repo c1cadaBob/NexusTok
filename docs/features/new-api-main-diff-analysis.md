@@ -55,7 +55,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | 只读 catalog 已落地 | 已新增 NexusTok 原生权限 catalog，先覆盖渠道、账号池、用户、模型、订阅、系统设置六类资源，并返回 Root/Admin 基线矩阵；Casbin 存储、用户 override 和路由 enforcement 待后续分批接入。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | 只读 catalog 与自身份权限回传已落地 | 已新增 NexusTok 原生权限 catalog，先覆盖渠道、账号池、用户、模型、订阅、系统设置六类资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，当前仍基于系统角色基线，不改变现有服务端放行逻辑；Casbin 存储、用户 override 和路由 enforcement 待后续分批接入。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已部分落地 | 已抽出 NexusTok 原生 `registerChannelRoutes` 并补路由结构测试，当前仍保持 AdminAuth/RootAuth 行为；后续接入 Authz 后再将读、操作、写、敏感写拆成权限表，账号池路由也应采用同样模式。 |
 | 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；完整 Authz 上线前敏感写暂映射为 Root 权限。账号池表单分类待后续跟进。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
@@ -74,7 +74,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
 | 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；`allow_balance_pay` 控制套餐是否允许余额购买。前端按钮/表单待接入。 |
 | 订阅钱包溢出控制 | `allow_wallet_overflow` | 后端已落地 | 已在套餐与用户订阅快照保存钱包溢出策略；`subscription_first` 下订阅额度不足时，任一活跃订阅禁止溢出即阻断钱包 fallback。前端管理字段待接入。 |
-| 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 缺少 | 默认前端可据此隐藏不可操作按钮，减少 403 弹窗。 |
+| 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 后端已落地，前端类型已声明 | `/api/user/self` 已返回 `permissions.admin_permissions`，默认前端 auth store 已声明类型；当前矩阵来自系统角色基线，后续在用户 override/enforcement 落地后再接入按钮显隐和操作禁用。 |
 
 ## 默认前端页面差异
 
@@ -192,7 +192,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 1. 引入 Authz：
    - 只读 catalog 已落地：`channel`、`account_pool`、`user`、`model`、`subscription`、`system_setting`。
    - 动作已先统一为 `read`、`operate`、`write`、`sensitive_write`、`secret_view`。
-   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；用户级 override、Casbin 存储和路由 enforcement 待后续接入。
+   - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端可在后续页面改造中复用同一 schema。
+   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；用户级 override、Casbin 存储、前端按钮消费和路由 enforcement 待后续接入。
 2. 拆分路由注册：
    - 渠道路由已先从巨型 `api-router.go` 抽出到 `router/channel-router.go`，保持现有权限行为不变。
    - 后续学习 `new-api-main/router/channel-router.go` 的权限表模式，为每条写接口绑定权限常量，并补 route permission 测试。
@@ -544,3 +545,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 流量账本查询后端 | `model/usedata.go`、`controller/usedata.go`、`router/api-router.go` | 扩展 `quota_data` 记录 node/token/group/channel 维度，新增 `/api/data/flow` 与 `/api/data/flow/self` 聚合接口；Root 可看节点、Token 和渠道，Admin 隐藏 Token/节点，普通用户仅查看自己的 Token/group/model 聚合，为后续 dashboard Sankey 图提供后端数据。 |
 | 2026-07-07 | 订阅余额支付与钱包溢出控制后端 | `model/subscription.go`、`controller/subscription.go`、`router/api-router.go`、`service/billing_session.go`、`service/quota.go` | 新增套餐 `allow_balance_pay`、`allow_wallet_overflow` 和用户订阅钱包溢出快照，提供 `/api/subscription/balance/pay` 余额购买订阅接口；余额扣款、订阅创建和成功订单在同一事务内完成，`subscription_first` 在订阅额度不足时按活跃订阅快照决定是否允许钱包 fallback。 |
 | 2026-07-07 | 权限 catalog 后端 | `service/authz/*`、`controller/authz.go`、`router/authz-router.go` | 新增 `/api/authz/catalog` 只读权限 schema，覆盖渠道、账号池、用户、模型、订阅和系统设置六类资源，返回动作定义与 Root/Admin 基线授权矩阵；当前不改变现有 AdminAuth/RootAuth 行为，为后续 Casbin 和路由权限表迁移提供稳定 schema。 |
+| 2026-07-07 | 用户权限矩阵回传 | `controller/user.go`、`controller/user_authz_test.go`、`web/default/src/stores/auth-store.ts` | `/api/user/self` 在 `permissions.admin_permissions` 回传 Authz 能力矩阵，并为默认前端用户状态补充类型声明；当前只反映系统角色基线，不引入用户 override 或改变服务端权限判断。 |

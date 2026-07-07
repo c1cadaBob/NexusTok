@@ -4,7 +4,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,16 +12,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/c1cada/NexusTok/common"    // 公共工具包
-	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
-	"github.com/c1cada/NexusTok/i18n"      // 国际化
-	"github.com/c1cada/NexusTok/logger"    // 日志
-	"github.com/c1cada/NexusTok/model"     // 数据模型
-	"github.com/c1cada/NexusTok/service"   // 服务层
-	"github.com/c1cada/NexusTok/setting"   // 设置
+	"github.com/c1cada/NexusTok/common"  // 公共工具包
+	"github.com/c1cada/NexusTok/dto"     // 数据传输对象
+	"github.com/c1cada/NexusTok/i18n"    // 国际化
+	"github.com/c1cada/NexusTok/logger"  // 日志
+	"github.com/c1cada/NexusTok/model"   // 数据模型
+	"github.com/c1cada/NexusTok/service" // 服务层
+	"github.com/c1cada/NexusTok/service/authz"
+	"github.com/c1cada/NexusTok/setting"                   // 设置
 	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营设置
 
-	"github.com/c1cada/NexusTok/constant"  // 常量
+	"github.com/c1cada/NexusTok/constant" // 常量
 
 	"github.com/gin-contrib/sessions" // 会话管理
 	"github.com/gin-gonic/gin"        // Gin 框架
@@ -55,7 +55,7 @@ func Login(c *gin.Context) {
 
 	// 解析登录请求
 	var loginRequest LoginRequest
-	err := json.NewDecoder(c.Request.Body).Decode(&loginRequest)
+	err := common.DecodeJson(c.Request.Body, &loginRequest)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -178,7 +178,7 @@ func Register(c *gin.Context) {
 		return
 	}
 	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	err := common.DecodeJson(c.Request.Body, &user)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -207,7 +207,7 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
+	affCode := user.AffCode // 这里保存的是邀请人的邀请码，而不是当前用户自己的邀请码。
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
 	cleanUser := model.User{
 		Username:    user.Username,
@@ -417,11 +417,12 @@ func GetSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// Hide admin remarks: set to empty to trigger omitempty tag, ensuring the remark field is not included in JSON returned to regular users
+	// 管理备注只供后台使用，这里置空以触发 omitempty，避免普通自查接口泄露内部备注。
 	user.Remark = ""
 
 	// 计算用户权限信息
 	permissions := calculateUserPermissions(userRole)
+	permissions["admin_permissions"] = authz.Capabilities(userRole)
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
@@ -452,7 +453,7 @@ func GetSelf(c *gin.Context) {
 		"setting":           user.Setting,
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"permissions":       permissions,                // 新增权限字段，包含侧栏偏好与管理能力矩阵。
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -556,8 +557,8 @@ func generateDefaultSidebarConfig(userRole int) string {
 	}
 	// 普通用户不包含admin区域
 
-	// 转换为JSON字符串
-	configBytes, err := json.Marshal(defaultConfig)
+	// 转换为 JSON 字符串，便于沿用用户设置中的字符串存储格式。
+	configBytes, err := common.Marshal(defaultConfig)
 	if err != nil {
 		common.SysLog("生成默认边栏配置失败: " + err.Error())
 		return ""
@@ -595,13 +596,13 @@ func GetUserModels(c *gin.Context) {
 
 func UpdateUser(c *gin.Context) {
 	var updatedUser model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&updatedUser)
+	err := common.DecodeJson(c.Request.Body, &updatedUser)
 	if err != nil || updatedUser.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	if updatedUser.Password == "" {
-		updatedUser.Password = "$I_LOVE_U" // make Validator happy :)
+		updatedUser.Password = "$I_LOVE_U" // 校验器要求密码非空，后续会在真正更新前恢复为空。
 	}
 	if err := common.Validate.Struct(&updatedUser); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
@@ -622,7 +623,7 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
-		updatedUser.Password = "" // rollback to what it should be
+		updatedUser.Password = "" // 恢复为空，表示本次不更新密码。
 	}
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
@@ -676,7 +677,7 @@ func AdminClearUserBinding(c *gin.Context) {
 
 func UpdateSelf(c *gin.Context) {
 	var requestData map[string]interface{}
-	err := json.NewDecoder(c.Request.Body).Decode(&requestData)
+	err := common.DecodeJson(c.Request.Body, &requestData)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -740,19 +741,19 @@ func UpdateSelf(c *gin.Context) {
 
 	// 原有的用户信息更新逻辑
 	var user model.User
-	requestDataBytes, err := json.Marshal(requestData)
+	requestDataBytes, err := common.Marshal(requestData)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	err = json.Unmarshal(requestDataBytes, &user)
+	err = common.Unmarshal(requestDataBytes, &user)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 
 	if user.Password == "" {
-		user.Password = "$I_LOVE_U" // make Validator happy :)
+		user.Password = "$I_LOVE_U" // 校验器要求密码非空，后续会在真正更新前恢复为空。
 	}
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidInput)
@@ -766,7 +767,7 @@ func UpdateSelf(c *gin.Context) {
 		DisplayName: user.DisplayName,
 	}
 	if user.Password == "$I_LOVE_U" {
-		user.Password = "" // rollback to what it should be
+		user.Password = "" // 恢复为空，表示本次不更新密码。
 		cleanUser.Password = ""
 	}
 	updatePassword, err := checkUpdatePassword(user.OriginalPassword, user.Password, cleanUser.Id)
@@ -855,7 +856,7 @@ func DeleteSelf(c *gin.Context) {
 
 func CreateUser(c *gin.Context) {
 	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	err := common.DecodeJson(c.Request.Body, &user)
 	user.Username = strings.TrimSpace(user.Username)
 	if err != nil || user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -873,7 +874,7 @@ func CreateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
-	// Even for admin users, we cannot fully trust them!
+	// 即使调用方是管理员，也只接收白名单字段，避免越权写入敏感资料。
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -902,7 +903,7 @@ type ManageRequest struct {
 // ManageUser Only admin user can do this
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
-	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	err := common.DecodeJson(c.Request.Body, &req)
 
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
