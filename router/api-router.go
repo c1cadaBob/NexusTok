@@ -72,19 +72,19 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/about", controller.GetAbout)                       // 获取关于信息
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent) // 获取首页内容
 
-		// 定价信息（可选用户认证，用于显示用户特定价格）
-		apiRouter.GET("/pricing", middleware.TryUserAuth(), controller.GetPricing)
+		// 定价信息：访问策略跟随 HeaderNavModules.pricing，已登录用户可看到分组价格
+		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
 
 		// 性能监控指标路由组
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
-		perfMetricsRoute.Use(middleware.TryUserAuth()) // 可选用户认证
+		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing")) // pricing 辅助数据，公开策略跟随模型广场
 		{
 			perfMetricsRoute.GET("/summary", controller.GetPerfMetricsSummary) // 获取性能指标摘要
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)                // 获取详细性能指标
 		}
 
-		// 排行榜
-		apiRouter.GET("/rankings", controller.GetRankings)
+		// 排行榜：访问策略跟随 HeaderNavModules.rankings
+		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 
 		// 邮箱验证（需要频率限制和 Turnstile 验证）
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
