@@ -19,7 +19,10 @@ For commercial licensing, please contact support@c1cada.dev
 import z from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { Redemptions } from '@/features/redemption-codes'
 import { REDEMPTION_STATUS_VALUES } from '@/features/redemption-codes/constants'
 
@@ -34,7 +37,7 @@ export const Route = createFileRoute('/_authenticated/redemption-codes/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+    if (!canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.USER)) {
       throw redirect({
         to: '/403',
       })

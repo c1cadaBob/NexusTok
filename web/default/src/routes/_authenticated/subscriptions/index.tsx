@@ -18,13 +18,18 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { Subscriptions } from '@/features/subscriptions'
 
 export const Route = createFileRoute('/_authenticated/subscriptions/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+    if (
+      !canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION)
+    ) {
       throw redirect({ to: '/403' })
     }
   },

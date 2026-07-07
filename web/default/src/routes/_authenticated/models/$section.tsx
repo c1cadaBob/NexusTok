@@ -19,7 +19,10 @@ For commercial licensing, please contact support@c1cada.dev
 import z from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { Models } from '@/features/models'
 import {
   MODELS_SECTION_IDS,
@@ -43,7 +46,7 @@ export const Route = createFileRoute('/_authenticated/models/$section')({
   beforeLoad: ({ params }) => {
     const { auth } = useAuthStore.getState()
 
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+    if (!canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.MODEL)) {
       throw redirect({
         to: '/403',
       })

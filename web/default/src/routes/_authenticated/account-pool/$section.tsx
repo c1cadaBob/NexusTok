@@ -18,7 +18,10 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { AccountPool } from '@/features/account-pool'
 import {
   ACCOUNT_POOL_DEFAULT_SECTION,
@@ -28,7 +31,9 @@ import {
 export const Route = createFileRoute('/_authenticated/account-pool/$section')({
   beforeLoad: ({ params }) => {
     const { auth } = useAuthStore.getState()
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+    if (
+      !canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL)
+    ) {
       throw redirect({ to: '/403' })
     }
     if (!isAccountPoolSectionId(params.section)) {

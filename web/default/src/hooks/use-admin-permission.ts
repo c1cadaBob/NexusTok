@@ -16,26 +16,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
 import {
-  ADMIN_PERMISSION_RESOURCES,
-  canReadAdminResource,
+  type AdminPermissionAction,
+  type AdminPermissionResource,
+  ADMIN_PERMISSION_ACTIONS,
+  hasAdminPermission,
 } from '@/lib/admin-permissions'
-import { ACCOUNT_POOL_DEFAULT_SECTION } from '@/features/account-pool/section-registry'
 
-export const Route = createFileRoute('/_authenticated/account-pool/')({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    if (
-      !canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL)
-    ) {
-      throw redirect({ to: '/403' })
-    }
-    throw redirect({
-      to: '/account-pool/$section',
-      params: { section: ACCOUNT_POOL_DEFAULT_SECTION },
-      replace: true,
-    })
-  },
-})
+export function useAdminPermission(
+  resource: AdminPermissionResource,
+  action: AdminPermissionAction
+): boolean {
+  const user = useAuthStore((state) => state.auth.user)
+  return hasAdminPermission(user, resource, action)
+}
+
+export function useCanReadAdminResource(
+  resource: AdminPermissionResource
+): boolean {
+  return useAdminPermission(resource, ADMIN_PERMISSION_ACTIONS.READ)
+}

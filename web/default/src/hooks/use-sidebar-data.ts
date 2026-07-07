@@ -40,13 +40,38 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
 import { getAccountPoolSectionNavItems } from '@/features/account-pool/section-registry'
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const user = useAuthStore((state) => state.auth.user)
+  const userRole = user?.role
+  const canReadChannel = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL
+  )
+  const canReadAccountPool = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL
+  )
+  const canReadModel = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.MODEL
+  )
+  const canReadUser = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.USER
+  )
+  const canReadSubscription = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION
+  )
 
   return {
     workspaces: [
@@ -127,22 +152,34 @@ export function useSidebarData(): SidebarData {
         id: 'admin',
         title: t('Admin'),
         items: [
-          {
-            title: t('Upstream Channels'),
-            url: '/channels',
-            icon: Radio,
-          },
-          {
-            title: t('Account Pool'),
-            activeUrls: ['/account-pool'],
-            icon: DatabaseZap,
-            items: getAccountPoolSectionNavItems(t),
-          },
-          {
-            title: t('Models'),
-            url: '/models/metadata',
-            icon: Box,
-          },
+          ...(canReadChannel
+            ? [
+                {
+                  title: t('Upstream Channels'),
+                  url: '/channels',
+                  icon: Radio,
+                },
+              ]
+            : []),
+          ...(canReadAccountPool
+            ? [
+                {
+                  title: t('Account Pool'),
+                  activeUrls: ['/account-pool'],
+                  icon: DatabaseZap,
+                  items: getAccountPoolSectionNavItems(t),
+                },
+              ]
+            : []),
+          ...(canReadModel
+            ? [
+                {
+                  title: t('Models'),
+                  url: '/models/metadata',
+                  icon: Box,
+                },
+              ]
+            : []),
           ...(userRole === ROLE.SUPER_ADMIN
             ? [
                 {
@@ -155,29 +192,37 @@ export function useSidebarData(): SidebarData {
                   url: '/system-info',
                   icon: ServerCog,
                 },
+                {
+                  title: t('System Settings'),
+                  url: '/system-settings/site',
+                  activeUrls: ['/system-settings'],
+                  icon: Settings,
+                },
               ]
             : []),
-          {
-            title: t('Users'),
-            url: '/users',
-            icon: Users,
-          },
-          {
-            title: t('Redemption Codes'),
-            url: '/redemption-codes',
-            icon: Ticket,
-          },
-          {
-            title: t('Subscription Management'),
-            url: '/subscriptions',
-            icon: CreditCard,
-          },
-          {
-            title: t('System Settings'),
-            url: '/system-settings/site',
-            activeUrls: ['/system-settings'],
-            icon: Settings,
-          },
+          ...(canReadUser
+            ? [
+                {
+                  title: t('Users'),
+                  url: '/users',
+                  icon: Users,
+                },
+                {
+                  title: t('Redemption Codes'),
+                  url: '/redemption-codes',
+                  icon: Ticket,
+                },
+              ]
+            : []),
+          ...(canReadSubscription
+            ? [
+                {
+                  title: t('Subscription Management'),
+                  url: '/subscriptions',
+                  icon: CreditCard,
+                },
+              ]
+            : []),
         ],
       },
     ],

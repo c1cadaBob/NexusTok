@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { create } from 'zustand'
+import type { AdminCapabilities } from '@/lib/admin-permissions'
 
 export type UserPermissions = {
   sidebar_settings?: boolean
   sidebar_modules?: Record<string, unknown>
-  admin_permissions?: Record<string, Record<string, boolean>>
+  admin_permissions?: AdminCapabilities
 }
 
 export interface AuthUser {

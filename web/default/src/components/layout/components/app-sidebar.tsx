@@ -19,8 +19,12 @@ For commercial licensing, please contact support@c1cada.dev
 import { useMemo } from 'react'
 import { useLocation } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  type AdminPermissionResource,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
 import { useLayout } from '@/context/layout-provider'
 import { useSidebarConfig } from '@/hooks/use-sidebar-config'
 import { useSidebarData } from '@/hooks/use-sidebar-data'
@@ -40,7 +44,7 @@ export function AppSidebar() {
   const { t } = useTranslation()
   const { collapsible, variant } = useLayout()
   const { pathname } = useLocation()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const user = useAuthStore((state) => state.auth.user)
   const sidebarData = useSidebarData()
 
   // Get navigation group configuration corresponding to current path from workspace registry
@@ -52,14 +56,24 @@ export function AppSidebar() {
   // Filter navigation groups based on user role
   // Non-Admin users cannot see Admin navigation group
   const currentNavGroups = useMemo(() => {
-    const isAdmin = userRole && userRole >= ROLE.ADMIN
+    const adminResources: AdminPermissionResource[] = [
+      ADMIN_PERMISSION_RESOURCES.CHANNEL,
+      ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
+      ADMIN_PERMISSION_RESOURCES.USER,
+      ADMIN_PERMISSION_RESOURCES.MODEL,
+      ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION,
+      ADMIN_PERMISSION_RESOURCES.SYSTEM_SETTING,
+    ]
+    const canReadAnyAdminResource = adminResources.some((resource) =>
+      canReadAdminResource(user, resource)
+    )
     return configFilteredNavGroups.filter((group) => {
       if (group.id === 'admin') {
-        return isAdmin
+        return canReadAnyAdminResource
       }
       return true
     })
-  }, [configFilteredNavGroups, userRole])
+  }, [configFilteredNavGroups, user])
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
