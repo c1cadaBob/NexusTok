@@ -308,6 +308,18 @@ func TestQuotaRound(t *testing.T) {
 	}
 }
 
+func TestQuotaRoundSaturatesAbnormalValues(t *testing.T) {
+	if got := billingexpr.QuotaRound(math.Inf(1)); got != math.MaxInt32 {
+		t.Errorf("QuotaRound(+Inf) = %d, want %d", got, math.MaxInt32)
+	}
+	if got := billingexpr.QuotaRound(math.Inf(-1)); got != math.MinInt32 {
+		t.Errorf("QuotaRound(-Inf) = %d, want %d", got, math.MinInt32)
+	}
+	if got := billingexpr.QuotaRound(math.NaN()); got != 0 {
+		t.Errorf("QuotaRound(NaN) = %d, want 0", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Settlement
 // ---------------------------------------------------------------------------
