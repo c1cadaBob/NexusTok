@@ -145,10 +145,6 @@ func main() {
 		go controller.AutomaticallyUpdateChannels(frequency)
 	}
 
-	// 启动自动测试渠道任务
-	// 定期检测渠道的可用性
-	go controller.AutomaticallyTestChannels()
-
 	// 启动 Codex 凭证自动刷新任务
 	// 每 10 分钟检查一次，凭证将在 1 天内过期时自动刷新
 	service.StartCodexCredentialAutoRefreshTask()

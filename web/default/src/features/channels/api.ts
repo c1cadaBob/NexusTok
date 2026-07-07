@@ -600,9 +600,42 @@ export async function deleteOllamaModel(params: {
 export async function testAllChannels(): Promise<{
   success: boolean
   message?: string
+  data?: {
+    task_id?: string
+    status?: string
+    type?: string
+  }
 }> {
-  const res = await api.get('/api/channel/test')
-  return res.data
+  try {
+    const res = await api.get('/api/channel/test', {
+      skipErrorHandler: true,
+    } as ExtendedApiConfig)
+    return res.data
+  } catch (error) {
+    const response = (
+      error as {
+        response?: {
+          data?: {
+            success?: boolean
+            message?: string
+            data?: {
+              task_id?: string
+              status?: string
+              type?: string
+            }
+          }
+        }
+      }
+    ).response
+    if (response?.data && typeof response.data.success === 'boolean') {
+      return {
+        success: response.data.success,
+        message: response.data.message,
+        data: response.data.data,
+      }
+    }
+    throw error
+  }
 }
 
 /**

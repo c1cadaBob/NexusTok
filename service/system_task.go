@@ -436,6 +436,59 @@ func logCleanupProgress(processed int64, total int64) int {
 	return int(processed * 100 / total)
 }
 
+// SystemTaskProgress 是可按百分比汇报进度的系统任务通用状态。
+//
+// 渠道批量测试、模型同步等任务都会以“已处理数量/总数量”推进；统一状态结构可以让
+// 前端任务面板不用理解每一类任务的私有字段，也能稳定展示进度条。
+type SystemTaskProgress struct {
+	Total     int `json:"total"`
+	Processed int `json:"processed"`
+	Progress  int `json:"progress"`
+}
+
+// NewSystemTaskProgressReporter 创建绑定到 running 任务的进度写入回调。
+//
+// handler 在循环处理任务项时传入 processed/total；该回调会节流写入数据库，始终保留
+// 首次变化和最终 100% 状态。租约丢失时写入错误只作为 best-effort 忽略，runner 的
+// 心跳协程会取消 handler ctx，真正的停止语义由 handler 自己检查 ctx 完成。
+func NewSystemTaskProgressReporter(task *model.SystemTask, runnerID string) func(processed, total int) {
+	const minWriteInterval = 2 * time.Second
+	var (
+		lastWriteAt  time.Time
+		lastProgress = -1
+	)
+	return func(processed, total int) {
+		progress := 100
+		if total > 0 {
+			progress = processed * 100 / total
+		}
+		if progress < 0 {
+			progress = 0
+		}
+		if progress > 100 {
+			progress = 100
+		}
+
+		if progress < 100 {
+			if progress == lastProgress {
+				return
+			}
+			if !lastWriteAt.IsZero() && time.Since(lastWriteAt) < minWriteInterval {
+				return
+			}
+		}
+		lastProgress = progress
+		lastWriteAt = time.Now()
+
+		state := SystemTaskProgress{
+			Total:     total,
+			Processed: processed,
+			Progress:  progress,
+		}
+		_ = model.UpdateSystemTaskState(task.TaskID, runnerID, state)
+	}
+}
+
 func failSystemTask(task *model.SystemTask, runnerID string, err error) {
 	logger.LogWarn(context.Background(), fmt.Sprintf("system task %s failed: %v", task.TaskID, err))
 	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, nil, err.Error()); finishErr != nil {
