@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -62,4 +63,65 @@ func TestAttachQuotaSaturationNoClampNoMarker(t *testing.T) {
 
 	_, exists := other["admin_info"]
 	require.False(t, exists)
+}
+
+func TestComputeToolCallQuotaUsesQuotaRound(t *testing.T) {
+	result := ComputeToolCallQuota(ToolCallUsage{
+		ModelName:              "gpt-4o",
+		WebSearchCalls:         2,
+		WebSearchToolName:      "web_search_preview",
+		FileSearchCalls:        1,
+		ImageGenerationCall:    true,
+		ImageGenerationQuality: "low",
+		ImageGenerationSize:    "1024x1024",
+	}, 1)
+
+	require.Equal(t, 3, len(result.Items))
+	require.Equal(t, 25000, result.Items[0].Quota)
+	require.Equal(t, 1250, result.Items[1].Quota)
+	require.Equal(t, 5500, result.Items[2].Quota)
+	require.Equal(t, 31750, result.TotalQuota)
+}
+
+func TestComputeToolCallQuotaSaturatesLargeUsage(t *testing.T) {
+	result := ComputeToolCallQuota(ToolCallUsage{
+		ModelName:         "gpt-4o",
+		WebSearchCalls:    math.MaxInt32,
+		WebSearchToolName: "web_search_preview",
+		FileSearchCalls:   math.MaxInt32,
+	}, 1)
+
+	require.Equal(t, 2, len(result.Items))
+	require.Equal(t, common.MaxQuota, result.Items[0].Quota)
+	require.Equal(t, common.MaxQuota, result.Items[1].Quota)
+	require.Equal(t, common.MaxQuota, result.TotalQuota)
+}
+
+func TestCalcViolationFeeQuotaUsesDecimalAndSaturates(t *testing.T) {
+	quota, clamp := calcViolationFeeQuota(0.05, 1)
+	require.Equal(t, 25000, quota)
+	require.Nil(t, clamp)
+
+	quota, clamp = calcViolationFeeQuota(0.000001, 1)
+	require.Equal(t, 1, quota)
+	require.Nil(t, clamp)
+
+	quota, clamp = calcViolationFeeQuota(1e20, 1)
+	require.Equal(t, common.MaxQuota, quota)
+	require.NotNil(t, clamp)
+	require.Equal(t, "QuotaFromDecimal", clamp.Op)
+	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
+}
+
+func TestCalcViolationFeeQuotaHandlesInvalidFloat(t *testing.T) {
+	quota, clamp := calcViolationFeeQuota(math.NaN(), 1)
+	require.Equal(t, 0, quota)
+	require.NotNil(t, clamp)
+	require.Equal(t, common.QuotaClampNaN, clamp.Kind)
+	require.Equal(t, 0, clamp.Clamped)
+
+	quota, clamp = calcViolationFeeQuota(math.Inf(1), 1)
+	require.Equal(t, common.MaxQuota, quota)
+	require.NotNil(t, clamp)
+	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 }

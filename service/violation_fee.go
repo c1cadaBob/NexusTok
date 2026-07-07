@@ -6,16 +6,17 @@
 package service
 
 import (
-	"fmt"       // 格式化输出
-	"strings"   // 字符串操作（前缀匹配、内容检测）
-	"time"      // 时间计算（请求耗时）
+	"fmt"     // 格式化输出
+	"math"    // 浮点异常检测
+	"strings" // 字符串操作（前缀匹配、内容检测）
+	"time"    // 时间计算（请求耗时）
 
-	"github.com/c1cada/NexusTok/common"                    // 项目公共工具包
-	"github.com/c1cada/NexusTok/logger"                     // 日志记录
-	"github.com/c1cada/NexusTok/model"                      // 数据模型层
-	relaycommon "github.com/c1cada/NexusTok/relay/common"   // Relay 通用类型
-	"github.com/c1cada/NexusTok/setting/model_setting"      // 模型设置（Grok 配置）
-	"github.com/c1cada/NexusTok/types"                      // 类型定义（错误码等）
+	"github.com/c1cada/NexusTok/common"                   // 项目公共工具包
+	"github.com/c1cada/NexusTok/logger"                   // 日志记录
+	"github.com/c1cada/NexusTok/model"                    // 数据模型层
+	relaycommon "github.com/c1cada/NexusTok/relay/common" // Relay 通用类型
+	"github.com/c1cada/NexusTok/setting/model_setting"    // 模型设置（Grok 配置）
+	"github.com/c1cada/NexusTok/types"                    // 类型定义（错误码等）
 
 	"github.com/shopspring/decimal" // 高精度十进制运算库（避免浮点精度问题）
 
@@ -24,15 +25,16 @@ import (
 
 // 违规收费相关常量
 const (
-	ViolationFeeCodePrefix     = "violation_fee."                        // 违规费用错误码前缀
-	CSAMViolationMarker        = "Failed check: SAFETY_CHECK_TYPE"      // CSAM（儿童性虐待材料）违规标记
-	ContentViolatesUsageMarker = "Content violates usage guidelines"     // 内容违反使用准则标记
+	ViolationFeeCodePrefix     = "violation_fee."                    // 违规费用错误码前缀
+	CSAMViolationMarker        = "Failed check: SAFETY_CHECK_TYPE"   // CSAM（儿童性虐待材料）违规标记
+	ContentViolatesUsageMarker = "Content violates usage guidelines" // 内容违反使用准则标记
 )
 
 // IsViolationFeeCode 判断给定的错误码是否为违规费用错误码。
 // 通过检查错误码是否以 "violation_fee." 前缀开头来判断。
 // 参数:
 //   - code: 错误码
+//
 // 返回值:
 //   - bool: true 表示是违规费用错误码
 func IsViolationFeeCode(code types.ErrorCode) bool {
@@ -43,6 +45,7 @@ func IsViolationFeeCode(code types.ErrorCode) bool {
 // 通过在错误消息和 OpenAI 格式的错误消息中搜索特定标记字符串来判断。
 // 参数:
 //   - err: NexusTok 错误对象，可为 nil
+//
 // 返回值:
 //   - bool: true 表示包含违规标记
 func HasCSAMViolationMarker(err *types.NexusTokError) bool {
@@ -62,6 +65,7 @@ func HasCSAMViolationMarker(err *types.NexusTokError) bool {
 // 将错误码和类型设置为 ErrorCodeViolationFeeGrokCSAM，并启用跳过重试标志。
 // 参数:
 //   - err: 原始 NexusTok 错误对象，可为 nil
+//
 // 返回值:
 //   - *types.NexusTokError: 包装后的违规费用错误，nil 输入返回 nil
 func WrapAsViolationFeeGrokCSAM(err *types.NexusTokError) *types.NexusTokError {
@@ -81,6 +85,7 @@ func WrapAsViolationFeeGrokCSAM(err *types.NexusTokError) *types.NexusTokError {
 // 该函数必须在重试决策逻辑之前调用。
 // 参数:
 //   - err: 原始 NexusTok 错误对象，可为 nil
+//
 // 返回值:
 //   - *types.NexusTokError: 标准化后的错误，nil 输入返回 nil
 func NormalizeViolationFeeError(err *types.NexusTokError) *types.NexusTokError {
@@ -106,6 +111,7 @@ func NormalizeViolationFeeError(err *types.NexusTokError) *types.NexusTokError {
 // 当错误码为 Grok CSAM 违规费用码，或错误包含 CSAM 违规标记时返回 true。
 // 参数:
 //   - err: NexusTok 错误对象，可为 nil
+//
 // 返回值:
 //   - bool: true 表示应收取违规费用
 func shouldChargeViolationFee(err *types.NexusTokError) bool {
@@ -125,25 +131,34 @@ func shouldChargeViolationFee(err *types.NexusTokError) bool {
 // 参数:
 //   - amount: 违规罚款基础金额（美元）
 //   - groupRatio: 用户分组的配额比率
+//
 // 返回值:
 //   - int: 应扣除的配额数量（负数或零时不扣除）
-func calcViolationFeeQuota(amount, groupRatio float64) int {
+//   - *common.QuotaClamp: 若浮点/decimal 转换触发饱和保护，则返回审计信息
+func calcViolationFeeQuota(amount, groupRatio float64) (int, *common.QuotaClamp) {
 	if amount <= 0 {
-		return 0
+		return 0, nil
 	}
 	if groupRatio <= 0 {
-		return 0
+		return 0, nil
+	}
+	// decimal.NewFromFloat 对 NaN/Inf 会 panic。违规费用虽然通常来自管理员固定配置，
+	// 但配置导入或异常倍率仍可能传入非法浮点值，这里先收敛到统一的饱和语义。
+	if math.IsNaN(amount) || math.IsNaN(groupRatio) {
+		return common.QuotaFromFloatChecked(math.NaN())
+	}
+	if math.IsInf(amount, 0) || math.IsInf(groupRatio, 0) {
+		return common.QuotaFromFloatChecked(math.Inf(1))
 	}
 	// 使用 decimal 库进行高精度计算，避免浮点数精度丢失
 	quota := decimal.NewFromFloat(amount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
-		Mul(decimal.NewFromFloat(groupRatio)).
-		Round(0).
-		IntPart()
-	if quota <= 0 {
-		return 0
+		Mul(decimal.NewFromFloat(groupRatio))
+	quotaInt, clamp := common.QuotaFromDecimalChecked(quota)
+	if quotaInt <= 0 {
+		return 0, clamp
 	}
-	return int(quota)
+	return quotaInt, clamp
 }
 
 // ChargeViolationFeeIfNeeded 在正常流程完成后（包括退款）收取额外的违规费用。
@@ -158,6 +173,7 @@ func calcViolationFeeQuota(amount, groupRatio float64) int {
 //   - ctx: Gin 上下文
 //   - relayInfo: Relay 请求信息（包含用户、渠道、分组等信息）
 //   - apiErr: 上游 API 返回的错误
+//
 // 返回值:
 //   - bool: true 表示成功收取了违规费用
 func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, apiErr *types.NexusTokError) bool {
@@ -177,7 +193,8 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 
 	// 计算违规费用配额
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	feeQuota := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	feeQuota, clamp := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	relayInfo.NoteQuotaClamp(clamp)
 	if feeQuota <= 0 {
 		return false
 	}
@@ -199,16 +216,17 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	oai := apiErr.ToOpenAIError()
 
 	other := map[string]any{
-		"violation_fee":        true,                                               // 标记为违规费用
-		"violation_fee_code":   string(types.ErrorCodeViolationFeeGrokCSAM),        // 违规费用错误码
-		"fee_quota":            feeQuota,                                           // 实际扣除的配额
-		"base_amount":          settings.ViolationDeductionAmount,                  // 基础罚款金额
-		"group_ratio":          groupRatio,                                         // 分组比率
-		"status_code":          apiErr.StatusCode,                                  // HTTP 状态码
-		"upstream_error_type":  oai.Type,                                           // 上游错误类型
-		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),                        // 上游错误码
-		"violation_fee_marker": CSAMViolationMarker,                                // 违规标记
+		"violation_fee":        true,                                        // 标记为违规费用
+		"violation_fee_code":   string(types.ErrorCodeViolationFeeGrokCSAM), // 违规费用错误码
+		"fee_quota":            feeQuota,                                    // 实际扣除的配额
+		"base_amount":          settings.ViolationDeductionAmount,           // 基础罚款金额
+		"group_ratio":          groupRatio,                                  // 分组比率
+		"status_code":          apiErr.StatusCode,                           // HTTP 状态码
+		"upstream_error_type":  oai.Type,                                    // 上游错误类型
+		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),                 // 上游错误码
+		"violation_fee_marker": CSAMViolationMarker,                         // 违规标记
 	}
+	AttachQuotaSaturation(ctx, relayInfo, other)
 
 	// 记录消费日志
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

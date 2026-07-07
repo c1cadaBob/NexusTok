@@ -5,10 +5,8 @@
 package service
 
 import (
-	"math" // 数学运算（四舍五入）
-
-	"github.com/c1cada/NexusTok/common"                        // 项目公共工具包（QuotaPerUnit 常量）
-	"github.com/c1cada/NexusTok/setting/operation_setting"      // 运营设置（工具定价）
+	"github.com/c1cada/NexusTok/common"                    // 项目公共工具包（QuotaPerUnit 常量、额度饱和保护）
+	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营设置（工具定价）
 )
 
 // ToolCallUsage 单次请求中所有工具调用的使用量记录。
@@ -34,8 +32,8 @@ type ToolCallItem struct {
 
 // ToolCallResult 工具调用计费的聚合结果。
 type ToolCallResult struct {
-	TotalQuota int            `json:"total_quota"`       // 所有工具调用的总配额消耗
-	Items      []ToolCallItem `json:"items,omitempty"`   // 各工具的计费明细列表
+	TotalQuota int            `json:"total_quota"`     // 所有工具调用的总配额消耗
+	Items      []ToolCallItem `json:"items,omitempty"` // 各工具的计费明细列表
 }
 
 // ComputeToolCallQuota 计算请求中所有工具调用的总配额消耗。
@@ -49,11 +47,18 @@ type ToolCallResult struct {
 // 参数:
 //   - usage: 请求中的工具调用使用量
 //   - groupRatio: 用户分组的配额比率
+//
 // 返回值:
 //   - ToolCallResult: 工具调用计费结果（包含总配额和明细）
 func ComputeToolCallQuota(usage ToolCallUsage, groupRatio float64) ToolCallResult {
 	var items []ToolCallItem
 	totalQuota := 0
+
+	// 累加工具附加费时继续保持 int32 额度边界。单项已经经过 QuotaRound，
+	// 但多个工具同时触发高额计费时，总额仍可能超过日志/数据库长期约定边界。
+	addTotalQuota := func(quota int) {
+		totalQuota = common.QuotaFromFloat(float64(totalQuota) + float64(quota))
+	}
 
 	// 内部辅助函数：添加单个工具的计费明细
 	addItem := func(toolName string, count int) {
@@ -67,8 +72,10 @@ func ComputeToolCallQuota(usage ToolCallUsage, groupRatio float64) ToolCallResul
 		}
 		// 计算总价：单价 * 次数 / 1000
 		totalPrice := pricePer1K * float64(count) / 1000
-		// 折算为配额：总价 * 每单位配额数 * 分组比率
-		quota := int(math.Round(totalPrice * common.QuotaPerUnit * groupRatio))
+		// 折算为配额：总价 * 每单位配额数 * 分组比率。
+		// 工具调用次数、模型覆盖价格和分组倍率都可能由配置或请求量放大，
+		// 统一走 QuotaRound，避免极端乘积在 int 转换时产生不可审计的溢出。
+		quota := common.QuotaRound(totalPrice * common.QuotaPerUnit * groupRatio)
 		items = append(items, ToolCallItem{
 			Name:       toolName,
 			CallCount:  count,
@@ -76,7 +83,7 @@ func ComputeToolCallQuota(usage ToolCallUsage, groupRatio float64) ToolCallResul
 			TotalPrice: totalPrice,
 			Quota:      quota,
 		})
-		totalQuota += quota
+		addTotalQuota(quota)
 	}
 
 	// Web 搜索工具计费
@@ -92,7 +99,9 @@ func ComputeToolCallQuota(usage ToolCallUsage, groupRatio float64) ToolCallResul
 	// 图片生成工具计费（按单次调用计价，不同于搜索工具的按千次计价）
 	if usage.ImageGenerationCall {
 		price := operation_setting.GetGPTImage1PriceOnceCall(usage.ImageGenerationQuality, usage.ImageGenerationSize)
-		quota := int(math.Round(price * common.QuotaPerUnit * groupRatio))
+		// 图片生成按单次调用计价，但同样受管理员配置的分组倍率影响，
+		// 因此也必须使用统一的配额转换入口处理异常大值和 NaN。
+		quota := common.QuotaRound(price * common.QuotaPerUnit * groupRatio)
 		items = append(items, ToolCallItem{
 			Name:       "image_generation",
 			CallCount:  1,
@@ -100,7 +109,7 @@ func ComputeToolCallQuota(usage ToolCallUsage, groupRatio float64) ToolCallResul
 			TotalPrice: price,
 			Quota:      quota,
 		})
-		totalQuota += quota
+		addTotalQuota(quota)
 	}
 
 	return ToolCallResult{
