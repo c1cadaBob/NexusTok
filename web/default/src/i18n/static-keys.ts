@@ -568,7 +568,7 @@ export const STATIC_I18N_KEYS = [
   'No enabled tokens available',
   'Redirecting to chat page...',
 
-  // System info
+  // 系统信息
   'System Info',
   'Instances',
   'Nodes reporting from this deployment and their latest heartbeat.',
@@ -595,8 +595,31 @@ export const STATIC_I18N_KEYS = [
   'Version',
   'Used',
   'Free',
+  'System Tasks',
+  'Recent maintenance tasks running across instances and their execution status.',
+  'Live refresh pauses when no task is running',
+  'Executor',
+  'Log cleanup',
+  'Batch channel test',
+  'Batch upstream model update',
+  'Drawing task polling',
+  'Async task polling',
+  'Account pool check',
+  'We could not load system tasks.',
+  'No system tasks yet.',
+  'Tasks will appear after maintenance actions are scheduled.',
+  'Active Tasks',
+  'Tasks currently pending or running.',
+  'No active system tasks.',
+  'Task History',
+  'Recently completed or failed system task runs.',
+  'No historical system tasks.',
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
 
-  // Channel upstream updates
+  // 渠道上游模型更新
   'No processable upstream model updates for this channel',
   'Upstream model updates applied: {{added}} added, {{removed}} removed, {{ignored}} ignored this time, {{totalIgnored}} total ignored models',
   'Batch processing failed',

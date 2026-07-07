@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { SystemInstancesPanel } from './components/system-instances-panel'
+import { SystemTasksPanel } from './components/system-tasks-panel'
 
 export function SystemInfo() {
   const { t } = useTranslation()
@@ -36,7 +37,10 @@ export function SystemInfo() {
         </span>
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <SystemInstancesPanel />
+        <div className='flex flex-col gap-4'>
+          <SystemInstancesPanel />
+          <SystemTasksPanel />
+        </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

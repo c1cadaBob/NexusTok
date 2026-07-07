@@ -18,11 +18,18 @@ For commercial licensing, please contact support@c1cada.dev
 */
 
 import { api } from '@/lib/api'
-import type { SystemInstanceListResponse } from './types'
+import type { SystemInstanceListResponse, SystemTaskListResponse } from './types'
 
 export async function listSystemInstances() {
   const res = await api.get<SystemInstanceListResponse>(
     '/api/system-info/instances'
   )
+  return res.data
+}
+
+export async function listSystemTasks(limit = 20) {
+  const res = await api.get<SystemTaskListResponse>('/api/system-task/list', {
+    params: { limit },
+  })
   return res.data
 }

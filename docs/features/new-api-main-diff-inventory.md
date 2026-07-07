@@ -24,8 +24,8 @@
 | 差异类别 | 文件数 | 说明 |
 |----------|--------|------|
 | NexusTok 独有 | 1060 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及差异索引脚本、请求体限制测试和 NexusTok 原生 SystemInfo/SystemTask 路由与测试。 |
-| new-api-main 独有 | 228 | 主要来自 Authz、SystemTask 其它业务 handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理后端、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
-| 同路径但内容不同 | 1875 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
+| new-api-main 独有 | 227 | 主要来自 Authz、SystemTask 其它业务 handlers、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理后端、SystemTask 前端面板、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
+| 同路径但内容不同 | 1876 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner、SystemTask 前端面板与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
 
 ## 重新生成清单
 
@@ -80,21 +80,21 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 
 | 顶层目录 | 文件数 | 主要含义 |
 |----------|--------|----------|
-| `web` | 146 | SystemTask 面板、DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。 |
+| `web` | 145 | DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。SystemInfo/SystemTask 默认前端观测页已转为同路径实现差异。 |
 | `service` | 20 | Authz、SystemTask 其它业务 handlers、RelayConvert、任务轮询测试等。SystemInstance 最小心跳层、SystemTask runner/日志清理、ProtectedFetch 与额度饱和审计已按 NexusTok 边界原生化。 |
 | `relay` | 21 | OpenAI Realtime/Image、Gemini Responses、Advanced Custom、更多 Relay 测试。 |
 | `model` | 11 | Authz、Casbin、Flow、Locking、ClickHouse 测试。SystemInstance、SystemTask 与日志脱敏测试已按 NexusTok 语义补齐。 |
 | `controller` | 6 | Authz、SystemTask handlers/创建入口、审计、订阅 Waffo Pancake 等；SystemInfo 实例列表接口和 SystemTask 只读接口已按 Root 只读能力落地。 |
 | `common` | 4 | 节点身份、邮件 NTLM 等。匿名请求体限制、QuotaMath 和部分 SSRF helper 已在 NexusTok 落地，但实现语义按本项目调整。 |
-| `middleware` | 3 | 审计、HeaderNav 等。匿名请求体限制已在 NexusTok 落地，但测试仍按本项目补充。 |
-| `router` | 3 | Authz 路由、Channel 路由拆分及测试。 |
+| `middleware` | 1 | 审计。匿名请求体限制和 HeaderNav 模块鉴权已在 NexusTok 落地，但测试仍按本项目补充。 |
+| `router` | 1 | Authz 路由；Channel 路由拆分及 SystemInfo/SystemTask 路由已按 NexusTok 边界原生化。 |
 | 其它 | 18 | 多语言 README、Electron 文档、poster、计费表达式测试等。 |
 
 ### 同路径但内容不同
 
 | 顶层目录 | 文件数 | 主要含义 |
 |----------|--------|----------|
-| `web` | 1262 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收。 |
+| `web` | 1268 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收；SystemInfo/SystemTask 默认前端已落地后转为同路径差异。 |
 | `relay` | 196 | Relay 能力、请求转换、测试覆盖和上游协议支持差异。 |
 | `controller` | 70 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异。 |
 | `service` | 62 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异；SystemTask runner 和额度饱和审计已落地为同路径差异。 |
@@ -102,7 +102,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | `common` | 50 | 公共工具、SSRF、请求体、配额、环境初始化差异；SSRF 已增加 Dial 阶段保护 helper，QuotaMath 已落地为 NexusTok 原生版本，但与 new-api-main 仍有实现边界差异。 |
 | `model` | 42 | 数据模型、日志、订阅、用户、渠道、任务等差异；日志清理批量删除和日志脱敏测试已落地为同路径差异。 |
 | `dto` | 29 | 请求/响应 DTO 差异，迁移时必须遵守显式零值规则。 |
-| `middleware` | 22 | 鉴权、限流、日志、请求处理等中间件差异。 |
+| `middleware` | 24 | 鉴权、限流、日志、请求处理等中间件差异。 |
 | `pkg` | 18 | 计费表达式、缓存、内部包实现差异。 |
 | 其它 | 68 | 路由、i18n、electron、构建和仓库元数据差异。 |
 
@@ -119,8 +119,8 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | `relay` | 0 | 21 | 196 | 逐协议迁移，必须补测试并检查 StreamOptions 支持。 |
 | `setting` | 0 | 1 | 49 | 不直接覆盖设置结构，按页面和 API 逐项合并。 |
 | `pkg` | 0 | 1 | 18 | 涉及计费表达式时继续遵守 `pkg/billingexpr/expr.md`。 |
-| `web/default/src/routes` | 3 | 2 | 59 | 页面清单已在主文档逐路由列出。 |
-| `web/default/src/features` | 21 | 74 | 528 | 账号池/计费保留；SystemInfo、DataTable、UsageLogs、Playground 分批吸收。 |
+| `web/default/src/routes` | 3 | 1 | 60 | `/system-info` 已在 NexusTok 默认前端落地，剩余独有路由主要是注册兼容入口；页面清单已在主文档逐路由列出。 |
+| `web/default/src/features` | 21 | 69 | 533 | 账号池/计费保留；SystemInfo/SystemTask 已吸收，DataTable、UsageLogs、Playground 继续分批迁移。 |
 | `web/default/src/components` | 15 | 56 | 155 | 优先迁移安全渲染、通用表格布局、Dialog/Drawer 长表单布局。 |
 | `web/default/src/hooks` | 0 | 1 | 20 | `use-sidebar-view` 可服务多层设置和系统信息。 |
 | `web/default/src/lib` | 0 | 4 | 27 | Admin permissions、frontend cache、content format 可按治理能力迁移。 |
@@ -128,7 +128,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 
 ## 页面级覆盖结论
 
-默认前端路由文件只有 5 个独有页面入口：
+默认前端路由文件只有 4 个独有页面入口：
 
 | 项目 | 独有路由文件 | 页面 |
 |------|--------------|------|
@@ -136,9 +136,8 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | NexusTok | `_authenticated/account-pool/$section.tsx` | `/account-pool/:section` |
 | NexusTok | `_authenticated/pricing-settings/index.tsx` | `/pricing-settings` |
 | new-api-main | `(auth)/register.tsx` | `/register` 兼容页 |
-| new-api-main | `_authenticated/system-info/index.tsx` | `/system-info` |
 
-其它默认前端页面大多是“同路径但实现不同”，已经在主文档按路由、feature 目录和组件能力列出。后续迁移时应以同路径页面为单位做局部对比，而不是简单复制 new-api-main 文件。
+`/system-info` 已在 NexusTok 默认前端落地，现在属于“同路径但实现不同”的页面。其它默认前端页面大多也是“同路径但实现不同”，已经在主文档按路由、feature 目录和组件能力列出。后续迁移时应以同路径页面为单位做局部对比，而不是简单复制 new-api-main 文件。
 
 Classic 前端没有 new-api-main 独有业务页面。NexusTok 独有 classic 账号池页和计费设置页必须保留，new-api-main 的 classic 差异主要是退场提示和主题 helper。
 
