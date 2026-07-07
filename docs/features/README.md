@@ -15,6 +15,7 @@
 | [model-sync-pricing.md](model-sync-pricing.md) | 模型同步与价格同步 — 上游模型目录、models.dev provider 价格、手动价格保护 |
 | [auth-rate-limit.md](auth-rate-limit.md) | 认证与限流中间件 — 多方式认证、模型级限流、安全验证 |
 | [hybrid-cache.md](hybrid-cache.md) | 混合缓存系统 — Redis + 内存 LRU 双层缓存 |
+| [new-api-main-diff-analysis.md](new-api-main-diff-analysis.md) | new-api-main 对比分析 — 功能、页面、基础设施差异与 NexusTok 原生化路线 |
 
 ## 阅读建议
 
