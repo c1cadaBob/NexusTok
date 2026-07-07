@@ -69,6 +69,14 @@ func Marshal(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// ValidJSON 判断字节内容是否为合法 JSON。
+//
+// 业务代码需要校验 JSON 字符串时应调用该封装，而不是直接调用
+// encoding/json.Valid；这样所有 JSON 行为都能继续收敛在 common 包内。
+func ValidJSON(data []byte) bool {
+	return json.Valid(data)
+}
+
 // GetJsonType 获取 JSON 数据的类型
 //
 // 通过检查第一个非空白字符判断 JSON 类型

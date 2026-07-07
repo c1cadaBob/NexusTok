@@ -16,6 +16,7 @@ import (
 	"github.com/c1cada/NexusTok/common"                     // 公共工具包
 	"github.com/c1cada/NexusTok/constant"                   // 常量定义
 	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
+	"github.com/c1cada/NexusTok/i18n"                       // 国际化消息键
 	"github.com/c1cada/NexusTok/model"                      // 数据模型
 	relaychannel "github.com/c1cada/NexusTok/relay/channel" // 中继渠道
 	"github.com/c1cada/NexusTok/relay/channel/gemini"       // Gemini 渠道适配器
@@ -822,7 +823,7 @@ func EditTagChannels(c *gin.Context) {
 	}
 	if channelTag.ParamOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.ParamOverride)
-		if trimmed != "" && !json.Valid([]byte(trimmed)) {
+		if trimmed != "" && !common.ValidJSON([]byte(trimmed)) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "参数覆盖必须是合法的 JSON 格式",
@@ -833,7 +834,7 @@ func EditTagChannels(c *gin.Context) {
 	}
 	if channelTag.HeaderOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.HeaderOverride)
-		if trimmed != "" && !json.Valid([]byte(trimmed)) {
+		if trimmed != "" && !common.ValidJSON([]byte(trimmed)) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "请求头覆盖必须是合法的 JSON 格式",
@@ -892,11 +893,21 @@ type PatchChannel struct {
 
 func UpdateChannel(c *gin.Context) {
 	channel := PatchChannel{}
-	err := c.ShouldBindJSON(&channel)
+	rawBody, err := c.GetRawData()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	if err := common.Unmarshal(rawBody, &channel); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var requestData map[string]any
+	if err := common.Unmarshal(rawBody, &requestData); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	clearChannelReadOnlyFields(&channel, requestData)
 	incomingChannelInfo := channel.ChannelInfo
 
 	// 使用统一的校验函数
@@ -915,6 +926,11 @@ func UpdateChannel(c *gin.Context) {
 			"success": false,
 			"message": err.Error(),
 		})
+		return
+	}
+
+	if channelHasSensitiveChanges(&channel, originChannel, requestData) && !channelCanSensitiveWrite(c) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
 

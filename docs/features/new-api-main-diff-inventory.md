@@ -110,7 +110,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | 目录 | NexusTok 独有 | new-api-main 独有 | 同路径不同 | 处理策略 |
 |------|---------------|-------------------|------------|----------|
 | `router` | 0 | 3 | 6 | 引入 Authz/Channel 路由拆分前，保持现有路由稳定。 |
-| `controller` | 20 | 10 | 66 | 账号池控制器保留；new-api-main 治理类控制器按 P1/P2 原生化。 |
+| `controller` | 20 | 10 | 66 | 账号池控制器保留；ChannelAuthz 已先按 Root 兜底吸收渠道敏感字段 fail-closed，剩余治理类控制器按 P1/P2 原生化。 |
 | `service` | 34 | 23 | 59 | 账号池服务保留；ProtectedFetch 和额度饱和审计已按用户可控 URL/计费日志边界迁移，工具调用附加费、违规费用、充值入账、视频任务和渠道测试已补饱和保护，Authz/SystemTask 继续分批推进，QuotaMath 剩余工作转为异步任务倍率调整等特殊计费路径覆盖。 |
 | `model` | 7 | 14 | 39 | 迁移新模型时必须确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容；日志 admin_info 脱敏测试已补齐。 |
 | `middleware` | 4 | 3 | 22 | 请求体限制与 HeaderNav 模块鉴权已吸收；全局审计需要配套权限/设置。 |
