@@ -66,12 +66,14 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		channelRoute.POST("/fetch_models", middleware.RootAuth(), controller.FetchModels) // 获取模型列表（需要 root）
 
 		// Codex OAuth
-		channelRoute.POST("/codex/oauth/start", controller.StartCodexOAuth)                     // 开始 Codex OAuth
-		channelRoute.POST("/codex/oauth/complete", controller.CompleteCodexOAuth)               // 完成 Codex OAuth
-		channelRoute.POST("/:id/codex/oauth/start", controller.StartCodexOAuthForChannel)       // 为指定渠道开始 Codex OAuth
-		channelRoute.POST("/:id/codex/oauth/complete", controller.CompleteCodexOAuthForChannel) // 为指定渠道完成 Codex OAuth
-		channelRoute.POST("/:id/codex/refresh", controller.RefreshCodexChannelCredential)       // 刷新 Codex 渠道凭证
-		channelRoute.GET("/:id/codex/usage", controller.GetCodexChannelUsage)                   // 获取 Codex 渠道使用情况
+		channelRoute.POST("/codex/oauth/start", controller.StartCodexOAuth)                                 // 开始 Codex OAuth
+		channelRoute.POST("/codex/oauth/complete", controller.CompleteCodexOAuth)                           // 完成 Codex OAuth
+		channelRoute.POST("/:id/codex/oauth/start", controller.StartCodexOAuthForChannel)                   // 为指定渠道开始 Codex OAuth
+		channelRoute.POST("/:id/codex/oauth/complete", controller.CompleteCodexOAuthForChannel)             // 为指定渠道完成 Codex OAuth
+		channelRoute.POST("/:id/codex/refresh", controller.RefreshCodexChannelCredential)                   // 刷新 Codex 渠道凭证
+		channelRoute.GET("/:id/codex/usage", controller.GetCodexChannelUsage)                               // 获取 Codex 渠道使用情况
+		channelRoute.GET("/:id/codex/usage/reset-credits", controller.GetCodexChannelRateLimitResetCredits) // 获取 Codex 用量重置额度
+		channelRoute.POST("/:id/codex/usage/reset", controller.ResetCodexChannelUsage)                      // 重置 Codex 用量
 
 		// Ollama 模型管理
 		channelRoute.POST("/ollama/pull", controller.OllamaPullModel)              // 拉取 Ollama 模型

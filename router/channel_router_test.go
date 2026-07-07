@@ -27,6 +27,8 @@ func TestRegisterChannelRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/", controller.AddChannel)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/:id/accounts", controller.ListChannelAccounts)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/:id/codex/refresh", controller.RefreshCodexChannelCredential)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/:id/codex/usage/reset-credits", controller.GetCodexChannelRateLimitResetCredits)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/:id/codex/usage/reset", controller.ResetCodexChannelUsage)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream_updates/apply", controller.ApplyChannelUpstreamModelUpdates)
 }
 

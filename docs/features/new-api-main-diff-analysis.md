@@ -46,7 +46,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 账号池 OAuth/设备授权 | `/groups/:id/oauth/:provider/start`、`/device/:provider/start`、Codex OAuth | 缺少 | 作为 NexusTok 原生凭据接入入口，后续抽象为 provider registry。 |
 | 渠道账号 | `model/channel_account.go`、`controller/channel_account.go`、`service/channel_account_*` | 缺少 | 与账号池区分：渠道账号适合单渠道多 Key，账号池适合跨渠道共享和调度。 |
 | 渠道账号池绑定 | `constant/channel_credential_mode.go`、渠道 `account_pool_group_id` | 缺少 | 保留为 Relay 热路径原生能力，后续统一校验分组状态、平台和认证类型。 |
-| Codex 渠道 OAuth | `controller/codex_oauth.go`、`service/codex_oauth.go` | new-api-main 也有部分 Codex 使用查询，但无账号池 Codex 接入 | 保留 NexusTok 的渠道和账号池双入口，并补齐 new-api-main 的 reset-credits 接口能力。 |
+| Codex 渠道 OAuth | `controller/codex_oauth.go`、`service/codex_oauth.go` | 后端 reset-credits 已补 | 保留 NexusTok 的渠道和账号池双入口；渠道侧已补齐 `/codex/usage/reset-credits` 与 `/codex/usage/reset` 后端 API，默认/经典前端弹窗交互待后续合并。 |
 | 账号池任务级限制 | `service/account_pool_task_limit.go` | 缺少 | 继续围绕任务类 Relay 做并发/频率/等待策略，不与普通渠道限流混淆。 |
 | 模型定价配置表 | `model/model_pricing_config.go` | 缺少 | 保留，用于承载 NexusTok 独立计费配置和后续表达式定价演进。 |
 | 账号池文档 | `docs/features/account-pool.md`、`account-pool-roadmap.md` | 缺少同等文档 | 继续作为账号池开发准绳。 |
@@ -467,7 +467,7 @@ NexusTok 独有 API 族：
 |----------|------|------|
 | `/api/account-pool/*` | 原生账号池、认证文件、组、账号、检测、健康、状态审计、使用日志 | 保留并扩展权限。 |
 | `/api/channel/:id/accounts*` | 渠道账号管理 | 保留，与账号池形成互补。 |
-| `/api/channel/codex/oauth/*`、`/api/channel/:id/codex/oauth/*` | Codex 渠道 OAuth | 保留，补 reset-credits 查询。 |
+| `/api/channel/codex/oauth/*`、`/api/channel/:id/codex/oauth/*`、`/api/channel/:id/codex/usage/*` | Codex 渠道 OAuth 与用量查询 | 保留；后端已补 reset-credits 查询和 reset 消费接口，前端弹窗待合并。 |
 
 `new-api-main` 独有或更完整 API 族：
 
@@ -508,3 +508,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 顶栏模块后端鉴权 | `middleware/header_nav.go`、`router/api-router.go`、`middleware/header_nav_test.go` | 吸收 HeaderNavModuleAuth，使 pricing/rankings 公开 API 与前端导航 `enabled/requireAuth` 配置保持一致；pricing 关联的 perf-metrics 对匿名访问做同源控制。 |
 | 2026-07-07 | 渠道敏感字段 fail-closed | `controller/channel_authz.go`、`controller/channel.go`、`controller/channel_authz_test.go` | 更新渠道时按原始请求字段判断敏感写：Key、BaseURL、请求覆盖、设置、凭证模式和未知字段默认需要敏感权限；完整 Authz 前暂以 Root 权限兜底，普通 Admin 仍可更新模型、分组、优先级等运营字段。 |
 | 2026-07-07 | 渠道路由注册拆分 | `router/channel-router.go`、`router/channel_router_test.go`、`router/api-router.go` | 将 `/api/channel` 路由从主 API 路由中抽出，保持现有 AdminAuth/RootAuth 行为不变，并为后续 Authz 权限表接入提供单一落点。 |
+| 2026-07-07 | Codex 用量重置后端 API | `controller/codex_usage.go`、`service/codex_wham_usage.go`、`router/channel-router.go`、`service/codex_wham_usage_test.go` | 复用 Codex WHAM 用量查询链路，补齐 reset credits 查询和消耗一次重置额度的后端接口；请求头、路径和 reset 消费请求体已用 httptest 覆盖。 |
