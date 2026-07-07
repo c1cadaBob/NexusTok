@@ -457,9 +457,11 @@ func SetApiRouter(router *gin.Engine) {
 		// 数据路由组 - /api/data
 		// ========================================
 		dataRoute := apiRouter.Group("/data")
-		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)         // 获取所有配额日期
-		dataRoute.GET("/users", middleware.AdminAuth(), controller.GetQuotaDatesByUser) // 按用户获取配额日期
-		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)     // 获取用户配额日期
+		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)              // 获取所有配额日期
+		dataRoute.GET("/users", middleware.AdminAuth(), controller.GetQuotaDatesByUser)      // 按用户获取配额日期
+		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)          // 获取用户配额日期
+		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)      // 获取流量账本聚合数据
+		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates) // 获取当前用户流量账本聚合数据
 
 		// Token 日志查询（需要 CORS 和频率限制）
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
