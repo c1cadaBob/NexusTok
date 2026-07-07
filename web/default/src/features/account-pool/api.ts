@@ -223,6 +223,7 @@ export async function getAccountPoolStateLogs(params: {
   action?: string
   source?: string
   actor?: string
+  request_id?: string
   start_timestamp?: number
   end_timestamp?: number
   search?: string
@@ -237,6 +238,7 @@ export async function getAccountPoolStateLogAuditSummary(params: {
   action?: string
   source?: string
   actor?: string
+  request_id?: string
   start_timestamp?: number
   end_timestamp?: number
   search?: string
@@ -253,6 +255,7 @@ export async function exportAccountPoolStateLogs(params: {
   action?: string
   source?: string
   actor?: string
+  request_id?: string
   start_timestamp?: number
   end_timestamp?: number
   search?: string

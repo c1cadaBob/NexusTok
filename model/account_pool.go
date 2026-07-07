@@ -699,6 +699,7 @@ type PoolAccountStateLogFilter struct {
 	Action         string
 	Source         string
 	Actor          string
+	RequestId      string
 	StartTimestamp int64
 	EndTimestamp   int64
 	Search         string
@@ -2130,6 +2131,9 @@ func applyPoolAccountStateLogFilter(query *gorm.DB, filter PoolAccountStateLogFi
 	if strings.TrimSpace(filter.Actor) != "" {
 		query = query.Where("actor = ?", strings.TrimSpace(filter.Actor))
 	}
+	if strings.TrimSpace(filter.RequestId) != "" {
+		query = query.Where("request_id = ?", strings.TrimSpace(filter.RequestId))
+	}
 	if filter.StartTimestamp > 0 {
 		query = query.Where("created_at >= ?", filter.StartTimestamp)
 	}
@@ -2138,7 +2142,7 @@ func applyPoolAccountStateLogFilter(query *gorm.DB, filter PoolAccountStateLogFi
 	}
 	if strings.TrimSpace(filter.Search) != "" {
 		like := "%" + strings.TrimSpace(filter.Search) + "%"
-		query = query.Where("(pool_group_name LIKE ? OR pool_account_name LIKE ? OR action LIKE ? OR source LIKE ? OR actor LIKE ? OR reason LIKE ? OR after_status_message LIKE ? OR after_disabled_reason LIKE ?)", like, like, like, like, like, like, like, like)
+		query = query.Where("(pool_group_name LIKE ? OR pool_account_name LIKE ? OR action LIKE ? OR source LIKE ? OR actor LIKE ? OR request_id LIKE ? OR reason LIKE ? OR after_status_message LIKE ? OR after_disabled_reason LIKE ?)", like, like, like, like, like, like, like, like, like)
 	}
 	return query
 }
@@ -2260,6 +2264,7 @@ func getPoolAccountStateLogBulkSummaries(filter PoolAccountStateLogFilter, limit
 		Action:         filter.Action,
 		Source:         filter.Source,
 		Actor:          filter.Actor,
+		RequestId:      filter.RequestId,
 		StartTimestamp: filter.StartTimestamp,
 		EndTimestamp:   filter.EndTimestamp,
 		Search:         filter.Search,

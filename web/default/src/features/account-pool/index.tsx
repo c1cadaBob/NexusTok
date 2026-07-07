@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Copy,
   Download,
+  FilterX,
   FileJson,
   KeyRound,
   Loader2,
@@ -38,6 +39,7 @@ import {
   Stethoscope,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -390,6 +392,14 @@ function safeDownloadName(value: string): string {
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return normalized || 'account-pool'
+}
+
+function datetimeLocalToTimestamp(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const time = new Date(trimmed).getTime()
+  if (!Number.isFinite(time)) return undefined
+  return Math.floor(time / 1000)
 }
 
 function downloadJsonFile(filename: string, data: unknown) {
@@ -1021,6 +1031,13 @@ export function AccountPool() {
     useState<StateLogActionFilter>('all')
   const [stateLogSource, setStateLogSource] =
     useState<StateLogSourceFilter>('all')
+  const [stateLogRequestId, setStateLogRequestId] = useState('')
+  const [stateLogStartTime, setStateLogStartTime] = useState('')
+  const [stateLogEndTime, setStateLogEndTime] = useState('')
+  const [stateLogAccountId, setStateLogAccountId] = useState<number | null>(
+    null
+  )
+  const [stateLogAccountLabel, setStateLogAccountLabel] = useState('')
   const [stateLogExporting, setStateLogExporting] = useState(false)
   const [checkTaskPage, setCheckTaskPage] = useState(1)
   const [checkTaskStatus, setCheckTaskStatus] =
@@ -1229,11 +1246,23 @@ export function AccountPool() {
   )
   const stateLogFilterParams = useMemo(
     () => ({
+      pool_account_id: stateLogAccountId ?? undefined,
       action: stateLogAction === 'all' ? undefined : stateLogAction,
       source: stateLogSource === 'all' ? undefined : stateLogSource,
+      request_id: stateLogRequestId.trim() || undefined,
+      start_timestamp: datetimeLocalToTimestamp(stateLogStartTime),
+      end_timestamp: datetimeLocalToTimestamp(stateLogEndTime),
       search: stateLogSearch.trim() || undefined,
     }),
-    [stateLogAction, stateLogSearch, stateLogSource]
+    [
+      stateLogAccountId,
+      stateLogAction,
+      stateLogEndTime,
+      stateLogRequestId,
+      stateLogSearch,
+      stateLogSource,
+      stateLogStartTime,
+    ]
   )
   const stateLogParams = useMemo(
     () => ({
@@ -1262,6 +1291,14 @@ export function AccountPool() {
       (stateLogPageInfo?.total ?? 0) / (stateLogPageInfo?.page_size ?? 10)
     )
   )
+  const hasStateLogFilters =
+    stateLogAction !== 'all' ||
+    stateLogSource !== 'all' ||
+    stateLogSearch.trim() !== '' ||
+    stateLogRequestId.trim() !== '' ||
+    stateLogStartTime.trim() !== '' ||
+    stateLogEndTime.trim() !== '' ||
+    stateLogAccountId !== null
   const checkTaskParams = useMemo(
     () => ({
       p: checkTaskPage,
@@ -1299,13 +1336,50 @@ export function AccountPool() {
   const health = healthQuery.data?.data
   const healthTotals = health?.totals
 
+  const clearStateLogFilters = useCallback(() => {
+    setStateLogAction('all')
+    setStateLogSource('all')
+    setStateLogSearch('')
+    setStateLogRequestId('')
+    setStateLogStartTime('')
+    setStateLogEndTime('')
+    setStateLogAccountId(null)
+    setStateLogAccountLabel('')
+    setStateLogPage(1)
+  }, [])
+
+  const filterStateLogsByRequest = useCallback((requestId: string) => {
+    const trimmed = requestId.trim()
+    if (!trimmed) return
+    setStateLogRequestId(trimmed)
+    setStateLogPage(1)
+  }, [])
+
+  const filterStateLogsByAccount = useCallback(
+    (accountId: number, label: string) => {
+      if (accountId <= 0) return
+      setStateLogAccountId(accountId)
+      setStateLogAccountLabel(label || `#${accountId}`)
+      setStateLogPage(1)
+    },
+    []
+  )
+
   useEffect(() => {
     setUsageLogPage(1)
   }, [usageLogSearch, usageLogStatus])
 
   useEffect(() => {
     setStateLogPage(1)
-  }, [stateLogAction, stateLogSearch, stateLogSource])
+  }, [
+    stateLogAccountId,
+    stateLogAction,
+    stateLogEndTime,
+    stateLogRequestId,
+    stateLogSearch,
+    stateLogSource,
+    stateLogStartTime,
+  ])
 
   useEffect(() => {
     setCheckTaskPage(1)
@@ -3420,14 +3494,46 @@ export function AccountPool() {
                       <TableRow key={log.id}>
                         <TableCell className='min-w-[150px] text-xs'>
                           {formatTimestamp(log.created_at)}
-                          <div className='text-muted-foreground mt-1'>
-                            {log.request_id || '-'}
-                          </div>
+                          {log.request_id ? (
+                            <Button
+                              variant='link'
+                              size='xs'
+                              className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
+                              title={t('Click to filter by request')}
+                              onClick={() =>
+                                filterStateLogsByRequest(log.request_id ?? '')
+                              }
+                            >
+                              {log.request_id}
+                            </Button>
+                          ) : (
+                            <div className='text-muted-foreground mt-1'>-</div>
+                          )}
                         </TableCell>
                         <TableCell className='min-w-[190px]'>
-                          <div className='text-sm font-medium'>
-                            {log.pool_account_name || `#${log.pool_account_id}`}
-                          </div>
+                          {log.pool_account_id > 0 ? (
+                            <Button
+                              variant='link'
+                              size='sm'
+                              className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
+                              title={t('Click to filter by account')}
+                              onClick={() =>
+                                filterStateLogsByAccount(
+                                  log.pool_account_id,
+                                  log.pool_account_name ||
+                                    `#${log.pool_account_id}`
+                                )
+                              }
+                            >
+                              {log.pool_account_name ||
+                                `#${log.pool_account_id}`}
+                            </Button>
+                          ) : (
+                            <div className='text-sm font-medium'>
+                              {log.pool_account_name ||
+                                `#${log.pool_account_id}`}
+                            </div>
+                          )}
                           <div className='text-muted-foreground text-xs'>
                             {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
                             {log.pool_account_auth_type || '-'}
@@ -3526,8 +3632,8 @@ export function AccountPool() {
             </TabsContent>
             <TabsContent value='state-logs' className='m-0 min-h-0'>
               {logViewTabs}
-              <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
-                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+              <div className='border-border flex flex-col gap-3 border-b p-3'>
+                <div className='grid gap-2 lg:grid-cols-[220px_200px_minmax(240px,1fr)]'>
                   <Select
                     items={stateLogActionFilterOptions.map((value) => ({
                       value,
@@ -3540,7 +3646,7 @@ export function AccountPool() {
                       )
                     }
                   >
-                    <SelectTrigger className='w-full sm:w-[220px]'>
+                    <SelectTrigger className='w-full'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
@@ -3565,7 +3671,7 @@ export function AccountPool() {
                       )
                     }
                   >
-                    <SelectTrigger className='w-full sm:w-[200px]'>
+                    <SelectTrigger className='w-full'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
@@ -3578,15 +3684,82 @@ export function AccountPool() {
                       </SelectGroup>
                     </SelectContent>
                   </Select>
+                  <Input
+                    placeholder={t(
+                      'Search account, action, source, actor, or reason'
+                    )}
+                    value={stateLogSearch}
+                    onChange={(event) => setStateLogSearch(event.target.value)}
+                  />
                 </div>
-                <Input
-                  className='lg:max-w-xs'
-                  placeholder={t(
-                    'Search account, action, source, actor, or reason'
-                  )}
-                  value={stateLogSearch}
-                  onChange={(event) => setStateLogSearch(event.target.value)}
-                />
+                <div className='grid gap-2 lg:grid-cols-[minmax(180px,1fr)_180px_180px_auto]'>
+                  <Input
+                    placeholder={t('Request ID')}
+                    value={stateLogRequestId}
+                    onChange={(event) =>
+                      setStateLogRequestId(event.target.value)
+                    }
+                  />
+                  <label className='flex min-w-0 flex-col gap-1'>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Start time')}
+                    </span>
+                    <Input
+                      type='datetime-local'
+                      value={stateLogStartTime}
+                      onChange={(event) =>
+                        setStateLogStartTime(event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className='flex min-w-0 flex-col gap-1'>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('End time')}
+                    </span>
+                    <Input
+                      type='datetime-local'
+                      value={stateLogEndTime}
+                      onChange={(event) =>
+                        setStateLogEndTime(event.target.value)
+                      }
+                    />
+                  </label>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='self-end'
+                    disabled={!hasStateLogFilters}
+                    onClick={clearStateLogFilters}
+                  >
+                    <FilterX data-icon='inline-start' />
+                    {t('Clear filters')}
+                  </Button>
+                </div>
+                {stateLogAccountId ? (
+                  <div className='flex min-w-0 items-center gap-2'>
+                    <Badge
+                      variant='secondary'
+                      className='max-w-full gap-1 overflow-hidden'
+                    >
+                      <span className='shrink-0'>{t('Account filter')}:</span>
+                      <span className='truncate'>
+                        {stateLogAccountLabel || `#${stateLogAccountId}`}
+                      </span>
+                    </Badge>
+                    <Button
+                      variant='ghost'
+                      size='icon-xs'
+                      title={t('Clear filters')}
+                      onClick={() => {
+                        setStateLogAccountId(null)
+                        setStateLogAccountLabel('')
+                        setStateLogPage(1)
+                      }}
+                    >
+                      <X aria-hidden='true' />
+                    </Button>
+                  </div>
+                ) : null}
               </div>
               <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
                 {[
@@ -3752,14 +3925,46 @@ export function AccountPool() {
                       <TableRow key={log.id}>
                         <TableCell className='min-w-[150px] text-xs'>
                           {formatTimestamp(log.created_at)}
-                          <div className='text-muted-foreground mt-1'>
-                            {log.request_id || '-'}
-                          </div>
+                          {log.request_id ? (
+                            <Button
+                              variant='link'
+                              size='xs'
+                              className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
+                              title={t('Click to filter by request')}
+                              onClick={() =>
+                                filterStateLogsByRequest(log.request_id ?? '')
+                              }
+                            >
+                              {log.request_id}
+                            </Button>
+                          ) : (
+                            <div className='text-muted-foreground mt-1'>-</div>
+                          )}
                         </TableCell>
                         <TableCell className='min-w-[190px]'>
-                          <div className='text-sm font-medium'>
-                            {log.pool_account_name || `#${log.pool_account_id}`}
-                          </div>
+                          {log.pool_account_id > 0 ? (
+                            <Button
+                              variant='link'
+                              size='sm'
+                              className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
+                              title={t('Click to filter by account')}
+                              onClick={() =>
+                                filterStateLogsByAccount(
+                                  log.pool_account_id,
+                                  log.pool_account_name ||
+                                    `#${log.pool_account_id}`
+                                )
+                              }
+                            >
+                              {log.pool_account_name ||
+                                `#${log.pool_account_id}`}
+                            </Button>
+                          ) : (
+                            <div className='text-sm font-medium'>
+                              {log.pool_account_name ||
+                                `#${log.pool_account_id}`}
+                            </div>
+                          )}
                           <div className='text-muted-foreground text-xs'>
                             {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
                             {log.pool_account_auth_type || '-'}

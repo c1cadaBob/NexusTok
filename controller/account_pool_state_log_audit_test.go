@@ -101,6 +101,31 @@ func TestGetAccountPoolStateLogAuditSummaryReturnsFilteredSummary(t *testing.T) 
 	require.Equal(t, 2, response.Data.RecentBulkOperations[0].AccountCount)
 }
 
+func TestGetAccountPoolStateLogAuditSummaryFiltersByRequestId(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	group := createBatchStatusGroup(t, "controller-audit-request")
+	accountA := createBatchStatusAccount(t, group.Id, "controller-audit-request-a")
+	accountB := createBatchStatusAccount(t, group.Id, "controller-audit-request-b")
+	now := common.GetTimestamp()
+	createControllerStateAuditLog(t, group, accountA, model.PoolAccountStateActionManualStatus, "admin", "alice", "request-exact-a", now-20)
+	createControllerStateAuditLog(t, group, accountB, model.PoolAccountStateActionManualDelete, "admin", "alice", "request-exact-b", now-10)
+
+	ctx, recorder := newAccountPoolStateLogAuditContext(
+		t,
+		"/api/account-pool/state-logs/audit-summary",
+		"pool_group_id="+strconv.Itoa(group.Id)+"&request_id=request-exact-a",
+	)
+	GetAccountPoolStateLogAuditSummary(ctx)
+
+	response := decodeAccountPoolStateLogAuditSummaryResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	require.NotNil(t, response.Data)
+	require.Equal(t, int64(1), response.Data.Total)
+	require.Equal(t, int64(1), response.Data.ManualTotal)
+	require.Len(t, response.Data.ActionStats, 1)
+	require.Equal(t, model.PoolAccountStateActionManualStatus, response.Data.ActionStats[0].Key)
+}
+
 func TestExportAccountPoolStateLogsReturnsSafeFilteredSnapshot(t *testing.T) {
 	setupAccountPoolBatchStatusTest(t)
 	group := createBatchStatusGroup(t, "controller-audit-export-main")
@@ -129,4 +154,30 @@ func TestExportAccountPoolStateLogsReturnsSafeFilteredSnapshot(t *testing.T) {
 	require.Len(t, response.Data.Logs, 1)
 	require.Equal(t, account.Id, response.Data.Logs[0].PoolAccountID)
 	require.Contains(t, response.Data.SensitiveFieldsRedacted, "credentials")
+}
+
+func TestExportAccountPoolStateLogsKeepsRequestIdFilter(t *testing.T) {
+	setupAccountPoolBatchStatusTest(t)
+	group := createBatchStatusGroup(t, "controller-audit-export-request")
+	accountA := createBatchStatusAccount(t, group.Id, "controller-audit-export-request-a")
+	accountB := createBatchStatusAccount(t, group.Id, "controller-audit-export-request-b")
+	now := common.GetTimestamp()
+	createControllerStateAuditLog(t, group, accountA, model.PoolAccountStateActionManualDelete, "admin", "alice", "export-request-a", now-20)
+	createControllerStateAuditLog(t, group, accountB, model.PoolAccountStateActionManualDelete, "admin", "alice", "export-request-b", now-10)
+
+	ctx, recorder := newAccountPoolStateLogAuditContext(
+		t,
+		"/api/account-pool/state-logs/export",
+		"pool_group_id="+strconv.Itoa(group.Id)+"&request_id=export-request-a&limit=10",
+	)
+	ExportAccountPoolStateLogs(ctx)
+
+	response := decodeAccountPoolStateLogAuditExportResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, int64(1), response.Data.Total)
+	require.Equal(t, 1, response.Data.Exported)
+	require.Equal(t, "export-request-a", response.Data.Filters["request_id"])
+	require.Len(t, response.Data.Logs, 1)
+	require.Equal(t, "export-request-a", response.Data.Logs[0].RequestID)
+	require.Equal(t, accountA.Id, response.Data.Logs[0].PoolAccountID)
 }

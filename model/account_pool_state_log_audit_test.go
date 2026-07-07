@@ -113,3 +113,34 @@ func TestGetPoolAccountStateLogAuditSummaryAggregatesFilteredLogs(t *testing.T) 
 	require.Equal(t, accountB.Id, summary.RecentBulkOperations[0].SampleAccounts[0].Id)
 	require.Equal(t, accountA.Id, summary.RecentBulkOperations[0].SampleAccounts[1].Id)
 }
+
+func TestGetPoolAccountStateLogsFiltersByRequestIdAndSearch(t *testing.T) {
+	setupAccountPoolStateLogAuditModelTest(t)
+	now := common.GetTimestamp()
+	group := createAccountPoolStateLogAuditGroup(t, "audit-request")
+	accountA := createAccountPoolStateLogAuditAccount(t, group, "audit-request-a")
+	accountB := createAccountPoolStateLogAuditAccount(t, group, "audit-request-b")
+
+	createAccountPoolStateAuditLog(t, group, accountA, PoolAccountStateActionManualStatus, "admin", "alice", "first request", "req-alpha", now-20)
+	createAccountPoolStateAuditLog(t, group, accountB, PoolAccountStateActionManualDelete, "admin", "alice", "second request", "req-beta", now-10)
+
+	logs, total, err := GetPoolAccountStateLogs(PoolAccountStateLogFilter{
+		RequestId: "req-alpha",
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	require.Equal(t, "req-alpha", logs[0].RequestId)
+	require.Equal(t, accountA.Id, logs[0].PoolAccountId)
+
+	logs, total, err = GetPoolAccountStateLogs(PoolAccountStateLogFilter{
+		Search: "req-beta",
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	require.Equal(t, "req-beta", logs[0].RequestId)
+	require.Equal(t, accountB.Id, logs[0].PoolAccountId)
+}
