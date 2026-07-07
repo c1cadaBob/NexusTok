@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -33,6 +34,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { handleCopyChannel } from '../../lib'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
 type CopyChannelDialogProps = {
@@ -50,10 +52,17 @@ export function CopyChannelDialog({
   const [suffix, setSuffix] = useState('_copy')
   const [resetBalance, setResetBalance] = useState(true)
   const [isCopying, setIsCopying] = useState(false)
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   if (!currentRow) return null
 
   const handleCopy = async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     setIsCopying(true)
 
     await handleCopyChannel(
@@ -120,9 +129,15 @@ export function CopyChannelDialog({
           >
             {t('Cancel')}
           </Button>
-          <Button onClick={handleCopy} disabled={isCopying}>
+          <Button
+            onClick={handleCopy}
+            disabled={isCopying || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
+          >
             {isCopying && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {isCopying ? 'Copying...' : 'Copy Channel'}
+            {isCopying ? t('Copying...') : t('Copy Channel')}
           </Button>
         </DialogFooter>
       </DialogContent>

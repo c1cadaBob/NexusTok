@@ -24,7 +24,7 @@
 | 差异类别 | 文件数 | 说明 |
 |----------|--------|------|
 | NexusTok 独有 | 1060 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及差异索引脚本、请求体限制测试和 NexusTok 原生 SystemInfo/SystemTask 路由与测试。 |
-| new-api-main 独有 | 226 | 主要来自 Authz enforcement/SystemTask 其它业务 handlers、Flow 前端图表、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理/批量渠道测试/上游模型同步/订阅维护/Midjourney 与异步任务轮询后端、流量账本查询后端、订阅余额支付/钱包溢出后端、Authz catalog、用户权限矩阵回传与默认前端入口消费、SystemTask 前端面板、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
+| new-api-main 独有 | 226 | 主要来自 Authz enforcement/SystemTask 其它业务 handlers、Flow 前端图表、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。SystemInstance 后端心跳、SystemInfo 实例页面、SystemTask runner/日志清理/批量渠道测试/上游模型同步/订阅维护/Midjourney 与异步任务轮询后端、流量账本查询后端、订阅余额支付/钱包溢出后端、Authz catalog、用户权限矩阵回传、默认前端入口消费与渠道页按钮级消费、SystemTask 前端面板、QuotaMath 与额度饱和审计测试已在 NexusTok 落地为原生实现差异。 |
 | 同路径但内容不同 | 1877 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异；QuotaMath、SystemInstance、SystemTask runner、SystemTask 前端面板、channel_test/model_update/subscription_maintenance/midjourney_poll/async_task_poll handler 与 quota_saturation/log_format 测试已按 NexusTok 语义原生化。 |
 
 ## 重新生成清单
@@ -123,7 +123,7 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | `web/default/src/features` | 21 | 69 | 533 | 账号池/计费保留；SystemInfo/SystemTask 与 Flow 后端已吸收，DataTable、UsageLogs、Playground 和 dashboard Flow 图表继续分批迁移。 |
 | `web/default/src/components` | 15 | 56 | 155 | 优先迁移安全渲染、通用表格布局、Dialog/Drawer 长表单布局。 |
 | `web/default/src/hooks` | 0 | 1 | 20 | `use-sidebar-view` 可服务多层设置和系统信息。 |
-| `web/default/src/lib` | 0 | 4 | 27 | Admin permissions 已以 NexusTok 原生 helper/hook 承接后端回传矩阵，并接入管理侧边栏与入口路由；frontend cache、content format 可按治理能力继续迁移。 |
+| `web/default/src/lib` | 0 | 4 | 27 | Admin permissions 已以 NexusTok 原生 helper/hook 承接后端回传矩阵，并接入管理侧边栏、入口路由和渠道管理页按钮/字段消费；frontend cache、content format 可按治理能力继续迁移。 |
 | `web/classic/src` | 4 | 2 | 397 | Classic 保留账号池/计费入口；退场提示低优先级。 |
 
 ## 页面级覆盖结论

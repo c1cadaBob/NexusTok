@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dialog'
 import { getCodexUsage, updateChannelBalance } from '../../api'
 import { channelsQueryKeys } from '../../lib'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 import {
   CodexUsageDialog,
@@ -59,12 +60,18 @@ export function BalanceQueryDialog({
   )
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const isCodex = currentRow?.type === 57
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow
     if (!row) return
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsQuerying(true)
     try {
       const res = await getCodexUsage(row.id)
@@ -91,6 +98,10 @@ export function BalanceQueryDialog({
   if (!currentRow) return null
 
   const handleQueryBalance = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsQuerying(true)
     try {
       const response = await updateChannelBalance(currentRow.id)
@@ -194,7 +205,8 @@ export function BalanceQueryDialog({
           <Button
             className='w-full'
             onClick={handleQueryBalance}
-            disabled={isQuerying}
+            disabled={isQuerying || !permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
           >
             {isQuerying && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {!isQuerying && <RefreshCw className='mr-2 h-4 w-4' />}

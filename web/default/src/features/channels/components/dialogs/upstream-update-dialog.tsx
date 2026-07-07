@@ -40,6 +40,8 @@ interface UpstreamUpdateDialogProps {
   removeModels: string[]
   preferredTab: 'add' | 'remove'
   confirmLoading: boolean
+  canConfirm?: boolean
+  disabledReason?: string
   onConfirm: (data: { addModels: string[]; removeModels: string[] }) => void
   onCancel: () => void
 }
@@ -100,6 +102,8 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
   }
 
   const handleConfirm = () => {
+    if (props.canConfirm === false) return
+
     const hasAdd = props.addModels.length > 0
     const hasRemove = props.removeModels.length > 0
     const selectedAddArr = Array.from(selectedAdd)
@@ -278,7 +282,11 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
               onClick={handleConfirm}
               disabled={
                 props.confirmLoading ||
+                props.canConfirm === false ||
                 (selectedAdd.size === 0 && selectedRemove.size === 0)
+              }
+              title={
+                props.canConfirm === false ? props.disabledReason : undefined
               }
             >
               {t('Confirm')}
@@ -295,6 +303,7 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
           'There are both add and remove models pending, but you only selected one type. Confirm submitting only the selected items?'
         )}
         handleConfirm={() => {
+          if (props.canConfirm === false) return
           setPartialConfirmOpen(false)
           props.onConfirm({
             addModels: Array.from(selectedAdd),

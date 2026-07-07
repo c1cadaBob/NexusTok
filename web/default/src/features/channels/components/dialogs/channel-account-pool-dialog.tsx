@@ -71,6 +71,7 @@ import {
 import { CHANNEL_STATUS } from '../../constants'
 import { channelsQueryKeys, formatTimestamp } from '../../lib'
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
 type ChannelAccountPoolDialogProps = {
@@ -152,6 +153,8 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [batchKeys, setBatchKeys] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const channelId = currentRow?.id ?? 0
   const accountsQueryKey = [
@@ -192,6 +195,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   }
 
   const openCreateForm = () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setFormState({
       ...emptyForm,
       models: currentRow?.models ?? '',
@@ -201,6 +208,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   }
 
   const openEditForm = (account: ChannelAccount) => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setFormState({
       id: account.id,
       name: account.name,
@@ -227,6 +238,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitForm = async () => {
     if (!currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!formState.id && !formState.key.trim()) {
       toast.error(t('API key is required'))
       return
@@ -261,6 +276,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     action: 'enable' | 'disable' | 'clear'
   ) => {
     if (!currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setActionLoading(true)
     try {
       let payload: {
@@ -304,6 +323,11 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const performDelete = async () => {
     if (!currentRow || !deleteTarget) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      setDeleteTarget(null)
+      return
+    }
     setActionLoading(true)
     try {
       const response = await deleteChannelAccount(
@@ -327,6 +351,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitBatch = async (importFromMultiKey = false) => {
     if (!currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setActionLoading(true)
     try {
       const response = importFromMultiKey
@@ -461,12 +489,34 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   type='button'
                   variant='outline'
                   size='sm'
-                  onClick={() => setBatchOpen((value) => !value)}
+                  onClick={() => {
+                    if (!permissions.canSensitiveWrite) {
+                      toast.error(noPermissionMessage)
+                      return
+                    }
+                    setBatchOpen((value) => !value)
+                  }}
+                  disabled={!permissions.canSensitiveWrite}
+                  title={
+                    permissions.canSensitiveWrite
+                      ? undefined
+                      : noPermissionMessage
+                  }
                 >
                   <Upload className='mr-2 h-4 w-4' />
                   {t('Batch Import')}
                 </Button>
-                <Button type='button' size='sm' onClick={openCreateForm}>
+                <Button
+                  type='button'
+                  size='sm'
+                  onClick={openCreateForm}
+                  disabled={!permissions.canSensitiveWrite}
+                  title={
+                    permissions.canSensitiveWrite
+                      ? undefined
+                      : noPermissionMessage
+                  }
+                >
                   <Plus className='mr-2 h-4 w-4' />
                   {t('Add Account')}
                 </Button>
@@ -486,7 +536,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     type='button'
                     size='sm'
                     onClick={() => submitBatch(false)}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                    }
                   >
                     {actionLoading && (
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -498,7 +553,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     variant='outline'
                     size='sm'
                     onClick={() => submitBatch(true)}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                    }
                   >
                     {t('Import from Multi-Key')}
                   </Button>
@@ -571,7 +631,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   <Button
                     type='button'
                     onClick={submitForm}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                    }
                   >
                     {actionLoading && (
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -652,6 +717,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 variant='ghost'
                                 size='icon-sm'
                                 onClick={() => openEditForm(account)}
+                                disabled={!permissions.canSensitiveWrite}
+                                title={
+                                  permissions.canSensitiveWrite
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 aria-label={t('Edit')}
                               >
                                 <Pencil className='h-4 w-4' />
@@ -667,6 +738,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                       ? 'disable'
                                       : 'enable'
                                   )
+                                }
+                                disabled={!permissions.canSensitiveWrite}
+                                title={
+                                  permissions.canSensitiveWrite
+                                    ? undefined
+                                    : noPermissionMessage
                                 }
                                 aria-label={
                                   account.status === CHANNEL_STATUS.ENABLED
@@ -687,6 +764,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 onClick={() =>
                                   performStatusAction(account, 'clear')
                                 }
+                                disabled={!permissions.canSensitiveWrite}
+                                title={
+                                  permissions.canSensitiveWrite
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 aria-label={t('Clear cooldown')}
                               >
                                 <ShieldOff className='h-4 w-4' />
@@ -695,7 +778,19 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 type='button'
                                 variant='ghost'
                                 size='icon-sm'
-                                onClick={() => setDeleteTarget(account)}
+                                onClick={() => {
+                                  if (!permissions.canSensitiveWrite) {
+                                    toast.error(noPermissionMessage)
+                                    return
+                                  }
+                                  setDeleteTarget(account)
+                                }}
+                                disabled={!permissions.canSensitiveWrite}
+                                title={
+                                  permissions.canSensitiveWrite
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 aria-label={t('Delete')}
                                 className='text-destructive hover:text-destructive'
                               >

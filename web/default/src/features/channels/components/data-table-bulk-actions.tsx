@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { type Table } from '@tanstack/react-table'
 import { Power, PowerOff, Tag, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -45,6 +46,7 @@ import {
   handleBatchSetTag,
 } from '../lib'
 import type { Channel } from '../types'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 
 interface DataTableBulkActionsProps<TData> {
   table: Table<TData>
@@ -58,6 +60,8 @@ export function DataTableBulkActions<TData>({
   const [showTagDialog, setShowTagDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [tagValue, setTagValue] = useState('')
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const selectedIds = selectedRows.reduce<number[]>((ids, row) => {
@@ -74,15 +78,24 @@ export function DataTableBulkActions<TData>({
     table.resetRowSelection()
   }
 
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
+
   const handleEnableAll = () => {
+    if (!guardPermission(permissions.canOperate)) return
     handleBatchEnable(selectedIds, queryClient, handleClearSelection)
   }
 
   const handleDisableAll = () => {
+    if (!guardPermission(permissions.canOperate)) return
     handleBatchDisable(selectedIds, queryClient, handleClearSelection)
   }
 
   const handleDeleteAll = () => {
+    if (!guardPermission(permissions.canSensitiveWrite)) return
     handleBatchDelete(selectedIds, queryClient, () => {
       setShowDeleteConfirm(false)
       handleClearSelection()
@@ -90,6 +103,7 @@ export function DataTableBulkActions<TData>({
   }
 
   const handleSetTag = () => {
+    if (!guardPermission(permissions.canWrite)) return
     handleBatchSetTag(selectedIds, tagValue || null, queryClient, () => {
       setShowTagDialog(false)
       setTagValue('')
@@ -107,6 +121,7 @@ export function DataTableBulkActions<TData>({
                 variant='outline'
                 size='icon'
                 onClick={handleEnableAll}
+                disabled={!permissions.canOperate}
                 className='size-8'
                 aria-label={t('Enable selected channels')}
                 title={t('Enable selected channels')}
@@ -117,7 +132,11 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Enable selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Enable selected channels')}</p>
+            <p>
+              {permissions.canOperate
+                ? t('Enable selected channels')
+                : noPermissionMessage}
+            </p>
           </TooltipContent>
         </Tooltip>
 
@@ -128,6 +147,7 @@ export function DataTableBulkActions<TData>({
                 variant='outline'
                 size='icon'
                 onClick={handleDisableAll}
+                disabled={!permissions.canOperate}
                 className='size-8'
                 aria-label={t('Disable selected channels')}
                 title={t('Disable selected channels')}
@@ -138,7 +158,11 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Disable selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Disable selected channels')}</p>
+            <p>
+              {permissions.canOperate
+                ? t('Disable selected channels')
+                : noPermissionMessage}
+            </p>
           </TooltipContent>
         </Tooltip>
 
@@ -148,7 +172,11 @@ export function DataTableBulkActions<TData>({
               <Button
                 variant='outline'
                 size='icon'
-                onClick={() => setShowTagDialog(true)}
+                onClick={() => {
+                  if (!guardPermission(permissions.canWrite)) return
+                  setShowTagDialog(true)
+                }}
+                disabled={!permissions.canWrite}
                 className='size-8'
                 aria-label={t('Set tag for selected channels')}
                 title={t('Set tag for selected channels')}
@@ -161,7 +189,11 @@ export function DataTableBulkActions<TData>({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Set tag for selected channels')}</p>
+            <p>
+              {permissions.canWrite
+                ? t('Set tag for selected channels')
+                : noPermissionMessage}
+            </p>
           </TooltipContent>
         </Tooltip>
 
@@ -171,7 +203,11 @@ export function DataTableBulkActions<TData>({
               <Button
                 variant='destructive'
                 size='icon'
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => {
+                  if (!guardPermission(permissions.canSensitiveWrite)) return
+                  setShowDeleteConfirm(true)
+                }}
+                disabled={!permissions.canSensitiveWrite}
                 className='size-8'
                 aria-label={t('Delete selected channels')}
                 title={t('Delete selected channels')}
@@ -182,7 +218,11 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Delete selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Delete selected channels')}</p>
+            <p>
+              {permissions.canSensitiveWrite
+                ? t('Delete selected channels')
+                : noPermissionMessage}
+            </p>
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
@@ -220,7 +260,9 @@ export function DataTableBulkActions<TData>({
             >
               {t('Cancel')}
             </Button>
-            <Button onClick={handleSetTag}>{t('Set Tag')}</Button>
+            <Button onClick={handleSetTag} disabled={!permissions.canWrite}>
+              {t('Set Tag')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -243,7 +285,11 @@ export function DataTableBulkActions<TData>({
             >
               {t('Cancel')}
             </Button>
-            <Button variant='destructive' onClick={handleDeleteAll}>
+            <Button
+              variant='destructive'
+              onClick={handleDeleteAll}
+              disabled={!permissions.canSensitiveWrite}
+            >
               {t('Delete')}
             </Button>
           </DialogFooter>

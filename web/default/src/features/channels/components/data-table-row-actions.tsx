@@ -37,6 +37,7 @@ import {
   UsersRound,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -63,6 +64,7 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import { useChannels } from './channels-provider'
 
 interface DataTableRowActionsProps {
@@ -77,22 +79,36 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const canFetchAndSaveModels = permissions.canOperate && permissions.canWrite
+  const canManageChannelAccounts =
+    permissions.canReadAccountPool && permissions.canSensitiveWrite
+
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const handleEdit = () => {
+    if (!guardPermission(permissions.canWrite)) return
     setCurrentRow(channel)
     setOpen('update-channel')
   }
 
   const handleTest = () => {
+    if (!guardPermission(permissions.canOperate)) return
     setCurrentRow(channel)
     setOpen('test-channel')
   }
 
   const handleDirectTest = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
+    if (!guardPermission(permissions.canOperate)) return
     setIsTesting(true)
     try {
       await handleTestChannel(channel.id, undefined, () => {
@@ -104,31 +120,37 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleQueryBalance = () => {
+    if (!guardPermission(permissions.canOperate)) return
     setCurrentRow(channel)
     setOpen('balance-query')
   }
 
   const handleFetchModels = () => {
+    if (!guardPermission(canFetchAndSaveModels)) return
     setCurrentRow(channel)
     setOpen('fetch-models')
   }
 
   const handleManageOllamaModels = () => {
+    if (!guardPermission(permissions.canOperate)) return
     setCurrentRow(channel)
     setOpen('ollama-models')
   }
 
   const handleCopy = () => {
+    if (!guardPermission(permissions.canSensitiveWrite)) return
     setCurrentRow(channel)
     setOpen('copy-channel')
   }
 
   const handleManageKeys = () => {
+    if (!guardPermission(permissions.canSensitiveWrite)) return
     setCurrentRow(channel)
     setOpen('multi-key-manage')
   }
 
   const handleManageAccountPool = () => {
+    if (!guardPermission(canManageChannelAccounts)) return
     setCurrentRow(channel)
     setOpen('account-pool-manage')
   }
@@ -137,6 +159,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     e?: React.MouseEvent<HTMLButtonElement>
   ) => {
     e?.stopPropagation()
+    if (!guardPermission(permissions.canOperate)) return
     setIsTogglingStatus(true)
     try {
       await handleToggleChannelStatus(channel.id, channel.status, queryClient)
@@ -154,7 +177,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               variant='ghost'
               size='icon-sm'
               onClick={handleDirectTest}
-              disabled={isTesting}
+              disabled={!permissions.canOperate || isTesting}
               aria-label={t('Test Connection')}
             />
           }
@@ -165,7 +188,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             <Gauge className='size-4' />
           )}
         </TooltipTrigger>
-        <TooltipContent>{t('Test Connection')}</TooltipContent>
+        <TooltipContent>
+          {permissions.canOperate ? t('Test Connection') : noPermissionMessage}
+        </TooltipContent>
       </Tooltip>
 
       <Tooltip>
@@ -175,7 +200,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               variant='ghost'
               size='icon-sm'
               onClick={handleToggleStatus}
-              disabled={isTogglingStatus}
+              disabled={!permissions.canOperate || isTogglingStatus}
               aria-label={isEnabled ? t('Disable') : t('Enable')}
               className={
                 isEnabled
@@ -194,7 +219,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           )}
         </TooltipTrigger>
         <TooltipContent>
-          {isEnabled ? t('Disable') : t('Enable')}
+          {permissions.canOperate
+            ? isEnabled
+              ? t('Disable')
+              : t('Enable')
+            : noPermissionMessage}
         </TooltipContent>
       </Tooltip>
 
@@ -212,7 +241,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-48'>
           {/* Edit */}
-          <DropdownMenuItem onClick={handleEdit}>
+          <DropdownMenuItem
+            onClick={handleEdit}
+            disabled={!permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {t('Edit')}
             <DropdownMenuShortcut>
               <Pencil size={16} />
@@ -220,7 +253,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
 
           {/* Test Connection */}
-          <DropdownMenuItem onClick={handleTest}>
+          <DropdownMenuItem
+            onClick={handleTest}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
             {t('Test Connection')}
             <DropdownMenuShortcut>
               <TestTube size={16} />
@@ -228,7 +265,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
 
           {/* Query Balance */}
-          <DropdownMenuItem onClick={handleQueryBalance}>
+          <DropdownMenuItem
+            onClick={handleQueryBalance}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
             {t('Query Balance')}
             <DropdownMenuShortcut>
               <DollarSign size={16} />
@@ -236,7 +277,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
 
           {/* Fetch Models */}
-          <DropdownMenuItem onClick={handleFetchModels}>
+          <DropdownMenuItem
+            onClick={handleFetchModels}
+            disabled={!canFetchAndSaveModels}
+            title={canFetchAndSaveModels ? undefined : noPermissionMessage}
+          >
             {t('Fetch Models')}
             <DropdownMenuShortcut>
               <Download size={16} />
@@ -247,11 +292,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           {MODEL_FETCHABLE_TYPES.has(channel.type) && (
             <DropdownMenuItem
               onClick={() => {
+                if (!guardPermission(permissions.canOperate)) return
                 const meta = parseUpstreamUpdateMeta(channel.settings)
                 if (
                   meta.pendingAddModels.length > 0 ||
                   meta.pendingRemoveModels.length > 0
                 ) {
+                  if (!guardPermission(permissions.canSensitiveWrite)) return
                   upstream.openModal(
                     channel,
                     meta.pendingAddModels,
@@ -262,6 +309,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                   upstream.detectChannelUpdates(channel)
                 }
               }}
+              disabled={!permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
             >
               {t('Upstream Updates')}
               <DropdownMenuShortcut>
@@ -272,7 +321,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
           {/* Ollama Models (only for Ollama channels) */}
           {channel.type === 4 && (
-            <DropdownMenuItem onClick={handleManageOllamaModels}>
+            <DropdownMenuItem
+              onClick={handleManageOllamaModels}
+              disabled={!permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
+            >
               {t('Manage Ollama Models')}
               <DropdownMenuShortcut>
                 <Boxes size={16} />
@@ -283,7 +336,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuSeparator />
 
           {/* Copy Channel */}
-          <DropdownMenuItem onClick={handleCopy}>
+          <DropdownMenuItem
+            onClick={handleCopy}
+            disabled={!permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
+          >
             {t('Copy Channel')}
             <DropdownMenuShortcut>
               <Copy size={16} />
@@ -292,7 +351,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
           {/* Manage Keys (only for multi-key channels) */}
           {isMultiKey && (
-            <DropdownMenuItem onClick={handleManageKeys}>
+            <DropdownMenuItem
+              onClick={handleManageKeys}
+              disabled={!permissions.canSensitiveWrite}
+              title={
+                permissions.canSensitiveWrite ? undefined : noPermissionMessage
+              }
+            >
               {t('Manage Keys')}
               <DropdownMenuShortcut>
                 <Key size={16} />
@@ -300,7 +365,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          <DropdownMenuItem onClick={handleManageAccountPool}>
+          <DropdownMenuItem
+            onClick={handleManageAccountPool}
+            disabled={!canManageChannelAccounts}
+            title={canManageChannelAccounts ? undefined : noPermissionMessage}
+          >
             {t('Account Pool')}
             <DropdownMenuShortcut>
               <UsersRound size={16} />
@@ -313,8 +382,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault()
+              if (!guardPermission(permissions.canSensitiveWrite)) return
               setDeleteConfirmOpen(true)
             }}
+            disabled={!permissions.canSensitiveWrite}
             className='text-destructive focus:text-destructive'
           >
             {t('Delete')}
@@ -329,10 +400,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title={t('Delete Channel')}
-        desc={`Are you sure you want to delete "${channel.name}"? This action cannot be undone.`}
-        confirmText='Delete'
+        desc={t(
+          'Are you sure you want to delete channel "{{name}}"? This action cannot be undone.',
+          { name: channel.name }
+        )}
+        confirmText={t('Delete')}
         destructive
         handleConfirm={() => {
+          if (!guardPermission(permissions.canSensitiveWrite)) return
           handleDeleteChannel(channel.id, queryClient)
           setDeleteConfirmOpen(false)
         }}

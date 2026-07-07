@@ -66,6 +66,7 @@ import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-ta
 import { DataTablePagination } from '@/components/data-table/pagination'
 import { StatusBadge } from '@/components/status-badge'
 import { formatResponseTime, handleTestChannel } from '../../lib'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
 type ChannelTestDialogProps = {
@@ -133,6 +134,8 @@ export function ChannelTestDialog({
     pageIndex: 0,
     pageSize: 10,
   })
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const resetState = useCallback(() => {
     setEndpointType('auto')
@@ -208,6 +211,13 @@ export function ChannelTestDialog({
   const testSingleModel = useCallback(
     async (model: string) => {
       if (!currentRow) return
+      if (!permissions.canOperate) {
+        updateTestResult(model, {
+          status: 'error',
+          error: noPermissionMessage,
+        })
+        return
+      }
 
       markModelTesting(model, true)
       updateTestResult(model, { status: 'testing' })
@@ -238,7 +248,15 @@ export function ChannelTestDialog({
         markModelTesting(model, false)
       }
     },
-    [currentRow, endpointType, isStreamTest, markModelTesting, updateTestResult]
+    [
+      currentRow,
+      endpointType,
+      isStreamTest,
+      markModelTesting,
+      noPermissionMessage,
+      permissions.canOperate,
+      updateTestResult,
+    ]
   )
 
   const handleBatchTest = useCallback(
@@ -397,7 +415,10 @@ export function ChannelTestDialog({
               variant='outline'
               size='sm'
               onClick={() => testSingleModel(model)}
-              disabled={isTestingModel || isBatchTesting}
+              disabled={
+                !permissions.canOperate || isTestingModel || isBatchTesting
+              }
+              title={permissions.canOperate ? undefined : noPermissionMessage}
             >
               {isTestingModel && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -413,6 +434,8 @@ export function ChannelTestDialog({
     [
       defaultTestModel,
       isBatchTesting,
+      noPermissionMessage,
+      permissions.canOperate,
       t,
       testResults,
       testingModels,
@@ -580,7 +603,8 @@ export function ChannelTestDialog({
 
             <TestModelsBulkActions
               table={table}
-              disabled={isAnyTesting}
+              disabled={isAnyTesting || !permissions.canOperate}
+              disabledReason={noPermissionMessage}
               onTestSelected={handleBatchTest}
             />
           </div>
@@ -599,10 +623,12 @@ export function ChannelTestDialog({
 function TestModelsBulkActions({
   table,
   disabled,
+  disabledReason,
   onTestSelected,
 }: {
   table: TanStackTable<ModelRow>
   disabled?: boolean
+  disabledReason?: string
   onTestSelected: (models: string[]) => void
 }) {
   const { t } = useTranslation()
@@ -623,6 +649,7 @@ function TestModelsBulkActions({
               size='sm'
               onClick={() => onTestSelected(selectedModels)}
               disabled={disabled || selectedModels.length === 0}
+              title={disabled ? disabledReason : undefined}
             />
           }
         >
@@ -636,7 +663,7 @@ function TestModelsBulkActions({
           )}
         </TooltipTrigger>
         <TooltipContent>
-          <p>{t('Run tests for the selected models')}</p>
+          <p>{disabled ? disabledReason : t('Run tests for the selected models')}</p>
         </TooltipContent>
       </Tooltip>
     </BulkActionsToolbar>

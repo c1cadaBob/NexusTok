@@ -151,6 +151,7 @@ import {
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
 import type { Channel } from '../../types'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
@@ -218,6 +219,22 @@ const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
 
 const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded'
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
+const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
+  'id',
+  'name',
+  'models',
+  'group',
+  'model_mapping',
+  'priority',
+  'weight',
+  'test_model',
+  'auto_ban',
+  'status_code_mapping',
+  'tag',
+  'remark',
+  'other_info',
+  'multi_key_mode',
+] as const
 
 function readAdvancedSettingsPreference(): boolean {
   if (typeof window === 'undefined') return false
@@ -244,6 +261,20 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim()
+  )
+}
+
+function pickNonSensitiveChannelUpdatePayload(payload: Partial<Channel>) {
+  return NON_SENSITIVE_CHANNEL_UPDATE_FIELDS.reduce<Partial<Channel>>(
+    (nextPayload, field) => {
+      if (field in payload) {
+        ;(nextPayload as Record<string, unknown>)[field] = (
+          payload as Record<string, unknown>
+        )[field]
+      }
+      return nextPayload
+    },
+    {}
   )
 }
 
@@ -300,6 +331,8 @@ export function ChannelMutateDrawer({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customModel, setCustomModel] = useState('')
   const [isFetchingModels, setIsFetchingModels] = useState(false)
@@ -329,6 +362,11 @@ export function ChannelMutateDrawer({
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
+  const canSubmitForm = isEditing
+    ? permissions.canWrite || permissions.canSensitiveWrite
+    : permissions.canSensitiveWrite
+  const canEditSensitiveFields = permissions.canSensitiveWrite
+  const canEditBasicFields = permissions.canWrite || permissions.canSensitiveWrite
 
   // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
   const { data: channelData } = useQuery({
@@ -723,6 +761,11 @@ export function ChannelMutateDrawer({
 
   // 多 Key 输入去重。
   const handleDeduplicateKeys = () => {
+    if (!canEditSensitiveFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     const currentKey = form.getValues('key')
     if (!currentKey || currentKey.trim() === '') {
       toast.info(t('Please enter keys first'))
@@ -752,6 +795,9 @@ export function ChannelMutateDrawer({
     if (!channelId) {
       throw new Error('Channel is not selected')
     }
+    if (!permissions.canViewSecret) {
+      throw new Error(noPermissionMessage)
+    }
 
     setIsChannelKeyLoading(true)
     try {
@@ -767,10 +813,14 @@ export function ChannelMutateDrawer({
     } finally {
       setIsChannelKeyLoading(false)
     }
-  }, [channelId, t])
+  }, [channelId, noPermissionMessage, permissions.canViewSecret, t])
 
   const handleRevealKey = useCallback(async () => {
     if (!channelId) return
+    if (!permissions.canViewSecret) {
+      toast.error(noPermissionMessage)
+      return
+    }
 
     try {
       await withVerification(fetchChannelKey, {
@@ -784,10 +834,20 @@ export function ChannelMutateDrawer({
         toast.error(error.message)
       }
     }
-  }, [channelId, withVerification, fetchChannelKey])
+  }, [
+    channelId,
+    fetchChannelKey,
+    noPermissionMessage,
+    permissions.canViewSecret,
+    withVerification,
+  ])
 
   const handleRefreshCodexCredential = useCallback(async () => {
     if (!channelId) return
+    if (!canEditSensitiveFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsCodexCredentialRefreshing(true)
     try {
       const res = await refreshCodexCredential(channelId)
@@ -803,7 +863,13 @@ export function ChannelMutateDrawer({
     } finally {
       setIsCodexCredentialRefreshing(false)
     }
-  }, [channelId, queryClient, t])
+  }, [
+    canEditSensitiveFields,
+    channelId,
+    noPermissionMessage,
+    queryClient,
+    t,
+  ])
 
   // 统一更新模型字段，所有快捷填充和预设导入都走这里保持格式一致。
   const updateModels = useCallback(
@@ -819,6 +885,11 @@ export function ChannelMutateDrawer({
 
   // 从上游拉取模型列表。账号池组模式不使用渠道 key，因此不允许走该路径。
   const handleFetchModels = useCallback(async () => {
+    if (!permissions.canOperate || !canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     if (isGlobalAccountPoolMode) {
       toast.info(t('Account pool mode does not fetch models from channel key.'))
       return
@@ -867,20 +938,38 @@ export function ChannelMutateDrawer({
     } finally {
       setIsFetchingModels(false)
     }
-  }, [isEditing, currentRow, form, t, updateModels, isGlobalAccountPoolMode])
+  }, [
+    canEditBasicFields,
+    currentRow,
+    form,
+    isEditing,
+    isGlobalAccountPoolMode,
+    noPermissionMessage,
+    permissions.canOperate,
+    t,
+    updateModels,
+  ])
 
   // 添加手动输入的自定义模型。
   const handleAddCustomModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!customModel?.trim()) return
 
     const modelArray = parseModelsString(customModel)
     const count = updateModels(modelArray, true)
     setCustomModel('')
     toast.success(t('Added {{count}} custom model(s)', { count }))
-  }, [customModel, t, updateModels])
+  }, [canEditBasicFields, customModel, noPermissionMessage, t, updateModels])
 
   // 模型快捷操作。
   const handleFillRelatedModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!basicModels.length) {
       toast.info(t('No related models available for this channel type'))
       return
@@ -889,9 +978,13 @@ export function ChannelMutateDrawer({
     toast.success(
       t('Filled {{count}} related model(s)', { count: basicModels.length })
     )
-  }, [basicModels, updateModels, t])
+  }, [basicModels, canEditBasicFields, noPermissionMessage, updateModels, t])
 
   const handleFillAllModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!allModelsList.length) {
       toast.info(t('No models available'))
       return
@@ -900,12 +993,16 @@ export function ChannelMutateDrawer({
     toast.success(
       t('Filled {{count}} model(s)', { count: allModelsList.length })
     )
-  }, [allModelsList, updateModels, t])
+  }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
   const handleClearModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
     form.setValue('models', '')
     toast.success(t('Cleared all models'))
-  }, [form, t])
+  }, [canEditBasicFields, form, noPermissionMessage, t])
 
   const handleCopyModels = useCallback(async () => {
     const models = form.getValues('models')
@@ -919,6 +1016,10 @@ export function ChannelMutateDrawer({
   // 添加模型预设分组中的模型。
   const handleAddPrefillGroup = useCallback(
     (group: { id: number; name: string; items: string | string[] }) => {
+      if (!canEditBasicFields) {
+        toast.error(noPermissionMessage)
+        return
+      }
       try {
         const items = Array.isArray(group.items)
           ? group.items
@@ -939,15 +1040,19 @@ export function ChannelMutateDrawer({
         toast.error(t('Failed to parse group items'))
       }
     },
-    [updateModels, t]
+    [canEditBasicFields, noPermissionMessage, updateModels, t]
   )
 
   // MultiSelect 组件会回传数组，保存前仍要转成逗号分隔字符串。
   const handleModelsChange = useCallback(
     (selected: string[]) => {
+      if (!canEditBasicFields) {
+        toast.error(noPermissionMessage)
+        return
+      }
       form.setValue('models', selected.join(','))
     },
-    [form]
+    [canEditBasicFields, form, noPermissionMessage]
   )
 
   // 提交成功后刷新渠道列表并关闭抽屉。
@@ -1016,6 +1121,15 @@ export function ChannelMutateDrawer({
   // 旧的 `account_pool` 仍表示“渠道内账号池”，只在编辑历史渠道时保留入口。
   const onSubmit = useCallback(
     async (data: ChannelFormValues) => {
+      if (!isEditing && !permissions.canSensitiveWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
+      if (isEditing && !canEditBasicFields) {
+        toast.error(noPermissionMessage)
+        return
+      }
+
       const isAccountPoolGroupMode =
         data.credential_mode === 'global_account_pool'
 
@@ -1104,17 +1218,17 @@ export function ChannelMutateDrawer({
           // 更新已有渠道。
           const payload = transformFormDataToUpdatePayload(data, currentRow.id)
           const payloadWithKeyMode =
-            isMultiKeyChannel && data.key_mode
+            canEditSensitiveFields && isMultiKeyChannel && data.key_mode
               ? {
                   ...payload,
                   key_mode: data.key_mode,
                 }
               : payload
+          const allowedPayload = canEditSensitiveFields
+            ? payloadWithKeyMode
+            : pickNonSensitiveChannelUpdatePayload(payloadWithKeyMode)
 
-          const response = await updateChannel(
-            currentRow.id,
-            payloadWithKeyMode
-          )
+          const response = await updateChannel(currentRow.id, allowedPayload)
           if (response.success) {
             toast.success(t(SUCCESS_MESSAGES.UPDATED))
             handleSuccess()
@@ -1138,6 +1252,10 @@ export function ChannelMutateDrawer({
       isEditing,
       currentRow,
       isMultiKeyChannel,
+      canEditBasicFields,
+      canEditSensitiveFields,
+      noPermissionMessage,
+      permissions.canSensitiveWrite,
       form,
       handleSuccess,
       confirmMissingModelMappings,
@@ -1236,6 +1354,10 @@ export function ChannelMutateDrawer({
                             options={channelTypeOptions}
                             value={String(field.value)}
                             onValueChange={(value) => {
+                              if (!canEditSensitiveFields) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
                               const nextType = Number(value)
                               if (Number.isInteger(nextType) && nextType > 0) {
                                 field.onChange(nextType)
@@ -1245,6 +1367,11 @@ export function ChannelMutateDrawer({
                             searchPlaceholder={t('Search channel type...')}
                             emptyText={t('No channel type found.')}
                             allowCustomValue
+                            className={
+                              canEditSensitiveFields
+                                ? undefined
+                                : 'pointer-events-none opacity-50'
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -1267,6 +1394,7 @@ export function ChannelMutateDrawer({
                       <FormControl>
                         <Switch
                           checked={field.value === 1}
+                          disabled={!permissions.canOperate}
                           onCheckedChange={(checked) =>
                             field.onChange(checked ? 1 : 2)
                           }
@@ -1284,7 +1412,11 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('OpenAI Organization')}</FormLabel>
                         <FormControl>
-                          <Input placeholder={t('org-...')} {...field} />
+                          <Input
+                            placeholder={t('org-...')}
+                            disabled={!canEditSensitiveFields}
+                            {...field}
+                          />
                         </FormControl>
                         <FormDescription>
                           {t(FIELD_DESCRIPTIONS.OPENAI_ORG)}
@@ -1324,6 +1456,7 @@ export function ChannelMutateDrawer({
                               placeholder={t(
                                 'e.g., https://docs-test-001.openai.azure.com'
                               )}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -1343,6 +1476,7 @@ export function ChannelMutateDrawer({
                           <FormControl>
                             <Input
                               placeholder={t('e.g., 2025-04-01-preview')}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -1362,6 +1496,7 @@ export function ChannelMutateDrawer({
                           <FormControl>
                             <Input
                               placeholder={t('e.g., preview')}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -1394,6 +1529,7 @@ export function ChannelMutateDrawer({
                             placeholder={t(
                               'e.g., https://api.openai.com/v1/chat/completions'
                             )}
+                            disabled={!canEditSensitiveFields}
                             {...field}
                           />
                         </FormControl>
@@ -1417,7 +1553,11 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Model Version *')}</FormLabel>
                         <FormControl>
-                          <Input placeholder={t('e.g., v2.1')} {...field} />
+                          <Input
+                            placeholder={t('e.g., v2.1')}
+                            disabled={!canEditSensitiveFields}
+                            {...field}
+                          />
                         </FormControl>
                         <FormDescription>
                           {t(
@@ -1448,6 +1588,7 @@ export function ChannelMutateDrawer({
                         <FormControl>
                           <Switch
                             checked={field.value}
+                            disabled={!canEditSensitiveFields}
                             onCheckedChange={field.onChange}
                           />
                         </FormControl>
@@ -1472,11 +1613,17 @@ export function ChannelMutateDrawer({
                             },
                             { value: 'api_key', label: t('API Key') },
                           ]}
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
+                            field.onChange(value)
+                          }}
                           value={field.value}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue
                                 placeholder={t('Select key format')}
                               />
@@ -1515,7 +1662,11 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Knowledge Base ID *')}</FormLabel>
                         <FormControl>
-                          <Input placeholder={t('e.g., 123456')} {...field} />
+                          <Input
+                            placeholder={t('e.g., 123456')}
+                            disabled={!canEditSensitiveFields}
+                            {...field}
+                          />
                         </FormControl>
                         <FormDescription>
                           {t('Enter the knowledge base ID')}
@@ -1539,6 +1690,7 @@ export function ChannelMutateDrawer({
                             placeholder={t(
                               'e.g., https://fastgpt.run/api/openapi'
                             )}
+                            disabled={!canEditSensitiveFields}
                             {...field}
                           />
                         </FormControl>
@@ -1568,6 +1720,7 @@ export function ChannelMutateDrawer({
                             placeholder={t(
                               'e.g., https://api.example.com (path before /suno)'
                             )}
+                            disabled={!canEditSensitiveFields}
                             {...field}
                           />
                         </FormControl>
@@ -1593,6 +1746,7 @@ export function ChannelMutateDrawer({
                         <FormControl>
                           <Input
                             placeholder={t('e.g., d6b5da8hk1awo8nap34ube6gh')}
+                            disabled={!canEditSensitiveFields}
                             {...field}
                           />
                         </FormControl>
@@ -1636,11 +1790,17 @@ export function ChannelMutateDrawer({
                               { value: 'json', label: t('JSON') },
                               { value: 'api_key', label: t('API Key') },
                             ]}
-                            onValueChange={field.onChange}
+                            onValueChange={(value) => {
+                              if (!canEditSensitiveFields) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
+                              field.onChange(value)
+                            }}
                             value={field.value}
                           >
                             <FormControl>
-                              <SelectTrigger>
+                              <SelectTrigger disabled={!canEditSensitiveFields}>
                                 <SelectValue />
                               </SelectTrigger>
                             </FormControl>
@@ -1678,7 +1838,12 @@ export function ChannelMutateDrawer({
                             type='file'
                             accept='.json,application/json'
                             multiple={isBatchMode}
+                            disabled={!canEditSensitiveFields}
                             onChange={async (e) => {
+                              if (!canEditSensitiveFields) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
                               const fileList = e.target.files
                               const files = fileList ? Array.from(fileList) : []
                               // 清空 input value，允许管理员重新选择同一个文件并触发 change。
@@ -1746,6 +1911,7 @@ export function ChannelMutateDrawer({
                                 'e.g., us-central1 or JSON format for model-specific regions'
                               )}
                               rows={3}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -1797,13 +1963,19 @@ export function ChannelMutateDrawer({
                                 label: t('Doubao Coding Plan'),
                               },
                             ]}
-                            onValueChange={field.onChange}
+                            onValueChange={(value) => {
+                              if (!canEditSensitiveFields) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
+                              field.onChange(value)
+                            }}
                             value={
                               field.value || 'https://ark.cn-beijing.volces.com'
                             }
                           >
                             <FormControl>
-                              <SelectTrigger>
+                              <SelectTrigger disabled={!canEditSensitiveFields}>
                                 <SelectValue />
                               </SelectTrigger>
                             </FormControl>
@@ -1845,6 +2017,7 @@ export function ChannelMutateDrawer({
                               placeholder={t(
                                 'e.g., https://ark.cn-beijing.volces.com'
                               )}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -1868,6 +2041,7 @@ export function ChannelMutateDrawer({
                         <FormControl>
                           <Input
                             placeholder={t('e.g., 7342866812345')}
+                            disabled={!canEditSensitiveFields}
                             {...field}
                           />
                         </FormControl>
@@ -1890,10 +2064,11 @@ export function ChannelMutateDrawer({
                         <FormItem>
                           <FormLabel>{t('Base URL')}</FormLabel>
                           <FormControl>
-                            <Input
-                              placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
-                              {...field}
-                            />
+                          <Input
+                            placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
+                            disabled={!canEditSensitiveFields}
+                            {...field}
+                          />
                           </FormControl>
                           <FormDescription>
                             {t(
@@ -1942,6 +2117,10 @@ export function ChannelMutateDrawer({
                             : []),
                         ]}
                         onValueChange={(value) => {
+                          if (!canEditSensitiveFields) {
+                            toast.error(noPermissionMessage)
+                            return
+                          }
                           field.onChange(value)
                           if (value === 'multi_key') {
                             form.setValue('multi_key_mode', 'multi_to_single')
@@ -1965,7 +2144,7 @@ export function ChannelMutateDrawer({
                         value={field.value}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger disabled={!canEditSensitiveFields}>
                             <SelectValue />
                           </SelectTrigger>
                         </FormControl>
@@ -2007,11 +2186,17 @@ export function ChannelMutateDrawer({
                             { value: 'polling', label: t('Polling') },
                             { value: 'random', label: t('Random') },
                           ]}
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
+                            field.onChange(value)
+                          }}
                           value={field.value}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
@@ -2045,13 +2230,17 @@ export function ChannelMutateDrawer({
                         <FormLabel>{t('Account Pool Group')}</FormLabel>
                         <Select
                           items={accountPoolGroupOptions}
-                          onValueChange={(value) =>
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
                             field.onChange(Number(value))
-                          }
+                          }}
                           value={field.value ? String(field.value) : ''}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue
                                 placeholder={t('Select account group')}
                               />
@@ -2097,6 +2286,7 @@ export function ChannelMutateDrawer({
                         <FormControl>
                           <Switch
                             checked={field.value === true}
+                            disabled={!canEditSensitiveFields}
                             onCheckedChange={field.onChange}
                           />
                         </FormControl>
@@ -2118,11 +2308,17 @@ export function ChannelMutateDrawer({
                               label: t(option.label),
                             })),
                           ]}
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
+                            field.onChange(value)
+                          }}
                           value={field.value}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
@@ -2185,11 +2381,12 @@ export function ChannelMutateDrawer({
                             <Textarea
                               placeholder={keyPlaceholder}
                               rows={isBatchMode ? 8 : 4}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
                           <FormDescription>
-                            <div className='flex flex-col gap-2'>
+                            <span className='flex flex-col gap-2'>
                               <span>
                                 {isEditing ? (
                                   <>
@@ -2219,13 +2416,19 @@ export function ChannelMutateDrawer({
                                   variant='outline'
                                   size='sm'
                                   onClick={handleDeduplicateKeys}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                   className='w-fit'
                                 >
                                   <Trash2 className='mr-2 h-4 w-4' />
                                   {t('Remove Duplicates')}
                                 </Button>
                               )}
-                            </div>
+                            </span>
                           </FormDescription>
                           {isEditing && (
                             <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
@@ -2247,8 +2450,14 @@ export function ChannelMutateDrawer({
                                     size='sm'
                                     onClick={handleRevealKey}
                                     disabled={
+                                      !permissions.canViewSecret ||
                                       isChannelKeyLoading ||
                                       verificationState.loading
+                                    }
+                                    title={
+                                      permissions.canViewSecret
+                                        ? undefined
+                                        : noPermissionMessage
                                     }
                                   >
                                     {isChannelKeyLoading ||
@@ -2310,6 +2519,12 @@ export function ChannelMutateDrawer({
                             variant='outline'
                             size='sm'
                             onClick={() => setCodexOAuthDialogOpen(true)}
+                            disabled={!canEditSensitiveFields}
+                            title={
+                              canEditSensitiveFields
+                                ? undefined
+                                : noPermissionMessage
+                            }
                           >
                             <Link2 className='mr-2 h-4 w-4' />
                             {t('Authorize')}
@@ -2320,7 +2535,15 @@ export function ChannelMutateDrawer({
                               variant='outline'
                               size='sm'
                               onClick={handleRefreshCodexCredential}
-                              disabled={isCodexCredentialRefreshing}
+                              disabled={
+                                !canEditSensitiveFields ||
+                                isCodexCredentialRefreshing
+                              }
+                              title={
+                                canEditSensitiveFields
+                                  ? undefined
+                                  : noPermissionMessage
+                              }
                             >
                               {isCodexCredentialRefreshing ? (
                                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -2348,6 +2571,10 @@ export function ChannelMutateDrawer({
                   open={codexOAuthDialogOpen}
                   onOpenChange={setCodexOAuthDialogOpen}
                   onKeyGenerated={(key) => {
+                    if (!canEditSensitiveFields) {
+                      toast.error(noPermissionMessage)
+                      return
+                    }
                     form.setValue('key', key, { shouldDirty: true })
                   }}
                 />
@@ -2370,11 +2597,17 @@ export function ChannelMutateDrawer({
                               label: t('Replace all existing keys'),
                             },
                           ]}
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
+                            field.onChange(value)
+                          }}
                           value={field.value}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
@@ -2416,11 +2649,17 @@ export function ChannelMutateDrawer({
                             { value: 'random', label: t('Random') },
                             { value: 'polling', label: t('Polling') },
                           ]}
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            if (!canEditSensitiveFields) {
+                              toast.error(noPermissionMessage)
+                              return
+                            }
+                            field.onChange(value)
+                          }}
                           value={field.value}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger disabled={!canEditSensitiveFields}>
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
@@ -2476,15 +2715,20 @@ export function ChannelMutateDrawer({
                         />
                       </FormControl>
                       <FormDescription>
-                        <div className='flex flex-col gap-2'>
+                        <span className='flex flex-col gap-2'>
                           <span>{t(FIELD_DESCRIPTIONS.MODELS)}</span>
-                          <div className='flex flex-wrap gap-2'>
+                          <span className='flex flex-wrap gap-2'>
                             <Button
                               type='button'
                               variant='outline'
                               size='sm'
                               onClick={handleFillRelatedModels}
-                              disabled={!basicModels.length}
+                              disabled={!canEditBasicFields || !basicModels.length}
+                              title={
+                                canEditBasicFields
+                                  ? undefined
+                                  : noPermissionMessage
+                              }
                             >
                               <FileText className='mr-2 h-4 w-4' />
                               {t('Fill Related Models')}
@@ -2494,7 +2738,14 @@ export function ChannelMutateDrawer({
                               variant='outline'
                               size='sm'
                               onClick={handleFillAllModels}
-                              disabled={!allModelsList.length}
+                              disabled={
+                                !canEditBasicFields || !allModelsList.length
+                              }
+                              title={
+                                canEditBasicFields
+                                  ? undefined
+                                  : noPermissionMessage
+                              }
                             >
                               <Plus className='mr-2 h-4 w-4' />
                               {t('Fill All Models')}
@@ -2506,7 +2757,17 @@ export function ChannelMutateDrawer({
                                   variant='outline'
                                   size='sm'
                                   onClick={handleFetchModels}
-                                  disabled={isFetchingModels}
+                                  disabled={
+                                    isFetchingModels ||
+                                    !permissions.canOperate ||
+                                    !canEditBasicFields
+                                  }
+                                  title={
+                                    permissions.canOperate &&
+                                    canEditBasicFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                 >
                                   {isFetchingModels ? (
                                     <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -2521,6 +2782,12 @@ export function ChannelMutateDrawer({
                               variant='outline'
                               size='sm'
                               onClick={handleClearModels}
+                              disabled={!canEditBasicFields}
+                              title={
+                                canEditBasicFields
+                                  ? undefined
+                                  : noPermissionMessage
+                              }
                             >
                               <Eraser className='mr-2 h-4 w-4' />
                               {t('Clear All')}
@@ -2541,12 +2808,18 @@ export function ChannelMutateDrawer({
                                 variant='secondary'
                                 size='sm'
                                 onClick={() => handleAddPrefillGroup(group)}
+                                disabled={!canEditBasicFields}
+                                title={
+                                  canEditBasicFields
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                               >
                                 {group.name}
                               </Button>
                             ))}
-                          </div>
-                        </div>
+                          </span>
+                        </span>
                       </FormDescription>
                       {modelMappingGuardrail.exposedTargetModels.length > 0 && (
                         <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
@@ -2571,6 +2844,7 @@ export function ChannelMutateDrawer({
                   <Input
                     placeholder={t('Add custom model(s), comma-separated')}
                     value={customModel}
+                    disabled={!canEditBasicFields}
                     onChange={(e) => setCustomModel(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -2583,7 +2857,10 @@ export function ChannelMutateDrawer({
                     type='button'
                     variant='secondary'
                     onClick={handleAddCustomModels}
-                    disabled={!customModel}
+                    disabled={!canEditBasicFields || !customModel}
+                    title={
+                      canEditBasicFields ? undefined : noPermissionMessage
+                    }
                   >
                     {t('Add')}
                   </Button>
@@ -2650,7 +2927,7 @@ export function ChannelMutateDrawer({
                         <ModelMappingEditor
                           value={field.value || ''}
                           onChange={field.onChange}
-                          disabled={isSubmitting}
+                          disabled={isSubmitting || !canEditBasicFields}
                         />
                       </FormControl>
                       <FormDescription>
@@ -2698,7 +2975,13 @@ export function ChannelMutateDrawer({
                           <MultiSelect
                             options={groupOptions}
                             selected={field.value}
-                            onChange={field.onChange}
+                            onChange={(values) => {
+                              if (!canEditBasicFields) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
+                              field.onChange(values)
+                            }}
                             placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
                           />
                         )}
@@ -2765,6 +3048,7 @@ export function ChannelMutateDrawer({
                                 <Input
                                   type='number'
                                   placeholder='0'
+                                  disabled={!canEditBasicFields}
                                   {...field}
                                   onChange={(e) =>
                                     field.onChange(Number(e.target.value))
@@ -2789,6 +3073,7 @@ export function ChannelMutateDrawer({
                                 <Input
                                   type='number'
                                   placeholder='0'
+                                  disabled={!canEditBasicFields}
                                   {...field}
                                   onChange={(e) =>
                                     field.onChange(Number(e.target.value))
@@ -2813,6 +3098,7 @@ export function ChannelMutateDrawer({
                             <FormControl>
                               <Input
                                 placeholder={t(FIELD_PLACEHOLDERS.TEST_MODEL)}
+                                disabled={!canEditBasicFields}
                                 {...field}
                               />
                             </FormControl>
@@ -2838,6 +3124,7 @@ export function ChannelMutateDrawer({
                             <FormControl>
                               <Switch
                                 checked={field.value === 1}
+                                disabled={!canEditBasicFields}
                                 onCheckedChange={(checked) =>
                                   field.onChange(checked ? 1 : 0)
                                 }
@@ -2863,6 +3150,7 @@ export function ChannelMutateDrawer({
                               <FormControl>
                                 <Input
                                   placeholder={t(FIELD_PLACEHOLDERS.TAG)}
+                                  disabled={!canEditBasicFields}
                                   {...field}
                                 />
                               </FormControl>
@@ -2884,6 +3172,7 @@ export function ChannelMutateDrawer({
                                 <Textarea
                                   placeholder={t(FIELD_PLACEHOLDERS.REMARK)}
                                   rows={2}
+                                  disabled={!canEditBasicFields}
                                   {...field}
                                 />
                               </FormControl>
@@ -2920,7 +3209,7 @@ export function ChannelMutateDrawer({
                               <JsonEditor
                                 value={field.value || ''}
                                 onChange={field.onChange}
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || !canEditBasicFields}
                                 keyPlaceholder='400'
                                 valuePlaceholder='500'
                                 keyLabel='Original Code'
@@ -2956,8 +3245,18 @@ export function ChannelMutateDrawer({
                                   type='button'
                                   variant='outline'
                                   size='sm'
-                                  onClick={() =>
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
                                     setParamOverrideEditorOpen(true)
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
                                   }
                                 >
                                   <Wand2 className='mr-2 h-4 w-4' />
@@ -2968,6 +3267,10 @@ export function ChannelMutateDrawer({
                                   variant='outline'
                                   size='sm'
                                   onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
                                     field.onChange(
                                       JSON.stringify(
                                         {
@@ -2992,6 +3295,12 @@ export function ChannelMutateDrawer({
                                       )
                                     )
                                   }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                 >
                                   <Code className='mr-2 h-4 w-4' />
                                   {t('New Format Template')}
@@ -3000,7 +3309,19 @@ export function ChannelMutateDrawer({
                                   type='button'
                                   variant='ghost'
                                   size='sm'
-                                  onClick={() => field.onChange('')}
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
+                                    field.onChange('')
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                 >
                                   {t('Clear')}
                                 </Button>
@@ -3010,7 +3331,7 @@ export function ChannelMutateDrawer({
                               <JsonEditor
                                 value={field.value || ''}
                                 onChange={field.onChange}
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || !canEditSensitiveFields}
                                 keyPlaceholder='temperature'
                                 valuePlaceholder='0.7'
                                 keyLabel='Parameter'
@@ -3050,7 +3371,11 @@ export function ChannelMutateDrawer({
                                   type='button'
                                   variant='outline'
                                   size='sm'
-                                  onClick={() =>
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
                                     field.onChange(
                                       JSON.stringify(
                                         {
@@ -3063,6 +3388,12 @@ export function ChannelMutateDrawer({
                                         2
                                       )
                                     )
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
                                   }
                                 >
                                   {t('Fill Template')}
@@ -3071,10 +3402,20 @@ export function ChannelMutateDrawer({
                                   type='button'
                                   variant='outline'
                                   size='sm'
-                                  onClick={() =>
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
                                     field.onChange(
                                       JSON.stringify({ '*': true }, null, 2)
                                     )
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
                                   }
                                 >
                                   {t('Passthrough Template')}
@@ -3084,6 +3425,10 @@ export function ChannelMutateDrawer({
                                   variant='outline'
                                   size='sm'
                                   onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
                                     try {
                                       const parsed = JSON.parse(
                                         field.value || '{}'
@@ -3095,6 +3440,12 @@ export function ChannelMutateDrawer({
                                       /* ignore invalid JSON */
                                     }
                                   }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                 >
                                   {t('Format')}
                                 </Button>
@@ -3102,7 +3453,19 @@ export function ChannelMutateDrawer({
                                   type='button'
                                   variant='ghost'
                                   size='sm'
-                                  onClick={() => field.onChange('')}
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
+                                    field.onChange('')
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
                                 >
                                   {t('Clear')}
                                 </Button>
@@ -3114,7 +3477,7 @@ export function ChannelMutateDrawer({
                                 rows={6}
                                 value={field.value || ''}
                                 onChange={field.onChange}
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || !canEditSensitiveFields}
                                 placeholder={t(
                                   'Enter JSON to override request headers'
                                 )}
@@ -3168,6 +3531,7 @@ export function ChannelMutateDrawer({
                                 <FormControl>
                                   <Switch
                                     checked={field.value}
+                                    disabled={!canEditSensitiveFields}
                                     onCheckedChange={field.onChange}
                                   />
                                 </FormControl>
@@ -3195,6 +3559,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3222,6 +3587,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3249,6 +3615,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3276,6 +3643,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3305,6 +3673,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3330,6 +3699,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3357,6 +3727,7 @@ export function ChannelMutateDrawer({
                                     <FormControl>
                                       <Switch
                                         checked={field.value}
+                                        disabled={!canEditSensitiveFields}
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
@@ -3387,6 +3758,7 @@ export function ChannelMutateDrawer({
                               <FormControl>
                                 <Switch
                                   checked={field.value}
+                                  disabled={!canEditSensitiveFields}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -3411,6 +3783,7 @@ export function ChannelMutateDrawer({
                             <FormControl>
                               <Switch
                                 checked={field.value}
+                                disabled={!canEditSensitiveFields}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -3432,6 +3805,7 @@ export function ChannelMutateDrawer({
                             <FormControl>
                               <Switch
                                 checked={field.value}
+                                disabled={!canEditSensitiveFields}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -3449,6 +3823,7 @@ export function ChannelMutateDrawer({
                           <FormControl>
                             <Input
                               placeholder={t('socks5://user:pass@host:port')}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -3474,6 +3849,7 @@ export function ChannelMutateDrawer({
                                 'Enter system prompt (user prompt takes priority)'
                               )}
                               rows={3}
+                              disabled={!canEditSensitiveFields}
                               {...field}
                             />
                           </FormControl>
@@ -3503,6 +3879,7 @@ export function ChannelMutateDrawer({
                           <FormControl>
                             <Switch
                               checked={field.value}
+                              disabled={!canEditSensitiveFields}
                               onCheckedChange={field.onChange}
                             />
                           </FormControl>
@@ -3535,6 +3912,7 @@ export function ChannelMutateDrawer({
                                 <FormControl>
                                   <Switch
                                     checked={field.value}
+                                    disabled={!canEditSensitiveFields}
                                     onCheckedChange={field.onChange}
                                   />
                                 </FormControl>
@@ -3559,7 +3937,10 @@ export function ChannelMutateDrawer({
                                 <FormControl>
                                   <Switch
                                     checked={field.value}
-                                    disabled={!upstreamModelUpdateCheckEnabled}
+                                    disabled={
+                                      !canEditSensitiveFields ||
+                                      !upstreamModelUpdateCheckEnabled
+                                    }
                                     onCheckedChange={field.onChange}
                                   />
                                 </FormControl>
@@ -3580,6 +3961,7 @@ export function ChannelMutateDrawer({
                                   placeholder={t(
                                     'e.g., gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$'
                                   )}
+                                  disabled={!canEditSensitiveFields}
                                   {...field}
                                 />
                               </FormControl>
@@ -3638,7 +4020,12 @@ export function ChannelMutateDrawer({
             >
               {t('Cancel')}
             </SheetClose>
-            <Button form='channel-form' type='submit' disabled={isSubmitting}>
+            <Button
+              form='channel-form'
+              type='submit'
+              disabled={isSubmitting || !canSubmitForm}
+              title={canSubmitForm ? undefined : noPermissionMessage}
+            >
               {isSubmitting && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
@@ -3654,6 +4041,10 @@ export function ChannelMutateDrawer({
           value={form.watch('param_override') || ''}
           onOpenChange={setParamOverrideEditorOpen}
           onSave={(nextValue) => {
+            if (!canEditSensitiveFields) {
+              toast.error(noPermissionMessage)
+              return
+            }
             form.setValue('param_override', nextValue, {
               shouldDirty: true,
               shouldValidate: true,

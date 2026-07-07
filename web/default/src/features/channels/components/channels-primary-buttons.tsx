@@ -31,6 +31,7 @@ import {
   ArrowUpFromLine,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -50,6 +51,7 @@ import {
   handleTestAllChannels,
   handleUpdateAllBalances,
 } from '../lib'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import { useChannels } from './channels-provider'
 
 export function ChannelsPrimaryButtons() {
@@ -64,6 +66,14 @@ export function ChannelsPrimaryButtons() {
   } = useChannels()
   const queryClient = useQueryClient()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const handleTagModeToggle = (checked: boolean) => {
     localStorage.setItem('enable-tag-mode', String(checked))
@@ -104,7 +114,17 @@ export function ChannelsPrimaryButtons() {
         </div>
 
         {/* Create Channel */}
-        <Button onClick={() => setOpen('create-channel')} size='sm'>
+        <Button
+          onClick={() => {
+            if (!guardPermission(permissions.canSensitiveWrite)) return
+            setOpen('create-channel')
+          }}
+          size='sm'
+          disabled={!permissions.canSensitiveWrite}
+          title={
+            permissions.canSensitiveWrite ? undefined : noPermissionMessage
+          }
+        >
           <Plus className='h-4 w-4' />
           <span className='max-sm:hidden'>{t('Create Channel')}</span>
           <span className='sm:hidden'>{t('Create')}</span>
@@ -139,8 +159,10 @@ export function ChannelsPrimaryButtons() {
 
             <DropdownMenuItem
               onClick={() => {
+                if (!guardPermission(permissions.canOperate)) return
                 handleTestAllChannels(queryClient)
               }}
+              disabled={!permissions.canOperate}
             >
               {t('Test All Channels')}
               <DropdownMenuShortcut>
@@ -150,8 +172,10 @@ export function ChannelsPrimaryButtons() {
 
             <DropdownMenuItem
               onClick={() => {
+                if (!guardPermission(permissions.canOperate)) return
                 handleUpdateAllBalances(queryClient)
               }}
+              disabled={!permissions.canOperate}
             >
               {t('Update All Balances')}
               <DropdownMenuShortcut>
@@ -162,8 +186,11 @@ export function ChannelsPrimaryButtons() {
             <DropdownMenuSeparator />
 
             <DropdownMenuItem
-              onClick={() => upstream.detectAllUpdates()}
-              disabled={upstream.detectAllLoading}
+              onClick={() => {
+                if (!guardPermission(permissions.canOperate)) return
+                upstream.detectAllUpdates()
+              }}
+              disabled={!permissions.canOperate || upstream.detectAllLoading}
             >
               {t('Detect All Upstream Updates')}
               <DropdownMenuShortcut>
@@ -172,8 +199,13 @@ export function ChannelsPrimaryButtons() {
             </DropdownMenuItem>
 
             <DropdownMenuItem
-              onClick={() => upstream.applyAllUpdates()}
-              disabled={upstream.applyAllLoading}
+              onClick={() => {
+                if (!guardPermission(permissions.canSensitiveWrite)) return
+                upstream.applyAllUpdates()
+              }}
+              disabled={
+                !permissions.canSensitiveWrite || upstream.applyAllLoading
+              }
             >
               {t('Apply All Upstream Updates')}
               <DropdownMenuShortcut>
@@ -185,11 +217,13 @@ export function ChannelsPrimaryButtons() {
 
             <DropdownMenuItem
               onClick={() => {
+                if (!guardPermission(permissions.canOperate)) return
                 handleFixAbilities(queryClient, (_result) => {
                   // eslint-disable-next-line no-console
                   console.log('Fix abilities result:', _result)
                 })
               }}
+              disabled={!permissions.canOperate}
             >
               {t('Fix Abilities')}
               <DropdownMenuShortcut>
@@ -202,8 +236,10 @@ export function ChannelsPrimaryButtons() {
             <DropdownMenuItem
               onSelect={(e) => {
                 e.preventDefault()
+                if (!guardPermission(permissions.canSensitiveWrite)) return
                 setShowDeleteDialog(true)
               }}
+              disabled={!permissions.canSensitiveWrite}
               className='text-destructive focus:text-destructive'
             >
               {t('Delete All Disabled')}
@@ -222,6 +258,7 @@ export function ChannelsPrimaryButtons() {
         desc='This will permanently delete all manually and automatically disabled channels. This action cannot be undone.'
         destructive
         handleConfirm={() => {
+          if (!guardPermission(permissions.canSensitiveWrite)) return
           handleDeleteAllDisabled(queryClient, (_count) => {
             // eslint-disable-next-line no-console
             console.log(`Deleted ${_count} channels`)

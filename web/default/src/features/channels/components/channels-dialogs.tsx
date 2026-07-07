@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { useTranslation } from 'react-i18next'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import { useChannels } from './channels-provider'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
 import { ChannelAccountPoolDialog } from './dialogs/channel-account-pool-dialog'
@@ -30,7 +32,9 @@ import { UpstreamUpdateDialog } from './dialogs/upstream-update-dialog'
 import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
 
 export function ChannelsDialogs() {
+  const { t } = useTranslation()
   const { open, setOpen, currentRow, upstream } = useChannels()
+  const permissions = useChannelPermissions()
 
   return (
     <>
@@ -102,6 +106,8 @@ export function ChannelsDialogs() {
         removeModels={upstream.removeModels}
         preferredTab={upstream.preferredTab}
         confirmLoading={upstream.applyLoading}
+        canConfirm={permissions.canSensitiveWrite}
+        disabledReason={t("You don't have necessary permission")}
         onConfirm={upstream.applyUpdates}
         onCancel={upstream.closeModal}
       />

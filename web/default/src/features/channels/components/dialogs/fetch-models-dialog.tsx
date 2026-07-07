@@ -51,6 +51,7 @@ import {
   normalizeModelName,
   parseModelsString,
 } from '../../lib'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
 function normalizeModelNameList(models: readonly string[]): string[] {
@@ -82,6 +83,8 @@ export function FetchModelsDialog({
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [searchKeyword, setSearchKeyword] = useState('')
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   // Parse existing models
   const existingModels = useMemo(
@@ -129,6 +132,10 @@ export function FetchModelsDialog({
 
   const handleFetchModels = async () => {
     if (!currentRow) return
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
 
     setIsFetching(true)
     try {
@@ -154,6 +161,10 @@ export function FetchModelsDialog({
 
   const handleSave = async () => {
     if (!currentRow) return
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
 
     // If onModelsSelected callback is provided, use it (form filling mode)
     if (onModelsSelected) {
@@ -376,7 +387,8 @@ export function FetchModelsDialog({
             <Button
               className='mt-4'
               onClick={handleFetchModels}
-              disabled={isFetching}
+              disabled={isFetching || !permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
             >
               {t('Fetch Models')}
             </Button>
@@ -478,7 +490,11 @@ export function FetchModelsDialog({
               >
                 {t('Cancel')}
               </Button>
-              <Button onClick={handleSave} disabled={isSaving}>
+              <Button
+                onClick={handleSave}
+                disabled={isSaving || !permissions.canWrite}
+                title={permissions.canWrite ? undefined : noPermissionMessage}
+              >
                 {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {isSaving ? t('Saving...') : t('Save Models')}
               </Button>

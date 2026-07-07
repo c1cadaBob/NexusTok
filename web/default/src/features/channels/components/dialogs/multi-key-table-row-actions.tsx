@@ -23,12 +23,16 @@ import type { MultiKeyConfirmAction } from '../../types'
 type MultiKeyTableRowActionsProps = {
   keyIndex: number
   status: number
+  disabled?: boolean
+  disabledReason?: string
   onAction: (action: MultiKeyConfirmAction) => void
 }
 
 export function MultiKeyTableRowActions({
   keyIndex,
   status,
+  disabled = false,
+  disabledReason,
   onAction,
 }: MultiKeyTableRowActionsProps) {
   const { t } = useTranslation()
@@ -41,6 +45,8 @@ export function MultiKeyTableRowActions({
           variant='outline'
           size='sm'
           onClick={() => onAction({ type: 'disable', keyIndex })}
+          disabled={disabled}
+          title={disabled ? disabledReason : undefined}
         >
           {t('Disable')}
         </Button>
@@ -49,6 +55,8 @@ export function MultiKeyTableRowActions({
           variant='outline'
           size='sm'
           onClick={() => onAction({ type: 'enable', keyIndex })}
+          disabled={disabled}
+          title={disabled ? disabledReason : undefined}
         >
           {t('Enable')}
         </Button>
@@ -57,6 +65,8 @@ export function MultiKeyTableRowActions({
         variant='destructive'
         size='sm'
         onClick={() => onAction({ type: 'delete', keyIndex })}
+        disabled={disabled}
+        title={disabled ? disabledReason : undefined}
       >
         {t('Delete')}
       </Button>

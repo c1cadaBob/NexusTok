@@ -66,6 +66,7 @@ import {
   isDestructiveAction,
 } from '../../lib'
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
@@ -82,6 +83,8 @@ export function MultiKeyManageDialog({
   const { t } = useTranslation()
   const { currentRow } = useChannels()
   const queryClient = useQueryClient()
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   // Data state
   const [isLoading, setIsLoading] = useState(false)
@@ -159,6 +162,11 @@ export function MultiKeyManageDialog({
 
   const performAction = async () => {
     if (!confirmAction || !currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      setConfirmAction(null)
+      return
+    }
 
     setIsPerformingAction(true)
     try {
@@ -313,7 +321,19 @@ export function MultiKeyManageDialog({
                   <Button
                     variant='default'
                     size='sm'
-                    onClick={() => setConfirmAction({ type: 'enable-all' })}
+                    onClick={() => {
+                      if (!permissions.canSensitiveWrite) {
+                        toast.error(noPermissionMessage)
+                        return
+                      }
+                      setConfirmAction({ type: 'enable-all' })
+                    }}
+                    disabled={!permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                    }
                   >
                     <Power className='mr-2 h-4 w-4' />
                     {t('Enable All')}
@@ -324,7 +344,19 @@ export function MultiKeyManageDialog({
                   <Button
                     variant='destructive'
                     size='sm'
-                    onClick={() => setConfirmAction({ type: 'disable-all' })}
+                    onClick={() => {
+                      if (!permissions.canSensitiveWrite) {
+                        toast.error(noPermissionMessage)
+                        return
+                      }
+                      setConfirmAction({ type: 'disable-all' })
+                    }}
+                    disabled={!permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                    }
                   >
                     <PowerOff className='mr-2 h-4 w-4' />
                     {t('Disable All')}
@@ -335,8 +367,18 @@ export function MultiKeyManageDialog({
                   <Button
                     variant='destructive'
                     size='sm'
-                    onClick={() =>
+                    onClick={() => {
+                      if (!permissions.canSensitiveWrite) {
+                        toast.error(noPermissionMessage)
+                        return
+                      }
                       setConfirmAction({ type: 'delete-disabled' })
+                    }}
+                    disabled={!permissions.canSensitiveWrite}
+                    title={
+                      permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
                     }
                   >
                     <Trash2 className='mr-2 h-4 w-4' />
@@ -391,6 +433,8 @@ export function MultiKeyManageDialog({
                             <MultiKeyTableRowActions
                               keyIndex={key.index}
                               status={key.status}
+                              disabled={!permissions.canSensitiveWrite}
+                              disabledReason={noPermissionMessage}
                               onAction={setConfirmAction}
                             />
                           </TableCell>
