@@ -276,6 +276,210 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 6. 仪表盘和日志体验：flow 数据、移动端卡片、统一筛选工具条。
 7. Relay/Playground 深水区：逐协议引入，逐项测试，不做大爆炸迁移。
 
+## 附录：精确差异清单
+
+### 默认前端路由文件
+
+NexusTok 独有：
+
+| 文件 | 对应页面 | 处理 |
+|------|----------|------|
+| `_authenticated/account-pool/index.tsx` | `/account-pool` | 保留，账号池一级入口。 |
+| `_authenticated/account-pool/$section.tsx` | `/account-pool/:section` | 保留，承载 overview/credentials/groups/history。 |
+| `_authenticated/pricing-settings/index.tsx` | `/pricing-settings` | 保留，Root 组倍率和工具价格页。 |
+
+`new-api-main` 独有：
+
+| 文件 | 对应页面 | 处理 |
+|------|----------|------|
+| `(auth)/register.tsx` | `/register` 兼容注册页 | 低优先级，仅做旧链接兼容时迁移。 |
+| `_authenticated/system-info/index.tsx` | `/system-info` | 建议 P1 原生化，引入系统实例和系统任务观测。 |
+
+两边共有的默认前端路由文件如下，迁移时应以“保留 NexusTok 业务语义，吸收 new-api-main 组件化实现”为原则：
+
+```text
+(auth)/forgot-password.tsx
+(auth)/oauth.tsx
+(auth)/otp.tsx
+(auth)/reset.tsx
+(auth)/route.tsx
+(auth)/sign-in.tsx
+(auth)/sign-up.tsx
+(auth)/user/reset.tsx
+(errors)/401.tsx
+(errors)/403.tsx
+(errors)/404.tsx
+(errors)/500.tsx
+(errors)/503.tsx
+__root.tsx
+_authenticated/channels/index.tsx
+_authenticated/chat/$chatId.tsx
+_authenticated/chat2link.tsx
+_authenticated/dashboard/$section.tsx
+_authenticated/dashboard/index.tsx
+_authenticated/errors/$error.tsx
+_authenticated/keys/index.tsx
+_authenticated/models/$section.tsx
+_authenticated/models/index.tsx
+_authenticated/playground/index.tsx
+_authenticated/profile/index.tsx
+_authenticated/redemption-codes/index.tsx
+_authenticated/route.tsx
+_authenticated/subscriptions/index.tsx
+_authenticated/system-settings/auth/$section.tsx
+_authenticated/system-settings/auth/index.tsx
+_authenticated/system-settings/billing/$section.tsx
+_authenticated/system-settings/billing/index.tsx
+_authenticated/system-settings/content/$section.tsx
+_authenticated/system-settings/content/index.tsx
+_authenticated/system-settings/index.tsx
+_authenticated/system-settings/models/$section.tsx
+_authenticated/system-settings/models/index.tsx
+_authenticated/system-settings/operations/$section.tsx
+_authenticated/system-settings/operations/index.tsx
+_authenticated/system-settings/route.tsx
+_authenticated/system-settings/security/$section.tsx
+_authenticated/system-settings/security/index.tsx
+_authenticated/system-settings/site/$section.tsx
+_authenticated/system-settings/site/index.tsx
+_authenticated/usage-logs/$section.tsx
+_authenticated/usage-logs/index.tsx
+_authenticated/users/index.tsx
+_authenticated/wallet/index.tsx
+about/index.tsx
+console/log.tsx
+console/topup.tsx
+index.tsx
+oauth/$provider.tsx
+pricing/$modelId/index.tsx
+pricing/index.tsx
+privacy-policy.tsx
+rankings/index.tsx
+setup/index.tsx
+user-agreement.tsx
+```
+
+### 默认前端 feature 目录
+
+NexusTok 独有：
+
+| 目录 | 状态 | 处理 |
+|------|------|------|
+| `account-pool` | 已有实际页面、接口和组件 | 核心保留。 |
+| `pricing-settings` | 已有 Root 页面 | 保留并与系统设置计费页保持边界。 |
+| `request-rules` | 当前为空目录 | 不计为已实现页面，后续若做请求规则编辑器再补齐。 |
+
+`new-api-main` 独有：
+
+| 目录 | 状态 | 处理 |
+|------|------|------|
+| `system-info` | 已有实例面板和系统任务面板 | P1 原生化。 |
+
+两边共有 feature 目录：
+
+```text
+about
+auth
+channels
+chat
+dashboard
+errors
+home
+keys
+legal
+models
+performance-metrics
+playground
+pricing
+profile
+rankings
+redemption-codes
+setup
+subscriptions
+system-settings
+usage-logs
+users
+wallet
+```
+
+其中差异较大的共有目录：
+
+| 目录 | new-api-main 优势 | NexusTok 优势 | 建议 |
+|------|------------------|---------------|------|
+| `channels` | 表单 section 拆分、移动端卡片、权限上下文 | 账号池绑定、渠道账号、Codex OAuth | 先吸收表单结构和移动端卡片。 |
+| `dashboard` | `flow` 图表和选择逻辑 | 现有总览和模型数据 | 后端补 `/api/data/flow` 后迁移。 |
+| `playground` | 分层更清晰，stream/message/input/storage 工具完整 | 已接入当前项目调试链路 | 按工具函数渐进迁移。 |
+| `subscriptions` | 余额支付、钱包溢出、重置弹窗 | 已有订阅基础管理 | 后端字段先行。 |
+| `system-settings` | routing-reliability、token-limit、Waffo Pancake 绑定体验 | 独立计费页和 NexusTok 设置结构 | 逐 section 合并。 |
+| `usage-logs` | 移动端卡片、统一筛选工具条 | 账号池日志体系 | 将账号池日志也纳入一致筛选体验。 |
+
+### 经典前端页面
+
+| 差异 | 文件 | 处理 |
+|------|------|------|
+| NexusTok 独有账号池页 | `web/classic/src/pages/AccountPool/index.jsx` | 保留，classic 兼容入口。 |
+| NexusTok 独有计费设置页 | `web/classic/src/pages/PricingSetting/index.jsx` | 保留，Root 计费管理入口。 |
+| `new-api-main` 没有独有 classic 页面文件 | - | 不需要从 classic 迁移页面，只可参考退场提示和主题 helper。 |
+
+### 后端独有文件：NexusTok
+
+| 范围 | 文件 | 对应能力 |
+|------|------|----------|
+| controller | `account_pool.go`、`account_pool_*_test.go`、`account_pool_proxy.go`、`account_pool_usage_proxy.go` | 账号池管理、检测、导出、代理、审计。 |
+| controller | `channel_account.go`、`channel_account_pool_test.go` | 渠道账号与账号池绑定。 |
+| controller | `codex_oauth.go`、`discord.go`、`github.go`、`linuxdo.go`、`oidc.go` | OAuth 和 Codex 接入。 |
+| controller | `models_dev_sync_task.go`、`model_sync_test.go` | models.dev 同步任务。 |
+| model | `account_pool.go`、`account_pool_health.go`、`account_pool_state_log_audit_test.go` | 账号池数据模型和审计。 |
+| model | `channel_account.go`、`model_pricing_config.go` | 渠道账号和定价配置。 |
+| service | `account_pool_*`、`accountauth/*`、`account_pool_task_limit.go` | 账号池选择、刷新、认证文件、检测、任务限制。 |
+| service | `channel_account_*`、`codex_oauth_test.go` | 渠道账号选择与 Codex OAuth 测试。 |
+| constant | `channel_credential_mode.go` | 渠道凭据模式枚举。 |
+
+### 后端独有文件：new-api-main
+
+| 范围 | 文件 | 对应能力 | 原生化优先级 |
+|------|------|----------|--------------|
+| router | `authz-router.go` | 权限 catalog API | P1 |
+| router | `channel-router.go`、`channel_router_test.go` | 渠道路由权限表和测试 | P1 |
+| controller | `audit.go`、`authz.go`、`channel_authz.go` | 审计、权限 catalog、渠道敏感字段分类 | P1 |
+| controller | `system_info.go`、`system_task.go`、`system_task_handlers.go` | 系统信息和系统任务 API | P1 |
+| controller | `subscription_payment_waffo_pancake.go` | 订阅 Waffo Pancake 支付 | P2 |
+| controller | `usedata_flow_test.go` | 流量账本接口测试 | P2 |
+| model | `authz_role.go`、`casbin_rule.go` | 权限存储 | P1 |
+| model | `system_instance.go`、`system_task.go` | 系统实例和任务 | P1 |
+| model | `locking.go` | 通用锁能力 | P1/P2，需确认是否可被 SystemTaskLock 覆盖。 |
+| model | `usedata_flow.go` | 分组/渠道/用户流量聚合 | P2 |
+| model | `clickhouse_log_test.go` | ClickHouse 日志兼容测试 | P3/可选 |
+| service | `authz/*` | Casbin 权限服务 | P1 |
+| service | `system_instance.go`、`system_task.go` | 心跳和任务 runner | P1 |
+| service | `protected_fetch_client.go` | SSRF 保护 HTTP client | P1 |
+| service | `relayconvert/*` | Relay 格式转换整理 | P3 |
+| service | `quota_saturation_test.go` | 额度饱和回归测试 | P2 |
+| service | `task_polling_test.go` | 异步任务轮询测试 | P2 |
+
+### API 差异摘要
+
+NexusTok 独有 API 族：
+
+| API 前缀 | 能力 | 处理 |
+|----------|------|------|
+| `/api/account-pool/*` | 原生账号池、认证文件、组、账号、检测、健康、状态审计、使用日志 | 保留并扩展权限。 |
+| `/api/channel/:id/accounts*` | 渠道账号管理 | 保留，与账号池形成互补。 |
+| `/api/channel/codex/oauth/*`、`/api/channel/:id/codex/oauth/*` | Codex 渠道 OAuth | 保留，补 reset-credits 查询。 |
+
+`new-api-main` 独有或更完整 API 族：
+
+| API 前缀 | 能力 | 处理 |
+|----------|------|------|
+| `/api/authz/catalog` | 权限资源/角色 catalog | P1 引入。 |
+| `/api/system-task/*` | 后台任务创建、查询、当前任务 | P1 引入并承接账号池检测。 |
+| `/api/system-info/instances` | 多节点实例心跳 | P1 引入。 |
+| `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | P2 引入。 |
+| `/api/subscription/balance/pay` | 余额购买订阅 | P2 引入。 |
+| `/api/subscription/admin/*/reset` | 订阅重置 | P2 引入。 |
+| `/api/waffo-pancake/webhook/:env` | Waffo Pancake 分环境 webhook | 评估是否替换 NexusTok 当前 webhook 形态。 |
+| `/api/option/waffo-pancake/*` | Waffo Pancake catalog/pair/product 绑定 | P2 引入为设置向导。 |
+
 ## 验收建议
 
 每个功能点迁移时至少满足：
