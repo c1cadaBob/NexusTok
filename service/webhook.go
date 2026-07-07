@@ -9,7 +9,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -34,6 +33,7 @@ type WebhookPayload struct {
 // 参数:
 //   - secret: 签名密钥
 //   - payload: 待签名的负载数据
+//
 // 返回值:
 //   - string: 十六进制编码的签名字符串
 func generateSignature(secret string, payload []byte) string {
@@ -50,6 +50,7 @@ func generateSignature(secret string, payload []byte) string {
 //   - webhookURL: Webhook 接收地址
 //   - secret: 签名密钥（可为空，表示不签名）
 //   - data: 通知数据
+//
 // 返回值:
 //   - error: 发送失败时返回错误
 func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error {
@@ -69,7 +70,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 	}
 
 	// 序列化负载
-	payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := common.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal webhook payload: %v", err)
 	}
@@ -128,8 +129,9 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 			req.Header.Set("X-Webhook-Signature", signature)
 		}
 
-		// 发送请求
-		client := GetHttpClient()
+		// 发送请求。Webhook URL 由用户配置，必须使用受保护 client，在 Dial 阶段
+		// 再次校验 DNS 解析结果，避免 URL 预校验后的 DNS rebinding。
+		client := GetSSRFProtectedHTTPClient()
 		resp, err = client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to send webhook request: %v", err)

@@ -7,7 +7,6 @@ package service
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -74,6 +73,7 @@ func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 //   - userEmail: 用户邮箱地址（Email 渠道使用）
 //   - userSetting: 用户通知设置（包含渠道类型、Webhook URL 等）
 //   - data: 通知数据（标题、内容、类型等）
+//
 // 返回值:
 //   - error: 发送失败时返回错误
 func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify) error {
@@ -138,6 +138,7 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 // 参数:
 //   - userEmail: 收件人邮箱地址
 //   - data: 通知数据
+//
 // 返回值:
 //   - error: 发送失败时返回错误
 func sendEmailNotify(userEmail string, data dto.Notify) error {
@@ -156,6 +157,7 @@ func sendEmailNotify(userEmail string, data dto.Notify) error {
 // 参数:
 //   - barkURL: Bark 推送 URL（可包含模板变量）
 //   - data: 通知数据
+//
 // 返回值:
 //   - error: 发送失败时返回错误
 func sendBarkNotify(barkURL string, data dto.Notify) error {
@@ -211,8 +213,9 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 		// 设置User-Agent
 		req.Header.Set("User-Agent", "OneAPI-Bark-Notify/1.0")
 
-		// 发送请求
-		client := GetHttpClient()
+		// 发送请求。Bark URL 由用户配置，必须使用受保护 client，在 Dial 阶段
+		// 再次校验 DNS 解析结果，避免 URL 预校验后的 DNS rebinding。
+		client := GetSSRFProtectedHTTPClient()
 		resp, err = client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to send bark request: %v", err)
@@ -236,6 +239,7 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 //   - gotifyToken: Gotify 应用 Token
 //   - priority: 消息优先级（0-10）
 //   - data: 通知数据
+//
 // 返回值:
 //   - error: 发送失败时返回错误
 func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data dto.Notify) error {
@@ -268,7 +272,7 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 	}
 
 	// 序列化为 JSON
-	payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := common.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal gotify payload: %v", err)
 	}
@@ -316,8 +320,9 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		req.Header.Set("User-Agent", "NexusTok-Gotify-Notify/1.0")
 
-		// 发送请求
-		client := GetHttpClient()
+		// 发送请求。Gotify URL 由用户配置，必须使用受保护 client，在 Dial 阶段
+		// 再次校验 DNS 解析结果，避免 URL 预校验后的 DNS rebinding。
+		client := GetSSRFProtectedHTTPClient()
 		resp, err = client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to send gotify request: %v", err)

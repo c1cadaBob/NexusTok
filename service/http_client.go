@@ -34,6 +34,7 @@ var (
 // 参数:
 //   - req: 当前重定向请求
 //   - via: 已经过的请求列表
+//
 // 返回值:
 //   - error: 安全检查失败或重定向次数超限时返回错误
 func checkRedirect(req *http.Request, via []*http.Request) error {
@@ -74,6 +75,7 @@ func InitHttpClient() {
 			CheckRedirect: checkRedirect,
 		}
 	}
+	InitSSRFProtectedHTTPClient()
 }
 
 // GetHttpClient 获取默认的 HTTP 客户端实例。

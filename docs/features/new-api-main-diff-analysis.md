@@ -65,7 +65,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用。 |
 | 顶栏模块鉴权 | `middleware/header_nav.go` | NexusTok 默认价格/排行更偏 TryUserAuth | 让公开页模块支持 `enabled + requireAuth`，页面隐藏和接口鉴权一致。 |
 | 额度饱和保护 | `common/quota_math.go`、`QuotaClamp`、相关测试 | NexusTok 未见同等集中实现 | 将所有计费路径的裸 `int(...)`、`math.Round(...)` 转换收敛到统一 helper，并把饱和事件写入 admin-only 日志。 |
-| 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 缺少或分散 | 所有远程拉取 URL、Discovery、模型同步、文件解析入口统一走 SSRF 保护客户端。 |
+| 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 已部分落地 | 已新增用户可控 URL 专用 protected fetch client，并接入下载、Webhook、Bark/Gotify 通知；Relay 全局 client 暂不替换，避免误伤内网模型渠道。 |
 | ClickHouse 日志兼容测试 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 缺少依赖 | 仅在明确支持 ClickHouse 日志库时引入；否则先记录为可选能力，避免增加部署复杂度。 |
 | 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 缺少 | 可用于账号池和渠道成本归因，建议接入仪表盘的流量 Sankey 图。 |
 | Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*` 且测试较少 | 逐步整理转换包命名和测试，不一次性改热路径。 |
@@ -216,7 +216,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ### P1：安全边界
 
 1. 增加匿名请求体限制，并挂到 setup、register、login、2FA login、passkey login、password reset、OAuth bind、Webhook。
-2. 增加 SSRF 保护客户端，所有外部 URL 拉取必须走统一 client。
+2. 增加 SSRF 保护客户端，所有用户可控外部 URL 拉取必须走统一 client；Relay 上游地址保留普通 client，避免误伤合法内网渠道。
 3. 增加 HeaderNavModuleAuth，让公开页面的可见性和接口访问权限一致。
 4. 为渠道和账号池敏感字段做 fail-closed 分类，新增字段未分类时默认需要 `sensitive_write`。
 
@@ -499,3 +499,4 @@ NexusTok 独有 API 族：
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
 | 2026-07-07 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go`、`router/api-router.go` | 吸收 new-api-main 的匿名入口保护，并补齐 NexusTok 现有 Waffo Pancake webhook 路由。 |
+| 2026-07-07 | 受保护 Fetch / SSRF | `common/ssrf_protection.go`、`service/protected_fetch_client.go`、`service/download.go`、`service/webhook.go`、`service/user_notify.go` | 为用户可控 URL 增加 Dial 阶段 DNS 解析校验，阻断 DNS rebinding；不替换 Relay 全局 client。 |

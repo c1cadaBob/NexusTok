@@ -24,8 +24,8 @@
 | 差异类别 | 文件数 | 说明 |
 |----------|--------|------|
 | NexusTok 独有 | 1052 | 主要来自内嵌 `modules/`、账号池、渠道账号、文档、默认前端账号池/计费页，以及本次新增的差异索引脚本和请求体限制测试。 |
-| new-api-main 独有 | 254 | 主要来自 Authz、SystemTask、SystemInfo、QuotaMath、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。 |
-| 同路径但内容不同 | 1849 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异。 |
+| new-api-main 独有 | 251 | 主要来自 Authz、SystemTask、SystemInfo、QuotaMath、Flow、Waffo Pancake catalog/pair 体验、DataTable/RichContent/Playground 重构。 |
+| 同路径但内容不同 | 1852 | 主要来自默认前端、classic 前端、Relay、controller、service、model、common、setting 等共享模块的实现差异。 |
 
 ## 重新生成清单
 
@@ -80,11 +80,11 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | 顶层目录 | 文件数 | 主要含义 |
 |----------|--------|----------|
 | `web` | 151 | SystemInfo 页面、DataTable 分层、RichContent、Playground 重构、Waffo Pancake 设置向导、UsageLogs 移动端卡片。 |
-| `service` | 26 | Authz、SystemTask、SystemInstance、ProtectedFetch、RelayConvert、额度饱和测试。 |
+| `service` | 24 | Authz、SystemTask、SystemInstance、RelayConvert、额度饱和测试等。ProtectedFetch 已按 NexusTok 边界原生化。 |
 | `relay` | 21 | OpenAI Realtime/Image、Gemini Responses、Advanced Custom、更多 Relay 测试。 |
 | `model` | 15 | Authz、Casbin、SystemTask、SystemInstance、Flow、Locking、ClickHouse 测试。 |
 | `controller` | 10 | Authz、ChannelAuthz、SystemTask、SystemInfo、审计、订阅 Waffo Pancake 等。 |
-| `common` | 7 | QuotaMath、节点身份、邮件 NTLM 等。匿名请求体限制已在 NexusTok 落地，但实现语义按本项目调整。 |
+| `common` | 6 | QuotaMath、节点身份、邮件 NTLM 等。匿名请求体限制和部分 SSRF helper 已在 NexusTok 落地，但实现语义按本项目调整。 |
 | `middleware` | 3 | 审计、HeaderNav 等。匿名请求体限制已在 NexusTok 落地，但测试仍按本项目补充。 |
 | `router` | 3 | Authz 路由、Channel 路由拆分及测试。 |
 | 其它 | 18 | 多语言 README、Electron 文档、poster、计费表达式测试等。 |
@@ -96,9 +96,9 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 | `web` | 1262 | 绝大部分页面/组件同路径但实现不同，需要按页面和 feature 逐项吸收。 |
 | `relay` | 196 | Relay 能力、请求转换、测试覆盖和上游协议支持差异。 |
 | `controller` | 66 | 管理接口、支付、用户、渠道、日志、模型同步等业务差异。 |
-| `service` | 56 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异。 |
+| `service` | 58 | 计费、订阅、任务、OAuth、Relay 转换和外部请求安全等实现差异。 |
 | `setting` | 49 | 系统设置、计费设置、支付设置、模型设置差异。 |
-| `common` | 47 | 公共工具、SSRF、请求体、配额、环境初始化差异。 |
+| `common` | 48 | 公共工具、SSRF、请求体、配额、环境初始化差异；SSRF 已增加 Dial 阶段保护 helper，但与 new-api-main 仍有实现边界差异。 |
 | `model` | 38 | 数据模型、日志、订阅、用户、渠道、任务等差异。 |
 | `dto` | 29 | 请求/响应 DTO 差异，迁移时必须遵守显式零值规则。 |
 | `middleware` | 22 | 鉴权、限流、日志、请求处理等中间件差异。 |
@@ -111,10 +111,10 @@ NEW_API_ROOT=/path/to/new-api-main ./scripts/compare-new-api-main.sh
 |------|---------------|-------------------|------------|----------|
 | `router` | 0 | 3 | 6 | 引入 Authz/Channel 路由拆分前，保持现有路由稳定。 |
 | `controller` | 20 | 10 | 66 | 账号池控制器保留；new-api-main 治理类控制器按 P1/P2 原生化。 |
-| `service` | 34 | 26 | 56 | 账号池服务保留；Authz/SystemTask/ProtectedFetch/QuotaMath 分批迁移。 |
+| `service` | 34 | 24 | 58 | 账号池服务保留；ProtectedFetch 已按用户可控 URL 边界迁移，Authz/SystemTask/QuotaMath 继续分批推进。 |
 | `model` | 7 | 15 | 38 | 迁移新模型时必须确认 SQLite/MySQL/PostgreSQL AutoMigrate 兼容。 |
 | `middleware` | 4 | 3 | 22 | 请求体限制已吸收；审计和 HeaderNav 需要配套权限/设置。 |
-| `common` | 3 | 7 | 47 | 请求体限制已吸收；QuotaMath、SSRF/Fetch 安全仍为优先吸收项。 |
+| `common` | 3 | 6 | 48 | 请求体限制已吸收；SSRF/Fetch 安全已补 Dial 阶段保护；QuotaMath 仍为优先吸收项。 |
 | `relay` | 0 | 21 | 196 | 逐协议迁移，必须补测试并检查 StreamOptions 支持。 |
 | `setting` | 0 | 1 | 49 | 不直接覆盖设置结构，按页面和 API 逐项合并。 |
 | `pkg` | 0 | 1 | 18 | 涉及计费表达式时继续遵守 `pkg/billingexpr/expr.md`。 |
