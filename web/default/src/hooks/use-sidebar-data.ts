@@ -35,6 +35,7 @@ import {
   Settings,
   Calculator,
   DatabaseZap,
+  ServerCog,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
@@ -148,6 +149,11 @@ export function useSidebarData(): SidebarData {
                   title: t('Group & Tool Pricing'),
                   url: '/pricing-settings',
                   icon: Calculator,
+                },
+                {
+                  title: t('System Info'),
+                  url: '/system-info',
+                  icon: ServerCog,
                 },
               ]
             : []),
