@@ -44,7 +44,7 @@ import type {
   TagOperationParams,
 } from './types'
 
-// Extended API config types
+// 扩展 API 请求配置，主要用于跳过全局业务错误处理或禁用重复请求合并。
 interface ExtendedApiConfig extends AxiosRequestConfig {
   skipBusinessError?: boolean
   disableDuplicate?: boolean
@@ -76,6 +76,10 @@ export type CodexUsageResponse = {
   upstream_status?: number
   data?: Record<string, unknown>
 }
+
+export type CodexResetCreditsResponse = CodexUsageResponse
+
+export type CodexUsageResetResponse = CodexUsageResponse
 
 export type CodexCredentialRefreshResponse = {
   success: boolean
@@ -336,7 +340,7 @@ export async function importMultiKeyToChannelAccounts(
 }
 
 // ============================================================================
-// Codex Channel Operations
+// Codex 渠道操作
 // ============================================================================
 
 export async function startCodexOAuth(): Promise<CodexOAuthStartResponse> {
@@ -377,6 +381,35 @@ export async function getCodexUsage(
     disableDuplicate: true,
   }
   const res = await api.get(`/api/channel/${channelId}/codex/usage`, config)
+  return res.data
+}
+
+export async function getCodexResetCredits(
+  channelId: number
+): Promise<CodexResetCreditsResponse> {
+  const config: ExtendedApiConfig = {
+    skipBusinessError: true,
+    disableDuplicate: true,
+  }
+  const res = await api.get(
+    `/api/channel/${channelId}/codex/usage/reset-credits`,
+    config
+  )
+  return res.data
+}
+
+export async function resetCodexUsage(
+  channelId: number
+): Promise<CodexUsageResetResponse> {
+  const config: ExtendedApiConfig = {
+    skipBusinessError: true,
+    disableDuplicate: true,
+  }
+  const res = await api.post(
+    `/api/channel/${channelId}/codex/usage/reset`,
+    {},
+    config
+  )
   return res.data
 }
 
