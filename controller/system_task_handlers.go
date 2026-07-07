@@ -18,6 +18,7 @@ import (
 
 func init() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
+	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 }
 
 // channelTestHandler 执行批量渠道测试任务。
@@ -65,6 +66,67 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// modelUpdateHandler 执行上游模型更新巡检任务。
+//
+// 定时任务继续读取原有环境变量控制开关和间隔；执行迁入 SystemTask 后可以复用
+// 数据库租约、防重复触发、进度状态和任务历史。手动 detect-all 会创建 Manual=true
+// 的任务，强制检测但不自动应用模型。
+type modelUpdateHandler struct{}
+
+func (modelUpdateHandler) Type() string {
+	return model.SystemTaskTypeModelUpdate
+}
+
+func (modelUpdateHandler) Enabled() bool {
+	return common.GetEnvOrDefaultBool("CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_ENABLED", true)
+}
+
+func (modelUpdateHandler) Interval() time.Duration {
+	intervalMinutes := common.GetEnvOrDefault(
+		"CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_INTERVAL_MINUTES",
+		channelUpstreamModelUpdateTaskDefaultIntervalMinutes,
+	)
+	if intervalMinutes < 1 {
+		intervalMinutes = channelUpstreamModelUpdateTaskDefaultIntervalMinutes
+	}
+	return time.Duration(intervalMinutes) * time.Minute
+}
+
+func (modelUpdateHandler) NewPayload() any {
+	return nil
+}
+
+// modelUpdateTaskPayload 控制一次 model_update 任务。
+//
+// Manual=false 的定时巡检会尊重渠道最小检查间隔，并允许开启自动同步的渠道自动添加
+// 新模型；Manual=true 的手动检测会强制重新检查所有启用该能力的渠道，但只暂存变更，
+// 由管理员在渠道页显式应用。
+type modelUpdateTaskPayload struct {
+	Manual bool `json:"manual,omitempty"`
+}
+
+func (modelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := modelUpdateTaskPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, payload.Manual, !payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
+	if summary.Cancelled {
+		runErr := ctx.Err()
+		if runErr == nil {
+			runErr = context.Canceled
+		}
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, runErr)
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)

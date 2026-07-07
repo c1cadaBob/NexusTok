@@ -17,13 +17,13 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -72,9 +72,7 @@ var channelUpstreamModelUpdateSelectFields = []string{
 
 // 全局变量
 var (
-	channelUpstreamModelUpdateTaskOnce    sync.Once     // 确保任务只启动一次
-	channelUpstreamModelUpdateTaskRunning atomic.Bool   // 任务是否正在运行
-	channelUpstreamModelUpdateNotifyState = struct {    // 通知状态
+	channelUpstreamModelUpdateNotifyState = struct { // 通知状态
 		sync.Mutex
 		lastNotifiedAt      int64 // 上次通知时间
 		lastChangedChannels int   // 上次变更渠道数
@@ -115,6 +113,20 @@ type upstreamModelUpdateChannelSummary struct {
 	ChannelName string // 渠道名称
 	AddCount    int    // 新增模型数
 	RemoveCount int    // 删除模型数
+}
+
+// upstreamModelUpdateSummary 记录一次模型更新巡检的汇总结果。
+//
+// 该结果会写入 model_update 系统任务历史，Root 管理员可以在系统信息页追踪本次巡检
+// 覆盖了多少渠道、发现了多少新增/删除模型、自动同步了多少模型以及失败渠道数量。
+type upstreamModelUpdateSummary struct {
+	CheckedChannels      int  `json:"checked_channels"`
+	ChangedChannels      int  `json:"changed_channels"`
+	DetectedAddModels    int  `json:"detected_add_models"`
+	DetectedRemoveModels int  `json:"detected_remove_models"`
+	FailedChannels       int  `json:"failed_channels"`
+	AutoAddedModels      int  `json:"auto_added_models"`
+	Cancelled            bool `json:"cancelled,omitempty"`
 }
 
 // normalizeModelNames 标准化模型名称列表
@@ -587,20 +599,13 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 	return builder.String()
 }
 
-// runChannelUpstreamModelUpdateTaskOnce 执行一次上游模型更新巡检
+// runChannelUpstreamModelUpdateTaskOnce 执行一次上游模型更新巡检。
 //
-// 流程：
-// 1. 分批查询所有启用的渠道
-// 2. 对每个渠道检查模型变更
-// 3. 如果启用自动同步，自动添加新模型
-// 4. 刷新运行时缓存
-// 5. 发送通知（如果需要）
-func runChannelUpstreamModelUpdateTaskOnce() {
-	if !channelUpstreamModelUpdateTaskRunning.CompareAndSwap(false, true) {
-		return
-	}
-	defer channelUpstreamModelUpdateTaskRunning.Store(false)
-
+// scheduled 任务传入 force=false、allowAutoApply=true：尊重每个渠道的最小检查间隔，
+// 并允许开启自动同步的渠道直接追加新模型。手动“检测全部”传入 force=true、
+// allowAutoApply=false：强制重新检测，但只暂存变更，等待管理员显式应用。
+// report 用于 SystemTask 进度展示，ctx 取消时会在批次/渠道边界尽快停止。
+func runChannelUpstreamModelUpdateTaskOnce(ctx context.Context, force bool, allowAutoApply bool, report func(processed, total int)) (upstreamModelUpdateSummary, error) {
 	checkedChannels := 0
 	failedChannels := 0
 	failedChannelIDs := make([]int, 0)
@@ -612,9 +617,20 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 	addModelSamples := make([]string, 0)
 	removeModelSamples := make([]string, 0)
 	refreshNeeded := false
+	var queryErr error
+
+	var totalChannels int64
+	if err := model.DB.Model(&model.Channel{}).Where("status = ?", common.ChannelStatusEnabled).Count(&totalChannels).Error; err != nil {
+		totalChannels = 0
+	}
+	processed := 0
 
 	lastID := 0
+scanLoop:
 	for {
+		if ctx != nil && ctx.Err() != nil {
+			break
+		}
 		var channels []*model.Channel
 		query := model.DB.
 			Select(channelUpstreamModelUpdateSelectFields).
@@ -627,6 +643,7 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 		err := query.Find(&channels).Error
 		if err != nil {
 			common.SysLog(fmt.Sprintf("upstream model update task query failed: %v", err))
+			queryErr = err
 			break
 		}
 		if len(channels) == 0 {
@@ -638,6 +655,14 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			if channel == nil {
 				continue
 			}
+			if ctx != nil && ctx.Err() != nil {
+				break scanLoop
+			}
+
+			processed++
+			if report != nil {
+				report(processed, int(totalChannels))
+			}
 
 			settings := channel.GetOtherSettings()
 			if !settings.UpstreamModelUpdateCheckEnabled {
@@ -645,7 +670,7 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			}
 
 			checkedChannels++
-			modelsChanged, autoAdded, err := checkAndPersistChannelUpstreamModelUpdates(channel, &settings, false, true)
+			modelsChanged, autoAdded, err := checkAndPersistChannelUpstreamModelUpdates(channel, &settings, force, allowAutoApply)
 			if err != nil {
 				failedChannels++
 				failedChannelIDs = append(failedChannelIDs, channel.Id)
@@ -674,7 +699,15 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			autoAddedModels += autoAdded
 
 			if common.RequestInterval > 0 {
-				time.Sleep(common.RequestInterval)
+				if ctx == nil {
+					time.Sleep(common.RequestInterval)
+				} else {
+					select {
+					case <-ctx.Done():
+						break scanLoop
+					case <-time.After(common.RequestInterval):
+					}
+				}
 			}
 		}
 
@@ -683,8 +716,22 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 		}
 	}
 
+	if report != nil && queryErr == nil && (ctx == nil || ctx.Err() == nil) {
+		report(int(totalChannels), int(totalChannels))
+	}
+
 	if refreshNeeded {
 		refreshChannelRuntimeCache()
+	}
+
+	summary := upstreamModelUpdateSummary{
+		CheckedChannels:      checkedChannels,
+		ChangedChannels:      changedChannels,
+		DetectedAddModels:    detectedAddModels,
+		DetectedRemoveModels: detectedRemoveModels,
+		FailedChannels:       failedChannels,
+		AutoAddedModels:      autoAddedModels,
+		Cancelled:            ctx != nil && ctx.Err() != nil,
 	}
 
 	if checkedChannels > 0 || common.DebugEnabled {
@@ -706,7 +753,7 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 				changedChannels,
 				failedChannels,
 			))
-			return
+			return summary, queryErr
 		}
 		service.NotifyUpstreamModelUpdateWatchers(
 			"上游模型巡检通知",
@@ -723,43 +770,7 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			),
 		)
 	}
-}
-
-// StartChannelUpstreamModelUpdateTask 启动上游模型更新巡检任务
-//
-// 使用 sync.Once 确保只启动一次
-// 仅在主节点上运行
-// 可通过环境变量 CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_ENABLED 禁用
-// 可通过环境变量 CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_INTERVAL_MINUTES 设置间隔
-func StartChannelUpstreamModelUpdateTask() {
-	channelUpstreamModelUpdateTaskOnce.Do(func() {
-		if !common.IsMasterNode {
-			return
-		}
-		if !common.GetEnvOrDefaultBool("CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_ENABLED", true) {
-			common.SysLog("upstream model update task disabled by CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_ENABLED")
-			return
-		}
-
-		intervalMinutes := common.GetEnvOrDefault(
-			"CHANNEL_UPSTREAM_MODEL_UPDATE_TASK_INTERVAL_MINUTES",
-			channelUpstreamModelUpdateTaskDefaultIntervalMinutes,
-		)
-		if intervalMinutes < 1 {
-			intervalMinutes = channelUpstreamModelUpdateTaskDefaultIntervalMinutes
-		}
-		interval := time.Duration(intervalMinutes) * time.Minute
-
-		go func() {
-			common.SysLog(fmt.Sprintf("upstream model update task started: interval=%s", interval))
-			runChannelUpstreamModelUpdateTaskOnce()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for range ticker.C {
-				runChannelUpstreamModelUpdateTaskOnce()
-			}
-		}()
-	})
+	return summary, queryErr
 }
 
 // ApplyChannelUpstreamModelUpdates 应用单个渠道的上游模型更新
@@ -1039,79 +1050,36 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 	})
 }
 
-// DetectAllChannelUpstreamModelUpdates 批量检测所有渠道的上游模型更新
+// DetectAllChannelUpstreamModelUpdates 创建手动上游模型更新检测任务。
 //
-// 遍历所有启用的渠道，检测模型变更
-// 返回检测结果摘要
+// 手动触发不再绑定在一次 HTTP 请求内同步扫描所有渠道，而是创建 Manual=true 的
+// model_update 系统任务。任务会强制重新检查渠道，但不会自动应用模型，保证管理员仍然
+// 可以先审阅待添加/待删除模型，再通过 apply 接口显式处理。
 func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
-	results := make([]detectChannelUpstreamModelUpdatesResult, 0)
-	failed := make([]int, 0)
-	detectedAddCount := 0
-	detectedRemoveCount := 0
-	refreshNeeded := false
-
-	lastID := 0
-	for {
-		channels, err := findEnabledChannelsAfterID(lastID, channelUpstreamModelUpdateTaskBatchSize)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if len(channels) == 0 {
-			break
-		}
-		lastID = channels[len(channels)-1].Id
-
-		for _, channel := range channels {
-			if channel == nil {
-				continue
-			}
-			settings := channel.GetOtherSettings()
-			if !settings.UpstreamModelUpdateCheckEnabled {
-				continue
-			}
-
-			modelsChanged, autoAdded, err := checkAndPersistChannelUpstreamModelUpdates(channel, &settings, true, false)
-			if err != nil {
-				failed = append(failed, channel.Id)
-				continue
-			}
-			if modelsChanged {
-				refreshNeeded = true
-			}
-
-			addModels := normalizeModelNames(settings.UpstreamModelUpdateLastDetectedModels)
-			removeModels := normalizeModelNames(settings.UpstreamModelUpdateLastRemovedModels)
-			detectedAddCount += len(addModels)
-			detectedRemoveCount += len(removeModels)
-			results = append(results, detectChannelUpstreamModelUpdatesResult{
-				ChannelID:       channel.Id,
-				ChannelName:     channel.Name,
-				AddModels:       addModels,
-				RemoveModels:    removeModels,
-				LastCheckTime:   settings.UpstreamModelUpdateLastCheckTime,
-				AutoAddedModels: autoAdded,
-			})
-		}
-
-		if len(channels) < channelUpstreamModelUpdateTaskBatchSize {
-			break
-		}
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeModelUpdate, modelUpdateTaskPayload{Manual: true})
+	if err != nil {
+		common.ApiError(c, err)
+		return
 	}
-
-	if refreshNeeded {
-		refreshChannelRuntimeCache()
+	if !created {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "已有模型更新任务正在运行或等待中，不能启动本次手动任务",
+			"data": gin.H{
+				"task_id": task.TaskID,
+				"status":  task.Status,
+				"type":    task.Type,
+			},
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"processed_channels":       len(results),
-			"failed_channel_ids":       failed,
-			"detected_add_models":      detectedAddCount,
-			"detected_remove_models":   detectedRemoveCount,
-			"channel_detected_results": results,
+			"task_id": task.TaskID,
+			"status":  task.Status,
 		},
 	})
 }

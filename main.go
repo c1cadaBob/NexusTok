@@ -172,10 +172,6 @@ func main() {
 		return a
 	}
 
-	// 启动渠道上游模型更新检查任务
-	// 定期从上游获取最新的模型列表
-	controller.StartChannelUpstreamModelUpdateTask()
-
 	// 启动 models.dev 模型目录每日同步任务
 	// 每天凌晨只补齐本地缺失的模型和供应商，不覆盖管理员手动编辑
 	controller.StartModelsDevSyncTask()

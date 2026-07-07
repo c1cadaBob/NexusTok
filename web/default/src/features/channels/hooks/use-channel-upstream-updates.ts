@@ -22,6 +22,18 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { normalizeModelList } from '../lib/upstream-update-utils'
 
+interface DetectAllUpstreamModelTaskData {
+  task_id?: string
+  status?: string
+}
+
+interface ApplyAllUpstreamModelUpdatesData {
+  processed_channels?: number
+  added_models?: number
+  removed_models?: number
+  failed_channel_ids?: number[]
+}
+
 function getManualIgnoredModelCount(settings: unknown): number {
   let parsed: Record<string, unknown> | null = null
   if (settings && typeof settings === 'object')
@@ -164,7 +176,11 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
         {},
         { skipErrorHandler: true } as Record<string, unknown>
       )
-      const { success, message, data } = res.data || {}
+      const { success, message, data } = (res.data || {}) as {
+        success?: boolean
+        message?: string
+        data?: ApplyAllUpstreamModelUpdatesData
+      }
       if (!success) {
         toast.error(message || t('Batch processing failed'))
         return
@@ -246,22 +262,20 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
         {},
         { skipErrorHandler: true } as Record<string, unknown>
       )
-      const { success, message, data } = res.data || {}
+      const { success, message, data } = (res.data || {}) as {
+        success?: boolean
+        message?: string
+        data?: DetectAllUpstreamModelTaskData
+      }
       if (!success) {
         toast.error(message || t('Batch detection failed'))
         return
       }
 
       toast.success(
-        t(
-          'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
-          {
-            channels: data?.processed_channels || 0,
-            add: data?.detected_add_models || 0,
-            remove: data?.detected_remove_models || 0,
-            fails: (data?.failed_channel_ids || []).length,
-          }
-        )
+        t('Batch upstream model detection task started: {{taskId}}', {
+          taskId: data?.task_id || '',
+        })
       )
       await refresh()
     } catch (e: unknown) {
