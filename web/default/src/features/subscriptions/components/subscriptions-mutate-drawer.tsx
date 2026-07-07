@@ -51,6 +51,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { createPlan, updatePlan, getGroups } from '../api'
 import { getDurationUnitOptions, getResetPeriodOptions } from '../constants'
 import {
@@ -77,6 +78,9 @@ export function SubscriptionsMutateDrawer({
   const { t } = useTranslation()
   const isEdit = !!currentRow?.plan?.id
   const { triggerRefresh } = useSubscriptions()
+  const { meta: currencyMeta } = getCurrencyDisplay()
+  const tokensOnly = currencyMeta.kind === 'tokens'
+  const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
 
@@ -228,19 +232,31 @@ export function SubscriptionsMutateDrawer({
                   name='total_amount'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Total Quota')}</FormLabel>
+                      <FormLabel>
+                        {t('Quota ({{currency}})', { currency: currencyLabel })}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           {...field}
                           type='number'
                           min={0}
+                          step={tokensOnly ? 1 : 0.01}
+                          placeholder={
+                            tokensOnly
+                              ? t('Enter quota in tokens')
+                              : t('Enter quota in {{currency}}', {
+                                  currency: currencyLabel,
+                                })
+                          }
                           onChange={(e) =>
                             field.onChange(parseFloat(e.target.value) || 0)
                           }
                         />
                       </FormControl>
                       <FormDescription>
-                        {t('0 means unlimited')}
+                        {t(
+                          'Total quota included in the plan, usable per billing period. 0 means unlimited.'
+                        )}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -348,6 +364,62 @@ export function SubscriptionsMutateDrawer({
                       <FormLabel className='!mt-0'>
                         {t('Enabled Status')}
                       </FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                <FormField
+                  control={form.control}
+                  name='allow_balance_pay'
+                  render={({ field }) => (
+                    <FormItem className='rounded-lg border p-3'>
+                      <div className='flex items-center justify-between gap-3'>
+                        <div className='space-y-1'>
+                          <FormLabel className='!mt-0'>
+                            {t('Allow balance redemption')}
+                          </FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Users can buy this plan directly with their wallet balance.'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='allow_wallet_overflow'
+                  render={({ field }) => (
+                    <FormItem className='rounded-lg border p-3'>
+                      <div className='flex items-center justify-between gap-3'>
+                        <div className='space-y-1'>
+                          <FormLabel className='!mt-0'>
+                            {t('Allow wallet fallback')}
+                          </FormLabel>
+                          <FormDescription>
+                            {t(
+                              'When subscription quota is exhausted, subscription-first billing may continue with wallet balance.'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </div>
                     </FormItem>
                   )}
                 />

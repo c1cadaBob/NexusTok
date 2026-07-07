@@ -38,10 +38,16 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { GroupBadge } from '@/components/group-badge'
+import { getSelf } from '@/lib/api'
+import { formatQuota } from '@/lib/format'
+import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
+import { useAuthStore, type AuthUser } from '@/stores/auth-store'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import {
   paySubscriptionStripe,
   paySubscriptionCreem,
   paySubscriptionEpay,
+  paySubscriptionBalance,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
@@ -61,10 +67,14 @@ interface Props {
   epayMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
+  userQuota?: number
+  onPurchaseSuccess?: () => void | Promise<void>
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
   const { t } = useTranslation()
+  const { currency } = useSystemConfig()
+  const auth = useAuthStore((state) => state.auth)
   const [paying, setPaying] = useState(false)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
 
@@ -91,6 +101,17 @@ export function SubscriptionPurchaseDialog(props: Props) {
     t('Select payment method')
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
+  const quotaPerUnit =
+    currency?.quotaPerUnit && currency.quotaPerUnit > 0
+      ? currency.quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
+  const balanceCost = Math.max(
+    0,
+    Math.ceil(Number(plan.price_amount || 0) * quotaPerUnit)
+  )
+  const userQuota = Math.max(0, Number(props.userQuota ?? auth.user?.quota ?? 0))
+  const allowBalancePay = plan.allow_balance_pay !== false
+  const insufficientBalance = userQuota < balanceCost
   const limitReached =
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
@@ -187,6 +208,40 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }
 
+  const handlePayBalance = async () => {
+    if (!allowBalancePay) {
+      toast.error(t('This plan does not allow balance redemption'))
+      return
+    }
+    setPaying(true)
+    try {
+      const res = await paySubscriptionBalance({ plan_id: plan.id })
+      if (res.success) {
+        toast.success(t('Subscription purchased successfully'))
+        try {
+          const userRes = await getSelf()
+          if (userRes?.success && userRes.data) {
+            auth.setUser(userRes.data as AuthUser)
+          }
+        } catch {
+          // 订阅已经购买成功，用户信息刷新失败时由钱包页后续刷新兜底。
+        }
+        await props.onPurchaseSuccess?.()
+        props.onOpenChange(false)
+      } else {
+        toast.error(
+          res.message && res.message !== 'success'
+            ? res.message
+            : t('Payment request failed')
+        )
+      }
+    } catch {
+      toast.error(t('Payment request failed'))
+    } finally {
+      setPaying(false)
+    }
+  }
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'>
@@ -230,7 +285,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
               </span>
               <span className='flex items-center gap-1 text-sm'>
                 <Package className='h-3.5 w-3.5' />
-                {totalAmount > 0 ? totalAmount : t('Unlimited')}
+                {totalAmount > 0 ? formatQuota(totalAmount) : t('Unlimited')}
               </span>
             </div>
             {plan.upgrade_group && (
@@ -256,6 +311,41 @@ export function SubscriptionPurchaseDialog(props: Props) {
               </AlertDescription>
             </Alert>
           )}
+
+          <div className='rounded-md border p-3'>
+            <div className='mb-2 flex items-center justify-between gap-2 text-xs'>
+              <span className='text-muted-foreground'>{t('Required')}</span>
+              <span>{formatQuota(balanceCost)}</span>
+            </div>
+            <div className='mb-3 flex items-center justify-between gap-2 text-xs'>
+              <span className='text-muted-foreground'>{t('Available')}</span>
+              <span>{formatQuota(userQuota)}</span>
+            </div>
+            {!allowBalancePay ? (
+              <Alert variant='destructive' className='mb-3'>
+                <AlertDescription>
+                  {t('This plan does not allow balance redemption')}
+                </AlertDescription>
+              </Alert>
+            ) : insufficientBalance ? (
+              <Alert variant='destructive' className='mb-3'>
+                <AlertDescription>{t('Insufficient balance')}</AlertDescription>
+              </Alert>
+            ) : null}
+            <Button
+              variant='outline'
+              className='w-full'
+              onClick={handlePayBalance}
+              disabled={
+                paying ||
+                limitReached ||
+                !allowBalancePay ||
+                insufficientBalance
+              }
+            >
+              {t('Pay with Balance')}
+            </Button>
+          </div>
 
           {hasAnyPayment ? (
             <div className='space-y-3'>
@@ -323,7 +413,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 </div>
               )}
             </div>
-          ) : (
+          ) : !allowBalancePay ? (
             <Alert>
               <AlertDescription>
                 {t(
@@ -331,7 +421,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 )}
               </AlertDescription>
             </Alert>
-          )}
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

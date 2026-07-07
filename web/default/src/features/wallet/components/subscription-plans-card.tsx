@@ -20,6 +20,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Crown, RefreshCw, Sparkles, Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -57,6 +58,7 @@ import type {
   PlanRecord,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
+import { useAuthStore, type AuthUser } from '@/stores/auth-store'
 import type { PaymentMethod, TopupInfo } from '../types'
 
 interface SubscriptionPlansCardProps {
@@ -93,6 +95,7 @@ export function SubscriptionPlansCard({
   onAvailabilityChange,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
+  const auth = useAuthStore((state) => state.auth)
 
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activeSubscriptions, setActiveSubscriptions] = useState<
@@ -160,6 +163,18 @@ export function SubscriptionPlansCard({
       setRefreshing(false)
     }
   }
+
+  const refreshUserAndSubscriptions = useCallback(async () => {
+    await fetchSelfSubscription()
+    try {
+      const response = await getSelf()
+      if (response?.success && response.data) {
+        auth.setUser(response.data as AuthUser)
+      }
+    } catch {
+      // 购买成功后订阅列表刷新已经完成；用户信息刷新失败时保留旧缓存。
+    }
+  }, [auth, fetchSelfSubscription])
 
   const handlePreferenceChange = async (pref: string) => {
     const previous = billingPreference
@@ -641,6 +656,8 @@ export function SubscriptionPlansCard({
             ? planPurchaseCountMap.get(selectedPlan.plan.id)
             : undefined
         }
+        userQuota={auth.user?.quota}
+        onPurchaseSuccess={refreshUserAndSubscriptions}
       />
     </>
   )

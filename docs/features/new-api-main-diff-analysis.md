@@ -177,6 +177,64 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 安全数学 | 已有 `common/quota_math.go`，主要扣费链路开始接入 | 有 `common/quota_math.go` | 已继续覆盖工具调用附加费、违规费用、充值入账、视频任务重算和渠道测试日志；后续覆盖异步任务倍率调整等剩余裸 `int(...)` 计费转换。 |
 | 请求体限制 | 无 | 有匿名请求体限制 | 高优先级，适合快速原生化。 |
 
+## 文档、配置与测试资产差异补充
+
+本轮对文档、部署、配置、OpenAPI、README、脚本和测试资产做了补充核对，结论如下：
+
+1. OpenAPI 路径层面基本齐平：`docs/openapi/api.json` 均为 131 个 paths，`docs/openapi/relay.json` 均为 35 个 paths；当前重点不是接口补齐，而是生成/校验流程和品牌化维护。
+2. NexusTok 已覆盖或重组了多项 new-api-main 文档：i18n 术语表迁入 `docs/i18n/`，渠道 other settings 迁入 `docs/configuration/channel-other-settings.md`，`ionet-client.md` 内容已覆盖，不应重复搬运。
+3. new-api-main 仍有值得吸收的文档资产：
+   - 多语言 README：`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md`。NexusTok 应生成本项目品牌化版本，而不是直接复制。
+   - `electron/README.md`：适合补成 NexusTok 桌面端开发/打包说明。
+   - `constant/README.md`：适合补充 constant 包维护约束，说明该包不应依赖业务层。
+   - `web/default/src/components/data-table/README.md`：适合在后续统一 DataTable 分层时补齐本地组件说明。
+   - `.github/ISSUE_TEMPLATE/*`：new-api-main 的 issue 前置约束更清晰，可品牌化吸收。
+4. 配置/脚本资产方面，new-api-main 的 `docker-compose.dev.yml`、`makefile`、`web/package.json`、前端格式化保护脚本和任意分支 Docker 镜像工作流可以作为工程化增强参考；其中 PostgreSQL dev compose 镜像声明、开发任务和 i18n literal 白名单最适合优先评估。
+5. 测试资产方面，new-api-main 仍有高价值回归测试可转化：
+   - `service/relayconvert/*` 的 Responses/Chat 转换与显式零值测试。
+   - `relay/channel/openai/*` 的 Responses、image stream、image edit 测试。
+   - `relay/channel/gemini/*` 的 Gemini Responses 测试。
+   - `pkg/billingexpr/settle_clamp_test.go` 的计费表达式溢出 clamp 测试。
+   - `model/user_update_test.go`、`model/redemption_test.go`、`model/locking_test.go`、`setting/operation_setting/monitor_setting_test.go` 等三库/权限/并发边界测试。
+   - `web/default/src/features/dashboard/lib/flow*.test.ts`，后续迁移 dashboard flow/Sankey 前应先吸收纯函数测试。
+
+## 子 Agent 复核后的后续优先队列
+
+本轮并行只读分析进一步确认：NexusTok 不能目录级覆盖 `new-api-main`，应把上游优势按安全边界和原生业务语义分批吸收。
+
+### 后端 P0/P1
+
+| 优先级 | 能力 | new-api-main 参考 | NexusTok 风险/迁移方式 |
+|--------|------|-------------------|-------------------------|
+| P0 | GORM v2 行锁 helper | `model/locking.go` | NexusTok 多处仍使用 `tx.Set("gorm:query_option", "FOR UPDATE")`，在 GORM v2 下存在被忽略风险；应新增三库兼容 `lockForUpdate(tx)`，逐步替换订阅、充值、兑换码、用户额度等事务热点，并补并发测试。 |
+| P1 | OpenAI Responses 反向兼容 | `service/relayconvert/responses_request_to_chat.go`、`relay/channel/openai/responses_via_chat.go` | NexusTok 现有 `service/openaicompat` 只覆盖部分方向；建议保留本项目包名，补 Responses→Chat 与 Chat→Responses 转换，不改热路径包结构。 |
+| P1 | Gemini Responses | `relay/channel/gemini/adaptor_responses.go`、`relay/channel/gemini/relay_responses.go` | 依赖 Responses/Chat 通用转换，迁移时必须明确 custom/freeform tool 的降级或拒绝策略。 |
+| P1/P2 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | NexusTok 已有账号池专项审计和额度饱和审计；应新增全局管理写操作审计，但 action 表必须覆盖账号池、渠道账号、Codex OAuth、订阅、SystemTask 等本项目独有路由。 |
+| P1/P2 | 完整 Authz/Casbin enforcement | `service/authz/*`、`model/casbin_rule.go`、`router/channel-router.go` | NexusTok 已有 catalog 和前端消费矩阵；下一步应先定义本项目原生资源：`channel_account`、`account_pool_auth_file` 等，再灰度接入服务端路由 enforcement。 |
+| P2 | Advanced Custom Channel | `relay/channel/advancedcustom/*`、`dto/channel_settings.go` | 高价值但高风险；必须纳入 Root/敏感写权限、SSRF/URL 安全、凭证脱敏和计费快照，不能直接开放给普通 Admin。 |
+| P2 | Waffo Pancake SDK 与订阅支付 | `service/waffo_pancake.go`、`controller/subscription_payment_waffo_pancake.go` | NexusTok 当前手写充值链路需继续兼容；可先新增 SDK 路径和订阅支付灰度入口，保留旧 webhook 幂等。 |
+
+### 前端 P0/P1
+
+| 优先级 | 能力 | new-api-main 参考 | NexusTok 迁移方式 |
+|--------|------|-------------------|-------------------|
+| P0 | 会话守卫仅 401 登出 | `_authenticated/route.tsx` | NexusTok 当前 `getSelf()` 失败更容易误登出；应只在 401 清登录，网络错误/5xx 暂时放行并后续重验。 |
+| P0/P1 | HeaderNavModules 健壮解析 | `lib/nav-modules.ts`、`hooks/use-top-nav-links.ts` | 吸收 boolean/number/string/object 兼容解析，避免 `"0"`、`"false"` 被误判；需保留 NexusTok 当前 `disabled`/权限链路。 |
+| P1 | Usage Logs 移动端卡片与筛选工具条 | `usage-logs-mobile-card.tsx`、`logs-filter-toolbar.tsx` | 后端依赖小，适合先迁普通使用日志，再统一账号池日志体验。 |
+| P1 | 渠道编辑抽屉分区化 | `channels/components/drawers/sections/*` | 保留 NexusTok `credential_mode`、账号池、Codex OAuth、渠道账号字段，只吸收分区导航、表单错误收敛和敏感字段提交裁剪。 |
+| P1/P2 | Dashboard Flow/Sankey | `dashboard/components/flow/*`、`dashboard/lib/flow.ts` | NexusTok 后端已原生化 `/api/data/flow*`，前端迁移前应先吸收 `flow*.test.ts` 纯函数测试。 |
+| P2 | Playground 消息/流式/Markdown 渲染增强 | `features/playground/*`、`components/ai-elements/response-renderer.tsx` | 价值高但依赖和安全面大，需评估 DOMPurify/KaTeX/CodeMirror 包体与 XSS 边界。 |
+| P2/P3 | DataTable 分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | 全局影响大，不做一次性替换；新页面先兼容导出，旧页面逐步迁移。 |
+
+### 文档与工程化 P1/P2
+
+| 优先级 | 能力 | 参考路径 | 迁移方式 |
+|--------|------|----------|----------|
+| P1 | 多语言 README | `README.*.md` | 生成 NexusTok 品牌化多语言 README，补根 README 语言入口。 |
+| P1 | Electron/constant 包文档 | `electron/README.md`、`constant/README.md` | 补桌面端开发/打包说明和 constant 包边界说明。 |
+| P1 | 开发 Compose/Makefile 修补 | `docker-compose.dev.yml`、`makefile` | 优先核对 PostgreSQL dev 镜像声明、`dev-api-rebuild`、`reset-setup` 等开发任务，避免破坏现有热更新部署。 |
+| P2 | Issue 模板与 CI 工作流 | `.github/ISSUE_TEMPLATE/*`、`.github/workflows/docker-image-branch.yml` | 品牌化吸收 issue 前置约束；任意分支镜像工作流只在确有临时预览需求时引入。 |
+
 ## 原生化路线建议
 
 ### P0：保护并完成 NexusTok 已有账号池主线
@@ -593,3 +651,4 @@ NexusTok 独有 API 族：
 | 2026-07-07 | 用户权限矩阵回传 | `controller/user.go`、`controller/user_authz_test.go`、`web/default/src/stores/auth-store.ts` | `/api/user/self` 在 `permissions.admin_permissions` 回传 Authz 能力矩阵，并为默认前端用户状态补充类型声明；当前只反映系统角色基线，不引入用户 override 或改变服务端权限判断。 |
 | 2026-07-07 | 默认前端入口消费权限矩阵 | `web/default/src/lib/admin-permissions.ts`、`web/default/src/hooks/use-admin-permission.ts`、`web/default/src/hooks/use-sidebar-data.ts`、`web/default/src/routes/_authenticated/*` | 默认前端新增管理权限 helper/hook，以 `permissions.admin_permissions` 为优先来源、旧角色为兼容 fallback；管理侧边栏和渠道、账号池、模型、用户、兑换码、订阅入口路由已按 read 能力显隐/放行，Root-only 系统设置、系统信息和计费设置继续保持 Root 边界。 |
 | 2026-07-07 | 渠道页按钮级权限消费 | `web/default/src/features/channels/hooks/use-channel-permissions.ts`、`web/default/src/features/channels/components/*` | 默认前端渠道管理页开始消费同一权限矩阵：`channel.operate` 控制测试、启停、余额和检测；`channel.write` 控制普通模型/分组/标签等编辑；`channel.sensitive_write` 控制新建、复制、删除、密钥、多 Key、渠道账号池和上游模型应用；`channel.secret_view` 控制密钥查看。编辑抽屉在缺少敏感写时会裁剪提交 payload，只发送非敏感字段，保持与后端 Root 兜底策略一致。 |
+| 2026-07-07 | 订阅余额支付与钱包兜底默认前端 | `web/default/src/features/subscriptions/*`、`web/default/src/features/wallet/components/subscription-plans-card.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端已消费后端 `allow_balance_pay`、`allow_wallet_overflow` 和 `/api/subscription/balance/pay`：管理员可在套餐抽屉配置余额兑换与钱包兜底策略，套餐表展示余额支付能力，用户购买弹窗展示所需/可用余额并支持直接用钱包余额购买，成功后刷新订阅和当前用户余额；新增文案已补齐 en/zh/fr/ja/ru/vi。 |
