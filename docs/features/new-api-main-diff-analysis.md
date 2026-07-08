@@ -1123,6 +1123,46 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. 使用 MCP 打开 `http://192.168.0.202:3003/models/metadata`，确认页面更新生效，`/api/models/`、`/api/vendors/` 等读取请求正常返回，控制台无新增 error/warn。
 5. 不在真实环境触发删除模型、删除厂商、删除部署或扩容部署等高风险操作；这些权限分类通过路由表测试验证。
 
+## 本轮实施评审：Waffo Pancake 用户侧支付路由补齐
+
+### 需求分析
+
+对照 `/opt/project/new-api-main` 的用户路由发现，new-api 已在用户自助充值路由中注册 `POST /api/user/waffo-pancake/amount` 和 `POST /api/user/waffo-pancake/pay`。NexusTok 当前已经具备 Waffo Pancake 的 controller、service、支付可用性判断、webhook、系统设置表单和默认前端钱包调用，但主路由只注册了 `/api/waffo-pancake/webhook` 回调，没有注册用户侧金额试算和发起支付入口。默认前端 `web/default/src/features/wallet/api.ts` 已经调用这两个路径，因此当前页面在启用 Waffo Pancake 充值时会命中 404 或无法进入支付链路。
+
+本轮目标是把 new-api 已有的用户侧支付入口补齐为 NexusTok 原生充值能力：
+
+1. 在 `/api/user` 的用户认证路由组中注册 `POST /waffo-pancake/amount` 和 `POST /waffo-pancake/pay`。
+2. 金额试算接口复用 `controller.RequestWaffoPancakeAmount`，支付发起接口复用 `controller.RequestWaffoPancakePay` 并保留 `CriticalRateLimit`，与 Waffo、Stripe、Creem 等支付入口保持一致。
+3. 只补路由，不改 Waffo Pancake 签名、webhook 验签、订单创建、充值入账、额度饱和保护、系统设置表单和前端文案。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 用户支付路由 | `router/api-router.go` | 在已认证用户自助支付路由组下补齐 Waffo Pancake 金额试算和支付发起入口。 |
+| 路由测试 | `router/api_router_payment_test.go` | 覆盖新路由绑定到正确 handler；`CriticalRateLimit` 通过代码路径与其他支付入口保持同一注册模式。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录该差异来源、风险边界、方案和落地状态。 |
+
+### 风险评估
+
+1. 这是补齐缺失路由，不改变 handler 内部支付逻辑；如果 Waffo Pancake 未配置或未启用，handler 仍按现有业务规则返回“未启用/配置缺失”，不会绕过配置开关。
+2. `/waffo-pancake/pay` 会创建支付会话，因此必须与其他支付发起接口一样保留 `CriticalRateLimit`，避免用户侧高频创建订单。
+3. 路由位于 `selfRoute` 内，仍需要 `UserAuth`；匿名用户不能直接发起金额试算或支付。
+4. Webhook 仍是匿名回调入口并已有 `anonymousRequestBodyLimit` 与验签逻辑，本轮不触碰，避免把用户侧路由和上游回调边界混淆。
+5. 本轮不触发真实支付，不创建真实订单；验收时只验证页面加载和接口到达 handler，若当前环境未配置支付，则业务返回配置缺失属于预期。
+
+### 方案评审
+
+采用最小补齐方案：在现有 `/api/user` 自助支付路由组中，紧邻 Waffo 支付路由注册 Waffo Pancake 的金额试算和支付发起接口。该方案与 new-api 路由保持兼容，也与默认前端当前 API 调用保持一致，不新增抽象、不改数据库、不改支付状态机。路由结构测试只验证 handler 绑定，真实支付行为继续由已有 controller/service 测试和 MCP 直调低风险响应覆盖。
+
+验收方式：
+
+1. `go test ./router ./controller` 覆盖路由注册和 controller 构建。
+2. `go test ./service/authz ./middleware ./router ./controller` 作为本轮路由改动的目标包回归。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 确认钱包前端类型不受影响。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/wallet`，确认页面更新生效、控制台无新增 error/warn；在浏览器上下文带 `NexusTok-User: 1` 调用 `POST /api/user/waffo-pancake/amount`，确认不再是 404/未注册路由，且在当前配置状态下返回业务层结果。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1166,3 +1206,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 账号池 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/account_pool-router.go`、`router/api-router.go`、`router/account_pool_router_test.go` | 为 NexusTok 独有 `/api/account-pool` 全量路由接入 account_pool 权限表：查询/脱敏日志走 read，检测/状态/脱敏导出走 operate，分组配置走 write，认证文件、账号生命周期、OAuth 和凭证刷新走 sensitive_write；主路由文件只保留注册调用。 |
 | 2026-07-08 | 订阅 Admin Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/subscription-router.go`、`router/api-router.go`、`router/subscription_router_test.go` | 为 `/api/subscription/admin` 接入 subscription 权限表：套餐和用户订阅查询走 read，套餐创建/更新/启停走 write，绑定、创建和失效用户订阅走 operate，删除用户订阅走 sensitive_write；用户购买和支付回调路由保持原有认证/匿名回调边界。 |
 | 2026-07-08 | 模型管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/model-router.go`、`router/api-router.go`、`router/model_router_test.go` | 为 `/api/vendors`、`/api/models`、`/api/deployments` 接入 model 权限表：元数据和部署查询走 read，上游预览/连接测试/价格估算/扩容走 operate，厂商/模型/部署创建编辑和定价更新走 write，删除模型、厂商和部署走 sensitive_write；NexusTok 扩展的模型定价接口也纳入同一原生权限体系。 |
+| 2026-07-08 | Waffo Pancake 用户侧支付路由补齐 | `router/api-router.go`、`router/api_router_payment_test.go` | 对齐 new-api 的用户自助充值入口，补齐默认前端已调用的 `/api/user/waffo-pancake/amount` 与 `/api/user/waffo-pancake/pay`；金额试算和支付发起复用现有 Waffo Pancake controller，支付发起保留 `CriticalRateLimit`，webhook 验签和入账事务不变。 |

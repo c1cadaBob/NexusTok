@@ -181,13 +181,15 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp) // 用户充值
 
 				// 支付相关
-				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)             // 请求易支付
-				selfRoute.POST("/amount", controller.RequestAmount)                                        // 请求金额
-				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay) // 请求 Stripe 支付
-				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)                           // 请求 Stripe 金额
-				selfRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.RequestCreemPay)   // 请求 Creem 支付
-				selfRoute.POST("/waffo/amount", controller.RequestWaffoAmount)                             // 请求 Waffo 金额
-				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)   // 请求 Waffo 支付
+				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)                          // 请求易支付
+				selfRoute.POST("/amount", controller.RequestAmount)                                                     // 请求金额
+				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)              // 请求 Stripe 支付
+				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)                                        // 请求 Stripe 金额
+				selfRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.RequestCreemPay)                // 请求 Creem 支付
+				selfRoute.POST("/waffo/amount", controller.RequestWaffoAmount)                                          // 请求 Waffo 金额
+				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)                // 请求 Waffo 支付
+				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)                           // 请求 Waffo Pancake 金额
+				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay) // 请求 Waffo Pancake 支付
 
 				// 推荐配额转移
 				selfRoute.POST("/aff_transfer", controller.TransferAffQuota)
