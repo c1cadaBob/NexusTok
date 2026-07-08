@@ -68,6 +68,10 @@ export function useSidebarData(): SidebarData {
     user,
     ADMIN_PERMISSION_RESOURCES.USER
   )
+  const canReadRedemption = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.REDEMPTION
+  )
   const canReadSubscription = canReadAdminResource(
     user,
     ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION
@@ -207,6 +211,10 @@ export function useSidebarData(): SidebarData {
                   url: '/users',
                   icon: Users,
                 },
+              ]
+            : []),
+          ...(canReadRedemption
+            ? [
                 {
                   title: t('Redemption Codes'),
                   url: '/redemption-codes',

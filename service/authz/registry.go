@@ -149,6 +149,36 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
+		Resource: ResourceRedemption,
+		LabelKey: "Redemption Codes",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "Read redemption codes",
+				DescriptionKey: "View redemption code lists, details, status, quota, and redemption metadata.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionOperate,
+				LabelKey:       "Operate redemption codes",
+				DescriptionKey: "Enable, disable, or clean up redemption codes through maintenance actions.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionWrite,
+				LabelKey:       "Edit redemption codes",
+				DescriptionKey: "Create redemption codes or edit ordinary redemption code metadata, quota, expiry, and status.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionSensitiveWrite,
+				LabelKey:       "Delete redemption codes",
+				DescriptionKey: "Delete redemption code records or perform bulk cleanup that removes redemption audit data.",
+			},
+		},
+	})
+
+	registerResource(ResourceDefinition{
 		Resource: ResourceSystemSetting,
 		LabelKey: "System Settings",
 		Actions: []ActionDefinition{

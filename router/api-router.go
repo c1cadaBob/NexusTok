@@ -334,20 +334,7 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
-		// ========================================
-		// 兑换码路由组 - /api/redemption（需要管理员权限）
-		// ========================================
-		redemptionRoute := apiRouter.Group("/redemption")
-		redemptionRoute.Use(middleware.AdminAuth())
-		{
-			redemptionRoute.GET("/", controller.GetAllRedemptions)                 // 获取所有兑换码
-			redemptionRoute.GET("/search", controller.SearchRedemptions)           // 搜索兑换码
-			redemptionRoute.GET("/:id", controller.GetRedemption)                  // 获取单个兑换码
-			redemptionRoute.POST("/", controller.AddRedemption)                    // 添加兑换码
-			redemptionRoute.PUT("/", controller.UpdateRedemption)                  // 更新兑换码
-			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption) // 删除无效兑换码
-			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)            // 删除兑换码
-		}
+		registerRedemptionRoutes(apiRouter)
 
 		// ========================================
 		// 日志路由组 - /api/log

@@ -1222,6 +1222,57 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. 使用 MCP 打开 `http://192.168.0.202:3003/users`，确认页面更新生效，`/api/user/` 和 `/api/user/search` 等读取请求正常返回，控制台无新增 error/warn。
 5. 不在真实环境触发创建、删除、完成充值、升降级和额度调整等高风险动作；这些敏感写收紧通过单元测试和路由表测试验证。
 
+## 本轮实施评审：兑换码 Authz 独立资源与路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 和 NexusTok 都提供 `/api/redemption` 管理接口，用于创建、查询、更新和删除兑换码。兑换码会把预设额度发放给最终用户，是钱包与额度体系的一部分；NexusTok 当前默认前端已经有独立的“兑换码”页面，但权限入口仍复用 `user.read`，服务端路由也仍是整组 `AdminAuth`。这会让用户管理权限和兑换码管理权限耦合在一起，不利于后续把用户账户治理、钱包额度治理和兑换码发行治理拆成原生能力。
+
+本轮目标是把兑换码管理从用户资源中拆出来，成为 NexusTok Authz catalog 的独立 `redemption` 资源：
+
+1. 新增 `redemption` 资源及稳定 permission 变量：`RedemptionRead`、`RedemptionOperate`、`RedemptionWrite`、`RedemptionSensitiveWrite`。
+2. 将 `/api/redemption` 从主 `api-router.go` 抽到独立路由文件，用权限表注册所有现有管理接口，保持 path、method、handler 和业务返回不变。
+3. 默认前端权限 helper 和侧边栏/路由守卫改为读取 `redemption.read`，不再把兑换码入口绑在 `user.read` 上。
+4. 兑换码列表、搜索、详情归为 `redemption.read`；启停状态更新和删除无效兑换码等维护动作归为 `redemption.operate` 或 `redemption.sensitive_write`；创建和普通编辑归为 `redemption.write`，以保持当前 Admin 维护流程兼容；删除单个兑换码归为 `redemption.sensitive_write`。
+5. 本轮不改变用户兑换兑换码的普通用户路径、不改兑换事务、不改额度入账、不改兑换码数据模型和数据库迁移。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz catalog | `service/authz/permission.go`、`service/authz/registry.go`、`service/authz/permission_test.go` | 新增 `redemption` 资源、permission 变量和 Root/Admin/普通用户基线测试。 |
+| 兑换码 Admin 路由 | `router/redemption-router.go`、`router/api-router.go`、`router/redemption_router_test.go` | 将 `/api/redemption` 迁移为权限表注册，主路由只保留注册调用。 |
+| 默认前端权限入口 | `web/default/src/lib/admin-permissions.ts`、`web/default/src/hooks/use-sidebar-data.ts`、`web/default/src/routes/_authenticated/redemption-codes/index.tsx`、`web/default/src/components/layout/components/app-sidebar.tsx`、`web/default/src/lib/admin-permissions.test.ts` | 增加 `redemption` 资源常量和 Admin fallback，侧边栏与页面守卫按 `redemption.read` 判断。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，作为后续兑换码按钮级权限消费依据。 |
+
+### 风险评估
+
+1. 新增 Authz 资源会改变 `/api/authz/catalog` 和 `/api/user/self` 返回的权限矩阵；前端必须同步新增 `redemption` 资源 fallback，避免旧角色用户在缺少显式矩阵时丢失兑换码入口。
+2. 兑换码创建会生成可兑换额度，理论上可以进一步提升到 `sensitive_write`；但当前 Admin 已经能创建兑换码，默认前端也没有按钮级 `redemption.sensitive_write` 消费。本轮先归入 `redemption.write` 保持兼容，后续可在按钮级权限和审批流补齐后再做更细收紧。
+3. 删除单个兑换码会移除可审计记录，归入 `redemption.sensitive_write`；删除无效兑换码是批量清理 used/disabled/expired 记录，仍有审计影响，本轮同样归入 `redemption.sensitive_write`，不在真实环境触发。
+4. `PUT /api/redemption/` 同时承担普通编辑和 `status_only=true` 状态启停，路由级无法按 query 参数分拆；本轮统一归入 `redemption.write`，保持兼容。后续可拆专用状态接口或在 handler 内做动作级二次校验。
+5. 兑换码管理路由包含 `/search`、`/invalid` 和 `/:id`，抽出后需要测试确认静态路径不会被参数路径抢占。
+
+### 方案评审
+
+采用独立资源方案，而不是继续复用 `user` 或 `system_setting`：兑换码既不是用户资料，也不是系统全局配置，而是钱包额度发行工具。后端复用已有 `permissionRoute` 和 `registerPermissionRoutes`，路由仍先经过 `AdminAuth`，再按 `redemption` 动作二次校验。前端只调整权限资源常量、侧边栏和页面守卫，不新增文案、不改 UI 结构。这样能把 new-api 的兑换码管理能力转成 NexusTok 更精确的原生治理边界。
+
+路由分类：
+
+| 路由 | 权限 | 说明 |
+|------|------|------|
+| `GET /api/redemption/`、`GET /api/redemption/search`、`GET /api/redemption/:id` | `redemption.read` | 列表、搜索和详情。 |
+| `POST /api/redemption/`、`PUT /api/redemption/` | `redemption.write` | 创建、普通编辑和状态更新；保持当前 Admin 工作流兼容。 |
+| `DELETE /api/redemption/invalid`、`DELETE /api/redemption/:id` | `redemption.sensitive_write` | 删除兑换码记录或批量清理无效记录。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖 permission、权限中间件、兑换码路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端权限资源类型和兑换码页面守卫不受影响。
+3. `node --test src/lib/admin-permissions.test.ts` 或等价前端测试覆盖 Admin fallback。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/redemption-codes`，确认页面更新生效，`/api/redemption/` 读取请求正常返回，控制台无新增 error/warn；只直调低风险读接口，不触发真实删除。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1267,3 +1318,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 模型管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/model-router.go`、`router/api-router.go`、`router/model_router_test.go` | 为 `/api/vendors`、`/api/models`、`/api/deployments` 接入 model 权限表：元数据和部署查询走 read，上游预览/连接测试/价格估算/扩容走 operate，厂商/模型/部署创建编辑和定价更新走 write，删除模型、厂商和部署走 sensitive_write；NexusTok 扩展的模型定价接口也纳入同一原生权限体系。 |
 | 2026-07-08 | Waffo Pancake 用户侧支付路由补齐 | `router/api-router.go`、`router/api_router_payment_test.go` | 对齐 new-api 的用户自助充值入口，补齐默认前端已调用的 `/api/user/waffo-pancake/amount` 与 `/api/user/waffo-pancake/pay`；金额试算和支付发起复用现有 Waffo Pancake controller，支付发起保留 `CriticalRateLimit`，webhook 验签和入账事务不变。 |
 | 2026-07-08 | 用户管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/user-router.go`、`router/api-router.go`、`controller/user_authz.go`、`router/user_router_test.go` | 为 `/api/user` 管理员子路由接入 user 权限表：用户/充值/绑定/2FA 查询走 read，绑定清理、Passkey/2FA 重置和普通启停走 operate，普通用户资料编辑走 write，创建、硬删除、管理员完成充值走 sensitive_write；`ManageUser` 复合接口对删除、升降级和额度调整额外执行 `user.sensitive_write` 二次校验。 |
+| 2026-07-08 | 兑换码 Authz 独立资源与路由权限表 | `service/authz/*`、`router/redemption-router.go`、`router/api-router.go`、`web/default/src/lib/admin-permissions.ts`、`web/default/src/routes/_authenticated/redemption-codes/index.tsx` | 新增 `redemption` 权限资源并让 `/api/redemption` 接入独立路由权限表：列表/搜索/详情走 read，创建和编辑走 write，删除单个兑换码与批量清理无效兑换码走 sensitive_write；默认前端侧边栏和页面守卫改为读取 `redemption.read`，不再复用 `user.read`。 |

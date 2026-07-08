@@ -68,6 +68,10 @@ describe('admin permission helpers', () => {
       true
     )
     assert.equal(
+      canReadAdminResource(user, ADMIN_PERMISSION_RESOURCES.REDEMPTION),
+      true
+    )
+    assert.equal(
       hasAdminPermission(
         user,
         ADMIN_PERMISSION_RESOURCES.CHANNEL,

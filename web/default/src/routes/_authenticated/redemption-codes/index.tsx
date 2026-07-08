@@ -37,7 +37,9 @@ export const Route = createFileRoute('/_authenticated/redemption-codes/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
-    if (!canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.USER)) {
+    if (
+      !canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.REDEMPTION)
+    ) {
       throw redirect({
         to: '/403',
       })
