@@ -77,12 +77,16 @@ type PrefillGroupFormDrawerProps = {
   open: boolean
   onClose: () => void
   currentGroup: PrefillGroup | null
+  canWrite: boolean
+  disabledReason: string
 }
 
 export function PrefillGroupFormDrawer({
   open,
   onClose,
   currentGroup,
+  canWrite,
+  disabledReason,
 }: PrefillGroupFormDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -134,6 +138,10 @@ export function PrefillGroupFormDrawer({
   }
 
   const handleSubmit = async (values: PrefillGroupFormValues) => {
+    if (!canWrite) {
+      toast.error(disabledReason)
+      return
+    }
     setIsSaving(true)
     const payload = {
       name: values.name.trim(),
@@ -391,7 +399,12 @@ export function PrefillGroupFormDrawer({
           >
             {t('Cancel')}
           </SheetClose>
-          <Button type='submit' form='prefill-group-form' disabled={isSaving}>
+          <Button
+            type='submit'
+            form='prefill-group-form'
+            disabled={isSaving || !canWrite}
+            title={canWrite ? undefined : disabledReason}
+          >
             {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {isSaving
               ? t('Saving...')

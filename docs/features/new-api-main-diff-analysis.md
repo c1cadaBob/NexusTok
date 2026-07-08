@@ -1620,6 +1620,60 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/users`，确认页面更新生效；直调 `GET /api/authz/catalog`，确认返回 200/业务 success 且包含 `resources` 与 `roles`，不执行任何写操作。
 
+## 本轮实施评审：模型管理前端按钮级 Authz 原生消费
+
+### 需求分析
+
+NexusTok 已经把 `/api/vendors`、`/api/models`、`/api/deployments`、`/api/group` 和 `/api/prefill_group` 接入 `model.read/operate/write/sensitive_write` 路由权限表，并在 `/api/user/self` 回传权限矩阵。默认前端模型页目前只在路由入口检查 `model.read`，但页面内的新增模型、同步上游、预填组、厂商管理、模型行编辑/启停/删除、部署创建/更新/扩容/删除等按钮仍未完整消费对应动作权限；这会导致未来用户级 override 场景下，前端展示可点击操作，后端再返回 403，体验和权限语义分叉。
+
+本轮目标：
+
+1. 新增模型模块专用 `useModelPermissions`，集中读取 `model.read/operate/write/sensitive_write`。
+2. 将模型元数据页主按钮按权限禁用并做点击前保护：新增模型和厂商管理需要 `model.write`；同步上游需要 `model.operate + model.write`；预填组入口至少需要 `model.write` 或 `model.sensitive_write`。
+3. 将模型行操作和批量操作按权限禁用：编辑/启停需要 `model.write`，删除需要 `model.sensitive_write`，复制模型名继续可用。
+4. 将部署页操作按权限禁用：创建、配置更新、重命名需要 `model.write`；扩容需要 `model.operate`；删除需要 `model.sensitive_write`；查看日志和详情继续只读。
+5. 将预填组弹窗内部的创建/编辑/删除和提交确认补充同一权限保护，避免只在入口按钮防护。
+6. 不修改后端路由、API payload、查询缓存 key、i18n 文案集合和模型/部署业务逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 模型权限 hook | `web/default/src/features/models/hooks/use-model-permissions.ts` | 集中封装模型管理动作能力，复用 `admin-permissions` 矩阵。 |
+| 模型元数据按钮 | `models-primary-buttons.tsx`、`data-table-row-actions.tsx`、`data-table-bulk-actions.tsx`、`sync-wizard-dialog.tsx` | 主按钮、行操作、批量操作和同步提交按 `model` 动作权限禁用或拦截。 |
+| 部署按钮 | `index.tsx`、`deployments-table.tsx`、`deployments-columns.tsx` | 部署创建/配置/重命名/扩容/删除按钮按权限禁用，查看操作保持可用。 |
+| 预填组管理 | `prefill-group-management.tsx`、`prefill-group-management-dialog.tsx`、`prefill-group-form-drawer.tsx` | 创建/编辑/删除和提交前检查分别对应 `model.write` 与 `model.sensitive_write`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变前端按钮状态和提交前保护，不降低后端 `RequirePermission` enforcement；如果前端状态判断失误，后端仍 fail-closed。
+2. 同步上游包含 preview 和写入两个阶段，入口和提交都要求 `model.operate + model.write`，避免只有预览权限的用户触发写入 403。
+3. 预填组列表本身是只读，但当前弹窗定位是管理工具；本轮入口需要写或敏感写，弹窗内部再细分创建/编辑与删除，避免读权限用户进入可写管理面。
+4. 默认 Admin 基线拥有 `model.write/operate` 但不拥有 `model.sensitive_write`，因此删除类按钮会禁用；Root 用户保持全量可用。该行为与后端权限表一致，是预期的权限收敛。
+5. 本轮不新增任何可见文案，统一复用既有 `You don't have necessary permission`，无需更新六语 i18n。
+
+### 方案评审
+
+采用“前端消费现有权限矩阵 + 后端继续 fail-closed”的方案，不引入新的前端权限资源，也不让 UI 自行推断角色。模型模块新增 hook 后，各组件只关心业务动作能力；按钮禁用使用现有 `disabled/title/toast` 模式，延续渠道页的权限消费风格。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 新增/编辑模型、启停模型、创建/编辑厂商、创建部署、更新部署配置、重命名部署、创建/编辑预填组 | `model.write` | `POST/PUT /api/models`、`POST/PUT /api/vendors`、`POST/PUT /api/deployments`、`POST/PUT /api/prefill_group` |
+| 同步上游 | `model.operate + model.write` | `GET /api/models/sync_upstream/preview` + `POST /api/models/sync_upstream` |
+| 部署扩容、部署连接测试 | `model.operate` | `POST /api/deployments/:id/extend`、`POST /api/deployments/test-connection` |
+| 删除模型、删除部署、删除预填组 | `model.sensitive_write` | `DELETE /api/models/:id`、`DELETE /api/deployments/:id`、`DELETE /api/prefill_group/:id` |
+| 查看模型、部署详情、部署日志、缺失模型 | `model.read` | 既有页面入口与只读接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认模型页权限 hook 与组件类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/models/metadata` 和 `/models/deployments`，确认模型主按钮、行操作菜单、批量操作和部署操作渲染正常，页面自身请求 200、控制台无错误；只触发只读页面加载，不执行新增、同步、扩容或删除。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1673,3 +1727,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 系统信息与系统任务 Authz 路由权限表 | `router/system-info-router.go`、`router/system-task-router.go`、`router/system_info_router_test.go`、`router/system_task_router_test.go` | 为 `/api/system-info/instances` 和 `/api/system-task` 查询接口接入 `system_setting.read`；日志清理任务创建入口接入 `system_setting.sensitive_write` 并额外要求 `usage_log.sensitive_write`，所有路径继续 RootAuth 保底。 |
 | 2026-07-08 | 绘图与异步任务日志 Authz 路由权限表 | `router/task-log-router.go`、`router/api-router.go`、`router/task_log_router_test.go` | 为管理员跨用户 `GET /api/mj/` 与 `GET /api/task/` 接入 `usage_log.read`；`/self` 用户自助查询继续只按当前用户认证隔离，不进入管理员权限表。 |
 | 2026-07-08 | Authz catalog 路由权限表 | `router/authz-router.go`、`router/authz_router_test.go` | 为 `GET /api/authz/catalog` 接入 `system_setting.read`，继续保留 `AdminAuth`，让权限 schema 只读入口也进入统一灰度权限表。 |
+| 2026-07-08 | 模型管理前端按钮级 Authz 消费 | `web/default/src/features/models/*` | 默认前端模型管理页新增 `useModelPermissions` 并让模型、厂商、预填组和部署的写入/操作/删除按钮消费 `model.write/operate/sensitive_write`，与后端模型路由权限表保持一致。 |

@@ -23,8 +23,8 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -40,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from '@/components/status-badge'
 import { syncUpstream, previewUpstreamDiff } from '../../api'
 import { getSyncLocaleOptions, getSyncSourceOptions } from '../../constants'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
 import type { SyncLocale, SyncSource } from '../../types'
 import { useModels } from '../models-provider'
@@ -64,6 +65,8 @@ export function SyncWizardDialog({
     syncWizardOptions,
   } = useModels()
   const isMobile = useIsMobile()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [locale, setLocale] = useState<SyncLocale>('zh')
   const [source, setSource] = useState<SyncSource>('models.dev')
   const [syncPricing, setSyncPricing] = useState(true)
@@ -73,7 +76,7 @@ export function SyncWizardDialog({
   )
   const [isSyncing, setIsSyncing] = useState(false)
 
-  // Get translated options
+  // 同步来源和语言选项随当前语言动态翻译。
   const SYNC_SOURCE_OPTIONS = useMemo(() => getSyncSourceOptions(t), [t])
   const SYNC_LOCALE_OPTIONS = useMemo(() => getSyncLocaleOptions(t), [t])
 
@@ -99,8 +102,13 @@ export function SyncWizardDialog({
     .map((provider) => provider.trim())
     .filter(Boolean)
   const canSyncPricing = source === 'models.dev'
+  const canSyncUpstream = permissions.canOperate && permissions.canWrite
 
   const handleSync = async () => {
+    if (!canSyncUpstream) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsSyncing(true)
     try {
       const pricing = {
@@ -128,7 +136,7 @@ export function SyncWizardDialog({
         return
       }
 
-      // No conflicts, proceed with sync
+      // 无冲突时才真正写入上游同步结果，避免覆盖需要人工确认的模型。
       const response = await syncUpstream({
         locale,
         source,
@@ -290,9 +298,11 @@ export function SyncWizardDialog({
             <div className='rounded-lg border p-4'>
               <div className='flex items-start justify-between gap-4'>
                 <div className='flex min-w-0 items-start gap-3'>
-                  <ShieldCheck className='mt-0.5 h-4 w-4 shrink-0 text-muted-foreground' />
+                  <ShieldCheck className='text-muted-foreground mt-0.5 h-4 w-4 shrink-0' />
                   <div className='min-w-0'>
-                    <div className='font-medium'>{t('Apply upstream pricing')}</div>
+                    <div className='font-medium'>
+                      {t('Apply upstream pricing')}
+                    </div>
                     <p className='text-muted-foreground text-sm'>
                       {t(
                         'Write selected provider prices into the model pricing settings during sync.'
@@ -377,7 +387,11 @@ export function SyncWizardDialog({
           >
             {t('Cancel')}
           </Button>
-          <Button onClick={handleSync} disabled={isSyncing}>
+          <Button
+            onClick={handleSync}
+            disabled={isSyncing || !canSyncUpstream}
+            title={canSyncUpstream ? undefined : noPermissionMessage}
+          >
             {isSyncing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             <RefreshCw className='mr-2 h-4 w-4' />
             {isSyncing ? t('Syncing...') : t('Sync Now')}

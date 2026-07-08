@@ -38,6 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
+import { useModelPermissions } from '../hooks/use-model-permissions'
 import {
   handleBatchEnableModels,
   handleBatchDisableModels,
@@ -55,6 +56,8 @@ export function DataTableBulkActions<TData>({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const selectedIds = selectedRows.reduce<number[]>((ids, row) => {
@@ -74,14 +77,26 @@ export function DataTableBulkActions<TData>({
   }
 
   const handleEnableAll = () => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     handleBatchEnableModels(selectedIds, queryClient, handleClearSelection)
   }
 
   const handleDisableAll = () => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     handleBatchDisableModels(selectedIds, queryClient, handleClearSelection)
   }
 
   const handleDeleteAll = () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     handleBatchDeleteModels(selectedIds, queryClient, () => {
       setShowDeleteConfirm(false)
       handleClearSelection()
@@ -109,8 +124,13 @@ export function DataTableBulkActions<TData>({
                 size='icon'
                 onClick={handleEnableAll}
                 className='size-8'
+                disabled={!permissions.canWrite}
                 aria-label={t('Enable selected models')}
-                title={t('Enable selected models')}
+                title={
+                  permissions.canWrite
+                    ? t('Enable selected models')
+                    : noPermissionMessage
+                }
               />
             }
           >
@@ -130,8 +150,13 @@ export function DataTableBulkActions<TData>({
                 size='icon'
                 onClick={handleDisableAll}
                 className='size-8'
+                disabled={!permissions.canWrite}
                 aria-label={t('Disable selected models')}
-                title={t('Disable selected models')}
+                title={
+                  permissions.canWrite
+                    ? t('Disable selected models')
+                    : noPermissionMessage
+                }
               />
             }
           >
@@ -172,8 +197,13 @@ export function DataTableBulkActions<TData>({
                 size='icon'
                 onClick={() => setShowDeleteConfirm(true)}
                 className='size-8'
+                disabled={!permissions.canSensitiveWrite}
                 aria-label={t('Delete selected models')}
-                title={t('Delete selected models')}
+                title={
+                  permissions.canSensitiveWrite
+                    ? t('Delete selected models')
+                    : noPermissionMessage
+                }
               />
             }
           >
@@ -186,7 +216,7 @@ export function DataTableBulkActions<TData>({
         </Tooltip>
       </BulkActionsToolbar>
 
-      {/* Delete Confirmation Dialog */}
+      {/* 删除确认弹窗 */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent>
           <DialogHeader>
@@ -204,7 +234,14 @@ export function DataTableBulkActions<TData>({
             >
               {t('Cancel')}
             </Button>
-            <Button variant='destructive' onClick={handleDeleteAll}>
+            <Button
+              variant='destructive'
+              onClick={handleDeleteAll}
+              disabled={!permissions.canSensitiveWrite}
+              title={
+                permissions.canSensitiveWrite ? undefined : noPermissionMessage
+              }
+            >
               {t('Delete')}
             </Button>
           </DialogFooter>

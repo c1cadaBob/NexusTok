@@ -79,6 +79,9 @@ type PrefillGroupManagementDialogProps = {
   onOpenChange: (open: boolean) => void
   onCreateGroup: () => void
   onEditGroup: (group: PrefillGroup) => void
+  canWrite: boolean
+  canSensitiveWrite: boolean
+  disabledReason: string
 }
 
 export function PrefillGroupManagementDialog({
@@ -86,6 +89,9 @@ export function PrefillGroupManagementDialog({
   onOpenChange,
   onCreateGroup,
   onEditGroup,
+  canWrite,
+  canSensitiveWrite,
+  disabledReason,
 }: PrefillGroupManagementDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -145,11 +151,19 @@ export function PrefillGroupManagementDialog({
   }, [open])
 
   const handleDeleteClick = (group: PrefillGroup) => {
+    if (!canSensitiveWrite) {
+      toast.error(disabledReason)
+      return
+    }
     setDeleteState({ open: true, group })
   }
 
   const handleDeleteConfirm = async () => {
     if (!deleteState.group) return
+    if (!canSensitiveWrite) {
+      toast.error(disabledReason)
+      return
+    }
     setIsDeleting(true)
     try {
       const response = await deletePrefillGroup(deleteState.group.id)
@@ -217,7 +231,12 @@ export function PrefillGroupManagementDialog({
 
             <div className='flex flex-wrap items-center gap-3 border-b px-4 py-3 text-sm sm:px-6'>
               <div className='flex flex-wrap items-center gap-2'>
-                <Button size='sm' onClick={onCreateGroup}>
+                <Button
+                  size='sm'
+                  onClick={onCreateGroup}
+                  disabled={!canWrite}
+                  title={canWrite ? undefined : disabledReason}
+                >
                   <Plus className='mr-2 h-4 w-4' />
                   {t('New Group')}
                 </Button>
@@ -324,6 +343,8 @@ export function PrefillGroupManagementDialog({
                                 size='icon'
                                 variant='outline'
                                 onClick={() => onEditGroup(group)}
+                                disabled={!canWrite}
+                                title={canWrite ? undefined : disabledReason}
                               >
                                 <Pencil className='h-4 w-4' />
                                 <span className='sr-only'>Edit group</span>
@@ -333,6 +354,10 @@ export function PrefillGroupManagementDialog({
                                 variant='ghost'
                                 className='text-destructive hover:text-destructive'
                                 onClick={() => handleDeleteClick(group)}
+                                disabled={!canSensitiveWrite}
+                                title={
+                                  canSensitiveWrite ? undefined : disabledReason
+                                }
                               >
                                 <Trash2 className='h-4 w-4' />
                                 <span className='sr-only'>Delete group</span>
@@ -474,6 +499,10 @@ export function PrefillGroupManagementDialog({
                                         size='icon'
                                         variant='outline'
                                         onClick={() => onEditGroup(group)}
+                                        disabled={!canWrite}
+                                        title={
+                                          canWrite ? undefined : disabledReason
+                                        }
                                       >
                                         <Pencil className='h-4 w-4' />
                                         <span className='sr-only'>
@@ -485,6 +514,12 @@ export function PrefillGroupManagementDialog({
                                         variant='ghost'
                                         className='text-destructive hover:text-destructive'
                                         onClick={() => handleDeleteClick(group)}
+                                        disabled={!canSensitiveWrite}
+                                        title={
+                                          canSensitiveWrite
+                                            ? undefined
+                                            : disabledReason
+                                        }
                                       >
                                         <Trash2 className='h-4 w-4' />
                                         <span className='sr-only'>
@@ -521,6 +556,7 @@ export function PrefillGroupManagementDialog({
         }
         destructive
         confirmText={isDeleting ? 'Deleting...' : 'Delete'}
+        disabled={!canSensitiveWrite}
         isLoading={isDeleting}
         handleConfirm={handleDeleteConfirm}
       />

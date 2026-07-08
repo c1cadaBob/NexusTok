@@ -59,6 +59,7 @@ import {
   getAvailableReplicas,
   getHardwareTypes,
 } from '../../api'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { deploymentsQueryKeys } from '../../lib'
 
 const BUILTIN_IMAGE = 'ollama/ollama:latest'
@@ -73,7 +74,7 @@ const schema = z.object({
   location_ids: z.array(z.string()).min(1),
   replica_count: z.coerce.number().int().min(1),
   duration_hours: z.coerce.number().int().min(1),
-  // Advanced
+  // 高级配置
   env_json: z.string().optional(),
   secret_env_json: z.string().optional(),
   entrypoint: z.string().optional(),
@@ -83,7 +84,7 @@ const schema = z.object({
   currency: z.string().optional(),
 })
 
-// NOTE: react-hook-form resolver uses the schema input type (coerce input is unknown)
+// react-hook-form resolver 使用 schema 输入类型；z.coerce 的输入在类型层面是 unknown。
 type FormValues = z.input<typeof schema>
 
 function toNumber(value: unknown, fallback: number) {
@@ -100,6 +101,8 @@ export function CreateDeploymentDrawer({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -148,7 +151,7 @@ export function CreateDeploymentDrawer({
     }))
   }, [hardwareTypesData])
 
-  // Keep gpus_per_container <= max_gpus
+  // 保证 gpus_per_container 不超过硬件类型允许的最大 GPU 数。
   useEffect(() => {
     if (!hardwareId) return
     const hw = hardwareOptions.find((x) => x.value === hardwareId)
@@ -234,6 +237,9 @@ export function CreateDeploymentDrawer({
 
   const createMutation = useMutation({
     mutationFn: async (values: FormValues) => {
+      if (!permissions.canWrite) {
+        throw new Error(noPermissionMessage)
+      }
       const env =
         values.env_json && values.env_json.trim()
           ? (JSON.parse(values.env_json) as Record<string, unknown>)
@@ -330,7 +336,7 @@ export function CreateDeploymentDrawer({
     },
   })
 
-  // Reset form when opening
+  // 每次打开抽屉时重置表单，避免复用上一次未提交的部署参数。
   useEffect(() => {
     if (!open) return
     form.reset({
@@ -386,12 +392,16 @@ export function CreateDeploymentDrawer({
         <Form {...form}>
           <form
             id='deployment-form'
-            onSubmit={form.handleSubmit((values) =>
+            onSubmit={form.handleSubmit((values) => {
+              if (!permissions.canWrite) {
+                toast.error(noPermissionMessage)
+                return
+              }
               createMutation.mutate(values)
-            )}
+            })}
             className='flex-1 space-y-6 overflow-y-auto px-4'
           >
-            {/* Basic Configuration */}
+            {/* 基础配置 */}
             <div className='space-y-4'>
               <h3 className='text-sm font-medium'>
                 {t('Basic Configuration')}
@@ -437,7 +447,7 @@ export function CreateDeploymentDrawer({
               />
             </div>
 
-            {/* Resource Configuration */}
+            {/* 资源配置 */}
             <div className='space-y-4'>
               <h3 className='text-sm font-medium'>
                 {t('Resource Configuration')}
@@ -606,7 +616,7 @@ export function CreateDeploymentDrawer({
               </div>
             </div>
 
-            {/* Price Estimation */}
+            {/* 价格预估 */}
             <div className='space-y-4'>
               <h3 className='text-sm font-medium'>{t('Price estimation')}</h3>
               <p className='text-muted-foreground text-xs'>
@@ -644,7 +654,7 @@ export function CreateDeploymentDrawer({
               />
             </div>
 
-            {/* Advanced Configuration */}
+            {/* 高级配置 */}
             <div className='space-y-4'>
               <h3 className='text-sm font-medium'>
                 {t('Advanced Configuration')}
@@ -769,7 +779,8 @@ export function CreateDeploymentDrawer({
           <Button
             form='deployment-form'
             type='submit'
-            disabled={createMutation.isPending}
+            disabled={createMutation.isPending || !permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
           >
             {createMutation.isPending ? t('Submitting...') : t('Create')}
           </Button>

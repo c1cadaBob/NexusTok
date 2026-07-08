@@ -37,6 +37,10 @@ export function useDeploymentsColumns(opts: {
   onExtend: (id: string | number) => void
   onRename: (id: string | number, currentName: string) => void
   onDelete: (deployment: Deployment) => void
+  canWrite: boolean
+  canOperate: boolean
+  canSensitiveWrite: boolean
+  disabledReason: string
 }): ColumnDef<Deployment>[] {
   const { t } = useTranslation()
   const STATUS = getDeploymentStatusConfig(t)
@@ -267,7 +271,7 @@ export function useDeploymentsColumns(opts: {
               onClick={() => opts.onViewLogs(id)}
               title={t('View logs')}
             >
-              <Eye className='h-4 w-4' />
+              <Eye />
             </Button>
             <Button
               variant='ghost'
@@ -275,39 +279,49 @@ export function useDeploymentsColumns(opts: {
               onClick={() => opts.onViewDetails(id)}
               title={t('View details')}
             >
-              <Info className='h-4 w-4' />
+              <Info />
             </Button>
             <Button
               variant='ghost'
               size='sm'
               onClick={() => opts.onUpdateConfig(id)}
-              title={t('Update configuration')}
+              disabled={!opts.canWrite}
+              title={
+                opts.canWrite ? t('Update configuration') : opts.disabledReason
+              }
             >
-              <Settings2 className='h-4 w-4' />
+              <Settings2 />
             </Button>
             <Button
               variant='ghost'
               size='sm'
               onClick={() => opts.onExtend(id)}
-              title={t('Extend deployment')}
+              disabled={!opts.canOperate}
+              title={
+                opts.canOperate ? t('Extend deployment') : opts.disabledReason
+              }
             >
-              <Timer className='h-4 w-4' />
+              <Timer />
             </Button>
             <Button
               variant='ghost'
               size='sm'
               onClick={() => opts.onRename(id, String(currentName))}
-              title={t('Rename deployment')}
+              disabled={!opts.canWrite}
+              title={
+                opts.canWrite ? t('Rename deployment') : opts.disabledReason
+              }
             >
-              <Pencil className='h-4 w-4' />
+              <Pencil />
             </Button>
             <Button
               variant='ghost'
               size='sm'
               onClick={() => opts.onDelete(row.original)}
-              title={t('Delete')}
+              disabled={!opts.canSensitiveWrite}
+              title={opts.canSensitiveWrite ? t('Delete') : opts.disabledReason}
             >
-              <Trash2 className='h-4 w-4 text-red-500' />
+              <Trash2 className='text-destructive' />
             </Button>
           </div>
         )

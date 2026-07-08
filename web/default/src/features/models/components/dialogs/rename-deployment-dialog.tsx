@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { checkClusterNameAvailability, updateDeploymentName } from '../../api'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { deploymentsQueryKeys } from '../../lib'
 
 export function RenameDeploymentDialog({
@@ -46,6 +47,8 @@ export function RenameDeploymentDialog({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [name, setName] = useState(currentName || '')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -77,10 +80,15 @@ export function RenameDeploymentDialog({
     Boolean(deploymentId) &&
     Boolean(trimmed) &&
     available !== false &&
-    !isSubmitting
+    !isSubmitting &&
+    permissions.canWrite
 
   const onSubmit = async () => {
     if (!deploymentId) return
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!trimmed) {
       toast.error(t('Please enter a name'))
       return
@@ -135,7 +143,11 @@ export function RenameDeploymentDialog({
           <Button variant='outline' onClick={() => onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button onClick={() => void onSubmit()} disabled={!canSubmit}>
+          <Button
+            onClick={() => void onSubmit()}
+            disabled={!canSubmit}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {isSubmitting ? (
               <Loader2 className='mr-2 h-4 w-4 animate-spin' />
             ) : null}

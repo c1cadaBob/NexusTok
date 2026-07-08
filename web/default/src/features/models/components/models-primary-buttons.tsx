@@ -25,6 +25,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -34,13 +35,26 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useModelPermissions } from '../hooks/use-model-permissions'
 import { useModels } from './models-provider'
 
 export function ModelsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, setCurrentRow } = useModels()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+  const canSyncUpstream = permissions.canOperate && permissions.canWrite
+  const canManagePrefillGroups =
+    permissions.canWrite || permissions.canSensitiveWrite
+
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const handleCreateModel = () => {
+    if (!guardPermission(permissions.canWrite)) return
     setCurrentRow(null)
     setOpen('create-model')
   }
@@ -50,58 +64,78 @@ export function ModelsPrimaryButtons() {
   }
 
   const handleSync = () => {
+    if (!guardPermission(canSyncUpstream)) return
     setOpen('sync-wizard')
   }
 
   const handlePrefillGroups = () => {
+    if (!guardPermission(canManagePrefillGroups)) return
     setOpen('prefill-groups')
   }
 
   const handleManageVendors = () => {
+    if (!guardPermission(permissions.canWrite)) return
     setOpen('create-vendor') // Will be a separate vendors management dialog
   }
 
   return (
     <div className='flex items-center gap-2'>
-      {/* Create Model */}
-      <Button onClick={handleCreateModel} size='sm'>
-        <Plus className='h-4 w-4' />
+      {/* 创建模型 */}
+      <Button
+        onClick={handleCreateModel}
+        size='sm'
+        disabled={!permissions.canWrite}
+        title={permissions.canWrite ? undefined : noPermissionMessage}
+      >
+        <Plus data-icon='inline-start' />
         {t('Add Model')}
       </Button>
 
-      {/* More Actions */}
+      {/* 更多操作 */}
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant='outline' size='sm' />}>
-          <MoreHorizontal className='h-4 w-4' />
+          <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-56'>
           <DropdownMenuItem onClick={handleMissingModels}>
             {t('Missing Models')}
             <DropdownMenuShortcut>
-              <AlertCircle className='h-4 w-4' />
+              <AlertCircle />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          <DropdownMenuItem onClick={handleSync}>
+          <DropdownMenuItem
+            onClick={handleSync}
+            disabled={!canSyncUpstream}
+            title={canSyncUpstream ? undefined : noPermissionMessage}
+          >
             {t('Sync Upstream')}
             <DropdownMenuShortcut>
-              <RefreshCw className='h-4 w-4' />
+              <RefreshCw />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuItem onClick={handlePrefillGroups}>
+          <DropdownMenuItem
+            onClick={handlePrefillGroups}
+            disabled={!canManagePrefillGroups}
+            title={canManagePrefillGroups ? undefined : noPermissionMessage}
+          >
             {t('Prefill Groups')}
             <DropdownMenuShortcut>
-              <List className='h-4 w-4' />
+              <List />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          <DropdownMenuItem onClick={handleManageVendors}>
+          <DropdownMenuItem
+            onClick={handleManageVendors}
+            disabled={!permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {t('Manage Vendors')}
             <DropdownMenuShortcut>
-              <Building2 className='h-4 w-4' />
+              <Building2 />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>

@@ -48,6 +48,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { getDeployment, updateDeployment } from '../../api'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { deploymentsQueryKeys } from '../../lib'
 
 const schema = z.object({
@@ -89,6 +90,8 @@ export function UpdateConfigDialog({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const form = useForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
@@ -164,6 +167,10 @@ export function UpdateConfigDialog({
 
   const onSubmit = async (values: Values) => {
     if (!deploymentId) return
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     try {
       const env_variables = normalizeJsonObject(values.env_json)
       const secret_env_variables = normalizeJsonObject(values.secret_env_json)
@@ -420,7 +427,15 @@ export function UpdateConfigDialog({
                   >
                     {t('Cancel')}
                   </Button>
-                  <Button type='submit' disabled={form.formState.isSubmitting}>
+                  <Button
+                    type='submit'
+                    disabled={
+                      form.formState.isSubmitting || !permissions.canWrite
+                    }
+                    title={
+                      permissions.canWrite ? undefined : noPermissionMessage
+                    }
+                  >
                     {form.formState.isSubmitting ? (
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                     ) : null}

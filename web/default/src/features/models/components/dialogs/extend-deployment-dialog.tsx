@@ -32,6 +32,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { estimatePrice, extendDeployment, getDeployment } from '../../api'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { deploymentsQueryKeys } from '../../lib'
 
 function toInt(value: unknown, fallback: number) {
@@ -50,6 +51,8 @@ export function ExtendDeploymentDialog({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [hours, setHours] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -134,10 +137,18 @@ export function ExtendDeploymentDialog({
     return `${String(total)} ${String(currency).toUpperCase()}`.trim()
   }, [priceRes])
 
-  const canSubmit = Boolean(deploymentId) && hours > 0 && !isSubmitting
+  const canSubmit =
+    Boolean(deploymentId) &&
+    hours > 0 &&
+    !isSubmitting &&
+    permissions.canOperate
 
   const onSubmit = async () => {
     if (!deploymentId) return
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
     const h = toInt(hours, 1)
     if (h <= 0) {
       toast.error(t('Please enter a valid duration'))
@@ -223,7 +234,11 @@ export function ExtendDeploymentDialog({
           <Button variant='outline' onClick={() => onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button onClick={() => void onSubmit()} disabled={!canSubmit}>
+          <Button
+            onClick={() => void onSubmit()}
+            disabled={!canSubmit}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
             {isSubmitting ? (
               <Loader2 className='mr-2 h-4 w-4 animate-spin' />
             ) : null}

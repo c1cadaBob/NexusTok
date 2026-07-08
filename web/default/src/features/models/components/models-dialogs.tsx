@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { useTranslation } from 'react-i18next'
+import { useModelPermissions } from '../hooks/use-model-permissions'
 import { DescriptionDialog } from './dialogs/description-dialog'
 import { MissingModelsDialog } from './dialogs/missing-models-dialog'
 import { PrefillGroupManagement } from './dialogs/prefill-group-management'
@@ -26,6 +28,7 @@ import { ModelMutateDrawer } from './drawers/model-mutate-drawer'
 import { useModels } from './models-provider'
 
 export function ModelsDialogs() {
+  const { t } = useTranslation()
   const {
     open,
     setOpen,
@@ -34,48 +37,52 @@ export function ModelsDialogs() {
     descriptionData,
     setDescriptionData,
   } = useModels()
+  const permissions = useModelPermissions()
 
   return (
     <>
-      {/* Model Create/Update Drawer */}
+      {/* 模型创建/更新抽屉 */}
       <ModelMutateDrawer
         open={open === 'create-model' || open === 'update-model'}
         onOpenChange={(v) => !v && setOpen(null)}
         currentRow={currentRow}
       />
 
-      {/* Vendor Create/Update Dialog */}
+      {/* 厂商创建/更新弹窗 */}
       <VendorMutateDialog
         open={open === 'create-vendor' || open === 'update-vendor'}
         onOpenChange={(v) => !v && setOpen(null)}
         currentVendor={open === 'update-vendor' ? currentVendor : null}
       />
 
-      {/* Missing Models Dialog */}
+      {/* 缺失模型弹窗 */}
       <MissingModelsDialog
         open={open === 'missing-models'}
         onOpenChange={(v) => !v && setOpen(null)}
       />
 
-      {/* Sync Wizard Dialog */}
+      {/* 上游同步向导弹窗 */}
       <SyncWizardDialog
         open={open === 'sync-wizard'}
         onOpenChange={(v) => !v && setOpen(null)}
       />
 
-      {/* Upstream Conflict Dialog */}
+      {/* 上游冲突处理弹窗 */}
       <UpstreamConflictDialog
         open={open === 'upstream-conflict'}
         onOpenChange={(v) => !v && setOpen(null)}
       />
 
-      {/* Prefill Groups Management */}
+      {/* 预填组管理弹窗 */}
       <PrefillGroupManagement
         open={open === 'prefill-groups'}
         onOpenChange={(v) => !v && setOpen(null)}
+        canWrite={permissions.canWrite}
+        canSensitiveWrite={permissions.canSensitiveWrite}
+        disabledReason={t("You don't have necessary permission")}
       />
 
-      {/* Description Dialog */}
+      {/* 模型描述弹窗 */}
       <DescriptionDialog
         open={open === 'description'}
         onOpenChange={(v) => {

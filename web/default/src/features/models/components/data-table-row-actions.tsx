@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { type Row } from '@tanstack/react-table'
 import { MoreHorizontal, Pencil, Power, PowerOff, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { useModelPermissions } from '../hooks/use-model-permissions'
 import {
   handleDeleteModel,
   handleToggleModelStatus,
@@ -49,15 +51,24 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { setOpen, setCurrentRow } = useModels()
   const queryClient = useQueryClient()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const isEnabled = isModelEnabled(model)
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const handleEdit = () => {
+    if (!guardPermission(permissions.canWrite)) return
     setCurrentRow(model)
     setOpen('update-model')
   }
 
   const handleToggleStatus = () => {
+    if (!guardPermission(permissions.canWrite)) return
     handleToggleModelStatus(model.id, model.status, queryClient)
   }
 
@@ -71,34 +82,42 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           />
         }
       >
-        <MoreHorizontal className='h-4 w-4' />
+        <MoreHorizontal />
         <span className='sr-only'>{t('Open menu')}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-48'>
-        {/* Edit */}
-        <DropdownMenuItem onClick={handleEdit}>
+        {/* 编辑 */}
+        <DropdownMenuItem
+          onClick={handleEdit}
+          disabled={!permissions.canWrite}
+          title={permissions.canWrite ? undefined : noPermissionMessage}
+        >
           {t('Edit')}
           <DropdownMenuShortcut>
-            <Pencil size={16} />
+            <Pencil />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />
 
-        {/* Enable/Disable */}
-        <DropdownMenuItem onClick={handleToggleStatus}>
+        {/* 启用/禁用 */}
+        <DropdownMenuItem
+          onClick={handleToggleStatus}
+          disabled={!permissions.canWrite}
+          title={permissions.canWrite ? undefined : noPermissionMessage}
+        >
           {isEnabled ? (
             <>
               {t('Disable')}
               <DropdownMenuShortcut>
-                <PowerOff size={16} />
+                <PowerOff />
               </DropdownMenuShortcut>
             </>
           ) : (
             <>
               {t('Enable')}
               <DropdownMenuShortcut>
-                <Power size={16} />
+                <Power />
               </DropdownMenuShortcut>
             </>
           )}
@@ -106,17 +125,22 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
         <DropdownMenuSeparator />
 
-        {/* Delete */}
+        {/* 删除 */}
         <DropdownMenuItem
           onSelect={(e) => {
             e.preventDefault()
+            if (!guardPermission(permissions.canSensitiveWrite)) return
             setDeleteConfirmOpen(true)
           }}
+          disabled={!permissions.canSensitiveWrite}
+          title={
+            permissions.canSensitiveWrite ? undefined : noPermissionMessage
+          }
           className='text-destructive focus:text-destructive'
         >
           {t('Delete')}
           <DropdownMenuShortcut>
-            <Trash2 size={16} />
+            <Trash2 />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -129,6 +153,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         confirmText='Delete'
         destructive
         handleConfirm={() => {
+          if (!guardPermission(permissions.canSensitiveWrite)) return
           handleDeleteModel(model.id, queryClient)
           setDeleteConfirmOpen(false)
         }}

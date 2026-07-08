@@ -33,6 +33,7 @@ import { ModelsPrimaryButtons } from './components/models-primary-buttons'
 import { ModelsProvider, useModels } from './components/models-provider'
 import { ModelsTable } from './components/models-table'
 import { useModelDeploymentSettings } from './hooks/use-model-deployment-settings'
+import { useModelPermissions } from './hooks/use-model-permissions'
 import { deploymentsQueryKeys } from './lib'
 import {
   type ModelsSectionId,
@@ -61,14 +62,16 @@ function ModelsContent() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { tabCategory, setTabCategory } = useModels()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const params = route.useParams()
   const activeSection = (params.section ??
     MODELS_DEFAULT_SECTION) as ModelsSectionId
 
-  // Deployment create dialog state
+  // 部署创建抽屉状态，独立于模型元数据弹窗上下文。
   const [createDeploymentOpen, setCreateDeploymentOpen] = useState(false)
 
-  // keep context state in sync (for components that rely on it)
+  // 同步上下文中的当前分类，供仍依赖 models provider 的子组件使用。
   useEffect(() => {
     if (tabCategory !== activeSection) {
       setTabCategory(activeSection)
@@ -86,15 +89,14 @@ function ModelsContent() {
     refresh: refreshDeploymentSettings,
   } = useModelDeploymentSettings()
 
-  // Ensure settings are fresh when switching to deployments section
+  // 切换到部署页时刷新服务配置，避免使用旧的启用状态或连接状态。
   useEffect(() => {
     if (activeSection === 'deployments') {
       refreshDeploymentSettings()
     }
   }, [activeSection, refreshDeploymentSettings])
 
-  // Prefetch deployments list while connection check is in progress
-  // This allows the data to be ready as soon as the guard passes
+  // 连接检查期间预取部署列表；守卫通过后表格可以直接复用缓存数据。
   useEffect(() => {
     if (
       activeSection === 'deployments' &&
@@ -105,7 +107,7 @@ function ModelsContent() {
       queryClient.prefetchQuery({
         queryKey: deploymentsQueryKeys.list(defaultParams),
         queryFn: () => listDeployments(defaultParams),
-        staleTime: 30 * 1000, // 30 seconds
+        staleTime: 30 * 1000, // 30 秒
       })
     }
   }, [activeSection, isIoNetEnabled, loadingPhase, queryClient])
@@ -133,8 +135,13 @@ function ModelsContent() {
           {activeSection === 'metadata' ? (
             <ModelsPrimaryButtons />
           ) : (
-            <Button onClick={() => setCreateDeploymentOpen(true)} size='sm'>
-              <Plus className='h-4 w-4' />
+            <Button
+              onClick={() => setCreateDeploymentOpen(true)}
+              size='sm'
+              disabled={!permissions.canWrite}
+              title={permissions.canWrite ? undefined : noPermissionMessage}
+            >
+              <Plus data-icon='inline-start' />
               {t('Create deployment')}
             </Button>
           )}

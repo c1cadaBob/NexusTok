@@ -88,6 +88,7 @@ import {
   updateModelPricing,
 } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { modelsQueryKeys, vendorsQueryKeys, parseModelTags } from '../../lib'
 import type { Model, UpdateModelPricingRequest } from '../../types'
 
@@ -235,6 +236,8 @@ export function ModelMutateDrawer({
 }: ModelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const isEditing = Boolean(currentRow?.id)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [pricingMode, setPricingMode] = useState<PricingMode>('per-token')
@@ -388,8 +391,7 @@ export function ModelMutateDrawer({
           setFormPricingValue(ratioFieldByLane[key], '')
           return
         }
-        const price =
-          key === 'completion' ? completionPrice : getLanePrice(key)
+        const price = key === 'completion' ? completionPrice : getLanePrice(key)
         setFormPricingValue(
           ratioFieldByLane[key],
           deriveLaneRatio(key, price, inputPrice, getLanePrice('audioInput'))
@@ -670,6 +672,10 @@ export function ModelMutateDrawer({
 
   const onSubmit = useCallback(
     async (values: ExtendedModelFormValues): Promise<void> => {
+      if (!permissions.canWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
       setIsSubmitting(true)
       try {
         if (
@@ -730,7 +736,9 @@ export function ModelMutateDrawer({
             buildPricingPayload(values)
           )
           if (!pricingResponse.success) {
-            toast.error(pricingResponse.message || t('Failed to update pricing'))
+            toast.error(
+              pricingResponse.message || t('Failed to update pricing')
+            )
             return
           }
 
@@ -769,6 +777,8 @@ export function ModelMutateDrawer({
       t,
       buildPricingPayload,
       validateTokenPricing,
+      permissions.canWrite,
+      noPermissionMessage,
     ]
   )
 
@@ -1078,8 +1088,7 @@ export function ModelMutateDrawer({
                         const audioOutputDisabled =
                           lane.key === 'audioOutput' &&
                           (!laneEnabled.audioInput ||
-                            toNumberOrNull(getLanePrice('audioInput')) ===
-                              null)
+                            toNumberOrNull(getLanePrice('audioInput')) === null)
 
                         return (
                           <PriceLaneCard
@@ -1162,7 +1171,7 @@ export function ModelMutateDrawer({
 
             <Separator />
 
-            {/* Status & Sync */}
+            {/* 状态与同步 */}
             <div className='space-y-4'>
               <h3 className='text-sm font-semibold'>{t('Status & Sync')}</h3>
 
@@ -1221,7 +1230,12 @@ export function ModelMutateDrawer({
           >
             {t('Cancel')}
           </SheetClose>
-          <Button form='model-form' type='submit' disabled={isSubmitting}>
+          <Button
+            form='model-form'
+            type='submit'
+            disabled={isSubmitting || !permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {isSubmitting && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {isEditing ? t('Update Model') : t('Save changes')}
           </Button>

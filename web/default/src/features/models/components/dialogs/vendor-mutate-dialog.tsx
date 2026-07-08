@@ -44,6 +44,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { createVendor, updateVendor } from '../../api'
+import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { vendorsQueryKeys, modelsQueryKeys } from '../../lib'
 import { vendorFormSchema, type Vendor } from '../../types'
 
@@ -62,6 +63,8 @@ export function VendorMutateDialog({
   const queryClient = useQueryClient()
   const isEdit = Boolean(currentVendor?.id)
   const [isSaving, setIsSaving] = useState(false)
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const form = useForm({
     resolver: zodResolver(vendorFormSchema),
@@ -73,7 +76,7 @@ export function VendorMutateDialog({
     },
   })
 
-  // Load vendor data for editing
+  // 编辑时回填厂商数据；新增时清空表单，避免复用上一次打开时的状态。
   useEffect(() => {
     if (open && isEdit && currentVendor) {
       form.reset({
@@ -94,6 +97,10 @@ export function VendorMutateDialog({
   }, [open, isEdit, currentVendor, form])
 
   const onSubmit = async (values: Record<string, unknown>) => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsSaving(true)
     try {
       const response = isEdit
@@ -202,7 +209,11 @@ export function VendorMutateDialog({
               >
                 {t('Cancel')}
               </Button>
-              <Button type='submit' disabled={isSaving}>
+              <Button
+                type='submit'
+                disabled={isSaving || !permissions.canWrite}
+                title={permissions.canWrite ? undefined : noPermissionMessage}
+              >
                 {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {isSaving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
               </Button>

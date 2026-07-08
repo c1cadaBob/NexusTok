@@ -24,6 +24,9 @@ import { PrefillGroupManagementDialog } from './prefill-group-management-dialog'
 type PrefillGroupManagementProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  canWrite: boolean
+  canSensitiveWrite: boolean
+  disabledReason: string
 }
 
 type PrefillView = 'dialog' | 'drawer'
@@ -31,6 +34,9 @@ type PrefillView = 'dialog' | 'drawer'
 export function PrefillGroupManagement({
   open,
   onOpenChange,
+  canWrite,
+  canSensitiveWrite,
+  disabledReason,
 }: PrefillGroupManagementProps) {
   const [view, setView] = useState<PrefillView>('dialog')
   const [currentGroup, setCurrentGroup] = useState<PrefillGroup | null>(null)
@@ -58,6 +64,7 @@ export function PrefillGroupManagement({
   }
 
   const handleShowDrawer = (group: PrefillGroup | null) => {
+    if (!canWrite) return
     setCurrentGroup(group)
     setView('drawer')
   }
@@ -69,11 +76,16 @@ export function PrefillGroupManagement({
         onOpenChange={handleDialogOpenChange}
         onCreateGroup={() => handleShowDrawer(null)}
         onEditGroup={(group) => handleShowDrawer(group)}
+        canWrite={canWrite}
+        canSensitiveWrite={canSensitiveWrite}
+        disabledReason={disabledReason}
       />
       <PrefillGroupFormDrawer
         open={open && view === 'drawer'}
         onClose={handleDrawerClose}
         currentGroup={currentGroup}
+        canWrite={canWrite}
+        disabledReason={disabledReason}
       />
     </>
   )

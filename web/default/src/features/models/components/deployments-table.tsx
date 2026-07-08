@@ -41,6 +41,7 @@ import {
 import { DataTablePage } from '@/components/data-table'
 import { deleteDeployment, listDeployments, searchDeployments } from '../api'
 import { getDeploymentStatusOptions } from '../constants'
+import { useModelPermissions } from '../hooks/use-model-permissions'
 import { deploymentsQueryKeys } from '../lib'
 import type { Deployment } from '../types'
 import { useDeploymentsColumns } from './deployments-columns'
@@ -56,8 +57,10 @@ export function DeploymentsTable() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const isMobile = useMediaQuery('(max-width: 640px)')
+  const permissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
-  // URL state (use dedicated keys so it won't collide with metadata table)
+  // URL 状态使用独立 key，避免与模型元数据表格的分页和筛选参数冲突。
   const {
     globalFilter,
     onGlobalFilterChange,
@@ -89,7 +92,7 @@ export function DeploymentsTable() {
       ? statusFilter[0]
       : undefined
 
-  // Dialog state
+  // 部署只读和写入类弹窗状态。
   const [logsOpen, setLogsOpen] = useState(false)
   const [logsDeploymentId, setLogsDeploymentId] = useState<
     string | number | null
@@ -112,7 +115,7 @@ export function DeploymentsTable() {
   >(null)
   const [renameCurrentName, setRenameCurrentName] = useState<string>('')
 
-  // Delete confirm
+  // 删除确认状态，真正删除前仍会再次检查敏感写权限。
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Deployment | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -147,6 +150,10 @@ export function DeploymentsTable() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsDeleting(true)
     try {
       const res = await deleteDeployment(deleteTarget.id)
@@ -179,22 +186,42 @@ export function DeploymentsTable() {
       setDetailsOpen(true)
     },
     onUpdateConfig: (id) => {
+      if (!permissions.canWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
       setUpdateDeploymentId(id)
       setUpdateOpen(true)
     },
     onExtend: (id) => {
+      if (!permissions.canOperate) {
+        toast.error(noPermissionMessage)
+        return
+      }
       setExtendDeploymentId(id)
       setExtendOpen(true)
     },
     onRename: (id, currentName) => {
+      if (!permissions.canWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
       setRenameCurrentName(currentName)
       setRenameDeploymentId(id)
       setRenameOpen(true)
     },
     onDelete: (deployment) => {
+      if (!permissions.canSensitiveWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
       setDeleteTarget(deployment)
       setDeleteOpen(true)
     },
+    canWrite: permissions.canWrite,
+    canOperate: permissions.canOperate,
+    canSensitiveWrite: permissions.canSensitiveWrite,
+    disabledReason: noPermissionMessage,
   })
 
   const table = useReactTable({
@@ -322,7 +349,10 @@ export function DeploymentsTable() {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
-              disabled={isDeleting}
+              disabled={isDeleting || !permissions.canSensitiveWrite}
+              title={
+                permissions.canSensitiveWrite ? undefined : noPermissionMessage
+              }
               className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
             >
               {isDeleting ? t('Deleting...') : t('Delete')}
