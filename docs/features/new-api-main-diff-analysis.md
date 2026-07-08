@@ -1577,6 +1577,49 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/usage-logs/drawing` 和 `/usage-logs/task`，确认页面更新生效；直调 `GET /api/mj/?p=0&page_size=5`、`GET /api/task/?p=0&page_size=5`、`GET /api/mj/self?p=0&page_size=5`、`GET /api/task/self?p=0&page_size=5`，确认返回 200/业务 success，不触发任务提交或日志清理。
 
+## 本轮实施评审：Authz catalog 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 提供 `/api/authz/catalog` 作为权限资源/动作 schema 和角色基线的只读入口，NexusTok 已经吸收并原生化为后端 `service/authz` catalog、`/api/user/self` 权限矩阵回传和默认前端按钮/路由显隐。但 catalog 路由本身仍只有 `AdminAuth`，没有进入灰度权限表；随着越来越多管理路由接入 `RequirePermission`，权限 catalog 也应归入同一套可审计的只读系统能力。
+
+本轮目标：
+
+1. 将 `GET /api/authz/catalog` 接入 `system_setting.read`，保留 `AdminAuth`，用于查看权限资源、动作定义和 Root/Admin 基线矩阵。
+2. 不新增 `authz` 独立资源；当前 catalog 仍只是系统权限配置的只读元数据，不包含用户 override、策略写入、授权变更或 Casbin 存储。
+3. 不修改 `service/authz` 的资源定义、角色基线、`/api/user/self` 回传结构、前端用户抽屉和权限矩阵渲染。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz catalog 路由 | `router/authz-router.go`、`router/authz_router_test.go` | `/api/authz/catalog` 保留 `AdminAuth` 并叠加 `system_setting.read`，handler 和响应结构不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. catalog 会暴露系统当前有哪些管理资源、动作名称和内置角色授权矩阵，属于后台权限配置元数据；继续保留 `AdminAuth`，不会向普通用户开放。
+2. 当前 `system_setting.read` 默认授予 Admin；叠加权限表不会改变现有管理员行为，但未来用户级 override 可以单独控制是否可查看权限 schema。
+3. 不新增独立 `authz` 资源可以避免把只读 schema 过早拆成新权限域；等出现用户策略写入、角色编辑或 Casbin 管理 UI 时，再评估是否新增 `authz.write/sensitive_write`。
+4. 本轮只调用 GET 只读接口，不触发用户权限修改、系统设置写入或任何授权策略持久化。
+
+### 方案评审
+
+采用“AdminAuth 保底 + system_setting.read”的方案。权限 catalog 是系统配置和运维元数据的一部分，现阶段与系统设置读权限绑定最稳妥；它不会改变现有 Root/Admin 基线，也不会影响前端从 `/api/user/self` 读取当前用户能力矩阵。
+
+路由分类：
+
+| 路由 | 权限 | 旧认证边界 | 说明 |
+|------|------|------------|------|
+| `GET /api/authz/catalog` | `system_setting.read` | Admin | 查看权限资源、动作、文案 key 和内置角色基线授权矩阵。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖权限 catalog、权限中间件、Authz 路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认用户管理前端权限 catalog API 类型不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/users`，确认页面更新生效；直调 `GET /api/authz/catalog`，确认返回 200/业务 success 且包含 `resources` 与 `roles`，不执行任何写操作。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1629,3 +1672,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 系统设置与运行维护 Authz 路由权限表 | `service/authz/permission.go`、`router/system-setting-router.go`、`router/api-router.go`、`router/system_setting_router_test.go` | 为 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance` 和 `/api/ratio_sync` 接入 system_setting 权限表；只读诊断保持 Admin 边界，其余系统设置和运行维护接口继续 RootAuth 保底，按 read/operate/sensitive_write 做二次校验。 |
 | 2026-07-08 | 系统信息与系统任务 Authz 路由权限表 | `router/system-info-router.go`、`router/system-task-router.go`、`router/system_info_router_test.go`、`router/system_task_router_test.go` | 为 `/api/system-info/instances` 和 `/api/system-task` 查询接口接入 `system_setting.read`；日志清理任务创建入口接入 `system_setting.sensitive_write` 并额外要求 `usage_log.sensitive_write`，所有路径继续 RootAuth 保底。 |
 | 2026-07-08 | 绘图与异步任务日志 Authz 路由权限表 | `router/task-log-router.go`、`router/api-router.go`、`router/task_log_router_test.go` | 为管理员跨用户 `GET /api/mj/` 与 `GET /api/task/` 接入 `usage_log.read`；`/self` 用户自助查询继续只按当前用户认证隔离，不进入管理员权限表。 |
+| 2026-07-08 | Authz catalog 路由权限表 | `router/authz-router.go`、`router/authz_router_test.go` | 为 `GET /api/authz/catalog` 接入 `system_setting.read`，继续保留 `AdminAuth`，让权限 schema 只读入口也进入统一灰度权限表。 |
