@@ -1163,6 +1163,65 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. `git diff --check` 确认无空白错误。
 5. 使用 MCP 打开 `http://192.168.0.202:3003/wallet`，确认页面更新生效、控制台无新增 error/warn；在浏览器上下文带 `NexusTok-User: 1` 调用 `POST /api/user/waffo-pancake/amount`，确认不再是 404/未注册路由，且在当前配置状态下返回业务层结果。
 
+## 本轮实施评审：用户管理 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 和 NexusTok 的 `/api/user` 管理员接口基本同源，均覆盖用户列表、搜索、详情、创建、更新、删除、启停、额度调整、充值记录、管理员完成充值、Passkey 重置、2FA 强制禁用和第三方绑定清理。NexusTok 已经在 Authz catalog 中注册了 `user.read/operate/write/sensitive_write`，默认前端侧边栏也已经按 `user.read` 控制“用户”入口，但服务端管理员子路由仍是整组 `AdminAuth`，没有消费同一套资源动作权限。用户管理是平台治理中风险最高的管理资源之一，直接关系到账户、额度、认证绑定和管理员身份边界，应继续吸收 new-api 的管理资源分层思路，转成 NexusTok 原生服务端 enforcement。
+
+本轮目标：
+
+1. 为 `user` 资源补齐稳定 permission 变量：`UserRead`、`UserOperate`、`UserWrite`、`UserSensitiveWrite`。
+2. 将 `/api/user` 中的管理员子路由抽成独立权限表注册，保留公开登录、用户自身操作、支付回调和用户自助支付路由原有边界。
+3. 用户列表、搜索、详情、充值记录、OAuth 绑定查看、2FA 统计归为 `user.read`。
+4. 重置 Passkey、强制禁用 2FA、解绑 OAuth/账号绑定、普通启停等运营动作归为 `user.operate`。
+5. 更新普通用户资料、分组、状态和非越权角色字段归为 `user.write`，继续依赖 controller 内已有“不能操作同级或更高级用户”的业务校验。
+6. 创建用户、硬删除用户、管理员完成充值、以及 `POST /api/user/manage` 中的删除、升降级和额度调整归为 `user.sensitive_write`；由于 `manage` 是复合动作，路由级先按 `user.operate` 放行，再在 handler 内按请求体动作做敏感写二次校验。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz 判定 | `service/authz/permission.go`、`service/authz/permission_test.go` | 新增用户管理 permission 变量，并补 Root/Admin/普通用户基线断言。 |
+| 用户 Admin 路由 | `router/user-router.go`、`router/api-router.go` | 将管理员子路由从主路由内联迁移到权限表注册；公开登录、自助资料、充值支付和 webhook 不变。 |
+| 复合动作二次校验 | `controller/user_authz.go`、`controller/user.go`、`controller/user_authz_test.go` | 为 `ManageUser` 的删除、升降级和额度调整增加 `user.sensitive_write` 二次校验，避免单一路由权限误放宽高风险动作。 |
+| 路由测试 | `router/user_router_test.go` | 覆盖用户 Admin 路由 handler 保持不变、权限分类和资源归属。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收标准，作为后续用户页按钮级权限消费依据。 |
+
+### 风险评估
+
+1. 用户管理接口包含账户和额度高风险动作；服务端 enforcement 会让普通 Admin 直接调用创建用户、硬删除用户、管理员完成充值，以及 `manage` 里的删除、升降级、额度调整时被拒绝。这是预期的敏感写收紧，Root 仍可执行。
+2. `POST /api/user/manage` 同时承担启用/禁用、删除、升降级和额度调整。如果整条路由直接标为 `user.sensitive_write`，会把普通启停也提升为 Root-only；如果只标为 `user.operate`，又会放宽删除和额度动作。因此必须增加 handler 内基于 `req.Action` 的二次校验。
+3. `UpdateUser` 仍归为 `user.write`，并保留 controller 内同级/更高级用户校验和目标角色校验；本轮不扩大 Admin 对管理员或 Root 的操作能力。
+4. `AdminResetPasskey` 目前没有像 2FA 禁用那样显式检查目标用户层级；路由级归为 `user.operate` 后仍保持现状，不在本轮顺手改变业务语义。后续可单独评审是否补同级/更高级保护。
+5. 用户自助支付、登录、注册、Passkey 自助、2FA 自助、OAuth 自助绑定、充值 webhook 不属于管理员资源权限表，本轮不改，避免影响普通用户路径。
+6. 默认前端用户页当前主要按 `user.read` 控制入口，按钮级细分尚未全部消费；服务端先收紧后，后续需要补用户页按钮/菜单级显隐，避免普通 Admin 看到不可用的敏感动作。
+
+### 方案评审
+
+采用与渠道、账号池、订阅和模型管理相同的灰度 enforcement：复用 `permissionRoute`、`registerPermissionRoutes` 和 `middleware.RequirePermission`，保留 `AdminAuth` 作为第一层认证边界。管理员子路由独立到 `router/user-router.go`，主路由只负责公开、自助和支付路径，降低 `api-router.go` 的管理资源堆积。复合动作 `ManageUser` 使用 `userManageActionNeedsSensitiveWrite` 做动作级敏感分类，后续接入 Casbin/user override 时会自动复用 `authz.Can` 的统一判定。
+
+路由按资源动作分类如下：
+
+| 路由 | 权限 | 说明 |
+|------|------|------|
+| `GET /api/user/`、`GET /api/user/search`、`GET /api/user/:id` | `user.read` | 用户列表、搜索和详情。 |
+| `GET /api/user/topup` | `user.read` | 管理员查看充值记录。 |
+| `GET /api/user/:id/oauth/bindings`、`GET /api/user/2fa/stats` | `user.read` | 查看认证绑定和 2FA 统计。 |
+| `DELETE /api/user/:id/oauth/bindings/:provider_id`、`DELETE /api/user/:id/bindings/:binding_type` | `user.operate` | 清理绑定，仍保留 controller 内目标用户层级校验。 |
+| `DELETE /api/user/:id/reset_passkey`、`DELETE /api/user/:id/2fa` | `user.operate` | 账号安全运营动作。 |
+| `POST /api/user/manage` | `user.operate` + 动作级二次校验 | 启停为 operate；删除、升降级、额度调整额外要求 sensitive_write。 |
+| `PUT /api/user/` | `user.write` | 编辑普通用户资料/分组/状态等，继续保留层级校验。 |
+| `POST /api/user/`、`DELETE /api/user/:id`、`POST /api/user/topup/complete` | `user.sensitive_write` | 创建/删除账号和手工完成充值属于高风险写。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖用户 permission、权限中间件、路由结构和 `ManageUser` 敏感动作分类。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端类型不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/users`，确认页面更新生效，`/api/user/` 和 `/api/user/search` 等读取请求正常返回，控制台无新增 error/warn。
+5. 不在真实环境触发创建、删除、完成充值、升降级和额度调整等高风险动作；这些敏感写收紧通过单元测试和路由表测试验证。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1207,3 +1266,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 订阅 Admin Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/subscription-router.go`、`router/api-router.go`、`router/subscription_router_test.go` | 为 `/api/subscription/admin` 接入 subscription 权限表：套餐和用户订阅查询走 read，套餐创建/更新/启停走 write，绑定、创建和失效用户订阅走 operate，删除用户订阅走 sensitive_write；用户购买和支付回调路由保持原有认证/匿名回调边界。 |
 | 2026-07-08 | 模型管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/model-router.go`、`router/api-router.go`、`router/model_router_test.go` | 为 `/api/vendors`、`/api/models`、`/api/deployments` 接入 model 权限表：元数据和部署查询走 read，上游预览/连接测试/价格估算/扩容走 operate，厂商/模型/部署创建编辑和定价更新走 write，删除模型、厂商和部署走 sensitive_write；NexusTok 扩展的模型定价接口也纳入同一原生权限体系。 |
 | 2026-07-08 | Waffo Pancake 用户侧支付路由补齐 | `router/api-router.go`、`router/api_router_payment_test.go` | 对齐 new-api 的用户自助充值入口，补齐默认前端已调用的 `/api/user/waffo-pancake/amount` 与 `/api/user/waffo-pancake/pay`；金额试算和支付发起复用现有 Waffo Pancake controller，支付发起保留 `CriticalRateLimit`，webhook 验签和入账事务不变。 |
+| 2026-07-08 | 用户管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/user-router.go`、`router/api-router.go`、`controller/user_authz.go`、`router/user_router_test.go` | 为 `/api/user` 管理员子路由接入 user 权限表：用户/充值/绑定/2FA 查询走 read，绑定清理、Passkey/2FA 重置和普通启停走 operate，普通用户资料编辑走 write，创建、硬删除、管理员完成充值走 sensitive_write；`ManageUser` 复合接口对删除、升降级和额度调整额外执行 `user.sensitive_write` 二次校验。 |

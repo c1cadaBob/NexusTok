@@ -216,28 +216,7 @@ func SetApiRouter(router *gin.Engine) {
 			// ========================================
 			// 管理员路由组 - 需要管理员权限
 			// ========================================
-			adminRoute := userRoute.Group("/")
-			adminRoute.Use(middleware.AdminAuth()) // 所有子路由都需要管理员权限
-			{
-				// 用户管理
-				adminRoute.GET("/", controller.GetAllUsers)                                                // 获取所有用户
-				adminRoute.GET("/topup", controller.GetAllTopUps)                                          // 获取所有充值记录
-				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)                          // 管理员完成充值
-				adminRoute.GET("/search", controller.SearchUsers)                                          // 搜索用户
-				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)              // 获取用户 OAuth 绑定（管理员）
-				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin) // 解绑用户 OAuth（管理员）
-				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)         // 清除用户绑定（管理员）
-				adminRoute.GET("/:id", controller.GetUser)                                                 // 获取单个用户
-				adminRoute.POST("/", controller.CreateUser)                                                // 创建用户
-				adminRoute.POST("/manage", controller.ManageUser)                                          // 管理用户
-				adminRoute.PUT("/", controller.UpdateUser)                                                 // 更新用户
-				adminRoute.DELETE("/:id", controller.DeleteUser)                                           // 删除用户
-				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)                      // 重置用户 Passkey
-
-				// 管理员 2FA 路由
-				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)    // 获取 2FA 统计
-				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA) // 禁用用户 2FA
-			}
+			registerUserAdminRoutes(userRoute)
 		}
 
 		// ========================================

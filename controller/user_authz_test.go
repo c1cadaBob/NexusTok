@@ -86,13 +86,40 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "channel", authz.ActionRead, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "channel", authz.ActionWrite, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "channel", authz.ActionSensitiveWrite, false)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "user", authz.ActionRead, true)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "user", authz.ActionOperate, true)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "user", authz.ActionWrite, true)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "user", authz.ActionSensitiveWrite, false)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionWrite, false)
 
 	userResp := performGetSelfForAuthz(t, users[2].Id, common.RoleCommonUser)
 	assert.True(t, *userResp.Data.Permissions.SidebarSettings)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "channel", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "account_pool", authz.ActionWrite, false)
+	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "user", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionRead, false)
+}
+
+func TestUserManageActionNeedsSensitiveWrite(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      ManageRequest
+		expected bool
+	}{
+		{name: "disable is operate", req: ManageRequest{Action: "disable"}, expected: false},
+		{name: "enable is operate", req: ManageRequest{Action: "enable"}, expected: false},
+		{name: "delete changes account lifecycle", req: ManageRequest{Action: "delete"}, expected: true},
+		{name: "promote changes administrator boundary", req: ManageRequest{Action: "promote"}, expected: true},
+		{name: "demote changes administrator boundary", req: ManageRequest{Action: "demote"}, expected: true},
+		{name: "add quota changes wallet balance", req: ManageRequest{Action: "add_quota", Mode: "add"}, expected: true},
+		{name: "unknown action stays non-sensitive and fails later validation", req: ManageRequest{Action: "unknown"}, expected: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, userManageActionNeedsSensitiveWrite(tc.req))
+		})
+	}
 }
 
 func performGetSelfForAuthz(t *testing.T, userID int, role int) getSelfAuthzResponse {

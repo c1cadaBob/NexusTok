@@ -909,6 +909,9 @@ func ManageUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	if userManageActionNeedsSensitiveWrite(req) && !requireUserSensitiveWrite(c) {
+		return
+	}
 	user := model.User{
 		Id: req.Id,
 	}
