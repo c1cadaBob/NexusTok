@@ -7,9 +7,9 @@
 package controller
 
 import (
-	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service/authz"
 
 	"github.com/gin-gonic/gin"
 )
@@ -120,10 +120,10 @@ func normalizeChannelMultiKeyMode(mode constant.MultiKeyMode) constant.MultiKeyM
 }
 
 // channelCanSensitiveWrite 是完整 Authz 引入前的过渡桥接。
-// 当前 AdminAuth 只保证 role >= Admin；修改 Key、BaseURL、请求头覆盖、参数覆盖、
-// 凭证模式和账号池绑定等敏感字段时继续要求 Root，避免普通管理员绕过安全边界。
+// 当前 authz.Can 只基于 Root/Admin 系统角色基线，效果仍等价 Root 才能通过；
+// 后续接入 Casbin 或用户级 override 时，字段级敏感写会自动复用同一套判定。
 func channelCanSensitiveWrite(c *gin.Context) bool {
-	return c.GetInt("role") >= common.RoleRootUser
+	return authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite)
 }
 
 // channelSensitiveFields 记录需要敏感写权限的渠道字段。

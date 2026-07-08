@@ -1,8 +1,8 @@
-// Package authz 提供 NexusTok 管理权限的只读 catalog。
+// Package authz 提供 NexusTok 管理权限 catalog 与基础授权判定。
 //
-// 当前阶段只暴露资源、动作和内置角色基线，供前端和后续路由权限表共用；
-// 不在这里引入 Casbin 或改变现有 AdminAuth/RootAuth 行为，避免一次迁移影响
-// 渠道、账号池、订阅等核心管理路径。
+// 当前阶段只维护资源、动作和内置角色基线，供前端、用户自身份权限回传和
+// 渠道路由权限表共用；暂不在这里引入 Casbin 或用户级 override，避免一次迁移
+// 影响账号池、订阅、系统设置等核心管理路径。
 package authz
 
 // Permission 标识某个资源上的一个动作。
@@ -20,11 +20,28 @@ const (
 )
 
 const (
+	ResourceChannel       = "channel"
+	ResourceAccountPool   = "account_pool"
+	ResourceUser          = "user"
+	ResourceModel         = "model"
+	ResourceSubscription  = "subscription"
+	ResourceSystemSetting = "system_setting"
+)
+
+const (
 	ActionRead           = "read"
 	ActionOperate        = "operate"
 	ActionWrite          = "write"
 	ActionSensitiveWrite = "sensitive_write"
 	ActionSecretView     = "secret_view"
+)
+
+var (
+	ChannelRead           = Permission{Resource: ResourceChannel, Action: ActionRead}
+	ChannelOperate        = Permission{Resource: ResourceChannel, Action: ActionOperate}
+	ChannelWrite          = Permission{Resource: ResourceChannel, Action: ActionWrite}
+	ChannelSensitiveWrite = Permission{Resource: ResourceChannel, Action: ActionSensitiveWrite}
+	ChannelSecretView     = Permission{Resource: ResourceChannel, Action: ActionSecretView}
 )
 
 // ActionDefinition 描述资源上的一个可授权动作。
@@ -94,16 +111,38 @@ func Roles() []RoleDescriptor {
 	return result
 }
 
-// Capabilities 按现有系统角色计算只读能力矩阵。
+// Capabilities 按现有系统角色计算能力矩阵。
 //
-// 这个函数先服务于前端按钮显隐和后续灰度接入；完整 Authz enforcement 上线前，
-// 它不参与任何服务端放行判断，避免与当前 AdminAuth/RootAuth 产生双重语义。
+// 这个函数服务于前端按钮显隐、自身份权限回传和灰度路由权限表。当前仍只基于
+// Root/Admin 系统角色基线；后续引入 Casbin 或用户级 override 时，应让它与 Can
+// 继续共享同一套语义，避免页面显隐和服务端放行产生分叉。
 func Capabilities(systemRole int) PermissionsMap {
 	role := roleForSystemRole(systemRole)
 	if role == nil {
 		return emptyGrants()
 	}
 	return roleGrants(*role)
+}
+
+// Can 判断当前用户是否拥有指定资源动作权限。
+//
+// userID 预留给后续 Casbin/user override 使用；当前实现只读取系统角色基线。
+// 未注册的资源或动作必须失败关闭，即使 Root 角色也不能绕过未知 permission，
+// 这样新增管理资源时必须先进入 catalog 才能被路由权限表引用。
+func Can(userID int, systemRole int, permission Permission) bool {
+	_ = userID
+	action, ok := findAction(permission)
+	if !ok {
+		return false
+	}
+	role := roleForSystemRole(systemRole)
+	if role == nil {
+		return false
+	}
+	if role.superuser {
+		return true
+	}
+	return actionHasRole(action, role.key)
 }
 
 func roleForSystemRole(systemRole int) *roleSpec {
@@ -129,6 +168,21 @@ func roleGrants(role roleSpec) PermissionsMap {
 		grants[resource.Resource] = actions
 	}
 	return grants
+}
+
+func findAction(permission Permission) (ActionDefinition, bool) {
+	for _, resource := range registry {
+		if resource.Resource != permission.Resource {
+			continue
+		}
+		for _, action := range resource.Actions {
+			if action.Action == permission.Action {
+				return action, true
+			}
+		}
+		return ActionDefinition{}, false
+	}
+	return ActionDefinition{}, false
 }
 
 func emptyGrants() PermissionsMap {

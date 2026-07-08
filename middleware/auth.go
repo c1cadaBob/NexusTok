@@ -22,6 +22,7 @@ import (
 	"github.com/c1cada/NexusTok/logger"                // 日志
 	"github.com/c1cada/NexusTok/model"                 // 数据模型
 	"github.com/c1cada/NexusTok/service"               // 服务层
+	"github.com/c1cada/NexusTok/service/authz"         // 管理权限判定
 	"github.com/c1cada/NexusTok/setting/ratio_setting" // 比率设置
 	"github.com/c1cada/NexusTok/types"                 // 类型定义
 
@@ -255,6 +256,27 @@ func AdminAuth() func(c *gin.Context) {
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleRootUser)
+	}
+}
+
+// RequirePermission 在 AdminAuth/RootAuth 之后执行资源动作权限校验。
+//
+// 认证中间件负责登录态、用户状态、角色下限和 NexusTok-User 头校验；这里仅按
+// authz catalog 中的资源动作做第二层拦截。未注册 permission、普通用户误入或
+// 认证上下文缺失都会失败关闭，避免路由权限表漏配时放宽管理边界。
+func RequirePermission(permission authz.Permission) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		role := c.GetInt("role")
+		userID := c.GetInt("id")
+		if authz.Can(userID, role, permission) {
+			c.Next()
+			return
+		}
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
+		})
+		c.Abort()
 	}
 }
 

@@ -63,6 +63,20 @@ func TestCapabilitiesFollowExistingSystemRoles(t *testing.T) {
 	assert.False(t, user["system_setting"][ActionRead])
 }
 
+func TestCanFollowsRoleBaselinesAndFailsClosed(t *testing.T) {
+	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
+	assert.True(t, Can(1, common.RoleRootUser, ChannelSecretView))
+	assert.True(t, Can(2, common.RoleAdminUser, ChannelRead))
+	assert.True(t, Can(2, common.RoleAdminUser, ChannelOperate))
+	assert.True(t, Can(2, common.RoleAdminUser, ChannelWrite))
+	assert.False(t, Can(2, common.RoleAdminUser, ChannelSensitiveWrite))
+	assert.False(t, Can(2, common.RoleAdminUser, ChannelSecretView))
+	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
+
+	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: ResourceChannel, Action: "unknown"}))
+	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: "unknown", Action: ActionRead}))
+}
+
 func assertActionExists(t *testing.T, resource ResourceDefinition, action string) {
 	t.Helper()
 	for _, item := range resource.Actions {

@@ -41,7 +41,7 @@ func managementActions(sensitiveLabel string, sensitiveDescription string) []Act
 
 func init() {
 	registerResource(ResourceDefinition{
-		Resource: "channel",
+		Resource: ResourceChannel,
 		LabelKey: "Channel Management",
 		Actions: managementActions(
 			"Edit sensitive channel settings",
@@ -50,7 +50,7 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
-		Resource: "account_pool",
+		Resource: ResourceAccountPool,
 		LabelKey: "Account Pool",
 		Actions: managementActions(
 			"Edit sensitive account pool settings",
@@ -59,7 +59,7 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
-		Resource: "user",
+		Resource: ResourceUser,
 		LabelKey: "User Management",
 		Actions: []ActionDefinition{
 			{
@@ -89,7 +89,7 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
-		Resource: "model",
+		Resource: ResourceModel,
 		LabelKey: "Model Management",
 		Actions: []ActionDefinition{
 			{
@@ -119,7 +119,7 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
-		Resource: "subscription",
+		Resource: ResourceSubscription,
 		LabelKey: "Subscription Management",
 		Actions: []ActionDefinition{
 			{
@@ -149,7 +149,7 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
-		Resource: "system_setting",
+		Resource: ResourceSystemSetting,
 		LabelKey: "System Settings",
 		Actions: []ActionDefinition{
 			{

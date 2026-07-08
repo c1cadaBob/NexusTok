@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/controller"
+	"github.com/c1cada/NexusTok/service/authz"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -45,10 +46,51 @@ func TestRegisterChannelRoutesKeepsRootProtectedHandlers(t *testing.T) {
 	assert.Equal(t, handlerName(controller.FetchModels), fetchModelsRoute.Handler)
 }
 
+func TestChannelPermissionRoutesClassifyCoreActions(t *testing.T) {
+	assertPermissionRoute(t, http.MethodGet, "/", authz.ChannelRead)
+	assertPermissionRoute(t, http.MethodGet, "/models", authz.ChannelRead)
+	assertPermissionRoute(t, http.MethodGet, "/:id/accounts", authz.ChannelRead)
+	assertPermissionRoute(t, http.MethodGet, "/test/:id", authz.ChannelOperate)
+	assertPermissionRoute(t, http.MethodGet, "/update_balance/:id", authz.ChannelOperate)
+	assertPermissionRoute(t, http.MethodPut, "/", authz.ChannelWrite)
+	assertPermissionRoute(t, http.MethodPut, "/tag", authz.ChannelWrite)
+	assertPermissionRoute(t, http.MethodPost, "/", authz.ChannelSensitiveWrite)
+	assertPermissionRoute(t, http.MethodDelete, "/:id", authz.ChannelSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPost, "/:id/accounts", authz.ChannelSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPost, "/:id/key", authz.ChannelSecretView)
+}
+
+func TestChannelPermissionRoutesKeepLegacySensitiveMiddlewares(t *testing.T) {
+	keyRoute := requirePermissionRoute(t, http.MethodPost, "/:id/key")
+	require.NotEmpty(t, keyRoute.before)
+	require.Len(t, keyRoute.after, 3)
+
+	fetchModelsRoute := requirePermissionRoute(t, http.MethodPost, "/fetch_models")
+	require.NotEmpty(t, fetchModelsRoute.before)
+	require.Empty(t, fetchModelsRoute.after)
+}
+
 func assertRouteHandler(t *testing.T, engine *gin.Engine, method string, path string, handler gin.HandlerFunc) {
 	t.Helper()
 	route := requireRoute(t, engine, method, path)
 	assert.Equal(t, handlerName(handler), route.Handler)
+}
+
+func assertPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) {
+	t.Helper()
+	route := requirePermissionRoute(t, method, path)
+	assert.Equal(t, permission, route.permission)
+}
+
+func requirePermissionRoute(t *testing.T, method string, path string) permissionRoute {
+	t.Helper()
+	for _, route := range channelPermissionRoutes {
+		if route.method == method && route.path == path {
+			return route
+		}
+	}
+	t.Fatalf("permission route %s %s not found", method, path)
+	return permissionRoute{}
 }
 
 func requireRoute(t *testing.T, engine *gin.Engine, method string, path string) gin.RouteInfo {
