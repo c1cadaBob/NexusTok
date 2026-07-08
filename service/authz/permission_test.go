@@ -52,6 +52,10 @@ func TestRolesExposeRootAndAdminBaselines(t *testing.T) {
 	assert.True(t, admin.Grants["account_pool"][ActionWrite])
 	assert.False(t, admin.Grants["account_pool"][ActionSensitiveWrite])
 	assert.False(t, admin.Grants["account_pool"][ActionSecretView])
+	assert.True(t, admin.Grants["subscription"][ActionRead])
+	assert.True(t, admin.Grants["subscription"][ActionOperate])
+	assert.True(t, admin.Grants["subscription"][ActionWrite])
+	assert.False(t, admin.Grants["subscription"][ActionSensitiveWrite])
 	assert.False(t, admin.Grants["system_setting"][ActionWrite])
 }
 
@@ -80,8 +84,13 @@ func TestCanFollowsRoleBaselinesAndFailsClosed(t *testing.T) {
 	assert.True(t, Can(2, common.RoleAdminUser, AccountPoolWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, AccountPoolSensitiveWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, AccountPoolSecretView))
+	assert.True(t, Can(2, common.RoleAdminUser, SubscriptionRead))
+	assert.True(t, Can(2, common.RoleAdminUser, SubscriptionOperate))
+	assert.True(t, Can(2, common.RoleAdminUser, SubscriptionWrite))
+	assert.False(t, Can(2, common.RoleAdminUser, SubscriptionSensitiveWrite))
 	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
 	assert.False(t, Can(3, common.RoleCommonUser, AccountPoolRead))
+	assert.False(t, Can(3, common.RoleCommonUser, SubscriptionRead))
 
 	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: ResourceChannel, Action: "unknown"}))
 	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: "unknown", Action: ActionRead}))

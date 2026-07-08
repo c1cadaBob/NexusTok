@@ -254,22 +254,7 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)     // Creem 订阅
 		}
 
-		// 管理员订阅管理路由（需要管理员权限）
-		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
-		subscriptionAdminRoute.Use(middleware.AdminAuth())
-		{
-			subscriptionAdminRoute.GET("/plans", controller.AdminListSubscriptionPlans)              // 获取订阅计划列表（管理员）
-			subscriptionAdminRoute.POST("/plans", controller.AdminCreateSubscriptionPlan)            // 创建订阅计划
-			subscriptionAdminRoute.PUT("/plans/:id", controller.AdminUpdateSubscriptionPlan)         // 更新订阅计划
-			subscriptionAdminRoute.PATCH("/plans/:id", controller.AdminUpdateSubscriptionPlanStatus) // 更新订阅计划状态
-			subscriptionAdminRoute.POST("/bind", controller.AdminBindSubscription)                   // 绑定订阅
-
-			// 用户订阅管理（管理员）
-			subscriptionAdminRoute.GET("/users/:id/subscriptions", controller.AdminListUserSubscriptions)                 // 获取用户订阅列表
-			subscriptionAdminRoute.POST("/users/:id/subscriptions", controller.AdminCreateUserSubscription)               // 创建用户订阅
-			subscriptionAdminRoute.POST("/user_subscriptions/:id/invalidate", controller.AdminInvalidateUserSubscription) // 使用户订阅失效
-			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)              // 删除用户订阅
-		}
+		registerSubscriptionAdminRoutes(apiRouter)
 
 		// 订阅支付回调（无需认证）
 		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
