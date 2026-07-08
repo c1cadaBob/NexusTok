@@ -24,6 +24,23 @@ import { AuthenticatedLayout } from '@/components/layout'
 // 内存中的验证标记，避免同一会话中重复验证
 let sessionVerified = false
 
+function getHttpStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } })?.response?.status
+}
+
+async function verifyCurrentSession() {
+  try {
+    return await getSelf()
+  } catch (error: unknown) {
+    // 只有 401 能证明 session 已失效；网络错误、超时或 5xx 只能说明本次预检失败。
+    // 这种临时故障不清理本地用户，也不设置 sessionVerified，下一次导航会继续重验。
+    if (getHttpStatus(error) === 401) {
+      return { success: false }
+    }
+    return null
+  }
+}
+
 export const Route = createFileRoute('/_authenticated')({
   beforeLoad: async ({ location }) => {
     const { auth } = useAuthStore.getState()
@@ -38,13 +55,13 @@ export const Route = createFileRoute('/_authenticated')({
 
     // 本地有用户信息，但需要验证 session 是否有效（每个会话只验证一次）
     if (!sessionVerified) {
-      const res = await getSelf().catch(() => null)
+      const res = await verifyCurrentSession()
       if (res?.success && res.data) {
         // 验证成功，更新用户信息（可能有变化）
         auth.setUser(res.data)
         sessionVerified = true
-      } else {
-        // 验证失败或 API 调用失败，清除本地缓存并跳转登录页
+      } else if (res) {
+        // 服务端明确返回认证失败时，清除本地缓存并跳转登录页。
         auth.reset()
         throw redirect({
           to: '/sign-in',
