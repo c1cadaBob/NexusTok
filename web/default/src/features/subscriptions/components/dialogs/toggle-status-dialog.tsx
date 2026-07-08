@@ -21,12 +21,15 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { patchPlanStatus } from '../../api'
+import { useSubscriptionPermissions } from '../../hooks/use-subscription-permissions'
 import { useSubscriptions } from '../subscriptions-provider'
 
 export function ToggleStatusDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useSubscriptions()
   const [loading, setLoading] = useState(false)
+  const permissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   if (open !== 'toggle-status' || !currentRow) return null
 
@@ -39,6 +42,10 @@ export function ToggleStatusDialog() {
     : t('After enabling, the plan will be shown to users. Continue?')
 
   const handleConfirm = async () => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setLoading(true)
     try {
       const res = await patchPlanStatus(currentRow.plan.id, !isEnabled)
@@ -63,6 +70,7 @@ export function ToggleStatusDialog() {
       title={title}
       desc={description}
       handleConfirm={handleConfirm}
+      disabled={!permissions.canWrite}
       isLoading={loading}
       confirmText={isEnabled ? t('Disable') : t('Enable')}
       destructive={isEnabled}

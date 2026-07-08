@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { type Row } from '@tanstack/react-table'
 import { MoreHorizontal, Pencil, Power, PowerOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -26,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useSubscriptionPermissions } from '../hooks/use-subscription-permissions'
 import type { PlanRecord } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
 
@@ -36,40 +38,54 @@ interface DataTableRowActionsProps {
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const { setOpen, setCurrentRow, complianceConfirmed } = useSubscriptions()
+  const permissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+
+  const guardWrite = () => {
+    if (permissions.canWrite) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
+
+  const canWritePlan = complianceConfirmed && permissions.canWrite
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={<Button variant='ghost' className='h-8 w-8 p-0' />}
       >
-        <MoreHorizontal className='h-4 w-4' />
+        <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
         <DropdownMenuItem
-          disabled={!complianceConfirmed}
+          disabled={!canWritePlan}
+          title={permissions.canWrite ? undefined : noPermissionMessage}
           onClick={() => {
+            if (!guardWrite() || !complianceConfirmed) return
             setCurrentRow(row.original)
             setOpen('update')
           }}
         >
-          <Pencil className='mr-2 h-4 w-4' />
+          <Pencil />
           {t('Edit')}
         </DropdownMenuItem>
         <DropdownMenuItem
-          disabled={!complianceConfirmed}
+          disabled={!canWritePlan}
+          title={permissions.canWrite ? undefined : noPermissionMessage}
           onClick={() => {
+            if (!guardWrite() || !complianceConfirmed) return
             setCurrentRow(row.original)
             setOpen('toggle-status')
           }}
         >
           {row.original.plan.enabled ? (
             <>
-              <PowerOff className='mr-2 h-4 w-4' />
+              <PowerOff />
               {t('Disable')}
             </>
           ) : (
             <>
-              <Power className='mr-2 h-4 w-4' />
+              <Power />
               {t('Enable')}
             </>
           )}

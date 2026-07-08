@@ -22,6 +22,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { CalendarClock, CreditCard, RefreshCw, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -51,9 +52,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
-import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { createPlan, updatePlan, getGroups } from '../api'
 import { getDurationUnitOptions, getResetPeriodOptions } from '../constants'
+import { useSubscriptionPermissions } from '../hooks/use-subscription-permissions'
 import {
   getPlanFormSchema,
   PLAN_FORM_DEFAULTS,
@@ -83,6 +84,8 @@ export function SubscriptionsMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
+  const permissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const schema = getPlanFormSchema(t)
   const form = useForm<PlanFormValues>({
@@ -109,6 +112,10 @@ export function SubscriptionsMutateDrawer({
   const resetPeriod = form.watch('quota_reset_period')
 
   const onSubmit = async (values: PlanFormValues) => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsSubmitting(true)
     try {
       const payload = formValuesToPlanPayload(values)
@@ -166,7 +173,7 @@ export function SubscriptionsMutateDrawer({
             onSubmit={form.handleSubmit(onSubmit)}
             className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-6 sm:px-4'
           >
-            {/* Basic Info */}
+            {/* 基础信息 */}
             <div className='space-y-4'>
               <h3 className='flex items-center gap-2 text-sm font-medium'>
                 <Settings2 className='h-4 w-4' />
@@ -426,7 +433,7 @@ export function SubscriptionsMutateDrawer({
               </div>
             </div>
 
-            {/* Duration Settings */}
+            {/* 有效期设置 */}
             <div className='space-y-4'>
               <h3 className='flex items-center gap-2 text-sm font-medium'>
                 <CalendarClock className='h-4 w-4' />
@@ -516,7 +523,7 @@ export function SubscriptionsMutateDrawer({
               </div>
             </div>
 
-            {/* Quota Reset */}
+            {/* 额度重置 */}
             <div className='space-y-4'>
               <h3 className='flex items-center gap-2 text-sm font-medium'>
                 <RefreshCw className='h-4 w-4' />
@@ -584,7 +591,7 @@ export function SubscriptionsMutateDrawer({
               </div>
             </div>
 
-            {/* Payment Config */}
+            {/* 第三方支付配置 */}
             <div className='space-y-4'>
               <h3 className='flex items-center gap-2 text-sm font-medium'>
                 <CreditCard className='h-4 w-4' />
@@ -628,7 +635,8 @@ export function SubscriptionsMutateDrawer({
           <Button
             form='subscription-form'
             type='submit'
-            disabled={isSubmitting}
+            disabled={isSubmitting || !permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
           >
             {isSubmitting ? t('Saving...') : t('Save changes')}
           </Button>

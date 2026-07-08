@@ -18,20 +18,35 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { useSubscriptionPermissions } from '../hooks/use-subscription-permissions'
 import { useSubscriptions } from './subscriptions-provider'
 
 export function SubscriptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, complianceConfirmed } = useSubscriptions()
+  const permissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+
+  const handleCreate = () => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (!complianceConfirmed) return
+    setOpen('create')
+  }
+
   return (
     <div className='flex gap-2'>
       <Button
         size='sm'
-        onClick={() => setOpen('create')}
-        disabled={!complianceConfirmed}
+        onClick={handleCreate}
+        disabled={!complianceConfirmed || !permissions.canWrite}
+        title={permissions.canWrite ? undefined : noPermissionMessage}
       >
-        <Plus className='h-4 w-4' />
+        <Plus data-icon='inline-start' />
         {t('Create Plan')}
       </Button>
     </div>

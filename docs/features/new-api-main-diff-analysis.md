@@ -1730,6 +1730,56 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/users`，确认用户主按钮、行操作菜单、绑定管理/用户订阅入口渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和只读弹窗，不执行创建、升降级、解绑、额度调整、删除或订阅变更。
 
+## 本轮实施评审：订阅管理前端按钮级 Authz 原生消费
+
+### 需求分析
+
+订阅管理后端 `/api/subscription/admin` 已按 `subscription.read/write/operate/sensitive_write` 接入权限表：套餐列表走 read，套餐创建、编辑和启停走 write，用户订阅创建/失效走 operate，用户订阅删除走 sensitive_write。上一轮已经为用户行内订阅弹窗补齐跨资源 `subscription.*` 消费；订阅管理页面本身仍只在路由入口校验 `subscription.read`，`Create Plan`、套餐行 `Edit`、套餐 `Enable/Disable`、套餐抽屉保存和启停确认没有按 `subscription.write` 做按钮禁用与提交前保护。
+
+本轮目标：
+
+1. 复用 `useSubscriptionPermissions`，让订阅套餐页主按钮、行菜单、创建/编辑抽屉和启停确认弹窗消费 `subscription.write`。
+2. 保留现有支付合规确认逻辑，不把 `subscription.write` 与合规状态混为一个条件；按钮禁用原因仍优先体现权限不足。
+3. 不修改订阅后端路由、套餐 payload、支付合规系统设置接口、用户购买流程和用户订阅弹窗逻辑。
+4. 不新增可见文案，继续复用既有 `You don't have necessary permission`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 订阅主按钮 | `web/default/src/features/subscriptions/components/subscriptions-primary-buttons.tsx` | `Create Plan` 需要 `subscription.write`，并保留支付合规确认约束。 |
+| 订阅行操作 | `data-table-row-actions.tsx` | `Edit` 与 `Enable/Disable` 需要 `subscription.write`，查看或其他只读行为不变。 |
+| 套餐抽屉 | `subscriptions-mutate-drawer.tsx` | 创建/编辑提交前检查 `subscription.write`，保存按钮按权限禁用。 |
+| 启停确认弹窗 | `dialogs/toggle-status-dialog.tsx` | 确认启停前检查 `subscription.write`，确认按钮按权限禁用。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变前端按钮状态和提交前保护，不降低后端 `RequirePermission` enforcement；后端仍是最终授权边界。
+2. 订阅套餐创建/编辑同时受支付合规确认约束和 `subscription.write` 约束；本轮仅增加权限约束，不改变合规确认流程。
+3. 默认 Admin 拥有 `subscription.write`，因此现有管理员工作流保持可用；未来用户级 override 可以单独关闭套餐写操作。
+4. 用户订阅创建/失效/删除已在上一轮用户切片接入 `subscription.operate/sensitive_write`，本轮避免重复修改以降低冲突面。
+
+### 方案评审
+
+采用“复用订阅权限 hook + 按后端套餐路由动作映射”的方案。订阅套餐创建、编辑和启停后端都归入 `subscription.write`，前端也保持同一映射；如果未来要把启停拆成 `operate`，应先调整后端路由权限表，再改前端按钮映射，避免前端放行而服务端 403。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 查看订阅套餐列表 | `subscription.read` | `GET /api/subscription/admin/plans` |
+| 创建套餐 | `subscription.write` | `POST /api/subscription/admin/plans` |
+| 编辑套餐 | `subscription.write` | `PUT /api/subscription/admin/plans/:id` |
+| 启用/禁用套餐 | `subscription.write` | `PATCH /api/subscription/admin/plans/:id` |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认订阅权限 hook 与组件类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和订阅路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/subscriptions`，确认订阅套餐页加载、主按钮和行操作菜单渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和菜单查看，不执行创建、编辑、启停或删除。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1785,3 +1835,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | Authz catalog 路由权限表 | `router/authz-router.go`、`router/authz_router_test.go` | 为 `GET /api/authz/catalog` 接入 `system_setting.read`，继续保留 `AdminAuth`，让权限 schema 只读入口也进入统一灰度权限表。 |
 | 2026-07-08 | 模型管理前端按钮级 Authz 消费 | `web/default/src/features/models/*` | 默认前端模型管理页新增 `useModelPermissions` 并让模型、厂商、预填组和部署的写入/操作/删除按钮消费 `model.write/operate/sensitive_write`，与后端模型路由权限表保持一致。 |
 | 2026-07-08 | 用户管理前端按钮级 Authz 消费 | `web/default/src/features/users/*`、`web/default/src/features/subscriptions/hooks/*`、`web/default/src/features/subscriptions/components/dialogs/user-subscriptions-dialog.tsx` | 默认前端用户管理页新增 `useUserPermissions`，让用户资料、生命周期、安全凭据、绑定解绑、额度调整和硬删除消费 `user.write/operate/sensitive_write`；用户行内订阅弹窗按跨资源 `subscription.read/operate/sensitive_write` 控制。 |
+| 2026-07-08 | 订阅管理前端按钮级 Authz 消费 | `web/default/src/features/subscriptions/*` | 默认前端订阅套餐页复用 `useSubscriptionPermissions`，让套餐创建、编辑、启停和保存提交消费 `subscription.write`，并保留支付合规确认锁。 |
