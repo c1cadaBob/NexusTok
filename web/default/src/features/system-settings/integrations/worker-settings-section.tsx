@@ -188,7 +188,13 @@ export function WorkerSettingsSection({
             )}
           />
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending
               ? t('Saving...')
               : t('Save Worker settings')}

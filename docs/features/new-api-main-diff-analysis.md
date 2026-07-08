@@ -2130,6 +2130,56 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/operations/logs`，确认页面加载、`/api/option/` 只读请求正常、清理日志按钮渲染正常、控制台无错误；不点击确认清理，避免删除真实日志。
 
+## 本轮实施评审：系统设置运维集成与模型部署保存按钮 Authz 消费
+
+### 需求分析
+
+系统设置的运维集成类页面仍有四个通过 `useUpdateOption()` 写入 `PUT /api/option/` 的保存入口只按 pending、dirty 或 submitting 状态禁用：监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署。后端已经将 `PUT /api/option/` 统一纳入 `system_setting.sensitive_write`，hook 也会在提交前拦截无权限写入；这些页面需要在按钮层消费同一个 `canUpdate/disabledReason`，让受限管理员在点击前就看到一致的权限状态。
+
+本轮目标：
+
+1. 将监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署四个保存按钮接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 保持本地草稿编辑、表单校验、SMTP token 空值保留、Worker URL/key 处理、监控规则规范化和 io.net 表单脏状态判断不变。
+3. io.net 的 `Test Connection` 调用 `testDeploymentConnectionWithKey(apiKey)`，属于模型部署连接测试能力，不是 `PUT /api/option/` 保存动作；本轮只记录边界，不混入该按钮权限语义。
+4. 不修改后端接口、权限表、option payload、缓存刷新和任何支付/模型定价逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 监控告警 | `web/default/src/features/system-settings/integrations/monitoring-settings-section.tsx` | 保存监控阈值、自动测试和自动禁用/重试规则时消费统一 option 保存权限。 |
+| SMTP 邮件 | `integrations/email-settings-section.tsx` | 保存 SMTP 主机、端口、账号、发件人、token 和安全开关时消费统一 option 保存权限。 |
+| Worker 代理 | `integrations/worker-settings-section.tsx` | 保存 Worker URL、访问 key 和 HTTP 图片请求开关时消费统一 option 保存权限。 |
+| io.net 模型部署 | `integrations/ionet-deployment-settings-section.tsx` | 保存 io.net 启用状态和 API key 时消费统一 option 保存权限；连接测试按钮保持原逻辑。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变保存按钮的 `disabled/title`，不改变 `onSubmit` 中的更新集合生成、字段清洗、校验规则和异步提交顺序。
+2. 监控告警会影响自动渠道测试和自动禁用恢复，本轮不改变规则解析与保存 key，避免影响调度任务。
+3. SMTP、Worker 和 io.net API key 都属于敏感配置；按钮层只做提前禁用，真正的权限边界仍由 `useUpdateOption()` 和后端 `RequirePermission` 兜底。
+4. io.net 连接测试可能需要单独映射到 `model.operate` 或 `system_setting.operate`，但它不会持久化 option；本轮不改，避免引入未评审的行为变化。
+
+### 方案评审
+
+采用“同一 `PUT /api/option/` 保存入口，同一按钮权限字段”的方案。页面继续允许受限管理员查看与编辑本地草稿，保存按钮在缺少敏感写权限时禁用并展示 hook 提供的原因；即使存在脚本提交或遗漏路径，hook 层仍会阻止实际请求。io.net 连接测试保留原 pending 语义，后续如要权限化，应单独按模型部署操作能力评审。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存监控告警、SMTP 邮件、Worker 代理、io.net 模型部署 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| io.net 连接测试 | 本轮不修改，后续单独评审 | `testDeploymentConnectionWithKey(apiKey)` 对应模型部署连接测试 API |
+| 本地编辑、表单校验、开关切换 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认四个页面能识别统一权限字段。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置、模型部署和权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/monitoring`、`/system-settings/operations/email`、`/system-settings/operations/worker`、`/system-settings/models/model-deployment`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存和 io.net 连接测试。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2193,3 +2243,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-08 | 系统设置认证与安全表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{auth/oauth-section.tsx,auth/passkey-section.tsx,auth/bot-protection-section.tsx,request-limits/sensitive-words-section.tsx,request-limits/ssrf-section.tsx}` | OAuth、Passkey、Turnstile、敏感词和 SSRF 五类认证/安全表单的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段，受限管理员可查看和编辑草稿但不能提交系统 option 写入。 |
 | 2026-07-08 | 系统设置站点、计费与运维普通表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general,maintenance}/*` | 系统行为、配额、货币显示、签到、公告、顶部导航、侧边栏模块和日志记录设置的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；日志清理危险操作保留为后续双资源权限切片。 |
 | 2026-07-08 | 日志清理系统任务入口与双资源 Authz 消费 | `web/default/src/features/system-settings/{api.ts,types.ts,maintenance/log-settings-section.tsx}` | 日志维护页历史日志清理改为创建 `log_cleanup` SystemTask，前端按钮和确认动作同时消费 `system_setting.sensitive_write` 与 `usage_log.sensitive_write`，成功后提示任务 ID 并刷新系统任务缓存。 |
+| 2026-07-08 | 系统设置运维集成与模型部署保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/*` | 监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；io.net 连接测试保持独立操作语义，留待后续单独权限评审。 |
