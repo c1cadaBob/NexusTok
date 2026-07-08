@@ -1981,6 +1981,55 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/site/system-info`、`/system-settings/auth/basic-auth`、`/system-settings/security/rate-limit`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存。
 
+## 本轮实施评审：系统设置认证与安全表单保存按钮 Authz 消费
+
+### 需求分析
+
+站点信息、基础认证和请求限流已经开始在按钮层消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。认证与安全分组中仍有 OAuth 集成、Passkey、Bot Protection、敏感词和 SSRF 保护五个表单通过同一 `PUT /api/option/` 保存，但按钮未显式消费 `system_setting.sensitive_write`。这些页面都属于登录入口、请求防护或出站请求安全配置；如果受限管理员只具备读取权限，页面应保持可查看和本地编辑草稿，但保存入口必须直接反映“无权写入系统 option”的状态。
+
+本轮目标：
+
+1. 将 OAuth 集成、Passkey、Bot Protection、敏感词和 SSRF 保护五处保存按钮接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 继续保留 `useUpdateOption()` 的统一提交前保护，防止遗漏页面或绕过按钮状态后发出 `PUT /api/option/`。
+3. 不改变 OAuth well-known 拉取、Passkey origins 归一化、敏感词文本处理、SSRF 列表/端口归一化和任何 API payload。
+4. 不新增可见文案，继续复用既有 `You don't have necessary permission`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| OAuth 集成 | `web/default/src/features/system-settings/auth/oauth-section.tsx` | 保存按钮缺少敏感写权限时禁用并展示权限原因；本地重置按钮保持原有脏状态逻辑。 |
+| Passkey | `web/default/src/features/system-settings/auth/passkey-section.tsx` | 保存按钮新增 pending/权限禁用状态，避免此前提交中没有 loading/权限反馈。 |
+| Bot Protection | `web/default/src/features/system-settings/auth/bot-protection-section.tsx` | Turnstile 配置保存按钮消费统一 option 保存权限。 |
+| 敏感词 | `web/default/src/features/system-settings/request-limits/sensitive-words-section.tsx` | 敏感词保存按钮消费统一 option 保存权限。 |
+| SSRF 保护 | `web/default/src/features/system-settings/request-limits/ssrf-section.tsx` | SSRF 出站请求安全配置保存按钮消费统一 option 保存权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮仍只改变前端按钮 disabled/title 与 Passkey 按钮的 pending 文案，不改变后端权限表、表单字段、校验和提交 payload。
+2. OAuth 集成包含 client secret、Bot Protection 包含 Turnstile secret、SSRF 影响服务端出站请求边界，因此统一要求 `system_setting.sensitive_write` 与当前后端 `PUT /api/option/` 分类一致。
+3. OAuth 的 well-known 拉取发生在保存流程内部，当前仍随保存按钮一起受敏感写限制；后续如要把 discovery 单独视为 operate，应先拆出独立接口或前端按钮，再调整权限映射。
+4. Root/Super Admin 体验保持不变；受限管理员仍可查看配置和编辑本地草稿，但无法提交系统 option 写入。
+
+### 方案评审
+
+采用“同类系统 option 表单统一按钮语义”的方案。五个页面都继续复用 `useUpdateOption()`，按钮层只读取 hook 暴露的 `canUpdate/disabledReason`，避免每页重新解释角色或权限矩阵。Passkey 原按钮缺少 `isPending` 禁用和 `Saving...` 反馈，本轮顺手对齐同类表单，降低重复点击风险。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 OAuth、Passkey、Bot Protection、敏感词、SSRF option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| OAuth 表单重置、Tab 切换、SSRF/敏感词本地编辑 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认五个页面能识别统一权限字段。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限表和路由层仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/auth/oauth`、`/system-settings/auth/passkey`、`/system-settings/auth/bot-protection`、`/system-settings/security/sensitive-words`、`/system-settings/security/ssrf`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2041,3 +2090,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 系统设置前端运行维护 Authz 消费 | `web/default/src/features/system-settings/*` | 默认前端系统设置运行维护入口新增 `useSystemSettingPermissions` 并让性能维护、渠道亲和缓存、上游倍率同步、模型倍率重置和自定义 OAuth provider 操作消费 `system_setting.operate/sensitive_write`，与后端系统设置路由权限表保持一致。 |
 | 2026-07-08 | 系统设置通用 option 保存前置 Authz 保护 | `web/default/src/features/system-settings/hooks/use-update-option.ts` | 默认前端所有通过 `useUpdateOption()` 发起的 `PUT /api/option/` 保存会先检查 `system_setting.sensitive_write`；缺少权限时前端不发请求并复用无权限提示，同时向后续逐页按钮禁用暴露 `canUpdate/disabledReason`。 |
 | 2026-07-08 | 系统设置高频表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general/system-info-section.tsx,auth/basic-auth-section.tsx,request-limits/rate-limit-section.tsx}` | 站点信息、基础认证和请求限流三处高频表单的保存按钮直接消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`，缺少 `system_setting.sensitive_write` 时在按钮层禁用并保留 hook 级提交前保护。 |
+| 2026-07-08 | 系统设置认证与安全表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{auth/oauth-section.tsx,auth/passkey-section.tsx,auth/bot-protection-section.tsx,request-limits/sensitive-words-section.tsx,request-limits/ssrf-section.tsx}` | OAuth、Passkey、Turnstile、敏感词和 SSRF 五类认证/安全表单的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段，受限管理员可查看和编辑草稿但不能提交系统 option 写入。 |

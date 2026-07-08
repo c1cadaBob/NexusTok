@@ -368,7 +368,15 @@ export function PasskeySection({ defaultValues }: PasskeySectionProps) {
             )}
           />
 
-          <Button type='submit'>{t('Save Changes')}</Button>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
+            {updateOption.isPending ? t('Saving...') : t('Save Changes')}
+          </Button>
         </form>
       </Form>
     </SettingsSection>
