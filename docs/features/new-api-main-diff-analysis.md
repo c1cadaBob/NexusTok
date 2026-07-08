@@ -1780,6 +1780,60 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/subscriptions`，确认订阅套餐页加载、主按钮和行操作菜单渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和菜单查看，不执行创建、编辑、启停或删除。
 
+## 本轮实施评审：兑换码前端按钮级 Authz 原生消费
+
+### 需求分析
+
+兑换码后端 `/api/redemption` 已作为独立资源接入 `redemption.read/write/sensitive_write` 权限表：列表、搜索和详情走 read，创建、编辑和状态启停走 write，单个删除和批量清理无效兑换码走 sensitive_write。默认前端兑换码页已经在侧边栏和路由入口消费 `redemption.read`，但页面内 `Create Code`、行菜单 `Edit/Enable/Disable/Delete`、创建/编辑抽屉提交、删除确认和批量 `Delete invalid codes` 仍没有消费动作级权限。
+
+本轮目标：
+
+1. 新增兑换码模块 `useRedemptionPermissions`，集中读取 `redemption.read/write/sensitive_write`。
+2. 将创建、编辑、启停和抽屉保存映射到 `redemption.write`；当前后端启停仍走 `PUT /api/redemption/?status_only=true`，不擅自改成 `redemption.operate`。
+3. 将单个删除和批量清理无效兑换码映射到 `redemption.sensitive_write`。
+4. 保留兑换码复制、查看和列表读取的现状；本轮不引入 `redemption.secret_view` 或 reveal 接口，避免扩大后端契约。
+5. 不修改兑换码后端路由、payload、列表查询、批量清理语义和现有 i18n 文案集合。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 兑换码权限 hook | `web/default/src/features/redemption-codes/hooks/use-redemption-permissions.ts` | 集中封装兑换码动作权限。 |
+| 主按钮与批量操作 | `redemptions-primary-buttons.tsx`、`data-table-bulk-actions.tsx` | 创建兑换码走 `redemption.write`；批量清理无效码走 `redemption.sensitive_write`；复制选中兑换码保持只读行为。 |
+| 行操作与确认弹窗 | `data-table-row-actions.tsx`、`redemptions-delete-dialog.tsx` | 编辑/启停走 write；删除走 sensitive_write，并在确认前二次检查。 |
+| 创建/编辑抽屉 | `redemptions-mutate-drawer.tsx` | 保存提交前检查 `redemption.write`，保存按钮按权限禁用。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变前端按钮状态和提交前保护，后端 `RequirePermission` 仍是最终授权边界。
+2. `service/authz` 中 `redemption.operate` 的描述包含启停/清理，但当前 router 未使用该动作；前端必须对齐实际后端路由，启停按 write、清理按 sensitive_write，否则会出现前端放行而后端 403。
+3. 完整兑换码仍随列表数据返回，复制/查看能力无法仅靠前端按钮彻底隔离；真正区分“读元数据”和“查看密钥”需要后续新增 `redemption.secret_view` 或后端 reveal 接口。
+4. 默认 Admin 拥有 `redemption.write` 但不拥有 `redemption.sensitive_write`，因此删除/清理类按钮会在受限管理员场景下禁用；Root 仍保持全量可用。
+
+### 方案评审
+
+采用“前端消费现有 `redemption` 权限矩阵 + 后端语义不变”的方案。新增 hook 只读取已有矩阵，不引入新资源或角色推断；所有写入类按钮在 disabled、点击入口和提交/确认 handler 三层做保护。密钥可见性问题作为后续独立后端契约改造项记录，不混入本轮按钮级权限消费。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 查看兑换码列表、搜索、详情 | `redemption.read` | `GET /api/redemption/*` |
+| 创建兑换码 | `redemption.write` | `POST /api/redemption/` |
+| 编辑兑换码 | `redemption.write` | `PUT /api/redemption/` |
+| 启用/禁用兑换码 | `redemption.write` | `PUT /api/redemption/?status_only=true` |
+| 删除单个兑换码 | `redemption.sensitive_write` | `DELETE /api/redemption/:id` |
+| 批量清理无效兑换码 | `redemption.sensitive_write` | `DELETE /api/redemption/invalid` |
+| 复制兑换码 | `redemption.read`（现状） | 依赖列表数据；后续可拆 secret_view |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认兑换码权限 hook 与组件类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和兑换码路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/redemption-codes`，确认兑换码页加载、主按钮、批量工具和行操作菜单渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和菜单查看，不执行创建、编辑、启停、删除或批量清理。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1836,3 +1890,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 模型管理前端按钮级 Authz 消费 | `web/default/src/features/models/*` | 默认前端模型管理页新增 `useModelPermissions` 并让模型、厂商、预填组和部署的写入/操作/删除按钮消费 `model.write/operate/sensitive_write`，与后端模型路由权限表保持一致。 |
 | 2026-07-08 | 用户管理前端按钮级 Authz 消费 | `web/default/src/features/users/*`、`web/default/src/features/subscriptions/hooks/*`、`web/default/src/features/subscriptions/components/dialogs/user-subscriptions-dialog.tsx` | 默认前端用户管理页新增 `useUserPermissions`，让用户资料、生命周期、安全凭据、绑定解绑、额度调整和硬删除消费 `user.write/operate/sensitive_write`；用户行内订阅弹窗按跨资源 `subscription.read/operate/sensitive_write` 控制。 |
 | 2026-07-08 | 订阅管理前端按钮级 Authz 消费 | `web/default/src/features/subscriptions/*` | 默认前端订阅套餐页复用 `useSubscriptionPermissions`，让套餐创建、编辑、启停和保存提交消费 `subscription.write`，并保留支付合规确认锁。 |
+| 2026-07-08 | 兑换码前端按钮级 Authz 消费 | `web/default/src/features/redemption-codes/*` | 默认前端兑换码页新增 `useRedemptionPermissions`，让兑换码创建、编辑、启停和保存消费 `redemption.write`，单个删除与批量清理无效码消费 `redemption.sensitive_write`。 |

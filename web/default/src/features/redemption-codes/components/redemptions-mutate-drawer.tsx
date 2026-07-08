@@ -46,6 +46,7 @@ import {
 import { DateTimePicker } from '@/components/datetime-picker'
 import { createRedemption, updateRedemption, getRedemption } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
+import { useRedemptionPermissions } from '../hooks/use-redemption-permissions'
 import {
   getRedemptionFormSchema,
   type RedemptionFormValues,
@@ -71,28 +72,33 @@ export function RedemptionsMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useRedemptions()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const permissions = useRedemptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const form = useForm<RedemptionFormValues>({
     resolver: zodResolver(getRedemptionFormSchema(t)),
     defaultValues: REDEMPTION_FORM_DEFAULT_VALUES,
   })
 
-  // Load existing data when updating
+  // 编辑时读取最新兑换码详情；新增时重置默认值，避免复用上一次抽屉状态。
   useEffect(() => {
     if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
+      // 列表数据可能不是完整编辑基准，保存前以详情接口结果为准。
       getRedemption(currentRow.id).then((result) => {
         if (result.success && result.data) {
           form.reset(transformRedemptionToFormDefaults(result.data))
         }
       })
     } else if (open && !isUpdate) {
-      // For create, reset to defaults
       form.reset(REDEMPTION_FORM_DEFAULT_VALUES)
     }
   }, [open, isUpdate, currentRow, form])
 
   const onSubmit = async (data: RedemptionFormValues) => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsSubmitting(true)
     try {
       const basePayload = transformFormDataToPayload(data)
@@ -108,7 +114,6 @@ export function RedemptionsMutateDrawer({
           triggerRefresh()
         }
       } else {
-        // Create mode
         const result = await createRedemption(basePayload)
         if (result.success) {
           const count = result.data?.length || 0
@@ -309,7 +314,12 @@ export function RedemptionsMutateDrawer({
           <SheetClose render={<Button variant='outline' />}>
             {t('Close')}
           </SheetClose>
-          <Button form='redemption-form' type='submit' disabled={isSubmitting}>
+          <Button
+            form='redemption-form'
+            type='submit'
+            disabled={isSubmitting || !permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {isSubmitting ? t('Saving...') : t('Save changes')}
           </Button>
         </SheetFooter>

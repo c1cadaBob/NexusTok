@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { updateRedemptionStatus } from '../api'
 import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
+import { useRedemptionPermissions } from '../hooks/use-redemption-permissions'
 import { isRedemptionExpired } from '../lib'
 import { redemptionSchema } from '../types'
 import { useRedemptions } from './redemptions-provider'
@@ -51,6 +52,8 @@ export function DataTableRowActions<TData>({
   const { t } = useTranslation()
   const redemption = redemptionSchema.parse(row.original)
   const { setOpen, setCurrentRow, triggerRefresh } = useRedemptions()
+  const permissions = useRedemptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const isEnabled = redemption.status === REDEMPTION_STATUS.ENABLED
   const isUsed = redemption.status === REDEMPTION_STATUS.USED
   const isExpired = isRedemptionExpired(
@@ -59,6 +62,10 @@ export function DataTableRowActions<TData>({
   )
 
   const handleToggleStatus = async () => {
+    if (!permissions.canWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     const newStatus = isEnabled
       ? REDEMPTION_STATUS.DISABLED
       : REDEMPTION_STATUS.ENABLED
@@ -73,8 +80,8 @@ export function DataTableRowActions<TData>({
     }
   }
 
-  const canEdit = isEnabled && !isExpired
-  const canToggle = !isUsed && !isExpired
+  const canEdit = isEnabled && !isExpired && permissions.canWrite
+  const canToggleByState = !isUsed && !isExpired
 
   return (
     <DropdownMenu modal={false}>
@@ -86,36 +93,45 @@ export function DataTableRowActions<TData>({
           />
         }
       >
-        <DotsHorizontalIcon className='h-4 w-4' />
+        <DotsHorizontalIcon />
         <span className='sr-only'>{t('Open menu')}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-[160px]'>
         <DropdownMenuItem
           onClick={() => {
+            if (!permissions.canWrite) {
+              toast.error(noPermissionMessage)
+              return
+            }
             setCurrentRow(redemption)
             setOpen('update')
           }}
           disabled={!canEdit}
+          title={permissions.canWrite ? undefined : noPermissionMessage}
         >
           {t('Edit')}
           <DropdownMenuShortcut>
-            <Edit size={16} />
+            <Edit />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
-        {canToggle && (
-          <DropdownMenuItem onClick={handleToggleStatus}>
+        {canToggleByState && (
+          <DropdownMenuItem
+            onClick={handleToggleStatus}
+            disabled={!permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {isEnabled ? (
               <>
                 {t('Disable')}
                 <DropdownMenuShortcut>
-                  <PowerOff size={16} />
+                  <PowerOff />
                 </DropdownMenuShortcut>
               </>
             ) : (
               <>
                 {t('Enable')}
                 <DropdownMenuShortcut>
-                  <Power size={16} />
+                  <Power />
                 </DropdownMenuShortcut>
               </>
             )}
@@ -124,14 +140,22 @@ export function DataTableRowActions<TData>({
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={() => {
+            if (!permissions.canSensitiveWrite) {
+              toast.error(noPermissionMessage)
+              return
+            }
             setCurrentRow(redemption)
             setOpen('delete')
           }}
           className='text-destructive focus:text-destructive'
+          disabled={!permissions.canSensitiveWrite}
+          title={
+            permissions.canSensitiveWrite ? undefined : noPermissionMessage
+          }
         >
           {t('Delete')}
           <DropdownMenuShortcut>
-            <Trash2 size={16} />
+            <Trash2 />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DropdownMenuContent>

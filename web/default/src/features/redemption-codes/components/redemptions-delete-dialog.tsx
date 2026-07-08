@@ -31,15 +31,22 @@ import {
 } from '@/components/ui/alert-dialog'
 import { deleteRedemption } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
+import { useRedemptionPermissions } from '../hooks/use-redemption-permissions'
 import { useRedemptions } from './redemptions-provider'
 
 export function RedemptionsDeleteDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useRedemptions()
   const [isDeleting, setIsDeleting] = useState(false)
+  const permissions = useRedemptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const handleDelete = async () => {
     if (!currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
 
     setIsDeleting(true)
     try {
@@ -74,7 +81,10 @@ export function RedemptionsDeleteDialog() {
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
-            disabled={isDeleting}
+            disabled={isDeleting || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
             className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
           >
             {isDeleting ? t('Deleting...') : t('Delete')}

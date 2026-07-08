@@ -31,6 +31,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
 import { deleteInvalidRedemptions } from '../api'
+import { useRedemptionPermissions } from '../hooks/use-redemption-permissions'
 import { type Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
@@ -43,6 +44,8 @@ export function DataTableBulkActions<TData>({
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
+  const permissions = useRedemptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -57,6 +60,10 @@ export function DataTableBulkActions<TData>({
   }, [selectedRows])
 
   const handleDeleteInvalid = async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsDeleting(true)
     try {
       const result = await deleteInvalidRedemptions()
@@ -96,10 +103,21 @@ export function DataTableBulkActions<TData>({
               <Button
                 variant='destructive'
                 size='icon'
-                onClick={() => setShowDeleteInvalidConfirm(true)}
+                onClick={() => {
+                  if (!permissions.canSensitiveWrite) {
+                    toast.error(noPermissionMessage)
+                    return
+                  }
+                  setShowDeleteInvalidConfirm(true)
+                }}
                 className='size-8'
+                disabled={!permissions.canSensitiveWrite}
                 aria-label={t('Delete invalid redemption codes')}
-                title={t('Delete invalid redemption codes')}
+                title={
+                  permissions.canSensitiveWrite
+                    ? t('Delete invalid redemption codes')
+                    : noPermissionMessage
+                }
               />
             }
           >
@@ -117,6 +135,7 @@ export function DataTableBulkActions<TData>({
         open={showDeleteInvalidConfirm}
         onOpenChange={setShowDeleteInvalidConfirm}
         handleConfirm={handleDeleteInvalid}
+        disabled={!permissions.canSensitiveWrite}
         isLoading={isDeleting}
         className='max-w-md'
         title={t('Delete Invalid Redemption Codes?')}
