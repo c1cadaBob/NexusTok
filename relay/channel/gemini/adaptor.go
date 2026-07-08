@@ -20,6 +20,7 @@ import (
 	"github.com/c1cada/NexusTok/relay/channel/openai"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/relay/constant"
+	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/setting/model_setting"
 	"github.com/c1cada/NexusTok/setting/reasoning"
 	"github.com/c1cada/NexusTok/types"
@@ -355,18 +356,27 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 // ConvertOpenAIResponsesRequest 将 OpenAI Responses 格式的请求转换为 Gemini 格式。
-// 当前尚未实现，调用时会返回 "not implemented" 错误。
+// 转换流程为 Responses -> Chat Completions -> Gemini Chat。由于 Gemini 没有 Responses 的 stateful
+// 语义和 custom/freeform 工具等价能力，预处理阶段会过滤无法安全表达的工具项，转换层会对
+// conversation、previous_response_id 等有状态字段 fail-closed，避免静默改变请求语义。
 // 参数:
 //   - c: Gin 上下文
 //   - info: Relay 中继信息
 //   - request: OpenAI Responses 格式的请求对象
 //
 // 返回:
-//   - any: 始终返回 nil
-//   - error: 始终返回未实现错误
+//   - any: Gemini 格式请求
+//   - error: 转换过程中的错误
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	request, err := preprocessGeminiOpenAIResponsesRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	chatReq, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+	if err != nil {
+		return nil, err
+	}
+	return a.ConvertOpenAIRequest(c, info, chatReq)
 }
 
 // DoRequest 执行向 Gemini API 的 HTTP 请求。
@@ -409,6 +419,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		} else {
 			return GeminiTextGenerationHandler(c, info, resp)
 		}
+	}
+
+	if info.RelayMode == constant.RelayModeResponses {
+		if info.IsStream {
+			return GeminiResponsesStreamHandler(c, info, resp)
+		}
+		return GeminiResponsesHandler(c, info, resp)
 	}
 
 	if strings.HasPrefix(info.UpstreamModelName, "imagen") {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/dto" // 数据传输对象
 )
 
@@ -35,41 +36,16 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	text := ExtractOutputTextFromResponses(resp)
 
 	// 转换 usage 统计
-	usage := &dto.Usage{}
-	if resp.Usage != nil {
-		if resp.Usage.InputTokens != 0 {
-			usage.PromptTokens = resp.Usage.InputTokens
-			usage.InputTokens = resp.Usage.InputTokens
-		}
-		if resp.Usage.OutputTokens != 0 {
-			usage.CompletionTokens = resp.Usage.OutputTokens
-			usage.OutputTokens = resp.Usage.OutputTokens
-		}
-		if resp.Usage.TotalTokens != 0 {
-			usage.TotalTokens = resp.Usage.TotalTokens
-		} else {
-			// totalTokens 未返回时，用 input + output 计算
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		}
-		// 转换 input tokens 详情（缓存、图片、音频 token 数）
-		if resp.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = resp.Usage.InputTokensDetails.CachedTokens
-			usage.PromptTokensDetails.ImageTokens = resp.Usage.InputTokensDetails.ImageTokens
-			usage.PromptTokensDetails.AudioTokens = resp.Usage.InputTokensDetails.AudioTokens
-		}
-		// 转换 completion token 详情（推理 token 数）
-		if resp.Usage.CompletionTokenDetails.ReasoningTokens != 0 {
-			usage.CompletionTokenDetails.ReasoningTokens = resp.Usage.CompletionTokenDetails.ReasoningTokens
-		}
-	}
+	usage := UsageFromResponsesUsage(resp.Usage)
 
 	created := resp.CreatedAt
 
-	// 如果没有文本输出，检查是否有 function_call 输出 -> 转换为 tool_calls
+	// Responses 允许文本、reasoning 和工具调用同时出现在 output 中。
+	// Chat Completions 也可以用 assistant content + tool_calls 表达该组合，因此不能因为已有文本就丢弃工具调用。
 	var toolCalls []dto.ToolCallResponse
-	if text == "" && len(resp.Output) > 0 {
+	if len(resp.Output) > 0 {
 		for _, out := range resp.Output {
-			if out.Type != "function_call" {
+			if !isResponsesToolOutputType(out.Type) {
 				continue
 			}
 			name := strings.TrimSpace(out.Name)
@@ -94,7 +70,9 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 
 	// 根据是否有 tool_calls 设置 finish_reason
 	finishReason := "stop"
-	if len(toolCalls) > 0 {
+	if mappedReason, ok := ResponsesFinishReasonFromStatus(resp); ok {
+		finishReason = mappedReason
+	} else if len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
 
@@ -103,10 +81,15 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 		Role:    "assistant",
 		Content: text,
 	}
+	if reasoning := ExtractReasoningTextFromResponses(resp); reasoning != "" {
+		msg.ReasoningContent = &reasoning
+	}
 	if len(toolCalls) > 0 {
-		// 有 tool_calls 时，清空 content，设置 tool_calls
-		msg.SetToolCalls(toolCalls)
-		msg.Content = ""
+		toolCallsRaw, err := common.Marshal(toolCalls)
+		if err != nil {
+			return nil, nil, err
+		}
+		msg.ToolCalls = toolCallsRaw
 	}
 
 	// 构建 Chat Completions 响应
@@ -126,6 +109,80 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	}
 
 	return out, usage, nil
+}
+
+// ResponsesFinishReasonFromStatus 将 Responses incomplete 状态映射为 Chat finish_reason。
+func ResponsesFinishReasonFromStatus(resp *dto.OpenAIResponsesResponse) (string, bool) {
+	if resp == nil {
+		return "", false
+	}
+
+	status := responseStatusString(resp)
+	if status != "incomplete" {
+		return "", false
+	}
+
+	reason := ""
+	if resp.IncompleteDetails != nil {
+		reason = strings.TrimSpace(resp.IncompleteDetails.Reason)
+		if reason == "" {
+			reason = strings.TrimSpace(resp.IncompleteDetails.Reasoning)
+		}
+	}
+	if reason == responsesIncompleteReasonContentFilter {
+		return "content_filter", true
+	}
+	return "length", true
+}
+
+// UsageFromResponsesUsage 将 Responses usage 字段补齐为 Chat usage 语义。
+func UsageFromResponsesUsage(src *dto.Usage) *dto.Usage {
+	usage := &dto.Usage{}
+	if src == nil {
+		return usage
+	}
+	if src.InputTokens != 0 {
+		usage.PromptTokens = src.InputTokens
+		usage.InputTokens = src.InputTokens
+	}
+	if src.PromptTokens != 0 {
+		usage.PromptTokens = src.PromptTokens
+		usage.InputTokens = src.PromptTokens
+	}
+	if src.OutputTokens != 0 {
+		usage.CompletionTokens = src.OutputTokens
+		usage.OutputTokens = src.OutputTokens
+	}
+	if src.CompletionTokens != 0 {
+		usage.CompletionTokens = src.CompletionTokens
+		usage.OutputTokens = src.CompletionTokens
+	}
+	if src.TotalTokens != 0 {
+		usage.TotalTokens = src.TotalTokens
+	} else {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if src.InputTokensDetails != nil {
+		usage.PromptTokensDetails.CachedTokens = src.InputTokensDetails.CachedTokens
+		usage.PromptTokensDetails.ImageTokens = src.InputTokensDetails.ImageTokens
+		usage.PromptTokensDetails.AudioTokens = src.InputTokensDetails.AudioTokens
+		usage.PromptTokensDetails.TextTokens = src.InputTokensDetails.TextTokens
+		usage.PromptTokensDetails.CachedCreationTokens = src.InputTokensDetails.CachedCreationTokens
+	}
+	if src.PromptTokensDetails.CachedTokens != 0 ||
+		src.PromptTokensDetails.ImageTokens != 0 ||
+		src.PromptTokensDetails.AudioTokens != 0 ||
+		src.PromptTokensDetails.TextTokens != 0 ||
+		src.PromptTokensDetails.CachedCreationTokens != 0 {
+		usage.PromptTokensDetails = src.PromptTokensDetails
+	}
+	if src.CompletionTokenDetails.ReasoningTokens != 0 ||
+		src.CompletionTokenDetails.TextTokens != 0 ||
+		src.CompletionTokenDetails.AudioTokens != 0 ||
+		src.CompletionTokenDetails.ImageTokens != 0 {
+		usage.CompletionTokenDetails = src.CompletionTokenDetails
+	}
+	return usage
 }
 
 // ExtractOutputTextFromResponses 从 Responses API 响应中提取输出文本。
@@ -170,4 +227,28 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		}
 	}
 	return sb.String()
+}
+
+// ExtractReasoningTextFromResponses 从 Responses 输出中提取 reasoning summary 文本。
+func ExtractReasoningTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
+	if resp == nil || len(resp.Output) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for _, out := range resp.Output {
+		if out.Type != responsesOutputTypeReasoning {
+			continue
+		}
+		for _, c := range out.Content {
+			if c.Text != "" {
+				sb.WriteString(c.Text)
+			}
+		}
+	}
+	return sb.String()
+}
+
+func isResponsesToolOutputType(outputType string) bool {
+	return outputType == responsesOutputTypeFunctionCall || outputType == responsesOutputTypeCustomToolCall
 }

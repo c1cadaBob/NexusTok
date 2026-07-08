@@ -15,6 +15,7 @@ import (
 // 用于在 Responses API 模式下处理来自 Chat Completions 兼容客户端的请求
 // 参数:
 //   - req: Chat Completions 格式的请求
+//
 // 返回值:
 //   - *dto.OpenAIResponsesRequest: Responses API 格式的请求
 //   - error: 转换失败时返回错误
@@ -22,11 +23,64 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	return openaicompat.ChatCompletionsRequestToResponsesRequest(req)
 }
 
+// ResponsesRequestToChatCompletionsRequest 将 Responses API 请求转换为 Chat Completions 请求格式
+// 用于让不支持 Responses 原生端点的上游渠道复用 Chat Completions 适配链路。
+// 参数:
+//   - req: Responses API 格式的请求
+//
+// 返回值:
+//   - *dto.GeneralOpenAIRequest: Chat Completions 格式的请求
+//   - error: 转换失败时返回错误
+func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return openaicompat.ResponsesRequestToChatCompletionsRequest(req)
+}
+
+// ChatCompletionsResponseToResponsesResponse 将 Chat Completions 响应转换为 Responses API 响应格式
+// 用于不支持 Responses 原生端点的上游渠道复用 Chat 适配链路后，将响应恢复为客户端请求的 Responses 形态。
+// 参数:
+//   - resp: Chat Completions 格式的响应
+//   - id: Responses 响应 ID
+//
+// 返回值:
+//   - *dto.OpenAIResponsesResponse: Responses API 格式的响应
+//   - *dto.Usage: 使用量信息
+//   - error: 转换失败时返回错误
+func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
+	return openaicompat.ChatCompletionsResponseToResponsesResponse(resp, id)
+}
+
+// UsageFromChatUsage 将 Chat usage 字段补齐为 Responses usage 语义。
+func UsageFromChatUsage(src *dto.Usage) *dto.Usage {
+	return openaicompat.UsageFromChatUsage(src)
+}
+
+// ChatToResponsesStreamEvent 表示从 Chat 流式 chunk 生成的一条 Responses SSE 事件。
+type ChatToResponsesStreamEvent = openaicompat.ChatToResponsesStreamEvent
+
+// ChatToResponsesStreamState 保存 Chat 流式响应转换成 Responses 事件所需的跨 chunk 状态。
+type ChatToResponsesStreamState = openaicompat.ChatToResponsesStreamState
+
+// NewChatToResponsesStreamState 创建 Chat 流式响应到 Responses 事件的转换状态。
+func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStreamState {
+	return openaicompat.NewChatToResponsesStreamState(id, model)
+}
+
+// ChatCompletionsStreamChunkToResponsesEvents 将一个 Chat 流式 chunk 转换为 Responses SSE 事件。
+func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
+	return openaicompat.ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
+}
+
+// FinalizeChatCompletionsStreamToResponses 结束转换并生成终态 Responses 事件。
+func FinalizeChatCompletionsStreamToResponses(state *ChatToResponsesStreamState) []ChatToResponsesStreamEvent {
+	return openaicompat.FinalizeChatCompletionsStreamToResponses(state)
+}
+
 // ResponsesResponseToChatCompletionsResponse 将 Responses API 响应转换为 Chat Completions 响应格式
 // 用于在 Responses API 模式下将上游响应转换回 Chat Completions 格式返回给客户端
 // 参数:
 //   - resp: Responses API 格式的响应
 //   - id: 请求 ID，用于填充 Chat Completions 响应的 id 字段
+//
 // 返回值:
 //   - *dto.OpenAITextResponse: Chat Completions 格式的响应
 //   - *dto.Usage: 使用量信息
@@ -39,6 +93,7 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 // 遍历响应的 output 数组，拼接所有 output_text 类型的内容
 // 参数:
 //   - resp: Responses API 格式的响应
+//
 // 返回值:
 //   - string: 提取的输出文本
 func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {

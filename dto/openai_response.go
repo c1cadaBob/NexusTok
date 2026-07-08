@@ -502,10 +502,11 @@ func (o *OpenAIResponsesResponse) GetSize() string {
 	return ""
 }
 
-// IncompleteDetails 响应未完成详情
-// Reasoning：未完成原因
+// IncompleteDetails 响应未完成详情。
+// OpenAI Responses 标准字段是 reason；保留 reasoning 作为历史兼容字段，避免旧数据或旧上游扩展解析丢失。
 type IncompleteDetails struct {
-	Reasoning string `json:"reasoning"`
+	Reason    string `json:"reason,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // ResponsesOutput Responses API 输出项
