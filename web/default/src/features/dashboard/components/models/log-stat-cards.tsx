@@ -18,6 +18,11 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasAdminPermission,
+} from '@/lib/admin-permissions'
 import { formatNumber, formatQuota } from '@/lib/format'
 import { computeTimeRange } from '@/lib/time'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -41,7 +46,11 @@ interface LogStatCardsProps {
 export function LogStatCards(props: LogStatCardsProps) {
   const statCardsConfig = useModelStatCardsConfig()
   const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = !!(user?.role && user.role >= 10)
+  const isAdmin = hasAdminPermission(
+    user,
+    ADMIN_PERMISSION_RESOURCES.USAGE_DATA,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
   const [stats, setStats] = useState<{
     totalQuota: number
     totalCount: number

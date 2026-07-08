@@ -179,13 +179,44 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
+		Resource: ResourceUsageLog,
+		LabelKey: "Usage Logs",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "Read usage logs",
+				DescriptionKey: "View cross-user request logs, usage statistics, audit entries, and routing cache usage details.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionSensitiveWrite,
+				LabelKey:       "Delete usage logs",
+				DescriptionKey: "Delete historical request logs, audit logs, or other usage evidence that may be needed for investigation.",
+			},
+		},
+	})
+
+	registerResource(ResourceDefinition{
+		Resource: ResourceUsageData,
+		LabelKey: "Usage Data",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "Read usage data",
+				DescriptionKey: "View cross-user quota trends, user usage rankings, and traffic flow analytics.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+		},
+	})
+
+	registerResource(ResourceDefinition{
 		Resource: ResourceSystemSetting,
 		LabelKey: "System Settings",
 		Actions: []ActionDefinition{
 			{
 				Action:         ActionRead,
 				LabelKey:       "Read system settings",
-				DescriptionKey: "View options, system instances, system tasks, logs, performance data, and routing metadata.",
+				DescriptionKey: "View options, system instances, system tasks, performance data, and routing metadata.",
 				DefaultRoles:   []string{BuiltInRoleAdmin},
 			},
 			{

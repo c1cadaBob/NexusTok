@@ -26,6 +26,8 @@ const (
 	ResourceModel         = "model"
 	ResourceSubscription  = "subscription"
 	ResourceRedemption    = "redemption"
+	ResourceUsageLog      = "usage_log"
+	ResourceUsageData     = "usage_data"
 	ResourceSystemSetting = "system_setting"
 )
 
@@ -69,6 +71,11 @@ var (
 	RedemptionOperate        = Permission{Resource: ResourceRedemption, Action: ActionOperate}
 	RedemptionWrite          = Permission{Resource: ResourceRedemption, Action: ActionWrite}
 	RedemptionSensitiveWrite = Permission{Resource: ResourceRedemption, Action: ActionSensitiveWrite}
+
+	UsageLogRead           = Permission{Resource: ResourceUsageLog, Action: ActionRead}
+	UsageLogSensitiveWrite = Permission{Resource: ResourceUsageLog, Action: ActionSensitiveWrite}
+
+	UsageDataRead = Permission{Resource: ResourceUsageData, Action: ActionRead}
 )
 
 // ActionDefinition 描述资源上的一个可授权动作。

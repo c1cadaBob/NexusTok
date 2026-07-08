@@ -25,7 +25,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 推荐演进方向不是复制 `new-api-main`，而是把这些优势收敛到 NexusTok 的原生域模型：
 
 1. 账号池继续作为 NexusTok 的核心差异化能力，承接渠道账号、Codex OAuth、检测任务、状态审计和健康看板。
-2. 权限系统应优先围绕账号池、渠道、用户、模型、订阅、系统设置做资源级授权，而不是只有 Admin/Root 粗粒度角色。
+2. 权限系统应优先围绕账号池、渠道、用户、模型、订阅、兑换码、日志、用量数据和系统设置做资源级授权，而不是只有 Admin/Root 粗粒度角色。
 3. 系统任务应成为账号池检测、日志清理、批量渠道测试、上游模型同步、订阅重置等后台工作的统一执行和观测框架。
 4. 系统信息应服务多节点运维：展示主/从节点、版本、资源、最后心跳，并与账号池自动检测和任务调度联动。
 5. 额度安全、请求体限制和 SSRF 保护属于底层安全债，应优先吸收，避免支付、计费、拉取外部内容、匿名接口成为风险面。
@@ -55,7 +55,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、默认前端入口/按钮消费与渠道/账号池/订阅 Admin 路由 enforcement 已部分落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、系统设置六类资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，默认前端已让管理入口和渠道页关键按钮消费该矩阵；`/api/channel`、`/api/account-pool` 与 `/api/subscription/admin` 已按同一矩阵做服务端二次校验。当前仍基于系统角色基线；Casbin 存储、用户 override 和用户/系统设置等更多路由 enforcement 待后续分批接入。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、默认前端入口/按钮消费与渠道/账号池/订阅 Admin 路由 enforcement 已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置九类资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，默认前端已让管理入口、Usage Logs、Dashboard 和渠道页关键按钮消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log` 和 `/api/data` 已按同一矩阵做服务端二次校验。当前仍基于系统角色基线；Casbin 存储、用户 override 和系统设置等更多路由 enforcement 待后续分批接入。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地首个 enforcement 切片 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；原有 `AdminAuth`、`RootAuth`、安全验证、限流和禁缓存边界继续保留。后续账号池路由也应采用同样模式。 |
 | 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；敏感写二次校验已改为 `authz.Can(..., ChannelSensitiveWrite)`，当前基线仍等价 Root 权限。账号池路由已先按接口级敏感度收紧，字段级分类待后续跟进。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
@@ -1273,6 +1273,62 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. `git diff --check` 确认无空白错误。
 5. 使用 MCP 打开 `http://192.168.0.202:3003/redemption-codes`，确认页面更新生效，`/api/redemption/` 读取请求正常返回，控制台无新增 error/warn；只直调低风险读接口，不触发真实删除。
 
+## 本轮实施评审：日志与用量数据 Authz 独立资源灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 对 `/api/log` 的历史日志删除已提升到 Root 边界，同时 NexusTok 近期已经原生化了全局管理操作审计兜底、Usage Logs 移动端体验和 Dashboard Flow 流量账本可视化。NexusTok 当前 `/api/log` 与 `/api/data` 仍在主 `api-router.go` 中内联注册，管理员跨用户日志查询、统计、搜索、渠道亲和用量缓存统计，以及跨用户用量聚合/flow 查询都只依赖 `AdminAuth`。随着 Authz catalog 已覆盖渠道、账号池、订阅、模型、用户和兑换码，日志与用量数据也应从泛化 Admin 角色中拆出，形成 NexusTok 原生的审计/统计读取边界。
+
+本轮目标：
+
+1. 新增 `usage_log` 与 `usage_data` 两个 Authz 资源，分别承载跨用户请求日志/审计日志读取、历史日志清理，以及跨用户用量统计/flow 聚合读取。
+2. 将 `/api/log` 管理员接口和 `/api/data` 管理员接口从主路由抽到独立路由文件，用现有权限表模式注册。
+3. 保留 `/api/log/self`、`/api/log/self/stat`、`/api/log/self/search`、`/api/log/token`、`/api/data/self`、`/api/data/flow/self` 的原认证边界，避免普通用户自助查询被管理员资源权限表误拦截。
+4. `GET /api/log/`、`GET /api/log/stat`、`GET /api/log/search`、`GET /api/log/channel_affinity_usage_cache` 归为 `usage_log.read`；`DELETE /api/log/` 归为 `usage_log.sensitive_write`，与 new-api 的 Root-only 删除意图对齐。
+5. `GET /api/data/`、`GET /api/data/users`、`GET /api/data/flow` 归为 `usage_data.read`；本轮不新增数据写接口。
+6. 默认前端在 Usage Logs 和 Dashboard 中判断“跨用户视图”时读取对应 read 权限，而不是只看角色是否为 Admin，为后续 Casbin/user override 提前消除前后端分叉。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz catalog | `service/authz/permission.go`、`service/authz/registry.go`、`service/authz/permission_test.go`、`controller/user_authz_test.go` | 新增 `usage_log`、`usage_data` 资源和 permission 变量，补 Root/Admin/普通用户基线矩阵断言。 |
+| 日志/数据路由 | `router/log-data-router.go`、`router/api-router.go`、`router/log_data_router_test.go` | 将管理员日志和管理员用量数据路由迁移到权限表注册；普通用户 self 与 token 路径保留在主路由。 |
+| 默认前端权限消费 | `web/default/src/lib/admin-permissions.ts`、`web/default/src/lib/admin-permissions.test.ts`、`web/default/src/features/usage-logs/*`、`web/default/src/features/dashboard/*` | 增加资源 fallback，并让 Usage Logs/Dashboard 的跨用户请求按 `usage_log.read`、`usage_data.read` 判断。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收标准，作为后续日志删除按钮、flow 用户/节点筛选和管理审计页面权限消费依据。 |
+
+### 风险评估
+
+1. `/api/log` 同时服务普通用户 Usage Logs、管理员全站 Usage Logs、系统设置日志清理和 classic 前端旧入口；路由迁移时必须明确 self/token 路径不进入管理员权限表，避免普通用户日志页回退。
+2. `DELETE /api/log/` 会实际删除历史请求日志和审计日志，是不可逆数据清理。本轮将其从普通 Admin 能力收紧为 `usage_log.sensitive_write`，等价于当前 Root 基线；这会让非 Root Admin 直接调用旧同步删除接口时被拒绝。默认前端系统设置仍是 Root-only，推荐继续优先使用 `/api/system-task/log-cleanup`。
+3. `/api/log/channel_affinity_usage_cache` 位于系统设置的渠道亲和缓存弹窗中，但返回的是特定规则/key 的用量缓存统计，属于日志/用量观测而非系统设置写操作；归入 `usage_log.read` 后，缺少该权限的未来自定义管理员不应看到跨用户缓存详情。
+4. `/api/data/flow` 中 Root 可以看到 node/token/channel 维度，Admin 会在 controller/model 层隐藏 token/node 维度；本轮不改变这些脱敏规则，只在路由前增加 `usage_data.read`。
+5. Dashboard 和 Usage Logs 前端从角色判断切到权限判断后，旧后端缺少新资源矩阵时需要依赖本地 Admin fallback，否则热更新过程中可能把管理员误降级为普通用户视图。
+6. 本轮不改日志模型、统计 SQL、flow 聚合、审计写入和数据库迁移，避免影响 Relay 热路径与已有报表结果。
+7. 子 Agent 复核额外发现 `/api/data/self` 与 `/api/data/?username=...` 的基础用量查询仍可能返回比 Dashboard 所需更细的原始 `quota_data` 维度，后续应参考 `new-api-main` 的聚合写法做单独评审；`SumUsedQuota` 空结果未统一 `COALESCE` 也应作为统计稳定性修复单独处理。
+
+### 方案评审
+
+采用独立资源方案，而不是继续复用 `system_setting.read`：日志和用量数据是平台审计/运营观测资源，既会暴露跨用户请求、成本、IP、Token 名称、渠道链路和管理员操作审计，也会服务 Dashboard Flow 等非系统配置页面。把它们从系统设置中拆出，有利于后续创建“审计员/财务观察员”等只读管理角色。后端仍复用 `permissionRoute`、`registerPermissionRoutes` 和 `middleware.RequirePermission`；路由先过 `AdminAuth`，再按 `usage_log`/`usage_data` 动作二次校验。前端只调整权限判断，不新增文案、不改变页面布局。
+
+路由分类：
+
+| 路由 | 权限 | 说明 |
+|------|------|------|
+| `GET /api/log/`、`GET /api/log/stat`、`GET /api/log/search` | `usage_log.read` | 管理员跨用户日志列表、统计和兼容搜索入口。 |
+| `GET /api/log/channel_affinity_usage_cache` | `usage_log.read` | 渠道亲和用量缓存详情，暴露跨用户/key 维度观测数据。 |
+| `DELETE /api/log/` | `usage_log.sensitive_write` | 同步删除历史日志；与 new-api 的 Root-only 删除边界对齐。 |
+| `GET /api/data/`、`GET /api/data/users`、`GET /api/data/flow` | `usage_data.read` | 管理员跨用户用量趋势、用户排行和流量账本聚合查询。 |
+| `GET /api/log/self*`、`GET /api/log/token`、`GET /api/data/self`、`GET /api/data/flow/self` | 不纳入管理员权限表 | 普通用户或 Token 自身认证路径，继续保持原有最小可见范围。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖 permission、权限中间件、日志/数据路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认 Usage Logs/Dashboard 权限判断类型正确。
+3. `cd web/default && ./node_modules/.bin/tsx --test src/lib/admin-permissions.test.ts` 覆盖 Admin fallback。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/usage-logs/common` 与 `http://192.168.0.202:3003/dashboard/flow`，确认页面更新生效、管理员读接口返回 200、控制台无新增 error/warn；只验证低风险读接口，不触发 `DELETE /api/log/`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1300,9 +1356,9 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-07 | Midjourney 与异步任务轮询系统任务 | `controller/midjourney.go`、`service/task_polling.go`、`main.go` | 绘图任务和通用异步任务轮询从独立无限 goroutine 迁入 `midjourney_poll`/`async_task_poll` SystemTask；旧启动入口只负责创建首次任务，周期执行由 scheduler 和数据库租约统一管理。保留 Midjourney 失败退款、通用任务超时清理、Suno/视频任务分发和差额结算路径，并补充空上游任务 ID 修复、handler 完成和启动入队测试。 |
 | 2026-07-07 | 流量账本查询后端 | `model/usedata.go`、`controller/usedata.go`、`router/api-router.go` | 扩展 `quota_data` 记录 node/token/group/channel 维度，新增 `/api/data/flow` 与 `/api/data/flow/self` 聚合接口；Root 可看节点、Token 和渠道，Admin 隐藏 Token/节点，普通用户仅查看自己的 Token/group/model 聚合，为后续 dashboard Sankey 图提供后端数据。 |
 | 2026-07-07 | 订阅余额支付与钱包溢出控制后端 | `model/subscription.go`、`controller/subscription.go`、`router/api-router.go`、`service/billing_session.go`、`service/quota.go` | 新增套餐 `allow_balance_pay`、`allow_wallet_overflow` 和用户订阅钱包溢出快照，提供 `/api/subscription/balance/pay` 余额购买订阅接口；余额扣款、订阅创建和成功订单在同一事务内完成，`subscription_first` 在订阅额度不足时按活跃订阅快照决定是否允许钱包 fallback。 |
-| 2026-07-07 | 权限 catalog 后端 | `service/authz/*`、`controller/authz.go`、`router/authz-router.go` | 新增 `/api/authz/catalog` 只读权限 schema，覆盖渠道、账号池、用户、模型、订阅和系统设置六类资源，返回动作定义与 Root/Admin 基线授权矩阵；当前不改变现有 AdminAuth/RootAuth 行为，为后续 Casbin 和路由权限表迁移提供稳定 schema。 |
+| 2026-07-07 | 权限 catalog 后端 | `service/authz/*`、`controller/authz.go`、`router/authz-router.go` | 新增 `/api/authz/catalog` 只读权限 schema，并持续扩展到渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置九类资源，返回动作定义与 Root/Admin 基线授权矩阵；当前不引入 Casbin 存储，为后续用户级 override 和路由权限表迁移提供稳定 schema。 |
 | 2026-07-07 | 用户权限矩阵回传 | `controller/user.go`、`controller/user_authz_test.go`、`web/default/src/stores/auth-store.ts` | `/api/user/self` 在 `permissions.admin_permissions` 回传 Authz 能力矩阵，并为默认前端用户状态补充类型声明；当前只反映系统角色基线，不引入用户 override 或改变服务端权限判断。 |
-| 2026-07-07 | 默认前端入口消费权限矩阵 | `web/default/src/lib/admin-permissions.ts`、`web/default/src/hooks/use-admin-permission.ts`、`web/default/src/hooks/use-sidebar-data.ts`、`web/default/src/routes/_authenticated/*` | 默认前端新增管理权限 helper/hook，以 `permissions.admin_permissions` 为优先来源、旧角色为兼容 fallback；管理侧边栏和渠道、账号池、模型、用户、兑换码、订阅入口路由已按 read 能力显隐/放行，Root-only 系统设置、系统信息和计费设置继续保持 Root 边界。 |
+| 2026-07-07 | 默认前端入口消费权限矩阵 | `web/default/src/lib/admin-permissions.ts`、`web/default/src/hooks/use-admin-permission.ts`、`web/default/src/hooks/use-sidebar-data.ts`、`web/default/src/routes/_authenticated/*` | 默认前端新增管理权限 helper/hook，以 `permissions.admin_permissions` 为优先来源、旧角色为兼容 fallback；管理侧边栏和渠道、账号池、模型、用户、兑换码、订阅入口路由已按 read 能力显隐/放行，Usage Logs 与 Dashboard 的跨用户视图也开始读取对应 read 能力，Root-only 系统设置、系统信息和计费设置继续保持 Root 边界。 |
 | 2026-07-07 | 渠道页按钮级权限消费 | `web/default/src/features/channels/hooks/use-channel-permissions.ts`、`web/default/src/features/channels/components/*` | 默认前端渠道管理页开始消费同一权限矩阵：`channel.operate` 控制测试、启停、余额和检测；`channel.write` 控制普通模型/分组/标签等编辑；`channel.sensitive_write` 控制新建、复制、删除、密钥、多 Key、渠道账号池和上游模型应用；`channel.secret_view` 控制密钥查看。编辑抽屉在缺少敏感写时会裁剪提交 payload，只发送非敏感字段，保持与后端 Root 兜底策略一致。 |
 | 2026-07-07 | 订阅余额支付与钱包兜底默认前端 | `web/default/src/features/subscriptions/*`、`web/default/src/features/wallet/components/subscription-plans-card.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端已消费后端 `allow_balance_pay`、`allow_wallet_overflow` 和 `/api/subscription/balance/pay`：管理员可在套餐抽屉配置余额兑换与钱包兜底策略，套餐表展示余额支付能力，用户购买弹窗展示所需/可用余额并支持直接用钱包余额购买，成功后刷新订阅和当前用户余额；新增文案已补齐 en/zh/fr/ja/ru/vi。 |
 | 2026-07-08 | GORM v2 行锁原生化 | `model/locking.go`、`model/locking_test.go`、`model/subscription.go`、`model/topup.go`、`model/redemption.go`、`model/user.go` | 新增模型层统一 `lockForUpdate` helper，MySQL/PostgreSQL 使用 GORM v2 `clause.Locking` 生成真实 `FOR UPDATE`，SQLite 自动跳过不兼容语法；订阅、充值、兑换和邀请额度转移热点事务已替换旧 GORM v1 query option 写法，测试覆盖 SQL 生成和关键业务路径。 |
@@ -1319,3 +1375,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | Waffo Pancake 用户侧支付路由补齐 | `router/api-router.go`、`router/api_router_payment_test.go` | 对齐 new-api 的用户自助充值入口，补齐默认前端已调用的 `/api/user/waffo-pancake/amount` 与 `/api/user/waffo-pancake/pay`；金额试算和支付发起复用现有 Waffo Pancake controller，支付发起保留 `CriticalRateLimit`，webhook 验签和入账事务不变。 |
 | 2026-07-08 | 用户管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/user-router.go`、`router/api-router.go`、`controller/user_authz.go`、`router/user_router_test.go` | 为 `/api/user` 管理员子路由接入 user 权限表：用户/充值/绑定/2FA 查询走 read，绑定清理、Passkey/2FA 重置和普通启停走 operate，普通用户资料编辑走 write，创建、硬删除、管理员完成充值走 sensitive_write；`ManageUser` 复合接口对删除、升降级和额度调整额外执行 `user.sensitive_write` 二次校验。 |
 | 2026-07-08 | 兑换码 Authz 独立资源与路由权限表 | `service/authz/*`、`router/redemption-router.go`、`router/api-router.go`、`web/default/src/lib/admin-permissions.ts`、`web/default/src/routes/_authenticated/redemption-codes/index.tsx` | 新增 `redemption` 权限资源并让 `/api/redemption` 接入独立路由权限表：列表/搜索/详情走 read，创建和编辑走 write，删除单个兑换码与批量清理无效兑换码走 sensitive_write；默认前端侧边栏和页面守卫改为读取 `redemption.read`，不再复用 `user.read`。 |
+| 2026-07-08 | 日志与用量数据 Authz 独立资源 | `service/authz/*`、`router/log-data-router.go`、`router/api-router.go`、`web/default/src/features/usage-logs/*`、`web/default/src/features/dashboard/*` | 新增 `usage_log` 与 `usage_data` 权限资源，管理员 `/api/log` 和 `/api/data` 读接口进入独立权限表，历史日志同步删除归入 `usage_log.sensitive_write`；普通用户 self/token 路径保持原认证边界，默认前端 Usage Logs 与 Dashboard 的跨用户视图改为读取对应 read 权限。 |

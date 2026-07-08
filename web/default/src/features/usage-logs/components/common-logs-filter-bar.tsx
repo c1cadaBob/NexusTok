@@ -22,7 +22,11 @@ import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import { type Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useIsAdmin } from '@/hooks/use-admin'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -70,7 +74,10 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const isAdmin = useIsAdmin()
+  const isAdmin = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.USAGE_LOG,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 

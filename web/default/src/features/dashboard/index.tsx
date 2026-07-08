@@ -20,6 +20,10 @@ import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -163,7 +167,8 @@ export function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const user = useAuthStore((state) => state.auth.user)
+  const userRole = user?.role
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
 
@@ -202,12 +207,17 @@ export function Dashboard() {
 
   const meta = SECTION_META[activeSection] ?? SECTION_META.overview
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
+  const canReadUsageData = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.USAGE_DATA
+  )
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) =>
+          section !== 'overview' && (section !== 'users' || canReadUsageData)
       ),
-    [isAdmin]
+    [canReadUsageData]
   )
   const handleSectionChange = useCallback(
     (section: string) => {
@@ -323,7 +333,7 @@ export function Dashboard() {
               </FadeIn>
             </>
           )}
-          {activeSection === 'users' && (
+          {activeSection === 'users' && canReadUsageData && (
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyUserCharts />

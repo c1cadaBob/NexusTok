@@ -10,7 +10,7 @@ import (
 
 func TestCatalogIncludesNexusTokCoreResources(t *testing.T) {
 	catalog := Catalog()
-	require.Len(t, catalog, 7)
+	require.Len(t, catalog, 9)
 
 	resources := make(map[string]ResourceDefinition, len(catalog))
 	for _, resource := range catalog {
@@ -19,7 +19,7 @@ func TestCatalogIncludesNexusTokCoreResources(t *testing.T) {
 		assert.NotEmpty(t, resource.Actions)
 	}
 
-	for _, name := range []string{"channel", "account_pool", "user", "model", "subscription", "redemption", "system_setting"} {
+	for _, name := range []string{"channel", "account_pool", "user", "model", "subscription", "redemption", "usage_log", "usage_data", "system_setting"} {
 		_, ok := resources[name]
 		assert.True(t, ok, "resource %s should be registered", name)
 	}
@@ -28,6 +28,8 @@ func TestCatalogIncludesNexusTokCoreResources(t *testing.T) {
 	assertActionExists(t, resources["channel"], ActionSensitiveWrite)
 	assertActionExists(t, resources["account_pool"], ActionSecretView)
 	assertActionExists(t, resources["redemption"], ActionSensitiveWrite)
+	assertActionExists(t, resources["usage_log"], ActionSensitiveWrite)
+	assertActionExists(t, resources["usage_data"], ActionRead)
 	assertActionExists(t, resources["system_setting"], ActionSecretView)
 }
 
@@ -69,6 +71,9 @@ func TestRolesExposeRootAndAdminBaselines(t *testing.T) {
 	assert.True(t, admin.Grants["redemption"][ActionOperate])
 	assert.True(t, admin.Grants["redemption"][ActionWrite])
 	assert.False(t, admin.Grants["redemption"][ActionSensitiveWrite])
+	assert.True(t, admin.Grants["usage_log"][ActionRead])
+	assert.False(t, admin.Grants["usage_log"][ActionSensitiveWrite])
+	assert.True(t, admin.Grants["usage_data"][ActionRead])
 	assert.False(t, admin.Grants["system_setting"][ActionWrite])
 }
 
@@ -82,10 +87,15 @@ func TestCapabilitiesFollowExistingSystemRoles(t *testing.T) {
 	assert.False(t, admin["subscription"][ActionSensitiveWrite])
 	assert.True(t, admin["redemption"][ActionWrite])
 	assert.False(t, admin["redemption"][ActionSensitiveWrite])
+	assert.True(t, admin["usage_log"][ActionRead])
+	assert.False(t, admin["usage_log"][ActionSensitiveWrite])
+	assert.True(t, admin["usage_data"][ActionRead])
 	assert.False(t, user["channel"][ActionRead])
 	assert.False(t, user["user"][ActionRead])
 	assert.False(t, user["model"][ActionRead])
 	assert.False(t, user["redemption"][ActionRead])
+	assert.False(t, user["usage_log"][ActionRead])
+	assert.False(t, user["usage_data"][ActionRead])
 	assert.False(t, user["system_setting"][ActionRead])
 }
 
@@ -118,12 +128,17 @@ func TestCanFollowsRoleBaselinesAndFailsClosed(t *testing.T) {
 	assert.True(t, Can(2, common.RoleAdminUser, RedemptionOperate))
 	assert.True(t, Can(2, common.RoleAdminUser, RedemptionWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, RedemptionSensitiveWrite))
+	assert.True(t, Can(2, common.RoleAdminUser, UsageLogRead))
+	assert.False(t, Can(2, common.RoleAdminUser, UsageLogSensitiveWrite))
+	assert.True(t, Can(2, common.RoleAdminUser, UsageDataRead))
 	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
 	assert.False(t, Can(3, common.RoleCommonUser, AccountPoolRead))
 	assert.False(t, Can(3, common.RoleCommonUser, UserRead))
 	assert.False(t, Can(3, common.RoleCommonUser, ModelRead))
 	assert.False(t, Can(3, common.RoleCommonUser, SubscriptionRead))
 	assert.False(t, Can(3, common.RoleCommonUser, RedemptionRead))
+	assert.False(t, Can(3, common.RoleCommonUser, UsageLogRead))
+	assert.False(t, Can(3, common.RoleCommonUser, UsageDataRead))
 
 	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: ResourceChannel, Action: "unknown"}))
 	assert.False(t, Can(1, common.RoleRootUser, Permission{Resource: "unknown", Action: ActionRead}))

@@ -335,29 +335,21 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		registerRedemptionRoutes(apiRouter)
+		registerLogDataAdminRoutes(apiRouter)
 
 		// ========================================
-		// 日志路由组 - /api/log
+		// 用户日志路由组 - /api/log
 		// ========================================
 		logRoute := apiRouter.Group("/log")
-		// 管理员接口
-		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)                                                    // 获取所有日志
-		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)                                          // 删除历史日志
-		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)                                               // 获取日志统计
-		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)                                       // 获取用户日志统计
-		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats) // 获取渠道亲和使用缓存统计
-		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)                                           // 搜索所有日志
-		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)                                                // 获取用户日志
-		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)        // 搜索用户日志
+		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)                                // 获取用户日志统计
+		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)                                         // 获取用户日志
+		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs) // 搜索用户日志
 
 		// ========================================
-		// 数据路由组 - /api/data
+		// 用户数据路由组 - /api/data
 		// ========================================
 		dataRoute := apiRouter.Group("/data")
-		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)              // 获取所有配额日期
-		dataRoute.GET("/users", middleware.AdminAuth(), controller.GetQuotaDatesByUser)      // 按用户获取配额日期
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)          // 获取用户配额日期
-		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)      // 获取流量账本聚合数据
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates) // 获取当前用户流量账本聚合数据
 
 		// Token 日志查询（需要 CORS 和频率限制）

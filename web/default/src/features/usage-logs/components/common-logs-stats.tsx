@@ -21,7 +21,11 @@ import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { formatLogQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { useIsAdmin } from '@/hooks/use-admin'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
@@ -48,7 +52,10 @@ function StatBadge(props: {
 
 export function CommonLogsStats() {
   const { t } = useTranslation()
-  const isAdmin = useIsAdmin()
+  const isAdmin = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.USAGE_LOG,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 

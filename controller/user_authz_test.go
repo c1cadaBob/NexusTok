@@ -93,6 +93,9 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionRead, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionWrite, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionSensitiveWrite, false)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionRead, true)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionSensitiveWrite, false)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_data", authz.ActionRead, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionWrite, false)
 
 	userResp := performGetSelfForAuthz(t, users[2].Id, common.RoleCommonUser)
@@ -101,6 +104,8 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "account_pool", authz.ActionWrite, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "user", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionRead, false)
+	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionRead, false)
+	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "usage_data", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionRead, false)
 }
 
