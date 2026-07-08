@@ -42,6 +42,8 @@ interface UserQuotaDialogProps {
   userId: number
   currentQuota: number
   onSuccess: () => void
+  canAdjust: boolean
+  disabledReason: string
 }
 
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
@@ -75,6 +77,10 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   }
 
   const handleConfirm = async () => {
+    if (!props.canAdjust) {
+      toast.error(props.disabledReason)
+      return
+    }
     if (!amount && mode !== 'override') return
     if (quotaValue <= 0 && mode !== 'override') return
 
@@ -177,7 +183,11 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           <Button variant='outline' onClick={handleCancel}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleConfirm} disabled={loading}>
+          <Button
+            onClick={handleConfirm}
+            disabled={loading || !props.canAdjust}
+            title={props.canAdjust ? undefined : props.disabledReason}
+          >
             {loading ? t('Processing...') : t('Confirm')}
           </Button>
         </DialogFooter>

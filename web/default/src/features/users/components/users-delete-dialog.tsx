@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { deleteUser } from '../api'
 import { ERROR_MESSAGES } from '../constants'
+import { useUserPermissions } from '../hooks/use-user-permissions'
 import { getUserActionMessage } from '../lib'
 import { useUsers } from './users-provider'
 
@@ -38,9 +39,15 @@ export function UsersDeleteDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useUsers()
   const [isDeleting, setIsDeleting] = useState(false)
+  const permissions = useUserPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const handleDelete = async () => {
     if (!currentRow) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
 
     setIsDeleting(true)
     try {
@@ -79,7 +86,10 @@ export function UsersDeleteDialog() {
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
-            disabled={isDeleting}
+            disabled={isDeleting || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
             className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
           >
             {isDeleting ? 'Deleting...' : 'Delete'}

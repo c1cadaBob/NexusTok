@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
+import { useSubscriptionPermissions } from '@/features/subscriptions/hooks/use-subscription-permissions'
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
   USER_STATUS,
@@ -51,6 +52,7 @@ import {
   ERROR_MESSAGES,
   isUserDeleted,
 } from '../constants'
+import { useUserPermissions } from '../hooks/use-user-permissions'
 import { getUserActionMessage } from '../lib'
 import { type User, type ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
@@ -68,18 +70,35 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const permissions = useUserPermissions()
+  const subscriptionPermissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+
+  const guardPermission = (allowed: boolean) => {
+    if (allowed) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const handleEdit = () => {
+    if (!guardPermission(permissions.canWrite)) return
     setCurrentRow(user)
     setOpen('update')
   }
 
   const handleDelete = () => {
+    if (!guardPermission(permissions.canSensitiveWrite)) return
     setCurrentRow(user)
     setOpen('delete')
   }
 
   const handleManage = async (action: Exclude<ManageUserAction, 'delete'>) => {
+    const allowed =
+      action === 'promote' || action === 'demote'
+        ? permissions.canOperate && permissions.canSensitiveWrite
+        : permissions.canOperate
+    if (!guardPermission(allowed)) return
+
     try {
       const result = await manageUser(user.id, action)
       if (result.success) {
@@ -96,6 +115,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleResetPasskey = async () => {
+    if (!guardPermission(permissions.canOperate)) return
     try {
       const result = await resetUserPasskey(user.id)
       if (result.success) {
@@ -112,6 +132,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleResetTwoFA = async () => {
+    if (!guardPermission(permissions.canOperate)) return
     try {
       const result = await resetUserTwoFA(user.id)
       if (result.success) {
@@ -130,6 +151,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
   const isRoot = user.role === USER_ROLE.ROOT
+  const canPromoteOrDemote =
+    permissions.canOperate && permissions.canSensitiveWrite
 
   if (isUserDeleted(user)) {
     return null
@@ -146,52 +169,69 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             />
           }
         >
-          <MoreHorizontal className='h-4 w-4' />
+          <MoreHorizontal />
           <span className='sr-only'>{t('Open menu')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-[180px]'>
-          <DropdownMenuItem onClick={handleEdit}>
+          <DropdownMenuItem
+            onClick={handleEdit}
+            disabled={!permissions.canWrite}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+          >
             {t('Edit')}
             <DropdownMenuShortcut>
-              <Pencil size={16} />
+              <Pencil />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
 
           {isDisabled ? (
-            <DropdownMenuItem onClick={() => handleManage('enable')}>
+            <DropdownMenuItem
+              onClick={() => handleManage('enable')}
+              disabled={!permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
+            >
               {t('Enable')}
               <DropdownMenuShortcut>
-                <Power size={16} />
+                <Power />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem
               onClick={() => handleManage('disable')}
-              disabled={isRoot}
+              disabled={isRoot || !permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
             >
               {t('Disable')}
               <DropdownMenuShortcut>
-                <PowerOff size={16} />
+                <PowerOff />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
 
           {isAdmin && !isRoot && (
-            <DropdownMenuItem onClick={() => handleManage('demote')}>
+            <DropdownMenuItem
+              onClick={() => handleManage('demote')}
+              disabled={!canPromoteOrDemote}
+              title={canPromoteOrDemote ? undefined : noPermissionMessage}
+            >
               {t('Demote')}
               <DropdownMenuShortcut>
-                <ArrowDown size={16} />
+                <ArrowDown />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
 
           {!isAdmin && (
-            <DropdownMenuItem onClick={() => handleManage('promote')}>
+            <DropdownMenuItem
+              onClick={() => handleManage('promote')}
+              disabled={!canPromoteOrDemote}
+              title={canPromoteOrDemote ? undefined : noPermissionMessage}
+            >
               {t('Promote')}
               <DropdownMenuShortcut>
-                <ArrowUp size={16} />
+                <ArrowUp />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
@@ -199,24 +239,32 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              if (!guardPermission(permissions.canRead)) return
               setBindingDialogOpen(true)
             }}
+            disabled={!permissions.canRead}
+            title={permissions.canRead ? undefined : noPermissionMessage}
           >
             {t('Manage Bindings')}
             <DropdownMenuShortcut>
-              <Link2 size={16} />
+              <Link2 />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              if (!guardPermission(subscriptionPermissions.canRead)) return
               setSubscriptionsDialogOpen(true)
             }}
+            disabled={!subscriptionPermissions.canRead}
+            title={
+              subscriptionPermissions.canRead ? undefined : noPermissionMessage
+            }
           >
             {t('Manage Subscriptions')}
             <DropdownMenuShortcut>
-              <CreditCard size={16} />
+              <CreditCard />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
@@ -225,26 +273,30 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              if (!guardPermission(permissions.canOperate)) return
               setResetPasskeyOpen(true)
             }}
-            disabled={isRoot}
+            disabled={isRoot || !permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
           >
             {t('Reset Passkey')}
             <DropdownMenuShortcut>
-              <KeyRound size={16} />
+              <KeyRound />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              if (!guardPermission(permissions.canOperate)) return
               setResetTwoFAOpen(true)
             }}
-            disabled={isRoot}
+            disabled={isRoot || !permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
           >
             {t('Reset 2FA')}
             <DropdownMenuShortcut>
-              <ShieldAlert size={16} />
+              <ShieldAlert />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
@@ -253,11 +305,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onClick={handleDelete}
             className='text-destructive focus:text-destructive'
-            disabled={isRoot}
+            disabled={isRoot || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
           >
             {t('Delete')}
             <DropdownMenuShortcut>
-              <Trash2 size={16} />
+              <Trash2 />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -270,6 +325,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         desc={`Reset Passkey for ${user.username}? The user will need to register a new Passkey before using passwordless login.`}
         confirmText='Reset Passkey'
         handleConfirm={handleResetPasskey}
+        disabled={!permissions.canOperate}
       />
 
       <ConfirmDialog
@@ -279,6 +335,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         desc={`Reset 2FA for ${user.username}? The user must set up 2FA again to continue using it.`}
         confirmText='Reset 2FA'
         handleConfirm={handleResetTwoFA}
+        disabled={!permissions.canOperate}
       />
 
       <UserBindingDialog
@@ -286,6 +343,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setBindingDialogOpen}
         userId={user.id}
         onUnbindSuccess={triggerRefresh}
+        canOperate={permissions.canOperate}
+        disabledReason={noPermissionMessage}
       />
 
       <UserSubscriptionsDialog

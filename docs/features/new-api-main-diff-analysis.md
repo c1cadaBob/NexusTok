@@ -1674,6 +1674,62 @@ NexusTok 已经把 `/api/vendors`、`/api/models`、`/api/deployments`、`/api/g
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/models/metadata` 和 `/models/deployments`，确认模型主按钮、行操作菜单、批量操作和部署操作渲染正常，页面自身请求 200、控制台无错误；只触发只读页面加载，不执行新增、同步、扩容或删除。
 
+## 本轮实施评审：用户管理前端按钮级 Authz 原生消费
+
+### 需求分析
+
+NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write/sensitive_write` 权限表，并在 `ManageUser` 复合接口内对升降级、删除和额度调整执行 `user.sensitive_write` 二次校验。默认前端用户页当前只在路由入口校验 `user.read`，页面内新增用户、编辑用户、启停、升降级、重置 Passkey/2FA、解绑登录方式、额度调整和硬删除等按钮仍主要依赖旧 Root/Admin 直觉；当后续用户级 override 收紧某个动作时，前端会展示可点击操作，最终由后端返回 403，体验与权限语义不一致。
+
+本轮目标：
+
+1. 新增用户模块专用 `useUserPermissions`，集中读取 `user.read/operate/write/sensitive_write`；新增订阅模块 `useSubscriptionPermissions`，供用户页跨入口复用 `subscription.read/operate/sensitive_write`。
+2. 将用户页主按钮、行操作和确认弹窗按权限禁用并做提交前保护：创建/删除用户和额度调整需要敏感写；编辑用户资料需要普通写；启停、绑定解绑、Passkey/2FA 重置需要运营权限；升降级需要运营权限和敏感写。
+3. 将用户编辑抽屉内部的保存与额度调整入口补充同一权限保护，避免只在行操作或主按钮防护。
+4. 将账号绑定管理弹窗中的解绑操作补充 `user.operate` 防护，列表读取继续由页面入口和接口自身 `user.read` 控制。
+5. 将用户行内“管理订阅”入口按 `subscription.read` 控制，并让该专用用户订阅弹窗内部按 `subscription.operate/sensitive_write` 控制创建、失效和删除订阅；这是跨资源动作，不能错误归入 `user.*`。
+6. 不修改后端路由、用户/订阅 API payload、查询缓存和数据库行为；本轮只消费现有权限矩阵并复用既有无权限文案。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 用户与订阅权限 hook | `web/default/src/features/users/hooks/use-user-permissions.ts`、`web/default/src/features/subscriptions/hooks/use-subscription-permissions.ts` | 集中封装用户页动作能力，并为用户页跨入口订阅弹窗复用订阅动作能力。 |
+| 用户页按钮与行操作 | `users-primary-buttons.tsx`、`data-table-row-actions.tsx` | 新增、编辑、启停、升降级、绑定管理、订阅管理、重置安全凭据和删除按权限禁用或拦截。 |
+| 用户编辑与删除 | `users-mutate-drawer.tsx`、`user-quota-dialog.tsx`、`users-delete-dialog.tsx` | 保存、额度调整和硬删除在提交前做二次权限检查。 |
+| 绑定与用户订阅弹窗 | `dialogs/user-binding-dialog.tsx`、`subscriptions/components/dialogs/user-subscriptions-dialog.tsx` | 解绑账号、创建/失效/删除用户订阅消费各自资源的动作权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变前端按钮状态和提交前保护，不改变后端 `RequirePermission` 或 `ManageUser` 敏感写二次校验；前端误判时后端仍 fail-closed。
+2. `ManageUser` 是历史复合接口，启停只需要 `user.operate`，升降级和额度调整需要 `user.operate + user.sensitive_write`；前端必须按动作细分，不能简单把整个菜单归为一个权限。
+3. 创建用户走 `POST /api/user/`，后端归为 `user.sensitive_write`，因此默认 Admin 不再看到可用的创建按钮；这与后端权限表收敛一致。
+4. 用户订阅管理虽然从用户行进入，但后端在 `/api/subscription/admin` 下按 `subscription` 资源授权；本轮按跨资源权限处理，避免给拥有 `user.read` 但没有订阅权限的管理员暴露订阅操作面。
+5. 当前 Root 用户拥有全量权限，MCP 环境下按钮多数保持可用；验收重点是渲染稳定、请求正常和无控制台错误，不执行高风险写操作。
+
+### 方案评审
+
+采用“用户页本地 hook + 后端 fail-closed + 跨资源动作按归属资源授权”的方案。用户模块 hook 只封装权限读取，不引入角色推断和本地策略存储；各组件在按钮 disabled、点击入口和提交 handler 三层做轻量保护，延续模型/渠道页已经形成的前端权限消费模式。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 查看用户列表、搜索、用户详情、安全统计、绑定列表 | `user.read` | `GET /api/user/*` 管理员只读路由 |
+| 启用/禁用用户、重置 Passkey、重置 2FA、解绑内置或自定义 OAuth 绑定 | `user.operate` | `POST /api/user/manage`、`DELETE /api/user/:id/reset_passkey`、`DELETE /api/user/:id/2fa`、`DELETE /api/user/:id/bindings/*` |
+| 编辑用户普通资料、分组、备注 | `user.write` | `PUT /api/user/` |
+| 创建用户、硬删除用户、升降级、额度调整 | `user.sensitive_write`，其中升降级/额度调整还需 `user.operate` | `POST /api/user/`、`DELETE /api/user/:id`、`POST /api/user/manage` |
+| 打开用户订阅管理 | `subscription.read` | `GET /api/subscription/admin/plans`、`GET /api/subscription/admin/users/:id/subscriptions` |
+| 创建/失效用户订阅 | `subscription.operate` | `POST /api/subscription/admin/users/:id/subscriptions`、`POST /api/subscription/admin/user_subscriptions/:id/invalidate` |
+| 删除用户订阅记录 | `subscription.sensitive_write` | `DELETE /api/subscription/admin/user_subscriptions/:id` |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认用户权限 hook 和跨资源弹窗类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和用户/订阅路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/users`，确认用户主按钮、行操作菜单、绑定管理/用户订阅入口渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和只读弹窗，不执行创建、升降级、解绑、额度调整、删除或订阅变更。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1728,3 +1784,4 @@ NexusTok 已经把 `/api/vendors`、`/api/models`、`/api/deployments`、`/api/g
 | 2026-07-08 | 绘图与异步任务日志 Authz 路由权限表 | `router/task-log-router.go`、`router/api-router.go`、`router/task_log_router_test.go` | 为管理员跨用户 `GET /api/mj/` 与 `GET /api/task/` 接入 `usage_log.read`；`/self` 用户自助查询继续只按当前用户认证隔离，不进入管理员权限表。 |
 | 2026-07-08 | Authz catalog 路由权限表 | `router/authz-router.go`、`router/authz_router_test.go` | 为 `GET /api/authz/catalog` 接入 `system_setting.read`，继续保留 `AdminAuth`，让权限 schema 只读入口也进入统一灰度权限表。 |
 | 2026-07-08 | 模型管理前端按钮级 Authz 消费 | `web/default/src/features/models/*` | 默认前端模型管理页新增 `useModelPermissions` 并让模型、厂商、预填组和部署的写入/操作/删除按钮消费 `model.write/operate/sensitive_write`，与后端模型路由权限表保持一致。 |
+| 2026-07-08 | 用户管理前端按钮级 Authz 消费 | `web/default/src/features/users/*`、`web/default/src/features/subscriptions/hooks/*`、`web/default/src/features/subscriptions/components/dialogs/user-subscriptions-dialog.tsx` | 默认前端用户管理页新增 `useUserPermissions`，让用户资料、生命周期、安全凭据、绑定解绑、额度调整和硬删除消费 `user.write/operate/sensitive_write`；用户行内订阅弹窗按跨资源 `subscription.read/operate/sensitive_write` 控制。 |

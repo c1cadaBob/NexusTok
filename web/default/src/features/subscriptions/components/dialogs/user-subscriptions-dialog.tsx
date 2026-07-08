@@ -53,6 +53,7 @@ import {
   invalidateUserSubscription,
   deleteUserSubscription,
 } from '../../api'
+import { useSubscriptionPermissions } from '../../hooks/use-subscription-permissions'
 import { formatTimestamp } from '../../lib'
 import type { PlanRecord, UserSubscriptionRecord } from '../../types'
 
@@ -98,6 +99,8 @@ function SubscriptionStatusBadge(props: {
 
 export function UserSubscriptionsDialog(props: Props) {
   const { t } = useTranslation()
+  const permissions = useSubscriptionPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [plans, setPlans] = useState<PlanRecord[]>([])
@@ -141,6 +144,10 @@ export function UserSubscriptionsDialog(props: Props) {
   }, [props.open, props.user?.id, loadData])
 
   const handleCreate = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
     if (!props.user?.id || !selectedPlanId) {
       toast.error(t('Please select a subscription plan'))
       return
@@ -165,6 +172,14 @@ export function UserSubscriptionsDialog(props: Props) {
 
   const handleConfirmAction = async () => {
     if (!confirmAction) return
+    const allowed =
+      confirmAction.type === 'invalidate'
+        ? permissions.canOperate
+        : permissions.canSensitiveWrite
+    if (!allowed) {
+      toast.error(noPermissionMessage)
+      return
+    }
     try {
       if (confirmAction.type === 'invalidate') {
         const res = await invalidateUserSubscription(confirmAction.subId)
@@ -232,9 +247,12 @@ export function UserSubscriptionsDialog(props: Props) {
               </Select>
               <Button
                 onClick={handleCreate}
-                disabled={creating || !selectedPlanId}
+                disabled={
+                  creating || !selectedPlanId || !permissions.canOperate
+                }
+                title={permissions.canOperate ? undefined : noPermissionMessage}
               >
-                <Plus className='mr-1 h-4 w-4' />
+                <Plus data-icon='inline-start' />
                 {t('Add subscription')}
               </Button>
             </div>
@@ -312,7 +330,12 @@ export function UserSubscriptionsDialog(props: Props) {
                               <Button
                                 size='sm'
                                 variant='outline'
-                                disabled={!isActive}
+                                disabled={!isActive || !permissions.canOperate}
+                                title={
+                                  permissions.canOperate
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 onClick={() =>
                                   setConfirmAction({
                                     type: 'invalidate',
@@ -325,6 +348,12 @@ export function UserSubscriptionsDialog(props: Props) {
                               <Button
                                 size='sm'
                                 variant='destructive'
+                                disabled={!permissions.canSensitiveWrite}
+                                title={
+                                  permissions.canSensitiveWrite
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 onClick={() =>
                                   setConfirmAction({
                                     type: 'delete',
@@ -366,6 +395,11 @@ export function UserSubscriptionsDialog(props: Props) {
                 )
           }
           handleConfirm={handleConfirmAction}
+          disabled={
+            confirmAction.type === 'invalidate'
+              ? !permissions.canOperate
+              : !permissions.canSensitiveWrite
+          }
           destructive={confirmAction.type === 'delete'}
         />
       )}

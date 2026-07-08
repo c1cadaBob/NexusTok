@@ -18,22 +18,35 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { useUserPermissions } from '../hooks/use-user-permissions'
 import { useUsers } from './users-provider'
 
 export function UsersPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, setCurrentRow } = useUsers()
+  const permissions = useUserPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const handleCreate = () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setCurrentRow(null)
     setOpen('create')
   }
 
   return (
     <div className='flex gap-2'>
-      <Button size='sm' onClick={handleCreate}>
-        <Plus className='h-4 w-4' />
+      <Button
+        size='sm'
+        onClick={handleCreate}
+        disabled={!permissions.canSensitiveWrite}
+        title={permissions.canSensitiveWrite ? undefined : noPermissionMessage}
+      >
+        <Plus data-icon='inline-start' />
         {t('Add User')}
       </Button>
     </div>

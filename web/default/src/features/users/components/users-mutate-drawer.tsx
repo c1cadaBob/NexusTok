@@ -57,6 +57,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { createUser, updateUser, getUser, getGroups } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { useUserPermissions } from '../hooks/use-user-permissions'
 import {
   userFormSchema,
   type UserFormValues,
@@ -84,8 +85,14 @@ export function UsersMutateDrawer({
   const { triggerRefresh } = useUsers()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
+  const permissions = useUserPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+  const canSubmit = isUpdate
+    ? permissions.canWrite
+    : permissions.canSensitiveWrite
+  const canAdjustQuota = permissions.canOperate && permissions.canSensitiveWrite
 
-  // Fetch groups
+  // 加载可选分组；编辑用户时用于展示当前可分配的用户分组。
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
@@ -99,17 +106,16 @@ export function UsersMutateDrawer({
     defaultValues: USER_FORM_DEFAULT_VALUES,
   })
 
-  // Load existing data when updating
+  // 编辑时读取最新用户详情，新增时重置为默认值，避免复用上一次抽屉状态。
   useEffect(() => {
     if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
+      // 用户列表字段可能不完整，保存前需要以详情接口作为表单基准。
       getUser(currentRow.id).then((result) => {
         if (result.success && result.data) {
           form.reset(transformUserToFormDefaults(result.data))
         }
       })
     } else if (open && !isUpdate) {
-      // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
     }
   }, [open, isUpdate, currentRow, form])
@@ -121,6 +127,10 @@ export function UsersMutateDrawer({
   const currentQuotaRaw = form.watch('quota_dollars') || 0
 
   const onSubmit = async (data: UserFormValues) => {
+    if (!canSubmit) {
+      toast.error(noPermissionMessage)
+      return
+    }
     setIsSubmitting(true)
     try {
       const payload = transformFormDataToPayload(data, currentRow?.id)
@@ -188,7 +198,7 @@ export function UsersMutateDrawer({
               onSubmit={form.handleSubmit(onSubmit)}
               className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-6 sm:px-4'
             >
-              {/* Basic Information */}
+              {/* 基础信息 */}
               <div className='space-y-4'>
                 <h3 className='text-sm font-medium'>
                   {t('Basic Information')}
@@ -295,7 +305,7 @@ export function UsersMutateDrawer({
                 />
               </div>
 
-              {/* Group & Quota Settings (Update only) */}
+              {/* 分组与额度设置，仅编辑用户时展示 */}
               {isUpdate && (
                 <div className='space-y-4'>
                   <h3 className='text-sm font-medium'>{t('Group & Quota')}</h3>
@@ -361,9 +371,19 @@ export function UsersMutateDrawer({
                           <Button
                             type='button'
                             variant='outline'
-                            onClick={() => setQuotaDialogOpen(true)}
+                            onClick={() => {
+                              if (!canAdjustQuota) {
+                                toast.error(noPermissionMessage)
+                                return
+                              }
+                              setQuotaDialogOpen(true)
+                            }}
+                            disabled={!canAdjustQuota}
+                            title={
+                              canAdjustQuota ? undefined : noPermissionMessage
+                            }
                           >
-                            <Pencil className='mr-1 h-4 w-4' />
+                            <Pencil data-icon='inline-start' />
                             {t('Adjust Quota')}
                           </Button>
                         </div>
@@ -397,7 +417,7 @@ export function UsersMutateDrawer({
                 </div>
               )}
 
-              {/* Binding Information (Read-only) */}
+              {/* 绑定信息只读展示，解绑操作在独立绑定管理弹窗中处理。 */}
               {isUpdate && (
                 <div className='space-y-4'>
                   <h3 className='text-sm font-medium'>
@@ -433,14 +453,19 @@ export function UsersMutateDrawer({
             <SheetClose render={<Button variant='outline' />}>
               {t('Close')}
             </SheetClose>
-            <Button form='user-form' type='submit' disabled={isSubmitting}>
+            <Button
+              form='user-form'
+              type='submit'
+              disabled={isSubmitting || !canSubmit}
+              title={canSubmit ? undefined : noPermissionMessage}
+            >
               {isSubmitting ? t('Saving...') : t('Save changes')}
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
 
-      {/* Adjust Quota Dialog */}
+      {/* 额度调整弹窗 */}
       {currentRow && (
         <UserQuotaDialog
           open={quotaDialogOpen}
@@ -448,6 +473,8 @@ export function UsersMutateDrawer({
           userId={currentRow.id}
           currentQuota={parseQuotaFromDollars(currentQuotaRaw || 0)}
           onSuccess={refreshUserData}
+          canAdjust={canAdjustQuota}
+          disabledReason={noPermissionMessage}
         />
       )}
     </>

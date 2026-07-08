@@ -64,6 +64,8 @@ interface Props {
   onOpenChange: (open: boolean) => void
   userId: number | null
   onUnbindSuccess?: () => void
+  canOperate: boolean
+  disabledReason: string
 }
 
 interface BindingItem {
@@ -288,6 +290,10 @@ export function UserBindingDialog(props: Props) {
 
   const handleUnbind = async () => {
     if (!unbindTarget || !props.userId) return
+    if (!props.canOperate) {
+      toast.error(props.disabledReason)
+      return
+    }
     setUnbinding(true)
     try {
       let res
@@ -417,6 +423,12 @@ export function UserBindingDialog(props: Props) {
                             size='sm'
                             className='text-destructive hover:text-destructive h-7 w-7 shrink-0 p-0'
                             onClick={() => setUnbindTarget(binding)}
+                            disabled={!props.canOperate}
+                            title={
+                              props.canOperate
+                                ? undefined
+                                : props.disabledReason
+                            }
                           >
                             <Unlink className='h-3.5 w-3.5' />
                           </Button>
@@ -448,6 +460,7 @@ export function UserBindingDialog(props: Props) {
         confirmText={t('Confirm Unbind')}
         destructive
         handleConfirm={handleUnbind}
+        disabled={!props.canOperate}
         isLoading={unbinding}
       />
     </>
