@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/controller"
+	"github.com/c1cada/NexusTok/service/authz"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,4 +40,39 @@ func TestSystemTaskRoutesRequireRootAuth(t *testing.T) {
 	engine.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
+func TestSystemTaskPermissionRoutesClassifyCoreActions(t *testing.T) {
+	logCleanupRoute := assertSystemTaskPermissionRoute(t, http.MethodPost, "/log-cleanup", authz.SystemSettingSensitiveWrite)
+	require.Len(t, logCleanupRoute.after, 1)
+
+	assertSystemTaskPermissionRoute(t, http.MethodGet, "/list", authz.SystemSettingRead)
+	assertSystemTaskPermissionRoute(t, http.MethodGet, "/current", authz.SystemSettingRead)
+	assertSystemTaskPermissionRoute(t, http.MethodGet, "/:task_id", authz.SystemSettingRead)
+}
+
+func TestSystemTaskPermissionRoutesStayOnSystemSettingResource(t *testing.T) {
+	require.NotEmpty(t, systemTaskPermissionRoutes)
+	for _, route := range systemTaskPermissionRoutes {
+		assert.Equal(t, authz.ResourceSystemSetting, route.permission.Resource, "%s %s", route.method, route.path)
+		assert.NotEmpty(t, route.permission.Action, "%s %s", route.method, route.path)
+	}
+}
+
+func assertSystemTaskPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) permissionRoute {
+	t.Helper()
+	route := requireSystemTaskPermissionRoute(t, method, path)
+	assert.Equal(t, permission, route.permission)
+	return route
+}
+
+func requireSystemTaskPermissionRoute(t *testing.T, method string, path string) permissionRoute {
+	t.Helper()
+	for _, route := range systemTaskPermissionRoutes {
+		if route.method == method && route.path == path {
+			return route
+		}
+	}
+	t.Fatalf("system task permission route %s %s not found", method, path)
+	return permissionRoute{}
 }

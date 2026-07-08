@@ -1482,6 +1482,54 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/system-settings/site`，确认页面更新生效；直调 `GET /api/status/test`、`GET /api/option/`、`GET /api/performance/stats`、`GET /api/ratio_sync/channels` 等低风险读接口，确认返回 200/业务 success，不触发写操作、清理或外部同步。
 
+## 本轮实施评审：系统信息与系统任务 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 的系统信息/系统任务能力强调多实例运维观测和后台任务中心，NexusTok 已经把它们原生化到 `/system-info` 页面和 `/api/system-info`、`/api/system-task` 后端接口。但这两组路由目前仍只有 `RootAuth`，没有进入 `system_setting` 权限表；上一轮已完成系统选项、性能维护和倍率同步路由的 `system_setting` enforcement，本轮需要把同一系统运维域下的实例观测和系统任务观测补齐，避免 Authz catalog 与真实 Root-only 运维入口继续分叉。
+
+本轮目标：
+
+1. 将 `/api/system-info/instances` 接入 `system_setting.read`，保留 `RootAuth`，用于查看节点名、版本、资源占用和心跳状态。
+2. 将 `/api/system-task/list`、`/api/system-task/current`、`/api/system-task/:task_id` 接入 `system_setting.read`，保留 `RootAuth`，用于查看后台任务输入、进度、结果和错误。
+3. 将 `POST /api/system-task/log-cleanup` 接入 `system_setting.sensitive_write`，同时额外要求 `usage_log.sensitive_write`。该接口会创建异步日志清理任务，最终删除历史请求日志和审计证据，不能只按普通运维操作处理。
+4. 不修改 SystemTask runner、任务模型、任务调度、日志清理 handler、系统信息前端页面和数据库迁移。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 系统信息路由 | `router/system-info-router.go`、`router/system_info_router_test.go` | `/api/system-info/instances` 改为 RootAuth + `system_setting.read` 权限表注册，handler 不变。 |
+| 系统任务路由 | `router/system-task-router.go`、`router/system_task_router_test.go` | `/api/system-task/*` 改为 RootAuth + 权限表注册；日志清理任务额外叠加 `usage_log.sensitive_write`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 系统实例列表暴露节点名、角色、版本、CPU/内存/磁盘占用和最近心跳，仍必须保持 Root-only；本轮只叠加 `system_setting.read`，不放宽入口。
+2. 系统任务详情可能包含不同业务域的 payload、progress、result 和 error，例如账号池检测、渠道测试、上游模型同步、订阅维护和日志清理摘要。即使是只读，也必须继续 RootAuth 保底。
+3. 日志清理任务创建不是同步删除，但会由 runner 异步删除历史日志。本轮把它归入 `system_setting.sensitive_write`，并额外要求 `usage_log.sensitive_write`，避免未来只拥有系统运维敏感写但没有日志删除权限的角色误触发审计证据清理。
+4. 由于当前 Root 角色是 superuser，叠加权限表不会改变现有 Root 管理员行为；普通 Admin 和普通用户仍无法访问这些接口。
+5. 本轮 MCP 验证只调用 `GET /api/system-info/instances` 和 `GET /api/system-task/list` 等只读接口，不触发 `POST /api/system-task/log-cleanup`。
+
+### 方案评审
+
+采用“RootAuth 保底 + system_setting 权限表 + 日志清理双权限”的方案。系统信息与系统任务属于系统运维域，主权限使用 `system_setting.read/sensitive_write`；日志清理任务同时跨越日志治理域，因此用 `route.after` 额外挂 `usage_log.sensitive_write`。这样既不改变当前 Root-only 生产行为，又为未来 Casbin/user override 提供更准确的资源动作组合。
+
+路由分类：
+
+| 路由 | 权限 | 旧认证边界 | 说明 |
+|------|------|------------|------|
+| `GET /api/system-info/instances` | `system_setting.read` | Root | 查看多节点实例心跳和资源状态。 |
+| `GET /api/system-task/list`、`GET /api/system-task/current`、`GET /api/system-task/:task_id` | `system_setting.read` | Root | 查看系统任务历史、当前活跃任务和单条任务详情。 |
+| `POST /api/system-task/log-cleanup` | `system_setting.sensitive_write` + `usage_log.sensitive_write` | Root | 创建异步日志清理任务，最终删除历史日志/审计证据。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖权限中间件、系统信息/系统任务路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认 `/system-info` 页面 API 类型和页面编译不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/system-info`，确认页面更新生效；直调 `GET /api/system-info/instances`、`GET /api/system-task/list`、`GET /api/system-task/current?type=channel_test` 等只读接口，确认返回 200/业务 success，不触发日志清理任务。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1532,3 +1580,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 基础用量查询聚合与统计空值保护 | `model/usedata.go`、`model/log.go`、`model/usedata_flow_test.go`、`model/log_stat_test.go` | 对齐 new-api 的 Dashboard 基础用量聚合语义，`/api/data/self` 和按 username 查询只返回 user/model/hour 汇总，不再带出 token/channel/node/group 细维度值；日志统计统一使用跨三库的 `COALESCE`，空结果稳定返回 0。 |
 | 2026-07-08 | 分组与预填充分组 Authz 路由权限表 | `router/group-router.go`、`router/api-router.go`、`router/group_router_test.go`、`model/prefill_group.go` | 为管理端 `/api/group` 与 `/api/prefill_group` 接入 model 权限表：分组和预填模板查询走 read，预填模板创建/更新走 write，删除预填模板走 sensitive_write；普通用户自助分组路径不变，并同步将预填组 JSON fallback 序列化切到 `common.Marshal`。 |
 | 2026-07-08 | 系统设置与运行维护 Authz 路由权限表 | `service/authz/permission.go`、`router/system-setting-router.go`、`router/api-router.go`、`router/system_setting_router_test.go` | 为 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance` 和 `/api/ratio_sync` 接入 system_setting 权限表；只读诊断保持 Admin 边界，其余系统设置和运行维护接口继续 RootAuth 保底，按 read/operate/sensitive_write 做二次校验。 |
+| 2026-07-08 | 系统信息与系统任务 Authz 路由权限表 | `router/system-info-router.go`、`router/system-task-router.go`、`router/system_info_router_test.go`、`router/system_task_router_test.go` | 为 `/api/system-info/instances` 和 `/api/system-task` 查询接口接入 `system_setting.read`；日志清理任务创建入口接入 `system_setting.sensitive_write` 并额外要求 `usage_log.sensitive_write`，所有路径继续 RootAuth 保底。 |
