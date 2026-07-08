@@ -50,10 +50,18 @@ export type ConfirmPaymentComplianceResponse = {
   }
 }
 
-export type DeleteLogsResponse = {
+export type CreateLogCleanupTaskResponse = {
   success: boolean
   message: string
-  data?: number
+  data?: {
+    id: number
+    task_id: string
+    type: string
+    status: string
+    active_key?: string
+    created_at: number
+    updated_at: number
+  }
 }
 
 export type SiteSettings = {

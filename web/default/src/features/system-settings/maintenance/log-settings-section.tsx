@@ -18,11 +18,17 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useMemo, useState } from 'react'
 import * as z from 'zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatTimestampToDate } from '@/lib/format'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,7 +51,7 @@ import {
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { DateTimePicker } from '@/components/datetime-picker'
-import { deleteLogsBefore } from '../api'
+import { createLogCleanupTask } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
@@ -88,7 +94,14 @@ export function LogSettingsSection({
   defaultEnabled,
 }: LogSettingsSectionProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
+  const canDeleteUsageLogs = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.USAGE_LOG,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
+  const canCleanLogs = updateOption.canUpdate && canDeleteUsageLogs
+  const noPermissionMessage = updateOption.disabledReason
   const form = useForm<LogSettingsFormValues>({
     resolver: zodResolver(logSettingsSchema),
     defaultValues: {
@@ -125,6 +138,11 @@ export function LogSettingsSection({
   }
 
   const handleRequestCleanLogs = () => {
+    if (!canCleanLogs) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     if (!purgeTimestamp) {
       toast.error(t('Select a timestamp before clearing logs.'))
       return
@@ -134,6 +152,11 @@ export function LogSettingsSection({
   }
 
   const handleCleanLogs = async () => {
+    if (!canCleanLogs) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     if (!purgeTimestamp) {
       toast.error(t('Select a timestamp before clearing logs.'))
       return
@@ -141,16 +164,20 @@ export function LogSettingsSection({
 
     setIsCleaning(true)
     try {
-      const res = await deleteLogsBefore(purgeTimestamp)
+      const res = await createLogCleanupTask(purgeTimestamp)
       if (!res.success) {
         throw new Error(res.message || t('Failed to clean logs'))
       }
-      const count = res.data ?? 0
+      queryClient.invalidateQueries({
+        queryKey: ['system-info', 'system-tasks'],
+      })
+      const taskId = res.data?.task_id
       toast.success(
-        count > 0
-          ? t('{{count}} log entries removed.', { count })
-          : t('No log entries matched the selected time.')
+        taskId
+          ? `${t('Log cleanup')} ${t('Task ID:')} ${taskId}`
+          : t('Tasks will appear after maintenance actions are scheduled.')
       )
+      setShowConfirmDialog(false)
     } catch (error) {
       const message =
         error instanceof Error ? error.message : t('Failed to clean logs')
@@ -218,7 +245,8 @@ export function LogSettingsSection({
                 type='button'
                 variant='destructive'
                 onClick={handleRequestCleanLogs}
-                disabled={isCleaning}
+                disabled={isCleaning || !canCleanLogs}
+                title={canCleanLogs ? undefined : noPermissionMessage}
               >
                 {isCleaning ? t('Cleaning...') : t('Clean logs')}
               </Button>
@@ -256,7 +284,11 @@ export function LogSettingsSection({
             <AlertDialogCancel disabled={isCleaning}>
               {t('Cancel')}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleCleanLogs} disabled={isCleaning}>
+            <AlertDialogAction
+              onClick={handleCleanLogs}
+              disabled={isCleaning || !canCleanLogs}
+              title={canCleanLogs ? undefined : noPermissionMessage}
+            >
               {isCleaning ? t('Cleaning...') : t('Delete logs')}
             </AlertDialogAction>
           </AlertDialogFooter>

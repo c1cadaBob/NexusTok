@@ -2083,6 +2083,53 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/behavior`、`/system-settings/billing/quota`、`/system-settings/billing/currency`、`/system-settings/billing/checkin`、`/system-settings/site/notice`、`/system-settings/site/header-navigation`、`/system-settings/site/sidebar-modules`、`/system-settings/operations/logs`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存和日志清理。
 
+## 本轮实施评审：日志清理系统任务入口与双资源 Authz 消费
+
+### 需求分析
+
+NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原生 SystemTask：`POST /api/system-task/log-cleanup` 只创建后台任务，runner 负责分批删除、进度记录和任务历史展示。该入口继续保留 RootAuth，并先要求 `system_setting.sensitive_write`，再额外要求 `usage_log.sensitive_write`，因为日志清理会删除请求记录和管理审计证据。默认前端日志维护页仍调用旧的 `DELETE /api/log/`，并且“清理日志”按钮只按本地 cleaning 状态禁用，没有消费双资源权限；这会绕开 SystemTask 的可观测能力，也会让前端权限语义低于后端路由表。
+
+本轮目标：
+
+1. 将日志维护页历史日志清理 API 从 `DELETE /api/log/` 切到 `POST /api/system-task/log-cleanup?target_timestamp=...`。
+2. 清理按钮、确认弹窗和确认动作同时消费 `system_setting.sensitive_write` 与 `usage_log.sensitive_write`；任一权限缺失时不打开确认或不发请求。
+3. 成功创建任务后用已有 `Log cleanup` 与 `Task ID:` 文案提示任务 ID，并刷新 `system-info/system-tasks` 查询缓存，方便系统信息页观测进度。
+4. 保持日志记录设置保存按钮、日期选择、快速时间按钮、确认弹窗内容和后端路由不变；不触发同步删除。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 日志清理 API | `web/default/src/features/system-settings/api.ts`、`types.ts` | 新增/改用 SystemTask 创建响应，调用 `POST /api/system-task/log-cleanup`。 |
+| 日志维护页 | `maintenance/log-settings-section.tsx` | 清理按钮和确认动作消费系统设置敏感写与日志敏感写双权限；成功后提示任务 ID 并刷新系统任务缓存。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录旧同步接口迁移、双权限映射、风险和验收方式。 |
+
+### 风险评估
+
+1. 本轮会改变前端发起日志清理的后端路径，但目标是对齐已经存在的原生 SystemTask API；旧 `DELETE /api/log/` 管理员接口不删除，避免破坏其他潜在调用方。
+2. SystemTask 清理是异步执行，用户不再立即看到删除数量；前端改为提示任务 ID，删除数量可在 `/system-info` 的 System Tasks 面板查看。
+3. 双权限任一缺失都会禁用清理入口并在点击时提示无权限，避免只满足系统设置权限却缺少日志删除权限的管理员触发危险操作。
+4. 不改日志清理 runner、批量大小、幂等防重和后端权限表；并发点击仍由后端 active task 去重。
+
+### 方案评审
+
+采用“前端切换到 SystemTask 创建 API + 双权限前置保护”的方案。日志清理从同步删除变为可观测后台任务，符合 NexusTok 已落地的 SystemTask 原生能力；按钮层和确认 handler 只做前置 UX 保护，后端 `RequirePermission` 仍是最终边界。成功后刷新系统任务列表缓存，不在日志维护页新增任务表，避免把系统信息页已有观测面重复搬进设置页。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 打开日志清理确认弹窗 | `system_setting.sensitive_write` + `usage_log.sensitive_write` | 前端本地检查 |
+| 创建日志清理 SystemTask | `system_setting.sensitive_write` + `usage_log.sensitive_write` | `POST /api/system-task/log-cleanup?target_timestamp=...` |
+| 查看日志清理任务进度 | `system_setting.read` | `/api/system-task/list`，由系统信息页消费 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认 API 响应类型、权限 hook 和日志维护页类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统任务、日志与权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/operations/logs`，确认页面加载、`/api/option/` 只读请求正常、清理日志按钮渲染正常、控制台无错误；不点击确认清理，避免删除真实日志。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2145,3 +2192,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 系统设置高频表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general/system-info-section.tsx,auth/basic-auth-section.tsx,request-limits/rate-limit-section.tsx}` | 站点信息、基础认证和请求限流三处高频表单的保存按钮直接消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`，缺少 `system_setting.sensitive_write` 时在按钮层禁用并保留 hook 级提交前保护。 |
 | 2026-07-08 | 系统设置认证与安全表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{auth/oauth-section.tsx,auth/passkey-section.tsx,auth/bot-protection-section.tsx,request-limits/sensitive-words-section.tsx,request-limits/ssrf-section.tsx}` | OAuth、Passkey、Turnstile、敏感词和 SSRF 五类认证/安全表单的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段，受限管理员可查看和编辑草稿但不能提交系统 option 写入。 |
 | 2026-07-08 | 系统设置站点、计费与运维普通表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general,maintenance}/*` | 系统行为、配额、货币显示、签到、公告、顶部导航、侧边栏模块和日志记录设置的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；日志清理危险操作保留为后续双资源权限切片。 |
+| 2026-07-08 | 日志清理系统任务入口与双资源 Authz 消费 | `web/default/src/features/system-settings/{api.ts,types.ts,maintenance/log-settings-section.tsx}` | 日志维护页历史日志清理改为创建 `log_cleanup` SystemTask，前端按钮和确认动作同时消费 `system_setting.sensitive_write` 与 `usage_log.sensitive_write`，成功后提示任务 ID 并刷新系统任务缓存。 |

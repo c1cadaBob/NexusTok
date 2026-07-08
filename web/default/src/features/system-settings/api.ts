@@ -19,7 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { api } from '@/lib/api'
 import type {
   ConfirmPaymentComplianceResponse,
-  DeleteLogsResponse,
+  CreateLogCleanupTaskResponse,
   FetchUpstreamRatiosRequest,
   SystemOptionsResponse,
   UpdateOptionRequest,
@@ -46,10 +46,14 @@ export async function confirmPaymentCompliance() {
   return res.data
 }
 
-export async function deleteLogsBefore(targetTimestamp: number) {
-  const res = await api.delete<DeleteLogsResponse>('/api/log/', {
-    params: { target_timestamp: targetTimestamp },
-  })
+export async function createLogCleanupTask(targetTimestamp: number) {
+  const res = await api.post<CreateLogCleanupTaskResponse>(
+    '/api/system-task/log-cleanup',
+    null,
+    {
+      params: { target_timestamp: targetTimestamp },
+    }
+  )
   return res.data
 }
 
