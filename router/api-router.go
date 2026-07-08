@@ -304,22 +304,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		registerGroupRoutes(apiRouter)
-
-		// ========================================
-		// Midjourney 路由组 - /api/mj
-		// ========================================
-		mjRoute := apiRouter.Group("/mj")
-		mjRoute.GET("/self", middleware.UserAuth(), controller.GetUserMidjourney) // 获取用户 Midjourney 任务
-		mjRoute.GET("/", middleware.AdminAuth(), controller.GetAllMidjourney)     // 获取所有 Midjourney 任务
-
-		// ========================================
-		// 任务路由组 - /api/task
-		// ========================================
-		taskRoute := apiRouter.Group("/task")
-		{
-			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask) // 获取用户任务
-			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)     // 获取所有任务
-		}
+		registerTaskLogRoutes(apiRouter)
 
 		registerModelRoutes(apiRouter)
 

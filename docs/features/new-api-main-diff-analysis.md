@@ -1530,6 +1530,53 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/system-info`，确认页面更新生效；直调 `GET /api/system-info/instances`、`GET /api/system-task/list`、`GET /api/system-task/current?type=channel_test` 等只读接口，确认返回 200/业务 success，不触发日志清理任务。
 
+## 本轮实施评审：绘图与异步任务日志 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 与 NexusTok 都提供 `/api/mj` 和 `/api/task` 两组任务日志接口：`/self` 路径面向当前用户，根路径面向管理员跨用户查询。NexusTok 默认前端已经把它们原生化为 Usage Logs 下的 `drawing` 和 `task` 页面，并在移动端、筛选条、状态映射等方面进一步增强；但后端跨用户查询仍停留在泛化 `AdminAuth`，没有进入上一轮新增的 `usage_log` 权限表。
+
+本轮目标：
+
+1. 将 `GET /api/mj/` 接入 `usage_log.read`，继续保留 `AdminAuth`，用于跨用户查看 Midjourney/MjProxy 绘图任务、渠道、费用、状态、进度和错误。
+2. 将 `GET /api/task/` 接入 `usage_log.read`，继续保留 `AdminAuth`，用于跨用户查看视频、音频、图像等通用异步任务、用户、渠道、上游任务 ID、状态和失败原因。
+3. 保持 `GET /api/mj/self` 和 `GET /api/task/self` 只走 `UserAuth`，它们只能查询当前用户自己的任务记录，不进入管理员权限表。
+4. 不修改任务表结构、查询参数、分页语义、轮询 SystemTask、计费逻辑、前端 Usage Logs 页面和 Relay 任务提交路径。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 任务日志路由 | `router/task-log-router.go`、`router/api-router.go`、`router/task_log_router_test.go` | `/api/mj` 和 `/api/task` 从主路由抽出；管理员根路径叠加 `usage_log.read`，self 路径保持用户自助认证。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 跨用户绘图任务和异步任务日志会暴露用户、渠道、上游任务 ID、生成结果 URL、失败原因和成本信息，属于日志审计域，必须进入 `usage_log.read`，但不能降低既有 `AdminAuth` 门槛。
+2. self 路径依赖 `c.GetInt("id")` 做用户隔离；如果误挂到管理员权限表，普通用户可能无法查看自己的任务历史，或未来权限 override 时产生管理权限绕过。本轮明确把 self 路径排除在权限表外。
+3. 当前 `usage_log.read` 默认授予 Admin；叠加权限表不会改变现有 Admin 可读行为，但会让未来用户级 override 能单独关闭跨用户任务日志视图。
+4. 本轮只处理 GET 读接口，不触发任务提交、轮询、重试、取消、日志清理或任何写操作。
+
+### 方案评审
+
+采用“self 路径原认证 + 管理根路径 AdminAuth + usage_log.read”的方案。绘图任务日志和通用异步任务日志虽然使用独立数据表，但在产品语义上已经归入 Usage Logs；复用 `usage_log.read` 可以避免新增过细资源导致前端入口、侧边栏和后端路由权限语义分叉。
+
+路由分类：
+
+| 路由 | 权限 | 旧认证边界 | 说明 |
+|------|------|------------|------|
+| `GET /api/mj/self` | 不进入管理员权限表 | User | 当前用户查看自己的 Midjourney/MjProxy 绘图任务日志。 |
+| `GET /api/mj/` | `usage_log.read` | Admin | 管理员跨用户查看绘图任务日志。 |
+| `GET /api/task/self` | 不进入管理员权限表 | User | 当前用户查看自己的通用异步任务日志。 |
+| `GET /api/task/` | `usage_log.read` | Admin | 管理员跨用户查看通用异步任务日志。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖权限中间件、任务日志路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认 Usage Logs 前端 API 类型和页面编译不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/usage-logs/drawing` 和 `/usage-logs/task`，确认页面更新生效；直调 `GET /api/mj/?p=0&page_size=5`、`GET /api/task/?p=0&page_size=5`、`GET /api/mj/self?p=0&page_size=5`、`GET /api/task/self?p=0&page_size=5`，确认返回 200/业务 success，不触发任务提交或日志清理。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1581,3 +1628,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 分组与预填充分组 Authz 路由权限表 | `router/group-router.go`、`router/api-router.go`、`router/group_router_test.go`、`model/prefill_group.go` | 为管理端 `/api/group` 与 `/api/prefill_group` 接入 model 权限表：分组和预填模板查询走 read，预填模板创建/更新走 write，删除预填模板走 sensitive_write；普通用户自助分组路径不变，并同步将预填组 JSON fallback 序列化切到 `common.Marshal`。 |
 | 2026-07-08 | 系统设置与运行维护 Authz 路由权限表 | `service/authz/permission.go`、`router/system-setting-router.go`、`router/api-router.go`、`router/system_setting_router_test.go` | 为 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance` 和 `/api/ratio_sync` 接入 system_setting 权限表；只读诊断保持 Admin 边界，其余系统设置和运行维护接口继续 RootAuth 保底，按 read/operate/sensitive_write 做二次校验。 |
 | 2026-07-08 | 系统信息与系统任务 Authz 路由权限表 | `router/system-info-router.go`、`router/system-task-router.go`、`router/system_info_router_test.go`、`router/system_task_router_test.go` | 为 `/api/system-info/instances` 和 `/api/system-task` 查询接口接入 `system_setting.read`；日志清理任务创建入口接入 `system_setting.sensitive_write` 并额外要求 `usage_log.sensitive_write`，所有路径继续 RootAuth 保底。 |
+| 2026-07-08 | 绘图与异步任务日志 Authz 路由权限表 | `router/task-log-router.go`、`router/api-router.go`、`router/task_log_router_test.go` | 为管理员跨用户 `GET /api/mj/` 与 `GET /api/task/` 接入 `usage_log.read`；`/self` 用户自助查询继续只按当前用户认证隔离，不进入管理员权限表。 |
