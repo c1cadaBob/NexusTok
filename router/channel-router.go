@@ -30,13 +30,21 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 	channelRoute := apiRouter.Group("/channel")
 	channelRoute.Use(middleware.AdminAuth())
 
-	for _, route := range channelPermissionRoutes {
+	registerPermissionRoutes(channelRoute, channelPermissionRoutes)
+}
+
+// registerPermissionRoutes 将资源权限表注册到 Gin 路由组。
+//
+// 调用方仍负责先挂 AdminAuth/RootAuth 这类认证边界；本 helper 只负责把
+// route.before、RequirePermission、route.after 和最终 handler 按稳定顺序拼接。
+func registerPermissionRoutes(routeGroup *gin.RouterGroup, routes []permissionRoute) {
+	for _, route := range routes {
 		handlers := make([]gin.HandlerFunc, 0, len(route.before)+len(route.after)+2)
 		handlers = append(handlers, route.before...)
 		handlers = append(handlers, middleware.RequirePermission(route.permission))
 		handlers = append(handlers, route.after...)
 		handlers = append(handlers, route.handler)
-		channelRoute.Handle(route.method, route.path, handlers...)
+		routeGroup.Handle(route.method, route.path, handlers...)
 	}
 }
 

@@ -42,6 +42,12 @@ var (
 	ChannelWrite          = Permission{Resource: ResourceChannel, Action: ActionWrite}
 	ChannelSensitiveWrite = Permission{Resource: ResourceChannel, Action: ActionSensitiveWrite}
 	ChannelSecretView     = Permission{Resource: ResourceChannel, Action: ActionSecretView}
+
+	AccountPoolRead           = Permission{Resource: ResourceAccountPool, Action: ActionRead}
+	AccountPoolOperate        = Permission{Resource: ResourceAccountPool, Action: ActionOperate}
+	AccountPoolWrite          = Permission{Resource: ResourceAccountPool, Action: ActionWrite}
+	AccountPoolSensitiveWrite = Permission{Resource: ResourceAccountPool, Action: ActionSensitiveWrite}
+	AccountPoolSecretView     = Permission{Resource: ResourceAccountPool, Action: ActionSecretView}
 )
 
 // ActionDefinition 描述资源上的一个可授权动作。

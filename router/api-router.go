@@ -330,65 +330,7 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)   // 获取上游比率
 		}
 
-		// ========================================
-		// 账号池路由组 - /api/account-pool（需要管理员权限）
-		// ========================================
-		accountPoolRoute := apiRouter.Group("/account-pool")
-		accountPoolRoute.Use(middleware.AdminAuth())
-		{
-			// 提供商和分组管理
-			accountPoolRoute.GET("/providers", controller.ListAccountPoolProviders)                          // 获取账号池提供商列表
-			accountPoolRoute.GET("/auth-files", controller.ListAccountPoolAuthFiles)                         // 获取原生认证文件列表
-			accountPoolRoute.POST("/auth-files", controller.CreateAccountPoolAuthFile)                       // 导入原生认证文件
-			accountPoolRoute.POST("/auth-files/import", controller.ImportAccountPoolAuthFiles)               // 自动导入单个或批量认证文件
-			accountPoolRoute.GET("/auth-files/:auth_file_id", controller.GetAccountPoolAuthFile)             // 获取单个原生认证文件
-			accountPoolRoute.PUT("/auth-files/:auth_file_id", controller.UpdateAccountPoolAuthFile)          // 更新原生认证文件
-			accountPoolRoute.DELETE("/auth-files/:auth_file_id", controller.DeleteAccountPoolAuthFile)       // 删除原生认证文件
-			accountPoolRoute.GET("/health", controller.GetAccountPoolHealth)                                 // 获取原生账号池健康概览
-			accountPoolRoute.GET("/usage-logs", controller.ListAccountPoolUsageLogs)                         // 查询原生账号池使用日志
-			accountPoolRoute.GET("/state-logs/audit-summary", controller.GetAccountPoolStateLogAuditSummary) // 获取原生账号池状态审计聚合
-			accountPoolRoute.GET("/state-logs/export", controller.ExportAccountPoolStateLogs)                // 安全导出原生账号池状态审计日志
-			accountPoolRoute.GET("/state-logs", controller.ListAccountPoolStateLogs)                         // 查询原生账号池状态变更日志
-			accountPoolRoute.GET("/check-tasks", controller.ListPoolAccountCheckTasks)                       // 查询账号池检测任务历史
-			accountPoolRoute.POST("/check-tasks/cleanup", controller.CleanupPoolAccountCheckTasks)           // 清理账号池检测任务历史
-			accountPoolRoute.GET("/groups", controller.ListAccountPoolGroups)                                // 获取账号池分组列表
-			accountPoolRoute.POST("/groups", controller.CreateAccountPoolGroup)                              // 创建账号池分组
-			accountPoolRoute.GET("/groups/options", controller.ListAccountPoolGroupOptions)                  // 获取账号池分组选项
-			accountPoolRoute.GET("/groups/:id", controller.GetAccountPoolGroup)                              // 获取单个账号池分组
-			accountPoolRoute.PUT("/groups/:id", controller.UpdateAccountPoolGroup)                           // 更新账号池分组
-			accountPoolRoute.DELETE("/groups/:id", controller.DeleteAccountPoolGroup)                        // 删除账号池分组
-
-			// OAuth 和设备授权流程
-			accountPoolRoute.POST("/groups/:id/oauth/:provider/start", controller.StartAccountPoolProviderOAuth)       // 开始提供商 OAuth
-			accountPoolRoute.POST("/groups/:id/oauth/:provider/complete", controller.CompleteAccountPoolProviderOAuth) // 完成提供商 OAuth
-			accountPoolRoute.POST("/groups/:id/device/:provider/start", controller.StartAccountPoolProviderDevice)     // 开始设备授权
-
-			// 账号管理
-			accountPoolRoute.GET("/groups/:id/accounts", controller.ListPoolAccounts)                             // 获取分组账号列表
-			accountPoolRoute.POST("/groups/:id/accounts", controller.CreatePoolAccount)                           // 创建账号
-			accountPoolRoute.POST("/groups/:id/accounts/batch", controller.BatchCreatePoolAccounts)               // 批量创建账号
-			accountPoolRoute.POST("/groups/:id/accounts/attach", controller.AttachPoolAccountsToGroup)            // 从凭证或其他分组添加账号
-			accountPoolRoute.POST("/groups/:id/accounts/status", controller.BatchUpdatePoolAccountStatus)         // 批量更新账号状态
-			accountPoolRoute.POST("/groups/:id/accounts/export", controller.BatchExportPoolAccounts)              // 安全导出账号清单
-			accountPoolRoute.POST("/groups/:id/accounts/delete", controller.BatchDeletePoolAccounts)              // 批量删除账号
-			accountPoolRoute.POST("/groups/:id/accounts/check", controller.CheckPoolAccountsInGroup)              // 批量检测分组账号
-			accountPoolRoute.POST("/groups/:id/accounts/check-tasks", controller.StartPoolAccountCheckTask)       // 启动后台批量检测任务
-			accountPoolRoute.GET("/check-tasks/:check_task_id", controller.GetPoolAccountCheckTask)               // 查询后台检测任务
-			accountPoolRoute.GET("/login-sessions/:session_id", controller.GetAccountPoolLoginSession)            // 获取登录会话
-			accountPoolRoute.POST("/login-sessions/:session_id/cancel", controller.CancelAccountPoolLoginSession) // 取消登录会话
-			accountPoolRoute.GET("/accounts/:account_id", controller.GetPoolAccount)                              // 获取单个账号
-			accountPoolRoute.PUT("/accounts/:account_id", controller.UpdatePoolAccount)                           // 更新账号
-			accountPoolRoute.DELETE("/accounts/:account_id", controller.DeletePoolAccount)                        // 删除账号
-			accountPoolRoute.POST("/accounts/:account_id/status", controller.UpdatePoolAccountStatus)             // 更新账号状态
-			accountPoolRoute.POST("/accounts/:account_id/check", controller.CheckPoolAccount)                     // 检测单个账号可用性
-			accountPoolRoute.POST("/accounts/:account_id/refresh", controller.RefreshPoolAccountCredential)       // 刷新账号凭证
-			accountPoolRoute.POST("/accounts/:account_id/runtime/reset", controller.ResetPoolAccountRuntime)      // 重置账号运行时
-
-			// Codex OAuth
-			accountPoolRoute.POST("/oauth/codex/start", controller.StartAccountPoolCodexOAuth)       // 开始 Codex OAuth
-			accountPoolRoute.POST("/oauth/codex/complete", controller.CompleteAccountPoolCodexOAuth) // 完成 Codex OAuth
-		}
-
+		registerAccountPoolRoutes(apiRouter)
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
 		registerSystemTaskRoutes(apiRouter)
