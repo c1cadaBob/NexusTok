@@ -358,26 +358,7 @@ func SetApiRouter(router *gin.Engine) {
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey) // 通过 token 获取日志
 		}
 
-		// ========================================
-		// 分组路由组 - /api/group（需要管理员权限）
-		// ========================================
-		groupRoute := apiRouter.Group("/group")
-		groupRoute.Use(middleware.AdminAuth())
-		{
-			groupRoute.GET("/", controller.GetGroups) // 获取所有分组
-		}
-
-		// ========================================
-		// 预填充分组路由组 - /api/prefill_group（需要管理员权限）
-		// ========================================
-		prefillGroupRoute := apiRouter.Group("/prefill_group")
-		prefillGroupRoute.Use(middleware.AdminAuth())
-		{
-			prefillGroupRoute.GET("/", controller.GetPrefillGroups)         // 获取所有预填充分组
-			prefillGroupRoute.POST("/", controller.CreatePrefillGroup)      // 创建预填充分组
-			prefillGroupRoute.PUT("/", controller.UpdatePrefillGroup)       // 更新预填充分组
-			prefillGroupRoute.DELETE("/:id", controller.DeletePrefillGroup) // 删除预填充分组
-		}
+		registerGroupRoutes(apiRouter)
 
 		// ========================================
 		// Midjourney 路由组 - /api/mj

@@ -1372,6 +1372,57 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/dashboard/models` 与 `/dashboard/flow`，确认页面更新生效；直调 `/api/data/self`、`/api/data/`、`/api/data/flow` 和 `/api/log/stat` 低风险读接口，确认均返回 200/业务 success，不触发任何写操作。
 
+## 本轮实施评审：分组与预填充分组 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 与 NexusTok 都保留 `/api/group` 和 `/api/prefill_group` 两组管理接口：前者返回系统配置中的用户组/模型组名称，供用户管理、订阅配置、渠道和模型配置选择；后者维护可复用的模型、标签、端点预填模板，是模型和渠道配置效率的一部分。NexusTok 当前已经把 `/api/vendors`、`/api/models` 和 `/api/deployments` 纳入 `model` 资源权限表，但 `/api/group` 与 `/api/prefill_group` 仍在主路由里只挂 `AdminAuth`，导致模型配置相关模板能力没有进入同一套原生 Authz enforcement。
+
+本轮目标：
+
+1. 将 `/api/group` 和 `/api/prefill_group` 从主 `api-router.go` 中抽出，用现有 `permissionRoute` 权限表注册。
+2. 复用现有 `model` 资源，不新增独立 `group` 资源：`authz.ModelWrite` 的 catalog 描述已经包含 prefill groups，分组和预填模板都服务模型/渠道配置，不需要扩大前端权限矩阵。
+3. `GET /api/group/` 与 `GET /api/prefill_group/` 归为 `model.read`；`POST /api/prefill_group/` 与 `PUT /api/prefill_group/` 归为 `model.write`；`DELETE /api/prefill_group/:id` 归为 `model.sensitive_write`。
+4. 保持用户自助 `GET /api/user/self/groups`、`GET /api/user/groups` 原认证边界不变，避免普通用户 Playground/API Key 用户组选项被管理员权限表误拦截。
+5. 不修改预填组数据模型、接口响应结构、前端页面布局和渠道/模型表单行为；只收紧管理员管理路径的授权表达。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 分组路由 | `router/group-router.go`、`router/api-router.go`、`router/group_router_test.go` | 新增集中路由注册，将 `/api/group` 和 `/api/prefill_group` 接入 `model` 权限表，并覆盖 handler 与权限分类。 |
+| 模型 JSON helper 一致性 | `model/prefill_group.go` | 触碰预填组能力时同步修复 `Scan` fallback 中直接调用 `encoding/json.Marshal` 的项目规范问题，改为 `common.Marshal`；`json.RawMessage` 类型引用保留。 |
+| 默认前端 | `web/default/src/features/models/*`、`web/default/src/features/channels/*`、`web/default/src/features/users/api.ts`、`web/default/src/features/subscriptions/api.ts` | 本轮不改 UI；模型页、渠道抽屉、用户和订阅页面继续调用原路径，服务端按 `model` 权限二次校验。后续可单独做模型页按钮级 `write/operate/sensitive_write` 消费。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
+
+### 风险评估
+
+1. `/api/group` 虽然也被用户管理和订阅管理页面复用，但它返回的是模型/计费组配置中的分组名称，而不是用户详情；归入 `model.read` 后，未来拥有用户读权限但没有模型读权限的自定义管理员将无法拉取完整分组选项。这是更偏最小暴露的选择，后续若出现“用户管理员需要分组列表但不能看模型配置”的角色，可新增只读 group 元数据资源或专用聚合接口。
+2. `/api/prefill_group?type=model` 也被渠道编辑抽屉用于快速填充模型列表；渠道管理员如果未来只有 `channel.write` 没有 `model.read`，将看不到预填模板，但仍可以手动输入模型。当前 Admin 基线同时拥有 `model.read`，不会影响现有管理员工作流。
+3. 删除预填组不会直接删除模型或渠道，但会移除可复用配置模板，可能影响团队后续配置效率；本轮归入 `model.sensitive_write`，与模型/厂商/部署删除保持相同敏感写边界。
+4. `model/prefill_group.go` 中 `JSONValue.Scan` 的 fallback 从 `json.Marshal` 改为 `common.Marshal` 后，外部行为应保持一致；该路径只处理非 `nil`、非 `[]byte`、非 `string` 的数据库驱动返回值，属于低频兼容兜底。
+5. 本轮不在真实环境触发预填组创建、更新、删除，只通过单元测试和只读接口验证，避免误改生产配置。
+
+### 方案评审
+
+采用“复用模型资源”的最小收敛方案，而不是新增 `group`/`prefill_group` Authz 资源：这样能让预填模板跟模型元数据、厂商元数据、部署和定价保持同一治理边界，也不会让前端权限矩阵突然增加一类用户难以理解的资源。实现上继续复用 `registerPermissionRoutes`，路由先经过 `AdminAuth`，再按 `model.read/write/sensitive_write` 二次校验；普通用户自助分组路径不进入该路由表。
+
+路由分类：
+
+| 路由 | 权限 | 说明 |
+|------|------|------|
+| `GET /api/group/` | `model.read` | 管理端读取模型/计费组名称，用于用户、订阅、渠道和模型配置下拉选项。 |
+| `GET /api/prefill_group/` | `model.read` | 查看模型、标签、端点预填模板。 |
+| `POST /api/prefill_group/`、`PUT /api/prefill_group/` | `model.write` | 创建和编辑预填模板，属于模型配置辅助写操作。 |
+| `DELETE /api/prefill_group/:id` | `model.sensitive_write` | 删除可复用模板，按敏感写处理，避免普通 Admin 误删共享配置资产。 |
+
+验收方式：
+
+1. `go test ./model ./controller ./service/authz ./middleware ./router` 覆盖预填组模型构建、控制器构建、权限中间件和新路由表结构。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认前端原 API 调用路径和类型不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/models/metadata`，确认页面更新生效；直调 `/api/group/` 与 `/api/prefill_group` 低风险读接口，确认返回正常，不触发预填组写操作。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1420,3 +1471,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 兑换码 Authz 独立资源与路由权限表 | `service/authz/*`、`router/redemption-router.go`、`router/api-router.go`、`web/default/src/lib/admin-permissions.ts`、`web/default/src/routes/_authenticated/redemption-codes/index.tsx` | 新增 `redemption` 权限资源并让 `/api/redemption` 接入独立路由权限表：列表/搜索/详情走 read，创建和编辑走 write，删除单个兑换码与批量清理无效兑换码走 sensitive_write；默认前端侧边栏和页面守卫改为读取 `redemption.read`，不再复用 `user.read`。 |
 | 2026-07-08 | 日志与用量数据 Authz 独立资源 | `service/authz/*`、`router/log-data-router.go`、`router/api-router.go`、`web/default/src/features/usage-logs/*`、`web/default/src/features/dashboard/*` | 新增 `usage_log` 与 `usage_data` 权限资源，管理员 `/api/log` 和 `/api/data` 读接口进入独立权限表，历史日志同步删除归入 `usage_log.sensitive_write`；普通用户 self/token 路径保持原认证边界，默认前端 Usage Logs 与 Dashboard 的跨用户视图改为读取对应 read 权限。 |
 | 2026-07-08 | 基础用量查询聚合与统计空值保护 | `model/usedata.go`、`model/log.go`、`model/usedata_flow_test.go`、`model/log_stat_test.go` | 对齐 new-api 的 Dashboard 基础用量聚合语义，`/api/data/self` 和按 username 查询只返回 user/model/hour 汇总，不再带出 token/channel/node/group 细维度值；日志统计统一使用跨三库的 `COALESCE`，空结果稳定返回 0。 |
+| 2026-07-08 | 分组与预填充分组 Authz 路由权限表 | `router/group-router.go`、`router/api-router.go`、`router/group_router_test.go`、`model/prefill_group.go` | 为管理端 `/api/group` 与 `/api/prefill_group` 接入 model 权限表：分组和预填模板查询走 read，预填模板创建/更新走 write，删除预填模板走 sensitive_write；普通用户自助分组路径不变，并同步将预填组 JSON fallback 序列化切到 `common.Marshal`。 |
