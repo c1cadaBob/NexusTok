@@ -2030,6 +2030,59 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/auth/oauth`、`/system-settings/auth/passkey`、`/system-settings/auth/bot-protection`、`/system-settings/security/sensitive-words`、`/system-settings/security/ssrf`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存。
 
+## 本轮实施评审：系统设置站点、计费与运维普通表单保存按钮 Authz 消费
+
+### 需求分析
+
+系统设置通用保存 hook 已经统一拦截缺少 `system_setting.sensitive_write` 的 `PUT /api/option/`，并且站点信息、认证、安全表单已分批把保存按钮接入 `canUpdate/disabledReason`。剩余站点、计费和运维分组中仍有一批普通 option 表单只按 pending/submitting 禁用：系统行为、配额、货币显示、签到、系统公告、顶部导航、侧边栏模块和日志记录设置。它们虽然业务域不同，但保存路径一致，均应在按钮层消费同一个敏感写权限，避免受限管理员看到可点击保存入口后才被 hook 拦截。
+
+本轮目标：
+
+1. 将系统行为、配额、货币显示、签到、系统公告、顶部导航、侧边栏模块和日志记录设置的保存按钮接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 保持本地草稿编辑、重置到默认、表单重置和导航模块开关编辑能力不变；只有实际保存入口需要系统 option 敏感写权限。
+3. 不修改配额合规提示、货币显示序列化、签到额度序列化、导航模块 JSON 序列化、日志记录设置和任何后端接口。
+4. 日志维护页的历史日志清理按钮不是 `PUT /api/option/`，后端实际要求系统设置敏感写并额外要求日志敏感写；本轮不混入该危险操作，后续单独评审和实现。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 系统行为 | `web/default/src/features/system-settings/general/system-behavior-section.tsx` | 保存系统默认行为时消费统一 option 保存权限。 |
+| 配额设置 | `general/quota-settings-section.tsx` | 保存新用户额度、预消费、邀请奖励、充值/文档链接和免费模型预消费开关时消费统一权限。 |
+| 货币显示 | `general/pricing-section.tsx` | 保存货币展示、汇率和 token 统计展示时消费统一权限；本地重置按钮不变。 |
+| 签到奖励 | `general/checkin-settings-section.tsx` | 保存签到开关和额度范围时消费统一权限；无脏数据时仍保持禁用。 |
+| 系统公告 | `maintenance/notice-section.tsx` | 保存全局公告 option 时消费统一权限。 |
+| 顶部导航 | `maintenance/header-navigation-section.tsx` | 保存 HeaderNavModules 时消费统一权限；重置到默认仅改本地草稿。 |
+| 侧边栏模块 | `maintenance/sidebar-modules-section.tsx` | 保存 SidebarModulesAdmin 时消费统一权限；重置到默认仅改本地草稿。 |
+| 日志记录设置 | `maintenance/log-settings-section.tsx` | 保存 LogConsumeEnabled 时消费统一权限；历史日志清理按钮保持现状，留待独立危险操作权限切片。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变保存按钮 disabled/title，不改变表单字段、序列化、合规提示、缓存刷新和后端权限 enforcement。
+2. `HeaderNavModules`、`SidebarModulesAdmin`、`Notice`、`LogConsumeEnabled` 等 key 会影响公共页面和全局状态，继续由 `useUpdateOption()` 成功后刷新 status，按钮接线不会改变刷新语义。
+3. 签到和配额属于用户激励与余额相关配置，本轮只提前禁用保存入口，不改变额度计算和合规确认。
+4. 日志清理会删除审计证据，权限语义比普通保存更严格；本轮明确不修改该按钮，避免只加 `system_setting.sensitive_write` 而漏掉 `usage_log.sensitive_write`。
+
+### 方案评审
+
+采用“同一 `PUT /api/option/` 保存入口，同一按钮权限字段”的方案。页面仍允许查看和编辑本地草稿，保存按钮在缺少敏感写时禁用并展示统一无权限原因；hook 层保留提交前保护，防止快捷键、脚本或遗漏按钮路径绕过前端。危险日志清理另开切片，以同时消费系统设置和日志资源权限。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存系统行为、配额、货币显示、签到、公告、顶部导航、侧边栏模块、日志记录 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 重置表单、重置导航/侧边栏默认值、编辑本地开关 | 本地交互，无写权限要求 | 不调用后端写接口 |
+| 清理历史日志 | 后续切片处理 | `POST /api/system-task/log-cleanup`，需要系统设置敏感写和日志敏感写 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认八个页面能识别统一权限字段。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置、系统任务和权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/behavior`、`/system-settings/billing/quota`、`/system-settings/billing/currency`、`/system-settings/billing/checkin`、`/system-settings/site/notice`、`/system-settings/site/header-navigation`、`/system-settings/site/sidebar-modules`、`/system-settings/operations/logs`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存和日志清理。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2091,3 +2144,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 系统设置通用 option 保存前置 Authz 保护 | `web/default/src/features/system-settings/hooks/use-update-option.ts` | 默认前端所有通过 `useUpdateOption()` 发起的 `PUT /api/option/` 保存会先检查 `system_setting.sensitive_write`；缺少权限时前端不发请求并复用无权限提示，同时向后续逐页按钮禁用暴露 `canUpdate/disabledReason`。 |
 | 2026-07-08 | 系统设置高频表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general/system-info-section.tsx,auth/basic-auth-section.tsx,request-limits/rate-limit-section.tsx}` | 站点信息、基础认证和请求限流三处高频表单的保存按钮直接消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`，缺少 `system_setting.sensitive_write` 时在按钮层禁用并保留 hook 级提交前保护。 |
 | 2026-07-08 | 系统设置认证与安全表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{auth/oauth-section.tsx,auth/passkey-section.tsx,auth/bot-protection-section.tsx,request-limits/sensitive-words-section.tsx,request-limits/ssrf-section.tsx}` | OAuth、Passkey、Turnstile、敏感词和 SSRF 五类认证/安全表单的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段，受限管理员可查看和编辑草稿但不能提交系统 option 写入。 |
+| 2026-07-08 | 系统设置站点、计费与运维普通表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general,maintenance}/*` | 系统行为、配额、货币显示、签到、公告、顶部导航、侧边栏模块和日志记录设置的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；日志清理危险操作保留为后续双资源权限切片。 |

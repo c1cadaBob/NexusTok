@@ -191,7 +191,15 @@ export function CheckinSettingsSection({
 
           <Button
             type='submit'
-            disabled={!isDirty || updateOption.isPending || isSubmitting}
+            disabled={
+              !isDirty ||
+              updateOption.isPending ||
+              isSubmitting ||
+              !updateOption.canUpdate
+            }
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
           >
             {updateOption.isPending || isSubmitting
               ? t('Saving...')

@@ -370,7 +370,16 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
             <div className='flex gap-2'>
               <Button
                 type='submit'
-                disabled={updateOption.isPending || isSubmitting}
+                disabled={
+                  updateOption.isPending ||
+                  isSubmitting ||
+                  !updateOption.canUpdate
+                }
+                title={
+                  updateOption.canUpdate
+                    ? undefined
+                    : updateOption.disabledReason
+                }
               >
                 {updateOption.isPending ? t('Saving...') : t('Save Changes')}
               </Button>
