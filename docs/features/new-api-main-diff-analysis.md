@@ -1063,6 +1063,66 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. 使用 MCP 打开 `http://192.168.0.202:3003/subscriptions`，确认页面更新生效，`/api/subscription/admin/plans` 正常返回，控制台无新增 error/warn。
 5. 不在真实环境触发删除用户订阅等高风险写接口；敏感写收紧通过路由表测试验证。
 
+## 本轮实施评审：模型管理 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 和 NexusTok 在模型管理基础路由上基本同源：两者都提供 `/api/vendors`、`/api/models`、`/api/deployments` 三组管理接口，用来维护厂商元数据、模型元数据、上游模型同步和 io.net 部署生命周期。NexusTok 在此基础上已经扩展了模型级定价配置接口 `/api/models/:id/pricing`，并且默认前端已经按 `model.read` 能力展示模型管理入口；但服务端仍只用粗粒度 `AdminAuth` 保护整组接口，尚未消费已经注册在 Authz catalog 中的 `model` 权限动作。
+
+本轮目标是把 `new-api-main` 的平台治理方向转成 NexusTok 原生模型管理能力，而不是迁移新的页面框架：
+
+1. 为 `model` 资源补齐稳定 permission 变量：`ModelRead`、`ModelOperate`、`ModelWrite`、`ModelSensitiveWrite`，让路由、中间件测试和未来前端按钮级权限使用同一常量。
+2. 将 `/api/vendors`、`/api/models`、`/api/deployments` 从主 `api-router.go` 抽到独立模型管理路由文件，并用权限表注册全部现有路径，保持 HTTP method、path、handler 和业务返回不变。
+3. 厂商、模型、部署列表和详情查询归为 `model.read`；连接测试、价格估算、名称检查、上游同步预览、部署扩容这类运行操作归为 `model.operate`。
+4. 厂商/模型/部署创建和编辑、模型定价配置更新、上游同步落库归为 `model.write`；厂商、模型和部署删除归为 `model.sensitive_write`，避免普通 Admin 通过直接调用 API 移除关键元数据或部署资源。
+5. 本轮不改变 controller、model、service、数据库迁移和前端页面；默认前端按钮级细分权限可以在后续独立切片中继续补齐。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz 判定 | `service/authz/permission.go`、`service/authz/permission_test.go` | 新增模型管理 permission 变量，并补充 Root/Admin/普通用户基线断言，保证未知权限仍 fail-closed。 |
+| 模型管理路由 | `router/model-router.go`、`router/api-router.go` | 新增独立模型管理路由权限表，主路由只保留 `registerModelRoutes(apiRouter)` 调用，避免主路由继续堆积管理资源细节。 |
+| 路由测试 | `router/model_router_test.go` | 覆盖 vendors/models/deployments 核心 handler、权限分类和全部路由资源归属。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收标准，作为后续模型页按钮级权限和系统设置路由迁移依据。 |
+
+### 风险评估
+
+1. 模型管理接口影响平台可用模型、价格和部署资源。服务端 enforcement 会让普通 Admin 直接调用删除模型、删除厂商、删除部署接口时被拒绝；这是预期的敏感写保护，但必须确认查询、连接测试、同步预览、创建和日常编辑仍按现有 Admin 基线可用。
+2. `/api/models/sync_upstream` 会从上游同步并写入模型/厂商元数据，因此不能仅视为 operate；本轮归为 `model.write`，而只读预览 `/sync_upstream/preview` 保持 `model.operate`。
+3. `/api/models/:id/pricing` 是 NexusTok 相对 `new-api-main` 的增强能力，更新模型定价会直接影响计费，但它属于管理员日常配置项；本轮归为 `model.write`，不提升到 Root-only，避免破坏现有模型管理工作流。更细的计费权限拆分留给后续系统设置/计费设置权限切片。
+4. `/api/deployments/:id/extend` 会改变部署运行容量但不删除资源，本轮归为 `model.operate`；创建、更新、重命名部署归为 `model.write`，删除部署归为 `model.sensitive_write`。
+5. 三个路由组包含 `/search`、`/settings`、`/:id`、`/:id/pricing`、`/:id/containers/:container_id` 等静态和参数路径，抽出后必须通过路由结构测试确认 Gin 匹配顺序不变。
+6. 本轮不改数据库、不改部署 service、不触发真实部署删除或扩容；核心风险集中在路由权限分类、handler 挂接错误和默认前端页面读取接口被误拦截。
+
+### 方案评审
+
+采用与渠道、账号池和订阅 Admin 相同的灰度 enforcement 方案：复用 `permissionRoute`、`registerPermissionRoutes` 和 `middleware.RequirePermission`，仍由 `AdminAuth` 负责登录态、用户状态和基础系统角色边界，权限表只在认证通过后做资源动作二次校验。这样能把 `new-api-main` 的管理资源分层治理优势沉淀为 NexusTok 原生 Authz 能力，并为后续 Casbin/user override 留出单一替换点。
+
+路由按资源动作分类如下：
+
+| 路由组 | 权限 | 路径 |
+|------|------|------|
+| `/api/vendors` | `model.read` | `GET /`、`GET /search`、`GET /:id` |
+| `/api/vendors` | `model.write` | `POST /`、`PUT /` |
+| `/api/vendors` | `model.sensitive_write` | `DELETE /:id` |
+| `/api/models` | `model.read` | `GET /missing`、`GET /`、`GET /search`、`GET /:id/pricing`、`GET /:id` |
+| `/api/models` | `model.operate` | `GET /sync_upstream/preview` |
+| `/api/models` | `model.write` | `POST /sync_upstream`、`PUT /:id/pricing`、`POST /`、`PUT /` |
+| `/api/models` | `model.sensitive_write` | `DELETE /:id` |
+| `/api/deployments` | `model.read` | `GET /settings`、`GET /`、`GET /search`、`GET /hardware-types`、`GET /locations`、`GET /available-replicas`、`GET /check-name`、`GET /:id`、`GET /:id/logs`、`GET /:id/containers`、`GET /:id/containers/:container_id` |
+| `/api/deployments` | `model.operate` | `POST /settings/test-connection`、`POST /test-connection`、`POST /price-estimation`、`POST /:id/extend` |
+| `/api/deployments` | `model.write` | `POST /`、`PUT /:id`、`PUT /:id/name` |
+| `/api/deployments` | `model.sensitive_write` | `DELETE /:id` |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖模型 permission、权限中间件、路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端模型页面类型不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/models/metadata`，确认页面更新生效，`/api/models/`、`/api/vendors/` 等读取请求正常返回，控制台无新增 error/warn。
+5. 不在真实环境触发删除模型、删除厂商、删除部署或扩容部署等高风险操作；这些权限分类通过路由表测试验证。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1105,3 +1165,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 渠道 Authz 路由权限表灰度 enforcement | `service/authz/*`、`middleware/auth.go`、`router/channel-router.go`、`controller/channel_authz.go` | 新增 `authz.Can`、渠道 permission 常量和 `middleware.RequirePermission`，并将 `/api/channel` 注册迁移为读/操作/写/敏感写/密钥查看权限表；Root-only 与安全验证中间件继续保留，渠道敏感字段二次校验复用同一 `ChannelSensitiveWrite` 判定。 |
 | 2026-07-08 | 账号池 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/account_pool-router.go`、`router/api-router.go`、`router/account_pool_router_test.go` | 为 NexusTok 独有 `/api/account-pool` 全量路由接入 account_pool 权限表：查询/脱敏日志走 read，检测/状态/脱敏导出走 operate，分组配置走 write，认证文件、账号生命周期、OAuth 和凭证刷新走 sensitive_write；主路由文件只保留注册调用。 |
 | 2026-07-08 | 订阅 Admin Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/subscription-router.go`、`router/api-router.go`、`router/subscription_router_test.go` | 为 `/api/subscription/admin` 接入 subscription 权限表：套餐和用户订阅查询走 read，套餐创建/更新/启停走 write，绑定、创建和失效用户订阅走 operate，删除用户订阅走 sensitive_write；用户购买和支付回调路由保持原有认证/匿名回调边界。 |
+| 2026-07-08 | 模型管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/model-router.go`、`router/api-router.go`、`router/model_router_test.go` | 为 `/api/vendors`、`/api/models`、`/api/deployments` 接入 model 权限表：元数据和部署查询走 read，上游预览/连接测试/价格估算/扩容走 operate，厂商/模型/部署创建编辑和定价更新走 write，删除模型、厂商和部署走 sensitive_write；NexusTok 扩展的模型定价接口也纳入同一原生权限体系。 |

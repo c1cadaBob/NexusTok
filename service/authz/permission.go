@@ -49,6 +49,11 @@ var (
 	AccountPoolSensitiveWrite = Permission{Resource: ResourceAccountPool, Action: ActionSensitiveWrite}
 	AccountPoolSecretView     = Permission{Resource: ResourceAccountPool, Action: ActionSecretView}
 
+	ModelRead           = Permission{Resource: ResourceModel, Action: ActionRead}
+	ModelOperate        = Permission{Resource: ResourceModel, Action: ActionOperate}
+	ModelWrite          = Permission{Resource: ResourceModel, Action: ActionWrite}
+	ModelSensitiveWrite = Permission{Resource: ResourceModel, Action: ActionSensitiveWrite}
+
 	SubscriptionRead           = Permission{Resource: ResourceSubscription, Action: ActionRead}
 	SubscriptionOperate        = Permission{Resource: ResourceSubscription, Action: ActionOperate}
 	SubscriptionWrite          = Permission{Resource: ResourceSubscription, Action: ActionWrite}

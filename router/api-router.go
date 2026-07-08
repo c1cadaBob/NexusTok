@@ -435,71 +435,7 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)     // 获取所有任务
 		}
 
-		// ========================================
-		// 厂商路由组 - /api/vendors（需要管理员权限）
-		// ========================================
-		vendorRoute := apiRouter.Group("/vendors")
-		vendorRoute.Use(middleware.AdminAuth())
-		{
-			vendorRoute.GET("/", controller.GetAllVendors)          // 获取所有厂商
-			vendorRoute.GET("/search", controller.SearchVendors)    // 搜索厂商
-			vendorRoute.GET("/:id", controller.GetVendorMeta)       // 获取单个厂商元数据
-			vendorRoute.POST("/", controller.CreateVendorMeta)      // 创建厂商元数据
-			vendorRoute.PUT("/", controller.UpdateVendorMeta)       // 更新厂商元数据
-			vendorRoute.DELETE("/:id", controller.DeleteVendorMeta) // 删除厂商元数据
-		}
-
-		// ========================================
-		// 模型路由组 - /api/models（需要管理员权限）
-		// ========================================
-		modelsRoute := apiRouter.Group("/models")
-		modelsRoute.Use(middleware.AdminAuth())
-		{
-			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview) // 预览上游同步
-			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)         // 同步上游模型
-			modelsRoute.GET("/missing", controller.GetMissingModels)                  // 获取缺失模型
-			modelsRoute.GET("/", controller.GetAllModelsMeta)                         // 获取所有模型元数据
-			modelsRoute.GET("/search", controller.SearchModelsMeta)                   // 搜索模型元数据
-			modelsRoute.GET("/:id/pricing", controller.GetModelPricingConfig)         // 获取单个模型定价配置
-			modelsRoute.PUT("/:id/pricing", controller.UpdateModelPricingConfig)      // 更新单个模型定价配置
-			modelsRoute.GET("/:id", controller.GetModelMeta)                          // 获取单个模型元数据
-			modelsRoute.POST("/", controller.CreateModelMeta)                         // 创建模型元数据
-			modelsRoute.PUT("/", controller.UpdateModelMeta)                          // 更新模型元数据
-			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)                    // 删除模型元数据
-		}
-
-		// ========================================
-		// 部署路由组 - /api/deployments（需要管理员权限）
-		// 用于管理模型部署
-		// ========================================
-		deploymentsRoute := apiRouter.Group("/deployments")
-		deploymentsRoute.Use(middleware.AdminAuth())
-		{
-			// 部署设置
-			deploymentsRoute.GET("/settings", controller.GetModelDeploymentSettings)           // 获取部署设置
-			deploymentsRoute.POST("/settings/test-connection", controller.TestIoNetConnection) // 测试连接
-
-			// 部署管理
-			deploymentsRoute.GET("/", controller.GetAllDeployments)                      // 获取所有部署
-			deploymentsRoute.GET("/search", controller.SearchDeployments)                // 搜索部署
-			deploymentsRoute.POST("/test-connection", controller.TestIoNetConnection)    // 测试连接
-			deploymentsRoute.GET("/hardware-types", controller.GetHardwareTypes)         // 获取硬件类型
-			deploymentsRoute.GET("/locations", controller.GetLocations)                  // 获取可用区域
-			deploymentsRoute.GET("/available-replicas", controller.GetAvailableReplicas) // 获取可用副本数
-			deploymentsRoute.POST("/price-estimation", controller.GetPriceEstimation)    // 获取价格估算
-			deploymentsRoute.GET("/check-name", controller.CheckClusterNameAvailability) // 检查集群名称可用性
-			deploymentsRoute.POST("/", controller.CreateDeployment)                      // 创建部署
-
-			// 单个部署操作
-			deploymentsRoute.GET("/:id", controller.GetDeployment)                                // 获取单个部署
-			deploymentsRoute.GET("/:id/logs", controller.GetDeploymentLogs)                       // 获取部署日志
-			deploymentsRoute.GET("/:id/containers", controller.ListDeploymentContainers)          // 获取部署容器列表
-			deploymentsRoute.GET("/:id/containers/:container_id", controller.GetContainerDetails) // 获取容器详情
-			deploymentsRoute.PUT("/:id", controller.UpdateDeployment)                             // 更新部署
-			deploymentsRoute.PUT("/:id/name", controller.UpdateDeploymentName)                    // 更新部署名称
-			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)                     // 扩展部署
-			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)                          // 删除部署
-		}
+		registerModelRoutes(apiRouter)
 
 	}
 }
