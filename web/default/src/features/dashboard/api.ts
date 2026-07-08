@@ -17,18 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { api } from '@/lib/api'
-import type { QuotaDataItem, UptimeGroupResult } from './types'
+import type {
+  FlowQuotaDataItem,
+  QuotaDataItem,
+  UptimeGroupResult,
+} from './types'
 
 // ============================================================================
-// Dashboard APIs
+// Dashboard API
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// Quota & Usage Data
+// 额度与使用数据
 // ----------------------------------------------------------------------------
 
-// Get user quota data within a time range
-// Admin users get all users' data by default (matching classic frontend behavior)
+// 获取指定时间范围内的模型用量数据；管理员默认查看全站数据，普通用户只能查看自己。
 export async function getUserQuotaDates(
   params: {
     start_timestamp: number
@@ -46,8 +49,26 @@ export async function getUserQuotaDates(
   return res.data
 }
 
+// 获取流量账本聚合数据；普通用户必须走 self 接口，避免前端误请求到管理员维度。
+export async function getFlowQuotaDates(
+  params: {
+    start_timestamp: number
+    end_timestamp: number
+    default_time?: string
+    username?: string
+  },
+  isAdmin = false
+) {
+  const endpoint = isAdmin ? '/api/data/flow' : '/api/data/flow/self'
+  const res = await api.get<{ success: boolean; data: FlowQuotaDataItem[] }>(
+    endpoint,
+    { params }
+  )
+  return res.data
+}
+
 // ----------------------------------------------------------------------------
-// System Monitoring
+// 系统监控
 // ----------------------------------------------------------------------------
 
 export async function getUserQuotaDataByUsers(params: {
@@ -61,7 +82,7 @@ export async function getUserQuotaDataByUsers(params: {
   return res.data
 }
 
-// Get uptime monitoring status for all services
+// 获取所有服务的 Uptime 监控状态。
 export async function getUptimeStatus() {
   const res = await api.get<{ success: boolean; data: UptimeGroupResult[] }>(
     '/api/uptime/status'

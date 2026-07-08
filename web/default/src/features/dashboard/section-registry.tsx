@@ -20,7 +20,7 @@ import type { TFunction } from 'i18next'
 import { createSectionRegistry } from '@/features/system-settings/utils/section-registry'
 
 /**
- * Dashboard page section definitions
+ * Dashboard 页面分区定义。
  */
 const DASHBOARD_SECTIONS = [
   {
@@ -40,6 +40,13 @@ const DASHBOARD_SECTIONS = [
     titleKey: 'User Analytics',
     descriptionKey: 'View user consumption statistics and charts',
     adminOnly: true,
+    build: () => null,
+  },
+  {
+    id: 'flow',
+    titleKey: 'Traffic Flow',
+    descriptionKey:
+      'View quota, token, and request flow across users, groups, models, and channels',
     build: () => null,
   },
 ] as const

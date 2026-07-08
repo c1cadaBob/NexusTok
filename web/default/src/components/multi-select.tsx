@@ -20,6 +20,7 @@ import * as React from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Command, CommandGroup, CommandItem } from '@/components/ui/command'
@@ -34,6 +35,9 @@ interface MultiSelectProps {
   selected: string[]
   onChange: (values: string[]) => void
   placeholder?: string
+  emptyText?: string
+  maxVisibleChips?: number
+  renderSelectedSummary?: (values: string[]) => string
   className?: string
 }
 
@@ -42,10 +46,14 @@ export function MultiSelect({
   selected,
   onChange,
   placeholder,
+  emptyText,
+  maxVisibleChips,
+  renderSelectedSummary,
   className,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
+  const resolvedEmptyText = emptyText ?? t('No options')
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [open, setOpen] = React.useState(false)
   const [inputValue, setInputValue] = React.useState('')
@@ -71,15 +79,26 @@ export function MultiSelect({
   const selectables = options.filter(
     (option) => !selected.includes(option.value)
   )
+  // 大量用户筛选时只展示前几个 chip，其余用汇总标记占位，避免工具条被长用户名撑开。
+  const visibleSelected =
+    maxVisibleChips == null ? selected : selected.slice(0, maxVisibleChips)
+  const hiddenSelected =
+    maxVisibleChips == null ? [] : selected.slice(maxVisibleChips)
+  const selectedSummary =
+    hiddenSelected.length > 0 && renderSelectedSummary
+      ? renderSelectedSummary(selected)
+      : hiddenSelected.length > 0
+        ? `+${hiddenSelected.length}`
+        : ''
 
   return (
     <Command
       onKeyDown={handleKeyDown}
-      className={`overflow-visible bg-transparent ${className || ''}`}
+      className={cn('overflow-visible bg-transparent', className)}
     >
       <div className='group border-input ring-offset-background focus-within:ring-ring rounded-md border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-offset-2'>
         <div className='flex flex-wrap gap-1'>
-          {selected.map((value) => {
+          {visibleSelected.map((value) => {
             const option = options.find((o) => o.value === value)
             return (
               <Badge key={value} variant='secondary'>
@@ -108,6 +127,11 @@ export function MultiSelect({
               </Badge>
             )
           })}
+          {selectedSummary && (
+            <Badge variant='secondary' aria-label={t('Selected items')}>
+              {selectedSummary}
+            </Badge>
+          )}
           <CommandPrimitive.Input
             ref={inputRef}
             value={inputValue}
@@ -142,6 +166,10 @@ export function MultiSelect({
                 )
               })}
             </CommandGroup>
+          </div>
+        ) : open && selectables.length === 0 ? (
+          <div className='bg-popover text-muted-foreground animate-in absolute top-0 z-10 w-full rounded-md border px-3 py-2 text-sm shadow-md outline-none'>
+            {resolvedEmptyText}
           </div>
         ) : null}
       </div>

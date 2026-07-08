@@ -33,6 +33,134 @@ export interface QuotaDataItem {
   quota?: number
 }
 
+export interface FlowQuotaDataItem {
+  user_id?: number
+  username?: string
+  node_name?: string
+  use_group?: string
+  token_id?: number
+  token_name?: string
+  channel_id?: number
+  channel_name?: string
+  model_name?: string
+  token_used?: number
+  count?: number
+  quota?: number
+}
+
+export type FlowMetric = 'quota' | 'tokens' | 'requests'
+
+export type FlowOverflowMode = 'aggregate' | 'hide'
+
+export type FlowRole = 'user' | 'admin' | 'root'
+
+export type FlowNodeKind =
+  | 'user'
+  | 'node'
+  | 'token'
+  | 'group'
+  | 'model'
+  | 'channel'
+
+export interface FlowNodeFilter {
+  kind: FlowNodeKind
+  id: string
+}
+
+export interface FlowLinkSelection {
+  source: string
+  target: string
+}
+
+export interface FlowBuildOptions {
+  role?: FlowRole
+  selectedUsers?: string[]
+  selectedNodes?: FlowNodeFilter[]
+  activeNode?: FlowNodeFilter
+  activeLink?: FlowLinkSelection
+  colorPalette?: readonly string[]
+  visibleStages?: FlowNodeKind[]
+  topNodeLimit?: number
+  overflowMode?: FlowOverflowMode
+  // 开启后只遮罩敏感节点显示文案，节点 id 保持不变，确保 Sankey 聚合和高亮关系稳定。
+  maskSensitive?: boolean
+  // 后端聚合可能返回已删除 Token 的 id，调用方可注入本地化的兜底文案。
+  deletedTokenLabel?: (tokenId: number) => string
+  otherNodeLabel?: (kind: FlowNodeKind) => string
+}
+
+export interface DashboardFlowNode {
+  id: string
+  label: string
+  kind: FlowNodeKind
+  value: number
+  requests: number
+  quota: number
+  tokens: number
+  color: string
+  colorKey: string
+  highlighted?: boolean
+  dimmed?: boolean
+}
+
+export interface DashboardFlowLink {
+  source: string
+  target: string
+  value: number
+  requests: number
+  quota: number
+  tokens: number
+  sourceLabel: string
+  targetLabel: string
+  color: string
+  linkColor: string
+  linkAlpha: number
+  hoverColor: string
+  colorKey: string
+  share: number
+  highlighted?: boolean
+  dimmed?: boolean
+}
+
+export interface DashboardFlowGraph {
+  nodes: DashboardFlowNode[]
+  links: DashboardFlowLink[]
+}
+
+export interface FlowUserFilterOption {
+  value: string
+  label: string
+  valueLabel: string
+  valueRaw: number
+  color: string
+}
+
+export interface FlowNodeFilterOption {
+  kind: FlowNodeKind
+  value: string
+  label: string
+  valueLabel: string
+  valueRaw: number
+  color: string
+}
+
+export interface FlowFilterOptions {
+  users: FlowUserFilterOption[]
+  nodes: FlowNodeFilterOption[]
+}
+
+export interface FlowSummary {
+  quota: number
+  tokens: number
+  requests: number
+}
+
+export interface ProcessedFlowData {
+  summary: FlowSummary
+  flow: DashboardFlowGraph
+  filterOptions: FlowFilterOptions
+}
+
 // ============================================================================
 // Uptime Monitoring Types
 // ============================================================================

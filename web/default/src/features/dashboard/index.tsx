@@ -77,6 +77,12 @@ const LazyUserCharts = lazy(() =>
   }))
 )
 
+const LazyFlowCharts = lazy(() =>
+  import('./components/flow/flow-charts').then((m) => ({
+    default: m.FlowCharts,
+  }))
+)
+
 function LogStatCardsFallback() {
   return (
     <div className='overflow-hidden rounded-lg border'>
@@ -146,6 +152,11 @@ const SECTION_META: Record<
     titleKey: 'User Analytics',
     descriptionKey: 'View user consumption statistics and charts',
   },
+  flow: {
+    titleKey: 'Traffic Flow',
+    descriptionKey:
+      'View quota, token, and request flow across users, groups, models, and channels',
+  },
 }
 
 export function Dashboard() {
@@ -209,17 +220,29 @@ export function Dashboard() {
   )
   const showSectionTabs =
     activeSection !== 'overview' && visibleSections.length > 1
-  const modelActions =
-    activeSection === 'models' ? (
+  const dashboardActions =
+    activeSection === 'models' || activeSection === 'flow' ? (
       <>
-        <ModelsChartPreferences
-          preferences={chartPreferences}
-          onPreferencesChange={handleChartPreferencesChange}
-        />
+        {activeSection === 'models' && (
+          <ModelsChartPreferences
+            preferences={chartPreferences}
+            onPreferencesChange={handleChartPreferencesChange}
+          />
+        )}
         <ModelsFilter
           preferences={chartPreferences}
           onFilterChange={handleFilterChange}
           onReset={handleResetFilters}
+          titleKey={
+            activeSection === 'flow'
+              ? 'Filter Traffic Flow'
+              : 'Filter Dashboard Models'
+          }
+          descriptionKey={
+            activeSection === 'flow'
+              ? 'Set filters to customize traffic flow analytics.'
+              : 'Set filters to customize your dashboard statistics and charts.'
+          }
         />
       </>
     ) : null
@@ -231,7 +254,7 @@ export function Dashboard() {
         {t(meta.descriptionKey)}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
-        <div className='space-y-3 sm:space-y-4'>
+        <div className='flex flex-col gap-3 sm:gap-4'>
           {activeSection !== 'overview' && (
             <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
               {showSectionTabs ? (
@@ -247,9 +270,9 @@ export function Dashboard() {
               ) : (
                 <div />
               )}
-              {modelActions != null && (
+              {dashboardActions != null && (
                 <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
-                  {modelActions}
+                  {dashboardActions}
                 </div>
               )}
             </div>
@@ -304,6 +327,13 @@ export function Dashboard() {
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyUserCharts />
+              </Suspense>
+            </FadeIn>
+          )}
+          {activeSection === 'flow' && (
+            <FadeIn>
+              <Suspense fallback={<ModelChartsFallback />}>
+                <LazyFlowCharts filters={modelFilters} />
               </Suspense>
             </FadeIn>
           )}

@@ -44,6 +44,10 @@ interface DateTimePickerProps {
   value?: Date
   onChange?: (date: Date | undefined) => void
   placeholder?: string
+  dateLabel?: string
+  timeLabel?: string
+  dateButtonId?: string
+  timeInputId?: string
   className?: string
 }
 
@@ -51,10 +55,16 @@ export function DateTimePicker({
   value,
   onChange,
   placeholder,
+  dateLabel,
+  timeLabel,
+  dateButtonId,
+  timeInputId,
   className,
 }: DateTimePickerProps) {
   const { t, i18n } = useTranslation()
   const placeholderText = placeholder ?? t('Select date')
+  const resolvedDateLabel = dateLabel ?? placeholderText
+  const resolvedTimeLabel = timeLabel ?? t('Time')
   const calendarLocale =
     calendarLocales[i18n.language as keyof typeof calendarLocales] ?? enUS
   const [open, setOpen] = React.useState(false)
@@ -114,11 +124,13 @@ export function DateTimePicker({
         <PopoverTrigger
           render={
             <Button
+              id={dateButtonId}
               variant='outline'
               className={cn(
                 'flex-1 justify-between font-normal',
                 !date && 'text-muted-foreground'
               )}
+              aria-label={resolvedDateLabel}
             />
           }
         >
@@ -138,9 +150,11 @@ export function DateTimePicker({
         </PopoverContent>
       </Popover>
       <Input
+        id={timeInputId}
         type='time'
         value={time}
         onChange={handleTimeChange}
+        aria-label={resolvedTimeLabel}
         className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
         disabled={!date}
       />
@@ -151,7 +165,7 @@ export function DateTimePicker({
           size='icon'
           onClick={handleClear}
           className='shrink-0'
-          aria-label='Clear'
+          aria-label={t('Clear')}
         >
           <span aria-hidden='true'>✕</span>
         </Button>

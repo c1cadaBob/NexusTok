@@ -61,10 +61,12 @@ interface ModelsFilterProps {
   preferences: DashboardChartPreferences
   onFilterChange: (filters: DashboardFilters) => void
   onReset: () => void
+  titleKey?: string
+  descriptionKey?: string
 }
 
 /**
- * Section divider component for better visual organization
+ * 分隔筛选区域，帮助用户在紧凑对话框里区分快捷时间、自定义时间和管理员条件。
  */
 const SectionDivider = ({ label }: { label: string }) => (
   <div className='relative'>
@@ -151,10 +153,13 @@ export function ModelsFilter(props: ModelsFilterProps) {
       </DialogTrigger>
       <DialogContent className='flex max-h-[calc(100dvh-2rem)] flex-col max-sm:h-dvh max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:p-4 sm:max-w-lg'>
         <DialogHeader>
-          <DialogTitle>{t('Filter Dashboard Models')}</DialogTitle>
+          <DialogTitle>
+            {t(props.titleKey ?? 'Filter Dashboard Models')}
+          </DialogTitle>
           <DialogDescription>
             {t(
-              'Set filters to customize your dashboard statistics and charts.'
+              props.descriptionKey ??
+                'Set filters to customize your dashboard statistics and charts.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -194,24 +199,28 @@ export function ModelsFilter(props: ModelsFilterProps) {
             {/* Custom time range */}
             <div className='grid gap-3 sm:gap-4'>
               <div className='grid gap-2'>
-                <Label htmlFor='start_timestamp'>{t('Start Time')}</Label>
+                <Label>{t('Start Time')}</Label>
                 <DateTimePicker
                   value={filters.start_timestamp}
                   onChange={(date) =>
                     handleChange('start_timestamp', date || undefined)
                   }
                   placeholder={t('Select start time')}
+                  dateLabel={t('Start Time')}
+                  timeLabel={t('Start Time')}
                 />
               </div>
 
               <div className='grid gap-2'>
-                <Label htmlFor='end_timestamp'>{t('End Time')}</Label>
+                <Label>{t('End Time')}</Label>
                 <DateTimePicker
                   value={filters.end_timestamp}
                   onChange={(date) =>
                     handleChange('end_timestamp', date || undefined)
                   }
                   placeholder={t('Select end time')}
+                  dateLabel={t('End Time')}
+                  timeLabel={t('End Time')}
                 />
               </div>
             </div>
@@ -219,7 +228,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
             <SectionDivider label={t('Chart Settings')} />
 
             <div className='grid gap-2'>
-              <Label htmlFor='time_granularity'>{t('Time Granularity')}</Label>
+              <Label id='time-granularity-label'>{t('Time Granularity')}</Label>
               <Select
                 items={[
                   ...TIME_GRANULARITY_OPTIONS.map((option) => ({
@@ -232,7 +241,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
                   handleChange('time_granularity', value as TimeGranularity)
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger aria-labelledby='time-granularity-label'>
                   <SelectValue placeholder={t('Select time granularity')} />
                 </SelectTrigger>
                 <SelectContent alignItemWithTrigger={false}>
