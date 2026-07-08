@@ -99,16 +99,30 @@ export interface LogOtherData {
     use_channel?: number[]
     local_count_tokens?: boolean
     channel_affinity?: ChannelAffinityInfo
-    // Top-up audit fields (type=1, admin only)
+    // 充值审计字段（type=1，仅管理员可见）
     payment_method?: string
     callback_payment_method?: string
     caller_ip?: string
     server_ip?: string
     version?: string
     node_name?: string
-    // Manage audit fields (type=3, admin only)
+    // 管理审计字段（type=3，仅管理员可见）
     admin_username?: string
     admin_id?: number | string
+    admin_role?: number | string
+    auth_method?: string
+  }
+  op?: {
+    action?: string
+    params?: Record<string, unknown>
+  }
+  audit_info?: {
+    method?: string
+    route?: string
+    path?: string
+    status?: number
+    success?: boolean
+    params?: Record<string, string>
   }
   request_path?: string
   request_conversion?: string[]

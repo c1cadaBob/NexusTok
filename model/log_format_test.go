@@ -17,6 +17,10 @@ func TestFormatUserLogsStripsQuotaSaturationAdminInfo(t *testing.T) {
 				"clamped": common.MaxQuota,
 			},
 		},
+		"audit_info": map[string]interface{}{
+			"route":   "/api/option/",
+			"success": true,
+		},
 	}
 	logs := []*Log{{Other: common.MapToJsonStr(other)}}
 
@@ -28,6 +32,8 @@ func TestFormatUserLogsStripsQuotaSaturationAdminInfo(t *testing.T) {
 	require.Equal(t, 0.004, formatted["model_price"])
 	_, hasAdminInfo := formatted["admin_info"]
 	require.False(t, hasAdminInfo)
+	_, hasAuditInfo := formatted["audit_info"]
+	require.False(t, hasAuditInfo)
 }
 
 func TestBuildTopupAdminInfoMergesExtraAudit(t *testing.T) {

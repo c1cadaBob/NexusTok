@@ -135,6 +135,18 @@ function formatRatio(ratio: number | undefined): string {
   return ratio.toFixed(4)
 }
 
+function formatAuditValue(value: unknown): string {
+  if (value == null) return '-'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 function BillingBreakdown(props: {
   log: UsageLog
   other: LogOtherData
@@ -300,7 +312,10 @@ function BillingBreakdown(props: {
     })
   }
 
-  if (isAdmin && other.admin_info) {
+  if (
+    isAdmin &&
+    typeof other.admin_info?.local_count_tokens === 'boolean'
+  ) {
     rows.push({
       label: t('Billing Source'),
       value: other.admin_info.local_count_tokens
@@ -466,6 +481,28 @@ export function DetailsDialog(props: DetailsDialogProps) {
     if (hasUsername) return String(username)
     return `ID: ${id}`
   })()
+  const auditInfo = isManage && props.isAdmin ? other?.audit_info : undefined
+  const auditOp = isManage && props.isAdmin ? other?.op : undefined
+  const auditRouteParams =
+    auditInfo?.params && typeof auditInfo.params === 'object'
+      ? Object.entries(auditInfo.params).filter(
+          ([, value]) => value != null && String(value).trim() !== ''
+        )
+      : []
+  const authMethodLabel = (() => {
+    if (!adminInfo?.auth_method) return ''
+    if (adminInfo.auth_method === 'access_token') return t('Access Token')
+    if (adminInfo.auth_method === 'session') return t('Session')
+    return adminInfo.auth_method
+  })()
+  const showManageAuditSection =
+    isManage &&
+    props.isAdmin &&
+    (auditInfo ||
+      auditOp?.action ||
+      props.log.ip ||
+      authMethodLabel ||
+      auditRouteParams.length > 0)
 
   const conversionChain =
     other && Array.isArray(other.request_conversion)
@@ -739,7 +776,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
-            {/* Manage operator (type=3, admin only) */}
+            {/* 管理操作人（type=3，仅管理员可见） */}
             {manageOperator && (
               <DetailRow
                 label={
@@ -754,6 +791,81 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 value={manageOperator}
                 mono
               />
+            )}
+
+            {/* 管理审计详情（type=3，仅管理员可见） */}
+            {showManageAuditSection && (
+              <DetailSection
+                icon={<ShieldCheck className='size-3.5' aria-hidden='true' />}
+                label={t('Manage Audit Info')}
+              >
+                {auditOp?.action && (
+                  <DetailRow
+                    label={t('Action')}
+                    value={auditOp.action}
+                    mono
+                  />
+                )}
+                {typeof auditInfo?.success === 'boolean' && (
+                  <DetailRow
+                    label={t('Result')}
+                    value={
+                      <StatusBadge
+                        label={auditInfo.success ? t('Success') : t('Failed')}
+                        variant={auditInfo.success ? 'success' : 'danger'}
+                        copyable={false}
+                      />
+                    }
+                  />
+                )}
+                {auditInfo?.method && (
+                  <DetailRow
+                    label={t('HTTP Method')}
+                    value={auditInfo.method}
+                    mono
+                  />
+                )}
+                {auditInfo?.status != null && (
+                  <DetailRow
+                    label={t('Status Code')}
+                    value={String(auditInfo.status)}
+                    mono
+                  />
+                )}
+                {auditInfo?.route && (
+                  <DetailRow label={t('Route')} value={auditInfo.route} mono />
+                )}
+                {auditInfo?.path && (
+                  <DetailRow label={t('Path')} value={auditInfo.path} mono />
+                )}
+                {props.log.ip && (
+                  <DetailRow label={t('Client IP')} value={props.log.ip} mono />
+                )}
+                {authMethodLabel && (
+                  <DetailRow
+                    label={t('Auth Method')}
+                    value={authMethodLabel}
+                    mono
+                  />
+                )}
+                {auditRouteParams.length > 0 && (
+                  <DetailRow
+                    label={t('Path Parameters')}
+                    value={
+                      <span className='flex flex-wrap gap-1'>
+                        {auditRouteParams.map(([key, value]) => (
+                          <StatusBadge
+                            key={key}
+                            label={`${key}: ${formatAuditValue(value)}`}
+                            variant='neutral'
+                            copyable={false}
+                          />
+                        ))}
+                      </span>
+                    }
+                  />
+                )}
+              </DetailSection>
             )}
 
             {/* Audio/WebSocket token breakdown */}
@@ -874,7 +986,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
             {props.isAdmin &&
               !isConsume &&
               props.log.type !== 6 &&
-              other?.admin_info && (
+              typeof other?.admin_info?.local_count_tokens === 'boolean' && (
                 <DetailRow
                   label={t('Billing Source')}
                   value={

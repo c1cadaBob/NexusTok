@@ -16,18 +16,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"    // 公共工具包
-	"github.com/c1cada/NexusTok/constant"  // 常量定义
-	"github.com/c1cada/NexusTok/i18n"      // 国际化
-	"github.com/c1cada/NexusTok/logger"    // 日志
-	"github.com/c1cada/NexusTok/model"     // 数据模型
-	"github.com/c1cada/NexusTok/service"   // 服务层
+	"github.com/c1cada/NexusTok/common"                // 公共工具包
+	"github.com/c1cada/NexusTok/constant"              // 常量定义
+	"github.com/c1cada/NexusTok/i18n"                  // 国际化
+	"github.com/c1cada/NexusTok/logger"                // 日志
+	"github.com/c1cada/NexusTok/model"                 // 数据模型
+	"github.com/c1cada/NexusTok/service"               // 服务层
 	"github.com/c1cada/NexusTok/setting/ratio_setting" // 比率设置
-	"github.com/c1cada/NexusTok/types"     // 类型定义
+	"github.com/c1cada/NexusTok/types"                 // 类型定义
 
 	"github.com/gin-contrib/sessions" // 会话管理
 	"github.com/gin-gonic/gin"        // Gin 框架
-	"gorm.io/gorm"                     // GORM ORM
+	"gorm.io/gorm"                    // GORM ORM
 )
 
 // legacyUserHeaderName 旧版用户标识头名称
@@ -206,6 +206,13 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("group", session.Get("group"))
 	c.Set("user_group", session.Get("group"))
 	c.Set("use_access_token", useAccessToken)
+
+	if minRole >= common.RoleAdminUser {
+		auditWriter, auditOwner := beginAdminAudit(c)
+		c.Next()
+		finishAdminAudit(c, auditWriter, auditOwner)
+		return
+	}
 
 	c.Next()
 }

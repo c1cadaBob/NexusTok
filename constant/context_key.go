@@ -169,6 +169,13 @@ const (
 	// ContextKeyAdminRejectReason 管理员拒绝原因（仅管理员可见，不返回给用户）
 	// 用于调试，可持久化到消费/错误日志中
 	ContextKeyAdminRejectReason ContextKey = "admin_reject_reason"
+	// ContextKeyAuditLogged 标记当前请求已经由 handler 手动写入管理审计日志。
+	// 全局管理审计兜底在请求结束后会检查该标记，避免同一次操作被重复记录。
+	ContextKeyAuditLogged ContextKey = "audit_logged"
+	// ContextKeyAuditActive 标记当前请求已经进入管理审计包装。
+	// AdminAuth 路由组内再叠加 RootAuth 时会再次进入 authHelper，该标记用于避免
+	// 重复包装 ResponseWriter 并产生多条兜底审计日志。
+	ContextKeyAuditActive ContextKey = "audit_active"
 	// ContextKeyLanguage 用户语言偏好（用于国际化）
 	ContextKeyLanguage ContextKey = "language"
 	// ContextKeyIsStream 是否为流式请求

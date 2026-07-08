@@ -84,8 +84,10 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
-			// Remove admin-only debug fields.
+			// 移除仅管理员可见的调试和审计字段，避免普通用户日志接口泄露内部操作者、
+			// 路由模板、路径参数、节点状态等排障信息。
 			delete(otherMap, "admin_info")
+			delete(otherMap, "audit_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
 		}
@@ -160,6 +162,69 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 	}
 	if err := LOG_DB.Create(log).Error; err != nil {
 		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// OperationAuditLogParams 描述一条管理操作审计日志。
+//
+// 设计约束：
+//   - UserId 必须是实际操作者，而不是被操作资源的用户 ID；目标资源应放入 Params。
+//   - Params 只保存语言无关、非敏感的结构化参数，供前端本地化和后续排障使用。
+//   - AdminInfo 写入 Other.admin_info，仅管理员日志视图可见。
+//   - AuditInfo 写入 Other.audit_info，仅管理员日志视图可见，用于保存兜底中间件捕获的路由、
+//     状态码、业务 success 结果和路径参数；不要放请求体或密钥类字段。
+type OperationAuditLogParams struct {
+	UserId    int
+	Content   string
+	Ip        string
+	Action    string
+	Params    map[string]interface{}
+	AdminInfo map[string]interface{}
+	AuditInfo map[string]interface{}
+}
+
+// buildOperationAuditOpField 构建语言无关的操作描述。
+// 前端可以依据 action 和 params 渲染本地化文案；Content 只作为导出、旧前端或解析失败时的兜底文本。
+func buildOperationAuditOpField(action string, params map[string]interface{}) map[string]interface{} {
+	op := map[string]interface{}{
+		"action": action,
+	}
+	if len(params) > 0 {
+		op["params"] = params
+	}
+	return op
+}
+
+// RecordOperationAuditLog 记录管理操作审计日志。
+//
+// 该函数复用 logs 表和 LogTypeManage，不新增数据库表或 JSON 类型列，确保 SQLite、
+// MySQL 和 PostgreSQL 均按现有文本 JSON 方式兼容。调用方必须保证传入的 Params、
+// AdminInfo 和 AuditInfo 已经去除敏感字段；本函数不会读取请求体，也不会做深度脱敏。
+func RecordOperationAuditLog(params OperationAuditLogParams) {
+	if params.Action == "" {
+		params.Action = "generic"
+	}
+	username, _ := GetUsernameById(params.UserId, false)
+	other := map[string]interface{}{
+		"op": buildOperationAuditOpField(params.Action, params.Params),
+	}
+	if len(params.AdminInfo) > 0 {
+		other["admin_info"] = params.AdminInfo
+	}
+	if len(params.AuditInfo) > 0 {
+		other["audit_info"] = params.AuditInfo
+	}
+	log := &Log{
+		UserId:    params.UserId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeManage,
+		Content:   params.Content,
+		Ip:        params.Ip,
+		Other:     common.MapToJsonStr(other),
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record operation audit log: " + err.Error())
 	}
 }
 
