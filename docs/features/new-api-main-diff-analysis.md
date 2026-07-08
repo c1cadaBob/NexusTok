@@ -1329,6 +1329,49 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 4. `git diff --check` 确认无空白错误。
 5. 使用 MCP 打开 `http://192.168.0.202:3003/usage-logs/common` 与 `http://192.168.0.202:3003/dashboard/flow`，确认页面更新生效、管理员读接口返回 200、控制台无新增 error/warn；只验证低风险读接口，不触发 `DELETE /api/log/`。
 
+## 本轮实施评审：基础用量查询聚合与日志统计空值保护
+
+### 需求分析
+
+子 Agent 复核和本地代码对照都确认：`new-api-main` 已经把基础 Dashboard 用量查询聚合到 `user/model/hour` 维度，而 NexusTok 当前 `GetQuotaDataByUsername` 与 `GetQuotaDataByUserId` 仍直接返回 `quota_data` 原始行。由于 NexusTok 为 Flow/Sankey 已扩展同一张表的 `node_name`、`token_id`、`use_group`、`channel_id` 等维度，基础 `/api/data/self` 和 `/api/data?username=...` 如果继续直接 `Find`，会把 Dashboard 不需要的细维度行带回前端，也可能让同一用户同一模型同一小时因为不同 token/channel/group 拆成多行，造成基础图表重复统计或泄露路由拓扑细节。
+
+同时，`new-api-main` 在日志统计里使用 `COALESCE(sum(...), 0)`，而 NexusTok 的 `SumUsedQuota` 仍使用裸 `sum(...)`，`SumUsedToken` 还使用 PostgreSQL 不支持的 `ifnull(...)`。在空结果、筛选条件无匹配或 PostgreSQL 日志库场景下，统计接口应稳定返回 0，而不是依赖数据库方言或扫描空值的偶然行为。
+
+本轮目标：
+
+1. 将 `GetQuotaDataByUsername` 和 `GetQuotaDataByUserId` 改为聚合查询，只返回 `user_id`、`username`、`model_name`、`created_at` 与 count/quota/token 汇总。
+2. 保持 `/api/data/flow` 和 `/api/data/flow/self` 的 Flow 专用维度不变；基础 Dashboard 查询与 Flow 查询分工明确。
+3. 将 `SumUsedQuota` 的 quota、rpm/tpm 查询改为 `COALESCE`，确保无匹配日志时返回 0。
+4. 将 `SumUsedToken` 的 `ifnull` 改为跨 SQLite/MySQL/PostgreSQL 通用的 `COALESCE`。
+5. 不修改日志写入、quota_data 写入、Flow 聚合、前端页面结构和权限中间件。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 用量数据模型 | `model/usedata.go`、`model/usedata_flow_test.go` | 基础用户/用户名用量查询改为聚合，补测试确认不会返回 token/channel/node/use_group 细维度。 |
+| 日志统计模型 | `model/log.go`、`model/log_cleanup_test.go` 或独立日志统计测试 | 日志统计 sum 使用 `COALESCE`，补空结果和跨字段统计测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录该安全/稳定性差异、方案、风险和验收标准。 |
+
+### 风险评估
+
+1. 基础用量查询从原始行改为聚合行后，返回行数可能减少，这是预期行为；Dashboard 图表本来只需要模型/时间聚合，不应依赖 token/channel/group 细节。
+2. 管理员带 `username` 查询会保留 `user_id` 和 `username`，普通 `/api/data/self` 也会保留当前用户自己的 `user_id` 和 `username`，但不会返回 node/token/channel/use_group 明细。
+3. Flow/Sankey 仍继续使用 `GetFlowQuotaData`，Root/Admin/User 维度脱敏规则不变，本轮不会削弱已经落地的 Flow 观测能力。
+4. `COALESCE` 是 SQLite、MySQL 和 PostgreSQL 都支持的标准函数，比 `ifnull` 更符合本项目三库兼容要求。
+5. 本轮不处理日志搜索通配语义和 ClickHouse 日志库兼容；这些属于更大范围的日志后端设计，避免和基础统计稳定性混在一起。
+
+### 方案评审
+
+采用最小模型层修复：参考 `new-api-main` 的聚合字段和 `GROUP BY` 维度，在 NexusTok 保留现有函数名与 controller 契约，只改变基础用量查询的 SQL 投影；同时把日志统计的空值保护集中到 `model/log.go`。这样前端 API 路径、响应结构、权限边界和数据库迁移都不变，风险集中在聚合结果语义，且可用模型层单元测试直接覆盖。
+
+验收方式：
+
+1. `go test ./model ./controller` 覆盖基础用量聚合、Flow 维度不回退、日志统计空结果和 controller 构建。
+2. `go test ./service/authz ./middleware ./router` 确认上轮 Authz 路由权限表不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`、`/dashboard/models` 与 `/dashboard/flow`，确认页面更新生效；直调 `/api/data/self`、`/api/data/`、`/api/data/flow` 和 `/api/log/stat` 低风险读接口，确认均返回 200/业务 success，不触发任何写操作。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1376,3 +1419,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 用户管理 Authz 路由权限表灰度 enforcement | `service/authz/*`、`router/user-router.go`、`router/api-router.go`、`controller/user_authz.go`、`router/user_router_test.go` | 为 `/api/user` 管理员子路由接入 user 权限表：用户/充值/绑定/2FA 查询走 read，绑定清理、Passkey/2FA 重置和普通启停走 operate，普通用户资料编辑走 write，创建、硬删除、管理员完成充值走 sensitive_write；`ManageUser` 复合接口对删除、升降级和额度调整额外执行 `user.sensitive_write` 二次校验。 |
 | 2026-07-08 | 兑换码 Authz 独立资源与路由权限表 | `service/authz/*`、`router/redemption-router.go`、`router/api-router.go`、`web/default/src/lib/admin-permissions.ts`、`web/default/src/routes/_authenticated/redemption-codes/index.tsx` | 新增 `redemption` 权限资源并让 `/api/redemption` 接入独立路由权限表：列表/搜索/详情走 read，创建和编辑走 write，删除单个兑换码与批量清理无效兑换码走 sensitive_write；默认前端侧边栏和页面守卫改为读取 `redemption.read`，不再复用 `user.read`。 |
 | 2026-07-08 | 日志与用量数据 Authz 独立资源 | `service/authz/*`、`router/log-data-router.go`、`router/api-router.go`、`web/default/src/features/usage-logs/*`、`web/default/src/features/dashboard/*` | 新增 `usage_log` 与 `usage_data` 权限资源，管理员 `/api/log` 和 `/api/data` 读接口进入独立权限表，历史日志同步删除归入 `usage_log.sensitive_write`；普通用户 self/token 路径保持原认证边界，默认前端 Usage Logs 与 Dashboard 的跨用户视图改为读取对应 read 权限。 |
+| 2026-07-08 | 基础用量查询聚合与统计空值保护 | `model/usedata.go`、`model/log.go`、`model/usedata_flow_test.go`、`model/log_stat_test.go` | 对齐 new-api 的 Dashboard 基础用量聚合语义，`/api/data/self` 和按 username 查询只返回 user/model/hour 汇总，不再带出 token/channel/node/group 细维度值；日志统计统一使用跨三库的 `COALESCE`，空结果稳定返回 0。 |

@@ -610,10 +610,10 @@ type Stat struct {
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
+	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
+	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
 
 	if username != "" {
 		tx = tx.Where("username = ?", username)
@@ -666,7 +666,7 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 }
 
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {
-	tx := LOG_DB.Table("logs").Select("ifnull(sum(prompt_tokens),0) + ifnull(sum(completion_tokens),0)")
+	tx := LOG_DB.Table("logs").Select("COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0)")
 	if username != "" {
 		tx = tx.Where("username = ?", username)
 	}

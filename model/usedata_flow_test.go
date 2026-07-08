@@ -128,6 +128,76 @@ func TestGetFlowQuotaDataUsesRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, 175, selfRows[0].Quota)
 }
 
+func TestQuotaDataDashboardQueriesAggregateFlowDimensions(t *testing.T) {
+	truncateTables(t)
+
+	seedFlowQuotaData(t, QuotaData{
+		UserID:    1,
+		Username:  "alice",
+		NodeName:  "node-a",
+		TokenID:   11,
+		UseGroup:  "vip",
+		ChannelID: 1,
+		ModelName: "gpt-a",
+		CreatedAt: 3600,
+		Count:     2,
+		Quota:     100,
+		TokenUsed: 40,
+	})
+	seedFlowQuotaData(t, QuotaData{
+		UserID:    1,
+		Username:  "alice",
+		NodeName:  "node-b",
+		TokenID:   22,
+		UseGroup:  "default",
+		ChannelID: 2,
+		ModelName: "gpt-a",
+		CreatedAt: 3600,
+		Count:     3,
+		Quota:     75,
+		TokenUsed: 30,
+	})
+	seedFlowQuotaData(t, QuotaData{
+		UserID:    1,
+		Username:  "alice",
+		NodeName:  "node-a",
+		TokenID:   11,
+		UseGroup:  "vip",
+		ChannelID: 1,
+		ModelName: "gpt-b",
+		CreatedAt: 3600,
+		Count:     1,
+		Quota:     50,
+		TokenUsed: 20,
+	})
+
+	userRows, err := GetQuotaDataByUserId(1, 3000, 4000)
+	require.NoError(t, err)
+	require.Len(t, userRows, 2)
+
+	rowsByModel := make(map[string]*QuotaData, len(userRows))
+	for _, row := range userRows {
+		rowsByModel[row.ModelName] = row
+		require.Empty(t, row.NodeName)
+		require.Zero(t, row.TokenID)
+		require.Empty(t, row.UseGroup)
+		require.Zero(t, row.ChannelID)
+		require.Equal(t, 1, row.UserID)
+		require.Equal(t, "alice", row.Username)
+		require.Equal(t, int64(3600), row.CreatedAt)
+	}
+
+	require.Equal(t, 5, rowsByModel["gpt-a"].Count)
+	require.Equal(t, 175, rowsByModel["gpt-a"].Quota)
+	require.Equal(t, 70, rowsByModel["gpt-a"].TokenUsed)
+	require.Equal(t, 1, rowsByModel["gpt-b"].Count)
+	require.Equal(t, 50, rowsByModel["gpt-b"].Quota)
+
+	usernameRows, err := GetQuotaDataByUsername("alice", 3000, 4000)
+	require.NoError(t, err)
+	require.Len(t, usernameRows, 2)
+}
+
 func TestLogQuotaDataSplitsRowsByFlowDimensions(t *testing.T) {
 	truncateTables(t)
 	CacheQuotaDataLock.Lock()

@@ -183,15 +183,26 @@ func increaseQuotaData(quotaData *QuotaData) {
 
 func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
-	// 从quota_data表中查询数据
-	err = DB.Table("quota_data").Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).Find(&quotaDatas).Error
+	// 基础 Dashboard 只需要用户、模型和小时维度。quota_data 同时承载 Flow 的
+	// node/token/group/channel 细维度，按这里聚合后可避免普通用量图表暴露路由拓扑
+	// 或因为同一小时多个 token/channel 被拆成多行而重复展示。
+	err = DB.Table("quota_data").
+		Select("user_id, username, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).
+		Group("user_id, username, model_name, created_at").
+		Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
 func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
-	// 从quota_data表中查询数据
-	err = DB.Table("quota_data").Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).Find(&quotaDatas).Error
+	// 与按用户名查询保持同一聚合语义。Flow 视图需要细维度时会走 GetFlowQuotaData，
+	// 这里不返回 node/token/channel/use_group，避免用户自助 Dashboard 暴露内部路由。
+	err = DB.Table("quota_data").
+		Select("user_id, username, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).
+		Group("user_id, username, model_name, created_at").
+		Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
