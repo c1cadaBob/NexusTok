@@ -26,6 +26,8 @@ import type { CustomOAuthFormValues } from '../types'
 
 type DiscoveryButtonProps = {
   form: UseFormReturn<CustomOAuthFormValues>
+  canDiscover: boolean
+  disabledReason: string
 }
 
 export function DiscoveryButton(props: DiscoveryButtonProps) {
@@ -33,6 +35,11 @@ export function DiscoveryButton(props: DiscoveryButtonProps) {
   const discover = useDiscoverEndpoints()
 
   const handleDiscover = async () => {
+    if (!props.canDiscover) {
+      toast.error(props.disabledReason)
+      return
+    }
+
     const wellKnown = props.form.getValues('well_known')
     if (!wellKnown) {
       toast.error(t('Please enter a Well-Known URL first'))
@@ -86,7 +93,8 @@ export function DiscoveryButton(props: DiscoveryButtonProps) {
       variant='outline'
       size='sm'
       onClick={handleDiscover}
-      disabled={discover.isPending}
+      disabled={discover.isPending || !props.canDiscover}
+      title={props.canDiscover ? undefined : props.disabledReason}
     >
       <Search className='mr-1.5 h-3.5 w-3.5' />
       {discover.isPending ? t('Discovering...') : t('Auto-discover')}

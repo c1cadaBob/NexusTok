@@ -49,6 +49,7 @@ type ConflictConfirmDialogProps = {
   conflicts: ConflictItem[]
   onConfirm: () => void
   isLoading?: boolean
+  disabled?: boolean
 }
 
 export function ConflictConfirmDialog({
@@ -57,6 +58,7 @@ export function ConflictConfirmDialog({
   conflicts,
   onConfirm,
   isLoading = false,
+  disabled = false,
 }: ConflictConfirmDialogProps) {
   const { t } = useTranslation()
   return (
@@ -110,7 +112,7 @@ export function ConflictConfirmDialog({
           <AlertDialogCancel disabled={isLoading}>
             {t('Cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={isLoading}>
+          <AlertDialogAction onClick={onConfirm} disabled={isLoading || disabled}>
             {isLoading ? t('Applying...') : t('Confirm Changes')}
           </AlertDialogAction>
         </AlertDialogFooter>

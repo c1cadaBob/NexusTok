@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { resetModelRatios } from '../api'
 import { SettingsSection } from '../components/settings-section'
+import { useSystemSettingPermissions } from '../hooks/use-system-setting-permissions'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { GroupRatioForm } from './group-ratio-form'
 import { ModelRatioForm } from './model-ratio-form'
@@ -218,6 +219,8 @@ export function RatioSettingsCard({
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const permissions = useSystemSettingPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -363,6 +366,11 @@ export function RatioSettingsCard({
 
   const saveModelRatios = useCallback(
     async (values: ModelFormValues) => {
+      if (!permissions.canSensitiveWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
+
       const normalized = {
         ModelPrice: normalizeJsonString(values.ModelPrice),
         ModelRatio: normalizeJsonString(values.ModelRatio),
@@ -393,11 +401,16 @@ export function RatioSettingsCard({
         await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
       }
     },
-    [updateOption]
+    [noPermissionMessage, permissions.canSensitiveWrite, updateOption]
   )
 
   const saveGroupRatios = useCallback(
     async (values: GroupFormValues) => {
+      if (!permissions.canSensitiveWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
+
       const normalized = {
         GroupRatio: normalizeJsonString(values.GroupRatio),
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
@@ -410,7 +423,7 @@ export function RatioSettingsCard({
         ),
       }
 
-      // Map form field names to API keys (most are 1:1, except GroupSpecialUsableGroup)
+      // 将表单字段名映射到系统 option key；多数保持 1:1，特殊字段单独转换。
       const apiKeyMap: Record<string, string> = {
         GroupSpecialUsableGroup:
           'group_ratio_setting.group_special_usable_group',
@@ -427,17 +440,27 @@ export function RatioSettingsCard({
         await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
       }
     },
-    [updateOption]
+    [noPermissionMessage, permissions.canSensitiveWrite, updateOption]
   )
 
   const handleResetRatios = useCallback(() => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     setConfirmOpen(true)
-  }, [])
+  }, [noPermissionMessage, permissions.canSensitiveWrite])
 
   const { mutate: resetMutate } = resetMutation
   const handleConfirmReset = useCallback(() => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     resetMutate()
-  }, [resetMutate])
+  }, [noPermissionMessage, permissions.canSensitiveWrite, resetMutate])
 
   const tabLabels: Record<RatioTabId, string> = {
     models: 'Model prices',
@@ -463,6 +486,9 @@ export function RatioSettingsCard({
           onReset={handleResetRatios}
           isSaving={updateOption.isPending}
           isResetting={resetMutation.isPending}
+          canSave={permissions.canSensitiveWrite}
+          canReset={permissions.canSensitiveWrite}
+          disabledReason={noPermissionMessage}
         />
       )
     }
@@ -472,6 +498,8 @@ export function RatioSettingsCard({
           form={groupForm}
           onSave={saveGroupRatios}
           isSaving={updateOption.isPending}
+          canSave={permissions.canSensitiveWrite}
+          disabledReason={noPermissionMessage}
         />
       )
     }
@@ -492,6 +520,9 @@ export function RatioSettingsCard({
           'billing_setting.billing_mode': modelDefaults.BillingMode,
           'billing_setting.billing_expr': modelDefaults.BillingExpr,
         }}
+        canFetch={permissions.canOperate}
+        canApply={permissions.canSensitiveWrite}
+        disabledReason={noPermissionMessage}
       />
     )
   }
@@ -529,6 +560,7 @@ export function RatioSettingsCard({
         isLoading={resetMutation.isPending}
         handleConfirm={handleConfirmReset}
         confirmText={t('Reset')}
+        disabled={!permissions.canSensitiveWrite}
       />
     </SettingsSection>
   )

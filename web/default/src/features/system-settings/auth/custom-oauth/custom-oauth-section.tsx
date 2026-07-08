@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SettingsSection } from '../../components/settings-section'
+import { useSystemSettingPermissions } from '../../hooks/use-system-setting-permissions'
 import { ProviderFormDialog } from './components/provider-form-dialog'
 import { ProviderTable } from './components/provider-table'
 import { useCustomOAuthProviders } from './hooks/use-custom-oauth-providers'
@@ -26,6 +27,8 @@ import type { CustomOAuthProvider } from './types'
 
 export function CustomOAuthSection() {
   const { t } = useTranslation()
+  const permissions = useSystemSettingPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const { data: providers = [], isLoading } = useCustomOAuthProviders()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingProvider, setEditingProvider] =
@@ -74,12 +77,17 @@ export function CustomOAuthSection() {
         providers={providers}
         onEdit={handleEdit}
         onCreate={handleCreate}
+        canWrite={permissions.canSensitiveWrite}
+        disabledReason={noPermissionMessage}
       />
 
       <ProviderFormDialog
         open={dialogOpen}
         onOpenChange={handleDialogChange}
         provider={editingProvider}
+        canSave={permissions.canSensitiveWrite}
+        canDiscover={permissions.canOperate}
+        disabledReason={noPermissionMessage}
       />
     </SettingsSection>
   )

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useState } from 'react'
 import { Pencil, Trash2, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Table,
@@ -37,6 +38,8 @@ type ProviderTableProps = {
   providers: CustomOAuthProvider[]
   onEdit: (provider: CustomOAuthProvider) => void
   onCreate: () => void
+  canWrite: boolean
+  disabledReason: string
 }
 
 export function ProviderTable(props: ProviderTableProps) {
@@ -48,6 +51,11 @@ export function ProviderTable(props: ProviderTableProps) {
 
   const handleDelete = async () => {
     if (!deleteTarget) return
+    if (!props.canWrite) {
+      toast.error(props.disabledReason)
+      return
+    }
+
     await deleteProvider.mutateAsync(deleteTarget.id)
     setDeleteTarget(null)
   }
@@ -58,7 +66,12 @@ export function ProviderTable(props: ProviderTableProps) {
         <p className='text-muted-foreground text-sm'>
           {t('Manage custom OAuth providers for user authentication')}
         </p>
-        <Button size='sm' onClick={props.onCreate}>
+        <Button
+          size='sm'
+          onClick={props.onCreate}
+          disabled={!props.canWrite}
+          title={props.canWrite ? undefined : props.disabledReason}
+        >
           <Plus className='mr-1.5 h-4 w-4' />
           {t('Add Provider')}
         </Button>
@@ -114,6 +127,8 @@ export function ProviderTable(props: ProviderTableProps) {
                       variant='ghost'
                       size='sm'
                       onClick={() => props.onEdit(provider)}
+                      disabled={!props.canWrite}
+                      title={props.canWrite ? undefined : props.disabledReason}
                     >
                       <Pencil className='h-4 w-4' />
                     </Button>
@@ -121,6 +136,8 @@ export function ProviderTable(props: ProviderTableProps) {
                       variant='ghost'
                       size='sm'
                       onClick={() => setDeleteTarget(provider)}
+                      disabled={!props.canWrite}
+                      title={props.canWrite ? undefined : props.disabledReason}
                     >
                       <Trash2 className='text-destructive h-4 w-4' />
                     </Button>
@@ -144,6 +161,7 @@ export function ProviderTable(props: ProviderTableProps) {
         destructive
         handleConfirm={handleDelete}
         isLoading={deleteProvider.isPending}
+        disabled={!props.canWrite}
       />
     </>
   )

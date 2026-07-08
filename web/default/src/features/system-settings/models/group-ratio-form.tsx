@@ -62,12 +62,16 @@ type GroupRatioFormProps = {
   form: UseFormReturn<GroupFormValues>
   onSave: (values: GroupFormValues) => Promise<void>
   isSaving: boolean
+  canSave: boolean
+  disabledReason: string
 }
 
 export const GroupRatioForm = memo(function GroupRatioForm({
   form,
   onSave,
   isSaving,
+  canSave,
+  disabledReason,
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
@@ -157,7 +161,11 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               )}
             />
 
-            <Button onClick={form.handleSubmit(onSave)} disabled={isSaving}>
+            <Button
+              onClick={form.handleSubmit(onSave)}
+              disabled={isSaving || !canSave}
+              title={canSave ? undefined : disabledReason}
+            >
               {isSaving ? t('Saving...') : t('Save group ratios')}
             </Button>
           </div>
@@ -305,7 +313,11 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               )}
             />
 
-            <Button type='submit' disabled={isSaving}>
+            <Button
+              type='submit'
+              disabled={isSaving || !canSave}
+              title={canSave ? undefined : disabledReason}
+            >
               {isSaving ? t('Saving...') : t('Save group ratios')}
             </Button>
           </form>

@@ -44,6 +44,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { SettingsSection } from '../../components/settings-section'
+import { useSystemSettingPermissions } from '../../hooks/use-system-setting-permissions'
 import { useUpdateOption } from '../../hooks/use-update-option'
 import { getCacheStats, clearAllCache, clearRuleCache } from './api'
 import { RULE_TEMPLATES, cloneTemplate, makeUniqueName } from './constants'
@@ -74,6 +75,8 @@ interface Props {
 export function ChannelAffinitySection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const permissions = useSystemSettingPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const [enabled, setEnabled] = useState(
     props.defaultValues['channel_affinity_setting.enabled']
@@ -178,6 +181,11 @@ export function ChannelAffinitySection(props: Props) {
   }
 
   const handleSave = async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     let rulesJson: string
     if (editMode === 'json') {
       try {
@@ -283,6 +291,11 @@ export function ChannelAffinitySection(props: Props) {
   }
 
   const handleClearAll = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     const res = await clearAllCache()
     if (res.success) {
       toast.success(t('Cleared'))
@@ -293,6 +306,11 @@ export function ChannelAffinitySection(props: Props) {
 
   const handleClearRule = async () => {
     if (!clearRuleName) return
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     const res = await clearRuleCache(clearRuleName)
     if (res.success) {
       toast.success(t('Cleared'))
@@ -347,7 +365,7 @@ export function ChannelAffinitySection(props: Props) {
           </AlertDescription>
         </Alert>
 
-        {/* Basic Settings */}
+        {/* 基础设置 */}
         <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
           <div className='flex items-center gap-2'>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -388,7 +406,7 @@ export function ChannelAffinitySection(props: Props) {
 
         <Separator />
 
-        {/* Toolbar */}
+        {/* 工具栏 */}
         <div className='flex flex-wrap items-center gap-2'>
           <Button
             variant={editMode === 'visual' ? 'default' : 'outline'}
@@ -445,7 +463,14 @@ export function ChannelAffinitySection(props: Props) {
             <FileText className='mr-1 h-3 w-3' />
             {t('Fill Templates')}
           </Button>
-          <Button size='sm' onClick={handleSave} disabled={saving}>
+          <Button
+            size='sm'
+            onClick={handleSave}
+            disabled={saving || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
+          >
             {saving ? t('Saving...') : t('Save')}
           </Button>
           <Button
@@ -463,6 +488,8 @@ export function ChannelAffinitySection(props: Props) {
             variant='destructive'
             size='sm'
             onClick={() => setClearAllDialogOpen(true)}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
           >
             {t('Clear All Cache')}
           </Button>
@@ -474,7 +501,7 @@ export function ChannelAffinitySection(props: Props) {
           )}
         </div>
 
-        {/* Rules Table or JSON Editor */}
+        {/* 规则表格或 JSON 编辑器 */}
         {editMode === 'visual' ? (
           <div className='overflow-x-auto rounded-md border'>
             <Table>
@@ -625,7 +652,12 @@ export function ChannelAffinitySection(props: Props) {
                               size='icon'
                               className='h-7 w-7'
                               onClick={() => setClearRuleName(rule.name)}
-                              title={t('Clear cache for this rule')}
+                              title={
+                                permissions.canOperate
+                                  ? t('Clear cache for this rule')
+                                  : noPermissionMessage
+                              }
+                              disabled={!permissions.canOperate}
                             >
                               <X className='h-3 w-3' />
                             </Button>
@@ -687,6 +719,7 @@ export function ChannelAffinitySection(props: Props) {
         )}
         handleConfirm={handleClearAll}
         destructive
+        disabled={!permissions.canOperate}
       />
 
       {clearRuleName !== null && (
@@ -697,6 +730,7 @@ export function ChannelAffinitySection(props: Props) {
           desc={`${t('Rule')}: ${clearRuleName}`}
           handleConfirm={handleClearRule}
           destructive
+          disabled={!permissions.canOperate}
         />
       )}
 

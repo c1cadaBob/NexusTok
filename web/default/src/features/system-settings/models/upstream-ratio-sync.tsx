@@ -56,7 +56,7 @@ import {
 import { UpstreamRatioSyncTable } from './upstream-ratio-sync-table'
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 type UpstreamRatioSyncProps = {
@@ -72,15 +72,17 @@ type UpstreamRatioSyncProps = {
     'billing_setting.billing_mode': string
     'billing_setting.billing_expr': string
   }
+  canFetch: boolean
+  canApply: boolean
+  disabledReason: string
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-// The two synthesized presets always carry stable negative IDs assigned by
-// `controller/ratio_sync.go`; matching by ID alone is sufficient and avoids
-// fragile name/base_url comparisons.
+// `controller/ratio_sync.go` 生成的两个虚拟预设始终使用稳定的负数 ID；
+// 这里只按 ID 选择默认端点，避免名称或 base_url 调整导致同步来源误判。
 function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
   if (channel.id === MODELS_DEV_PRESET_ID) return MODELS_DEV_PRESET_ENDPOINT
   if (channel.id === OFFICIAL_CHANNEL_ID) return OFFICIAL_CHANNEL_ENDPOINT
@@ -135,10 +137,15 @@ function deleteResolutionField(
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// 组件
 // ---------------------------------------------------------------------------
 
-export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
+export function UpstreamRatioSync({
+  modelRatios,
+  canFetch,
+  canApply,
+  disabledReason,
+}: UpstreamRatioSyncProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -159,9 +166,8 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
     enabled: channelDialogOpen,
   })
 
-  // Memoize the channels list so the effect below only re-runs when the query
-  // data actually changes, instead of on every render (the `|| []` fallback
-  // would otherwise produce a new array reference each render).
+  // 固定渠道列表引用，确保下面的 effect 只在查询数据真实变化时执行；
+  // 如果直接使用 `|| []`，每次渲染都会生成新数组并触发不必要的重算。
   const channels = useMemo(() => channelsData?.data ?? [], [channelsData?.data])
 
   useEffect(() => {
@@ -244,10 +250,20 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
   })
 
   const handleOpenChannelDialog = () => {
+    if (!canFetch) {
+      toast.error(disabledReason)
+      return
+    }
+
     setChannelDialogOpen(true)
   }
 
   const handleConfirmChannelSelection = (selectedIds: number[]) => {
+    if (!canFetch) {
+      toast.error(disabledReason)
+      return
+    }
+
     const selectedChannels = channels.filter((ch) =>
       selectedIds.includes(ch.id)
     )
@@ -276,7 +292,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
     ) => {
       const modelDiffs = differences[model]
 
-      // Prefer billing_expr over individual ratio fields when available
+      // 同一来源同时提供阶梯计费表达式时，优先选择 billing_expr 而不是单项倍率字段。
       const preferredType = sourceName
         ? getPreferredSyncField(modelDiffs || {}, ratioType, sourceName)
         : ratioType
@@ -292,7 +308,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       setResolutions((prev) => {
         const newModelRes = { ...(prev[model] || {}) }
 
-        // Clear conflicting categories
+        // 清理互斥计费类别，避免同一个模型同时保留固定价格和倍率价格。
         Object.keys(newModelRes).forEach((rt) => {
           if (
             category !== 'tiered' &&
@@ -305,7 +321,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
         newModelRes[finalType] = finalValue
 
-        // When selecting a tiered field, auto-populate paired fields from the same source
+        // 选择阶梯计费字段时，同步补齐同一来源的 billing_mode/billing_expr 配对值。
         if (category === 'tiered' && sourceName && modelDiffs) {
           const modeVal = modelDiffs.billing_mode?.upstreams?.[sourceName]
           const exprVal = modelDiffs.billing_expr?.upstreams?.[sourceName]
@@ -375,6 +391,11 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
   const performSync = useCallback(
     async (currentRatios: ParsedRatios): Promise<boolean> => {
+      if (!canApply) {
+        toast.error(disabledReason)
+        return false
+      }
+
       const finalRatios: Record<string, Record<string, number | string>> = {
         ModelRatio: { ...currentRatios.ModelRatio },
         CompletionRatio: { ...currentRatios.CompletionRatio },
@@ -432,7 +453,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         })
       })
     },
-    [resolutions, syncMutate]
+    [canApply, disabledReason, resolutions, syncMutate]
   )
 
   const findSourceChannel = (
@@ -447,6 +468,11 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
   }
 
   const handleApplySync = () => {
+    if (!canApply) {
+      toast.error(disabledReason)
+      return
+    }
+
     const currentRatios = parsedRatios
     const conflicts: ConflictItem[] = []
 
@@ -502,6 +528,11 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
   }
 
   const handleConfirmConflict = async () => {
+    if (!canApply) {
+      toast.error(disabledReason)
+      return
+    }
+
     setConfirmLoading(true)
     try {
       const success = await performSync(parsedRatios)
@@ -515,19 +546,26 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
   const hasSelections = Object.keys(resolutions).length > 0
   const isLoading = fetchMutation.isPending || isSyncPending || confirmLoading
+  const canOpenChannelDialog = canFetch && !isLoading
+  const canApplySelections = canApply && hasSelections && !isLoading
 
   return (
     <div className='space-y-4'>
       <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
         <div className='flex flex-col gap-2 sm:flex-row'>
-          <Button onClick={handleOpenChannelDialog} disabled={isLoading}>
+          <Button
+            onClick={handleOpenChannelDialog}
+            disabled={!canOpenChannelDialog}
+            title={canFetch ? undefined : disabledReason}
+          >
             <RefreshCcw className='mr-2 h-4 w-4' />
             {t('Select Sync Channels')}
           </Button>
           <Button
             variant='secondary'
             onClick={handleApplySync}
-            disabled={!hasSelections || isLoading}
+            disabled={!canApplySelections}
+            title={canApply ? undefined : disabledReason}
           >
             {(isSyncPending || confirmLoading) && (
               <span className='mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent' />
@@ -556,6 +594,8 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         channelEndpoints={channelEndpoints}
         onChannelEndpointsChange={setChannelEndpoints}
         onConfirm={handleConfirmChannelSelection}
+        confirmDisabled={!canFetch}
+        disabledReason={disabledReason}
       />
 
       <ConflictConfirmDialog
@@ -564,6 +604,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         conflicts={conflictItems}
         onConfirm={handleConfirmConflict}
         isLoading={confirmLoading}
+        disabled={!canApply}
       />
     </div>
   )

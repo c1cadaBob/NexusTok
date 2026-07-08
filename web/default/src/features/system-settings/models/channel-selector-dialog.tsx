@@ -75,10 +75,12 @@ type ChannelSelectorDialogProps = {
   channelEndpoints: Record<number, string>
   onChannelEndpointsChange: (endpoints: Record<number, string>) => void
   onConfirm: (selectedIds: number[]) => void
+  confirmDisabled?: boolean
+  disabledReason?: string
 }
 
-// Synthesized presets from `controller/ratio_sync.go` always carry stable
-// negative IDs, so matching by ID alone is reliable and self-documenting.
+// `controller/ratio_sync.go` 生成的虚拟预设始终使用稳定的负数 ID。
+// 这里只按 ID 匹配，避免把名称或 base_url 变化误判为不同来源。
 function isOfficialChannel(channel: UpstreamChannel): boolean {
   return (
     channel.id === OFFICIAL_CHANNEL_ID || channel.id === MODELS_DEV_PRESET_ID
@@ -94,6 +96,8 @@ export function ChannelSelectorDialog({
   channelEndpoints,
   onChannelEndpointsChange,
   onConfirm,
+  confirmDisabled = false,
+  disabledReason,
 }: ChannelSelectorDialogProps) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
@@ -408,7 +412,13 @@ export function ChannelSelectorDialog({
           <Button variant='outline' onClick={() => onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleConfirm}>{t('Confirm Selection')}</Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={confirmDisabled}
+            title={confirmDisabled ? disabledReason : undefined}
+          >
+            {t('Confirm Selection')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

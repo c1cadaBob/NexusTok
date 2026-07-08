@@ -20,6 +20,7 @@ import { useEffect } from 'react'
 import { type Resolver, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -67,6 +68,9 @@ type ProviderFormDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   provider?: CustomOAuthProvider | null
+  canSave: boolean
+  canDiscover: boolean
+  disabledReason: string
 }
 
 export function ProviderFormDialog(props: ProviderFormDialogProps) {
@@ -148,6 +152,11 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
   }, [props.open, props.provider, form])
 
   const onSubmit = async (values: CustomOAuthFormValues) => {
+    if (!props.canSave) {
+      toast.error(props.disabledReason)
+      return
+    }
+
     if (isEditing && props.provider) {
       const res = await updateProvider.mutateAsync({
         id: props.provider.id,
@@ -186,10 +195,10 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
-            {/* Preset Selector (only for creating) */}
+            {/* 创建时可用预设模板快速填充 provider 基础配置。 */}
             {!isEditing && <PresetSelector form={form} />}
 
-            {/* Basic Info */}
+            {/* 基础信息 */}
             <div className='space-y-4'>
               <h4 className='text-sm font-medium'>{t('Basic Info')}</h4>
 
@@ -272,7 +281,7 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
 
             <Separator />
 
-            {/* Credentials */}
+            {/* OAuth 凭证 */}
             <div className='space-y-4'>
               <h4 className='text-sm font-medium'>{t('Credentials')}</h4>
               <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
@@ -361,11 +370,15 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
 
             <Separator />
 
-            {/* Endpoints */}
+            {/* OAuth/OIDC 端点 */}
             <div className='space-y-4'>
               <div className='flex items-center justify-between'>
                 <h4 className='text-sm font-medium'>{t('Endpoints')}</h4>
-                <DiscoveryButton form={form} />
+                <DiscoveryButton
+                  form={form}
+                  canDiscover={props.canDiscover}
+                  disabledReason={props.disabledReason}
+                />
               </div>
 
               <FormField
@@ -466,7 +479,7 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
 
             <Separator />
 
-            {/* Field Mapping */}
+            {/* 用户信息字段映射 */}
             <div className='space-y-4'>
               <h4 className='text-sm font-medium'>{t('Field Mapping')}</h4>
               <FormDescription>
@@ -536,7 +549,7 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
 
             <Separator />
 
-            {/* Advanced */}
+            {/* 高级访问策略 */}
             <div className='space-y-4'>
               <h4 className='text-sm font-medium'>{t('Advanced')}</h4>
 
@@ -594,7 +607,11 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
               >
                 {t('Cancel')}
               </Button>
-              <Button type='submit' disabled={isPending}>
+              <Button
+                type='submit'
+                disabled={isPending || !props.canSave}
+                title={props.canSave ? undefined : props.disabledReason}
+              >
                 {isPending
                   ? t('Saving...')
                   : isEditing

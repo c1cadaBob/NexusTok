@@ -1834,6 +1834,59 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/redemption-codes`，确认兑换码页加载、主按钮、批量工具和行操作菜单渲染正常，页面自身请求 200、控制台无错误；只触发页面加载和菜单查看，不执行创建、编辑、启停、删除或批量清理。
 
+## 本轮实施评审：系统设置前端运行维护 Authz 原生消费
+
+### 需求分析
+
+系统设置后端已经把 `/api/option`、`/api/performance`、`/api/ratio_sync` 和 `/api/custom-oauth-provider` 纳入 `system_setting.read/operate/sensitive_write` 权限表：只读统计走 read，缓存清理、GC、上游倍率拉取和 OIDC discovery 走 operate，通用设置保存、日志文件删除、模型倍率重置、自定义 OAuth provider 增删改走 sensitive_write。默认前端系统设置页当前仍主要依赖 Root 页面边界，页面内运行维护按钮、危险写入按钮和自定义 OAuth 操作没有消费动作级权限；当后续用户级 override 收紧某一类系统设置能力时，前端会展示可点击操作，最终由后端返回 403，体验与服务端权限语义不一致。
+
+本轮目标：
+
+1. 新增系统设置模块 `useSystemSettingPermissions`，集中读取 `system_setting.read/operate/write/sensitive_write/secret_view`；其中 `write/secret_view` 先保留为矩阵完整性字段，当前后端系统设置路由尚未使用普通写和密钥查看动作。
+2. 将性能页的运行维护按钮映射到现有后端权限：清理非活跃磁盘缓存、重置统计、强制 GC 需要 `system_setting.operate`；删除服务器日志文件需要 `system_setting.sensitive_write`；性能设置保存继续对齐通用 `PUT /api/option/` 的 sensitive_write。
+3. 将模型倍率页的 `Reset prices` 映射到 `system_setting.sensitive_write`，上游倍率拉取映射到 `system_setting.operate`，上游倍率应用映射到 `system_setting.sensitive_write`，避免“可拉取差异但无权写入系统倍率”时误展示可提交动作。
+4. 将渠道亲和页的缓存清理映射到 `system_setting.operate`，保存亲和配置映射到 `system_setting.sensitive_write`；规则编辑仍是本地草稿行为，最终保存前再执行敏感写权限保护。
+5. 将自定义 OAuth provider 的新增、编辑、删除和弹窗提交映射到 `system_setting.sensitive_write`，OIDC discovery 映射到 `system_setting.operate`。
+6. 本轮不全局改造所有 `useUpdateOption()` 表单保存入口，避免一次性收紧站点、认证、支付、内容、请求限制等全部设置页面；这些通用保存入口后续需要单独切片、逐页验证和更完整的管理员兼容评审。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 系统设置权限 hook | `web/default/src/features/system-settings/hooks/use-system-setting-permissions.ts` | 集中封装系统设置动作权限，供运行维护、倍率同步、渠道亲和和自定义 OAuth 复用。 |
+| 性能维护页 | `maintenance/performance-section.tsx` | 性能设置保存、缓存清理、统计重置、强制 GC、服务器日志文件清理按后端 system_setting 权限禁用并提交前保护。 |
+| 渠道亲和页 | `general/channel-affinity/index.tsx` | 亲和配置保存按敏感写控制，清理全部/单规则缓存按 operate 控制。 |
+| 模型/分组倍率与上游同步 | `models/ratio-settings-card.tsx`、`models/model-ratio-form.tsx`、`models/group-ratio-form.tsx`、`models/upstream-ratio-sync.tsx` | 分组倍率保存、模型倍率重置、上游拉取和应用同步分别消费 sensitive_write、sensitive_write、operate、sensitive_write；当前生产路由主要通过 `/pricing-settings` 暴露分组与工具价格页。 |
+| 自定义 OAuth | `auth/custom-oauth/*` | provider 新增、编辑、删除、保存和 OIDC discovery 按 sensitive_write/operate 控制。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改变前端按钮状态和提交前保护，不降低后端 `RequirePermission` enforcement；即使前端判断失误，后端仍 fail-closed。
+2. 默认 Admin 仅有 `system_setting.read` 基线，Root/Super Admin 保持全量能力；因此部分系统设置写入按钮会在受限管理员场景下禁用，这是与后端 RootAuth + 权限表二次校验一致的行为。
+3. `PUT /api/option/` 当前整体归为 `system_setting.sensitive_write`，但系统设置页面覆盖面极大；本轮只处理与运行维护工具同屏且边界明确的保存入口，避免一次性影响支付、认证、站点内容等关键配置工作流。
+4. 上游倍率同步包含两个不同阶段：拉取差异是 operate，应用结果会写入系统 option，必须归为 sensitive_write；前端按钮需要拆分控制，不能只按一个权限处理。
+5. 自定义 OAuth 的 client secret、登录入口和访问准入策略都属于高风险配置，新增/编辑/删除统一按 sensitive_write 控制；OIDC discovery 只读取第三方 well-known 并回填表单，按 operate 控制。
+
+### 方案评审
+
+采用“系统设置专用 hook + 明确接口动作映射 + 后端 fail-closed”的方案。前端不推断角色、不缓存策略、不改变 API payload；只在按钮 disabled、点击入口和提交/确认 handler 三层按后端路由权限表做保护。通用系统 option 表单保存后续单独评审和分批接入，避免一次改动跨越太多业务域。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 读取系统 option、性能统计、日志文件信息、自定义 OAuth 列表、上游渠道列表、渠道亲和缓存统计 | `system_setting.read` | `GET /api/option/`、`GET /api/performance/*`、`GET /api/custom-oauth-provider/*`、`GET /api/ratio_sync/channels` |
+| 清理非活跃磁盘缓存、重置性能统计、强制 GC、清理渠道亲和缓存、OIDC discovery、拉取上游倍率差异 | `system_setting.operate` | `DELETE /api/performance/disk_cache`、`POST /api/performance/reset_stats`、`POST /api/performance/gc`、`DELETE /api/option/channel_affinity_cache`、`POST /api/custom-oauth-provider/discovery`、`POST /api/ratio_sync/fetch` |
+| 保存性能/渠道亲和/模型倍率 option、应用上游倍率同步、重置模型倍率、自定义 OAuth provider 增删改、删除服务器日志文件 | `system_setting.sensitive_write` | `PUT /api/option/`、`POST /api/option/rest_model_ratio`、`POST/PUT/DELETE /api/custom-oauth-provider/*`、`DELETE /api/performance/logs` |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认系统设置权限 hook 和相关组件类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和路由层仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/performance`、`/pricing-settings`、`/system-settings/models/channel-affinity`、`/system-settings/auth/custom-oauth`，确认页面加载、按钮渲染和只读数据请求正常，控制台无错误；只做页面加载和打开弹窗，不触发 GC、日志删除、缓存清理、倍率应用、自定义 OAuth 保存或删除。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1891,3 +1944,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 用户管理前端按钮级 Authz 消费 | `web/default/src/features/users/*`、`web/default/src/features/subscriptions/hooks/*`、`web/default/src/features/subscriptions/components/dialogs/user-subscriptions-dialog.tsx` | 默认前端用户管理页新增 `useUserPermissions`，让用户资料、生命周期、安全凭据、绑定解绑、额度调整和硬删除消费 `user.write/operate/sensitive_write`；用户行内订阅弹窗按跨资源 `subscription.read/operate/sensitive_write` 控制。 |
 | 2026-07-08 | 订阅管理前端按钮级 Authz 消费 | `web/default/src/features/subscriptions/*` | 默认前端订阅套餐页复用 `useSubscriptionPermissions`，让套餐创建、编辑、启停和保存提交消费 `subscription.write`，并保留支付合规确认锁。 |
 | 2026-07-08 | 兑换码前端按钮级 Authz 消费 | `web/default/src/features/redemption-codes/*` | 默认前端兑换码页新增 `useRedemptionPermissions`，让兑换码创建、编辑、启停和保存消费 `redemption.write`，单个删除与批量清理无效码消费 `redemption.sensitive_write`。 |
+| 2026-07-08 | 系统设置前端运行维护 Authz 消费 | `web/default/src/features/system-settings/*` | 默认前端系统设置运行维护入口新增 `useSystemSettingPermissions` 并让性能维护、渠道亲和缓存、上游倍率同步、模型倍率重置和自定义 OAuth provider 操作消费 `system_setting.operate/sensitive_write`，与后端系统设置路由权限表保持一致。 |

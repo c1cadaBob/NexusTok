@@ -61,6 +61,7 @@ import { Switch } from '@/components/ui/switch'
 import { StatusBadge } from '@/components/status-badge'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
+import { useSystemSettingPermissions } from '../hooks/use-system-setting-permissions'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const perfSchema = z.object({
@@ -146,6 +147,8 @@ type PerformanceStats = {
 export function PerformanceSection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const permissions = useSystemSettingPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
   const [stats, setStats] = useState<PerformanceStats | null>(null)
   const [logInfo, setLogInfo] = useState<LogInfo | null>(null)
   const [logCleanupMode, setLogCleanupMode] = useState('by_count')
@@ -166,7 +169,7 @@ export function PerformanceSection(props: Props) {
       const res = await api.get('/api/performance/stats')
       if (res.data.success) setStats(res.data.data)
     } catch {
-      /* ignore */
+      /* 只读统计拉取失败不阻塞设置页渲染，页面保留已有状态。 */
     }
   }, [])
 
@@ -175,7 +178,7 @@ export function PerformanceSection(props: Props) {
       const res = await api.get('/api/performance/logs')
       if (res.data.success) setLogInfo(res.data.data)
     } catch {
-      /* ignore */
+      /* 只读日志信息拉取失败不阻塞设置页渲染，页面保留已有状态。 */
     }
   }, [])
 
@@ -185,6 +188,11 @@ export function PerformanceSection(props: Props) {
   }, [fetchStats, fetchLogInfo])
 
   const onSubmit = async (data: PerfFormValues) => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     const entries = Object.entries(data) as [string, unknown][]
     const updates = entries.filter(
       ([key, value]) =>
@@ -205,6 +213,11 @@ export function PerformanceSection(props: Props) {
   }
 
   const clearDiskCache = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     try {
       const res = await api.delete('/api/performance/disk_cache')
       if (res.data.success) {
@@ -217,6 +230,11 @@ export function PerformanceSection(props: Props) {
   }
 
   const resetStats = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     try {
       const res = await api.post('/api/performance/reset_stats')
       if (res.data.success) {
@@ -229,6 +247,11 @@ export function PerformanceSection(props: Props) {
   }
 
   const forceGC = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     try {
       const res = await api.post('/api/performance/gc')
       if (res.data.success) {
@@ -241,6 +264,11 @@ export function PerformanceSection(props: Props) {
   }
 
   const cleanupLogFiles = async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     if (!logCleanupValue || isNaN(logCleanupValue) || logCleanupValue < 1) {
       toast.error(t('Please enter a valid number'))
       return
@@ -302,7 +330,7 @@ export function PerformanceSection(props: Props) {
     >
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
-          {/* Disk Cache Settings */}
+          {/* 磁盘缓存设置 */}
           <div>
             <h4 className='font-medium'>{t('Disk Cache Settings')}</h4>
             <p className='text-muted-foreground mt-1 text-xs'>
@@ -398,7 +426,7 @@ export function PerformanceSection(props: Props) {
 
           <Separator />
 
-          {/* System Performance Monitor */}
+          {/* 系统性能监控 */}
           <div>
             <h4 className='font-medium'>
               {t('System Performance Monitoring')}
@@ -574,7 +602,13 @@ export function PerformanceSection(props: Props) {
             />
           </div>
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !permissions.canSensitiveWrite}
+            title={
+              permissions.canSensitiveWrite ? undefined : noPermissionMessage
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save Changes')}
           </Button>
         </form>
@@ -582,7 +616,7 @@ export function PerformanceSection(props: Props) {
 
       <Separator />
 
-      {/* Server Log Management */}
+      {/* 服务器日志文件管理 */}
       <div className='space-y-4'>
         <div>
           <h4 className='font-medium'>{t('Server Log Management')}</h4>
@@ -674,7 +708,14 @@ export function PerformanceSection(props: Props) {
                     <Button
                       variant='destructive'
                       size='sm'
-                      disabled={logCleanupLoading}
+                      disabled={
+                        logCleanupLoading || !permissions.canSensitiveWrite
+                      }
+                      title={
+                        permissions.canSensitiveWrite
+                          ? undefined
+                          : noPermissionMessage
+                      }
                     />
                   }
                 >
@@ -705,7 +746,10 @@ export function PerformanceSection(props: Props) {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-                    <AlertDialogAction onClick={cleanupLogFiles}>
+                    <AlertDialogAction
+                      onClick={cleanupLogFiles}
+                      disabled={!permissions.canSensitiveWrite}
+                    >
                       {t('Confirm Cleanup')}
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -726,7 +770,7 @@ export function PerformanceSection(props: Props) {
 
       <Separator />
 
-      {/* Performance Stats Dashboard */}
+      {/* 性能统计仪表盘 */}
       <div className='space-y-4'>
         <div className='flex items-center gap-2'>
           <h4 className='font-medium'>{t('Performance Monitor')}</h4>
@@ -734,7 +778,18 @@ export function PerformanceSection(props: Props) {
             {t('Refresh Stats')}
           </Button>
           <AlertDialog>
-            <AlertDialogTrigger render={<Button variant='outline' size='sm' />}>
+            <AlertDialogTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='sm'
+                  disabled={!permissions.canOperate}
+                  title={
+                    permissions.canOperate ? undefined : noPermissionMessage
+                  }
+                />
+              }
+            >
               {t('Clean up inactive cache')}
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -750,16 +805,31 @@ export function PerformanceSection(props: Props) {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-                <AlertDialogAction onClick={clearDiskCache}>
+                <AlertDialogAction
+                  onClick={clearDiskCache}
+                  disabled={!permissions.canOperate}
+                >
                   {t('Confirm')}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <Button variant='outline' size='sm' onClick={resetStats}>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={resetStats}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
             {t('Reset Stats')}
           </Button>
-          <Button variant='outline' size='sm' onClick={forceGC}>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={forceGC}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
             {t('Run GC')}
           </Button>
         </div>

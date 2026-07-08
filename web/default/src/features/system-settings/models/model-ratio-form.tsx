@@ -56,6 +56,9 @@ type ModelRatioFormProps = {
   onReset: () => void
   isSaving: boolean
   isResetting: boolean
+  canSave: boolean
+  canReset: boolean
+  disabledReason: string
 }
 
 export const ModelRatioForm = memo(function ModelRatioForm({
@@ -64,6 +67,9 @@ export const ModelRatioForm = memo(function ModelRatioForm({
   onReset,
   isSaving,
   isResetting,
+  canSave,
+  canReset,
+  disabledReason,
 }: ModelRatioFormProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
@@ -163,14 +169,19 @@ export const ModelRatioForm = memo(function ModelRatioForm({
             />
 
             <div className='flex flex-wrap gap-4'>
-              <Button onClick={form.handleSubmit(onSave)} disabled={isSaving}>
+              <Button
+                onClick={form.handleSubmit(onSave)}
+                disabled={isSaving || !canSave}
+                title={canSave ? undefined : disabledReason}
+              >
                 {isSaving ? t('Saving...') : t('Save model prices')}
               </Button>
               <Button
                 type='button'
                 variant='destructive'
                 onClick={onReset}
-                disabled={isResetting}
+                disabled={isResetting || !canReset}
+                title={canReset ? undefined : disabledReason}
               >
                 {t('Reset prices')}
               </Button>
@@ -354,14 +365,19 @@ export const ModelRatioForm = memo(function ModelRatioForm({
             />
 
             <div className='flex flex-wrap gap-4'>
-              <Button type='submit' disabled={isSaving}>
+              <Button
+                type='submit'
+                disabled={isSaving || !canSave}
+                title={canSave ? undefined : disabledReason}
+              >
                 {isSaving ? t('Saving...') : t('Save model prices')}
               </Button>
               <Button
                 type='button'
                 variant='destructive'
                 onClick={onReset}
-                disabled={isResetting}
+                disabled={isResetting || !canReset}
+                title={canReset ? undefined : disabledReason}
               >
                 {t('Reset prices')}
               </Button>
