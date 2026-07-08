@@ -62,9 +62,6 @@ func SetApiRouter(router *gin.Engine) {
 		// 模型列表（需要用户认证）
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 
-		// 状态测试（需要管理员权限）
-		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
-
 		// 公开信息接口
 		apiRouter.GET("/notice", controller.GetNotice)                     // 获取系统公告
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)      // 获取用户协议
@@ -243,59 +240,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
 
-		// ========================================
-		// 系统选项路由组 - /api/option（需要 root 权限）
-		// ========================================
-		optionRoute := apiRouter.Group("/option")
-		optionRoute.Use(middleware.RootAuth())
-		{
-			optionRoute.GET("/", controller.GetOptions)                                         // 获取所有选项
-			optionRoute.PUT("/", controller.UpdateOption)                                       // 更新选项
-			optionRoute.POST("/payment_compliance", controller.ConfirmPaymentCompliance)        // 确认支付合规
-			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats) // 获取渠道亲和缓存统计
-			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache) // 清除渠道亲和缓存
-			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)                   // 重置模型比率
-			optionRoute.POST("/migrate_console_setting", controller.MigrateConsoleSetting)      // 迁移控制台设置（旧键，下个版本删除）
-		}
-
-		// ========================================
-		// 自定义 OAuth 提供商管理路由组 - /api/custom-oauth-provider（需要 root 权限）
-		// ========================================
-		customOAuthRoute := apiRouter.Group("/custom-oauth-provider")
-		customOAuthRoute.Use(middleware.RootAuth())
-		{
-			customOAuthRoute.POST("/discovery", controller.FetchCustomOAuthDiscovery) // 获取 OAuth Discovery
-			customOAuthRoute.GET("/", controller.GetCustomOAuthProviders)             // 获取所有自定义 OAuth 提供商
-			customOAuthRoute.GET("/:id", controller.GetCustomOAuthProvider)           // 获取单个自定义 OAuth 提供商
-			customOAuthRoute.POST("/", controller.CreateCustomOAuthProvider)          // 创建自定义 OAuth 提供商
-			customOAuthRoute.PUT("/:id", controller.UpdateCustomOAuthProvider)        // 更新自定义 OAuth 提供商
-			customOAuthRoute.DELETE("/:id", controller.DeleteCustomOAuthProvider)     // 删除自定义 OAuth 提供商
-		}
-
-		// ========================================
-		// 性能监控路由组 - /api/performance（需要 root 权限）
-		// ========================================
-		performanceRoute := apiRouter.Group("/performance")
-		performanceRoute.Use(middleware.RootAuth())
-		{
-			performanceRoute.GET("/stats", controller.GetPerformanceStats)          // 获取性能统计
-			performanceRoute.DELETE("/disk_cache", controller.ClearDiskCache)       // 清除磁盘缓存
-			performanceRoute.POST("/reset_stats", controller.ResetPerformanceStats) // 重置性能统计
-			performanceRoute.POST("/gc", controller.ForceGC)                        // 强制 GC
-			performanceRoute.GET("/logs", controller.GetLogFiles)                   // 获取日志文件
-			performanceRoute.DELETE("/logs", controller.CleanupLogFiles)            // 清理日志文件
-		}
-
-		// ========================================
-		// 比率同步路由组 - /api/ratio_sync（需要 root 权限）
-		// ========================================
-		ratioSyncRoute := apiRouter.Group("/ratio_sync")
-		ratioSyncRoute.Use(middleware.RootAuth())
-		{
-			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels) // 获取可同步渠道
-			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)   // 获取上游比率
-		}
-
+		registerSystemSettingRoutes(apiRouter)
 		registerAccountPoolRoutes(apiRouter)
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)

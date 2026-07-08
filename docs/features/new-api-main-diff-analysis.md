@@ -1423,6 +1423,65 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/models/metadata`，确认页面更新生效；直调 `/api/group/` 与 `/api/prefill_group` 低风险读接口，确认返回正常，不触发预填组写操作。
 
+## 本轮实施评审：系统设置与运行维护 Authz 路由权限表灰度 enforcement
+
+### 需求分析
+
+`new-api-main` 与 NexusTok 都把系统选项、性能维护、自定义 OAuth 提供商、上游倍率同步等接口放在 Root 管理面。NexusTok 目前已经在 Authz catalog 中定义了 `system_setting` 资源，但 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance` 和 `/api/ratio_sync` 仍散落在主 `api-router.go` 中，只依赖 `AdminAuth` 或 `RootAuth`。这会让系统设置页面、运行维护按钮和后续用户级 override 之间缺少统一的资源动作表达。
+
+本轮目标：
+
+1. 新增 `SystemSettingRead`、`SystemSettingOperate`、`SystemSettingWrite`、`SystemSettingSensitiveWrite`、`SystemSettingSecretView` permission 变量，复用既有 `system_setting` catalog。
+2. 将 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance`、`/api/ratio_sync` 从主路由抽到集中路由文件，并使用权限表注册。
+3. 保留旧认证边界：`/api/status/test` 继续先过 `AdminAuth`，其他系统设置/维护路由继续先过 `RootAuth`；权限表只做第二层语义标注和未来扩展落点，不放宽任何 Root-only 路径。
+4. 只做路由层收敛，不修改 option 更新逻辑、OAuth provider 存储、性能维护动作、倍率同步逻辑、前端系统设置页面和数据库模型。
+5. `/api/system-info`、`/api/system-task` 已经有独立路由文件，本轮不混入；后续可以单独把系统信息读取和系统任务观测接入同一 `system_setting` 权限表。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz permission | `service/authz/permission.go` | 新增 `system_setting` 资源的稳定 permission 变量，供路由权限表复用。 |
+| 系统设置/维护路由 | `router/system-setting-router.go`、`router/api-router.go`、`router/system_setting_router_test.go` | 抽出 `/status/test`、`/option`、`/custom-oauth-provider`、`/performance`、`/ratio_sync`，保留原 path、method、handler 和 Admin/Root 认证边界。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录系统设置路由接入 Authz 的需求、风险、方案和验收标准。 |
+
+### 风险评估
+
+1. `/api/status/test` 当前是 Admin 可访问的只读诊断接口，检查数据库连接并返回 HTTP 统计。本轮归入 `system_setting.read`，保留 Admin 可访问语义；如果归入 operate，会因当前 Admin baseline 不含 `system_setting.operate` 而改变旧行为。
+2. `/api/option/` 的通用更新接口可以修改大量系统选项，包含 OAuth、支付、密钥类配置。路由层无法按 key 精细拆分，因此 `PUT /api/option/` 归入 `system_setting.sensitive_write`，旧 RootAuth 保留。后续如果要允许非 Root 管理员编辑非敏感选项，需要在 controller 内按 option key 做动作级二次校验。
+3. 自定义 OAuth provider 创建/更新会触碰 client secret、OIDC 端点、准入策略和用户登录入口，统一归入 `system_setting.sensitive_write`；Discovery 拉取会访问外部 URL，归入 `system_setting.operate`，并继续保持 Root-only。
+4. 性能维护中的 GC、磁盘缓存清理、统计重置属于运行操作，归入 `system_setting.operate`；服务器日志文件删除会移除运维证据，归入 `system_setting.sensitive_write`。
+5. `ratio_sync/fetch` 会访问上游 URL 或渠道 BaseURL 并计算倍率差异，归入 `system_setting.operate`；`ratio_sync/channels` 返回可同步渠道及 BaseURL，归入 `system_setting.read`，但旧 RootAuth 继续防止普通 Admin 暴露底层地址。
+6. 本轮不触发任何系统设置写操作、缓存清理、GC、日志删除或倍率同步；只通过低风险读接口和页面加载验证。
+
+### 方案评审
+
+采用“RootAuth 保底 + system_setting 权限表二次校验”的灰度接入方案：现有安全边界不降低，同时把系统设置与运行维护动作纳入同一套 Authz catalog。实现上沿用 `permissionRoute` 和 `registerPermissionRoutes`，为 Root-only 路由组设置 `RootAuth`，再按 read/operate/sensitive_write 挂权限；`/status/test` 作为只读诊断仍使用 `AdminAuth` + `system_setting.read`。
+
+路由分类：
+
+| 路由 | 权限 | 旧认证边界 | 说明 |
+|------|------|------------|------|
+| `GET /api/status/test` | `system_setting.read` | Admin | 只读诊断：数据库 ping 和 HTTP 统计。 |
+| `GET /api/option/`、`GET /api/option/channel_affinity_cache` | `system_setting.read` | Root | 查看系统选项和缓存统计。 |
+| `PUT /api/option/`、`POST /api/option/payment_compliance`、`POST /api/option/rest_model_ratio`、`POST /api/option/migrate_console_setting` | `system_setting.sensitive_write` | Root | 修改全局配置、合规状态、模型倍率和迁移旧配置。 |
+| `DELETE /api/option/channel_affinity_cache` | `system_setting.operate` | Root | 清理渠道亲和缓存。 |
+| `GET /api/custom-oauth-provider/`、`GET /api/custom-oauth-provider/:id` | `system_setting.read` | Root | 查看自定义 OAuth 提供商配置。 |
+| `POST /api/custom-oauth-provider/discovery` | `system_setting.operate` | Root | 拉取 OIDC Discovery 配置。 |
+| `POST /api/custom-oauth-provider/`、`PUT /api/custom-oauth-provider/:id`、`DELETE /api/custom-oauth-provider/:id` | `system_setting.sensitive_write` | Root | 创建、更新或删除登录入口和密钥配置。 |
+| `GET /api/performance/stats`、`GET /api/performance/logs` | `system_setting.read` | Root | 查看运行性能和服务器日志文件列表。 |
+| `DELETE /api/performance/disk_cache`、`POST /api/performance/reset_stats`、`POST /api/performance/gc` | `system_setting.operate` | Root | 运行维护动作。 |
+| `DELETE /api/performance/logs` | `system_setting.sensitive_write` | Root | 删除服务器日志文件。 |
+| `GET /api/ratio_sync/channels` | `system_setting.read` | Root | 查看可同步渠道和上游地址。 |
+| `POST /api/ratio_sync/fetch` | `system_setting.operate` | Root | 拉取上游倍率并计算差异。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller` 覆盖 permission、权限中间件、系统设置路由结构和 controller 构建。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端系统设置页面不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/` 与 `/system-settings/site`，确认页面更新生效；直调 `GET /api/status/test`、`GET /api/option/`、`GET /api/performance/stats`、`GET /api/ratio_sync/channels` 等低风险读接口，确认返回 200/业务 success，不触发写操作、清理或外部同步。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1472,3 +1531,4 @@ NexusTok 的账号池是当前项目相对 `new-api-main` 的核心原生优势�
 | 2026-07-08 | 日志与用量数据 Authz 独立资源 | `service/authz/*`、`router/log-data-router.go`、`router/api-router.go`、`web/default/src/features/usage-logs/*`、`web/default/src/features/dashboard/*` | 新增 `usage_log` 与 `usage_data` 权限资源，管理员 `/api/log` 和 `/api/data` 读接口进入独立权限表，历史日志同步删除归入 `usage_log.sensitive_write`；普通用户 self/token 路径保持原认证边界，默认前端 Usage Logs 与 Dashboard 的跨用户视图改为读取对应 read 权限。 |
 | 2026-07-08 | 基础用量查询聚合与统计空值保护 | `model/usedata.go`、`model/log.go`、`model/usedata_flow_test.go`、`model/log_stat_test.go` | 对齐 new-api 的 Dashboard 基础用量聚合语义，`/api/data/self` 和按 username 查询只返回 user/model/hour 汇总，不再带出 token/channel/node/group 细维度值；日志统计统一使用跨三库的 `COALESCE`，空结果稳定返回 0。 |
 | 2026-07-08 | 分组与预填充分组 Authz 路由权限表 | `router/group-router.go`、`router/api-router.go`、`router/group_router_test.go`、`model/prefill_group.go` | 为管理端 `/api/group` 与 `/api/prefill_group` 接入 model 权限表：分组和预填模板查询走 read，预填模板创建/更新走 write，删除预填模板走 sensitive_write；普通用户自助分组路径不变，并同步将预填组 JSON fallback 序列化切到 `common.Marshal`。 |
+| 2026-07-08 | 系统设置与运行维护 Authz 路由权限表 | `service/authz/permission.go`、`router/system-setting-router.go`、`router/api-router.go`、`router/system_setting_router_test.go` | 为 `/api/status/test`、`/api/option`、`/api/custom-oauth-provider`、`/api/performance` 和 `/api/ratio_sync` 接入 system_setting 权限表；只读诊断保持 Admin 边界，其余系统设置和运行维护接口继续 RootAuth 保底，按 read/operate/sensitive_write 做二次校验。 |

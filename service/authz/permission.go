@@ -76,6 +76,12 @@ var (
 	UsageLogSensitiveWrite = Permission{Resource: ResourceUsageLog, Action: ActionSensitiveWrite}
 
 	UsageDataRead = Permission{Resource: ResourceUsageData, Action: ActionRead}
+
+	SystemSettingRead           = Permission{Resource: ResourceSystemSetting, Action: ActionRead}
+	SystemSettingOperate        = Permission{Resource: ResourceSystemSetting, Action: ActionOperate}
+	SystemSettingWrite          = Permission{Resource: ResourceSystemSetting, Action: ActionWrite}
+	SystemSettingSensitiveWrite = Permission{Resource: ResourceSystemSetting, Action: ActionSensitiveWrite}
+	SystemSettingSecretView     = Permission{Resource: ResourceSystemSetting, Action: ActionSecretView}
 )
 
 // ActionDefinition 描述资源上的一个可授权动作。
