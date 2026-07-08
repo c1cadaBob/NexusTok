@@ -21,8 +21,9 @@ import i18next from 'i18next'
 import { toast } from 'sonner'
 import { updateSystemOption } from '../api'
 import type { UpdateOptionRequest } from '../types'
+import { useSystemSettingPermissions } from './use-system-setting-permissions'
 
-// Configuration keys that require status refresh
+// 这些配置会影响公共状态、导航或计费展示，保存成功后需要同步刷新 status。
 const STATUS_RELATED_KEYS = [
   'theme.frontend',
   'HeaderNavModules',
@@ -40,15 +41,22 @@ const STATUS_RELATED_KEYS = [
 
 export function useUpdateOption() {
   const queryClient = useQueryClient()
+  const permissions = useSystemSettingPermissions()
+  const disabledReason = i18next.t("You don't have necessary permission")
 
-  return useMutation({
-    mutationFn: (request: UpdateOptionRequest) => updateSystemOption(request),
+  const mutation = useMutation({
+    mutationFn: (request: UpdateOptionRequest) => {
+      if (!permissions.canSensitiveWrite) {
+        throw new Error(disabledReason)
+      }
+      return updateSystemOption(request)
+    },
     onSuccess: (data, variables) => {
       if (data.success) {
-        // Always refresh system-options
+        // 系统 option 是多个设置页的共享数据源，任意保存成功后都需要刷新。
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 
-        // If updating frontend-display-related config, also refresh status
+        // 前台展示相关配置还会影响全局 status，避免导航、品牌和计费展示滞后。
         if (STATUS_RELATED_KEYS.includes(variables.key)) {
           queryClient.invalidateQueries({ queryKey: ['status'] })
         }
@@ -61,5 +69,10 @@ export function useUpdateOption() {
     onError: (error: Error) => {
       toast.error(error.message || i18next.t('Failed to update setting'))
     },
+  })
+
+  return Object.assign(mutation, {
+    canUpdate: permissions.canSensitiveWrite,
+    disabledReason,
   })
 }

@@ -1887,6 +1887,53 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/performance`、`/pricing-settings`、`/system-settings/models/channel-affinity`、`/system-settings/auth/custom-oauth`，确认页面加载、按钮渲染和只读数据请求正常，控制台无错误；只做页面加载和打开弹窗，不触发 GC、日志删除、缓存清理、倍率应用、自定义 OAuth 保存或删除。
 
+## 本轮实施评审：系统设置通用 option 保存前置 Authz 保护
+
+### 需求分析
+
+上一轮已经把性能维护、渠道亲和、上游倍率同步和自定义 OAuth 等边界清晰的系统设置动作接入 `system_setting.operate/sensitive_write`。但默认前端仍有大量站点、认证、支付、内容、安全限制、模型配置和运维表单通过 `useUpdateOption()` 调用 `PUT /api/option/`，该后端路由已经统一归入 `system_setting.sensitive_write`。如果只逐页禁用按钮，很容易遗漏某个表单或某个批量保存路径；更稳妥的原生能力应当先在通用 hook 内建立前置权限保护，让所有系统 option 保存请求在发出前都按同一权限矩阵 fail-closed。
+
+本轮目标：
+
+1. 在 `useUpdateOption()` 内消费 `useSystemSettingPermissions()`，对所有 `updateSystemOption()` 调用做统一 `system_setting.sensitive_write` 前置检查。
+2. 缺少权限时不发送 `PUT /api/option/` 请求，直接复用既有 `You don't have necessary permission` 文案提示，避免前端展示可点击后再由后端返回 403。
+3. 扩展 `useUpdateOption()` 返回值，向调用方暴露 `canUpdate` 与 `disabledReason`，为后续逐页禁用保存按钮提供兼容的集中字段；本轮不强制一次性修改所有表单按钮，避免跨几十个设置页面引入视觉和交互回归。
+4. 保持后端权限表、API payload、查询缓存刷新、状态刷新和 i18n 文件不变。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 通用保存 hook | `web/default/src/features/system-settings/hooks/use-update-option.ts` | 所有 `PUT /api/option/` 前端调用先检查 `system_setting.sensitive_write`，并向调用方暴露 `canUpdate/disabledReason`。 |
+| 系统设置权限 hook | `web/default/src/features/system-settings/hooks/use-system-setting-permissions.ts` | 复用上一轮权限矩阵，保持单一授权来源。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮中心化保护的需求、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 本轮不会放宽任何后端权限；后端 `RequirePermission(system_setting.sensitive_write)` 仍是最终边界。
+2. 默认 Root/Super Admin 拥有全量权限，现有 Root 管理工作流保持可用；缺少敏感写的受限管理员会在前端保存前被拦截，行为与后端语义一致。
+3. 中心化保护会覆盖所有 `useUpdateOption()` 消费者，包括站点品牌、认证、支付、内容、安全限制和模型配置等页面；这是符合后端 `PUT /api/option/` 当前统一敏感写分类的，但按钮禁用仍需后续分批做更完整的交互 polish。
+4. `useUpdateOption()` 当前负责成功后刷新 `system-options` 和部分 `status` 查询；本轮只包裹 mutationFn，不改变成功/失败缓存策略，避免影响页面数据同步。
+5. 若未来后端按 option key 细分普通写与敏感写，本轮的中心化 `sensitive_write` 检查会偏保守；届时应先调整后端路由/controller 语义，再把 hook 改成 key-aware 权限判断。
+
+### 方案评审
+
+采用“中心化前置检查 + 兼容返回字段”的方案。`useUpdateOption()` 继续返回 TanStack Query mutation 对象，现有调用方的 `mutateAsync`、`isPending`、`onSuccess` 行为不变；额外通过 `Object.assign` 暴露 `canUpdate` 和 `disabledReason`，让后续页面可以逐步把保存按钮的 disabled/title 从本地判断切到统一字段。缺少权限时 hook 抛出本地错误并由现有 `onError` toast 处理，不发起 API 请求。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 所有通过 `useUpdateOption()` 保存的系统 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 保存后刷新系统 option/status 缓存 | 成功保存后执行 | 前端 `queryClient.invalidateQueries`，不改变后端路由 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认扩展 mutation 返回值不破坏既有调用方类型。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和系统设置路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开至少两个典型 `useUpdateOption()` 页面（如 `/system-settings/site/general` 或其实际默认路径、`/system-settings/auth/basic-auth`、`/system-settings/security/rate-limit`），确认页面加载和只读 `/api/option/` 请求正常，控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1945,3 +1992,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 订阅管理前端按钮级 Authz 消费 | `web/default/src/features/subscriptions/*` | 默认前端订阅套餐页复用 `useSubscriptionPermissions`，让套餐创建、编辑、启停和保存提交消费 `subscription.write`，并保留支付合规确认锁。 |
 | 2026-07-08 | 兑换码前端按钮级 Authz 消费 | `web/default/src/features/redemption-codes/*` | 默认前端兑换码页新增 `useRedemptionPermissions`，让兑换码创建、编辑、启停和保存消费 `redemption.write`，单个删除与批量清理无效码消费 `redemption.sensitive_write`。 |
 | 2026-07-08 | 系统设置前端运行维护 Authz 消费 | `web/default/src/features/system-settings/*` | 默认前端系统设置运行维护入口新增 `useSystemSettingPermissions` 并让性能维护、渠道亲和缓存、上游倍率同步、模型倍率重置和自定义 OAuth provider 操作消费 `system_setting.operate/sensitive_write`，与后端系统设置路由权限表保持一致。 |
+| 2026-07-08 | 系统设置通用 option 保存前置 Authz 保护 | `web/default/src/features/system-settings/hooks/use-update-option.ts` | 默认前端所有通过 `useUpdateOption()` 发起的 `PUT /api/option/` 保存会先检查 `system_setting.sensitive_write`；缺少权限时前端不发请求并复用无权限提示，同时向后续逐页按钮禁用暴露 `canUpdate/disabledReason`。 |
