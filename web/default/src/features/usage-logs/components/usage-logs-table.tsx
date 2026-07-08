@@ -43,6 +43,7 @@ import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
+import { UsageLogsMobileList } from './usage-logs-mobile-card'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -173,6 +174,17 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       skeletonKeyPrefix='usage-log-skeleton'
       tableClassName='max-h-[calc(100dvh-13rem)] overflow-auto sm:max-h-[calc(100dvh-14rem)]'
       tableHeaderClassName='bg-muted/30 sticky top-0 z-10'
+      mobile={
+        <UsageLogsMobileList
+          table={table}
+          isLoading={isLoadingData}
+          emptyTitle={t('No Logs Found')}
+          emptyDescription={t(
+            'No usage logs available. Logs will appear here once API calls are made.'
+          )}
+          logCategory={logCategory}
+        />
+      }
       toolbar={
         isCommon ? (
           <CommonLogsFilterBar table={table} />
