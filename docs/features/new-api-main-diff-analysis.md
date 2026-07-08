@@ -1934,6 +1934,53 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开至少两个典型 `useUpdateOption()` 页面（如 `/system-settings/site/general` 或其实际默认路径、`/system-settings/auth/basic-auth`、`/system-settings/security/rate-limit`），确认页面加载和只读 `/api/option/` 请求正常，控制台无错误；不触发真实保存。
 
+## 本轮实施评审：系统设置高频表单保存按钮 Authz 消费
+
+### 需求分析
+
+上一轮已经在 `useUpdateOption()` 内为所有 `PUT /api/option/` 调用建立 `system_setting.sensitive_write` 前置保护，并向调用方暴露 `canUpdate/disabledReason`。站点信息、基础认证和请求限流是系统设置中访问频率较高、配置影响面明确的三类表单：它们都通过 `useUpdateOption()` 保存 option，但按钮仍只根据 pending/submitting 状态禁用。这样在受限管理员场景下，用户仍会看到可点击保存按钮，点击后才被通用 hook 拦截，交互反馈晚于权限语义。
+
+本轮目标：
+
+1. 将站点信息、基础认证和请求限流三处保存按钮直接消费 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 保留 `useUpdateOption()` 的统一前置拦截作为最终前端保护，按钮禁用只做更早、更清晰的交互表达。
+3. 不修改 API payload、表单 schema、默认值归一化、请求限流 JSON 校验、重置按钮和后端权限表。
+4. 不新增可见文案，继续复用既有 `You don't have necessary permission`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 站点信息表单 | `web/default/src/features/system-settings/general/system-info-section.tsx` | 保存按钮在缺少 `system_setting.sensitive_write` 时禁用并展示权限原因；重置按钮保持只受脏状态和提交状态控制。 |
+| 基础认证表单 | `web/default/src/features/system-settings/auth/basic-auth-section.tsx` | 保存按钮消费统一 option 保存权限；开关编辑仍允许本地修改草稿，提交入口按权限关闭。 |
+| 请求限流表单 | `web/default/src/features/system-settings/request-limits/rate-limit-section.tsx` | 保存限流配置按钮消费统一 option 保存权限；视觉/JSON 模式切换和本地校验不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只增加按钮级 disabled/title，不改变 `useUpdateOption()` 的提交前 fail-closed 保护，也不降低后端 `RequirePermission(system_setting.sensitive_write)` enforcement。
+2. Root/Super Admin 拥有敏感写能力，现有系统设置保存工作流保持可用；受限管理员会在按钮层直接看到不可保存状态，体验与后端权限一致。
+3. 允许用户在无保存权限时编辑本地表单草稿，不会发出写请求；这避免把权限控制和表单字段可读性混在一起，也便于管理员查看配置。
+4. 三个页面覆盖站点品牌、认证开关和限流规则，均属于高影响配置；本轮不触碰支付、OAuth、模型倍率等其他页面，避免一次性扩大视觉回归面。
+
+### 方案评审
+
+采用“通用 hook 兜底 + 高频页面按钮原生消费”的方案。`useUpdateOption()` 继续作为所有 option 保存的统一授权入口，页面按钮只读取其暴露的 `canUpdate/disabledReason`，这样权限判断来源保持单一。如果未来后端按 option key 细分普通写和敏感写，只需要先调整 hook 的 key-aware 判断，再让这些按钮自然继承新的保存能力。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存站点信息、基础认证、请求限流 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 重置本地草稿、切换请求限流编辑模式 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认三处页面能识别 `useUpdateOption()` 暴露的权限字段。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认后端权限表和路由层仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/site/system-info`、`/system-settings/auth/basic-auth`、`/system-settings/security/rate-limit`，确认页面加载、保存按钮渲染和 `/api/option/` 只读请求正常，控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -1993,3 +2040,4 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 2026-07-08 | 兑换码前端按钮级 Authz 消费 | `web/default/src/features/redemption-codes/*` | 默认前端兑换码页新增 `useRedemptionPermissions`，让兑换码创建、编辑、启停和保存消费 `redemption.write`，单个删除与批量清理无效码消费 `redemption.sensitive_write`。 |
 | 2026-07-08 | 系统设置前端运行维护 Authz 消费 | `web/default/src/features/system-settings/*` | 默认前端系统设置运行维护入口新增 `useSystemSettingPermissions` 并让性能维护、渠道亲和缓存、上游倍率同步、模型倍率重置和自定义 OAuth provider 操作消费 `system_setting.operate/sensitive_write`，与后端系统设置路由权限表保持一致。 |
 | 2026-07-08 | 系统设置通用 option 保存前置 Authz 保护 | `web/default/src/features/system-settings/hooks/use-update-option.ts` | 默认前端所有通过 `useUpdateOption()` 发起的 `PUT /api/option/` 保存会先检查 `system_setting.sensitive_write`；缺少权限时前端不发请求并复用无权限提示，同时向后续逐页按钮禁用暴露 `canUpdate/disabledReason`。 |
+| 2026-07-08 | 系统设置高频表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general/system-info-section.tsx,auth/basic-auth-section.tsx,request-limits/rate-limit-section.tsx}` | 站点信息、基础认证和请求限流三处高频表单的保存按钮直接消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`，缺少 `system_setting.sensitive_write` 时在按钮层禁用并保留 hook 级提交前保护。 |

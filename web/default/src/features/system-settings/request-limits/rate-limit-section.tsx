@@ -307,7 +307,13 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
             )}
           />
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save rate limits')}
           </Button>
         </form>

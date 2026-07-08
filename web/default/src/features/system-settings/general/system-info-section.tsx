@@ -368,7 +368,16 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
             <div className='flex gap-2'>
               <Button
                 type='submit'
-                disabled={isSubmitting || updateOption.isPending}
+                disabled={
+                  isSubmitting ||
+                  updateOption.isPending ||
+                  !updateOption.canUpdate
+                }
+                title={
+                  updateOption.canUpdate
+                    ? undefined
+                    : updateOption.disabledReason
+                }
               >
                 {updateOption.isPending ? t('Saving...') : t('Save Changes')}
               </Button>
