@@ -16,23 +16,131 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-type ModuleAccess = { enabled: boolean; requireAuth: boolean }
+export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
-const DEFAULTS: Record<string, ModuleAccess> = {
+export type HeaderNavModule = 'rankings' | 'pricing'
+
+export type HeaderNavModules = {
+  home: boolean
+  console: boolean
+  pricing: ModuleAccess
+  rankings: ModuleAccess
+  docs: boolean
+  about: boolean
+  [key: string]: boolean | ModuleAccess
+}
+
+export const HEADER_NAV_DEFAULT: HeaderNavModules = {
+  home: true,
+  console: true,
   pricing: { enabled: true, requireAuth: false },
   rankings: { enabled: true, requireAuth: false },
+  docs: true,
+  about: true,
+}
+
+const DEFAULTS: Record<HeaderNavModule, ModuleAccess> = {
+  pricing: HEADER_NAV_DEFAULT.pricing,
+  rankings: HEADER_NAV_DEFAULT.rankings,
+}
+
+function cloneHeaderNavDefault(): HeaderNavModules {
+  return {
+    ...HEADER_NAV_DEFAULT,
+    pricing: { ...HEADER_NAV_DEFAULT.pricing },
+    rankings: { ...HEADER_NAV_DEFAULT.rankings },
+  }
+}
+
+export function parseHeaderNavBoolean(
+  raw: unknown,
+  fallback: boolean
+): boolean {
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'number') {
+    if (raw === 1) return true
+    if (raw === 0) return false
+    return fallback
+  }
+  if (typeof raw === 'string') {
+    const normalized = raw.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') return true
+    if (normalized === 'false' || normalized === '0') return false
+  }
+  return fallback
 }
 
 function parseAccess(raw: unknown, fallback: ModuleAccess): ModuleAccess {
-  if (typeof raw === 'boolean') return { enabled: raw, requireAuth: fallback.requireAuth }
-  if (raw && typeof raw === 'object') {
-    const r = raw as Record<string, unknown>
+  if (
+    typeof raw === 'boolean' ||
+    typeof raw === 'number' ||
+    typeof raw === 'string'
+  ) {
     return {
-      enabled: typeof r.enabled === 'boolean' ? r.enabled : fallback.enabled,
-      requireAuth: typeof r.requireAuth === 'boolean' ? r.requireAuth : fallback.requireAuth,
+      enabled: parseHeaderNavBoolean(raw, fallback.enabled),
+      requireAuth: fallback.requireAuth,
+    }
+  }
+  if (raw && typeof raw === 'object') {
+    const record = raw as Record<string, unknown>
+    return {
+      enabled: parseHeaderNavBoolean(record.enabled, fallback.enabled),
+      requireAuth: parseHeaderNavBoolean(
+        record.requireAuth,
+        fallback.requireAuth
+      ),
     }
   }
   return { ...fallback }
+}
+
+function parseHeaderNavRecord(raw: unknown): Record<string, unknown> | null {
+  if (!raw || String(raw).trim() === '') return null
+  if (raw && typeof raw === 'object') return raw as Record<string, unknown>
+
+  try {
+    return JSON.parse(String(raw)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+export function parseHeaderNavModules(raw: unknown): HeaderNavModules {
+  const result = cloneHeaderNavDefault()
+  const parsed = parseHeaderNavRecord(raw)
+  if (!parsed) return result
+
+  Object.entries(parsed).forEach(([key, value]) => {
+    if (key === 'pricing') {
+      result.pricing = parseAccess(value, result.pricing)
+      return
+    }
+    if (key === 'rankings') {
+      result.rankings = parseAccess(value, result.rankings)
+      return
+    }
+
+    const fallback = result[key]
+    if (
+      typeof fallback === 'boolean' ||
+      typeof value === 'boolean' ||
+      typeof value === 'number' ||
+      typeof value === 'string'
+    ) {
+      result[key] = parseHeaderNavBoolean(
+        value,
+        typeof fallback === 'boolean' ? fallback : true
+      )
+    }
+  })
+
+  return result
+}
+
+export function parseHeaderNavModulesFromStatus(
+  status: Record<string, unknown> | null | undefined
+): HeaderNavModules {
+  return parseHeaderNavModules(status?.HeaderNavModules)
 }
 
 function getCachedStatus(): Record<string, unknown> | null {
@@ -44,22 +152,21 @@ function getCachedStatus(): Record<string, unknown> | null {
   }
 }
 
-export function getModuleAccess(module: 'rankings' | 'pricing'): ModuleAccess {
-  const status = getCachedStatus()
-  if (!status) return DEFAULTS[module]
-
-  const rawNav = status.HeaderNavModules
-  if (!rawNav || String(rawNav).trim() === '') return DEFAULTS[module]
-
-  try {
-    const parsed = JSON.parse(String(rawNav)) as Record<string, unknown>
-    return parseAccess(parsed[module], DEFAULTS[module])
-  } catch {
-    return DEFAULTS[module]
-  }
+export function getModuleAccessFromStatus(
+  status: Record<string, unknown> | null | undefined,
+  module: HeaderNavModule
+): ModuleAccess {
+  return parseHeaderNavModulesFromStatus(status)[module] ?? DEFAULTS[module]
 }
 
-export function isSidebarModuleEnabled(section: string, module: string): boolean {
+export function getModuleAccess(module: HeaderNavModule): ModuleAccess {
+  return getModuleAccessFromStatus(getCachedStatus(), module)
+}
+
+export function isSidebarModuleEnabled(
+  section: string,
+  module: string
+): boolean {
   const status = getCachedStatus()
   if (!status) return true
 
@@ -67,7 +174,10 @@ export function isSidebarModuleEnabled(section: string, module: string): boolean
   if (!raw || String(raw).trim() === '') return true
 
   try {
-    const parsed = JSON.parse(String(raw)) as Record<string, Record<string, boolean>>
+    const parsed = JSON.parse(String(raw)) as Record<
+      string,
+      Record<string, boolean>
+    >
     const sectionConfig = parsed[section]
     if (!sectionConfig) return true
     if (sectionConfig.enabled === false) return false

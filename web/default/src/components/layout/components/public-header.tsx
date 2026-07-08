@@ -115,7 +115,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                 : 'h-16 px-2'
             )}
           >
-            {/* Logo */}
+            {/* 品牌入口 */}
             <Link
               to={homeUrl}
               className='group flex shrink-0 items-center gap-2.5'
@@ -139,7 +139,7 @@ export function PublicHeader(props: PublicHeaderProps) {
               </span>
             </Link>
 
-            {/* Desktop nav */}
+            {/* 桌面端导航 */}
             <div className='hidden items-center gap-0.5 sm:flex'>
               {links.map((link, i) => {
                 const isActive = pathname === link.href
@@ -147,10 +147,20 @@ export function PublicHeader(props: PublicHeaderProps) {
                   return (
                     <a
                       key={i}
-                      href={link.href}
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      className='text-muted-foreground hover:text-foreground rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200'
+                      href={link.disabled ? undefined : link.href}
+                      target={link.disabled ? undefined : '_blank'}
+                      rel={link.disabled ? undefined : 'noopener noreferrer'}
+                      aria-disabled={link.disabled || undefined}
+                      tabIndex={link.disabled ? -1 : undefined}
+                      className={cn(
+                        'text-muted-foreground hover:text-foreground rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200',
+                        link.disabled && 'pointer-events-none opacity-50'
+                      )}
+                      onClick={(event) => {
+                        if (link.disabled) {
+                          event.preventDefault()
+                        }
+                      }}
                     >
                       {t(link.title)}
                     </a>
@@ -160,8 +170,11 @@ export function PublicHeader(props: PublicHeaderProps) {
                   <Link
                     key={i}
                     to={link.href}
+                    disabled={link.disabled}
+                    aria-disabled={link.disabled || undefined}
                     className={cn(
                       'rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200',
+                      link.disabled && 'pointer-events-none opacity-50',
                       isActive
                         ? 'text-foreground'
                         : 'text-muted-foreground hover:text-foreground'
@@ -207,7 +220,7 @@ export function PublicHeader(props: PublicHeaderProps) {
               )}
             </div>
 
-            {/* Mobile: compact actions + hamburger */}
+            {/* 移动端紧凑操作区 */}
             <div className='flex items-center gap-2 sm:hidden'>
               {showThemeSwitch && <ThemeSwitch />}
               {showAuthButtons && !loading && isAuthenticated && (
@@ -247,7 +260,7 @@ export function PublicHeader(props: PublicHeaderProps) {
         </div>
       </header>
 
-      {/* Mobile full-screen overlay */}
+      {/* 移动端全屏菜单 */}
       <div
         className={cn(
           'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] sm:pointer-events-none sm:hidden',
@@ -260,21 +273,53 @@ export function PublicHeader(props: PublicHeaderProps) {
           <nav className='flex flex-col gap-1'>
             {links.map((link, i) => {
               const isActive = pathname === link.href
+              const linkClassName = cn(
+                'flex items-center gap-3 py-3 text-base font-medium tracking-tight transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                mobileOpen ? 'translate-y-0' : 'translate-y-4 opacity-0',
+                mobileOpen && (link.disabled ? 'opacity-50' : 'opacity-100'),
+                link.disabled
+                  ? 'pointer-events-none text-muted-foreground'
+                  : isActive
+                    ? 'text-foreground'
+                    : 'text-muted-foreground'
+              )
+              const linkStyle = {
+                transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
+              }
+
+              if (link.external) {
+                return (
+                  <a
+                    key={i}
+                    href={link.disabled ? undefined : link.href}
+                    target={link.disabled ? undefined : '_blank'}
+                    rel={link.disabled ? undefined : 'noopener noreferrer'}
+                    aria-disabled={link.disabled || undefined}
+                    tabIndex={link.disabled ? -1 : undefined}
+                    onClick={(event) => {
+                      if (link.disabled) {
+                        event.preventDefault()
+                        return
+                      }
+                      setMobileOpen(false)
+                    }}
+                    className={linkClassName}
+                    style={linkStyle}
+                  >
+                    {t(link.title)}
+                  </a>
+                )
+              }
+
               return (
                 <Link
                   key={i}
                   to={link.href}
+                  disabled={link.disabled}
+                  aria-disabled={link.disabled || undefined}
                   onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 py-3 text-base font-medium tracking-tight transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
-                    mobileOpen
-                      ? 'translate-y-0 opacity-100'
-                      : 'translate-y-4 opacity-0',
-                    isActive ? 'text-foreground' : 'text-muted-foreground'
-                  )}
-                  style={{
-                    transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
-                  }}
+                  className={linkClassName}
+                  style={linkStyle}
                 >
                   {t(link.title)}
                 </Link>
@@ -304,7 +349,7 @@ export function PublicHeader(props: PublicHeaderProps) {
         </div>
       </div>
 
-      {/* Notification Dialog */}
+      {/* 通知弹窗 */}
       {showNotifications && (
         <NotificationDialog
           open={notifications.dialogOpen}

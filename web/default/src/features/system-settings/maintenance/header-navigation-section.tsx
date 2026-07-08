@@ -21,6 +21,7 @@ import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
+import { parseHeaderNavBoolean } from '@/lib/nav-modules'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -60,33 +61,49 @@ type HeaderNavigationSectionProps = {
 
 const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
   home:
-    config.home === undefined ? HEADER_NAV_DEFAULT.home : Boolean(config.home),
+    config.home === undefined
+      ? HEADER_NAV_DEFAULT.home
+      : parseHeaderNavBoolean(config.home, HEADER_NAV_DEFAULT.home),
   console:
     config.console === undefined
       ? HEADER_NAV_DEFAULT.console
-      : Boolean(config.console),
+      : parseHeaderNavBoolean(config.console, HEADER_NAV_DEFAULT.console),
   pricingEnabled:
     config.pricing?.enabled === undefined
       ? HEADER_NAV_DEFAULT.pricing.enabled
-      : Boolean(config.pricing.enabled),
+      : parseHeaderNavBoolean(
+          config.pricing.enabled,
+          HEADER_NAV_DEFAULT.pricing.enabled
+        ),
   pricingRequireAuth:
     config.pricing?.requireAuth === undefined
       ? HEADER_NAV_DEFAULT.pricing.requireAuth
-      : Boolean(config.pricing.requireAuth),
+      : parseHeaderNavBoolean(
+          config.pricing.requireAuth,
+          HEADER_NAV_DEFAULT.pricing.requireAuth
+        ),
   rankingsEnabled:
     config.rankings?.enabled === undefined
       ? HEADER_NAV_DEFAULT.rankings.enabled
-      : Boolean(config.rankings.enabled),
+      : parseHeaderNavBoolean(
+          config.rankings.enabled,
+          HEADER_NAV_DEFAULT.rankings.enabled
+        ),
   rankingsRequireAuth:
     config.rankings?.requireAuth === undefined
       ? HEADER_NAV_DEFAULT.rankings.requireAuth
-      : Boolean(config.rankings.requireAuth),
+      : parseHeaderNavBoolean(
+          config.rankings.requireAuth,
+          HEADER_NAV_DEFAULT.rankings.requireAuth
+        ),
   docs:
-    config.docs === undefined ? HEADER_NAV_DEFAULT.docs : Boolean(config.docs),
+    config.docs === undefined
+      ? HEADER_NAV_DEFAULT.docs
+      : parseHeaderNavBoolean(config.docs, HEADER_NAV_DEFAULT.docs),
   about:
     config.about === undefined
       ? HEADER_NAV_DEFAULT.about
-      : Boolean(config.about),
+      : parseHeaderNavBoolean(config.about, HEADER_NAV_DEFAULT.about),
 })
 
 export function HeaderNavigationSection({

@@ -62,31 +62,42 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent side='bottom' align='start'>
             {normalizedLinks.map(
-              ({ title, href, isActive, disabled, external }) => (
-                <DropdownMenuItem
-                  key={`${title}-${href}`}
-                  render={
-                    external ? (
-                      <a
-                        href={href}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                        className={!isActive ? 'text-muted-foreground' : ''}
-                      >
-                        {title}
-                      </a>
-                    ) : (
-                      <Link
-                        to={href}
-                        className={!isActive ? 'text-muted-foreground' : ''}
-                        disabled={disabled}
-                      >
-                        {title}
-                      </Link>
-                    )
-                  }
-                ></DropdownMenuItem>
-              )
+              ({ title, href, isActive, disabled, external }) => {
+                const linkClassName = cn(
+                  !isActive && 'text-muted-foreground',
+                  disabled && 'pointer-events-none opacity-50'
+                )
+
+                return (
+                  <DropdownMenuItem
+                    key={`${title}-${href}`}
+                    disabled={disabled}
+                    render={
+                      external ? (
+                        <a
+                          href={disabled ? undefined : href}
+                          target={disabled ? undefined : '_blank'}
+                          rel={disabled ? undefined : 'noopener noreferrer'}
+                          aria-disabled={disabled || undefined}
+                          tabIndex={disabled ? -1 : undefined}
+                          className={linkClassName}
+                        >
+                          {title}
+                        </a>
+                      ) : (
+                        <Link
+                          to={href}
+                          className={linkClassName}
+                          disabled={disabled}
+                          aria-disabled={disabled || undefined}
+                        >
+                          {title}
+                        </Link>
+                      )
+                    }
+                  ></DropdownMenuItem>
+                )
+              }
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -104,10 +115,16 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
           external ? (
             <a
               key={`${title}-${href}`}
-              href={href}
-              target='_blank'
-              rel='noopener noreferrer'
-              className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+              href={disabled ? undefined : href}
+              target={disabled ? undefined : '_blank'}
+              rel={disabled ? undefined : 'noopener noreferrer'}
+              aria-disabled={disabled || undefined}
+              tabIndex={disabled ? -1 : undefined}
+              className={cn(
+                'hover:text-primary text-sm font-medium transition-colors',
+                !isActive && 'text-muted-foreground',
+                disabled && 'pointer-events-none opacity-50'
+              )}
             >
               {title}
             </a>
@@ -116,7 +133,12 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
               key={`${title}-${href}`}
               to={href}
               disabled={disabled}
-              className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+              aria-disabled={disabled || undefined}
+              className={cn(
+                'hover:text-primary text-sm font-medium transition-colors',
+                !isActive && 'text-muted-foreground',
+                disabled && 'pointer-events-none opacity-50'
+              )}
             >
               {title}
             </Link>

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
+import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 import { useStatus } from '@/hooks/use-status'
 
 export type TopNavLink = {
@@ -28,123 +29,54 @@ export type TopNavLink = {
   external?: boolean
 }
 
-// Default navigation configuration
-const DEFAULT_HEADER_NAV_MODULES = {
-  home: true,
-  console: true,
-  pricing: { enabled: true, requireAuth: false },
-  rankings: { enabled: true, requireAuth: false },
-  docs: true,
-  about: true,
-}
-
-function parseAccessModule(
-  raw: unknown,
-  fallback: { enabled: boolean; requireAuth: boolean }
-) {
-  if (
-    typeof raw === 'boolean' ||
-    typeof raw === 'string' ||
-    typeof raw === 'number'
-  ) {
-    return {
-      enabled: raw === true || raw === 'true' || raw === '1' || raw === 1,
-      requireAuth: fallback.requireAuth,
-    }
-  }
-  if (raw && typeof raw === 'object') {
-    const record = raw as Record<string, unknown>
-    return {
-      enabled:
-        typeof record.enabled === 'boolean' ? record.enabled : fallback.enabled,
-      requireAuth:
-        typeof record.requireAuth === 'boolean'
-          ? record.requireAuth
-          : fallback.requireAuth,
-    }
-  }
-  return { ...fallback }
-}
-
-function parseHeaderNavModules(
-  raw: unknown
-): typeof DEFAULT_HEADER_NAV_MODULES {
-  if (!raw || String(raw).trim() === '') {
-    return DEFAULT_HEADER_NAV_MODULES
-  }
-  try {
-    const parsed = JSON.parse(String(raw)) as Record<string, unknown>
-    return {
-      ...DEFAULT_HEADER_NAV_MODULES,
-      ...parsed,
-      pricing: parseAccessModule(
-        parsed.pricing,
-        DEFAULT_HEADER_NAV_MODULES.pricing
-      ),
-      rankings: parseAccessModule(
-        parsed.rankings,
-        DEFAULT_HEADER_NAV_MODULES.rankings
-      ),
-    }
-  } catch {
-    return DEFAULT_HEADER_NAV_MODULES
-  }
-}
-
 /**
- * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
- * Backend format example (stringified JSON):
- * {
- *   home: true,
- *   console: true,
- *   pricing: { enabled: true, requireAuth: false },
- *   rankings: { enabled: true, requireAuth: false },
- *   docs: true,
- *   about: true
- * }
+ * 基于后端 `/api/status` 返回的 HeaderNavModules 生成顶部导航。
+ * 后端配置通常是字符串化 JSON，也可能来自历史版本的对象、数字或字符串布尔值。
  */
 export function useTopNavLinks(): TopNavLink[] {
   const { t } = useTranslation()
   const { status } = useStatus()
   const { auth } = useAuthStore()
 
-  // Parse HeaderNavModules
+  // 解析 HeaderNavModules，确保顶栏和页面守卫共享同一套兼容语义。
   const modules = useMemo(() => {
-    return parseHeaderNavModules(status?.HeaderNavModules)
-  }, [status?.HeaderNavModules])
+    return parseHeaderNavModulesFromStatus(
+      status as Record<string, unknown> | null
+    )
+  }, [status])
 
-  // Documentation link (may be external)
+  // 文档链接可能是外部地址，也可能回退到内置文档页。
   const docsLink: string | undefined = status?.docs_link as string | undefined
 
   const isAuthed = !!auth?.user
 
   const links: TopNavLink[] = []
 
-  // Home
+  // 首页入口。
   if (modules?.home !== false) {
     links.push({ title: t('Home'), href: '/' })
   }
 
-  // Console -> /dashboard (new console path)
+  // 控制台入口统一指向新版 `/dashboard`。
   if (modules?.console !== false) {
     links.push({ title: t('Console'), href: '/dashboard' })
   }
 
-  // Pricing
+  // 模型广场支持 requireAuth：未登录时保留入口但置为禁用态。
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {
     const disabled = pricing.requireAuth && !isAuthed
     links.push({ title: t('Model Square'), href: '/pricing', disabled })
   }
 
-  // Rankings
+  // 排行榜同样支持 requireAuth，保持与模型广场一致的交互规则。
   const rankings = modules?.rankings
   if (rankings && typeof rankings === 'object' && rankings.enabled) {
     const disabled = rankings.requireAuth && !isAuthed
     links.push({ title: t('Rankings'), href: '/rankings', disabled })
   }
 
-  // Docs (supports external links)
+  // 文档入口支持外链配置。
   if (modules?.docs !== false) {
     if (docsLink) {
       links.push({ title: t('Docs'), href: docsLink, external: true })
@@ -153,7 +85,7 @@ export function useTopNavLinks(): TopNavLink[] {
     }
   }
 
-  // About
+  // 关于页入口。
   if (modules?.about !== false) {
     links.push({ title: t('About'), href: '/about' })
   }
