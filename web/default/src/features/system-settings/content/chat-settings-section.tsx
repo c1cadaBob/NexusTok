@@ -187,7 +187,13 @@ export function ChatSettingsSection({
             </TabsContent>
           </Tabs>
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save chat settings')}
           </Button>
         </form>

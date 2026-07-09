@@ -2277,6 +2277,55 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面加载、`/api/option/` 只读请求正常、Waffo 与 Waffo Pancake 保存按钮渲染正常、控制台无错误；不触发真实保存。
 
+## 本轮实施评审：控制台内容基础表单保存按钮 Authz 消费
+
+### 需求分析
+
+系统设置的“控制台内容”分组中，Dashboard、Chat Presets 和 Drawing 三个实际路由页面都通过 `useUpdateOption()` 写入 `PUT /api/option/`，但保存按钮仍只按 `updateOption.isPending` 禁用。后端与 hook 已经统一要求 `system_setting.sensitive_write`，这些基础表单需要在按钮层消费 `canUpdate/disabledReason`，与站点、运维、支付等系统设置页面保持同一权限体验。
+
+本轮目标：
+
+1. 将 `/system-settings/content/dashboard` 的 `Save Changes` 接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 将 `/system-settings/content/chat` 的 `Save chat settings` 接入同一保存权限字段。
+3. 将 `/system-settings/content/drawing` 的 `Save drawing settings` 接入同一保存权限字段。
+4. 不处理 FAQ、API Addresses、Announcements、Uptime Kuma 四个列表编辑器页面；它们包含本地批量新增/编辑/删除草稿，后续单独评审。
+5. `JsonToggleSection` 当前没有实际调用方，本轮不做无效改动。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Dashboard 内容设置 | `web/default/src/features/system-settings/content/dashboard-section.tsx` | 数据导出开关、间隔和默认粒度保存按钮消费统一 option 保存权限。 |
+| Chat Presets | `content/chat-settings-section.tsx` | 视觉/JSON 聊天预设保存按钮消费统一 option 保存权限；编辑模式切换不变。 |
+| Drawing 内容设置 | `content/drawing-settings-section.tsx` | 绘图与 Midjourney 相关开关保存按钮消费统一 option 保存权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改保存按钮 disabled/title，不改 Dashboard 导出间隔校验、Chat JSON/可视化编辑、Drawing 开关列表和任何 option key。
+2. Dashboard 导出和 Drawing 开关会影响前台功能可见性与后台任务行为，前端按钮只是提前表达后端已有权限；`useUpdateOption()` 仍是提交前保护。
+3. Chat 视觉编辑器允许本地调整预设，本轮不禁止本地草稿编辑，避免无权限管理员失去查看和整理能力；真正持久化由保存按钮控制。
+4. 列表编辑器页面存在批量草稿和本地删除提示，和本轮基础表单不同；分开处理能减少误伤本地编辑语义的风险。
+
+### 方案评审
+
+采用“同一 `PUT /api/option/` 保存入口，同一按钮权限字段”的方案。三个页面继续允许本地编辑和表单校验，保存按钮在缺少 `system_setting.sensitive_write` 时禁用并展示统一无权限原因；hook 层保留最终前置检查，防止快捷键、脚本或未来遗漏按钮路径绕过前端 UI。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 Dashboard、Chat Presets、Drawing option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 本地开关切换、Chat 视觉/JSON 编辑模式切换、字段编辑 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认三个内容设置页面类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/content/dashboard`、`/system-settings/content/chat`、`/system-settings/content/drawing`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2343,3 +2392,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-08 | 系统设置运维集成与模型部署保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/*` | 监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；io.net 连接测试保持独立操作语义，留待后续单独权限评审。 |
 | 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
 | 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
+| 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
