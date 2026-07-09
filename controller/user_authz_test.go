@@ -91,6 +91,7 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	rootResp := performGetSelfForAuthz(t, users[0].Id, common.RoleRootUser)
 	assert.False(t, *rootResp.Data.Permissions.SidebarSettings)
 	assertPermission(t, rootResp.Data.Permissions.AdminPermissions, "channel", authz.ActionSensitiveWrite, true)
+	assertPermission(t, rootResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionSecretView, true)
 	assertPermission(t, rootResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionSecretView, true)
 
 	adminResp := performGetSelfForAuthz(t, users[1].Id, common.RoleAdminUser)
@@ -105,6 +106,7 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionRead, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionWrite, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionSensitiveWrite, false)
+	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "redemption", authz.ActionSecretView, false)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionRead, true)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionSensitiveWrite, false)
 	assertPermission(t, adminResp.Data.Permissions.AdminPermissions, "usage_data", authz.ActionRead, true)

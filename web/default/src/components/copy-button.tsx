@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
@@ -29,7 +30,8 @@ import {
 } from '@/components/ui/tooltip'
 
 interface CopyButtonProps {
-  value: string
+  value?: string
+  resolveValue?: () => Promise<string | null | undefined>
   children?: ReactNode
   className?: string
   iconClassName?: string
@@ -37,11 +39,13 @@ interface CopyButtonProps {
   size?: 'default' | 'sm' | 'lg' | 'icon'
   tooltip?: string
   successTooltip?: string
+  disabled?: boolean
   'aria-label'?: string
 }
 
 export function CopyButton({
   value,
+  resolveValue,
   children,
   className,
   iconClassName,
@@ -49,25 +53,48 @@ export function CopyButton({
   size = 'icon',
   tooltip,
   successTooltip,
+  disabled = false,
   'aria-label': ariaLabel,
 }: CopyButtonProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
-  const isCopied = copiedText === value
+  const [pending, setPending] = useState(false)
+  const [lastCopiedText, setLastCopiedText] = useState<string | null>(null)
+  const isCopied = Boolean(
+    copiedText && (copiedText === value || copiedText === lastCopiedText)
+  )
   const resolvedTooltip = tooltip ?? t('Copy to clipboard')
   const resolvedSuccessTooltip = successTooltip ?? t('Copied!')
   const resolvedAriaLabel = ariaLabel ?? resolvedTooltip
   const copiedAriaLabel = t('Copied')
+
+  const handleCopy = async () => {
+    if (disabled || pending) return
+    setPending(true)
+    try {
+      const nextValue = resolveValue ? await resolveValue() : value
+      if (!nextValue) return
+      const copied = await copyToClipboard(nextValue)
+      if (copied) {
+        setLastCopiedText(nextValue)
+      }
+    } finally {
+      setPending(false)
+    }
+  }
 
   const button = (
     <Button
       variant={variant}
       size={size}
       className={cn('shrink-0', className)}
-      onClick={() => copyToClipboard(value)}
+      onClick={handleCopy}
+      disabled={disabled || pending}
       aria-label={isCopied ? copiedAriaLabel : resolvedAriaLabel}
     >
-      {isCopied ? (
+      {pending ? (
+        <Spinner className={cn(iconClassName)} />
+      ) : isCopied ? (
         <Check className={cn('text-success', iconClassName)} />
       ) : (
         <Copy className={cn(iconClassName)} />

@@ -175,6 +175,11 @@ func init() {
 				LabelKey:       "Delete redemption codes",
 				DescriptionKey: "Delete redemption code records or perform bulk cleanup that removes redemption audit data.",
 			},
+			{
+				Action:         ActionSecretView,
+				LabelKey:       "View redemption codes",
+				DescriptionKey: "View complete redemption code values after secure verification.",
+			},
 		},
 	})
 

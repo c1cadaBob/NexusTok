@@ -75,6 +75,7 @@ var (
 	RedemptionOperate        = Permission{Resource: ResourceRedemption, Action: ActionOperate}
 	RedemptionWrite          = Permission{Resource: ResourceRedemption, Action: ActionWrite}
 	RedemptionSensitiveWrite = Permission{Resource: ResourceRedemption, Action: ActionSensitiveWrite}
+	RedemptionSecretView     = Permission{Resource: ResourceRedemption, Action: ActionSecretView}
 
 	UsageLogRead           = Permission{Resource: ResourceUsageLog, Action: ActionRead}
 	UsageLogSensitiveWrite = Permission{Resource: ResourceUsageLog, Action: ActionSensitiveWrite}

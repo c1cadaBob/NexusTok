@@ -27,6 +27,7 @@ export const redemptionSchema = z.object({
   user_id: z.number(),
   name: z.string(),
   key: z.string(),
+  key_redacted: z.boolean().optional(),
   status: z.number(), // 1: enabled, 2: disabled, 3: used
   quota: z.number(),
   created_time: z.number(),
@@ -77,6 +78,10 @@ export interface RedemptionFormData {
   expired_time: number
   count?: number // Only for create
   status?: number // Only for status update
+}
+
+export interface RedemptionKeyResponse {
+  key: string
 }
 
 // ============================================================================

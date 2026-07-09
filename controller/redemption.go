@@ -13,6 +13,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"unicode/utf8"
@@ -24,6 +25,61 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+type redemptionResponse struct {
+	Id           int    `json:"id"`
+	UserId       int    `json:"user_id"`
+	Key          string `json:"key"`
+	KeyRedacted  bool   `json:"key_redacted"`
+	Status       int    `json:"status"`
+	Name         string `json:"name"`
+	Quota        int    `json:"quota"`
+	CreatedTime  int64  `json:"created_time"`
+	RedeemedTime int64  `json:"redeemed_time"`
+	UsedUserId   int    `json:"used_user_id"`
+	ExpiredTime  int64  `json:"expired_time"`
+}
+
+type redemptionKeyResponse struct {
+	Key string `json:"key"`
+}
+
+// buildRedemptionResponse 构造管理端兑换码响应。
+//
+// 默认路径只返回脱敏 key；完整兑换码必须通过受 `redemption.secret_view`
+// 和安全验证保护的 reveal 接口获取，避免普通 read 权限泄露可入账额度凭据。
+func buildRedemptionResponse(redemption *model.Redemption, revealKey bool) *redemptionResponse {
+	if redemption == nil {
+		return nil
+	}
+	key := redemption.GetMaskedKey()
+	keyRedacted := true
+	if revealKey {
+		key = redemption.Key
+		keyRedacted = false
+	}
+	return &redemptionResponse{
+		Id:           redemption.Id,
+		UserId:       redemption.UserId,
+		Key:          key,
+		KeyRedacted:  keyRedacted,
+		Status:       redemption.Status,
+		Name:         redemption.Name,
+		Quota:        redemption.Quota,
+		CreatedTime:  redemption.CreatedTime,
+		RedeemedTime: redemption.RedeemedTime,
+		UsedUserId:   redemption.UsedUserId,
+		ExpiredTime:  redemption.ExpiredTime,
+	}
+}
+
+func buildRedemptionResponses(redemptions []*model.Redemption) []*redemptionResponse {
+	result := make([]*redemptionResponse, 0, len(redemptions))
+	for _, redemption := range redemptions {
+		result = append(result, buildRedemptionResponse(redemption, false))
+	}
+	return result
+}
 
 // GetAllRedemptions 管理员获取所有兑换码
 //
@@ -39,7 +95,7 @@ func GetAllRedemptions(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(redemptions)
+	pageInfo.SetItems(buildRedemptionResponses(redemptions))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -61,7 +117,7 @@ func SearchRedemptions(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(redemptions)
+	pageInfo.SetItems(buildRedemptionResponses(redemptions))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -84,9 +140,33 @@ func GetRedemption(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    redemption,
+		"data":    buildRedemptionResponse(redemption, false),
 	})
 	return
+}
+
+// GetRedemptionKey reveal 单个兑换码完整值。
+//
+// 路由层必须先通过 `redemption.secret_view`、关键限流、禁缓存和安全验证；
+// handler 只返回完整 key 本身，避免额外元数据在敏感响应中扩大暴露面。
+func GetRedemptionKey(c *gin.Context) {
+	userId := c.GetInt("id")
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	redemption, err := model.GetRedemptionById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(userId, model.LogTypeSystem, fmt.Sprintf("查看兑换码完整值 (兑换码ID: %d)", id))
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "获取成功",
+		"data":    redemptionKeyResponse{Key: redemption.Key},
+	})
 }
 
 func AddRedemption(c *gin.Context) {
@@ -196,7 +276,7 @@ func UpdateRedemption(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    cleanRedemption,
+		"data":    buildRedemptionResponse(cleanRedemption, false),
 	})
 	return
 }

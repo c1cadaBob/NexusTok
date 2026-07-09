@@ -43,6 +43,10 @@ export const STATIC_I18N_KEYS = [
   'System Settings',
   'Manage and configure',
 
+  // Permission catalog
+  'View redemption codes',
+  'View complete redemption code values after secure verification.',
+
   // System settings sidebar
   'System Administration',
   'General',

@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useMemo } from 'react'
+import { useCallback, useState } from 'react'
 import { type Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
+import { Copy01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -27,10 +29,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { Spinner } from '@/components/ui/spinner'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyButton } from '@/components/copy-button'
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
-import { deleteInvalidRedemptions } from '../api'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
+import { deleteInvalidRedemptions, getRedemptionKey } from '../api'
 import { useRedemptionPermissions } from '../hooks/use-redemption-permissions'
 import { type Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
@@ -49,15 +56,89 @@ export function DataTableBulkActions<TData>({
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
   const selectedRows = table.getFilteredSelectedRowModel().rows
+  const { copyToClipboard } = useCopyToClipboard({
+    notify: true,
+    successMessage: t('Codes copied!'),
+  })
 
-  const contentToCopy = useMemo(() => {
-    const selectedCodes = selectedRows.map((row) => {
-      const redemption = row.original as Redemption
-      return `${redemption.name}\t${redemption.key}`
-    })
+  const fetchSelectedCodes = useCallback(async () => {
+    if (!permissions.canViewSecret) {
+      throw new Error(noPermissionMessage)
+    }
+    const selectedCodes = await Promise.all(
+      selectedRows.map(async (row) => {
+        const redemption = row.original as Redemption
+        const response = await getRedemptionKey(redemption.id)
+        if (!response.success || !response.data?.key) {
+          throw new Error(
+            response.message || 'Failed to fetch redemption code'
+          )
+        }
+        return `${redemption.name}\t${response.data.key}`
+      })
+    )
     return selectedCodes.join('\n')
-  }, [selectedRows])
+  }, [noPermissionMessage, permissions.canViewSecret, selectedRows])
+
+  const {
+    open: verificationOpen,
+    setOpen: setVerificationOpen,
+    methods: verificationMethods,
+    state: verificationState,
+    withVerification,
+    executeVerification,
+    cancel: cancelVerification,
+    setCode: setVerificationCode,
+    switchMethod: switchVerificationMethod,
+  } = useSecureVerification({
+    successMessage: t('Redemption codes unlocked'),
+    onSuccess: async (result) => {
+      if (typeof result === 'string' && result.length > 0) {
+        await copyToClipboard(result)
+      }
+    },
+  })
+
+  const handleCopySelectedCodes = async () => {
+    if (!permissions.canViewSecret) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    setIsCopying(true)
+    try {
+      const result = await withVerification(fetchSelectedCodes, {
+        preferredMethod: 'passkey',
+        title: t('Verify to copy redemption codes'),
+        description: t(
+          'Use Passkey or 2FA to confirm your identity before copying selected redemption codes.'
+        ),
+      })
+      if (typeof result === 'string' && result.length > 0) {
+        await copyToClipboard(result)
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : t('Failed to fetch redemption code')
+      toast.error(message)
+    } finally {
+      setIsCopying(false)
+    }
+  }
+
+  const selectedCount = selectedRows.length
+  const copyDisabled =
+    selectedCount === 0 ||
+    !permissions.canViewSecret ||
+    isCopying ||
+    verificationState.loading
+
+  const copyTooltip = permissions.canViewSecret
+    ? t('Copy selected codes')
+    : noPermissionMessage
 
   const handleDeleteInvalid = async () => {
     if (!permissions.canSensitiveWrite) {
@@ -87,15 +168,31 @@ export function DataTableBulkActions<TData>({
   return (
     <>
       <BulkActionsToolbar table={table} entityName={t('redemption code')}>
-        <CopyButton
-          value={contentToCopy}
-          variant='outline'
-          size='icon'
-          className='size-8'
-          tooltip={t('Copy selected codes')}
-          successTooltip={t('Codes copied!')}
-          aria-label={t('Copy selected codes')}
-        />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                className='size-8'
+                disabled={copyDisabled}
+                title={copyTooltip}
+                aria-label={t('Copy selected codes')}
+                onClick={handleCopySelectedCodes}
+              />
+            }
+          >
+            {isCopying || verificationState.loading ? (
+              <Spinner />
+            ) : (
+              <HugeiconsIcon icon={Copy01Icon} />
+            )}
+            <span className='sr-only'>{t('Copy selected codes')}</span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{copyTooltip}</p>
+          </TooltipContent>
+        </Tooltip>
 
         <Tooltip>
           <TooltipTrigger
@@ -150,6 +247,24 @@ export function DataTableBulkActions<TData>({
           </>
         }
         confirmText={t('Delete Invalid')}
+      />
+
+      <SecureVerificationDialog
+        open={verificationOpen}
+        onOpenChange={(open) => {
+          setVerificationOpen(open)
+          if (!open) {
+            cancelVerification()
+          }
+        }}
+        methods={verificationMethods}
+        state={verificationState}
+        onVerify={async (method, code) => {
+          await executeVerification(method, code)
+        }}
+        onCancel={cancelVerification}
+        onCodeChange={setVerificationCode}
+        onMethodChange={switchVerificationMethod}
       />
     </>
   )

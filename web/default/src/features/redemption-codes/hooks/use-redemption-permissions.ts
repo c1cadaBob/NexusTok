@@ -28,10 +28,11 @@ export type RedemptionPermissions = {
   canRead: boolean
   canWrite: boolean
   canSensitiveWrite: boolean
+  canViewSecret: boolean
 }
 
-// 兑换码页面当前后端只使用 read/write/sensitive_write 三类动作。
 // 启停仍复用 update 路由，因此前端也按 write 控制，避免与服务端权限表分叉。
+// 完整兑换码 reveal 独立使用 secret_view，避免普通 read 用户复制可入账凭据。
 export function useRedemptionPermissions(): RedemptionPermissions {
   const user = useAuthStore((state) => state.auth.user)
 
@@ -51,6 +52,11 @@ export function useRedemptionPermissions(): RedemptionPermissions {
         user,
         ADMIN_PERMISSION_RESOURCES.REDEMPTION,
         ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+      ),
+      canViewSecret: hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.REDEMPTION,
+        ADMIN_PERMISSION_ACTIONS.SECRET_VIEW
       ),
     }),
     [user]

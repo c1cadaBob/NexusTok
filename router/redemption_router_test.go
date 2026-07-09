@@ -24,6 +24,7 @@ func TestRegisterRedemptionRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodGet, "/api/redemption/", controller.GetAllRedemptions)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/redemption/search", controller.SearchRedemptions)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/redemption/:id", controller.GetRedemption)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/redemption/:id/key", controller.GetRedemptionKey)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/redemption/", controller.AddRedemption)
 	assertRouteHandler(t, engine, http.MethodPut, "/api/redemption/", controller.UpdateRedemption)
 	assertRouteHandler(t, engine, http.MethodDelete, "/api/redemption/invalid", controller.DeleteInvalidRedemption)
@@ -34,6 +35,7 @@ func TestRedemptionPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertRedemptionPermissionRoute(t, http.MethodGet, "/", authz.RedemptionRead)
 	assertRedemptionPermissionRoute(t, http.MethodGet, "/search", authz.RedemptionRead)
 	assertRedemptionPermissionRoute(t, http.MethodGet, "/:id", authz.RedemptionRead)
+	assertRedemptionPermissionRoute(t, http.MethodPost, "/:id/key", authz.RedemptionSecretView)
 	assertRedemptionPermissionRoute(t, http.MethodPost, "/", authz.RedemptionWrite)
 	assertRedemptionPermissionRoute(t, http.MethodPut, "/", authz.RedemptionWrite)
 	assertRedemptionPermissionRoute(t, http.MethodDelete, "/invalid", authz.RedemptionSensitiveWrite)
@@ -49,6 +51,13 @@ func TestRedemptionPermissionRoutesStayOnRedemptionResource(t *testing.T) {
 		assert.Equal(t, authz.ResourceRedemption, route.permission.Resource, "%s %s", route.method, route.path)
 		assert.NotEmpty(t, route.permission.Action, "%s %s", route.method, route.path)
 	}
+}
+
+func TestRedemptionKeyRevealRequiresSensitiveMiddlewares(t *testing.T) {
+	keyRoute := requireRedemptionPermissionRoute(t, http.MethodPost, "/:id/key")
+	require.Empty(t, keyRoute.before)
+	require.Len(t, keyRoute.after, 3)
+	assert.Equal(t, authz.RedemptionSecretView, keyRoute.permission)
 }
 
 func assertRedemptionPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) {

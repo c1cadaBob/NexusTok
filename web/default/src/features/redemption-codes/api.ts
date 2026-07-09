@@ -24,6 +24,7 @@ import type {
   GetRedemptionsResponse,
   SearchRedemptionsParams,
   RedemptionFormData,
+  RedemptionKeyResponse,
 } from './types'
 
 // ============================================================================
@@ -58,6 +59,14 @@ export async function getRedemption(
   id: number
 ): Promise<ApiResponse<Redemption>> {
   const res = await api.get(`/api/redemption/${id}`)
+  return res.data
+}
+
+// 获取单个兑换码完整值；该接口需要 redemption.secret_view 和安全验证。
+export async function getRedemptionKey(
+  id: number
+): Promise<ApiResponse<RedemptionKeyResponse>> {
+  const res = await api.post(`/api/redemption/${id}/key`)
   return res.data
 }
 

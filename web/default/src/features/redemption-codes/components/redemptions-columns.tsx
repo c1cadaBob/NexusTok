@@ -26,12 +26,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
-import { MaskedValueDisplay } from '@/components/masked-value-display'
 import { StatusBadge } from '@/components/status-badge'
 import { REDEMPTION_FILTER_EXPIRED, REDEMPTION_STATUSES } from '../constants'
 import { isRedemptionExpired, isTimestampExpired } from '../lib'
 import { type Redemption } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
+import { RedemptionCodeDisplay } from './redemption-code-display'
 
 export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
   const { t } = useTranslation()
@@ -144,18 +144,7 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       ),
       cell: function CodeCell({ row }) {
         const redemption = row.original
-        const key = redemption.key
-        const maskedKey = `${key.slice(0, 8)}${'*'.repeat(16)}${key.slice(-8)}`
-
-        return (
-          <MaskedValueDisplay
-            label={t('Full Code')}
-            fullValue={key}
-            maskedValue={maskedKey}
-            copyTooltip={t('Copy code')}
-            copyAriaLabel={t('Copy redemption code')}
-          />
-        )
+        return <RedemptionCodeDisplay redemption={redemption} />
       },
       enableSorting: false,
     },

@@ -6529,6 +6529,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |
 | 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
+| 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
 ## 本轮实施评审：渠道编辑页分段布局与模型搜索添加修复
 
@@ -6714,3 +6715,62 @@ NexusTok 已经具备管理权限 catalog、角色基线矩阵、`middleware.Req
 6. `cd web/default && bun run build`。
 7. `git diff --check`。
 8. 访问 `http://192.168.0.202:3003/`，登录后进入 `/users`，打开 Admin 用户编辑抽屉，确认权限矩阵渲染；调用 `/api/authz/catalog` 与 `/api/user/:id` 确认返回矩阵；不实际保存生产账号权限，避免改变当前运行态管理能力。
+
+## 本轮实施评审：兑换码 secret_view 与完整码 reveal 契约
+
+### 需求分析
+
+前几轮已经把兑换码拆成独立 `redemption` 权限资源，并完成后端路由权限表和默认前端按钮级消费。但当前兑换码列表、搜索和详情接口仍直接返回完整 `key`，导致只具备 `redemption.read` 的管理员也能查看和复制所有未使用兑换码。兑换码本质上是可兑换额度的 bearer secret：拥有完整码即可在用户侧入账，因此它不应和普通列表元数据处在同一权限层级。
+
+对照 `new-api-main` 的平台治理方向，敏感材料应通过更细粒度的资源动作、二次验证和按需 reveal 交互来控制。NexusTok 已经拥有原生 `secret_view` 动作、安全验证中间件、渠道密钥 reveal 模式和用户级 override，本轮目标是把这些能力延伸到兑换码域：列表默认脱敏，完整兑换码只能通过 `redemption.secret_view` + 安全验证后的 reveal 接口获取。
+
+### 影响范围分析
+
+- `service/authz`：为 `redemption` 补齐 `secret_view` 动作和 `RedemptionSecretView` permission 变量；Root 默认拥有，Admin 默认不拥有，可通过用户级 override 显式授权。
+- `controller/redemption.go`：列表、搜索、详情和更新响应统一返回脱敏兑换码；新增完整码 reveal handler，只返回 `{ key }`，并记录查看日志。
+- `router/redemption-router.go`：新增 `POST /api/redemption/:id/key`，挂接 `redemption.secret_view`、关键限流、禁缓存和安全验证，不改变用户兑换路径。
+- `web/default/src/features/redemption-codes/*`：兑换码列不再把列表 `key` 当完整值复制；行内复制/查看与批量复制选中码改为先 reveal，再复制或展示。
+- `web/default/src/i18n/locales/*.json`：补齐 reveal、验证、权限提示相关新增文案。
+- `docs/features/new-api-main-diff-analysis.md`：记录本轮方案、风险、结果和验证记录。
+
+### 风险评估
+
+- 兑换码列表从完整值改为脱敏值会影响现有管理员复制工作流；必须在前端提供按需 reveal 和复制入口，并在无 `secret_view` 时给出明确禁用/提示，而不是复制一堆掩码。
+- `POST /api/redemption/:id/key` 不能只依赖前端隐藏按钮；后端必须同时检查 `redemption.secret_view` 和安全验证 session，且需要禁缓存和关键限流，避免完整码被浏览器或代理缓存。
+- 创建兑换码接口当前会返回本次新建的完整 keys，便于管理员立即分发。本轮不改变创建返回契约，避免破坏既有工作流；但创建后的再次查看必须走 reveal 契约。
+- Admin 默认不拥有 `secret_view`，因此普通 Admin 的历史体验会从“可直接复制完整码”收紧为“只能查看脱敏码”。这是安全提升，但需要通过 Root 用户实际页面验证确认 Root 工作流正常。
+- 批量复制会对选中行逐个调用 reveal 接口；应限制在管理员明确选择后触发，并复用一次安全验证 session，避免页面加载时批量泄露。
+
+### 方案评审
+
+采用“脱敏列表 + reveal endpoint + 前端安全验证”的小步原生化方案。后端新增轻量响应 DTO，不改 `model.Redemption` 表结构和兑换事务；`GetAllRedemptions`、`SearchRedemptions`、`GetRedemption` 和 `UpdateRedemption` 在出站前将 `key` 替换为 `model.MaskTokenKey` 风格的脱敏值，并标记 `key_redacted=true`。新增 `GetRedemptionKey` 只按 ID 读取完整 `key`，返回最小 `{ key }` payload，并记录管理日志。
+
+路由层沿用 NexusTok 的权限表模式：`POST /api/redemption/:id/key` 先经过 `AdminAuth`，再经过 `RequirePermission(redemption.secret_view)`，然后执行 `CriticalRateLimit`、`DisableCache` 和 `SecureVerificationRequired`。这里不额外加 `RootAuth`，因为 `secret_view` 已支持 Root 基线和用户级 override；Root 可以把该能力显式授予受信 Admin，但 Admin 默认仍无权查看。
+
+前端复用现有 Base UI、`SecureVerificationDialog`、权限 helper 和复制组件，不新增视觉体系。兑换码列展示脱敏值，复制按钮点击时调用 reveal；无权限时按钮禁用并显示无权限提示。批量复制选中码也先通过安全验证，再逐条 reveal 并写入剪贴板，避免复制脱敏占位符。
+
+### 验收方式
+
+1. `go test ./service/authz ./router ./controller ./model`，重点覆盖 `redemption.secret_view` catalog、路由权限分类、列表/详情脱敏和 reveal 返回完整码。
+2. `cd web/default && bun run i18n:sync`，确认新增文案六语补齐。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/redemption-codes`，确认列表渲染脱敏码、无控制台错误；调用列表接口确认响应不包含完整 32 位兑换码。
+7. MCP 在登录态浏览器上下文调用 `POST /api/redemption/:id/key`：未通过安全验证时应返回需要验证；完成安全验证后 Root 可 reveal 完整码。若当前账号未配置 2FA/Passkey，则记录“页面按钮可见但 reveal 被安全验证前置阻断”，不强行修改生产账号安全设置。
+
+### 实施结果
+
+已完成兑换码完整值安全查看的原生化闭环。后端为 `redemption` 资源新增 `secret_view` 动作和 `RedemptionSecretView` 权限常量，Root 默认拥有，Admin 默认不拥有，可通过用户级 override 授权；`/api/redemption` 的列表、搜索、详情和更新响应统一构造脱敏 DTO，保留创建接口一次性返回新建完整码的既有分发契约。完整码查看改为 `POST /api/redemption/:id/key`，路由同时经过 `AdminAuth`、`RequirePermission(redemption.secret_view)`、`CriticalRateLimit`、`DisableCache` 和 `SecureVerificationRequired`，handler 只返回 `{ key }` 并写入管理日志。
+
+默认前端兑换码表格不再把列表 `key` 当完整值使用。行内“查看/复制”按钮和批量复制选中码都会先检查 `redemption.secret_view`，再复用 `SecureVerificationDialog` 触发安全验证，验证通过后按需调用 reveal 接口并复制或展示完整码；无权限时按钮禁用并复用统一无权限提示。`CopyButton` 同步支持异步解析复制内容，静态复制调用保持兼容；新增 reveal 文案和权限 catalog 文案已补齐 en、zh、fr、ja、ru、vi 六语。
+
+### 验证记录
+
+1. `go test ./...` 通过。
+2. `cd web/default && bun run i18n:sync && bun run typecheck && bun run build` 通过。
+3. `git diff --check` 通过。
+4. MCP 打开 `http://192.168.0.202:3003/redemption-codes`，页面可访问；首次点击发现热更新仍服务旧 bundle，按运行态验证约定重启 `nexustok-api-hot` 与 `nexustok-frontend-watch` 后重新硬刷新，确认页面加载到新版兑换码行内组件，最终空表状态控制台无 error/warn。
+5. MCP 在登录态浏览器上下文创建临时兑换码并调用 `/api/redemption/search`：接口返回脱敏 `key` 和 `key_redacted=true`，响应体不包含创建接口返回的完整 32 位码。
+6. MCP 调用 `POST /api/redemption/:id/key`：未完成安全验证时返回 HTTP 403，业务 `code=VERIFICATION_REQUIRED`，响应头包含 `no-store/no-cache`，未返回完整码；当前账号未启用 2FA/Passkey，前端继续提示需先启用安全验证方式，没有强行修改生产账号安全设置。
+7. MCP 硬刷新表格后确认临时兑换码行内只显示脱敏码和复制按钮；随后通过 `DELETE /api/redemption/:id` 删除临时记录，再次刷新确认列表恢复为空，测试数据无遗留。

@@ -148,6 +148,17 @@ func GetRedemptionById(id int) (*Redemption, error) {
 	return &redemption, err
 }
 
+// GetMaskedKey 返回用于管理列表展示的脱敏兑换码。
+//
+// 兑换码本身等价于可入账额度的 bearer secret，因此普通 read 接口只能返回脱敏值；
+// 需要完整值时必须通过受 `redemption.secret_view` 与安全验证保护的 reveal 接口获取。
+func (redemption *Redemption) GetMaskedKey() string {
+	if redemption == nil || redemption.Key == "" {
+		return ""
+	}
+	return MaskTokenKey(redemption.Key)
+}
+
 func Redeem(key string, userId int) (quota int, err error) {
 	if key == "" {
 		return 0, errors.New("未提供兑换码")
