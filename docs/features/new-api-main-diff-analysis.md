@@ -2967,8 +2967,50 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 4. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认热更新页面仍正常加载、控制台无新增错误。
 5. 在浏览器上下文带 `NexusTok-User: 1` 调用一个不会命中真实上游的非法图片请求（例如缺少模型或 `n` 超上限），确认接口返回明确错误而不是 500；不触发真实图片生成或真实扣费。
 
+## 本轮实施评审：渠道新增缓存刷新补齐
+
+### 需求分析
+
+上一轮用 MCP 验证 OpenAI 图片请求边界时，临时创建了一个只支持 `gpt-image-1` 的 OpenAI 渠道，但随后 relay 请求仍被 Distribute 返回“分组 default 下模型 gpt-image-1 无可用渠道”。复核代码后确认：`AddChannel` 成功写入数据库和 abilities 后只调用 `service.ResetProxyClientCache()`，没有刷新 `model/channel_cache.go` 中的分发缓存；而 `DeleteChannel`、`UpdateChannel`、标签批量操作、上游模型同步等路径都会调用 `model.InitChannelCache()`。这会导致新增渠道在当前进程中无法立即参与模型分发，需要重启或其它缓存刷新动作后才生效。
+
+本轮目标是补齐新增渠道后的缓存刷新，使“创建渠道”成为即时可用的原生管理能力：
+
+1. `POST /api/channel/` 在 `model.BatchInsertChannels` 成功后刷新渠道缓存，确保新渠道及其 abilities 立即参与 Distribute。
+2. 保留现有代理客户端缓存重置，避免新渠道代理配置或 BaseURL 变更后复用旧客户端。
+3. 不改变渠道写入事务、批量新增、多 Key 拆分、账号池凭证模式、权限和安全验证边界。
+4. 用单元测试覆盖新增渠道后调用缓存刷新和代理客户端缓存刷新，防止后续回归。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 渠道新增控制器 | `controller/channel.go` | `AddChannel` 成功后调用 `model.InitChannelCache()`，让新渠道立即进入分发缓存。 |
+| 渠道测试 | `controller/channel_test.go` 或相邻测试文件 | 新增控制器级测试，验证新增成功后刷新渠道缓存；失败路径不刷新。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录 MCP 暴露的问题、方案和验收标准。 |
+
+### 风险评估
+
+1. `model.InitChannelCache()` 会重新读取渠道和 abilities，新增渠道成功后调用一次属于已有更新/删除路径的既有行为，风险低；但批量新增大量渠道时会多一次全量缓存构建，因此必须只在 `BatchInsertChannels` 成功后执行。
+2. 如果 `InitChannelCache` 内部 panic 或数据库异常，会影响新增接口响应。当前项目在启动和部分任务里已有 panic 保护，但控制器其它更新路径直接调用该函数；本轮保持一致，不新增吞错逻辑，避免新增渠道写入成功但缓存失败被静默隐藏。
+3. 该修改不触碰数据库 schema、渠道选择策略、计费、账号池绑定、密钥脱敏和前端表单；核心风险集中在新增渠道后的进程内缓存状态。
+4. 测试需要避免依赖真实数据库缓存全局状态。可以使用 monkey patch 或包内可替换 hook 封装缓存刷新调用；若新增 hook，应保持未导出、默认指向原函数，避免生产路径分叉。
+
+### 方案评审
+
+采用最小热路径修复：在 `AddChannel` 的成功分支中，在 `model.BatchInsertChannels(channels)` 成功返回后调用 `model.InitChannelCache()`，然后继续调用 `service.ResetProxyClientCache()`。该顺序与“数据库能力先落盘、分发缓存再重建、HTTP 客户端缓存再清理”的运行语义一致。
+
+为便于测试且不引入外部依赖，在 controller 包内增加未导出的缓存刷新函数变量（默认指向 `model.InitChannelCache` 与 `service.ResetProxyClientCache`），测试中临时替换为计数函数，验证成功路径调用、校验失败路径不调用。生产行为仍调用原有函数，不改变公共 API。
+
+验收方式：
+
+1. `go test ./controller` 覆盖新增渠道成功/失败路径。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认页面正常加载。
+4. 在浏览器上下文创建临时渠道和临时 token，再发起不会命中真实上游的非法图片请求，确认请求不再因为新增渠道缓存未刷新而返回 `model_not_found`；随后删除临时 token 和渠道，并确认无残留。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 渠道新增缓存刷新 | `controller/channel.go`、`controller/channel_add_cache_test.go` | 新增渠道成功后同步刷新分发缓存和代理客户端缓存，避免当前进程仍按旧缓存返回 `model_not_found`；测试覆盖成功新增与校验失败路径。 |
 | 2026-07-09 | OpenAI 图片流式与计费边界 | `dto/openai_image.go`、`relay/helper/valid_request.go`、`relay/channel/openai/relay-openai.go`、`relay/channel/openai/adaptor.go`、`relay/helper/stream_scanner.go` | 原生化 Images `stream` 显式零值、JSON/multipart `n` 上限、multipart body 复读、图片 usage 标准化、SSE/JSON-as-SSE 图片流和 error event 记录；补齐 dto/helper/openai 单元测试。 |
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
 | 2026-07-07 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go`、`router/api-router.go` | 吸收 new-api-main 的匿名入口保护，并补齐 NexusTok 现有 Waffo Pancake webhook 路由。 |

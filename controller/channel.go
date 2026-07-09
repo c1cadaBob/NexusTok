@@ -26,6 +26,15 @@ import (
 	"github.com/gin-gonic/gin" // Gin 框架
 )
 
+var (
+	// addChannelRefreshChannelCache 指向新增渠道成功后的分发缓存刷新函数。
+	// 包内测试会临时替换为计数函数，生产路径始终默认调用 model.InitChannelCache。
+	addChannelRefreshChannelCache = model.InitChannelCache
+	// addChannelResetProxyClientCache 指向新增渠道成功后的代理客户端缓存重置函数。
+	// 新渠道可能携带新的 BaseURL、代理或认证配置，重置后下次请求会重新构造客户端。
+	addChannelResetProxyClientCache = service.ResetProxyClientCache
+)
+
 // OpenAIModel OpenAI 模型结构体
 // 用于表示从上游获取的模型信息
 type OpenAIModel struct {
@@ -707,7 +716,8 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	service.ResetProxyClientCache()
+	addChannelRefreshChannelCache()
+	addChannelResetProxyClientCache()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
