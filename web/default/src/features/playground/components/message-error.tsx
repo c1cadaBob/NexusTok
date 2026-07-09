@@ -21,12 +21,13 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { MESSAGE_STATUS } from '../constants'
+import {
+  FALLBACK_ERROR_CONTENT,
+  getMessageErrorState,
+  isAdminRole,
+  MODEL_PRICING_SETTINGS_PATH,
+} from '../lib'
 import type { Message } from '../types'
-
-const FALLBACK_ERROR_CONTENT = 'An unknown error occurred'
-const MODEL_PRICING_SETTINGS_PATH = '/system-settings/billing/model-pricing'
-const MODEL_PRICE_ERROR_CODE = 'model_price_error'
 
 interface MessageErrorProps {
   message: Message
@@ -39,23 +40,25 @@ interface MessageErrorProps {
 export function MessageError({ message, className = '' }: MessageErrorProps) {
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
-  const isAdmin = user?.role != null && user.role >= 10
+  const errorState = getMessageErrorState(message, isAdminRole(user?.role))
 
-  if (message.status !== MESSAGE_STATUS.ERROR) {
+  if (!errorState) {
     return null
   }
 
   const errorContent =
-    message.versions[0]?.content || t(FALLBACK_ERROR_CONTENT)
+    errorState.content === FALLBACK_ERROR_CONTENT
+      ? t(FALLBACK_ERROR_CONTENT)
+      : errorState.content
 
-  if (message.errorCode === MODEL_PRICE_ERROR_CODE) {
+  if (errorState.kind === 'model-price') {
     return (
       <Alert variant='default' className={className}>
         <AlertTriangle className='text-warning' />
         <AlertTitle>{t('Model Price Not Configured')}</AlertTitle>
         <AlertDescription className='flex flex-col gap-2'>
           <p>{errorContent}</p>
-          {isAdmin && (
+          {errorState.showSettingsLink && (
             <Button
               variant='outline'
               size='sm'

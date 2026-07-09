@@ -4539,8 +4539,64 @@ new-api-main 的 Playground 将 reasoning/content 流式增量合并、assistant
 9. 线上 `/static/js/async/5192.js` 与本地 `web/default/dist/static/js/async/5192.js`、`5192.bf9c0f05f6.js` SHA256 均为 `13a56115eae01b75af8d9154181a946c9c6250ee680b1375beced774295a5b50`，确认 3003 页面加载的是本轮构建产物。
 10. 上一轮旧 Playground chunk `/static/js/async/4604.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
 
+## 本轮实施评审：Playground 错误状态 helper 原生化
+
+### 需求分析
+
+new-api-main 的 Playground 已将消息错误分类、模型价格错误判断、管理员设置入口可见性和 fallback 错误文案收敛到 `message-error-utils.ts`，`MessageError` 组件只负责渲染 `Alert`。NexusTok 当前 `message-error.tsx` 仍内联 `MODEL_PRICE_ERROR_CODE`、`MODEL_PRICING_SETTINGS_PATH`、`FALLBACK_ERROR_CONTENT`、`message.status` 判断和 `role >= 10` 管理员判断；后续继续吸收错误动作、错误详情、模型价格入口或权限矩阵时，会让展示组件继续承担业务状态判断。
+
+本轮目标是把错误状态判断抽成可测试纯函数，同时保留 NexusTok 当前错误卡片视觉和动作布局：
+
+1. 新增 `message-error-utils.ts`，提供 `FALLBACK_ERROR_CONTENT`、`MODEL_PRICING_SETTINGS_PATH`、`isAdminRole()`、`isErrorMessage()` 和 `getMessageErrorState()`。
+2. `getMessageErrorState()` 返回 `content`、`kind` 和 `showSettingsLink`，让组件不再直接判断 `message.status`、`errorCode` 和用户角色。
+3. `MessageError` 继续使用当前 `Alert`/`Button` 组合、`text-warning` 语义色和 `data-icon='inline-start'` 图标写法；本轮不移动错误恢复动作进 Alert 内部，避免和当前 metadata/errorActions 顺序一起改变。
+4. 为 helper 补测试，覆盖非错误消息、普通错误、模型价格错误、管理员和非管理员设置入口可见性、空内容 fallback。
+5. 本轮不新增 i18n 文案；`An unknown error occurred`、`Model Price Not Configured`、`Go to Settings`、`Error` 继续复用现有翻译 key。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 错误状态 helper | `web/default/src/features/playground/lib/message-error-utils.ts`、`message-error-utils.test.ts`、`lib/index.ts` | 新增错误分类和管理员可见性纯函数，并从统一 lib 入口导出。 |
+| 错误组件 | `web/default/src/features/playground/components/message-error.tsx` | 组件改为消费 helper 的 `MessageErrorState`，保留现有 Alert/Button 结构和视觉语义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. `MessageError` 是 Playground 错误展示入口；本轮只移动状态判断到 helper，不改变错误消息写入、errorCode 来源、恢复动作、请求链路、SSE 解析或 toast 行为。
+2. 管理员判断仍保持当前 `role >= 10` 语义，不接入权限矩阵，避免把前端展示 helper 与后续 Authz 改造绑定在一起。
+3. fallback 文案从组件内常量迁入 helper；组件仍只在 fallback 命中时调用 `t(FALLBACK_ERROR_CONTENT)`，真实上游错误内容保持原样展示。
+4. 模型价格设置入口路径继续使用 `/system-settings/billing/model-pricing`，不改当前默认前端路由，也不影响渠道测试弹窗里的同类错误处理。
+5. 本轮不改 UI 文案、不新增 locale key、不触碰后端、数据库、计费、权限和 localStorage schema，核心业务风险低。
+
+### 方案评审
+
+采用“纯函数抽离 + 组件瘦身”的方案：按 NexusTok 版权头和中文注释新增 `message-error-utils.ts`；`MessageError` 读取 `useAuthStore` 后只调用 `getMessageErrorState(message, isAdminRole(user?.role))`，根据 `kind` 渲染普通 destructive Alert 或模型价格 warning Alert。设计方向保持当前默认前端工具台风格，继续使用已安装的 `Alert`、`Button` 和 lucide 图标，不新增卡片、不调整错误动作位置、不引入新依赖。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-error-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-action-utils.test.ts`，覆盖错误状态 helper、错误写回和消息动作边界。
+2. 针对 `message-error.tsx`、`message-error-utils.ts`、`message-error-utils.test.ts` 和 `lib/index.ts` 运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，覆盖 helper 导出、组件类型和生产构建。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-error-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-action-utils.test.ts` 通过，共 17 个用例，覆盖错误状态 helper、错误写回和消息动作边界。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/message-error.tsx src/features/playground/lib/message-error-utils.ts src/features/playground/lib/message-error-utils.test.ts src/features/playground/lib/index.ts` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `MessageErrorState`、helper 导出和 `MessageError` 组件类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，生产构建生成新的本地 `dist`；Playground 相关 async chunk 切换为 `/static/js/async/6675.js`。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`，`system_name` 为 `NexusTok`。
+8. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/6675.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `c452d3907d348546052e086ff18dc22a5516aa085a76975a78d12a8610337394`，`6675.js` SHA256 均为 `c77cd7a9f0966488e11a0b19f2ca791616e66a5152cb8d59cd451265124fca0e`。
+9. 线上 `/static/js/async/6675.js` 已包含 `/system-settings/billing/model-pricing`、`An unknown error occurred`、`model_price_error` 和 `messageLayoutMode` 特征，确认本轮错误状态 helper 和前序 Playground 能力已进入 3003 页面资源。
+10. 上一轮旧 Playground chunk `/static/js/async/5192.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 错误状态 helper | `web/default/src/features/playground/components/message-error.tsx`、`web/default/src/features/playground/lib/{message-error-utils.ts,message-error-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message error state helper；错误分类、模型价格错误、管理员设置入口可见性和 fallback 文案进入可测试纯函数，`MessageError` 只保留 Alert/Button 渲染，现有错误动作位置、请求链路和 i18n key 不变。 |
 | 2026-07-09 | Playground 消息流式状态工具 | `web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/lib/{message-streaming-utils.ts,message-streaming-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message streaming helper 分层；流式 reasoning/content 增量、累计 chunk 去重、assistant 完成态判断和非流式 choice 写回进入可测试纯函数，`use-chat-handler` 只保留请求生命周期、toast 和错误落盘编排。 |
 | 2026-07-09 | Playground 消息布局对齐底座 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/components/{playground-chat.tsx,playground-message-content.tsx,message-metadata.tsx}`、`web/default/src/features/playground/lib/{message-layout-utils.ts,message-layout-utils.test.ts,index.ts}` | 原生化 new-api-main 的 `PlaygroundMessageLayoutMode` 和消息 alignment helper；默认保持 alternating，user 消息右对齐、assistant/system 左对齐，并为后续全部左对齐或用户偏好设置提供原生底座；保留 Branch 多版本、消息动作、请求协议和 localStorage schema。 |
 | 2026-07-09 | Playground 移动端消息动作菜单 | `web/default/src/features/playground/components/message-actions.tsx`、`web/default/src/features/playground/hooks/use-message-action-guard.ts`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts}`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的移动端消息动作菜单；单条消息动作先收敛为同一动作数组，桌面继续显示 tooltip 图标组，移动端折叠到 `DropdownMenu`；user/assistant 完成态消息均可展示 regenerate，动作 label 与 toast 补齐 i18n。 |
