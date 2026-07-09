@@ -6210,8 +6210,67 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 4. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 5. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：Relay HTTP 空闲连接超时配置
+
+### 需求分析
+
+`new-api-main` 支持 `RELAY_IDLE_CONN_TIMEOUT`，并把它应用到默认 Relay HTTP client、HTTP/HTTPS 代理 client、SOCKS5 代理 client 和 SSRF protected fetch client 的 `http.Transport.IdleConnTimeout`。NexusTok 当前已经支持 `RELAY_MAX_IDLE_CONNS` 与 `RELAY_MAX_IDLE_CONNS_PER_HOST`，但自建 transport 没有设置 `IdleConnTimeout`，实际语义变成“空闲连接永不因 transport 自身超时关闭”，不同于 Go 标准库默认的 90 秒。
+
+长期运行的 API 网关会频繁连接多种上游 provider、代理和用户可控 URL 下载端点。为连接池补上可配置空闲超时，可以减少长期空闲连接占用、让代理/上游连接回收更可控，并与 new-api-main 的工程化配置保持一致。
+
+本轮目标是将该能力原生化到 NexusTok：新增 `common.RelayIdleConnTimeout`，默认 90 秒，对齐 Go 标准库和 new-api-main；允许通过 `RELAY_IDLE_CONN_TIMEOUT=0` 显式关闭空闲连接超时；同时补 `.env.example` 示例和 transport 配置测试。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 全局配置 | `common/constants.go`、`common/init.go` | 新增 `RelayIdleConnTimeout`，从 `RELAY_IDLE_CONN_TIMEOUT` 读取，默认 90 秒。 |
+| 环境变量示例 | `.env.example` | 在 Relay timeout 相关配置下新增空闲连接超时说明。 |
+| HTTP client | `service/http_client.go` | 默认 client、HTTP/HTTPS proxy client、SOCKS5 proxy client 的 transport 设置 `IdleConnTimeout`。 |
+| SSRF protected fetch | `service/protected_fetch_client.go` | 用户可控 URL 专用 transport 设置同一空闲连接超时。 |
+| 回归测试 | `service/http_client_test.go`、`service/protected_fetch_client_test.go` | 覆盖默认 client、HTTP proxy、SOCKS5 proxy 和 protected fetch transport 的配置传播。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 默认值从自建 transport 的零值“不主动关闭空闲连接”变为 90 秒，行为更接近 Go 标准库默认值，但仍可能改变少数依赖超长空闲连接复用的部署；因此提供 `RELAY_IDLE_CONN_TIMEOUT=0` 作为显式关闭开关。
+2. 所有新增设置只影响新创建的 transport；已运行进程中的现有连接池需要重启或重新初始化 client 后才会使用新配置。
+3. 代理 client 有缓存，配置变更后需要 `ResetProxyClientCache()` 或进程重启才能让缓存代理 client 生效；这与现有 max idle 配置一致。
+4. SSRF protected fetch 的 transport 是按代理地址缓存的，新增字段必须覆盖 direct 和 proxied 两类 transport。
+5. 不修改 controller 中已有的模型同步/倍率同步专用短连接 transport；这些路径已经手动设置了 90 秒和额外 header timeout，本轮只覆盖通用 relay/protected fetch client。
+
+### 方案评审
+
+采用与 new-api-main 等价但保留 NexusTok 命名和测试边界的实现：
+
+1. 在 `common/constants.go` 增加 `RelayIdleConnTimeout int`，注释说明单位为秒、0 表示不限制。
+2. 在 `common.InitEnv()` 中读取 `RELAY_IDLE_CONN_TIMEOUT`，默认值为 90。
+3. 在 `.env.example` 的 `RELAY_TIMEOUT` 后补充 `RELAY_IDLE_CONN_TIMEOUT=90` 示例。
+4. 在 `service/http_client.go` 的三个 `http.Transport` 字面量中设置 `IdleConnTimeout: time.Duration(common.RelayIdleConnTimeout) * time.Second`。
+5. 在 `service/protected_fetch_client.go` 的 `newTransport` 中设置同一字段。
+6. 新增 `service/http_client_test.go` 覆盖默认 client、HTTP proxy 和 SOCKS5 proxy；扩展 `TestProtectedFetchRoundTripperReusesTransportPerProxy` 覆盖 protected fetch direct/proxy transport 的 `IdleConnTimeout`。
+
+验收方式：
+
+1. `go test ./common ./service -run 'Test.*(RelayIdleConnTimeout|ProtectedFetchRoundTripperReusesTransportPerProxy)'`。
+2. `go test ./service`。
+3. `rg -n "RelayIdleConnTimeout|RELAY_IDLE_CONN_TIMEOUT|IdleConnTimeout" common service .env.example docs/features/new-api-main-diff-analysis.md`。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `go test ./common ./service -run 'Test.*(RelayIdleConnTimeout|ProtectedFetchRoundTripperReusesTransportPerProxy)'` 通过。
+2. `go test ./service` 通过。
+3. `go test ./common` 通过。
+4. `rg -n "RelayIdleConnTimeout|RELAY_IDLE_CONN_TIMEOUT|IdleConnTimeout" common service .env.example docs/features/new-api-main-diff-analysis.md` 已确认配置变量、环境示例、默认/代理/protected fetch transport 和测试均已接入。
+5. `git diff --check` 通过。
+6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Relay HTTP 空闲连接超时配置 | `common/constants.go`、`common/init.go`、`.env.example`、`service/http_client.go`、`service/protected_fetch_client.go`、`service/http_client_test.go`、`service/protected_fetch_client_test.go` | 原生化 new-api-main 的 `RELAY_IDLE_CONN_TIMEOUT` 能力，默认 90 秒并允许 0 表示不限制；默认 Relay client、HTTP/HTTPS proxy、SOCKS5 proxy 和 SSRF protected fetch transport 均使用同一配置，测试覆盖配置传播。 |
 | 2026-07-09 | 本地 MCP 与临时测试忽略项 | `.gitignore` | 原生化 new-api-main 的本地验证产物隔离策略，忽略 `.playwright-mcp`、`.local-tests/` 和明确命名的 chat responses live local 探针文件；同时覆盖 NexusTok 当前 `service/openaicompat` 原生命名路径，降低 MCP/真实上游临时验证文件误提交风险。 |
 | 2026-07-09 | Secure Session Cookie 示例补齐 | `.env.example` | 补齐已经落地的 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 示例说明，让 HTTPS 反代部署者能从环境样例发现 Secure Cookie 开关；不补尚未接线的 relay idle timeout 变量，不改变默认运行时行为。 |
 | 2026-07-09 | Prettier 版权头保护包装器 | `web/default/scripts/format-with-protected-headers.mjs`、`web/default/package.json` | 原生化 new-api-main 的格式化版权头保护优势，但继续使用 NexusTok 当前 Prettier/ESLint/tsc 工具链；`format`/`format:check` 通过 wrapper 临时剥离并恢复 `c1cada` AGPL 版权头，check 模式会恢复快照并排除热更新构建目录，避免历史格式检查污染工作区。 |

@@ -235,6 +235,7 @@ var BatchUpdateInterval int    // 批量更新间隔（秒）
 
 var RelayTimeout int // 中继请求超时时间（秒）
 
+var RelayIdleConnTimeout int     // HTTP 客户端空闲连接超时时间（秒），0 表示不限制
 var RelayMaxIdleConns int        // HTTP 客户端最大空闲连接数
 var RelayMaxIdleConnsPerHost int // HTTP 客户端每主机最大空闲连接数
 

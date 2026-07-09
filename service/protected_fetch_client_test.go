@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/setting/system_setting"
@@ -298,6 +299,18 @@ func TestProtectedFetchRoundTripperNoProxyUsesProtectedDialer(t *testing.T) {
 }
 
 func TestProtectedFetchRoundTripperReusesTransportPerProxy(t *testing.T) {
+	originalIdleTimeout := common.RelayIdleConnTimeout
+	originalMaxIdleConns := common.RelayMaxIdleConns
+	originalMaxIdleConnsPerHost := common.RelayMaxIdleConnsPerHost
+	t.Cleanup(func() {
+		common.RelayIdleConnTimeout = originalIdleTimeout
+		common.RelayMaxIdleConns = originalMaxIdleConns
+		common.RelayMaxIdleConnsPerHost = originalMaxIdleConnsPerHost
+	})
+	common.RelayIdleConnTimeout = 19
+	common.RelayMaxIdleConns = 41
+	common.RelayMaxIdleConnsPerHost = 7
+
 	client := newProtectedFetchHTTPClientWithDialer(nil, nil, nil)
 	roundTripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
 	require.True(t, ok)
@@ -308,6 +321,10 @@ func TestProtectedFetchRoundTripperReusesTransportPerProxy(t *testing.T) {
 
 	require.Same(t, direct, directAgain)
 	require.NotSame(t, direct, proxied)
+	require.Equal(t, common.RelayMaxIdleConns, direct.MaxIdleConns)
+	require.Equal(t, common.RelayMaxIdleConnsPerHost, direct.MaxIdleConnsPerHost)
+	require.Equal(t, time.Duration(common.RelayIdleConnTimeout)*time.Second, direct.IdleConnTimeout)
+	require.Equal(t, time.Duration(common.RelayIdleConnTimeout)*time.Second, proxied.IdleConnTimeout)
 	require.True(t, direct.ForceAttemptHTTP2)
 	require.False(t, direct.DisableKeepAlives)
 }
