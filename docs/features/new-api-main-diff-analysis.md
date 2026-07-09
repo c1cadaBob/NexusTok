@@ -3956,8 +3956,65 @@ new-api-main 的 Playground 已把消息编辑器、编辑状态计算、上一�
 7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
 8. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9942.js`，确认线上资源包含 `Save & Submit` 与新 chunk 编号 `9942`；线上资源与本地 `web/default/dist` 完全一致，旧 `/static/js/async/3854.js` 已返回 404，确认页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 消息内容渲染组件化
+
+### 需求分析
+
+new-api-main 的 Playground 已把单条消息的来源列表、推理内容、加载提示、错误卡片、Markdown 响应和消息动作整合到 `PlaygroundMessageContent` 组件，并用 `getMessageContentState` helper 集中计算显示状态。NexusTok 当前仍在 `playground-chat.tsx` 内部通过一段立即执行函数直接计算 `hasSources`、`showReasoning`、`showLoader`、`showMessageContent`、`displayContent`，然后内联渲染 `Sources`、`Reasoning`、`Loader/Shimmer`、`MessageError`、`Response` 和动作按钮。上一轮已经把编辑器和会话数组操作拆出，但聊天组件仍同时承担消息列表遍历和消息正文渲染，后续继续接入 new-api-main 的 message metadata、来源折叠、原始响应查看、消息布局模式时仍会反复触碰同一大块 JSX。
+
+本轮目标是把 new-api-main 的消息内容拆分优势转成 NexusTok 原生能力，同时保持当前用户可见行为稳定：
+
+1. 新增 `message-content-utils.ts`，集中计算消息来源、推理、加载、错误、正文可见性和 assistant `<think>` 正文剥离结果。
+2. 新增 `PlaygroundMessageContent` 组件，封装来源列表、推理块、加载提示、错误卡片、正常响应和动作区。
+3. `playground-chat.tsx` 只负责消息遍历、编辑态选择、错误恢复动作拼装和分支切换，不再直接内联正文渲染细节。
+4. 保留现有 `MessageContent`、`Response`、`Reasoning`、`Sources`、`MessageError` 和 `MessageErrorActions` 行为；不迁移 new-api-main 的 raw response CodeBlock、message metadata、layout mode、source toggle 和历史裁剪。
+5. 将已有硬编码 `Responding...` 纳入 i18n 六语翻译，避免新组件继续裸写英文。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 内容 helper | `web/default/src/features/playground/lib/message-content-utils.ts`、`message-content-utils.test.ts`、`lib/index.ts` | 新增可测试的消息正文状态计算，覆盖来源、推理、加载、正文和错误状态。 |
+| 内容组件 | `web/default/src/features/playground/components/playground-message-content.tsx`、`playground-chat.tsx` | 单条消息正文渲染从聊天列表组件拆出，聊天组件变薄。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `Responding...` 六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 本轮只改默认前端 Playground 的消息展示层，不触碰后端 Relay、计费、权限、数据库、请求 DTO、SSE 解析、消息存储 key 和会话数组生成逻辑。
+2. `showLoader`、`showMessageContent` 和 `<think>` 正文剥离是流式体验关键路径，必须用定向测试覆盖：纯推理流不显示正文、空 streaming assistant 显示 loading、assistant 完整正文剥离 `<think>` 后再交给 `Response`。
+3. 错误消息必须继续只显示 `MessageError` 和错误恢复动作，不能被正常 `Response` 分支同时渲染。
+4. 来源列表必须保留在正文之前，且 key 需要稳定，避免来源重复或重新排序导致 React 误复用。
+5. 不引入 raw response/metadata/layout mode 是本轮稳定性边界；这些能力依赖 CodeBlock 扩展、Message 类型时间字段和布局策略，需后续单独评审。
+
+### 方案评审
+
+采用“状态 helper + 内容组件”的小步原生化方案：`getMessageContentState(message, versionContent)` 输出 `sources`、`hasSources`、`hasReasoning`、`reasoningContent`、`showLoader`、`showMessageContent`、`displayContent`、`isError`、`isMessageFinal` 等派生状态；`PlaygroundMessageContent` 接收 `message`、当前 version 内容、普通动作和错误动作，内部按现有顺序渲染来源、推理、加载、错误或正文。`playground-chat.tsx` 仍保留 `Branch`/多版本切换、编辑器选择、上一条 user prompt 查找和动作回调拼装，避免一次性迁移 new-api-main 的完整 message 目录。设计方向延续当前工具台界面，组件化是结构增强，不改变卡片样式、布局密度和请求行为。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-content-utils.test.ts` 覆盖新增消息内容状态 helper。
+2. `cd web/default && bun run i18n:sync` 确认 `Responding...` 进入 en、zh、fr、ja、ru、vi。
+3. 针对本轮触碰文件运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖新增 helper、组件 props 和聊天组件接线。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+6. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查普通消息、推理消息、错误消息和加载状态；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 确认 `Responding...` 和新 chunk 已热更新。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-content-utils.test.ts` 通过，6 条测试覆盖 user 内容保留、assistant `<think>` 剥离、reasoning 展示、loading assistant、reasoning streaming 与来源/错误状态。
+2. `cd web/default && bun test src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 通过，Playground 消息相关 14 条测试全部通过。
+3. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 均 `missingCount: 0`、`extrasCount: 0`，本轮新增 `Responding...` 六语 key 已归档。
+4. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/message-content-utils.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/index.ts src/features/playground/components/playground-message-content.tsx src/features/playground/components/playground-chat.tsx` 通过。
+5. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增 helper、测试类型、内容组件 props 和聊天组件接线类型正确。
+6. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground lazy chunk 切换为 `/static/js/async/157.js`；`git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
+9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/157.js`，确认线上资源包含 `Responding...`、`Reasoning`、`Save & Submit`、`Start a playground chat` 等特征；线上资源与本地 `web/default/dist` 完全一致，旧 `/static/js/async/9942.js` 已返回 404，确认页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息内容渲染组件化 | `web/default/src/features/playground/components/{playground-message-content.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-content-utils.ts,message-content-utils.test.ts,index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息内容拆分方式，来源、推理、加载、错误和正文显示状态统一由 helper 计算，单条消息正文渲染交给 `PlaygroundMessageContent`，聊天组件只保留消息列表、编辑态和动作编排；`Responding...` 补齐六语翻译。 |
 | 2026-07-09 | Playground 消息编辑与会话操作工具化 | `web/default/src/features/playground/components/{playground-message-editor.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-editor-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息编辑器拆分和会话消息数组 helper；发送、重试、删除、上一条 user 查找、编辑保存与编辑后重新提交统一由纯函数处理并补定向测试，聊天组件和容器不再手写关键数组截断逻辑。 |
 | 2026-07-09 | Playground 输入区恢复能力 | `web/default/src/features/playground/components/{playground-input.tsx,playground-input-controls.tsx,playground-input-tools.tsx,playground-empty-state.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{input-control-utils.ts,input-tool-utils.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的输入区拆分、空会话 starter prompts 和清空本地会话能力；新增清空确认弹窗，输入工具状态集中到 helper，移除旧 raw color 建议按钮，所有新增文案补齐六语翻译。 |
 | 2026-07-09 | Playground 错误消息动作 | `web/default/src/features/playground/components/{message-error-actions.tsx,playground-chat.tsx}` | 原生化 new-api-main 的失败态恢复入口，错误 assistant 消息下方显示专用 Retry/Edit/Delete 动作；Retry 复用 regenerate，Edit 定位到上一条 user prompt，Delete 清理错误消息，普通消息动作和请求协议保持不变。 |

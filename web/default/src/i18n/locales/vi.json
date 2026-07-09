@@ -3793,6 +3793,7 @@
     "Resource Configuration": "Cấu hình tài nguyên",
     "Response": "Phản hồi",
     "Response Time": "Thời gian phản hồi",
+    "Responding...": "Đang phản hồi...",
     "Responses API Version": "Phiên bản API Phản hồi",
     "Restore defaults": "Khôi phục mặc định",
     "Restrict user model request frequency (may impact high concurrency performance)": "Hạn chế tần suất yêu cầu mô hình người dùng (có thể ảnh hưởng đến hiệu suất khi có độ đồng thời cao)",

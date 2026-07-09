@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useState } from 'react'
-import { cn } from '@/lib/utils'
 import {
   Branch,
   BranchMessages,
@@ -31,34 +30,18 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation'
-import { Loader } from '@/components/ai-elements/loader'
-import { Message, MessageContent } from '@/components/ai-elements/message'
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from '@/components/ai-elements/reasoning'
-import { Response } from '@/components/ai-elements/response'
-import { Shimmer } from '@/components/ai-elements/shimmer'
-import {
-  Source,
-  Sources,
-  SourcesContent,
-  SourcesTrigger,
-} from '@/components/ai-elements/sources'
-import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
+import { Message } from '@/components/ai-elements/message'
+import { MESSAGE_STATUS } from '../constants'
 import {
   getChatMessageRenderState,
   getEditingMessageContent,
   getPreviousUserMessage,
 } from '../lib'
-import { getMessageContentStyles } from '../lib/message-styles'
-import { parseThinkTags } from '../lib/message-utils'
 import type { Message as MessageType } from '../types'
 import { MessageActions } from './message-actions'
-import { MessageError } from './message-error'
 import { MessageErrorActions } from './message-error-actions'
 import { PlaygroundEmptyState } from './playground-empty-state'
+import { PlaygroundMessageContent } from './playground-message-content'
 import { PlaygroundMessageEditor } from './playground-message-editor'
 
 interface PlaygroundChatProps {
@@ -112,6 +95,42 @@ export function PlaygroundChat({
           messageIndex,
           editingKey
         )
+        const previousUserMessage =
+          message.status === MESSAGE_STATUS.ERROR
+            ? getPreviousUserMessage(messages, messageIndex)
+            : null
+        const actions = (
+          <MessageActions
+            message={message}
+            onCopy={onCopyMessage}
+            onRegenerate={onRegenerateMessage}
+            onEdit={onEditMessage}
+            onDelete={onDeleteMessage}
+            isGenerating={isGenerating}
+            alwaysVisible={alwaysShowActions}
+            className='mt-1'
+          />
+        )
+        const errorActions =
+          message.status === MESSAGE_STATUS.ERROR ? (
+            <MessageErrorActions
+              disabled={isGenerating}
+              onRetry={
+                onRegenerateMessage
+                  ? () => onRegenerateMessage(message)
+                  : undefined
+              }
+              onEditPrompt={
+                onEditMessage && previousUserMessage
+                  ? () => onEditMessage(previousUserMessage)
+                  : undefined
+              }
+              onDelete={
+                onDeleteMessage ? () => onDeleteMessage(message) : undefined
+              }
+            />
+          ) : undefined
+
         return (
           <Branch defaultBranch={0} key={message.key}>
             <BranchMessages>
@@ -133,142 +152,12 @@ export function PlaygroundChat({
                         originalText={originalText}
                       />
                     ) : (
-                      <>
-                        {(() => {
-                          const isAssistant =
-                            message.from === MESSAGE_ROLES.ASSISTANT
-                          const hasSources = !!message.sources?.length
-                          const showReasoning =
-                            isAssistant && !!message.reasoning?.content
-                          const showLoader =
-                            isAssistant &&
-                            !message.isReasoningStreaming &&
-                            (message.status === 'loading' ||
-                              (message.status === 'streaming' &&
-                                !version.content))
-                          const showMessageContent =
-                            (message.from === MESSAGE_ROLES.USER ||
-                              !message.isReasoningStreaming) &&
-                            !!version.content
-
-                          // assistant 消息会把 <think> 内容放入 reasoning 区域，正文只渲染可见部分。
-                          const displayContent = isAssistant
-                            ? parseThinkTags(version.content).visibleContent
-                            : version.content
-                          const previousUserMessage =
-                            message.status === MESSAGE_STATUS.ERROR
-                              ? getPreviousUserMessage(messages, messageIndex)
-                              : null
-
-                          const actions = (
-                            <MessageActions
-                              message={message}
-                              onCopy={onCopyMessage}
-                              onRegenerate={onRegenerateMessage}
-                              onEdit={onEditMessage}
-                              onDelete={onDeleteMessage}
-                              isGenerating={isGenerating}
-                              alwaysVisible={alwaysShowActions}
-                              className='mt-1'
-                            />
-                          )
-
-                          return (
-                            <>
-                              {/* 来源列表保留在消息内容之前，便于用户先判断引用数量。 */}
-                              {hasSources && (
-                                <Sources>
-                                  <SourcesTrigger
-                                    count={message.sources!.length}
-                                  />
-                                  <SourcesContent>
-                                    {message.sources!.map(
-                                      (source, sourceIndex) => (
-                                        <Source
-                                          href={source.href}
-                                          key={`${message.key}-source-${sourceIndex}`}
-                                          title={source.title}
-                                        />
-                                      )
-                                    )}
-                                  </SourcesContent>
-                                </Sources>
-                              )}
-
-                              {/* 推理内容与正文分离，流式状态继续交给 Reasoning 组件处理。 */}
-                              {showReasoning && (
-                                <Reasoning
-                                  defaultOpen={true}
-                                  isStreaming={message.isReasoningStreaming}
-                                >
-                                  <ReasoningTrigger />
-                                  <ReasoningContent>
-                                    {message.reasoning!.content}
-                                  </ReasoningContent>
-                                </Reasoning>
-                              )}
-
-                              {/* 没有正文 delta 时显示加载提示，避免空白 assistant 消息让用户误判。 */}
-                              {showLoader && (
-                                <div className='flex items-center gap-2 py-2'>
-                                  <Loader />
-                                  <Shimmer className='text-sm' duration={1}>
-                                    Responding...
-                                  </Shimmer>
-                                </div>
-                              )}
-
-                              {/* 错误消息使用专门恢复动作，普通消息继续使用通用动作组。 */}
-                              {message.status === 'error' ? (
-                                <>
-                                  <MessageError
-                                    message={message}
-                                    className='mb-2'
-                                  />
-                                  <MessageErrorActions
-                                    disabled={isGenerating}
-                                    onRetry={
-                                      onRegenerateMessage
-                                        ? () => onRegenerateMessage(message)
-                                        : undefined
-                                    }
-                                    onEditPrompt={
-                                      onEditMessage && previousUserMessage
-                                        ? () =>
-                                            onEditMessage(previousUserMessage)
-                                        : undefined
-                                    }
-                                    onDelete={
-                                      onDeleteMessage
-                                        ? () => onDeleteMessage(message)
-                                        : undefined
-                                    }
-                                  />
-                                </>
-                              ) : (
-                                showMessageContent && (
-                                  <>
-                                    <MessageContent
-                                      variant='flat'
-                                      className={cn(getMessageContentStyles())}
-                                    >
-                                      <Response
-                                        final={
-                                          message.status !==
-                                          MESSAGE_STATUS.STREAMING
-                                        }
-                                      >
-                                        {displayContent}
-                                      </Response>
-                                    </MessageContent>
-                                    {actions}
-                                  </>
-                                )
-                              )}
-                            </>
-                          )
-                        })()}
-                      </>
+                      <PlaygroundMessageContent
+                        actions={actions}
+                        errorActions={errorActions}
+                        message={message}
+                        versionContent={version.content}
+                      />
                     )}
                   </div>
                 </Message>
