@@ -52,6 +52,8 @@ const createEmailSchema = (t: (key: string) => string) =>
     }, t('Enter a valid email or leave blank')),
     SMTPToken: z.string(),
     SMTPSSLEnabled: z.boolean(),
+    SMTPStartTLSEnabled: z.boolean(),
+    SMTPInsecureSkipVerify: z.boolean(),
     SMTPForceAuthLogin: z.boolean(),
   })
 
@@ -83,6 +85,8 @@ export function EmailSettingsSection({
       SMTPFrom: values.SMTPFrom.trim(),
       SMTPToken: values.SMTPToken.trim(),
       SMTPSSLEnabled: values.SMTPSSLEnabled,
+      SMTPStartTLSEnabled: values.SMTPStartTLSEnabled,
+      SMTPInsecureSkipVerify: values.SMTPInsecureSkipVerify,
       SMTPForceAuthLogin: values.SMTPForceAuthLogin,
     }
 
@@ -93,6 +97,8 @@ export function EmailSettingsSection({
       SMTPFrom: defaultValues.SMTPFrom.trim(),
       SMTPToken: defaultValues.SMTPToken.trim(),
       SMTPSSLEnabled: defaultValues.SMTPSSLEnabled,
+      SMTPStartTLSEnabled: defaultValues.SMTPStartTLSEnabled,
+      SMTPInsecureSkipVerify: defaultValues.SMTPInsecureSkipVerify,
       SMTPForceAuthLogin: defaultValues.SMTPForceAuthLogin,
     }
 
@@ -122,6 +128,20 @@ export function EmailSettingsSection({
       updates.push({
         key: 'SMTPSSLEnabled',
         value: sanitized.SMTPSSLEnabled,
+      })
+    }
+
+    if (sanitized.SMTPStartTLSEnabled !== initial.SMTPStartTLSEnabled) {
+      updates.push({
+        key: 'SMTPStartTLSEnabled',
+        value: sanitized.SMTPStartTLSEnabled,
+      })
+    }
+
+    if (sanitized.SMTPInsecureSkipVerify !== initial.SMTPInsecureSkipVerify) {
+      updates.push({
+        key: 'SMTPInsecureSkipVerify',
+        value: sanitized.SMTPInsecureSkipVerify,
       })
     }
 
@@ -205,6 +225,52 @@ export function EmailSettingsSection({
                     </FormLabel>
                     <FormDescription>
                       {t('Use secure connection when sending emails')}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='SMTPStartTLSEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Use STARTTLS')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t('Require STARTTLS upgrade for non-SSL SMTP connections')}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='SMTPInsecureSkipVerify'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Skip SMTP TLS certificate verification')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t('Allow self-signed or mismatched SMTP certificates')}
                     </FormDescription>
                   </div>
                   <FormControl>

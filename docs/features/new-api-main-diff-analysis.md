@@ -5141,8 +5141,83 @@ new-api-main 在 `constant/README.md` 中明确了 `constant` 包的职责边界
 3. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
 4. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200。该切片只新增文档，不改变页面或接口行为。
 
+## 本轮实施评审：SMTP STARTTLS 与 TLS 校验配置原生化
+
+### 需求分析
+
+new-api-main 已经把 SMTP 连接层拆成可测试的 `newSMTPClient()`，支持显式 STARTTLS、隐式 TLS 兼容、TLS 证书校验策略和空凭证跳过认证。NexusTok 当前虽然已有更适合企业 Exchange 场景的 NTLM 自适应认证，但连接层仍存在三类短板：
+
+1. 端口 587 等普通 SMTP 连接完全依赖 `smtp.SendMail` 的默认行为，无法由管理员明确要求 STARTTLS，也无法在服务端不支持 STARTTLS 时给出确定错误。
+2. 端口 465 或 `SMTPSSLEnabled=true` 时固定 `InsecureSkipVerify: true`，默认跳过 TLS 证书校验，安全基线低于 new-api-main。
+3. SMTP 账号或令牌为空时仍会尝试构造并发送认证流程，无法兼容匿名内网 SMTP relay 或只需要 envelope sender 的企业网关。
+
+本轮目标是吸收 new-api-main 的连接层优势，并转成 NexusTok 原生能力：
+
+1. 新增 `SMTPStartTLSEnabled` 配置，管理员可以显式要求 STARTTLS；即使端口设置为 465，只要启用该开关也按 STARTTLS 方式连接。
+2. 新增 `SMTPInsecureSkipVerify` 配置，默认进行证书校验；只有管理员明确开启时才跳过校验，用于自签名或内网 SMTP 兼容。
+3. 抽出 `newSMTPClient()` 和 `smtpTLSConfig()`，让隐式 TLS、显式 STARTTLS 和普通明文连接路径可测试、可维护。
+4. 新增 `shouldAuthenticateSMTP()`，仅当账号与令牌都非空时才执行 `AUTH`，保留现有 `AutoSMTPAuth()`、LOGIN 强制和 NTLM 自适应选择。
+5. 在默认前端 SMTP 设置页补充两个开关，并把配置纳入 `OperationsSettings`、默认值、section registry 和六语言 i18n。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| SMTP 全局配置 | `common/constants.go`、`common/init.go` | 新增 STARTTLS 与 TLS 证书跳过校验变量，支持环境变量覆盖。 |
+| 邮件发送链路 | `common/email.go` | 改造连接创建、TLS 配置和认证触发条件；保留现有邮件头、Message-ID、LOGIN/NTLM 认证策略和发送流程。 |
+| SMTP 回归测试 | `common/email_test.go` | 新增 fake SMTP server 覆盖 STARTTLS、证书校验、隐式 TLS 465、空凭证跳过认证和 NTLM 发送路径。 |
+| 系统 option | `model/option.go` | 新增两个 option 默认值和运行时更新分支，保持三库兼容，不引入迁移。 |
+| 默认前端设置页 | `web/default/src/features/system-settings/{types.ts,operations/index.tsx,operations/section-registry.tsx,integrations/email-settings-section.tsx}` | SMTP Email 分区新增 STARTTLS 与 TLS 校验兼容开关，继续复用现有 option 保存权限与逐项更新链路。 |
+| 前端国际化 | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 为新增 UI 文案补齐六语言翻译，新增文案均为直接 `t()` 调用，无需补充静态 key。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. TLS 默认行为会从“隐式 TLS 一律跳过证书校验”提升为“默认校验证书”。这能提高安全性，但使用自签名证书或内网域名不匹配证书的管理员需要显式开启 `SMTPInsecureSkipVerify` 才能继续发送邮件。
+2. `SMTPPort=465` 的历史行为必须保留：未开启 `SMTPStartTLSEnabled` 时仍走隐式 TLS，避免破坏传统 SMTPS 配置；开启 STARTTLS 时才按显式升级连接处理。
+3. 明文连接下继续调用 `smtp.PlainAuth` 可能被 Go 标准库拒绝远程明文认证，本轮不绕过该安全保护；管理员需要启用 STARTTLS/SSL 或使用本地 relay。
+4. 空账号或空令牌跳过 AUTH 会改变旧的失败路径，但这是为了兼容匿名 SMTP relay；只要账号和令牌齐全，现有 LOGIN/NTLM/PLAIN 自适应语义不变。
+5. 新增 option 字段不需要数据库迁移，但需要确认 `InitOptionMap()`、`UpdateOption()`、前端 `getOptionValue()` 默认值一致，避免设置页出现 `undefined` 开关。
+6. 前端新增文案必须补齐六语言并运行 `bun run i18n:sync`，否则 i18n 同步报告会出现 missing key。
+7. 按用户要求，完成后必须优先使用 MCP 访问 3003 设置页和相关接口；若 MCP 仍因 Chrome DevTools 连接失败不可用，需要记录错误并使用 3003 真实 HTTP 请求、登录态 option 接口和前端资源 hash 兜底验证。
+
+### 方案评审
+
+采用“连接层原生化 + 配置透出 + 回归测试保护”的低耦合方案：后端先补两个配置变量和环境变量解析，再把 `SendEmail()` 的连接创建迁移到 `newSMTPClient()`，由 `SMTPSSLEnabled`、`SMTPPort` 和 `SMTPStartTLSEnabled` 共同决定隐式 TLS、显式 STARTTLS 或普通 SMTP。TLS 配置统一走 `smtpTLSConfig()`，默认校验证书，管理员兼容场景通过 `SMTPInsecureSkipVerify` 显式放开。认证层只增加空凭证跳过判断，保留 `AutoSMTPAuth()` 已有 NTLM 自适应和 `SMTPForceAuthLogin` 语义。
+
+前端只在已有 SMTP Email 分区新增两个 Switch，不新增页面、不改变路由、不改变保存 hook 权限模型。配置仍逐项提交到 `/api/option/`，与其他系统设置保持一致。
+
+验收方式：
+
+1. `go test ./common -run 'TestSendEmail|TestNewSMTPClient|TestSMTPPlainAuth'`。
+2. `go test ./common`。
+3. `go test ./model -run 'TestUpdateOptionsBulk'`，再执行 `go test ./model`。
+4. `cd web/default && bun run i18n:sync`。
+5. `cd web/default && bunx eslint src/features/system-settings/integrations/email-settings-section.tsx src/features/system-settings/operations/index.tsx src/features/system-settings/operations/section-registry.tsx src/features/system-settings/types.ts`。
+6. `cd web/default && bun run typecheck`。
+7. `cd web/default && bun run build`。
+8. `git diff --check`。
+9. 优先用 MCP 打开 `http://192.168.0.202:3003/system-settings/operations/email` 并检查设置页、控制台错误和 option 接口；如 MCP 不可用，则用 `curl --noproxy '*'` 登录 3003，验证 `/`、`/api/status`、登录态 `/api/option/` 返回包含 `SMTPStartTLSEnabled` 与 `SMTPInsecureSkipVerify`，并比对线上静态资源是否包含新增文案。
+
+验证记录：
+
+1. SMTP 定向测试通过：`go test ./common -run 'TestSendEmail|TestNewSMTPClient|TestSMTPPlainAuth'`。覆盖显式 STARTTLS、服务端不支持 STARTTLS、STARTTLS 关闭时不自动升级、远程明文 PLAIN AUTH 被拒绝、465 端口显式 STARTTLS、465 端口隐式 TLS 兼容、空凭证/不完整凭证跳过 AUTH、NTLM 发送路径和默认拒绝不可信证书。
+2. `common` 包测试通过：`go test ./common`。
+3. option 保存测试通过：`go test ./model -run 'TestUpdateOptionsBulk'`，新增断言覆盖 `SMTPStartTLSEnabled` 与 `SMTPInsecureSkipVerify` 保存后同步刷新 `common.OptionMap` 和运行时全局变量。
+4. `model` 包全量测试通过：`go test ./model`。
+5. i18n 同步通过：`cd web/default && bun run i18n:sync`；同步报告显示 en/fr/ja/ru/vi/zh 的 `missingCount=0`、`extrasCount=0`，现有 untranslatedCount 为历史存量。
+6. 前端触碰文件定向 ESLint 通过：`cd web/default && bunx eslint src/features/system-settings/integrations/email-settings-section.tsx src/features/system-settings/operations/index.tsx src/features/system-settings/operations/section-registry.tsx src/features/system-settings/types.ts`。
+7. 前端类型检查通过：`cd web/default && bun run typecheck`。
+8. 前端生产构建通过：`cd web/default && bun run build`，总量 `24265.2 kB / 9215.8 kB gzip`。
+9. 补丁空白检查通过：`git diff --check`。
+10. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/system-settings/operations/email`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求和资源一致性兜底验证。
+11. 3003 页面与基础接口验证通过：`/` 返回 200，`/system-settings/operations/email` 返回 200，`/api/status` 返回 200 且 `success=true`。
+12. 3003 登录态 option 验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/option/` 返回 `success=true`、`total=227`，其中 `SMTPStartTLSEnabled=false`、`SMTPInsecureSkipVerify=false`、`SMTPSSLEnabled=false`、`SMTPForceAuthLogin=false`。
+13. 3003 前端资源验证通过：线上 `/static/js/index.js` 与本地 `web/default/dist/static/js/index.js` SHA256 均为 `a610251c5d4a53d7487ece3884e798a8885dac487bc159cb94d29fcf0fd9f6a8`，线上 `/static/js/async/1043.js` 与本地 `web/default/dist/static/js/async/1043.js` SHA256 均为 `d7c6a70f6b24c7b34548520c0767fd189a9c50f75a170f094f495787a9a8799a`；线上资源包含 `SMTPStartTLSEnabled`、`SMTPInsecureSkipVerify`、`Use STARTTLS`、`Skip SMTP TLS certificate verification`、`Require STARTTLS upgrade for non-SSL SMTP connections` 和 `Allow self-signed or mismatched SMTP certificates`，确认热更新页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | SMTP STARTTLS 与 TLS 校验配置 | `common/{email.go,email_test.go,constants.go,init.go}`、`model/{option.go,option_bulk_test.go}`、`web/default/src/features/system-settings/{types.ts,operations/*,integrations/email-settings-section.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 SMTP 连接层安全与兼容能力；新增显式 STARTTLS、默认 TLS 证书校验、管理员可选跳过校验、465 隐式 TLS 兼容和空凭证跳过 AUTH，并在默认前端 SMTP 设置页提供原生开关。 |
 | 2026-07-09 | 常量包边界文档 | `constant/README.md` | 原生化 new-api-main 的 `constant` 包维护约定；按 NexusTok 当前文件列表记录职责说明，并明确常量包禁止承载业务流程、数据库操作、第三方调用和项目内反向依赖。 |
 | 2026-07-09 | 监控配置环境变量覆盖测试 | `setting/operation_setting/monitor_setting_test.go` | 原生化 new-api-main 的渠道自动测试配置回归保护；测试覆盖 `CHANNEL_TEST_FREQUENCY`、`CHANNEL_TEST_ENABLED=false/true` 的优先级和默认 `scheduled_all` 模式，防止后续 Routing Reliability 或 SystemTask 调整误改环境变量语义。 |
 | 2026-07-09 | 兑换码状态筛选与兑换 CAS | `model/redemption.go`、`model/redemption_test.go`、`controller/redemption.go`、`web/default/src/features/redemption-codes/{api.ts,types.ts,components/redemptions-table.tsx}` | 原生化 new-api-main 的兑换码服务端状态筛选与兑换幂等保护；搜索接口支持 `status` 参数和 `expired` 虚拟状态，默认前端状态筛选走后端分页，`Redeem` 通过状态 CAS 确保同一兑换码并发场景只入账一次。 |

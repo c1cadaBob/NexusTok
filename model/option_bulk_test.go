@@ -15,6 +15,8 @@ func setupOptionBulkTestDB(t *testing.T) {
 	t.Helper()
 	originDB := DB
 	originOptionMap := common.OptionMap
+	originSMTPStartTLSEnabled := common.SMTPStartTLSEnabled
+	originSMTPInsecureSkipVerify := common.SMTPInsecureSkipVerify
 	originMerchantID := setting.WaffoPancakeMerchantID
 	originStoreID := setting.WaffoPancakeStoreID
 	originProductID := setting.WaffoPancakeProductID
@@ -33,6 +35,8 @@ func setupOptionBulkTestDB(t *testing.T) {
 		common.OptionMapRWMutex.Lock()
 		common.OptionMap = originOptionMap
 		common.OptionMapRWMutex.Unlock()
+		common.SMTPStartTLSEnabled = originSMTPStartTLSEnabled
+		common.SMTPInsecureSkipVerify = originSMTPInsecureSkipVerify
 		setting.WaffoPancakeMerchantID = originMerchantID
 		setting.WaffoPancakeStoreID = originStoreID
 		setting.WaffoPancakeProductID = originProductID
@@ -61,4 +65,23 @@ func TestUpdateOptionsBulkPersistsAndRefreshesOptionMap(t *testing.T) {
 	require.Equal(t, "merchant-test", setting.WaffoPancakeMerchantID)
 	require.Equal(t, "store-test", setting.WaffoPancakeStoreID)
 	require.Equal(t, "product-test", setting.WaffoPancakeProductID)
+}
+
+func TestUpdateOptionsBulkRefreshesSMTPTransportFlags(t *testing.T) {
+	setupOptionBulkTestDB(t)
+	common.SMTPStartTLSEnabled = false
+	common.SMTPInsecureSkipVerify = false
+
+	require.NoError(t, UpdateOptionsBulk(map[string]string{
+		"SMTPStartTLSEnabled":    "true",
+		"SMTPInsecureSkipVerify": "true",
+	}))
+
+	common.OptionMapRWMutex.RLock()
+	require.Equal(t, "true", common.OptionMap["SMTPStartTLSEnabled"])
+	require.Equal(t, "true", common.OptionMap["SMTPInsecureSkipVerify"])
+	common.OptionMapRWMutex.RUnlock()
+
+	require.True(t, common.SMTPStartTLSEnabled)
+	require.True(t, common.SMTPInsecureSkipVerify)
 }

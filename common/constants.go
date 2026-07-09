@@ -163,13 +163,15 @@ var TLSInsecureSkipVerify bool                              // 是否跳过 TLS 
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true} // 不安全的 TLS 配置（用于测试或自签名证书）
 
 // ── SMTP 邮件配置 ───────────────────────────────────────────────────
-var SMTPServer = ""           // SMTP 服务器地址
-var SMTPPort = 587            // SMTP 端口（默认 587，SSL 时为 465）
-var SMTPSSLEnabled = false    // 是否启用 SMTP SSL
-var SMTPForceAuthLogin = false // 是否强制 SMTP AUTH LOGIN 认证
-var SMTPAccount = ""          // SMTP 账号
-var SMTPFrom = ""             // SMTP 发件人地址
-var SMTPToken = ""            // SMTP 密码/令牌
+var SMTPServer = ""                // SMTP 服务器地址
+var SMTPPort = 587                 // SMTP 端口（默认 587，SSL 时为 465）
+var SMTPSSLEnabled = false         // 是否启用 SMTP SSL
+var SMTPStartTLSEnabled = false    // 是否显式启用 SMTP STARTTLS
+var SMTPInsecureSkipVerify = false // 是否跳过 SMTP TLS 证书校验，仅用于自签名或内网兼容场景
+var SMTPForceAuthLogin = false     // 是否强制 SMTP AUTH LOGIN 认证
+var SMTPAccount = ""               // SMTP 账号
+var SMTPFrom = ""                  // SMTP 发件人地址
+var SMTPToken = ""                 // SMTP 密码/令牌
 
 // ── OAuth 配置 ──────────────────────────────────────────────────────
 var GitHubClientId = ""         // GitHub OAuth Client ID
