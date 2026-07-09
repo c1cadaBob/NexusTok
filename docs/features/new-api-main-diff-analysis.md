@@ -69,7 +69,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | ClickHouse 日志兼容测试 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 缺少依赖 | 仅在明确支持 ClickHouse 日志库时引入；否则先记录为可选能力，避免增加部署复杂度。 |
 | 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 后端已落地 | 已扩展 `quota_data` 记录 node/token/group/channel 维度，并新增 `/api/data/flow`、`/api/data/flow/self`；后续接入仪表盘 Sankey 图。 |
 | Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*` 且测试较少 | 逐步整理转换包命名和测试，不一次性改热路径。 |
-| OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | 缺少部分文件 | 逐个核对上游协议支持，再按 channel 能力原生接入。 |
+| OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | Realtime 和 image edit 已在现有文件中实现；image stream 与图片计费边界待增强 | 逐个核对上游协议支持，再按 channel 能力原生接入；本轮优先原生化 OpenAI image stream、`stream` 显式零值和 `n` 上限保护。 |
 | Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 缺少 | 可作为高级渠道改写能力参考，但必须接入 NexusTok 的参数覆盖、安全过滤和计费快照。 |
 | Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
 | 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；`allow_balance_pay` 控制套餐是否允许余额购买。前端按钮/表单待接入。 |
@@ -2919,8 +2919,57 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 4. MCP 打开 classic 控制台路径，例如 `http://192.168.0.202:3003/console`，确认 banner 渲染、Root 切换按钮存在、控制台内容未被遮挡、控制台无新增错误。
 5. MCP 点击关闭按钮，确认出现关闭确认弹窗；取消关闭后 banner 仍存在，不写服务端配置、不切换前端。
 
+## 本轮实施评审：OpenAI 图片流式与计费边界增强
+
+### 需求分析
+
+复核 `new-api-main` 与 NexusTok 的 OpenAI relay 差异后可以确认：NexusTok 已经在 `relay/channel/openai/adaptor.go` 和 `relay/channel/openai/relay-openai.go` 中具备 Realtime WebSocket 代理、图片编辑 multipart 重组和基础图片 usage 计费能力，并非完全缺少 Realtime/image edit 功能。但 `new-api-main` 仍有一组值得吸收的图片链路增强：OpenAI Images `stream` 字段使用指针保留显式 `false`，multipart 图片编辑可解析并继续复读请求体，`n` 增加上限避免超大值进入计费倍率，图片 usage 统一把 `input_tokens/output_tokens/input_tokens_details` 映射到 NexusTok 结算字段，并支持 `text/event-stream` 图片流式返回。
+
+本轮目标是把这部分优势转换为 NexusTok 原生 OpenAI 图片能力：
+
+1. `dto.ImageRequest` 新增 `Stream *bool`，满足上游 relay 请求 DTO “字段缺失省略、显式 false 仍保留”的项目规则。
+2. 图片请求解析支持 JSON 和 multipart 两种入口的 `stream` 与 `n` 校验；multipart 解析必须保持请求体可复读，避免后续 `ConvertImageRequest` 和重试链路拿不到文件。
+3. 为图片生成数量 `n` 设置 `dto.MaxImageN` 上限，拒绝负数、超大数和超过上限的值，避免计费倍率溢出或变成异常负计费。
+4. 图片非流式响应在写回客户端前先识别 OpenAI error body；正常响应统一标准化 usage，避免 `input_tokens` 与 `prompt_tokens` 双重累加或丢失 image/text token 明细。
+5. 图片流式响应支持真实 SSE 转发、JSON 响应包装为伪 SSE completed 事件、SSE error event 软错误记录和 `[DONE]` 终止事件，保留现有上游状态码、重试、计费和日志链路。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 图片 DTO | `dto/openai_image.go`、`dto/openai_request_zero_value_test.go` | 新增 `MaxImageN` 和 `Stream *bool`，补显式零值保留测试。 |
+| 请求解析 | `relay/helper/valid_request.go`、`relay/helper/openai_image_request_test.go` | multipart 图片编辑改用可复读表单解析，解析/校验 `stream` 与 `n`；JSON 图片请求增加 `n` 上限校验。 |
+| OpenAI 图片响应 | `relay/channel/openai/relay-openai.go`、`relay/channel/openai/image_stream_test.go` | 新增图片 usage 标准化、图片 SSE/JSON-as-SSE 响应处理和 error body 检测；DoResponse 按 `info.IsStream` 分发。 |
+| 流状态观测 | `relay/helper/stream_scanner.go`、`relay/helper/stream_scanner_test.go` | 保留调用方预初始化的 `StreamStatus`，避免图片流式 error event 或上层诊断信息在扫描器启动时被覆盖。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收标准，同时修正文档中“缺少 Realtime/image edit”的过时表述。 |
+
+### 风险评估
+
+1. 图片编辑请求通常是 multipart/form-data，并且中继重试会多次读取 body；解析阶段如果直接消费 `c.Request.Body` 会导致后续上游请求没有文件。本轮必须使用 `common.ParseMultipartFormReusable` 和 `common.GetBodyStorage`，并把解析后的 form 回写到 `c.Request.MultipartForm/PostForm`。
+2. `stream` 是可选标量，必须使用 `*bool`，否则客户端显式传 `false` 会被 `omitempty` 丢弃，违反项目 Rule 6；multipart 中 `stream=notabool` 应明确拒绝。
+3. `n` 既影响 OpenAI 请求又影响 NexusTok `OtherRatio("n")` 计费倍率；负数、超大整数或超过上限的值不能进入计费阶段。默认值仍为 1，避免改变既有请求行为。
+4. 图片 API 的 usage 字段不同于 Chat：OpenAI Images 常返回 `input_tokens/output_tokens/input_tokens_details`。本轮只在图片路径做覆盖式标准化，不复用到 Chat/Embedding，避免其它响应因字段同时存在而被覆盖。
+5. 图片流式响应返回 SSE 后可能已经向客户端写出部分内容；中途上游 error event 只能记录到 `StreamStatus` 并继续把 payload 转发，不能伪造未发送过的 JSON 错误响应。
+6. `helper.StreamScannerHandler` 已有测试要求在 `info.StreamStatus` 预初始化时保留既有软错误；图片流式路径也依赖该对象记录上游 error event。因此只把初始化逻辑改为 nil 时创建，避免清空调用方已挂载的诊断状态。
+7. 本轮不改数据库、模型定价配置、渠道选择、账号池、前端页面和 Realtime WebSocket 逻辑；核心风险集中在图片请求解析、usage 归一和图片流式响应处理。
+
+### 方案评审
+
+采用“小切片增强”方案：不新增新的 relay 包，也不重排 OpenAI adaptor 文件；在现有 `dto.ImageRequest`、请求解析和 `OpenaiHandlerWithUsage` 所在文件内补齐图片流式与计费边界。OpenAI 图片流式处理复用现有 `helper.StreamScannerHandler`，从 JSON `type` 字段重建 SSE `event:` 行，获得与 Chat/Responses 流式路径一致的超时、断连和清理行为。
+
+实现后 `DoResponse` 对 `RelayModeImagesGenerations/ImagesEdits` 按 `info.IsStream` 分发：流式走 `OpenaiImageStreamHandler`，非流式走 `OpenaiImageHandler`。非流式和 JSON-as-SSE 两个入口都先解析 OpenAI error body，只有正常响应才写回客户端并结算 usage。这样可以吸收 `new-api-main` 的协议兼容与安全边界，同时保持 NexusTok 现有图片编辑、渠道适配器、价格倍率和日志结构不变。
+
+验收方式：
+
+1. `go test ./dto ./relay/helper ./relay/channel/openai` 覆盖显式零值、图片请求解析、`n` 上限、multipart body 复读、图片非流式 error、SSE 转发、JSON-as-SSE 和 error event。
+2. `go test ./relay ./controller` 确认图片中继入口和 controller 构建不受影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认热更新页面仍正常加载、控制台无新增错误。
+5. 在浏览器上下文带 `NexusTok-User: 1` 调用一个不会命中真实上游的非法图片请求（例如缺少模型或 `n` 超上限），确认接口返回明确错误而不是 500；不触发真实图片生成或真实扣费。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | OpenAI 图片流式与计费边界 | `dto/openai_image.go`、`relay/helper/valid_request.go`、`relay/channel/openai/relay-openai.go`、`relay/channel/openai/adaptor.go`、`relay/helper/stream_scanner.go` | 原生化 Images `stream` 显式零值、JSON/multipart `n` 上限、multipart body 复读、图片 usage 标准化、SSE/JSON-as-SSE 图片流和 error event 记录；补齐 dto/helper/openai 单元测试。 |
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
 | 2026-07-07 | 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go`、`router/api-router.go` | 吸收 new-api-main 的匿名入口保护，并补齐 NexusTok 现有 Waffo Pancake webhook 路由。 |
 | 2026-07-07 | 受保护 Fetch / SSRF | `common/ssrf_protection.go`、`service/protected_fetch_client.go`、`service/download.go`、`service/webhook.go`、`service/user_notify.go` | 为用户可控 URL 增加 Dial 阶段 DNS 解析校验，阻断 DNS rebinding；不替换 Relay 全局 client。 |

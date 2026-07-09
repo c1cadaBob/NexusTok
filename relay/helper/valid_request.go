@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -214,16 +216,31 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	switch relayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-			_, err := c.MultipartForm()
+			form, err := common.ParseMultipartFormReusable(c)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
 			}
-			formData := c.Request.PostForm
+			formData := url.Values(form.Value)
+			c.Request.MultipartForm = form
+			c.Request.PostForm = formData
 			imageRequest.Prompt = formData.Get("prompt")
 			imageRequest.Model = formData.Get("model")
-			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
+			if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
+				n, err := strconv.Atoi(nValue)
+				if err != nil || n < 0 || n > dto.MaxImageN {
+					return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+				}
+				imageRequest.N = common.GetPointer(uint(n))
+			}
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			if streamValue := strings.TrimSpace(formData.Get("stream")); streamValue != "" {
+				stream, err := strconv.ParseBool(streamValue)
+				if err != nil {
+					return nil, fmt.Errorf("invalid stream value: %w", err)
+				}
+				imageRequest.Stream = common.GetPointer(stream)
+			}
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
 			}
@@ -246,6 +263,11 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		}
 		fallthrough
 	default:
+		if strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
+			if err := validateOpenAIImageRawN(c); err != nil {
+				return nil, err
+			}
+		}
 		err := common.UnmarshalBodyReusable(c, imageRequest)
 		if err != nil {
 			return nil, err
@@ -258,6 +280,10 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 
 		if strings.Contains(imageRequest.Size, "×") {
 			return nil, errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
+		}
+
+		if imageRequest.N != nil && *imageRequest.N > dto.MaxImageN {
+			return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 		}
 
 		// Not "256x256", "512x512", or "1024x1024"
@@ -294,6 +320,34 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	}
 
 	return imageRequest, nil
+}
+
+// validateOpenAIImageRawN 在正式解析 ImageRequest 前预检 n 的数值边界。
+// 这里先读取原始 JSON，是为了在客户端传入超大整数时避免 json 到 uint 的溢出错误
+// 泄漏到底层类型细节，并统一返回图片接口的业务边界错误。
+func validateOpenAIImageRawN(c *gin.Context) error {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return err
+	}
+	requestBody, err := storage.Bytes()
+	if err != nil {
+		return err
+	}
+	var raw struct {
+		N *float64 `json:"n"`
+	}
+	if err := common.Unmarshal(requestBody, &raw); err != nil {
+		return err
+	}
+	if raw.N == nil {
+		return nil
+	}
+	n := *raw.N
+	if n < 0 || n > float64(dto.MaxImageN) || math.Trunc(n) != n {
+		return fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+	}
+	return nil
 }
 
 // GetAndValidateClaudeRequest 解析并验证 Claude 格式的请求。

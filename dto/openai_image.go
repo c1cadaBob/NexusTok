@@ -24,6 +24,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// MaxImageN 限制图片生成数量上限，避免异常大的 n 进入计费倍率后造成溢出或反向计费。
+// 该值只限制 OpenAI 图片接口的单次请求数量；不同上游若有更严格限制，仍由对应渠道返回错误。
+const MaxImageN = 128
+
 // ImageRequest 图像生成请求结构体
 // Model：目标模型名称（如 dall-e-3、gpt-image-1 等）
 // Prompt：图像生成提示词（必填）
@@ -35,6 +39,7 @@ import (
 // User：用户标识
 // ExtraFields：额外字段（透传）
 // Background/Moderation/OutputFormat/OutputCompression/PartialImages：GPT-Image 扩展参数
+// Stream：图片流式输出开关，使用指针保留客户端显式传入的 false。
 // Images/Mask/InputFidelity：编辑模式参数（垫图、遮罩等）
 // Watermark：是否添加水印
 // WatermarkEnabled/UserId/Image：智谱 4V 兼容参数
@@ -54,11 +59,11 @@ type ImageRequest struct {
 	OutputFormat      json.RawMessage `json:"output_format,omitempty"`
 	OutputCompression json.RawMessage `json:"output_compression,omitempty"`
 	PartialImages     json.RawMessage `json:"partial_images,omitempty"`
-	// Stream            bool            `json:"stream,omitempty"`
-	Images        json.RawMessage `json:"images,omitempty"`
-	Mask          json.RawMessage `json:"mask,omitempty"`
-	InputFidelity json.RawMessage `json:"input_fidelity,omitempty"`
-	Watermark     *bool           `json:"watermark,omitempty"`
+	Stream            *bool           `json:"stream,omitempty"`
+	Images            json.RawMessage `json:"images,omitempty"`
+	Mask              json.RawMessage `json:"mask,omitempty"`
+	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"`
+	Watermark         *bool           `json:"watermark,omitempty"`
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
@@ -204,9 +209,10 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	}
 }
 
-// IsStream 图像生成请求不支持流式输出，始终返回 false
+// IsStream 返回图片请求是否启用流式输出。
+// Stream 使用指针是为了区分“客户端未传字段”和“客户端显式传 false”，满足上游 relay DTO 零值保留约束。
 func (i *ImageRequest) IsStream(c *gin.Context) bool {
-	return false
+	return i.Stream != nil && *i.Stream
 }
 
 // SetModelName 设置图像请求的模型名称
@@ -226,6 +232,7 @@ type ImageResponse struct {
 	Created  int64           `json:"created"`
 	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
+
 // ImageData 单个生成的图像数据
 // Url：图像 URL（当 response_format 为 url 时）
 // B64Json：Base64 编码的图像数据（当 response_format 为 b64_json 时）

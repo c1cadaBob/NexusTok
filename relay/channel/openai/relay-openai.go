@@ -10,10 +10,12 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
@@ -436,8 +438,8 @@ func streamTTSResponse(c *gin.Context, resp *http.Response) {
 // Token 计费机制：
 //   - 客户端发送时：实时统计输入 token（文本 + 音频）
 //   - 上游 response.done 事件时：
-//     - 如果响应包含 usage 信息，直接使用上游的 usage 进行计费
-//     - 如果不包含 usage，使用本地统计的 token 数进行计费
+//   - 如果响应包含 usage 信息，直接使用上游的 usage 进行计费
+//   - 如果不包含 usage，使用本地统计的 token 数进行计费
 //   - 其他上游事件时：统计输出 token（文本 + 音频）
 //   - 每次计费完成后调用 preConsumeUsage 扣除配额
 //
@@ -726,6 +728,16 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 //   - *dto.Usage: token 使用量信息
 //   - *types.NexusTokError: 处理过程中的错误
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
+	return OpenaiImageHandler(c, info, resp)
+}
+
+// OpenaiImageHandler 处理 OpenAI Images 非流式响应。
+// 图片 API 的 usage 字段通常使用 input_tokens/output_tokens 命名，本函数会在写回客户端前：
+//  1. 读取并解析完整响应体；
+//  2. 如果响应是 OpenAI error body，直接返回错误且不泄漏错误 body；
+//  3. 将图片 usage 标准化到 NexusTok 通用 prompt/completion 字段；
+//  4. 原样写回正常响应体并返回 usage 供计费。
+func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseBody, err := io.ReadAll(resp.Body)
@@ -738,26 +750,243 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	if oaiError := usageResp.GetOpenAIError(); oaiError != nil {
+		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
-	// Once we've written to the client, we should not return errors anymore
-	// because the upstream has already consumed resources and returned content
-	// We should still perform billing even if parsing fails
-	// format
-	if usageResp.InputTokens > 0 {
-		usageResp.PromptTokens += usageResp.InputTokens
-	}
-	if usageResp.OutputTokens > 0 {
-		usageResp.CompletionTokens += usageResp.OutputTokens
-	}
-	if usageResp.InputTokensDetails != nil {
-		usageResp.PromptTokensDetails.ImageTokens += usageResp.InputTokensDetails.ImageTokens
-		usageResp.PromptTokensDetails.TextTokens += usageResp.InputTokensDetails.TextTokens
-	}
+	normalizeOpenAIImageUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 	return &usageResp.Usage, nil
+}
+
+// normalizeOpenAIImageUsage 将 OpenAI Images 专用 usage 字段映射到通用计费字段。
+// 该函数仅用于图片生成/编辑路径。Chat、Embedding 等路径如果同时返回
+// prompt_tokens 与 input_tokens，不能复用这里的覆盖语义，否则可能造成重复或覆盖计费。
+func normalizeOpenAIImageUsage(usage *dto.Usage) {
+	if usage == nil {
+		return
+	}
+	if usage.InputTokens != 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.OutputTokens != 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+	if usage.InputTokensDetails != nil {
+		usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
+		usage.PromptTokensDetails.CachedCreationTokens = usage.InputTokensDetails.CachedCreationTokens
+		usage.PromptTokensDetails.ImageTokens = usage.InputTokensDetails.ImageTokens
+		usage.PromptTokensDetails.TextTokens = usage.InputTokensDetails.TextTokens
+		usage.PromptTokensDetails.AudioTokens = usage.InputTokensDetails.AudioTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+}
+
+// OpenaiImageStreamHandler 处理 OpenAI Images 流式响应。
+// 真实 SSE 响应会原样转发 data payload，并根据 JSON type 重建 event 行；
+// 非 SSE JSON 成功响应会包装为 completed 事件，便于客户端在 stream=true 时仍使用同一消费逻辑。
+func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
+	if resp == nil || resp.Body == nil {
+		logger.LogError(c, "invalid image stream response")
+		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return OpenaiImageHandler(c, info, resp)
+	}
+	if !strings.Contains(contentType, "text/event-stream") {
+		return OpenaiImageJSONAsStreamHandler(c, info, resp)
+	}
+
+	usage := &dto.Usage{}
+	var lastStreamData []byte
+
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		raw := common.StringToByteSlice(data)
+		lastStreamData = raw
+		if isOpenAIImageStreamErrorEvent(raw) {
+			// SSE 已经开始返回时不能再改写成 JSON 错误；记录软错误并继续把上游 payload 转发给客户端。
+			sr.Error(fmt.Errorf("%s", extractOpenAIImageStreamErrorMessage(raw)))
+		}
+		var usageResp dto.SimpleResponse
+		if err := common.Unmarshal(raw, &usageResp); err == nil {
+			normalizeOpenAIImageUsage(&usageResp.Usage)
+			if service.ValidUsage(&usageResp.Usage) {
+				usage = &usageResp.Usage
+			}
+		}
+		if err := writeOpenAIImageStreamChunk(c, raw); err != nil {
+			sr.Stop(err)
+		}
+	})
+
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone {
+		helper.Done(c)
+	}
+
+	applyUsagePostProcessing(info, usage, lastStreamData)
+	return usage, nil
+}
+
+// OpenaiImageJSONAsStreamHandler 将非流式 JSON 图片响应包装成 SSE completed 事件。
+// 该兜底用于上游忽略 stream=true 但返回正常 JSON 的情况。
+func OpenaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NexusTokError) {
+	defer service.CloseResponseBodyGracefully(resp)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+
+	var usageResp dto.SimpleResponse
+	_ = common.Unmarshal(responseBody, &usageResp)
+	if oaiError := usageResp.GetOpenAIError(); oaiError != nil {
+		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
+	normalizeOpenAIImageUsage(&usageResp.Usage)
+	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+
+	var imageResp dto.ImageResponse
+	if err := common.Unmarshal(responseBody, &imageResp); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	helper.SetEventStreamHeaders(c)
+	c.Status(http.StatusOK)
+
+	created := imageResp.Created
+	if created == 0 {
+		created = time.Now().Unix()
+	}
+	if info != nil {
+		info.SetFirstResponseTime()
+	}
+	for _, image := range imageResp.Data {
+		payload := map[string]any{
+			"type":       "image_generation.completed",
+			"created_at": created,
+		}
+		if image.Url != "" {
+			payload["url"] = image.Url
+		}
+		if image.B64Json != "" {
+			payload["b64_json"] = image.B64Json
+		}
+		if image.RevisedPrompt != "" {
+			payload["revised_prompt"] = image.RevisedPrompt
+		}
+		if service.ValidUsage(&usageResp.Usage) {
+			payload["usage"] = usageResp.Usage
+		}
+		if err := writeOpenAIImageStreamPayload(c, "image_generation.completed", payload); err != nil {
+			if info != nil && info.StreamStatus != nil {
+				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
+			}
+			return &usageResp.Usage, nil
+		}
+	}
+	if err := writeOpenAIImageStreamDone(c); err != nil {
+		if info != nil && info.StreamStatus != nil {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
+		}
+		return &usageResp.Usage, nil
+	}
+	if info != nil {
+		info.ReceivedResponseCount += len(imageResp.Data)
+		if info.StreamStatus == nil {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+		}
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	}
+	return &usageResp.Usage, nil
+}
+
+// writeOpenAIImageStreamChunk 按 OpenAI 图片流式格式重建 SSE frame。
+// 上游 event 行在扫描时已被剥离，因此这里从 JSON type 字段恢复事件名。
+func writeOpenAIImageStreamChunk(c *gin.Context, data []byte) error {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	_ = common.Unmarshal(data, &payload)
+	if eventName := strings.TrimSpace(payload.Type); eventName != "" {
+		return writeOpenAIImageStreamEvent(c, eventName, string(data))
+	}
+	return helper.StringData(c, string(data))
+}
+
+func isOpenAIImageStreamErrorEvent(data []byte) bool {
+	if !common.ValidJSON(data) {
+		return false
+	}
+	var payload struct {
+		Type  string          `json:"type"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return false
+	}
+	payloadType := strings.ToLower(strings.TrimSpace(payload.Type))
+	return payloadType == "error" || payloadType == "upstream_error" || len(payload.Error) > 0
+}
+
+func extractOpenAIImageStreamErrorMessage(data []byte) string {
+	if len(data) == 0 || !common.ValidJSON(data) {
+		return "upstream image stream returned error event"
+	}
+	var payload struct {
+		Message string          `json:"message"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return "upstream image stream returned error event"
+	}
+	if msg := strings.TrimSpace(payload.Message); msg != "" {
+		return msg
+	}
+	if len(payload.Error) > 0 {
+		var nested struct {
+			Message string `json:"message"`
+		}
+		if err := common.Unmarshal(payload.Error, &nested); err == nil {
+			if msg := strings.TrimSpace(nested.Message); msg != "" {
+				return msg
+			}
+		}
+		if msg := strings.TrimSpace(common.JsonRawMessageToString(payload.Error)); msg != "" {
+			return msg
+		}
+	}
+	return "upstream image stream returned error event"
+}
+
+func writeOpenAIImageStreamPayload(c *gin.Context, eventName string, payload any) error {
+	data, err := common.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if eventName != "" {
+		return writeOpenAIImageStreamEvent(c, eventName, string(data))
+	}
+	return helper.StringData(c, string(data))
+}
+
+// writeOpenAIImageStreamEvent 写入带 event 名称的 SSE frame。
+// 现有 helper.ResponseChunkData 只负责写出，不返回 FlushWriter 错误；图片流式路径需要感知
+// 客户端断开等写失败场景，因此在本路径内保留一个可返回错误的轻量写入函数。
+func writeOpenAIImageStreamEvent(c *gin.Context, eventName string, data string) error {
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventName)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
+	return helper.FlushWriter(c)
+}
+
+func writeOpenAIImageStreamDone(c *gin.Context) error {
+	return helper.StringData(c, "[DONE]")
 }
 
 // applyUsagePostProcessing 根据渠道类型对 usage 信息进行后处理。

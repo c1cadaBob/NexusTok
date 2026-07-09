@@ -140,13 +140,13 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 // GetRequestURL 根据渠道类型和请求模式构建完整的上游请求 URL。
 // 不同渠道类型的 URL 构建逻辑不同：
 //   - Azure: 使用部署路径格式 /openai/deployments/{model}/{task}?api-version={version}
-//     - 支持 Responses API（含 compact 模式），使用不同的 API 版本
-//     - 2025年5月10日后创建的渠道不再移除模型名中的点号
-//     - 支持 Realtime 模式的 WebSocket URL（wss://）
-//     - 支持 Claude 格式的请求路径转换
+//   - 支持 Responses API（含 compact 模式），使用不同的 API 版本
+//   - 2025年5月10日后创建的渠道不再移除模型名中的点号
+//   - 支持 Realtime 模式的 WebSocket URL（wss://）
+//   - 支持 Claude 格式的请求路径转换
 //   - Custom: 支持 URL 中的 {model} 占位符替换
 //   - 其他渠道（OpenAI、OpenRouter 等）: 使用标准的完整请求路径
-//     - Claude/Gemini 格式的非 Responses 请求统一转发到 /v1/chat/completions
+//   - Claude/Gemini 格式的非 Responses 请求统一转发到 /v1/chat/completions
 //
 // 参数:
 //   - info: 中继信息，包含渠道类型、基础 URL、请求路径、模型名称等
@@ -487,10 +487,10 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 // 根据不同的中继模式使用不同的处理方式：
 //   - TTS（AudioSpeech）: 将请求序列化为 JSON 字节流
 //   - STT（AudioTranscription/AudioTranslation）: 构建 multipart/form-data 请求体
-//     - 包含 model 字段
-//     - 复制原始表单中的所有非文件字段
-//     - 处理音频文件上传（file 字段）
-//     - 自动设置 Content-Type 头（含 boundary）
+//   - 包含 model 字段
+//   - 复制原始表单中的所有非文件字段
+//   - 处理音频文件上传（file 字段）
+//   - 自动设置 Content-Type 头（含 boundary）
 //
 // 参数:
 //   - c: Gin 上下文
@@ -569,11 +569,11 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 // ConvertImageRequest 将图片请求转换为 OpenAI 格式。
 // 根据不同的中继模式使用不同的处理方式：
 //   - ImagesEdits（图片编辑）: 构建 multipart/form-data 请求体
-//     - 包含 model 字段和所有非文件表单字段
-//     - 支持单张或多张图片上传（image 或 image[] 字段名）
-//     - 支持 mask 文件上传（用于指定编辑区域）
-//     - 自动检测图片 MIME 类型（JPEG、PNG、WebP）
-//     - 如果请求体已经是 JSON 格式，则直接返回
+//   - 包含 model 字段和所有非文件表单字段
+//   - 支持单张或多张图片上传（image 或 image[] 字段名）
+//   - 支持 mask 文件上传（用于指定编辑区域）
+//   - 自动检测图片 MIME 类型（JPEG、PNG、WebP）
+//   - 如果请求体已经是 JSON 格式，则直接返回
 //   - ImagesGenerations（图片生成）: 直接返回请求对象
 //
 // 参数:
@@ -598,9 +598,12 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 使用已解析的 multipart 表单，避免重复解析
 		mf := c.Request.MultipartForm
 		if mf == nil {
-			if _, err := c.MultipartForm(); err != nil {
+			form, err := common.ParseMultipartFormReusable(c)
+			if err != nil {
 				return nil, errors.New("failed to parse multipart form")
 			}
+			c.Request.MultipartForm = form
+			c.Request.PostForm = form.Value
 			mf = c.Request.MultipartForm
 		}
 
@@ -845,7 +848,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-		usage, err = OpenaiHandlerWithUsage(c, info, resp)
+		if info.IsStream {
+			usage, err = OpenaiImageStreamHandler(c, info, resp)
+		} else {
+			usage, err = OpenaiImageHandler(c, info, resp)
+		}
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:

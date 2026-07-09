@@ -83,8 +83,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		return
 	}
 
-	// 无条件新建 StreamStatus
-	info.StreamStatus = relaycommon.NewStreamStatus()
+	// 仅在调用方未提供 StreamStatus 时初始化。
+	// 某些流式路径会在进入扫描器前预先挂载诊断状态或软错误，不能在这里覆盖掉。
+	if info.StreamStatus == nil {
+		info.StreamStatus = relaycommon.NewStreamStatus()
+	}
 
 	// 确保响应体总是被关闭
 	defer func() {
