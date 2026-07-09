@@ -281,6 +281,7 @@ type syncRequest struct {
 	Locale    string                   `json:"locale"`
 	Source    string                   `json:"source"`
 	Pricing   syncPricingPolicyRequest `json:"pricing"`
+	CreateAll *bool                    `json:"create_all,omitempty"`
 }
 
 type modelsDevPricingCandidate struct {
@@ -1055,6 +1056,43 @@ func buildSyncSourceInfo(req syncRequest) syncSourceInfo {
 	}
 }
 
+// parseOptionalBoolQuery 解析可选布尔查询参数。
+//
+// 仅在调用方显式传参时返回指针；无法识别的值按未传处理，避免调试链接中的拼写
+// 错误把同步范围意外收窄或放大。
+func parseOptionalBoolQuery(c *gin.Context, key string) *bool {
+	raw, ok := c.GetQuery(key)
+	if !ok {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return common.GetPointer(true)
+	case "0", "false", "no", "off":
+		return common.GetPointer(false)
+	default:
+		return nil
+	}
+}
+
+// resolveSyncUpstreamOptions 统一手动同步、预览和自动任务的目标范围。
+//
+// models.dev 是完整公开模型目录，页面手动同步也应默认补齐 catalog 中所有本地缺失
+// 模型；否则新模型系列中只有已经出现在能力表里的变体会被创建，导致 Luna/Terra
+// 这类同系列模型被遗漏。official 来源沿用历史的“只补能力表缺失项”语义，避免
+// 老元数据仓库一次性导入过多模型。create_all 为可选逃生开关，便于脚本显式控制。
+func resolveSyncUpstreamOptions(req syncRequest, opts syncUpstreamOptions) syncUpstreamOptions {
+	resolved := opts
+	if req.CreateAll != nil {
+		resolved.CreateAllUpstream = *req.CreateAll
+		return resolved
+	}
+	if normalizeSyncSource(req.Source) == syncSourceModelsDev {
+		resolved.CreateAllUpstream = true
+	}
+	return resolved
+}
+
 // fetchSyncUpstreamData 拉取指定来源的供应商和模型数据。
 func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVendor, []upstreamModel, syncSourceInfo, error) {
 	sourceInfo := buildSyncSourceInfo(req)
@@ -1119,6 +1157,7 @@ func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]u
 // - 创建出来的模型明确设置 sync_official=1，后续仍可参与官方数据差异预览。
 func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstreamOptions) (*syncUpstreamResult, error) {
 	req.Source = normalizeSyncSource(req.Source)
+	opts = resolveSyncUpstreamOptions(req, opts)
 	sourceInfo := buildSyncSourceInfo(req)
 	emptyResult := &syncUpstreamResult{
 		SkippedModels: []string{},
@@ -1622,7 +1661,8 @@ func SyncUpstreamPreview(c *gin.Context) {
 
 	locale := c.Query("locale")
 	source := c.Query("source")
-	req := syncRequest{Locale: locale, Source: source}
+	req := syncRequest{Locale: locale, Source: source, CreateAll: parseOptionalBoolQuery(c, "create_all")}
+	opts := resolveSyncUpstreamOptions(req, syncUpstreamOptions{})
 	vendors, upstreamModels, sourceInfo, fetchErr := fetchSyncUpstreamData(ctx, req)
 	if fetchErr != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + fetchErr.Error(), "source": sourceInfo})
@@ -1670,8 +1710,8 @@ func SyncUpstreamPreview(c *gin.Context) {
 		}
 	}
 
-	// 3) 缺失且上游存在的模型
-	missingList, _ := model.GetMissingModels()
+	// 3) 缺失且上游存在的模型。models.dev 使用完整 catalog，official 保留旧能力表范围。
+	missingList, _ := buildSyncTargetModelNames(modelByName, opts)
 	var missing []string
 	for _, name := range missingList {
 		if _, ok := modelByName[name]; ok {
@@ -1714,7 +1754,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 		if local.NameRule != up.NameRule {
 			fields = append(fields, conflictField{Field: "name_rule", Local: local.NameRule, Upstream: up.NameRule})
 		}
-		if local.Status != chooseStatus(up.Status, local.Status) {
+		if local.Status != chooseSyncModelStatus(up.Status, sourceInfo.Source, local.Status) {
 			fields = append(fields, conflictField{Field: "status", Local: local.Status, Upstream: up.Status})
 		}
 		if len(fields) > 0 {

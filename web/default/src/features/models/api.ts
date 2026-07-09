@@ -211,6 +211,7 @@ export async function deleteVendor(
 export async function syncUpstream(params?: {
   locale?: SyncLocale
   source?: SyncSource
+  create_all?: boolean
   overwrite?: SyncOverwritePayload[]
   pricing?: SyncPricingPolicy
 }): Promise<SyncUpstreamResponse> {
@@ -224,6 +225,7 @@ export async function syncUpstream(params?: {
 export async function previewUpstreamDiff(params?: {
   locale?: SyncLocale
   source?: SyncSource
+  create_all?: boolean
 }): Promise<PreviewUpstreamDiffResponse> {
   const searchParams = new URLSearchParams()
   if (params?.locale) {
@@ -231,6 +233,9 @@ export async function previewUpstreamDiff(params?: {
   }
   if (params?.source) {
     searchParams.set('source', params.source)
+  }
+  if (params?.create_all !== undefined) {
+    searchParams.set('create_all', String(params.create_all))
   }
   const queryString = searchParams.toString()
   const url = queryString
@@ -247,6 +252,7 @@ export async function applyUpstreamOverwrite(params: {
   overwrite: SyncOverwritePayload[]
   locale?: SyncLocale
   source?: SyncSource
+  create_all?: boolean
   pricing?: SyncPricingPolicy
 }): Promise<SyncUpstreamResponse> {
   return syncUpstream(params)

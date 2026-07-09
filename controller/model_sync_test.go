@@ -229,6 +229,73 @@ func TestConvertModelsDevCatalogPrefersCanonicalOwner(t *testing.T) {
 	require.Contains(t, models[0].Tags, "1M")
 }
 
+func TestConvertModelsDevCatalogPreservesGPT56Series(t *testing.T) {
+	catalog := &modelsDevCatalog{
+		Models: map[string]modelsDevCatalogModel{
+			"openai/gpt-5.6-luna": {
+				ID:               "openai/gpt-5.6-luna",
+				Name:             "GPT-5.6 Luna",
+				Reasoning:        true,
+				ToolCall:         true,
+				StructuredOutput: true,
+				Attachment:       true,
+				Modalities: modelsDevCatalogModalities{
+					Input:  []string{"text", "image", "pdf"},
+					Output: []string{"text"},
+				},
+				Limit: modelsDevCatalogLimit{Context: 1050000, Output: 128000},
+			},
+			"openai/gpt-5.6-sol": {
+				ID:               "openai/gpt-5.6-sol",
+				Name:             "GPT-5.6 Sol",
+				Reasoning:        true,
+				ToolCall:         true,
+				StructuredOutput: true,
+				Attachment:       true,
+				Modalities: modelsDevCatalogModalities{
+					Input:  []string{"text", "image", "pdf"},
+					Output: []string{"text"},
+				},
+				Limit: modelsDevCatalogLimit{Context: 1050000, Output: 128000},
+			},
+			"openai/gpt-5.6-terra": {
+				ID:               "openai/gpt-5.6-terra",
+				Name:             "GPT-5.6 Terra",
+				Reasoning:        true,
+				ToolCall:         true,
+				StructuredOutput: true,
+				Attachment:       true,
+				Modalities: modelsDevCatalogModalities{
+					Input:  []string{"text", "image", "pdf"},
+					Output: []string{"text"},
+				},
+				Limit: modelsDevCatalogLimit{Context: 1050000, Output: 128000},
+			},
+		},
+		Providers: map[string]modelsDevCatalogProvider{
+			"openai": {
+				ID:   "openai",
+				Name: "OpenAI",
+				Doc:  "https://platform.openai.com/docs/models",
+			},
+		},
+	}
+
+	_, models := convertModelsDevCatalog(catalog)
+
+	require.Len(t, models, 3)
+	got := make([]string, 0, len(models))
+	for _, item := range models {
+		got = append(got, item.ModelName)
+		require.Equal(t, "OpenAI", item.VendorName)
+		require.Equal(t, "OpenAI.Color", item.Icon)
+		require.Contains(t, item.Tags, "Reasoning")
+		require.Contains(t, item.Tags, "Tools")
+		require.Contains(t, item.Tags, "1M")
+	}
+	require.Equal(t, []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}, got)
+}
+
 func TestConvertModelsDevCatalogMapsDeprecatedToDisabled(t *testing.T) {
 	catalog := &modelsDevCatalog{
 		Providers: map[string]modelsDevCatalogProvider{
@@ -328,6 +395,96 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, second.CreatedModels)
 	require.Empty(t, second.SkippedModels)
+}
+
+func TestSyncUpstreamModelsCoreModelsDevDefaultsToFullCatalog(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+	withModelsDevTestServer(t, `{
+		"models": {
+			"openai/gpt-5.6-luna": {
+				"id": "openai/gpt-5.6-luna",
+				"name": "GPT-5.6 Luna",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			},
+			"openai/gpt-5.6-sol": {
+				"id": "openai/gpt-5.6-sol",
+				"name": "GPT-5.6 Sol",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			},
+			"openai/gpt-5.6-terra": {
+				"id": "openai/gpt-5.6-terra",
+				"name": "GPT-5.6 Terra",
+				"reasoning": true,
+				"tool_call": true,
+				"structured_output": true,
+				"attachment": true,
+				"modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+				"limit": {"context": 1050000, "output": 128000}
+			}
+		},
+		"providers": {
+			"openai": {
+				"id": "openai",
+				"name": "OpenAI",
+				"doc": "https://platform.openai.com/docs/models",
+				"models": {
+					"gpt-5.6-luna": {
+						"id": "gpt-5.6-luna",
+						"name": "GPT-5.6 Luna",
+						"cost": {"input": 1, "output": 8}
+					},
+					"gpt-5.6-sol": {
+						"id": "gpt-5.6-sol",
+						"name": "GPT-5.6 Sol",
+						"cost": {"input": 5, "output": 40}
+					},
+					"gpt-5.6-terra": {
+						"id": "gpt-5.6-terra",
+						"name": "GPT-5.6 Terra",
+						"cost": {"input": 2.5, "output": 20}
+					}
+				}
+			}
+		}
+	}`)
+
+	existing := &model.Model{
+		ModelName:    "gpt-5.6-sol",
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}
+	require.NoError(t, existing.Insert())
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:       true,
+			ProviderOrder: []string{"openai"},
+		},
+	}, syncUpstreamOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 2, result.CreatedModels)
+	require.ElementsMatch(t, []string{"gpt-5.6-luna", "gpt-5.6-terra"}, result.CreatedList)
+	require.Contains(t, result.UpdatedList, "gpt-5.6-sol")
+	require.Equal(t, 3, result.PricingUpdated)
+	require.ElementsMatch(t, []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}, result.PricingList)
+
+	for _, name := range []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"} {
+		var saved model.Model
+		require.NoError(t, db.Where("model_name = ?", name).First(&saved).Error)
+		require.Equal(t, 1, saved.SyncOfficial)
+	}
 }
 
 func TestSyncUpstreamModelsCoreAppliesModelsDevPricingProviderOrder(t *testing.T) {

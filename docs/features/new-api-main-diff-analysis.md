@@ -6321,8 +6321,75 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：models.dev 手动同步全量缺失补齐
+
+### 需求分析
+
+用户在默认前端模型元信息页搜索 `gpt-5.6` 后发现本地只同步到 `gpt-5.6-sol`，而 models.dev 当前公开目录中同一系列实际包含 `openai/gpt-5.6-luna`、`openai/gpt-5.6-sol` 和 `openai/gpt-5.6-terra` 三条 canonical model。排查发现 NexusTok 已经具备 models.dev canonical 解析能力，后台每日自动任务也会以 `CreateAllUpstream=true` 按上游目录补齐本地缺失模型；但管理页面的手动 `Sync Upstream Models` 仍沿用旧 official 同步语义，只创建当前能力表里出现但元信息缺失的模型。
+
+这会造成一个用户可见的不一致：models.dev 被前端标记为推荐来源，文案也强调同步模型元数据和供应商价格，但手动点击同步时只补齐当前渠道/能力已经出现的模型。对于刚发布的模型系列，如果能力表只因为某个渠道暴露了 `sol`，`luna` 和 `terra` 即使存在于 models.dev canonical catalog 中也不会被创建。
+
+本轮目标是修复 models.dev 手动同步和预览的目标集合：选择 models.dev 来源时，默认按上游 catalog 补齐所有本地缺失模型；旧 official 来源继续保持“只补能力表缺失模型”的历史行为。这样用户在页面手动同步后，`gpt-5.6` 系列会一次性补齐三条模型记录。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 同步请求结构 | `controller/model_sync.go` | 增加可选 `create_all` 逃生开关；models.dev 未显式指定时默认全量缺失补齐。 |
+| 手动同步核心 | `controller/model_sync.go` | `syncUpstreamModelsCore` 对 models.dev 源使用完整上游目录计算待创建模型。 |
+| 同步预览接口 | `controller/model_sync.go` | `/api/models/sync_upstream/preview?source=models.dev` 的 `missing` 改为展示所有上游存在、本地不存在的模型。 |
+| 回归测试 | `controller/model_sync_test.go` | 覆盖 GPT-5.6 Luna/Sol/Terra canonical 形态，以及 models.dev 手动同步默认补齐同系列剩余模型。 |
+| 功能文档 | `docs/features/model-sync-pricing.md` | 更新手动 models.dev 同步语义，避免文档仍描述成只补能力表缺失项。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证。 |
+
+### 风险评估
+
+1. models.dev 手动同步的创建范围会从“当前能力表缺失项”扩大为“models.dev catalog 中本地缺失项”，首次执行可能创建更多模型元信息。这与每日自动同步已有语义一致，但对只想补单个能力缺口的管理员来说感知会更明显。
+2. 旧 official 来源仍保持原行为，避免一次性导入 legacy 元数据仓库中所有模型，降低对已有部署的默认行为冲击。
+3. 只创建本地不存在的模型，不静默覆盖已有模型的描述、标签、状态、供应商等字段；已有冲突仍通过预览和人工覆盖流程处理。
+4. `create_all` 作为可选请求字段保留手动控制能力：未来如需在脚本或调试场景回退到旧范围，可显式传 `false`。
+5. 实际调用 3003 同步接口会改动运行中数据库，属于本轮修复目标的一部分；验证时必须确认 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 均可通过模型 API 查到。
+
+### 方案评审
+
+采用后端语义修复为主、前端无需新增交互的方案：
+
+1. 在 `syncRequest` 中增加 `CreateAll *bool`，JSON 字段为 `create_all`。
+2. 新增 `resolveSyncUpstreamOptions`：若请求显式带 `create_all`，优先使用该值；否则当 `source=models.dev` 时默认 `CreateAllUpstream=true`，official 仍为 false。
+3. `syncUpstreamModelsCore` 在标准化 source 后统一调用该 helper，保证 HTTP 手动同步、冲突覆盖路径和测试路径行为一致。
+4. `SyncUpstreamPreview` 同样使用该 helper 计算 `missing`，使预览弹窗和实际写入目标一致；同时把 models.dev 状态对比切到 `chooseSyncModelStatus`，避免 deprecated 状态在预览里被误当成启用。
+5. 保留自动同步任务现有 `CreateAllUpstream=true`，不改调度、价格同步、供应商纠偏和人工覆盖逻辑。
+6. 测试加入当前 models.dev GPT-5.6 canonical 数据形态，确认转换层能得到 Luna/Sol/Terra 三条；再模拟本地已存在 `gpt-5.6-sol` 的场景，确认手动 models.dev 默认同步会创建缺失的 `luna` 和 `terra`。
+
+验收方式：
+
+1. `go test ./controller -run 'Test(ConvertModelsDevCatalogPreservesGPT56Series|SyncUpstreamModelsCoreModelsDevDefaultsToFullCatalog|SyncUpstreamModelsCoreCreatesModelsDevCatalogModels|SyncUpstreamModelsCoreCorrectsExistingModelsDevVendor)'`。
+2. `go test ./controller -run 'Test.*ModelsDev'`。
+3. `go test ./controller`。
+4. `cd web/default && bun run typecheck`。
+5. `cd web/default && bun run build`。
+6. `git diff --check`。
+7. 优先用 MCP 打开 `http://192.168.0.202:3003/` 并触发/检查模型同步；如 MCP 工具受限，则用 `curl --noproxy '*'` 登录后调用 `/api/models/sync_upstream` 和模型搜索接口，确认 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 均存在，并比对 models.dev catalog 与本地模型集合差集。
+
+### 本轮验证记录
+
+1. `curl --noproxy '*' https://models.dev/catalog.json` 确认当前 models.dev canonical catalog 包含 `openai/gpt-5.6-luna`、`openai/gpt-5.6-sol` 和 `openai/gpt-5.6-terra` 三条。
+2. `go test ./controller -run 'Test(ConvertModelsDevCatalogPreservesGPT56Series|SyncUpstreamModelsCoreModelsDevDefaultsToFullCatalog|SyncUpstreamModelsCoreCreatesModelsDevCatalogModels|SyncUpstreamModelsCoreCorrectsExistingModelsDevVendor)'` 通过。
+3. `go test ./controller -run 'Test.*ModelsDev'` 通过。
+4. `go test ./controller` 通过。
+5. `cd web/default && bun run typecheck` 通过。
+6. `cd web/default && bun run build` 通过。
+7. `git diff --check` 通过。
+8. MCP 已连接到 3003 页面并获取首页快照，页面可访问；当前 MCP 工具集缺少导航/点击/表单输入工具，接口验证改用 3003 真实 HTTP 调用完成。
+9. 3003 登录验证通过：使用账号 `c1cada` 登录 `/api/user/login` 返回 `success=true`。
+10. 3003 `GET /api/models/search?keyword=gpt-5.6` 返回 3 条：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。三者 `vendor_id=1`，供应商接口确认 `id=1` 为 `OpenAI`；其中 `sol` 已有 `openai/default` 能力绑定，`luna` 和 `terra` 仅完成元信息同步，尚未绑定能力。
+11. 3003 `GET /api/models/sync_upstream/preview?source=models.dev&create_all=true` 返回 `success=true`、`missing=0`、`conflicts=0`。
+12. 3003 `POST /api/models/sync_upstream` 使用页面默认语义（`source=models.dev`，不显式传 `create_all`）返回 `success=true`、`created_models=0`、`updated_models=0`、`created_vendors=0`、`skipped_models=0`；说明手动 models.dev 同步入口已按全量 catalog 计算并且当前库无缺失。
+13. 将 models.dev canonical keys 按同步规则去掉 owner 前缀后与 3003 `/api/models/search` 分页结果做集合比对：models.dev 期望唯一模型数 244，本地唯一模型数 244，缺失数 0。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | models.dev 手动同步全量缺失补齐 | `controller/model_sync.go`、`controller/model_sync_test.go`、`web/default/src/features/models/api.ts`、`docs/features/model-sync-pricing.md` | 修复默认前端手动 models.dev 同步仍按旧 official 缺失能力表范围创建模型的问题；models.dev 来源默认按完整 catalog 补齐本地缺失模型，预览和实际同步目标一致，并保留 `create_all` 显式控制。回归覆盖 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 三模型场景。 |
 | 2026-07-09 | 前端依赖安全护栏 | `web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的前端 overrides 安全护栏，但不全量照搬；DOMPurify 升级到 `3.4.11`，并只锁定同主版本兼容的 `fast-uri`、`hono`、`js-cookie`、`mermaid`、`minimist`、`postcss` 和 `qs`，暂缓不兼容主版本或精确依赖路径的 `brace-expansion`、`uuid`、`ip-address`。 |
 | 2026-07-09 | Relay HTTP 空闲连接超时配置 | `common/constants.go`、`common/init.go`、`.env.example`、`service/http_client.go`、`service/protected_fetch_client.go`、`service/http_client_test.go`、`service/protected_fetch_client_test.go` | 原生化 new-api-main 的 `RELAY_IDLE_CONN_TIMEOUT` 能力，默认 90 秒并允许 0 表示不限制；默认 Relay client、HTTP/HTTPS proxy、SOCKS5 proxy 和 SSRF protected fetch transport 均使用同一配置，测试覆盖配置传播。 |
 | 2026-07-09 | 本地 MCP 与临时测试忽略项 | `.gitignore` | 原生化 new-api-main 的本地验证产物隔离策略，忽略 `.playwright-mcp`、`.local-tests/` 和明确命名的 chat responses live local 探针文件；同时覆盖 NexusTok 当前 `service/openaicompat` 原生命名路径，降低 MCP/真实上游临时验证文件误提交风险。 |

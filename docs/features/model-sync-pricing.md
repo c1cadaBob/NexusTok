@@ -46,7 +46,9 @@ NexusTok 的模型同步用于把上游模型目录导入到本地模型库，�
 | `name_rule` | 名称匹配规则 |
 | `status` | 启用状态 |
 
-默认手动同步只补齐本地缺失的模型；每日 models.dev 自动同步会按上游目录补齐本地不存在的模型和供应商。已有模型不会被静默覆盖，除非管理员在冲突预览中明确选择覆盖字段。
+默认手动同步的补齐范围按来源区分：`models.dev` 会按完整 catalog 补齐所有本地不存在的模型和供应商；`official` 沿用旧行为，只补齐当前能力表中已经被引用但缺少元信息的模型。每日 models.dev 自动同步同样按完整上游目录补齐本地不存在的模型和供应商。已有模型不会被静默覆盖，除非管理员在冲突预览中明确选择覆盖字段。
+
+接口调用方可以通过 `create_all` 显式控制补齐范围：`true` 表示按上游完整目录补齐本地缺失模型，`false` 表示只处理当前能力表缺失项。页面上的 models.dev 同步默认等价于 `create_all=true`，因此像 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 这类同系列模型会一次性补齐。
 
 models.dev 同步会优先使用 canonical models 的归属方作为本地供应商。例如 provider 目录中某个 OpenAI 模型可能由第三方服务商提供，但本地模型供应商仍应归属到 OpenAI，而不是误写成 serving provider。
 
@@ -62,6 +64,7 @@ models.dev 来源支持价格同步。官方仓库目前没有统一 provider �
 {
   "locale": "zh",
   "source": "models.dev",
+  "create_all": true,
   "pricing": {
     "enabled": true,
     "overwrite_manual": false,
