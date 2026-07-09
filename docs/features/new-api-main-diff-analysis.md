@@ -4985,8 +4985,73 @@ new-api-main 新增了 `common/node_identity.go`，把节点身份解析统一�
 8. 3003 页面与接口验证通过：`/` 返回 200，`/system-info` 返回 200，`/api/status` 返回 200；未登录访问 `/api/system-info/instances` 返回 401，消息为 `Unauthorized, not logged in and no access token provided`。
 9. 登录态接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后按默认前端 `web/default/src/lib/api.ts` 的约定携带 `NexusTok-User: 1` 和 session cookie 访问 `/api/system-info/instances` 返回 200。返回数据包含 1 个在线实例，节点字段为 `name=nexustok-hot-node-1`、`source=manual`、`manually_configured=true`、`should_configure_manually=false`，确认系统实例页面消费的新结构已在热更新容器生效。
 
+## 本轮实施评审：兑换码状态筛选原生化
+
+### 需求分析
+
+new-api-main 在兑换码管理里已经把 `status` 作为搜索接口参数下沉到模型层，支持后端分页下按可用、禁用、已使用和虚拟过期状态筛选。NexusTok 默认前端已经有兑换码状态筛选 UI，也定义了 `expired` 虚拟状态，但当前 `searchRedemptions()` 只发送 `keyword`，后端 `controller.SearchRedemptions()` 和 `model.SearchRedemptions()` 也只接收关键词。这会造成两个问题：一是管理员选择状态筛选时只可能依赖前端当前页数据，无法在后端分页总量里得到完整结果；二是 `Expired` 这类由 `expired_time` 计算出的虚拟状态不能被当前 API 正确分页筛选。
+
+同时，new-api-main 的 `Redeem` 在事务内使用 `WHERE id = ? AND status = enabled` 的 compare-and-swap 更新兑换码状态，只有成功把兑换码从 enabled 翻转为 used 的事务才会给用户加额度。NexusTok 当前依赖 `lockForUpdate` 读锁后先增加用户额度、再保存兑换码状态；在 SQLite 或锁语义退化的环境中，这类额度路径缺少显式 CAS 兜底。兑换码属于资金/额度入口，本轮应一并吸收该幂等保护。
+
+本轮目标是把 new-api-main 的兑换码状态筛选能力转成 NexusTok 原生能力：
+
+1. 后端 `GET /api/redemption/search` 接收可选 `status` 查询参数。
+2. 模型层 `SearchRedemptions` 支持关键词与状态组合过滤；`expired` 表示 `status=enabled` 且 `expired_time` 已过当前时间；`enabled` 排除已过期兑换码。
+3. 默认前端状态筛选与关键词搜索都走后端 search API，并把状态值写入 query key 和请求参数，分页总数以服务端结果为准。
+4. 保留现有 API 兼容性：未传 `status` 时搜索行为不变；状态值非法或空字符串时不额外过滤。
+5. `Redeem` 使用兑换码状态 CAS 作为最终幂等门闩，避免同一兑换码在并发场景下重复入账。
+6. 补齐模型测试覆盖关键词、状态、过期虚拟状态、分页总数、重复兑换和并发兑换只入账一次。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 兑换码模型查询与兑换 | `model/redemption.go`、`model/redemption_test.go` | `SearchRedemptions` 增加状态参数与组合过滤；`Redeem` 增加状态 CAS 幂等保护；新增回归测试。 |
+| 兑换码控制器 | `controller/redemption.go` | 搜索接口读取 `status` 并传入模型层，保持分页响应结构不变。 |
+| 默认前端兑换码列表 | `web/default/src/features/redemption-codes/{api.ts,types.ts,components/redemptions-table.tsx}` | 搜索请求追加 `status`，列表按状态筛选时走后端分页；状态筛选设置为单选。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. `SearchRedemptions` 签名变化会影响所有调用点，需要同步控制器和测试；当前只有兑换码搜索控制器直接调用，改动面可控。
+2. `expired` 是虚拟状态，不是数据库真实 `status` 值；实现必须与前端 `isRedemptionExpired` 语义一致，只把已启用且 `expired_time != 0 && expired_time < now` 的兑换码视为过期。
+3. `enabled` 筛选应排除已过期兑换码，否则 `Unused` 和 `Expired` 会在列表中重叠；这与 new-api-main 行为一致。
+4. 查询条件必须使用 GORM `Where` 和参数绑定，避免数据库方言差异和 SQL 注入风险；不新增迁移，不改变兑换码表结构。
+5. 前端从局部过滤转为服务端过滤后，`pageCount` 和 `total` 应完全来自后端；需要设置手动分页/过滤，避免服务端结果再被当前页二次过滤导致空页。
+6. `Redeem` 改为先 CAS 更新兑换码状态、再增加用户额度；两步必须在同一个事务中，确保后续用户额度更新失败时兑换码状态也会回滚。
+7. CAS 条件只判断当前记录仍是 enabled，不能跳过过期时间检查；过期兑换码仍要在 CAS 前返回失败。
+8. 本轮新增测试与前端类型变更，不新增 UI 文案；无需更新 i18n locale，但仍需运行前端类型检查/构建并访问 3003 `/redemption-codes` 验证热更新页面和接口。
+
+### 方案评审
+
+采用“后端搜索能力补齐 + 前端筛选参数透传 + 兑换 CAS 幂等保护”的方案。后端保持 `GetAllRedemptions` 不变，仅增强 `/api/redemption/search`，这样未筛选列表仍走旧路径；当关键词或状态任一存在时，前端统一走搜索接口。模型层用同一个 GORM 查询对象叠加关键词和状态条件，分页前先 `Count` 得到完整总数，再按 `id desc` 分页查询。兑换路径继续保留 `lockForUpdate` 作为支持行锁数据库的第一道保护，同时增加状态 CAS 作为跨数据库最终门闩，并且把 CAS 与用户额度增加放在同一个事务内。前端只复用现有状态筛选 UI 和 URL 状态，不新增文案、不新增路由。
+
+验收方式：
+
+1. `go test ./model -run 'TestSearchRedemptions|TestRedeem'`，验证兑换码搜索、状态筛选、分页和兑换并发保护。
+2. `go test ./controller -run TestRedemption`，确认控制器和路由相关测试仍通过。
+3. `go test ./model ./controller`，覆盖本轮后端相关包。
+4. 在 `web/default/` 执行 `bun run lint`、`bun run typecheck`、`bun run build`。
+5. `git diff --check` 检查补丁空白。
+6. 优先用 MCP 打开 `http://192.168.0.202:3003/redemption-codes`，登录后切换状态筛选并观察网络请求；如 MCP 仍不可用，则用 `curl --noproxy '*'` 登录后验证 `/api/redemption/search?keyword=&status=1`、`status=expired`、`status=2`、`status=3` 的响应状态和分页结构，并访问 `/` 与 `/redemption-codes` 确认热更新页面可达。
+
+验证记录：
+
+1. 模型定向测试通过：`go test ./model -run 'TestSearchRedemptions|TestRedeem'`，覆盖关键词搜索、状态筛选、`expired` 虚拟状态、分页总数、重复兑换和并发兑换只入账一次。
+2. 后端相关包测试通过：`go test ./model ./controller`、`go test ./controller`、`go test ./router -run TestRedemption`。
+3. 前端定向 ESLint 通过：`bunx eslint src/features/redemption-codes/api.ts src/features/redemption-codes/types.ts src/features/redemption-codes/components/redemptions-table.tsx`。
+4. 前端类型检查通过：`bun run typecheck`。
+5. 前端生产构建通过：`bun run build`，总量 `24261.3 kB / 9214.7 kB gzip`。
+6. 补丁空白检查通过：`git diff --check`。
+7. 全量 `bun run lint` 已执行，但失败在本轮未触碰的既有文件上，包括 `risk-acknowledgement-dialog.tsx`、`dashboard/components/flow/flow-charts.tsx`、`keys/components/api-keys-dialogs.tsx`、`system-info/components/system-instances-panel.tsx`、`system-settings/models/*`、`usage-logs/components/*`、`theme-radius.ts` 等 React Hooks/Query 规则和一个重复 import；本轮触碰的兑换码文件定向 ESLint 已通过。
+8. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/redemption-codes`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求和资源一致性兜底验证。
+9. 3003 页面与基础接口验证通过：`/` 返回 200，`/redemption-codes` 返回 200，`/api/status` 返回 200。
+10. 登录态兑换码搜索接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/redemption/search?keyword=&status=1&p=1&page_size=5`、`status=expired`、`status=2`、`status=3` 均返回 200，响应结构均为 `success=true`、`page=1`、`page_size=5`、`total=0`、`items=[]`。当前热更新环境没有兑换码数据，筛选语义由模型单元测试覆盖。
+11. 3003 前端资源验证通过：线上 `/static/js/async/4474.js` 与本地 `web/default/dist/static/js/async/4474.js` SHA256 均为 `c355d8e4db3b3cdfbf3be8fa1c5bb627599c785df4b8c445bc2a7d473f4870c0`，且 chunk 同时包含 `redemption/search?`、`URLSearchParams` 和 `manualFiltering`；线上 `/static/js/index.js` 与本地 `web/default/dist/static/js/index.js` SHA256 均为 `6b49f4293b8af999d03b4c4a7ed18a26f2735bddc55001bba9d491ca2a260e94`，确认热更新页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 兑换码状态筛选与兑换 CAS | `model/redemption.go`、`model/redemption_test.go`、`controller/redemption.go`、`web/default/src/features/redemption-codes/{api.ts,types.ts,components/redemptions-table.tsx}` | 原生化 new-api-main 的兑换码服务端状态筛选与兑换幂等保护；搜索接口支持 `status` 参数和 `expired` 虚拟状态，默认前端状态筛选走后端分页，`Redeem` 通过状态 CAS 确保同一兑换码并发场景只入账一次。 |
 | 2026-07-09 | 节点身份公共化 | `common/node_identity.go`、`common/constants.go`、`common/init.go`、`service/system_instance.go`、`service/system_instance_test.go` | 原生化 new-api-main 的节点身份解析能力；`common.NodeName` 优先使用 `NODE_NAME`，未配置时回退 hostname，并暴露来源和手动配置标记；系统实例心跳复用公共身份，日志、用量导出和 SystemTask runner 共享同一节点名语义。 |
 | 2026-07-09 | 表格展示原子组件 | `web/default/src/components/{table-id.tsx,provider-badge.tsx,truncated-text.tsx,long-text.tsx}`、`web/default/src/features/{channels,models}/components/*-columns.tsx` | 原生化 new-api-main 的表格 ID、provider badge 和长文本截断优势；新增公共 `TableId`、`ProviderBadge`、`TruncatedText`，并让 `LongText` 支持响应式 overflow 重新测量；渠道和模型两张高频表先行接入，保留账号池、多 Key、IO.NET、上游模型同步、权限动作、筛选和 API 语义不变。 |
 | 2026-07-09 | 模型倍率 JSON 模式 CodeMirror 编辑器 | `web/default/src/components/json-code-editor.tsx`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/system-settings/models/model-ratio-form.tsx` | 原生化 new-api-main 的 JSON 结构化编辑体验；新增公共 `JsonCodeEditor` 复用现有 CodeMirror 底座，模型倍率 JSON 模式从普通 `Textarea` 切换为带行号、状态和格式化动作的编辑器，同时保持八个倍率字段、保存校验、计费表达式语义和提交接口不变。 |

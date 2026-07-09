@@ -27,10 +27,10 @@ import type {
 } from './types'
 
 // ============================================================================
-// Redemption Code Management
+// 兑换码管理
 // ============================================================================
 
-// Get paginated redemption codes list
+// 获取分页兑换码列表。
 export async function getRedemptions(
   params: GetRedemptionsParams = {}
 ): Promise<GetRedemptionsResponse> {
@@ -39,18 +39,21 @@ export async function getRedemptions(
   return res.data
 }
 
-// Search redemption codes by keyword
+// 按关键词和状态搜索兑换码；status 为空时保持旧搜索语义。
 export async function searchRedemptions(
   params: SearchRedemptionsParams
 ): Promise<GetRedemptionsResponse> {
-  const { keyword = '', p = 1, page_size = 10 } = params
-  const res = await api.get(
-    `/api/redemption/search?keyword=${keyword}&p=${p}&page_size=${page_size}`
-  )
+  const { keyword = '', status = '', p = 1, page_size = 10 } = params
+  const queryParams = new URLSearchParams()
+  queryParams.set('keyword', keyword)
+  if (status) queryParams.set('status', status)
+  queryParams.set('p', String(p))
+  queryParams.set('page_size', String(page_size))
+  const res = await api.get(`/api/redemption/search?${queryParams.toString()}`)
   return res.data
 }
 
-// Get single redemption code by ID
+// 按 ID 获取单个兑换码。
 export async function getRedemption(
   id: number
 ): Promise<ApiResponse<Redemption>> {
@@ -58,7 +61,7 @@ export async function getRedemption(
   return res.data
 }
 
-// Create redemption code(s)
+// 创建一个或多个兑换码。
 export async function createRedemption(
   data: RedemptionFormData
 ): Promise<ApiResponse<string[]>> {
@@ -66,7 +69,7 @@ export async function createRedemption(
   return res.data
 }
 
-// Update redemption code
+// 更新兑换码信息。
 export async function updateRedemption(
   data: RedemptionFormData & { id: number }
 ): Promise<ApiResponse<Redemption>> {
@@ -74,7 +77,7 @@ export async function updateRedemption(
   return res.data
 }
 
-// Update redemption code status (enable/disable)
+// 更新兑换码状态（启用/禁用）。
 export async function updateRedemptionStatus(
   id: number,
   status: number
@@ -83,13 +86,13 @@ export async function updateRedemptionStatus(
   return res.data
 }
 
-// Delete a single redemption code
+// 删除单个兑换码。
 export async function deleteRedemption(id: number): Promise<ApiResponse> {
   const res = await api.delete(`/api/redemption/${id}/`)
   return res.data
 }
 
-// Delete invalid redemption codes (used, disabled, expired)
+// 删除已使用、已禁用和已过期的失效兑换码。
 export async function deleteInvalidRedemptions(): Promise<ApiResponse<number>> {
   const res = await api.delete('/api/redemption/invalid')
   return res.data

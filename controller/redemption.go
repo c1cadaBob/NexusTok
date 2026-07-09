@@ -46,14 +46,16 @@ func GetAllRedemptions(c *gin.Context) {
 
 // SearchRedemptions 搜索兑换码
 //
-// 支持按关键词搜索
+// 支持按关键词和状态搜索；状态筛选在后端完成，避免分页时只过滤当前页。
 //
 // 查询参数：
 //   - keyword: 搜索关键词
+//   - status: 状态筛选，可为 1、2、3 或 expired
 func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
+	status := c.Query("status")
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.SearchRedemptions(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.SearchRedemptions(keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
