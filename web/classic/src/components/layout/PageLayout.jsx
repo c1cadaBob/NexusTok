@@ -24,6 +24,7 @@ import App from '../../App';
 import FooterBar from './Footer';
 import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
+import ClassicFrontendDeprecationBanner from './ClassicFrontendDeprecationBanner';
 import React, { useContext, useEffect, useState } from 'react';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
@@ -209,6 +210,7 @@ const PageLayout = () => {
             flexDirection: 'column',
           }}
         >
+          <ClassicFrontendDeprecationBanner />
           <Content
             style={{
               flex: '1 0 auto',

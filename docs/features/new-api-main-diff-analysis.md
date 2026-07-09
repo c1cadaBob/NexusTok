@@ -149,7 +149,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | `/console/account-pool` | 有 `pages/AccountPool/index.jsx` 和侧边栏入口 | 无 | 保留，作为 classic 兼容管理入口。 |
 | `/console/pricing-setting` | 有 `pages/PricingSetting/index.jsx`，Root 可见 | 无 | 保留，避免 classic 管理员丢失组倍率/工具价格设置。 |
 | 渠道弹窗 | 有 `ChannelAccountPoolModal.jsx`、`CodexOAuthModal.jsx` | 无账号池弹窗 | 保留 NexusTok 能力，后续只做维护性修复。 |
-| ClassicFrontendDeprecationBanner | 无 | 有 | 可低优先级引入，用于提示 classic 前端逐步退场。 |
+| ClassicFrontendDeprecationBanner | 已接入 classic 全局布局 | 有 | 已原生化为可关闭退场提示；Root 用户可直接切换到默认前端，非 Root 用户看到联系管理员提示。 |
 | `helpers/frontendTheme.js` | 无 | 有 | 如果要统一 classic/default 主题变量，可参考；不是核心能力。 |
 | Midjourney 命名 | `Midjourney` | `MjProxy` | 无需迁移，保持本项目命名一致。 |
 
@@ -2873,6 +2873,52 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 5. MCP 打开 `http://192.168.0.202:3003/system-settings/models/routing-reliability`，确认导航项、表单字段、默认值、测试模式下拉和状态码规范化提示渲染正常，控制台无错误。
 6. MCP 点击无改动保存，确认只提示 `No changes to save`，不误写线上真实配置；若页面未更新，先重启容器再复验。
 
+## 本轮实施评审：Classic 前端退场提示原生化
+
+### 需求分析
+
+`new-api-main` 在 classic 前端全局布局中提供 `ClassicFrontendDeprecationBanner`，用于提醒用户旧版前端即将停止维护，并为 Root 用户提供一键切换到新版默认前端的入口。NexusTok 已经在 classic 的系统设置页提供“切换到新版前端”按钮，但入口隐藏较深，普通用户也无法明确知道 classic 体验可能缺少新功能；这与当前默认前端持续增强、classic 仅保留兼容入口的演进方向不一致。
+
+本轮目标是把该优势转成 NexusTok 原生能力：
+
+1. 在 classic 全局 `PageLayout` 中增加可关闭的维护提示，仅影响 classic 前端，不改变默认前端和后端业务链路。
+2. Root 用户看到“切换到新版前端”按钮，复用现有 `PUT /api/option/` 写入 `theme.frontend=default` 的语义；非 Root 用户只看到联系管理员的提示。
+3. 关闭提示只写入当前浏览器 `localStorage`，不修改服务端配置，不影响其他用户。
+4. 文案补齐 classic 已支持的 `zh-CN`、`zh-TW`、`en`、`fr`、`ja`、`ru`、`vi` 语言包。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Classic 布局 | `web/classic/src/components/layout/PageLayout.jsx` | 在 header 与页面内容之间插入退场提示 banner。 |
+| Classic 组件 | `web/classic/src/components/layout/ClassicFrontendDeprecationBanner.jsx` | 新增可关闭提示、Root 切换按钮和本地关闭确认。 |
+| Classic helper | `web/classic/src/helpers/frontendTheme.js`、`web/classic/src/helpers/index.js` | 抽出切换到默认前端的确认逻辑，供 banner 复用；设置页旧逻辑本轮不强制迁移，避免扩大行为面。 |
+| Classic 样式 | `web/classic/src/index.css` | 增加 banner 布局、内容换行和移动端收缩样式。 |
+| Classic i18n | `web/classic/src/i18n/locales/*.json` | 补齐 banner 标题、正文、跳转成功文案和缓存提示。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验收方式。 |
+
+### 风险评估
+
+1. Classic 前端使用固定 header 与固定侧边栏，新增 banner 可能挤压内容或造成移动端重叠。样式应只在 banner 可见时占位，并在小屏下改为纵向布局，避免遮挡已有控制台内容。
+2. 切换前端会写入全局 `theme.frontend`，属于 Root 级系统设置动作。前端只对 Root 用户展示按钮，后端 `/api/option/` 仍保留既有 Root/Authz 边界；非 Root 点击路径不存在。
+3. 关闭提示是浏览器本地状态，如果用户误关闭，只影响当前浏览器；不写服务端 option，避免把“是否显示提示”变成全局配置。
+4. Classic 语言包比默认前端多 `zh-CN`/`zh-TW`，不能只补默认前端六语；否则部分 classic 用户会看到源文案。
+5. 本轮不删除 classic 入口、不改变 `theme.frontend` 默认值、不调整系统设置页原有按钮，避免引发不可逆迁移。
+
+### 方案评审
+
+采用“全局提示 + Root 显式切换 + 本地可关闭”的方案。新增 `ClassicFrontendDeprecationBanner` 使用 Semi UI `Banner`、`Button`、`Modal` 和现有 i18n，不引入新依赖；视觉上沿用 classic 现有 Semi warning 语义，保持密集后台界面的一致性。
+
+切换逻辑抽到 `helpers/frontendTheme.js`：弹出确认框，说明切换后会刷新并进入新版前端；确认后调用 `API.put('/api/option/', { key: 'theme.frontend', value: 'default' })`，成功后跳转首页，失败时复用 `showError`。这个 helper 先供 banner 使用，设置页已有逻辑保持不动，后续如果需要可以再单独去重。
+
+验收方式：
+
+1. `cd web/classic && npm run build` 或可用的本地构建命令通过；若环境缺包管理器能力，则至少执行 Vite/ESBuild 可用检查并说明。
+2. `git diff --check` 通过。
+3. MCP 打开 `http://192.168.0.202:3003/`，确认热更新入口仍可访问。
+4. MCP 打开 classic 控制台路径，例如 `http://192.168.0.202:3003/console`，确认 banner 渲染、Root 切换按钮存在、控制台内容未被遮挡、控制台无新增错误。
+5. MCP 点击关闭按钮，确认出现关闭确认弹窗；取消关闭后 banner 仍存在，不写服务端配置、不切换前端。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2949,3 +2995,4 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 | 2026-07-09 | 订阅额度手动重置 | `model/subscription.go`、`controller/subscription.go`、`router/subscription-router.go`、`web/default/src/features/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的管理员手动重置订阅额度能力，支持套餐级和用户级重置、`advance_reset_time`、`subscription.operate` 权限、用户管理日志和管理审计。 |
 | 2026-07-09 | Token Limits 默认前端入口 | `web/default/src/features/system-settings/{security,request-limits,types.ts}`、`web/default/src/i18n/locales/*.json` | 默认前端安全设置新增 `token-limits` 分区，Root 可查看并保存现有 `token_setting.max_user_tokens`，复用 `system_setting.sensitive_write` 权限和统一 option 保存链路。 |
 | 2026-07-09 | Routing Reliability 默认前端聚合入口 | `web/default/src/features/system-settings/models/*`、`web/default/src/features/system-settings/types.ts`、`web/default/src/i18n/locales/*.json` | 默认前端模型设置新增 `routing-reliability` 分区，聚合重试、自动重试状态码、渠道自动禁用/恢复和自动测试模式，复用现有 option 保存与 `system_setting.sensitive_write` 权限。 |
+| 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |

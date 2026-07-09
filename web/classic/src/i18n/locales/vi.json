@@ -4256,7 +4256,12 @@
     "账号已删除": "Account deleted",
     "账号已更新": "Account updated",
     "账号池": "Account pool",
-    "账号池策略": "Account pool strategy"
+    "账号池策略": "Account pool strategy",
+    "旧版前端即将停止维护": "Frontend cũ sắp ngừng bảo trì",
+    "你正在使用旧版前端，该版本即将停止维护，部分功能可能无法使用。建议切换到新版前端以获得完整体验。": "Bạn đang sử dụng frontend cũ. Phiên bản này sắp ngừng được bảo trì và một số tính năng có thể không khả dụng. Hãy chuyển sang frontend mới để có trải nghiệm đầy đủ.",
+    "你正在使用旧版前端，该版本即将停止维护，部分功能可能无法使用。请联系管理员切换到新版前端。": "Bạn đang sử dụng frontend cũ. Phiên bản này sắp ngừng được bảo trì và một số tính năng có thể không khả dụng. Vui lòng liên hệ quản trị viên để chuyển sang frontend mới.",
+    "提示：如果切换后页面无法正常渲染，请清空浏览器缓存后重试。": "Mẹo: Nếu trang không hiển thị đúng sau khi chuyển đổi, hãy xóa bộ nhớ đệm trình duyệt rồi thử lại.",
+    "已切换到新版前端，正在跳转首页": "Đã chuyển sang frontend mới, đang chuyển đến trang chủ"
   },
   "羊毛纸": "Giấy len",
   "使用温润纸感主题": "Dung giao dien giay am ap"

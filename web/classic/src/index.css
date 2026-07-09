@@ -65,6 +65,50 @@ body[data-theme-preset='wool-paper'] {
   height: calc(100dvh - 64px);
 }
 
+.classic-frontend-deprecation-banner {
+  flex: 0 0 auto;
+  margin-top: 64px;
+  padding: 8px 12px 0;
+}
+
+.classic-frontend-deprecation-banner-inner {
+  position: relative;
+}
+
+.classic-frontend-deprecation-banner .semi-banner {
+  border-radius: 8px;
+}
+
+.classic-frontend-deprecation-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 32px;
+}
+
+.classic-frontend-deprecation-body > span {
+  min-width: 0;
+}
+
+.classic-frontend-deprecation-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+@media (max-width: 767px) {
+  .classic-frontend-deprecation-banner {
+    padding: 8px 8px 0;
+  }
+
+  .classic-frontend-deprecation-body {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-right: 24px;
+  }
+}
+
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
@@ -384,7 +428,9 @@ code {
   line-height: 1;
   background-color: var(--semi-color-fill-0);
   color: var(--semi-color-text-2);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .sbg-badge-active {
@@ -902,7 +948,8 @@ html.dark .with-pastel-balls::before {
     max-width: 80px;
   }
 
-  .semi-input-prefix-text, .semi-input-suffix-text {
+  .semi-input-prefix-text,
+  .semi-input-suffix-text {
     margin: 0;
   }
 
@@ -1040,4 +1087,6 @@ html.dark .with-pastel-balls::before {
   }
 }
 
-.ec-dbcd0a3c01b55203 { forced-color-adjust: auto; }
+.ec-dbcd0a3c01b55203 {
+  forced-color-adjust: auto;
+}
