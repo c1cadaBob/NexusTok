@@ -4649,8 +4649,65 @@ new-api-main 的 Playground 已将用户气泡和 assistant 回复的阅读样�
 9. 线上 `/static/js/async/6675.js` 已包含 `max-w-[78ch]`、`font-sans`、`rounded-br-md` 和 `bg-muted/70`，且未检出本轮移除的 `font-serif`、`max-w-none`、`dark:group-[.is-user]:bg-muted` 特征，确认 3003 页面资源已加载本轮消息阅读样式。
 10. 本轮 chunk 路径未变化，线上入口、CSS 和 Playground chunk 均已与本地构建一致，无需重启容器。
 
+## 本轮实施评审：Playground 消息编辑器状态安全原生化
+
+### 需求分析
+
+new-api-main 的 Playground 消息编辑器相比 NexusTok 当前实现有四类优势：编辑区域宽度与消息阅读列宽一致，按钮收敛为图标动作，未保存变更在取消或按 Escape 时会二次确认，且提供一键重置到原文。NexusTok 已有 `PlaygroundMessageEditor` 组件和 `getMessageEditorState()` 纯函数，具备 Save、Save & Submit、Cancel 与 Ctrl/⌘+Enter 提交，但当前编辑器仍使用整行 `Textarea` 和文字按钮；如果用户误按 Escape 或 Cancel，会直接丢弃本地编辑内容。
+
+本轮目标是吸收 new-api-main 的编辑器安全和布局优势，同时保持 NexusTok 当前依赖与组件体系：
+
+1. 不引入 CodeMirror、不新增 `@codemirror/*` 依赖，继续使用现有 `Textarea`，避免把公共 `CodeBlock` 组件和构建体积一起纳入本轮。
+2. 为 `message-styles.ts` 增加 `getMessageEditorStyles()`，让编辑器和消息正文共享 `78ch` assistant 列宽、user 最大宽度规则，避免编辑态横向铺满。
+3. `PlaygroundMessageEditor` 使用 `hasChanged` 派生状态，取消和 Escape 在存在未保存变更时调用 `window.confirm(t('You have unsaved changes. Are you sure you want to leave?'))`。
+4. 编辑器动作改为图标按钮：Save & Submit、Save、Reset、Cancel，均保留 `aria-label` 和现有 i18n key；Reset 仅在内容变更后展示，并把编辑文本恢复到 `originalText`。
+5. 补充 `message-editor-utils.test.ts` 和扩展 `message-styles.test.ts`，锁定编辑器状态与样式 helper，避免后续回退。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 编辑器组件 | `web/default/src/features/playground/components/playground-message-editor.tsx` | 增加取消确认、重置动作、图标按钮和编辑区域宽度 class；请求、保存回调和键盘提交语义保持不变。 |
+| 样式 helper | `web/default/src/features/playground/lib/message-styles.ts`、`message-styles.test.ts` | 新增编辑器宽度 helper，并补测试覆盖 assistant/user 编辑态宽度。 |
+| 编辑状态测试 | `web/default/src/features/playground/lib/message-editor-utils.test.ts` | 新增纯函数测试，覆盖未变更、空内容、user/assistant Save & Submit 可见性和 `hasChanged`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. 本轮只改 Playground 前端编辑态，不改变消息结构、localStorage schema、发送 payload、SSE、错误恢复、计费、权限和后端接口，核心业务风险低。
+2. `window.confirm` 会新增一次浏览器原生确认交互，仅在内容有变更且用户主动 Cancel/Escape 时触发；无变更取消、保存、Save & Submit 和重置动作不受影响。
+3. 图标按钮会减少编辑器底部文字宽度压力，但依赖 `aria-label` 与 tooltip 外的浏览器辅助能力；本轮保留现有 i18n key，不新增文案。
+4. 不引入 CodeMirror 意味着本轮没有 new-api-main 的 Markdown 高亮编辑体验；这是有意拆分，避免依赖、公共组件和构建体积风险混入编辑器安全能力。
+5. 编辑器宽度 class 进入 helper 后会和上一轮消息正文列宽保持一致；若后续暴露“全部左对齐”布局偏好，再单独评审编辑态的 alignment 传入方式。
+
+### 方案评审
+
+采用“现有 Textarea 增强 + 可测试样式 helper”的方案：`PlaygroundMessageEditor` 继续消费 `getMessageEditorState()`，新增 `handleCancel()` 统一处理 Cancel 与 Escape；按钮改用现有 `Button` 的 `icon-sm` 尺寸和 lucide 图标，遵守当前 Playground 已有图标体系；`getMessageEditorStyles()` 只负责 role-based 宽度约束，不改组件结构和保存回调。这样能把 new-api-main 的误取消保护、重置入口和阅读列宽优势转为 NexusTok 原生能力，同时把 CodeMirror 编辑器留给后续更大范围的 rich editor 切片。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-editor-utils.test.ts src/features/playground/lib/message-styles.test.ts src/features/playground/lib/conversation-message-utils.test.ts`，覆盖编辑状态、编辑器样式和编辑保存数组行为。
+2. 针对 `playground-message-editor.tsx`、`message-editor-utils.test.ts`、`message-styles.ts` 和 `message-styles.test.ts` 运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，确认组件类型、图标导入和生产构建通过。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载、编辑器动作和取消确认；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-editor-utils.test.ts src/features/playground/lib/message-styles.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 通过，共 17 个用例，覆盖编辑器状态、编辑器宽度样式和保存/提交消息数组行为。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/playground-message-editor.tsx src/features/playground/lib/message-editor-utils.test.ts src/features/playground/lib/message-styles.ts src/features/playground/lib/message-styles.test.ts` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `PlaygroundMessageEditor`、Tooltip、图标按钮和新增测试类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，生产构建生成新的本地 `dist`；Playground 相关 async chunk 仍为 `/static/js/async/6675.js`，内容 hash 已随本轮编辑器改造更新。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+7. 第一次 `curl --noproxy '*' http://192.168.0.202:3003/` 出现一次瞬时连接失败；随后重试 `/` 成功返回 `HTTP 200`，`/playground` 和 `/api/status` 也均返回 `HTTP 200`；`/api/status` 返回 `success: true`，`system_name` 为 `NexusTok`。
+8. 从 3003 拉取 `/static/js/index.js`、`/static/js/async/6675.js` 和 `/static/css/index.css` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `c452d3907d348546052e086ff18dc22a5516aa085a76975a78d12a8610337394`，`6675.js` SHA256 均为 `f28c912face1c18d45642a9400ab7a7bb386a4f7d088845e70302fb7bc7bbaad`，`index.css` SHA256 均为 `e641984672d30452ed7b325c5f3e350de58062ec0c6d4916b6c0a20ec659a6fa`。
+9. 线上 `/static/js/async/6675.js` 已包含 `You have unsaved changes. Are you sure you want to leave?`、`Unsaved changes`、`No changes`、`Save & Submit`、`Reset`、`group-[.is-assistant]:max-w-[78ch]` 和 `group-[.is-user]:max-w-[85%]` 特征，确认 3003 页面资源已加载本轮编辑器安全状态和宽度样式。
+10. 本轮复用已有六语 i18n key，没有新增 locale 文案；线上入口、CSS 和 Playground chunk 均已与本地构建一致，无需重启容器。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息编辑器状态安全 | `web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/src/features/playground/lib/{message-editor-utils.test.ts,message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的编辑器误取消保护、重置动作、图标动作和编辑态宽度对齐；继续使用现有 `Textarea`，不引入 CodeMirror 依赖，保存、Save & Submit、消息数组和请求协议保持不变。 |
 | 2026-07-09 | Playground 消息阅读样式 | `web/default/src/features/playground/lib/{message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的消息阅读样式优势；assistant 正文限制为 `78ch` 文档列并使用当前 `font-sans` 字体轴，user 消息切换为语义 muted 边框气泡，移除旧 `font-serif`、无限宽和手写深色背景覆盖，消息协议、存储和请求链路不变。 |
 | 2026-07-09 | Playground 错误状态 helper | `web/default/src/features/playground/components/message-error.tsx`、`web/default/src/features/playground/lib/{message-error-utils.ts,message-error-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message error state helper；错误分类、模型价格错误、管理员设置入口可见性和 fallback 文案进入可测试纯函数，`MessageError` 只保留 Alert/Button 渲染，现有错误动作位置、请求链路和 i18n key 不变。 |
 | 2026-07-09 | Playground 消息流式状态工具 | `web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/lib/{message-streaming-utils.ts,message-streaming-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message streaming helper 分层；流式 reasoning/content 增量、累计 chunk 去重、assistant 完成态判断和非流式 choice 写回进入可测试纯函数，`use-chat-handler` 只保留请求生命周期、toast 和错误落盘编排。 |

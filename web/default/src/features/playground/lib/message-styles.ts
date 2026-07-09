@@ -64,3 +64,20 @@ export function getMessageContentStyles() {
     'lg:group-[.is-user]:max-w-[72ch]',
   ].join(' ')
 }
+
+/**
+ * 获取消息编辑器外层样式。
+ *
+ * 编辑态应与阅读态共享同一套宽度约束：assistant 保持文档列宽，
+ * user 继承紧凑 prompt 的最大宽度，避免切换编辑时出现横向跳变。
+ */
+export function getMessageEditorStyles() {
+  return [
+    'w-full',
+    'group-[.is-assistant]:max-w-[78ch]',
+    'group-[.is-user]:max-w-[85%]',
+    'sm:group-[.is-user]:max-w-[62ch]',
+    'md:group-[.is-user]:max-w-[68ch]',
+    'lg:group-[.is-user]:max-w-[72ch]',
+  ].join(' ')
+}

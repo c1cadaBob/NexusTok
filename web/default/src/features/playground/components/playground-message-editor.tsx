@@ -17,10 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import type { KeyboardEvent } from 'react'
+import { Check, RotateCcw, Send, X, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { getMessageEditorState } from '../lib'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { getMessageEditorState, getMessageEditorStyles } from '../lib'
 import type { Message } from '../types'
 
 interface PlaygroundMessageEditorProps {
@@ -33,6 +41,44 @@ interface PlaygroundMessageEditorProps {
   originalText: string
 }
 
+interface EditorIconButtonProps {
+  disabled?: boolean
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+  variant?: 'default' | 'ghost'
+}
+
+function EditorIconButton({
+  disabled = false,
+  icon: Icon,
+  label,
+  onClick,
+  variant = 'ghost',
+}: EditorIconButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+            size='icon-sm'
+            type='button'
+            variant={variant}
+          />
+        }
+      >
+        <Icon aria-hidden='true' />
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{label}</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export function PlaygroundMessageEditor({
   editText,
   message,
@@ -43,16 +89,29 @@ export function PlaygroundMessageEditor({
   originalText,
 }: PlaygroundMessageEditorProps) {
   const { t } = useTranslation()
-  const { canSave, showSaveAndSubmit } = getMessageEditorState(
+  const { canSave, hasChanged, showSaveAndSubmit } = getMessageEditorState(
     message,
     editText,
     originalText
   )
 
+  const handleCancel = () => {
+    if (
+      hasChanged &&
+      !window.confirm(
+        t('You have unsaved changes. Are you sure you want to leave?')
+      )
+    ) {
+      return
+    }
+
+    onCancelEdit?.(false)
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      onCancelEdit?.(false)
+      handleCancel()
       return
     }
 
@@ -69,39 +128,52 @@ export function PlaygroundMessageEditor({
   }
 
   return (
-    <div className='flex flex-col gap-2'>
+    <div className={cn('flex flex-col gap-2', getMessageEditorStyles())}>
       <Textarea
-        className='font-mono text-sm'
+        className='min-h-32 font-mono text-sm leading-6'
+        aria-label={t('Edit')}
         onChange={(event) => onEditTextChange(event.target.value)}
         onKeyDown={handleKeyDown}
         rows={8}
         value={editText}
       />
-      <div className='flex flex-wrap gap-2'>
-        {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
-        {showSaveAndSubmit && (
-          <Button
-            disabled={!canSave}
-            onClick={() => onSaveEditAndSubmit?.(editText)}
-            size='sm'
-          >
-            {t('Save & Submit')}
-          </Button>
-        )}
-        <Button
-          disabled={!canSave}
-          onClick={() => onSaveEdit?.(editText)}
-          size='sm'
-        >
-          {t('Save')}
-        </Button>
-        <Button
-          onClick={() => onCancelEdit?.(false)}
-          size='sm'
-          variant='outline'
-        >
-          {t('Cancel')}
-        </Button>
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground text-xs'>
+          {hasChanged ? t('Unsaved changes') : t('No changes')}
+        </span>
+        <TooltipProvider delay={300}>
+          <div className='flex items-center gap-1'>
+            {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
+            {showSaveAndSubmit && (
+              <EditorIconButton
+                disabled={!canSave}
+                icon={Send}
+                label={t('Save & Submit')}
+                onClick={() => onSaveEditAndSubmit?.(editText)}
+                variant='default'
+              />
+            )}
+            <EditorIconButton
+              disabled={!canSave}
+              icon={Check}
+              label={t('Save')}
+              onClick={() => onSaveEdit?.(editText)}
+              variant={showSaveAndSubmit ? 'ghost' : 'default'}
+            />
+            {hasChanged && (
+              <EditorIconButton
+                icon={RotateCcw}
+                label={t('Reset')}
+                onClick={() => onEditTextChange(originalText)}
+              />
+            )}
+            <EditorIconButton
+              icon={X}
+              label={t('Cancel')}
+              onClick={handleCancel}
+            />
+          </div>
+        </TooltipProvider>
       </div>
     </div>
   )

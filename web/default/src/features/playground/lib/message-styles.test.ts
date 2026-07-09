@@ -18,10 +18,17 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { getMessageContentStyles } from './message-styles'
+import {
+  getMessageContentStyles,
+  getMessageEditorStyles,
+} from './message-styles'
 
 function getMessageContentClassSet() {
   return new Set(getMessageContentStyles().split(/\s+/))
+}
+
+function getMessageEditorClassSet() {
+  return new Set(getMessageEditorStyles().split(/\s+/))
 }
 
 describe('message styles', () => {
@@ -61,5 +68,16 @@ describe('message styles', () => {
     assert.equal(classes.has('sm:leading-7'), true)
     assert.equal(classes.has('break-words'), true)
     assert.equal(classes.has('whitespace-pre-wrap'), true)
+  })
+
+  test('keeps editor width aligned with message reading columns', () => {
+    const classes = getMessageEditorClassSet()
+
+    assert.equal(classes.has('w-full'), true)
+    assert.equal(classes.has('group-[.is-assistant]:max-w-[78ch]'), true)
+    assert.equal(classes.has('group-[.is-user]:max-w-[85%]'), true)
+    assert.equal(classes.has('sm:group-[.is-user]:max-w-[62ch]'), true)
+    assert.equal(classes.has('md:group-[.is-user]:max-w-[68ch]'), true)
+    assert.equal(classes.has('lg:group-[.is-user]:max-w-[72ch]'), true)
   })
 })
