@@ -37,6 +37,10 @@ services:
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
+      # 仅当开发后端通过 HTTPS 域名访问时开启。开启后必须配置可信 URL，
+      # 否则浏览器不会在 HTTP 本地开发环境中携带 Secure session cookie。
+      # - SESSION_COOKIE_SECURE=true
+      # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com
     depends_on:
       redis:
         condition: service_started
@@ -54,6 +58,8 @@ services:
 
   # PostgreSQL 数据库服务
   postgres:
+    image: postgres:15-alpine
+    container_name: nexustok-dev-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: root

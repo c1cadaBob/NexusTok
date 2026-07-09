@@ -5604,8 +5604,69 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 5. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 6. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。该切片不涉及前端页面改动，页面访问用于确认当前热部署服务仍可用。
 
+## 本轮实施评审：开发 Compose 与 Makefile 修补
+
+### 需求分析
+
+`new-api-main` 的工程化差异中，`docker-compose.dev.yml` 和 `makefile` 提供了更完整的本地开发闭环：PostgreSQL dev 服务显式声明镜像、后端容器可单独重建、初始化向导状态可快速重置。NexusTok 当前已经有同名 dev compose 和 makefile，但存在几个可直接原生化的问题：
+
+1. `docker-compose.dev.yml` 的 `postgres` 服务没有 `image` 字段。Docker Compose 对没有 `image` 且没有 `build` 的 service 会报配置错误，导致本地 PostgreSQL dev 栈无法稳定启动。
+2. `makefile` 只有 `dev-api`，没有只重建后端服务的 `dev-api-rebuild`。Go 依赖或 Dockerfile 变更后，开发者需要手写 compose 命令，和文档中“开发任务可复用”的目标不一致。
+3. 当前没有 `reset-setup` 任务。调试初始化向导、root 用户创建和演示模式时，开发者需要手工进入 PostgreSQL 或 SQLite 执行 SQL，容易误删非开发环境数据。
+4. NexusTok 没有 `web/package.json` 工作区，不应照搬 new-api-main 的 `cd ./web && bun install --filter ...`；应保留 `web/default`、`web/classic` 的独立 Bun 使用方式。
+5. new-api-main 的 `oxlint`、`oxfmt`、`tsgo` 和分支镜像工作流属于更大工具链切换，本轮不引入，避免扰动现有前端格式化、CI 和热更新容器。
+
+本轮目标是把 new-api-main 的开发体验优势转为 NexusTok 原生开发任务：修复 dev compose PostgreSQL 启动缺口，增加后端重建和初始化重置入口，并更新部署文档。该切片不改变生产部署、热更新 `docker-compose.hot.yml`、运行时业务逻辑或前端页面。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Dev Compose | `docker-compose.dev.yml` | 为 `postgres` 服务补齐 `postgres:15-alpine` 镜像和容器名；补充 Secure Session Cookie 的 HTTPS 开发注释，保留 NexusTok 数据库名和服务名。 |
+| 开发命令 | `makefile` | 增加可配置变量、`dev-api-rebuild` 和 `reset-setup`，保留 `web/default` 与 `web/classic` 独立 Bun 安装方式。 |
+| 部署文档 | `docs/installation/deployment.md` | 补充 `make dev-api-rebuild`、`make reset-setup` 和重置任务的安全边界说明。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. `docker-compose.dev.yml` 只用于本地前后端分离开发，不影响用户要求的 3003 热更新部署，也不修改 `docker-compose.hot.yml`。
+2. 补齐 PostgreSQL `image` 是配置修复；不会修改数据库 schema、迁移逻辑或默认生产数据库选择。
+3. `reset-setup` 会删除 dev 数据库中的 `setups` 记录、root 用户和两个演示模式 option，因此必须限定在本地 dev compose 或显式指定的本地 SQLite 文件；任务文案和文档会明确这是开发重置，不用于生产。
+4. Makefile 的原有目标继续保留，新增目标不改变 `make dev`、`make dev-api`、`make dev-web` 的行为。
+5. 本轮不执行 `make reset-setup`，避免改动当前本地 `nexustok.db` 或 Docker dev 数据；只用 `docker compose config` 和 Makefile dry-run 验证命令生成。
+
+### 方案评审
+
+采用“开发工具最小补齐”的方案：
+
+1. 在 `docker-compose.dev.yml` 的 `postgres` 服务增加 `image: postgres:15-alpine` 和稳定 `container_name: nexustok-dev-pg`；继续使用 `nexustok` 服务名、`nexustok` 数据库名、`nexustok-dev` 镜像名和现有网络/卷。
+2. 在 `docker-compose.dev.yml` 中保留 Secure Session Cookie 的注释配置，和当前后端 `SESSION_COOKIE_SECURE` / `SESSION_COOKIE_TRUSTED_URL` 能力对齐，但默认不启用。
+3. 在 `makefile` 中引入 `DEV_COMPOSE_FILE`、`DEV_API_SERVICE`、`DEV_POSTGRES_SERVICE`、`DEV_POSTGRES_DB`、`DEV_POSTGRES_USER`、`DEV_SQLITE_PATH` 变量；新增 `dev-api-rebuild` 和 `reset-setup`。
+4. `reset-setup` 优先检测正在运行的 dev PostgreSQL service，存在时通过 `docker compose exec -T postgres psql ...` 删除初始化状态并重启 dev API；否则回退到本地 SQLite 文件，默认 `nexustok.db`，并允许通过 `SQLITE_PATH` 或 `DEV_SQLITE_PATH` 指定。
+5. 更新 `docs/installation/deployment.md` 的本地开发段落，记录新增开发命令和安全说明。
+
+验收方式：
+
+1. `docker compose -f docker-compose.dev.yml config`。
+2. `make -n dev-api-rebuild`。
+3. `make -n reset-setup`。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `docker compose -f docker-compose.dev.yml config` 通过，配置中 `postgres` 服务已解析为 `postgres:15-alpine`，容器名为 `nexustok-dev-pg`。
+2. `make -n dev-api-rebuild` 通过，展开命令为 `docker compose -f docker-compose.dev.yml up -d --build nexustok`。
+3. `make -n reset-setup` 通过，只做 dry-run，未执行数据库重置；展开逻辑会优先检测 dev PostgreSQL，否则回退到本地 SQLite。
+4. `make -n build-frontend`、`make -n build-frontend-classic`、`make -n dev-web`、`make -n dev-web-classic`、`make -n dev-api` 和 `make -n dev` 均通过，确认 Makefile 目录和端口参数符合 NexusTok 当前结构。
+5. `git diff --check` 通过。
+6. 本轮只修改开发 compose、Makefile 和文档，不涉及 Go/TypeScript 运行时代码，因此未额外执行 `go test ./...` 或前端 build。
+7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 开发 Compose 与 Makefile 修补 | `docker-compose.dev.yml`、`makefile`、`docs/installation/deployment.md` | 原生化 new-api-main 的本地开发工程化优势：dev PostgreSQL 显式使用 `postgres:15-alpine`，新增 `dev-api-rebuild` 和开发专用 `reset-setup`，并在部署文档补充后端重建、初始化状态重置和生产禁用说明；不引入 oxlint/tsgo，不修改热更新部署。 |
 | 2026-07-09 | 日志查询与 ClickHouse 准备层护栏 | `common/database.go`、`model/main.go`、`model/log.go`、`model/token.go`、`model/clickhouse_log_test.go` | 原生化 new-api-main 的 ClickHouse 日志准备层优势：主库 ClickHouse DSN fail-fast、当前构建对 `LOG_SQL_DSN` ClickHouse 给出明确未启用 driver 错误、日志 LIKE 过滤统一转义、日志写入补齐 `request_id`、ClickHouse 排序与 TTL SQL helper 进入测试契约；不引入 ClickHouse driver，不改变 SQLite/MySQL/PostgreSQL 主路径。 |
 | 2026-07-09 | Chat 与 Responses relay handler 兼容原生化 | `service/openaicompat/responses_to_chat.go`、`service/openai_chat_responses_compat.go`、`relay/chat_completions_via_responses.go`、`relay/channel/openai/chat_via_responses.go` | 原生化 new-api-main 的 Responses SSE -> Chat chunks 状态机、buffered SSE -> Chat JSON、Chat SSE -> Responses SSE 和大小写不敏感的 event-stream 判断；客户端非流式请求遇到上游 Responses SSE 时返回普通 JSON，流式路径保留 tool_calls、reasoning、usage 和终态事件顺序。 |
 | 2026-07-09 | Responses 请求转 Chat 兼容测试 | `service/openaicompat/responses_request_to_chat_test.go` | 原生化 new-api-main `service/relayconvert` 的 Responses request 降级 Chat 回归测试资产；覆盖 instructions/scalar 字段、显式零值、stream options、多模态 file/audio/video、assistant text 与 function_call 共存、only function_call 自动构造 assistant、tools/tool_choice/text.format 和 custom_tool_call 原始 shape，确认 NexusTok `openaicompat` 已具备对应原生能力。 |

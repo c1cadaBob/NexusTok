@@ -185,11 +185,20 @@ bun run dev
 
 ```bash
 make dev-api
+make dev-api-rebuild
 make dev-web
 make dev-web-classic
 ```
 
 注意：`Dockerfile.dev` 只给 Go embed 创建占位前端页面，真正页面应通过前端开发服务器访问。
+
+如果需要重新测试初始化向导，可以使用本地开发专用的重置任务：
+
+```bash
+make reset-setup
+```
+
+该任务只面向本地开发环境：它会优先检测 `docker-compose.dev.yml` 中正在运行的 PostgreSQL 服务，删除 `setups` 记录、Root 用户和演示模式相关 option 后重启 dev 后端；如果没有运行中的 dev PostgreSQL，则回退到本地 SQLite 文件，默认 `nexustok.db`，也可以通过 `SQLITE_PATH` 或 `DEV_SQLITE_PATH` 指定。不要在生产数据库上执行该任务。
 
 ## 热重载部署：docker-compose.hot.yml
 
