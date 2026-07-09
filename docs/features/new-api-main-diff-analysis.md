@@ -5049,8 +5049,56 @@ new-api-main 在兑换码管理里已经把 `status` 作为搜索接口参数下
 10. 登录态兑换码搜索接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/redemption/search?keyword=&status=1&p=1&page_size=5`、`status=expired`、`status=2`、`status=3` 均返回 200，响应结构均为 `success=true`、`page=1`、`page_size=5`、`total=0`、`items=[]`。当前热更新环境没有兑换码数据，筛选语义由模型单元测试覆盖。
 11. 3003 前端资源验证通过：线上 `/static/js/async/4474.js` 与本地 `web/default/dist/static/js/async/4474.js` SHA256 均为 `c355d8e4db3b3cdfbf3be8fa1c5bb627599c785df4b8c445bc2a7d473f4870c0`，且 chunk 同时包含 `redemption/search?`、`URLSearchParams` 和 `manualFiltering`；线上 `/static/js/index.js` 与本地 `web/default/dist/static/js/index.js` SHA256 均为 `6b49f4293b8af999d03b4c4a7ed18a26f2735bddc55001bba9d491ca2a260e94`，确认热更新页面加载的是本轮构建产物。
 
+## 本轮实施评审：监控配置环境变量覆盖测试
+
+### 需求分析
+
+new-api-main 补充了 `setting/operation_setting/monitor_setting_test.go`，用于锁定渠道自动测试配置的环境变量覆盖语义：`CHANNEL_TEST_FREQUENCY` 可以覆盖自动测试频率并启用定时测试，`CHANNEL_TEST_ENABLED=false` 即使在配置已启用时也必须关闭自动测试，`CHANNEL_TEST_ENABLED=true` 也可以开启原本禁用的配置。NexusTok 当前 `GetMonitorSetting()` 已具备这些运行时行为，并额外维护 `ChannelTestMode`，但缺少对应测试保护；后续调整 Routing Reliability、SystemTask 或渠道自动测试时容易误改环境变量优先级。
+
+本轮目标是把 new-api-main 的监控配置测试优势转为 NexusTok 原生回归保护：
+
+1. 新增 `setting/operation_setting/monitor_setting_test.go`，覆盖 `CHANNEL_TEST_ENABLED=false` 覆盖已启用配置。
+2. 覆盖 `CHANNEL_TEST_ENABLED=true` 可以启用禁用配置。
+3. 覆盖 `CHANNEL_TEST_FREQUENCY` 有效时会更新分钟数，并保持默认 `scheduled_all` 模式。
+4. 测试结束后恢复包级 `monitorSetting`，避免污染其他配置测试。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 运营监控配置测试 | `setting/operation_setting/monitor_setting_test.go` | 新增环境变量覆盖行为的单元测试，不改运行时逻辑。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 本轮只新增测试，不修改生产代码、数据库、路由或前端页面，运行时风险极低。
+2. `monitorSetting` 是包级变量，测试必须用 `t.Cleanup` 恢复原值；否则会影响同包后续测试或并行测试。
+3. 测试使用 `t.Setenv` 注入环境变量，不能与 `t.Parallel` 混用；本轮不启用并行测试。
+4. `GetMonitorSetting()` 会规范化未知 `ChannelTestMode` 为 `scheduled_all`，测试应显式断言该不变量，避免后续新增模式时破坏默认行为。
+5. 该改动不涉及页面和接口，但按项目要求仍需访问 3003 `/` 和 `/api/status`，确认热更新服务可达；MCP 如仍不可用则记录并使用 HTTP 兜底。
+
+### 方案评审
+
+采用“纯测试补齐”的方案，不改变当前 `GetMonitorSetting()` 实现。测试直接设置 `monitorSetting` 初始状态和环境变量，调用 `GetMonitorSetting()` 后断言启用状态、分钟数和 `ChannelTestMode`。这样能吸收 new-api-main 的配置语义保护，同时保持 NexusTok 已有 Routing Reliability、SystemTask 定时任务和渠道自动测试运行路径不变。
+
+验收方式：
+
+1. `go test ./setting/operation_setting -run TestGetMonitorSetting`。
+2. `go test ./setting/operation_setting`。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. 定向测试通过：`go test ./setting/operation_setting -run TestGetMonitorSetting`。
+2. 包测试通过：`go test ./setting/operation_setting`。
+3. 补丁空白检查通过：`git diff --check`。
+4. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
+5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200。该切片只新增后端测试，不改变页面或接口行为。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 监控配置环境变量覆盖测试 | `setting/operation_setting/monitor_setting_test.go` | 原生化 new-api-main 的渠道自动测试配置回归保护；测试覆盖 `CHANNEL_TEST_FREQUENCY`、`CHANNEL_TEST_ENABLED=false/true` 的优先级和默认 `scheduled_all` 模式，防止后续 Routing Reliability 或 SystemTask 调整误改环境变量语义。 |
 | 2026-07-09 | 兑换码状态筛选与兑换 CAS | `model/redemption.go`、`model/redemption_test.go`、`controller/redemption.go`、`web/default/src/features/redemption-codes/{api.ts,types.ts,components/redemptions-table.tsx}` | 原生化 new-api-main 的兑换码服务端状态筛选与兑换幂等保护；搜索接口支持 `status` 参数和 `expired` 虚拟状态，默认前端状态筛选走后端分页，`Redeem` 通过状态 CAS 确保同一兑换码并发场景只入账一次。 |
 | 2026-07-09 | 节点身份公共化 | `common/node_identity.go`、`common/constants.go`、`common/init.go`、`service/system_instance.go`、`service/system_instance_test.go` | 原生化 new-api-main 的节点身份解析能力；`common.NodeName` 优先使用 `NODE_NAME`，未配置时回退 hostname，并暴露来源和手动配置标记；系统实例心跳复用公共身份，日志、用量导出和 SystemTask runner 共享同一节点名语义。 |
 | 2026-07-09 | 表格展示原子组件 | `web/default/src/components/{table-id.tsx,provider-badge.tsx,truncated-text.tsx,long-text.tsx}`、`web/default/src/features/{channels,models}/components/*-columns.tsx` | 原生化 new-api-main 的表格 ID、provider badge 和长文本截断优势；新增公共 `TableId`、`ProviderBadge`、`TruncatedText`，并让 `LongText` 支持响应式 overflow 重新测量；渠道和模型两张高频表先行接入，保留账号池、多 Key、IO.NET、上游模型同步、权限动作、筛选和 API 语义不变。 |
