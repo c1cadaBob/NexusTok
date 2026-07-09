@@ -17,10 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { formatDuration, formatMessageTime } from '../lib'
+import type { MessageAlignment } from '../lib/message-layout-utils'
 import type { Message } from '../types'
 
 interface MessageMetadataProps {
+  alignment: MessageAlignment
   message: Message
 }
 
@@ -30,7 +33,7 @@ interface MessageMetadataProps {
  * timing 字段是可选的，历史 localStorage 消息缺字段时不渲染任何内容，
  * 避免为了展示元信息而引入存储迁移或历史消息兼容风险。
  */
-export function MessageMetadata({ message }: MessageMetadataProps) {
+export function MessageMetadata({ alignment, message }: MessageMetadataProps) {
   const { t } = useTranslation()
   const translateDuration = (
     key: string,
@@ -44,7 +47,12 @@ export function MessageMetadata({ message }: MessageMetadataProps) {
   }
 
   return (
-    <div className='text-muted-foreground mt-1 flex min-h-4 flex-wrap items-center gap-1.5 text-xs leading-none'>
+    <div
+      className={cn(
+        'text-muted-foreground mt-1 flex min-h-4 flex-wrap items-center gap-1.5 text-xs leading-none',
+        alignment === 'right' && 'justify-end'
+      )}
+    >
       {messageTime && <time>{messageTime}</time>}
       {duration && (
         <>

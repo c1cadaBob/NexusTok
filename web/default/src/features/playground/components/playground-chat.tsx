@@ -35,11 +35,15 @@ import { MESSAGE_STATUS } from '../constants'
 import {
   getChatMessageRenderState,
   getEditingMessageContent,
+  getMessageAlignment,
   isMessageSourceVisible,
   getPreviousUserMessage,
   toggleMessageSourceKey,
 } from '../lib'
-import type { Message as MessageType } from '../types'
+import type {
+  Message as MessageType,
+  PlaygroundMessageLayoutMode,
+} from '../types'
 import { MessageActions } from './message-actions'
 import { MessageErrorActions } from './message-error-actions'
 import { PlaygroundEmptyState } from './playground-empty-state'
@@ -58,6 +62,7 @@ interface PlaygroundChatProps {
   onCancelEdit?: (open: boolean) => void
   onSaveEditAndSubmit?: (newContent: string) => void
   onSelectPrompt?: (prompt: string) => void
+  messageLayoutMode?: PlaygroundMessageLayoutMode
 }
 
 export function PlaygroundChat({
@@ -72,6 +77,7 @@ export function PlaygroundChat({
   onCancelEdit,
   onSaveEditAndSubmit,
   onSelectPrompt,
+  messageLayoutMode = 'alternating',
 }: PlaygroundChatProps) {
   const [editText, setEditText] = useState('')
   const [originalText, setOriginalText] = useState('')
@@ -114,6 +120,7 @@ export function PlaygroundChat({
           sourceMessageKeys,
           message.key
         )
+        const alignment = getMessageAlignment(message, messageLayoutMode)
         const actions = (
           <MessageActions
             message={message}
@@ -171,6 +178,7 @@ export function PlaygroundChat({
                     ) : (
                       <PlaygroundMessageContent
                         actions={actions}
+                        alignment={alignment}
                         errorActions={errorActions}
                         isSourceVisible={sourceVisible}
                         message={message}

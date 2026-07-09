@@ -4425,8 +4425,68 @@ new-api-main 的 Playground 已将单条消息动作先收敛为动作数组：�
 9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/92.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `5b8c02af7d9fb2746f34f6ff26b4ce4dd35febc715797f26099b18fcf5abb7cb`，`92.js` SHA256 均为 `03ca49a192056920c67ce6e073c0d836fc10bcd8db57242074d1de811e812e2b`。
 10. 线上 `/static/js/async/92.js` 已包含 `Open menu`、`No content to copy`、`Please wait for the current generation to complete`、`Show source`、`Regenerate` 特征；上一轮旧 chunk `/static/js/async/92.a93384736f.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 消息布局对齐底座原生化
+
+### 需求分析
+
+new-api-main 的 Playground 已把消息布局抽象为 `PlaygroundMessageLayoutMode = 'alternating' | 'left'`，并通过 `getMessageAlignment()` 和 `getMessageAlignmentClass()` 统一决定 user/assistant/system 消息的左右对齐。NexusTok 当前仍在 `PlaygroundChat` 里固定给每条 `Message` 套 `group flex-row-reverse` 和一层全宽内容容器，`PlaygroundMessageContent` 与 `MessageMetadata` 不知道消息对齐语义；后续如果要继续吸收 new-api-main 的“全部左对齐”模式、用户偏好或调试布局，就会反复触碰聊天列表、消息内容和元信息组件。
+
+本轮目标是只补齐对齐底座，不增加用户设置入口、不改本地存储 schema、不改变请求 payload：
+
+1. 在 Playground 类型层新增 `PlaygroundMessageLayoutMode`，让消息布局模式成为显式类型，而不是组件内部散落字符串。
+2. 新增可测试的 message layout helper：`alternating` 下 user 右对齐、非 user 左对齐；`left` 下所有角色统一左对齐。
+3. `PlaygroundChat` 新增可选 `messageLayoutMode` prop，默认保持 `alternating`，并在保留 NexusTok 多版本 `Branch` 能力的前提下把 alignment 传给消息内容。
+4. `PlaygroundMessageContent` 用 alignment 包裹来源、推理、加载、错误、正文、元信息和动作区域；`MessageMetadata` 根据 alignment 决定左/右侧展示，避免时间和耗时元信息与正文方向割裂。
+5. 本轮不迁移 new-api-main 的消息气泡样式、不调整 `Message` AI element 的基础布局，也不把 layout mode 持久化到 localStorage，降低视觉和兼容风险。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Playground 类型 | `web/default/src/features/playground/types.ts` | 新增 `PlaygroundMessageLayoutMode`，为后续设置入口和布局模式接入提供稳定类型。 |
+| 布局 helper | `web/default/src/features/playground/lib/message-layout-utils.ts`、`message-layout-utils.test.ts`、`lib/index.ts` | 新增左右对齐纯函数和测试覆盖，并从统一 lib 入口导出。 |
+| 聊天列表 | `web/default/src/features/playground/components/playground-chat.tsx` | 新增 `messageLayoutMode` prop，默认 `alternating`；每条消息计算 alignment 后传给内容组件，保留 Branch 多版本切换。 |
+| 消息内容 | `web/default/src/features/playground/components/playground-message-content.tsx` | 外层按 alignment 设置 `items-*` 和 `text-*`，让来源、推理、raw/preview、错误、动作区域拥有一致对齐语义。 |
+| 消息元信息 | `web/default/src/features/playground/components/message-metadata.tsx` | 接收 alignment 并在右对齐时 `justify-end`，历史缺 timing 字段时仍不渲染。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. `Message` 公共 AI element 已有 role-based flex class；本轮不重写该组件，只让 Playground 内容列和元信息消费 alignment，避免把公共消息组件行为一起改动。
+2. NexusTok 仍保留多版本 `Branch` 渲染，而 new-api-main 当前实现没有同等分支层；本轮只在每个 version 渲染时传递同一个 alignment，不改变分支选择、key 或版本内容。
+3. 默认 `alternating` 与现有 user 右侧、assistant 左侧的视觉语义一致；新增 `left` 只是底座能力，未暴露为用户可见设置，因此不会突然改变当前用户界面。
+4. 本轮不改 localStorage、storage schema、SSE 流式处理、消息生成、计费、权限、后端 relay 或数据库，核心业务链路风险低。
+5. `text-right` 可能影响 Markdown 列表、代码块或 raw response 的内部排版；本轮仅把它作为 alignment class 作用在内容列，`CodeBlock` 仍保持自身块级滚动与等宽渲染，验证时需要关注 raw response 和普通 Markdown 的宽度是否稳定。
+6. 新增 helper 要避免从 new-api-main 直接带入 `QuantumNous` 版权头；在 NexusTok 落地时使用本项目版权、中文注释和现有常量路径。
+
+### 方案评审
+
+采用“类型 + 纯函数 + 渲染透传”的最小底座方案：在 `types.ts` 定义 `PlaygroundMessageLayoutMode`；新增 `message-layout-utils.ts` 暴露 `MessageAlignment`、`getMessageAlignment()` 和 `getMessageAlignmentClass()`；`PlaygroundChat` 默认 `messageLayoutMode='alternating'`，对每条消息计算 alignment 后传入 `PlaygroundMessageContent`；内容组件增加一层 `flex w-full min-w-0 flex-col` 包裹现有来源、推理、加载、错误、正文、元信息和动作；`MessageMetadata` 用 `cn()` 根据 alignment 添加 `justify-end`。设计方向保持当前 Playground 工具台密度和既有色彩，不新增 in-app 文案、不新增依赖、不改变移动端动作菜单。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-layout-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-action-utils.test.ts`，覆盖新 helper 和近期已触碰的消息内容/会话/动作链路。
+2. 针对 `playground-chat.tsx`、`playground-message-content.tsx`、`message-metadata.tsx`、`message-layout-utils.ts`、`message-layout-utils.test.ts`、`types.ts` 和 `lib/index.ts` 运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，覆盖新增 prop、alignment 类型和生产构建。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载、消息对齐和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-layout-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-action-utils.test.ts` 通过，共 25 个用例，覆盖 alternating/left 对齐、消息内容状态、会话编辑/重试和动作可见性链路。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/playground-chat.tsx src/features/playground/components/playground-message-content.tsx src/features/playground/components/message-metadata.tsx src/features/playground/lib/message-layout-utils.ts src/features/playground/lib/message-layout-utils.test.ts src/features/playground/types.ts src/features/playground/lib/index.ts` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `PlaygroundMessageLayoutMode`、`MessageAlignment`、`messageLayoutMode` prop 和 `MessageMetadata` 传参类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，生产构建生成新的本地 `dist`；Playground 相关代码已进入 `/static/js/async/4604.js` 等 async chunk。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`。
+8. 从 3003 拉取 `/static/js/index.js`、`/static/js/6870.js`、`/static/js/async/4604.js`、`/static/js/async/2191.js`、`/static/js/async/762.js`、`/static/js/async/4474.js`、`/static/js/async/4050.js` 和 `/static/js/async/1325.js` 后，与本地 `web/default/dist` 完全一致；其中 `index.js` SHA256 均为 `841af9a5bfe3370052d02e504024b748bc678d63c7dc152cc91b7542cc4dfaeb`，`4604.js` SHA256 均为 `c539d6857bbdba73e616bf10b11064f56c6518a483f93033e5320e054c27473c`。
+9. 线上 `/static/js/async/4604.js` 已包含 `items-end text-right`、`items-start text-left` 和 `messageLayoutMode` 特征，确认本轮消息对齐底座已进入 3003 页面资源。
+10. 上一轮旧 Playground chunk `/static/js/async/92.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息布局对齐底座 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/components/{playground-chat.tsx,playground-message-content.tsx,message-metadata.tsx}`、`web/default/src/features/playground/lib/{message-layout-utils.ts,message-layout-utils.test.ts,index.ts}` | 原生化 new-api-main 的 `PlaygroundMessageLayoutMode` 和消息 alignment helper；默认保持 alternating，user 消息右对齐、assistant/system 左对齐，并为后续全部左对齐或用户偏好设置提供原生底座；保留 Branch 多版本、消息动作、请求协议和 localStorage schema。 |
 | 2026-07-09 | Playground 移动端消息动作菜单 | `web/default/src/features/playground/components/message-actions.tsx`、`web/default/src/features/playground/hooks/use-message-action-guard.ts`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts}`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的移动端消息动作菜单；单条消息动作先收敛为同一动作数组，桌面继续显示 tooltip 图标组，移动端折叠到 `DropdownMenu`；user/assistant 完成态消息均可展示 regenerate，动作 label 与 toast 补齐 i18n。 |
 | 2026-07-09 | Playground 推理耗时展示 | `web/default/src/components/ai-elements/reasoning.tsx`、`web/default/src/features/playground/components/playground-message-content.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 reasoning duration 展示闭环；Playground 将已记录的 `message.reasoning.duration` 传入公共 `Reasoning`，trigger 按流式、未知耗时和精确秒数展示六语 i18n 文案，旧消息和 0 秒耗时仍回落泛化提示。 |
 | 2026-07-09 | Playground 原始响应切换 | `web/default/src/features/playground/components/{message-actions.tsx,playground-chat.tsx,playground-message-content.tsx}`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts,message-source-utils.ts,message-source-utils.test.ts,index.ts}`、`web/default/src/features/playground/constants.ts`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 assistant 消息 source/preview toggle；完成态 assistant 消息可在 Markdown 预览和当前版本原始响应代码块之间切换，source 状态仅保留在页面会话中，不改消息协议和 localStorage；新增 raw/source 文案补齐六语。 |

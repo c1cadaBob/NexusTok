@@ -38,7 +38,8 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from '@/components/ai-elements/sources'
-import { getMessageContentState } from '../lib'
+import { getMessageAlignmentClass, getMessageContentState } from '../lib'
+import type { MessageAlignment } from '../lib/message-layout-utils'
 import { getMessageContentStyles } from '../lib/message-styles'
 import type { Message } from '../types'
 import { MessageError } from './message-error'
@@ -46,6 +47,7 @@ import { MessageMetadata } from './message-metadata'
 
 interface PlaygroundMessageContentProps {
   actions: ReactNode
+  alignment: MessageAlignment
   errorActions?: ReactNode
   isSourceVisible?: boolean
   message: Message
@@ -54,6 +56,7 @@ interface PlaygroundMessageContentProps {
 
 export function PlaygroundMessageContent({
   actions,
+  alignment,
   errorActions,
   isSourceVisible = false,
   message,
@@ -73,7 +76,12 @@ export function PlaygroundMessageContent({
   } = getMessageContentState(message, versionContent)
 
   return (
-    <>
+    <div
+      className={cn(
+        'flex w-full min-w-0 flex-col',
+        getMessageAlignmentClass(alignment)
+      )}
+    >
       {/* 来源列表保留在消息内容之前，便于用户先判断引用数量。 */}
       {hasSources && (
         <Sources>
@@ -116,7 +124,7 @@ export function PlaygroundMessageContent({
       {isError ? (
         <>
           <MessageError message={message} className='mb-2' />
-          <MessageMetadata message={message} />
+          <MessageMetadata alignment={alignment} message={message} />
           {errorActions}
         </>
       ) : (
@@ -129,7 +137,7 @@ export function PlaygroundMessageContent({
                 </div>
                 <CodeBlock
                   code={versionContent}
-                  className='my-0 max-h-[min(520px,60vh)] max-w-full overflow-auto'
+                  className='my-0 max-h-[min(520px,60vh)] max-w-full overflow-auto text-left'
                   language='markdown'
                   showLineNumbers
                 >
@@ -145,11 +153,11 @@ export function PlaygroundMessageContent({
               </MessageContent>
             ))}
           {(showMessageContent || hasReasoning) && (
-            <MessageMetadata message={message} />
+            <MessageMetadata alignment={alignment} message={message} />
           )}
           {showMessageContent && actions}
         </>
       )}
-    </>
+    </div>
   )
 }

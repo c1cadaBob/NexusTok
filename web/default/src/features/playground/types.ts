@@ -21,6 +21,8 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessageStatus = 'loading' | 'streaming' | 'complete' | 'error'
 
+export type PlaygroundMessageLayoutMode = 'alternating' | 'left'
+
 export interface MessageVersion {
   id: string
   content: string
@@ -135,7 +137,7 @@ export interface ParameterEnabled {
   seed: boolean
 }
 
-// Model and group options
+// 模型和分组选项
 export interface ModelOption {
   label: string
   value: string
