@@ -75,6 +75,32 @@ func FinalizeChatCompletionsStreamToResponses(state *ChatToResponsesStreamState)
 	return openaicompat.FinalizeChatCompletionsStreamToResponses(state)
 }
 
+// ResponsesToChatStreamState 保存 Responses SSE 转 Chat chunks 的跨事件状态。
+type ResponsesToChatStreamState = openaicompat.ResponsesToChatStreamState
+
+// NewResponsesToChatStreamState 创建 Responses SSE 到 Chat chunks 的转换状态。
+func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return openaicompat.NewResponsesToChatStreamState(model, includeUsage)
+}
+
+// ResponsesStreamEventToChatChunks 将一条 Responses SSE 事件转换为 Chat chunks。
+func ResponsesStreamEventToChatChunks(event *dto.ResponsesStreamResponse, state *ResponsesToChatStreamState) ([]dto.ChatCompletionsStreamResponse, error) {
+	return openaicompat.ResponsesStreamEventToChatChunks(event, state)
+}
+
+// FinalizeResponsesToChatStream 结束 Responses SSE 到 Chat chunks 的转换。
+func FinalizeResponsesToChatStream(state *ResponsesToChatStreamState) []dto.ChatCompletionsStreamResponse {
+	return openaicompat.FinalizeResponsesToChatStream(state)
+}
+
+// ResponsesBufferedAccumulator 累积 Responses SSE 片段，用于还原非流式 JSON。
+type ResponsesBufferedAccumulator = openaicompat.ResponsesBufferedAccumulator
+
+// NewResponsesBufferedAccumulator 创建 Responses SSE buffered 累积器。
+func NewResponsesBufferedAccumulator() *ResponsesBufferedAccumulator {
+	return openaicompat.NewResponsesBufferedAccumulator()
+}
+
 // ResponsesResponseToChatCompletionsResponse 将 Responses API 响应转换为 Chat Completions 响应格式
 // 用于在 Responses API 模式下将上游响应转换回 Chat Completions 格式返回给客户端
 // 参数:

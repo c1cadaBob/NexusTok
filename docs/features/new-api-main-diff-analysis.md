@@ -68,7 +68,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 已部分落地 | 已新增用户可控 URL 专用 protected fetch client，并接入下载、Webhook、Bark/Gotify 通知；Relay 全局 client 暂不替换，避免误伤内网模型渠道。 |
 | ClickHouse 日志兼容测试 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 缺少依赖 | 仅在明确支持 ClickHouse 日志库时引入；否则先记录为可选能力，避免增加部署复杂度。 |
 | 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 后端已落地 | 已扩展 `quota_data` 记录 node/token/group/channel 维度，并新增 `/api/data/flow`、`/api/data/flow/self`；后续接入仪表盘 Sankey 图。 |
-| Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*` 且测试较少 | 逐步整理转换包命名和测试，不一次性改热路径。 |
+| Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*`；Responses 请求降级、Chat/Responses 响应互转和流式状态机已持续原生化 | 保留 `openaicompat` 作为本项目原生命名，不创建 `relayconvert`；剩余 ClickHouse、Advanced Custom、Authz 持久化等差异继续分批评审。 |
 | OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | Realtime 和 image edit 已在现有文件中实现；image stream 与图片计费边界待增强 | 逐个核对上游协议支持，再按 channel 能力原生接入；本轮优先原生化 OpenAI image stream、`stream` 显式零值和 `n` 上限保护。 |
 | Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 缺少 | 可作为高级渠道改写能力参考，但必须接入 NexusTok 的参数覆盖、安全过滤和计费快照。 |
 | Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
@@ -5481,8 +5481,71 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 5. MCP 浏览器验证已按要求尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
 6. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只新增后端纯逻辑测试，不改变前端页面或接口行为。
 
+## 本轮实施评审：Chat 与 Responses relay handler 兼容原生化
+
+### 需求分析
+
+`new-api-main` 在 Chat Completions 与 Responses 双向兼容链路中补齐了三类 NexusTok 当前仍不完整的能力：
+
+1. `chatCompletionsViaResponses` 能区分客户端是否请求 stream 与上游是否返回 `text/event-stream`。当客户端请求非流式、但上游 Responses 只能返回 SSE 时，new-api-main 会把 SSE 事件缓冲并还原为普通 Chat JSON；NexusTok 当前只要上游 `Content-Type` 以 `text/event-stream` 开头就把 `info.IsStream` 置为 true，可能把非流式客户端请求错误响应成 SSE。
+2. `OaiResponsesToChatStreamHandler` 复用 service 层状态机处理 Responses SSE，包括 `response.done`、`response.incomplete`、`response.reasoning_text.delta`、`custom_tool_call`、工具参数 delta 早于 output item、terminal response output 兜底等复杂事件；NexusTok 当前 openai channel 仍是手写状态，覆盖面窄于 new-api-main。
+3. `OaiChatToResponsesStreamHandler` 能把 Chat Completions SSE 还原为 Responses SSE，供“客户端请求 `/v1/responses`，上游/适配层只返回 Chat SSE”的兼容路径复用。NexusTok 已经有 `service/openaicompat` 的 Chat stream -> Responses event 状态机，并在 Gemini Responses 中使用，但 OpenAI channel 尚未提供对应 handler。
+
+本轮目标是把这些优势转为 NexusTok 原生能力：保留 `service/openaicompat` 作为本项目兼容包名，不引入 `service/relayconvert`；在 service 层补齐 Responses SSE -> Chat chunks 的状态机和 buffered accumulator；在 OpenAI channel 增加 buffered stream handler 与 Chat SSE -> Responses SSE handler；同时补齐 new-api-main 的 relay/service 回归测试。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Responses SSE -> Chat 状态机 | `service/openaicompat/responses_to_chat.go`、`service/openai_chat_responses_compat.go` | 新增 Responses stream event 转 Chat stream chunks、终态 flush、buffered accumulator 和 service 层薄封装。 |
+| Chat/Responses relay handler | `relay/chat_completions_via_responses.go`、`relay/channel/openai/chat_via_responses.go` | 区分 client stream 与 upstream stream；非流式客户端遇到上游 SSE 时输出普通 JSON；新增 Chat SSE 转 Responses SSE handler。 |
+| 回归测试 | `service/openaicompat/*_test.go`、`relay/chat_completions_via_responses_test.go`、`relay/channel/openai/chat_via_responses_test.go` | 原生化 new-api-main 对 stream 顺序、usage、tool args、buffered JSON 和 Content-Type 判断的测试资产。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验证结果和完成清单。 |
+
+### 风险评估
+
+1. 本轮触碰 relay 响应转换热路径，用户可见行为包括响应是否为 SSE、Chat chunk 顺序、tool_calls、finish_reason 和 usage 帧，必须用定向测试锁定。
+2. `clientStream=false && upstreamStream=true` 从历史 SSE 输出改为 JSON 输出，属于兼容性修复：它更符合客户端非流式请求语义，但可能改变依赖旧错误行为的调用方。该分支只在 Chat via Responses 兼容模式且上游返回 SSE 时触发。
+3. 状态机必须继续使用 `common.Marshal`、`common.UnmarshalJsonStr`，不能引入直接 `encoding/json` 调用；新增测试同样遵守项目 JSON 规则。
+4. 不改数据库、不改计费表达式、不新增前端文案和路由权限，三库兼容风险低；主要风险集中在内存累积上游 SSE。buffered 模式只服务客户端非流式请求，且仅累积当前响应文本、reasoning 与工具调用参数，不持久化。
+5. Stream scanner 会关闭上游 body，新增 handler 不应重复读取 body 或丢失 `service.CloseResponseBodyGracefully` 语义；buffered handler 用 scanner 顺序读取并在函数返回时关闭 body。
+6. `response.failed`/`response.error` 必须 fail-closed 返回上游错误，不允许静默转成成功 Chat 响应。
+7. 该切片不涉及前端页面，但按用户要求仍需尝试 MCP 访问 3003；MCP 不可用时记录错误，并用真实 HTTP 请求验证 `/` 与 `/api/status`。
+
+### 方案评审
+
+采用“service 状态机原生化 + relay handler 最小接入”的方案：
+
+1. 在 `service/openaicompat/responses_to_chat.go` 补齐 `ResponsesToChatStreamState`、`ResponsesStreamEventToChatChunks`、`FinalizeResponsesToChatStream` 和 `ResponsesBufferedAccumulator`，复用现有常量、DTO 和中文注释，保留 NexusTok 已有 usage 细节增强。
+2. 在 `service/openai_chat_responses_compat.go` 增加薄封装，让 relay 层仍只依赖 `service` 包，不直接耦合 `openaicompat` 内部实现。
+3. 将 `OaiResponsesToChatStreamHandler` 改为消费 service 状态机，统一处理 Responses SSE 事件；新增 `OaiResponsesToChatBufferedStreamHandler`，把上游 SSE 缓冲为 Responses 终态对象后复用非流式 Chat 转换逻辑。
+4. 新增 `OaiChatToResponsesStreamHandler`，复用现有 Chat stream -> Responses event 状态机，输出标准 `event:` + `data:` SSE。
+5. 修改 `chatCompletionsViaResponses` 的 stream 分支判断：先记录 `clientStream`，再用大小写不敏感的 `isResponsesEventStreamContentType()` 判断 `upstreamStream`；只有双方都是 stream 时走 SSE 转 SSE，只有上游 stream 时走 buffered JSON，否则走普通 JSON。
+
+验收方式：
+
+1. `go test ./service/openaicompat -run 'TestResponsesStreamEventToChatChunks|TestResponsesBufferedAccumulator|TestChatCompletionsStreamToResponsesEvents'`。
+2. `go test ./relay -run 'TestIsResponsesEventStreamContentType'`。
+3. `go test ./relay/channel/openai -run 'TestOai.*Responses.*Chat|TestOaiChatToResponses'`。
+4. `go test ./service/openaicompat ./relay ./relay/channel/openai`。
+5. `go test ./...`。
+6. `git diff --check`。
+7. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200，并登录后至少读取 `/api/user/self`。
+
+验证记录：
+
+1. Responses SSE 状态机定向测试通过：`go test ./service/openaicompat -run 'TestResponsesStreamEventToChatChunks|TestResponsesBufferedAccumulator|TestChatCompletionsStreamToResponsesEvents'`。
+2. Chat via Responses Content-Type 判断测试通过：`go test ./relay -run 'TestIsResponsesEventStreamContentType'`。
+3. OpenAI Chat/Responses relay handler 定向测试通过：`go test ./relay/channel/openai -run 'TestOai.*Responses.*Chat|TestOaiChatToResponses'`。
+4. 相关包整体测试通过：`go test ./service/openaicompat`、`go test ./relay`、`go test ./relay/channel/openai`。
+5. 仓库级 Go 测试通过：`go test ./...`。
+6. 补丁空白检查通过：`git diff --check`。
+7. MCP 浏览器验证已按要求尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
+8. 3003 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。该切片只修改后端 relay 转换和测试，不改变前端页面。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Chat 与 Responses relay handler 兼容原生化 | `service/openaicompat/responses_to_chat.go`、`service/openai_chat_responses_compat.go`、`relay/chat_completions_via_responses.go`、`relay/channel/openai/chat_via_responses.go` | 原生化 new-api-main 的 Responses SSE -> Chat chunks 状态机、buffered SSE -> Chat JSON、Chat SSE -> Responses SSE 和大小写不敏感的 event-stream 判断；客户端非流式请求遇到上游 Responses SSE 时返回普通 JSON，流式路径保留 tool_calls、reasoning、usage 和终态事件顺序。 |
 | 2026-07-09 | Responses 请求转 Chat 兼容测试 | `service/openaicompat/responses_request_to_chat_test.go` | 原生化 new-api-main `service/relayconvert` 的 Responses request 降级 Chat 回归测试资产；覆盖 instructions/scalar 字段、显式零值、stream options、多模态 file/audio/video、assistant text 与 function_call 共存、only function_call 自动构造 assistant、tools/tool_choice/text.format 和 custom_tool_call 原始 shape，确认 NexusTok `openaicompat` 已具备对应原生能力。 |
 | 2026-07-09 | Claude OpenAI 文件内容转换语义修复 | `relay/channel/claude/relay-claude.go`、`relay/channel/claude/message_delta_usage_patch_test.go` | 修复仓库级测试暴露的 Claude 文件转换缺口；OpenAI `file` 内容按 filename 扩展名转换，`.txt` 解码为 Claude text，`.pdf` 转 document，图片转 image，未知二进制跳过，避免把 unsupported file 错误包装成 image 发给上游；同时补齐 message_delta usage patch 测试 imports。 |
 | 2026-07-09 | 用户更新并发字段保护与邮箱唯一性 | `model/{user.go,errors.go,user_update_test.go}`、`controller/{user.go,misc.go,subscription.go}` | 原生化 new-api-main 的用户更新安全回归能力；用户资料更新不再覆盖并发变化的 `quota`、`used_quota`、`request_count`，用户设置/语言/sidebar/订阅计费偏好只写 `setting` 列，邮箱注册/绑定/找回密码统一规范化并按大小写不敏感唯一性校验，passwordless 用户保持空密码且密码登录明确拒绝。 |
