@@ -6580,6 +6580,28 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 - `GET /api/channel/models`：确认静态能力列表仍以 `gpt-3.5-*` 等旧模型开头，证明截图问题源于旧候选源；前端已改为额外合并 `/api/models/search` 结果。
 - `GET /static/js/async/2817.js`：返回 200，且服务端当前 chunk 包含 `channel_model_meta_search`、`Searching model metadata`、`Add custom model`，确认 3003 页面资源已热更新生效，无需重启容器。
 
+### 补充修复：搜索匹配时错误创建自定义模型
+
+用户复测后指出“搜索添加时不正确”。重新在 3003 打开渠道编辑页复现：`/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 已正确返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三条模型元信息，但 `MultiSelect` 的“创建自定义值”判断只检查输入是否与候选完全相等。由于输入 `gpt-5.6` 并不等于任一具体变体，前端仍展示 `Add custom model "gpt-5.6"`，管理员快速按 Enter 或点击创建项时会把不存在的基础名加入渠道能力，偏离“根据已有模型添加能力”的目标。
+
+影响范围限定在默认前端：
+
+- `web/default/src/components/multi-select.tsx`：创建自定义值前新增“是否存在匹配候选”的判断，并在远程搜索加载中禁用创建项，避免真实候选返回前误创建。
+- `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`：对齐 `/opt/project/new-api-main` 最新编辑渠道页的分段说明和模型区操作结构，新增 Basic/Credentials/Models 描述，并把填入、拉取、复制、清空和预设组操作独立为 `Quick actions` 操作区。
+- `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json`：补齐新增说明文案六语翻译。
+
+风险评估：该修复不改变后端同步、模型元信息、渠道保存 payload 和权限裁剪逻辑；只改变模型多选的候选渲染和编辑抽屉布局。`allowCreate` 仍然保留，但只有在没有任何匹配候选且搜索不在加载中时才出现，因此自定义模型能力不被移除，错误创建 `gpt-5.6` 这类系列前缀的风险被降低。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过；`en/zh` missing 与 untranslated 均为 0，`fr/ja/ru/vi` 无 missing，本轮新增 key 已翻译，剩余 untranslated 为历史技术项。
+2. `cd web/default && bun run typecheck` 通过。
+3. MCP 打开 `http://192.168.0.202:3003/channels`，强制刷新后打开渠道 `11111` 的编辑抽屉，页面已显示 `Name, provider type, and availability.`、`Published models, groups, and model remapping rules.` 和 `Quick actions`，确认热更新已生效，无需重启容器。
+4. 在模型输入框输入 `gpt-5.6`，网络请求 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 200，响应包含 Terra/Luna/Sol 三条模型。
+5. 直接读取下拉 DOM，候选为 `["gpt-5.6-terra","gpt-5.6-luna","gpt-5.6-sol"]`，`hasCustomCreate=false`，确认不再展示错误的 `Add custom model "gpt-5.6"`。
+6. 点击 `gpt-5.6-terra` 后表单 chip 计数从 `Selected 3` 变为 `Selected 4`，新增 chip 为 `gpt-5.6-terra`；随后点击 Cancel 关闭抽屉，网络记录中没有 `PUT /api/channel/` 保存请求，未改动运行态渠道数据。
+7. MCP console error/warn 为空。
+
 ## 本轮实施评审：Authz 用户级 override 基础层
 
 ### 需求分析
@@ -6650,3 +6672,45 @@ NexusTok 已经具备管理权限 catalog、角色基线矩阵、`middleware.Req
 - 3003 `GET /api/user/self` 返回 200，`permissions.admin_permissions.channel` 和 `permissions.admin_permissions.system_setting` 对 Root 均保持完整 `read/operate/write/sensitive_write/secret_view=true`，确认 Root 能力未被 override 基础层回退。
 - 3003 运行态数据库验证：`nexustok-hot-pg` 中 `to_regclass('public.authz_user_overrides')` 返回 `authz_user_overrides`，字段包含 `id/user_id/resource/action/effect/created_at/updated_at`，索引包含 `idx_authz_user_override_unique`。
 - MCP 浏览器验证：打开 `http://192.168.0.202:3003/`，在浏览器上下文登录并调用 `/api/user/self` 成功；跳转 `/channels` 后渠道管理页正常渲染，网络请求均为 200/301 正常跳转，控制台无新增错误，仅有 i18next 信息日志。
+
+## 本轮实施评审：用户编辑页权限矩阵 override 管理入口
+
+### 需求分析
+
+上一轮已经把用户级 Authz override 基础层原生化到 NexusTok：数据库可保存 allow/deny，`authz.Can` 和 `/api/user/self` 已能消费用户级矩阵。但当前用户管理页面仍无法查看或编辑这些 override：`GET /api/user/:id` 不返回 `admin_permissions`，`POST/PUT /api/user/` 不接收矩阵，默认前端用户抽屉也没有权限矩阵区块。这样 Root 虽然具备底层能力，却无法通过管理后台完成细粒度分权。
+
+对照 `/opt/project/new-api-main`，用户编辑页会在目标用户为 Admin 时展示“Admin Permissions”矩阵，并在保存时提交完整矩阵，后端只保存相对 Admin 基线不同的 override。本轮目标是把这条管理闭环按 NexusTok 当前权限 catalog、Base UI 组件和用户抽屉风格原生化，形成“Root 可为 Admin 配置细粒度权限；普通 Admin 不能配置权限；普通用户不显示矩阵”的最小完整能力。
+
+### 影响范围分析
+
+- `model.User`：新增 `AdminPermissions` 非持久化字段，供详情接口和管理保存 payload 使用，不改变用户表结构。
+- `model.User.Edit`：补充事务版本 `EditWithTx`，让用户资料更新与 authz override 保存可在同一事务内完成。
+- `controller/user.go`：`GetUser` 返回目标用户当前有效 `admin_permissions`；`CreateUser` 和 `UpdateUser` 在 Root 操作 Admin 用户时保存矩阵，普通用户或非 Root 操作者不能写入矩阵。
+- `web/default/src/lib/admin-permissions.ts`：补充权限 catalog 类型、矩阵归一化和默认矩阵工具，继续服务现有按钮级权限 helper。
+- `web/default/src/features/users/*`：用户详情类型、表单 schema、payload 转换、API、编辑抽屉接入权限 catalog 和矩阵区块。
+- `web/default/src/i18n/locales/*.json`：补齐新增 UI 文案六语翻译。
+
+### 风险评估
+
+- 权限矩阵编辑属于高风险管理能力，必须只允许 Root 提交；普通 Admin 即使构造 `admin_permissions` payload 也应被后端拒绝或忽略，不能靠前端隐藏。
+- 更新用户资料和更新权限 override 必须保持事务一致性：用户资料保存失败不能写入权限；权限保存失败不能只更新用户资料。
+- 目标用户如果不是 Admin，后端必须清理或忽略 override，避免普通用户未来被升为 Admin 后意外继承旧权限。
+- 前端矩阵需要基于 `/api/authz/catalog` 构造完整资源动作集合；catalog 加载失败时不提交矩阵，避免把不完整矩阵保存为覆盖规则。
+- 现有用户抽屉较窄，权限矩阵不能造成移动端横向溢出；采用折叠资源组和 checkbox 列表，优先保证可读和可操作。
+
+### 方案评审
+
+采用“后端闭环 + 前端 Root 可见矩阵”的低风险方案：后端新增 `updateAdminPermissionsForUserInTx`，只在 Root 且目标角色为 Admin 时调用 `authz.SetUserPermissionsInTx`；目标角色低于 Admin 时调用 `authz.ClearUserAuthorizationInTx` 清理旧 override；非 Root 提交矩阵直接返回权限错误。`GetUser` 使用 `authz.CapabilitiesForUser(user.Id, user.Role)` 返回当前有效矩阵，让前端初始状态与服务端判定一致。
+
+前端不复制 new-api-main 整个用户抽屉，只吸收其权限矩阵能力。新增 `getPermissionCatalog` API，复用已有 `Checkbox`、`Accordion` 和 `Alert` 组件，在编辑 Admin 用户且当前操作者拥有 `user.sensitive_write` 时展示矩阵。保存 payload 只有在目标角色为 Admin 且 catalog 已加载时才带 `admin_permissions`；否则省略字段，让后端保留或清理既定规则。视觉上保持 NexusTok 现有紧凑后台风格，不新增装饰色或营销文案。
+
+### 验收方式
+
+1. `go test ./controller -run 'Test(GetUserReturnsAdminPermissions|UpdateUserAdminPermissions|CreateUserAdminPermissions)'`。
+2. `go test ./model -run TestUserEditWithTx`。
+3. `go test ./service/authz`。
+4. `cd web/default && bun run i18n:sync`。
+5. `cd web/default && bun run typecheck`。
+6. `cd web/default && bun run build`。
+7. `git diff --check`。
+8. 访问 `http://192.168.0.202:3003/`，登录后进入 `/users`，打开 Admin 用户编辑抽屉，确认权限矩阵渲染；调用 `/api/authz/catalog` 与 `/api/user/:id` 确认返回矩阵；不实际保存生产账号权限，避免改变当前运行态管理能力。

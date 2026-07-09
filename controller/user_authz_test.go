@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,17 @@ type getSelfAuthzResponse struct {
 			AdminPermissions authz.PermissionsMap `json:"admin_permissions"`
 		} `json:"permissions"`
 	} `json:"data"`
+}
+
+type userDetailAuthzResponse struct {
+	Success bool       `json:"success"`
+	Message string     `json:"message"`
+	Data    model.User `json:"data"`
+}
+
+type simpleAuthzResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
 func setupUserAuthzControllerTestDB(t *testing.T) *gorm.DB {
@@ -128,6 +140,148 @@ func TestGetSelfIncludesAuthzUserOverrides(t *testing.T) {
 	assertPermission(t, resp.Data.Permissions.AdminPermissions, "channel", authz.ActionSensitiveWrite, true)
 }
 
+func TestGetUserReturnsAdminPermissions(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 301, Username: "scoped-admin", Password: "password", DisplayName: "scoped-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "scoped-admin"}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, authz.SetUserPermissions(user.Id, authz.PermissionsMap{
+		authz.ResourceChannel: {
+			authz.ActionRead:           false,
+			authz.ActionSensitiveWrite: true,
+		},
+	}))
+
+	resp := performGetUserForAuthz(t, user.Id, common.RoleRootUser)
+
+	assertPermission(t, resp.Data.AdminPermissions, authz.ResourceChannel, authz.ActionRead, false)
+	assertPermission(t, resp.Data.AdminPermissions, authz.ResourceChannel, authz.ActionWrite, true)
+	assertPermission(t, resp.Data.AdminPermissions, authz.ResourceChannel, authz.ActionSensitiveWrite, true)
+}
+
+func TestUpdateUserAdminPermissions(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 302, Username: "editable-admin", Password: "password", DisplayName: "before", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "editable-admin"}
+	require.NoError(t, db.Create(&user).Error)
+
+	resp := performUpdateUserForAuthz(t, common.RoleRootUser, model.User{
+		Id:          user.Id,
+		Username:    user.Username,
+		DisplayName: "after",
+		Group:       "vip",
+		Remark:      "scoped admin",
+		AdminPermissions: authz.PermissionsMap{
+			authz.ResourceChannel: {
+				authz.ActionRead:           false,
+				authz.ActionSensitiveWrite: true,
+			},
+		},
+	})
+
+	require.True(t, resp.Success, resp.Message)
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, "after", stored.DisplayName)
+	assert.Equal(t, "vip", stored.Group)
+	assertPermission(t, authz.CapabilitiesForUser(user.Id, common.RoleAdminUser), authz.ResourceChannel, authz.ActionRead, false)
+	assertPermission(t, authz.CapabilitiesForUser(user.Id, common.RoleAdminUser), authz.ResourceChannel, authz.ActionSensitiveWrite, true)
+}
+
+func TestUpdateUserRejectsNonRootAdminPermissions(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 303, Username: "common-user", Password: "password", DisplayName: "before", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "common-user"}
+	require.NoError(t, db.Create(&user).Error)
+
+	resp := performUpdateUserForAuthz(t, common.RoleAdminUser, model.User{
+		Id:          user.Id,
+		Username:    user.Username,
+		DisplayName: "should-rollback",
+		Group:       "vip",
+		AdminPermissions: authz.PermissionsMap{
+			authz.ResourceChannel: {
+				authz.ActionSensitiveWrite: true,
+			},
+		},
+	})
+
+	require.False(t, resp.Success)
+	assert.Contains(t, resp.Message, "only root")
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, "before", stored.DisplayName)
+	assert.Equal(t, "default", stored.Group)
+}
+
+func TestCreateUserAdminPermissions(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	resp := performCreateUserForAuthz(t, common.RoleRootUser, model.User{
+		Username:    "new-admin",
+		Password:    "Password123",
+		DisplayName: "new-admin",
+		Role:        common.RoleAdminUser,
+		AdminPermissions: authz.PermissionsMap{
+			authz.ResourceChannel: {
+				authz.ActionRead:           false,
+				authz.ActionSensitiveWrite: true,
+			},
+		},
+	})
+
+	require.True(t, resp.Success, resp.Message)
+	var stored model.User
+	require.NoError(t, db.Where("username = ?", "new-admin").First(&stored).Error)
+	assert.Equal(t, common.RoleAdminUser, stored.Role)
+	assertPermission(t, authz.CapabilitiesForUser(stored.Id, common.RoleAdminUser), authz.ResourceChannel, authz.ActionRead, false)
+	assertPermission(t, authz.CapabilitiesForUser(stored.Id, common.RoleAdminUser), authz.ResourceChannel, authz.ActionSensitiveWrite, true)
+}
+
+func TestUpdateUserClearsAdminPermissionsWhenTargetIsCommon(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 304, Username: "demoted-earlier", Password: "password", DisplayName: "before", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "demoted-earlier"}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, model.ReplaceAuthzUserResourceOverridesInTx(db, user.Id, authz.ResourceChannel, []model.AuthzUserOverride{
+		{UserID: user.Id, Resource: authz.ResourceChannel, Action: authz.ActionSensitiveWrite, Effect: authz.EffectAllow},
+	}))
+
+	resp := performUpdateUserForAuthz(t, common.RoleRootUser, model.User{
+		Id:          user.Id,
+		Username:    user.Username,
+		DisplayName: "after",
+		Group:       "default",
+	})
+
+	require.True(t, resp.Success, resp.Message)
+	records, err := model.GetAuthzUserOverrides(user.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
+func TestDemoteClearsAdminPermissions(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 305, Username: "admin-to-demote", Password: "password", DisplayName: "admin-to-demote", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "admin-to-demote"}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, authz.SetUserPermissions(user.Id, authz.PermissionsMap{
+		authz.ResourceChannel: {
+			authz.ActionSensitiveWrite: true,
+		},
+	}))
+
+	resp := performManageUserForAuthz(t, common.RoleRootUser, ManageRequest{Id: user.Id, Action: "demote"})
+
+	require.True(t, resp.Success, resp.Message)
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, common.RoleCommonUser, stored.Role)
+	records, err := model.GetAuthzUserOverrides(user.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
 func TestUserManageActionNeedsSensitiveWrite(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -167,6 +321,84 @@ func performGetSelfForAuthz(t *testing.T, userID int, role int) getSelfAuthzResp
 	require.True(t, response.Success)
 	require.NotNil(t, response.Data.Permissions.SidebarSettings)
 	require.NotEmpty(t, response.Data.Permissions.AdminPermissions)
+	return response
+}
+
+func performGetUserForAuthz(t *testing.T, targetUserID int, role int) userDetailAuthzResponse {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/user/%d", targetUserID), nil)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", targetUserID)}}
+	c.Set("id", 1)
+	c.Set("role", role)
+
+	GetUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response userDetailAuthzResponse
+	require.NoError(t, common.DecodeJson(w.Body, &response))
+	require.True(t, response.Success, response.Message)
+	require.NotEmpty(t, response.Data.AdminPermissions)
+	return response
+}
+
+func performUpdateUserForAuthz(t *testing.T, role int, payload model.User) simpleAuthzResponse {
+	t.Helper()
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/", bytes.NewReader(body))
+	c.Set("id", 1)
+	c.Set("role", role)
+
+	UpdateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response simpleAuthzResponse
+	require.NoError(t, common.DecodeJson(w.Body, &response))
+	return response
+}
+
+func performCreateUserForAuthz(t *testing.T, role int, payload model.User) simpleAuthzResponse {
+	t.Helper()
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/", bytes.NewReader(body))
+	c.Set("id", 1)
+	c.Set("role", role)
+
+	CreateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response simpleAuthzResponse
+	require.NoError(t, common.DecodeJson(w.Body, &response))
+	return response
+}
+
+func performManageUserForAuthz(t *testing.T, role int, payload ManageRequest) simpleAuthzResponse {
+	t.Helper()
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/manage", bytes.NewReader(body))
+	c.Set("id", 1)
+	c.Set("role", role)
+	c.Set("username", "root")
+
+	ManageUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response simpleAuthzResponse
+	require.NoError(t, common.DecodeJson(w.Body, &response))
 	return response
 }
 

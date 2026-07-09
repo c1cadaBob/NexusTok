@@ -41,3 +41,33 @@ func TestAuthzUserOverrideReplaceAndClear(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, records)
 }
+
+func TestUserDeleteClearsAuthzUserOverrides(t *testing.T) {
+	require.NoError(t, DB.AutoMigrate(&User{}, &AuthzUserOverride{}))
+	require.NoError(t, DB.Exec("DELETE FROM authz_user_overrides").Error)
+	require.NoError(t, DB.Unscoped().Exec("DELETE FROM users").Error)
+	t.Cleanup(func() {
+		require.NoError(t, DB.Exec("DELETE FROM authz_user_overrides").Error)
+		require.NoError(t, DB.Unscoped().Exec("DELETE FROM users").Error)
+	})
+
+	softDeletedUser := User{Id: 4101, Username: "soft-delete-authz-user", Password: "password", AffCode: "soft-authz"}
+	require.NoError(t, DB.Create(&softDeletedUser).Error)
+	require.NoError(t, ReplaceAuthzUserResourceOverridesInTx(DB, softDeletedUser.Id, "channel", []AuthzUserOverride{
+		{UserID: softDeletedUser.Id, Resource: "channel", Action: "sensitive_write", Effect: "allow"},
+	}))
+	require.NoError(t, softDeletedUser.Delete())
+	records, err := GetAuthzUserOverrides(softDeletedUser.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+
+	hardDeletedUser := User{Id: 4102, Username: "hard-delete-authz-user", Password: "password", AffCode: "hard-authz"}
+	require.NoError(t, DB.Create(&hardDeletedUser).Error)
+	require.NoError(t, ReplaceAuthzUserResourceOverridesInTx(DB, hardDeletedUser.Id, "channel", []AuthzUserOverride{
+		{UserID: hardDeletedUser.Id, Resource: "channel", Action: "sensitive_write", Effect: "allow"},
+	}))
+	require.NoError(t, HardDeleteUserById(hardDeletedUser.Id))
+	records, err = GetAuthzUserOverrides(hardDeletedUser.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}

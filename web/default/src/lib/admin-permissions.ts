@@ -42,6 +42,38 @@ export const ADMIN_PERMISSION_ACTIONS = {
   SECRET_VIEW: 'secret_view',
 } as const
 
+export const ADMIN_ROLE_KEY = 'admin'
+
+export interface PermissionActionDefinition {
+  action: string
+  label_key: string
+  description_key: string
+}
+
+export interface PermissionResourceDefinition {
+  resource: string
+  label_key: string
+  actions: PermissionActionDefinition[]
+}
+
+export interface PermissionRoleDefinition {
+  key: string
+  name: string
+  built_in: boolean
+  superuser: boolean
+  grants: AdminPermissionMatrix
+}
+
+export interface PermissionCatalog {
+  resources: PermissionResourceDefinition[]
+  roles: PermissionRoleDefinition[]
+}
+
+export const EMPTY_PERMISSION_CATALOG: PermissionCatalog = {
+  resources: [],
+  roles: [],
+}
+
 export type AdminPermissionResource =
   (typeof ADMIN_PERMISSION_RESOURCES)[keyof typeof ADMIN_PERMISSION_RESOURCES]
 
@@ -101,6 +133,48 @@ function baselineAllows(
   if ((role ?? 0) >= ROLE.SUPER_ADMIN) return true
   if ((role ?? 0) < ROLE.ADMIN) return false
   return ADMIN_DEFAULT_GRANTS[resource]?.[action] === true
+}
+
+function staticAdminBaselineAllows(resource: string, action: string): boolean {
+  return (
+    ADMIN_DEFAULT_GRANTS[resource as AdminPermissionResource]?.[
+      action as AdminPermissionAction
+    ] === true
+  )
+}
+
+// roleGrants 返回后端 catalog 中指定角色的基线矩阵。
+export function roleGrants(
+  catalog: PermissionCatalog,
+  roleKey: string
+): AdminPermissionMatrix {
+  return catalog.roles.find((role) => role.key === roleKey)?.grants ?? {}
+}
+
+// normalizeAdminPermissions 根据后端 catalog 补齐完整权限矩阵。
+//
+// 用户编辑页必须提交完整矩阵，否则只保存局部字段会让未渲染动作继承旧状态。缺失值优先
+// 回落到 Admin 角色基线；如果 catalog 临时缺少 roles，则使用前端静态基线兜底，保证旧
+// 权限显隐逻辑和编辑器默认值保持一致。
+export function normalizeAdminPermissions(
+  value: AdminPermissionMatrix | null | undefined,
+  catalog: PermissionCatalog
+): AdminPermissionMatrix {
+  const baseline = roleGrants(catalog, ADMIN_ROLE_KEY)
+  const normalized: AdminPermissionMatrix = {}
+
+  for (const resource of catalog.resources) {
+    const actions: Record<string, boolean> = {}
+    for (const action of resource.actions) {
+      actions[action.action] =
+        value?.[resource.resource]?.[action.action] ??
+        baseline[resource.resource]?.[action.action] ??
+        staticAdminBaselineAllows(resource.resource, action.action)
+    }
+    normalized[resource.resource] = actions
+  }
+
+  return normalized
 }
 
 export function hasAdminPermission(

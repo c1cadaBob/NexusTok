@@ -26,6 +26,7 @@ import (
 
 	"github.com/gin-contrib/sessions" // 会话管理
 	"github.com/gin-gonic/gin"        // Gin 框架
+	"gorm.io/gorm"
 )
 
 // LoginRequest 登录请求结构体
@@ -363,6 +364,7 @@ func GetUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
+	user.AdminPermissions = authz.CapabilitiesForUser(user.Id, user.Role)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -702,9 +704,17 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "" // 恢复为空，表示本次不更新密码。
 	}
 	updatePassword := updatedUser.Password != ""
-	if err := updatedUser.Edit(updatePassword); err != nil {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
+			return err
+		}
+		return updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, originUser.Role, updatedUser.AdminPermissions)
+	}); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err := model.InvalidateUserCache(updatedUser.Id); err != nil {
+		common.SysLog(fmt.Sprintf("failed to invalidate user cache for user %d: %s", updatedUser.Id, err.Error()))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -955,10 +965,16 @@ func CreateUser(c *gin.Context) {
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
 	}
-	if err := cleanUser.Insert(0); err != nil {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
+			return err
+		}
+		return updateAdminPermissionsForUserInTx(c, tx, cleanUser.Id, cleanUser.Role, user.AdminPermissions)
+	}); err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	cleanUser.FinalizeUserCreation(0)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -1095,8 +1111,19 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 
-	if err := user.Update(false); err != nil {
-		common.ApiError(c, err)
+	var updateErr error
+	if req.Action == "demote" {
+		updateErr = model.DB.Transaction(func(tx *gorm.DB) error {
+			if err := user.UpdateWithTx(tx, false); err != nil {
+				return err
+			}
+			return authz.ClearUserAuthorizationInTx(tx, user.Id)
+		})
+	} else {
+		updateErr = user.Update(false)
+	}
+	if updateErr != nil {
+		common.ApiError(c, updateErr)
 		return
 	}
 	// 禁用 / 角色调整后，强制失效用户缓存与其全部令牌缓存，

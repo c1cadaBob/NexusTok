@@ -23,9 +23,31 @@ import { useQuery } from '@tanstack/react-query'
 import { Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
+import {
+  EMPTY_PERMISSION_CATALOG,
+  normalizeAdminPermissions,
+  type AdminPermissionMatrix,
+} from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import {
   Form,
   FormControl,
@@ -54,8 +76,22 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { createUser, updateUser, getUser, getGroups } from '../api'
+import {
+  SideDrawerSection,
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
+import {
+  createUser,
+  updateUser,
+  getUser,
+  getGroups,
+  getPermissionCatalog,
+} from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { useUserPermissions } from '../hooks/use-user-permissions'
 import {
@@ -83,6 +119,7 @@ export function UsersMutateDrawer({
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
+  const currentUser = useAuthStore((state) => state.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
   const permissions = useUserPermissions()
@@ -100,6 +137,18 @@ export function UsersMutateDrawer({
   })
 
   const groups = groupsData?.data || []
+  const isRootUser = (currentUser?.role ?? 0) >= ROLE.SUPER_ADMIN
+
+  const {
+    data: permissionCatalog = EMPTY_PERMISSION_CATALOG,
+    isLoading: isPermissionCatalogLoading,
+    isError: isPermissionCatalogError,
+  } = useQuery({
+    queryKey: ['admin-permission-catalog'],
+    queryFn: getPermissionCatalog,
+    enabled: open && isUpdate && isRootUser,
+    staleTime: 5 * 60 * 1000,
+  })
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -125,6 +174,11 @@ export function UsersMutateDrawer({
   const tokensOnly = currencyMeta.kind === 'tokens'
 
   const currentQuotaRaw = form.watch('quota_dollars') || 0
+  const targetRole = form.watch('role') ?? currentRow?.role ?? 0
+  const targetIsAdmin = targetRole === ROLE.ADMIN
+  const canEditAdminPermissions =
+    isUpdate && isRootUser && targetIsAdmin && permissions.canSensitiveWrite
+  const permissionCatalogReady = permissionCatalog.resources.length > 0
 
   const onSubmit = async (data: UserFormValues) => {
     if (!canSubmit) {
@@ -133,7 +187,13 @@ export function UsersMutateDrawer({
     }
     setIsSubmitting(true)
     try {
-      const payload = transformFormDataToPayload(data, currentRow?.id)
+      const payload = transformFormDataToPayload(
+        data,
+        currentRow?.id,
+        canEditAdminPermissions && permissionCatalogReady
+          ? permissionCatalog
+          : undefined
+      )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
         : await createUser(payload)
@@ -181,8 +241,8 @@ export function UsersMutateDrawer({
           }
         }}
       >
-        <SheetContent className='flex h-dvh w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]'>
-          <SheetHeader className='border-b px-4 py-3 text-start sm:px-6 sm:py-4'>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-3xl')}>
+          <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle>
               {isUpdate ? t('Update') : t('Create')} {t('User')}
             </SheetTitle>
@@ -196,10 +256,10 @@ export function UsersMutateDrawer({
             <form
               id='user-form'
               onSubmit={form.handleSubmit(onSubmit)}
-              className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-6 sm:px-4'
+              className={sideDrawerFormClassName()}
             >
               {/* 基础信息 */}
-              <div className='space-y-4'>
+              <SideDrawerSection>
                 <h3 className='text-sm font-medium'>
                   {t('Basic Information')}
                 </h3>
@@ -303,11 +363,11 @@ export function UsersMutateDrawer({
                     </FormItem>
                   )}
                 />
-              </div>
+              </SideDrawerSection>
 
               {/* 分组与额度设置，仅编辑用户时展示 */}
               {isUpdate && (
-                <div className='space-y-4'>
+                <SideDrawerSection>
                   <h3 className='text-sm font-medium'>{t('Group & Quota')}</h3>
 
                   <FormField
@@ -414,12 +474,155 @@ export function UsersMutateDrawer({
                       </FormItem>
                     )}
                   />
-                </div>
+                </SideDrawerSection>
+              )}
+
+              {isUpdate && isRootUser && targetIsAdmin && (
+                <SideDrawerSection>
+                  <div className='flex flex-col gap-1'>
+                    <h3 className='text-sm font-medium'>
+                      {t('Admin Permissions')}
+                    </h3>
+                    <p className='text-muted-foreground text-xs leading-5'>
+                      {t(
+                        'Default administrator permissions can be overridden for this user.'
+                      )}
+                    </p>
+                  </div>
+
+                  {isPermissionCatalogLoading && (
+                    <div className='flex flex-col gap-3'>
+                      <Skeleton className='h-10 w-full' />
+                      <Skeleton className='h-10 w-full' />
+                      <Skeleton className='h-10 w-full' />
+                    </div>
+                  )}
+
+                  {isPermissionCatalogError && (
+                    <Alert variant='destructive'>
+                      <AlertTitle>
+                        {t('Permission catalog unavailable')}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {t(
+                          'Permissions cannot be edited until the catalog loads.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {permissionCatalogReady && (
+                    <FormField
+                      control={form.control}
+                      name='admin_permissions'
+                      render={({ field }) => {
+                        const selected = normalizeAdminPermissions(
+                          field.value as AdminPermissionMatrix | undefined,
+                          permissionCatalog
+                        )
+                        const defaultOpenResources = permissionCatalog.resources
+                          .slice(0, 2)
+                          .map((resource) => resource.resource)
+
+                        return (
+                          <FormItem>
+                            <Accordion
+                              multiple
+                              defaultValue={defaultOpenResources}
+                              className='rounded-md border'
+                            >
+                              {permissionCatalog.resources.map((resource) => {
+                                const selectedCount = resource.actions.filter(
+                                  (action) =>
+                                    selected[resource.resource]?.[
+                                      action.action
+                                    ] === true
+                                ).length
+
+                                return (
+                                  <AccordionItem
+                                    key={resource.resource}
+                                    value={resource.resource}
+                                    className='px-3'
+                                  >
+                                    <AccordionTrigger className='gap-3 py-3 hover:no-underline'>
+                                      <span className='flex min-w-0 flex-1 flex-col gap-1'>
+                                        <span className='truncate'>
+                                          {t(resource.label_key)}
+                                        </span>
+                                        <span className='text-muted-foreground text-xs font-normal'>
+                                          {t(
+                                            'Enabled actions: {{enabled}} / {{total}}',
+                                            {
+                                              enabled: selectedCount,
+                                              total: resource.actions.length,
+                                            }
+                                          )}
+                                        </span>
+                                      </span>
+                                    </AccordionTrigger>
+                                    <AccordionContent className='pb-3'>
+                                      <FieldGroup className='gap-3'>
+                                        {resource.actions.map((option) => {
+                                          const checkboxId = `admin-permission-${resource.resource}-${option.action}`
+                                          return (
+                                            <Field
+                                              key={option.action}
+                                              orientation='horizontal'
+                                              className='rounded-md border p-3'
+                                            >
+                                              <Checkbox
+                                                id={checkboxId}
+                                                checked={
+                                                  selected[resource.resource]?.[
+                                                    option.action
+                                                  ] === true
+                                                }
+                                                onCheckedChange={(checked) => {
+                                                  field.onChange({
+                                                    ...selected,
+                                                    [resource.resource]: {
+                                                      ...selected[
+                                                        resource.resource
+                                                      ],
+                                                      [option.action]:
+                                                        checked === true,
+                                                    },
+                                                  })
+                                                }}
+                                              />
+                                              <FieldContent>
+                                                <FieldLabel
+                                                  htmlFor={checkboxId}
+                                                  className='font-medium'
+                                                >
+                                                  {t(option.label_key)}
+                                                </FieldLabel>
+                                                <FieldDescription>
+                                                  {t(option.description_key)}
+                                                </FieldDescription>
+                                              </FieldContent>
+                                            </Field>
+                                          )
+                                        })}
+                                      </FieldGroup>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                )
+                              })}
+                            </Accordion>
+                            <FormMessage />
+                          </FormItem>
+                        )
+                      }}
+                    />
+                  )}
+                </SideDrawerSection>
               )}
 
               {/* 绑定信息只读展示，解绑操作在独立绑定管理弹窗中处理。 */}
               {isUpdate && (
-                <div className='space-y-4'>
+                <SideDrawerSection>
                   <h3 className='text-sm font-medium'>
                     {t('Binding Information')}
                   </h3>
@@ -429,7 +632,7 @@ export function UsersMutateDrawer({
                     )}
                   </p>
 
-                  <div className='space-y-3'>
+                  <div className='flex flex-col gap-3'>
                     {BINDING_FIELDS.map(({ key, label }) => (
                       <div key={key}>
                         <Label className='text-muted-foreground text-xs'>
@@ -445,11 +648,11 @@ export function UsersMutateDrawer({
                       </div>
                     ))}
                   </div>
-                </div>
+                </SideDrawerSection>
               )}
             </form>
           </Form>
-          <SheetFooter className='grid grid-cols-2 gap-2 border-t px-4 py-3 sm:flex sm:px-6 sm:py-4'>
+          <SheetFooter className={sideDrawerFooterClassName()}>
             <SheetClose render={<Button variant='outline' />}>
               {t('Close')}
             </SheetClose>

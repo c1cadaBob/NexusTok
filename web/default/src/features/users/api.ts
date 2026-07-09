@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type {
   User,
@@ -135,6 +136,18 @@ export async function resetUserTwoFA(id: number): Promise<ApiResponse> {
 export async function getGroups(): Promise<ApiResponse<string[]>> {
   const res = await api.get('/api/group/')
   return res.data
+}
+
+/**
+ * 获取管理权限 catalog（资源、动作和角色基线）。
+ * 权限结构的唯一真相位于后端 authz 包，前端只负责渲染和提交矩阵。
+ */
+export async function getPermissionCatalog(): Promise<PermissionCatalog> {
+  const res = await api.get('/api/authz/catalog')
+  return {
+    resources: res.data?.data?.resources ?? [],
+    roles: res.data?.data?.roles ?? [],
+  }
 }
 
 // ============================================================================

@@ -7,6 +7,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/c1cada/NexusTok/common"
@@ -14,6 +15,7 @@ import (
 	"github.com/c1cada/NexusTok/service/authz"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // userManageActionNeedsSensitiveWrite 判断 ManageUser 请求是否触碰高风险用户资产。
@@ -42,4 +44,24 @@ func requireUserSensitiveWrite(c *gin.Context) bool {
 	})
 	c.Abort()
 	return false
+}
+
+// updateAdminPermissionsForUserInTx 在用户资料事务内同步保存管理权限矩阵。
+//
+// 只有 Root 可以编辑用户级管理权限；普通 Admin 即使构造请求体也会被拒绝。目标用户
+// 低于 Admin 时会清理历史 override，避免未来升为 Admin 后意外继承旧权限。
+func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, userRole int, permissions map[string]map[string]bool) error {
+	if permissions == nil {
+		if userRole < common.RoleAdminUser && c.GetInt("role") == common.RoleRootUser {
+			return authz.ClearUserAuthorizationInTx(tx, userID)
+		}
+		return nil
+	}
+	if c.GetInt("role") != common.RoleRootUser {
+		return fmt.Errorf("only root can update admin permissions")
+	}
+	if userRole < common.RoleAdminUser {
+		return authz.ClearUserAuthorizationInTx(tx, userID)
+	}
+	return authz.SetUserPermissionsInTx(tx, userID, permissions)
 }

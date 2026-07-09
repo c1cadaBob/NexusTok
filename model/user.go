@@ -34,37 +34,38 @@ const UserNameMaxLength = 20
 // 注意：如果添加敏感字段，不要忘记在 setupLogin 函数中清理
 // 否则敏感信息会以明文形式保存在本地存储中！
 type User struct {
-	Id               int            `json:"id"`                                                                   // 用户 ID
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`                       // 用户名（唯一索引）
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`                    // 密码（哈希后存储）
-	OriginalPassword string         `json:"original_password" gorm:"-:all"`                                       // 原始密码（仅用于密码修改验证，不存储到数据库）
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`                          // 显示名称
-	Role             int            `json:"role" gorm:"type:int;default:1"`                                       // 用户角色（1=普通用户，10=管理员，100=Root）
-	Status           int            `json:"status" gorm:"type:int;default:1"`                                     // 用户状态（1=启用，2=禁用）
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`                                 // 邮箱地址
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`                              // GitHub ID（OAuth 关联）
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`                            // Discord ID（OAuth 关联）
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`                                  // OIDC ID（OAuth 关联）
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`                              // 微信 ID（OAuth 关联）
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`                          // Telegram ID（OAuth 关联）
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`                                       // 邮箱验证码（仅用于邮箱验证，不存储到数据库）
-	AccessToken      *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`    // 系统管理用 Access Token
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`                                      // 用户总额度
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`               // 已使用额度
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`                             // 请求次数
-	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`                      // 用户分组
-	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`         // 邀请码
-	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`                 // 邀请人数
-	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`                 // 邀请剩余额度
-	AffHistoryQuota  int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"`       // 邀请历史额度
-	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`                   // 邀请人 ID
-	DeletedAt        gorm.DeletedAt `gorm:"index"`                                                                // 软删除时间
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`                          // Linux DO ID（OAuth 关联）
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`                              // 用户设置（JSON 格式）
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`         // 备注
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"` // Stripe 客户 ID
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`                   // 创建时间
-	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`                  // 最后登录时间
+	Id               int                        `json:"id"`                                                                   // 用户 ID
+	Username         string                     `json:"username" gorm:"unique;index" validate:"max=20"`                       // 用户名（唯一索引）
+	Password         string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`                    // 密码（哈希后存储）
+	OriginalPassword string                     `json:"original_password" gorm:"-:all"`                                       // 原始密码（仅用于密码修改验证，不存储到数据库）
+	DisplayName      string                     `json:"display_name" gorm:"index" validate:"max=20"`                          // 显示名称
+	Role             int                        `json:"role" gorm:"type:int;default:1"`                                       // 用户角色（1=普通用户，10=管理员，100=Root）
+	Status           int                        `json:"status" gorm:"type:int;default:1"`                                     // 用户状态（1=启用，2=禁用）
+	Email            string                     `json:"email" gorm:"index" validate:"max=50"`                                 // 邮箱地址
+	GitHubId         string                     `json:"github_id" gorm:"column:github_id;index"`                              // GitHub ID（OAuth 关联）
+	DiscordId        string                     `json:"discord_id" gorm:"column:discord_id;index"`                            // Discord ID（OAuth 关联）
+	OidcId           string                     `json:"oidc_id" gorm:"column:oidc_id;index"`                                  // OIDC ID（OAuth 关联）
+	WeChatId         string                     `json:"wechat_id" gorm:"column:wechat_id;index"`                              // 微信 ID（OAuth 关联）
+	TelegramId       string                     `json:"telegram_id" gorm:"column:telegram_id;index"`                          // Telegram ID（OAuth 关联）
+	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                                       // 邮箱验证码（仅用于邮箱验证，不存储到数据库）
+	AccessToken      *string                    `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`    // 系统管理用 Access Token
+	Quota            int                        `json:"quota" gorm:"type:int;default:0"`                                      // 用户总额度
+	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`               // 已使用额度
+	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                             // 请求次数
+	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`                      // 用户分组
+	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`         // 邀请码
+	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`                 // 邀请人数
+	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`                 // 邀请剩余额度
+	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"`       // 邀请历史额度
+	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`                   // 邀请人 ID
+	DeletedAt        gorm.DeletedAt             `gorm:"index"`                                                                // 软删除时间
+	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`                          // Linux DO ID（OAuth 关联）
+	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`                              // 用户设置（JSON 格式）
+	Remark           string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`         // 备注
+	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"` // Stripe 客户 ID
+	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`                   // 创建时间
+	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`                  // 最后登录时间
+	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`                             // 管理权限矩阵，仅用于 API payload，不写入 users 表
 }
 
 // ToBaseUser 将用户转换为基础用户信息（用于缓存）
@@ -484,8 +485,12 @@ func HardDeleteUserById(id int) error {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
-	err := DB.Unscoped().Delete(&User{}, "id = ?", id).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Delete(&User{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return ClearAuthzUserOverridesInTx(tx, id)
+	})
 }
 
 func inviteUser(inviterId int) (err error) {
@@ -575,35 +580,7 @@ func (user *User) Insert(inviterId int) error {
 		return err
 	}
 
-	// 用户创建成功后，根据角色初始化边栏配置
-	// 需要重新获取用户以确保有正确的ID和Role
-	var createdUser User
-	if err := DB.Where("username = ?", user.Username).First(&createdUser).Error; err == nil {
-		// 生成基于角色的默认边栏配置
-		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
-		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
-		}
-	}
-
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
-	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
-	}
+	user.FinalizeUserCreation(inviterId)
 	return nil
 }
 
@@ -636,12 +613,12 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 	return nil
 }
 
-// FinalizeOAuthUserCreation 执行 OAuth 用户创建后的收尾任务。
+// FinalizeUserCreation 执行用户创建事务提交后的收尾任务。
 //
-// 该函数必须在外部事务成功提交后调用，用于初始化侧边栏配置、记录注册
-// 赠额日志和处理邀请奖励。它不参与 OAuth 绑定事务，避免邮件、日志或
-// 邀请奖励失败时反向影响已经完成的账号创建。
-func (user *User) FinalizeOAuthUserCreation(inviterId int) {
+// 该函数必须在外部事务成功提交后调用，用于初始化侧边栏配置、记录注册赠额日志和处理
+// 邀请奖励。它不参与创建事务，避免侧栏设置、日志或邀请奖励失败时反向影响已经完成的
+// 账号创建；调用方只需要保证 user.Id 已经由 GORM 回填。
+func (user *User) FinalizeUserCreation(inviterId int) {
 	// 用户创建成功后，根据角色初始化边栏配置
 	var createdUser User
 	if err := DB.Where("id = ?", user.Id).First(&createdUser).Error; err == nil {
@@ -668,6 +645,14 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 			_ = inviteUser(inviterId)
 		}
 	}
+}
+
+// FinalizeOAuthUserCreation 保留 OAuth 注册路径使用的历史函数名。
+//
+// OAuth 和后台创建用户现在共享同一套创建后收尾逻辑；保留这个包装函数可以避免旧调用点
+// 大范围重命名，同时让函数名里的 OAuth 语义不再泄漏到普通后台创建流程。
+func (user *User) FinalizeOAuthUserCreation(inviterId int) {
+	user.FinalizeUserCreation(inviterId)
 }
 
 func (user *User) Update(updatePassword bool) error {
@@ -708,6 +693,23 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 }
 
 func (user *User) Edit(updatePassword bool) error {
+	if err := user.EditWithTx(DB, updatePassword); err != nil {
+		return err
+	}
+
+	// 更新缓存
+	return updateUserCache(*user)
+}
+
+// EditWithTx 在事务中更新管理员可编辑的用户资料字段。
+//
+// 用户管理页的资料保存可能与权限 override 保存放在同一事务里执行，因此这里只
+// 更新明确允许的资料字段：用户名、显示名、分组、备注和可选密码。额度、已用量、
+// 请求次数、角色和第三方绑定等字段不在该路径写入，避免资料编辑覆盖并发业务状态。
+func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
+	if tx == nil {
+		tx = DB
+	}
 	var err error
 	if updatePassword {
 		user.Password, err = common.Password2Hash(user.Password)
@@ -727,13 +729,13 @@ func (user *User) Edit(updatePassword bool) error {
 		updates["password"] = newUser.Password
 	}
 
-	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(updates).Error; err != nil {
+	if err = tx.First(user, user.Id).Error; err != nil {
 		return err
 	}
-
-	// 更新缓存
-	return updateUserCache(*user)
+	if err = tx.Model(user).Updates(updates).Error; err != nil {
+		return err
+	}
+	return tx.First(user, user.Id).Error
 }
 
 // BindEmailToUser 将规范化邮箱绑定到指定用户。
@@ -789,7 +791,12 @@ func (user *User) Delete() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	if err := DB.Delete(user).Error; err != nil {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(user).Error; err != nil {
+			return err
+		}
+		return ClearAuthzUserOverridesInTx(tx, user.Id)
+	}); err != nil {
 		return err
 	}
 
@@ -801,8 +808,12 @@ func (user *User) HardDelete() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	err := DB.Unscoped().Delete(user).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Delete(user).Error; err != nil {
+			return err
+		}
+		return ClearAuthzUserOverridesInTx(tx, user.Id)
+	})
 }
 
 // ValidateAndFill 校验密码登录凭据并填充用户信息。

@@ -62,6 +62,52 @@ func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 	assert.Equal(t, 4, got.RequestCount)
 }
 
+func TestUserEditDoesNotOverwriteAccountingOrRoleFields(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	user := User{
+		Id:           11,
+		Username:     "editable-user",
+		Password:     "password",
+		DisplayName:  "before",
+		Role:         common.RoleAdminUser,
+		Status:       common.UserStatusEnabled,
+		Group:        "default",
+		Remark:       "old remark",
+		Quota:        1000,
+		UsedQuota:    20,
+		RequestCount: 3,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	staleUser, err := GetUserById(user.Id, true)
+	require.NoError(t, err)
+
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+		"quota":         gorm.Expr("quota - ?", 400),
+		"used_quota":    gorm.Expr("used_quota + ?", 400),
+		"request_count": gorm.Expr("request_count + ?", 1),
+	}).Error)
+
+	staleUser.DisplayName = "after"
+	staleUser.Group = "vip"
+	staleUser.Remark = "new remark"
+	staleUser.Role = common.RoleRootUser
+	staleUser.Status = common.UserStatusDisabled
+	require.NoError(t, staleUser.Edit(false))
+
+	var got User
+	require.NoError(t, DB.First(&got, user.Id).Error)
+	assert.Equal(t, "after", got.DisplayName)
+	assert.Equal(t, "vip", got.Group)
+	assert.Equal(t, "new remark", got.Remark)
+	assert.Equal(t, common.RoleAdminUser, got.Role)
+	assert.Equal(t, common.UserStatusEnabled, got.Status)
+	assert.Equal(t, 600, got.Quota)
+	assert.Equal(t, 420, got.UsedQuota)
+	assert.Equal(t, 4, got.RequestCount)
+}
+
 func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	setupUserUpdateTestState(t)
 

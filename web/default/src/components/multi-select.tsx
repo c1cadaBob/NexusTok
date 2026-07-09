@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import * as React from 'react'
 import { Add01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { cn } from '@/lib/utils'
 import {
   Combobox,
   ComboboxChip,
@@ -34,8 +36,6 @@ import {
   ComboboxValue,
   useComboboxAnchor,
 } from '@/components/ui/combobox'
-import { copyToClipboard } from '@/lib/copy-to-clipboard'
-import { cn } from '@/lib/utils'
 
 export type Option = {
   label: string
@@ -119,17 +119,32 @@ export function MultiSelect({
   }, [options])
 
   const trimmedInput = inputValue.trim()
+  const normalizedInput = trimmedInput.toLowerCase()
   const inputMatchesExisting =
     trimmedInput.length > 0 &&
     (selectedSet.has(trimmedInput) ||
       options.some(
         (option) =>
-          option.value.toLowerCase() === trimmedInput.toLowerCase() ||
-          option.label.toLowerCase() === trimmedInput.toLowerCase()
+          option.value.toLowerCase() === normalizedInput ||
+          option.label.toLowerCase() === normalizedInput
+      ))
+  const inputHasMatchingOption =
+    trimmedInput.length > 0 &&
+    (selected.some((value) => value.toLowerCase().includes(normalizedInput)) ||
+      options.some(
+        (option) =>
+          option.value.toLowerCase().includes(normalizedInput) ||
+          option.label.toLowerCase().includes(normalizedInput)
       ))
 
+  // 存在搜索候选时不要展示“创建自定义值”。渠道模型搜索会把模型元信息候选异步合并进来，
+  // 例如 gpt-5.6 会匹配 luna/sol/terra 三个真实模型；此时继续创建 gpt-5.6 会误导管理员。
   const canCreate =
-    allowCreate === true && trimmedInput.length > 0 && !inputMatchesExisting
+    allowCreate === true &&
+    trimmedInput.length > 0 &&
+    !isLoading &&
+    !inputMatchesExisting &&
+    !inputHasMatchingOption
 
   const items = React.useMemo(() => {
     const set = new Set<string>(options.map((option) => option.value))
@@ -237,14 +252,10 @@ export function MultiSelect({
       onOpenChange={setOpen}
       disabled={disabled}
     >
-      <ComboboxChips
-        ref={chipsAnchorRef}
-        className={cn('w-full', className)}
-      >
+      <ComboboxChips ref={chipsAnchorRef} className={cn('w-full', className)}>
         <ComboboxValue>
           {(values: string[]) => {
-            const shouldLimit =
-              typeof maxVisibleChips === 'number' && !expanded
+            const shouldLimit = typeof maxVisibleChips === 'number' && !expanded
             const visibleValues = shouldLimit
               ? values.slice(0, maxVisibleChips)
               : values

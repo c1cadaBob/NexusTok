@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { z } from 'zod'
+import {
+  type AdminPermissionMatrix,
+  type PermissionCatalog,
+  normalizeAdminPermissions,
+} from '@/lib/admin-permissions'
 import { quotaUnitsToDollars } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { DEFAULT_GROUP } from '../constants'
 import { type UserFormData, type User } from '../types'
 
@@ -33,6 +39,9 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
+  admin_permissions: z
+    .record(z.string(), z.record(z.string(), z.boolean()))
+    .optional(),
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -49,6 +58,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   quota_dollars: 0,
   group: DEFAULT_GROUP,
   remark: '',
+  admin_permissions: {},
 }
 
 // ============================================================================
@@ -56,11 +66,12 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 // ============================================================================
 
 /**
- * Transform form data to API payload
+ * 将表单值转换为用户管理接口 payload。
  */
 export function transformFormDataToPayload(
   data: UserFormValues,
-  userId?: number
+  userId?: number,
+  catalog?: PermissionCatalog
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -68,11 +79,22 @@ export function transformFormDataToPayload(
     password: data.password || undefined,
   }
 
-  // For create: only send required fields
+  const role = userId === undefined ? data.role || ROLE.USER : (data.role ?? 0)
+
+  // 权限矩阵必须基于后端 catalog 补齐后提交。catalog 不可用时省略该字段，
+  // 后端会保留现有 override，避免前端保存部分矩阵导致权限被意外重置。
+  if (role >= ROLE.ADMIN && catalog) {
+    payload.admin_permissions = normalizeAdminPermissions(
+      data.admin_permissions as AdminPermissionMatrix | undefined,
+      catalog
+    )
+  }
+
+  // 新建用户时只提交创建所需字段，角色只能在创建阶段由后台指定。
   if (userId === undefined) {
-    payload.role = data.role || 1 // Default to common user
+    payload.role = role
   } else {
-    // For update: quota is adjusted atomically via /api/user/manage, not sent here
+    // 编辑用户时额度通过 /api/user/manage 原子调整，不在资料保存接口里写入。
     payload.group = data.group
     payload.remark = data.remark || undefined
     payload.id = userId
@@ -82,7 +104,7 @@ export function transformFormDataToPayload(
 }
 
 /**
- * Transform user data to form defaults
+ * 将用户详情转换为抽屉表单默认值。
  */
 export function transformUserToFormDefaults(user: User): UserFormValues {
   return {
@@ -93,5 +115,6 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: user.group || DEFAULT_GROUP,
     remark: user.remark || '',
+    admin_permissions: user.admin_permissions ?? {},
   }
 }
