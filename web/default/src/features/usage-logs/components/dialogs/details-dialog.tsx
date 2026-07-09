@@ -135,6 +135,16 @@ function formatRatio(ratio: number | undefined): string {
   return ratio.toFixed(4)
 }
 
+function quotaSaturationKindLabel(
+  kind: string | undefined,
+  t: (key: string) => string
+): string {
+  if (kind === 'overflow') return t('Overflow')
+  if (kind === 'underflow') return t('Underflow')
+  if (kind === 'nan') return t('Invalid (NaN)')
+  return kind || '-'
+}
+
 function formatAuditValue(value: unknown): string {
   if (value == null) return '-'
   if (typeof value === 'string') return value
@@ -436,6 +446,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const quotaSaturation = props.isAdmin
+    ? adminInfo?.quota_saturation
+    : undefined
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -655,7 +668,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               )}
             </div>
 
-            {/* Request conversion (admin only, not for refund) */}
+            {/* 请求转换链（仅管理员，退款日志不展示） */}
             {showConversion && (
               <DetailSection label={t('Request Conversion')}>
                 <div className='relative min-w-0'>
@@ -695,7 +708,39 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
-            {/* Reject reason (admin only) */}
+            {/* 额度饱和保护标记（仅管理员） */}
+            {quotaSaturation && (
+              <DetailSection
+                icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+                label={t('Quota clamped')}
+                variant='danger'
+              >
+                <p className='mb-1 text-xs break-words'>
+                  {t('Quota saturation protection triggered')}
+                </p>
+                <DetailRow
+                  label={t('Kind')}
+                  value={quotaSaturationKindLabel(quotaSaturation.kind, t)}
+                />
+                <DetailRow
+                  label={t('Original value')}
+                  value={String(quotaSaturation.original)}
+                  mono
+                />
+                <DetailRow
+                  label={t('Clamped to')}
+                  value={String(quotaSaturation.clamped)}
+                  mono
+                />
+                <DetailRow
+                  label={t('Operation')}
+                  value={quotaSaturation.op}
+                  mono
+                />
+              </DetailSection>
+            )}
+
+            {/* 拒绝原因（仅管理员） */}
             {props.isAdmin && other?.reject_reason && (
               <DetailSection
                 icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
@@ -706,7 +751,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
-            {/* Violation fee info */}
+            {/* 违规费用信息 */}
             {isViolation && other && (
               <DetailSection
                 icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}

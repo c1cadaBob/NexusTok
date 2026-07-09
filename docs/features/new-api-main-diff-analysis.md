@@ -3008,8 +3008,49 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 3. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认页面正常加载。
 4. 在浏览器上下文创建临时渠道和临时 token，再发起不会命中真实上游的非法图片请求，确认请求不再因为新增渠道缓存未刷新而返回 `model_not_found`；随后删除临时 token 和渠道，并确认无残留。
 
+## 本轮实施评审：额度饱和日志前端可观测性
+
+### 需求分析
+
+NexusTok 后端已经把异常额度转换的饱和保护结果写入 `other.admin_info.quota_saturation`，普通用户日志视图会由后端剥离 `admin_info`，管理员日志视图则保留该审计字段。对比 `new-api-main` 后发现，其默认前端会在使用日志表格的详情摘要和详情弹窗中高亮“Quota clamped”，帮助管理员把异常超大倍率、NaN 或 int32 边界钳制事件与对应请求关联起来；当前 NexusTok 默认前端只解析 `admin_info` 的渠道、计费来源、支付和操作审计字段，缺少 `quota_saturation` 类型定义和显式展示。
+
+本轮目标是补齐额度安全闭环的前端可观测性：
+
+1. 在使用日志 `LogOtherData.admin_info` 中声明 `quota_saturation` 结构，匹配后端 `common.QuotaClamp.AuditMap()` 输出。
+2. 管理员查看消费日志时，在表格详情摘要中优先展示危险态“Quota clamped”，让异常请求在列表中可见。
+3. 管理员打开详情弹窗时展示钳制类型、原始值、钳制结果和操作来源；普通用户即使收到异常数据也不展示该审计块。
+4. 补齐 en、zh、fr、ja、ru、vi 翻译，并用现有 i18n 同步脚本校验。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 使用日志类型 | `web/default/src/features/usage-logs/types.ts` | 新增 `quota_saturation` 管理员审计字段类型，不改变 API 结构。 |
+| 使用日志列表 | `web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 管理员消费日志摘要优先显示危险态钳制标记；保留既有违规费、动态计费、缓存、stream 状态等展示。 |
+| 使用日志详情 | `web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx` | 新增管理员可见危险态详情区块，展示钳制字段。 |
+| 前端 i18n | `web/default/src/i18n/locales/*.json` | 新增六语 UI 文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮迁移原因、风险和验收方式。 |
+
+### 风险评估
+
+1. 该字段位于后端已定义的管理员审计命名空间 `admin_info` 下；前端仍同时检查 `props.isAdmin`，即使未来后端脱敏逻辑变化，也不会在非管理员 UI 中展示。
+2. 使用日志列表是高密度表格，新增摘要必须只在异常字段存在时出现，避免影响正常日志行的阅读和排序。
+3. `original` 可能是极大数或 NaN 来源转出的数值，本轮仅以字符串展示，不参与计算和格式化，避免二次溢出或本地化误读。
+4. 新增文案需要覆盖所有默认前端语言；当前环境没有 `bun`，可使用项目现有 `node scripts/sync-i18n.mjs` 和 `tsc -b` 作为替代验证。
+
+### 方案评审
+
+采用最小 UI 接入：复用现有 `DetailSegment.danger`、`DetailSection`、`DetailRow` 和 `AlertTriangle`，不新增组件依赖、不改日志查询 API、不改后端脱敏逻辑。列表层在管理员且存在 `quota_saturation` 时把“Quota clamped”插到详情摘要首位；详情弹窗在请求转换/计费信息之后、拒绝原因之前显示危险态区块。钳制类型映射为 `Overflow`、`Underflow`、`Invalid (NaN)`，未知值按原文展示，保证兼容后续后端扩展。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+2. `cd web/default && node scripts/sync-i18n.mjs` 通过并无缺失 key。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/usage-logs`，确认页面正常加载、控制台无新增错误；若环境中没有真实饱和日志，可在浏览器上下文用临时样例校验新增文案存在于构建资源和 i18n 中。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 额度饱和日志前端可观测性 | `web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 管理员使用日志列表与详情弹窗展示 `other.admin_info.quota_saturation`，补齐钳制类型、原始值、钳制结果和操作来源；新增六语翻译并保持非管理员不可见。 |
 | 2026-07-09 | 渠道新增缓存刷新 | `controller/channel.go`、`controller/channel_add_cache_test.go` | 新增渠道成功后同步刷新分发缓存和代理客户端缓存，避免当前进程仍按旧缓存返回 `model_not_found`；测试覆盖成功新增与校验失败路径。 |
 | 2026-07-09 | OpenAI 图片流式与计费边界 | `dto/openai_image.go`、`relay/helper/valid_request.go`、`relay/channel/openai/relay-openai.go`、`relay/channel/openai/adaptor.go`、`relay/helper/stream_scanner.go` | 原生化 Images `stream` 显式零值、JSON/multipart `n` 上限、multipart body 复读、图片 usage 标准化、SSE/JSON-as-SSE 图片流和 error event 记录；补齐 dto/helper/openai 单元测试。 |
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |

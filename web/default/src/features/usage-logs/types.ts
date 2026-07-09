@@ -111,6 +111,14 @@ export interface LogOtherData {
     admin_id?: number | string
     admin_role?: number | string
     auth_method?: string
+    // 额度饱和保护标记：当计费额度转换触发 int32 边界钳制或 NaN 兜底时写入。
+    // 字段位于 admin_info 下，仅管理员日志视图可见。
+    quota_saturation?: {
+      op: string
+      kind: 'overflow' | 'underflow' | 'nan'
+      original: number
+      clamped: number
+    }
   }
   op?: {
     action?: string
