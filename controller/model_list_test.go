@@ -141,17 +141,23 @@ func withSelfUseModeDisabled(t *testing.T) {
 func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[string]struct{} {
 	t.Helper()
 
-	require.Equal(t, http.StatusOK, recorder.Code)
-	var payload listModelsResponse
-	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
-	require.Equal(t, "list", payload.Object)
-
+	payload := decodeListModelsPayload(t, recorder)
 	ids := make(map[string]struct{}, len(payload.Data))
 	for _, item := range payload.Data {
 		ids[item.Id] = struct{}{}
 	}
 	return ids
+}
+
+func decodeListModelsPayload(t *testing.T, recorder *httptest.ResponseRecorder) listModelsResponse {
+	t.Helper()
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Equal(t, "list", payload.Object)
+	return payload
 }
 
 func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
@@ -247,4 +253,43 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestListModelsUsesPreferredChannelAsOwnedBy(t *testing.T) {
+	originalSelfUseMode := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = true
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = originalSelfUseMode
+	})
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1002,
+		Username: "model-owner-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 11, Type: constant.ChannelTypeOpenAI, Key: "openai-key", Status: common.ChannelStatusEnabled, Name: "openai-channel"},
+		{Id: 12, Type: constant.ChannelTypeCodex, Key: "codex-key", Status: common.ChannelStatusEnabled, Name: "codex-channel"},
+	}).Error)
+	openAIPriority := int64(1)
+	codexPriority := int64(2)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-owned-by-model", ChannelId: 11, Enabled: true, Priority: &openAIPriority, Weight: 100},
+		{Group: "default", Model: "zz-owned-by-model", ChannelId: 12, Enabled: true, Priority: &codexPriority, Weight: 0},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1002)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	payload := decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 1)
+	require.Equal(t, "zz-owned-by-model", payload.Data[0].Id)
+	require.Equal(t, "codex", payload.Data[0].OwnedBy)
 }

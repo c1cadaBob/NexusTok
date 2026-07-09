@@ -19,6 +19,7 @@ package model
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/c1cada/NexusTok/common"
 
@@ -27,10 +28,10 @@ import (
 
 // NameRule 模型名称匹配规则常量
 const (
-	NameRuleExact   = iota // 精确匹配
-	NameRulePrefix         // 前缀匹配
-	NameRuleContains       // 包含匹配
-	NameRuleSuffix         // 后缀匹配
+	NameRuleExact    = iota // 精确匹配
+	NameRulePrefix          // 前缀匹配
+	NameRuleContains        // 包含匹配
+	NameRuleSuffix          // 后缀匹配
 )
 
 // BoundChannel 绑定的渠道信息
@@ -43,18 +44,18 @@ type BoundChannel struct {
 // Model 模型元数据
 // 存储模型的配置信息，包括名称规则、显示名称、绑定渠道等
 type Model struct {
-	Id           int            `json:"id"`                                                        // 模型 ID
+	Id           int            `json:"id"`                                                                                 // 模型 ID
 	ModelName    string         `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"` // 模型名称（唯一索引）
-	Description  string         `json:"description,omitempty" gorm:"type:text"`                    // 模型描述
-	Icon         string         `json:"icon,omitempty" gorm:"type:varchar(128)"`                   // 模型图标
-	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`                   // 模型标签（逗号分隔）
-	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`                          // 供应商 ID
-	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`                      // 支持的端点类型（JSON 格式）
-	Status       int            `json:"status" gorm:"default:1"`                                   // 模型状态（1=启用，2=禁用）
-	SyncOfficial int            `json:"sync_official" gorm:"default:1"`                            // 是否同步官方数据
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`                                // 创建时间
-	UpdatedTime  int64          `json:"updated_time" gorm:"bigint"`                                // 更新时间
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"` // 软删除时间
+	Description  string         `json:"description,omitempty" gorm:"type:text"`                                             // 模型描述
+	Icon         string         `json:"icon,omitempty" gorm:"type:varchar(128)"`                                            // 模型图标
+	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`                                            // 模型标签（逗号分隔）
+	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`                                                   // 供应商 ID
+	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`                                               // 支持的端点类型（JSON 格式）
+	Status       int            `json:"status" gorm:"default:1"`                                                            // 模型状态（1=启用，2=禁用）
+	SyncOfficial int            `json:"sync_official" gorm:"default:1"`                                                     // 是否同步官方数据
+	CreatedTime  int64          `json:"created_time" gorm:"bigint"`                                                         // 创建时间
+	UpdatedTime  int64          `json:"updated_time" gorm:"bigint"`                                                         // 更新时间
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`                      // 软删除时间
 
 	BoundChannels []BoundChannel `json:"bound_channels,omitempty" gorm:"-"` // 绑定的渠道列表（非持久化，运行时附加）
 	EnableGroups  []string       `json:"enable_groups,omitempty" gorm:"-"`  // 启用的分组列表（非持久化，运行时附加）
@@ -209,6 +210,70 @@ func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel
 	}
 	for _, r := range rows {
 		result[r.Model] = append(result[r.Model], BoundChannel{Name: r.Name, Type: r.Type})
+	}
+	return result, nil
+}
+
+// normalizeLookupValues 规范化用于 IN 查询的字符串列表。
+// 该 helper 会去掉首尾空白、跳过空值并按首次出现顺序去重，
+// 避免重复模型名或分组名放大 SQL 参数数量，同时保留调用方的稳定语义。
+func normalizeLookupValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
+// GetPreferredModelOwnerChannelTypes 获取模型在指定分组中的首选渠道类型。
+// 该查询只读取已启用的能力和已启用的渠道，用于 `/v1/models` 的
+// OpenAI 兼容 `owned_by` 字段展示。排序规则与调度预期保持一致：
+// 优先级高者优先，同优先级权重大者优先，最后用 channel_id 升序保证
+// 完全相同配置下结果稳定，避免同一模型的 owner 在列表响应中抖动。
+func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (map[string]int, error) {
+	result := make(map[string]int)
+	modelNames = normalizeLookupValues(modelNames)
+	if len(modelNames) == 0 {
+		return result, nil
+	}
+
+	type row struct {
+		Model       string
+		ChannelType int
+	}
+	var rows []row
+
+	query := DB.Table("abilities").
+		Select("abilities.model as model, channels.type as channel_type").
+		Joins("JOIN channels ON abilities.channel_id = channels.id").
+		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
+		Order("COALESCE(abilities.priority, 0) DESC").
+		Order("abilities.weight DESC").
+		Order("abilities.channel_id ASC")
+
+	groups = normalizeLookupValues(groups)
+	if len(groups) > 0 {
+		query = query.Where("abilities."+commonGroupCol+" IN ?", groups)
+	}
+
+	if err := query.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, item := range rows {
+		if _, exists := result[item.Model]; exists {
+			continue
+		}
+		result[item.Model] = item.ChannelType
 	}
 	return result, nil
 }

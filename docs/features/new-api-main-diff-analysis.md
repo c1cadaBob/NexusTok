@@ -3284,8 +3284,60 @@ new-api-main 在 `/pricing` 与 `/pricing/:modelId` 进入路由前会调用 `ge
 3. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代真实访问：`http://192.168.0.202:3003/` 返回 200，`/api/status` 返回 200 且当前 `HeaderNavModules` 为空字符串，`/pricing` 返回 200，符合默认公开配置。
 4. 通过 `curl` 拉取 `http://192.168.0.202:3003/static/js/index.js`，确认当前 3003 提供的前端 bundle 已刷新并包含 `/api/status`、`requireAuth`、`sign-in` 与 `pricing` 等守卫相关片段；本轮路由行为是客户端跳转，无法用纯 HTML 响应直接观察跳转状态。
 
+## 本轮实施评审：`/v1/models` 动态 `owned_by` 原生化
+
+### 需求分析
+
+new-api-main 在 `/v1/models` 返回 OpenAI 兼容模型列表时，不再只使用内置适配器静态归属或未知模型的 `custom`，而是根据当前用户/Token 实际可用分组里的能力表，选择该模型优先路由到的启用渠道，并把渠道类型转换成 `owned_by`。这能让客户端、SDK、监控和排障工具看到更接近真实调度路径的归属，例如自定义 `gpt-5.4` 如果实际由 Codex 渠道承载，就返回 `owned_by=codex`，而不是笼统的 `custom`。
+
+NexusTok 当前 `/v1/models` 已能按用户组、Token 模型限制和计费配置过滤可见模型，但 `owned_by` 对动态模型仍只回落为 `custom`，对静态模型也不能反映当前分组中实际优先渠道。考虑到 NexusTok 已原生化账号池、渠道账号、SystemTask 和模型元数据同步，模型列表的归属字段也应体现当前平台调度能力，而不是只暴露内置默认值。
+
+本轮目标：
+
+1. 在模型层新增三库兼容的 `GetPreferredModelOwnerChannelTypes(modelNames, groups)`，只读 `abilities` 和 `channels`，按启用状态、渠道状态、优先级、权重和 channel_id 稳定选择每个模型的首选渠道类型。
+2. 在 controller 层新增 `channelOwnerName`、`getPreferredModelOwners` 和 `buildOpenAIModel`，把渠道类型转换成适配器 channel name，并集中构造 OpenAI 模型响应。
+3. 重构 `ListModels` 为“先收集模型名，再统一构造响应”，保持现有分组、`auto` 分组、Token 模型限制、`AcceptUnsetRatioModel` 和 `SupportedEndpointTypes` 语义。
+4. 对 Token 模型限制路径保持兼容：如果测试或特殊调用没有用户分组上下文，仍返回模型列表，只是不做动态 `owned_by` 覆盖，避免比当前行为更严格。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 模型层查询 | `model/model_meta.go` | 新增模型首选渠道类型查询 helper，使用 GORM join 和 `IN ?`，不新增表字段。 |
+| 模型层测试 | `model/model_owner_test.go` | 覆盖优先级、权重、channel_id 稳定排序、分组过滤、禁用能力和禁用渠道。 |
+| 模型列表控制器 | `controller/model.go` | `/v1/models` OpenAI 格式响应按实际可用渠道覆盖 `owned_by`，Claude/Gemini 派生响应继续复用同一可见模型集合。 |
+| 控制器测试 | `controller/model_owned_by_test.go`、`controller/model_list_test.go` | 覆盖 owner name 转换、未知模型回落、分组解析和 `/v1/models` 返回动态 `owned_by`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. `/v1/models` 是 Token 鉴权后的公开兼容接口，新增一次能力表与渠道表查询会增加轻量读负载；查询只按当前响应模型名和分组过滤，不进入 Relay 请求热路径。
+2. `owned_by` 字段会从静态值变为更贴近调度路径的动态值，依赖该字段做展示的客户端会看到更准确的 provider；若无启用渠道或上下文不足，则保留旧值，避免误报。
+3. 查询排序必须和调度语义一致：优先级高者优先，同优先级权重大者优先，再用 channel_id 升序稳定打破完全相同配置，避免同一模型每次列表归属抖动。
+4. 只查询 `channels.status = enabled` 和 `abilities.enabled = true`，不把手动禁用渠道或禁用能力暴露成 owner；这与模型实际可用性一致。
+5. 本轮不改变模型过滤、计费表达式、Token 权限、渠道分发和数据库 schema，因此核心业务风险集中在响应字段和查询性能。
+
+### 方案评审
+
+采用 new-api-main 的已验证方案，但按 NexusTok 当前测试和兼容性收敛：模型层新增 `normalizeLookupValues` 以去空、去重并保留顺序；`GetPreferredModelOwnerChannelTypes` 使用 `DB.Table("abilities")` join `channels`，并复用 `commonGroupCol` 引用保留字列。controller 层先收集 `userModelNames`，再在能确定 `ownerGroups` 时查询动态 owner；构造响应统一走 `buildOpenAIModel`，避免 Token 限制路径和普通分组路径继续复制静态/custom 分支。
+
+验收方式：
+
+1. `go test -count=1 ./model ./controller` 覆盖新增 owner 查询、模型列表响应和现有 controller 逻辑。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/` 并通过浏览器上下文调用 `/v1/models`，确认认证边界和模型列表响应正常；若 MCP Chrome 仍不可用，则用 `curl` 访问主页、`/api/status` 和无 token `/v1/models` 401 作为替代验证，并说明无法直接用浏览器执行带真实 Token 的模型列表调用。
+
+验证记录：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./model` 通过，覆盖 `GetPreferredModelOwnerChannelTypes` 的优先级、权重、稳定排序、分组过滤和禁用状态。
+2. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./controller -run 'Test(ListModels|ChannelOwnerName|BuildOpenAIModel|GetModelListGroups)'` 通过，覆盖本轮 controller helper 和 `/v1/models` 动态 `owned_by` 响应。
+3. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./controller` 首次在沙箱内因存量 `model_sync_test.go` 的 `httptest.NewServer` 无法监听本地端口失败；按权限规则提升后完整 `./controller` 通过。
+4. `git diff --check` 通过，无空白错误。
+5. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代访问热更新站点：`http://192.168.0.202:3003/` 返回 200，`/api/status` 返回 200，无 Token `/v1/models` 返回 401 `Invalid token`，认证边界未放宽。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | `/v1/models` 动态 `owned_by` | `model/model_meta.go`、`controller/model.go`、`model/model_owner_test.go`、`controller/model_*test.go` | OpenAI 兼容模型列表按当前用户/Token 可用分组查询首选启用渠道，并用实际渠道归属覆盖 `owned_by`；未知模型仍回落 `custom`，Token 模型限制路径缺少分组上下文时保持旧兼容行为。 |
 | 2026-07-09 | Pricing 路由最新配置守卫 | `web/default/src/lib/nav-modules.ts`、`web/default/src/routes/pricing/*` | 默认前端 Pricing 列表与详情路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.pricing` 判断关闭跳转首页、登录可见跳转登录，并写回本地 status 缓存；后端 HeaderNavModuleAuth 仍是最终接口边界。 |
 | 2026-07-09 | 登录成功审计日志 | `model/log.go`、`controller/user.go`、`web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 新增 `LogTypeLogin=7` 与成功登录审计记录，登录落点写入登录方式、IP、User-Agent 和结构化 `op`；默认前端 Usage Logs 支持 Login 类型筛选与详情展示，并补齐六语翻译。 |
 | 2026-07-09 | 转换后上游 JSON 请求体存储与 Content-Length | `relay/common/outbound_body.go`、`relay/common/relay_info.go`、`relay/channel/api_request.go`、`relay/*_handler.go` | 新增转换后 JSON body 的 `BodyStorage` 包装，记录最终上游 body 字节数并在通用 HTTP 请求构造层回填 `ContentLength`；主要 JSON 转换 handler 已接入，透传、multipart 和 WebSocket 路径保持原语义。 |

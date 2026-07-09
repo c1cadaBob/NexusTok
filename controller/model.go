@@ -16,6 +16,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -132,9 +133,135 @@ func init() {
 	})
 }
 
-func ListModels(c *gin.Context, modelType int) {
-	userOpenAiModels := make([]dto.OpenAIModels, 0)
+// channelOwnerName 将渠道类型转换为 OpenAI 兼容模型列表中的 owned_by。
+// 优先使用适配器声明的 channel name，保证 Codex、OpenRouter 等扩展渠道
+// 能返回稳定技术标识；无法解析适配器时回退到渠道类型名称的小写形式。
+func channelOwnerName(channelType int) string {
+	apiType, success := common.ChannelType2APIType(channelType)
+	if !success {
+		return strings.ToLower(constant.GetChannelTypeName(channelType))
+	}
+	adaptor := relay.GetAdaptor(apiType)
+	if adaptor == nil {
+		return strings.ToLower(constant.GetChannelTypeName(channelType))
+	}
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType: channelType,
+	}})
+	if owner := strings.TrimSpace(adaptor.GetChannelName()); owner != "" {
+		return owner
+	}
+	return strings.ToLower(constant.GetChannelTypeName(channelType))
+}
 
+// getPreferredModelOwners 查询当前可见模型在指定分组中的首选渠道归属。
+// 查询失败时只记录系统日志并回退到静态 owner，避免模型列表接口因为
+// 展示字段不可用而影响客户端拉取模型清单。
+func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
+	if len(modelNames) == 0 || len(groups) == 0 {
+		return map[string]string{}
+	}
+	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("GetPreferredModelOwnerChannelTypes error: %v", err))
+		return map[string]string{}
+	}
+
+	ownerByChannelType := make(map[int]string)
+	owners := make(map[string]string, len(channelTypes))
+	for modelName, channelType := range channelTypes {
+		owner, ok := ownerByChannelType[channelType]
+		if !ok {
+			owner = channelOwnerName(channelType)
+			ownerByChannelType[channelType] = owner
+		}
+		if owner != "" {
+			owners[modelName] = owner
+		}
+	}
+	return owners
+}
+
+// buildOpenAIModel 统一构造 OpenAI 兼容模型条目。
+// 内置模型先沿用适配器静态元数据，动态模型回退为 custom；
+// 当能力表能确认当前分组的首选渠道时，用实际 owner 覆盖静态值。
+func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
+	var oaiModel dto.OpenAIModels
+	if staticModel, ok := openAIModelsMap[modelName]; ok {
+		oaiModel = staticModel
+	} else {
+		oaiModel = dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: "custom",
+		}
+	}
+	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
+		oaiModel.OwnedBy = owner
+	}
+	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	return oaiModel
+}
+
+type modelListGroups struct {
+	userGroup   string
+	tokenGroup  string
+	ownerGroups []string
+}
+
+// getModelListGroups 解析 `/v1/models` 使用的用户分组与 owner 查询分组。
+// 普通模型列表必须能确定分组，否则无法得到可见模型；Token 模型限制
+// 路径已有显式模型白名单，因此允许缺少分组上下文并只跳过动态 owner 覆盖。
+func getModelListGroups(c *gin.Context, requireGroup bool) (modelListGroups, error) {
+	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" && (tokenGroup == "" || tokenGroup == "auto") {
+		userID := c.GetInt("id")
+		if userID > 0 {
+			var err error
+			userGroup, err = model.GetUserGroup(userID, false)
+			if err != nil && requireGroup {
+				return modelListGroups{}, err
+			}
+		}
+	}
+
+	if tokenGroup == "auto" {
+		if userGroup == "" {
+			if requireGroup {
+				return modelListGroups{}, fmt.Errorf("empty user group")
+			}
+			return modelListGroups{tokenGroup: tokenGroup}, nil
+		}
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: service.GetUserAutoGroup(userGroup),
+		}, nil
+	}
+
+	group := userGroup
+	if tokenGroup != "" {
+		group = tokenGroup
+	}
+	if group == "" {
+		if requireGroup {
+			return modelListGroups{}, fmt.Errorf("empty user group")
+		}
+		return modelListGroups{
+			userGroup:  userGroup,
+			tokenGroup: tokenGroup,
+		}, nil
+	}
+	return modelListGroups{
+		userGroup:   userGroup,
+		tokenGroup:  tokenGroup,
+		ownerGroups: []string{group},
+	}, nil
+}
+
+func ListModels(c *gin.Context, modelType int) {
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -147,6 +274,16 @@ func ListModels(c *gin.Context, modelType int) {
 	}
 
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+	groups, err := getModelListGroups(c, !modelLimitEnable)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "get user group failed",
+		})
+		return
+	}
+
+	userModelNames := make([]string, 0)
 	if modelLimitEnable {
 		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 		var tokenModelLimit map[string]bool
@@ -161,37 +298,12 @@ func ListModels(c *gin.Context, modelType int) {
 					continue
 				}
 			}
-			if oaiModel, ok := openAIModelsMap[allowModel]; ok {
-				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(allowModel)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
-			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
-					Id:                     allowModel,
-					Object:                 "model",
-					Created:                1626777600,
-					OwnedBy:                "custom",
-					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(allowModel),
-				})
-			}
+			userModelNames = append(userModelNames, allowModel)
 		}
 	} else {
-		userId := c.GetInt("id")
-		userGroup, err := model.GetUserGroup(userId, false)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "get user group failed",
-			})
-			return
-		}
-		group := userGroup
-		tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
-		if tokenGroup != "" {
-			group = tokenGroup
-		}
 		var models []string
-		if tokenGroup == "auto" {
-			for _, autoGroup := range service.GetUserAutoGroup(userGroup) {
+		if groups.tokenGroup == "auto" {
+			for _, autoGroup := range groups.ownerGroups {
 				groupModels := model.GetGroupEnabledModels(autoGroup)
 				for _, g := range groupModels {
 					if !common.StringsContains(models, g) {
@@ -200,7 +312,7 @@ func ListModels(c *gin.Context, modelType int) {
 				}
 			}
 		} else {
-			models = model.GetGroupEnabledModels(group)
+			models = model.GetGroupEnabledModels(groups.ownerGroups[0])
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {
@@ -208,19 +320,14 @@ func ListModels(c *gin.Context, modelType int) {
 					continue
 				}
 			}
-			if oaiModel, ok := openAIModelsMap[modelName]; ok {
-				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
-			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
-					Id:                     modelName,
-					Object:                 "model",
-					Created:                1626777600,
-					OwnedBy:                "custom",
-					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(modelName),
-				})
-			}
+			userModelNames = append(userModelNames, modelName)
 		}
+	}
+
+	ownerByModel := getPreferredModelOwners(userModelNames, groups.ownerGroups)
+	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
+	for _, modelName := range userModelNames {
+		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
 	}
 
 	switch modelType {
