@@ -54,6 +54,7 @@ import { parseThinkTags } from '../lib/message-utils'
 import type { Message as MessageType } from '../types'
 import { MessageActions } from './message-actions'
 import { MessageError } from './message-error'
+import { MessageErrorActions } from './message-error-actions'
 
 interface PlaygroundChatProps {
   messages: MessageType[]
@@ -66,6 +67,27 @@ interface PlaygroundChatProps {
   onSaveEdit?: (newContent: string) => void
   onCancelEdit?: (open: boolean) => void
   onSaveEditAndSubmit?: (newContent: string) => void
+}
+
+/**
+ * 从错误 assistant 消息向前查找最近的一条用户消息。
+ *
+ * 错误恢复里的 Edit 应该编辑触发失败的 prompt，而不是编辑 assistant
+ * 错误占位消息本身；按索引倒序查找可以兼容中间插入 system/source 等消息的情况。
+ */
+function getPreviousUserMessage(
+  messages: MessageType[],
+  messageIndex: number
+): MessageType | null {
+  for (let index = messageIndex - 1; index >= 0; index--) {
+    const candidate = messages[index]
+
+    if (candidate?.from === MESSAGE_ROLES.USER) {
+      return candidate
+    }
+  }
+
+  return null
 }
 
 export function PlaygroundChat({
@@ -101,7 +123,7 @@ export function PlaygroundChat({
   )
   return (
     <Conversation>
-      {/* Remove outer padding; apply padding to inner centered container to align with input */}
+      {/* 外层不加 padding，内层居中容器负责和输入框对齐。 */}
       <ConversationContent className='p-0'>
         <div className='mx-auto w-full max-w-4xl px-4 py-4'>
           {messages.map((message, messageIndex) => {
@@ -120,7 +142,7 @@ export function PlaygroundChat({
                     >
                       <div className='w-full min-w-0 flex-1 basis-full py-1'>
                         {isEditing(message.key) ? (
-                          <div className='space-y-2'>
+                          <div className='flex flex-col gap-2'>
                             <Textarea
                               value={editText}
                               onChange={(e) => setEditText(e.target.value)}
@@ -128,7 +150,7 @@ export function PlaygroundChat({
                               rows={8}
                             />
                             <div className='flex gap-2'>
-                              {/* Save & Submit only makes sense for user messages */}
+                              {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
                               {message.from === MESSAGE_ROLES.USER && (
                                 <Button
                                   size='sm'
@@ -175,10 +197,17 @@ export function PlaygroundChat({
                                   !message.isReasoningStreaming) &&
                                 !!version.content
 
-                              // Extract visible content (remove <think> tags for assistant messages)
+                              // assistant 消息会把 <think> 内容放入 reasoning 区域，正文只渲染可见部分。
                               const displayContent = isAssistant
                                 ? parseThinkTags(version.content).visibleContent
                                 : version.content
+                              const previousUserMessage =
+                                message.status === MESSAGE_STATUS.ERROR
+                                  ? getPreviousUserMessage(
+                                      messages,
+                                      messageIndex
+                                    )
+                                  : null
 
                               const actions = (
                                 <MessageActions
@@ -195,7 +224,7 @@ export function PlaygroundChat({
 
                               return (
                                 <>
-                                  {/* Sources */}
+                                  {/* 来源列表保留在消息内容之前，便于用户先判断引用数量。 */}
                                   {hasSources && (
                                     <Sources>
                                       <SourcesTrigger
@@ -215,7 +244,7 @@ export function PlaygroundChat({
                                     </Sources>
                                   )}
 
-                                  {/* Reasoning */}
+                                  {/* 推理内容与正文分离，流式状态继续交给 Reasoning 组件处理。 */}
                                   {showReasoning && (
                                     <Reasoning
                                       defaultOpen={true}
@@ -228,7 +257,7 @@ export function PlaygroundChat({
                                     </Reasoning>
                                   )}
 
-                                  {/* Loader */}
+                                  {/* 没有正文 delta 时显示加载提示，避免空白 assistant 消息让用户误判。 */}
                                   {showLoader && (
                                     <div className='flex items-center gap-2 py-2'>
                                       <Loader />
@@ -238,14 +267,35 @@ export function PlaygroundChat({
                                     </div>
                                   )}
 
-                                  {/* Error or Content */}
+                                  {/* 错误消息使用专门恢复动作，普通消息继续使用通用动作组。 */}
                                   {message.status === 'error' ? (
                                     <>
                                       <MessageError
                                         message={message}
                                         className='mb-2'
                                       />
-                                      {actions}
+                                      <MessageErrorActions
+                                        disabled={isGenerating}
+                                        onRetry={
+                                          onRegenerateMessage
+                                            ? () =>
+                                                onRegenerateMessage(message)
+                                            : undefined
+                                        }
+                                        onEditPrompt={
+                                          onEditMessage && previousUserMessage
+                                            ? () =>
+                                                onEditMessage(
+                                                  previousUserMessage
+                                                )
+                                            : undefined
+                                        }
+                                        onDelete={
+                                          onDeleteMessage
+                                            ? () => onDeleteMessage(message)
+                                            : undefined
+                                        }
+                                      />
                                     </>
                                   ) : (
                                     showMessageContent && (
@@ -279,7 +329,7 @@ export function PlaygroundChat({
                   ))}
                 </BranchMessages>
 
-                {/* Branch selector for multiple versions */}
+                {/* 多版本消息仍保留分支切换，不参与本轮错误恢复动作。 */}
                 {versions.length > 1 && (
                   <BranchSelector className='px-0' from={message.from}>
                     <BranchPrevious />

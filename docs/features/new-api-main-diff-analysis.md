@@ -3791,8 +3791,62 @@ new-api-main 的 Playground 将流式响应解析、SSE readyState 错误判断�
 7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status`、`/playground` 和 `/system-settings/billing/model-pricing` 均返回 `HTTP/1.1 200 OK`。
 8. 容器 `nexustok-api-hot` 日志显示热更新已发布前端 dist、重新构建并重启后端；从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9979.js`，确认线上静态资源包含 `An unknown error occurred` 和 `/system-settings/billing/model-pricing` 等本轮可观察特征。生产构建会压缩函数名，因此不依赖 helper 函数名作为线上特征。
 
+## 本轮实施评审：Playground 错误消息动作原生化
+
+### 需求分析
+
+new-api-main 的 Playground 在 assistant 消息失败时，会在错误卡片下方提供专门的 `Retry`、`Edit` 和 `Delete` 动作。这个设计把“重试失败请求”“回到上一条用户 prompt 修改后再发”“清理错误消息”三种恢复路径直接放在错误现场，用户不需要先理解普通消息动作对错误消息的含义。NexusTok 当前错误消息仍复用普通 `MessageActions`，可以删除错误消息，也可能对空内容 assistant 消息隐藏复制/编辑等动作，但缺少面向失败态的“编辑上一条 user prompt”入口，错误恢复链路不够直接。
+
+本轮目标是吸收 new-api-main 的低风险交互优势，但保持 NexusTok 现有 Playground 结构：
+
+1. 新增默认前端本地 `MessageErrorActions`，只暴露 `Retry`、`Edit`、`Delete` 三个错误恢复动作。
+2. 错误消息的 `Retry` 继续调用现有 `onRegenerateMessage(errorMessage)`，不改变请求 payload、消息状态机和 SSE 生命周期。
+3. 错误消息的 `Edit` 指向该错误消息之前最近的一条 user 消息，让用户直接修改导致失败的 prompt；没有可编辑 user 消息时隐藏该动作。
+4. 错误消息的 `Delete` 继续调用现有 `onDeleteMessage(errorMessage)`，不新增确认弹窗，不修改删除语义。
+5. 不迁移 new-api-main 的完整 message 目录、源码预览、移动端动作菜单、历史消息裁剪和本地存储 schema，避免把一个恢复按钮切片扩大成 Playground 重构。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 错误动作组件 | `web/default/src/features/playground/components/message-error-actions.tsx` | 新增错误消息专用按钮组，复用当前 `MessageActionButton` 和已有 `Retry/Edit/Delete` i18n key。 |
+| 消息渲染 | `web/default/src/features/playground/components/playground-chat.tsx` | 错误消息分支改用 `MessageErrorActions`；新增查找上一条 user 消息的轻量 helper；顺手把触碰到的旧 `space-y-*` 编辑布局改为 `flex/gap`。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 已有 `Retry`、`Edit`、`Delete` 翻译；本轮仅运行同步脚本确认无缺失。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 本轮只改默认前端 Playground 的错误消息 UI，不触碰后端 Relay、计费、权限、数据库、模型请求 DTO 和流式解析工具。
+2. `Retry` 复用现有 regenerate 回调，风险集中在按钮出现时机；禁用态跟随 `isGenerating`，避免生成中重复发起恢复动作。
+3. `Edit` 改为编辑上一条 user 消息，而不是编辑错误 assistant 消息本身，这是 new-api-main 的关键体验差异；实现时必须从当前完整 messages 数组按索引向前查找，不能假定错误消息一定紧跟 user 消息。
+4. 错误分支不再展示普通 `MessageActions`，避免同一错误卡片同时出现两套删除/编辑入口；普通完成消息、流式消息和用户消息动作不变。
+5. 本轮不新增翻译 key，但新增 `t()` 调用后仍需跑 `bun run i18n:sync` 和定向 ESLint，确认所有 locale key 已覆盖。
+
+### 方案评审
+
+采用“专用错误动作组件 + 本地上一条 user helper”的最小原生化方案：`MessageErrorActions` 放在当前 `components/` 目录，与现有 `MessageActions` 并列；按钮继续使用 Playground 已封装的 `MessageActionButton`，保持尺寸、tooltip、destructive 样式和现有动作体系一致。`playground-chat.tsx` 在 `message.status === 'error'` 分支中计算 `previousUserMessage`，只把错误恢复动作传给错误卡片，不改普通消息内容渲染。设计方向延续当前默认前端的工具台式紧凑布局，使用已有 icon button 和 tooltip，不新增卡片、说明文案或营销式提示。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync` 确认 `Retry/Edit/Delete` 在六语 locale 中无缺失并保持文件顺序。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/message-error-actions.tsx src/features/playground/components/playground-chat.tsx` 定向检查本轮文件。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖新增组件 props、上一条 user helper 和 Playground 消息类型。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 chunk 分包。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查页面与控制台；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 确认 `Retry` 错误动作相关代码已热更新。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过，`Retry`、`Edit`、`Delete` 六语 locale 已存在，未产生额外翻译文件变更。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/message-error-actions.tsx src/features/playground/components/playground-chat.tsx` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增错误动作组件、上一条 user 消息查找 helper 和 Playground 消息回调类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，确认生产构建和 Playground lazy chunk 正常生成；`git diff --check` 通过。
+5. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+6. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
+7. 从 3003 拉取 `/static/js/async/3786.js`，确认线上 chunk 包含 `onEditPrompt`、`onRetry`、`Retry` 和 `flex flex-wrap items-center gap-0.5 pt-2` 等本轮错误动作特征；线上 chunk 与本地 `web/default/dist/static/js/async/3786.js` 完全一致。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 错误消息动作 | `web/default/src/features/playground/components/{message-error-actions.tsx,playground-chat.tsx}` | 原生化 new-api-main 的失败态恢复入口，错误 assistant 消息下方显示专用 Retry/Edit/Delete 动作；Retry 复用 regenerate，Edit 定位到上一条 user prompt，Delete 清理错误消息，普通消息动作和请求协议保持不变。 |
 | 2026-07-09 | Playground 流式错误处理底座 | `web/default/src/features/playground/lib/{stream-utils.ts,request-error-utils.ts,index.ts}`、`web/default/src/features/playground/hooks/{use-stream-request.ts,use-chat-handler.ts}`、`web/default/src/features/playground/components/message-error.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground stream/request error 工具拆分，SSE 连接状态改为响应式 `isStreaming`，新请求前关闭旧流，统一解析流式和非流式错误；模型价格错误设置入口改向默认前端模型价格页，并补齐错误 fallback 六语翻译。 |
 | 2026-07-09 | Playground AI 响应受控渲染 | `web/default/src/components/ai-elements/{response.tsx,response-content.ts,response-types.ts,response-node-guards.ts,response-renderer*.tsx}`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-chat.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 AST Response renderer，移除直接 `streamdown`，由 `stream-markdown-parser` 解析并本地受控渲染表格、脚注、图片、alert、details、checkbox 和代码块；HTML 默认文本化、图片 URL 过滤、超过 20,000 字符纯文本降级，Playground streaming 消息按 `final` 状态解析。 |
 | 2026-07-09 | 默认前端安全富文本渲染 | `web/default/src/components/html-content.tsx`、`web/default/src/components/rich-content.tsx`、`web/default/src/components/ui/markdown.tsx`、`web/default/src/lib/content-format.ts`、`web/default/src/features/home/index.tsx`、`web/default/src/features/about/index.tsx`、`web/default/src/features/legal/legal-document.tsx`、`web/default/src/components/notification-dialog.tsx`、`web/default/src/features/dashboard/components/overview/announcement-detail-dialog.tsx`、`web/default/src/features/dashboard/components/overview/faq-panel.tsx`、`web/default/src/components/layout/components/footer.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 `HtmlContent`/`RichContent` 安全渲染能力，Markdown 移除 raw HTML 执行；首页、About、Legal、通知、公告、FAQ 和自定义页脚 HTML 统一进入 DOMPurify 清洗链路，完整 HTML 页面使用 shadow root 隔离，同时移除源码不再使用的直接 `rehype-raw` 依赖。 |
