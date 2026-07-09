@@ -4705,8 +4705,66 @@ new-api-main 的 Playground 消息编辑器相比 NexusTok 当前实现有四类
 9. 线上 `/static/js/async/6675.js` 已包含 `You have unsaved changes. Are you sure you want to leave?`、`Unsaved changes`、`No changes`、`Save & Submit`、`Reset`、`group-[.is-assistant]:max-w-[78ch]` 和 `group-[.is-user]:max-w-[85%]` 特征，确认 3003 页面资源已加载本轮编辑器安全状态和宽度样式。
 10. 本轮复用已有六语 i18n key，没有新增 locale 文案；线上入口、CSS 和 Playground chunk 均已与本地构建一致，无需重启容器。
 
+## 本轮实施评审：Playground CodeMirror 编辑器底座原生化
+
+### 需求分析
+
+new-api-main 的 Playground 消息编辑器不只是普通多行输入框，而是复用公共 `CodeBlockEditor`，基于 CodeMirror 提供 Markdown 编辑、行号、键盘事件接入、固定行高和代码块式 frame。这对于长 prompt、Markdown、工具调用 JSON 和 assistant 原始响应修订都更接近“代码/结构化文本编辑器”，也是 new-api-main 在 Rich Content / Playground 编辑体验上的明确优势。NexusTok 当前已经完成编辑器误取消保护、重置动作和宽度对齐，但仍使用 `Textarea`，缺少 CodeMirror 的行级编辑体验。
+
+本轮目标是把 CodeMirror 编辑器作为 NexusTok 原生公共能力引入，同时控制公共代码块展示链路的风险：
+
+1. 在 `web/default/src/components/ai-elements/code-block.tsx` 中新增 `CodeBlockEditor`、`CodeMirrorCodeView` 和必要的 CodeMirror helper，供编辑场景使用。
+2. 保留现有只读 `CodeBlock` 的 Shiki 高亮渲染、copy 入口和调用 API，不把 pricing、AI response、tool output 等所有代码块展示一次性迁移到 CodeMirror。
+3. 为 `web/default` 新增 CodeMirror 依赖：`@codemirror/lang-markdown`、`@codemirror/language`、`@codemirror/state`、`@codemirror/view` 和 `@lezer/highlight`。
+4. `PlaygroundMessageEditor` 改为使用 `CodeBlockEditor`，保留上一轮已落地的未保存确认、Reset、图标动作、Save & Submit 和宽度 helper。
+5. 补充轻量纯函数/样式测试继续锁住编辑状态和宽度；CodeMirror DOM 行为主要通过 TypeScript、生产构建和 3003 资源验证确认。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 公共编辑器底座 | `web/default/src/components/ai-elements/code-block.tsx` | 新增 CodeMirror 编辑器能力；只读 `CodeBlock` 保持 Shiki 实现和现有 props，不迁移公共展示链路。 |
+| Playground 编辑器 | `web/default/src/features/playground/components/playground-message-editor.tsx` | 从 `Textarea` 切换为 `CodeBlockEditor`，复用现有动作、确认和宽度状态。 |
+| 前端依赖 | `web/default/package.json`、`web/default/bun.lock` | 新增 CodeMirror 相关依赖，用 Bun 更新 lockfile。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. `code-block.tsx` 是 AI response、pricing API 示例和 tool output 的公共组件；本轮只新增 `CodeBlockEditor`，不改变现有 `CodeBlock` 渲染路径，降低跨页面回归风险。
+2. 新增 CodeMirror 依赖会增加前端包体和 Playground 相关 chunk 体积；本轮通过生产构建观察 chunk 变化，并只在编辑器路径引用，避免影响不进入 Playground 编辑态的核心 API/计费/管理流程。
+3. CodeMirror 通过 `EditorView` 管理 DOM，必须在组件卸载时销毁；本轮实现需要明确 `destroy()`，并在外部 value 变化时做受控同步，避免内存泄漏和重置动作失效。
+4. CodeMirror 的 `keydown` 事件类型为 `globalThis.KeyboardEvent`，与 React `KeyboardEvent` 不同；`PlaygroundMessageEditor` 的快捷键处理需要改用浏览器事件类型，保持 Escape 与 Ctrl/⌘+Enter 语义不变。
+5. 本轮不新增 UI 文案，复用 `Edit`、`Unsaved changes`、`No changes`、`Save`、`Save & Submit`、`Reset`、`Cancel` 等已有六语 key；不触碰后端、数据库、权限、计费和 localStorage schema。
+
+### 方案评审
+
+采用“公共编辑器新增、只读展示不迁移”的方案：从 new-api-main 吸收 CodeMirror 编辑器的核心结构，但保持 NexusTok 当前 Shiki `CodeBlock` 作为只读代码展示实现。`CodeMirrorCodeView` 负责创建、销毁和同步 `EditorView`；`CodeBlockEditor` 负责 frame、toolbar actions 与受控 value。`PlaygroundMessageEditor` 只替换输入控件，上一轮的误取消保护、Reset、本地状态提示和保存回调全部保留。这样能把 new-api-main 的结构化编辑优势真正转为 NexusTok 原生能力，同时把跨页面代码块展示升级留给后续单独评审。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-editor-utils.test.ts src/features/playground/lib/message-styles.test.ts src/features/playground/lib/conversation-message-utils.test.ts`，确认编辑状态、宽度和保存数组语义不变。
+2. 针对 `src/components/ai-elements/code-block.tsx`、`playground-message-editor.tsx` 和相关测试运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b`，确认 CodeMirror 类型、浏览器事件类型和受控 editor 同步类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build`，确认生产构建与新增依赖 chunk 通过。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证编辑器加载、输入、Reset、Cancel 确认和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物和 CodeMirror 特征。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-editor-utils.test.ts src/features/playground/lib/message-styles.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 已通过，17 个 Playground 编辑/样式/消息数组测试全部通过。
+2. 定向 ESLint 已通过：`src/components/ai-elements/code-block.tsx`、`src/features/playground/components/playground-message-editor.tsx`、`message-editor-utils.test.ts`、`message-styles.ts`、`message-styles.test.ts` 均无报错。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 已通过，CodeMirror 受控同步、浏览器键盘事件和公共编辑器导出类型无类型错误。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 已通过；生产构建总量约 `24246.5 kB / 9209.8 kB gzip`，`async/6675.js` 约 `79.1 kB / 23.5 kB gzip`，`async/5099.js` 约 `85.2 kB / 24.0 kB gzip`，`async/7217.js` 约 `612.3 kB / 206.4 kB gzip`。
+5. `git diff --check` 已通过，无补丁空白问题。
+6. 实现过程中发现若把 `onKeyDown` 直接放入 CodeMirror 扩展依赖，React 重渲染会导致 `EditorView` 在输入时反复重建；本轮已改为对 `EditorView.dom` 单独挂载原生 `keydown` 监听，保持输入、Reset、切换消息和快捷键语义稳定。
+7. 已尝试 MCP Chrome DevTools 验证，但当前环境无法连接 Chrome：`Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮按项目约定执行替代验证。
+8. 使用 `curl --noproxy '*'` 真实访问 `http://192.168.0.202:3003/`、`/playground`、`/api/status` 均返回 `200`，确认 3003 页面和接口可访问。
+9. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/5099.js`、`/static/js/async/6675.js`、`/static/js/async/7217.js`，与本地 `web/default/dist` 逐字 `cmp` 一致；核心 sha256 分别为 `e72d29e4663c70716e8b74b3a3d1b6917ee399918f681be2aabe5554410bfce4`（index.js）、`9e3e63369896ea21103f6dc231a576871579eda776c22c7fdf5be24b9892a5d9`（index.css）、`8b37e747f92eaaa64a61aa692ec420d11f6c1c7e3fcdf74fb9559aad62c557a3`（5099.js）、`8613b3913b0e129683f7b2074133cc61d251ae2402c4e6691359a883f9fb7e88`（6675.js）、`88150dee012e8d947c80fc06a9513fc228da23f95ae79ee57b6e84cd3d4a1a15`（7217.js）。
+10. 线上 chunk 已包含 `cm-editor`、`cm-content`、`addEventListener("keydown"`、`Unsaved changes`、`No changes`、`Save & Submit`、`Reset`、`group-[.is-assistant]:max-w-[78ch]` 等特征，确认 3003 页面资源已加载本轮 CodeMirror 编辑器底座、编辑状态和宽度样式；本轮未新增 UI 文案，无需更新 locale。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground CodeMirror 编辑器底座 | `web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 CodeMirror 结构化编辑能力；新增公共 `CodeBlockEditor`，Playground 消息编辑器切换为 Markdown/行号编辑器，并把键盘事件与 `EditorView` 生命周期解耦，保留 Shiki 只读代码块展示和现有保存/确认/Reset 语义。 |
 | 2026-07-09 | Playground 消息编辑器状态安全 | `web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/src/features/playground/lib/{message-editor-utils.test.ts,message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的编辑器误取消保护、重置动作、图标动作和编辑态宽度对齐；继续使用现有 `Textarea`，不引入 CodeMirror 依赖，保存、Save & Submit、消息数组和请求协议保持不变。 |
 | 2026-07-09 | Playground 消息阅读样式 | `web/default/src/features/playground/lib/{message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的消息阅读样式优势；assistant 正文限制为 `78ch` 文档列并使用当前 `font-sans` 字体轴，user 消息切换为语义 muted 边框气泡，移除旧 `font-serif`、无限宽和手写深色背景覆盖，消息协议、存储和请求链路不变。 |
 | 2026-07-09 | Playground 错误状态 helper | `web/default/src/features/playground/components/message-error.tsx`、`web/default/src/features/playground/lib/{message-error-utils.ts,message-error-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message error state helper；错误分类、模型价格错误、管理员设置入口可见性和 fallback 文案进入可测试纯函数，`MessageError` 只保留 Alert/Button 渲染，现有错误动作位置、请求链路和 i18n key 不变。 |

@@ -16,18 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import type { KeyboardEvent } from 'react'
 import { Check, RotateCcw, Send, X, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { CodeBlockEditor } from '@/components/ai-elements/code-block'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 import { getMessageEditorState, getMessageEditorStyles } from '../lib'
 import type { Message } from '../types'
 
@@ -108,7 +106,7 @@ export function PlaygroundMessageEditor({
     onCancelEdit?.(false)
   }
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: globalThis.KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault()
       handleCancel()
@@ -127,54 +125,56 @@ export function PlaygroundMessageEditor({
     }
   }
 
-  return (
-    <div className={cn('flex flex-col gap-2', getMessageEditorStyles())}>
-      <Textarea
-        className='min-h-32 font-mono text-sm leading-6'
-        aria-label={t('Edit')}
-        onChange={(event) => onEditTextChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        rows={8}
-        value={editText}
-      />
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground text-xs'>
-          {hasChanged ? t('Unsaved changes') : t('No changes')}
-        </span>
-        <TooltipProvider delay={300}>
-          <div className='flex items-center gap-1'>
-            {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
-            {showSaveAndSubmit && (
-              <EditorIconButton
-                disabled={!canSave}
-                icon={Send}
-                label={t('Save & Submit')}
-                onClick={() => onSaveEditAndSubmit?.(editText)}
-                variant='default'
-              />
-            )}
-            <EditorIconButton
-              disabled={!canSave}
-              icon={Check}
-              label={t('Save')}
-              onClick={() => onSaveEdit?.(editText)}
-              variant={showSaveAndSubmit ? 'ghost' : 'default'}
-            />
-            {hasChanged && (
-              <EditorIconButton
-                icon={RotateCcw}
-                label={t('Reset')}
-                onClick={() => onEditTextChange(originalText)}
-              />
-            )}
-            <EditorIconButton
-              icon={X}
-              label={t('Cancel')}
-              onClick={handleCancel}
-            />
-          </div>
-        </TooltipProvider>
+  const editorActions = (
+    <TooltipProvider delay={300}>
+      <div className='flex items-center gap-1'>
+        {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
+        {showSaveAndSubmit && (
+          <EditorIconButton
+            disabled={!canSave}
+            icon={Send}
+            label={t('Save & Submit')}
+            onClick={() => onSaveEditAndSubmit?.(editText)}
+            variant='default'
+          />
+        )}
+        <EditorIconButton
+          disabled={!canSave}
+          icon={Check}
+          label={t('Save')}
+          onClick={() => onSaveEdit?.(editText)}
+          variant={showSaveAndSubmit ? 'ghost' : 'default'}
+        />
+        {hasChanged && (
+          <EditorIconButton
+            icon={RotateCcw}
+            label={t('Reset')}
+            onClick={() => onEditTextChange(originalText)}
+          />
+        )}
+        <EditorIconButton icon={X} label={t('Cancel')} onClick={handleCancel} />
       </div>
-    </div>
+    </TooltipProvider>
+  )
+
+  return (
+    <CodeBlockEditor
+      actions={editorActions}
+      ariaLabel={t('Edit')}
+      className={getMessageEditorStyles()}
+      language='markdown'
+      onChange={onEditTextChange}
+      onKeyDown={handleKeyDown}
+      rows={8}
+      title={
+        <span className='inline-flex items-center gap-2'>
+          <span>{t('Edit')}</span>
+          <span className='text-muted-foreground/80 normal-case'>
+            {hasChanged ? t('Unsaved changes') : t('No changes')}
+          </span>
+        </span>
+      }
+      value={editText}
+    />
   )
 }
