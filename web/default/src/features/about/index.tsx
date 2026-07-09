@@ -19,23 +19,11 @@ For commercial licensing, please contact support@c1cada.dev
 import { useQuery } from '@tanstack/react-query'
 import { Construction } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Markdown } from '@/components/ui/markdown'
+import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
+import { RichContent } from '@/components/rich-content'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PublicLayout } from '@/components/layout'
 import { getAboutContent } from './api'
-
-function isValidUrl(value: string) {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-function isLikelyHtml(value: string) {
-  return /<\/?[a-z][\s\S]*>/i.test(value)
-}
 
 function EmptyAboutState() {
   const { t } = useTranslation()
@@ -131,7 +119,7 @@ export function About() {
 
   const rawContent = data?.data?.trim() ?? ''
   const hasContent = rawContent.length > 0
-  const isUrl = hasContent && isValidUrl(rawContent)
+  const isUrl = hasContent && isHttpUrl(rawContent)
   const isHtml = hasContent && !isUrl && isLikelyHtml(rawContent)
 
   if (isLoading) {
@@ -170,16 +158,12 @@ export function About() {
   return (
     <PublicLayout>
       <div className='mx-auto max-w-6xl px-4 py-8'>
-        {isHtml ? (
-          <div
-            className='prose prose-neutral dark:prose-invert max-w-none'
-            dangerouslySetInnerHTML={{ __html: rawContent }}
-          />
-        ) : (
-          <Markdown className='prose-neutral dark:prose-invert max-w-none'>
-            {rawContent}
-          </Markdown>
-        )}
+        <RichContent
+          content={rawContent}
+          mode={isHtml ? 'html' : 'markdown'}
+          htmlVariant='isolated'
+          className='prose-neutral dark:prose-invert max-w-none'
+        />
       </div>
     </PublicLayout>
   )

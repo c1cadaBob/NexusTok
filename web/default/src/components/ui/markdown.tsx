@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import ReactMarkdown from 'react-markdown'
-import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 
 interface MarkdownProps {
   children: string
   className?: string
+  breaks?: boolean
 }
 
-export function Markdown({ children, className }: MarkdownProps) {
+export function Markdown({ children, className, breaks = false }: MarkdownProps) {
   return (
     <div
       className={cn(
@@ -44,14 +44,14 @@ export function Markdown({ children, className }: MarkdownProps) {
         'prose-img:rounded-lg prose-img:shadow-sm',
         '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
         '[overflow-wrap:anywhere] break-words',
+        // breaks 只在段落层保留普通换行，不启用原始 HTML 解析。
+        breaks && 'prose-p:whitespace-pre-line',
         className
       )}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw]}
         components={{
-          // 自定义组件渲染（可选）
           a: ({ node, ...props }) => (
             <a {...props} target='_blank' rel='noopener noreferrer' />
           ),

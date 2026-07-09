@@ -21,6 +21,7 @@ import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_LOGO } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { HtmlContent } from '@/components/html-content'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
 interface FooterLink {
@@ -179,9 +180,9 @@ export function Footer(props: FooterProps) {
       >
         <div className='mx-auto w-full max-w-6xl px-6 py-5'>
           <div className='bg-muted/20 border-border/50 flex flex-col items-center justify-between gap-4 rounded-2xl border px-4 py-4 backdrop-blur-sm sm:flex-row sm:px-5'>
-            <div
+            <HtmlContent
+              content={footerHtml}
               className='custom-footer text-muted-foreground min-w-0 text-center text-sm sm:text-left'
-              dangerouslySetInnerHTML={{ __html: footerHtml }}
             />
             <div className='border-border/60 w-full border-t pt-4 sm:w-auto sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5'>
               <ProjectAttribution currentYear={currentYear} />

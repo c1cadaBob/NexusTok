@@ -17,7 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useTranslation } from 'react-i18next'
+import { isLikelyHtml } from '@/lib/content-format'
 import { formatDateTimeObject } from '@/lib/time'
+import { RichContent } from '@/components/rich-content'
 import {
   Dialog,
   DialogContent,
@@ -25,7 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface AnnouncementDetailModalProps {
@@ -63,7 +64,13 @@ export function AnnouncementDetailModal({
             {announcement?.content && (
               <div>
                 <h4 className='mb-2 font-medium'>{t('Content')}</h4>
-                <Markdown>{announcement.content}</Markdown>
+                <RichContent
+                  content={announcement.content}
+                  mode={
+                    isLikelyHtml(announcement.content) ? 'html' : 'markdown'
+                  }
+                  breaks
+                />
               </div>
             )}
             {announcement?.extra && (
@@ -71,9 +78,12 @@ export function AnnouncementDetailModal({
                 <h4 className='mb-2 font-medium'>
                   {t('Additional Information')}
                 </h4>
-                <Markdown className='text-muted-foreground'>
-                  {announcement.extra}
-                </Markdown>
+                <RichContent
+                  content={announcement.extra}
+                  mode={isLikelyHtml(announcement.extra) ? 'html' : 'markdown'}
+                  breaks
+                  className='text-muted-foreground'
+                />
               </div>
             )}
           </div>

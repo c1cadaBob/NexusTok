@@ -18,13 +18,14 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { HelpCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { isLikelyHtml } from '@/lib/content-format'
+import { RichContent } from '@/components/rich-content'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useFAQ } from '@/features/dashboard/hooks/use-status-data'
 import type { FAQItem } from '@/features/dashboard/types'
@@ -61,14 +62,18 @@ export function FAQPanel() {
                 className='border-border/60'
               >
                 <AccordionTrigger className='text-start hover:no-underline'>
-                  <Markdown className='text-sm leading-relaxed font-semibold'>
-                    {item.question}
-                  </Markdown>
+                  <RichContent
+                    content={item.question}
+                    mode={isLikelyHtml(item.question) ? 'html' : 'markdown'}
+                    className='text-sm leading-relaxed font-semibold'
+                  />
                 </AccordionTrigger>
                 <AccordionContent>
-                  <Markdown className='text-muted-foreground/60 text-sm'>
-                    {item.answer}
-                  </Markdown>
+                  <RichContent
+                    content={item.answer}
+                    mode={isLikelyHtml(item.answer) ? 'html' : 'markdown'}
+                    className='text-muted-foreground/60 text-sm'
+                  />
                 </AccordionContent>
               </AccordionItem>
             )

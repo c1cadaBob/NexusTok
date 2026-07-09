@@ -3622,8 +3622,64 @@ new-api-main 同时修复了 `/v1/video/generations` 直连 JSON 请求中只传
 5. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
 6. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮任务校验和计费倍率边界改动未影响 3003 页面与状态接口可用性。
 
+## 本轮实施评审：默认前端安全富文本渲染
+
+### 需求分析
+
+new-api-main 默认前端提供了 `HtmlContent`、`RichContent` 和基于 DOMPurify 的 Markdown/HTML 安全渲染路径，并在首页自定义内容、About/Legal 文档、通知公告等入口统一消费。NexusTok 当前 `Markdown` 组件启用了 `rehypeRaw`，公告、FAQ、通知、首页自定义内容、About/Legal 等管理员可配置或远端内容会允许原始 HTML 进入渲染链；About/Legal 还存在直接 `dangerouslySetInnerHTML`。这些入口都属于管理员或远端可控内容，一旦配置被误填、导入外部 HTML 或遇到恶意链接，浏览器侧风险会被放大。
+
+本轮目标是把 new-api-main 的安全富文本优势转成 NexusTok 原生前端基础能力：
+
+1. 新增 `HtmlContent`，所有显式 HTML 先经 DOMPurify 清洗；`target="_blank"` 链接强制补 `noopener noreferrer`，iframe 清除 `srcdoc` 并加 sandbox/referrerpolicy。
+2. 新增 `RichContent` 统一 Markdown/HTML 入口；Markdown 默认不再执行原始 HTML，HTML 只在调用方显式选择 `mode="html"` 时渲染。
+3. 新增 `content-format` helper，统一判断 HTTP(S) URL 与疑似 HTML，替换 About/Legal/Home 中重复且语义不一致的本地判断。
+4. 先接入公开内容、通知公告和 Dashboard 公告详情等高风险入口；不在本轮重构 Playground response renderer，以免同时改变模型输出渲染和消息流行为。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 富文本基础组件 | `web/default/src/components/html-content.tsx`、`web/default/src/components/rich-content.tsx`、`web/default/src/components/ui/markdown.tsx` | 新增 DOMPurify HTML 清洗入口；Markdown 移除 `rehypeRaw` 原始 HTML 执行；保留现有 prose 样式。 |
+| 内容格式 helper | `web/default/src/lib/content-format.ts` | 统一 URL/HTML 判定，避免页面各自实现。 |
+| 公开内容入口 | `web/default/src/features/home/index.tsx`、`web/default/src/features/about/index.tsx`、`web/default/src/features/legal/legal-document.tsx` | URL 继续 iframe/外链；Markdown 和 HTML 改走 `RichContent`。 |
+| 通知与公告入口 | `web/default/src/components/notification-dialog.tsx`、`web/default/src/features/dashboard/components/overview/announcement-detail-dialog.tsx`、`web/default/src/features/dashboard/components/overview/faq-panel.tsx` | 通知、公告、FAQ 内容改走 `RichContent`；Markdown 不执行 raw HTML，疑似 HTML 先经 DOMPurify 清洗再 inline 渲染。 |
+| 页脚 HTML 入口 | `web/default/src/components/layout/components/footer.tsx` | 自定义页脚 HTML 从直接 `dangerouslySetInnerHTML` 改为 `HtmlContent`，保留现有布局并补齐清洗边界。 |
+| 依赖 | `web/default/package.json`、`web/default/bun.lock` | 将当前锁文件中已有的 DOMPurify 提升为直接依赖，并移除不再被源码使用的直接 `rehype-raw` 依赖，明确安全渲染组件的依赖来源。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 这是默认前端渲染层改动，不触碰后端 API、数据库、计费和权限边界。
+2. Markdown 不再执行原始 HTML，可能改变少量把 HTML 混在 Markdown 中的旧配置显示方式；显式 HTML 内容会通过 `RichContent mode="html"` 渲染并被清洗，常见 About/Legal/Home HTML 页面仍可展示。
+3. DOMPurify 会移除危险标签和属性；如果管理员配置依赖脚本、`srcdoc` 或不安全事件属性，本轮会主动阻断，这是预期安全边界。
+4. isolated HTML 会复制当前样式表到 shadow root，可能增加少量渲染成本；本轮只在 About/Legal/Home 等完整内容区域使用 isolated，通知/FAQ 保持 Markdown。
+5. 遵循现有 Swiss 运维界面，不新增可见文案、不引入营销式说明，也不改信息层级。
+
+### 方案评审
+
+采用小步安全基础设施方案：直接吸收 new-api-main 的 `HtmlContent`/`RichContent` 思路，但保留 NexusTok 当前 `Markdown` 视觉 class 和 Base UI 组件体系。所有 HTML 必须显式通过 `RichContent mode="html"` 或 `HtmlContent` 进入 DOMPurify；普通 Markdown 继续用 ReactMarkdown + GFM，但不启用 `rehypeRaw`。About/Legal/Home 通过 `isHttpUrl`、`isLikelyHtml` 选择 URL、HTML 或 Markdown，完整页面 HTML 使用 isolated shadow root；通知、公告、FAQ 体量较小，疑似 HTML 仅 inline 清洗渲染，不允许再借 Markdown raw 链路执行。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖 TypeScript 类型。
+2. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/` 检查页面；若 MCP Chrome 仍不可用，则用 `curl` 访问主页和 `/api/status` 作为替代验证。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `HtmlContent`、`RichContent`、`Markdown breaks` 和所有页面接入点类型正确。
+2. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，确认新增 DOMPurify 直接依赖、移除直接 `rehype-raw` 后默认前端生产构建正常。
+3. `git diff --check` 通过，无空白错误。
+4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+5. `curl -H 'Cache-Control: no-cache' http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`，`/api/status` 也返回 `HTTP/1.1 200 OK`，确认热更新站点主页和状态接口可用。
+6. 从 3003 拉取 `/static/js/index.js` 及相关 async chunk，确认当前服务出的 chunk 中包含 `FORCE_BODY`、`allow-popups-to-escape-sandbox`、`srcdoc` 清理、`custom-home-content`、`custom-footer` 等本轮新增渲染逻辑特征，且未命中 `rehypeRaw` / `rehype-raw`。
+7. `./node_modules/.bin/eslint` 针对本轮触碰的前端文件运行无错误；`src/components/ui/markdown.tsx` 按项目 ignore 规则被跳过并仅产生 warning。
+8. 全量 `bun run lint` 和 `bun run copyright:check` 仍受既有未触碰文件影响失败，主要涉及 `risk-acknowledgement-dialog.tsx`、`flow-charts.tsx`、`system-info/*`、`usage-logs/*` 等旧问题；本轮未将这些无关修复混入提交。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 默认前端安全富文本渲染 | `web/default/src/components/html-content.tsx`、`web/default/src/components/rich-content.tsx`、`web/default/src/components/ui/markdown.tsx`、`web/default/src/lib/content-format.ts`、`web/default/src/features/home/index.tsx`、`web/default/src/features/about/index.tsx`、`web/default/src/features/legal/legal-document.tsx`、`web/default/src/components/notification-dialog.tsx`、`web/default/src/features/dashboard/components/overview/announcement-detail-dialog.tsx`、`web/default/src/features/dashboard/components/overview/faq-panel.tsx`、`web/default/src/components/layout/components/footer.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 `HtmlContent`/`RichContent` 安全渲染能力，Markdown 移除 raw HTML 执行；首页、About、Legal、通知、公告、FAQ 和自定义页脚 HTML 统一进入 DOMPurify 清洗链路，完整 HTML 页面使用 shadow root 隔离，同时移除源码不再使用的直接 `rehype-raw` 依赖。 |
 | 2026-07-09 | 视频任务时长上限与直连 `image` 标准化 | `relay/common/relay_utils.go`、`relay/relay_task.go`、`relay/channel/task/gemini/billing.go`、`relay/channel/task/ali/adaptor.go`、`relay/common/relay_utils_test.go`、`relay/channel/task/gemini/billing_test.go`、`relay/channel/task/ali/adaptor_test.go` | 任务入口拒绝负数和超过 3600 秒的 `duration`/`seconds`，直连 JSON `image` 会标准化为图生视频输入；历史 remix、Gemini/Veo metadata 和 Ali metadata 进入 OtherRatios 前统一钳制时长倍率。 |
 | 2026-07-09 | Ollama 非流式 `tool_calls` 响应兼容 | `relay/channel/ollama/stream.go`、`relay/channel/ollama/stream_test.go` | Ollama 非流式响应会把上游 `message.tool_calls` 转为 OpenAI 兼容 `message.tool_calls`，保留工具参数显式零值，空参数回退 `{}`；存在工具调用时非流式和流式结束原因统一为 `tool_calls`。 |
 | 2026-07-09 | Moonshot `kimi-k2.6` temperature 兼容 | `relay/channel/moonshot/adaptor.go`、`relay/channel/moonshot/adaptor_test.go` | Moonshot OpenAI 兼容请求在真实上游模型为 `kimi-k2.6` 且客户端显式传入非 `1.0` temperature 时修正为 `1.0`；未传字段继续省略，非目标模型保持原值。 |

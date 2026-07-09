@@ -20,8 +20,10 @@ import type { TFunction } from 'i18next'
 import { Bell, Megaphone } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getAnnouncementColorClass } from '@/lib/colors'
+import { isLikelyHtml } from '@/lib/content-format'
 import { formatDateTimeObject } from '@/lib/time'
 import { cn } from '@/lib/utils'
+import { RichContent } from '@/components/rich-content'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -30,7 +32,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -54,7 +55,7 @@ interface NotificationDialogProps {
 }
 
 /**
- * Get relative time string from a date
+ * 根据发布时间生成相对时间文案。
  */
 function getRelativeTime(publishDate: string | Date, t: TFunction): string {
   if (!publishDate) return ''
@@ -62,7 +63,7 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
   const now = new Date()
   const pubDate = new Date(publishDate)
 
-  // If invalid date, return original string
+  // 无效日期直接回显原始字符串，避免错误数据导致弹窗不可用。
   if (isNaN(pubDate.getTime()))
     return typeof publishDate === 'string' ? publishDate : ''
 
@@ -75,10 +76,9 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
   const diffMonths = Math.floor(diffDays / 30)
   const diffYears = Math.floor(diffDays / 365)
 
-  // If future time, show specific date
+  // 未来时间通常是后台误填或预告发布，展示绝对时间更明确。
   if (diffMs < 0) return formatDateTimeObject(pubDate)
 
-  // Return relative time based on difference
   if (diffSeconds < 60) return t('Just now')
   if (diffMinutes < 60)
     return diffMinutes === 1
@@ -102,12 +102,12 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
       : t('{{count}} months ago', { count: diffMonths })
   if (diffYears < 2) return t('1 year ago')
 
-  // Over 2 years, show specific date
+  // 超过两年的公告用绝对时间，避免“多年前”信息过于模糊。
   return formatDateTimeObject(pubDate)
 }
 
 /**
- * Announcement status dot indicator
+ * 公告类型状态点。
  */
 function AnnouncementDot({ type }: { type?: string }) {
   return (
@@ -121,7 +121,7 @@ function AnnouncementDot({ type }: { type?: string }) {
 }
 
 /**
- * Empty state component
+ * 弹窗列表为空或加载中时的占位内容。
  */
 function EmptyState({ message }: { message: string }) {
   return (
@@ -132,7 +132,7 @@ function EmptyState({ message }: { message: string }) {
 }
 
 /**
- * Notice tab content
+ * 全局通知页签内容。
  */
 function NoticeContent({
   notice,
@@ -153,13 +153,17 @@ function NoticeContent({
 
   return (
     <ScrollArea className='h-[50vh] pr-4'>
-      <Markdown>{notice}</Markdown>
+      <RichContent
+        content={notice}
+        mode={isLikelyHtml(notice) ? 'html' : 'markdown'}
+        breaks
+      />
     </ScrollArea>
   )
 }
 
 /**
- * Announcements tab content
+ * 时间线公告页签内容。
  */
 function AnnouncementsContent({
   announcements,
@@ -198,19 +202,31 @@ function AnnouncementsContent({
                 <div className='flex items-start gap-3'>
                   <AnnouncementDot type={item.type} />
                   <div className='min-w-0 flex-1 space-y-2'>
-                    {/* Content */}
+                    {/* 公告正文支持 Markdown/HTML，但 HTML 必须先经过安全清洗。 */}
                     <div className='text-sm'>
-                      <Markdown>{item.content || ''}</Markdown>
+                      <RichContent
+                        content={item.content || ''}
+                        mode={
+                          isLikelyHtml(item.content || '') ? 'html' : 'markdown'
+                        }
+                        breaks
+                      />
                     </div>
 
-                    {/* Extra info */}
+                    {/* 附加信息与正文保持同样的安全渲染路径。 */}
                     {item.extra && (
                       <div className='text-muted-foreground text-xs'>
-                        <Markdown>{item.extra}</Markdown>
+                        <RichContent
+                          content={item.extra}
+                          mode={
+                            isLikelyHtml(item.extra) ? 'html' : 'markdown'
+                          }
+                          breaks
+                        />
                       </div>
                     )}
 
-                    {/* Time */}
+                    {/* 时间同时展示相对值和绝对值，便于用户确认公告时效。 */}
                     {absoluteTime && (
                       <div className='text-muted-foreground text-xs'>
                         {relativeTime && `${relativeTime} • `}
@@ -230,7 +246,7 @@ function AnnouncementsContent({
 }
 
 /**
- * Notification dialog with Notice and Announcements tabs
+ * 系统通知弹窗，包含全局通知和时间线公告两个页签。
  */
 export function NotificationDialog({
   open,

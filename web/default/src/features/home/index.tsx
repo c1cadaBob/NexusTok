@@ -18,7 +18,8 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
-import { Markdown } from '@/components/ui/markdown'
+import { isLikelyHtml } from '@/lib/content-format'
+import { RichContent } from '@/components/rich-content'
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
@@ -52,7 +53,12 @@ export function Home() {
             />
           ) : (
             <div className='container mx-auto py-8'>
-              <Markdown className='custom-home-content'>{content}</Markdown>
+              <RichContent
+                content={content}
+                mode={isLikelyHtml(content) ? 'html' : 'markdown'}
+                htmlVariant='isolated'
+                className='custom-home-content'
+              />
             </div>
           )}
         </main>
