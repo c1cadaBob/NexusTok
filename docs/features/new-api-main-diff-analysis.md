@@ -6011,8 +6011,69 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：手动任意分支 Docker 镜像工作流
+
+### 需求分析
+
+`new-api-main` 提供 `.github/workflows/docker-image-branch.yml`，维护者可以在 GitHub Actions 中手动输入分支名，为任意分支生成多架构 Docker Hub 预览镜像。NexusTok 当前已经有三条 Docker 发布链路：
+
+1. `docker-build.yml`：面向正式 tag 和 `latest` 的多架构发布。
+2. `docker-image-alpha.yml`：面向 `alpha` 分支的自动/手动预发布，推送 Docker Hub 和 GHCR，并启用 cosign。
+3. `docker-image-nightly.yml`：面向 `nightly` 分支的自动/手动每日构建，只推送 Docker Hub。
+
+缺口是：当某个功能分支需要交付给测试环境、Docker 用户或远程机器快速试运行时，维护者只能先合并到固定分支或手写本地构建命令。`new-api-main` 的优势在于把“指定分支 -> 生成稳定分支标签和日期 SHA 标签 -> 合并多架构 manifest -> 签名”的路径固定为可审计的 CI 能力。
+
+本轮目标是把该能力原生化到 NexusTok：新增一个手动触发的任意分支 Docker 镜像工作流，继续使用 `c1cada/nexustok` 镜像名、现有 Dockerfile、多架构 runner、SBOM/provenance 和 cosign 签名。为避免覆盖 `latest`、`alpha`、`nightly` 或正式版本标签，本项目不会照搬上游“分支名直接作为 Docker tag”的策略，而是统一发布为 `branch-{sanitized-branch}` 和 `branch-{sanitized-branch}-{YYYYMMDD}-{SHORT_SHA}`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| GitHub Actions | `.github/workflows/docker-image-branch.yml` | 新增手动触发的任意分支 Docker Hub 多架构构建、推送、manifest 和 cosign 签名。 |
+| Docker 发布规范 | Docker Hub `c1cada/nexustok` | 新增 `branch-*` 预览镜像标签，不改变 `latest`、正式版本、`alpha`、`nightly` 的现有语义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 该 workflow 只通过 `workflow_dispatch` 手动触发，不监听所有分支推送，避免每个开发分支自动消耗 runner 和污染镜像仓库。
+2. 任意分支构建会发布该分支当前 Dockerfile 产物。能触发 workflow 的维护者需要确认分支可信；workflow 不向 Docker build context 传入 Docker Hub token、GitHub token 或 cosign 凭证，但恶意 Dockerfile 仍可能发布不可用镜像或消耗构建资源。
+3. 直接使用分支名作为 tag 会有覆盖稳定 tag 的风险。本轮强制加 `branch-` 前缀，并限制清洗后的分支主体长度，确保附加日期、短 SHA 和架构后仍不超过 Docker tag 长度限制。
+4. 该变更只新增 CI 文件，不修改应用运行时代码、Dockerfile、Compose、数据库迁移、热更新容器或 3003 服务。
+5. Docker Hub secrets 缺失时 workflow 会在登录阶段失败，这是发布环境配置问题，不影响本地开发和已部署服务。
+6. `ubuntu-24.04-arm` runner 依赖 GitHub 当前 arm64 托管 runner 可用性；该风险与现有 alpha/nightly 工作流一致。
+
+### 方案评审
+
+采用“手动触发 + `branch-*` 标签命名 + Docker Hub only + cosign”的保守方案：
+
+1. 新增 `.github/workflows/docker-image-branch.yml`，触发条件仅为 `workflow_dispatch.inputs.branch`。
+2. `prepare` job 使用 `actions/checkout` 检出 `refs/heads/{branch}`，生成固定 commit SHA、清洗后的 tag 主体、`branch-{tag}` 前缀和 `branch-{tag}-{YYYYMMDD}-{SHORT_SHA}` 版本号；若分支名无法转为有效 tag 主体则 fail-fast。
+3. `build_single_arch` job 复用现有 `amd64` / `arm64` 原生 runner、Docker Buildx、metadata labels、GHA cache、`provenance: mode=max`、`sbom: true`，分别推送 `branch-*-amd64` 和 `branch-*-arm64` 单架构镜像。
+4. `create_manifests` job 合并 `branch-*` 和带日期 SHA 的两个多架构 manifest，并对 manifest tag 执行 cosign 签名。
+5. 不同步推送 GHCR，原因是任意分支预览镜像数量更不可控，优先保持 Docker Hub 单仓库可清理；后续如确有 GHCR 预览需求，再按 alpha 工作流模式独立评审。
+
+验收方式：
+
+1. 检查 `.github/workflows/docker-image-branch.yml` 中不存在 `calciumion`、`new-api`、`QuantumNous` 等上游品牌残留。
+2. 检查 workflow 包含 `workflow_dispatch`、`branch` input、`refs/heads/` checkout、`branch-` tag 前缀、`c1cada/nexustok`、`cosign` 和 `docker buildx imagetools create`。
+3. 使用本地脚本解析 workflow 的 `uses:` 行，确认新增 workflow 使用的 action 均固定到 commit SHA。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `python3` + PyYAML 解析 `.github/workflows/docker-image-branch.yml` 通过，workflow 语法可被本地 YAML parser 读取；当前环境未安装 `actionlint` 和 `ruby`，因此未执行 actionlint 或 Ruby YAML 检查。
+2. `rg -n "calciumion|QuantumNous|docs\\.newapi|New API|new-api" .github/workflows/docker-image-branch.yml` 无匹配，新增 workflow 未残留上游品牌、镜像名或文档站链接。
+3. `rg -n "workflow_dispatch|branch:|refs/heads/|branch-|c1cada/nexustok|cosign|imagetools create|provenance: mode=max|sbom: true" .github/workflows/docker-image-branch.yml` 已确认手动触发、分支输入、分支引用、`branch-*` tag、NexusTok 镜像名、cosign、manifest、SBOM 和 provenance 配置存在。
+4. 本地 Python 脚本检查新增 workflow 的全部 `uses:` 行均固定到 40 位 commit SHA，没有使用浮动 `@v*` 引用。
+5. tag 清洗边界检查通过：`feature/account-pool` -> `branch-feature-account-pool`，`Alpha` -> `branch-alpha`，`release/v1.2.3` -> `branch-release-v1.2.3`，纯标点或纯非 ASCII 分支名会被判定为无效；最长清洗主体为 98 字符时，带日期、短 SHA 和 `-amd64` 的完整 tag 长度为 128。
+6. `git diff --check` 通过。
+7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 手动任意分支 Docker 预览镜像 | `.github/workflows/docker-image-branch.yml` | 原生化 new-api-main 的任意分支镜像发布优势，新增维护者手动输入分支名的 Docker Hub 多架构构建；统一发布 `branch-*` 和 `branch-*-YYYYMMDD-SHA` 标签，避免覆盖 `latest`、`alpha`、`nightly` 和正式版本 tag，并保留 SBOM/provenance 与 cosign 签名。 |
 | 2026-07-09 | 多语言 README 品牌化补齐 | `README.md`、`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md` | 原生化 new-api-main 的多语言 README 入口优势，按 NexusTok 当前能力生成英文、简中、繁中、法文、日文 README；保留本项目仓库、镜像、部署维护手册和合规提示，不迁移上游品牌、合作伙伴、徽章和外部文档站点。 |
 | 2026-07-09 | 中文 i18n Quota 漏翻清理 | `web/default/src/i18n/locales/zh.json`、`web/default/src/i18n/locales/_reports/*` | 将 zh locale 中唯一剩余的 `Quota:` 翻译为 `额度：`，并通过 `bun run i18n:sync` 验证 stale untranslated report 清理能力；中文未翻译计数归零。 |
 | 2026-07-09 | i18n 同步脚本字面量白名单与报告清理 | `web/default/scripts/sync-i18n.mjs`、`web/default/src/i18n/locales/_reports/*` | 原生化 new-api-main 的 i18n literal 白名单优势，过滤品牌、provider、URL、密钥占位符、模型名和代码化字符串的误报；同步脚本在 locale 无 extras/untranslated 时清理旧报告，剩余自然语言未翻译项继续保留给后续翻译切片。 |
