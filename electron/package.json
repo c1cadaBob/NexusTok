@@ -61,10 +61,6 @@
           "to": "bin/nexustok"
         },
         {
-          "from": "../web/dist",
-          "to": "web/dist"
-        },
-        {
           "from": "../LICENSE",
           "to": "licenses/LICENSE"
         },

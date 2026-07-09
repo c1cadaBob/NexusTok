@@ -5664,8 +5664,70 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：Electron 桌面端文档与构建脚本修复
+
+### 需求分析
+
+`new-api-main` 的 `electron/README.md` 明确说明了桌面端开发、二进制准备、打包输出和数据目录。NexusTok 当前已经有 `electron/` 包装层、托盘图标、错误日志和 `electron-builder` 配置，但缺少桌面端 README；同时本地代码对照发现两个会直接影响桌面端原生能力的问题：
+
+1. `electron/build.sh` 会执行 `cd ../web && bun run build`。NexusTok 当前没有 `web/package.json`，默认前端和经典前端分别位于 `web/default`、`web/classic`，因此脚本会在第一步失败。
+2. Go 主程序通过 `//go:embed web/default/dist` 和 `//go:embed web/classic/dist` 嵌入前端资源。Electron 构建脚本必须先构建这两套前端，再构建 Go 二进制，否则打包出的桌面应用可能嵌入旧资源或缺少 classic 兼容入口。
+3. `electron/main.js` 开发模式提示仍写着 `cd web && bun dev`，并把 `DEV_FRONTEND_PORT` 注释为 Vite dev server port；NexusTok 默认前端已经是 Rsbuild，且上一轮 Makefile 将默认前端开发端口统一为 `3001`。
+4. `electron/package.json` 的 macOS `extraResources` 仍引用 `../web/dist`。该路径在 NexusTok 不存在，且生产 Electron 会启动内嵌了前端资源的 Go 二进制，不需要再额外挂载 `web/dist`。
+5. 桌面端数据目录、开发模式依赖、打包输出、许可证资源和常见问题都需要品牌化成 NexusTok 说明，不能直接复制 new-api-main 文案。
+
+本轮目标是把 new-api-main 的 Electron 文档优势转为 NexusTok 原生维护能力，并顺手修复当前构建脚本与目录结构不匹配的问题。该切片不修改后端业务逻辑、不改变 Web 前端页面、不启动 Electron 打包产物。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Electron 构建脚本 | `electron/build.sh` | 按 NexusTok 目录分别构建 `web/default` 与 `web/classic`，再构建 Go 二进制和平台安装包；注入 `common.Version`。 |
+| Electron 主进程开发提示 | `electron/main.js` | 将开发前端端口与 Makefile 对齐为 3001，并修正开发启动提示为 `make dev-api` / `make dev-web` 或 `web/default` 路径。 |
+| Electron Builder 配置 | `electron/package.json` | 移除 macOS 对不存在 `../web/dist` 的资源引用，保留二进制和许可证资源。 |
+| Electron 文档 | `electron/README.md` | 新增 NexusTok 桌面端开发、构建、数据目录和排障说明。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. `electron/build.sh` 属于桌面端打包脚本，不参与普通后端启动、Docker 热更新或 3003 线上验证链路。
+2. 分别构建 default/classic 前端会增加桌面端打包耗时，但符合 Go embed 的真实资源需求，避免打包出缺资源或旧资源的二进制。
+3. 移除 `../web/dist` 资源引用只影响 macOS Electron 额外资源；后端二进制已经嵌入 `web/default/dist` 与 `web/classic/dist`，Windows/Linux 配置也没有该资源，语义更一致。
+4. 将 Electron 开发前端端口调整为 3001 会要求开发者使用 `make dev-web` 或显式 `bun run dev -- --port 3001`；这与当前开发文档和 Makefile 保持一致。
+5. 本轮不执行完整 Electron 打包，避免下载/签名/平台构建带来的环境依赖波动；使用脚本语法、JSON 解析、路径检查和 3003 HTTP 验证作为轻量验收。
+
+### 方案评审
+
+采用“脚本修复 + 文档补齐”的方案：
+
+1. 重写 `electron/build.sh` 的路径处理：以脚本所在目录推导仓库根目录，先读取 `VERSION`，再分别在 `web/default` 和 `web/classic` 中执行 Bun 构建，最后回到根目录构建 `nexustok` 或 `nexustok.exe`。
+2. Go build 继续使用 `CGO_ENABLED=1`，并通过 `-X github.com/c1cada/NexusTok/common.Version=...` 注入版本号，保持与 Docker 热更新构建脚本一致。
+3. Electron 依赖安装仍在 `electron/` 目录执行 `npm install`，平台构建命令继续使用既有 `npm run build:mac` / `build:linux` / `build:win`。
+4. `electron/main.js` 只修正开发模式提示与端口常量，不重构启动逻辑和错误分析逻辑。
+5. `electron/README.md` 使用 NexusTok 品牌、路径和命令，明确开发模式与生产模式的数据目录差异，以及许可证资源的打包要求。
+
+验收方式：
+
+1. `bash -n electron/build.sh`。
+2. `node -e "JSON.parse(require('fs').readFileSync('electron/package.json', 'utf8')); console.log('ok')"`。
+3. `rg -n "cd web &&|../web/dist|Vite dev server" electron`，确认旧路径和旧提示已消除。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `bash -n electron/build.sh` 通过。
+2. `node -e "JSON.parse(require('fs').readFileSync('electron/package.json', 'utf8')); console.log('ok')"` 通过。
+3. `node --check electron/main.js` 与 `node --check electron/preload.js` 通过。
+4. `rg -n "cd web &&|../web/dist|Vite dev server|cd ../web|bun dev \\(port 5173\\)|5173" electron` 无匹配，旧路径和旧端口提示已消除。
+5. `git diff --check` 通过。
+6. 本轮未执行完整 Electron 打包，原因是 `electron-builder` 跨平台打包会下载平台依赖并涉及安装包产物，超出本轮轻量修复验收范围；脚本语法、JSON 配置、Node 语法和路径残留已覆盖当前修复点。
+7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Electron 桌面端文档与构建脚本修复 | `electron/build.sh`、`electron/main.js`、`electron/package.json`、`electron/README.md` | 原生化 new-api-main 的 Electron 文档资产并修复 NexusTok 目录不匹配问题：桌面构建先分别生成 default/classic 前端 dist，再构建嵌入资源的 Go 二进制；开发模式前端端口与 `make dev-web` 对齐为 3001；移除不存在的 `../web/dist` 资源引用，并补充桌面端开发、打包、数据目录和排障说明。 |
 | 2026-07-09 | 开发 Compose 与 Makefile 修补 | `docker-compose.dev.yml`、`makefile`、`docs/installation/deployment.md` | 原生化 new-api-main 的本地开发工程化优势：dev PostgreSQL 显式使用 `postgres:15-alpine`，新增 `dev-api-rebuild` 和开发专用 `reset-setup`，并在部署文档补充后端重建、初始化状态重置和生产禁用说明；不引入 oxlint/tsgo，不修改热更新部署。 |
 | 2026-07-09 | 日志查询与 ClickHouse 准备层护栏 | `common/database.go`、`model/main.go`、`model/log.go`、`model/token.go`、`model/clickhouse_log_test.go` | 原生化 new-api-main 的 ClickHouse 日志准备层优势：主库 ClickHouse DSN fail-fast、当前构建对 `LOG_SQL_DSN` ClickHouse 给出明确未启用 driver 错误、日志 LIKE 过滤统一转义、日志写入补齐 `request_id`、ClickHouse 排序与 TTL SQL helper 进入测试契约；不引入 ClickHouse driver，不改变 SQLite/MySQL/PostgreSQL 主路径。 |
 | 2026-07-09 | Chat 与 Responses relay handler 兼容原生化 | `service/openaicompat/responses_to_chat.go`、`service/openai_chat_responses_compat.go`、`relay/chat_completions_via_responses.go`、`relay/channel/openai/chat_via_responses.go` | 原生化 new-api-main 的 Responses SSE -> Chat chunks 状态机、buffered SSE -> Chat JSON、Chat SSE -> Responses SSE 和大小写不敏感的 event-stream 判断；客户端非流式请求遇到上游 Responses SSE 时返回普通 JSON，流式路径保留 tool_calls、reasoning、usage 和终态事件顺序。 |
