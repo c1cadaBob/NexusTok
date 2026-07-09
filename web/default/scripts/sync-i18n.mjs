@@ -19,15 +19,107 @@ For commercial licensing, please contact support@c1cada.dev
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-// This script is executed from the web/ package root (see package.json script).
+// 本脚本从 web/default 包根目录执行，对应 package.json 的 i18n:sync。
 const LOCALES_DIR = path.resolve('src/i18n/locales')
-const FALLBACK_COMPARE_LOCALE = 'en' // used for "still English" detection only
+const FALLBACK_COMPARE_LOCALE = 'en' // 仅用于判断非英文 locale 是否仍保留英文。
 const OBFUSCATED_KEYS = [
   {
     runtime: ['footer', 'new' + 'api', 'projectAttributionSuffix'].join('.'),
     serialized: 'footer.new\\u0061pi.projectAttributionSuffix',
   },
 ]
+
+// 这些值本身就是品牌、provider、协议字段或占位符，和英文相同不代表漏翻译。
+const BRAND_AND_LITERAL_KEYS = new Set([
+  'AI Proxy',
+  'AIGC2D',
+  'Alipay',
+  'Anthropic',
+  'API URL',
+  'API2GPT',
+  'AccessKey / SecretAccessKey',
+  'AZURE_OPENAI_ENDPOINT *',
+  'Azure',
+  'Baidu V2',
+  'CC Switch',
+  'ChatGPT',
+  'ChatGPT Subscription (Codex)',
+  'Claude',
+  'Client ID',
+  'Client Secret',
+  'Cloudflare',
+  'Codex OAuth',
+  'Cohere',
+  'Creem',
+  'DeepSeek',
+  'Discord',
+  'DoubaoVideo',
+  'FastGPT',
+  'Gemini',
+  'Gemini Image 4K',
+  'GitHub',
+  'Jimeng',
+  'JustSong',
+  'LingYiWanWu',
+  'LinuxDO',
+  'Midjourney',
+  'Midjourney-Proxy',
+  'MidjourneyPlus',
+  'MjProxy',
+  'MjProxyPlus',
+  'MiniMax',
+  'Mistral',
+  'MokaAI',
+  'Moonshot',
+  'NexusTok',
+  'NexusTok &lt;noreply@example.com&gt;',
+  'OAuth Client Secret',
+  'OhMyGPT',
+  'Ollama',
+  'One API',
+  'OpenAI',
+  'OpenAIMax',
+  'OpenRouter',
+  'Pancake',
+  'Passkey',
+  'Perplexity',
+  'Replicate',
+  'SiliconFlow',
+  'Stripe',
+  'Submodel',
+  'SunoAPI',
+  'Telegram',
+  'Tencent',
+  'TTFT P50',
+  'TTFT P95',
+  'TTFT P99',
+  'Uptime Kuma',
+  'Uptime Kuma URL',
+  'Vertex AI',
+  'VolcEngine',
+  'Waffo',
+  'Waffo Pancake',
+  'Waffo Pancake Dashboard',
+  'Waffo Pancake MoR',
+  'WeChat',
+  'WeChat Pay',
+  'Webhook URL',
+  'Webhook URL:',
+  'Well-Known URL',
+  'Worker URL',
+  'Xinference',
+  'Xunfei',
+  'Zhipu V4',
+  '"default": "us-central1", "claude-3-5-sonnet-20240620": "europe-west1"',
+  'c1cada',
+  'edit_this',
+  'footer.columns.related.links.midjourney',
+  'footer.columns.related.links.nexusTokKeyTool',
+  'my-status',
+  'nexustok-key-tool',
+  'price_xxx',
+  'whsec_xxx',
+])
 
 function isPlainObject(v) {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -95,16 +187,34 @@ function isLikelyUntranslated({ locale, baseValue, value }) {
   if (typeof value !== 'string' || typeof baseValue !== 'string') return false
   if (value !== baseValue) return false
 
-  // Skip short tokens / acronyms / ids
+  // 品牌、URL、密钥占位符、模型名和代码化示例不应进入未翻译报告。
   const s = baseValue.trim()
+  if (BRAND_AND_LITERAL_KEYS.has(s)) return false
+  if (
+    /^https?:\/\//.test(s) ||
+    /^\/[\w/-]+/.test(s) ||
+    /^[\w.-]+@[\w.-]+$/.test(s) ||
+    /^smtp\./i.test(s) ||
+    /^socks5:/i.test(s) ||
+    /^org-/.test(s) ||
+    /^gpt-/i.test(s) ||
+    /^checkout\./.test(s) ||
+    /^footer\./.test(s) ||
+    /^[A-Z0-9_ *./:-]+$/.test(s) ||
+    s.startsWith('{') ||
+    s.startsWith('[') ||
+    s.includes('&#10;')
+  ) {
+    return false
+  }
   if (s.length < 6) return false
   if (!/[A-Za-z]{3,}/.test(s)) return false
 
-  // For locales with non-latin scripts, equality with EN is a strong signal.
+  // 非拉丁文字 locale 与英文完全相同时，通常是漏翻译的强信号。
   if (locale === 'ja' || locale === 'zh') return true
   if (locale === 'ru') return true
 
-  // For fr/vi: still useful but noisier; keep it conservative.
+  // fr/vi 与英文共享词更多，保持更保守的英文功能词检测。
   if (locale === 'fr' || locale === 'vi') return /\b(the|and|or|to|with|please)\b/i.test(s)
 
   return false
@@ -159,7 +269,7 @@ async function main() {
     const missing = []
     const fixed = reorderLikeBase(baseJson, json, compareJson, extras, missing)
 
-    // Untranslated scan (translation namespace only)
+    // 只扫描 translation 命名空间中的未翻译值。
     const untranslated = {}
     const compareTrans = compareJson?.translation ?? {}
     const trans = fixed?.translation ?? {}
@@ -187,6 +297,10 @@ async function main() {
 
     if (Object.keys(extras).length > 0) {
       await fs.writeFile(path.join(extrasDir, `${locale}.extras.json`), stableStringify(extras), 'utf8')
+    } else {
+      await fs.rm(path.join(extrasDir, `${locale}.extras.json`), {
+        force: true,
+      })
     }
     if (Object.keys(untranslated).length > 0) {
       await fs.writeFile(
@@ -194,21 +308,22 @@ async function main() {
         stableStringify(untranslated),
         'utf8',
       )
+    } else {
+      await fs.rm(path.join(reportsDir, `${locale}.untranslated.json`), {
+        force: true,
+      })
     }
 
-    // Rewrite locale file in base order (even for en to normalize formatting)
+    // 按基础 locale 顺序重写文件，包括 en，用于统一格式和键顺序。
     await fs.writeFile(full, stableStringify(fixed), 'utf8')
   }
 
   await fs.writeFile(path.join(reportsDir, '_sync-report.json'), stableStringify(report), 'utf8')
-   
+
   console.log(`i18n sync done. Report: ${path.join(reportsDir, '_sync-report.json')}`)
 }
 
 main().catch((err) => {
-   
   console.error(err)
   process.exitCode = 1
 })
-
-

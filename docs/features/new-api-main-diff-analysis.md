@@ -5835,8 +5835,66 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 4. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 5. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：i18n 同步脚本字面量白名单与报告清理
+
+### 需求分析
+
+已按 `i18n-translate` 技能要求确认默认前端 i18n 维护流程：`web/default/scripts/sync-i18n.mjs` 是 locale 排序、缺失 key、extras 和未翻译报告的统一入口。`new-api-main` 的同名脚本相比 NexusTok 当前脚本有两个值得吸收的维护能力：
+
+1. 有 `BRAND_AND_LITERAL_KEYS` 白名单，用于跳过品牌名、协议名、URL、密钥占位符、模型/渠道厂商名等不应翻译的英文值。
+2. 对 URL、邮箱、API path、环境变量、模型名、`price_xxx`、`whsec_xxx`、JSON 示例等代码化字符串有额外模式过滤，避免被误报为未翻译。
+3. 当某个 locale 已经没有 extras 或 untranslated 时，会删除旧报告文件，避免 stale 报告长期留在仓库中误导维护者。
+4. NexusTok 当前 `_reports/*.untranslated.json` 中仍有大量真实句子未翻译，本轮不做批量翻译，只降低品牌/字面量噪声，保留真正需要翻译的自然语言句子。
+5. 白名单必须品牌化，不能照搬 `New API`、`QuantumNous` 等上游标识；应加入 `NexusTok`、`c1cada`、`Waffo Pancake`、当前 provider 名称和技术占位符。
+
+本轮目标是增强 i18n 同步脚本的误报过滤和 stale 报告清理能力，不新增 UI 文案，不改 `t()` 调用，不手工编辑六语 locale 文案。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| i18n 同步脚本 | `web/default/scripts/sync-i18n.mjs` | 新增 NexusTok 品牌化字面量白名单、代码化字符串过滤和 stale reports 清理逻辑。 |
+| i18n 报告产物 | `web/default/src/i18n/locales/_reports/*` | 运行 `bun run i18n:sync` 后，未翻译计数会排除品牌/字面量噪声；无内容的旧报告会自动删除。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 白名单过宽会隐藏真实未翻译句子，因此只加入精确品牌/厂商/协议/占位符和明显代码化模式；普通自然语言句子仍会进入 untranslated 报告。
+2. `bun run i18n:sync` 会重写 locale JSON 和报告文件；本轮需要检查 diff，确认没有意外改动翻译内容。
+3. 删除 stale report 文件是维护行为变化，但只在对应报告为空时发生，不影响运行时前端。
+4. 脚本是 Node ESM，不涉及后端 JSON 规则、数据库兼容性或 Docker 热更新逻辑。
+5. 该能力只提升 i18n 检查精度，不能替代后续真实翻译工作；剩余未翻译自然语言仍需分批补齐。
+
+### 方案评审
+
+采用“保守白名单 + 报告清理”的方案：
+
+1. 在 `sync-i18n.mjs` 中新增 `BRAND_AND_LITERAL_KEYS`，只放 NexusTok 当前使用的品牌、provider、支付平台、OAuth/URL/密钥字段、模型示例和占位符。
+2. 在 `isLikelyUntranslated` 中优先检查白名单，再过滤 URL、API path、邮箱、环境变量、模型名、checkout 域名、footer key、全大写技术标识、JSON/数组示例和 HTML 换行实体。
+3. 将该函数内触碰到的英文注释改为中文，符合项目中文注释约定。
+4. 写入 extras/untranslated 报告时，如果本轮没有内容则删除对应旧文件，保持 `_reports` 和 `_extras` 只反映当前状态。
+5. 运行 `bun run i18n:sync` 验证脚本，并检查 report 计数和 diff，确认没有隐藏真实自然语言未翻译项。
+
+验收方式：
+
+1. `node --check scripts/sync-i18n.mjs`。
+2. `bun run i18n:sync`。
+3. `cat src/i18n/locales/_reports/_sync-report.json`，确认 missing/extras/untranslated 统计可读。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `node --check scripts/sync-i18n.mjs` 通过。
+2. `bun run i18n:sync` 通过，并生成最新 `src/i18n/locales/_reports/_sync-report.json`。
+3. 最新同步报告：所有 locale 的 `missingCount=0`、`extrasCount=0`；`untranslatedCount` 为 `fr=34`、`ja=85`、`ru=97`、`vi=36`、`zh=1`。其中 zh 仅剩 `Quota:`，ja/ru 主要保留自然语言句子，URL、provider、密钥占位符和代码化示例噪声已被过滤。
+4. `git diff --check` 通过。
+5. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+6. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | i18n 同步脚本字面量白名单与报告清理 | `web/default/scripts/sync-i18n.mjs`、`web/default/src/i18n/locales/_reports/*` | 原生化 new-api-main 的 i18n literal 白名单优势，过滤品牌、provider、URL、密钥占位符、模型名和代码化字符串的误报；同步脚本在 locale 无 extras/untranslated 时清理旧报告，剩余自然语言未翻译项继续保留给后续翻译切片。 |
 | 2026-07-09 | Issue 模板前置约束增强 | `.github/ISSUE_TEMPLATE/{bug_report.md,bug_report_en.md,feature_request.md,feature_request_en.md}` | 原生化 new-api-main 的 issue 治理优势，四份模板补充非重复搜索、使用/配置/接入排除、Relay/pass-through 上游行为边界、coding plan/逆向渠道技术支持边界，以及转发/计费问题排查信息提示；保留 NexusTok 品牌链接和现有 Issue Chooser 配置。 |
 | 2026-07-09 | DataTable 组件维护文档 | `web/default/src/components/data-table/README.md` | 原生化 new-api-main 的 DataTable 包说明优势，但不直接迁移其 `core/layout/toolbar/static/hooks` 目录；文档按 NexusTok 当前扁平组件结构记录稳定导入入口、组件职责、`DataTablePage` 组合方式、移动端列 meta 和后续渐进分层原则。 |
 | 2026-07-09 | Electron 桌面端文档与构建脚本修复 | `electron/build.sh`、`electron/main.js`、`electron/package.json`、`electron/README.md` | 原生化 new-api-main 的 Electron 文档资产并修复 NexusTok 目录不匹配问题：桌面构建先分别生成 default/classic 前端 dist，再构建嵌入资源的 Go 二进制；开发模式前端端口与 `make dev-web` 对齐为 3001；移除不存在的 `../web/dist` 资源引用，并补充桌面端开发、打包、数据目录和排障说明。 |
