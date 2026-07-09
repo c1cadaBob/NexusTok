@@ -161,6 +161,8 @@ export function PaymentSettingsSection({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
+  const canUpdatePaymentSettings = updateOption.canUpdate
+  const paymentUpdateDisabledReason = updateOption.disabledReason
   const initialRef = React.useRef(defaultValues)
   const defaultsSignature = React.useMemo(
     () => JSON.stringify(defaultValues),
@@ -249,6 +251,24 @@ export function PaymentSettingsSection({
       toast.error(error.message || t('Failed to confirm compliance'))
     },
   })
+
+  const openComplianceDialog = () => {
+    if (!canUpdatePaymentSettings) {
+      toast.error(paymentUpdateDisabledReason)
+      return
+    }
+
+    setShowComplianceDialog(true)
+  }
+
+  const confirmCompliance = () => {
+    if (!canUpdatePaymentSettings) {
+      toast.error(paymentUpdateDisabledReason)
+      return
+    }
+
+    confirmComplianceMutation.mutate()
+  }
 
   const form = useForm({
     resolver: zodResolver(paymentSchema),
@@ -683,7 +703,16 @@ export function PaymentSettingsSection({
               type='button'
               size='sm'
               variant='destructive'
-              onClick={() => setShowComplianceDialog(true)}
+              onClick={openComplianceDialog}
+              disabled={
+                confirmComplianceMutation.isPending ||
+                !canUpdatePaymentSettings
+              }
+              title={
+                canUpdatePaymentSettings
+                  ? undefined
+                  : paymentUpdateDisabledReason
+              }
             >
               {t('Confirm compliance')}
             </Button>
@@ -719,8 +748,11 @@ export function PaymentSettingsSection({
         inputPlaceholder={t('Type the confirmation text here')}
         mismatchHint={t('The entered text does not match the required text.')}
         confirmText={t('Confirm and enable')}
+        confirmDisabledReason={
+          canUpdatePaymentSettings ? undefined : paymentUpdateDisabledReason
+        }
         isLoading={confirmComplianceMutation.isPending}
-        onConfirm={() => confirmComplianceMutation.mutate()}
+        onConfirm={confirmCompliance}
       />
 
       {/* eslint-disable react-hooks/refs */}
@@ -968,7 +1000,12 @@ export function PaymentSettingsSection({
                 e.stopPropagation()
                 saveGeneralSettings()
               }}
-              disabled={updateOption.isPending}
+              disabled={updateOption.isPending || !canUpdatePaymentSettings}
+              title={
+                canUpdatePaymentSettings
+                  ? undefined
+                  : paymentUpdateDisabledReason
+              }
             >
               {updateOption.isPending
                 ? t('Saving...')
@@ -1083,7 +1120,12 @@ export function PaymentSettingsSection({
                 e.stopPropagation()
                 saveEpaySettings()
               }}
-              disabled={updateOption.isPending}
+              disabled={updateOption.isPending || !canUpdatePaymentSettings}
+              title={
+                canUpdatePaymentSettings
+                  ? undefined
+                  : paymentUpdateDisabledReason
+              }
             >
               {updateOption.isPending
                 ? t('Saving...')
@@ -1289,7 +1331,12 @@ export function PaymentSettingsSection({
                 e.stopPropagation()
                 saveStripeSettings()
               }}
-              disabled={updateOption.isPending}
+              disabled={updateOption.isPending || !canUpdatePaymentSettings}
+              title={
+                canUpdatePaymentSettings
+                  ? undefined
+                  : paymentUpdateDisabledReason
+              }
             >
               {updateOption.isPending
                 ? t('Saving...')
@@ -1452,7 +1499,12 @@ export function PaymentSettingsSection({
                 e.stopPropagation()
                 saveCreemSettings()
               }}
-              disabled={updateOption.isPending}
+              disabled={updateOption.isPending || !canUpdatePaymentSettings}
+              title={
+                canUpdatePaymentSettings
+                  ? undefined
+                  : paymentUpdateDisabledReason
+              }
             >
               {updateOption.isPending
                 ? t('Saving...')
@@ -1460,7 +1512,13 @@ export function PaymentSettingsSection({
             </Button>
           </div>
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !canUpdatePaymentSettings}
+            title={
+              canUpdatePaymentSettings ? undefined : paymentUpdateDisabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save all settings')}
           </Button>
         </form>

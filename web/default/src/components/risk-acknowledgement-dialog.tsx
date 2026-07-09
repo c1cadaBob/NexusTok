@@ -56,6 +56,7 @@ type RiskAcknowledgementDialogProps = {
   inputPlaceholder?: string
   mismatchHint?: string
   confirmText?: string
+  confirmDisabledReason?: string
   cancelText?: string
   destructive?: boolean
   isLoading?: boolean
@@ -76,6 +77,7 @@ export function RiskAcknowledgementDialog({
   inputPlaceholder,
   mismatchHint,
   confirmText,
+  confirmDisabledReason,
   cancelText,
   destructive = true,
   isLoading = false,
@@ -147,7 +149,8 @@ export function RiskAcknowledgementDialog({
     ? typedTextParts.some((part) => part.trim() !== '')
     : typedText.length > 0
 
-  const canConfirm = allChecked && typedMatched && !isLoading
+  const canConfirm =
+    allChecked && typedMatched && !isLoading && !confirmDisabledReason
 
   const handleChecklistChange = (index: number, checked: boolean) => {
     setCheckedItems((previous) => {
@@ -297,6 +300,7 @@ export function RiskAcknowledgementDialog({
           <Button
             variant={destructive ? 'destructive' : 'default'}
             disabled={!canConfirm}
+            title={confirmDisabledReason}
             onClick={onConfirm}
           >
             {confirmText ?? t('Confirm')}

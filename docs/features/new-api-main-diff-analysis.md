@@ -2180,6 +2180,55 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/operations/monitoring`、`/system-settings/operations/email`、`/system-settings/operations/worker`、`/system-settings/models/model-deployment`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存和 io.net 连接测试。
 
+## 本轮实施评审：支付配置保存与合规确认按钮 Authz 消费
+
+### 需求分析
+
+支付配置页是系统设置中风险最高的 option 表单之一，包含充值单价、充值金额、支付方式、Epay、Stripe、Creem 凭证以及支付合规确认。后端已经将普通保存入口 `PUT /api/option/` 与合规确认入口 `POST /api/option/payment_compliance` 都纳入 `system_setting.sensitive_write`，但默认前端支付页仍有五个保存按钮和一个合规确认入口只按 pending 或弹窗输入状态禁用。受限管理员会看到可点击入口，直到提交时才被后端或 hook 拦截，权限语义不如其他系统设置页面一致。
+
+本轮目标：
+
+1. 将支付配置页的 `Save general settings`、`Save Epay settings`、`Save Stripe settings`、`Save Creem settings` 和 `Save all settings` 接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 将支付合规确认入口和风险确认弹窗最终确认按钮接入同一 `system_setting.sensitive_write` 权限；缺少权限时不打开弹窗、不调用 `POST /api/option/payment_compliance`。
+3. 保持支付表单字段、JSON 可视化编辑器、密钥空值保留、Stripe/Creem/Epay 保存拆分、合规确认文案和后端接口不变。
+4. 不处理 Waffo 与 Waffo Pancake 子表单，它们有独立组件和保存状态，后续单独评审，避免在一个切片里混入过多支付网关逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 风险确认弹窗 | `web/default/src/components/risk-acknowledgement-dialog.tsx` | 新增可选确认禁用原因，供支付合规确认在权限不足时禁用最终确认按钮。 |
+| 支付配置页 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx` | 保存按钮和合规确认入口消费 `system_setting.sensitive_write`；本地编辑和 JSON/可视化模式切换不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改按钮禁用、标题提示和合规确认 mutation 前置检查，不改支付 option 的更新集合生成、字段清洗、JSON 规范化、密钥空值保留和保存顺序。
+2. 支付配置直接影响充值入账、订阅、兑换码和邀请奖励，必须保留后端权限作为最终边界；前端按钮只是提前表达同一权限语义。
+3. `RiskAcknowledgementDialog` 当前只由支付合规确认使用，新增可选禁用参数保持默认不禁用，避免改变其他调用方行为。
+4. Waffo/Waffo Pancake 子组件保存逻辑较独立，且包含自定义 loading 与多方法编辑器；本轮不触碰，降低支付网关配置误改风险。
+
+### 方案评审
+
+采用“支付页统一消费 `system_setting.sensitive_write`，风险弹窗提供通用确认禁用扩展”的方案。普通支付 option 保存继续复用 `useUpdateOption()` 的 `canUpdate/disabledReason`，合规确认入口也复用同一权限结果，并在打开弹窗和最终确认两个阶段都做前置保护。这样页面层、hook 层和后端路由权限表保持一致，同时不改变任何支付业务 payload。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存通用支付、Epay、Stripe、Creem、全部支付 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 打开支付合规确认弹窗 | `system_setting.sensitive_write` | 前端本地检查 |
+| 确认支付合规声明 | `system_setting.sensitive_write` | `POST /api/option/payment_compliance` |
+| JSON/可视化编辑模式切换、本地字段编辑 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认支付页和风险确认弹窗类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面加载、`/api/option/` 只读请求正常、支付保存按钮和合规确认入口渲染正常、控制台无错误；不触发真实保存、不确认支付合规。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2244,3 +2293,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-08 | 系统设置站点、计费与运维普通表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/{general,maintenance}/*` | 系统行为、配额、货币显示、签到、公告、顶部导航、侧边栏模块和日志记录设置的保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；日志清理危险操作保留为后续双资源权限切片。 |
 | 2026-07-08 | 日志清理系统任务入口与双资源 Authz 消费 | `web/default/src/features/system-settings/{api.ts,types.ts,maintenance/log-settings-section.tsx}` | 日志维护页历史日志清理改为创建 `log_cleanup` SystemTask，前端按钮和确认动作同时消费 `system_setting.sensitive_write` 与 `usage_log.sensitive_write`，成功后提示任务 ID 并刷新系统任务缓存。 |
 | 2026-07-08 | 系统设置运维集成与模型部署保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/*` | 监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；io.net 连接测试保持独立操作语义，留待后续单独权限评审。 |
+| 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
