@@ -79,6 +79,34 @@ export function canToggleMessageSource({
 }
 
 /**
+ * 判断重试按钮是否应该展示。
+ *
+ * user 消息重试会保留当前 prompt 并截断其后的上下文重新提交；assistant 消息重试
+ * 会替换当前 assistant 分支。两条路径都由 conversation helper 统一处理，因此
+ * UI 只需要确认消息有正文、不是流式中间态，并且调用方确实提供了重试 handler。
+ */
+export function canRegenerateMessage({
+  hasContent,
+  hasRegenerateHandler,
+  isAssistant,
+  isLoading,
+  isUser,
+}: {
+  hasContent: boolean
+  hasRegenerateHandler: boolean
+  isAssistant: boolean
+  isLoading: boolean
+  isUser: boolean
+}): boolean {
+  return (
+    (isAssistant || isUser) &&
+    hasContent &&
+    !isLoading &&
+    hasRegenerateHandler
+  )
+}
+
+/**
  * 根据当前 source 视图状态返回切换按钮文案 key。
  */
 export function getMessageSourceToggleLabel(isSourceVisible: boolean): string {

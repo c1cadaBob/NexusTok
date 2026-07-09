@@ -25,6 +25,7 @@ import {
 } from '../constants'
 import type { Message } from '../types'
 import {
+  canRegenerateMessage,
   canToggleMessageSource,
   getMessageActionsVisibilityClass,
   getMessageActionState,
@@ -128,6 +129,74 @@ describe('message action utils', () => {
         hasToggleHandler: false,
         isAssistant: true,
         isLoading: false,
+      }),
+      false
+    )
+  })
+
+  test('allows regenerate for completed user or assistant content with handler', () => {
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: true,
+        hasRegenerateHandler: true,
+        isAssistant: true,
+        isLoading: false,
+        isUser: false,
+      }),
+      true
+    )
+
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: true,
+        hasRegenerateHandler: true,
+        isAssistant: false,
+        isLoading: false,
+        isUser: true,
+      }),
+      true
+    )
+
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: true,
+        hasRegenerateHandler: true,
+        isAssistant: true,
+        isLoading: true,
+        isUser: false,
+      }),
+      false
+    )
+
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: false,
+        hasRegenerateHandler: true,
+        isAssistant: true,
+        isLoading: false,
+        isUser: false,
+      }),
+      false
+    )
+
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: true,
+        hasRegenerateHandler: false,
+        isAssistant: false,
+        isLoading: false,
+        isUser: true,
+      }),
+      false
+    )
+
+    assert.equal(
+      canRegenerateMessage({
+        hasContent: true,
+        hasRegenerateHandler: true,
+        isAssistant: false,
+        isLoading: false,
+        isUser: false,
       }),
       false
     )

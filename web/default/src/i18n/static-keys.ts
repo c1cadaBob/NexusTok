@@ -511,6 +511,8 @@ export const STATIC_I18N_KEYS = [
   'Deleted',
   'Validity',
   'Actions',
+  'No content to copy',
+  'Please wait for the current generation to complete',
 
   // Sidebar modules
   'Chat Area',

@@ -16,15 +16,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { Copy, Check, RefreshCw, Edit, Trash2, FileCode2 } from 'lucide-react'
+import {
+  Check,
+  Copy,
+  Edit,
+  FileCode2,
+  MoreHorizontal,
+  RefreshCw,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { MESSAGE_ACTION_LABELS } from '../constants'
 import { useMessageActionGuard } from '../hooks/use-message-action-guard'
 import {
+  canRegenerateMessage,
   canToggleMessageSource,
   getMessageActionsVisibilityClass,
   getMessageActionState,
@@ -46,6 +64,15 @@ interface MessageActionsProps {
   className?: string
 }
 
+type MessageActionItem = {
+  className?: string
+  disabled?: boolean
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+  variant?: 'default' | 'destructive'
+}
+
 export function MessageActions({
   message,
   onCopy,
@@ -62,13 +89,13 @@ export function MessageActions({
   const { copiedText, copyToClipboard } = useCopyToClipboard()
   const { guardAction } = useMessageActionGuard(isGenerating)
 
-  const { content, hasContent, isAssistant, isLoading } =
+  const { content, hasContent, isAssistant, isLoading, isUser } =
     getMessageActionState(message)
   const isCopied = copiedText === content
 
   const handleCopy = () => {
     if (!content) {
-      toast.warning(MESSAGE_ACTION_LABELS.NO_CONTENT)
+      toast.warning(t(MESSAGE_ACTION_LABELS.NO_CONTENT))
       return
     }
     copyToClipboard(content)
@@ -87,70 +114,128 @@ export function MessageActions({
     isAssistant,
     isLoading,
   })
+  const showRegenerate = canRegenerateMessage({
+    hasContent,
+    hasRegenerateHandler: Boolean(onRegenerate),
+    isAssistant,
+    isLoading,
+    isUser,
+  })
+  const actions: MessageActionItem[] = []
+
+  if (hasContent) {
+    actions.push({
+      className: isCopied ? 'text-green-600' : '',
+      icon: isCopied ? Check : Copy,
+      label: isCopied
+        ? MESSAGE_ACTION_LABELS.COPIED
+        : MESSAGE_ACTION_LABELS.COPY,
+      onClick: handleCopy,
+    })
+  }
+
+  if (showSourceToggle) {
+    actions.push({
+      icon: FileCode2,
+      label: getMessageSourceToggleLabel(isSourceVisible),
+      onClick: handleToggleSource,
+    })
+  }
+
+  if (showRegenerate) {
+    actions.push({
+      disabled: isGenerating,
+      icon: RefreshCw,
+      label: MESSAGE_ACTION_LABELS.REGENERATE,
+      onClick: handleRegenerate,
+    })
+  }
+
+  if (hasContent && onEdit) {
+    actions.push({
+      disabled: isGenerating,
+      icon: Edit,
+      label: MESSAGE_ACTION_LABELS.EDIT,
+      onClick: handleEdit,
+    })
+  }
+
+  if (onDelete) {
+    actions.push({
+      disabled: isGenerating,
+      icon: Trash2,
+      label: MESSAGE_ACTION_LABELS.DELETE,
+      onClick: handleDelete,
+      variant: 'destructive',
+    })
+  }
+
+  if (actions.length === 0) {
+    return null
+  }
 
   return (
-    <TooltipProvider delay={300}>
-      <div
-        className={cn(
-          'flex items-center gap-0.5 transition-opacity',
-          visibilityClass,
-          className
-        )}
-      >
-        {/* 复制 */}
-        {hasContent && (
-          <MessageActionButton
-            icon={isCopied ? Check : Copy}
-            label={
-              isCopied
-                ? MESSAGE_ACTION_LABELS.COPIED
-                : MESSAGE_ACTION_LABELS.COPY
+    <>
+      <TooltipProvider delay={300}>
+        <div
+          className={cn(
+            'hidden items-center gap-0.5 transition-opacity md:flex',
+            visibilityClass,
+            className
+          )}
+        >
+          {actions.map((action) => (
+            <MessageActionButton
+              className={action.className}
+              disabled={action.disabled}
+              icon={action.icon}
+              key={action.label}
+              label={t(action.label)}
+              onClick={action.onClick}
+              variant={action.variant}
+            />
+          ))}
+        </div>
+      </TooltipProvider>
+
+      <div className={cn('md:hidden', className)}>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                aria-label={t('Open menu')}
+                className='data-popup-open:bg-muted text-muted-foreground hover:text-foreground size-11'
+                size='icon'
+                type='button'
+                variant='ghost'
+              />
             }
-            onClick={handleCopy}
-            className={isCopied ? 'text-green-600' : ''}
-          />
-        )}
+          >
+            <MoreHorizontal className='size-4' />
+            <span className='sr-only'>{t('Open menu')}</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='w-44'>
+            {actions.map((action) => {
+              const Icon = action.icon
 
-        {/* 原始响应切换只在 assistant 完成态正文上展示，避免流式半成品被误认为最终响应。 */}
-        {showSourceToggle && (
-          <MessageActionButton
-            icon={FileCode2}
-            label={t(getMessageSourceToggleLabel(isSourceVisible))}
-            onClick={handleToggleSource}
-          />
-        )}
-
-        {/* assistant 消息重试 */}
-        {isAssistant && !isLoading && onRegenerate && (
-          <MessageActionButton
-            icon={RefreshCw}
-            label={MESSAGE_ACTION_LABELS.REGENERATE}
-            onClick={handleRegenerate}
-            disabled={isGenerating}
-          />
-        )}
-
-        {/* 编辑 */}
-        {hasContent && onEdit && (
-          <MessageActionButton
-            icon={Edit}
-            label={MESSAGE_ACTION_LABELS.EDIT}
-            onClick={handleEdit}
-            disabled={isGenerating}
-          />
-        )}
-
-        {/* 删除 */}
-        {onDelete && (
-          <MessageActionButton
-            icon={Trash2}
-            label={MESSAGE_ACTION_LABELS.DELETE}
-            onClick={handleDelete}
-            disabled={isGenerating}
-            variant='destructive'
-          />
-        )}
+              return (
+                <DropdownMenuItem
+                  className='min-h-11'
+                  disabled={action.disabled}
+                  key={action.label}
+                  onClick={action.onClick}
+                  variant={action.variant}
+                >
+                  {t(action.label)}
+                  <DropdownMenuShortcut>
+                    <Icon className='size-4' />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-    </TooltipProvider>
+    </>
   )
 }

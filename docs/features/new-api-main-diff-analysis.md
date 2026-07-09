@@ -4366,8 +4366,68 @@ new-api-main 的 Playground 在渲染 reasoning 块时会把 `message.reasoning?
 9. 从 3003 拉取 `/static/js/index.61905bfd48.js` 与 `/static/js/async/92.a93384736f.js` 后，与本地 `web/default/dist` 完全一致：`index.61905bfd48.js` SHA256 均为 `5200dc91f6adf5c23d1b14235f588001ef46184103fe13be3fc2f802a8ef1140`，`92.a93384736f.js` SHA256 均为 `3a3679d17448a6eee3ef542b3a1bcd37ab345d19409c1a89e440f9c1f991b61f`。
 10. 线上 `/static/js/async/92.a93384736f.js` 已包含 `Thinking...`、`Thought for {{duration}} seconds`、`Raw response`、`Show source` 特征；上一轮旧 chunk `/static/js/async/92.4ded5331fd.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 移动端消息动作菜单原生化
+
+### 需求分析
+
+new-api-main 的 Playground 已将单条消息动作先收敛为动作数组：桌面端继续展示 tooltip 图标按钮，移动端则用 `DropdownMenu` 折叠到一个 `MoreHorizontal` 菜单中。NexusTok 当前仍在 `MessageActions` 内直接横向渲染 Copy、Source/Preview、Regenerate、Edit、Delete 图标组，且通过 `max-md:opacity-100` 在移动端常显；在窄屏下，多版本分支、元信息、原始响应切换和错误恢复动作叠加后，图标组容易占用消息正文宽度，也不利于触控目标保持稳定。
+
+本轮目标是吸收 new-api-main 的移动端交互优势，同时保留 NexusTok 已有 source toggle、动作守卫和会话 helper：
+
+1. `MessageActions` 先根据消息状态生成统一动作数组，桌面端复用现有 `MessageActionButton` + `TooltipProvider`，移动端使用现有 Base UI `DropdownMenu` 渲染同一组动作。
+2. 移动端只显示一个 `MoreHorizontal` 触发按钮，菜单项展示动作文案和右侧图标，避免多枚 28px 图标在小屏横向挤压。
+3. Regenerate 可见条件与 new-api-main 对齐：user/assistant 消息只要有正文、非 loading/streaming 且存在 handler，都可以展示重试入口；底层 `createRegeneratedMessages` 已有 user 消息重提交流程和测试覆盖。
+4. 现有 Copy、Copied、Regenerate、Edit、Delete、Show source、Show preview、Open menu 等文案全部走 i18n；补齐当前尚未进入 locale 的 `No content to copy` 和 `Please wait for the current generation to complete` toast 文案。
+5. 本轮不改变错误消息专用动作栏、不改变请求 payload、不改变 localStorage schema，也不迁移 message alignment/layout mode。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 消息动作栏 | `web/default/src/features/playground/components/message-actions.tsx` | 动作收敛为数组；桌面图标组保持原样，移动端新增 `DropdownMenu` 菜单；动作 label 统一翻译。 |
+| 动作守卫 | `web/default/src/features/playground/hooks/use-message-action-guard.ts` | 生成中禁止操作的 toast 改为 i18n，并把触碰到的英文注释改为中文。 |
+| 动作状态 helper | `web/default/src/features/playground/lib/message-action-utils.ts`、`message-action-utils.test.ts` | 新增 regenerate 可见性判断 helper，覆盖 user/assistant、loading、无正文、无 handler 等边界。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json`、`web/default/src/i18n/static-keys.ts` | 新增两个 toast 文案 key；其他动作文案复用已有 key。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. 移动端菜单若与桌面按钮使用两套条件，容易出现同一条消息桌面可操作、移动端不可操作的割裂；本轮用同一动作数组驱动两种展示。
+2. `DropdownMenuItem` 点击后会执行原有 handler；动作守卫仍包裹 regenerate/edit/delete，生成中不会发出新的重试、编辑或删除请求。
+3. user 消息 regenerate 虽然此前 UI 未展示，但 `createRegeneratedMessages` 已支持并有测试覆盖；本轮只是暴露已有能力，不新增请求协议。
+4. 移动端触发按钮使用 `Open menu` 作为无障碍名称，避免只靠图标表达；菜单项继续使用已有动作文案，不新增解释性 in-app 文案。
+5. `No content to copy` 和等待生成 toast 使用动态常量传给 `t()`，必须写入 `static-keys.ts`，否则静态同步工具无法发现。
+6. 本轮仅触碰 Playground 前端局部组件，不影响后端 relay、计费、权限、数据库和用户会话核心链路。
+
+### 方案评审
+
+采用“统一动作模型 + 响应式展示”的方案：`MessageActions` 内部构造 `MessageActionItem[]`，每项包含 `icon`、`label`、`onClick`、`disabled`、`variant` 和可选 class；桌面端 `hidden md:flex` 渲染现有 `MessageActionButton`，移动端 `md:hidden` 渲染 `DropdownMenu`。source/preview 可见性继续使用 `canToggleMessageSource` 和 `getMessageSourceToggleLabel`；新增 `canRegenerateMessage` 只负责判断重试入口是否可见。设计方向保持当前工具台密度，不新增卡片、不改变消息布局、不引入新颜色；`DropdownMenu`、`Button`、`Tooltip` 均复用已安装 Base UI 组件。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync`，确认 en、zh、fr、ja、ru、vi 无 missing/extras。
+2. `cd web/default && bun test src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-source-utils.test.ts src/features/playground/lib/storage.test.ts`，覆盖动作可见性、user regenerate 会话链路、source key 和 storage 兼容。
+3. 针对 `message-actions.tsx`、`use-message-action-guard.ts`、`message-action-utils.ts`、`message-action-utils.test.ts` 和 i18n static keys 运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，覆盖 Base UI DropdownMenu 类型和生产构建。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证移动端菜单和桌面按钮；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0。本轮新增 `No content to copy` 和 `Please wait for the current generation to complete` 已补齐六语；报告中的 untranslated 计数为仓库既有存量。
+2. `cd web/default && bun test src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-source-utils.test.ts src/features/playground/lib/storage.test.ts` 通过，共 27 个用例，覆盖 source toggle、user/assistant regenerate 可见性、user regenerate 会话重提交流程、source key 和 storage 兼容链路。
+3. `cd web/default && ./node_modules/.bin/eslint src/features/playground/components/message-actions.tsx src/features/playground/hooks/use-message-action-guard.ts src/features/playground/lib/message-action-utils.ts src/features/playground/lib/message-action-utils.test.ts src/i18n/static-keys.ts` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 Base UI `DropdownMenu` 组合、动作数组类型和 i18n hook 类型正确。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 为 `/static/js/async/92.js`。
+6. `git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`。
+9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/92.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `5b8c02af7d9fb2746f34f6ff26b4ce4dd35febc715797f26099b18fcf5abb7cb`，`92.js` SHA256 均为 `03ca49a192056920c67ce6e073c0d836fc10bcd8db57242074d1de811e812e2b`。
+10. 线上 `/static/js/async/92.js` 已包含 `Open menu`、`No content to copy`、`Please wait for the current generation to complete`、`Show source`、`Regenerate` 特征；上一轮旧 chunk `/static/js/async/92.a93384736f.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 移动端消息动作菜单 | `web/default/src/features/playground/components/message-actions.tsx`、`web/default/src/features/playground/hooks/use-message-action-guard.ts`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts}`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的移动端消息动作菜单；单条消息动作先收敛为同一动作数组，桌面继续显示 tooltip 图标组，移动端折叠到 `DropdownMenu`；user/assistant 完成态消息均可展示 regenerate，动作 label 与 toast 补齐 i18n。 |
 | 2026-07-09 | Playground 推理耗时展示 | `web/default/src/components/ai-elements/reasoning.tsx`、`web/default/src/features/playground/components/playground-message-content.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 reasoning duration 展示闭环；Playground 将已记录的 `message.reasoning.duration` 传入公共 `Reasoning`，trigger 按流式、未知耗时和精确秒数展示六语 i18n 文案，旧消息和 0 秒耗时仍回落泛化提示。 |
 | 2026-07-09 | Playground 原始响应切换 | `web/default/src/features/playground/components/{message-actions.tsx,playground-chat.tsx,playground-message-content.tsx}`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts,message-source-utils.ts,message-source-utils.test.ts,index.ts}`、`web/default/src/features/playground/constants.ts`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 assistant 消息 source/preview toggle；完成态 assistant 消息可在 Markdown 预览和当前版本原始响应代码块之间切换，source 状态仅保留在页面会话中，不改消息协议和 localStorage；新增 raw/source 文案补齐六语。 |
 | 2026-07-09 | Playground 消息基础工具拆分 | `web/default/src/features/playground/lib/{message-reasoning-utils.ts,message-reasoning-utils.test.ts,message-update-utils.ts,message-update-utils.test.ts,message-action-utils.ts,message-action-utils.test.ts,message-utils.ts,message-content-utils.ts,storage.ts,index.ts}`、`web/default/src/features/playground/components/message-actions.tsx` | 原生化 new-api-main 的 message reasoning/update/action 工具拆分；`<think>` 解析、assistant 错误更新、动作栏状态和可见性 class 进入可测试纯函数，MessageActions 只消费派生状态，现有按钮结构、请求协议和本地存储 key 保持不变。 |

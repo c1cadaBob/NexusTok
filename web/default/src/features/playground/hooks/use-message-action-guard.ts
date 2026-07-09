@@ -17,25 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { MESSAGE_ACTION_LABELS } from '../constants'
 
 /**
- * Hook to guard message actions when generation is in progress
- * Provides a wrapper that checks if generation is active before executing
+ * 在生成进行中保护消息动作。
+ *
+ * Playground 的重试、编辑和删除都会改变会话上下文；如果当前仍在生成中，
+ * 这些动作必须被拦截，避免同一轮对话同时出现多个竞争中的请求。
  */
 export function useMessageActionGuard(isGenerating: boolean) {
+  const { t } = useTranslation()
+
   const guardAction = useCallback(
     (action: () => void) => {
       return () => {
         if (isGenerating) {
-          toast.warning(MESSAGE_ACTION_LABELS.WAIT_GENERATION)
+          toast.warning(t(MESSAGE_ACTION_LABELS.WAIT_GENERATION))
           return
         }
         action()
       }
     },
-    [isGenerating]
+    [isGenerating, t]
   )
 
   return { guardAction }
