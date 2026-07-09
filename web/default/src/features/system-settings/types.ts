@@ -39,6 +39,32 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type SaveWaffoPancakeConfigRequest = {
+  enabled: boolean
+  sandbox: boolean
+  merchant_id: string
+  private_key: string
+  webhook_public_key: string
+  webhook_test_key: string
+  store_id: string
+  product_id: string
+  return_url: string
+  currency: string
+  unit_price: number
+  min_top_up: number
+}
+
+export type SaveWaffoPancakeConfigResponse = {
+  success: boolean
+  message: string
+  data?: {
+    enabled: boolean
+    sandbox: boolean
+    store_id: string
+    product_id: string
+  }
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string

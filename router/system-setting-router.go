@@ -52,6 +52,8 @@ var optionPermissionRoutes = []permissionRoute{
 	// 通用 option 更新可能触碰密钥、支付、OAuth 和安全配置，路由层按敏感写处理。
 	{method: http.MethodPut, path: "/", permission: authz.SystemSettingSensitiveWrite, handler: controller.UpdateOption},
 	{method: http.MethodPost, path: "/payment_compliance", permission: authz.SystemSettingSensitiveWrite, handler: controller.ConfirmPaymentCompliance},
+	// Waffo Pancake 支付配置需要一次提交多项敏感 option，沿用系统设置敏感写权限。
+	{method: http.MethodPost, path: "/waffo-pancake/save", permission: authz.SystemSettingSensitiveWrite, handler: controller.SaveWaffoPancakeConfig},
 	{method: http.MethodPost, path: "/rest_model_ratio", permission: authz.SystemSettingSensitiveWrite, handler: controller.ResetModelRatio},
 	{method: http.MethodPost, path: "/migrate_console_setting", permission: authz.SystemSettingSensitiveWrite, handler: controller.MigrateConsoleSetting},
 

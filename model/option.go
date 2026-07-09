@@ -11,6 +11,7 @@
 package model
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/c1cada/NexusTok/setting/performance_setting"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 	"github.com/c1cada/NexusTok/setting/system_setting"
+	"gorm.io/gorm"
 )
 
 // Option 系统选项键值对
@@ -255,6 +257,51 @@ func UpdateOption(key string, value string) error {
 	DB.Save(&option)
 	// Update OptionMap
 	return updateOptionMap(key, value)
+}
+
+// UpdateOptionsBulk 在同一个数据库事务中保存多项系统选项。
+//
+// 该函数用于支付网关绑定这类“多个 option 必须同时成功”的配置场景：
+//   - 数据库阶段使用 GORM transaction，保持 SQLite、MySQL、PostgreSQL 兼容；
+//   - 任一写入失败时事务回滚，不更新内存 OptionMap；
+//   - 数据库全部提交成功后，再复用 updateOptionMap 同步所有已有全局变量。
+//
+// 注意：内存同步阶段如果遇到解析错误，会把错误返回给调用方；此时数据库已经
+// 提交成功，因此调用方应只传入已由 updateOptionMap 支持且经过校验的 option key。
+func UpdateOptionsBulk(values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, key := range keys {
+			value := values[key]
+			option := Option{Key: key}
+			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+				return err
+			}
+			option.Value = value
+			if err := tx.Save(&option).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	for _, key := range keys {
+		value := values[key]
+		if err := updateOptionMap(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // updateOptionMap 更新内存中的选项映射

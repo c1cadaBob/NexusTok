@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -26,6 +27,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { saveWaffoPancakeConfig } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { removeTrailingSlash } from './utils'
@@ -51,6 +53,7 @@ interface Props {
 
 export function WaffoPancakeSettingsSection(props: Props) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const canUpdateWaffoPancakeSettings = updateOption.canUpdate
   const waffoPancakeUpdateDisabledReason = updateOption.disabledReason
@@ -112,66 +115,27 @@ export function WaffoPancakeSettingsSection(props: Props) {
 
     setLoading(true)
     try {
-      const options: { key: string; value: string }[] = [
-        { key: 'WaffoPancakeEnabled', value: enabled ? 'true' : 'false' },
-        { key: 'WaffoPancakeSandbox', value: sandbox ? 'true' : 'false' },
-        {
-          key: 'WaffoPancakeMerchantID',
-          value: values.WaffoPancakeMerchantID || '',
-        },
-        {
-          key: 'WaffoPancakeStoreID',
-          value: values.WaffoPancakeStoreID || '',
-        },
-        {
-          key: 'WaffoPancakeProductID',
-          value: values.WaffoPancakeProductID || '',
-        },
-        {
-          key: 'WaffoPancakeReturnURL',
-          value: removeTrailingSlash(values.WaffoPancakeReturnURL || ''),
-        },
-        {
-          key: 'WaffoPancakeCurrency',
-          value: values.WaffoPancakeCurrency || 'USD',
-        },
-        {
-          key: 'WaffoPancakeUnitPrice',
-          value: String(values.WaffoPancakeUnitPrice ?? 1),
-        },
-        {
-          key: 'WaffoPancakeMinTopUp',
-          value: String(values.WaffoPancakeMinTopUp ?? 1),
-        },
-      ]
-
-      if ((values.WaffoPancakePrivateKey || '').trim()) {
-        options.push({
-          key: 'WaffoPancakePrivateKey',
-          value: values.WaffoPancakePrivateKey,
-        })
+      const result = await saveWaffoPancakeConfig({
+        enabled,
+        sandbox,
+        merchant_id: values.WaffoPancakeMerchantID || '',
+        private_key: values.WaffoPancakePrivateKey || '',
+        webhook_public_key: values.WaffoPancakeWebhookPublicKey || '',
+        webhook_test_key: values.WaffoPancakeWebhookTestKey || '',
+        store_id: values.WaffoPancakeStoreID || '',
+        product_id: values.WaffoPancakeProductID || '',
+        return_url: removeTrailingSlash(values.WaffoPancakeReturnURL || ''),
+        currency: values.WaffoPancakeCurrency || 'USD',
+        unit_price: Number(values.WaffoPancakeUnitPrice ?? 1),
+        min_top_up: Number(values.WaffoPancakeMinTopUp ?? 1),
+      })
+      if (!result.success) {
+        throw new Error(result.message || t('Update failed'))
       }
-
-      if ((values.WaffoPancakeWebhookPublicKey || '').trim()) {
-        options.push({
-          key: 'WaffoPancakeWebhookPublicKey',
-          value: values.WaffoPancakeWebhookPublicKey,
-        })
-      }
-
-      if ((values.WaffoPancakeWebhookTestKey || '').trim()) {
-        options.push({
-          key: 'WaffoPancakeWebhookTestKey',
-          value: values.WaffoPancakeWebhookTestKey,
-        })
-      }
-
-      for (const option of options) {
-        await updateOption.mutateAsync(option)
-      }
+      await queryClient.invalidateQueries({ queryKey: ['system-options'] })
       toast.success(t('Updated successfully'))
-    } catch {
-      toast.error(t('Update failed'))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Update failed'))
     } finally {
       setLoading(false)
     }

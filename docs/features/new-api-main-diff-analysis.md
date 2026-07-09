@@ -2475,6 +2475,64 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/models/model-deployment`，确认页面加载、`/api/option/` 只读请求正常、保存按钮和连接测试区域渲染正常、控制台无错误；不点击 `Test Connection`，不触发真实测试请求或保存。
 
+## 本轮实施评审：Waffo Pancake 配置原子保存后端原生化
+
+### 需求分析
+
+`new-api-main` 的 Waffo Pancake 管理端已经从“手工填写 Store/Product ID 后逐项保存”演进为配置向导：管理员可以用 Merchant ID 与 Private Key 拉取 Pancake catalog、选择已有 Store/Product、一键创建 Store + OnetimeProduct，并在最终保存时通过 `/api/option/waffo-pancake/save` 一次性提交绑定关系。NexusTok 当前已经具备 Waffo Pancake 用户侧充值、金额试算、结账会话创建、Webhook 验签与入账能力，也有默认前端的 Waffo Pancake 设置表单；但保存仍通过多次 `PUT /api/option/` 循环写入，存在部分 option 已写入、后续 option 失败导致支付配置短暂不一致的风险。
+
+本轮目标选择低风险切片，先把 `new-api-main` 中“最终保存原子化”的优势转成 NexusTok 原生能力：
+
+1. 在模型层补齐跨 SQLite、MySQL、PostgreSQL 的 `UpdateOptionsBulk`，用 GORM transaction 统一保存多个 option，数据库全部成功后再更新内存 `OptionMap`。
+2. 在 Waffo Pancake service/controller 中新增 `SaveWaffoPancakeConfig` 与 `POST /api/option/waffo-pancake/save`，让支付网关绑定字段一次提交。
+3. 让默认前端 Waffo Pancake 设置页优先调用原子保存接口，保留现有字段校验、密钥留空表示保留旧值、webhook key 留空表示保留旧值、开关/货币/单价/最低充值等原生配置能力。
+4. 暂不引入 `waffo-pancake-sdk-go`，暂不实现 catalog、pair、subscription-product 和 subscription-product-options，避免把外部 Pancake 资源创建、订阅计划字段、SDK 版本升级与支付保存一致性混成一个高风险提交。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 系统选项模型 | `model/option.go` | 新增批量 option 保存事务；数据库成功后再逐项刷新内存配置，失败时不污染 `OptionMap`。 |
+| Waffo Pancake service | `service/waffo_pancake.go` | 新增保存配置的领域函数，校验 Merchant/Store/Product 必填，空私钥或空 webhook key 保持已有密钥。 |
+| Waffo Pancake controller | `controller/topup_waffo_pancake.go` | 新增管理端保存接口请求结构、错误处理和返回数据；用户充值与 webhook 入口不变。 |
+| 系统设置路由 | `router/system-setting-router.go` | 将 `POST /api/option/waffo-pancake/save` 纳入现有 RootAuth + `system_setting.sensitive_write` 权限表。 |
+| 默认前端支付设置 | `web/default/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx` 及可能新增 API helper | 保存按钮改为调用原子保存接口；按钮权限仍消费 `useUpdateOption()` 暴露的系统设置敏感写权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收结果，后续 catalog/一键创建继续在同一报告追踪。 |
+
+### 风险评估
+
+1. 支付配置属于高敏感配置，若 Merchant ID、Store ID、Product ID、Private Key 或 Webhook 公钥分批保存失败，可能导致用户侧支付发起失败或 webhook 验签失败；原子保存可以降低配置不一致风险。
+2. `model.UpdateOptionsBulk` 会改变同一批 option 的写入方式，必须只使用 GORM transaction、`FirstOrCreate`、`Save` 等三库兼容 API，不写数据库专用 SQL。
+3. 数据库事务成功后再更新内存 `OptionMap`，可避免数据库失败但内存已更新；但如果内存更新阶段某个 option 解析失败，数据库已提交。本轮只写现有已支持的 Waffo Pancake option key，并保留逐项 `updateOptionMap` 错误返回，风险可控。
+4. 前端仍需要允许空私钥、空生产 webhook 公钥和空测试 webhook 公钥表示“保留已保存密钥”，不能因原子接口而把这些密钥强制清空；新增 service 必须只在输入非空时写入密钥类 option。
+5. catalog、pair 和 subscription product 依赖 Waffo Pancake SDK 和外部商户资源创建，失败会产生外部资源残留；本轮暂不做，避免影响现有自研 HTTP/RSA checkout 实现和已上线支付链路。
+6. 新接口必须挂载在现有系统设置权限表中，权限语义与通用 `PUT /api/option/` 一致，仍要求 RootAuth 保底和 `system_setting.sensitive_write` 二次授权。
+
+### 方案评审
+
+采用“先原子保存，再分阶段接入 catalog/创建向导”的方案。后端新增 `model.UpdateOptionsBulk(values map[string]string)`：当 `values` 为空直接返回；非空时在 `DB.Transaction` 中逐项 `FirstOrCreate` option 并 `Save` value；事务完成后再逐项调用现有 `updateOptionMap`，复用全部已有全局变量同步逻辑。这样不会引入新的表结构、迁移或数据库方言分支。
+
+Waffo Pancake service 新增 `SaveWaffoPancakeConfig`，接收现有前端完整表单字段。必填校验只在支付绑定核心字段上执行：启用状态下前端已校验 Merchant/Store/Product 和当前环境 webhook key；后端保存函数则保证 Merchant/Store/Product 不能为空，防止管理端直接调用保存出不可用绑定。`WaffoPancakePrivateKey`、`WaffoPancakeWebhookPublicKey`、`WaffoPancakeWebhookTestKey` 仅在输入非空时写入，延续“密钥不回显，留空保留”的原生安全体验。
+
+路由新增到 `optionPermissionRoutes`，路径为 `POST /waffo-pancake/save`，权限为 `system_setting.sensitive_write`。前端新增或内联 API helper 调用该路径；保存按钮继续用 `useUpdateOption()` 的 `canUpdate/disabledReason` 表达权限，因为它和新接口共享同一后端权限。
+
+后续分阶段计划：
+
+| 阶段 | 能力 | 前置条件 |
+|------|------|----------|
+| 阶段 1 | 原子保存 Waffo Pancake 配置 | 本轮完成，不引入外部 SDK。 |
+| 阶段 2 | catalog 凭证验证与 Store/Product 选择 | 评审 `waffo-pancake-sdk-go` 与 NexusTok 当前自研 auth service 的兼容性。 |
+| 阶段 3 | 一键创建 Store + OnetimeProduct | 明确外部资源创建失败的 orphan store 展示与重试策略。 |
+| 阶段 4 | 订阅计划 Pancake product 支持 | 先补 `SubscriptionPlan.WaffoPancakeProductId`、迁移、支付入口和 webhook 订单解析，再接 UI。 |
+
+验收方式：
+
+1. `go test ./service/authz ./middleware ./router ./controller ./model` 确认系统设置路由、controller 和 option 模型构建通过。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认 Waffo Pancake 设置页类型通过。
+3. `cd web/default && node scripts/sync-i18n.mjs` 确认新增前端文案没有遗漏翻译 key。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面更新生效、Waffo Pancake 设置区渲染正常、`/api/option/` 只读请求正常、控制台无错误；不填写真实 Waffo 凭证、不触发真实支付或外部 Pancake 创建。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2545,3 +2603,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
 | 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |
 | 2026-07-09 | io.net 连接测试按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | 模型部署设置中的 `Test Connection` 按钮和 handler 消费后端路由对应的 `model.operate`；io.net option 保存仍由 `system_setting.sensitive_write` 控制。 |
+| 2026-07-09 | Waffo Pancake 配置原子保存 | `model/option.go`、`service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/{api.ts,types.ts,integrations/waffo-pancake-settings-section.tsx}` | 对齐 new-api-main 的 Waffo Pancake 保存优势，新增三库兼容 `UpdateOptionsBulk` 与 `POST /api/option/waffo-pancake/save`，支付设置页改为一次性提交 Waffo Pancake 配置；catalog、pair 和订阅产品能力保留为后续 SDK 阶段。 |

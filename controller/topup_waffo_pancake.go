@@ -36,6 +36,25 @@ type WaffoPancakePayRequest struct {
 	Amount int64 `json:"amount"` // 充值数量
 }
 
+// saveWaffoPancakeConfigRequest 是管理端 Waffo Pancake 配置原子保存请求。
+//
+// 密钥类字段在前端不会回显，传空表示保留服务端已保存的值；布尔和数字字段由
+// 管理端表单始终显式传入，用于保留关闭网关、沙箱模式和最低充值等零值/默认值语义。
+type saveWaffoPancakeConfigRequest struct {
+	Enabled          bool    `json:"enabled"`
+	Sandbox          bool    `json:"sandbox"`
+	MerchantID       string  `json:"merchant_id"`
+	PrivateKey       string  `json:"private_key"`
+	WebhookPublicKey string  `json:"webhook_public_key"`
+	WebhookTestKey   string  `json:"webhook_test_key"`
+	StoreID          string  `json:"store_id"`
+	ProductID        string  `json:"product_id"`
+	ReturnURL        string  `json:"return_url"`
+	Currency         string  `json:"currency"`
+	UnitPrice        float64 `json:"unit_price"`
+	MinTopUp         int     `json:"min_top_up"`
+}
+
 // RequestWaffoPancakeAmount 查询 Waffo Pancake 充值金额
 //
 // 根据充值数量和用户分组计算实际支付金额
@@ -148,6 +167,47 @@ func getWaffoPancakeReturnURL() string {
 		return setting.WaffoPancakeReturnURL
 	}
 	return paymentReturnPath("/console/topup?show_history=true")
+}
+
+// SaveWaffoPancakeConfig 原子保存管理端 Waffo Pancake 支付配置。
+//
+// 该接口仅负责保存 NexusTok 本地 option，不创建外部 Pancake Store/Product；
+// 后续 catalog 和一键创建能力会在单独评审中接入，避免外部资源副作用影响当前支付链路。
+func SaveWaffoPancakeConfig(c *gin.Context) {
+	var req saveWaffoPancakeConfigRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+
+	if err := service.SaveWaffoPancakeConfig(
+		req.Enabled,
+		req.Sandbox,
+		req.MerchantID,
+		req.PrivateKey,
+		req.WebhookPublicKey,
+		req.WebhookTestKey,
+		req.StoreID,
+		req.ProductID,
+		req.ReturnURL,
+		req.Currency,
+		req.UnitPrice,
+		req.MinTopUp,
+	); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake 保存配置失败 enabled=%t sandbox=%t store_id=%q product_id=%q error=%q",
+			req.Enabled, req.Sandbox, req.StoreID, req.ProductID, err.Error(),
+		))
+		common.ApiErrorMsg(c, "保存配置失败")
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"enabled":    setting.WaffoPancakeEnabled,
+		"sandbox":    setting.WaffoPancakeSandbox,
+		"store_id":   setting.WaffoPancakeStoreID,
+		"product_id": setting.WaffoPancakeProductID,
+	})
 }
 
 // RequestWaffoPancakePay 发起 Waffo Pancake 充值支付

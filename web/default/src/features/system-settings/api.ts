@@ -21,6 +21,8 @@ import type {
   ConfirmPaymentComplianceResponse,
   CreateLogCleanupTaskResponse,
   FetchUpstreamRatiosRequest,
+  SaveWaffoPancakeConfigRequest,
+  SaveWaffoPancakeConfigResponse,
   SystemOptionsResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
@@ -35,6 +37,16 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function saveWaffoPancakeConfig(
+  request: SaveWaffoPancakeConfigRequest
+) {
+  const res = await api.post<SaveWaffoPancakeConfigResponse>(
+    '/api/option/waffo-pancake/save',
+    request
+  )
   return res.data
 }
 

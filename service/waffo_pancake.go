@@ -4,33 +4,33 @@
 package service
 
 import (
-	"bytes"               // HTTP 请求体构建
-	"context"             // 请求上下文
-	"crypto"              // 哈希算法标识
-	"crypto/rsa"          // RSA 密码学操作
-	"crypto/sha256"       // SHA-256 哈希
-	"crypto/x509"         // 证书和密钥解析
-	"encoding/base64"     // Base64 编解码
-	"encoding/pem"        // PEM 格式编解码
-	"fmt"                 // 格式化输出
-	"io"                  // IO 操作
-	"math"                // 数学函数（Abs）
-	"net/http"            // HTTP 客户端
-	"strconv"             // 字符串转换
-	"strings"             // 字符串操作
-	"time"                // 时间操作
+	"bytes"           // HTTP 请求体构建
+	"context"         // 请求上下文
+	"crypto"          // 哈希算法标识
+	"crypto/rsa"      // RSA 密码学操作
+	"crypto/sha256"   // SHA-256 哈希
+	"crypto/x509"     // 证书和密钥解析
+	"encoding/base64" // Base64 编解码
+	"encoding/pem"    // PEM 格式编解码
+	"fmt"             // 格式化输出
+	"io"              // IO 操作
+	"math"            // 数学函数（Abs）
+	"net/http"        // HTTP 客户端
+	"strconv"         // 字符串转换
+	"strings"         // 字符串操作
+	"time"            // 时间操作
 
-	"github.com/c1cada/NexusTok/common"   // 公共工具：JSON 序列化等
-	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
-	"github.com/c1cada/NexusTok/model"     // 数据模型：TopUp 等
-	"github.com/c1cada/NexusTok/setting"   // 系统配置
+	"github.com/c1cada/NexusTok/common"  // 公共工具：JSON 序列化等
+	"github.com/c1cada/NexusTok/dto"     // 数据传输对象
+	"github.com/c1cada/NexusTok/model"   // 数据模型：TopUp 等
+	"github.com/c1cada/NexusTok/setting" // 系统配置
 )
 
 // Waffo Pancake 支付服务的常量配置
 const (
 	waffoPancakeAuthBaseURL      = "https://waffo-pancake-auth-service.vercel.app" // 认证服务基地址
-	waffoPancakeCheckoutPath     = "/v1/actions/checkout/create-session"            // 创建结账会话路径
-	waffoPancakeDefaultTolerance = 5 * time.Minute                                  // Webhook 时间戳容差（5分钟）
+	waffoPancakeCheckoutPath     = "/v1/actions/checkout/create-session"           // 创建结账会话路径
+	waffoPancakeDefaultTolerance = 5 * time.Minute                                 // Webhook 时间戳容差（5分钟）
 )
 
 // WaffoPancakePriceSnapshot 结账价格快照
@@ -68,7 +68,7 @@ type waffoPancakeAPIError struct {
 
 // waffoPancakeCreateSessionResponse 创建会话的 API 响应
 type waffoPancakeCreateSessionResponse struct {
-	Data   *WaffoPancakeCheckoutSession `json:"data"`    // 响应数据
+	Data   *WaffoPancakeCheckoutSession `json:"data"`   // 响应数据
 	Errors []waffoPancakeAPIError       `json:"errors"` // 错误列表
 }
 
@@ -225,6 +225,79 @@ func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error)
 	}
 
 	return "", fmt.Errorf("missing webhook orderId")
+}
+
+// SaveWaffoPancakeConfig 原子保存 Waffo Pancake 管理端配置。
+//
+// 该函数承接支付设置页的一次性保存动作，避免 Merchant、Store、Product、
+// 回跳地址和价格参数被多次 PUT 分批写入后出现半成功状态。启用支付时会校验
+// 运行所需的核心字段和当前环境的 webhook 公钥；未启用时允许管理员保存空绑定，
+// 便于先关闭网关再清理配置。私钥和 webhook 公钥不回显，输入为空表示保留已有值。
+func SaveWaffoPancakeConfig(enabled bool, sandbox bool, merchantID string, privateKey string, webhookPublicKey string, webhookTestKey string, storeID string, productID string, returnURL string, currency string, unitPrice float64, minTopUp int) error {
+	merchantID = strings.TrimSpace(merchantID)
+	storeID = strings.TrimSpace(storeID)
+	productID = strings.TrimSpace(productID)
+	privateKey = strings.TrimSpace(privateKey)
+	webhookPublicKey = strings.TrimSpace(webhookPublicKey)
+	webhookTestKey = strings.TrimSpace(webhookTestKey)
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == "" {
+		currency = "USD"
+	}
+	if minTopUp < 1 {
+		minTopUp = 1
+	}
+
+	if enabled {
+		if merchantID == "" {
+			return fmt.Errorf("merchant id is required")
+		}
+		if storeID == "" {
+			return fmt.Errorf("store id is required")
+		}
+		if productID == "" {
+			return fmt.Errorf("product id is required")
+		}
+		if strings.TrimSpace(privateKey) == "" && strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" {
+			return fmt.Errorf("private key is required")
+		}
+		if unitPrice <= 0 {
+			return fmt.Errorf("unit price must be greater than 0")
+		}
+		if sandbox {
+			if webhookTestKey == "" && strings.TrimSpace(setting.WaffoPancakeWebhookTestKey) == "" {
+				return fmt.Errorf("sandbox webhook public key is required")
+			}
+		} else if webhookPublicKey == "" && strings.TrimSpace(setting.WaffoPancakeWebhookPublicKey) == "" {
+			return fmt.Errorf("production webhook public key is required")
+		}
+	}
+
+	values := map[string]string{
+		"WaffoPancakeEnabled":    strconv.FormatBool(enabled),
+		"WaffoPancakeSandbox":    strconv.FormatBool(sandbox),
+		"WaffoPancakeMerchantID": merchantID,
+		"WaffoPancakeStoreID":    storeID,
+		"WaffoPancakeProductID":  productID,
+		"WaffoPancakeReturnURL":  strings.TrimSpace(returnURL),
+		"WaffoPancakeCurrency":   currency,
+		"WaffoPancakeUnitPrice":  strconv.FormatFloat(unitPrice, 'f', -1, 64),
+		"WaffoPancakeMinTopUp":   strconv.Itoa(minTopUp),
+	}
+	if privateKey != "" {
+		values["WaffoPancakePrivateKey"] = privateKey
+	}
+	if webhookPublicKey != "" {
+		values["WaffoPancakeWebhookPublicKey"] = webhookPublicKey
+	}
+	if webhookTestKey != "" {
+		values["WaffoPancakeWebhookTestKey"] = webhookTestKey
+	}
+
+	if err := model.UpdateOptionsBulk(values); err != nil {
+		return fmt.Errorf("persist Waffo Pancake config: %w", err)
+	}
+	return nil
 }
 
 // normalizeRSAPrivateKey 标准化 RSA 私钥格式为 PEM 编码
