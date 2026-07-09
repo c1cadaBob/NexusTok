@@ -37,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { testDeploymentConnectionWithKey } from '@/features/models/api'
+import { useModelPermissions } from '@/features/models/hooks/use-model-permissions'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
@@ -58,6 +59,8 @@ export function IoNetDeploymentSettingsSection({
 }) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const modelPermissions = useModelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -106,6 +109,11 @@ export function IoNetDeploymentSettingsSection({
   }
 
   const handleTestConnection = async () => {
+    if (!modelPermissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
     setTestState({ loading: true, ok: null, error: null })
     try {
       const apiKey = form.getValues('apiKey')
@@ -184,7 +192,16 @@ export function IoNetDeploymentSettingsSection({
                         type='button'
                         variant='secondary'
                         onClick={handleTestConnection}
-                        disabled={testState.loading || updateOption.isPending}
+                        disabled={
+                          testState.loading ||
+                          updateOption.isPending ||
+                          !modelPermissions.canOperate
+                        }
+                        title={
+                          modelPermissions.canOperate
+                            ? undefined
+                            : noPermissionMessage
+                        }
                         className='shrink-0'
                       >
                         {testState.loading ? (

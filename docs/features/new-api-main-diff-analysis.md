@@ -2427,6 +2427,54 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/models/global`、`/system-settings/models/gemini`、`/system-settings/models/claude`、`/system-settings/models/grok`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存。
 
+## 本轮实施评审：io.net 连接测试按钮 Authz 消费
+
+### 需求分析
+
+系统设置的“模型与路由 → 模型部署”页面复用了 io.net 部署配置组件。保存 `model_deployment.ionet.enabled` 与 `model_deployment.ionet.api_key` 已经消费 `system_setting.sensitive_write`，但 `Test Connection` 按钮会调用 `/api/deployments/settings/test-connection`，该后端路由属于模型部署诊断能力，并在路由权限表中要求 `model.operate`。当前按钮只按 `testState.loading` 和 `updateOption.isPending` 禁用，缺少模型操作权限的管理员会看到可点击的测试入口，直到提交后才被后端阻断。
+
+本轮目标：
+
+1. 在 `IoNetDeploymentSettingsSection` 中引入模型权限矩阵，单独读取 `model.operate`。
+2. `handleTestConnection` 开头增加权限前置检查，缺少 `model.operate` 时只显示无权限 toast，不调用后端测试接口。
+3. `Test Connection` 按钮缺少 `model.operate` 时禁用并展示统一无权限原因。
+4. 保持 io.net 设置保存按钮继续由 `system_setting.sensitive_write` 控制，不把模型操作权限错误套到系统 option 保存上。
+5. 不改 api key 草稿、启用开关、保存 payload、测试请求体或后端部署接口。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| io.net 模型部署设置 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | `Test Connection` 按钮和 handler 消费 `model.operate`；保存按钮继续消费 `system_setting.sensitive_write`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录跨资源权限需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 连接测试不写系统 option，但会携带当前草稿中的 api key 调用后端诊断接口；按后端 `model.operate` 权限提前禁用，可以避免无权限用户探测部署凭据和上游连接状态。
+2. 保存 io.net 配置仍是 `PUT /api/option/`，本轮不改变其 `system_setting.sensitive_write` 语义，避免把“保存设置”和“模型部署操作”混为一个权限。
+3. 本轮不改变 `testDeploymentConnectionWithKey` 的请求路径、payload、错误处理和成功/失败展示，只在 UI 和 handler 前置权限判断。
+4. 如果当前环境未启用 io.net deployments，测试按钮不会出现在页面上；验收时仍需要验证页面加载和只读 option 请求，且不通过本地切换触发任何真实测试请求。
+
+### 方案评审
+
+采用“跨资源按钮按后端路由权限表消费”的方案：组件同时使用 `useUpdateOption()` 和 `useModelPermissions()`。保存路径仍由 `updateOption.canUpdate` 控制；连接测试路径由 `modelPermissions.canOperate` 控制。按钮层禁用负责提前表达权限，handler 前置检查负责防止脚本调用或未来按钮遗漏路径绕过 UI。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 io.net enabled/api key option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 测试 io.net 部署连接 | `model.operate` | `POST /api/deployments/settings/test-connection` |
+| 本地启用开关、api key 草稿编辑、打开 io.net API Keys 链接 | 本地/外链交互，无后端写权限要求 | 不调用系统 option 写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认跨资源 hook 引入后类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认模型与系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/models/model-deployment`，确认页面加载、`/api/option/` 只读请求正常、保存按钮和连接测试区域渲染正常、控制台无错误；不点击 `Test Connection`，不触发真实测试请求或保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2496,3 +2544,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
 | 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
 | 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |
+| 2026-07-09 | io.net 连接测试按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | 模型部署设置中的 `Test Connection` 按钮和 handler 消费后端路由对应的 `model.operate`；io.net option 保存仍由 `system_setting.sensitive_write` 控制。 |
