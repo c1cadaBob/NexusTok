@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { RateLimitSection } from '../request-limits/rate-limit-section'
 import { SensitiveWordsSection } from '../request-limits/sensitive-words-section'
 import { SSRFSection } from '../request-limits/ssrf-section'
+import { TokenLimitSection } from '../request-limits/token-limit-section'
 import type { SecuritySettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 
@@ -76,6 +77,19 @@ const SECURITY_SECTIONS = [
             settings['fetch_setting.allowed_ports'],
           'fetch_setting.apply_ip_filter_for_domain':
             settings['fetch_setting.apply_ip_filter_for_domain'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'token-limits',
+    titleKey: 'Token Limits',
+    descriptionKey: 'Configure API token count limits',
+    build: (settings: SecuritySettings) => (
+      <TokenLimitSection
+        defaultValues={{
+          'token_setting.max_user_tokens':
+            settings['token_setting.max_user_tokens'],
         }}
       />
     ),

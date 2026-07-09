@@ -2773,6 +2773,50 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 5. MCP 打开 `http://192.168.0.202:3003/subscriptions`，确认订阅管理页、重置入口和确认弹窗渲染正常，控制台无错误。
 6. MCP 在浏览器上下文对新增接口做参数错误或空数据负例调用，确认返回业务响应，不误改真实订阅数据。
 
+## 本轮实施评审：Token Limits 默认前端入口原生化
+
+### 需求分析
+
+`new-api-main` 默认前端在系统设置安全页提供 `Token Limits` 配置，用于管理 `token_setting.max_user_tokens`。NexusTok 后端已经具备同名原生能力：`setting/operation_setting/token_setting.go` 注册了 `token_setting.max_user_tokens`，`model/token.go` 的 Token 搜索保护和创建数量限制已经读取该值；classic 前端也已经能配置该字段。但默认前端目前只展示 Rate Limiting、Sensitive Words 和 SSRF Protection，导致 Root 用户无法在当前主前端中调整每用户最大 API Token 数，只能依赖默认值或 classic 页面。
+
+本轮目标是将 `new-api-main` 的默认前端入口吸收为 NexusTok 原生安全设置页能力：
+
+1. 在 `/system-settings/security` 下新增 `token-limits` section，展示并保存 `token_setting.max_user_tokens`。
+2. 复用现有 `SettingsPage`、`SettingsSection`、`useUpdateOption` 和系统设置权限保护，不新增后端接口、不绕过 `system_setting.sensitive_write`。
+3. 表单只允许正整数，默认值保持 1000；保存时仅在值变化时调用 `PUT /api/option/`。
+4. 补齐默认前端六语翻译，并更新差异报告实施记录。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 默认前端安全设置 | `web/default/src/features/system-settings/security/*`、`request-limits/token-limit-section.tsx` | 新增 Token Limits 分区和表单入口，读写现有 `token_setting.max_user_tokens`。 |
+| 默认前端类型 | `web/default/src/features/system-settings/types.ts` | `SecuritySettings` 增加 `token_setting.max_user_tokens` 类型声明。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 增加 Token Limits 页面标题、说明、字段和保存按钮文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、风险和验收方式。 |
+
+### 风险评估
+
+1. 该字段会影响用户创建 API Token 的数量上限，也影响超量用户搜索 Token 时是否允许模糊查询。错误地设置过低可能阻止用户创建新 Token；错误地设置过高可能降低超量搜索保护效果。前端必须保留正整数校验和说明文案。
+2. 本轮不修改 `setting/operation_setting/token_setting.go`、`model/token.go` 或创建 Token 的后端逻辑，避免触碰核心认证和密钥生成路径。
+3. 保存仍走统一 `useUpdateOption()`，缺少 `system_setting.sensitive_write` 时前端不发请求，后端路由也已有 Root/Authz 边界。
+4. 该设置不是公共 status 依赖，不需要刷新 `/api/status`；保存后刷新 `system-options` 即可。
+5. 若线上配置缺失该 key，默认前端使用 1000，与后端默认配置一致。
+
+### 方案评审
+
+采用“仅默认前端补入口”的方案。新增 `TokenLimitSection` 参考 `new-api-main` 的字段语义，但使用 NexusTok 当前页面结构、版权头、`useUpdateOption` 权限封装和现有按钮保存模式。`SecuritySettings` 类型与默认值补上 `'token_setting.max_user_tokens': 1000`，`security/section-registry.tsx` 增加 `token-limits` 导航项，并让路由校验自然接受 `/system-settings/security/token-limits`。
+
+表单保存时先比较当前值与默认值；没有变化时提示 `No changes to save`，有变化时调用 `updateOption.mutateAsync({ key: 'token_setting.max_user_tokens', value })`。不新增后端测试，因为业务逻辑已存在且本轮不改后端；验证重点放在 TypeScript、i18n 同步和 MCP 页面/接口真实调用。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+2. `cd web/default && node scripts/sync-i18n.mjs` 通过，新增 `t()` 文案无缺失翻译。
+3. `git diff --check` 通过。
+4. MCP 打开 `http://192.168.0.202:3003/system-settings/security/token-limits`，确认页面渲染、字段默认值、无控制台错误。
+5. MCP 在浏览器上下文调用 `PUT /api/option/` 的无效权限/校验或读取 `GET /api/option/`，确认现有 option key 可被当前前端识别；不随意修改线上真实上限值。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2847,3 +2891,4 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 | 2026-07-09 | io.net 连接测试按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | 模型部署设置中的 `Test Connection` 按钮和 handler 消费后端路由对应的 `model.operate`；io.net option 保存仍由 `system_setting.sensitive_write` 控制。 |
 | 2026-07-09 | Waffo Pancake 配置原子保存 | `model/option.go`、`service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/{api.ts,types.ts,integrations/waffo-pancake-settings-section.tsx}` | 对齐 new-api-main 的 Waffo Pancake 保存优势，新增三库兼容 `UpdateOptionsBulk` 与 `POST /api/option/waffo-pancake/save`，支付设置页改为一次性提交 Waffo Pancake 配置；catalog、pair 和订阅产品能力保留为后续 SDK 阶段。 |
 | 2026-07-09 | 订阅额度手动重置 | `model/subscription.go`、`controller/subscription.go`、`router/subscription-router.go`、`web/default/src/features/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的管理员手动重置订阅额度能力，支持套餐级和用户级重置、`advance_reset_time`、`subscription.operate` 权限、用户管理日志和管理审计。 |
+| 2026-07-09 | Token Limits 默认前端入口 | `web/default/src/features/system-settings/{security,request-limits,types.ts}`、`web/default/src/i18n/locales/*.json` | 默认前端安全设置新增 `token-limits` 分区，Root 可查看并保存现有 `token_setting.max_user_tokens`，复用 `system_setting.sensitive_write` 权限和统一 option 保存链路。 |
