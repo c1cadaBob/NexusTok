@@ -4484,8 +4484,64 @@ new-api-main 的 Playground 已把消息布局抽象为 `PlaygroundMessageLayout
 9. 线上 `/static/js/async/4604.js` 已包含 `items-end text-right`、`items-start text-left` 和 `messageLayoutMode` 特征，确认本轮消息对齐底座已进入 3003 页面资源。
 10. 上一轮旧 Playground chunk `/static/js/async/92.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
 
+## 本轮实施评审：Playground 消息流式状态工具原生化
+
+### 需求分析
+
+new-api-main 的 Playground 将 reasoning/content 流式增量合并、assistant 完成态判断、非流式 choice 应用和重复 chunk 防护收敛到 `message-streaming-utils.ts`，让 `use-chat-handler` 只负责请求生命周期编排。NexusTok 当前已经有 `processStreamingContent()`、`finalizeMessage()`、`updateLastAssistantMessage()` 和 stream/request 错误工具，但 `use-chat-handler.ts` 内仍直接拼接 reasoning delta、手写完成态判断、手写非流式 choice 写回；后续继续吸收消息重构能力时，这些热路径逻辑仍会让 hook 变厚。
+
+本轮目标是把流式消息状态变更继续沉到可测试纯函数里，同时不改变 `/pg/chat/completions` payload、SSE 连接实现和消息存储格式：
+
+1. 新增 `message-streaming-utils.ts`，提供 `applyStreamingChunk()`、`completeAssistantMessage()`、`isAssistantMessageFinal()`、`isAssistantMessagePending()`、`applyChatCompletionChoice()` 和 `applyChatCompletionResponse()`。
+2. `applyStreamingChunk()` 复用 NexusTok 已有 `<think>` 解析和 timing helper，并加入 appendable chunk 保护：如果上游误返回累计内容而不是纯 delta，只追加新增部分，避免正文或 reasoning 重复。
+3. `use-chat-handler.ts` 改为调用上述 helper，保留现有 toast、错误落盘、payload builder、`useStreamRequest()` 和停止生成语义。
+4. 补充 `message-streaming-utils.test.ts`，覆盖 reasoning/content delta、累计 chunk 去重、错误消息保护、完成态清理和非流式响应应用。
+5. 本轮不迁移 `sanitizeMessagesOnLoad()`，因为 NexusTok 已在 `message-utils.ts` 和 `storage.ts` 形成稳定兼容路径；后续若整理目录结构，再单独迁移，避免一次性触碰本地存储恢复链路。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 消息流式 helper | `web/default/src/features/playground/lib/message-streaming-utils.ts`、`message-streaming-utils.test.ts`、`lib/index.ts` | 新增流式增量、完成态、非流式响应应用的纯函数和测试导出。 |
+| Chat hook | `web/default/src/features/playground/hooks/use-chat-handler.ts` | 用 helper 替代内联 reasoning/content 拼接、完成态判断和 choice 写回；请求生命周期和错误 toast 不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. `use-chat-handler.ts` 是 Playground 发送热路径；本轮只移动消息状态变更到纯函数，不改请求创建、SSE 事件监听、错误 toast、停止生成和 payload 构造，降低行为回归风险。
+2. appendable chunk 去重会改变极少数“上游返回累计内容”的表现：从重复拼接变为只追加新增部分；正常 OpenAI SSE delta 不受影响。
+3. `applyStreamingChunk()` 在 `<think>` 标签闭合后可提前完成 reasoning timing，但最终 `completeAssistantMessage()` 仍会兜底，旧消息和无 reasoning 响应保持兼容。
+4. 非流式响应无 choice 时继续保留当前 assistant 占位消息，不主动标错；这个语义与当前 hook 一致，避免把“空 choices”处理策略混入本轮。
+5. 本轮不触碰后端 relay、计费、权限、数据库、i18n 文案、localStorage schema 和 UI 结构。
+
+### 方案评审
+
+采用“新增消息流式纯函数 + hook 薄化”的方案：`message-streaming-utils.ts` 复用现有 `processStreamingContent()`、`finalizeMessage()`、`updateCurrentVersionContent()`、`startReasoningTiming()` 和 timing helper；`use-chat-handler.ts` 在 `handleStreamUpdate`、`handleStreamComplete`、`sendNonStreamingChat` 和 `stopGeneration` 中只调用这些 helper。这样保留 NexusTok 现有中文注释、消息版本结构和错误恢复能力，同时吸收 new-api-main 的 streaming helper 分层与重复 chunk 防护。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-streaming-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-reasoning-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts`，覆盖新增 helper 和既有 timing/update/reasoning 边界。
+2. 针对 `use-chat-handler.ts`、`message-streaming-utils.ts`、`message-streaming-utils.test.ts` 和 `lib/index.ts` 运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，覆盖 hook 类型、响应类型和生产构建。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-streaming-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-reasoning-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts` 通过，共 24 个用例，覆盖流式增量、累计 chunk 去重、错误态保护、非流式响应写回、reasoning 解析和 timing 边界。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/hooks/use-chat-handler.ts src/features/playground/lib/message-streaming-utils.ts src/features/playground/lib/message-streaming-utils.test.ts src/features/playground/lib/index.ts` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 hook 回调类型、`MessageStreamChunkType` 和 `ChatCompletionResponse` choice 应用类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，生产构建生成新的本地 `dist`；Playground 相关 async chunk 切换为 `/static/js/async/5192.js`。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`，`system_name` 为 `NexusTok`。
+8. 3003 首页已引用 `/static/js/index.7787b8d1af.js`；线上 `/static/js/index.js` 与本地 `web/default/dist/static/js/index.js` SHA256 均为 `6aa08836fd8204c839c09bf3099410c2b687561995e233c5c9da6d443696b7bf`，线上 `/static/js/index.7787b8d1af.js` 与本地 hash 入口 SHA256 均为 `380189ab25297387f3eeef401716da5f8ae3a7d5948a98f4161fcc92621d48ae`。
+9. 线上 `/static/js/async/5192.js` 与本地 `web/default/dist/static/js/async/5192.js`、`5192.bf9c0f05f6.js` SHA256 均为 `13a56115eae01b75af8d9154181a946c9c6250ee680b1375beced774295a5b50`，确认 3003 页面加载的是本轮构建产物。
+10. 上一轮旧 Playground chunk `/static/js/async/4604.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息流式状态工具 | `web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/lib/{message-streaming-utils.ts,message-streaming-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message streaming helper 分层；流式 reasoning/content 增量、累计 chunk 去重、assistant 完成态判断和非流式 choice 写回进入可测试纯函数，`use-chat-handler` 只保留请求生命周期、toast 和错误落盘编排。 |
 | 2026-07-09 | Playground 消息布局对齐底座 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/components/{playground-chat.tsx,playground-message-content.tsx,message-metadata.tsx}`、`web/default/src/features/playground/lib/{message-layout-utils.ts,message-layout-utils.test.ts,index.ts}` | 原生化 new-api-main 的 `PlaygroundMessageLayoutMode` 和消息 alignment helper；默认保持 alternating，user 消息右对齐、assistant/system 左对齐，并为后续全部左对齐或用户偏好设置提供原生底座；保留 Branch 多版本、消息动作、请求协议和 localStorage schema。 |
 | 2026-07-09 | Playground 移动端消息动作菜单 | `web/default/src/features/playground/components/message-actions.tsx`、`web/default/src/features/playground/hooks/use-message-action-guard.ts`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts}`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的移动端消息动作菜单；单条消息动作先收敛为同一动作数组，桌面继续显示 tooltip 图标组，移动端折叠到 `DropdownMenu`；user/assistant 完成态消息均可展示 regenerate，动作 label 与 toast 补齐 i18n。 |
 | 2026-07-09 | Playground 推理耗时展示 | `web/default/src/components/ai-elements/reasoning.tsx`、`web/default/src/features/playground/components/playground-message-content.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 reasoning duration 展示闭环；Playground 将已记录的 `message.reasoning.duration` 传入公共 `Reasoning`，trigger 按流式、未知耗时和精确秒数展示六语 i18n 文案，旧消息和 0 秒耗时仍回落泛化提示。 |

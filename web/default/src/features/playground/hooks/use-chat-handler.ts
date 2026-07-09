@@ -19,15 +19,17 @@ For commercial licensing, please contact support@c1cada.dev
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { sendChatCompletion } from '../api'
-import { MESSAGE_STATUS } from '../constants'
 import {
+  applyChatCompletionResponse,
+  applyStreamingChunk,
   buildChatCompletionPayload,
+  completeAssistantMessage,
+  isAssistantMessageFinal,
+  isAssistantMessagePending,
+  type MessageStreamChunkType,
   updateAssistantMessageWithError,
   updateLastAssistantMessage,
-  processStreamingContent,
-  finalizeMessage,
   parseRequestErrorDetails,
-  startReasoningTiming,
 } from '../lib'
 import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
 import { useStreamRequest } from './use-stream-request'
@@ -50,32 +52,11 @@ export function useChatHandler({
 
   // 处理流式增量。
   const handleStreamUpdate = useCallback(
-    (type: 'reasoning' | 'content', chunk: string) => {
+    (type: MessageStreamChunkType, chunk: string) => {
       onMessageUpdate((prev) =>
-        updateLastAssistantMessage(prev, (message) => {
-          if (message.status === MESSAGE_STATUS.ERROR) return message
-
-          if (type === 'reasoning') {
-            // 直连 API 的 reasoning_content 不需要等待 <think> 标签闭合。
-            const reasoningTiming = startReasoningTiming(message)
-            return {
-              ...message,
-              reasoning: {
-                ...reasoningTiming,
-                content: reasoningTiming.content + chunk,
-                duration: 0,
-              },
-              isReasoningStreaming: true,
-              status: MESSAGE_STATUS.STREAMING,
-            }
-          }
-
-          // 普通内容流需要实时拆分 <think> 标签，避免思考内容混到可见正文。
-          return {
-            ...processStreamingContent(message, chunk),
-            status: MESSAGE_STATUS.STREAMING,
-          }
-        })
+        updateLastAssistantMessage(prev, (message) =>
+          applyStreamingChunk(message, type, chunk)
+        )
       )
     },
     [onMessageUpdate]
@@ -85,10 +66,9 @@ export function useChatHandler({
   const handleStreamComplete = useCallback(() => {
     onMessageUpdate((prev) =>
       updateLastAssistantMessage(prev, (message) =>
-        message.status === MESSAGE_STATUS.COMPLETE ||
-        message.status === MESSAGE_STATUS.ERROR
+        isAssistantMessageFinal(message)
           ? message
-          : { ...finalizeMessage(message), status: MESSAGE_STATUS.COMPLETE }
+          : completeAssistantMessage(message)
       )
     )
   }, [onMessageUpdate])
@@ -140,25 +120,13 @@ export function useChatHandler({
 
       try {
         const response = await sendChatCompletion(payload)
-        const choice = response.choices?.[0]
-        if (!choice) return
 
         onMessageUpdate((prev) =>
-          updateLastAssistantMessage(prev, (message) => ({
-            ...finalizeMessage(
-              {
-                ...message,
-                versions: [
-                  {
-                    ...message.versions[0],
-                    content: choice.message?.content || '',
-                  },
-                ],
-              },
-              choice.message?.reasoning_content
-            ),
-            status: MESSAGE_STATUS.COMPLETE,
-          }))
+          updateLastAssistantMessage(
+            prev,
+            (message) =>
+              applyChatCompletionResponse(message, response) ?? message
+          )
         )
       } catch (error: unknown) {
         const { errorCode, errorMessage } = parseRequestErrorDetails(error)
@@ -185,9 +153,8 @@ export function useChatHandler({
     stopStream()
     onMessageUpdate((prev) =>
       updateLastAssistantMessage(prev, (message) =>
-        message.status === MESSAGE_STATUS.LOADING ||
-        message.status === MESSAGE_STATUS.STREAMING
-          ? { ...finalizeMessage(message), status: MESSAGE_STATUS.COMPLETE }
+        isAssistantMessagePending(message)
+          ? completeAssistantMessage(message)
           : message
       )
     )
