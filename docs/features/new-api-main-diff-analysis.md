@@ -5429,8 +5429,61 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 4. MCP 浏览器验证已按要求再次尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
 5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只修改后端 relay 转换和测试，不改变前端页面。
 
+## 本轮实施评审：Responses 请求转 Chat 兼容测试原生化
+
+### 需求分析
+
+`new-api-main` 在 `service/relayconvert/responses_request_to_chat_test.go` 中覆盖了 OpenAI Responses 请求降级为 Chat Completions 请求的多个边界场景。NexusTok 已经把该能力原生化到 `service/openaicompat`，且生产实现与 new-api-main 的 `relayconvert` 基本同构；但当前 NexusTok 的 `responses_request_to_chat_test.go` 测试粒度偏粗，仍缺少以下 new-api-main 已锁定的回归点：
+
+1. `instructions`、字符串 `input`、`stream_options.include_usage`、`max_output_tokens`、`temperature=0`、`top_p`、`parallel_tool_calls=true`、`prompt_cache_key`、`reasoning.effort`、`user`、`store=false`、`metadata` 等标量字段的组合映射。
+2. Responses 多模态 `input` 中 `input_file`、`input_audio`、`input_video` 降级为 Chat 内容块时的类型和 payload 保留。
+3. assistant `output_text` 与随后独立的 `function_call` 共存时，Chat assistant 消息既保留文本，又能追加 `tool_calls`。
+4. 只有 `function_call` 而没有 preceding assistant message 时，应自动构造 assistant 消息承载工具调用。
+5. `tools`、`tool_choice`、`text.format=json_schema` 到 Chat `tools/tool_choice/response_format` 的细节映射。
+6. `custom_tool_call` 要同时保留 Chat tool call 的 `custom` 原始 shape 和 `Function.Arguments` 的 freeform 输入。
+
+本轮目标是把 new-api-main 的测试资产迁移到 NexusTok 原生 `service/openaicompat` 包下，作为 Responses 兼容层的回归护栏。优先只补测试；若测试暴露生产行为缺口，再按最小影响修复转换逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Responses 兼容测试 | `service/openaicompat/responses_request_to_chat_test.go` | 增加更细的 Responses 请求降级 Chat 转换测试，覆盖标量、多模态、工具调用、custom 工具和 response_format。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 本轮预计只新增/扩展测试，不改生产代码，运行时风险低。
+2. 测试必须使用 NexusTok 的 `service/openaicompat` 包名和 `github.com/c1cada/NexusTok/...` import，不引入已废弃的 `relayconvert` 目录。
+3. 测试断言应匹配 NexusTok DTO 当前结构。例如 Chat 多模态内容可能以 `[]any` 存储，但应通过 `dto.Message.ParseContent()` 验证最终可解析语义，避免只锁定 map 的 Go 运行时形态。
+4. 新增断言涉及显式零值和 JSON 原始字段，必须继续遵守项目 JSON 规则，测试 helper 使用 `common.Marshal`。
+5. 如果新增测试失败，优先判断是否为测试迁移路径差异还是生产能力缺口；只有确认能力缺口会影响 Responses 兼容语义时才改生产逻辑。
+6. 该切片不涉及页面和真实外部上游，但按用户要求仍需尝试 MCP 访问 3003；MCP 不可用时记录错误并使用 `/`、`/api/status` HTTP 兜底。
+
+### 方案评审
+
+采用“测试资产原生化”的方案：在现有 `service/openaicompat/responses_request_to_chat_test.go` 中追加 new-api-main 缺失的细粒度用例，复用现有 `mustRawMessage()` helper，并补充 `assert`/`gjson` 断言工具。测试覆盖保持在转换函数纯逻辑层，不需要启动服务、不触发数据库和外部网络。这样能把 `relayconvert` 的优势转为 NexusTok `openaicompat` 的原生质量门禁，同时避免目录/包名回退。
+
+验收方式：
+
+1. `go test ./service/openaicompat -run 'TestResponsesRequestToChatCompletionsRequest'`。
+2. `go test ./service/openaicompat`。
+3. `go test ./...`。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. Responses 请求转 Chat 定向测试通过：`go test ./service/openaicompat -run 'TestResponsesRequestToChatCompletionsRequest'`。
+2. OpenAI 兼容服务包测试通过：`go test ./service/openaicompat`。
+3. 仓库级 Go 测试通过：`go test ./...`。
+4. 补丁空白检查通过：`git diff --check`。
+5. MCP 浏览器验证已按要求尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
+6. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只新增后端纯逻辑测试，不改变前端页面或接口行为。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Responses 请求转 Chat 兼容测试 | `service/openaicompat/responses_request_to_chat_test.go` | 原生化 new-api-main `service/relayconvert` 的 Responses request 降级 Chat 回归测试资产；覆盖 instructions/scalar 字段、显式零值、stream options、多模态 file/audio/video、assistant text 与 function_call 共存、only function_call 自动构造 assistant、tools/tool_choice/text.format 和 custom_tool_call 原始 shape，确认 NexusTok `openaicompat` 已具备对应原生能力。 |
 | 2026-07-09 | Claude OpenAI 文件内容转换语义修复 | `relay/channel/claude/relay-claude.go`、`relay/channel/claude/message_delta_usage_patch_test.go` | 修复仓库级测试暴露的 Claude 文件转换缺口；OpenAI `file` 内容按 filename 扩展名转换，`.txt` 解码为 Claude text，`.pdf` 转 document，图片转 image，未知二进制跳过，避免把 unsupported file 错误包装成 image 发给上游；同时补齐 message_delta usage patch 测试 imports。 |
 | 2026-07-09 | 用户更新并发字段保护与邮箱唯一性 | `model/{user.go,errors.go,user_update_test.go}`、`controller/{user.go,misc.go,subscription.go}` | 原生化 new-api-main 的用户更新安全回归能力；用户资料更新不再覆盖并发变化的 `quota`、`used_quota`、`request_count`，用户设置/语言/sidebar/订阅计费偏好只写 `setting` 列，邮箱注册/绑定/找回密码统一规范化并按大小写不敏感唯一性校验，passwordless 用户保持空密码且密码登录明确拒绝。 |
 | 2026-07-09 | 计费表达式结算 clamp 回归测试 | `pkg/billingexpr/settle_clamp_test.go` | 原生化 new-api-main 的分层计费结算饱和测试资产；锁定异常超大表达式结算必须饱和到 int32 上限并返回 `Clamp`，正常范围结算不误报 `Clamp`，防止动态计费后续调整破坏安全审计不变量。 |
