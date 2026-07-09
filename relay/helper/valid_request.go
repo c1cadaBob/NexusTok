@@ -162,6 +162,20 @@ func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.Embeddi
 	return embeddingRequest, nil
 }
 
+// maxTokensLimit 约束客户端可传入的最大输出 token 字段。
+// 这些字段会进入预消费额度估算、动态计费和部分 provider 的 int 转换；
+// 使用 math.MaxInt32/2 作为保守上限，可以避免超大 uint 在后续链路中溢出或反向计费。
+const maxTokensLimit = math.MaxInt32 / 2
+
+func exceedsMaxTokensLimit(values ...*uint) bool {
+	for _, value := range values {
+		if lo.FromPtrOr(value, uint(0)) > maxTokensLimit {
+			return true
+		}
+	}
+	return false
+}
+
 // GetAndValidateResponsesRequest 解析并验证 OpenAI Responses API 请求。
 // 验证规则：model 和 input 字段均不能为空。
 //
@@ -182,6 +196,9 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	}
 	if request.Input == nil {
 		return nil, errors.New("input is required")
+	}
+	if exceedsMaxTokensLimit(request.MaxOutputTokens) {
+		return nil, errors.New("max_output_tokens is invalid")
 	}
 	return request, nil
 }
@@ -371,6 +388,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if textRequest.Model == "" {
 		return nil, errors.New("field model is required")
 	}
+	if exceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
+		return nil, errors.New("max_tokens is invalid")
+	}
 
 	//if textRequest.Stream {
 	//	relayInfo.IsStream = true
@@ -405,7 +425,7 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 		textRequest.Model = c.Param("model")
 	}
 
-	if lo.FromPtrOr(textRequest.MaxTokens, uint(0)) > math.MaxInt32/2 {
+	if exceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxCompletionTokens) {
 		return nil, errors.New("max_tokens is invalid")
 	}
 	if textRequest.Model == "" {
@@ -431,8 +451,8 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 			return nil, errors.New("field prompt is required")
 		}
 	case relayconstant.RelayModeChatCompletions:
-		// For FIM (Fill-in-the-middle) requests with prefix/suffix, messages is optional
-		// It will be filled by provider-specific adaptors if needed (e.g., SiliconFlow)。Or it is allowed by model vendor(s) (e.g., DeepSeek)
+		// FIM（Fill-in-the-middle）请求带 prefix/suffix 时允许 messages 为空。
+		// 具体 provider 适配器会在需要时补齐，部分模型提供商（如 DeepSeek）也允许该形态。
 		if len(textRequest.Messages) == 0 && textRequest.Prefix == nil && textRequest.Suffix == nil {
 			return nil, errors.New("field messages is required")
 		}
@@ -459,6 +479,9 @@ func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error)
 	}
 	if len(request.Contents) == 0 && len(request.Requests) == 0 {
 		return nil, errors.New("contents is required")
+	}
+	if exceedsMaxTokensLimit(request.GenerationConfig.MaxOutputTokens) {
+		return nil, errors.New("maxOutputTokens is invalid")
 	}
 
 	//if c.Query("alt") == "sse" {

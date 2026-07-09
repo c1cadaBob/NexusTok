@@ -3048,8 +3048,50 @@ NexusTok 后端已经把异常额度转换的饱和保护结果写入 `other.adm
 2. `cd web/default && node scripts/sync-i18n.mjs` 通过并无缺失 key。
 3. 使用 MCP 打开 `http://192.168.0.202:3003/usage-logs`，确认页面正常加载、控制台无新增错误；若环境中没有真实饱和日志，可在浏览器上下文用临时样例校验新增文案存在于构建资源和 i18n 中。
 
+## 本轮实施评审：Max Token 家族字段上限保护
+
+### 需求分析
+
+new-api-main 在 relay 请求解析层统一限制了客户端可指定的最大输出 token 字段，避免 `max_tokens`、`max_completion_tokens`、Claude `max_tokens/max_tokens_to_sample`、Gemini `maxOutputTokens/max_output_tokens` 和 Responses `max_output_tokens` 进入后续 token 估算、预消费和 `int(...)` 转换时造成溢出或异常扣费。NexusTok 当前只在 OpenAI 通用文本请求中校验了旧字段 `max_tokens > math.MaxInt32/2`，没有覆盖 `max_completion_tokens`、Claude、Gemini 和 Responses 的同类字段。由于这些字段最终会被 `GetTokenCountMeta()` 或 provider 适配器转换为 `int`，超大 `uint` 一旦漏过验证，会放大为预扣费、动态计费和日志审计链路的安全风险。
+
+本轮目标是把该边界发展成 NexusTok 原生 relay 请求验证能力：
+
+1. 在 `relay/helper/valid_request.go` 定义统一的最大输出 token 边界，使用 `math.MaxInt32 / 2` 作为保守上限。
+2. 在 OpenAI 通用文本请求中同时检查 `max_tokens` 和 `max_completion_tokens`。
+3. 在 Claude 请求中检查 `max_tokens` 和 `max_tokens_to_sample`。
+4. 在 Gemini 请求中检查 `generationConfig.maxOutputTokens`，包括已有 Unmarshal 兼容的 `max_output_tokens`。
+5. 在 OpenAI Responses 请求中检查 `max_output_tokens`。
+6. 补单元测试覆盖超大值拒绝和正常值接受，锁住计费安全边界。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| relay 请求验证 | `relay/helper/valid_request.go` | 新增统一 token 上限 helper，并接入 OpenAI、Claude、Gemini、Responses 请求解析。 |
+| relay helper 测试 | `relay/helper/max_tokens_bounds_test.go` | 覆盖 OpenAI `max_tokens/max_completion_tokens`、Claude、Gemini、Responses 的异常/正常边界。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险和验收方式。 |
+
+### 风险评估
+
+1. 该变更会新增 400/invalid_request 类拒绝路径，但只拒绝超过 `math.MaxInt32/2` 的极端输出 token 参数，不影响正常大上下文模型的输入长度，也不改变模型、消息、prompt 等既有校验。
+2. `math.MaxInt32/2` 已被 NexusTok 现有 OpenAI `max_tokens` 校验使用，本轮只是把同一上限扩展到同语义字段，避免字段名迁移绕过安全边界。
+3. Claude 和 Gemini 后续会把这些 `uint` 转为 `int` 或参与思考预算计算；提前拒绝可以避免平台差异导致的整数溢出或负数语义。
+4. 错误文案保持现有风格：OpenAI/Claude 返回 `max_tokens is invalid`，Responses 返回 `max_output_tokens is invalid`，Gemini 返回 `maxOutputTokens is invalid`；不暴露底层整数类型细节。
+
+### 方案评审
+
+采用最小后端修复：在 `valid_request.go` 中新增 `maxTokensLimit` 和 `exceedsMaxTokensLimit(values ...*uint)`，并在四个请求解析函数完成 JSON 解析和必填字段校验附近调用。该 helper 只读指针值，不改变 DTO，不影响显式零值保留语义。测试使用 `gin.CreateTestContext` 构造 JSON body，保持 `common.UnmarshalBodyReusable` 的真实解析路径；超大值使用 `18446744073686646784`，用于覆盖可被 `uint` 解析但远超安全上限的输入。
+
+验收方式：
+
+1. `go test ./relay/helper` 覆盖新增上限测试。
+2. `go test ./relay ./controller` 确认 relay/controller 相关包不回归。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/`，并在浏览器上下文调用一个无 token relay 请求和一个带临时 token/临时渠道的超大 `max_completion_tokens` 请求；前者应仍按认证边界返回 401，后者应在请求解析阶段返回明确 `max_tokens is invalid`，不触发真实上游。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Max Token 家族字段上限保护 | `relay/helper/valid_request.go`、`relay/helper/max_tokens_bounds_test.go` | 统一限制 OpenAI `max_tokens/max_completion_tokens`、Claude `max_tokens/max_tokens_to_sample`、Gemini `maxOutputTokens/max_output_tokens` 和 Responses `max_output_tokens`，避免极端输出 token 参数绕过预扣费与 int 转换安全边界。 |
 | 2026-07-09 | 额度饱和日志前端可观测性 | `web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 管理员使用日志列表与详情弹窗展示 `other.admin_info.quota_saturation`，补齐钳制类型、原始值、钳制结果和操作来源；新增六语翻译并保持非管理员不可见。 |
 | 2026-07-09 | 渠道新增缓存刷新 | `controller/channel.go`、`controller/channel_add_cache_test.go` | 新增渠道成功后同步刷新分发缓存和代理客户端缓存，避免当前进程仍按旧缓存返回 `model_not_found`；测试覆盖成功新增与校验失败路径。 |
 | 2026-07-09 | OpenAI 图片流式与计费边界 | `dto/openai_image.go`、`relay/helper/valid_request.go`、`relay/channel/openai/relay-openai.go`、`relay/channel/openai/adaptor.go`、`relay/helper/stream_scanner.go` | 原生化 Images `stream` 显式零值、JSON/multipart `n` 上限、multipart body 复读、图片 usage 标准化、SSE/JSON-as-SSE 图片流和 error event 记录；补齐 dto/helper/openai 单元测试。 |
