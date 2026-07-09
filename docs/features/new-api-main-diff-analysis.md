@@ -6165,8 +6165,54 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 3. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 4. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：本地 MCP 与临时测试忽略项补齐
+
+### 需求分析
+
+`new-api-main` 的 `.gitignore` 已经补充 `.playwright-mcp`、`.local-tests/` 和本地 live probe 测试文件，用来隔离浏览器 MCP 状态、临时联调脚本和只在开发者机器运行的真实上游探针。NexusTok 当前项目约定要求前后端完成后尽量用 MCP 浏览器验证，且我们在持续原生化过程中会反复创建 `/tmp` 或本地 scratch 探针；如果这些文件落在仓库内，容易被误加入提交。
+
+NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅存在于 `service/relayconvert` 的路径。本轮目标是吸收上游忽略策略，但按 NexusTok 当前目录和历史兼容需求补齐忽略项：保留 `service/relayconvert/chat_responses_live_local_test.go` 的上游路径防误放，同时增加本项目实际的 `service/openaicompat/chat_responses_live_local_test.go`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Git 忽略规则 | `.gitignore` | 增加 MCP 浏览器状态目录、临时测试工作区和本地 live probe 测试文件忽略项。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. `.gitignore` 只影响未跟踪文件的默认显示和误提交风险，不改变任何运行时代码、构建产物、数据库、前端页面或 3003 热更新行为。
+2. 忽略规则不能覆盖正式测试文件；因此只忽略带 `live_local_test.go` 的明确本地探针文件，不忽略整个 `service/openaicompat` 或 `service/relayconvert` 目录。
+3. `.local-tests/` 是专门的 scratch 工作区；如果未来需要提交其中内容，应先移出该目录或调整规则。
+4. `.playwright-mcp` 只用于本地 MCP/浏览器状态，不应进入仓库。
+
+### 方案评审
+
+采用最小忽略项补齐：
+
+1. 在 `.gitignore` 末尾增加 `.playwright-mcp`。
+2. 增加注释分组 `# Local-only live probes and scratch test workspaces.`，并忽略 `.local-tests/`。
+3. 增加 `service/relayconvert/chat_responses_live_local_test.go` 和 `service/openaicompat/chat_responses_live_local_test.go`，同时兼容上游路径和 NexusTok 当前原生命名路径。
+
+验收方式：
+
+1. `rg -n "playwright-mcp|local-tests|live_local_test" .gitignore docs/features/new-api-main-diff-analysis.md`。
+2. 创建临时路径并用 `git check-ignore -v` 确认 `.playwright-mcp/state.json`、`.local-tests/probe.txt`、`service/openaicompat/chat_responses_live_local_test.go` 和 `service/relayconvert/chat_responses_live_local_test.go` 均被忽略，随后删除临时文件。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `rg -n "playwright-mcp|local-tests|live_local_test" .gitignore docs/features/new-api-main-diff-analysis.md` 已确认 `.gitignore` 和差异报告均记录本轮忽略项。
+2. `git check-ignore -v` 验证通过：`.playwright-mcp/state.json`、`.local-tests/probe.txt`、`service/openaicompat/chat_responses_live_local_test.go` 和 `service/relayconvert/chat_responses_live_local_test.go` 均命中预期规则；临时验证文件已删除。
+3. `git diff --check` 通过。
+4. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+5. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 本地 MCP 与临时测试忽略项 | `.gitignore` | 原生化 new-api-main 的本地验证产物隔离策略，忽略 `.playwright-mcp`、`.local-tests/` 和明确命名的 chat responses live local 探针文件；同时覆盖 NexusTok 当前 `service/openaicompat` 原生命名路径，降低 MCP/真实上游临时验证文件误提交风险。 |
 | 2026-07-09 | Secure Session Cookie 示例补齐 | `.env.example` | 补齐已经落地的 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 示例说明，让 HTTPS 反代部署者能从环境样例发现 Secure Cookie 开关；不补尚未接线的 relay idle timeout 变量，不改变默认运行时行为。 |
 | 2026-07-09 | Prettier 版权头保护包装器 | `web/default/scripts/format-with-protected-headers.mjs`、`web/default/package.json` | 原生化 new-api-main 的格式化版权头保护优势，但继续使用 NexusTok 当前 Prettier/ESLint/tsc 工具链；`format`/`format:check` 通过 wrapper 临时剥离并恢复 `c1cada` AGPL 版权头，check 模式会恢复快照并排除热更新构建目录，避免历史格式检查污染工作区。 |
 | 2026-07-09 | 手动任意分支 Docker 预览镜像 | `.github/workflows/docker-image-branch.yml` | 原生化 new-api-main 的任意分支镜像发布优势，新增维护者手动输入分支名的 Docker Hub 多架构构建；统一发布 `branch-*` 和 `branch-*-YYYYMMDD-SHA` 标签，避免覆盖 `latest`、`alpha`、`nightly` 和正式版本 tag，并保留 SBOM/provenance 与 cosign 签名。 |
