@@ -6071,8 +6071,60 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：Prettier 版权头保护包装器
+
+### 需求分析
+
+`new-api-main` 的默认前端把格式化命令封装为 `scripts/format-with-protected-headers.mjs`：格式化前临时剥离项目版权头，格式化完成后再恢复，避免 formatter 或 import 排序工具把 AGPL 版权头移动、重排或误判为普通块注释。NexusTok 当前 `web/default` 仍使用 Prettier + `@trivago/prettier-plugin-sort-imports`，且大量源码文件已经有 `Copyright (C) 2023-2026 c1cada` 头部，因此同样需要保护“版权头永远处于文件最前方”的不变量。
+
+需要注意的是，当前 `web/default` 的既有 `bun run format:check` 基线已经失败，Prettier 报告 89 个历史格式问题。本轮不能把全仓库格式化混入工程化脚本改造，否则会产生大量不相关 diff，影响 review 和热更新稳定性。本轮只把 new-api-main 的保护思路原生化为 NexusTok 的 Prettier wrapper，保持现有 Prettier、ESLint、TypeScript 和 Bun 工具链不变。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 前端格式化脚本 | `web/default/scripts/format-with-protected-headers.mjs` | 新增 NexusTok 品牌化的 Prettier 包装器，保护 `c1cada` 版权头并支持 `--check` / `--write`。 |
+| 前端 package scripts | `web/default/package.json` | 将 `format:check` 和 `format` 从直接调用 Prettier 改为调用包装器；其它脚本、依赖和锁文件不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 该变更只影响开发者执行 `bun run format` / `bun run format:check` 时的行为，不参与前端构建产物、后端 API、数据库、计费或热更新容器运行。
+2. check 模式会像 new-api-main 一样临时执行 formatter 写入，因此必须在脚本中先保存快照，并在 `finally` 中恢复，避免失败检查污染工作区。
+3. 当前 `format:check` 既有基线失败。本轮验收需要确认新的 wrapper 仍然失败并列出格式问题，同时不留下任何未预期文件改动；不把历史格式化债和脚本改造合并到一个 commit。
+4. 不引入 `oxfmt`、`oxlint`、`tsgo` 或 web workspace catalog，避免改变依赖安装方式、CI 速度特征和现有 lint/typecheck 规则。
+5. 脚本只保护 NexusTok 当前 `c1cada` 版权头，不再复制上游 `QuantumNous` 品牌匹配；历史上游版权头已经由 `add-copyright.mjs` 负责识别和迁移。
+
+### 方案评审
+
+采用“复用现有 Prettier，新增保护层”的方案：
+
+1. 新增 `web/default/scripts/format-with-protected-headers.mjs`，使用 NexusTok AGPL 版权头，内部只调用本项目已有 `prettier --write .`。
+2. wrapper 在 `--check` 模式下记录 10MB 以下文件快照，剥离 `.js/.ts/.tsx/.css/.scss` 等文件开头的 `c1cada` 项目版权头，执行 Prettier，恢复版权头，再对比快照列出会被格式化改动的文件，最后恢复原始快照。
+3. wrapper 在 `--write` 模式下剥离版权头、执行 Prettier、恢复版权头，保留正常格式化输出。
+4. `web/default/package.json` 的 `format:check` 和 `format` 改为调用该 wrapper；`build:check`、`typecheck`、`lint`、`copyright` 和 `i18n:sync` 不变。
+
+验收方式：
+
+1. `node --check scripts/format-with-protected-headers.mjs`。
+2. 用 `/tmp` 临时 fixture 验证 `--check` 会失败但还原文件，`--write` 会保留版权头并格式化内容。
+3. `bun run format:check`：预期仍因当前 89 个历史格式问题失败，但不留下工作区改动。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `node --check scripts/format-with-protected-headers.mjs` 通过。
+2. `/tmp` fixture 验证通过：`--check` 对未格式化文件返回 1 并恢复原文件；`--write` 后版权头仍在首行，正文被格式化为 `const demo = { value: 1 }`。
+3. 首次真实 `bun run format:check` 暴露脚本边界：wrapper 快照包含 `dist.hot` 热更新产物，检查期间文件消失会触发 `ENOENT` 并留下临时格式化 diff。本轮已修复：排除 `dist.hot`、`dist.next`、`dist.prev`、`dist-ssr`，恢复快照时重建父目录，恢复版权头时跳过已删除文件。
+4. 修复后再次执行 `bun run format:check`，预期返回 1；失败点变为历史格式差异列表，并输出 `Format issues found in protected-header-safe check:`，不再出现 `ENOENT`，且工作区未新增临时格式化改动。
+5. `git diff --check` 通过。
+6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Prettier 版权头保护包装器 | `web/default/scripts/format-with-protected-headers.mjs`、`web/default/package.json` | 原生化 new-api-main 的格式化版权头保护优势，但继续使用 NexusTok 当前 Prettier/ESLint/tsc 工具链；`format`/`format:check` 通过 wrapper 临时剥离并恢复 `c1cada` AGPL 版权头，check 模式会恢复快照并排除热更新构建目录，避免历史格式检查污染工作区。 |
 | 2026-07-09 | 手动任意分支 Docker 预览镜像 | `.github/workflows/docker-image-branch.yml` | 原生化 new-api-main 的任意分支镜像发布优势，新增维护者手动输入分支名的 Docker Hub 多架构构建；统一发布 `branch-*` 和 `branch-*-YYYYMMDD-SHA` 标签，避免覆盖 `latest`、`alpha`、`nightly` 和正式版本 tag，并保留 SBOM/provenance 与 cosign 签名。 |
 | 2026-07-09 | 多语言 README 品牌化补齐 | `README.md`、`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md` | 原生化 new-api-main 的多语言 README 入口优势，按 NexusTok 当前能力生成英文、简中、繁中、法文、日文 README；保留本项目仓库、镜像、部署维护手册和合规提示，不迁移上游品牌、合作伙伴、徽章和外部文档站点。 |
 | 2026-07-09 | 中文 i18n Quota 漏翻清理 | `web/default/src/i18n/locales/zh.json`、`web/default/src/i18n/locales/_reports/*` | 将 zh locale 中唯一剩余的 `Quota:` 翻译为 `额度：`，并通过 `bun run i18n:sync` 验证 stale untranslated report 清理能力；中文未翻译计数归零。 |
