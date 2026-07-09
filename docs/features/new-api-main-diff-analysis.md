@@ -3237,8 +3237,56 @@ new-api-main 在用户完成登录后会写入 `LogTypeLogin=7` 的成功登录�
 3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，Usage Logs 路由 search schema 已同步允许 type=7。
 4. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮用 `curl` 替代验证：访问 `http://192.168.0.202:3003/` 返回 200；调用 `/api/user/login` 真实登录账号 `c1cada` 成功；携带 session cookie 与 `NexusTok-User: 1` 调用 `/api/log/self?type=7` 返回最新登录日志，字段包含 `type=7`、`content=Logged in successfully via password`、`login_method=password`、`user_agent=curl/8.18.0` 和 `op.action=login`。
 
+## 本轮实施评审：Pricing 路由最新配置守卫
+
+### 需求分析
+
+new-api-main 在 `/pricing` 与 `/pricing/:modelId` 进入路由前会调用 `getStatus()` 刷新 `HeaderNavModules`，再按最新的 `pricing.enabled` 和 `pricing.requireAuth` 决定是否允许访问或跳转登录。NexusTok 已经原生化了后端 `HeaderNavModuleAuth` 和前端健壮解析，但 Pricing 路由当前仍只读取 `localStorage.status` 的旧缓存。这样当 Root 在系统设置中临时关闭价格页，或把价格页从公开改为登录可见时，已经打开过站点的浏览器可能继续按旧状态进入页面，直到其它代码刷新 status。
+
+本轮目标是把 new-api-main 的路由级新鲜配置检查转成 NexusTok 默认前端原生能力：
+
+1. 在 `web/default/src/lib/nav-modules.ts` 增加 `getFreshModuleAccess(module)`，通过 `getStatus()` 获取最新系统状态，成功后写回本地 `status` 缓存，并复用现有 `getModuleAccessFromStatus()` 解析语义。
+2. 为 `getCachedStatus()` 增加服务端/构建期 `window` guard，避免路由预加载或测试环境访问 `window.localStorage` 抛错。
+3. 在 `/pricing` 与 `/pricing/$modelId` 的 TanStack Router `beforeLoad` 中调用新 helper：关闭时跳转首页，要求登录且当前无用户时跳转 `/sign-in` 并携带原始 `redirect`。
+4. 不改 Pricing 页面数据请求、筛选 search schema、顶部导航渲染、后端鉴权中间件和模型定价接口，避免把路由守卫与定价业务混在一起。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 顶栏模块配置 helper | `web/default/src/lib/nav-modules.ts` | 新增最新 status 拉取与缓存写回能力，保留既有缓存读取 API。 |
+| Pricing 列表路由 | `web/default/src/routes/pricing/index.tsx` | 进入页面前按最新 `pricing` 模块配置进行跳转。 |
+| Pricing 详情路由 | `web/default/src/routes/pricing/$modelId/index.tsx` | 与列表页保持同一访问控制语义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 每次进入 Pricing 路由会多一次 `/api/status` 请求，属于低频公开页面导航，不进入 Relay 热路径，也不改变 Pricing 业务 API 的缓存和分页行为。
+2. 当 `/api/status` 网络失败时，本轮按 new-api-main 的 fail-closed 语义返回 `{ enabled: false, requireAuth: true }`，路由会跳转首页或登录页，避免配置不可确认时误开放受限页面；代价是短暂网络故障可能让价格页不可达。
+3. `getFreshModuleAccess()` 会写回本地 `status`，可能刷新顶部导航和后续页面守卫看到的配置，这是预期行为；写缓存失败会被吞掉，不影响当前访问判定。
+4. 未登录且 `requireAuth=true` 时只检查 `useAuthStore` 的本地用户状态，后端 `/api/pricing` 仍有 `HeaderNavModuleAuth` 兜底；如果本地用户过期，后端会继续按已有认证边界拒绝。
+5. 本轮不触碰 i18n 文案、UI 结构、Pricing 详情组件和系统设置保存逻辑，因此风险集中在 import、路由跳转类型和 TypeScript 编译。
+
+### 方案评审
+
+采用最小前端路由守卫方案：`nav-modules.ts` 只新增 `getStatus` 依赖和两个 helper，不改变 `parseHeaderNavModules`、`getModuleAccess` 和 `isSidebarModuleEnabled` 既有导出。`cacheStatus()` 只在浏览器环境且 status 存在时写入 localStorage，保持 SSR/测试环境安全。两个 Pricing 路由复用同一段 `beforeLoad` 逻辑，按 TanStack Router 的 `redirect()` 抛出跳转，`redirect` 参数使用 `location.href` 保留用户原本筛选、模型详情路径和 query。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端路由和类型通过。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/`，访问 `/pricing` 与一个 `/pricing/:modelId` 路径，确认页面按当前配置加载或跳转；如 MCP Chrome 仍不可用，则用 `curl` 访问主页、`/api/status` 和 `/pricing` 验证热更新页面可达，并在最终回复说明替代验证。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增 `beforeLoad`、`redirect` 和 auth store 读取类型正确。
+2. `git diff --check` 通过，无空白错误。
+3. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代真实访问：`http://192.168.0.202:3003/` 返回 200，`/api/status` 返回 200 且当前 `HeaderNavModules` 为空字符串，`/pricing` 返回 200，符合默认公开配置。
+4. 通过 `curl` 拉取 `http://192.168.0.202:3003/static/js/index.js`，确认当前 3003 提供的前端 bundle 已刷新并包含 `/api/status`、`requireAuth`、`sign-in` 与 `pricing` 等守卫相关片段；本轮路由行为是客户端跳转，无法用纯 HTML 响应直接观察跳转状态。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Pricing 路由最新配置守卫 | `web/default/src/lib/nav-modules.ts`、`web/default/src/routes/pricing/*` | 默认前端 Pricing 列表与详情路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.pricing` 判断关闭跳转首页、登录可见跳转登录，并写回本地 status 缓存；后端 HeaderNavModuleAuth 仍是最终接口边界。 |
 | 2026-07-09 | 登录成功审计日志 | `model/log.go`、`controller/user.go`、`web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 新增 `LogTypeLogin=7` 与成功登录审计记录，登录落点写入登录方式、IP、User-Agent 和结构化 `op`；默认前端 Usage Logs 支持 Login 类型筛选与详情展示，并补齐六语翻译。 |
 | 2026-07-09 | 转换后上游 JSON 请求体存储与 Content-Length | `relay/common/outbound_body.go`、`relay/common/relay_info.go`、`relay/channel/api_request.go`、`relay/*_handler.go` | 新增转换后 JSON body 的 `BodyStorage` 包装，记录最终上游 body 字节数并在通用 HTTP 请求构造层回填 `ContentLength`；主要 JSON 转换 handler 已接入，透传、multipart 和 WebSocket 路径保持原语义。 |
 | 2026-07-09 | Secure Session Cookie 环境配置 | `common/session_cookie.go`、`common/init.go`、`main.go`、`common/session_cookie_test.go` | 新增 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 配置，默认保持 HTTP 开发兼容；开启 Secure 时要求可信 HTTPS URL，并让 session store 使用配置值。 |

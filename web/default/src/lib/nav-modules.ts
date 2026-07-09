@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { getStatus } from '@/lib/api'
+
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
 export type HeaderNavModule = 'rankings' | 'pricing'
@@ -145,10 +147,21 @@ export function parseHeaderNavModulesFromStatus(
 
 function getCachedStatus(): Record<string, unknown> | null {
   try {
+    if (typeof window === 'undefined') return null
     const raw = window.localStorage.getItem('status')
     return raw ? (JSON.parse(raw) as Record<string, unknown>) : null
   } catch {
     return null
+  }
+}
+
+function cacheStatus(status: Record<string, unknown> | null): void {
+  try {
+    if (typeof window !== 'undefined' && status) {
+      window.localStorage.setItem('status', JSON.stringify(status))
+    }
+  } catch {
+    // 本地缓存失败不应影响当前路由访问判定，后端鉴权仍是最终边界。
   }
 }
 
@@ -161,6 +174,18 @@ export function getModuleAccessFromStatus(
 
 export function getModuleAccess(module: HeaderNavModule): ModuleAccess {
   return getModuleAccessFromStatus(getCachedStatus(), module)
+}
+
+export async function getFreshModuleAccess(
+  module: HeaderNavModule
+): Promise<ModuleAccess> {
+  try {
+    const status = (await getStatus()) as Record<string, unknown> | null
+    cacheStatus(status)
+    return getModuleAccessFromStatus(status, module)
+  } catch {
+    return { enabled: false, requireAuth: true }
+  }
 }
 
 export function isSidebarModuleEnabled(
