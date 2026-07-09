@@ -4762,8 +4762,61 @@ new-api-main 的 Playground 消息编辑器不只是普通多行输入框，而�
 9. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/5099.js`、`/static/js/async/6675.js`、`/static/js/async/7217.js`，与本地 `web/default/dist` 逐字 `cmp` 一致；核心 sha256 分别为 `e72d29e4663c70716e8b74b3a3d1b6917ee399918f681be2aabe5554410bfce4`（index.js）、`9e3e63369896ea21103f6dc231a576871579eda776c22c7fdf5be24b9892a5d9`（index.css）、`8b37e747f92eaaa64a61aa692ec420d11f6c1c7e3fcdf74fb9559aad62c557a3`（5099.js）、`8613b3913b0e129683f7b2074133cc61d251ae2402c4e6691359a883f9fb7e88`（6675.js）、`88150dee012e8d947c80fc06a9513fc228da23f95ae79ee57b6e84cd3d4a1a15`（7217.js）。
 10. 线上 chunk 已包含 `cm-editor`、`cm-content`、`addEventListener("keydown"`、`Unsaved changes`、`No changes`、`Save & Submit`、`Reset`、`group-[.is-assistant]:max-w-[78ch]` 等特征，确认 3003 页面资源已加载本轮 CodeMirror 编辑器底座、编辑状态和宽度样式；本轮未新增 UI 文案，无需更新 locale。
 
+## 本轮实施评审：渠道移动端专用卡片原生化
+
+### 需求分析
+
+new-api-main 的渠道管理页有专用 `channel-card.tsx`，移动端不再机械压缩桌面表格，而是把选择框、渠道类型、名称/备注、状态、余额、优先级、权重、响应时间、最近测试时间、分组和行操作重新组织为适合触摸浏览的卡片。NexusTok 当前已经具备 DataTable 默认移动卡片和完整渠道权限/账号池能力，但渠道页仍主要依赖列 meta 自动折叠，复杂字段在手机上扫描成本较高。
+
+本轮目标是把 new-api-main 的“复用列 cell 渲染的渠道专用移动卡片”转为 NexusTok 原生能力：
+
+1. 新增 `web/default/src/features/channels/components/channel-card.tsx`，通过 `flexRender` 复用现有列 cell，不重新实现渠道状态、余额、权限动作、多 Key、账号池和 tag 聚合逻辑。
+2. `ChannelsTable` 在 `DataTablePage.mobile` slot 中使用专用 `ChannelsMobileList`，桌面表格、筛选、分页、排序、批量操作和接口请求保持不变。
+3. 移动端卡片保留已落地的权限控制：动作 cell 仍走 `DataTableRowActions` / `DataTableTagRowActions`，不绕过 `useChannelPermissions`。
+4. 不引入 new-api-main 的渠道表单分区、Advanced Custom 编辑器或 `ChannelRowActionsLayoutContext`，避免把大范围渠道编辑器重构混入本轮。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 渠道移动端列表 | `web/default/src/features/channels/components/channel-card.tsx` | 新增移动端专用 list/card、加载骨架和空状态；复用现有列 cell 和分组 badge。 |
+| 渠道表格接入 | `web/default/src/features/channels/components/channels-table.tsx` | 在移动端使用专用卡片；桌面 DataTable、toolbar、pagination 和 bulk actions 不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 渠道页是高频管理入口，不能改变查询参数、分页、批量选择、权限判断和行操作；本轮只替换移动端展示层，所有数据和动作继续来自同一 TanStack table row。
+2. 复用列 cell 能最大化继承 NexusTok 独有能力，但部分 cell 原本为桌面表格设计，移动端必须用稳定 grid/flex 容器限制宽度，避免长渠道名、模型 badge、分组或余额文本挤破布局。
+3. Tag 聚合行没有普通渠道 ID 和选择语义，卡片需要继续区分 `isTagAggregateRow`，避免为 tag 行展示无意义的选择框或敏感信息。
+4. 本轮不新增 UI 文案，复用 `Priority`、`Weight`、`Used / Remaining`、`Response`、`Last Tested`、`No Channels Found` 等已有 i18n key；不需要修改 locale。
+5. MCP Chrome 当前可能仍不可用；页面验证需先尝试 MCP，失败时用 3003 真实页面、资源 hash 和线上 chunk 特征作为替代，并明确记录无法完成真实浏览器交互的原因。
+
+### 方案评审
+
+采用“专用移动端展示、列 cell 复用”的方案，而不是引入 new-api-main 的完整渠道表单和 DataTable 分层。`ChannelCard` 负责单条移动端布局，`ChannelsMobileList` 负责 loading/empty/row 容器；`ChannelsTable` 只把它接入 `DataTablePage.mobile`。这样可以吸收 new-api-main 在移动端渠道管理上的优势，同时保持 NexusTok 已有账号池、Codex、权限矩阵、多 Key 和上游模型同步操作全部由现有列与 action 组件承载。
+
+验收方式：
+
+1. 针对 `channel-card.tsx`、`channels-table.tsx` 和相关渠道表格文件运行定向 ESLint。
+2. `cd web/default && ./node_modules/.bin/tsc -b`，确认 TanStack row/cell 类型和移动端组件 props 正确。
+3. `cd web/default && ./node_modules/.bin/rsbuild build`，确认生产构建通过。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/channels`，以移动端 viewport 验证渠道列表卡片、筛选工具条、行操作菜单和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/channels`、`/api/status`，并拉取线上 `index.js`、CSS 和渠道相关 chunk 与本地 `dist` 比对，确认 3003 页面加载本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/eslint src/features/channels/components/channel-card.tsx src/features/channels/components/channels-table.tsx` 通过。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+3. `cd web/default && ./node_modules/.bin/rsbuild build` 通过；生产构建总量为 `24251.2 kB / 9210.7 kB gzip`，渠道相关 async chunk 为 `dist/static/js/async/3020.3a9a61b0c9.js`（`251.2 kB / 58.0 kB gzip`）。
+4. `git diff --check` 通过。
+5. 已优先尝试 MCP Chrome 打开 `http://192.168.0.202:3003/channels`，但当前环境仍无法连接 Chrome 远程调试端：`Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮按约定使用 3003 真实 HTTP 页面和资源 hash 兜底验证。
+6. `curl --noproxy '*'` 访问 `http://192.168.0.202:3003/`、`/channels`、`/api/status` 均返回 `200`；`/api/status` 返回正常 JSON，确认后端状态接口可用。
+7. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/3020.js`，分别与本地 `web/default/dist/static/js/index.js`、`web/default/dist/static/css/index.css`、`web/default/dist/static/js/async/3020.js` 逐字 `cmp` 一致；sha256 分别为 `5c661e0ebdbeef2da067b03ac9a5e913d1ced912d24255aa76d1d666c73e2596`（index.js）、`22eb2d6118acd2bf3ceab39c799258d25f8c7cc1faef805b9bd57365b1fe9b64`（index.css）、`db02f700719db20f4c3b4ad7b55aa511eba9c0c3a52e2a504f64807ae8c38d3f`（3020.js）。
+8. 线上渠道 chunk 已包含 `Used / Remaining`、`Last Tested`、`No Channels Found`、`No channels available. Create your first channel to get started.` 等移动端卡片特征，确认 3003 页面资源已加载本轮渠道卡片构建产物；本轮未新增 UI 文案，无需更新 locale。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 渠道移动端专用卡片 | `web/default/src/features/channels/components/{channel-card.tsx,channels-table.tsx}` | 原生化 new-api-main 的渠道移动端卡片体验；移动端列表改用专用卡片重组类型、名称、状态、余额、优先级、权重、响应时间、最近测试、分组和行操作，继续复用现有列 cell、权限动作、tag 聚合和桌面表格逻辑。 |
 | 2026-07-09 | Playground CodeMirror 编辑器底座 | `web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 CodeMirror 结构化编辑能力；新增公共 `CodeBlockEditor`，Playground 消息编辑器切换为 Markdown/行号编辑器，并把键盘事件与 `EditorView` 生命周期解耦，保留 Shiki 只读代码块展示和现有保存/确认/Reset 语义。 |
 | 2026-07-09 | Playground 消息编辑器状态安全 | `web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/src/features/playground/lib/{message-editor-utils.test.ts,message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的编辑器误取消保护、重置动作、图标动作和编辑态宽度对齐；继续使用现有 `Textarea`，不引入 CodeMirror 依赖，保存、Save & Submit、消息数组和请求协议保持不变。 |
 | 2026-07-09 | Playground 消息阅读样式 | `web/default/src/features/playground/lib/{message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的消息阅读样式优势；assistant 正文限制为 `78ch` 文档列并使用当前 `font-sans` 字体轴，user 消息切换为语义 muted 边框气泡，移除旧 `font-serif`、无限宽和手写深色背景覆盖，消息协议、存储和请求链路不变。 |

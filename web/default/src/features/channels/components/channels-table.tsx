@@ -53,6 +53,7 @@ import {
   getChannelTypeLabel,
 } from '../lib'
 import type { Channel, ChannelSortBy } from '../types'
+import { ChannelsMobileList } from './channel-card'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
@@ -67,6 +68,8 @@ const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
   'response_time',
   'test_time',
 ])
+
+const EMPTY_FILTER_VALUES: string[] = []
 
 function isDisabledChannelRow(channel: Channel) {
   return (
@@ -115,11 +118,17 @@ export function ChannelsTable() {
 
   // Extract filters from column filters
   const statusFilter =
-    (columnFilters.find((f) => f.id === 'status')?.value as string[]) || []
+    (columnFilters.find((f) => f.id === 'status')?.value as
+      | string[]
+      | undefined) ?? EMPTY_FILTER_VALUES
   const typeFilter =
-    (columnFilters.find((f) => f.id === 'type')?.value as string[]) || []
+    (columnFilters.find((f) => f.id === 'type')?.value as
+      | string[]
+      | undefined) ?? EMPTY_FILTER_VALUES
   const groupFilter =
-    (columnFilters.find((f) => f.id === 'group')?.value as string[]) || []
+    (columnFilters.find((f) => f.id === 'group')?.value as
+      | string[]
+      | undefined) ?? EMPTY_FILTER_VALUES
   const modelFilterFromUrl =
     (columnFilters.find((f) => f.id === 'model')?.value as string) || ''
 
@@ -371,6 +380,13 @@ export function ChannelsTable() {
     ...groupOptions,
   ]
 
+  const getChannelRowClassName = (row: Row<Channel>, isMobileRow: boolean) =>
+    isDisabledChannelRow(row.original)
+      ? isMobileRow
+        ? DISABLED_ROW_MOBILE
+        : DISABLED_ROW_DESKTOP
+      : undefined
+
   return (
     <DataTablePage
       table={table}
@@ -414,12 +430,19 @@ export function ChannelsTable() {
           },
         ],
       }}
+      mobile={
+        <ChannelsMobileList
+          table={table}
+          isLoading={isLoading}
+          emptyTitle={t('No Channels Found')}
+          emptyDescription={t(
+            'No channels available. Create your first channel to get started.'
+          )}
+          getRowClassName={(row) => getChannelRowClassName(row, true)}
+        />
+      }
       getRowClassName={(row, { isMobile }) =>
-        isDisabledChannelRow(row.original)
-          ? isMobile
-            ? DISABLED_ROW_MOBILE
-            : DISABLED_ROW_DESKTOP
-          : undefined
+        getChannelRowClassName(row, isMobile)
       }
       bulkActions={<DataTableBulkActions table={table} />}
     />
