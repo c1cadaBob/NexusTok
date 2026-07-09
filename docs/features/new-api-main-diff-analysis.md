@@ -5892,8 +5892,70 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 5. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 6. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：中文 i18n Quota 漏翻清理
+
+### 需求分析
+
+在完成 i18n 同步脚本字面量白名单后，最新 `_sync-report.json` 显示 zh locale 仅剩 1 个未翻译项：`Quota:`。进一步核对六语当前值：
+
+| locale | 当前值 |
+|--------|--------|
+| en | `Quota:` |
+| zh | `Quota:` |
+| fr | `Quota :` |
+| ja | `クォータ：` |
+| ru | `Квота:` |
+| vi | `Hạn ngạch:` |
+
+这说明 `Quota:` 不是应白名单跳过的品牌或代码化字面量，而是中文 locale 的真实漏翻。修复后可以验证本轮新增的 stale report 清理能力：当 zh 无未翻译项时，`zh.untranslated.json` 应被自动删除。
+
+本轮目标是只修复 zh 中 `Quota:` 的翻译，并运行 `bun run i18n:sync` 更新报告；不新增 UI key，不修改其它语言，不改业务代码。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 中文 locale | `web/default/src/i18n/locales/zh.json` | 将 `Quota:` 翻译为 `额度：`。 |
+| i18n 报告 | `web/default/src/i18n/locales/_reports/_sync-report.json`、`web/default/src/i18n/locales/_reports/zh.untranslated.json` | zh `untranslatedCount` 归零，并由同步脚本删除空的 zh untranslated 报告。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 只修改一个中文翻译值，不影响 API、计费、权限或数据库。
+2. `Quota:` 是短标签，中文翻译使用全角冒号 `额度：`，与日文 `クォータ：` 的标点风格一致。
+3. 运行 `bun run i18n:sync` 会重写报告文件；需要检查 diff，确认只有 zh locale 和 zh report 清理相关变化。
+4. 该改动会让 zh 未翻译报告消失，这是脚本新增清理能力的预期行为。
+
+### 方案评审
+
+采用最小翻译修复：
+
+1. 在 `zh.json` 中把 `Quota:` 的值从 `Quota:` 改为 `额度：`。
+2. 运行 `bun run i18n:sync`，让脚本重算 `_sync-report.json` 并删除空的 `zh.untranslated.json`。
+3. 检查 `_sync-report.json`，确认 zh 的 `untranslatedCount=0`，其它 locale 计数不因本轮翻译变化而异常波动。
+
+验收方式：
+
+1. `bun run i18n:sync`。
+2. `jq -r '.translation["Quota:"]' src/i18n/locales/zh.json`。
+3. `cat src/i18n/locales/_reports/_sync-report.json`。
+4. `test ! -f src/i18n/locales/_reports/zh.untranslated.json`。
+5. `git diff --check`。
+6. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `bun run i18n:sync` 通过。
+2. `jq -r '.translation["Quota:"]' src/i18n/locales/zh.json` 返回 `额度：`。
+3. 最新 `_sync-report.json` 中 zh `missingCount=0`、`extrasCount=0`、`untranslatedCount=0`；fr/ja/ru/vi 计数保持为后续真实翻译待办。
+4. `test ! -f src/i18n/locales/_reports/zh.untranslated.json` 通过，空报告已由同步脚本清理。
+5. `git diff --check` 通过。
+6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 中文 i18n Quota 漏翻清理 | `web/default/src/i18n/locales/zh.json`、`web/default/src/i18n/locales/_reports/*` | 将 zh locale 中唯一剩余的 `Quota:` 翻译为 `额度：`，并通过 `bun run i18n:sync` 验证 stale untranslated report 清理能力；中文未翻译计数归零。 |
 | 2026-07-09 | i18n 同步脚本字面量白名单与报告清理 | `web/default/scripts/sync-i18n.mjs`、`web/default/src/i18n/locales/_reports/*` | 原生化 new-api-main 的 i18n literal 白名单优势，过滤品牌、provider、URL、密钥占位符、模型名和代码化字符串的误报；同步脚本在 locale 无 extras/untranslated 时清理旧报告，剩余自然语言未翻译项继续保留给后续翻译切片。 |
 | 2026-07-09 | Issue 模板前置约束增强 | `.github/ISSUE_TEMPLATE/{bug_report.md,bug_report_en.md,feature_request.md,feature_request_en.md}` | 原生化 new-api-main 的 issue 治理优势，四份模板补充非重复搜索、使用/配置/接入排除、Relay/pass-through 上游行为边界、coding plan/逆向渠道技术支持边界，以及转发/计费问题排查信息提示；保留 NexusTok 品牌链接和现有 Issue Chooser 配置。 |
 | 2026-07-09 | DataTable 组件维护文档 | `web/default/src/components/data-table/README.md` | 原生化 new-api-main 的 DataTable 包说明优势，但不直接迁移其 `core/layout/toolbar/static/hooks` 目录；文档按 NexusTok 当前扁平组件结构记录稳定导入入口、组件职责、`DataTablePage` 组合方式、移动端列 meta 和后续渐进分层原则。 |
