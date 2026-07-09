@@ -3899,8 +3899,66 @@ new-api-main 的 Playground 输入区已经把文本提交、模型/分组选择
 7. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/3854.js`，确认线上资源包含 `Clear chat history`、`Conversation cleared`、`Start a playground chat`、`Analyze data` 等本轮特征；旧 `/static/js/async/3786.js` 已返回 404，说明 Playground chunk 已切换到新构建。
 8. 线上 `/static/js/async/3854.js` 与本地 `web/default/dist/static/js/async/3854.js` 完全一致，确认热更新页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 消息编辑与会话操作工具化
+
+### 需求分析
+
+new-api-main 的 Playground 已把消息编辑器、编辑状态计算、上一条 user prompt 查找、重试截断、删除和编辑后提交等逻辑拆成独立组件与纯函数。NexusTok 当前虽然已经具备编辑、重试和错误恢复能力，但 `playground-chat.tsx` 仍直接持有 `editText`、`originalText`、编辑按钮 JSX 和上一条 user 查找；`index.tsx` 也直接拼接消息数组。这会让后续继续吸收 new-api-main 的消息内容拆分、来源折叠、历史裁剪和会话 hook 时，每一步都需要在大组件里反复改动同一块状态逻辑。
+
+本轮目标是把 new-api-main 的低风险结构优势转成 NexusTok 原生能力：
+
+1. 新增消息编辑状态 helper，集中计算 `canSave`、`hasChanged` 和“用户消息才显示 Save & Submit”的规则。
+2. 新增会话消息数组 helper，集中处理发送、重试、删除、查找错误消息对应 user prompt、编辑保存和编辑后重新提交。
+3. 新增 `PlaygroundMessageEditor` 组件，把编辑态 textarea 与 Save/Save & Submit/Cancel 按钮从 `playground-chat.tsx` 中移出。
+4. 保持现有 `Textarea`、`Button`、消息类型、请求 payload、localStorage key 和视觉布局，不引入 new-api-main 的 `CodeBlockEditor`、历史裁剪、来源折叠或完整 message 目录迁移。
+5. 为纯函数补充定向测试，覆盖编辑、重试和删除这些最容易影响 Playground 请求上下文的边界。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 消息 helper | `web/default/src/features/playground/lib/conversation-message-utils.ts`、`message-editor-utils.ts`、`lib/index.ts` | 新增可测试纯函数，封装消息数组变更和编辑状态计算。 |
+| 消息编辑组件 | `web/default/src/features/playground/components/playground-message-editor.tsx`、`playground-chat.tsx` | 编辑态 JSX 从聊天组件中拆出，聊天组件只负责选择编辑/展示分支。 |
+| Playground 容器 | `web/default/src/features/playground/index.tsx` | 发送、重试、删除、编辑保存改为调用 helper，避免在容器里手写数组截断。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 若将已有硬编码 `Save & Submit` 改为 `t()`，需补齐六语 key。 |
+| 测试 | `web/default/src/features/playground/lib/conversation-message-utils.test.ts` | 覆盖消息追加、重试截断、上一条 user 查找、编辑保存和编辑后重新提交。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 本轮只移动默认前端 Playground 客户端消息编辑和数组操作，不触碰后端 Relay、计费、权限、数据库、模型请求 DTO、SSE 解析、存储 key 和参数配置。
+2. 重试/编辑后提交会决定发给 `/pg/chat/completions` 的上下文数组，必须用纯函数测试确认：assistant 重试截断到该 assistant 之前，user 消息重新提交保留该 user 并追加新的 loading assistant。
+3. 编辑保存必须保持原语义：空文本不可保存，未变化不可保存；assistant 消息只能保存，不触发重新提交；user 消息 Save & Submit 会丢弃该 user 之后的旧消息并追加新的 assistant 占位。
+4. 拆出 `PlaygroundMessageEditor` 可能影响移动端按钮布局；本轮保留原来的文字按钮和 `Textarea`，不引入图标按钮或确认弹窗，减少视觉回归。
+5. 新增测试使用 Bun/Node 内置测试风格，不新增测试依赖；若环境无法运行，应至少通过 ESLint、TypeScript、生产构建和 3003 资源验证。
+
+### 方案评审
+
+采用“纯函数先行 + 组件薄拆分”的方案：`conversation-message-utils.ts` 负责所有会话数组变更，`message-editor-utils.ts` 负责编辑器按钮状态，`PlaygroundMessageEditor` 只接收 `editText`、`originalText`、`message` 和回调。`playground-chat.tsx` 保留当前 `Branch`、`MessageContent`、`Response`、`Reasoning`、错误动作和空状态结构，只把编辑态渲染替换为新组件，并从 helper 获取上一条 user prompt；`index.tsx` 用 helper 生成新消息数组后再调用现有 `updateMessages` 和 `sendChat`。这样能为后续继续拆 `PlaygroundMessageContent` 或引入会话 hook 打基础，同时把行为变化控制在可测试函数内。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/conversation-message-utils.test.ts` 覆盖本轮新增消息数组 helper。
+2. `cd web/default && bun run i18n:sync` 确认新增或复用的编辑器文案进入 en、zh、fr、ja、ru、vi。
+3. 针对本轮触碰文件运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖新增 helper、组件 props 和容器调用。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+6. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查编辑器按钮状态、保存、取消、错误消息 Edit Prompt 和控制台错误；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 确认新组件/文案特征已热更新。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/conversation-message-utils.test.ts` 通过，8 条测试覆盖发送消息对、assistant/user 重试、上一条 user prompt 查找、编辑保存、编辑后提交、assistant 编辑不提交、删除和读取编辑内容。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 均 `missingCount: 0`、`extrasCount: 0`，本轮新增 `Save & Submit` 六语 key 已归档。
+3. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/message-editor-utils.ts src/features/playground/lib/conversation-message-utils.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/index.ts src/features/playground/components/playground-message-editor.tsx src/features/playground/components/playground-chat.tsx src/features/playground/index.tsx` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增 helper、测试类型、编辑器 props 和容器接线类型正确。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground lazy chunk 切换为 `/static/js/async/9942.js`；`git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
+8. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9942.js`，确认线上资源包含 `Save & Submit` 与新 chunk 编号 `9942`；线上资源与本地 `web/default/dist` 完全一致，旧 `/static/js/async/3854.js` 已返回 404，确认页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息编辑与会话操作工具化 | `web/default/src/features/playground/components/{playground-message-editor.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-editor-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息编辑器拆分和会话消息数组 helper；发送、重试、删除、上一条 user 查找、编辑保存与编辑后重新提交统一由纯函数处理并补定向测试，聊天组件和容器不再手写关键数组截断逻辑。 |
 | 2026-07-09 | Playground 输入区恢复能力 | `web/default/src/features/playground/components/{playground-input.tsx,playground-input-controls.tsx,playground-input-tools.tsx,playground-empty-state.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{input-control-utils.ts,input-tool-utils.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的输入区拆分、空会话 starter prompts 和清空本地会话能力；新增清空确认弹窗，输入工具状态集中到 helper，移除旧 raw color 建议按钮，所有新增文案补齐六语翻译。 |
 | 2026-07-09 | Playground 错误消息动作 | `web/default/src/features/playground/components/{message-error-actions.tsx,playground-chat.tsx}` | 原生化 new-api-main 的失败态恢复入口，错误 assistant 消息下方显示专用 Retry/Edit/Delete 动作；Retry 复用 regenerate，Edit 定位到上一条 user prompt，Delete 清理错误消息，普通消息动作和请求协议保持不变。 |
 | 2026-07-09 | Playground 流式错误处理底座 | `web/default/src/features/playground/lib/{stream-utils.ts,request-error-utils.ts,index.ts}`、`web/default/src/features/playground/hooks/{use-stream-request.ts,use-chat-handler.ts}`、`web/default/src/features/playground/components/message-error.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground stream/request error 工具拆分，SSE 连接状态改为响应式 `isStreaming`，新请求前关闭旧流，统一解析流式和非流式错误；模型价格错误设置入口改向默认前端模型价格页，并补齐错误 fallback 六语翻译。 |

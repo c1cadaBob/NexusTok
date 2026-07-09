@@ -22,7 +22,12 @@ import { getUserModels, getUserGroups } from './api'
 import { PlaygroundChat } from './components/playground-chat'
 import { PlaygroundInput } from './components/playground-input'
 import { usePlaygroundState, useChatHandler } from './hooks'
-import { createUserMessage, createLoadingAssistantMessage } from './lib'
+import {
+  appendUserMessagePair,
+  applyMessageEdit,
+  createRegeneratedMessages,
+  removeMessageByKey,
+} from './lib'
 import type { Message as MessageType } from './types'
 
 export function Playground() {
@@ -90,10 +95,7 @@ export function Playground() {
   }, [groupsData, setGroups, config.group, updateConfig])
 
   const handleSendMessage = (text: string) => {
-    const userMessage = createUserMessage(text)
-    const assistantMessage = createLoadingAssistantMessage()
-
-    const newMessages = [...messages, userMessage, assistantMessage]
+    const newMessages = appendUserMessagePair(messages, text)
     updateMessages(newMessages)
 
     // 发送请求时直接复用当前消息数组，确保本地展示和上游上下文一致。
@@ -107,12 +109,8 @@ export function Playground() {
   }
 
   const handleRegenerateMessage = (message: MessageType) => {
-    const messageIndex = messages.findIndex((m) => m.key === message.key)
-    if (messageIndex === -1) return
-
-    const messagesUpToHere = messages.slice(0, messageIndex)
-    const loadingMessage = createLoadingAssistantMessage()
-    const newMessages = [...messagesUpToHere, loadingMessage]
+    const newMessages = createRegeneratedMessages(messages, message.key)
+    if (!newMessages) return
 
     updateMessages(newMessages)
     sendChat(newMessages)
@@ -130,34 +128,27 @@ export function Playground() {
   const applyEdit = useCallback(
     (newContent: string, submit: boolean) => {
       if (!editingMessageKey) return
-      const index = messages.findIndex((m) => m.key === editingMessageKey)
-      if (index === -1) return
 
-      const updated = messages.map((m) =>
-        m.key === editingMessageKey
-          ? { ...m, versions: [{ ...m.versions[0], content: newContent }] }
-          : m
+      const result = applyMessageEdit(
+        messages,
+        editingMessageKey,
+        newContent,
+        submit
       )
+      if (!result) return
 
       setEditingMessageKey(null)
+      updateMessages(result.messages)
 
-      if (!submit || updated[index].from !== 'user') {
-        updateMessages(updated)
-        return
+      if (result.shouldSend) {
+        sendChat(result.messages)
       }
-
-      const toSubmit = [
-        ...updated.slice(0, index + 1),
-        createLoadingAssistantMessage(),
-      ]
-      updateMessages(toSubmit)
-      sendChat(toSubmit)
     },
     [editingMessageKey, messages, updateMessages, sendChat]
   )
 
   const handleDeleteMessage = (message: MessageType) => {
-    const newMessages = messages.filter((m) => m.key !== message.key)
+    const newMessages = removeMessageByKey(messages, message.key)
     updateMessages(newMessages)
   }
 

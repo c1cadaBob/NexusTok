@@ -3879,6 +3879,7 @@
     "Sampling temperature; lower is more deterministic": "サンプリング温度。低いほど決定論的になります",
     "Sandbox mode": "サンドボックスモード",
     "Save": "保存",
+    "Save & Submit": "保存して送信",
     "Save all settings": "すべての設定を保存",
     "Save Backup Codes": "バックアップコードを保存",
     "Save changes": "変更を保存",

@@ -16,10 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import {
   Branch,
   BranchMessages,
@@ -49,6 +47,11 @@ import {
   SourcesTrigger,
 } from '@/components/ai-elements/sources'
 import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
+import {
+  getChatMessageRenderState,
+  getEditingMessageContent,
+  getPreviousUserMessage,
+} from '../lib'
 import { getMessageContentStyles } from '../lib/message-styles'
 import { parseThinkTags } from '../lib/message-utils'
 import type { Message as MessageType } from '../types'
@@ -56,6 +59,7 @@ import { MessageActions } from './message-actions'
 import { MessageError } from './message-error'
 import { MessageErrorActions } from './message-error-actions'
 import { PlaygroundEmptyState } from './playground-empty-state'
+import { PlaygroundMessageEditor } from './playground-message-editor'
 
 interface PlaygroundChatProps {
   messages: MessageType[]
@@ -69,27 +73,6 @@ interface PlaygroundChatProps {
   onCancelEdit?: (open: boolean) => void
   onSaveEditAndSubmit?: (newContent: string) => void
   onSelectPrompt?: (prompt: string) => void
-}
-
-/**
- * 从错误 assistant 消息向前查找最近的一条用户消息。
- *
- * 错误恢复里的 Edit 应该编辑触发失败的 prompt，而不是编辑 assistant
- * 错误占位消息本身；按索引倒序查找可以兼容中间插入 system/source 等消息的情况。
- */
-function getPreviousUserMessage(
-  messages: MessageType[],
-  messageIndex: number
-): MessageType | null {
-  for (let index = messageIndex - 1; index >= 0; index--) {
-    const candidate = messages[index]
-
-    if (candidate?.from === MESSAGE_ROLES.USER) {
-      return candidate
-    }
-  }
-
-  return null
 }
 
 export function PlaygroundChat({
@@ -110,20 +93,12 @@ export function PlaygroundChat({
 
   useEffect(() => {
     if (!editingKey) return
-    const message = messages.find((m) => m.key === editingKey)
-    const content = message?.versions?.[0]?.content || ''
+    const content = getEditingMessageContent(messages, editingKey)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditText(content)
 
     setOriginalText(content)
   }, [editingKey, messages])
-
-  const isEditing = (key: string) => editingKey === key
-  const isEmpty = useMemo(() => !editText.trim(), [editText])
-  const isChanged = useMemo(
-    () => editText !== originalText,
-    [editText, originalText]
-  )
 
   const chatContent =
     messages.length === 0 && onSelectPrompt ? (
@@ -131,9 +106,12 @@ export function PlaygroundChat({
     ) : (
       messages.map((message, messageIndex) => {
         const { versions = [] } = message
-        const isLastAssistantMessage =
-          messageIndex === messages.length - 1 &&
-          message.from === MESSAGE_ROLES.ASSISTANT
+        const { alwaysShowActions, isEditing } = getChatMessageRenderState(
+          messages,
+          message,
+          messageIndex,
+          editingKey
+        )
         return (
           <Branch defaultBranch={0} key={message.key}>
             <BranchMessages>
@@ -144,41 +122,16 @@ export function PlaygroundChat({
                   key={`${message.key}-${version.id}-${versionIndex}`}
                 >
                   <div className='w-full min-w-0 flex-1 basis-full py-1'>
-                    {isEditing(message.key) ? (
-                      <div className='flex flex-col gap-2'>
-                        <Textarea
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          className='font-mono text-sm'
-                          rows={8}
-                        />
-                        <div className='flex gap-2'>
-                          {/* Save & Submit 只对用户消息有意义，assistant 消息仅保存草稿。 */}
-                          {message.from === MESSAGE_ROLES.USER && (
-                            <Button
-                              size='sm'
-                              onClick={() => onSaveEditAndSubmit?.(editText)}
-                              disabled={isEmpty || !isChanged}
-                            >
-                              Save & Submit
-                            </Button>
-                          )}
-                          <Button
-                            size='sm'
-                            onClick={() => onSaveEdit?.(editText)}
-                            disabled={isEmpty || !isChanged}
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            onClick={() => onCancelEdit?.(false)}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
+                    {isEditing ? (
+                      <PlaygroundMessageEditor
+                        editText={editText}
+                        message={message}
+                        onCancelEdit={onCancelEdit}
+                        onEditTextChange={setEditText}
+                        onSaveEdit={onSaveEdit}
+                        onSaveEditAndSubmit={onSaveEditAndSubmit}
+                        originalText={originalText}
+                      />
                     ) : (
                       <>
                         {(() => {
@@ -215,7 +168,7 @@ export function PlaygroundChat({
                               onEdit={onEditMessage}
                               onDelete={onDeleteMessage}
                               isGenerating={isGenerating}
-                              alwaysVisible={isLastAssistantMessage}
+                              alwaysVisible={alwaysShowActions}
                               className='mt-1'
                             />
                           )
@@ -297,9 +250,7 @@ export function PlaygroundChat({
                                   <>
                                     <MessageContent
                                       variant='flat'
-                                      className={cn(
-                                        getMessageContentStyles()
-                                      )}
+                                      className={cn(getMessageContentStyles())}
                                     >
                                       <Response
                                         final={
