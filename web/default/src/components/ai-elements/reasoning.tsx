@@ -26,7 +26,9 @@ import {
   useEffect,
   useState,
 } from 'react'
+import type { TFunction } from 'i18next'
 import { BrainIcon, ChevronDownIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useControllableState } from '@/lib/use-controllable-state'
 import { cn } from '@/lib/utils'
 import {
@@ -89,7 +91,7 @@ export const Reasoning = memo(
     const [hasAutoClosed, setHasAutoClosed] = useState(false)
     const [startTime, setStartTime] = useState<number | null>(null)
 
-    // Track duration when streaming starts and ends
+    // 流式 reasoning 开始和结束时记录耗时，外部传入 duration 时由受控状态优先接管。
     useEffect(() => {
       if (isStreaming) {
         if (startTime === null) {
@@ -102,10 +104,10 @@ export const Reasoning = memo(
       }
     }, [isStreaming, startTime, setDuration])
 
-    // Auto-open when streaming starts, auto-close when streaming ends (once only)
+    // 默认展开的 reasoning 在流式结束后只自动收起一次，避免用户手动展开后被重复关闭。
     useEffect(() => {
       if (defaultOpen && !isStreaming && isOpen && !hasAutoClosed) {
-        // Add a small delay before closing to allow user to see the content
+        // 留出短暂缓冲，让用户能看到刚完成的推理内容。
         const timer = setTimeout(() => {
           setIsOpen(false)
           setHasAutoClosed(true)
@@ -138,20 +140,25 @@ export const Reasoning = memo(
 
 export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger>
 
-const getThinkingMessage = (isStreaming: boolean, duration?: number) => {
+const getThinkingMessage = (
+  isStreaming: boolean,
+  duration: number | undefined,
+  t: TFunction
+) => {
   if (isStreaming) {
-    return <Shimmer duration={1}>Thinking...</Shimmer>
+    return <Shimmer duration={1}>{t('Thinking...')}</Shimmer>
   }
-  // When duration is unknown or 0 (e.g., non-streaming responses), show a generic message
+  // duration 缺失或为 0 常见于旧消息、非流式响应或亚秒级推理，统一展示泛化提示。
   if (duration === undefined || duration === 0) {
-    return <p>Thought for a few seconds</p>
+    return <p>{t('Thought for a few seconds')}</p>
   }
-  return <p>Thought for {duration} seconds</p>
+  return <p>{t('Thought for {{duration}} seconds', { duration })}</p>
 }
 
 export const ReasoningTrigger = memo(
   ({ className, children, ...props }: ReasoningTriggerProps) => {
     const { isStreaming, isOpen, duration } = useReasoning()
+    const { t } = useTranslation()
 
     return (
       <CollapsibleTrigger
@@ -164,7 +171,7 @@ export const ReasoningTrigger = memo(
         {children ?? (
           <>
             <BrainIcon className='size-4' />
-            {getThinkingMessage(isStreaming, duration)}
+            {getThinkingMessage(isStreaming, duration, t)}
             <ChevronDownIcon
               className={cn(
                 'size-4 transition-transform',

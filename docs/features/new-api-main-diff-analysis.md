@@ -4310,8 +4310,65 @@ new-api-main 的 Playground 在 assistant 消息完成后提供 source/preview �
 9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/92.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `e8b7995c396e7ee0ead4f34816ef97e5fb1c79a85f980335b42763fcb9f28956`，`92.js` SHA256 均为 `4ded5331fdb8d0e8fec0157c4be125f1545b57d6a1b3c3e4292a98010c8caf3e`。
 10. 线上 `/static/js/async/92.js` 已包含 `Raw response`、`Show source` 特征；上一轮旧 chunk `/static/js/async/6948.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 推理耗时展示原生化
+
+### 需求分析
+
+new-api-main 的 Playground 在渲染 reasoning 块时会把 `message.reasoning?.duration` 传给公共 `Reasoning` 组件，用户可以看到“Thinking...”或“Thought for N seconds”这类推理耗时提示。NexusTok 前序轮次已经原生化了 `reasoning.startedAt`、`reasoning.completedAt`、`reasoning.durationMs` 和 `reasoning.duration` 的记录逻辑，也已经在消息元信息里展示整体响应耗时，但 `PlaygroundMessageContent` 当前没有把 `message.reasoning?.duration` 继续传入 `Reasoning`，导致推理块标题只能落回组件内部默认耗时，历史消息与非即时渲染场景无法准确体现已计算的 reasoning 时长。
+
+本轮目标是把已有 timing 数据闭环到 UI 层，同时顺手消除公共 `Reasoning` 组件中的英文硬编码：
+
+1. `PlaygroundMessageContent` 在存在 reasoning 时向 `Reasoning` 传入 `duration={message.reasoning?.duration}`，复用现有消息结构，不新增协议字段。
+2. `ReasoningTrigger` 使用 `useTranslation()` 渲染 `Thinking...`、`Thought for a few seconds` 和 `Thought for {{duration}} seconds`，避免默认前端在非英文语言下泄漏英文。
+3. 当 duration 缺失或为 0 时仍展示泛化的“几秒”提示；只有 duration 为正数时展示精确秒数。
+4. 补齐 en、zh、fr、ja、ru、vi 六语翻译，并通过 i18n sync 校验 key 完整性。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 公共 AI 元素 | `web/default/src/components/ai-elements/reasoning.tsx` | 引入 `useTranslation`，将 trigger 的 thinking/thought 文案从英文硬编码改为 i18n；保留组件 props、context 和自动展开/收起行为。 |
+| Playground 消息内容 | `web/default/src/features/playground/components/playground-message-content.tsx` | 将已记录的 `message.reasoning?.duration` 传给 `Reasoning`；不改变来源、错误、原始响应切换、正文渲染和元信息顺序。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json`、`web/default/src/i18n/static-keys.ts` | 新增 reasoning trigger 的三条文案，保持 flat JSON key 规则和变量占位符一致。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. 本轮只读取并展示已有 `message.reasoning.duration`，不改 SSE 解析、`<think>` 解析、finalize、storage schema、请求体、计费或上游 relay，核心业务链路风险低。
+2. `Reasoning` 是公共组件，文案 i18n 化会影响所有使用它的页面；但输出语义保持原样，且 key 使用英文源字符串，符合默认前端 i18n 体系。
+3. duration 缺失、旧 localStorage 消息、非流式响应或耗时小于 1 秒时可能得到 0；保留原有泛化提示，避免显示 “0 seconds” 造成误读。
+4. `useTranslation()` 放在 `ReasoningTrigger` 中会让该 trigger 订阅语言变化；组件已是 client component，额外渲染成本极小。
+5. 新增 `{{duration}}` 占位符必须在六语中完整保留，否则 i18n sync 或运行时插值会出现异常。
+
+### 方案评审
+
+采用“小闭环展示 + 公共文案 i18n”方案：`PlaygroundMessageContent` 只在现有 `<Reasoning>` 上补 `duration={message.reasoning?.duration}`；`reasoning.tsx` 将 `getThinkingMessage` 改为接收 `t`，streaming 时返回 `<Shimmer>{t('Thinking...')}</Shimmer>`，无有效 duration 时返回 `t('Thought for a few seconds')`，duration 为正数时返回 `t('Thought for {{duration}} seconds', { duration })`。这个方案不会引入新状态，也不会把展示逻辑拆入 Playground 私有 helper，原因是 thinking 文案属于公共 `Reasoning` trigger 的职责；同时保持当前 shadcn/Base UI 的 `Collapsible` 组合、视觉密度和图标结构不变。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync`，确认 en、zh、fr、ja、ru、vi 无 missing/extras，并检查新增 key 的占位符一致。
+2. `cd web/default && bun test src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/storage.test.ts`，覆盖 timing、内容状态和既有动作/storage 链路。
+3. 针对 `reasoning.tsx`、`playground-message-content.tsx` 和 i18n static keys 运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，覆盖公共组件类型和生产构建。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0。本轮新增 `Thinking...`、`Thought for a few seconds`、`Thought for {{duration}} seconds` 已补齐六语；报告中的 untranslated 计数为仓库既有存量。
+2. `cd web/default && bun test src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/storage.test.ts` 通过，共 29 个用例，覆盖 timing、消息内容状态、动作状态和 storage 兼容链路。
+3. `cd web/default && ./node_modules/.bin/eslint src/components/ai-elements/reasoning.tsx src/features/playground/components/playground-message-content.tsx src/i18n/static-keys.ts` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `ReasoningTrigger` 的 i18n 类型、公共组件 props 和 Playground 传参类型正确。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 为 `/static/js/async/92.a93384736f.js`。
+6. `git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`。
+9. 从 3003 拉取 `/static/js/index.61905bfd48.js` 与 `/static/js/async/92.a93384736f.js` 后，与本地 `web/default/dist` 完全一致：`index.61905bfd48.js` SHA256 均为 `5200dc91f6adf5c23d1b14235f588001ef46184103fe13be3fc2f802a8ef1140`，`92.a93384736f.js` SHA256 均为 `3a3679d17448a6eee3ef542b3a1bcd37ab345d19409c1a89e440f9c1f991b61f`。
+10. 线上 `/static/js/async/92.a93384736f.js` 已包含 `Thinking...`、`Thought for {{duration}} seconds`、`Raw response`、`Show source` 特征；上一轮旧 chunk `/static/js/async/92.4ded5331fd.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 推理耗时展示 | `web/default/src/components/ai-elements/reasoning.tsx`、`web/default/src/features/playground/components/playground-message-content.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 reasoning duration 展示闭环；Playground 将已记录的 `message.reasoning.duration` 传入公共 `Reasoning`，trigger 按流式、未知耗时和精确秒数展示六语 i18n 文案，旧消息和 0 秒耗时仍回落泛化提示。 |
 | 2026-07-09 | Playground 原始响应切换 | `web/default/src/features/playground/components/{message-actions.tsx,playground-chat.tsx,playground-message-content.tsx}`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts,message-source-utils.ts,message-source-utils.test.ts,index.ts}`、`web/default/src/features/playground/constants.ts`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 assistant 消息 source/preview toggle；完成态 assistant 消息可在 Markdown 预览和当前版本原始响应代码块之间切换，source 状态仅保留在页面会话中，不改消息协议和 localStorage；新增 raw/source 文案补齐六语。 |
 | 2026-07-09 | Playground 消息基础工具拆分 | `web/default/src/features/playground/lib/{message-reasoning-utils.ts,message-reasoning-utils.test.ts,message-update-utils.ts,message-update-utils.test.ts,message-action-utils.ts,message-action-utils.test.ts,message-utils.ts,message-content-utils.ts,storage.ts,index.ts}`、`web/default/src/features/playground/components/message-actions.tsx` | 原生化 new-api-main 的 message reasoning/update/action 工具拆分；`<think>` 解析、assistant 错误更新、动作栏状态和可见性 class 进入可测试纯函数，MessageActions 只消费派生状态，现有按钮结构、请求协议和本地存储 key 保持不变。 |
 | 2026-07-09 | Playground 选项加载与会话 hook | `controller/user.go`、`controller/user_models_test.go`、`web/default/src/features/playground/{api.ts,index.tsx,hooks/use-playground-{options,conversation,state}.ts,hooks/index.ts,lib/playground-{option,state}-utils.ts,lib/playground-{option,state}-utils.test.ts,lib/index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground options/conversation 拆分；`/api/user/models?group=` 支持按用户可用分组过滤模型，不可用分组返回空数组，无参数保持旧聚合行为；前端按当前分组刷新模型候选、加载失败 toast 补齐六语，发送/重试/编辑/删除逻辑收敛到专用 hook。 |
