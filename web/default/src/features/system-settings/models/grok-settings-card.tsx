@@ -20,6 +20,7 @@ import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -63,6 +64,11 @@ export function GrokSettingsCard(props: Props) {
   useResetForm(form as any, props.defaultValues)
 
   const onSubmit = async (data: GrokFormValues) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     const entries = Object.entries(data) as [string, unknown][]
     const updates = entries.filter(
       ([key, value]) =>
@@ -140,7 +146,13 @@ export function GrokSettingsCard(props: Props) {
             )}
           />
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save Changes')}
           </Button>
         </form>

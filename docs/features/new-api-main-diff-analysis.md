@@ -2377,6 +2377,56 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/content/announcements`、`/system-settings/content/api-info`、`/system-settings/content/faq`、`/system-settings/content/uptime-kuma`，确认页面加载、`/api/option/` 只读请求正常、保存按钮和开关渲染正常、控制台无错误；不触发真实保存或开关写入。
 
+## 本轮实施评审：模型配置卡片保存按钮 Authz 消费
+
+### 需求分析
+
+系统设置的“模型与路由”分组中，Global Model Configuration、Gemini、Claude 和 Grok 四个配置卡片都会通过 `useUpdateOption()` 写入 `PUT /api/option/`。这些卡片已经具备表单校验、JSON 规范化、仅保存差异字段等原生行为，但最终 `Save Changes` 按钮仍只按 `updateOption.isPending` 禁用；缺少 `system_setting.sensitive_write` 的管理员会看到可提交入口，直到提交后才由 hook 或后端阻断。
+
+本轮目标：
+
+1. 将 `/system-settings/models/global` 的最终保存按钮和 `onSubmit` 前置检查接入 `updateOption.canUpdate/disabledReason`。
+2. 将 `/system-settings/models/gemini` 的最终保存按钮和 `onSubmit` 前置检查接入同一权限。
+3. 将 `/system-settings/models/claude` 的最终保存按钮和 `onSubmit` 前置检查接入同一权限。
+4. 将 `/system-settings/models/grok` 的最终保存按钮和 `onSubmit` 前置检查接入同一权限。
+5. 保持表单内 Switch、JSON 格式化、示例填充、字段校验、差异字段计算和 option key 不变，因为这些操作只修改本地表单状态，不直接调用后端写接口。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 全局模型配置 | `web/default/src/features/system-settings/models/global-settings-card.tsx` | 保存全局透传、thinking 黑名单、Chat Completions 到 Responses 策略和 keep-alive ping 设置时消费统一 option 保存权限。 |
+| Gemini 配置 | `models/gemini-settings-card.tsx` | 保存 Gemini safety/version/imagine/thinking/function response 设置时消费统一 option 保存权限。 |
+| Claude 配置 | `models/claude-settings-card.tsx` | 保存 Anthropic header、default max tokens 和 thinking adapter 设置时消费统一 option 保存权限。 |
+| Grok 配置 | `models/grok-settings-card.tsx` | 保存 xAI 违规扣费开关和扣费金额时消费统一 option 保存权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮不改模型定价、倍率、分组倍率、工具价格或表达式计费页面，因此不涉及 `pkg/billingexpr/expr.md` 所描述的计费表达式语义变更。
+2. 四个卡片的表单 Switch 都是本地草稿字段，和内容列表页的即时写入开关不同；本轮不禁用本地 Switch，避免无权限管理员无法查看或整理草稿配置。
+3. Global/Gemini/Claude 的 JSON 字段存在规范化和差异比较逻辑，本轮只在提交入口前加权限判断，不改变 JSON parse/stringify、默认值 fallback、schema 校验或差异字段计算。
+4. Grok 违规扣费会影响计费结算行为，但本轮只提前表达后端已有 `system_setting.sensitive_write` 保存权限，不改变扣费金额单位、开关语义或后端结算路径。
+
+### 方案评审
+
+采用“模型配置卡片最终保存入口统一消费 `system_setting.sensitive_write`”的方案。四个卡片继续复用 `useUpdateOption()`；`onSubmit` 开头先检查 `updateOption.canUpdate`，无权限时只显示统一无权限 toast，不进入差异字段计算后的 option 写入循环；最终保存按钮缺少权限时禁用并展示 `disabledReason`。表单内的 Switch、Format JSON、Fill example 等按钮继续作为本地草稿交互，不扩大权限禁用范围。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 Global、Gemini、Claude、Grok 模型配置 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 本地表单 Switch、JSON 格式化、示例填充、字段编辑和校验 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认四个模型设置卡片类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/models/global`、`/system-settings/models/gemini`、`/system-settings/models/claude`、`/system-settings/models/grok`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2445,3 +2495,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
 | 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
 | 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
+| 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |

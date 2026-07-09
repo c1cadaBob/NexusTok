@@ -165,6 +165,11 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
   }
 
   const onSubmit = async (values: GlobalModelSettingsFormValues) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     const flattenedDefaults = flattenGlobalValues(defaultValues)
     const flattenedValues = flattenGlobalValues(values)
     const updates = Object.entries(flattenedValues).filter(
@@ -403,7 +408,13 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
             )}
           />
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save Changes')}
           </Button>
         </form>

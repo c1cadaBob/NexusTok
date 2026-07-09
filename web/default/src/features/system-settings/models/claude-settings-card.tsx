@@ -146,6 +146,11 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
   }, [defaultValues, form])
 
   const onSubmit = async (values: ClaudeSettingsFormValues) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     const normalized: FlatClaudeSettings = {
       'claude.model_headers_settings': normalizeJsonString(
         values.claude.model_headers_settings
@@ -269,7 +274,13 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
             />
           </div>
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save Changes')}
           </Button>
         </form>

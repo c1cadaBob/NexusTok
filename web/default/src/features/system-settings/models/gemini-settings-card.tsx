@@ -184,6 +184,11 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
   const isAdapterEnabled = form.watch('gemini.thinking_adapter_enabled')
 
   const onSubmit = async (values: GeminiSettingsFormValues) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     const normalized: FlatGeminiSettings = {
       'gemini.safety_settings': normalizeJsonString(
         values.gemini.safety_settings
@@ -405,7 +410,13 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
             )}
           />
 
-          <Button type='submit' disabled={updateOption.isPending}>
+          <Button
+            type='submit'
+            disabled={updateOption.isPending || !updateOption.canUpdate}
+            title={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          >
             {updateOption.isPending ? t('Saving...') : t('Save Changes')}
           </Button>
         </form>
