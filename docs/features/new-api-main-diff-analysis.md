@@ -2652,6 +2652,73 @@ Pancake 管理端继续复用上一轮接入的 `waffo-pancake-sdk-go`，新增 
 5. 使用 MCP 打开 `http://192.168.0.202:3003/subscriptions`，打开创建或编辑套餐抽屉，确认 Waffo Pancake Product ID 下拉、手填输入和创建按钮渲染正常，控制台无错误。
 6. 使用 MCP 在浏览器上下文调用 `GET /api/option/waffo-pancake/subscription-product-options`；在未配置真实凭证时应返回业务失败且不写本地配置。不点击真实创建 product 按钮，避免产生外部资源。
 
+## 本轮实施评审：Waffo Pancake 订阅支付闭环原生化
+
+### 需求分析
+
+上一轮已把 `new-api-main` 的 Waffo Pancake 订阅套餐 product 绑定转成 NexusTok 原生管理能力：套餐可保存 `waffo_pancake_product_id`，管理员可选择或创建 Pancake OnetimeProduct。但用户侧购买弹窗仍不会展示 Pancake，后端也没有 `/api/subscription/waffo-pancake/pay` 和 webhook 订阅订单分流。这样管理员虽然能绑定 product，用户仍无法通过 Pancake 购买订阅。
+
+`new-api-main` 的成熟做法不是只新增一个 pay 接口，而是把 Pancake checkout 和 webhook 映射都收紧为“本地业务单号驱动”：
+
+1. 创建 checkout 时传入稳定的 `OrderMerchantExternalID = trade_no`，让 webhook 可直接拿本地订单号完成 `SubscriptionOrder` 或 `TopUp`。
+2. 创建 checkout 时传入稳定的 buyer identity，webhook 回来后用 `MerchantProvidedBuyerIdentity` 校验订单所属用户，避免只靠邮箱或上游 `orderId` 串单。
+3. webhook 按本地 trade_no 前缀区分充值和订阅：`WAFFO_PANCAKE_SUB-` 走订阅完成，`WAFFO_PANCAKE-` 走钱包充值。
+4. 使用 Pancake `OnetimeProduct` 购买 NexusTok 内部订阅，而不是 Pancake 自动续费 product，避免上游续费但本地权益没有续期。
+
+NexusTok 当前 Waffo Pancake 充值 checkout 仍走自研 auth-service HTTP/RSA 请求，payload 只有 `buyerEmail` 和上游 `orderId`，没有 `OrderMerchantExternalID` 与 buyer identity。若直接新增订阅 pay 接口，会导致付款成功后 webhook 映射不可靠。因此本轮目标是一次性把 Waffo Pancake 运行时 checkout 迁到官方 SDK 的 Authenticated checkout，并同时保持充值和订阅两条路径兼容。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Pancake service | `service/waffo_pancake.go` | `CreateWaffoPancakeCheckoutSession` 改用 SDK Authenticated checkout；请求/响应 DTO 增加 `BuyerIdentity`、`OrderMerchantExternalID`、`Token`、`TokenExpiresAt`；webhook data 增加 `orderMerchantExternalId` 和 `merchantProvidedBuyerIdentity`；新增充值/订阅 trade_no 解析校验。 |
+| Pancake 充值 controller | `controller/topup_waffo_pancake.go` | 充值 checkout 也传入本地 trade_no 与 buyer identity；webhook 按 `WAFFO_PANCAKE_SUB-` 分流订阅，否则继续充值。 |
+| 充值信息 controller | `controller/topup.go` | 在保留 `enable_waffo_pancake_topup` 钱包充值开关的同时，新增 `enable_waffo_pancake_subscription`，让前端能区分“可购买订阅”和“可充值钱包”。 |
+| 订阅 Pancake controller | `controller/subscription_payment_waffo_pancake.go` | 新增用户侧订阅 pay 接口，创建 pending `SubscriptionOrder` 后拉起 Pancake checkout。 |
+| 路由 | `router/api-router.go`、相关路由测试 | 新增 `POST /api/subscription/waffo-pancake/pay`，继续 `UserAuth + CriticalRateLimit`。 |
+| Webhook 可用性 | `controller/payment_webhook_availability.go` | `isWaffoPancakeWebhookEnabled` 不再强依赖钱包充值全局 ProductID，允许“只卖订阅、不开放钱包充值”的配置。 |
+| 默认前端购买弹窗 | `web/default/src/features/subscriptions/*` | 增加 Pancake 订阅支付 API 和购买按钮；仅在网关开启且套餐有 `waffo_pancake_product_id` 时展示。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 如新增可见文案需补齐六语翻译。 |
+| 测试 | `service/waffo_pancake_test.go`、`controller/payment_webhook_availability_test.go`、`router/*test.go` | 覆盖 trade_no 外部单号映射、buyer identity mismatch、订阅订单分流和 webhook 可用性拆分。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、风险、方案和验收标准。 |
+
+### 风险评估
+
+1. 运行时 checkout 从自研 auth-service HTTP/RSA 切到 SDK Authenticated checkout，会改变充值拉起支付的底层请求方式。风险收益比仍可接受：SDK 已在上一轮 catalog/pair/product 创建中引入，且它支持私钥标准化、`OrderMerchantExternalID`、buyer identity 和 token；这是接入订阅分流的必要前置。
+2. 充值 webhook 映射从 `event.Data.OrderID` 改为 `event.Data.OrderMerchantExternalID`，旧的未支付 pending 订单如果是在切换前创建的，webhook 可能仍只带上游 `orderId`。为降低兼容风险，解析函数可在没有外部单号时回退旧 `OrderID` 查找，但新路径必须优先使用外部单号并校验 buyer identity。
+3. buyer identity mismatch 必须拒绝订单完成。否则攻击者可能利用可编辑邮箱或上游订单信息造成串单。对没有 identity 的旧订单回调，只在旧 `OrderID` fallback 路径兼容充值，不用于订阅订单。
+4. webhook 订阅完成需要先按本地 trade_no 判断订单类型，不能让订阅订单落入 `RechargeWaffoPancake`，否则会错误增加钱包余额而非创建订阅权益。
+5. 金额/币种/product/store 校验仍未完全覆盖。`CompleteSubscriptionOrder` 当前只按 trade_no 和 provider 完成订单。本轮会先建立稳定映射和 provider guard，金额/币种/product 校验可作为下一步加固项；但订阅 checkout 的 trade_no 是服务端创建并回传，已有 provider、订单状态和 buyer identity 多重约束。
+6. 购买次数上限在创建订单和 webhook 完成时都可能检查。若用户并发创建多个 pending 订单并都付款，后到 webhook 可能因为购买上限失败，需要人工退款或补偿；这是现有 Stripe/Creem/EPay 订阅支付也存在的业务风险，本轮不扩大该风险面。
+7. 前端新增 Pancake 按钮必须只在套餐绑定 product 且 Waffo Pancake 网关开启时展示；未绑定 product 的套餐不能误导用户点击。
+
+### 方案评审
+
+采用“SDK Authenticated checkout + 本地 trade_no 分流 + 前端灰度展示”的方案。
+
+后端 service 层将 `WaffoPancakeCreateSessionParams` 扩展为同时支持充值和订阅所需字段：`ProductID`、`Currency`、`PriceSnapshot`、`BuyerEmail`、`SuccessURL`、`ExpiresInSeconds`、`BuyerIdentity`、`OrderMerchantExternalID`。创建会话时使用 `pancake.AuthenticatedCheckoutParams`，`OrderMerchantExternalID` 始终传本地 `trade_no`，`BuyerIdentity` 统一由 `WaffoPancakeBuyerIdentityFromUserID(userID)` 生成。
+
+充值路径创建 `TopUp` 后调用同一个 checkout 函数，并把 trade_no 传入外部单号；订阅路径新增 `SubscriptionRequestWaffoPancakePay`，校验合规、套餐启用、`waffo_pancake_product_id`、凭证、webhook key、用户和购买上限，创建 pending `SubscriptionOrder` 后用套餐 product 创建 checkout。订阅 trade_no 前缀固定为 `WAFFO_PANCAKE_SUB-`。
+
+webhook 验签继续保留 NexusTok 当前 RSA 验证逻辑，以避免一次性替换签名校验边界；只扩展 payload struct 解析新字段。验签成功后：
+
+1. 只处理 `order.completed`；
+2. 优先读取 `event.Data.OrderMerchantExternalID`；
+3. 前缀为 `WAFFO_PANCAKE_SUB-` 时调用 `ResolveWaffoPancakeSubscriptionTradeNo` 与 `CompleteSubscriptionOrder`；
+4. 其它订单调用 `ResolveWaffoPancakeTradeNo` 与 `RechargeWaffoPancake`；
+5. 两个 Resolve 函数都校验 provider，且新外部单号路径校验 buyer identity。
+
+前端 `GetTopUpInfo` 消费独立的 `enable_waffo_pancake_subscription` 能力标记，购买弹窗再结合套餐自身的 `waffo_pancake_product_id` 展示 Pancake 支付按钮；返回 `checkout_url` 后先校验只允许 `http/https`，再与 Creem 保持同样的新窗口打开体验。用户付款后的权益发放仍依赖 webhook，不在前端乐观刷新订阅。
+
+验收方式：
+
+1. `go test ./service ./model ./controller ./router ./middleware` 覆盖后端关键路径和路由。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+3. `cd web/default && node scripts/sync-i18n.mjs` 通过。
+4. `git diff --check` 通过。
+5. MCP 打开 `http://192.168.0.202:3003/wallet` 或订阅购买入口，确认 Pancake 按钮只在 `enable_waffo_pancake_subscription=true` 且套餐有 product 绑定时展示；管理端订阅表单仍正常。
+6. MCP 在浏览器上下文调用 `POST /api/subscription/waffo-pancake/pay`，在未配置真实凭证或套餐无 product 时返回业务失败，不创建外部支付；不触发真实支付。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |

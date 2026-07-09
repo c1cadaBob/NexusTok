@@ -105,7 +105,7 @@ func isWaffoWebhookEnabled() bool {
 
 // isWaffoPancakeTopUpEnabled 检查 Waffo Pancake 充值是否启用
 //
-// 需要支付合规已确认、功能已启用且所有必要配置都已设置
+// 需要支付合规已确认、功能已启用且钱包充值所需的 Store/Product 配置都已设置。
 func isWaffoPancakeTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
@@ -121,6 +121,22 @@ func isWaffoPancakeTopUpEnabled() bool {
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 
+// isWaffoPancakeRuntimeConfigured 检查 Waffo Pancake 运行时凭证是否可用于 checkout/webhook。
+//
+// 这里不要求钱包充值 ProductID。订阅套餐可以绑定自己的 Pancake product，只要全局
+// Merchant/PrivateKey/Webhook key 可用，就应允许 webhook 接收订阅支付回调。
+func isWaffoPancakeRuntimeConfigured() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	if !setting.WaffoPancakeEnabled {
+		return false
+	}
+	return isWaffoPancakeWebhookConfigured() &&
+		strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) != ""
+}
+
 // isWaffoPancakeWebhookConfigured 检查 Waffo Pancake Webhook 是否已配置
 func isWaffoPancakeWebhookConfigured() bool {
 	currentWebhookKey := strings.TrimSpace(setting.WaffoPancakeWebhookPublicKey)
@@ -133,7 +149,7 @@ func isWaffoPancakeWebhookConfigured() bool {
 
 // isWaffoPancakeWebhookEnabled 检查 Waffo Pancake Webhook 是否启用
 func isWaffoPancakeWebhookEnabled() bool {
-	return isWaffoPancakeTopUpEnabled()
+	return isWaffoPancakeRuntimeConfigured()
 }
 
 // isEpayTopUpEnabled 检查易支付充值是否启用

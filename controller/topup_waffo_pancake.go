@@ -416,7 +416,7 @@ func SaveWaffoPancakeConfig(c *gin.Context) {
 // 4. 计算实际支付金额
 // 5. 生成唯一订单号
 // 6. 创建本地待处理订单
-// 7. 调用 service 层创建结账会话
+// 7. 调用 service 层创建 Authenticated 结账会话，并传入本地订单号和稳定买家身份
 // 8. 返回结账 URL 和会话信息
 func RequestWaffoPancakePay(c *gin.Context) {
 	if !setting.WaffoPancakeEnabled {
@@ -493,9 +493,11 @@ func RequestWaffoPancakePay(c *gin.Context) {
 			TaxIncluded: false,
 			TaxCategory: "saas",
 		},
-		BuyerEmail:       getWaffoPancakeBuyerEmail(user),
-		SuccessURL:       getWaffoPancakeReturnURL(),
-		ExpiresInSeconds: &expiresInSeconds,
+		BuyerEmail:              getWaffoPancakeBuyerEmail(user),
+		BuyerIdentity:           service.WaffoPancakeBuyerIdentityFromUserID(user.Id),
+		SuccessURL:              getWaffoPancakeReturnURL(),
+		ExpiresInSeconds:        &expiresInSeconds,
+		OrderMerchantExternalID: tradeNo,
 	})
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建结账会话失败 user_id=%d trade_no=%s error=%q", id, tradeNo, err.Error()))
@@ -525,8 +527,9 @@ func RequestWaffoPancakePay(c *gin.Context) {
 // 3. 验证签名（X-Waffo-Signature）
 // 4. 解析 Webhook 事件
 // 5. 处理 order.completed 事件
-// 6. 解析订单号映射
-// 7. 加锁处理订单，完成充值
+// 6. 优先按 orderMerchantExternalId 解析本地订单号
+// 7. 根据订单号前缀分流订阅购买或钱包充值
+// 8. 加锁处理订单，幂等完成入账或订阅权益发放
 func WaffoPancakeWebhook(c *gin.Context) {
 	if !isWaffoPancakeWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -557,9 +560,35 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		return
 	}
 
+	rawTradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
+	if strings.HasPrefix(rawTradeNo, "WAFFO_PANCAKE_SUB-") {
+		tradeNo, err := service.ResolveWaffoPancakeSubscriptionTradeNo(event)
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf(
+				"Waffo Pancake webhook 订阅订单映射失败 event_id=%s order_id=%s trade_no=%s buyer_identity=%q error=%q",
+				event.ID, event.Data.OrderID, rawTradeNo, event.Data.MerchantProvidedBuyerIdentity, err.Error(),
+			))
+			c.String(http.StatusOK, "OK")
+			return
+		}
+
+		LockOrder(tradeNo)
+		defer UnlockOrder(tradeNo)
+
+		if err := model.CompleteSubscriptionOrder(tradeNo, string(bodyBytes), model.PaymentProviderWaffoPancake, ""); err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+			c.String(http.StatusInternalServerError, "retry")
+			return
+		}
+
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅成功 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
+		c.String(http.StatusOK, "OK")
+		return
+	}
+
 	tradeNo, err := service.ResolveWaffoPancakeTradeNo(event)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 订单号映射失败 event_id=%s order_id=%s error=%q", event.ID, event.Data.OrderID, err.Error()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 订单号映射失败 event_id=%s order_id=%s trade_no=%s buyer_identity=%q error=%q", event.ID, event.Data.OrderID, rawTradeNo, event.Data.MerchantProvidedBuyerIdentity, err.Error()))
 		c.String(http.StatusOK, "OK")
 		return
 	}

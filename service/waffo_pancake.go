@@ -4,7 +4,6 @@
 package service
 
 import (
-	"bytes"           // HTTP 请求体构建
 	"context"         // 请求上下文
 	"crypto"          // 哈希算法标识
 	"crypto/rsa"      // RSA 密码学操作
@@ -13,9 +12,7 @@ import (
 	"encoding/base64" // Base64 编解码
 	"encoding/pem"    // PEM 格式编解码
 	"fmt"             // 格式化输出
-	"io"              // IO 操作
 	"math"            // 数学函数（Abs）
-	"net/http"        // HTTP 客户端
 	"strconv"         // 字符串转换
 	"strings"         // 字符串操作
 	"time"            // 时间操作
@@ -29,11 +26,9 @@ import (
 
 // Waffo Pancake 支付服务的常量配置
 const (
-	waffoPancakeAuthBaseURL        = "https://waffo-pancake-auth-service.vercel.app" // 认证服务基地址
-	waffoPancakeCheckoutPath       = "/v1/actions/checkout/create-session"           // 创建结账会话路径
-	waffoPancakeDefaultTolerance   = 5 * time.Minute                                 // Webhook 时间戳容差（5分钟）
-	defaultWaffoPancakeStoreName   = "nexustok-store"                                // 管理端一键创建的默认店铺名
-	defaultWaffoPancakeProductName = "nexustok-charge-product"                       // 管理端一键创建的钱包充值商品名
+	waffoPancakeDefaultTolerance   = 5 * time.Minute           // Webhook 时间戳容差（5分钟）
+	defaultWaffoPancakeStoreName   = "nexustok-store"          // 管理端一键创建的默认店铺名
+	defaultWaffoPancakeProductName = "nexustok-charge-product" // 管理端一键创建的钱包充值商品名
 )
 
 // WaffoPancakePriceSnapshot 结账价格快照
@@ -45,22 +40,26 @@ type WaffoPancakePriceSnapshot struct {
 
 // WaffoPancakeCreateSessionParams 创建结账会话的请求参数
 type WaffoPancakeCreateSessionParams struct {
-	StoreID          string                     `json:"storeId"`                    // 商店 ID
-	ProductID        string                     `json:"productId"`                  // 产品 ID
-	ProductType      string                     `json:"productType"`                // 产品类型
-	Currency         string                     `json:"currency"`                   // 货币代码
-	PriceSnapshot    *WaffoPancakePriceSnapshot `json:"priceSnapshot,omitempty"`    // 价格快照
-	BuyerEmail       string                     `json:"buyerEmail,omitempty"`       // 买家邮箱
-	SuccessURL       string                     `json:"successUrl,omitempty"`       // 支付成功回调 URL
-	ExpiresInSeconds *int                       `json:"expiresInSeconds,omitempty"` // 会话过期秒数
+	StoreID                 string                     `json:"storeId"`                           // 商店 ID，保留给旧调用方语义和日志，不再参与 SDK checkout
+	ProductID               string                     `json:"productId"`                         // 产品 ID
+	ProductType             string                     `json:"productType"`                       // 产品类型，当前运行时固定使用 onetime product
+	Currency                string                     `json:"currency"`                          // 货币代码
+	PriceSnapshot           *WaffoPancakePriceSnapshot `json:"priceSnapshot,omitempty"`           // 价格快照
+	BuyerEmail              string                     `json:"buyerEmail,omitempty"`              // 买家邮箱
+	BuyerIdentity           string                     `json:"buyerIdentity,omitempty"`           // NexusTok 侧稳定用户身份
+	SuccessURL              string                     `json:"successUrl,omitempty"`              // 支付成功回调 URL
+	ExpiresInSeconds        *int                       `json:"expiresInSeconds,omitempty"`        // 会话过期秒数
+	OrderMerchantExternalID string                     `json:"orderMerchantExternalId,omitempty"` // NexusTok 本地 trade_no
 }
 
 // WaffoPancakeCheckoutSession 结账会话响应
 type WaffoPancakeCheckoutSession struct {
-	SessionID   string `json:"sessionId"`   // 会话 ID
-	CheckoutURL string `json:"checkoutUrl"` // 结账页面 URL
-	ExpiresAt   string `json:"expiresAt"`   // 过期时间
-	OrderID     string `json:"orderId"`     // 订单 ID
+	SessionID      string `json:"sessionId"`      // 会话 ID
+	CheckoutURL    string `json:"checkoutUrl"`    // 结账页面 URL
+	ExpiresAt      string `json:"expiresAt"`      // 过期时间
+	OrderID        string `json:"orderId"`        // 上游订单 ID；Authenticated checkout 创建阶段通常为空
+	Token          string `json:"token"`          // Authenticated checkout 的 buyer session token
+	TokenExpiresAt string `json:"tokenExpiresAt"` // buyer session token 过期时间
 }
 
 // waffoPancakeAPIError API 错误响应
@@ -77,13 +76,15 @@ type waffoPancakeCreateSessionResponse struct {
 
 // waffoPancakeWebhookData Webhook 事件数据
 type waffoPancakeWebhookData struct {
-	ID          string          `json:"id"`          // 事件数据 ID
-	OrderID     string          `json:"orderId"`     // 订单 ID
-	BuyerEmail  string          `json:"buyerEmail"`  // 买家邮箱
-	Currency    string          `json:"currency"`    // 货币代码
-	Amount      dto.StringValue `json:"amount"`      // 金额
-	TaxAmount   dto.StringValue `json:"taxAmount"`   // 税额
-	ProductName string          `json:"productName"` // 产品名称
+	ID                            string          `json:"id"`                            // 事件数据 ID
+	OrderID                       string          `json:"orderId"`                       // Pancake 上游订单 ID
+	OrderMerchantExternalID       string          `json:"orderMerchantExternalId"`       // NexusTok 本地 trade_no
+	MerchantProvidedBuyerIdentity string          `json:"merchantProvidedBuyerIdentity"` // NexusTok checkout 传入的稳定用户身份
+	BuyerEmail                    string          `json:"buyerEmail"`                    // 买家邮箱
+	Currency                      string          `json:"currency"`                      // 货币代码
+	Amount                        dto.StringValue `json:"amount"`                        // 金额
+	TaxAmount                     dto.StringValue `json:"taxAmount"`                     // 税额
+	ProductName                   string          `json:"productName"`                   // 产品名称
 }
 
 // waffoPancakeWebhookEvent Webhook 事件对象
@@ -105,8 +106,11 @@ func (e *waffoPancakeWebhookEvent) NormalizedEventType() string {
 	return e.EventType
 }
 
-// CreateWaffoPancakeCheckoutSession 创建 Waffo Pancake 结账会话。
-// 构建请求体、RSA 签名后发送到 Waffo Pancake 认证服务。
+// CreateWaffoPancakeCheckoutSession 创建 Waffo Pancake Authenticated 结账会话。
+//
+// 运行时 checkout 统一使用官方 SDK，并强制传入 NexusTok 本地 trade_no 与稳定
+// buyer identity。Webhook 回调必须依赖这两个字段做订单归属校验，避免只靠邮箱
+// 或上游 orderId 导致充值和订阅订单串单。
 //
 // 参数：
 //   - ctx: 请求上下文
@@ -119,74 +123,61 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	if params == nil {
 		return nil, fmt.Errorf("missing checkout params")
 	}
-
-	// 序列化请求体
-	body, err := common.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("marshal Waffo Pancake checkout payload: %w", err)
+	if strings.TrimSpace(params.ProductID) == "" {
+		return nil, fmt.Errorf("missing product id")
+	}
+	if strings.TrimSpace(params.BuyerIdentity) == "" {
+		return nil, fmt.Errorf("missing buyer identity")
+	}
+	if strings.TrimSpace(params.OrderMerchantExternalID) == "" {
+		return nil, fmt.Errorf("missing order merchant external id")
 	}
 
-	// 标准化 RSA 私钥格式
-	privateKey, err := normalizeRSAPrivateKey(setting.WaffoPancakePrivateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// 生成时间戳和请求签名
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	signature, err := signWaffoPancakeRequest(http.MethodPost, waffoPancakeCheckoutPath, timestamp, string(body), privateKey)
+	client, err := newWaffoPancakeRuntimeClient()
 	if err != nil {
 		return nil, err
 	}
 
-	// 构建 HTTP 请求
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, waffoPancakeAuthBaseURL+waffoPancakeCheckoutPath, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build Waffo Pancake checkout request: %w", err)
+	currency := strings.ToUpper(strings.TrimSpace(params.Currency))
+	if currency == "" {
+		currency = "USD"
 	}
-	// 设置请求头：认证、签名、环境
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Merchant-Id", setting.WaffoPancakeMerchantID)
-	req.Header.Set("X-Timestamp", timestamp)
-	req.Header.Set("X-Signature", signature)
-	if setting.WaffoPancakeSandbox {
-		req.Header.Set("X-Environment", "test")
-	} else {
-		req.Header.Set("X-Environment", "prod")
+	sdkParams := pancake.AuthenticatedCheckoutParams{
+		CreateCheckoutSessionParams: pancake.CreateCheckoutSessionParams{
+			ProductID:               strings.TrimSpace(params.ProductID),
+			Currency:                currency,
+			BuyerEmail:              optionalWaffoPancakeString(params.BuyerEmail),
+			SuccessURL:              optionalWaffoPancakeString(params.SuccessURL),
+			ExpiresInSeconds:        params.ExpiresInSeconds,
+			OrderMerchantExternalID: optionalWaffoPancakeString(params.OrderMerchantExternalID),
+		},
+		BuyerIdentity: strings.TrimSpace(params.BuyerIdentity),
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request Waffo Pancake checkout session: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 读取并解析响应
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read Waffo Pancake checkout response: %w", err)
-	}
-
-	var result waffoPancakeCreateSessionResponse
-	if err := common.Unmarshal(responseBody, &result); err != nil {
-		return nil, fmt.Errorf("decode Waffo Pancake checkout response: %w", err)
-	}
-	// 处理 HTTP 错误状态码
-	if resp.StatusCode >= http.StatusBadRequest {
-		if len(result.Errors) > 0 {
-			return nil, fmt.Errorf("Waffo Pancake error (%d): %s", resp.StatusCode, result.Errors[0].Message)
+	if params.PriceSnapshot != nil {
+		taxCategory := strings.TrimSpace(params.PriceSnapshot.TaxCategory)
+		if taxCategory == "" {
+			taxCategory = "saas"
 		}
-		return nil, fmt.Errorf("Waffo Pancake checkout request failed with status %d", resp.StatusCode)
+		sdkParams.PriceSnapshot = &pancake.PriceInfo{
+			Amount:      strings.TrimSpace(params.PriceSnapshot.Amount),
+			TaxCategory: pancake.TaxCategory(taxCategory),
+		}
 	}
-	// 处理业务错误
-	if len(result.Errors) > 0 {
-		return nil, fmt.Errorf("Waffo Pancake error: %s", result.Errors[0].Message)
+
+	session, err := client.Checkout.Authenticated.Create(ctx, sdkParams)
+	if err != nil {
+		return nil, fmt.Errorf("request Waffo Pancake authenticated checkout session: %w", err)
 	}
-	// 验证返回数据完整性
-	if result.Data == nil || result.Data.CheckoutURL == "" || strings.TrimSpace(result.Data.SessionID) == "" {
+	if session == nil || strings.TrimSpace(session.CheckoutURL) == "" || strings.TrimSpace(session.SessionID) == "" {
 		return nil, fmt.Errorf("Waffo Pancake returned empty checkout session")
 	}
-	return result.Data, nil
+	return &WaffoPancakeCheckoutSession{
+		SessionID:      session.SessionID,
+		CheckoutURL:    session.CheckoutURL,
+		ExpiresAt:      session.ExpiresAt,
+		Token:          session.Token,
+		TokenExpiresAt: session.TokenExpiresAt,
+	}, nil
 }
 
 // VerifyConfiguredWaffoPancakeWebhook 验证 Waffo Pancake Webhook 请求的签名。
@@ -204,6 +195,14 @@ func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string)
 	return verifyWaffoPancakeWebhook(payload, signatureHeader, environment)
 }
 
+// WaffoPancakeBuyerIdentityFromUserID 生成 Pancake Authenticated checkout 使用的稳定买家身份。
+//
+// Webhook 解析充值和订阅订单时会用同一个函数计算期望值，因此这里的格式一旦变更，
+// 必须同时兼容历史 pending 订单，避免付款成功后因为身份不匹配而无法入账。
+func WaffoPancakeBuyerIdentityFromUserID(userID int) string {
+	return fmt.Sprintf("nexustok-user-%d", userID)
+}
+
 // ResolveWaffoPancakeTradeNo 从 Webhook 事件中解析订单号。
 // 验证订单号在数据库中存在且支付方式为 Waffo Pancake。
 //
@@ -218,22 +217,76 @@ func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error)
 		return "", fmt.Errorf("missing webhook event")
 	}
 
-	if tradeNo := strings.TrimSpace(event.Data.OrderID); tradeNo != "" {
-		// 从数据库中查找对应的充值记录
+	if tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID); tradeNo != "" {
 		topUp := model.GetTopUpByTradeNo(tradeNo)
-		if topUp != nil && topUp.PaymentMethod == model.PaymentMethodWaffoPancake {
+		if topUp != nil && topUp.PaymentProvider == model.PaymentProviderWaffoPancake {
+			if err := validateWaffoPancakeBuyerIdentity(event.Data.MerchantProvidedBuyerIdentity, topUp.UserId, tradeNo); err != nil {
+				return "", err
+			}
+			return tradeNo, nil
+		}
+		return "", fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo)
+	}
+
+	if tradeNo := strings.TrimSpace(event.Data.OrderID); tradeNo != "" {
+		// 兼容迁移前创建的旧 checkout：旧路径没有 orderMerchantExternalId，只能用上游 OrderID 反查。
+		// 该 fallback 只用于钱包充值；订阅订单必须走外部单号，避免权益发放串单。
+		topUp := model.GetTopUpByTradeNo(tradeNo)
+		if topUp != nil && topUp.PaymentProvider == model.PaymentProviderWaffoPancake {
 			return tradeNo, nil
 		}
 		return "", fmt.Errorf("waffo pancake order not found for webhook orderId=%s", tradeNo)
 	}
 
-	return "", fmt.Errorf("missing webhook orderId")
+	return "", fmt.Errorf("missing webhook orderMerchantExternalId")
 }
 
-// newWaffoPancakeAdminClientFromCreds 使用管理端输入的临时凭证创建 Pancake SDK client。
+// ResolveWaffoPancakeSubscriptionTradeNo 从 Webhook 事件中解析订阅订单号。
 //
-// 该 client 仅用于 catalog 查询和 Store/Product 创建，不能替换当前充值 checkout
-// 与 webhook 验签链路，避免 SDK 行为变化影响已经上线的支付入账流程。
+// 订阅不提供旧 OrderID fallback：只有 checkout 创建时写入的本地 trade_no 才能完成
+// SubscriptionOrder，确保订阅权益不会因为上游订单 ID 或邮箱变化而串单。
+func ResolveWaffoPancakeSubscriptionTradeNo(event *waffoPancakeWebhookEvent) (string, error) {
+	if event == nil {
+		return "", fmt.Errorf("missing webhook event")
+	}
+	tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
+	if tradeNo == "" {
+		return "", fmt.Errorf("missing webhook orderMerchantExternalId")
+	}
+	order := model.GetSubscriptionOrderByTradeNo(tradeNo)
+	if order == nil || order.PaymentProvider != model.PaymentProviderWaffoPancake {
+		return "", fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo)
+	}
+	if err := validateWaffoPancakeBuyerIdentity(event.Data.MerchantProvidedBuyerIdentity, order.UserId, tradeNo); err != nil {
+		return "", err
+	}
+	return tradeNo, nil
+}
+
+func validateWaffoPancakeBuyerIdentity(actualIdentity string, userID int, tradeNo string) error {
+	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(userID)
+	if strings.TrimSpace(actualIdentity) != expectedIdentity {
+		return fmt.Errorf(
+			"waffo pancake buyer identity mismatch for tradeNo=%s: expected=%q actual=%q",
+			tradeNo,
+			expectedIdentity,
+			strings.TrimSpace(actualIdentity),
+		)
+	}
+	return nil
+}
+
+// newWaffoPancakeRuntimeClient 使用已保存配置创建运行时 checkout client。
+//
+// 与管理端临时凭证 client 分开命名，避免后续误把尚未保存的私钥用于用户支付。
+func newWaffoPancakeRuntimeClient() (*pancake.Client, error) {
+	return newWaffoPancakeAdminClientFromCreds(setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey)
+}
+
+// newWaffoPancakeAdminClientFromCreds 使用传入凭证创建 Pancake SDK client。
+//
+// 管理端 catalog/Store/Product 创建会传入临时或已保存凭证；运行时 checkout 只通过
+// newWaffoPancakeRuntimeClient 使用已保存凭证，避免尚未保存的私钥参与用户支付。
 func newWaffoPancakeAdminClientFromCreds(merchantID string, privateKey string) (*pancake.Client, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	privateKey = strings.TrimSpace(privateKey)
@@ -445,7 +498,8 @@ func CreateWaffoPancakePrimaryPair(ctx context.Context, merchantID string, priva
 }
 
 func optionalWaffoPancakeString(value string) *string {
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return nil
 	}
 	return &value

@@ -99,6 +99,12 @@ export interface SubscriptionPayResponse {
   data?: {
     pay_link?: string
     checkout_url?: string
+    session_id?: string
+    expires_at?: number | string
+    order_id?: string
+    token?: string
+    token_expires_at?: string
+    sandbox?: boolean
   }
   url?: string
 }

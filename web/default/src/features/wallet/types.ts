@@ -115,41 +115,43 @@ export interface WaffoPayMethod {
  * Topup configuration information
  */
 export interface TopupInfo {
-  /** Whether online topup is enabled */
+  /** 是否启用在线充值 */
   enable_online_topup: boolean
-  /** Whether Stripe topup is enabled */
+  /** 是否启用 Stripe 充值 */
   enable_stripe_topup: boolean
-  /** Available payment methods */
+  /** 可用支付方式 */
   pay_methods: PaymentMethod[]
-  /** Minimum topup amount for online topup */
+  /** 在线充值最小金额 */
   min_topup: number
-  /** Minimum topup amount for Stripe */
+  /** Stripe 最小充值金额 */
   stripe_min_topup: number
-  /** Preset amount options */
+  /** 预设充值金额选项 */
   amount_options: number[]
-  /** Discount rates by amount */
+  /** 按金额配置的折扣率 */
   discount: Record<number, number>
-  /** Optional topup link for purchasing codes */
+  /** 可选的兑换码购买链接 */
   topup_link?: string
-  /** Whether Creem topup is enabled */
+  /** 是否启用 Creem 充值 */
   enable_creem_topup?: boolean
-  /** Available Creem products */
+  /** 可用 Creem 商品 */
   creem_products?: CreemProduct[]
-  /** Whether Waffo topup is enabled */
+  /** 是否启用 Waffo 充值 */
   enable_waffo_topup?: boolean
-  /** Available Waffo payment methods */
+  /** 可用 Waffo 支付方式 */
   waffo_pay_methods?: WaffoPayMethod[]
-  /** Minimum topup amount for Waffo */
+  /** Waffo 最小充值金额 */
   waffo_min_topup?: number
-  /** Whether Waffo Pancake topup is enabled */
+  /** 是否启用 Waffo Pancake 钱包充值 */
   enable_waffo_pancake_topup?: boolean
-  /** Minimum topup amount for Waffo Pancake */
+  /** 是否启用 Waffo Pancake 订阅支付 */
+  enable_waffo_pancake_subscription?: boolean
+  /** Waffo Pancake 最小充值金额 */
   waffo_pancake_min_topup?: number
-  /** Whether redemption code usage is enabled */
+  /** 是否启用兑换码 */
   enable_redemption?: boolean
-  /** Whether compliance confirmation has been completed */
+  /** 是否已完成支付合规确认 */
   payment_compliance_confirmed?: boolean
-  /** Current compliance terms version */
+  /** 当前支付合规条款版本 */
   payment_compliance_terms_version?: string
 }
 

@@ -123,6 +123,15 @@ export async function paySubscriptionCreem(
   return res.data
 }
 
+export async function paySubscriptionWaffoPancake(
+  data: SubscriptionPayRequest
+): Promise<SubscriptionPayResponse> {
+  const res = await api.post('/api/subscription/waffo-pancake/pay', data, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
 export async function paySubscriptionBalance(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {

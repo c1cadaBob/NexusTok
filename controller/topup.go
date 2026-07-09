@@ -115,16 +115,18 @@ func GetTopUpInfo(c *gin.Context) {
 			})
 		}
 	}
+	enableWaffoPancakeSubscription := isWaffoPancakeRuntimeConfigured()
 
 	data := gin.H{
-		"enable_online_topup":              isEpayTopUpEnabled(),
-		"enable_stripe_topup":              isStripeTopUpEnabled(),
-		"enable_creem_topup":               isCreemTopUpEnabled(),
-		"enable_waffo_topup":               enableWaffo,
-		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_redemption":                complianceConfirmed,
-		"payment_compliance_confirmed":     complianceConfirmed,
-		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
+		"enable_online_topup":               isEpayTopUpEnabled(),
+		"enable_stripe_topup":               isStripeTopUpEnabled(),
+		"enable_creem_topup":                isCreemTopUpEnabled(),
+		"enable_waffo_topup":                enableWaffo,
+		"enable_waffo_pancake_topup":        enableWaffoPancake,
+		"enable_waffo_pancake_subscription": enableWaffoPancakeSubscription,
+		"enable_redemption":                 complianceConfirmed,
+		"payment_compliance_confirmed":      complianceConfirmed,
+		"payment_compliance_terms_version":  operation_setting.CurrentComplianceTermsVersion,
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()

@@ -10,10 +10,14 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/setting"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -121,7 +125,7 @@ func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isWaffoWebhookEnabled())
 }
 
-func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestWaffoPancakeWebhookEnabledRequiresRuntimeAndWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalEnabled := setting.WaffoPancakeEnabled
 	originalSandbox := setting.WaffoPancakeSandbox
@@ -146,13 +150,18 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	setting.WaffoPancakeSandbox = false
 	setting.WaffoPancakeMerchantID = "merchant"
 	setting.WaffoPancakePrivateKey = "private"
-	setting.WaffoPancakeStoreID = "store"
-	setting.WaffoPancakeProductID = "product"
+	setting.WaffoPancakeStoreID = ""
+	setting.WaffoPancakeProductID = ""
 	setting.WaffoPancakeWebhookPublicKey = ""
 	require.False(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeWebhookPublicKey = "public"
 	require.True(t, isWaffoPancakeWebhookEnabled())
+	require.False(t, isWaffoPancakeTopUpEnabled())
+
+	setting.WaffoPancakeStoreID = "store"
+	setting.WaffoPancakeProductID = "product"
+	require.True(t, isWaffoPancakeTopUpEnabled())
 
 	setting.WaffoPancakeEnabled = false
 	require.False(t, isWaffoPancakeWebhookEnabled())
@@ -164,6 +173,53 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 
 	setting.WaffoPancakeWebhookTestKey = "test_public"
 	require.True(t, isWaffoPancakeWebhookEnabled())
+}
+
+func TestGetTopUpInfoExposesWaffoPancakeSubscriptionSwitchSeparately(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalEnabled := setting.WaffoPancakeEnabled
+	originalSandbox := setting.WaffoPancakeSandbox
+	originalMerchantID := setting.WaffoPancakeMerchantID
+	originalPrivateKey := setting.WaffoPancakePrivateKey
+	originalWebhookPublicKey := setting.WaffoPancakeWebhookPublicKey
+	originalStoreID := setting.WaffoPancakeStoreID
+	originalProductID := setting.WaffoPancakeProductID
+	t.Cleanup(func() {
+		setting.WaffoPancakeEnabled = originalEnabled
+		setting.WaffoPancakeSandbox = originalSandbox
+		setting.WaffoPancakeMerchantID = originalMerchantID
+		setting.WaffoPancakePrivateKey = originalPrivateKey
+		setting.WaffoPancakeWebhookPublicKey = originalWebhookPublicKey
+		setting.WaffoPancakeStoreID = originalStoreID
+		setting.WaffoPancakeProductID = originalProductID
+	})
+
+	setting.WaffoPancakeEnabled = true
+	setting.WaffoPancakeSandbox = false
+	setting.WaffoPancakeMerchantID = "merchant"
+	setting.WaffoPancakePrivateKey = "private"
+	setting.WaffoPancakeWebhookPublicKey = "public"
+	setting.WaffoPancakeStoreID = ""
+	setting.WaffoPancakeProductID = ""
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/topup", nil)
+
+	GetTopUpInfo(ctx)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			EnableWaffoPancakeTopUp        bool `json:"enable_waffo_pancake_topup"`
+			EnableWaffoPancakeSubscription bool `json:"enable_waffo_pancake_subscription"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.False(t, response.Data.EnableWaffoPancakeTopUp)
+	require.True(t, response.Data.EnableWaffoPancakeSubscription)
 }
 
 func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {

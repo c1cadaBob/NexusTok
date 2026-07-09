@@ -3,17 +3,17 @@
 package service
 
 import (
-	"fmt"      // 格式化输出
-	"strings"  // 字符串操作
-	"testing"  // 测试框架
-	"time"     // 时间处理
+	"fmt"     // 格式化输出
+	"strings" // 字符串操作
+	"testing" // 测试框架
+	"time"    // 时间处理
 
-	"github.com/c1cada/NexusTok/common"  // 公共工具包
-	"github.com/c1cada/NexusTok/model"   // 数据模型
-	"github.com/c1cada/NexusTok/setting" // 配置管理
+	"github.com/c1cada/NexusTok/common"   // 公共工具包
+	"github.com/c1cada/NexusTok/model"    // 数据模型
+	"github.com/c1cada/NexusTok/setting"  // 配置管理
 	"github.com/glebarez/sqlite"          // SQLite 驱动
 	"github.com/stretchr/testify/require" // 测试断言
-	"gorm.io/gorm"                       // ORM 框架
+	"gorm.io/gorm"                        // ORM 框架
 )
 
 // setupWaffoPancakeTestDB 设置 Waffo Pancake 测试数据库
@@ -42,8 +42,8 @@ func setupWaffoPancakeTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	// 自动迁移用户和充值表
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}))
+	// 自动迁移用户、充值表和订阅订单表
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}))
 
 	// 注册清理函数，测试结束后关闭数据库连接
 	t.Cleanup(func() {
@@ -75,19 +75,20 @@ func TestWaffoPancakeCreateSessionResponseParsesDocumentedPayload(t *testing.T) 
 }
 
 // TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists 测试当本地订单存在时使用 Webhook 的 OrderID
-// 验证 Webhook 回调的 OrderID 能正确匹配本地订单
+// 验证迁移前旧 checkout 的 Webhook 回调仍可用 OrderID 匹配本地充值订单。
 func TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists(t *testing.T) {
 	db := setupWaffoPancakeTestDB(t)
 
 	// 创建待支付的充值订单
 	topUp := &model.TopUp{
-		UserId:        1,
-		Amount:        10,
-		Money:         29,
-		TradeNo:       "ORD_5dXBtmF2HLlHfbPNm0Wcnz",
-		PaymentMethod: model.PaymentMethodWaffoPancake,
-		CreateTime:    time.Now().Unix(),
-		Status:        common.TopUpStatusPending,
+		UserId:          1,
+		Amount:          10,
+		Money:           29,
+		TradeNo:         "ORD_5dXBtmF2HLlHfbPNm0Wcnz",
+		PaymentMethod:   model.PaymentMethodWaffoPancake,
+		PaymentProvider: model.PaymentProviderWaffoPancake,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
 	}
 	require.NoError(t, db.Create(topUp).Error)
 
@@ -99,6 +100,80 @@ func TestResolveWaffoPancakeTradeNo_UsesWebhookOrderIDWhenLocalOrderExists(t *te
 	})
 	require.NoError(t, err)
 	require.Equal(t, "ORD_5dXBtmF2HLlHfbPNm0Wcnz", tradeNo)
+}
+
+// TestResolveWaffoPancakeTradeNo_UsesExternalIDAndBuyerIdentity 测试新 checkout 外部单号解析。
+// 新路径必须使用 orderMerchantExternalId 匹配本地 trade_no，并校验 buyer identity 防串单。
+func TestResolveWaffoPancakeTradeNo_UsesExternalIDAndBuyerIdentity(t *testing.T) {
+	db := setupWaffoPancakeTestDB(t)
+
+	topUp := &model.TopUp{
+		UserId:          42,
+		Amount:          10,
+		Money:           29,
+		TradeNo:         "WAFFO_PANCAKE-42-123456-abc123",
+		PaymentMethod:   model.PaymentMethodWaffoPancake,
+		PaymentProvider: model.PaymentProviderWaffoPancake,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
+	}
+	require.NoError(t, db.Create(topUp).Error)
+
+	tradeNo, err := ResolveWaffoPancakeTradeNo(&waffoPancakeWebhookEvent{
+		Data: waffoPancakeWebhookData{
+			OrderID:                       "ORD_remote",
+			OrderMerchantExternalID:       topUp.TradeNo,
+			MerchantProvidedBuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(topUp.UserId),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, topUp.TradeNo, tradeNo)
+
+	tradeNo, err = ResolveWaffoPancakeTradeNo(&waffoPancakeWebhookEvent{
+		Data: waffoPancakeWebhookData{
+			OrderID:                       "ORD_remote",
+			OrderMerchantExternalID:       topUp.TradeNo,
+			MerchantProvidedBuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(99),
+		},
+	})
+	require.Error(t, err)
+	require.Empty(t, tradeNo)
+}
+
+// TestResolveWaffoPancakeSubscriptionTradeNo_RequiresExternalIDAndIdentity 测试订阅订单解析。
+// 订阅不接受旧 OrderID fallback，必须使用外部单号和稳定 buyer identity。
+func TestResolveWaffoPancakeSubscriptionTradeNo_RequiresExternalIDAndIdentity(t *testing.T) {
+	db := setupWaffoPancakeTestDB(t)
+
+	order := &model.SubscriptionOrder{
+		UserId:          42,
+		PlanId:          7,
+		Money:           9.99,
+		TradeNo:         "WAFFO_PANCAKE_SUB-42-123456-abc123",
+		PaymentMethod:   model.PaymentMethodWaffoPancake,
+		PaymentProvider: model.PaymentProviderWaffoPancake,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
+	}
+	require.NoError(t, db.Create(order).Error)
+
+	tradeNo, err := ResolveWaffoPancakeSubscriptionTradeNo(&waffoPancakeWebhookEvent{
+		Data: waffoPancakeWebhookData{
+			OrderID:                       "ORD_remote",
+			OrderMerchantExternalID:       order.TradeNo,
+			MerchantProvidedBuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(order.UserId),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, order.TradeNo, tradeNo)
+
+	tradeNo, err = ResolveWaffoPancakeSubscriptionTradeNo(&waffoPancakeWebhookEvent{
+		Data: waffoPancakeWebhookData{
+			OrderID: "ORD_remote",
+		},
+	})
+	require.Error(t, err)
+	require.Empty(t, tradeNo)
 }
 
 // TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown 测试当 Webhook OrderID 未知时解析失败
@@ -117,13 +192,14 @@ func TestResolveWaffoPancakeTradeNo_FailsWhenWebhookOrderIDIsUnknown(t *testing.
 
 	// 创建待支付的充值订单（使用不同的交易号）
 	topUp := &model.TopUp{
-		UserId:        user.Id,
-		Amount:        10,
-		Money:         29,
-		TradeNo:       "WAFFO_PANCAKE-42-123456-abc123",
-		PaymentMethod: model.PaymentMethodWaffoPancake,
-		CreateTime:    time.Now().Unix(),
-		Status:        common.TopUpStatusPending,
+		UserId:          user.Id,
+		Amount:          10,
+		Money:           29,
+		TradeNo:         "WAFFO_PANCAKE-42-123456-abc123",
+		PaymentMethod:   model.PaymentMethodWaffoPancake,
+		PaymentProvider: model.PaymentProviderWaffoPancake,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
 	}
 	require.NoError(t, db.Create(topUp).Error)
 
