@@ -3477,8 +3477,54 @@ new-api-main 的邮件发送层提供 `AutoSMTPAuth`，会根据 SMTP 服务器 
 4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
 5. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮后端基础设施改动未影响 3003 页面与状态接口可用性。
 
+## 本轮实施评审：Moonshot kimi-k2.6 temperature 兼容
+
+### 需求分析
+
+new-api-main 在 Moonshot adapter 中针对 `kimi-k2.6` 增加了 temperature 兼容规则：该上游模型只接受 `temperature=1.0`，当客户端显式传入其它 temperature 时应在转发前改为 `1.0`；如果客户端没有传入 temperature，则保持字段省略，避免破坏“缺省值由上游决定”的语义。NexusTok 当前 Moonshot 的 `ConvertOpenAIRequest` 直接透传请求，遇到 `kimi-k2.6` 且客户端显式传入 `0`、`0.7` 等值时，可能被 Moonshot 上游拒绝。
+
+本轮目标是把该 provider 兼容规则转成 NexusTok 原生能力：
+
+1. 仅在 Moonshot OpenAI 兼容请求路径中处理 `kimi-k2.6`。
+2. 优先使用 `RelayInfo.ChannelMeta.UpstreamModelName` 判断上游真实模型名，缺失时回退请求体 `model`。
+3. 仅当 `Temperature` 指针非 nil 且值不等于 `1.0` 时修正为 `1.0`；nil 保持 nil，遵守上游请求 DTO 显式零值保留规则。
+4. 不修改通用 OpenAI adapter、Claude/Gemini/Responses 路径、计费、模型映射和请求参数覆盖逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Moonshot adapter | `relay/channel/moonshot/adaptor.go` | 新增 `kimi-k2.6` temperature 修正 helper，并在 `ConvertOpenAIRequest` 中调用。 |
+| Moonshot 测试 | `relay/channel/moonshot/adaptor_test.go` | 覆盖 temperature nil、`1.0`、`0`、`0.7`、非目标模型和上游模型名覆盖本地模型名。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 这是单 provider 局部改动，风险集中在模型名判断错误或误改非 `kimi-k2.6` 请求；通过 helper 和单元测试约束范围。
+2. `Temperature` 是指针字段，nil 表示客户端未传入；本轮不把 nil 改成 `1.0`，避免与上游默认值语义冲突。
+3. 显式 `temperature=0` 会被改为 `1.0`，这是本轮预期行为，因为上游限制优先于客户端采样偏好。
+4. `UpstreamModelName` 覆盖本地模型名时应以真实上游为准，否则模型映射到 `kimi-k2.6` 的请求仍可能失败。
+
+### 方案评审
+
+采用最小 provider 兼容方案：在 `moonshot/adaptor.go` 内新增 `moonshotUpstreamModelName` 和 `isMoonshotTemperatureOneOnlyModel`，`ConvertOpenAIRequest` 根据上游模型名判断是否需要修正 temperature。使用 `common.GetPointer[float64](1.0)` 创建新指针，避免修改原指针指向的外部变量；不引入新依赖，也不改请求 marshal 逻辑。
+
+验收方式：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/channel/moonshot` 覆盖 Moonshot adapter 行为。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/` 确认页面仍可访问；若 MCP Chrome 仍不可用，则用 `curl` 访问主页和 `/api/status` 作为替代验证。
+
+验证记录：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/channel/moonshot` 通过，覆盖 `kimi-k2.6` temperature 省略、允许值、显式零值、非目标模型、模型映射和未初始化 ChannelMeta fallback。
+2. `git diff --check` 通过，无空白错误。
+3. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+4. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮 provider 兼容改动未影响 3003 页面与状态接口可用性。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Moonshot `kimi-k2.6` temperature 兼容 | `relay/channel/moonshot/adaptor.go`、`relay/channel/moonshot/adaptor_test.go` | Moonshot OpenAI 兼容请求在真实上游模型为 `kimi-k2.6` 且客户端显式传入非 `1.0` temperature 时修正为 `1.0`；未传字段继续省略，非目标模型保持原值。 |
 | 2026-07-09 | SMTP NTLM 自适应认证 | `common/email.go`、`common/email_ntlm_auth.go`、`common/email_ntlm_auth_test.go`、`go.mod`、`go.sum` | 邮件发送路径新增 PLAIN/LOGIN/NTLM 自适应认证，标准 SMTP 保持 PLAIN，强制 LOGIN 和 Outlook 兼容语义保留，企业 SMTP 仅开放 `AUTH NTLM` 时可完成 NTLM 协商。 |
 | 2026-07-09 | 注册兼容路由与已登录跳转 | `web/default/src/routes/(auth)/register.tsx`、`web/default/src/routes/(auth)/sign-up.tsx`、`web/default/src/routeTree.gen.ts` | 默认前端新增 `/register` 到 `/sign-up` 的 replace 跳转并保留 `aff` 等查询参数；已登录用户访问注册页时跳转 `/dashboard`，避免邀请注册链接和会话状态出现前端路由断点。 |
 | 2026-07-09 | Rankings 路由最新配置守卫 | `web/default/src/routes/rankings/index.tsx` | 默认前端 Rankings 路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.rankings` 判断关闭跳转首页、登录可见跳转登录；保留 NexusTok 自有 `period=all` 查询参数。 |

@@ -11,19 +11,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	// 项目内部包
-	channelconstant "github.com/c1cada/NexusTok/constant"           // 渠道常量定义
-	"github.com/c1cada/NexusTok/dto"                                 // 数据传输对象
-	"github.com/c1cada/NexusTok/relay/channel"                       // 渠道通用工具
-	"github.com/c1cada/NexusTok/relay/channel/claude"                // Claude 适配器（用于 Claude 格式请求转换）
-	"github.com/c1cada/NexusTok/relay/channel/openai"                // OpenAI 适配器（用于 OpenAI 格式请求转换）
-	relaycommon "github.com/c1cada/NexusTok/relay/common"            // Relay 通用信息
-	"github.com/c1cada/NexusTok/relay/constant"                      // Relay 常量（RelayMode 等）
-	"github.com/c1cada/NexusTok/types"                               // 类型定义（错误类型等）
+	"github.com/c1cada/NexusTok/common"
+	channelconstant "github.com/c1cada/NexusTok/constant" // 渠道常量定义
+	"github.com/c1cada/NexusTok/dto"                      // 数据传输对象
+	"github.com/c1cada/NexusTok/relay/channel"            // 渠道通用工具
+	"github.com/c1cada/NexusTok/relay/channel/claude"     // Claude 适配器（用于 Claude 格式请求转换）
+	"github.com/c1cada/NexusTok/relay/channel/openai"     // OpenAI 适配器（用于 OpenAI 格式请求转换）
+	relaycommon "github.com/c1cada/NexusTok/relay/common" // Relay 通用信息
+	"github.com/c1cada/NexusTok/relay/constant"           // Relay 常量（RelayMode 等）
+	"github.com/c1cada/NexusTok/types"                    // 类型定义（错误类型等）
 
 	// 第三方依赖
-	"github.com/gin-gonic/gin"                                       // Gin Web 框架
+	"github.com/gin-gonic/gin" // Gin Web 框架
 )
 
 // Adaptor 是 Moonshot 渠道的适配器实现。
@@ -161,7 +163,30 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 //   - any: 原请求体
 //   - error: 始终返回 nil
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	if request.Temperature != nil &&
+		isMoonshotTemperatureOneOnlyModel(moonshotUpstreamModelName(info, request.Model)) &&
+		*request.Temperature != 1.0 {
+		// kimi-k2.6 上游只接受 temperature=1.0。仅修正客户端显式传入的非 1.0 值，
+		// nil 继续保持省略，避免破坏“未传字段由上游决定”的请求语义。
+		request.Temperature = common.GetPointer[float64](1.0)
+	}
 	return request, nil
+}
+
+// moonshotUpstreamModelName 返回 Moonshot 实际要请求的上游模型名。
+//
+// 模型映射生效时，RelayInfo.UpstreamModelName 才是上游真正看到的模型；测试或少数
+// 未初始化 ChannelMeta 的路径则回退请求体 model，保证 helper 可独立验证。
+func moonshotUpstreamModelName(info *relaycommon.RelayInfo, fallback string) string {
+	if info != nil && info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return fallback
+}
+
+// isMoonshotTemperatureOneOnlyModel 判断模型是否只接受 temperature=1.0。
+func isMoonshotTemperatureOneOnlyModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), "kimi-k2.6")
 }
 
 // ConvertOpenAIResponsesRequest 将 OpenAI Responses 格式请求转换为上游格式。
