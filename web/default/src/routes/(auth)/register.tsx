@@ -17,16 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { SignUp } from '@/features/auth/sign-up'
-import { useAuthStore } from '@/stores/auth-store'
 
-export const Route = createFileRoute('/(auth)/sign-up')({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    // 已登录用户再次访问注册页没有业务意义，直接回到控制台避免误触新账号注册。
-    if (auth.user) {
-      throw redirect({ to: '/dashboard' })
-    }
+export const Route = createFileRoute('/(auth)/register')({
+  beforeLoad: ({ location }) => {
+    // 兼容历史邀请链接和钱包邀请链接，保留 aff 等查询参数交给注册页解析。
+    throw redirect({
+      to: '/sign-up',
+      search: location.search,
+      replace: true,
+    })
   },
-  component: SignUp,
 })

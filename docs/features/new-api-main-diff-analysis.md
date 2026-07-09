@@ -3380,8 +3380,58 @@ new-api-main 的 `/rankings` 页面和 `/pricing` 一样，进入路由前会调
 4. `curl` 访问 `http://192.168.0.202:3003/`、`/api/status`、`/rankings` 和 `/static/js/index.js` 均返回 `HTTP/1.1 200 OK`，确认 3003 页面与资源可访问。
 5. 前端 bundle 中可检索到 `/api/status`、`rankings`、`requireAuth`、`sign-in` 片段，确认热更新资源包含本轮配置刷新守卫相关逻辑。
 
+## 本轮实施评审：注册兼容路由与已登录跳转
+
+### 需求分析
+
+new-api-main 在默认前端额外提供 `(auth)/register.tsx`，访问 `/register` 时会保留当前查询参数并替换跳转到 `/sign-up`。NexusTok 当前只有 `/sign-up` 路由，但钱包邀请链接 `generateAffiliateLink` 已经生成 `/register?aff=...`，这会让邀请注册入口依赖一个不存在的前端路由。另一方面，new-api-main 的 `/sign-up` 在已登录状态下会直接跳转 `/dashboard`，避免用户在已有会话里误触注册页。
+
+本轮目标是把 new-api-main 的兼容入口沉淀为 NexusTok 默认前端原生能力：
+
+1. 新增 `/register` 前端路由，进入后 `replace` 到 `/sign-up`，并完整保留 `?aff=...` 等查询参数。
+2. 为 `/sign-up` 增加已登录用户跳转 `/dashboard` 的轻量守卫，避免已登录状态误进入注册表单。
+3. 不改 `SignUp` 组件、注册表单、`/api/user/register` 后端接口、邀请参数解析和钱包邀请链接生成逻辑。
+4. 更新 TanStack Router 生成路由树，确保类型安全导航中包含 `/register`。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 注册兼容路由 | `web/default/src/routes/(auth)/register.tsx` | 新增 `/register` 到 `/sign-up` 的 replace 跳转，并保留查询参数。 |
+| 注册页守卫 | `web/default/src/routes/(auth)/sign-up.tsx` | 已登录用户访问注册页时跳转 `/dashboard`。 |
+| 生成路由树 | `web/default/src/routeTree.gen.ts` | TanStack Router 类型注册新增 `/register`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. `/register` 只做前端 replace 跳转，不新增页面和接口调用，不会改变后端注册开关、邀请校验、密码策略和 OAuth 注册逻辑。
+2. 查询参数必须原样传递给 `/sign-up`，否则邀请注册的 `aff` 参数会丢失；本轮以 `location.search` 作为跳转 search，复用 TanStack Router 对 search 的处理。
+3. 已登录用户跳转 `/dashboard` 与 new-api-main 行为一致，但可能改变少量用户手动访问注册页时看到表单的旧体验；该场景本身不应继续注册新账号，跳转更符合现有会话语义。
+4. `routeTree.gen.ts` 是生成文件，必须由现有 TanStack Router 插件刷新，避免手工遗漏类型映射。
+
+### 方案评审
+
+采用最小兼容方案：新增 `(auth)/register.tsx`，复用 `createFileRoute('/(auth)/register')` 和 `redirect({ to: '/sign-up', search: location.search, replace: true })`；`sign-up.tsx` 只增加 `useAuthStore` 检查和 `/dashboard` 跳转。该方案吸收 new-api-main 的兼容优势，同时保留 NexusTok 自己的钱包邀请链接格式，不引入注册页重构。
+
+验收方式：
+
+1. 运行路由生成/构建相关命令，确认 `routeTree.gen.ts` 包含 `/register`。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端类型通过。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/register?aff=demo`，确认跳转到 `/sign-up?aff=demo`；若 MCP Chrome 仍不可用，则用 `curl` 访问 `/register?aff=demo`、主页和前端 bundle 片段作为替代验证，并说明工具限制。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，并刷新 `web/default/src/routeTree.gen.ts`，生成路由树中已包含 `/register`、`/(auth)/register` 和 `authRegisterRoute`。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `/register` 跳转 search 参数、`/sign-up` 已登录跳转和生成路由类型一致。
+3. `git diff --check` 通过，无空白错误。
+4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+5. `curl` 访问 `http://192.168.0.202:3003/`、`/api/status`、`/register?aff=demo`、`/sign-up?aff=demo` 和 `/static/js/index.js` 均返回 `HTTP/1.1 200 OK`，确认 3003 页面和兼容入口可访问。
+6. 前端 bundle 中可检索到 `/register`、`/sign-up`、`aff`、`dashboard` 片段，确认热更新资源包含本轮兼容路由和已登录跳转逻辑。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 注册兼容路由与已登录跳转 | `web/default/src/routes/(auth)/register.tsx`、`web/default/src/routes/(auth)/sign-up.tsx`、`web/default/src/routeTree.gen.ts` | 默认前端新增 `/register` 到 `/sign-up` 的 replace 跳转并保留 `aff` 等查询参数；已登录用户访问注册页时跳转 `/dashboard`，避免邀请注册链接和会话状态出现前端路由断点。 |
 | 2026-07-09 | Rankings 路由最新配置守卫 | `web/default/src/routes/rankings/index.tsx` | 默认前端 Rankings 路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.rankings` 判断关闭跳转首页、登录可见跳转登录；保留 NexusTok 自有 `period=all` 查询参数。 |
 | 2026-07-09 | `/v1/models` 动态 `owned_by` | `model/model_meta.go`、`controller/model.go`、`model/model_owner_test.go`、`controller/model_*test.go` | OpenAI 兼容模型列表按当前用户/Token 可用分组查询首选启用渠道，并用实际渠道归属覆盖 `owned_by`；未知模型仍回落 `custom`，Token 模型限制路径缺少分组上下文时保持旧兼容行为。 |
 | 2026-07-09 | Pricing 路由最新配置守卫 | `web/default/src/lib/nav-modules.ts`、`web/default/src/routes/pricing/*` | 默认前端 Pricing 列表与详情路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.pricing` 判断关闭跳转首页、登录可见跳转登录，并写回本地 status 缓存；后端 HeaderNavModuleAuth 仍是最终接口边界。 |
