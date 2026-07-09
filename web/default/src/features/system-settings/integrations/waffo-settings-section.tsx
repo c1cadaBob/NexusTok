@@ -78,6 +78,8 @@ interface Props {
 export function WaffoSettingsSection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const canUpdateWaffoSettings = updateOption.canUpdate
+  const waffoUpdateDisabledReason = updateOption.disabledReason
   const [loading, setLoading] = useState(false)
   const iconFileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -111,6 +113,11 @@ export function WaffoSettingsSection(props: Props) {
   }, [props.defaultValues, form])
 
   const handleSave = async () => {
+    if (!canUpdateWaffoSettings) {
+      toast.error(waffoUpdateDisabledReason)
+      return
+    }
+
     setLoading(true)
     try {
       const values = form.getValues()
@@ -413,7 +420,15 @@ export function WaffoSettingsSection(props: Props) {
           </Table>
         </div>
 
-        <Button onClick={handleSave} disabled={loading}>
+        <Button
+          onClick={handleSave}
+          disabled={
+            loading || updateOption.isPending || !canUpdateWaffoSettings
+          }
+          title={
+            canUpdateWaffoSettings ? undefined : waffoUpdateDisabledReason
+          }
+        >
           {loading ? t('Saving...') : t('Save Changes')}
         </Button>
       </SettingsSection>

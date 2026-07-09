@@ -52,6 +52,8 @@ interface Props {
 export function WaffoPancakeSettingsSection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const canUpdateWaffoPancakeSettings = updateOption.canUpdate
+  const waffoPancakeUpdateDisabledReason = updateOption.disabledReason
   const [loading, setLoading] = useState(false)
   const form = useForm<WaffoPancakeSettingsValues>({
     defaultValues: props.defaultValues,
@@ -62,6 +64,11 @@ export function WaffoPancakeSettingsSection(props: Props) {
   }, [props.defaultValues, form])
 
   const handleSave = async () => {
+    if (!canUpdateWaffoPancakeSettings) {
+      toast.error(waffoPancakeUpdateDisabledReason)
+      return
+    }
+
     const values = form.getValues()
     const enabled = !!values.WaffoPancakeEnabled
     const sandbox = !!values.WaffoPancakeSandbox
@@ -300,7 +307,17 @@ export function WaffoPancakeSettingsSection(props: Props) {
         </div>
       </div>
 
-      <Button onClick={handleSave} disabled={loading}>
+      <Button
+        onClick={handleSave}
+        disabled={
+          loading || updateOption.isPending || !canUpdateWaffoPancakeSettings
+        }
+        title={
+          canUpdateWaffoPancakeSettings
+            ? undefined
+            : waffoPancakeUpdateDisabledReason
+        }
+      >
         {loading ? t('Saving...') : t('Save Waffo Pancake settings')}
       </Button>
     </SettingsSection>

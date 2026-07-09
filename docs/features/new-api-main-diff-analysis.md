@@ -2229,6 +2229,54 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面加载、`/api/option/` 只读请求正常、支付保存按钮和合规确认入口渲染正常、控制台无错误；不触发真实保存、不确认支付合规。
 
+## 本轮实施评审：Waffo 支付子表单保存按钮 Authz 消费
+
+### 需求分析
+
+支付配置主表单已经将通用、Epay、Stripe、Creem、全部保存以及支付合规确认入口接入 `system_setting.sensitive_write`。同一支付页面下的 Waffo 与 Waffo Pancake 子表单仍然通过 `useUpdateOption()` 写入 `PUT /api/option/`，但保存按钮只按本地 `loading` 禁用；缺少系统设置敏感写权限的管理员仍会看到可点击保存入口，直到提交时才被 hook 或后端拦截。
+
+本轮目标：
+
+1. 将 Waffo 子表单的 `Save Changes` 和 Waffo Pancake 子表单的 `Save Waffo Pancake settings` 接入 `updateOption.canUpdate` 与 `updateOption.disabledReason`。
+2. 在 `handleSave` 中增加同一权限前置检查，防止脚本调用或按钮遗漏路径发起无权限保存。
+3. 保持 Waffo 支付方式本地新增/编辑/删除、图标上传、密钥空值保留、Pancake 必填校验、URL 去尾斜杠和 option key 列表不变。
+4. 不处理 Waffo 支付方式弹窗的本地确认按钮，因为它只修改本地草稿，不调用后端写接口。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Waffo 聚合支付 | `web/default/src/features/system-settings/integrations/waffo-settings-section.tsx` | 最终保存按钮和保存 handler 消费统一 option 保存权限；本地支付方式编辑器不变。 |
+| Waffo Pancake 托管支付 | `integrations/waffo-pancake-settings-section.tsx` | 最终保存按钮和保存 handler 消费统一 option 保存权限；启用时的必填校验不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 本轮只改最终保存按钮 disabled/title 与 handler 权限前置检查，不改任何支付网关字段、序列化、密钥保存条件或校验规则。
+2. Waffo 支付方式列表包含图标和支付方法元数据，本轮允许继续本地编辑草稿，避免无权限用户无法查看或临时整理配置；真正持久化仍由保存按钮和 hook/后端兜底。
+3. Waffo Pancake 启用校验涉及商户、店铺、商品、Webhook 公钥和价格边界，本轮不改变校验顺序，权限不足时先提示权限，权限满足时才进入原业务校验。
+4. 两个组件都保留本地 `loading` 状态，避免多 key 连续保存期间重复点击；同时读取 `updateOption.isPending` 作为额外保护。
+
+### 方案评审
+
+采用“与支付主表单一致的 `system_setting.sensitive_write` 保存语义”的方案。两个子组件继续复用 `useUpdateOption()`，保存按钮缺少权限时禁用并展示统一无权限原因；`handleSave` 开头也做同一检查，让前端行为与后端 `/api/option/` 权限表一致。支付方式弹窗和字段编辑保持本地草稿交互，不扩大权限禁用范围。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 Waffo 聚合支付 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 保存 Waffo Pancake 托管支付 option | `system_setting.sensitive_write` | `PUT /api/option/` |
+| Waffo 支付方式本地新增/编辑/删除、图标上传、字段编辑 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认两个 Waffo 子表单类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面加载、`/api/option/` 只读请求正常、Waffo 与 Waffo Pancake 保存按钮渲染正常、控制台无错误；不触发真实保存。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2294,3 +2342,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-08 | 日志清理系统任务入口与双资源 Authz 消费 | `web/default/src/features/system-settings/{api.ts,types.ts,maintenance/log-settings-section.tsx}` | 日志维护页历史日志清理改为创建 `log_cleanup` SystemTask，前端按钮和确认动作同时消费 `system_setting.sensitive_write` 与 `usage_log.sensitive_write`，成功后提示任务 ID 并刷新系统任务缓存。 |
 | 2026-07-08 | 系统设置运维集成与模型部署保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/*` | 监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；io.net 连接测试保持独立操作语义，留待后续单独权限评审。 |
 | 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
+| 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
