@@ -25,9 +25,11 @@ func TestRegisterSubscriptionAdminRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/plans", controller.AdminCreateSubscriptionPlan)
 	assertRouteHandler(t, engine, http.MethodPut, "/api/subscription/admin/plans/:id", controller.AdminUpdateSubscriptionPlan)
 	assertRouteHandler(t, engine, http.MethodPatch, "/api/subscription/admin/plans/:id", controller.AdminUpdateSubscriptionPlanStatus)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/plans/:id/subscriptions/reset", controller.AdminResetPlanSubscriptions)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/bind", controller.AdminBindSubscription)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/subscription/admin/users/:id/subscriptions", controller.AdminListUserSubscriptions)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/users/:id/subscriptions", controller.AdminCreateUserSubscription)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/users/:id/subscriptions/reset", controller.AdminResetUserSubscriptionsByPlan)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/admin/user_subscriptions/:id/invalidate", controller.AdminInvalidateUserSubscription)
 	assertRouteHandler(t, engine, http.MethodDelete, "/api/subscription/admin/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
 }
@@ -37,9 +39,11 @@ func TestSubscriptionPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/plans", authz.SubscriptionWrite)
 	assertSubscriptionPermissionRoute(t, http.MethodPut, "/plans/:id", authz.SubscriptionWrite)
 	assertSubscriptionPermissionRoute(t, http.MethodPatch, "/plans/:id", authz.SubscriptionWrite)
+	assertSubscriptionPermissionRoute(t, http.MethodPost, "/plans/:id/subscriptions/reset", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/bind", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodGet, "/users/:id/subscriptions", authz.SubscriptionRead)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/users/:id/subscriptions", authz.SubscriptionOperate)
+	assertSubscriptionPermissionRoute(t, http.MethodPost, "/users/:id/subscriptions/reset", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/user_subscriptions/:id/invalidate", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodDelete, "/user_subscriptions/:id", authz.SubscriptionSensitiveWrite)
 }

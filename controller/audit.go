@@ -20,21 +20,23 @@ import (
 // auditContentTemplates 将稳定 action 映射为英文兜底模板。
 // 数据库存储仍以 action+params 为主；Content 只服务导出、旧前端或解析失败时的人类可读兜底。
 var auditContentTemplates = map[string]string{
-	"user.create":        "Created user ${username}",
-	"user.update":        "Updated user ${username} (ID: ${id})",
-	"user.delete":        "Deleted user ${username} (ID: ${id})",
-	"user.manage":        "Managed user ${username} (ID: ${id})",
-	"user.binding_clear": "Cleared ${binding_type} binding for user ${username}",
-	"user.2fa_disable":   "Force-disabled two-factor authentication for user ${target_user_id}",
-	"option.update":      "Updated system setting ${key}",
-	"channel.create":     "Created channel ${name}",
-	"channel.update":     "Updated channel ${name} (ID: ${id})",
-	"channel.delete":     "Deleted channel ${name} (ID: ${id})",
-	"channel.key_view":   "Viewed channel key (ID: ${id})",
-	"redemption.create":  "Created redemption codes ${name}",
-	"redemption.update":  "Updated redemption code ${id}",
-	"redemption.delete":  "Deleted redemption code ${id}",
-	"subscription.bind":  "Bound subscription for user ${target_user_id}",
+	"user.create":                  "Created user ${username}",
+	"user.update":                  "Updated user ${username} (ID: ${id})",
+	"user.delete":                  "Deleted user ${username} (ID: ${id})",
+	"user.manage":                  "Managed user ${username} (ID: ${id})",
+	"user.binding_clear":           "Cleared ${binding_type} binding for user ${username}",
+	"user.2fa_disable":             "Force-disabled two-factor authentication for user ${target_user_id}",
+	"option.update":                "Updated system setting ${key}",
+	"channel.create":               "Created channel ${name}",
+	"channel.update":               "Updated channel ${name} (ID: ${id})",
+	"channel.delete":               "Deleted channel ${name} (ID: ${id})",
+	"channel.key_view":             "Viewed channel key (ID: ${id})",
+	"redemption.create":            "Created redemption codes ${name}",
+	"redemption.update":            "Updated redemption code ${id}",
+	"redemption.delete":            "Deleted redemption code ${id}",
+	"subscription.bind":            "Bound subscription for user ${target_user_id}",
+	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
+	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 }
 
 // auditContentEN 根据 action 模板渲染英文兜底内容；未登记 action 时返回 action 本身。

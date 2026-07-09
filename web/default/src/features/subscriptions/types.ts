@@ -113,6 +113,19 @@ export interface CreateUserSubscriptionRequest {
   plan_id: number
 }
 
+export interface ResetSubscriptionsRequest {
+  plan_id?: number
+  advance_reset_time?: boolean
+}
+
+export interface ResetSubscriptionsResponse {
+  plan_id: number
+  matched_count: number
+  reset_count: number
+  user_count: number
+  advance_reset_time: boolean
+}
+
 export interface WaffoPancakeSubscriptionProduct {
   id: string
   name: string
@@ -138,4 +151,8 @@ export interface SelfSubscriptionData {
 // Dialog Types
 // ============================================================================
 
-export type SubscriptionsDialogType = 'create' | 'update' | 'toggle-status'
+export type SubscriptionsDialogType =
+  | 'create'
+  | 'update'
+  | 'toggle-status'
+  | 'reset-subscriptions'

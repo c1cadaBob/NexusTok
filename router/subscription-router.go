@@ -28,11 +28,13 @@ var subscriptionPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/plans", permission: authz.SubscriptionWrite, handler: controller.AdminCreateSubscriptionPlan},
 	{method: http.MethodPut, path: "/plans/:id", permission: authz.SubscriptionWrite, handler: controller.AdminUpdateSubscriptionPlan},
 	{method: http.MethodPatch, path: "/plans/:id", permission: authz.SubscriptionWrite, handler: controller.AdminUpdateSubscriptionPlanStatus},
+	{method: http.MethodPost, path: "/plans/:id/subscriptions/reset", permission: authz.SubscriptionOperate, handler: controller.AdminResetPlanSubscriptions},
 
 	// 用户订阅管理。删除会直接移除权益记录，按敏感写处理；失效与创建仍属于运营动作。
 	{method: http.MethodPost, path: "/bind", permission: authz.SubscriptionOperate, handler: controller.AdminBindSubscription},
 	{method: http.MethodGet, path: "/users/:id/subscriptions", permission: authz.SubscriptionRead, handler: controller.AdminListUserSubscriptions},
 	{method: http.MethodPost, path: "/users/:id/subscriptions", permission: authz.SubscriptionOperate, handler: controller.AdminCreateUserSubscription},
+	{method: http.MethodPost, path: "/users/:id/subscriptions/reset", permission: authz.SubscriptionOperate, handler: controller.AdminResetUserSubscriptionsByPlan},
 	{method: http.MethodPost, path: "/user_subscriptions/:id/invalidate", permission: authz.SubscriptionOperate, handler: controller.AdminInvalidateUserSubscription},
 	{method: http.MethodDelete, path: "/user_subscriptions/:id", permission: authz.SubscriptionSensitiveWrite, handler: controller.AdminDeleteUserSubscription},
 }

@@ -21,6 +21,7 @@ import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -50,6 +51,7 @@ import {
   getAdminPlans,
   getUserSubscriptions,
   createUserSubscription,
+  resetUserSubscriptionsByPlan,
   invalidateUserSubscription,
   deleteUserSubscription,
 } from '../../api'
@@ -106,9 +108,15 @@ export function UserSubscriptionsDialog(props: Props) {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [subs, setSubs] = useState<UserSubscriptionRecord[]>([])
   const [selectedPlanId, setSelectedPlanId] = useState<string>('')
+  const [resetting, setResetting] = useState(false)
+  const [advanceResetTime, setAdvanceResetTime] = useState(true)
   const [confirmAction, setConfirmAction] = useState<{
     type: 'invalidate' | 'delete'
     subId: number
+  } | null>(null)
+  const [resetAction, setResetAction] = useState<{
+    planId: number
+    planTitle: string
   } | null>(null)
 
   const planTitleMap = useMemo(() => {
@@ -200,6 +208,35 @@ export function UserSubscriptionsDialog(props: Props) {
       toast.error(t('Operation failed'))
     } finally {
       setConfirmAction(null)
+    }
+  }
+
+  const handleResetConfirm = async () => {
+    if (!props.user?.id || !resetAction) return
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    setResetting(true)
+    try {
+      const res = await resetUserSubscriptionsByPlan(props.user.id, {
+        plan_id: resetAction.planId,
+        advance_reset_time: advanceResetTime,
+      })
+      if (res.success) {
+        toast.success(
+          t('Reset {{count}} active subscriptions', {
+            count: res.data?.reset_count || 0,
+          })
+        )
+        await loadData()
+        props.onSuccess?.()
+      }
+    } catch {
+      toast.error(t('Operation failed'))
+    } finally {
+      setResetting(false)
+      setResetAction(null)
     }
   }
 
@@ -336,6 +373,27 @@ export function UserSubscriptionsDialog(props: Props) {
                                     ? undefined
                                     : noPermissionMessage
                                 }
+                                onClick={() => {
+                                  setAdvanceResetTime(true)
+                                  setResetAction({
+                                    planId: sub.plan_id,
+                                    planTitle:
+                                      planTitleMap.get(sub.plan_id) ||
+                                      `#${sub.plan_id}`,
+                                  })
+                                }}
+                              >
+                                {t('Reset quota')}
+                              </Button>
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                disabled={!isActive || !permissions.canOperate}
+                                title={
+                                  permissions.canOperate
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
                                 onClick={() =>
                                   setConfirmAction({
                                     type: 'invalidate',
@@ -402,6 +460,30 @@ export function UserSubscriptionsDialog(props: Props) {
           }
           destructive={confirmAction.type === 'delete'}
         />
+      )}
+
+      {resetAction && (
+        <ConfirmDialog
+          open
+          onOpenChange={(v) => !v && setResetAction(null)}
+          title={t('Reset subscription quota')}
+          desc={t('Reset active {{plan}} subscriptions for this user?', {
+            plan: resetAction.planTitle,
+          })}
+          confirmText={t('Reset quota')}
+          handleConfirm={handleResetConfirm}
+          disabled={!permissions.canOperate}
+          isLoading={resetting}
+        >
+          <label className='flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm'>
+            <span>{t('Advance next reset time')}</span>
+            <Switch
+              checked={advanceResetTime}
+              onCheckedChange={(checked) => setAdvanceResetTime(!!checked)}
+              aria-label={t('Advance next reset time')}
+            />
+          </label>
+        </ConfirmDialog>
       )}
     </>
   )

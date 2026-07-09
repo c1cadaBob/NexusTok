@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { type Row } from '@tanstack/react-table'
-import { MoreHorizontal, Pencil, Power, PowerOff } from 'lucide-react'
+import { MoreHorizontal, Pencil, Power, PowerOff, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -46,8 +47,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     toast.error(noPermissionMessage)
     return false
   }
+  const guardOperate = () => {
+    if (permissions.canOperate) return true
+    toast.error(noPermissionMessage)
+    return false
+  }
 
   const canWritePlan = complianceConfirmed && permissions.canWrite
+  const canOperatePlan = complianceConfirmed && permissions.canOperate
 
   return (
     <DropdownMenu>
@@ -57,39 +64,53 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
-        <DropdownMenuItem
-          disabled={!canWritePlan}
-          title={permissions.canWrite ? undefined : noPermissionMessage}
-          onClick={() => {
-            if (!guardWrite() || !complianceConfirmed) return
-            setCurrentRow(row.original)
-            setOpen('update')
-          }}
-        >
-          <Pencil />
-          {t('Edit')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={!canWritePlan}
-          title={permissions.canWrite ? undefined : noPermissionMessage}
-          onClick={() => {
-            if (!guardWrite() || !complianceConfirmed) return
-            setCurrentRow(row.original)
-            setOpen('toggle-status')
-          }}
-        >
-          {row.original.plan.enabled ? (
-            <>
-              <PowerOff />
-              {t('Disable')}
-            </>
-          ) : (
-            <>
-              <Power />
-              {t('Enable')}
-            </>
-          )}
-        </DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            disabled={!canWritePlan}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+            onClick={() => {
+              if (!guardWrite() || !complianceConfirmed) return
+              setCurrentRow(row.original)
+              setOpen('update')
+            }}
+          >
+            <Pencil />
+            {t('Edit')}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!canOperatePlan}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+            onClick={() => {
+              if (!guardOperate() || !complianceConfirmed) return
+              setCurrentRow(row.original)
+              setOpen('reset-subscriptions')
+            }}
+          >
+            <RotateCcw />
+            {t('Reset quota')}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!canWritePlan}
+            title={permissions.canWrite ? undefined : noPermissionMessage}
+            onClick={() => {
+              if (!guardWrite() || !complianceConfirmed) return
+              setCurrentRow(row.original)
+              setOpen('toggle-status')
+            }}
+          >
+            {row.original.plan.enabled ? (
+              <>
+                <PowerOff />
+                {t('Disable')}
+              </>
+            ) : (
+              <>
+                <Power />
+                {t('Enable')}
+              </>
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )

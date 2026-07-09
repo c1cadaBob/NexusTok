@@ -2719,6 +2719,60 @@ webhook 验签继续保留 NexusTok 当前 RSA 验证逻辑，以避免一次性
 5. MCP 打开 `http://192.168.0.202:3003/wallet` 或订阅购买入口，确认 Pancake 按钮只在 `enable_waffo_pancake_subscription=true` 且套餐有 product 绑定时展示；管理端订阅表单仍正常。
 6. MCP 在浏览器上下文调用 `POST /api/subscription/waffo-pancake/pay`，在未配置真实凭证或套餐无 product 时返回业务失败，不创建外部支付；不触发真实支付。
 
+## 本轮实施评审：订阅额度手动重置原生化
+
+### 需求分析
+
+`new-api-main` 已提供管理员手动重置订阅额度的能力：可以按套餐批量重置所有有效订阅，也可以在某个用户的订阅列表中按套餐重置该用户的有效订阅。该能力解决的是运营补偿、人工售后、套餐规则调整后的额度恢复等场景。NexusTok 当前已经有周期性订阅维护任务，会自动处理到期和 `next_reset_time` 到达的重置，但缺少“管理员立即触发”的安全入口；管理员只能删除/失效/重新绑定订阅，容易改变有效期、分组快照或订单历史，操作粒度过粗。
+
+本轮目标是把 `new-api-main` 的手动重置优势转成 NexusTok 原生能力：
+
+1. 后端提供套餐级和用户级两个管理接口，只重置有效订阅的 `amount_used`，不改变订阅总额、有效期、来源、分组快照和钱包溢出策略。
+2. 支持 `advance_reset_time` 开关：默认推进下一次周期重置时间，避免管理员刚手动补偿后又被周期任务立刻二次重置；关闭时仅清零已用额度，保留原 `last_reset_time/next_reset_time`。
+3. 路由接入现有 `subscription.operate` 权限表，因为这是运营动作，不应按只读或普通写入处理，也不需要提升到删除级敏感写。
+4. 前端订阅管理页增加按套餐重置入口，用户订阅弹窗增加按用户+套餐重置入口，并复用已有权限 hook 控制按钮可见性。
+5. 记录用户管理日志和管理审计信息，保证人工重置可追溯。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 订阅模型 | `model/subscription.go`、新增/更新测试 | 新增 `SubscriptionResetResult`、用户级和套餐级重置事务；使用 GORM v2 行锁 helper，保持 SQLite/MySQL/PostgreSQL 兼容。 |
+| 订阅 controller | `controller/subscription.go` | 新增 `AdminResetPlanSubscriptions` 与 `AdminResetUserSubscriptionsByPlan`，解析 `advance_reset_time`，记录用户日志和管理审计。 |
+| 路由与权限 | `router/subscription-router.go`、路由测试 | 新增 `POST /api/subscription/admin/plans/:id/subscriptions/reset` 和 `POST /api/subscription/admin/users/:id/subscriptions/reset`，权限使用 `subscription.operate`。 |
+| 默认前端 API | `web/default/src/features/subscriptions/api.ts`、`types.ts` | 新增重置请求/响应类型和两个 API 函数。 |
+| 默认前端订阅页 | `web/default/src/features/subscriptions/components/*` | 套餐行操作增加“重置额度”按钮与确认弹窗；用户订阅弹窗在每个有效订阅计划旁提供用户级重置按钮。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 新增确认弹窗、按钮和结果提示文案的六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、风险和验收标准。 |
+
+### 风险评估
+
+1. 额度重置是高影响运营操作，误点会立即改变用户可用订阅额度。前端必须使用确认弹窗，并展示“是否推进下一次重置时间”的明确选项；后端必须只挂在 AdminAuth + `subscription.operate` 后面。
+2. 并发风险主要来自周期维护任务、用户请求预消费和管理员手动重置同时写同一订阅。模型层应在事务中查询有效订阅并加行锁；SQLite 不支持 `FOR UPDATE`，现有 `lockForUpdate` helper 会自动跳过不兼容语法，保持三库兼容。
+3. 套餐级重置可能影响多个用户。返回结果需要包含匹配订阅数和用户数，日志按受影响用户分别写入，便于后续审计。
+4. `advance_reset_time=false` 适合临时补偿，但若 `next_reset_time` 已经过期，周期维护任务下一轮可能再次清零。前端默认启用 `advance_reset_time=true`，并在文案中强调该默认行为。
+5. 有效订阅筛选必须使用 `status='active' AND end_time > now`。已到期但尚未被维护任务标记为 expired 的记录不应被手动重置，避免给事实上已过期的订阅续命。
+6. 该能力只重置订阅额度，不退款、不撤销订单、不修改钱包余额，不影响 Waffo/Stripe/Creem/EPay 支付链路。
+
+### 方案评审
+
+采用“模型事务重置 + subscription.operate 路由 + 前端确认弹窗”的方案。
+
+模型层新增 `resetUserSubscriptionTx` 作为唯一重置原语：将 `AmountUsed` 置零；当 `advanceResetTime=true` 时，用现有 `calcNextResetTime(time.Unix(now, 0), plan, sub.EndTime)` 重新计算 `NextResetTime`，有周期时同步 `LastResetTime=now`，无周期时清零两者。用户级入口 `AdminResetUserSubscriptionsByPlan(userId, planId, advanceResetTime)` 只重置该用户该套餐下仍有效的 active 订阅，找不到匹配项返回业务错误；套餐级入口 `AdminResetPlanSubscriptions(planId, advanceResetTime)` 重置该套餐下所有有效 active 订阅，零匹配时返回成功且计数为 0，便于管理员安全执行批量操作。
+
+Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉及手动 JSON marshal；响应使用 `common.ApiSuccess`。审计维度保持 NexusTok 现有模式：每个受影响用户写 `model.LogTypeManage` 用户日志，套餐级操作写系统管理审计，用户级操作写目标用户管理审计。
+
+前端不直接复制 `new-api-main` 文件，而是在 NexusTok 当前订阅权限 hook 和现有表格结构上原生化：行操作菜单/按钮在具备 `subscription.operate` 时展示重置入口；确认弹窗使用已有确认组件或 shadcn Dialog/AlertDialog，默认勾选“推进下一次重置时间”，成功后刷新列表并 toast 展示重置数量。用户订阅弹窗内只对 active 且未到期的订阅展示用户级重置入口。
+
+验收方式：
+
+1. `go test ./model ./controller ./router ./middleware` 覆盖模型事务、controller/路由权限注册和订阅相关中间件影响面。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+3. `cd web/default && node scripts/sync-i18n.mjs` 通过，新增文案没有缺失翻译 key。
+4. `git diff --check` 通过。
+5. MCP 打开 `http://192.168.0.202:3003/subscriptions`，确认订阅管理页、重置入口和确认弹窗渲染正常，控制台无错误。
+6. MCP 在浏览器上下文对新增接口做参数错误或空数据负例调用，确认返回业务响应，不误改真实订阅数据。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2792,3 +2846,4 @@ webhook 验签继续保留 NexusTok 当前 RSA 验证逻辑，以避免一次性
 | 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |
 | 2026-07-09 | io.net 连接测试按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | 模型部署设置中的 `Test Connection` 按钮和 handler 消费后端路由对应的 `model.operate`；io.net option 保存仍由 `system_setting.sensitive_write` 控制。 |
 | 2026-07-09 | Waffo Pancake 配置原子保存 | `model/option.go`、`service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/{api.ts,types.ts,integrations/waffo-pancake-settings-section.tsx}` | 对齐 new-api-main 的 Waffo Pancake 保存优势，新增三库兼容 `UpdateOptionsBulk` 与 `POST /api/option/waffo-pancake/save`，支付设置页改为一次性提交 Waffo Pancake 配置；catalog、pair 和订阅产品能力保留为后续 SDK 阶段。 |
+| 2026-07-09 | 订阅额度手动重置 | `model/subscription.go`、`controller/subscription.go`、`router/subscription-router.go`、`web/default/src/features/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的管理员手动重置订阅额度能力，支持套餐级和用户级重置、`advance_reset_time`、`subscription.operate` 权限、用户管理日志和管理审计。 |
