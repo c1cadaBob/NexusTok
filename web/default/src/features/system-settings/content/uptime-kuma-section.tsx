@@ -140,6 +140,11 @@ export function UptimeKumaSection({ enabled, data }: UptimeKumaSectionProps) {
   }, [enabled])
 
   const handleToggleEnabled = async (checked: boolean) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.uptime_kuma_enabled',
@@ -224,6 +229,11 @@ export function UptimeKumaSection({ enabled, data }: UptimeKumaSectionProps) {
   }
 
   const handleSaveAll = async () => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.uptime_kuma_groups',
@@ -274,7 +284,12 @@ export function UptimeKumaSection({ enabled, data }: UptimeKumaSectionProps) {
               onClick={handleSaveAll}
               size='sm'
               variant='secondary'
-              disabled={!hasChanges || updateOption.isPending}
+              disabled={
+                !hasChanges || updateOption.isPending || !updateOption.canUpdate
+              }
+              title={
+                updateOption.canUpdate ? undefined : updateOption.disabledReason
+              }
             >
               <Save className='mr-2 h-4 w-4' />
               {updateOption.isPending ? t('Saving...') : t('Save Settings')}
@@ -284,7 +299,14 @@ export function UptimeKumaSection({ enabled, data }: UptimeKumaSectionProps) {
             <span className='text-muted-foreground text-sm'>
               {t('Enabled')}
             </span>
-            <Switch checked={isEnabled} onCheckedChange={handleToggleEnabled} />
+            <Switch
+              checked={isEnabled}
+              onCheckedChange={handleToggleEnabled}
+              disabled={updateOption.isPending || !updateOption.canUpdate}
+              title={
+                updateOption.canUpdate ? undefined : updateOption.disabledReason
+              }
+            />
           </div>
         </div>
 

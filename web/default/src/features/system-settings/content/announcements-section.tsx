@@ -185,6 +185,11 @@ export function AnnouncementsSection({
   }, [enabled])
 
   const handleToggleEnabled = async (checked: boolean) => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.announcements_enabled',
@@ -275,6 +280,11 @@ export function AnnouncementsSection({
   }
 
   const handleSaveAll = async () => {
+    if (!updateOption.canUpdate) {
+      toast.error(updateOption.disabledReason)
+      return
+    }
+
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.announcements',
@@ -344,7 +354,12 @@ export function AnnouncementsSection({
               onClick={handleSaveAll}
               size='sm'
               variant='secondary'
-              disabled={!hasChanges || updateOption.isPending}
+              disabled={
+                !hasChanges || updateOption.isPending || !updateOption.canUpdate
+              }
+              title={
+                updateOption.canUpdate ? undefined : updateOption.disabledReason
+              }
             >
               <Save className='mr-2 h-4 w-4' />
               {updateOption.isPending ? t('Saving...') : t('Save Settings')}
@@ -354,7 +369,14 @@ export function AnnouncementsSection({
             <span className='text-muted-foreground text-sm'>
               {t('Enabled')}
             </span>
-            <Switch checked={isEnabled} onCheckedChange={handleToggleEnabled} />
+            <Switch
+              checked={isEnabled}
+              onCheckedChange={handleToggleEnabled}
+              disabled={updateOption.isPending || !updateOption.canUpdate}
+              title={
+                updateOption.canUpdate ? undefined : updateOption.disabledReason
+              }
+            />
           </div>
         </div>
 

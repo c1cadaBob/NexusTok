@@ -2326,6 +2326,57 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/content/dashboard`、`/system-settings/content/chat`、`/system-settings/content/drawing`，确认页面加载、`/api/option/` 只读请求正常、保存按钮渲染正常、控制台无错误；不触发真实保存。
 
+## 本轮实施评审：控制台内容列表编辑器保存与开关 Authz 消费
+
+### 需求分析
+
+系统设置的“控制台内容”列表编辑器页面已经具备 Announcements、API Addresses、FAQ 和 Uptime Kuma 四类可视化草稿编辑能力。这些页面的本地新增、编辑、删除和批量删除只修改 React state，只有最终 `Save Settings` 才通过 `useUpdateOption()` 写入 `PUT /api/option/`。此外，每个页面顶部的 `Enabled` 开关会立即写入对应的启用 option，实际也是系统设置敏感写入入口。
+
+本轮目标：
+
+1. 将 `/system-settings/content/announcements` 的最终保存按钮与 `console_setting.announcements_enabled` 开关接入 `system_setting.sensitive_write`。
+2. 将 `/system-settings/content/api-info` 的最终保存按钮与 `console_setting.api_info_enabled` 开关接入同一权限。
+3. 将 `/system-settings/content/faq` 的最终保存按钮与 `console_setting.faq_enabled` 开关接入同一权限。
+4. 将 `/system-settings/content/uptime-kuma` 的最终保存按钮与 `console_setting.uptime_kuma_enabled` 开关接入同一权限。
+5. 保持列表项新增、编辑、删除、批量删除、表单校验、删除确认、排序/展示、JSON 序列化格式和 option key 不变，避免把本地草稿整理误判为后端写操作。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Announcements 列表编辑器 | `web/default/src/features/system-settings/content/announcements-section.tsx` | 最终保存按钮和启用开关消费统一 option 保存权限；本地公告草稿编辑不变。 |
+| API Addresses 列表编辑器 | `content/api-info-section.tsx` | 最终保存按钮和启用开关消费统一 option 保存权限；URL、路由、颜色等表单校验不变。 |
+| FAQ 列表编辑器 | `content/faq-section.tsx` | 最终保存按钮和启用开关消费统一 option 保存权限；FAQ 草稿增删改不变。 |
+| Uptime Kuma 列表编辑器 | `content/uptime-kuma-section.tsx` | 最终保存按钮和启用开关消费统一 option 保存权限；分组字段和监控项 JSON 序列化不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收方式，并补充能力落地清单。 |
+
+### 风险评估
+
+1. 四个页面的本地列表操作不直接调用后端，本轮不禁用这些草稿操作，避免无权限管理员失去查看、整理和临时编辑配置的能力；真正持久化由保存按钮与 hook/后端双层控制。
+2. `Enabled` 开关是立即写入入口，若只处理最终保存按钮会留下可点击写路径；本轮在 handler 开头增加权限前置检查，并在 Switch 控件层禁用，确保无权限时不发起 `PUT /api/option/`。
+3. 本轮不改变列表数据解析、`JSON.stringify` 输出、字段 schema、日期处理、颜色枚举、Uptime Kuma 分组结构和删除确认流程，因此不会影响现有控制台内容渲染。
+4. `useUpdateOption()` 已经在提交前做权限兜底，本轮 UI 层只是提前表达同一权限语义；即使未来出现遗漏入口，后端路由权限表和 hook 仍会阻断无权限写入。
+
+### 方案评审
+
+采用“真实写入入口统一消费 `system_setting.sensitive_write`，本地草稿操作保持可用”的方案。四个页面继续复用 `useUpdateOption()`，最终保存按钮在缺少权限时禁用并展示统一 `disabledReason`，`handleSaveAll` 开头也执行同一权限前置检查，避免按钮外调用路径产生重复错误提示；`handleToggleEnabled` 开头先检查 `updateOption.canUpdate`，无权限时只显示 toast，不更新本地开关状态、不调用后端。Switch 控件增加禁用条件，防止用户在无权限或保存中的状态下触发即时写入。
+
+动作映射：
+
+| UI 操作 | 权限 | 后端对应路由 |
+|---------|------|--------------|
+| 保存 Announcements、API Addresses、FAQ、Uptime Kuma 列表配置 | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 切换四个列表页面的 `Enabled` 开关 | `system_setting.sensitive_write` | `PUT /api/option/` |
+| 本地新增、编辑、删除、批量删除、打开弹窗、字段校验 | 本地交互，无写权限要求 | 不调用后端写接口 |
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认四个列表编辑器类型通过。
+2. `go test ./service/authz ./middleware ./router ./controller` 确认系统设置权限路由仍可构建。
+3. `git diff --check` 确认无空白错误。
+4. `cd web/default && node scripts/sync-i18n.mjs` 确认未产生遗漏翻译 key。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/`，再打开 `/system-settings/content/announcements`、`/system-settings/content/api-info`、`/system-settings/content/faq`、`/system-settings/content/uptime-kuma`，确认页面加载、`/api/option/` 只读请求正常、保存按钮和开关渲染正常、控制台无错误；不触发真实保存或开关写入。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2393,3 +2444,4 @@ NexusTok 后端已经把历史日志清理从同步 `DELETE /api/log/` 迁入原
 | 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
 | 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
 | 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
+| 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
