@@ -5215,8 +5215,61 @@ new-api-main 已经把 SMTP 连接层拆成可测试的 `newSMTPClient()`，支�
 12. 3003 登录态 option 验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/option/` 返回 `success=true`、`total=227`，其中 `SMTPStartTLSEnabled=false`、`SMTPInsecureSkipVerify=false`、`SMTPSSLEnabled=false`、`SMTPForceAuthLogin=false`。
 13. 3003 前端资源验证通过：线上 `/static/js/index.js` 与本地 `web/default/dist/static/js/index.js` SHA256 均为 `a610251c5d4a53d7487ece3884e798a8885dac487bc159cb94d29fcf0fd9f6a8`，线上 `/static/js/async/1043.js` 与本地 `web/default/dist/static/js/async/1043.js` SHA256 均为 `d7c6a70f6b24c7b34548520c0767fd189a9c50f75a170f094f495787a9a8799a`；线上资源包含 `SMTPStartTLSEnabled`、`SMTPInsecureSkipVerify`、`Use STARTTLS`、`Skip SMTP TLS certificate verification`、`Require STARTTLS upgrade for non-SSL SMTP connections` 和 `Allow self-signed or mismatched SMTP certificates`，确认热更新页面加载的是本轮构建产物。
 
+## 本轮实施评审：计费表达式结算 clamp 回归测试
+
+### 需求分析
+
+按照项目规则，本轮涉及计费表达式系统前已完整阅读 `pkg/billingexpr/expr.md`。new-api-main 在 `pkg/billingexpr/settle_clamp_test.go` 中补充了一个专门的安全回归测试文件，用于锁定两条计费结算不变量：
+
+1. 分层/动态计费表达式在实际结算时如果输出异常放大，最终配额必须通过 `QuotaRoundChecked` 饱和到 int32 上限，不能 wraparound 成负数或用户退款。
+2. 正常范围内的表达式结算不能误报 `Clamp`，避免日志和审计路径在常规请求中产生噪音。
+
+NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使用 `common.QuotaRoundChecked(quotaBeforeGroup * snap.GroupRatio)` 并把 `Clamp` 放入 `TieredResult`；`pkg/billingexpr/billingexpr_test.go` 也已有一个超大表达式 clamp 测试。但缺少独立的 settle clamp 测试资产，尤其缺少“正常范围 `Clamp == nil`”这一条反向断言。后续调整 `quotaConversion()`、`GroupRatio` 处理、`QuotaRoundChecked` 或 `TieredResult` 字段时，可能只保留溢出路径而误伤普通结算。
+
+本轮目标是把 new-api-main 的测试优势转为 NexusTok 原生回归保护：
+
+1. 新增 `pkg/billingexpr/settle_clamp_test.go`，用中文注释说明计费安全不变量。
+2. 覆盖异常超大结算饱和到 `math.MaxInt32`，并断言 `Clamp.Kind`、`Clamp.Clamped`。
+3. 覆盖正常范围结算 `Clamp == nil`，并断言普通计费结果保持稳定。
+4. 不修改计费表达式运行时逻辑，不改数据库、接口、前端或配置。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 计费表达式测试 | `pkg/billingexpr/settle_clamp_test.go` | 新增结算饱和保护与正常路径无 clamp 的单元测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 本轮只新增测试，不改变生产代码、数据库 schema、接口和前端页面，运行时风险极低。
+2. 测试必须使用 NexusTok 的 `common.MaxQuota` / `common.QuotaClampOverflow` 常量，避免硬编码和当前公共饱和策略脱节。
+3. 超大表达式应选择可读、稳定且足够超过 int32 上限的输入，避免依赖平台相关的 int 溢出行为；断言应落在 `QuotaRoundChecked` 的饱和输出上。
+4. 正常路径测试需要覆盖 `Clamp == nil`，防止未来把普通四舍五入也误标记成审计事件。
+5. 该切片不涉及页面和接口，但按用户要求仍需访问 3003 `/` 和 `/api/status`；MCP 如仍不可用则记录并使用 HTTP 兜底。
+
+### 方案评审
+
+采用“测试资产原生化”的方案：保留现有 `ComputeTieredQuota()` 实现不动，只新增一个专门测试文件承载 new-api-main 的 clamp 语义。超大结算测试使用 `tier("base", p * 1000000000)` 和 `P=1_000_000_000`，确保表达式输出、quota 换算和分组后金额远超 int32 上限；正常路径测试使用 `tier("base", p * 2 + c * 10)`，断言 `Clamp` 为 nil。这样既能补齐 new-api-main 的明确测试优势，又不会在计费热路径上引入额外改动。
+
+验收方式：
+
+1. `go test ./pkg/billingexpr -run 'TestComputeTieredQuota_(ClampOnOverflow|NoClampInRange)'`。
+2. `go test ./pkg/billingexpr`。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. 定向测试通过：`go test ./pkg/billingexpr -run 'TestComputeTieredQuota_(ClampOnOverflow|NoClampInRange)'`。
+2. 计费表达式包测试通过：`go test ./pkg/billingexpr`。
+3. 补丁空白检查通过：`git diff --check`。
+4. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
+5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只新增后端测试，不改变页面或接口行为。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 计费表达式结算 clamp 回归测试 | `pkg/billingexpr/settle_clamp_test.go` | 原生化 new-api-main 的分层计费结算饱和测试资产；锁定异常超大表达式结算必须饱和到 int32 上限并返回 `Clamp`，正常范围结算不误报 `Clamp`，防止动态计费后续调整破坏安全审计不变量。 |
 | 2026-07-09 | SMTP STARTTLS 与 TLS 校验配置 | `common/{email.go,email_test.go,constants.go,init.go}`、`model/{option.go,option_bulk_test.go}`、`web/default/src/features/system-settings/{types.ts,operations/*,integrations/email-settings-section.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 SMTP 连接层安全与兼容能力；新增显式 STARTTLS、默认 TLS 证书校验、管理员可选跳过校验、465 隐式 TLS 兼容和空凭证跳过 AUTH，并在默认前端 SMTP 设置页提供原生开关。 |
 | 2026-07-09 | 常量包边界文档 | `constant/README.md` | 原生化 new-api-main 的 `constant` 包维护约定；按 NexusTok 当前文件列表记录职责说明，并明确常量包禁止承载业务流程、数据库操作、第三方调用和项目内反向依赖。 |
 | 2026-07-09 | 监控配置环境变量覆盖测试 | `setting/operation_setting/monitor_setting_test.go` | 原生化 new-api-main 的渠道自动测试配置回归保护；测试覆盖 `CHANNEL_TEST_FREQUENCY`、`CHANNEL_TEST_ENABLED=false/true` 的优先级和默认 `scheduled_all` 模式，防止后续 Routing Reliability 或 SystemTask 调整误改环境变量语义。 |
