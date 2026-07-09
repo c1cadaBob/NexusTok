@@ -1853,6 +1853,8 @@
     "Failed to load image": "画像の読み込みに失敗しました",
     "Failed to load logs": "ログの読み込みに失敗しました",
     "Failed to load Passkey status": "Passkeyのステータスの読み込みに失敗しました",
+    "Failed to load playground groups": "Playground グループの読み込みに失敗しました",
+    "Failed to load playground models": "Playground モデルの読み込みに失敗しました",
     "Failed to load profile": "プロファイルの読み込みに失敗しました",
     "Failed to load redemption codes": "引き換えコードの読み込みに失敗しました",
     "Failed to load setup data": "セットアップデータの読み込みに失敗しました",

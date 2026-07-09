@@ -1853,6 +1853,8 @@
     "Failed to load image": "Не удалось загрузить изображение",
     "Failed to load logs": "Не удалось загрузить логи",
     "Failed to load Passkey status": "Не удалось загрузить статус Passkey",
+    "Failed to load playground groups": "Не удалось загрузить группы Playground",
+    "Failed to load playground models": "Не удалось загрузить модели Playground",
     "Failed to load profile": "Не удалось загрузить профиль",
     "Failed to load redemption codes": "Не удалось загрузить коды активации",
     "Failed to load setup data": "Не удалось загрузить данные настройки",

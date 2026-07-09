@@ -1853,6 +1853,8 @@
     "Failed to load image": "Failed to load image",
     "Failed to load logs": "Failed to load logs",
     "Failed to load Passkey status": "Failed to load Passkey status",
+    "Failed to load playground groups": "Failed to load playground groups",
+    "Failed to load playground models": "Failed to load playground models",
     "Failed to load profile": "Failed to load profile",
     "Failed to load redemption codes": "Failed to load redemption codes",
     "Failed to load setup data": "Failed to load setup data",

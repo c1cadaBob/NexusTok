@@ -4130,8 +4130,72 @@ new-api-main 的 Playground 本地存储已经把配置、参数开关和消息�
 9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9008.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `25ea44dc944c7a99a20f34bcaecaf0f1ce5cf470a7adf7b1e06fe9e2a76aa69c`，`9008.js` SHA256 均为 `e72a3b97e2c58bc626261832d5ed80e458060b839866161048776b02feebd0f7`。
 10. 线上 `/static/js/async/9008.js` 已包含 `playground_messages`、`playground_config` 特征；上一轮旧 chunk `/static/js/async/1397.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 选项加载与会话 hook 原生化
+
+### 需求分析
+
+new-api-main 的 Playground 已把“模型/分组选项加载”和“会话消息操作”拆成 `usePlaygroundOptions`、`usePlaygroundConversation` 以及对应的纯函数工具。NexusTok 当前仍在 `web/default/src/features/playground/index.tsx` 里直接写 `useQuery`、模型/分组 fallback、发送、重试、编辑、删除等逻辑；同时 `/api/user/models` 无 `group` 查询时只返回用户所有可用分组的模型集合，切换 Playground 分组后模型下拉不能按当前分组收敛。这个差异会让后续继续吸收 new-api 的 layout、reasoning、raw response、会话历史能力时反复修改容器组件，也会让用户在某些分组下选到该分组不可用的模型。
+
+本轮目标是把 new-api-main 的低风险结构优势转成 NexusTok 原生能力：
+
+1. 后端 `/api/user/models` 增加可选 `group` 查询参数；参数为空时保持旧聚合行为，参数为用户不可用分组时返回空数组，避免泄露其它分组模型。
+2. 前端 `getUserModels(group?)` 支持按分组请求模型，`usePlaygroundOptions` 使用 `['playground-models', currentGroup]` 查询 key，让分组变化能刷新模型候选。
+3. 新增 option helper，集中处理模型 fallback、分组 fallback、当前分组无模型时清空模型，以及加载错误消息提取。
+4. 新增 `usePlaygroundConversation`，把发送、重试、编辑、删除和编辑态 key 从 `index.tsx` 移到专用 hook；容器组件只负责接线。
+5. 对新增错误 toast 文案补齐 en、zh、fr、ja、ru、vi，并保持无新增页面布局或交互形态。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 后端模型查询 | `controller/user.go`、相关 Go 测试 | `/api/user/models?group=<name>` 返回当前用户可用分组内启用模型；无参数兼容旧行为。 |
+| Playground API | `web/default/src/features/playground/api.ts` | `getUserModels` 接收可选 group 并作为 query params 传给后端。 |
+| Playground options hook | `web/default/src/features/playground/hooks/use-playground-options.ts`、`lib/playground-option-utils.ts` | 分离模型/分组查询、错误 toast、fallback 和清空模型逻辑。 |
+| Playground conversation hook | `web/default/src/features/playground/hooks/use-playground-conversation.ts`、`index.tsx` | 发送、重试、编辑、删除和编辑态由 hook 管理，容器组件瘦身。 |
+| 状态 helper | `web/default/src/features/playground/lib/playground-state-utils.ts`、`hooks/use-playground-state.ts` | 初始配置、参数开关、消息加载和消息 updater 应用集中为纯函数。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增模型/分组加载失败 toast 文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 后端 `group` 参数必须是可选兼容增强；旧前端、第三方调用和无参数请求仍返回所有用户可用分组模型集合。
+2. 传入用户不可用分组时必须返回空数组而不是 fallback 到全部模型，否则可能误导前端并扩大模型信息可见范围。
+3. 前端分组变化会触发模型重查；如果当前模型不在新列表中，应优先切到新列表第一项；如果新列表为空则清空模型，避免继续向上游发送旧分组不可用模型。
+4. 错误 toast 只在 query error 时出现，不能把业务成功但空列表误报为失败；新增文案必须补齐六语。
+5. 会话 hook 只移动现有消息操作，不改变请求 payload、localStorage key、消息结构和 UI 布局；删除消息继续用 updater 读取最新状态，避免闭包陈旧。
+
+### 方案评审
+
+采用“后端兼容增强 + 前端 hook 瘦身”的方案：后端 `GetUserModels` 在读取用户可用分组后检查 `c.Query("group")`，合法分组直接返回 `model.GetGroupEnabledModels(group)`，非法分组返回空数组，无参数沿用旧去重聚合逻辑。前端新增 `playground-option-utils.ts` 与 `usePlaygroundOptions`，模型查询 key 绑定当前 group，分组查询独立；当模型列表变化时先设置 `models`，再用 helper 判断是否 fallback 或清空。新增 `usePlaygroundConversation` 复用既有 `appendUserMessagePair`、`createRegeneratedMessages`、`applyMessageEdit` 和 `removeMessageByKey`，不引入新的消息语义。`index.tsx` 移除内联 `useQuery/useEffect/useState`，仅组合 state、chat handler、options hook 和 conversation hook。
+
+验收方式：
+
+1. Go 测试覆盖 `/api/user/models?group=...` 的合法分组、不可用分组和无参数兼容行为。
+2. `cd web/default && bun test` 定向覆盖 option/state/conversation helper 和既有 Playground helper。
+3. `cd web/default && bun run i18n:sync` 确认新增 toast 文案进入六语 locale。
+4. 针对本轮触碰文件运行 Go/TS 定向 ESLint 与 `go test`。
+5. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build` 覆盖前端类型与生产构建。
+6. `git diff --check` 检查补丁空白。
+7. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 并检查模型/分组请求；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并在登录态可用时调用 `/api/user/models?group=default`；同时拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `go test ./controller -run 'TestBuildUserModelsForGroups'` 通过，覆盖合法分组过滤、不可用分组返回空数组和无参数聚合去重兼容行为。
+2. `cd web/default && bun test src/features/playground/lib/playground-option-utils.test.ts src/features/playground/lib/playground-state-utils.test.ts src/features/playground/lib/storage.test.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 通过，共 40 个用例，覆盖 option fallback、模型清空、消息 updater、storage 和既有消息 helper。
+3. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0，本轮新增 `Failed to load playground models`、`Failed to load playground groups` 已补齐六语。
+4. `cd web/default && ./node_modules/.bin/eslint src/features/playground/api.ts src/features/playground/index.tsx src/features/playground/hooks/use-playground-options.ts src/features/playground/hooks/use-playground-conversation.ts src/features/playground/hooks/use-playground-state.ts src/features/playground/hooks/index.ts src/features/playground/lib/playground-option-utils.ts src/features/playground/lib/playground-option-utils.test.ts src/features/playground/lib/playground-state-utils.ts src/features/playground/lib/playground-state-utils.test.ts src/features/playground/lib/index.ts` 通过。
+5. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `getUserModels(group?)`、`usePlaygroundOptions`、`usePlaygroundConversation` 和状态 helper 类型正确。
+6. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 切换为 `/static/js/async/1750.js`。
+7. `git diff --check` 通过。
+8. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+9. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，其中 `/api/status` 返回 `success: true`。
+10. 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/api/user/login` 成功，随后携带 session cookie 与 `NexusTok-User: 1` 调用 `/api/user/models?group=default` 返回 `["gpt-5.4","gpt-5.5","gpt-5.6-sol"]`；调用 `/api/user/models?group=__not_allowed__` 返回空数组；无参数 `/api/user/models` 仍返回聚合模型列表，确认 3003 后端 group 过滤兼容增强已生效。
+11. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/1750.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `1c99b1e25173e4fc843bb58569f125980f97c94039080b660669d6347d0c9b3e`，`1750.js` SHA256 均为 `7aa87ffb2bb90423df6c0527e72dd5e305941e6c196848b87b403a76a5a1d5c4`。
+12. 线上 `/static/js/async/1750.js` 已包含 `playground-models`、`Failed to load playground models` 特征；上一轮旧 chunk `/static/js/async/9008.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 选项加载与会话 hook | `controller/user.go`、`controller/user_models_test.go`、`web/default/src/features/playground/{api.ts,index.tsx,hooks/use-playground-{options,conversation,state}.ts,hooks/index.ts,lib/playground-{option,state}-utils.ts,lib/playground-{option,state}-utils.test.ts,lib/index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground options/conversation 拆分；`/api/user/models?group=` 支持按用户可用分组过滤模型，不可用分组返回空数组，无参数保持旧聚合行为；前端按当前分组刷新模型候选、加载失败 toast 补齐六语，发送/重试/编辑/删除逻辑收敛到专用 hook。 |
 | 2026-07-09 | Playground 本地存储 schema 与容量保护 | `web/default/src/features/playground/lib/{storage-schema.ts,storage.ts,storage.test.ts}` | 原生化 new-api-main 的 Playground 本地存储 envelope、Zod schema 校验和容量保护；保存继续使用原 storage key，读取兼容旧裸 JSON，损坏/超大/流式中断消息会被裁剪、清理或稳定化。 |
 | 2026-07-09 | Playground 消息时间元信息 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/lib/{message-timing-utils.ts,message-timing-utils.test.ts,message-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/components/{message-metadata.tsx,playground-message-content.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息 `createdAt`、`startedAt`、`completedAt`、`durationMs` 和 `MessageMetadata` 能力，新消息记录发送时间与响应耗时，流式/非流式/停止/错误路径统一补完成时间；旧 localStorage 消息缺 timing 字段时不渲染元信息，避免存储迁移。 |
 | 2026-07-09 | Playground 消息内容渲染组件化 | `web/default/src/features/playground/components/{playground-message-content.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-content-utils.ts,message-content-utils.test.ts,index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息内容拆分方式，来源、推理、加载、错误和正文显示状态统一由 helper 计算，单条消息正文渲染交给 `PlaygroundMessageContent`，聊天组件只保留消息列表、编辑态和动作编排；`Responding...` 补齐六语翻译。 |

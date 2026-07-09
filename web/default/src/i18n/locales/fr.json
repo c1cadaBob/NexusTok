@@ -1853,6 +1853,8 @@
     "Failed to load image": "Échec du chargement de l'image",
     "Failed to load logs": "Échec du chargement des journaux",
     "Failed to load Passkey status": "Échec du chargement du statut Passkey",
+    "Failed to load playground groups": "Échec du chargement des groupes Playground",
+    "Failed to load playground models": "Échec du chargement des modèles Playground",
     "Failed to load profile": "Échec du chargement du profil",
     "Failed to load redemption codes": "Échec du chargement des codes d'échange",
     "Failed to load setup data": "Échec du chargement des données de configuration",

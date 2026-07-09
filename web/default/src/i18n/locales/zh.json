@@ -1853,6 +1853,8 @@
     "Failed to load image": "无法加载图像",
     "Failed to load logs": "加载日志失败",
     "Failed to load Passkey status": "加载 Passkey 状态失败",
+    "Failed to load playground groups": "加载 Playground 分组失败",
+    "Failed to load playground models": "加载 Playground 模型失败",
     "Failed to load profile": "加载个人资料失败",
     "Failed to load redemption codes": "加载兑换码失败",
     "Failed to load setup data": "无法加载设置数据",

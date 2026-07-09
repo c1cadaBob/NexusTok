@@ -627,20 +627,46 @@ func GetUserModels(c *gin.Context) {
 		return
 	}
 	groups := service.GetUserUsableGroups(user.Group)
-	var models []string
-	for group := range groups {
-		for _, g := range model.GetGroupEnabledModels(group) {
-			if !common.StringsContains(models, g) {
-				models = append(models, g)
-			}
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    models,
+		"data": buildUserModelsForGroups(
+			c.Query("group"),
+			groups,
+			model.GetGroupEnabledModels,
+		),
 	})
 	return
+}
+
+// buildUserModelsForGroups 根据用户可用分组构建模型列表。
+//
+// requestedGroup 为空时保持历史兼容行为：聚合所有用户可用分组的启用模型并去重。
+// requestedGroup 非空时只允许查询用户可用分组内的模型；不可用分组返回空列表，
+// 避免 Playground 或第三方调用借助查询参数看到其它分组的模型名称。
+func buildUserModelsForGroups(
+	requestedGroup string,
+	usableGroups map[string]string,
+	getGroupModels func(group string) []string,
+) []string {
+	if requestedGroup != "" {
+		if _, ok := usableGroups[requestedGroup]; !ok {
+			return []string{}
+		}
+
+		return getGroupModels(requestedGroup)
+	}
+
+	var models []string
+	for group := range usableGroups {
+		for _, modelName := range getGroupModels(group) {
+			if !common.StringsContains(models, modelName) {
+				models = append(models, modelName)
+			}
+		}
+	}
+
+	return models
 }
 
 func UpdateUser(c *gin.Context) {

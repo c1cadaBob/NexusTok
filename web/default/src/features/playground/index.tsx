@@ -16,18 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useCallback, useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getUserModels, getUserGroups } from './api'
 import { PlaygroundChat } from './components/playground-chat'
 import { PlaygroundInput } from './components/playground-input'
-import { usePlaygroundState, useChatHandler } from './hooks'
 import {
-  appendUserMessagePair,
-  applyMessageEdit,
-  createRegeneratedMessages,
-  removeMessageByKey,
-} from './lib'
+  useChatHandler,
+  usePlaygroundConversation,
+  usePlaygroundOptions,
+  usePlaygroundState,
+} from './hooks'
 import type { Message as MessageType } from './types'
 
 export function Playground() {
@@ -50,57 +46,28 @@ export function Playground() {
     onMessageUpdate: updateMessages,
   })
 
-  // 编辑状态只保存当前消息 key，避免复制整条消息对象导致内容陈旧。
-  const [editingMessageKey, setEditingMessageKey] = useState<string | null>(
-    null
-  )
-
-  // 加载当前用户可用模型列表。
-  const { data: modelsData, isLoading: isLoadingModels } = useQuery({
-    queryKey: ['playground-models'],
-    queryFn: getUserModels,
+  const { isLoadingModels } = usePlaygroundOptions({
+    currentGroup: config.group,
+    currentModel: config.model,
+    setGroups,
+    setModels,
+    updateConfig,
   })
 
-  // 加载当前用户可用分组列表。
-  const { data: groupsData } = useQuery({
-    queryKey: ['playground-groups'],
-    queryFn: getUserGroups,
+  const {
+    editingMessageKey,
+    handleSendMessage,
+    handleRegenerateMessage,
+    handleEditMessage,
+    handleEditOpenChange,
+    applyEdit,
+    handleDeleteMessage,
+    resetEditingMessage,
+  } = usePlaygroundConversation({
+    messages,
+    updateMessages,
+    sendChat,
   })
-
-  // 模型列表变化后校正当前模型，避免继续使用已不可见模型。
-  useEffect(() => {
-    if (!modelsData) return
-
-    setModels(modelsData)
-
-    const isCurrentModelValid = modelsData.some((m) => m.value === config.model)
-    if (modelsData.length > 0 && !isCurrentModelValid) {
-      updateConfig('model', modelsData[0].value)
-    }
-  }, [modelsData, config.model, setModels, updateConfig])
-
-  // 分组列表变化后优先回退 default 分组，再回退第一项。
-  useEffect(() => {
-    if (!groupsData) return
-
-    setGroups(groupsData)
-
-    const hasCurrentGroup = groupsData.some((g) => g.value === config.group)
-    if (!hasCurrentGroup && groupsData.length > 0) {
-      const fallback =
-        groupsData.find((g) => g.value === 'default')?.value ??
-        groupsData[0].value
-      updateConfig('group', fallback)
-    }
-  }, [groupsData, setGroups, config.group, updateConfig])
-
-  const handleSendMessage = (text: string) => {
-    const newMessages = appendUserMessagePair(messages, text)
-    updateMessages(newMessages)
-
-    // 发送请求时直接复用当前消息数组，确保本地展示和上游上下文一致。
-    sendChat(newMessages)
-  }
 
   const handleCopyMessage = (message: MessageType) => {
     // 复制动作已经由 MessageActions 处理，这里只保留可观测回调。
@@ -108,54 +75,10 @@ export function Playground() {
     console.log('Message copied:', message.key)
   }
 
-  const handleRegenerateMessage = (message: MessageType) => {
-    const newMessages = createRegeneratedMessages(messages, message.key)
-    if (!newMessages) return
-
-    updateMessages(newMessages)
-    sendChat(newMessages)
-  }
-
-  const handleEditMessage = useCallback((message: MessageType) => {
-    setEditingMessageKey(message.key)
-  }, [])
-
-  const handleEditOpenChange = useCallback((open: boolean) => {
-    if (!open) setEditingMessageKey(null)
-  }, [])
-
-  // 保存编辑后可选择从该用户消息重新提交，后续消息会被新的 assistant 占位替换。
-  const applyEdit = useCallback(
-    (newContent: string, submit: boolean) => {
-      if (!editingMessageKey) return
-
-      const result = applyMessageEdit(
-        messages,
-        editingMessageKey,
-        newContent,
-        submit
-      )
-      if (!result) return
-
-      setEditingMessageKey(null)
-      updateMessages(result.messages)
-
-      if (result.shouldSend) {
-        sendChat(result.messages)
-      }
-    },
-    [editingMessageKey, messages, updateMessages, sendChat]
-  )
-
-  const handleDeleteMessage = (message: MessageType) => {
-    const newMessages = removeMessageByKey(messages, message.key)
-    updateMessages(newMessages)
-  }
-
-  const handleClearMessages = useCallback(() => {
-    setEditingMessageKey(null)
+  const handleClearMessages = () => {
+    resetEditingMessage()
     clearMessages()
-  }, [clearMessages])
+  }
 
   return (
     <div className='relative flex size-full flex-col overflow-hidden'>

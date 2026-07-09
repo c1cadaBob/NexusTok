@@ -1853,6 +1853,8 @@
     "Failed to load image": "Không thể tải ảnh",
     "Failed to load logs": "Không tải được nhật ký",
     "Failed to load Passkey status": "Không thể tải trạng thái Passkey",
+    "Failed to load playground groups": "Không thể tải nhóm Playground",
+    "Failed to load playground models": "Không thể tải mô hình Playground",
     "Failed to load profile": "Không thể tải hồ sơ",
     "Failed to load redemption codes": "Không thể tải mã đổi thưởng",
     "Failed to load setup data": "Không thể tải dữ liệu thiết lập",

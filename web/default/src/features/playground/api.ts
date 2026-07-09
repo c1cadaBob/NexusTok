@@ -26,7 +26,7 @@ import type {
 } from './types'
 
 /**
- * Send chat completion request (non-streaming)
+ * 发送非流式 Chat Completions 请求。
  */
 export async function sendChatCompletion(
   payload: ChatCompletionRequest
@@ -38,10 +38,15 @@ export async function sendChatCompletion(
 }
 
 /**
- * Get user available models
+ * 获取用户可用模型。
+ *
+ * group 为空时保持旧行为，返回用户所有可用分组的模型集合；传入 group 时
+ * 后端只返回该分组内启用模型，便于 Playground 切换分组后收敛模型候选。
  */
-export async function getUserModels(): Promise<ModelOption[]> {
-  const res = await api.get(API_ENDPOINTS.USER_MODELS)
+export async function getUserModels(group?: string): Promise<ModelOption[]> {
+  const res = await api.get(API_ENDPOINTS.USER_MODELS, {
+    params: group ? { group } : undefined,
+  })
   const { data } = res
 
   if (!data.success || !Array.isArray(data.data)) {
@@ -55,7 +60,7 @@ export async function getUserModels(): Promise<ModelOption[]> {
 }
 
 /**
- * Get user groups
+ * 获取用户可用分组。
  */
 export async function getUserGroups(): Promise<GroupOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_GROUPS)
@@ -67,7 +72,7 @@ export async function getUserGroups(): Promise<GroupOption[]> {
 
   const groupData = data.data as Record<string, { desc: string; ratio: number }>
 
-  // label is for button display (name only); desc is for dropdown content
+  // label 用于按钮展示，desc 用于下拉内容说明。
   return Object.entries(groupData).map(([group, info]) => ({
     label: group,
     value: group,

@@ -19,12 +19,14 @@ For commercial licensing, please contact support@c1cada.dev
 import { useState, useCallback } from 'react'
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
-  loadConfig,
   saveConfig,
-  loadParameterEnabled,
   saveParameterEnabled,
-  loadMessages,
   saveMessages,
+  getInitialMessages,
+  getInitialParameterEnabled,
+  getInitialPlaygroundConfig,
+  applyMessageStateUpdate,
+  type MessageStateUpdater,
 } from '../lib'
 import type {
   Message,
@@ -35,30 +37,24 @@ import type {
 } from '../types'
 
 /**
- * Main state management hook for playground
+ * Playground 主状态管理 hook。
  */
 export function usePlaygroundState() {
-  // Load initial state from localStorage
-  const [config, setConfig] = useState<PlaygroundConfig>(() => {
-    const savedConfig = loadConfig()
-    return { ...DEFAULT_CONFIG, ...savedConfig }
-  })
-
-  const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(
-    () => {
-      const saved = loadParameterEnabled()
-      return { ...DEFAULT_PARAMETER_ENABLED, ...saved }
-    }
+  // 从 localStorage 加载初始状态，异常数据会在 storage 层兜底。
+  const [config, setConfig] = useState<PlaygroundConfig>(
+    getInitialPlaygroundConfig
   )
 
-  const [messages, setMessages] = useState<Message[]>(() => {
-    return loadMessages() || []
-  })
+  const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(
+    getInitialParameterEnabled
+  )
+
+  const [messages, setMessages] = useState<Message[]>(getInitialMessages)
 
   const [models, setModels] = useState<ModelOption[]>([])
   const [groups, setGroups] = useState<GroupOption[]>([])
 
-  // Update config with automatic save
+  // 更新配置并自动保存。
   const updateConfig = useCallback(
     <K extends keyof PlaygroundConfig>(key: K, value: PlaygroundConfig[K]) => {
       setConfig((prev) => {
@@ -70,7 +66,7 @@ export function usePlaygroundState() {
     []
   )
 
-  // Update parameter enabled with automatic save
+  // 更新参数开关并自动保存。
   const updateParameterEnabled = useCallback(
     (key: keyof ParameterEnabled, value: boolean) => {
       setParameterEnabled((prev) => {
@@ -82,25 +78,21 @@ export function usePlaygroundState() {
     []
   )
 
-  // Update messages with automatic save
-  const updateMessages = useCallback(
-    (updater: Message[] | ((prev: Message[]) => Message[])) => {
-      setMessages((prev) => {
-        const newMessages =
-          typeof updater === 'function' ? updater(prev) : updater
-        saveMessages(newMessages)
-        return newMessages
-      })
-    },
-    []
-  )
+  // 更新消息并自动保存。
+  const updateMessages = useCallback((updater: MessageStateUpdater) => {
+    setMessages((prev) => {
+      const newMessages = applyMessageStateUpdate(prev, updater)
+      saveMessages(newMessages)
+      return newMessages
+    })
+  }, [])
 
-  // Clear all messages
+  // 清空当前会话消息。
   const clearMessages = useCallback(() => {
     updateMessages([])
   }, [updateMessages])
 
-  // Reset config to defaults
+  // 重置配置与参数开关到默认值。
   const resetConfig = useCallback(() => {
     setConfig(DEFAULT_CONFIG)
     setParameterEnabled(DEFAULT_PARAMETER_ENABLED)
@@ -109,18 +101,18 @@ export function usePlaygroundState() {
   }, [])
 
   return {
-    // State
+    // 状态
     config,
     parameterEnabled,
     messages,
     models,
     groups,
 
-    // Setters
+    // 列表 setter
     setModels,
     setGroups,
 
-    // Actions
+    // 操作
     updateConfig,
     updateParameterEnabled,
     updateMessages,
