@@ -5096,8 +5096,54 @@ new-api-main 补充了 `setting/operation_setting/monitor_setting_test.go`，用
 4. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
 5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200。该切片只新增后端测试，不改变页面或接口行为。
 
+## 本轮实施评审：常量包边界文档
+
+### 需求分析
+
+new-api-main 在 `constant/README.md` 中明确了 `constant` 包的职责边界：该目录只放全局可复用常量定义，不承载业务流程、数据库操作、第三方服务调用，也不引用项目内其他自定义包。NexusTok 当前 `constant/` 已经承载 API 类型、渠道类型、上下文键、端点类型、环境变量、任务、Waffo 支付方式等基础常量，但缺少目录级说明。后续继续从 new-api-main 同步 channel、endpoint、account pool 和 relay 能力时，如果没有边界文档，容易把设置解析、provider 适配逻辑或缓存逻辑塞入 `constant`，增加包耦合。
+
+本轮目标是把 new-api-main 的常量包约定转为 NexusTok 原生文档能力：
+
+1. 新增 `constant/README.md`，说明 `constant` 只承载常量、轻量类型和常量映射。
+2. 按 NexusTok 当前文件列表更新“当前文件”表格，避免照搬 new-api-main 已不存在或尚未引入的文件。
+3. 明确使用约定：禁止引入项目内自定义包，禁止放业务流程/数据库/第三方调用逻辑，新增文件需同步 README。
+4. 该切片只新增文档，不改变运行时代码和接口。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 常量包文档 | `constant/README.md` | 新增目录职责、当前文件说明和使用约定。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 本轮只新增 Markdown 文档，不影响编译、接口、数据库或前端页面，运行时风险极低。
+2. README 表格必须与 NexusTok 当前 `constant/*.go` 文件对应；照搬 new-api-main 的 `channel_setting.go`、`user_setting.go` 等不存在文件会造成误导。
+3. `constant/azure.go` 当前允许标准库 `time`，README 需说明“项目内自定义包禁止引用”，而不是绝对禁止任何 import。
+4. 文档约定不会自动阻止错误依赖，后续如果需要可再增加静态检查；本轮只做项目维护指引。
+5. 按用户要求仍需访问 3003 `/` 和 `/api/status`，确认热更新服务可达；MCP 如仍不可用则记录并使用 HTTP 兜底。
+
+### 方案评审
+
+采用“按当前文件列表改写 README”的方案，不创建脚本、不加入 CI 规则、不移动常量。README 保留 new-api-main 的核心边界约束，同时补充 NexusTok 自有文件如 `api_type.go`、`channel.go`、`channel_credential_mode.go`、`endpoint_type.go`、`multi_key_mode.go`、`waffo_pay_method.go`。这样可以低风险吸收其维护优势，并给后续差异同步提供清晰落点。
+
+验收方式：
+
+1. `go test ./constant`，确认新增文档不影响常量包编译。
+2. `git diff --check`。
+3. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. 常量包编译通过：`go test ./constant`（无测试文件）。
+2. 补丁空白检查通过：`git diff --check`。
+3. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
+4. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200。该切片只新增文档，不改变页面或接口行为。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 常量包边界文档 | `constant/README.md` | 原生化 new-api-main 的 `constant` 包维护约定；按 NexusTok 当前文件列表记录职责说明，并明确常量包禁止承载业务流程、数据库操作、第三方调用和项目内反向依赖。 |
 | 2026-07-09 | 监控配置环境变量覆盖测试 | `setting/operation_setting/monitor_setting_test.go` | 原生化 new-api-main 的渠道自动测试配置回归保护；测试覆盖 `CHANNEL_TEST_FREQUENCY`、`CHANNEL_TEST_ENABLED=false/true` 的优先级和默认 `scheduled_all` 模式，防止后续 Routing Reliability 或 SystemTask 调整误改环境变量语义。 |
 | 2026-07-09 | 兑换码状态筛选与兑换 CAS | `model/redemption.go`、`model/redemption_test.go`、`controller/redemption.go`、`web/default/src/features/redemption-codes/{api.ts,types.ts,components/redemptions-table.tsx}` | 原生化 new-api-main 的兑换码服务端状态筛选与兑换幂等保护；搜索接口支持 `status` 参数和 `expired` 虚拟状态，默认前端状态筛选走后端分页，`Redeem` 通过状态 CAS 确保同一兑换码并发场景只入账一次。 |
 | 2026-07-09 | 节点身份公共化 | `common/node_identity.go`、`common/constants.go`、`common/init.go`、`service/system_instance.go`、`service/system_instance_test.go` | 原生化 new-api-main 的节点身份解析能力；`common.NodeName` 优先使用 `NODE_NAME`，未配置时回退 hostname，并暴露来源和手动配置标记；系统实例心跳复用公共身份，日志、用量导出和 SystemTask runner 共享同一节点名语义。 |
