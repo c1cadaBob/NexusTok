@@ -5543,8 +5543,70 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 7. MCP 浏览器验证已按要求尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
 8. 3003 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。该切片只修改后端 relay 转换和测试，不改变前端页面。
 
+## 本轮实施评审：日志查询与 ClickHouse 准备层护栏
+
+### 需求分析
+
+`new-api-main` 在日志模型中补齐了两类优势：一类是 ClickHouse 作为独立日志库时需要的 DSN 识别、TTL SQL、排序和 LIKE 转义；另一类是即使不启用 ClickHouse，也能让日志查询的文本过滤与请求 ID 更稳定。NexusTok 当前已经有 `common.UsingClickHouse` 标记和独立 `LOG_SQL_DSN` 入口，但尚未真正接入 ClickHouse driver；日志查询中也存在若干可提前吸收的稳健性差异：
+
+1. 主业务库不能误配置为 ClickHouse。ClickHouse 适合日志分析，不适合 NexusTok 的事务型主库；如果 `SQL_DSN` 使用 `clickhouse://`、`tcp://`、`http://` 或 `https://`，应 fail-fast 返回明确错误。
+2. 日志文本过滤需要统一处理普通三库和未来 ClickHouse 的 LIKE 转义。当前 `GetUserLogs` 和 `SumUsedQuota` 使用 `sanitizeLikePattern()`，但 `GetAllLogs` 对 `model_name` 仍直接拼 `LIKE ?`，没有统一逃逸路径。
+3. 日志记录应尽量补齐 `request_id`，为后续 ClickHouse 排序、跨库日志排障和审计定位提供稳定键。
+4. ClickHouse 的日志排序不能依赖自增 `id`，应使用 `created_at, request_id` 的稳定顺序；即使本轮不接入 driver，也可以先提供排序 helper 和测试护栏。
+5. ClickHouse TTL 建表 SQL 属于未来可选日志库能力，本轮只实现纯字符串 helper 和测试，不执行真实迁移，不引入 `gorm.io/driver/clickhouse`，避免增加部署依赖和三库测试复杂度。
+
+本轮目标是把 new-api-main 的日志基础设施优势转成 NexusTok 原生准备层：保留当前 SQLite/MySQL/PostgreSQL 主路径，增加 ClickHouse DSN 识别和日志查询护栏；真实 ClickHouse driver、迁移执行和运行时连接仍作为后续独立评审项。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 数据库类型 helper | `common/database.go` | 新增 `DatabaseTypeClickHouse`、日志库类型 getter/setter 和 `UsingLogDatabase()`，兼容现有 `LogSqlType` 与 `UsingClickHouse` 标记。 |
+| 数据库初始化 | `model/main.go` | 新增 ClickHouse DSN 识别和主库 fail-fast；保留 `LOG_SQL_DSN` 不支持 ClickHouse 的明确错误，不接入 driver。 |
+| 日志模型 | `model/log.go` | 新增日志 LIKE 条件 helper、ClickHouse LIKE 转义、request_id 补齐、ClickHouse 排序/TTL SQL 字符串 helper；让日志查询复用统一文本过滤。 |
+| LIKE 校验复用 | `model/token.go` | 将原有 `sanitizeLikePattern()` 内部通配符校验抽为 `validateLikePattern()`，保持令牌搜索语义不变，同时供 ClickHouse 日志 LIKE 清洗复用。 |
+| 回归测试 | `model/clickhouse_log_test.go`、相关日志测试 | 原生化 new-api-main 的 ClickHouse 准备层测试，并按 NexusTok 当前“不引入 driver”策略调整连接测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 本轮不引入 ClickHouse driver，不改变默认数据库支持矩阵；SQLite、MySQL、PostgreSQL 仍是唯一正式支持的主业务数据库。
+2. `SQL_DSN=http://...` 过去可能会被错误当作 MySQL DSN 尝试连接；本轮会 fail-fast 并提示主库不支持 ClickHouse。该行为是配置纠错，不影响合法 MySQL/PostgreSQL/SQLite DSN。
+3. `GetAllLogs`、`GetUserLogs` 和统计查询的文本过滤会统一走 `applyExplicitLogTextFilter()`：无 `%` 时等值匹配，有 `%` 时按 LIKE 搜索并转义 `_` 与 `!`。这会让含下划线的模型名不再被误当作单字符通配符，属于更精确的搜索语义。
+4. 为日志记录补齐 `request_id` 会让新写入日志多一个稳定标识，不改变表结构；已有空 request_id 不迁移。
+5. ClickHouse TTL SQL/helper 只在测试中生成字符串，不执行真实 `ALTER TABLE`，不会影响线上数据库。
+6. 该切片不涉及前端页面，但按用户要求仍需尝试 MCP 访问 3003；MCP 不可用时记录错误并用真实 HTTP 请求验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 方案评审
+
+采用“准备层先行、driver 后置”的方案：
+
+1. 在 `common/database.go` 保持现有全局变量兼容，新增 `DatabaseTypeClickHouse` 和日志库类型访问函数，避免大范围重构 `UsingSQLite/UsingMySQL/UsingPostgreSQL`。
+2. 在 `model/main.go` 增加 `isClickHouseDSN()` 与 `normalizeClickHouseDSN()`。主库发现 ClickHouse DSN 直接返回错误；日志库发现 ClickHouse DSN 也返回“当前构建未启用 ClickHouse driver”的明确错误，后续真正接入 driver 时再替换此分支。
+3. 在 `model/log.go` 新增 `applyExplicitLogTextFilter()`、`buildLogLikeCondition()`、`sanitizeClickHouseLikePattern()`、`ensureLogRequestId()`、`createLog()`、`clickHouseLogOrder()` 与 TTL SQL helper；现有日志写入统一调用 `createLog()`。
+4. 将 `GetAllLogs`、`GetUserLogs`、`SumUsedQuota` 的 model/username 文本过滤改为同一 helper，减少三库与未来 ClickHouse 分叉。
+5. 增加 `model/clickhouse_log_test.go`，覆盖 DSN 识别、https secure 参数补齐、主库拒绝 ClickHouse、当前构建拒绝 ClickHouse 日志库、TTL SQL 字符串、LIKE 转义、request_id 补齐和展示 ID 分配。
+
+验收方式：
+
+1. `go test ./model -run 'Test(IsClickHouseDSN|NormalizeClickHouseDSN|ChooseDB.*ClickHouse|ClickHouse|BuildLogLikeCondition|EnsureLogRequestId|AssignDisplayLogIds)'`。
+2. `go test ./model`。
+3. `go test ./...`。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `go test ./model -run 'Test(IsClickHouseDSN|NormalizeClickHouseDSN|ChooseDB.*ClickHouse|ClickHouse|BuildLogLikeCondition|EnsureLogRequestId|AssignDisplayLogIds)'` 通过。
+2. `go test ./model` 通过。
+3. `go test ./...` 通过。
+4. `git diff --check` 通过。
+5. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+6. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。该切片不涉及前端页面改动，页面访问用于确认当前热部署服务仍可用。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 日志查询与 ClickHouse 准备层护栏 | `common/database.go`、`model/main.go`、`model/log.go`、`model/token.go`、`model/clickhouse_log_test.go` | 原生化 new-api-main 的 ClickHouse 日志准备层优势：主库 ClickHouse DSN fail-fast、当前构建对 `LOG_SQL_DSN` ClickHouse 给出明确未启用 driver 错误、日志 LIKE 过滤统一转义、日志写入补齐 `request_id`、ClickHouse 排序与 TTL SQL helper 进入测试契约；不引入 ClickHouse driver，不改变 SQLite/MySQL/PostgreSQL 主路径。 |
 | 2026-07-09 | Chat 与 Responses relay handler 兼容原生化 | `service/openaicompat/responses_to_chat.go`、`service/openai_chat_responses_compat.go`、`relay/chat_completions_via_responses.go`、`relay/channel/openai/chat_via_responses.go` | 原生化 new-api-main 的 Responses SSE -> Chat chunks 状态机、buffered SSE -> Chat JSON、Chat SSE -> Responses SSE 和大小写不敏感的 event-stream 判断；客户端非流式请求遇到上游 Responses SSE 时返回普通 JSON，流式路径保留 tool_calls、reasoning、usage 和终态事件顺序。 |
 | 2026-07-09 | Responses 请求转 Chat 兼容测试 | `service/openaicompat/responses_request_to_chat_test.go` | 原生化 new-api-main `service/relayconvert` 的 Responses request 降级 Chat 回归测试资产；覆盖 instructions/scalar 字段、显式零值、stream options、多模态 file/audio/video、assistant text 与 function_call 共存、only function_call 自动构造 assistant、tools/tool_choice/text.format 和 custom_tool_call 原始 shape，确认 NexusTok `openaicompat` 已具备对应原生能力。 |
 | 2026-07-09 | Claude OpenAI 文件内容转换语义修复 | `relay/channel/claude/relay-claude.go`、`relay/channel/claude/message_delta_usage_patch_test.go` | 修复仓库级测试暴露的 Claude 文件转换缺口；OpenAI `file` 内容按 filename 扩展名转换，`.txt` 解码为 Claude text，`.pdf` 转 document，图片转 image，未知二进制跳过，避免把 unsupported file 错误包装成 image 发给上游；同时补齐 message_delta usage patch 测试 imports。 |

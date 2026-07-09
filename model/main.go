@@ -16,6 +16,7 @@ package model
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -163,25 +164,134 @@ func CheckSetup() {
 	}
 }
 
+// isClickHouseDSN 判断 DSN 是否使用 ClickHouse 常见连接协议。
+//
+// ClickHouse 通常使用 clickhouse/tcp/http/https 协议；这些协议不属于 NexusTok 主业务库
+// 当前支持范围，因此主库遇到这类 DSN 会 fail-fast，日志库则进入准备层护栏。
+func isClickHouseDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "clickhouse://") ||
+		strings.HasPrefix(dsn, "tcp://") ||
+		strings.HasPrefix(dsn, "http://") ||
+		strings.HasPrefix(dsn, "https://")
+}
+
+// normalizeClickHouseDSN 规范化 ClickHouse HTTPS DSN。
+//
+// gorm ClickHouse driver 对 HTTPS 连接需要 `secure=true`，这里先把该兼容行为固化为纯字符串
+// helper。当前构建不会真正打开 ClickHouse 连接，但错误提示会展示规范化后的 DSN，便于用户
+// 后续迁移配置时直接复用。
+func normalizeClickHouseDSN(dsn string) string {
+	parsed, err := url.Parse(dsn)
+	if err != nil || parsed.Scheme != "https" {
+		return dsn
+	}
+	query := parsed.Query()
+	if _, ok := query["secure"]; !ok {
+		query.Set("secure", "true")
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String()
+}
+
+// clickHouseLogTTLDays 返回 ClickHouse 日志保留天数。
+//
+// 小于 0 的配置视为关闭 TTL，避免错误环境变量生成无意义的删除表达式。
+func clickHouseLogTTLDays() int {
+	ttlDays := common.GetEnvOrDefault("LOG_SQL_CLICKHOUSE_TTL_DAYS", 0)
+	if ttlDays < 0 {
+		return 0
+	}
+	return ttlDays
+}
+
+// clickHouseLogTTLExpression 生成 ClickHouse logs 表 TTL 表达式。
+//
+// 返回空字符串表示不启用 TTL；调用方必须先判断空值，避免拼出不完整 DDL。
+func clickHouseLogTTLExpression(ttlDays int) string {
+	if ttlDays <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("toDateTime(created_at) + INTERVAL %d DAY DELETE", ttlDays)
+}
+
+// clickHouseLogTTLClause 生成可直接拼到 ClickHouse 建表 SQL 后部的 TTL 子句。
+func clickHouseLogTTLClause(ttlDays int) string {
+	expression := clickHouseLogTTLExpression(ttlDays)
+	if expression == "" {
+		return ""
+	}
+	return "\nTTL " + expression
+}
+
+// clickHouseLogCreateTableSQL 返回未来接入 ClickHouse 日志库时使用的 logs 表 DDL。
+//
+// 当前构建不启用 ClickHouse driver，也不会执行这段 SQL；保留该 helper 是为了先把
+// request_id 排序、字段类型和 TTL 语义固化为可测试契约，后续真正接入日志库时避免
+// 再重新讨论表结构。
+func clickHouseLogCreateTableSQL(ttlDays int) string {
+	return fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS logs (
+	id Int64 DEFAULT 0,
+	user_id Int32 DEFAULT 0,
+	created_at Int64 DEFAULT 0,
+	type Int32 DEFAULT 0,
+	content String DEFAULT '',
+	username String DEFAULT '',
+	token_name String DEFAULT '',
+	model_name String DEFAULT '',
+	quota Int32 DEFAULT 0,
+	prompt_tokens Int32 DEFAULT 0,
+	completion_tokens Int32 DEFAULT 0,
+	use_time Int32 DEFAULT 0,
+	is_stream UInt8 DEFAULT 0,
+	channel_id Int32 DEFAULT 0,
+	token_id Int32 DEFAULT 0,
+	`+"`group`"+` String DEFAULT '',
+	ip String DEFAULT '',
+	request_id String DEFAULT '',
+	upstream_request_id String DEFAULT '',
+	other String DEFAULT ''
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(toDateTime(created_at))
+ORDER BY (created_at, request_id)%s`, clickHouseLogTTLClause(ttlDays))
+}
+
+// clickHouseCreateTableHasTTL 判断 ClickHouse 建表 SQL 中是否已经包含 TTL 子句。
+//
+// 当前准备层只做字符串级判断和测试护栏；真正执行 TTL 同步需要等 ClickHouse driver 接入后
+// 再独立实现。
+func clickHouseCreateTableHasTTL(createTableSQL string) bool {
+	upperSQL := strings.ToUpper(createTableSQL)
+	return strings.Contains(upperSQL, "\nTTL ") || strings.Contains(upperSQL, " TTL ")
+}
+
 func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 	defer func() {
 		initCol()
 	}()
 	dsn := os.Getenv(envName)
 	if dsn != "" {
+		if isClickHouseDSN(dsn) {
+			if !isLog {
+				return nil, fmt.Errorf("%s does not support ClickHouse; use SQLite, MySQL, or PostgreSQL for the primary database", envName)
+			}
+			normalized := normalizeClickHouseDSN(dsn)
+			return nil, fmt.Errorf("%s uses ClickHouse DSN %q, but this build has not enabled the ClickHouse log driver yet", envName, normalized)
+		}
 		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-			// Use PostgreSQL
+			// 使用 PostgreSQL 作为当前数据库。
 			common.SysLog("using PostgreSQL as database")
 			if !isLog {
 				common.UsingPostgreSQL = true
 			} else {
-				common.LogSqlType = common.DatabaseTypePostgreSQL
+				common.SetLogDatabaseType(common.DatabaseTypePostgreSQL)
 			}
 			return gorm.Open(postgres.New(postgres.Config{
 				DSN:                  dsn,
-				PreferSimpleProtocol: true, // disables implicit prepared statement usage
+				PreferSimpleProtocol: true, // 禁用隐式 prepared statement，避免部分连接池兼容问题。
 			}), &gorm.Config{
-				PrepareStmt: true, // precompile SQL
+				PrepareStmt: true, // 预编译 SQL，提高重复查询性能。
 			})
 		}
 		if strings.HasPrefix(dsn, "local") {
@@ -189,15 +299,15 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 			if !isLog {
 				common.UsingSQLite = true
 			} else {
-				common.LogSqlType = common.DatabaseTypeSQLite
+				common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 			}
 			return gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
-				PrepareStmt: true, // precompile SQL
+				PrepareStmt: true, // 预编译 SQL，提高重复查询性能。
 			})
 		}
-		// Use MySQL
+		// 使用 MySQL 作为当前数据库。
 		common.SysLog("using MySQL as database")
-		// check parseTime
+		// GORM 读取时间字段需要 parseTime，缺失时自动补齐以降低配置门槛。
 		if !strings.Contains(dsn, "parseTime") {
 			if strings.Contains(dsn, "?") {
 				dsn += "&parseTime=true"
@@ -208,17 +318,17 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 		if !isLog {
 			common.UsingMySQL = true
 		} else {
-			common.LogSqlType = common.DatabaseTypeMySQL
+			common.SetLogDatabaseType(common.DatabaseTypeMySQL)
 		}
 		return gorm.Open(mysql.Open(dsn), &gorm.Config{
-			PrepareStmt: true, // precompile SQL
+			PrepareStmt: true, // 预编译 SQL，提高重复查询性能。
 		})
 	}
-	// Use SQLite
+	// 未显式配置 DSN 时使用 SQLite，保持开发和单机部署的默认体验。
 	common.SysLog("SQL_DSN not set, using SQLite as database")
 	common.UsingSQLite = true
 	return gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
-		PrepareStmt: true, // precompile SQL
+		PrepareStmt: true, // 预编译 SQL，提高重复查询性能。
 	})
 }
 
@@ -229,7 +339,7 @@ func InitDB() (err error) {
 			db = db.Debug()
 		}
 		DB = db
-		// MySQL charset/collation startup check: ensure Chinese-capable charset
+		// MySQL 启动时校验字符集/排序规则，确保能够保存中文内容。
 		if common.UsingMySQL {
 			if err := checkMySQLChineseSupport(DB); err != nil {
 				panic(err)

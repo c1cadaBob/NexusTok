@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -38,6 +39,59 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
+
+// applyExplicitLogTextFilter 为日志查询追加文本过滤条件。
+//
+// value 为空时不追加过滤；包含 `%` 时视为用户显式请求模糊搜索，并走统一 LIKE 清洗；
+// 不含 `%` 时使用等值匹配，避免模型名或用户名中的 `_` 被数据库误判为单字符通配符。
+func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
+	if value == "" {
+		return tx, nil
+	}
+	if strings.Contains(value, "%") {
+		condition, pattern, err := buildLogLikeCondition(column, value)
+		if err != nil {
+			return nil, err
+		}
+		return tx.Where(condition, pattern), nil
+	}
+	return tx.Where(column+" = ?", value), nil
+}
+
+// buildLogLikeCondition 按日志库方言生成 LIKE 条件和安全搜索模式。
+//
+// SQLite/MySQL/PostgreSQL 使用 `!` 作为 ESCAPE 字符；未来 ClickHouse 日志库不支持同样的
+// ESCAPE 子句，改用反斜杠转义 `_` 与反斜杠本身。两条路径都复用 validateLikePattern()
+// 限制 `%` 通配符数量和关键词长度。
+func buildLogLikeCondition(column string, value string) (string, string, error) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		pattern, err := sanitizeClickHouseLikePattern(value)
+		if err != nil {
+			return "", "", err
+		}
+		return column + " LIKE ?", pattern, nil
+	}
+
+	pattern, err := sanitizeLikePattern(value)
+	if err != nil {
+		return "", "", err
+	}
+	return column + " LIKE ? ESCAPE '!'", pattern, nil
+}
+
+// sanitizeClickHouseLikePattern 清洗 ClickHouse LIKE 搜索模式。
+//
+// ClickHouse 使用反斜杠处理 LIKE 中的特殊字符；这里只保留 `%` 作为用户显式通配符，
+// `_` 始终按普通字符匹配，避免模型名如 `gpt_4` 被误扩展为 `gpt?4`。
+func sanitizeClickHouseLikePattern(input string) (string, error) {
+	input = strings.ReplaceAll(input, `\`, `\\`)
+	input = strings.ReplaceAll(input, `_`, `\_`)
+
+	if err := validateLikePattern(input); err != nil {
+		return "", err
+	}
+	return input, nil
+}
 
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
@@ -63,7 +117,7 @@ type Log struct {
 	Other             string `json:"other"`
 }
 
-// don't use iota, avoid change log type value
+// 日志类型值会持久化到数据库，禁止使用 iota，避免新增类型时意外改变历史含义。
 const (
 	LogTypeUnknown = 0
 	LogTypeTopup   = 1
@@ -75,7 +129,44 @@ const (
 	LogTypeLogin   = 7
 )
 
-// formatUserLogs 格式化用户日志（移除管理员敏感字段，设置序号）
+// ensureLogRequestId 为新日志补齐 request_id。
+//
+// 已有 request_id 必须原样保留，便于 relay 链路把上游或请求上下文中的追踪 ID 写入日志；
+// 空值才生成本地 ID，为后续 ClickHouse 排序、审计定位和跨表排障提供稳定键。
+func ensureLogRequestId(log *Log) {
+	if log != nil && log.RequestId == "" {
+		log.RequestId = common.GetTimeString() + common.GetRandomString(8)
+	}
+}
+
+// createLog 统一写入日志并保证 request_id 不为空。
+//
+// 该包装保持现有 LOG_DB 写入路径不变，只在入库前补齐追踪 ID，避免各个 Record*Log
+// 调用点重复处理。
+func createLog(log *Log) error {
+	ensureLogRequestId(log)
+	return LOG_DB.Create(log).Error
+}
+
+// clickHouseLogOrder 返回 ClickHouse 日志查询的稳定排序表达式。
+//
+// ClickHouse logs 表不依赖传统自增 id，因此排序使用 created_at 与 request_id 组合；
+// prefix 用于兼容 `logs.` 这样的表名前缀。
+func clickHouseLogOrder(prefix string) string {
+	return prefix + "created_at desc, " + prefix + "request_id desc"
+}
+
+// assignDisplayLogIds 为分页结果生成前端展示序号。
+//
+// 该序号只用于页面展示，不代表数据库主键；ClickHouse 准备层同样依赖这个函数隐藏
+// 不同日志库底层主键策略差异。
+func assignDisplayLogIds(logs []*Log, startIdx int) {
+	for i := range logs {
+		logs[i].Id = startIdx + i + 1
+	}
+}
+
+// formatUserLogs 格式化用户日志（移除管理员敏感字段，设置序号）。
 //
 // 参数：
 //   - logs: 日志列表
@@ -94,8 +185,8 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "stream_status")
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
-		logs[i].Id = startIdx + i + 1
 	}
+	assignDisplayLogIds(logs, startIdx)
 }
 
 // GetLogByTokenId 根据 Token ID 获取最近的日志记录
@@ -131,7 +222,7 @@ func RecordLog(userId int, logType int, content string) {
 		Type:      logType,
 		Content:   content,
 	}
-	err := LOG_DB.Create(log).Error
+	err := createLog(log)
 	if err != nil {
 		common.SysLog("failed to record log: " + err.Error())
 	}
@@ -162,7 +253,7 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 		}
 		log.Other = common.MapToJsonStr(other)
 	}
-	if err := LOG_DB.Create(log).Error; err != nil {
+	if err := createLog(log); err != nil {
 		common.SysLog("failed to record log: " + err.Error())
 	}
 }
@@ -235,7 +326,7 @@ func RecordLoginLog(params LoginLogParams) {
 		Ip:        params.Ip,
 		Other:     common.MapToJsonStr(other),
 	}
-	if err := LOG_DB.Create(log).Error; err != nil {
+	if err := createLog(log); err != nil {
 		common.SysLog("failed to record login log: " + err.Error())
 	}
 }
@@ -268,7 +359,7 @@ func RecordOperationAuditLog(params OperationAuditLogParams) {
 		Ip:        params.Ip,
 		Other:     common.MapToJsonStr(other),
 	}
-	if err := LOG_DB.Create(log).Error; err != nil {
+	if err := createLog(log); err != nil {
 		common.SysLog("failed to record operation audit log: " + err.Error())
 	}
 }
@@ -322,7 +413,7 @@ func RecordTopupLogWithAdminInfo(userId int, content string, callerIp string, pa
 		Ip:        callerIp,
 		Other:     common.MapToJsonStr(other),
 	}
-	err := LOG_DB.Create(log).Error
+	err := createLog(log)
 	if err != nil {
 		common.SysLog("failed to record topup log: " + err.Error())
 	}
@@ -383,7 +474,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := LOG_DB.Create(log).Error
+	err := createLog(log)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
@@ -446,7 +537,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := LOG_DB.Create(log).Error
+	err := createLog(log)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
@@ -505,7 +596,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		Group:     params.Group,
 		Other:     common.MapToJsonStr(params.Other),
 	}
-	err := LOG_DB.Create(log).Error
+	err := createLog(log)
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
 	}
@@ -519,11 +610,11 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
-	if modelName != "" {
-		tx = tx.Where("logs.model_name like ?", modelName)
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+		return nil, 0, err
 	}
-	if username != "" {
-		tx = tx.Where("logs.username = ?", username)
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
+		return nil, 0, err
 	}
 	if tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
@@ -550,7 +641,11 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	order := "logs.created_at desc, logs.id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("logs.")
+	}
+	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -568,7 +663,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			Name string `gorm:"column:name"`
 		}
 		if common.MemoryCacheEnabled {
-			// Cache get channel
+			// 优先从内存缓存读取渠道名称，减少后台日志列表的数据库查询。
 			for _, channelId := range channelIds.Items() {
 				if cacheChannel, err := CacheGetChannel(channelId); err == nil {
 					channels = append(channels, struct {
@@ -581,7 +676,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 				}
 			}
 		} else {
-			// Bulk query channels from DB
+			// 未启用缓存时批量查询渠道名称，避免按日志逐条查询。
 			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
 				return logs, total, err
 			}
@@ -608,12 +703,8 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
 
-	if modelName != "" {
-		modelNamePattern, err := sanitizeLikePattern(modelName)
-		if err != nil {
-			return nil, 0, err
-		}
-		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+		return nil, 0, err
 	}
 	if tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
@@ -638,7 +729,11 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		common.SysError("failed to count user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
 	}
-	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	order := "logs.id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("logs.")
+	}
+	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError("failed to search user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
@@ -660,9 +755,11 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
 
-	if username != "" {
-		tx = tx.Where("username = ?", username)
-		rpmTpmQuery = rpmTpmQuery.Where("username = ?", username)
+	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
+		return stat, err
 	}
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)
@@ -674,13 +771,11 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	if endTimestamp != 0 {
 		tx = tx.Where("created_at <= ?", endTimestamp)
 	}
-	if modelName != "" {
-		modelNamePattern, err := sanitizeLikePattern(modelName)
-		if err != nil {
-			return stat, err
-		}
-		tx = tx.Where("model_name LIKE ? ESCAPE '!'", modelNamePattern)
-		rpmTpmQuery = rpmTpmQuery.Where("model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
+		return stat, err
 	}
 	if channel != 0 {
 		tx = tx.Where("channel_id = ?", channel)

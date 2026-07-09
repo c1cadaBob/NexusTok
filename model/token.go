@@ -15,32 +15,32 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"                        // 公共工具包
-	"github.com/c1cada/NexusTok/setting/operation_setting"     // 运营设置
-	"github.com/bytedance/gopkg/util/gopool"                   // 协程池
-	"gorm.io/gorm"                                             // GORM ORM
+	"github.com/bytedance/gopkg/util/gopool"               // 协程池
+	"github.com/c1cada/NexusTok/common"                    // 公共工具包
+	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营设置
+	"gorm.io/gorm"                                         // GORM ORM
 )
 
 // Token API Token 数据模型
 // 代表用户的一个 API 访问凭证
 type Token struct {
-	Id                 int            `json:"id"`                                                           // Token ID
-	UserId             int            `json:"user_id" gorm:"index"`                                        // 所属用户 ID
-	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`                     // Token Key（唯一索引）
-	Status             int            `json:"status" gorm:"default:1"`                                      // Token 状态（1=启用，2=禁用）
-	Name               string         `json:"name" gorm:"index" `                                           // Token 名称
-	CreatedTime        int64          `json:"created_time" gorm:"bigint"`                                   // 创建时间
-	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`                                  // 最后访问时间
-	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"`                        // 过期时间（-1 表示永不过期）
-	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`                                // 剩余额度
-	UnlimitedQuota     bool           `json:"unlimited_quota"`                                              // 是否无限额度
-	ModelLimitsEnabled bool           `json:"model_limits_enabled"`                                         // 是否启用模型限制
-	ModelLimits        string         `json:"model_limits" gorm:"type:text"`                                // 模型限制列表（JSON 格式）
-	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`                                  // 允许的 IP 地址列表（换行分隔）
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"`                                  // 已使用额度
-	Group              string         `json:"group" gorm:"default:''"`                                      // Token 分组
-	CrossGroupRetry    bool           `json:"cross_group_retry"`                                            // 是否跨分组重试（仅 auto 分组有效）
-	DeletedAt          gorm.DeletedAt `gorm:"index"`                                                        // 软删除时间
+	Id                 int            `json:"id"`                                       // Token ID
+	UserId             int            `json:"user_id" gorm:"index"`                     // 所属用户 ID
+	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"` // Token Key（唯一索引）
+	Status             int            `json:"status" gorm:"default:1"`                  // Token 状态（1=启用，2=禁用）
+	Name               string         `json:"name" gorm:"index" `                       // Token 名称
+	CreatedTime        int64          `json:"created_time" gorm:"bigint"`               // 创建时间
+	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`              // 最后访问时间
+	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"`    // 过期时间（-1 表示永不过期）
+	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`            // 剩余额度
+	UnlimitedQuota     bool           `json:"unlimited_quota"`                          // 是否无限额度
+	ModelLimitsEnabled bool           `json:"model_limits_enabled"`                     // 是否启用模型限制
+	ModelLimits        string         `json:"model_limits" gorm:"type:text"`            // 模型限制列表（JSON 格式）
+	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`              // 允许的 IP 地址列表（换行分隔）
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"`              // 已使用额度
+	Group              string         `json:"group" gorm:"default:''"`                  // Token 分组
+	CrossGroupRetry    bool           `json:"cross_group_retry"`                        // 是否跨分组重试（仅 auto 分组有效）
+	DeletedAt          gorm.DeletedAt `gorm:"index"`                                    // 软删除时间
 }
 
 // Clean 清理 Token 的敏感信息
@@ -131,12 +131,11 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	return tokens, err
 }
 
-// sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式
-// 防止 SQL 注入和恶意输入
+// sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式。
 //
 // 校验规则：
 // 1. 转义 ! 和 _（使用 ! 作为 ESCAPE 字符，兼容 MySQL/PostgreSQL/SQLite）
-// 2. 连续的 % 合并为单个 %
+// 2. 连续的 % 直接拒绝
 // 3. 最多允许 2 个 %
 // 4. 含 % 时（模糊搜索），去掉 % 后关键词长度必须 >= 2
 // 5. 不含 % 时按精确匹配
@@ -153,28 +152,39 @@ func sanitizeLikePattern(input string) (string, error) {
 	input = strings.ReplaceAll(input, "!", "!!")
 	input = strings.ReplaceAll(input, `_`, `!_`)
 
-	// 2. 连续的 % 直接拒绝
-	if strings.Contains(input, "%%") {
-		return "", errors.New("搜索模式中不允许包含连续的 % 通配符")
+	if err := validateLikePattern(input); err != nil {
+		return "", err
 	}
 
-	// 3. 统计 % 数量，不得超过 2
+	return input, nil
+}
+
+// validateLikePattern 统一校验 LIKE 搜索模式的通配符约束。
+//
+// 该函数不负责转义数据库方言差异，只校验用户显式保留的 % 通配符数量和关键词长度。
+// 普通三库的 `!` 转义和 ClickHouse 的反斜杠转义会在各自清洗函数中先完成，再复用这里的
+// 安全边界，确保日志、令牌、充值等搜索入口保持一致限制。
+func validateLikePattern(input string) error {
+	// 1. 连续的 % 直接拒绝
+	if strings.Contains(input, "%%") {
+		return errors.New("搜索模式中不允许包含连续的 % 通配符")
+	}
+
+	// 2. 统计 % 数量，不得超过 2
 	count := strings.Count(input, "%")
 	if count > 2 {
-		return "", errors.New("搜索模式中最多允许包含 2 个 % 通配符")
+		return errors.New("搜索模式中最多允许包含 2 个 % 通配符")
 	}
 
-	// 4. 含 % 时，去掉 % 后关键词长度必须 >= 2
+	// 3. 含 % 时，去掉 % 后关键词长度必须 >= 2
 	if count > 0 {
 		stripped := strings.ReplaceAll(input, "%", "")
 		if len(stripped) < 2 {
-			return "", errors.New("使用模糊搜索时，关键词长度至少为 2 个字符")
+			return errors.New("使用模糊搜索时，关键词长度至少为 2 个字符")
 		}
-		return input, nil
 	}
 
-	// 5. 无 % 时，精确全匹配
-	return input, nil
+	return nil
 }
 
 // searchHardLimit 搜索结果硬限制
