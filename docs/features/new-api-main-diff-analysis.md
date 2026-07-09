@@ -5725,8 +5725,63 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：DataTable 组件维护文档补齐
+
+### 需求分析
+
+`new-api-main` 的 `web/default/src/components/data-table/README.md` 用很短的篇幅说明了公共 DataTable 包的导入边界和 `core`、`layout`、`toolbar`、`static`、`hooks` 分层职责。NexusTok 当前已经有 `web/default/src/components/data-table/*` 公共组件，并且在渠道、模型、日志、订阅、用户等页面持续复用，但目录仍是扁平结构，缺少 README 说明：
+
+1. 新页面应从 `@/components/data-table` 通过 `index.ts` 导入，还是直接引用内部文件，目前没有明确约定。
+2. `DataTablePage`、`DataTableToolbar`、`MobileCardList`、`DataTablePagination`、`DataTableBulkActions` 等组件的职责边界需要文档化，方便后续页面继续复用而不是复制局部表格代码。
+3. NexusTok 已经在 `MobileCardList` 中支持 `mobileTitle`、`mobileBadge`、`mobileHidden` 列 meta，但该移动端卡片约定没有集中说明。
+4. `new-api-main` 的分层结构值得吸收，但 NexusTok 当前表格调用面很广，直接目录级拆分会造成大范围 import 变更和回归风险。
+5. 本轮适合先把文档资产原生化：明确当前稳定 API、组件职责、扩展点和后续分层迁移原则，为将来逐步拆分 `core/layout/toolbar/static/hooks` 做准备。
+
+本轮目标是新增 NexusTok 品牌化的 DataTable README，不修改运行时代码、不改变任何页面行为、不新增依赖。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| DataTable 组件文档 | `web/default/src/components/data-table/README.md` | 新增当前组件目录职责、稳定导入入口、常用组合方式、移动端列 meta 和后续迁移边界。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 本轮只新增/更新 Markdown 文档，不参与前端打包产物和后端运行路径。
+2. 文档如果过度承诺未来目录结构，可能误导后续开发者一次性重构；因此明确当前仍以扁平目录和 `index.ts` 公共导出为准。
+3. 文档中的示例必须使用 NexusTok 已存在的组件和 prop，不引用 `new-api-main` 当前才有的 `core/*`、`layout/*`、`static/*` 文件，避免形成不存在的 API。
+4. README 不能复制 new-api-main 的英文说明，而应结合 NexusTok 当前 `DataTablePage`、`DataTableToolbar` 和 `MobileCardList` 实际能力进行说明。
+
+### 方案评审
+
+采用“文档先行、结构后移”的方案：
+
+1. 新增 `web/default/src/components/data-table/README.md`，说明该目录是默认前端列表页的公共表格工具包，稳定导入入口为 `@/components/data-table`。
+2. 按当前文件列出职责：页面包装、工具条、分页、空态、骨架、列头、筛选、列显示、批量操作、移动端列表。
+3. 给出 `DataTablePage` 的最小使用示例，覆盖 `table`、`columns`、`isLoading`、`toolbarProps`、`bulkActions` 等高频组合。
+4. 单独说明移动端列 meta 的约定，鼓励新列表优先提供 `mobileTitle` 和 `mobileBadge`，避免手机端退化成难读的键值列表。
+5. 记录后续吸收 new-api-main 分层的原则：只在真实复用需求出现时逐步拆出 `core/layout/toolbar/static/hooks`，每一步保持 `index.ts` 导出兼容。
+
+验收方式：
+
+1. `sed -n '1,260p' web/default/src/components/data-table/README.md` 人工检查文档内容。
+2. `rg -n "@/components/data-table/(core|layout|static|toolbar|hooks)|new-api-main" web/default/src/components/data-table/README.md` 确认没有引用不存在的分层 API 或上游项目名。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `sed -n '1,260p' web/default/src/components/data-table/README.md` 已人工检查，README 只描述 NexusTok 当前存在的扁平 DataTable 组件、公开导入入口和移动端列 meta。
+2. `rg -n "@/components/data-table/(core|layout|static|toolbar|hooks)|new-api-main" web/default/src/components/data-table/README.md` 无匹配，未引用不存在的分层 import 或上游项目名。
+3. `git diff --check` 通过。
+4. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+5. 3003 首次 HTTP 探测遇到热更新重启窗口，`192.168.0.202:3003` 短暂返回连接失败；随后确认 `nexustok-api-hot` 容器仍运行，`127.0.0.1:3003/` 返回 200，容器内 `127.0.0.1:3000/api/status` 可用。
+6. 3003 指定地址重试验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | DataTable 组件维护文档 | `web/default/src/components/data-table/README.md` | 原生化 new-api-main 的 DataTable 包说明优势，但不直接迁移其 `core/layout/toolbar/static/hooks` 目录；文档按 NexusTok 当前扁平组件结构记录稳定导入入口、组件职责、`DataTablePage` 组合方式、移动端列 meta 和后续渐进分层原则。 |
 | 2026-07-09 | Electron 桌面端文档与构建脚本修复 | `electron/build.sh`、`electron/main.js`、`electron/package.json`、`electron/README.md` | 原生化 new-api-main 的 Electron 文档资产并修复 NexusTok 目录不匹配问题：桌面构建先分别生成 default/classic 前端 dist，再构建嵌入资源的 Go 二进制；开发模式前端端口与 `make dev-web` 对齐为 3001；移除不存在的 `../web/dist` 资源引用，并补充桌面端开发、打包、数据目录和排障说明。 |
 | 2026-07-09 | 开发 Compose 与 Makefile 修补 | `docker-compose.dev.yml`、`makefile`、`docs/installation/deployment.md` | 原生化 new-api-main 的本地开发工程化优势：dev PostgreSQL 显式使用 `postgres:15-alpine`，新增 `dev-api-rebuild` 和开发专用 `reset-setup`，并在部署文档补充后端重建、初始化状态重置和生产禁用说明；不引入 oxlint/tsgo，不修改热更新部署。 |
 | 2026-07-09 | 日志查询与 ClickHouse 准备层护栏 | `common/database.go`、`model/main.go`、`model/log.go`、`model/token.go`、`model/clickhouse_log_test.go` | 原生化 new-api-main 的 ClickHouse 日志准备层优势：主库 ClickHouse DSN fail-fast、当前构建对 `LOG_SQL_DSN` ClickHouse 给出明确未启用 driver 错误、日志 LIKE 过滤统一转义、日志写入补齐 `request_id`、ClickHouse 排序与 TTL SQL helper 进入测试契约；不引入 ClickHouse driver，不改变 SQLite/MySQL/PostgreSQL 主路径。 |
