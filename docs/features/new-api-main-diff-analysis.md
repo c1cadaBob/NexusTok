@@ -4594,8 +4594,64 @@ new-api-main 的 Playground 已将消息错误分类、模型价格错误判断�
 9. 线上 `/static/js/async/6675.js` 已包含 `/system-settings/billing/model-pricing`、`An unknown error occurred`、`model_price_error` 和 `messageLayoutMode` 特征，确认本轮错误状态 helper 和前序 Playground 能力已进入 3003 页面资源。
 10. 上一轮旧 Playground chunk `/static/js/async/5192.js` 返回 `HTTP 404`，确认 3003 未继续加载旧缓存；页面资源已随本轮构建更新，无需重启容器。
 
+## 本轮实施评审：Playground 消息阅读样式原生化
+
+### 需求分析
+
+new-api-main 的 Playground 已将用户气泡和 assistant 回复的阅读样式收敛到 `message-styles.ts`：assistant 内容按文档列宽限制在 `78ch` 左右，用户消息保持紧凑气泡，回复字体回到当前 UI 字体轴，避免长回答在宽屏上横向铺满。NexusTok 当前同名 helper 仍保留 `max-w-none`、`font-serif`、`rounded-3xl`、`bg-secondary` 和 `dark:` 专用覆盖；在已经完成消息布局对齐、原始响应、错误状态和流式状态工具化后，这块样式会继续影响 Playground 的阅读密度和默认前端视觉一致性。
+
+本轮目标是只原生化消息内容阅读样式，不扩大到编辑器、输入区、布局偏好或主题系统：
+
+1. 将 assistant 正文从无限宽改为 `max-w-[78ch]`，保留 `w-full` 参与当前消息行布局，降低超宽屏阅读负担。
+2. 移除 `font-serif`，改为使用 NexusTok 当前主题中的 `font-sans` 字体轴，保持 Base Nova/默认前端字体策略一致。
+3. 将用户消息气泡调整为轻量边框和 `muted` surface，使用语义 token，移除手写 `dark:` 背景覆盖。
+4. 补充 `message-styles.test.ts`，用纯字符串断言锁住关键阅读样式，防止后续回退到无限宽或 serif。
+5. 本轮不新增任何 UI 文案，因此不涉及 i18n；不改变消息协议、localStorage schema、请求链路和 Markdown 渲染组件。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 消息样式 helper | `web/default/src/features/playground/lib/message-styles.ts` | 调整 `getMessageContentStyles()` 返回的 Tailwind class 列表，并把触碰到的主体注释改为中文。 |
+| 样式回归测试 | `web/default/src/features/playground/lib/message-styles.test.ts` | 新增关键 class 断言，覆盖 assistant 列宽、字体、用户气泡 surface、字号和深色模式覆盖移除。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和最终验证记录。 |
+
+### 风险评估
+
+1. 这是纯前端 class 调整，不改变消息数据、发送逻辑、错误处理、计费、权限、数据库和后端接口，核心业务风险低。
+2. assistant 最大宽度从无限制变为 `78ch` 后，超宽屏长回答会更像文档列；但代码块、原始响应和多版本内容可能需要继续依赖内部 overflow 处理，本轮会通过生产构建和 3003 静态资源验证确认样式进入页面。
+3. 用户气泡从 `bg-secondary/dark:bg-muted` 改为 `bg-muted/70 + border`，视觉上会比旧版更轻；这属于目标内的阅读体验提升，但需要避免引入 raw color 和额外主题覆盖。
+4. `font-sans` 依赖当前默认前端的 `--app-font-sans` 主题定义；若未来主题变量重构，测试会捕获关键 class，实际渲染仍由全局 CSS token 决定。
+5. 本轮不动编辑器样式。new-api-main 的编辑器也使用了 `max-w-[78ch]`，但 NexusTok 编辑器已在前几轮形成独立组件，后续可单独评审，避免一次视觉变更影响编辑输入体验。
+
+### 方案评审
+
+采用“直接收敛现有 helper class + 单元测试锁定关键 class”的方案：保留 `getMessageContentStyles()` 的调用方式和 `PlaygroundMessageContent` 结构，仅调整 class 列表。设计方向以当前默认前端 Base Nova 工具台为边界，吸收 new-api-main 的文档列宽、紧凑用户气泡和主题字体优点，不引入新组件、不新增文案、不修改全局 CSS。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-styles.test.ts src/features/playground/lib/message-layout-utils.test.ts src/features/playground/lib/message-content-utils.test.ts`，覆盖新增样式 helper 和相邻布局/内容 helper。
+2. 针对 `message-styles.ts` 和 `message-styles.test.ts` 运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build`，确认类型和生产构建通过。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证页面加载和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-styles.test.ts src/features/playground/lib/message-layout-utils.test.ts src/features/playground/lib/message-content-utils.test.ts` 通过，共 14 个用例，覆盖新增消息样式 helper、布局 alignment helper 和消息内容状态 helper。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/message-styles.ts src/features/playground/lib/message-styles.test.ts` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增测试和样式 helper 类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，生产构建生成新的本地 `dist`；Playground 相关 async chunk 仍为 `/static/js/async/6675.js`，内容 hash 已随本轮样式变更更新。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`，`system_name` 为 `NexusTok`。
+8. 从 3003 拉取 `/static/js/index.js`、`/static/js/async/6675.js` 和 `/static/css/index.css` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `c452d3907d348546052e086ff18dc22a5516aa085a76975a78d12a8610337394`，`6675.js` SHA256 均为 `29523081f9b6a7421ad2862eb1c82acfbb1feb18615d42fc857714923bc7de77`，`index.css` SHA256 均为 `e641984672d30452ed7b325c5f3e350de58062ec0c6d4916b6c0a20ec659a6fa`。
+9. 线上 `/static/js/async/6675.js` 已包含 `max-w-[78ch]`、`font-sans`、`rounded-br-md` 和 `bg-muted/70`，且未检出本轮移除的 `font-serif`、`max-w-none`、`dark:group-[.is-user]:bg-muted` 特征，确认 3003 页面资源已加载本轮消息阅读样式。
+10. 本轮 chunk 路径未变化，线上入口、CSS 和 Playground chunk 均已与本地构建一致，无需重启容器。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息阅读样式 | `web/default/src/features/playground/lib/{message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的消息阅读样式优势；assistant 正文限制为 `78ch` 文档列并使用当前 `font-sans` 字体轴，user 消息切换为语义 muted 边框气泡，移除旧 `font-serif`、无限宽和手写深色背景覆盖，消息协议、存储和请求链路不变。 |
 | 2026-07-09 | Playground 错误状态 helper | `web/default/src/features/playground/components/message-error.tsx`、`web/default/src/features/playground/lib/{message-error-utils.ts,message-error-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message error state helper；错误分类、模型价格错误、管理员设置入口可见性和 fallback 文案进入可测试纯函数，`MessageError` 只保留 Alert/Button 渲染，现有错误动作位置、请求链路和 i18n key 不变。 |
 | 2026-07-09 | Playground 消息流式状态工具 | `web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/lib/{message-streaming-utils.ts,message-streaming-utils.test.ts,index.ts}` | 原生化 new-api-main 的 message streaming helper 分层；流式 reasoning/content 增量、累计 chunk 去重、assistant 完成态判断和非流式 choice 写回进入可测试纯函数，`use-chat-handler` 只保留请求生命周期、toast 和错误落盘编排。 |
 | 2026-07-09 | Playground 消息布局对齐底座 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/components/{playground-chat.tsx,playground-message-content.tsx,message-metadata.tsx}`、`web/default/src/features/playground/lib/{message-layout-utils.ts,message-layout-utils.test.ts,index.ts}` | 原生化 new-api-main 的 `PlaygroundMessageLayoutMode` 和消息 alignment helper；默认保持 alternating，user 消息右对齐、assistant/system 左对齐，并为后续全部左对齐或用户偏好设置提供原生底座；保留 Branch 多版本、消息动作、请求协议和 localStorage schema。 |
