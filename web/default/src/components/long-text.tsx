@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import {
   Popover,
@@ -34,32 +34,90 @@ type LongTextProps = {
   children: React.ReactNode
   className?: string
   contentClassName?: string
+  side?: LongTextSide
 }
+
+export type LongTextSide =
+  | 'bottom'
+  | 'inline-end'
+  | 'inline-start'
+  | 'left'
+  | 'right'
+  | 'top'
 
 export function LongText({
   children,
   className = '',
   contentClassName = '',
+  side = 'top',
 }: LongTextProps) {
-  const ref = useRef<HTMLDivElement>(null)
+  const desktopRef = useRef<HTMLDivElement>(null)
+  const mobileRef = useRef<HTMLDivElement>(null)
   const [isOverflown, setIsOverflown] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+
+  const updateOverflow = useCallback(() => {
+    const current = isMobile ? mobileRef.current : desktopRef.current
+
+    // 表格列宽、字体加载和响应式断点都会改变实际溢出状态，
+    // 因此这里以 DOM 实测结果作为 tooltip/popover 是否启用的唯一依据。
+    setIsOverflown(checkOverflow(current))
+  }, [isMobile])
 
   useEffect(() => {
-    if (checkOverflow(ref.current)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsOverflown(true)
-      return
+    if (typeof window === 'undefined' || !window.matchMedia) return
+
+    const mediaQuery = window.matchMedia('(max-width: 639px)')
+    const syncViewport = () => {
+      setIsMobile(mediaQuery.matches)
     }
 
-    setIsOverflown(false)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+
+    return () => {
+      mediaQuery.removeEventListener('change', syncViewport)
+    }
   }, [])
 
-  if (!isOverflown)
+  useEffect(() => {
+    const current = isMobile ? mobileRef.current : desktopRef.current
+    updateOverflow()
+
+    if (!current) return
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateOverflow)
+
+      return () => {
+        window.removeEventListener('resize', updateOverflow)
+      }
+    }
+
+    const observer = new ResizeObserver(updateOverflow)
+    observer.observe(current)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [children, className, isMobile, isOverflown, updateOverflow])
+
+  if (!isOverflown) {
     return (
-      <div ref={ref} className={cn('truncate', className)}>
-        {children}
-      </div>
+      <>
+        <div className='hidden sm:block'>
+          <div ref={desktopRef} className={cn('truncate', className)}>
+            {children}
+          </div>
+        </div>
+        <div className='sm:hidden'>
+          <div ref={mobileRef} className={cn('truncate', className)}>
+            {children}
+          </div>
+        </div>
+      </>
     )
+  }
 
   return (
     <>
@@ -67,11 +125,13 @@ export function LongText({
         <TooltipProvider delay={0}>
           <Tooltip>
             <TooltipTrigger
-              render={<div ref={ref} className={cn('truncate', className)} />}
+              render={
+                <div ref={desktopRef} className={cn('truncate', className)} />
+              }
             >
               {children}
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side={side}>
               <p className={contentClassName}>{children}</p>
             </TooltipContent>
           </Tooltip>
@@ -80,11 +140,16 @@ export function LongText({
       <div className='sm:hidden'>
         <Popover>
           <PopoverTrigger
-            render={<div ref={ref} className={cn('truncate', className)} />}
+            render={
+              <div ref={mobileRef} className={cn('truncate', className)} />
+            }
           >
             {children}
           </PopoverTrigger>
-          <PopoverContent className={cn('w-fit', contentClassName)}>
+          <PopoverContent
+            side={side}
+            className={cn('w-fit max-w-xs', contentClassName)}
+          >
             <p>{children}</p>
           </PopoverContent>
         </Popover>

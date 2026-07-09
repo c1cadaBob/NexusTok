@@ -4870,8 +4870,68 @@ new-api-main 在 `web/default/src/components/json-code-editor.tsx` 中把系统�
 9. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/9522.js`、`/static/js/async/8130.js`、`/static/js/async/5099.js`、`/static/js/async/6675.js`，与本地 `web/default/dist` 逐字 `cmp` 一致；sha256 分别为 `f6534ac2678517a15323d0c1ea6a8215626f9f434820a192ae4c759015ca7616`（index.js）、`22eb2d6118acd2bf3ceab39c799258d25f8c7cc1faef805b9bd57365b1fe9b64`（index.css）、`b619df6e2f4b221d80a4d84d656670134717fedb8de04a15fcf9e3c3b817a668`（9522.js）、`9f5daf4ca878611947801a82cb90ade4d870e8d2f997ae3cce432769930a1367`（8130.js）、`a4a086d056ab93f9302c0aa14efc4ae7c1387b225c3790dd6e1b06fb5db98c8d`（5099.js）、`638a900f61cfed997859b1585408580f1847215067b0cf81ea608d278bb1b548`（6675.js）。
 10. 线上 chunk 已包含 `Format JSON`、`Invalid JSON`、`Model fixed pricing`、`Advanced bulk pricing`、`aria-readonly`、`readOnly`、`autoFocus` 等特征，确认 3003 页面资源已加载本轮 JSON CodeMirror 编辑器、格式化动作和多编辑器非自动聚焦/readOnly 支持。
 
+## 本轮实施评审：表格展示原子组件原生化
+
+### 需求分析
+
+new-api-main 在 `web/default/src/components/table-id.tsx`、`provider-badge.tsx` 和 `truncated-text.tsx` 中把表格里高频出现的 ID、供应商/渠道类型 badge、长文本截断提示抽成公共原子组件。NexusTok 当前有 `StatusBadge`、`LongText`、`getLobeIcon` 等基础能力，但模型表和渠道表仍在列定义里重复手写 ID badge、provider 图标、长名称截断和 tooltip。随着渠道账号池、模型部署、Usage Logs、Pricing 等页面继续增长，这类展示逻辑如果继续分散，会让后续 DataTable 分层迁移和移动端卡片复用成本变高。
+
+本轮目标是把 new-api-main 的表格展示组件优势转为 NexusTok 原生能力：
+
+1. 新增 `TableId`，用稳定的 mono/tabular 数字样式展示表格 ID；默认不复制，避免改变 `StatusBadge` 的点击复制语义，确需复制的列可显式打开。
+2. 新增 `ProviderBadge`，复用 NexusTok 现有 `StatusBadge` 和 `getLobeIcon`，把 provider/vendor/channel type 的图标、颜色和不可复制默认值统一起来。
+3. 新增 `TruncatedText`，基于 NexusTok 现有 `LongText` 做薄封装，保留桌面 Tooltip 和移动端 Popover 的行为，同时给表格列提供统一 `maxWidth`/`side` 参数。
+4. 先接入模型管理表和渠道管理表这两个高频页面：模型表的 ID/vendor 列和渠道表的 ID/name/type 列；不一次性改 users、subscriptions、redemptions、usage logs 等更多表格。
+5. 保留 NexusTok 已有账号池、多 Key、Codex 用量、IO.NET deployment、tag 聚合、上游模型同步和权限动作逻辑，不搬运 new-api-main 的 DataTable 分层、`BadgeCell`、`TruncatedCell` 或渠道 action context。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 公共表格 ID 展示 | `web/default/src/components/table-id.tsx` | 新增可复用 ID 原子组件，默认只展示，显式 `copyable` 时才允许点击复制。 |
+| 公共 provider badge | `web/default/src/components/provider-badge.tsx` | 新增 provider/vendor/channel type badge，统一图标、颜色、截断和默认不可复制语义。 |
+| 公共长文本截断 | `web/default/src/components/truncated-text.tsx`、`web/default/src/components/long-text.tsx` | 新增表格长文本薄封装；`LongText` 支持响应式 overflow 重新测量，避免初始渲染后列宽变化导致 tooltip 状态陈旧。 |
+| 模型表格 | `web/default/src/features/models/components/models-columns.tsx` | ID 和 Vendor 列使用公共组件；模型名称、状态、权限动作和其它列不变。 |
+| 渠道表格 | `web/default/src/features/channels/components/channels-columns.tsx` | ID、Name、Type 列使用公共组件；账号池、多 Key、IO.NET、tag 聚合、余额和操作列不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 表格列是管理后台高频入口，不能改变排序、筛选、选择、批量操作、权限判断和 API 调用；本轮只改 cell 内部展示组件，不改 column accessor、filterFn、row action 或数据请求。
+2. `StatusBadge` 默认可复制，new-api-main 的 `ProviderBadge` 如果直接复制会让点击 provider 意外复制文本；本轮 `ProviderBadge` 默认 `copyable=false`，同时保留显式 override。
+3. 渠道名称列承载 pass-through 警告、多 Key 数量、账号池统计和上游模型同步标签；接入 `TruncatedText` 必须只替换名称/备注文本，不移动或删除这些 NexusTok 自有 badge。
+4. 渠道 type 列承载多 Key 轮询/随机图标和 IO.NET deployment 跳转；接入 `ProviderBadge` 只能替换 provider 名称 badge，不改变 multi-key tooltip 和 IO.NET 点击路径。
+5. `LongText` 之前只在 mount 时检测 overflow，列宽、字体加载或数据刷新后可能出现 tooltip 状态滞后；加入 `ResizeObserver` 要注意浏览器兼容和卸载清理，避免列表频繁渲染造成泄漏。
+6. 本轮不新增 UI 文案，复用现有列标题和 badge 文本；不需要补 locale 或运行 `bun run i18n:sync`。
+7. MCP Chrome 当前可能仍不可用；完成后仍需先尝试 MCP 打开 `http://192.168.0.202:3003/channels` 和 `/models/metadata`，失败时使用 3003 页面、状态接口、资源 hash 和线上 chunk 特征兜底验证。
+
+### 方案评审
+
+采用“公共展示组件 + 两张高频表小范围接入”的方案，而不是一次性迁移 new-api-main 的 DataTable core/layout/toolbar 分层。`TableId`、`ProviderBadge`、`TruncatedText` 都放在当前 `components/` 根目录，继续使用 NexusTok 已有 Base UI Tooltip/Popover、`StatusBadge`、`getLobeIcon` 和 `cn` 工具。设计方向延续默认前端 Base Nova 管理台：紧凑、可扫描、语义色来自现有 design token，不新增装饰性颜色、卡片或说明文案。
+
+验收方式：
+
+1. 定向 ESLint 检查新增组件和两个接入列文件。
+2. `cd web/default && ./node_modules/.bin/tsc -b`，确认公共组件 props、TanStack column cell 类型和 `ResizeObserver` 类型正确。
+3. `cd web/default && ./node_modules/.bin/rsbuild build`，确认生产构建通过。
+4. `git diff --check` 检查补丁空白。
+5. 优先使用 MCP 打开 `http://192.168.0.202:3003/channels` 和 `/models/metadata`，验证表格 ID、渠道名称截断、渠道类型 badge、模型 vendor badge、移动端渠道卡片复用列 cell 后仍正常显示；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/channels`、`/models/metadata`、`/api/status`，并拉取线上 `index.js`、CSS 和相关 async chunk 与本地 `dist` 比对，确认 3003 页面加载本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/eslint src/components/table-id.tsx src/components/provider-badge.tsx src/components/truncated-text.tsx src/components/long-text.tsx src/features/models/components/models-columns.tsx src/features/channels/components/channels-columns.tsx` 通过，且无 warning。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `TableId`、`ProviderBadge`、`TruncatedText`、`LongTextSide`、Base UI `side` 参数和 TanStack column cell 类型正确。
+3. `cd web/default && ./node_modules/.bin/rsbuild build` 通过；生产构建总量为 `24261.3 kB / 9214.6 kB gzip`。本轮相关 chunk 包括公共 `provider-badge` chunk `dist/static/js/async/2252.js`、渠道表 chunk `dist/static/js/async/4516.js`、模型管理 chunk `dist/static/js/async/4050.js`，以及复用 `LongText` 的共享/页面 chunk。
+4. `git diff --check` 通过。
+5. 已优先尝试 MCP Chrome 打开 `http://192.168.0.202:3003/channels`，但当前环境仍无法连接 Chrome 远程调试端：`Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮按约定使用 3003 真实 HTTP 页面、资源 hash 和线上 chunk 特征兜底验证。
+6. `curl --noproxy '*'` 访问 `http://192.168.0.202:3003/`、`/channels`、`/models/metadata`、`/api/status` 均返回 `200`；`/api/status` 返回正常 JSON，确认后端状态接口可用。
+7. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/2252.js`、`/static/js/async/4516.js`、`/static/js/async/4050.js`、`/static/js/async/8579.js` 等相关资源，并与本地 `web/default/dist` 逐字 `cmp` 一致；关键 sha256 为 `6b49f4293b8af999d03b4c4a7ed18a26f2735bddc55001bba9d491ca2a260e94`（index.js）、`73ffa1bdcc142cb2fc260dc83a39f1866f232fa30c59d1049e0a6b113e658814`（index.css）、`52c67886c73376734ebac2ba5797fcf1a62c76c0ca1629cf3cffa95f03ac4f89`（2252.js）、`b9fbd19484070d289165bef7be31ea1ff9ba2c77a1f24d669f589cdae27116f6`（4516.js）、`389ce483e57da353da5746735f234d2ff1f166d4177508712ba276aa9492205d`（4050.js）、`1cad09ab198db1e89f3656fdf0f813da5fe214a5c0a5da5294a3732c612c06fa`（8579.js）。
+8. 线上 chunk 特征确认：`2252.js` 包含 `provider-badge`；`4516.js` 包含 `ResizeObserver`、`Tag Aggregate`、`Multi-key: Random rotation`、`From IO.NET deployment`、`Model Name`；`4050.js` 包含 `Model Name`、`Vendor`；`index.js` 路由表包含模型管理和渠道管理相关加载配置。确认 3003 页面资源已加载本轮表格展示原子组件和两个高频表格接入产物。
+9. 本轮未新增 UI 文案，只新增组件标识和中文维护注释；无需修改 `en/zh/fr/ja/ru/vi` locale，也无需运行 `bun run i18n:sync`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 表格展示原子组件 | `web/default/src/components/{table-id.tsx,provider-badge.tsx,truncated-text.tsx,long-text.tsx}`、`web/default/src/features/{channels,models}/components/*-columns.tsx` | 原生化 new-api-main 的表格 ID、provider badge 和长文本截断优势；新增公共 `TableId`、`ProviderBadge`、`TruncatedText`，并让 `LongText` 支持响应式 overflow 重新测量；渠道和模型两张高频表先行接入，保留账号池、多 Key、IO.NET、上游模型同步、权限动作、筛选和 API 语义不变。 |
 | 2026-07-09 | 模型倍率 JSON 模式 CodeMirror 编辑器 | `web/default/src/components/json-code-editor.tsx`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/system-settings/models/model-ratio-form.tsx` | 原生化 new-api-main 的 JSON 结构化编辑体验；新增公共 `JsonCodeEditor` 复用现有 CodeMirror 底座，模型倍率 JSON 模式从普通 `Textarea` 切换为带行号、状态和格式化动作的编辑器，同时保持八个倍率字段、保存校验、计费表达式语义和提交接口不变。 |
 | 2026-07-09 | 渠道移动端专用卡片 | `web/default/src/features/channels/components/{channel-card.tsx,channels-table.tsx}` | 原生化 new-api-main 的渠道移动端卡片体验；移动端列表改用专用卡片重组类型、名称、状态、余额、优先级、权重、响应时间、最近测试、分组和行操作，继续复用现有列 cell、权限动作、tag 聚合和桌面表格逻辑。 |
 | 2026-07-09 | Playground CodeMirror 编辑器底座 | `web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 CodeMirror 结构化编辑能力；新增公共 `CodeBlockEditor`，Playground 消息编辑器切换为 Markdown/行号编辑器，并把键盘事件与 `EditorView` 生命周期解耦，保留 Shiki 只读代码块展示和现有保存/确认/Reset 语义。 |

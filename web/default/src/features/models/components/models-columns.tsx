@@ -29,7 +29,9 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table/column-header'
 import { GroupBadge } from '@/components/group-badge'
+import { ProviderBadge } from '@/components/provider-badge'
 import { StatusBadge } from '@/components/status-badge'
+import { TableId } from '@/components/table-id'
 import {
   getModelStatusConfig,
   getNameRuleConfig,
@@ -118,15 +120,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       ),
       cell: ({ row }) => {
         const id = row.getValue('id') as number
-        return (
-          <StatusBadge
-            label={String(id)}
-            variant='neutral'
-            copyText={String(id)}
-            size='sm'
-            className='font-mono'
-          />
-        )
+        return <TableId value={id} copyable />
       },
       size: 80,
     },
@@ -280,17 +274,12 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
 
-        const icon = vendor.icon ? getLobeIcon(vendor.icon, 14) : null
-
         return (
-          <div className='flex items-center gap-1.5'>
-            {icon}
-            <StatusBadge
-              label={vendor.name}
-              autoColor={vendor.name}
-              size='sm'
-            />
-          </div>
+          <ProviderBadge
+            iconKey={vendor.icon}
+            label={vendor.name}
+            className='max-w-[150px]'
+          />
         )
       },
       filterFn: (row, id, value) => {

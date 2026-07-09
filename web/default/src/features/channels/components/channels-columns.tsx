@@ -34,8 +34,7 @@ import {
   formatTimestampToDate,
   formatQuota as formatQuotaValue,
 } from '@/lib/format'
-import { getLobeIcon } from '@/lib/lobe-icon'
-import { cn, truncateText } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -47,11 +46,14 @@ import {
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { DataTableColumnHeader } from '@/components/data-table/column-header'
 import { GroupBadge } from '@/components/group-badge'
+import { ProviderBadge } from '@/components/provider-badge'
 import {
   StatusBadge,
   dotColorMap,
   textColorMap,
 } from '@/components/status-badge'
+import { TableId } from '@/components/table-id'
+import { TruncatedText } from '@/components/truncated-text'
 import { getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
@@ -490,15 +492,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       ),
       cell: ({ row }) => {
         const id = row.getValue('id') as number
-        return (
-          <StatusBadge
-            label={String(id)}
-            variant='neutral'
-            copyText={String(id)}
-            size='sm'
-            className='font-mono'
-          />
-        )
+        return <TableId value={id} copyable />
       },
       size: 80,
     },
@@ -569,7 +563,11 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
           <div className='flex items-center gap-2'>
             <div className='flex flex-col gap-1'>
               <div className='flex items-center gap-1.5'>
-                <span className='font-medium'>{truncateText(name, 30)}</span>
+                <TruncatedText
+                  text={name}
+                  maxWidth='max-w-[220px]'
+                  className='font-medium'
+                />
                 {isPassThrough && (
                   <TooltipProvider delay={100}>
                     <Tooltip>
@@ -632,20 +630,13 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
                 <UpstreamUpdateTags channel={channel} />
               </div>
               {channel.remark && (
-                <TooltipProvider delay={200}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className='text-muted-foreground text-xs' />
-                      }
-                    >
-                      {truncateText(channel.remark, 40)}
-                    </TooltipTrigger>
-                    <TooltipContent side='bottom' className='max-w-xs'>
-                      {channel.remark}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <TruncatedText
+                  text={channel.remark}
+                  maxWidth='max-w-[280px]'
+                  side='bottom'
+                  className='text-muted-foreground text-xs'
+                  contentClassName='break-words'
+                />
               )}
             </div>
           </div>
@@ -677,7 +668,6 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const typeNameKey = getChannelTypeLabel(type)
         const typeName = t(typeNameKey)
         const iconName = getChannelTypeIcon(type)
-        const icon = getLobeIcon(`${iconName}.Color`, 20)
         const channel = row.original as Channel
         const isMultiKey = isMultiKeyChannel(channel)
         const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
@@ -714,13 +704,12 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
                   </Tooltip>
                 </TooltipProvider>
               )}
-              {icon}
             </div>
-            <StatusBadge
+            <ProviderBadge
+              iconKey={`${iconName}.Color`}
+              iconSize={20}
               label={typeName}
-              autoColor={typeName}
-              size='sm'
-              copyable={false}
+              className='max-w-[160px]'
             />
             {isIonet && (
               <TooltipProvider delay={100}>
