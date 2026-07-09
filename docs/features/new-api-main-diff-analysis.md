@@ -2817,6 +2817,62 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 4. MCP 打开 `http://192.168.0.202:3003/system-settings/security/token-limits`，确认页面渲染、字段默认值、无控制台错误。
 5. MCP 在浏览器上下文调用 `PUT /api/option/` 的无效权限/校验或读取 `GET /api/option/`，确认现有 option key 可被当前前端识别；不随意修改线上真实上限值。
 
+## 本轮实施评审：Routing Reliability 默认前端聚合入口原生化
+
+### 需求分析
+
+`new-api-main` 在模型设置中提供 `Routing Reliability` 分区，将请求重试次数、自动重试状态码、渠道自动禁用、渠道自动恢复、自动渠道测试和测试模式集中到一个面向模型路由运维的页面。NexusTok 后端已经具备这些 option 和运行逻辑，当前默认前端也能在 System Behavior、Monitoring & Alerts、Operations 等位置配置其中多数能力；但相关字段分散在不同设置页，管理员排查“模型路由为什么重试、为什么禁用、什么时候恢复”时需要跨页面跳转，认知成本偏高。
+
+本轮目标是把 `new-api-main` 的聚合视图吸收为 NexusTok 原生能力：
+
+1. 在 `/system-settings/models` 下新增 `routing-reliability` 分区，把模型路由可靠性相关 option 汇总展示。
+2. 复用 NexusTok 现有后端 option、`useUpdateOption()`、状态码规则校验和 `system_setting.sensitive_write` 权限，不新增后端接口、不改变 Relay 热路径。
+3. 保留旧入口，不迁移、不删除 System Behavior 和 Monitoring & Alerts 中已有字段，避免影响管理员现有操作路径。
+4. 新增 `monitor_setting.channel_test_mode` 默认前端入口，支持 `scheduled_all` 与 `passive_recovery`，对齐后端监控任务模式语义。
+5. 补齐默认前端六语翻译，并在差异报告实施记录中标注该能力已完成默认前端原生化。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 默认前端模型设置 | `web/default/src/features/system-settings/models/*` | 新增 Routing Reliability 分区、注册导航项，并把现有可靠性 option 接入模型设置默认值。 |
+| 默认前端类型 | `web/default/src/features/system-settings/types.ts` | `ModelSettings` 增加重试、渠道自动禁用/恢复、自动测试与 `channel_test_mode` 字段声明。 |
+| 默认前端表单校验 | `web/default/src/features/system-settings/models/routing-reliability-section.tsx` | 复用 `parseHttpStatusCodeRules`，校验 HTTP 状态码列表和范围；数值字段保持非负或正整数约束。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 新增 Routing Reliability 页面标题、说明、分组标题、测试模式和保存按钮文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验收方式。 |
+
+### 风险评估
+
+1. 同一个 option 会出现在多个设置入口，可能造成管理员认知重复。本轮保留旧入口是有意的兼容策略：新增模型路由聚合视图用于提升运维效率，不改变原有页面和用户习惯；后续若要收敛旧入口，需要单独做迁移评审和文案提示。
+2. `RetryTimes`、自动重试状态码和渠道自动禁用规则会直接影响 Relay 可用性。错误配置可能导致请求过度重试、故障渠道被保留或正常渠道被禁用。前端必须保留 0-10 重试次数限制、状态码规则校验和自动规范化提示。
+3. `AutomaticDisableKeywords` 可能根据上游错误内容禁用渠道，属于高影响运维规则。表单只做换行规范化，不改变后端匹配语义，避免引入隐藏行为差异。
+4. 自动测试模式影响 SystemTask/监控任务的渠道检测范围。`scheduled_all` 适合定时检测所有非手动禁用渠道，`passive_recovery` 适合只恢复自动禁用渠道；本轮只提供配置入口，不修改后端 runner。
+5. 保存仍走 `useUpdateOption()`，缺少 `system_setting.sensitive_write` 时按钮禁用且 hook 拦截提交；后端 `/api/option` 仍保留 Root/Authz 边界。
+6. 该切片只改默认前端和文档，不涉及数据库迁移、计费、账号池、支付或 Relay 请求转换，核心业务风险较低。
+
+### 方案评审
+
+采用“新增聚合入口、复用现有 option、保留旧入口”的方案。新增 `RoutingReliabilitySection` 使用当前 NexusTok 设置页已有 `Form`、`SettingsSection`、`Input`、`Switch`、`Textarea`、`Select` 和 `Button` 组合，不引入 `new-api-main` 中尚未在本项目落地的 `SettingsForm`/浮动保存动作，避免一次性扩大 UI 基建变更。
+
+表单 schema 包含：
+
+1. `RetryTimes`：0-10 的整数重试次数。
+2. `AutomaticRetryStatusCodes`：自动重试状态码，支持逗号和闭区间，保存前规范化。
+3. `monitor_setting.auto_test_channel_enabled`、`monitor_setting.auto_test_channel_minutes`、`monitor_setting.channel_test_mode`：自动测试开关、测试间隔和测试模式。
+4. `AutomaticEnableChannelEnabled`：成功检测后自动恢复渠道。
+5. `AutomaticDisableChannelEnabled`、`ChannelDisableThreshold`、`AutomaticDisableStatusCodes`、`AutomaticDisableKeywords`：自动禁用规则。
+
+保存时先把表单值规范化，与进入页面时的 baseline 对比；没有变化时只提示 `No changes to save`，不发 `PUT /api/option/`；有变化时逐项调用 `updateOption.mutateAsync`。状态码字段通过 `parseHttpStatusCodeRules` 校验和保存规范化结果，`channel_test_mode` 对缺失或未知值兜底为 `scheduled_all`。Base UI `Select` 使用根节点 `items` prop，并把 `SelectItem` 放在 `SelectGroup` 内，符合当前组件约束。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+2. `cd web/default && node scripts/sync-i18n.mjs` 通过，新增 `t()` 文案无缺失翻译。
+3. `git diff --check` 通过。
+4. MCP 打开 `http://192.168.0.202:3003/`，确认热更新后的首页可访问且未被旧缓存误导。
+5. MCP 打开 `http://192.168.0.202:3003/system-settings/models/routing-reliability`，确认导航项、表单字段、默认值、测试模式下拉和状态码规范化提示渲染正常，控制台无错误。
+6. MCP 点击无改动保存，确认只提示 `No changes to save`，不误写线上真实配置；若页面未更新，先重启容器再复验。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2892,3 +2948,4 @@ Controller 层复用 `common.DecodeJson`/`ShouldBindJSON` 的现有习惯不涉�
 | 2026-07-09 | Waffo Pancake 配置原子保存 | `model/option.go`、`service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/{api.ts,types.ts,integrations/waffo-pancake-settings-section.tsx}` | 对齐 new-api-main 的 Waffo Pancake 保存优势，新增三库兼容 `UpdateOptionsBulk` 与 `POST /api/option/waffo-pancake/save`，支付设置页改为一次性提交 Waffo Pancake 配置；catalog、pair 和订阅产品能力保留为后续 SDK 阶段。 |
 | 2026-07-09 | 订阅额度手动重置 | `model/subscription.go`、`controller/subscription.go`、`router/subscription-router.go`、`web/default/src/features/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的管理员手动重置订阅额度能力，支持套餐级和用户级重置、`advance_reset_time`、`subscription.operate` 权限、用户管理日志和管理审计。 |
 | 2026-07-09 | Token Limits 默认前端入口 | `web/default/src/features/system-settings/{security,request-limits,types.ts}`、`web/default/src/i18n/locales/*.json` | 默认前端安全设置新增 `token-limits` 分区，Root 可查看并保存现有 `token_setting.max_user_tokens`，复用 `system_setting.sensitive_write` 权限和统一 option 保存链路。 |
+| 2026-07-09 | Routing Reliability 默认前端聚合入口 | `web/default/src/features/system-settings/models/*`、`web/default/src/features/system-settings/types.ts`、`web/default/src/i18n/locales/*.json` | 默认前端模型设置新增 `routing-reliability` 分区，聚合重试、自动重试状态码、渠道自动禁用/恢复和自动测试模式，复用现有 option 保存与 `system_setting.sensitive_write` 权限。 |
