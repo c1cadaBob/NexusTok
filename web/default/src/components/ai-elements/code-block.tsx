@@ -58,9 +58,11 @@ type CodeBlockEditorProps = Omit<
 > & {
   actions?: ReactNode
   ariaLabel: string
+  autoFocus?: boolean
   language: BundledLanguage | string
   onChange: (value: string) => void
   onKeyDown?: (event: globalThis.KeyboardEvent) => void
+  readOnly?: boolean
   rows?: number
   title?: ReactNode
   value: string
@@ -72,6 +74,7 @@ type CodeMirrorCodeViewProps = {
   language: BundledLanguage | string
   onChange: (value: string) => void
   onKeyDown?: (event: globalThis.KeyboardEvent) => void
+  readOnly?: boolean
   rows?: number
   showLineNumbers?: boolean
   value: string
@@ -289,6 +292,7 @@ function getCodeMirrorLanguageExtension(language: BundledLanguage | string) {
  */
 function getCodeMirrorExtensions(options: {
   language: BundledLanguage | string
+  readOnly: boolean
   showLineNumbers: boolean
 }): Extension[] {
   const extensions: Extension[] = [
@@ -301,6 +305,13 @@ function getCodeMirrorExtensions(options: {
 
   if (options.showLineNumbers) {
     extensions.unshift(lineNumbers())
+  }
+
+  if (options.readOnly) {
+    extensions.push(
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false)
+    )
   }
 
   return extensions
@@ -318,6 +329,7 @@ function CodeMirrorCodeView({
   language,
   onChange,
   onKeyDown,
+  readOnly = false,
   rows = 8,
   showLineNumbers = true,
   value,
@@ -331,9 +343,10 @@ function CodeMirrorCodeView({
     () =>
       getCodeMirrorExtensions({
         language,
+        readOnly,
         showLineNumbers,
       }),
-    [language, showLineNumbers]
+    [language, readOnly, showLineNumbers]
   )
 
   useEffect(() => {
@@ -409,6 +422,7 @@ function CodeMirrorCodeView({
     <div
       aria-label={ariaLabel}
       aria-multiline='true'
+      aria-readonly={readOnly ? 'true' : undefined}
       className='min-h-(--code-editor-min-height)'
       ref={editorHostRef}
       role='textbox'
@@ -478,10 +492,12 @@ export const CodeBlock = ({
 export const CodeBlockEditor = ({
   actions,
   ariaLabel,
+  autoFocus = true,
   className,
   language,
   onChange,
   onKeyDown,
+  readOnly = false,
   rows = 8,
   title,
   value,
@@ -509,10 +525,11 @@ export const CodeBlockEditor = ({
     <div className='max-w-full overflow-auto'>
       <CodeMirrorCodeView
         ariaLabel={ariaLabel}
-        autoFocus
+        autoFocus={autoFocus}
         language={language}
         onChange={onChange}
         onKeyDown={onKeyDown}
+        readOnly={readOnly}
         rows={rows}
         showLineNumbers
         value={value}

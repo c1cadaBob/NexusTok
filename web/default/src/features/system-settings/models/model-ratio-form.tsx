@@ -18,9 +18,9 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { memo, useCallback, useState } from 'react'
 import { type UseFormReturn } from 'react-hook-form'
+import { Link } from '@tanstack/react-router'
 import { Code2, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Link } from '@tanstack/react-router'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +33,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
+import { JsonCodeEditor } from '@/components/json-code-editor'
 import { ModelRatioVisualEditor } from './model-ratio-visual-editor'
 
 type ModelFormValues = {
@@ -59,6 +59,112 @@ type ModelRatioFormProps = {
   canSave: boolean
   canReset: boolean
   disabledReason: string
+}
+
+type ModelJsonFieldName =
+  | 'ModelPrice'
+  | 'ModelRatio'
+  | 'CacheRatio'
+  | 'CreateCacheRatio'
+  | 'CompletionRatio'
+  | 'ImageRatio'
+  | 'AudioRatio'
+  | 'AudioCompletionRatio'
+
+const modelJsonFields: Array<{
+  descriptionKey: string
+  labelKey: string
+  name: ModelJsonFieldName
+  rows: number
+}> = [
+  {
+    descriptionKey:
+      'JSON map of model → USD cost per request. Takes precedence over ratio based billing.',
+    labelKey: 'Model fixed pricing',
+    name: 'ModelPrice',
+    rows: 8,
+  },
+  {
+    descriptionKey: 'JSON map of model → multiplier applied to quota billing.',
+    labelKey: 'Model ratio',
+    name: 'ModelRatio',
+    rows: 8,
+  },
+  {
+    descriptionKey: 'Optional ratio used when upstream cache hits occur.',
+    labelKey: 'Prompt cache ratio',
+    name: 'CacheRatio',
+    rows: 8,
+  },
+  {
+    descriptionKey:
+      'Ratio applied when creating cache entries for supported models.',
+    labelKey: 'Create cache ratio',
+    name: 'CreateCacheRatio',
+    rows: 8,
+  },
+  {
+    descriptionKey:
+      'Applies to custom completion endpoints. JSON map of model → ratio.',
+    labelKey: 'Completion ratio',
+    name: 'CompletionRatio',
+    rows: 8,
+  },
+  {
+    descriptionKey: 'Configure per-model ratio for image inputs or outputs.',
+    labelKey: 'Image ratio',
+    name: 'ImageRatio',
+    rows: 6,
+  },
+  {
+    descriptionKey:
+      'Ratio applied to audio inputs where supported by the upstream model.',
+    labelKey: 'Audio ratio',
+    name: 'AudioRatio',
+    rows: 6,
+  },
+  {
+    descriptionKey: 'Ratio applied to audio completions for streaming models.',
+    labelKey: 'Audio completion ratio',
+    name: 'AudioCompletionRatio',
+    rows: 6,
+  },
+]
+
+/**
+ * 渲染模型倍率 JSON 字段。
+ *
+ * 各字段仍然写回原 react-hook-form 字符串值；JSON 结构是否合法继续由
+ * 表单 schema 和保存接口兜底，编辑器只提供行号、状态和格式化体验。
+ */
+function ModelJsonEditorField(props: {
+  description: string
+  form: UseFormReturn<ModelFormValues>
+  label: string
+  name: ModelJsonFieldName
+  rows: number
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem className='min-w-0'>
+          <FormLabel>{props.label}</FormLabel>
+          <FormControl>
+            <JsonCodeEditor
+              ariaLabel={props.label}
+              onChange={field.onChange}
+              rows={props.rows}
+              value={field.value}
+            />
+          </FormControl>
+          <FormDescription>{props.description}</FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 }
 
 export const ModelRatioForm = memo(function ModelRatioForm({
@@ -106,12 +212,12 @@ export const ModelRatioForm = memo(function ModelRatioForm({
         <Button variant='outline' size='sm' onClick={toggleEditMode}>
           {editMode === 'visual' ? (
             <>
-              <Code2 className='mr-2 h-4 w-4' />
+              <Code2 data-icon='inline-start' />
               {t('Switch to JSON')}
             </>
           ) : (
             <>
-              <Eye className='mr-2 h-4 w-4' />
+              <Eye data-icon='inline-start' />
               {t('Switch to Visual')}
             </>
           )}
@@ -189,155 +295,16 @@ export const ModelRatioForm = memo(function ModelRatioForm({
           </div>
         ) : (
           <form onSubmit={form.handleSubmit(onSave)} className='space-y-6'>
-            <FormField
-              control={form.control}
-              name='ModelPrice'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Model fixed pricing')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'JSON map of model → USD cost per request. Takes precedence over ratio based billing.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='ModelRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Model ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'JSON map of model → multiplier applied to quota billing.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='CacheRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Prompt cache ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Optional ratio used when upstream cache hits occur.')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='CreateCacheRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Create cache ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Ratio applied when creating cache entries for supported models.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='CompletionRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Completion ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Applies to custom completion endpoints. JSON map of model → ratio.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='ImageRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Image ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={6} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Configure per-model ratio for image inputs or outputs.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AudioRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Audio ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={6} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Ratio applied to audio inputs where supported by the upstream model.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AudioCompletionRatio'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Audio completion ratio')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={6} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Ratio applied to audio completions for streaming models.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {modelJsonFields.map((item) => (
+              <ModelJsonEditorField
+                description={t(item.descriptionKey)}
+                form={form}
+                key={item.name}
+                label={t(item.labelKey)}
+                name={item.name}
+                rows={item.rows}
+              />
+            ))}
 
             <FormField
               control={form.control}

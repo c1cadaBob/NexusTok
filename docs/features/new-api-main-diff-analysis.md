@@ -4814,8 +4814,65 @@ new-api-main 的渠道管理页有专用 `channel-card.tsx`，移动端不再机
 7. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/3020.js`，分别与本地 `web/default/dist/static/js/index.js`、`web/default/dist/static/css/index.css`、`web/default/dist/static/js/async/3020.js` 逐字 `cmp` 一致；sha256 分别为 `5c661e0ebdbeef2da067b03ac9a5e913d1ced912d24255aa76d1d666c73e2596`（index.js）、`22eb2d6118acd2bf3ceab39c799258d25f8c7cc1faef805b9bd57365b1fe9b64`（index.css）、`db02f700719db20f4c3b4ad7b55aa511eba9c0c3a52e2a504f64807ae8c38d3f`（3020.js）。
 8. 线上渠道 chunk 已包含 `Used / Remaining`、`Last Tested`、`No Channels Found`、`No channels available. Create your first channel to get started.` 等移动端卡片特征，确认 3003 页面资源已加载本轮渠道卡片构建产物；本轮未新增 UI 文案，无需更新 locale。
 
+## 本轮实施评审：模型倍率 JSON 模式 CodeMirror 编辑器原生化
+
+### 需求分析
+
+new-api-main 在 `web/default/src/components/json-code-editor.tsx` 中把系统设置里的 JSON 文本编辑从普通 `Textarea` 提升为带行号、JSON 状态和格式化按钮的代码编辑体验。NexusTok 当前模型倍率页已经具备更完整的可视化编辑器、计费表达式系统和 CodeMirror 底座，但在 `ModelRatioForm` 的 JSON 模式中仍使用多个普通 `Textarea`，管理员编辑大体量模型价格、倍率、缓存倍率、音频倍率和表达式映射时缺少结构化编辑反馈。
+
+本轮目标是把 new-api-main 的“JSON 模式结构化编辑”转为 NexusTok 原生能力：
+
+1. 新增公共 `web/default/src/components/json-code-editor.tsx`，复用 NexusTok 已落地的 `CodeBlockEditor` / CodeMirror 底座，不额外引入 CodeMirror 依赖。
+2. 在 `web/default/src/features/system-settings/models/model-ratio-form.tsx` 的 JSON 模式中替换原始 `Textarea`，保留每个 `FormField`、字段名、保存按钮、重置按钮、schema 校验和后台保存 API 不变。
+3. 提供 JSON 语法状态和 `Format JSON` 动作；空值保持可编辑且视为未填写，非法草稿不被格式化覆盖，最终保存仍由现有表单校验兜底。
+4. 计费表达式系统相关字段 `BillingMode`、`BillingExpr` 的存储语义不变；本轮只改 JSON map 外层编辑体验，不改表达式语言、变量、`p/c/len` 归一化、预消费或结算逻辑。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 公共 JSON 编辑器 | `web/default/src/components/json-code-editor.tsx` | 新增基于 CodeMirror 的 JSON 编辑器，包含标题、状态和格式化动作。 |
+| 模型倍率设置 | `web/default/src/features/system-settings/models/model-ratio-form.tsx` | JSON 模式从 `Textarea` 切换到公共编辑器；可视化模式和保存/重置逻辑不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. 模型倍率设置直接影响计费，不能在 UI 层修改字段值的含义；本轮只在用户输入、JSON 格式化按钮和表单受控值之间同步字符串，不改任何字段名称或提交结构。
+2. JSON 格式化可能改变空白但不能改变数据结构；实现中只在 `JSON.parse` 成功时执行 `JSON.stringify(parsed, null, 2)`，非法草稿保持原样并显示错误状态。
+3. `BillingExpr` 字段本身是 JSON map，value 可能包含表达式字符串和 `|||` request rule；格式化 JSON 只能处理外层 JSON，表达式字符串内容保持原值，避免破坏计费表达式系统的一表达式一真相原则。
+4. 复用 `CodeBlockEditor` 会沿用 Playground 的 CodeMirror 生命周期；需要通过 TypeScript 和构建确认多个编辑器实例不会影响表单渲染。
+5. 本轮复用已有 `JSON`、`Invalid JSON`、`Format JSON` 等 i18n key，不新增文案；如实际实现新增文案，则必须补齐 `en/zh/fr/ja/ru/vi` 并运行 `bun run i18n:sync`。
+6. MCP Chrome 当前可能仍不可用；完成后仍需先尝试 MCP 打开系统设置模型页，失败时使用 3003 页面、接口状态、资源 hash 和线上 chunk 特征兜底验证。
+
+### 方案评审
+
+采用“公共 JSON 编辑器 + 局部替换 Textarea”的方案，而不是搬运 new-api-main 的手写行号编辑器。NexusTok 已有 `CodeBlockEditor`，继续复用可避免重复维护滚动同步、行号、键盘事件和 editor 生命周期；`JsonCodeEditor` 只负责 JSON 状态、格式化动作和表单无障碍属性转发。`ModelRatioForm` 通过一个本地 helper 统一渲染 JSON 字段，减少八个 `FormField` 的重复，同时保持每个字段的 label、description、rows 和 `FormMessage`。
+
+验收方式：
+
+1. 定向 ESLint 检查 `json-code-editor.tsx` 和 `model-ratio-form.tsx`。
+2. `cd web/default && ./node_modules/.bin/tsc -b`，确认公共编辑器 props、react-hook-form 字段和 CodeMirror 受控值类型正确。
+3. `cd web/default && ./node_modules/.bin/rsbuild build`，确认生产构建通过。
+4. 如无新增 i18n 文案，扫描确认使用的 `JSON`、`Invalid JSON`、`Format JSON` 已存在于各 locale；如有新增则运行 `bun run i18n:sync`。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/pricing-settings`，切到 JSON 模式验证编辑器、格式化按钮和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、目标页面、`/api/status`，并拉取线上 `index.js`、CSS 和定价设置相关 chunk 与本地 `dist` 比对，确认 3003 页面加载本轮构建产物。
+
+验证记录：
+
+1. 已按计费表达式系统要求先阅读 `pkg/billingexpr/expr.md`，确认本轮只改模型倍率 JSON map 的编辑体验，不改变 `BillingMode`、`BillingExpr`、表达式语言、`p/c/len` 归一化、预消费或结算逻辑。
+2. `cd web/default && ./node_modules/.bin/eslint src/components/json-code-editor.tsx src/components/ai-elements/code-block.tsx src/features/system-settings/models/model-ratio-form.tsx` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过；生产构建总量为 `24257.7 kB / 9213.4 kB gzip`，本轮相关 chunk 包括 `dist/static/js/async/9522.e6a9f9e1c2.js`、`dist/static/js/async/8130.f0a8779084.js`、`dist/static/js/async/5099.7a9a672d2b.js`、`dist/static/js/async/6675.cf4e7544f7.js`。
+5. 已扫描 `en/zh/fr/ja/ru/vi` locale，确认 `JSON`、`JSON Editor`、`Invalid JSON`、`Format JSON` 均已存在；本轮无新增 UI 文案，无需运行 `bun run i18n:sync`。
+6. `git diff --check` 通过。
+7. 已优先尝试 MCP Chrome 打开 `http://192.168.0.202:3003/pricing-settings`，但当前环境仍无法连接 Chrome 远程调试端：`Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮按约定使用 3003 真实 HTTP 页面和资源 hash 兜底验证。
+8. `curl --noproxy '*'` 访问 `http://192.168.0.202:3003/`、`/pricing-settings`、`/api/status` 均返回 `200`；`/api/status` 返回正常 JSON，确认后端状态接口可用。
+9. 已从 3003 拉取 `/static/js/index.js`、`/static/css/index.css`、`/static/js/async/9522.js`、`/static/js/async/8130.js`、`/static/js/async/5099.js`、`/static/js/async/6675.js`，与本地 `web/default/dist` 逐字 `cmp` 一致；sha256 分别为 `f6534ac2678517a15323d0c1ea6a8215626f9f434820a192ae4c759015ca7616`（index.js）、`22eb2d6118acd2bf3ceab39c799258d25f8c7cc1faef805b9bd57365b1fe9b64`（index.css）、`b619df6e2f4b221d80a4d84d656670134717fedb8de04a15fcf9e3c3b817a668`（9522.js）、`9f5daf4ca878611947801a82cb90ade4d870e8d2f997ae3cce432769930a1367`（8130.js）、`a4a086d056ab93f9302c0aa14efc4ae7c1387b225c3790dd6e1b06fb5db98c8d`（5099.js）、`638a900f61cfed997859b1585408580f1847215067b0cf81ea608d278bb1b548`（6675.js）。
+10. 线上 chunk 已包含 `Format JSON`、`Invalid JSON`、`Model fixed pricing`、`Advanced bulk pricing`、`aria-readonly`、`readOnly`、`autoFocus` 等特征，确认 3003 页面资源已加载本轮 JSON CodeMirror 编辑器、格式化动作和多编辑器非自动聚焦/readOnly 支持。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 模型倍率 JSON 模式 CodeMirror 编辑器 | `web/default/src/components/json-code-editor.tsx`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/system-settings/models/model-ratio-form.tsx` | 原生化 new-api-main 的 JSON 结构化编辑体验；新增公共 `JsonCodeEditor` 复用现有 CodeMirror 底座，模型倍率 JSON 模式从普通 `Textarea` 切换为带行号、状态和格式化动作的编辑器，同时保持八个倍率字段、保存校验、计费表达式语义和提交接口不变。 |
 | 2026-07-09 | 渠道移动端专用卡片 | `web/default/src/features/channels/components/{channel-card.tsx,channels-table.tsx}` | 原生化 new-api-main 的渠道移动端卡片体验；移动端列表改用专用卡片重组类型、名称、状态、余额、优先级、权重、响应时间、最近测试、分组和行操作，继续复用现有列 cell、权限动作、tag 聚合和桌面表格逻辑。 |
 | 2026-07-09 | Playground CodeMirror 编辑器底座 | `web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 CodeMirror 结构化编辑能力；新增公共 `CodeBlockEditor`，Playground 消息编辑器切换为 Markdown/行号编辑器，并把键盘事件与 `EditorView` 生命周期解耦，保留 Shiki 只读代码块展示和现有保存/确认/Reset 语义。 |
 | 2026-07-09 | Playground 消息编辑器状态安全 | `web/default/src/features/playground/components/playground-message-editor.tsx`、`web/default/src/features/playground/lib/{message-editor-utils.test.ts,message-styles.ts,message-styles.test.ts}` | 原生化 new-api-main 的编辑器误取消保护、重置动作、图标动作和编辑态宽度对齐；继续使用现有 `Textarea`，不引入 CodeMirror 依赖，保存、Save & Submit、消息数组和请求协议保持不变。 |
