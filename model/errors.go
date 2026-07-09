@@ -23,6 +23,15 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	// ErrUserEmptyCredentials 用户名或密码为空
 	ErrUserEmptyCredentials = errors.New("empty credentials")
+	// ErrEmailAlreadyTaken 表示邮箱已被其他用户占用。
+	// 该错误用于注册、邮箱绑定和 OAuth 写入前的模型层唯一性保护。
+	ErrEmailAlreadyTaken = errors.New("email already taken")
+	// ErrEmailNotFound 表示按规范化邮箱没有找到可用于当前操作的用户。
+	// 密码重置等路径会用它区分“没有唯一目标用户”和数据库异常。
+	ErrEmailNotFound = errors.New("email not found")
+	// ErrEmailAmbiguous 表示同一个规范化邮箱匹配到多个历史用户。
+	// 出现该错误时必须拒绝自动重置密码或绑定，避免误操作多个账号。
+	ErrEmailAmbiguous = errors.New("email matches multiple users")
 )
 
 // Token 认证错误

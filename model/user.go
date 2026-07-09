@@ -13,7 +13,6 @@ package model
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -114,7 +113,7 @@ func (user *User) SetAccessToken(token string) {
 func (user *User) GetSetting() dto.UserSetting {
 	setting := dto.UserSetting{}
 	if user.Setting != "" {
-		err := json.Unmarshal([]byte(user.Setting), &setting)
+		err := common.Unmarshal([]byte(user.Setting), &setting)
 		if err != nil {
 			common.SysLog("failed to unmarshal setting: " + err.Error())
 		}
@@ -128,12 +127,32 @@ func (user *User) GetSetting() dto.UserSetting {
 // 参数：
 //   - setting: 用户设置对象
 func (user *User) SetSetting(setting dto.UserSetting) {
-	settingBytes, err := json.Marshal(setting)
+	settingBytes, err := common.Marshal(setting)
 	if err != nil {
 		common.SysLog("failed to marshal setting: " + err.Error())
 		return
 	}
 	user.Setting = string(settingBytes)
+}
+
+// UpdateUserSetting 只更新用户设置列，并同步刷新设置缓存。
+//
+// 个人设置保存经常发生在用户请求和计费扣减并发运行时，因此这里不能复用
+// User.Update 的整行更新语义。该函数只写入 setting 字段，保证 quota、
+// used_quota、request_count 等账务字段不会被旧用户快照覆盖。
+func UpdateUserSetting(userId int, setting dto.UserSetting) error {
+	if userId == 0 {
+		return errors.New("id 为空！")
+	}
+	settingBytes, err := common.Marshal(setting)
+	if err != nil {
+		return err
+	}
+	settingValue := string(settingBytes)
+	if err = DB.Model(&User{}).Where("id = ?", userId).Update("setting", settingValue).Error; err != nil {
+		return err
+	}
+	return updateUserSettingCache(userId, settingValue)
 }
 
 // generateDefaultSidebarConfigForRole 根据用户角色生成默认的边栏配置
@@ -203,7 +222,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	// 普通用户不包含admin区域
 
 	// 转换为JSON字符串
-	configBytes, err := json.Marshal(defaultConfig)
+	configBytes, err := common.Marshal(defaultConfig)
 	if err != nil {
 		common.SysLog("生成默认边栏配置失败: " + err.Error())
 		return ""
@@ -212,17 +231,21 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	return string(configBytes)
 }
 
-// CheckUserExistOrDeleted check if user exist or deleted, if not exist, return false, nil, if deleted or exist, return true, nil
+// CheckUserExistOrDeleted 检查用户名或邮箱是否已存在（包含软删除记录）。
+//
+// 返回值含义：
+//   - false, nil：用户名和邮箱均未被占用。
+//   - true, nil：存在正常或软删除用户占用了用户名/邮箱。
+//   - false, error：数据库查询失败。
 func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 	var user User
 
-	// err := DB.Unscoped().First(&user, "username = ? or email = ?", username, email).Error
-	// check email if empty
 	var err error
+	email = NormalizeEmail(email)
 	if email == "" {
 		err = DB.Unscoped().First(&user, "username = ?", username).Error
 	} else {
-		err = DB.Unscoped().First(&user, "username = ? or email = ?", username, email).Error
+		err = DB.Unscoped().First(&user, "username = ? or LOWER(email) = ?", username, email).Error
 	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -234,6 +257,89 @@ func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 	}
 	// exist, return true, nil
 	return true, nil
+}
+
+// NormalizeEmail 将邮箱转换为模型层持久化和比较所用的规范格式。
+//
+// 邮箱在业务语义上需要大小写不敏感，历史数据中又可能存在不同大小写的
+// 重复值。所有注册、绑定、登录辅助查询和密码重置入口都应先调用该函数，
+// 再进入数据库比较，避免同一邮箱因为大小写或首尾空白被当成多个账号。
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// emailQuery 返回大小写不敏感的邮箱查询。
+//
+// 查询包含软删除记录，用于注册和绑定前的唯一性检查；这样被软删除的历史
+// 账号不会被新账号悄悄复用邮箱，后续恢复账号时也不会产生冲突。
+func emailQuery(tx *gorm.DB, email string) *gorm.DB {
+	if tx == nil {
+		tx = DB
+	}
+	return tx.Unscoped().Model(&User{}).Where("LOWER(email) = ?", NormalizeEmail(email))
+}
+
+// CountUsersByEmail 统计规范化邮箱匹配到的用户数量。
+func CountUsersByEmail(email string) (int64, error) {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return 0, nil
+	}
+	var count int64
+	err := emailQuery(DB, email).Count(&count).Error
+	return count, err
+}
+
+// IsEmailAvailable 判断邮箱是否可用于指定用户。
+//
+// excludeUserID 用于用户修改自身邮箱时排除当前账号；传 0 表示不能被任何
+// 历史账号占用。空邮箱允许重复，兼容无邮箱的 OAuth/passwordless 用户。
+func IsEmailAvailable(email string, excludeUserID int) (bool, error) {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return true, nil
+	}
+	query := emailQuery(DB, email)
+	if excludeUserID > 0 {
+		query = query.Where("id <> ?", excludeUserID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// EnsureEmailAvailable 在邮箱不可用时返回稳定的模型层错误。
+func EnsureEmailAvailable(email string, excludeUserID int) error {
+	available, err := IsEmailAvailable(email, excludeUserID)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return ErrEmailAlreadyTaken
+	}
+	return nil
+}
+
+// ensureEmailAvailableWithTx 在指定事务中执行邮箱唯一性检查。
+func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) error {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return nil
+	}
+	query := emailQuery(tx, email)
+	if excludeUserID > 0 {
+		query = query.Where("id <> ?", excludeUserID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrEmailAlreadyTaken
+	}
+	return nil
 }
 
 func GetMaxUserId() int {
@@ -430,28 +536,43 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	return tx.Commit().Error
 }
 
-func (user *User) Insert(inviterId int) error {
+// prepareForInsert 统一处理用户写入前的规范化与安全检查。
+//
+// 该函数只在 Insert/InsertWithTx 中调用：邮箱先转换为规范格式，再在同一
+// 事务内执行大小写不敏感唯一性检查；密码只有在非空时才哈希，确保 OAuth
+// 或 Passkey 等 passwordless 用户能够继续以空密码形式保存。
+func (user *User) prepareForInsert(tx *gorm.DB) error {
+	user.Email = NormalizeEmail(user.Email)
+	if err := ensureEmailAvailableWithTx(tx, user.Email, 0); err != nil {
+		return err
+	}
+	if user.Password == "" {
+		return nil
+	}
 	var err error
-	if user.Password != "" {
-		user.Password, err = common.Password2Hash(user.Password)
-		if err != nil {
+	user.Password, err = common.Password2Hash(user.Password)
+	return err
+}
+
+func (user *User) Insert(inviterId int) error {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-	}
-	user.Quota = common.QuotaForNewUser
-	//user.SetAccessToken(common.GetUUID())
-	user.AffCode = common.GetRandomString(4)
+		user.Quota = common.QuotaForNewUser
+		//user.SetAccessToken(common.GetUUID())
+		user.AffCode = common.GetRandomString(4)
 
-	// 初始化用户设置，包括默认的边栏配置
-	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
-		// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-		user.SetSetting(defaultSetting)
-	}
+		// 初始化用户设置，包括默认的边栏配置
+		if user.Setting == "" {
+			defaultSetting := dto.UserSetting{}
+			// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
+			user.SetSetting(defaultSetting)
+		}
 
-	result := DB.Create(user)
-	if result.Error != nil {
-		return result.Error
+		return tx.Create(user).Error
+	}); err != nil {
+		return err
 	}
 
 	// 用户创建成功后，根据角色初始化边栏配置
@@ -486,16 +607,17 @@ func (user *User) Insert(inviterId int) error {
 	return nil
 }
 
-// InsertWithTx inserts a new user within an existing transaction.
-// This is used for OAuth registration where user creation and binding need to be atomic.
-// Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
+// InsertWithTx 在外部事务中创建用户。
+//
+// OAuth 注册需要把用户创建和第三方绑定放在同一个事务内，确保中间任一
+// 步失败时不会留下半绑定账号。侧边栏初始化、注册日志和邀请奖励等写入
+// 依赖已提交的用户 ID，应在事务提交成功后由调用方执行。
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
-	var err error
-	if user.Password != "" {
-		user.Password, err = common.Password2Hash(user.Password)
-		if err != nil {
-			return err
-		}
+	if tx == nil {
+		tx = DB
+	}
+	if err := user.prepareForInsert(tx); err != nil {
+		return err
 	}
 	user.Quota = common.QuotaForNewUser
 	user.AffCode = common.GetRandomString(4)
@@ -514,8 +636,11 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 	return nil
 }
 
-// FinalizeOAuthUserCreation performs post-transaction tasks for OAuth user creation.
-// This should be called after the transaction commits successfully.
+// FinalizeOAuthUserCreation 执行 OAuth 用户创建后的收尾任务。
+//
+// 该函数必须在外部事务成功提交后调用，用于初始化侧边栏配置、记录注册
+// 赠额日志和处理邀请奖励。它不参与 OAuth 绑定事务，避免邮件、日志或
+// 邀请奖励失败时反向影响已经完成的账号创建。
 func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	// 用户创建成功后，根据角色初始化边栏配置
 	var createdUser User
@@ -546,6 +671,24 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 }
 
 func (user *User) Update(updatePassword bool) error {
+	if err := user.UpdateWithTx(DB, updatePassword); err != nil {
+		return err
+	}
+
+	// 更新缓存
+	return updateUserCache(*user)
+}
+
+// UpdateWithTx 在事务中更新用户资料，并保护账务字段不被旧快照覆盖。
+//
+// 用户对象常由控制器先读取再修改局部字段后保存。在这段时间里，relay
+// 计费、兑换、订阅或管理员额度操作可能已经更新了 quota、used_quota 和
+// request_count。这里显式 Omit 这三个字段，并在更新后重新读取当前行，
+// 保证调用方拿到的是数据库最新状态。
+func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
+	if tx == nil {
+		tx = DB
+	}
 	var err error
 	if updatePassword {
 		user.Password, err = common.Password2Hash(user.Password)
@@ -554,13 +697,14 @@ func (user *User) Update(updatePassword bool) error {
 		}
 	}
 	newUser := *user
-	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(newUser).Error; err != nil {
+	current := User{}
+	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
 	}
-
-	// Update cache
-	return updateUserCache(*user)
+	if err = tx.Model(&current).Omit("quota", "used_quota", "request_count").Updates(newUser).Error; err != nil {
+		return err
+	}
+	return tx.First(user, user.Id).Error
 }
 
 func (user *User) Edit(updatePassword bool) error {
@@ -588,7 +732,25 @@ func (user *User) Edit(updatePassword bool) error {
 		return err
 	}
 
-	// Update cache
+	// 更新缓存
+	return updateUserCache(*user)
+}
+
+// BindEmailToUser 将规范化邮箱绑定到指定用户。
+//
+// 绑定前会排除当前用户并检查邮箱是否已被其他历史账号占用。检查和更新在
+// 同一事务中完成，避免控制器在验证码校验成功后绕过模型层唯一性规则。
+func BindEmailToUser(user *User, email string) error {
+	email = NormalizeEmail(email)
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := ensureEmailAvailableWithTx(tx, email, user.Id); err != nil {
+			return err
+		}
+		user.Email = email
+		return user.UpdateWithTx(tx, false)
+	}); err != nil {
+		return err
+	}
 	return updateUserCache(*user)
 }
 
@@ -643,23 +805,26 @@ func (user *User) HardDelete() error {
 	return err
 }
 
-// ValidateAndFill check password & user status
+// ValidateAndFill 校验密码登录凭据并填充用户信息。
 func (user *User) ValidateAndFill() (err error) {
-	// When querying with struct, GORM will only query with non-zero fields,
-	// that means if your field's value is 0, '', false or other zero values,
-	// it won't be used to build query conditions
+	// 这里必须显式记录明文密码并用条件查询用户；如果直接用结构体查询，
+	// GORM 会忽略空字符串、0、false 等零值字段，容易构造出不完整条件。
 	password := user.Password
 	username := strings.TrimSpace(user.Username)
 	if username == "" || password == "" {
 		return ErrUserEmptyCredentials
 	}
-	// find by username or email
-	err = DB.Where("username = ? OR email = ?", username, username).First(user).Error
+	// 支持用户名或邮箱登录；邮箱比较使用规范化值，兼容用户输入大小写不同
+	// 的邮箱地址，同时不改变用户名登录的精确匹配语义。
+	err = DB.Where("username = ? OR LOWER(email) = ?", username, NormalizeEmail(username)).First(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrInvalidCredentials
 		}
 		return fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	if user.Password == "" {
+		return ErrInvalidCredentials
 	}
 	okay := common.ValidatePasswordAndHash(password, user.Password)
 	if !okay || user.Status != common.UserStatusEnabled {
@@ -680,7 +845,8 @@ func (user *User) FillUserByEmail() error {
 	if user.Email == "" {
 		return errors.New("email 为空！")
 	}
-	DB.Where(User{Email: user.Email}).First(user)
+	user.Email = NormalizeEmail(user.Email)
+	DB.Where("LOWER(email) = ?", user.Email).First(user)
 	return nil
 }
 
@@ -736,7 +902,32 @@ func (user *User) FillUserByTelegramId() error {
 }
 
 func IsEmailAlreadyTaken(email string) bool {
-	return DB.Unscoped().Where("email = ?", email).Find(&User{}).RowsAffected == 1
+	count, err := CountUsersByEmail(email)
+	return err == nil && count > 0
+}
+
+// GetUniqueUserByEmail 按规范化邮箱查找唯一用户。
+//
+// 密码重置等高风险路径必须使用该函数。若历史数据中存在大小写不同的重复
+// 邮箱，函数返回 ErrEmailAmbiguous，调用方应拒绝自动执行写操作并提示用户
+// 重新发起或联系管理员处理历史数据。
+func GetUniqueUserByEmail(email string) (*User, error) {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return nil, ErrEmailNotFound
+	}
+	var users []User
+	if err := DB.Where("LOWER(email) = ?", email).Limit(2).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	switch len(users) {
+	case 0:
+		return nil, ErrEmailNotFound
+	case 1:
+		return &users[0], nil
+	default:
+		return nil, ErrEmailAmbiguous
+	}
 }
 
 func IsWeChatIdAlreadyTaken(wechatId string) bool {
@@ -763,11 +954,15 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if email == "" || password == "" {
 		return errors.New("邮箱地址或密码为空！")
 	}
+	user, err := GetUniqueUserByEmail(email)
+	if err != nil {
+		return err
+	}
 	hashedPassword, err := common.Password2Hash(password)
 	if err != nil {
 		return err
 	}
-	err = DB.Model(&User{}).Where("email = ?", email).Update("password", hashedPassword).Error
+	err = DB.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
 	return err
 }
 

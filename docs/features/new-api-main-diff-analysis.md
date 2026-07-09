@@ -5267,8 +5267,79 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 4. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
 5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只新增后端测试，不改变页面或接口行为。
 
+## 本轮实施评审：用户更新并发字段保护与邮箱唯一性原生化
+
+### 需求分析
+
+`new-api-main` 的 `model/user_update_test.go` 针对用户模型补充了一组安全回归测试，覆盖用户资料更新、个人设置保存、邮箱规范化、无密码用户和邮箱找回密码等核心路径。NexusTok 当前已经有更丰富的用户管理、Authz、Passkey、OAuth 和默认前端设置能力，但用户模型仍存在几处可以吸收 new-api-main 优势的风险点：
+
+1. `User.Update(false)` 会先复制调用方传入的旧用户对象，再执行全字段 `Updates`。如果该对象是在扣费、消费日志或并发请求前读取的旧快照，保存显示名、邮箱或设置时可能把最新 `quota`、`used_quota`、`request_count` 覆盖回旧值。
+2. `controller.UpdateUserSetting` 当前通过 `user.SetSetting(settings)` 后调用 `user.Update(false)`，个人设置保存理论上也会经过上述全字段更新路径，可能误覆盖并发计费字段。
+3. 邮箱判断仍使用精确匹配：`CheckUserExistOrDeleted`、`IsEmailAlreadyTaken`、注册和邮箱绑定无法稳定防住 `Taken@Example.com` 与 `taken@example.com` 这种大小写重复。
+4. 密码重置按 `email = ?` 批量更新，历史数据如果已有大小写重复邮箱，接口可能更新 0 个或多个账号，缺少“唯一活跃匹配”的保护。
+5. OAuth/passwordless 用户允许空密码插入是合理能力，但密码登录必须明确拒绝空密码账号，避免未来密码校验函数行为变化导致无密码账号被“补登录”。
+6. `model/user.go` 当前直接使用 `encoding/json` 做设置序列化，触碰该文件时必须同步切换到 `common.Marshal` / `common.Unmarshal`，符合项目 JSON 封装规则。
+
+本轮目标是把 new-api-main 的用户安全回归能力转成 NexusTok 原生能力：模型层提供邮箱规范化、邮箱唯一性查询、只更新设置列、安全 `UpdateWithTx` 和唯一邮箱密码重置；控制器层将个人设置保存、邮箱绑定、邮箱验证码和密码重置接入这些模型能力；同时补齐回归测试，锁定余额字段不被旧对象覆盖。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 用户模型 | `model/user.go`、`model/errors.go` | 新增邮箱规范化/唯一性 helper、`UpdateUserSetting`、`UpdateWithTx`，`Update` 避免覆盖计费字段，密码重置要求唯一邮箱匹配，用户设置 JSON 改用 `common` 封装。 |
+| 用户缓存 | `model/user_cache.go` | 复用现有 `updateUserSettingCache`，设置保存只刷新设置缓存字段，不重写余额缓存。 |
+| 用户控制器 | `controller/user.go`、`controller/misc.go` | 注册、邮箱绑定、验证码发送、密码重置和个人设置保存接入规范化邮箱与模型层安全入口。 |
+| 回归测试 | `model/user_update_test.go` | 原生化 new-api-main 的用户更新安全测试，覆盖并发字段保护、邮箱大小写唯一性、passwordless 登录拒绝和邮箱重置歧义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 用户模型是核心路径，影响密码注册、OAuth 注册、邮箱绑定、个人设置保存、管理员用户编辑、密码登录和找回密码。实现必须保持原接口响应结构、会话行为和缓存策略不变。
+2. 邮箱规范化会把新写入邮箱保存为 `strings.ToLower(strings.TrimSpace(email))`。这会牺牲邮箱原始大小写展示，但换来登录、注册、绑定和找回密码的一致语义；历史大小写重复数据不会自动合并，密码重置遇到重复时返回歧义错误并拒绝更新。
+3. `Update` 避免覆盖 `quota`、`used_quota`、`request_count` 后，调用方如果确实要调整额度，必须继续使用 `IncreaseUserQuota`、`DecreaseUserQuota`、管理员额度接口或明确的 `DB.Model(...).Update("quota", ...)`。这是更安全的边界，但需要测试覆盖避免误伤已有资料编辑。
+4. `UpdateUserSetting` 只更新 `setting` 列，缓存只更新设置字段。这样能避免并发余额覆盖，但如果未来某个调用方期望保存设置时顺带保存其他用户字段，应改为显式字段更新，不应依赖副作用。
+5. 三库兼容方面，本轮只使用 GORM、`LOWER(email) = ?`、事务和普通 `UPDATE`，不引入 PostgreSQL advisory lock 或 MySQL `FOR UPDATE` email gap lock；这能降低跨库风险。极端并发同邮箱写入仍建议后续用数据库索引或专门锁切片加固。
+6. 密码重置会从“邮箱存在即发送重置邮件”改为“只有唯一匹配时发送邮件，重复或数据库异常只记录日志并对外保持成功”，避免泄露账号存在性和避免重复账号误重置。
+7. `controller/misc.go` 触碰 JSON 解码时应改用 `common.DecodeJson`，并移除不再需要的 `encoding/json` import，防止继续扩大项目规范债务。
+
+### 方案评审
+
+采用“模型层收敛、控制器最小接入、测试先锁语义”的方案：
+
+1. 在 `model/errors.go` 增加 `ErrEmailAlreadyTaken`、`ErrEmailNotFound`、`ErrEmailAmbiguous`，让控制器和测试能用 `errors.Is` 区分邮箱占用、缺失和歧义。
+2. 在 `model/user.go` 增加 `NormalizeEmail`、`emailQuery`、`CountUsersByEmail`、`IsEmailAvailable`、`EnsureEmailAvailable`、`ensureEmailAvailableWithTx`、`GetUniqueUserByEmail`。这些 helper 统一使用规范化邮箱和大小写不敏感匹配。
+3. 提取 `prepareForInsert`，`Insert` 和 `InsertWithTx` 在写入前统一规范化邮箱、检查邮箱可用、仅在密码非空时哈希密码；无密码 OAuth 用户继续允许空密码。
+4. 新增 `UpdateUserSetting(userId, setting)`，只 marshal 设置 JSON、更新 `setting` 列并刷新设置缓存；`controller.UpdateUserSetting` 改用该函数。
+5. 新增 `UpdateWithTx(tx, updatePassword)`，`Update` 调用它并继续刷新完整用户缓存；更新时 `Omit("quota", "used_quota", "request_count")`，完成后重新读取当前用户，确保调用方对象反映数据库最新余额字段。
+6. `ValidateAndFill` 在验证密码前明确拒绝数据库中空密码的用户；这不会影响 OAuth 登录路径，只影响密码登录。
+7. `ResetUserPasswordByEmail` 改为先 `GetUniqueUserByEmail`，只更新唯一用户 ID；重复邮箱和未找到邮箱返回明确错误。
+8. `SendEmailVerification`、`SendPasswordResetEmail`、`ResetPassword`、`Register`、`EmailBind` 接入 `NormalizeEmail` / `EnsureEmailAvailable` / `GetUniqueUserByEmail`，并保持对外错误尽量与当前行为兼容。
+9. 原生化 `model/user_update_test.go`，按 NexusTok 包路径和现有测试基础设施调整；测试不依赖外部 Redis、邮件服务或真实数据库。
+
+验收方式：
+
+1. `go test ./model -run 'Test(UserUpdate|UpdateUserSetting|EnsureEmail|Insert|ValidateAndFill|ResetUserPassword)'`。
+2. `go test ./model`。
+3. 如控制器改动影响编译，运行 `go test ./controller -run 'Test.*User|Test.*Reset|Test.*Email'`，无匹配时至少运行相关包编译测试。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/` 并验证低风险页面/接口；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status`、登录、`/api/user/self`，并在登录态下调用一个低风险用户设置保存请求确认接口仍能返回业务响应。
+
+验证记录：
+
+1. 定向用户模型测试通过：`go test ./model -run 'Test(UserUpdate|UpdateUserSetting|EnsureEmail|Insert|ValidateAndFill|ResetUserPassword)'`。
+2. 模型包完整测试通过：`go test ./model`。
+3. 控制器包测试通过：`go test ./controller`。
+4. 用户/订阅相关定向编译测试通过：`go test ./model ./controller -run 'Test.*Subscription|Test.*User|Test.*Reset|Test.*Email'`。
+5. 补丁空白检查通过：`git diff --check`。
+6. 仓库级 `go test ./...` 已执行，但被既有 `relay/channel/claude/message_delta_usage_patch_test.go` 编译问题阻断：该测试文件缺少 `testing`、`dto`、`require`、`gjson` 等 import，失败与本轮用户模型改动无关。本轮先记录该验证阻断，并将 Claude 测试导入修复作为独立验证修复提交处理。
+7. MCP 浏览器验证已按要求尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
+8. 3003 页面与状态接口验证通过：`/` 返回 200，`/api/status` 返回 200。
+9. 3003 登录态接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/user/self` 返回 200。
+10. 3003 设置写入口低风险验证通过：对当前账号调用 `PUT /api/user/self` 写入原有 `language=zh` 返回 200 和 `success=true`，再次读取 `/api/user/self` 后 `setting` 仍为 `{"gotify_priority":0,"language":"zh"}`，确认用户设置控制器路径可用且未改变真实偏好值。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 用户更新并发字段保护与邮箱唯一性 | `model/{user.go,errors.go,user_update_test.go}`、`controller/{user.go,misc.go,subscription.go}` | 原生化 new-api-main 的用户更新安全回归能力；用户资料更新不再覆盖并发变化的 `quota`、`used_quota`、`request_count`，用户设置/语言/sidebar/订阅计费偏好只写 `setting` 列，邮箱注册/绑定/找回密码统一规范化并按大小写不敏感唯一性校验，passwordless 用户保持空密码且密码登录明确拒绝。 |
 | 2026-07-09 | 计费表达式结算 clamp 回归测试 | `pkg/billingexpr/settle_clamp_test.go` | 原生化 new-api-main 的分层计费结算饱和测试资产；锁定异常超大表达式结算必须饱和到 int32 上限并返回 `Clamp`，正常范围结算不误报 `Clamp`，防止动态计费后续调整破坏安全审计不变量。 |
 | 2026-07-09 | SMTP STARTTLS 与 TLS 校验配置 | `common/{email.go,email_test.go,constants.go,init.go}`、`model/{option.go,option_bulk_test.go}`、`web/default/src/features/system-settings/{types.ts,operations/*,integrations/email-settings-section.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 SMTP 连接层安全与兼容能力；新增显式 STARTTLS、默认 TLS 证书校验、管理员可选跳过校验、465 隐式 TLS 兼容和空凭证跳过 AUTH，并在默认前端 SMTP 设置页提供原生开关。 |
 | 2026-07-09 | 常量包边界文档 | `constant/README.md` | 原生化 new-api-main 的 `constant` 包维护约定；按 NexusTok 当前文件列表记录职责说明，并明确常量包禁止承载业务流程、数据库操作、第三方调用和项目内反向依赖。 |
