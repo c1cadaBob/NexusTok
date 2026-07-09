@@ -72,8 +72,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | Realtime 和 image edit 已在现有文件中实现；image stream 与图片计费边界待增强 | 逐个核对上游协议支持，再按 channel 能力原生接入；本轮优先原生化 OpenAI image stream、`stream` 显式零值和 `n` 上限保护。 |
 | Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 缺少 | 可作为高级渠道改写能力参考，但必须接入 NexusTok 的参数覆盖、安全过滤和计费快照。 |
 | Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
-| 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；`allow_balance_pay` 控制套餐是否允许余额购买。前端按钮/表单待接入。 |
-| 订阅钱包溢出控制 | `allow_wallet_overflow` | 后端已落地 | 已在套餐与用户订阅快照保存钱包溢出策略；`subscription_first` 下订阅额度不足时，任一活跃订阅禁止溢出即阻断钱包 fallback。前端管理字段待接入。 |
+| 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端与默认前端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；默认前端已在套餐抽屉、套餐表和购买弹窗消费 `allow_balance_pay`。 |
+| 订阅钱包溢出控制 | `allow_wallet_overflow` | 后端与默认前端已落地 | 已在套餐与用户订阅快照保存钱包溢出策略；`subscription_first` 下订阅额度不足时，任一活跃订阅禁止溢出即阻断钱包 fallback；默认前端套餐抽屉已提供钱包兜底开关。 |
 | 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 后端、默认前端入口消费与渠道页按钮级消费已落地 | `/api/user/self` 已返回 `permissions.admin_permissions`，默认前端已新增权限 helper/hook，并让管理侧边栏与渠道、账号池、模型、用户、订阅等入口路由按 read 能力判断；渠道管理页已按 `write`、`operate`、`sensitive_write`、`secret_view` 控制新建、编辑、测试、启停、批量操作、密钥查看、多 Key、渠道账号池和上游模型应用入口。当前矩阵来自系统角色基线，用户 override 和服务端 enforcement 待后续接入。 |
 
 ## 默认前端页面差异
@@ -86,8 +86,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 |------|------|----------|
 | `/` | 首页 | 两边都有公开首页，NexusTok 品牌和样式独立。 |
 | `/setup` | 初始化向导 | new-api-main 对 setup POST 增加匿名请求体限制。 |
-| `/sign-in`、`/login` 等认证页 | 登录 | 两边都有，new-api-main 额外保留 `(auth)/register.tsx` 路由文件。 |
-| `/sign-up`、`/register` | 注册 | 两边都有，new-api-main 多一个兼容 register 文件。 |
+| `/sign-in`、`/login` 等认证页 | 登录 | 两边都有；NexusTok 已补齐 `(auth)/register.tsx` 兼容路由文件。 |
+| `/sign-up`、`/register` | 注册 | 两边都有；NexusTok 的 `/register` 已 replace 跳转 `/sign-up` 并保留查询参数。 |
 | `/forgot-password`、`/reset`、`/user/reset` | 密码重置 | new-api-main 匿名入口有限流和请求体限制。 |
 | `/oauth/:provider` | OAuth 回调 | 两边都有统一 provider 路由。 |
 | `/dashboard/overview`、`/dashboard/models` | 概览/仪表盘 | new-api-main 多流量分析组件，NexusTok 已有模型和总览看板。 |
@@ -124,7 +124,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 页面/路由 | 文件 | 说明 | 原生化建议 |
 |-----------|------|------|------------|
-| `(auth)/register.tsx` | `routes/(auth)/register.tsx` | 注册路由兼容文件。 | 低优先级，仅在需要兼容旧链接时添加。 |
+| `(auth)/register.tsx` | `routes/(auth)/register.tsx` | 注册路由兼容文件。 | 已原生化：NexusTok 默认前端已新增 `/register` 到 `/sign-up` 的 replace 跳转并保留查询参数。 |
 
 `/system-info` 已在 NexusTok 默认前端落地，因此不再作为 `new-api-main` 独有页面统计；当前差异转为同路径实现细节和后续任务类型接入差异。
 
@@ -136,7 +136,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | Dashboard | 有 overview/models/users 等面板 | 额外有 `dashboard/components/flow` 和 flow selection 测试 | 引入 `/api/data/flow` 后再接入流量 Sankey，不先做纯前端页面。 |
 | Playground | 扁平组件结构，已有消息/输入/存储能力 | 更细拆成 `chat/`、`input/`、`message/`、`options/`、`streaming/`、`storage/` | 逐步重构，不改变接口协议；先迁移错误展示、消息编辑、stream utils。 |
 | Usage Logs | 有通用/绘图/任务日志 | 额外有 `logs-filter-toolbar`、移动端卡片、schema | 先吸收移动端卡片和筛选工具条，再把账号池日志也纳入一致交互。 |
-| Subscriptions | 有计划管理 | 额外有 reset dialog、余额支付、钱包溢出、Waffo Pancake 产品字段 | 需要后端字段先落地，再改表单。 |
+| Subscriptions | 有计划管理、reset dialog、余额支付、钱包溢出、Waffo Pancake 产品字段 | 具备同类能力 | 余额支付与钱包兜底已原生化；后续重点转为订阅重置交互 polish、权限细分和支付产品绑定体验。 |
 | System Settings / Models | 缺少 routing-reliability section | 有 `RoutingReliabilitySection` | 将重试、自动禁用、自动启用、自动测试统一挪到“路由可靠性”。 |
 | System Settings / Request Limits | 缺少 `token-limit-section.tsx` | 有 token limit 设置页 | 后端已有全局 max token 边界时再做设置页。 |
 | System Settings / Integrations | 有 Waffo Pancake 基础设置 | new-api-main 有 catalog、pair、product options 体验 | 保留 NexusTok 支付配置字段，增加“验证并绑定商品”的向导。 |
@@ -173,7 +173,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | Casbin | 无 | `github.com/casbin/casbin/v2`、`casbin_rule.go` | 引入权限系统时再加依赖，不提前污染。 |
 | ClickHouse | 无 | `gorm.io/driver/clickhouse` | 仅当确定要支持 ClickHouse 日志库时引入。 |
 | Waffo Pancake SDK | `github.com/waffo-com/waffo-go v1.3.1` | `waffo-go v1.3.2` + `waffo-pancake-sdk-go` | 先升级/补 SDK 适配层，保持现有充值接口兼容。 |
-| NTLM 邮件 | 无 | `github.com/Azure/go-ntlmssp`、`common/email_ntlm_auth.go` | 低优先级，只有企业 SMTP 需要 NTLM 时再引入。 |
+| NTLM 邮件 | 已落地 `github.com/Azure/go-ntlmssp`、`common/email_ntlm_auth.go` | `github.com/Azure/go-ntlmssp`、`common/email_ntlm_auth.go` | NexusTok 已新增 PLAIN/LOGIN/NTLM 自适应 SMTP 认证，企业 SMTP 仅开放 `AUTH NTLM` 时可完成协商。 |
 | 安全数学 | 已有 `common/quota_math.go`，主要扣费链路开始接入 | 有 `common/quota_math.go` | 已继续覆盖工具调用附加费、违规费用、充值入账、视频任务重算和渠道测试日志；后续覆盖异步任务倍率调整等剩余裸 `int(...)` 计费转换。 |
 | 请求体限制 | 无 | 有匿名请求体限制 | 高优先级，适合快速原生化。 |
 
@@ -376,7 +376,7 @@ NexusTok 独有：
 
 | 文件 | 对应页面 | 处理 |
 |------|----------|------|
-| `(auth)/register.tsx` | `/register` 兼容注册页 | 低优先级，仅做旧链接兼容时迁移。 |
+| `(auth)/register.tsx` | `/register` 兼容注册页 | 已落地：默认前端新增兼容路由并保留 `aff` 等查询参数。 |
 
 两边共有的默认前端路由文件如下，迁移时应以“保留 NexusTok 业务语义，吸收 new-api-main 组件化实现”为原则：
 
