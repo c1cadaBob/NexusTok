@@ -9,7 +9,7 @@
 package ollama
 
 import (
-	"bufio"      // 用于逐行读取流式响应
+	"bufio" // 用于逐行读取流式响应
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,16 +18,17 @@ import (
 	"time"
 
 	// 项目内部包
-	"github.com/c1cada/NexusTok/common"                              // 通用工具（JSON、UUID 等）
-	"github.com/c1cada/NexusTok/dto"                                 // 数据传输对象
-	"github.com/c1cada/NexusTok/logger"                              // 日志工具
-	relaycommon "github.com/c1cada/NexusTok/relay/common"            // Relay 通用信息
-	"github.com/c1cada/NexusTok/relay/helper"                        // Relay 辅助工具（流式响应生成）
-	"github.com/c1cada/NexusTok/service"                             // 服务层（响应转换等）
-	"github.com/c1cada/NexusTok/types"                               // 类型定义
+	"github.com/c1cada/NexusTok/common" // 通用工具（JSON、UUID 等）
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"                      // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                   // 日志工具
+	relaycommon "github.com/c1cada/NexusTok/relay/common" // Relay 通用信息
+	"github.com/c1cada/NexusTok/relay/helper"             // Relay 辅助工具（流式响应生成）
+	"github.com/c1cada/NexusTok/service"                  // 服务层（响应转换等）
+	"github.com/c1cada/NexusTok/types"                    // 类型定义
 
 	// 第三方依赖
-	"github.com/gin-gonic/gin"                                       // Gin Web 框架
+	"github.com/gin-gonic/gin" // Gin Web 框架
 )
 
 // ollamaChatStreamChunk 表示 Ollama 流式响应的单个数据块。
@@ -38,32 +39,64 @@ type ollamaChatStreamChunk struct {
 	CreatedAt string `json:"created_at"` // 创建时间（RFC3339 格式）
 	// 聊天模式的响应内容
 	Message *struct {
-		Role      string          `json:"role"`       // 消息角色
-		Content   string          `json:"content"`    // 消息内容
-		Thinking  json.RawMessage `json:"thinking"`   // 思考内容
-		ToolCalls []struct {
-			Function struct {
-				Name      string      `json:"name"`      // 函数名称
-				Arguments interface{} `json:"arguments"` // 函数参数
-			} `json:"function"` // 函数调用详情
-		} `json:"tool_calls"` // 工具调用列表
+		Role      string           `json:"role"`       // 消息角色
+		Content   string           `json:"content"`    // 消息内容
+		Thinking  json.RawMessage  `json:"thinking"`   // 思考内容
+		ToolCalls []OllamaToolCall `json:"tool_calls"` // 工具调用列表
 	} `json:"message"` // 聊天消息（聊天模式）
 	// 生成模式的响应内容
-	Response           string `json:"response"`              // 生成的文本（生成模式）
-	Done               bool   `json:"done"`                  // 是否完成
-	DoneReason         string `json:"done_reason"`           // 完成原因（stop/length 等）
-	TotalDuration      int64  `json:"total_duration"`        // 总耗时（纳秒）
-	LoadDuration       int64  `json:"load_duration"`         // 模型加载耗时（纳秒）
-	PromptEvalCount    int    `json:"prompt_eval_count"`     // 提示词 token 数量
-	EvalCount          int    `json:"eval_count"`            // 生成的 token 数量
-	PromptEvalDuration int64  `json:"prompt_eval_duration"`  // 提示词处理耗时（纳秒）
-	EvalDuration       int64  `json:"eval_duration"`         // 生成耗时（纳秒）
+	Response           string `json:"response"`             // 生成的文本（生成模式）
+	Done               bool   `json:"done"`                 // 是否完成
+	DoneReason         string `json:"done_reason"`          // 完成原因（stop/length 等）
+	TotalDuration      int64  `json:"total_duration"`       // 总耗时（纳秒）
+	LoadDuration       int64  `json:"load_duration"`        // 模型加载耗时（纳秒）
+	PromptEvalCount    int    `json:"prompt_eval_count"`    // 提示词 token 数量
+	EvalCount          int    `json:"eval_count"`           // 生成的 token 数量
+	PromptEvalDuration int64  `json:"prompt_eval_duration"` // 提示词处理耗时（纳秒）
+	EvalDuration       int64  `json:"eval_duration"`        // 生成耗时（纳秒）
+}
+
+// ollamaToolCallsToOpenAI 将 Ollama 原生工具调用转换为 OpenAI Chat Completions 兼容格式。
+//
+// includeIndex 只应在流式 delta 中启用；非流式 message.tool_calls 不带 index，
+// 这样可以同时兼容 OpenAI 的流式增量格式和普通响应格式。arguments 必须是 JSON
+// 字符串，缺失或序列化失败时使用空对象，避免客户端拿到不可解析的参数。
+func ollamaToolCallsToOpenAI(toolCalls []OllamaToolCall, startIndex int, includeIndex bool) ([]dto.ToolCallResponse, int) {
+	if len(toolCalls) == 0 {
+		return nil, startIndex
+	}
+
+	result := make([]dto.ToolCallResponse, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		argBytes := []byte("{}")
+		if tc.Function.Arguments != nil {
+			if marshaled, err := common.Marshal(tc.Function.Arguments); err == nil && len(marshaled) > 0 {
+				argBytes = marshaled
+			}
+		}
+
+		toolCall := dto.ToolCallResponse{
+			ID:   fmt.Sprintf("call_%d", startIndex),
+			Type: "function",
+			Function: dto.FunctionResponse{
+				Name:      tc.Function.Name,
+				Arguments: string(argBytes),
+			},
+		}
+		if includeIndex {
+			toolCall.SetIndex(startIndex)
+		}
+		startIndex++
+		result = append(result, toolCall)
+	}
+	return result, startIndex
 }
 
 // toUnix 将时间字符串转换为 Unix 时间戳。
 // 支持 RFC3339 和 RFC3339Nano 格式。
 // 参数:
 //   - ts: 时间字符串
+//
 // 返回:
 //   - int64: Unix 时间戳（秒）
 func toUnix(ts string) int64 {
@@ -96,6 +129,7 @@ func toUnix(ts string) int64 {
 //   - c: Gin 上下文
 //   - info: Relay 信息
 //   - resp: Ollama 的 HTTP 响应
+//
 // 返回:
 //   - *dto.Usage: 使用量统计
 //   - *types.NexusTokError: 错误信息（成功时为 nil）
@@ -129,7 +163,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 		// 解析 JSON 数据块
 		var chunk ollamaChatStreamChunk
-		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+		if err := common.UnmarshalJsonStr(line, &chunk); err != nil {
 			logger.LogError(c, "ollama stream json decode error: "+err.Error()+" line="+line)
 			return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
@@ -166,7 +200,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 				if raw != "" && raw != "null" {
 					// 解析 JSON 字符串以获取实际内容（去除引号）
 					var thinkingContent string
-					if err := json.Unmarshal(chunk.Message.Thinking, &thinkingContent); err == nil {
+					if err := common.Unmarshal(chunk.Message.Thinking, &thinkingContent); err == nil {
 						delta.Choices[0].Delta.SetReasoningContent(thinkingContent)
 					} else {
 						// 回退到原始字符串（如果不是 JSON 字符串格式）
@@ -176,16 +210,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			}
 			// 处理工具调用
 			if chunk.Message != nil && len(chunk.Message.ToolCalls) > 0 {
-				delta.Choices[0].Delta.ToolCalls = make([]dto.ToolCallResponse, 0, len(chunk.Message.ToolCalls))
-				for _, tc := range chunk.Message.ToolCalls {
-					// 将参数转换为字符串
-					argBytes, _ := json.Marshal(tc.Function.Arguments)
-					toolId := fmt.Sprintf("call_%d", toolCallIndex)
-					tr := dto.ToolCallResponse{ID: toolId, Type: "function", Function: dto.FunctionResponse{Name: tc.Function.Name, Arguments: string(argBytes)}}
-					tr.SetIndex(toolCallIndex)
-					toolCallIndex++
-					delta.Choices[0].Delta.ToolCalls = append(delta.Choices[0].Delta.ToolCalls, tr)
-				}
+				delta.Choices[0].Delta.ToolCalls, toolCallIndex = ollamaToolCallsToOpenAI(chunk.Message.ToolCalls, toolCallIndex, true)
 			}
 			// 发送增量响应
 			if data, err := common.Marshal(delta); err == nil {
@@ -201,6 +226,9 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		finishReason := chunk.DoneReason
 		if finishReason == "" {
 			finishReason = "stop"
+		}
+		if toolCallIndex > 0 {
+			finishReason = constant.FinishReasonToolCalls
 		}
 		// 发送停止响应
 		if stop := helper.GenerateStopResponse(responseId, created, model, finishReason); stop != nil {
@@ -231,6 +259,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 //   - c: Gin 上下文
 //   - info: Relay 信息
 //   - resp: Ollama 的 HTTP 响应
+//
 // 返回:
 //   - *dto.Usage: 使用量统计
 //   - *types.NexusTokError: 错误信息（成功时为 nil）
@@ -248,10 +277,12 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	// 尝试按多行 NDJSON 格式解析
 	lines := strings.Split(raw, "\n")
 	var (
-		aggContent       strings.Builder  // 聚合内容
-		reasoningBuilder strings.Builder  // 聚合思考内容
+		aggContent       strings.Builder // 聚合内容
+		reasoningBuilder strings.Builder // 聚合思考内容
 		lastChunk        ollamaChatStreamChunk
 		parsedAny        bool
+		toolCallIndex    int
+		toolCalls        []dto.ToolCallResponse
 	)
 	for _, ln := range lines {
 		ln = strings.TrimSpace(ln)
@@ -259,7 +290,7 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			continue
 		}
 		var ck ollamaChatStreamChunk
-		if err := json.Unmarshal([]byte(ln), &ck); err != nil {
+		if err := common.UnmarshalJsonStr(ln, &ck); err != nil {
 			// 如果只有一行且解析失败，可能是单个 JSON 对象
 			if len(lines) == 1 {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
@@ -274,7 +305,7 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			if raw != "" && raw != "null" {
 				// 解析 JSON 字符串以获取实际内容（去除引号）
 				var thinkingContent string
-				if err := json.Unmarshal(ck.Message.Thinking, &thinkingContent); err == nil {
+				if err := common.Unmarshal(ck.Message.Thinking, &thinkingContent); err == nil {
 					reasoningBuilder.WriteString(thinkingContent)
 				} else {
 					// 回退到原始字符串
@@ -288,12 +319,17 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		} else if ck.Response != "" {
 			aggContent.WriteString(ck.Response)
 		}
+		if ck.Message != nil && len(ck.Message.ToolCalls) > 0 {
+			var converted []dto.ToolCallResponse
+			converted, toolCallIndex = ollamaToolCallsToOpenAI(ck.Message.ToolCalls, toolCallIndex, false)
+			toolCalls = append(toolCalls, converted...)
+		}
 	}
 
 	// 如果没有按 NDJSON 解析成功，尝试作为单个 JSON 对象解析
 	if !parsedAny {
 		var single ollamaChatStreamChunk
-		if err := json.Unmarshal(body, &single); err != nil {
+		if err := common.Unmarshal(body, &single); err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 		lastChunk = single
@@ -304,7 +340,7 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 				if raw != "" && raw != "null" {
 					// 解析 JSON 字符串以获取实际内容（去除引号）
 					var thinkingContent string
-					if err := json.Unmarshal(single.Message.Thinking, &thinkingContent); err == nil {
+					if err := common.Unmarshal(single.Message.Thinking, &thinkingContent); err == nil {
 						reasoningBuilder.WriteString(thinkingContent)
 					} else {
 						// 回退到原始字符串
@@ -313,6 +349,11 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 				}
 			}
 			aggContent.WriteString(single.Message.Content)
+			if len(single.Message.ToolCalls) > 0 {
+				var converted []dto.ToolCallResponse
+				converted, toolCallIndex = ollamaToolCallsToOpenAI(single.Message.ToolCalls, toolCallIndex, false)
+				toolCalls = append(toolCalls, converted...)
+			}
 		} else {
 			aggContent.WriteString(single.Response)
 		}
@@ -330,9 +371,17 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	if finishReason == "" {
 		finishReason = "stop"
 	}
+	if len(toolCalls) > 0 {
+		finishReason = constant.FinishReasonToolCalls
+	}
 
 	// 构建消息对象
 	msg := dto.Message{Role: "assistant", Content: contentPtr(content)}
+	if len(toolCalls) > 0 {
+		if rawToolCalls, err := common.Marshal(toolCalls); err == nil {
+			msg.ToolCalls = rawToolCalls
+		}
+	}
 	if rc := reasoningBuilder.String(); rc != "" {
 		msg.ReasoningContent = &rc // 设置思考内容
 	}
@@ -358,6 +407,7 @@ func ollamaChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 // 空字符串返回 nil，非空字符串返回指针。
 // 参数:
 //   - s: 输入字符串
+//
 // 返回:
 //   - *string: 字符串指针（空字符串时为 nil）
 func contentPtr(s string) *string {

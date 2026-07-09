@@ -3522,8 +3522,57 @@ new-api-main 在 Moonshot adapter 中针对 `kimi-k2.6` 增加了 temperature �
 3. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
 4. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮 provider 兼容改动未影响 3003 页面与状态接口可用性。
 
+## 本轮实施评审：Ollama 非流式 tool_calls 响应兼容
+
+### 需求分析
+
+new-api-main 的 Ollama adapter 已将 Ollama 原生 `message.tool_calls` 转换为 OpenAI 兼容响应中的 `message.tool_calls`，并在发生工具调用时把 `finish_reason` 修正为 `tool_calls`。NexusTok 当前流式路径已有部分工具调用转换，但非流式 `ollamaChatHandler` 只聚合文本和 reasoning，不会把上游 tool calls 写回 OpenAI 响应，导致支持工具调用的本地 Ollama 模型在非流式调用时表现为普通空文本结束，客户端无法继续执行工具。
+
+本轮目标是把该能力转成 NexusTok 原生 provider 兼容能力：
+
+1. 复用 Ollama 自身 DTO，将 `[]OllamaToolCall` 统一转换为 `[]dto.ToolCallResponse`。
+2. 非流式聊天响应和多行 NDJSON fallback 均收集 `message.tool_calls`，写入 `dto.Message.ToolCalls`。
+3. 非流式存在工具调用时，`finish_reason` 固定为 `tool_calls`，即使上游 `done_reason` 返回 `stop`。
+4. 流式路径沿用同一转换 helper，并在已发送工具调用后把结束帧 `finish_reason` 修正为 `tool_calls`。
+5. 触碰同文件时同步把实际 JSON marshal/unmarshal 调用改为 `common.*` 封装，仅保留 `encoding/json` 作为 `json.RawMessage` 类型来源。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Ollama 响应转换 | `relay/channel/ollama/stream.go` | 新增工具调用转换 helper；非流式收集 tool calls 并输出 OpenAI 兼容字段；流式结束原因与工具调用语义对齐。 |
+| Ollama 单元测试 | `relay/channel/ollama/stream_test.go` | 新增非流式 compact JSON、pretty JSON fallback、多行 NDJSON 聚合、`arguments:null` 回退和流式 finish reason 测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 该改动集中在 Ollama provider 响应转换层，不触碰通用 OpenAI adapter、请求分发、计费公式和数据库。
+2. `tool_calls` 参数需要保持 JSON 字符串语义，转换时必须将 `arguments` marshal 为字符串；若上游缺少 arguments，则使用 `{}`，避免返回空字符串导致客户端 JSON 解析失败。
+3. 非流式 `message.content` 可能为空，NexusTok 现有 `contentPtr` 会省略空 content；本轮不改变该行为，仅补充 tool calls。
+4. 流式工具调用需要保留 `index`，非流式 message 级工具调用不带 `index`；测试需分别约束，避免混用导致客户端兼容性下降。
+5. 同文件内已有直接 `encoding/json` marshal/unmarshal 调用；本轮替换为 `common.*` 时要避免改变 `json.RawMessage` 类型定义和已有 reasoning fallback 语义。
+
+### 方案评审
+
+采用局部 provider 兼容方案：在 `ollama/stream.go` 内新增 `ollamaToolCallsToOpenAI(toolCalls, startIndex, includeIndex)`，流式调用时 `includeIndex=true`，非流式调用时 `includeIndex=false`。非流式解析 compact JSON 和 pretty JSON fallback 时统一收集工具调用，最终写入 `msg.ToolCalls`；只要存在工具调用，完成原因改为 `constant.FinishReasonToolCalls`。实际 JSON 解析和序列化统一改为 `common.UnmarshalJsonStr`、`common.Unmarshal` 和 `common.Marshal`。
+
+验收方式：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/channel/ollama` 覆盖 Ollama 非流式和流式 tool calls 行为。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/` 确认页面仍可访问；若 MCP Chrome 仍不可用，则用 `curl` 访问主页和 `/api/status` 作为替代验证。
+
+验证记录：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/channel/ollama` 通过，覆盖非流式 compact JSON、pretty JSON fallback、多行 NDJSON 聚合、`arguments:null` 回退为 `{}`、非流式不带 `index`、流式 tool call delta 带 `index` 和结束帧 `finish_reason=tool_calls`。
+2. `rg -n "json\\.(Marshal|Unmarshal|NewDecoder|NewEncoder)" relay/channel/ollama/stream.go relay/channel/ollama/stream_test.go` 无结果，确认本轮触碰文件中的实际 JSON 编解码已切到 `common.*` 封装；`encoding/json` 仅保留作 `json.RawMessage` 类型来源。
+3. `git diff --check` 通过，无空白错误。
+4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+5. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮 provider 响应转换改动未影响 3003 页面与状态接口可用性。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Ollama 非流式 `tool_calls` 响应兼容 | `relay/channel/ollama/stream.go`、`relay/channel/ollama/stream_test.go` | Ollama 非流式响应会把上游 `message.tool_calls` 转为 OpenAI 兼容 `message.tool_calls`，保留工具参数显式零值，空参数回退 `{}`；存在工具调用时非流式和流式结束原因统一为 `tool_calls`。 |
 | 2026-07-09 | Moonshot `kimi-k2.6` temperature 兼容 | `relay/channel/moonshot/adaptor.go`、`relay/channel/moonshot/adaptor_test.go` | Moonshot OpenAI 兼容请求在真实上游模型为 `kimi-k2.6` 且客户端显式传入非 `1.0` temperature 时修正为 `1.0`；未传字段继续省略，非目标模型保持原值。 |
 | 2026-07-09 | SMTP NTLM 自适应认证 | `common/email.go`、`common/email_ntlm_auth.go`、`common/email_ntlm_auth_test.go`、`go.mod`、`go.sum` | 邮件发送路径新增 PLAIN/LOGIN/NTLM 自适应认证，标准 SMTP 保持 PLAIN，强制 LOGIN 和 Outlook 兼容语义保留，企业 SMTP 仅开放 `AUTH NTLM` 时可完成 NTLM 协商。 |
 | 2026-07-09 | 注册兼容路由与已登录跳转 | `web/default/src/routes/(auth)/register.tsx`、`web/default/src/routes/(auth)/sign-up.tsx`、`web/default/src/routeTree.gen.ts` | 默认前端新增 `/register` 到 `/sign-up` 的 replace 跳转并保留 `aff` 等查询参数；已登录用户访问注册页时跳转 `/dashboard`，避免邀请注册链接和会话状态出现前端路由断点。 |
