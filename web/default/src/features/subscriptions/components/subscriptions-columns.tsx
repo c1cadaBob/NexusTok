@@ -162,6 +162,13 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
               {plan.creem_product_id && (
                 <StatusBadge label='Creem' variant='neutral' copyable={false} />
               )}
+              {plan.waffo_pancake_product_id && (
+                <StatusBadge
+                  label='Pancake'
+                  variant='neutral'
+                  copyable={false}
+                />
+              )}
               {plan.allow_balance_pay !== false && (
                 <StatusBadge
                   label={t('Balance')}
@@ -172,7 +179,7 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
             </div>
           )
         },
-        size: 140,
+        size: 180,
       },
       {
         id: 'total_amount',

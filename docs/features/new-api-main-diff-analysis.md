@@ -2590,6 +2590,68 @@ Waffo Pancake service 新增 `SaveWaffoPancakeConfig`，接收现有前端完整
 4. `git diff --check` 确认无空白错误。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/system-settings/billing/payment`，确认 Waffo Pancake 辅助区渲染正常、无控制台错误；用空凭证或无效凭证调用 catalog，确认接口返回业务失败且不保存配置；不点击一键创建真实外部资源。
 
+## 本轮实施评审：Waffo Pancake 订阅套餐产品绑定原生化
+
+### 需求分析
+
+`new-api-main` 在订阅套餐管理里已经把 Waffo Pancake 作为计划级支付商品来源：每个 `SubscriptionPlan` 可保存独立的 `waffo_pancake_product_id`，管理端可以从已保存 Store 下拉选择 active OnetimeProduct，也可以根据套餐标题和价格一键创建并发布一个新的 OnetimeProduct。NexusTok 当前已经具备订阅计划、余额购买、Stripe/Creem/EPay 订阅支付、Waffo Pancake 钱包充值、Pancake catalog 和默认 Store/Product 一键创建能力，但订阅套餐仍缺少 Pancake product 绑定字段，管理员无法在套餐层沉淀 Pancake 商品关系。
+
+本轮目标是把 `new-api-main` 的计划级产品绑定优势转成 NexusTok 原生管理能力，但不立即开放用户侧 Waffo Pancake 订阅支付：
+
+1. 在 `SubscriptionPlan` 中新增 `waffo_pancake_product_id`，与已有 `stripe_price_id`、`creem_product_id` 保持同级语义。
+2. 后端管理 API 支持创建、更新、查询套餐时保留该字段，并补齐 SQLite 手写建表与补列逻辑，确保 SQLite、MySQL、PostgreSQL 均可迁移。
+3. 新增管理端辅助接口：用已保存的 Pancake Merchant/PrivateKey/Store 创建订阅套餐专属 OnetimeProduct，并列出已保存 Store 下的 active OnetimeProducts 供套餐表单选择。
+4. 默认前端订阅套餐抽屉支持选择/手填 Waffo Pancake Product ID，并提供“按当前套餐标题和价格创建 product”的按钮。
+5. 用户侧 `POST /api/subscription/waffo-pancake/pay`、checkout `OrderMerchantExternalID`、buyer identity、webhook 前缀分流、金额/币种校验和订阅订单完成逻辑单独评审，不在本轮混入。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 订阅模型 | `model/subscription.go` | 新增 `WaffoPancakeProductId` 字段，缓存序列化会自然携带该字段。 |
+| 数据库迁移 | `model/main.go` | SQLite 建表和 required columns 增加 `waffo_pancake_product_id`；MySQL/PostgreSQL 继续由 GORM AutoMigrate 处理。 |
+| 订阅 Admin API | `controller/subscription.go` | 创建和更新套餐时 trim 并保存 Waffo Pancake product ID，更新 map 必须包含空字符串以支持清空绑定。 |
+| Pancake service | `service/waffo_pancake.go` | 新增 plan 专属 OnetimeProduct 创建函数，复用现有管理端 SDK client，不触碰 checkout/webhook 运行时链路。 |
+| Pancake controller | `controller/topup_waffo_pancake.go` | 新增 subscription-product 创建接口和 subscription-product-options 只读接口。 |
+| 系统设置路由 | `router/system-setting-router.go`、`router/system_setting_router_test.go` | 新增两条 `/api/option/waffo-pancake/*` 管理辅助路由并补权限表测试。 |
+| 默认前端订阅管理 | `web/default/src/features/subscriptions/*` | 类型、表单默认值、payload、API helper、套餐抽屉和列表支付渠道标记接入 Pancake product 字段。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增订阅 Pancake product 相关按钮、提示和错误文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、验收和落地结果。 |
+
+### 风险评估
+
+1. 最主要风险是把“订阅套餐绑定 Pancake product”误解成“用户已经可以用 Pancake 购买订阅”。本轮只沉淀管理字段和商品辅助创建，购买弹窗不会新增 Pancake 按钮，webhook 不会新增订阅分流，避免支付成功后权益无法正确发放。
+2. `waffo_pancake_product_id` 是数据库新增列，SQLite 不能使用 `ALTER COLUMN`；必须沿用当前 `ensureSubscriptionPlanTableSQLite` 的 `ALTER TABLE ... ADD COLUMN` 补列模式。MySQL/PostgreSQL 不写方言 SQL，依赖 GORM 结构体迁移。
+3. Product 创建会在外部 Waffo Pancake 账号产生真实 OnetimeProduct，属于强副作用动作；接口需要继续挂在 RootAuth 后的 `system_setting.sensitive_write`，前端缺少系统设置敏感写权限时禁用按钮。
+4. Product options 查询使用已保存 Merchant/PrivateKey/Store 访问外部服务，虽然不写本地数据，但会探测外部资源；可按 `system_setting.read` 处理，和已保存凭证 catalog GET 一致。若后续要求把外部访问统一归入 operate，可单独调整权限表。
+5. 创建 product 使用套餐当前表单标题和价格，并固定创建 OnetimeProduct 而非 Pancake 自动续费 SubscriptionProduct。原因是 NexusTok 当前没有外部续费、取消、past_due、退款撤销权益等生命周期模型，使用自动续费会导致上游扣费但本地权益不续期。
+6. 前端 catalog 可能为空，已保存 product 也可能不在当前 Store 的 active 列表里；表单必须保留手填/原始 ID 兜底，不因 options 缺失清空管理员已有绑定。
+7. 新增前端文案必须补齐六语 locale 并运行同步脚本；当前环境 `bun` 不可用时使用 `node scripts/sync-i18n.mjs` 作为等价同步方式。
+
+### 方案评审
+
+采用“先字段与管理辅助，后支付闭环”的方案。后端为 `SubscriptionPlan` 增加 `WaffoPancakeProductId string`，创建和更新套餐统一调用 trim，更新 map 显式写入 `waffo_pancake_product_id`，让管理员可以清空绑定。SQLite 建表 SQL 与 required columns 都补列，保持三库兼容。
+
+Pancake 管理端继续复用上一轮接入的 `waffo-pancake-sdk-go`，新增 `CreateWaffoPancakeProductForPlan(ctx, merchantID, privateKey, storeID, name, amount, returnURL)`。它只创建并发布 `OnetimeProduct`，价格使用套餐金额的两位小数字符串和 USD，`SuccessURL` 复用已保存 ReturnURL。该函数不改 `CreateWaffoPancakeCheckoutSession`、`VerifyConfiguredWaffoPancakeWebhook`、`ResolveWaffoPancakeTradeNo`，运行时充值链路完全隔离。
+
+新增路由：
+
+| 路由 | 方法 | 权限 | 说明 |
+|------|------|------|------|
+| `/api/option/waffo-pancake/subscription-product-options` | `GET` | `system_setting.read` | 使用已保存凭证和 Store 读取 active OnetimeProducts，用于订阅套餐表单下拉。 |
+| `/api/option/waffo-pancake/subscription-product` | `POST` | `system_setting.sensitive_write` | 根据表单标题和价格创建外部 OnetimeProduct，返回 product ID 给管理员确认后保存套餐。 |
+
+默认前端在订阅套餐抽屉第三方支付配置区新增 Waffo Pancake 字段。打开抽屉时 best-effort 拉取 product options；下拉为空或请求失败时不阻断表单，仍允许手填 ID。创建按钮只在标题非空、价格大于 0 且用户具备 `system_setting.sensitive_write` 时启用；保存套餐仍由订阅写权限控制，外部建品和本地保存两步分离，避免管理员误以为创建外部 product 已自动保存套餐。
+
+验收方式：
+
+1. `go test ./model ./service ./service/authz ./middleware ./router ./controller` 确认模型迁移、Pancake service、controller 和路由权限表构建通过。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端类型通过。
+3. `cd web/default && node scripts/sync-i18n.mjs` 确认新增文案六语同步。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/subscriptions`，打开创建或编辑套餐抽屉，确认 Waffo Pancake Product ID 下拉、手填输入和创建按钮渲染正常，控制台无错误。
+6. 使用 MCP 在浏览器上下文调用 `GET /api/option/waffo-pancake/subscription-product-options`；在未配置真实凭证时应返回业务失败且不写本地配置。不点击真实创建 product 按钮，避免产生外部资源。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2657,6 +2719,7 @@ Waffo Pancake service 新增 `SaveWaffoPancakeConfig`，接收现有前端完整
 | 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
 | 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
 | 2026-07-09 | Waffo Pancake catalog 与一键建品 | `service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端支付设置页支持拉取 Pancake Store/OnetimeProduct catalog、选择已有绑定和一键创建默认 Store/Product；后端新增 catalog/pair 管理接口，权限区分 read/operate/sensitive_write，保存仍走原子配置接口。 |
+| 2026-07-09 | Waffo Pancake 订阅套餐产品绑定 | `model/subscription.go`、`model/main.go`、`controller/subscription.go`、`service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 订阅套餐新增 `waffo_pancake_product_id`，管理端可读取已保存 Store 下的 active OnetimeProduct、手填 Product ID 或按套餐标题和价格创建专属 OnetimeProduct；用户侧 Pancake 订阅支付、checkout 外部单号和 webhook 分流仍保留为后续独立评审。 |
 | 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
 | 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
 | 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |

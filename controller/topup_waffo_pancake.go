@@ -65,6 +65,12 @@ type waffoPancakeAdminCredsRequest struct {
 	ReturnURL  string `json:"return_url"`
 }
 
+// createWaffoPancakeSubscriptionProductRequest 是管理端为订阅套餐创建 Pancake 商品的请求。
+type createWaffoPancakeSubscriptionProductRequest struct {
+	Name   string `json:"name"`
+	Amount string `json:"amount"`
+}
+
 // RequestWaffoPancakeAmount 查询 Waffo Pancake 充值金额
 //
 // 根据充值数量和用户分组计算实际支付金额
@@ -268,10 +274,102 @@ func CreateWaffoPancakePair(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+// CreateWaffoPancakeSubscriptionProduct 创建订阅套餐专属 Pancake OnetimeProduct。
+//
+// 该接口只使用已保存的 MerchantID、PrivateKey 与 StoreID，不接收临时私钥，
+// 目的是把外部 product 创建和本地套餐保存拆成可审计的两步：管理员先在支付设置中
+// 完成网关绑定，再在订阅套餐表单中按当前标题和价格创建 product 并手动保存套餐。
+func CreateWaffoPancakeSubscriptionProduct(c *gin.Context) {
+	var req createWaffoPancakeSubscriptionProductRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		common.ApiErrorMsg(c, "套餐名称不能为空")
+		return
+	}
+	amountDecimal, err := decimal.NewFromString(strings.TrimSpace(req.Amount))
+	if err != nil || amountDecimal.LessThanOrEqual(decimal.Zero) {
+		common.ApiErrorMsg(c, "套餐价格需大于0")
+		return
+	}
+
+	merchantID, privateKey := resolveWaffoPancakeAdminCreds("", "")
+	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)
+	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(privateKey) == "" || storeID == "" {
+		common.ApiErrorMsg(c, "Waffo Pancake 未完成配置，请先在支付设置中完成网关绑定")
+		return
+	}
+
+	amount := amountDecimal.StringFixed(2)
+	productID, err := service.CreateWaffoPancakeProductForPlan(
+		c.Request.Context(),
+		merchantID,
+		privateKey,
+		storeID,
+		name,
+		amount,
+		setting.WaffoPancakeReturnURL,
+	)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake 创建订阅套餐商品失败 store_id=%q name=%q amount=%q error=%q",
+			storeID, name, amount, err.Error(),
+		))
+		common.ApiErrorMsg(c, "创建套餐商品失败")
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"product_id":   productID,
+		"product_name": name,
+		"store_id":     storeID,
+	})
+}
+
+// ListWaffoPancakeSubscriptionProductOptions 读取已保存 Store 下的 active OnetimeProducts。
+//
+// 订阅套餐表单用它提供 product 下拉；如果 catalog 中没有匹配 Store，则返回空列表，
+// 让前端保留手填 Product ID 的兜底能力，而不是清空已有绑定。
+func ListWaffoPancakeSubscriptionProductOptions(c *gin.Context) {
+	merchantID, privateKey := resolveWaffoPancakeAdminCreds("", "")
+	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)
+	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(privateKey) == "" || storeID == "" {
+		common.ApiErrorMsg(c, "Waffo Pancake 未完成配置，请先在支付设置中完成网关绑定")
+		return
+	}
+
+	catalog, err := service.ListWaffoPancakeCatalog(c.Request.Context(), merchantID, privateKey)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake 拉取订阅套餐商品列表失败 store_id=%q error=%q",
+			storeID, err.Error(),
+		))
+		common.ApiErrorMsg(c, "拉取套餐商品列表失败")
+		return
+	}
+
+	products := []service.WaffoPancakeCatalogProduct{}
+	for _, store := range catalog.Stores {
+		if store.ID == storeID {
+			products = store.OnetimeProducts
+			break
+		}
+	}
+	common.ApiSuccess(c, gin.H{
+		"store_id": storeID,
+		"products": products,
+	})
+}
+
 // SaveWaffoPancakeConfig 原子保存管理端 Waffo Pancake 支付配置。
 //
 // 该接口仅负责保存 NexusTok 本地 option，不创建外部 Pancake Store/Product；
-// 后续 catalog 和一键创建能力会在单独评审中接入，避免外部资源副作用影响当前支付链路。
+// catalog、默认充值商品创建和订阅套餐商品创建都由独立接口处理，避免保存配置时
+// 隐式产生外部资源副作用。
 func SaveWaffoPancakeConfig(c *gin.Context) {
 	var req saveWaffoPancakeConfigRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {

@@ -343,6 +343,51 @@ func CreateWaffoPancakePrimaryStore(ctx context.Context, merchantID string, priv
 	return storeRes.Store.ID, nil
 }
 
+// CreateWaffoPancakeProductForPlan 创建并发布订阅套餐专属的一次性商品。
+//
+// 这里有意使用 OnetimeProduct，而不是 Pancake 自动续费的 SubscriptionProduct：
+// NexusTok 当前订阅模型只表达一次购买后的内部有效期和额度，并没有外部续费、
+// 取消、逾期、退款撤销权益等生命周期处理。先把 plan 级 product 绑定原生化，
+// 后续如接入用户侧 Pancake 订阅支付，再单独评审 checkout 元数据和 webhook
+// 订单分流，避免上游自动扣款但本地权益没有续期。
+func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID string, privateKey string, storeID string, name string, amount string, returnURL string) (string, error) {
+	storeID = strings.TrimSpace(storeID)
+	if storeID == "" {
+		return "", fmt.Errorf("store id is required to create a product")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("plan name is required")
+	}
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return "", fmt.Errorf("plan price is required")
+	}
+	client, err := newWaffoPancakeAdminClientFromCreds(merchantID, privateKey)
+	if err != nil {
+		return "", err
+	}
+	productRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
+		StoreID: storeID,
+		Name:    name,
+		Prices: pancake.Prices{
+			"USD": {
+				Amount:      amount,
+				TaxCategory: pancake.TaxCategory("saas"),
+			},
+		},
+		SuccessURL: optionalWaffoPancakeString(strings.TrimSpace(returnURL)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("create Waffo Pancake plan product: %w", err)
+	}
+	productID := productRes.Product.ID
+	if _, err := client.OnetimeProducts.Publish(ctx, pancake.PublishOnetimeProductParams{ID: productID}); err != nil {
+		return "", fmt.Errorf("publish Waffo Pancake plan product: %w", err)
+	}
+	return productID, nil
+}
+
 // CreateWaffoPancakePrimaryProduct 创建并发布钱包充值使用的一次性商品。
 //
 // 商品种子价格固定为 1.00 USD；真实充值金额仍由当前 checkout 请求中的

@@ -29,7 +29,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Subscription duration units
+// 订阅有效期单位
 const (
 	SubscriptionDurationYear   = "year"
 	SubscriptionDurationMonth  = "month"
@@ -38,7 +38,7 @@ const (
 	SubscriptionDurationCustom = "custom"
 )
 
-// Subscription quota reset period
+// 订阅额度重置周期
 const (
 	SubscriptionResetNever   = "never"
 	SubscriptionResetDaily   = "daily"
@@ -156,14 +156,14 @@ func InvalidateSubscriptionPlanCache(planId int) {
 	_ = infoCache.Purge()
 }
 
-// Subscription plan
+// SubscriptionPlan 表示后台配置的订阅套餐。
 type SubscriptionPlan struct {
 	Id int `json:"id"`
 
 	Title    string `json:"title" gorm:"type:varchar(128);not null"`
 	Subtitle string `json:"subtitle" gorm:"type:varchar(255);default:''"`
 
-	// Display money amount (follow existing code style: float64 for money)
+	// PriceAmount 是展示和第三方支付使用的金额；沿用项目既有代码风格，金额字段仍使用 float64。
 	PriceAmount float64 `json:"price_amount" gorm:"type:decimal(10,6);not null;default:0"`
 	Currency    string  `json:"currency" gorm:"type:varchar(8);not null;default:'USD'"`
 
@@ -184,17 +184,21 @@ type SubscriptionPlan struct {
 
 	StripePriceId  string `json:"stripe_price_id" gorm:"type:varchar(128);default:''"`
 	CreemProductId string `json:"creem_product_id" gorm:"type:varchar(128);default:''"`
+	// WaffoPancakeProductId 绑定 Waffo Pancake OnetimeProduct。
+	// 该字段目前只用于管理端套餐配置，用户侧 Pancake 订阅支付和 webhook 分流
+	// 需要在独立评审中接入，避免把外部商品绑定误当成已经完成支付闭环。
+	WaffoPancakeProductId string `json:"waffo_pancake_product_id" gorm:"type:varchar(128);default:''"`
 
-	// Max purchases per user (0 = unlimited)
+	// MaxPurchasePerUser 控制单用户最多购买次数，0 表示不限制。
 	MaxPurchasePerUser int `json:"max_purchase_per_user" gorm:"type:int;default:0"`
 
-	// Upgrade user group after purchase (empty = no change)
+	// UpgradeGroup 表示购买成功后升级到的用户分组，空字符串表示不变更分组。
 	UpgradeGroup string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
 
-	// Total quota (amount in quota units, 0 = unlimited)
+	// TotalAmount 是套餐包含的总额度，单位为内部 quota unit，0 表示不限量。
 	TotalAmount int64 `json:"total_amount" gorm:"type:bigint;not null;default:0"`
 
-	// Quota reset period for plan
+	// QuotaResetPeriod 定义套餐额度的周期性重置规则。
 	QuotaResetPeriod        string `json:"quota_reset_period" gorm:"type:varchar(16);default:'never'"`
 	QuotaResetCustomSeconds int64  `json:"quota_reset_custom_seconds" gorm:"type:bigint;default:0"`
 

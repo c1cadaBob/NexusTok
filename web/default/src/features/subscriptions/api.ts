@@ -26,6 +26,7 @@ import type {
   SubscriptionPayResponse,
   SubscriptionPayRequest,
   SelfSubscriptionData,
+  WaffoPancakeSubscriptionProductOptions,
 } from './types'
 
 // ============================================================================
@@ -137,6 +138,30 @@ export async function paySubscriptionEpay(
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
   }
+}
+
+export async function createWaffoPancakeSubscriptionProduct(data: {
+  name: string
+  amount: string
+}): Promise<
+  ApiResponse<{ product_id: string; product_name: string; store_id: string }>
+> {
+  const res = await api.post(
+    '/api/option/waffo-pancake/subscription-product',
+    data,
+    { skipBusinessError: true } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function listWaffoPancakeSubscriptionProductOptions(): Promise<
+  ApiResponse<WaffoPancakeSubscriptionProductOptions>
+> {
+  const res = await api.get(
+    '/api/option/waffo-pancake/subscription-product-options',
+    { skipBusinessError: true } as Record<string, unknown>
+  )
+  return res.data
 }
 
 // ============================================================================

@@ -228,6 +228,9 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "自定义重置周期需大于0秒")
 		return
 	}
+	req.Plan.StripePriceId = strings.TrimSpace(req.Plan.StripePriceId)
+	req.Plan.CreemProductId = strings.TrimSpace(req.Plan.CreemProductId)
+	req.Plan.WaffoPancakeProductId = strings.TrimSpace(req.Plan.WaffoPancakeProductId)
 	err := model.DB.Create(&req.Plan).Error
 	if err != nil {
 		common.ApiError(c, err)
@@ -295,9 +298,12 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "自定义重置周期需大于0秒")
 		return
 	}
+	req.Plan.StripePriceId = strings.TrimSpace(req.Plan.StripePriceId)
+	req.Plan.CreemProductId = strings.TrimSpace(req.Plan.CreemProductId)
+	req.Plan.WaffoPancakeProductId = strings.TrimSpace(req.Plan.WaffoPancakeProductId)
 
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
-		// update plan (allow zero values updates with map)
+		// 使用 map 更新，确保 enabled=false、价格为 0、清空第三方 product ID 等显式零值不会被 GORM 省略。
 		updateMap := map[string]interface{}{
 			"title":                      req.Plan.Title,
 			"subtitle":                   req.Plan.Subtitle,
@@ -310,6 +316,7 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 			"sort_order":                 req.Plan.SortOrder,
 			"stripe_price_id":            req.Plan.StripePriceId,
 			"creem_product_id":           req.Plan.CreemProductId,
+			"waffo_pancake_product_id":   req.Plan.WaffoPancakeProductId,
 			"max_purchase_per_user":      req.Plan.MaxPurchasePerUser,
 			"total_amount":               req.Plan.TotalAmount,
 			"upgrade_group":              req.Plan.UpgradeGroup,

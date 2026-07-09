@@ -50,6 +50,8 @@ var optionPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/channel_affinity_cache", permission: authz.SystemSettingRead, handler: controller.GetChannelAffinityCacheStats},
 	// 已保存 Waffo Pancake 凭证的 catalog 读取是只读回访入口。
 	{method: http.MethodGet, path: "/waffo-pancake/catalog", permission: authz.SystemSettingRead, handler: controller.ListWaffoPancakeCatalog},
+	// 订阅套餐 product 下拉只读取已保存 Store 下的 active OnetimeProduct。
+	{method: http.MethodGet, path: "/waffo-pancake/subscription-product-options", permission: authz.SystemSettingRead, handler: controller.ListWaffoPancakeSubscriptionProductOptions},
 
 	// 通用 option 更新可能触碰密钥、支付、OAuth 和安全配置，路由层按敏感写处理。
 	{method: http.MethodPut, path: "/", permission: authz.SystemSettingSensitiveWrite, handler: controller.UpdateOption},
@@ -58,6 +60,8 @@ var optionPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/waffo-pancake/catalog", permission: authz.SystemSettingOperate, handler: controller.ListWaffoPancakeCatalog},
 	// 一键创建 Store/Product 会在外部商户侧产生资源，按敏感写处理。
 	{method: http.MethodPost, path: "/waffo-pancake/pair", permission: authz.SystemSettingSensitiveWrite, handler: controller.CreateWaffoPancakePair},
+	// 订阅套餐 product 创建同样会在外部商户侧产生资源，按敏感写处理。
+	{method: http.MethodPost, path: "/waffo-pancake/subscription-product", permission: authz.SystemSettingSensitiveWrite, handler: controller.CreateWaffoPancakeSubscriptionProduct},
 	// Waffo Pancake 支付配置需要一次提交多项敏感 option，沿用系统设置敏感写权限。
 	{method: http.MethodPost, path: "/waffo-pancake/save", permission: authz.SystemSettingSensitiveWrite, handler: controller.SaveWaffoPancakeConfig},
 	{method: http.MethodPost, path: "/rest_model_ratio", permission: authz.SystemSettingSensitiveWrite, handler: controller.ResetModelRatio},

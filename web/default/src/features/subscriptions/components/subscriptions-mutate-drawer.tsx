@@ -19,10 +19,16 @@ For commercial licensing, please contact support@c1cada.dev
 import { useEffect, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { AddCircleIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { CalendarClock, CreditCard, RefreshCw, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -51,8 +57,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { createPlan, updatePlan, getGroups } from '../api'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
+import {
+  createPlan,
+  updatePlan,
+  getGroups,
+  createWaffoPancakeSubscriptionProduct,
+  listWaffoPancakeSubscriptionProductOptions,
+} from '../api'
 import { getDurationUnitOptions, getResetPeriodOptions } from '../constants'
 import { useSubscriptionPermissions } from '../hooks/use-subscription-permissions'
 import {
@@ -62,7 +76,7 @@ import {
   formValuesToPlanPayload,
   type PlanFormValues,
 } from '../lib'
-import type { PlanRecord } from '../types'
+import type { PlanRecord, WaffoPancakeSubscriptionProduct } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
 
 interface Props {
@@ -84,7 +98,19 @@ export function SubscriptionsMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
+  const [creatingPancakeProduct, setCreatingPancakeProduct] = useState(false)
+  const [pancakeProducts, setPancakeProducts] = useState<
+    WaffoPancakeSubscriptionProduct[]
+  >([])
   const permissions = useSubscriptionPermissions()
+  const canReadPancakeProducts = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.SYSTEM_SETTING,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
+  const canCreatePancakeProduct = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.SYSTEM_SETTING,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
   const noPermissionMessage = t("You don't have necessary permission")
 
   const schema = getPlanFormSchema(t)
@@ -105,11 +131,30 @@ export function SubscriptionsMutateDrawer({
           if (res.success) setGroupOptions(res.data || [])
         })
         .catch(() => {})
+      if (canReadPancakeProducts) {
+        listWaffoPancakeSubscriptionProductOptions()
+          .then((res) => {
+            if (res.success && Array.isArray(res.data?.products)) {
+              setPancakeProducts(res.data.products)
+            } else {
+              setPancakeProducts([])
+            }
+          })
+          .catch(() => setPancakeProducts([]))
+      } else {
+        setPancakeProducts([])
+      }
     }
-  }, [open, currentRow, form])
+  }, [open, currentRow, form, canReadPancakeProducts])
 
   const durationUnit = form.watch('duration_unit')
   const resetPeriod = form.watch('quota_reset_period')
+  const watchedTitle = form.watch('title')
+  const watchedPrice = form.watch('price_amount')
+  const pancakeCreateReady =
+    typeof watchedTitle === 'string' &&
+    watchedTitle.trim().length > 0 &&
+    Number(watchedPrice ?? 0) > 0
 
   const onSubmit = async (values: PlanFormValues) => {
     if (!permissions.canWrite) {
@@ -138,6 +183,60 @@ export function SubscriptionsMutateDrawer({
       toast.error(t('Request failed'))
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleCreatePancakeProduct = async () => {
+    if (!canCreatePancakeProduct) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    const title = form.getValues('title').trim()
+    const priceAmount = Number(form.getValues('price_amount') || 0)
+    if (!title) {
+      toast.error(t('Plan title is required'))
+      return
+    }
+    if (priceAmount <= 0) {
+      toast.error(t('Plan price must be greater than zero'))
+      return
+    }
+
+    setCreatingPancakeProduct(true)
+    try {
+      const res = await createWaffoPancakeSubscriptionProduct({
+        name: title,
+        amount: priceAmount.toFixed(2),
+      })
+      if (res.success && res.data?.product_id) {
+        form.setValue('waffo_pancake_product_id', res.data.product_id, {
+          shouldDirty: true,
+          shouldTouch: true,
+        })
+        if (canReadPancakeProducts) {
+          try {
+            const refresh = await listWaffoPancakeSubscriptionProductOptions()
+            if (refresh.success && Array.isArray(refresh.data?.products)) {
+              setPancakeProducts(refresh.data.products)
+            }
+          } catch {
+            // 新 product ID 已经写入表单；下拉刷新失败时保留手填兜底。
+          }
+        }
+        toast.success(
+          `${t('Waffo Pancake product created')}: ${res.data.product_id}`
+        )
+        return
+      }
+      toast.error(res.message || t('Waffo Pancake product creation failed'))
+    } catch (err) {
+      toast.error(
+        `${t('Waffo Pancake product creation failed')}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      )
+    } finally {
+      setCreatingPancakeProduct(false)
     }
   }
 
@@ -624,6 +723,104 @@ export function SubscriptionsMutateDrawer({
                     <FormMessage />
                   </FormItem>
                 )}
+              />
+
+              <FormField
+                control={form.control}
+                name='waffo_pancake_product_id'
+                render={({ field }) => {
+                  const items = pancakeProducts.map((product) => ({
+                    value: product.id,
+                    label: product.name
+                      ? `${product.name} (${product.id})`
+                      : product.id,
+                  }))
+                  const currentProductId = (field.value || '').trim()
+                  if (
+                    currentProductId &&
+                    !items.some((item) => item.value === currentProductId)
+                  ) {
+                    items.unshift({
+                      value: currentProductId,
+                      label: currentProductId,
+                    })
+                  }
+                  return (
+                    <FormItem>
+                      <FormLabel>Waffo Pancake Product ID</FormLabel>
+                      <div className='flex flex-col gap-2'>
+                        <div className='flex flex-col gap-2 sm:flex-row'>
+                          <Select
+                            items={items}
+                            value={currentProductId}
+                            onValueChange={(value) => field.onChange(value)}
+                            disabled={items.length === 0}
+                          >
+                            <SelectTrigger className='w-full sm:flex-1'>
+                              <SelectValue
+                                placeholder={t('Select a product')}
+                              />
+                            </SelectTrigger>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {items.map((item) => (
+                                  <SelectItem
+                                    key={item.value}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            onClick={handleCreatePancakeProduct}
+                            disabled={
+                              creatingPancakeProduct ||
+                              !pancakeCreateReady ||
+                              !canCreatePancakeProduct
+                            }
+                            title={
+                              canCreatePancakeProduct
+                                ? undefined
+                                : noPermissionMessage
+                            }
+                            className='sm:shrink-0'
+                          >
+                            {creatingPancakeProduct ? (
+                              <Spinner data-icon='inline-start' />
+                            ) : (
+                              <HugeiconsIcon
+                                icon={AddCircleIcon}
+                                strokeWidth={2}
+                                data-icon='inline-start'
+                              />
+                            )}
+                            {creatingPancakeProduct
+                              ? t('Creating...')
+                              : t('Create product')}
+                          </Button>
+                        </div>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            value={field.value || ''}
+                            placeholder='prod_...'
+                          />
+                        </FormControl>
+                      </div>
+                      <FormDescription>
+                        {t(
+                          'Select an active Pancake product from the saved store, or enter a product ID manually. Creating a product uses the current plan title and price.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
               />
             </div>
           </form>
