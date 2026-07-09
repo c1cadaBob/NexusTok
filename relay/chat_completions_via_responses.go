@@ -7,7 +7,6 @@
 package relay
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -100,6 +99,7 @@ func applySystemPromptIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, requ
 //   - *dto.Usage: 使用量统计
 //   - *types.NexusTokError: 错误信息（成功时为 nil）
 func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NexusTokError) {
+	info.UpstreamRequestBodySize = 0
 	chatJSON, err := common.Marshal(request)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -155,7 +155,14 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 
-	var requestBody io.Reader = bytes.NewBuffer(jsonData)
+	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	defer closer.Close()
+	jsonData = nil
+	info.UpstreamRequestBodySize = size
+	var requestBody io.Reader = body
 
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)

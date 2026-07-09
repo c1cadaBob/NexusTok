@@ -6,7 +6,6 @@
 package relay
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +34,7 @@ import (
 //  3. 处理 StreamOptions：若渠道不支持流式选项则置空；若配置了强制启用则自动填充。
 //  4. 判断是否走 "通过 Responses API 转发" 的特殊路径：
 //     - 若全局配置开启且渠道未使用 passthrough，先应用系统提示，
-//       再调用 chatCompletionsViaResponses 完成请求转发和计费。
+//     再调用 chatCompletionsViaResponses 完成请求转发和计费。
 //  5. 常规路径下：根据是否使用 passthrough 模式，分别选择透传原始请求体或经过适配器转换。
 //  6. 应用参数覆盖（ParamOverride）、移除禁用字段（RemoveDisabledFields）。
 //  7. 通过适配器发送请求，处理错误响应和状态码映射。
@@ -118,6 +117,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	var requestBody io.Reader
+	info.UpstreamRequestBodySize = 0
 
 	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
@@ -201,7 +201,14 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		// 应用请求规则覆写（全局规则，在渠道覆写之后执行）
 		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
 
-		requestBody = bytes.NewBuffer(jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
 	}
 
 	var httpResp *http.Response

@@ -3,14 +3,56 @@
 package channel
 
 import (
-	"net/http"           // HTTP 客户端
-	"net/http/httptest"  // HTTP 测试工具
-	"testing"            // 测试框架
+	"net/http"          // HTTP 客户端
+	"net/http/httptest" // HTTP 测试工具
+	"strings"
+	"testing" // 测试框架
 
 	relaycommon "github.com/c1cada/NexusTok/relay/common" // 中继通用类型
 	"github.com/gin-gonic/gin"                            // Gin Web 框架
 	"github.com/stretchr/testify/require"                 // 测试断言
 )
+
+// TestApplyUpstreamContentLengthSetsBodySize 验证 BodyStorage 包装后的上游请求会回填 ContentLength。
+func TestApplyUpstreamContentLengthSetsBodySize(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", struct {
+		*strings.Reader
+	}{strings.NewReader(`{"model":"gpt-4.1"}`)})
+	req.ContentLength = 0
+	info := &relaycommon.RelayInfo{UpstreamRequestBodySize: 21}
+
+	applyUpstreamContentLength(req, info)
+
+	require.Equal(t, int64(21), req.ContentLength)
+}
+
+// TestApplyUpstreamContentLengthKeepsExistingLength 验证已有明确长度时不覆盖 net/http 的判断。
+func TestApplyUpstreamContentLengthKeepsExistingLength(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", strings.NewReader("payload"))
+	require.Equal(t, int64(len("payload")), req.ContentLength)
+
+	applyUpstreamContentLength(req, &relaycommon.RelayInfo{UpstreamRequestBodySize: 99})
+
+	require.Equal(t, int64(len("payload")), req.ContentLength)
+}
+
+// TestApplyUpstreamContentLengthIgnoresMissingSize 验证未声明转换后 body 大小时保持默认长度语义。
+func TestApplyUpstreamContentLengthIgnoresMissingSize(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", struct {
+		*strings.Reader
+	}{strings.NewReader("payload")})
+	req.ContentLength = 0
+
+	applyUpstreamContentLength(req, &relaycommon.RelayInfo{})
+
+	require.Zero(t, req.ContentLength)
+}
 
 // TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules 测试渠道测试模式跳过透传规则
 // 验证在渠道测试模式下，通配符 "*" 透传规则不会传递客户端请求头
@@ -123,8 +165,8 @@ func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 	// 运行时头覆盖应完全替代渠道静态配置
 	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "runtime-value", headers["x-static"])  // 运行时值覆盖静态值
-	require.Equal(t, "runtime-only", headers["x-runtime"])   // 运行时独有头存在
+	require.Equal(t, "runtime-value", headers["x-static"]) // 运行时值覆盖静态值
+	require.Equal(t, "runtime-only", headers["x-runtime"]) // 运行时独有头存在
 	_, exists := headers["x-legacy"]
 	require.False(t, exists) // 渠道静态独有头不应存在
 }
@@ -169,8 +211,8 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	ctx.Request.Header.Set("Originator", "Codex CLI")   // 设置 Codex CLI 来源头
-	ctx.Request.Header.Set("Session_id", "sess-123")    // 设置会话 ID 头
+	ctx.Request.Header.Set("Originator", "Codex CLI") // 设置 Codex CLI 来源头
+	ctx.Request.Header.Set("Session_id", "sess-123")  // 设置会话 ID 头
 
 	// 配置 pass_headers 操作模式和静态头覆盖
 	info := &relaycommon.RelayInfo{
@@ -183,7 +225,7 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 			ParamOverride: map[string]any{
 				"operations": []any{
 					map[string]any{
-						"mode":  "pass_headers",                                    // 操作模式：传递请求头
+						"mode":  "pass_headers",                                             // 操作模式：传递请求头
 						"value": []any{"Originator", "Session_id", "X-Codex-Beta-Features"}, // 要传递的头列表
 					},
 				},
@@ -197,11 +239,11 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	// 应用参数覆盖，设置运行时头覆盖
 	_, err := relaycommon.ApplyParamOverrideWithRelayInfo([]byte(`{"model":"gpt-4.1"}`), info)
 	require.NoError(t, err)
-	require.True(t, info.UseRuntimeHeadersOverride) // 运行时头覆盖应被启用
+	require.True(t, info.UseRuntimeHeadersOverride)                          // 运行时头覆盖应被启用
 	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"]) // Originator 头应被传递
 	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])  // Session_id 头应被传递
 	_, exists := info.RuntimeHeadersOverride["x-codex-beta-features"]
-	require.False(t, exists) // 不存在的头不应出现
+	require.False(t, exists)                                                  // 不存在的头不应出现
 	require.Equal(t, "legacy-value", info.RuntimeHeadersOverride["x-static"]) // 静态头应被合并
 
 	// 验证 processHeaderOverride 能正确处理运行时头覆盖

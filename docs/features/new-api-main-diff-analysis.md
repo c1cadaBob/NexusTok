@@ -3131,8 +3131,61 @@ new-api-main 支持通过 `SESSION_COOKIE_SECURE=true` 让 Gin session cookie �
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认默认 Secure=false 下页面仍正常加载、`/api/status` 和 `/api/user/self` 正常、控制台无新增错误。
 
+## 本轮实施评审：转换后上游 JSON 请求体存储与 Content-Length
+
+### 需求分析
+
+new-api-main 在 relay 转换请求后，不再直接把已序列化的 JSON `[]byte` 包装成 `bytes.Buffer` 或 `bytes.Reader` 交给上游 HTTP 请求，而是通过 `BodyStorage` 统一持有转换后的请求体，并把最终 body 字节数写入 `RelayInfo.UpstreamRequestBodySize`。这样一来，当图片、Responses、Gemini、Claude 或 Embedding 请求包含较大的 base64 内容时，请求体可以按现有阈值落到临时文件，减少等待上游响应期间的堆内存驻留；同时，由于 `ReaderOnly(BodyStorage)` 会隐藏具体 reader 类型，需要在构造上游 `http.Request` 后显式设置 `ContentLength`，避免部分上游因为缺少 `Content-Length` 而拒绝 chunked 请求。
+
+NexusTok 已具备 `common.BodyStorage`、`common.ReaderOnly` 和请求体大小限制能力，但转换后的上游 JSON body 仍散落在多个 handler 中使用 `bytes.NewBuffer(jsonData)` 或 `bytes.NewReader(jsonData)`。本轮目标是把 new-api-main 的优势原生化为 NexusTok 的 relay 基础能力：
+
+1. 在 `relay/common` 增加转换后 JSON body 的统一包装 helper，复用现有 `common.CreateBodyStorage` 和 `common.ReaderOnly`。
+2. 在 `RelayInfo` 中记录转换后上游请求体大小，作为通用请求构造层回填 `ContentLength` 的唯一来源。
+3. 在 `relay/channel` 的通用 HTTP 请求构造路径中，如果请求体来自转换后的 `BodyStorage`，显式设置 `req.ContentLength`。
+4. 将当前主要 JSON 转换 handler 接入该 helper，包括 Chat Completions、Responses、Gemini、Gemini Embedding、Claude、Embedding、Image JSON、Rerank，以及 Chat Completions via Responses；不改变 multipart、原始透传 body、WebSocket 和任务接口的语义。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| relay 公共请求体 | `relay/common/outbound_body.go` | 新增转换后 JSON 请求体包装 helper，统一返回 reader、size 和 closer。 |
+| relay 上下文 | `relay/common/relay_info.go` | 新增 `UpstreamRequestBodySize`，仅用于通用上游请求构造层回填 `ContentLength`。 |
+| 上游请求构造 | `relay/channel/api_request.go` | 在 `DoApiRequest`、`DoFormRequest`、`DoTaskApiRequest` 中按 `RelayInfo` 回填 `ContentLength`；对未设置 size 的请求保持 net/http 默认行为。 |
+| relay handler | `relay/compatible_handler.go`、`relay/responses_handler.go`、`relay/gemini_handler.go`、`relay/claude_handler.go`、`relay/embedding_handler.go`、`relay/image_handler.go`、`relay/rerank_handler.go`、`relay/chat_completions_via_responses.go` | 将转换后的 JSON body 从 `bytes.*` reader 切换为 `BodyStorage` 包装；请求完成后关闭 storage。 |
+| 测试 | `relay/common/*_test.go`、`relay/channel/api_request_test.go` | 覆盖 helper 的 size/read/close 语义和 `ContentLength` 回填规则。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 该变更位于 relay 热路径，风险主要是请求体生命周期、Content-Length 计算和关闭时机。handler 必须在 `adaptor.DoRequest` 返回后再 `defer closer.Close()`，不能提前关闭 `BodyStorage`，否则上游传输可能读不到完整 body。
+2. 透传请求体仍使用客户端原始 `BodyStorage`，不设置 `UpstreamRequestBodySize`，避免对原始 body、multipart 文件上传和 WebSocket 产生额外语义变化。
+3. `BodyStorage` 可能落盘，调试日志不能为了释放内存再调用 `Bytes()` 读取磁盘内容；本轮只在已有 debug 分支保留原字符串日志，并在包装后置空 `jsonData`，让大 payload 更快被 GC。
+4. `ContentLength` 只在 `info.UpstreamRequestBodySize > 0` 且 `req.ContentLength <= 0` 时设置；如果某些特殊请求已经由 `net/http` 自动识别长度，则保留原值。
+5. 自定义 adaptor 中直接调用 `http.NewRequest` 的少数路径不在本轮覆盖范围内；本轮优先强化通用 `DoApiRequest` 路径和主要 JSON handler，后续可按差异报告继续细化非通用 adaptor。
+
+### 方案评审
+
+采用 new-api-main 已验证的最小底座方案，但按 NexusTok 现有中文注释和包结构落地：新增 `relay/common.NewOutboundJSONBody(data []byte)`，返回 `io.Reader`、字节数、`io.Closer` 和错误。调用方在完成 `common.Marshal`、字段裁剪、参数覆写和日志输出后调用该 helper，随后 `jsonData = nil`，把 size 写入 `info.UpstreamRequestBodySize`，并 `defer closer.Close()`。
+
+`relay/channel/api_request.go` 新增未导出的 `applyUpstreamContentLength(req, info)`，集中解释为什么 `ReaderOnly(BodyStorage)` 需要手动回填长度。`DoApiRequest`、`DoFormRequest`、`DoTaskApiRequest` 统一调用该函数。这样 handler 只负责声明“转换后的 body 有多大”，请求构造层负责把它映射为 HTTP 协议字段，边界清晰且便于测试。
+
+验收方式：
+
+1. `go test ./relay/common ./relay/channel` 覆盖新增 helper 与 Content-Length 回填。
+2. `go test ./relay ./controller` 确认 relay/controller 相关路径不回归。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/` 并调用一个认证边界内的 relay 请求，确认页面仍正常、接口仍按预期响应；若 MCP 浏览器工具不可用，则使用 `curl` 访问页面和 `/api/status` 作为替代验证，并在最终报告中说明。
+
+验证记录：
+
+1. `go test -count=1 ./relay/common ./relay/channel` 通过，覆盖 `NewOutboundJSONBody` 和 `ContentLength` 回填规则。
+2. `go test -count=1 ./relay ./controller` 通过，确认 relay 入口和 controller 相关包不回归。
+3. `go test -count=1 ./relay/...` 中本轮相关包均通过，但存量 `relay/channel/claude/message_delta_usage_patch_test.go` 缺少 `testing`、`dto`、`require`、`gjson` 等导入，导致 `relay/channel/claude` 包构建失败；该文件不属于本轮改动范围。
+4. MCP Chrome DevTools 无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代访问 `http://192.168.0.202:3003/`，主页返回 200；`/api/status` 返回 200；无 token 请求 `/v1/chat/completions` 返回 401，认证边界正常。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 转换后上游 JSON 请求体存储与 Content-Length | `relay/common/outbound_body.go`、`relay/common/relay_info.go`、`relay/channel/api_request.go`、`relay/*_handler.go` | 新增转换后 JSON body 的 `BodyStorage` 包装，记录最终上游 body 字节数并在通用 HTTP 请求构造层回填 `ContentLength`；主要 JSON 转换 handler 已接入，透传、multipart 和 WebSocket 路径保持原语义。 |
 | 2026-07-09 | Secure Session Cookie 环境配置 | `common/session_cookie.go`、`common/init.go`、`main.go`、`common/session_cookie_test.go` | 新增 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 配置，默认保持 HTTP 开发兼容；开启 Secure 时要求可信 HTTPS URL，并让 session store 使用配置值。 |
 | 2026-07-09 | Max Token 家族字段上限保护 | `relay/helper/valid_request.go`、`relay/helper/max_tokens_bounds_test.go` | 统一限制 OpenAI `max_tokens/max_completion_tokens`、Claude `max_tokens/max_tokens_to_sample`、Gemini `maxOutputTokens/max_output_tokens` 和 Responses `max_output_tokens`，避免极端输出 token 参数绕过预扣费与 int 转换安全边界。 |
 | 2026-07-09 | 额度饱和日志前端可观测性 | `web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 管理员使用日志列表与详情弹窗展示 `other.admin_info.quota_saturation`，补齐钳制类型、原始值、钳制结果和操作来源；新增六语翻译并保持非管理员不可见。 |

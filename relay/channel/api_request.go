@@ -20,18 +20,18 @@ import (
 	"sync"
 	"time"
 
-	common2 "github.com/c1cada/NexusTok/common"              // 公共工具包
-	"github.com/c1cada/NexusTok/logger"                      // 日志
-	"github.com/c1cada/NexusTok/relay/common"                // 中继公共
-	"github.com/c1cada/NexusTok/relay/constant"              // 中继常量
-	"github.com/c1cada/NexusTok/relay/helper"                // 中继辅助
-	"github.com/c1cada/NexusTok/service"                     // 服务层
-	"github.com/c1cada/NexusTok/setting/operation_setting"   // 运营设置
-	"github.com/c1cada/NexusTok/types"                       // 类型定义
+	common2 "github.com/c1cada/NexusTok/common"            // 公共工具包
+	"github.com/c1cada/NexusTok/logger"                    // 日志
+	"github.com/c1cada/NexusTok/relay/common"              // 中继公共
+	"github.com/c1cada/NexusTok/relay/constant"            // 中继常量
+	"github.com/c1cada/NexusTok/relay/helper"              // 中继辅助
+	"github.com/c1cada/NexusTok/service"                   // 服务层
+	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营设置
+	"github.com/c1cada/NexusTok/types"                     // 类型定义
 
-	"github.com/bytedance/gopkg/util/gopool"  // 协程池
-	"github.com/gin-gonic/gin"                // Gin 框架
-	"github.com/gorilla/websocket"            // WebSocket
+	"github.com/bytedance/gopkg/util/gopool" // 协程池
+	"github.com/gin-gonic/gin"               // Gin 框架
+	"github.com/gorilla/websocket"           // WebSocket
 )
 
 // SetupApiRequestHeader 设置 API 请求头
@@ -65,9 +65,9 @@ const clientHeaderPlaceholderPrefix = "{client_header:"
 
 // 请求头透传模式常量
 const (
-	headerPassthroughAllKey        = "*"          // 透传所有请求头
-	headerPassthroughRegexPrefix   = "re:"        // 正则匹配模式（旧版）
-	headerPassthroughRegexPrefixV2 = "regex:"     // 正则匹配模式（新版）
+	headerPassthroughAllKey        = "*"      // 透传所有请求头
+	headerPassthroughRegexPrefix   = "re:"    // 正则匹配模式（旧版）
+	headerPassthroughRegexPrefixV2 = "regex:" // 正则匹配模式（新版）
 )
 
 // passthroughSkipHeaderNamesLower 不允许透传的请求头列表
@@ -99,6 +99,21 @@ var passthroughSkipHeaderNamesLower = map[string]struct{}{
 	"sec-websocket-key":        {},
 	"sec-websocket-version":    {},
 	"sec-websocket-extensions": {},
+}
+
+// applyUpstreamContentLength 在转换后的上游请求体使用 BodyStorage 时回填 ContentLength。
+//
+// net/http.NewRequest 只能自动识别 *bytes.Reader、*bytes.Buffer 和 *strings.Reader 的长度。
+// 当 handler 使用 relay/common.NewOutboundJSONBody 后，请求体会被 ReaderOnly 包装成普通
+// io.Reader，此时如果不显式设置 ContentLength，上游会收到 chunked 请求。部分 provider 对
+// JSON POST 要求固定 Content-Length，因此这里集中使用 RelayInfo 中记录的最终字节数。
+func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
+	if info == nil {
+		return
+	}
+	if info.UpstreamRequestBodySize > 0 && req.ContentLength <= 0 {
+		req.ContentLength = info.UpstreamRequestBodySize
+	}
 }
 
 // headerPassthroughRegexCache 正则表达式缓存
@@ -335,6 +350,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	applyUpstreamContentLength(req, info)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
@@ -366,6 +382,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	applyUpstreamContentLength(req, info)
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
@@ -578,6 +595,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	applyUpstreamContentLength(req, info)
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(requestBody), nil
 	}

@@ -11,22 +11,21 @@
 package relay
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
-	"github.com/c1cada/NexusTok/common"                    // 公共工具包
-	"github.com/c1cada/NexusTok/constant"                   // 常量定义
-	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
-	relaycommon "github.com/c1cada/NexusTok/relay/common"   // 中继公共包
-	"github.com/c1cada/NexusTok/relay/helper"               // 中继辅助函数
-	"github.com/c1cada/NexusTok/service"                    // 服务层
-	"github.com/c1cada/NexusTok/setting/model_setting"      // 模型设置
-	"github.com/c1cada/NexusTok/setting/reasoning"          // 推理设置
-	"github.com/c1cada/NexusTok/types"                      // 类型定义
+	"github.com/c1cada/NexusTok/common"                   // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                 // 常量定义
+	"github.com/c1cada/NexusTok/dto"                      // 数据传输对象
+	relaycommon "github.com/c1cada/NexusTok/relay/common" // 中继公共包
+	"github.com/c1cada/NexusTok/relay/helper"             // 中继辅助函数
+	"github.com/c1cada/NexusTok/service"                  // 服务层
+	"github.com/c1cada/NexusTok/setting/model_setting"    // 模型设置
+	"github.com/c1cada/NexusTok/setting/reasoning"        // 推理设置
+	"github.com/c1cada/NexusTok/types"                    // 类型定义
 
 	"github.com/gin-gonic/gin" // Gin 框架
 )
@@ -204,6 +203,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
+	info.UpstreamRequestBodySize = 0
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
@@ -239,7 +239,14 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
-		requestBody = bytes.NewBuffer(jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")

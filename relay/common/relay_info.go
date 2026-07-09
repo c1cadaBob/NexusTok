@@ -178,13 +178,18 @@ type RelayInfo struct {
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
-	IsClaudeBetaQuery                     bool // /v1/messages?beta=true
-	IsChannelTest                         bool // channel test request
-	RetryIndex                            int
-	LastError                             *types.NexusTokError
-	RuntimeHeadersOverride                map[string]interface{}
-	UseRuntimeHeadersOverride             bool
-	ParamOverrideAudit                    []string
+	// UpstreamRequestBodySize 记录转换后上游请求体的字节数。
+	// 当 handler 使用 NewOutboundJSONBody 将 JSON body 包装为 BodyStorage 时，
+	// net/http 无法再自动识别具体长度；通用请求构造层会用该值回填 ContentLength。
+	// 0 表示保持 net/http 默认判断，适用于透传、multipart、WebSocket 等路径。
+	UpstreamRequestBodySize   int64
+	IsClaudeBetaQuery         bool // /v1/messages?beta=true
+	IsChannelTest             bool // channel test request
+	RetryIndex                int
+	LastError                 *types.NexusTokError
+	RuntimeHeadersOverride    map[string]interface{}
+	UseRuntimeHeadersOverride bool
+	ParamOverrideAudit        []string
 
 	PriceData types.PriceData
 
