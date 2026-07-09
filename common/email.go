@@ -8,6 +8,7 @@
 // 支持的认证方式：
 // - PLAIN 认证（smtp.PlainAuth）
 // - LOGIN 认证（自定义 LoginAuth，用于 Outlook 等特殊服务器）
+// - NTLM 认证（用于只开放 AUTH NTLM 的企业 SMTP/Exchange 服务器）
 //
 // 使用场景：
 // - 用户注册邮箱验证
@@ -61,17 +62,15 @@ func shouldUseSMTPLoginAuth() bool {
 
 // getSMTPAuth 获取 SMTP 认证对象
 //
-// 根据服务器类型选择认证方式：
-// - LOGIN 认证：用于 Outlook 等特殊服务器
+// 根据服务器能力和历史兼容配置自适应选择认证方式：
+// - LOGIN 认证：用于强制 LOGIN、Outlook 或历史白名单服务器
+// - NTLM 认证：用于只开放 AUTH NTLM 的企业 SMTP/Exchange 服务器
 // - PLAIN 认证：用于大多数标准 SMTP 服务器
 //
 // 返回值：
 //   - smtp.Auth: SMTP 认证对象
 func getSMTPAuth() smtp.Auth {
-	if shouldUseSMTPLoginAuth() {
-		return LoginAuth(SMTPAccount, SMTPToken)
-	}
-	return smtp.PlainAuth("", SMTPAccount, SMTPToken, SMTPServer)
+	return AutoSMTPAuth(SMTPAccount, SMTPToken)
 }
 
 // SendEmail 发送邮件

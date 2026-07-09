@@ -3429,8 +3429,57 @@ new-api-main 在默认前端额外提供 `(auth)/register.tsx`，访问 `/regist
 5. `curl` 访问 `http://192.168.0.202:3003/`、`/api/status`、`/register?aff=demo`、`/sign-up?aff=demo` 和 `/static/js/index.js` 均返回 `HTTP/1.1 200 OK`，确认 3003 页面和兼容入口可访问。
 6. 前端 bundle 中可检索到 `/register`、`/sign-up`、`aff`、`dashboard` 片段，确认热更新资源包含本轮兼容路由和已登录跳转逻辑。
 
+## 本轮实施评审：SMTP NTLM 自适应认证
+
+### 需求分析
+
+new-api-main 的邮件发送层提供 `AutoSMTPAuth`，会根据 SMTP 服务器 EHLO 返回的认证机制在 `PLAIN`、`LOGIN` 和 `NTLM` 之间选择。NexusTok 当前只在配置或 Outlook 账号命中时使用 `LOGIN`，其它情况使用 `PLAIN`；如果企业 Exchange、Microsoft 365 或内网 SMTP 只开放 `AUTH NTLM`，注册验证、密码重置、配额预警和用户通知邮件会在认证阶段失败。
+
+本轮目标是把 new-api-main 的 SMTP NTLM 兼容能力转成 NexusTok 原生基础设施能力：
+
+1. 新增 SMTP 自适应认证对象，优先遵守 `SMTPForceAuthLogin`，并在服务器只支持或明确支持 `NTLM` 时使用 NTLM 协商。
+2. 保留现有 `shouldUseSMTPLoginAuth()` 的兼容语义：Outlook/onmicrosoft 或 `EmailLoginAuthServerList` 仍优先 LOGIN，除非服务器只声明 NTLM。
+3. 继续在标准服务器上使用 `PLAIN`，不改变 `SMTPServer`、`SMTPPort`、`SMTPSSLEnabled`、`SMTPAccount`、`SMTPToken` 等配置模型。
+4. 不引入前端设置项、不改邮件模板、不改验证码或通知业务流程。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| SMTP 认证 | `common/email.go`、`common/email_ntlm_auth.go` | `getSMTPAuth()` 改为自适应认证，新增 NTLM 协商实现。 |
+| 测试 | `common/email_ntlm_auth_test.go` | 覆盖 PLAIN、LOGIN、NTLM 和 Outlook/onmicrosoft 仅 NTLM 场景的认证机制选择。 |
+| 依赖 | `go.mod`、`go.sum` | 新增 `github.com/Azure/go-ntlmssp`，仅用于 NTLM 消息生成。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. SMTP 认证发生在邮件发送路径，失败会影响注册验证、密码重置和通知；本轮只替换 `smtp.Auth` 实现，不改变连接建立、收件人、邮件内容和错误返回。
+2. `smtp.Auth.Start` 会收到服务器支持的机制列表；若服务器支持 `PLAIN`，仍保持原路径，减少对常规邮件服务商的扰动。
+3. NTLM 依赖新增第三方库，必须固定版本并用单元测试覆盖协商入口，避免只在真实企业 SMTP 环境中才暴露编译或选择错误。
+4. `SMTPForceAuthLogin=true` 仍强制 LOGIN；这是管理员显式配置，不能被自动探测覆盖。
+
+### 方案评审
+
+采用最小后端基础设施改动：保留现有 `LoginAuth`，新增 `AutoSMTPAuth` 包装选择逻辑，`getSMTPAuth()` 统一返回 `AutoSMTPAuth(SMTPAccount, SMTPToken)`。这样已有手动 LOGIN、Outlook 兼容和 PLAIN 服务器行为保持不变，只为服务器能力列表里出现 NTLM 的场景补上协商分支。测试不搭完整 SMTP 服务，而是直接构造 `smtp.ServerInfo` 验证 `Start` 选择的机制和初始响应，保证切片稳定可重复。
+
+验收方式：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./common -run 'TestAutoSMTPAuth|TestGetSMTPAuth'` 覆盖 SMTP 认证机制选择。
+2. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./common` 做 common 包回归。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/` 确认页面仍可访问；若 MCP Chrome 仍不可用，则用 `curl` 访问主页和 `/api/status` 作为替代验证。
+
+验证记录：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./common -run 'TestAutoSMTPAuth|TestGetSMTPAuth'` 通过，覆盖 PLAIN、强制 LOGIN、历史 LOGIN 服务器、仅 NTLM 服务器和 onmicrosoft 仅 NTLM 场景。
+2. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./common` 通过，确认 common 包回归正常。
+3. `git diff --check` 通过，无空白错误。
+4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+5. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮后端基础设施改动未影响 3003 页面与状态接口可用性。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | SMTP NTLM 自适应认证 | `common/email.go`、`common/email_ntlm_auth.go`、`common/email_ntlm_auth_test.go`、`go.mod`、`go.sum` | 邮件发送路径新增 PLAIN/LOGIN/NTLM 自适应认证，标准 SMTP 保持 PLAIN，强制 LOGIN 和 Outlook 兼容语义保留，企业 SMTP 仅开放 `AUTH NTLM` 时可完成 NTLM 协商。 |
 | 2026-07-09 | 注册兼容路由与已登录跳转 | `web/default/src/routes/(auth)/register.tsx`、`web/default/src/routes/(auth)/sign-up.tsx`、`web/default/src/routeTree.gen.ts` | 默认前端新增 `/register` 到 `/sign-up` 的 replace 跳转并保留 `aff` 等查询参数；已登录用户访问注册页时跳转 `/dashboard`，避免邀请注册链接和会话状态出现前端路由断点。 |
 | 2026-07-09 | Rankings 路由最新配置守卫 | `web/default/src/routes/rankings/index.tsx` | 默认前端 Rankings 路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.rankings` 判断关闭跳转首页、登录可见跳转登录；保留 NexusTok 自有 `period=all` 查询参数。 |
 | 2026-07-09 | `/v1/models` 动态 `owned_by` | `model/model_meta.go`、`controller/model.go`、`model/model_owner_test.go`、`controller/model_*test.go` | OpenAI 兼容模型列表按当前用户/Token 可用分组查询首选启用渠道，并用实际渠道归属覆盖 `owned_by`；未知模型仍回落 `custom`，Token 模型限制路径缺少分组上下文时保持旧兼容行为。 |
