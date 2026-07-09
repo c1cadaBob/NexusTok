@@ -33,6 +33,7 @@ export function Playground() {
     models,
     groups,
     updateMessages,
+    clearMessages,
     setModels,
     setGroups,
     updateConfig,
@@ -44,37 +45,36 @@ export function Playground() {
     onMessageUpdate: updateMessages,
   })
 
-  // Edit dialog state
+  // 编辑状态只保存当前消息 key，避免复制整条消息对象导致内容陈旧。
   const [editingMessageKey, setEditingMessageKey] = useState<string | null>(
     null
   )
 
-  // Load models
+  // 加载当前用户可用模型列表。
   const { data: modelsData, isLoading: isLoadingModels } = useQuery({
     queryKey: ['playground-models'],
     queryFn: getUserModels,
   })
 
-  // Load groups
+  // 加载当前用户可用分组列表。
   const { data: groupsData } = useQuery({
     queryKey: ['playground-groups'],
     queryFn: getUserGroups,
   })
 
-  // Update models when data changes
+  // 模型列表变化后校正当前模型，避免继续使用已不可见模型。
   useEffect(() => {
     if (!modelsData) return
 
     setModels(modelsData)
 
-    // Set default model if current model is not available
     const isCurrentModelValid = modelsData.some((m) => m.value === config.model)
     if (modelsData.length > 0 && !isCurrentModelValid) {
       updateConfig('model', modelsData[0].value)
     }
   }, [modelsData, config.model, setModels, updateConfig])
 
-  // Update groups when data changes
+  // 分组列表变化后优先回退 default 分组，再回退第一项。
   useEffect(() => {
     if (!groupsData) return
 
@@ -96,22 +96,20 @@ export function Playground() {
     const newMessages = [...messages, userMessage, assistantMessage]
     updateMessages(newMessages)
 
-    // Send chat request
+    // 发送请求时直接复用当前消息数组，确保本地展示和上游上下文一致。
     sendChat(newMessages)
   }
 
   const handleCopyMessage = (message: MessageType) => {
-    // Copy is handled in MessageActions component
+    // 复制动作已经由 MessageActions 处理，这里只保留可观测回调。
     // eslint-disable-next-line no-console
     console.log('Message copied:', message.key)
   }
 
   const handleRegenerateMessage = (message: MessageType) => {
-    // Find the message index and regenerate from there
     const messageIndex = messages.findIndex((m) => m.key === message.key)
     if (messageIndex === -1) return
 
-    // Remove messages after this one and regenerate
     const messagesUpToHere = messages.slice(0, messageIndex)
     const loadingMessage = createLoadingAssistantMessage()
     const newMessages = [...messagesUpToHere, loadingMessage]
@@ -128,7 +126,7 @@ export function Playground() {
     if (!open) setEditingMessageKey(null)
   }, [])
 
-  // Apply edit and optionally re-submit from the edited user message
+  // 保存编辑后可选择从该用户消息重新提交，后续消息会被新的 assistant 占位替换。
   const applyEdit = useCallback(
     (newContent: string, submit: boolean) => {
       if (!editingMessageKey) return
@@ -163,9 +161,14 @@ export function Playground() {
     updateMessages(newMessages)
   }
 
+  const handleClearMessages = useCallback(() => {
+    setEditingMessageKey(null)
+    clearMessages()
+  }, [clearMessages])
+
   return (
     <div className='relative flex size-full flex-col overflow-hidden'>
-      {/* Full-width scroll container: scrolling works even over side whitespace */}
+      {/* 全宽滚动容器让侧边空白区域也能滚动消息列表。 */}
       <div className='flex flex-1 flex-col overflow-hidden'>
         <PlaygroundChat
           messages={messages}
@@ -178,10 +181,11 @@ export function Playground() {
           onCancelEdit={handleEditOpenChange}
           onSaveEdit={(newContent) => applyEdit(newContent, false)}
           onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+          onSelectPrompt={handleSendMessage}
         />
       </div>
 
-      {/* Input area: center content and constrain to the same container width */}
+      {/* 输入区与消息容器保持同一最大宽度。 */}
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           disabled={isGenerating}
@@ -191,8 +195,10 @@ export function Playground() {
           isModelLoading={isLoadingModels}
           modelValue={config.model}
           models={models}
+          hasMessages={messages.length > 0}
           onGroupChange={(value) => updateConfig('group', value)}
           onModelChange={(value) => updateConfig('model', value)}
+          onClearMessages={handleClearMessages}
           onStop={stopGeneration}
           onSubmit={handleSendMessage}
         />

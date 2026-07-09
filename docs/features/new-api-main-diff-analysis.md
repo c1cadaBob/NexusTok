@@ -3844,8 +3844,64 @@ new-api-main 的 Playground 在 assistant 消息失败时，会在错误卡片�
 6. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
 7. 从 3003 拉取 `/static/js/async/3786.js`，确认线上 chunk 包含 `onEditPrompt`、`onRetry`、`Retry` 和 `flex flex-wrap items-center gap-0.5 pt-2` 等本轮错误动作特征；线上 chunk 与本地 `web/default/dist/static/js/async/3786.js` 完全一致。
 
+## 本轮实施评审：Playground 输入区恢复能力原生化
+
+### 需求分析
+
+new-api-main 的 Playground 输入区已经把文本提交、模型/分组选择、附件/搜索工具和会话清理入口拆成独立组件，并在空会话时提供 starter prompts。NexusTok 当前仍把这些逻辑集中在 `playground-input.tsx`：输入提交校验、选择器禁用、附件 toast、搜索 toast 和底部建议条都混在一起；用户如果想清空本浏览器保存的 Playground 会话，只能逐条删除消息；空会话区域也没有说明当前页面可以直接测试模型或选择 starter prompt。
+
+本轮目标是把 new-api-main 的输入恢复体验转成 NexusTok 原生能力，同时保持当前 Relay 调试链路稳定：
+
+1. 抽出输入提交和按钮状态 helper，避免后续继续把 selector、submit、stop 的禁用规则散落在组件 JSX 中。
+2. 抽出附件/搜索工具 helper，统一 toast 文案来源，并保留当前“功能开发中”的占位行为，不引入真实文件上传。
+3. 新增清空会话按钮，使用现有 `ConfirmDialog` 二次确认后调用 `clearMessages()`，只清理本浏览器 `playground_messages`，不影响服务端数据。
+4. 新增空会话 starter prompts，用户点击后直接走现有 `handleSendMessage(prompt)`，不新增请求字段、不改消息存储 schema。
+5. 移除旧输入区中 raw icon color suggestion，实现所有新增可见文案走 i18n 六语翻译。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 输入 helper | `web/default/src/features/playground/lib/input-control-utils.ts`、`web/default/src/features/playground/lib/input-tool-utils.ts`、`web/default/src/features/playground/lib/index.ts` | 新增提交文本、选择器/按钮禁用、附件动作和搜索动作 notice helper。 |
+| 输入组件 | `web/default/src/features/playground/components/playground-input.tsx`、`playground-input-controls.tsx`、`playground-input-tools.tsx` | 输入区拆成容器、控制区和工具区；新增清空会话确认入口；保留模型/分组选择和 Stop/Send 语义。 |
+| 空状态 | `web/default/src/features/playground/components/playground-empty-state.tsx`、`playground-chat.tsx`、`index.tsx` | 空消息时显示 starter prompts；点击后复用现有发送函数；输入区接收 `hasMessages` 和 `onClearMessages`。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 starter prompts、清空会话、空状态说明等六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 本轮只改默认前端 Playground UI 和本地状态操作，不触碰后端 Relay、计费、权限、数据库、模型请求 DTO、SSE 解析和本地存储 key。
+2. 清空会话按钮会删除当前浏览器保存的 Playground 消息；必须有二次确认，并且生成中禁用，避免用户在 SSE 进行中清掉仍在更新的消息数组。
+3. starter prompt 点击会直接发起一次现有 chat 请求，这是用户主动动作；它复用 `handleSendMessage`，因此请求体、模型选择、分组选择和参数启用规则保持原样。
+4. 输入区拆分可能影响移动端工具栏排布；需要生产构建后访问 3003，并用线上 chunk 特征确认热更新。若 MCP 可用，应额外检查控制台和页面布局。
+5. 本轮会新增多个 i18n key，必须跑 `bun run i18n:sync`、定向 ESLint、TypeScript 和生产构建；若发现旧 locale 存在未翻译存量，不纳入本轮扩散修复。
+
+### 方案评审
+
+采用“输入区组件拆分 + 空状态最小接线”的方案：参考 new-api-main 的 `PlaygroundInputControls`、`PlaygroundInputTools` 和 `PlaygroundEmptyState` 结构，但版权头、注释和文案按 NexusTok 规范重写；按钮继续使用当前 `PromptInputButton`、`DropdownMenu`、`Tooltip`、`ConfirmDialog` 和 `ModelGroupSelector`，不新增依赖。`playground-chat.tsx` 仅新增 `onSelectPrompt`，空消息时渲染空状态；`index.tsx` 将 `clearMessages` 和 `handleSendMessage` 传入输入区/空状态。设计保持当前默认前端工具台语义：紧凑、扫描友好、无营销化说明，避免把输入区改成落地页。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync` 确认新增 UI key 进入 en、zh、fr、ja、ru、vi。
+2. 针对本轮触碰文件运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖新增 props、helper 导出和 i18n 调用。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查空状态、清空确认弹窗、控制台错误和网络请求；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 确认 `Clear chat history`、`Start a playground chat` 等特征已热更新。
+
+验证记录：
+
+1. `cd web/default && node scripts/add-playground-input-i18n.mjs && bun run i18n:sync` 通过，随后已删除临时脚本；en、zh、fr、ja、ru、vi 各新增 9 个输入区/空状态翻译 key。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/input-control-utils.ts src/features/playground/lib/input-tool-utils.ts src/features/playground/lib/index.ts src/features/playground/components/playground-input.tsx src/features/playground/components/playground-input-controls.tsx src/features/playground/components/playground-input-tools.tsx src/features/playground/components/playground-empty-state.tsx src/features/playground/components/playground-chat.tsx src/features/playground/index.tsx` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增输入 helper、组件 props、空状态接线和 i18n 调用类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，确认生产构建和 Playground lazy chunk 正常生成；`git diff --check` 通过。
+5. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+6. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
+7. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/3854.js`，确认线上资源包含 `Clear chat history`、`Conversation cleared`、`Start a playground chat`、`Analyze data` 等本轮特征；旧 `/static/js/async/3786.js` 已返回 404，说明 Playground chunk 已切换到新构建。
+8. 线上 `/static/js/async/3854.js` 与本地 `web/default/dist/static/js/async/3854.js` 完全一致，确认热更新页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 输入区恢复能力 | `web/default/src/features/playground/components/{playground-input.tsx,playground-input-controls.tsx,playground-input-tools.tsx,playground-empty-state.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{input-control-utils.ts,input-tool-utils.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的输入区拆分、空会话 starter prompts 和清空本地会话能力；新增清空确认弹窗，输入工具状态集中到 helper，移除旧 raw color 建议按钮，所有新增文案补齐六语翻译。 |
 | 2026-07-09 | Playground 错误消息动作 | `web/default/src/features/playground/components/{message-error-actions.tsx,playground-chat.tsx}` | 原生化 new-api-main 的失败态恢复入口，错误 assistant 消息下方显示专用 Retry/Edit/Delete 动作；Retry 复用 regenerate，Edit 定位到上一条 user prompt，Delete 清理错误消息，普通消息动作和请求协议保持不变。 |
 | 2026-07-09 | Playground 流式错误处理底座 | `web/default/src/features/playground/lib/{stream-utils.ts,request-error-utils.ts,index.ts}`、`web/default/src/features/playground/hooks/{use-stream-request.ts,use-chat-handler.ts}`、`web/default/src/features/playground/components/message-error.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground stream/request error 工具拆分，SSE 连接状态改为响应式 `isStreaming`，新请求前关闭旧流，统一解析流式和非流式错误；模型价格错误设置入口改向默认前端模型价格页，并补齐错误 fallback 六语翻译。 |
 | 2026-07-09 | Playground AI 响应受控渲染 | `web/default/src/components/ai-elements/{response.tsx,response-content.ts,response-types.ts,response-node-guards.ts,response-renderer*.tsx}`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-chat.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 AST Response renderer，移除直接 `streamdown`，由 `stream-markdown-parser` 解析并本地受控渲染表格、脚注、图片、alert、details、checkbox 和代码块；HTML 默认文本化、图片 URL 过滤、超过 20,000 字符纯文本降级，Playground streaming 消息按 `final` 状态解析。 |
