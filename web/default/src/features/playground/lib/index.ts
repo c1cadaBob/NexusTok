@@ -17,6 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 export * from './message-utils'
+export * from './message-reasoning-utils'
+export * from './message-update-utils'
+export * from './message-action-utils'
 export * from './payload-builder'
 export * from './request-error-utils'
 export * from './storage'

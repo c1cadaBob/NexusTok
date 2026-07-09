@@ -18,7 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
 import type { Message } from '../types'
-import { parseThinkTags } from './message-utils'
+import { parseThinkTags } from './message-reasoning-utils'
 
 type MessageSources = NonNullable<Message['sources']>
 

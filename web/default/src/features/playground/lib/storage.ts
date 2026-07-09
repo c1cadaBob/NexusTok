@@ -18,7 +18,8 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { MESSAGE_ROLES, MESSAGE_STATUS, STORAGE_KEYS } from '../constants'
 import type { PlaygroundConfig, ParameterEnabled, Message } from '../types'
-import { parseThinkTags, sanitizeMessagesOnLoad } from './message-utils'
+import { sanitizeMessagesOnLoad } from './message-utils'
+import { parseThinkTags } from './message-reasoning-utils'
 import { completeAssistantTiming } from './message-timing-utils'
 import {
   MAX_LOADED_MESSAGE_CHARS,

@@ -4193,8 +4193,66 @@ new-api-main 的 Playground 已把“模型/分组选项加载”和“会话消
 11. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/1750.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `1c99b1e25173e4fc843bb58569f125980f97c94039080b660669d6347d0c9b3e`，`1750.js` SHA256 均为 `7aa87ffb2bb90423df6c0527e72dd5e305941e6c196848b87b403a76a5a1d5c4`。
 12. 线上 `/static/js/async/1750.js` 已包含 `playground-models`、`Failed to load playground models` 特征；上一轮旧 chunk `/static/js/async/9008.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 消息基础工具拆分
+
+### 需求分析
+
+new-api-main 的 Playground 将消息基础能力继续拆成 `message-reasoning-utils`、`message-update-utils` 和 `message-action-utils`：`<think>` 标签解析、最后一条 assistant 更新、错误消息落盘、动作按钮可见性和内容状态都由独立纯函数提供。NexusTok 当前这些逻辑仍集中在 `message-utils.ts` 和 `MessageActions` 组件中；虽然已经具备功能，但职责过重，后续继续接入 raw response/source toggle、移动端动作菜单、layout mode 或更完整 reasoning 展示时，会反复触碰同一大文件和 JSX 内联判断。
+
+本轮目标是继续吸收 new-api-main 的结构优势，但不改变用户可见行为：
+
+1. 新增 `message-reasoning-utils.ts`，承载 `<think>` 完整/未闭合标签解析，供 streaming、finalize、消息内容状态和 storage 共享。
+2. 新增 `message-update-utils.ts`，承载 `updateLastAssistantMessage` 和 `updateAssistantMessageWithError`，并保留当前错误标题、errorCode、reasoning timing 和 assistant timing 语义。
+3. 新增 `message-action-utils.ts`，集中计算 MessageActions 所需的 `content/hasContent/isAssistant/isUser/isLoading` 和 hover 可见性 class。
+4. `message-utils.ts` 回归消息创建、版本读取、内容更新、API 格式化和请求有效性判断；不改消息结构、不改 storage key、不改 `/pg/chat/completions` payload。
+5. 为三类纯函数补定向测试，覆盖 think 标签边界、最后一条 assistant 更新、错误消息完成时间、动作状态和可见性 class。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| reasoning helper | `web/default/src/features/playground/lib/message-reasoning-utils.ts`、`message-reasoning-utils.test.ts` | 从 `message-utils.ts` 拆出 `<think>` 解析，供消息展示、流式处理和存储恢复复用。 |
+| update helper | `web/default/src/features/playground/lib/message-update-utils.ts`、`message-update-utils.test.ts` | 从 `message-utils.ts` 拆出 assistant 错误更新和最后一条 assistant 更新逻辑。 |
+| action helper | `web/default/src/features/playground/lib/message-action-utils.ts`、`message-action-utils.test.ts` | 从 `MessageActions` 内联状态拆出可测试动作状态和可见性 class。 |
+| 调用点 | `message-utils.ts`、`message-content-utils.ts`、`storage.ts`、`components/message-actions.tsx`、`lib/index.ts` | 改为引用拆分后的 helper；MessageActions 只使用 helper 结果，不改变按钮渲染结构。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. `<think>` 解析是流式 reasoning、最终正文清理和本地存储恢复共同依赖的核心逻辑；拆分时必须保持完整标签、多段标签和未闭合标签的旧语义。
+2. `updateAssistantMessageWithError` 位于流式/非流式错误路径，必须继续补齐 assistant/reasoning 完成时间，避免错误消息缺少耗时元信息。
+3. MessageActions 的 `hasContent` 从工具函数读取时，应与消息当前版本一致，不能让 loading 占位消息显示复制/编辑动作；按钮外观、tooltip 和禁用逻辑保持原状。
+4. 本轮不引入 new-api-main 的 raw response/source toggle、移动端 DropdownMenu 或 layout mode，避免把纯函数拆分扩大成可见 UI 改造。
+5. 不新增用户可见文案，不触碰 i18n；如测试发现现有未翻译文案，不在本轮顺手扩散。
+
+### 方案评审
+
+采用“先抽纯函数，再替换调用点”的小步方案：`message-reasoning-utils.ts` 提供 `parseThinkTags`，`message-utils.ts` 内部导入它继续处理 streaming/finalize；`message-update-utils.ts` 导入 `updateCurrentVersionContent` 与 timing helper，实现错误更新并由 `lib/index.ts` 导出；`message-action-utils.ts` 通过 `getCurrentVersion` 读取当前内容，供 `MessageActions` 组件使用。测试先覆盖新 helper，再跑既有 Playground message/storage 测试，确认行为不变。视觉层只替换内联判断，不新增 shadcn 组件、不改变 class 结构、不改文案。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-reasoning-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/storage.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts` 覆盖本轮 helper 与既有 Playground 消息链路。
+2. 针对本轮触碰文件运行定向 ESLint。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖拆分后的导出和调用点类型。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+5. `git diff --check` 检查补丁空白。
+6. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 并检查页面加载；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-reasoning-utils.test.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/storage.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts` 通过，共 43 个用例，覆盖 think 标签解析、assistant 错误更新、动作状态、消息内容状态、storage 恢复和既有会话 helper。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/message-reasoning-utils.ts src/features/playground/lib/message-reasoning-utils.test.ts src/features/playground/lib/message-update-utils.ts src/features/playground/lib/message-update-utils.test.ts src/features/playground/lib/message-action-utils.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-utils.ts src/features/playground/lib/message-content-utils.ts src/features/playground/lib/storage.ts src/features/playground/lib/index.ts src/features/playground/components/message-actions.tsx` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认拆分后的 helper 导出、MessageActions 调用和 storage/message content 引用类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 切换为 `/static/js/async/6948.js`。
+5. `git diff --check` 通过。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，其中 `/api/status` 返回 `success: true`。
+8. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/6948.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `0d746516191d50557c44fcf327acac696aa690b64e0388d2edff12d0163800a2`，`6948.js` SHA256 均为 `7e21046a08f310bc54f1795b4668159bde13c2bd38d0bbfa91fd89b1bba94d0a`。
+9. 线上 `/static/js/async/6948.js` 已包含 `hasUnclosedTag`、`max-md:opacity-100` 特征；上一轮旧 chunk `/static/js/async/1750.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息基础工具拆分 | `web/default/src/features/playground/lib/{message-reasoning-utils.ts,message-reasoning-utils.test.ts,message-update-utils.ts,message-update-utils.test.ts,message-action-utils.ts,message-action-utils.test.ts,message-utils.ts,message-content-utils.ts,storage.ts,index.ts}`、`web/default/src/features/playground/components/message-actions.tsx` | 原生化 new-api-main 的 message reasoning/update/action 工具拆分；`<think>` 解析、assistant 错误更新、动作栏状态和可见性 class 进入可测试纯函数，MessageActions 只消费派生状态，现有按钮结构、请求协议和本地存储 key 保持不变。 |
 | 2026-07-09 | Playground 选项加载与会话 hook | `controller/user.go`、`controller/user_models_test.go`、`web/default/src/features/playground/{api.ts,index.tsx,hooks/use-playground-{options,conversation,state}.ts,hooks/index.ts,lib/playground-{option,state}-utils.ts,lib/playground-{option,state}-utils.test.ts,lib/index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground options/conversation 拆分；`/api/user/models?group=` 支持按用户可用分组过滤模型，不可用分组返回空数组，无参数保持旧聚合行为；前端按当前分组刷新模型候选、加载失败 toast 补齐六语，发送/重试/编辑/删除逻辑收敛到专用 hook。 |
 | 2026-07-09 | Playground 本地存储 schema 与容量保护 | `web/default/src/features/playground/lib/{storage-schema.ts,storage.ts,storage.test.ts}` | 原生化 new-api-main 的 Playground 本地存储 envelope、Zod schema 校验和容量保护；保存继续使用原 storage key，读取兼容旧裸 JSON，损坏/超大/流式中断消息会被裁剪、清理或稳定化。 |
 | 2026-07-09 | Playground 消息时间元信息 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/lib/{message-timing-utils.ts,message-timing-utils.test.ts,message-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/components/{message-metadata.tsx,playground-message-content.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息 `createdAt`、`startedAt`、`completedAt`、`durationMs` 和 `MessageMetadata` 能力，新消息记录发送时间与响应耗时，流式/非流式/停止/错误路径统一补完成时间；旧 localStorage 消息缺 timing 字段时不渲染元信息，避免存储迁移。 |

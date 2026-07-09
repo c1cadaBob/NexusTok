@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { nanoid } from 'nanoid'
-import { MESSAGE_ROLES, MESSAGE_STATUS, ERROR_MESSAGES } from '../constants'
+import { ERROR_MESSAGES, MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
 import type {
   Message,
   MessageVersion,
@@ -29,6 +29,7 @@ import {
   completeReasoningTiming,
   startReasoningTiming,
 } from './message-timing-utils'
+import { parseThinkTags } from './message-reasoning-utils'
 
 /**
  * 创建一条新的消息版本。
@@ -45,6 +46,20 @@ export function createMessageVersion(content: string): MessageVersion {
  */
 export function getCurrentVersion(message: Message): MessageVersion {
   return message.versions[0] || { id: 'default', content: '' }
+}
+
+/**
+ * 读取消息当前版本的可展示正文。
+ */
+export function getMessageContent(message: Message): string {
+  return getCurrentVersion(message).content
+}
+
+/**
+ * 判断消息当前版本是否有非空正文。
+ */
+export function hasMessageContent(message: Message): boolean {
+  return getMessageContent(message).trim() !== ''
 }
 
 /**
@@ -158,112 +173,12 @@ export function formatMessageForAPI(message: Message): ChatCompletionMessage {
 export function isValidMessage(message: Message): boolean {
   if (!message || !message.from || !message.versions.length) return false
 
-  const content = message.versions[0]?.content
-  if (content === undefined) return false
-
   // 排除空 assistant 消息，避免把前端占位状态发送到上游。
-  if (message.from === 'assistant' && !content.trim()) return false
+  if (message.from === MESSAGE_ROLES.ASSISTANT && !hasMessageContent(message)) {
+    return false
+  }
 
   return true
-}
-
-/**
- * 解析 `<think>` 内容，把推理过程从可见正文中拆出来。
- *
- * 兼容完整和未闭合的 `<think>` 标签，流式过程中未闭合部分会进入
- * reasoning buffer，而不是提前显示到正文里。
- */
-export function parseThinkTags(content: string): {
-  visibleContent: string
-  reasoning: string
-  hasUnclosedTag: boolean
-} {
-  if (!content.includes('<think>')) {
-    return { visibleContent: content, reasoning: '', hasUnclosedTag: false }
-  }
-
-  const visibleParts: string[] = []
-  const reasoningParts: string[] = []
-  let currentPos = 0
-  let hasUnclosed = false
-
-  while (true) {
-    // 查找下一段 `<think>` 标签。
-    const openPos = content.indexOf('<think>', currentPos)
-
-    if (openPos === -1) {
-      // 没有更多标签时，剩余内容全部作为可见正文。
-      if (currentPos < content.length) {
-        visibleParts.push(content.substring(currentPos))
-      }
-      break
-    }
-
-    // 标签之前的内容保持为可见正文。
-    if (openPos > currentPos) {
-      visibleParts.push(content.substring(currentPos, openPos))
-    }
-
-    // 查找匹配的闭合标签。
-    const closePos = content.indexOf('</think>', openPos + 7)
-
-    if (closePos === -1) {
-      // 未闭合标签表示当前剩余内容仍在推理流中。
-      reasoningParts.push(content.substring(openPos + 7))
-      hasUnclosed = true
-      break
-    }
-
-    // 提取完整标签内部的推理内容。
-    reasoningParts.push(content.substring(openPos + 7, closePos))
-    currentPos = closePos + 8
-  }
-
-  return {
-    visibleContent: visibleParts.join('').trim(),
-    reasoning: reasoningParts.join('\n\n').trim(),
-    hasUnclosedTag: hasUnclosed,
-  }
-}
-
-/**
- * 将最后一条 assistant 消息更新为错误态。
- */
-export function updateAssistantMessageWithError(
-  messages: Message[],
-  errorMessage: string,
-  errorCode?: string
-): Message[] {
-  return updateLastAssistantMessage(messages, (message) => {
-    const updatedMessage = updateCurrentVersionContent(
-      message,
-      `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${errorMessage}`
-    )
-    const failedMessage: Message = {
-      ...updatedMessage,
-      status: MESSAGE_STATUS.ERROR,
-      isReasoningStreaming: false,
-      errorCode: errorCode || null,
-    }
-
-    return completeAssistantTiming(completeReasoningTiming(failedMessage))
-  })
-}
-
-/**
- * 更新最后一条 assistant 消息；没有 assistant 时返回原数组。
- */
-export function updateLastAssistantMessage(
-  messages: Message[],
-  updater: (message: Message) => Message
-): Message[] {
-  if (messages.length === 0) return messages
-  const last = messages[messages.length - 1]
-  if (!last || last.from !== MESSAGE_ROLES.ASSISTANT) return messages
-
-  const updated = [...messages]
-  updated[updated.length - 1] = updater(last)
-  return updated
 }
 
 /**

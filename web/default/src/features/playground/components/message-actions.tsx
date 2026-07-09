@@ -20,8 +20,13 @@ import { Copy, Check, RefreshCw, Edit, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { MESSAGE_ACTION_LABELS } from '../constants'
 import { useMessageActionGuard } from '../hooks/use-message-action-guard'
+import {
+  getMessageActionsVisibilityClass,
+  getMessageActionState,
+} from '../lib'
 import type { Message } from '../types'
 import { MessageActionButton } from './message-action-button'
 
@@ -49,11 +54,8 @@ export function MessageActions({
   const { copiedText, copyToClipboard } = useCopyToClipboard()
   const { guardAction } = useMessageActionGuard(isGenerating)
 
-  const isAssistant = message.from === 'assistant'
-  const hasContent = message.versions.some((v) => v.content)
-  const isLoading =
-    message.status === 'loading' || message.status === 'streaming'
-  const content = message.versions[0]?.content || ''
+  const { content, hasContent, isAssistant, isLoading } =
+    getMessageActionState(message)
   const isCopied = copiedText === content
 
   const handleCopy = () => {
@@ -69,14 +71,16 @@ export function MessageActions({
   const handleEdit = guardAction(() => onEdit?.(message))
   const handleDelete = guardAction(() => onDelete?.(message))
 
-  const visibilityClass = alwaysVisible
-    ? 'opacity-100'
-    : 'opacity-0 group-hover:opacity-100 max-md:opacity-100'
+  const visibilityClass = getMessageActionsVisibilityClass(alwaysVisible)
 
   return (
     <TooltipProvider delay={300}>
       <div
-        className={`flex items-center gap-0.5 transition-opacity ${visibilityClass} ${className}`}
+        className={cn(
+          'flex items-center gap-0.5 transition-opacity',
+          visibilityClass,
+          className
+        )}
       >
         {/* Copy */}
         {hasContent && (
