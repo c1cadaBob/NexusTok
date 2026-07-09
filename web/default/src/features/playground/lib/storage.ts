@@ -16,19 +16,338 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { STORAGE_KEYS } from '../constants'
+import { MESSAGE_ROLES, MESSAGE_STATUS, STORAGE_KEYS } from '../constants'
 import type { PlaygroundConfig, ParameterEnabled, Message } from '../types'
-import { sanitizeMessagesOnLoad } from './message-utils'
+import { parseThinkTags, sanitizeMessagesOnLoad } from './message-utils'
+import { completeAssistantTiming } from './message-timing-utils'
+import {
+  MAX_LOADED_MESSAGE_CHARS,
+  MAX_LOADED_MESSAGES_CHARS,
+  MAX_STORED_MESSAGES,
+  MAX_STORED_MESSAGES_BYTES,
+  STORAGE_VERSION,
+  messagesSchema,
+  parameterEnabledSchema,
+  playgroundConfigSchema,
+} from './storage-schema'
+
+type StoredEnvelope<T> = {
+  version: number
+  data: T
+}
+
+type SectionOccurrence = {
+  heading: string
+  index: number
+}
+
+const TRUNCATED_CONTENT_SUFFIX = '\n\n[...]'
+const MIN_PREFIX_COLLAPSE_LENGTH = 2000
+const MIN_REPEATED_SECTION_COUNT = 3
+const SECTION_HEADING_LINE_PATTERN = /^#{2,6}\s+\d+\.\s+.+$/gm
+
+function readStoredValue(key: string): unknown | null {
+  const saved = localStorage.getItem(key)
+  if (!saved) return null
+
+  return JSON.parse(saved) as unknown
+}
+
+function readStoredMessagesValue(): unknown | null {
+  const saved = localStorage.getItem(STORAGE_KEYS.MESSAGES)
+  if (!saved) return null
+
+  if (saved.length > MAX_STORED_MESSAGES_BYTES) {
+    localStorage.removeItem(STORAGE_KEYS.MESSAGES)
+    return null
+  }
+
+  return JSON.parse(saved) as unknown
+}
+
+function isStoredEnvelope(value: unknown): value is StoredEnvelope<unknown> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'version' in value &&
+    'data' in value
+  )
+}
+
+function unwrapStoredValue(value: unknown): unknown {
+  if (isStoredEnvelope(value)) {
+    return value.data
+  }
+
+  return value
+}
+
+function writeStoredValue<T>(key: string, data: T): void {
+  const payload: StoredEnvelope<T> = {
+    version: STORAGE_VERSION,
+    data,
+  }
+
+  localStorage.setItem(key, JSON.stringify(payload))
+}
+
+function trimMessages(messages: Message[]): Message[] {
+  if (messages.length <= MAX_STORED_MESSAGES) {
+    return messages
+  }
+
+  return messages.slice(-MAX_STORED_MESSAGES)
+}
+
+function getMessageSize(message: Message): number {
+  const versionsSize = message.versions.reduce(
+    (total, version) => total + version.content.length,
+    0
+  )
+  const reasoningSize = message.reasoning?.content.length ?? 0
+
+  return versionsSize + reasoningSize
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text
+  }
+
+  if (maxLength <= TRUNCATED_CONTENT_SUFFIX.length) {
+    return text.slice(0, maxLength)
+  }
+
+  return `${text.slice(0, maxLength - TRUNCATED_CONTENT_SUFFIX.length)}${TRUNCATED_CONTENT_SUFFIX}`
+}
+
+function getSectionOccurrences(text: string): SectionOccurrence[] {
+  const occurrences: SectionOccurrence[] = []
+  const matches = text.matchAll(SECTION_HEADING_LINE_PATTERN)
+
+  for (const match of matches) {
+    const index = match.index
+    if (index === undefined) {
+      continue
+    }
+
+    occurrences.push({
+      heading: match[0],
+      index,
+    })
+  }
+
+  return occurrences
+}
+
+function getHeadingCounts(
+  occurrences: SectionOccurrence[]
+): Map<string, number> {
+  const counts = new Map<string, number>()
+
+  for (const occurrence of occurrences) {
+    counts.set(occurrence.heading, (counts.get(occurrence.heading) ?? 0) + 1)
+  }
+
+  return counts
+}
+
+function findLastRepeatedSectionRunStart(text: string): number {
+  const occurrences = getSectionOccurrences(text)
+  const headingCounts = getHeadingCounts(occurrences)
+  const lastRepeatedIndexes: number[] = []
+  const seenHeadings = new Set<string>()
+
+  for (let index = occurrences.length - 1; index >= 0; index--) {
+    const occurrence = occurrences[index]
+    const count = headingCounts.get(occurrence.heading) ?? 0
+
+    if (
+      count < MIN_REPEATED_SECTION_COUNT ||
+      seenHeadings.has(occurrence.heading)
+    ) {
+      continue
+    }
+
+    seenHeadings.add(occurrence.heading)
+    lastRepeatedIndexes.push(occurrence.index)
+  }
+
+  if (lastRepeatedIndexes.length === 0) {
+    return -1
+  }
+
+  return Math.min(...lastRepeatedIndexes)
+}
+
+function collapseRepeatedSectionSnapshots(text: string): string {
+  if (text.length < MIN_PREFIX_COLLAPSE_LENGTH) {
+    return text
+  }
+
+  const lastRepeatedRunStart = findLastRepeatedSectionRunStart(text)
+  if (lastRepeatedRunStart === -1) {
+    return text
+  }
+
+  return text.slice(lastRepeatedRunStart)
+}
+
+function isAssistantMessagePending(message: Message): boolean {
+  return (
+    message.from === MESSAGE_ROLES.ASSISTANT &&
+    (message.status === MESSAGE_STATUS.LOADING ||
+      message.status === MESSAGE_STATUS.STREAMING)
+  )
+}
+
+function hasStoredMessageContent(message: Message): boolean {
+  return message.versions.some((version) => version.content.trim() !== '')
+}
+
+function completeStoredReasoningTiming(
+  message: Message,
+  completedAt: number
+): Message {
+  if (!message.reasoning) {
+    return message
+  }
+
+  const startedAt =
+    message.reasoning.startedAt ?? message.startedAt ?? completedAt
+  const durationMs =
+    message.reasoning.durationMs ?? Math.max(0, completedAt - startedAt)
+
+  return {
+    ...message,
+    reasoning: {
+      ...message.reasoning,
+      startedAt,
+      completedAt: message.reasoning.completedAt ?? completedAt,
+      durationMs,
+      duration: message.reasoning.duration || Math.ceil(durationMs / 1000),
+    },
+  }
+}
+
+function finalizeStoredPendingMessage(
+  message: Message,
+  completedAt: number
+): Message {
+  const [currentVersion, ...otherVersions] = message.versions
+  const { visibleContent, reasoning } = parseThinkTags(
+    currentVersion?.content ?? ''
+  )
+  const finalReasoning = message.reasoning?.content || reasoning || ''
+  const finalized: Message = {
+    ...message,
+    versions: currentVersion
+      ? [{ ...currentVersion, content: visibleContent }, ...otherVersions]
+      : message.versions,
+    reasoning: finalReasoning
+      ? {
+          content: finalReasoning,
+          duration: message.reasoning?.duration || 0,
+          startedAt: message.reasoning?.startedAt,
+          completedAt: message.reasoning?.completedAt,
+          durationMs: message.reasoning?.durationMs,
+        }
+      : undefined,
+    isReasoningStreaming: false,
+    status: MESSAGE_STATUS.COMPLETE,
+  }
+
+  return completeAssistantTiming(
+    completeStoredReasoningTiming(finalized, completedAt),
+    completedAt
+  )
+}
+
+function normalizeStoredMessageForLoad(message: Message): Message {
+  let changed = false
+  const versions = message.versions.map((version) => {
+    const collapsedContent = collapseRepeatedSectionSnapshots(version.content)
+    const content = truncateText(collapsedContent, MAX_LOADED_MESSAGE_CHARS)
+
+    if (content === version.content && collapsedContent === version.content) {
+      return version
+    }
+
+    changed = true
+    return {
+      ...version,
+      content,
+    }
+  })
+
+  const reasoning = message.reasoning
+    ? {
+        ...message.reasoning,
+        content: truncateText(
+          message.reasoning.content,
+          MAX_LOADED_MESSAGE_CHARS
+        ),
+      }
+    : undefined
+
+  if (reasoning?.content !== message.reasoning?.content) {
+    changed = true
+  }
+
+  const normalized = changed ? { ...message, versions, reasoning } : message
+
+  if (!isAssistantMessagePending(normalized)) {
+    return normalized
+  }
+
+  const hasContent = hasStoredMessageContent(normalized)
+  const hasReasoning = normalized.reasoning?.content.trim()
+
+  if (!hasContent && !hasReasoning) {
+    return normalized
+  }
+
+  const completedAt =
+    normalized.completedAt ??
+    normalized.reasoning?.completedAt ??
+    normalized.startedAt ??
+    normalized.createdAt ??
+    Date.now()
+
+  return finalizeStoredPendingMessage(normalized, completedAt)
+}
+
+function trimMessagesByContentSize(messages: Message[]): Message[] {
+  let totalSize = 0
+  const result: Message[] = []
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    const messageSize = getMessageSize(message)
+
+    if (
+      result.length > 0 &&
+      totalSize + messageSize > MAX_LOADED_MESSAGES_CHARS
+    ) {
+      break
+    }
+
+    totalSize += messageSize
+    result.push(message)
+  }
+
+  return result.reverse()
+}
 
 /**
- * Load playground config from localStorage
+ * 从 localStorage 加载 Playground 配置。
  */
 export function loadConfig(): Partial<PlaygroundConfig> {
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.CONFIG)
-    if (saved) {
-      return JSON.parse(saved)
-    }
+    const saved = readStoredValue(STORAGE_KEYS.CONFIG)
+    if (!saved) return {}
+
+    return playgroundConfigSchema.parse(unwrapStoredValue(saved))
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to load config:', error)
@@ -37,11 +356,12 @@ export function loadConfig(): Partial<PlaygroundConfig> {
 }
 
 /**
- * Save playground config to localStorage
+ * 将 Playground 配置保存到 localStorage。
  */
 export function saveConfig(config: Partial<PlaygroundConfig>): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(config))
+    const parsed = playgroundConfigSchema.parse(config)
+    writeStoredValue(STORAGE_KEYS.CONFIG, parsed)
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save config:', error)
@@ -49,14 +369,14 @@ export function saveConfig(config: Partial<PlaygroundConfig>): void {
 }
 
 /**
- * Load parameter enabled state from localStorage
+ * 从 localStorage 加载参数开关状态。
  */
 export function loadParameterEnabled(): Partial<ParameterEnabled> {
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.PARAMETER_ENABLED)
-    if (saved) {
-      return JSON.parse(saved)
-    }
+    const saved = readStoredValue(STORAGE_KEYS.PARAMETER_ENABLED)
+    if (!saved) return {}
+
+    return parameterEnabledSchema.parse(unwrapStoredValue(saved))
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to load parameter enabled:', error)
@@ -65,16 +385,14 @@ export function loadParameterEnabled(): Partial<ParameterEnabled> {
 }
 
 /**
- * Save parameter enabled state to localStorage
+ * 将参数开关状态保存到 localStorage。
  */
 export function saveParameterEnabled(
   parameterEnabled: Partial<ParameterEnabled>
 ): void {
   try {
-    localStorage.setItem(
-      STORAGE_KEYS.PARAMETER_ENABLED,
-      JSON.stringify(parameterEnabled)
-    )
+    const parsed = parameterEnabledSchema.parse(parameterEnabled)
+    writeStoredValue(STORAGE_KEYS.PARAMETER_ENABLED, parsed)
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save parameter enabled:', error)
@@ -82,24 +400,42 @@ export function saveParameterEnabled(
 }
 
 /**
- * Load messages from localStorage
+ * 从 localStorage 加载消息历史。
+ *
+ * 加载期会兼容旧裸数组格式，并在进入 React 状态前完成容量裁剪和
+ * pending assistant 稳定化，避免异常浏览器缓存拖慢 Playground 页面。
  */
 export function loadMessages(): Message[] | null {
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.MESSAGES)
-    if (saved) {
-      const parsed: unknown = JSON.parse(saved)
-      if (!Array.isArray(parsed)) {
-        localStorage.removeItem(STORAGE_KEYS.MESSAGES)
-        return null
-      }
-      const sanitized = sanitizeMessagesOnLoad(parsed as Message[])
-      // Persist sanitized result to avoid re-sanitizing on subsequent loads
-      if (sanitized !== parsed) {
-        saveMessages(sanitized)
-      }
-      return sanitized
+    const saved = readStoredMessagesValue()
+    if (!saved) return null
+
+    const unwrapped = unwrapStoredValue(saved)
+    if (!Array.isArray(unwrapped)) {
+      localStorage.removeItem(STORAGE_KEYS.MESSAGES)
+      return null
     }
+
+    const parsed = messagesSchema.parse(unwrapped) as Message[]
+    const normalized = parsed.map(normalizeStoredMessageForLoad)
+    const normalizedChanged = normalized.some(
+      (message, index) => message !== parsed[index]
+    )
+    const trimmed = trimMessages(normalized)
+    const sizeTrimmed = trimMessagesByContentSize(trimmed)
+    const sanitized = sanitizeMessagesOnLoad(sizeTrimmed)
+
+    if (
+      !isStoredEnvelope(saved) ||
+      normalizedChanged ||
+      trimmed !== normalized ||
+      sizeTrimmed !== trimmed ||
+      sanitized !== sizeTrimmed
+    ) {
+      saveMessages(sanitized)
+    }
+
+    return sanitized
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to load messages:', error)
@@ -108,11 +444,13 @@ export function loadMessages(): Message[] | null {
 }
 
 /**
- * Save messages to localStorage
+ * 将消息历史保存到 localStorage。
  */
 export function saveMessages(messages: Message[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messages))
+    const trimmed = trimMessages(messages)
+    const parsed = messagesSchema.parse(trimmed) as Message[]
+    writeStoredValue(STORAGE_KEYS.MESSAGES, parsed)
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save messages:', error)
@@ -120,7 +458,7 @@ export function saveMessages(messages: Message[]): void {
 }
 
 /**
- * Clear all playground data
+ * 清理所有 Playground 本地数据。
  */
 export function clearPlaygroundData(): void {
   try {

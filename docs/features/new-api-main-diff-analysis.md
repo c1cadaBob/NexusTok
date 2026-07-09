@@ -4072,8 +4072,67 @@ new-api-main 的 Playground 会在消息对象上记录 `createdAt`、`startedAt
 9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/1397.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `85fccd17941b0f2579c71cb7d18b4c02a2515108e75c7ace361d1258a5594c5e`，`1397.js` SHA256 均为 `e81e11e69520b91b54c02b6151421ea12629cc19d0fd0f3859adf4f4e12b1c3d`。
 10. 线上 `/static/js/async/1397.js` 已包含 `Response time`、`durationMs`、`createdAt` 特征；上一轮旧 chunk `/static/js/async/157.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 本地存储 schema 与容量保护
+
+### 需求分析
+
+new-api-main 的 Playground 本地存储已经把配置、参数开关和消息历史包进带版本号的 envelope，并用 Zod schema 校验加载内容；消息历史还包含数量上限、原始 localStorage 字节上限、单条内容上限、总加载内容上限、重复 Markdown 快照折叠和 pending assistant 稳定化。NexusTok 当前 `storage.ts` 仍直接 `JSON.parse` 裸 JSON，只在消息数组加载后做轻量 `sanitizeMessagesOnLoad`。如果用户浏览器中存在损坏 JSON、过大的 `playground_messages`、被流式刷新留下的长篇重复快照，页面初始化可能被卡住，或者每次进入 Playground 都重复处理异常数据。
+
+本轮目标是把 new-api-main 的存储韧性转成 NexusTok 原生能力，同时保持现有使用习惯和兼容性：
+
+1. 新增 Playground storage schema，使用当前前端已存在的 `zod` 校验配置、参数开关和消息结构。
+2. 保存时写入 `{ version: 1, data }` envelope；加载时兼容旧版裸 JSON，不改 `STORAGE_KEYS`，不要求用户手动清缓存。
+3. 对 `playground_messages` 增加原始大小、消息数量、单条正文、reasoning 内容和总体加载内容保护，避免异常 localStorage 拖垮页面。
+4. 对含有内容或 reasoning 的 pending assistant 消息在加载时补齐完成态和耗时；对空 pending assistant 继续交给现有中断清理逻辑转成错误态。
+5. 不新增用户可见文案、不改变 `/pg/chat/completions` payload、不触碰后端 Relay、计费、权限、数据库或模型配置。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| storage schema | `web/default/src/features/playground/lib/storage-schema.ts` | 新增 storage 版本、容量上限常量，以及配置、参数开关和消息历史 Zod schema。 |
+| storage 读写 | `web/default/src/features/playground/lib/storage.ts` | 读取兼容 envelope 与旧裸 JSON；保存写 envelope；消息加载增加大小限制、裁剪、重复快照折叠和 pending 状态稳定化。 |
+| storage 测试 | `web/default/src/features/playground/lib/storage.test.ts` | 覆盖旧数据兼容、envelope 写入、无效数据兜底、消息数量裁剪、超大存储清理、内容截断和 pending 消息恢复。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 旧用户浏览器里已经存在裸 JSON 配置、参数开关和消息数组，schema 兼容必须足够宽松；加载失败应返回默认空状态而不是阻断页面。
+2. 消息 schema 过严会导致历史合法消息丢弃；本轮只校验当前 `Message` 类型中真实使用的字段，所有 timing、reasoning 和错误字段保持可选。
+3. 容量保护必须只影响 Playground 本地历史，不影响当前请求上下文、后端协议或计费；保存失败只记录 `console.error`，不能打断页面交互。
+4. 裁剪长内容可能丢失很旧或超长的本地历史；但限制只在加载和保存历史时生效，优先保留最近消息，目标是恢复页面可用性。
+5. pending assistant 稳定化必须避免刷新后继续显示“正在响应”；有内容的消息转完成态，空占位转现有中断错误态，以减少误导。
+
+### 方案评审
+
+采用“schema/envelope 原生化 + 加载期防护”的方案：新增 `storage-schema.ts` 承载版本号、容量上限和 Zod schema；`storage.ts` 继续作为唯一读写入口，内部通过 `unwrapStoredValue` 兼容旧裸 JSON，通过 `writeStoredValue` 统一写 `{ version, data }`。消息加载流程为：先检查原始 `playground_messages` 字符串是否超过 1MB，过大则删除并返回空历史；再解包并用 schema 校验；随后按单条 40,000 字符和总计 120,000 字符裁剪正文/reasoning，折叠重复 Markdown section 快照；最后调用现有 `sanitizeMessagesOnLoad` 处理空 pending assistant。保存消息时最多保留最近 100 条并写入 envelope。该方案不新增 UI、不新增路由、不改变 storage key，不会影响核心 Relay 与计费路径。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/storage.test.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 覆盖本轮 storage 逻辑和既有 Playground helper。
+2. `cd web/default && bun run i18n:sync` 确认无新增可见文案且六语 locale 仍同步。
+3. 针对本轮触碰文件运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖 schema、storage helper 和测试类型。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+6. `git diff --check` 检查空白与补丁格式。
+7. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 并检查页面加载；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/storage.test.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 通过，共 31 个用例，覆盖 storage envelope、旧裸 JSON 兼容、无效配置兜底、参数开关保存、消息数量裁剪、超大消息存储清理、单条/总体内容裁剪、重复 Markdown section 快照折叠和 pending assistant 恢复。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0，本轮未新增用户可见文案。
+3. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/storage-schema.ts src/features/playground/lib/storage.ts src/features/playground/lib/storage.test.ts src/features/playground/lib/message-utils.ts src/features/playground/lib/message-timing-utils.ts` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 storage schema、localStorage 读写 helper 和测试类型正常。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 切换为 `/static/js/async/9008.js`。
+6. `git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，其中 `/api/status` 返回 `success: true`。
+9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9008.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `25ea44dc944c7a99a20f34bcaecaf0f1ce5cf470a7adf7b1e06fe9e2a76aa69c`，`9008.js` SHA256 均为 `e72a3b97e2c58bc626261832d5ed80e458060b839866161048776b02feebd0f7`。
+10. 线上 `/static/js/async/9008.js` 已包含 `playground_messages`、`playground_config` 特征；上一轮旧 chunk `/static/js/async/1397.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 本地存储 schema 与容量保护 | `web/default/src/features/playground/lib/{storage-schema.ts,storage.ts,storage.test.ts}` | 原生化 new-api-main 的 Playground 本地存储 envelope、Zod schema 校验和容量保护；保存继续使用原 storage key，读取兼容旧裸 JSON，损坏/超大/流式中断消息会被裁剪、清理或稳定化。 |
 | 2026-07-09 | Playground 消息时间元信息 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/lib/{message-timing-utils.ts,message-timing-utils.test.ts,message-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/components/{message-metadata.tsx,playground-message-content.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息 `createdAt`、`startedAt`、`completedAt`、`durationMs` 和 `MessageMetadata` 能力，新消息记录发送时间与响应耗时，流式/非流式/停止/错误路径统一补完成时间；旧 localStorage 消息缺 timing 字段时不渲染元信息，避免存储迁移。 |
 | 2026-07-09 | Playground 消息内容渲染组件化 | `web/default/src/features/playground/components/{playground-message-content.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-content-utils.ts,message-content-utils.test.ts,index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息内容拆分方式，来源、推理、加载、错误和正文显示状态统一由 helper 计算，单条消息正文渲染交给 `PlaygroundMessageContent`，聊天组件只保留消息列表、编辑态和动作编排；`Responding...` 补齐六语翻译。 |
 | 2026-07-09 | Playground 消息编辑与会话操作工具化 | `web/default/src/features/playground/components/{playground-message-editor.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-editor-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息编辑器拆分和会话消息数组 helper；发送、重试、删除、上一条 user 查找、编辑保存与编辑后重新提交统一由纯函数处理并补定向测试，聊天组件和容器不再手写关键数组截断逻辑。 |
