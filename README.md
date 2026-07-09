@@ -6,6 +6,15 @@
 
 🍥 **新一代大模型网关与AI资产管理系统**
 
+<p align="center">
+  <strong>简体中文</strong> |
+  <a href="./README.en.md">English</a> |
+  <a href="./README.zh_TW.md">繁體中文</a> |
+  <a href="./README.fr.md">Français</a> |
+  <a href="./README.ja.md">日本語</a> |
+  <a href="./README.zh_CN.md">简体中文完整页</a>
+</p>
+
 </div>
 
 ---

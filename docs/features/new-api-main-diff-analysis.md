@@ -5953,8 +5953,67 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：多语言 README 品牌化补齐
+
+### 需求分析
+
+`new-api-main` 在根目录提供 `README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md`，并在 README 顶部提供语言切换入口。NexusTok 当前根目录只有中文 `README.md`，对非中文用户、海外部署者和跨语言协作者不够友好，也无法完整展示 NexusTok 已经原生化出来的差异优势：
+
+1. NexusTok 已形成多提供商 AI API 网关、账号池、统一权限治理、系统任务、系统信息、Dashboard Flow、Waffo Pancake、订阅/钱包、三库兼容等原生能力，但 README 仍偏部署说明，缺少能力总览。
+2. 当前 README 没有语言切换入口；`new-api-main` 的多语言 README 结构值得吸收，但其中包含 New API 品牌、合作伙伴、徽章、外部 docs.newapi 链接，不应直接复制。
+3. 多语言 README 应以 NexusTok 当前仓库文档为权威入口：`docs/installation/deployment.md`、OpenAPI 文件、GitHub Issues/Releases，而不是引用上游文档站点。
+4. 本轮只补项目文档，不修改前端/后端运行时代码，不新增 UI 文案，不影响 Docker 热更新链路。
+
+本轮目标是生成 NexusTok 品牌化的英文、简体中文、繁体中文、法文、日文 README，并在根 `README.md` 顶部加入语言切换入口；同时避免上游品牌和不存在的承诺残留。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 根 README | `README.md` | 增加语言切换入口，并保持当前简体中文内容可读。 |
+| 多语言 README | `README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md` | 新增 NexusTok 品牌化项目说明、能力总览、快速开始、部署、文档和许可证说明。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 文档翻译可能出现术语不一致；本轮将保留 API、JWT、OAuth、WebAuthn、Redis、Waffo Pancake、SystemTask、Dashboard Flow 等固定术语，不强行翻译。
+2. 多语言 README 可能与后续功能演进发生漂移，因此只描述当前已经落地或仓库已有的能力，不承诺未完成的 Casbin 持久化、Advanced Custom Channel 或完整 SDK 替换。
+3. 根 README 增加语言入口不会影响构建、测试、Docker 镜像或页面运行。
+4. 不迁移 new-api-main 的合作伙伴、Trendshift/ProductHunt/HelloGitHub 徽章和外部文档链接，避免品牌错配或不存在资源。
+5. README 是仓库首页文档，链接错误会影响协作者体验；需要用脚本检查新增 README 中是否残留 `QuantumNous`、`Calcium-Ion`、`docs.newapi`、`calciumion/new-api` 等上游标识。
+
+### 方案评审
+
+采用“根 README 加入口 + 多语言文件品牌化生成”的方案：
+
+1. 在现有 `README.md` 标题区增加语言切换行：简体中文、English、繁體中文、Français、日本語。
+2. 新增 `README.zh_CN.md`，内容与根 README 同为简体中文，但加入语言切换和能力总览，作为明确的简中语言目标。
+3. 新增 `README.en.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md`，使用同一信息结构：Project description、Key capabilities、Quick start、Deployment、Documentation、License。
+4. 所有命令、镜像名、仓库地址、维护手册、Issue/Releases 链接均使用 NexusTok 当前路径和 `c1cada/nexustok`。
+5. 文档中对合规义务保持与根 README 一致的风险提示，不增加法律建议性质的承诺。
+
+验收方式：
+
+1. `find . -maxdepth 1 -type f -iname 'README*' -print | sort`，确认根目录 README 语言文件齐全。
+2. `rg -n "QuantumNous|Calcium-Ion|docs\\.newapi|calciumion/new-api|New API" README*.md`，确认没有上游品牌残留。
+3. `rg -n "README\\.(en|zh_CN|zh_TW|fr|ja)\\.md" README.md README*.md`，确认语言入口互链存在。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `find . -maxdepth 1 -type f -iname 'README*' -print | sort` 已确认根目录包含 `README.md`、`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md`。
+2. `rg -n "QuantumNous|Calcium-Ion|docs\\.newapi|calciumion/new-api|New API" README*.md` 无匹配，未残留上游品牌、镜像名或文档站链接。
+3. `rg -n "README\\.(en|zh_CN|zh_TW|fr|ja)\\.md" README.md README*.md` 已确认语言入口互链存在。
+4. 本地 README 链接检查通过：新增 README 中的相对链接和仓库根路径链接均能在当前仓库中解析到目标文件。
+5. 代码块 fence 计数检查通过：新增 README 的 fenced code block 数量均为偶数。
+6. `git diff --check` 通过。
+7. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+8. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 多语言 README 品牌化补齐 | `README.md`、`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md` | 原生化 new-api-main 的多语言 README 入口优势，按 NexusTok 当前能力生成英文、简中、繁中、法文、日文 README；保留本项目仓库、镜像、部署维护手册和合规提示，不迁移上游品牌、合作伙伴、徽章和外部文档站点。 |
 | 2026-07-09 | 中文 i18n Quota 漏翻清理 | `web/default/src/i18n/locales/zh.json`、`web/default/src/i18n/locales/_reports/*` | 将 zh locale 中唯一剩余的 `Quota:` 翻译为 `额度：`，并通过 `bun run i18n:sync` 验证 stale untranslated report 清理能力；中文未翻译计数归零。 |
 | 2026-07-09 | i18n 同步脚本字面量白名单与报告清理 | `web/default/scripts/sync-i18n.mjs`、`web/default/src/i18n/locales/_reports/*` | 原生化 new-api-main 的 i18n literal 白名单优势，过滤品牌、provider、URL、密钥占位符、模型名和代码化字符串的误报；同步脚本在 locale 无 extras/untranslated 时清理旧报告，剩余自然语言未翻译项继续保留给后续翻译切片。 |
 | 2026-07-09 | Issue 模板前置约束增强 | `.github/ISSUE_TEMPLATE/{bug_report.md,bug_report_en.md,feature_request.md,feature_request_en.md}` | 原生化 new-api-main 的 issue 治理优势，四份模板补充非重复搜索、使用/配置/接入排除、Relay/pass-through 上游行为边界、coding plan/逆向渠道技术支持边界，以及转发/计费问题排查信息提示；保留 NexusTok 品牌链接和现有 Issue Chooser 配置。 |
