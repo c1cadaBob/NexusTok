@@ -3793,6 +3793,7 @@
     "Resource Configuration": "リソース設定",
     "Response": "レスポンス",
     "Response Time": "応答時間",
+    "Response time: {{duration}}": "応答時間：{{duration}}",
     "Responding...": "応答中...",
     "Responses API Version": "応答APIバージョン",
     "Restore defaults": "既定に戻す",

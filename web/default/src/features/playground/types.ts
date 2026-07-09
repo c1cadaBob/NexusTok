@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-// Message types
+// 消息类型
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessageStatus = 'loading' | 'streaming' | 'complete' | 'error'
@@ -30,10 +30,17 @@ export interface Message {
   key: string
   from: MessageRole
   versions: MessageVersion[]
+  createdAt?: number
+  startedAt?: number
+  completedAt?: number
+  durationMs?: number
   sources?: { href: string; title: string }[]
   reasoning?: {
     content: string
     duration: number
+    startedAt?: number
+    completedAt?: number
+    durationMs?: number
   }
   isReasoningStreaming?: boolean
   isReasoningComplete?: boolean
@@ -42,7 +49,7 @@ export interface Message {
   errorCode?: string | null
 }
 
-// API payload types
+// API 请求/响应类型
 export interface ChatCompletionMessage {
   role: MessageRole
   content: string | ContentPart[]
@@ -106,7 +113,7 @@ export interface ChatCompletionResponse {
   }
 }
 
-// Configuration types
+// Playground 配置类型
 export interface PlaygroundConfig {
   model: string
   group: string

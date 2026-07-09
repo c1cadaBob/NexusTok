@@ -53,6 +53,8 @@ describe('conversation message utils', () => {
     assert.equal(next[1].versions[0].content, 'new prompt')
     assert.equal(next[2].from, MESSAGE_ROLES.ASSISTANT)
     assert.equal(next[2].status, MESSAGE_STATUS.LOADING)
+    assert.equal(next[1].createdAt, next[2].startedAt)
+    assert.equal(next[2].createdAt, next[2].startedAt)
   })
 
   test('regenerates assistant messages by replacing the assistant branch', () => {
@@ -128,6 +130,7 @@ describe('conversation message utils', () => {
     assert.equal(result.messages[0].versions[0].content, 'new prompt')
     assert.equal(result.messages[1].from, MESSAGE_ROLES.ASSISTANT)
     assert.equal(result.messages[1].status, MESSAGE_STATUS.LOADING)
+    assert.equal(result.messages[0].createdAt, result.messages[1].startedAt)
   })
 
   test('does not submit edited assistant messages', () => {

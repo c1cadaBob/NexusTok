@@ -3793,6 +3793,7 @@
     "Resource Configuration": "Resource Configuration",
     "Response": "Response",
     "Response Time": "Response Time",
+    "Response time: {{duration}}": "Response time: {{duration}}",
     "Responding...": "Responding...",
     "Responses API Version": "Responses API Version",
     "Restore defaults": "Restore defaults",

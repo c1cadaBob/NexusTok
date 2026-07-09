@@ -27,6 +27,7 @@ import {
   processStreamingContent,
   finalizeMessage,
   parseRequestErrorDetails,
+  startReasoningTiming,
 } from '../lib'
 import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
 import { useStreamRequest } from './use-stream-request'
@@ -56,10 +57,12 @@ export function useChatHandler({
 
           if (type === 'reasoning') {
             // 直连 API 的 reasoning_content 不需要等待 <think> 标签闭合。
+            const reasoningTiming = startReasoningTiming(message)
             return {
               ...message,
               reasoning: {
-                content: (message.reasoning?.content || '') + chunk,
+                ...reasoningTiming,
+                content: reasoningTiming.content + chunk,
                 duration: 0,
               },
               isReasoningStreaming: true,

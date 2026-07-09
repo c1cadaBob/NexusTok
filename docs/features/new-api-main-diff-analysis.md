@@ -4012,8 +4012,69 @@ new-api-main 的 Playground 已把单条消息的来源列表、推理内容、�
 8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`。
 9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/157.js`，确认线上资源包含 `Responding...`、`Reasoning`、`Save & Submit`、`Start a playground chat` 等特征；线上资源与本地 `web/default/dist` 完全一致，旧 `/static/js/async/9942.js` 已返回 404，确认页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 消息时间元信息原生化
+
+### 需求分析
+
+new-api-main 的 Playground 会在消息对象上记录 `createdAt`、`startedAt`、`completedAt`、`durationMs`，并通过 `MessageMetadata` 在消息下方展示发送时间和响应耗时。NexusTok 当前 Playground 已能稳定发送、编辑、重试和展示消息内容，但缺少消息级时间元信息；管理员或用户调试上游模型时，无法直接从 Playground 判断某次响应耗时，只能依赖浏览器网络面板或后端日志。这个差异影响调试效率，也让后续接入会话历史、消息裁剪和响应性能分析时缺少基础字段。
+
+本轮目标是把 new-api-main 的时间元信息能力转成 NexusTok 原生能力，同时保持存储与请求兼容：
+
+1. 将 `Message` 的 `createdAt`、`startedAt`、`completedAt`、`durationMs` 做成可选字段，新消息写入时间，旧 localStorage 消息不强制迁移。
+2. 新增 `message-timing-utils.ts`，集中计算 assistant 完成耗时、reasoning 开始/完成耗时和元信息格式化。
+3. 在流式、非流式、停止生成和错误路径调用 timing helper，确保完成、停止和错误消息都有稳定的耗时信息。
+4. 新增 `MessageMetadata` 组件，在 `PlaygroundMessageContent` 的错误和正常正文下方显示消息时间与响应耗时。
+5. 补齐 `Response time: {{duration}}`、`{{value}}s` 等 i18n 文案，并补定向测试覆盖 timing 计算和格式化。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 类型与消息工具 | `web/default/src/features/playground/types.ts`、`lib/message-utils.ts`、`lib/conversation-message-utils.ts` | 新增可选 timing 字段；创建 user/assistant 消息时写入 `createdAt/startedAt`；编辑后提交重置 user 时间。 |
+| timing helper | `web/default/src/features/playground/lib/message-timing-utils.ts`、`message-timing-utils.test.ts`、`lib/index.ts` | 集中计算 assistant/reasoning 耗时和展示文案。 |
+| 请求生命周期 | `web/default/src/features/playground/hooks/use-chat-handler.ts` | 流式完成、非流式完成、停止生成和错误落盘时补齐 `completedAt/durationMs`。 |
+| 元信息组件 | `web/default/src/features/playground/components/message-metadata.tsx`、`playground-message-content.tsx` | 在消息内容下方展示发送时间和响应耗时。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐响应耗时相关文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 本轮只在前端 Playground 消息对象上增加可选字段，不修改后端 Relay、计费、权限、数据库、请求 DTO、API payload 和 storage key。
+2. localStorage 里旧消息没有 timing 字段，`MessageMetadata` 必须在字段缺失时返回 `null`，不能导致历史消息渲染异常。
+3. 耗时计算必须以 assistant 的 `startedAt` 为准；如果历史消息缺字段，则以完成时间兜底，避免 `NaN` 或负数展示。
+4. 错误和停止路径也要写入耗时，否则用户最需要排查的问题请求反而没有时间线。
+5. UI 元信息必须保持低视觉权重，不能挤压消息正文或改变现有气泡/Markdown 布局；移动端需要保留换行空间。
+
+### 方案评审
+
+采用“可选字段 + helper + 轻量元信息”的方案：`Message` 增加可选 timing 字段，`createUserMessage` 和 `createLoadingAssistantMessage` 只在新消息上写入时间；`completeAssistantTiming` 和 `completeReasoningTiming` 负责完成态计算，`formatMessageTime` 和 `formatDuration` 负责展示文本。`use-chat-handler` 在原有 `finalizeMessage` 外层包 timing helper，不改变 SSE 解析和请求 payload；`updateAssistantMessageWithError` 内部也补完成耗时，保证错误路径一致。`MessageMetadata` 只在有 `createdAt` 或 `durationMs` 时显示，并放在 `PlaygroundMessageContent` 的错误/正文之后、动作之前。暂不引入 new-api-main 的 layout alignment 参数，NexusTok 当前仍保持现有消息布局。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-timing-utils.test.ts` 覆盖 timing 计算和格式化。
+2. `cd web/default && bun test src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts` 覆盖本轮与既有消息 helper。
+3. `cd web/default && bun run i18n:sync` 确认响应耗时文案进入 en、zh、fr、ja、ru、vi。
+4. 针对本轮触碰文件运行定向 ESLint。
+5. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖新增字段、helper、组件 props 和 hook 接线。
+6. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 Playground lazy chunk。
+7. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查消息时间/响应耗时显示；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 确认 `Response time` 等特征已热更新。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts` 通过，共 21 个用例，覆盖 timing 计算、消息内容状态和会话编辑/重提交流程。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0，本轮新增 `Response time: {{duration}}` 已写入六语 locale，`{{value}}s` 已存在并保持同步。
+3. `cd web/default && ./node_modules/.bin/eslint src/features/playground/types.ts src/features/playground/lib/message-timing-utils.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/message-utils.ts src/features/playground/lib/conversation-message-utils.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/index.ts src/features/playground/hooks/use-chat-handler.ts src/features/playground/components/message-metadata.tsx src/features/playground/components/playground-message-content.tsx` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，新增可选字段、helper、组件 props 和 hook 接线类型检查正常。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground lazy chunk 切换为 `/static/js/async/1397.js`。
+6. `git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，其中 `/api/status` 返回 `success: true`。
+9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/1397.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `85fccd17941b0f2579c71cb7d18b4c02a2515108e75c7ace361d1258a5594c5e`，`1397.js` SHA256 均为 `e81e11e69520b91b54c02b6151421ea12629cc19d0fd0f3859adf4f4e12b1c3d`。
+10. 线上 `/static/js/async/1397.js` 已包含 `Response time`、`durationMs`、`createdAt` 特征；上一轮旧 chunk `/static/js/async/157.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 消息时间元信息 | `web/default/src/features/playground/types.ts`、`web/default/src/features/playground/lib/{message-timing-utils.ts,message-timing-utils.test.ts,message-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/hooks/use-chat-handler.ts`、`web/default/src/features/playground/components/{message-metadata.tsx,playground-message-content.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息 `createdAt`、`startedAt`、`completedAt`、`durationMs` 和 `MessageMetadata` 能力，新消息记录发送时间与响应耗时，流式/非流式/停止/错误路径统一补完成时间；旧 localStorage 消息缺 timing 字段时不渲染元信息，避免存储迁移。 |
 | 2026-07-09 | Playground 消息内容渲染组件化 | `web/default/src/features/playground/components/{playground-message-content.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-content-utils.ts,message-content-utils.test.ts,index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息内容拆分方式，来源、推理、加载、错误和正文显示状态统一由 helper 计算，单条消息正文渲染交给 `PlaygroundMessageContent`，聊天组件只保留消息列表、编辑态和动作编排；`Responding...` 补齐六语翻译。 |
 | 2026-07-09 | Playground 消息编辑与会话操作工具化 | `web/default/src/features/playground/components/{playground-message-editor.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{message-editor-utils.ts,conversation-message-utils.ts,conversation-message-utils.test.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的消息编辑器拆分和会话消息数组 helper；发送、重试、删除、上一条 user 查找、编辑保存与编辑后重新提交统一由纯函数处理并补定向测试，聊天组件和容器不再手写关键数组截断逻辑。 |
 | 2026-07-09 | Playground 输入区恢复能力 | `web/default/src/features/playground/components/{playground-input.tsx,playground-input-controls.tsx,playground-input-tools.tsx,playground-empty-state.tsx,playground-chat.tsx}`、`web/default/src/features/playground/lib/{input-control-utils.ts,input-tool-utils.ts,index.ts}`、`web/default/src/features/playground/index.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的输入区拆分、空会话 starter prompts 和清空本地会话能力；新增清空确认弹窗，输入工具状态集中到 helper，移除旧 raw color 建议按钮，所有新增文案补齐六语翻译。 |

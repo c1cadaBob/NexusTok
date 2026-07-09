@@ -24,9 +24,14 @@ import type {
   ChatCompletionMessage,
   ContentPart,
 } from '../types'
+import {
+  completeAssistantTiming,
+  completeReasoningTiming,
+  startReasoningTiming,
+} from './message-timing-utils'
 
 /**
- * Create a new message version
+ * 创建一条新的消息版本。
  */
 export function createMessageVersion(content: string): MessageVersion {
   return {
@@ -36,14 +41,14 @@ export function createMessageVersion(content: string): MessageVersion {
 }
 
 /**
- * Get current version from message (always returns the first version)
+ * 读取消息当前版本；Playground 当前始终使用第一版作为活跃内容。
  */
 export function getCurrentVersion(message: Message): MessageVersion {
   return message.versions[0] || { id: 'default', content: '' }
 }
 
 /**
- * Update current version content in message
+ * 更新消息当前版本内容。
  */
 export function updateCurrentVersionContent(
   message: Message,
@@ -57,24 +62,32 @@ export function updateCurrentVersionContent(
 }
 
 /**
- * Create a user message
+ * 创建 user 消息，并记录本地提交时间。
  */
-export function createUserMessage(content: string): Message {
+export function createUserMessage(
+  content: string,
+  createdAt: number = Date.now()
+): Message {
   return {
     key: nanoid(),
     from: MESSAGE_ROLES.USER,
     versions: [createMessageVersion(content)],
+    createdAt,
   }
 }
 
 /**
- * Create a loading assistant message
+ * 创建等待中的 assistant 占位消息，并以 startedAt 作为响应耗时起点。
  */
-export function createLoadingAssistantMessage(): Message {
+export function createLoadingAssistantMessage(
+  startedAt: number = Date.now()
+): Message {
   return {
     key: nanoid(),
     from: MESSAGE_ROLES.ASSISTANT,
     versions: [createMessageVersion('')],
+    createdAt: startedAt,
+    startedAt,
     reasoning: undefined,
     isReasoningComplete: false,
     isContentComplete: false,
@@ -84,7 +97,7 @@ export function createLoadingAssistantMessage(): Message {
 }
 
 /**
- * Build message content with optional images
+ * 构建包含可选图片的消息内容。
  */
 export function buildMessageContent(
   text: string,
@@ -111,7 +124,7 @@ export function buildMessageContent(
 }
 
 /**
- * Extract text content from message content
+ * 从消息内容中提取文本片段。
  */
 export function getTextContent(content: string | ContentPart[]): string {
   if (typeof content === 'string') {
@@ -127,7 +140,7 @@ export function getTextContent(content: string | ContentPart[]): string {
 }
 
 /**
- * Format message for API request
+ * 将内部消息格式转为上游 Chat Completions 请求格式。
  */
 export function formatMessageForAPI(message: Message): ChatCompletionMessage {
   const currentVersion = getCurrentVersion(message)
@@ -138,8 +151,9 @@ export function formatMessageForAPI(message: Message): ChatCompletionMessage {
 }
 
 /**
- * Check if message is valid for API request
- * Excludes loading/streaming assistant messages and empty content
+ * 判断消息是否可以进入上游请求上下文。
+ *
+ * loading/streaming assistant 占位消息和空 assistant 内容不能发送给上游。
  */
 export function isValidMessage(message: Message): boolean {
   if (!message || !message.from || !message.versions.length) return false
@@ -147,15 +161,17 @@ export function isValidMessage(message: Message): boolean {
   const content = message.versions[0]?.content
   if (content === undefined) return false
 
-  // Exclude empty assistant messages (loading/streaming placeholders)
+  // 排除空 assistant 消息，避免把前端占位状态发送到上游。
   if (message.from === 'assistant' && !content.trim()) return false
 
   return true
 }
 
 /**
- * Parse content to separate thinking from visible text
- * Handles both complete and incomplete <think> tags
+ * 解析 `<think>` 内容，把推理过程从可见正文中拆出来。
+ *
+ * 兼容完整和未闭合的 `<think>` 标签，流式过程中未闭合部分会进入
+ * reasoning buffer，而不是提前显示到正文里。
  */
 export function parseThinkTags(content: string): {
   visibleContent: string
@@ -172,33 +188,33 @@ export function parseThinkTags(content: string): {
   let hasUnclosed = false
 
   while (true) {
-    // Find next <think> tag
+    // 查找下一段 `<think>` 标签。
     const openPos = content.indexOf('<think>', currentPos)
 
     if (openPos === -1) {
-      // No more think tags, add remaining content
+      // 没有更多标签时，剩余内容全部作为可见正文。
       if (currentPos < content.length) {
         visibleParts.push(content.substring(currentPos))
       }
       break
     }
 
-    // Add visible content before this tag
+    // 标签之前的内容保持为可见正文。
     if (openPos > currentPos) {
       visibleParts.push(content.substring(currentPos, openPos))
     }
 
-    // Look for matching </think> tag
+    // 查找匹配的闭合标签。
     const closePos = content.indexOf('</think>', openPos + 7)
 
     if (closePos === -1) {
-      // Unclosed tag: rest is reasoning buffer
+      // 未闭合标签表示当前剩余内容仍在推理流中。
       reasoningParts.push(content.substring(openPos + 7))
       hasUnclosed = true
       break
     }
 
-    // Extract reasoning content between tags
+    // 提取完整标签内部的推理内容。
     reasoningParts.push(content.substring(openPos + 7, closePos))
     currentPos = closePos + 8
   }
@@ -211,10 +227,7 @@ export function parseThinkTags(content: string): {
 }
 
 /**
- * Update the last assistant message with an error
- * @param messages - Current messages array
- * @param errorMessage - Error message to display
- * @returns Updated messages array
+ * 将最后一条 assistant 消息更新为错误态。
  */
 export function updateAssistantMessageWithError(
   messages: Message[],
@@ -226,20 +239,19 @@ export function updateAssistantMessageWithError(
       message,
       `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${errorMessage}`
     )
-    return {
+    const failedMessage: Message = {
       ...updatedMessage,
       status: MESSAGE_STATUS.ERROR,
       isReasoningStreaming: false,
       errorCode: errorCode || null,
     }
+
+    return completeAssistantTiming(completeReasoningTiming(failedMessage))
   })
 }
 
 /**
- * Helper function to update the last assistant message
- * @param messages - Current messages array
- * @param updater - Function to update the message
- * @returns Updated messages array or original if no assistant message found
+ * 更新最后一条 assistant 消息；没有 assistant 时返回原数组。
  */
 export function updateLastAssistantMessage(
   messages: Message[],
@@ -255,9 +267,9 @@ export function updateLastAssistantMessage(
 }
 
 /**
- * Process content chunk during streaming
- * Separates <think> reasoning from visible content in real-time
- * Note: versions[0].content keeps the full raw content (with tags) during streaming
+ * 处理流式正文增量，并实时拆分 `<think>` 推理内容。
+ *
+ * 流式期间 `versions[0].content` 保留带标签的原始内容，完成时再清理为可见正文。
  */
 export function processStreamingContent(
   message: Message,
@@ -270,10 +282,12 @@ export function processStreamingContent(
 
   const { reasoning, hasUnclosedTag } = parseThinkTags(fullContent)
 
-  // Preserve existing reasoning if no think tags found (e.g., from API reasoning_content)
-  const finalReasoning = reasoning
-    ? { content: reasoning, duration: 0 }
-    : message.reasoning
+  // 没有 `<think>` 标签时，保留 API reasoning_content 已写入的推理内容。
+  const reasoningTiming =
+    reasoning || message.reasoning ? startReasoningTiming(message) : undefined
+  const finalReasoning = reasoningTiming
+    ? { ...reasoningTiming, content: reasoning || reasoningTiming.content }
+    : undefined
 
   return {
     ...updateCurrentVersionContent(message, fullContent),
@@ -283,8 +297,10 @@ export function processStreamingContent(
 }
 
 /**
- * Finalize message after streaming completes
- * Cleans content and consolidates reasoning from all sources
+ * 在流式或非流式响应完成后稳定消息内容。
+ *
+ * 这里统一清理 `<think>` 标签、合并 API reasoning_content 和流式 reasoning，
+ * 并补齐 assistant/reasoning 的完成时间，保证停止生成和错误恢复前后的消息结构一致。
  */
 export function finalizeMessage(
   message: Message,
@@ -293,25 +309,35 @@ export function finalizeMessage(
   const currentVersion = getCurrentVersion(message)
   const { visibleContent, reasoning } = parseThinkTags(currentVersion.content)
 
-  // Priority:
-  // 1. API reasoning_content passed as parameter (non-streaming response)
-  // 2. Existing message.reasoning (from streaming reasoning_content)
-  // 3. Extracted think tags from content
+  // 推理内容优先级：
+  // 1. 非流式响应显式传入的 API reasoning_content；
+  // 2. 流式 reasoning_content 已累积到 message.reasoning；
+  // 3. 从 `<think>` 标签提取的推理内容。
   const finalReasoning =
     apiReasoningContent || message.reasoning?.content || reasoning || ''
 
-  return {
+  const finalizedMessage: Message = {
     ...updateCurrentVersionContent(message, visibleContent),
     reasoning: finalReasoning
-      ? { content: finalReasoning, duration: message.reasoning?.duration || 0 }
+      ? {
+          content: finalReasoning,
+          duration: message.reasoning?.duration || 0,
+          startedAt: message.reasoning?.startedAt,
+          completedAt: message.reasoning?.completedAt,
+          durationMs: message.reasoning?.durationMs,
+        }
       : undefined,
     isReasoningStreaming: false,
   }
+
+  return completeAssistantTiming(completeReasoningTiming(finalizedMessage))
 }
 
 /**
- * Sanitize messages loaded from storage
- * Converts stuck loading/streaming messages to stable state
+ * 清理从本地存储恢复的消息。
+ *
+ * 浏览器刷新或异常退出后，最后一条 assistant 可能停在 loading/streaming；
+ * 恢复时将其稳定为 complete 或 error，避免页面长期显示“正在响应”。
  */
 export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
   let targetIndex = -1

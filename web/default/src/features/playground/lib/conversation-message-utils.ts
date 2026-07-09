@@ -45,10 +45,12 @@ export function appendUserMessagePair(
   messages: Message[],
   content: string
 ): Message[] {
+  const submittedAt = Date.now()
+
   return [
     ...messages,
-    createUserMessage(content),
-    createLoadingAssistantMessage(),
+    createUserMessage(content, submittedAt),
+    createLoadingAssistantMessage(submittedAt),
   ]
 }
 
@@ -131,16 +133,19 @@ export function applyMessageEdit(
     return null
   }
 
+  const shouldResubmitUser =
+    shouldSubmit && messages[messageIndex].from === MESSAGE_ROLES.USER
+  const submittedAt = shouldResubmitUser ? Date.now() : undefined
   const updatedMessages = messages.map((message) =>
     message.key === messageKey
-      ? updateCurrentVersionContent(message, content)
+      ? {
+          ...updateCurrentVersionContent(message, content),
+          createdAt: submittedAt ?? message.createdAt,
+        }
       : message
   )
 
-  if (
-    !shouldSubmit ||
-    updatedMessages[messageIndex].from !== MESSAGE_ROLES.USER
-  ) {
+  if (!shouldResubmitUser) {
     return {
       messages: updatedMessages,
       shouldSend: false,
@@ -150,7 +155,7 @@ export function applyMessageEdit(
   return {
     messages: [
       ...updatedMessages.slice(0, messageIndex + 1),
-      createLoadingAssistantMessage(),
+      createLoadingAssistantMessage(submittedAt),
     ],
     shouldSend: true,
   }

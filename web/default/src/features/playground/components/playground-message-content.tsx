@@ -38,6 +38,7 @@ import { getMessageContentState } from '../lib'
 import { getMessageContentStyles } from '../lib/message-styles'
 import type { Message } from '../types'
 import { MessageError } from './message-error'
+import { MessageMetadata } from './message-metadata'
 
 interface PlaygroundMessageContentProps {
   actions: ReactNode
@@ -108,20 +109,24 @@ export function PlaygroundMessageContent({
       {isError ? (
         <>
           <MessageError message={message} className='mb-2' />
+          <MessageMetadata message={message} />
           {errorActions}
         </>
       ) : (
-        showMessageContent && (
-          <>
+        <>
+          {showMessageContent && (
             <MessageContent
               variant='flat'
               className={cn(getMessageContentStyles())}
             >
               <Response final={isMessageFinal}>{displayContent}</Response>
             </MessageContent>
-            {actions}
-          </>
-        )
+          )}
+          {(showMessageContent || hasReasoning) && (
+            <MessageMetadata message={message} />
+          )}
+          {showMessageContent && actions}
+        </>
       )}
     </>
   )
