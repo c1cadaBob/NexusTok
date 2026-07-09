@@ -67,11 +67,11 @@ type AliVideoParameters struct {
 // AliVideoResponse 阿里云通义万相视频生成 API 的响应结构体。
 // 包含任务输出信息、请求ID、错误码和使用统计。
 type AliVideoResponse struct {
-	Output    AliVideoOutput `json:"output"`              // 任务输出信息（状态、视频URL等）
-	RequestID string         `json:"request_id"`          // 阿里云请求唯一标识
-	Code      string         `json:"code,omitempty"`      // 错误码（非空表示请求级错误）
-	Message   string         `json:"message,omitempty"`   // 错误消息（配合 Code 使用）
-	Usage     *AliUsage      `json:"usage,omitempty"`     // 使用统计信息（视频时长、数量等）
+	Output    AliVideoOutput `json:"output"`            // 任务输出信息（状态、视频URL等）
+	RequestID string         `json:"request_id"`        // 阿里云请求唯一标识
+	Code      string         `json:"code,omitempty"`    // 错误码（非空表示请求级错误）
+	Message   string         `json:"message,omitempty"` // 错误消息（配合 Code 使用）
+	Usage     *AliUsage      `json:"usage,omitempty"`   // 使用统计信息（视频时长、数量等）
 }
 
 // AliVideoOutput 视频生成任务的输出信息结构体。
@@ -127,10 +127,10 @@ type AliMetadata struct {
 // 实现 taskcommon.TaskAdaptor 接口，负责与阿里 DashScope API 交互。
 // 继承 BaseBilling 以获得基础计费功能。
 type TaskAdaptor struct {
-	taskcommon.BaseBilling           // 嵌入基础计费功能
-	ChannelType int                  // 渠道类型常量（如 constant.ChannelTypeAli）
-	apiKey      string               // 阿里云 API 密钥（Bearer Token）
-	baseURL     string               // 阿里云 DashScope API 基础URL
+	taskcommon.BaseBilling        // 嵌入基础计费功能
+	ChannelType            int    // 渠道类型常量（如 constant.ChannelTypeAli）
+	apiKey                 string // 阿里云 API 密钥（Bearer Token）
+	baseURL                string // 阿里云 DashScope API 基础URL
 }
 
 // Init 初始化适配器，从中继信息中提取渠道类型、API 基础URL 和密钥。
@@ -439,8 +439,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 
+	// metadata 可覆盖 duration 并绕过通用入口校验；作为计费倍率前统一钳制。
 	otherRatios := map[string]float64{
-		"seconds": float64(aliReq.Parameters.Duration),
+		"seconds": float64(min(aliReq.Parameters.Duration, relaycommon.MaxTaskDurationSeconds)),
 	}
 	ratios, err := ProcessAliOtherRatios(aliReq)
 	if err != nil {

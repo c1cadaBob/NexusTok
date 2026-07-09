@@ -7,6 +7,8 @@ package gemini
 import (
 	"strconv"
 	"strings"
+
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
 )
 
 // ParseVeoDurationSeconds 从 metadata 中解析视频时长（秒）。
@@ -60,19 +62,21 @@ func ParseVeoResolution(metadata map[string]any) string {
 //  2. 标准请求的 duration 字段
 //  3. 标准请求的 seconds 字段（字符串格式）
 //  4. 默认值 8 秒
+//
+// 返回值会被用作 OtherRatios["seconds"]，因此对 metadata 和标准字段都做上限钳制。
 func ResolveVeoDuration(metadata map[string]any, stdDuration int, stdSeconds string) int {
 	if metadata != nil {
 		if _, exists := metadata["durationSeconds"]; exists {
 			if d := ParseVeoDurationSeconds(metadata); d > 0 {
-				return d
+				return min(d, relaycommon.MaxTaskDurationSeconds)
 			}
 		}
 	}
 	if stdDuration > 0 {
-		return stdDuration
+		return min(stdDuration, relaycommon.MaxTaskDurationSeconds)
 	}
 	if s, err := strconv.Atoi(stdSeconds); err == nil && s > 0 {
-		return s
+		return min(s, relaycommon.MaxTaskDurationSeconds)
 	}
 	return 8
 }

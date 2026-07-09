@@ -3570,8 +3570,61 @@ new-api-main 的 Ollama adapter 已将 Ollama 原生 `message.tool_calls` 转换
 4. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
 5. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮 provider 响应转换改动未影响 3003 页面与状态接口可用性。
 
+## 本轮实施评审：视频任务时长上限与直连 image 标准化
+
+### 需求分析
+
+new-api-main 在异步视频任务入口增加了 `MaxTaskDurationSeconds=3600`，用于限制用户可控的 `duration` / `seconds`。该字段会进入 `OtherRatios["seconds"]`，影响任务预扣费和结算快照；如果没有边界，极端大值可能在后续额度计算中放大风险。NexusTok 当前任务入口会接受负数或超大时长，Sora、Gemini/Veo、Ali 等任务 provider 的计费估算也可能从 metadata 或历史任务数据中拿到绕过入口校验的时长。
+
+new-api-main 同时修复了 `/v1/video/generations` 直连 JSON 请求中只传 `image` 字段时没有标准化到 `Images` 的问题。NexusTok 当前 `ValidateMultipartDirect` 只处理 `input_reference`，没有把单图 `image` 转成 `Images`，可能导致图生视频请求被误判为纯文本生成动作。
+
+本轮目标是把这两个相邻任务入口优势转成 NexusTok 原生能力：
+
+1. 在任务通用校验层统一限制 `duration` / `seconds` 为非负且不超过 3600 秒，正常缺省值继续由各 provider 使用现有默认。
+2. `ValidateMultipartDirect` 将直连 JSON 的 `image` 标准化为 `Images`，保持与 `ValidateBasicTaskRequest` 的单图兼容行为一致。
+3. 对历史 remix 数据、Gemini/Veo metadata、Ali metadata 等可能绕过通用入口校验的计费倍率路径做上限兜底。
+4. 不修改任务数据库模型、任务轮询、任务状态机、表达式计费引擎和实际上游请求体字段。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 任务通用校验 | `relay/common/relay_utils.go` | 新增 `MaxTaskDurationSeconds` 和 `validateTaskDurationBounds`；直连 JSON `image` 标准化到 `Images`；普通任务与直连任务校验时拒绝负数或超过 3600 秒。 |
+| remix 计费兜底 | `relay/relay_task.go` | 历史任务数据缺少 BillingContext 时，从旧 task data 解析出的 seconds 在写入 OtherRatios 前做上限钳制。 |
+| task provider 计费兜底 | `relay/channel/task/gemini/billing.go`、`relay/channel/task/ali/adaptor.go` | Gemini/Veo 和 Ali 估算计费使用的时长倍率做 3600 秒兜底，防止 metadata 覆盖绕过通用校验。 |
+| 任务校验测试 | `relay/common/relay_utils_test.go` | 覆盖直连 `image` 标准化、超大 duration、超大 seconds、负数 duration 和正常秒数。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 入口超限请求会从“可能提交到上游”变成 400 本地错误，这是预期的安全边界变化；正常 1 到 3600 秒请求不受影响。
+2. 缺省或非正正常化语义保持不变：未传时仍由 provider 适配器使用现有默认，`seconds<=0` 的默认回退逻辑不被本轮改写。
+3. Gemini/Veo 和 Ali 的 metadata 兜底只钳制计费倍率，不改发送给上游的请求体；目的是防止计费乘数越界，不改变 provider 原有参数映射。
+4. remix 历史任务缺少 BillingContext 时，旧 task data 中保存的极端 seconds 会被钳制到 3600；这只影响异常历史数据的重试/混剪预扣费，避免无界放大。
+5. 已阅读 `pkg/billingexpr/expr.md`。本轮不修改表达式语法、变量归一化、预消费表达式计算或结算表达式计算，只保护进入任务 OtherRatios 的时长倍率边界。
+
+### 方案评审
+
+采用最小任务入口保护方案：在 `relay/common/relay_utils.go` 增加常量和校验 helper，`ValidateMultipartDirect` 与 `ValidateBasicTaskRequest` 在提示词校验后统一调用；直连 JSON 的单图 `image` 按现有 Basic 路径语义标准化为 `Images`。对不一定经过通用校验的计费兜底路径，使用同一上限常量做 `min`/条件钳制，保证所有 seconds 进入 `OtherRatios` 前有稳定上界。
+
+验收方式：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/common ./relay/channel/task/gemini ./relay/channel/task/ali` 覆盖任务校验和 provider 编译回归。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/` 确认页面仍可访问；若 MCP Chrome 仍不可用，则用 `curl` 访问主页和 `/api/status` 作为替代验证。
+
+验证记录：
+
+1. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/common ./relay/channel/task/gemini ./relay/channel/task/ali` 通过，覆盖直连 `image` 标准化、超大 `duration`、超大 `seconds`、负数 `duration`、正常 `seconds`、Gemini/Veo 时长钳制和 Ali metadata 时长钳制。
+2. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay/channel/task/...` 通过，确认所有 task provider 子包编译回归正常。
+3. `GOCACHE=/tmp/nexustok-go-build go test -count=1 ./relay` 通过，确认 remix 兜底所在 relay 包编译正常。
+4. `git diff --check` 通过，无空白错误。
+5. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+6. `curl` 访问 `http://192.168.0.202:3003/` 和 `/api/status` 均返回 `HTTP/1.1 200 OK`，确认本轮任务校验和计费倍率边界改动未影响 3003 页面与状态接口可用性。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 视频任务时长上限与直连 `image` 标准化 | `relay/common/relay_utils.go`、`relay/relay_task.go`、`relay/channel/task/gemini/billing.go`、`relay/channel/task/ali/adaptor.go`、`relay/common/relay_utils_test.go`、`relay/channel/task/gemini/billing_test.go`、`relay/channel/task/ali/adaptor_test.go` | 任务入口拒绝负数和超过 3600 秒的 `duration`/`seconds`，直连 JSON `image` 会标准化为图生视频输入；历史 remix、Gemini/Veo metadata 和 Ali metadata 进入 OtherRatios 前统一钳制时长倍率。 |
 | 2026-07-09 | Ollama 非流式 `tool_calls` 响应兼容 | `relay/channel/ollama/stream.go`、`relay/channel/ollama/stream_test.go` | Ollama 非流式响应会把上游 `message.tool_calls` 转为 OpenAI 兼容 `message.tool_calls`，保留工具参数显式零值，空参数回退 `{}`；存在工具调用时非流式和流式结束原因统一为 `tool_calls`。 |
 | 2026-07-09 | Moonshot `kimi-k2.6` temperature 兼容 | `relay/channel/moonshot/adaptor.go`、`relay/channel/moonshot/adaptor_test.go` | Moonshot OpenAI 兼容请求在真实上游模型为 `kimi-k2.6` 且客户端显式传入非 `1.0` temperature 时修正为 `1.0`；未传字段继续省略，非目标模型保持原值。 |
 | 2026-07-09 | SMTP NTLM 自适应认证 | `common/email.go`、`common/email_ntlm_auth.go`、`common/email_ntlm_auth_test.go`、`go.mod`、`go.sum` | 邮件发送路径新增 PLAIN/LOGIN/NTLM 自适应认证，标准 SMTP 保持 PLAIN，强制 LOGIN 和 Outlook 兼容语义保留，企业 SMTP 仅开放 `AUTH NTLM` 时可完成 NTLM 协商。 |

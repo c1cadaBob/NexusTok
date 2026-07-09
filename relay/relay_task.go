@@ -33,10 +33,10 @@ import (
 // TaskSubmitResult 表示任务提交成功后的结果数据。
 // 包含上游返回的任务 ID、原始响应数据、所属平台和最终配额。
 type TaskSubmitResult struct {
-	UpstreamTaskID string               // 上游返回的任务唯一标识符
-	TaskData       []byte               // 上游返回的原始响应数据（JSON 格式）
+	UpstreamTaskID string                // 上游返回的任务唯一标识符
+	TaskData       []byte                // 上游返回的原始响应数据（JSON 格式）
 	Platform       constant.TaskPlatform // 任务所属平台（如 suno、kling、sora 等）
-	Quota          int                  // 最终消费的配额（经过提交后调整）
+	Quota          int                   // 最终消费的配额（经过提交后调整）
 	//PerCallPrice   types.PriceData
 }
 
@@ -131,14 +131,15 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 			if seconds <= 0 {
 				seconds = 4
 			}
-			sizeStr, _ := taskData["size"].(string)
-			if info.PriceData.OtherRatios == nil {
-				info.PriceData.OtherRatios = map[string]float64{}
+			// 历史任务数据可能早于入口校验，作为计费倍率使用前必须钳制上限。
+			if seconds > relaycommon.MaxTaskDurationSeconds {
+				seconds = relaycommon.MaxTaskDurationSeconds
 			}
-			info.PriceData.OtherRatios["seconds"] = float64(seconds)
-			info.PriceData.OtherRatios["size"] = 1
+			sizeStr, _ := taskData["size"].(string)
+			info.PriceData.AddOtherRatio("seconds", float64(seconds))
+			info.PriceData.AddOtherRatio("size", 1)
 			if sizeStr == "1792x1024" || sizeStr == "1024x1792" {
-				info.PriceData.OtherRatios["size"] = 1.666667
+				info.PriceData.AddOtherRatio("size", 1.666667)
 			}
 		}
 	}

@@ -107,6 +107,7 @@ func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj
 	info.Action = action
 	c.Set("task_request", requestObj)
 }
+
 // GetTaskRequest 从 Gin 上下文中获取之前存储的任务请求对象。
 //
 // 参数：
@@ -137,6 +138,25 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 func validatePrompt(prompt string) *dto.TaskError {
 	if strings.TrimSpace(prompt) == "" {
 		return createTaskError(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest, true)
+	}
+	return nil
+}
+
+// MaxTaskDurationSeconds 限制用户可控的视频任务时长。
+//
+// duration / seconds 会作为 OtherRatios["seconds"] 参与任务预扣费和结算快照。
+// 入口层拒绝负数和超大值，可以避免异常请求把计费倍率放大到不可控范围；
+// 未传或无法解析的值保持原有默认值语义，由具体 provider 适配器继续处理。
+const MaxTaskDurationSeconds = 3600
+
+// validateTaskDurationBounds 校验任务请求中的时长边界。
+func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
+	seconds := req.Duration
+	if seconds == 0 && req.Seconds != "" {
+		seconds, _ = strconv.Atoi(req.Seconds)
+	}
+	if seconds < 0 || seconds > MaxTaskDurationSeconds {
+		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
 	}
 	return nil
 }
@@ -225,6 +245,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 	if req.InputReference != "" {
 		req.Images = []string{req.InputReference}
+	} else if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
+		// 直连 JSON 路径也兼容单图 image 字段，确保图生视频动作判断与 Basic 路径一致。
+		req.Images = []string{strings.TrimSpace(req.Image)}
 	}
 
 	if strings.TrimSpace(req.Model) == "" {
@@ -236,6 +259,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 
 	if taskErr := validatePrompt(prompt); taskErr != nil {
+		return taskErr
+	}
+
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 
@@ -319,6 +346,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	}
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+		return taskErr
+	}
+
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 
