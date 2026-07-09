@@ -6268,8 +6268,62 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：前端依赖安全护栏
+
+### 需求分析
+
+`new-api-main` 在默认前端 `package.json` 中维护了一组 `overrides`，用于把部分高频安全敏感或工具链传递依赖固定到更高补丁版本。NexusTok 默认前端当前已经原生化了安全富文本渲染、Playground 受控 Markdown 渲染、CodeMirror 编辑器和 MCP/shadcn 工具链，但 `web/default/package.json` 尚无依赖 override 护栏，`bun.lock` 中仍存在若干比 `new-api-main` 低的包版本，例如 `dompurify@3.3.3`、`fast-uri@3.1.0`、`hono@4.12.12`、`js-cookie@3.0.5`、`mermaid@11.14.0`、`postcss@8.5.9` 和 `qs@6.15.1`。
+
+本轮目标不是照搬 `new-api-main` 的完整 overrides，而是把它的“前端依赖安全护栏”转化为 NexusTok 原生、可维护、与现有依赖树兼容的能力：直接升级 DOMPurify 到 `3.4.11`，并只为当前依赖范围内同主版本兼容的传递依赖添加 overrides，避免把不兼容主版本强行压到全局。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 前端依赖声明 | `web/default/package.json` | 将直接依赖 `dompurify` 升级到 `3.4.11`，新增最小兼容 `overrides` 护栏。 |
+| 前端锁文件 | `web/default/bun.lock` | 由 Bun 重新解析依赖树，锁定 DOMPurify 和兼容传递依赖的新版本。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录依赖护栏的需求、影响范围、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. `overrides` 是全局依赖解析规则，如果照搬 `brace-expansion: 2.1.1` 会把当前 `minimatch@10` 需要的 `brace-expansion@^5.0.5` 强行降到不兼容主版本；如果照搬 `uuid: 14.0.0` 会覆盖 `@lobehub/ui` 的 `uuid@^13` 和 `mermaid` 的 `uuid@^11`。这两项本轮不接入。
+2. `ip-address@10.2.0` 虽然与现有 `10.1.0` 同主版本，但当前锁文件中 `express-rate-limit` 使用精确依赖 `10.1.0`，不是 semver 范围；为避免覆盖上游精确约束，本轮暂不加入 override。
+3. `mermaid`、`hono`、`postcss`、`qs` 等包主要来自 dev 工具链或可视化/文档相关传递依赖，补丁升级理论上兼容，但仍可能带来锁文件解析差异；必须执行 `bun install`、类型/生产构建和静态页面验证。
+4. DOMPurify 是前端安全渲染链路的核心依赖，升级后必须确认 `HtmlContent`、`RichContent` 和 Playground Response renderer 构建正常，避免清洗 API 或类型变化造成页面白屏。
+5. 本轮只调整依赖解析，不新增运行时代码、不改变 API、数据库、计费或权限逻辑；若构建或 3003 验证暴露不兼容，应收窄 overrides，而不是扩大升级范围。
+
+### 方案评审
+
+采用最小兼容方案：
+
+1. `web/default/package.json` 中把直接依赖 `dompurify` 从 `3.3.3` 升级为 `3.4.11`。
+2. 新增 `overrides`，只包含当前依赖树范围兼容的包：`dompurify@3.4.11`、`fast-uri@3.1.2`、`hono@4.12.22`、`js-cookie@3.0.7`、`mermaid@11.15.0`、`minimist@1.2.8`、`postcss@8.5.15`、`qs@6.15.2`。
+3. 暂缓 `brace-expansion`、`uuid` 和 `ip-address` 三项，原因分别是不兼容主版本、跨多个主版本依赖路径和上游精确依赖约束。
+4. 使用 `cd web/default && bun install` 更新 `bun.lock`，不手写锁文件。
+5. 验证 `package.json` 与 `bun.lock` 中目标版本生效，并执行 `bun run build:check` 覆盖 TypeScript 与生产构建。
+6. 优先使用 MCP 打开 3003；若 MCP 仍不可用，则使用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+验收方式：
+
+1. `cd web/default && bun install`。
+2. `cd web/default && bun run build:check`。
+3. `rg -n '"(dompurify|fast-uri|hono|js-cookie|mermaid|minimist|postcss|qs)"|overrides' web/default/package.json web/default/bun.lock`。
+4. `git diff --check`。
+5. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `cd web/default && bun install` 通过，并更新 `web/default/bun.lock`。
+2. `cd web/default && bun install --frozen-lockfile` 通过，确认 `package.json` 与 `bun.lock` 一致。
+3. `cd web/default && bun run build:check` 通过，覆盖 TypeScript 编译和 Rsbuild 生产构建。
+4. `rg -n '"(dompurify|fast-uri|hono|js-cookie|mermaid|minimist|postcss|qs)"|overrides' web/default/package.json web/default/bun.lock` 已确认 DOMPurify 直接依赖和 overrides 生效；`brace-expansion@5.x`、`uuid@13` 与 `ip-address@10.1.0` 未被不兼容覆盖。
+5. `git diff --check` 通过。
+6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 前端依赖安全护栏 | `web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的前端 overrides 安全护栏，但不全量照搬；DOMPurify 升级到 `3.4.11`，并只锁定同主版本兼容的 `fast-uri`、`hono`、`js-cookie`、`mermaid`、`minimist`、`postcss` 和 `qs`，暂缓不兼容主版本或精确依赖路径的 `brace-expansion`、`uuid`、`ip-address`。 |
 | 2026-07-09 | Relay HTTP 空闲连接超时配置 | `common/constants.go`、`common/init.go`、`.env.example`、`service/http_client.go`、`service/protected_fetch_client.go`、`service/http_client_test.go`、`service/protected_fetch_client_test.go` | 原生化 new-api-main 的 `RELAY_IDLE_CONN_TIMEOUT` 能力，默认 90 秒并允许 0 表示不限制；默认 Relay client、HTTP/HTTPS proxy、SOCKS5 proxy 和 SSRF protected fetch transport 均使用同一配置，测试覆盖配置传播。 |
 | 2026-07-09 | 本地 MCP 与临时测试忽略项 | `.gitignore` | 原生化 new-api-main 的本地验证产物隔离策略，忽略 `.playwright-mcp`、`.local-tests/` 和明确命名的 chat responses live local 探针文件；同时覆盖 NexusTok 当前 `service/openaicompat` 原生命名路径，降低 MCP/真实上游临时验证文件误提交风险。 |
 | 2026-07-09 | Secure Session Cookie 示例补齐 | `.env.example` | 补齐已经落地的 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 示例说明，让 HTTPS 反代部署者能从环境样例发现 Secure Cookie 开关；不补尚未接线的 relay idle timeout 变量，不改变默认运行时行为。 |
