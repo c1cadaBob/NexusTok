@@ -3734,8 +3734,66 @@ NexusTok 当前 `web/default/src/components/ai-elements/response.tsx` 仍直接�
 6. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，确认指定热更新站点入口、状态接口和 Playground 路由可访问。
 7. 从 `http://192.168.0.202:3003` 拉取 `/static/js/index.js`、`/static/js/async/2459.js`、`/static/js/async/5395.js`，确认线上静态资源包含 `nexustok-response`、`Image not available`、`Back to footnote`、`footnote-ref` 等本轮 Response renderer 特征，说明热更新页面已加载新代码。
 
+## 本轮实施评审：Playground 流式错误处理底座
+
+### 需求分析
+
+new-api-main 的 Playground 将流式响应解析、SSE readyState 错误判断和普通请求错误解析拆到了 `lib/streaming/*`，`use-stream-request` 只负责连接生命周期和回调编排。NexusTok 当前仍把 JSON chunk 解析、错误 payload 解析、HTTP readyState 判断和 `isStreaming` 状态直接写在 hook 内；同时 `isStreaming` 由 ref 推导，不会主动触发 React 重渲染，可能导致输入框 Stop/Send 状态、消息动作禁用状态和实际 SSE 生命周期短暂不同步。
+
+本轮目标是把 new-api-main 的低风险结构优势转成 NexusTok 原生 Playground 底座：
+
+1. 新增本地 `stream-utils` 与 `request-error-utils`，统一解析 SSE `[DONE]`、delta 更新、错误 payload 和非流式请求错误。
+2. `useStreamRequest` 改为显式 `useState` 跟踪 `isStreaming`，开始连接、关闭、错误和停止时都同步更新 UI 状态。
+3. 新请求开始前主动关闭旧 SSE，避免用户连续发送或异常重试时出现旧连接残留。
+4. 不修改 `/pg/chat/completions` payload、不改消息存储 schema、不迁移整个 Playground 目录结构，不引入新依赖。
+5. 错误 Alert 只做必要清理：fallback 文案走 i18n，间距使用 `flex/gap`；模型价格错误按钮跳转到 `/system-settings/billing/model-pricing`，避免继续指向 classic `/console` 路径。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 流式解析工具 | `web/default/src/features/playground/lib/stream-utils.ts` | 新增 `[DONE]`、chunk delta、readyState 和 stream error payload 解析 helper。 |
+| 请求错误工具 | `web/default/src/features/playground/lib/request-error-utils.ts` | 新增非流式请求错误 message/code 解析 helper，兼容 `{message}` 与 `{error:{message,code}}` 响应。 |
+| hook 生命周期 | `web/default/src/features/playground/hooks/use-stream-request.ts` | 改为响应式 `isStreaming`，统一 close/error/stop 路径，复用 stream helper。 |
+| 非流式错误 | `web/default/src/features/playground/hooks/use-chat-handler.ts` | catch 分支复用 request error helper，避免 stream/non-stream 错误解析分叉。 |
+| 错误展示 | `web/default/src/features/playground/components/message-error.tsx` | fallback 文案进入 i18n，移除 raw orange 和 `space-y-*` 样式，模型价格错误的设置入口改向默认前端模型价格页。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `An unknown error occurred` 翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 本轮只改默认前端 Playground 的客户端状态和错误解析，不触碰后端 Relay、计费、权限、数据库和模型请求 DTO。
+2. `isStreaming` 从 ref 推导变成 state 后，UI 会更及时进入/退出生成态；正常请求 payload 与 SSE 消息处理不变，风险集中在关闭连接时机。
+3. 新请求前关闭旧连接会中断残留 SSE，这是预期保护；不会影响用户点击 Stop 的现有语义，Stop 仍把当前 assistant 消息 finalize 为 complete。
+4. 错误解析会优先展示上游 `error.message` 或业务 `message`，比旧逻辑更完整；如果错误体不是 JSON，仍回退 raw data 或通用错误。
+5. 本轮不新增可执行 HTML、不改 Markdown renderer、不改模型输出内容处理。
+
+### 方案评审
+
+采用“工具函数抽离 + hook 生命周期修正”的最小方案：参考 new-api-main 的 `stream-utils`、`request-error-utils` 和 `use-stream-request` 结构，但保留 NexusTok 当前 API endpoint、类型、toast 和消息更新函数。`useStreamRequest` 在 `sendStreamRequest` 前关闭旧连接，创建新 SSE 后设置 `isStreaming=true`，所有关闭路径统一经过 `closeActiveStream`，确保输入控件和消息动作响应式更新。非流式 catch 改用同一错误解析 helper，避免后续维护两套错误字段兼容逻辑。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync` 确认新增 fallback key 进入六语翻译文件。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/stream-utils.ts src/features/playground/lib/request-error-utils.ts src/features/playground/hooks/use-stream-request.ts src/features/playground/hooks/use-chat-handler.ts src/features/playground/components/message-error.tsx` 定向检查本轮文件。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖 Playground 类型、hook 回调和新增工具导出。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查页面；若 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取 chunk 确认 `parseStreamMessageUpdates`、`parseRequestErrorDetails` 等特征已热更新。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过，新增 `An unknown error occurred` 已进入 en、zh、fr、ja、ru、vi 六语 locale。
+2. `cd web/default && ./node_modules/.bin/eslint src/features/playground/lib/stream-utils.ts src/features/playground/lib/request-error-utils.ts src/features/playground/lib/index.ts src/features/playground/hooks/use-stream-request.ts src/features/playground/hooks/use-chat-handler.ts src/features/playground/components/message-error.tsx` 通过。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认新增工具导出、hook state、SSE 事件类型和 request error 解析类型正确。
+4. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，确认默认前端生产构建正常。
+5. `git diff --check` 通过，无空白错误。
+6. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+7. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status`、`/playground` 和 `/system-settings/billing/model-pricing` 均返回 `HTTP/1.1 200 OK`。
+8. 容器 `nexustok-api-hot` 日志显示热更新已发布前端 dist、重新构建并重启后端；从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/9979.js`，确认线上静态资源包含 `An unknown error occurred` 和 `/system-settings/billing/model-pricing` 等本轮可观察特征。生产构建会压缩函数名，因此不依赖 helper 函数名作为线上特征。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 流式错误处理底座 | `web/default/src/features/playground/lib/{stream-utils.ts,request-error-utils.ts,index.ts}`、`web/default/src/features/playground/hooks/{use-stream-request.ts,use-chat-handler.ts}`、`web/default/src/features/playground/components/message-error.tsx`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground stream/request error 工具拆分，SSE 连接状态改为响应式 `isStreaming`，新请求前关闭旧流，统一解析流式和非流式错误；模型价格错误设置入口改向默认前端模型价格页，并补齐错误 fallback 六语翻译。 |
 | 2026-07-09 | Playground AI 响应受控渲染 | `web/default/src/components/ai-elements/{response.tsx,response-content.ts,response-types.ts,response-node-guards.ts,response-renderer*.tsx}`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-chat.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 AST Response renderer，移除直接 `streamdown`，由 `stream-markdown-parser` 解析并本地受控渲染表格、脚注、图片、alert、details、checkbox 和代码块；HTML 默认文本化、图片 URL 过滤、超过 20,000 字符纯文本降级，Playground streaming 消息按 `final` 状态解析。 |
 | 2026-07-09 | 默认前端安全富文本渲染 | `web/default/src/components/html-content.tsx`、`web/default/src/components/rich-content.tsx`、`web/default/src/components/ui/markdown.tsx`、`web/default/src/lib/content-format.ts`、`web/default/src/features/home/index.tsx`、`web/default/src/features/about/index.tsx`、`web/default/src/features/legal/legal-document.tsx`、`web/default/src/components/notification-dialog.tsx`、`web/default/src/features/dashboard/components/overview/announcement-detail-dialog.tsx`、`web/default/src/features/dashboard/components/overview/faq-panel.tsx`、`web/default/src/components/layout/components/footer.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 `HtmlContent`/`RichContent` 安全渲染能力，Markdown 移除 raw HTML 执行；首页、About、Legal、通知、公告、FAQ 和自定义页脚 HTML 统一进入 DOMPurify 清洗链路，完整 HTML 页面使用 shadow root 隔离，同时移除源码不再使用的直接 `rehype-raw` 依赖。 |
 | 2026-07-09 | 视频任务时长上限与直连 `image` 标准化 | `relay/common/relay_utils.go`、`relay/relay_task.go`、`relay/channel/task/gemini/billing.go`、`relay/channel/task/ali/adaptor.go`、`relay/common/relay_utils_test.go`、`relay/channel/task/gemini/billing_test.go`、`relay/channel/task/ali/adaptor_test.go` | 任务入口拒绝负数和超过 3600 秒的 `duration`/`seconds`，直连 JSON `image` 会标准化为图生视频输入；历史 remix、Gemini/Veo metadata 和 Ali metadata 进入 OtherRatios 前统一钳制时长倍率。 |

@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "Les options de montant doivent être un tableau JSON",
     "Amount to pay:": "Montant à payer :",
     "An unexpected error occurred": "Une erreur inattendue est survenue",
+    "An unknown error occurred": "Une erreur inconnue s’est produite",
     "and": "et",
     "Announcement added. Click \"Save Settings\" to apply.": "Annonce ajoutée. Cliquez sur \"Enregistrer les paramètres\" pour appliquer.",
     "Announcement content": "Contenu de l'annonce",

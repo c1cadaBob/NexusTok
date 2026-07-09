@@ -24,14 +24,17 @@ import { Button } from '@/components/ui/button'
 import { MESSAGE_STATUS } from '../constants'
 import type { Message } from '../types'
 
+const FALLBACK_ERROR_CONTENT = 'An unknown error occurred'
+const MODEL_PRICING_SETTINGS_PATH = '/system-settings/billing/model-pricing'
+const MODEL_PRICE_ERROR_CODE = 'model_price_error'
+
 interface MessageErrorProps {
   message: Message
   className?: string
 }
 
 /**
- * Display error messages using Alert component
- * Following ai-elements pattern for error handling
+ * 使用 Alert 展示 Playground 消息级错误。
  */
 export function MessageError({ message, className = '' }: MessageErrorProps) {
   const { t } = useTranslation()
@@ -43,24 +46,24 @@ export function MessageError({ message, className = '' }: MessageErrorProps) {
   }
 
   const errorContent =
-    message.versions[0]?.content || 'An unknown error occurred'
+    message.versions[0]?.content || t(FALLBACK_ERROR_CONTENT)
 
-  if (message.errorCode === 'model_price_error') {
+  if (message.errorCode === MODEL_PRICE_ERROR_CODE) {
     return (
       <Alert variant='default' className={className}>
-        <AlertTriangle className='text-orange-500' />
+        <AlertTriangle className='text-warning' />
         <AlertTitle>{t('Model Price Not Configured')}</AlertTitle>
-        <AlertDescription className='space-y-2'>
+        <AlertDescription className='flex flex-col gap-2'>
           <p>{errorContent}</p>
           {isAdmin && (
             <Button
               variant='outline'
               size='sm'
               onClick={() =>
-                window.open('/console/setting?tab=ratio', '_blank')
+                window.open(MODEL_PRICING_SETTINGS_PATH, '_blank')
               }
             >
-              <Settings className='mr-1 h-3.5 w-3.5' />
+              <Settings data-icon='inline-start' />
               {t('Go to Settings')}
             </Button>
           )}

@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "Tùy chọn số tiền phải là mảng JSON",
     "Amount to pay:": "Amount due:",
     "An unexpected error occurred": "Đã xảy ra lỗi không mong muốn",
+    "An unknown error occurred": "Đã xảy ra lỗi không xác định",
     "and": "and",
     "Announcement added. Click \"Save Settings\" to apply.": "Đã thêm thông báo. Nhấp \"Save Settings\" để áp dụng.",
     "Announcement content": "Nội dung thông báo",

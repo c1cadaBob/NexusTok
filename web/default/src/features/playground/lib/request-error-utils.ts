@@ -16,9 +16,38 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-export * from './message-utils'
-export * from './payload-builder'
-export * from './request-error-utils'
-export * from './storage'
-export * from './message-styles'
-export * from './stream-utils'
+import { ERROR_MESSAGES } from '../constants'
+
+type RequestErrorLike = {
+  message?: string
+  response?: {
+    data?: {
+      error?: {
+        code?: string
+        message?: string
+      }
+      message?: string
+    }
+  }
+}
+
+export type RequestErrorDetails = {
+  errorCode?: string
+  errorMessage: string
+}
+
+export function parseRequestErrorDetails(
+  error: unknown
+): RequestErrorDetails {
+  const requestError = error as RequestErrorLike
+  const responseData = requestError?.response?.data
+
+  return {
+    errorCode: responseData?.error?.code || undefined,
+    errorMessage:
+      responseData?.error?.message ||
+      responseData?.message ||
+      requestError?.message ||
+      ERROR_MESSAGES.API_REQUEST_ERROR,
+  }
+}

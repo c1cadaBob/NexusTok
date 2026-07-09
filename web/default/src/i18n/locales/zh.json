@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "金额选项必须是 JSON 数组",
     "Amount to pay:": "待支付金额：",
     "An unexpected error occurred": "发生意外错误",
+    "An unknown error occurred": "发生未知错误",
     "and": "和",
     "Announcement added. Click \"Save Settings\" to apply.": "公告已添加。点击 \"保存设置\" 以应用。",
     "Announcement content": "公告内容",

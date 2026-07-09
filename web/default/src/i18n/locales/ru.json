@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "Варианты сумм должны быть JSON-массивом",
     "Amount to pay:": "Сумма к оплате:",
     "An unexpected error occurred": "Произошла непредвиденная ошибка",
+    "An unknown error occurred": "Произошла неизвестная ошибка",
     "and": "и",
     "Announcement added. Click \"Save Settings\" to apply.": "Объявление добавлено. Нажмите \"Сохранить настройки\", чтобы применить.",
     "Announcement content": "Содержимое объявления",

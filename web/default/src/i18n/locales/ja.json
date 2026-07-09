@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "金額オプションは JSON 配列でなければなりません",
     "Amount to pay:": "支払い金額:",
     "An unexpected error occurred": "予期せぬエラーが発生しました",
+    "An unknown error occurred": "不明なエラーが発生しました",
     "and": "および",
     "Announcement added. Click \"Save Settings\" to apply.": "お知らせが追加されました。\"設定を保存\" をクリックして適用してください。",
     "Announcement content": "お知らせの内容",

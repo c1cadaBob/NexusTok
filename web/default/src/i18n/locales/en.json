@@ -366,6 +366,7 @@
     "Amount options must be a JSON array": "Amount options must be a JSON array",
     "Amount to pay:": "Amount to pay:",
     "An unexpected error occurred": "An unexpected error occurred",
+    "An unknown error occurred": "An unknown error occurred",
     "and": "and",
     "Announcement added. Click \"Save Settings\" to apply.": "Announcement added. Click \"Save Settings\" to apply.",
     "Announcement content": "Announcement content",

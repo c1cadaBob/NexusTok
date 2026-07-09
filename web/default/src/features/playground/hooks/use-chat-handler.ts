@@ -19,13 +19,14 @@ For commercial licensing, please contact support@c1cada.dev
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { sendChatCompletion } from '../api'
-import { MESSAGE_STATUS, ERROR_MESSAGES } from '../constants'
+import { MESSAGE_STATUS } from '../constants'
 import {
   buildChatCompletionPayload,
   updateAssistantMessageWithError,
   updateLastAssistantMessage,
   processStreamingContent,
   finalizeMessage,
+  parseRequestErrorDetails,
 } from '../lib'
 import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
 import { useStreamRequest } from './use-stream-request'
@@ -37,7 +38,7 @@ interface UseChatHandlerOptions {
 }
 
 /**
- * Hook for handling chat message sending and receiving
+ * 负责 Playground 消息发送、流式更新和错误落盘。
  */
 export function useChatHandler({
   config,
@@ -46,7 +47,7 @@ export function useChatHandler({
 }: UseChatHandlerOptions) {
   const { sendStreamRequest, stopStream, isStreaming } = useStreamRequest()
 
-  // Handle stream update
+  // 处理流式增量。
   const handleStreamUpdate = useCallback(
     (type: 'reasoning' | 'content', chunk: string) => {
       onMessageUpdate((prev) =>
@@ -54,7 +55,7 @@ export function useChatHandler({
           if (message.status === MESSAGE_STATUS.ERROR) return message
 
           if (type === 'reasoning') {
-            // Direct API reasoning_content
+            // 直连 API 的 reasoning_content 不需要等待 <think> 标签闭合。
             return {
               ...message,
               reasoning: {
@@ -66,7 +67,7 @@ export function useChatHandler({
             }
           }
 
-          // Content streaming: handle <think> tags
+          // 普通内容流需要实时拆分 <think> 标签，避免思考内容混到可见正文。
           return {
             ...processStreamingContent(message, chunk),
             status: MESSAGE_STATUS.STREAMING,
@@ -77,7 +78,7 @@ export function useChatHandler({
     [onMessageUpdate]
   )
 
-  // Handle stream complete
+  // 流结束后清理未闭合的 reasoning 状态。
   const handleStreamComplete = useCallback(() => {
     onMessageUpdate((prev) =>
       updateLastAssistantMessage(prev, (message) =>
@@ -89,7 +90,7 @@ export function useChatHandler({
     )
   }, [onMessageUpdate])
 
-  // Handle stream error
+  // 流式和非流式错误都写回最后一条 assistant 消息。
   const handleStreamError = useCallback(
     (error: string, errorCode?: string) => {
       toast.error(error)
@@ -100,7 +101,7 @@ export function useChatHandler({
     [onMessageUpdate]
   )
 
-  // Send streaming chat request
+  // 发送流式请求。
   const sendStreamingChat = useCallback(
     (messages: Message[]) => {
       const payload = buildChatCompletionPayload(
@@ -125,7 +126,7 @@ export function useChatHandler({
     ]
   )
 
-  // Send non-streaming chat request
+  // 发送非流式请求。
   const sendNonStreamingChat = useCallback(
     async (messages: Message[]) => {
       const payload = buildChatCompletionPayload(
@@ -157,24 +158,14 @@ export function useChatHandler({
           }))
         )
       } catch (error: unknown) {
-        const err = error as {
-          response?: {
-            data?: { message?: string; error?: { code?: string } }
-          }
-          message?: string
-        }
-        handleStreamError(
-          err?.response?.data?.message ||
-            err?.message ||
-            ERROR_MESSAGES.API_REQUEST_ERROR,
-          err?.response?.data?.error?.code || undefined
-        )
+        const { errorCode, errorMessage } = parseRequestErrorDetails(error)
+        handleStreamError(errorMessage, errorCode)
       }
     },
     [config, parameterEnabled, onMessageUpdate, handleStreamError]
   )
 
-  // Send chat request (stream or non-stream based on config)
+  // 根据当前配置选择流式或非流式请求。
   const sendChat = useCallback(
     (messages: Message[]) => {
       if (config.stream) {
@@ -186,7 +177,7 @@ export function useChatHandler({
     [config.stream, sendStreamingChat, sendNonStreamingChat]
   )
 
-  // Stop generation
+  // 停止生成时关闭 SSE，并把当前 assistant 消息稳定为完成态。
   const stopGeneration = useCallback(() => {
     stopStream()
     onMessageUpdate((prev) =>
