@@ -48,7 +48,7 @@ export const DEFAULT_LOGS_DATA = {
 // ============================================================================
 
 /**
- * Log type enum values
+ * 日志类型枚举值，必须与后端 model/log.go 保持一致。
  */
 export const LOG_TYPE_ENUM = {
   UNKNOWN: 0,
@@ -58,6 +58,7 @@ export const LOG_TYPE_ENUM = {
   SYSTEM: 4,
   ERROR: 5,
   REFUND: 6,
+  LOGIN: 7,
 } as const
 
 // ============================================================================
@@ -79,7 +80,7 @@ export const TIME_RANGE_PRESETS = [
 // ============================================================================
 
 /**
- * Log types configuration for filtering and display
+ * 日志类型展示配置，用于筛选下拉框和表格类型徽标。
  */
 export const LOG_TYPES = [
   { value: 0, label: 'Unknown', color: 'default' },
@@ -89,10 +90,11 @@ export const LOG_TYPES = [
   { value: 4, label: 'System', color: 'purple' },
   { value: 5, label: 'Error', color: 'red' },
   { value: 6, label: 'Refund', color: 'blue' },
+  { value: 7, label: 'Login', color: 'teal' },
 ] as const
 
 /**
- * Log types for DataTableToolbar filters (single select mode)
+ * DataTableToolbar 使用的日志类型筛选项（单选模式）。
  */
 export const LOG_TYPE_FILTERS = LOG_TYPES.map((type) => ({
   label: type.label,

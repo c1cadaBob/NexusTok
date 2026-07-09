@@ -123,7 +123,55 @@ func Login(c *gin.Context) {
 	setupLogin(&user, c)
 }
 
-// setup session & cookies and then return user info
+// loginMethodFromContext 根据当前路由推导成功登录方式。
+//
+// 返回值使用稳定技术标识，便于日志筛选、导出和后续统计；标准 OAuth 提供商会带上
+// provider 名称，例如 oauth:github。
+func loginMethodFromContext(c *gin.Context) string {
+	switch c.FullPath() {
+	case "/api/user/login":
+		return "password"
+	case "/api/user/login/2fa":
+		return "2fa"
+	case "/api/user/passkey/login/finish":
+		return "passkey"
+	case "/api/oauth/wechat":
+		return "wechat"
+	case "/api/oauth/telegram/login":
+		return "telegram"
+	case "/api/oauth/:provider":
+		if provider := c.Param("provider"); provider != "" {
+			return "oauth:" + provider
+		}
+		return "oauth"
+	default:
+		return "unknown"
+	}
+}
+
+// recordLoginAudit 记录成功登录审计日志。
+//
+// 只记录成功登录，避免失败登录日志暴露不存在的用户名或密码错误模式；日志写入失败不会影响
+// 已经通过认证的用户建立 session。
+func recordLoginAudit(user *model.User, c *gin.Context) {
+	method := loginMethodFromContext(c)
+	model.RecordLoginLog(model.LoginLogParams{
+		UserId:   user.Id,
+		Username: user.Username,
+		Content:  fmt.Sprintf("Logged in successfully via %s", method),
+		Ip:       c.ClientIP(),
+		Action:   "login",
+		Params: map[string]interface{}{
+			"method": method,
+		},
+		Extra: map[string]interface{}{
+			"login_method": method,
+			"user_agent":   c.Request.UserAgent(),
+		},
+	})
+}
+
+// setupLogin 设置登录 session/cookie，并返回用户信息。
 func setupLogin(user *model.User, c *gin.Context) {
 	model.UpdateUserLastLoginAt(user.Id)
 	session := sessions.Default(c)
@@ -137,6 +185,7 @@ func setupLogin(user *model.User, c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
 		return
 	}
+	recordLoginAudit(user, c)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,

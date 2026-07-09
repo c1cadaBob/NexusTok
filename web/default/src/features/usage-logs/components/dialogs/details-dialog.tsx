@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   UserCog,
   Info,
+  LogIn,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
@@ -435,6 +436,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isConsume = props.log.type === 2
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
+  const isLogin = props.log.type === 7
   const isSubscription = other?.billing_source === 'subscription'
   const isTieredBilling =
     isConsume &&
@@ -516,6 +518,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
       props.log.ip ||
       authMethodLabel ||
       auditRouteParams.length > 0)
+  const loginAuditFields = isLogin
+    ? ([
+        other?.login_method && {
+          label: t('Login Method'),
+          value: String(other.login_method),
+        },
+        props.log.ip && {
+          label: t('IP Address'),
+          value: props.log.ip,
+        },
+        other?.user_agent && {
+          label: t('User Agent'),
+          value: String(other.user_agent),
+        },
+      ].filter(Boolean) as Array<{ label: string; value: string }>)
+    : []
 
   const conversionChain =
     other && Array.isArray(other.request_conversion)
@@ -910,6 +928,23 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     }
                   />
                 )}
+              </DetailSection>
+            )}
+
+            {/* 登录审计详情（type=7，归属用户可见） */}
+            {isLogin && loginAuditFields.length > 0 && (
+              <DetailSection
+                icon={<LogIn className='size-3.5' aria-hidden='true' />}
+                label={t('Login Info')}
+              >
+                {loginAuditFields.map((field, idx) => (
+                  <DetailRow
+                    key={idx}
+                    label={field.label}
+                    value={field.value}
+                    mono
+                  />
+                ))}
               </DetailSection>
             )}
 

@@ -132,6 +132,9 @@ export interface LogOtherData {
     success?: boolean
     params?: Record<string, string>
   }
+  // 登录审计字段（type=7），归属用户和管理员查看该用户日志时均可见。
+  login_method?: string
+  user_agent?: string
   request_path?: string
   request_conversion?: string[]
   ws?: boolean

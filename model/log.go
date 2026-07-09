@@ -14,6 +14,7 @@
 // - LogTypeSystem：系统日志
 // - LogTypeError：错误日志
 // - LogTypeRefund：退款日志
+// - LogTypeLogin：成功登录日志
 //
 // 核心功能：
 // - 日志记录：支持多种类型的日志记录
@@ -71,6 +72,7 @@ const (
 	LogTypeSystem  = 4
 	LogTypeError   = 5
 	LogTypeRefund  = 6
+	LogTypeLogin   = 7
 )
 
 // formatUserLogs 格式化用户日志（移除管理员敏感字段，设置序号）
@@ -183,6 +185,22 @@ type OperationAuditLogParams struct {
 	AuditInfo map[string]interface{}
 }
 
+// LoginLogParams 描述一条成功登录审计日志。
+//
+// 设计约束：
+//   - 仅记录成功登录，不记录失败用户名或失败原因，避免制造账号枚举信号。
+//   - Extra 只放普通用户也可见的轻量元数据，例如 login_method、user_agent。
+//   - Content 是导出和旧前端兜底文本；前端优先读取 Other.op 和 Extra 中的结构化字段。
+type LoginLogParams struct {
+	UserId   int
+	Username string
+	Content  string
+	Ip       string
+	Action   string
+	Params   map[string]interface{}
+	Extra    map[string]interface{}
+}
+
 // buildOperationAuditOpField 构建语言无关的操作描述。
 // 前端可以依据 action 和 params 渲染本地化文案；Content 只作为导出、旧前端或解析失败时的兜底文本。
 func buildOperationAuditOpField(action string, params map[string]interface{}) map[string]interface{} {
@@ -193,6 +211,33 @@ func buildOperationAuditOpField(action string, params map[string]interface{}) ma
 		op["params"] = params
 	}
 	return op
+}
+
+// RecordLoginLog 记录用户成功登录审计日志。
+//
+// 该函数复用 logs 表和 Other 文本 JSON 字段，不新增数据库结构；写入失败只记录系统日志，
+// 不影响登录主流程。调用方应传入已知用户名，避免在登录成功路径中额外查询。
+func RecordLoginLog(params LoginLogParams) {
+	if params.Action == "" {
+		params.Action = "login"
+	}
+	other := map[string]interface{}{}
+	for key, value := range params.Extra {
+		other[key] = value
+	}
+	other["op"] = buildOperationAuditOpField(params.Action, params.Params)
+	log := &Log{
+		UserId:    params.UserId,
+		Username:  params.Username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeLogin,
+		Content:   params.Content,
+		Ip:        params.Ip,
+		Other:     common.MapToJsonStr(other),
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record login log: " + err.Error())
+	}
 }
 
 // RecordOperationAuditLog 记录管理操作审计日志。

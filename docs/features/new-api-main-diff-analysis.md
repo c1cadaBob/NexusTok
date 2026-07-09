@@ -3183,8 +3183,63 @@ NexusTok 已具备 `common.BodyStorage`、`common.ReaderOnly` 和请求体大小
 3. `go test -count=1 ./relay/...` 中本轮相关包均通过，但存量 `relay/channel/claude/message_delta_usage_patch_test.go` 缺少 `testing`、`dto`、`require`、`gjson` 等导入，导致 `relay/channel/claude` 包构建失败；该文件不属于本轮改动范围。
 4. MCP Chrome DevTools 无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代访问 `http://192.168.0.202:3003/`，主页返回 200；`/api/status` 返回 200；无 token 请求 `/v1/chat/completions` 返回 401，认证边界正常。
 
+## 本轮实施评审：登录成功审计日志
+
+### 需求分析
+
+new-api-main 在用户完成登录后会写入 `LogTypeLogin=7` 的成功登录审计日志，记录登录方式、客户端 IP 和 User-Agent，并在默认前端 Usage Logs 中提供 Login 类型、筛选项和详情展示。NexusTok 当前只更新 `last_login_at`，无法让用户或管理员在统一日志页面追踪账号近期成功登录来源。考虑到 NexusTok 已支持密码、2FA、Passkey、标准 OAuth、微信和 Telegram 登录，成功登录日志能补齐账号安全排障闭环：当用户发现异常消费或会话变化时，可以先在日志里确认是否存在异常登录。
+
+本轮目标是把该能力发展成 NexusTok 原生日志能力：
+
+1. 在后端日志类型中新增固定值 `LogTypeLogin=7`，不使用 `iota`，避免改变既有日志类型值。
+2. 新增 `model.RecordLoginLog`，复用现有 `logs.other` 文本 JSON 保存 `login_method`、`user_agent` 和语言无关的 `op` 字段，不新增表和字段，保持 SQLite、MySQL、PostgreSQL 兼容。
+3. 在 `setupLogin` 成功保存 session 后记录登录审计；2FA、Passkey、OAuth、微信、Telegram 等最终都会走该函数，因此只需单点接入。失败登录不记录，避免用户名枚举和日志噪声。
+4. 前端 Usage Logs 增加 Login 类型、筛选值、详情入口，并在详情弹窗展示登录方式、IP 和 User-Agent；这些字段对日志归属用户可见，不放入 `admin_info`。
+5. 补齐 en、zh、fr、ja、ru、vi 翻译，并用现有 i18n 同步和 TypeScript 构建验证。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 后端日志类型 | `model/log.go` | 新增 `LogTypeLogin=7`、`RecordLoginLog`，普通用户日志脱敏逻辑保留 login 字段。 |
+| 登录控制器 | `controller/user.go` | 新增登录方式推导和成功登录审计；`setupLogin` session 保存成功后写日志。 |
+| 后端测试 | `model/log_audit_test.go`、`controller/*` 相关测试 | 覆盖登录日志 JSON 结构，保证日志类型、IP、方法和 User-Agent 写入正确。 |
+| 前端日志常量 | `web/default/src/features/usage-logs/constants.ts`、`common-logs-filter-bar.tsx` | 增加 Login 类型和筛选值，确保 type=7 可被查询。 |
+| 前端日志类型/详情 | `web/default/src/features/usage-logs/types.ts`、`details-dialog.tsx` | 声明 login 审计字段，并展示登录信息详情。 |
+| 前端 i18n | `web/default/src/i18n/locales/*.json` | 新增 Login、Login Info、Login Method、User Agent 等六语文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 登录成功日志会增加 `logs` 写入量，但仅在成功登录时写入一条轻量记录，不受 `LogConsumeEnabled` 影响；若日志库写入失败，只写系统日志，不阻断用户登录。
+2. 仅记录成功登录，不记录失败用户名、失败 IP 或密码错误原因，避免让日志变成账号枚举信号源。
+3. `User-Agent` 可能较长，本轮只写入 `Other` 文本字段并在详情弹窗 mono 展示，不参与索引和查询，避免扩大数据库索引负担。
+4. `login_method` 来自路由模板和 provider 参数，属于稳定技术标识；标准 OAuth provider 使用 `oauth:<provider>`，便于后续筛选或统计。
+5. 前端 type=7 不加入 `DISPLAYABLE_LOG_TYPES`，避免 Token、Cost、Channel 等用量列解析无关字段；详情列本身始终可打开，因此登录审计信息仍可查看。
+
+### 方案评审
+
+采用单点接入方案：`setupLogin` 是密码登录、2FA 登录、Passkey 登录和 OAuth 登录最终落点，因此在 session 保存成功后调用 `recordLoginAudit(user, c)`。`recordLoginAudit` 通过 `c.FullPath()` 推导登录方式，构造 `content="Logged in successfully via <method>"` 作为导出/旧前端兜底文本，并调用 `model.RecordLoginLog` 写入结构化 `other`。日志归属 `user.Id`，`Username` 使用登录流程已持有的用户对象，避免额外数据库查询。
+
+前端复用现有 `DetailSection`、`DetailRow` 和 `StatusBadge`，只新增 `LogIn` 图标和登录审计区块，不新增组件依赖。Login 类型加入 `LOG_TYPES` 和 `logTypeValues`，但不加入 `DISPLAYABLE_LOG_TYPES`，让登录日志只参与类型徽标、筛选和详情展示，不进入消费用量列。详情弹窗在管理审计区块之后展示 Login Info，普通用户和管理员查看该用户日志时都可见。翻译直接补齐所有默认语言。
+
+验收方式：
+
+1. `go test -count=1 ./model ./controller` 覆盖后端日志结构和登录控制器编译。
+2. `cd web/default && node scripts/sync-i18n.mjs` 确认新增 key 同步到所有 locale。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端类型通过。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/` 并执行一次真实登录，再访问 Usage Logs 验证出现 Login 类型记录和详情；若 MCP 浏览器不可用，则用 `curl` 登录、携带 cookie 调用 `/api/log/self` 或 `/api/log` 验证日志记录。
+
+验证记录：
+
+1. `go test -count=1 ./model ./controller` 通过，覆盖 `RecordLoginLog` 的结构化 JSON 写入。
+2. `cd web/default && node scripts/sync-i18n.mjs` 通过，所有 locale missing/extras 均为 0；untranslated 为存量。
+3. `cd web/default && ./node_modules/.bin/tsc -b` 通过，Usage Logs 路由 search schema 已同步允许 type=7。
+4. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮用 `curl` 替代验证：访问 `http://192.168.0.202:3003/` 返回 200；调用 `/api/user/login` 真实登录账号 `c1cada` 成功；携带 session cookie 与 `NexusTok-User: 1` 调用 `/api/log/self?type=7` 返回最新登录日志，字段包含 `type=7`、`content=Logged in successfully via password`、`login_method=password`、`user_agent=curl/8.18.0` 和 `op.action=login`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 登录成功审计日志 | `model/log.go`、`controller/user.go`、`web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 新增 `LogTypeLogin=7` 与成功登录审计记录，登录落点写入登录方式、IP、User-Agent 和结构化 `op`；默认前端 Usage Logs 支持 Login 类型筛选与详情展示，并补齐六语翻译。 |
 | 2026-07-09 | 转换后上游 JSON 请求体存储与 Content-Length | `relay/common/outbound_body.go`、`relay/common/relay_info.go`、`relay/channel/api_request.go`、`relay/*_handler.go` | 新增转换后 JSON body 的 `BodyStorage` 包装，记录最终上游 body 字节数并在通用 HTTP 请求构造层回填 `ContentLength`；主要 JSON 转换 handler 已接入，透传、multipart 和 WebSocket 路径保持原语义。 |
 | 2026-07-09 | Secure Session Cookie 环境配置 | `common/session_cookie.go`、`common/init.go`、`main.go`、`common/session_cookie_test.go` | 新增 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 配置，默认保持 HTTP 开发兼容；开启 Secure 时要求可信 HTTPS URL，并让 session store 使用配置值。 |
 | 2026-07-09 | Max Token 家族字段上限保护 | `relay/helper/valid_request.go`、`relay/helper/max_tokens_bounds_test.go` | 统一限制 OpenAI `max_tokens/max_completion_tokens`、Claude `max_tokens/max_tokens_to_sample`、Gemini `maxOutputTokens/max_output_tokens` 和 Responses `max_output_tokens`，避免极端输出 token 参数绕过预扣费与 int 转换安全边界。 |
