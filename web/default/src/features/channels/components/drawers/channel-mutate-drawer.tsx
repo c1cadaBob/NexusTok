@@ -25,10 +25,14 @@ import {
   useRef,
 } from 'react'
 import { useForm } from 'react-hook-form'
+import type { SubmitErrorHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
+  AlertCircle,
+  CheckCircle2,
+  Circle,
   HelpCircle,
   Loader2,
   Sparkles,
@@ -55,9 +59,17 @@ import { toast } from 'sonner'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { useDebounce } from '@/hooks'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import {
   Collapsible,
   CollapsibleContent,
@@ -82,6 +94,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
   SheetClose,
@@ -106,6 +119,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { searchModels } from '@/features/models/api'
 import {
   createChannel,
   fetchModels,
@@ -119,6 +133,7 @@ import {
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
+  CHANNEL_STATUS_LABELS,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
@@ -176,6 +191,25 @@ type ModelMappingGuardrail = {
   exposedTargetModels: string[]
 }
 
+type ChannelEditorSectionStatus = 'complete' | 'configured' | 'error' | 'idle'
+
+type ChannelEditorNavChildItem = {
+  id: string
+  title: string
+  configured?: boolean
+}
+
+type ChannelEditorNavItem = {
+  id: string
+  title: string
+  description?: string
+  statusLabel: string
+  status: ChannelEditorSectionStatus
+  icon: ReactNode
+  configured?: boolean
+  children?: ChannelEditorNavChildItem[]
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -218,6 +252,29 @@ const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
 }> = [{ source: 'client-model', target: 'upstream-model' }]
 
 const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded'
+const CHANNEL_EDITOR_SECTION_IDS = {
+  identity: 'channel-section-identity',
+  credentials: 'channel-section-credentials',
+  models: 'channel-section-models',
+  advanced: 'channel-section-advanced',
+} as const
+const CHANNEL_EDITOR_MAIN_SECTION_IDS = [
+  CHANNEL_EDITOR_SECTION_IDS.identity,
+  CHANNEL_EDITOR_SECTION_IDS.credentials,
+  CHANNEL_EDITOR_SECTION_IDS.models,
+  CHANNEL_EDITOR_SECTION_IDS.advanced,
+]
+const ADVANCED_SETTINGS_SECTION_IDS = {
+  routingStrategy: 'channel-section-advanced-routing-strategy',
+  internalNotes: 'channel-section-advanced-internal-notes',
+  overrideRules: 'channel-section-advanced-override-rules',
+  extraSettings: 'channel-section-advanced-extra-settings',
+  fieldPassthrough: 'channel-section-advanced-field-passthrough',
+  upstreamModelDetection: 'channel-section-advanced-upstream-model-detection',
+} as const
+const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
+  ADVANCED_SETTINGS_SECTION_IDS
+)
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
 const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'id',
@@ -323,6 +380,154 @@ function SubHeading({ title, icon }: { title: string; icon?: ReactNode }) {
   )
 }
 
+function getSectionStatusIcon(status: ChannelEditorSectionStatus): ReactNode {
+  if (status === 'error') {
+    return <AlertCircle className='h-3.5 w-3.5' aria-hidden='true' />
+  }
+  if (status === 'complete' || status === 'configured') {
+    return <CheckCircle2 className='h-3.5 w-3.5' aria-hidden='true' />
+  }
+  return <Circle className='h-3.5 w-3.5' aria-hidden='true' />
+}
+
+function getCompletionStatus(
+  hasErrors: boolean,
+  isComplete: boolean
+): ChannelEditorSectionStatus {
+  if (hasErrors) return 'error'
+  if (isComplete) return 'complete'
+  return 'idle'
+}
+
+function getSectionStatusLabel(
+  status: ChannelEditorSectionStatus,
+  t: (key: string) => string
+): string {
+  if (status === 'error') return t('Error')
+  if (status === 'complete' || status === 'configured') return t('Ready')
+  return t('Incomplete')
+}
+
+function ChannelEditorNav(props: {
+  providerLogo: ReactNode
+  providerLabel: string
+  statusLabel: string
+  progressLabel: string
+  navigationLabel: string
+  items: ChannelEditorNavItem[]
+  activeItemId?: string
+  expandedItemId?: string
+  onNavigate: (targetId: string) => void
+}) {
+  return (
+    <aside className='hidden self-start lg:sticky lg:top-4 lg:block'>
+      <div className='flex max-h-[calc(100dvh-12rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
+        <div className='border-border/60 bg-muted/20 rounded-lg border p-3'>
+          <div className='flex min-w-0 items-center gap-2'>
+            <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
+              {props.providerLogo}
+            </span>
+            <div className='min-w-0'>
+              <p className='truncate text-sm font-medium'>
+                {props.providerLabel}
+              </p>
+              <p className='text-muted-foreground truncate text-xs'>
+                {props.statusLabel} · {props.progressLabel}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <nav
+          className='border-border/60 bg-background rounded-lg border p-1'
+          aria-label={props.navigationLabel}
+        >
+          {props.items.map((item) => {
+            const isError = item.status === 'error'
+            const isDone =
+              item.status === 'complete' || item.status === 'configured'
+            const isConfigured = Boolean(item.configured)
+            const isActive = props.activeItemId === item.id
+            const isExpanded = props.expandedItemId === item.id
+
+            return (
+              <div key={item.id}>
+                <button
+                  type='button'
+                  className={cn(
+                    'hover:bg-muted/60 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
+                    isActive && 'bg-muted/70',
+                    isConfigured && !isError && 'text-primary',
+                    isError && 'text-destructive hover:bg-destructive/10'
+                  )}
+                  onClick={() => props.onNavigate(item.id)}
+                  aria-current={isActive ? 'true' : undefined}
+                >
+                  <span
+                    className={cn(
+                      'bg-muted text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
+                      isConfigured && !isError && 'bg-primary/10 text-primary',
+                      isError && 'bg-destructive/10 text-destructive',
+                      isDone && !isError && 'text-primary'
+                    )}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate text-sm font-medium'>
+                      {item.title}
+                    </span>
+                    {item.description && (
+                      <span className='text-muted-foreground block truncate text-xs'>
+                        {item.description}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      'text-muted-foreground mt-1 shrink-0',
+                      isError && 'text-destructive',
+                      isDone && !isError && 'text-primary'
+                    )}
+                    aria-label={item.statusLabel}
+                  >
+                    {getSectionStatusIcon(item.status)}
+                  </span>
+                </button>
+                {item.children && isExpanded && (
+                  <div className='border-border/60 ml-5 flex flex-col gap-0.5 border-l py-1 pl-3'>
+                    {item.children.map((child) => (
+                      <button
+                        key={child.id}
+                        type='button'
+                        className={cn(
+                          'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
+                          child.configured && 'text-primary'
+                        )}
+                        onClick={() => props.onNavigate(child.id)}
+                      >
+                        <span className='min-w-0 flex-1 truncate'>
+                          {child.title}
+                        </span>
+                        {child.configured && (
+                          <span
+                            className='bg-primary size-1.5 shrink-0 rounded-full'
+                            aria-hidden='true'
+                          />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </nav>
+      </div>
+    </aside>
+  )
+}
+
 export function ChannelMutateDrawer({
   open,
   onOpenChange,
@@ -334,7 +539,6 @@ export function ChannelMutateDrawer({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [customModel, setCustomModel] = useState('')
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
@@ -357,8 +561,21 @@ export function ChannelMutateDrawer({
   const missingModelsResolveRef = useRef<
     ((action: MissingModelsAction) => void) | null
   >(null)
+  const channelFormRef = useRef<HTMLFormElement>(null)
+  const advancedNavScrollPendingRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
+  const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
+    CHANNEL_EDITOR_SECTION_IDS.identity
+  )
+  const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
+    string | undefined
+  >()
+  const [modelSearchKeyword, setModelSearchKeyword] = useState('')
+  const debouncedModelSearchKeyword = useDebounce(
+    modelSearchKeyword.trim(),
+    300
+  )
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -385,6 +602,19 @@ export function ChannelMutateDrawer({
   const { data: allModelsData } = useQuery({
     queryKey: ['channel_models'],
     queryFn: getAllModels,
+  })
+
+  // 按输入关键词查询模型元信息库，补齐 /api/channel/models 静态能力列表中没有的新同步模型。
+  const { data: modelSearchData, isFetching: isSearchingModelMeta } = useQuery({
+    queryKey: ['channel_model_meta_search', debouncedModelSearchKeyword],
+    queryFn: () =>
+      searchModels({
+        keyword: debouncedModelSearchKeyword,
+        p: 1,
+        page_size: 50,
+      }),
+    enabled: open && debouncedModelSearchKeyword.length > 0,
+    staleTime: 30_000,
   })
 
   // 拉取模型预设分组，便于管理员快速批量填入常用模型集合。
@@ -438,14 +668,19 @@ export function ChannelMutateDrawer({
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
+  const currentStatus = form.watch('status')
   const currentBaseUrl = form.watch('base_url')
+  const currentKey = form.watch('key')
+  const currentOther = form.watch('other')
   const currentModels = form.watch('models')
+  const currentName = form.watch('name')
   const currentModelMapping = form.watch('model_mapping')
   const awsKeyType = form.watch('aws_key_type')
   const upstreamModelUpdateCheckEnabled = form.watch(
     'upstream_model_update_check_enabled'
   )
   const currentSettings = form.watch('settings')
+  const currentFormValues = form.watch()
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
@@ -474,6 +709,14 @@ export function ChannelMutateDrawer({
   const allModelsList = useMemo(
     () => allModelsData?.data?.map((model) => model.id).filter(Boolean) || [],
     [allModelsData]
+  )
+
+  const modelSearchModelNames = useMemo(
+    () =>
+      modelSearchData?.data?.items
+        ?.map((model) => model.model_name)
+        .filter(Boolean) || [],
+    [modelSearchData]
   )
 
   // 按渠道类型推导基础模型集合。
@@ -560,6 +803,216 @@ export function ChannelMutateDrawer({
     }
   }, [credentialMode, t])
 
+  const formErrors = form.formState.errors
+  const identityHasErrors = Boolean(
+    formErrors.name ||
+      formErrors.type ||
+      formErrors.status ||
+      formErrors.openai_organization
+  )
+  const credentialsHaveErrors = Boolean(
+    formErrors.key ||
+      formErrors.base_url ||
+      formErrors.other ||
+      formErrors.multi_key_mode ||
+      formErrors.multi_key_type ||
+      formErrors.key_mode ||
+      formErrors.vertex_key_type ||
+      formErrors.aws_key_type ||
+      formErrors.azure_responses_version ||
+      formErrors.account_pool_group_id
+  )
+  const modelsHaveErrors = Boolean(
+    formErrors.models || formErrors.group || formErrors.model_mapping
+  )
+  const advancedHaveErrors = Boolean(
+    formErrors.priority ||
+      formErrors.weight ||
+      formErrors.test_model ||
+      formErrors.auto_ban ||
+      formErrors.tag ||
+      formErrors.remark ||
+      formErrors.status_code_mapping ||
+      formErrors.param_override ||
+      formErrors.header_override ||
+      formErrors.force_format ||
+      formErrors.thinking_to_content ||
+      formErrors.pass_through_body_enabled ||
+      formErrors.proxy ||
+      formErrors.system_prompt ||
+      formErrors.system_prompt_override ||
+      formErrors.allow_service_tier ||
+      formErrors.disable_store ||
+      formErrors.allow_safety_identifier ||
+      formErrors.allow_include_obfuscation ||
+      formErrors.allow_inference_geo ||
+      formErrors.allow_speed ||
+      formErrors.claude_beta_query ||
+      formErrors.upstream_model_update_check_enabled ||
+      formErrors.upstream_model_update_auto_sync_enabled ||
+      formErrors.upstream_model_update_ignored_models
+  )
+  const providerRequiresBaseUrl =
+    !isGlobalAccountPoolMode && [3, 8, 36, 45].includes(currentType)
+  const providerRequiresOther = [3, 18, 21, 39, 41, 49].includes(currentType)
+  const identityComplete = Boolean(currentName?.trim() && currentType > 0)
+  const credentialsComplete = isGlobalAccountPoolMode
+    ? Boolean(accountPoolGroupId)
+    : Boolean(
+        (isEditing || currentKey?.trim()) &&
+          (!providerRequiresBaseUrl || currentBaseUrl?.trim()) &&
+          (!providerRequiresOther || currentOther?.trim())
+      )
+  const modelsComplete = Boolean(
+    currentModelsArray.length > 0 && currentGroups?.length
+  )
+  const requiredCompletedCount = [
+    identityComplete,
+    credentialsComplete,
+    modelsComplete,
+  ].filter(Boolean).length
+  const currentStatusLabel =
+    CHANNEL_STATUS_LABELS[
+      currentStatus as keyof typeof CHANNEL_STATUS_LABELS
+    ] || 'Unknown'
+  const progressLabel = `${requiredCompletedCount}/3`
+  const identityStatus = getCompletionStatus(
+    identityHasErrors,
+    identityComplete
+  )
+  const credentialsStatus = getCompletionStatus(
+    credentialsHaveErrors,
+    credentialsComplete
+  )
+  const modelsStatus = getCompletionStatus(modelsHaveErrors, modelsComplete)
+  const advancedConfigured = hasAdvancedSettingsValues(currentFormValues)
+  const advancedStatus: ChannelEditorSectionStatus = advancedHaveErrors
+    ? 'error'
+    : advancedConfigured
+      ? 'configured'
+      : 'idle'
+  const advancedSummary = advancedHaveErrors
+    ? t('Error')
+    : advancedConfigured
+      ? t('Ready')
+      : undefined
+  const routingStrategyConfigured = Boolean(
+    currentFormValues.priority ||
+      currentFormValues.weight ||
+      currentFormValues.test_model?.trim() ||
+      (currentFormValues.auto_ban ?? 1) !== 1
+  )
+  const internalNotesConfigured = Boolean(
+    currentFormValues.tag?.trim() || currentFormValues.remark?.trim()
+  )
+  const overrideRulesConfigured = Boolean(
+    currentFormValues.status_code_mapping?.trim() ||
+      currentFormValues.param_override?.trim() ||
+      currentFormValues.header_override?.trim()
+  )
+  const extraSettingsConfigured = Boolean(
+    currentFormValues.force_format ||
+      currentFormValues.thinking_to_content ||
+      currentFormValues.pass_through_body_enabled ||
+      currentFormValues.proxy?.trim() ||
+      currentFormValues.system_prompt?.trim() ||
+      currentFormValues.system_prompt_override
+  )
+  let fieldPassthroughConfigured = false
+  if (currentType === 1 || currentType === 57) {
+    fieldPassthroughConfigured = Boolean(
+      currentFormValues.allow_service_tier ||
+        currentFormValues.disable_store ||
+        currentFormValues.allow_safety_identifier ||
+        currentFormValues.allow_include_obfuscation ||
+        currentFormValues.allow_inference_geo
+    )
+  } else if (currentType === 14) {
+    fieldPassthroughConfigured = Boolean(
+      currentFormValues.allow_service_tier ||
+        currentFormValues.allow_inference_geo ||
+        currentFormValues.allow_speed ||
+        currentFormValues.claude_beta_query
+    )
+  }
+  const upstreamModelDetectionConfigured = Boolean(
+    currentFormValues.upstream_model_update_check_enabled ||
+      currentFormValues.upstream_model_update_auto_sync_enabled ||
+      currentFormValues.upstream_model_update_ignored_models?.trim()
+  )
+  const advancedNavChildren: ChannelEditorNavChildItem[] = [
+    {
+      id: ADVANCED_SETTINGS_SECTION_IDS.routingStrategy,
+      title: t('Routing Strategy'),
+      configured: routingStrategyConfigured,
+    },
+    {
+      id: ADVANCED_SETTINGS_SECTION_IDS.internalNotes,
+      title: t('Internal Notes'),
+      configured: internalNotesConfigured,
+    },
+    {
+      id: ADVANCED_SETTINGS_SECTION_IDS.overrideRules,
+      title: t('Override Rules'),
+      configured: overrideRulesConfigured,
+    },
+    {
+      id: ADVANCED_SETTINGS_SECTION_IDS.extraSettings,
+      title: t('Channel Extra Settings'),
+      configured: extraSettingsConfigured,
+    },
+  ]
+  if (currentType === 1 || currentType === 14 || currentType === 57) {
+    advancedNavChildren.push({
+      id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
+      title: t('Field passthrough controls'),
+      configured: fieldPassthroughConfigured,
+    })
+  }
+  if (MODEL_FETCHABLE_TYPES.has(currentType)) {
+    advancedNavChildren.push({
+      id: ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection,
+      title: t('Upstream Model Detection Settings'),
+      configured: upstreamModelDetectionConfigured,
+    })
+  }
+  const editorNavItems: ChannelEditorNavItem[] = [
+    {
+      id: CHANNEL_EDITOR_SECTION_IDS.identity,
+      title: t('Basic Information'),
+      description: getSectionStatusLabel(identityStatus, t),
+      statusLabel: getSectionStatusLabel(identityStatus, t),
+      status: identityStatus,
+      icon: <Server className='h-4 w-4' aria-hidden='true' />,
+    },
+    {
+      id: CHANNEL_EDITOR_SECTION_IDS.credentials,
+      title: t('Credentials'),
+      description: getSectionStatusLabel(credentialsStatus, t),
+      statusLabel: getSectionStatusLabel(credentialsStatus, t),
+      status: credentialsStatus,
+      icon: <KeyRound className='h-4 w-4' aria-hidden='true' />,
+    },
+    {
+      id: CHANNEL_EDITOR_SECTION_IDS.models,
+      title: t('Models & Groups'),
+      description: getSectionStatusLabel(modelsStatus, t),
+      statusLabel: getSectionStatusLabel(modelsStatus, t),
+      status: modelsStatus,
+      icon: <Boxes className='h-4 w-4' aria-hidden='true' />,
+    },
+    {
+      id: CHANNEL_EDITOR_SECTION_IDS.advanced,
+      title: t('Advanced Settings'),
+      description: advancedSummary,
+      statusLabel: advancedSummary ?? t('Advanced Settings'),
+      status: advancedStatus,
+      icon: <Settings className='h-4 w-4' aria-hidden='true' />,
+      configured: advancedConfigured,
+      children: advancedNavChildren,
+    },
+  ]
+
   const channelTypeOptions = useMemo(() => {
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
@@ -590,12 +1043,16 @@ export function ChannelMutateDrawer({
 
   // 将系统模型和当前渠道模型合并成模型选择器选项，避免编辑历史模型时选项丢失。
   const modelOptions = useMemo(() => {
-    const allModels = new Set([...allModelsList, ...currentModelsArray])
+    const allModels = new Set([
+      ...modelSearchModelNames,
+      ...allModelsList,
+      ...currentModelsArray,
+    ])
     return Array.from(allModels).map((model) => ({
       value: model,
       label: model,
     }))
-  }, [allModelsList, currentModelsArray])
+  }, [allModelsList, currentModelsArray, modelSearchModelNames])
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -950,20 +1407,6 @@ export function ChannelMutateDrawer({
     updateModels,
   ])
 
-  // 添加手动输入的自定义模型。
-  const handleAddCustomModels = useCallback(() => {
-    if (!canEditBasicFields) {
-      toast.error(noPermissionMessage)
-      return
-    }
-    if (!customModel?.trim()) return
-
-    const modelArray = parseModelsString(customModel)
-    const count = updateModels(modelArray, true)
-    setCustomModel('')
-    toast.success(t('Added {{count}} custom model(s)', { count }))
-  }, [canEditBasicFields, customModel, noPermissionMessage, t, updateModels])
-
   // 模型快捷操作。
   const handleFillRelatedModels = useCallback(() => {
     if (!canEditBasicFields) {
@@ -1058,9 +1501,14 @@ export function ChannelMutateDrawer({
   // 提交成功后刷新渠道列表并关闭抽屉。
   const handleSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    if (channelId) {
+      queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(channelId),
+      })
+    }
     onOpenChange(false)
     setOpen(null)
-  }, [queryClient, onOpenChange, setOpen])
+  }, [channelId, queryClient, onOpenChange, setOpen])
 
   // 模型映射源模型缺失时弹出确认，避免管理员保存后看不到映射入口模型。
   const confirmMissingModelMappings = useCallback(
@@ -1270,13 +1718,21 @@ export function ChannelMutateDrawer({
       onOpenChange(v)
       if (!v) {
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+        advancedNavScrollPendingRef.current = false
+        setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
+        setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
+        setModelSearchKeyword('')
       }
     },
     [onOpenChange, form]
   )
 
   const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      advancedNavScrollPendingRef.current = false
+      setExpandedEditorNavItemId(undefined)
+    }
     setAdvancedSettingsOpen(nextOpen)
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(
@@ -1286,13 +1742,97 @@ export function ChannelMutateDrawer({
     }
   }, [])
 
+  const handleEditorNavNavigate = useCallback(
+    (targetId: string) => {
+      const isAdvancedTarget =
+        targetId === CHANNEL_EDITOR_SECTION_IDS.advanced ||
+        ADVANCED_SETTINGS_CHILD_SECTION_IDS.includes(targetId)
+
+      if (isAdvancedTarget) {
+        advancedNavScrollPendingRef.current = true
+        handleAdvancedSettingsOpenChange(true)
+        setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.advanced)
+        setExpandedEditorNavItemId(CHANNEL_EDITOR_SECTION_IDS.advanced)
+      } else {
+        advancedNavScrollPendingRef.current = false
+        setActiveEditorSectionId(targetId)
+        setExpandedEditorNavItemId(undefined)
+      }
+
+      const scrollTargetIntoView = () => {
+        document
+          .querySelector<HTMLElement>(`#${targetId}`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+
+      window.requestAnimationFrame(scrollTargetIntoView)
+    },
+    [handleAdvancedSettingsOpenChange]
+  )
+
+  const updateActiveEditorSection = useCallback(() => {
+    const formElement = channelFormRef.current
+    if (!formElement) return
+
+    const activationY = formElement.getBoundingClientRect().top + 80
+    let nextActiveSectionId: string = CHANNEL_EDITOR_SECTION_IDS.identity
+
+    for (const sectionId of CHANNEL_EDITOR_MAIN_SECTION_IDS) {
+      const sectionElement = document.querySelector<HTMLElement>(
+        `#${sectionId}`
+      )
+      if (!sectionElement) continue
+      if (sectionElement.getBoundingClientRect().top <= activationY) {
+        nextActiveSectionId = sectionId
+      } else {
+        break
+      }
+    }
+
+    setActiveEditorSectionId((current) =>
+      current === nextActiveSectionId ? current : nextActiveSectionId
+    )
+
+    if (nextActiveSectionId === CHANNEL_EDITOR_SECTION_IDS.advanced) {
+      advancedNavScrollPendingRef.current = false
+      setExpandedEditorNavItemId(CHANNEL_EDITOR_SECTION_IDS.advanced)
+      if (!advancedSettingsOpen) {
+        handleAdvancedSettingsOpenChange(true)
+      }
+    } else if (!advancedNavScrollPendingRef.current) {
+      setExpandedEditorNavItemId(undefined)
+    }
+  }, [advancedSettingsOpen, handleAdvancedSettingsOpenChange])
+
+  useEffect(() => {
+    if (!open) return
+    const formElement = channelFormRef.current
+    if (!formElement) return
+
+    updateActiveEditorSection()
+    formElement.addEventListener('scroll', updateActiveEditorSection, {
+      passive: true,
+    })
+    window.addEventListener('resize', updateActiveEditorSection)
+
+    return () => {
+      formElement.removeEventListener('scroll', updateActiveEditorSection)
+      window.removeEventListener('resize', updateActiveEditorSection)
+    }
+  }, [open, updateActiveEditorSection])
+
+  const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(() => {
+    handleAdvancedSettingsOpenChange(true)
+    toast.error(t('Please fix the highlighted fields before saving'))
+  }, [handleAdvancedSettingsOpenChange, t])
+
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className='flex h-dvh w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
-          <SheetHeader className='border-b px-4 py-3 text-start sm:px-6 sm:py-4'>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+          <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
-              <span className='bg-muted flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border'>
+              <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md border'>
                 {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
               </span>
               <span>
@@ -1316,11 +1856,32 @@ export function ChannelMutateDrawer({
           <Form {...form}>
             <form
               id='channel-form'
-              onSubmit={form.handleSubmit(onSubmit)}
-              className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-5 sm:px-4'
+              ref={channelFormRef}
+              onSubmit={form.handleSubmit(onSubmit, onInvalid)}
+              className={sideDrawerFormClassName('gap-5')}
             >
-              {/* ── Basic Information ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-3 sm:p-5'>
+              <div className='grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start'>
+                <ChannelEditorNav
+                  providerLogo={getLobeIcon(
+                    `${getChannelTypeIcon(currentType)}.Color`,
+                    18
+                  )}
+                  providerLabel={t(currentTypeLabel)}
+                  statusLabel={t(currentStatusLabel)}
+                  progressLabel={progressLabel}
+                  navigationLabel={t('Channels')}
+                  items={editorNavItems}
+                  activeItemId={activeEditorSectionId}
+                  expandedItemId={expandedEditorNavItemId}
+                  onNavigate={handleEditorNavNavigate}
+                />
+                <div className='flex min-w-0 flex-col gap-5'>
+                  {/* ── Basic Information ── */}
+                  <div
+                    id={CHANNEL_EDITOR_SECTION_IDS.identity}
+                    className='scroll-mt-4'
+                  >
+                    <div className='bg-card space-y-4 rounded-lg border p-3 sm:p-5'>
                 <CardHeading
                   title={t('Basic Information')}
                   icon={<Server className='h-4 w-4' />}
@@ -1426,13 +1987,18 @@ export function ChannelMutateDrawer({
                     )}
                   />
                 )}
-              </div>
+                    </div>
+                  </div>
 
-              {/* ── API Access ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  {/* ── Credentials ── */}
+                  <div
+                    id={CHANNEL_EDITOR_SECTION_IDS.credentials}
+                    className='scroll-mt-4'
+                  >
+                    <div className='bg-card space-y-4 rounded-lg border p-5'>
                 <CardHeading
-                  title={t('API Access')}
-                  icon={<Link2 className='h-4 w-4' />}
+                  title={t('Credentials')}
+                  icon={<KeyRound className='h-4 w-4' />}
                 />
                 {CHANNEL_TYPE_WARNINGS[currentType] && (
                   <Alert>
@@ -2692,10 +3258,15 @@ export function ChannelMutateDrawer({
                     )}
                   />
                 )}
-              </div>
+                    </div>
+                  </div>
 
-              {/* ── Models & Groups ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  {/* ── Models & Groups ── */}
+                  <div
+                    id={CHANNEL_EDITOR_SECTION_IDS.models}
+                    className='scroll-mt-4'
+                  >
+                    <div className='bg-card space-y-4 rounded-lg border p-5'>
                 <CardHeading
                   title={t('Models & Groups')}
                   icon={<Boxes className='h-4 w-4' />}
@@ -2704,19 +3275,39 @@ export function ChannelMutateDrawer({
                   control={form.control}
                   name='models'
                   render={() => (
-                    <FormItem>
-                      <FormLabel>{t('Models *')}</FormLabel>
+                    <FormItem className='space-y-3'>
+                      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                        <div className='space-y-1'>
+                          <FormLabel>{t('Models *')}</FormLabel>
+                          <FormDescription>
+                            {t(FIELD_DESCRIPTIONS.MODELS)}
+                          </FormDescription>
+                        </div>
+                        <Badge variant='outline' className='w-fit'>
+                          {t('Selected {{count}}', {
+                            count: currentModelsArray.length,
+                          })}
+                        </Badge>
+                      </div>
                       <FormControl>
                         <MultiSelect
                           options={modelOptions}
                           selected={currentModelsArray}
                           onChange={handleModelsChange}
                           placeholder={t('Select models or add custom ones')}
+                          allowCreate
+                          createLabel='Add custom model "{{value}}"'
+                          maxVisibleChips={8}
+                          copyChipOnClick
+                          disabled={!canEditBasicFields}
+                          isLoading={isSearchingModelMeta}
+                          loadingText={t('Searching model metadata...')}
+                          emptyText={t('No matching models')}
+                          onSearchChange={setModelSearchKeyword}
                         />
                       </FormControl>
                       <FormDescription>
                         <span className='flex flex-col gap-2'>
-                          <span>{t(FIELD_DESCRIPTIONS.MODELS)}</span>
                           <span className='flex flex-wrap gap-2'>
                             <Button
                               type='button'
@@ -2839,32 +3430,7 @@ export function ChannelMutateDrawer({
                   )}
                 />
 
-                {/* 自定义模型输入。 */}
-                <div className='flex gap-2'>
-                  <Input
-                    placeholder={t('Add custom model(s), comma-separated')}
-                    value={customModel}
-                    disabled={!canEditBasicFields}
-                    onChange={(e) => setCustomModel(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        handleAddCustomModels()
-                      }
-                    }}
-                  />
-                  <Button
-                    type='button'
-                    variant='secondary'
-                    onClick={handleAddCustomModels}
-                    disabled={!canEditBasicFields || !customModel}
-                    title={
-                      canEditBasicFields ? undefined : noPermissionMessage
-                    }
-                  >
-                    {t('Add')}
-                  </Button>
-                </div>
+                <Separator />
 
                 <FormField
                   control={form.control}
@@ -2993,12 +3559,17 @@ export function ChannelMutateDrawer({
                     </FormItem>
                   )}
                 />
-              </div>
+                    </div>
+                  </div>
 
-              <Collapsible
-                open={advancedSettingsOpen}
-                onOpenChange={handleAdvancedSettingsOpenChange}
-              >
+                  <div
+                    id={CHANNEL_EDITOR_SECTION_IDS.advanced}
+                    className='scroll-mt-4'
+                  >
+                    <Collapsible
+                      open={advancedSettingsOpen}
+                      onOpenChange={handleAdvancedSettingsOpenChange}
+                    >
                 <CollapsibleTrigger
                   render={
                     <button
@@ -3027,12 +3598,18 @@ export function ChannelMutateDrawer({
 
                 <CollapsibleContent className='mt-5 space-y-5'>
                   {/* ── Routing & Overrides ── */}
-                  <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  <div
+                    id={ADVANCED_SETTINGS_SECTION_IDS.extraSettings}
+                    className='bg-card scroll-mt-4 space-y-4 rounded-lg border p-5'
+                  >
                     <CardHeading
                       title={t('Routing & Overrides')}
                       icon={<Route className='h-4 w-4' />}
                     />
-                    <div className='space-y-4'>
+                    <div
+                      id={ADVANCED_SETTINGS_SECTION_IDS.routingStrategy}
+                      className='scroll-mt-4 space-y-4'
+                    >
                       <SubHeading
                         title={t('Routing Strategy')}
                         icon={<Route className='h-3.5 w-3.5' />}
@@ -3135,7 +3712,10 @@ export function ChannelMutateDrawer({
                       />
                     </div>
 
-                    <div className='space-y-4 border-t pt-4'>
+                    <div
+                      id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}
+                      className='scroll-mt-4 space-y-4 border-t pt-4'
+                    >
                       <SubHeading
                         title={t('Internal Notes')}
                         icon={<FileText className='h-3.5 w-3.5' />}
@@ -3186,7 +3766,10 @@ export function ChannelMutateDrawer({
                       </div>
                     </div>
 
-                    <div className='space-y-4 border-t pt-4'>
+                    <div
+                      id={ADVANCED_SETTINGS_SECTION_IDS.overrideRules}
+                      className='scroll-mt-4 space-y-4 border-t pt-4'
+                    >
                       <SubHeading
                         title={t('Override Rules')}
                         icon={<Code className='h-3.5 w-3.5' />}
@@ -3508,7 +4091,10 @@ export function ChannelMutateDrawer({
                       icon={<Settings className='h-4 w-4' />}
                     />
                     {(currentType === 1 || currentType === 14) && (
-                      <div className='space-y-3 rounded-lg border p-4'>
+                      <div
+                        id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
+                        className='scroll-mt-4 space-y-3 rounded-lg border p-4'
+                      >
                         <SubHeading
                           title={t('Field passthrough controls')}
                           icon={<SlidersHorizontal className='h-3.5 w-3.5' />}
@@ -3888,7 +4474,12 @@ export function ChannelMutateDrawer({
                     />
 
                     {MODEL_FETCHABLE_TYPES.has(currentType) && (
-                      <div className='space-y-3 rounded-lg border p-4'>
+                      <div
+                        id={
+                          ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection
+                        }
+                        className='scroll-mt-4 space-y-3 rounded-lg border p-4'
+                      >
                         <SubHeading
                           title={t('Upstream Model Detection Settings')}
                           icon={<RefreshCw className='h-3.5 w-3.5' />}
@@ -4011,10 +4602,13 @@ export function ChannelMutateDrawer({
                   </div>
                 </CollapsibleContent>
               </Collapsible>
+                  </div>
+                </div>
+              </div>
             </form>
           </Form>
 
-          <SheetFooter className='grid grid-cols-2 gap-2 border-t px-4 py-3 sm:flex sm:px-6 sm:py-4'>
+          <SheetFooter className={sideDrawerFooterClassName()}>
             <SheetClose
               render={<Button variant='outline' disabled={isSubmitting} />}
             >

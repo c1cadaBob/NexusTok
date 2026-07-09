@@ -6527,3 +6527,54 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | Token Limits 默认前端入口 | `web/default/src/features/system-settings/{security,request-limits,types.ts}`、`web/default/src/i18n/locales/*.json` | 默认前端安全设置新增 `token-limits` 分区，Root 可查看并保存现有 `token_setting.max_user_tokens`，复用 `system_setting.sensitive_write` 权限和统一 option 保存链路。 |
 | 2026-07-09 | Routing Reliability 默认前端聚合入口 | `web/default/src/features/system-settings/models/*`、`web/default/src/features/system-settings/types.ts`、`web/default/src/i18n/locales/*.json` | 默认前端模型设置新增 `routing-reliability` 分区，聚合重试、自动重试状态码、渠道自动禁用/恢复和自动测试模式，复用现有 option 保存与 `system_setting.sensitive_write` 权限。 |
 | 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |
+| 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
+
+## 本轮实施评审：渠道编辑页分段布局与模型搜索添加修复
+
+### 需求分析
+
+当前默认前端渠道编辑页的“模型”多选输入在输入 `gpt-5.6` 时，候选列表仍优先展示 `gpt-3.5-*`、`gpt-5.4*` 等无关模型，无法稳定找到已从 models.dev 同步到模型元信息库的 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`。这会阻断管理员把已存在的模型元信息添加到渠道能力中的关键路径。
+
+对照 `/opt/project/new-api-main` 最新默认前端，编辑渠道页面已经升级为更清晰的右侧大抽屉：顶部展示 provider 图标和标题，主体采用“基本信息 / 凭证 / 模型与分组 / 高级设置”的分段结构，左侧提供状态导航，底部固定取消和保存按钮。该体验适合吸收为 NexusTok 原生能力，但不能替换 NexusTok 现有的权限矩阵、敏感字段裁剪、账号池组、多 Key、模型映射校验、状态码风险确认和安全验证逻辑。
+
+### 影响范围分析
+
+- `web/default/src/components/multi-select.tsx`：修复多选搜索过滤，增强为支持内联创建、自定义值、多值粘贴和 chip 数量收敛的可复用控件。
+- `web/default/src/components/drawer-layout.ts`：新增通用侧边编辑抽屉布局 helper，沉淀 new-api-main 的页面结构优势，后续其他抽屉可复用。
+- `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`：仅调整默认前端渠道编辑抽屉的布局骨架、分段导航和模型候选来源，保留表单字段、提交 payload 转换和权限控制。
+- `web/default/src/features/models/api.ts`、`web/default/src/features/models/types.ts`：复用现有 `/api/models/search` 模型元信息接口，不新增后端路由。
+- `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json`：补齐新增界面文案六语翻译。
+
+### 风险评估
+
+- 渠道编辑表单字段多且存在敏感配置，改动不得破坏 `channel.write` 与 `channel.sensitive_write` 的前端裁剪语义，也不得绕过后端敏感字段 fail-closed 校验。
+- 模型搜索需要区分“模型元信息库”和“渠道能力列表”：搜索候选可以来自 `/api/models/search`，但选择候选只写入当前渠道的 `models` 字段，不自动创建模型、不自动修改 vendor、endpoint、group 或计费配置。
+- `getAllModels()` 仍来自 `/api/channel/models`，用于快捷填充和兼容旧能力列表；远程模型元信息搜索只作为候选增强，接口失败时必须降级为本地候选，不阻断渠道编辑。
+- 页面布局对齐 new-api-main 时不能复制其品牌、权限模型和不适配 NexusTok 的字段；需要保留账号池组模式、多 Key、Codex OAuth、Doubao 隐藏解锁、上游模型检测等 NexusTok 现有能力。
+- MultiSelect 是共享组件，增强时必须保持旧调用兼容：默认不允许创建自定义项，已有 `maxVisibleChips`、`renderSelectedSummary` 行为不能回退。
+
+### 方案评审
+
+采用低风险原生化方案：先增强共享 `MultiSelect`，显式按输入过滤候选并支持 `allowCreate`、逗号/换行批量添加、chip 收敛和点击复制；再在渠道编辑抽屉中接入 `/api/models/search?keyword=` 的防抖远程查询，把模型元信息候选与 `/api/channel/models`、当前渠道历史模型合并去重。输入 `gpt-5.6` 时应能直接展示 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`。
+
+渠道编辑页布局吸收 new-api-main 的右侧 Drawer 结构：新增顶部 provider 标识、主体两列布局、左侧状态导航、右侧分段表单和固定底部按钮。高级设置保持现有折叠区，左侧导航点击高级项时自动展开并滚动定位。提交逻辑、表单 schema、权限判断、敏感字段裁剪、风险确认弹窗和现有接口保持原样，降低核心业务回归风险。
+
+### 实施结果
+
+- `MultiSelect` 从旧的 `cmdk` 下拉升级为项目 Base UI Combobox 芯片多选，显式过滤输入值；保留旧调用兼容，同时新增 `allowCreate`、`onSearchChange`、`isLoading`、`copyChipOnClick` 和多值粘贴能力。
+- 渠道编辑抽屉新增模型元信息远程候选：输入关键词后防抖调用 `/api/models/search`，并按“搜索结果、静态能力列表、当前已选模型”的顺序合并候选；选择后只更新渠道 `models` 字段，不自动创建模型或修改供应商/计费/分组。
+- 渠道编辑抽屉对齐 new-api-main 最新布局：宽度提升为 `sm:max-w-5xl`，左侧增加 provider 摘要与状态导航，右侧保留现有字段并挂载 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings` 锚点，高级子项可定位到路由策略、内部备注、覆盖规则、额外设置、字段透传和上游模型检测。
+- 保留 NexusTok 原有能力边界：`channel.write/channel.sensitive_write` 前端权限裁剪、账号池组模式、多 Key 模式、Codex OAuth、密钥安全验证、模型映射风险确认、状态码风险确认和提交 payload 转换均未替换。
+
+### 验证记录
+
+- `cd web/default && bun run i18n:sync`：通过；六语 locale `missingCount=0`，本轮新增 key 已补齐。
+- `cd web/default && bun run typecheck`：通过。
+- `cd web/default && bun run build`：通过。
+- `git diff --check`：通过。
+- MCP 浏览器验证：本轮工具可发现 Chrome DevTools MCP，但连接 `http://127.0.0.1:9222/json/version` 失败，错误为无法连接 Chrome 调试实例；因此使用真实 3003 HTTP 请求作为替代验证。
+- `GET http://192.168.0.202:3003/`：返回 200，页面 HTML 正常。
+- `POST http://192.168.0.202:3003/api/user/login?turnstile=`：账号 `c1cada` 登录成功。
+- `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=20`：返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三条模型元信息，`vendor_id=1`，Sol 已绑定 `openai/default`，Luna/Terra 保持仅元信息状态。
+- `GET /api/channel/models`：确认静态能力列表仍以 `gpt-3.5-*` 等旧模型开头，证明截图问题源于旧候选源；前端已改为额外合并 `/api/models/search` 结果。
+- `GET /static/js/async/2817.js`：返回 200，且服务端当前 chunk 包含 `channel_model_meta_search`、`Searching model metadata`、`Add custom model`，确认 3003 页面资源已热更新生效，无需重启容器。
