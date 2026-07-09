@@ -6122,8 +6122,52 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 6. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
 7. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：Secure Session Cookie 示例补齐
+
+### 需求分析
+
+前序切片已经把 `new-api-main` 的 Secure Session Cookie 配置原生化到 NexusTok：`common/session_cookie.go` 支持 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL`，`common/session_cookie_test.go` 覆盖默认 HTTP 兼容、成对配置校验、HTTPS URL 校验和多 URL trim，`main.go` 的 session store 已消费 `common.SessionCookieSecure`。后续开发 Compose 修补也已经在 `docker-compose.dev.yml` 里补充 HTTPS 开发注释。
+
+当前尾差是 `.env.example` 仍只展示 `SESSION_SECRET`，没有暴露这两个已经生效的部署安全变量。生产环境使用 HTTPS 反代时，维护者不容易从示例配置中发现 Secure Cookie 能力；而直接照抄上游 `.env.example` 中未接线的变量又会制造“文档声明但运行无效”的风险。因此本轮只补已经落地的 Secure Session Cookie 示例，不补 `RELAY_IDLE_CONN_TIMEOUT` 等尚未接线的变量。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 环境变量示例 | `.env.example` | 在 `SESSION_SECRET` 附近补充 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL` 注释示例。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录该文档尾差的需求、影响、风险、方案和验证方式。 |
+
+### 风险评估
+
+1. `.env.example` 是配置示例文件，不改变默认运行时配置、热更新容器、数据库、前端构建或 API 行为。
+2. 示例必须明确 `SESSION_COOKIE_SECURE=true` 需要可信 HTTPS 入口地址；如果用户在纯 HTTP 环境启用 Secure Cookie，浏览器不会携带 session cookie，这是预期但容易误用。
+3. 本轮只补后端已经支持并有测试覆盖的变量，不补 `RELAY_IDLE_CONN_TIMEOUT`，避免出现无效环境变量示例。
+4. 文案应保持 NexusTok 品牌和中文说明，不复制上游项目名、邮箱或无关配置。
+
+### 方案评审
+
+采用最小示例补齐：
+
+1. 在 `.env.example` 的 `SESSION_SECRET` 后增加 Secure session cookie 注释。
+2. 默认示例保持注释状态：`# SESSION_COOKIE_SECURE=false`，不影响本地 HTTP。
+3. `SESSION_COOKIE_TRUSTED_URL` 示例使用 `https://example.com,https://admin.example.com`，与现有后端校验和 dev compose 注释保持一致。
+
+验收方式：
+
+1. `rg -n "SESSION_COOKIE_SECURE|SESSION_COOKIE_TRUSTED_URL" .env.example docker-compose.dev.yml common/session_cookie.go docs/features/new-api-main-diff-analysis.md`。
+2. `git diff --check`。
+3. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `rg -n "SESSION_COOKIE_SECURE|SESSION_COOKIE_TRUSTED_URL" .env.example docker-compose.dev.yml common/session_cookie.go docs/features/new-api-main-diff-analysis.md` 已确认示例、dev compose 注释、后端配置和差异报告均能对应到同一组环境变量。
+2. `git diff --check` 通过。
+3. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+4. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Secure Session Cookie 示例补齐 | `.env.example` | 补齐已经落地的 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 示例说明，让 HTTPS 反代部署者能从环境样例发现 Secure Cookie 开关；不补尚未接线的 relay idle timeout 变量，不改变默认运行时行为。 |
 | 2026-07-09 | Prettier 版权头保护包装器 | `web/default/scripts/format-with-protected-headers.mjs`、`web/default/package.json` | 原生化 new-api-main 的格式化版权头保护优势，但继续使用 NexusTok 当前 Prettier/ESLint/tsc 工具链；`format`/`format:check` 通过 wrapper 临时剥离并恢复 `c1cada` AGPL 版权头，check 模式会恢复快照并排除热更新构建目录，避免历史格式检查污染工作区。 |
 | 2026-07-09 | 手动任意分支 Docker 预览镜像 | `.github/workflows/docker-image-branch.yml` | 原生化 new-api-main 的任意分支镜像发布优势，新增维护者手动输入分支名的 Docker Hub 多架构构建；统一发布 `branch-*` 和 `branch-*-YYYYMMDD-SHA` 标签，避免覆盖 `latest`、`alpha`、`nightly` 和正式版本 tag，并保留 SBOM/provenance 与 cosign 签名。 |
 | 2026-07-09 | 多语言 README 品牌化补齐 | `README.md`、`README.en.md`、`README.zh_CN.md`、`README.zh_TW.md`、`README.fr.md`、`README.ja.md` | 原生化 new-api-main 的多语言 README 入口优势，按 NexusTok 当前能力生成英文、简中、繁中、法文、日文 README；保留本项目仓库、镜像、部署维护手册和合规提示，不迁移上游品牌、合作伙伴、徽章和外部文档站点。 |
