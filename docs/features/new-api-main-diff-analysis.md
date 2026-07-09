@@ -5337,8 +5337,101 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 9. 3003 登录态接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后携带 session cookie 与 `NexusTok-User: 1` 访问 `/api/user/self` 返回 200。
 10. 3003 设置写入口低风险验证通过：对当前账号调用 `PUT /api/user/self` 写入原有 `language=zh` 返回 200 和 `success=true`，再次读取 `/api/user/self` 后 `setting` 仍为 `{"gotify_priority":0,"language":"zh"}`，确认用户设置控制器路径可用且未改变真实偏好值。
 
+## 本轮附带验证修复：Claude message_delta usage patch 测试导入修复
+
+### 需求分析
+
+在验证“用户更新并发字段保护与邮箱唯一性”切片时，仓库级 `go test ./...` 被 `relay/channel/claude/message_delta_usage_patch_test.go` 的编译错误阻断。该测试文件已经包含完整测试逻辑和中文注释，但文件顶部只有导入分组占位注释，缺少实际 import，导致 `testing`、`dto`、`relaycommon`、`model_setting`、`assert`、`require`、`gjson` 等符号无法解析。
+
+本轮附带修复目标很窄：只补齐该测试文件的 import 列表，让 Claude message_delta usage patch 回归测试能参与仓库级验证。不修改 Claude 渠道生产逻辑、不调整测试断言、不改变 relay 行为。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Claude 渠道测试 | `relay/channel/claude/message_delta_usage_patch_test.go` | 补齐标准库、第三方库和项目内部包 imports，恢复测试编译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录该验证修复的需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 该修复只修改 `_test.go` import 列表，不影响生产二进制、接口、数据库、前端或运行时逻辑。
+2. import 必须与测试实际引用一致，避免引入未使用依赖导致新的编译失败。
+3. 修复后需要至少运行 `go test ./relay/channel/claude`，并重新运行 `go test ./...`，确认此前仓库级验证阻断已解除。
+4. 该切片不涉及页面和接口，但按用户要求仍需访问 3003 `/` 与 `/api/status`；MCP 如仍不可用则继续记录并使用 HTTP 兜底。
+
+### 方案评审
+
+采用最小修复方案：保留原测试内容不动，只把占位导入注释替换为真实 import 块。标准库导入 `testing`，第三方导入 `gjson`、`assert`、`require`，项目内部导入 `dto`、`relay/common` 和 `setting/model_setting`。完成后运行 Claude 包测试和全仓库 Go 测试，确认用户切片之外的既有编译阻断已清除。
+
+验收方式：
+
+1. `go test ./relay/channel/claude`。
+2. `go test ./...`。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. 补齐 import 后，`relay/channel/claude/message_delta_usage_patch_test.go` 的 `testing`、`dto`、`relaycommon`、`model_setting`、`assert`、`require`、`gjson` 符号均可解析。
+2. `go test ./relay/channel/claude` 不再因该文件编译失败退出，但继续暴露出既有 OpenAI `file` 内容转 Claude 内容块的行为断言失败；该失败已拆分为下一小节的生产转换修复。
+
+## 本轮附带验证修复：Claude OpenAI 文件内容转换语义修复
+
+### 需求分析
+
+补齐 `message_delta_usage_patch_test.go` 导入后，`go test ./relay/channel/claude` 继续暴露出 3 个既有失败，集中在 `RequestOpenAI2ClaudeMessage` 的 OpenAI 复合内容 `file` 转 Claude 内容块路径：
+
+1. `.bin` 等未知文件扩展名当前会被当成 `image` 内容块发送给 Claude，测试期望忽略未知二进制，只保留文本内容。
+2. `.pdf` 文件当前因为 `MediaContent.ToFileSource()` 丢失 `filename`，最小 PDF 片段 MIME 回退为 `application/octet-stream`，最终被错误转成 `image`；测试期望按文件名转换为 Claude `document`。
+3. `.txt` 文件当前同样被转成 `image`，测试期望 base64 解码为 Claude `text` 内容块。
+
+这不是导入问题，而是 Claude 文件转换能力缺口。修复目标是把已存在的测试语义变成真实生产行为：OpenAI `file` 内容进入 Claude 时只支持 Claude 能理解的文本、图片和 PDF；未知二进制跳过，不构造无效 `image` 内容块。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Claude 请求转换 | `relay/channel/claude/relay-claude.go` | 在复合内容转换中专门处理 `ContentTypeFile`：按文件名扩展名识别 text/pdf/image，未知类型跳过。 |
+| Claude 渠道测试 | `relay/channel/claude/relay_claude_test.go`、`relay/channel/claude/message_delta_usage_patch_test.go` | 复用既有失败测试作为验收，不新增或放宽断言。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录该行为修复的需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 该修复触碰 relay 生产转换路径，影响 OpenAI 兼容请求转 Claude 上游请求的多模态内容。必须严格限制在 `file` 类型和 MIME 判定，不改变文本、tool、system、assistant tool_calls 等路径。
+2. 当前旧行为会把 unknown/audio/video/octet-stream 文件也包装成 Claude `image`，这很可能是错误请求。修复后这些类型被跳过，可能让依赖错误行为的请求少一个无效内容块，但能避免上游 400 和错误媒体类型。
+3. PDF 和图片通过 `service.GetBase64Data` 继续复用现有文件缓存、data URL 清理和 base64 处理；文本文件只在 `text/*` 扩展名时解码为字符串，避免误把任意二进制转文本。
+4. 依赖文件名扩展名识别内联 `file_data` 的 MIME，是因为当前 `MessageFile` 没有独立 MIME 字段。后续如 DTO 增加 `mime_type`，应优先使用显式 MIME。
+5. 修改后需要运行 Claude 包测试和仓库级测试，确认此前失败的断言恢复，且没有引入新的 relay 编译问题。
+
+### 方案评审
+
+采用局部转换 helper 方案：在 `relay/channel/claude/relay-claude.go` 增加 `convertOpenAIFileContentForClaude()`，只服务 `RequestOpenAI2ClaudeMessage` 内的 `ContentTypeFile`。helper 先通过 `service.GetMimeTypeByExtension()` 按 `filename` 推断 MIME：
+
+1. `text/*`：清理可能存在的 data URL 前缀，base64 解码为字符串，构造 Claude `text` 内容块。
+2. `application/pdf`：用带 MIME 的 `types.FileSource` 进入 `service.GetBase64Data()`，构造 Claude `document` 内容块。
+3. `image/*`：同样复用 `service.GetBase64Data()`，构造 Claude `image` 内容块。
+4. `application/octet-stream` 或其他类型：返回 `ok=false`，调用方跳过，不向 Claude 发送未知二进制。
+
+同时在原默认媒体转换路径中只允许 `application/pdf` 和 `image/*` 被追加，防止 audio/video/unknown 继续被误包装成 image。
+
+验收方式：
+
+1. `go test ./relay/channel/claude`。
+2. `go test ./...`。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/` 和 `/api/status` 返回 200。
+
+验证记录：
+
+1. Claude 包测试通过：`go test ./relay/channel/claude`。
+2. 仓库级 Go 测试通过：`go test ./...`。
+3. 补丁空白检查通过：`git diff --check`。
+4. MCP 浏览器验证已按要求再次尝试连接 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮继续采用同一 3003 服务的真实 HTTP 请求兜底验证。
+5. 3003 兜底验证通过：`/` 返回 200，`/api/status` 返回 200 且 `success=true`。该切片只修改后端 relay 转换和测试，不改变前端页面。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Claude OpenAI 文件内容转换语义修复 | `relay/channel/claude/relay-claude.go`、`relay/channel/claude/message_delta_usage_patch_test.go` | 修复仓库级测试暴露的 Claude 文件转换缺口；OpenAI `file` 内容按 filename 扩展名转换，`.txt` 解码为 Claude text，`.pdf` 转 document，图片转 image，未知二进制跳过，避免把 unsupported file 错误包装成 image 发给上游；同时补齐 message_delta usage patch 测试 imports。 |
 | 2026-07-09 | 用户更新并发字段保护与邮箱唯一性 | `model/{user.go,errors.go,user_update_test.go}`、`controller/{user.go,misc.go,subscription.go}` | 原生化 new-api-main 的用户更新安全回归能力；用户资料更新不再覆盖并发变化的 `quota`、`used_quota`、`request_count`，用户设置/语言/sidebar/订阅计费偏好只写 `setting` 列，邮箱注册/绑定/找回密码统一规范化并按大小写不敏感唯一性校验，passwordless 用户保持空密码且密码登录明确拒绝。 |
 | 2026-07-09 | 计费表达式结算 clamp 回归测试 | `pkg/billingexpr/settle_clamp_test.go` | 原生化 new-api-main 的分层计费结算饱和测试资产；锁定异常超大表达式结算必须饱和到 int32 上限并返回 `Clamp`，正常范围结算不误报 `Clamp`，防止动态计费后续调整破坏安全审计不变量。 |
 | 2026-07-09 | SMTP STARTTLS 与 TLS 校验配置 | `common/{email.go,email_test.go,constants.go,init.go}`、`model/{option.go,option_bulk_test.go}`、`web/default/src/features/system-settings/{types.ts,operations/*,integrations/email-settings-section.tsx}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 SMTP 连接层安全与兼容能力；新增显式 STARTTLS、默认 TLS 证书校验、管理员可选跳过校验、465 隐式 TLS 兼容和空凭证跳过 AUTH，并在默认前端 SMTP 设置页提供原生开关。 |

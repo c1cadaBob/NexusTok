@@ -16,6 +16,7 @@
 package claude
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,6 +73,93 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
+// mimeTypeFromOpenAIFileName 根据 OpenAI file 内容中的 filename 推断 MIME。
+//
+// OpenAI 兼容请求的 file_data 只有 base64 数据和 filename，没有独立
+// MIME 字段。Claude 上游对内容块类型非常严格，因此这里必须先用文件名
+// 扩展名识别可支持类型；未知扩展名返回 application/octet-stream，调用方
+// 应跳过而不是错误地包装成 image。
+func mimeTypeFromOpenAIFileName(fileName string) string {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return "application/octet-stream"
+	}
+	if dot := strings.LastIndex(fileName, "."); dot >= 0 && dot+1 < len(fileName) {
+		return service.GetMimeTypeByExtension(fileName[dot+1:])
+	}
+	return "application/octet-stream"
+}
+
+// stripBase64DataURLPrefix 移除 data URL 前缀，返回可直接解码的 base64 数据。
+func stripBase64DataURLPrefix(data string) string {
+	if strings.HasPrefix(data, "data:") {
+		if idx := strings.Index(data, ","); idx >= 0 && idx+1 < len(data) {
+			return data[idx+1:]
+		}
+	}
+	return data
+}
+
+// convertOpenAIFileContentForClaude 将 OpenAI file 内容转换为 Claude 支持的内容块。
+//
+// 支持范围刻意保持保守：
+//   - text/*：解码为 Claude text 内容块。
+//   - application/pdf：转换为 Claude document 内容块。
+//   - image/*：转换为 Claude image 内容块。
+//   - 其他未知二进制：跳过，避免把无效 media_type 伪装成 image 发送给上游。
+func convertOpenAIFileContentForClaude(c *gin.Context, file *dto.MessageFile) (*dto.ClaudeMediaMessage, bool, error) {
+	if file == nil || file.FileData == "" {
+		return nil, false, nil
+	}
+
+	mimeType := mimeTypeFromOpenAIFileName(file.FileName)
+	if strings.HasPrefix(mimeType, "text/") {
+		decoded, err := base64.StdEncoding.DecodeString(stripBase64DataURLPrefix(file.FileData))
+		if err != nil {
+			return nil, false, fmt.Errorf("decode text file failed: %w", err)
+		}
+		text := string(decoded)
+		if text == "" {
+			return nil, false, nil
+		}
+		return &dto.ClaudeMediaMessage{
+			Type: "text",
+			Text: common.GetPointer[string](text),
+		}, true, nil
+	}
+
+	if !strings.HasPrefix(mimeType, "application/pdf") && !strings.HasPrefix(mimeType, "image/") {
+		return nil, false, nil
+	}
+
+	source := types.NewFileSourceFromData(file.FileData, mimeType)
+	base64Data, resolvedMimeType, err := service.GetBase64Data(c, source, "formatting file for Claude")
+	if err != nil {
+		return nil, false, fmt.Errorf("get file data failed: %w", err)
+	}
+	if resolvedMimeType == "" {
+		resolvedMimeType = mimeType
+	}
+
+	claudeMediaMessage := &dto.ClaudeMediaMessage{
+		Source: &dto.ClaudeMessageSource{
+			Type:      "base64",
+			MediaType: resolvedMimeType,
+			Data:      base64Data,
+		},
+	}
+	switch {
+	case strings.HasPrefix(resolvedMimeType, "application/pdf"):
+		claudeMediaMessage.Type = "document"
+	case strings.HasPrefix(resolvedMimeType, "image/"):
+		claudeMediaMessage.Type = "image"
+	default:
+		return nil, false, nil
+	}
+
+	return claudeMediaMessage, true, nil
+}
+
 // RequestOpenAI2ClaudeMessage 将 OpenAI 格式的聊天补全请求转换为 Claude API 格式。
 //
 // 该函数是请求转换的核心入口，处理以下映射：
@@ -87,9 +175,9 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 //
 //  4. 思维链（Thinking）：支持三种模式：
 //     a) Effort 后缀模式：如 claude-opus-4-6-low，从模型名提取 effort level，使用 adaptive thinking。
-//        Opus 4.7 特殊处理：使用 summarized display 并清空 temperature/top_p/top_k。
+//     Opus 4.7 特殊处理：使用 summarized display 并清空 temperature/top_p/top_k。
 //     b) -thinking 后缀模式：如 claude-3-5-sonnet-thinking，启用 extended thinking，
-//        BudgetTokens 为 max_tokens 的可配置百分比（默认 80%）。
+//     BudgetTokens 为 max_tokens 的可配置百分比（默认 80%）。
 //     c) reasoning_effort 参数：直接映射为固定 BudgetTokens（low=1280, medium=2048, high=4096）。
 //     d) reasoning 对象：通过 openrouter.RequestReasoning 结构的 max_tokens 覆盖 BudgetTokens。
 //
@@ -245,9 +333,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			claudeRequest.TopP = nil
 			claudeRequest.Temperature = common.GetPointer[float64](1.0)
 		}
-	// 模式二：-thinking 后缀模式。
-	// 当 ThinkingAdapterEnabled 配置启用且模型名以 "-thinking" 结尾时，自动启用 extended thinking。
-	// 例如 claude-3-5-sonnet-thinking -> trimmedModel="claude-3-5-sonnet"
+		// 模式二：-thinking 后缀模式。
+		// 当 ThinkingAdapterEnabled 配置启用且模型名以 "-thinking" 结尾时，自动启用 extended thinking。
+		// 例如 claude-3-5-sonnet-thinking -> trimmedModel="claude-3-5-sonnet"
 	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
 		strings.HasSuffix(textRequest.Model, "-thinking") {
 
@@ -470,6 +558,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 								Text: common.GetPointer[string](mediaMessage.Text),
 							})
 						}
+					case dto.ContentTypeFile:
+						claudeMediaMessage, ok, err := convertOpenAIFileContentForClaude(c, mediaMessage.GetFile())
+						if err != nil {
+							return nil, err
+						}
+						if ok && claudeMediaMessage != nil {
+							claudeMediaMessages = append(claudeMediaMessages, *claudeMediaMessage)
+						}
 					default:
 						source := mediaMessage.ToFileSource()
 						if source == nil {
@@ -486,8 +582,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						}
 						if strings.HasPrefix(mimeType, "application/pdf") {
 							claudeMediaMessage.Type = "document"
-						} else {
+						} else if strings.HasPrefix(mimeType, "image/") {
 							claudeMediaMessage.Type = "image"
+						} else {
+							continue
 						}
 
 						claudeMediaMessage.Source.MediaType = mimeType
@@ -534,10 +632,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 //   - "message_start"：消息开始事件，提取 response id、model，初始化空 delta。
 //   - "content_block_start"：内容块开始事件，处理 text 块的首段文本和 tool_use 块的工具调用初始化。
 //   - "content_block_delta"：内容块增量事件，处理以下子类型：
-//     * text：文本增量
-//     * input_json_delta：工具调用参数的 JSON 增量
-//     * thinking_delta：思维链增量（映射为 reasoning_content）
-//     * signature_delta：签名增量（加密内容，输出换行占位）
+//   - text：文本增量
+//   - input_json_delta：工具调用参数的 JSON 增量
+//   - thinking_delta：思维链增量（映射为 reasoning_content）
+//   - signature_delta：签名增量（加密内容，输出换行占位）
 //   - "message_delta"：消息结束事件，提取 stop_reason 并转换为 OpenAI 的 finish_reason。
 //   - "message_stop"：消息停止事件，返回 nil（由外部处理结束）。
 //
@@ -631,9 +729,9 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 //
 // 处理逻辑：
 //   - 遍历 claudeResponse.Content 中的所有内容块，按类型分别处理：
-//     * "tool_use"：提取工具调用的 id、name 和 input 参数（JSON 序列化为字符串）。
-//     * "thinking"：提取思维链明文内容，映射为 reasoning_content 字段。
-//     * "text"：提取最终响应文本。
+//   - "tool_use"：提取工具调用的 id、name 和 input 参数（JSON 序列化为字符串）。
+//   - "thinking"：提取思维链明文内容，映射为 reasoning_content 字段。
+//   - "text"：提取最终响应文本。
 //   - 如果 content[0] 包含 Thinking 字段，单独提取为 choice 级别的 reasoning_content。
 //   - 将 Claude 的 stop_reason 通过 stopReasonClaude2OpenAI 转换为 finish_reason。
 //   - 生成标准的 OpenAI 响应结构，包括 id（使用 Claude 原始 id）、object、created、model、choices。
@@ -1008,9 +1106,9 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 //  3. 检查 refusal 拒绝：如果 stop_reason 为 "refusal"，在上下文中标记拒绝原因。
 //  4. 根据中继格式分别处理：
 //     - RelayFormatClaude：直接透传 Claude 原始格式，但对 message_delta 的 usage 进行补丁
-//       （解决 Bedrock 等上游缺失字段的问题），然后通过 helper.ClaudeChunkData 发送。
+//     （解决 Bedrock 等上游缺失字段的问题），然后通过 helper.ClaudeChunkData 发送。
 //     - RelayFormatOpenAI：调用 StreamResponseClaude2OpenAI 转换为 OpenAI 格式，
-//       通过 FormatClaudeResponseInfo 累积 usage，最后通过 helper.ObjectData 发送。
+//     通过 FormatClaudeResponseInfo 累积 usage，最后通过 helper.ObjectData 发送。
 //
 // 参数：
 //   - c: Gin 上下文
@@ -1078,7 +1176,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 //  3. 根据中继格式分别处理：
 //     - RelayFormatClaude：无需额外操作（流式数据已在 HandleStreamResponseData 中逐块发送）。
 //     - RelayFormatOpenAI：如果需要包含 usage（ShouldIncludeUsage），将 Claude usage 转换为
-//       OpenAI 格式并发送最终的 usage chunk，然后发送 [DONE] 结束标记。
+//     OpenAI 格式并发送最终的 usage chunk，然后发送 [DONE] 结束标记。
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
 	if claudeInfo.Usage.PromptTokens == 0 {
 		//上游出错
@@ -1165,7 +1263,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 //  3. 提取 usage 统计：input_tokens、output_tokens、cache 相关字段、分拆的 5m/1h 缓存 token。
 //  4. 根据中继格式分别处理：
 //     - RelayFormatOpenAI：调用 ResponseClaude2OpenAI 转换为 OpenAI 格式，
-//       附带转换后的 usage，然后 JSON 序列化。
+//     附带转换后的 usage，然后 JSON 序列化。
 //     - RelayFormatClaude：直接使用原始响应数据。
 //  5. 特殊处理：如果响应中包含 web_search_requests（服务器端工具用量），
 //     设置到 gin.Context 中用于计费。

@@ -3,11 +3,21 @@
 // 确保在流式响应中正确合并和更新 token 使用量信息。
 package claude
 
-// 标准库导入
+import (
+	// 标准库导入
+	"testing"
 
-// 第三方库导入
+	// 第三方库导入
+	"github.com/tidwall/gjson"
 
-// 项目内部导入
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	// 项目内部导入
+	"github.com/c1cada/NexusTok/dto"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/model_setting"
+)
 
 // TestPatchClaudeMessageDeltaUsageDataPreserveUnknownFields 测试 usage 数据补丁是否保留未知字段。
 // 验证在补丁 usage 数据时，原始 JSON 中的未知字段（如 vendor_meta）不会被丢弃，
