@@ -2533,6 +2533,63 @@ Waffo Pancake service 新增 `SaveWaffoPancakeConfig`，接收现有前端完整
 4. `git diff --check` 确认无空白错误。
 5. 使用 MCP 访问 `http://192.168.0.202:3003/` 和 `/system-settings/billing/payment`，确认页面更新生效、Waffo Pancake 设置区渲染正常、`/api/option/` 只读请求正常、控制台无错误；不填写真实 Waffo 凭证、不触发真实支付或外部 Pancake 创建。
 
+## 本轮实施评审：Waffo Pancake catalog 与一键创建 Store/Product 原生化
+
+### 需求分析
+
+`new-api-main` 的 Waffo Pancake 设置页已经具备管理端配置向导能力：管理员输入 Merchant ID 和 Private Key 后，可以拉取 Pancake catalog、选择已有 Store + OnetimeProduct，或者一键创建默认 Store + OnetimeProduct，再将选中的绑定一次性保存。NexusTok 上一轮已经补齐了原子保存接口，但默认前端仍只能手填 Store ID 与 Product ID；这会让管理员必须离开 NexusTok 去 Pancake 后台复制 ID，容易填错，也无法在 NexusTok 内确认凭证是否有效。
+
+本轮目标是在不替换现有充值 checkout/webhook 运行时链路的前提下，把 `new-api-main` 的管理端优势转成 NexusTok 原生能力：
+
+1. 引入 `github.com/waffo-com/waffo-pancake-sdk-go`，仅用于管理端 catalog 查询和 Store/Product 创建，不触碰现有自研 HTTP/RSA checkout 与 webhook 验签。
+2. 新增 Waffo Pancake catalog 查询能力，支持用前端临时输入的 Merchant ID/Private Key 做凭证验证并返回 Store + active OnetimeProduct 列表。
+3. 新增一键创建默认 Store + wallet top-up OnetimeProduct 的能力，成功后回填 Store ID 与 Product ID；如果 Store 创建成功但 Product 创建失败，需要返回 orphan store 信息，便于管理员重试或手工接管。
+4. 默认前端 Waffo Pancake 设置区增加“验证并拉取 catalog”“使用已存在 Store/Product”“一键创建 Store/Product”的原生工作流，同时保留手填 ID 兜底。
+5. 订阅计划级 Pancake product、订阅支付入口和 webhook 订阅订单分流仍放到后续阶段，避免把外部商品创建与订阅 schema 迁移混在一个提交里。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Go 依赖 | `go.mod`、`go.sum` | 新增 Waffo Pancake SDK，仅被管理端辅助函数使用。 |
+| Waffo Pancake service | `service/waffo_pancake.go` | 新增 SDK client、catalog 查询、默认 Store 创建、默认 OnetimeProduct 创建、pair 创建和 catalog 响应 DTO。 |
+| Waffo Pancake controller | `controller/topup_waffo_pancake.go` | 新增 catalog 与 pair 管理端接口；临时凭证优先，空凭证回退已保存配置。 |
+| 系统设置路由 | `router/system-setting-router.go` | 新增 `/api/option/waffo-pancake/catalog` 与 `/api/option/waffo-pancake/pair`，继续 RootAuth 保底并接入 Authz 权限表。 |
+| 默认前端支付设置 | `web/default/src/features/system-settings/{api.ts,types.ts,integrations/waffo-pancake-settings-section.tsx}` | 增加 catalog/pair API 调用、选择控件、状态提示和一键创建按钮；保存仍走上轮原子保存接口。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 UI 文案翻译并运行同步脚本。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、能力落地与后续订阅阶段边界。 |
+
+### 风险评估
+
+1. `catalog` 使用临时 private key 验证凭证，如果沿用 new-api-main 的 GET query 形式会把密钥暴露在 URL、代理日志和浏览器历史中；本轮前端使用 `POST /api/option/waffo-pancake/catalog` 请求体传参，后端可保留 GET 只读已保存凭证目录作为兼容入口。
+2. `pair` 会在外部 Pancake 账户创建 Store 和 OnetimeProduct，虽然不写本地数据库，也会产生外部资源副作用；因此权限不按普通 read，而按 `system_setting.sensitive_write` 处理，并在前端缺少保存权限时禁用。
+3. 引入 SDK 不能影响当前生产充值流程。现有 `CreateWaffoPancakeCheckoutSession`、`VerifyConfiguredWaffoPancakeWebhook`、`ResolveWaffoPancakeTradeNo` 不改调用链；SDK 只用于新增管理端函数。
+4. Store 创建成功但 Product 创建失败会产生 orphan store。后端必须返回 `orphan_store/store_id/store_name`，前端展示可理解的失败提示并回填 Store ID，避免管理员失去已创建资源线索。
+5. Catalog 返回可能为空、Store 可能没有 active OnetimeProduct、或者已保存 Product 已被上游删除。前端需要保留手填 ID 和已保存 raw ID 兜底，不强制清空当前配置。
+6. 新增文案必须进入六语 locale，避免默认前端构建后出现缺失翻译 key。
+
+### 方案评审
+
+采用“管理端 SDK 辅助、运行时链路隔离”的方案。后端新增 `newWaffoPancakeAdminClientFromCreds`，只由 catalog/pair 函数使用。`ListWaffoPancakeCatalog` 通过 SDK GraphQL 查询 `stores(limit: 100)` 及其 `onetimeProducts`，并过滤非 active 产品；pair 创建沿用 new-api-main 的默认命名思路，创建 `nexustok-store` 与 `nexustok-charge-product`，产品价格使用 1.00 USD + `saas` tax category，实际充值仍由现有 checkout 的 `PriceSnapshot` 覆盖。
+
+路由权限：
+
+| 路由 | 方法 | 权限 | 原因 |
+|------|------|------|------|
+| `/api/option/waffo-pancake/catalog` | `POST` | `system_setting.operate` | 使用临时凭证探测外部 Pancake catalog，不写本地配置。 |
+| `/api/option/waffo-pancake/catalog` | `GET` | `system_setting.read` | 仅使用已保存凭证读取 catalog，便于回访页面。 |
+| `/api/option/waffo-pancake/pair` | `POST` | `system_setting.sensitive_write` | 会创建外部 Store/Product，属于支付配置强副作用动作。 |
+
+前端在现有 Waffo Pancake 表单内增加辅助区：`Refresh catalog` 用当前表单里的 Merchant ID/Private Key 触发 POST catalog；catalog 成功后展示 Store 和 Product 下拉，选择时回填原有 `WaffoPancakeStoreID/ProductID` 表单字段；`Create store + product` 调用 pair，成功后回填并刷新 catalog。保存按钮仍调用 `saveWaffoPancakeConfig`，因此最终落库保持原子性。
+
+验收方式：
+
+1. `go test ./service ./service/authz ./middleware ./router ./controller ./model` 或聚焦相关包，确认 SDK 引入和新增路由构建通过。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 确认前端类型通过。
+3. `cd web/default && node scripts/sync-i18n.mjs` 并检查报告，确认新增文案进入六语 locale。
+4. `git diff --check` 确认无空白错误。
+5. 使用 MCP 访问 `http://192.168.0.202:3003/system-settings/billing/payment`，确认 Waffo Pancake 辅助区渲染正常、无控制台错误；用空凭证或无效凭证调用 catalog，确认接口返回业务失败且不保存配置；不点击一键创建真实外部资源。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
 | 2026-07-07 | 全量文件差异索引 | `docs/features/new-api-main-diff-inventory.md`、`scripts/compare-new-api-main.sh` | 新增可重复生成的文件级差异清单，主文档继续承载功能和页面解释。 |
@@ -2599,6 +2656,7 @@ Waffo Pancake service 新增 `SaveWaffoPancakeConfig`，接收现有前端完整
 | 2026-07-08 | 系统设置运维集成与模型部署保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/*` | 监控告警、SMTP 邮件、Worker 代理和 io.net 模型部署保存按钮直接消费 `useUpdateOption()` 暴露的保存权限字段；io.net 连接测试保持独立操作语义，留待后续单独权限评审。 |
 | 2026-07-09 | 支付配置保存与合规确认按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx`、`web/default/src/components/risk-acknowledgement-dialog.tsx` | 支付配置页的通用、Epay、Stripe、Creem、全部保存按钮以及支付合规确认入口消费 `system_setting.sensitive_write`；风险确认弹窗支持外部禁用原因，缺少权限时不触发支付合规确认 API。 |
 | 2026-07-09 | Waffo 支付子表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/integrations/{waffo-settings-section.tsx,waffo-pancake-settings-section.tsx}` | Waffo 聚合支付和 Waffo Pancake 托管支付最终保存按钮及保存 handler 消费 `system_setting.sensitive_write`；支付方式弹窗继续作为本地草稿编辑，不触发后端写入。 |
+| 2026-07-09 | Waffo Pancake catalog 与一键建品 | `service/waffo_pancake.go`、`controller/topup_waffo_pancake.go`、`router/system-setting-router.go`、`web/default/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端支付设置页支持拉取 Pancake Store/OnetimeProduct catalog、选择已有绑定和一键创建默认 Store/Product；后端新增 catalog/pair 管理接口，权限区分 read/operate/sensitive_write，保存仍走原子配置接口。 |
 | 2026-07-09 | 控制台内容基础表单保存按钮 Authz 消费 | `web/default/src/features/system-settings/content/{dashboard-section.tsx,chat-settings-section.tsx,drawing-settings-section.tsx}` | Dashboard、Chat Presets 和 Drawing 三个基础内容设置保存按钮消费 `useUpdateOption()` 暴露的保存权限字段；列表编辑器页面保留给后续单独切片。 |
 | 2026-07-09 | 控制台内容列表编辑器保存与开关 Authz 消费 | `web/default/src/features/system-settings/content/{announcements-section.tsx,api-info-section.tsx,faq-section.tsx,uptime-kuma-section.tsx}` | Announcements、API Addresses、FAQ 和 Uptime Kuma 的最终保存按钮及启用开关消费 `system_setting.sensitive_write`；本地列表草稿新增、编辑、删除和批量删除保持原交互。 |
 | 2026-07-09 | 模型配置卡片保存按钮 Authz 消费 | `web/default/src/features/system-settings/models/{global-settings-card.tsx,gemini-settings-card.tsx,claude-settings-card.tsx,grok-settings-card.tsx}` | Global、Gemini、Claude 和 Grok 模型配置卡片最终保存按钮及提交 handler 消费 `system_setting.sensitive_write`；表单内 Switch、JSON 格式化和示例填充继续作为本地草稿操作。 |

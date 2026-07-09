@@ -16,20 +16,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
+import { AddCircleIcon, DatabaseSyncIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { saveWaffoPancakeConfig } from '../api'
+import {
+  createWaffoPancakePair,
+  listWaffoPancakeCatalog,
+  saveWaffoPancakeConfig,
+} from '../api'
 import { SettingsSection } from '../components/settings-section'
+import { useSystemSettingPermissions } from '../hooks/use-system-setting-permissions'
 import { useUpdateOption } from '../hooks/use-update-option'
+import type { WaffoPancakeCatalogStore } from '../types'
 import { removeTrailingSlash } from './utils'
 
 export interface WaffoPancakeSettingsValues {
@@ -51,20 +67,247 @@ interface Props {
   defaultValues: WaffoPancakeSettingsValues
 }
 
+type CatalogSelectItem = {
+  value: string
+  label: string
+}
+
 export function WaffoPancakeSettingsSection(props: Props) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const permissions = useSystemSettingPermissions()
   const updateOption = useUpdateOption()
   const canUpdateWaffoPancakeSettings = updateOption.canUpdate
   const waffoPancakeUpdateDisabledReason = updateOption.disabledReason
   const [loading, setLoading] = useState(false)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [pairLoading, setPairLoading] = useState(false)
+  const [catalogStores, setCatalogStores] = useState<
+    WaffoPancakeCatalogStore[]
+  >([])
   const form = useForm<WaffoPancakeSettingsValues>({
     defaultValues: props.defaultValues,
   })
+  const watchedStoreID = form.watch('WaffoPancakeStoreID') || ''
+  const watchedProductID = form.watch('WaffoPancakeProductID') || ''
+  const noPermissionMessage = t("You don't have necessary permission")
 
   useEffect(() => {
     form.reset(props.defaultValues)
   }, [props.defaultValues, form])
+
+  const storeSelectItems = useMemo<CatalogSelectItem[]>(() => {
+    const items = catalogStores.map((store) => ({
+      value: store.id,
+      label: store.name ? `${store.name} (${store.id})` : store.id,
+    }))
+    const currentStoreID = watchedStoreID.trim()
+    if (
+      currentStoreID &&
+      !items.some((item) => item.value === currentStoreID)
+    ) {
+      return [{ value: currentStoreID, label: currentStoreID }, ...items]
+    }
+    return items
+  }, [catalogStores, watchedStoreID])
+
+  const selectedCatalogStore = useMemo(
+    () => catalogStores.find((store) => store.id === watchedStoreID.trim()),
+    [catalogStores, watchedStoreID]
+  )
+
+  const productSelectItems = useMemo<CatalogSelectItem[]>(() => {
+    const products = selectedCatalogStore?.onetimeProducts || []
+    const items = products.map((product) => ({
+      value: product.id,
+      label: product.name ? `${product.name} (${product.id})` : product.id,
+    }))
+    const currentProductID = watchedProductID.trim()
+    if (
+      currentProductID &&
+      !items.some((item) => item.value === currentProductID)
+    ) {
+      return [{ value: currentProductID, label: currentProductID }, ...items]
+    }
+    return items
+  }, [selectedCatalogStore, watchedProductID])
+
+  const mergeCreatedStore = (
+    stores: WaffoPancakeCatalogStore[],
+    storeID: string,
+    storeName: string,
+    productID?: string,
+    productName?: string
+  ) => {
+    if (!storeID) return stores
+    const product =
+      productID && productName
+        ? { id: productID, name: productName, status: 'active' }
+        : null
+    const nextStore: WaffoPancakeCatalogStore = {
+      id: storeID,
+      name: storeName || storeID,
+      status: 'active',
+      prodEnabled: true,
+      onetimeProducts: product ? [product] : [],
+    }
+
+    const exists = stores.some((store) => store.id === storeID)
+    if (!exists) return [nextStore, ...stores]
+
+    return stores.map((store) => {
+      if (store.id !== storeID) return store
+      if (
+        !product ||
+        store.onetimeProducts.some((item) => item.id === product.id)
+      ) {
+        return { ...store, name: store.name || nextStore.name }
+      }
+      return {
+        ...store,
+        name: store.name || nextStore.name,
+        onetimeProducts: [product, ...store.onetimeProducts],
+      }
+    })
+  }
+
+  const applyCatalogSelection = (stores: WaffoPancakeCatalogStore[]) => {
+    const values = form.getValues()
+    const currentStoreID = values.WaffoPancakeStoreID.trim()
+    const currentProductID = values.WaffoPancakeProductID.trim()
+    const currentStore = stores.find((store) => store.id === currentStoreID)
+    const nextStore = currentStore || stores[0]
+
+    if (!nextStore) return
+
+    if (!currentStoreID) {
+      form.setValue('WaffoPancakeStoreID', nextStore.id, {
+        shouldDirty: true,
+      })
+    }
+    if (currentStoreID && !currentStore) return
+
+    const products = nextStore.onetimeProducts || []
+    const productStillAvailable = products.some(
+      (product) => product.id === currentProductID
+    )
+    if (!currentProductID || !productStillAvailable) {
+      form.setValue('WaffoPancakeProductID', products[0]?.id || '', {
+        shouldDirty: true,
+      })
+    }
+  }
+
+  const handleFetchCatalog = async () => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
+    const values = form.getValues()
+    const merchantID = values.WaffoPancakeMerchantID.trim()
+    const privateKey = values.WaffoPancakePrivateKey.trim()
+    if (privateKey && !merchantID) {
+      toast.error(t('Merchant ID is required'))
+      return
+    }
+
+    setCatalogLoading(true)
+    try {
+      const result = await listWaffoPancakeCatalog(
+        privateKey
+          ? {
+              merchant_id: merchantID,
+              private_key: privateKey,
+            }
+          : undefined
+      )
+      if (!result.success) {
+        throw new Error(result.message || t('Catalog fetch failed'))
+      }
+
+      const stores = result.data?.stores || []
+      setCatalogStores(stores)
+      applyCatalogSelection(stores)
+      toast.success(stores.length > 0 ? t('Catalog loaded') : t('No stores found'))
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Catalog fetch failed')
+      )
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  const handleCreatePair = async () => {
+    if (!canUpdateWaffoPancakeSettings) {
+      toast.error(waffoPancakeUpdateDisabledReason)
+      return
+    }
+
+    const values = form.getValues()
+    const merchantID = values.WaffoPancakeMerchantID.trim()
+    const privateKey = values.WaffoPancakePrivateKey.trim()
+    if (privateKey && !merchantID) {
+      toast.error(t('Merchant ID is required'))
+      return
+    }
+
+    setPairLoading(true)
+    try {
+      const result = await createWaffoPancakePair({
+        merchant_id: merchantID,
+        private_key: privateKey,
+        return_url: removeTrailingSlash(values.WaffoPancakeReturnURL || ''),
+      })
+
+      const data = result.data
+      if (!result.success) {
+        if (data?.orphan_store && data.store_id) {
+          form.setValue('WaffoPancakeStoreID', data.store_id, {
+            shouldDirty: true,
+          })
+          setCatalogStores((stores) =>
+            mergeCreatedStore(stores, data.store_id || '', data.store_name || '')
+          )
+          toast.error(t('Store created but product creation failed'))
+          return
+        }
+        throw new Error(result.message || t('Create store + product failed'))
+      }
+
+      if (data?.store_id) {
+        form.setValue('WaffoPancakeStoreID', data.store_id, {
+          shouldDirty: true,
+        })
+      }
+      if (data?.product_id) {
+        form.setValue('WaffoPancakeProductID', data.product_id, {
+          shouldDirty: true,
+        })
+      }
+      if (data?.store_id) {
+        setCatalogStores((stores) =>
+          mergeCreatedStore(
+            stores,
+            data.store_id || '',
+            data.store_name || '',
+            data.product_id,
+            data.product_name
+          )
+        )
+      }
+      toast.success(t('Store and product created'))
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Create store + product failed')
+      )
+    } finally {
+      setPairLoading(false)
+    }
+  }
 
   const handleSave = async () => {
     if (!canUpdateWaffoPancakeSettings) {
@@ -202,6 +445,129 @@ export function WaffoPancakeSettingsSection(props: Props) {
             placeholder='PROD_xxx'
             {...form.register('WaffoPancakeProductID')}
           />
+        </div>
+      </div>
+
+      <div className='grid gap-3'>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <Label>{t('Pancake catalog')}</Label>
+          <div className='flex flex-wrap gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={handleFetchCatalog}
+              disabled={
+                catalogLoading || pairLoading || !permissions.canOperate
+              }
+              title={permissions.canOperate ? undefined : noPermissionMessage}
+            >
+              <HugeiconsIcon
+                icon={DatabaseSyncIcon}
+                strokeWidth={2}
+                data-icon='inline-start'
+              />
+              {catalogLoading ? t('Fetching...') : t('Refresh catalog')}
+            </Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={handleCreatePair}
+              disabled={
+                pairLoading ||
+                catalogLoading ||
+                !canUpdateWaffoPancakeSettings
+              }
+              title={
+                canUpdateWaffoPancakeSettings
+                  ? undefined
+                  : waffoPancakeUpdateDisabledReason
+              }
+            >
+              <HugeiconsIcon
+                icon={AddCircleIcon}
+                strokeWidth={2}
+                data-icon='inline-start'
+              />
+              {pairLoading ? t('Creating...') : t('Create store + product')}
+            </Button>
+          </div>
+        </div>
+
+        <div className='grid grid-cols-2 gap-4'>
+          <div className='grid gap-1.5'>
+            <Label>{t('Store ID')}</Label>
+            <Select<string>
+              items={storeSelectItems}
+              value={watchedStoreID || null}
+              onValueChange={(value) => {
+                if (value === null) return
+                form.setValue('WaffoPancakeStoreID', value, {
+                  shouldDirty: true,
+                })
+                const store = catalogStores.find((item) => item.id === value)
+                if (store) {
+                  form.setValue(
+                    'WaffoPancakeProductID',
+                    store.onetimeProducts?.[0]?.id || '',
+                    { shouldDirty: true }
+                  )
+                }
+              }}
+              disabled={storeSelectItems.length === 0}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue
+                  placeholder={
+                    storeSelectItems.length > 0
+                      ? t('Select Store')
+                      : t('No stores found')
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {storeSelectItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className='grid gap-1.5'>
+            <Label>{t('Product ID')}</Label>
+            <Select<string>
+              items={productSelectItems}
+              value={watchedProductID || null}
+              onValueChange={(value) => {
+                if (value === null) return
+                form.setValue('WaffoPancakeProductID', value, {
+                  shouldDirty: true,
+                })
+              }}
+              disabled={productSelectItems.length === 0}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue
+                  placeholder={
+                    productSelectItems.length > 0
+                      ? t('Select Product')
+                      : t('No active products found')
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {productSelectItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 

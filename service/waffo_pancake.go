@@ -24,13 +24,16 @@ import (
 	"github.com/c1cada/NexusTok/dto"     // 数据传输对象
 	"github.com/c1cada/NexusTok/model"   // 数据模型：TopUp 等
 	"github.com/c1cada/NexusTok/setting" // 系统配置
+	pancake "github.com/waffo-com/waffo-pancake-sdk-go"
 )
 
 // Waffo Pancake 支付服务的常量配置
 const (
-	waffoPancakeAuthBaseURL      = "https://waffo-pancake-auth-service.vercel.app" // 认证服务基地址
-	waffoPancakeCheckoutPath     = "/v1/actions/checkout/create-session"           // 创建结账会话路径
-	waffoPancakeDefaultTolerance = 5 * time.Minute                                 // Webhook 时间戳容差（5分钟）
+	waffoPancakeAuthBaseURL        = "https://waffo-pancake-auth-service.vercel.app" // 认证服务基地址
+	waffoPancakeCheckoutPath       = "/v1/actions/checkout/create-session"           // 创建结账会话路径
+	waffoPancakeDefaultTolerance   = 5 * time.Minute                                 // Webhook 时间戳容差（5分钟）
+	defaultWaffoPancakeStoreName   = "nexustok-store"                                // 管理端一键创建的默认店铺名
+	defaultWaffoPancakeProductName = "nexustok-charge-product"                       // 管理端一键创建的钱包充值商品名
 )
 
 // WaffoPancakePriceSnapshot 结账价格快照
@@ -225,6 +228,182 @@ func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error)
 	}
 
 	return "", fmt.Errorf("missing webhook orderId")
+}
+
+// newWaffoPancakeAdminClientFromCreds 使用管理端输入的临时凭证创建 Pancake SDK client。
+//
+// 该 client 仅用于 catalog 查询和 Store/Product 创建，不能替换当前充值 checkout
+// 与 webhook 验签链路，避免 SDK 行为变化影响已经上线的支付入账流程。
+func newWaffoPancakeAdminClientFromCreds(merchantID string, privateKey string) (*pancake.Client, error) {
+	merchantID = strings.TrimSpace(merchantID)
+	privateKey = strings.TrimSpace(privateKey)
+	if merchantID == "" || privateKey == "" {
+		return nil, fmt.Errorf("merchant id and private key are required")
+	}
+	return pancake.New(pancake.Config{
+		MerchantID: merchantID,
+		PrivateKey: privateKey,
+	})
+}
+
+// WaffoPancakeCatalogProduct 是 catalog 中可绑定的一次性商品。
+type WaffoPancakeCatalogProduct struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// WaffoPancakeCatalogStore 是 Pancake Store 及其 active OnetimeProduct 列表。
+type WaffoPancakeCatalogStore struct {
+	ID              string                       `json:"id"`
+	Name            string                       `json:"name"`
+	Status          string                       `json:"status"`
+	ProdEnabled     bool                         `json:"prodEnabled"`
+	OnetimeProducts []WaffoPancakeCatalogProduct `json:"onetimeProducts"`
+}
+
+// WaffoPancakeCatalog 是管理端 catalog 响应。
+type WaffoPancakeCatalog struct {
+	Stores []WaffoPancakeCatalogStore `json:"stores"`
+}
+
+// ListWaffoPancakeCatalog 查询 Pancake 账号下的 Store 与 active OnetimeProduct。
+//
+// 该接口既作为“凭证是否可用”的验证入口，也为前端 Store/Product 下拉提供数据。
+// 当前使用 limit=100，与 new-api-main 行为一致；若真实商户目录超过上限，后续再
+// 加 offset 分页，避免本轮引入复杂分页状态。
+func ListWaffoPancakeCatalog(ctx context.Context, merchantID string, privateKey string) (*WaffoPancakeCatalog, error) {
+	client, err := newWaffoPancakeAdminClientFromCreds(merchantID, privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	type queryShape struct {
+		Stores []WaffoPancakeCatalogStore `json:"stores"`
+	}
+	resp, err := pancake.GraphQLQuery[queryShape](ctx, client, pancake.GraphQLParams{
+		Query: `query {
+			stores(limit: 100) {
+				id
+				name
+				status
+				prodEnabled
+				onetimeProducts {
+					id
+					name
+					status
+				}
+			}
+		}`,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query Waffo Pancake catalog: %w", err)
+	}
+	if len(resp.Errors) > 0 {
+		return nil, fmt.Errorf("waffo pancake catalog query returned %d errors: %s", len(resp.Errors), resp.Errors[0].Message)
+	}
+
+	stores := resp.Data.Stores
+	for i := range stores {
+		active := stores[i].OnetimeProducts[:0]
+		for _, product := range stores[i].OnetimeProducts {
+			if strings.EqualFold(strings.TrimSpace(product.Status), "active") {
+				active = append(active, product)
+			}
+		}
+		stores[i].OnetimeProducts = active
+	}
+	return &WaffoPancakeCatalog{Stores: stores}, nil
+}
+
+// WaffoPancakePairResult 是一键创建 Store + OnetimeProduct 的结果。
+//
+// OrphanStore 为 true 表示 Store 已创建但 Product 创建或发布失败，前端应展示
+// StoreID 供管理员到 Pancake 后台接管或稍后重试。
+type WaffoPancakePairResult struct {
+	StoreID     string `json:"store_id"`
+	StoreName   string `json:"store_name"`
+	ProductID   string `json:"product_id"`
+	ProductName string `json:"product_name"`
+	OrphanStore bool   `json:"orphan_store,omitempty"`
+}
+
+// CreateWaffoPancakePrimaryStore 创建 NexusTok 默认 Waffo Pancake Store。
+func CreateWaffoPancakePrimaryStore(ctx context.Context, merchantID string, privateKey string) (string, error) {
+	client, err := newWaffoPancakeAdminClientFromCreds(merchantID, privateKey)
+	if err != nil {
+		return "", err
+	}
+	storeRes, err := client.Stores.Create(ctx, pancake.CreateStoreParams{
+		Name: defaultWaffoPancakeStoreName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create Waffo Pancake store: %w", err)
+	}
+	return storeRes.Store.ID, nil
+}
+
+// CreateWaffoPancakePrimaryProduct 创建并发布钱包充值使用的一次性商品。
+//
+// 商品种子价格固定为 1.00 USD；真实充值金额仍由当前 checkout 请求中的
+// PriceSnapshot 覆盖，因此不会改变用户侧任意金额充值语义。
+func CreateWaffoPancakePrimaryProduct(ctx context.Context, merchantID string, privateKey string, storeID string, returnURL string) (string, error) {
+	storeID = strings.TrimSpace(storeID)
+	if storeID == "" {
+		return "", fmt.Errorf("store id is required to create a product")
+	}
+	client, err := newWaffoPancakeAdminClientFromCreds(merchantID, privateKey)
+	if err != nil {
+		return "", err
+	}
+	productRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
+		StoreID: storeID,
+		Name:    defaultWaffoPancakeProductName,
+		Prices: pancake.Prices{
+			"USD": {
+				Amount:      "1.00",
+				TaxCategory: pancake.TaxCategory("saas"),
+			},
+		},
+		SuccessURL: optionalWaffoPancakeString(strings.TrimSpace(returnURL)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("create Waffo Pancake product: %w", err)
+	}
+	productID := productRes.Product.ID
+	if _, err := client.OnetimeProducts.Publish(ctx, pancake.PublishOnetimeProductParams{ID: productID}); err != nil {
+		return "", fmt.Errorf("publish Waffo Pancake product: %w", err)
+	}
+	return productID, nil
+}
+
+// CreateWaffoPancakePrimaryPair 一键创建默认 Store 与钱包充值商品。
+func CreateWaffoPancakePrimaryPair(ctx context.Context, merchantID string, privateKey string, returnURL string) (*WaffoPancakePairResult, error) {
+	storeID, err := CreateWaffoPancakePrimaryStore(ctx, merchantID, privateKey)
+	if err != nil {
+		return nil, err
+	}
+	productID, err := CreateWaffoPancakePrimaryProduct(ctx, merchantID, privateKey, storeID, returnURL)
+	if err != nil {
+		return &WaffoPancakePairResult{
+			StoreID:     storeID,
+			StoreName:   defaultWaffoPancakeStoreName,
+			OrphanStore: true,
+		}, fmt.Errorf("store created at %s but product creation failed: %w", storeID, err)
+	}
+	return &WaffoPancakePairResult{
+		StoreID:     storeID,
+		StoreName:   defaultWaffoPancakeStoreName,
+		ProductID:   productID,
+		ProductName: defaultWaffoPancakeProductName,
+	}, nil
+}
+
+func optionalWaffoPancakeString(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
 }
 
 // SaveWaffoPancakeConfig 原子保存 Waffo Pancake 管理端配置。

@@ -16,9 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import type { AxiosRequestConfig } from 'axios'
 import { api } from '@/lib/api'
 import type {
   ConfirmPaymentComplianceResponse,
+  CreateWaffoPancakePairRequest,
+  CreateWaffoPancakePairResponse,
   CreateLogCleanupTaskResponse,
   FetchUpstreamRatiosRequest,
   SaveWaffoPancakeConfigRequest,
@@ -28,7 +31,13 @@ import type {
   UpdateOptionResponse,
   UpstreamChannelsResponse,
   UpstreamRatiosResponse,
+  WaffoPancakeCatalogRequest,
+  WaffoPancakeCatalogResponse,
 } from './types'
+
+interface ExtendedApiConfig extends AxiosRequestConfig {
+  skipBusinessError?: boolean
+}
 
 export async function getSystemOptions() {
   const res = await api.get<SystemOptionsResponse>('/api/option/')
@@ -46,6 +55,37 @@ export async function saveWaffoPancakeConfig(
   const res = await api.post<SaveWaffoPancakeConfigResponse>(
     '/api/option/waffo-pancake/save',
     request
+  )
+  return res.data
+}
+
+export async function listWaffoPancakeCatalog(
+  request?: WaffoPancakeCatalogRequest
+) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  if (request) {
+    const res = await api.post<WaffoPancakeCatalogResponse>(
+      '/api/option/waffo-pancake/catalog',
+      request,
+      config
+    )
+    return res.data
+  }
+  const res = await api.get<WaffoPancakeCatalogResponse>(
+    '/api/option/waffo-pancake/catalog',
+    config
+  )
+  return res.data
+}
+
+export async function createWaffoPancakePair(
+  request: CreateWaffoPancakePairRequest
+) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.post<CreateWaffoPancakePairResponse>(
+    '/api/option/waffo-pancake/pair',
+    request,
+    config
   )
   return res.data
 }

@@ -65,6 +65,52 @@ export type SaveWaffoPancakeConfigResponse = {
   }
 }
 
+export type WaffoPancakeCatalogProduct = {
+  id: string
+  name: string
+  status: string
+}
+
+export type WaffoPancakeCatalogStore = {
+  id: string
+  name: string
+  status: string
+  prodEnabled: boolean
+  onetimeProducts: WaffoPancakeCatalogProduct[]
+}
+
+export type WaffoPancakeCatalogRequest = {
+  merchant_id: string
+  private_key: string
+}
+
+export type WaffoPancakeCatalogResponse = {
+  success: boolean
+  message: string
+  data?: {
+    stores: WaffoPancakeCatalogStore[]
+  }
+}
+
+export type CreateWaffoPancakePairRequest = {
+  merchant_id: string
+  private_key: string
+  return_url: string
+}
+
+export type CreateWaffoPancakePairResponse = {
+  success: boolean
+  message: string
+  data?: {
+    store_id?: string
+    store_name?: string
+    product_id?: string
+    product_name?: string
+    orphan_store?: boolean
+    error?: string
+  }
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string

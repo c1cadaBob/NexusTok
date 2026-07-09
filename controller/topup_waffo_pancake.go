@@ -55,6 +55,16 @@ type saveWaffoPancakeConfigRequest struct {
 	MinTopUp         int     `json:"min_top_up"`
 }
 
+// waffoPancakeAdminCredsRequest 是管理端 catalog/pair 辅助请求。
+//
+// MerchantID 与 PrivateKey 可使用尚未保存的表单输入；二者都为空时回退已保存
+// 配置，便于管理员刷新页面后直接查看已绑定账号的 catalog。
+type waffoPancakeAdminCredsRequest struct {
+	MerchantID string `json:"merchant_id"`
+	PrivateKey string `json:"private_key"`
+	ReturnURL  string `json:"return_url"`
+}
+
 // RequestWaffoPancakeAmount 查询 Waffo Pancake 充值金额
 //
 // 根据充值数量和用户分组计算实际支付金额
@@ -167,6 +177,95 @@ func getWaffoPancakeReturnURL() string {
 		return setting.WaffoPancakeReturnURL
 	}
 	return paymentReturnPath("/console/topup?show_history=true")
+}
+
+// resolveWaffoPancakeAdminCreds 解析管理端临时凭证。
+//
+// 前端在凭证尚未保存时传入 MerchantID/PrivateKey 用于验证；如果请求体留空，
+// 说明管理员希望复用已保存配置。只传其中一个字段会被视为不完整凭证并让下游校验失败。
+func resolveWaffoPancakeAdminCreds(bodyMerchantID string, bodyPrivateKey string) (string, string) {
+	merchantID := strings.TrimSpace(bodyMerchantID)
+	privateKey := strings.TrimSpace(bodyPrivateKey)
+	if merchantID == "" && privateKey == "" {
+		return setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey
+	}
+	return merchantID, privateKey
+}
+
+// ListWaffoPancakeCatalog 拉取 Pancake Store 与 active OnetimeProduct 目录。
+//
+// GET 只使用已保存凭证；POST 允许使用当前表单里尚未保存的临时凭证，避免把
+// PrivateKey 放进 URL query。该接口只读上游 catalog，不保存本地 option。
+func ListWaffoPancakeCatalog(c *gin.Context) {
+	var req waffoPancakeAdminCredsRequest
+	if c.Request.Method == http.MethodPost {
+		if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+			common.ApiErrorMsg(c, "参数错误")
+			return
+		}
+	}
+
+	merchantID, privateKey := resolveWaffoPancakeAdminCreds(req.MerchantID, req.PrivateKey)
+	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(privateKey) == "" {
+		common.ApiErrorMsg(c, "Waffo Pancake 凭证未配置")
+		return
+	}
+
+	catalog, err := service.ListWaffoPancakeCatalog(c.Request.Context(), merchantID, privateKey)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 拉取目录失败 error=%q", err.Error()))
+		common.ApiErrorMsg(c, "拉取目录失败")
+		return
+	}
+	common.ApiSuccess(c, catalog)
+}
+
+// CreateWaffoPancakePair 在 Pancake 侧创建默认 Store 与钱包充值商品。
+//
+// 该接口不会自动保存本地 option；管理员仍需点击最终保存按钮，把返回的
+// Store/Product 绑定通过原子保存接口写入 NexusTok。
+func CreateWaffoPancakePair(c *gin.Context) {
+	var req waffoPancakeAdminCredsRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+
+	merchantID, privateKey := resolveWaffoPancakeAdminCreds(req.MerchantID, req.PrivateKey)
+	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(privateKey) == "" {
+		common.ApiErrorMsg(c, "Waffo Pancake 凭证未配置")
+		return
+	}
+
+	result, err := service.CreateWaffoPancakePrimaryPair(c.Request.Context(), merchantID, privateKey, req.ReturnURL)
+	if err != nil {
+		orphanStore := result != nil && result.OrphanStore
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake 创建店铺与商品失败 orphan_store=%t store_id=%q error=%q",
+			orphanStore,
+			func() string {
+				if result == nil {
+					return ""
+				}
+				return result.StoreID
+			}(),
+			err.Error(),
+		))
+		data := gin.H{"error": err.Error()}
+		if orphanStore {
+			data["orphan_store"] = true
+			data["store_id"] = result.StoreID
+			data["store_name"] = result.StoreName
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "创建店铺与商品失败",
+			"data":    data,
+		})
+		return
+	}
+
+	common.ApiSuccess(c, result)
 }
 
 // SaveWaffoPancakeConfig 原子保存管理端 Waffo Pancake 支付配置。
