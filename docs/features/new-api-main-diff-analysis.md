@@ -4250,8 +4250,69 @@ new-api-main 的 Playground 将消息基础能力继续拆成 `message-reasoning
 8. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/6948.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `0d746516191d50557c44fcf327acac696aa690b64e0388d2edff12d0163800a2`，`6948.js` SHA256 均为 `7e21046a08f310bc54f1795b4668159bde13c2bd38d0bbfa91fd89b1bba94d0a`。
 9. 线上 `/static/js/async/6948.js` 已包含 `hasUnclosedTag`、`max-md:opacity-100` 特征；上一轮旧 chunk `/static/js/async/1750.js` 返回 `HTTP/1.1 404 Not Found`，确认 3003 页面加载的是本轮构建产物。
 
+## 本轮实施评审：Playground 原始响应切换原生化
+
+### 需求分析
+
+new-api-main 的 Playground 在 assistant 消息完成后提供 source/preview 切换：默认展示 Markdown 预览，用户需要排查模型原始输出、Markdown 解析差异、工具返回片段或流式拼接问题时，可以切到 raw response 视图查看当前版本的原始内容。NexusTok 当前已经具备受控 Markdown 渲染、推理块、来源块、错误恢复、消息时间元信息和基础动作栏，但仍缺少“原始响应”这一调试视角；管理员或高级用户只能复制预览内容，无法在页面内直接对比解析前文本。
+
+本轮目标是吸收 new-api-main 的低风险交互优势，同时保持 NexusTok 当前 Playground 的原生结构：
+
+1. 为非 loading/streaming 的 assistant 消息新增“Show source / Show preview”动作，只有消息有正文且调用方提供切换能力时展示。
+2. 在 `PlaygroundChat` 内按 message key 维护原始响应可见集合；该状态只影响当前页面会话展示，不写入 localStorage，避免污染消息协议和历史兼容。
+3. 在 `PlaygroundMessageContent` 内支持 `isSourceVisible`，切换后使用现有 `CodeBlock` 展示当前版本 `versionContent`，保留复制按钮和行号。
+4. 新增动作状态 helper，集中判断 source toggle 是否可用、按钮文案和 source key set 更新，减少 JSX 内联条件。
+5. 补齐 `Show source`、`Show preview`、`Raw response` 六语翻译，并用定向测试覆盖动作可见性和 source key set 切换。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Playground 聊天编排 | `web/default/src/features/playground/components/playground-chat.tsx` | 新增原始响应可见状态，并把切换回调、当前可见状态传给消息动作和内容组件。 |
+| 消息动作栏 | `web/default/src/features/playground/components/message-actions.tsx`、`message-action-button.tsx` | 增加 source/preview 切换动作；按钮仍复用现有 Tooltip + ghost icon button，不引入移动端 DropdownMenu。 |
+| 消息内容 | `web/default/src/features/playground/components/playground-message-content.tsx` | 在 source 可见时用 `CodeBlock` 渲染原始版本内容；默认预览、推理、来源、错误和时间元信息保持原语义。 |
+| 纯函数工具 | `web/default/src/features/playground/lib/message-action-utils.ts`、`message-source-utils.ts` 及测试 | 把按钮可见条件、文案选择、source key set 切换收敛为可测试 helper。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 raw/source toggle 相关文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式与后续验证结果。 |
+
+### 风险评估
+
+1. source toggle 不能出现在 loading/streaming 消息上，否则用户会看到半截 raw 文本并误以为最终响应异常；必须等 assistant 消息完成且有正文后才展示。
+2. source 可见状态若写入消息结构或 localStorage，会带来历史 schema 迁移和跨版本兼容成本；本轮只使用组件内 UI 状态。
+3. `versionContent` 是当前分支版本的原始文本，多版本消息切换时必须跟随 branch 渲染内容，不应改写 `getMessageContentState` 的预览解析结果。
+4. 当前 NexusTok `CodeBlock` 不支持 new-api-main 的 `title/collapsedLines/showToolbar` props；直接照搬会造成类型错误，因此本轮采用现有 CodeBlock 能力，并用轻量标题文本承载 `Raw response`。
+5. 本轮不迁移 new-api-main 的 mobile DropdownMenu、message layout mode 和 alignment metadata，避免把调试能力和布局重构耦合到同一改动。
+6. 新增 UI 文案必须补齐六语并跑 i18n sync；按钮 tooltip 需要使用翻译后的文案，避免英文硬编码漏出。
+
+### 方案评审
+
+采用“小步原生化”方案：新增 `message-source-utils.ts` 提供 `toggleMessageSourceKey`，`message-action-utils.ts` 增加 `canToggleMessageSource` 和 `getMessageSourceToggleLabel`；`PlaygroundChat` 使用 `useState<ReadonlySet<string>>` 维护可见 key 集合，并将 `handleToggleMessageSource` 传给 `MessageActions`。动作栏新增可选 `onToggleSource` 与 `isSourceVisible` props，只有 assistant、非 loading、有内容时渲染 source 按钮。内容组件新增 `isSourceVisible`，source 模式下在消息内容位置渲染 `Raw response` 标题和 `CodeBlock code={versionContent} language="markdown" showLineNumbers`，继续显示元信息与通用动作。视觉层沿用现有操作台密度和 shadcn Base UI 组合，不新增卡片套卡片，不改变消息布局。
+
+验收方式：
+
+1. `cd web/default && bun test src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-source-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/storage.test.ts` 覆盖 source toggle helper、动作可见性和既有消息链路。
+2. `cd web/default && bun run i18n:sync`，确认 en、zh、fr、ja、ru、vi 无 missing/extras。
+3. 针对本轮触碰文件运行定向 ESLint。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 和 `./node_modules/.bin/rsbuild build` 覆盖类型与生产构建。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/playground` 验证按钮和 raw response 切换；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/`、`/api/status`、`/playground`，并拉取线上 chunk 与本地 `dist` 比对，确认 3003 页面加载的是本轮构建产物。
+
+验证记录：
+
+1. `cd web/default && bun test src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-source-utils.test.ts src/features/playground/lib/message-content-utils.test.ts src/features/playground/lib/conversation-message-utils.test.ts src/features/playground/lib/message-timing-utils.test.ts src/features/playground/lib/storage.test.ts` 通过，共 39 个用例，覆盖 source toggle 条件、source key set 不可变更新、消息内容状态、会话 helper、timing 和 storage 兼容链路。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 和 `extrasCount` 均为 0。本轮新增 `Raw response`、`Show preview`、`Show source` 已补齐六语；报告中的 untranslated 计数为仓库既有存量。
+3. `cd web/default && ./node_modules/.bin/eslint src/features/playground/constants.ts src/features/playground/components/message-actions.tsx src/features/playground/components/playground-chat.tsx src/features/playground/components/playground-message-content.tsx src/features/playground/lib/message-action-utils.ts src/features/playground/lib/message-action-utils.test.ts src/features/playground/lib/message-source-utils.ts src/features/playground/lib/message-source-utils.test.ts src/features/playground/lib/index.ts src/i18n/static-keys.ts` 通过。
+4. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `MessageActions` 新增 props、`PlaygroundMessageContent` source 模式和 helper 导出类型正确。
+5. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，Playground 相关 lazy chunk 切换为 `/static/js/async/92.js`。
+6. `git diff --check` 通过。
+7. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用真实 3003 HTTP 请求与线上资源比对替代页面验证。
+8. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP 200`；`/api/status` 返回 `success: true`。
+9. 从 3003 拉取 `/static/js/index.js` 与 `/static/js/async/92.js` 后，与本地 `web/default/dist` 完全一致：`index.js` SHA256 均为 `e8b7995c396e7ee0ead4f34816ef97e5fb1c79a85f980335b42763fcb9f28956`，`92.js` SHA256 均为 `4ded5331fdb8d0e8fec0157c4be125f1545b57d6a1b3c3e4292a98010c8caf3e`。
+10. 线上 `/static/js/async/92.js` 已包含 `Raw response`、`Show source` 特征；上一轮旧 chunk `/static/js/async/6948.js` 返回 `HTTP 404`，确认 3003 页面加载的是本轮构建产物。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground 原始响应切换 | `web/default/src/features/playground/components/{message-actions.tsx,playground-chat.tsx,playground-message-content.tsx}`、`web/default/src/features/playground/lib/{message-action-utils.ts,message-action-utils.test.ts,message-source-utils.ts,message-source-utils.test.ts,index.ts}`、`web/default/src/features/playground/constants.ts`、`web/default/src/i18n/locales/*.json`、`web/default/src/i18n/static-keys.ts` | 原生化 new-api-main 的 assistant 消息 source/preview toggle；完成态 assistant 消息可在 Markdown 预览和当前版本原始响应代码块之间切换，source 状态仅保留在页面会话中，不改消息协议和 localStorage；新增 raw/source 文案补齐六语。 |
 | 2026-07-09 | Playground 消息基础工具拆分 | `web/default/src/features/playground/lib/{message-reasoning-utils.ts,message-reasoning-utils.test.ts,message-update-utils.ts,message-update-utils.test.ts,message-action-utils.ts,message-action-utils.test.ts,message-utils.ts,message-content-utils.ts,storage.ts,index.ts}`、`web/default/src/features/playground/components/message-actions.tsx` | 原生化 new-api-main 的 message reasoning/update/action 工具拆分；`<think>` 解析、assistant 错误更新、动作栏状态和可见性 class 进入可测试纯函数，MessageActions 只消费派生状态，现有按钮结构、请求协议和本地存储 key 保持不变。 |
 | 2026-07-09 | Playground 选项加载与会话 hook | `controller/user.go`、`controller/user_models_test.go`、`web/default/src/features/playground/{api.ts,index.tsx,hooks/use-playground-{options,conversation,state}.ts,hooks/index.ts,lib/playground-{option,state}-utils.ts,lib/playground-{option,state}-utils.test.ts,lib/index.ts}`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 Playground options/conversation 拆分；`/api/user/models?group=` 支持按用户可用分组过滤模型，不可用分组返回空数组，无参数保持旧聚合行为；前端按当前分组刷新模型候选、加载失败 toast 补齐六语，发送/重试/编辑/删除逻辑收敛到专用 hook。 |
 | 2026-07-09 | Playground 本地存储 schema 与容量保护 | `web/default/src/features/playground/lib/{storage-schema.ts,storage.ts,storage.test.ts}` | 原生化 new-api-main 的 Playground 本地存储 envelope、Zod schema 校验和容量保护；保存继续使用原 storage key，读取兼容旧裸 JSON，损坏/超大/流式中断消息会被裁剪、清理或稳定化。 |

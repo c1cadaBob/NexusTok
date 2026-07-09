@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
+import {
+  MESSAGE_ACTION_LABELS,
+  MESSAGE_ROLES,
+  MESSAGE_STATUS,
+} from '../constants'
 import type { Message } from '../types'
 import { getMessageContent, hasMessageContent } from './message-utils'
 
@@ -52,4 +56,33 @@ export function getMessageActionsVisibilityClass(
   return alwaysVisible
     ? 'opacity-100'
     : 'opacity-0 group-hover:opacity-100 max-md:opacity-100'
+}
+
+/**
+ * 判断原始响应切换按钮是否应该展示。
+ *
+ * 该按钮只面向已经有完整正文的 assistant 消息；loading/streaming 阶段的
+ * 原始文本仍在拼接中，此时展示 source 视图容易让用户误判为最终响应。
+ */
+export function canToggleMessageSource({
+  hasContent,
+  hasToggleHandler,
+  isAssistant,
+  isLoading,
+}: {
+  hasContent: boolean
+  hasToggleHandler: boolean
+  isAssistant: boolean
+  isLoading: boolean
+}): boolean {
+  return isAssistant && hasContent && !isLoading && hasToggleHandler
+}
+
+/**
+ * 根据当前 source 视图状态返回切换按钮文案 key。
+ */
+export function getMessageSourceToggleLabel(isSourceVisible: boolean): string {
+  return isSourceVisible
+    ? MESSAGE_ACTION_LABELS.SHOW_PREVIEW
+    : MESSAGE_ACTION_LABELS.SHOW_SOURCE
 }

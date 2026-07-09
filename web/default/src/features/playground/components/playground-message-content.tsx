@@ -19,6 +19,10 @@ For commercial licensing, please contact support@c1cada.dev
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import {
+  CodeBlock,
+  CodeBlockCopyButton,
+} from '@/components/ai-elements/code-block'
 import { Loader } from '@/components/ai-elements/loader'
 import { MessageContent } from '@/components/ai-elements/message'
 import {
@@ -43,6 +47,7 @@ import { MessageMetadata } from './message-metadata'
 interface PlaygroundMessageContentProps {
   actions: ReactNode
   errorActions?: ReactNode
+  isSourceVisible?: boolean
   message: Message
   versionContent: string
 }
@@ -50,6 +55,7 @@ interface PlaygroundMessageContentProps {
 export function PlaygroundMessageContent({
   actions,
   errorActions,
+  isSourceVisible = false,
   message,
   versionContent,
 }: PlaygroundMessageContentProps) {
@@ -114,14 +120,29 @@ export function PlaygroundMessageContent({
         </>
       ) : (
         <>
-          {showMessageContent && (
-            <MessageContent
-              variant='flat'
-              className={cn(getMessageContentStyles())}
-            >
-              <Response final={isMessageFinal}>{displayContent}</Response>
-            </MessageContent>
-          )}
+          {showMessageContent &&
+            (isSourceVisible ? (
+              <div className='flex w-full flex-col gap-2'>
+                <div className='text-muted-foreground text-xs font-medium'>
+                  {t('Raw response')}
+                </div>
+                <CodeBlock
+                  code={versionContent}
+                  className='my-0 max-h-[min(520px,60vh)] max-w-full overflow-auto'
+                  language='markdown'
+                  showLineNumbers
+                >
+                  <CodeBlockCopyButton aria-label={t('Copy')} />
+                </CodeBlock>
+              </div>
+            ) : (
+              <MessageContent
+                variant='flat'
+                className={cn(getMessageContentStyles())}
+              >
+                <Response final={isMessageFinal}>{displayContent}</Response>
+              </MessageContent>
+            ))}
           {(showMessageContent || hasReasoning) && (
             <MessageMetadata message={message} />
           )}

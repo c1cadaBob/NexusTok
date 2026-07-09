@@ -18,11 +18,17 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
+import {
+  MESSAGE_ACTION_LABELS,
+  MESSAGE_ROLES,
+  MESSAGE_STATUS,
+} from '../constants'
 import type { Message } from '../types'
 import {
+  canToggleMessageSource,
   getMessageActionsVisibilityClass,
   getMessageActionState,
+  getMessageSourceToggleLabel,
 } from './message-action-utils'
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
@@ -72,6 +78,69 @@ describe('message action utils', () => {
     assert.equal(
       getMessageActionsVisibilityClass(false),
       'opacity-0 group-hover:opacity-100 max-md:opacity-100'
+    )
+  })
+
+  test('allows source toggle only for completed assistant content with handler', () => {
+    assert.equal(
+      canToggleMessageSource({
+        hasContent: true,
+        hasToggleHandler: true,
+        isAssistant: true,
+        isLoading: false,
+      }),
+      true
+    )
+
+    assert.equal(
+      canToggleMessageSource({
+        hasContent: true,
+        hasToggleHandler: true,
+        isAssistant: true,
+        isLoading: true,
+      }),
+      false
+    )
+
+    assert.equal(
+      canToggleMessageSource({
+        hasContent: true,
+        hasToggleHandler: true,
+        isAssistant: false,
+        isLoading: false,
+      }),
+      false
+    )
+
+    assert.equal(
+      canToggleMessageSource({
+        hasContent: false,
+        hasToggleHandler: true,
+        isAssistant: true,
+        isLoading: false,
+      }),
+      false
+    )
+
+    assert.equal(
+      canToggleMessageSource({
+        hasContent: true,
+        hasToggleHandler: false,
+        isAssistant: true,
+        isLoading: false,
+      }),
+      false
+    )
+  })
+
+  test('returns source toggle labels for preview and raw response modes', () => {
+    assert.equal(
+      getMessageSourceToggleLabel(false),
+      MESSAGE_ACTION_LABELS.SHOW_SOURCE
+    )
+    assert.equal(
+      getMessageSourceToggleLabel(true),
+      MESSAGE_ACTION_LABELS.SHOW_PREVIEW
     )
   })
 })

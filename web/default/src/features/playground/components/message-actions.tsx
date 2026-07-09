@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { Copy, Check, RefreshCw, Edit, Trash2 } from 'lucide-react'
+import { Copy, Check, RefreshCw, Edit, Trash2, FileCode2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -24,8 +25,10 @@ import { cn } from '@/lib/utils'
 import { MESSAGE_ACTION_LABELS } from '../constants'
 import { useMessageActionGuard } from '../hooks/use-message-action-guard'
 import {
+  canToggleMessageSource,
   getMessageActionsVisibilityClass,
   getMessageActionState,
+  getMessageSourceToggleLabel,
 } from '../lib'
 import type { Message } from '../types'
 import { MessageActionButton } from './message-action-button'
@@ -34,8 +37,10 @@ interface MessageActionsProps {
   message: Message
   onCopy?: (message: Message) => void
   onRegenerate?: (message: Message) => void
+  onToggleSource?: (message: Message) => void
   onEdit?: (message: Message) => void
   onDelete?: (message: Message) => void
+  isSourceVisible?: boolean
   isGenerating?: boolean
   alwaysVisible?: boolean
   className?: string
@@ -45,12 +50,15 @@ export function MessageActions({
   message,
   onCopy,
   onRegenerate,
+  onToggleSource,
   onEdit,
   onDelete,
+  isSourceVisible = false,
   isGenerating = false,
   alwaysVisible = false,
   className = '',
 }: MessageActionsProps) {
+  const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard()
   const { guardAction } = useMessageActionGuard(isGenerating)
 
@@ -68,10 +76,17 @@ export function MessageActions({
   }
 
   const handleRegenerate = guardAction(() => onRegenerate?.(message))
+  const handleToggleSource = () => onToggleSource?.(message)
   const handleEdit = guardAction(() => onEdit?.(message))
   const handleDelete = guardAction(() => onDelete?.(message))
 
   const visibilityClass = getMessageActionsVisibilityClass(alwaysVisible)
+  const showSourceToggle = canToggleMessageSource({
+    hasContent,
+    hasToggleHandler: Boolean(onToggleSource),
+    isAssistant,
+    isLoading,
+  })
 
   return (
     <TooltipProvider delay={300}>
@@ -82,7 +97,7 @@ export function MessageActions({
           className
         )}
       >
-        {/* Copy */}
+        {/* 复制 */}
         {hasContent && (
           <MessageActionButton
             icon={isCopied ? Check : Copy}
@@ -96,7 +111,16 @@ export function MessageActions({
           />
         )}
 
-        {/* Regenerate - only for assistant messages */}
+        {/* 原始响应切换只在 assistant 完成态正文上展示，避免流式半成品被误认为最终响应。 */}
+        {showSourceToggle && (
+          <MessageActionButton
+            icon={FileCode2}
+            label={t(getMessageSourceToggleLabel(isSourceVisible))}
+            onClick={handleToggleSource}
+          />
+        )}
+
+        {/* assistant 消息重试 */}
         {isAssistant && !isLoading && onRegenerate && (
           <MessageActionButton
             icon={RefreshCw}
@@ -106,7 +130,7 @@ export function MessageActions({
           />
         )}
 
-        {/* Edit */}
+        {/* 编辑 */}
         {hasContent && onEdit && (
           <MessageActionButton
             icon={Edit}
@@ -116,7 +140,7 @@ export function MessageActions({
           />
         )}
 
-        {/* Delete */}
+        {/* 删除 */}
         {onDelete && (
           <MessageActionButton
             icon={Trash2}

@@ -35,7 +35,9 @@ import { MESSAGE_STATUS } from '../constants'
 import {
   getChatMessageRenderState,
   getEditingMessageContent,
+  isMessageSourceVisible,
   getPreviousUserMessage,
+  toggleMessageSourceKey,
 } from '../lib'
 import type { Message as MessageType } from '../types'
 import { MessageActions } from './message-actions'
@@ -73,6 +75,15 @@ export function PlaygroundChat({
 }: PlaygroundChatProps) {
   const [editText, setEditText] = useState('')
   const [originalText, setOriginalText] = useState('')
+  const [sourceMessageKeys, setSourceMessageKeys] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+
+  function handleToggleMessageSource(message: MessageType): void {
+    setSourceMessageKeys((currentKeys) =>
+      toggleMessageSourceKey(currentKeys, message.key)
+    )
+  }
 
   useEffect(() => {
     if (!editingKey) return
@@ -99,13 +110,19 @@ export function PlaygroundChat({
           message.status === MESSAGE_STATUS.ERROR
             ? getPreviousUserMessage(messages, messageIndex)
             : null
+        const sourceVisible = isMessageSourceVisible(
+          sourceMessageKeys,
+          message.key
+        )
         const actions = (
           <MessageActions
             message={message}
             onCopy={onCopyMessage}
             onRegenerate={onRegenerateMessage}
+            onToggleSource={handleToggleMessageSource}
             onEdit={onEditMessage}
             onDelete={onDeleteMessage}
+            isSourceVisible={sourceVisible}
             isGenerating={isGenerating}
             alwaysVisible={alwaysShowActions}
             className='mt-1'
@@ -155,6 +172,7 @@ export function PlaygroundChat({
                       <PlaygroundMessageContent
                         actions={actions}
                         errorActions={errorActions}
+                        isSourceVisible={sourceVisible}
                         message={message}
                         versionContent={version.content}
                       />
