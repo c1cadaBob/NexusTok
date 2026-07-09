@@ -1,8 +1,7 @@
-// Package authz 提供 NexusTok 管理权限 catalog 与基础授权判定。
+// Package authz 提供 NexusTok 管理权限 catalog、角色基线和用户级 override 授权判定。
 //
-// 当前阶段只维护资源、动作和内置角色基线，供前端、用户自身份权限回传和
-// 渠道路由权限表共用；暂不在这里引入 Casbin 或用户级 override，避免一次迁移
-// 影响账号池、订阅、系统设置等核心管理路径。
+// 权限语义由前端、用户自身份权限回传和路由权限表共用：未知权限必须失败关闭，
+// Root 始终是 superuser，Admin 可以通过用户级 allow/deny override 做细粒度分权。
 package authz
 
 // Permission 标识某个资源上的一个动作。
@@ -17,6 +16,11 @@ type PermissionsMap map[string]map[string]bool
 const (
 	BuiltInRoleRoot  = "root"
 	BuiltInRoleAdmin = "admin"
+)
+
+const (
+	EffectAllow = "allow"
+	EffectDeny  = "deny"
 )
 
 const (
@@ -151,26 +155,33 @@ func Roles() []RoleDescriptor {
 	return result
 }
 
-// Capabilities 按现有系统角色计算能力矩阵。
+// Capabilities 按系统角色计算能力矩阵。
 //
-// 这个函数服务于前端按钮显隐、自身份权限回传和灰度路由权限表。当前仍只基于
-// Root/Admin 系统角色基线；后续引入 Casbin 或用户级 override 时，应让它与 Can
-// 继续共享同一套语义，避免页面显隐和服务端放行产生分叉。
+// 保留旧签名供没有用户上下文的调用点使用；存在用户上下文时应优先使用
+// CapabilitiesForUser，让前端显隐和服务端 Can 共享用户级 override 语义。
 func Capabilities(systemRole int) PermissionsMap {
+	return CapabilitiesForUser(0, systemRole)
+}
+
+// CapabilitiesForUser 按系统角色和用户级 override 计算完整能力矩阵。
+func CapabilitiesForUser(userID int, systemRole int) PermissionsMap {
 	role := roleForSystemRole(systemRole)
 	if role == nil {
 		return emptyGrants()
 	}
-	return roleGrants(*role)
+	if role.superuser {
+		return roleGrants(*role)
+	}
+	overrides := safeUserOverrideEffects(userID)
+	return roleGrantsWithOverrides(*role, overrides)
 }
 
 // Can 判断当前用户是否拥有指定资源动作权限。
 //
-// userID 预留给后续 Casbin/user override 使用；当前实现只读取系统角色基线。
-// 未注册的资源或动作必须失败关闭，即使 Root 角色也不能绕过未知 permission，
-// 这样新增管理资源时必须先进入 catalog 才能被路由权限表引用。
+// 未注册的资源或动作必须失败关闭，即使 Root 角色也不能绕过未知 permission。
+// Admin 用户的显式 allow/deny override 优先于角色基线；普通用户没有管理角色，
+// 即使数据库中误写 override 也不能被提升为管理员权限。
 func Can(userID int, systemRole int, permission Permission) bool {
-	_ = userID
 	action, ok := findAction(permission)
 	if !ok {
 		return false
@@ -181,6 +192,9 @@ func Can(userID int, systemRole int, permission Permission) bool {
 	}
 	if role.superuser {
 		return true
+	}
+	if allowed, ok := explicitUserOverride(userID, permission); ok {
+		return allowed
 	}
 	return actionHasRole(action, role.key)
 }
@@ -199,10 +213,19 @@ func roleForSystemRole(systemRole int) *roleSpec {
 }
 
 func roleGrants(role roleSpec) PermissionsMap {
+	return roleGrantsWithOverrides(role, nil)
+}
+
+func roleGrantsWithOverrides(role roleSpec, overrides overrideEffects) PermissionsMap {
 	grants := make(PermissionsMap, len(registry))
 	for _, resource := range registry {
 		actions := make(map[string]bool, len(resource.Actions))
 		for _, action := range resource.Actions {
+			permission := Permission{Resource: resource.Resource, Action: action.Action}
+			if allowed, ok := overrideAllows(overrides, permission); ok {
+				actions[action.Action] = allowed
+				continue
+			}
 			actions[action.Action] = role.superuser || actionHasRole(action, role.key)
 		}
 		grants[resource.Resource] = actions

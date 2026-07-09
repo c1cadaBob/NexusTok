@@ -6528,6 +6528,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | Routing Reliability 默认前端聚合入口 | `web/default/src/features/system-settings/models/*`、`web/default/src/features/system-settings/types.ts`、`web/default/src/i18n/locales/*.json` | 默认前端模型设置新增 `routing-reliability` 分区，聚合重试、自动重试状态码、渠道自动禁用/恢复和自动测试模式，复用现有 option 保存与 `system_setting.sensitive_write` 权限。 |
 | 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |
 | 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
+| 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 
 ## 本轮实施评审：渠道编辑页分段布局与模型搜索添加修复
 
@@ -6578,3 +6579,74 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 - `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=20`：返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三条模型元信息，`vendor_id=1`，Sol 已绑定 `openai/default`，Luna/Terra 保持仅元信息状态。
 - `GET /api/channel/models`：确认静态能力列表仍以 `gpt-3.5-*` 等旧模型开头，证明截图问题源于旧候选源；前端已改为额外合并 `/api/models/search` 结果。
 - `GET /static/js/async/2817.js`：返回 200，且服务端当前 chunk 包含 `channel_model_meta_search`、`Searching model metadata`、`Add custom model`，确认 3003 页面资源已热更新生效，无需重启容器。
+
+## 本轮实施评审：Authz 用户级 override 基础层
+
+### 需求分析
+
+NexusTok 已经具备管理权限 catalog、角色基线矩阵、`middleware.RequirePermission` 路由权限表和默认前端按钮级权限消费，但当前 `service/authz.Can(userID, systemRole, permission)` 中的 `userID` 仍只是预留参数，`/api/user/self` 返回的 `permissions.admin_permissions` 也只按系统角色计算。这意味着管理员权限只能按 Root/Admin 两档粗粒度控制，无法吸收 `/opt/project/new-api-main` 中“按用户显式 allow/deny override”的优势。
+
+本轮目标是先实现 NexusTok 原生的用户级 override 基础层：允许在数据库中为某个管理用户记录特定资源动作的 allow/deny 覆盖，授权判定时 Root 仍保持 superuser，未知权限 fail-closed，普通用户不能通过 override 获得管理权限；Admin 用户先读显式 override，未命中再回退现有角色基线。这样可以为后续用户编辑页权限矩阵、审计、导入导出和更细粒度运营分权打基础。
+
+### 影响范围分析
+
+- `model` 层：新增三库兼容的用户权限 override 表与基础读写 helper，使用 GORM 迁移，不引入数据库方言 SQL，不使用 JSON 列。
+- `model/main.go`：将新模型加入普通迁移和快速迁移，确保 SQLite、MySQL、PostgreSQL 都能自动建表。
+- `service/authz`：新增 allow/deny effect 常量、用户 override 解析与管理 helper；`Can` 和新的 `CapabilitiesForUser` 共享同一语义，旧 `Capabilities(systemRole)` 保持兼容包装。
+- `controller/user.go`：`GetSelf` 读取当前用户 ID 后返回包含用户 override 的 `admin_permissions`，让前端显隐与服务端路由判定保持一致。
+- 测试：补充 service/controller/middleware 覆盖，验证 allow 提权到 Admin 敏感动作、deny 覆盖 Admin 基线、Root 不受 deny 覆盖、普通用户不被 override 提升、未知权限失败关闭。
+
+### 风险评估
+
+- 权限系统属于核心安全边界，override 查询失败时不能扩大权限。本轮设计中查询错误会记录系统日志并回退角色基线，避免数据库瞬时错误导致管理后台整体不可用；后续若增加缓存初始化状态，可以再收紧为显式 deny 优先的 fail-closed 模式。
+- 普通用户被误写入 override 不能获得管理权限，因此 `roleForSystemRole` 返回 nil 时直接拒绝，override 只在 Admin 角色上参与细分授权。
+- Root 用户不能被用户级 deny 降权，避免误配置锁死唯一超级管理员。
+- 新表需要跨数据库兼容，字段仅使用整数、短字符串和 bigint 时间戳；唯一约束使用 GORM index tag，避免手写 `ON CONFLICT` 或方言专用 DDL。
+- 本轮不新增前端编辑入口和公开 API，避免一次改动同时触碰用户编辑表单、权限矩阵 UI、审计和批量保存流程；基础层稳定后再分批开放管理能力。
+
+### 方案评审
+
+采用“轻量原生 DB override”方案，而不是直接迁入 new-api-main 的 Casbin enforcer、adapter 和 policy 初始化链路。原因是 NexusTok 目前已经有稳定的内置权限 catalog 与路由权限表，引入 Casbin 会显著扩大启动初始化、缓存一致性、迁移和依赖风险；而本轮需要的核心优势是 per-user allow/deny 语义，可以先用一张原生表和小型 service helper 实现。
+
+执行策略：
+
+1. 新增 `authz_user_overrides` 表，唯一键为 `user_id + resource + action`，`effect` 只允许 `allow` 或 `deny`。
+2. `SetUserPermissions` 只保存相对 Admin 基线有差异的动作：与基线一致的项不写入，降低冗余并对齐 new-api-main “只存 override”的优势。
+3. `Can` 的顺序为：校验 permission 已注册 -> 解析角色 -> Root 直接允许 -> 非 Admin 拒绝 -> 查询用户 override -> 回退 Admin 基线。
+4. `CapabilitiesForUser(userID, systemRole)` 预加载该用户 override map 后构建矩阵，避免为每个动作重复查询数据库。
+5. `Capabilities(systemRole)` 继续保留旧签名，作为无用户上下文的兼容入口。
+6. 本轮测试只使用 SQLite 内存库，但实现坚持 GORM 抽象和通用字段类型，确保迁移路径兼容 MySQL/PostgreSQL。
+
+### 验收方式
+
+1. `go test ./service/authz`。
+2. `go test ./middleware -run TestRequirePermission`。
+3. `go test ./controller -run 'TestGetSelfReturnsAdminPermissions|TestGetSelfIncludesAuthzUserOverrides'`。
+4. `go test ./model -run Authz`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 并登录，调用 `/api/user/self` 确认 `permissions.admin_permissions` 仍返回完整权限矩阵；如本轮未开放管理 UI，则不通过页面写入 override，只验证现有页面和接口未回归。
+
+### 实施结果
+
+- 新增 `model.AuthzUserOverride`，使用 `user_id + resource + action` 唯一索引保存用户级 allow/deny override，字段均为跨数据库兼容的整数、短字符串和 bigint 时间戳。
+- 普通迁移与快速迁移均纳入 `AuthzUserOverride`，容器热更新后 3003 使用的 PostgreSQL 数据库已存在 `authz_user_overrides` 表和唯一索引。
+- `service/authz` 新增 `EffectAllow`、`EffectDeny`、`SetUserPermissions`、`SetUserPermissionsInTx`、`ClearUserAuthorization`、`ExplicitUserOverrides` 和 `CapabilitiesForUser`；保存时只持久化相对 Admin 基线不同的动作，降低冗余。
+- `Can(userID, systemRole, permission)` 现在按“权限已注册 -> 角色解析 -> Root superuser -> 用户级 override -> 角色基线”的顺序判定；未知权限继续失败关闭，普通用户即使存在误写 override 也不会获得管理权限。
+- `/api/user/self` 改为使用 `authz.CapabilitiesForUser(id, role)`，默认前端按钮显隐矩阵与后端路由权限表共享同一 override 语义。
+- 本轮未新增用户编辑页权限矩阵 UI 和管理 API，避免一次性扩大到用户表单、审计和批量保存流程；后续可在该基础层之上分批开放管理入口。
+
+### 验证记录
+
+- `go test ./service/authz`：通过。
+- `go test ./middleware -run TestRequirePermission`：通过。
+- `go test ./controller -run 'TestGetSelfReturnsAdminPermissions|TestGetSelfIncludesAuthzUserOverrides'`：通过。
+- `go test ./model -run Authz`：通过。
+- `go test ./service/authz ./middleware ./router`：通过。
+- `go test ./controller -run 'Authz|GetSelf|Permission'`：通过。
+- `go test ./model -run 'Authz|Migrate'`：通过。
+- `go test ./...`：通过。
+- `git diff --check`：通过。
+- 3003 `GET /` 返回 200，账号 `c1cada` 登录成功。
+- 3003 `GET /api/user/self` 返回 200，`permissions.admin_permissions.channel` 和 `permissions.admin_permissions.system_setting` 对 Root 均保持完整 `read/operate/write/sensitive_write/secret_view=true`，确认 Root 能力未被 override 基础层回退。
+- 3003 运行态数据库验证：`nexustok-hot-pg` 中 `to_regclass('public.authz_user_overrides')` 返回 `authz_user_overrides`，字段包含 `id/user_id/resource/action/effect/created_at/updated_at`，索引包含 `idx_authz_user_override_unique`。
+- MCP 浏览器验证：打开 `http://192.168.0.202:3003/`，在浏览器上下文登录并调用 `/api/user/self` 成功；跳转 `/channels` 后渠道管理页正常渲染，网络请求均为 200/301 正常跳转，控制台无新增错误，仅有 i18next 信息日志。

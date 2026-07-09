@@ -48,7 +48,7 @@ func setupUserAuthzControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuthzUserOverride{}))
 
 	t.Cleanup(func() {
 		model.DB = oldDB
@@ -107,6 +107,25 @@ func TestGetSelfReturnsAdminPermissions(t *testing.T) {
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "usage_log", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "usage_data", authz.ActionRead, false)
 	assertPermission(t, userResp.Data.Permissions.AdminPermissions, "system_setting", authz.ActionRead, false)
+}
+
+func TestGetSelfIncludesAuthzUserOverrides(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	user := model.User{Id: 201, Username: "scoped-admin", Password: "password", DisplayName: "scoped-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "scoped"}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, authz.SetUserPermissions(user.Id, authz.PermissionsMap{
+		authz.ResourceChannel: {
+			authz.ActionRead:           false,
+			authz.ActionSensitiveWrite: true,
+		},
+	}))
+
+	resp := performGetSelfForAuthz(t, user.Id, common.RoleAdminUser)
+
+	assertPermission(t, resp.Data.Permissions.AdminPermissions, "channel", authz.ActionRead, false)
+	assertPermission(t, resp.Data.Permissions.AdminPermissions, "channel", authz.ActionWrite, true)
+	assertPermission(t, resp.Data.Permissions.AdminPermissions, "channel", authz.ActionSensitiveWrite, true)
 }
 
 func TestUserManageActionNeedsSensitiveWrite(t *testing.T) {

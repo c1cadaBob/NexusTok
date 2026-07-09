@@ -472,7 +472,7 @@ func GetSelf(c *gin.Context) {
 
 	// 计算用户权限信息
 	permissions := calculateUserPermissions(userRole)
-	permissions["admin_permissions"] = authz.Capabilities(userRole)
+	permissions["admin_permissions"] = authz.CapabilitiesForUser(id, userRole)
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
