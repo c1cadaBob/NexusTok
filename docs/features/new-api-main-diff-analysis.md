@@ -3089,8 +3089,51 @@ new-api-main 在 relay 请求解析层统一限制了客户端可指定的最大
 3. `git diff --check` 确认无空白错误。
 4. 使用 MCP 打开 `http://192.168.0.202:3003/`，并在浏览器上下文调用一个无 token relay 请求和一个带临时 token/临时渠道的超大 `max_completion_tokens` 请求；前者应仍按认证边界返回 401，后者应在请求解析阶段返回明确 `max_tokens is invalid`，不触发真实上游。
 
+## 本轮实施评审：Secure Session Cookie 环境配置
+
+### 需求分析
+
+new-api-main 支持通过 `SESSION_COOKIE_SECURE=true` 让 Gin session cookie 只在 HTTPS 下发送，并要求同时提供 `SESSION_COOKIE_TRUSTED_URL` 作为可信 HTTPS 站点列表，避免生产环境误用非安全 Cookie。NexusTok 当前在 `main.go` 中固定 `Secure: false`，即使部署在 HTTPS 反代之后，也无法通过环境变量启用浏览器的 Secure Cookie 保护。考虑到 NexusTok 已有长期 session、Passkey、2FA、OAuth 和账号池登录会话，该配置属于低侵入但高价值的部署安全增强。
+
+本轮目标是把 Secure session cookie 配置发展成 NexusTok 原生环境能力：
+
+1. 新增 `common.SessionCookieSecure` 和 `common.SessionCookieTrustedURLs` 全局配置，默认保持 false/空列表，确保本地 HTTP 和现有热更新容器行为不变。
+2. 新增 `common.InitSessionCookieSettings()`，读取 `SESSION_COOKIE_SECURE` 和 `SESSION_COOKIE_TRUSTED_URL`，并校验组合关系。
+3. `SESSION_COOKIE_SECURE=true` 时必须提供一个或多个 HTTPS URL；非 HTTPS、空 URL、secure=false 却配置 trusted URL 均视为启动配置错误。
+4. `main.go` 的 session store 使用 `common.SessionCookieSecure`，不改变 Path、MaxAge、HttpOnly 和 SameSite。
+5. 补单元测试覆盖默认、缺失组合、非 HTTPS、多 URL 和尾逗号等边界。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 环境初始化 | `common/init.go`、`common/session_cookie.go` | 解析并校验 Secure session cookie 环境变量，配置错误启动即失败。 |
+| 全局配置 | `common/session_cookie.go` | 新增 session cookie secure 和 trusted URL 配置变量。 |
+| HTTP session store | `main.go` | 将 `sessions.Options.Secure` 从固定 false 改为配置值。 |
+| 测试 | `common/session_cookie_test.go` | 覆盖 env 解析和校验边界。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险和验收方式。 |
+
+### 风险评估
+
+1. 默认值仍为 `Secure=false`，不会影响当前 `http://192.168.0.202:3003/` 热更新环境和普通本地开发；只有显式开启环境变量时才改变 Cookie 行为。
+2. 如果开启 Secure 后仍通过 HTTP 访问，浏览器不会发送 session cookie，这是 HTTPS 部署的预期行为；因此必须在文档和错误信息中明确 `SESSION_COOKIE_SECURE=true` 需要 HTTPS trusted URL。
+3. `SESSION_COOKIE_TRUSTED_URL` 本轮只作为配置校验和后续扩展预留，不接入 CORS、OAuth 回调或 redirect 逻辑，避免扩大影响面。
+4. 初始化错误使用 `log.Fatal` 中止启动，能够让错误部署尽早失败，而不是以半安全状态运行。
+
+### 方案评审
+
+采用最小配置增强：新增独立 `common/session_cookie.go`，不混入 session secret 文件；`InitEnv()` 在解析 `SessionMaxAge` 后调用 `InitSessionCookieSettings()`，失败时 `log.Fatal`。URL 校验只接受 `https` scheme 和非空 host，逗号分隔列表会 trim 后保存原始 URL 字符串。`main.go` 只替换 `Secure: false` 为 `Secure: common.SessionCookieSecure`，其它 session 选项保持不变。
+
+验收方式：
+
+1. `go test ./common` 覆盖环境变量解析。
+2. `go test ./controller` 确认会话相关控制器测试不受默认值影响。
+3. `git diff --check` 确认无空白错误。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/`，确认默认 Secure=false 下页面仍正常加载、`/api/status` 和 `/api/user/self` 正常、控制台无新增错误。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Secure Session Cookie 环境配置 | `common/session_cookie.go`、`common/init.go`、`main.go`、`common/session_cookie_test.go` | 新增 `SESSION_COOKIE_SECURE` 与 `SESSION_COOKIE_TRUSTED_URL` 配置，默认保持 HTTP 开发兼容；开启 Secure 时要求可信 HTTPS URL，并让 session store 使用配置值。 |
 | 2026-07-09 | Max Token 家族字段上限保护 | `relay/helper/valid_request.go`、`relay/helper/max_tokens_bounds_test.go` | 统一限制 OpenAI `max_tokens/max_completion_tokens`、Claude `max_tokens/max_tokens_to_sample`、Gemini `maxOutputTokens/max_output_tokens` 和 Responses `max_output_tokens`，避免极端输出 token 参数绕过预扣费与 int 转换安全边界。 |
 | 2026-07-09 | 额度饱和日志前端可观测性 | `web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 管理员使用日志列表与详情弹窗展示 `other.admin_info.quota_saturation`，补齐钳制类型、原始值、钳制结果和操作来源；新增六语翻译并保持非管理员不可见。 |
 | 2026-07-09 | 渠道新增缓存刷新 | `controller/channel.go`、`controller/channel_add_cache_test.go` | 新增渠道成功后同步刷新分发缓存和代理客户端缓存，避免当前进程仍按旧缓存返回 `model_not_found`；测试覆盖成功新增与校验失败路径。 |

@@ -90,6 +90,9 @@ func InitEnv() {
 		SessionSecret = sessionSecret
 	}
 	SessionMaxAge = resolveSessionMaxAge(SessionMaxAge)
+	if err := InitSessionCookieSettings(); err != nil {
+		log.Fatal(err)
+	}
 	if os.Getenv("CRYPTO_SECRET") != "" {
 		CryptoSecret = os.Getenv("CRYPTO_SECRET")
 	} else {

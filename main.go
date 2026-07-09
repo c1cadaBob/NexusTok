@@ -239,11 +239,11 @@ func main() {
 	// 使用 Cookie 存储会话数据，配置安全选项
 	store := cookie.NewStore([]byte(common.SessionSecret))
 	store.Options(sessions.Options{
-		Path:     "/",                     // Cookie 路径
-		MaxAge:   common.SessionMaxAge,    // 会话过期时间（秒）
-		HttpOnly: true,                    // 仅 HTTP 访问，防止 XSS
-		Secure:   false,                   // 是否仅 HTTPS（生产环境应设为 true）
-		SameSite: http.SameSiteStrictMode, // SameSite 策略，防止 CSRF
+		Path:     "/",                        // Cookie 路径
+		MaxAge:   common.SessionMaxAge,       // 会话过期时间（秒）
+		HttpOnly: true,                       // 仅 HTTP 访问，防止 XSS
+		Secure:   common.SessionCookieSecure, // 是否仅 HTTPS（生产环境可通过 SESSION_COOKIE_SECURE=true 启用）
+		SameSite: http.SameSiteStrictMode,    // SameSite 策略，防止 CSRF
 	})
 	// 注册会话中间件，会话名称为 "session"
 	server.Use(sessions.Sessions("session", store))
