@@ -3335,8 +3335,54 @@ NexusTok 当前 `/v1/models` 已能按用户组、Token 模型限制和计费配
 4. `git diff --check` 通过，无空白错误。
 5. MCP Chrome DevTools 仍无法连接 `http://127.0.0.1:9222/json/version`，本轮使用 `curl` 替代访问热更新站点：`http://192.168.0.202:3003/` 返回 200，`/api/status` 返回 200，无 Token `/v1/models` 返回 401 `Invalid token`，认证边界未放宽。
 
+## 本轮实施评审：Rankings 路由最新配置守卫
+
+### 需求分析
+
+new-api-main 的 `/rankings` 页面和 `/pricing` 一样，进入路由前会调用 `getFreshModuleAccess('rankings')` 拉取最新 `/api/status`，再根据 `HeaderNavModules.rankings.enabled/requireAuth` 决定是否允许访问。NexusTok 当前已经具备后端 `HeaderNavModuleAuth`、前端集中解析和 Rankings 缓存守卫，但页面守卫仍只读取 `localStorage.status`：当管理员刚关闭排行榜或改成登录可见时，已经打开过站点的浏览器可能继续按旧缓存进入页面，随后才由接口鉴权或导航刷新表现出新配置。
+
+本轮目标是把 new-api-main 的 Rankings 新鲜配置检查转成 NexusTok 默认前端原生能力：
+
+1. `/rankings` 进入路由前调用已有 `getFreshModuleAccess('rankings')`，与 Pricing 使用同一配置读取语义。
+2. `enabled=false` 时跳转首页；`requireAuth=true` 且本地无用户时跳转 `/sign-in`，并用 `location.href` 保留原始查询参数。
+3. 保留 NexusTok 自有 `period=all` 搜索参数，不回退到 new-api-main 只支持 `today/week/month/year` 的 schema。
+4. 不改排行榜页面组件、数据 API、后端 HeaderNavModuleAuth 和顶部导航渲染，避免把路由守卫与排行统计逻辑混在一起。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Rankings 路由 | `web/default/src/routes/rankings/index.tsx` | 从缓存访问守卫改为进入路由时刷新最新 status；登录跳转保留完整 location。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式。 |
+
+### 风险评估
+
+1. 每次进入 Rankings 路由会多一次 `/api/status` 请求，和 Pricing 保持一致；该请求是低频导航配置读取，不影响排行榜数据聚合和 Relay 热路径。
+2. `/api/status` 失败时 `getFreshModuleAccess` 会 fail-closed，页面可能短暂跳转首页或登录页；这比配置不可确认时误开放受控页面更安全。
+3. `useAuthStore` 仍只做前端本地用户判断，服务端 `/api/rankings` 的 HeaderNavModuleAuth 继续作为最终边界；本轮不放宽任何后端鉴权。
+4. 保留 `period=all` 可避免破坏 NexusTok 当前排行榜页面已有的“全部时间”视图和 URL 兼容性。
+
+### 方案评审
+
+采用最小路由改动：`rankings/index.tsx` 将 `getModuleAccess` 替换为 `getFreshModuleAccess`，`beforeLoad` 改为 async 并接收 `location`，未登录跳转时使用 `location.href` 保存原始 URL。由于 `getFreshModuleAccess` 已在 Pricing 切片中实现并验证，本轮不新增 helper、不改 `nav-modules.ts`，只让 Rankings 复用同一原生能力。
+
+验收方式：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 确认默认前端路由类型通过。
+2. `git diff --check` 确认无空白错误。
+3. 使用 MCP 打开 `http://192.168.0.202:3003/rankings`，验证页面按当前配置加载或跳转；若 MCP Chrome 仍不可用，则用 `curl` 访问主页、`/api/status`、`/rankings` 和前端 bundle 片段作为替代验证。
+
+验证记录：
+
+1. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 Rankings 路由的 async `beforeLoad` 和跳转参数类型正确。
+2. `git diff --check` 通过，无空白错误。
+3. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；本轮按约定使用 `curl` 替代访问热更新站点。
+4. `curl` 访问 `http://192.168.0.202:3003/`、`/api/status`、`/rankings` 和 `/static/js/index.js` 均返回 `HTTP/1.1 200 OK`，确认 3003 页面与资源可访问。
+5. 前端 bundle 中可检索到 `/api/status`、`rankings`、`requireAuth`、`sign-in` 片段，确认热更新资源包含本轮配置刷新守卫相关逻辑。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Rankings 路由最新配置守卫 | `web/default/src/routes/rankings/index.tsx` | 默认前端 Rankings 路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.rankings` 判断关闭跳转首页、登录可见跳转登录；保留 NexusTok 自有 `period=all` 查询参数。 |
 | 2026-07-09 | `/v1/models` 动态 `owned_by` | `model/model_meta.go`、`controller/model.go`、`model/model_owner_test.go`、`controller/model_*test.go` | OpenAI 兼容模型列表按当前用户/Token 可用分组查询首选启用渠道，并用实际渠道归属覆盖 `owned_by`；未知模型仍回落 `custom`，Token 模型限制路径缺少分组上下文时保持旧兼容行为。 |
 | 2026-07-09 | Pricing 路由最新配置守卫 | `web/default/src/lib/nav-modules.ts`、`web/default/src/routes/pricing/*` | 默认前端 Pricing 列表与详情路由进入前刷新 `/api/status`，按最新 `HeaderNavModules.pricing` 判断关闭跳转首页、登录可见跳转登录，并写回本地 status 缓存；后端 HeaderNavModuleAuth 仍是最终接口边界。 |
 | 2026-07-09 | 登录成功审计日志 | `model/log.go`、`controller/user.go`、`web/default/src/features/usage-logs/*`、`web/default/src/i18n/locales/*.json` | 新增 `LogTypeLogin=7` 与成功登录审计记录，登录落点写入登录方式、IP、User-Agent 和结构化 `op`；默认前端 Usage Logs 支持 Login 类型筛选与详情展示，并补齐六语翻译。 |
