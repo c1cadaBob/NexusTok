@@ -39,7 +39,7 @@ import { Button } from '@/components/ui/button'
 
 type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string
-  language: BundledLanguage
+  language: BundledLanguage | string
   showLineNumbers?: boolean
 }
 
@@ -74,21 +74,67 @@ const lineNumberTransformer: ShikiTransformer = {
 
 export async function highlightCode(
   code: string,
-  language: BundledLanguage,
+  language: BundledLanguage | string,
   showLineNumbers = false
 ) {
   const transformers: ShikiTransformer[] = showLineNumbers
     ? [lineNumberTransformer]
     : []
 
-  return codeToHtml(code, {
-    lang: language,
-    themes: {
-      light: 'one-light',
-      dark: 'one-dark-pro',
-    },
-    transformers,
-  })
+  const requestedLanguage = normalizeCodeLanguage(language)
+
+  try {
+    return await codeToHtml(code, {
+      lang: requestedLanguage,
+      themes: {
+        light: 'one-light',
+        dark: 'one-dark-pro',
+      },
+      transformers,
+    })
+  } catch {
+    // 模型输出的 fence 语言可能不是 Shiki 支持项；回退 plaintext，保证响应区不被高亮错误拖垮。
+    return codeToHtml(code, {
+      lang: 'plaintext',
+      themes: {
+        light: 'one-light',
+        dark: 'one-dark-pro',
+      },
+      transformers,
+    })
+  }
+}
+
+function normalizeCodeLanguage(language: BundledLanguage | string) {
+  const normalized = String(language || 'plaintext')
+    .trim()
+    .toLowerCase()
+
+  if (!/^[a-z0-9][a-z0-9+#._-]{0,31}$/i.test(normalized)) {
+    return 'plaintext'
+  }
+
+  if (normalized === 'text' || normalized === 'plain') {
+    return 'plaintext'
+  }
+
+  if (normalized === 'shell' || normalized === 'sh') {
+    return 'bash'
+  }
+
+  if (normalized === 'js') {
+    return 'javascript'
+  }
+
+  if (normalized === 'ts') {
+    return 'typescript'
+  }
+
+  if (normalized === 'golang') {
+    return 'go'
+  }
+
+  return normalized
 }
 
 export const CodeBlock = ({

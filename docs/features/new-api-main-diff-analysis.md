@@ -3677,8 +3677,66 @@ new-api-main 默认前端提供了 `HtmlContent`、`RichContent` 和基于 DOMPu
 7. `./node_modules/.bin/eslint` 针对本轮触碰的前端文件运行无错误；`src/components/ui/markdown.tsx` 按项目 ignore 规则被跳过并仅产生 warning。
 8. 全量 `bun run lint` 和 `bun run copyright:check` 仍受既有未触碰文件影响失败，主要涉及 `risk-acknowledgement-dialog.tsx`、`flow-charts.tsx`、`system-info/*`、`usage-logs/*` 等旧问题；本轮未将这些无关修复混入提交。
 
+## 本轮实施评审：Playground AI 响应受控渲染
+
+### 需求分析
+
+new-api-main 默认前端已经把模型响应渲染从第三方黑盒组件迁移为本地可审计的 AST 渲染链路：`Response` 使用 `stream-markdown-parser` 解析 Markdown，再由 `response-renderer-*` 文件按节点类型渲染文本、段落、代码块、图片、表格、脚注、GitHub alert、`details/summary` 等内容。HTML block/inline 默认文本化，只对白名单内的 `details` 走受控组件；图片 URL 经过 `sanitizeImageSrc`；超长响应超过 20,000 字符时降级为纯文本，避免大响应解析拖慢页面。
+
+NexusTok 当前 `web/default/src/components/ai-elements/response.tsx` 仍直接包装 `streamdown`，只做自定义包装标签和 `<think>` 标签移除。虽然 `streamdown` 自身带有安全依赖，但项目侧无法逐节点审计 HTML、图片、脚注、表格、details 等行为，也没有本地解析长度上限。Playground 是管理员和用户调试上游模型的重要页面，响应内容由模型或上游返回，可控性和降级策略应成为 NexusTok 原生能力。
+
+本轮目标：
+
+1. 引入 new-api-main 的本地 Response 解析和渲染思路，保留 NexusTok 现有 `<Response>{content}</Response>` 调用 API。
+2. HTML block/inline 默认文本化，仅 `details/summary` 走受控渲染；图片 URL 通过 parser 提供的 `sanitizeImageSrc` 过滤，失败时降级显示 alt 文本。
+3. 支持表格、脚注、GitHub alert 风格 blockquote、checkbox、硬换行、水平线和基础数学文本降级；代码块复用 NexusTok 当前 `CodeBlock`，不在本轮升级 CodeMirror 代码块。
+4. 对超过 20,000 字符的响应不解析 AST，直接文本展示，避免极端输出影响 Playground 交互。
+5. 补齐新增可见/可访问文案的六语 i18n 翻译。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Response 主入口 | `web/default/src/components/ai-elements/response.tsx` | 从 `streamdown` wrapper 改为本地 `stream-markdown-parser` AST 渲染；保留 `children`、`className`、`final` API。 |
+| Response 解析和类型 | `web/default/src/components/ai-elements/response-content.ts`、`response-types.ts`、`response-node-guards.ts` | 统一清理 AI wrapper 标签、规范 Markdown 示例 fence、拆分 footnote/body 节点，并提供节点类型守卫。 |
+| Response 节点渲染 | `web/default/src/components/ai-elements/response-renderer*.tsx` | 受控渲染段落、标题、列表、代码块、链接、图片、表格、脚注、alert、details；HTML 默认文本化。 |
+| 依赖 | `web/default/package.json`、`web/default/bun.lock` | 新增 `stream-markdown-parser`，移除 Response 不再直接使用的 `streamdown`。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `Image not available`、`Back to footnote {{id}} reference`、`Note`、`Tip`、`Important` 等文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验收方式，并补充落地清单。 |
+
+### 风险评估
+
+1. 本轮只改 AI 响应展示组件，不改 Playground 消息流、请求参数、存储 schema、Relay 接口、计费和权限。
+2. Markdown 渲染行为会从 `streamdown` 的内置策略变为 NexusTok 本地策略，少量边缘 Markdown 样式可能有差异；收益是 HTML、图片、details、脚注等行为可审计。
+3. new-api-main 的 `renderCodeBlock` 依赖新版 `CodeBlock` 的折叠、toolbar、title 等 props；NexusTok 当前 `CodeBlock` 不兼容。本轮采用适配版 `renderCodeBlock`，继续使用当前 Shiki 代码块和复制按钮，避免引入 CodeMirror 依赖与更大 UI 变更。
+4. 数学节点本轮按代码/预格式化文本降级，不引入 KaTeX；这保持依赖克制，避免把 Markdown 能力扩展和安全渲染混成一个大改。
+5. 新增 `stream-markdown-parser` 后需要完整跑 TypeScript 和生产构建；如果 parser 类型与当前 React 版本存在差异，优先通过本地类型守卫和适配层处理，不修改调用页面。
+
+### 方案评审
+
+采用“本地 AST 渲染器 + 代码块适配”的小步原生化方案：复制 new-api-main 的 Response 解析结构和节点渲染拆分，版权头改为 c1cada；`response-renderer-blocks.tsx` 中的代码块渲染改成 NexusTok 当前 `CodeBlock` 支持的 `code/language/showLineNumbers` props；表格、提示块和分隔线落到当前默认前端已有的 `Table`、`Alert`、`Separator` 基础组件上；保留 `Response` 的 `memo` 和 `final` 语义。依赖层仅新增 `stream-markdown-parser` 并移除直接 `streamdown`，不迁移新版 `CodeBlock`、不新增 CodeMirror/KaTeX、不重构 Playground 页面目录结构。
+
+验收方式：
+
+1. `cd web/default && bun run i18n:sync` 确认新增 key 进入六语翻译文件并保持顺序。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 覆盖 Response 类型和调用点。
+3. `cd web/default && ./node_modules/.bin/rsbuild build` 覆盖生产构建和 chunk 分包。
+4. 针对本轮触碰文件运行 `eslint`，并记录全量 lint 中的既有问题是否仍与本轮无关。
+5. 使用 MCP 打开 `http://192.168.0.202:3003/playground` 检查页面；若 MCP Chrome 仍不可用，则用 `curl` 访问 3003 主页、`/api/status`，并拉取相关 chunk 确认新 Response 代码已热更新。
+
+验证记录：
+
+1. `cd web/default && bun run i18n:sync` 通过，六语 locale 已包含新增的图片降级、脚注返回和 alert 标题文案。
+2. `cd web/default && ./node_modules/.bin/tsc -b` 通过，确认 `stream-markdown-parser` 节点类型、本地守卫、`Response final` 调用点和 `CodeBlock` 未知语言回退类型正确。
+3. `cd web/default && ./node_modules/.bin/rsbuild build` 通过，确认新增依赖、移除直接 `streamdown` 后生产构建正常。
+4. 针对本轮触碰文件运行 `./node_modules/.bin/eslint ...` 通过；`git diff --check` 通过，无空白错误。
+5. MCP Chrome DevTools 仍无法连接，错误为无法从 `http://127.0.0.1:9222/json/version` 获取 browser WebSocket URL；因此本轮按约定使用真实 3003 HTTP 请求替代页面验证。
+6. `curl --noproxy '*' -H 'Cache-Control: no-cache' http://192.168.0.202:3003/`、`/api/status` 和 `/playground` 均返回 `HTTP/1.1 200 OK`，确认指定热更新站点入口、状态接口和 Playground 路由可访问。
+7. 从 `http://192.168.0.202:3003` 拉取 `/static/js/index.js`、`/static/js/async/2459.js`、`/static/js/async/5395.js`，确认线上静态资源包含 `nexustok-response`、`Image not available`、`Back to footnote`、`footnote-ref` 等本轮 Response renderer 特征，说明热更新页面已加载新代码。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Playground AI 响应受控渲染 | `web/default/src/components/ai-elements/{response.tsx,response-content.ts,response-types.ts,response-node-guards.ts,response-renderer*.tsx}`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/playground/components/playground-chat.tsx`、`web/default/src/i18n/locales/*.json`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 AST Response renderer，移除直接 `streamdown`，由 `stream-markdown-parser` 解析并本地受控渲染表格、脚注、图片、alert、details、checkbox 和代码块；HTML 默认文本化、图片 URL 过滤、超过 20,000 字符纯文本降级，Playground streaming 消息按 `final` 状态解析。 |
 | 2026-07-09 | 默认前端安全富文本渲染 | `web/default/src/components/html-content.tsx`、`web/default/src/components/rich-content.tsx`、`web/default/src/components/ui/markdown.tsx`、`web/default/src/lib/content-format.ts`、`web/default/src/features/home/index.tsx`、`web/default/src/features/about/index.tsx`、`web/default/src/features/legal/legal-document.tsx`、`web/default/src/components/notification-dialog.tsx`、`web/default/src/features/dashboard/components/overview/announcement-detail-dialog.tsx`、`web/default/src/features/dashboard/components/overview/faq-panel.tsx`、`web/default/src/components/layout/components/footer.tsx`、`web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的 `HtmlContent`/`RichContent` 安全渲染能力，Markdown 移除 raw HTML 执行；首页、About、Legal、通知、公告、FAQ 和自定义页脚 HTML 统一进入 DOMPurify 清洗链路，完整 HTML 页面使用 shadow root 隔离，同时移除源码不再使用的直接 `rehype-raw` 依赖。 |
 | 2026-07-09 | 视频任务时长上限与直连 `image` 标准化 | `relay/common/relay_utils.go`、`relay/relay_task.go`、`relay/channel/task/gemini/billing.go`、`relay/channel/task/ali/adaptor.go`、`relay/common/relay_utils_test.go`、`relay/channel/task/gemini/billing_test.go`、`relay/channel/task/ali/adaptor_test.go` | 任务入口拒绝负数和超过 3600 秒的 `duration`/`seconds`，直连 JSON `image` 会标准化为图生视频输入；历史 remix、Gemini/Veo metadata 和 Ali metadata 进入 OtherRatios 前统一钳制时长倍率。 |
 | 2026-07-09 | Ollama 非流式 `tool_calls` 响应兼容 | `relay/channel/ollama/stream.go`、`relay/channel/ollama/stream_test.go` | Ollama 非流式响应会把上游 `message.tool_calls` 转为 OpenAI 兼容 `message.tool_calls`，保留工具参数显式零值，空参数回退 `{}`；存在工具调用时非流式和流式结束原因统一为 `tool_calls`。 |

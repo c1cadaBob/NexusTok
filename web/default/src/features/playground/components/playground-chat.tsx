@@ -48,7 +48,7 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from '@/components/ai-elements/sources'
-import { MESSAGE_ROLES } from '../constants'
+import { MESSAGE_ROLES, MESSAGE_STATUS } from '../constants'
 import { getMessageContentStyles } from '../lib/message-styles'
 import { parseThinkTags } from '../lib/message-utils'
 import type { Message as MessageType } from '../types'
@@ -256,7 +256,14 @@ export function PlaygroundChat({
                                             getMessageContentStyles()
                                           )}
                                         >
-                                          <Response>{displayContent}</Response>
+                                          <Response
+                                            final={
+                                              message.status !==
+                                              MESSAGE_STATUS.STREAMING
+                                            }
+                                          >
+                                            {displayContent}
+                                          </Response>
                                         </MessageContent>
                                         {actions}
                                       </>
