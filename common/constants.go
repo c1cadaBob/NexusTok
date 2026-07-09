@@ -207,9 +207,21 @@ var RetryTimes = 0 // 请求失败重试次数（0 表示不重试）
 
 var IsMasterNode bool // 是否为主节点（多节点部署时标识主节点）
 
-// NodeName 节点名称，从 NODE_NAME 环境变量读取；
-// 用于审计日志中标识节点身份，在容器/K8s 部署时比自动探测到的容器内网 IP 更具可读性。
+const (
+	NodeNameSourceManual   = "manual"   // 节点名由运维通过 NODE_NAME 显式配置。
+	NodeNameSourceHostname = "hostname" // 节点名由主机名自动兜底生成。
+)
+
+// NodeName 节点名称，优先从 NODE_NAME 环境变量读取，未配置时回退主机名。
+// 它用于审计日志、用量导出、SystemTask runner 和系统实例心跳中标识当前节点；
+// 多实例部署时必须显式配置稳定且唯一的 NODE_NAME，避免容器重建后主机名变化。
 var NodeName = ""
+
+// NodeNameSource 记录 NodeName 的来源，便于系统信息页区分手动配置和自动兜底。
+var NodeNameSource = NodeNameSourceHostname
+
+// NodeNameManuallyConfigured 表示节点名是否来自运维显式配置。
+var NodeNameManuallyConfigured bool
 
 var requestInterval int           // 请求间隔（内部使用）
 var RequestInterval time.Duration // 请求间隔（时间间隔格式）

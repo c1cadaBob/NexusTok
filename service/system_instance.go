@@ -29,19 +29,12 @@ var systemInstanceReporterOnce sync.Once
 // 到主机名，并通过 should_configure_manually 提醒多副本部署应显式设置稳定名称。
 type SystemInstanceInfo struct {
 	SchemaVersion int                        `json:"schema_version"`
-	Node          SystemInstanceNodeInfo     `json:"node"`
+	Node          common.NodeIdentity        `json:"node"`
 	Role          SystemInstanceRoleInfo     `json:"role"`
 	Runtime       SystemInstanceRuntimeInfo  `json:"runtime"`
 	Host          SystemInstanceHostInfo     `json:"host"`
 	Resources     SystemInstanceResourceInfo `json:"resources"`
 	Extra         map[string]any             `json:"extra,omitempty"`
-}
-
-type SystemInstanceNodeInfo struct {
-	Name                    string `json:"name"`
-	Source                  string `json:"source"`
-	ManuallyConfigured      bool   `json:"manually_configured"`
-	ShouldConfigureManually bool   `json:"should_configure_manually"`
 }
 
 type SystemInstanceRoleInfo struct {
@@ -136,24 +129,25 @@ func ReportCurrentSystemInstance() error {
 //
 // 多节点部署必须使用稳定的 NODE_NAME；未配置时使用主机名兜底，使单节点部署
 // 开箱可观测，同时在返回结构中标记 should_configure_manually 便于页面提醒。
-func ResolveSystemInstanceNode() (SystemInstanceNodeInfo, error) {
-	name := strings.TrimSpace(common.NodeName)
-	if name != "" {
-		return SystemInstanceNodeInfo{
-			Name:               name,
-			Source:             "env",
-			ManuallyConfigured: true,
-		}, nil
+func ResolveSystemInstanceNode() (common.NodeIdentity, error) {
+	identity := common.GetNodeIdentity()
+	if strings.TrimSpace(identity.Name) != "" {
+		identity.Name = strings.TrimSpace(identity.Name)
+		if identity.Source == "" {
+			identity.Source = common.NodeNameSourceHostname
+		}
+		identity.ShouldConfigureManually = !identity.ManuallyConfigured
+		return identity, nil
 	}
 
 	hostname, err := os.Hostname()
 	hostname = strings.TrimSpace(hostname)
 	if err != nil || hostname == "" {
-		return SystemInstanceNodeInfo{}, fmt.Errorf("system instance node name is empty")
+		return common.NodeIdentity{}, fmt.Errorf("system instance node name is empty")
 	}
-	return SystemInstanceNodeInfo{
+	return common.NodeIdentity{
 		Name:                    hostname,
-		Source:                  "hostname",
+		Source:                  common.NodeNameSourceHostname,
 		ManuallyConfigured:      false,
 		ShouldConfigureManually: true,
 	}, nil

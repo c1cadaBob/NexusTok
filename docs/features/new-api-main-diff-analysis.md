@@ -4929,8 +4929,65 @@ new-api-main 在 `web/default/src/components/table-id.tsx`、`provider-badge.tsx
 8. 线上 chunk 特征确认：`2252.js` 包含 `provider-badge`；`4516.js` 包含 `ResizeObserver`、`Tag Aggregate`、`Multi-key: Random rotation`、`From IO.NET deployment`、`Model Name`；`4050.js` 包含 `Model Name`、`Vendor`；`index.js` 路由表包含模型管理和渠道管理相关加载配置。确认 3003 页面资源已加载本轮表格展示原子组件和两个高频表格接入产物。
 9. 本轮未新增 UI 文案，只新增组件标识和中文维护注释；无需修改 `en/zh/fr/ja/ru/vi` locale，也无需运行 `bun run i18n:sync`。
 
+## 本轮实施评审：节点身份公共化原生化
+
+### 需求分析
+
+new-api-main 新增了 `common/node_identity.go`，把节点身份解析统一沉到 `common` 层：优先使用运维显式配置的 `NODE_NAME`，未配置时回退主机名，并暴露来源、是否手动配置、是否建议手动配置等元信息。NexusTok 当前已经有系统实例心跳和前端 `Configure NODE_NAME` 提示，但解析逻辑仍主要写在 `service/system_instance.go`；`common.NodeName` 本身只读取环境变量，导致充值审计、普通请求日志、`QuotaData` 用量流和 SystemTask runner 在未配置 `NODE_NAME` 时仍可能写入空节点名，而系统实例列表却显示 hostname。这个差异会让多实例排障和日志关联不一致。
+
+本轮目标是把 new-api-main 的节点身份公共化能力转为 NexusTok 原生能力：
+
+1. 在 `common` 层新增 `NodeIdentity`、`GetNodeIdentity()` 和初始化 helper，集中管理 `NodeName`、来源和手动配置标记。
+2. `InitEnv()` 初始化时调用节点身份 helper，使 `common.NodeName` 在未配置 `NODE_NAME` 时也有 hostname 兜底；审计日志、用量导出、SystemTask runner 和系统实例心跳共享同一个非空身份。
+3. `service/system_instance.go` 复用 `common.NodeIdentity`，保留 `ResolveSystemInstanceNode()` 作为服务层校验包装，避免上报空节点名。
+4. 保持前端系统实例页面现有 `Configure NODE_NAME` 提示和六语文案不变；本轮不新增 UI 文案。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 公共节点身份 | `common/constants.go`、`common/init.go`、`common/node_identity.go` | 新增节点名来源常量、手动配置标记和统一身份查询；未配置 `NODE_NAME` 时回退 hostname。 |
+| 系统实例上报 | `service/system_instance.go`、`service/system_instance_test.go` | 心跳上报复用 common 身份，测试覆盖手动配置、hostname 兜底和空身份错误路径。 |
+| 公共身份测试 | `common/node_identity_test.go` | 覆盖 `NODE_NAME` 手动配置和 hostname fallback 的全局变量语义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求、影响、风险、方案、验收方式和验证记录。 |
+
+### 风险评估
+
+1. `common.NodeName` 从“未配置时为空”变为“未配置时 hostname”，会改变新增日志、充值审计、用量导出和 SystemTask runner ID 的节点名字段；这是预期修复，但需要确认没有测试依赖全局 `common.NodeName == ""` 的旧语义。
+2. hostname 不是多实例生产环境的稳定身份，系统实例页面仍必须通过 `should_configure_manually=true` 提示运维配置 `NODE_NAME`；本轮保留该字段，不把 hostname 当成手动配置。
+3. `InitEnv()` 运行在进程启动早期，节点身份 helper 不能依赖数据库、Redis、logger 或复杂配置，避免初始化环路；实现只读取环境变量和 `os.Hostname()`。
+4. `os.Hostname()` 在极端环境可能失败或返回空；此时 `NodeName` 保持空，`ReportCurrentSystemInstance()` 继续返回错误，不写入空主键的实例心跳。
+5. 本轮不改数据库结构、不改路由、不改系统实例 API response schema；前端类型和页面已经兼容 `name/source/manually_configured/should_configure_manually`。
+6. 后端改动没有新增前端文案，不需要更新 locale；但仍需按项目要求尝试 MCP/3003 验证 `/system-info` 和 `/api/status`。
+
+### 方案评审
+
+采用“common 层统一身份 + service 层轻校验”的方案，而不是只在系统实例服务里继续复制 hostname fallback。`common.InitEnv()` 初始化 `NodeName`、`NodeNameSource`、`NodeNameManuallyConfigured`，所有使用 `common.NodeName` 的现有路径自然获得一致身份；`service.ResolveSystemInstanceNode()` 保留并复用 `common.GetNodeIdentity()`，只负责上报前的空值兜底和错误返回。这样能吸收 new-api-main 的基础设施优势，同时不改变数据库迁移、API schema、系统信息页面和日志写入调用点。
+
+验收方式：
+
+1. `go test ./common ./service -run 'Test(NodeIdentity|ResolveSystemInstanceNode)'`，验证节点身份解析和系统实例服务包装。
+2. `go test ./model -run TestSystemInstance`，确认系统实例模型读写仍兼容。
+3. `go test ./service -run TestSystemTask`，确认 SystemTask runner 相关逻辑仍可构建。
+4. `go test ./common ./service ./model`，覆盖本轮相关包的常规测试。
+5. `git diff --check` 检查补丁空白。
+6. 优先使用 MCP 打开 `http://192.168.0.202:3003/system-info`，确认页面和控制台状态；如 MCP Chrome 仍不可用，则用 `curl --noproxy '*'` 访问 `/system-info`、`/api/system-info/instances` 和 `/api/status`，确认 3003 运行页面和后端接口可访问，并记录无法真实浏览器验证的原因。
+
+验证记录：
+
+1. 单元测试通过：`go test ./common -run TestInitNodeNameIdentity` 覆盖 `NODE_NAME` 手动配置与 hostname fallback 的公共身份初始化语义。
+2. 定向测试通过：`go test ./common ./service -run 'Test(NodeIdentity|ResolveSystemInstanceNode)'`。其中 `common` 包正则未命中测试名，已由上一条命令单独覆盖；`service` 包覆盖系统实例节点解析包装。
+3. 相关服务测试通过：`go test ./service -run 'Test(ResolveSystemInstanceNode|SystemTask)'`，确认系统实例节点解析和 SystemTask runner 相关逻辑仍可构建。
+4. 模型测试通过：`go test ./model -run TestSystemInstance`，确认系统实例心跳模型写入、列表和响应转换不受影响。
+5. 相关包整包测试通过：`go test ./common ./service ./model`。
+6. 补丁空白检查通过：`git diff --check`。
+7. MCP 浏览器验证已按要求尝试打开 `http://192.168.0.202:3003/system-info`，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。因此本轮采用同一 3003 服务的真实 HTTP 请求兜底验证。
+8. 3003 页面与接口验证通过：`/` 返回 200，`/system-info` 返回 200，`/api/status` 返回 200；未登录访问 `/api/system-info/instances` 返回 401，消息为 `Unauthorized, not logged in and no access token provided`。
+9. 登录态接口验证通过：使用账号 `c1cada` 登录 `/api/user/login?turnstile=` 返回 `success=true`，随后按默认前端 `web/default/src/lib/api.ts` 的约定携带 `NexusTok-User: 1` 和 session cookie 访问 `/api/system-info/instances` 返回 200。返回数据包含 1 个在线实例，节点字段为 `name=nexustok-hot-node-1`、`source=manual`、`manually_configured=true`、`should_configure_manually=false`，确认系统实例页面消费的新结构已在热更新容器生效。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | 节点身份公共化 | `common/node_identity.go`、`common/constants.go`、`common/init.go`、`service/system_instance.go`、`service/system_instance_test.go` | 原生化 new-api-main 的节点身份解析能力；`common.NodeName` 优先使用 `NODE_NAME`，未配置时回退 hostname，并暴露来源和手动配置标记；系统实例心跳复用公共身份，日志、用量导出和 SystemTask runner 共享同一节点名语义。 |
 | 2026-07-09 | 表格展示原子组件 | `web/default/src/components/{table-id.tsx,provider-badge.tsx,truncated-text.tsx,long-text.tsx}`、`web/default/src/features/{channels,models}/components/*-columns.tsx` | 原生化 new-api-main 的表格 ID、provider badge 和长文本截断优势；新增公共 `TableId`、`ProviderBadge`、`TruncatedText`，并让 `LongText` 支持响应式 overflow 重新测量；渠道和模型两张高频表先行接入，保留账号池、多 Key、IO.NET、上游模型同步、权限动作、筛选和 API 语义不变。 |
 | 2026-07-09 | 模型倍率 JSON 模式 CodeMirror 编辑器 | `web/default/src/components/json-code-editor.tsx`、`web/default/src/components/ai-elements/code-block.tsx`、`web/default/src/features/system-settings/models/model-ratio-form.tsx` | 原生化 new-api-main 的 JSON 结构化编辑体验；新增公共 `JsonCodeEditor` 复用现有 CodeMirror 底座，模型倍率 JSON 模式从普通 `Textarea` 切换为带行号、状态和格式化动作的编辑器，同时保持八个倍率字段、保存校验、计费表达式语义和提交接口不变。 |
 | 2026-07-09 | 渠道移动端专用卡片 | `web/default/src/features/channels/components/{channel-card.tsx,channels-table.tsx}` | 原生化 new-api-main 的渠道移动端卡片体验；移动端列表改用专用卡片重组类型、名称、状态、余额、优先级、权重、响应时间、最近测试、分组和行操作，继续复用现有列 cell、权限动作、tag 聚合和桌面表格逻辑。 |
