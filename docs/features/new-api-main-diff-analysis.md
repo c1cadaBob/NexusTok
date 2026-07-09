@@ -5779,8 +5779,65 @@ NexusTok 当前 `pkg/billingexpr/settle.go` 已经与 new-api-main 等价，使�
 5. 3003 首次 HTTP 探测遇到热更新重启窗口，`192.168.0.202:3003` 短暂返回连接失败；随后确认 `nexustok-api-hot` 容器仍运行，`127.0.0.1:3003/` 返回 200，容器内 `127.0.0.1:3000/api/status` 可用。
 6. 3003 指定地址重试验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
 
+## 本轮实施评审：Issue 模板前置约束增强
+
+### 需求分析
+
+`new-api-main` 的 Issue 模板在“提交前必读”和提交确认项上更具体，能提前过滤使用、配置、接入、透传上游行为、逆向渠道和 coding plan 等非缺陷/非功能请求类内容。NexusTok 当前已经有中英文 bug/feature 模板和 `config.yml` 联系链接，但确认项相对笼统：
+
+1. “我已确认目前没有类似 issue”没有提供仓库 Issues 搜索链接。
+2. “已查看文档和 README”没有明确要求先排除使用、配置或接入问题。
+3. Bug 模板没有提示转发/Relay 问题需要附渠道类型、转换格式、上游原生支持依据和服务端日志。
+4. Bug 模板没有提示计费问题附 `usage` 示例，后续排查动态计费、钱包兜底和模型倍率时成本较高。
+5. Feature 模板没有明确拒绝 coding plan、逆向渠道、绕过上游限制等技术支持类 issue。
+
+本轮目标是把 new-api-main 的模板治理优势转成 NexusTok 原生协作规范，增强四份 Issue 模板；不修改 GitHub workflow，不修改 Issue Chooser `config.yml`，不改变代码运行行为。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 中文 Bug 模板 | `.github/ISSUE_TEMPLATE/bug_report.md` | 增加透传/Relay、技术支持边界、非重复搜索、使用问题排除、转发和计费信息提示。 |
+| 英文 Bug 模板 | `.github/ISSUE_TEMPLATE/bug_report_en.md` | 与中文 Bug 模板保持语义等价。 |
+| 中文功能请求模板 | `.github/ISSUE_TEMPLATE/feature_request.md` | 增加技术支持边界、非重复搜索和使用/配置/接入问题排除确认。 |
+| 英文功能请求模板 | `.github/ISSUE_TEMPLATE/feature_request_en.md` | 与中文功能请求模板保持语义等价。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 模板变更只影响 GitHub 新建 issue 时的默认文本，不参与运行时代码、前端页面或 Docker 热更新链路。
+2. 约束写得过硬可能劝退有效反馈，因此保留“尽可能”“when possible”等措辞，只明确拒绝纯技术支持、coding plan、逆向渠道和绕过上游限制请求。
+3. NexusTok 与 new-api-main 的项目身份、文档链接和仓库 Issues 地址不同，必须品牌化替换为 `c1cada/NexusTok`，不能复制上游链接。
+4. 中英文模板需要保持同等约束，避免不同入口提交质量不一致。
+
+### 方案评审
+
+采用“模板文字增强，不改入口配置”的方案：
+
+1. 在四份模板的“提交前必读 / Read This First”中补充 Relay/pass-through 上游行为边界和技术支持类 issue 边界。
+2. 将提交确认项改成带加粗标签的结构化描述，包含非重复 issue、提交前必读、模板完整和维护成本。
+3. Bug 模板在“问题描述 / Issue Description”下补充排查提示：问题现象、影响范围、为什么判断为 NexusTok 问题；转发问题附渠道/转换/上游依据/日志；计费问题附 `usage` 示例。
+4. 功能请求模板只增强前置约束，不额外增加复杂字段，避免提高有效功能建议的提交门槛。
+5. 保持 `.github/ISSUE_TEMPLATE/config.yml` 不变，因为 NexusTok 当前文档和 DeepWiki contact links 已正确品牌化。
+
+验收方式：
+
+1. `sed -n '1,220p' .github/ISSUE_TEMPLATE/{bug_report.md,bug_report_en.md,feature_request.md,feature_request_en.md}` 人工检查模板。
+2. `rg -n "QuantumNous|docs.newapi.ai|newapi" .github/ISSUE_TEMPLATE` 确认没有上游品牌残留。
+3. `git diff --check`。
+4. 优先用 MCP 打开 `http://192.168.0.202:3003/`；如 MCP 仍不可用，则用 `curl --noproxy '*'` 验证 `/`、`/api/status` 和登录后的 `/api/user/self`。
+
+### 本轮验证记录
+
+1. `sed -n '1,220p' .github/ISSUE_TEMPLATE/bug_report.md .github/ISSUE_TEMPLATE/bug_report_en.md .github/ISSUE_TEMPLATE/feature_request.md .github/ISSUE_TEMPLATE/feature_request_en.md` 已人工检查，四份模板均保留 NexusTok 链接并完成中英文等价增强。
+2. `rg -n "QuantumNous|docs\\.newapi\\.ai|newapi" .github/ISSUE_TEMPLATE` 无匹配，未残留上游品牌或文档地址。
+3. `git diff --check` 通过。
+4. 已尝试 MCP 浏览器验证 3003，但 Chrome DevTools MCP 仍无法连接，错误为 `Could not connect to Chrome. Check if Chrome is running. Cause: Failed to fetch browser webSocket URL from http://127.0.0.1:9222/json/version: fetch failed`。
+5. 3003 真实 HTTP 兜底验证通过：`/` 返回 200；`/api/status` 返回 200 且 `success=true`；使用账号 `c1cada` 登录返回 `success=true`；登录后 `GET /api/user/self` 返回 `success=true` 且用户名为 `c1cada`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-09 | Issue 模板前置约束增强 | `.github/ISSUE_TEMPLATE/{bug_report.md,bug_report_en.md,feature_request.md,feature_request_en.md}` | 原生化 new-api-main 的 issue 治理优势，四份模板补充非重复搜索、使用/配置/接入排除、Relay/pass-through 上游行为边界、coding plan/逆向渠道技术支持边界，以及转发/计费问题排查信息提示；保留 NexusTok 品牌链接和现有 Issue Chooser 配置。 |
 | 2026-07-09 | DataTable 组件维护文档 | `web/default/src/components/data-table/README.md` | 原生化 new-api-main 的 DataTable 包说明优势，但不直接迁移其 `core/layout/toolbar/static/hooks` 目录；文档按 NexusTok 当前扁平组件结构记录稳定导入入口、组件职责、`DataTablePage` 组合方式、移动端列 meta 和后续渐进分层原则。 |
 | 2026-07-09 | Electron 桌面端文档与构建脚本修复 | `electron/build.sh`、`electron/main.js`、`electron/package.json`、`electron/README.md` | 原生化 new-api-main 的 Electron 文档资产并修复 NexusTok 目录不匹配问题：桌面构建先分别生成 default/classic 前端 dist，再构建嵌入资源的 Go 二进制；开发模式前端端口与 `make dev-web` 对齐为 3001；移除不存在的 `../web/dist` 资源引用，并补充桌面端开发、打包、数据目录和排障说明。 |
 | 2026-07-09 | 开发 Compose 与 Makefile 修补 | `docker-compose.dev.yml`、`makefile`、`docs/installation/deployment.md` | 原生化 new-api-main 的本地开发工程化优势：dev PostgreSQL 显式使用 `postgres:15-alpine`，新增 `dev-api-rebuild` 和开发专用 `reset-setup`，并在部署文档补充后端重建、初始化状态重置和生产禁用说明；不引入 oxlint/tsgo，不修改热更新部署。 |
