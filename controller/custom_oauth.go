@@ -27,6 +27,8 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/oauth"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -161,6 +163,41 @@ type FetchCustomOAuthDiscoveryRequest struct {
 	IssuerURL    string `json:"issuer_url"`
 }
 
+// validateCustomOAuthDiscoveryURL 使用系统 FetchSetting 校验 OIDC Discovery URL。
+//
+// Discovery URL 由 Root 在系统设置页输入，但它会触发服务端主动访问外部地址。
+// 这里在发出请求前执行统一 SSRF 策略，防止误配置或恶意输入访问回环地址、内网地址、
+// 受限端口或被黑名单命中的域名/IP；真正建立连接前的 DNS rebinding 防护由
+// newCustomOAuthDiscoveryHTTPClient 返回的 protected client 继续兜底。
+func validateCustomOAuthDiscoveryURL(urlStr string) error {
+	fetchSetting := system_setting.GetFetchSetting()
+	return common.ValidateURLWithFetchSetting(
+		urlStr,
+		fetchSetting.EnableSSRFProtection,
+		fetchSetting.AllowPrivateIp,
+		fetchSetting.DomainFilterMode,
+		fetchSetting.IpFilterMode,
+		fetchSetting.DomainList,
+		fetchSetting.IpList,
+		fetchSetting.AllowedPorts,
+		fetchSetting.ApplyIPFilterForDomain,
+	)
+}
+
+// newCustomOAuthDiscoveryHTTPClient 返回 OIDC Discovery 专用 HTTP client。
+//
+// 复用 service.GetSSRFProtectedHTTPClient 的 Transport 和 redirect 校验能力，同时复制
+// client 并覆盖 Timeout，保持旧实现单次 discovery 最多等待 20 秒的行为。
+func newCustomOAuthDiscoveryHTTPClient() *http.Client {
+	baseClient := service.GetSSRFProtectedHTTPClient()
+	if baseClient == nil {
+		return &http.Client{Timeout: 20 * time.Second}
+	}
+	client := *baseClient
+	client.Timeout = 20 * time.Second
+	return &client
+}
+
 // FetchCustomOAuthDiscovery 通过后端获取 OIDC Discovery 配置（仅管理员）
 //
 // 支持两种方式：
@@ -192,6 +229,10 @@ func FetchCustomOAuthDiscovery(c *gin.Context) {
 		common.ApiErrorMsg(c, "Discovery URL 无效，仅支持 http/https")
 		return
 	}
+	if err := validateCustomOAuthDiscoveryURL(targetURL); err != nil {
+		common.ApiErrorMsg(c, "Discovery URL 安全校验失败: "+err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
@@ -203,7 +244,7 @@ func FetchCustomOAuthDiscovery(c *gin.Context) {
 	}
 	httpReq.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := newCustomOAuthDiscoveryHTTPClient()
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		common.ApiErrorMsg(c, "获取 Discovery 配置失败: "+err.Error())

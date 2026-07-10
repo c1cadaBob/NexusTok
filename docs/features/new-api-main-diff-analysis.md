@@ -6534,6 +6534,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-10 | 渠道模型搜索追加弹层关闭与编辑页导航对齐 | `web/default/src/components/multi-select.tsx`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 运行态复现确认 `gpt-5.6` 后端搜索和追加数据正确，但批量追加后 Combobox 因搜索词清空仍保持打开并铺出完整模型库；本轮让 `MultiSelect` 支持可选受控 open，渠道模型选择器在 `Add {{count}} new model(s)` 后立即关闭弹层，并补齐 new-api 编辑页左侧导航 sticky 层级。 |
 | 2026-07-10 | 结果媒体代理 SSRF Dial 阶段补强 | `controller/video_proxy.go`、`relay/mjproxy_handler.go`、`docs/features/new-api-main-diff-analysis.md` | 继续执行用户可控 URL 覆盖缺口审计，确认下载、Webhook、Bark/Gotify 已走 protected client；本轮补齐视频代理和 Midjourney 图片代理直连路径，URL 预校验后实际请求也使用 `GetSSRFProtectedHTTPClient()`，通过 Dial 阶段解析 IP 校验抵御 DNS rebinding；显式渠道代理继续保留一次性 URL 校验。 |
 | 2026-07-10 | Uptime Kuma 状态接口 SSRF 防护补强 | `controller/uptime_kuma.go`、`controller/uptime_kuma_test.go`、`docs/features/new-api-main-diff-analysis.md` | 公开 `/api/uptime/status` 会根据系统设置拉取 Uptime Kuma 状态页和心跳 API；本轮在每个最终 URL 发出前接入 FetchSetting 预校验，实际请求改用 `GetSSRFProtectedHTTPClient()` 的 Dial 阶段校验并保留 10 秒单请求超时，同时补齐私网目标请求前拦截与关闭 SSRF 后兼容的回归测试。 |
+| 2026-07-10 | 自定义 OAuth Discovery SSRF 防护补强 | `controller/custom_oauth.go`、`controller/custom_oauth_test.go`、`docs/features/new-api-main-diff-analysis.md` | Root 可操作的 `/api/custom-oauth-provider/discovery` 会根据管理员输入的 well-known/issuer URL 拉取 OIDC discovery；本轮在基础 http/https 校验后接入 FetchSetting 预校验，实际请求改用 protected client 的 Dial 阶段校验并保留 20 秒超时，测试覆盖私网目标请求前拦截和关闭 SSRF 后兼容行为。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -7956,4 +7957,68 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
 7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
 8. `curl --noproxy '*' -sS --max-time 20 http://192.168.0.202:3003/api/uptime/status` 返回 `{"data":[],"message":"","success":true}`，确认公开 Uptime Kuma 状态接口在当前配置下仍保持成功响应。
+9. 当前会话未暴露 MCP 浏览器工具；本轮后端安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口。
+
+## 本轮实施评审：自定义 OAuth Discovery SSRF 防护补强
+
+### 需求分析
+
+继续审计配置可控 URL 的服务端出站请求时，发现 `controller.FetchCustomOAuthDiscovery` 仍使用裸 `http.Client{Timeout: 20 * time.Second}` 拉取 OIDC Discovery 文档。该接口位于 `POST /api/custom-oauth-provider/discovery`，路由已经保留 `RootAuth` 并叠加 `system_setting.operate`，不是公开匿名接口；但它读取的是管理员在系统设置页输入的 `well_known_url` 或 `issuer_url`，最终仍由 NexusTok 后端主动访问外部地址。
+
+对照 `/opt/project/new-api-main/controller/custom_oauth.go` 后确认，上游当前实现与 NexusTok 原实现一致：只校验 URL 解析、host 和 http/https scheme，没有接入 FetchSetting，也没有 Dial 阶段 DNS rebinding 防护。NexusTok 已经把 protected fetch 原生化为用户/配置可控 URL 的共享能力，本轮目标是继续把该能力用于 OIDC Discovery，避免登录入口配置工具成为 SSRF 例外。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 自定义 OAuth Discovery | `controller/custom_oauth.go` | 在已有 http/https 基础校验后，对最终 discovery URL 执行 FetchSetting 预校验；实际请求 client 改为 protected client 并保留 20 秒超时。 |
+| 自定义 OAuth 管理 | `controller/custom_oauth.go` | provider 创建、更新、删除、绑定/解绑、OAuth 回调和敏感字段脱敏逻辑不变。 |
+| 回归测试 | `controller/custom_oauth_test.go` | 覆盖私网 discovery URL 请求前拦截、公开 IP URL 放行、关闭 SSRF 后本地测试 discovery 仍可拉取。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录 Root 操作类出站请求的防护边界，避免后续只关注公开接口而遗漏系统设置工具。 |
+
+### 风险评估
+
+- 行为会变严格：如果管理员使用内网 Keycloak、GitLab、Authentik 或自建 OIDC provider 的 discovery URL，在默认 `allow_private_ip=false` 且端口不在允许列表时会被拒绝。该行为符合 FetchSetting 的安全策略，可信内网部署需要显式配置允许私网、IP 白名单或端口。
+- 该接口是 Root 操作，不是公开接口，风险低于 Uptime Kuma；但 Root 页面常用于调试外部登录入口，错误 URL 仍可能造成服务端访问受限网络，纳入统一防护更一致。
+- 不修改 provider 保存结构和前端回填语义，避免影响现有自定义 OAuth 配置流程；Discovery 失败仍通过现有 `ApiErrorMsg` 返回 `success=false`。
+- protected client 的基础超时可能受 Relay 配置影响，本轮通过复制 client 并覆盖 20 秒 Timeout 保持旧行为。
+- OAuth provider 的实际登录/回调链路可能访问管理员配置的 token/userinfo endpoint；这些属于后续独立审计范围，本轮只处理系统设置页的 discovery 拉取入口。
+
+### 方案评审
+
+采用“基础 URL 校验不变 + FetchSetting 预校验 + protected client 实际请求”的方案：
+
+1. 新增 `validateCustomOAuthDiscoveryURL`，从 `system_setting.GetFetchSetting()` 读取策略，调用 `common.ValidateURLWithFetchSetting` 校验最终 URL。
+2. 新增 `newCustomOAuthDiscoveryHTTPClient`，复用 `service.GetSSRFProtectedHTTPClient()` 的 Transport 与 redirect 校验能力，复制 client 后把 Timeout 固定为 20 秒。
+3. `FetchCustomOAuthDiscovery` 仍先完成空值、issuer 拼接和 http/https scheme 校验；通过后再执行 FetchSetting 安全校验，失败时返回 `Discovery URL 安全校验失败`。
+4. 成功路径继续设置 `Accept: application/json`，读取 HTTP 200 响应并用 `common.DecodeJson` 解析，返回 `{ well_known_url, discovery }`，不改变前端消费结构。
+5. 单测用 IP 字面量覆盖策略 helper，用 `httptest.NewServer` 验证私网目标不会触达 handler，并验证关闭 SSRF 防护后旧本地 discovery 调试行为仍可用。
+
+### 验收方式
+
+1. `go test ./controller -run 'CustomOAuth|Discovery'`。
+2. `go test ./controller`。
+3. `go test ./service -run 'TestProtectedFetch'`。
+4. `go test ./controller ./service`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 与 `/api/status`，确认热更新服务可访问。
+7. 使用登录 cookie 与 `NexusTok-User: 1` 调用 3003 的 `/api/custom-oauth-provider/discovery`，确认私网 discovery URL 在运行态被安全校验拒绝。
+8. 当前会话若仍无 MCP 浏览器工具，则使用 `curl --noproxy '*'` 替代页面/接口验证，并在最终回复说明限制。
+
+### 实施结果
+
+已完成自定义 OAuth Discovery SSRF 防护补强。`POST /api/custom-oauth-provider/discovery` 在拼接并解析最终 URL 后，会读取系统 FetchSetting 并执行协议、端口、私网 IP、域名/IP 黑白名单校验；校验失败时请求不会发出，上游 discovery endpoint 不会被触达。
+
+实际请求 client 已从裸 `http.Client` 切换为复用 `service.GetSSRFProtectedHTTPClient()` 的 Discovery 专用 client，并保留 20 秒单请求超时。这样即使 URL 预校验后发生 DNS rebinding，直连 Dial 阶段仍会重新解析目标并按 FetchSetting 校验 IP。provider 的创建/更新/删除、登录回调、绑定解绑、前端回填字段和路由权限分类均保持不变。
+
+### 验证记录
+
+1. `go test ./controller -run 'CustomOAuth|Discovery'` 通过，覆盖私网 URL 拒绝、公开 IP 放行、私网目标请求前拦截和关闭 SSRF 后兼容本地 discovery。
+2. `go test ./controller` 通过，确认控制器包既有测试和本轮新增测试均通过。
+3. `go test ./service -run 'TestProtectedFetch'` 通过，确认 protected fetch client 的 DNS rebinding 与禁用 fallback 契约仍保持。
+4. `go test ./controller ./service` 通过，确认本轮接入的控制器和复用的 service 包共同编译与测试通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+8. 使用账号 `c1cada` 登录 3003 后，携带 session cookie 与 `NexusTok-User: 1` 调用 `POST /api/custom-oauth-provider/discovery`，请求体 `{"well_known_url":"http://127.0.0.1/.well-known/openid-configuration"}` 返回 `{"message":"Discovery URL 安全校验失败: private IP address not allowed: 127.0.0.1","success":false}`，确认运行态已在请求前按 FetchSetting 拦截私网 discovery URL。
 9. 当前会话未暴露 MCP 浏览器工具；本轮后端安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口。
