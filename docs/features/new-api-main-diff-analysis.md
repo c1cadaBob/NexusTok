@@ -6389,6 +6389,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-10 | 订阅到期显式降级分组 | `model/subscription.go`、`model/main.go`、`controller/subscription.go`、`web/default/src/features/subscriptions/*`、`web/classic/src/components/table/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 `downgrade_group` 能力：套餐可配置订阅结束后显式降级到指定分组；用户订阅购买时快照该策略，到期/作废/删除时显式降级优先，空值继续回退购买前分组，并保留其它有效升级订阅的分组权益。 |
 | 2026-07-10 | 账号池分组字段级 fail-closed | `controller/account_pool.go`、`controller/account_pool_authz.go`、`controller/account_pool_authz_test.go`、`web/default/src/features/account-pool/*` | 账号池分组更新读取原始 JSON 并按字段分类做敏感写二次校验：`platform`、`auth_type`、`model_mapping`、`settings` 和未知字段默认需要 `account_pool.sensitive_write`；普通字段仍允许 `account_pool.write`。默认前端账号池页和凭证面板消费 `write/operate/sensitive_write`，编辑既有分组时禁用敏感字段。 |
 | 2026-07-10 | 安全边界能力状态校准 | `docs/features/new-api-main-diff-analysis.md` | 复核匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 客户端和 `/api/status/test` 权限路由现状，将报告中仍按“待增加”描述的安全能力更新为“已原生化首批 + 后续维护契约”，避免后续重复迁移。 |
 | 2026-07-09 | models.dev 手动同步全量缺失补齐 | `controller/model_sync.go`、`controller/model_sync_test.go`、`web/default/src/features/models/api.ts`、`docs/features/model-sync-pricing.md` | 修复默认前端手动 models.dev 同步仍按旧 official 缺失能力表范围创建模型的问题；models.dev 来源默认按完整 catalog 补齐本地缺失模型，预览和实际同步目标一致，并保留 `create_all` 显式控制。回归覆盖 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 三模型场景。 |
@@ -7679,3 +7680,81 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 5. `cd web/default && bun run build` 通过。
 6. `git diff --check` 通过。
 7. 当前会话仍未暴露浏览器 MCP/DevTools 工具；已使用 `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 验证首页返回 200，并使用 `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 验证状态接口可访问。
+
+## 本轮实施评审：订阅到期显式降级分组
+
+### 需求分析
+
+当前 NexusTok 已经具备订阅套餐购买后升级用户分组的原生能力：管理员可以在套餐上配置 `upgrade_group`，购买成功后用户会升级到目标分组；订阅到期、取消或删除时，系统会根据订阅快照回退到购买前分组。该逻辑能覆盖“临时升级权益”的基础场景，但它把到期后的目标分组完全绑定到用户购买前状态，无法表达更明确的运营策略。
+
+`/opt/project/new-api-main` 最新版在此基础上增加了 `downgrade_group`：管理员可以为套餐配置到期后显式降级到某个指定分组；若留空，则继续回退到购买前分组。这个能力适合试用套餐、活动套餐和统一降级策略，例如试用结束后统一回到 `default`，而不是依赖用户购买前的历史分组快照。
+
+本轮目标是把该能力转换为 NexusTok 的原生订阅能力：保留当前“空值回退购买前分组”的兼容行为，新增“显式降级分组优先”的业务语义，并让后台套餐编辑页可以配置该字段。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 订阅套餐模型 | `model/subscription.go` | `SubscriptionPlan` 增加 `DowngradeGroup`；购买时快照到 `UserSubscription`。 |
+| 用户订阅快照 | `model/subscription.go` | `UserSubscription` 增加 `DowngradeGroup`，到期、取消、删除时用于决定分组回退目标。 |
+| 到期任务与人工失效 | `model/subscription.go` | `ExpireDueSubscriptions` 与 `downgradeUserGroupForSubscriptionTx` 调整为显式降级优先，空值保持旧逻辑。 |
+| 数据库迁移 | `model/main.go` | SQLite 建表/补列增加 `downgrade_group`；GORM AutoMigrate 负责 MySQL/PostgreSQL 常规列补齐，保持三库兼容。 |
+| 管理端订阅控制器 | `controller/subscription.go` | 创建/更新套餐时 trim 并校验降级分组存在；更新 map 写入显式空值以支持清空。 |
+| 后端回归测试 | `model/subscription_balance_test.go` 等 | 覆盖购买快照、显式降级优先、空值旧行为、存在其它有效升级订阅时不降级。 |
+| 默认前端订阅页 | `web/default/src/features/subscriptions/*` | 类型、表单 schema、默认值、payload 和套餐编辑抽屉增加 `Downgrade Group`。 |
+| 前端国际化 | `web/default/src/i18n/locales/*.json` | 增加 `Downgrade Group` 与 `Downgrade to pre-purchase group` 六语文案，并运行 i18n 同步。 |
+
+### 风险评估
+
+- 该能力直接影响用户分组，属于权限和计费权益敏感逻辑；如果到期降级判断错误，可能造成用户权益提前丢失或过期权益残留。
+- 空值兼容必须严格保持：`downgrade_group` 为空时，历史套餐和历史订阅仍按当前项目的“回退购买前分组”行为运行。
+- 显式降级分组必须在创建和更新时校验存在，避免订阅到期后把用户写入不存在的分组。
+- 用户可能同时拥有多个订阅；如果仍有其它有效且会升级分组的订阅，过期其中一个订阅时不能覆盖当前有效权益。
+- `UserSubscription.AllowWalletOverflow` 在 NexusTok 中是指针，用于保留显式 `false`，与 new-api-main 的 bool 实现不同；本轮只迁移 `downgrade_group` 业务语义，不改变钱包溢出快照不变量。
+- SQLite 不支持复杂列变更；本轮只追加 varchar 列，使用既有 `ensureSubscriptionPlanTableSQLite` 补列模式和 GORM AutoMigrate，避免数据库专用 DDL。
+
+### 方案评审
+
+采用“小字段、强兼容、显式优先”的方案：
+
+1. `SubscriptionPlan` 增加 `DowngradeGroup string`，含义为套餐到期后的显式目标分组，空值表示沿用旧行为。
+2. `UserSubscription` 增加 `DowngradeGroup string`，购买、余额购买、管理员绑定订阅时均从套餐快照，避免管理员后续改套餐影响已购订阅。
+3. `downgradeUserGroupForSubscriptionTx` 先读取订阅快照中的 `DowngradeGroup` 和 `UpgradeGroup`：二者都为空时直接返回；存在其它有效升级订阅时不降级；显式降级非空时直接作为目标，否则才检查当前分组是否仍等于升级分组并回退到 `PrevUserGroup`。
+4. `ExpireDueSubscriptions` 查询最近到期的分组迁移订阅时纳入 `(downgrade_group <> '' OR upgrade_group <> '')`；显式降级优先，空值继续回退购买前分组。
+5. 控制器新增统一分组校验 helper，创建和更新套餐同时校验 `upgrade_group` 与 `downgrade_group`，并允许空字符串表示“不配置”。
+6. 默认前端订阅套餐表单在 `Upgrade Group` 旁边增加 `Downgrade Group` Select；选项中的 `__none__` 展示为 `Downgrade to pre-purchase group`，提交时转换为空字符串。
+7. 本轮不改变用户侧购买弹窗的权益展示口径，避免把“到期降级”误读成购买后立即生效的正向权益；管理员编辑页负责配置该策略。
+
+### 验收方式
+
+1. `go test ./model -run 'TestSubscription|TestPurchaseSubscriptionWithBalance|TestUserActiveSubscriptionsAllowWalletOverflow'`。
+2. `go test ./controller -run 'TestSubscriptionPlanGroupValidation'` 或同等覆盖创建/更新分组校验的控制器单测。
+3. `cd web/default && bun run i18n:sync`。
+4. `cd web/default && bun run typecheck`。
+5. `cd web/default && bun run build`。
+6. `git diff --check`。
+7. 修改后访问 `http://192.168.0.202:3003/`，并打开订阅管理页确认套餐编辑抽屉出现 `Downgrade Group`；如果页面未更新，先重启容器再验证。当前会话若仍无 MCP 浏览器工具，则使用 Chrome headless/CDP 或 `curl --noproxy '*'` 做替代验证，并在结果中说明限制。
+
+### 实施结果
+
+已完成订阅到期显式降级分组原生化。`SubscriptionPlan` 和 `UserSubscription` 均新增 `downgrade_group` 字段：套餐用于管理员配置策略，用户订阅用于购买时快照，避免后续修改套餐影响已购订阅的到期行为。余额购买、第三方支付完成和管理员新增订阅都会通过 `CreateUserSubscriptionFromPlanTx` 统一快照该字段。
+
+分组回退状态机已调整为“显式降级优先，空值旧行为兼容”。订阅到期任务、管理员作废订阅和管理员删除订阅在处理分组时都会先检查是否还有其它有效升级订阅；若存在则保留当前分组。没有其它有效升级订阅时，非空 `downgrade_group` 会作为目标分组；为空时才继续要求当前分组仍等于 `upgrade_group`，并回退到 `prev_user_group`。因此历史套餐和历史订阅在未配置新字段时仍保持原行为。
+
+管理端创建和更新套餐共用 `normalizeAndValidateSubscriptionPlanGroups`：`upgrade_group` 与 `downgrade_group` 都会 trim，非空值必须存在于分组倍率配置中；更新 map 显式写入 `downgrade_group`，支持管理员清空该配置。SQLite 建表/补列逻辑增加 `downgrade_group`，MySQL/PostgreSQL 继续依赖 GORM AutoMigrate 的常规追加列能力。
+
+默认前端订阅套餐编辑抽屉已在 `Upgrade Group` 旁增加 `Downgrade Group` Select，空选项显示 `Downgrade to pre-purchase group` 并提交为空字符串。默认前端类型、表单 schema、默认值、表单回填、payload 和六语翻译均已补齐。classic 前端也补齐了同字段的表单回填、payload 和列表/详情展示，避免管理员从旧版前端编辑套餐时误清空新策略。
+
+### 验证记录
+
+1. `go test ./controller -run 'TestSubscriptionPlanGroupValidation'` 通过，覆盖已知分组 trim 放行、空分组兼容、未知升级分组拒绝和未知降级分组拒绝。
+2. `go test ./model -run 'Test(CreateUserSubscriptionSnapshotsDowngradeGroup|ExpireDueSubscriptions|DowngradeUserGroupForSubscriptionTxSupportsExplicitDowngradeOnly|PurchaseSubscriptionWithBalance|UserActiveSubscriptionsAllowWalletOverflow)'` 通过，覆盖购买快照、显式降级优先、空值回退购买前分组、其它有效升级订阅保护、仅配置显式降级目标和钱包溢出快照旧逻辑。
+3. `go test ./model ./controller` 通过；本轮顺手修正 model 包测试夹具，在 `TestMain` 设置 SQLite 标记后调用 `initCol()`，避免未走完整 `InitDB` 时 `group/key` 保留字列名为空。
+4. `cd web/default && bun run i18n:sync` 通过；默认前端 i18n 报告显示六语 `missingCount=0`、`extrasCount=0`。
+5. `cd web/default && bun run typecheck` 通过。
+6. `cd web/default && bun run build` 通过。
+7. `cd web/classic && bun run build` 通过；仅出现既有 Browserslist 数据过期、`lottie-web` eval 和 chunk size 警告。
+8. `git diff --check` 通过。
+9. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true`。
+10. 当前会话未暴露浏览器 MCP 工具，已用 Chrome headless/CDP 替代：登录账号 `c1cada` 成功，写入前端 `uid/user` 本地状态后打开 `http://192.168.0.202:3003/subscriptions`，页面显示 `Subscription Management`、`Create Plan` 和空套餐列表；点击 `Create Plan` 后抽屉真实渲染 `Downgrade Group` 与 `Downgrade to pre-purchase group`。
+11. 使用登录 cookie 与 `NexusTok-User: 1` 调用运行态 3003：`PUT /api/subscription/admin/plans/999999` 传入 `downgrade_group="__missing_group__"` 返回 `{"message":"降级分组不存在","success":false}`，确认后端热更新已生效且请求在写库前被校验拦截。

@@ -195,6 +195,10 @@ type SubscriptionPlan struct {
 	// UpgradeGroup 表示购买成功后升级到的用户分组，空字符串表示不变更分组。
 	UpgradeGroup string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
 
+	// DowngradeGroup 表示订阅到期后显式降级到的用户分组。
+	// 空字符串保留旧行为：回退到购买前的用户分组快照。
+	DowngradeGroup string `json:"downgrade_group" gorm:"type:varchar(64);default:''"`
+
 	// TotalAmount 是套餐包含的总额度，单位为内部 quota unit，0 表示不限量。
 	TotalAmount int64 `json:"total_amount" gorm:"type:bigint;not null;default:0"`
 
@@ -291,6 +295,11 @@ type UserSubscription struct {
 
 	UpgradeGroup  string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
 	PrevUserGroup string `json:"prev_user_group" gorm:"type:varchar(64);default:''"`
+
+	// DowngradeGroup 是购买时从套餐快照下来的显式降级目标。
+	// 它必须独立于 SubscriptionPlan 保存，避免管理员后续调整套餐时改变已购订阅的到期语义。
+	// 空字符串表示沿用 PrevUserGroup 回退逻辑。
+	DowngradeGroup string `json:"downgrade_group" gorm:"type:varchar(64);default:''"`
 
 	// AllowWalletOverflow 是购买时的套餐策略快照。
 	// 只要任意一个活跃订阅显式禁止钱包溢出，subscription_first 下订阅额度不足就不再回退钱包。
@@ -466,16 +475,14 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if tx == nil || sub == nil {
 		return "", errors.New("invalid downgrade args")
 	}
+	downgradeGroup := strings.TrimSpace(sub.DowngradeGroup)
 	upgradeGroup := strings.TrimSpace(sub.UpgradeGroup)
-	if upgradeGroup == "" {
+	if downgradeGroup == "" && upgradeGroup == "" {
 		return "", nil
 	}
 	currentGroup, err := getUserGroupByIdTx(tx, sub.UserId)
 	if err != nil {
 		return "", err
-	}
-	if currentGroup != upgradeGroup {
-		return "", nil
 	}
 	var activeSub UserSubscription
 	activeQuery := tx.Where("user_id = ? AND status = ? AND end_time > ? AND id <> ? AND upgrade_group <> ''",
@@ -486,15 +493,21 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if activeQuery.Error == nil && activeQuery.RowsAffected > 0 {
 		return "", nil
 	}
-	prevGroup := strings.TrimSpace(sub.PrevUserGroup)
-	if prevGroup == "" || prevGroup == currentGroup {
+	targetGroup := downgradeGroup
+	if targetGroup == "" {
+		if currentGroup != upgradeGroup {
+			return "", nil
+		}
+		targetGroup = strings.TrimSpace(sub.PrevUserGroup)
+	}
+	if targetGroup == "" || targetGroup == currentGroup {
 		return "", nil
 	}
 	if err := tx.Model(&User{}).Where("id = ?", sub.UserId).
-		Update("group", prevGroup).Error; err != nil {
+		Update("group", targetGroup).Error; err != nil {
 		return "", err
 	}
-	return prevGroup, nil
+	return targetGroup, nil
 }
 
 func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
@@ -532,6 +545,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		lastReset = now.Unix()
 	}
 	upgradeGroup := strings.TrimSpace(plan.UpgradeGroup)
+	downgradeGroup := strings.TrimSpace(plan.DowngradeGroup)
 	prevGroup := ""
 	if upgradeGroup != "" {
 		currentGroup, err := getUserGroupByIdTx(tx, userId)
@@ -559,6 +573,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		NextResetTime:       nextReset,
 		UpgradeGroup:        upgradeGroup,
 		PrevUserGroup:       prevGroup,
+		DowngradeGroup:      downgradeGroup,
 		AllowWalletOverflow: plan.AllowWalletOverflow,
 		CreatedAt:           common.GetTimestamp(),
 		UpdatedAt:           common.GetTimestamp(),
@@ -963,7 +978,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
 	if downgradeGroup != "" {
-		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
+		return fmt.Sprintf("用户分组将调整到 %s", downgradeGroup), nil
 	}
 	return "", nil
 }
@@ -1004,7 +1019,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
 	if downgradeGroup != "" {
-		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
+		return fmt.Sprintf("用户分组将调整到 %s", downgradeGroup), nil
 	}
 	return "", nil
 }
@@ -1203,9 +1218,10 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 				return nil
 			}
 
-			// 没有其它有效升级订阅时，按订阅快照回退到购买前分组。
+			// 没有其它有效升级订阅时，按订阅快照处理分组迁移：
+			// 显式 downgrade_group 优先；为空时继续回退到购买前分组。
 			var lastExpired UserSubscription
-			expiredQuery := tx.Where("user_id = ? AND status = ? AND upgrade_group <> ''",
+			expiredQuery := tx.Where("user_id = ? AND status = ? AND (downgrade_group <> '' OR upgrade_group <> '')",
 				userId, "expired").
 				Order("end_time desc, id desc").
 				Limit(1).
@@ -1213,23 +1229,30 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 			if expiredQuery.Error != nil || expiredQuery.RowsAffected == 0 {
 				return nil
 			}
-			upgradeGroup := strings.TrimSpace(lastExpired.UpgradeGroup)
-			prevGroup := strings.TrimSpace(lastExpired.PrevUserGroup)
-			if upgradeGroup == "" || prevGroup == "" {
-				return nil
-			}
 			currentGroup, err := getUserGroupByIdTx(tx, userId)
 			if err != nil {
 				return err
 			}
-			if currentGroup != upgradeGroup || currentGroup == prevGroup {
+			targetGroup := strings.TrimSpace(lastExpired.DowngradeGroup)
+			if targetGroup == "" {
+				upgradeGroup := strings.TrimSpace(lastExpired.UpgradeGroup)
+				prevGroup := strings.TrimSpace(lastExpired.PrevUserGroup)
+				if upgradeGroup == "" || prevGroup == "" {
+					return nil
+				}
+				if currentGroup != upgradeGroup {
+					return nil
+				}
+				targetGroup = prevGroup
+			}
+			if targetGroup == "" || targetGroup == currentGroup {
 				return nil
 			}
 			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("group", prevGroup).Error; err != nil {
+				Update("group", targetGroup).Error; err != nil {
 				return err
 			}
-			cacheGroup = prevGroup
+			cacheGroup = targetGroup
 			return nil
 		})
 		if err != nil {

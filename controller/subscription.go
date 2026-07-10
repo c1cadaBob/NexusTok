@@ -176,6 +176,27 @@ type AdminUpsertSubscriptionPlanRequest struct {
 	Plan model.SubscriptionPlan `json:"plan"`
 }
 
+// normalizeAndValidateSubscriptionPlanGroups 统一处理套餐的分组迁移字段。
+//
+// upgrade_group 表示购买后升级到的分组；downgrade_group 表示订阅结束后显式降级到的分组。
+// 两者都允许为空：空 upgrade_group 表示购买后不变更分组；空 downgrade_group 表示沿用
+// “回退到购买前分组”的历史行为。非空值必须存在于当前分组倍率配置中，避免订阅到期任务
+// 把用户写入不存在的分组。
+func normalizeAndValidateSubscriptionPlanGroups(plan *model.SubscriptionPlan) string {
+	if plan == nil {
+		return "参数错误"
+	}
+	plan.UpgradeGroup = strings.TrimSpace(plan.UpgradeGroup)
+	if plan.UpgradeGroup != "" && !ratio_setting.ContainsGroupRatio(plan.UpgradeGroup) {
+		return "升级分组不存在"
+	}
+	plan.DowngradeGroup = strings.TrimSpace(plan.DowngradeGroup)
+	if plan.DowngradeGroup != "" && !ratio_setting.ContainsGroupRatio(plan.DowngradeGroup) {
+		return "降级分组不存在"
+	}
+	return ""
+}
+
 func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -217,12 +238,9 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "总额度不能为负数")
 		return
 	}
-	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	if msg := normalizeAndValidateSubscriptionPlanGroups(&req.Plan); msg != "" {
+		common.ApiErrorMsg(c, msg)
+		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
@@ -287,12 +305,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "总额度不能为负数")
 		return
 	}
-	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	if msg := normalizeAndValidateSubscriptionPlanGroups(&req.Plan); msg != "" {
+		common.ApiErrorMsg(c, msg)
+		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
@@ -321,6 +336,7 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 			"max_purchase_per_user":      req.Plan.MaxPurchasePerUser,
 			"total_amount":               req.Plan.TotalAmount,
 			"upgrade_group":              req.Plan.UpgradeGroup,
+			"downgrade_group":            req.Plan.DowngradeGroup,
 			"quota_reset_period":         req.Plan.QuotaResetPeriod,
 			"quota_reset_custom_seconds": req.Plan.QuotaResetCustomSeconds,
 			"updated_at":                 common.GetTimestamp(),

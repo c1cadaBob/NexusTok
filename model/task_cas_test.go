@@ -32,6 +32,8 @@ func TestMain(m *testing.M) {
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
+	// 测试环境没有执行完整 InitDB，需要手动初始化保留字列名，避免涉及 group/key 的查询生成空 SELECT。
+	initCol()
 
 	sqlDB, err := db.DB()
 	if err != nil {
