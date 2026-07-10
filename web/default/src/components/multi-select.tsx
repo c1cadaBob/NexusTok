@@ -65,6 +65,7 @@ interface MultiSelectProps {
   onOpenChange?: (open: boolean) => void
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
+  preserveSelectedOnEmptyRemovalKey?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -143,6 +144,25 @@ export function canCreateMultiSelectValue({
   return true
 }
 
+export function shouldPreventEmptyInputChipRemoval({
+  preserveSelectedOnEmptyRemovalKey,
+  inputValue,
+  key,
+  selectedLength,
+}: {
+  preserveSelectedOnEmptyRemovalKey: boolean
+  inputValue: string
+  key: string
+  selectedLength: number
+}): boolean {
+  if (!preserveSelectedOnEmptyRemovalKey || selectedLength === 0) return false
+  if (key !== 'Backspace' && key !== 'Delete') return false
+
+  // 渠道模型字段把输入框用作搜索过滤器。空搜索时 Backspace/Delete 继续传给
+  // Base UI 会删除已有模型，容易让“搜索后追加”误变成“替换整个模型列表”。
+  return inputValue.trim().length === 0
+}
+
 // 芯片式多选。它基于项目 Base UI Combobox，保证输入值会参与真实过滤，
 // 同时允许调用方按输入内容发起远程搜索并把结果合并进 options。
 export function MultiSelect({
@@ -167,6 +187,7 @@ export function MultiSelect({
   onOpenChange,
   contentFooter,
   allowCreateWithMatches = true,
+  preserveSelectedOnEmptyRemovalKey = false,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -312,6 +333,23 @@ export function MultiSelect({
     [t]
   )
 
+  const handleRemovalKeyDownCapture = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (
+      shouldPreventEmptyInputChipRemoval({
+        preserveSelectedOnEmptyRemovalKey,
+        inputValue,
+        key: event.key,
+        selectedLength: selected.length,
+      })
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter' || !allowCreate || !canCreate) return
 
@@ -418,6 +456,7 @@ export function MultiSelect({
         <ComboboxChipsInput
           id={id}
           placeholder={selected.length === 0 ? resolvedPlaceholder : undefined}
+          onKeyDownCapture={handleRemovalKeyDownCapture}
           onKeyDown={handleKeyDown}
           aria-label={resolvedPlaceholder}
         />

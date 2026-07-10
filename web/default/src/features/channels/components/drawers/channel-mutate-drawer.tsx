@@ -157,6 +157,7 @@ import {
   extractMappingSourceModels,
   hasModelConfigChanged,
   findMissingModelsInMapping,
+  getModelSearchModelNames,
   getMissingModelSearchMatches,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -285,6 +286,7 @@ const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
 )
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
+const MODEL_SEARCH_APPEND_PAGE_SIZE = 100
 const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'id',
   'name',
@@ -301,6 +303,39 @@ const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'other_info',
   'multi_key_mode',
 ] as const
+
+async function fetchAllModelSearchModelNames(keyword: string): Promise<string[]> {
+  const trimmedKeyword = keyword.trim()
+  if (!trimmedKeyword) return []
+
+  const names: string[] = []
+  let page = 1
+
+  for (;;) {
+    const response = await searchModels({
+      keyword: trimmedKeyword,
+      p: page,
+      page_size: MODEL_SEARCH_APPEND_PAGE_SIZE,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message || '')
+    }
+
+    const data = response.data
+    if (!data) return names
+
+    names.push(...getModelSearchModelNames(data.items ?? [], trimmedKeyword))
+
+    const pageSize = data.page_size || MODEL_SEARCH_APPEND_PAGE_SIZE
+    const loadedCount = page * pageSize
+    if (loadedCount >= data.total || data.items.length === 0) {
+      return names
+    }
+
+    page += 1
+  }
+}
 
 function readAdvancedSettingsPreference(): boolean {
   if (typeof window === 'undefined') return false
@@ -630,12 +665,13 @@ export function ChannelMutateDrawer({
   >()
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
   const [modelSelectOpen, setModelSelectOpen] = useState(false)
+  const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
+    useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
   const debouncedModelSearchKeyword = useDebounce(
     trimmedModelSearchKeyword,
     300
   )
-  const normalizedModelSearchKeyword = debouncedModelSearchKeyword.toLowerCase()
   const isModelSearchDebouncing =
     trimmedModelSearchKeyword.length > 0 &&
     trimmedModelSearchKeyword !== debouncedModelSearchKeyword
@@ -783,27 +819,14 @@ export function ChannelMutateDrawer({
     [allModelsData]
   )
 
-  const modelSearchModelNames = useMemo(() => {
-    const seen = new Set<string>()
-    const names: string[] = []
-
-    for (const model of modelSearchData?.data?.items ?? []) {
-      const name = model.model_name?.trim()
-      if (!name || seen.has(name)) continue
-      // /api/models/search 会匹配 description/tags。渠道模型候选只应该展示真实
-      // model_name 本身包含关键词的条目，避免把标签命中的无关模型塞进下拉框。
-      if (
-        normalizedModelSearchKeyword &&
-        !name.toLowerCase().includes(normalizedModelSearchKeyword)
-      ) {
-        continue
-      }
-      seen.add(name)
-      names.push(name)
-    }
-
-    return names
-  }, [modelSearchData, normalizedModelSearchKeyword])
+  const modelSearchModelNames = useMemo(
+    () =>
+      getModelSearchModelNames(
+        modelSearchData?.data?.items ?? [],
+        debouncedModelSearchKeyword
+      ),
+    [debouncedModelSearchKeyword, modelSearchData]
+  )
 
   // 按渠道类型推导基础模型集合。
   const basicModels = useMemo(() => {
@@ -1526,27 +1549,54 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
-  const handleAddModelSearchMatches = useCallback(() => {
+  const handleAddModelSearchMatches = useCallback(async () => {
     if (!canEditBasicFields) {
       toast.error(noPermissionMessage)
+      return
+    }
+    if (isAddingModelSearchMatches) {
       return
     }
     if (modelSearchMissingModelNames.length === 0) {
       toast.info(t('No new models to add'))
       return
     }
-    const modelsToAdd = [...modelSearchMissingModelNames]
-    // 点击搜索补齐按钮时，模型 Combobox 的弹层可能仍处于打开状态。
-    // 这里始终读取 form 里的最新草稿后再合并，避免弹层关闭或旧闭包把新增模型覆盖回去。
-    const count = updateModels(modelsToAdd, true)
-    setModelSelectOpen(false)
-    clearModelSearch()
-    window.setTimeout(() => {
-      toast.success(t('Added {{count}} model(s) from search', { count }))
-    }, 0)
+
+    setIsAddingModelSearchMatches(true)
+    try {
+      const allSearchModelNames = await fetchAllModelSearchModelNames(
+        debouncedModelSearchKeyword
+      )
+      const currentModels = parseModelsString(form.getValues('models') || '')
+      const modelsToAdd = getMissingModelSearchMatches(
+        allSearchModelNames,
+        currentModels
+      )
+
+      if (modelsToAdd.length === 0) {
+        toast.info(t('No new models to add'))
+        return
+      }
+
+      // 点击搜索补齐按钮时，模型 Combobox 的弹层可能仍处于打开状态。
+      // 这里始终读取 form 里的最新草稿后再合并，避免弹层关闭或旧闭包把新增模型覆盖回去。
+      const count = updateModels(modelsToAdd, true)
+      setModelSelectOpen(false)
+      clearModelSearch()
+      window.setTimeout(() => {
+        toast.success(t('Added {{count}} model(s) from search', { count }))
+      }, 0)
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('Refresh failed'))
+    } finally {
+      setIsAddingModelSearchMatches(false)
+    }
   }, [
     canEditBasicFields,
     clearModelSearch,
+    debouncedModelSearchKeyword,
+    form,
+    isAddingModelSearchMatches,
     modelSearchMissingModelNames,
     noPermissionMessage,
     t,
@@ -3613,6 +3663,7 @@ export function ChannelMutateDrawer({
                                     onSearchChange={setModelSearchKeyword}
                                     open={modelSelectOpen}
                                     onOpenChange={setModelSelectOpen}
+                                    preserveSelectedOnEmptyRemovalKey
                                     contentFooter={
                                       shouldShowModelSearchAppend ? (
                                         <Alert>
@@ -3664,7 +3715,10 @@ export function ChannelMutateDrawer({
                                                 }
                                                 handleAddModelSearchMatches()
                                               }}
-                                              disabled={!canEditBasicFields}
+                                              disabled={
+                                                !canEditBasicFields ||
+                                                isAddingModelSearchMatches
+                                              }
                                               title={
                                                 canEditBasicFields
                                                   ? undefined

@@ -8151,3 +8151,69 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON，且当前运行态 `oidc_enabled=false`。
 8. `curl --noproxy '*' -sS --max-time 15 'http://192.168.0.202:3003/api/oauth/oidc?state=invalid&code=test'` 返回 `{"message":"State parameter is empty or mismatched","success":false}`，确认当前活跃 OAuth 路由仍保持前置 state 校验。
 9. 当前会话未暴露 MCP 浏览器工具；本轮旧控制器未路由，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口，旧路径安全边界由 controller 包单元测试覆盖。
+
+## 本轮实施评审：渠道编辑页搜索添加与 new-api 编辑页对齐复核
+
+### 需求分析
+
+用户反馈“搜索添加时不正确”，并要求把当前渠道编辑页继续向 `/opt/project/new-api-main` 最新版编辑渠道页面对齐。结合前几轮关于 `gpt-5.6` 三个 OpenAI 模型只追加不完整的上下文，本轮需要同时确认两件事：
+
+1. 渠道模型搜索输入 `gpt-5.6` 时，前端必须基于 `/api/models/search` 返回的真实 `model_name` 追加模型，而不是把 `gpt-5.6` 前缀当成自定义模型，也不能因为当前渠道已有 `gpt-5.6-sol` 就漏掉 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+2. 当前编辑渠道抽屉需要保持 new-api 最新页面的分段编辑体验，包括左侧导航、Basic Information、Credentials、Models & Groups、Advanced Settings 等结构，同时保留 NexusTok 已原生化的账号池、Codex、权限分级、模型映射防护和上游模型同步等能力。
+
+复核代码和运行态后确认，直接输入 `gpt-5.6` 的主路径已经可以显示 `Add 2 new model(s)` 并追加 `terra/luna`；不过真实页面交互暴露了一个边界：当模型搜索框为空时按 Backspace/Delete，Base UI Combobox 会把按键解释为删除最后一个已选芯片，可能让管理员在清理搜索词或重复搜索时误删已有模型。独立子 agent 还指出搜索追加只使用第一页 `page_size=50` 结果，若未来某个模型系列超过第一页容量，仍可能出现“搜索结果没有加全”。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用多选组件 | `web/default/src/components/multi-select.tsx` | 新增可选的空搜索删除键保护，默认关闭，仅由渠道模型字段启用；不会改变其它 MultiSelect 的键盘删除行为。 |
+| 多选组件测试 | `web/default/src/components/multi-select.test.ts` | 覆盖 Backspace/Delete 空搜索保护、存在搜索词时仍允许删除输入、默认关闭保护的兼容行为。 |
+| 渠道模型搜索 helper | `web/default/src/features/channels/lib/model-search.ts` | 抽出模型搜索候选提取函数，只保留 `model_name` 本身包含关键词的真实模型，并按大小写不敏感去重。 |
+| 渠道模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 覆盖 description/tags 命中但 `model_name` 不匹配时不进入候选，以及 `gpt-5.6` 缺失项计算。 |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 启用模型字段空搜索删除保护；普通下拉搜索继续轻量拉第一页；点击“添加搜索结果”时再按 `page_size=100` 拉全所有搜索页后追加缺失模型。 |
+| 运行态验证 | `http://192.168.0.202:3003/channels` | 登录后打开渠道 `11111` 编辑抽屉，验证 new-api 分段结构、空 Backspace 不误删、`gpt-5.6` 追加后 Selected 5。 |
+
+### 风险评估
+
+- 空搜索 Backspace/Delete 保护只在渠道模型选择器启用。风险是该字段不再支持通过空输入框键盘删除最后一个模型，但管理员仍可通过芯片移除按钮、候选反选、Clear All 等明确操作删除模型；这比隐式按键误删生产渠道模型更可控。
+- 点击追加时会额外请求 `/api/models/search?page_size=100`，并在 `total` 未拉完时继续翻页。该逻辑只在管理员显式点击追加按钮时发生，普通输入仍只拉第一页用于下拉展示，避免每次键入都触发多页请求。
+- `/api/models/search` 会按 `model_name OR description OR tags` 搜索。前端继续只将 `model_name` 自身包含关键词的结果加入渠道，避免标签命中导致无关模型被追加。
+- 追加逻辑只修改前端表单草稿，不会自动保存渠道；管理员仍需要点击 Update Channel 才会写入后端。
+- 本轮未引入新前端文案，未改变后端接口和数据库结构，不涉及 JSON/GORM/计费表达式规则。
+
+### 方案评审
+
+采用“默认兼容 + 渠道模型字段定向防护 + 点击时拉全页”的方案：
+
+1. `MultiSelect` 新增 `preserveSelectedOnEmptyRemovalKey`，默认 `false`，用纯函数 `shouldPreventEmptyInputChipRemoval` 判断是否阻止空输入 Backspace/Delete。
+2. 在 `ComboboxChipsInput` 的 `onKeyDownCapture` 阶段拦截空输入删除键。第一次仅在 bubble 阶段拦截时，页面验证发现 Base UI 已先删除芯片，因此必须前移到 capture 阶段。
+3. 渠道编辑页的模型 MultiSelect 启用该保护，其它页面不受影响。
+4. 抽出 `getModelSearchModelNames`，统一处理搜索结果中的真实模型名提取，避免组件内重复写过滤规则。
+5. 普通远程搜索仍使用 `page_size=50`，只服务下拉候选展示；点击 `Add {{count}} new model(s)` 时调用 `fetchAllModelSearchModelNames`，使用后端最大 `page_size=100` 按 `total` 翻页拉完，再基于当前表单最新 `models` 计算缺失项并合并。
+6. 追加期间禁用按钮，避免重复点击造成并发追加。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索追加修复和边界补强：
+
+- 输入 `gpt-5.6` 后，下拉候选展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，搜索结果提示只显示当前渠道尚未包含的 `terra/luna`，按钮为 `Add 2 new model(s)`。
+- 点击追加后，表单从 `Selected 3` 变为 `Selected 5`，保留 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，新增 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+- 空搜索框按 Backspace 不再删除已有模型，避免“搜索添加”操作链中误删原有模型后变成替换列表。
+- 点击追加会发起 `page_size=100` 的补齐请求，未来同系列模型超过第一页候选时也会按分页拉全再追加。
+- 编辑渠道抽屉运行态仍呈现 new-api 风格的四段结构：`Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`；NexusTok 的 Account Pool Group、Codex 渠道、权限控制和模型映射防护继续保留。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，共 18 条测试。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bun run build` 通过。
+4. `git diff --check` 通过。
+5. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+6. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+7. 使用账号 `c1cada` 登录 3003 后，通过 Chrome headless/CDP 打开 `http://192.168.0.202:3003/channels`，打开渠道 `11111` 编辑抽屉，确认页面结构包含 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，初始模型为 `Selected 3`。
+8. 在模型输入框为空时发送 Backspace，页面仍为 `Selected 3`，且 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol` 均保留。
+9. 在模型输入框输入 `gpt-5.6`，页面保持 `Selected 3`，候选和搜索结果包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，按钮显示 `Add 2 new model(s)`。
+10. 点击追加按钮后，页面显示 `Selected 5`，并同时包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。本次验证未点击 `Update Channel`，没有保存运行态渠道数据。
+11. Chrome headless/CDP 网络记录显示普通下拉搜索请求为 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，点击追加时额外请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100`，确认全页补齐路径生效。
+12. 当前会话未暴露 MCP 浏览器工具；本轮前端交互按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。

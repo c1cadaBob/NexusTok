@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 import {
   canCreateMultiSelectValue,
   filterMultiSelectItems,
+  shouldPreventEmptyInputChipRemoval,
 } from './multi-select'
 
 describe('MultiSelect 搜索过滤', () => {
@@ -56,6 +57,56 @@ describe('MultiSelect 搜索过滤', () => {
     assert.deepEqual(filterMultiSelectItems(items, 'terra', labels), [
       'model-a',
     ])
+  })
+})
+
+describe('MultiSelect 空搜索删除键保护', () => {
+  test('启用保护时空输入 Backspace 不删除已选项', () => {
+    assert.equal(
+      shouldPreventEmptyInputChipRemoval({
+        preserveSelectedOnEmptyRemovalKey: true,
+        inputValue: '',
+        key: 'Backspace',
+        selectedLength: 3,
+      }),
+      true
+    )
+  })
+
+  test('启用保护时空输入 Delete 不删除已选项', () => {
+    assert.equal(
+      shouldPreventEmptyInputChipRemoval({
+        preserveSelectedOnEmptyRemovalKey: true,
+        inputValue: '',
+        key: 'Delete',
+        selectedLength: 3,
+      }),
+      true
+    )
+  })
+
+  test('存在搜索词时仍允许删除键清空输入内容', () => {
+    assert.equal(
+      shouldPreventEmptyInputChipRemoval({
+        preserveSelectedOnEmptyRemovalKey: true,
+        inputValue: 'gpt-5.6',
+        key: 'Backspace',
+        selectedLength: 3,
+      }),
+      false
+    )
+  })
+
+  test('默认关闭保护以保持其它 MultiSelect 的键盘行为', () => {
+    assert.equal(
+      shouldPreventEmptyInputChipRemoval({
+        preserveSelectedOnEmptyRemovalKey: false,
+        inputValue: '',
+        key: 'Backspace',
+        selectedLength: 3,
+      }),
+      false
+    )
   })
 })
 
