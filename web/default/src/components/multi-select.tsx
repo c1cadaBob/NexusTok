@@ -61,6 +61,8 @@ interface MultiSelectProps {
   loadingText?: string
   searchValue?: string
   onSearchChange?: (value: string) => void
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
 }
@@ -161,6 +163,8 @@ export function MultiSelect({
   loadingText,
   searchValue,
   onSearchChange,
+  open: controlledOpen,
+  onOpenChange,
   contentFooter,
   allowCreateWithMatches = true,
 }: MultiSelectProps) {
@@ -170,9 +174,20 @@ export function MultiSelect({
   const resolvedLoadingText = loadingText ?? t('Searching...')
   const chipsAnchorRef = useComboboxAnchor()
   const [internalInputValue, setInternalInputValue] = React.useState('')
-  const [open, setOpen] = React.useState(false)
+  const [internalOpen, setInternalOpen] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
   const inputValue = searchValue ?? internalInputValue
+  const open = controlledOpen ?? internalOpen
+
+  const updateOpen = React.useCallback(
+    (nextOpen: boolean) => {
+      if (controlledOpen === undefined) {
+        setInternalOpen(nextOpen)
+      }
+      onOpenChange?.(nextOpen)
+    },
+    [controlledOpen, onOpenChange]
+  )
 
   const labelMap = React.useMemo(() => {
     const map = new Map<string, string>()
@@ -320,7 +335,7 @@ export function MultiSelect({
       inputValue={inputValue}
       onInputValueChange={handleInputValueChange}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={updateOpen}
       disabled={disabled}
     >
       <ComboboxChips ref={chipsAnchorRef} className={cn('w-full', className)}>

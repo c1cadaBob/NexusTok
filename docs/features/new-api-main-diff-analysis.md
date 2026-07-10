@@ -6531,6 +6531,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | Routing Reliability 默认前端聚合入口 | `web/default/src/features/system-settings/models/*`、`web/default/src/features/system-settings/types.ts`、`web/default/src/i18n/locales/*.json` | 默认前端模型设置新增 `routing-reliability` 分区，聚合重试、自动重试状态码、渠道自动禁用/恢复和自动测试模式，复用现有 option 保存与 `system_setting.sensitive_write` 权限。 |
 | 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |
 | 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
+| 2026-07-10 | 渠道模型搜索追加弹层关闭与编辑页导航对齐 | `web/default/src/components/multi-select.tsx`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 运行态复现确认 `gpt-5.6` 后端搜索和追加数据正确，但批量追加后 Combobox 因搜索词清空仍保持打开并铺出完整模型库；本轮让 `MultiSelect` 支持可选受控 open，渠道模型选择器在 `Add {{count}} new model(s)` 后立即关闭弹层，并补齐 new-api 编辑页左侧导航 sticky 层级。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -7758,3 +7759,74 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 9. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true`。
 10. 当前会话未暴露浏览器 MCP 工具，已用 Chrome headless/CDP 替代：登录账号 `c1cada` 成功，写入前端 `uid/user` 本地状态后打开 `http://192.168.0.202:3003/subscriptions`，页面显示 `Subscription Management`、`Create Plan` 和空套餐列表；点击 `Create Plan` 后抽屉真实渲染 `Downgrade Group` 与 `Downgrade to pre-purchase group`。
 11. 使用登录 cookie 与 `NexusTok-User: 1` 调用运行态 3003：`PUT /api/subscription/admin/plans/999999` 传入 `downgrade_group="__missing_group__"` 返回 `{"message":"降级分组不存在","success":false}`，确认后端热更新已生效且请求在写库前被校验拦截。
+
+## 本轮实施评审：渠道模型搜索追加弹层关闭与编辑页导航对齐
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新版编辑渠道页面继续对齐。重新访问 3003 运行态复现后确认：后端数据和前端追加结果本身是正确的，`/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 同步模型；渠道 `11111` 当前已有 `gpt-5.6-sol`，所以批量追加按钮正确显示 `Add 2 new model(s)`，点击后表单草稿也确实增加 `terra/luna`。
+
+真正的问题是追加成功后的弹层状态：`handleAddModelSearchMatches` 会清空搜索词，但通用 `MultiSelect` 内部的 Combobox 仍保持打开。搜索词清空后，候选过滤回到“显示完整模型库”，页面立即铺出大量模型名称，视觉上像搜索添加乱跳或添加到了错误列表。这个问题不属于模型同步缺失，也不应通过后端补数据解决；应该把搜索补齐动作完成后的弹层关闭纳入渠道编辑页的原生交互。
+
+同时对照 new-api 最新编辑渠道页，当前 NexusTok 已经具备大抽屉、左侧状态导航、Basic/Credentials/Models/Advanced 分区和高级折叠结构；本轮只补齐导航 sticky 层级，避免右侧长内容滚动或弹层交互时导航被局部内容覆盖，不覆盖 NexusTok 已有的账号池、Codex OAuth、字段级权限和模型搜索补齐能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 新增可选 `open` 与 `onOpenChange` 受控 props；未传入时继续使用内部状态，保持其它调用方行为不变。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型选择器接管 Combobox open 状态；批量追加搜索缺失模型后关闭弹层并清空搜索词，避免完整模型库突然展开。 |
+| 渠道编辑导航 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 左侧 `ChannelEditorNav` 补齐 `lg:z-20` sticky 层级，对齐 new-api 编辑页导航稳定性。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮复现结论和方案边界，明确问题不是 `gpt-5.6` 模型未同步。 |
+
+### 风险评估
+
+- `MultiSelect` 是通用组件，如果直接改变默认关闭策略，可能影响用户管理、分组选择、其它模型选择器或自定义标签输入；因此本轮只新增可选受控能力，默认仍走原内部状态。
+- 批量追加仍只修改表单草稿，不触发 `updateChannel`；运行态验证必须避免点击 `Update Channel`，防止把测试草稿写入渠道配置。
+- 搜索补齐按钮继续保留在 Combobox 弹层内部，因为上一轮复测证明放在弹层外会被 Base UI 的 dismiss 交互抢走点击；本轮只在 handler 成功后关闭弹层，不改变按钮所在交互上下文。
+- 清空搜索词后关闭弹层可能让管理员需要重新聚焦输入才能继续搜索，但这比展示完整模型库更符合“本次搜索补齐已完成”的预期；逐个点选候选的旧能力仍可用。
+- 本轮不修改后端 `/api/models/search`、模型元信息同步、渠道保存 payload、数据库、relay 或计费路径，核心业务风险较低。
+
+### 方案评审
+
+采用“通用组件可选受控 + 渠道页局部接管”的方案：
+
+1. `MultiSelectProps` 增加 `open?: boolean` 与 `onOpenChange?: (open: boolean) => void`。
+2. `MultiSelect` 内部保留 `internalOpen`；调用方没有传 `open` 时行为与此前一致，传入后只把状态变更通过 `onOpenChange` 通知外部。
+3. 渠道编辑抽屉新增 `modelSelectOpen` 状态，并将其绑定到模型 `MultiSelect`。
+4. `handleAddModelSearchMatches` 在成功合并缺失模型后先 `setModelSelectOpen(false)`，再清空 `modelSearchKeyword`，防止清空搜索词后的完整候选列表保持可见。
+5. 抽屉关闭时同步清空 `modelSelectOpen`，避免下次打开时复用旧弹层状态。
+6. `ChannelEditorNav` 补齐 `lg:z-20`，对齐 new-api 侧栏导航在长抽屉中的层级处理。
+7. 验证重点放在 `gpt-5.6` 搜索追加后弹层是否关闭、表单是否变为 5 个模型、运行态渠道是否没有被保存修改。
+
+### 实施结果
+
+已完成渠道模型搜索追加后的弹层关闭修复。`MultiSelect` 现在支持可选受控打开状态：其它调用方不传 `open/onOpenChange` 时继续由组件内部管理，渠道编辑页则显式接管模型选择器弹层。管理员输入 `gpt-5.6` 后仍能看到三个真实候选和 `Add 2 new model(s)`；点击追加后，表单草稿增加 `gpt-5.6-terra` 与 `gpt-5.6-luna`，同时关闭候选弹层，不再因为搜索词清空而展示完整模型库。
+
+编辑渠道页的 new-api 结构对齐保持为“吸收页面信息架构，不覆盖 NexusTok 原生能力”：侧栏导航、分区、固定底部操作和高级折叠结构继续保留；账号池凭据模式、Codex OAuth、权限禁用、敏感字段裁剪、模型映射 guardrail、状态码风险确认和搜索补齐 footer 均未被削弱。本轮仅补齐左侧导航 sticky 层级，减少长抽屉滚动时的遮挡风险。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 和 `/api/status`，确认热更新服务可访问。
+7. 用运行态页面登录 `c1cada`，打开 `/channels` 编辑渠道 `11111`，输入 `gpt-5.6`，确认三条候选、两条可新增，点击 `Add 2 new model(s)` 后表单草稿变为 5 个模型且弹层关闭；不点击 `Update Channel`。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，12 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见文案，六语 `missingCount=0`、`extrasCount=0`。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回状态 JSON。
+7. `docker logs --tail 120 nexustok-frontend-watch` 显示 `[hot] published default dist`，说明热更新产物已发布到 3003 当前服务。
+8. 当前会话未暴露 MCP 浏览器工具，已使用 Chrome headless/CDP 替代真实页面验证。登录账号 `c1cada` 后打开 `http://192.168.0.202:3003/channels/`，渠道列表正常显示 `11111`。
+9. Chrome headless/CDP 打开渠道 `11111` 编辑抽屉，模型区初始显示 `Selected 3`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+10. 在模型输入框输入 `gpt-5.6` 后，页面候选包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，未出现 `Add custom model "gpt-5.6"` 或 `Add "gpt-5.6"`。
+11. Chrome headless/CDP 真实点击 `Add 2 new model(s)` 后，表单草稿显示 `Selected 5`，chip 列表包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；`[data-slot="combobox-content"][data-open]` 不存在，页面没有铺出完整模型库。
+12. 验证期间未点击 `Update Channel`。随后使用登录 cookie 与 `NexusTok-User: 1` 调用 `GET /api/channel/?p=0&page_size=5`，运行态渠道 `11111` 仍为 `models:"gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认没有保存测试草稿。
+13. 同样使用运行态接口调用 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50`，返回 `total=3`，items 为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，再次确认模型同步数据完整，问题已定位在前端弹层状态而非供应商或模型元信息缺失。

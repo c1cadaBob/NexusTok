@@ -475,7 +475,7 @@ function ChannelEditorNav(props: {
   onNavigate: (targetId: string) => void
 }) {
   return (
-    <aside className='hidden self-start lg:sticky lg:top-4 lg:block'>
+    <aside className='hidden self-start lg:sticky lg:top-4 lg:z-20 lg:block'>
       <div className='flex max-h-[calc(100dvh-12rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
         <div className='border-border/60 bg-muted/20 rounded-lg border p-3'>
           <div className='flex min-w-0 items-center gap-2'>
@@ -629,6 +629,7 @@ export function ChannelMutateDrawer({
     string | undefined
   >()
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
+  const [modelSelectOpen, setModelSelectOpen] = useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
   const debouncedModelSearchKeyword = useDebounce(
     trimmedModelSearchKeyword,
@@ -712,6 +713,7 @@ export function ChannelMutateDrawer({
       setChannelKey(null)
       setIsChannelKeyLoading(false)
       clearModelSearch()
+      setModelSelectOpen(false)
     } else if (channelId) {
       setChannelKey(null)
     }
@@ -1537,6 +1539,7 @@ export function ChannelMutateDrawer({
     // 点击搜索补齐按钮时，模型 Combobox 的弹层可能仍处于打开状态。
     // 这里始终读取 form 里的最新草稿后再合并，避免弹层关闭或旧闭包把新增模型覆盖回去。
     const count = updateModels(modelsToAdd, true)
+    setModelSelectOpen(false)
     clearModelSearch()
     window.setTimeout(() => {
       toast.success(t('Added {{count}} model(s) from search', { count }))
@@ -3608,6 +3611,8 @@ export function ChannelMutateDrawer({
                                     emptyText={t('No matching models')}
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
+                                    open={modelSelectOpen}
+                                    onOpenChange={setModelSelectOpen}
                                     contentFooter={
                                       shouldShowModelSearchAppend ? (
                                         <Alert>
