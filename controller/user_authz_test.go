@@ -60,7 +60,12 @@ func setupUserAuthzControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuthzUserOverride{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.AuthzUserOverride{},
+		&model.AuthzRole{},
+		&model.CasbinRule{},
+	))
 
 	t.Cleanup(func() {
 		model.DB = oldDB

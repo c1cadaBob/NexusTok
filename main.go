@@ -27,6 +27,7 @@ import (
 	"github.com/c1cada/NexusTok/relay"                         // AI API 中继/代理层
 	"github.com/c1cada/NexusTok/router"                        // 路由配置
 	"github.com/c1cada/NexusTok/service"                       // 服务层：业务逻辑
+	"github.com/c1cada/NexusTok/service/authz"                 // 管理权限角色与策略初始化
 	_ "github.com/c1cada/NexusTok/setting/performance_setting" // 性能设置（init 自动加载）
 	"github.com/c1cada/NexusTok/setting/ratio_setting"         // 比率/定价设置
 
@@ -417,6 +418,13 @@ func InitResources() error {
 	if err != nil {
 		common.FatalLog("failed to initialize database: " + err.Error())
 		return err
+	}
+
+	if common.IsMasterNode {
+		if err = authz.SeedPersistentPolicies(); err != nil {
+			common.FatalLog("failed to seed authz persistent policies: " + err.Error())
+			return err
+		}
 	}
 
 	// 检查数据库设置状态

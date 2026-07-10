@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupAuthzOverrideTestDB(t *testing.T) *gorm.DB {
+func setupAuthzTestDB(t *testing.T, migrateModels ...interface{}) *gorm.DB {
 	t.Helper()
 
 	oldDB := model.DB
@@ -31,7 +31,7 @@ func setupAuthzOverrideTestDB(t *testing.T) *gorm.DB {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.AuthzUserOverride{}))
+	require.NoError(t, db.AutoMigrate(migrateModels...))
 	model.DB = db
 
 	t.Cleanup(func() {
@@ -47,6 +47,21 @@ func setupAuthzOverrideTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func setupAuthzOverrideTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return setupAuthzTestDB(
+		t,
+		&model.AuthzUserOverride{},
+		&model.AuthzRole{},
+		&model.CasbinRule{},
+	)
+}
+
+func setupAuthzPolicyMissingTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return setupAuthzTestDB(t, &model.AuthzUserOverride{})
 }
 
 func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {

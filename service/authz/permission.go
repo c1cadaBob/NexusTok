@@ -114,16 +114,31 @@ type RoleDescriptor struct {
 }
 
 type roleSpec struct {
-	key       string
-	name      string
-	builtIn   bool
-	superuser bool
-	sort      int
+	key         string
+	name        string
+	description string
+	builtIn     bool
+	superuser   bool
+	sort        int
 }
 
 var builtInRoles = []roleSpec{
-	{key: BuiltInRoleRoot, name: "Root", builtIn: true, superuser: true, sort: 0},
-	{key: BuiltInRoleAdmin, name: "Admin", builtIn: true, superuser: false, sort: 10},
+	{
+		key:         BuiltInRoleRoot,
+		name:        "Root",
+		description: "Built-in root authorization role",
+		builtIn:     true,
+		superuser:   true,
+		sort:        0,
+	},
+	{
+		key:         BuiltInRoleAdmin,
+		name:        "Admin",
+		description: "Built-in admin authorization role",
+		builtIn:     true,
+		superuser:   false,
+		sort:        10,
+	},
 }
 
 // Catalog 返回权限资源注册表的副本。
@@ -197,6 +212,9 @@ func Can(userID int, systemRole int, permission Permission) bool {
 	if allowed, ok := explicitUserOverride(userID, permission); ok {
 		return allowed
 	}
+	if allowed, ok := persistentRoleAllows(*role, permission); ok {
+		return allowed
+	}
 	return actionHasRole(action, role.key)
 }
 
@@ -219,6 +237,7 @@ func roleGrants(role roleSpec) PermissionsMap {
 
 func roleGrantsWithOverrides(role roleSpec, overrides overrideEffects) PermissionsMap {
 	grants := make(PermissionsMap, len(registry))
+	persistentGrants, persistentOK := persistentRoleGrants(role)
 	for _, resource := range registry {
 		actions := make(map[string]bool, len(resource.Actions))
 		for _, action := range resource.Actions {
@@ -227,11 +246,28 @@ func roleGrantsWithOverrides(role roleSpec, overrides overrideEffects) Permissio
 				actions[action.Action] = allowed
 				continue
 			}
-			actions[action.Action] = role.superuser || actionHasRole(action, role.key)
+			if role.superuser {
+				actions[action.Action] = true
+				continue
+			}
+			if persistentOK {
+				actions[action.Action] = persistentGrants[resource.Resource][action.Action]
+				continue
+			}
+			actions[action.Action] = actionHasRole(action, role.key)
 		}
 		grants[resource.Resource] = actions
 	}
 	return grants
+}
+
+func builtInRoleByKey(roleKey string) (*roleSpec, bool) {
+	for i := range builtInRoles {
+		if builtInRoles[i].key == roleKey {
+			return &builtInRoles[i], true
+		}
+	}
+	return nil, false
 }
 
 func findAction(permission Permission) (ActionDefinition, bool) {

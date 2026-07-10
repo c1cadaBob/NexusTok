@@ -8527,3 +8527,72 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 12. 真实点击 `添加 2 个新模型` 后，toast 显示 `已从搜索结果添加 2 个模型`，表单草稿显示 `已选 5 个`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
 13. 验证期间未点击 `更新渠道`，因此没有保存测试草稿，不改变运行态渠道数据。
 14. 当前会话未暴露 MCP 浏览器工具；本轮按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成真实页面交互和接口验证。
+
+## 本轮实施评审：Authz 角色与策略持久化底座原生化
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main/service/authz` 后确认，new-api 的细粒度授权不只返回静态 catalog，还把角色模板保存到 `authz_roles`，把角色和用户策略保存到 `casbin_rule`，启动时种子内置 Root/Admin 角色并持久化 Admin 默认策略。NexusTok 当前已经有权限 catalog、路由 `RequirePermission`、用户级 override 和前端权限矩阵，但角色基线仍完全由内存里的 `DefaultRoles` 推导，缺少可审计、可导出、可后续编辑的策略存储。
+
+本轮目标是先把 new-api 的“角色与策略持久化”优势转换成 NexusTok 原生底座：新增跨数据库兼容的 `authz_roles` 与 `casbin_rule` 表，主节点启动时种子内置角色和 Admin 默认策略，权限计算优先读取数据库策略，读取失败或表尚未准备好时回退当前静态基线。完整的角色模板 UI、Casbin 运行时依赖和自定义角色分配暂不混入本轮，避免一次性扩大授权面。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 数据模型 | `model/authz_role.go`、`model/casbin_rule.go` | 新增 `AuthzRole` 与 `CasbinRule`，表名对齐 new-api；字段只使用字符串、整数、布尔和 bigint 时间戳，保持 SQLite/MySQL/PostgreSQL 兼容。 |
+| 数据库迁移 | `model/main.go` | `migrateDB` 与 `migrateDBFast` 纳入两张新表；不修改现有用户、渠道、账号池和日志表。 |
+| 权限服务 | `service/authz/*` | 新增角色 subject、策略 subject、种子、读取和 fallback；`Roles()`、`CapabilitiesForUser()`、`Can()` 在数据库策略可用时优先使用持久化策略。 |
+| 启动流程 | `main.go` | 主库初始化后调用 Authz 持久策略初始化；失败时 fail-fast，避免迁移或种子异常后服务带着不完整策略运行。 |
+| 测试 | `service/authz/*_test.go`、必要的 controller 测试 setup | 增加策略种子、角色列表、策略优先级、未知策略过滤、用户 override 叠加和表缺失 fallback 的回归覆盖。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、边界、实施结果和验证。 |
+
+### 风险评估
+
+- 授权放大风险：如果数据库策略被误读为默认允许，会直接扩大 Admin 权限。本轮只接受已注册 catalog 中的 `allow` 策略，未知 resource/action/effect 全部忽略，Root 仍仅通过已知权限短路，未知权限继续 fail-closed。
+- 启动兼容风险：老库没有新表时，服务启动迁移会创建表并种子策略；测试或从节点临时未迁移时，权限计算回退静态基线，避免因为表不存在导致所有 Admin 页面瞬间不可用。
+- 多节点风险：本轮种子只应在主节点执行，避免从节点并发写策略；从节点读取策略失败时回退静态基线。后续如果开放角色编辑，需要再做策略变更广播或周期 reload。
+- 语义迁移风险：当前用户级 override 保存在 `authz_user_overrides`，直接迁到 `casbin_rule` 会影响既有测试和前端接口。本轮保留用户 override 表，只把角色基线策略持久化，后续再评估是否合并用户策略存储。
+- 数据库兼容风险：不得使用 PostgreSQL JSONB、MySQL 专用 upsert 或 SQLite 不支持的 ALTER COLUMN；种子使用 GORM 查询后 create/update 的通用路径。
+
+### 方案评审
+
+采用“持久策略优先 + 静态基线兜底”的低侵入方案：
+
+1. 新增 `AuthzRole` 与 `CasbinRule` 模型，表结构对齐 new-api 的 `authz_roles` 和 `casbin_rule`，但时间戳用 NexusTok 统一的 Unix 秒字段和 GORM hook。
+2. 新增 `RoleSubject(roleKey)` 和 `UserSubject(userID)`，角色策略使用 `p, role:admin, resource, action, allow` 形式保存；Root 是 superuser，不写全量策略。
+3. 主节点启动后调用 `SeedPersistentPolicies()`：先 upsert 内置角色，再重置内置角色策略，最后按 catalog 中 `DefaultRoles` 种子 Admin allow 策略。
+4. `Roles()` 返回内置角色描述时，角色 key/name/superuser 仍以代码内置定义为准，避免数据库误配置关闭内置管理角色；授权矩阵优先读取持久化策略，数据库不可用时继续返回当前静态矩阵。
+5. `roleGrantsWithOverrides()` 和 `Can()` 对非 Root 角色优先查持久策略；策略表不可用、角色没有持久策略或读取错误时回退 `DefaultRoles`，确保升级期间行为与旧版本一致。
+6. 用户级 override 保持当前 `AuthzUserOverride` 语义，仍然优先于角色基线；普通用户即使存在 override 也不能被提升为管理角色。
+7. 后续角色编辑 UI、自定义角色、用户角色分配和用户 override 迁入 `casbin_rule` 作为独立切片继续推进。
+
+### 实施结果
+
+已完成 Authz 角色与策略持久化底座原生化：
+
+- 新增 `model.AuthzRole` 和 `model.CasbinRule`，表名分别为 `authz_roles` 与 `casbin_rule`，字段与 new-api/Casbin adapter 兼容，并使用 NexusTok 统一 Unix 秒时间戳 hook。
+- `migrateDB()` 和 `migrateDBFast()` 均已纳入两张新表，保持 SQLite、MySQL、PostgreSQL 通用 GORM 迁移路径，不使用数据库专用 upsert 或 JSONB。
+- 新增 `RoleSubject(roleKey)` 和 `UserSubject(userID)`，角色策略统一保存为 `p, role:<key>, <resource>, <action>, allow`；Root 作为 superuser 不写全量 allow 策略。
+- `SeedPersistentPolicies()` 会 upsert 内置 Root/Admin 角色模板，重置内置角色策略，再按 catalog 中的 Admin `DefaultRoles` 种子默认 allow 策略。
+- `InitResources()` 在主节点数据库初始化成功后执行 Authz 持久策略种子；种子失败时 fail-fast，避免服务带着半初始化授权表运行。
+- `Roles()`、`CapabilitiesForUser()`、`Can()` 对非 Root 管理角色优先读取 `casbin_rule` 中的可用策略；策略表缺失、读取错误、角色没有任何可用 allow 策略时回退静态 Admin 基线。
+- 用户级 override 继续存储在 `authz_user_overrides`，并且仍优先于角色基线；差异计算现在会优先对比持久 Admin 基线，后续角色策略可编辑时，用户级 allow/deny 仍能表达“相对当前角色基线”的覆盖。
+- 未知 resource/action、非 allow effect 和脏策略会被忽略；如果只剩未知策略，会被视为策略缺失并回退静态基线，降低升级与误写风险。
+- 本轮没有引入 Casbin 运行时依赖，没有开放角色编辑 UI、自定义角色、用户角色分配，也没有把用户 override 迁入 `casbin_rule`；这些仍作为后续独立切片推进。
+
+### 验证记录
+
+1. `go test ./service/authz` 通过，覆盖策略种子、Root/Admin 角色、持久策略优先、用户 override 优先、策略表缺失回退、无有效策略回退和原有 override 语义。
+2. `go test ./controller -run 'TestGetSelfReturnsAdminPermissions|TestGetSelfIncludesAuthzUserOverrides|TestGetUserReturnsAdminPermissions|TestUpdateUserAdminPermissions|TestUpdateUserRejectsNonRootAdminPermissions|TestCreateUserAdminPermissions|TestUpdateUserClearsAdminPermissionsWhenTargetIsCommon|TestDemoteClearsAdminPermissions'` 通过，确认用户详情、自身份权限和用户管理接口仍返回正确权限矩阵。
+3. `go test ./model` 通过，确认新增模型迁移没有破坏现有模型层回归。
+4. `go test ./service/authz ./controller` 通过。
+5. `go test ./router -run Authz` 通过。
+6. `go test ./...` 通过，确认新增 Authz 持久化底座没有破坏全仓 Go 回归。
+7. `git diff --check` 通过。
+8. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+9. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON，后端运行态正常。
+10. Docker 日志确认热更新后端已 rebuild/restart，`start_time` 已更新；运行态使用 PostgreSQL 数据库 `nexustok`。
+11. 在 PostgreSQL 运行态确认 `authz_roles` 已种子 `root`、`admin` 两条内置角色；`casbin_rule` 中 `role:admin` 默认 allow 策略共 21 条。
+12. 在运行态确认 Admin 的 `channel` 策略包含 `read`、`write`、`operate` 三条 allow，和静态 Admin 基线保持一致。
+13. 当前会话未暴露 MCP 浏览器工具；本轮为后端授权底座改动，已按热更新要求访问 `http://192.168.0.202:3003/`，并使用 curl、Docker 日志和 PostgreSQL 查询完成运行态验证。

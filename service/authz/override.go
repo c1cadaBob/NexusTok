@@ -119,7 +119,11 @@ func userOverrideRecords(userID int, resource ResourceDefinition, actions map[st
 		if !ok {
 			continue
 		}
-		if desired == actionHasRole(action, BuiltInRoleAdmin) {
+		adminBaseline := actionHasRole(action, BuiltInRoleAdmin)
+		if allowed, ok := persistentAdminBaseline(resource.Resource, action.Action); ok {
+			adminBaseline = allowed
+		}
+		if desired == adminBaseline {
 			continue
 		}
 		effect := EffectDeny
