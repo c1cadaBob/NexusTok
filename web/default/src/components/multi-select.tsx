@@ -33,6 +33,7 @@ import {
   ComboboxEmpty,
   ComboboxItem,
   ComboboxList,
+  ComboboxSeparator,
   ComboboxValue,
   useComboboxAnchor,
 } from '@/components/ui/combobox'
@@ -60,6 +61,7 @@ interface MultiSelectProps {
   loadingText?: string
   searchValue?: string
   onSearchChange?: (value: string) => void
+  contentFooter?: React.ReactNode
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -147,6 +149,7 @@ export function MultiSelect({
   loadingText,
   searchValue,
   onSearchChange,
+  contentFooter,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -415,6 +418,17 @@ export function MultiSelect({
         <ComboboxEmpty>
           {isLoading ? resolvedLoadingText : resolvedEmptyText}
         </ComboboxEmpty>
+        {contentFooter && (
+          <>
+            <ComboboxSeparator />
+            <div
+              className='p-2'
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {contentFooter}
+            </div>
+          </>
+        )}
       </ComboboxContent>
     </Combobox>
   )

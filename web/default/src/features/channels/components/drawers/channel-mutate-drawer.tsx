@@ -156,6 +156,7 @@ import {
   extractMappingSourceModels,
   hasModelConfigChanged,
   findMissingModelsInMapping,
+  getMissingModelSearchMatches,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
@@ -604,6 +605,7 @@ export function ChannelMutateDrawer({
   >(null)
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
+  const modelSearchAppendPointerHandledRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
@@ -1117,6 +1119,20 @@ export function ChannelMutateDrawer({
     }))
   }, [allModelsList, currentModelsArray, modelSearchModelNames])
 
+  const modelSearchMissingModelNames = useMemo(
+    () =>
+      getMissingModelSearchMatches(modelSearchModelNames, currentModelsArray),
+    [currentModelsArray, modelSearchModelNames]
+  )
+  const modelSearchMissingPreview = modelSearchMissingModelNames.slice(0, 6)
+  const modelSearchMissingOmittedCount =
+    modelSearchMissingModelNames.length - modelSearchMissingPreview.length
+  const shouldShowModelSearchAppend =
+    trimmedModelSearchKeyword.length > 0 &&
+    !isSearchingModelMeta &&
+    !isModelSearchDebouncing &&
+    modelSearchMissingModelNames.length > 0
+
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
       return createEmptyModelMappingGuardrail()
@@ -1388,13 +1404,26 @@ export function ChannelMutateDrawer({
   // 统一更新模型字段，所有快捷填充和预设导入都走这里保持格式一致。
   const updateModels = useCallback(
     (newModels: string[], merge: boolean = false) => {
-      const finalModels = merge
-        ? formatModelsArray([...currentModelsArray, ...newModels])
-        : formatModelsArray(newModels)
-      form.setValue('models', finalModels)
-      return newModels.length
+      const normalizedNewModels = newModels
+        .map((model) => model.trim())
+        .filter(Boolean)
+      const existingModels = merge
+        ? parseModelsString(form.getValues('models') || '')
+        : []
+      const existingModelSet = new Set(existingModels)
+      const finalModelsArray = merge
+        ? [...existingModels, ...normalizedNewModels]
+        : normalizedNewModels
+      const finalModels = formatModelsArray(finalModelsArray)
+      const nextModels = parseModelsString(finalModels)
+      form.setValue('models', finalModels, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      if (!merge) return nextModels.length
+      return nextModels.filter((model) => !existingModelSet.has(model)).length
     },
-    [currentModelsArray, form]
+    [form]
   )
 
   // 从上游拉取模型列表。账号池组模式不使用渠道 key，因此不允许走该路径。
@@ -1488,12 +1517,41 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
+  const handleAddModelSearchMatches = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (modelSearchMissingModelNames.length === 0) {
+      toast.info(t('No new models to add'))
+      return
+    }
+    const modelsToAdd = [...modelSearchMissingModelNames]
+    // 点击搜索补齐按钮时，模型 Combobox 的弹层可能仍处于打开状态。
+    // 这里始终读取 form 里的最新草稿后再合并，避免弹层关闭或旧闭包把新增模型覆盖回去。
+    const count = updateModels(modelsToAdd, true)
+    clearModelSearch()
+    window.setTimeout(() => {
+      toast.success(t('Added {{count}} model(s) from search', { count }))
+    }, 0)
+  }, [
+    canEditBasicFields,
+    clearModelSearch,
+    modelSearchMissingModelNames,
+    noPermissionMessage,
+    t,
+    updateModels,
+  ])
+
   const handleClearModels = useCallback(() => {
     if (!canEditBasicFields) {
       toast.error(noPermissionMessage)
       return
     }
-    form.setValue('models', '')
+    form.setValue('models', '', {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
     toast.success(t('Cleared all models'))
   }, [canEditBasicFields, form, noPermissionMessage, t])
 
@@ -1543,7 +1601,10 @@ export function ChannelMutateDrawer({
         toast.error(noPermissionMessage)
         return
       }
-      form.setValue('models', selected.join(','))
+      form.setValue('models', selected.join(','), {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
     },
     [canEditBasicFields, form, noPermissionMessage]
   )
@@ -3539,6 +3600,75 @@ export function ChannelMutateDrawer({
                                     emptyText={t('No matching models')}
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
+                                    contentFooter={
+                                      shouldShowModelSearchAppend ? (
+                                        <Alert>
+                                          <AlertTitle>
+                                            {t('Search results')}
+                                          </AlertTitle>
+                                          <AlertDescription className='mt-2 flex flex-col gap-3'>
+                                            <span className='text-sm'>
+                                              <span className='break-all'>
+                                                {modelSearchMissingPreview.join(
+                                                  ', '
+                                                )}
+                                              </span>
+                                              {modelSearchMissingOmittedCount >
+                                                0 && (
+                                                <span className='ml-1'>
+                                                  {t(
+                                                    '({{total}} total, {{omit}} omitted)',
+                                                    {
+                                                      total:
+                                                        modelSearchMissingModelNames.length,
+                                                      omit: modelSearchMissingOmittedCount,
+                                                    }
+                                                  )}
+                                                </span>
+                                              )}
+                                            </span>
+                                            <Button
+                                              type='button'
+                                              variant='outline'
+                                              size='sm'
+                                              className='w-full'
+                                              onPointerDown={(event) => {
+                                                event.preventDefault()
+                                                event.stopPropagation()
+                                                modelSearchAppendPointerHandledRef.current =
+                                                  true
+                                                handleAddModelSearchMatches()
+                                                window.setTimeout(() => {
+                                                  modelSearchAppendPointerHandledRef.current =
+                                                    false
+                                                }, 0)
+                                              }}
+                                              onClick={(event) => {
+                                                if (
+                                                  modelSearchAppendPointerHandledRef.current
+                                                ) {
+                                                  event.preventDefault()
+                                                  event.stopPropagation()
+                                                  return
+                                                }
+                                                handleAddModelSearchMatches()
+                                              }}
+                                              disabled={!canEditBasicFields}
+                                              title={
+                                                canEditBasicFields
+                                                  ? undefined
+                                                  : noPermissionMessage
+                                              }
+                                            >
+                                              {t('Add {{count}} new model(s)', {
+                                                count:
+                                                  modelSearchMissingModelNames.length,
+                                              })}
+                                            </Button>
+                                          </AlertDescription>
+                                        </Alert>
+                                      ) : undefined
+                                    }
                                   />
                                 </FormControl>
                                 {modelMappingGuardrail.exposedTargetModels
@@ -3836,13 +3966,20 @@ export function ChannelMutateDrawer({
                               </FormItem>
                             )}
                           />
+                        </div>
 
+                        <div className='border-border/60 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
                             name='group'
                             render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Groups *')}</FormLabel>
+                              <FormItem className='space-y-3'>
+                                <div className='space-y-1'>
+                                  <FormLabel>{t('Groups *')}</FormLabel>
+                                  <FormDescription>
+                                    {t(FIELD_DESCRIPTIONS.GROUP)}
+                                  </FormDescription>
+                                </div>
                                 <FormControl>
                                   {isLoadingGroups ? (
                                     <Skeleton className='h-10 w-full' />
@@ -3861,9 +3998,6 @@ export function ChannelMutateDrawer({
                                     />
                                   )}
                                 </FormControl>
-                                <FormDescription>
-                                  {t(FIELD_DESCRIPTIONS.GROUP)}
-                                </FormDescription>
                                 <FormMessage />
                               </FormItem>
                             )}

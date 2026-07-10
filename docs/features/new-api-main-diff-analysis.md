@@ -7404,3 +7404,81 @@ NexusTok 当前 `web/default/src/features/system-settings/models/grok-settings-c
 7. MCP 在 Grok 设置页浏览器上下文检查数字输入，实际 DOM `input.value` 为 `0.05`，`input.valueAsNumber` 为 `0.05`，说明页面展示值保持干净。
 8. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染。
 9. MCP 验证 Grok 设置页和首页控制台均无 error/warn/issue。
+
+## 本轮实施评审：渠道编辑页搜索补齐与 new-api 页面结构再对齐
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并指出最新版 new-api 的编辑渠道页面体验较好，需要将当前编辑渠道页面继续向 `/opt/project/new-api-main` 对齐。MCP 复现当前运行态后确认：渠道 `11111` 的模型列表只有 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，而 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 实际返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型。也就是说，后端模型库和 OpenAI 供应商模型元信息完整，问题在编辑页搜索后没有提供清晰的“补齐本次搜索命中的缺失模型”动作，管理员只能逐个点候选，容易出现“三个模型只加了一个”的结果。
+
+上一轮为了避免旧批量搜索面板造成语义混淆，移除了 `Search results / Add N new model(s)` 面板；但当前场景证明 NexusTok 的原生模型库搜索比 new-api 更强，应当保留这项优势，只是需要用更明确、更局部、更安全的方式落地：搜索框仍负责单个选择/自定义添加，搜索命中的缺失模型则在模型搜索弹层内部显示一个轻量提示和批量追加按钮，按钮只追加当前关键词命中的缺失项，不覆盖已有模型，不直接保存渠道。
+
+同时对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`，最新版 new-api 将 `Models`、`Model Mapping`、`Groups` 拆成三个独立卡片；当前 NexusTok 的 `Groups` 被放在 `Model Mapping` 卡片内部，页面结构比 new-api 更拥挤。本轮需要将 `Groups` 独立成单独卡片，并保留 NexusTok 已有权限控制、账号池、模型映射 guardrail、Codex 等本地能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 新增当前搜索命中的缺失模型集合、批量追加 handler 和弹层内补齐提示；将 `Groups` 从 `Model Mapping` 卡片拆出，结构对齐 new-api。 |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 新增可选 `contentFooter` 插槽，使调用方能把搜索补齐动作放在 Combobox 弹层内部；继续保持远程搜索受控输入、候选过滤和自定义添加能力。 |
+| i18n | `web/default/src/i18n/locales/*.json`、`static-keys.ts` | 优先复用已有 `Add {{count}} new model(s)`、`Added {{count}} model(s) from search`、`No new models to add` 等翻译；如新增文案则运行 `i18n:sync`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮二次评审、实施结果和验证记录，说明为什么从“移除批量面板”调整为“受控搜索补齐”。 |
+
+### 风险评估
+
+- 本轮只修改默认前端编辑抽屉，不改后端模型搜索接口、渠道保存接口、数据库结构、relay 路由或计费逻辑。
+- 批量追加按钮只写入前端表单草稿，不直接调用 `updateChannel`；管理员仍需点击 `Update Channel` 才会保存，因此不会因搜索动作误改运行态渠道。
+- 按钮只追加 `model_name` 包含当前关键词、且当前渠道尚未包含的模型；已经存在的 `gpt-5.6-sol` 不会重复追加，`gpt-5.6-terra`、`gpt-5.6-luna` 会被补齐。
+- 若远程搜索还在 debounce/loading，按钮不会提前显示，避免把不完整结果当成最终结果。
+- `Groups` 拆卡片只影响视觉和 DOM 结构，不改变字段名、表单值、校验 schema 或提交 payload。
+- 权限仍沿用 `canEditBasicFields`，无权限时批量追加按钮禁用并使用既有无权限提示。
+
+### 方案评审
+
+采用“new-api 页面结构 + NexusTok 原生模型库补齐”的方案：
+
+1. 保留 `searchModels` 查询和 `modelSearchModelNames` 过滤，继续只接受真实 `model_name` 包含关键词的条目，避免 tags/description 命中的无关模型进入渠道模型候选。
+2. 新增 `modelSearchMissingModelNames`：以大小写不敏感方式比较当前渠道模型，只保留本次搜索命中但尚未加入的模型。
+3. 在模型 MultiSelect 弹层内部显示轻量提示：搜索关键词存在、远程搜索完成且存在缺失模型时，显示 `Search results`、缺失模型预览和 `Add {{count}} new model(s)` 按钮；点击后调用 `updateModels(models, true)` 追加并去重，清空搜索词，toast 使用 `Added {{count}} model(s) from search`。MCP 真实点击验证发现，若按钮放在 Combobox 弹层外部，会被 Base UI DismissLayer 拦截指针事件，因此最终方案改为弹层内 footer。
+4. 远程搜索完成但没有缺失模型时不显示额外提示，避免在普通单选/自定义添加场景产生噪音。
+5. 将 `Groups` `FormField` 从 `Model Mapping` 卡片中移出，包裹在独立 `border-border/60 rounded-lg border p-4` 卡片内；保留 NexusTok 当前 `FormDescription`、权限拦截和 `MultiSelect`。
+6. 补充单测覆盖搜索缺失模型计算，避免未来再次出现“三个命中只补一个”的回归。
+7. 执行前端单测、i18n sync、typecheck、build、diff check，并通过 MCP 在 3003 页面实测 `gpt-5.6` 搜索能显示两个缺失模型、一键追加后表单中包含三种 `gpt-5.6` 模型；验证时不点击保存，避免改动运行态渠道。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.ts`。
+2. 如新增渠道 helper 测试，执行对应 `bun test`。
+3. `cd web/default && bun run i18n:sync`。
+4. `cd web/default && bun run typecheck`。
+5. `cd web/default && bun run build`。
+6. `git diff --check`。
+7. MCP 打开 `http://192.168.0.202:3003/channels`，编辑渠道 `11111`，输入 `gpt-5.6`，确认搜索接口返回 3 个模型，页面显示可追加的缺失模型为 `gpt-5.6-terra` 和 `gpt-5.6-luna`，点击批量追加后表单草稿包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+8. MCP 确认 `Groups` 在模型映射下方独立成卡片，页面无新增 console error/warn/issue；验证期间不点击 `Update Channel`。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索补齐修复，并继续向最新版 new-api 编辑渠道页面结构对齐。本轮没有修改后端模型搜索接口、渠道保存接口、数据库结构或 relay 逻辑；所有改动集中在默认前端。
+
+模型搜索补齐方面，新增 `getMissingModelSearchMatches` 纯函数，用大小写不敏感方式计算“本次搜索命中但当前渠道尚未包含”的模型，并新增单测覆盖 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 场景。`updateModels` 现在在合并模式下从 `form.getValues('models')` 读取最新表单草稿再追加，避免 Combobox 关闭或旧闭包把新增模型覆盖回旧值；返回值也改为实际新增数量，toast 能准确显示 `Added 2 model(s) from search`。
+
+MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new model(s)` 放在模型字段下方时，提示内容能显示，但按钮实际点击会被 Base UI Combobox 的 DismissLayer 接走，页面停留在 `Selected 3`。因此本轮进一步给通用 `MultiSelect` 增加可选 `contentFooter` 插槽，将搜索补齐提示渲染在 `ComboboxContent` 内部；这样按钮和候选列表处于同一个弹层交互上下文，真实鼠标点击可以稳定进入 handler。该插槽是可选能力，默认不渲染，不影响其他多选使用方。
+
+页面结构方面，`Groups` 已从 `Model Mapping` 卡片内部拆出为独立卡片，和 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 的 `Models`、`Model Mapping`、`Groups` 三段结构一致；同时保留 NexusTok 当前账号池凭证模式、模型映射 guardrail、Codex 渠道、权限控制和快捷填充能力。
+
+本轮验证只操作前端表单草稿，没有点击 `Update Channel`，因此渠道 `11111` 的运行态配置未被保存修改。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，10 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过；本轮复用已有 `Search results`、`Add {{count}} new model(s)`、`Added {{count}} model(s) from search` 等翻译键。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. 已重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，确认 `dist.hot` 重新发布并且 `http://192.168.0.202:3003/api/status` 返回 200 后，再用 MCP 忽略缓存刷新 `http://192.168.0.202:3003/channels`。
+7. MCP 打开渠道 `11111` 编辑抽屉，初始模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，显示 `Selected 3`。
+8. MCP 在模型搜索框输入 `gpt-5.6`，网络请求 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 `total: 3`，三条模型分别是 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，均为 `icon: OpenAI.Color`、`vendor_id: 1`、`sync_official: 1`，说明 OpenAI 供应商模型已完整同步。
+9. MCP 确认补齐提示位于 Combobox 下拉弹层内部，显示 `Search results`、`gpt-5.6-terra, gpt-5.6-luna` 和 `Add 2 new model(s)`。
+10. MCP 真实点击 `Add 2 new model(s)` 后，页面 toast 显示 `Added 2 model(s) from search`；浏览器上下文读取表单文本确认 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
+11. MCP 点击 `Cancel` 返回渠道列表；验证期间未点击 `Update Channel`，未保存渠道变更。
+12. MCP `/channels` 控制台无 error/warn；DevTools Issue 面板仍显示既有表单 `autocomplete` 与部分复合编辑器 `label for` 关联提示，定位到 `name`、`priority`、`Model Mapping`、`Status Code Mapping`、`Parameter Override` 等既有字段，与本轮模型搜索补齐和 `contentFooter` 改动无直接关系。

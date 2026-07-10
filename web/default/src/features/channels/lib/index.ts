@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-// Re-export all library functions
+// 统一导出渠道功能的纯函数和表单工具，便于组件保持轻量。
 export * from './advanced-custom'
 export * from './channel-actions'
 export * from './channel-form-errors'
@@ -24,4 +24,5 @@ export * from './channel-form'
 export * from './channel-type-config'
 export * from './channel-utils'
 export * from './multi-key-utils'
+export * from './model-search'
 export * from './model-mapping-validation'
