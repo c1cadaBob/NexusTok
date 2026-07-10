@@ -96,6 +96,7 @@ var supportedAccessPolicyOps = []string{
 // NewGenericOAuthProvider 根据数据库配置创建通用 OAuth 提供商实例
 // 参数：
 //   - config：自定义 OAuth 提供商的数据库配置（包含端点、密钥、字段映射等）
+//
 // 返回值：初始化好的 GenericOAuthProvider 实例
 func NewGenericOAuthProvider(config *model.CustomOAuthProvider) *GenericOAuthProvider {
 	return &GenericOAuthProvider{config: config}
@@ -147,6 +148,11 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 		values.Set("client_secret", p.config.ClientSecret)
 	}
 
+	if err := validateConfiguredOAuthEndpointURL(p.config.TokenEndpoint); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] ExchangeToken endpoint blocked: %s", p.config.Slug, err.Error()))
+		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": p.config.Name}, err.Error())
+	}
+
 	req, err = http.NewRequestWithContext(ctx, "POST", p.config.TokenEndpoint, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
@@ -163,9 +169,7 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 	logger.LogDebug(ctx, "[OAuth-Generic-%s] ExchangeToken: token_endpoint=%s, redirect_uri=%s, auth_style=%d",
 		p.config.Slug, p.config.TokenEndpoint, redirectUri, authStyle)
 
-	client := http.Client{
-		Timeout: 20 * time.Second,
-	}
+	client := newConfiguredOAuthHTTPClient(20 * time.Second)
 	res, err := client.Do(req)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] ExchangeToken error: %s", p.config.Slug, err.Error()))
@@ -238,6 +242,11 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAuthUser, error) {
 	logger.LogDebug(ctx, "[OAuth-Generic-%s] GetUserInfo: fetching user info from %s", p.config.Slug, p.config.UserInfoEndpoint)
 
+	if err := validateConfiguredOAuthEndpointURL(p.config.UserInfoEndpoint); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] GetUserInfo endpoint blocked: %s", p.config.Slug, err.Error()))
+		return nil, NewOAuthErrorWithRaw(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": p.config.Name}, err.Error())
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", p.config.UserInfoEndpoint, nil)
 	if err != nil {
 		return nil, err
@@ -248,9 +257,7 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, token.AccessToken))
 	req.Header.Set("Accept", "application/json")
 
-	client := http.Client{
-		Timeout: 20 * time.Second,
-	}
+	client := newConfiguredOAuthHTTPClient(20 * time.Second)
 	res, err := client.Do(req)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-Generic-%s] GetUserInfo error: %s", p.config.Slug, err.Error()))

@@ -6535,6 +6535,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-10 | 结果媒体代理 SSRF Dial 阶段补强 | `controller/video_proxy.go`、`relay/mjproxy_handler.go`、`docs/features/new-api-main-diff-analysis.md` | 继续执行用户可控 URL 覆盖缺口审计，确认下载、Webhook、Bark/Gotify 已走 protected client；本轮补齐视频代理和 Midjourney 图片代理直连路径，URL 预校验后实际请求也使用 `GetSSRFProtectedHTTPClient()`，通过 Dial 阶段解析 IP 校验抵御 DNS rebinding；显式渠道代理继续保留一次性 URL 校验。 |
 | 2026-07-10 | Uptime Kuma 状态接口 SSRF 防护补强 | `controller/uptime_kuma.go`、`controller/uptime_kuma_test.go`、`docs/features/new-api-main-diff-analysis.md` | 公开 `/api/uptime/status` 会根据系统设置拉取 Uptime Kuma 状态页和心跳 API；本轮在每个最终 URL 发出前接入 FetchSetting 预校验，实际请求改用 `GetSSRFProtectedHTTPClient()` 的 Dial 阶段校验并保留 10 秒单请求超时，同时补齐私网目标请求前拦截与关闭 SSRF 后兼容的回归测试。 |
 | 2026-07-10 | 自定义 OAuth Discovery SSRF 防护补强 | `controller/custom_oauth.go`、`controller/custom_oauth_test.go`、`docs/features/new-api-main-diff-analysis.md` | Root 可操作的 `/api/custom-oauth-provider/discovery` 会根据管理员输入的 well-known/issuer URL 拉取 OIDC discovery；本轮在基础 http/https 校验后接入 FetchSetting 预校验，实际请求改用 protected client 的 Dial 阶段校验并保留 20 秒超时，测试覆盖私网目标请求前拦截和关闭 SSRF 后兼容行为。 |
+| 2026-07-10 | OAuth 登录端点 SSRF 防护补强 | `oauth/outbound_http.go`、`oauth/generic.go`、`oauth/oidc.go`、`oauth/outbound_http_test.go`、`docs/features/new-api-main-diff-analysis.md` | 活跃 `/api/oauth/:provider` 登录回调中，系统 OIDC 与自定义 OAuth 的 token/userinfo endpoint 来自管理员配置；本轮在 token 和 userinfo 请求前接入 FetchSetting 预校验，实际请求复用 protected client 的 Dial 阶段校验，保留 OIDC 5 秒和 Generic 20 秒超时，并用测试确认私网端点在请求前被拦截。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -8022,3 +8023,70 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
 8. 使用账号 `c1cada` 登录 3003 后，携带 session cookie 与 `NexusTok-User: 1` 调用 `POST /api/custom-oauth-provider/discovery`，请求体 `{"well_known_url":"http://127.0.0.1/.well-known/openid-configuration"}` 返回 `{"message":"Discovery URL 安全校验失败: private IP address not allowed: 127.0.0.1","success":false}`，确认运行态已在请求前按 FetchSetting 拦截私网 discovery URL。
 9. 当前会话未暴露 MCP 浏览器工具；本轮后端安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口。
+
+## 本轮实施评审：OAuth 登录端点 SSRF 防护补强
+
+### 需求分析
+
+前两轮已经补齐系统设置页的 OIDC Discovery 拉取和公开 Uptime Kuma 状态接口，但继续审计登录回调链路时发现：活跃标准 OAuth 路由 `GET /api/oauth/:provider` 会通过 `oauth.Provider` 接口处理 GitHub、Discord、LinuxDo、OIDC 和自定义 OAuth provider。其中 GitHub、Discord、LinuxDo 是固定官方端点，属于固定第三方 API；系统 OIDC 的 `TokenEndpoint`、`UserInfoEndpoint` 以及自定义 OAuth 的 `TokenEndpoint`、`UserInfoEndpoint` 则来自管理员配置。
+
+对照 `/opt/project/new-api-main/oauth/generic.go` 与 `/opt/project/new-api-main/oauth/oidc.go` 后确认，上游和 NexusTok 原实现一样，在 token 与 userinfo 阶段都直接创建 `http.Client` 发起请求，没有 FetchSetting 预校验，也没有 Dial 阶段 DNS rebinding 防护。由于这些请求发生在真实登录/绑定回调中，如果管理员误配置或配置被污染，攻击者可以通过触发登录回调让后端访问回环、内网或受限端口。本轮目标是把 NexusTok 已经形成的 protected fetch 能力继续扩展到管理员配置的 OAuth 登录端点。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| OAuth 出站请求 helper | `oauth/outbound_http.go` | 新增 oauth 包内部 helper，统一读取 FetchSetting 校验配置端点，并返回复制超时后的 protected client。 |
+| 自定义 OAuth 登录 | `oauth/generic.go` | `ExchangeToken` 和 `GetUserInfo` 在请求前校验 token/userinfo endpoint，实际请求改用 protected client；认证方式、响应格式 fallback、访问策略评估不变。 |
+| 系统 OIDC 登录 | `oauth/oidc.go` | `ExchangeToken` 和 `GetUserInfo` 在请求前校验 token/userinfo endpoint，实际请求改用 protected client；超时仍为 5 秒，响应字段和用户映射不变。 |
+| JSON 解码规范 | `oauth/oidc.go` | 移除直接 `encoding/json.NewDecoder`，改为 `common.DecodeJson`，符合项目 JSON 封装约定。 |
+| 回归测试 | `oauth/outbound_http_test.go` | 覆盖 helper、Generic token/userinfo、OIDC token/userinfo 的私网请求前拦截，以及关闭 SSRF 后本地 token endpoint 兼容。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录登录链路补强和边界：固定 provider 不动，旧 `controller/oidc.go` 暂列非活跃历史路径。 |
+
+### 风险评估
+
+- 行为会变严格：如果系统 OIDC 或自定义 OAuth provider 部署在内网，默认 `allow_private_ip=false` 会让登录回调失败。该行为符合 FetchSetting 的安全策略，可信内网 SSO 需要管理员显式允许私网地址、IP 白名单或对应端口。
+- 登录链路是高频入口，必须保持错误形态兼容。本轮把安全校验失败包装为现有 `MsgOAuthConnectFailed`，前端仍按 OAuth 网络连接失败路径展示，不引入新响应 schema。
+- Generic provider 支持 token JSON 和 URL-encoded fallback，也支持 Basic Auth 和访问策略；本轮只改请求发出前的安全边界和 HTTP client，不改认证参数、字段映射和策略判断。
+- OIDC provider 原来直接使用 `encoding/json.NewDecoder`，本轮改为 `common.DecodeJson`，语义等价但符合项目约定。
+- `controller/oidc.go` 中存在旧 OIDC 控制器和直接 HTTP 请求，但当前路由只注册统一 `controller.HandleOAuth` 的 `/api/oauth/:provider`，没有直接引用 `OidcAuth/OidcBind`；本轮不扩大到历史路径，避免改动未路由代码造成额外回归面。后续可以单独删除或迁移旧控制器。
+
+### 方案评审
+
+采用“活跃 provider 接口小范围接入 + 固定 provider 保持原状”的方案：
+
+1. 在 `oauth/outbound_http.go` 新增 `validateConfiguredOAuthEndpointURL`，读取当前 FetchSetting 并调用 `common.ValidateURLWithFetchSetting`。
+2. 同文件新增 `newConfiguredOAuthHTTPClient(timeout)`，复用 `service.GetSSRFProtectedHTTPClient()` 的 Transport 和 redirect 校验能力，复制 client 后按调用方传入的 timeout 覆盖超时。
+3. `GenericOAuthProvider.ExchangeToken` 在构造请求前校验 `p.config.TokenEndpoint`；`GetUserInfo` 在构造请求前校验 `p.config.UserInfoEndpoint`；失败时写日志并返回现有 OAuth connect failed 错误。
+4. `OIDCProvider.ExchangeToken` 与 `GetUserInfo` 同样校验系统设置中的 token/userinfo endpoint，并保持原来的 5 秒超时。
+5. 不修改 GitHub、Discord、LinuxDo 等固定 endpoint provider，不修改微信/Telegram 等非标准登录路径，不修改 OAuth 路由、session、state 校验、用户创建/绑定事务。
+6. 单测用 `httptest.NewServer` 锁定“请求前拦截”而不仅是 helper 结果：私网 endpoint 被拒绝时 handler 不应被调用；关闭 SSRF 后 Generic token endpoint 仍可请求本地测试服务。
+
+### 验收方式
+
+1. `go test ./oauth -run 'ConfiguredOAuth|GenericOAuth|OIDC'`。
+2. `go test ./oauth`。
+3. `go test ./service -run 'TestProtectedFetch'`。
+4. `go test ./controller ./oauth ./service`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 与 `/api/status`，确认热更新服务可访问。
+7. 当前 3003 的 `oidc_enabled=false`，无法在不改全局登录配置的情况下真实触发 OIDC token/userinfo 拉取；运行态验证以服务可访问和 `/api/oauth/oidc` 路由前置状态校验为主，端点拦截由单元测试覆盖。
+8. 当前会话若仍无 MCP 浏览器工具，则使用 `curl --noproxy '*'` 替代页面/接口验证，并在最终回复说明限制。
+
+### 实施结果
+
+已完成活跃 OAuth 登录端点 SSRF 防护补强。系统 OIDC 和自定义 OAuth provider 的 token/userinfo 请求现在都会在构造 HTTP 请求前执行 FetchSetting 校验；如果目标是回环、私网、受限端口或命中黑名单，请求不会发出，错误会通过既有 OAuth 连接失败路径返回。
+
+实际请求 client 已切换为复用 `service.GetSSRFProtectedHTTPClient()` 的 OAuth 专用 client，并保留各 provider 原有超时：系统 OIDC 仍为 5 秒，自定义 OAuth 仍为 20 秒。这样即使 URL 预校验后发生 DNS rebinding，直连 Dial 阶段仍会重新解析目标并按 FetchSetting 校验 IP。固定官方 OAuth provider、微信/Telegram、OAuth state/session、用户创建/绑定事务、自定义 OAuth 访问策略和前端回调结构均未改变。
+
+### 验证记录
+
+1. `go test ./oauth -run 'ConfiguredOAuth|GenericOAuth|OIDC'` 通过，覆盖 helper、Generic token/userinfo、OIDC token/userinfo 的私网请求前拦截，以及关闭 SSRF 后 Generic token endpoint 的本地兼容行为。
+2. `go test ./oauth` 通过，确认 oauth 包既有逻辑和本轮新增测试均通过。
+3. `go test ./service -run 'TestProtectedFetch'` 通过，确认 protected fetch client 的 DNS rebinding 与禁用 fallback 契约仍保持。
+4. `go test ./controller ./oauth ./service` 通过，确认登录控制器、OAuth provider 和复用的 service 包共同编译与测试通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON，且当前运行态 `oidc_enabled=false`。
+8. `curl --noproxy '*' -sS --max-time 15 'http://192.168.0.202:3003/api/oauth/oidc?state=invalid&code=test'` 返回 `{"message":"State parameter is empty or mismatched","success":false}`，确认 OAuth 路由仍保持前置 state 校验；当前未启用 OIDC，未修改全局登录配置去触发真实 token/userinfo 拉取。
+9. 当前会话未暴露 MCP 浏览器工具；本轮后端登录链路安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口，端点 SSRF 拦截由 oauth 包单元测试覆盖。
