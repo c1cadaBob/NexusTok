@@ -67,6 +67,7 @@ interface MultiSelectProps {
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
   preserveSelectedOnEmptyRemovalKey?: boolean
+  hideSelectedOptionsWhenSearching?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -190,6 +191,7 @@ export function MultiSelect({
   contentFooter,
   allowCreateWithMatches = true,
   preserveSelectedOnEmptyRemovalKey = false,
+  hideSelectedOptionsWhenSearching = false,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -221,6 +223,10 @@ export function MultiSelect({
   }, [options])
 
   const trimmedInput = inputValue.trim()
+  const selectedKeys = React.useMemo(
+    () => new Set(selected.map((value) => value.trim().toLowerCase())),
+    [selected]
+  )
 
   const baseItems = React.useMemo(() => {
     const set = new Set<string>(options.map((option) => option.value))
@@ -259,10 +265,23 @@ export function MultiSelect({
 
   // Base UI 的 Combobox Collection 不会替代业务侧过滤；渠道模型列表可能包含数百个
   // 静态模型，必须在这里按输入值收敛候选，才能让远程同步模型命中稳定浮到前面。
-  const visibleItems = React.useMemo(
-    () => filterMultiSelectItems(items, inputValue, labelMap),
-    [inputValue, items, labelMap]
-  )
+  const visibleItems = React.useMemo(() => {
+    const filteredItems = filterMultiSelectItems(items, inputValue, labelMap)
+    if (!hideSelectedOptionsWhenSearching || trimmedInput.length === 0) {
+      return filteredItems
+    }
+
+    return filteredItems.filter(
+      (item) => !selectedKeys.has(item.trim().toLowerCase())
+    )
+  }, [
+    hideSelectedOptionsWhenSearching,
+    inputValue,
+    items,
+    labelMap,
+    selectedKeys,
+    trimmedInput,
+  ])
 
   const updateInputValue = React.useCallback(
     (value: string) => {

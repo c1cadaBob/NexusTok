@@ -21,6 +21,8 @@ function normalizeModelSearchKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
+const MODEL_DRAFT_SEPARATOR_REGEX = /[,，\n]+/
+
 type ModelSearchItemLike = {
   model_name?: string | null
 }
@@ -30,6 +32,29 @@ export type ModelSearchAppendPlan = {
   previewModels: string[]
   omittedCount: number
   totalCount: number
+}
+
+export type ModelSearchAppendSummary = {
+  matchedCount: number
+  addableCount: number
+  existingCount: number
+}
+
+// 解析管理员在“自定义模型”输入框中录入的模型列表。
+// 支持英文逗号、中文逗号和换行，按大小写不敏感去重并保留首次录入的展示形式。
+export function parseModelDraftList(value: string): string[] {
+  const seenKeys = new Set<string>()
+  const models: string[] = []
+
+  for (const rawModel of value.split(MODEL_DRAFT_SEPARATOR_REGEX)) {
+    const model = rawModel.trim()
+    const key = normalizeModelSearchKey(model)
+    if (!key || seenKeys.has(key)) continue
+    seenKeys.add(key)
+    models.push(model)
+  }
+
+  return models
 }
 
 // 从模型搜索接口返回项中提取可用于渠道模型选择器的真实模型名。
@@ -103,5 +128,24 @@ export function buildModelSearchAppendPlan(
     previewModels,
     omittedCount: missingModels.length - previewModels.length,
     totalCount: missingModels.length,
+  }
+}
+
+// 汇总搜索结果与当前渠道模型的关系，供编辑页明确展示“命中/可新增/已存在”。
+// 该统计只描述当前已加载的真实模型名；点击追加时仍会重新按最新表单值计算缺失项。
+export function buildModelSearchAppendSummary(
+  searchMatches: readonly string[],
+  currentModels: readonly string[]
+): ModelSearchAppendSummary {
+  const uniqueMatches = getMissingModelSearchMatches(searchMatches, [])
+  const addableMatches = getMissingModelSearchMatches(
+    uniqueMatches,
+    currentModels
+  )
+
+  return {
+    matchedCount: uniqueMatches.length,
+    addableCount: addableMatches.length,
+    existingCount: uniqueMatches.length - addableMatches.length,
   }
 }

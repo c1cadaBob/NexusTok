@@ -32,6 +32,7 @@ import { useDebounce } from '@/hooks'
 import {
   ArrowRight,
   AlertCircle,
+  ChevronDown,
   CheckCircle2,
   Circle,
   HelpCircle,
@@ -63,7 +64,16 @@ import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group'
 import { Combobox } from '@/components/ui/combobox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Form,
   FormControl,
@@ -74,6 +84,12 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import {
   Select,
   SelectContent,
@@ -159,8 +175,10 @@ import {
   hasModelConfigChanged,
   findMissingModelsInMapping,
   buildModelSearchAppendPlan,
+  buildModelSearchAppendSummary,
   getModelSearchModelNames,
   getMissingModelSearchMatches,
+  parseModelDraftList,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
@@ -306,7 +324,9 @@ const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'multi_key_mode',
 ] as const
 
-async function fetchAllModelSearchModelNames(keyword: string): Promise<string[]> {
+async function fetchAllModelSearchModelNames(
+  keyword: string
+): Promise<string[]> {
   const trimmedKeyword = keyword.trim()
   if (!trimmedKeyword) return []
 
@@ -668,6 +688,7 @@ export function ChannelMutateDrawer({
   >()
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
   const [modelSelectOpen, setModelSelectOpen] = useState(false)
+  const [customModelInput, setCustomModelInput] = useState('')
   const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
     useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
@@ -753,6 +774,7 @@ export function ChannelMutateDrawer({
       setIsChannelKeyLoading(false)
       clearModelSearch()
       setModelSelectOpen(false)
+      setCustomModelInput('')
     } else if (channelId) {
       setChannelKey(null)
     }
@@ -1162,21 +1184,21 @@ export function ChannelMutateDrawer({
 
   const modelSearchAppendPlan = useMemo(
     () =>
-      buildModelSearchAppendPlan(
-        modelSearchModelNames,
-        currentModelsArray,
-        6
-      ),
+      buildModelSearchAppendPlan(modelSearchModelNames, currentModelsArray, 6),
     [currentModelsArray, modelSearchModelNames]
   )
-  const modelSearchMissingModelNames = modelSearchAppendPlan.missingModels
+  const modelSearchAppendSummary = useMemo(
+    () =>
+      buildModelSearchAppendSummary(modelSearchModelNames, currentModelsArray),
+    [currentModelsArray, modelSearchModelNames]
+  )
   const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
   const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
   const shouldShowModelSearchAppend =
     trimmedModelSearchKeyword.length > 0 &&
     !isSearchingModelMeta &&
     !isModelSearchDebouncing &&
-    modelSearchAppendPlan.totalCount > 0
+    modelSearchAppendSummary.matchedCount > 0
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1565,8 +1587,8 @@ export function ChannelMutateDrawer({
     if (isAddingModelSearchMatches) {
       return
     }
-    if (modelSearchMissingModelNames.length === 0) {
-      toast.info(t('No new models to add'))
+    if (!debouncedModelSearchKeyword.trim()) {
+      toast.info(t('No new search results to add'))
       return
     }
 
@@ -1582,7 +1604,7 @@ export function ChannelMutateDrawer({
       )
 
       if (modelsToAdd.length === 0) {
-        toast.info(t('No new models to add'))
+        toast.info(t('No new search results to add'))
         return
       }
 
@@ -1605,7 +1627,37 @@ export function ChannelMutateDrawer({
     debouncedModelSearchKeyword,
     form,
     isAddingModelSearchMatches,
-    modelSearchMissingModelNames,
+    noPermissionMessage,
+    t,
+    updateModels,
+  ])
+
+  const handleAddCustomModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
+    const draftModels = parseModelDraftList(customModelInput)
+    if (draftModels.length === 0) {
+      toast.info(t('Please enter model name'))
+      return
+    }
+
+    const currentModels = parseModelsString(form.getValues('models') || '')
+    const modelsToAdd = getMissingModelSearchMatches(draftModels, currentModels)
+    if (modelsToAdd.length === 0) {
+      toast.info(t('No new models to add'))
+      return
+    }
+
+    const count = updateModels(modelsToAdd, true)
+    setCustomModelInput('')
+    toast.success(t('Added {{count}} custom model(s)', { count }))
+  }, [
+    canEditBasicFields,
+    customModelInput,
+    form,
     noPermissionMessage,
     t,
     updateModels,
@@ -3652,12 +3704,8 @@ export function ChannelMutateDrawer({
                                     options={modelOptions}
                                     selected={currentModelsArray}
                                     onChange={handleModelsChange}
-                                    placeholder={t(
-                                      'Select models or add custom ones'
-                                    )}
-                                    allowCreate
-                                    createLabel='Add custom model "{{value}}"'
-                                    allowCreateWithMatches={false}
+                                    placeholder={t('Search models...')}
+                                    allowCreate={false}
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
@@ -3674,6 +3722,7 @@ export function ChannelMutateDrawer({
                                     open={modelSelectOpen}
                                     onOpenChange={setModelSelectOpen}
                                     preserveSelectedOnEmptyRemovalKey
+                                    hideSelectedOptionsWhenSearching
                                     contentHeader={
                                       shouldShowModelSearchAppend ? (
                                         <Alert className='border-primary/20 bg-primary/5'>
@@ -3683,32 +3732,49 @@ export function ChannelMutateDrawer({
                                           <AlertDescription className='mt-2 flex flex-col gap-3'>
                                             <span>
                                               {t(
-                                                'Use the button to add every matching model. Selecting a row below adds only that one model.'
+                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                {
+                                                  matched:
+                                                    modelSearchAppendSummary.matchedCount,
+                                                  addable:
+                                                    modelSearchAppendSummary.addableCount,
+                                                  existing:
+                                                    modelSearchAppendSummary.existingCount,
+                                                }
                                               )}
                                             </span>
-                                            <span className='text-sm'>
-                                              <span className='break-all'>
-                                                {modelSearchMissingPreview.join(
-                                                  ', '
-                                                )}
-                                              </span>
-                                              {modelSearchMissingOmittedCount >
-                                                0 && (
-                                                <span className='ml-1'>
-                                                  {t(
-                                                    '({{total}} total, {{omit}} omitted)',
-                                                    {
-                                                      total:
-                                                        modelSearchAppendPlan.totalCount,
-                                                      omit: modelSearchMissingOmittedCount,
-                                                    }
+                                            {modelSearchAppendPlan.totalCount >
+                                            0 ? (
+                                              <span className='text-sm'>
+                                                <span className='break-all'>
+                                                  {modelSearchMissingPreview.join(
+                                                    ', '
                                                   )}
                                                 </span>
-                                              )}
-                                            </span>
+                                                {modelSearchMissingOmittedCount >
+                                                  0 && (
+                                                  <span className='ml-1'>
+                                                    {t(
+                                                      '({{total}} total, {{omit}} omitted)',
+                                                      {
+                                                        total:
+                                                          modelSearchAppendPlan.totalCount,
+                                                        omit: modelSearchMissingOmittedCount,
+                                                      }
+                                                    )}
+                                                  </span>
+                                                )}
+                                              </span>
+                                            ) : (
+                                              <span className='text-muted-foreground text-sm'>
+                                                {t(
+                                                  'No new search results to add'
+                                                )}
+                                              </span>
+                                            )}
                                             <Button
                                               type='button'
-                                              variant='outline'
+                                              variant='default'
                                               size='sm'
                                               className='w-full'
                                               onPointerDown={(event) => {
@@ -3732,7 +3798,9 @@ export function ChannelMutateDrawer({
                                               }}
                                               disabled={
                                                 !canEditBasicFields ||
-                                                isAddingModelSearchMatches
+                                                isAddingModelSearchMatches ||
+                                                modelSearchAppendSummary.addableCount ===
+                                                  0
                                               }
                                               title={
                                                 canEditBasicFields
@@ -3746,13 +3814,10 @@ export function ChannelMutateDrawer({
                                                   className='animate-spin'
                                                 />
                                               )}
-                                              {t(
-                                                'Add all {{count}} matched model(s)',
-                                                {
-                                                  count:
-                                                    modelSearchAppendPlan.totalCount,
-                                                }
-                                              )}
+                                              {t('Add {{count}} new model(s)', {
+                                                count:
+                                                  modelSearchAppendSummary.addableCount,
+                                              })}
                                             </Button>
                                           </AlertDescription>
                                         </Alert>
@@ -3805,6 +3870,49 @@ export function ChannelMutateDrawer({
                             )}
                           />
 
+                          <FormItem>
+                            <FormLabel>
+                              {t('Custom model (comma-separated)')}
+                            </FormLabel>
+                            <FormControl>
+                              <InputGroup>
+                                <InputGroupInput
+                                  value={customModelInput}
+                                  onChange={(event) =>
+                                    setCustomModelInput(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key !== 'Enter') return
+                                    event.preventDefault()
+                                    handleAddCustomModels()
+                                  }}
+                                  placeholder={t('Enter model name')}
+                                  disabled={!canEditBasicFields}
+                                />
+                                <InputGroupAddon align='inline-end'>
+                                  <InputGroupButton
+                                    onClick={handleAddCustomModels}
+                                    disabled={
+                                      !canEditBasicFields ||
+                                      customModelInput.trim().length === 0
+                                    }
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <Plus data-icon='inline-start' />
+                                    {t('Add')}
+                                  </InputGroupButton>
+                                </InputGroupAddon>
+                              </InputGroup>
+                            </FormControl>
+                            <FormDescription>
+                              {t('Add custom model(s), comma-separated')}
+                            </FormDescription>
+                          </FormItem>
+
                           <Separator className='my-4' />
 
                           <div className='flex flex-col gap-3'>
@@ -3818,7 +3926,7 @@ export function ChannelMutateDrawer({
                                 )}
                               </p>
                             </div>
-                            <div className='flex flex-wrap gap-2'>
+                            <ButtonGroup className='max-w-full flex-wrap'>
                               <Button
                                 type='button'
                                 variant='outline'
@@ -3833,98 +3941,101 @@ export function ChannelMutateDrawer({
                                     : noPermissionMessage
                                 }
                               >
-                                <FileText className='mr-2 h-4 w-4' />
+                                <FileText data-icon='inline-start' />
                                 {t('Fill Related Models')}
-                              </Button>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleFillAllModels}
-                                disabled={
-                                  !canEditBasicFields || !allModelsList.length
-                                }
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                <Plus className='mr-2 h-4 w-4' />
-                                {t('Fill All Models')}
                               </Button>
                               {MODEL_FETCHABLE_TYPES.has(currentType) &&
                                 !isGlobalAccountPoolMode && (
-                                  <Button
-                                    type='button'
-                                    variant='outline'
-                                    size='sm'
-                                    onClick={handleFetchModels}
-                                    disabled={
-                                      !permissions.canOperate ||
-                                      !canEditBasicFields
-                                    }
-                                    title={
-                                      permissions.canOperate &&
-                                      canEditBasicFields
-                                        ? undefined
-                                        : noPermissionMessage
-                                    }
-                                  >
-                                    <Sparkles className='mr-2 h-4 w-4' />
-                                    {t('Fetch from Upstream')}
-                                  </Button>
+                                  <>
+                                    <ButtonGroupSeparator />
+                                    <Button
+                                      type='button'
+                                      variant='outline'
+                                      size='sm'
+                                      onClick={handleFetchModels}
+                                      disabled={
+                                        !permissions.canOperate ||
+                                        !canEditBasicFields
+                                      }
+                                      title={
+                                        permissions.canOperate &&
+                                        canEditBasicFields
+                                          ? undefined
+                                          : noPermissionMessage
+                                      }
+                                    >
+                                      <Sparkles data-icon='inline-start' />
+                                      {t('Fetch from Upstream')}
+                                    </Button>
+                                  </>
                                 )}
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleClearModels}
-                                disabled={!canEditBasicFields}
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                <Eraser className='mr-2 h-4 w-4' />
-                                {t('Clear All')}
-                              </Button>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleCopyModels}
-                                disabled={currentModelsArray.length === 0}
-                              >
-                                <Copy className='mr-2 h-4 w-4' />
-                                {t('Copy All')}
-                              </Button>
-                            </div>
-                            {prefillGroups.length > 0 && (
-                              <div className='flex flex-wrap items-center gap-2'>
-                                <span className='text-muted-foreground text-xs'>
-                                  {t('Preset groups')}:
-                                </span>
-                                {prefillGroups.map((group) => (
-                                  <Button
-                                    key={group.id}
-                                    type='button'
-                                    variant='secondary'
-                                    size='sm'
-                                    onClick={() => handleAddPrefillGroup(group)}
-                                    disabled={!canEditBasicFields}
-                                    title={
-                                      canEditBasicFields
-                                        ? undefined
-                                        : noPermissionMessage
-                                    }
-                                  >
-                                    {group.name}
-                                  </Button>
-                                ))}
-                              </div>
-                            )}
+                              <ButtonGroupSeparator />
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  render={
+                                    <Button
+                                      type='button'
+                                      variant='outline'
+                                      size='sm'
+                                    />
+                                  }
+                                >
+                                  {t('More')}
+                                  <ChevronDown data-icon='inline-end' />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align='end'
+                                  className='w-56'
+                                >
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuItem
+                                      onClick={handleFillAllModels}
+                                      disabled={
+                                        !canEditBasicFields ||
+                                        !allModelsList.length
+                                      }
+                                    >
+                                      <Plus />
+                                      {t('Fill All Models')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={handleCopyModels}
+                                      disabled={currentModelsArray.length === 0}
+                                    >
+                                      <Copy />
+                                      {t('Copy All')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={handleClearModels}
+                                      disabled={!canEditBasicFields}
+                                      variant='destructive'
+                                    >
+                                      <Eraser />
+                                      {t('Clear All')}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+                                  {prefillGroups.length > 0 && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuGroup>
+                                        {prefillGroups.map((group) => (
+                                          <DropdownMenuItem
+                                            key={group.id}
+                                            onClick={() =>
+                                              handleAddPrefillGroup(group)
+                                            }
+                                            disabled={!canEditBasicFields}
+                                          >
+                                            <FileText />
+                                            {group.name}
+                                          </DropdownMenuItem>
+                                        ))}
+                                      </DropdownMenuGroup>
+                                    </>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </ButtonGroup>
                           </div>
                         </div>
 

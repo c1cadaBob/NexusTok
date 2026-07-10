@@ -20,9 +20,22 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   buildModelSearchAppendPlan,
+  buildModelSearchAppendSummary,
   getMissingModelSearchMatches,
   getModelSearchModelNames,
+  parseModelDraftList,
 } from './model-search'
+
+describe('渠道模型草稿解析', () => {
+  test('支持逗号、中文逗号和换行并按大小写不敏感去重', () => {
+    assert.deepEqual(
+      parseModelDraftList(
+        ' gpt-5.6-terra, GPT-5.6-TERRA，gpt-5.6-luna\n\n gpt-5.6-sol '
+      ),
+      ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol']
+    )
+  })
+})
 
 describe('渠道模型搜索候选提取', () => {
   test('只保留模型名自身包含关键词的搜索结果', () => {
@@ -128,5 +141,19 @@ describe('渠道模型搜索批量追加计划', () => {
     assert.deepEqual(plan.previewModels, ['gpt-5.6-terra', 'gpt-5.6-luna'])
     assert.equal(plan.omittedCount, 1)
     assert.equal(plan.totalCount, 3)
+  })
+
+  test('搜索摘要会区分命中、可新增和已存在模型', () => {
+    assert.deepEqual(
+      buildModelSearchAppendSummary(
+        ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol']
+      ),
+      {
+        matchedCount: 3,
+        addableCount: 2,
+        existingCount: 1,
+      }
+    )
   })
 })
