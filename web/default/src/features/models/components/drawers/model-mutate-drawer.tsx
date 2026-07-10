@@ -78,6 +78,7 @@ import {
   combineBillingExpr,
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
+import { formatPricingNumber } from '@/features/system-settings/models/pricing-format'
 import { TieredPricingEditor } from '@/features/system-settings/models/tiered-pricing-editor'
 import {
   createModel,
@@ -204,12 +205,6 @@ function toNumberOrNull(value: unknown): number | null {
   if (!hasPricingValue(value) && value !== 0) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
-}
-
-function formatPricingNumber(value: unknown): string {
-  const parsed = toNumberOrNull(value)
-  if (parsed === null) return ''
-  return Number.parseFloat(parsed.toFixed(12)).toString()
 }
 
 function deriveLanePrice(

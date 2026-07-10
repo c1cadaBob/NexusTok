@@ -7121,3 +7121,72 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 8. MCP 点击新增按钮后，表单显示 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`；验证期间未点击 `Update Channel`。
 9. MCP 在浏览器上下文调用 `GET /api/channel?p=1&page_size=10&tag_mode=false&id_sort=false` 返回 HTTP 200、`success=true`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认本轮验证没有写入后端。
 10. MCP 控制台未出现新增 error/warn；仅保留浏览器既有 issue：一个表单 autocomplete 提示和三个 label 关联提示。
+
+## 本轮实施评审：模型定价价格格式化稳定化
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的系统设置模型定价实现后确认：new-api 已将模型定价的核心计算、快照、输入组件和价格格式化拆分为独立 helper，其中 `pricing-format.ts` 对浮点计算结果做了漂移吸附。NexusTok 当前已经具备完整的模型定价可视化编辑器、阶梯表达式编辑器和批量 JSON 编辑入口，但模型定价抽屉与批量模型定价表格仍各自使用简单的 `toFixed(12)` 格式化。
+
+这会在管理员输入常见十进制价格或倍率时留下展示风险：例如倍率与价格相乘、输入价反推倍率、音频输出价反推音频输入倍率时，JavaScript 浮点误差可能把本应显示为 `0.3`、`3.75` 或 `15.11` 的价格变成带尾巴的近似值。该问题不改变后端计费表达式执行，但会影响保存预览、列表摘要和管理员对实际配置的判断，适合吸收 new-api 的稳定格式化能力作为 NexusTok 原生能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 价格格式 helper | `web/default/src/features/system-settings/models/pricing-format.ts` | 新增独立格式化函数，集中处理空值、非法值、显示精度和浮点漂移吸附。 |
+| 模型定价抽屉 | `web/default/src/features/system-settings/models/model-pricing-sheet.tsx` | 替换本地 `formatNumber`，让输入价、分项价、倍率反推和保存预览使用同一格式化规则。 |
+| 批量模型定价表格 | `web/default/src/features/system-settings/models/model-ratio-visual-editor.tsx` | 替换列表摘要里的本地 `formatPrice`，保证表格摘要与编辑抽屉展示一致。 |
+| 模型管理抽屉 | `web/default/src/features/models/components/drawers/model-mutate-drawer.tsx` | 替换模型级定价编辑中的本地格式化实现，保证 `/models/metadata` 的可达定价入口同步受益。 |
+| 前端测试 | `web/default/src/features/system-settings/models/pricing-format.test.ts` | 新增针对整数、小数、浮点漂移、空值和非法值的单测，防止后续回退。 |
+
+### 风险评估
+
+- 本轮只改变前端展示和由展示输入反推的字符串格式，不调整后端计费、保存接口、数据库结构、表达式版本和 quota 转换公式。
+- `formatPricingNumber` 仍保留最多 12 位展示小数，不会截断管理员输入的合理高精度价格；只在误差落入极小容忍区间时吸附到更短的十进制结果。
+- 模型定价抽屉中输入框仍保留原有 `numericDraftRegex`，不会接受负数、科学计数法或其它原先不允许的格式。
+- 批量表格的价格摘要只读展示会变得更稳定，但排序仍基于摘要字符串；本轮不改表格排序语义，避免额外行为变化。
+- 涉及计费表达式周边文件前已阅读 `pkg/billingexpr/expr.md`，本轮不修改表达式语言、变量归一化、预消费或结算逻辑。
+
+### 方案评审
+
+采用“共享 helper + 定向替换 + 单测锁定”的低风险方案：
+
+1. 从 new-api 吸收 `formatPricingNumber` 的核心思想，在 NexusTok 下新增本地 `pricing-format.ts`，保留项目版权头和当前 TypeScript 风格。
+2. 将 `model-pricing-sheet.tsx` 的本地 `formatNumber` 调用替换为 `formatPricingNumber`，覆盖 `ratioToBasePrice`、`deriveLanePrice`、`deriveLaneRatio` 和输入价反推倍率。
+3. 将 `model-ratio-visual-editor.tsx` 的本地 `formatPrice` 替换为同一个 helper，覆盖价格摘要与详情。
+4. 将 `/models/metadata` 使用的模型管理抽屉同步切到共享 helper，避免系统设置批量入口与模型管理单模型入口出现价格显示差异。
+5. 新增 helper 单测，覆盖 `0.1 + 0.2`、`0.1 * 0.2`、`1.005`、空值和非法值等边界。
+6. 本轮不搬迁 new-api 的整套 `model-pricing-core` / `model-pricing-snapshots` 文件，以免在无必要时重写批量编辑器结构；后续若继续优化模型定价页，再以独立切片做快照/列定义拆分。
+
+### 验收方式
+
+1. `cd web/default && bun test src/features/system-settings/models/pricing-format.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/`、`/pricing-settings` 和 `/models/metadata`，确认价格设置页与模型管理页正常渲染；如热更新未体现，先重启容器再复验。
+
+### 实施结果
+
+已完成模型定价价格格式化稳定化。本轮新增 `pricing-format.ts`，集中提供 `formatPricingNumber`：空值、`false`、非法数字返回空字符串；有效数字最多保留 12 位展示小数；对于 `0.1 + 0.2`、`0.1 * 0.2`、`3.7500000000000004` 这类 JavaScript 浮点漂移，会在极小容忍区间内吸附为管理员预期的小数结果。该 helper 只服务前端展示和表单字符串生成，不改变后端计费表达式、预消费、结算或 quota 转换。
+
+模型系统设置中的 `model-pricing-sheet.tsx` 已移除本地 `formatNumber`，输入价、分项价、倍率反推和保存预览统一使用 `formatPricingNumber`。批量模型定价表格 `model-ratio-visual-editor.tsx` 已移除本地 `formatPrice`，价格摘要和详情与编辑抽屉共用同一规则；同一逻辑块中原英文注释已改为中文说明，明确 tiered_expr 模型保留 ratio/price 的多实例同步兼容背景。
+
+实际可达的模型管理页面 `/models/metadata` 也已同步接入该 helper。`model-mutate-drawer.tsx` 之前有一份独立的 `formatPricingNumber` 本地实现，本轮已删除并改为复用共享 helper，避免模型管理单模型定价入口与系统设置批量模型定价入口在价格展示和反推倍率时出现不一致。
+
+### 验证记录
+
+1. 已按计费表达式规则先阅读 `pkg/billingexpr/expr.md`；本轮未修改表达式语言、变量归一化、预消费、结算或日志注入。
+2. `cd web/default && bun test src/features/system-settings/models/pricing-format.test.ts` 通过，覆盖空值/非法值、常见浮点漂移吸附和高精度保留。
+3. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见文案。
+4. `cd web/default && bun run typecheck` 通过。
+5. `cd web/default && bun run build` 通过。
+6. `git diff --check` 通过。
+7. `rg -n "function formatPricingNumber|toFixed\\(12\\)|formatNumber\\(|formatPrice\\(" web/default/src/features/system-settings/models web/default/src/features/models/components/drawers/model-mutate-drawer.tsx -S` 只剩共享 helper 的导出定义，确认旧本地实现已移除。
+8. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染。
+9. MCP 打开并强刷 `http://192.168.0.202:3003/pricing-settings`，价格设置页正常渲染；当前生产入口只展示 `Group ratios` 和 `Tool prices`，`Model prices` 标签未对外暴露，因此未在该页写入或保存任何模型价格配置。
+10. MCP 打开 `http://192.168.0.202:3003/models/metadata`，模型列表正常渲染；选择 `gpt-5.6-terra` 打开编辑抽屉，`Pricing Configuration` 正常显示 `Per-token`、`Per-request`、`Expression` 三种模式，输入价格展示为干净小数字符串，如 `2.5`、`20`、`0.25`、`3.125`。
+11. 验证期间未点击 `Update Model` 或任何保存按钮，未写入运行态模型价格数据。
+12. MCP 控制台无新增 error/warn；仅保留既有表单可访问性 issue：一个字段缺少 label、一个字段缺少 id/name、三个 label 关联提示。
