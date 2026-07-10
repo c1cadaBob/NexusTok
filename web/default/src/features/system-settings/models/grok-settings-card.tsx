@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import * as z from 'zod'
+import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
@@ -29,58 +30,83 @@ import {
   FormField,
   FormItem,
   FormLabel,
+  FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from '../components/settings-section'
-import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import {
+  buildGrokFormDefaults,
+  getChangedGrokSettingKeys,
+  normalizeGrokFormValues,
+  type FlatGrokSettings,
+  type GrokFormInput,
+  type GrokFormValues,
+} from './grok-settings-utils'
 
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee'
 
+// react-hook-form 会把 dotted name 当作路径解析。这里必须使用嵌套 schema，
+// 保存前再转回后端 option 使用的扁平 key，避免表单状态和提交值分裂。
 const grokSchema = z.object({
-  'grok.violation_deduction_enabled': z.boolean(),
-  'grok.violation_deduction_amount': z.coerce.number().min(0),
+  grok: z.object({
+    violation_deduction_enabled: z.boolean(),
+    violation_deduction_amount: z.coerce.number().min(0),
+  }),
 })
 
-type GrokFormValues = z.infer<typeof grokSchema>
-
 interface Props {
-  defaultValues: GrokFormValues
+  defaultValues: FlatGrokSettings
 }
 
 export function GrokSettingsCard(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const baselineRef = useRef<FlatGrokSettings>(props.defaultValues)
+  const baselineSerializedRef = useRef<string>(
+    JSON.stringify(props.defaultValues)
+  )
 
-  const form = useForm<GrokFormValues>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    resolver: zodResolver(grokSchema) as any,
-    defaultValues: props.defaultValues,
+  const form = useForm<GrokFormInput, unknown, GrokFormValues>({
+    resolver: zodResolver(grokSchema),
+    defaultValues: buildGrokFormDefaults(props.defaultValues),
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  useResetForm(form as any, props.defaultValues)
+  useEffect(() => {
+    const serialized = JSON.stringify(props.defaultValues)
+    if (serialized === baselineSerializedRef.current) return
 
-  const onSubmit = async (data: GrokFormValues) => {
+    baselineRef.current = props.defaultValues
+    baselineSerializedRef.current = serialized
+    form.reset(buildGrokFormDefaults(props.defaultValues))
+  }, [props.defaultValues, form])
+
+  const onSubmit = async (values: GrokFormValues) => {
     if (!updateOption.canUpdate) {
       toast.error(updateOption.disabledReason)
       return
     }
 
-    const entries = Object.entries(data) as [string, unknown][]
-    const updates = entries.filter(
-      ([key, value]) =>
-        value !== (props.defaultValues[key as keyof GrokFormValues] as unknown)
-    )
-    for (const [key, value] of updates) {
+    const normalized = normalizeGrokFormValues(values)
+    const updates = getChangedGrokSettingKeys(normalized, baselineRef.current)
+    if (updates.length === 0) {
+      toast.info(t('No changes to save'))
+      return
+    }
+
+    for (const key of updates) {
       await updateOption.mutateAsync({
         key,
-        value: value as string | number | boolean,
+        value: normalized[key],
       })
     }
+
+    baselineRef.current = normalized
+    baselineSerializedRef.current = JSON.stringify(normalized)
+    form.reset(buildGrokFormDefaults(normalized))
   }
 
   const enabled = form.watch('grok.violation_deduction_enabled')
@@ -143,6 +169,7 @@ export function GrokSettingsCard(props: Props) {
                     'Base amount. Actual deduction = base amount × system group rate.'
                   )}
                 </FormDescription>
+                <FormMessage />
               </FormItem>
             )}
           />

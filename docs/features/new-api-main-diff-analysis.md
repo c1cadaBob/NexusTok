@@ -7339,3 +7339,68 @@ NexusTok 当前多个系统设置字段仍直接执行 `field.onChange(event.tar
 10. 当前 `11111` 渠道处于 Account Pool 凭证模式，编辑抽屉内按既有规则不展示 `Fetch from Upstream`；通过行菜单 `Fetch Models` 验证弹窗可打开并显示 `Fetch available models for: 11111`，随后关闭弹窗，未保存任何变更。该账号池渠道的 `/api/channel/fetch_models/1` 在验证环境中保持 pending，属于上游探测运行态行为，本轮未修改后端探测逻辑。
 11. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染；根页面控制台无 error/warn/issue。
 12. `/channels` 验证期间控制台无 error/warn；DevTools Issue 面板仍显示既有表单可访问性提示（autocomplete 和 label 关联），与本轮模型搜索添加修复无直接关系，未阻断渠道编辑流程。
+
+## 本轮实施评审：Grok 设置 dotted key 表单修复
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 默认前端后确认，new-api 已修复 `GrokSettingsCard` 中 react-hook-form dotted key 的状态树问题：`FormField name='grok.violation_deduction_enabled'` 会被 RHF 解析为嵌套路径 `grok.violation_deduction_enabled`，如果 Zod schema 和 defaultValues 仍使用扁平 key `'grok.violation_deduction_enabled'`，表单内部会同时存在扁平值和嵌套值，提交时可能读取不到用户刚刚切换/输入的值，最终表现为 Grok 违规扣费开关或金额保存无效。
+
+NexusTok 当前 `web/default/src/features/system-settings/models/grok-settings-card.tsx` 仍然使用扁平 schema 和扁平 defaultValues，而页面字段名使用 dotted path。上一轮已完成数字输入 NaN 防护，但并没有修复 dotted key 与 RHF 路径语义不一致的问题；这会影响 Grok 违规扣费设置的保存可靠性，属于可以从 new-api 吸收的明确稳定性优势。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| Grok 设置表单 | `web/default/src/features/system-settings/models/grok-settings-card.tsx` | 将表单内部状态改为嵌套 `grok` 对象，提交前再规范化为后端 option 需要的扁平 key。 |
+| Grok 表单 helper | `web/default/src/features/system-settings/models/grok-settings-utils.ts` | 新增纯函数负责扁平默认值、嵌套表单值、保存 payload 之间的转换，便于单测覆盖。 |
+| Grok helper 测试 | `web/default/src/features/system-settings/models/grok-settings-utils.test.ts` | 覆盖默认值构建、表单值归一化、变更 key 识别和无变更判断。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证记录。 |
+
+### 风险评估
+
+- 本轮只修改默认前端 Grok 系统设置表单，不改后端 Grok setting、option 存储、违规扣费服务、relay 错误标准化或配额扣费逻辑。
+- 后端 option key 仍保持 `'grok.violation_deduction_enabled'` 和 `'grok.violation_deduction_amount'`，因此数据库兼容性和现有配置读取路径不变。
+- 表单内部从扁平 key 改为嵌套对象后，需要确保 `defaultValues` 变化时重置的是嵌套结构；否则系统 option 刷新后页面可能显示旧值。
+- 保存时只提交实际变化的扁平 option key。无变化时显示 `No changes to save`，避免点击保存后产生空请求或误导性成功 toast。
+- 数字金额字段继续使用上一轮引入的 `safeNumberFieldProps`，本轮不改变空输入/非法数字处理语义。
+
+### 方案评审
+
+采用“new-api 语义 + NexusTok 本地表单布局”的低风险方案：
+
+1. 新增 `grok-settings-utils.ts`，定义 `FlatGrokSettings`、`GrokFormInput`、`GrokFormValues`、`buildGrokFormDefaults`、`normalizeGrokFormValues` 和 `getChangedGrokSettingKeys`。
+2. `GrokSettingsCard` 的 Zod schema 改为 `z.object({ grok: z.object(...) })`，`useForm` 使用嵌套 defaultValues，并保留当前 `SettingsSection`、`FormField`、`Switch`、`Input`、`Button` 布局，不迁移 new-api 的 `SettingsForm`/`SettingsPageFormActions`。
+3. 提交时把嵌套 values 规范化为扁平 option key，和当前默认值比较后逐项调用 `useUpdateOption().mutateAsync`；保存成功后把 baseline 更新为已保存值并重置表单，避免重复点击继续提交同一变更。
+4. 新增纯函数单测，证明默认值映射和变更识别正确，不依赖浏览器环境。
+5. 执行定向单测、i18n sync、typecheck、build、diff check，并通过 MCP 打开 `http://192.168.0.202:3003/system-settings/models/grok` 和首页确认运行态页面正常；验证期间不点击保存。
+
+### 验收方式
+
+1. `cd web/default && bun test src/features/system-settings/models/grok-settings-utils.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/system-settings/models/grok`，确认 Grok 设置页正常渲染，开关与金额字段仍可见；验证期间不保存设置。
+7. MCP 打开 `http://192.168.0.202:3003/`，确认首页正常渲染；控制台无新增 error/warn。
+
+### 实施结果
+
+已完成 Grok 设置 dotted key 表单修复。本轮把 Grok 设置的内部表单状态从扁平 key 改成嵌套 `grok` 对象，使 `FormField name='grok.violation_deduction_enabled'` 与 react-hook-form 的路径语义一致；提交时再通过 `normalizeGrokFormValues` 转回后端 option 需要的 `'grok.violation_deduction_enabled'` 和 `'grok.violation_deduction_amount'` 两个扁平 key。
+
+新增 `grok-settings-utils.ts` 固化这套转换关系，包含默认值构建、提交值归一化和变更 key 识别。`GrokSettingsCard` 保存时只提交相对 baseline 发生变化的 key，无变化时提示 `No changes to save`；保存成功后会更新 baseline 并重置表单，避免重复点击保存继续提交同一变更。默认值刷新仍使用序列化快照保护，父组件重渲染但实际设置值未变化时不会擦掉管理员草稿。
+
+该能力吸收了 new-api 默认前端的 dotted key 修复思路，但保留 NexusTok 当前 `SettingsSection`、权限 hook、`useUpdateOption`、`safeNumberFieldProps` 和保存按钮布局，没有改后端配置结构、违规扣费服务、relay 错误标准化或配额计算。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/system-settings/models/grok-settings-utils.test.ts` 通过，4 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见文案。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. MCP 打开 `http://192.168.0.202:3003/system-settings/models/grok`，Grok 设置页正常渲染，`Enable violation deduction` 开关、`Violation deduction amount` 数字输入和保存按钮可见；验证期间未点击保存，未写入运行态系统 option。
+7. MCP 在 Grok 设置页浏览器上下文检查数字输入，实际 DOM `input.value` 为 `0.05`，`input.valueAsNumber` 为 `0.05`，说明页面展示值保持干净。
+8. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染。
+9. MCP 验证 Grok 设置页和首页控制台均无 error/warn/issue。
