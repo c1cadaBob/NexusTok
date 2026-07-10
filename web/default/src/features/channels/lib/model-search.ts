@@ -91,7 +91,10 @@ export function buildModelSearchAppendPlan(
   currentModels: readonly string[],
   previewLimit = 6
 ): ModelSearchAppendPlan {
-  const missingModels = getMissingModelSearchMatches(searchMatches, currentModels)
+  const missingModels = getMissingModelSearchMatches(
+    searchMatches,
+    currentModels
+  )
   const normalizedPreviewLimit = Math.max(0, previewLimit)
   const previewModels = missingModels.slice(0, normalizedPreviewLimit)
 
