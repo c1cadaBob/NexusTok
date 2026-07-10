@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 // Re-export all library functions
+export * from './advanced-custom'
 export * from './channel-actions'
 export * from './channel-form'
 export * from './channel-type-config'

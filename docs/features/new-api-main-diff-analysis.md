@@ -6979,3 +6979,76 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 14. MCP 访问 `http://192.168.0.202:3003/`，确认首页仍正常渲染。
 15. MCP 在登录态浏览器上下文调用 `POST /api/channel/`，尝试创建 type 58 但不携带 `settings.advanced_custom` 的渠道；接口返回 HTTP 200、业务 `success=false`，错误为 `渠道额外设置[channel setting] 格式错误：advanced_custom is required`，确认后端保存校验已生效且不会进入创建成功路径。
 16. MCP 控制台未发现本轮新增阻断性错误；仅保留浏览器报告的既有表单 autocomplete/label 可访问性 issue。
+
+## 本轮复核评审：渠道编辑页搜索添加修复与 Advanced Custom 编辑入口
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面继续对齐。重新打开 3003 运行态页面复现后确认：当前渠道编辑抽屉已经具备 Basic/Credentials/Models/Advanced 分区，但模型 `MultiSelect` 在输入 `gpt-5.6` 时，下拉候选仍会铺出大量静态模型，远程模型元信息命中没有稳定成为优先候选；这会让管理员误以为搜索没有按关键词工作，也会弱化外部“Add search results”批量追加按钮的可信度。
+
+同时，上一轮 Advanced Custom 只完成了后端基础层和前端类型识别。对照 new-api 最新页面，编辑渠道页还缺少 `settings.advanced_custom` 的可视化/JSON 双模式配置入口。由于后端已经 fail-closed 校验 type 58，本轮可以把 new-api 的优势转成 NexusTok 原生能力：在现有抽屉中暴露受权限控制的 Advanced Custom Routes 编辑器，让管理员能用模板快速配置 route/auth/converter，并在提交前由前端和后端双重校验。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用多选 | `web/default/src/components/multi-select.tsx` | 显式按输入过滤候选，并让远程命中/当前已选模型在搜索时优先展示；不改变未搜索状态的历史行为。 |
+| Advanced Custom helper | `web/default/src/features/channels/lib/advanced-custom.ts` | 新增前端配置模板、归一化、校验、统计和 auth 构造工具，与后端 schema 保持一致。 |
+| Advanced Custom 弹窗 | `web/default/src/features/channels/components/dialogs/advanced-custom-editor-dialog.tsx` | 新增 visual/json 双模式编辑器，支持模板填充、追加、格式化、route 增删、auth 配置和保存前校验。 |
+| 渠道表单转换 | `web/default/src/features/channels/lib/channel-form.ts` | 增加 `advanced_custom` 表单字段，从 `settings.advanced_custom` 回填；保存时仅 type 58 写入，切换其它类型时清理该字段。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 接入 Advanced Custom Routes 配置区、统计 badge、前端校验、权限禁用和弹窗保存。 |
+| i18n | `web/default/src/i18n/*` | 补齐新增用户可见文案六语翻译。 |
+
+### 风险评估
+
+- `MultiSelect` 是共享组件，过滤逻辑必须保持未输入关键词时展示完整候选，避免影响分组选择、其它多选和历史模型回填。
+- 渠道能力只能追加真实模型名；搜索批量追加继续只读取 `/api/models/search` 返回的 `model_name`，不能把裸关键词写入 `models`。
+- Advanced Custom 能改变上游 URL、auth 和协议转换，必须只在 type 58 展示并受 `channel.sensitive_write` 控制；没有敏感写权限时不能编辑或提交相关 settings。
+- 前端校验不能代替后端校验，保存 payload 仍必须让后端 `settings.advanced_custom` schema 做最终裁决。
+- 编辑器从 new-api 迁移时必须改为 NexusTok 版权头、中文注释和当前 Base UI 组件约定，不能硬搬提交 hook 或破坏 NexusTok 的账号池凭证模式、权限裁剪、Codex OAuth 和原有保存链路。
+- `settings` 需要保留未知字段；写入 `advanced_custom` 时不得抹掉上游模型更新、字段透传、AWS/Vertex/Azure 等既有配置。
+
+### 方案评审
+
+采用“共享组件小修 + Advanced Custom 前端入口原生化”的低风险方案：
+
+1. 在 `MultiSelect` 内部计算 `visibleItems`：无搜索词时保持原列表；有搜索词时只展示包含关键词的候选、已选命中和可创建项，远程命中因已合并进 `options` 会自然优先出现在下拉里。
+2. 新增 `advanced-custom.ts`，迁移并本地化 new-api 的 route 模板、converter/auth/path 约束、JSON parse/stringify、validate 和 stats helper，保证前端配置形态与后端 DTO 对齐。
+3. 新增 `AdvancedCustomEditorDialog`，提供 visual/json 双模式：visual 模式用于常规 route/auth/converter 配置，JSON 模式用于高级批量编辑；保存前统一 normalize + validate。
+4. 在 `channelFormSchema` 增加 `advanced_custom` 字符串字段和 type 58 前端校验；`transformChannelToFormDefaults` 从 `settings.advanced_custom` 回填；`buildSettingsJSON` 仅在 type 58 时写入 normalized config，其它类型切换时清理。
+5. 在渠道编辑抽屉的凭证/基础 URL区域展示 Advanced Custom Routes 配置块，显示 route 数、入口类型和 incomplete 状态；按钮受敏感权限控制，保存弹窗只更新表单值，不直接调用后端。
+6. 修改后执行前端类型检查、构建、i18n sync、必要的 helper 测试和 MCP 真实页面验证；若热更新未生效，按约定重启容器后复验。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.tsx src/features/channels/lib/advanced-custom.test.ts`（如测试环境支持 React 测试则执行；否则至少执行 helper 单测）。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/channels`，编辑渠道 `11111`，输入 `gpt-5.6`，确认下拉与搜索结果只围绕 `gpt-5.6` 真实模型展示，批量追加后表单从 3 个模型变为 5 个且不触发保存请求。
+7. MCP 打开创建渠道抽屉，选择 `Advanced Custom`，确认页面出现 Advanced Custom Routes 配置入口；应用模板并保存弹窗后 route 数和类型 badge 更新；未点击创建渠道，避免写入高风险运行态配置。
+
+### 实施结果
+
+已完成本轮渠道编辑页对齐与搜索添加修复。`MultiSelect` 新增 `filterMultiSelectItems` 显式过滤层：没有搜索词时保持原候选顺序，有搜索词时只展示 value 或 label 命中的候选，因此渠道模型输入 `gpt-5.6` 时，下拉候选收敛为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，不再混入大量 `gpt-3.5`、`gpt-4` 或其它静态模型。创建自定义模型的旧能力仍保留，但加载中或存在真实匹配候选时不会展示裸关键词创建项。
+
+已把 new-api 最新编辑渠道页中 Advanced Custom route 编辑能力原生化到 NexusTok 默认前端。新增 `advanced-custom.ts` 前端 helper，提供模板、converter/auth/path 约束、归一化、校验、序列化和摘要统计；新增 `AdvancedCustomEditorDialog`，支持 Visual/JSON 双模式、模板填充/追加、route 增删、incoming/upstream path、converter 和 auth 配置。弹窗使用 NexusTok 当前 Base UI 组件与 Hugeicons 图标库，不直接复用 new-api 提交流程。
+
+渠道表单已增加 `advanced_custom` 字段，并在 type 58 时进行前端校验：无有效 route 会标记 incomplete，route 使用相对 upstream path 且未配置 Base URL 时会提示 Base URL 必填。保存 payload 构造时仅 `Advanced Custom` 渠道写入 `settings.advanced_custom`，其它渠道类型切换时清理该高风险配置，同时保留 `settings` 中其它未知字段，避免影响 AWS/Vertex/Azure、字段透传、上游模型更新等既有设置。
+
+渠道编辑抽屉已接入 Advanced Custom Routes 配置区：选择 `Advanced Custom` 后在 Credentials/Base URL 附近显示安全提示、route 数量、入口类型 badge 和 `Configure routes` 按钮；按钮受 `channel.sensitive_write` 权限保护，弹窗保存只更新当前表单状态，不直接调用后端创建或更新接口。该能力与当前页面的 Basic Information、Credentials、Models & Groups、Advanced Settings 分段布局保持一致，继续保留 NexusTok 的账号池、Codex OAuth、权限裁剪和风险确认链路。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/advanced-custom.test.ts src/components/multi-select.test.ts` 通过，覆盖 MultiSelect 搜索过滤、`gpt-5.6` 三模型候选、label 命中、Advanced Custom 模板 clone/parse/stringify、重复 path 拒绝、converter/path mismatch 拒绝、stats 与相对 upstream path 检测。
+2. `cd web/default && bun run i18n:sync` 通过，报告已生成；本轮新增文案已补齐 en、zh、fr、ja、ru、vi，历史 fr/ja/ru/vi untranslated 统计不属于本轮新增。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. MCP 打开 `http://192.168.0.202:3003/channels`，编辑渠道 `11111`，当前模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；在模型输入框输入 `gpt-5.6` 后，DOM 中真实下拉候选为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，搜索结果条显示 `3 synced model(s) matched "gpt-5.6"` 和 `Add 2 search result(s)`。
+7. MCP 点击批量追加后，表单内模型数从 `Selected 3` 变为 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，搜索输入和结果条被清空；验证期间未点击 `Update Channel`。
+8. MCP 在浏览器上下文携带 `NexusTok-User: 1` 调用 `GET /api/channel?p=1&page_size=10&tag_mode=false&id_sort=false` 返回 HTTP 200、`success=true`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认搜索追加验证没有写入运行态数据。
+9. MCP 打开创建渠道抽屉，选择 `Advanced Custom`，页面出现安全提示、`Advanced Custom Routes`、`Routes: 0`、`Incomplete` 与 `Configure routes`；点击配置后弹窗显示 Visual/JSON 模式、模板选择和默认 OpenAI Chat route。
+10. MCP 在 Advanced Custom 弹窗点击 `Fill Template` 并 `Save changes` 后，外层表单更新为 `Routes: 1` 和 `OpenAI Chat` badge，`Incomplete` 消失；未点击 `Save changes` 创建渠道，避免写入高风险运行态配置。
+11. MCP 刷新 `http://192.168.0.202:3003/channels` 后页面正常渲染；控制台 error/warn 为空，说明热更新页面已生效且无需重启容器。

@@ -64,6 +64,23 @@ interface MultiSelectProps {
 
 const COMMA_REGEX = /[,，\n]/
 
+export function filterMultiSelectItems(
+  items: string[],
+  inputValue: string,
+  labelMap: ReadonlyMap<string, string> = new Map()
+): string[] {
+  const normalizedInput = inputValue.trim().toLowerCase()
+  if (!normalizedInput) return items
+
+  return items.filter((item) => {
+    const label = labelMap.get(item) ?? item
+    return (
+      item.toLowerCase().includes(normalizedInput) ||
+      label.toLowerCase().includes(normalizedInput)
+    )
+  })
+}
+
 function splitDraft(value: string): { completed: string[]; draft: string } {
   if (!COMMA_REGEX.test(value)) {
     return { completed: [], draft: value }
@@ -160,6 +177,13 @@ export function MultiSelect({
     return Array.from(set)
   }, [canCreate, options, selected, trimmedInput])
 
+  // Base UI 的 Combobox Collection 不会替代业务侧过滤；渠道模型列表可能包含数百个
+  // 静态模型，必须在这里按输入值收敛候选，才能让远程同步模型命中稳定浮到前面。
+  const visibleItems = React.useMemo(
+    () => filterMultiSelectItems(items, inputValue, labelMap),
+    [inputValue, items, labelMap]
+  )
+
   const updateInputValue = React.useCallback(
     (value: string) => {
       if (searchValue === undefined) {
@@ -248,7 +272,7 @@ export function MultiSelect({
   return (
     <Combobox
       multiple
-      items={items}
+      items={visibleItems}
       value={selected}
       onValueChange={handleValueChange}
       inputValue={inputValue}

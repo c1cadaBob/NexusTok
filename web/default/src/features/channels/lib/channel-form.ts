@@ -19,6 +19,13 @@ For commercial licensing, please contact support@c1cada.dev
 import { z } from 'zod'
 import { CHANNEL_STATUS, MODEL_FETCHABLE_TYPES } from '../constants'
 import type { Channel } from '../types'
+import {
+  CHANNEL_TYPE_ADVANCED_CUSTOM,
+  advancedCustomConfigUsesRelativeUpstreamPath,
+  parseAdvancedCustomConfig,
+  stringifyAdvancedCustomConfig,
+  validateAdvancedCustomConfig,
+} from './advanced-custom'
 
 // ============================================================================
 // 表单校验 Schema
@@ -49,6 +56,7 @@ export const channelFormSchema = z
     param_override: z.string().optional(),
     header_override: z.string().optional(),
     settings: z.string().optional(),
+    advanced_custom: z.string().optional(),
     other: z.string().optional(),
     // 多 Key 表单选项只用于前端决定创建模式，不作为渠道字段直接保存。
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
@@ -87,6 +95,32 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
+      const advancedCustomConfig = parseAdvancedCustomConfig(
+        data.advanced_custom
+      )
+      const advancedCustomError =
+        validateAdvancedCustomConfig(advancedCustomConfig)
+      if (advancedCustomError) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['advanced_custom'],
+          message: advancedCustomError.message,
+        })
+      }
+      if (
+        advancedCustomConfigUsesRelativeUpstreamPath(advancedCustomConfig) &&
+        !data.base_url?.trim()
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['base_url'],
+          message:
+            'Base URL is required when an advanced route uses an upstream path',
+        })
+      }
+    }
+
     if (
       data.credential_mode === 'global_account_pool' &&
       (!data.account_pool_group_id || data.account_pool_group_id <= 0)
@@ -127,6 +161,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   param_override: '',
   header_override: '',
   settings: '{}',
+  advanced_custom: '',
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
@@ -216,6 +251,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let advancedCustom = ''
 
   if (channel.settings) {
     try {
@@ -240,6 +276,9 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
+      if (parsed.advanced_custom) {
+        advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
+      }
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to parse channel settings:', error)
@@ -276,6 +315,7 @@ export function transformChannelToFormDefaults(
     param_override: channel.param_override || '',
     header_override: channel.header_override || '',
     settings: channel.settings || '{}',
+    advanced_custom: advancedCustom,
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
@@ -426,6 +466,19 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     if (typeof settingsObj.upstream_model_update_last_check_time !== 'number') {
       settingsObj.upstream_model_update_last_check_time = 0
     }
+  }
+
+  // Advanced Custom 的 route/auth/converter 配置只允许保存在 type 58 渠道上。
+  // 管理员把渠道切换回其它类型时主动清理，避免后端未来误消费历史高风险配置。
+  if (formData.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
+    const advancedCustomConfig = parseAdvancedCustomConfig(
+      formData.advanced_custom
+    )
+    if (advancedCustomConfig) {
+      settingsObj.advanced_custom = advancedCustomConfig
+    }
+  } else if ('advanced_custom' in settingsObj) {
+    delete settingsObj.advanced_custom
   }
 
   return JSON.stringify(settingsObj)

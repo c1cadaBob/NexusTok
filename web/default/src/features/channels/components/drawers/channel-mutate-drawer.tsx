@@ -139,6 +139,7 @@ import {
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
+  CHANNEL_TYPE_ADVANCED_CUSTOM,
   channelFormSchema,
   channelsQueryKeys,
   transformChannelToFormDefaults,
@@ -146,6 +147,7 @@ import {
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
+  getAdvancedCustomStats,
   getChannelTypeIcon,
   getKeyPromptForType,
   parseModelsString,
@@ -162,6 +164,7 @@ import {
 } from '../../lib/status-code-risk-guard'
 import type { Channel } from '../../types'
 import { useChannels } from '../channels-provider'
+import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
 import {
@@ -276,6 +279,7 @@ const ADVANCED_SETTINGS_SECTION_IDS = {
 const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
   ADVANCED_SETTINGS_SECTION_IDS
 )
+const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
 const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'id',
@@ -304,6 +308,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.model_mapping?.trim() ||
     values.param_override?.trim() ||
     values.header_override?.trim() ||
+    values.advanced_custom?.trim() ||
     values.status_code_mapping?.trim() ||
     values.tag?.trim() ||
     values.remark?.trim() ||
@@ -583,6 +588,8 @@ export function ChannelMutateDrawer({
   const advancedNavScrollPendingRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
+  const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
+    useState(false)
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
     CHANNEL_EDITOR_SECTION_IDS.identity
   )
@@ -708,6 +715,7 @@ export function ChannelMutateDrawer({
     'upstream_model_update_check_enabled'
   )
   const currentSettings = form.watch('settings')
+  const currentAdvancedCustom = form.watch('advanced_custom')
   const currentFormValues = form.watch()
   const {
     unlocked: doubaoApiEditUnlocked,
@@ -821,6 +829,23 @@ export function ChannelMutateDrawer({
     [currentModels]
   )
 
+  const advancedCustomStats = useMemo(
+    () => getAdvancedCustomStats(currentAdvancedCustom),
+    [currentAdvancedCustom]
+  )
+  const advancedCustomRouteTypeLabels =
+    advancedCustomStats.routeTypeLabels.slice(
+      0,
+      ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT
+    )
+  const hiddenAdvancedCustomRouteTypeCount =
+    advancedCustomStats.routeTypeLabels.length -
+    advancedCustomRouteTypeLabels.length
+  const advancedCustomRouteTypeTitle =
+    hiddenAdvancedCustomRouteTypeCount > 0
+      ? advancedCustomStats.routeTypeLabels.join(', ')
+      : undefined
+
   const currentTypeLabel = useMemo(
     () =>
       CHANNEL_TYPE_OPTIONS.find((option) => option.value === currentType)
@@ -877,6 +902,7 @@ export function ChannelMutateDrawer({
     formErrors.status_code_mapping ||
     formErrors.param_override ||
     formErrors.header_override ||
+    formErrors.advanced_custom ||
     formErrors.force_format ||
     formErrors.thinking_to_content ||
     formErrors.pass_through_body_enabled ||
@@ -958,7 +984,9 @@ export function ChannelMutateDrawer({
     currentFormValues.pass_through_body_enabled ||
     currentFormValues.proxy?.trim() ||
     currentFormValues.system_prompt?.trim() ||
-    currentFormValues.system_prompt_override
+    currentFormValues.system_prompt_override ||
+    (currentType === CHANNEL_TYPE_ADVANCED_CUSTOM &&
+      currentFormValues.advanced_custom?.trim())
   )
   let fieldPassthroughConfigured = false
   if (currentType === 1 || currentType === 57) {
@@ -1799,6 +1827,7 @@ export function ChannelMutateDrawer({
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
         setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
+        setAdvancedCustomEditorOpen(false)
         setModelSearchKeyword('')
       }
     },
@@ -2760,6 +2789,87 @@ export function ChannelMutateDrawer({
                             )}
                           />
                         )}
+
+                      {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (
+                        <FormField
+                          control={form.control}
+                          name='advanced_custom'
+                          render={({ field }) => (
+                            <FormItem className='border-border/60 rounded-lg border p-4'>
+                              <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+                                <div className='min-w-0 space-y-2'>
+                                  <FormLabel>
+                                    {t('Advanced Custom Routes')}
+                                  </FormLabel>
+                                  <FormDescription>
+                                    {t(
+                                      'Configure incoming paths, upstream paths, converters, and authentication for this Advanced Custom channel.'
+                                    )}
+                                  </FormDescription>
+                                  <div className='flex flex-wrap gap-2'>
+                                    <Badge variant='secondary'>
+                                      {t('Routes')}:{' '}
+                                      {advancedCustomStats.routeCount}
+                                    </Badge>
+                                    {advancedCustomRouteTypeLabels.map(
+                                      (label) => (
+                                        <Badge
+                                          key={label}
+                                          variant='outline'
+                                          className='max-w-[12rem]'
+                                          title={label}
+                                        >
+                                          <span className='truncate'>
+                                            {t(label)}
+                                          </span>
+                                        </Badge>
+                                      )
+                                    )}
+                                    {hiddenAdvancedCustomRouteTypeCount > 0 && (
+                                      <Badge
+                                        variant='outline'
+                                        title={advancedCustomRouteTypeTitle}
+                                      >
+                                        +{hiddenAdvancedCustomRouteTypeCount}
+                                      </Badge>
+                                    )}
+                                    {!advancedCustomStats.valid && (
+                                      <Badge variant='destructive'>
+                                        {t('Incomplete')}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => {
+                                    if (!canEditSensitiveFields) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
+                                    setAdvancedCustomEditorOpen(true)
+                                  }}
+                                  disabled={!canEditSensitiveFields}
+                                  title={
+                                    canEditSensitiveFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
+                                >
+                                  <Route data-icon='inline-start' />
+                                  {t('Configure routes')}
+                                </Button>
+                              </div>
+                              <FormControl>
+                                <input type='hidden' {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       <ChannelAuthSection>
                         <FormField
@@ -4957,6 +5067,24 @@ export function ChannelMutateDrawer({
               return
             }
             form.setValue('param_override', nextValue, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }}
+        />
+      )}
+
+      {advancedCustomEditorOpen && (
+        <AdvancedCustomEditorDialog
+          open={advancedCustomEditorOpen}
+          value={form.watch('advanced_custom') || ''}
+          onOpenChange={setAdvancedCustomEditorOpen}
+          onSave={(nextValue) => {
+            if (!canEditSensitiveFields) {
+              toast.error(noPermissionMessage)
+              return
+            }
+            form.setValue('advanced_custom', nextValue, {
               shouldDirty: true,
               shouldValidate: true,
             })
