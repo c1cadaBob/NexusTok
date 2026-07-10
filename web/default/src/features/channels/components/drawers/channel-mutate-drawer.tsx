@@ -581,7 +581,6 @@ export function ChannelMutateDrawer({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -657,7 +656,7 @@ export function ChannelMutateDrawer({
     queryFn: getAllModels,
   })
 
-  // 按输入关键词查询模型元信息库，补齐 /api/channel/models 静态能力列表中没有的新同步模型。
+  // 用模型元信息搜索补齐系统模型候选源，避免已同步到模型库但尚未加入任何渠道的模型不可选。
   const { data: modelSearchData, isFetching: isSearchingModelMeta } = useQuery({
     queryKey: ['channel_model_meta_search', debouncedModelSearchKeyword],
     queryFn: () =>
@@ -775,8 +774,8 @@ export function ChannelMutateDrawer({
     for (const model of modelSearchData?.data?.items ?? []) {
       const name = model.model_name?.trim()
       if (!name || seen.has(name)) continue
-      // /api/models/search 也会匹配 description/tags。渠道能力只能追加真实模型名，
-      // 因此批量搜索添加只接收 model_name 本身包含当前关键词的结果。
+      // /api/models/search 会匹配 description/tags。渠道模型候选只应该展示真实
+      // model_name 本身包含关键词的条目，避免把标签命中的无关模型塞进下拉框。
       if (
         normalizedModelSearchKeyword &&
         !name.toLowerCase().includes(normalizedModelSearchKeyword)
@@ -1118,26 +1117,6 @@ export function ChannelMutateDrawer({
     }))
   }, [allModelsList, currentModelsArray, modelSearchModelNames])
 
-  // 当前搜索结果中尚未加入渠道能力的模型。这里只使用 /api/models/search 返回的真实
-  // model_name，不把输入关键词本身当作模型名，避免 gpt-5.6 这类系列前缀被错误写入渠道。
-  const modelSearchAddableNames = useMemo(
-    () =>
-      modelSearchModelNames.filter(
-        (model) => !currentModelsArray.includes(model)
-      ),
-    [currentModelsArray, modelSearchModelNames]
-  )
-  const modelSearchExistingNames = useMemo(
-    () =>
-      modelSearchModelNames.filter((model) =>
-        currentModelsArray.includes(model)
-      ),
-    [currentModelsArray, modelSearchModelNames]
-  )
-  const modelSearchPreviewNames = modelSearchAddableNames.slice(0, 6)
-  const modelSearchPreviewOmittedCount =
-    modelSearchAddableNames.length - modelSearchPreviewNames.length
-
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
       return createEmptyModelMappingGuardrail()
@@ -1419,6 +1398,7 @@ export function ChannelMutateDrawer({
   )
 
   // 从上游拉取模型列表。账号池组模式不使用渠道 key，因此不允许走该路径。
+  // 新建和编辑渠道都统一进入选择弹窗，避免搜索或拉取动作直接改写模型列表。
   const handleFetchModels = useCallback(async () => {
     if (!permissions.canOperate || !canEditBasicFields) {
       toast.error(noPermissionMessage)
@@ -1437,52 +1417,44 @@ export function ChannelMutateDrawer({
       return
     }
 
-    // 编辑模式先打开选择弹窗，避免直接覆盖已有模型列表。
-    if (isEditing && currentRow) {
-      setFetchModelsDialogOpen(true)
-      return
-    }
-
-    // 新建模式直接拉取并合并到当前模型列表。
-    const key = form.getValues('key')
-    if (!key?.trim()) {
-      toast.error(t('Please enter API key first'))
-      return
-    }
-
-    setIsFetchingModels(true)
-    try {
-      const response = await fetchModels({
-        type,
-        key,
-        base_url: form.getValues('base_url') || '',
-      })
-
-      if (response.success && response.data) {
-        updateModels(response.data, true)
-        toast.success(
-          t('Fetched {{count}} model(s) from upstream', {
-            count: response.data.length,
-          })
-        )
-      } else {
-        toast.error(t('No models fetched from upstream'))
+    if (!isEditing) {
+      const key = form.getValues('key')
+      if (!key?.trim()) {
+        toast.error(t('Please enter API key first'))
+        return
       }
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error) || t('Failed to fetch models'))
-    } finally {
-      setIsFetchingModels(false)
     }
+
+    setFetchModelsDialogOpen(true)
   }, [
     canEditBasicFields,
-    currentRow,
     form,
     isEditing,
     isGlobalAccountPoolMode,
     noPermissionMessage,
     permissions.canOperate,
     t,
-    updateModels,
+  ])
+
+  // 新建渠道还没有 channel id，弹窗需要使用当前表单里的连接信息实时拉取上游模型。
+  const createModeFetcher = useCallback(async (): Promise<string[]> => {
+    if (!canEditSensitiveFields) {
+      throw new Error(noPermissionMessage)
+    }
+    const response = await fetchModels({
+      type: form.getValues('type'),
+      key: form.getValues('key'),
+      base_url: form.getValues('base_url') || '',
+    })
+    if (response.success && response.data) {
+      return response.data
+    }
+    throw new Error(response.message || t('No models fetched from upstream'))
+  }, [
+    canEditSensitiveFields,
+    form,
+    noPermissionMessage,
+    t,
   ])
 
   // 模型快捷操作。
@@ -1533,34 +1505,6 @@ export function ChannelMutateDrawer({
     }
     await copyToClipboard(models)
   }, [form, copyToClipboard, t])
-
-  // 将当前搜索命中的真实模型一次性追加到渠道能力列表，适合 gpt-5.6 Luna/Sol/Terra
-  // 这类同系列模型批量补齐场景。最终保存仍由表单提交触发，不在这里调用渠道更新接口。
-  const handleAddModelSearchResults = useCallback(() => {
-    if (!canEditBasicFields) {
-      toast.error(noPermissionMessage)
-      return
-    }
-    if (modelSearchAddableNames.length === 0) {
-      toast.info(t('No new search results to add'))
-      return
-    }
-
-    updateModels(modelSearchAddableNames, true)
-    clearModelSearch()
-    toast.success(
-      t('Added {{count}} model(s) from search', {
-        count: modelSearchAddableNames.length,
-      })
-    )
-  }, [
-    canEditBasicFields,
-    modelSearchAddableNames,
-    clearModelSearch,
-    noPermissionMessage,
-    t,
-    updateModels,
-  ])
 
   // 添加模型预设分组中的模型。
   const handleAddPrefillGroup = useCallback(
@@ -1829,7 +1773,6 @@ export function ChannelMutateDrawer({
         setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
         setAdvancedCustomEditorOpen(false)
-        setModelSearchKeyword('')
       }
     },
     [onOpenChange, form]
@@ -3638,83 +3581,6 @@ export function ChannelMutateDrawer({
                                     </AlertDescription>
                                   </Alert>
                                 )}
-                                {trimmedModelSearchKeyword.length > 0 && (
-                                  <div className='border-border/60 bg-muted/20 flex flex-col gap-3 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between'>
-                                    <div className='min-w-0'>
-                                      <p className='text-sm font-medium'>
-                                        {t('Search results')}
-                                      </p>
-                                      <p className='text-muted-foreground text-xs'>
-                                        {isSearchingModelMeta ||
-                                        isModelSearchDebouncing
-                                          ? t('Searching model metadata...')
-                                          : modelSearchModelNames.length > 0
-                                            ? t(
-                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                {
-                                                  matched:
-                                                    modelSearchModelNames.length,
-                                                  addable:
-                                                    modelSearchAddableNames.length,
-                                                  existing:
-                                                    modelSearchExistingNames.length,
-                                                }
-                                              )
-                                            : t('No matching models')}
-                                      </p>
-                                      {!isSearchingModelMeta &&
-                                        !isModelSearchDebouncing &&
-                                        modelSearchPreviewNames.length > 0 && (
-                                          <div className='mt-1 flex flex-wrap gap-1'>
-                                            {modelSearchPreviewNames.map(
-                                              (model) => (
-                                                <span
-                                                  key={model}
-                                                  className='bg-background text-foreground inline-flex max-w-[14rem] items-center rounded-sm border px-1.5 py-0.5 font-mono text-[11px] leading-4'
-                                                  title={model}
-                                                >
-                                                  <span className='truncate'>
-                                                    {model}
-                                                  </span>
-                                                </span>
-                                              )
-                                            )}
-                                            {modelSearchPreviewOmittedCount >
-                                              0 && (
-                                              <span className='text-muted-foreground inline-flex items-center px-1.5 py-0.5 text-[11px] leading-4'>
-                                                {t('+{{count}} more', {
-                                                  count:
-                                                    modelSearchPreviewOmittedCount,
-                                                })}
-                                              </span>
-                                            )}
-                                          </div>
-                                        )}
-                                    </div>
-                                    <Button
-                                      type='button'
-                                      variant='secondary'
-                                      size='sm'
-                                      onClick={handleAddModelSearchResults}
-                                      disabled={
-                                        !canEditBasicFields ||
-                                        isSearchingModelMeta ||
-                                        isModelSearchDebouncing ||
-                                        modelSearchAddableNames.length === 0
-                                      }
-                                      title={
-                                        canEditBasicFields
-                                          ? undefined
-                                          : noPermissionMessage
-                                      }
-                                    >
-                                      <Plus data-icon='inline-start' />
-                                      {t('Add {{count}} new model(s)', {
-                                        count: modelSearchAddableNames.length,
-                                      })}
-                                    </Button>
-                                  </div>
-                                )}
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -3776,7 +3642,6 @@ export function ChannelMutateDrawer({
                                     size='sm'
                                     onClick={handleFetchModels}
                                     disabled={
-                                      isFetchingModels ||
                                       !permissions.canOperate ||
                                       !canEditBasicFields
                                     }
@@ -3784,14 +3649,10 @@ export function ChannelMutateDrawer({
                                       permissions.canOperate &&
                                       canEditBasicFields
                                         ? undefined
-                                        : noPermissionMessage
+                                      : noPermissionMessage
                                     }
                                   >
-                                    {isFetchingModels ? (
-                                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                    ) : (
-                                      <Sparkles className='mr-2 h-4 w-4' />
-                                    )}
+                                    <Sparkles className='mr-2 h-4 w-4' />
                                     {t('Fetch from Upstream')}
                                   </Button>
                                 )}
@@ -5122,19 +4983,21 @@ export function ChannelMutateDrawer({
         />
       )}
 
-      {/* 编辑模式下的上游模型选择弹窗。 */}
-      {isEditing && currentRow && (
-        <FetchModelsDialog
-          open={fetchModelsDialogOpen}
-          onOpenChange={setFetchModelsDialogOpen}
-          onModelsSelected={(models) => {
-            // 将管理员选择的上游模型追加到表单模型列表。
-            form.setValue('models', formatModelsArray(models))
-          }}
-          redirectModels={redirectModelList}
-          redirectSourceModels={redirectModelKeyList}
-        />
-      )}
+      {/* 上游模型选择弹窗：编辑模式按 channel id 拉取，新建模式按当前表单凭证拉取。 */}
+      <FetchModelsDialog
+        open={fetchModelsDialogOpen}
+        onOpenChange={setFetchModelsDialogOpen}
+        onModelsSelected={(models) => {
+          form.setValue('models', formatModelsArray(models))
+        }}
+        redirectModels={redirectModelList}
+        redirectSourceModels={redirectModelKeyList}
+        customFetcher={!isEditing ? createModeFetcher : undefined}
+        existingModelsOverride={parseModelsString(
+          form.getValues('models') || ''
+        )}
+        channelName={!isEditing ? currentName?.trim() : undefined}
+      />
 
       <SecureVerificationDialog
         open={verificationOpen}

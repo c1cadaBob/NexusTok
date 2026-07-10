@@ -97,6 +97,36 @@ function splitDraft(value: string): { completed: string[]; draft: string } {
   return { completed, draft }
 }
 
+export function canCreateMultiSelectValue({
+  allowCreate,
+  inputValue,
+  selected,
+  options,
+  isLoading = false,
+}: {
+  allowCreate: boolean
+  inputValue: string
+  selected: readonly string[]
+  options: readonly Option[]
+  isLoading?: boolean
+}): boolean {
+  const trimmedInput = inputValue.trim()
+  if (!allowCreate || isLoading || trimmedInput.length === 0) return false
+
+  const normalizedInput = trimmedInput.toLowerCase()
+  const selectedSet = new Set(
+    selected.map((value) => value.trim().toLowerCase())
+  )
+  return !(
+    selectedSet.has(normalizedInput) ||
+    options.some(
+      (option) =>
+        option.value.toLowerCase() === normalizedInput ||
+        option.label.toLowerCase() === normalizedInput
+    )
+  )
+}
+
 // 芯片式多选。它基于项目 Base UI Combobox，保证输入值会参与真实过滤，
 // 同时允许调用方按输入内容发起远程搜索并把结果合并进 options。
 export function MultiSelect({
@@ -128,8 +158,6 @@ export function MultiSelect({
   const [expanded, setExpanded] = React.useState(false)
   const inputValue = searchValue ?? internalInputValue
 
-  const selectedSet = React.useMemo(() => new Set(selected), [selected])
-
   const labelMap = React.useMemo(() => {
     const map = new Map<string, string>()
     for (const option of options) {
@@ -139,32 +167,16 @@ export function MultiSelect({
   }, [options])
 
   const trimmedInput = inputValue.trim()
-  const normalizedInput = trimmedInput.toLowerCase()
-  const inputMatchesExisting =
-    trimmedInput.length > 0 &&
-    (selectedSet.has(trimmedInput) ||
-      options.some(
-        (option) =>
-          option.value.toLowerCase() === normalizedInput ||
-          option.label.toLowerCase() === normalizedInput
-      ))
-  const inputHasMatchingOption =
-    trimmedInput.length > 0 &&
-    (selected.some((value) => value.toLowerCase().includes(normalizedInput)) ||
-      options.some(
-        (option) =>
-          option.value.toLowerCase().includes(normalizedInput) ||
-          option.label.toLowerCase().includes(normalizedInput)
-      ))
 
-  // 存在搜索候选时不要展示“创建自定义值”。渠道模型搜索会把模型元信息候选异步合并进来，
-  // 例如 gpt-5.6 会匹配 luna/sol/terra 三个真实模型；此时继续创建 gpt-5.6 会误导管理员。
-  const canCreate =
-    allowCreate === true &&
-    trimmedInput.length > 0 &&
-    !isLoading &&
-    !inputMatchesExisting &&
-    !inputHasMatchingOption
+  // 搜索候选只是帮助定位已有选项，不能阻止用户添加完整自定义值。
+  // 只有输入值与已选项或候选项精确重复时，才隐藏“创建自定义值”入口。
+  const canCreate = canCreateMultiSelectValue({
+    allowCreate,
+    inputValue,
+    selected,
+    options,
+    isLoading,
+  })
 
   const items = React.useMemo(() => {
     const set = new Set<string>(options.map((option) => option.value))

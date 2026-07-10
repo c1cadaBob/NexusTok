@@ -89,8 +89,6 @@ export const STATIC_I18N_KEYS = [
   'Required when advanced_custom routes use relative upstream paths',
   'Injected by advanced_custom auth templates, such as {api_key}',
   'Models exposed by the custom upstream routes',
-  '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-  'Add {{count}} new model(s)',
   'Loading channel details',
   'Please wait before editing to avoid overwriting saved values.',
   'Sensitive channel settings are read-only',

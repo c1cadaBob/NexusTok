@@ -18,7 +18,10 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { filterMultiSelectItems } from './multi-select'
+import {
+  canCreateMultiSelectValue,
+  filterMultiSelectItems,
+} from './multi-select'
 
 describe('MultiSelect 搜索过滤', () => {
   test('空搜索保持原候选顺序', () => {
@@ -27,7 +30,7 @@ describe('MultiSelect 搜索过滤', () => {
     assert.deepEqual(filterMultiSelectItems(items, ''), items)
   })
 
-  test('按模型名过滤远程同步候选', () => {
+  test('按模型名过滤候选', () => {
     const items = [
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -53,5 +56,61 @@ describe('MultiSelect 搜索过滤', () => {
     assert.deepEqual(filterMultiSelectItems(items, 'terra', labels), [
       'model-a',
     ])
+  })
+})
+
+describe('MultiSelect 自定义添加判定', () => {
+  const options = [
+    { value: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
+    { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
+    { value: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
+  ]
+
+  test('部分匹配候选不阻止添加完整自定义值', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'gpt-5.6',
+        selected: [],
+        options,
+      }),
+      true
+    )
+  })
+
+  test('精确重复候选会阻止创建', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'gpt-5.6-sol',
+        selected: [],
+        options,
+      }),
+      false
+    )
+  })
+
+  test('已选值会阻止重复创建', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'custom-model',
+        selected: ['custom-model'],
+        options,
+      }),
+      false
+    )
+  })
+
+  test('已选值大小写不同也会阻止重复创建', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'Custom-Model',
+        selected: ['custom-model'],
+        options,
+      }),
+      false
+    )
   })
 })

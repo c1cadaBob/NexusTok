@@ -7265,3 +7265,77 @@ NexusTok 当前多个系统设置字段仍直接执行 `field.onChange(event.tar
 13. MCP 打开 `http://192.168.0.202:3003/system-settings/models/routing-reliability`，Routing Reliability 页面正常渲染，重试次数和测试间隔数字输入可见。
 14. MCP 打开 `http://192.168.0.202:3003/system-settings/models/grok`，Grok Settings 页面正常渲染，违规扣费金额数字输入可见。
 15. MCP 控制台检查 `error`、`warn`、`issue` 类型消息，无新增控制台错误、警告或浏览器 issue。
+
+## 本轮实施评审：渠道编辑页模型搜索添加对齐 new-api
+
+### 需求分析
+
+用户反馈“搜索添加时不正确”，并明确指出最新版 new-api 的编辑渠道页面体验更好，需要将当前项目编辑渠道页面与 `/opt/project/new-api-main` 对齐。结合页面实际验证，当前项目在 `ChannelMutateDrawer` 的模型选择框里额外加入了“远程模型元信息搜索 + Add N new model(s)”批量添加面板；最新版 new-api 已经没有这套入口，而是保留更清晰的三种模型维护路径：在 MultiSelect 中搜索/选择已有模型、按输入值添加自定义模型、通过 Fetch Models 弹窗从上游拉取并确认。
+
+当前项目 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 实测返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型，说明后端模型元信息搜索没有缺数据。问题更可能来自 UI 语义混淆：管理员在同一个输入框里既能点单个下拉候选，又能点批量添加搜索结果，还可能被“部分匹配候选存在时隐藏自定义添加项”的逻辑影响，最终感知为搜索后只添加了一个模型或添加了非预期内容。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除渠道模型选择区的远程模型元信息搜索批量添加面板；保留 `/api/models/search` 作为 MultiSelect 候选补全，使已同步但尚未加入渠道的模型仍可单个选择；新建/编辑模式均通过 Fetch Models 弹窗确认上游模型。 |
+| 上游模型弹窗 | `web/default/src/features/channels/components/dialogs/fetch-models-dialog.tsx` | 对齐 new-api，支持 `customFetcher`、`existingModelsOverride` 和 `channelName`，使新建渠道也能先弹窗选择，再写回表单而不是直接合并。 |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 保留当前项目已有的本地过滤和 chip 复制能力，但将自定义添加判断调整为只在精确重复时隐藏创建项，避免部分匹配阻止添加完整自定义模型名。 |
+| i18n | `web/default/src/i18n/static-keys.ts` | 清理不再使用的搜索批量添加静态文案，保留实际仍使用的通用文案，并运行 `i18n:sync` 校验。 |
+| 报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验证结果，延续差异原生化报告。 |
+
+### 风险评估
+
+- 本轮只修改前端表单交互和弹窗确认流程，不改后端 Channel API、模型元信息 API、数据库结构或 relay 行为。
+- 移除“远程模型元信息一键添加”会改变当前项目独有增强入口；但该入口正是本轮反馈的主要问题来源，且最新版 new-api 已移除同类设计。本轮保留远程模型元信息搜索作为候选补全，避免 `gpt-5.6-luna`、`gpt-5.6-terra` 这类已同步模型因为尚未出现在 `/api/channel/models` 而不可选。
+- Fetch Models 新建模式从“直接合并到表单”改为“弹窗中勾选后写回表单”，会多一步确认，但可避免误覆盖和误加模型，是更稳定的管理员工作流。
+- 编辑模式的 Fetch Models 弹窗需要读取表单当前未保存的模型值作为初始选择，否则会用数据库旧值覆盖管理员刚做的草稿；本轮将显式传入 `existingModelsOverride`。
+- MultiSelect 自定义添加判断回到精确匹配语义后，输入 `gpt-5.6` 时可能同时看到自定义创建项和 `gpt-5.6-*` 候选。该行为与 new-api 一致，且不会再出现隐藏自定义入口导致管理员只能选择非预期候选的情况。
+- 权限仍沿用当前项目的 `useChannelPermissions`，没有照搬 new-api 的权限模块，避免破坏 NexusTok 已有账号池、Codex OAuth 和敏感字段控制。
+
+### 方案评审
+
+采用“最小对齐 + 保留 NexusTok 本地能力”的方案：
+
+1. 参考 `/opt/project/new-api-main/web/classic/src/components/table/channels/modals/EditChannelModal.jsx`：new-api 使用 `Form.Select allowCreate` 负责模型搜索/选择/创建，`获取模型列表` 只打开 `ModelSelectModal` 确认上游返回模型，没有额外的“搜索结果批量添加”面板。
+2. 在 `ChannelMutateDrawer` 中移除搜索结果统计、搜索结果预览和 `handleAddModelSearchResults`，模型选择框只负责搜索/选择/创建；保留 `searchModels`、`useDebounce`、`modelSearchKeyword` 和 `modelSearchData`，但仅用于把 `/api/models/search` 返回的真实 `model_name` 合并为下拉候选。
+3. `modelOptions` 合并 `modelSearchModelNames`、`allModelsList` 与 `currentModelsArray`：远程搜索候选优先进入列表，系统模型和历史模型仍完整保留；远程接口失败或为空时自动退回本地候选，不阻断渠道编辑。
+4. `handleFetchModels` 对新建和编辑渠道统一打开 `FetchModelsDialog`；新建模式只在缺少 key 时拦截，不再直接拉取并合并。
+5. 给 `FetchModelsDialog` 增加 `customFetcher` 和 `existingModelsOverride`：新建渠道用表单内 type/key/base_url 拉取上游模型；编辑渠道用当前表单内 models 初始化选择，避免未保存草稿被旧数据覆盖。
+6. 调整 `MultiSelect` 的 `canCreate`，保留本地候选过滤和受控搜索扩展能力，但只在输入值与已有 option/selected 精确相等时隐藏创建项；部分匹配候选不再阻止输入值本身作为自定义模型添加。
+7. 执行前端单测、i18n sync、typecheck、build、diff check，并通过 MCP 打开 `http://192.168.0.202:3003/channels` 实测编辑渠道模型搜索、Fetch Models 弹窗和控制台错误。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/channels`，编辑现有渠道，确认输入 `gpt-5.6` 时不再出现额外 `Search results / Add N new model(s)` 批量添加面板，候选包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，同时仍显示 `Add custom model "gpt-5.6"`，且不保存也不会写入运行态数据。
+7. MCP 验证 Fetch Models 入口会打开弹窗，弹窗取消不改变渠道；控制台无新增 error/warn。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索添加对齐 new-api。本轮没有照搬 new-api 的 Semi UI 表单，而是将其更清晰的模型维护语义转换为 NexusTok 默认前端的原生能力：模型 MultiSelect 负责搜索、选择和自定义创建，Fetch Models 负责从上游拉取后弹窗确认，取消原先容易造成误解的“Search results / Add N new model(s)”批量追加面板。
+
+`ChannelMutateDrawer` 现在保留 `/api/models/search` 远程模型元信息查询，但只把真实 `model_name` 合并进下拉候选，不再提供批量写入按钮。这样输入 `gpt-5.6` 时，已经同步到模型元信息库的 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 会稳定出现在候选里，同时 `Add custom model "gpt-5.6"` 仍可用于添加完整自定义模型名。该实现既保留当前项目模型元信息库的优势，也对齐 new-api 不把搜索结果批量入口混在模型输入框下方的页面结构。
+
+`FetchModelsDialog` 已扩展为新建和编辑渠道共用：编辑模式按现有 channel id 拉取上游模型，新建模式通过表单中的 type/key/base_url 调用后端代理；两种模式都先在弹窗里确认，再回填表单草稿，避免拉取动作直接覆盖模型列表。通用 `MultiSelect` 的自定义创建判定也已抽成 `canCreateMultiSelectValue` 并补充单测，部分匹配候选不再阻止自定义添加，精确重复和大小写不同的已选重复仍会被拦截。
+
+本轮清理了不再使用的搜索批量添加静态 i18n key。现有 locale 文件未被强制删除历史 extra key，遵循项目 `i18n:sync` 当前的保守同步策略。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts` 通过，7 个用例全部成功，覆盖候选过滤、部分匹配可创建、精确重复不可创建、已选重复大小写不敏感等场景。
+2. `cd web/default && bun run i18n:sync` 通过，生成同步报告。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `rg -n "Search results|Add {{count}} new model(s)|No new search results|Added {{count}} model(s) from search|{{matched}} matched" ...` 无源码命中，确认旧批量搜索添加入口已从默认前端移除。
+7. MCP 强刷 `http://192.168.0.202:3003/channels` 后打开渠道 `11111` 编辑抽屉，模型输入框输入 `gpt-5.6`，下拉候选包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 和 `Add custom model "gpt-5.6"`。
+8. 同一 MCP 验证中确认页面正文和弹层不再出现 `Search results`、`Add N new model(s)`、`matched · ... already selected` 等旧批量面板文案；验证期间未点击 `Update Channel`，没有保存运行态数据。
+9. MCP 在浏览器上下文直接请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，响应状态 200，返回模型名为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，说明后端模型元信息同步结果完整，前端候选展示已正确消费。
+10. 当前 `11111` 渠道处于 Account Pool 凭证模式，编辑抽屉内按既有规则不展示 `Fetch from Upstream`；通过行菜单 `Fetch Models` 验证弹窗可打开并显示 `Fetch available models for: 11111`，随后关闭弹窗，未保存任何变更。该账号池渠道的 `/api/channel/fetch_models/1` 在验证环境中保持 pending，属于上游探测运行态行为，本轮未修改后端探测逻辑。
+11. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染；根页面控制台无 error/warn/issue。
+12. `/channels` 验证期间控制台无 error/warn；DevTools Issue 面板仍显示既有表单可访问性提示（autocomplete 和 label 关联），与本轮模型搜索添加修复无直接关系，未阻断渠道编辑流程。

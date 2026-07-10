@@ -66,6 +66,9 @@ type FetchModelsDialogProps = {
   onModelsSelected?: (models: string[]) => void
   redirectModels?: string[]
   redirectSourceModels?: string[]
+  customFetcher?: () => Promise<string[]>
+  existingModelsOverride?: string[]
+  channelName?: string | null
 }
 
 export function FetchModelsDialog({
@@ -74,9 +77,13 @@ export function FetchModelsDialog({
   onModelsSelected,
   redirectModels = [],
   redirectSourceModels = [],
+  customFetcher,
+  existingModelsOverride,
+  channelName,
 }: FetchModelsDialogProps) {
   const { t } = useTranslation()
   const { currentRow } = useChannels()
+  const activeChannel = customFetcher ? null : currentRow
   const queryClient = useQueryClient()
   const [isFetching, setIsFetching] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -86,13 +93,14 @@ export function FetchModelsDialog({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
 
-  // Parse existing models
+  // 弹窗可能服务于新建渠道，此时还没有 currentRow，需要用表单当前值初始化选择。
   const existingModels = useMemo(
-    () => parseModelsString(currentRow?.models || ''),
-    [currentRow?.models]
+    () =>
+      existingModelsOverride ?? parseModelsString(activeChannel?.models || ''),
+    [existingModelsOverride, activeChannel?.models]
   )
 
-  // Categorize models with redirect models
+  // 将模型映射目标纳入分类，避免映射目标被误判为可安全删除的模型。
   const modelCategories = useMemo(
     () => categorizeModelsWithRedirect(existingModels, redirectModels),
     [existingModels, redirectModels]
@@ -105,9 +113,8 @@ export function FetchModelsDialog({
     [fetchedModels]
   )
 
-  // Source keys in model_mapping are aliases, not real upstream IDs, so we
-  // must skip them when computing "removed upstream" entries to avoid false
-  // positives.
+  // model_mapping 的源 key 是客户端可见别名，不一定是真实上游模型名；
+  // 计算“上游已移除”时跳过这些别名，避免制造误报。
   const redirectSourceKeysSet = useMemo(
     () => new Set(normalizeModelNameList(redirectSourceModels)),
     [redirectSourceModels]
@@ -124,14 +131,14 @@ export function FetchModelsDialog({
   }, [fetchedModelSet, redirectSourceKeysSet, searchKeyword, selectedModels])
 
   useEffect(() => {
-    if (open && currentRow) {
+    if (open && (activeChannel || customFetcher)) {
       handleFetchModels()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentRow?.id])
+  }, [open, activeChannel?.id, customFetcher])
 
   const handleFetchModels = async () => {
-    if (!currentRow) return
+    if (!activeChannel && !customFetcher) return
     if (!permissions.canOperate) {
       toast.error(noPermissionMessage)
       return
@@ -139,15 +146,22 @@ export function FetchModelsDialog({
 
     setIsFetching(true)
     try {
-      const response = await fetchUpstreamModels(currentRow.id)
-      if (response.success) {
-        const list = Array.isArray(response.data) ? response.data : []
+      if (customFetcher) {
+        const list = await customFetcher()
         setFetchedModels(list)
         setSelectedModels(existingModels)
         toast.success(t('Fetched {{count}} models', { count: list.length }))
       } else {
-        toast.error(response.message || t('Failed to fetch models'))
-        setFetchedModels([])
+        const response = await fetchUpstreamModels(activeChannel!.id)
+        if (response.success) {
+          const list = Array.isArray(response.data) ? response.data : []
+          setFetchedModels(list)
+          setSelectedModels(existingModels)
+          toast.success(t('Fetched {{count}} models', { count: list.length }))
+        } else {
+          toast.error(response.message || t('Failed to fetch models'))
+          setFetchedModels([])
+        }
       }
     } catch (error: unknown) {
       toast.error(
@@ -160,13 +174,12 @@ export function FetchModelsDialog({
   }
 
   const handleSave = async () => {
-    if (!currentRow) return
-    if (!permissions.canWrite) {
+    if (!permissions.canWrite && !permissions.canSensitiveWrite) {
       toast.error(noPermissionMessage)
       return
     }
 
-    // If onModelsSelected callback is provided, use it (form filling mode)
+    // 表单回填模式只更新抽屉里的未保存草稿，不直接调用渠道更新接口。
     if (onModelsSelected) {
       onModelsSelected(selectedModels)
       toast.success(t('Models filled to form'))
@@ -174,11 +187,13 @@ export function FetchModelsDialog({
       return
     }
 
-    // Otherwise, directly save to API (standalone mode)
+    if (!activeChannel) return
+
+    // 独立弹窗模式才直接保存到渠道接口。
     setIsSaving(true)
     try {
       const modelsString = selectedModels.join(',')
-      const response = await updateChannel(currentRow.id, {
+      const response = await updateChannel(activeChannel.id, {
         models: modelsString,
       })
       if (response.success) {
@@ -204,14 +219,14 @@ export function FetchModelsDialog({
     onOpenChange(false)
   }
 
-  // Categorize models by common prefixes
+  // 按常见模型名前缀做轻量分组，便于管理员批量勾选。
   const categorizeModels = (models: string[]) => {
     const categories: Record<string, string[]> = {}
 
     models.forEach((model) => {
       let category = 'Other'
 
-      // Determine category based on model name
+      // 只根据模型名做前端展示分组，不影响保存值。
       if (
         model.toLowerCase().includes('gpt') ||
         model.toLowerCase().includes('o1') ||
@@ -243,7 +258,7 @@ export function FetchModelsDialog({
     return categories
   }
 
-  // Filter models by search
+  // 弹窗内搜索只过滤已经拉取到的上游模型，不再触发额外远程搜索。
   const filteredModels = useMemo(() => {
     if (!searchKeyword) return fetchedModels
     return fetchedModels.filter((model) =>
@@ -251,11 +266,11 @@ export function FetchModelsDialog({
     )
   }, [fetchedModels, searchKeyword])
 
-  // Helper to check if a model is considered "existing" (in selected or redirect)
+  // 同时考虑已选模型和映射目标，避免重复展示为“新增”。
   const isExistingModel = (model: string) =>
     classificationSet.has(normalizeModelName(model))
 
-  // Separate new and existing models
+  // 将上游返回模型拆成新增/已存在，方便管理员快速识别变更。
   const newModels = filteredModels.filter((m) => !isExistingModel(m))
   const existingFilteredModels = filteredModels.filter((m) =>
     isExistingModel(m)
@@ -369,11 +384,11 @@ export function FetchModelsDialog({
           <DialogTitle>{t('Fetch Models')}</DialogTitle>
           <DialogDescription>
             {t('Fetch available models for:')}{' '}
-            <strong>{currentRow?.name}</strong>
+            <strong>{channelName || activeChannel?.name || '-'}</strong>
           </DialogDescription>
         </DialogHeader>
 
-        {!currentRow ? (
+        {!activeChannel && !customFetcher ? (
           <div className='text-muted-foreground py-8 text-center'>
             {t('No channel selected')}
           </div>
@@ -409,7 +424,7 @@ export function FetchModelsDialog({
 
               {/* Tabs for New vs Existing vs Removed */}
               <Tabs
-                key={`${currentRow?.id}-${fetchedModels.length}-${removedModels.length}`}
+                key={`${activeChannel?.id ?? 'create'}-${fetchedModels.length}-${removedModels.length}`}
                 defaultValue={
                   newModels.length > 0
                     ? 'new'
@@ -492,8 +507,15 @@ export function FetchModelsDialog({
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={isSaving || !permissions.canWrite}
-                title={permissions.canWrite ? undefined : noPermissionMessage}
+                disabled={
+                  isSaving ||
+                  (!permissions.canWrite && !permissions.canSensitiveWrite)
+                }
+                title={
+                  permissions.canWrite || permissions.canSensitiveWrite
+                    ? undefined
+                    : noPermissionMessage
+                }
               >
                 {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {isSaving ? t('Saving...') : t('Save Models')}
