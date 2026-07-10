@@ -463,15 +463,25 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
-	for _, taskId := range taskIds {
+	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
+	for i, taskId := range taskIds {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
 		}
-		// sleep 1 second between each task to avoid hitting rate limits of upstream platforms
-		time.Sleep(1 * time.Second)
+		if disablePollingSleep || i == len(taskIds)-1 {
+			continue
+		}
+		// 默认保留 1 秒保护性等待，避免视频类上游被单个渠道的批量轮询打满。
+		// 若管理员在可信渠道上显式关闭等待，则当前 pass 会连续查询；等待期间也必须响应
+		// ctx 取消，避免 SystemTask 租约撤销后仍被 sleep 阻塞。
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 	return nil
 }

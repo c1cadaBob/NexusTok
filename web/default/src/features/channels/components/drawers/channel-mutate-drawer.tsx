@@ -357,6 +357,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.force_format ||
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
+    values.disable_task_polling_sleep ||
     values.system_prompt_override ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
@@ -1014,6 +1015,7 @@ export function ChannelMutateDrawer({
     currentFormValues.force_format ||
     currentFormValues.thinking_to_content ||
     currentFormValues.pass_through_body_enabled ||
+    currentFormValues.disable_task_polling_sleep ||
     currentFormValues.proxy?.trim() ||
     currentFormValues.system_prompt?.trim() ||
     currentFormValues.system_prompt_override ||
@@ -4912,6 +4914,32 @@ export function ChannelMutateDrawer({
                                   <FormDescription>
                                     {t(
                                       'Pass request body directly to upstream'
+                                    )}
+                                  </FormDescription>
+                                </div>
+                                <FormControl>
+                                  <Switch
+                                    checked={field.value}
+                                    disabled={!canEditSensitiveFields}
+                                    onCheckedChange={field.onChange}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name='disable_task_polling_sleep'
+                            render={({ field }) => (
+                              <FormItem className='flex items-center justify-between px-4 py-3'>
+                                <div className='flex flex-col gap-0.5'>
+                                  <FormLabel>
+                                    {t('Skip async task polling delay')}
+                                  </FormLabel>
+                                  <FormDescription>
+                                    {t(
+                                      'Do not wait one second between polling async tasks for this channel'
                                     )}
                                   </FormDescription>
                                 </div>

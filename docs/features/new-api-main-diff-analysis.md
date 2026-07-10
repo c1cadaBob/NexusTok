@@ -8241,7 +8241,7 @@ NexusTok 当前页面虽然已经在 UI 上用 `*` 标出这些字段，但 sche
 - 行为会更严格：历史上能提交的错误 JSON、数组型配置、非字符串模型映射、非法状态码映射、缺少区域/API version/Account ID 等配置，现在会在前端阻断。这符合 new-api 编辑页的安全边界，也能减少后端保存后才暴露的渠道不可用问题。
 - `base_url` 和 `other` 必填不能机械照搬 new-api。NexusTok 有 `global_account_pool` 模式，账号池组会托管上游凭据和部分配置；本轮对账号池组模式做豁免，避免把 UI 已隐藏的本地凭据字段错误标为必填。
 - `FormMessage` 走 `t()` 是通用组件变化，但使用英文原文作为 key 且 i18next 缺失时回退原文，因此对未翻译的既有错误消息保持兼容。
-- 本轮只做前端 schema 和文案，不修改后端 DTO、数据库、relay 和保存接口；`disable_task_polling_sleep` 这类需要后端任务轮询服务消费的 new-api 差异不混入本轮。
+- 本轮只做前端 schema 和文案，不修改后端 DTO、数据库、relay 和保存接口；`disable_task_polling_sleep` 这类需要后端任务轮询服务消费的 new-api 差异不混入本轮，已在后续“异步任务轮询延迟开关原生化”切片补齐。
 
 ### 方案评审
 
@@ -8264,7 +8264,7 @@ NexusTok 当前页面虽然已经在 UI 上用 `*` 标出这些字段，但 sche
 - Azure、Custom、SunoAPI、VolcEngine 的 `base_url` 必填兜底已补齐；Azure、Xunfei、AI Proxy Library、Cloudflare、Vertex、Coze 的 `other` 附加配置必填兜底已补齐。
 - 账号池组模式保留 NexusTok 原生语义：不强制填写被隐藏的本地 `base_url/other`，但仍必须选择有效账号池组。
 - 表单错误消息现在可按当前语言显示；新增文案已覆盖 en、zh、fr、ja、ru、vi。
-- 子 agent 只读复核指出的两项缺失规则（`base_url`、`other`）已纳入本轮修复；`disable_task_polling_sleep` 记录为后续需要后端任务轮询能力同步的功能项，本轮不做纯前端开关。
+- 子 agent 只读复核指出的两项缺失规则（`base_url`、`other`）已纳入本轮修复；`disable_task_polling_sleep` 已在后续切片补齐为后端真正消费的渠道级能力，而不是纯前端开关。
 
 ### 验证记录
 
@@ -8279,3 +8279,75 @@ NexusTok 当前页面虽然已经在 UI 上用 `*` 标出这些字段，但 sche
 9. 打开 `11111` 编辑抽屉，确认页面结构包含 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，模型字段显示 `Selected 3`，并保留 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
 10. 在 `Model Mapping` 中切换到 `JSON Mode`，输入 `{"client":123}` 并点击 `Update Channel`，页面显示 `Model mapping must be a JSON object with string values` 与顶部 `Please fix the highlighted fields before saving`，Chrome/CDP 网络记录没有出现 `/api/channel` 的 POST/PUT/PATCH 保存请求，确认前端校验已在提交前阻断。
 11. 当前会话未暴露 MCP 浏览器工具；本轮前端交互按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。
+
+## 本轮实施评审：异步任务轮询延迟开关原生化
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 后发现，new-api 在渠道 `settings` JSON 中提供了 `disable_task_polling_sleep` 开关，并在视频类异步任务轮询中真正消费该字段。该能力的价值不是“禁用任务轮询”，而是允许管理员在可信上游或高吞吐渠道上关闭同一渠道内多个视频任务逐个查询之间的 1 秒保护性等待，从而降低任务积压时的单渠道轮询延迟。
+
+NexusTok 此前已经完成了编辑渠道页面对齐、模型搜索追加修复和表单校验原生化，但 `disable_task_polling_sleep` 仍未形成完整闭环。本轮目标是把它转换成 NexusTok 原生能力：前端可编辑、保存到 `settings`，后端任务轮询服务按渠道读取并生效，默认行为保持保护性等待，避免影响现有核心业务稳定性。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道设置 DTO | `dto/channel_settings.go` | `ChannelOtherSettings` 新增 `DisableTaskPollingSleep`，继续复用 `settings` JSON，不新增数据库列。 |
+| 异步任务轮询 | `service/task_polling.go` | `updateVideoTasks` 按渠道读取开关；默认在非最后一个 task 后等待 1 秒，开启后跳过等待；等待期间响应 `ctx.Done()`。 |
+| 后端测试 | `service/task_polling_test.go` | 补充默认等待、按渠道关闭等待、等待期间响应 context 取消三类回归测试。 |
+| 渠道表单类型和转换 | `web/default/src/features/channels/types.ts`、`web/default/src/features/channels/lib/channel-form.ts` | schema、默认值、编辑回填和更新 payload 均支持 `disable_task_polling_sleep`，保存到 `settings` JSON。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 在 `Advanced Settings` → `Channel Extra Settings` 中新增开关，受敏感字段权限控制。 |
+| 高级设置错误归类 | `web/default/src/features/channels/lib/channel-form-errors.ts` | 将该字段纳入高级设置字段集合，与 new-api 保持一致。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐开关标题和说明六语翻译。 |
+| 前端测试 | `web/default/src/features/channels/lib/channel-form.test.ts` | 覆盖从 `settings` 回填和保存到 `settings` JSON。 |
+
+### 风险评估
+
+- 速率限制风险：默认的 1 秒等待是保护性节流。关闭后同一渠道会连续查询上游，可能更容易触发 429 或供应商限制。因此默认必须为 `false`，并且 UI 放在高级设置/敏感字段权限下。
+- 语义误解风险：字段名是负向开关，容易被误读为“禁用任务轮询”。本轮 UI 文案明确为 `Skip async task polling delay`，说明文案强调只是“不在轮询异步任务之间等待 1 秒”。
+- 作用范围风险：本轮只影响视频类/default 异步任务路径，不影响 Suno 批量轮询，不改变 Midjourney 轮询，不改变任务状态机和计费结算路径。
+- 调度行为风险：new-api 的 `UpdateVideoTasks` 还包含“按渠道并发轮询”的更大调度差异；NexusTok 当前仍按渠道串行处理。本轮只原生化渠道级 sleep 开关，不混入并发调度改造，避免一次性扩大任务调度行为变更。
+- 数据库兼容风险低：字段仍存储在已有 `settings` TEXT JSON 中，SQLite、MySQL、PostgreSQL 都不需要迁移。
+
+### 方案评审
+
+采用“小闭环、低侵入”的原生化方案：
+
+1. 后端 `ChannelOtherSettings` 增加 `DisableTaskPollingSleep bool`，复用 `model.Channel.GetOtherSettings()` 的 JSON 解析路径，字段缺失自然回落为 `false`。
+2. `updateVideoTasks` 在初始化 adaptor 后读取渠道设置，逐个任务处理时只在“未关闭等待且不是最后一个 task”时等待 1 秒。
+3. 将原来的无条件 `time.Sleep(1 * time.Second)` 改为 `select { case <-ctx.Done(): ...; case <-time.After(...) }`，让 SystemTask 租约撤销、超时或取消时能及时退出。
+4. 前端把开关作为 `settings` JSON 的一部分处理，覆盖默认值、回填、保存和类型定义；不写入旧 `setting` JSON，避免与渠道通用扩展设置混淆。
+5. UI 放入 `Channel Extra Settings`，与 `force_format`、`thinking_to_content`、`pass_through_body_enabled` 等渠道扩展开关同区展示，并受 `canEditSensitiveFields` 控制。
+6. 子 agent 只读复核确认：当前最小闭环已与 new-api 的单渠道 sleep 开关语义等价；更完整的“跨渠道并发轮询”属于后续独立评审项。
+
+### 实施结果
+
+已完成 `disable_task_polling_sleep` 的 NexusTok 原生化：
+
+- 后端现在会从渠道 `settings` JSON 读取 `disable_task_polling_sleep`，开启后跳过同一渠道视频类异步任务之间的 1 秒保护性等待。
+- 默认缺失字段或 `false` 时仍保留等待，只是不再在最后一个 task 后做无意义等待。
+- 默认等待期间会响应 `ctx.Done()`，避免任务取消、租约撤销或超时后仍阻塞在 sleep。
+- 前端编辑页能从 `settings` 回填该开关，并在保存时写回 `settings.disable_task_polling_sleep`。
+- `Advanced Settings` → `Channel Extra Settings` 已新增开关和说明文案，六语翻译已补齐。
+- 高级设置错误字段集合已纳入该字段，和 new-api 的表单错误归类保持一致。
+- 本轮不修改数据库 schema，不修改任务计费，不修改 Suno/Midjourney 轮询路径。
+
+### 后续差异与建议
+
+new-api 还将视频任务按 channel id 排序后并发执行，每个渠道的 1 秒等待只阻塞本渠道；NexusTok 当前 `UpdateVideoTasks` 仍按 `taskChannelM` 串行遍历渠道。因此本轮已补齐“渠道级关闭轮询间隔”能力，但尚未补齐“跨渠道并发轮询”调度能力。建议后续单独评审该调度差异，重点补充默认睡眠不阻塞其他渠道、慢渠道不阻塞快渠道、混合渠道设置三类测试，再决定是否移植。
+
+### 验证记录
+
+1. `go test ./service -run 'TestUpdateVideoTasks.*PollingSleep'` 通过，覆盖默认等待、context 取消、按渠道关闭等待。
+2. `go test ./service` 通过。
+3. `cd web/default && bun test src/features/channels/lib/channel-form.test.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，共 33 条相关前端测试。
+4. `cd web/default && bun run i18n:sync` 通过，报告显示所有 locale `missingCount=0`、`extrasCount=0`。
+5. `cd web/default && bun run typecheck` 通过。
+6. `cd web/default && bun run build` 通过。
+7. `git diff --check` 通过。
+8. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，响应头包含新的 `Cache-Version`。
+9. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+10. 使用 Chrome headless/CDP 登录 `c1cada`，打开 `http://192.168.0.202:3003/channels`，确认渠道列表包含 `11111`，并打开其 `Edit Channel` 抽屉。
+11. 在运行态编辑抽屉中打开 `Advanced Settings` → `Channel Extra Settings`，确认页面包含 `Skip async task polling delay`、`Do not wait one second between polling async tasks for this channel` 和对应 switch。
+12. 页面级验证未点击 `Update Channel`，Chrome/CDP 网络记录没有 `/api/channel/` 保存请求；这样避免改变真实渠道的轮询压力配置，payload 行为由单元测试覆盖。
+13. 当前会话未暴露 MCP 浏览器工具；本轮按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。

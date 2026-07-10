@@ -213,6 +213,7 @@ export const channelFormSchema = z
     allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic 推理地域控制。
     allow_speed: z.boolean().optional(), // Anthropic speed 模式控制。
     claude_beta_query: z.boolean().optional(), // Anthropic beta query 透传控制。
+    disable_task_polling_sleep: z.boolean().optional(), // 异步视频任务轮询是否跳过逐任务等待。
     // 上游模型更新设置同样保存在 settings JSON 中，后端定时任务会读取这些字段。
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
@@ -382,6 +383,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_inference_geo: false,
   allow_speed: false,
   claude_beta_query: false,
+  disable_task_polling_sleep: false,
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
@@ -439,6 +441,7 @@ export function transformChannelToFormDefaults(
   let allowInferenceGeo = false
   let allowSpeed = false
   let claudeBetaQuery = false
+  let disableTaskPollingSleep = false
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
@@ -458,6 +461,7 @@ export function transformChannelToFormDefaults(
       allowInferenceGeo = parsed.allow_inference_geo === true
       allowSpeed = parsed.allow_speed === true
       claudeBetaQuery = parsed.claude_beta_query === true
+      disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
       upstreamModelUpdateAutoSyncEnabled =
@@ -529,6 +533,7 @@ export function transformChannelToFormDefaults(
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
     claude_beta_query: claudeBetaQuery,
+    disable_task_polling_sleep: disableTaskPollingSleep,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
@@ -632,6 +637,10 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     if ('allow_speed' in settingsObj) delete settingsObj.allow_speed
     if ('claude_beta_query' in settingsObj) delete settingsObj.claude_beta_query
   }
+
+  // 该开关由后端异步视频任务轮询读取；默认 false 仍保留 1 秒保护性等待。
+  settingsObj.disable_task_polling_sleep =
+    formData.disable_task_polling_sleep === true
 
   // 只有可拉取模型的渠道才保留上游模型更新配置，避免无效渠道被定时任务扫描。
   if (MODEL_FETCHABLE_TYPES.has(formData.type)) {

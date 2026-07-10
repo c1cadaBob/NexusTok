@@ -21,8 +21,11 @@ import { describe, test } from 'node:test'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   channelFormSchema,
+  transformChannelToFormDefaults,
+  transformFormDataToUpdatePayload,
   type ChannelFormValues,
 } from './channel-form'
+import type { Channel } from '../types'
 
 function makeValidChannelForm(
   overrides: Partial<ChannelFormValues> = {}
@@ -224,5 +227,68 @@ describe('渠道类型专属表单校验', () => {
 
     assert.equal(result.success, false)
     assert.deepEqual(getIssuePaths(result), ['account_pool_group_id'])
+  })
+})
+
+describe('渠道表单 settings 转换', () => {
+  test('从 settings JSON 回填跳过异步任务轮询等待开关', () => {
+    const channel: Channel = {
+      id: 1,
+      type: 1,
+      key: '',
+      openai_organization: '',
+      test_model: '',
+      status: 1,
+      name: 'Test Channel',
+      weight: 0,
+      created_time: 0,
+      test_time: 0,
+      response_time: 0,
+      base_url: 'https://api.openai.com',
+      other: '',
+      balance: 0,
+      balance_updated_time: 0,
+      models: 'gpt-4o',
+      group: 'default',
+      used_quota: 0,
+      model_mapping: '',
+      status_code_mapping: '',
+      priority: 0,
+      auto_ban: 1,
+      other_info: '',
+      tag: '',
+      setting: '{}',
+      param_override: '',
+      header_override: '',
+      remark: '',
+      max_input_tokens: 0,
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+      },
+      settings: '{"disable_task_polling_sleep":true}',
+    }
+
+    const values = transformChannelToFormDefaults(channel)
+
+    assert.equal(values.disable_task_polling_sleep, true)
+  })
+
+  test('保存跳过异步任务轮询等待开关到 settings JSON', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        disable_task_polling_sleep: true,
+      }),
+      1
+    )
+
+    const settings = JSON.parse(String(payload.settings || '{}')) as Record<
+      string,
+      unknown
+    >
+
+    assert.equal(settings.disable_task_polling_sleep, true)
   })
 })
