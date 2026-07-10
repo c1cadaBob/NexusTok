@@ -62,6 +62,7 @@ interface MultiSelectProps {
   searchValue?: string
   onSearchChange?: (value: string) => void
   contentFooter?: React.ReactNode
+  allowCreateWithMatches?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -105,12 +106,16 @@ export function canCreateMultiSelectValue({
   selected,
   options,
   isLoading = false,
+  allowCreateWithMatches = true,
+  hasMatchingOption = false,
 }: {
   allowCreate: boolean
   inputValue: string
   selected: readonly string[]
   options: readonly Option[]
   isLoading?: boolean
+  allowCreateWithMatches?: boolean
+  hasMatchingOption?: boolean
 }): boolean {
   const trimmedInput = inputValue.trim()
   if (!allowCreate || isLoading || trimmedInput.length === 0) return false
@@ -119,14 +124,21 @@ export function canCreateMultiSelectValue({
   const selectedSet = new Set(
     selected.map((value) => value.trim().toLowerCase())
   )
-  return !(
+  const hasExactDuplicate =
     selectedSet.has(normalizedInput) ||
     options.some(
       (option) =>
         option.value.toLowerCase() === normalizedInput ||
         option.label.toLowerCase() === normalizedInput
     )
-  )
+
+  if (hasExactDuplicate) return false
+
+  // 渠道模型搜索会输入系列前缀，例如 gpt-5.6。存在真实候选时，
+  // 该输入应被解释为筛选/补齐意图，而不是创建一个不完整自定义模型。
+  if (!allowCreateWithMatches && hasMatchingOption) return false
+
+  return true
 }
 
 // 芯片式多选。它基于项目 Base UI Combobox，保证输入值会参与真实过滤，
@@ -150,6 +162,7 @@ export function MultiSelect({
   searchValue,
   onSearchChange,
   contentFooter,
+  allowCreateWithMatches = true,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -171,26 +184,40 @@ export function MultiSelect({
 
   const trimmedInput = inputValue.trim()
 
-  // 搜索候选只是帮助定位已有选项，不能阻止用户添加完整自定义值。
-  // 只有输入值与已选项或候选项精确重复时，才隐藏“创建自定义值”入口。
+  const baseItems = React.useMemo(() => {
+    const set = new Set<string>(options.map((option) => option.value))
+    for (const value of selected) {
+      set.add(value)
+    }
+    return Array.from(set)
+  }, [options, selected])
+
+  const hasMatchingOption = React.useMemo(
+    () =>
+      trimmedInput.length > 0 &&
+      filterMultiSelectItems(baseItems, inputValue, labelMap).length > 0,
+    [baseItems, inputValue, labelMap, trimmedInput]
+  )
+
+  // 默认只在精确重复时隐藏“创建自定义值”入口；渠道模型搜索等场景可通过
+  // allowCreateWithMatches=false 将“有候选”解释为筛选/补齐意图。
   const canCreate = canCreateMultiSelectValue({
     allowCreate,
     inputValue,
     selected,
     options,
     isLoading,
+    allowCreateWithMatches,
+    hasMatchingOption,
   })
 
   const items = React.useMemo(() => {
-    const set = new Set<string>(options.map((option) => option.value))
-    for (const value of selected) {
-      set.add(value)
-    }
+    const set = new Set(baseItems)
     if (canCreate) {
       set.add(trimmedInput)
     }
     return Array.from(set)
-  }, [canCreate, options, selected, trimmedInput])
+  }, [baseItems, canCreate, trimmedInput])
 
   // Base UI 的 Combobox Collection 不会替代业务侧过滤；渠道模型列表可能包含数百个
   // 静态模型，必须在这里按输入值收敛候选，才能让远程同步模型命中稳定浮到前面。

@@ -78,6 +78,34 @@ describe('MultiSelect 自定义添加判定', () => {
     )
   })
 
+  test('调用方可要求存在候选时隐藏自定义添加', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'gpt-5.6',
+        selected: [],
+        options,
+        allowCreateWithMatches: false,
+        hasMatchingOption: true,
+      }),
+      false
+    )
+  })
+
+  test('禁止匹配候选创建时仍允许真正无候选的自定义值', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'custom-model',
+        selected: [],
+        options,
+        allowCreateWithMatches: false,
+        hasMatchingOption: false,
+      }),
+      true
+    )
+  })
+
   test('精确重复候选会阻止创建', () => {
     assert.equal(
       canCreateMultiSelectValue({

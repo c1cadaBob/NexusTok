@@ -7485,6 +7485,83 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 11. MCP 点击 `Cancel` 返回渠道列表；验证期间未点击 `Update Channel`，未保存渠道变更。
 12. MCP `/channels` 控制台无 error/warn；DevTools Issue 面板仍显示既有表单 `autocomplete` 与部分复合编辑器 `label for` 关联提示，定位到 `name`、`priority`、`Model Mapping`、`Status Code Mapping`、`Parameter Override` 等既有字段，与本轮模型搜索补齐和 `contentFooter` 改动无直接关系。
 
+## 本轮实施评审：渠道编辑页搜索添加二次修复与 new-api 最新结构对齐
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新版编辑渠道页面继续对齐。复核当前默认前端后确认，上一轮已经把模型搜索结果 footer 放入 `MultiSelect` 弹层，但 `MultiSelect` 的自定义添加入口仍会在存在搜索候选时展示 `Add custom model "{{value}}"`。当管理员输入 `gpt-5.6` 这类系列关键词时，页面同时存在“批量补齐搜索命中模型”和“把关键词本身当作自定义模型添加”两个动作；按 Enter 或误点自定义入口会添加 `gpt-5.6` 这个不完整关键词，而不是补齐 `gpt-5.6-terra`、`gpt-5.6-luna` 等真实模型。这与“搜索添加”语义不一致。
+
+同时对照最新版 new-api 的编辑渠道页面，当前 NexusTok advanced 区域还有两个结构偏差：`Routing & Overrides` 外层误用了 `ADVANCED_SETTINGS_SECTION_IDS.extraSettings` 作为锚点，导致高级导航的 `Channel Extra Settings` 锚点定位不稳定；已配置的高级子区块虽然已计算 `routingStrategyConfigured`、`internalNotesConfigured`、`overrideRulesConfigured` 等状态，但渲染没有使用 new-api 的已配置高亮容器，页面扫描感弱于 new-api。
+
+本轮目标是二次修复搜索添加的歧义，并把高级设置区域的锚点、分区和已配置态视觉向 new-api 最新实现对齐，同时保留 NexusTok 当前已有的权限控制、账号池、Codex OAuth、模型库搜索和字段级 fail-closed 能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 新增可选策略：当当前搜索词已经匹配候选项时，可隐藏自定义创建项，避免把系列搜索词误加入为模型名；默认行为保持兼容。 |
+| MultiSelect 单测 | `web/default/src/components/multi-select.test.ts` | 补充“存在候选时禁止创建自定义值”的纯函数测试，固定搜索添加语义。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型选择器启用新策略；修正 advanced 子区块锚点；引入 new-api 风格的 configured 高亮容器；补齐 Codex/OpenAI 类型的字段透传区块显示条件。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮二次修复的需求分析、影响范围、风险评估、方案评审和验证记录。 |
+
+### 风险评估
+
+- 本轮只修改默认前端交互和布局，不修改后端模型搜索接口、渠道保存接口、数据库结构、relay 路由、计费或权限路由。
+- `MultiSelect` 新策略是可选 prop，默认仍允许“部分匹配候选不阻止自定义添加”，避免影响密钥页、用户页、模型预设等其它多选使用场景。
+- 渠道模型选择器启用该策略后，存在候选时不再展示 `Add custom model "gpt-5.6"`，但没有候选时仍允许添加真正的自定义模型。
+- 搜索补齐按钮仍只修改前端表单草稿，不直接调用 `updateChannel`；管理员必须保存渠道才会写入运行态配置。
+- advanced 锚点修复会改变 DOM 定位和视觉边框，但不改变字段名、表单值、校验 schema、提交 payload 或权限判断。
+- `Field passthrough controls` 对 `currentType === 57` 显示条件与已有 `fieldPassthroughConfigured` 计算保持一致，属于补齐已有表单能力的可见性，不新增后端语义。
+
+### 方案评审
+
+采用“小步兼容 + 页面结构对齐”的方案：
+
+1. 在 `MultiSelect` 中新增 `allowCreateWithMatches`，默认 `true`；当调用方传 `false` 时，如果输入值能匹配任何候选值或候选 label，则隐藏自定义创建项。
+2. `canCreateMultiSelectValue` 增加 `hasMatchingOption` 与 `allowCreateWithMatches` 参数，继续保持精确重复、已选重复和 loading 禁止创建的既有规则。
+3. 渠道模型选择器传入 `allowCreateWithMatches={false}`，使 `gpt-5.6` 这类搜索词优先用于筛选/批量补齐真实模型；只有没有候选时才作为自定义模型创建。
+4. 保留弹层内 `Search results / Add {{count}} new model(s)` footer，不改搜索接口和 `getMissingModelSearchMatches` 的缺失模型计算。
+5. 将 advanced 区域的第一个大块从错误的 `extraSettings` 锚点改为普通 section；`routingStrategy`、`internalNotes`、`overrideRules` 用 new-api 的 `configuredAdvancedSectionClassName` 标记已配置态。
+6. 将 `Channel Extra Settings` 外层改为真实 `extraSettings` 锚点和 new-api section 容器；`fieldPassthrough`、`upstreamModelDetection` 子块也使用 configured 高亮，方便管理员快速扫出已启用配置。
+7. 运行前端单测、i18n sync、typecheck、build、diff check，并通过 3003 页面/接口确认热更新服务可访问；由于当前会话没有 MCP 浏览器工具，若无法用真实浏览器工具操作页面，最终报告中明确说明替代验证方式。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 和 `/api/status` 确认热更新部署可访问；如页面未更新则重启相关容器后再验证。
+7. 若可用浏览器验证，打开 `/channels` 编辑渠道，在模型搜索框输入 `gpt-5.6`，确认存在候选时不再出现 `Add custom model "gpt-5.6"`，批量追加按钮仍能补齐缺失真实模型；advanced 导航点击 `Channel Extra Settings` 能定位到正确区块。
+
+### 实施结果
+
+已完成渠道编辑页搜索添加二次修复，并继续向最新版 new-api 编辑渠道页面结构对齐。本轮没有修改后端模型搜索接口、渠道保存接口、数据库结构、relay 路由、计费或权限路由；改动仍集中在默认前端交互和布局。
+
+通用 `MultiSelect` 新增 `allowCreateWithMatches` 可选策略，默认值为 `true`，保持其它调用方原有“部分匹配候选仍可创建自定义值”的行为。渠道模型选择器显式传入 `allowCreateWithMatches={false}`：当管理员输入 `gpt-5.6` 且候选列表中已经存在 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 等真实模型时，下拉列表不再展示 `Add custom model "gpt-5.6"`，避免把系列搜索词误加入渠道模型；如果搜索词没有任何候选，仍保留自定义模型添加能力。
+
+`canCreateMultiSelectValue` 已增加 `hasMatchingOption` 判定，并补充纯函数测试固定三种语义：默认兼容旧行为、调用方可要求存在候选时隐藏自定义创建、无候选时仍允许真正自定义值。该策略与上一轮已落地的 `Search results / Add {{count}} new model(s)` footer 配合后，`gpt-5.6` 的正确操作路径变成“搜索真实模型并一键补齐缺失项”，而不是添加 `gpt-5.6` 这个不完整关键词。
+
+编辑渠道页面 advanced 区域已继续对齐 new-api 最新结构：`Routing & Overrides` 外层不再占用 `extraSettings` 锚点，`Channel Extra Settings` 才是 `ADVANCED_SETTINGS_SECTION_IDS.extraSettings` 的真实定位目标；`routingStrategy`、`internalNotes`、`overrideRules`、`fieldPassthrough`、`upstreamModelDetection` 均使用已配置高亮容器，管理员能更快扫出已启用的高级配置。`Field passthrough controls` 也补齐 `currentType === 57` 的显示条件，使 Codex/OpenAI 类型渠道在可见性上与已有配置状态计算一致。
+
+本轮保留 NexusTok 原生能力：渠道字段级权限、账号池凭据模式、Codex OAuth、模型映射 guardrail、模型库搜索补齐 footer、敏感字段 fail-closed 和现有保存 payload 均未被削弱。页面验证期间只操作表单草稿，没有点击 `Update Channel`，因此渠道运行态配置未被保存修改。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，12 个用例全部成功，覆盖 `MultiSelect` 自定义创建策略和渠道模型搜索缺失项计算。
+2. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见翻译 key。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回首页 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回状态 JSON。
+7. `docker logs --tail 80 nexustok-frontend-watch` 显示 `[hot] published default dist`，说明热更新产物已发布到当前 3003 服务使用的 `dist.hot`。
+8. 当前会话未暴露 MCP 浏览器工具，已改用 Chrome headless + CDP 做真实页面验证。登录账号 `c1cada` 后打开 `http://192.168.0.202:3003/channels`，页面成功进入渠道列表，未出现登录页回退。
+9. Chrome headless/CDP 打开渠道 `11111` 编辑抽屉，初始模型显示 `Selected 3`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，页面同时显示 `Models & Groups`、`Model Mapping`、`Groups` 和 `Advanced Settings`。
+10. 在模型搜索框输入 `gpt-5.6` 后，真实触发 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50` 并返回 200；下拉候选显示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，其中 `gpt-5.6-sol` 已勾选。
+11. 页面显示 `Search results`、`gpt-5.6-terra, gpt-5.6-luna` 和 `Add 2 new model(s)`；未出现 `Add custom model "gpt-5.6"` 或 `Add "gpt-5.6"`，确认“搜索添加时误加关键词本身”的问题已修复。
+12. Chrome headless/CDP 真实点击 `Add 2 new model(s)` 后，表单草稿变为 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；验证期间未点击 `Update Channel`，未保存渠道变更。
+
 ## 本轮报告校准：安全边界能力状态复核
 
 ### 需求分析

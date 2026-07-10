@@ -105,6 +105,7 @@ import {
   sideDrawerFooterClassName,
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
+  sideDrawerSectionClassName,
 } from '@/components/drawer-layout'
 import { JsonEditor } from '@/components/json-editor'
 import { MultiSelect } from '@/components/multi-select'
@@ -420,6 +421,17 @@ function SubHeading({ title, icon }: { title: string; icon?: ReactNode }) {
         {title}
       </h4>
     </div>
+  )
+}
+
+function configuredAdvancedSectionClassName(
+  className: string,
+  configured: boolean
+) {
+  return cn(
+    className,
+    'border-border/60 rounded-lg border p-3 transition-colors',
+    configured && 'border-primary/35 ring-primary/20 ring-1'
   )
 }
 
@@ -1479,12 +1491,7 @@ export function ChannelMutateDrawer({
       return response.data
     }
     throw new Error(response.message || t('No models fetched from upstream'))
-  }, [
-    canEditSensitiveFields,
-    form,
-    noPermissionMessage,
-    t,
-  ])
+  }, [canEditSensitiveFields, form, noPermissionMessage, t])
 
   // 模型快捷操作。
   const handleFillRelatedModels = useCallback(() => {
@@ -3587,6 +3594,7 @@ export function ChannelMutateDrawer({
                                     )}
                                     allowCreate
                                     createLabel='Add custom model "{{value}}"'
+                                    allowCreateWithMatches={false}
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
@@ -3635,12 +3643,10 @@ export function ChannelMutateDrawer({
                                               onPointerDown={(event) => {
                                                 event.preventDefault()
                                                 event.stopPropagation()
-                                                modelSearchAppendPointerHandledRef.current =
-                                                  true
+                                                modelSearchAppendPointerHandledRef.current = true
                                                 handleAddModelSearchMatches()
                                                 window.setTimeout(() => {
-                                                  modelSearchAppendPointerHandledRef.current =
-                                                    false
+                                                  modelSearchAppendPointerHandledRef.current = false
                                                 }, 0)
                                               }}
                                               onClick={(event) => {
@@ -3779,7 +3785,7 @@ export function ChannelMutateDrawer({
                                       permissions.canOperate &&
                                       canEditBasicFields
                                         ? undefined
-                                      : noPermissionMessage
+                                        : noPermissionMessage
                                     }
                                   >
                                     <Sparkles className='mr-2 h-4 w-4' />
@@ -4017,17 +4023,17 @@ export function ChannelMutateDrawer({
                       summary={advancedSummary}
                     >
                       {/* ── Routing & Overrides ── */}
-                      <div
-                        id={ADVANCED_SETTINGS_SECTION_IDS.extraSettings}
-                        className='bg-card scroll-mt-4 space-y-4 rounded-lg border p-5'
-                      >
+                      <div className={sideDrawerSectionClassName()}>
                         <CardHeading
                           title={t('Routing & Overrides')}
                           icon={<Route className='h-4 w-4' />}
                         />
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.routingStrategy}
-                          className='scroll-mt-4 space-y-4'
+                          className={configuredAdvancedSectionClassName(
+                            'flex scroll-mt-4 flex-col gap-4',
+                            routingStrategyConfigured
+                          )}
                         >
                           <SubHeading
                             title={t('Routing Strategy')}
@@ -4135,7 +4141,10 @@ export function ChannelMutateDrawer({
 
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}
-                          className='scroll-mt-4 space-y-4 border-t pt-4'
+                          className={configuredAdvancedSectionClassName(
+                            'flex scroll-mt-4 flex-col gap-4 border-t pt-4',
+                            internalNotesConfigured
+                          )}
                         >
                           <SubHeading
                             title={t('Internal Notes')}
@@ -4189,7 +4198,10 @@ export function ChannelMutateDrawer({
 
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.overrideRules}
-                          className='scroll-mt-4 space-y-4 border-t pt-4'
+                          className={configuredAdvancedSectionClassName(
+                            'flex scroll-mt-4 flex-col gap-4 border-t pt-4',
+                            overrideRulesConfigured
+                          )}
                         >
                           <SubHeading
                             title={t('Override Rules')}
@@ -4516,15 +4528,28 @@ export function ChannelMutateDrawer({
                       </div>
 
                       {/* ── Extra Settings ── */}
-                      <div className='bg-card space-y-4 rounded-xl border p-5'>
+                      <div
+                        id={ADVANCED_SETTINGS_SECTION_IDS.extraSettings}
+                        className={sideDrawerSectionClassName(
+                          configuredAdvancedSectionClassName(
+                            'scroll-mt-4',
+                            extraSettingsConfigured
+                          )
+                        )}
+                      >
                         <CardHeading
                           title={t('Channel Extra Settings')}
                           icon={<Settings className='h-4 w-4' />}
                         />
-                        {(currentType === 1 || currentType === 14) && (
+                        {(currentType === 1 ||
+                          currentType === 14 ||
+                          currentType === 57) && (
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
-                            className='scroll-mt-4 space-y-3 rounded-lg border p-4'
+                            className={configuredAdvancedSectionClassName(
+                              'flex scroll-mt-4 flex-col gap-3',
+                              fieldPassthroughConfigured
+                            )}
                           >
                             <SubHeading
                               title={t('Field passthrough controls')}
@@ -4560,7 +4585,7 @@ export function ChannelMutateDrawer({
                                 )}
                               />
 
-                              {currentType === 1 && (
+                              {(currentType === 1 || currentType === 57) && (
                                 <>
                                   <FormField
                                     control={form.control}
@@ -4923,7 +4948,10 @@ export function ChannelMutateDrawer({
                             id={
                               ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection
                             }
-                            className='scroll-mt-4 space-y-3 rounded-lg border p-4'
+                            className={configuredAdvancedSectionClassName(
+                              'flex scroll-mt-4 flex-col gap-3',
+                              upstreamModelDetectionConfigured
+                            )}
                           >
                             <SubHeading
                               title={t('Upstream Model Detection Settings')}
