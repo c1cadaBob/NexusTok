@@ -25,6 +25,13 @@ type ModelSearchItemLike = {
   model_name?: string | null
 }
 
+export type ModelSearchAppendPlan = {
+  missingModels: string[]
+  previewModels: string[]
+  omittedCount: number
+  totalCount: number
+}
+
 // 从模型搜索接口返回项中提取可用于渠道模型选择器的真实模型名。
 // /api/models/search 会匹配 description/tags；渠道模型补齐只应该使用
 // model_name 本身包含关键词的条目，避免把标签命中的无关模型加入渠道。
@@ -74,4 +81,24 @@ export function getMissingModelSearchMatches(
   }
 
   return missingModels
+}
+
+// 生成渠道编辑页“搜索后批量追加”操作所需的展示计划。
+// 该函数只处理已经提取出的真实模型名，不再读取 description/tags 命中的条目，
+// 保证按钮文案、预览列表和最终追加数量使用同一套去重规则。
+export function buildModelSearchAppendPlan(
+  searchMatches: readonly string[],
+  currentModels: readonly string[],
+  previewLimit = 6
+): ModelSearchAppendPlan {
+  const missingModels = getMissingModelSearchMatches(searchMatches, currentModels)
+  const normalizedPreviewLimit = Math.max(0, previewLimit)
+  const previewModels = missingModels.slice(0, normalizedPreviewLimit)
+
+  return {
+    missingModels,
+    previewModels,
+    omittedCount: missingModels.length - previewModels.length,
+    totalCount: missingModels.length,
+  }
 }

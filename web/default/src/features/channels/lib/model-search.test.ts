@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
+  buildModelSearchAppendPlan,
   getMissingModelSearchMatches,
   getModelSearchModelNames,
 } from './model-search'
@@ -54,6 +55,16 @@ describe('渠道模型搜索候选提取', () => {
 })
 
 describe('渠道模型搜索缺失项计算', () => {
+  test('搜索 gpt-5.6 时会保留全部三个待追加模型', () => {
+    assert.deepEqual(
+      getMissingModelSearchMatches(
+        ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        []
+      ),
+      ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol']
+    )
+  })
+
   test('只返回搜索命中但渠道尚未包含的模型', () => {
     assert.deepEqual(
       getMissingModelSearchMatches(
@@ -82,5 +93,40 @@ describe('渠道模型搜索缺失项计算', () => {
       ),
       ['gpt-5.6-terra', 'gpt-5.6-luna']
     )
+  })
+})
+
+describe('渠道模型搜索批量追加计划', () => {
+  test('预览和总数共用同一套缺失模型计算结果', () => {
+    assert.deepEqual(
+      buildModelSearchAppendPlan(
+        ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        ['gpt-5.6-sol'],
+        1
+      ),
+      {
+        missingModels: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+        previewModels: ['gpt-5.6-terra'],
+        omittedCount: 1,
+        totalCount: 2,
+      }
+    )
+  })
+
+  test('预览限制不会影响最终待追加模型列表', () => {
+    const plan = buildModelSearchAppendPlan(
+      ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+      [],
+      2
+    )
+
+    assert.deepEqual(plan.missingModels, [
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+    ])
+    assert.deepEqual(plan.previewModels, ['gpt-5.6-terra', 'gpt-5.6-luna'])
+    assert.equal(plan.omittedCount, 1)
+    assert.equal(plan.totalCount, 3)
   })
 })

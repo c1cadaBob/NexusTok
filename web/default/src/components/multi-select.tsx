@@ -63,6 +63,7 @@ interface MultiSelectProps {
   onSearchChange?: (value: string) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  contentHeader?: React.ReactNode
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
   preserveSelectedOnEmptyRemovalKey?: boolean
@@ -185,6 +186,7 @@ export function MultiSelect({
   onSearchChange,
   open: controlledOpen,
   onOpenChange,
+  contentHeader,
   contentFooter,
   allowCreateWithMatches = true,
   preserveSelectedOnEmptyRemovalKey = false,
@@ -463,6 +465,17 @@ export function MultiSelect({
       </ComboboxChips>
 
       <ComboboxContent anchor={chipsAnchorRef}>
+        {contentHeader && (
+          <>
+            <div
+              className='p-2'
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {contentHeader}
+            </div>
+            <ComboboxSeparator />
+          </>
+        )}
         <ComboboxList>
           <ComboboxCollection>
             {(item: string) => {

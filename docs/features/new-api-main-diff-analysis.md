@@ -8406,3 +8406,67 @@ NexusTok 上一轮已完成渠道级关闭轮询等待开关，但 `UpdateVideoT
 3. `go test ./service` 通过。
 4. `git diff --check` 通过。
 5. 本轮为后端调度与日志基础设施改动，未修改前端资源；仍按热更新要求访问 `http://192.168.0.202:3003/` 和 `/api/status` 进行运行态存活确认。
+
+## 本轮实施评审：渠道模型搜索批量追加显性化与编辑页开关样式对齐
+
+### 需求分析
+
+用户再次反馈“搜索添加时不正确”，并指出 `/opt/project/new-api-main` 最新版编辑渠道页面体验更好，应继续对齐。结合前几轮验证，本地模型库已经完整同步 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，当前渠道 `11111` 已包含 `gpt-5.6-sol`，因此批量追加时实际应新增 `terra/luna` 两个缺失模型。
+
+本轮复核确认，搜索数据与追加合并逻辑本身已经能补齐缺失模型，但 UI 仍存在歧义：输入 `gpt-5.6` 后，下拉候选首先展示的是单个模型行，批量追加按钮在弹层底部，管理员容易点击第一条候选并以为完成“搜索添加”，结果只加入一个模型。new-api 编辑页的优势在于表单分区和开关行更统一、扫描成本更低；NexusTok 应在保留账号池、Codex、权限控制和模型库搜索能力的前提下，把批量追加动作做成更明确的原生操作。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用多选组件 | `web/default/src/components/multi-select.tsx` | 新增可选 `contentHeader` 插槽，把调用方的关键操作放在候选列表上方；默认不传时其它页面行为不变。 |
+| 渠道模型搜索 helper | `web/default/src/features/channels/lib/model-search.ts` | 新增 `buildModelSearchAppendPlan()`，让预览、按钮数量和最终待追加模型共享同一套缺失模型计算规则。 |
+| 渠道模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加 `gpt-5.6` 三模型批量追加计划测试，固定“预览限制不影响最终待追加列表”的语义。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 将 `Search results` 批量追加提示移动到 MultiSelect 弹层顶部，明确说明点击候选只加单个模型；按钮改为 `Add all ... matched model(s)`。 |
+| 编辑页开关样式 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | `Enabled` 与 `Fallback to Channel Key` 开关行改用 `sideDrawerSwitchItemClassName()`，与 new-api 最新编辑页及本项目 drawer helper 对齐。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐批量追加按钮与说明文案六语翻译。 |
+
+### 风险评估
+
+- `MultiSelect` 是共享组件，不能改变默认弹层结构和选中语义。本轮只新增可选 header 插槽，现有调用方不传入时无行为变化。
+- 渠道模型字段仍允许单独选择候选模型；本轮只把“批量添加全部搜索命中”的入口提前，并用说明文案区分批量按钮和单行候选。
+- 批量追加仍只写入前端表单草稿，不直接调用 `updateChannel`，管理员必须点击 `Update Channel` 才会保存运行态渠道配置。
+- `/api/models/search` 会匹配 `model_name/description/tags`。本轮继续只把 `model_name` 自身包含关键词的结果纳入渠道模型，避免标签命中带入无关模型。
+- 开关行样式对齐只改布局类名，不改变 `status`、`account_pool_fallback` 字段值、权限禁用条件或保存 payload。
+
+### 方案评审
+
+采用“显性批量动作 + 不回退已有增强”的方案：
+
+1. `MultiSelect` 增加 `contentHeader`，渲染在候选列表上方，并阻止 header 区域 pointer 事件冒泡到 Combobox dismiss/selection 流程。
+2. 渠道模型字段把 `Search results` 从 footer 移到 header，先展示说明：“使用按钮添加所有匹配模型；选择下方某一行只添加该单个模型”。
+3. 批量按钮文案改为 `Add all {{count}} matched model(s)`，并在执行中显示 loading icon，减少“点了没反应”的误判。
+4. 新增 `buildModelSearchAppendPlan()`，用同一份缺失列表生成预览、 omitted 数量和按钮总数；最终点击时仍按 `page_size=100` 翻页拉全搜索结果再合并，避免大系列模型只取第一页。
+5. `Enabled` 和 `Fallback to Channel Key` 两个开关行使用 `sideDrawerSwitchItemClassName()`，向 new-api 编辑页的统一抽屉表单视觉靠拢。
+
+### 实施结果
+
+已完成渠道模型搜索批量追加显性化：
+
+- 输入 `gpt-5.6` 后，弹层顶部先显示 `Search results`、缺失模型预览和 `Add all 2 matched model(s)`，下方才是 `gpt-5.6-terra/luna/sol` 单项候选。
+- 顶部说明明确区分批量按钮与单行候选，避免把“点击第一条候选”误认为“添加全部搜索结果”。
+- 批量追加计划会保留全部缺失模型，预览数量只影响展示，不影响最终追加列表。
+- 编辑渠道页的 `Enabled` 和账号池 fallback 开关行已对齐 new-api 的 drawer switch 样式，不再使用局部 rounded card 样式。
+- 本轮保留 NexusTok 原生能力：账号池凭据模式、Codex OAuth、字段级权限、模型映射 guardrail、搜索翻页补齐、弹层关闭和保存前校验均未削弱。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，21 个用例全部成功，覆盖 `gpt-5.6` 三模型缺失项、批量追加计划和 MultiSelect 搜索/创建/删除保护。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示六种 locale `missingCount=0`、`extrasCount=0`。fr/ja/ru/vi 仍有历史 untranslated 项，本轮新增两条文案已提供对应翻译。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，热更新页面可访问。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+8. 使用 Chrome headless/CDP 登录 `c1cada`，打开 `http://192.168.0.202:3003/channels`，确认渠道 `11111` 可见，并通过行菜单打开 `Edit Channel` 抽屉。
+9. 编辑抽屉初始模型字段显示 `Selected 3`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；页面结构包含 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`。
+10. 在模型输入框输入 `gpt-5.6` 后，弹层顶部显示 `Search results`、说明 `Use the button to add every matching model. Selecting a row below adds only that one model.`、预览 `gpt-5.6-terra, gpt-5.6-luna` 和按钮 `Add all 2 matched model(s)`；下方候选包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，且未出现 `Add custom model "gpt-5.6"` 或 `Add "gpt-5.6"`。
+11. 真实点击 `Add all 2 matched model(s)` 后，表单草稿显示 `Selected 5`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；`[data-slot="combobox-content"][data-open]` 数量为 0，弹层已关闭。
+12. 验证期间未点击 `Update Channel`。随后使用登录 cookie 与 `NexusTok-User: 1` 调用 `GET /api/channel/?p=0&page_size=5`，运行态渠道 `11111` 仍为 `models:"gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认没有保存测试草稿。
+13. 同样使用运行态接口调用 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50`，返回 `total=3`，items 为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，确认模型库完整，修复点集中在前端批量追加交互。
+14. 当前会话未暴露 MCP 浏览器工具；本轮按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成真实页面交互验证。

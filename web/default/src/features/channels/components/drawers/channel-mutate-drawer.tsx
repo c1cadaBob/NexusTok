@@ -106,6 +106,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
   sideDrawerSectionClassName,
+  sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { JsonEditor } from '@/components/json-editor'
 import { MultiSelect } from '@/components/multi-select'
@@ -157,6 +158,7 @@ import {
   extractMappingSourceModels,
   hasModelConfigChanged,
   findMissingModelsInMapping,
+  buildModelSearchAppendPlan,
   getModelSearchModelNames,
   getMissingModelSearchMatches,
   validateModelMappingJson,
@@ -1158,19 +1160,23 @@ export function ChannelMutateDrawer({
     }))
   }, [allModelsList, currentModelsArray, modelSearchModelNames])
 
-  const modelSearchMissingModelNames = useMemo(
+  const modelSearchAppendPlan = useMemo(
     () =>
-      getMissingModelSearchMatches(modelSearchModelNames, currentModelsArray),
+      buildModelSearchAppendPlan(
+        modelSearchModelNames,
+        currentModelsArray,
+        6
+      ),
     [currentModelsArray, modelSearchModelNames]
   )
-  const modelSearchMissingPreview = modelSearchMissingModelNames.slice(0, 6)
-  const modelSearchMissingOmittedCount =
-    modelSearchMissingModelNames.length - modelSearchMissingPreview.length
+  const modelSearchMissingModelNames = modelSearchAppendPlan.missingModels
+  const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
+  const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
   const shouldShowModelSearchAppend =
     trimmedModelSearchKeyword.length > 0 &&
     !isSearchingModelMeta &&
     !isModelSearchDebouncing &&
-    modelSearchMissingModelNames.length > 0
+    modelSearchAppendPlan.totalCount > 0
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -2144,8 +2150,8 @@ export function ChannelMutateDrawer({
                         control={form.control}
                         name='status'
                         render={({ field }) => (
-                          <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
-                            <div className='space-y-0.5'>
+                          <FormItem className={sideDrawerSwitchItemClassName()}>
+                            <div className='flex flex-col gap-0.5'>
                               <FormLabel>{t('Enabled')}</FormLabel>
                               <FormDescription className='text-xs'>
                                 {t('Enable or disable this channel')}
@@ -3171,8 +3177,10 @@ export function ChannelMutateDrawer({
                             control={form.control}
                             name='account_pool_fallback'
                             render={({ field }) => (
-                              <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
-                                <div className='space-y-0.5'>
+                              <FormItem
+                                className={sideDrawerSwitchItemClassName()}
+                              >
+                                <div className='flex flex-col gap-0.5'>
                                   <FormLabel>
                                     {t('Fallback to Channel Key')}
                                   </FormLabel>
@@ -3666,13 +3674,18 @@ export function ChannelMutateDrawer({
                                     open={modelSelectOpen}
                                     onOpenChange={setModelSelectOpen}
                                     preserveSelectedOnEmptyRemovalKey
-                                    contentFooter={
+                                    contentHeader={
                                       shouldShowModelSearchAppend ? (
-                                        <Alert>
+                                        <Alert className='border-primary/20 bg-primary/5'>
                                           <AlertTitle>
                                             {t('Search results')}
                                           </AlertTitle>
                                           <AlertDescription className='mt-2 flex flex-col gap-3'>
+                                            <span>
+                                              {t(
+                                                'Use the button to add every matching model. Selecting a row below adds only that one model.'
+                                              )}
+                                            </span>
                                             <span className='text-sm'>
                                               <span className='break-all'>
                                                 {modelSearchMissingPreview.join(
@@ -3686,7 +3699,7 @@ export function ChannelMutateDrawer({
                                                     '({{total}} total, {{omit}} omitted)',
                                                     {
                                                       total:
-                                                        modelSearchMissingModelNames.length,
+                                                        modelSearchAppendPlan.totalCount,
                                                       omit: modelSearchMissingOmittedCount,
                                                     }
                                                   )}
@@ -3727,10 +3740,19 @@ export function ChannelMutateDrawer({
                                                   : noPermissionMessage
                                               }
                                             >
-                                              {t('Add {{count}} new model(s)', {
-                                                count:
-                                                  modelSearchMissingModelNames.length,
-                                              })}
+                                              {isAddingModelSearchMatches && (
+                                                <Loader2
+                                                  data-icon='inline-start'
+                                                  className='animate-spin'
+                                                />
+                                              )}
+                                              {t(
+                                                'Add all {{count}} matched model(s)',
+                                                {
+                                                  count:
+                                                    modelSearchAppendPlan.totalCount,
+                                                }
+                                              )}
                                             </Button>
                                           </AlertDescription>
                                         </Alert>
