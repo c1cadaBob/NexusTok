@@ -241,8 +241,21 @@ export const ERROR_MESSAGES = {
   REQUIRED_KEY: 'API key is required',
   REQUIRED_MODELS: 'Models are required',
   REQUIRED_GROUP: 'Group is required',
+  REQUIRED_BASE_URL_FOR_TYPE: 'Base URL is required for this channel type',
+  REQUIRED_EXTRA_CONFIG:
+    'This channel type requires additional configuration',
   INVALID_JSON: 'Invalid JSON format',
   INVALID_MODEL_MAPPING: 'Invalid model mapping format',
+  INVALID_MODEL_MAPPING_OBJECT:
+    'Model mapping must be a JSON object with string values',
+  INVALID_STATUS_CODE_MAPPING:
+    'Status code mapping must use valid HTTP status codes',
+  CODEX_BATCH_UNSUPPORTED: 'Codex channels do not support batch creation',
+  INVALID_CODEX_CREDENTIAL:
+    'Codex credential must be a JSON object with access_token and account_id',
+  INVALID_VERTEX_JSON_KEY: 'Vertex AI service account key must be valid JSON',
+  VERTEX_API_KEY_BATCH_UNSUPPORTED:
+    'Vertex AI API Key mode does not support batch creation',
   CREATE_FAILED: 'Failed to create channel',
   UPDATE_FAILED: 'Failed to update channel',
   DELETE_FAILED: 'Failed to delete channel',

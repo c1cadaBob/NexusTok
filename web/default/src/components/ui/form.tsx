@@ -27,6 +27,7 @@ import {
   type FieldValues,
 } from 'react-hook-form'
 import { useRender } from '@base-ui/react/use-render'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 
@@ -153,7 +154,9 @@ function FormDescription({ className, ...props }: React.ComponentProps<'p'>) {
 
 function FormMessage({ className, ...props }: React.ComponentProps<'p'>) {
   const { error, formMessageId } = useFormField()
-  const body = error ? String(error?.message ?? '') : props.children
+  const { t } = useTranslation()
+  // 表单 schema 中的错误消息统一使用英文 key；缺少翻译时 i18next 会按原文回退。
+  const body = error ? t(String(error?.message ?? '')) : props.children
 
   if (!body) {
     return null

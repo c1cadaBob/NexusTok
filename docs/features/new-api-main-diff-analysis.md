@@ -8217,3 +8217,65 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 10. 点击追加按钮后，页面显示 `Selected 5`，并同时包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。本次验证未点击 `Update Channel`，没有保存运行态渠道数据。
 11. Chrome headless/CDP 网络记录显示普通下拉搜索请求为 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，点击追加时额外请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100`，确认全页补齐路径生效。
 12. 当前会话未暴露 MCP 浏览器工具；本轮前端交互按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。
+
+## 本轮实施评审：渠道编辑表单校验原生化
+
+### 需求分析
+
+在完成 `gpt-5.6` 搜索追加修复后，继续对照 `/opt/project/new-api-main/web/default/src/features/channels/lib/channel-form.ts` 与最新版编辑渠道页，发现 new-api 在编辑提交前还做了更完整的 schema 兜底：JSON 配置字段必须是对象、模型映射必须是 string-to-string 对象、状态码映射必须是合法 HTTP 状态码、Codex 手动凭证必须包含 `access_token/account_id`、Vertex AI JSON key 必须是 JSON、部分渠道类型必须填写 `base_url` 或 `other` 附加配置。
+
+NexusTok 当前页面虽然已经在 UI 上用 `*` 标出这些字段，但 schema 层缺少部分兜底，管理员仍可能通过空值或结构错误的 JSON 进入提交链路。本轮目标是把 new-api 的“提交前阻断明显坏配置”能力转成 NexusTok 原生前端校验能力，并保留 NexusTok 自己的账号池组模式、权限体系和既有页面结构。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道表单 schema | `web/default/src/features/channels/lib/channel-form.ts` | 新增 JSON object、模型映射、状态码映射、Codex、Vertex、`base_url`、`other` 等校验 helper 和 `superRefine` 规则。 |
+| 渠道错误消息常量 | `web/default/src/features/channels/constants.ts` | 将新增 schema 错误集中到 `ERROR_MESSAGES`，便于 i18n 和后续复用。 |
+| 通用表单消息 | `web/default/src/components/ui/form.tsx` | `FormMessage` 对 schema message 执行 `t()`，缺少翻译时仍按原文回退；不改变表单布局和 Base UI 组合方式。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐本轮错误文案六语翻译，并由 `bun run i18n:sync` 规范排序。 |
+| 回归测试 | `web/default/src/features/channels/lib/channel-form.test.ts` | 覆盖 JSON object、模型映射、状态码映射、Codex、Vertex、`base_url`、`other`、账号池组豁免与账号池组必选规则。 |
+
+### 风险评估
+
+- 行为会更严格：历史上能提交的错误 JSON、数组型配置、非字符串模型映射、非法状态码映射、缺少区域/API version/Account ID 等配置，现在会在前端阻断。这符合 new-api 编辑页的安全边界，也能减少后端保存后才暴露的渠道不可用问题。
+- `base_url` 和 `other` 必填不能机械照搬 new-api。NexusTok 有 `global_account_pool` 模式，账号池组会托管上游凭据和部分配置；本轮对账号池组模式做豁免，避免把 UI 已隐藏的本地凭据字段错误标为必填。
+- `FormMessage` 走 `t()` 是通用组件变化，但使用英文原文作为 key 且 i18next 缺失时回退原文，因此对未翻译的既有错误消息保持兼容。
+- 本轮只做前端 schema 和文案，不修改后端 DTO、数据库、relay 和保存接口；`disable_task_polling_sleep` 这类需要后端任务轮询服务消费的 new-api 差异不混入本轮。
+
+### 方案评审
+
+采用“schema 原生化 + 账号池语义适配 + 文案集中翻译”的方案：
+
+1. 移植 new-api 的 `parseOptionalJson`、JSON object 判断、模型映射判断、状态码映射判断、Codex 凭证判断和 Vertex JSON key 判断。
+2. `setting`、`param_override`、`header_override`、`settings` 只允许空值或 JSON object；避免数组/字符串被误保存为对象配置。
+3. `model_mapping` 只允许空值或值为字符串的 JSON object；`status_code_mapping` 只允许 `100-599` 的整数状态码映射。
+4. Codex 渠道禁用批量创建，手动 key 非空时必须是含 `access_token` 与 `account_id` 的 JSON object。
+5. Vertex AI 服务账号 key 模式要求 JSON object 或 object array；API Key 模式禁用批量创建。
+6. 对 new-api 的 `base_url` 与 `other` 必填规则做 NexusTok 化：普通模式下要求对应类型必填；`global_account_pool` 模式下豁免本地配置字段，但仍要求选择账号池组。
+7. 新增错误文案进入 `ERROR_MESSAGES` 和六语 locale，`FormMessage` 统一翻译 schema message。
+
+### 实施结果
+
+已完成渠道编辑表单校验原生化：
+
+- JSON 配置字段、模型映射和状态码映射现在能在提交前阻断结构错误。
+- Codex 与 Vertex AI 的特殊凭据规则和批量创建限制已与 new-api 对齐。
+- Azure、Custom、SunoAPI、VolcEngine 的 `base_url` 必填兜底已补齐；Azure、Xunfei、AI Proxy Library、Cloudflare、Vertex、Coze 的 `other` 附加配置必填兜底已补齐。
+- 账号池组模式保留 NexusTok 原生语义：不强制填写被隐藏的本地 `base_url/other`，但仍必须选择有效账号池组。
+- 表单错误消息现在可按当前语言显示；新增文案已覆盖 en、zh、fr、ja、ru、vi。
+- 子 agent 只读复核指出的两项缺失规则（`base_url`、`other`）已纳入本轮修复；`disable_task_polling_sleep` 记录为后续需要后端任务轮询能力同步的功能项，本轮不做纯前端开关。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/channel-form.test.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，共 31 条测试。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bun run i18n:sync` 通过，报告显示所有 locale `missingCount=0`、`extrasCount=0`。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+8. 使用账号 `c1cada` 登录 3003 后，通过 Chrome headless/CDP 打开 `http://192.168.0.202:3003/channels`，确认渠道列表显示 `11111`，行操作菜单包含 `Edit`。
+9. 打开 `11111` 编辑抽屉，确认页面结构包含 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，模型字段显示 `Selected 3`，并保留 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+10. 在 `Model Mapping` 中切换到 `JSON Mode`，输入 `{"client":123}` 并点击 `Update Channel`，页面显示 `Model mapping must be a JSON object with string values` 与顶部 `Please fix the highlighted fields before saving`，Chrome/CDP 网络记录没有出现 `/api/channel` 的 POST/PUT/PATCH 保存请求，确认前端校验已在提交前阻断。
+11. 当前会话未暴露 MCP 浏览器工具；本轮前端交互按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。

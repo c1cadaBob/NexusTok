@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { z } from 'zod'
-import { CHANNEL_STATUS, MODEL_FETCHABLE_TYPES } from '../constants'
+import {
+  CHANNEL_STATUS,
+  ERROR_MESSAGES,
+  MODEL_FETCHABLE_TYPES,
+} from '../constants'
 import type { Channel } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
@@ -31,31 +35,151 @@ import {
 // 表单校验 Schema
 // ============================================================================
 
+function parseOptionalJson(value: string | undefined): unknown {
+  if (!value?.trim()) return undefined
+  return JSON.parse(value)
+}
+
+function isJsonObjectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isOptionalJsonObject(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    return parsed === undefined || isJsonObjectValue(parsed)
+  } catch {
+    return false
+  }
+}
+
+function isOptionalModelMapping(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    if (!isJsonObjectValue(parsed)) return false
+    return Object.values(parsed).every((item) => typeof item === 'string')
+  } catch {
+    return false
+  }
+}
+
+function isOptionalStatusCodeMapping(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    if (!isJsonObjectValue(parsed)) return false
+    return Object.entries(parsed).every(([from, to]) => {
+      const fromCode = Number(from)
+      const toCode = Number(to)
+      return (
+        Number.isInteger(fromCode) &&
+        Number.isInteger(toCode) &&
+        fromCode >= 100 &&
+        fromCode <= 599 &&
+        toCode >= 100 &&
+        toCode <= 599
+      )
+    })
+  } catch {
+    return false
+  }
+}
+
+function isCodexCredential(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    return (
+      isJsonObjectValue(parsed) &&
+      typeof parsed.access_token === 'string' &&
+      parsed.access_token.trim().length > 0 &&
+      typeof parsed.account_id === 'string' &&
+      parsed.account_id.trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
+function isVertexJsonKey(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    if (Array.isArray(parsed)) {
+      return parsed.every((item) => isJsonObjectValue(item))
+    }
+    return isJsonObjectValue(parsed)
+  } catch {
+    return false
+  }
+}
+
+function addRequiredIssue(
+  ctx: z.RefinementCtx,
+  path: string,
+  message: string
+): void {
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: [path],
+    message,
+  })
+}
+
+function usesGlobalAccountPool(data: { credential_mode?: string }): boolean {
+  return data.credential_mode === 'global_account_pool'
+}
+
 export const channelFormSchema = z
   .object({
-    name: z.string().min(1, 'Channel name is required'),
-    type: z.number().min(0, 'Channel type is required'),
+    name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
+    type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
     base_url: z.string().optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
-    models: z.string().min(1, 'At least one model is required'),
-    group: z.array(z.string()).min(1, 'At least one group is required'),
-    model_mapping: z.string().optional(),
+    models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
+    group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
+    model_mapping: z
+      .string()
+      .optional()
+      .refine(
+        isOptionalModelMapping,
+        ERROR_MESSAGES.INVALID_MODEL_MAPPING_OBJECT
+      ),
     priority: z.number().optional(),
     weight: z.number().optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
-    status_code_mapping: z.string().optional(),
+    status_code_mapping: z
+      .string()
+      .optional()
+      .refine(
+        isOptionalStatusCodeMapping,
+        ERROR_MESSAGES.INVALID_STATUS_CODE_MAPPING
+      ),
     tag: z.string().optional(),
     remark: z
       .string()
       .max(255, 'Remark must be less than 255 characters')
       .optional(),
-    setting: z.string().optional(),
-    param_override: z.string().optional(),
-    header_override: z.string().optional(),
-    settings: z.string().optional(),
+    setting: z
+      .string()
+      .optional()
+      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    param_override: z
+      .string()
+      .optional()
+      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    header_override: z
+      .string()
+      .optional()
+      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    settings: z
+      .string()
+      .optional()
+      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
     advanced_custom: z.string().optional(),
     other: z.string().optional(),
     // 多 Key 表单选项只用于前端决定创建模式，不作为渠道字段直接保存。
@@ -95,6 +219,18 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      [3, 8, 36, 45].includes(data.type) &&
+      !usesGlobalAccountPool(data) &&
+      !data.base_url?.trim()
+    ) {
+      addRequiredIssue(
+        ctx,
+        'base_url',
+        ERROR_MESSAGES.REQUIRED_BASE_URL_FOR_TYPE
+      )
+    }
+
     if (data.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
       const advancedCustomConfig = parseAdvancedCustomConfig(
         data.advanced_custom
@@ -119,6 +255,61 @@ export const channelFormSchema = z
             'Base URL is required when an advanced route uses an upstream path',
         })
       }
+    }
+
+    if (
+      [3, 18, 21, 39, 41, 49].includes(data.type) &&
+      !usesGlobalAccountPool(data) &&
+      !data.other?.trim()
+    ) {
+      addRequiredIssue(
+        ctx,
+        'other',
+        ERROR_MESSAGES.REQUIRED_EXTRA_CONFIG
+      )
+    }
+
+    if (data.type === 57) {
+      if (data.multi_key_mode && data.multi_key_mode !== 'single') {
+        addRequiredIssue(
+          ctx,
+          'multi_key_mode',
+          ERROR_MESSAGES.CODEX_BATCH_UNSUPPORTED
+        )
+      }
+      if (data.key?.trim() && !isCodexCredential(data.key)) {
+        addRequiredIssue(
+          ctx,
+          'key',
+          ERROR_MESSAGES.INVALID_CODEX_CREDENTIAL
+        )
+      }
+    }
+
+    if (
+      data.type === 41 &&
+      data.vertex_key_type === 'json' &&
+      data.key?.trim() &&
+      !isVertexJsonKey(data.key)
+    ) {
+      addRequiredIssue(
+        ctx,
+        'key',
+        ERROR_MESSAGES.INVALID_VERTEX_JSON_KEY
+      )
+    }
+
+    if (
+      data.type === 41 &&
+      data.vertex_key_type === 'api_key' &&
+      data.multi_key_mode &&
+      data.multi_key_mode !== 'single'
+    ) {
+      addRequiredIssue(
+        ctx,
+        'multi_key_mode',
+        ERROR_MESSAGES.VERTEX_API_KEY_BATCH_UNSUPPORTED
+      )
     }
 
     if (
