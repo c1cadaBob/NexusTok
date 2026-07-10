@@ -6603,6 +6603,62 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 6. 点击 `gpt-5.6-terra` 后表单 chip 计数从 `Selected 3` 变为 `Selected 4`，新增 chip 为 `gpt-5.6-terra`；随后点击 Cancel 关闭抽屉，网络记录中没有 `PUT /api/channel/` 保存请求，未改动运行态渠道数据。
 7. MCP console error/warn 为空。
 
+### 补充修复：渠道模型搜索结果批量追加与 new-api-main 模型区操作对齐
+
+用户继续反馈“搜索添加时不正确”，并要求编辑渠道页面继续向最新版 `/opt/project/new-api-main` 的编辑渠道页对齐。重新在 3003 真实页面复现后确认：输入 `gpt-5.6` 时，运行页 DOM 已能展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型元信息候选，且不再展示错误的 `Add custom model "gpt-5.6"`；但当前交互仍只能逐个点选候选，用户在“根据已有模型添加到渠道能力”的场景下容易误以为搜索添加只同步/添加了其中一个模型。
+
+#### 需求分析
+
+- 渠道编辑页需要把“搜索到的已同步模型”转化为可直接追加到当前渠道 `models` 字段的批量操作，尤其覆盖 `gpt-5.6` Luna/Sol/Terra 这种同系列模型。
+- 批量添加只应使用 `/api/models/search` 返回的真实 `model_name`，不能把搜索关键词本身写入渠道能力。
+- 页面继续吸收 new-api-main 最新模型区的低风险交互：映射目标误暴露时可一键移除，映射源缺失时可一键追加，预设组从普通快捷按钮堆中独立展示。
+- 改动必须保持未保存状态只修改前端表单，不主动调用渠道更新接口；最终仍由用户点击保存触发原有提交、权限和风险确认链路。
+
+#### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 新增搜索结果去重、批量追加按钮、搜索命中数量提示、映射风险快捷修复、预设组独立展示。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐 7 个新增文案，保持六语 locale `missingCount=0`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验证结果。 |
+
+#### 风险评估
+
+- 不改后端同步、模型元信息、渠道能力保存接口、数据库结构和计费逻辑，核心业务风险低。
+- 批量追加按钮使用 `modelSearchAddableNames`，先从搜索接口结果中 trim、去空、去重，再排除当前已选模型；因此不会重复追加，也不会把 `gpt-5.6` 这类系列前缀误写入。
+- `/api/models/search` 可能命中 description/tags，本轮进一步限定批量追加只接收 `model_name` 本身包含当前关键词的结果，避免描述或标签误命中被加入渠道能力。
+- 按钮受 `canEditBasicFields` 控制，和手动选择模型、快捷填充模型保持同一权限边界。
+- 输入值等待 debounce 生效期间也视为搜索中，MultiSelect 不展示自定义创建项，避免远程候选返回前按 Enter 抢先创建裸模型名。
+- 映射目标移除和缺失源追加只改当前表单值，仍需用户显式保存；如果用户取消抽屉，不会产生 `PUT /api/channel/` 请求。
+- 搜索接口失败或无结果时，页面仍保留现有本地候选和自定义添加能力，不阻断渠道编辑。
+
+#### 方案评审
+
+采用前端最小闭环方案：复用现有 `searchModels` 查询结果，新增 `modelSearchAddableNames` 派生状态和 `handleAddModelSearchResults` 事件。模型输入框下方在有搜索关键词时展示“Search results”状态条，显示搜索命中数量，并提供“Add {{count}} search result(s)”按钮一次性追加所有尚未加入的真实模型。该方案不引入新的后端 API，不改变 MultiSelect 的共享行为，避免影响其他多选场景。
+
+页面对齐方面，只吸收 new-api-main 中与模型区稳定性直接相关的低风险交互：`Remove mapped targets`、`Add missing models`、`Preset groups` 独立展示和空模型时禁用 `Copy All`。暂不迁移 new-api-main 的 `ChannelModelsSection` 拆分和更深层映射编辑器候选能力，因为当前 NexusTok 仍有账号池组、Codex OAuth、权限裁剪等本地差异，直接重构会扩大风险。
+
+#### 实施结果
+
+- 输入 `gpt-5.6` 后，渠道编辑页会显示搜索命中数量，例如 `3 synced model(s) matched "gpt-5.6"`。
+- 搜索结果面板会展示即将追加的前 6 个具体模型名，超过 6 个时显示 `+N more`，管理员可以在点击前确认会写入哪些能力。
+- 当三条候选中只有 `gpt-5.6-sol` 已在当前渠道里时，新增按钮显示可追加 2 条搜索结果；点击后会把 `gpt-5.6-terra`、`gpt-5.6-luna` 追加到表单，并保留已有 `gpt-5.6-sol`。
+- 如果全部搜索结果都已存在，按钮禁用，并在调用时提示 `No new search results to add`。
+- 模型映射风险提示补齐两个快捷动作：移除已暴露的上游目标模型、追加缺失的映射源模型。
+- 预设组按钮从 `Quick actions` 主操作堆中分离，减少填充/拉取/复制/清空等命令和预设项混在一起的误操作概率。
+
+#### 验证记录
+
+1. `cd web/default && bun run typecheck`：通过。
+2. `cd web/default && bun run build`：通过。
+3. `cd web/default && bun run i18n:sync`：通过；`en/zh/fr/ja/ru/vi` 均无缺失 key，本轮新增 7 个文案已补齐六语翻译。
+4. `git diff --check`：通过。
+5. MCP 打开并强刷 `http://192.168.0.202:3003/channels`，页面资源已包含本轮新版渠道编辑代码，未触发容器重启。
+6. 在渠道 `11111` 的编辑抽屉中输入 `gpt-5.6`，页面显示 `Search results`、`3 synced model(s) matched "gpt-5.6"`，预览区展示 `gpt-5.6-terra`、`gpt-5.6-luna`，按钮显示 `Add 2 search result(s)`。
+7. 网络请求 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 3 条真实模型名：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`；其中 `gpt-5.6-sol` 已绑定当前渠道，Terra/Luna 未绑定。
+8. 点击 `Add 2 search result(s)` 后，toast 显示 `Added 2 model(s) from search`，表单选择数量从 `Selected 3` 变为 `Selected 5`，新增 chip 为 `gpt-5.6-terra`、`gpt-5.6-luna`，按钮随即变为 `Add 0 search result(s)` 并禁用。
+9. 验证过程中没有出现 `PUT /api/channel/` 请求，说明批量追加只更新未保存的前端表单状态，没有改动运行态渠道数据。
+
 ## 本轮实施评审：Authz 用户级 override 基础层
 
 ### 需求分析

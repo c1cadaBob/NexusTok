@@ -593,6 +593,11 @@ export function ChannelMutateDrawer({
     modelSearchKeyword.trim(),
     300
   )
+  const normalizedModelSearchKeyword =
+    debouncedModelSearchKeyword.toLowerCase()
+  const isModelSearchDebouncing =
+    modelSearchKeyword.trim().length > 0 &&
+    modelSearchKeyword.trim() !== debouncedModelSearchKeyword
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -730,11 +735,28 @@ export function ChannelMutateDrawer({
   )
 
   const modelSearchModelNames = useMemo(
-    () =>
-      modelSearchData?.data?.items
-        ?.map((model) => model.model_name)
-        .filter(Boolean) || [],
-    [modelSearchData]
+    () => {
+      const seen = new Set<string>()
+      const names: string[] = []
+
+      for (const model of modelSearchData?.data?.items ?? []) {
+        const name = model.model_name?.trim()
+        if (!name || seen.has(name)) continue
+        // /api/models/search 也会匹配 description/tags。渠道能力只能追加真实模型名，
+        // 因此批量搜索添加只接收 model_name 本身包含当前关键词的结果。
+        if (
+          normalizedModelSearchKeyword &&
+          !name.toLowerCase().includes(normalizedModelSearchKeyword)
+        ) {
+          continue
+        }
+        seen.add(name)
+        names.push(name)
+      }
+
+      return names
+    },
+    [modelSearchData, normalizedModelSearchKeyword]
   )
 
   // 按渠道类型推导基础模型集合。
@@ -1071,6 +1093,19 @@ export function ChannelMutateDrawer({
       label: model,
     }))
   }, [allModelsList, currentModelsArray, modelSearchModelNames])
+
+  // 当前搜索结果中尚未加入渠道能力的模型。这里只使用 /api/models/search 返回的真实
+  // model_name，不把输入关键词本身当作模型名，避免 gpt-5.6 这类系列前缀被错误写入渠道。
+  const modelSearchAddableNames = useMemo(
+    () =>
+      modelSearchModelNames.filter(
+        (model) => !currentModelsArray.includes(model)
+      ),
+    [currentModelsArray, modelSearchModelNames]
+  )
+  const modelSearchPreviewNames = modelSearchAddableNames.slice(0, 6)
+  const modelSearchPreviewOmittedCount =
+    modelSearchAddableNames.length - modelSearchPreviewNames.length
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1467,6 +1502,32 @@ export function ChannelMutateDrawer({
     }
     await copyToClipboard(models)
   }, [form, copyToClipboard, t])
+
+  // 将当前搜索命中的真实模型一次性追加到渠道能力列表，适合 gpt-5.6 Luna/Sol/Terra
+  // 这类同系列模型批量补齐场景。最终保存仍由表单提交触发，不在这里调用渠道更新接口。
+  const handleAddModelSearchResults = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (modelSearchAddableNames.length === 0) {
+      toast.info(t('No new search results to add'))
+      return
+    }
+
+    updateModels(modelSearchAddableNames, true)
+    toast.success(
+      t('Added {{count}} model(s) from search', {
+        count: modelSearchAddableNames.length,
+      })
+    )
+  }, [
+    canEditBasicFields,
+    modelSearchAddableNames,
+    noPermissionMessage,
+    t,
+    updateModels,
+  ])
 
   // 添加模型预设分组中的模型。
   const handleAddPrefillGroup = useCallback(
@@ -3399,7 +3460,10 @@ export function ChannelMutateDrawer({
                                   maxVisibleChips={8}
                                   copyChipOnClick
                                   disabled={!canEditBasicFields}
-                                  isLoading={isSearchingModelMeta}
+                                  isLoading={
+                                    isSearchingModelMeta ||
+                                    isModelSearchDebouncing
+                                  }
                                   loadingText={t('Searching model metadata...')}
                                   emptyText={t('No matching models')}
                                   onSearchChange={setModelSearchKeyword}
@@ -3408,16 +3472,117 @@ export function ChannelMutateDrawer({
                               {modelMappingGuardrail.exposedTargetModels
                                 .length > 0 && (
                                 <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                                  <AlertDescription>
-                                    {t('The mapped upstream model(s)')}{' '}
-                                    {formatModelNames(
-                                      modelMappingGuardrail.exposedTargetModels
-                                    )}{' '}
-                                    {t(
-                                      'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
-                                    )}
+                                  <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                                    <span>
+                                      {t('The mapped upstream model(s)')}{' '}
+                                      {formatModelNames(
+                                        modelMappingGuardrail.exposedTargetModels
+                                      )}{' '}
+                                      {t(
+                                        'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
+                                      )}
+                                    </span>
+                                    <Button
+                                      type='button'
+                                      variant='outline'
+                                      size='sm'
+                                      onClick={() => {
+                                        const hiddenTargets = new Set(
+                                          modelMappingGuardrail.exposedTargetModels
+                                        )
+                                        updateModels(
+                                          currentModelsArray.filter(
+                                            (model) =>
+                                              !hiddenTargets.has(model)
+                                          )
+                                        )
+                                      }}
+                                      disabled={!canEditBasicFields}
+                                      title={
+                                        canEditBasicFields
+                                          ? undefined
+                                          : noPermissionMessage
+                                      }
+                                    >
+                                      {t('Remove mapped targets')}
+                                    </Button>
                                   </AlertDescription>
                                 </Alert>
+                              )}
+                              {debouncedModelSearchKeyword.length > 0 && (
+                                <div className='border-border/60 bg-muted/20 flex flex-col gap-3 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between'>
+                                  <div className='min-w-0'>
+                                    <p className='text-sm font-medium'>
+                                      {t('Search results')}
+                                    </p>
+                                    <p className='text-muted-foreground text-xs'>
+                                      {isSearchingModelMeta ||
+                                      isModelSearchDebouncing
+                                        ? t('Searching model metadata...')
+                                        : modelSearchModelNames.length > 0
+                                          ? t(
+                                              '{{count}} synced model(s) matched "{{keyword}}"',
+                                              {
+                                                count:
+                                                  modelSearchModelNames.length,
+                                                keyword:
+                                                  debouncedModelSearchKeyword,
+                                              }
+                                            )
+                                          : t('No matching models')}
+                                    </p>
+                                    {!isSearchingModelMeta &&
+                                      !isModelSearchDebouncing &&
+                                      modelSearchPreviewNames.length > 0 && (
+                                        <div className='mt-1 flex flex-wrap gap-1'>
+                                          {modelSearchPreviewNames.map(
+                                            (model) => (
+                                              <span
+                                                key={model}
+                                                className='bg-background text-foreground inline-flex max-w-[14rem] items-center rounded-sm border px-1.5 py-0.5 font-mono text-[11px] leading-4'
+                                                title={model}
+                                              >
+                                                <span className='truncate'>
+                                                  {model}
+                                                </span>
+                                              </span>
+                                            )
+                                          )}
+                                          {modelSearchPreviewOmittedCount >
+                                            0 && (
+                                            <span className='text-muted-foreground inline-flex items-center px-1.5 py-0.5 text-[11px] leading-4'>
+                                              {t('+{{count}} more', {
+                                                count:
+                                                  modelSearchPreviewOmittedCount,
+                                              })}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                  </div>
+                                  <Button
+                                    type='button'
+                                    variant='secondary'
+                                    size='sm'
+                                    onClick={handleAddModelSearchResults}
+                                    disabled={
+                                      !canEditBasicFields ||
+                                      isSearchingModelMeta ||
+                                      isModelSearchDebouncing ||
+                                      modelSearchAddableNames.length === 0
+                                    }
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <Plus className='mr-2 h-4 w-4' />
+                                    {t('Add {{count}} search result(s)', {
+                                      count: modelSearchAddableNames.length,
+                                    })}
+                                  </Button>
+                                </div>
                               )}
                               <FormMessage />
                             </FormItem>
@@ -3518,28 +3683,36 @@ export function ChannelMutateDrawer({
                               variant='outline'
                               size='sm'
                               onClick={handleCopyModels}
+                              disabled={currentModelsArray.length === 0}
                             >
                               <Copy className='mr-2 h-4 w-4' />
                               {t('Copy All')}
                             </Button>
-                            {prefillGroups.map((group) => (
-                              <Button
-                                key={group.id}
-                                type='button'
-                                variant='secondary'
-                                size='sm'
-                                onClick={() => handleAddPrefillGroup(group)}
-                                disabled={!canEditBasicFields}
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                {group.name}
-                              </Button>
-                            ))}
                           </div>
+                          {prefillGroups.length > 0 && (
+                            <div className='flex flex-wrap items-center gap-2'>
+                              <span className='text-muted-foreground text-xs'>
+                                {t('Preset groups')}:
+                              </span>
+                              {prefillGroups.map((group) => (
+                                <Button
+                                  key={group.id}
+                                  type='button'
+                                  variant='secondary'
+                                  size='sm'
+                                  onClick={() => handleAddPrefillGroup(group)}
+                                  disabled={!canEditBasicFields}
+                                  title={
+                                    canEditBasicFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
+                                >
+                                  {group.name}
+                                </Button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -3629,14 +3802,35 @@ export function ChannelMutateDrawer({
                             {modelMappingGuardrail.missingSourceModels.length >
                               0 && (
                               <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                                <AlertDescription>
-                                  {t('Add')}{' '}
-                                  {formatModelNames(
-                                    modelMappingGuardrail.missingSourceModels
-                                  )}{' '}
-                                  {t(
-                                    'to the Models list so users can use them before the mapping sends traffic upstream.'
-                                  )}
+                                <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                                  <span>
+                                    {t('Add')}{' '}
+                                    {formatModelNames(
+                                      modelMappingGuardrail.missingSourceModels
+                                    )}{' '}
+                                    {t(
+                                      'to the Models list so users can use them before the mapping sends traffic upstream.'
+                                    )}
+                                  </span>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() => {
+                                      updateModels(
+                                        modelMappingGuardrail.missingSourceModels,
+                                        true
+                                      )
+                                    }}
+                                    disabled={!canEditBasicFields}
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    {t('Add missing models')}
+                                  </Button>
                                 </AlertDescription>
                               </Alert>
                             )}
