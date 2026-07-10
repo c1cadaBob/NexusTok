@@ -6532,6 +6532,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | Classic 前端退场提示 | `web/classic/src/components/layout/*`、`web/classic/src/helpers/frontendTheme.js`、`web/classic/src/i18n/locales/*.json` | classic 全局布局新增可关闭维护提示，Root 用户可从提示中切换到默认前端；关闭状态仅保存在当前浏览器，默认前端和后端核心链路不受影响。 |
 | 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
 | 2026-07-10 | 渠道模型搜索追加弹层关闭与编辑页导航对齐 | `web/default/src/components/multi-select.tsx`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 运行态复现确认 `gpt-5.6` 后端搜索和追加数据正确，但批量追加后 Combobox 因搜索词清空仍保持打开并铺出完整模型库；本轮让 `MultiSelect` 支持可选受控 open，渠道模型选择器在 `Add {{count}} new model(s)` 后立即关闭弹层，并补齐 new-api 编辑页左侧导航 sticky 层级。 |
+| 2026-07-10 | 结果媒体代理 SSRF Dial 阶段补强 | `controller/video_proxy.go`、`relay/mjproxy_handler.go`、`docs/features/new-api-main-diff-analysis.md` | 继续执行用户可控 URL 覆盖缺口审计，确认下载、Webhook、Bark/Gotify 已走 protected client；本轮补齐视频代理和 Midjourney 图片代理直连路径，URL 预校验后实际请求也使用 `GetSSRFProtectedHTTPClient()`，通过 Dial 阶段解析 IP 校验抵御 DNS rebinding；显式渠道代理继续保留一次性 URL 校验。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -7830,3 +7831,65 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 11. Chrome headless/CDP 真实点击 `Add 2 new model(s)` 后，表单草稿显示 `Selected 5`，chip 列表包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；`[data-slot="combobox-content"][data-open]` 不存在，页面没有铺出完整模型库。
 12. 验证期间未点击 `Update Channel`。随后使用登录 cookie 与 `NexusTok-User: 1` 调用 `GET /api/channel/?p=0&page_size=5`，运行态渠道 `11111` 仍为 `models:"gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认没有保存测试草稿。
 13. 同样使用运行态接口调用 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50`，返回 `total=3`，items 为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，再次确认模型同步数据完整，问题已定位在前端弹层状态而非供应商或模型元信息缺失。
+
+## 本轮实施评审：结果媒体代理 SSRF Dial 阶段补强
+
+### 需求分析
+
+持续对照 `/opt/project/new-api-main` 的安全边界实现时，报告中仍保留“用户可控 URL 覆盖缺口审计”作为 SSRF 后续待办。本轮重新搜索 Go 侧 HTTP 外连调用后确认：下载代理、Webhook、Bark、Gotify 已经在 URL 预校验后使用 `GetSSRFProtectedHTTPClient()`，能够在真正 Dial 前重新解析并校验目标 IP，抵御 URL 校验和连接之间的 DNS rebinding。
+
+但仍有两个用户可访问的结果媒体代理只做了请求前 URL 预校验：`controller.VideoProxy` 会代理任务结果视频，`relay.RelayMidjourneyImage` 会代理 Midjourney 任务图片。两者的 URL 来源来自上游任务结果或上游回调，最终会由 NexusTok 服务端代用户发起 GET 请求。如果攻击者能影响结果 URL 的域名解析，在预校验后把域名解析到内网地址，普通 `GetHttpClient()` 或显式代理 client 不会在 Dial 阶段再次按 FetchSetting 校验解析 IP。
+
+本轮目标是把 new-api 的 protected fetch 优势继续原生化到 NexusTok 的结果媒体代理：直连路径使用 `GetSSRFProtectedHTTPClient()`，保留原有 URL 预校验和错误返回；显式渠道代理路径由于连接由代理侧建立，无法在 NexusTok 进程内校验最终目标 IP，因此继续保留请求前一次性 URL 校验，并在代码注释中说明边界。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 视频结果代理 | `controller/video_proxy.go` | 无渠道代理时，`VideoProxy` 的实际 GET client 从普通 relay client 改为用户可控 URL 专用 protected client；Gemini、Vertex、OpenAI/Sora 和历史 `result_url` 分支共享同一保护。 |
+| Midjourney 图片代理 | `relay/mjproxy_handler.go` | 无渠道代理时，图片代理实际 GET client 从普通 relay client 改为 protected client；显式渠道代理仍用 `NewProxyHttpClient(proxy)`。 |
+| SSRF 覆盖报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮审计结论、例外边界和验证记录，避免后续把 Relay 上游 client 或渠道代理误替换。 |
+
+### 风险评估
+
+- 直连路径的行为会更严格：如果 FetchSetting 开启 SSRF 防护且目标域名在 Dial 阶段解析到私有、保留或黑名单 IP，请求会被拒绝。这是本轮预期安全增强，可能暴露少量历史任务结果 URL 配置不安全的问题。
+- Relay/provider 上游请求不能全局替换成 protected client，因为 Ollama、自建网关、私有模型服务和内网代理都可能是合法上游；本轮只处理结果媒体代理，不触碰 `service.GetHttpClient()` 的全局语义。
+- 显式渠道代理路径无法在本进程内验证代理最终连接的 IP；如果强行替换成 protected client 也只能校验代理地址，无法校验目标。因此本轮保留请求前 URL 校验，并在注释中固定这个例外。
+- 视频代理涉及多 provider 认证头，不能改变 `x-goog-api-key`、Vertex URL 解析、OpenAI/Sora Bearer token 或缓存头；本轮只改 client 选择。
+- Midjourney 图片代理只改无代理 client，不改任务查询、Content-Type 复制、响应体转发和失败返回。
+
+### 方案评审
+
+采用“结果媒体直连 protected client + 显式代理例外”的小步方案：
+
+1. `VideoProxy` 默认使用 `service.GetSSRFProtectedHTTPClient()`。
+2. 当渠道配置了 `proxy` 时，`VideoProxy` 继续使用 `service.GetHttpClientWithProxy(proxy)`，因为目标连接由代理侧建立；请求前 `ValidateURLWithFetchSetting` 保留。
+3. `RelayMidjourneyImage` 记录渠道 `proxy` 字符串；无代理时使用 `service.GetSSRFProtectedHTTPClient()`，有代理时保持 `service.NewProxyHttpClient(proxy)`。
+4. 两个调用点继续在 `client.Do` 前执行现有 `common.ValidateURLWithFetchSetting`，让错误尽早以 403 返回；直连实际请求时由 protected client 再做 RoundTrip 和 Dial 阶段校验。
+5. 不新增路由、不改数据库、不改 FetchSetting schema、不改变 Worker 下载、Webhook、Bark/Gotify、Relay 上游和账号池 Sidecar 代理边界。
+
+### 验收方式
+
+1. `go test ./service -run 'TestProtectedFetch'`，确认 protected client 的 DNS rebinding、代理和禁用 fallback 契约仍通过。
+2. `go test ./controller -run 'TestVideoProxy'`，如当前包内存在相关测试则覆盖视频代理；没有匹配测试时以 package compile 作为最低验证。
+3. `go test ./relay -run 'TestRelayMidjourney'`，如当前包内存在相关测试则覆盖 Midjourney 代理；没有匹配测试时以 package compile 作为最低验证。
+4. `go test ./controller ./relay ./service`，确认本轮触碰的三个包编译与既有单测通过。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 与 `/api/status`，确认热更新服务仍可访问。
+7. 当前会话无 MCP 浏览器工具时，使用 `curl --noproxy '*'` 和必要的 Chrome headless/CDP 作为替代，并在最终回复中说明限制。
+
+### 实施结果
+
+已完成结果媒体代理 SSRF Dial 阶段补强。`controller.VideoProxy` 现在默认使用 `service.GetSSRFProtectedHTTPClient()` 发起任务结果视频请求；当渠道显式配置 `proxy` 时，继续使用 `service.GetHttpClientWithProxy(proxy)`，并保留请求前 URL 预校验作为代理路径的可执行边界。这样无代理直连视频代理会在 URL 预校验后，于真正拨号前再次解析和校验目标 IP，降低 DNS rebinding 风险。
+
+`relay.RelayMidjourneyImage` 也完成同类调整：无渠道代理时使用 protected client 代理任务图片；有渠道代理时继续使用 `service.NewProxyHttpClient(proxy)`，因为最终目标连接由代理侧建立。两处均未修改任务查询、provider 认证头、响应体转发、Content-Type、缓存头、Worker 下载、Webhook/Bark/Gotify 或 Relay 全局上游 client。SSRF 覆盖缺口审计结论同步写入实施索引：当前首批用户可控 URL 直连链路已覆盖下载、Webhook、Bark/Gotify、视频结果代理和 Midjourney 图片代理；Relay 上游、渠道显式代理、账号池 Sidecar、models.dev 同步和固定 OAuth/支付服务继续作为明确例外管理。
+
+### 验证记录
+
+1. `go test ./service -run 'TestProtectedFetch'` 通过，确认 protected client 的私网回绑定阻断、混合解析 IP 阻断、允许地址拨号、私网白名单、禁用解析校验和关闭保护 fallback 契约仍有效。
+2. `go test ./controller -run 'TestVideoProxy'` 通过，当前 controller 包没有匹配的专项测试，命令完成 package compile。
+3. `go test ./relay -run 'TestRelayMidjourney'` 通过，当前 relay 包没有匹配的专项测试，命令完成 package compile。
+4. `go test ./controller ./relay ./service` 通过，确认本轮触碰的三个包既有测试和编译均通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+7. 当前会话未暴露 MCP 浏览器工具，本轮安全修复没有新增页面入口；运行态验证将使用 `curl --noproxy '*'` 替代页面连通性确认。

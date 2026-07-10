@@ -94,11 +94,17 @@ func VideoProxy(c *gin.Context) {
 
 	var videoURL string
 	proxy := channel.GetSetting().Proxy
-	client, err := service.GetHttpClientWithProxy(proxy)
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create proxy client for task %s: %s", taskID, err.Error()))
-		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy client")
-		return
+	client := service.GetSSRFProtectedHTTPClient()
+	if proxy != "" {
+		// 渠道显式代理会由代理侧建立到目标 URL 的连接，NexusTok 进程无法在 Dial
+		// 阶段看到最终目标 IP，因此下方仍保留请求前 URL 校验；无代理直连路径则使用
+		// protected client，在真正拨号前再次校验 DNS 解析结果，抵御 DNS rebinding。
+		client, err = service.GetHttpClientWithProxy(proxy)
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create proxy client for task %s: %s", taskID, err.Error()))
+			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy client")
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)

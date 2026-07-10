@@ -59,8 +59,9 @@ func RelayMidjourneyImage(c *gin.Context) {
 		return
 	}
 	var httpClient *http.Client
+	var proxy string
 	if channel, err := model.CacheGetChannel(midjourneyTask.ChannelId); err == nil {
-		proxy := channel.GetSetting().Proxy
+		proxy = channel.GetSetting().Proxy
 		if proxy != "" {
 			if httpClient, err = service.NewProxyHttpClient(proxy); err != nil {
 				c.JSON(400, gin.H{
@@ -71,7 +72,10 @@ func RelayMidjourneyImage(c *gin.Context) {
 		}
 	}
 	if httpClient == nil {
-		httpClient = service.GetHttpClient()
+		// 任务图片 URL 来自上游回调或任务结果，属于用户可访问的结果媒体代理。
+		// 无渠道代理时必须使用 protected client，让 Dial 阶段重新校验 DNS 解析 IP；
+		// 有渠道代理时连接由代理侧建立，下面的 URL 预校验是本进程可执行的边界。
+		httpClient = service.GetSSRFProtectedHTTPClient()
 	}
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(midjourneyTask.ImageUrl, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
