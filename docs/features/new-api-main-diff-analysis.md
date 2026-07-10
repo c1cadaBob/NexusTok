@@ -55,10 +55,10 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、默认前端入口/按钮消费与渠道/账号池/订阅 Admin 路由 enforcement 已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置九类资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，默认前端已让管理入口、Usage Logs、Dashboard 和渠道页关键按钮消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log` 和 `/api/data` 已按同一矩阵做服务端二次校验。当前仍基于系统角色基线；Casbin 存储、用户 override 和系统设置等更多路由 enforcement 待后续分批接入。 |
-| 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地首个 enforcement 切片 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；原有 `AdminAuth`、`RootAuth`、安全验证、限流和禁缓存边界继续保留。后续账号池路由也应采用同样模式。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费与多组 Admin 路由 enforcement 已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验。真正剩余的是 Casbin/角色策略持久化和更细资源拆分，而不是基础 Authz enforcement。 |
+| 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地并扩展到多组管理路由 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；同一 `permissionRoute` 模式已扩展到账户池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统任务和系统信息等路由。后续重点转为角色策略持久化和资源粒度继续拆分。 |
 | 渠道/账号池敏感字段 fail-closed | `controller/channel_authz.go`、`controller/account_pool_authz.go` | 已落地主要更新路径 | 渠道更新接口已建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；账号池分组更新已对 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段做敏感写二次校验，并让默认前端账号池页消费 `write/operate/sensitive_write`。后续新增字段必须进入分类测试。 |
-| 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
+| 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 已落地 | 保留账号池专用审计，同时已新增全局操作审计兜底；管理写操作记录 action、params、状态码、业务成功状态和操作者，不记录请求体，前端 Usage Logs 详情可展示结构化审计信息。 |
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`controller/system_task_handlers.go`、`/api/system-task/*` | 后端模型、租约锁、runner、Root 查询接口、日志清理任务、批量渠道测试任务、上游模型同步任务、账号池检测任务、订阅维护任务、Midjourney/通用异步任务轮询和默认前端任务面板已落地 | 继续把后续新增长耗时后台动作统一接入 SystemTask，并在 `/system-info` 统一观测。 |
 | 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 后端心跳、Root 只读接口和默认前端 `/system-info` 实例面板已落地 | 已引入 `NODE_NAME`/主机名兜底、主从节点、CPU/内存/磁盘/版本心跳、实例页面和同页 SystemTask 任务面板。 |
 | 后台任务锁 | `SystemTaskLock`、租约续期、过期失败标记 | 已按 NexusTok 三库兼容模型原生化 | 已用数据库锁实现跨节点互斥、租约续期、过期失败标记和锁丢失保护；后续任务 handler 要支持 context cancellation。 |
@@ -67,14 +67,14 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 额度饱和保护 | `common/quota_math.go`、`QuotaClamp`、相关测试 | 已部分落地 | 已新增 NexusTok 原生 `common/quota_math.go`，接入表达式计费、文本/音频/WSS 结算、标准预扣、按次预扣、任务差额结算、工具调用附加费、违规费用、充值入账、视频任务重算和渠道测试日志；饱和事件已写入 `other.admin_info.quota_saturation`。 |
 | 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 已落地首批 | 已新增用户可控 URL 专用 protected fetch client，并接入下载、Webhook、Bark/Gotify 通知；Relay 全局 client 明确保留普通 client，避免误伤合法内网模型渠道，新增用户可控 URL 拉取必须复用该客户端或在评审中说明例外。 |
 | ClickHouse 日志兼容测试 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 缺少依赖 | 仅在明确支持 ClickHouse 日志库时引入；否则先记录为可选能力，避免增加部署复杂度。 |
-| 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 后端已落地 | 已扩展 `quota_data` 记录 node/token/group/channel 维度，并新增 `/api/data/flow`、`/api/data/flow/self`；后续接入仪表盘 Sankey 图。 |
+| 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 后端与默认前端 Flow/Sankey 已落地 | 已扩展 `quota_data` 记录 node/token/group/channel 维度，并新增 `/api/data/flow`、`/api/data/flow/self`；默认前端 `/dashboard/flow` 已接入 Sankey 图、指标切换、Top 节点限制、节点筛选、阶段显隐和点击高亮。 |
 | Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*`；Responses 请求降级、Chat/Responses 响应互转和流式状态机已持续原生化 | 保留 `openaicompat` 作为本项目原生命名，不创建 `relayconvert`；剩余 ClickHouse、Advanced Custom、Authz 持久化等差异继续分批评审。 |
-| OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | Realtime 和 image edit 已在现有文件中实现；image stream 与图片计费边界待增强 | 逐个核对上游协议支持，再按 channel 能力原生接入；本轮优先原生化 OpenAI image stream、`stream` 显式零值和 `n` 上限保护。 |
-| Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 缺少 | 可作为高级渠道改写能力参考，但必须接入 NexusTok 的参数覆盖、安全过滤和计费快照。 |
-| Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | NexusTok 有自研 Waffo Pancake 充值 | 吸收“自动验证凭据、拉取商店/商品、创建配对”的 UX，不强制替换当前支付链路。 |
+| OpenAI Realtime / image edit / image stream 等 relay 文件 | `relay/channel/openai/relay_realtime.go`、`relay_image.go` | Realtime、image edit、image stream 与图片计费边界已在现有文件中实现 | 已补齐 `dto.ImageRequest.Stream *bool` 显式零值保留、`n` 上限校验、OpenAI 图片 SSE 转发、JSON-as-SSE 兜底和 usage 结算测试；后续新增 OpenAI 子协议时继续逐项核对 StreamOptions 和计费快照。 |
+| Advanced Custom Channel | `relay/channel/advancedcustom/adaptor.go` | 后端基础层与默认前端编辑入口已落地 | 已新增 type 58、`settings.advanced_custom` schema、严格校验、relay adaptor、Visual/JSON 双模式编辑器和权限控制；后续如继续增强，应聚焦模板库、导入导出和更细审计，而不是从零迁移 adaptor。 |
+| Waffo Pancake SDK 绑定体验 | `waffo-pancake-sdk-go`、catalog/pair/save/product 接口 | 充值、订阅支付、catalog/pair/save/product 与订阅套餐商品绑定已落地 | 已在系统设置接入 Waffo Pancake catalog 刷新、store/product 创建和原子保存；用户充值、订阅支付、订阅套餐商品创建/选择、Webhook 分流均已原生化，继续保留 NexusTok 旧充值链路兼容。 |
 | 订阅余额支付 | `SubscriptionRequestBalancePay`、`allow_balance_pay` | 后端与默认前端已落地 | 已新增 `/api/subscription/balance/pay`，在模型事务内完成钱包扣款、订阅创建和成功订单落账；默认前端已在套餐抽屉、套餐表和购买弹窗消费 `allow_balance_pay`。 |
 | 订阅钱包溢出控制 | `allow_wallet_overflow` | 后端与默认前端已落地 | 已在套餐与用户订阅快照保存钱包溢出策略；`subscription_first` 下订阅额度不足时，任一活跃订阅禁止溢出即阻断钱包 fallback；默认前端套餐抽屉已提供钱包兜底开关。 |
-| 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 后端、默认前端入口消费与渠道页按钮级消费已落地 | `/api/user/self` 已返回 `permissions.admin_permissions`，默认前端已新增权限 helper/hook，并让管理侧边栏与渠道、账号池、模型、用户、订阅等入口路由按 read 能力判断；渠道管理页已按 `write`、`operate`、`sensitive_write`、`secret_view` 控制新建、编辑、测试、启停、批量操作、密钥查看、多 Key、渠道账号池和上游模型应用入口。当前矩阵来自系统角色基线，用户 override 和服务端 enforcement 待后续接入。 |
+| 用户权限回传 | `user.AdminPermissions = authz.Capabilities(...)` | 后端、用户级 override、默认前端入口消费与页面按钮级消费已落地 | `/api/user/self` 已返回 `permissions.admin_permissions`，默认前端已新增权限 helper/hook，并让管理侧边栏、Usage Logs、Dashboard、渠道、账号池、模型、用户、订阅等入口和关键按钮按资源动作判断；用户管理接口已支持 Root 设置管理用户的 `admin_permissions` override。后续重点是角色模板/Casbin 存储与更多细粒度页面矩阵编辑体验。 |
 
 ## 默认前端页面差异
 
@@ -198,42 +198,35 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
    - `model/user_update_test.go`、`model/redemption_test.go`、`model/locking_test.go`、`setting/operation_setting/monitor_setting_test.go` 等三库/权限/并发边界测试。
    - `web/default/src/features/dashboard/lib/flow*.test.ts`，后续迁移 dashboard flow/Sankey 前应先吸收纯函数测试。
 
-## 子 Agent 复核后的后续优先队列
+## 2026-07-10 复核后的后续优先队列
 
-本轮并行只读分析进一步确认：NexusTok 不能目录级覆盖 `new-api-main`，应把上游优势按安全边界和原生业务语义分批吸收。
+本轮按当前工作树重新核对后确认：早期队列中的行锁、Responses/Gemini Responses、全局管理审计、会话守卫、HeaderNavModules、Usage Logs 移动端、Dashboard Flow、Advanced Custom、Waffo Pancake 商品绑定、Playground 多个消息/输入/编辑切片、README/Issue 模板/开发 Compose 等已经在后续实施记录中落地。后续开发不应再按旧队列重复迁移，应聚焦仍未被当前代码和验证记录证明完成的能力。
 
-### 后端 P0/P1
+### 后端与治理 P1/P2
 
-| 优先级 | 能力 | new-api-main 参考 | NexusTok 风险/迁移方式 |
-|--------|------|-------------------|-------------------------|
-| P0 | GORM v2 行锁 helper | `model/locking.go` | NexusTok 多处仍使用 `tx.Set("gorm:query_option", "FOR UPDATE")`，在 GORM v2 下存在被忽略风险；应新增三库兼容 `lockForUpdate(tx)`，逐步替换订阅、充值、兑换码、用户额度等事务热点，并补并发测试。 |
-| P1 | OpenAI Responses 反向兼容 | `service/relayconvert/responses_request_to_chat.go`、`relay/channel/openai/responses_via_chat.go` | NexusTok 现有 `service/openaicompat` 只覆盖部分方向；建议保留本项目包名，补 Responses→Chat 与 Chat→Responses 转换，不改热路径包结构。 |
-| P1 | Gemini Responses | `relay/channel/gemini/adaptor_responses.go`、`relay/channel/gemini/relay_responses.go` | 依赖 Responses/Chat 通用转换，迁移时必须明确 custom/freeform tool 的降级或拒绝策略。 |
-| P1/P2 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | NexusTok 已有账号池专项审计和额度饱和审计；应新增全局管理写操作审计，但 action 表必须覆盖账号池、渠道账号、Codex OAuth、订阅、SystemTask 等本项目独有路由。 |
-| P1/P2 | 完整 Authz/Casbin enforcement | `service/authz/*`、`model/casbin_rule.go`、`router/channel-router.go` | NexusTok 已有 catalog 和前端消费矩阵；下一步应先定义本项目原生资源：`channel_account`、`account_pool_auth_file` 等，再灰度接入服务端路由 enforcement。 |
-| P2 | Advanced Custom Channel | `relay/channel/advancedcustom/*`、`dto/channel_settings.go` | 高价值但高风险；必须纳入 Root/敏感写权限、SSRF/URL 安全、凭证脱敏和计费快照，不能直接开放给普通 Admin。 |
-| P2 | Waffo Pancake SDK 与订阅支付 | `service/waffo_pancake.go`、`controller/subscription_payment_waffo_pancake.go` | NexusTok 当前手写充值链路需继续兼容；可先新增 SDK 路径和订阅支付灰度入口，保留旧 webhook 幂等。 |
+| 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
+|--------|------|----------|--------------------|
+| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | NexusTok 已有 catalog、用户级 override、`RequirePermission` 路由表和多组管理路由 enforcement；仍未引入 Casbin/角色策略存储。下一步应先设计角色模板、策略导入导出、冲突优先级和迁移兼容，而不是再重做基础权限表。 |
+| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 当前 `account_pool` 已覆盖凭证、账号、分组和日志等能力；后续如需要更细运营分权，可把 `channel_account`、`account_pool_auth_file` 等拆成独立资源，并保留现有敏感写 fail-closed。 |
+| P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
+| P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
+| P2/P3 | Advanced Custom 模板库与审计增强 | `relay/channel/advancedcustom/*`、默认前端 editor | 基础 adaptor、后端校验和 Visual/JSON 编辑器已落地；后续可做可信模板、导入导出、路由级审计和更清晰的敏感字段变更预览。 |
 
-### 前端 P0/P1
+### 前端体验 P1/P3
 
-| 优先级 | 能力 | new-api-main 参考 | NexusTok 迁移方式 |
-|--------|------|-------------------|-------------------|
-| P0 | 会话守卫仅 401 登出 | `_authenticated/route.tsx` | NexusTok 当前 `getSelf()` 失败更容易误登出；应只在 401 清登录，网络错误/5xx 暂时放行并后续重验。 |
-| P0/P1 | HeaderNavModules 健壮解析 | `lib/nav-modules.ts`、`hooks/use-top-nav-links.ts` | 吸收 boolean/number/string/object 兼容解析，避免 `"0"`、`"false"` 被误判；需保留 NexusTok 当前 `disabled`/权限链路。 |
-| P1 | Usage Logs 移动端卡片与筛选工具条 | `usage-logs-mobile-card.tsx`、`logs-filter-toolbar.tsx` | 后端依赖小，适合先迁普通使用日志，再统一账号池日志体验。 |
-| P1 | 渠道编辑抽屉分区化 | `channels/components/drawers/sections/*` | 保留 NexusTok `credential_mode`、账号池、Codex OAuth、渠道账号字段，只吸收分区导航、表单错误收敛和敏感字段提交裁剪。 |
-| P1/P2 | Dashboard Flow/Sankey | `dashboard/components/flow/*`、`dashboard/lib/flow.ts` | NexusTok 后端已原生化 `/api/data/flow*`，前端迁移前应先吸收 `flow*.test.ts` 纯函数测试。 |
-| P2 | Playground 消息/流式/Markdown 渲染增强 | `features/playground/*`、`components/ai-elements/response-renderer.tsx` | 价值高但依赖和安全面大，需评估 DOMPurify/KaTeX/CodeMirror 包体与 XSS 边界。 |
-| P2/P3 | DataTable 分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | 全局影响大，不做一次性替换；新页面先兼容导出，旧页面逐步迁移。 |
+| 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
+|--------|------|----------|--------------------|
+| P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 普通 Usage Logs 已吸收移动端卡片和筛选 Drawer；账号池专用日志仍保留原生筛选与脱敏语义，后续可在不丢账号粒度字段的前提下复用相同交互模式。 |
+| P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并保留当前扁平结构；new-api-main 的 core/layout/static/hooks 全量分层仍未迁移。新页面或大改页面可先复用分层思想，避免一次性替换全站表格。 |
+| P2/P3 | Playground 目录结构 polish | `features/playground/components/{chat,input,message}`、`lib/{message,streaming,storage}` | 消息渲染、错误、输入、编辑器、CodeMirror、流式 helper 和大量纯函数测试已原生化；剩余差异主要是目录层级组织，不应为了路径一致而重构，除非后续功能开发自然触碰。 |
+| P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
 
-### 文档与工程化 P1/P2
+### 文档与工程化 P2/P3
 
-| 优先级 | 能力 | 参考路径 | 迁移方式 |
-|--------|------|----------|----------|
-| P1 | 多语言 README | `README.*.md` | 生成 NexusTok 品牌化多语言 README，补根 README 语言入口。 |
-| P1 | Electron/constant 包文档 | `electron/README.md`、`constant/README.md` | 补桌面端开发/打包说明和 constant 包边界说明。 |
-| P1 | 开发 Compose/Makefile 修补 | `docker-compose.dev.yml`、`makefile` | 优先核对 PostgreSQL dev 镜像声明、`dev-api-rebuild`、`reset-setup` 等开发任务，避免破坏现有热更新部署。 |
-| P2 | Issue 模板与 CI 工作流 | `.github/ISSUE_TEMPLATE/*`、`.github/workflows/docker-image-branch.yml` | 品牌化吸收 issue 前置约束；任意分支镜像工作流只在确有临时预览需求时引入。 |
+| 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
+|--------|------|----------|--------------------|
+| P2 | ClickHouse/高级部署文档 | `docs/installation/*` | 多语言 README、Electron、constant、开发 Compose、Makefile、任意分支 Docker 镜像和 Issue 模板已品牌化；若后续真接入 ClickHouse，再补部署和回滚文档。 |
+| P3 | CI 工具链评估 | `oxlint`、`oxfmt`、`tsgo` | 当前保留 Bun/ESLint/TypeScript/Rsbuild 工具链；只有在现有 lint/build 成本成为瓶颈时再评估，不作为功能差异迁移前置条件。 |
 
 ## 原生化路线建议
 
@@ -248,14 +241,13 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ### P1：平台治理能力
 
 1. 引入 Authz：
-   - 只读 catalog 已落地：`channel`、`account_pool`、`user`、`model`、`subscription`、`system_setting`。
+   - 只读 catalog 已扩展到渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据、系统设置、系统任务和系统信息等管理资源。
    - 动作已先统一为 `read`、`operate`、`write`、`sensitive_write`、`secret_view`。
-   - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端已用同一 schema 过滤管理侧边栏与入口级路由守卫。
-   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；默认前端渠道页已开始消费页面内按钮和敏感字段权限，用户级 override、Casbin 存储、其它管理页面按钮消费和路由 enforcement 待后续接入。
+   - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端已用同一 schema 过滤管理侧边栏、入口级路由守卫和多处页面按钮。
+   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖。后续重点是 Casbin/角色模板持久化和更细资源拆分。
 2. 拆分路由注册：
-   - 渠道路由已先从巨型 `api-router.go` 抽出到 `router/channel-router.go`，保持现有权限行为不变。
-   - 后续学习 `new-api-main/router/channel-router.go` 的权限表模式，为每条写接口绑定权限常量，并补 route permission 测试。
-   - 账号池路由仍在主路由文件中，待 Authz 设计稳定后再抽出。
+   - 渠道、账号池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统信息、系统任务和 Authz catalog 路由都已按 `permissionRoute` 模式拆分或接入权限表。
+   - 后续新增管理路由必须先进入资源动作分类和路由结构测试，避免退回只依赖粗粒度 Admin/Root 的注册方式。
 3. 引入全局操作审计：
    - 账号池仍保留专用状态日志。
    - 其它管理写操作走中间件兜底审计，使用稳定 action + params，前端本地化展示。
@@ -297,7 +289,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ### P1：安全边界
 
 1. 匿名请求体限制已完成首批原生化，并挂到 setup、register、login、2FA login、passkey login、password reset、OAuth bind、Webhook 等入口；后续新增匿名 POST 路由时，必须在路由评审里明确挂载 `AnonymousRequestBodyLimit()` 或说明无需限制的原因。
-2. SSRF 保护客户端已完成首批原生化，下载、Webhook、Bark/Gotify 通知等用户可控外部 URL 拉取已走统一 protected client；Relay 上游地址继续保留普通 client，避免误伤合法内网渠道，后续只做用户可控 URL 覆盖缺口审计。
+2. SSRF 保护客户端已完成首批和后续补强审计，下载、Webhook、Bark/Gotify、Uptime Kuma、自定义 OAuth Discovery、OAuth 登录端点和历史 OIDC 控制器等用户/管理员可控外部 URL 拉取已走统一 protected client 或等价 URL 校验；Relay 上游地址继续保留普通 client，避免误伤合法内网渠道。
 3. HeaderNavModuleAuth 已完成后端鉴权、默认前端健壮解析和 pricing/rankings 路由最新配置守卫；后续新增公开导航模块时，必须同步维护 `HeaderNavModules` 解析、前端守卫和后端 API 鉴权。
 4. 渠道和账号池敏感字段 fail-closed 已覆盖主要更新路径：渠道更新和账号池分组更新均按原始请求字段做分类，未知字段默认敏感；账号池凭证、账号生命周期、OAuth 和批量导入路径继续在路由级要求 `account_pool.sensitive_write`。后续新增字段必须先补分类和测试，再开放给前端。
 
@@ -319,20 +311,20 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 2. `allow_balance_pay` 和 `allow_wallet_overflow` 后端已落地：
    - `allow_balance_pay` 控制是否允许用余额购买套餐；
    - `allow_wallet_overflow` 在购买时快照到用户订阅，控制套餐额度用尽后是否继续消耗钱包；
-   - 后续需要默认前端套餐表单和用户订阅页展示这两个字段。
-3. Waffo Pancake 保留 NexusTok 当前充值链路，吸收 new-api-main 的 catalog/pair/product 绑定向导，减少手填 Store/Product ID 的错误。
-4. 订阅管理页补齐重置计划/重置用户订阅能力，并走 SystemTask 或明确的同步事务边界。
+   - 默认前端套餐抽屉、套餐表和购买弹窗已经消费这两个策略字段。
+3. Waffo Pancake 保留 NexusTok 当前充值链路，同时已吸收 new-api-main 的 catalog/pair/product 绑定向导、配置原子保存、用户充值支付入口、订阅支付入口和订阅套餐商品绑定。
+4. 订阅管理页已补齐余额支付、钱包溢出、Waffo Pancake 商品、显式降级分组等关键能力；后续重点是权限矩阵编辑 polish、订单诊断体验和 Classic 前端低优先级补齐。
 
 ### P2：仪表盘和日志体验
 
-1. 引入 `/api/data/flow` 后，再接入仪表盘流量 Sankey 图。
-2. 使用日志页吸收 `logs-filter-toolbar` 和移动端卡片，先覆盖普通日志，再覆盖账号池日志。
-3. 模型设置新增“路由可靠性”页面，把自动禁用、自动启用、重试状态码、自动测试集中管理。
+1. `/api/data/flow` 与默认前端 `/dashboard/flow` 已落地，后续 Flow 增强应聚焦保存偏好、导出和更细角色遮罩策略。
+2. 普通 Usage Logs 已吸收 `logs-filter-toolbar` 和移动端卡片；后续可把账号池专用日志在保留脱敏字段和账号粒度的前提下统一体验。
+3. 模型设置已新增“路由可靠性”页面，把自动禁用、自动启用、重试状态码、自动测试集中管理；后续新增可靠性选项继续归入该 section。
 4. 公共 DataTable 逐步向 new-api-main 的 core/layout/static 分层靠拢，避免每个页面重复实现移动端卡片。
 
 ### P3：Relay 和 Playground 演进
 
-1. 逐步核对 `new-api-main/relay` 中缺失的 OpenAI Realtime、Image Edit/Image Stream、Gemini Responses、Advanced Custom adaptor。
+1. OpenAI Realtime、Image Edit/Image Stream、Gemini Responses、Advanced Custom adaptor 等高价值 relay 差异已持续原生化；后续逐协议引入时仍需先核对请求 DTO 显式零值、StreamOptions、计费快照和响应错误语义。
 2. 每引入一个 channel 或 relay 格式，都必须检查 StreamOptions 支持并加入 `streamSupportedChannels`。
 3. Relay 请求 DTO 可选标量继续使用 `*int`、`*float64`、`*bool` + `omitempty`，保留显式零值。
 4. Playground 可优先迁移 streaming 错误解析、消息编辑、输入控制和本地存储 schema，不一次性重写页面。
@@ -351,12 +343,12 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑第一批已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed 已原生化；下一批聚焦 SSRF 覆盖缺口审计、Authz override/Casbin 持久化和公开模块新增时的测试契约。
-3. 系统任务/系统信息：先后端模型和接口，再 `/system-info` 页面。
-4. 权限系统：先 channel/account_pool 两个资源，再扩展到用户、模型、订阅、设置。
-5. 订阅/支付增强：余额支付、钱包溢出、Waffo Pancake 商品绑定。
-6. 仪表盘和日志体验：flow 数据、移动端卡片、统一筛选工具条。
-7. Relay/Playground 深水区：逐协议引入，逐项测试，不做大爆炸迁移。
+2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override 和多组权限路由表已原生化；下一批聚焦 Casbin/角色策略持久化和新增公开模块的测试契约。
+3. 系统任务/系统信息已形成后端模型、接口、租约执行和 `/system-info` 页面闭环；后续新增长耗时任务直接接入 SystemTask。
+4. 权限系统已覆盖 channel/account_pool/user/model/subscription/redemption/log/data/system_setting 等资源；后续从“有没有 enforcement”转为“角色模板、Casbin、细资源拆分和权限编辑体验”。
+5. 订阅/支付增强已覆盖余额支付、钱包溢出、Waffo Pancake 商品绑定和订阅支付；后续转向诊断、Classic parity 和支付异常自助排查。
+6. 仪表盘和日志体验已覆盖 flow 数据、Sankey、移动端卡片、统一筛选工具条；后续优先统一账号池日志体验。
+7. Relay/Playground 深水区已完成 Responses/Gemini/OpenAI image/Advanced Custom 和 Playground 多个关键切片；后续继续逐协议、逐组件小步演进，不做大爆炸迁移。
 
 ## 附录：精确差异清单
 
@@ -6387,8 +6379,68 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 12. 3003 `POST /api/models/sync_upstream` 使用页面默认语义（`source=models.dev`，不显式传 `create_all`）返回 `success=true`、`created_models=0`、`updated_models=0`、`created_vendors=0`、`skipped_models=0`；说明手动 models.dev 同步入口已按全量 catalog 计算并且当前库无缺失。
 13. 将 models.dev canonical keys 按同步规则去掉 owner 前缀后与 3003 `/api/models/search` 分页结果做集合比对：models.dev 期望唯一模型数 244，本地唯一模型数 244，缺失数 0。
 
+## 本轮实施评审：差异报告优先队列状态校准
+
+### 需求分析
+
+持续推进差异吸收时发现，文档早期的“后续优先队列”和部分顶部总表仍保留旧状态：GORM v2 行锁 helper、Responses/Gemini Responses、管理操作审计、会话守卫、HeaderNavModules、Usage Logs 移动端、Dashboard Flow、Advanced Custom、Waffo Pancake、OpenAI 图片流式、用户级 Authz override 和多组权限路由表等已经在后续切片中落地，但早期段落仍把它们写成“缺少”或“待迁移”。这会让后续开发重复选择已经完成的能力，偏离“持续把 new-api-main 优势发展成 NexusTok 原生能力”的真实目标。
+
+本轮目标是只做报告状态校准，不改运行时代码：
+
+1. 按当前工作树和后续实施记录，把顶部差异总表中已完成的能力改为“已原生化/后续维护点”。
+2. 将旧“子 Agent 复核后的后续优先队列”替换为 2026-07-10 复核后的真实剩余队列。
+3. 校准“原生化路线建议”和“建议的落地顺序”，让后续计划从“基础迁移”转为“角色策略持久化、细资源拆分、账号池日志体验、DataTable 渐进分层、ClickHouse 真接入”等剩余能力。
+4. 保留完整目标未完成的判断，不把报告校准误写成整个 new-api-main 差异吸收已经结束。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| 顶部差异总表 | `docs/features/new-api-main-diff-analysis.md` | 校准 Authz、管理审计、Flow、OpenAI 图片流式、Advanced Custom、Waffo Pancake、用户权限回传等状态。 |
+| 后续优先队列 | `docs/features/new-api-main-diff-analysis.md` | 用当前证据替换早期 P0/P1/P2 队列，避免重复开发已完成切片。 |
+| 原生化路线建议 | `docs/features/new-api-main-diff-analysis.md` | 更新平台治理、安全边界、订阅支付、仪表盘日志、Relay/Playground 的下一步方向。 |
+| 实施索引 | `docs/features/new-api-main-diff-analysis.md` | 新增本轮状态校准记录，便于后续回溯。 |
+
+### 风险评估
+
+1. 最大风险是把尚未完成的能力误标为完成。本轮只校准已有明确代码证据和报告实施记录的项，例如 `model/locking.go`、`service/openaicompat/*`、`relay/channel/advancedcustom/*`、`web/default/src/features/dashboard/components/flow/*`、`web/default/src/features/usage-logs/components/usage-logs-mobile-card.tsx`、`model/authz_user_override.go` 和各组 `router/*_router.go` 权限表。
+2. 本轮只修改文档，不影响 Go/前端编译、数据库 schema、权限判定、支付、Relay 热路径或 3003 运行态行为。
+3. 文档中的剩余队列不能过度收窄总目标；因此仍保留 Casbin/角色策略持久化、ClickHouse 真接入、账号池日志体验、DataTable 分层、Classic parity 等未完成方向。
+4. 由于报告很长，局部校准可能仍有少量旧表述散落在历史实施评审中；历史评审保留当时语境，本轮优先修正会影响后续决策的总表、队列和路线建议。
+
+### 方案评审
+
+采用“证据驱动的文档校准”方案：不根据记忆判断完成度，而是用当前仓库文件、路由、测试文件和后续实施记录作为证据。总表只改能力当前状态和后续迁移方式；早期历史评审段落不回写改动当时的需求背景，避免破坏时间线。优先队列不再保留已完成项，而是重新列出仍能从当前代码中确认未完全实现的后续能力。
+
+验收方式：
+
+1. `rg` 确认早期队列不再把 GORM 行锁、Responses、Gemini Responses、管理审计、Usage Logs、Dashboard Flow、Advanced Custom 和 Waffo Pancake 写成待迁移主项。
+2. `rg` 确认新增的 2026-07-10 复核队列和本轮实施评审存在。
+3. `git diff --check` 确认文档无空白错误。
+4. 按热更新要求访问 `http://192.168.0.202:3003/` 和 `/api/status`，确认本轮文档修改没有影响运行态服务可用性。
+
+### 实施结果
+
+已完成差异报告状态校准：
+
+- 顶部总表已把 Authz、权限路由表、管理审计、Flow/Sankey、OpenAI image stream、Advanced Custom、Waffo Pancake 和用户权限回传改为当前已落地状态，并明确剩余方向。
+- 早期“子 Agent 复核后的后续优先队列”已替换为“2026-07-10 复核后的后续优先队列”，重点转向 Casbin/角色策略持久化、细资源拆分、ClickHouse 真接入、账号池任务持久队列、账号池日志体验、DataTable 渐进分层和 Classic parity。
+- 原生化路线建议已从“先做基础能力”更新为“已完成基础闭环后的维护契约和下一层能力”，避免后续重复实现已经落地的切片。
+- 本轮没有修改运行时代码、前端资源或数据库迁移。
+
+### 验证记录
+
+本轮修改后已执行以下验证：
+
+1. `rg -n "2026-07-10 复核后的后续优先队列|差异报告优先队列状态校准|角色模板与 Casbin|账号池日志与全局 Usage Logs" docs/features/new-api-main-diff-analysis.md`，确认复核队列、本轮实施评审和实施索引均已写入。
+2. `rg -n "P0 \\| GORM v2 行锁 helper|P1 \\| OpenAI Responses 反向兼容|P1 \\| Gemini Responses|P1 \\| Usage Logs 移动端|P1/P2 \\| Dashboard Flow" docs/features/new-api-main-diff-analysis.md` 无输出，确认旧优先队列主项已移除。
+3. `git diff --check` 通过。
+4. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`。
+5. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回正常状态 JSON，`success=true`。
+
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-10 | 差异报告优先队列状态校准 | `docs/features/new-api-main-diff-analysis.md` | 基于当前工作树证据校准早期总表、优先队列和路线建议；把已原生化的行锁、Responses/Gemini、管理审计、Flow、Usage Logs、Advanced Custom、Waffo Pancake、OpenAI image stream、用户级 Authz override 和多组权限路由从待办中移出，保留 Casbin/角色策略、ClickHouse 真接入、DataTable 分层、账号池日志体验等真实剩余项。 |
 | 2026-07-10 | 订阅到期显式降级分组 | `model/subscription.go`、`model/main.go`、`controller/subscription.go`、`web/default/src/features/subscriptions/*`、`web/classic/src/components/table/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 `downgrade_group` 能力：套餐可配置订阅结束后显式降级到指定分组；用户订阅购买时快照该策略，到期/作废/删除时显式降级优先，空值继续回退购买前分组，并保留其它有效升级订阅的分组权益。 |
 | 2026-07-10 | 账号池分组字段级 fail-closed | `controller/account_pool.go`、`controller/account_pool_authz.go`、`controller/account_pool_authz_test.go`、`web/default/src/features/account-pool/*` | 账号池分组更新读取原始 JSON 并按字段分类做敏感写二次校验：`platform`、`auth_type`、`model_mapping`、`settings` 和未知字段默认需要 `account_pool.sensitive_write`；普通字段仍允许 `account_pool.write`。默认前端账号池页和凭证面板消费 `write/operate/sensitive_write`，编辑既有分组时禁用敏感字段。 |
 | 2026-07-10 | 安全边界能力状态校准 | `docs/features/new-api-main-diff-analysis.md` | 复核匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 客户端和 `/api/status/test` 权限路由现状，将报告中仍按“待增加”描述的安全能力更新为“已原生化首批 + 后续维护契约”，避免后续重复迁移。 |
