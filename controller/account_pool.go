@@ -481,9 +481,23 @@ func UpdateAccountPoolGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	var req accountPoolGroupUpsertRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	rawBody, err := c.GetRawData()
+	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	var req accountPoolGroupUpsertRequest
+	if err := common.Unmarshal(rawBody, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var requestData map[string]any
+	if err := common.Unmarshal(rawBody, &requestData); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	completeAccountPoolGroupUpdateRequest(&req, group, requestData)
+	if !requireAccountPoolGroupSensitiveWriteIfNeeded(c, req, group, requestData) {
 		return
 	}
 	updates, err := accountPoolGroupUpdateMap(req)

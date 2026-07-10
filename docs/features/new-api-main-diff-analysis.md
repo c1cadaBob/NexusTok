@@ -57,7 +57,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 |------|------------------------|---------------|------------|
 | 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、默认前端入口/按钮消费与渠道/账号池/订阅 Admin 路由 enforcement 已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置九类资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，默认前端已让管理入口、Usage Logs、Dashboard 和渠道页关键按钮消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log` 和 `/api/data` 已按同一矩阵做服务端二次校验。当前仍基于系统角色基线；Casbin 存储、用户 override 和系统设置等更多路由 enforcement 待后续分批接入。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地首个 enforcement 切片 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；原有 `AdminAuth`、`RootAuth`、安全验证、限流和禁缓存边界继续保留。后续账号池路由也应采用同样模式。 |
-| 渠道敏感字段 fail-closed | `controller/channel_authz.go` | 已部分落地 | 已先为渠道更新接口建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；敏感写二次校验已改为 `authz.Can(..., ChannelSensitiveWrite)`，当前基线仍等价 Root 权限。账号池路由已先按接口级敏感度收紧，字段级分类待后续跟进。 |
+| 渠道/账号池敏感字段 fail-closed | `controller/channel_authz.go`、`controller/account_pool_authz.go` | 已落地主要更新路径 | 渠道更新接口已建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；账号池分组更新已对 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段做敏感写二次校验，并让默认前端账号池页消费 `write/operate/sensitive_write`。后续新增字段必须进入分类测试。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 账号池有状态审计，但全局管理审计较弱 | 保留账号池专用审计，同时新增全局操作审计兜底，用 action + params 支持前端 i18n。 |
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`controller/system_task_handlers.go`、`/api/system-task/*` | 后端模型、租约锁、runner、Root 查询接口、日志清理任务、批量渠道测试任务、上游模型同步任务、账号池检测任务、订阅维护任务、Midjourney/通用异步任务轮询和默认前端任务面板已落地 | 继续把后续新增长耗时后台动作统一接入 SystemTask，并在 `/system-info` 统一观测。 |
 | 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 后端心跳、Root 只读接口和默认前端 `/system-info` 实例面板已落地 | 已引入 `NODE_NAME`/主机名兜底、主从节点、CPU/内存/磁盘/版本心跳、实例页面和同页 SystemTask 任务面板。 |
@@ -299,7 +299,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 1. 匿名请求体限制已完成首批原生化，并挂到 setup、register、login、2FA login、passkey login、password reset、OAuth bind、Webhook 等入口；后续新增匿名 POST 路由时，必须在路由评审里明确挂载 `AnonymousRequestBodyLimit()` 或说明无需限制的原因。
 2. SSRF 保护客户端已完成首批原生化，下载、Webhook、Bark/Gotify 通知等用户可控外部 URL 拉取已走统一 protected client；Relay 上游地址继续保留普通 client，避免误伤合法内网渠道，后续只做用户可控 URL 覆盖缺口审计。
 3. HeaderNavModuleAuth 已完成后端鉴权、默认前端健壮解析和 pricing/rankings 路由最新配置守卫；后续新增公开导航模块时，必须同步维护 `HeaderNavModules` 解析、前端守卫和后端 API 鉴权。
-4. 渠道和账号池敏感字段 fail-closed 仍需继续推进：渠道更新接口已先落地字段分类和 Root 兜底，账号池接口已按敏感度收紧，账号池表单字段级分类待后续接入 Authz 时统一覆盖。
+4. 渠道和账号池敏感字段 fail-closed 已覆盖主要更新路径：渠道更新和账号池分组更新均按原始请求字段做分类，未知字段默认敏感；账号池凭证、账号生命周期、OAuth 和批量导入路径继续在路由级要求 `account_pool.sensitive_write`。后续新增字段必须先补分类和测试，再开放给前端。
 
 ### P2：计费和额度安全
 
@@ -351,7 +351,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑第一批已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper 已原生化；下一批聚焦账号池字段级 fail-closed、SSRF 覆盖缺口审计、Authz override/Casbin 和公开模块新增时的测试契约。
+2. 安全小步快跑第一批已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed 已原生化；下一批聚焦 SSRF 覆盖缺口审计、Authz override/Casbin 持久化和公开模块新增时的测试契约。
 3. 系统任务/系统信息：先后端模型和接口，再 `/system-info` 页面。
 4. 权限系统：先 channel/account_pool 两个资源，再扩展到用户、模型、订阅、设置。
 5. 订阅/支付增强：余额支付、钱包溢出、Waffo Pancake 商品绑定。
@@ -6389,6 +6389,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-10 | 账号池分组字段级 fail-closed | `controller/account_pool.go`、`controller/account_pool_authz.go`、`controller/account_pool_authz_test.go`、`web/default/src/features/account-pool/*` | 账号池分组更新读取原始 JSON 并按字段分类做敏感写二次校验：`platform`、`auth_type`、`model_mapping`、`settings` 和未知字段默认需要 `account_pool.sensitive_write`；普通字段仍允许 `account_pool.write`。默认前端账号池页和凭证面板消费 `write/operate/sensitive_write`，编辑既有分组时禁用敏感字段。 |
 | 2026-07-10 | 安全边界能力状态校准 | `docs/features/new-api-main-diff-analysis.md` | 复核匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 客户端和 `/api/status/test` 权限路由现状，将报告中仍按“待增加”描述的安全能力更新为“已原生化首批 + 后续维护契约”，避免后续重复迁移。 |
 | 2026-07-09 | models.dev 手动同步全量缺失补齐 | `controller/model_sync.go`、`controller/model_sync_test.go`、`web/default/src/features/models/api.ts`、`docs/features/model-sync-pricing.md` | 修复默认前端手动 models.dev 同步仍按旧 official 缺失能力表范围创建模型的问题；models.dev 来源默认按完整 catalog 补齐本地缺失模型，预览和实际同步目标一致，并保留 `create_all` 显式控制。回归覆盖 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 三模型场景。 |
 | 2026-07-09 | 前端依赖安全护栏 | `web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的前端 overrides 安全护栏，但不全量照搬；DOMPurify 升级到 `3.4.11`，并只锁定同主版本兼容的 `fast-uri`、`hono`、`js-cookie`、`mermaid`、`minimist`、`postcss` 和 `qs`，暂缓不兼容主版本或精确依赖路径的 `brace-expansion`、`uuid`、`ip-address`。 |
@@ -7490,14 +7491,14 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 
 持续对照 `/opt/project/new-api-main` 的过程中，差异报告顶部总表已经把匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 和系统设置路由权限表标记为已落地或部分落地，但中部 `P1：安全边界` 与“建议的落地顺序”仍保留“增加匿名请求体限制”“增加 SSRF 保护客户端”“增加 HeaderNavModuleAuth”等待办式描述。该表述会误导后续迁移计划，让已经原生化的安全能力被重复纳入待开发范围。
 
-本轮目标不是新增业务能力，而是基于当前仓库证据校准报告状态：只把已经能从代码、路由和测试中确认的能力改为“已原生化首批 + 后续维护契约”，对尚未完全完成的账号池字段级 fail-closed、Authz override/Casbin、SSRF 覆盖缺口审计继续保留为后续待办。
+本轮目标不是新增业务能力，而是基于当前仓库证据校准报告状态：只把已经能从代码、路由和测试中确认的能力改为“已原生化首批 + 后续维护契约”。账号池字段级 fail-closed 已在后续实施切片补齐，Authz override/Casbin、SSRF 覆盖缺口审计继续保留为后续待办。
 
 ### 影响范围分析
 
 | 模块 | 文件 | 影响 |
 | --- | --- | --- |
 | 差异报告顶部总表 | `docs/features/new-api-main-diff-analysis.md` | 将匿名请求体限制、顶栏模块鉴权和受保护 Fetch/SSRF 的原生化建议改为维护契约，明确新增入口的后续约束。 |
-| P1 安全边界路线 | `docs/features/new-api-main-diff-analysis.md` | 把已完成首批的安全能力从“待增加”改为“已落地，后续审计/维护”，保留账号池字段级 fail-closed 待办。 |
+| P1 安全边界路线 | `docs/features/new-api-main-diff-analysis.md` | 把已完成首批的安全能力从“待增加”改为“已落地，后续审计/维护”；账号池字段级 fail-closed 已在后续实施切片补齐。 |
 | 建议落地顺序 | `docs/features/new-api-main-diff-analysis.md` | 标注安全小步快跑第一批已完成，下一批聚焦权限和覆盖缺口。 |
 | 实施记录索引 | `docs/features/new-api-main-diff-analysis.md` | 新增 2026-07-10 状态校准记录，便于后续回溯本轮只改文档、不改业务代码。 |
 
@@ -7507,7 +7508,7 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 - 主要风险是把尚未完成的能力误标为完成；因此只校准有明确证据的条目：匿名请求体限制、HeaderNavModuleAuth、用户可控 URL 的 protected fetch 首批接入，以及 `/api/status/test` 已归入系统设置权限路由。
 - SSRF 条目不声明“所有网络请求已替换”，而是明确限定为“用户可控 URL 专用 client 首批已落地”；Relay 全局 client 继续作为显式例外保留。
 - HeaderNav 条目不只看后端中间件，也结合默认前端集中解析、pricing/rankings 路由守卫和实施记录，避免把单点能力误判为全链路完成。
-- 账号池字段级 fail-closed、Authz override/Casbin 和新增公开模块的测试契约仍保留为后续待办，避免过度乐观。
+- Authz override/Casbin、SSRF 覆盖缺口审计和新增公开模块的测试契约仍保留为后续待办，避免过度乐观。
 
 ### 方案评审
 
@@ -7527,7 +7528,7 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 1. 匿名请求体限制已经是 NexusTok 原生匿名入口保护能力，后续新增匿名 POST 路由必须显式评估是否挂载。
 2. HeaderNavModuleAuth 已形成后端接口鉴权、前端配置解析和页面路由守卫的闭环，后续新增公开导航模块必须同步维护三处契约。
 3. 受保护 Fetch/SSRF 已覆盖首批用户可控 URL 拉取链路，Relay 全局 client 保留为显式例外，后续重点是覆盖缺口审计。
-4. 安全小步快跑第一批已完成，下一批重点转向账号池字段级 fail-closed、SSRF 覆盖缺口审计、Authz override/Casbin 和公开模块新增时的测试契约。
+4. 安全小步快跑第一批已完成；账号池字段级 fail-closed 已在后续切片补齐，下一批重点转向 SSRF 覆盖缺口审计、Authz override/Casbin 和公开模块新增时的测试契约。
 
 ### 验证记录
 
@@ -7535,3 +7536,69 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 2. `rg -n "P1：安全边界|匿名请求体|HeaderNav|SSRF|status/test|建议的落地顺序" docs/features/new-api-main-diff-analysis.md` 已定位并校准旧表述。
 3. 本轮无业务代码改动，因此不需要运行 Go 单测、前端 typecheck 或构建；执行 `git diff --check` 作为文档格式检查。
 4. 当前会话未暴露浏览器 MCP/DevTools 工具，已通过工具发现确认不可用；本轮改用 `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 验证当前热更新部署首页返回 200。由于本轮仅修改文档，页面不会出现业务 UI 变化。
+
+## 本轮实施评审：账号池分组字段级 fail-closed
+
+### 需求分析
+
+前面已经将 `/api/account-pool` 接入 `account_pool` 权限表：查询、操作、普通写和敏感写在路由级已经区分。但分组更新接口 `PUT /api/account-pool/groups/:id` 仍是一个混合 payload，只要求 `account_pool.write`。该 payload 同时包含普通展示/调度字段和会改变上游语义的高风险字段，例如 `platform`、`auth_type`、`model_mapping`、`settings`。普通 Admin 具备 `account_pool.write` 但默认不具备 `account_pool.sensitive_write`，如果不做字段级二次校验，就会比渠道编辑页已经落地的 fail-closed 策略更松。
+
+本轮目标是把 new-api-main 的细粒度权限优势转为 NexusTok 原生账号池保护能力：分组更新时，普通字段仍允许具备 `account_pool.write` 的管理员维护；一旦请求修改敏感字段或携带未知字段，后端必须额外要求 `account_pool.sensitive_write`。默认前端也应消费同一权限矩阵，在编辑既有分组时禁用敏感字段，避免用户先填后被服务端拒绝。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 账号池分组后端鉴权 | `controller/account_pool_authz.go`、`controller/account_pool.go` | 新增分组更新字段分类和敏感变更判定；`PUT /api/account-pool/groups/:id` 在写入前进行敏感写二次校验。 |
+| 账号池分组更新兼容 | `controller/account_pool.go` | 读取原始 JSON，区分字段缺失和显式清空；缺失的 `models`、`group`、`settings` 继承原值，避免局部更新误清空文本字段。 |
+| 后端回归测试 | `controller/account_pool_authz_test.go` 或现有账号池测试 | 覆盖普通字段放行、敏感字段拒绝、未知字段 fail-closed、字段分类完整性和局部更新保留文本字段。 |
+| 默认前端账号池页 | `web/default/src/features/account-pool/index.tsx` | 消费 `account_pool.write/sensitive_write` 权限；新建/保存/删除/账号生命周期按钮按既有路由权限禁用；编辑既有分组时禁用敏感字段。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 尽量复用已有 `You don't have necessary permission` 文案；若新增说明文本则运行 `bun run i18n:sync` 并补齐六语。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+- 分组更新是账号池调度核心接口，误判敏感字段可能阻断 Admin 的日常维护；因此敏感集合先收敛到 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段，不把名称、模型列表、用户组、状态、策略、限流、每日额度、自动检测、预热和任务提交限流直接升级为敏感写。
+- `settings` 是开放 JSON 扩展，未来可能承载代理、额外请求参数或其它高风险配置，必须按敏感字段处理；但历史 `settings.max_concurrency` 清理属于 `max_concurrency` 显式字段的兼容逻辑，不应让普通限流调整被误判为敏感。
+- 当前前端编辑分组会发送完整 payload；后端读取原始 JSON 后仍要兼容这种完整提交，同时防止外部客户端只传 `name` 时被旧 update map 误清空 `models`、`group`、`settings`。
+- 新建分组仍保持 `account_pool.write`，因为它不会直接修改既有运行态绑定；凭证创建、导入、OAuth、账号生命周期等路径已经在路由级要求 `account_pool.sensitive_write`。
+- 前端按钮禁用只是体验层保护，后端字段级校验才是最终边界；受限管理员如果绕过页面发请求，服务端必须拒绝敏感字段变更。
+
+### 方案评审
+
+采用“后端 fail-closed + 前端权限消费”的小步方案：
+
+1. 新增账号池分组字段分类：敏感字段为 `platform`、`auth_type`、`model_mapping`、`settings`；只读字段包括 `id`、来源、统计、用量和时间戳；其它分组维护字段归为普通写。
+2. `UpdateAccountPoolGroup` 改为先 `GetRawData()`，用 `common.Unmarshal` 同时解析 DTO 和 `map[string]any`，再基于 requestData 判断字段是否出现，避免未知字段被 Gin bind 静默忽略。
+3. 敏感变更判定只在实际值变化时触发；`platform/auth_type` 按模型层规范化比较，`model_mapping` 按 nil 与空字符串等价比较，`settings` 对历史 `max_concurrency` 清理做兼容。
+4. 如果 requestData 中存在未分类字段，后端默认按敏感变更处理；Root 或拥有 `account_pool.sensitive_write` override 的管理员可以继续修改。
+5. 前端账号池页新增本地权限计算：`write` 控制新建/编辑保存，`operate` 控制检测、状态、导出和清理，`sensitive_write` 控制删除、账号创建/批量导入、凭证/OAuth/刷新和既有分组的敏感字段编辑。
+6. 编辑既有分组时，缺少敏感写权限则禁用 `Platform`、`Auth Type`、`Model Mapping`、`Settings JSON`；保存仍允许提交普通字段，后端会兜底拒绝任何绕过禁用态的敏感字段变更。
+
+### 验收方式
+
+1. `go test ./controller -run 'TestAccountPoolGroup'`。
+2. `go test ./router -run TestAccountPoolRoutes`。
+3. `cd web/default && bun run i18n:sync`。
+4. `cd web/default && bun run typecheck`。
+5. `cd web/default && bun run build`。
+6. `git diff --check`。
+7. 优先使用 MCP 打开 `http://192.168.0.202:3003/account-pool/groups` 验证账号池页面仍正常；如当前会话仍无浏览器 MCP 工具，则使用 `curl --noproxy '*'` 访问首页和 `/api/status`，并记录工具限制。
+
+### 实施结果
+
+已完成账号池分组字段级 fail-closed 原生化。本轮新增 `controller/account_pool_authz.go`，把账号池分组更新字段分为敏感、普通写和只读三类：`platform`、`auth_type`、`model_mapping`、`settings` 以及未分类字段默认要求 `account_pool.sensitive_write`；名称、状态、策略、模型列表、用户组、限流、每日额度、自动检测、预热和任务提交限流继续由 `account_pool.write` 维护。
+
+`UpdateAccountPoolGroup` 已改为读取原始 JSON 后分别解析 DTO 和 `requestData`，从而能区分字段缺失、显式清空和未知字段。为避免旧 update map 在局部更新时误清空 `models`、`group`、`settings`，本轮在进入 update map 前用原始分组补齐缺失文本字段；但客户端显式传空字符串时仍保留“清空”语义。历史 `settings.max_concurrency` 在显式提交 `max_concurrency` 时继续按兼容逻辑移除，不会被误判为 settings 敏感变更。
+
+默认前端账号池页已开始消费 `account_pool.write/operate/sensitive_write`：新建/保存分组走 write；检测、状态、导出、清理和运行时重置走 operate；删除分组、创建/更新/删除账号、批量导入、凭证文件导入/编辑/删除、Codex OAuth/Device 和凭证刷新走 sensitive_write。编辑既有分组时，缺少敏感写权限会禁用 `Platform`、`Auth Type`、`Model Mapping`、`Settings JSON`，普通字段仍可维护。
+
+### 验证记录
+
+1. `go test ./controller -run 'TestAccountPoolGroup'` 通过，覆盖普通字段放行、敏感字段拒绝、未知字段 fail-closed、字段分类完整性、局部更新保留文本字段和 legacy `settings.max_concurrency` 清理兼容。
+2. `go test ./router -run 'Test(RegisterAccountPoolRoutesKeepsCoreHandlers|AccountPoolPermissionRoutesClassifyCoreActions|AccountPoolPermissionRoutesStayOnAccountPoolResource)'` 通过，确认账号池路由权限表仍保持 read/operate/write/sensitive_write 分类。
+3. `cd web/default && bun run i18n:sync` 通过；本轮复用已有 `You don't have necessary permission` 文案，没有新增 locale key。
+4. `cd web/default && bun run typecheck` 通过。
+5. `cd web/default && bun run build` 通过。
+6. `git diff --check` 通过。
+7. 当前会话仍未暴露浏览器 MCP/DevTools 工具；已使用 `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 验证首页返回 200，并使用 `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 验证状态接口可访问。

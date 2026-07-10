@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FileJson, Loader2, Pencil, Trash2, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -68,6 +68,7 @@ import type {
 
 type AuthFilesPanelProps = {
   groups: AccountPoolGroup[]
+  canSensitiveWrite?: boolean
 }
 
 type AuthFileFormState = {
@@ -323,7 +324,10 @@ function authFileFormFromRow(authFile: AccountPoolAuthFile): AuthFileFormState {
   }
 }
 
-export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
+export function AuthFilesPanel({
+  groups,
+  canSensitiveWrite = true,
+}: AuthFilesPanelProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -361,7 +365,14 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
     await queryClient.invalidateQueries({ queryKey: ['channels'] })
   }
 
+  const ensureSensitiveWrite = useCallback(() => {
+    if (canSensitiveWrite) return true
+    toast.error(t("You don't have necessary permission"))
+    return false
+  }, [canSensitiveWrite, t])
+
   const openImport = () => {
+    if (!ensureSensitiveWrite()) return
     setForm({
       ...emptyForm,
       poolGroupId: groupFilterId ? String(groupFilterId) : 'auto',
@@ -370,6 +381,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
   }
 
   const openEdit = (authFile: AccountPoolAuthFile) => {
+    if (!ensureSensitiveWrite()) return
     setForm(authFileFormFromRow(authFile))
     setFormOpen(true)
   }
@@ -414,6 +426,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
   })
 
   const submitAuthFile = async () => {
+    if (!ensureSensitiveWrite()) return
     if (!form.id && !form.content.trim()) {
       toast.error(t('Auth file JSON is required'))
       return
@@ -459,6 +472,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
   }
 
   const deleteAuthFile = async (authFile: AccountPoolAuthFile) => {
+    if (!ensureSensitiveWrite()) return
     if (
       !window.confirm(t('Delete this credential and its linked pool account?'))
     ) {
@@ -553,7 +567,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
             )}
             {t('Refresh')}
           </Button>
-          <Button onClick={openImport}>
+          <Button disabled={!canSensitiveWrite} onClick={openImport}>
             <Upload data-icon='inline-start' />
             {t('Import Credential')}
           </Button>
@@ -578,8 +592,9 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
               const fullSummary = formatCredentialSummary(
                 authFile.credential_summary
               )
-              const accountSummary =
-                formatCompactCredentialSummary(authFile.credential_summary)
+              const accountSummary = formatCompactCredentialSummary(
+                authFile.credential_summary
+              )
               const groupText = assignedGroupsText(authFile)
               const sourceSummary = sourceText(authFile)
               const subscriptionType = subscriptionTypeText(authFile)
@@ -587,7 +602,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
 
               return (
                 <TableRow key={authFile.id}>
-                  <TableCell className='min-w-[280px] max-w-[440px]'>
+                  <TableCell className='max-w-[440px] min-w-[280px]'>
                     <div
                       className='truncate font-medium'
                       title={accountTitle(authFile, fullSummary, t)}
@@ -601,7 +616,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                       {t('File')}: {authFile.name} · #{authFile.id}
                     </div>
                   </TableCell>
-                  <TableCell className='min-w-[150px] max-w-[190px]'>
+                  <TableCell className='max-w-[190px] min-w-[150px]'>
                     <div className='truncate text-sm'>
                       {authFile.provider || '-'}
                     </div>
@@ -613,7 +628,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     </div>
                   </TableCell>
                   <TableCell
-                    className='min-w-[90px] max-w-[130px]'
+                    className='max-w-[130px] min-w-[90px]'
                     title={`${t('Type')}: ${subscriptionType}`}
                   >
                     {subscriptionType === '-' ? (
@@ -625,7 +640,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     )}
                   </TableCell>
                   <TableCell
-                    className='min-w-[150px] max-w-[220px] truncate text-xs font-medium'
+                    className='max-w-[220px] min-w-[150px] truncate text-xs font-medium'
                     title={[
                       assignedGroupsTitle(authFile),
                       authFile.pool_account_ids &&
@@ -643,7 +658,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                     {groupText}
                   </TableCell>
                   <TableCell
-                    className='min-w-[190px] max-w-[260px] truncate text-xs'
+                    className='max-w-[260px] min-w-[190px] truncate text-xs'
                     title={ruleTitle(authFile, t)}
                   >
                     {ruleSummary || '-'}
@@ -673,6 +688,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                         size='icon-sm'
                         aria-label={t('Edit')}
                         title={t('Edit')}
+                        disabled={!canSensitiveWrite}
                         onClick={() => openEdit(authFile)}
                       >
                         <Pencil />
@@ -682,6 +698,7 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
                         size='icon-sm'
                         aria-label={t('Delete')}
                         title={t('Delete')}
+                        disabled={!canSensitiveWrite}
                         onClick={() => void deleteAuthFile(authFile)}
                       >
                         <Trash2 />
@@ -998,7 +1015,10 @@ export function AuthFilesPanel({ groups }: AuthFilesPanelProps) {
           </div>
 
           <DialogFooter>
-            <Button onClick={submitAuthFile} disabled={actionLoading}>
+            <Button
+              onClick={submitAuthFile}
+              disabled={actionLoading || !canSensitiveWrite}
+            >
               {actionLoading && (
                 <Loader2 data-icon='inline-start' className='animate-spin' />
               )}

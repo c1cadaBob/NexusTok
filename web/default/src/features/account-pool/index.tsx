@@ -43,6 +43,12 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
+import { cn } from '@/lib/utils'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -82,7 +88,6 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
@@ -1133,9 +1138,35 @@ export function AccountPool() {
 
   const groups = groupsQuery.data?.data?.items ?? []
   const selectedGroup = groups.find((group) => group.id === selectedGroupId)
-  const sourceGroupOptions = groups.filter((group) => group.id !== selectedGroupId)
+  const sourceGroupOptions = groups.filter(
+    (group) => group.id !== selectedGroupId
+  )
   const selectedSourceGroup = sourceGroupOptions.find(
     (group) => String(group.id) === sourceGroupId
+  )
+  const canOperateAccountPool = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canWriteAccountPool = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
+  const canSensitiveWriteAccountPool = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
+  const selectedGroupIsEditable = Boolean(selectedGroup && canWriteAccountPool)
+  const canEditGroupSensitiveFields = Boolean(
+    !groupForm.id || canSensitiveWriteAccountPool
+  )
+  const ensureAccountPoolPermission = useCallback(
+    (allowed: boolean) => {
+      if (allowed) return true
+      toast.error(t("You don't have necessary permission"))
+      return false
+    },
+    [t]
   )
 
   useEffect(() => {
@@ -1537,11 +1568,13 @@ export function AccountPool() {
   }, [checkTask?.id, checkTask?.status, refreshAll, t])
 
   const openCreateGroup = () => {
+    if (!ensureAccountPoolPermission(canWriteAccountPool)) return
     setGroupForm(emptyGroupForm)
     setGroupFormOpen(true)
   }
 
   const openEditGroup = (group: AccountPoolGroup) => {
+    if (!ensureAccountPoolPermission(canWriteAccountPool)) return
     setGroupForm({
       id: group.id,
       name: group.name,
@@ -1569,8 +1602,7 @@ export function AccountPool() {
         group.preflight_check_freshness_minutes || 1440
       ),
       preflightCheckLimit: String(group.preflight_check_limit || 20),
-      noAvailableAction:
-        group.no_available_action === 'wait' ? 'wait' : 'fail',
+      noAvailableAction: group.no_available_action === 'wait' ? 'wait' : 'fail',
       noAvailableWaitSeconds: String(group.no_available_wait_seconds || 5),
       taskMaxConcurrency: String(group.task_max_concurrency || 0),
       taskRateLimitRpm: String(group.task_rate_limit_rpm || 0),
@@ -1581,6 +1613,7 @@ export function AccountPool() {
   }
 
   const submitGroup = async () => {
+    if (!ensureAccountPoolPermission(canWriteAccountPool)) return
     if (!groupForm.name.trim()) {
       toast.error(t('Name is required'))
       return
@@ -1640,6 +1673,7 @@ export function AccountPool() {
   }
 
   const deleteGroup = async (group: AccountPoolGroup) => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (
       !window.confirm(
         t('Are you sure you want to delete this account pool group?')
@@ -1666,6 +1700,7 @@ export function AccountPool() {
   }
 
   const openCreateAccount = () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     setAccountForm({
       ...emptyAccountForm,
       platform: selectedGroup?.platform ?? '',
@@ -1679,6 +1714,7 @@ export function AccountPool() {
   }
 
   const openEditAccount = (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     setAccountForm({
       id: account.id,
       name: account.name,
@@ -1703,9 +1739,7 @@ export function AccountPool() {
   const toggleAuthFileSelection = (authFileId: number, checked: boolean) => {
     setSelectedAuthFileIds((current) => {
       if (checked) {
-        return current.includes(authFileId)
-          ? current
-          : [...current, authFileId]
+        return current.includes(authFileId) ? current : [...current, authFileId]
       }
       return current.filter((id) => id !== authFileId)
     })
@@ -1725,6 +1759,7 @@ export function AccountPool() {
   }
 
   const submitAttachAccounts = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
     if (accountAddMode === 'credentials' && selectedAuthFileIds.length === 0) {
       toast.error(t('Select at least one credential'))
@@ -1771,6 +1806,7 @@ export function AccountPool() {
   }
 
   const submitAccount = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
     if (!accountForm.id && accountAddMode !== 'manual') {
       await submitAttachAccounts()
@@ -1821,6 +1857,7 @@ export function AccountPool() {
   }
 
   const submitBatch = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId || !batchCredentials.trim()) return
     setActionLoading(true)
     try {
@@ -1852,6 +1889,7 @@ export function AccountPool() {
   }
 
   const exportAccounts = async (accountIds?: number[]) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     if (!selectedGroupId || !selectedGroup) return
     if (accountIds && accountIds.length === 0) {
       toast.info(t('No accounts selected'))
@@ -1886,6 +1924,7 @@ export function AccountPool() {
   }
 
   const exportStateLogs = async () => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     setStateLogExporting(true)
     try {
       const response = await exportAccountPoolStateLogs({
@@ -1945,6 +1984,7 @@ export function AccountPool() {
   const batchUpdateSelectedAccountStatus = async (
     action: 'enable' | 'disable' | 'clear_cooldown'
   ) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     if (!selectedGroupId) return
     if (selectedAccountIds.length === 0) {
       toast.info(t('No accounts selected'))
@@ -1991,6 +2031,7 @@ export function AccountPool() {
   }
 
   const batchDeleteSelectedAccounts = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
     if (selectedAccountIds.length === 0) {
       toast.info(t('No accounts selected'))
@@ -2032,6 +2073,7 @@ export function AccountPool() {
   }
 
   const setAccountEnabled = async (account: PoolAccount, enabled: boolean) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     setActionLoading(true)
     try {
       const response = await updatePoolAccountStatus(account.id, {
@@ -2053,6 +2095,7 @@ export function AccountPool() {
   }
 
   const clearCooldown = async (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     setActionLoading(true)
     try {
       const response = await updatePoolAccountStatus(account.id, {
@@ -2071,6 +2114,7 @@ export function AccountPool() {
   }
 
   const deleteAccount = async (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!window.confirm(t('Are you sure you want to delete this account?'))) {
       return
     }
@@ -2090,6 +2134,7 @@ export function AccountPool() {
   }
 
   const refreshCredential = async (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     setActionLoading(true)
     try {
       const response = await refreshPoolAccountCredential(account.id)
@@ -2106,6 +2151,7 @@ export function AccountPool() {
   }
 
   const checkAccount = async (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     setCheckingAccountId(account.id)
     try {
       const response = await checkPoolAccount(account.id)
@@ -2130,6 +2176,7 @@ export function AccountPool() {
   }
 
   const checkSelectedGroupAccounts = async () => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     if (!selectedGroupId) return
     if (accountTotal <= 0) {
       toast.info(t('No accounts found'))
@@ -2159,6 +2206,7 @@ export function AccountPool() {
   }
 
   const cleanupCheckTasks = async () => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     const confirmed = window.confirm(
       t('Clean completed and failed check tasks older than 7 days?')
     )
@@ -2197,6 +2245,7 @@ export function AccountPool() {
   }
 
   const resetRuntime = async (account: PoolAccount) => {
+    if (!ensureAccountPoolPermission(canOperateAccountPool)) return
     setActionLoading(true)
     try {
       const response = await resetPoolAccountRuntime(account.id)
@@ -2213,6 +2262,7 @@ export function AccountPool() {
   }
 
   const startCodexOAuth = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
     setActionLoading(true)
     try {
@@ -2241,6 +2291,7 @@ export function AccountPool() {
   }
 
   const completeCodexOAuth = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId || !codexInput.trim()) return
     setActionLoading(true)
     try {
@@ -2270,6 +2321,7 @@ export function AccountPool() {
   }
 
   const startCodexDevice = async () => {
+    if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
     setActionLoading(true)
     try {
@@ -2323,7 +2375,7 @@ export function AccountPool() {
             {t('Refresh')}
           </Button>
           {activeSection === 'groups' ? (
-            <Button onClick={openCreateGroup}>
+            <Button disabled={!canWriteAccountPool} onClick={openCreateGroup}>
               <Plus data-icon='inline-start' />
               {t('New Group')}
             </Button>
@@ -2410,10 +2462,7 @@ export function AccountPool() {
         ) : null}
 
         <section className='border-border bg-background min-w-0 rounded-lg border'>
-          <Tabs
-            value={activeView}
-            className='flex min-h-0 flex-col'
-          >
+          <Tabs value={activeView} className='flex min-h-0 flex-col'>
             <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
               <div className='flex min-w-0 flex-col gap-2'>
                 <div className='truncate text-sm font-semibold'>
@@ -2467,10 +2516,7 @@ export function AccountPool() {
                 ) : null}
               </div>
               <div className='flex flex-col gap-2 lg:items-end'>
-                <Tabs
-                  value={activeSection}
-                  onValueChange={handleSectionChange}
-                >
+                <Tabs value={activeSection} onValueChange={handleSectionChange}>
                   <TabsList className='h-auto max-w-full flex-wrap justify-start'>
                     {ACCOUNT_POOL_SECTION_IDS.map((section) => (
                       <TabsTrigger key={section} value={section}>
@@ -2516,7 +2562,7 @@ export function AccountPool() {
                       <Button
                         variant='outline'
                         size='sm'
-                        disabled={stateLogExporting}
+                        disabled={stateLogExporting || !canOperateAccountPool}
                         onClick={() => void exportStateLogs()}
                       >
                         {stateLogExporting ? (
@@ -2544,7 +2590,7 @@ export function AccountPool() {
                       <Button
                         variant='outline'
                         size='sm'
-                        disabled={checkTaskCleaning}
+                        disabled={checkTaskCleaning || !canOperateAccountPool}
                         onClick={() => void cleanupCheckTasks()}
                       >
                         {checkTaskCleaning ? (
@@ -2567,7 +2613,8 @@ export function AccountPool() {
                         disabled={
                           batchChecking ||
                           selectedGroupCheckTaskActive ||
-                          accountTotal <= 0
+                          accountTotal <= 0 ||
+                          !canOperateAccountPool
                         }
                         onClick={() => void checkSelectedGroupAccounts()}
                       >
@@ -2581,7 +2628,11 @@ export function AccountPool() {
                         )}
                         {t('Check Group')}
                       </Button>
-                      <Button size='sm' onClick={openCreateAccount}>
+                      <Button
+                        size='sm'
+                        disabled={!canSensitiveWriteAccountPool}
+                        onClick={openCreateAccount}
+                      >
                         <Plus data-icon='inline-start' />
                         {t('Add Account')}
                       </Button>
@@ -2597,31 +2648,46 @@ export function AccountPool() {
                         <DropdownMenuContent align='end' className='w-48'>
                           <DropdownMenuGroup>
                             <DropdownMenuItem
+                              disabled={!selectedGroupIsEditable}
                               onClick={() => openEditGroup(selectedGroup)}
                             >
                               <Pencil />
                               {t('Edit Group')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
+                              disabled={!canSensitiveWriteAccountPool}
                               onClick={() => void deleteGroup(selectedGroup)}
                             >
                               <Trash2 />
                               {t('Delete')}
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={startCodexOAuth}>
+                            <DropdownMenuItem
+                              disabled={!canSensitiveWriteAccountPool}
+                              onClick={startCodexOAuth}
+                            >
                               <ShieldCheck />
                               {t('Codex OAuth')}
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={startCodexDevice}>
+                            <DropdownMenuItem
+                              disabled={!canSensitiveWriteAccountPool}
+                              onClick={startCodexDevice}
+                            >
                               <Smartphone />
                               {t('Codex Device')}
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setBatchOpen(true)}>
+                            <DropdownMenuItem
+                              disabled={!canSensitiveWriteAccountPool}
+                              onClick={() => setBatchOpen(true)}
+                            >
                               <Upload />
                               {t('Batch Import')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              disabled={actionLoading || accountTotal <= 0}
+                              disabled={
+                                actionLoading ||
+                                accountTotal <= 0 ||
+                                !canOperateAccountPool
+                              }
                               onClick={() => void exportAccounts()}
                             >
                               <Download />
@@ -3112,7 +3178,9 @@ export function AccountPool() {
                       variant='outline'
                       size='sm'
                       disabled={
-                        actionLoading || selectedAccountIds.length === 0
+                        actionLoading ||
+                        selectedAccountIds.length === 0 ||
+                        !canOperateAccountPool
                       }
                       onClick={() =>
                         void batchUpdateSelectedAccountStatus('enable')
@@ -3125,7 +3193,9 @@ export function AccountPool() {
                       variant='outline'
                       size='sm'
                       disabled={
-                        actionLoading || selectedAccountIds.length === 0
+                        actionLoading ||
+                        selectedAccountIds.length === 0 ||
+                        !canOperateAccountPool
                       }
                       onClick={() =>
                         void batchUpdateSelectedAccountStatus('disable')
@@ -3138,7 +3208,9 @@ export function AccountPool() {
                       variant='outline'
                       size='sm'
                       disabled={
-                        actionLoading || selectedAccountIds.length === 0
+                        actionLoading ||
+                        selectedAccountIds.length === 0 ||
+                        !canOperateAccountPool
                       }
                       onClick={() =>
                         void batchUpdateSelectedAccountStatus('clear_cooldown')
@@ -3151,7 +3223,9 @@ export function AccountPool() {
                       variant='outline'
                       size='sm'
                       disabled={
-                        actionLoading || selectedAccountIds.length === 0
+                        actionLoading ||
+                        selectedAccountIds.length === 0 ||
+                        !canOperateAccountPool
                       }
                       onClick={() => void exportAccounts(selectedAccountIds)}
                     >
@@ -3162,7 +3236,9 @@ export function AccountPool() {
                       variant='outline'
                       size='sm'
                       disabled={
-                        actionLoading || selectedAccountIds.length === 0
+                        actionLoading ||
+                        selectedAccountIds.length === 0 ||
+                        !canSensitiveWriteAccountPool
                       }
                       onClick={() => void batchDeleteSelectedAccounts()}
                     >
@@ -3300,12 +3376,8 @@ export function AccountPool() {
                               {t('Request')}:&nbsp;
                               {formatUsageNumber(
                                 account.daily_request_count
-                              )}{' '}
-                              /{' '}
-                              {formatLimitValue(
-                                account.daily_request_limit,
-                                t
-                              )}
+                              )} /{' '}
+                              {formatLimitValue(account.daily_request_limit, t)}
                             </div>
                             <div className='text-muted-foreground mt-1 truncate'>
                               {t('Success')}: {account.success_count ?? 0} ·{' '}
@@ -3364,7 +3436,10 @@ export function AccountPool() {
                                 size='icon-sm'
                                 aria-label={t('Check Account')}
                                 title={t('Check Account')}
-                                disabled={checkingAccountId === account.id}
+                                disabled={
+                                  checkingAccountId === account.id ||
+                                  !canOperateAccountPool
+                                }
                                 onClick={() => void checkAccount(account)}
                               >
                                 {checkingAccountId === account.id ? (
@@ -3382,6 +3457,7 @@ export function AccountPool() {
                                 title={
                                   accountEnabled ? t('Disable') : t('Enable')
                                 }
+                                disabled={!canOperateAccountPool}
                                 onClick={() =>
                                   void setAccountEnabled(
                                     account,
@@ -3410,18 +3486,23 @@ export function AccountPool() {
                                 >
                                   <DropdownMenuGroup>
                                     <DropdownMenuItem
+                                      disabled={!canSensitiveWriteAccountPool}
                                       onClick={() => openEditAccount(account)}
                                     >
                                       <Pencil />
                                       {t('Edit')}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onClick={() => void clearCooldown(account)}
+                                      disabled={!canOperateAccountPool}
+                                      onClick={() =>
+                                        void clearCooldown(account)
+                                      }
                                     >
                                       <RefreshCw />
                                       {t('Clear cooldown')}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
+                                      disabled={!canOperateAccountPool}
                                       onClick={() => void resetRuntime(account)}
                                     >
                                       <RotateCcw />
@@ -3431,6 +3512,9 @@ export function AccountPool() {
                                       account.auth_type ===
                                         'official_oauth' && (
                                         <DropdownMenuItem
+                                          disabled={
+                                            !canSensitiveWriteAccountPool
+                                          }
                                           onClick={() =>
                                             void refreshCredential(account)
                                           }
@@ -3441,7 +3525,10 @@ export function AccountPool() {
                                       )}
                                     <DropdownMenuItem
                                       variant='destructive'
-                                      onClick={() => void deleteAccount(account)}
+                                      disabled={!canSensitiveWriteAccountPool}
+                                      onClick={() =>
+                                        void deleteAccount(account)
+                                      }
                                     >
                                       <Trash2 />
                                       {t('Delete')}
@@ -3496,7 +3583,10 @@ export function AccountPool() {
               </div>
             </TabsContent>
             <TabsContent value='auth-files' className='m-0 min-h-0'>
-              <AuthFilesPanel groups={groups} />
+              <AuthFilesPanel
+                groups={groups}
+                canSensitiveWrite={canSensitiveWriteAccountPool}
+              />
             </TabsContent>
             <TabsContent value='usage-logs' className='m-0 min-h-0'>
               {logViewTabs}
@@ -4329,6 +4419,7 @@ export function AccountPool() {
             <Input
               placeholder={t('Platform')}
               value={groupForm.platform}
+              disabled={!canEditGroupSensitiveFields}
               onChange={(event) =>
                 setGroupForm((current) => ({
                   ...current,
@@ -4339,6 +4430,7 @@ export function AccountPool() {
             <Select
               items={authTypeOptions.map((value) => ({ value, label: value }))}
               value={groupForm.authType}
+              disabled={!canEditGroupSensitiveFields}
               onValueChange={(value) =>
                 setGroupForm((current) => ({
                   ...current,
@@ -4412,6 +4504,7 @@ export function AccountPool() {
               autoComplete='off'
               placeholder={t('Model Mapping')}
               value={groupForm.modelMapping}
+              disabled={!canEditGroupSensitiveFields}
               onChange={(event) =>
                 setGroupForm((current) => ({
                   ...current,
@@ -4739,6 +4832,7 @@ export function AccountPool() {
               autoComplete='off'
               placeholder={t('Settings JSON')}
               value={groupForm.settings}
+              disabled={!canEditGroupSensitiveFields}
               onChange={(event) =>
                 setGroupForm((current) => ({
                   ...current,
@@ -4748,7 +4842,10 @@ export function AccountPool() {
             />
           </div>
           <DialogFooter>
-            <Button onClick={submitGroup} disabled={actionLoading}>
+            <Button
+              onClick={submitGroup}
+              disabled={actionLoading || !canWriteAccountPool}
+            >
               {actionLoading && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
@@ -4776,7 +4873,9 @@ export function AccountPool() {
           </DialogHeader>
           <Tabs
             value={accountForm.id ? 'manual' : accountAddMode}
-            onValueChange={(value) => setAccountAddMode(value as AccountAddMode)}
+            onValueChange={(value) =>
+              setAccountAddMode(value as AccountAddMode)
+            }
           >
             {!accountForm.id && (
               <TabsList className='h-auto max-w-full flex-wrap justify-start'>
@@ -4868,7 +4967,7 @@ export function AccountPool() {
                               aria-label={t('Select row')}
                             />
                           </TableCell>
-                          <TableCell className='min-w-[220px] max-w-[320px]'>
+                          <TableCell className='max-w-[320px] min-w-[220px]'>
                             <div
                               className='truncate font-medium'
                               title={fullSummary}
@@ -4889,7 +4988,7 @@ export function AccountPool() {
                             {authFile.subscription_type || '-'}
                           </TableCell>
                           <TableCell
-                            className='min-w-[150px] max-w-[220px] truncate text-xs'
+                            className='max-w-[220px] min-w-[150px] truncate text-xs'
                             title={authFilePoolGroupNames(authFile).join(', ')}
                           >
                             {authFileGroupLabel(authFile)}
@@ -5181,11 +5280,16 @@ export function AccountPool() {
             </TabsContent>
           </Tabs>
           <DialogFooter>
-            <Button onClick={submitAccount} disabled={actionLoading}>
+            <Button
+              onClick={submitAccount}
+              disabled={actionLoading || !canSensitiveWriteAccountPool}
+            >
               {actionLoading && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
-              {t(accountForm.id || accountAddMode === 'manual' ? 'Save' : 'Add')}
+              {t(
+                accountForm.id || accountAddMode === 'manual' ? 'Save' : 'Add'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5206,7 +5310,10 @@ export function AccountPool() {
             placeholder={t('Credentials')}
           />
           <DialogFooter>
-            <Button onClick={submitBatch} disabled={actionLoading}>
+            <Button
+              onClick={submitBatch}
+              disabled={actionLoading || !canSensitiveWriteAccountPool}
+            >
               {actionLoading && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
@@ -5238,7 +5345,10 @@ export function AccountPool() {
             onChange={(event) => setCodexInput(event.target.value)}
           />
           <DialogFooter>
-            <Button onClick={completeCodexOAuth} disabled={actionLoading}>
+            <Button
+              onClick={completeCodexOAuth}
+              disabled={actionLoading || !canSensitiveWriteAccountPool}
+            >
               {actionLoading && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
