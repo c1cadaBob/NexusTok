@@ -6830,3 +6830,73 @@ NexusTok 已经具备管理权限 catalog、角色基线矩阵、`middleware.Req
 5. MCP 在登录态浏览器上下文创建临时兑换码并调用 `/api/redemption/search`：接口返回脱敏 `key` 和 `key_redacted=true`，响应体不包含创建接口返回的完整 32 位码。
 6. MCP 调用 `POST /api/redemption/:id/key`：未完成安全验证时返回 HTTP 403，业务 `code=VERIFICATION_REQUIRED`，响应头包含 `no-store/no-cache`，未返回完整码；当前账号未启用 2FA/Passkey，前端继续提示需先启用安全验证方式，没有强行修改生产账号安全设置。
 7. MCP 硬刷新表格后确认临时兑换码行内只显示脱敏码和复制按钮；随后通过 `DELETE /api/redemption/:id` 删除临时记录，再次刷新确认列表恢复为空，测试数据无遗留。
+
+## 本轮实施评审：渠道编辑页对齐 new-api 与模型搜索添加修复
+
+### 需求分析
+
+用户反馈渠道编辑页“搜索添加时不正确”，并希望参考 `/opt/project/new-api-main` 最新默认前端的编辑渠道页面进行对齐。运行态复核显示，当前 3003 环境中 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 正确返回 3 个 OpenAI 同步模型：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`；当前唯一渠道 `11111` 只绑定 `gpt-5.6-sol`，因此前端正确行为应是清晰展示 3 个搜索命中，并允许一次性追加尚未绑定的 `terra/luna` 两个真实模型。
+
+当前页面已经能在模型输入框下方展示 `Add 2 search result(s)`，但仍存在两个体验问题：第一，远程搜索结果没有作为 MultiSelect 下拉候选稳定呈现，用户看到的是空下拉加外部结果条，容易误判搜索没有进入选择器；第二，点击批量追加后表单确实新增模型，但搜索关键词和结果状态残留，页面显示 `Add 0 search result(s)`，让用户误以为追加动作异常或仍需继续操作。
+
+对照 new-api 最新页面，本轮不追求目录级迁移，而是把其优势转为 NexusTok 原生能力：保留 NexusTok 的账号池凭证模式、Codex OAuth、权限裁剪、敏感字段提交裁剪和现有保存链路，只吸收 new-api 渠道编辑抽屉的分区结构、紧凑 section 视觉与模型区稳定交互。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 增加受控搜索值和搜索清空能力；保持旧调用不传新参数时行为不变。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型搜索输入改为受控；批量追加后清空搜索状态；将 Basic/Credentials/Models/Advanced 视觉结构对齐 new-api 的 section 形态。 |
+| 渠道抽屉 section | `web/default/src/features/channels/components/drawers/sections/*` | 新增 NexusTok 原生 section 包装组件，复用现有 `drawer-layout` 公共能力，后续便于继续拆分长表单。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验证结果。 |
+
+### 风险评估
+
+- 本轮只改默认前端，不改后端模型同步、渠道保存接口、数据库结构、计费逻辑和 relay 热路径，核心业务风险低。
+- MultiSelect 新增受控搜索参数必须保持向后兼容：不传 `searchValue` 时继续使用内部状态；传入时由调用方控制输入框内容，并通过 `onSearchChange` 回传用户输入。
+- 搜索批量追加仍只使用 `/api/models/search` 返回的 `model_name`，并排除当前已选模型；不会把裸关键词 `gpt-5.6` 写入渠道能力。
+- 点击批量追加后清空搜索输入和结果面板，只改变未保存表单状态，不会触发 `PUT /api/channel/`；最终保存仍由用户点击 `Update Channel` 走原权限、敏感字段和风险确认链路。
+- 对齐 new-api 页面时不能覆盖 NexusTok 特有账号池字段、Codex 凭证刷新和权限禁用逻辑；本轮仅提取 section 包装，不引入 new-api 的 Advanced Custom 和提交 hook。
+- 视觉结构从卡片化变为 section 化会影响抽屉局部布局，需要在 3003 上实际打开编辑渠道页验证文字不重叠、按钮可点击、模型搜索和分组编辑仍可用。
+
+### 方案评审
+
+采用“小步原生化对齐”方案。
+
+1. 在 `MultiSelect` 中新增可选 `searchValue`，当调用方传入该值时组件以受控方式展示输入内容；不传时继续使用内部 `inputValue`。同时保留 `isLoading`、`loadingText` 和 `onSearchChange`，让渠道模型搜索可以明确清空输入。
+2. 渠道编辑页把 `modelSearchKeyword` 传给 MultiSelect，`handleAddModelSearchResults` 成功追加后调用统一 `clearModelSearch()`，清空输入、debounce 关键词和搜索结果面板，避免 `Add 0 search result(s)` 残留。
+3. 保留搜索结果状态条作为“批量追加全部真实命中”的确认区，同时让远程返回的真实模型继续合并进 `modelOptions`，供用户单选某个具体模型。
+4. 新增 `ChannelBasicSection`、`ChannelApiAccessSection`、`ChannelAuthSection`、`ChannelModelsSection`、`ChannelAdvancedSection` 等 NexusTok 本地组件，视觉和结构对齐 new-api 最新编辑渠道页；当前长表单先使用这些 wrapper，不拆分业务逻辑，降低回归风险。
+5. 验收时以运行态 3003 为准：确认 `gpt-5.6` 搜索显示 3 个真实模型、按钮追加 2 个、追加后搜索状态清空、未点击保存时无 `PUT /api/channel/` 请求，并检查页面和控制台没有新增错误。
+
+### 验收方式
+
+1. `cd web/default && bun run typecheck`。
+2. `cd web/default && bun run build`。
+3. 如新增用户可见文案，执行 `cd web/default && bun run i18n:sync` 并补齐六语；若无新增文案，确认现有 key 均已存在。
+4. `git diff --check`。
+5. MCP 打开并强刷 `http://192.168.0.202:3003/channels`，打开渠道 `11111` 编辑抽屉。
+6. 在模型输入框中搜索 `gpt-5.6`，确认页面显示 3 个同步模型命中、可追加数量为 2，并且追加后表单模型数从 3 变 5。
+7. 追加后确认搜索输入和结果条被清空，页面不再显示 `Add 0 search result(s)`。
+8. 通过网络请求确认验证过程中未触发 `PUT /api/channel/`；取消抽屉后运行态渠道数据保持未保存状态。
+
+### 实施结果
+
+已完成渠道编辑抽屉的本轮原生化对齐与模型搜索添加修复。`MultiSelect` 新增可选受控搜索输入 `searchValue`，旧调用不传该参数时继续使用内部状态，保持兼容；渠道模型选择器改为由抽屉统一维护搜索关键词，批量追加远程命中模型后立即清空搜索输入和结果状态，避免追加成功后残留 `Add 0 search result(s)`。
+
+渠道编辑页结构对齐 new-api 最新编辑渠道页的优势，但没有硬迁移其提交逻辑。当前 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings` 均通过 NexusTok 本地 section wrapper 渲染，保留账号池凭证模式、Codex OAuth、权限禁用、敏感字段裁剪、风险确认和原有保存链路。`gpt-5.6` 搜索仍基于 `/api/models/search` 的真实 `model_name`，不会把裸关键词写入渠道能力；当前渠道已绑定 `gpt-5.6-sol` 时，批量追加只加入未绑定的 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+
+本轮未改后端、数据库、relay、计费或模型同步任务，核心业务路径保持不变。
+
+### 验证记录
+
+1. `cd web/default && bun run i18n:sync` 通过；本轮无新增用户可见翻译 key。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bun run build` 通过。
+4. `git diff --check` 通过；本轮触碰的前端文件已用 `bunx prettier --check` 验证通过。全量 `bun run format:check` 仍会因仓库既有历史格式问题失败，本轮未做无关格式化。
+5. MCP 打开并强刷 `http://192.168.0.202:3003/channels`，打开渠道 `11111` 编辑抽屉，确认 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings` 分区正常渲染。
+6. MCP 在模型输入框搜索 `gpt-5.6`，确认运行态页面展示 `3 synced model(s) matched "gpt-5.6"`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，并显示 `Add 2 search result(s)`。
+7. MCP 点击 `Add 2 search result(s)` 后，表单内模型数从 `Selected 3` 变为 `Selected 5`，新增 `gpt-5.6-terra` 和 `gpt-5.6-luna`；追加后搜索输入和结果条清空，页面不再显示 `Add 0 search result(s)`。
+8. MCP 网络面板确认验证过程中只有 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50`、`GET /api/channel/1` 等读取请求，没有触发 `PUT /api/channel/`。
+9. MCP 在浏览器上下文调用 `GET /api/channel?p=1&page_size=10` 回查运行态渠道，渠道 `11111` 的持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认未点击保存时不会写入测试追加结果。
+10. MCP 控制台无新增 `error` 或 `warn`；仅观察到 i18next 信息日志和浏览器既有表单可访问性 issue 提示，本轮未新增阻断性前端错误。

@@ -58,6 +58,7 @@ interface MultiSelectProps {
   copyChipOnClick?: boolean
   isLoading?: boolean
   loadingText?: string
+  searchValue?: string
   onSearchChange?: (value: string) => void
 }
 
@@ -97,6 +98,7 @@ export function MultiSelect({
   copyChipOnClick = false,
   isLoading = false,
   loadingText,
+  searchValue,
   onSearchChange,
 }: MultiSelectProps) {
   const { t } = useTranslation()
@@ -104,9 +106,10 @@ export function MultiSelect({
   const resolvedEmptyText = emptyText ?? t('No matching items')
   const resolvedLoadingText = loadingText ?? t('Searching...')
   const chipsAnchorRef = useComboboxAnchor()
-  const [inputValue, setInputValue] = React.useState('')
+  const [internalInputValue, setInternalInputValue] = React.useState('')
   const [open, setOpen] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
+  const inputValue = searchValue ?? internalInputValue
 
   const selectedSet = React.useMemo(() => new Set(selected), [selected])
 
@@ -159,10 +162,12 @@ export function MultiSelect({
 
   const updateInputValue = React.useCallback(
     (value: string) => {
-      setInputValue(value)
+      if (searchValue === undefined) {
+        setInternalInputValue(value)
+      }
       onSearchChange?.(value)
     },
-    [onSearchChange]
+    [onSearchChange, searchValue]
   )
 
   const addValues = React.useCallback(
