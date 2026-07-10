@@ -13,14 +13,16 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/setting/console_setting"
+	"github.com/c1cada/NexusTok/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -28,25 +30,60 @@ import (
 
 // 常量定义
 const (
-	requestTimeout   = 30 * time.Second // 整体请求超时时间
-	httpTimeout      = 10 * time.Second // 单个 HTTP 请求超时时间
-	uptimeKeySuffix  = "_24"            // 24 小时可用性键后缀
-	apiStatusPath    = "/api/status-page/"       // Uptime Kuma 状态页面 API 路径
+	requestTimeout   = 30 * time.Second              // 整体请求超时时间
+	httpTimeout      = 10 * time.Second              // 单个 HTTP 请求超时时间
+	uptimeKeySuffix  = "_24"                         // 24 小时可用性键后缀
+	apiStatusPath    = "/api/status-page/"           // Uptime Kuma 状态页面 API 路径
 	apiHeartbeatPath = "/api/status-page/heartbeat/" // Uptime Kuma 心跳 API 路径
 )
 
 // Monitor 监控项结构体
 type Monitor struct {
-	Name   string  `json:"name"`              // 监控项名称
-	Uptime float64 `json:"uptime"`            // 24 小时可用性（百分比）
-	Status int     `json:"status"`            // 当前状态（0: 异常, 1: 正常, 2: 暂停, 3: 待定）
-	Group  string  `json:"group,omitempty"`   // 监控组名称
+	Name   string  `json:"name"`            // 监控项名称
+	Uptime float64 `json:"uptime"`          // 24 小时可用性（百分比）
+	Status int     `json:"status"`          // 当前状态（0: 异常, 1: 正常, 2: 暂停, 3: 待定）
+	Group  string  `json:"group,omitempty"` // 监控组名称
 }
 
 // UptimeGroupResult 监控组结果结构体
 type UptimeGroupResult struct {
 	CategoryName string    `json:"categoryName"` // 分类名称
 	Monitors     []Monitor `json:"monitors"`     // 监控项列表
+}
+
+// validateUptimeKumaFetchURL 使用系统 FetchSetting 校验最终 Uptime Kuma API URL。
+//
+// Uptime Kuma URL 来自后台配置，但 /api/uptime/status 是公开状态接口，任何访客都能
+// 触发服务端出站请求。这里必须在请求前执行 SSRF 预校验，避免配置被误用后访问内网、
+// 本机回环地址、受限端口或被黑名单命中的域名/IP。真正 Dial 前的 DNS rebinding
+// 防护由 newUptimeKumaHTTPClient 返回的 protected client 继续兜底。
+func validateUptimeKumaFetchURL(urlStr string) error {
+	fetchSetting := system_setting.GetFetchSetting()
+	return common.ValidateURLWithFetchSetting(
+		urlStr,
+		fetchSetting.EnableSSRFProtection,
+		fetchSetting.AllowPrivateIp,
+		fetchSetting.DomainFilterMode,
+		fetchSetting.IpFilterMode,
+		fetchSetting.DomainList,
+		fetchSetting.IpList,
+		fetchSetting.AllowedPorts,
+		fetchSetting.ApplyIPFilterForDomain,
+	)
+}
+
+// newUptimeKumaHTTPClient 返回 Uptime Kuma 专用 HTTP client。
+//
+// 复用 service.GetSSRFProtectedHTTPClient 的 Transport 和重定向策略，以获得 Dial 阶段
+// SSRF 校验；同时复制 client 并覆盖 Timeout，保持旧实现每个上游请求最多 10 秒的行为。
+func newUptimeKumaHTTPClient() *http.Client {
+	baseClient := service.GetSSRFProtectedHTTPClient()
+	if baseClient == nil {
+		return &http.Client{Timeout: httpTimeout}
+	}
+	client := *baseClient
+	client.Timeout = httpTimeout
+	return &client
 }
 
 // getAndDecode 发送 HTTP GET 请求并解码响应
@@ -59,6 +96,10 @@ type UptimeGroupResult struct {
 //   - url: 请求 URL
 //   - dest: 目标结构体指针
 func getAndDecode(ctx context.Context, client *http.Client, url string, dest interface{}) error {
+	if err := validateUptimeKumaFetchURL(url); err != nil {
+		return err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -74,7 +115,7 @@ func getAndDecode(ctx context.Context, client *http.Client, url string, dest int
 		return errors.New("non-200 status")
 	}
 
-	return json.NewDecoder(resp.Body).Decode(dest)
+	return common.DecodeJson(resp.Body, dest)
 }
 
 // fetchGroupData 获取单个监控组的数据
@@ -181,7 +222,7 @@ func GetUptimeKumaStatus(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), requestTimeout)
 	defer cancel()
 
-	client := &http.Client{Timeout: httpTimeout}
+	client := newUptimeKumaHTTPClient()
 	results := make([]UptimeGroupResult, len(groups))
 
 	g, gCtx := errgroup.WithContext(ctx)

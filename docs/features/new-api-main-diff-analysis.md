@@ -6533,6 +6533,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-09 | 渠道编辑页分段布局与模型搜索添加 | `web/default/src/components/multi-select.tsx`、`web/default/src/components/drawer-layout.ts`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/i18n/locales/*.json` | 默认前端渠道编辑抽屉对齐 new-api-main 最新分段体验：5xl 右侧抽屉、左侧状态导航、基本信息/凭证/模型与分组/高级设置锚点、固定底部操作；模型多选改为 Base UI Combobox 芯片多选，支持显式过滤、自定义模型、多值粘贴、chip 收敛，并按关键词查询 `/api/models/search` 合并模型元信息候选，修复 `gpt-5.6` Luna/Terra/Sol 不能稳定搜索添加的问题。 |
 | 2026-07-10 | 渠道模型搜索追加弹层关闭与编辑页导航对齐 | `web/default/src/components/multi-select.tsx`、`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 运行态复现确认 `gpt-5.6` 后端搜索和追加数据正确，但批量追加后 Combobox 因搜索词清空仍保持打开并铺出完整模型库；本轮让 `MultiSelect` 支持可选受控 open，渠道模型选择器在 `Add {{count}} new model(s)` 后立即关闭弹层，并补齐 new-api 编辑页左侧导航 sticky 层级。 |
 | 2026-07-10 | 结果媒体代理 SSRF Dial 阶段补强 | `controller/video_proxy.go`、`relay/mjproxy_handler.go`、`docs/features/new-api-main-diff-analysis.md` | 继续执行用户可控 URL 覆盖缺口审计，确认下载、Webhook、Bark/Gotify 已走 protected client；本轮补齐视频代理和 Midjourney 图片代理直连路径，URL 预校验后实际请求也使用 `GetSSRFProtectedHTTPClient()`，通过 Dial 阶段解析 IP 校验抵御 DNS rebinding；显式渠道代理继续保留一次性 URL 校验。 |
+| 2026-07-10 | Uptime Kuma 状态接口 SSRF 防护补强 | `controller/uptime_kuma.go`、`controller/uptime_kuma_test.go`、`docs/features/new-api-main-diff-analysis.md` | 公开 `/api/uptime/status` 会根据系统设置拉取 Uptime Kuma 状态页和心跳 API；本轮在每个最终 URL 发出前接入 FetchSetting 预校验，实际请求改用 `GetSSRFProtectedHTTPClient()` 的 Dial 阶段校验并保留 10 秒单请求超时，同时补齐私网目标请求前拦截与关闭 SSRF 后兼容的回归测试。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -7893,3 +7894,66 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 5. `git diff --check` 通过。
 6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
 7. 当前会话未暴露 MCP 浏览器工具，本轮安全修复没有新增页面入口；运行态验证将使用 `curl --noproxy '*'` 替代页面连通性确认。
+
+## 本轮实施评审：Uptime Kuma 状态接口 SSRF 防护补强
+
+### 需求分析
+
+继续执行用户可控/配置可控 URL 覆盖缺口审计时，发现 `controller.GetUptimeKumaStatus` 仍使用普通 `http.Client{Timeout: 10 * time.Second}` 拉取外部状态页数据。该接口注册在公开 API 路由 `GET /api/uptime/status`，任何访客都可以触发服务端读取系统设置中的 Uptime Kuma `url` 与 `slug`，并并发请求 `/api/status-page/{slug}` 与 `/api/status-page/heartbeat/{slug}`。
+
+对照 `/opt/project/new-api-main/controller/uptime_kuma.go` 后确认，上游当前实现与 NexusTok 原实现基本一致，同样没有 FetchSetting 预校验和 Dial 阶段 DNS rebinding 防护。NexusTok 已经在下载、Webhook、Bark/Gotify、视频结果代理和 Midjourney 图片代理上形成了原生 protected fetch 能力；因此本轮不是机械复制 new-api-main，而是把已吸收形成的优势继续扩展到公开状态接口，让 Uptime Kuma 出站请求进入同一安全边界。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| Uptime Kuma 控制器 | `controller/uptime_kuma.go` | 每个最终 API URL 发出前执行 `FetchSetting` 预校验；实际请求 client 改为复用 `GetSSRFProtectedHTTPClient()`，获得 Dial 阶段 IP 校验；保留 10 秒单请求超时。 |
+| JSON 解码规范 | `controller/uptime_kuma.go` | 移除直接 `encoding/json.NewDecoder` 调用，改用项目统一 `common.DecodeJson`，符合 `AGENTS.md` 的 JSON 封装约定。 |
+| 回归测试 | `controller/uptime_kuma_test.go` | 覆盖启用 SSRF 时私网 URL 被请求前拦截、公开 IP 放行、关闭 SSRF 后兼容本地测试服务拉取。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮对比证据、例外边界、风险和验证，后续审计不再把 Uptime Kuma 漏列为普通外连。 |
+
+### 风险评估
+
+- 行为会变严格：如果管理员当前把 Uptime Kuma 配置为内网地址、回环地址或默认 FetchSetting 未允许的端口，公开状态接口会按安全策略拦截并返回空监控组。该变化符合 SSRF 防护预期，但需要管理员在可信部署中显式配置 `allow_private_ip`、IP 白名单或允许端口。
+- `fetchGroupData` 目前对任一请求失败采用静默降级并返回空 `monitors`，本轮保持该 API 形态，避免公开首页/仪表盘因为某个监控源不可达而变成错误响应；后续可以单独评审是否把安全拦截原因暴露给 Root 诊断页。
+- Uptime Kuma 与 Relay 上游不同：它不是模型服务上游，不需要合法访问内网 Ollama/自建模型网关，因此可以纳入用户可触发 URL 的 protected fetch 范围。
+- `GetSSRFProtectedHTTPClient()` 的全局 client 可能带有不同的 `RelayTimeout`，本轮通过复制 client 并覆盖 `Timeout=10s` 保持原有单请求超时，不改变整体 30 秒并发聚合超时。
+- 不修改 Uptime Kuma 配置结构、前端设置页、数据库、仪表盘组件和返回 JSON schema，降低页面兼容风险。
+
+### 方案评审
+
+采用“最终 URL 预校验 + protected client 实际请求 + 保持接口降级语义”的方案：
+
+1. 新增 `validateUptimeKumaFetchURL`，从 `system_setting.GetFetchSetting()` 读取当前策略，并调用 `common.ValidateURLWithFetchSetting` 校验每个拼接后的最终 Uptime Kuma API URL。
+2. 新增 `newUptimeKumaHTTPClient`，复用 `service.GetSSRFProtectedHTTPClient()` 的 Transport 和 redirect 校验能力，复制 client 后覆盖 `Timeout` 为原来的 10 秒。
+3. `getAndDecode` 在 `http.NewRequestWithContext` 前先校验 URL；通过后才发出请求，响应解码改为 `common.DecodeJson`。
+4. `GetUptimeKumaStatus` 使用专用 protected client，并保留 `requestTimeout=30s`、并发拉取多个 group、失败返回空 group 的旧行为。
+5. 单测不依赖真实外网 DNS：用 IP 字面量验证私网/公网校验，用 `httptest.NewServer` 验证私网目标在 handler 被调用前被拦截，以及关闭 SSRF 时旧兼容行为仍可用。
+
+### 验收方式
+
+1. `go test ./controller -run 'UptimeKuma|Uptime'`。
+2. `go test ./controller`。
+3. `git diff --check`。
+4. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/`。
+5. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status`。
+6. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/uptime/status`。
+7. 当前会话若仍无 MCP 浏览器工具，则使用 `curl` 替代公开页面/接口验证，并在最终回复说明限制。
+
+### 实施结果
+
+已完成 Uptime Kuma 状态接口 SSRF 防护补强。`/api/uptime/status` 在拉取每个 Uptime Kuma group 时，会对最终的状态页 API 和 heartbeat API URL 执行 FetchSetting 预校验；无论 URL 来自哪个配置项，只要 SSRF 防护开启，就会统一执行协议、域名/IP、私网地址和端口策略。
+
+实际请求 client 已从裸 `http.Client` 切换为复用 `service.GetSSRFProtectedHTTPClient()` 的 Uptime Kuma 专用 client，保留原来的 10 秒单请求超时。这样即使 URL 预校验与真正连接之间发生 DNS rebinding，直连 Dial 阶段仍会重新解析并校验目标 IP。响应 JSON 解码也已从直接 `encoding/json` 调用切换为 `common.DecodeJson`，符合项目 JSON 封装规范。
+
+### 验证记录
+
+1. `go test ./controller -run 'UptimeKuma|Uptime'` 通过，覆盖私网目标拦截、公开 IP 放行、请求前拦截不触达 handler、关闭 SSRF 后兼容本地测试服务。
+2. `go test ./controller` 通过，确认控制器包既有测试和本轮新增测试均通过。
+3. `go test ./service -run 'TestProtectedFetch'` 通过，确认 protected fetch client 的 DNS rebinding 与禁用 fallback 契约仍保持。
+4. `go test ./controller ./service` 通过，确认本轮接入的控制器和复用的 service 包共同编译与测试通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON。
+8. `curl --noproxy '*' -sS --max-time 20 http://192.168.0.202:3003/api/uptime/status` 返回 `{"data":[],"message":"","success":true}`，确认公开 Uptime Kuma 状态接口在当前配置下仍保持成功响应。
+9. 当前会话未暴露 MCP 浏览器工具；本轮后端安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口。
