@@ -10,7 +10,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/setting/system_setting"
 
 	"github.com/gin-contrib/sessions"
@@ -44,6 +44,40 @@ type OidcUser struct {
 	Name              string `json:"name"`               // 显示名称
 	PreferredUsername string `json:"preferred_username"` // 首选用户名
 	Picture           string `json:"picture"`            // 头像 URL
+}
+
+// validateLegacyOIDCEndpointURL 使用系统 FetchSetting 校验旧 OIDC 控制器配置端点。
+//
+// 当前活跃 OAuth 路由已经迁移到 oauth.Provider 体系，但该旧控制器仍在编译范围内。
+// 这里保持与活跃 OIDC provider 相同的安全边界，避免未来误接回旧路由时重新引入
+// 配置端点 SSRF 风险。
+func validateLegacyOIDCEndpointURL(urlStr string) error {
+	fetchSetting := system_setting.GetFetchSetting()
+	return common.ValidateURLWithFetchSetting(
+		urlStr,
+		fetchSetting.EnableSSRFProtection,
+		fetchSetting.AllowPrivateIp,
+		fetchSetting.DomainFilterMode,
+		fetchSetting.IpFilterMode,
+		fetchSetting.DomainList,
+		fetchSetting.IpList,
+		fetchSetting.AllowedPorts,
+		fetchSetting.ApplyIPFilterForDomain,
+	)
+}
+
+// newLegacyOIDCHTTPClient 返回旧 OIDC 控制器专用 HTTP client。
+//
+// 复用 protected fetch client 获得 Dial 阶段 DNS rebinding 防护；复制 client 后覆盖
+// Timeout，保持旧控制器原有 5 秒超时行为。
+func newLegacyOIDCHTTPClient() *http.Client {
+	baseClient := service.GetSSRFProtectedHTTPClient()
+	if baseClient == nil {
+		return &http.Client{Timeout: 5 * time.Second}
+	}
+	client := *baseClient
+	client.Timeout = 5 * time.Second
+	return &client
 }
 
 // getOidcUserInfoByCode 通过授权码获取 OIDC 用户信息
@@ -70,15 +104,18 @@ func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 	values.Set("grant_type", "authorization_code")
 	values.Set("redirect_uri", fmt.Sprintf("%s/oauth/oidc", system_setting.ServerAddress))
 	formData := values.Encode()
-	req, err := http.NewRequest("POST", system_setting.GetOIDCSettings().TokenEndpoint, strings.NewReader(formData))
+	tokenEndpoint := system_setting.GetOIDCSettings().TokenEndpoint
+	if err := validateLegacyOIDCEndpointURL(tokenEndpoint); err != nil {
+		common.SysLog(err.Error())
+		return nil, errors.New("无法连接至 OIDC 服务器，请稍后重试！")
+	}
+	req, err := http.NewRequest("POST", tokenEndpoint, strings.NewReader(formData))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	client := http.Client{
-		Timeout: 5 * time.Second,
-	}
+	client := newLegacyOIDCHTTPClient()
 	res, err := client.Do(req)
 	if err != nil {
 		common.SysLog(err.Error())
@@ -86,7 +123,7 @@ func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 	}
 	defer res.Body.Close()
 	var oidcResponse OidcResponse
-	err = json.NewDecoder(res.Body).Decode(&oidcResponse)
+	err = common.DecodeJson(res.Body, &oidcResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +133,12 @@ func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 		return nil, errors.New("OIDC 获取 Token 失败，请检查设置！")
 	}
 
-	req, err = http.NewRequest("GET", system_setting.GetOIDCSettings().UserInfoEndpoint, nil)
+	userInfoEndpoint := system_setting.GetOIDCSettings().UserInfoEndpoint
+	if err := validateLegacyOIDCEndpointURL(userInfoEndpoint); err != nil {
+		common.SysLog(err.Error())
+		return nil, errors.New("无法连接至 OIDC 服务器，请稍后重试！")
+	}
+	req, err = http.NewRequest("GET", userInfoEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +155,7 @@ func getOidcUserInfoByCode(code string) (*OidcUser, error) {
 	}
 
 	var oidcUser OidcUser
-	err = json.NewDecoder(res2.Body).Decode(&oidcUser)
+	err = common.DecodeJson(res2.Body, &oidcUser)
 	if err != nil {
 		return nil, err
 	}

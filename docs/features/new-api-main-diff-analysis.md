@@ -6536,6 +6536,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 | 2026-07-10 | Uptime Kuma 状态接口 SSRF 防护补强 | `controller/uptime_kuma.go`、`controller/uptime_kuma_test.go`、`docs/features/new-api-main-diff-analysis.md` | 公开 `/api/uptime/status` 会根据系统设置拉取 Uptime Kuma 状态页和心跳 API；本轮在每个最终 URL 发出前接入 FetchSetting 预校验，实际请求改用 `GetSSRFProtectedHTTPClient()` 的 Dial 阶段校验并保留 10 秒单请求超时，同时补齐私网目标请求前拦截与关闭 SSRF 后兼容的回归测试。 |
 | 2026-07-10 | 自定义 OAuth Discovery SSRF 防护补强 | `controller/custom_oauth.go`、`controller/custom_oauth_test.go`、`docs/features/new-api-main-diff-analysis.md` | Root 可操作的 `/api/custom-oauth-provider/discovery` 会根据管理员输入的 well-known/issuer URL 拉取 OIDC discovery；本轮在基础 http/https 校验后接入 FetchSetting 预校验，实际请求改用 protected client 的 Dial 阶段校验并保留 20 秒超时，测试覆盖私网目标请求前拦截和关闭 SSRF 后兼容行为。 |
 | 2026-07-10 | OAuth 登录端点 SSRF 防护补强 | `oauth/outbound_http.go`、`oauth/generic.go`、`oauth/oidc.go`、`oauth/outbound_http_test.go`、`docs/features/new-api-main-diff-analysis.md` | 活跃 `/api/oauth/:provider` 登录回调中，系统 OIDC 与自定义 OAuth 的 token/userinfo endpoint 来自管理员配置；本轮在 token 和 userinfo 请求前接入 FetchSetting 预校验，实际请求复用 protected client 的 Dial 阶段校验，保留 OIDC 5 秒和 Generic 20 秒超时，并用测试确认私网端点在请求前被拦截。 |
+| 2026-07-10 | 旧 OIDC 控制器安全基线补齐 | `controller/oidc.go`、`controller/oidc_legacy_test.go`、`docs/features/new-api-main-diff-analysis.md` | `controller.OidcAuth/OidcBind` 当前未被后端路由直接注册，但仍在 controller 包编译范围内；本轮防御性补齐 token/userinfo endpoint 的 FetchSetting 预校验、protected client 实际请求和 `common.DecodeJson` 解码，避免未来恢复旧路由时重新引入 SSRF 或 JSON 封装回退。 |
 | 2026-07-09 | Authz 用户级 override 基础层 | `model/authz_user_override.go`、`model/main.go`、`service/authz/*`、`controller/user.go`、`middleware/authz_test.go`、`controller/user_authz_test.go` | 原生化 new-api-main 的用户级 allow/deny override 优势，但不直接引入 Casbin；新增三库兼容 `authz_user_overrides` 表，Admin 授权先读用户 override 再回退角色基线，Root 不受 deny 影响，普通用户不能被 override 提升，`/api/user/self` 回传与服务端 `Can` 共享同一权限语义。 |
 | 2026-07-09 | 兑换码完整值安全查看 | `model/redemption.go`、`controller/redemption.go`、`router/redemption-router.go`、`service/authz/*`、`web/default/src/features/redemption-codes/*`、`web/default/src/i18n/locales/*.json` | 兑换码列表、搜索、详情和更新响应默认返回脱敏 `key` 与 `key_redacted=true`；新增 `POST /api/redemption/:id/key`，通过 `redemption.secret_view`、关键限流、禁缓存和安全验证 reveal 完整码；默认前端行内查看/复制与批量复制改为按需 reveal，避免普通 read 权限泄露可兑换额度凭据。 |
 
@@ -8090,3 +8091,63 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON，且当前运行态 `oidc_enabled=false`。
 8. `curl --noproxy '*' -sS --max-time 15 'http://192.168.0.202:3003/api/oauth/oidc?state=invalid&code=test'` 返回 `{"message":"State parameter is empty or mismatched","success":false}`，确认 OAuth 路由仍保持前置 state 校验；当前未启用 OIDC，未修改全局登录配置去触发真实 token/userinfo 拉取。
 9. 当前会话未暴露 MCP 浏览器工具；本轮后端登录链路安全修复没有新增页面入口，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口，端点 SSRF 拦截由 oauth 包单元测试覆盖。
+
+## 本轮实施评审：旧 OIDC 控制器安全基线补齐
+
+### 需求分析
+
+上一轮已经补齐活跃 `/api/oauth/:provider` 登录链路中的系统 OIDC 和自定义 OAuth provider，但继续复核后发现 `controller/oidc.go` 仍保留一套旧的 `OidcAuth/OidcBind/getOidcUserInfoByCode` 实现。当前后端路由只注册统一 `controller.HandleOAuth`，没有直接注册 `OidcAuth/OidcBind`；不过该文件仍在 controller 包编译范围内，并且仍使用裸 `http.Client` 访问系统设置里的 OIDC token/userinfo endpoint，还直接调用 `encoding/json.NewDecoder` 解码。
+
+本轮目标不是恢复旧路由，也不是改变当前登录入口，而是把这条历史路径拉回同一安全基线：如果未来误接回旧控制器，不能重新带出配置端点 SSRF 和 JSON 封装违规；同时报告中明确它是未路由历史实现，后续可单独评审删除或迁移。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 旧 OIDC 控制器 | `controller/oidc.go` | `getOidcUserInfoByCode` 在 token/userinfo 请求前执行 FetchSetting 预校验，实际请求复用 protected client 并保持 5 秒超时。 |
+| JSON 解码规范 | `controller/oidc.go` | 移除直接 `encoding/json.NewDecoder`，改为 `common.DecodeJson`。 |
+| 回归测试 | `controller/oidc_legacy_test.go` | 覆盖旧控制器 helper、token endpoint 私网请求前拦截、userinfo endpoint 私网请求前拦截，以及关闭 SSRF 后本地 token/userinfo 兼容。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 明确旧控制器当前未路由，属于防御性安全基线补齐。 |
+
+### 风险评估
+
+- 当前后端路由没有直接使用 `OidcAuth/OidcBind`，因此运行态行为风险低；改动主要影响编译范围内的历史函数和未来可能恢复的路径。
+- 如果未来恢复旧路径，内网 OIDC endpoint 会按 FetchSetting 策略被拦截，需要管理员显式放行可信内网 SSO；这与活跃 `oauth/oidc.go` 行为保持一致。
+- 保持旧函数签名、旧用户错误文案和旧 5 秒超时，避免未来仍有内部调用时出现响应结构变化。
+- 不删除旧控制器，避免在本安全切片里扩大到路由/前端清理；后续可以单独做 dead code 清理评审。
+
+### 方案评审
+
+采用“最小防御性补齐”的方案：
+
+1. 在 `controller/oidc.go` 内新增 `validateLegacyOIDCEndpointURL`，复用 `common.ValidateURLWithFetchSetting`。
+2. 新增 `newLegacyOIDCHTTPClient`，复用 `service.GetSSRFProtectedHTTPClient()` 的 Transport 和 redirect 校验能力，复制 client 后覆盖为旧路径原有 5 秒超时。
+3. `getOidcUserInfoByCode` 在 token 请求和 userinfo 请求前分别校验 endpoint；失败时写系统日志并沿用旧的“无法连接至 OIDC 服务器”错误文案。
+4. JSON 解码改为 `common.DecodeJson`，不改变 `OidcResponse`、`OidcUser` 和后续用户创建/绑定逻辑。
+5. 新增测试直接调用未导出的 `getOidcUserInfoByCode`，确认安全拦截发生在请求发出前。
+
+### 验收方式
+
+1. `go test ./controller -run 'LegacyOIDC|Oidc'`。
+2. `go test ./controller`。
+3. `go test ./service -run 'TestProtectedFetch'`。
+4. `go test ./controller ./service`。
+5. `git diff --check`。
+6. 访问 `http://192.168.0.202:3003/` 与 `/api/status`，确认热更新服务可访问。
+7. 当前旧 OIDC 控制器未路由，不做运行态旧路径调用；以单元测试覆盖其安全边界。
+
+### 实施结果
+
+已完成旧 OIDC 控制器安全基线补齐。`getOidcUserInfoByCode` 在访问 token endpoint 和 userinfo endpoint 前都会执行 FetchSetting 校验，实际请求使用 protected client，保留 5 秒超时。JSON 解码也已切换为 `common.DecodeJson`。当前活跃 `/api/oauth/:provider` 路径不受本轮影响；旧控制器仍未被路由直接注册。
+
+### 验证记录
+
+1. `go test ./controller -run 'LegacyOIDC|Oidc'` 通过，覆盖旧 OIDC 私网 token/userinfo endpoint 请求前拦截和关闭 SSRF 后本地兼容行为。
+2. `go test ./controller` 通过，确认 controller 包既有测试和本轮新增测试均通过。
+3. `go test ./service -run 'TestProtectedFetch'` 通过，确认 protected fetch client 的 DNS rebinding 与禁用 fallback 契约仍保持。
+4. `go test ./controller ./service` 通过，确认旧控制器和复用的 service 包共同编译与测试通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. `curl --noproxy '*' -sS --max-time 15 http://192.168.0.202:3003/api/status` 返回 `success=true` 状态 JSON，且当前运行态 `oidc_enabled=false`。
+8. `curl --noproxy '*' -sS --max-time 15 'http://192.168.0.202:3003/api/oauth/oidc?state=invalid&code=test'` 返回 `{"message":"State parameter is empty or mismatched","success":false}`，确认当前活跃 OAuth 路由仍保持前置 state 校验。
+9. 当前会话未暴露 MCP 浏览器工具；本轮旧控制器未路由，已按项目热更新要求使用 `curl --noproxy '*'` 验证 3003 页面与接口，旧路径安全边界由 controller 包单元测试覆盖。
