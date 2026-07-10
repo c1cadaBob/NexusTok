@@ -62,10 +62,10 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 系统任务中心 | `model/system_task.go`、`service/system_task.go`、`controller/system_task.go`、`controller/system_task_handlers.go`、`/api/system-task/*` | 后端模型、租约锁、runner、Root 查询接口、日志清理任务、批量渠道测试任务、上游模型同步任务、账号池检测任务、订阅维护任务、Midjourney/通用异步任务轮询和默认前端任务面板已落地 | 继续把后续新增长耗时后台动作统一接入 SystemTask，并在 `/system-info` 统一观测。 |
 | 系统实例心跳 | `model/system_instance.go`、`service/system_instance.go`、`GET /api/system-info/instances` | 后端心跳、Root 只读接口和默认前端 `/system-info` 实例面板已落地 | 已引入 `NODE_NAME`/主机名兜底、主从节点、CPU/内存/磁盘/版本心跳、实例页面和同页 SystemTask 任务面板。 |
 | 后台任务锁 | `SystemTaskLock`、租约续期、过期失败标记 | 已按 NexusTok 三库兼容模型原生化 | 已用数据库锁实现跨节点互斥、租约续期、过期失败标记和锁丢失保护；后续任务 handler 要支持 context cancellation。 |
-| 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已用于注册、登录、setup、OAuth 绑定、Webhook 等匿名入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用。 |
-| 顶栏模块鉴权 | `middleware/header_nav.go` | 已落地 | 已让 `/api/pricing`、`/api/rankings` 和 pricing 辅助性能接口跟随 `HeaderNavModules.enabled/requireAuth`，页面隐藏和接口鉴权一致。 |
+| 匿名请求体限制 | `common/request_body_limit.go`、`middleware/request_body_limit.go` | 已落地 | 已原生化为匿名入口通用中间件，并用于注册、登录、setup、OAuth 绑定、Webhook 等入口，默认 512KB，可用 `ANONYMOUS_REQUEST_BODY_LIMIT_KB=0` 禁用；后续新增匿名 POST 必须显式评估是否挂载。 |
+| 顶栏模块鉴权 | `middleware/header_nav.go` | 已落地 | 已原生化为后端 `HeaderNavModuleAuth` 与默认前端集中解析/路由守卫，让 `/api/pricing`、`/api/rankings` 和 pricing 辅助性能接口跟随 `HeaderNavModules.enabled/requireAuth`，页面隐藏和接口鉴权一致。 |
 | 额度饱和保护 | `common/quota_math.go`、`QuotaClamp`、相关测试 | 已部分落地 | 已新增 NexusTok 原生 `common/quota_math.go`，接入表达式计费、文本/音频/WSS 结算、标准预扣、按次预扣、任务差额结算、工具调用附加费、违规费用、充值入账、视频任务重算和渠道测试日志；饱和事件已写入 `other.admin_info.quota_saturation`。 |
-| 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 已部分落地 | 已新增用户可控 URL 专用 protected fetch client，并接入下载、Webhook、Bark/Gotify 通知；Relay 全局 client 暂不替换，避免误伤内网模型渠道。 |
+| 受保护 Fetch / SSRF | `service/protected_fetch_client.go` | 已落地首批 | 已新增用户可控 URL 专用 protected fetch client，并接入下载、Webhook、Bark/Gotify 通知；Relay 全局 client 明确保留普通 client，避免误伤合法内网模型渠道，新增用户可控 URL 拉取必须复用该客户端或在评审中说明例外。 |
 | ClickHouse 日志兼容测试 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 缺少依赖 | 仅在明确支持 ClickHouse 日志库时引入；否则先记录为可选能力，避免增加部署复杂度。 |
 | 流量账本查询 | `model/usedata_flow.go`、`controller.GetAllFlowQuotaDates`、`/api/data/flow` | 后端已落地 | 已扩展 `quota_data` 记录 node/token/group/channel 维度，并新增 `/api/data/flow`、`/api/data/flow/self`；后续接入仪表盘 Sankey 图。 |
 | Relay 转换包整理 | `service/relayconvert/*`、更多 Responses/Gemini/OpenAI 测试 | NexusTok 使用 `service/openaicompat/*`；Responses 请求降级、Chat/Responses 响应互转和流式状态机已持续原生化 | 保留 `openaicompat` 作为本项目原生命名，不创建 `relayconvert`；剩余 ClickHouse、Advanced Custom、Authz 持久化等差异继续分批评审。 |
@@ -296,10 +296,10 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 ### P1：安全边界
 
-1. 增加匿名请求体限制，并挂到 setup、register、login、2FA login、passkey login、password reset、OAuth bind、Webhook。
-2. 增加 SSRF 保护客户端，所有用户可控外部 URL 拉取必须走统一 client；Relay 上游地址保留普通 client，避免误伤合法内网渠道。
-3. 增加 HeaderNavModuleAuth，让公开页面的可见性和接口访问权限一致。
-4. 为渠道和账号池敏感字段做 fail-closed 分类，新增字段未分类时默认需要 `sensitive_write`；渠道更新接口已先落地字段分类和 Root 兜底，账号池表单待后续接入 Authz 时统一覆盖。
+1. 匿名请求体限制已完成首批原生化，并挂到 setup、register、login、2FA login、passkey login、password reset、OAuth bind、Webhook 等入口；后续新增匿名 POST 路由时，必须在路由评审里明确挂载 `AnonymousRequestBodyLimit()` 或说明无需限制的原因。
+2. SSRF 保护客户端已完成首批原生化，下载、Webhook、Bark/Gotify 通知等用户可控外部 URL 拉取已走统一 protected client；Relay 上游地址继续保留普通 client，避免误伤合法内网渠道，后续只做用户可控 URL 覆盖缺口审计。
+3. HeaderNavModuleAuth 已完成后端鉴权、默认前端健壮解析和 pricing/rankings 路由最新配置守卫；后续新增公开导航模块时，必须同步维护 `HeaderNavModules` 解析、前端守卫和后端 API 鉴权。
+4. 渠道和账号池敏感字段 fail-closed 仍需继续推进：渠道更新接口已先落地字段分类和 Root 兜底，账号池接口已按敏感度收紧，账号池表单字段级分类待后续接入 Authz 时统一覆盖。
 
 ### P2：计费和额度安全
 
@@ -351,7 +351,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper。
+2. 安全小步快跑第一批已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper 已原生化；下一批聚焦账号池字段级 fail-closed、SSRF 覆盖缺口审计、Authz override/Casbin 和公开模块新增时的测试契约。
 3. 系统任务/系统信息：先后端模型和接口，再 `/system-info` 页面。
 4. 权限系统：先 channel/account_pool 两个资源，再扩展到用户、模型、订阅、设置。
 5. 订阅/支付增强：余额支付、钱包溢出、Waffo Pancake 商品绑定。
@@ -6389,6 +6389,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-10 | 安全边界能力状态校准 | `docs/features/new-api-main-diff-analysis.md` | 复核匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 客户端和 `/api/status/test` 权限路由现状，将报告中仍按“待增加”描述的安全能力更新为“已原生化首批 + 后续维护契约”，避免后续重复迁移。 |
 | 2026-07-09 | models.dev 手动同步全量缺失补齐 | `controller/model_sync.go`、`controller/model_sync_test.go`、`web/default/src/features/models/api.ts`、`docs/features/model-sync-pricing.md` | 修复默认前端手动 models.dev 同步仍按旧 official 缺失能力表范围创建模型的问题；models.dev 来源默认按完整 catalog 补齐本地缺失模型，预览和实际同步目标一致，并保留 `create_all` 显式控制。回归覆盖 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 三模型场景。 |
 | 2026-07-09 | 前端依赖安全护栏 | `web/default/package.json`、`web/default/bun.lock` | 原生化 new-api-main 的前端 overrides 安全护栏，但不全量照搬；DOMPurify 升级到 `3.4.11`，并只锁定同主版本兼容的 `fast-uri`、`hono`、`js-cookie`、`mermaid`、`minimist`、`postcss` 和 `qs`，暂缓不兼容主版本或精确依赖路径的 `brace-expansion`、`uuid`、`ip-address`。 |
 | 2026-07-09 | Relay HTTP 空闲连接超时配置 | `common/constants.go`、`common/init.go`、`.env.example`、`service/http_client.go`、`service/protected_fetch_client.go`、`service/http_client_test.go`、`service/protected_fetch_client_test.go` | 原生化 new-api-main 的 `RELAY_IDLE_CONN_TIMEOUT` 能力，默认 90 秒并允许 0 表示不限制；默认 Relay client、HTTP/HTTPS proxy、SOCKS5 proxy 和 SSRF protected fetch transport 均使用同一配置，测试覆盖配置传播。 |
@@ -7482,3 +7483,55 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 10. MCP 真实点击 `Add 2 new model(s)` 后，页面 toast 显示 `Added 2 model(s) from search`；浏览器上下文读取表单文本确认 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
 11. MCP 点击 `Cancel` 返回渠道列表；验证期间未点击 `Update Channel`，未保存渠道变更。
 12. MCP `/channels` 控制台无 error/warn；DevTools Issue 面板仍显示既有表单 `autocomplete` 与部分复合编辑器 `label for` 关联提示，定位到 `name`、`priority`、`Model Mapping`、`Status Code Mapping`、`Parameter Override` 等既有字段，与本轮模型搜索补齐和 `contentFooter` 改动无直接关系。
+
+## 本轮报告校准：安全边界能力状态复核
+
+### 需求分析
+
+持续对照 `/opt/project/new-api-main` 的过程中，差异报告顶部总表已经把匿名请求体限制、HeaderNavModuleAuth、受保护 Fetch/SSRF 和系统设置路由权限表标记为已落地或部分落地，但中部 `P1：安全边界` 与“建议的落地顺序”仍保留“增加匿名请求体限制”“增加 SSRF 保护客户端”“增加 HeaderNavModuleAuth”等待办式描述。该表述会误导后续迁移计划，让已经原生化的安全能力被重复纳入待开发范围。
+
+本轮目标不是新增业务能力，而是基于当前仓库证据校准报告状态：只把已经能从代码、路由和测试中确认的能力改为“已原生化首批 + 后续维护契约”，对尚未完全完成的账号池字段级 fail-closed、Authz override/Casbin、SSRF 覆盖缺口审计继续保留为后续待办。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 差异报告顶部总表 | `docs/features/new-api-main-diff-analysis.md` | 将匿名请求体限制、顶栏模块鉴权和受保护 Fetch/SSRF 的原生化建议改为维护契约，明确新增入口的后续约束。 |
+| P1 安全边界路线 | `docs/features/new-api-main-diff-analysis.md` | 把已完成首批的安全能力从“待增加”改为“已落地，后续审计/维护”，保留账号池字段级 fail-closed 待办。 |
+| 建议落地顺序 | `docs/features/new-api-main-diff-analysis.md` | 标注安全小步快跑第一批已完成，下一批聚焦权限和覆盖缺口。 |
+| 实施记录索引 | `docs/features/new-api-main-diff-analysis.md` | 新增 2026-07-10 状态校准记录，便于后续回溯本轮只改文档、不改业务代码。 |
+
+### 风险评估
+
+- 本轮只修改 Markdown 文档，不改变 Go/React 代码、路由注册、数据库迁移、环境变量默认值、热更新构建产物或运行态配置。
+- 主要风险是把尚未完成的能力误标为完成；因此只校准有明确证据的条目：匿名请求体限制、HeaderNavModuleAuth、用户可控 URL 的 protected fetch 首批接入，以及 `/api/status/test` 已归入系统设置权限路由。
+- SSRF 条目不声明“所有网络请求已替换”，而是明确限定为“用户可控 URL 专用 client 首批已落地”；Relay 全局 client 继续作为显式例外保留。
+- HeaderNav 条目不只看后端中间件，也结合默认前端集中解析、pricing/rankings 路由守卫和实施记录，避免把单点能力误判为全链路完成。
+- 账号池字段级 fail-closed、Authz override/Casbin 和新增公开模块的测试契约仍保留为后续待办，避免过度乐观。
+
+### 方案评审
+
+采用“证据驱动的文档校准”方案：
+
+1. 以当前仓库文件为准复核能力状态，不根据旧计划或主观印象改状态。
+2. 匿名请求体限制以 `router/api-router.go` 中 setup、register、login、2FA、Passkey、OAuth bind、Webhook 等路由挂载 `anonymousRequestBodyLimit`，以及 `middleware/request_body_limit_test.go` 回归测试为完成依据。
+3. HeaderNavModuleAuth 以后端 `middleware/header_nav.go`、`router/api-router.go` pricing/rankings 挂载、`middleware/header_nav_test.go`、默认前端 `nav-modules.ts` 和 pricing/rankings 路由守卫实施记录为完成依据。
+4. SSRF 保护以 `service/protected_fetch_client.go`、`service/download.go`、`service/webhook.go`、`service/user_notify.go` 和 `service/protected_fetch_client_test.go` 为首批完成依据，同时在报告中保留 Relay 上游地址不替换的例外说明。
+5. `/api/status/test` 以 `router/system-setting-router.go`、`router/system_setting_router_test.go` 和前文系统设置路由权限表实施记录为完成依据，不再重复列为待迁移散落路由。
+6. 文档只更新已证实条目，未证实或仍处于部分完成状态的功能不改为完成。
+
+### 实施结果
+
+已完成安全边界能力状态校准：顶部总表、`P1：安全边界`、建议落地顺序和实施记录索引均已更新。报告现在明确表达：
+
+1. 匿名请求体限制已经是 NexusTok 原生匿名入口保护能力，后续新增匿名 POST 路由必须显式评估是否挂载。
+2. HeaderNavModuleAuth 已形成后端接口鉴权、前端配置解析和页面路由守卫的闭环，后续新增公开导航模块必须同步维护三处契约。
+3. 受保护 Fetch/SSRF 已覆盖首批用户可控 URL 拉取链路，Relay 全局 client 保留为显式例外，后续重点是覆盖缺口审计。
+4. 安全小步快跑第一批已完成，下一批重点转向账号池字段级 fail-closed、SSRF 覆盖缺口审计、Authz override/Casbin 和公开模块新增时的测试契约。
+
+### 验证记录
+
+1. `rg -n "AnonymousRequestBodyLimit|HeaderNavModuleAuth|GetSSRFProtectedHTTPClient|/test|TestStatus" common middleware router service controller -S` 已复核对应代码、路由和测试存在。
+2. `rg -n "P1：安全边界|匿名请求体|HeaderNav|SSRF|status/test|建议的落地顺序" docs/features/new-api-main-diff-analysis.md` 已定位并校准旧表述。
+3. 本轮无业务代码改动，因此不需要运行 Go 单测、前端 typecheck 或构建；执行 `git diff --check` 作为文档格式检查。
+4. 当前会话未暴露浏览器 MCP/DevTools 工具，已通过工具发现确认不可用；本轮改用 `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 验证当前热更新部署首页返回 200。由于本轮仅修改文档，页面不会出现业务 UI 变化。
