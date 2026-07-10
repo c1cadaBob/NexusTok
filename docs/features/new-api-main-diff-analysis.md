@@ -7190,3 +7190,78 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 10. MCP 打开 `http://192.168.0.202:3003/models/metadata`，模型列表正常渲染；选择 `gpt-5.6-terra` 打开编辑抽屉，`Pricing Configuration` 正常显示 `Per-token`、`Per-request`、`Expression` 三种模式，输入价格展示为干净小数字符串，如 `2.5`、`20`、`0.25`、`3.125`。
 11. 验证期间未点击 `Update Model` 或任何保存按钮，未写入运行态模型价格数据。
 12. MCP 控制台无新增 error/warn；仅保留既有表单可访问性 issue：一个字段缺少 label、一个字段缺少 id/name、三个 label 关联提示。
+
+## 本轮实施评审：系统设置数字输入 NaN 防护
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的系统设置差异后确认，new-api 独有 `utils/numeric-field.ts`，并在定价展示、支付配置、数据面板、性能监控、路由可靠性等页面复用 `safeNumberFieldProps`。该 helper 的核心价值不是视觉改版，而是避免 `<input type="number">` 在清空输入框、只输入 `-` 或输入非完成态小数时把 `valueAsNumber === NaN` 写入 react-hook-form。
+
+NexusTok 当前多个系统设置字段仍直接执行 `field.onChange(event.target.valueAsNumber)`，字段一旦进入 `NaN`，Zod `z.number()` / `z.coerce.number()` 校验可能在提交阶段失败，但页面上不一定出现清晰 toast，管理员会感知为“保存按钮没反应”。该问题属于系统设置稳定性能力缺口，适合吸收 new-api 的数字字段安全适配器，并以当前项目原生方式逐步覆盖关键数字输入。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 数字字段 helper | `web/default/src/features/system-settings/utils/numeric-field.ts` | 新增 `safeNumberFieldProps`，只向表单写入有限数字，非有限值显示为空字符串并忽略变更。 |
+| helper 测试 | `web/default/src/features/system-settings/utils/numeric-field.test.ts` | 覆盖有限数字写入、`NaN`/`Infinity` 忽略、非有限表单值显示为空。 |
+| 定价显示设置 | `web/default/src/features/system-settings/general/pricing-section.tsx` | `USDExchangeRate` 和自定义汇率输入不再把 `NaN` 写入表单。 |
+| 数据面板设置 | `web/default/src/features/system-settings/content/dashboard-section.tsx` | 数据导出刷新间隔输入使用安全数字绑定。 |
+| 支付配置 | `web/default/src/features/system-settings/integrations/payment-settings-section.tsx` | Epay/Stripe 单价与最低充值金额使用安全数字绑定，避免支付配置清空输入后进入不可保存状态。 |
+| Creem 产品弹窗 | `web/default/src/features/system-settings/integrations/creem-product-dialog.tsx` | 产品价格和额度输入使用安全数字绑定。 |
+| 监控配置 | `web/default/src/features/system-settings/integrations/monitoring-settings-section.tsx` | 自动测试间隔输入使用安全数字绑定。 |
+| 路由可靠性 | `web/default/src/features/system-settings/models/routing-reliability-section.tsx` | 重试次数和自动测试间隔使用安全数字绑定。 |
+| Grok 设置 | `web/default/src/features/system-settings/models/grok-settings-card.tsx` | 违规扣费金额输入使用安全数字绑定；Grok 表单 dotted key 结构修复另列后续切片。 |
+
+### 风险评估
+
+- 本轮只处理前端表单数字输入的 `value`/`onChange` 绑定，不改后端 options 存储、不改接口字段名、不改默认值和提交 payload 结构。
+- `safeNumberFieldProps` 会忽略 `NaN` 更新，React 受控输入会回到上一个有效值；这与 new-api/Semi `InputNumber` 的“无效输入不进入表单状态”行为一致，但意味着管理员不能在这些字段里临时保留非法草稿。
+- 空输入会显示为空字符串，但不会立刻写入 `NaN`；必填/最小值错误仍由原有 Zod schema 在提交或校验阶段处理。
+- 支付配置字段较敏感，本轮只替换数字输入绑定，不触碰支付方法、产品、Webhook、优惠配置、风险确认或保存流程。
+- 部分系统设置仍有字符串型数字字段或自定义数字编辑器，本轮不一次性替换所有数字输入，避免扩大风险；后续继续按差异文档分批覆盖。
+
+### 方案评审
+
+采用“helper 原生化 + 关键字段定向接入”的方案：
+
+1. 在 NexusTok 新增 `safeNumberFieldProps`，版权头和注释改为项目规范的中文说明，解释为什么不能把 `NaN` 写入表单状态。
+2. 对 `PricingSection`、`DashboardSection`、`PaymentSettingsSection`、`CreemProductDialog`、`MonitoringSettingsSection`、`RoutingReliabilitySection`、`GrokSettingsCard` 中直接使用 `valueAsNumber` 或直接展开数字 field 的关键字段改为展开 `safeNumberFieldProps(field)`，保留原 `min`、`max`、`step`、`disabled` 等属性。
+3. 对可选自定义汇率字段保持“空值可选”的语义：安全 helper 负责不写 `NaN`，schema 仍决定 `CUSTOM` 模式下是否必填。
+4. 新增 Node 单测覆盖 helper 行为，不引入浏览器测试依赖。
+5. 执行定向单测、i18n sync、typecheck、build、diff check，并用 MCP 访问 3003 的系统设置/价格配置页面，确认关键页面仍正常渲染；验证期间不保存支付或系统配置。
+
+### 验收方式
+
+1. `cd web/default && bun test src/features/system-settings/utils/numeric-field.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 打开 `http://192.168.0.202:3003/`、`/system-settings/site`、`/pricing-settings`、`/system-settings/models/routing-reliability`，确认页面正常渲染；如热更新未体现，先重启容器再复验。
+
+### 实施结果
+
+已完成系统设置数字输入 NaN 防护原生化。本轮新增 `utils/numeric-field.ts`，提供 `getSafeNumberDisplayValue` 和 `safeNumberFieldProps`：只有有限数字会进入 react-hook-form 状态，`NaN`、`Infinity`、字符串、空值等非有限值在展示层兜底为空字符串，并且不会污染表单值。
+
+系统设置中的定价显示、数据面板、支付网关、Creem 产品弹窗、监控规则、路由可靠性、Grok 违规扣费金额等关键数字输入已接入统一 helper，保留原有 `min`、`max`、`step`、`disabled` 和字段名，不改变后端 options payload、保存接口或数据库结构。本轮同时移除了 `routing-reliability-section.tsx` 里旧的本地 `numberInputValue` 辅助函数，避免同类逻辑继续分散。
+
+新增 `numeric-field.test.ts` 覆盖有限数字展示、非有限值展示为空、有限数字写入表单状态、`NaN`/`Infinity` 不写入表单状态。该能力与 new-api 的系统设置稳定性优势对齐，但以 NexusTok 当前 Base UI/react-hook-form 表单结构落地。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/system-settings/utils/numeric-field.test.ts` 通过，3 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见文案。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `rg -n "valueAsNumber|safeNumberFieldProps|numberInputValue" ...` 复核后，业务页面只保留 `safeNumberFieldProps` 调用，直接读取 `valueAsNumber` 的逻辑集中在 helper 内部。
+7. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染。
+8. MCP 打开 `http://192.168.0.202:3003/system-settings/site`，实际落到 `/system-settings/site/system-info`，系统信息页正常渲染。
+9. MCP 打开 `http://192.168.0.202:3003/pricing-settings`，Group & Tool Pricing 页面正常渲染，分组倍率数字输入可见。
+10. MCP 打开 `http://192.168.0.202:3003/system-settings/billing/payment`，Payment Gateway 页面正常渲染，Epay、Stripe、Creem、Waffo、Waffo Pancake 相关数字输入可见；验证期间未点击保存。
+11. MCP 打开 `http://192.168.0.202:3003/system-settings/content/dashboard`，Data Dashboard 页面正常渲染，刷新间隔数字输入可见。
+12. MCP 打开 `http://192.168.0.202:3003/system-settings/operations/monitoring`，Monitoring & Alerts 页面正常渲染，测试间隔等数字输入可见。
+13. MCP 打开 `http://192.168.0.202:3003/system-settings/models/routing-reliability`，Routing Reliability 页面正常渲染，重试次数和测试间隔数字输入可见。
+14. MCP 打开 `http://192.168.0.202:3003/system-settings/models/grok`，Grok Settings 页面正常渲染，违规扣费金额数字输入可见。
+15. MCP 控制台检查 `error`、`warn`、`issue` 类型消息，无新增控制台错误、警告或浏览器 issue。

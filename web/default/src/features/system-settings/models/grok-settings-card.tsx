@@ -35,6 +35,7 @@ import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee'
@@ -133,7 +134,7 @@ export function GrokSettingsCard(props: Props) {
                     type='number'
                     step={0.01}
                     min={0}
-                    {...field}
+                    {...safeNumberFieldProps(field)}
                     disabled={!enabled}
                   />
                 </FormControl>

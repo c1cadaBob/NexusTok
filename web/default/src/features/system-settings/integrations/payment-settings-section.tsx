@@ -49,6 +49,7 @@ import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dia
 import { confirmPaymentCompliance } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
 import { CreemProductsVisualEditor } from './creem-products-visual-editor'
@@ -785,10 +786,7 @@ export function PaymentSettingsSection({
                         type='number'
                         step='0.01'
                         min={0}
-                        value={(field.value ?? 0) as number}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -812,10 +810,7 @@ export function PaymentSettingsSection({
                         type='number'
                         step='0.01'
                         min={0}
-                        value={(field.value ?? 0) as number}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -1261,10 +1256,7 @@ export function PaymentSettingsSection({
                         type='number'
                         step='0.01'
                         min={0}
-                        value={(field.value ?? 0) as number}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -1286,10 +1278,7 @@ export function PaymentSettingsSection({
                         type='number'
                         step='0.01'
                         min={0}
-                        value={(field.value ?? 0) as number}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>

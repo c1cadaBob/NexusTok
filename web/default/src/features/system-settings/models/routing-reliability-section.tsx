@@ -48,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const numericString = z.string().refine((value) => {
   const trimmed = value.trim()
@@ -141,10 +142,6 @@ function normalizeLineEndings(value: string) {
 
 function normalizeChannelTestMode(value?: string | null): ChannelTestMode {
   return value === 'passive_recovery' ? 'passive_recovery' : 'scheduled_all'
-}
-
-function numberInputValue(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : ''
 }
 
 const buildFormDefaults = (
@@ -327,13 +324,7 @@ export function RoutingReliabilitySection({
                         min={0}
                         max={10}
                         step={1}
-                        value={numberInputValue(field.value)}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
-                        name={field.name}
-                        onBlur={field.onBlur}
-                        ref={field.ref}
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -469,13 +460,7 @@ export function RoutingReliabilitySection({
                         type='number'
                         min={1}
                         step={1}
-                        value={numberInputValue(field.value)}
-                        onChange={(event) =>
-                          field.onChange(event.target.valueAsNumber)
-                        }
-                        name={field.name}
-                        onBlur={field.onBlur}
-                        ref={field.ref}
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
