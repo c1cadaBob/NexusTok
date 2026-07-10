@@ -60,7 +60,7 @@ import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -157,6 +157,7 @@ import {
   hasModelConfigChanged,
   findMissingModelsInMapping,
   validateModelMappingJson,
+  hasAdvancedSettingsErrors,
 } from '../../lib'
 import {
   collectInvalidStatusCodeEntries,
@@ -179,6 +180,7 @@ import {
   ChannelApiAccessSection,
   ChannelAuthSection,
   ChannelBasicSection,
+  ChannelEditorLoadingState,
   ChannelModelsSection,
 } from './sections'
 
@@ -305,11 +307,10 @@ function readAdvancedSettingsPreference(): boolean {
 
 function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
   return Boolean(
-    values.model_mapping?.trim() ||
-    values.param_override?.trim() ||
-    values.header_override?.trim() ||
+    hasConfiguredOverrideValue(values.param_override) ||
+    hasConfiguredOverrideValue(values.header_override) ||
     values.advanced_custom?.trim() ||
-    values.status_code_mapping?.trim() ||
+    hasConfiguredOverrideValue(values.status_code_mapping) ||
     values.tag?.trim() ||
     values.remark?.trim() ||
     values.priority ||
@@ -325,6 +326,24 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim()
   )
+}
+
+function hasConfiguredOverrideValue(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === 'null') return false
+
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (parsed === null) return false
+    if (Array.isArray(parsed)) return parsed.length > 0
+    if (typeof parsed === 'object') return Object.keys(parsed).length > 0
+  } catch {
+    return true
+  }
+
+  return true
 }
 
 function pickNonSensitiveChannelUpdatePayload(payload: Partial<Channel>) {
@@ -620,7 +639,7 @@ export function ChannelMutateDrawer({
     permissions.canWrite || permissions.canSensitiveWrite
 
   // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
-  const { data: channelData } = useQuery({
+  const { data: channelData, isLoading: isChannelLoading } = useQuery({
     queryKey: channelsQueryKeys.detail(currentRow?.id || 0),
     queryFn: () => getChannel(currentRow!.id),
     enabled: isEditing && Boolean(currentRow?.id),
@@ -688,6 +707,8 @@ export function ChannelMutateDrawer({
   // 判断当前编辑对象是否为多 Key 渠道，决定是否展示追加/覆盖等历史密钥管理入口。
   const isMultiKeyChannel =
     isEditing && channelData?.data?.channel_info?.is_multi_key === true
+  const isChannelDetailLoading = isEditing && isChannelLoading
+  const sensitiveFieldsReadOnly = isEditing && !canEditSensitiveFields
 
   // 表单实例初始化。
   const form = useForm<ChannelFormValues>({
@@ -892,34 +913,7 @@ export function ChannelMutateDrawer({
   const modelsHaveErrors = Boolean(
     formErrors.models || formErrors.group || formErrors.model_mapping
   )
-  const advancedHaveErrors = Boolean(
-    formErrors.priority ||
-    formErrors.weight ||
-    formErrors.test_model ||
-    formErrors.auto_ban ||
-    formErrors.tag ||
-    formErrors.remark ||
-    formErrors.status_code_mapping ||
-    formErrors.param_override ||
-    formErrors.header_override ||
-    formErrors.advanced_custom ||
-    formErrors.force_format ||
-    formErrors.thinking_to_content ||
-    formErrors.pass_through_body_enabled ||
-    formErrors.proxy ||
-    formErrors.system_prompt ||
-    formErrors.system_prompt_override ||
-    formErrors.allow_service_tier ||
-    formErrors.disable_store ||
-    formErrors.allow_safety_identifier ||
-    formErrors.allow_include_obfuscation ||
-    formErrors.allow_inference_geo ||
-    formErrors.allow_speed ||
-    formErrors.claude_beta_query ||
-    formErrors.upstream_model_update_check_enabled ||
-    formErrors.upstream_model_update_auto_sync_enabled ||
-    formErrors.upstream_model_update_ignored_models
-  )
+  const advancedHaveErrors = hasAdvancedSettingsErrors(formErrors)
   const providerRequiresBaseUrl =
     !isGlobalAccountPoolMode && [3, 8, 36, 45].includes(currentType)
   const providerRequiresOther = [3, 18, 21, 39, 41, 49].includes(currentType)
@@ -1130,6 +1124,13 @@ export function ChannelMutateDrawer({
     () =>
       modelSearchModelNames.filter(
         (model) => !currentModelsArray.includes(model)
+      ),
+    [currentModelsArray, modelSearchModelNames]
+  )
+  const modelSearchExistingNames = useMemo(
+    () =>
+      modelSearchModelNames.filter((model) =>
+        currentModelsArray.includes(model)
       ),
     [currentModelsArray, modelSearchModelNames]
   )
@@ -1911,7 +1912,7 @@ export function ChannelMutateDrawer({
   }, [advancedSettingsOpen, handleAdvancedSettingsOpenChange])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || isChannelDetailLoading) return
     const formElement = channelFormRef.current
     if (!formElement) return
 
@@ -1925,12 +1926,17 @@ export function ChannelMutateDrawer({
       formElement.removeEventListener('scroll', updateActiveEditorSection)
       window.removeEventListener('resize', updateActiveEditorSection)
     }
-  }, [open, updateActiveEditorSection])
+  }, [isChannelDetailLoading, open, updateActiveEditorSection])
 
-  const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(() => {
-    handleAdvancedSettingsOpenChange(true)
-    toast.error(t('Please fix the highlighted fields before saving'))
-  }, [handleAdvancedSettingsOpenChange, t])
+  const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(
+    (errors) => {
+      if (hasAdvancedSettingsErrors(errors)) {
+        handleAdvancedSettingsOpenChange(true)
+      }
+      toast.error(t('Please fix the highlighted fields before saving'))
+    },
+    [handleAdvancedSettingsOpenChange, t]
+  )
 
   return (
     <>
@@ -1959,6 +1965,20 @@ export function ChannelMutateDrawer({
             </SheetDescription>
           </SheetHeader>
 
+          {sensitiveFieldsReadOnly && (
+            <Alert className='mx-4 mt-4 sm:mx-6'>
+              <AlertCircle aria-hidden='true' />
+              <AlertTitle>
+                {t('Sensitive channel settings are read-only')}
+              </AlertTitle>
+              <AlertDescription>
+                {t(
+                  'You can still edit non-sensitive fields such as models, groups, priority, and weight.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
           <Form {...form}>
             <form
               id='channel-form'
@@ -1966,7 +1986,13 @@ export function ChannelMutateDrawer({
               onSubmit={form.handleSubmit(onSubmit, onInvalid)}
               className={sideDrawerFormClassName('gap-5')}
             >
-              <div className='grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start'>
+              {isChannelDetailLoading && <ChannelEditorLoadingState />}
+              <div
+                className={cn(
+                  'grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start',
+                  isChannelDetailLoading && 'hidden'
+                )}
+              >
                 <ChannelEditorNav
                   providerLogo={getLobeIcon(
                     `${getChannelTypeIcon(currentType)}.Color`,
@@ -3624,12 +3650,14 @@ export function ChannelMutateDrawer({
                                           ? t('Searching model metadata...')
                                           : modelSearchModelNames.length > 0
                                             ? t(
-                                                '{{count}} synced model(s) matched "{{keyword}}"',
+                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
                                                 {
-                                                  count:
+                                                  matched:
                                                     modelSearchModelNames.length,
-                                                  keyword:
-                                                    debouncedModelSearchKeyword,
+                                                  addable:
+                                                    modelSearchAddableNames.length,
+                                                  existing:
+                                                    modelSearchExistingNames.length,
                                                 }
                                               )
                                             : t('No matching models')}
@@ -3680,8 +3708,8 @@ export function ChannelMutateDrawer({
                                           : noPermissionMessage
                                       }
                                     >
-                                      <Plus className='mr-2 h-4 w-4' />
-                                      {t('Add {{count}} search result(s)', {
+                                      <Plus data-icon='inline-start' />
+                                      {t('Add {{count}} new model(s)', {
                                         count: modelSearchAddableNames.length,
                                       })}
                                     </Button>
@@ -5044,7 +5072,9 @@ export function ChannelMutateDrawer({
             <Button
               form='channel-form'
               type='submit'
-              disabled={isSubmitting || !canSubmitForm}
+              disabled={
+                isSubmitting || !canSubmitForm || isChannelDetailLoading
+              }
               title={canSubmitForm ? undefined : noPermissionMessage}
             >
               {isSubmitting && (

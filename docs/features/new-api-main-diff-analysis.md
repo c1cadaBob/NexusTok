@@ -7052,3 +7052,72 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 9. MCP 打开创建渠道抽屉，选择 `Advanced Custom`，页面出现安全提示、`Advanced Custom Routes`、`Routes: 0`、`Incomplete` 与 `Configure routes`；点击配置后弹窗显示 Visual/JSON 模式、模板选择和默认 OpenAI Chat route。
 10. MCP 在 Advanced Custom 弹窗点击 `Fill Template` 并 `Save changes` 后，外层表单更新为 `Routes: 1` 和 `OpenAI Chat` badge，`Incomplete` 消失；未点击 `Save changes` 创建渠道，避免写入高风险运行态配置。
 11. MCP 刷新 `http://192.168.0.202:3003/channels` 后页面正常渲染；控制台 error/warn 为空，说明热更新页面已生效且无需重启容器。
+
+## 本轮复核评审：渠道编辑页继续对齐 new-api 最新交互
+
+### 需求分析
+
+用户继续指出“搜索添加时不正确”，并要求把当前渠道编辑页面进一步对齐 `/opt/project/new-api-main` 最新版编辑渠道页。运行态复现确认：当前输入 `gpt-5.6` 后确实能命中 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个真实模型，但由于 `gpt-5.6-sol` 已经在渠道中，按钮显示 `Add 2 search result(s)`，容易被理解为只同步到了两个模型，和用户预期的“三种模型都同步到能力中”产生歧义。
+
+对照 new-api 最新源码，NexusTok 当前编辑抽屉已经具备分区导航、账号池凭证、Codex OAuth、密钥安全验证、模型映射保护和 Advanced Custom 入口，但仍缺少三个体验保护：编辑详情加载中防覆盖的骨架屏、敏感字段只读时的全局提示、以及校验失败时只展开包含错误的高级设置。上述能力适合以 NexusTok 原生方式补齐，不应直接覆盖当前提交链路。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 调整模型搜索结果的命中/新增/已存在计数展示，加入详情加载态、敏感字段只读提示和更精准的 invalid 展开逻辑。 |
+| 渠道编辑加载态 | `web/default/src/features/channels/components/drawers/sections/channel-editor-loading-state.tsx` | 新增 new-api 同类骨架屏，避免详情未加载完成时展示默认空表单。 |
+| 表单错误归类 | `web/default/src/features/channels/lib/channel-form-errors.ts` | 抽出高级设置字段集合，供 invalid handler 判断是否需要展开高级设置。 |
+| 高级配置状态 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 复用 new-api 的空值判断，避免 `{}`、`[]`、`null` 这类空 JSON 被误标记为已配置。 |
+| i18n | `web/default/src/i18n/*` | 补齐新增提示、计数和加载文案六语翻译。 |
+
+### 风险评估
+
+- 搜索添加只能修改表单内 `models` 字段，不能直接保存渠道；运行态验证不得点击 `Update Channel`，避免误改现有渠道。
+- `gpt-5.6-sol` 已在渠道中时，按钮应只追加未存在的模型，但必须明确展示“3 个命中、2 个可新增、1 个已存在”，避免再次让用户误判同步缺失。
+- 详情加载态只应在编辑模式且详情请求首次加载时显示；如果 React Query 已有缓存，不应闪烁或阻塞正常编辑。
+- 敏感字段只读提示不能改变现有权限裁剪语义：普通写权限仍可编辑模型、分组、优先级、权重等非敏感字段，敏感字段继续由 `canSensitiveWrite` 控制。
+- 高级设置展开逻辑只影响前端可见状态，不替代后端 schema 和权限校验；提交 payload 的敏感字段过滤、账号池模式和 Codex OAuth 链路保持不变。
+
+### 方案评审
+
+本轮采用“小切片 UX 对齐”方案：
+
+1. 模型搜索区域保留现有远程搜索和批量追加逻辑，但把文案拆成命中数、可新增数和已在渠道中的数量；按钮改为“Add {{count}} new model(s)”，只表示实际会新增的模型。
+2. 从 new-api 引入 `ChannelEditorLoadingState` 的交互思想并本地化为 NexusTok 文件：编辑详情加载中显示骨架屏和防覆盖提示。
+3. 新增 `hasAdvancedSettingsErrors` helper，`onInvalid` 只在高级字段出错时展开高级设置；普通 Basic/Credentials/Models 错误不再强制展开高级区。
+4. 追加敏感字段只读 Alert：当用户只有非敏感写权限时，明确提示仍可编辑模型、分组、优先级、权重等非敏感操作字段。
+5. 调整高级配置“已配置”判断，空 JSON、`null` 和空数组不再触发 configured 状态；保留 NexusTok 当前的账号池、Advanced Custom、状态码风险确认和模型映射保护逻辑。
+
+### 验收方式
+
+1. `cd web/default && bun test src/features/channels/lib/advanced-custom.test.ts src/components/multi-select.test.ts`。
+2. `cd web/default && bun run i18n:sync`。
+3. `cd web/default && bun run typecheck`。
+4. `cd web/default && bun run build`。
+5. `git diff --check`。
+6. MCP 访问 `http://192.168.0.202:3003/` 与 `/channels`，编辑渠道 `11111`，输入 `gpt-5.6`，确认页面显示 3 个命中、2 个可新增、1 个已存在；点击新增后表单变为 5 个模型但不点击保存。
+7. MCP 刷新页面并检查控制台 error/warn；若热更新未生效，按约定重启容器后复验。
+
+### 实施结果
+
+已完成渠道编辑页的继续对齐。模型搜索添加区域不再用容易误解的 `Add {{count}} search result(s)` 表达真实行为，而是拆成 `{{matched}} matched · {{addable}} new · {{existing}} already selected`。例如现有渠道已经包含 `gpt-5.6-sol` 时，输入 `gpt-5.6` 会显示 3 个真实模型命中、2 个可新增、1 个已存在，按钮只显示 `Add 2 new model(s)`，明确说明实际只会新增 terra/luna，不会重复写入 sol。
+
+已新增 `ChannelEditorLoadingState`，编辑详情首次加载时展示骨架屏和“等待详情加载，避免覆盖已保存值”的提示；主表单在加载期间隐藏，提交按钮同步禁用，避免默认表单值被误提交。该实现吸收 new-api 最新编辑器的防覆盖思路，但保留 NexusTok 当前 React Query、账号池和渠道权限链路。
+
+已新增 `channel-form-errors.ts`，集中维护高级设置字段集合；校验失败时只有高级设置字段出错才自动展开高级区，Basic/Credentials/Models 的错误不会再把用户带到无关区域。同时高级设置“已配置”判断改为解析空 JSON：`null`、`{}`、`[]` 不再被误认为已配置，保留非空对象/数组和非法但非空 JSON 的提示价值。
+
+已为敏感字段只读场景新增全局提示。当用户可以编辑非敏感字段但没有 `channel.sensitive_write` 时，页面会提示敏感设置只读，并说明模型、分组、优先级、权重等非敏感字段仍可编辑。现有字段级禁用、提交 payload 裁剪、密钥安全验证、账号池模式、Codex OAuth、Advanced Custom 配置入口、状态码风险确认和模型映射保护均保持不变。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/advanced-custom.test.ts src/components/multi-select.test.ts` 通过，7 个用例全部通过。
+2. `cd web/default && bun run i18n:sync` 通过；新增 6 条文案已补齐 en、zh、fr、ja、ru、vi，并记录到 `static-keys.ts`。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. MCP 打开 `http://192.168.0.202:3003/`，首页正常渲染；随后打开 `/channels`，渠道列表正常渲染。
+7. MCP 编辑渠道 `11111`，输入 `gpt-5.6` 后，页面显示 `3 matched · 2 new · 1 already selected`，候选列表为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，按钮显示 `Add 2 new model(s)`。
+8. MCP 点击新增按钮后，表单显示 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`；验证期间未点击 `Update Channel`。
+9. MCP 在浏览器上下文调用 `GET /api/channel?p=1&page_size=10&tag_mode=false&id_sort=false` 返回 HTTP 200、`success=true`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认本轮验证没有写入后端。
+10. MCP 控制台未出现新增 error/warn；仅保留浏览器既有 issue：一个表单 autocomplete 提示和三个 label 关联提示。

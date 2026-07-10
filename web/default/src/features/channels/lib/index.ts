@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 // Re-export all library functions
 export * from './advanced-custom'
 export * from './channel-actions'
+export * from './channel-form-errors'
 export * from './channel-form'
 export * from './channel-type-config'
 export * from './channel-utils'
