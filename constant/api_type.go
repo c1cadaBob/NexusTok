@@ -16,7 +16,7 @@
 package constant
 
 const (
-	APITypeOpenAI = iota         // OpenAI API（GPT 系列模型）
+	APITypeOpenAI         = iota // OpenAI API（GPT 系列模型）
 	APITypeAnthropic             // Anthropic API（Claude 系列模型）
 	APITypePaLM                  // Google PaLM API
 	APITypeBaidu                 // 百度文心一言 API
@@ -51,5 +51,6 @@ const (
 	APITypeMiniMax               // MiniMax API
 	APITypeReplicate             // Replicate API
 	APITypeCodex                 // Codex API
+	APITypeAdvancedCustom        // Advanced Custom API（按路由映射到不同上游协议）
 	APITypeDummy                 // 仅用于计数，不要在此之后添加 API 类型
 )

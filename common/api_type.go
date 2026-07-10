@@ -109,6 +109,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeSubmodel
 	case constant.ChannelTypeCodex: // Codex（代码生成）
 		apiType = constant.APITypeCodex
+	case constant.ChannelTypeAdvancedCustom: // Advanced Custom（按请求路径映射上游协议）
+		apiType = constant.APITypeAdvancedCustom
 	}
 
 	// 如果没有找到匹配的渠道类型，默认返回 OpenAI API 类型

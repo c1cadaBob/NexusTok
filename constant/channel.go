@@ -68,7 +68,8 @@ const (
 	ChannelTypeSora           = 55 // Sora（OpenAI 视频生成）
 	ChannelTypeReplicate      = 56 // Replicate
 	ChannelTypeCodex          = 57 // Codex（OpenAI Codex）
-	ChannelTypeDummy          // 仅用于计数，不要在此之后添加渠道
+	ChannelTypeAdvancedCustom = 58 // Advanced Custom（按请求路径自定义上游路由）
+	ChannelTypeDummy               // 仅用于计数，不要在此之后添加渠道
 )
 
 // ChannelBaseURLs 渠道基础 URL 列表
@@ -132,6 +133,7 @@ var ChannelBaseURLs = []string{
 	"https://api.openai.com",                    // 55 - Sora
 	"https://api.replicate.com",                 // 56 - Replicate
 	"https://chatgpt.com",                       // 57 - Codex
+	"",                                          // 58 - Advanced Custom
 }
 
 // ChannelTypeNames 渠道类型名称映射
@@ -191,6 +193,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSora:           "Sora",
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "Codex",
+	ChannelTypeAdvancedCustom: "Advanced Custom",
 }
 
 // GetChannelTypeName 获取渠道类型名称

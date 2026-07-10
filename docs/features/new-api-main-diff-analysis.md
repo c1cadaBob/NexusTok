@@ -6900,3 +6900,82 @@ NexusTok 已经具备管理权限 catalog、角色基线矩阵、`middleware.Req
 8. MCP 网络面板确认验证过程中只有 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50`、`GET /api/channel/1` 等读取请求，没有触发 `PUT /api/channel/`。
 9. MCP 在浏览器上下文调用 `GET /api/channel?p=1&page_size=10` 回查运行态渠道，渠道 `11111` 的持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认未点击保存时不会写入测试追加结果。
 10. MCP 控制台无新增 `error` 或 `warn`；仅观察到 i18next 信息日志和浏览器既有表单可访问性 issue 提示，本轮未新增阻断性前端错误。
+
+## 本轮实施评审：Advanced Custom Channel 后端基础层原生化
+
+### 需求分析
+
+`new-api-main` 已提供 Advanced Custom Channel，用于把一个渠道内的多个客户端入口路径映射到不同上游 URL，并可选择在 OpenAI Chat、Anthropic Messages、Gemini GenerateContent 和 OpenAI Responses 之间做协议转换。NexusTok 当前只有普通 `Custom`、参数覆写和请求头覆写，缺少“按请求路径精确路由到上游端点”的原生能力；这使管理员在接入非标准代理、混合协议网关或只暴露部分兼容端点的上游时，只能通过新增多个普通渠道绕行，配置成本高，且无法在同一渠道内统一模型、分组、权重和计费策略。
+
+该能力价值高，但风险也高：它允许管理员把客户端请求路径和上游地址重新绑定，若不做后端校验，会带来 SSRF、凭证泄露、协议转换错配、计费快照不一致和绕过现有 provider 边界等问题。因此本轮目标不是一次性开放完整前端编辑器，而是先把 Advanced Custom 的后端基础层原生化：新增独立渠道类型、配置 schema、严格校验、relay adaptor、注册映射和回归测试，让后续 UI 编辑器能建立在后端 fail-closed 能力之上。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道/API 常量 | `constant/channel.go`、`constant/api_type.go`、`common/api_type.go` | 新增 `ChannelTypeAdvancedCustom=58` 与 `APITypeAdvancedCustom`，不改变既有类型编号和映射。 |
+| 渠道设置 DTO | `dto/channel_settings.go`、新增 DTO 测试 | 在 `ChannelOtherSettings` 中加入 `advanced_custom` 配置；实现 route、auth、converter schema、路径匹配和后端校验。 |
+| 渠道保存校验 | `model/channel.go` / `controller/channel.go` | Advanced Custom 渠道保存时必须存在并通过 `advanced_custom` 校验；普通渠道如携带该配置也会先校验 schema，避免无效 JSON 被持久化。 |
+| Relay 适配器 | `relay/channel/advancedcustom/*`、`relay/relay_adaptor.go`、`relay/common/relay_info.go` | 新增 adaptor，复用 OpenAI/Claude/Gemini 原生转换与响应处理；支持 URL 拼接、`{model}` 模板、header/query auth、Gemini streaming URL 切换和 Responses/Chat 互转。 |
+| 默认前端识别层 | `web/default/src/features/channels/constants.ts` 等 | 仅补齐 type label/icon/提示，保证后端已有 Advanced Custom 渠道能被识别；完整可视化编辑器另行评审。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验证结果和后续边界。 |
+
+### 风险评估
+
+- Advanced Custom 的 `upstream_path` 支持绝对 URL 和相对 URL。相对 URL 必须依赖渠道 `base_url`，绝对 URL 必须限定为 `http`/`https`，并拒绝 `//host/path` 这类容易被误判的协议相对 URL。
+- `incoming_path` 必须以 `/` 开头、不能包含 query，且同一配置内必须唯一；带 `{model}` 的模板只允许匹配单个路径段，避免吞掉额外路径导致越权路由。
+- converter 必须与入口路径匹配，例如 Responses 转 Chat 只能挂在 `/v1/responses`，OpenAI Chat 转 Claude/Gemini/Responses 只能挂在 `/v1/chat/completions`，Gemini 原生入口必须包含 `:generateContent` 或 `:streamGenerateContent`。
+- auth 支持 `none`、`header`、`query`。`header/query` 必须提供非空 name/value，value 支持 `{api_key}` 模板；默认无 auth 时使用 `Authorization: Bearer <key>`，保持 OpenAI 兼容预期。
+- 本轮不新增数据库字段，不修改计费表和日志表；Advanced Custom 继续走现有渠道选择、模型映射、参数覆写、请求体透传、预扣费和响应 usage 处理链路。
+- 暂不开放完整可视化编辑器，避免在后端基础未验证前把任意路由映射暴露为常规表单入口。后续 UI 需要继续接入 `channel.sensitive_write`、二次确认和配置模板。
+
+### 方案评审
+
+采用“后端基础层先行、前端仅识别”的原生化方案。
+
+1. 在 Go DTO 层新增 `AdvancedCustomConfig`、`AdvancedCustomRoute` 和 `AdvancedCustomRouteAuth`，并把 `Validate` 设计为保存前和 relay 前都可复用的 fail-closed 校验。
+2. 在 `ChannelOtherSettings` 中加入 `AdvancedCustom *AdvancedCustomConfig`，并在渠道校验中要求 `ChannelTypeAdvancedCustom` 必须配置有效 `advanced_custom`；普通渠道如果保留未知/高级 settings 字段，只有 `advanced_custom` 非空时才执行 schema 校验。
+3. 新增 `relay/channel/advancedcustom` adaptor，复用 NexusTok 现有 `openai`、`claude`、`gemini` adaptor 和 `service/openaicompat` 转换函数，不复制一套协议转换逻辑。
+4. 注册 `APITypeAdvancedCustom`，让中继按新类型走独立 adaptor；同时把该类型加入 StreamOptions 支持表，因为它可能承载 OpenAI/Claude/Gemini 的流式 chat 路径。
+5. 前端本轮只补渠道类型常量、图标和 key/base URL 提示，使页面不会显示 Unknown；完整 `advanced_custom` 编辑器、模板和 JSON/visual 双模式另行分批。
+6. 测试优先覆盖 DTO 校验和 adaptor 的 URL/auth/转换行为，包括相对 upstream path、缺失 base URL、query/header auth、Gemini 流式 URL、路径不匹配和 Responses 转 Chat。
+
+### 验收方式
+
+1. `go test ./dto -run AdvancedCustom`。
+2. `go test ./relay/channel/advancedcustom`。
+3. `go test ./model -run AdvancedCustom`（如新增模型层校验测试）。
+4. `go test ./common -run ChannelType2APIType`（如新增映射测试）。
+5. `go test ./relay -run AdvancedCustom` 或定向构建注册相关包。
+6. `cd web/default && bun run i18n:sync`、`bun run typecheck`、`bun run build`（如改前端识别层）。
+7. `git diff --check`。
+8. MCP 打开 `http://192.168.0.202:3003/` 与 `/channels`，确认热更新页面可访问、渠道列表仍正常渲染，现有 Codex 渠道未受影响；本轮不在运行态创建真实 Advanced Custom 渠道，避免写入高风险生产配置。
+
+### 实施结果
+
+已完成 Advanced Custom Channel 后端基础层的原生化落地。后端新增 `ChannelTypeAdvancedCustom=58`、`APITypeAdvancedCustom` 和渠道类型映射，`ChannelOtherSettings` 支持 `settings.advanced_custom`；保存渠道时，type 58 必须携带有效 Advanced Custom 配置，普通渠道如果携带该配置也会先执行 schema 校验，避免错误配置悄悄落库。
+
+新增 `AdvancedCustomConfig`/`AdvancedCustomRoute`/`AdvancedCustomRouteAuth` 后端 schema，保存前与 relay 前复用同一套 fail-closed 校验：`incoming_path` 必须是无 query 的绝对路径且唯一，`upstream_path` 只能是 http/https 绝对 URL 或单 `/` 开头的相对路径，拒绝协议相对 URL、userinfo 和不匹配的 converter；header/query auth 必须提供安全的 name/value，value 支持 `{api_key}` 模板。`{model}` 路径模板只匹配单一路径段，Gemini `:generateContent` 与 `:streamGenerateContent` 做了兼容匹配。
+
+Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor 注册表中接入。该 adaptor 只负责 route 解析、URL/auth 组装和 converter 分发，协议转换与响应处理复用 NexusTok 现有 OpenAI、Claude、Gemini adaptor 以及 `service/openaicompat` 转换函数；已支持默认 Bearer auth、header/query auth、相对 upstream path 拼接、`{model}` 替换、Claude 默认 header、Gemini 流式 URL 切换、OpenAI Chat 与 Responses 的双向转换，以及原生 OpenAI/Claude/Gemini 响应处理。
+
+默认前端完成识别层接入：渠道类型列表显示 `Advanced Custom`，图标使用 OpenAI 兼容标识，API Key 提示、安全警告和六语 i18n key 已补齐。运行态创建渠道弹窗中可搜索并选中 `Advanced Custom`，选中后显示“Advanced Custom routes can change upstream URLs and credentials. Only use trusted configurations.”安全提示。本轮没有开放完整可视化编辑器，避免在高风险 route/auth 配置上绕过后端先行校验和后续权限评审。
+
+### 验证记录
+
+1. `go test ./dto -run AdvancedCustom` 通过。
+2. `go test ./relay/channel/advancedcustom` 通过。
+3. `go test ./model -run AdvancedCustom` 通过。
+4. `go test ./common -run ChannelType2APIType` 通过。
+5. `go test ./relay -run AdvancedCustom` 通过。
+6. `go test ./relay ./relay/common ./relay/channel/advancedcustom ./controller -run 'AdvancedCustom|TestGetAdaptorAdvancedCustom|TestChannelType2APITypeAdvancedCustom'` 通过。
+7. `go test ./...` 通过。
+8. `cd web/default && bun run i18n:sync` 通过；本轮新增 Advanced Custom 文案已补齐 en、zh、fr、ja、ru、vi，仓库既有 fr/ja/ru/vi untranslated 统计仍存在但非本轮新增。
+9. `cd web/default && bun run typecheck` 通过。
+10. `cd web/default && bun run build` 通过。
+11. `git diff --check` 通过；本轮触碰的前端文件已用 `bunx prettier --check` 验证通过。
+12. MCP 打开并强刷 `http://192.168.0.202:3003/channels`，确认渠道列表正常渲染，现有 Codex 渠道 `11111` 未受影响；当前页面网络请求均最终返回 200，只有 `/api/channel` 与 `/api/prefill_group` 的尾斜杠 301 跳转。
+13. MCP 打开创建渠道弹窗，搜索并点选 `Advanced Custom`，确认类型候选、弹窗标题、类型名和安全警告均已进入运行态页面；未点击保存，未创建真实 Advanced Custom 渠道。
+14. MCP 访问 `http://192.168.0.202:3003/`，确认首页仍正常渲染。
+15. MCP 在登录态浏览器上下文调用 `POST /api/channel/`，尝试创建 type 58 但不携带 `settings.advanced_custom` 的渠道；接口返回 HTTP 200、业务 `success=false`，错误为 `渠道额外设置[channel setting] 格式错误：advanced_custom is required`，确认后端保存校验已生效且不会进入创建成功路径。
+16. MCP 控制台未发现本轮新增阻断性错误；仅保留浏览器报告的既有表单 autocomplete/label 可访问性 issue。

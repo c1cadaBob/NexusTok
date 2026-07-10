@@ -17,50 +17,51 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"strings"
 	"sync"
 
-	"github.com/c1cada/NexusTok/common"    // 公共工具包
-	"github.com/c1cada/NexusTok/constant"  // 常量定义
-	"github.com/c1cada/NexusTok/dto"       // 数据传输对象
-	"github.com/c1cada/NexusTok/types"     // 类型定义
+	"github.com/c1cada/NexusTok/common"   // 公共工具包
+	"github.com/c1cada/NexusTok/constant" // 常量定义
+	"github.com/c1cada/NexusTok/dto"      // 数据传输对象
+	"github.com/c1cada/NexusTok/types"    // 类型定义
 
-	"github.com/samber/lo"  // Go 工具库
-	"gorm.io/gorm"          // GORM ORM
-	"gorm.io/gorm/clause"   // GORM 子句
+	"github.com/samber/lo" // Go 工具库
+	"gorm.io/gorm"         // GORM ORM
+	"gorm.io/gorm/clause"  // GORM 子句
 )
 
 // Channel 渠道数据模型
 // 代表一个上游 AI 服务提供商的连接通道
 type Channel struct {
-	Id                 int     `json:"id"`                                                                      // 渠道 ID
-	Type               int     `json:"type" gorm:"default:0"`                                                   // 渠道类型（见 constant/channel.go）
-	Key                string  `json:"key" gorm:"not null"`                                                     // API Key（单 Key 模式）
-	OpenAIOrganization *string `json:"openai_organization"`                                                     // OpenAI Organization ID
-	TestModel          *string `json:"test_model"`                                                              // 测试模型名称
-	Status             int     `json:"status" gorm:"default:1"`                                                 // 渠道状态（1=启用，2=禁用）
-	Name               string  `json:"name" gorm:"index"`                                                       // 渠道名称
-	Weight             *uint   `json:"weight" gorm:"default:0"`                                                 // 权重（用于负载均衡）
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`                                              // 创建时间
-	TestTime           int64   `json:"test_time" gorm:"bigint"`                                                 // 最后测试时间
-	ResponseTime       int     `json:"response_time"`                                                           // 响应时间（毫秒）
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`                              // 基础 URL
-	Other              string  `json:"other"`                                                                   // 其他配置（如 API 版本、区域等）
-	Balance            float64 `json:"balance"`                                                                 // 余额（美元）
-	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`                                      // 余额更新时间
-	Models             string  `json:"models"`                                                                  // 支持的模型列表（逗号分隔）
-	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`                          // 渠道分组
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`                                      // 已使用额度
-	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`                                          // 模型映射（JSON 格式）
-	StatusCodeMapping  *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`                // 状态码映射（JSON 格式）
-	Priority           *int64  `json:"priority" gorm:"bigint;default:0"`                                        // 优先级（数值越高越优先）
-	AutoBan            *int    `json:"auto_ban" gorm:"default:1"`                                               // 是否自动封禁（1=启用，0=禁用）
-	OtherInfo          string  `json:"other_info"`                                                              // 其他信息
-	Tag                *string `json:"tag" gorm:"index"`                                                        // 标签
-	Setting            *string `json:"setting" gorm:"type:text"`                                                // 渠道额外设置（JSON 格式）
-	ParamOverride      *string `json:"param_override" gorm:"type:text"`                                         // 参数覆盖（JSON 格式）
-	HeaderOverride     *string `json:"header_override" gorm:"type:text"`                                        // 请求头覆盖（JSON 格式）
-	Remark             *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`                       // 备注
+	Id                 int     `json:"id"`                                                       // 渠道 ID
+	Type               int     `json:"type" gorm:"default:0"`                                    // 渠道类型（见 constant/channel.go）
+	Key                string  `json:"key" gorm:"not null"`                                      // API Key（单 Key 模式）
+	OpenAIOrganization *string `json:"openai_organization"`                                      // OpenAI Organization ID
+	TestModel          *string `json:"test_model"`                                               // 测试模型名称
+	Status             int     `json:"status" gorm:"default:1"`                                  // 渠道状态（1=启用，2=禁用）
+	Name               string  `json:"name" gorm:"index"`                                        // 渠道名称
+	Weight             *uint   `json:"weight" gorm:"default:0"`                                  // 权重（用于负载均衡）
+	CreatedTime        int64   `json:"created_time" gorm:"bigint"`                               // 创建时间
+	TestTime           int64   `json:"test_time" gorm:"bigint"`                                  // 最后测试时间
+	ResponseTime       int     `json:"response_time"`                                            // 响应时间（毫秒）
+	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`               // 基础 URL
+	Other              string  `json:"other"`                                                    // 其他配置（如 API 版本、区域等）
+	Balance            float64 `json:"balance"`                                                  // 余额（美元）
+	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`                       // 余额更新时间
+	Models             string  `json:"models"`                                                   // 支持的模型列表（逗号分隔）
+	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`          // 渠道分组
+	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`                       // 已使用额度
+	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`                           // 模型映射（JSON 格式）
+	StatusCodeMapping  *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"` // 状态码映射（JSON 格式）
+	Priority           *int64  `json:"priority" gorm:"bigint;default:0"`                         // 优先级（数值越高越优先）
+	AutoBan            *int    `json:"auto_ban" gorm:"default:1"`                                // 是否自动封禁（1=启用，0=禁用）
+	OtherInfo          string  `json:"other_info"`                                               // 其他信息
+	Tag                *string `json:"tag" gorm:"index"`                                         // 标签
+	Setting            *string `json:"setting" gorm:"type:text"`                                 // 渠道额外设置（JSON 格式）
+	ParamOverride      *string `json:"param_override" gorm:"type:text"`                          // 参数覆盖（JSON 格式）
+	HeaderOverride     *string `json:"header_override" gorm:"type:text"`                         // 请求头覆盖（JSON 格式）
+	Remark             *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`       // 备注
 	// v0.8.5 之后添加
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"` // 渠道配置信息（JSON 格式）
 
@@ -1007,6 +1008,54 @@ func (channel *Channel) ValidateSettings() error {
 		if err != nil {
 			return err
 		}
+	}
+	otherSettings := dto.ChannelOtherSettings{}
+	if channel.OtherSettings != "" {
+		if err := common.UnmarshalJsonStr(channel.OtherSettings, &otherSettings); err != nil {
+			return err
+		}
+	}
+	if otherSettings.AdvancedCustom != nil {
+		if err := otherSettings.AdvancedCustom.Validate(); err != nil {
+			return err
+		}
+		if err := channel.validateAdvancedCustomBaseURL(otherSettings.AdvancedCustom); err != nil {
+			return err
+		}
+	}
+	if channel.Type == constant.ChannelTypeAdvancedCustom && otherSettings.AdvancedCustom == nil {
+		return fmt.Errorf("advanced_custom is required")
+	}
+	return nil
+}
+
+func (channel *Channel) validateAdvancedCustomBaseURL(config *dto.AdvancedCustomConfig) error {
+	if config == nil {
+		return nil
+	}
+	needsBaseURL := false
+	for _, route := range config.Routes {
+		upstreamPath := strings.TrimSpace(route.UpstreamPath)
+		if strings.HasPrefix(upstreamPath, "/") && !strings.HasPrefix(upstreamPath, "//") {
+			needsBaseURL = true
+			break
+		}
+	}
+	if !needsBaseURL {
+		return nil
+	}
+	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+		return fmt.Errorf("advanced_custom relative upstream_path requires channel base_url")
+	}
+	parsedBaseURL, err := url.Parse(strings.TrimSpace(*channel.BaseURL))
+	if err != nil || parsedBaseURL.Scheme == "" || parsedBaseURL.Host == "" {
+		return fmt.Errorf("advanced_custom relative upstream_path requires a full http/https channel base_url")
+	}
+	if parsedBaseURL.User != nil {
+		return fmt.Errorf("advanced_custom channel base_url must not include user info")
+	}
+	if !strings.EqualFold(parsedBaseURL.Scheme, "http") && !strings.EqualFold(parsedBaseURL.Scheme, "https") {
+		return fmt.Errorf("advanced_custom channel base_url must use http or https")
 	}
 	return nil
 }

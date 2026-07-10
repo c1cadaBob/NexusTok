@@ -8,6 +8,7 @@ import (
 
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/relay/channel"
+	"github.com/c1cada/NexusTok/relay/channel/advancedcustom"
 	"github.com/c1cada/NexusTok/relay/channel/ali"
 	"github.com/c1cada/NexusTok/relay/channel/aws"
 	"github.com/c1cada/NexusTok/relay/channel/baidu"
@@ -131,6 +132,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &replicate.Adaptor{}
 	case constant.APITypeCodex:
 		return &codex.Adaptor{}
+	case constant.APITypeAdvancedCustom:
+		return &advancedcustom.Adaptor{}
 	}
 	return nil
 }

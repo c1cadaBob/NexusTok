@@ -82,6 +82,14 @@ export const STATIC_I18N_KEYS = [
   'More...',
   'Less',
 
+  // 渠道常量
+  'Advanced Custom',
+  'Use settings.advanced_custom to define routes and authentication',
+  'Advanced Custom routes can change upstream URLs and credentials. Only use trusted configurations.',
+  'Required when advanced_custom routes use relative upstream paths',
+  'Injected by advanced_custom auth templates, such as {api_key}',
+  'Models exposed by the custom upstream routes',
+
   // Roles
   'Super Admin',
   'Admin',

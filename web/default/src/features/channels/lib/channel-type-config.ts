@@ -134,6 +134,17 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Default: https://api.replicate.com',
     },
   },
+  58: {
+    id: 58,
+    name: CHANNEL_TYPES[58],
+    icon: 'openai',
+    hints: {
+      baseUrl:
+        'Required when advanced_custom routes use relative upstream paths',
+      key: 'Injected by advanced_custom auth templates, such as {api_key}',
+      models: 'Models exposed by the custom upstream routes',
+    },
+  },
 }
 
 /**
