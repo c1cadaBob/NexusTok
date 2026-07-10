@@ -8318,7 +8318,7 @@ NexusTok 此前已经完成了编辑渠道页面对齐、模型搜索追加修�
 3. 将原来的无条件 `time.Sleep(1 * time.Second)` 改为 `select { case <-ctx.Done(): ...; case <-time.After(...) }`，让 SystemTask 租约撤销、超时或取消时能及时退出。
 4. 前端把开关作为 `settings` JSON 的一部分处理，覆盖默认值、回填、保存和类型定义；不写入旧 `setting` JSON，避免与渠道通用扩展设置混淆。
 5. UI 放入 `Channel Extra Settings`，与 `force_format`、`thinking_to_content`、`pass_through_body_enabled` 等渠道扩展开关同区展示，并受 `canEditSensitiveFields` 控制。
-6. 子 agent 只读复核确认：当前最小闭环已与 new-api 的单渠道 sleep 开关语义等价；更完整的“跨渠道并发轮询”属于后续独立评审项。
+6. 子 agent 只读复核确认：当前最小闭环已与 new-api 的单渠道 sleep 开关语义等价；更完整的“跨渠道并发轮询”已在后续独立切片补齐。
 
 ### 实施结果
 
@@ -8334,7 +8334,7 @@ NexusTok 此前已经完成了编辑渠道页面对齐、模型搜索追加修�
 
 ### 后续差异与建议
 
-new-api 还将视频任务按 channel id 排序后并发执行，每个渠道的 1 秒等待只阻塞本渠道；NexusTok 当前 `UpdateVideoTasks` 仍按 `taskChannelM` 串行遍历渠道。因此本轮已补齐“渠道级关闭轮询间隔”能力，但尚未补齐“跨渠道并发轮询”调度能力。建议后续单独评审该调度差异，重点补充默认睡眠不阻塞其他渠道、慢渠道不阻塞快渠道、混合渠道设置三类测试，再决定是否移植。
+new-api 还将视频任务按 channel id 排序后并发执行，每个渠道的 1 秒等待只阻塞本渠道；该调度差异已在后续“异步视频任务跨渠道并发轮询原生化”切片补齐。后续如果继续扩展任务轮询调度，应重点关注真实 adaptor 是否可安全并发、普通渠道错误是否仍只记录日志、以及 SystemTask 成败口径是否需要单独调整。
 
 ### 验证记录
 
@@ -8351,3 +8351,58 @@ new-api 还将视频任务按 channel id 排序后并发执行，每个渠道的
 11. 在运行态编辑抽屉中打开 `Advanced Settings` → `Channel Extra Settings`，确认页面包含 `Skip async task polling delay`、`Do not wait one second between polling async tasks for this channel` 和对应 switch。
 12. 页面级验证未点击 `Update Channel`，Chrome/CDP 网络记录没有 `/api/channel/` 保存请求；这样避免改变真实渠道的轮询压力配置，payload 行为由单元测试覆盖。
 13. 当前会话未暴露 MCP 浏览器工具；本轮按项目热更新要求访问了 `http://192.168.0.202:3003/`，并使用 Chrome headless/CDP 完成页面级验证和网络请求核对。
+
+## 本轮实施评审：异步视频任务跨渠道并发轮询原生化
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main/service/task_polling.go` 后确认，new-api 的 `UpdateVideoTasks` 不只是支持 `disable_task_polling_sleep`，还会先收集并排序 channel id，再按渠道并发执行视频任务轮询。其核心收益是让某个渠道内部的 1 秒保护性等待、慢上游请求或临时阻塞只影响该渠道，不拖慢其他渠道的异步视频任务状态更新。
+
+NexusTok 上一轮已完成渠道级关闭轮询等待开关，但 `UpdateVideoTasks` 外层仍按 `taskChannelM` 串行遍历。为了把 new-api 的调度优势转为 NexusTok 原生能力，本轮目标是只迁移“跨渠道并发调度”这一层：保留单渠道内部逐任务串行、保留默认 1 秒保护性等待、保留 `ctx.Done()` 取消、保留普通渠道错误只打日志不向上聚合的现有语义。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 异步任务轮询调度 | `service/task_polling.go` | `UpdateVideoTasks` 从串行 map 遍历改为排序 channel id 后按渠道并发执行；每个 worker 仍调用原 `updateVideoTasks`。 |
+| 日志基础设施 | `logger/logger.go` | 并发渠道日志会同时触发 `logHelper`，本轮为 `logCount/setupLogWorking` 增加互斥保护，消除并发日志写入 race。 |
+| 后端测试 | `service/task_polling_test.go` | 补充默认 sleep 不阻塞其他渠道、慢渠道不阻塞快渠道、混合 sleep 设置三类测试；内存 SQLite 测试库限制为单连接，避免并发 goroutine 看到不同 `:memory:` 数据库。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新上一节待办状态，并记录本轮评审、风险、结果和验证。 |
+
+### 风险评估
+
+- 并发更新风险：`taskM` 在本调度层中按 task id 只读查表；正常数据不应让同一个 upstream task id 出现在多个渠道。如果存在脏数据导致跨渠道重复，同一个 `*model.Task` 可能被多个 worker 同时处理，这属于任务分组数据不变量问题，本轮不扩大为重写任务归属校验。
+- adaptor 线程安全风险：`GetTaskAdaptorFunc(platform)` 每个渠道都会获取并初始化 adaptor。new-api 已采用此模式；NexusTok 保持同样调用方式，不共享本轮新增状态。后续若某个真实 adaptor 返回共享有状态实例，需要单独用 race/集成测试审计。
+- 错误语义风险：如果把渠道错误聚合向上返回，单个渠道临时失败会把整个 SystemTask 标记失败，改变现有运维口径。本轮保持 NexusTok/new-api 共同语义：普通渠道错误只记录日志，`ctx.Err()` 才向上返回。
+- 取消语义风险：并发后需要等待所有 worker 收束再返回。单渠道内部已有 `ctx.Done()` 检查和可取消 sleep，本轮保留这些能力，并在 `wg.Wait()` 后返回 `ctx.Err()`。
+- 日志 race 风险：跨渠道并发会让原来“基本串行”的日志计数状态变成真实并发读写。race 测试已暴露该问题，本轮同步为日志轮转状态加锁。
+
+### 方案评审
+
+采用“只并发渠道层，不改任务更新层”的低侵入方案：
+
+1. `UpdateVideoTasks` 收集 `taskChannelM` 的 channel id 并 `sort.Ints`，让 worker 提交顺序稳定，避免 Go map 遍历顺序影响调度。
+2. 对每个非空渠道复制一份 `taskIds` 切片，再通过 `gopool.Go` 提交 worker，使用 `sync.WaitGroup` 等待全部渠道完成。
+3. worker 内继续调用现有 `updateVideoTasks(ctx, platform, channelId, taskIds, taskM)`，单渠道内部的 adaptor 初始化、逐任务轮询、sleep、结算和错误日志不重写。
+4. `wg.Wait()` 后只检查 `ctx.Err()` 并返回；普通渠道错误仍在 worker 内记录，不聚合。
+5. `logger.logHelper` 使用 `logStateMu` 保护日志计数和轮转状态，保留原有 `SetupLogger` 轮转机制。
+6. 后端测试覆盖跨渠道并发行为，且通过 race 定向测试确认新并发路径没有数据竞争。
+
+### 实施结果
+
+已完成异步视频任务跨渠道并发轮询原生化：
+
+- `UpdateVideoTasks` 现在会按 channel id 排序并发处理不同渠道；同一渠道内部仍按原顺序逐任务轮询。
+- 默认 1 秒保护性等待只阻塞本渠道，不再拖住其他渠道。
+- 慢渠道的 `FetchTask` 阻塞时，其他渠道仍能继续完成轮询。
+- 混合配置下，关闭 `disable_task_polling_sleep` 的 fast 渠道不会被默认 sleep 渠道拖慢。
+- `ctx` 取消后仍会等待 worker 收束，并向上返回 `context.DeadlineExceeded`/`ctx.Err()`，保持 NexusTok SystemTask 失败记录能力。
+- 并发日志写入不再对 `logCount/setupLogWorking` 产生数据竞争。
+
+### 验证记录
+
+1. `go test ./service -run 'TestUpdateVideoTasks'` 通过，覆盖单渠道 sleep、context 取消、关闭 sleep、跨渠道默认 sleep、慢渠道阻塞、混合 sleep 设置。
+2. `go test -race ./service -run 'TestUpdateVideoTasks'` 通过，确认并发轮询和日志轮转状态无 race。
+3. `go test ./service` 通过。
+4. `git diff --check` 通过。
+5. 本轮为后端调度与日志基础设施改动，未修改前端资源；仍按热更新要求访问 `http://192.168.0.202:3003/` 和 `/api/status` 进行运行态存活确认。

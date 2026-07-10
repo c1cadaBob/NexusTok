@@ -38,12 +38,13 @@ const (
 
 const maxLogCount = 1000000 // 单个日志文件最大日志条数，超过后触发轮转
 
-var logCount int               // 当前日志文件已写入的日志条数
-var setupLogLock sync.Mutex    // 日志设置互斥锁，防止并发设置
-var setupLogWorking bool       // 是否正在设置日志（防止重入）
-var currentLogPath string      // 当前日志文件路径
+var logCount int                  // 当前日志文件已写入的日志条数
+var logStateMu sync.Mutex         // 日志计数和轮转状态互斥锁，防止并发日志写入时产生数据竞争
+var setupLogLock sync.Mutex       // 日志设置互斥锁，防止并发设置
+var setupLogWorking bool          // 是否正在设置日志（防止重入）
+var currentLogPath string         // 当前日志文件路径
 var currentLogPathMu sync.RWMutex // 日志路径读写锁
-var currentLogFile *os.File    // 当前日志文件句柄
+var currentLogFile *os.File       // 当前日志文件句柄
 
 // GetCurrentLogPath 获取当前日志文件路径
 //
@@ -66,7 +67,9 @@ func GetCurrentLogPath() string {
 // 注意：使用 TryLock 防止并发调用
 func SetupLogger() {
 	defer func() {
+		logStateMu.Lock()
 		setupLogWorking = false
+		logStateMu.Unlock()
 	}()
 	if *common.LogDir != "" {
 		ok := setupLogLock.TryLock()
@@ -170,10 +173,16 @@ func logHelper(ctx context.Context, level string, msg string) {
 	}
 	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
 	common.LogWriterMu.RUnlock()
-	logCount++ // 不需要精确计数，无需加锁
+	shouldSetupLog := false
+	logStateMu.Lock()
+	logCount++
 	if logCount > maxLogCount && !setupLogWorking {
 		logCount = 0
 		setupLogWorking = true
+		shouldSetupLog = true
+	}
+	logStateMu.Unlock()
+	if shouldSetupLog {
 		gopool.Go(func() {
 			SetupLogger()
 		})
