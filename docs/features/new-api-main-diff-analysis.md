@@ -10751,3 +10751,70 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 9. 运行态 popup 文本为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`、`3 matched · 2 new · 1 already selected`、`Add 2 new model(s)` 和缺失模型预览 `gpt-5.6-terra, gpt-5.6-luna`；不再出现 `Add custom model "gpt-5.6"` 误加入口。
 10. Chrome Headless + CDP 真实点击 `Add 2 new model(s)` 后，表单草稿变为 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；验证期间未点击 `Update Channel`，没有保存渠道运行态配置。
 11. 页面验证期间没有捕获 `Runtime.exceptionThrown` 或 `Network.loadingFailed`。
+
+## 本轮实施评审：渠道编辑页提交逻辑对齐 new-api 分层
+
+### 需求分析
+
+用户要求继续参考 `/opt/project/new-api-main` 最新编辑渠道页面，把当前编辑渠道页面体验和结构对齐。复核后确认，NexusTok 当前已经具备 new-api 最新版的主要编辑页布局能力：右侧 5xl 抽屉、左侧分区导航、Basic/Credentials/Models/Advanced 分区、模型元信息搜索、`gpt-5.6` 三模型完整候选展示和批量补齐能力均已落地。
+
+本轮发现仍有一个结构性差异：new-api 最新版把创建/编辑渠道的提交 mutation 抽到 `useChannelMutateForm`，drawer 本体主要负责页面状态、前端校验和风险确认；NexusTok 的 drawer 仍内联 `createChannel`、`updateChannel`、敏感字段权限裁剪、提交 loading 和错误处理。该内联逻辑让编辑页继续扩展时更难维护，也不利于后续继续吸收 new-api 的编辑页分区组件化经验。
+
+因此本轮目标不是改变页面文案或后端能力，而是把 new-api 的“提交逻辑分层”优势转换为 NexusTok 原生能力：新增 NexusTok 版 `useChannelMutateForm`，保留当前更细的 `write` / `sensitive_write` 权限边界、账号池组模式、多 Key `key_mode`、空 key 不覆盖和后端错误 toast 语义。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道提交 hook | `web/default/src/features/channels/hooks/use-channel-mutate-form.ts` | 新增 create/update mutation，集中处理成功 toast、错误 toast、权限二次兜底、敏感字段裁剪和多 Key `key_mode`。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除内联 `createChannel` / `updateChannel` 调用、提交 loading state 和非敏感字段白名单；保留提交前 key 校验、状态码风险确认、模型映射确认和页面交互。 |
+| 权限裁剪测试 | `web/default/src/features/channels/hooks/use-channel-mutate-form.test.ts` | 新增普通写权限、敏感写权限、多 Key `key_mode` 和未知字段丢弃测试，锁定 NexusTok 权限语义。 |
+| 后端/API/数据库 | 无 | 不修改接口、数据库结构、渠道保存 payload 格式、模型搜索或 relay。 |
+| i18n | 无新增 key | 仅复用已有 `API key is required`、创建/更新失败和成功文案；运行 `i18n:sync` 确认。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 渠道保存路径风险：提交逻辑虽然只是前端分层迁移，但触及核心渠道保存入口；必须保持创建、编辑、账号池组、模型映射确认和状态码风险确认的行为一致。
+2. 权限越界风险：new-api 的 hook 只按敏感字段列表删除字段，而 NexusTok 当前允许普通 `write` 保存模型、分组、权重、标签等非敏感字段；本轮保留原有白名单裁剪，并加测试防止 `key`、`base_url`、`settings`、`param_override`、`header_override` 等敏感字段泄漏。
+3. 多 Key 语义风险：编辑多 Key 渠道时 `key_mode=append/replace` 只能在 `sensitive_write` 且渠道为多 Key 时提交；本轮把该条件封装为 `buildAllowedChannelUpdatePayload` 并测试非多 Key不附加 `key_mode`。
+4. 空 key 覆盖风险：编辑模式下表单 key 默认为空，转换函数仍只在用户输入新 key 或账号池组模式下携带 key；本轮不改变该转换逻辑。
+5. 错误提示风险：mutation `onError` 统一展示后端错误或创建/更新失败文案；drawer 的提交 handler 捕获并吞掉异常，避免 React Hook Form 出现未处理 promise。
+6. 页面回归风险：本轮不改 DOM 结构和文案，但 hook 化会影响 `isSubmitting` 来源；需要通过真实页面打开抽屉、搜索模型和检查控制台/网络错误确认。
+
+### 方案评审
+
+采用“小步迁移提交 mutation，不迁移页面校验”的方案：
+
+1. 新增 `useChannelMutateForm`，参数显式传入 `currentRow`、`isEditing`、`isMultiKeyChannel`、`permissions` 和 `onSuccess`，避免 hook 内重新推导页面状态。
+2. 把原 drawer 内的 `NON_SENSITIVE_CHANNEL_UPDATE_FIELDS` 移入 hook，并导出 `pickNonSensitiveChannelUpdatePayload` 与 `buildAllowedChannelUpdatePayload` 供测试覆盖。
+3. hook 内保留权限二次兜底：创建必须有 `sensitive_write`；编辑至少要有 `write` 或 `sensitive_write`。
+4. drawer 仍负责提交前交互式校验：账号池组模式 key 豁免、状态码风险确认、模型映射 JSON 校验、缺失源模型确认和必要时自动补齐模型。
+5. drawer 使用 `mutateAsync` 执行最终保存，`isSubmitting` 直接来自 React Query mutation pending 状态。
+6. 不引入新文案、不新增依赖、不改变后端接口，降低上线风险。
+
+### 实施结果
+
+已完成渠道编辑页提交逻辑分层：
+
+- 新增 `web/default/src/features/channels/hooks/use-channel-mutate-form.ts`，作为 NexusTok 原生渠道创建/编辑 mutation hook。
+- 渠道编辑抽屉移除内联保存实现，页面主文件减少提交路径细节，继续保留 new-api 对齐后的分区布局和 NexusTok 原有高级交互。
+- 普通写权限更新 payload 继续只保留非敏感白名单字段；敏感写权限保留完整 payload；多 Key `key_mode` 只在敏感写权限和多 Key 渠道下携带。
+- 搜索添加 `gpt-5.6` 的页面能力未回退：三模型完整展示、2 个缺失模型批量追加、已选 `sol` 保留可见。
+- 本轮没有修改后端、数据库、运行态渠道配置、模型元信息或 relay。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，40 个用例全部成功，覆盖权限 payload 裁剪、`gpt-5.6` 三模型搜索追加和 MultiSelect 搜索行为。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见翻译 key。
+4. `cd web/default && bun run build` 通过。
+5. `docker logs --tail 120 nexustok-frontend-watch` 显示 `[hot] published default dist`，确认 3003 热更新产物已发布。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+7. 真实接口登录账号 `c1cada` 后调用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=20`，返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型；`gpt-5.6-sol` 仍绑定渠道 `11111`。
+8. Chrome Headless + DevTools Protocol 登录 3003，进入 `/channels`，打开渠道 `11111` 编辑抽屉，初始模型为 `Selected 3`。
+9. 在模型输入框搜索 `gpt-5.6`，页面同时展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，并显示 `3 matched · 2 new · 1 already selected` 与 `Add 2 new model(s)`；没有出现 `Add custom model "gpt-5.6"`。
+10. 点击 `Add 2 new model(s)` 后，未保存表单草稿变为 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+11. 验证期间网络记录中 `PUT /api/channel` 请求数为 0；再次查询 `GET /api/channel/?p=1&page_size=5&tag_mode=false&id_sort=false`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
+12. Chrome Headless 验证期间未捕获 `Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别 Log。
+13. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol 和真实 HTTP API 作为 MCP 替代验证方式。

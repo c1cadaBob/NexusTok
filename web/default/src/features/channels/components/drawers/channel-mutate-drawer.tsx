@@ -126,7 +126,6 @@ import {
 } from '@/features/auth/secure-verification'
 import { searchModels } from '@/features/models/api'
 import {
-  createChannel,
   fetchModels,
   getAllModels,
   getChannel,
@@ -134,7 +133,6 @@ import {
   getGroups,
   getPrefillGroups,
   refreshCodexCredential,
-  updateChannel,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
@@ -145,8 +143,8 @@ import {
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
   MODEL_FETCHABLE_TYPES,
-  SUCCESS_MESSAGES,
 } from '../../constants'
+import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
@@ -154,8 +152,6 @@ import {
   channelFormSchema,
   channelsQueryKeys,
   transformChannelToFormDefaults,
-  transformFormDataToCreatePayload,
-  transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
   getAdvancedCustomStats,
@@ -303,22 +299,6 @@ const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
 const MODEL_SEARCH_APPEND_PAGE_SIZE = 100
-const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
-  'id',
-  'name',
-  'models',
-  'group',
-  'model_mapping',
-  'priority',
-  'weight',
-  'test_model',
-  'auto_ban',
-  'status_code_mapping',
-  'tag',
-  'remark',
-  'other_info',
-  'multi_key_mode',
-] as const
 
 async function fetchAllModelSearchModelNames(
   keyword: string,
@@ -404,20 +384,6 @@ function hasConfiguredOverrideValue(value: unknown): boolean {
   }
 
   return true
-}
-
-function pickNonSensitiveChannelUpdatePayload(payload: Partial<Channel>) {
-  return NON_SENSITIVE_CHANNEL_UPDATE_FIELDS.reduce<Partial<Channel>>(
-    (nextPayload, field) => {
-      if (field in payload) {
-        ;(nextPayload as Record<string, unknown>)[field] = (
-          payload as Record<string, unknown>
-        )[field]
-      }
-      return nextPayload
-    },
-    {}
-  )
 }
 
 function parseSettingsRecord(
@@ -776,7 +742,6 @@ export function ChannelMutateDrawer({
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
   const currentType = form.watch('type')
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -2034,6 +1999,15 @@ export function ChannelMutateDrawer({
     }
   }, [])
 
+  const { mutateAsync: submitChannelMutation, isPending: isSubmitting } =
+    useChannelMutateForm({
+      currentRow,
+      isEditing,
+      isMultiKeyChannel,
+      permissions,
+      onSuccess: handleSuccess,
+    })
+
   // 提交前先做前端侧快速校验，避免把明显不完整的数据发给后端。
   //
   // 注意：`global_account_pool` 是用户当前看到的“账号池”模式，它只需要选择账号池组，
@@ -2056,7 +2030,7 @@ export function ChannelMutateDrawer({
       if (!isEditing && !isAccountPoolGroupMode && !data.key?.trim()) {
         form.setError('key', {
           type: 'manual',
-          message: 'API key is required',
+          message: ERROR_MESSAGES.REQUIRED_KEY,
         })
         return
       }
@@ -2132,54 +2106,21 @@ export function ChannelMutateDrawer({
         }
       }
 
-      setIsSubmitting(true)
       try {
-        if (isEditing && currentRow) {
-          // 更新已有渠道。
-          const payload = transformFormDataToUpdatePayload(data, currentRow.id)
-          const payloadWithKeyMode =
-            canEditSensitiveFields && isMultiKeyChannel && data.key_mode
-              ? {
-                  ...payload,
-                  key_mode: data.key_mode,
-                }
-              : payload
-          const allowedPayload = canEditSensitiveFields
-            ? payloadWithKeyMode
-            : pickNonSensitiveChannelUpdatePayload(payloadWithKeyMode)
-
-          const response = await updateChannel(currentRow.id, allowedPayload)
-          if (response.success) {
-            toast.success(t(SUCCESS_MESSAGES.UPDATED))
-            handleSuccess()
-          }
-        } else {
-          // 创建新渠道；批量、多 Key 聚合和账号池组模式都在转换函数中归一。
-          const payload = transformFormDataToCreatePayload(data)
-          const response = await createChannel(payload)
-          if (response.success) {
-            toast.success(t(SUCCESS_MESSAGES.CREATED))
-            handleSuccess()
-          }
-        }
-      } catch (error: unknown) {
-        toast.error(getErrorMessage(error) || t(ERROR_MESSAGES.CREATE_FAILED))
-      } finally {
-        setIsSubmitting(false)
+        await submitChannelMutation(data)
+      } catch {
+        // mutation 的 onError 已经负责展示后端或权限错误，这里只阻止异常继续冒泡到表单层。
       }
     },
     [
       isEditing,
-      currentRow,
-      isMultiKeyChannel,
       canEditBasicFields,
-      canEditSensitiveFields,
       noPermissionMessage,
       permissions.canSensitiveWrite,
       form,
-      handleSuccess,
       confirmMissingModelMappings,
       confirmStatusCodeRisk,
+      submitChannelMutation,
       t,
     ]
   )
