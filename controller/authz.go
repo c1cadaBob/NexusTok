@@ -62,8 +62,8 @@ func ComparePermissionRoleShadowPolicies(c *gin.Context) {
 
 // CreatePermissionRole 创建一个自定义角色模板。
 //
-// 自定义角色模板当前不参与运行时用户分配；该接口只让 Root 先沉淀可复用的权限
-// 基线，再通过现有角色策略矩阵维护 allow 策略。
+// 自定义角色模板可由 Root 分配给系统 Admin 用户作为授权基线；创建模板本身不改变
+// 用户权限，只有用户编辑页显式绑定后才会进入运行时授权判定。
 func CreatePermissionRole(c *gin.Context) {
 	var req authz.RoleTemplateMutationRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {

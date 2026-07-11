@@ -43,14 +43,13 @@ func SetUserPermissionsInTx(tx *gorm.DB, userID int, permissions PermissionsMap)
 		return errAuthzDatabaseNotInitialized
 	}
 
+	baselineResolver := userPermissionBaselineResolverInTx(tx, userID)
 	for _, resource := range registry {
 		actions, ok := permissions[resource.Resource]
 		if !ok {
 			continue
 		}
-		overrides := userOverrideRecords(userID, resource, actions, func(resource string, action string) (bool, bool) {
-			return persistentAdminBaselineInTx(tx, resource, action)
-		})
+		overrides := userOverrideRecords(userID, resource, actions, baselineResolver)
 		if err := model.ReplaceAuthzUserResourceOverridesInTx(tx, userID, resource.Resource, overrides); err != nil {
 			return err
 		}
@@ -79,7 +78,12 @@ func ClearUserPermissionsInTx(tx *gorm.DB, userID int) error {
 	if tx == nil {
 		return errAuthzDatabaseNotInitialized
 	}
-	return model.ClearAuthzUserOverridesInTx(tx, userID)
+	if err := model.ClearAuthzUserOverridesInTx(tx, userID); err != nil {
+		return err
+	}
+	return tx.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("authz_role", "").Error
 }
 
 // ClearUserAuthorization 是用户生命周期代码使用的语义化别名。

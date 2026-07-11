@@ -150,6 +150,54 @@ func TestImportPersistentPoliciesReplaceAppliesAndReloadsSnapshot(t *testing.T) 
 	assert.Zero(t, policyCount)
 }
 
+func TestImportPersistentPoliciesReplaceRejectsDeletingAssignedRole(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.User{}).
+		Where("id = ?", 42).
+		Update("authz_role", "auditor").Error)
+
+	req := requirePolicyImportRequest(t)
+	req.Mode = "replace"
+	req.Roles = filterRoles(req.Roles, func(role PersistentPolicyExportRole) bool {
+		return role.Key != "auditor"
+	})
+	req.Policies = filterPolicies(req.Policies, func(policy PersistentPolicyExportRule) bool {
+		return policy.V0 != RoleSubject("auditor")
+	})
+
+	_, err = ImportPersistentPolicies(req)
+	require.ErrorIs(t, err, errAuthzRoleAssigned)
+}
+
+func TestImportPersistentPoliciesRejectsDisablingAssignedRole(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.User{}).
+		Where("id = ?", 42).
+		Update("authz_role", "auditor").Error)
+
+	req := requirePolicyImportRequest(t)
+	for i := range req.Roles {
+		if req.Roles[i].Key == "auditor" {
+			req.Roles[i].Enabled = false
+		}
+	}
+
+	_, err = ImportPersistentPolicies(req)
+	require.ErrorIs(t, err, errAuthzRoleAssigned)
+}
+
 func TestImportPersistentPoliciesRejectsUnsafeBuiltInRoles(t *testing.T) {
 	setupAuthzOverrideTestDB(t)
 	require.NoError(t, SeedPersistentPolicies())
@@ -208,6 +256,16 @@ func filterPolicies(policies []PersistentPolicyExportRule, keep func(PersistentP
 	for _, policy := range policies {
 		if keep(policy) {
 			filtered = append(filtered, policy)
+		}
+	}
+	return filtered
+}
+
+func filterRoles(roles []PersistentPolicyExportRole, keep func(PersistentPolicyExportRole) bool) []PersistentPolicyExportRole {
+	filtered := make([]PersistentPolicyExportRole, 0, len(roles))
+	for _, role := range roles {
+		if keep(role) {
+			filtered = append(filtered, role)
 		}
 	}
 	return filtered

@@ -16,8 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import type { AxiosRequestConfig } from 'axios'
 import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
+import type {
+  AuthzRolesData,
+  AuthzRolesResponse,
+} from '@/features/system-settings/types'
 import type {
   User,
   GetUsersParams,
@@ -28,6 +33,10 @@ import type {
   ManageUserQuotaPayload,
   ApiResponse,
 } from './types'
+
+interface ExtendedApiConfig extends AxiosRequestConfig {
+  skipBusinessError?: boolean
+}
 
 // ============================================================================
 // User Management APIs
@@ -143,11 +152,29 @@ export async function getGroups(): Promise<ApiResponse<string[]>> {
  * 权限结构的唯一真相位于后端 authz 包，前端只负责渲染和提交矩阵。
  */
 export async function getPermissionCatalog(): Promise<PermissionCatalog> {
-  const res = await api.get('/api/authz/catalog')
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.get('/api/authz/catalog', config)
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to load permission catalog')
+  }
   return {
     resources: res.data?.data?.resources ?? [],
     roles: res.data?.data?.roles ?? [],
   }
+}
+
+/**
+ * 获取可分配的授权角色模板。
+ *
+ * 用户编辑页只消费启用且非 Root 的角色，后端仍是角色是否可分配的最终裁判。
+ */
+export async function getAuthzRoles(): Promise<AuthzRolesData> {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.get<AuthzRolesResponse>('/api/authz/roles', config)
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to load authorization roles')
+  }
+  return res.data.data ?? { roles: [] }
 }
 
 // ============================================================================

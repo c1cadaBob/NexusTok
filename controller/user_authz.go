@@ -46,22 +46,35 @@ func requireUserSensitiveWrite(c *gin.Context) bool {
 	return false
 }
 
-// updateAdminPermissionsForUserInTx 在用户资料事务内同步保存管理权限矩阵。
+// updateUserAuthorizationInTx 在用户资料事务内同步保存授权角色和管理权限矩阵。
 //
-// 只有 Root 可以编辑用户级管理权限；普通 Admin 即使构造请求体也会被拒绝。目标用户
-// 低于 Admin 时会清理历史 override，避免未来升为 Admin 后意外继承旧权限。
-func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, userRole int, permissions map[string]map[string]bool) error {
-	if permissions == nil {
-		if userRole < common.RoleAdminUser && c.GetInt("role") == common.RoleRootUser {
-			return authz.ClearUserAuthorizationInTx(tx, userID)
+// 只有 Root 可以编辑用户授权角色和用户级管理权限；普通 Admin 即使构造请求体也会被
+// 拒绝。目标用户低于 Admin 时会清理历史授权，避免未来升为 Admin 后意外继承旧模板。
+func updateUserAuthorizationInTx(
+	c *gin.Context,
+	tx *gorm.DB,
+	userID int,
+	userRole int,
+	roleKey string,
+	roleKeyProvided bool,
+	permissions map[string]map[string]bool,
+) error {
+	if c.GetInt("role") != common.RoleRootUser {
+		if permissions != nil || roleKeyProvided {
+			return fmt.Errorf("only root can update admin permissions")
 		}
 		return nil
 	}
-	if c.GetInt("role") != common.RoleRootUser {
-		return fmt.Errorf("only root can update admin permissions")
-	}
 	if userRole < common.RoleAdminUser {
 		return authz.ClearUserAuthorizationInTx(tx, userID)
+	}
+	if roleKeyProvided {
+		if err := authz.AssignUserRoleInTx(tx, userID, roleKey); err != nil {
+			return err
+		}
+	}
+	if permissions == nil {
+		return nil
 	}
 	return authz.SetUserPermissionsInTx(tx, userID, permissions)
 }

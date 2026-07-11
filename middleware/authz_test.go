@@ -69,7 +69,16 @@ func setupRequirePermissionAuthzDB(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.AuthzUserOverride{}, &model.CasbinRule{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuthzUserOverride{}, &model.CasbinRule{}))
+	require.NoError(t, db.Create(&model.User{
+		Id:       42,
+		Username: "permission-admin",
+		Password: "password",
+		Role:     common.RoleAdminUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "permission-admin",
+	}).Error)
 	model.DB = db
 
 	t.Cleanup(func() {

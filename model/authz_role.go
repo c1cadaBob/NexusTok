@@ -14,9 +14,8 @@ import (
 
 // AuthzRole 表示一个可授权角色模板。
 //
-// Root/Admin 是系统内置运行时角色；自定义角色当前作为权限模板存在，便于 Root
-// 先维护策略矩阵。真正的用户角色分配仍由 service/authz 后续独立接入，避免把
-// 模板 CRUD 误扩展成运行时授权迁移。
+// Root/Admin 是系统内置运行时角色；自定义角色可作为系统 Admin 用户的授权基线，
+// 具体权限语义仍由 service/authz 校验 catalog 与 casbin_rule 后消费。
 type AuthzRole struct {
 	ID          int64  `json:"id" gorm:"primaryKey"`
 	Key         string `json:"key" gorm:"type:varchar(64);uniqueIndex;not null"`

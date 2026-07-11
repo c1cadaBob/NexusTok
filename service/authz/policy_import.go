@@ -87,6 +87,9 @@ func ImportPersistentPolicies(req PersistentPolicyImportRequest) (*PersistentPol
 	if err != nil {
 		return nil, err
 	}
+	if err := validatePersistentPolicyImportAssignments(normalized, mode); err != nil {
+		return nil, err
+	}
 
 	result, err := buildPersistentPolicyImportResult(normalized, dryRun, mode)
 	if err != nil {
@@ -410,6 +413,36 @@ func buildPersistentPolicyImportResult(imported *normalizedPolicyImport, dryRun 
 	return result, nil
 }
 
+func validatePersistentPolicyImportAssignments(imported *normalizedPolicyImport, mode string) error {
+	existingRoles, err := loadExistingAuthzRoles()
+	if err != nil {
+		return err
+	}
+	importRoleKeys := make(map[string]PersistentPolicyExportRole, len(imported.roles))
+	for _, role := range imported.roles {
+		importRoleKeys[role.Key] = role
+		if existing, ok := existingRoles[role.Key]; ok && existing.Enabled && !role.Enabled {
+			if err := ensureRoleUnassignedInTx(model.DB, role.Key); err != nil {
+				return err
+			}
+		}
+	}
+	if mode != "replace" {
+		return nil
+	}
+	for _, existingRole := range existingRoles {
+		if existingRole.BuiltIn {
+			continue
+		}
+		if _, ok := importRoleKeys[existingRole.Key]; !ok {
+			if err := ensureRoleUnassignedInTx(model.DB, existingRole.Key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func loadExistingAuthzRoles() (map[string]model.AuthzRole, error) {
 	var roles []model.AuthzRole
 	if err := model.DB.Find(&roles).Error; err != nil {
@@ -476,6 +509,11 @@ func applyPersistentPolicyRoleImport(tx *gorm.DB, roles []PersistentPolicyExport
 		err := tx.Where("key = ?", role.Key).First(&existing).Error
 		switch {
 		case err == nil:
+			if existing.Enabled && !role.Enabled {
+				if err := ensureRoleUnassignedInTx(tx, existing.Key); err != nil {
+					return err
+				}
+			}
 			if err := tx.Model(&existing).Updates(map[string]interface{}{
 				"name":        role.Name,
 				"description": role.Description,
@@ -502,6 +540,16 @@ func applyPersistentPolicyRoleImport(tx *gorm.DB, roles []PersistentPolicyExport
 	}
 	if mode != "replace" {
 		return nil
+	}
+	var staleRoles []model.AuthzRole
+	if err := tx.Where("built_in = ? AND key NOT IN ?", false, importRoleKeys).
+		Find(&staleRoles).Error; err != nil {
+		return err
+	}
+	for _, role := range staleRoles {
+		if err := ensureRoleUnassignedInTx(tx, role.Key); err != nil {
+			return err
+		}
 	}
 	return tx.Where("built_in = ? AND key NOT IN ?", false, importRoleKeys).
 		Delete(&model.AuthzRole{}).Error

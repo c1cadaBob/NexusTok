@@ -29,9 +29,8 @@ var customRoleKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 // RolePolicyDescriptor 描述一个持久化角色及其当前权限矩阵。
 //
 // Root 是 superuser，不依赖 casbin_rule 中的 allow 策略；其它角色的 grants
-// 来自 `casbin_rule` 中的 `role:<key>` 策略。自定义角色目前只作为模板持久化，
-// 尚未接入系统角色分配，因此 RuntimeManaged 用于提示前端不要把保存策略误读成
-// 已经可以授予普通用户的完整运行时角色。
+// 来自 `casbin_rule` 中的 `role:<key>` 策略。自定义角色可分配给系统 Admin 用户作为
+// 授权基线，RuntimeManaged 用于提示前端该角色是否会被授权热路径消费。
 type RolePolicyDescriptor struct {
 	Key            string         `json:"key"`
 	Name           string         `json:"name"`
@@ -119,11 +118,11 @@ func PersistentRoles() ([]RolePolicyDescriptor, error) {
 	return result, nil
 }
 
-// CreateRoleTemplate 创建一个自定义角色模板。
+// CreateRoleTemplate 创建一个可分配给系统 Admin 用户的自定义授权角色模板。
 //
-// 自定义角色当前只作为策略模板存在，尚未接入运行时角色分配；因此创建模板不会
-// 改变任何用户的授权结果。后续管理员可以通过角色策略矩阵为该模板配置 allow
-// 策略，等角色分配能力落地后再启用运行时授权。
+// 创建模板本身不会立即改变任何用户的授权结果；只有 Root 在用户编辑页显式分配该
+// 角色后，它才会成为该管理员的权限基线。后续管理员可以通过角色策略矩阵维护 allow
+// 策略，用户级 override 会继续作为相对该基线的差异保存。
 func CreateRoleTemplate(req RoleTemplateMutationRequest) (*RolePolicyDescriptor, error) {
 	if model.DB == nil {
 		return nil, errAuthzDatabaseNotInitialized
@@ -207,6 +206,7 @@ func UpdateRoleTemplate(roleKey string, req RoleTemplateMutationRequest) (*RoleP
 	}
 
 	var descriptor RolePolicyDescriptor
+	reloadAfterCommit := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var role model.AuthzRole
 		err := tx.Where("key = ?", normalizedKey).First(&role).Error
@@ -218,6 +218,15 @@ func UpdateRoleTemplate(roleKey string, req RoleTemplateMutationRequest) (*RoleP
 		}
 		if role.BuiltIn {
 			return errAuthzRoleBuiltInReadOnly
+		}
+
+		if req.Enabled != nil && role.Enabled != *req.Enabled {
+			if !*req.Enabled {
+				if err := ensureRoleUnassignedInTx(tx, role.Key); err != nil {
+					return err
+				}
+			}
+			reloadAfterCommit = true
 		}
 
 		updates := map[string]interface{}{
@@ -245,6 +254,11 @@ func UpdateRoleTemplate(roleKey string, req RoleTemplateMutationRequest) (*RoleP
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+	if reloadAfterCommit {
+		if err := ReloadPersistentPolicies(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &descriptor, nil
@@ -276,6 +290,9 @@ func DeleteRoleTemplate(roleKey string) (*RoleTemplateDeleteResult, error) {
 		}
 		if role.BuiltIn {
 			return errAuthzRoleBuiltInReadOnly
+		}
+		if err := ensureRoleUnassignedInTx(tx, role.Key); err != nil {
+			return err
 		}
 
 		policyDelete := tx.Where("ptype = ? AND v0 = ?", "p", RoleSubject(role.Key)).
@@ -438,7 +455,7 @@ func describePersistentRole(db *gorm.DB, role model.AuthzRole) (RolePolicyDescri
 			count = len(permissionsFromGrants(grants))
 		}
 	}
-	_, runtimeManaged := builtInRoleByKey(role.Key)
+	runtimeManaged := role.Enabled
 	return RolePolicyDescriptor{
 		Key:            role.Key,
 		Name:           role.Name,

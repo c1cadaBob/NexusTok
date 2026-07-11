@@ -70,7 +70,28 @@ func ReloadPersistentPolicies() error {
 	}
 
 	nextSnapshot := make(map[string]PermissionsMap)
+	roleSpecs := make(map[string]roleSpec, len(builtInRoles))
 	for _, role := range builtInRoles {
+		roleSpecs[role.key] = role
+	}
+	var persistentRoles []model.AuthzRole
+	if err := model.DB.Where("enabled = ?", true).Find(&persistentRoles).Error; err != nil {
+		return err
+	}
+	for _, role := range persistentRoles {
+		if _, ok := roleSpecs[role.Key]; ok {
+			continue
+		}
+		roleSpecs[role.Key] = roleSpec{
+			key:         role.Key,
+			name:        role.Name,
+			description: role.Description,
+			builtIn:     role.BuiltIn,
+			superuser:   false,
+			sort:        role.Sort,
+		}
+	}
+	for _, role := range roleSpecs {
 		if role.superuser {
 			continue
 		}

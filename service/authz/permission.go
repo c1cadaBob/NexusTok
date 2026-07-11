@@ -192,7 +192,7 @@ func Capabilities(systemRole int) PermissionsMap {
 
 // CapabilitiesForUser 按系统角色和用户级 override 计算完整能力矩阵。
 func CapabilitiesForUser(userID int, systemRole int) PermissionsMap {
-	role := roleForSystemRole(systemRole)
+	role := effectiveRoleForUser(userID, systemRole)
 	if role == nil {
 		return emptyGrants()
 	}
@@ -213,7 +213,7 @@ func Can(userID int, systemRole int, permission Permission) bool {
 	if !ok {
 		return false
 	}
-	role := roleForSystemRole(systemRole)
+	role := effectiveRoleForUser(userID, systemRole)
 	if role == nil {
 		return false
 	}

@@ -28,6 +28,7 @@ export {
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
+  AUTHZ_ROLE_ADMIN_VALUE,
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from './user-form'

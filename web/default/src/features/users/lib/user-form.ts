@@ -27,6 +27,8 @@ import { ROLE } from '@/lib/roles'
 import { DEFAULT_GROUP } from '../constants'
 import { type UserFormData, type User } from '../types'
 
+export const AUTHZ_ROLE_ADMIN_VALUE = 'admin'
+
 // ============================================================================
 // Form Schema
 // ============================================================================
@@ -39,6 +41,7 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
+  authz_role: z.string().optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
@@ -58,6 +61,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   quota_dollars: 0,
   group: DEFAULT_GROUP,
   remark: '',
+  authz_role: AUTHZ_ROLE_ADMIN_VALUE,
   admin_permissions: {},
 }
 
@@ -84,6 +88,10 @@ export function transformFormDataToPayload(
   // 权限矩阵必须基于后端 catalog 补齐后提交。catalog 不可用时省略该字段，
   // 后端会保留现有 override，避免前端保存部分矩阵导致权限被意外重置。
   if (role >= ROLE.ADMIN && catalog) {
+    const authzRole = (data.authz_role || AUTHZ_ROLE_ADMIN_VALUE)
+      .trim()
+      .toLowerCase()
+    payload.authz_role = authzRole === AUTHZ_ROLE_ADMIN_VALUE ? '' : authzRole
     payload.admin_permissions = normalizeAdminPermissions(
       data.admin_permissions as AdminPermissionMatrix | undefined,
       catalog
@@ -115,6 +123,7 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: user.group || DEFAULT_GROUP,
     remark: user.remark || '',
+    authz_role: user.authz_role?.trim() || AUTHZ_ROLE_ADMIN_VALUE,
     admin_permissions: user.admin_permissions ?? {},
   }
 }

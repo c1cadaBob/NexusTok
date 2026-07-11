@@ -34,38 +34,39 @@ const UserNameMaxLength = 20
 // 注意：如果添加敏感字段，不要忘记在 setupLogin 函数中清理
 // 否则敏感信息会以明文形式保存在本地存储中！
 type User struct {
-	Id               int                        `json:"id"`                                                                   // 用户 ID
-	Username         string                     `json:"username" gorm:"unique;index" validate:"max=20"`                       // 用户名（唯一索引）
-	Password         string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`                    // 密码（哈希后存储）
-	OriginalPassword string                     `json:"original_password" gorm:"-:all"`                                       // 原始密码（仅用于密码修改验证，不存储到数据库）
-	DisplayName      string                     `json:"display_name" gorm:"index" validate:"max=20"`                          // 显示名称
-	Role             int                        `json:"role" gorm:"type:int;default:1"`                                       // 用户角色（1=普通用户，10=管理员，100=Root）
-	Status           int                        `json:"status" gorm:"type:int;default:1"`                                     // 用户状态（1=启用，2=禁用）
-	Email            string                     `json:"email" gorm:"index" validate:"max=50"`                                 // 邮箱地址
-	GitHubId         string                     `json:"github_id" gorm:"column:github_id;index"`                              // GitHub ID（OAuth 关联）
-	DiscordId        string                     `json:"discord_id" gorm:"column:discord_id;index"`                            // Discord ID（OAuth 关联）
-	OidcId           string                     `json:"oidc_id" gorm:"column:oidc_id;index"`                                  // OIDC ID（OAuth 关联）
-	WeChatId         string                     `json:"wechat_id" gorm:"column:wechat_id;index"`                              // 微信 ID（OAuth 关联）
-	TelegramId       string                     `json:"telegram_id" gorm:"column:telegram_id;index"`                          // Telegram ID（OAuth 关联）
-	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                                       // 邮箱验证码（仅用于邮箱验证，不存储到数据库）
-	AccessToken      *string                    `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`    // 系统管理用 Access Token
-	Quota            int                        `json:"quota" gorm:"type:int;default:0"`                                      // 用户总额度
-	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`               // 已使用额度
-	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                             // 请求次数
-	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`                      // 用户分组
-	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`         // 邀请码
-	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`                 // 邀请人数
-	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`                 // 邀请剩余额度
-	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"`       // 邀请历史额度
-	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`                   // 邀请人 ID
-	DeletedAt        gorm.DeletedAt             `gorm:"index"`                                                                // 软删除时间
-	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`                          // Linux DO ID（OAuth 关联）
-	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`                              // 用户设置（JSON 格式）
-	Remark           string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`         // 备注
-	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"` // Stripe 客户 ID
-	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`                   // 创建时间
-	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`                  // 最后登录时间
-	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`                             // 管理权限矩阵，仅用于 API payload，不写入 users 表
+	Id               int                        `json:"id"`                                                                                                // 用户 ID
+	Username         string                     `json:"username" gorm:"unique;index" validate:"max=20"`                                                    // 用户名（唯一索引）
+	Password         string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`                                                 // 密码（哈希后存储）
+	OriginalPassword string                     `json:"original_password" gorm:"-:all"`                                                                    // 原始密码（仅用于密码修改验证，不存储到数据库）
+	DisplayName      string                     `json:"display_name" gorm:"index" validate:"max=20"`                                                       // 显示名称
+	Role             int                        `json:"role" gorm:"type:int;default:1"`                                                                    // 用户角色（1=普通用户，10=管理员，100=Root）
+	AuthzRole        string                     `json:"authz_role,omitempty" gorm:"type:varchar(64);column:authz_role;default:'';index" validate:"max=64"` // 管理员授权角色模板；为空表示使用内置 Admin 基线
+	Status           int                        `json:"status" gorm:"type:int;default:1"`                                                                  // 用户状态（1=启用，2=禁用）
+	Email            string                     `json:"email" gorm:"index" validate:"max=50"`                                                              // 邮箱地址
+	GitHubId         string                     `json:"github_id" gorm:"column:github_id;index"`                                                           // GitHub ID（OAuth 关联）
+	DiscordId        string                     `json:"discord_id" gorm:"column:discord_id;index"`                                                         // Discord ID（OAuth 关联）
+	OidcId           string                     `json:"oidc_id" gorm:"column:oidc_id;index"`                                                               // OIDC ID（OAuth 关联）
+	WeChatId         string                     `json:"wechat_id" gorm:"column:wechat_id;index"`                                                           // 微信 ID（OAuth 关联）
+	TelegramId       string                     `json:"telegram_id" gorm:"column:telegram_id;index"`                                                       // Telegram ID（OAuth 关联）
+	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                                                                    // 邮箱验证码（仅用于邮箱验证，不存储到数据库）
+	AccessToken      *string                    `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`                                 // 系统管理用 Access Token
+	Quota            int                        `json:"quota" gorm:"type:int;default:0"`                                                                   // 用户总额度
+	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`                                            // 已使用额度
+	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                                                          // 请求次数
+	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`                                                   // 用户分组
+	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`                                      // 邀请码
+	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`                                              // 邀请人数
+	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`                                              // 邀请剩余额度
+	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"`                                    // 邀请历史额度
+	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`                                                // 邀请人 ID
+	DeletedAt        gorm.DeletedAt             `gorm:"index"`                                                                                             // 软删除时间
+	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`                                                       // Linux DO ID（OAuth 关联）
+	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`                                                           // 用户设置（JSON 格式）
+	Remark           string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`                                      // 备注
+	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`                              // Stripe 客户 ID
+	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`                                                // 创建时间
+	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`                                               // 最后登录时间
+	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`                                                          // 管理权限矩阵，仅用于 API payload，不写入 users 表
 }
 
 // ToBaseUser 将用户转换为基础用户信息（用于缓存）

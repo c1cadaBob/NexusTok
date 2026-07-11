@@ -31,6 +31,7 @@ export interface AuthUser {
   display_name?: string
   email?: string
   role: number
+  authz_role?: string
   status?: number
   group?: string
   quota?: number

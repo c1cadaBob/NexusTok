@@ -48,7 +48,7 @@ func TestPersistentRolesReturnsStoredRolesAndGrants(t *testing.T) {
 
 	auditor := requirePersistentRole(t, roles, "auditor")
 	assert.False(t, auditor.BuiltIn)
-	assert.False(t, auditor.RuntimeManaged)
+	assert.True(t, auditor.RuntimeManaged)
 	assert.Equal(t, "Read-only audit role", auditor.Description)
 	assert.True(t, auditor.Grants[ResourceUsageLog][ActionRead])
 	assert.False(t, auditor.Grants[ResourceChannel][ActionRead])
@@ -72,7 +72,7 @@ func TestCreateRoleTemplateCreatesCustomTemplate(t *testing.T) {
 	assert.Equal(t, "Read-only audit template", role.Description)
 	assert.False(t, role.BuiltIn)
 	assert.True(t, role.Enabled)
-	assert.False(t, role.RuntimeManaged)
+	assert.True(t, role.RuntimeManaged)
 	assert.Zero(t, role.PolicyCount)
 	assert.False(t, role.Grants[ResourceChannel][ActionRead])
 	assert.GreaterOrEqual(t, role.Sort, 10)
@@ -83,7 +83,7 @@ func TestCreateRoleTemplateCreatesCustomTemplate(t *testing.T) {
 	require.NoError(t, err)
 	created := requirePersistentRole(t, roles, "security_audit")
 	assert.Equal(t, "Security Audit", created.Name)
-	assert.False(t, created.RuntimeManaged)
+	assert.True(t, created.RuntimeManaged)
 }
 
 func TestCreateRoleTemplateRejectsInvalidReservedAndDuplicateKeys(t *testing.T) {
@@ -201,6 +201,25 @@ func TestDeleteRoleTemplateRejectsBuiltInRole(t *testing.T) {
 	require.ErrorIs(t, err, errAuthzRoleBuiltInReadOnly)
 }
 
+func TestDeleteRoleTemplateRejectsAssignedRole(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.User{}).
+		Where("id = ?", 42).
+		Update("authz_role", "auditor").Error)
+
+	_, err = DeleteRoleTemplate("auditor")
+
+	require.ErrorIs(t, err, errAuthzRoleAssigned)
+	var role model.AuthzRole
+	require.NoError(t, db.Where("key = ?", "auditor").First(&role).Error)
+}
+
 func TestUpdateRolePoliciesDefaultsToDryRun(t *testing.T) {
 	db := setupAuthzOverrideTestDB(t)
 	require.NoError(t, SeedPersistentPolicies())
@@ -305,6 +324,29 @@ func TestUpdateRolePoliciesRejectsDisabledRole(t *testing.T) {
 		},
 	})
 	require.ErrorIs(t, err, errAuthzRoleDisabled)
+}
+
+func TestUpdateRoleTemplateRejectsDisablingAssignedRole(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.User{}).
+		Where("id = ?", 42).
+		Update("authz_role", "auditor").Error)
+
+	_, err = UpdateRoleTemplate("auditor", RoleTemplateMutationRequest{
+		Name:    "Auditor",
+		Enabled: boolPtr(false),
+	})
+
+	require.ErrorIs(t, err, errAuthzRoleAssigned)
+	var role model.AuthzRole
+	require.NoError(t, db.Where("key = ?", "auditor").First(&role).Error)
+	assert.True(t, role.Enabled)
 }
 
 func requirePersistentRoleFromService(t *testing.T, key string) RolePolicyDescriptor {

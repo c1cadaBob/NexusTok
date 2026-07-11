@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
@@ -85,12 +85,14 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import type { AuthzRolePolicy } from '@/features/system-settings/types'
 import {
   createUser,
   updateUser,
   getUser,
   getGroups,
   getPermissionCatalog,
+  getAuthzRoles,
 } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { useUserPermissions } from '../hooks/use-user-permissions'
@@ -98,6 +100,7 @@ import {
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
+  AUTHZ_ROLE_ADMIN_VALUE,
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from '../lib'
@@ -110,6 +113,11 @@ type UsersMutateDrawerProps = {
   onOpenChange: (open: boolean) => void
   currentRow?: User
 }
+
+type AssignableAuthzRoleOption = Pick<
+  AuthzRolePolicy,
+  'key' | 'name' | 'description' | 'built_in' | 'sort' | 'grants'
+>
 
 export function UsersMutateDrawer({
   open,
@@ -179,6 +187,79 @@ export function UsersMutateDrawer({
   const canEditAdminPermissions =
     isUpdate && isRootUser && targetIsAdmin && permissions.canSensitiveWrite
   const permissionCatalogReady = permissionCatalog.resources.length > 0
+  const {
+    data: authzRolesData,
+    isLoading: isAuthzRolesLoading,
+    isError: isAuthzRolesError,
+  } = useQuery({
+    queryKey: ['authz-roles'],
+    queryFn: getAuthzRoles,
+    enabled: open && canEditAdminPermissions,
+    staleTime: 5 * 60 * 1000,
+  })
+  const assignableAuthzRoles = useMemo<AssignableAuthzRoleOption[]>(() => {
+    const catalogAdmin = permissionCatalog.roles.find(
+      (role) => role.key === AUTHZ_ROLE_ADMIN_VALUE
+    )
+    const persistentAdmin = authzRolesData?.roles.find(
+      (role) => role.key === AUTHZ_ROLE_ADMIN_VALUE && !role.superuser
+    )
+    const adminOption: AssignableAuthzRoleOption = {
+      key: AUTHZ_ROLE_ADMIN_VALUE,
+      name: persistentAdmin?.name || catalogAdmin?.name || 'Admin',
+      description:
+        persistentAdmin?.description ||
+        t('Built-in Admin authorization baseline'),
+      built_in: true,
+      sort: persistentAdmin?.sort ?? 10,
+      grants: persistentAdmin?.grants || catalogAdmin?.grants || {},
+    }
+
+    const customOptions = (authzRolesData?.roles ?? [])
+      .filter(
+        (role) =>
+          role.enabled &&
+          !role.superuser &&
+          !role.built_in &&
+          role.key !== AUTHZ_ROLE_ADMIN_VALUE
+      )
+      .map<AssignableAuthzRoleOption>((role) => ({
+        key: role.key,
+        name: role.name,
+        description: role.description,
+        built_in: false,
+        sort: role.sort,
+        grants: role.grants,
+      }))
+      .sort(
+        (left, right) =>
+          left.sort - right.sort || left.key.localeCompare(right.key)
+      )
+
+    return [adminOption, ...customOptions]
+  }, [authzRolesData?.roles, permissionCatalog.roles, t])
+  const authzRoleSelectDisabled = isAuthzRolesLoading || isAuthzRolesError
+
+  const handleAuthzRoleBaselineChange = (roleKey: string) => {
+    const nextRoleKey = roleKey || AUTHZ_ROLE_ADMIN_VALUE
+    form.setValue('authz_role', nextRoleKey, {
+      shouldDirty: true,
+      shouldTouch: true,
+    })
+    const roleOption = assignableAuthzRoles.find(
+      (role) => role.key === nextRoleKey
+    )
+    if (roleOption && permissionCatalogReady) {
+      form.setValue(
+        'admin_permissions',
+        normalizeAdminPermissions(roleOption.grants, permissionCatalog),
+        {
+          shouldDirty: true,
+          shouldTouch: true,
+        }
+      )
+    }
+  }
 
   const onSubmit = async (data: UserFormValues) => {
     if (!canSubmit) {
@@ -489,6 +570,101 @@ export function UsersMutateDrawer({
                       )}
                     </p>
                   </div>
+
+                  {permissionCatalogReady && (
+                    <>
+                      {isAuthzRolesError && (
+                        <Alert variant='destructive'>
+                          <AlertTitle>
+                            {t('Authorization roles unavailable')}
+                          </AlertTitle>
+                          <AlertDescription>
+                            {t(
+                              'Custom role baselines cannot be loaded right now.'
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
+                      {isAuthzRolesLoading ? (
+                        <Skeleton className='h-20 w-full' />
+                      ) : (
+                        <FormField
+                          control={form.control}
+                          name='authz_role'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('Role baseline')}</FormLabel>
+                              <Select
+                                items={assignableAuthzRoles.map((role) => ({
+                                  value: role.key,
+                                  label:
+                                    role.key === AUTHZ_ROLE_ADMIN_VALUE
+                                      ? t('Built-in Admin baseline')
+                                      : role.name,
+                                }))}
+                                onValueChange={(value) => {
+                                  if (value !== null) {
+                                    handleAuthzRoleBaselineChange(value)
+                                  }
+                                }}
+                                value={field.value || AUTHZ_ROLE_ADMIN_VALUE}
+                                disabled={authzRoleSelectDisabled}
+                              >
+                                <FormControl>
+                                  <SelectTrigger
+                                    title={
+                                      isAuthzRolesError
+                                        ? t(
+                                            'Custom role baselines cannot be loaded right now.'
+                                          )
+                                        : undefined
+                                    }
+                                  >
+                                    <SelectValue
+                                      placeholder={t('Select a baseline role')}
+                                    />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent alignItemWithTrigger={false}>
+                                  <SelectGroup>
+                                    {assignableAuthzRoles.map((role) => (
+                                      <SelectItem
+                                        key={role.key}
+                                        value={role.key}
+                                      >
+                                        <span className='flex min-w-0 flex-col gap-0.5'>
+                                          <span className='truncate'>
+                                            {role.key === AUTHZ_ROLE_ADMIN_VALUE
+                                              ? t('Built-in Admin baseline')
+                                              : role.name}
+                                          </span>
+                                          {role.description && (
+                                            <span className='text-muted-foreground truncate text-xs'>
+                                              {role.description}
+                                            </span>
+                                          )}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                {t(
+                                  'Select the baseline role applied before per-user overrides.'
+                                )}{' '}
+                                {t(
+                                  'Per-user overrides below are saved relative to the selected role.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </>
+                  )}
 
                   {isPermissionCatalogLoading && (
                     <div className='flex flex-col gap-3'>

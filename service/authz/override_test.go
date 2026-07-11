@@ -53,17 +53,36 @@ func setupAuthzTestDB(t *testing.T, migrateModels ...interface{}) *gorm.DB {
 
 func setupAuthzOverrideTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return setupAuthzTestDB(
+	db := setupAuthzTestDB(
 		t,
+		&model.User{},
 		&model.AuthzUserOverride{},
 		&model.AuthzRole{},
 		&model.CasbinRule{},
 	)
+	seedAuthzTestUsers(t, db)
+	return db
 }
 
 func setupAuthzPolicyMissingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return setupAuthzTestDB(t, &model.AuthzUserOverride{})
+	db := setupAuthzTestDB(t, &model.User{}, &model.AuthzUserOverride{})
+	seedAuthzTestUsers(t, db)
+	return db
+}
+
+func seedAuthzTestUsers(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	users := []model.User{
+		{Id: 1, Username: "root-1", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "root-1"},
+		{Id: 2, Username: "admin-2", Password: "password", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "admin-2"},
+		{Id: 3, Username: "user-3", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "user-3"},
+		{Id: 7, Username: "root-7", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "root-7"},
+		{Id: 42, Username: "admin-42", Password: "password", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "admin-42"},
+		{Id: 43, Username: "admin-43", Password: "password", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "admin-43"},
+		{Id: 99, Username: "user-99", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "user-99"},
+	}
+	require.NoError(t, db.Create(&users).Error)
 }
 
 func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
@@ -136,6 +155,20 @@ func TestCanUsesUserOverridesWithoutElevatingCommonUsers(t *testing.T) {
 	assert.False(t, Can(42, common.RoleAdminUser, Permission{Resource: ResourceChannel, Action: "unknown"}))
 }
 
+func TestCanFailsClosedForDeletedOrDemotedAdminSession(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+
+	assert.True(t, Can(42, common.RoleAdminUser, ChannelRead))
+
+	require.NoError(t, db.Model(&model.User{}).
+		Where("id = ?", 42).
+		Update("role", common.RoleCommonUser).Error)
+	assert.False(t, Can(42, common.RoleAdminUser, ChannelRead))
+
+	require.NoError(t, db.Unscoped().Delete(&model.User{}, "id = ?", 42).Error)
+	assert.False(t, Can(42, common.RoleAdminUser, ChannelRead))
+}
+
 func TestCapabilitiesForUserAppliesOverrides(t *testing.T) {
 	setupAuthzOverrideTestDB(t)
 
@@ -150,9 +183,9 @@ func TestCapabilitiesForUserAppliesOverrides(t *testing.T) {
 	assert.True(t, Capabilities(common.RoleAdminUser)[ResourceChannel][ActionRead])
 	assert.False(t, Capabilities(common.RoleAdminUser)[ResourceChannel][ActionSensitiveWrite])
 
-	root := CapabilitiesForUser(42, common.RoleRootUser)
-	assert.True(t, root[ResourceChannel][ActionRead])
-	assert.True(t, root[ResourceChannel][ActionSensitiveWrite])
+	staleRoot := CapabilitiesForUser(42, common.RoleRootUser)
+	assert.False(t, staleRoot[ResourceChannel][ActionRead])
+	assert.True(t, staleRoot[ResourceChannel][ActionSensitiveWrite])
 }
 
 func TestClearUserAuthorizationRemovesOverrides(t *testing.T) {

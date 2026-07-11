@@ -828,7 +828,7 @@ export function RolePolicySection() {
               </DialogTitle>
               <DialogDescription>
                 {t(
-                  'Custom roles are templates only until role assignment is enabled.'
+                  'Custom roles can be assigned to Admin users as authorization baselines.'
                 )}
               </DialogDescription>
             </DialogHeader>

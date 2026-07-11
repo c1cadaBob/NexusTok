@@ -6,6 +6,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -485,6 +486,7 @@ func GetSelf(c *gin.Context) {
 		"username":          user.Username,
 		"display_name":      user.DisplayName,
 		"role":              user.Role,
+		"authz_role":        user.AuthzRole,
 		"status":            user.Status,
 		"email":             user.Email,
 		"github_id":         user.GitHubId,
@@ -674,11 +676,19 @@ func buildUserModelsForGroups(
 
 func UpdateUser(c *gin.Context) {
 	var updatedUser model.User
-	err := common.DecodeJson(c.Request.Body, &updatedUser)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	err = common.Unmarshal(body, &updatedUser)
 	if err != nil || updatedUser.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	var requestData map[string]interface{}
+	_ = common.Unmarshal(body, &requestData)
+	_, authzRoleProvided := requestData["authz_role"]
 	if updatedUser.Password == "" {
 		updatedUser.Password = "$I_LOVE_U" // 校验器要求密码非空，后续会在真正更新前恢复为空。
 	}
@@ -704,11 +714,15 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "" // 恢复为空，表示本次不更新密码。
 	}
 	updatePassword := updatedUser.Password != ""
+	authzRole := originUser.AuthzRole
+	if authzRoleProvided {
+		authzRole = updatedUser.AuthzRole
+	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
 		}
-		return updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, originUser.Role, updatedUser.AdminPermissions)
+		return updateUserAuthorizationInTx(c, tx, updatedUser.Id, originUser.Role, authzRole, authzRoleProvided, updatedUser.AdminPermissions)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -969,7 +983,7 @@ func CreateUser(c *gin.Context) {
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}
-		return updateAdminPermissionsForUserInTx(c, tx, cleanUser.Id, cleanUser.Role, user.AdminPermissions)
+		return updateUserAuthorizationInTx(c, tx, cleanUser.Id, cleanUser.Role, user.AuthzRole, true, user.AdminPermissions)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
