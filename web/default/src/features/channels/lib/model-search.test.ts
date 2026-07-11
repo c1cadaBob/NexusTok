@@ -21,8 +21,10 @@ import { describe, test } from 'node:test'
 import {
   buildModelSearchAppendPlan,
   buildModelSearchAppendSummary,
+  dedupeModelNames,
   getMissingModelSearchMatches,
   getModelSearchModelNames,
+  mergeModelNames,
   parseModelDraftList,
 } from './model-search'
 
@@ -33,6 +35,25 @@ describe('渠道模型草稿解析', () => {
         ' gpt-5.6-terra, GPT-5.6-TERRA，gpt-5.6-luna\n\n gpt-5.6-sol '
       ),
       ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol']
+    )
+  })
+})
+
+describe('渠道模型列表归一化', () => {
+  test('按 trim + 大小写不敏感方式去重并保留首次展示形式', () => {
+    assert.deepEqual(
+      dedupeModelNames([' gpt-5.6-terra ', 'GPT-5.6-TERRA', '', 'gpt-5.6-luna']),
+      ['gpt-5.6-terra', 'gpt-5.6-luna']
+    )
+  })
+
+  test('合并模型列表时保留已有模型并只追加新增项', () => {
+    assert.deepEqual(
+      mergeModelNames(
+        ['gpt-5.6-sol', 'gpt-5.6-terra'],
+        ['GPT-5.6-TERRA', 'gpt-5.6-luna']
+      ),
+      ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
     )
   })
 })

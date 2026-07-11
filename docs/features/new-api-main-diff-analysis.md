@@ -8596,3 +8596,81 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 11. 在 PostgreSQL 运行态确认 `authz_roles` 已种子 `root`、`admin` 两条内置角色；`casbin_rule` 中 `role:admin` 默认 allow 策略共 21 条。
 12. 在运行态确认 Admin 的 `channel` 策略包含 `read`、`write`、`operate` 三条 allow，和静态 Admin 基线保持一致。
 13. 当前会话未暴露 MCP 浏览器工具；本轮为后端授权底座改动，已按热更新要求访问 `http://192.168.0.202:3003/`，并使用 curl、Docker 日志和 PostgreSQL 查询完成运行态验证。
+
+## 本轮实施评审：编辑渠道页 new-api 对齐与模型搜索追加二次补强
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并明确指出 `/opt/project/new-api-main` 最新版编辑渠道页面的体验更好，应把当前编辑渠道页继续向它对齐。结合前几轮 `gpt-5.6` 供应商模型同步上下文，本轮重新验证后确认：模型库和接口数据本身完整，OpenAI 供应商下已有 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型；渠道 `11111` 当前只保存了 `gpt-5.6-sol`，因此搜索 `gpt-5.6` 后应只把缺失的 `terra/luna` 两个模型追加到表单草稿。
+
+本轮真正需要补强的是交互边界与页面组织：
+
+1. 搜索追加不能被旧的异步请求污染。管理员切换渠道、关闭抽屉或修改搜索词后，旧请求返回时不能再写入当前表单。
+2. 搜索追加不能只依赖第一页预览。当第一页没有可新增模型但后端仍有未扫描结果时，按钮应允许“扫描全部搜索结果”后再判断。
+3. 模型字段仍应支持 new-api 习惯里的“快速录入模型”，但必须避免有真实候选时把 `gpt-5.6` 这种系列前缀误创建成自定义模型。
+4. 编辑渠道页应吸收 new-api 最新页面“核心配置优先、模型操作靠近字段、高级配置可继续下钻”的优势，同时保留 NexusTok 已经原生化的账号池、Codex、权限、模型映射 guardrail、上游检测和多语言能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型搜索 helper | `web/default/src/features/channels/lib/model-search.ts` | 新增统一的模型名 trim + 大小写不敏感去重、合并工具，供搜索追加、自定义创建、预设填充和手动选择复用。 |
+| 模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 补充去重与合并测试，继续固定 `gpt-5.6` 三模型里“已有 sol 时只新增 terra/luna”的语义。 |
+| 共享 MultiSelect | `web/default/src/components/multi-select.tsx` | 抽出可测试的候选可见性计算；支持“搜索时隐藏已选项”；允许调用方在有匹配候选时禁止自定义创建。 |
+| MultiSelect 测试 | `web/default/src/components/multi-select.test.ts` | 覆盖搜索 `gpt-5.6` 时隐藏已选 `sol`、保留 `terra/luna`，以及空搜索仍显示已选项。 |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 搜索追加加入请求序列、同步锁和上下文校验；支持未扫描结果提示；模型框改为“无候选时可创建”；抽屉加宽，左侧导航改为顶部横向锚点条；上游检测模型预览改为 Tooltip 完整展示。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 增加 `Scan all search results` 与未扫描结果提示文案，六语完整同步。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和运行态验收。 |
+
+### 风险评估
+
+- 表单污染风险：搜索全量拉取是异步操作，若不校验当前 `open/channelId/keyword`，旧请求可能在用户切换渠道后写入错误表单。本轮用请求序列和上下文快照双重校验，失效请求只结束自身，不再写草稿。
+- 重复提交风险：React state 更新存在同 tick 空窗，仅依赖 `isAddingModelSearchMatches` 可能挡不住连续 pointer/click。本轮增加同步 ref 锁，避免重复拉取和重复追加。
+- 数据完整性风险：接口搜索可能分页。按钮状态不能只看当前页的可新增数，否则未来大模型系列可能被误判为“没有新结果”。本轮用后端 `total` 与当前已加载真实模型数计算未扫描数量，并允许扫描全量页。
+- 自定义模型回归风险：如果完全禁用模型框创建，会让管理员录入冷门模型更绕；如果有真实候选时仍允许创建，又会把 `gpt-5.6` 前缀当成模型。本轮只在无真实候选时展示创建入口，避免两端能力互相伤害。
+- 页面布局风险：把侧边导航改成顶部 sticky 横向条可能遮挡长表单或移动端溢出。本轮仅在抽屉内部使用横向滚动条和稳定宽度，保留锚点状态，不改变保存 payload 和后端接口。
+- Tooltip 可用性风险：上游检测完整列表可能很长。本轮只把完整列表放到 Tooltip，原地仍显示前 8 个预览，不扩大表单默认占高。
+
+### 方案评审
+
+采用“保留 NexusTok 宽抽屉能力 + 吸收 new-api 编辑页交互”的方案，而不是直接复制 new-api classic 的窄抽屉：
+
+1. 在 `model-search.ts` 统一模型名归一化、去重和合并规则，所有模型列表写入前都按同一套 trim + lower key 处理。
+2. 搜索追加按钮点击时重新拉取全部搜索页，再基于表单最新 `models` 计算缺失项；写入前校验请求序列、抽屉打开状态、渠道 ID 和搜索词仍一致。
+3. 当前页如果已没有可新增项但后端还有未扫描结果，弹层显示未扫描数量，按钮切换为 `Scan all search results`，让管理员可以触发全量确认。
+4. 模型 MultiSelect 开启 `allowCreate`，但设置 `allowCreateWithMatches={false}`：无候选时显示 `Press Enter to use "{{value}}"`，有候选时只做筛选/补齐。
+5. 顶部 sticky 锚点条替代左侧 sticky aside，抽屉从 `sm:max-w-5xl` 扩到 `sm:max-w-6xl`，让模型区和高级配置获得更宽的工作面。
+6. 上游检测的 `Last detected addable models` 保持预览，同时通过 Tooltip 展示完整检测列表。
+7. 全部新增 UI 文案进入六语 locale，并用 `i18n:sync` 校验。
+
+### 实施结果
+
+已完成编辑渠道页 new-api 对齐和模型搜索追加二次补强：
+
+- `fetchAllModelSearchModelNames()` 对空 `items` 做一致处理，翻页终止不再访问可能为空的 `data.items.length`。
+- `handleAddModelSearchMatches()` 增加同步 ref 锁、请求序列和 `open/channelId/keyword` 校验，旧请求不会污染当前抽屉；关闭抽屉或切换渠道会立即让 pending 请求失效。
+- 模型列表写入统一经过 `dedupeModelNames()` / `mergeModelNames()`，大小写不同或带空白的重复模型不会被写入表单草稿。
+- 搜索弹层在后端仍有未扫描结果时提示 `{{count}} more result(s) will be checked when adding`，并允许点击 `Scan all search results` 做全量检查。
+- 模型选择框在搜索时隐藏已选项；搜索 `gpt-5.6` 时只显示可新增的 `gpt-5.6-terra`、`gpt-5.6-luna`，不再展示已选 `gpt-5.6-sol`。
+- 模型选择框恢复无候选时创建自定义模型的能力；输入 `custom-test-model-xyz` 时显示 `Press Enter to use "custom-test-model-xyz"`，但输入 `gpt-5.6` 这种已有候选前缀时不会误创建。
+- 编辑渠道抽屉改为更宽的 `sm:max-w-6xl`，原左侧导航改为顶部横向 sticky 锚点条，保留 Basic Information、Credentials、Models & Groups、Advanced Settings 及高级子项导航。
+- 上游检测完整模型列表通过 Tooltip 展示，默认页面只保留短预览，避免高级设置区域被长列表撑开。
+- 本轮没有修改后端接口、保存 payload、权限判断、账号池/Codex 逻辑，也没有保存真实渠道配置。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，27 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过，locale 同步报告生成成功；本轮新增文案已覆盖 en、zh、fr、ja、ru、vi。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；页面已可访问，未触发容器重启。
+7. 由于当前会话没有暴露 MCP 浏览器工具，使用 Google Chrome headless + CDP 替代真实浏览器验证；验证入口仍为 `http://192.168.0.202:3003/`。
+8. 使用账号 `c1cada` 登录后进入 `/channels`，打开渠道 `11111` 的 `Edit Channel` 抽屉，初始模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，显示 `Selected 3`。
+9. 抽屉运行态宽度为 1152px，内部无旧的左侧 `aside` 导航；顶部横向锚点条显示 Basic Information、Credentials、Models & Groups、Advanced Settings 和高级子项。
+10. 在模型框搜索 `gpt-5.6` 后，弹层显示 `3 matched · 2 new · 1 already selected`，预览 `gpt-5.6-terra, gpt-5.6-luna`，按钮为 `Add 2 new model(s)`，候选只显示 `terra/luna`。
+11. 点击 `Add 2 new model(s)` 后，表单草稿显示 `Selected 5`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；验证期间未点击 `Update Channel`。
+12. 输入 `custom-test-model-xyz` 后，截图确认弹层显示 `Press Enter to use "custom-test-model-xyz"`，证明无候选时自定义创建入口生效。
+13. Chrome/CDP 记录没有运行时异常、控制台 error/warning 或非取消型网络失败。
+14. 接口复查 `GET /api/channel/1` 返回 `models="gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认页面验证未保存表单草稿、未改变运行态渠道数据。
+15. 验证截图保存于 `/tmp/nexustok-channel-edit-after.png` 与 `/tmp/nexustok-channel-custom-create.png`。

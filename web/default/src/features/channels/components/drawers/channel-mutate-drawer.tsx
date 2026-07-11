@@ -176,8 +176,10 @@ import {
   findMissingModelsInMapping,
   buildModelSearchAppendPlan,
   buildModelSearchAppendSummary,
+  dedupeModelNames,
   getModelSearchModelNames,
   getMissingModelSearchMatches,
+  mergeModelNames,
   parseModelDraftList,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -347,11 +349,12 @@ async function fetchAllModelSearchModelNames(
     const data = response.data
     if (!data) return names
 
-    names.push(...getModelSearchModelNames(data.items ?? [], trimmedKeyword))
+    const items = data.items ?? []
+    names.push(...getModelSearchModelNames(items, trimmedKeyword))
 
     const pageSize = data.page_size || MODEL_SEARCH_APPEND_PAGE_SIZE
     const loadedCount = page * pageSize
-    if (loadedCount >= data.total || data.items.length === 0) {
+    if (loadedCount >= data.total || items.length === 0) {
       return names
     }
 
@@ -533,10 +536,10 @@ function ChannelEditorNav(props: {
   onNavigate: (targetId: string) => void
 }) {
   return (
-    <aside className='hidden self-start lg:sticky lg:top-4 lg:z-20 lg:block'>
-      <div className='flex max-h-[calc(100dvh-12rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
-        <div className='border-border/60 bg-muted/20 rounded-lg border p-3'>
-          <div className='flex min-w-0 items-center gap-2'>
+    <div className='sticky top-0 z-20 -mx-1 bg-background/95 py-1 backdrop-blur supports-[backdrop-filter]:bg-background/80'>
+      <div className='border-border/60 bg-background rounded-lg border p-2 shadow-sm'>
+        <div className='flex flex-col gap-2 xl:flex-row xl:items-center'>
+          <div className='bg-muted/30 flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 xl:w-56'>
             <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
               {props.providerLogo}
             </span>
@@ -549,27 +552,25 @@ function ChannelEditorNav(props: {
               </p>
             </div>
           </div>
-        </div>
 
-        <nav
-          className='border-border/60 bg-background rounded-lg border p-1'
-          aria-label={props.navigationLabel}
-        >
-          {props.items.map((item) => {
-            const isError = item.status === 'error'
-            const isDone =
-              item.status === 'complete' || item.status === 'configured'
-            const isConfigured = Boolean(item.configured)
-            const isActive = props.activeItemId === item.id
-            const isExpanded = props.expandedItemId === item.id
+          <nav
+            className='flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5'
+            aria-label={props.navigationLabel}
+          >
+            {props.items.map((item) => {
+              const isError = item.status === 'error'
+              const isDone =
+                item.status === 'complete' || item.status === 'configured'
+              const isConfigured = Boolean(item.configured)
+              const isActive = props.activeItemId === item.id
 
-            return (
-              <div key={item.id}>
+              return (
                 <button
+                  key={item.id}
                   type='button'
                   className={cn(
-                    'hover:bg-muted/60 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
-                    isActive && 'bg-muted/70',
+                    'hover:bg-muted/60 flex min-w-[9.5rem] shrink-0 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors',
+                    isActive && 'bg-muted/80',
                     isConfigured && !isError && 'text-primary',
                     isError && 'text-destructive hover:bg-destructive/10'
                   )}
@@ -578,7 +579,7 @@ function ChannelEditorNav(props: {
                 >
                   <span
                     className={cn(
-                      'bg-muted text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
+                      'bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md',
                       isConfigured && !isError && 'bg-primary/10 text-primary',
                       isError && 'bg-destructive/10 text-destructive',
                       isDone && !isError && 'text-primary'
@@ -607,37 +608,44 @@ function ChannelEditorNav(props: {
                     {getSectionStatusIcon(item.status)}
                   </span>
                 </button>
-                {item.children && isExpanded && (
-                  <div className='border-border/60 ml-5 flex flex-col gap-0.5 border-l py-1 pl-3'>
-                    {item.children.map((child) => (
-                      <button
-                        key={child.id}
-                        type='button'
-                        className={cn(
-                          'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
-                          child.configured && 'text-primary'
-                        )}
-                        onClick={() => props.onNavigate(child.id)}
-                      >
-                        <span className='min-w-0 flex-1 truncate'>
-                          {child.title}
-                        </span>
-                        {child.configured && (
-                          <span
-                            className='bg-primary size-1.5 shrink-0 rounded-full'
-                            aria-hidden='true'
-                          />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </nav>
+              )
+            })}
+          </nav>
+        </div>
+
+        {props.items.map((item) => {
+          const isExpanded = props.expandedItemId === item.id
+          if (!item.children || !isExpanded) return null
+
+          return (
+            <div
+              key={`${item.id}-children`}
+              className='border-border/60 mt-2 flex gap-1 overflow-x-auto border-t pt-2'
+            >
+              {item.children.map((child) => (
+                <button
+                  key={child.id}
+                  type='button'
+                  className={cn(
+                    'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex min-w-fit items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
+                    child.configured && 'text-primary'
+                  )}
+                  onClick={() => props.onNavigate(child.id)}
+                >
+                  <span className='truncate'>{child.title}</span>
+                  {child.configured && (
+                    <span
+                      className='bg-primary size-1.5 shrink-0 rounded-full'
+                      aria-hidden='true'
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )
+        })}
       </div>
-    </aside>
+    </div>
   )
 }
 
@@ -676,6 +684,8 @@ export function ChannelMutateDrawer({
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
   const modelSearchAppendPointerHandledRef = useRef(false)
+  const modelSearchAppendRequestSeqRef = useRef(0)
+  const isAddingModelSearchMatchesRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
@@ -702,6 +712,12 @@ export function ChannelMutateDrawer({
   const clearModelSearch = useCallback(() => {
     setModelSearchKeyword('')
   }, [])
+
+  const modelSearchAppendContextRef = useRef({
+    open,
+    channelId: currentRow?.id ?? null,
+    keyword: debouncedModelSearchKeyword,
+  })
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -756,6 +772,20 @@ export function ChannelMutateDrawer({
   })
 
   const { copyToClipboard } = useCopyToClipboard()
+
+  useEffect(() => {
+    modelSearchAppendContextRef.current = {
+      open,
+      channelId,
+      keyword: debouncedModelSearchKeyword,
+    }
+  }, [channelId, debouncedModelSearchKeyword, open])
+
+  useEffect(() => {
+    modelSearchAppendRequestSeqRef.current += 1
+    isAddingModelSearchMatchesRef.current = false
+    setIsAddingModelSearchMatches(false)
+  }, [channelId, open])
 
   const {
     open: verificationOpen,
@@ -1194,11 +1224,21 @@ export function ChannelMutateDrawer({
   )
   const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
   const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
+  const modelSearchBackendTotal =
+    modelSearchData?.data?.total ?? modelSearchAppendSummary.matchedCount
+  const unscannedModelSearchResultCount = Math.max(
+    0,
+    modelSearchBackendTotal - modelSearchAppendSummary.matchedCount
+  )
+  const canRunModelSearchAppend =
+    modelSearchAppendSummary.addableCount > 0 ||
+    unscannedModelSearchResultCount > 0
   const shouldShowModelSearchAppend =
     trimmedModelSearchKeyword.length > 0 &&
     !isSearchingModelMeta &&
     !isModelSearchDebouncing &&
-    modelSearchAppendSummary.matchedCount > 0
+    (modelSearchAppendSummary.matchedCount > 0 ||
+      unscannedModelSearchResultCount > 0)
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1471,15 +1511,15 @@ export function ChannelMutateDrawer({
   // 统一更新模型字段，所有快捷填充和预设导入都走这里保持格式一致。
   const updateModels = useCallback(
     (newModels: string[], merge: boolean = false) => {
-      const normalizedNewModels = newModels
-        .map((model) => model.trim())
-        .filter(Boolean)
+      const normalizedNewModels = dedupeModelNames(newModels)
       const existingModels = merge
-        ? parseModelsString(form.getValues('models') || '')
+        ? dedupeModelNames(parseModelsString(form.getValues('models') || ''))
         : []
-      const existingModelSet = new Set(existingModels)
+      const existingModelSet = new Set(
+        existingModels.map((model) => model.trim().toLowerCase())
+      )
       const finalModelsArray = merge
-        ? [...existingModels, ...normalizedNewModels]
+        ? mergeModelNames(existingModels, normalizedNewModels)
         : normalizedNewModels
       const finalModels = formatModelsArray(finalModelsArray)
       const nextModels = parseModelsString(finalModels)
@@ -1488,7 +1528,9 @@ export function ChannelMutateDrawer({
         shouldValidate: true,
       })
       if (!merge) return nextModels.length
-      return nextModels.filter((model) => !existingModelSet.has(model)).length
+      return nextModels.filter(
+        (model) => !existingModelSet.has(model.trim().toLowerCase())
+      ).length
     },
     [form]
   )
@@ -1584,19 +1626,32 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
-    if (isAddingModelSearchMatches) {
+    if (isAddingModelSearchMatchesRef.current) {
       return
     }
-    if (!debouncedModelSearchKeyword.trim()) {
+    const keyword = debouncedModelSearchKeyword.trim()
+    if (!keyword) {
       toast.info(t('No new search results to add'))
       return
     }
 
+    const requestSeq = modelSearchAppendRequestSeqRef.current + 1
+    modelSearchAppendRequestSeqRef.current = requestSeq
+    isAddingModelSearchMatchesRef.current = true
     setIsAddingModelSearchMatches(true)
+    const requestChannelId = channelId
     try {
-      const allSearchModelNames = await fetchAllModelSearchModelNames(
-        debouncedModelSearchKeyword
-      )
+      const allSearchModelNames = await fetchAllModelSearchModelNames(keyword)
+      const latestContext = modelSearchAppendContextRef.current
+      if (
+        modelSearchAppendRequestSeqRef.current !== requestSeq ||
+        !latestContext.open ||
+        latestContext.channelId !== requestChannelId ||
+        latestContext.keyword.trim() !== keyword
+      ) {
+        return
+      }
+
       const currentModels = parseModelsString(form.getValues('models') || '')
       const modelsToAdd = getMissingModelSearchMatches(
         allSearchModelNames,
@@ -1619,14 +1674,17 @@ export function ChannelMutateDrawer({
     } catch (error) {
       toast.error(getErrorMessage(error) || t('Refresh failed'))
     } finally {
-      setIsAddingModelSearchMatches(false)
+      if (modelSearchAppendRequestSeqRef.current === requestSeq) {
+        isAddingModelSearchMatchesRef.current = false
+        setIsAddingModelSearchMatches(false)
+      }
     }
   }, [
     canEditBasicFields,
+    channelId,
     clearModelSearch,
     debouncedModelSearchKeyword,
     form,
-    isAddingModelSearchMatches,
     noPermissionMessage,
     t,
     updateModels,
@@ -1721,7 +1779,7 @@ export function ChannelMutateDrawer({
         toast.error(noPermissionMessage)
         return
       }
-      form.setValue('models', selected.join(','), {
+      form.setValue('models', formatModelsArray(dedupeModelNames(selected)), {
         shouldDirty: true,
         shouldValidate: true,
       })
@@ -1948,6 +2006,9 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
+        modelSearchAppendRequestSeqRef.current += 1
+        isAddingModelSearchMatchesRef.current = false
+        setIsAddingModelSearchMatches(false)
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
         advancedNavScrollPendingRef.current = false
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
@@ -2065,7 +2126,7 @@ export function ChannelMutateDrawer({
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-6xl')}>
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md border'>
@@ -2113,7 +2174,7 @@ export function ChannelMutateDrawer({
               {isChannelDetailLoading && <ChannelEditorLoadingState />}
               <div
                 className={cn(
-                  'grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start',
+                  'flex flex-col gap-5',
                   isChannelDetailLoading && 'hidden'
                 )}
               >
@@ -3705,7 +3766,9 @@ export function ChannelMutateDrawer({
                                     selected={currentModelsArray}
                                     onChange={handleModelsChange}
                                     placeholder={t('Search models...')}
-                                    allowCreate={false}
+                                    allowCreate
+                                    allowCreateWithMatches={false}
+                                    createLabel='Press Enter to use "{{value}}"'
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
@@ -3743,6 +3806,18 @@ export function ChannelMutateDrawer({
                                                 }
                                               )}
                                             </span>
+                                            {unscannedModelSearchResultCount >
+                                              0 && (
+                                              <span className='text-muted-foreground text-sm'>
+                                                {t(
+                                                  '{{count}} more result(s) will be checked when adding',
+                                                  {
+                                                    count:
+                                                      unscannedModelSearchResultCount,
+                                                  }
+                                                )}
+                                              </span>
+                                            )}
                                             {modelSearchAppendPlan.totalCount >
                                             0 ? (
                                               <span className='text-sm'>
@@ -3799,8 +3874,7 @@ export function ChannelMutateDrawer({
                                               disabled={
                                                 !canEditBasicFields ||
                                                 isAddingModelSearchMatches ||
-                                                modelSearchAppendSummary.addableCount ===
-                                                  0
+                                                !canRunModelSearchAppend
                                               }
                                               title={
                                                 canEditBasicFields
@@ -3814,10 +3888,16 @@ export function ChannelMutateDrawer({
                                                   className='animate-spin'
                                                 />
                                               )}
-                                              {t('Add {{count}} new model(s)', {
-                                                count:
-                                                  modelSearchAppendSummary.addableCount,
-                                              })}
+                                              {modelSearchAppendSummary.addableCount >
+                                              0
+                                                ? t(
+                                                    'Add {{count}} new model(s)',
+                                                    {
+                                                      count:
+                                                        modelSearchAppendSummary.addableCount,
+                                                    }
+                                                  )
+                                                : t('Scan all search results')}
                                             </Button>
                                           </AlertDescription>
                                         </Alert>
@@ -5276,9 +5356,29 @@ export function ChannelMutateDrawer({
                                   t('None')
                                 ) : (
                                   <>
-                                    <span className='break-all'>
-                                      {upstreamDetectedModelsPreview.join(', ')}
-                                    </span>
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <button
+                                            type='button'
+                                            className='text-left break-all underline decoration-dotted underline-offset-2'
+                                          />
+                                        }
+                                      >
+                                        {upstreamDetectedModelsPreview.join(', ')}
+                                      </TooltipTrigger>
+                                      <TooltipContent
+                                        side='top'
+                                        align='start'
+                                        className='max-w-[40rem] whitespace-normal'
+                                      >
+                                        <span className='break-all'>
+                                          {upstreamUpdateMeta.detectedModels.join(
+                                            ', '
+                                          )}
+                                        </span>
+                                      </TooltipContent>
+                                    </Tooltip>
                                     {upstreamDetectedModelsOmittedCount > 0 && (
                                       <span className='ml-1'>
                                         {t(

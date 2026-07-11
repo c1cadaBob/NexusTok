@@ -17,8 +17,32 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 
-function normalizeModelSearchKey(model: string): string {
+export function normalizeModelSearchKey(model: string): string {
   return model.trim().toLowerCase()
+}
+
+// 渠道模型列表在前端草稿中统一按 trim + lower 去重，并保留首次出现的展示形式。
+// 这样搜索追加、自定义输入、预设分组和手动选择不会因为大小写差异生成重复模型。
+export function dedupeModelNames(models: readonly string[]): string[] {
+  const seenKeys = new Set<string>()
+  const dedupedModels: string[] = []
+
+  for (const rawModel of models) {
+    const model = rawModel.trim()
+    const key = normalizeModelSearchKey(model)
+    if (!key || seenKeys.has(key)) continue
+    seenKeys.add(key)
+    dedupedModels.push(model)
+  }
+
+  return dedupedModels
+}
+
+export function mergeModelNames(
+  existingModels: readonly string[],
+  incomingModels: readonly string[]
+): string[] {
+  return dedupeModelNames([...existingModels, ...incomingModels])
 }
 
 const MODEL_DRAFT_SEPARATOR_REGEX = /[,，\n]+/

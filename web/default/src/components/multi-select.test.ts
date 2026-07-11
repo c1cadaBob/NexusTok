@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 import {
   canCreateMultiSelectValue,
   filterMultiSelectItems,
+  getVisibleMultiSelectItems,
   shouldPreventEmptyInputChipRemoval,
 } from './multi-select'
 
@@ -57,6 +58,39 @@ describe('MultiSelect 搜索过滤', () => {
     assert.deepEqual(filterMultiSelectItems(items, 'terra', labels), [
       'model-a',
     ])
+  })
+
+  test('搜索时可隐藏已选项但保留可新增候选', () => {
+    const items = [
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.4',
+    ]
+
+    assert.deepEqual(
+      getVisibleMultiSelectItems({
+        items,
+        inputValue: 'gpt-5.6',
+        hideSelectedOptionsWhenSearching: true,
+        selected: ['gpt-5.6-sol'],
+      }),
+      ['gpt-5.6-terra', 'gpt-5.6-luna']
+    )
+  })
+
+  test('空搜索时仍显示已选项方便管理', () => {
+    const items = ['gpt-5.6-terra', 'gpt-5.6-sol']
+
+    assert.deepEqual(
+      getVisibleMultiSelectItems({
+        items,
+        inputValue: '',
+        hideSelectedOptionsWhenSearching: true,
+        selected: ['gpt-5.6-sol'],
+      }),
+      items
+    )
   })
 })
 

@@ -89,6 +89,33 @@ export function filterMultiSelectItems(
   })
 }
 
+export function getVisibleMultiSelectItems({
+  items,
+  inputValue,
+  labelMap = new Map(),
+  hideSelectedOptionsWhenSearching,
+  selected,
+}: {
+  items: string[]
+  inputValue: string
+  labelMap?: ReadonlyMap<string, string>
+  hideSelectedOptionsWhenSearching: boolean
+  selected: readonly string[]
+}): string[] {
+  const filteredItems = filterMultiSelectItems(items, inputValue, labelMap)
+  const trimmedInput = inputValue.trim()
+  if (!hideSelectedOptionsWhenSearching || trimmedInput.length === 0) {
+    return filteredItems
+  }
+
+  const selectedKeys = new Set(
+    selected.map((value) => value.trim().toLowerCase())
+  )
+  return filteredItems.filter(
+    (item) => !selectedKeys.has(item.trim().toLowerCase())
+  )
+}
+
 function splitDraft(value: string): { completed: string[]; draft: string } {
   if (!COMMA_REGEX.test(value)) {
     return { completed: [], draft: value }
@@ -223,10 +250,6 @@ export function MultiSelect({
   }, [options])
 
   const trimmedInput = inputValue.trim()
-  const selectedKeys = React.useMemo(
-    () => new Set(selected.map((value) => value.trim().toLowerCase())),
-    [selected]
-  )
 
   const baseItems = React.useMemo(() => {
     const set = new Set<string>(options.map((option) => option.value))
@@ -266,21 +289,19 @@ export function MultiSelect({
   // Base UI 的 Combobox Collection 不会替代业务侧过滤；渠道模型列表可能包含数百个
   // 静态模型，必须在这里按输入值收敛候选，才能让远程同步模型命中稳定浮到前面。
   const visibleItems = React.useMemo(() => {
-    const filteredItems = filterMultiSelectItems(items, inputValue, labelMap)
-    if (!hideSelectedOptionsWhenSearching || trimmedInput.length === 0) {
-      return filteredItems
-    }
-
-    return filteredItems.filter(
-      (item) => !selectedKeys.has(item.trim().toLowerCase())
-    )
+    return getVisibleMultiSelectItems({
+      items,
+      inputValue,
+      labelMap,
+      hideSelectedOptionsWhenSearching,
+      selected,
+    })
   }, [
     hideSelectedOptionsWhenSearching,
     inputValue,
     items,
     labelMap,
-    selectedKeys,
-    trimmedInput,
+    selected,
   ])
 
   const updateInputValue = React.useCallback(
