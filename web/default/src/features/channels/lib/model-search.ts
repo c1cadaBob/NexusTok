@@ -53,6 +53,7 @@ type ModelSearchItemLike = {
   tags?: string | null
   name_rule?: number | null
   matched_models?: string[] | null
+  matched_count?: number | null
 }
 
 export type ModelSearchAppendPlan = {
@@ -66,6 +67,11 @@ export type ModelSearchAppendSummary = {
   matchedCount: number
   addableCount: number
   existingCount: number
+}
+
+export type ModelSearchModelNameResult = {
+  names: string[]
+  unresolvedMatchedCount: number
 }
 
 export type ModelSearchAppendContext = {
@@ -133,13 +139,16 @@ export function parseModelDraftList(value: string): string[] {
 // /api/models/search 已经在后端按 model_name、description、tags 完成过滤；
 // 前端不能再要求模型名自身包含关键词，否则搜索供应商、标签或描述时会丢失真实命中模型。
 // 名称规则模型优先使用运行时展开的 matched_models，避免把规则占位名误加入渠道。
-export function getModelSearchModelNames(
+// matched_count 可能大于当前返回的 matched_models 数量；这种情况只作为提示信息，
+// 追加时仍以后端实际返回的模型名为准，避免把不可见或不可调用的占位结果写入渠道。
+export function getModelSearchModelNameResult(
   searchItems: readonly ModelSearchItemLike[],
   keyword: string
-): string[] {
+): ModelSearchModelNameResult {
   const normalizedKeyword = keyword.trim().toLowerCase()
   const seenKeys = new Set<string>()
   const names: string[] = []
+  let unresolvedMatchedCount = 0
 
   for (const item of searchItems) {
     const matchedModels = Array.isArray(item.matched_models)
@@ -158,6 +167,13 @@ export function getModelSearchModelNames(
     const candidates = isRuleModel
       ? [...matchedModels, ...ruleFallback]
       : [modelName, ...matchedModels]
+    const expectedMatchedCount =
+      typeof item.matched_count === 'number' && item.matched_count > 0
+        ? item.matched_count
+        : 0
+    if (isRuleModel && expectedMatchedCount > matchedModels.length) {
+      unresolvedMatchedCount += expectedMatchedCount - matchedModels.length
+    }
     for (const candidate of candidates) {
       const name = candidate?.trim()
       if (!name) continue
@@ -170,7 +186,24 @@ export function getModelSearchModelNames(
     }
   }
 
-  return names
+  return { names, unresolvedMatchedCount }
+}
+
+export function getModelSearchModelNames(
+  searchItems: readonly ModelSearchItemLike[],
+  keyword: string
+): string[] {
+  return getModelSearchModelNameResult(searchItems, keyword).names
+}
+
+// 搜索下拉只展示当前页已经展开出的真实模型名；当后端返回的规则模型声明
+// matched_count 多于 matched_models 时，在 UI 中提示管理员继续使用“扫描全部搜索结果”。
+export function getUnresolvedModelSearchMatchedCount(
+  searchItems: readonly ModelSearchItemLike[],
+  keyword: string
+): number {
+  return getModelSearchModelNameResult(searchItems, keyword)
+    .unresolvedMatchedCount
 }
 
 // 计算当前模型库搜索命中里还没有加入渠道的模型。

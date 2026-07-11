@@ -10958,6 +10958,70 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 16. 验证后再次调用 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=5`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有污染运行态配置。
 17. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
 
+## 本轮补充评审：渠道模型搜索追加数量语义修正
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求渠道编辑页继续对齐 `/opt/project/new-api-main` 最新编辑渠道页面。结合前序验证，当前页面已经具备 new-api 风格的渠道编辑分区、模型区平铺快捷操作、模型映射 `Visual / JSON` Tabs、`gpt-5.6` 三模型完整候选展示，以及 Enter/点击批量追加能力。本轮复查发现剩余问题集中在模型元信息搜索的数量语义：前端把 `/api/models/search` 返回的 `total` 当作“可添加模型数”展示，但后端 `total` 实际表示模型元数据行数；规则模型还可能通过 `matched_models` 展开出多个真实模型。
+
+因此，当搜索结果跨分页或包含名称规则模型时，按钮可能显示“添加全部 N 个匹配模型”，但 N 并不等于真实可写入渠道的模型数量。正确语义应当是：当前页已展开的 `model_name + matched_models` 决定“真实命中/可新增/已存在”数量；如果后端还有未扫描的元数据行，按钮只表达“扫描全部搜索结果”，点击后重新读取所有分页并按真实模型名集合追加。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型搜索结果解释 | `web/default/src/features/channels/lib/model-search.ts` | 新增 `getModelSearchModelNameResult()`，显式区分已展开真实模型名与未展开匹配数量；保留原 `getModelSearchModelNames()` 兼容调用方。 |
+| 模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加规则模型 `matched_count / matched_models` 用例，覆盖三模型展开和未展开匹配不写入渠道的边界。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 分页提示改为按已加载元数据行数计算；有未扫描分页时按钮显示 `Scan all search results`，不再把元数据行数伪装为模型数量。 |
+| 后端/API/数据库 | 无 | 不修改 `/api/models/search`、渠道保存接口、渠道能力写入、数据库结构或 relay。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证结果。 |
+
+### 风险评估
+
+1. 搜索追加回归风险：不能破坏前序已验证的 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三模型完整展示；本轮不再隐藏已选模型，footer 仍按缺失模型集合只追加未选择项。
+2. 数量误导风险：后端 `total` 是元数据行数而非真实模型数，继续用于按钮“Add all {{count}} matched model(s)”会误导管理员。本轮只在分页提示中使用它，并改称“搜索结果”。
+3. 数据污染风险：规则模型若声明 `matched_count` 大于 `matched_models`，前端不能凭数量猜测模型名写入渠道；本轮只追加后端实际返回的模型名。
+4. 异步污染风险：全分页扫描仍沿用请求序号、渠道 ID、关键词和供应商上下文校验，避免旧搜索结果污染当前表单草稿。
+5. 保存风险：本轮只改模型选择草稿和按钮文案，不触发渠道保存；页面验证必须确认没有 `PUT /api/channel`。
+
+### 方案评审
+
+采用“真实模型集合优先，元数据行数只用于扫描提示”的方案：
+
+1. 抽出 `getModelSearchModelNameResult()`，让规则模型的 `matched_models` 展开逻辑有明确返回结构。
+2. `getModelSearchModelNames()` 保持原函数签名，避免大范围改调用方。
+3. 当前页 summary 继续使用真实模型名集合统计 `matched / new / already selected`。
+4. 未扫描数量改为 `backend total - current page item count`，表达还有多少元数据行需要继续扫描。
+5. 未扫描分页存在时按钮改为 `Scan all search results`；点击后仍调用 `fetchAllModelSearchModelNames()` 扫描所有分页，再按 `getMissingModelSearchMatches()` 只追加缺失模型。
+6. 不新增依赖、不改后端、不改保存 payload、不改权限裁剪。
+
+### 实施结果
+
+- 规则模型搜索结果会以展开出的真实模型名作为追加基准；例如 `gpt-5.6` 规则模型展开为 Terra/Luna/Sol 时，前端统计为 3 个真实模型。
+- 规则模型声明了更多 `matched_count` 但未返回具体 `matched_models` 时，前端不会猜测或写入不可见模型名，只记录未展开数量供后续排查。
+- 分页场景不再显示误导性的 `Add all {{count}} matched model(s)`；若还有未扫描元数据行，按钮显示 `Scan all search results`。
+- 点击扫描仍会读取所有分页，并按当前表单最新模型集合追加缺失项，保留旧搜索结果上下文保护。
+- 本轮没有修改后端模型搜索、渠道保存、权限、账号池、数据库或 relay。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts`：47 个测试通过，覆盖模型搜索展开、MultiSelect 搜索/Enter 行为和渠道表单模型变更逻辑。
+2. `cd web/default && bun run typecheck`：通过，确认本轮新增 `matched_count`、`getModelSearchModelNameResult()` 与渠道抽屉调用没有 TypeScript 类型错误。
+3. `git diff --check`：通过，确认本轮补丁没有空白格式问题。
+4. `cd web/default && bun run i18n:sync`：通过；本轮复用既有 `Scan all search results`、`{{count}} more result(s) will be checked when adding` 等文案，没有新增缺失翻译键。
+5. `cd web/default && bun run build`：通过，Rsbuild 生产构建完成。
+6. `docker logs --tail 80 nexustok-frontend-watch`：确认热更新容器输出 `[hot] published default dist`。
+7. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/`：返回 `HTTP/1.1 200 OK`，`Cache-Version: b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14`，确认 3003 页面可访问且命中新构建。
+8. 使用 Chrome Headless + DevTools Protocol 访问 `http://192.168.0.202:3003/`，在页面上下文调用真实登录接口，账号 `c1cada` 登录成功，`/api/user/self` 返回管理员用户 `role: 100`。
+9. 在 3003 页面打开 `/channels`，渠道 `11111` 位于第一页；点击行菜单 `Open menu -> Edit` 后进入 `Edit Channel` 抽屉，模型区初始为 `Selected 3`，供应商收窄显示 `Vendor: OpenAI`。
+10. 在编辑渠道模型输入框输入 `gpt-5.6`，页面真实触发 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`；候选完整展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+11. 搜索 footer 显示 `3 matched · 2 new · 1 already selected`，按钮显示 `Add 2 new model(s)`；本场景没有未扫描分页，因此不会出现 `Scan all search results`。
+12. 点击 `Add 2 new model(s)` 后表单草稿变为 `Selected 5`，页面中保留 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，说明已选的 `gpt-5.6-sol` 不会重复追加，缺失的 Terra/Luna 会补齐。
+13. CDP 网络记录中没有 `PUT /api/channel` 请求；再次调用 `GET /api/channel/?p=1&page_size=5&tag_mode=false&id_sort=false`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认搜索追加只影响表单草稿，没有污染运行态配置。
+14. 额外调用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，返回 `total: 3`、`itemCount: 3`，真实模型集合为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+15. CDP 记录中没有 `Network.loadingFailed`，没有 `console.error` 或 `console.warning`。
+16. 当前环境没有暴露浏览器 MCP 工具，本轮按项目规则记录限制，并使用 Chrome Headless + DevTools Protocol、真实 HTTP API、Docker 热更新日志作为替代验证方式。
+
 ## 本轮实施评审：编辑渠道页面向 new-api 模型区体验对齐
 
 ### 需求分析

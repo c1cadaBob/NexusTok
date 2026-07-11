@@ -1372,21 +1372,22 @@ export function ChannelMutateDrawer({
   )
   const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
   const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
-  const modelSearchBackendTotal = isModelSearchResultCurrent
-    ? (modelSearchData?.data?.total ?? modelSearchAppendSummary.matchedCount)
-    : modelSearchAppendSummary.matchedCount
+  const loadedModelSearchResultCount = isModelSearchResultCurrent
+    ? (modelSearchData?.data?.items?.length ?? 0)
+    : 0
+  const modelSearchBackendResultTotal = isModelSearchResultCurrent
+    ? (modelSearchData?.data?.total ?? loadedModelSearchResultCount)
+    : loadedModelSearchResultCount
   const unscannedModelSearchResultCount = Math.max(
     0,
-    modelSearchBackendTotal - modelSearchAppendSummary.matchedCount
+    modelSearchBackendResultTotal - loadedModelSearchResultCount
   )
   const canRunModelSearchAppend =
     modelSearchAppendSummary.addableCount > 0 ||
     unscannedModelSearchResultCount > 0
   const modelSearchAddButtonLabel =
     unscannedModelSearchResultCount > 0
-      ? t('Add all {{count}} matched model(s)', {
-          count: modelSearchBackendTotal,
-        })
+      ? t('Scan all search results')
       : modelSearchAppendSummary.addableCount > 0
         ? t('Add {{count}} new model(s)', {
             count: modelSearchAppendSummary.addableCount,

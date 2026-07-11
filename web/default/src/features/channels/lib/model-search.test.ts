@@ -23,6 +23,7 @@ import {
   buildModelSearchAppendSummary,
   dedupeModelNames,
   getMissingModelSearchMatches,
+  getModelSearchModelNameResult,
   getModelSearchModelNames,
   getModelSearchVendorForChannelType,
   isModelSearchAppendContextCurrent,
@@ -155,6 +156,50 @@ describe('渠道模型搜索候选提取', () => {
         'gpt-5.6'
       ),
       ['gpt-5.6-sol']
+    )
+  })
+
+  test('规则模型会以展开出的真实模型数作为搜索追加基准', () => {
+    assert.deepEqual(
+      getModelSearchModelNameResult(
+        [
+          {
+            model_name: 'gpt-5.6',
+            name_rule: 1,
+            matched_count: 3,
+            matched_models: [
+              'gpt-5.6-terra',
+              'gpt-5.6-luna',
+              'gpt-5.6-sol',
+            ],
+          },
+        ],
+        'gpt-5.6'
+      ),
+      {
+        names: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        unresolvedMatchedCount: 0,
+      }
+    )
+  })
+
+  test('规则模型声明的未展开匹配数不会被写入渠道模型列表', () => {
+    assert.deepEqual(
+      getModelSearchModelNameResult(
+        [
+          {
+            model_name: 'gpt-5.6',
+            name_rule: 1,
+            matched_count: 3,
+            matched_models: ['gpt-5.6-terra'],
+          },
+        ],
+        'gpt-5.6'
+      ),
+      {
+        names: ['gpt-5.6-terra'],
+        unresolvedMatchedCount: 2,
+      }
     )
   })
 })
