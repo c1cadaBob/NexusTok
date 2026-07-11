@@ -100,12 +100,12 @@ export type CodexCredentialRefreshResponse = {
 // ============================================================================
 
 /**
- * Get paginated list of channels
+ * 获取分页渠道列表。
  */
 export async function getChannels(
   params: GetChannelsParams = {}
 ): Promise<GetChannelsResponse> {
-  const res = await api.get('/api/channel', { params })
+  const res = await api.get('/api/channel/', { params })
   return res.data
 }
 

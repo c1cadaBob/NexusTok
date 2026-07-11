@@ -10886,3 +10886,74 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 11. 再点击表格视图后，`tbody tr` 恢复为 20 行，卡片数为 0，`localStorage.models-table-view-mode` 为 `table`。
 12. Chrome Headless 验证期间未捕获业务写请求、`Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别 console 记录。
 13. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
+
+## 本轮实施评审：渠道模型搜索 Enter 追加与编辑入口稳定性
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求把编辑渠道页面向 `/opt/project/new-api-main` 最新编辑页体验对齐。结合运行态复查后确认：模型元信息已经完整，`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型；当前渠道 `11111` 只持久化 `gpt-5.6-sol`。
+
+进一步用 3003 真实页面复现发现：点击模型搜索弹层底部的 `Add 2 new model(s)` 可以正确把 Terra/Luna 追加到未保存草稿，问题集中在键盘/默认选择路径。管理员在模型多选器输入 `gpt-5.6` 后按 Enter，会触发全量搜索请求，但 Base UI Combobox 的默认键盘选择会同时介入，导致搜索词/弹层状态被消费，最终表单没有追加缺失模型。这会让“搜索添加”看起来只识别或只添加了一个模型。
+
+同时，页面列表入口仍使用 `/api/channel`，后端运行态会先返回 301 再重定向到 `/api/channel/`。这不直接造成模型丢失，但会给编辑入口真实验证增加一次无意义跳转，也容易让列表加载状态和网络排查变得含混。本轮将 new-api 的单入口编辑体验转换为 NexusTok 原生能力时，需要保留当前更强的模型元信息搜索补齐能力，并修复 Enter 路径的语义。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| MultiSelect 键盘行为 | `web/default/src/components/multi-select.tsx` | 新增默认关闭的 `submitSearchOnEnterWithMatches` 开关；搜索有候选或正在搜索时，Enter 可优先提交搜索追加。 |
+| MultiSelect 测试 | `web/default/src/components/multi-select.test.ts` | 新增纯函数覆盖，确认启用场景、搜索中场景、自定义模型保留路径和默认关闭行为。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 仅渠道模型选择器启用 Enter 搜索追加，不影响分组选择器和其它 MultiSelect 使用方。 |
+| 渠道列表 API | `web/default/src/features/channels/api.ts` | `getChannels()` 改为直接请求 `/api/channel/`，减少 301 跳转。 |
+| 后端/API/数据库 | 无 | 不修改模型搜索接口、渠道保存接口、渠道能力表、账号池、权限矩阵、relay 或数据库结构。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 键盘行为回归风险：MultiSelect 是通用组件，不能让所有多选器的 Enter 都变成搜索提交。本轮新增开关默认关闭，只在渠道模型选择器启用。
+2. 自定义模型风险：渠道仍需要支持真正的自定义模型。新逻辑只在存在候选或搜索仍在进行时接管 Enter；没有候选且不在搜索中时继续走原来的自定义创建路径。
+3. 异步污染风险：搜索追加仍沿用已有请求序号、渠道 ID、关键词和供应商上下文校验，避免旧搜索结果污染当前表单。
+4. 渠道保存风险：本轮只修改未保存草稿层的交互，不触碰 `Update Channel`、保存 payload、权限裁剪或后端写接口；验证必须确认没有 `PUT /api/channel`。
+5. 入口路径风险：`getChannels()` 仅从后端最终路径 `/api/channel/` 发起 GET，和当前 301 后的最终资源一致，不改变查询参数、分页、排序或响应解析。
+6. 页面视觉风险：不做大面积重绘，不复制 new-api 的简化 MultiSelect；保留 NexusTok 已有的账号池、供应商收窄、三模型完整候选展示和批量补齐能力。
+
+### 方案评审
+
+采用“小范围 opt-in 键盘修复 + 列表入口路径稳定”的方案：
+
+1. 在 MultiSelect 中抽出 `shouldSubmitMultiSelectSearchOnEnter()`，用纯函数明确 Enter 何时由搜索提交接管。
+2. 在输入框 `onKeyDownCapture` 阶段拦截符合条件的 Enter，先 `preventDefault` / `stopPropagation`，再调用 `onSearchSubmit`，避免 Base UI Combobox 先按高亮候选消耗事件。
+3. 该行为必须同时满足：调用方显式启用、存在 `onSearchSubmit`、按键是 Enter、输入非空、且“正在搜索或已有匹配候选”。否则保持原有候选选择/自定义创建行为。
+4. 仅渠道编辑页模型 MultiSelect 传入 `submitSearchOnEnterWithMatches`，其它 MultiSelect 不改变。
+5. `getChannels()` 改用 `/api/channel/`，让前端直接请求后端真实 200 路径。
+6. 不引入新依赖、不新增用户可见文案、不改后端。
+
+### 实施结果
+
+已完成渠道模型搜索 Enter 追加修复与编辑入口稳定性增强：
+
+- 输入 `gpt-5.6` 后按 Enter 会优先执行搜索补齐，草稿一次性追加缺失的 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+- 页面仍完整展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个搜索命中，footer 继续显示 `3 matched · 2 new · 1 already selected`。
+- 真正没有候选的自定义模型仍可通过 Enter 添加，避免破坏渠道手工模型能力。
+- 渠道列表前端请求直接使用 `/api/channel/`，真实页面网络中不再出现 `/api/channel?` 301 起跳。
+- 本轮没有修改后端模型同步、模型搜索、渠道保存、权限、账号池或 relay 行为。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts` 通过，45 个用例全部成功。
+2. `cd web/default && bunx prettier --check src/components/multi-select.tsx src/components/multi-select.test.ts src/features/channels/api.ts src/features/channels/components/drawers/channel-mutate-drawer.tsx` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见翻译 key。
+5. `cd web/default && bun run build` 通过。
+6. `git diff --check` 通过。
+7. `docker logs --tail 120 nexustok-frontend-watch` 显示 `[hot] published default dist`。
+8. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，确认 3003 页面可访问。
+9. 真实接口登录账号 `c1cada` 后调用 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，确认返回 Terra/Luna/Sol 三个 OpenAI 模型。
+10. 直接调用后端路径确认：无尾斜杠 `/api/channel?tag_mode=false&id_sort=false&p=1&page_size=5` 返回 301，带尾斜杠 `/api/channel/?tag_mode=false&id_sort=false&p=1&page_size=5` 返回 200；前端已改为直接请求后者。
+11. Chrome Headless + DevTools Protocol 清缓存登录 3003，打开 `/channels` 并编辑渠道 `11111`；初始模型显示 `Selected 3`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+12. 页面网络记录显示渠道列表直接请求 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`，没有 `/api/channel?` 请求。
+13. 在模型输入框输入 `gpt-5.6` 后，页面显示三条模型候选、`3 matched · 2 new · 1 already selected` 和 `Add 2 new model(s)`。
+14. 按 Enter 后页面触发 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 全量扫描，toast 显示 `Added 2 model(s) from search`，未保存草稿变为 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna` 和 `gpt-5.6-sol`。
+15. Chrome Headless 验证期间业务写请求数为 0，没有 `PUT /api/channel`，没有 `Runtime.exceptionThrown`、`Network.loadingFailed`、error/warning console 或 error/warning Log。
+16. 验证后再次调用 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=5`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有污染运行态配置。
+17. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。

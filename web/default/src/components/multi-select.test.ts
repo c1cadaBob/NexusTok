@@ -23,6 +23,7 @@ import {
   filterMultiSelectItems,
   getVisibleMultiSelectItems,
   shouldPreventEmptyInputChipRemoval,
+  shouldSubmitMultiSelectSearchOnEnter,
 } from './multi-select'
 
 describe('MultiSelect 搜索过滤', () => {
@@ -133,6 +134,100 @@ describe('MultiSelect 空搜索删除键保护', () => {
         inputValue: '',
         key: 'Backspace',
         selectedLength: 3,
+      }),
+      false
+    )
+  })
+})
+
+describe('MultiSelect 搜索提交键盘行为', () => {
+  test('启用后存在候选时 Enter 优先提交搜索追加', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+        isLoading: false,
+        hasMatchingOption: true,
+      }),
+      true
+    )
+  })
+
+  test('搜索请求仍在进行时 Enter 也交给搜索提交处理', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+        isLoading: true,
+        hasMatchingOption: false,
+      }),
+      true
+    )
+  })
+
+  test('没有候选且未搜索时保留自定义模型创建路径', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: 'custom-model',
+        isLoading: false,
+        hasMatchingOption: false,
+      }),
+      false
+    )
+  })
+
+  test('默认关闭，避免影响其它 MultiSelect 的键盘选择', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: false,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+        isLoading: false,
+        hasMatchingOption: true,
+      }),
+      false
+    )
+  })
+
+  test('没有搜索提交处理器、空输入或非 Enter 键时不接管', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: false,
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+        isLoading: false,
+        hasMatchingOption: true,
+      }),
+      false
+    )
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: '   ',
+        isLoading: true,
+        hasMatchingOption: true,
+      }),
+      false
+    )
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        hasSearchSubmit: true,
+        key: 'Tab',
+        inputValue: 'gpt-5.6',
+        isLoading: true,
+        hasMatchingOption: true,
       }),
       false
     )

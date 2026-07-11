@@ -3894,6 +3894,7 @@ export function ChannelMutateDrawer({
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
                                     onSearchSubmit={handleAddModelSearchMatches}
+                                    submitSearchOnEnterWithMatches
                                     isLoading={
                                       isSearchingModelMeta ||
                                       isModelSearchDebouncing

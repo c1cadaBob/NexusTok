@@ -69,6 +69,7 @@ interface MultiSelectProps {
   allowCreateWithMatches?: boolean
   preserveSelectedOnEmptyRemovalKey?: boolean
   hideSelectedOptionsWhenSearching?: boolean
+  submitSearchOnEnterWithMatches?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -193,6 +194,31 @@ export function shouldPreventEmptyInputChipRemoval({
   return inputValue.trim().length === 0
 }
 
+export function shouldSubmitMultiSelectSearchOnEnter({
+  submitSearchOnEnterWithMatches,
+  hasSearchSubmit,
+  key,
+  inputValue,
+  isLoading,
+  hasMatchingOption,
+}: {
+  submitSearchOnEnterWithMatches: boolean
+  hasSearchSubmit: boolean
+  key: string
+  inputValue: string
+  isLoading: boolean
+  hasMatchingOption: boolean
+}): boolean {
+  if (!submitSearchOnEnterWithMatches || !hasSearchSubmit) return false
+  if (key !== 'Enter') return false
+  if (inputValue.trim().length === 0) return false
+
+  // 渠道模型搜索里，输入 gpt-5.6 这类系列前缀时，Enter 应优先解释为
+  // “提交当前搜索并批量补齐命中模型”。如果没有任何候选且也不在搜索中，
+  // 则继续交给原有自定义模型创建逻辑处理，避免禁用真正的自定义能力。
+  return isLoading || hasMatchingOption
+}
+
 // 芯片式多选。它基于项目 Base UI Combobox，保证输入值会参与真实过滤，
 // 同时允许调用方按输入内容发起远程搜索并把结果合并进 options。
 export function MultiSelect({
@@ -221,6 +247,7 @@ export function MultiSelect({
   allowCreateWithMatches = true,
   preserveSelectedOnEmptyRemovalKey = false,
   hideSelectedOptionsWhenSearching = false,
+  submitSearchOnEnterWithMatches = false,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -386,9 +413,25 @@ export function MultiSelect({
       event.stopPropagation()
       return
     }
+
+    if (
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches,
+        hasSearchSubmit: Boolean(onSearchSubmit),
+        key: event.key,
+        inputValue,
+        isLoading,
+        hasMatchingOption,
+      })
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      onSearchSubmit?.()
+    }
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.defaultPrevented) return
     if (event.key !== 'Enter') return
 
     const popup = document.querySelector<HTMLElement>(
