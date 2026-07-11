@@ -212,14 +212,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		for _, ra := range info.PriceData.OtherRatios {
-			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
-			}
-		}
-	}
+	// 6. 将 OtherRatios 应用到基础额度。
+	applyTaskOtherRatios(info, modelName)
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
@@ -276,6 +270,32 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}, nil
 }
 
+// applyTaskOtherRatios 将异步任务适配器估算出的 OtherRatios 应用到基础额度。
+//
+// 视频、音乐等异步任务会把时长、分辨率、动作类型等维度作为倍率追加到
+// PriceData.OtherRatios。这些倍率可能来自用户请求或历史任务数据，进入预扣费前
+// 必须通过统一 quota 转换入口，避免极端倍率在 int 转换时回绕。TaskPricePatches
+// 中的模型已经由适配器做过专门价格修正，保持历史逻辑不再重复应用倍率。
+func applyTaskOtherRatios(info *relaycommon.RelayInfo, modelName string) int {
+	if info == nil {
+		return 0
+	}
+	if common.StringsContains(constant.TaskPricePatches, modelName) {
+		return info.PriceData.Quota
+	}
+
+	quotaWithRatios := float64(info.PriceData.Quota)
+	for _, ra := range info.PriceData.OtherRatios {
+		if ra != 1.0 {
+			quotaWithRatios *= ra
+		}
+	}
+	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+	info.NoteQuotaClamp(clamp)
+	info.PriceData.Quota = quota
+	return quota
+}
+
 // recalcQuotaFromRatios 根据调整后的 OtherRatios 重新计算配额。
 // 计算公式：基础配额 × 各倍率的乘积。
 // 首先从当前 PriceData.Quota 中除掉原有的 OtherRatios 恢复基础额度，
@@ -289,21 +309,23 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 //   - int: 重新计算后的配额值
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) int {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
-	baseQuota := info.PriceData.Quota
+	baseQuota := float64(info.PriceData.Quota)
 	// 先除掉原有的 OtherRatios 恢复基础额度
 	for _, ra := range info.PriceData.OtherRatios {
 		if ra != 1.0 && ra > 0 {
-			baseQuota = int(float64(baseQuota) / ra)
+			baseQuota /= ra
 		}
 	}
 	// 应用新的 ratios
-	result := float64(baseQuota)
+	result := baseQuota
 	for _, ra := range ratios {
 		if ra != 1.0 {
 			result *= ra
 		}
 	}
-	return int(result)
+	quota, clamp := common.QuotaFromFloatChecked(result)
+	info.NoteQuotaClamp(clamp)
+	return quota
 }
 
 // fetchRespBuilders 是任务查询响应构建器的映射表。

@@ -10016,3 +10016,60 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 4. `git diff --check` 通过。
 5. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
 6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端音频 token 估算安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
+
+## 本轮实施评审：异步任务 OtherRatios 配额饱和转换
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的异步任务提交流程后发现，new-api-main 在 `RelayTaskSubmit` 中会把任务适配器估算出的 `OtherRatios` 先按 float 累乘，再通过 `common.QuotaFromFloatChecked` 写回 `PriceData.Quota`，并把饱和事件记录到 `RelayInfo.QuotaClamp`。提交后 `AdjustBillingOnSubmit` 重新计算 quota 时也使用同一套饱和转换。NexusTok 当前已经具备 `RelayInfo.NoteQuotaClamp`、任务日志 `quota_saturation` 和多条计费饱和保护链路，但异步任务提交中的 `OtherRatios` 仍使用裸 `int(float64(quota) * ratio)`，提交后重算也直接 `int(result)`。
+
+`OtherRatios` 通常来自视频时长、分辨率、动作类型或基于历史任务的 remix/continuation 信息。正常请求下倍率较小，但异常历史数据、适配器解析错误或上游/请求组合导致的极端倍率，可能在预扣费前发生整数回绕，使任务以不可审计的错误 quota 进入后续扣费链路。本轮目标是把 new-api-main 的任务倍率安全边界原生化到 NexusTok：保持历史“向零截断”语义和 `TaskPricePatches` 跳过逻辑，同时让异常倍率进入统一饱和转换与审计记录。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 异步任务提交配额 | `relay/relay_task.go` | `OtherRatios` 应用改为 `applyTaskOtherRatios()`，通过 `common.QuotaFromFloatChecked` 饱和转换并记录 `RelayInfo.QuotaClamp`。 |
+| 提交后配额重算 | `relay/relay_task.go` | `recalcQuotaFromRatios()` 从旧倍率恢复基础 quota 后，使用 float 重新应用新倍率，并通过 checked quota 转换返回。 |
+| 回归测试 | `relay/relay_task_test.go` | 覆盖正常倍率、超大倍率饱和、`TaskPricePatches` 跳过和提交后重算饱和。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改数据库 schema、任务状态机、任务适配器请求构造、账号池任务限流、预扣费/退款接口、任务轮询调度、前端页面或模型价格配置格式。
+
+### 风险评估
+
+1. 正常倍率回归风险：`OtherRatios` 正常组合仍需保持历史按 float 乘积后向零截断的语义，不能改成四舍五入。
+2. `TaskPricePatches` 重复计费风险：补丁模型已经由适配器做专门价格修正，本轮必须保留跳过倍率应用逻辑。
+3. 极端倍率风险：超大倍率不能在 `int` 转换时回绕，应饱和到 `common.MaxQuota`，并记录 `QuotaClamp`，后续任务消费日志可通过已有链路写入 `admin_info.quota_saturation`。
+4. 提交后调整风险：`AdjustBillingOnSubmit` 可能基于上游返回值调整 duration/size 等倍率，重算时要先从当前 quota 中除掉原有正倍率恢复基础 quota，再应用新倍率。
+5. 审计覆盖风险：同一次请求可能多个阶段触发饱和；本轮复用 `RelayInfo.NoteQuotaClamp` 的“首个事件优先”规则，避免后续转换覆盖根因。
+
+### 方案评审
+
+采用“抽取倍率应用 helper + 重算 checked 转换”的小步方案：
+
+1. 新增 `applyTaskOtherRatios(info, modelName)`，集中处理异步任务提交前的 `OtherRatios` 应用。
+2. 非 `TaskPricePatches` 模型将 `PriceData.Quota` 转为 float 后累乘所有非 1 倍率，再用 `common.QuotaFromFloatChecked` 转回 int。
+3. helper 通过 `info.NoteQuotaClamp(clamp)` 记录首个饱和事件，并把最终 quota 写回 `info.PriceData.Quota`。
+4. `recalcQuotaFromRatios()` 改为 float 恢复基础 quota 和重算结果，最终同样使用 checked quota 转换。
+5. 不改变 `OtherRatios` 的来源、响应 header、预扣费入口或任务成功后的结算流程。
+
+### 实施结果
+
+已完成异步任务 `OtherRatios` 配额饱和转换：
+
+- 任务提交前的时长、分辨率等倍率应用不再使用裸 `int` 转换。
+- 提交后基于上游实际返回值调整倍率时，也会通过统一 quota 饱和转换返回最终 quota。
+- 正常倍率仍保持向零截断语义。
+- `TaskPricePatches` 中的特殊模型继续跳过倍率应用，避免重复计费。
+- 超大倍率会饱和到 `common.MaxQuota` 并记录 `RelayInfo.QuotaClamp`。
+
+### 验证记录
+
+1. `go test ./relay -run 'TestApplyTaskOtherRatios|TestRecalcQuotaFromRatiosUsesSaturatingConversion'` 通过，覆盖正常倍率、超大倍率、补丁跳过和提交后重算。
+2. `go test ./relay` 通过，确认 relay 包整体构建和既有测试不受影响。
+3. `go test ./service -run 'Task|Quota|Billing'` 通过，确认任务、额度和计费相关服务测试不受影响。
+4. `go test ./relay/channel/task/...` 通过，确认异步任务适配器包整体构建和既有测试不受影响。
+5. `git diff --check` 通过。
+6. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
+7. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端任务配额安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
