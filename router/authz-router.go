@@ -29,6 +29,8 @@ var authzPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/policies/export", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ExportPermissionPolicies},
 	// 角色策略矩阵会暴露完整管理边界，读取也继续保持 RootAuth 保底。
 	{method: http.MethodGet, path: "/roles", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ListPermissionRoles},
+	// Casbin shadow 对比结果用于 Root 在切换真实 runtime 前观测策略一致性；只读但敏感。
+	{method: http.MethodGet, path: "/shadow/role-mismatches", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ComparePermissionRoleShadowPolicies},
 	// 自定义角色模板创建只改变权限模板元数据，仍属于高风险权限配置写操作。
 	{method: http.MethodPost, path: "/roles", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.CreatePermissionRole},
 	// 内置 Root/Admin 模板由 service 层保护为只读；路由层统一保持 RootAuth 保底。

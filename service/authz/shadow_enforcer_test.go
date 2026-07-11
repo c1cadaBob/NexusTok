@@ -105,6 +105,31 @@ func TestCompareShadowRolePoliciesReportsFallbackMismatch(t *testing.T) {
 	})
 }
 
+func TestCompareShadowRolePolicyStatusReportsUnavailableWithoutEnforcer(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	resetShadowEnforcerForTest(t)
+
+	comparison, err := CompareShadowRolePolicyStatus()
+	require.NoError(t, err)
+	require.NotNil(t, comparison)
+	assert.False(t, comparison.Available)
+	assert.Zero(t, comparison.MismatchCount)
+	assert.Empty(t, comparison.Mismatches)
+}
+
+func TestCompareShadowRolePolicyStatusReturnsMismatchCount(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	resetShadowEnforcerForTest(t)
+
+	require.NoError(t, InitShadowEnforcer(db))
+	comparison, err := CompareShadowRolePolicyStatus()
+	require.NoError(t, err)
+	require.NotNil(t, comparison)
+	assert.True(t, comparison.Available)
+	assert.Equal(t, len(comparison.Mismatches), comparison.MismatchCount)
+	assert.NotEmpty(t, comparison.Mismatches)
+}
+
 func resetShadowEnforcerForTest(t *testing.T) {
 	t.Helper()
 

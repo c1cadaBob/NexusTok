@@ -47,6 +47,19 @@ func ListPermissionRoles(c *gin.Context) {
 	})
 }
 
+// ComparePermissionRoleShadowPolicies 返回角色策略与 Casbin 影子运行时的只读对比结果。
+//
+// 该接口只用于 Root 管理员观测未来切换 Casbin runtime 前的风险，不参与真实授权。
+// shadow runtime 尚未初始化时 service 会返回 available=false，避免影响角色策略页。
+func ComparePermissionRoleShadowPolicies(c *gin.Context) {
+	comparison, err := authz.CompareShadowRolePolicyStatus()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, comparison)
+}
+
 // CreatePermissionRole 创建一个自定义角色模板。
 //
 // 自定义角色模板当前不参与运行时用户分配；该接口只让 Root 先沉淀可复用的权限

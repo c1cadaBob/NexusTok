@@ -55,7 +55,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement、持久策略底座、自定义角色模板 CRUD 和 Casbin 影子 runtime 已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地，`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles`、`POST /api/authz/roles`、`PUT /api/authz/roles/:key`、`DELETE /api/authz/roles/:key` 和 `PUT /api/authz/roles/:key/policies` 已提供 Root-only 策略导出、导入、角色模板管理和角色策略编辑后端合同；默认前端 `/system-settings/security/role-policies` 已接入角色模板创建/编辑/删除、模板创建/更新时间展示、角色策略矩阵、dry-run 预览和二次保存确认；Authz 角色/策略写操作已写入结构化管理审计摘要；Casbin `SyncedEnforcer` 已以只读影子模式加载 `casbin_rule` 并提供一致性对比，但真实 `Can()` 热路径暂不切换。真正剩余的是用户角色分配、更细资源拆分、Casbin 影子结果可视化审计展示，以及评估何时把真实授权切到 runtime，而不是基础 Authz enforcement。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement、持久策略底座、自定义角色模板 CRUD、Casbin 影子 runtime 和 mismatch 可视化已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地，`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles`、`POST /api/authz/roles`、`PUT /api/authz/roles/:key`、`DELETE /api/authz/roles/:key` 和 `PUT /api/authz/roles/:key/policies` 已提供 Root-only 策略导出、导入、角色模板管理和角色策略编辑后端合同；默认前端 `/system-settings/security/role-policies` 已接入角色模板创建/编辑/删除、模板创建/更新时间展示、角色策略矩阵、dry-run 预览和二次保存确认；Authz 角色/策略写操作已写入结构化管理审计摘要；Casbin `SyncedEnforcer` 已以只读影子模式加载 `casbin_rule` 并通过 `GET /api/authz/shadow/role-mismatches` 与 Role Policies 页面展示一致性对比，但真实 `Can()` 热路径暂不切换。真正剩余的是用户角色分配、更细资源拆分、完整 shadow 审计报表，以及评估何时把真实授权切到 runtime，而不是基础 Authz enforcement。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地并扩展到多组管理路由 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；同一 `permissionRoute` 模式已扩展到账户池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统任务和系统信息等路由。后续重点转为 Casbin runtime/角色编辑和资源粒度继续拆分。 |
 | 渠道/账号池敏感字段 fail-closed | `controller/channel_authz.go`、`controller/account_pool_authz.go` | 已落地主要更新路径 | 渠道更新接口已建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；账号池分组更新已对 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段做敏感写二次校验，并让默认前端账号池页消费 `write/operate/sensitive_write`。后续新增字段必须进入分类测试。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 已落地 | 保留账号池专用审计，同时已新增全局操作审计兜底；管理写操作记录 action、params、状态码、业务成功状态和操作者，不记录请求体，前端 Usage Logs 详情可展示结构化审计信息。 |
@@ -170,7 +170,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 类别 | NexusTok | new-api-main | 建议 |
 |------|----------|--------------|------|
 | Go module | `github.com/c1cada/NexusTok` | `github.com/QuantumNous/new-api` | 禁止直接复制 import，迁移时必须改为 NexusTok 包路径。 |
-| Casbin | 已引入只读影子 runtime，真实授权热路径仍由 NexusTok 原生快照判定 | `github.com/casbin/casbin/v2`、`casbin_rule.go` | `casbin_rule` 已作为持久策略表落地；本轮新增 Casbin `SyncedEnforcer`、只读 GORM adapter 和周期 reload，用于观察 `casbin_rule` 与当前角色权限矩阵是否一致。`Can()` 暂不读取 Casbin runtime，避免在用户角色分配和差异审计完成前改变核心授权语义。 |
+| Casbin | 已引入只读影子 runtime 和 mismatch 可视化，真实授权热路径仍由 NexusTok 原生快照判定 | `github.com/casbin/casbin/v2`、`casbin_rule.go` | `casbin_rule` 已作为持久策略表落地；Casbin `SyncedEnforcer`、只读 GORM adapter 和周期 reload 已用于观察 `casbin_rule` 与当前角色权限矩阵是否一致；Root 可通过 `/api/authz/shadow/role-mismatches` 和 Role Policies 页面查看 shadow 对比状态。`Can()` 暂不读取 Casbin runtime，避免在用户角色分配和完整差异审计完成前改变核心授权语义。 |
 | ClickHouse | 无 | `gorm.io/driver/clickhouse` | 仅当确定要支持 ClickHouse 日志库时引入。 |
 | Waffo Pancake SDK | `github.com/waffo-com/waffo-go v1.3.1` | `waffo-go v1.3.2` + `waffo-pancake-sdk-go` | 先升级/补 SDK 适配层，保持现有充值接口兼容。 |
 | NTLM 邮件 | 已落地 `github.com/Azure/go-ntlmssp`、`common/email_ntlm_auth.go` | `github.com/Azure/go-ntlmssp`、`common/email_ntlm_auth.go` | NexusTok 已新增 PLAIN/LOGIN/NTLM 自适应 SMTP 认证，企业 SMTP 仅开放 `AUTH NTLM` 时可完成协商。 |
@@ -206,7 +206,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像、静态基线 fallback、Root-only 策略导出、带 dry-run/确认保护的策略导入接口、Root-only 角色策略列表/更新 API、自定义角色模板 CRUD API、角色/策略写操作审计摘要，以及默认前端角色策略矩阵、角色模板管理 UI 和模板生命周期时间展示；Casbin runtime/enforcer 已以只读影子模式引入，真实授权结果仍由现有快照和 override 判定。下一步应围绕用户角色分配、shadow mismatch 可视化、运行时切换开关和切换前回归做独立评审，而不是再重做基础权限表。 |
+| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像、静态基线 fallback、Root-only 策略导出、带 dry-run/确认保护的策略导入接口、Root-only 角色策略列表/更新 API、自定义角色模板 CRUD API、角色/策略写操作审计摘要，以及默认前端角色策略矩阵、角色模板管理 UI、模板生命周期时间展示和 Casbin shadow mismatch 摘要；Casbin runtime/enforcer 已以只读影子模式引入，真实授权结果仍由现有快照和 override 判定。下一步应围绕用户角色分配、完整 shadow 审计报表、运行时切换开关和切换前回归做独立评审，而不是再重做基础权限表。 |
 | P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`channel_account.read` 响应已做基础脱敏，只有 sensitive_write 用户可见上游地址、组织 ID、请求覆盖、模型映射、provider settings 和原始错误详情；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account.write` 非敏感写边界、字段级审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
@@ -244,7 +244,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
    - 只读 catalog 已扩展到渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据、系统设置、系统任务和系统信息等管理资源。
    - 动作已先统一为 `read`、`operate`、`write`、`sensitive_write`、`secret_view`。
    - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端已用同一 schema 过滤管理侧边栏、入口级路由守卫和多处页面按钮。
-   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`；`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles`、`POST /api/authz/roles`、`PUT /api/authz/roles/:key`、`DELETE /api/authz/roles/:key` 与 `PUT /api/authz/roles/:key/policies` 已形成 Root-only 策略迁移、角色模板管理和角色策略编辑后端闭环，默认前端安全设置页已提供角色模板创建/编辑/删除、模板生命周期时间、角色策略矩阵、dry-run 预览和二次保存确认。Casbin runtime/enforcer 已以只读影子模式接入，用于加载 `casbin_rule` 并对比当前角色权限矩阵；后续重点是用户角色分配、更深角色策略审计增强、shadow mismatch 可视化、真实授权切换方案和更细资源拆分。
+   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`；`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles`、`POST /api/authz/roles`、`PUT /api/authz/roles/:key`、`DELETE /api/authz/roles/:key` 与 `PUT /api/authz/roles/:key/policies` 已形成 Root-only 策略迁移、角色模板管理和角色策略编辑后端闭环，默认前端安全设置页已提供角色模板创建/编辑/删除、模板生命周期时间、角色策略矩阵、dry-run 预览和二次保存确认。Casbin runtime/enforcer 已以只读影子模式接入，用于加载 `casbin_rule` 并通过 API 与页面摘要对比当前角色权限矩阵；后续重点是用户角色分配、更深角色策略审计增强、真实授权切换方案和更细资源拆分。
 2. 拆分路由注册：
    - 渠道、账号池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统信息、系统任务和 Authz catalog 路由都已按 `permissionRoute` 模式拆分或接入权限表。
    - 后续新增管理路由必须先进入资源动作分类和路由结构测试，避免退回只依赖粗粒度 Admin/Root 的注册方式。
@@ -343,9 +343,9 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表、账号池认证文件独立权限资源、Authz 持久策略底座、策略导出/导入接口、角色策略编辑 API 和 Casbin 影子 runtime 已原生化；下一批聚焦用户角色分配、shadow mismatch 可视化、真实授权切换评审和新增公开模块的测试契约。
+2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表、账号池认证文件独立权限资源、Authz 持久策略底座、策略导出/导入接口、角色策略编辑 API、Casbin 影子 runtime 和 shadow mismatch 摘要已原生化；下一批聚焦用户角色分配、完整 shadow 审计报表、真实授权切换评审和新增公开模块的测试契约。
 3. 系统任务/系统信息已形成后端模型、接口、租约执行和 `/system-info` 页面闭环；后续新增长耗时任务直接接入 SystemTask。
-4. 权限系统已覆盖 channel/account_pool/account_pool_auth_file/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座、周期 reload、用户 override 兼容镜像、Root-only 策略导出/导入、角色策略编辑 API 和 Casbin 影子 runtime；后续从“有没有 enforcement”转为“用户角色分配、shadow mismatch 可视化、真实授权切换评审、继续拆分细资源和权限编辑体验”。
+4. 权限系统已覆盖 channel/account_pool/account_pool_auth_file/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座、周期 reload、用户 override 兼容镜像、Root-only 策略导出/导入、角色策略编辑 API、Casbin 影子 runtime 和 shadow mismatch 摘要；后续从“有没有 enforcement”转为“用户角色分配、完整 shadow 审计报表、真实授权切换评审、继续拆分细资源和权限编辑体验”。
 5. 订阅/支付增强已覆盖余额支付、钱包溢出、Waffo Pancake 商品绑定和订阅支付；后续转向诊断、Classic parity 和支付异常自助排查。
 6. 仪表盘和日志体验已覆盖 flow 数据、Sankey、移动端卡片、统一筛选工具条；后续优先统一账号池日志体验。
 7. Relay/Playground 深水区已完成 Responses/Gemini/OpenAI image/Advanced Custom 和 Playground 多个关键切片；后续继续逐协议、逐组件小步演进，不做大爆炸迁移。
@@ -548,7 +548,7 @@ NexusTok 独有 API 族：
 | `/api/authz/catalog` | 权限资源/角色 catalog | 已引入。 |
 | `/api/authz/policies/export` | 角色与 Casbin 兼容策略快照导出 | 已引入 Root-only 只读导出，用于审计、备份和导入前 diff。 |
 | `/api/authz/policies/import` | 角色与策略快照导入 | 已引入 Root-only 写入接口，默认 dry-run，replace 模式必须确认；导入 `user:<id>` 策略时同步 `authz_user_overrides` 与 `casbin_rule` 镜像。 |
-| `/api/authz/roles`、`/api/authz/roles/:key`、`/api/authz/roles/:key/policies` | 角色模板管理与角色策略查看/编辑 | 已引入 Root-only 后端合同：读取返回持久角色模板、创建/更新时间、superuser/runtime 标记和 grants 矩阵；`POST /roles`、`PUT /roles/:key`、`DELETE /roles/:key` 管理非内置自定义角色模板，删除时清理 `role:<key>` 策略；策略更新默认 dry-run，显式 `dry_run:false` 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照。默认前端 `/system-settings/security/role-policies` 已接入角色模板创建/编辑/删除、生命周期时间展示、角色选择、完整权限矩阵、差异统计、dry-run 预览和二次保存确认；用户角色分配仍待后续切片。 |
+| `/api/authz/roles`、`/api/authz/roles/:key`、`/api/authz/roles/:key/policies`、`/api/authz/shadow/role-mismatches` | 角色模板管理、角色策略查看/编辑和 Casbin shadow 一致性观测 | 已引入 Root-only 后端合同：读取返回持久角色模板、创建/更新时间、superuser/runtime 标记和 grants 矩阵；`POST /roles`、`PUT /roles/:key`、`DELETE /roles/:key` 管理非内置自定义角色模板，删除时清理 `role:<key>` 策略；策略更新默认 dry-run，显式 `dry_run:false` 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照；`GET /shadow/role-mismatches` 返回 shadow runtime 可用状态、mismatch count 和明细。默认前端 `/system-settings/security/role-policies` 已接入角色模板创建/编辑/删除、生命周期时间展示、角色选择、完整权限矩阵、差异统计、dry-run 预览、二次保存确认和 Casbin shadow 摘要；用户角色分配仍待后续切片。 |
 | `/api/system-task/*` | 后台任务创建、查询、当前任务 | 查询、当前任务和日志清理创建入口已引入；其它创建接口需等真实 handler 接入后开放。 |
 | `/api/system-info/instances` | 多节点实例心跳 | 后端和默认前端实例面板已引入。 |
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | 已引入；Root/Admin/User 按角色返回不同维度。 |
@@ -10623,3 +10623,73 @@ NexusTok 当前已经完成 Advanced Custom 的后端 schema、严格校验、re
 10. 使用账号 `c1cada` 登录 3003 后调用 `GET /api/authz/roles` 返回 `success=true`，Root/Admin 角色矩阵正常，Admin `policy_count=25`，确认真实授权接口不受 shadow runtime 影响。
 11. 扫描 `nexustok-api-hot` 最近 15 分钟容器日志，没有发现 `authz shadow` 初始化/对比/reload 错误，也没有匹配到 `panic` 或 `fatal`。
 12. 当前环境没有暴露浏览器 MCP 工具，本轮使用 `curl` 访问页面/API 并结合 Docker 日志确认运行态；由于本轮无前端可见页面改动，没有执行会污染业务数据的页面写操作。
+
+## 本轮实施评审：Casbin shadow mismatch 后台可视化
+
+### 需求分析
+
+上一轮已经把 `new-api-main` 的 Casbin runtime/enforcer 优势转换为 NexusTok 的只读影子运行时：`casbin_rule` 可以加载进 `SyncedEnforcer`，并能在服务层比较当前角色权限矩阵与 Casbin shadow 结果。但该能力仍停留在日志和测试层，Root 管理员在后台无法判断 shadow runtime 是否初始化、当前是否存在 mismatch，也无法在切换真实授权 runtime 前直观看到风险点。
+
+NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、角色策略矩阵 UI、导入导出、用户 override 镜像和 Casbin shadow runtime。因此本轮不再照搬 new-api-main 仅按系统角色映射 Root/Admin 的轻量 assignment，而是把“切换风险可观测”发展成 NexusTok 原生治理能力：在已有 Role Policies 页面展示 Casbin shadow 一致性摘要，并提供 Root-only API 供后续审计报表复用。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Authz shadow service | `service/authz/shadow_enforcer.go` | 新增 `ShadowRolePolicyComparison` 和 `CompareShadowRolePolicyStatus()`，把 shadow 未初始化表示为 `available=false`，避免只读观测能力影响角色页可用性。 |
+| Authz controller | `controller/authz.go`、`controller/authz_shadow_test.go` | 新增 `ComparePermissionRoleShadowPolicies` 只读 handler，并测试 shadow 未初始化时仍返回成功状态。 |
+| Authz router | `router/authz-router.go`、`router/authz_router_test.go` | 新增 `GET /api/authz/shadow/role-mismatches`，保持 RootAuth + `system_setting.secret_view`，并锁定路由 handler 与权限分类。 |
+| 默认前端 API/type | `web/default/src/features/system-settings/{api.ts,types.ts}` | 新增 shadow mismatch 响应类型和查询函数。 |
+| Role Policies 页面 | `web/default/src/features/system-settings/security/role-policy-section.tsx` | 在角色策略编辑器中展示 shadow unavailable、passed、mismatch 三种状态；有 mismatch 时展示前 8 条明细。 |
+| 前端 i18n | `web/default/src/i18n/locales/*.json` | 补齐 en/zh/fr/ja/ru/vi 六语 shadow 文案。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新 Authz/Casbin 状态、API 摘要、后续队列和本轮评审记录。 |
+
+本轮不修改数据库 schema，不新增写接口，不修改 `Can()`、`Capabilities()`、用户 override、角色策略保存、策略导入导出、Casbin adapter 写入语义、权限 catalog 或真实授权路由中间件。
+
+### 风险评估
+
+1. 授权路径风险：shadow mismatch 只读展示不能参与真实授权判定；本轮只新增 API/UI 观测，`Can()` 热路径不变。
+2. 页面可用性风险：shadow runtime 初始化失败不应导致 Role Policies 页面整体失败；本轮后端以 `available=false` 表达未初始化，前端显示提示而非错误中断。
+3. 路由冲突风险：已有 `/api/authz/roles/:key` 动态路由会吞掉 `/roles/*` 下的静态路径；本轮选择 `/api/authz/shadow/role-mismatches`，避免动态段冲突。
+4. 信息暴露风险：mismatch 明细会暴露角色、资源和动作，因此继续保持 RootAuth 保底，并归类为 `system_setting.secret_view`。
+5. UI 过载风险：策略异常时 mismatch 可能很多；本轮页面只展示前 8 条并显示隐藏数量，完整导出/过滤留给后续审计报表。
+6. i18n 风险：新增前端文案必须补齐六语；本轮运行 `bun run i18n:sync`，报告中 missingCount 为 0。
+
+### 方案评审
+
+采用“单独只读 API + Role Policies 内嵌摘要”的方案：
+
+1. 后端复用现有 `CompareShadowRolePolicies()`，新增 `CompareShadowRolePolicyStatus()` 作为前端友好 DTO，避免 controller 识别内部错误类型。
+2. 新 API 返回 `available`、`mismatch_count` 和 `mismatches`；未初始化时 success=true 且 `available=false`。
+3. 路由路径放在 `/api/authz/shadow/role-mismatches`，继续走 `permissionRoute` 统一权限分类。
+4. 默认前端使用独立 React Query key `authz-shadow-role-mismatches`，刷新角色策略时同步刷新 catalog、roles 和 shadow 对比结果。
+5. 页面状态分三种：未初始化提示、完全一致提示、发现 mismatch 的警示表格。
+6. mismatch 表格显示 Role、Permission、Current、Shadow，Current 表示当前 NexusTok 角色矩阵，Shadow 表示 Casbin shadow runtime 结果。
+
+### 实施结果
+
+已完成 Casbin shadow mismatch 后台可视化：
+
+- `GET /api/authz/shadow/role-mismatches` 已提供 Root-only 只读一致性观测入口。
+- shadow 未初始化时 API 返回 `available=false`，不会拖垮 Role Policies 页面。
+- Role Policies 页面会显示 Casbin shadow runtime 状态；一致时展示通过提示，不一致时展示 mismatch count 和前 8 条明细。
+- 页面刷新按钮会同时刷新角色列表、权限 catalog 和 shadow 对比结果。
+- 新增 UI 文案已补齐 en、zh、fr、ja、ru、vi。
+- 真实授权仍由 NexusTok 当前持久策略快照和用户 override 判定，未接入 Casbin shadow 结果。
+
+### 验证记录
+
+1. `go test ./service/authz ./router ./controller -run 'TestShadow|TestCompareShadow|TestRegisterAuthz|TestAuthzPermission|TestComparePermissionRoleShadow'` 通过，覆盖 shadow status DTO、handler、路由 handler 和权限分类。
+2. `cd web/default && bun run typecheck` 通过，确认新增 API/type 和 Role Policies 页面类型无回归。
+3. `cd web/default && bun test src/features/system-settings/security/role-policy-utils.test.ts src/lib/admin-permissions.test.ts` 通过，确认角色策略工具函数与权限 helper 回归正常。
+4. `cd web/default && bun run i18n:sync` 通过，`_sync-report.json` 中所有 locale 的 `missingCount=0`、`extrasCount=0`；新增 shadow 文案已覆盖六语。
+5. `go test ./service/authz ./router ./controller ./middleware ./model` 通过，确认受影响后端包完整回归。
+6. `cd web/default && bun run build` 通过，确认默认前端生产打包无回归。
+7. `cd web/default && bunx prettier --check src/features/system-settings/api.ts src/features/system-settings/types.ts src/features/system-settings/security/role-policy-section.tsx src/i18n/locales/en.json src/i18n/locales/zh.json src/i18n/locales/fr.json src/i18n/locales/ja.json src/i18n/locales/ru.json src/i18n/locales/vi.json ../../docs/features/new-api-main-diff-analysis.md` 通过。
+8. `git diff --check` 通过，确认没有空白或补丁格式问题。
+9. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；`GET /api/status` 返回 `start_time=1783780288`，对应 2026-07-11 14:31:28Z，说明 3003 已在本轮修改后重新加载。
+10. 使用账号 `c1cada` 登录 3003 后调用 `GET /api/authz/shadow/role-mismatches`，返回 `success=true,available=true,mismatch_count=0,mismatches=[]`。
+11. 使用 Chrome Headless + DevTools Protocol 登录并打开 `http://192.168.0.202:3003/system-settings/security/role-policies`，页面显示 `Role Policies` 和 `Casbin shadow comparison passed`，并展示说明 `The current role matrix matches the Casbin shadow runtime for all enabled non-superuser roles.`。
+12. Chrome Headless 验证期间未捕获 console error/warning、runtime exception 或 Network loadingFailed。
+13. 扫描 `nexustok-api-hot` 最近 20 分钟容器日志，没有发现 `authz shadow`、`casbin`、`panic`、`fatal` 或 shadow reload/compare 相关错误。
+14. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 与真实 HTTP API 替代 MCP 页面/接口验证。

@@ -97,6 +97,7 @@ import {
   createAuthzRole,
   deleteAuthzRole,
   getAuthzRoles,
+  getAuthzShadowRoleMismatches,
   getPermissionCatalog,
   updateAuthzRole,
   updateAuthzRolePolicies,
@@ -104,7 +105,11 @@ import {
 import { SettingsCard } from '../components/settings-card'
 import { SettingsSection } from '../components/settings-section'
 import { useSystemSettingPermissions } from '../hooks/use-system-setting-permissions'
-import type { AuthzRolePolicy, AuthzRolePolicyUpdateResult } from '../types'
+import type {
+  AuthzRolePolicy,
+  AuthzRolePolicyUpdateResult,
+  AuthzShadowRolePolicyComparison,
+} from '../types'
 import {
   countEnabledActions,
   countResourceEnabledActions,
@@ -221,6 +226,18 @@ export function RolePolicySection() {
     queryFn: getAuthzRoles,
     enabled: canLoadPolicies,
     staleTime: 60 * 1000,
+  })
+
+  const {
+    data: shadowComparison,
+    isLoading: isShadowComparisonLoading,
+    isError: isShadowComparisonError,
+    error: shadowComparisonError,
+  } = useQuery({
+    queryKey: ['authz-shadow-role-mismatches'],
+    queryFn: getAuthzShadowRoleMismatches,
+    enabled: canLoadPolicies,
+    staleTime: 30 * 1000,
   })
 
   const roles = rolesData?.roles ?? []
@@ -340,6 +357,9 @@ export function RolePolicySection() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['authz-permission-catalog'] }),
       queryClient.invalidateQueries({ queryKey: ['authz-roles'] }),
+      queryClient.invalidateQueries({
+        queryKey: ['authz-shadow-role-mismatches'],
+      }),
     ])
   }
 
@@ -700,6 +720,14 @@ export function RolePolicySection() {
                   role={selectedRole}
                   enabledActions={enabledActions}
                   totalActions={totalActions}
+                />
+
+                <ShadowComparisonSummary
+                  catalog={catalog}
+                  comparison={shadowComparison}
+                  isLoading={isShadowComparisonLoading}
+                  isError={isShadowComparisonError}
+                  error={shadowComparisonError}
                 />
 
                 {selectedRole.superuser && (
@@ -1106,6 +1134,164 @@ function RoleSummary({
         </span>
       </div>
     </div>
+  )
+}
+
+function ShadowComparisonSummary({
+  catalog,
+  comparison,
+  isLoading,
+  isError,
+  error,
+}: {
+  catalog: PermissionCatalog
+  comparison: AuthzShadowRolePolicyComparison | undefined
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+}) {
+  const { t } = useTranslation()
+  if (isLoading) {
+    return <Skeleton className='h-20 w-full' />
+  }
+  if (isError) {
+    return (
+      <Alert variant='destructive'>
+        <AlertTitle>{t('Casbin shadow comparison unavailable')}</AlertTitle>
+        <AlertDescription>
+          {getErrorMessage(
+            error,
+            t('Failed to load Casbin shadow comparison.')
+          )}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  if (!comparison?.available) {
+    return (
+      <Alert>
+        <AlertTitle>{t('Casbin shadow runtime is not initialized')}</AlertTitle>
+        <AlertDescription>
+          {t(
+            'Role policies still use the current NexusTok authorization snapshot. Shadow comparison will appear after the runtime loads.'
+          )}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  const mismatches = comparison.mismatches ?? []
+  const visibleMismatches = mismatches.slice(0, 8)
+  const hiddenMismatchCount = Math.max(
+    0,
+    comparison.mismatch_count - visibleMismatches.length
+  )
+
+  if (comparison.mismatch_count === 0) {
+    return (
+      <Alert>
+        <AlertTitle>{t('Casbin shadow comparison passed')}</AlertTitle>
+        <AlertDescription>
+          {t(
+            'The current role matrix matches the Casbin shadow runtime for all enabled non-superuser roles.'
+          )}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  return (
+    <Alert variant='destructive'>
+      <AlertTitle>
+        {t('Casbin shadow mismatches detected: {{count}}', {
+          count: comparison.mismatch_count,
+        })}
+      </AlertTitle>
+      <AlertDescription>
+        <div className='flex flex-col gap-3 pt-1'>
+          <p>
+            {t(
+              'Review these differences before switching real authorization to Casbin runtime.'
+            )}
+          </p>
+          <div className='overflow-x-auto rounded-md border'>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('Role')}</TableHead>
+                  <TableHead>{t('Permission')}</TableHead>
+                  <TableHead>{t('Current')}</TableHead>
+                  <TableHead>{t('Shadow')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleMismatches.map((mismatch) => (
+                  <TableRow
+                    key={`${mismatch.role_key}:${mismatch.resource}:${mismatch.action}`}
+                  >
+                    <TableCell>{mismatch.role_key}</TableCell>
+                    <TableCell>
+                      {t(formatShadowPermission(catalog, mismatch.resource))} /{' '}
+                      {t(
+                        formatShadowAction(
+                          catalog,
+                          mismatch.resource,
+                          mismatch.action
+                        )
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <BooleanBadge value={mismatch.expected} />
+                    </TableCell>
+                    <TableCell>
+                      <BooleanBadge value={mismatch.shadow} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {hiddenMismatchCount > 0 && (
+            <p>
+              {t('{{count}} additional mismatches are hidden.', {
+                count: hiddenMismatchCount,
+              })}
+            </p>
+          )}
+        </div>
+      </AlertDescription>
+    </Alert>
+  )
+}
+
+function formatShadowPermission(
+  catalog: PermissionCatalog,
+  resourceKey: string
+) {
+  const resource = catalog.resources.find(
+    (item) => item.resource === resourceKey
+  )
+  return resource?.label_key ?? resourceKey
+}
+
+function formatShadowAction(
+  catalog: PermissionCatalog,
+  resourceKey: string,
+  actionKey: string
+) {
+  const resource = catalog.resources.find(
+    (item) => item.resource === resourceKey
+  )
+  const action = resource?.actions.find((item) => item.action === actionKey)
+  return action?.label_key ?? actionKey
+}
+
+function BooleanBadge({ value }: { value: boolean }) {
+  const { t } = useTranslation()
+  return (
+    <Badge variant={value ? 'secondary' : 'outline'}>
+      {value ? t('Allowed') : t('Denied')}
+    </Badge>
   )
 }
 

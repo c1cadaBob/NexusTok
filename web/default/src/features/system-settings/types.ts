@@ -459,6 +459,26 @@ export type AuthzRolesResponse = {
   data?: AuthzRolesData
 }
 
+export type AuthzShadowPolicyMismatch = {
+  role_key: string
+  resource: string
+  action: string
+  expected: boolean
+  shadow: boolean
+}
+
+export type AuthzShadowRolePolicyComparison = {
+  available: boolean
+  mismatch_count: number
+  mismatches: AuthzShadowPolicyMismatch[]
+}
+
+export type AuthzShadowRolePolicyComparisonResponse = {
+  success: boolean
+  message: string
+  data?: AuthzShadowRolePolicyComparison
+}
+
 export type UpdateAuthzRolePoliciesRequest = {
   dry_run?: boolean
   grants: AdminPermissionMatrix

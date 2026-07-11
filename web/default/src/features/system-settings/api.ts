@@ -24,6 +24,8 @@ import type {
   AuthzRoleDeleteResponse,
   AuthzRoleMutationResponse,
   AuthzRolesResponse,
+  AuthzShadowRolePolicyComparison,
+  AuthzShadowRolePolicyComparisonResponse,
   AuthzRolePolicyUpdateResponse,
   ConfirmPaymentComplianceResponse,
   CreateWaffoPancakePairRequest,
@@ -71,6 +73,26 @@ export async function getAuthzRoles(): Promise<AuthzRolesData> {
     throw new Error(res.data.message || 'Failed to load authorization roles')
   }
   return res.data.data ?? { roles: [] }
+}
+
+export async function getAuthzShadowRoleMismatches(): Promise<AuthzShadowRolePolicyComparison> {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.get<AuthzShadowRolePolicyComparisonResponse>(
+    '/api/authz/shadow/role-mismatches',
+    config
+  )
+  if (!res.data.success) {
+    throw new Error(
+      res.data.message || 'Failed to load authorization shadow comparison'
+    )
+  }
+  return (
+    res.data.data ?? {
+      available: false,
+      mismatch_count: 0,
+      mismatches: [],
+    }
+  )
 }
 
 export async function createAuthzRole(request: MutateAuthzRoleRequest) {

@@ -22,6 +22,7 @@ func TestRegisterAuthzRoutesKeepsCatalogHandler(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/catalog", controller.GetPermissionCatalog)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/policies/export", controller.ExportPermissionPolicies)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/roles", controller.ListPermissionRoles)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/shadow/role-mismatches", controller.ComparePermissionRoleShadowPolicies)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/authz/roles", controller.CreatePermissionRole)
 	assertRouteHandler(t, engine, http.MethodPut, "/api/authz/roles/:key", controller.UpdatePermissionRole)
 	assertRouteHandler(t, engine, http.MethodDelete, "/api/authz/roles/:key", controller.DeletePermissionRole)
@@ -44,6 +45,11 @@ func TestAuthzPermissionRoutesClassifyCatalog(t *testing.T) {
 	assert.Equal(t, authz.SystemSettingSecretView, rolesRoute.permission)
 	assert.Len(t, rolesRoute.before, 1)
 	assert.Empty(t, rolesRoute.after)
+
+	shadowMismatchesRoute := requireAuthzPermissionRoute(t, http.MethodGet, "/shadow/role-mismatches")
+	assert.Equal(t, authz.SystemSettingSecretView, shadowMismatchesRoute.permission)
+	assert.Len(t, shadowMismatchesRoute.before, 1)
+	assert.Empty(t, shadowMismatchesRoute.after)
 
 	createRoleRoute := requireAuthzPermissionRoute(t, http.MethodPost, "/roles")
 	assert.Equal(t, authz.SystemSettingSensitiveWrite, createRoleRoute.permission)

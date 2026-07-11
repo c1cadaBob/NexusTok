@@ -46,6 +46,17 @@ type ShadowPolicyMismatch struct {
 	Shadow   bool   `json:"shadow"`
 }
 
+// ShadowRolePolicyComparison 描述当前角色策略矩阵与 Casbin 影子运行时的对比状态。
+//
+// Available=false 表示 shadow enforcer 尚未初始化，调用方只能把它展示为观测能力
+// 不可用，不能据此推断策略一致或不一致。MismatchCount 与 Mismatches 只在
+// Available=true 时代表真实对比结果。
+type ShadowRolePolicyComparison struct {
+	Available     bool                   `json:"available"`
+	MismatchCount int                    `json:"mismatch_count"`
+	Mismatches    []ShadowPolicyMismatch `json:"mismatches"`
+}
+
 // InitShadowEnforcer 初始化 Casbin 影子运行时。
 //
 // 影子 enforcer 只加载 casbin_rule，并关闭 AutoSave，确保不会向数据库写入策略。
@@ -170,6 +181,31 @@ func CompareShadowRolePolicies() ([]ShadowPolicyMismatch, error) {
 		}
 	}
 	return mismatches, nil
+}
+
+// CompareShadowRolePolicyStatus 返回适合管理后台展示的 shadow 对比状态。
+//
+// shadow enforcer 未初始化时不返回错误，避免只读观测能力影响角色策略页面可用性；
+// 数据库或 Casbin enforce 异常仍返回错误，提示 Root 管理员需要排查运行态。
+func CompareShadowRolePolicyStatus() (*ShadowRolePolicyComparison, error) {
+	if model.DB == nil {
+		return nil, errAuthzDatabaseNotInitialized
+	}
+	if currentShadowEnforcer() == nil {
+		return &ShadowRolePolicyComparison{
+			Available:  false,
+			Mismatches: []ShadowPolicyMismatch{},
+		}, nil
+	}
+	mismatches, err := CompareShadowRolePolicies()
+	if err != nil {
+		return nil, err
+	}
+	return &ShadowRolePolicyComparison{
+		Available:     true,
+		MismatchCount: len(mismatches),
+		Mismatches:    mismatches,
+	}, nil
 }
 
 func shadowComparableRoles() ([]RolePolicyDescriptor, error) {
