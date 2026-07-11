@@ -9915,3 +9915,48 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 12. DevTools Network 捕获到 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 与全量扫描 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 均返回 HTTP 200；Console 和 Network 未发现错误。
 13. 编辑抽屉中的顺序验证为：`Models *` -> `Quick actions` -> `Groups *` -> `Model Mapping`，符合本轮对齐方案。
 14. 关闭抽屉后再次调用 `GET /api/channel/?p=1&page_size=5`，确认渠道 `11111` 后端 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，没有因页面验证污染真实配置。
+
+## 本轮实施评审：可灵任务扣费 token 计数饱和转换
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的异步任务计费安全实现后发现，new-api-main 在可灵任务结果解析中会将 `final_unit_deduction` 先 `math.Ceil`，再通过 `common.QuotaFromFloat` 转为整数，避免上游返回异常大扣费积分时在 `int(...)` 转换阶段发生回绕。NexusTok 当前异步任务额度重算链路已经使用 `common.QuotaFromFloatChecked` 记录 `quota_saturation`，但可灵 adaptor 仍在结果解析阶段使用裸 `int(math.Ceil(tokens))`，异常值可能在进入重算前就变成不可审计的 token 数。
+
+本轮目标是补齐这个小而关键的安全边界：保持可灵扣费积分“向上取整”的历史语义，同时复用 NexusTok 已有 quota 饱和转换，防止异常上游值污染异步任务重算。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 可灵任务结果解析 | `relay/channel/task/kling/adaptor.go` | `final_unit_deduction` 从裸 `int(math.Ceil(...))` 改为 `common.QuotaFromFloat(math.Ceil(...))`。 |
+| 可灵 adaptor 测试 | `relay/channel/task/kling/adaptor_test.go` | 覆盖正常小数向上取整、超大值饱和到 `common.MaxQuota`、NaN 不产生正 token。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改数据库 schema、任务状态机、任务轮询调度、渠道配置、前端页面、路由、模型倍率、分组倍率或最终扣费公式。
+
+### 风险评估
+
+1. 正常计费语义回归风险：可灵返回 `1.2` 这类小数积分时仍必须按 `ceil` 记为 2 个 token，不能改成四舍五入或向零截断。
+2. 异常上游值风险：`1e100`、`+Inf` 等异常值不能在 `int` 转换时回绕为负数或平台相关结果，应饱和到 `common.MaxQuota`，后续额度重算仍会继续使用 checked quota 转换。
+3. NaN 风险：NaN 不能产生正 token；`common.QuotaFromFloat` 会兜底为 0，当前 `rounded > 0` 条件会保持不写入 token。
+4. 审计范围风险：`ParseTaskResult` 没有 `RelayInfo` 或 `Task` 上下文，无法在该层写入 `quota_saturation`；本轮只保证 token 计数不回绕，最终额度异常仍由后续 `RecalculateTaskQuota` 的 checked 转换记录。
+
+### 方案评审
+
+采用与 new-api-main 等价的最小方案：保留 `math.Ceil(tokens)` 的上游积分取整语义，只把最终整数转换替换为 `common.QuotaFromFloat(...)`。该 helper 已在 NexusTok 的额度安全体系中使用，具备 NaN、上溢和下溢保护，不引入新依赖，也不改变任务成功/失败状态映射。
+
+### 实施结果
+
+已完成可灵任务扣费 token 计数饱和转换：
+
+- 可灵 `final_unit_deduction` 正常小数仍按向上取整写入 `CompletionTokens` 与 `TotalTokens`。
+- 超大扣费积分会饱和到 `common.MaxQuota`，避免裸 `int` 转换回绕。
+- NaN 或非正结果不会写入正 token，保持任务结果解析安全。
+
+### 验证记录
+
+1. `go test ./relay/channel/task/kling` 通过，覆盖正常小数、超大值和 NaN 三类结果解析。
+2. `go test ./relay/channel/task/...` 通过，确认任务 channel 包整体构建和既有测试不受影响。
+3. `go test ./service -run 'Task|Quota|Billing'` 通过，确认服务侧任务重算、退款和额度安全相关测试不受影响。
+4. `git diff --check` 通过。
+5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端任务解析安全修复，没有新增前端页面或可直接手动触发的公开交互入口。

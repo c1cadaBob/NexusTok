@@ -497,7 +497,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskInfo.Url = video.Url
 		}
 		if tokens, err := strconv.ParseFloat(resPayload.Data.FinalUnitDeduction, 64); err == nil {
-			rounded := int(math.Ceil(tokens))
+			// 上游扣费积分会进入异步任务重算链路。这里先保持可灵“向上取整”的
+			// 历史语义，再用统一 quota 饱和转换防止异常大值在 int 转换时回绕。
+			rounded := common.QuotaFromFloat(math.Ceil(tokens))
 			if rounded > 0 {
 				taskInfo.CompletionTokens = rounded
 				taskInfo.TotalTokens = rounded
