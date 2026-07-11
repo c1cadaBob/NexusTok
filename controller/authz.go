@@ -63,6 +63,7 @@ func CreatePermissionRole(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAudit(c, "authz.role_create", authzRoleDescriptorAuditParams(role))
 	common.ApiSuccess(c, role)
 }
 
@@ -82,6 +83,7 @@ func UpdatePermissionRole(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAudit(c, "authz.role_update", authzRoleDescriptorAuditParams(role))
 	common.ApiSuccess(c, role)
 }
 
@@ -101,6 +103,7 @@ func UpdatePermissionRolePolicies(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAudit(c, "authz.role_policies_update", authzRolePolicyUpdateAuditParams(result))
 	common.ApiSuccess(c, result)
 }
 
@@ -114,6 +117,7 @@ func DeletePermissionRole(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAudit(c, "authz.role_delete", authzRoleDeleteAuditParams(result))
 	common.ApiSuccess(c, result)
 }
 
@@ -134,5 +138,73 @@ func ImportPermissionPolicies(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAudit(c, "authz.policies_import", authzPolicyImportAuditParams(result))
 	common.ApiSuccess(c, result)
+}
+
+func authzRoleDescriptorAuditParams(role *authz.RolePolicyDescriptor) map[string]interface{} {
+	if role == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"role_key":        role.Key,
+		"role_name":       role.Name,
+		"built_in":        role.BuiltIn,
+		"enabled":         role.Enabled,
+		"sort":            role.Sort,
+		"runtime_managed": role.RuntimeManaged,
+		"policy_count":    role.PolicyCount,
+	}
+}
+
+func authzRolePolicyUpdateAuditParams(result *authz.RolePolicyUpdateResult) map[string]interface{} {
+	if result == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"role_key":               result.RoleKey,
+		"dry_run":                result.DryRun,
+		"applied":                result.Applied,
+		"reloaded":               result.Reloaded,
+		"old_policy_count":       result.OldPolicyCount,
+		"new_policy_count":       result.NewPolicyCount,
+		"created_policy_count":   result.CreatedPolicyCount,
+		"deleted_policy_count":   result.DeletedPolicyCount,
+		"unchanged_policy_count": result.UnchangedPolicyCount,
+	}
+}
+
+func authzRoleDeleteAuditParams(result *authz.RoleTemplateDeleteResult) map[string]interface{} {
+	if result == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"role_key":             result.RoleKey,
+		"deleted_policy_count": result.DeletedPolicyCount,
+		"reloaded":             result.Reloaded,
+	}
+}
+
+func authzPolicyImportAuditParams(result *authz.PersistentPolicyImportResult) map[string]interface{} {
+	if result == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"dry_run":                      result.DryRun,
+		"mode":                         result.Mode,
+		"applied":                      result.Applied,
+		"reloaded":                     result.Reloaded,
+		"role_count":                   result.RoleCount,
+		"policy_count":                 result.PolicyCount,
+		"role_policy_count":            result.RolePolicyCount,
+		"user_policy_count":            result.UserPolicyCount,
+		"duplicate_policy_count":       result.DuplicatePolicyCount,
+		"created_role_count":           result.CreatedRoleCount,
+		"updated_role_count":           result.UpdatedRoleCount,
+		"deleted_role_count":           result.DeletedRoleCount,
+		"created_role_policy_count":    result.CreatedRolePolicyCount,
+		"deleted_role_policy_count":    result.DeletedRolePolicyCount,
+		"imported_user_override_count": result.ImportedUserOverrideCount,
+		"cleared_user_override_count":  result.ClearedUserOverrideCount,
+	}
 }

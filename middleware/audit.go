@@ -81,6 +81,13 @@ var auditRouteActions = map[string]string{
 	"POST /api/system-task/log-cleanup":         "system_task.log_cleanup",
 	"DELETE /api/log/":                          "log.clear",
 
+	// 权限治理
+	"POST /api/authz/roles":              "authz.role_create",
+	"PUT /api/authz/roles/:key":          "authz.role_update",
+	"DELETE /api/authz/roles/:key":       "authz.role_delete",
+	"PUT /api/authz/roles/:key/policies": "authz.role_policies_update",
+	"POST /api/authz/policies/import":    "authz.policies_import",
+
 	// 自定义 OAuth 提供商
 	"POST /api/custom-oauth-provider/discovery": "custom_oauth.discovery",
 	"POST /api/custom-oauth-provider/":          "custom_oauth.create",

@@ -207,3 +207,17 @@ func TestUserAuthWriteDoesNotRecordManageAudit(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.EqualValues(t, 0, auditLogCount(t))
 }
+
+func TestAdminAuditAuthzRoutesHaveStableActions(t *testing.T) {
+	expected := map[string]string{
+		"POST /api/authz/roles":              "authz.role_create",
+		"PUT /api/authz/roles/:key":          "authz.role_update",
+		"DELETE /api/authz/roles/:key":       "authz.role_delete",
+		"PUT /api/authz/roles/:key/policies": "authz.role_policies_update",
+		"POST /api/authz/policies/import":    "authz.policies_import",
+	}
+
+	for route, action := range expected {
+		require.Equal(t, action, auditRouteActions[route], route)
+	}
+}

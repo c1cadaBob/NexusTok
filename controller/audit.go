@@ -37,6 +37,11 @@ var auditContentTemplates = map[string]string{
 	"subscription.bind":            "Bound subscription for user ${target_user_id}",
 	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
+	"authz.role_create":            "Created authz role ${role_key}",
+	"authz.role_update":            "Updated authz role ${role_key}",
+	"authz.role_delete":            "Deleted authz role ${role_key}",
+	"authz.role_policies_update":   "Processed authz role policies ${role_key}",
+	"authz.policies_import":        "Processed authz policy import ${mode}",
 }
 
 // auditContentEN 根据 action 模板渲染英文兜底内容；未登记 action 时返回 action 本身。
