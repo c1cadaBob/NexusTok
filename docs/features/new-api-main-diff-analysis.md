@@ -9287,3 +9287,73 @@ NexusTok 当前已经有 `authz_roles`、`casbin_rule`、Root/Admin 内置角色
 8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 `curl` 登录 3003 并调用真实后端接口验证。
 9. 使用账号 `c1cada` 登录 `POST /api/user/login?turnstile=` 返回 HTTP 200、`success=true`、`role=100`。
 10. 携带登录 cookie 和 `NexusTok-User: 1` 调用 `GET /api/authz/catalog` 返回 HTTP 200，响应包含 `channel`、`channel_account`、`account_pool`、`account_pool_auth_file`、`user`、`model`、`subscription`、`redemption` 等资源和 Root/Admin 角色基线，确认 Authz catalog 运行态接口未回归。
+
+## 本轮实施评审：编辑渠道页搜索追加上下文与 new-api 页面体验对齐
+
+### 需求分析
+
+本轮用户反馈集中在两个点：第一，编辑渠道时搜索 `gpt-5.6` 后“搜索添加”不正确；第二，希望将当前编辑渠道页面与 `/opt/project/new-api-main` 最新编辑渠道页面对齐。
+
+运行态复核确认，3003 环境的 `/api/models/search?keyword=gpt-5.6` 返回 3 个 OpenAI 精确模型：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，均为 `vendor_id=1`、`name_rule=0`。渠道 `11111` 当前只保存了 `gpt-5.6-sol`，因此正确行为应是搜索 `gpt-5.6` 时展示 `3 matched · 2 new · 1 already selected`，点击追加只把缺失的 `gpt-5.6-terra`、`gpt-5.6-luna` 合并到表单草稿中，不应添加前缀 `gpt-5.6`，也不应漏掉同供应商下的其他已同步模型。
+
+对照 new-api 最新编辑渠道页后确认，可吸收的优势主要是页面密度和局部交互约束：更收敛的抽屉宽度、较窄的左侧导航、基础信息中先选 `Type` 再填 `Name`、Codex 与 Vertex API Key 新建时只允许单 key 创建、模型映射编辑器给源模型和目标模型提供候选补全。不能直接照搬 new-api 整页，因为 NexusTok 当前已经具备全局账号池、Codex OAuth、字段级权限、非敏感字段白名单、模型元信息搜索追加、模型映射 guardrail、上游模型检测和高级设置子导航等原生增强。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 修复搜索追加上下文，避免旧关键词、旧渠道或已关闭抽屉的异步结果污染当前表单；对齐 new-api 抽屉宽度、左侧导航宽度、基础字段顺序、Codex/Vertex API Key 的单 key 创建限制，并给模型映射编辑器传入候选模型。 |
+| 模型搜索 helper | `web/default/src/features/channels/lib/model-search.ts` | 新增搜索追加上下文纯函数，统一判断抽屉打开状态、渠道 ID 和关键词是否仍匹配当前请求。 |
+| 模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加异步搜索追加上下文测试，覆盖关键词大小写/空格容忍、抽屉关闭、渠道切换和关键词变化。 |
+| 模型映射编辑器 | `web/default/src/features/channels/components/model-mapping-editor.tsx` | 增加源模型和目标模型候选 `datalist`，使映射编辑时可复用当前渠道模型和系统模型候选。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、风险评估、方案评审、实施结果和验证记录。 |
+
+本轮不修改后端模型同步逻辑、供应商归属、渠道保存接口、数据库 schema、relay、计费或权限模型；现有 Authz 未提交改动也不纳入本轮提交。
+
+### 风险评估
+
+- 旧关键词污染风险：模型搜索输入使用 debounce，请求返回可能晚于用户继续输入。旧实现存在点击追加时使用旧 debounced 关键词或旧搜索结果的风险；本轮改为读取当前输入框关键词，并在 debounce 未完成时只提示 `Searching model metadata...`。
+- 跨渠道污染风险：管理员可能在搜索请求返回前切换编辑渠道。旧异步结果如果继续合并，会把 A 渠道搜索结果写入 B 渠道草稿；本轮追加前校验渠道 ID。
+- 抽屉关闭污染风险：搜索全量扫描期间抽屉可能关闭。旧响应继续 setValue 会污染下一次打开的表单；本轮校验抽屉仍处于打开状态，并用请求序号丢弃过期响应。
+- 整页照搬风险：直接覆盖为 new-api 页面会丢失 NexusTok 已有的账号池、Codex OAuth、权限白名单和模型搜索增强；本轮只吸收明确有价值且低耦合的页面体验。
+- 历史渠道兼容风险：若已有历史渠道处于 `multi_key`，编辑时强行隐藏选项可能造成不可恢复。本轮只在新建且当前类型不支持多 key 创建时自动回落；编辑模式或历史值仍保留显示。
+- 表单保存风险：搜索追加只更新前端草稿，不自动调用保存接口；验证中刻意不点击 `Update Channel`，确认后端渠道模型保持原值。
+
+### 方案评审
+
+采用“上下文校验修复 + 局部对齐 new-api 优势”的方案：
+
+1. 新增 `isModelSearchAppendContextCurrent()`，把搜索追加的有效性条件收敛为纯函数：抽屉必须打开、渠道 ID 必须一致、关键词 trim 后大小写不敏感一致。
+2. `handleAddModelSearchMatches()` 改为读取 `modelSearchKeywordRef.current`，并在当前输入还未完成 debounce 时拒绝用旧结果追加。
+3. 搜索结果展示只在 `trimmedModelSearchKeyword === debouncedModelSearchKeyword` 时生效，避免页面上展示旧结果摘要。
+4. 保留 `fetchAllModelSearchModelNames()` 的分页全量扫描能力，点击追加时仍按搜索接口真实分页补齐全部匹配模型，而不是只添加首屏候选。
+5. 对齐 new-api 编辑页的局部体验：抽屉宽度改为 `sm:max-w-5xl`，左侧导航改为 `lg:grid-cols-[13rem_minmax(0,1fr)]`，基础信息字段改为 `Type` 在前、`Name` 在后。
+6. 对齐 new-api 的新建限制：Codex 类型以及 Vertex `api_key` 模式不展示批量/多 key 创建；编辑历史渠道时保留现有值，避免破坏存量配置。
+7. 模型映射编辑器增加源/目标模型候选，但不改变映射 JSON 存储格式和 guardrail 逻辑。
+
+### 实施结果
+
+已完成以下改动：
+
+- 修复模型搜索追加使用旧关键词、旧搜索结果或旧渠道上下文的问题。
+- 搜索结果摘要与追加按钮只在当前关键词对应的搜索结果有效时出现。
+- 点击 `Add 2 new model(s)` 会全量扫描搜索接口分页结果，并只追加当前渠道缺失的模型。
+- 编辑渠道抽屉与 new-api 最新页面在抽屉宽度、左侧导航宽度和基础字段顺序上对齐。
+- Codex 新建渠道时 `Credential Mode` 不再展示 `Multi-Key Rotation`，`Add Mode` 只保留 `Single Key`。
+- Vertex API Key 新建渠道同样会自动回落到单 key 创建，避免提交后被表单校验拒绝。
+- 模型映射可从当前渠道模型中补全源模型，并可从系统模型候选中补全目标模型。
+- 保留 NexusTok 原生能力：全局账号池、Codex OAuth、权限白名单、模型映射 guardrail、上游模型检测和高级设置子导航均未被回退。
+
+### 验证记录
+
+1. `git diff --check` 通过。
+2. `cd web/default && bun test src/features/channels/lib/model-search.test.ts` 通过，模型搜索相关 16 个用例全部成功。
+3. `cd web/default && bun run typecheck` 通过。
+4. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+5. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+6. 使用账号 `c1cada` 登录 3003 后进入 `/channels`，打开渠道 `11111` 的 `Edit Channel` 抽屉；页面验证到 `sm:max-w-5xl`、`lg:grid-cols-[13rem_minmax(0,1fr)]` 已生效，基础字段顺序为 `Type *`、`Name *`、`Enabled`。
+7. 在模型搜索输入中真实输入 `gpt-5.6`，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，展示 `Search results`、`3 matched · 2 new · 1 already selected`、`Add 2 new model(s)`，并包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+8. 点击 `Add 2 new model(s)` 后，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 做追加扫描，表单草稿显示 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+9. 验证后通过页面上下文请求 `/api/channel/?p=1&page_size=5`，渠道 `11111` 后端保存值仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有误保存草稿。
+10. 新建渠道场景中真实选择 `Codex` 类型后，`Credential Mode` 下拉选项为 `Single Key`、`Account Pool`，不包含 `Multi-Key Rotation`；`Add Mode` 下拉仅包含 `Single Key`。
+11. Chrome/CDP 验证期间没有 console error/warning、运行时 exception 或网络失败。

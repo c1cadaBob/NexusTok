@@ -179,6 +179,7 @@ import {
   dedupeModelNames,
   getModelSearchModelNames,
   getMissingModelSearchMatches,
+  isModelSearchAppendContextCurrent,
   mergeModelNames,
   parseModelDraftList,
   validateModelMappingJson,
@@ -794,14 +795,18 @@ export function ChannelMutateDrawer({
   const isModelSearchDebouncing =
     trimmedModelSearchKeyword.length > 0 &&
     trimmedModelSearchKeyword !== debouncedModelSearchKeyword
+  const isModelSearchResultCurrent =
+    trimmedModelSearchKeyword.length > 0 &&
+    trimmedModelSearchKeyword === debouncedModelSearchKeyword
   const clearModelSearch = useCallback(() => {
     setModelSearchKeyword('')
   }, [])
+  const modelSearchKeywordRef = useRef(trimmedModelSearchKeyword)
 
   const modelSearchAppendContextRef = useRef({
     open,
     channelId: currentRow?.id ?? null,
-    keyword: debouncedModelSearchKeyword,
+    keyword: trimmedModelSearchKeyword,
   })
 
   const isEditing = Boolean(currentRow)
@@ -859,12 +864,16 @@ export function ChannelMutateDrawer({
   const { copyToClipboard } = useCopyToClipboard()
 
   useEffect(() => {
+    modelSearchKeywordRef.current = trimmedModelSearchKeyword
+  }, [trimmedModelSearchKeyword])
+
+  useEffect(() => {
     modelSearchAppendContextRef.current = {
       open,
       channelId,
-      keyword: debouncedModelSearchKeyword,
+      keyword: trimmedModelSearchKeyword,
     }
-  }, [channelId, debouncedModelSearchKeyword, open])
+  }, [channelId, open, trimmedModelSearchKeyword])
 
   useEffect(() => {
     modelSearchAppendRequestSeqRef.current += 1
@@ -922,6 +931,7 @@ export function ChannelMutateDrawer({
   const currentModels = form.watch('models')
   const currentName = form.watch('name')
   const currentModelMapping = form.watch('model_mapping')
+  const vertexKeyType = form.watch('vertex_key_type')
   const awsKeyType = form.watch('aws_key_type')
   const upstreamModelUpdateCheckEnabled = form.watch(
     'upstream_model_update_check_enabled'
@@ -952,6 +962,68 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
+  const supportsMultiKeyAddMode =
+    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+
+  const credentialModeOptions = useMemo(() => {
+    const options = [
+      {
+        value: 'single_key',
+        label: t('Single Key'),
+      },
+      ...(supportsMultiKeyAddMode || isEditing || credentialMode === 'multi_key'
+        ? [
+            {
+              value: 'multi_key',
+              label: t('Multi-Key Rotation'),
+            },
+          ]
+        : []),
+      {
+        value: 'global_account_pool',
+        label: t('Account Pool'),
+      },
+    ]
+
+    if (isLegacyChannelAccountPoolMode) {
+      options.push({
+        value: 'account_pool',
+        label: t('Legacy Channel Account Pool'),
+      })
+    }
+
+    return options
+  }, [
+    credentialMode,
+    isEditing,
+    isLegacyChannelAccountPoolMode,
+    supportsMultiKeyAddMode,
+    t,
+  ])
+
+  const addModeOptions = useMemo(
+    () =>
+      supportsMultiKeyAddMode
+        ? ADD_MODE_OPTIONS
+        : ADD_MODE_OPTIONS.filter((option) => option.value === 'single'),
+    [supportsMultiKeyAddMode]
+  )
+
+  useEffect(() => {
+    if (isEditing || supportsMultiKeyAddMode) return
+    if (credentialMode === 'multi_key') {
+      form.setValue('credential_mode', 'single_key', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+    if (multiKeyMode && multiKeyMode !== 'single') {
+      form.setValue('multi_key_mode', 'single', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+  }, [credentialMode, form, isEditing, multiKeyMode, supportsMultiKeyAddMode])
 
   // 汇总系统模型列表。
   const allModelsList = useMemo(
@@ -959,14 +1031,13 @@ export function ChannelMutateDrawer({
     [allModelsData]
   )
 
-  const modelSearchModelNames = useMemo(
-    () =>
-      getModelSearchModelNames(
-        modelSearchData?.data?.items ?? [],
-        debouncedModelSearchKeyword
-      ),
-    [debouncedModelSearchKeyword, modelSearchData]
-  )
+  const modelSearchModelNames = useMemo(() => {
+    if (!isModelSearchResultCurrent) return []
+    return getModelSearchModelNames(
+      modelSearchData?.data?.items ?? [],
+      debouncedModelSearchKeyword
+    )
+  }, [debouncedModelSearchKeyword, isModelSearchResultCurrent, modelSearchData])
 
   // 按渠道类型推导基础模型集合。
   const basicModels = useMemo(() => {
@@ -1714,9 +1785,13 @@ export function ChannelMutateDrawer({
     if (isAddingModelSearchMatchesRef.current) {
       return
     }
-    const keyword = debouncedModelSearchKeyword.trim()
+    const keyword = modelSearchKeywordRef.current.trim()
     if (!keyword) {
       toast.info(t('No new search results to add'))
+      return
+    }
+    if (debouncedModelSearchKeyword.trim() !== keyword) {
+      toast.info(t('Searching model metadata...'))
       return
     }
 
@@ -1730,9 +1805,10 @@ export function ChannelMutateDrawer({
       const latestContext = modelSearchAppendContextRef.current
       if (
         modelSearchAppendRequestSeqRef.current !== requestSeq ||
-        !latestContext.open ||
-        latestContext.channelId !== requestChannelId ||
-        latestContext.keyword.trim() !== keyword
+        !isModelSearchAppendContextCurrent(latestContext, {
+          channelId: requestChannelId,
+          keyword,
+        })
       ) {
         return
       }
@@ -2211,7 +2287,7 @@ export function ChannelMutateDrawer({
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-6xl')}>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md border'>
@@ -2259,7 +2335,7 @@ export function ChannelMutateDrawer({
               {isChannelDetailLoading && <ChannelEditorLoadingState />}
               <div
                 className={cn(
-                  'grid gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]',
+                  'grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start',
                   isChannelDetailLoading && 'hidden'
                 )}
               >
@@ -2285,23 +2361,6 @@ export function ChannelMutateDrawer({
                   >
                     <ChannelBasicSection>
                       <div className='grid gap-4 sm:grid-cols-2'>
-                        <FormField
-                          control={form.control}
-                          name='name'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Name *')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t(FIELD_PLACEHOLDERS.NAME)}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
                         <FormField
                           control={form.control}
                           name='type'
@@ -2336,6 +2395,23 @@ export function ChannelMutateDrawer({
                                       ? undefined
                                       : 'pointer-events-none opacity-50'
                                   }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name='name'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('Name *')}</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder={t(FIELD_PLACEHOLDERS.NAME)}
+                                  {...field}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -3175,30 +3251,7 @@ export function ChannelMutateDrawer({
                             <FormItem>
                               <FormLabel>{t('Credential Mode')}</FormLabel>
                               <Select
-                                items={[
-                                  {
-                                    value: 'single_key',
-                                    label: t('Single Key'),
-                                  },
-                                  {
-                                    value: 'multi_key',
-                                    label: t('Multi-Key Rotation'),
-                                  },
-                                  {
-                                    value: 'global_account_pool',
-                                    label: t('Account Pool'),
-                                  },
-                                  ...(isLegacyChannelAccountPoolMode
-                                    ? [
-                                        {
-                                          value: 'account_pool',
-                                          label: t(
-                                            'Legacy Channel Account Pool'
-                                          ),
-                                        },
-                                      ]
-                                    : []),
-                                ]}
+                                items={credentialModeOptions}
                                 onValueChange={(value) => {
                                   if (!canEditSensitiveFields) {
                                     toast.error(noPermissionMessage)
@@ -3241,20 +3294,14 @@ export function ChannelMutateDrawer({
                                 </FormControl>
                                 <SelectContent alignItemWithTrigger={false}>
                                   <SelectGroup>
-                                    <SelectItem value='single_key'>
-                                      {t('Single Key')}
-                                    </SelectItem>
-                                    <SelectItem value='multi_key'>
-                                      {t('Multi-Key Rotation')}
-                                    </SelectItem>
-                                    <SelectItem value='global_account_pool'>
-                                      {t('Account Pool')}
-                                    </SelectItem>
-                                    {isLegacyChannelAccountPoolMode && (
-                                      <SelectItem value='account_pool'>
-                                        {t('Legacy Channel Account Pool')}
+                                    {credentialModeOptions.map((option) => (
+                                      <SelectItem
+                                        key={option.value}
+                                        value={option.value}
+                                      >
+                                        {option.label}
                                       </SelectItem>
-                                    )}
+                                    ))}
                                   </SelectGroup>
                                 </SelectContent>
                               </Select>
@@ -3407,12 +3454,10 @@ export function ChannelMutateDrawer({
                               <FormItem>
                                 <FormLabel>{t('Add Mode')}</FormLabel>
                                 <Select
-                                  items={[
-                                    ...ADD_MODE_OPTIONS.map((option) => ({
-                                      value: option.value,
-                                      label: t(option.label),
-                                    })),
-                                  ]}
+                                  items={addModeOptions.map((option) => ({
+                                    value: option.value,
+                                    label: t(option.label),
+                                  }))}
                                   onValueChange={(value) => {
                                     if (!canEditSensitiveFields) {
                                       toast.error(noPermissionMessage)
@@ -3431,7 +3476,7 @@ export function ChannelMutateDrawer({
                                   </FormControl>
                                   <SelectContent alignItemWithTrigger={false}>
                                     <SelectGroup>
-                                      {ADD_MODE_OPTIONS.map((option) => (
+                                      {addModeOptions.map((option) => (
                                         <SelectItem
                                           key={option.value}
                                           value={option.value}
@@ -4272,6 +4317,10 @@ export function ChannelMutateDrawer({
                                     disabled={
                                       isSubmitting || !canEditBasicFields
                                     }
+                                    sourceModelOptions={currentModelsArray}
+                                    targetModelOptions={modelOptions.map(
+                                      (option) => option.value
+                                    )}
                                   />
                                 </FormControl>
                                 <FormDescription>

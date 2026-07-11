@@ -24,6 +24,7 @@ import {
   dedupeModelNames,
   getMissingModelSearchMatches,
   getModelSearchModelNames,
+  isModelSearchAppendContextCurrent,
   mergeModelNames,
   parseModelDraftList,
 } from './model-search'
@@ -217,6 +218,42 @@ describe('渠道模型搜索批量追加计划', () => {
         addableCount: 2,
         existingCount: 1,
       }
+    )
+  })
+})
+
+describe('渠道模型搜索追加上下文校验', () => {
+  test('同一渠道且关键词仅大小写或空格变化时视为同一请求', () => {
+    assert.equal(
+      isModelSearchAppendContextCurrent(
+        { open: true, channelId: 7, keyword: ' GPT-5.6 ' },
+        { channelId: 7, keyword: 'gpt-5.6' }
+      ),
+      true
+    )
+  })
+
+  test('抽屉关闭、渠道切换或关键词变化时拒绝旧搜索结果', () => {
+    assert.equal(
+      isModelSearchAppendContextCurrent(
+        { open: false, channelId: 7, keyword: 'gpt-5.6' },
+        { channelId: 7, keyword: 'gpt-5.6' }
+      ),
+      false
+    )
+    assert.equal(
+      isModelSearchAppendContextCurrent(
+        { open: true, channelId: 8, keyword: 'gpt-5.6' },
+        { channelId: 7, keyword: 'gpt-5.6' }
+      ),
+      false
+    )
+    assert.equal(
+      isModelSearchAppendContextCurrent(
+        { open: true, channelId: 7, keyword: 'gpt-5.7' },
+        { channelId: 7, keyword: 'gpt-5.6' }
+      ),
+      false
     )
   })
 })

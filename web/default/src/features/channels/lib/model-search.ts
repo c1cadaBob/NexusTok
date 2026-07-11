@@ -66,6 +66,17 @@ export type ModelSearchAppendSummary = {
   existingCount: number
 }
 
+export type ModelSearchAppendContext = {
+  open: boolean
+  channelId: number | null
+  keyword: string
+}
+
+export type ModelSearchAppendRequest = {
+  channelId: number | null
+  keyword: string
+}
+
 // 解析管理员在“自定义模型”输入框中录入的模型列表。
 // 支持英文逗号、中文逗号和换行，按大小写不敏感去重并保留首次录入的展示形式。
 export function parseModelDraftList(value: string): string[] {
@@ -184,4 +195,18 @@ export function buildModelSearchAppendSummary(
     addableCount: addableMatches.length,
     existingCount: uniqueMatches.length - addableMatches.length,
   }
+}
+
+// 搜索追加会异步扫描所有分页结果。请求返回时必须确认抽屉仍打开、
+// 仍在编辑同一个渠道且输入框关键词没有变化，避免旧搜索结果污染当前表单草稿。
+export function isModelSearchAppendContextCurrent(
+  context: ModelSearchAppendContext,
+  request: ModelSearchAppendRequest
+): boolean {
+  if (!context.open) return false
+  if (context.channelId !== request.channelId) return false
+  return (
+    normalizeModelSearchKey(context.keyword) ===
+    normalizeModelSearchKey(request.keyword)
+  )
 }

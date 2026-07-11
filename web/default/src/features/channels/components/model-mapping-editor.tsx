@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { Code, Table, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -28,6 +28,8 @@ type ModelMappingEditorProps = {
   value: string
   onChange: (value: string) => void
   disabled?: boolean
+  sourceModelOptions?: string[]
+  targetModelOptions?: string[]
 }
 
 type MappingRow = {
@@ -40,11 +42,16 @@ export function ModelMappingEditor({
   value,
   onChange,
   disabled = false,
+  sourceModelOptions = [],
+  targetModelOptions = [],
 }: ModelMappingEditorProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<'visual' | 'json'>('visual')
   const [rows, setRows] = useState<MappingRow[]>([])
   const [jsonValue, setJsonValue] = useState(value)
+  const editorId = useId()
+  const sourceOptionsId = `${editorId}-source-models`
+  const targetOptionsId = `${editorId}-target-models`
 
   const parseJsonToRows = (json: string) => {
     try {
@@ -206,6 +213,11 @@ export function ModelMappingEditor({
                     }
                     placeholder='gpt-3.5-turbo'
                     disabled={disabled}
+                    list={
+                      sourceModelOptions.length > 0
+                        ? sourceOptionsId
+                        : undefined
+                    }
                   />
                   <Input
                     value={row.to}
@@ -214,6 +226,11 @@ export function ModelMappingEditor({
                     }
                     placeholder='gpt-3.5-turbo-0125'
                     disabled={disabled}
+                    list={
+                      targetModelOptions.length > 0
+                        ? targetOptionsId
+                        : undefined
+                    }
                   />
                   <Button
                     type='button'
@@ -246,6 +263,20 @@ export function ModelMappingEditor({
             <Plus className='mr-2 h-4 w-4' />
             {t('Add Mapping')}
           </Button>
+          {sourceModelOptions.length > 0 && (
+            <datalist id={sourceOptionsId}>
+              {sourceModelOptions.map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+          )}
+          {targetModelOptions.length > 0 && (
+            <datalist id={targetOptionsId}>
+              {targetModelOptions.map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+          )}
         </div>
       ) : (
         <Textarea
