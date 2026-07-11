@@ -10493,3 +10493,65 @@ NexusTok 当前已经完成 Advanced Custom 的后端 schema、严格校验、re
 3. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过，确认差异报告格式正常。
 4. `git diff --check` 通过。
 5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮没有在运行态执行真实渠道复制，避免创建额外渠道污染当前环境。
+
+## 本轮实施评审：渠道编辑页模型搜索内聚与 new-api 页面体验对齐
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并指出最新版 `/opt/project/new-api-main` 的编辑渠道页面体验更好，希望 NexusTok 的编辑渠道页面与其对齐。重新对照 new-api-main 的 `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认，其 `Models & Groups` 区域以模型多选器作为唯一主入口，配置顺序清晰：模型列表、模型映射、分组。NexusTok 前一轮为了补齐同步模型库搜索能力，额外增加了独立的 `Search model library` 输入框和独立的自定义模型输入框，导致模型选择、搜索追加、自定义添加三套入口并存。
+
+真实 3003 接口验证显示，`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=20` 已经返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型；问题不在同步数据，也不在后端供应商过滤，而在页面交互入口：管理员在多选器里搜索 `gpt-5.6` 时，只能看到当前渠道/能力已有的模型候选，容易只选到 `gpt-5.6-sol`，或者在没有正确候选时把 `gpt-5.6` 当成一个错误的自定义模型。目标是吸收 new-api-main 的单入口编辑体验，同时保留 NexusTok 已有的“从模型元数据搜索补齐尚未加入渠道能力的模型”优势。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型多选器接管同步模型库搜索；移除独立 `Search model library` 和独立自定义模型输入框；候选集合继续合并当前渠道模型、已启用模型和后端搜索结果。 |
+| 多选组件 | `web/default/src/components/multi-select.tsx` | 新增 `onSearchSubmit` 可选回调，保留回车触发“添加全部匹配模型”的键盘习惯；高亮候选和自定义创建仍优先走原有行为。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+本轮不修改后端模型搜索接口、模型同步逻辑、渠道保存 payload、渠道能力表、权限矩阵、模型映射 JSON、账号池模式、上游拉取模型弹窗或 `gpt-5.6` 模型元数据。
+
+### 风险评估
+
+1. 多选器受控输入风险：模型多选器原先内部维护搜索词，本轮改为由渠道抽屉传入 `searchValue/onSearchChange`。如果处理不当，可能影响选中候选后清空搜索、自定义模型创建和逗号批量录入。
+2. 错误自定义模型风险：输入 `gpt-5.6` 这类系列前缀时，如果搜索结果尚未返回，不能立即创建 `gpt-5.6` 这个不完整自定义模型。本轮复用 `isLoading` 与 `allowCreateWithMatches=false`，搜索中和存在候选时都隐藏创建入口。
+3. 搜索追加一致性风险：预览候选和点击“添加全部”仍必须使用同一套 keyword + vendor 规则；本轮保留前一轮的分页扫描、request sequence 和 `open/channelId/keyword/vendor` 上下文校验。
+4. 页面回归风险：移除独立自定义输入框后，自定义模型仍必须能添加。`MultiSelect` 已支持逗号、中文逗号和换行拆分；本轮不删除该能力。
+5. 权限风险：非敏感写/敏感写权限仍由 `canEditBasicFields` 控制，搜索按钮、模型选中、快捷操作和映射修复按钮继续沿用已有权限判断。
+6. 运行态数据风险：页面验证只修改未保存的表单草稿，不点击 `Update Channel`，避免污染 3003 的真实渠道模型配置。
+
+### 方案评审
+
+采用“把 NexusTok 增强能力内聚到 new-api-main 的单入口模型多选器”的方案：
+
+1. `MultiSelect` 增加 `onSearchSubmit`，仅在按 Enter、没有高亮候选、也没有可创建自定义值时触发，用于保持旧搜索框的键盘追加习惯。
+2. 渠道编辑页将 `modelSearchKeyword` 作为 `MultiSelect.searchValue`，让同一个输入同时承担本地候选过滤和 `/api/models/search` 远程搜索。
+3. `modelOptions` 继续合并 `modelSearchModelNames`，因此 `gpt-5.6-terra` 和 `gpt-5.6-luna` 即使尚未绑定任何渠道能力，也能作为可选候选出现。
+4. 将“命中/新增/已存在”摘要和“添加全部匹配模型”按钮移入多选器下拉 footer，避免表单主体出现第二个搜索入口。
+5. 模型区顶部保留 `Selected {{count}}` 和 `Vendor: OpenAI/All Vendors` badge，让管理员仍能看到搜索范围。
+6. 删除独立 `Search model library` 表单项和独立 `Custom model (comma-separated)` 表单项；自定义模型改回在模型多选器中直接输入创建，与 new-api-main 页面结构对齐。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索内聚与 new-api 页面体验对齐：
+
+- 编辑渠道页 `Models & Groups` 区域恢复为以模型多选器为唯一主入口的结构。
+- 输入 `gpt-5.6` 时，多选器会触发 OpenAI vendor 范围内的同步模型库搜索，并把 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 合并到候选体系。
+- 已选模型在搜索时会被隐藏，未选中的 `gpt-5.6-terra` 和 `gpt-5.6-luna` 能直接选择或通过 footer 一次性追加。
+- “添加全部匹配模型”仍会分页扫描所有搜索结果，避免只追加当前第一页或当前可见候选。
+- 搜索中和存在真实候选时不会创建 `gpt-5.6` 这种不完整自定义模型；真正没有候选的自定义模型仍可直接创建。
+- 页面主体不再显示 `Search model library`、`Search results` 和 `Custom model (comma-separated)`，整体更接近 new-api-main 最新编辑渠道页。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，共 36 个测试，覆盖模型搜索候选提取、`gpt-5.6` 三模型追加、供应商映射、上下文校验和 MultiSelect 搜索/创建行为。
+2. `cd web/default && bun run typecheck` 通过，确认 `ChannelMutateDrawer`、`MultiSelect` 和相关类型无回归。
+3. `cd web/default && bun run build` 通过，确认 Rsbuild 生产打包无回归。
+4. `cd web/default && bunx prettier --check src/features/channels/components/drawers/channel-mutate-drawer.tsx src/components/multi-select.tsx ../../docs/features/new-api-main-diff-analysis.md` 通过。
+5. `git diff --check` 通过。
+6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；`GET /api/status` 返回正常状态 JSON。
+7. 通过 3003 真实接口登录 `c1cada`，调用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=20`，确认返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型。
+8. 当前环境没有可用浏览器 MCP 工具，本轮使用本机 Chrome Headless + DevTools Protocol 替代真实页面验证：登录后打开 `http://192.168.0.202:3003/channels`，进入渠道 `11111` 编辑抽屉，页面显示 `Vendor: OpenAI`，且不再出现 `Search model library` 和 `Custom model (comma-separated)`。
+9. 在同一编辑抽屉的模型多选器中输入 `gpt-5.6`，页面显示 `3 matched · 2 new · 1 already selected`，候选包含 `gpt-5.6-terra` 和 `gpt-5.6-luna`；点击 `Add 2 new model(s)` 后，未保存草稿显示 `Selected 5`，包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，且未创建错误的 `gpt-5.6` 自定义模型。
+10. Chrome Headless 验证过程未发现控制台 error/warning；页面验证只改动未保存草稿，没有点击保存，不污染运行态渠道数据。

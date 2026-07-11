@@ -63,6 +63,7 @@ interface MultiSelectProps {
   onSearchChange?: (value: string) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  onSearchSubmit?: () => void
   contentHeader?: React.ReactNode
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
@@ -214,6 +215,7 @@ export function MultiSelect({
   onSearchChange,
   open: controlledOpen,
   onOpenChange,
+  onSearchSubmit,
   contentHeader,
   contentFooter,
   allowCreateWithMatches = true,
@@ -387,7 +389,7 @@ export function MultiSelect({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Enter' || !allowCreate || !canCreate) return
+    if (event.key !== 'Enter') return
 
     const popup = document.querySelector<HTMLElement>(
       '[data-slot="combobox-content"][data-open]'
@@ -395,9 +397,17 @@ export function MultiSelect({
     const hasHighlight = popup?.querySelector('[data-highlighted]') != null
     if (hasHighlight) return
 
-    event.preventDefault()
-    addValues([trimmedInput])
-    updateInputValue('')
+    if (allowCreate && canCreate) {
+      event.preventDefault()
+      addValues([trimmedInput])
+      updateInputValue('')
+      return
+    }
+
+    if (onSearchSubmit && trimmedInput.length > 0) {
+      event.preventDefault()
+      onSearchSubmit()
+    }
   }
 
   return (
