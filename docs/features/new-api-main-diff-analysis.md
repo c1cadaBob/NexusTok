@@ -9156,3 +9156,70 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 9. 页面显示 `Account Pool`、`Total: 0`、`Enabled: 0`、`Batch Import`、`Add Account`、`No accounts found`。
 10. 浏览器网络记录显示 `/api/channel/1/accounts?p=1&page_size=10` 返回 HTTP 200。
 11. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
+
+## 本轮实施评审：渠道模型搜索规则展开与编辑渠道页对齐复核
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并再次确认 `gpt-5.6` 应有 3 种 OpenAI 模型。本轮先复核 3003 运行态接口与最新版 `/opt/project/new-api-main` 编辑渠道页结构，再决定最小改动范围。
+
+复核结论如下：
+
+1. 运行态 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 `total=3`，三条精确模型分别为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，`vendor_id=1`，供应商为 OpenAI。
+2. 渠道 `11111` 当前后端保存的模型仍是 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，因此页面搜索 `gpt-5.6` 时正确行为是命中 3 个、实际新增缺失的 `terra/luna` 两个，不能把“命中 3 个”误写成“新增 3 个”。
+3. 继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 和 `sections/channel-models-section.tsx` 后确认，NexusTok 当前编辑渠道页已经具备 new-api 最新页面的核心信息架构：右侧大抽屉、`Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`、左侧状态导航和分段滚动定位。
+4. NexusTok 当前页面在 new-api 基础上还有原生增强：`Credential Mode`、全局账号池组、Codex OAuth、模型元信息搜索追加、独立自定义模型输入、Quick actions/More 操作收敛、字段级权限、模型映射 guardrail、上游模型检测和高级设置子导航。因此本轮不做整页替换，避免把已增强能力退回 new-api 的简化版本。
+5. 新发现的搜索边界在前端候选提取 helper：模型搜索接口除精确模型外，还可能返回 `name_rule > 0` 的规则模型，并在 `matched_models` 中携带展开后的真实模型名。旧逻辑只读取 `model_name`，会漏掉规则展开出的具体模型，或把规则模型占位名错误加入渠道。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道模型搜索 helper | `web/default/src/features/channels/lib/model-search.ts` | `getModelSearchModelNames()` 支持 `name_rule` 与 `matched_models`：规则模型只使用展开后的真实匹配模型；精确模型继续保留 `model_name`。 |
+| 渠道模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加规则模型展开、规则占位名不入选、精确模型继续保留自身名称的测试。 |
+| 编辑渠道页面 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 本轮不改页面结构；复核确认当前页面已经与 new-api 最新编辑渠道页的信息架构对齐，并保留 NexusTok 原生增强。 |
+| 后端与数据 | 无 | 不改模型同步、供应商、渠道保存接口、数据库 schema、relay、计费或权限。 |
+
+### 风险评估
+
+- 规则占位名误加入风险：`name_rule > 0` 的 `model_name` 可能是系列、正则或规则名称，不一定是可暴露给 `/v1/models` 的真实模型。本轮规则模型只取 `matched_models`，避免把占位名写入渠道能力。
+- 标签命中污染风险：`/api/models/search` 仍可能因为 description/tags 命中无关模型。本轮对所有候选名再次按关键词过滤，只把候选名本身包含搜索词的模型交给追加逻辑。
+- 精确模型回归风险：当前 3003 上 `gpt-5.6-terra/luna/sol` 都是 `name_rule=0` 精确模型。本轮保留精确模型 `model_name`，不会影响当前运行态路径。
+- 页面大改风险：直接复制 new-api 编辑渠道页会丢失 NexusTok 独有的账号池、权限和搜索增强。本轮只修搜索候选提取边界，并把页面对齐结论写入报告。
+- 保存数据风险：页面验证只操作表单草稿并点击搜索追加按钮，未点击 `Update Channel`；后端渠道模型保持原值。
+
+### 方案评审
+
+采用“候选提取增强 + 页面结构复核不替换”的低风险方案：
+
+1. `ModelSearchItemLike` 增加可选 `name_rule` 和 `matched_models`，与模型搜索接口现有响应兼容。
+2. `getModelSearchModelNames()` 对 `name_rule > 0` 的结果只遍历 `matched_models`；对精确模型遍历 `model_name + matched_models`，并继续做 trim、大小写不敏感去重和关键词过滤。
+3. 保持 `getMissingModelSearchMatches()`、`buildModelSearchAppendPlan()`、`fetchAllModelSearchModelNames()` 和渠道保存 payload 不变，继续让“命中数/新增数/已存在数”来自同一套去重规则。
+4. 当前编辑渠道页已吸收 new-api 最新页面的左侧分区导航和四段式信息架构，本轮不重复重构 UI；后续若要进一步靠拢，只应按具体交互差异逐项评审。
+
+### 实施结果
+
+已完成渠道模型搜索规则展开修复：
+
+- 搜索结果项为规则模型时，会把 `matched_models` 中的真实模型纳入候选。
+- 规则模型自身的 `model_name` 不再被当作渠道模型名加入，避免出现 `gpt-5.6` 这类系列前缀或规则占位名。
+- 精确模型仍保留 `model_name`，当前 3003 上的 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 路径不受影响。
+- 搜索结果继续按关键词过滤，description/tags 命中的无关模型不会进入渠道追加列表。
+- 编辑渠道页复核通过：当前页面已经呈现 new-api 最新编辑页的核心分段结构，并保留 NexusTok 的账号池、Codex、权限、模型映射和上游检测增强。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts` 通过，14 个用例全部成功，新增覆盖规则模型 `matched_models` 展开、规则占位名排除、精确模型保留。
+2. `cd web/default && bunx prettier --check src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `git diff --check` 通过。
+5. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+6. 运行态 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 3 条 OpenAI 精确模型：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，均为 `vendor_id=1`、`name_rule=0`。
+7. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+8. 使用账号 `c1cada` 登录 3003 后进入 `/channels`，打开渠道 `11111` 的 `Edit Channel` 抽屉；页面包含 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，初始模型显示 `Selected 3`。
+9. 在模型搜索输入中输入 `gpt-5.6`，页面显示 `Search results`、`3 matched · 2 new · 1 already selected`、预览 `gpt-5.6-terra, gpt-5.6-luna` 和按钮 `Add 2 new model(s)`；未出现 `Press Enter to use "gpt-5.6"` 或自定义创建前缀入口。
+10. 点击 `Add 2 new model(s)` 后，表单草稿显示 `Selected 5`，并包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
+11. 验证后通过页面上下文重新请求 `/api/channel/?p=0&page_size=5`，渠道 `11111` 后端保存值仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认未误保存草稿。
+12. Chrome/CDP 网络记录显示 `/api/channel/models`、`/api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、`/api/channel/1`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=50`、点击追加时的 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100`、以及复查 `/api/channel/?p=0&page_size=5` 均返回 HTTP 200。
+13. Chrome/CDP 记录没有 console error/warning、运行时 exception 或非取消型网络失败。
+14. 运行态验证截图保存于 `/tmp/nexustok-channel-model-search-rule-fix.png`。

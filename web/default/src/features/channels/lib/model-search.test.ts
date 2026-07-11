@@ -42,7 +42,12 @@ describe('渠道模型草稿解析', () => {
 describe('渠道模型列表归一化', () => {
   test('按 trim + 大小写不敏感方式去重并保留首次展示形式', () => {
     assert.deepEqual(
-      dedupeModelNames([' gpt-5.6-terra ', 'GPT-5.6-TERRA', '', 'gpt-5.6-luna']),
+      dedupeModelNames([
+        ' gpt-5.6-terra ',
+        'GPT-5.6-TERRA',
+        '',
+        'gpt-5.6-luna',
+      ]),
       ['gpt-5.6-terra', 'gpt-5.6-luna']
     )
   })
@@ -84,6 +89,43 @@ describe('渠道模型搜索候选提取', () => {
         'gpt-5.6'
       ),
       ['GPT-5.6-Terra']
+    )
+  })
+
+  test('搜索候选会纳入名称规则展开出的具体匹配模型', () => {
+    assert.deepEqual(
+      getModelSearchModelNames(
+        [
+          {
+            model_name: 'gpt-5.6',
+            name_rule: 1,
+            matched_models: ['gpt-5.6-terra', 'gpt-5.6-luna', 'claude-sonnet'],
+          },
+          {
+            model_name: 'reasoning family',
+            name_rule: 2,
+            matched_models: ['gpt-5.6-sol', 'GPT-5.6-TERRA'],
+          },
+        ],
+        'gpt-5.6'
+      ),
+      ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol']
+    )
+  })
+
+  test('精确模型仍会保留 model_name 自身', () => {
+    assert.deepEqual(
+      getModelSearchModelNames(
+        [
+          {
+            model_name: 'gpt-5.6-sol',
+            name_rule: 0,
+            matched_models: ['gpt-5.6-sol'],
+          },
+        ],
+        'gpt-5.6'
+      ),
+      ['gpt-5.6-sol']
     )
   })
 })

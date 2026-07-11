@@ -49,6 +49,8 @@ const MODEL_DRAFT_SEPARATOR_REGEX = /[,，\n]+/
 
 type ModelSearchItemLike = {
   model_name?: string | null
+  name_rule?: number | null
+  matched_models?: string[] | null
 }
 
 export type ModelSearchAppendPlan = {
@@ -83,7 +85,8 @@ export function parseModelDraftList(value: string): string[] {
 
 // 从模型搜索接口返回项中提取可用于渠道模型选择器的真实模型名。
 // /api/models/search 会匹配 description/tags；渠道模型补齐只应该使用
-// model_name 本身包含关键词的条目，避免把标签命中的无关模型加入渠道。
+// 精确模型的 model_name 或名称规则展开出的 matched_models，并再次按关键词过滤，
+// 避免把标签命中的无关模型、规则模型占位名加入渠道。
 export function getModelSearchModelNames(
   searchItems: readonly ModelSearchItemLike[],
   keyword: string
@@ -93,15 +96,24 @@ export function getModelSearchModelNames(
   const names: string[] = []
 
   for (const item of searchItems) {
-    const name = item.model_name?.trim()
-    if (!name) continue
+    const matchedModels = Array.isArray(item.matched_models)
+      ? item.matched_models
+      : []
+    const isRuleModel = typeof item.name_rule === 'number' && item.name_rule > 0
+    const candidates = isRuleModel
+      ? matchedModels
+      : [item.model_name, ...matchedModels]
+    for (const candidate of candidates) {
+      const name = candidate?.trim()
+      if (!name) continue
 
-    const key = normalizeModelSearchKey(name)
-    if (seenKeys.has(key)) continue
-    if (normalizedKeyword && !key.includes(normalizedKeyword)) continue
+      const key = normalizeModelSearchKey(name)
+      if (seenKeys.has(key)) continue
+      if (normalizedKeyword && !key.includes(normalizedKeyword)) continue
 
-    seenKeys.add(key)
-    names.push(name)
+      seenKeys.add(key)
+      names.push(name)
+    }
   }
 
   return names
