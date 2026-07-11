@@ -135,8 +135,9 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 			usage.CompletionTokens = estimatedTokens
 			usage.CompletionTokenDetails.AudioTokens = estimatedTokens
 		} else if duration > 0 {
-			// 计算 token: ceil(duration) / 60.0 * 1000，即每分钟 1000 tokens
-			completionTokens := int(math.Round(math.Ceil(duration) / 60.0 * 1000))
+			// 计算 token: ceil(duration) / 60.0 * 1000，即每分钟 1000 tokens。
+			// duration 解析自上游返回的音频元数据，统一 helper 会做负值和超大值保护。
+			completionTokens := service.EstimateAudioDurationTokens(duration)
 			usage.CompletionTokens = completionTokens
 			usage.CompletionTokenDetails.AudioTokens = completionTokens
 		}

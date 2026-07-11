@@ -202,6 +202,18 @@ func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, strea
 	return tiles*tileTokens + baseTokens, nil
 }
 
+// EstimateAudioDurationTokens 按音频时长估算 token 数。
+//
+// 音频转写、翻译和 TTS fallback 都按“每分钟 1000 token”的历史规则计数。
+// duration 来自用户上传文件或上游音频元数据，可能被伪造为负数、NaN 或极大值；
+// 这里先把负值钳为 0，再通过统一 quota 四舍五入入口转换，避免裸 int 转换回绕。
+func EstimateAudioDurationTokens(duration float64) int {
+	if duration < 0 {
+		duration = 0
+	}
+	return common.QuotaRound(math.Ceil(duration) / 60.0 * 1000)
+}
+
 // EstimateRequestToken 预估请求的 Token 总数
 //
 // 处理流程：
@@ -250,8 +262,8 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 			if err != nil {
 				return 0, fmt.Errorf("error getting audio duration: %v", err)
 			}
-			// 一分钟 1000 token，与 $price / minute 对齐
-			totalAudioToken += int(math.Round(math.Ceil(duration) / 60.0 * 1000))
+			// 一分钟 1000 token，与 $price / minute 对齐。
+			totalAudioToken += EstimateAudioDurationTokens(duration)
 		}
 		return totalAudioToken, nil
 	}

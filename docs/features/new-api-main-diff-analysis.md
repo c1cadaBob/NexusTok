@@ -9960,3 +9960,59 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 3. `go test ./service -run 'Task|Quota|Billing'` 通过，确认服务侧任务重算、退款和额度安全相关测试不受影响。
 4. `git diff --check` 通过。
 5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端任务解析安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
+
+## 本轮实施评审：音频时长 token 估算饱和转换
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的计费边界后发现，new-api-main 在音频 token 估算中已经把 `ceil(duration) / 60 * 1000` 的结果交给 `common.QuotaRound` 转换，并在请求预消费估算里先把负时长钳为 0。NexusTok 当前已经有统一的 quota 饱和转换体系，但音频转写/翻译预消费估算和 OpenAI TTS fallback usage 仍使用裸 `int(math.Round(...))`。
+
+音频时长来自用户上传文件或上游音频元数据，正常情况下数值很小，但异常文件、损坏元数据或上游返回异常值时，裸 `int` 转换可能出现平台相关回绕或负 token。由于这些 token 会进入预扣费、usage 展示和后续额度计算链路，本轮目标是把 new-api-main 的安全边界原生化到 NexusTok：保持原有“每分钟 1000 token、秒数先向上取整”的语义，同时对负值、NaN 和超大值进行统一保护。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 音频时长 token helper | `service/token_counter.go` | 新增 `EstimateAudioDurationTokens()`，统一执行负时长钳制、`ceil(duration) / 60 * 1000` 公式和 `common.QuotaRound` 饱和转换。 |
+| 请求 token 预估 | `service/token_counter.go` | 音频转写/翻译模式下的预消费 token 改为调用统一 helper。 |
+| OpenAI TTS usage fallback | `relay/channel/openai/audio.go` | 上游未返回 usage 时，按音频时长估算 completion audio token 的路径改为调用统一 helper。 |
+| 回归测试 | `service/audio_token_test.go` | 覆盖正常小数秒、负时长、NaN 和超大时长。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改数据库 schema、模型倍率、分组倍率、日志结构、Relay 请求/响应 DTO、音频解码方式、文件上传流程或上游请求协议。
+
+### 风险评估
+
+1. 正常计费语义回归风险：正常音频仍必须保持 `ceil(duration) / 60 * 1000` 后四舍五入的历史公式。例如 `60.1s` 应估算为 `1017` token。
+2. 负时长风险：异常元数据返回负数时不能产生负 token，否则会低估预扣费甚至影响余额保护。本轮先将负 duration 钳为 0。
+3. 超大时长风险：极端 duration 不能在 `int` 转换阶段回绕，应饱和到 `common.MaxQuota`，后续额度计算仍会沿用已有 quota 安全链路。
+4. NaN 风险：NaN 不代表真实使用量，`common.QuotaRound` 会兜底为 0；本轮测试明确锁定该行为。
+5. 复用范围风险：helper 放在 service 层，OpenAI relay 包本来已经依赖 service，因此不会引入新的反向依赖或包环。
+
+### 方案评审
+
+采用“抽取统一 helper + 两处替换”的小步方案：
+
+1. 在 `service/token_counter.go` 新增 `EstimateAudioDurationTokens(duration float64) int`。
+2. helper 内部先处理 `duration < 0`，再按现有公式 `math.Ceil(duration) / 60.0 * 1000` 计算，最后交给 `common.QuotaRound`。
+3. `EstimateRequestToken` 的音频转写/翻译预消费估算改为调用 helper。
+4. `OpenaiTTSHandler` 的时长 fallback completion token 估算改为调用 helper。
+5. 保留按响应体大小估算 token 的 fallback 路径不变，因为 new-api-main 当前也未改变该路径，本轮不扩大行为面。
+
+### 实施结果
+
+已完成音频时长 token 估算饱和转换：
+
+- 音频转写/翻译预消费估算和 OpenAI TTS fallback usage 使用同一个 helper。
+- 正常音频时长仍保持原有分钟计费公式。
+- 负时长会返回 0，不再可能生成负 token。
+- NaN 返回 0，超大时长饱和到 `common.MaxQuota`，避免裸 `int` 转换回绕。
+
+### 验证记录
+
+1. `go test ./service -run TestEstimateAudioDurationTokens` 通过，覆盖正常小数秒、负时长、NaN 和超大时长。
+2. `go test ./relay/channel/openai` 通过，确认 OpenAI audio relay 包复用 helper 后构建和既有测试不受影响。
+3. `go test ./service ./relay/channel/openai` 通过，确认 service 和 OpenAI relay 受影响包完整测试不受影响。
+4. `git diff --check` 通过。
+5. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
+6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端音频 token 估算安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
