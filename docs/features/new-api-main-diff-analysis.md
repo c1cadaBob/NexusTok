@@ -207,7 +207,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
 | P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略优先读取和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、策略周期 reload、用户 override 迁入 `casbin_rule`、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
-| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account` 返回字段脱敏、`channel_account.write` 非敏感写边界、审计增强和角色编辑 UI，而不是重复拆资源。 |
+| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`channel_account.read` 响应已做基础脱敏，只有 sensitive_write 用户可见上游地址、组织 ID、请求覆盖、模型映射、provider settings 和原始错误详情；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account.write` 非敏感写边界、字段级审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
 | P2/P3 | Advanced Custom 模板库与审计增强 | `relay/channel/advancedcustom/*`、默认前端 editor | 基础 adaptor、后端校验和 Visual/JSON 编辑器已落地；后续可做可信模板、导入导出、路由级审计和更清晰的敏感字段变更预览。 |
@@ -9099,3 +9099,60 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 17. 浏览器网络记录显示 `/api/channel/1/accounts?p=1&page_size=10` 返回 HTTP 200。
 18. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
 19. 运行态验证截图保存于 `/tmp/nexustok-channel-account-dialog.png`。
+
+## 本轮实施评审：渠道账号只读响应脱敏
+
+### 需求分析
+
+上一轮已经把渠道内账号拆成独立 `channel_account` 资源，并让默认 Admin 具备 `read/operate`。继续复核后发现：`ListChannelAccounts` 和 `GetChannelAccount` 的 read 响应虽然已经对 `key` 做脱敏，但仍会返回上游地址、OpenAI 组织 ID、`other/settings`、模型映射、参数覆盖、请求头覆盖、状态码映射和原始错误详情。这些字段足以暴露私有上游配置或请求改写策略，不应仅凭 `channel_account.read` 暴露。
+
+本轮目标是把 `channel_account.read` 收敛为“查看运行态账号列表和脱敏元数据”，只有具备 `channel_account.sensitive_write` 的管理员才能读取完整高级配置，以匹配新增资源的权限语义。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道账号响应 | `controller/channel_account.go` | 新增按上下文权限构造响应；基础响应不包含高级敏感配置，敏感写用户仍可获得完整字段。 |
+| 单元测试 | `controller/channel_account_response_test.go` | 新增普通 Admin 与 Root 两类响应断言，锁定只读脱敏和 Root 可见完整配置。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 顶部后续队列和本轮实施记录同步更新。 |
+
+本轮不改 API URL、路由权限、数据库 schema、前端页面、保存 payload、Relay 选择逻辑或账号字段存储方式。
+
+### 风险评估
+
+- 编辑回填风险：如果拥有敏感写权限的用户也拿不到高级配置，会影响后续编辑。实现中使用 `authz.Can(userID, role, authz.ChannelAccountSensitiveWrite)` 判断，Root 和显式敏感写用户仍可见完整字段。
+- 只读页面回归风险：渠道账号弹窗表格当前只展示名称、脱敏 key、状态、模型、分组、优先级、权重、冷却等基础字段，本轮全部保留。
+- 错误详情泄露风险：`last_error` 可能包含上游地址、供应商原文或请求上下文，因此归入敏感字段，仅敏感写用户可见。
+- 权限重复判断风险：路由中间件已经检查过 read，本轮 controller 再判断 sensitive_write 仅用于字段可见性，不改变请求通过/拒绝结果。
+
+### 方案评审
+
+采用“基础响应 + 敏感字段追加”的低风险方案：
+
+1. 新增 `channelAccountResponseForContext(c, account)`，从 Gin 上下文读取 `id` 和 `role`，并调用 `authz.Can` 判断是否具备 `ChannelAccountSensitiveWrite`。
+2. `channelAccountResponse(account, includeSensitive)` 默认返回基础字段：id、channel_id、name、脱敏 key、status、models、group、priority、weight、last_used_time、used_quota、冷却字段、disabled_reason、max_concurrency、created_time。
+3. `includeSensitive=true` 时才追加：base_url、openai_organization、other、setting、settings、model_mapping、param_override、header_override、status_code_mapping、last_error。
+4. 创建和更新接口仍返回完整字段，因为它们本身已经受 `channel_account.sensitive_write` 路由权限保护；只读和详情接口会根据调用者是否额外拥有敏感写权限自动脱敏。
+
+### 实施结果
+
+已完成渠道账号只读响应脱敏：
+
+- 普通 Admin 在只读上下文中只能拿到脱敏 key 和运行态元数据。
+- Root 或具备 `channel_account.sensitive_write` 的用户仍能拿到完整高级配置。
+- `last_error` 已从基础 read 响应中移除，避免泄露上游原始错误细节。
+- 前端渠道账号弹窗不需要调整，因为表格使用的字段都在基础响应中保留。
+
+### 验证记录
+
+1. `go test ./controller -run 'TestChannelAccountResponse|TestRegister|TestGetSelfReturnsAdminPermissions'` 通过。
+2. `go test ./controller` 通过。
+3. `go test ./service/authz ./router ./controller` 通过。
+4. `git diff --check` 通过。
+5. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200。
+6. 运行态登录 `c1cada` 后调用 `/api/channel/1/accounts?p=1&page_size=10`，返回 HTTP 200，当前渠道账号为空，响应为 `items=[]` 和全 0 stats。
+7. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+8. 使用真实浏览器打开 `/channels`，点击渠道 `11111` 行菜单中的 `Account Pool`，渠道账号弹窗成功打开。
+9. 页面显示 `Account Pool`、`Total: 0`、`Enabled: 0`、`Batch Import`、`Add Account`、`No accounts found`。
+10. 浏览器网络记录显示 `/api/channel/1/accounts?p=1&page_size=10` 返回 HTTP 200。
+11. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。

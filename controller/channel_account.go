@@ -21,29 +21,30 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service/authz"
 
 	"github.com/gin-gonic/gin"
 )
 
 // channelAccountUpsertRequest 渠道账号创建/更新请求
 type channelAccountUpsertRequest struct {
-	Name               string  `json:"name"`                 // 账号名称
-	Key                string  `json:"key"`                  // API 密钥
-	Status             *int    `json:"status"`               // 状态
-	Models             string  `json:"models"`               // 支持的模型
-	Group              string  `json:"group"`                // 用户组
-	Priority           *int64  `json:"priority"`             // 优先级
-	Weight             *int    `json:"weight"`               // 权重
-	BaseURL            *string `json:"base_url"`             // 基础 URL
-	OpenAIOrganization *string `json:"openai_organization"`  // OpenAI 组织 ID
-	Other              string  `json:"other"`                // 其他配置
-	Setting            *string `json:"setting"`              // 设置
-	OtherSettings      string  `json:"settings"`             // 其他设置
-	ModelMapping       *string `json:"model_mapping"`        // 模型映射
-	ParamOverride      *string `json:"param_override"`       // 参数覆盖
-	HeaderOverride     *string `json:"header_override"`      // 请求头覆盖
-	StatusCodeMapping  *string `json:"status_code_mapping"`  // 状态码映射
-	MaxConcurrency     *int    `json:"max_concurrency"`      // 最大并发数
+	Name               string  `json:"name"`                // 账号名称
+	Key                string  `json:"key"`                 // API 密钥
+	Status             *int    `json:"status"`              // 状态
+	Models             string  `json:"models"`              // 支持的模型
+	Group              string  `json:"group"`               // 用户组
+	Priority           *int64  `json:"priority"`            // 优先级
+	Weight             *int    `json:"weight"`              // 权重
+	BaseURL            *string `json:"base_url"`            // 基础 URL
+	OpenAIOrganization *string `json:"openai_organization"` // OpenAI 组织 ID
+	Other              string  `json:"other"`               // 其他配置
+	Setting            *string `json:"setting"`             // 设置
+	OtherSettings      string  `json:"settings"`            // 其他设置
+	ModelMapping       *string `json:"model_mapping"`       // 模型映射
+	ParamOverride      *string `json:"param_override"`      // 参数覆盖
+	HeaderOverride     *string `json:"header_override"`     // 请求头覆盖
+	StatusCodeMapping  *string `json:"status_code_mapping"` // 状态码映射
+	MaxConcurrency     *int    `json:"max_concurrency"`     // 最大并发数
 }
 
 // channelAccountBatchRequest 渠道账号批量创建请求
@@ -82,7 +83,7 @@ func ListChannelAccounts(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(accounts))
 	for _, account := range accounts {
-		items = append(items, channelAccountResponse(account))
+		items = append(items, channelAccountResponseForContext(c, account))
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
@@ -115,7 +116,7 @@ func CreateChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, channelAccountResponse(account))
+	common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 }
 
 func BatchCreateChannelAccounts(c *gin.Context) {
@@ -152,7 +153,7 @@ func GetChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, channelAccountResponse(account))
+	common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 }
 
 func UpdateChannelAccount(c *gin.Context) {
@@ -172,7 +173,7 @@ func UpdateChannelAccount(c *gin.Context) {
 	}
 	updates := channelAccountUpdateMap(req)
 	if len(updates) == 0 {
-		common.ApiSuccess(c, channelAccountResponse(account))
+		common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 		return
 	}
 	if err := model.DB.Model(account).Updates(updates).Error; err != nil {
@@ -184,7 +185,7 @@ func UpdateChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, channelAccountResponse(updated))
+	common.ApiSuccess(c, channelAccountResponseForContext(c, updated))
 }
 
 func DeleteChannelAccount(c *gin.Context) {
@@ -486,37 +487,52 @@ func splitImportKeys(keys string) []string {
 	return result
 }
 
-func channelAccountResponse(account *model.ChannelAccount) gin.H {
+// channelAccountResponseForContext 根据当前管理员权限返回渠道账号响应。
+//
+// `channel_account.read` 只应支持列表查看和运行态运维，因此基础响应保留脱敏 key、
+// 状态、模型、分组、权重、冷却和配额等页面需要的字段。私有上游地址、组织 ID、请求
+// 覆盖、模型映射、provider settings 和原始错误详情只给具备
+// `channel_account.sensitive_write` 的用户，避免把只读运维权限扩大为凭证配置读取权限。
+func channelAccountResponseForContext(c *gin.Context, account *model.ChannelAccount) gin.H {
+	userID := c.GetInt("id")
+	role := c.GetInt("role")
+	return channelAccountResponse(account, authz.Can(userID, role, authz.ChannelAccountSensitiveWrite))
+}
+
+func channelAccountResponse(account *model.ChannelAccount, includeSensitive bool) gin.H {
 	if account == nil {
 		return gin.H{}
 	}
-	return gin.H{
-		"id":                   account.Id,
-		"channel_id":           account.ChannelId,
-		"name":                 account.Name,
-		"key":                  account.GetMaskedKey(),
-		"status":               account.Status,
-		"models":               account.Models,
-		"group":                account.Group,
-		"priority":             account.Priority,
-		"weight":               account.Weight,
-		"last_used_time":       account.LastUsedTime,
-		"used_quota":           account.UsedQuota,
-		"base_url":             account.BaseURL,
-		"openai_organization":  account.OpenAIOrganization,
-		"other":                account.Other,
-		"setting":              account.Setting,
-		"settings":             account.OtherSettings,
-		"model_mapping":        account.ModelMapping,
-		"param_override":       account.ParamOverride,
-		"header_override":      account.HeaderOverride,
-		"status_code_mapping":  account.StatusCodeMapping,
-		"rate_limited_until":   account.RateLimitedUntil,
-		"overload_until":       account.OverloadUntil,
-		"temp_disabled_until":  account.TempDisabledUntil,
-		"disabled_reason":      account.DisabledReason,
-		"last_error":           account.LastError,
-		"max_concurrency":      account.MaxConcurrency,
-		"created_time":         account.CreatedTime,
+	response := gin.H{
+		"id":                  account.Id,
+		"channel_id":          account.ChannelId,
+		"name":                account.Name,
+		"key":                 account.GetMaskedKey(),
+		"status":              account.Status,
+		"models":              account.Models,
+		"group":               account.Group,
+		"priority":            account.Priority,
+		"weight":              account.Weight,
+		"last_used_time":      account.LastUsedTime,
+		"used_quota":          account.UsedQuota,
+		"rate_limited_until":  account.RateLimitedUntil,
+		"overload_until":      account.OverloadUntil,
+		"temp_disabled_until": account.TempDisabledUntil,
+		"disabled_reason":     account.DisabledReason,
+		"max_concurrency":     account.MaxConcurrency,
+		"created_time":        account.CreatedTime,
 	}
+	if includeSensitive {
+		response["base_url"] = account.BaseURL
+		response["openai_organization"] = account.OpenAIOrganization
+		response["other"] = account.Other
+		response["setting"] = account.Setting
+		response["settings"] = account.OtherSettings
+		response["model_mapping"] = account.ModelMapping
+		response["param_override"] = account.ParamOverride
+		response["header_override"] = account.HeaderOverride
+		response["status_code_mapping"] = account.StatusCodeMapping
+		response["last_error"] = account.LastError
+	}
+	return response
 }
