@@ -6648,6 +6648,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | 渠道复制结构化审计补齐 | `controller/channel.go`、`controller/audit.go`、`model/channel.go`、`controller/channel_copy_audit_test.go` | 补齐 new-api-main 已有的 `channel.copy` 业务审计参数：复制成功后手动记录 `sourceId/id/name`，避免只依赖中间件兜底的 route/action；同时让单条 `Insert()` 事务化并回填真实新渠道 ID，响应、ability 和审计一致。 |
 | 2026-07-11 | Advanced Custom 请求路径感知选路 | `middleware/distributor.go`、`controller/relay.go`、`service/channel_select.go`、`model/channel_cache.go`、`model/ability.go`、`model/channel_path_select_test.go` | 原生化 new-api-main 的 type 58 path-aware routing：初选、亲和性复用、relay 重试、内存缓存和 DB fallback 均携带 `RequestPath`；仅 Advanced Custom 渠道按 `settings.advanced_custom` 的 `incoming_path` 过滤候选，普通渠道保持原分组/模型/状态语义。 |
 | 2026-07-11 | 订阅套餐启停操作权限原生化 | `router/subscription-router.go`、`router/subscription_router_test.go`、`web/default/src/features/subscriptions/components/data-table-row-actions.tsx`、`web/default/src/features/subscriptions/components/dialogs/toggle-status-dialog.tsx` | 对齐 new-api-main 独立 `PATCH /api/subscription/admin/plans/:id` 状态接口的操作语义，并发展为 NexusTok 原生 Authz 边界：套餐启停从 `subscription.write` 收窄到 `subscription.operate`，编辑套餐内容仍保留 `subscription.write`，前端行操作和确认弹窗同步消费 operate 权限。 |
 | 2026-07-11 | 渠道状态专用 API 与编辑解耦 | `controller/channel.go`、`controller/channel_authz.go`、`router/channel-router.go`、`web/default/src/features/channels/api.ts`、`web/default/src/features/channels/lib/channel-actions.ts` | 原生化 new-api-main 的渠道状态操作边界：新增 `POST /api/channel/:id/status` 与 `/api/channel/status/batch`，通用 `PUT /api/channel/` 拒绝 `status` 字段，前端单个/批量启停改走 `channel.operate` 专用接口；只允许手动启用/禁用，不允许伪造自动禁用状态。 |
@@ -10434,3 +10435,61 @@ NexusTok 当前已经完成 Advanced Custom 的后端 schema、严格校验、re
 4. `go test ./model -run 'Test(FilterChannelsByRequestPath|GetChannelFiltersAdvancedCustomByRequestPath)' -count=1` 通过，单独固定本轮新增 path-aware 选路测试。
 5. `git diff --check` 通过。
 6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；访问 `http://192.168.0.202:3003/api/status` 返回正常状态 JSON，确认 3003 热更新运行态仍可访问。
+
+## 本轮实施评审：渠道复制结构化审计补齐
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的渠道复制 handler 与 Usage Logs 展示链路后确认，new-api-main 在复制渠道成功后会手动写入 `channel.copy` 管理审计，并包含 `sourceId`、新渠道 `id` 和新渠道 `name`。NexusTok 当前默认前端 `web/default/src/features/usage-logs/lib/format.ts` 已经具备 `AUDIT_TEMPLATES` 和 `channel.copy` 本地化模板，管理审计中间件也能对 `POST /api/channel/copy/:id` 兜底记录 action；但兜底审计出于安全边界不会读取请求体或业务结果，因此缺少新渠道 ID、名称和来源渠道 ID。
+
+运行态效果是：Usage Logs 有能力渲染 `Copied channel (source ID: ...) to ...`，但后端没有提供这组业务参数时只能回退到 route/action 级审计，无法达到 new-api-main 的结构化展示完整度。本轮目标是补齐复制成功路径的业务审计参数，同时检查复制接口自身是否能返回真实新渠道 ID。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道复制 handler | `controller/channel.go` | 复制成功后调用 `recordManageAudit(c, "channel.copy", ...)`，写入 `sourceId/id/name`。 |
+| 审计兜底模板 | `controller/audit.go` | 增加 `channel.copy` 英文兜底模板，供导出、旧前端或结构化渲染失败时使用。 |
+| 渠道模型层 | `model/channel.go` | `Channel.Insert()` 改为事务化，保证渠道主记录和 ability 同进同退，同时保留新 ID 回填。 |
+| 回归测试 | `controller/channel_copy_audit_test.go` | 覆盖复制响应 ID、复制后 ability、新渠道关键字段、单条管理日志和 `other.op.params`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新实施索引，并记录本轮需求、影响、风险、方案、实施结果和验证记录。 |
+
+本轮不修改数据库 schema、渠道保存/编辑接口、权限路由、Usage Logs 默认前端模板、日志表结构、审计中间件的兜底策略或渠道密钥脱敏规则。
+
+### 风险评估
+
+1. 重复审计风险：复制 handler 手动写日志后，审计中间件如果继续兜底会产生两条管理日志。本轮复用 `recordManageAudit()`，它会设置 `ContextKeyAuditLogged`，中间件将自动跳过兜底。
+2. 敏感信息泄露风险：复制渠道会保留密钥、BaseURL、settings 和账号池配置，但审计参数只记录 `sourceId`、新 `id` 和 `name`，不记录任何 key、header、auth file、settings 或 upstream URL。
+3. 新 ID 准确性风险：原实现使用 `BatchInsertChannels([]model.Channel{clone})`，调用方的 `clone.Id` 不一定能拿到 GORM 回填的新主键。本轮改为单条 `clone.Insert()`，让响应、审计和 ability 都基于真实新渠道 ID。
+4. 能力表一致性风险：如果单条 `Insert()` 先写渠道再写 ability，ability 失败会留下孤立渠道。本轮同步将 `Channel.Insert()` 改为事务化，保持渠道主记录和 ability 同进同退。
+5. 运行态数据风险：3003 页面验证不执行真实复制，避免创建额外渠道污染当前环境；本轮通过 SQLite controller 测试证明成功路径。
+
+### 方案评审
+
+采用“成功路径手动审计 + 不动前端模板”的最小方案：
+
+1. 保留复制接口路径、query 参数、响应结构和权限边界。
+2. 将复制插入从批量插入改为 `clone.Insert()`，确保新渠道 ID 立即回填。
+3. 插入成功并刷新缓存后调用 `recordManageAudit()`，参数只包含可公开的资源标识。
+4. `Channel.Insert()` 内部使用事务包裹 `Create(channel)` 和 `AddAbilities(tx)`，避免为了 ID 回填牺牲原批量插入路径的原子性。
+5. `controller/audit.go` 增加 `channel.copy` fallback content 模板；默认前端已有 `channel.copy` template，无需新增 i18n key。
+6. 新增 controller 测试，固定复制 ID、ability 和审计 JSON，避免后续退回到只有兜底 action 的审计。
+
+### 实施结果
+
+已完成渠道复制结构化审计补齐：
+
+- `POST /api/channel/copy/:id` 成功后会记录 `channel.copy` 管理审计。
+- 审计 `other.op.params` 包含来源渠道 `sourceId`、新渠道 `id` 和新渠道 `name`。
+- 中间件不会为同一次复制再写兜底日志，避免重复。
+- 复制响应中的 `data.id` 现在是实际新渠道 ID，而不是潜在的零值。
+- 复制后的 ability 仍通过 `Insert()` 的 `AddAbilities()` 创建，并与渠道主记录处于同一事务。
+- Usage Logs 默认前端已有 `channel.copy` 结构化渲染模板，本轮后端参数补齐后即可展示完整复制内容。
+
+### 验证记录
+
+1. `go test ./controller -run 'TestCopyChannelWritesStructuredAuditWithNewChannelID'` 通过，覆盖新渠道 ID 回填、密钥保留、余额重置、ability 创建和 `channel.copy` 审计参数。
+2. `go test ./controller ./middleware ./model` 通过，确认 controller 成功路径、管理审计中间件和事务化 `Channel.Insert()` 模型层回归正常。
+3. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过，确认差异报告格式正常。
+4. `git diff --check` 通过。
+5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮没有在运行态执行真实渠道复制，避免创建额外渠道污染当前环境。

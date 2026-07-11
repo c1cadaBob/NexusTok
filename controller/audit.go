@@ -31,6 +31,7 @@ var auditContentTemplates = map[string]string{
 	"channel.update":               "Updated channel ${name} (ID: ${id})",
 	"channel.delete":               "Deleted channel ${name} (ID: ${id})",
 	"channel.key_view":             "Viewed channel key (ID: ${id})",
+	"channel.copy":                 "Copied channel ${sourceId} to ${name} (ID: ${id})",
 	"redemption.create":            "Created redemption codes ${name}",
 	"redemption.update":            "Updated redemption code ${id}",
 	"redemption.delete":            "Deleted redemption code ${id}",

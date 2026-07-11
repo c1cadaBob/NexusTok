@@ -606,13 +606,25 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
-	if err != nil {
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(channel).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
-	err = channel.AddAbilities(nil)
-	return err
+	if err := channel.AddAbilities(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit().Error
 }
 
 func (channel *Channel) Update() error {

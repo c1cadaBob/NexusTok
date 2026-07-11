@@ -1389,13 +1389,18 @@ func CopyChannel(c *gin.Context) {
 		clone.UsedQuota = 0
 	}
 
-	// insert
-	if err := model.BatchInsertChannels([]model.Channel{clone}); err != nil {
+	// 使用单条插入以回填新渠道 ID，后续响应和管理审计都依赖这个真实 ID。
+	if err := clone.Insert(); err != nil {
 		common.SysError("failed to clone channel: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "复制渠道失败，请稍后重试"})
 		return
 	}
 	model.InitChannelCache()
+	recordManageAudit(c, "channel.copy", map[string]interface{}{
+		"sourceId": id,
+		"id":       clone.Id,
+		"name":     clone.Name,
+	})
 	// success
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"id": clone.Id}})
 }
