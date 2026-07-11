@@ -31,7 +31,6 @@ import { useDebounce } from '@/hooks'
 import {
   ArrowRight,
   AlertCircle,
-  ChevronDown,
   CheckCircle2,
   Circle,
   HelpCircle,
@@ -63,16 +62,7 @@ import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group'
 import { Combobox } from '@/components/ui/combobox'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import {
   Form,
   FormControl,
@@ -4068,7 +4058,7 @@ export function ChannelMutateDrawer({
                                 )}
                               </p>
                             </div>
-                            <ButtonGroup className='max-w-full flex-wrap'>
+                            <div className='flex flex-wrap gap-2'>
                               <Button
                                 type='button'
                                 variant='outline'
@@ -4086,98 +4076,98 @@ export function ChannelMutateDrawer({
                                 <FileText data-icon='inline-start' />
                                 {t('Fill Related Models')}
                               </Button>
+                              <Button
+                                type='button'
+                                variant='outline'
+                                size='sm'
+                                onClick={handleFillAllModels}
+                                disabled={
+                                  !canEditBasicFields || !allModelsList.length
+                                }
+                                title={
+                                  canEditBasicFields
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
+                              >
+                                <Plus data-icon='inline-start' />
+                                {t('Fill All Models')}
+                              </Button>
                               {MODEL_FETCHABLE_TYPES.has(currentType) &&
                                 !isGlobalAccountPoolMode && (
-                                  <>
-                                    <ButtonGroupSeparator />
-                                    <Button
-                                      type='button'
-                                      variant='outline'
-                                      size='sm'
-                                      onClick={handleFetchModels}
-                                      disabled={
-                                        !permissions.canOperate ||
-                                        !canEditBasicFields
-                                      }
-                                      title={
-                                        permissions.canOperate &&
-                                        canEditBasicFields
-                                          ? undefined
-                                          : noPermissionMessage
-                                      }
-                                    >
-                                      <Sparkles data-icon='inline-start' />
-                                      {t('Fetch from Upstream')}
-                                    </Button>
-                                  </>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleFetchModels}
+                                    disabled={
+                                      !permissions.canOperate ||
+                                      !canEditBasicFields
+                                    }
+                                    title={
+                                      permissions.canOperate &&
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <Sparkles data-icon='inline-start' />
+                                    {t('Fetch from Upstream')}
+                                  </Button>
                                 )}
-                              <ButtonGroupSeparator />
-                              <DropdownMenu>
-                                <DropdownMenuTrigger
-                                  render={
-                                    <Button
-                                      type='button'
-                                      variant='outline'
-                                      size='sm'
-                                    />
-                                  }
-                                >
-                                  {t('More')}
-                                  <ChevronDown data-icon='inline-end' />
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align='end'
-                                  className='w-56'
-                                >
-                                  <DropdownMenuGroup>
-                                    <DropdownMenuItem
-                                      onClick={handleFillAllModels}
-                                      disabled={
-                                        !canEditBasicFields ||
-                                        !allModelsList.length
-                                      }
-                                    >
-                                      <Plus />
-                                      {t('Fill All Models')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={handleCopyModels}
-                                      disabled={currentModelsArray.length === 0}
-                                    >
-                                      <Copy />
-                                      {t('Copy All')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={handleClearModels}
-                                      disabled={!canEditBasicFields}
-                                      variant='destructive'
-                                    >
-                                      <Eraser />
-                                      {t('Clear All')}
-                                    </DropdownMenuItem>
-                                  </DropdownMenuGroup>
-                                  {prefillGroups.length > 0 && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuGroup>
-                                        {prefillGroups.map((group) => (
-                                          <DropdownMenuItem
-                                            key={group.id}
-                                            onClick={() =>
-                                              handleAddPrefillGroup(group)
-                                            }
-                                            disabled={!canEditBasicFields}
-                                          >
-                                            <FileText />
-                                            {group.name}
-                                          </DropdownMenuItem>
-                                        ))}
-                                      </DropdownMenuGroup>
-                                    </>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </ButtonGroup>
+                              <Button
+                                type='button'
+                                variant='outline'
+                                size='sm'
+                                onClick={handleCopyModels}
+                                disabled={currentModelsArray.length === 0}
+                              >
+                                <Copy data-icon='inline-start' />
+                                {t('Copy All')}
+                              </Button>
+                              <Button
+                                type='button'
+                                variant='ghost'
+                                size='sm'
+                                onClick={handleClearModels}
+                                disabled={
+                                  !canEditBasicFields ||
+                                  currentModelsArray.length === 0
+                                }
+                                title={
+                                  canEditBasicFields
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
+                              >
+                                <Eraser data-icon='inline-start' />
+                                {t('Clear All')}
+                              </Button>
+                            </div>
+                            {prefillGroups.length > 0 && (
+                              <div className='flex flex-wrap items-center gap-2'>
+                                <span className='text-muted-foreground text-xs'>
+                                  {t('Preset groups')}:
+                                </span>
+                                {prefillGroups.map((group) => (
+                                  <Button
+                                    key={group.id}
+                                    type='button'
+                                    variant='secondary'
+                                    size='sm'
+                                    onClick={() => handleAddPrefillGroup(group)}
+                                    disabled={!canEditBasicFields}
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    {group.name}
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -4186,61 +4176,70 @@ export function ChannelMutateDrawer({
                             control={form.control}
                             name='model_mapping'
                             render={({ field }) => (
-                              <FormItem>
-                                <div className='flex items-center gap-2'>
-                                  <FormLabel className='mb-0'>
-                                    {t('Model Mapping')}
-                                  </FormLabel>
-                                  <Tooltip>
-                                    <TooltipTrigger
-                                      render={
-                                        <Button
-                                          type='button'
-                                          variant='ghost'
-                                          size='icon-sm'
-                                          className='text-muted-foreground hover:text-foreground size-auto p-0'
-                                          aria-label='How model mapping works'
-                                        />
-                                      }
-                                    >
-                                      <HelpCircle className='h-4 w-4' />
-                                    </TooltipTrigger>
-                                    <TooltipContent
-                                      side='top'
-                                      align='start'
-                                      className='max-w-xs space-y-2 text-left'
-                                    >
-                                      <p className='text-xs font-semibold tracking-wide uppercase'>
-                                        {t('Request flow')}
-                                      </p>
-                                      <div className='space-y-1 font-mono text-xs'>
-                                        {mappingPreviewPairs.map((pair) => (
-                                          <div
-                                            key={`${pair.source}-${pair.target}`}
-                                            className='flex items-center gap-1'
-                                          >
-                                            <span>{pair.source}</span>
-                                            <ArrowRight className='h-3.5 w-3.5 opacity-70' />
-                                            <span>{pair.target}</span>
+                              <FormItem className='flex flex-col gap-3'>
+                                <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                  <div className='flex flex-col gap-1'>
+                                    <div className='flex items-center gap-2'>
+                                      <FormLabel className='mb-0'>
+                                        {t('Model Mapping')}
+                                      </FormLabel>
+                                      <Tooltip>
+                                        <TooltipTrigger
+                                          render={
+                                            <Button
+                                              type='button'
+                                              variant='ghost'
+                                              size='icon-sm'
+                                              className='text-muted-foreground hover:text-foreground size-auto p-0'
+                                              aria-label={t(
+                                                'How model mapping works'
+                                              )}
+                                            />
+                                          }
+                                        >
+                                          <HelpCircle aria-hidden='true' />
+                                        </TooltipTrigger>
+                                        <TooltipContent
+                                          side='top'
+                                          align='start'
+                                          className='flex max-w-xs flex-col gap-2 text-left'
+                                        >
+                                          <p className='text-xs font-semibold tracking-wide uppercase'>
+                                            {t('Request flow')}
+                                          </p>
+                                          <div className='flex flex-col gap-1 font-mono text-xs'>
+                                            {mappingPreviewPairs.map((pair) => (
+                                              <div
+                                                key={`${pair.source}-${pair.target}`}
+                                                className='flex items-center gap-1'
+                                              >
+                                                <span>{pair.source}</span>
+                                                <ArrowRight className='size-3.5 opacity-70' />
+                                                <span>{pair.target}</span>
+                                              </div>
+                                            ))}
+                                            {remainingMappingCount > 0 && (
+                                              <div className='text-[11px] opacity-70'>
+                                                +{remainingMappingCount}{' '}
+                                                {t('more mapping')}
+                                                {remainingMappingCount > 1
+                                                  ? 's'
+                                                  : ''}
+                                              </div>
+                                            )}
                                           </div>
-                                        ))}
-                                        {remainingMappingCount > 0 && (
-                                          <div className='text-[11px] opacity-70'>
-                                            +{remainingMappingCount}{' '}
-                                            {t('more mapping')}
-                                            {remainingMappingCount > 1
-                                              ? 's'
-                                              : ''}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <p className='text-[11px] leading-relaxed opacity-80'>
-                                        {t(
-                                          'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
-                                        )}
-                                      </p>
-                                    </TooltipContent>
-                                  </Tooltip>
+                                          <p className='text-[11px] leading-relaxed opacity-80'>
+                                            {t(
+                                              'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+                                            )}
+                                          </p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </div>
+                                    <FormDescription>
+                                      {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
+                                    </FormDescription>
+                                  </div>
                                 </div>
                                 <FormControl>
                                   <ModelMappingEditor
@@ -4255,9 +4254,6 @@ export function ChannelMutateDrawer({
                                     )}
                                   />
                                 </FormControl>
-                                <FormDescription>
-                                  {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
-                                </FormDescription>
                                 {modelMappingGuardrail.invalidJson && (
                                   <Alert variant='destructive' className='mt-3'>
                                     <AlertDescription>

@@ -10957,3 +10957,73 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 15. Chrome Headless 验证期间业务写请求数为 0，没有 `PUT /api/channel`，没有 `Runtime.exceptionThrown`、`Network.loadingFailed`、error/warning console 或 error/warning Log。
 16. 验证后再次调用 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=5`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有污染运行态配置。
 17. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
+
+## 本轮实施评审：编辑渠道页面向 new-api 模型区体验对齐
+
+### 需求分析
+
+用户指出“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面，将当前项目的编辑渠道页面与其对齐。上一轮已经确认模型元信息搜索接口能返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型，并修复了 Enter 键路径；本轮继续聚焦页面体验差异，避免仅修接口而让管理员仍然难以发现和使用批量追加能力。
+
+对比 `new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 与当前实现后，确认分段壳基本一致，主要差异集中在模型区：
+
+1. new-api 的模型快捷操作是平铺按钮，`Fill Related Models`、`Fill All Models`、`Fetch from Upstream`、`Copy All`、`Clear All` 和预设分组入口直接可见；当前项目将一部分操作收进 `More` 菜单，降低了编辑效率。
+2. new-api 的模型映射编辑器使用 `Tabs` 在可视化/JSON 间切换，并能提示 JSON 格式和重复源模型风险；当前项目仍是单按钮切换，非法 JSON 和重复映射提示较弱。
+3. 当前项目已经具备 new-api 没有的供应商收窄、模型元数据搜索、全分页追加、账号池和细粒度权限控制；本轮应吸收 new-api 的直观交互，而不是覆盖这些 NexusTok 原生能力。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道模型区布局 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 将模型快捷操作从 `More` 菜单改为平铺按钮，并把预设分组恢复为可见二级按钮；保留权限禁用、账号池模式和搜索追加逻辑。 |
+| 模型映射编辑器 | `web/default/src/features/channels/components/model-mapping-editor.tsx` | 升级为 `Tabs` 可视化/JSON 双模式，新增重复源模型检测、严格 JSON object 校验和错误提示。 |
+| 模型映射测试 | `web/default/src/features/channels/components/model-mapping-editor.test.ts` | 新增纯函数测试，覆盖合法解析、非法 JSON、非字符串目标值、空入口过滤和重复源模型检测。 |
+| 前端 i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐模型映射错误提示和删除映射 aria-label 的六语种翻译。 |
+| 后端/API/数据库 | 无 | 不修改渠道保存接口、模型搜索接口、模型同步逻辑、数据库结构、relay 或权限后端。 |
+
+### 风险评估
+
+1. 搜索追加回归风险：不能为了对齐 new-api 简化模型选择器而删除 NexusTok 已有的模型元数据搜索和全分页追加。本轮保留 `submitSearchOnEnterWithMatches`、供应商 badge、搜索 footer 和全分页追加逻辑。
+2. 权限回归风险：new-api 页面按钮默认假定管理员可操作；NexusTok 已有 `canEditBasicFields`、`permissions.canOperate` 和账号池限制。本轮平铺按钮仍复用原禁用条件和无权限提示。
+3. 模型映射数据风险：可视化行最终仍写入 `model_mapping` JSON 字符串，重复入口模型会导致 JSON key 覆盖。本轮用重复检测和非法 sentinel 阻止静默保存。
+4. 表单同步风险：可视化模式与 JSON 模式切换时需要保持同一份草稿，外部切换渠道或表单 reset 时也要重新解析当前值。
+5. i18n 风险：新增错误提示必须覆盖 en、zh、fr、ja、ru、vi，并通过同步脚本确认没有遗漏。
+
+### 方案评审
+
+采用“保留当前原生能力 + 移植 new-api 可用性”的方案：
+
+1. 模型快捷操作恢复为平铺按钮，使常用操作不再隐藏在菜单中；预设分组用 secondary 小按钮展示，和 new-api 的直接操作体验一致。
+2. 模型映射编辑器引入 Base UI `Tabs`，默认显示可视化编辑，JSON 模式保留手工编辑能力。
+3. 抽出 `parseModelMappingJson()`、`modelMappingRowsToJson()`、`getDuplicateSources()` 三个纯函数，既便于测试，也让 JSON 约束和可视化行转换规则清晰可维护。
+4. 对重复源模型直接显示错误，并向父表单写入非法 sentinel，确保后续保存前的 JSON 校验会阻断提交。
+5. 保持所有字段名、保存 payload、后端接口和权限裁剪不变，把风险限定在编辑草稿层。
+
+### 实施结果
+
+已完成编辑渠道页模型区对齐：
+
+- `Fill All Models`、`Copy All`、`Clear All` 和预设分组按钮从 `More` 菜单恢复为可见操作，页面更接近 new-api 最新编辑渠道页的直观布局。
+- 模型搜索区域继续显示供应商范围、命中/可新增/已存在统计，并继续支持点击或 Enter 一次性追加搜索命中的多个模型。
+- 模型映射编辑器升级为 `Visual / JSON` Tabs；非法 JSON、非 object JSON、非字符串目标值和重复源模型都会给出明确提示。
+- 可视化映射行仍支持 datalist 补全当前渠道模型和可选目标模型；空入口模型不会写入 JSON，空目标模型会保留为空字符串。
+- 本轮没有修改后端模型同步、渠道保存、模型搜索、账号池、权限矩阵或 relay 行为。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/components/model-mapping-editor.test.ts src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts` 通过，49 个用例全部成功。
+2. `git diff --check` 通过。
+3. `cd web/default && bunx prettier --check src/features/channels/components/model-mapping-editor.tsx src/features/channels/components/model-mapping-editor.test.ts src/features/channels/components/drawers/channel-mutate-drawer.tsx src/i18n/locales/en.json src/i18n/locales/zh.json src/i18n/locales/fr.json src/i18n/locales/ja.json src/i18n/locales/ru.json src/i18n/locales/vi.json` 通过。
+4. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en/zh 缺失为 0，本轮新增键均已覆盖六种语言。fr/ja/ru/vi 仍有历史 untranslated 统计，非本轮新增。
+5. `cd web/default && bun run typecheck` 通过。
+6. `cd web/default && bun run build` 通过。
+7. `docker logs --tail 160 nexustok-frontend-watch` 显示 `[hot] published default dist`。
+8. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200。
+9. Chrome Headless + DevTools Protocol 使用账号 `c1cada` 登录 3003，写入 `localStorage.uid=1` 和完整 `/api/user/self` 用户信息后打开 `http://192.168.0.202:3003/channels`。
+10. 编辑渠道 `11111` 后，模型区真实页面显示 `Fill Related Models`、`Fill All Models`、`Copy All`、`Clear All` 平铺按钮，页面文本中不再出现模型快捷操作的 `More` 菜单。
+11. 模型映射区真实页面显示 `Visual / JSON` Tabs；点击 `JSON` 后出现 8 行 textarea，placeholder 为 `{"original-model": "replacement-model"}`；切回 `Visual` 后继续显示 `Add Mapping`。
+12. 渠道模型区域初始显示 `Selected 3`、`Vendor: OpenAI`，已有模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+13. 在模型输入框输入 `gpt-5.6` 后，页面命中 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，并显示 `3 matched` 相关统计。
+14. 按 Enter 后页面触发 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 全量扫描，未保存草稿变为 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+15. Chrome Headless 验证期间未捕获业务保存写请求，特别是没有 `PUT /api/channel`；也未捕获 `Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别日志。
+16. 验证后通过真实接口重新查询渠道列表，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
+17. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。

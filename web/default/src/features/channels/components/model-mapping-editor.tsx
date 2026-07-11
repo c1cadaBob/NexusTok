@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useEffect, useId } from 'react'
-import { Code, Table, Plus, Trash2 } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Code, Plus, Table, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 
 type ModelMappingEditorProps = {
@@ -32,10 +34,105 @@ type ModelMappingEditorProps = {
   targetModelOptions?: string[]
 }
 
-type MappingRow = {
+export type MappingRow = {
   id: string
   from: string
   to: string
+}
+
+type ModelMappingParseResult =
+  | {
+      ok: true
+      entries: Array<{ from: string; to: string }>
+    }
+  | {
+      ok: false
+      error:
+        | 'Model mapping must be a valid JSON object'
+        | 'Model mapping values must be strings'
+        | 'Model mapping must be valid JSON format'
+    }
+
+const DUPLICATE_MAPPING_SENTINEL = '{ "duplicate_source_models": '
+
+// 识别重复的入口模型。模型映射使用 JSON object 存储，重复 key 会被覆盖；
+// 在可视化编辑时提前拦截，可以避免管理员误以为多个重定向规则都会生效。
+export function getDuplicateSources(
+  rows: readonly Pick<MappingRow, 'from'>[]
+): string[] {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+
+  for (const row of rows) {
+    const source = row.from.trim()
+    if (!source) continue
+    if (seen.has(source)) {
+      duplicates.add(source)
+    } else {
+      seen.add(source)
+    }
+  }
+
+  return Array.from(duplicates)
+}
+
+// 将可视化行转换为后端保存的 JSON 字符串。空入口模型不参与保存，
+// 这样新增空白行不会污染当前渠道的 model_mapping 草稿。
+export function modelMappingRowsToJson(
+  rows: readonly Pick<MappingRow, 'from' | 'to'>[]
+): string {
+  if (rows.length === 0) return ''
+
+  const obj: Record<string, string> = {}
+  rows.forEach((row) => {
+    const source = row.from.trim()
+    if (source) {
+      obj[source] = row.to.trim()
+    }
+  })
+
+  if (Object.keys(obj).length === 0) return ''
+  return JSON.stringify(obj, null, 2)
+}
+
+// 解析 JSON 文本时严格要求 object<string, string>，和后端 model_mapping
+// 语义保持一致；数组、null 和非字符串目标值都应在保存前提示用户修正。
+export function parseModelMappingJson(json: string): ModelMappingParseResult {
+  try {
+    if (!json.trim()) {
+      return { ok: true, entries: [] }
+    }
+
+    const parsed = JSON.parse(json)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        error: 'Model mapping must be a valid JSON object',
+      }
+    }
+
+    const entries = Object.entries(parsed)
+    const invalidValue = entries.find(([, to]) => typeof to !== 'string')
+    if (invalidValue) {
+      return {
+        ok: false,
+        error: 'Model mapping values must be strings',
+      }
+    }
+
+    return {
+      ok: true,
+      entries: entries.map(([from, to]) => ({
+        from,
+        to: String(to),
+      })),
+    }
+  } catch (_error) {
+    return {
+      ok: false,
+      error: 'Model mapping must be valid JSON format',
+    }
+  }
 }
 
 export function ModelMappingEditor({
@@ -49,66 +146,101 @@ export function ModelMappingEditor({
   const [mode, setMode] = useState<'visual' | 'json'>('visual')
   const [rows, setRows] = useState<MappingRow[]>([])
   const [jsonValue, setJsonValue] = useState(value)
+  const [jsonError, setJsonError] = useState<string | null>(null)
   const editorId = useId()
   const sourceOptionsId = `${editorId}-source-models`
   const targetOptionsId = `${editorId}-target-models`
+  const nextRowIdRef = useRef(0)
+  const duplicateSources = useMemo(() => getDuplicateSources(rows), [rows])
 
-  const parseJsonToRows = (json: string) => {
-    try {
-      if (!json.trim()) {
-        setRows([])
-        return
-      }
-      const parsed = JSON.parse(json)
-      const newRows: MappingRow[] = Object.entries(parsed).map(
-        ([from, to], index) => ({
-          id: `${Date.now()}-${index}`,
-          from,
-          to: String(to),
-        })
-      )
-      setRows(newRows)
-    } catch (_error) {
-      // Invalid JSON, keep current rows
-    }
+  const createRowId = () => {
+    nextRowIdRef.current += 1
+    return `mapping-${nextRowIdRef.current}`
   }
 
-  // Parse JSON to rows when value changes externally
+  const parseJsonToRows = (json: string): boolean => {
+    const parsed = parseModelMappingJson(json)
+    if (!parsed.ok) {
+      setJsonError(t(parsed.error))
+      return false
+    }
+
+    setRows((previousRows) => {
+      const remainingRows = [...previousRows]
+      return parsed.entries.map((entry, index) => {
+        const exactIndex = remainingRows.findIndex(
+          (row) => row.from === entry.from && row.to === entry.to
+        )
+        if (exactIndex >= 0) {
+          const [existing] = remainingRows.splice(exactIndex, 1)
+          return existing
+        }
+
+        const sourceIndex = remainingRows.findIndex(
+          (row) => row.from === entry.from
+        )
+        if (sourceIndex >= 0) {
+          const [existing] = remainingRows.splice(sourceIndex, 1)
+          return {
+            id: existing.id,
+            from: entry.from,
+            to: entry.to,
+          }
+        }
+
+        if (previousRows[index]) {
+          return {
+            id: previousRows[index].id,
+            from: entry.from,
+            to: entry.to,
+          }
+        }
+
+        return {
+          id: createRowId(),
+          from: entry.from,
+          to: entry.to,
+        }
+      })
+    })
+    setJsonError(null)
+    return true
+  }
+
+  // 外部表单重置或切换渠道时，同步 JSON 草稿到可视化行。
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setJsonValue(value)
     parseJsonToRows(value)
   }, [value])
 
-  const convertRowsToJson = (updatedRows: MappingRow[]): string => {
-    if (updatedRows.length === 0) {
-      return ''
+  const syncRows = (updatedRows: MappingRow[]) => {
+    setRows(updatedRows)
+    const duplicates = getDuplicateSources(updatedRows)
+    if (duplicates.length > 0) {
+      setJsonError(t('Duplicate source model mappings are not allowed'))
+      setJsonValue(DUPLICATE_MAPPING_SENTINEL)
+      onChange(DUPLICATE_MAPPING_SENTINEL)
+      return
     }
-    const obj: Record<string, string> = {}
-    updatedRows.forEach((row) => {
-      if (row.from.trim()) {
-        obj[row.from.trim()] = row.to.trim()
-      }
-    })
-    return JSON.stringify(obj, null, 2)
+
+    const json = modelMappingRowsToJson(updatedRows)
+    setJsonError(null)
+    setJsonValue(json)
+    onChange(json)
   }
 
   const handleAddRow = () => {
     const newRow: MappingRow = {
-      id: `${Date.now()}`,
+      id: createRowId(),
       from: '',
       to: '',
     }
-    const updatedRows = [...rows, newRow]
-    setRows(updatedRows)
+    syncRows([...rows, newRow])
   }
 
   const handleDeleteRow = (id: string) => {
-    const updatedRows = rows.filter((row) => row.id !== id)
-    setRows(updatedRows)
-    const json = convertRowsToJson(updatedRows)
-    setJsonValue(json)
-    onChange(json)
+    syncRows(rows.filter((row) => row.id !== id))
   }
 
   const handleRowChange = (
@@ -119,10 +251,7 @@ export function ModelMappingEditor({
     const updatedRows = rows.map((row) =>
       row.id === id ? { ...row, [field]: newValue } : row
     )
-    setRows(updatedRows)
-    const json = convertRowsToJson(updatedRows)
-    setJsonValue(json)
-    onChange(json)
+    syncRows(updatedRows)
   }
 
   const handleJsonChange = (newJson: string) => {
@@ -142,43 +271,38 @@ export function ModelMappingEditor({
     parseJsonToRows(template)
   }
 
-  const toggleMode = () => {
-    if (mode === 'visual') {
-      // Switching to JSON mode: sync rows to JSON
-      const json = convertRowsToJson(rows)
-      setJsonValue(json)
-      onChange(json)
+  const handleModeChange = (nextMode: string) => {
+    if (nextMode !== 'visual' && nextMode !== 'json') return
+
+    if (nextMode === 'json') {
+      const duplicates = getDuplicateSources(rows)
+      if (duplicates.length === 0) {
+        const json = modelMappingRowsToJson(rows)
+        setJsonValue(json)
+        onChange(json)
+      }
       setMode('json')
-    } else {
-      // Switching to visual mode: sync JSON to rows
-      parseJsonToRows(jsonValue)
-      setMode('visual')
+      return
     }
+
+    parseJsonToRows(jsonValue)
+    setMode('visual')
   }
 
   return (
-    <div className='space-y-2'>
-      <div className='flex items-center justify-between'>
-        <div className='flex gap-2'>
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={toggleMode}
-            disabled={disabled}
-          >
-            {mode === 'visual' ? (
-              <>
-                <Code className='mr-2 h-4 w-4' />
-                {t('JSON Mode')}
-              </>
-            ) : (
-              <>
-                <Table className='mr-2 h-4 w-4' />
-                {t('Visual Mode')}
-              </>
-            )}
-          </Button>
+    <div className='flex flex-col gap-2'>
+      <Tabs value={mode} onValueChange={handleModeChange} className='gap-2'>
+        <div className='flex items-center justify-between gap-3'>
+          <TabsList>
+            <TabsTrigger value='visual'>
+              <Table data-icon='inline-start' aria-hidden='true' />
+              {t('Visual')}
+            </TabsTrigger>
+            <TabsTrigger value='json'>
+              <Code data-icon='inline-start' aria-hidden='true' />
+              {t('JSON')}
+            </TabsTrigger>
+          </TabsList>
           <Button
             type='button'
             variant='link'
@@ -190,16 +314,30 @@ export function ModelMappingEditor({
             {t('Fill Template')}
           </Button>
         </div>
-      </div>
 
-      {mode === 'visual' ? (
-        <div className='space-y-2'>
+        {jsonError && (
+          <Alert variant='destructive'>
+            <AlertDescription>{jsonError}</AlertDescription>
+          </Alert>
+        )}
+
+        {duplicateSources.length > 0 && (
+          <Alert>
+            <AlertDescription>
+              {t('Duplicate source model(s): {{models}}', {
+                models: duplicateSources.join(', '),
+              })}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <TabsContent value='visual' className='flex flex-col gap-2'>
           {rows.length > 0 ? (
-            <div className='space-y-2'>
+            <div className='flex flex-col gap-2'>
               <div className='grid grid-cols-[1fr_1fr_auto] gap-2 text-sm font-medium'>
                 <div>{t('Original Model')}</div>
                 <div>{t('Replacement Model')}</div>
-                <div className='w-10'></div>
+                <div className='size-8' />
               </div>
               {rows.map((row) => (
                 <div
@@ -238,9 +376,9 @@ export function ModelMappingEditor({
                     size='icon'
                     onClick={() => handleDeleteRow(row.id)}
                     disabled={disabled}
-                    className='h-10 w-10'
+                    aria-label={t('Delete mapping')}
                   >
-                    <Trash2 className='h-4 w-4' />
+                    <Trash2 aria-hidden='true' />
                   </Button>
                 </div>
               ))}
@@ -260,33 +398,39 @@ export function ModelMappingEditor({
             disabled={disabled}
             className='w-full'
           >
-            <Plus className='mr-2 h-4 w-4' />
+            <Plus data-icon='inline-start' />
             {t('Add Mapping')}
           </Button>
-          {sourceModelOptions.length > 0 && (
-            <datalist id={sourceOptionsId}>
-              {sourceModelOptions.map((model) => (
-                <option key={model} value={model} />
-              ))}
-            </datalist>
-          )}
-          {targetModelOptions.length > 0 && (
-            <datalist id={targetOptionsId}>
-              {targetModelOptions.map((model) => (
-                <option key={model} value={model} />
-              ))}
-            </datalist>
-          )}
-        </div>
-      ) : (
-        <Textarea
-          value={jsonValue}
-          onChange={(e) => handleJsonChange(e.target.value)}
-          placeholder={t('{"original-model": "replacement-model"}')}
-          disabled={disabled}
-          rows={8}
-          className={cn('font-mono text-sm')}
-        />
+        </TabsContent>
+        <TabsContent value='json'>
+          <Textarea
+            value={jsonValue}
+            onChange={(e) => handleJsonChange(e.target.value)}
+            placeholder={t('{"original-model": "replacement-model"}')}
+            disabled={disabled}
+            rows={8}
+            className={cn(
+              'font-mono text-sm',
+              jsonError && 'border-destructive'
+            )}
+            aria-invalid={Boolean(jsonError)}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {sourceModelOptions.length > 0 && (
+        <datalist id={sourceOptionsId}>
+          {sourceModelOptions.map((model) => (
+            <option key={model} value={model} />
+          ))}
+        </datalist>
+      )}
+      {targetModelOptions.length > 0 && (
+        <datalist id={targetOptionsId}>
+          {targetModelOptions.map((model) => (
+            <option key={model} value={model} />
+          ))}
+        </datalist>
       )}
     </div>
   )
