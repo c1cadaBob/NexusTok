@@ -10693,3 +10693,61 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 12. Chrome Headless 验证期间未捕获 console error/warning、runtime exception 或 Network loadingFailed。
 13. 扫描 `nexustok-api-hot` 最近 20 分钟容器日志，没有发现 `authz shadow`、`casbin`、`panic`、`fatal` 或 shadow reload/compare 相关错误。
 14. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 与真实 HTTP API 替代 MCP 页面/接口验证。
+
+## 本轮实施评审：渠道编辑页搜索命中完整展示修复
+
+### 需求分析
+
+用户再次反馈“搜索添加时不正确”，并要求继续参考 `/opt/project/new-api-main` 最新编辑渠道页面体验。复查运行态后确认，后端模型元信息完整：`GET /api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 供应商模型。但默认前端渠道编辑抽屉在模型搜索时启用了 `hideSelectedOptionsWhenSearching`，导致已经在渠道模型列表中的 `gpt-5.6-sol` 被下拉候选隐藏，只显示尚未选中的 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+
+这会产生明显的感知偏差：footer 显示 “3 matched · 2 new · 1 already selected”，但候选列表只看得见两个模型。管理员很容易理解为“搜索添加只同步/识别到了两个模型”，尤其是在前序问题已经围绕“gpt-5.6 有三种模型”反复确认时。本轮目标是让搜索命中完整可见：已选模型保留勾选态出现在候选中，批量按钮仍只补齐缺失模型，避免重复写入。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除渠道模型选择器的 `hideSelectedOptionsWhenSearching` 配置，使搜索命中的已选模型也显示在下拉候选中。 |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 不改组件默认行为；其它调用方仍可按需隐藏已选项。 |
+| 后端/API/数据库 | 无 | 不修改模型搜索、渠道保存、能力写入、数据库结构或 relay。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮复现、风险和验证结果。 |
+
+### 风险评估
+
+- 本轮只改变渠道编辑页模型搜索候选展示，不改变 `updateModels`、`transformFormDataToUpdatePayload`、`/api/models/search` 或 `/api/channel` 保存语义。
+- 已选模型显示在候选中后，搜索结果列表会比之前多出已选项，但 Base UI Combobox 会用选中态标记它，反而更接近 new-api “搜索/选择已有模型”的直觉。
+- 批量补齐按钮仍按 `getMissingModelSearchMatches` 只追加当前渠道缺失的模型；例如当前已有 `gpt-5.6-sol` 时，点击按钮只追加 `gpt-5.6-terra` 和 `gpt-5.6-luna`，不会重复加入 sol。
+- 搜索动作仍只改前端表单草稿；管理员必须点击 `Update Channel` 才会保存运行态渠道能力。
+- 当前会话没有浏览器 MCP 工具，页面验证继续使用 Chrome Headless + DevTools Protocol 替代，并在最终记录中明确说明。
+
+### 方案评审
+
+采用最小修复方案：保留 NexusTok 已有远程模型元信息搜索和缺失模型补齐 footer，只取消渠道模型选择器的“搜索时隐藏已选项”策略。这样 `gpt-5.6` 搜索时会同时展示 `gpt-5.6-terra`、`gpt-5.6-luna` 和已选的 `gpt-5.6-sol`；footer 的 “2 new” 只表达可新增数量，不再与候选列表形成视觉矛盾。该方案比移除搜索补齐能力更符合 NexusTok 的原生增强目标，也比继续增加解释性文案更低风险。
+
+### 验收方式
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts`。
+2. `cd web/default && bun run typecheck`。
+3. `cd web/default && bun run build`。
+4. `git diff --check`。
+5. 访问 `http://192.168.0.202:3003/` 和 `/api/status` 确认热更新服务可用；如页面未更新则重启容器后再验证。
+6. 使用 Chrome Headless + CDP 登录 3003，打开 `/channels` 编辑渠道 `11111`，在模型输入框搜索 `gpt-5.6`，确认候选中同时出现 terra、luna、sol，且 footer 仍显示只可新增两个缺失模型。
+
+### 实施结果
+
+已完成渠道编辑页搜索命中完整展示修复。渠道模型 MultiSelect 不再在搜索时隐藏已选模型，因此 `gpt-5.6` 搜索结果会完整展示 `gpt-5.6-terra`、`gpt-5.6-luna` 和已选中的 `gpt-5.6-sol`。footer 保持原有补齐语义，仍显示 `3 matched · 2 new · 1 already selected` 与 `Add 2 new model(s)`，点击后只追加 terra/luna 两个缺失模型，不重复写入 sol。
+
+该调整保留 NexusTok 相比 new-api 更强的模型元信息搜索补齐能力，同时让页面候选展示更接近 new-api 的选择器直觉：搜索命中是什么就完整显示什么，已选项由勾选态表达，而不是从列表中消失。本轮没有修改后端模型搜索接口、渠道保存接口、数据库结构、权限控制、账号池凭据模式或 relay 行为。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，36 个用例全部成功。
+2. `cd web/default && bun run i18n:sync` 通过；本轮没有新增用户可见翻译 key。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. `docker logs --tail 80 nexustok-frontend-watch` 显示 `[hot] published default dist`，确认热更新产物已发布。
+7. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200；`GET /api/status` 返回状态 JSON，3003 服务可访问。
+8. Chrome Headless + CDP 使用账号 `c1cada` 登录 3003，打开 `/channels` 并编辑渠道 `11111`；模型搜索框输入 `gpt-5.6` 后真实触发 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，响应状态 200。
+9. 运行态 popup 文本为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`、`3 matched · 2 new · 1 already selected`、`Add 2 new model(s)` 和缺失模型预览 `gpt-5.6-terra, gpt-5.6-luna`；不再出现 `Add custom model "gpt-5.6"` 误加入口。
+10. Chrome Headless + CDP 真实点击 `Add 2 new model(s)` 后，表单草稿变为 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；验证期间未点击 `Update Channel`，没有保存渠道运行态配置。
+11. 页面验证期间没有捕获 `Runtime.exceptionThrown` 或 `Network.loadingFailed`。
