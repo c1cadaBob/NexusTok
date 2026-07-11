@@ -216,7 +216,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 普通 Usage Logs 已吸收移动端卡片和筛选 Drawer；账号池专用日志仍保留原生筛选与脱敏语义，后续可在不丢账号粒度字段的前提下复用相同交互模式。 |
+| P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 已完成首批账号池专用移动端卡片：Usage Logs、State Logs、Check History 在手机端不再横向滚动表格，并保留账号粒度、状态迁移、检测任务详情和脱敏语义；后续可继续推进筛选 Drawer 与 DataTable 分层。 |
 | P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并保留当前扁平结构；new-api-main 的 core/layout/static/hooks 全量分层仍未迁移。新页面或大改页面可先复用分层思想，避免一次性替换全站表格。 |
 | P2/P3 | Playground 目录结构 polish | `features/playground/components/{chat,input,message}`、`lib/{message,streaming,storage}` | 消息渲染、错误、输入、编辑器、CodeMirror、流式 helper 和大量纯函数测试已原生化；剩余差异主要是目录层级组织，不应为了路径一致而重构，除非后续功能开发自然触碰。 |
 | P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
@@ -8674,3 +8674,70 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 13. Chrome/CDP 记录没有运行时异常、控制台 error/warning 或非取消型网络失败。
 14. 接口复查 `GET /api/channel/1` 返回 `models="gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认页面验证未保存表单草稿、未改变运行态渠道数据。
 15. 验证截图保存于 `/tmp/nexustok-channel-edit-after.png` 与 `/tmp/nexustok-channel-custom-create.png`。
+
+## 本轮实施评审：账号池 History 移动端日志卡片原生化
+
+### 需求分析
+
+对照 `/opt/project/new-api-main` 的 Usage Logs 移动端卡片和筛选体验，NexusTok 普通 Usage Logs 已经完成语义化移动卡片，但账号池 `history` 分区仍使用手写宽表格。账号池日志包含 NexusTok 独有的账号组、账号名、认证类型、状态迁移、检测任务进度和脱敏审计字段，不能直接复用普通 Usage Logs 的 column card，否则会丢失账号粒度和运行态排障语义。
+
+本轮目标是先把 new-api 的“手机端按日志语义阅读”优势转成 NexusTok 原生能力：账号池 `Usage Logs`、`State Logs`、`Check History` 在手机端渲染专用卡片，桌面端继续保留当前表格、分页、导出和清理动作。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 账号池移动端日志卡片 | `web/default/src/features/account-pool/components/account-pool-log-mobile-cards.tsx` | 新增账号池专用移动端列表，分别渲染使用日志、状态日志和检测任务，不复用全局 Usage Logs 的列定义。 |
+| 账号池 History 接入 | `web/default/src/features/account-pool/index.tsx` | 三个 History 子视图在 `md` 以下使用移动端卡片，`md` 及以上保留原桌面表格；账号池内部 Tabs 改为横向滚动，避免手机端换行重叠。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新后续优先队列，并记录本轮需求、方案、风险、实施和运行态验证。 |
+
+本轮没有修改后端接口、数据库、权限、计费、relay、账号池调度、导出接口或检测任务清理逻辑。
+
+### 风险评估
+
+- 字段丢失风险：账号池日志比普通 Usage Logs 多账号组、账号认证类型、before/after 状态、检测任务进度等字段。本轮新增账号池专用组件，避免把账号池数据强行映射成全局日志列。
+- 桌面回归风险：账号池 History 是管理排障高频页面。本轮只在 `md` 以下展示卡片，桌面表格 DOM 和列结构保留，减少运营习惯和宽屏批量扫描回归。
+- 权限与写操作风险：`Export audit`、`Cleanup`、检测任务 `View` 等原按钮继续由原页面控制；移动卡片只读展示，并复用现有 `viewCheckTask`、request/account 筛选回调，不新增写入路径。
+- 移动端布局风险：账号池主分区 Tabs 原先在手机端换行后可能重叠。本轮改为横向滚动，稳定 32px 高度，避免文字和按钮互相遮挡。
+- 热更新验证风险：必须以 `http://192.168.0.202:3003/` 的真实页面为准。本轮用 Chrome headless/CDP 登录 3003 并设置 390px 手机视口验证页面，而不是只依赖本地 build。
+
+### 方案评审
+
+采用“账号池专用卡片 + 桌面表格保留”的低风险方案：
+
+1. 新增 `AccountPoolUsageLogsMobileList`，首行展示模型和账号，字段区展示时间、request、账号、渠道、quota/token/use time、stream 状态、失败状态码、错误信息和 retry index。
+2. 新增 `AccountPoolStateLogsMobileList`，展示 action/source/actor、账号、reason、before/after 状态快照和 next retry，继续支持点击 request/account 复用现有状态日志筛选回调。
+3. 新增 `AccountPoolCheckTasksMobileList`，展示任务 ID、账号组、状态、进度条、通过/失败/跳过数量、actor、created/finished、request、message 和 `View` 按钮。
+4. 对三个列表添加 `data-account-pool-log-mobile-list=usage/state/check` 只读标记，方便运行态验证移动端路径是否真实生效。
+5. 桌面表格容器改为 `hidden md:block`，移动卡片容器使用 `md:hidden`，保持两个端点互不干扰。
+6. 账号池页面内部 Tabs 从 `flex-wrap` 改为横向滚动，避免手机端主分区导航换行重叠。
+7. 不在本轮迁移 `LogsFilterToolbar` 或 `DataTablePage`，因为它们会扩大状态、列显隐和 URL 同步影响面；筛选 Drawer 与 DataTable 分层留作后续切片。
+
+### 实施结果
+
+已完成账号池 History 移动端日志卡片原生化：
+
+- 账号池 Usage Logs 在手机端显示专用空态或卡片，不再显示横向滚动宽表格；当前 3003 运行态 Usage Logs 为空时显示账号池专用空态。
+- 账号池 State Logs 在手机端显示真实状态变更卡片，保留 action/source/actor、账号组、账号认证类型、reason、before/after 状态与 request 筛选入口。
+- 账号池 Check History 在手机端显示真实检测任务卡片，保留进度条、结果统计、actor、created/finished、request、message 和 `View` 入口。
+- 手机端三个 History 子视图可见表格数均为 0，证明移动端路径不再依赖桌面表格横向滚动。
+- 账号池主分区 Tabs 在 390px 视口下高度稳定为 32px，`overflow-x=auto`，不再发生换行重叠。
+- 本轮没有新增 UI 文案；所有使用到的文案均已存在于六语 locale，`i18n:sync` 后无 locale 文件变更。
+
+### 验证记录
+
+1. `cd web/default && bun run typecheck` 通过。
+2. `cd web/default && bun run build` 通过。
+3. `cd web/default && bun run i18n:sync` 通过，未产生 locale 变更。
+4. `cd web/default && bunx prettier --check src/features/account-pool/index.tsx src/features/account-pool/components/account-pool-log-mobile-cards.tsx` 通过。
+5. `git diff --check` 通过。
+6. `cd web/default && bun run format:check` 未通过，但失败列表为仓库既有大量无关格式债；本轮两个账号池文件的 targeted Prettier check 已通过。
+7. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + CDP 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+9. 使用账号 `c1cada` 登录后，以 390px 手机视口打开 `/account-pool/history`，等待 skeleton 消失。
+10. Usage Logs 视图验证：`data-account-pool-log-mobile-list="usage"` 可见，当前运行态为空态，`visibleTables=0`。
+11. State Logs 视图验证：`data-account-pool-log-mobile-list="state"` 可见，真实卡片包含 `Manual delete`、`Admin operations`、actor、request、账号和 before/after 状态，`visibleTables=0`。
+12. Check History 视图验证：`data-account-pool-log-mobile-list="check"` 可见，真实卡片包含任务 `#6`、`Completed`、进度、结果统计、actor、request、message 和 `View` 按钮，`visibleTables=0`。
+13. 账号池主分区 Tabs 验证：手机视口下第一组 Tabs `clientHeight=32`、`overflowX=auto`、`scrollWidth > clientWidth`，不再重叠。
+14. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
+15. 验证截图保存于 `/tmp/nexustok-account-pool-history-mobile-ready.png` 与 `/tmp/nexustok-account-pool-history-mobile-tabs.png`。

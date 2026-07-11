@@ -126,6 +126,11 @@ import {
   updatePoolAccount,
   updatePoolAccountStatus,
 } from './api'
+import {
+  AccountPoolCheckTasksMobileList,
+  AccountPoolStateLogsMobileList,
+  AccountPoolUsageLogsMobileList,
+} from './components/account-pool-log-mobile-cards'
 import { AuthFilesPanel } from './components/auth-files-panel'
 import {
   ACCOUNT_POOL_DEFAULT_SECTION,
@@ -1202,7 +1207,7 @@ export function AccountPool() {
         value={logView}
         onValueChange={(value) => setLogView(value as AccountPoolLogView)}
       >
-        <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+        <TabsList className='max-w-full justify-start overflow-x-auto'>
           {accountPoolLogViews.map((view) => (
             <TabsTrigger key={view} value={view}>
               {accountPoolLogViewLabel(view, t)}
@@ -2517,7 +2522,7 @@ export function AccountPool() {
               </div>
               <div className='flex flex-col gap-2 lg:items-end'>
                 <Tabs value={activeSection} onValueChange={handleSectionChange}>
-                  <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+                  <TabsList className='max-w-full justify-start overflow-x-auto'>
                     {ACCOUNT_POOL_SECTION_IDS.map((section) => (
                       <TabsTrigger key={section} value={section}>
                         {t(accountPoolSectionMeta[section].titleKey)}
@@ -3627,7 +3632,14 @@ export function AccountPool() {
                   onChange={(event) => setUsageLogSearch(event.target.value)}
                 />
               </div>
-              <div className='overflow-x-auto'>
+              <AccountPoolUsageLogsMobileList
+                items={usageLogs}
+                isLoading={usageLogsQuery.isLoading}
+                emptyTitle={t('No usage logs found')}
+                onFilterRequest={filterStateLogsByRequest}
+                onFilterAccount={filterStateLogsByAccount}
+              />
+              <div className='hidden overflow-x-auto md:block'>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -4058,7 +4070,14 @@ export function AccountPool() {
                     )}
                 </div>
               </div>
-              <div className='overflow-x-auto'>
+              <AccountPoolStateLogsMobileList
+                items={stateLogs}
+                isLoading={stateLogsQuery.isLoading}
+                emptyTitle={t('No state logs found')}
+                onFilterRequest={filterStateLogsByRequest}
+                onFilterAccount={filterStateLogsByAccount}
+              />
+              <div className='hidden overflow-x-auto md:block'>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -4254,7 +4273,13 @@ export function AccountPool() {
                   onChange={(event) => setCheckTaskSearch(event.target.value)}
                 />
               </div>
-              <div className='overflow-x-auto'>
+              <AccountPoolCheckTasksMobileList
+                items={checkTasks}
+                isLoading={checkTasksQuery.isLoading}
+                emptyTitle={t('No check tasks found')}
+                onViewTask={viewCheckTask}
+              />
+              <div className='hidden overflow-x-auto md:block'>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -4878,7 +4903,7 @@ export function AccountPool() {
             }
           >
             {!accountForm.id && (
-              <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+              <TabsList className='max-w-full justify-start overflow-x-auto'>
                 <TabsTrigger value='credentials'>
                   <FileJson data-icon='inline-start' />
                   {t('Select Credentials')}
