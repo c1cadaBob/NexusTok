@@ -444,6 +444,35 @@ function formatUnixTime(timestamp: unknown): string {
   return new Date(seconds * 1000).toLocaleString()
 }
 
+function ChannelTypeLogo(props: {
+  type: number
+  size?: number
+  className?: string
+}) {
+  const isKnownType = CHANNEL_TYPE_OPTIONS.some(
+    (option) => option.value === props.type
+  )
+
+  if (!isKnownType) {
+    return (
+      <Server
+        className={cn('text-muted-foreground shrink-0', props.className)}
+        style={{
+          width: props.size ?? 16,
+          height: props.size ?? 16,
+        }}
+        aria-hidden='true'
+      />
+    )
+  }
+
+  return (
+    <span className={cn('inline-flex shrink-0', props.className)}>
+      {getLobeIcon(`${getChannelTypeIcon(props.type)}.Color`, props.size ?? 16)}
+    </span>
+  )
+}
+
 function CardHeading({
   title,
   description,
@@ -768,7 +797,6 @@ export function ChannelMutateDrawer({
   >(null)
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
-  const modelSearchAppendPointerHandledRef = useRef(false)
   const modelSearchAppendRequestSeqRef = useRef(0)
   const isAddingModelSearchMatchesRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
@@ -1330,13 +1358,13 @@ export function ChannelMutateDrawer({
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
-      icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
+      icon: <ChannelTypeLogo type={option.value} size={16} />,
     }))
     if (!options.some((option) => Number(option.value) === currentType)) {
       options.push({
         value: String(currentType),
         label: `#${currentType}`,
-        icon: getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 16),
+        icon: <ChannelTypeLogo type={currentType} size={16} />,
       })
     }
     return options
@@ -2289,8 +2317,8 @@ export function ChannelMutateDrawer({
         <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
-              <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md border'>
-                {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
+              <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
+                <ChannelTypeLogo type={currentType} size={22} />
               </span>
               <span>
                 {isEditing ? t('Edit Channel') : t('Create Channel')}
@@ -2339,10 +2367,9 @@ export function ChannelMutateDrawer({
                 )}
               >
                 <ChannelEditorNav
-                  providerLogo={getLobeIcon(
-                    `${getChannelTypeIcon(currentType)}.Color`,
-                    18
-                  )}
+                  providerLogo={
+                    <ChannelTypeLogo type={currentType} size={18} />
+                  }
                   providerLabel={t(currentTypeLabel)}
                   statusLabel={t(currentStatusLabel)}
                   progressLabel={progressLabel}
@@ -2367,34 +2394,42 @@ export function ChannelMutateDrawer({
                             <FormItem>
                               <FormLabel>{t('Type *')}</FormLabel>
                               <FormControl>
-                                <Combobox
-                                  options={channelTypeOptions}
-                                  value={String(field.value)}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    const nextType = Number(value)
-                                    if (
-                                      Number.isInteger(nextType) &&
-                                      nextType > 0
-                                    ) {
-                                      field.onChange(nextType)
-                                    }
-                                  }}
-                                  placeholder={t('Select channel type')}
-                                  searchPlaceholder={t(
-                                    'Search channel type...'
-                                  )}
-                                  emptyText={t('No channel type found.')}
-                                  allowCustomValue
-                                  className={
-                                    canEditSensitiveFields
-                                      ? undefined
-                                      : 'pointer-events-none opacity-50'
-                                  }
-                                />
+                                <div className='relative'>
+                                  <span className='pointer-events-none absolute top-1/2 left-3 z-10 flex -translate-y-1/2'>
+                                    <ChannelTypeLogo
+                                      type={Number(field.value)}
+                                      size={18}
+                                    />
+                                  </span>
+                                  <Combobox
+                                    options={channelTypeOptions}
+                                    value={String(field.value)}
+                                    onValueChange={(value) => {
+                                      if (!canEditSensitiveFields) {
+                                        toast.error(noPermissionMessage)
+                                        return
+                                      }
+                                      const nextType = Number(value)
+                                      if (
+                                        Number.isInteger(nextType) &&
+                                        nextType > 0
+                                      ) {
+                                        field.onChange(nextType)
+                                      }
+                                    }}
+                                    placeholder={t('Select channel type')}
+                                    searchPlaceholder={t(
+                                      'Search channel type...'
+                                    )}
+                                    emptyText={t('No channel type found.')}
+                                    allowCustomValue
+                                    className={cn(
+                                      'pl-10',
+                                      !canEditSensitiveFields &&
+                                        'pointer-events-none opacity-50'
+                                    )}
+                                  />
+                                </div>
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -2419,29 +2454,33 @@ export function ChannelMutateDrawer({
                         />
                       </div>
 
-                      <FormField
-                        control={form.control}
-                        name='status'
-                        render={({ field }) => (
-                          <FormItem className={sideDrawerSwitchItemClassName()}>
-                            <div className='flex flex-col gap-0.5'>
-                              <FormLabel>{t('Enabled')}</FormLabel>
-                              <FormDescription className='text-xs'>
-                                {t('Enable or disable this channel')}
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value === 1}
-                                disabled={!permissions.canOperate}
-                                onCheckedChange={(checked) =>
-                                  field.onChange(checked ? 1 : 2)
-                                }
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
+                      {!isEditing && (
+                        <FormField
+                          control={form.control}
+                          name='status'
+                          render={({ field }) => (
+                            <FormItem
+                              className={sideDrawerSwitchItemClassName()}
+                            >
+                              <div className='flex flex-col gap-0.5'>
+                                <FormLabel>{t('Enabled')}</FormLabel>
+                                <FormDescription className='text-xs'>
+                                  {t('Enable or disable this channel')}
+                                </FormDescription>
+                              </div>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value === 1}
+                                  disabled={!permissions.canOperate}
+                                  onCheckedChange={(checked) =>
+                                    field.onChange(checked ? 1 : 2)
+                                  }
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       {currentType === 1 && !isGlobalAccountPoolMode && (
                         <FormField
@@ -3894,146 +3933,176 @@ export function ChannelMutateDrawer({
                                     options={modelOptions}
                                     selected={currentModelsArray}
                                     onChange={handleModelsChange}
-                                    placeholder={t('Search models...')}
+                                    placeholder={t(
+                                      'Select models or add custom ones'
+                                    )}
                                     allowCreate
                                     allowCreateWithMatches={false}
-                                    createLabel='Press Enter to use "{{value}}"'
+                                    createLabel='Add custom model "{{value}}"'
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
-                                    isLoading={
-                                      isSearchingModelMeta ||
-                                      isModelSearchDebouncing
-                                    }
-                                    loadingText={t(
-                                      'Searching model metadata...'
-                                    )}
                                     emptyText={t('No matching models')}
-                                    searchValue={modelSearchKeyword}
-                                    onSearchChange={setModelSearchKeyword}
                                     open={modelSelectOpen}
                                     onOpenChange={setModelSelectOpen}
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
-                                    contentHeader={
-                                      shouldShowModelSearchAppend ? (
-                                        <Alert className='border-primary/20 bg-primary/5'>
-                                          <AlertTitle>
-                                            {t('Search results')}
-                                          </AlertTitle>
-                                          <AlertDescription className='mt-2 flex flex-col gap-3'>
-                                            <span>
+                                  />
+                                </FormControl>
+
+                                <FormItem className='mt-4'>
+                                  <FormLabel>
+                                    {t('Search model library')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <InputGroup>
+                                      <InputGroupInput
+                                        value={modelSearchKeyword}
+                                        onChange={(event) =>
+                                          setModelSearchKeyword(
+                                            event.target.value
+                                          )
+                                        }
+                                        onKeyDown={(event) => {
+                                          if (event.key !== 'Enter') return
+                                          event.preventDefault()
+                                          handleAddModelSearchMatches()
+                                        }}
+                                        placeholder={t(
+                                          'Search synced models...'
+                                        )}
+                                        disabled={!canEditBasicFields}
+                                      />
+                                      <InputGroupAddon align='inline-end'>
+                                        {trimmedModelSearchKeyword.length >
+                                          0 && (
+                                          <InputGroupButton
+                                            onClick={clearModelSearch}
+                                            disabled={
+                                              isAddingModelSearchMatches
+                                            }
+                                            title={t('Clear search')}
+                                          >
+                                            {t('Clear')}
+                                          </InputGroupButton>
+                                        )}
+                                        <InputGroupButton
+                                          onClick={handleAddModelSearchMatches}
+                                          disabled={
+                                            !canEditBasicFields ||
+                                            isAddingModelSearchMatches ||
+                                            isSearchingModelMeta ||
+                                            isModelSearchDebouncing ||
+                                            !canRunModelSearchAppend
+                                          }
+                                          title={
+                                            canEditBasicFields
+                                              ? undefined
+                                              : noPermissionMessage
+                                          }
+                                        >
+                                          {isAddingModelSearchMatches ? (
+                                            <Loader2
+                                              data-icon='inline-start'
+                                              className='animate-spin'
+                                            />
+                                          ) : (
+                                            <Plus data-icon='inline-start' />
+                                          )}
+                                          {modelSearchAppendSummary.addableCount >
+                                          0
+                                            ? t('Add {{count}} new model(s)', {
+                                                count:
+                                                  modelSearchAppendSummary.addableCount,
+                                              })
+                                            : t('Add')}
+                                        </InputGroupButton>
+                                      </InputGroupAddon>
+                                    </InputGroup>
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Search synced model metadata and append all unselected matches.'
+                                    )}
+                                  </FormDescription>
+                                </FormItem>
+
+                                {trimmedModelSearchKeyword.length > 0 && (
+                                  <Alert className='border-primary/20 bg-primary/5 mt-3'>
+                                    <AlertTitle>
+                                      {t('Search results')}
+                                    </AlertTitle>
+                                    <AlertDescription className='mt-2 flex flex-col gap-2'>
+                                      {isSearchingModelMeta ||
+                                      isModelSearchDebouncing ? (
+                                        <span>
+                                          {t('Searching model metadata...')}
+                                        </span>
+                                      ) : shouldShowModelSearchAppend ? (
+                                        <>
+                                          <span>
+                                            {t(
+                                              '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                              {
+                                                matched:
+                                                  modelSearchAppendSummary.matchedCount,
+                                                addable:
+                                                  modelSearchAppendSummary.addableCount,
+                                                existing:
+                                                  modelSearchAppendSummary.existingCount,
+                                              }
+                                            )}
+                                          </span>
+                                          {unscannedModelSearchResultCount >
+                                            0 && (
+                                            <span className='text-muted-foreground text-sm'>
                                               {t(
-                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                '{{count}} more result(s) will be checked when adding',
                                                 {
-                                                  matched:
-                                                    modelSearchAppendSummary.matchedCount,
-                                                  addable:
-                                                    modelSearchAppendSummary.addableCount,
-                                                  existing:
-                                                    modelSearchAppendSummary.existingCount,
+                                                  count:
+                                                    unscannedModelSearchResultCount,
                                                 }
                                               )}
                                             </span>
-                                            {unscannedModelSearchResultCount >
-                                              0 && (
-                                              <span className='text-muted-foreground text-sm'>
-                                                {t(
-                                                  '{{count}} more result(s) will be checked when adding',
-                                                  {
-                                                    count:
-                                                      unscannedModelSearchResultCount,
-                                                  }
+                                          )}
+                                          {modelSearchAppendPlan.totalCount >
+                                          0 ? (
+                                            <span className='text-sm'>
+                                              <span className='break-all'>
+                                                {modelSearchMissingPreview.join(
+                                                  ', '
                                                 )}
                                               </span>
-                                            )}
-                                            {modelSearchAppendPlan.totalCount >
-                                            0 ? (
-                                              <span className='text-sm'>
-                                                <span className='break-all'>
-                                                  {modelSearchMissingPreview.join(
-                                                    ', '
+                                              {modelSearchMissingOmittedCount >
+                                                0 && (
+                                                <span className='ml-1'>
+                                                  {t(
+                                                    '({{total}} total, {{omit}} omitted)',
+                                                    {
+                                                      total:
+                                                        modelSearchAppendPlan.totalCount,
+                                                      omit: modelSearchMissingOmittedCount,
+                                                    }
                                                   )}
                                                 </span>
-                                                {modelSearchMissingOmittedCount >
-                                                  0 && (
-                                                  <span className='ml-1'>
-                                                    {t(
-                                                      '({{total}} total, {{omit}} omitted)',
-                                                      {
-                                                        total:
-                                                          modelSearchAppendPlan.totalCount,
-                                                        omit: modelSearchMissingOmittedCount,
-                                                      }
-                                                    )}
-                                                  </span>
-                                                )}
-                                              </span>
-                                            ) : (
-                                              <span className='text-muted-foreground text-sm'>
-                                                {t(
-                                                  'No new search results to add'
-                                                )}
-                                              </span>
-                                            )}
-                                            <Button
-                                              type='button'
-                                              variant='default'
-                                              size='sm'
-                                              className='w-full'
-                                              onPointerDown={(event) => {
-                                                event.preventDefault()
-                                                event.stopPropagation()
-                                                modelSearchAppendPointerHandledRef.current = true
-                                                handleAddModelSearchMatches()
-                                                window.setTimeout(() => {
-                                                  modelSearchAppendPointerHandledRef.current = false
-                                                }, 0)
-                                              }}
-                                              onClick={(event) => {
-                                                if (
-                                                  modelSearchAppendPointerHandledRef.current
-                                                ) {
-                                                  event.preventDefault()
-                                                  event.stopPropagation()
-                                                  return
-                                                }
-                                                handleAddModelSearchMatches()
-                                              }}
-                                              disabled={
-                                                !canEditBasicFields ||
-                                                isAddingModelSearchMatches ||
-                                                !canRunModelSearchAppend
-                                              }
-                                              title={
-                                                canEditBasicFields
-                                                  ? undefined
-                                                  : noPermissionMessage
-                                              }
-                                            >
-                                              {isAddingModelSearchMatches && (
-                                                <Loader2
-                                                  data-icon='inline-start'
-                                                  className='animate-spin'
-                                                />
                                               )}
-                                              {modelSearchAppendSummary.addableCount >
-                                              0
-                                                ? t(
-                                                    'Add {{count}} new model(s)',
-                                                    {
-                                                      count:
-                                                        modelSearchAppendSummary.addableCount,
-                                                    }
-                                                  )
-                                                : t('Scan all search results')}
-                                            </Button>
-                                          </AlertDescription>
-                                        </Alert>
-                                      ) : undefined
-                                    }
-                                  />
-                                </FormControl>
+                                            </span>
+                                          ) : (
+                                            <span className='text-muted-foreground text-sm'>
+                                              {t(
+                                                'No new search results to add'
+                                              )}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className='text-muted-foreground text-sm'>
+                                          {t('No matching models')}
+                                        </span>
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                )}
                                 {modelMappingGuardrail.exposedTargetModels
                                   .length > 0 && (
                                   <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>

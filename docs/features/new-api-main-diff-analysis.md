@@ -9503,6 +9503,14 @@ NexusTok 当前已经有 `authz_roles`、`casbin_rule`、Root/Admin 内置角色
 
 ## 本轮实施评审：编辑渠道页搜索追加上下文与 new-api 页面体验对齐
 
+### 2026-07-11 补充复核
+
+用户再次反馈“搜索添加时不正确”，并要求继续按 `/opt/project/new-api-main` 最新编辑渠道页对齐。复核 3003 运行态后确认：`/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回的是 3 条 OpenAI 精确模型，分别为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，`vendor_id=1`、`name_rule=0`。因此本轮不改模型同步和供应商归属，而是修正默认前端的搜索追加交互层。
+
+上一轮已补充搜索上下文校验和全量分页扫描，但批量追加按钮仍放在 `MultiSelect` 下拉内容里。这个位置会与候选选中、弹层关闭、输入清空等 Combobox 行为争抢状态，用户搜索 `gpt-5.6` 时容易只选中一个候选，误以为“搜索添加”只同步了一个模型。本轮将远程模型库搜索从模型多选弹层中独立出来，新增 `Search model library` 输入、稳定的 `Search results` 摘要和独立追加按钮；模型多选本身继续负责本地选择/自定义模型，避免把模型族前缀 `gpt-5.6` 误写为一个真实模型。
+
+页面对齐方面，本轮继续吸收 new-api 最新编辑渠道页的低风险结构细节：渠道类型图标抽象为 `ChannelTypeLogo`，未知自定义类型回退为 `Server` 图标；抽屉标题、左侧导航和 Type 输入框使用同一 Logo 表达；编辑渠道时不再在基础信息区展示 `Enabled` 开关，保持编辑页更聚焦配置内容，渠道启停仍由渠道列表操作入口承担。NexusTok 的细粒度权限、账号池、Codex OAuth、模型映射 guardrail、上游模型检测和高级设置子导航继续保留。
+
 ### 需求分析
 
 本轮用户反馈集中在两个点：第一，编辑渠道时搜索 `gpt-5.6` 后“搜索添加”不正确；第二，希望将当前编辑渠道页面与 `/opt/project/new-api-main` 最新编辑渠道页面对齐。
@@ -9549,9 +9557,14 @@ NexusTok 当前已经有 `authz_roles`、`casbin_rule`、Root/Admin 内置角色
 已完成以下改动：
 
 - 修复模型搜索追加使用旧关键词、旧搜索结果或旧渠道上下文的问题。
+- 将远程模型库搜索从模型多选弹层内部迁移为独立的 `Search model library` 输入和 `Search results` 摘要，避免批量追加按钮被 Combobox 候选选中/关闭行为干扰。
+- `gpt-5.6` 这类模型族关键词会展示 `3 matched · 2 new · 1 already selected`，追加按钮只合并未选择的 `gpt-5.6-terra`、`gpt-5.6-luna`，不会写入前缀 `gpt-5.6`。
 - 搜索结果摘要与追加按钮只在当前关键词对应的搜索结果有效时出现。
 - 点击 `Add 2 new model(s)` 会全量扫描搜索接口分页结果，并只追加当前渠道缺失的模型。
+- 多选框继续允许选择已有模型和添加自定义模型，但在已有匹配候选时不会把搜索前缀误创建为自定义模型。
 - 编辑渠道抽屉与 new-api 最新页面在抽屉宽度、左侧导航宽度和基础字段顺序上对齐。
+- 渠道类型 Logo 对齐 new-api 的统一展示方式，并对未知自定义渠道类型提供稳定 fallback。
+- 编辑态基础信息区隐藏 `Enabled` 开关，渠道运行态启停继续保留在渠道列表操作中。
 - Codex 新建渠道时 `Credential Mode` 不再展示 `Multi-Key Rotation`，`Add Mode` 只保留 `Single Key`。
 - Vertex API Key 新建渠道同样会自动回落到单 key 创建，避免提交后被表单校验拒绝。
 - 模型映射可从当前渠道模型中补全源模型，并可从系统模型候选中补全目标模型。
@@ -9562,14 +9575,18 @@ NexusTok 当前已经有 `authz_roles`、`casbin_rule`、Root/Admin 内置角色
 1. `git diff --check` 通过。
 2. `cd web/default && bun test src/features/channels/lib/model-search.test.ts` 通过，模型搜索相关 16 个用例全部成功。
 3. `cd web/default && bun run typecheck` 通过。
-4. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
-5. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
-6. 使用账号 `c1cada` 登录 3003 后进入 `/channels`，打开渠道 `11111` 的 `Edit Channel` 抽屉；页面验证到 `sm:max-w-5xl`、`lg:grid-cols-[13rem_minmax(0,1fr)]` 已生效，基础字段顺序为 `Type *`、`Name *`、`Enabled`。
-7. 在模型搜索输入中真实输入 `gpt-5.6`，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，展示 `Search results`、`3 matched · 2 new · 1 already selected`、`Add 2 new model(s)`，并包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
-8. 点击 `Add 2 new model(s)` 后，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 做追加扫描，表单草稿显示 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
-9. 验证后通过页面上下文请求 `/api/channel/?p=1&page_size=5`，渠道 `11111` 后端保存值仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有误保存草稿。
-10. 新建渠道场景中真实选择 `Codex` 类型后，`Credential Mode` 下拉选项为 `Single Key`、`Account Pool`，不包含 `Multi-Key Rotation`；`Add Mode` 下拉仅包含 `Single Key`。
-11. Chrome/CDP 验证期间没有 console error/warning、运行时 exception 或网络失败。
+4. `cd web/default && bun run i18n:sync` 通过，确认新增文案已进入六语 locale。
+5. `cd web/default && bunx eslint src/features/channels/components/drawers/channel-mutate-drawer.tsx` 通过。
+6. `cd web/default && bunx prettier --check src/features/channels/components/drawers/channel-mutate-drawer.tsx src/i18n/locales/en.json src/i18n/locales/zh.json src/i18n/locales/fr.json src/i18n/locales/ja.json src/i18n/locales/ru.json src/i18n/locales/vi.json ../../docs/features/new-api-main-diff-analysis.md` 通过。
+7. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+9. 使用账号 `c1cada` 登录 3003 后进入 `/channels`，打开渠道 `11111` 的 `Edit Channel` 抽屉；页面验证到 `sm:max-w-5xl`、`lg:grid-cols-[13rem_minmax(0,1fr)]` 已生效，基础字段顺序为 `Type *`、`Name *`，编辑态基础信息区不展示 `Enabled` 表单 label。
+10. 抽屉中可见独立 `Search model library` 输入，placeholder 为 `Search synced models...`，初始追加按钮禁用。
+11. 在 `Search model library` 输入中真实输入 `gpt-5.6`，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50`，展示 `Search results`、`3 matched · 2 new · 1 already selected`、`Add 2 new model(s)`，并包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+12. 点击 `Add 2 new model(s)` 后，页面请求 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 做追加扫描，表单草稿显示 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+13. 验证后通过页面上下文请求 `/api/channel/?p=1&page_size=5`，渠道 `11111` 后端保存值仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有误保存草稿。
+14. 新建渠道场景中真实选择 `Codex` 类型后，`Credential Mode` 下拉选项为 `Single Key`、`Account Pool`，不包含 `Multi-Key Rotation`；`Add Mode` 下拉仅包含 `Single Key`。
+15. Chrome/CDP 验证期间没有 console error、运行时 exception 或网络失败；唯一 console info 为 i18next/Locize 提示，不属于本次变更错误。
 
 ## 本轮实施评审：Authz 用户 override Casbin 兼容镜像
 
