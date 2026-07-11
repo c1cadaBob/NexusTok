@@ -1,0 +1,178 @@
+package authz
+
+import (
+	"testing"
+
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPersistentRolesReturnsStoredRolesAndGrants(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	require.NoError(t, db.Create(&model.AuthzRole{
+		Key:         "auditor",
+		Name:        "Auditor",
+		Description: "Read-only audit role",
+		Enabled:     true,
+		Sort:        20,
+	}).Error)
+	require.NoError(t, db.Create(&model.CasbinRule{
+		Ptype: "p",
+		V0:    RoleSubject("auditor"),
+		V1:    ResourceUsageLog,
+		V2:    ActionRead,
+		V3:    EffectAllow,
+	}).Error)
+
+	roles, err := PersistentRoles()
+	require.NoError(t, err)
+	require.Len(t, roles, 3)
+
+	root := requirePersistentRole(t, roles, BuiltInRoleRoot)
+	assert.True(t, root.Superuser)
+	assert.True(t, root.RuntimeManaged)
+	assert.True(t, root.Grants[ResourceSystemSetting][ActionSecretView])
+	assert.Zero(t, root.PolicyCount)
+
+	admin := requirePersistentRole(t, roles, BuiltInRoleAdmin)
+	assert.False(t, admin.Superuser)
+	assert.True(t, admin.RuntimeManaged)
+	assert.True(t, admin.Grants[ResourceChannel][ActionWrite])
+	assert.False(t, admin.Grants[ResourceChannel][ActionSensitiveWrite])
+	assert.Greater(t, admin.PolicyCount, 0)
+
+	auditor := requirePersistentRole(t, roles, "auditor")
+	assert.False(t, auditor.BuiltIn)
+	assert.False(t, auditor.RuntimeManaged)
+	assert.Equal(t, "Read-only audit role", auditor.Description)
+	assert.True(t, auditor.Grants[ResourceUsageLog][ActionRead])
+	assert.False(t, auditor.Grants[ResourceChannel][ActionRead])
+	assert.Equal(t, 1, auditor.PolicyCount)
+}
+
+func TestUpdateRolePoliciesDefaultsToDryRun(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	req := RolePolicyUpdateRequest{
+		Grants: PermissionsMap{
+			ResourceChannel: {
+				ActionRead: true,
+			},
+		},
+	}
+	result, err := UpdateRolePolicies(BuiltInRoleAdmin, req)
+	require.NoError(t, err)
+	assert.True(t, result.DryRun)
+	assert.False(t, result.Applied)
+	assert.False(t, result.Reloaded)
+	assert.Equal(t, 1, result.NewPolicyCount)
+	assert.True(t, result.DeletedPolicyCount > 0)
+
+	var policyCount int64
+	require.NoError(t, db.Model(&model.CasbinRule{}).
+		Where("ptype = ? AND v0 = ?", "p", RoleSubject(BuiltInRoleAdmin)).
+		Count(&policyCount).Error)
+	assert.Greater(t, policyCount, int64(1))
+	assert.True(t, Can(7, common.RoleAdminUser, ChannelWrite))
+}
+
+func TestUpdateRolePoliciesAppliesAndReloadsAdminSnapshot(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	admin := requirePersistentRoleFromService(t, BuiltInRoleAdmin)
+	admin.Grants[ResourceChannel][ActionWrite] = false
+	req := RolePolicyUpdateRequest{
+		DryRun: boolPtr(false),
+		Grants: admin.Grants,
+	}
+
+	result, err := UpdateRolePolicies(BuiltInRoleAdmin, req)
+	require.NoError(t, err)
+	assert.False(t, result.DryRun)
+	assert.True(t, result.Applied)
+	assert.True(t, result.Reloaded)
+	assert.Equal(t, 1, result.DeletedPolicyCount)
+	assert.False(t, result.Grants[ResourceChannel][ActionWrite])
+	assert.False(t, Can(7, common.RoleAdminUser, ChannelWrite))
+	assert.True(t, Can(7, common.RoleAdminUser, ChannelRead))
+
+	var policyCount int64
+	require.NoError(t, db.Model(&model.CasbinRule{}).
+		Where("ptype = ? AND v0 = ? AND v1 = ? AND v2 = ?", "p", RoleSubject(BuiltInRoleAdmin), ResourceChannel, ActionWrite).
+		Count(&policyCount).Error)
+	assert.Zero(t, policyCount)
+}
+
+func TestUpdateRolePoliciesRejectsRootRole(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	_, err := UpdateRolePolicies(BuiltInRoleRoot, RolePolicyUpdateRequest{
+		DryRun: boolPtr(false),
+		Grants: PermissionsMap{
+			ResourceChannel: {
+				ActionRead: true,
+			},
+		},
+	})
+	require.ErrorIs(t, err, errAuthzRootRoleReadOnly)
+	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
+}
+
+func TestUpdateRolePoliciesRejectsUnknownPermission(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	_, err := UpdateRolePolicies(BuiltInRoleAdmin, RolePolicyUpdateRequest{
+		Grants: PermissionsMap{
+			ResourceChannel: {
+				"unknown": true,
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown")
+}
+
+func TestUpdateRolePoliciesRejectsDisabledRole(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	require.NoError(t, db.Create(&model.AuthzRole{
+		Key:     "disabled",
+		Name:    "Disabled",
+		Enabled: false,
+		Sort:    30,
+	}).Error)
+
+	_, err := UpdateRolePolicies("disabled", RolePolicyUpdateRequest{
+		Grants: PermissionsMap{
+			ResourceChannel: {
+				ActionRead: true,
+			},
+		},
+	})
+	require.ErrorIs(t, err, errAuthzRoleDisabled)
+}
+
+func requirePersistentRoleFromService(t *testing.T, key string) RolePolicyDescriptor {
+	t.Helper()
+	roles, err := PersistentRoles()
+	require.NoError(t, err)
+	return requirePersistentRole(t, roles, key)
+}
+
+func requirePersistentRole(t *testing.T, roles []RolePolicyDescriptor, key string) RolePolicyDescriptor {
+	t.Helper()
+	for _, role := range roles {
+		if role.Key == key {
+			return role
+		}
+	}
+	t.Fatalf("persistent role %s should exist", key)
+	return RolePolicyDescriptor{}
+}

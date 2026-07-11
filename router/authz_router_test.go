@@ -21,6 +21,8 @@ func TestRegisterAuthzRoutesKeepsCatalogHandler(t *testing.T) {
 
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/catalog", controller.GetPermissionCatalog)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/policies/export", controller.ExportPermissionPolicies)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/roles", controller.ListPermissionRoles)
+	assertRouteHandler(t, engine, http.MethodPut, "/api/authz/roles/:key/policies", controller.UpdatePermissionRolePolicies)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/authz/policies/import", controller.ImportPermissionPolicies)
 }
 
@@ -34,6 +36,16 @@ func TestAuthzPermissionRoutesClassifyCatalog(t *testing.T) {
 	assert.Equal(t, authz.SystemSettingSecretView, exportRoute.permission)
 	assert.Len(t, exportRoute.before, 1)
 	assert.Empty(t, exportRoute.after)
+
+	rolesRoute := requireAuthzPermissionRoute(t, http.MethodGet, "/roles")
+	assert.Equal(t, authz.SystemSettingSecretView, rolesRoute.permission)
+	assert.Len(t, rolesRoute.before, 1)
+	assert.Empty(t, rolesRoute.after)
+
+	updateRoleRoute := requireAuthzPermissionRoute(t, http.MethodPut, "/roles/:key/policies")
+	assert.Equal(t, authz.SystemSettingSensitiveWrite, updateRoleRoute.permission)
+	assert.Len(t, updateRoleRoute.before, 1)
+	assert.Empty(t, updateRoleRoute.after)
 
 	importRoute := requireAuthzPermissionRoute(t, http.MethodPost, "/policies/import")
 	assert.Equal(t, authz.SystemSettingSensitiveWrite, importRoute.permission)

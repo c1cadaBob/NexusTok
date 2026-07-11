@@ -32,6 +32,40 @@ func ExportPermissionPolicies(c *gin.Context) {
 	common.ApiSuccess(c, export)
 }
 
+// ListPermissionRoles 返回持久化角色模板及当前策略矩阵。
+//
+// 角色矩阵会暴露管理面的完整授权边界，因此路由层必须保持 Root-only，并叠加
+// system_setting.secret_view 权限分类；controller 只负责转发 service 的稳定 DTO。
+func ListPermissionRoles(c *gin.Context) {
+	roles, err := authz.PersistentRoles()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"roles": roles,
+	})
+}
+
+// UpdatePermissionRolePolicies 校验并可选替换指定角色策略。
+//
+// 请求默认 dry-run；真正写库需要显式传入 `dry_run:false`。Root 角色策略在
+// service 层保持只读，避免把 superuser 语义降级成普通 allow 列表。
+func UpdatePermissionRolePolicies(c *gin.Context) {
+	var req authz.RolePolicyUpdateRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	result, err := authz.UpdateRolePolicies(c.Param("key"), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
 // ImportPermissionPolicies 校验并可选导入持久化权限策略快照。
 //
 // 导入是高风险写操作：默认只 dry-run；真正写库必须由 Root 显式传入
