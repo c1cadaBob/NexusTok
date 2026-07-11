@@ -263,11 +263,7 @@ export const channelFormSchema = z
       !usesGlobalAccountPool(data) &&
       !data.other?.trim()
     ) {
-      addRequiredIssue(
-        ctx,
-        'other',
-        ERROR_MESSAGES.REQUIRED_EXTRA_CONFIG
-      )
+      addRequiredIssue(ctx, 'other', ERROR_MESSAGES.REQUIRED_EXTRA_CONFIG)
     }
 
     if (data.type === 57) {
@@ -279,11 +275,7 @@ export const channelFormSchema = z
         )
       }
       if (data.key?.trim() && !isCodexCredential(data.key)) {
-        addRequiredIssue(
-          ctx,
-          'key',
-          ERROR_MESSAGES.INVALID_CODEX_CREDENTIAL
-        )
+        addRequiredIssue(ctx, 'key', ERROR_MESSAGES.INVALID_CODEX_CREDENTIAL)
       }
     }
 
@@ -293,11 +285,7 @@ export const channelFormSchema = z
       data.key?.trim() &&
       !isVertexJsonKey(data.key)
     ) {
-      addRequiredIssue(
-        ctx,
-        'key',
-        ERROR_MESSAGES.INVALID_VERTEX_JSON_KEY
-      )
+      addRequiredIssue(ctx, 'key', ERROR_MESSAGES.INVALID_VERTEX_JSON_KEY)
     }
 
     if (
@@ -604,14 +592,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   // 字段透传开关必须按渠道类型保存，避免把仅某个 provider 支持的字段带到其他渠道。
-  // OpenAI 和 Anthropic 共享 allow_service_tier；store、safety_identifier 等仅 OpenAI 使用。
-  if (formData.type === 1 || formData.type === 14) {
+  // Codex 走 OpenAI 兼容请求链路，需要与 OpenAI 一样持久化相关透传开关；
+  // 否则编辑页能看到开关但保存后会丢失，形成 UI 与后端语义不一致。
+  if (formData.type === 1 || formData.type === 14 || formData.type === 57) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
     delete settingsObj.allow_service_tier
   }
 
-  if (formData.type === 1) {
+  if (formData.type === 1 || formData.type === 57) {
     settingsObj.disable_store = formData.disable_store === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true
@@ -684,6 +673,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   return JSON.stringify(settingsObj)
 }
 
+function normalizeBaseUrl(value: string | undefined): string {
+  return String(value || '')
+    .trim()
+    .replace(/\/+$/, '')
+}
+
 /**
  * 将创建表单转换为后端创建 payload。
  *
@@ -712,7 +707,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     base_url:
       credentialMode === 'global_account_pool'
         ? null
-        : formData.base_url || null,
+        : normalizeBaseUrl(formData.base_url) || null,
     key:
       credentialMode === 'global_account_pool'
         ? 'global_account_pool'
@@ -788,7 +783,7 @@ export function transformFormDataToUpdatePayload(
     base_url:
       credentialMode === 'global_account_pool'
         ? null
-        : formData.base_url || null,
+        : normalizeBaseUrl(formData.base_url) || null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -839,7 +834,16 @@ export function transformFormDataToUpdatePayload(
     }
   })
 
-  // 这些 JSON/text 字段需要允许用户清空；显式发送空字符串可让 GORM 更新旧值。
+  // 这些 nullable 文本字段需要允许用户清空；显式发送空字符串可让 GORM 更新旧值。
+  // 这与 new-api 最新编辑页保持一致，也避免管理员在 UI 清空后后端仍保留旧值。
+  payload.base_url =
+    credentialMode === 'global_account_pool'
+      ? ''
+      : normalizeBaseUrl(formData.base_url) || ''
+  payload.openai_organization = formData.openai_organization || ''
+  payload.test_model = formData.test_model || ''
+  payload.tag = formData.tag || ''
+  payload.remark = formData.remark || ''
   payload.model_mapping = formData.model_mapping || ''
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
+import type { Channel } from '../types'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   channelFormSchema,
@@ -25,7 +26,6 @@ import {
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
 } from './channel-form'
-import type { Channel } from '../types'
 
 function makeValidChannelForm(
   overrides: Partial<ChannelFormValues> = {}
@@ -290,5 +290,105 @@ describe('渠道表单 settings 转换', () => {
     >
 
     assert.equal(settings.disable_task_polling_sleep, true)
+  })
+
+  test('Codex 渠道保存 OpenAI 兼容字段透传开关', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        type: 57,
+        allow_service_tier: true,
+        disable_store: true,
+        allow_safety_identifier: true,
+        allow_include_obfuscation: true,
+        allow_inference_geo: true,
+      }),
+      1
+    )
+
+    const settings = JSON.parse(String(payload.settings || '{}')) as Record<
+      string,
+      unknown
+    >
+
+    assert.equal(settings.allow_service_tier, true)
+    assert.equal(settings.disable_store, true)
+    assert.equal(settings.allow_safety_identifier, true)
+    assert.equal(settings.allow_include_obfuscation, true)
+    assert.equal(settings.allow_inference_geo, true)
+  })
+
+  test('非 OpenAI 兼容渠道会清理历史字段透传开关', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        type: 33,
+        settings: JSON.stringify({
+          allow_service_tier: true,
+          disable_store: true,
+          allow_safety_identifier: true,
+          allow_include_obfuscation: true,
+          allow_inference_geo: true,
+          allow_speed: true,
+          claude_beta_query: true,
+        }),
+      }),
+      1
+    )
+
+    const settings = JSON.parse(String(payload.settings || '{}')) as Record<
+      string,
+      unknown
+    >
+
+    assert.equal('allow_service_tier' in settings, false)
+    assert.equal('disable_store' in settings, false)
+    assert.equal('allow_safety_identifier' in settings, false)
+    assert.equal('allow_include_obfuscation' in settings, false)
+    assert.equal('allow_inference_geo' in settings, false)
+    assert.equal('allow_speed' in settings, false)
+    assert.equal('claude_beta_query' in settings, false)
+  })
+})
+
+describe('渠道表单更新 payload', () => {
+  test('更新时规范化 Base URL 并显式发送可清空字段', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        base_url: ' https://api.example.com/// ',
+        openai_organization: '',
+        test_model: '',
+        tag: '',
+        remark: '',
+        model_mapping: '',
+        status_code_mapping: '',
+        param_override: '',
+        header_override: '',
+      }),
+      7
+    )
+
+    assert.equal(payload.base_url, 'https://api.example.com')
+    assert.equal(payload.openai_organization, '')
+    assert.equal(payload.test_model, '')
+    assert.equal(payload.tag, '')
+    assert.equal(payload.remark, '')
+    assert.equal(payload.model_mapping, '')
+    assert.equal(payload.status_code_mapping, '')
+    assert.equal(payload.param_override, '')
+    assert.equal(payload.header_override, '')
+  })
+
+  test('账号池组模式更新时显式清空本地 Base URL 并保留哨兵 key', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        credential_mode: 'global_account_pool',
+        account_pool_group_id: 12,
+        base_url: 'https://api.example.com',
+      }),
+      7
+    )
+
+    assert.equal(payload.base_url, '')
+    assert.equal(payload.key, 'global_account_pool')
+    assert.equal(payload.channel_info?.account_pool_group_id, 12)
   })
 })

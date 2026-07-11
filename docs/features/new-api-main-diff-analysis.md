@@ -11212,3 +11212,59 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 7. 3003 真实接口验证：登录 `http://192.168.0.202:3003/` 后调用 `/api/user/self`，返回 `authz_role: ""` 和完整 `permissions.admin_permissions`；调用 `/api/authz/roles` 返回 Root/Admin 内置角色、`runtime_managed=true` 与 grants 矩阵，确认后端热更新已生效。
 8. 3003 前端发布验证：访问首页返回 200，静态前端包 `/static/js/index.js` 已包含 `Role baseline` 和 `Built-in Admin baseline` 文案，确认用户编辑页角色基线 UI 已随热更新发布。
 9. 当前环境没有暴露浏览器 MCP 工具，本轮按项目规则记录限制，并使用真实 HTTP API、Chrome Headless/CDP 与已发布前端包探针作为替代验证方式。
+
+## 本轮实施评审：编辑渠道页保存语义继续对齐 new-api 最新页
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面继续对齐。重新对照后确认，NexusTok 当前渠道编辑抽屉已经具备 new-api 的主干结构：`Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings` 分区、左侧步骤导航、模型快捷操作和模型映射编辑器均已落地；NexusTok 还保留了账号池组模式、Codex OAuth、细粒度权限和模型元数据搜索追加等原生增强。
+
+本轮真实复现显示，3003 当前页面在模型输入框搜索 `gpt-5.6` 时已经完整展示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，点击 `添加 2 个新模型` 后未保存草稿会从 `已选 3 个` 变为 `已选 5 个`，搜索追加主路径可用。继续对齐 new-api 最新源代码后发现两个确定缺口：Codex(type 57) 页面显示 OpenAI 兼容字段透传开关，但保存 settings 时没有持久化这些开关；更新 payload 也缺少 new-api 的 Base URL 去尾斜杠和多个 nullable 文本字段显式清空语义。同时，模型搜索 Enter 键在有高亮候选时仍可能被批量追加接管，容易让管理员本想选择单个候选却触发批量补齐。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道表单转换 | `web/default/src/features/channels/lib/channel-form.ts` | Codex(type 57) 保存 OpenAI 兼容字段透传开关；创建/更新 payload 规范化 Base URL；更新时显式发送可清空文本字段。 |
+| MultiSelect 键盘行为 | `web/default/src/components/multi-select.tsx` | 搜索弹层已有高亮候选时，Enter 保留给候选选择；没有高亮但存在搜索命中/加载中时，仍允许渠道模型搜索提交批量追加。 |
+| 测试 | `web/default/src/features/channels/lib/channel-form.test.ts`、`web/default/src/components/multi-select.test.ts` | 覆盖 Codex 透传保存、历史字段清理、Base URL 规范化、显式清空字段和 Enter 高亮候选保护。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和验证结果。 |
+
+### 风险评估
+
+1. 账号池组模式风险：NexusTok 的 `global_account_pool` 是本项目原生能力，不能被 new-api 的普通 key/base_url 语义覆盖；本轮仅在保存时显式清空本地 `base_url` 并保留 `global_account_pool` 哨兵 key。
+2. Codex 设置回归风险：type 57 走 OpenAI 兼容请求链路，保存透传开关应与页面可见控件一致；非 OpenAI 兼容渠道仍需清理历史透传字段，避免跨 provider 污染。
+3. 清空字段风险：更新 payload 显式发送空字符串会让管理员清空旧值；这与 new-api 最新页一致，但必须只覆盖 nullable 文本字段，不动 key 的“空值不覆盖旧密钥”保护。
+4. 搜索追加风险：不能破坏已经验证的显式按钮批量追加 Terra/Luna/Sol；只调整有高亮候选时的 Enter 语义，保留无高亮 Enter 批量追加和自定义模型创建路径。
+5. 运行态数据风险：3003 页面验证只修改未保存表单草稿，不点击 `更新渠道`，避免污染渠道 `11111` 的真实模型配置。
+
+### 方案评审
+
+采用“小范围语义补齐”的方案，不重写渠道编辑抽屉：
+
+1. 在 `buildSettingsJSON()` 中把 type 57 纳入 OpenAI 兼容字段透传保存范围，持久化 `allow_service_tier`、`disable_store`、`allow_safety_identifier`、`allow_include_obfuscation` 和 `allow_inference_geo`。
+2. 新增前端 `normalizeBaseUrl()`，创建和更新渠道时去除 Base URL 首尾空白和末尾 `/`，与 new-api 最新页保持一致。
+3. 更新渠道时显式发送 `base_url`、`openai_organization`、`test_model`、`tag`、`remark`、`model_mapping`、`status_code_mapping`、`param_override`、`header_override` 的空字符串，确保 UI 清空能写回后端；`key` 仍只在账号池组模式或用户显式输入时提交。
+4. `MultiSelect` 在 Enter 捕获阶段检测弹层内是否有 `[data-highlighted]` 候选；有高亮时不接管，让 Base UI 执行候选选择；没有高亮但搜索有命中或仍在加载时，继续执行渠道模型搜索提交。
+
+### 实施结果
+
+- Codex 渠道编辑页可见的 OpenAI 兼容字段透传开关现在能进入 `settings` payload，不再出现“页面能点、保存丢失”的不一致。
+- 非 OpenAI/Anthropic/Codex 渠道会清理历史字段透传开关，避免旧 settings 在切换 provider 后继续误生效。
+- 渠道创建和更新 payload 会规范化 Base URL；更新 payload 可显式清空组织、测试模型、标签、备注、模型映射和覆写 JSON 字段。
+- 模型搜索弹层有高亮候选时 Enter 不再触发批量追加；显式点击 `添加 2 个新模型` 仍会批量补齐缺失模型。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/channel-form.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts` 通过，69 个用例成功。
+2. `cd web/default && bunx prettier --check src/components/multi-select.tsx src/components/multi-select.test.ts src/features/channels/lib/channel-form.ts src/features/channels/lib/channel-form.test.ts` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. 3003 真实页面验证：访问 `http://192.168.0.202:3003/` 返回 200，`nexustok-frontend-watch` 日志出现 `[hot] published default dist`，确认本轮前端热更新已发布。
+7. Chrome Headless + DevTools Protocol 登录账号 `c1cada`，打开 `http://192.168.0.202:3003/channels`，通过行菜单进入渠道 `11111` 的编辑抽屉；初始模型区为 `已选 3 个`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+8. 在模型输入框搜索 `gpt-5.6`，页面显示 `搜索结果`、`命中 3 个 · 可新增 2 个 · 已存在 1 个`、`添加 2 个新模型`，候选完整包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+9. 键盘路径验证：搜索后按 ArrowDown 高亮 `gpt-5.6-terra`，再按 Enter 只选择该候选，草稿变为 `已选 4 个`，不会误触发批量追加。
+10. 显式按钮路径验证：重新打开编辑抽屉搜索 `gpt-5.6`，点击 `添加 2 个新模型` 后草稿变为 `已选 5 个`，包含 Terra/Luna/Sol 三项。
+11. 验证期间未点击 `更新渠道`；随后调用 `GET /api/channel/?p=1&page_size=5&tag_mode=false&id_sort=false`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
+12. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
