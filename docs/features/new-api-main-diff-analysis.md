@@ -217,7 +217,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
 | P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 已完成首批账号池专用移动端卡片与移动筛选 Drawer：Usage Logs、State Logs、Check History 在手机端不再横向滚动表格，常用搜索保留在页面，低频筛选收纳进底部 Drawer，并保留账号粒度、状态迁移、检测任务详情和脱敏语义；后续可继续推进 DataTable 分层。 |
-| P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并保留当前扁平结构；new-api-main 的 core/layout/static/hooks 全量分层仍未迁移。新页面或大改页面可先复用分层思想，避免一次性替换全站表格。 |
+| P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并新增桌面表格/卡片视图切换底座，先在 `/models/metadata` 模型表启用；new-api-main 的 core/layout/static/hooks 全量目录拆分仍未迁移。后续新页面或大改页面可继续复用该底座，避免一次性替换全站表格。 |
 | P2/P3 | Playground 目录结构 polish | `features/playground/components/{chat,input,message}`、`lib/{message,streaming,storage}` | 消息渲染、错误、输入、编辑器、CodeMirror、流式 helper 和大量纯函数测试已原生化；剩余差异主要是目录层级组织，不应为了路径一致而重构，除非后续功能开发自然触碰。 |
 | P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
 
@@ -10818,3 +10818,71 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 11. 验证期间网络记录中 `PUT /api/channel` 请求数为 0；再次查询 `GET /api/channel/?p=1&page_size=5&tag_mode=false&id_sort=false`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
 12. Chrome Headless 验证期间未捕获 `Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别 Log。
 13. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol 和真实 HTTP API 作为 MCP 替代验证方式。
+
+## 本轮实施评审：DataTable 桌面卡片视图渐进分层
+
+### 需求分析
+
+`new-api-main` 的默认前端已经把 DataTable 拆成 `core`、`layout`、`toolbar`、`static`、`hooks` 等更清晰的层次，并在多个数据页沉淀出表格/卡片视图切换能力。NexusTok 当前 DataTable 仍是扁平目录，但已经被渠道、模型、用户、订阅、日志等高频管理页复用；如果一次性迁移全站表格，回归面会很大，也容易影响已经落地的账号池、Authz 和渠道权限能力。
+
+本轮选择“渐进分层”的低风险切片：先把 new-api 的桌面表格/卡片视图优势发展成 NexusTok 的公共 DataTable 原生能力，默认不改变任何已有表格，只在 `/models/metadata` 模型表开启。模型表字段密度适中、只读浏览频率高，适合作为第一张桌面卡片视图验证表。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| DataTable 视图状态 | `web/default/src/components/data-table/use-data-table-view-mode.ts` | 新增 `table/card` 两种模式、localStorage 读写和不可用容错。 |
+| DataTable 工具栏 | `web/default/src/components/data-table/view-mode-toggle.tsx`、`toolbar.tsx` | 新增 Hugeicons 表格/卡片切换控件，并允许 toolbar 在列显示菜单前插入该控件。 |
+| DataTable 桌面卡片布局 | `card-grid.tsx`、`card-row-content.tsx`、`data-table-page.tsx` | 新增桌面卡片 grid 和列 meta 驱动的通用卡片内容；`DataTablePage` 增加可选 `enableCardView`、`renderCard`、`viewModeStorageKey` 等 props。 |
+| 模型管理页 | `web/default/src/features/models/components/models-table.tsx` | 仅模型表启用桌面表格/卡片视图切换，持久化 key 为 `models-table-view-mode`。 |
+| TanStack 列 meta 类型 | `web/default/src/tanstack-table.d.ts` | 补齐 `mobileTitle`、`mobileBadge`、`mobileHidden`、`mobileOrder` 类型说明，供移动卡片和桌面卡片共用。 |
+| DataTable 文档 | `web/default/src/components/data-table/README.md`、`docs/features/new-api-main-diff-analysis.md` | 补充视图切换接入方式、风险边界和本轮验证记录。 |
+
+本轮不修改后端接口、数据库结构、模型查询参数、权限系统、URL 同步、分页、排序、筛选、批量操作或其它表格页面默认行为。
+
+### 风险评估
+
+1. 全站回归风险：`enableCardView` 默认关闭，未显式接入的表格仍渲染原桌面表格和移动端卡片。
+2. 状态持久化风险：localStorage 在隐私模式或受限 iframe 中可能不可用；本轮读写均 catch，失败时只回退内存状态。
+3. 移动端风险：视图切换只在非移动端显示，移动端继续走已有 `MobileCardList`/自定义 mobile slot。
+4. 列渲染风险：通用卡片复用 TanStack cell renderer，不重新解释业务字段；自定义表格后续可通过 `renderCard` 覆盖。
+5. 视觉一致性风险：控件遵循当前 shadcn 配置的 Hugeicons 图标库和现有 Base Nova token，不新增一套视觉体系。
+6. 数据写入风险：模型表视图切换只操作 localStorage，不发起任何业务写接口；页面验证中需要确认没有 `POST/PUT/PATCH/DELETE` 写请求。
+
+### 方案评审
+
+采用“公共底座 + 单页试点”的方案：
+
+1. `useDataTableViewMode` 负责 `table/card` 模式校验、读取、写入和异常容错。
+2. `DataTableViewModeToggle` 作为 toolbar 可插拔控件，不侵入搜索、过滤、列显隐或扩展工具栏。
+3. `DataTableCardGrid` 使用现有 `table.getRowModel()` 和可见列集合，保持分页、排序、筛选结果与桌面表格一致。
+4. `CardRowContent` 优先读取列 meta 中的 `mobileTitle`、`mobileBadge`、`mobileHidden` 和 `mobileOrder`，让已有移动端列语义可以复用到桌面卡片。
+5. `DataTablePage` 新增可选 props，但默认路径仍调用原 `renderDesktop` 表格。
+6. `/models/metadata` 作为第一处试点，只传入 `enableCardView` 和 `viewModeStorageKey`；其它表格后续按页面需求逐步接入。
+
+### 实施结果
+
+已完成 NexusTok 原生 DataTable 桌面卡片视图底座：
+
+- 新增表格/卡片视图模式 hook、视图切换控件、通用桌面卡片 grid 和通用卡片内容渲染。
+- `DataTableToolbar` 支持渲染可选视图切换控件；未传入时工具栏 DOM 行为不变。
+- `DataTablePage` 支持非受控/受控视图模式、本地持久化 key、自定义卡片渲染器和卡片 grid className。
+- `/models/metadata` 模型表启用桌面视图切换；默认仍从表格视图开始，用户切换后记住本地偏好。
+- DataTable README 已补充视图切换接入示例和“默认关闭、逐页接入”的边界说明。
+- 本轮没有修改后端模型接口、模型元信息同步、渠道能力、权限矩阵或数据库。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/data-table/use-data-table-view-mode.test.ts` 通过，4 个用例覆盖合法模式、非法回退和 storage 不可用容错。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bun run i18n:sync` 通过；本轮复用已有 `Card view`、`Table view`、`View mode` 等翻译 key，没有新增用户可见文案。
+4. `cd web/default && bun run build` 通过。
+5. `docker logs --tail 120 nexustok-frontend-watch` 显示 `[hot] published default dist`。
+6. `curl --noproxy '*' -I -L --max-time 15 http://192.168.0.202:3003/` 返回 HTTP 200，响应头包含 `Cache-Version: b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14`。
+7. `GET /api/status` 返回 `start_time=1783784619`，对应 2026-07-11 15:43:39Z，确认 3003 服务处于本轮验证时段内。
+8. Chrome Headless + DevTools Protocol 使用账号 `c1cada` 登录 3003，写入前端 auth store 后打开 `http://192.168.0.202:3003/models/metadata`。
+9. 模型页初始状态存在 `aria-label="View mode"` 切换控件，桌面表格 `tbody tr` 为 20 行，卡片数为 0。
+10. 点击卡片视图后，`[data-slot="data-table-card"]` 为 20 个，`localStorage.models-table-view-mode` 为 `card`，表格行数为 0。
+11. 再点击表格视图后，`tbody tr` 恢复为 20 行，卡片数为 0，`localStorage.models-table-view-mode` 为 `table`。
+12. Chrome Headless 验证期间未捕获业务写请求、`Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别 console 记录。
+13. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。

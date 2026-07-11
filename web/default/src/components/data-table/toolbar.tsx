@@ -106,6 +106,10 @@ export type DataTableToolbarProps<TData> = {
    */
   hideViewOptions?: boolean
   /**
+   * 可选的表格/卡片视图切换控件，渲染在列显示菜单之前。
+   */
+  viewToggle?: ReactNode
+  /**
    * Content rendered on the LEFT side of the secondary action row. When
    * provided the toolbar splits into two visual rows:
    *   Row 1: search inputs / filter chips …… Expand
@@ -268,6 +272,7 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
             {props.preActions}
             {resetButton}
             {searchButton}
+            {props.viewToggle}
             {viewOptionsNode}
           </div>
         </div>
@@ -291,6 +296,7 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
         {props.preActions}
         {resetButton}
         {searchButton}
+        {props.viewToggle}
         {viewOptionsNode}
         {expandToggle}
       </div>

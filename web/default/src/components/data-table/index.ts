@@ -22,6 +22,24 @@ export { DataTableFacetedFilter } from './faceted-filter'
 export { DataTableViewOptions } from './view-options'
 export { DataTableToolbar } from './toolbar'
 export { DataTableBulkActions } from './bulk-actions'
+export {
+  DataTableCardGrid,
+  type DataTableCardGridProps,
+  type DataTableCardHelpers,
+} from './card-grid'
+export { CardRowContent, tableHasCompactCardMeta } from './card-row-content'
+export {
+  DataTableViewModeToggle,
+  type DataTableViewModeToggleProps,
+} from './view-mode-toggle'
+export {
+  DATA_TABLE_VIEW_MODES,
+  useDataTableViewMode,
+  isDataTableViewMode,
+  readDataTableViewMode,
+  writeDataTableViewMode,
+  type DataTableViewMode,
+} from './use-data-table-view-mode'
 export { TableSkeleton } from './table-skeleton'
 export { TableEmpty } from './table-empty'
 export { MobileCardList } from './mobile-card-list'

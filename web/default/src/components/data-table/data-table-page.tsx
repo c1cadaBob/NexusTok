@@ -34,11 +34,18 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { PageFooterPortal } from '@/components/layout'
+import { DataTableCardGrid, type DataTableCardHelpers } from './card-grid'
 import { MobileCardList } from './mobile-card-list'
 import { DataTablePagination } from './pagination'
 import { TableEmpty } from './table-empty'
 import { TableSkeleton } from './table-skeleton'
 import { DataTableToolbar } from './toolbar'
+import {
+  DATA_TABLE_VIEW_MODES,
+  useDataTableViewMode,
+  type DataTableViewMode,
+} from './use-data-table-view-mode'
+import { DataTableViewModeToggle } from './view-mode-toggle'
 
 /**
  * Pass-through configuration for the default {@link DataTableToolbar}.
@@ -148,6 +155,44 @@ export type DataTablePageProps<TData> = {
   renderRow?: (row: Row<TData>) => React.ReactNode
 
   /**
+   * 启用桌面端表格/卡片视图切换。默认关闭，未显式接入的列表页保持原有桌面表格行为。
+   */
+  enableCardView?: boolean
+
+  /**
+   * 受控桌面视图模式；传入后由 `onViewModeChange` 负责更新。
+   */
+  viewMode?: DataTableViewMode
+
+  /**
+   * 受控 `viewMode` 的变更回调。
+   */
+  onViewModeChange?: (mode: DataTableViewMode) => void
+
+  /**
+   * 非受控桌面视图模式的 localStorage 持久化 key。
+   */
+  viewModeStorageKey?: string
+
+  /**
+   * 非受控桌面视图初始值，默认使用表格视图。
+   */
+  defaultViewMode?: DataTableViewMode
+
+  /**
+   * 自定义桌面卡片渲染器；未提供时会根据列 meta 自动生成通用卡片内容。
+   */
+  renderCard?: (
+    row: Row<TData>,
+    helpers: DataTableCardHelpers
+  ) => React.ReactNode
+
+  /**
+   * 桌面卡片视图的响应式网格 className 覆盖。
+   */
+  cardGridClassName?: string
+
+  /**
    * Apply explicit column widths from `header.getSize()` to `<TableHead>`.
    * Enable this when your column definitions include `size` and you want it honored.
    * Off by default (TanStack Table assigns a default size of 150 to all columns
@@ -218,10 +263,25 @@ export type DataTablePageProps<TData> = {
 export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
   const isMobile = useMediaQuery('(max-width: 640px)')
   const showMobile = isMobile && !props.hideMobile
+  const [internalViewMode, setInternalViewMode] = useDataTableViewMode({
+    storageKey: props.viewModeStorageKey,
+    defaultMode: props.defaultViewMode ?? DATA_TABLE_VIEW_MODES.TABLE,
+  })
+  const viewMode = props.viewMode ?? internalViewMode
+  const setViewMode = props.onViewModeChange ?? setInternalViewMode
+  const cardViewEnabled = props.enableCardView === true && !showMobile
+  const viewToggle = cardViewEnabled ? (
+    <DataTableViewModeToggle value={viewMode} onChange={setViewMode} />
+  ) : undefined
 
-  const toolbarNode = renderToolbar(props)
+  const toolbarNode = renderToolbar(props, viewToggle)
   const mobileNode = renderMobile(props, showMobile)
-  const desktopNode = renderDesktop(props, showMobile)
+  const desktopNode = renderDesktop(
+    props,
+    showMobile,
+    cardViewEnabled,
+    viewMode
+  )
 
   return (
     <>
@@ -251,7 +311,8 @@ export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
 }
 
 function renderToolbar<TData>(
-  props: DataTablePageProps<TData>
+  props: DataTablePageProps<TData>,
+  viewToggle: React.ReactNode
 ): React.ReactNode {
   if (props.toolbar !== undefined) {
     return props.toolbar
@@ -260,7 +321,13 @@ function renderToolbar<TData>(
     return null
   }
   if (props.toolbarProps) {
-    return <DataTableToolbar table={props.table} {...props.toolbarProps} />
+    return (
+      <DataTableToolbar
+        table={props.table}
+        {...props.toolbarProps}
+        viewToggle={props.toolbarProps.viewToggle ?? viewToggle}
+      />
+    )
   }
   return null
 }
@@ -293,12 +360,40 @@ function renderMobile<TData>(
 
 function renderDesktop<TData>(
   props: DataTablePageProps<TData>,
-  showMobile: boolean
+  showMobile: boolean,
+  cardViewEnabled: boolean,
+  viewMode: DataTableViewMode
 ): React.ReactNode {
   if (showMobile) return null
 
   const rows = props.table.getRowModel().rows
   const isFetchingOnly = props.isFetching && !props.isLoading
+
+  if (cardViewEnabled && viewMode === DATA_TABLE_VIEW_MODES.CARD) {
+    return (
+      <div
+        className={cn(
+          'transition-opacity duration-150',
+          isFetchingOnly && 'pointer-events-none opacity-60',
+          props.tableClassName
+        )}
+      >
+        <DataTableCardGrid
+          table={props.table}
+          isLoading={props.isLoading}
+          emptyTitle={props.emptyTitle}
+          emptyDescription={props.emptyDescription}
+          emptyIcon={props.emptyIcon}
+          renderCard={props.renderCard}
+          gridClassName={props.cardGridClassName}
+          skeletonKeyPrefix={props.skeletonKeyPrefix}
+          getRowClassName={(row) =>
+            props.getRowClassName?.(row, { isMobile: false })
+          }
+        />
+      </div>
+    )
+  }
 
   return (
     <div

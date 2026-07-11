@@ -231,6 +231,8 @@ export function ModelsTable() {
       )}
       skeletonKeyPrefix='model-skeleton'
       applyHeaderSize
+      enableCardView
+      viewModeStorageKey='models-table-view-mode'
       toolbarProps={{
         searchPlaceholder: t('Filter by model name...'),
         filters: [
