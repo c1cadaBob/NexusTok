@@ -157,7 +157,11 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const noPermissionMessage = t("You don't have necessary permission")
   const canReadChannelAccounts = permissions.canReadChannelAccount
   const canOperateChannelAccounts = permissions.canOperateChannelAccount
-  const canEditChannelAccounts = permissions.canSensitiveWriteChannelAccount
+  const canWriteChannelAccounts = permissions.canWriteChannelAccount
+  const canSensitiveWriteChannelAccounts =
+    permissions.canSensitiveWriteChannelAccount
+  const canEditChannelAccounts =
+    canWriteChannelAccounts || canSensitiveWriteChannelAccounts
 
   const channelId = currentRow?.id ?? 0
   const accountsQueryKey = [
@@ -198,7 +202,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   }
 
   const openCreateForm = () => {
-    if (!canEditChannelAccounts) {
+    if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -228,16 +232,25 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     setFormOpen(true)
   }
 
-  const buildPayload = (): ChannelAccountPayload => ({
-    name: formState.name.trim(),
-    key: formState.key.trim(),
-    models: formState.models.trim(),
-    group: formState.group.trim(),
-    priority: numberOrZero(formState.priority),
-    weight: numberOrZero(formState.weight),
-    max_concurrency: numberOrZero(formState.maxConcurrency),
-    status: CHANNEL_STATUS.ENABLED,
-  })
+  const buildPayload = (): ChannelAccountPayload => {
+    const payload: ChannelAccountPayload = {
+      name: formState.name.trim(),
+      models: formState.models.trim(),
+      group: formState.group.trim(),
+      priority: numberOrZero(formState.priority),
+      weight: numberOrZero(formState.weight),
+      max_concurrency: numberOrZero(formState.maxConcurrency),
+    }
+
+    if (!formState.id) {
+      payload.status = CHANNEL_STATUS.ENABLED
+    }
+    if (canSensitiveWriteChannelAccounts && formState.key.trim()) {
+      payload.key = formState.key.trim()
+    }
+
+    return payload
+  }
 
   const submitForm = async () => {
     if (!currentRow) return
@@ -245,7 +258,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
       toast.error(noPermissionMessage)
       return
     }
-    if (!formState.id && !formState.key.trim()) {
+    if (
+      !formState.id &&
+      (!canSensitiveWriteChannelAccounts || !formState.key.trim())
+    ) {
       toast.error(t('API key is required'))
       return
     }
@@ -326,7 +342,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const performDelete = async () => {
     if (!currentRow || !deleteTarget) return
-    if (!canEditChannelAccounts) {
+    if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       setDeleteTarget(null)
       return
@@ -354,7 +370,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitBatch = async (importFromMultiKey = false) => {
     if (!currentRow) return
-    if (!canEditChannelAccounts) {
+    if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -496,15 +512,17 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   variant='outline'
                   size='sm'
                   onClick={() => {
-                    if (!canEditChannelAccounts) {
+                    if (!canSensitiveWriteChannelAccounts) {
                       toast.error(noPermissionMessage)
                       return
                     }
                     setBatchOpen((value) => !value)
                   }}
-                  disabled={!canEditChannelAccounts}
+                  disabled={!canSensitiveWriteChannelAccounts}
                   title={
-                    canEditChannelAccounts ? undefined : noPermissionMessage
+                    canSensitiveWriteChannelAccounts
+                      ? undefined
+                      : noPermissionMessage
                   }
                 >
                   <Upload className='mr-2 h-4 w-4' />
@@ -514,9 +532,11 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   type='button'
                   size='sm'
                   onClick={openCreateForm}
-                  disabled={!canEditChannelAccounts}
+                  disabled={!canSensitiveWriteChannelAccounts}
                   title={
-                    canEditChannelAccounts ? undefined : noPermissionMessage
+                    canSensitiveWriteChannelAccounts
+                      ? undefined
+                      : noPermissionMessage
                   }
                 >
                   <Plus className='mr-2 h-4 w-4' />
@@ -538,9 +558,13 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     type='button'
                     size='sm'
                     onClick={() => submitBatch(false)}
-                    disabled={actionLoading || !canEditChannelAccounts}
+                    disabled={
+                      actionLoading || !canSensitiveWriteChannelAccounts
+                    }
                     title={
-                      canEditChannelAccounts ? undefined : noPermissionMessage
+                      canSensitiveWriteChannelAccounts
+                        ? undefined
+                        : noPermissionMessage
                     }
                   >
                     {actionLoading && (
@@ -553,9 +577,13 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     variant='outline'
                     size='sm'
                     onClick={() => submitBatch(true)}
-                    disabled={actionLoading || !canEditChannelAccounts}
+                    disabled={
+                      actionLoading || !canSensitiveWriteChannelAccounts
+                    }
                     title={
-                      canEditChannelAccounts ? undefined : noPermissionMessage
+                      canSensitiveWriteChannelAccounts
+                        ? undefined
+                        : noPermissionMessage
                     }
                   >
                     {t('Import from Multi-Key')}
@@ -578,10 +606,15 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   onChange={(event) =>
                     setFormState({ ...formState, key: event.target.value })
                   }
+                  disabled={
+                    Boolean(formState.id) && !canSensitiveWriteChannelAccounts
+                  }
                   placeholder={
-                    formState.id
+                    formState.id && canSensitiveWriteChannelAccounts
                       ? t('Leave empty to keep existing key')
-                      : t('Enter secret key')
+                      : formState.id
+                        ? t('Sensitive channel settings are read-only')
+                        : t('Enter secret key')
                   }
                 />
                 <Input
@@ -784,15 +817,15 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 variant='ghost'
                                 size='icon-sm'
                                 onClick={() => {
-                                  if (!canEditChannelAccounts) {
+                                  if (!canSensitiveWriteChannelAccounts) {
                                     toast.error(noPermissionMessage)
                                     return
                                   }
                                   setDeleteTarget(account)
                                 }}
-                                disabled={!canEditChannelAccounts}
+                                disabled={!canSensitiveWriteChannelAccounts}
                                 title={
-                                  canEditChannelAccounts
+                                  canSensitiveWriteChannelAccounts
                                     ? undefined
                                     : noPermissionMessage
                                 }

@@ -49,6 +49,8 @@ export const STATIC_I18N_KEYS = [
   'View channel-owned account lists, details, masked keys, and routing metadata.',
   'Operate channel accounts',
   'Enable, disable, clear cooldowns, and run safe lifecycle operations for channel-owned accounts.',
+  'Edit channel account routing fields',
+  'Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.',
   'Edit channel account credentials',
   'Create, import, update, or delete channel-owned upstream credentials.',
   'Edit sensitive account pool settings',

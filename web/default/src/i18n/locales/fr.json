@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "Modifiez les ratios de facturation et les groupes sélectionnables par les utilisateurs dans un seul tableau.",
     "Edit Channel": "Modifier le canal",
     "Edit channel account credentials": "Modifier les identifiants des comptes de canal",
+    "Edit channel account routing fields": "Modifier les champs de routage des comptes de canal",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "Modifier les noms, modèles, groupes, priorités, poids et limites de concurrence des comptes propres au canal.",
     "Edit chat preset": "Modifier le préréglage de chat",
     "Edit Credential": "Modifier l’identifiant",
     "Edit discount tier": "Modifier le palier de remise",

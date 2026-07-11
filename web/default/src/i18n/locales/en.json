@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "Edit billing ratios and user-selectable groups in one table.",
     "Edit Channel": "Edit Channel",
     "Edit channel account credentials": "Edit channel account credentials",
+    "Edit channel account routing fields": "Edit channel account routing fields",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.",
     "Edit chat preset": "Edit chat preset",
     "Edit Credential": "Edit Credential",
     "Edit discount tier": "Edit discount tier",

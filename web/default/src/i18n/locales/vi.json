@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "Chỉnh sửa tỷ lệ tính phí và nhóm người dùng có thể chọn trong một bảng.",
     "Edit Channel": "Chỉnh sửa Kênh",
     "Edit channel account credentials": "Sửa thông tin xác thực tài khoản kênh",
+    "Edit channel account routing fields": "Sửa trường định tuyến tài khoản kênh",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "Sửa tên, mô hình, nhóm, mức ưu tiên, trọng số và giới hạn đồng thời của tài khoản thuộc kênh.",
     "Edit chat preset": "Chỉnh sửa cài đặt trước trò chuyện",
     "Edit Credential": "Sửa thông tin xác thực",
     "Edit discount tier": "Chỉnh sửa bậc giảm giá",

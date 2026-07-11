@@ -15,6 +15,7 @@ package controller
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -166,12 +167,26 @@ func UpdateChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	var req channelAccountUpsertRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiError(c, err)
+	req, requestData, ok := readChannelAccountUpsertRequest(c)
+	if !ok {
 		return
 	}
-	updates := channelAccountUpdateMap(req)
+	if channelAccountHasSensitiveChanges(account, req, requestData) &&
+		!channelAccountCanSensitiveWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "insufficient permission for sensitive channel account fields",
+		})
+		return
+	}
+	if channelAccountHasUnknownFields(requestData) && !channelAccountCanSensitiveWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "insufficient permission for unknown channel account fields",
+		})
+		return
+	}
+	updates := channelAccountUpdateMap(req, requestData)
 	if len(updates) == 0 {
 		common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 		return
@@ -317,6 +332,104 @@ func ensureChannelExists(c *gin.Context, channelID int) bool {
 	return true
 }
 
+func readChannelAccountUpsertRequest(c *gin.Context) (channelAccountUpsertRequest, map[string]any, bool) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		common.ApiError(c, err)
+		return channelAccountUpsertRequest{}, nil, false
+	}
+	var requestData map[string]any
+	if err := common.Unmarshal(body, &requestData); err != nil {
+		common.ApiError(c, err)
+		return channelAccountUpsertRequest{}, nil, false
+	}
+	var req channelAccountUpsertRequest
+	if err := common.Unmarshal(body, &req); err != nil {
+		common.ApiError(c, err)
+		return channelAccountUpsertRequest{}, nil, false
+	}
+	return req, requestData, true
+}
+
+func channelAccountCanSensitiveWrite(c *gin.Context) bool {
+	return authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelAccountSensitiveWrite)
+}
+
+// channelAccountHasSensitiveChanges 判断更新请求是否触碰凭证或高级上游配置。
+//
+// 该函数只在 PUT 更新路径使用：普通 `channel_account.write` 允许维护名称、模型、分组、
+// 优先级、权重和最大并发；key、上游地址、组织、provider settings、请求覆盖、模型映射、
+// 状态码映射和 status 仍要求 `channel_account.sensitive_write`。比较时使用原始 JSON
+// 字段集合区分“字段缺失”和“字段显式设置为空值/零值”。
+func channelAccountHasSensitiveChanges(account *model.ChannelAccount, req channelAccountUpsertRequest, requestData map[string]any) bool {
+	if account == nil {
+		return true
+	}
+	if _, ok := requestData["key"]; ok && strings.TrimSpace(req.Key) != account.Key {
+		return true
+	}
+	if _, ok := requestData["status"]; ok && req.Status != nil && *req.Status != account.Status {
+		return true
+	}
+	if _, ok := requestData["base_url"]; ok && !equalOptionalStringPtr(req.BaseURL, account.BaseURL) {
+		return true
+	}
+	if _, ok := requestData["openai_organization"]; ok && !equalOptionalStringPtr(req.OpenAIOrganization, account.OpenAIOrganization) {
+		return true
+	}
+	if _, ok := requestData["other"]; ok && req.Other != account.Other {
+		return true
+	}
+	if _, ok := requestData["setting"]; ok && !equalOptionalStringPtr(req.Setting, account.Setting) {
+		return true
+	}
+	if _, ok := requestData["settings"]; ok && req.OtherSettings != account.OtherSettings {
+		return true
+	}
+	if _, ok := requestData["model_mapping"]; ok && !equalOptionalStringPtr(req.ModelMapping, account.ModelMapping) {
+		return true
+	}
+	if _, ok := requestData["param_override"]; ok && !equalOptionalStringPtr(req.ParamOverride, account.ParamOverride) {
+		return true
+	}
+	if _, ok := requestData["header_override"]; ok && !equalOptionalStringPtr(req.HeaderOverride, account.HeaderOverride) {
+		return true
+	}
+	if _, ok := requestData["status_code_mapping"]; ok && !equalOptionalStringPtr(req.StatusCodeMapping, account.StatusCodeMapping) {
+		return true
+	}
+	return false
+}
+
+func channelAccountHasUnknownFields(requestData map[string]any) bool {
+	for field := range requestData {
+		if _, ok := channelAccountKnownFields[field]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+var channelAccountKnownFields = map[string]struct{}{
+	"name":                {},
+	"key":                 {},
+	"status":              {},
+	"models":              {},
+	"group":               {},
+	"priority":            {},
+	"weight":              {},
+	"base_url":            {},
+	"openai_organization": {},
+	"other":               {},
+	"setting":             {},
+	"settings":            {},
+	"model_mapping":       {},
+	"param_override":      {},
+	"header_override":     {},
+	"status_code_mapping": {},
+	"max_concurrency":     {},
+}
+
 func buildChannelAccountFromRequest(channelID int, req channelAccountUpsertRequest) (*model.ChannelAccount, error) {
 	if strings.TrimSpace(req.Key) == "" {
 		return nil, fmt.Errorf("key is required")
@@ -363,49 +476,63 @@ func buildChannelAccountFromRequest(channelID int, req channelAccountUpsertReque
 	}, nil
 }
 
-func channelAccountUpdateMap(req channelAccountUpsertRequest) map[string]interface{} {
+// channelAccountUpdateMap 只更新本次请求显式提交的字段。
+//
+// 渠道账号编辑页支持普通管理员只维护名称、模型、分组、优先级、权重和并发限制。
+// 因此 PUT 请求不能沿用“空字符串就是清空”的全量表单语义，否则只改一个字段时会把
+// models/group/settings 等字段误覆盖为空。requestData 来自原始 JSON，用来判断字段是否
+// 真实出现；key 仍保持“空值不写入”，避免编辑时空密钥覆盖已有凭证。
+func channelAccountUpdateMap(req channelAccountUpsertRequest, requestData map[string]any) map[string]interface{} {
 	updates := map[string]interface{}{}
-	if strings.TrimSpace(req.Name) != "" {
+	if _, ok := requestData["name"]; ok && strings.TrimSpace(req.Name) != "" {
 		updates["name"] = strings.TrimSpace(req.Name)
 	}
-	if strings.TrimSpace(req.Key) != "" {
+	if _, ok := requestData["key"]; ok && strings.TrimSpace(req.Key) != "" {
 		updates["key"] = strings.TrimSpace(req.Key)
 	}
-	if req.Status != nil && *req.Status > 0 {
+	if _, ok := requestData["status"]; ok && req.Status != nil && *req.Status > 0 {
 		updates["status"] = *req.Status
 	}
-	updates["models"] = strings.TrimSpace(req.Models)
-	updates["group"] = strings.TrimSpace(req.Group)
-	updates["other"] = req.Other
-	updates["settings"] = req.OtherSettings
-	if req.Priority != nil {
+	if _, ok := requestData["models"]; ok {
+		updates["models"] = strings.TrimSpace(req.Models)
+	}
+	if _, ok := requestData["group"]; ok {
+		updates["group"] = strings.TrimSpace(req.Group)
+	}
+	if _, ok := requestData["other"]; ok {
+		updates["other"] = req.Other
+	}
+	if _, ok := requestData["settings"]; ok {
+		updates["settings"] = req.OtherSettings
+	}
+	if _, ok := requestData["priority"]; ok && req.Priority != nil {
 		updates["priority"] = *req.Priority
 	}
-	if req.Weight != nil {
+	if _, ok := requestData["weight"]; ok && req.Weight != nil {
 		updates["weight"] = *req.Weight
 	}
-	if req.BaseURL != nil {
-		updates["base_url"] = *req.BaseURL
+	if _, ok := requestData["base_url"]; ok {
+		updates["base_url"] = optionalStringValue(req.BaseURL)
 	}
-	if req.OpenAIOrganization != nil {
-		updates["openai_organization"] = *req.OpenAIOrganization
+	if _, ok := requestData["openai_organization"]; ok {
+		updates["openai_organization"] = optionalStringValue(req.OpenAIOrganization)
 	}
-	if req.Setting != nil {
-		updates["setting"] = *req.Setting
+	if _, ok := requestData["setting"]; ok {
+		updates["setting"] = optionalStringValue(req.Setting)
 	}
-	if req.ModelMapping != nil {
-		updates["model_mapping"] = *req.ModelMapping
+	if _, ok := requestData["model_mapping"]; ok {
+		updates["model_mapping"] = optionalStringValue(req.ModelMapping)
 	}
-	if req.ParamOverride != nil {
-		updates["param_override"] = *req.ParamOverride
+	if _, ok := requestData["param_override"]; ok {
+		updates["param_override"] = optionalStringValue(req.ParamOverride)
 	}
-	if req.HeaderOverride != nil {
-		updates["header_override"] = *req.HeaderOverride
+	if _, ok := requestData["header_override"]; ok {
+		updates["header_override"] = optionalStringValue(req.HeaderOverride)
 	}
-	if req.StatusCodeMapping != nil {
-		updates["status_code_mapping"] = *req.StatusCodeMapping
+	if _, ok := requestData["status_code_mapping"]; ok {
+		updates["status_code_mapping"] = optionalStringValue(req.StatusCodeMapping)
 	}
-	if req.MaxConcurrency != nil {
+	if _, ok := requestData["max_concurrency"]; ok && req.MaxConcurrency != nil {
 		updates["max_concurrency"] = *req.MaxConcurrency
 	}
 	return updates

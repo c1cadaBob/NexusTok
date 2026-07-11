@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "課金倍率とユーザーが選択できるグループを1つの表で編集します。",
     "Edit Channel": "チャンネルを編集",
     "Edit channel account credentials": "チャネルアカウント認証情報を編集",
+    "Edit channel account routing fields": "チャネルアカウントのルーティング項目を編集",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "チャネル所有アカウントの名前、モデル、グループ、優先度、重み、同時実行制限を編集します。",
     "Edit chat preset": "チャットプリセットを編集",
     "Edit Credential": "認証情報を編集",
     "Edit discount tier": "割引ティアを編集",

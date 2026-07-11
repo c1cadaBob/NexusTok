@@ -54,6 +54,7 @@ var (
 
 	ChannelAccountRead           = Permission{Resource: ResourceChannelAccount, Action: ActionRead}
 	ChannelAccountOperate        = Permission{Resource: ResourceChannelAccount, Action: ActionOperate}
+	ChannelAccountWrite          = Permission{Resource: ResourceChannelAccount, Action: ActionWrite}
 	ChannelAccountSensitiveWrite = Permission{Resource: ResourceChannelAccount, Action: ActionSensitiveWrite}
 
 	AccountPoolRead           = Permission{Resource: ResourceAccountPool, Action: ActionRead}

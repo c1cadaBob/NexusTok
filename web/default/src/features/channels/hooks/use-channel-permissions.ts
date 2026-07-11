@@ -33,11 +33,12 @@ export type ChannelPermissions = {
   canReadAccountPool: boolean
   canReadChannelAccount: boolean
   canOperateChannelAccount: boolean
+  canWriteChannelAccount: boolean
   canSensitiveWriteChannelAccount: boolean
 }
 
 // 渠道管理页同时消费 channel、channel_account 与 account_pool 权限。
-// channel 控制渠道配置本身；channel_account 只覆盖渠道内账号列表、启停和凭证维护；
+// channel 控制渠道配置本身；channel_account 只覆盖渠道内账号列表、启停、普通调度字段和凭证维护；
 // account_pool 仍用于全局账号池组选择等跨渠道资源。集中封装可以避免各组件散落权限常量。
 export function useChannelPermissions(): ChannelPermissions {
   const user = useAuthStore((state) => state.auth.user)
@@ -83,6 +84,11 @@ export function useChannelPermissions(): ChannelPermissions {
         user,
         ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
         ADMIN_PERMISSION_ACTIONS.OPERATE
+      ),
+      canWriteChannelAccount: hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.WRITE
       ),
       canSensitiveWriteChannelAccount: hasAdminPermission(
         user,

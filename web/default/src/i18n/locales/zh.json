@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "在一个表格中编辑计费倍率和用户可选分组。",
     "Edit Channel": "编辑渠道",
     "Edit channel account credentials": "编辑渠道账号凭证",
+    "Edit channel account routing fields": "编辑渠道账号路由字段",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "编辑渠道内账号名称、模型、分组、优先级、权重和并发限制。",
     "Edit chat preset": "编辑聊天预设",
     "Edit Credential": "编辑凭证",
     "Edit discount tier": "编辑折扣档位",

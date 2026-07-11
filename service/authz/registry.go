@@ -66,6 +66,12 @@ func init() {
 				DefaultRoles:   []string{BuiltInRoleAdmin},
 			},
 			{
+				Action:         ActionWrite,
+				LabelKey:       "Edit channel account routing fields",
+				DescriptionKey: "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
 				Action:         ActionSensitiveWrite,
 				LabelKey:       "Edit channel account credentials",
 				DescriptionKey: "Create, import, update, or delete channel-owned upstream credentials.",

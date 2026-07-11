@@ -65,7 +65,7 @@ func TestChannelPermissionRoutesClassifyChannelAccountActions(t *testing.T) {
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts", authz.ChannelAccountSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/batch", authz.ChannelAccountSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/import-multikey", authz.ChannelAccountSensitiveWrite)
-	assertPermissionRoute(t, http.MethodPut, "/:id/accounts/:account_id", authz.ChannelAccountSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPut, "/:id/accounts/:account_id", authz.ChannelAccountWrite)
 	assertPermissionRoute(t, http.MethodDelete, "/:id/accounts/:account_id", authz.ChannelAccountSensitiveWrite)
 }
 

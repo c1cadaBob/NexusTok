@@ -1593,6 +1593,8 @@
     "Edit billing ratios and user-selectable groups in one table.": "Редактируйте коэффициенты тарификации и доступные пользователю группы в одной таблице.",
     "Edit Channel": "Редактировать канал",
     "Edit channel account credentials": "Изменять учетные данные учетных записей канала",
+    "Edit channel account routing fields": "Редактировать поля маршрутизации учетных записей канала",
+    "Edit channel-owned account names, models, groups, priority, weight, and concurrency limits.": "Изменять имена, модели, группы, приоритет, вес и лимиты параллелизма учетных записей канала.",
     "Edit chat preset": "Редактировать пресет чата",
     "Edit Credential": "Редактировать учетные данные",
     "Edit discount tier": "Редактировать уровень скидки",

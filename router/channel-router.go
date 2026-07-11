@@ -58,13 +58,14 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 
 	// 渠道账号管理。列表和详情只读脱敏数据；启停和清冷却是运行期操作；账号新增、导入、
-	// 更新和删除会触碰上游凭证材料，必须走独立敏感写权限。
+	// 更新接口先允许普通写进入 controller，再按字段级分类要求敏感写；删除仍会移除
+	// 凭证生命周期，必须走独立敏感写权限。
 	{method: http.MethodGet, path: "/:id/accounts", permission: authz.ChannelAccountRead, handler: controller.ListChannelAccounts},
 	{method: http.MethodPost, path: "/:id/accounts", permission: authz.ChannelAccountSensitiveWrite, handler: controller.CreateChannelAccount},
 	{method: http.MethodPost, path: "/:id/accounts/batch", permission: authz.ChannelAccountSensitiveWrite, handler: controller.BatchCreateChannelAccounts},
 	{method: http.MethodPost, path: "/:id/accounts/import-multikey", permission: authz.ChannelAccountSensitiveWrite, handler: controller.ImportMultiKeyToChannelAccounts},
 	{method: http.MethodGet, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountRead, handler: controller.GetChannelAccount},
-	{method: http.MethodPut, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountSensitiveWrite, handler: controller.UpdateChannelAccount},
+	{method: http.MethodPut, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountWrite, handler: controller.UpdateChannelAccount},
 	{method: http.MethodDelete, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountSensitiveWrite, handler: controller.DeleteChannelAccount},
 	{method: http.MethodPost, path: "/:id/accounts/:account_id/status", permission: authz.ChannelAccountOperate, handler: controller.UpdateChannelAccountStatus},
 

@@ -82,6 +82,14 @@ describe('admin permission helpers', () => {
       hasAdminPermission(
         user,
         ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.WRITE
+      ),
+      true
+    )
+    assert.equal(
+      hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
         ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
       ),
       false
