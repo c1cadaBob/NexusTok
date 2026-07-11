@@ -54,6 +54,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { MODEL_FETCHABLE_TYPES } from '../constants'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import {
   channelsQueryKeys,
   handleDeleteChannel,
@@ -64,7 +65,6 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
-import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import { useChannels } from './channels-provider'
 
 interface DataTableRowActionsProps {
@@ -85,8 +85,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
   const canFetchAndSaveModels = permissions.canOperate && permissions.canWrite
-  const canManageChannelAccounts =
-    permissions.canReadAccountPool && permissions.canSensitiveWrite
+  const canManageChannelAccounts = permissions.canReadChannelAccount
 
   const guardPermission = (allowed: boolean) => {
     if (allowed) return true

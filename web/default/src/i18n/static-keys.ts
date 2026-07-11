@@ -44,6 +44,13 @@ export const STATIC_I18N_KEYS = [
   'Manage and configure',
 
   // Permission catalog
+  'Channel Accounts',
+  'Read channel accounts',
+  'View channel-owned account lists, details, masked keys, and routing metadata.',
+  'Operate channel accounts',
+  'Enable, disable, clear cooldowns, and run safe lifecycle operations for channel-owned accounts.',
+  'Edit channel account credentials',
+  'Create, import, update, or delete channel-owned upstream credentials.',
   'Edit sensitive account pool settings',
   'Delete groups, refresh account credentials, or edit account lifecycle settings.',
   'Account Pool Auth Files',

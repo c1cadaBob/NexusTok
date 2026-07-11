@@ -10,7 +10,7 @@ import (
 
 func TestCatalogIncludesNexusTokCoreResources(t *testing.T) {
 	catalog := Catalog()
-	require.Len(t, catalog, 10)
+	require.Len(t, catalog, 11)
 
 	resources := make(map[string]ResourceDefinition, len(catalog))
 	for _, resource := range catalog {
@@ -19,13 +19,17 @@ func TestCatalogIncludesNexusTokCoreResources(t *testing.T) {
 		assert.NotEmpty(t, resource.Actions)
 	}
 
-	for _, name := range []string{"channel", "account_pool", "account_pool_auth_file", "user", "model", "subscription", "redemption", "usage_log", "usage_data", "system_setting"} {
+	for _, name := range []string{"channel", "channel_account", "account_pool", "account_pool_auth_file", "user", "model", "subscription", "redemption", "usage_log", "usage_data", "system_setting"} {
 		_, ok := resources[name]
 		assert.True(t, ok, "resource %s should be registered", name)
 	}
 
 	assert.Equal(t, "Channel Management", resources["channel"].LabelKey)
 	assertActionExists(t, resources["channel"], ActionSensitiveWrite)
+	assert.Equal(t, "Channel Accounts", resources["channel_account"].LabelKey)
+	assertActionExists(t, resources["channel_account"], ActionRead)
+	assertActionExists(t, resources["channel_account"], ActionOperate)
+	assertActionExists(t, resources["channel_account"], ActionSensitiveWrite)
 	assertActionExists(t, resources["account_pool"], ActionSecretView)
 	assertActionExists(t, resources["account_pool_auth_file"], ActionRead)
 	assertActionExists(t, resources["account_pool_auth_file"], ActionSensitiveWrite)
@@ -45,6 +49,7 @@ func TestRolesExposeRootAndAdminBaselines(t *testing.T) {
 
 	assert.True(t, root.Superuser)
 	assert.True(t, root.Grants["channel"][ActionSensitiveWrite])
+	assert.True(t, root.Grants["channel_account"][ActionSensitiveWrite])
 	assert.True(t, root.Grants["account_pool_auth_file"][ActionSensitiveWrite])
 	assert.True(t, root.Grants["system_setting"][ActionSecretView])
 
@@ -54,6 +59,9 @@ func TestRolesExposeRootAndAdminBaselines(t *testing.T) {
 	assert.True(t, admin.Grants["channel"][ActionWrite])
 	assert.False(t, admin.Grants["channel"][ActionSensitiveWrite])
 	assert.False(t, admin.Grants["channel"][ActionSecretView])
+	assert.True(t, admin.Grants["channel_account"][ActionRead])
+	assert.True(t, admin.Grants["channel_account"][ActionOperate])
+	assert.False(t, admin.Grants["channel_account"][ActionSensitiveWrite])
 	assert.True(t, admin.Grants["account_pool"][ActionRead])
 	assert.True(t, admin.Grants["account_pool"][ActionOperate])
 	assert.True(t, admin.Grants["account_pool"][ActionWrite])
@@ -100,7 +108,11 @@ func TestCapabilitiesFollowExistingSystemRoles(t *testing.T) {
 	assert.True(t, admin["usage_data"][ActionRead])
 	assert.True(t, admin["account_pool_auth_file"][ActionRead])
 	assert.False(t, admin["account_pool_auth_file"][ActionSensitiveWrite])
+	assert.True(t, admin["channel_account"][ActionRead])
+	assert.True(t, admin["channel_account"][ActionOperate])
+	assert.False(t, admin["channel_account"][ActionSensitiveWrite])
 	assert.False(t, user["channel"][ActionRead])
+	assert.False(t, user["channel_account"][ActionRead])
 	assert.False(t, user["user"][ActionRead])
 	assert.False(t, user["model"][ActionRead])
 	assert.False(t, user["redemption"][ActionRead])
@@ -117,6 +129,9 @@ func TestCanFollowsRoleBaselinesAndFailsClosed(t *testing.T) {
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, ChannelSensitiveWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, ChannelSecretView))
+	assert.True(t, Can(2, common.RoleAdminUser, ChannelAccountRead))
+	assert.True(t, Can(2, common.RoleAdminUser, ChannelAccountOperate))
+	assert.False(t, Can(2, common.RoleAdminUser, ChannelAccountSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, AccountPoolRead))
 	assert.True(t, Can(2, common.RoleAdminUser, AccountPoolOperate))
 	assert.True(t, Can(2, common.RoleAdminUser, AccountPoolWrite))
@@ -145,6 +160,7 @@ func TestCanFollowsRoleBaselinesAndFailsClosed(t *testing.T) {
 	assert.False(t, Can(2, common.RoleAdminUser, UsageLogSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, UsageDataRead))
 	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
+	assert.False(t, Can(3, common.RoleCommonUser, ChannelAccountRead))
 	assert.False(t, Can(3, common.RoleCommonUser, AccountPoolRead))
 	assert.False(t, Can(3, common.RoleCommonUser, AccountPoolAuthFileRead))
 	assert.False(t, Can(3, common.RoleCommonUser, UserRead))

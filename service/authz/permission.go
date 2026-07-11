@@ -25,6 +25,7 @@ const (
 
 const (
 	ResourceChannel             = "channel"
+	ResourceChannelAccount      = "channel_account"
 	ResourceAccountPool         = "account_pool"
 	ResourceAccountPoolAuthFile = "account_pool_auth_file"
 	ResourceUser                = "user"
@@ -50,6 +51,10 @@ var (
 	ChannelWrite          = Permission{Resource: ResourceChannel, Action: ActionWrite}
 	ChannelSensitiveWrite = Permission{Resource: ResourceChannel, Action: ActionSensitiveWrite}
 	ChannelSecretView     = Permission{Resource: ResourceChannel, Action: ActionSecretView}
+
+	ChannelAccountRead           = Permission{Resource: ResourceChannelAccount, Action: ActionRead}
+	ChannelAccountOperate        = Permission{Resource: ResourceChannelAccount, Action: ActionOperate}
+	ChannelAccountSensitiveWrite = Permission{Resource: ResourceChannelAccount, Action: ActionSensitiveWrite}
 
 	AccountPoolRead           = Permission{Resource: ResourceAccountPool, Action: ActionRead}
 	AccountPoolOperate        = Permission{Resource: ResourceAccountPool, Action: ActionOperate}

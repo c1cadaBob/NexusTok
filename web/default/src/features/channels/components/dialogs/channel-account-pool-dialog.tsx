@@ -69,9 +69,9 @@ import {
   updateChannelAccountStatus,
 } from '../../api'
 import { CHANNEL_STATUS } from '../../constants'
+import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { channelsQueryKeys, formatTimestamp } from '../../lib'
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
-import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
 type ChannelAccountPoolDialogProps = {
@@ -155,6 +155,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [actionLoading, setActionLoading] = useState(false)
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
+  const canReadChannelAccounts = permissions.canReadChannelAccount
+  const canOperateChannelAccounts = permissions.canOperateChannelAccount
+  const canEditChannelAccounts = permissions.canSensitiveWriteChannelAccount
 
   const channelId = currentRow?.id ?? 0
   const accountsQueryKey = [
@@ -174,7 +177,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
         status: statusFilter === 'all' ? undefined : Number(statusFilter),
         search: search || undefined,
       }),
-    enabled: props.open && channelId > 0,
+    enabled: props.open && channelId > 0 && canReadChannelAccounts,
   })
 
   const accounts = accountsQuery.data?.data?.accounts.items ?? []
@@ -195,7 +198,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   }
 
   const openCreateForm = () => {
-    if (!permissions.canSensitiveWrite) {
+    if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -208,7 +211,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   }
 
   const openEditForm = (account: ChannelAccount) => {
-    if (!permissions.canSensitiveWrite) {
+    if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -238,7 +241,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitForm = async () => {
     if (!currentRow) return
-    if (!permissions.canSensitiveWrite) {
+    if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -276,7 +279,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     action: 'enable' | 'disable' | 'clear'
   ) => {
     if (!currentRow) return
-    if (!permissions.canSensitiveWrite) {
+    if (!canOperateChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -323,7 +326,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const performDelete = async () => {
     if (!currentRow || !deleteTarget) return
-    if (!permissions.canSensitiveWrite) {
+    if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       setDeleteTarget(null)
       return
@@ -351,7 +354,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitBatch = async (importFromMultiKey = false) => {
     if (!currentRow) return
-    if (!permissions.canSensitiveWrite) {
+    if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       return
     }
@@ -480,7 +483,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   variant='outline'
                   size='sm'
                   onClick={() => accountsQuery.refetch()}
-                  disabled={accountsQuery.isFetching}
+                  disabled={!canReadChannelAccounts || accountsQuery.isFetching}
+                  title={
+                    canReadChannelAccounts ? undefined : noPermissionMessage
+                  }
                 >
                   <RefreshCw className='mr-2 h-4 w-4' />
                   {t('Refresh')}
@@ -490,17 +496,15 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   variant='outline'
                   size='sm'
                   onClick={() => {
-                    if (!permissions.canSensitiveWrite) {
+                    if (!canEditChannelAccounts) {
                       toast.error(noPermissionMessage)
                       return
                     }
                     setBatchOpen((value) => !value)
                   }}
-                  disabled={!permissions.canSensitiveWrite}
+                  disabled={!canEditChannelAccounts}
                   title={
-                    permissions.canSensitiveWrite
-                      ? undefined
-                      : noPermissionMessage
+                    canEditChannelAccounts ? undefined : noPermissionMessage
                   }
                 >
                   <Upload className='mr-2 h-4 w-4' />
@@ -510,11 +514,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   type='button'
                   size='sm'
                   onClick={openCreateForm}
-                  disabled={!permissions.canSensitiveWrite}
+                  disabled={!canEditChannelAccounts}
                   title={
-                    permissions.canSensitiveWrite
-                      ? undefined
-                      : noPermissionMessage
+                    canEditChannelAccounts ? undefined : noPermissionMessage
                   }
                 >
                   <Plus className='mr-2 h-4 w-4' />
@@ -536,11 +538,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     type='button'
                     size='sm'
                     onClick={() => submitBatch(false)}
-                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    disabled={actionLoading || !canEditChannelAccounts}
                     title={
-                      permissions.canSensitiveWrite
-                        ? undefined
-                        : noPermissionMessage
+                      canEditChannelAccounts ? undefined : noPermissionMessage
                     }
                   >
                     {actionLoading && (
@@ -553,11 +553,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     variant='outline'
                     size='sm'
                     onClick={() => submitBatch(true)}
-                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    disabled={actionLoading || !canEditChannelAccounts}
                     title={
-                      permissions.canSensitiveWrite
-                        ? undefined
-                        : noPermissionMessage
+                      canEditChannelAccounts ? undefined : noPermissionMessage
                     }
                   >
                     {t('Import from Multi-Key')}
@@ -631,11 +629,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   <Button
                     type='button'
                     onClick={submitForm}
-                    disabled={actionLoading || !permissions.canSensitiveWrite}
+                    disabled={actionLoading || !canEditChannelAccounts}
                     title={
-                      permissions.canSensitiveWrite
-                        ? undefined
-                        : noPermissionMessage
+                      canEditChannelAccounts ? undefined : noPermissionMessage
                     }
                   >
                     {actionLoading && (
@@ -666,7 +662,16 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {accountsQuery.isLoading ? (
+                  {!canReadChannelAccounts ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={9}
+                        className='text-muted-foreground h-24 text-center'
+                      >
+                        {noPermissionMessage}
+                      </TableCell>
+                    </TableRow>
+                  ) : accountsQuery.isLoading ? (
                     <TableRow>
                       <TableCell colSpan={9} className='h-24 text-center'>
                         <Loader2 className='mx-auto h-5 w-5 animate-spin' />
@@ -717,9 +722,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 variant='ghost'
                                 size='icon-sm'
                                 onClick={() => openEditForm(account)}
-                                disabled={!permissions.canSensitiveWrite}
+                                disabled={!canEditChannelAccounts}
                                 title={
-                                  permissions.canSensitiveWrite
+                                  canEditChannelAccounts
                                     ? undefined
                                     : noPermissionMessage
                                 }
@@ -739,9 +744,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                       : 'enable'
                                   )
                                 }
-                                disabled={!permissions.canSensitiveWrite}
+                                disabled={!canOperateChannelAccounts}
                                 title={
-                                  permissions.canSensitiveWrite
+                                  canOperateChannelAccounts
                                     ? undefined
                                     : noPermissionMessage
                                 }
@@ -764,9 +769,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 onClick={() =>
                                   performStatusAction(account, 'clear')
                                 }
-                                disabled={!permissions.canSensitiveWrite}
+                                disabled={!canOperateChannelAccounts}
                                 title={
-                                  permissions.canSensitiveWrite
+                                  canOperateChannelAccounts
                                     ? undefined
                                     : noPermissionMessage
                                 }
@@ -779,15 +784,15 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                                 variant='ghost'
                                 size='icon-sm'
                                 onClick={() => {
-                                  if (!permissions.canSensitiveWrite) {
+                                  if (!canEditChannelAccounts) {
                                     toast.error(noPermissionMessage)
                                     return
                                   }
                                   setDeleteTarget(account)
                                 }}
-                                disabled={!permissions.canSensitiveWrite}
+                                disabled={!canEditChannelAccounts}
                                 title={
-                                  permissions.canSensitiveWrite
+                                  canEditChannelAccounts
                                     ? undefined
                                     : noPermissionMessage
                                 }

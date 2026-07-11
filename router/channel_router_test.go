@@ -49,15 +49,24 @@ func TestRegisterChannelRoutesKeepsRootProtectedHandlers(t *testing.T) {
 func TestChannelPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertPermissionRoute(t, http.MethodGet, "/", authz.ChannelRead)
 	assertPermissionRoute(t, http.MethodGet, "/models", authz.ChannelRead)
-	assertPermissionRoute(t, http.MethodGet, "/:id/accounts", authz.ChannelRead)
 	assertPermissionRoute(t, http.MethodGet, "/test/:id", authz.ChannelOperate)
 	assertPermissionRoute(t, http.MethodGet, "/update_balance/:id", authz.ChannelOperate)
 	assertPermissionRoute(t, http.MethodPut, "/", authz.ChannelWrite)
 	assertPermissionRoute(t, http.MethodPut, "/tag", authz.ChannelWrite)
 	assertPermissionRoute(t, http.MethodPost, "/", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodDelete, "/:id", authz.ChannelSensitiveWrite)
-	assertPermissionRoute(t, http.MethodPost, "/:id/accounts", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/:id/key", authz.ChannelSecretView)
+}
+
+func TestChannelPermissionRoutesClassifyChannelAccountActions(t *testing.T) {
+	assertPermissionRoute(t, http.MethodGet, "/:id/accounts", authz.ChannelAccountRead)
+	assertPermissionRoute(t, http.MethodGet, "/:id/accounts/:account_id", authz.ChannelAccountRead)
+	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/:account_id/status", authz.ChannelAccountOperate)
+	assertPermissionRoute(t, http.MethodPost, "/:id/accounts", authz.ChannelAccountSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/batch", authz.ChannelAccountSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/import-multikey", authz.ChannelAccountSensitiveWrite)
+	assertPermissionRoute(t, http.MethodPut, "/:id/accounts/:account_id", authz.ChannelAccountSensitiveWrite)
+	assertPermissionRoute(t, http.MethodDelete, "/:id/accounts/:account_id", authz.ChannelAccountSensitiveWrite)
 }
 
 func TestChannelPermissionRoutesKeepLegacySensitiveMiddlewares(t *testing.T) {

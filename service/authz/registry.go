@@ -50,6 +50,30 @@ func init() {
 	})
 
 	registerResource(ResourceDefinition{
+		Resource: ResourceChannelAccount,
+		LabelKey: "Channel Accounts",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "Read channel accounts",
+				DescriptionKey: "View channel-owned account lists, details, masked keys, and routing metadata.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionOperate,
+				LabelKey:       "Operate channel accounts",
+				DescriptionKey: "Enable, disable, clear cooldowns, and run safe lifecycle operations for channel-owned accounts.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionSensitiveWrite,
+				LabelKey:       "Edit channel account credentials",
+				DescriptionKey: "Create, import, update, or delete channel-owned upstream credentials.",
+			},
+		},
+	})
+
+	registerResource(ResourceDefinition{
 		Resource: ResourceAccountPool,
 		LabelKey: "Account Pool",
 		Actions: managementActions(

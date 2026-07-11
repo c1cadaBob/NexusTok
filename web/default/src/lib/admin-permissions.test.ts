@@ -67,6 +67,26 @@ describe('admin permission helpers', () => {
       true
     )
     assert.equal(
+      canReadAdminResource(user, ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT),
+      true
+    )
+    assert.equal(
+      hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.OPERATE
+      ),
+      true
+    )
+    assert.equal(
+      hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+      ),
+      false
+    )
+    assert.equal(
       canReadAdminResource(
         user,
         ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE

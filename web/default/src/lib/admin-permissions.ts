@@ -24,6 +24,7 @@ export type AdminCapabilities = AdminPermissionMatrix
 
 export const ADMIN_PERMISSION_RESOURCES = {
   CHANNEL: 'channel',
+  CHANNEL_ACCOUNT: 'channel_account',
   ACCOUNT_POOL: 'account_pool',
   ACCOUNT_POOL_AUTH_FILE: 'account_pool_auth_file',
   USER: 'user',
@@ -89,6 +90,10 @@ const ADMIN_DEFAULT_GRANTS: Record<
     [ADMIN_PERMISSION_ACTIONS.READ]: true,
     [ADMIN_PERMISSION_ACTIONS.OPERATE]: true,
     [ADMIN_PERMISSION_ACTIONS.WRITE]: true,
+  },
+  [ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT]: {
+    [ADMIN_PERMISSION_ACTIONS.READ]: true,
+    [ADMIN_PERMISSION_ACTIONS.OPERATE]: true,
   },
   [ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL]: {
     [ADMIN_PERMISSION_ACTIONS.READ]: true,

@@ -2,7 +2,8 @@
 // 该文件集中注册渠道管理路由。
 //
 // 渠道路由先经过 AdminAuth，再按 authz 权限表执行 read/operate/write/
-// sensitive_write/secret_view 二次校验。原本 Root-only 或需要安全验证的路径
+// sensitive_write/secret_view 二次校验。渠道内账号管理使用独立 channel_account
+// 资源，避免把凭证池日常操作和渠道配置写权限绑死。原本 Root-only 或需要安全验证的路径
 // 继续保留旧中间件，避免权限表灰度接入时放宽敏感边界。
 package router
 
@@ -56,15 +57,16 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/models_enabled", permission: authz.ChannelRead, handler: controller.EnabledListModels},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 
-	// 渠道账号管理。账号新增、导入、更新和删除会触碰凭证材料，按敏感写处理。
-	{method: http.MethodGet, path: "/:id/accounts", permission: authz.ChannelRead, handler: controller.ListChannelAccounts},
-	{method: http.MethodPost, path: "/:id/accounts", permission: authz.ChannelSensitiveWrite, handler: controller.CreateChannelAccount},
-	{method: http.MethodPost, path: "/:id/accounts/batch", permission: authz.ChannelSensitiveWrite, handler: controller.BatchCreateChannelAccounts},
-	{method: http.MethodPost, path: "/:id/accounts/import-multikey", permission: authz.ChannelSensitiveWrite, handler: controller.ImportMultiKeyToChannelAccounts},
-	{method: http.MethodGet, path: "/:id/accounts/:account_id", permission: authz.ChannelRead, handler: controller.GetChannelAccount},
-	{method: http.MethodPut, path: "/:id/accounts/:account_id", permission: authz.ChannelSensitiveWrite, handler: controller.UpdateChannelAccount},
-	{method: http.MethodDelete, path: "/:id/accounts/:account_id", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteChannelAccount},
-	{method: http.MethodPost, path: "/:id/accounts/:account_id/status", permission: authz.ChannelOperate, handler: controller.UpdateChannelAccountStatus},
+	// 渠道账号管理。列表和详情只读脱敏数据；启停和清冷却是运行期操作；账号新增、导入、
+	// 更新和删除会触碰上游凭证材料，必须走独立敏感写权限。
+	{method: http.MethodGet, path: "/:id/accounts", permission: authz.ChannelAccountRead, handler: controller.ListChannelAccounts},
+	{method: http.MethodPost, path: "/:id/accounts", permission: authz.ChannelAccountSensitiveWrite, handler: controller.CreateChannelAccount},
+	{method: http.MethodPost, path: "/:id/accounts/batch", permission: authz.ChannelAccountSensitiveWrite, handler: controller.BatchCreateChannelAccounts},
+	{method: http.MethodPost, path: "/:id/accounts/import-multikey", permission: authz.ChannelAccountSensitiveWrite, handler: controller.ImportMultiKeyToChannelAccounts},
+	{method: http.MethodGet, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountRead, handler: controller.GetChannelAccount},
+	{method: http.MethodPut, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountSensitiveWrite, handler: controller.UpdateChannelAccount},
+	{method: http.MethodDelete, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountSensitiveWrite, handler: controller.DeleteChannelAccount},
+	{method: http.MethodPost, path: "/:id/accounts/:account_id/status", permission: authz.ChannelAccountOperate, handler: controller.UpdateChannelAccountStatus},
 
 	// 渠道密钥获取同时需要 Root、限流、禁缓存和安全验证，权限表只作为额外审计边界。
 	{

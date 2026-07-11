@@ -207,7 +207,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
 | P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略优先读取和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、策略周期 reload、用户 override 迁入 `casbin_rule`、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
-| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；`account_pool` 继续覆盖分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account` 等资源拆分，并保留现有敏感写 fail-closed。 |
+| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account` 返回字段脱敏、`channel_account.write` 非敏感写边界、审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
 | P2/P3 | Advanced Custom 模板库与审计增强 | `relay/channel/advancedcustom/*`、默认前端 editor | 基础 adaptor、后端校验和 Visual/JSON 编辑器已落地；后续可做可信模板、导入导出、路由级审计和更清晰的敏感字段变更预览。 |
@@ -8920,7 +8920,7 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 - `/api/account-pool/auth-files*` 六条路由已经从 `account_pool` 拆出；其余账号池分组、账号、日志、检测、OAuth 和运行态操作仍保持原 `account_pool` 权限。
 - 默认前端凭证面板、导入按钮、编辑/删除按钮和添加账号弹窗的选择凭证路径均消费新权限。
 - 动态权限 catalog 文案已补齐六语：`Account Pool Auth Files`、`Read account pool auth files`、`Edit account pool auth files` 及其描述。
-- 差异报告的 P1/P2 Authz 资源继续细分队列已更新：认证文件已拆出，后续可继续评估 `channel_account` 等细资源。
+- 差异报告的 P1/P2 Authz 资源继续细分队列已更新：认证文件已拆出；后续追加实施已继续拆出 `channel_account`，当前剩余重点转为返回字段脱敏、审计增强、非敏感写边界和角色编辑 UI。
 
 ### 验证记录
 
@@ -9013,3 +9013,89 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 13. Chrome/CDP 网络记录显示 `/api/channel/models`、`/api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、`/api/channel/1`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=50`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 均返回 200。
 14. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
 15. 运行态验证截图保存于 `/tmp/nexustok-channel-left-nav-search-add.png`。
+
+## 本轮实施评审：渠道账号权限资源拆分与页面操作对齐
+
+### 需求分析
+
+继续推进 `new-api-main` 差异吸收时，`channel_account` 是上一轮复核队列中的高价值细分资源。只读对比后确认：`new-api-main` 本身没有 NexusTok 的渠道内账号池接口和页面能力，它只有较粗的 `channel` 管理资源；NexusTok 反而已经具备更完整的渠道内账号模型、`/api/channel/:id/accounts*` API 和默认前端弹窗。
+
+因此本轮不是复制 `new-api-main` 的缺失实现，而是把它的“资源级授权治理”优势发展成 NexusTok 原生能力：将渠道内账号从 `channel` 和全局 `account_pool` 的混合语义中拆出来，新增独立 `channel_account` 权限资源。
+
+本轮目标：
+
+1. 新增 `channel_account` resource，并只注册当前实际需要的 `read`、`operate`、`sensitive_write` 三类动作。
+2. `/api/channel/:id/accounts*` URL 和 handler 保持不变，但路由权限从 `channel.*` 迁移到 `channel_account.*`。
+3. 默认 Admin 保持可读和可操作，避免现有管理员失去渠道账号日常运维入口；敏感写仍默认关闭，需要 Root 或显式授权。
+4. 前端渠道行菜单和 `ChannelAccountPoolDialog` 按新资源拆分：读列表、启停/清冷却、新增/导入/编辑/删除分别使用不同能力。
+5. 动态权限 catalog 文案补齐六语，并把实施结果写回差异报告。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 后端权限 catalog | `service/authz/permission.go`、`service/authz/registry.go` | 新增 `ResourceChannelAccount`、`ChannelAccountRead`、`ChannelAccountOperate`、`ChannelAccountSensitiveWrite`；catalog 注册 `Channel Accounts`。 |
+| 持久策略种子 | `service/authz/persistent_policy.go` 间接受影响，测试在 `persistent_policy_test.go` | `SeedPersistentPolicies()` 启动时会按 catalog 重置内置 Admin 默认策略，本轮测试锁定会写入 `channel_account.read/operate`，不会写入 sensitive_write。 |
+| 渠道路由权限表 | `router/channel-router.go` | 仅迁移 `/api/channel/:id/accounts*` 八条子路由；渠道 CRUD、测试、余额、Codex OAuth、Ollama、multi-key 和 upstream updates 不变。 |
+| 用户权限回传 | `controller/user_authz_test.go` | `/api/user/self`、`/api/user/:id` 的权限矩阵随 catalog 自动包含新资源，测试补齐 Root/Admin/普通用户断言。 |
+| 前端权限兜底 | `web/default/src/lib/admin-permissions.ts` | 静态 Admin baseline 新增 `channel_account.read/operate=true`，`sensitive_write=false`，用于旧会话或 catalog 临时不可用兜底。 |
+| 渠道页面权限 hook | `web/default/src/features/channels/hooks/use-channel-permissions.ts` | 新增 `canReadChannelAccount`、`canOperateChannelAccount`、`canSensitiveWriteChannelAccount`。 |
+| 渠道行菜单 | `data-table-row-actions.tsx` | `Account Pool` 入口从 `account_pool.read + channel.sensitive_write` 改为 `channel_account.read`。 |
+| 渠道账号弹窗 | `channel-account-pool-dialog.tsx` | 查询开关、刷新、启停/清冷却、新增/批量导入/编辑/删除分别接新权限。 |
+| i18n | `static-keys.ts`、`locales/{en,zh,fr,ja,ru,vi}.json` | 新增动态 catalog 文案翻译。 |
+
+### 风险评估
+
+- 既有管理员入口回归风险：如果默认 Admin 不授予 `channel_account.read`，普通管理员会突然看不到渠道账号弹窗。本轮默认授予 read/operate，锁定 sensitive_write 不默认授予。
+- 权限过宽风险：如果继续复用 `channel.sensitive_write`，授予渠道账号维护能力会顺带授予渠道创建、删除、复制和敏感渠道配置修改。本轮用独立 `channel_account.sensitive_write` 收窄该风险。
+- 前后端不一致风险：原弹窗状态启停使用 `channel.sensitive_write`，而后端旧路由是 `channel.operate`。本轮统一迁移为 `channel_account.operate`。
+- 全局账号池混淆风险：原行菜单入口要求 `account_pool.read`，会把全局账号池查看权限和渠道内账号查看权限绑在一起。本轮移除该耦合。
+- 热更新策略风险：运行态若后端未热更新，会看不到 `channel_account` catalog。本轮已访问 3003 并确认 `/api/authz/catalog` 与 `/api/user/self` 都包含新资源；无需重启容器。
+- 返回字段风险：子 agent 指出渠道账号 read 响应仍可能包含 `base_url`、`other/settings`、请求覆盖等字段。当前接口本轮不改响应结构，后续可以单独评审“read 字段脱敏”和是否新增 `channel_account.write`。
+
+### 方案评审
+
+采用“小资源拆分 + URL 不变 + 前端按动作消费 + 文案补齐”的方案：
+
+1. 不改数据库 schema，不改 controller payload，不改 API URL，降低对 Relay 热路径和现有页面的冲击。
+2. 后端只注册三类动作：`read` 覆盖列表和详情；`operate` 覆盖启停/清冷却；`sensitive_write` 覆盖新增、批量创建、multi-key 导入、更新和删除。
+3. 不注册 `channel_account.write`，因为渠道账号字段大多直接或间接影响凭证、路由和请求改写，非敏感写边界尚未充分评审。
+4. 前端入口允许只读用户打开弹窗查看列表；弹窗内部再按动作禁用按钮并在直接调用时 toast 无权限。
+5. 保持 `Account Pool` 现有弹窗标题和菜单文案，避免本轮 UI 文案大范围重命名；权限 catalog 中使用更准确的 `Channel Accounts`。
+
+### 实施结果
+
+已完成渠道账号权限资源拆分：
+
+- `authz.Catalog()` 新增 `channel_account`，actions 为 `read`、`operate`、`sensitive_write`。
+- Root 对新资源仍为 superuser；Admin 默认具备 `read/operate`，不具备 `sensitive_write`。
+- `SeedPersistentPolicies()` 的默认 Admin 策略会写入 `channel_account.read` 和 `channel_account.operate`，不会写入 `channel_account.sensitive_write`。
+- `/api/channel/:id/accounts` 和 `/api/channel/:id/accounts/:account_id` 改为 `channel_account.read`。
+- `/api/channel/:id/accounts/:account_id/status` 改为 `channel_account.operate`。
+- `/api/channel/:id/accounts`、`/batch`、`/import-multikey`、PUT/DELETE `/:account_id` 改为 `channel_account.sensitive_write`。
+- 默认前端行菜单 `Account Pool` 入口改为只依赖 `canReadChannelAccount`。
+- `ChannelAccountPoolDialog` 查询列表时要求 `canReadChannelAccount`；启停/清冷却要求 `canOperateChannelAccount`；新增、批量导入、从 multi-key 导入、编辑、删除要求 `canSensitiveWriteChannelAccount`。
+- 动态权限 catalog 文案已补齐 en/zh/fr/ja/ru/vi。
+- 顶部后续优先队列已更新：`channel_account` 资源拆分不再作为待评估项，后续转向字段脱敏、非敏感写边界、审计增强和角色编辑 UI。
+
+### 验证记录
+
+1. `go test ./service/authz -run 'TestCatalogIncludesNexusTokCoreResources|TestRolesExposeRootAndAdminBaselines|TestCapabilitiesFollowExistingSystemRoles|TestCanFollowsRoleBaselinesAndFailsClosed|TestSeedPersistentPoliciesStoresBuiltInRolesAndAdminPolicies|TestPersistentPolicyFallbackWhenPolicyTableMissing'` 通过。
+2. `go test ./router -run 'TestRegisterChannelRoutesKeepsCoreHandlers|TestRegisterChannelRoutesKeepsRootProtectedHandlers|TestChannelPermissionRoutesClassifyCoreActions|TestChannelPermissionRoutesClassifyChannelAccountActions|TestChannelPermissionRoutesKeepLegacySensitiveMiddlewares'` 通过。
+3. `go test ./controller -run 'TestGetSelfReturnsAdminPermissions|TestGetSelfIncludesAuthzUserOverrides|TestGetUserReturnsAdminPermissions|TestUpdateUserAdminPermissions'` 通过。
+4. `go test ./service/authz ./router ./controller` 通过。
+5. `cd web/default && bun test src/lib/admin-permissions.test.ts` 通过。
+6. `cd web/default && bunx prettier --check src/lib/admin-permissions.ts src/lib/admin-permissions.test.ts src/features/channels/hooks/use-channel-permissions.ts src/features/channels/components/data-table-row-actions.tsx src/features/channels/components/dialogs/channel-account-pool-dialog.tsx src/i18n/static-keys.ts src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` 通过。
+7. `cd web/default && bun run i18n:sync` 通过，报告显示所有语言 `missingCount=0`、`extrasCount=0`。
+8. `cd web/default && bun run typecheck` 通过。
+9. `cd web/default && bun run build` 通过。
+10. `git diff --check` 通过。
+11. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200。
+12. 运行态登录 `c1cada` 后访问 `/api/user/self`，返回 `permissions.admin_permissions.channel_account = { read: true, operate: true, sensitive_write: true }`，符合 Root superuser 预期。
+13. 运行态 `/api/authz/catalog` 返回 `channel_account`，动作和描述为 `read / operate / sensitive_write`。
+14. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+15. 使用真实浏览器打开 `/channels`，点击渠道 `11111` 行菜单中的 `Account Pool`，菜单项可点击且未禁用。
+16. 渠道账号弹窗成功打开，页面显示 `Account Pool`、`Total: 0`、`Enabled: 0`、`Refresh`、`Batch Import`、`Add Account`、`No accounts found`。
+17. 浏览器网络记录显示 `/api/channel/1/accounts?p=1&page_size=10` 返回 HTTP 200。
+18. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
+19. 运行态验证截图保存于 `/tmp/nexustok-channel-account-dialog.png`。

@@ -17,12 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useMemo } from 'react'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   hasAdminPermission,
 } from '@/lib/admin-permissions'
-import { useAuthStore } from '@/stores/auth-store'
 
 export type ChannelPermissions = {
   canRead: boolean
@@ -31,11 +31,14 @@ export type ChannelPermissions = {
   canSensitiveWrite: boolean
   canViewSecret: boolean
   canReadAccountPool: boolean
+  canReadChannelAccount: boolean
+  canOperateChannelAccount: boolean
+  canSensitiveWriteChannelAccount: boolean
 }
 
-// 渠道管理页需要同时消费 channel 与 account_pool 权限。
-// 集中封装可以避免各组件散落权限常量，后续接入服务端 enforcement 或用户 override 时
-// 只需要保持 `admin-permissions` 的矩阵语义稳定。
+// 渠道管理页同时消费 channel、channel_account 与 account_pool 权限。
+// channel 控制渠道配置本身；channel_account 只覆盖渠道内账号列表、启停和凭证维护；
+// account_pool 仍用于全局账号池组选择等跨渠道资源。集中封装可以避免各组件散落权限常量。
 export function useChannelPermissions(): ChannelPermissions {
   const user = useAuthStore((state) => state.auth.user)
 
@@ -70,6 +73,21 @@ export function useChannelPermissions(): ChannelPermissions {
         user,
         ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
         ADMIN_PERMISSION_ACTIONS.READ
+      ),
+      canReadChannelAccount: hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.READ
+      ),
+      canOperateChannelAccount: hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.OPERATE
+      ),
+      canSensitiveWriteChannelAccount: hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.CHANNEL_ACCOUNT,
+        ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
       ),
     }),
     [user]
