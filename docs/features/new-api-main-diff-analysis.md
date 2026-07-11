@@ -55,7 +55,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement 与持久策略底座已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地。真正剩余的是 Casbin runtime/enforcer、角色编辑/导入导出和更细资源拆分，而不是基础 Authz enforcement。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement 与持久策略底座已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地，`GET /api/authz/policies/export` 已提供 Root-only 稳定导出。真正剩余的是 Casbin runtime/enforcer、角色编辑/导入和更细资源拆分，而不是基础 Authz enforcement。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地并扩展到多组管理路由 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；同一 `permissionRoute` 模式已扩展到账户池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统任务和系统信息等路由。后续重点转为 Casbin runtime/角色编辑和资源粒度继续拆分。 |
 | 渠道/账号池敏感字段 fail-closed | `controller/channel_authz.go`、`controller/account_pool_authz.go` | 已落地主要更新路径 | 渠道更新接口已建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；账号池分组更新已对 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段做敏感写二次校验，并让默认前端账号池页消费 `write/operate/sensitive_write`。后续新增字段必须进入分类测试。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 已落地 | 保留账号池专用审计，同时已新增全局操作审计兜底；管理写操作记录 action、params、状态码、业务成功状态和操作者，不记录请求体，前端 Usage Logs 详情可展示结构化审计信息。 |
@@ -206,7 +206,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
+| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像、静态基线 fallback 和 Root-only 策略导出接口已原生化；仍未引入 Casbin runtime/enforcer、角色编辑 UI、自定义角色和策略导入。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
 | P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`channel_account.read` 响应已做基础脱敏，只有 sensitive_write 用户可见上游地址、组织 ID、请求覆盖、模型映射、provider settings 和原始错误详情；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account.write` 非敏感写边界、字段级审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
@@ -244,7 +244,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
    - 只读 catalog 已扩展到渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据、系统设置、系统任务和系统信息等管理资源。
    - 动作已先统一为 `read`、`operate`、`write`、`sensitive_write`、`secret_view`。
    - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端已用同一 schema 过滤管理侧边栏、入口级路由守卫和多处页面按钮。
-   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`。后续重点是 Casbin runtime/enforcer、角色编辑/导入导出和更细资源拆分。
+   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`；`GET /api/authz/policies/export` 已能导出可迁移策略快照。后续重点是 Casbin runtime/enforcer、角色编辑、策略导入和更细资源拆分。
 2. 拆分路由注册：
    - 渠道、账号池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统信息、系统任务和 Authz catalog 路由都已按 `permissionRoute` 模式拆分或接入权限表。
    - 后续新增管理路由必须先进入资源动作分类和路由结构测试，避免退回只依赖粗粒度 Admin/Root 的注册方式。
@@ -343,9 +343,9 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表、账号池认证文件独立权限资源和 Authz 持久策略底座已原生化；下一批聚焦 Casbin runtime/enforcer、角色编辑/导入导出和新增公开模块的测试契约。
+2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表、账号池认证文件独立权限资源、Authz 持久策略底座和策略导出接口已原生化；下一批聚焦 Casbin runtime/enforcer、角色编辑、策略导入和新增公开模块的测试契约。
 3. 系统任务/系统信息已形成后端模型、接口、租约执行和 `/system-info` 页面闭环；后续新增长耗时任务直接接入 SystemTask。
-4. 权限系统已覆盖 channel/account_pool/account_pool_auth_file/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座、周期 reload 和用户 override 兼容镜像；后续从“有没有 enforcement”转为“Casbin runtime、角色编辑/导入导出、继续拆分细资源和权限编辑体验”。
+4. 权限系统已覆盖 channel/account_pool/account_pool_auth_file/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座、周期 reload、用户 override 兼容镜像和 Root-only 策略导出；后续从“有没有 enforcement”转为“Casbin runtime、角色编辑、策略导入、继续拆分细资源和权限编辑体验”。
 5. 订阅/支付增强已覆盖余额支付、钱包溢出、Waffo Pancake 商品绑定和订阅支付；后续转向诊断、Classic parity 和支付异常自助排查。
 6. 仪表盘和日志体验已覆盖 flow 数据、Sankey、移动端卡片、统一筛选工具条；后续优先统一账号池日志体验。
 7. Relay/Playground 深水区已完成 Responses/Gemini/OpenAI image/Advanced Custom 和 Playground 多个关键切片；后续继续逐协议、逐组件小步演进，不做大爆炸迁移。
@@ -545,7 +545,8 @@ NexusTok 独有 API 族：
 
 | API 前缀 | 能力 | 处理 |
 |----------|------|------|
-| `/api/authz/catalog` | 权限资源/角色 catalog | P1 引入。 |
+| `/api/authz/catalog` | 权限资源/角色 catalog | 已引入。 |
+| `/api/authz/policies/export` | 角色与 Casbin 兼容策略快照导出 | 已引入 Root-only 只读导出，用于审计、备份和后续策略导入前 diff。 |
 | `/api/system-task/*` | 后台任务创建、查询、当前任务 | 查询、当前任务和日志清理创建入口已引入；其它创建接口需等真实 handler 接入后开放。 |
 | `/api/system-info/instances` | 多节点实例心跳 | 后端和默认前端实例面板已引入。 |
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | 已引入；Root/Admin/User 按角色返回不同维度。 |
@@ -566,6 +567,46 @@ NexusTok 独有 API 族：
 6. 每个独立功能点单独提交，提交信息使用中文。
 
 ## 已落地原生化记录
+
+## 本轮实施评审：Authz 策略导出接口原生化
+
+### 需求分析
+
+`new-api-main` 的 Authz 体系围绕 Casbin 兼容策略存储做权限治理。NexusTok 已经完成权限 catalog、用户级 override、服务端路由 enforcement、`authz_roles`/`casbin_rule` 持久化底座、策略 reload 和用户 override 镜像，但仍缺少一个稳定的策略快照出口，Root 管理员无法直接审计当前数据库里的角色模板和策略记录，也不方便为后续导入、回滚和角色编辑 UI 做基线对比。
+
+本轮目标是新增只读导出能力：
+
+1. 导出 `authz_roles` 中的角色业务字段。
+2. 导出 `casbin_rule` 中的 `ptype/v0..v5` 策略字段。
+3. 不导出数据库自增 ID、创建时间和更新时间，避免跨环境不可复用。
+4. 仅 Root 可访问，避免普通 Admin 通过接口读取完整权限策略。
+
+### 影响范围
+
+| 范围 | 文件 | 影响 |
+|------|------|------|
+| Authz service | `service/authz/policy_export.go` | 新增 `ExportPersistentPolicies()` 和稳定导出 DTO。 |
+| Controller | `controller/authz.go` | 新增 `ExportPermissionPolicies` 只读 handler。 |
+| Router | `router/authz-router.go` | 新增 `GET /api/authz/policies/export`，叠加 `RootAuth` 与 `system_setting.secret_view`。 |
+| 测试 | `service/authz/policy_export_test.go`、`router/authz_router_test.go` | 覆盖导出内容、排序、不导出 ID/时间戳、路由 handler 和 RootAuth 前置。 |
+
+### 风险评估
+
+1. 权限策略属于敏感管理元数据，必须保留 Root-only 边界，不能仅依赖 `system_setting.secret_view`。
+2. 导出结果若包含数据库 ID，会让备份在不同环境间难以复用，因此只导出业务稳定字段。
+3. 导出只读，不触发 seed、reload 或策略写入，避免影响现有 `Can()` 热路径和后台周期同步。
+4. 排序固定为角色 `sort/key`、策略 `ptype/v0/v1/v2/v3/v4/v5`，降低审计和备份 diff 噪声。
+
+### 方案评审
+
+采用小步原生化方案：不引入 Casbin runtime/enforcer，不新增数据库表，不做导入写路径；先把已经落地的持久策略表做成稳定可观测能力。导出接口仍挂在 `/api/authz` 下，沿用 `permissionRoute` 注册模式，先经过 `AdminAuth`，再通过 `RootAuth` 保底，最后执行 `RequirePermission(system_setting.secret_view)`，保证后续权限矩阵和现有 Root-only 边界同时生效。
+
+验收方式：
+
+1. `go test ./service/authz` 覆盖导出数据契约和用户 override 镜像策略。
+2. `go test ./router -run Authz` 覆盖路由 handler、permission 和 RootAuth 前置。
+3. `git diff --check` 与 Prettier 文档检查确认格式无问题。
+4. 通过 3003 真实登录后调用 `/api/authz/policies/export`，确认返回 `success=true`、包含 `roles/policies`，且策略导出不包含数据库 ID。
 
 ## 本轮实施评审：订阅余额支付与钱包溢出前端原生化
 

@@ -24,4 +24,7 @@ func registerAuthzRoutes(apiRouter *gin.RouterGroup) {
 var authzPermissionRoutes = []permissionRoute{
 	// 权限 catalog 暴露资源、动作和角色基线矩阵，属于系统权限配置的只读元数据。
 	{method: http.MethodGet, path: "/catalog", permission: authz.SystemSettingRead, handler: controller.GetPermissionCatalog},
+	// 权限策略导出包含完整角色与 Casbin 兼容策略快照，继续保持 RootAuth 保底；
+	// secret_view 作为权限表中的二次边界，便于后续审计和用户级 override 统一分类。
+	{method: http.MethodGet, path: "/policies/export", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ExportPermissionPolicies},
 }

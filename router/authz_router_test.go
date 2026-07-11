@@ -20,6 +20,7 @@ func TestRegisterAuthzRoutesKeepsCatalogHandler(t *testing.T) {
 	registerAuthzRoutes(api)
 
 	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/catalog", controller.GetPermissionCatalog)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/authz/policies/export", controller.ExportPermissionPolicies)
 }
 
 func TestAuthzPermissionRoutesClassifyCatalog(t *testing.T) {
@@ -27,6 +28,11 @@ func TestAuthzPermissionRoutesClassifyCatalog(t *testing.T) {
 	assert.Equal(t, authz.SystemSettingRead, route.permission)
 	assert.Empty(t, route.before)
 	assert.Empty(t, route.after)
+
+	exportRoute := requireAuthzPermissionRoute(t, http.MethodGet, "/policies/export")
+	assert.Equal(t, authz.SystemSettingSecretView, exportRoute.permission)
+	assert.Len(t, exportRoute.before, 1)
+	assert.Empty(t, exportRoute.after)
 }
 
 func TestAuthzPermissionRoutesStayOnSystemSettingResource(t *testing.T) {

@@ -18,3 +18,16 @@ func GetPermissionCatalog(c *gin.Context) {
 		"roles":     authz.Roles(),
 	})
 }
+
+// ExportPermissionPolicies 导出持久化权限策略快照。
+//
+// 该接口面向 Root 管理员的权限审计和备份场景，只读返回 authz_roles 与
+// casbin_rule 中的可迁移字段，不暴露数据库自增 ID，也不触发任何策略写入。
+func ExportPermissionPolicies(c *gin.Context) {
+	export, err := authz.ExportPersistentPolicies()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, export)
+}
