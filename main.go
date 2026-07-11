@@ -429,6 +429,16 @@ func InitResources() error {
 		common.SysLog("failed to load authz persistent policies, will retry in background: " + err.Error())
 	}
 	go authz.StartPersistentPolicySync(common.SyncFrequency)
+	if err = authz.InitShadowEnforcer(model.DB); err != nil {
+		common.SysLog("failed to initialize authz shadow enforcer: " + err.Error())
+	} else {
+		if mismatches, compareErr := authz.CompareShadowRolePolicies(); compareErr != nil {
+			common.SysLog("failed to compare authz shadow policies: " + compareErr.Error())
+		} else if len(mismatches) > 0 {
+			common.SysLog(fmt.Sprintf("authz shadow policy mismatch detected: count=%d", len(mismatches)))
+		}
+		go authz.StartShadowPolicySync(common.SyncFrequency)
+	}
 
 	// 检查数据库设置状态
 	// 如果是首次运行，可能需要初始化表结构
