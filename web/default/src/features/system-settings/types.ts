@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import type { AdminPermissionMatrix } from '@/lib/admin-permissions'
+
 export type SystemOption = {
   key: string
   value: string
@@ -422,6 +424,53 @@ export type SecuritySettings = {
   'fetch_setting.allowed_ports': number[]
   'fetch_setting.apply_ip_filter_for_domain': boolean
   'token_setting.max_user_tokens': number
+}
+
+export type AuthzRolePolicy = {
+  key: string
+  name: string
+  description: string
+  built_in: boolean
+  enabled: boolean
+  sort: number
+  superuser: boolean
+  runtime_managed: boolean
+  policy_count: number
+  grants: AdminPermissionMatrix
+}
+
+export type AuthzRolesData = {
+  roles: AuthzRolePolicy[]
+}
+
+export type AuthzRolesResponse = {
+  success: boolean
+  message: string
+  data?: AuthzRolesData
+}
+
+export type UpdateAuthzRolePoliciesRequest = {
+  dry_run?: boolean
+  grants: AdminPermissionMatrix
+}
+
+export type AuthzRolePolicyUpdateResult = {
+  role_key: string
+  dry_run: boolean
+  applied: boolean
+  reloaded: boolean
+  old_policy_count: number
+  new_policy_count: number
+  created_policy_count: number
+  deleted_policy_count: number
+  unchanged_policy_count: number
+  grants: AdminPermissionMatrix
+}
+
+export type AuthzRolePolicyUpdateResponse = {
+  success: boolean
+  message: string
+  data?: AuthzRolePolicyUpdateResult
 }
 
 export type UpstreamChannel = {

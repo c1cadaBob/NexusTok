@@ -22,6 +22,7 @@ import { SSRFSection } from '../request-limits/ssrf-section'
 import { TokenLimitSection } from '../request-limits/token-limit-section'
 import type { SecuritySettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { RolePolicySection } from './role-policy-section'
 
 const SECURITY_SECTIONS = [
   {
@@ -93,6 +94,12 @@ const SECURITY_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    id: 'role-policies',
+    titleKey: 'Role Policies',
+    descriptionKey: 'Manage administrator role permission baselines',
+    build: () => <RolePolicySection />,
   },
 ] as const
 

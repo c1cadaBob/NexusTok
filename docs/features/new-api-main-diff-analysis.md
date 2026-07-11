@@ -55,7 +55,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | new-api-main 文件/接口 | NexusTok 状态 | 原生化建议 |
 |------|------------------------|---------------|------------|
-| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement 与持久策略底座已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地，`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles` 和 `PUT /api/authz/roles/:key/policies` 已提供 Root-only 策略导出、导入和角色策略编辑后端合同。真正剩余的是 Casbin runtime/enforcer、角色编辑 UI、自定义角色分配和更细资源拆分，而不是基础 Authz enforcement。 |
+| 细粒度授权 Authz | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go`、`router/authz-router.go`、`GET /api/authz/catalog` | catalog、自身份权限回传、用户级 override、默认前端入口/按钮消费、多组 Admin 路由 enforcement 与持久策略底座已持续落地 | 已新增 NexusTok 原生权限 catalog，覆盖渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据和系统设置等资源，并返回 Root/Admin 基线矩阵；`/api/user/self` 已在 `permissions.admin_permissions` 回传同一矩阵，`AuthzUserOverride` 已支持管理用户 allow/deny 覆盖并同步维护 `casbin_rule` 兼容镜像；默认前端已让管理入口、Usage Logs、Dashboard、渠道、账号池、系统设置等页面消费该矩阵；`/api/channel`、`/api/account-pool`、`/api/subscription/admin`、`/api/models`、`/api/user`、`/api/redemption`、`/api/log`、`/api/data`、`/api/option`、`/api/system-task`、`/api/system-info` 等已按同一矩阵做服务端二次校验；`authz_roles` 与 `casbin_rule` 已作为角色/策略持久化底座落地，`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles` 和 `PUT /api/authz/roles/:key/policies` 已提供 Root-only 策略导出、导入和角色策略编辑后端合同；默认前端 `/system-settings/security/role-policies` 已接入角色策略矩阵、dry-run 预览和二次保存确认。真正剩余的是 Casbin runtime/enforcer、自定义角色创建与分配、更细资源拆分，以及角色策略 UI 的审计增强，而不是基础 Authz enforcement。 |
 | 渠道路由权限表 | `router/channel-router.go`、`middleware.RequirePermission` | 已落地并扩展到多组管理路由 | `/api/channel` 已迁移为权限表注册，读、操作、写、敏感写和密钥查看分别挂接 `authz.Channel*` permission；同一 `permissionRoute` 模式已扩展到账户池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统任务和系统信息等路由。后续重点转为 Casbin runtime/角色编辑和资源粒度继续拆分。 |
 | 渠道/账号池敏感字段 fail-closed | `controller/channel_authz.go`、`controller/account_pool_authz.go` | 已落地主要更新路径 | 渠道更新接口已建立敏感/非敏感/操作/只读字段分类，未知字段默认敏感；账号池分组更新已对 `platform`、`auth_type`、`model_mapping`、`settings` 和未知字段做敏感写二次校验，并让默认前端账号池页消费 `write/operate/sensitive_write`。后续新增字段必须进入分类测试。 |
 | 管理操作审计兜底 | `middleware/audit.go`、`controller/audit.go` | 已落地 | 保留账号池专用审计，同时已新增全局操作审计兜底；管理写操作记录 action、params、状态码、业务成功状态和操作者，不记录请求体，前端 Usage Logs 详情可展示结构化审计信息。 |
@@ -206,7 +206,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像、静态基线 fallback、Root-only 策略导出、带 dry-run/确认保护的策略导入接口，以及 Root-only 角色策略列表/更新 API 已原生化；仍未引入 Casbin runtime/enforcer、默认前端角色编辑 UI、自定义角色创建与角色分配。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
+| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步、用户 override 的 `casbin_rule` 兼容镜像、静态基线 fallback、Root-only 策略导出、带 dry-run/确认保护的策略导入接口、Root-only 角色策略列表/更新 API，以及默认前端角色策略矩阵 UI；仍未引入 Casbin runtime/enforcer、自定义角色创建与角色分配。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
 | P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`channel_account.read` 响应已做基础脱敏，只有 sensitive_write 用户可见上游地址、组织 ID、请求覆盖、模型映射、provider settings 和原始错误详情；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account.write` 非敏感写边界、字段级审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
@@ -244,7 +244,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
    - 只读 catalog 已扩展到渠道、账号池、用户、模型、订阅、兑换码、日志、用量数据、系统设置、系统任务和系统信息等管理资源。
    - 动作已先统一为 `read`、`operate`、`write`、`sensitive_write`、`secret_view`。
    - `/api/user/self` 已回传 `permissions.admin_permissions`，默认前端已用同一 schema 过滤管理侧边栏、入口级路由守卫和多处页面按钮。
-   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`；`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles` 与 `PUT /api/authz/roles/:key/policies` 已形成 Root-only 策略迁移和角色策略编辑后端闭环。后续重点是 Casbin runtime/enforcer、角色编辑 UI、自定义角色创建/分配和更细资源拆分。
+   - Root 基线拥有全部权限，Admin 基线拥有非敏感 read/operate/write；`authz_roles` 与 `casbin_rule` 已持久化内置角色和 Admin 默认策略，授权判定优先读取持久角色策略并保留静态基线 fallback；`AuthzUserOverride` 已支持管理用户级 allow/deny 覆盖，并把用户级策略同步镜像到 `casbin_rule`；`GET /api/authz/policies/export`、`POST /api/authz/policies/import`、`GET /api/authz/roles` 与 `PUT /api/authz/roles/:key/policies` 已形成 Root-only 策略迁移和角色策略编辑后端闭环，默认前端安全设置页已提供角色策略矩阵、dry-run 预览和二次保存确认。后续重点是 Casbin runtime/enforcer、自定义角色创建/分配、角色策略审计增强和更细资源拆分。
 2. 拆分路由注册：
    - 渠道、账号池、订阅、模型、用户、兑换码、日志/用量、系统设置、系统信息、系统任务和 Authz catalog 路由都已按 `permissionRoute` 模式拆分或接入权限表。
    - 后续新增管理路由必须先进入资源动作分类和路由结构测试，避免退回只依赖粗粒度 Admin/Root 的注册方式。
@@ -548,7 +548,7 @@ NexusTok 独有 API 族：
 | `/api/authz/catalog` | 权限资源/角色 catalog | 已引入。 |
 | `/api/authz/policies/export` | 角色与 Casbin 兼容策略快照导出 | 已引入 Root-only 只读导出，用于审计、备份和导入前 diff。 |
 | `/api/authz/policies/import` | 角色与策略快照导入 | 已引入 Root-only 写入接口，默认 dry-run，replace 模式必须确认；导入 `user:<id>` 策略时同步 `authz_user_overrides` 与 `casbin_rule` 镜像。 |
-| `/api/authz/roles`、`/api/authz/roles/:key/policies` | 角色策略查看与编辑 | 已引入 Root-only 后端合同：读取返回持久角色模板、superuser/runtime 标记和 grants 矩阵；更新默认 dry-run，显式 `dry_run:false` 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照。默认前端角色编辑 UI、自定义角色创建和角色分配仍待后续切片。 |
+| `/api/authz/roles`、`/api/authz/roles/:key/policies` | 角色策略查看与编辑 | 已引入 Root-only 后端合同：读取返回持久角色模板、superuser/runtime 标记和 grants 矩阵；更新默认 dry-run，显式 `dry_run:false` 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照。默认前端 `/system-settings/security/role-policies` 已接入角色选择、完整权限矩阵、差异统计、dry-run 预览和二次保存确认；自定义角色创建和角色分配仍待后续切片。 |
 | `/api/system-task/*` | 后台任务创建、查询、当前任务 | 查询、当前任务和日志清理创建入口已引入；其它创建接口需等真实 handler 接入后开放。 |
 | `/api/system-info/instances` | 多节点实例心跳 | 后端和默认前端实例面板已引入。 |
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | 已引入；Root/Admin/User 按角色返回不同维度。 |
@@ -569,6 +569,69 @@ NexusTok 独有 API 族：
 6. 每个独立功能点单独提交，提交信息使用中文。
 
 ## 已落地原生化记录
+
+## 本轮实施评审：Authz 默认前端角色策略编辑 UI 原生化
+
+### 需求分析
+
+`new-api-main` 的平台治理优势不仅在于后端有角色策略接口，也在于 Root 管理员能在管理后台直接维护角色基线。NexusTok 已经具备 `GET /api/authz/roles` 与 `PUT /api/authz/roles/:key/policies`，但如果默认前端没有入口，实际运维仍只能依赖导入导出或 curl，无法把角色策略维护沉淀为原生后台能力。
+
+本轮目标是在系统设置安全页新增 `role-policies` 分区，让 Root 可以查看 Root/Admin/自定义角色模板，编辑非 superuser 角色的完整权限矩阵，先 dry-run 预览策略差异，再二次确认保存。自定义角色创建、角色分配和完整 Casbin runtime/enforcer 不纳入本轮，避免把前端入口扩展成新的权限模型迁移。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统设置 API/types | `web/default/src/features/system-settings/api.ts`、`types.ts` | 新增 Authz 角色列表、角色策略更新和权限 catalog 的前端类型/调用封装，写接口使用 `skipBusinessError` 后由页面统一 toast。 |
+| 安全设置分区 | `web/default/src/features/system-settings/security/section-registry.tsx`、`role-policy-section.tsx` | 新增 `Role Policies` 分区，Root-only 查询角色策略；提供角色选择、badge、统计、权限矩阵、行批量开关、dry-run 预览、保存确认和刷新。 |
+| 权限矩阵工具 | `web/default/src/features/system-settings/security/role-policy-utils.ts` | 以后端 catalog 补齐完整矩阵，计算 enabled/changed 数量、矩阵签名和行批量开关，避免只提交局部授权。 |
+| 前端测试 | `web/default/src/features/system-settings/security/role-policy-utils.test.ts` | 覆盖矩阵归一化、行批量开关不丢其它资源、差异计数和签名稳定性。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增角色策略页面静态文案和动态 badge 六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新 Authz 队列状态、API 摘要、实施索引和本轮评审记录。 |
+
+本轮不修改 Go 后端、数据库 schema、Casbin 表结构、运行时授权判定、用户 override 保存语义、角色创建/分配链路或已有系统设置保存接口。
+
+### 风险评估
+
+1. 误保存权限风险：角色策略保存会影响所有使用该基线且没有用户 override 的管理员；本轮默认只做 dry-run 预览，只有预览与当前草稿签名一致时才允许二次确认保存。
+2. 非 Root 暴露风险：后端接口已 Root-only，前端也在非 Root 或缺少 `system_setting.secret_view` 时不发查询，只展示权限提示。
+3. 局部矩阵丢失风险：前端如果只提交当前可见 checkbox，会把未渲染资源误清空；本轮通过 catalog 归一化完整矩阵，并用单元测试锁定。
+4. Root 角色误编辑风险：Root 是 superuser 语义，不应转为普通 allow 列表；页面展示 Root 但所有控件禁用，并提示只读。
+5. Admin 空策略风险：后端已拒绝空 Admin 策略，前端也在 enabled action 为 0 时禁用预览与保存，避免触发静态 fallback 误解。
+6. i18n 漏 key 风险：角色 badge 有动态 `t(badge)`，普通源码扫描不一定发现；本轮手动补齐 `Superuser`、`Runtime-managed`、`Template only` 等动态 key。
+
+### 方案评审
+
+采用“系统设置安全页内新增独立分区”的低风险方案：不新增路由、不改变权限模型，只消费现有 Authz API 和 catalog。UI 保持后台高密度表格风格，使用现有 Button/Badge/Alert/Checkbox/Select/Table/Skeleton/Spinner/AlertDialog 组件；角色选择使用下拉，权限矩阵使用横向可滚动表格，移动端不重排成新数据结构。
+
+权限编辑采用三段式：
+
+1. 根据 `GET /api/authz/roles` 和 `GET /api/authz/catalog` 生成完整矩阵。
+2. 用户修改草稿后先调用 `PUT /api/authz/roles/:key/policies` 且 `dry_run:true`，展示 created/deleted/unchanged 摘要。
+3. 只有当前草稿签名与预览签名一致时，才允许打开确认框并用 `dry_run:false` 保存；保存成功后刷新角色策略。
+
+### 实施结果
+
+已完成 Authz 默认前端角色策略 UI 原生化：
+
+- 系统设置安全页新增 `Role Policies` 分区。
+- Root 可选择角色并查看 built-in、superuser、runtime-managed/template-only、disabled 等状态。
+- 非 superuser 且启用的角色可编辑完整 resource/action 矩阵；Root 角色只读。
+- 页面展示当前 enabled 数量、持久策略数量、草稿 changed 数量和 enable/disable 差异。
+- 行级 `Select row` / `Clear row` 只影响当前 resource，不会丢失其它资源授权。
+- 保存前必须先 dry-run，预览过期后无法 apply。
+- 前端补齐 en/zh/fr/ja/ru/vi 翻译，动态 badge 文案也已覆盖。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/system-settings/security/role-policy-utils.test.ts` 通过。
+2. `cd web/default && bun run typecheck` 通过。
+3. `cd web/default && bunx eslint src/features/system-settings/types.ts src/features/system-settings/api.ts src/features/system-settings/security/section-registry.tsx src/features/system-settings/security/role-policy-section.tsx src/features/system-settings/security/role-policy-utils.ts src/features/system-settings/security/role-policy-utils.test.ts` 通过。
+4. `cd web/default && bunx prettier --check src/features/system-settings/types.ts src/features/system-settings/api.ts src/features/system-settings/security/section-registry.tsx src/features/system-settings/security/role-policy-section.tsx src/features/system-settings/security/role-policy-utils.ts src/features/system-settings/security/role-policy-utils.test.ts` 通过。
+5. `cd web/default && bun run i18n:sync` 通过；新增角色策略 key 已存在于 `en.json`，同步报告显示各 locale `missingCount=0`。
+6. 3003 页面验证：Chrome/CDP 访问 `http://192.168.0.202:3003/system-settings/security/role-policies`，页面加载 `Role Policies` 分区；切换到 Admin 后显示 `policy_count=25`、`25/41` enabled actions 和 41 个可编辑 checkbox；点击一个 checkbox 后预览按钮启用且保存按钮保持禁用。
+7. 3003 dry-run 联调：页面触发 `PUT /api/authz/roles/admin/policies`，请求体包含 `dry_run:true` 和完整 grants 矩阵；返回后页面显示 `预览已就绪`、`新增策略: 0`、`删除策略: 1`、`未变化策略: 24`，保存按钮才启用，但未点击保存确认。
+8. 3003 防污染复查：dry-run 后再次调用 `GET /api/authz/roles`，Admin 仍为 `policy_count=25`，`channel.read/operate/write=true`，确认真实角色策略未被页面草稿污染；Chrome/CDP 期间未捕获 console error 或 runtime exception。
 
 ## 本轮实施评审：Authz 角色策略编辑接口原生化
 
@@ -6585,6 +6648,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | Authz 默认前端角色策略编辑 UI | `web/default/src/features/system-settings/security/role-policy-section.tsx`、`role-policy-utils.ts`、`web/default/src/features/system-settings/api.ts`、`web/default/src/i18n/locales/*.json` | 在系统设置安全页新增 `role-policies` 分区，Root 可查看角色模板、编辑非 superuser 角色权限矩阵、先 dry-run 预览再二次确认保存；矩阵以后端 catalog 补齐完整 grants，动态 badge 和页面文案补齐六语。 |
 | 2026-07-11 | Authz 角色策略编辑接口 | `service/authz/role_policy.go`、`controller/authz.go`、`router/authz-router.go`、`service/authz/role_policy_test.go` | 新增 Root-only `GET /api/authz/roles` 与 `PUT /api/authz/roles/:key/policies`；读取返回持久角色模板、superuser/runtime 标记和 grants 矩阵，更新默认 dry-run，显式 apply 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照。 |
 | 2026-07-11 | Authz 策略导入接口 | `service/authz/policy_import.go`、`controller/authz.go`、`router/authz-router.go`、`service/authz/policy_import_test.go` | 新增 Root-only `POST /api/authz/policies/import`，兼容导出 JSON，默认 dry-run；merge 补充角色/策略，replace 需确认并重建 role 策略与用户 override；导入 `user:<id>` 策略时同步 `authz_user_overrides` 和 `casbin_rule` 镜像，写入后 reload 持久策略快照。 |
 | 2026-07-11 | Authz 策略导出接口 | `service/authz/policy_export.go`、`controller/authz.go`、`router/authz-router.go`、`service/authz/policy_export_test.go` | 新增 Root-only `GET /api/authz/policies/export`，导出 `authz_roles` 与 `casbin_rule` 的可迁移字段，不包含数据库自增 ID、创建时间和更新时间，用于审计、备份和导入前 diff。 |

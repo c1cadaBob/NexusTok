@@ -17,8 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import type { AxiosRequestConfig } from 'axios'
+import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type {
+  AuthzRolesData,
+  AuthzRolesResponse,
+  AuthzRolePolicyUpdateResponse,
   ConfirmPaymentComplianceResponse,
   CreateWaffoPancakePairRequest,
   CreateWaffoPancakePairResponse,
@@ -29,6 +33,7 @@ import type {
   SystemOptionsResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
+  UpdateAuthzRolePoliciesRequest,
   UpstreamChannelsResponse,
   UpstreamRatiosResponse,
   WaffoPancakeCatalogRequest,
@@ -42,6 +47,43 @@ interface ExtendedApiConfig extends AxiosRequestConfig {
 export async function getSystemOptions() {
   const res = await api.get<SystemOptionsResponse>('/api/option/')
   return res.data
+}
+
+export async function getPermissionCatalog(): Promise<PermissionCatalog> {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.get('/api/authz/catalog', config)
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to load permission catalog')
+  }
+  return {
+    resources: res.data?.data?.resources ?? [],
+    roles: res.data?.data?.roles ?? [],
+  }
+}
+
+export async function getAuthzRoles(): Promise<AuthzRolesData> {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.get<AuthzRolesResponse>('/api/authz/roles', config)
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to load authorization roles')
+  }
+  return res.data.data ?? { roles: [] }
+}
+
+export async function updateAuthzRolePolicies(
+  roleKey: string,
+  request: UpdateAuthzRolePoliciesRequest
+) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.put<AuthzRolePolicyUpdateResponse>(
+    `/api/authz/roles/${encodeURIComponent(roleKey)}/policies`,
+    request,
+    config
+  )
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to update role policies')
+  }
+  return res.data.data
 }
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
