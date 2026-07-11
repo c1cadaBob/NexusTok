@@ -23,6 +23,8 @@ import (
 	"sync"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -33,13 +35,13 @@ import (
 // 记录某个渠道（Channel）支持的模型及调度参数
 // 复合主键：Group + Model + ChannelId
 type Ability struct {
-	Group     string  `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`          // 分组名称
-	Model     string  `json:"model" gorm:"type:varchar(255);primaryKey;autoIncrement:false"`         // 模型名称
-	ChannelId int     `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`                // 渠道 ID
-	Enabled   bool    `json:"enabled"`                                                               // 是否启用
-	Priority  *int64  `json:"priority" gorm:"bigint;default:0;index"`                                // 优先级（数值越大越优先）
-	Weight    uint    `json:"weight" gorm:"default:0;index"`                                         // 权重（同优先级内用于加权随机选择）
-	Tag       *string `json:"tag" gorm:"index"`                                                      // 标签（用于批量管理）
+	Group     string  `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`  // 分组名称
+	Model     string  `json:"model" gorm:"type:varchar(255);primaryKey;autoIncrement:false"` // 模型名称
+	ChannelId int     `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`        // 渠道 ID
+	Enabled   bool    `json:"enabled"`                                                       // 是否启用
+	Priority  *int64  `json:"priority" gorm:"bigint;default:0;index"`                        // 优先级（数值越大越优先）
+	Weight    uint    `json:"weight" gorm:"default:0;index"`                                 // 权重（同优先级内用于加权随机选择）
+	Tag       *string `json:"tag" gorm:"index"`                                              // 标签（用于批量管理）
 }
 
 // AbilityWithChannel 带渠道类型的联合查询结构体
@@ -141,7 +143,7 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 // 使用加权随机选择算法：权重越高的渠道被选中的概率越大
 // 基础权重为 10，加上渠道自身的权重值
 // 返回 nil 表示没有可用渠道
-func GetChannel(group string, model string, retry int) (*Channel, error) {
+func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -157,6 +159,7 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 	if err != nil {
 		return nil, err
 	}
+	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -179,6 +182,53 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+// filterAbilitiesByRequestPath 按请求路径过滤数据库兜底选路得到的能力候选。
+//
+// 非内存缓存路径无法复用 channel2advancedCustomConfig，因此这里一次性查询候选渠道；
+// 普通渠道全部保留，只有 Advanced Custom 渠道会要求 incoming_path 命中当前请求。
+// 如果 requestPath 为空，则保持旧行为，避免后台维护和测试调用被意外过滤。
+func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Ability {
+	if requestPath == "" || len(abilities) == 0 {
+		return abilities
+	}
+
+	channelIds := make([]int, 0, len(abilities))
+	seenChannelIds := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannelIds[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannelIds[ability.ChannelId] = struct{}{}
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+		// 选路过滤不是数据源；查询异常时沿用旧候选，避免把临时 DB 异常放大成无渠道。
+		return abilities
+	}
+
+	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
+	for _, channel := range channels {
+		if channel.Type == constant.ChannelTypeAdvancedCustom {
+			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
+		}
+	}
+
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		config, isAdvancedCustom := advancedConfigs[ability.ChannelId]
+		if !isAdvancedCustom {
+			filtered = append(filtered, ability)
+			continue
+		}
+		if config != nil && config.SupportsPath(requestPath) {
+			filtered = append(filtered, ability)
+		}
+	}
+	return filtered
 }
 
 // AddAbilities 为渠道添加能力记录

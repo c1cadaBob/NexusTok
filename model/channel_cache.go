@@ -29,6 +29,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 )
 
@@ -37,6 +38,10 @@ var group2model2channels map[string]map[string][]int // enabled channel
 
 // channelsIDM 渠道 ID -> 渠道对象的映射（包含所有渠道，含禁用的）
 var channelsIDM map[int]*Channel // all channels include disabled
+
+// channel2advancedCustomConfig 缓存 type 58 渠道解析后的 Advanced Custom 配置。
+// 选路热路径只需要判断 request path 是否命中 route，缓存配置可以避免每次请求重复解析 JSON。
+var channel2advancedCustomConfig map[int]*dto.AdvancedCustomConfig
 
 // channelSyncLock 渠道缓存的读写锁，保证并发安全
 var channelSyncLock sync.RWMutex
@@ -54,10 +59,16 @@ func InitChannelCache() {
 		return
 	}
 	newChannelId2channel := make(map[int]*Channel)
+	newChannel2advancedCustomConfig := make(map[int]*dto.AdvancedCustomConfig)
 	var channels []*Channel
 	DB.Find(&channels)
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
+		if channel.Type == constant.ChannelTypeAdvancedCustom {
+			if config := channel.GetOtherSettings().AdvancedCustom; config != nil {
+				newChannel2advancedCustomConfig[channel.Id] = config
+			}
+		}
 	}
 	var abilities []*Ability
 	DB.Find(&abilities)
@@ -112,6 +123,7 @@ func InitChannelCache() {
 		}
 	}
 	channelsIDM = newChannelId2channel
+	channel2advancedCustomConfig = newChannel2advancedCustomConfig
 	channelSyncLock.Unlock()
 	common.SysLog("channels synced from database")
 }
@@ -133,22 +145,22 @@ func SyncChannelCache(frequency int) {
 // 2. 按优先级分组，retry 参数决定使用哪个优先级
 // 3. 在目标优先级内，按权重进行加权随机选择
 // 4. 使用平滑因子处理权重差异过小的情况
-func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry)
+		return GetChannel(group, model, retry, requestPath)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := group2model2channels[group][model]
+	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = group2model2channels[group][normalizedModel]
+		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
 	}
 
 	if len(channels) == 0 {
@@ -228,6 +240,35 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+// filterChannelsByRequestPath 按当前请求路径过滤内存缓存中的候选渠道。
+//
+// 只过滤 Advanced Custom 渠道：普通渠道的能力仍由 group/model/status 决定；
+// type 58 渠道必须有至少一条 incoming_path 命中 requestPath 才能参与选路。
+// requestPath 为空时跳过过滤，以兼容测试、维护任务等非 relay 调用。
+// 调用方必须已经持有 channelSyncLock 读锁；本函数不会修改缓存切片。
+func filterChannelsByRequestPath(channels []int, requestPath string) []int {
+	if requestPath == "" || len(channels) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelId := range channels {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			// 保留未知 ID，让后续一致性检查继续按旧逻辑报错。
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if channel.Type != constant.ChannelTypeAdvancedCustom {
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if config := channel2advancedCustomConfig[channelId]; config != nil && config.SupportsPath(requestPath) {
+			filtered = append(filtered, channelId)
+		}
+	}
+	return filtered
 }
 
 // CacheGetChannel 从缓存获取渠道对象

@@ -192,6 +192,10 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 			if preferred.Status != common.ChannelStatusEnabled {
 				// 亲和性渠道已禁用
 				shouldAbortAffinityDisabled = service.ShouldSkipRetryAfterChannelAffinityFailure(c)
+			} else if !channelSupportsRequestPath(preferred, c.Request.URL.Path) {
+				// Advanced Custom 渠道可能只配置了部分入口路径。
+				// 模型能力匹配但 path 不匹配时不能复用亲和性渠道，否则会把
+				// /v1/responses、Gemini native 等请求打到错误 route。
 			} else if usingGroup == "auto" {
 				// auto 分组：遍历用户可用的自动分组，找到第一个支持该模型的分组
 				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
@@ -226,10 +230,11 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 	// ========== 随机选择渠道（兜底逻辑） ==========
 	if channel == nil {
 		channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-			Ctx:        c,
-			ModelName:  modelRequest.Model,
-			TokenGroup: usingGroup,
-			Retry:      common.GetPointer(0),
+			Ctx:         c,
+			ModelName:   modelRequest.Model,
+			TokenGroup:  usingGroup,
+			RequestPath: c.Request.URL.Path,
+			Retry:       common.GetPointer(0),
 		})
 		if err != nil {
 			showGroup := usingGroup
@@ -246,6 +251,21 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 		}
 	}
 	return channel, true
+}
+
+// channelSupportsRequestPath 判断渠道是否能处理当前请求路径。
+//
+// 只有 Advanced Custom 渠道需要按 path 过滤；普通渠道的能力仍只由分组、
+// 模型和状态决定。requestPath 为空时保持兼容旧调用，避免非 relay 场景被误拦截。
+func channelSupportsRequestPath(channel *model.Channel, requestPath string) bool {
+	if channel == nil {
+		return false
+	}
+	if requestPath == "" || channel.Type != constant.ChannelTypeAdvancedCustom {
+		return true
+	}
+	config := channel.GetOtherSettings().AdvancedCustom
+	return config != nil && config.SupportsPath(requestPath)
 }
 
 // RecordRelayChannelAffinityIfSucceeded 在请求成功后记录渠道亲和性。

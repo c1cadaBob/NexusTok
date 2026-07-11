@@ -25,6 +25,7 @@ type RetryParam struct {
 	Ctx          *gin.Context // Gin 上下文
 	TokenGroup   string       // Token 分组
 	ModelName    string       // 模型名称
+	RequestPath  string       // 当前请求路径，用于 Advanced Custom 按入口路径过滤候选渠道
 	Retry        *int         // 当前重试次数
 	resetNextTry bool         // 是否在下次重试时重置计数
 }
@@ -140,7 +141,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
 			// 获取满足要求的随机渠道
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry)
+			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
 
 			if channel == nil {
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -179,7 +180,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	} else {
 		// 普通模式：直接根据 token 分组和模型名称获取渠道
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
+		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

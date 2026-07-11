@@ -22,27 +22,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/c1cada/NexusTok/common"                    // 公共工具包
-	"github.com/c1cada/NexusTok/constant"                   // 常量定义
-	"github.com/c1cada/NexusTok/dto"                        // 数据传输对象
-	"github.com/c1cada/NexusTok/logger"                     // 日志
-	"github.com/c1cada/NexusTok/middleware"                  // 中间件
-	"github.com/c1cada/NexusTok/model"                      // 数据模型
+	"github.com/c1cada/NexusTok/common"                       // 公共工具包
+	"github.com/c1cada/NexusTok/constant"                     // 常量定义
+	"github.com/c1cada/NexusTok/dto"                          // 数据传输对象
+	"github.com/c1cada/NexusTok/logger"                       // 日志
+	"github.com/c1cada/NexusTok/middleware"                   // 中间件
+	"github.com/c1cada/NexusTok/model"                        // 数据模型
 	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics" // 性能监控
-	"github.com/c1cada/NexusTok/relay"                      // 中继层
-	relaycommon "github.com/c1cada/NexusTok/relay/common"   // 中继公共包
+	"github.com/c1cada/NexusTok/relay"                        // 中继层
+	relaycommon "github.com/c1cada/NexusTok/relay/common"     // 中继公共包
 	relayconstant "github.com/c1cada/NexusTok/relay/constant" // 中继常量
-	"github.com/c1cada/NexusTok/relay/helper"               // 中继辅助函数
-	"github.com/c1cada/NexusTok/service"                    // 服务层
-	"github.com/c1cada/NexusTok/setting"                    // 设置
-	"github.com/c1cada/NexusTok/setting/operation_setting"  // 运营设置
-	"github.com/c1cada/NexusTok/types"                      // 类型定义
+	"github.com/c1cada/NexusTok/relay/helper"                 // 中继辅助函数
+	"github.com/c1cada/NexusTok/service"                      // 服务层
+	"github.com/c1cada/NexusTok/setting"                      // 设置
+	"github.com/c1cada/NexusTok/setting/operation_setting"    // 运营设置
+	"github.com/c1cada/NexusTok/types"                        // 类型定义
 
-	"github.com/bytedance/gopkg/util/gopool"  // 字节跳动协程池
-	"github.com/samber/lo"                     // Go 泛型工具库
+	"github.com/bytedance/gopkg/util/gopool" // 字节跳动协程池
+	"github.com/samber/lo"                   // Go 泛型工具库
 
-	"github.com/gin-gonic/gin"        // Gin 框架
-	"github.com/gorilla/websocket"    // WebSocket 支持
+	"github.com/gin-gonic/gin"     // Gin 框架
+	"github.com/gorilla/websocket" // WebSocket 支持
 )
 
 // relayHandler 中继请求处理器
@@ -278,10 +278,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// 步骤 6：重试机制和请求转发
 	// ========================================
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
+		Ctx:         c,
+		TokenGroup:  relayInfo.TokenGroup,
+		ModelName:   relayInfo.OriginModelName,
+		RequestPath: c.Request.URL.Path,
+		Retry:       common.GetPointer(0),
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
@@ -710,10 +711,11 @@ func RelayTask(c *gin.Context) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
+		Ctx:         c,
+		TokenGroup:  relayInfo.TokenGroup,
+		ModelName:   relayInfo.OriginModelName,
+		RequestPath: c.Request.URL.Path,
+		Retry:       common.GetPointer(0),
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {

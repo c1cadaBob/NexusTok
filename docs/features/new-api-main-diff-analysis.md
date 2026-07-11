@@ -6648,6 +6648,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | Advanced Custom 请求路径感知选路 | `middleware/distributor.go`、`controller/relay.go`、`service/channel_select.go`、`model/channel_cache.go`、`model/ability.go`、`model/channel_path_select_test.go` | 原生化 new-api-main 的 type 58 path-aware routing：初选、亲和性复用、relay 重试、内存缓存和 DB fallback 均携带 `RequestPath`；仅 Advanced Custom 渠道按 `settings.advanced_custom` 的 `incoming_path` 过滤候选，普通渠道保持原分组/模型/状态语义。 |
 | 2026-07-11 | 订阅套餐启停操作权限原生化 | `router/subscription-router.go`、`router/subscription_router_test.go`、`web/default/src/features/subscriptions/components/data-table-row-actions.tsx`、`web/default/src/features/subscriptions/components/dialogs/toggle-status-dialog.tsx` | 对齐 new-api-main 独立 `PATCH /api/subscription/admin/plans/:id` 状态接口的操作语义，并发展为 NexusTok 原生 Authz 边界：套餐启停从 `subscription.write` 收窄到 `subscription.operate`，编辑套餐内容仍保留 `subscription.write`，前端行操作和确认弹窗同步消费 operate 权限。 |
 | 2026-07-11 | 渠道状态专用 API 与编辑解耦 | `controller/channel.go`、`controller/channel_authz.go`、`router/channel-router.go`、`web/default/src/features/channels/api.ts`、`web/default/src/features/channels/lib/channel-actions.ts` | 原生化 new-api-main 的渠道状态操作边界：新增 `POST /api/channel/:id/status` 与 `/api/channel/status/batch`，通用 `PUT /api/channel/` 拒绝 `status` 字段，前端单个/批量启停改走 `channel.operate` 专用接口；只允许手动启用/禁用，不允许伪造自动禁用状态。 |
 | 2026-07-11 | Authz 角色策略审计摘要增强 | `controller/authz.go`、`controller/audit.go`、`middleware/audit.go`、`controller/authz_audit_test.go`、`middleware/audit_test.go` | 角色模板创建/更新/删除、角色策略 dry-run/apply 和策略导入成功后写入 `authz.*` 结构化管理审计摘要；失败路径通过中间件稳定 action 兜底，审计只记录角色 key、策略计数、dry-run/applied/reloaded 等非敏感摘要，不写完整 grants 矩阵。 |
@@ -10371,3 +10372,65 @@ NexusTok 当前已经有 `model.UpdateChannelStatus()`，并且该函数会同�
 6. 同一登录态调用 `PATCH /api/subscription/admin/plans/1` 且 payload 为 `{}` 返回 `success=false,message="参数错误"`；调用 `PATCH /api/subscription/admin/plans/0` 且 payload 为 `{"enabled":true}` 返回 `success=false,message="无效的ID"`，确认状态接口仍执行参数校验。
 7. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 进行真实页面验证：写入登录态后打开 `http://192.168.0.202:3003/subscriptions`，页面渲染 `Subscription Management`、`Create Plan` 和空状态 `No subscription plans yet`，接口探针 `/api/subscription/admin/plans` 返回 `success=true,count=0`。
 8. 同一页面验证中没有捕获到 JavaScript exception 或 Network loadingFailed；Console 仅有 i18next/Locize 的信息级提示。
+
+## 本轮实施评审：Advanced Custom 请求路径感知选路
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的 Advanced Custom 运行链路后确认，new-api-main 不只提供 type 58 adaptor 和 route 配置，还在渠道选择阶段按当前请求路径过滤 Advanced Custom 候选。该能力解决的是运行正确性问题：同一模型可能同时配置在多个 Advanced Custom 渠道上，但某个渠道只支持 `/v1/chat/completions`，另一个只支持 `/v1/responses` 或 Gemini native path。如果分发层只看 group/model ability，就可能把 `/v1/responses` 请求选到只配置 chat route 的渠道，最终由 adaptor 返回 route 不匹配错误，甚至触发错误重试和亲和性污染。
+
+NexusTok 当前已经完成 Advanced Custom 的后端 schema、严格校验、relay adaptor 和默认前端编辑器，`dto.AdvancedCustomConfig` 也已有 `SupportsPath(requestPath)`。缺口集中在分发和选路：亲和性复用、随机选路、relay 重试和非内存缓存 DB fallback 都没有携带 request path，因此无法在候选阶段排除 path 不匹配的 type 58 渠道。本轮目标是把 new-api-main 的 path-aware routing 转成 NexusTok 原生能力，并保持普通渠道原行为不变。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 分发中间件 | `middleware/distributor.go` | 亲和性复用前增加 Advanced Custom path 支持判断；随机选路参数携带 `c.Request.URL.Path`。 |
+| Relay 重试 | `controller/relay.go` | 标准 relay 和 task relay 的 `RetryParam` 携带请求路径，重试选择渠道时继续过滤 path 不匹配的 type 58 候选。 |
+| 选路服务参数 | `service/channel_select.go` | `RetryParam` 新增 `RequestPath`，auto 分组和普通分组选路都向 model 层传递该值。 |
+| 内存缓存选路 | `model/channel_cache.go` | 缓存 type 58 解析后的 `AdvancedCustomConfig`，并在候选进入优先级/权重计算前按 path 过滤。 |
+| DB fallback 选路 | `model/ability.go` | 非内存缓存路径查询候选渠道后，仅对 Advanced Custom 候选按 `SupportsPath` 过滤。 |
+| 回归测试 | `model/channel_path_select_test.go` | 覆盖内存缓存过滤、空 path 兼容和 SQLite DB fallback path 过滤。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和验证记录，并更新实施索引。 |
+
+本轮不修改数据库 schema、渠道保存 payload、`settings.advanced_custom` JSON 结构、relay adaptor、协议转换器、计费逻辑、模型映射、账号池、渠道状态或前端编辑器。
+
+### 风险评估
+
+1. 误过滤风险：普通渠道不能因为 request path 被过滤；本轮只检查 `ChannelTypeAdvancedCustom`，OpenAI、Codex、Custom、账号池等既有渠道仍沿用原 group/model/status 选路。
+2. 空路径兼容风险：后台维护、测试或非 relay 调用可能没有 request path；本轮在 requestPath 为空时跳过过滤，保持旧行为。
+3. 配置解析风险：内存缓存路径在 `InitChannelCache()` 时缓存 type 58 的 parsed config，避免热路径重复解析 JSON；DB fallback 才按候选渠道临时读取配置。
+4. 亲和性污染风险：如果已记录的 Advanced Custom 亲和性渠道不支持当前 path，本轮会跳过复用并清理当前亲和性缓存，让随机兜底重新选择可用渠道。
+5. 无可用渠道风险：当同一 group/model 下只有 path 不匹配的 type 58 渠道时，本轮会返回无可用渠道。这是预期 fail-closed 行为，比把请求转发到错误 route 更安全。
+6. DB fallback 一致性风险：SQLite/MySQL/PostgreSQL 都继续使用 GORM 查询，不新增 raw SQL；测试覆盖 SQLite 内存库，列名保留字仍沿用已有 `commonGroupCol` 初始化。
+
+### 方案评审
+
+采用“候选阶段过滤，不碰转发阶段”的方案：
+
+1. `service.RetryParam` 增加 `RequestPath`，由 `middleware/distributor.go` 初选和 `controller/relay.go` 重试构造时填入 `c.Request.URL.Path`。
+2. 亲和性复用前调用 `channelSupportsRequestPath()`：非 Advanced Custom 直接放行；type 58 必须存在 `settings.advanced_custom` 且 `SupportsPath(requestPath)` 返回 true。
+3. 内存缓存路径新增 `channel2advancedCustomConfig`，随 `InitChannelCache()` 全量刷新；`GetRandomSatisfiedChannel()` 先按 path 过滤 exact model 候选，再尝试 normalized model 候选，然后才进入优先级和权重计算。
+4. DB fallback 路径在 `GetChannel()` 查询 ability 候选后，通过一次 `id IN ?` 读取候选渠道，仅对 type 58 做 path 支持判断；非 type 58 ability 全部保留。
+5. 新增 model 层测试，固定 “/v1/responses 只选 responses route 渠道”、“普通渠道不被 path 过滤”、“空 requestPath 兼容旧行为” 三类语义。
+
+### 实施结果
+
+已完成 Advanced Custom 请求路径感知选路：
+
+- 初次分发和 relay/task relay 重试都会携带 `RequestPath`。
+- 渠道亲和性不会再复用 path 不匹配的 Advanced Custom 渠道。
+- 内存缓存模式会缓存 type 58 的 `AdvancedCustomConfig`，并在优先级/权重选择前过滤候选。
+- 非内存缓存 DB fallback 也会按 request path 过滤 Advanced Custom ability。
+- 普通渠道、空 requestPath、模型分组、权重、优先级、账号池和 relay adaptor 行为保持不变。
+
+该能力把 new-api-main 的 type 58 path-aware routing 转为 NexusTok 原生调度能力，并与 NexusTok 已有的 `settings.advanced_custom` 严格校验、route matcher、账号池和细粒度权限体系保持解耦。
+
+### 验证记录
+
+1. `go test ./model -run 'Test(FilterChannelsByRequestPath|GetChannelFiltersAdvancedCustomByRequestPath|ChannelValidateSettings|AdvancedCustom|SearchModelsWithVendor)'` 通过，覆盖 Advanced Custom path 过滤、空 path 兼容、SQLite DB fallback、原有 Advanced Custom 配置校验和模型搜索回归。
+2. `go test ./service -run 'Test.*Channel|Test.*Retry'` 通过，确认 service 层现有渠道选择/重试相关测试不受 `RequestPath` 新字段影响。
+3. `go test ./middleware ./controller ./model ./service` 通过，确认分发中间件、relay controller、model 和 service 包整体回归正常。
+4. `go test ./model -run 'Test(FilterChannelsByRequestPath|GetChannelFiltersAdvancedCustomByRequestPath)' -count=1` 通过，单独固定本轮新增 path-aware 选路测试。
+5. `git diff --check` 通过。
+6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；访问 `http://192.168.0.202:3003/api/status` 返回正常状态 JSON，确认 3003 热更新运行态仍可访问。
