@@ -72,11 +72,44 @@ export type ModelSearchAppendContext = {
   open: boolean
   channelId: number | null
   keyword: string
+  vendor: string
 }
 
 export type ModelSearchAppendRequest = {
   channelId: number | null
   keyword: string
+  vendor: string
+}
+
+const CHANNEL_TYPE_MODEL_SEARCH_VENDORS: Record<number, string> = {
+  1: 'OpenAI',
+  3: 'Azure',
+  14: 'Anthropic',
+  16: 'Zhipu AI',
+  17: 'Alibaba',
+  23: 'tencent',
+  24: 'Google',
+  25: 'Moonshot AI',
+  26: 'Zhipu AI',
+  27: 'Perplexity',
+  34: 'Cohere',
+  35: 'MiniMax',
+  41: 'Google',
+  42: 'Mistral',
+  43: 'DeepSeek',
+  48: 'xAI',
+  55: 'OpenAI',
+  56: 'Replicate',
+  57: 'OpenAI',
+}
+
+// 将渠道类型收窄到模型元数据里的默认供应商。
+// Custom、Advanced Custom、OpenAI-compatible 聚合网关等渠道可能代理任意上游，
+// 因此没有明确供应商时返回空字符串，继续使用全局模型库搜索。
+export function getModelSearchVendorForChannelType(
+  channelType: number
+): string {
+  return CHANNEL_TYPE_MODEL_SEARCH_VENDORS[channelType] ?? ''
 }
 
 // 解析管理员在“自定义模型”输入框中录入的模型列表。
@@ -215,8 +248,14 @@ export function isModelSearchAppendContextCurrent(
 ): boolean {
   if (!context.open) return false
   if (context.channelId !== request.channelId) return false
-  return (
+  if (
     normalizeModelSearchKey(context.keyword) ===
     normalizeModelSearchKey(request.keyword)
-  )
+  ) {
+    return (
+      normalizeModelSearchKey(context.vendor) ===
+      normalizeModelSearchKey(request.vendor)
+    )
+  }
+  return false
 }

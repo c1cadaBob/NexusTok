@@ -24,6 +24,7 @@ import {
   dedupeModelNames,
   getMissingModelSearchMatches,
   getModelSearchModelNames,
+  getModelSearchVendorForChannelType,
   isModelSearchAppendContextCurrent,
   mergeModelNames,
   parseModelDraftList,
@@ -253,8 +254,13 @@ describe('渠道模型搜索追加上下文校验', () => {
   test('同一渠道且关键词仅大小写或空格变化时视为同一请求', () => {
     assert.equal(
       isModelSearchAppendContextCurrent(
-        { open: true, channelId: 7, keyword: ' GPT-5.6 ' },
-        { channelId: 7, keyword: 'gpt-5.6' }
+        {
+          open: true,
+          channelId: 7,
+          keyword: ' GPT-5.6 ',
+          vendor: ' OpenAI ',
+        },
+        { channelId: 7, keyword: 'gpt-5.6', vendor: 'openai' }
       ),
       true
     )
@@ -263,24 +269,52 @@ describe('渠道模型搜索追加上下文校验', () => {
   test('抽屉关闭、渠道切换或关键词变化时拒绝旧搜索结果', () => {
     assert.equal(
       isModelSearchAppendContextCurrent(
-        { open: false, channelId: 7, keyword: 'gpt-5.6' },
-        { channelId: 7, keyword: 'gpt-5.6' }
+        { open: false, channelId: 7, keyword: 'gpt-5.6', vendor: 'OpenAI' },
+        { channelId: 7, keyword: 'gpt-5.6', vendor: 'OpenAI' }
       ),
       false
     )
     assert.equal(
       isModelSearchAppendContextCurrent(
-        { open: true, channelId: 8, keyword: 'gpt-5.6' },
-        { channelId: 7, keyword: 'gpt-5.6' }
+        { open: true, channelId: 8, keyword: 'gpt-5.6', vendor: 'OpenAI' },
+        { channelId: 7, keyword: 'gpt-5.6', vendor: 'OpenAI' }
       ),
       false
     )
     assert.equal(
       isModelSearchAppendContextCurrent(
-        { open: true, channelId: 7, keyword: 'gpt-5.7' },
-        { channelId: 7, keyword: 'gpt-5.6' }
+        { open: true, channelId: 7, keyword: 'gpt-5.7', vendor: 'OpenAI' },
+        { channelId: 7, keyword: 'gpt-5.6', vendor: 'OpenAI' }
       ),
       false
     )
+  })
+
+  test('供应商变化时拒绝旧搜索结果', () => {
+    assert.equal(
+      isModelSearchAppendContextCurrent(
+        { open: true, channelId: 7, keyword: 'gpt-5.6', vendor: 'OpenAI' },
+        { channelId: 7, keyword: 'gpt-5.6', vendor: 'Anthropic' }
+      ),
+      false
+    )
+  })
+})
+
+describe('渠道模型搜索默认供应商', () => {
+  test('OpenAI 与 Codex 渠道默认搜索 OpenAI 模型库', () => {
+    assert.equal(getModelSearchVendorForChannelType(1), 'OpenAI')
+    assert.equal(getModelSearchVendorForChannelType(57), 'OpenAI')
+  })
+
+  test('明确供应商渠道会收窄到对应模型供应商', () => {
+    assert.equal(getModelSearchVendorForChannelType(14), 'Anthropic')
+    assert.equal(getModelSearchVendorForChannelType(24), 'Google')
+    assert.equal(getModelSearchVendorForChannelType(43), 'DeepSeek')
+  })
+
+  test('自定义与高级自定义渠道保持全局模型库搜索', () => {
+    assert.equal(getModelSearchVendorForChannelType(8), '')
+    assert.equal(getModelSearchVendorForChannelType(58), '')
   })
 })

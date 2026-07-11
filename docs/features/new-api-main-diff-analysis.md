@@ -10185,3 +10185,66 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 4. `git diff --check` 通过。
 5. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
 6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端渠道亲和调度能力修复，没有新增前端页面或可直接手动触发的公开交互入口。
+
+## 本轮实施评审：渠道编辑页模型搜索供应商收窄与页面对齐
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并指出最新版 `new-api-main` 的编辑渠道页面体验更好，希望 NexusTok 的编辑渠道页面与其对齐。结合前一轮 `gpt-5.6` 三模型同步问题继续核对后发现，NexusTok 当前已经能搜索到 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 模型，但编辑渠道页的模型库搜索默认是全局搜索：它会按关键词在模型名称、描述和标签中检索所有供应商模型。对于 OpenAI/Codex/Sora 等明确归属 OpenAI 供应商的渠道，搜索补齐应优先限定在 OpenAI 模型库，否则搜索供应商、标签或描述时可能把其它 provider 的兼容路由模型也追加到渠道能力里。
+
+同时，真实接口验证发现 `/api/models/search?keyword=...&vendor=OpenAI` 在 PostgreSQL 下会报 `column reference "description" is ambiguous`。原因是搜索带供应商过滤时会 JOIN `vendors` 表，而 `models` 和 `vendors` 都有 `description` 字段，模型搜索条件没有显式限定 `models.description`。因此本轮必须同时修复后端搜索接口和前端编辑页搜索语义，才能把“根据当前渠道供应商添加模型”发展成稳定的原生能力。
+
+最新版 `new-api-main` 的编辑渠道页面在 `Models & Groups` 区域采用更清晰的工作流：先配置模型，再配置模型映射，最后配置分组。NexusTok 在此基础上已经新增了模型库搜索、自定义批量添加、权限控制和账号池模式等原生增强。本轮页面对齐的目标不是回退这些增强，而是吸收 new-api-main 的配置顺序和清晰分区，让管理员能明确看到搜索范围、预览结果和最终追加行为。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型搜索接口 | `model/model_meta.go` | `SearchModels()` 中关键词条件显式限定 `models.model_name`、`models.description`、`models.tags`，修复带 vendor JOIN 时的跨库歧义。 |
+| 后端测试 | `model/model_meta_search_test.go` | 新增 SQLite 内存库测试，覆盖关键词 + vendor 搜索只返回对应供应商模型。 |
+| 渠道模型搜索纯函数 | `web/default/src/features/channels/lib/model-search.ts` | 新增渠道类型到默认模型供应商的映射，并让异步追加上下文校验包含 vendor。 |
+| 前端测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 覆盖 OpenAI/Codex 默认 OpenAI、Anthropic/Gemini/DeepSeek 等明确供应商映射，以及 vendor 变化时拒绝旧搜索结果。 |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型库预览搜索和“添加全部匹配”全量分页扫描使用同一 vendor 参数；页面显示当前搜索范围；`Models & Groups` 区域顺序调整为 `Models -> Model Mapping -> Groups`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改数据库 schema、模型同步逻辑、渠道保存 payload、渠道能力表结构、Relay 调度逻辑、账号池能力或模型价格配置。自定义渠道、Advanced Custom、OpenAI-compatible 聚合网关等无法明确供应商的渠道继续使用全局模型库搜索。
+
+### 风险评估
+
+1. 供应商映射过窄风险：Custom、Advanced Custom、OpenRouter、AI Proxy、Submodel 等渠道可能代理多个供应商，如果强行按渠道名称过滤会漏掉真实可用模型。本轮只对 OpenAI、Codex、Sora、Azure、Anthropic、Gemini/Vertex、DeepSeek、Mistral、Cohere、MiniMax、Perplexity、xAI、Replicate 等可明确归属的渠道启用默认 vendor 过滤，其它渠道保持全局搜索。
+2. 预览和最终追加不一致风险：如果预览搜索和点击追加时的分页扫描参数不同，管理员看到的 “new/already selected” 统计可能与最终写入不一致。本轮把 `vendor` 同时放进 query key、预览请求、全量分页扫描和上下文校验。
+3. 旧搜索结果污染风险：管理员切换渠道、切换渠道类型或修改关键词后，旧异步搜索结果不应继续写入当前表单。本轮在原有 `open/channelId/keyword` 校验基础上增加 `vendor` 校验，供应商范围变化会拒绝旧结果。
+4. PostgreSQL 兼容风险：后端修复必须使用 GORM 条件和表名前缀，不能引入数据库专用 SQL。本轮只把列名限定到 `models.*`，兼容 SQLite、MySQL 和 PostgreSQL。
+5. 页面回归风险：`Models & Groups` 区域重排不能影响已有权限禁用、复制模型、自定义模型、上游拉取、预设分组、模型映射守卫和分组必填校验。本轮只调整展示顺序和搜索参数，不改变保存转换函数。
+
+### 方案评审
+
+采用“后端搜索修复 + 前端供应商收窄 + 页面顺序对齐”的小步方案：
+
+1. 修复 `SearchModels()` 的歧义列条件，使带 `vendor` 过滤的搜索接口在 PostgreSQL 下可用。
+2. 新增 `getModelSearchVendorForChannelType()`，作为渠道编辑页模型搜索的默认供应商推导函数。
+3. `useQuery` 的模型库预览搜索 key 加入 `modelSearchVendor`，请求参数带上 `vendor`；点击“添加”时的 `fetchAllModelSearchModelNames()` 同样带 `vendor`。
+4. `isModelSearchAppendContextCurrent()` 把 vendor 纳入上下文一致性判断，避免渠道类型变化后误用旧搜索结果。
+5. 页面上在“Search model library”旁显示当前搜索范围，例如 `Vendor: OpenAI` 或 `All Vendors`。
+6. `Models & Groups` 区域按 new-api-main 最新源码调整为 `Models -> Model Mapping -> Groups`，保留 NexusTok 的模型库补齐、自定义模型和快捷操作增强。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索供应商收窄与页面对齐：
+
+- OpenAI/Codex/Sora 渠道的模型库搜索默认限定到 OpenAI 供应商，`gpt-5.6` 系列搜索和批量追加会围绕 OpenAI 模型库执行。
+- 明确供应商渠道会按对应供应商收窄搜索；无法明确供应商的渠道继续全局搜索，避免漏掉聚合网关和自定义路由模型。
+- 后端 `/api/models/search` 带 vendor 参数时不再因 `description` 歧义报错。
+- 模型库搜索结果预览、按钮可用状态和最终全量追加使用同一套 keyword + vendor 规则。
+- 编辑渠道页 `Models & Groups` 区域顺序与 new-api-main 最新页面对齐为 `Models -> Model Mapping -> Groups`，并显示当前搜索范围。
+
+### 验证记录
+
+1. `go test ./model -run 'TestSearchModelsWithVendorQualifiesModelColumns'` 通过，确认关键词 + vendor 搜索不会因跨表 `description` 歧义失败，且只返回对应供应商模型。
+2. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，共 36 个测试，覆盖模型搜索追加、供应商映射、上下文校验和 MultiSelect 搜索行为。
+3. `go test ./model` 通过，确认模型元数据、渠道能力归属、任务模型等 model 包既有测试不受影响。
+4. `cd web/default && bun run typecheck` 通过，确认编辑渠道抽屉和模型搜索工具函数的 TypeScript 类型无回归。
+5. `git diff --check` 通过，确认本轮修改没有空白错误。
+6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200，并通过真实接口调用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=20`，返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 供应商模型，不再出现 PostgreSQL `description` 歧义错误。
+7. 由于当前环境没有浏览器 MCP 工具，本轮使用本机 Chrome Headless + DevTools Protocol 作为替代真实页面验证：登录 `c1cada` 后打开 `http://192.168.0.202:3003/channels`，进入渠道 `11111` 的编辑抽屉，确认页面显示 `Search model library`、`Vendor: OpenAI`，且没有控制台错误。
+8. 在同一编辑抽屉里输入 `gpt-5.6`，页面显示 `3 matched · 2 new · 1 already selected` 和待追加预览 `gpt-5.6-terra, gpt-5.6-luna`；点击 `Add 2 new model(s)` 后，未保存的表单草稿显示 `Selected 5`，包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，验证搜索添加逻辑已按 OpenAI 供应商正确补齐。

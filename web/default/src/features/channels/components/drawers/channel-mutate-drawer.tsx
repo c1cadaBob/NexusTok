@@ -176,6 +176,7 @@ import {
   buildModelSearchAppendPlan,
   buildModelSearchAppendSummary,
   dedupeModelNames,
+  getModelSearchVendorForChannelType,
   getModelSearchModelNames,
   getMissingModelSearchMatches,
   isModelSearchAppendContextCurrent,
@@ -327,9 +328,11 @@ const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
 ] as const
 
 async function fetchAllModelSearchModelNames(
-  keyword: string
+  keyword: string,
+  vendor = ''
 ): Promise<string[]> {
   const trimmedKeyword = keyword.trim()
+  const trimmedVendor = vendor.trim()
   if (!trimmedKeyword) return []
 
   const names: string[] = []
@@ -338,6 +341,7 @@ async function fetchAllModelSearchModelNames(
   for (;;) {
     const response = await searchModels({
       keyword: trimmedKeyword,
+      vendor: trimmedVendor || undefined,
       p: page,
       page_size: MODEL_SEARCH_APPEND_PAGE_SIZE,
     })
@@ -773,6 +777,12 @@ export function ChannelMutateDrawer({
   const { setOpen } = useChannels()
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
+  // 表单实例初始化。
+  const form = useForm<ChannelFormValues>({
+    resolver: zodResolver(channelFormSchema),
+    defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
+  })
+  const currentType = form.watch('type')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
@@ -815,6 +825,10 @@ export function ChannelMutateDrawer({
   const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
     useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
+  const modelSearchVendor = useMemo(
+    () => getModelSearchVendorForChannelType(currentType),
+    [currentType]
+  )
   const debouncedModelSearchKeyword = useDebounce(
     trimmedModelSearchKeyword,
     300
@@ -829,11 +843,13 @@ export function ChannelMutateDrawer({
     setModelSearchKeyword('')
   }, [])
   const modelSearchKeywordRef = useRef(trimmedModelSearchKeyword)
+  const modelSearchVendorRef = useRef(modelSearchVendor)
 
   const modelSearchAppendContextRef = useRef({
     open,
     channelId: currentRow?.id ?? null,
     keyword: trimmedModelSearchKeyword,
+    vendor: modelSearchVendor,
   })
 
   const isEditing = Boolean(currentRow)
@@ -866,10 +882,15 @@ export function ChannelMutateDrawer({
 
   // 用模型元信息搜索补齐系统模型候选源，避免已同步到模型库但尚未加入任何渠道的模型不可选。
   const { data: modelSearchData, isFetching: isSearchingModelMeta } = useQuery({
-    queryKey: ['channel_model_meta_search', debouncedModelSearchKeyword],
+    queryKey: [
+      'channel_model_meta_search',
+      debouncedModelSearchKeyword,
+      modelSearchVendor,
+    ],
     queryFn: () =>
       searchModels({
         keyword: debouncedModelSearchKeyword,
+        vendor: modelSearchVendor || undefined,
         p: 1,
         page_size: 50,
       }),
@@ -895,18 +916,23 @@ export function ChannelMutateDrawer({
   }, [trimmedModelSearchKeyword])
 
   useEffect(() => {
+    modelSearchVendorRef.current = modelSearchVendor
+  }, [modelSearchVendor])
+
+  useEffect(() => {
     modelSearchAppendContextRef.current = {
       open,
       channelId,
       keyword: trimmedModelSearchKeyword,
+      vendor: modelSearchVendor,
     }
-  }, [channelId, open, trimmedModelSearchKeyword])
+  }, [channelId, modelSearchVendor, open, trimmedModelSearchKeyword])
 
   useEffect(() => {
     modelSearchAppendRequestSeqRef.current += 1
     isAddingModelSearchMatchesRef.current = false
     setIsAddingModelSearchMatches(false)
-  }, [channelId, open])
+  }, [channelId, modelSearchVendor, open])
 
   const {
     open: verificationOpen,
@@ -937,12 +963,6 @@ export function ChannelMutateDrawer({
   const isChannelDetailLoading = isEditing && isChannelLoading
   const sensitiveFieldsReadOnly = isEditing && !canEditSensitiveFields
 
-  // 表单实例初始化。
-  const form = useForm<ChannelFormValues>({
-    resolver: zodResolver(channelFormSchema),
-    defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
-  })
-
   // 监听表单字段变化，用于驱动凭证模式、渠道类型和高级配置的条件渲染。
   const multiKeyMode = form.watch('multi_key_mode')
   const multiKeyType = form.watch('multi_key_type')
@@ -950,7 +970,6 @@ export function ChannelMutateDrawer({
   const accountPoolGroupId = form.watch('account_pool_group_id')
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
-  const currentType = form.watch('type')
   const currentStatus = form.watch('status')
   const currentBaseUrl = form.watch('base_url')
   const currentKey = form.watch('key')
@@ -1824,6 +1843,7 @@ export function ChannelMutateDrawer({
       return
     }
     const keyword = modelSearchKeywordRef.current.trim()
+    const vendor = modelSearchVendorRef.current.trim()
     if (!keyword) {
       toast.info(t('No new search results to add'))
       return
@@ -1839,13 +1859,17 @@ export function ChannelMutateDrawer({
     setIsAddingModelSearchMatches(true)
     const requestChannelId = channelId
     try {
-      const allSearchModelNames = await fetchAllModelSearchModelNames(keyword)
+      const allSearchModelNames = await fetchAllModelSearchModelNames(
+        keyword,
+        vendor
+      )
       const latestContext = modelSearchAppendContextRef.current
       if (
         modelSearchAppendRequestSeqRef.current !== requestSeq ||
         !isModelSearchAppendContextCurrent(latestContext, {
           channelId: requestChannelId,
           keyword,
+          vendor,
         })
       ) {
         return
@@ -3962,9 +3986,19 @@ export function ChannelMutateDrawer({
                                 </FormControl>
 
                                 <FormItem className='mt-4'>
-                                  <FormLabel>
-                                    {t('Search model library')}
-                                  </FormLabel>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                    <FormLabel>
+                                      {t('Search model library')}
+                                    </FormLabel>
+                                    <Badge
+                                      variant='secondary'
+                                      className='w-fit'
+                                    >
+                                      {modelSearchVendor
+                                        ? `${t('Vendor')}: ${modelSearchVendor}`
+                                        : t('All Vendors')}
+                                    </Badge>
+                                  </div>
                                   <FormControl>
                                     <InputGroup>
                                       <InputGroupInput
@@ -4325,43 +4359,6 @@ export function ChannelMutateDrawer({
                         <div className='border-border/60 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
-                            name='group'
-                            render={({ field }) => (
-                              <FormItem className='space-y-3'>
-                                <div className='space-y-1'>
-                                  <FormLabel>{t('Groups *')}</FormLabel>
-                                  <FormDescription>
-                                    {t(FIELD_DESCRIPTIONS.GROUP)}
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  {isLoadingGroups ? (
-                                    <Skeleton className='h-10 w-full' />
-                                  ) : (
-                                    <MultiSelect
-                                      options={groupOptions}
-                                      selected={field.value}
-                                      onChange={(values) => {
-                                        if (!canEditBasicFields) {
-                                          toast.error(noPermissionMessage)
-                                          return
-                                        }
-                                        field.onChange(values)
-                                      }}
-                                      placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
-                                      disabled={!canEditBasicFields}
-                                    />
-                                  )}
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-
-                        <div className='border-border/60 rounded-lg border p-4'>
-                          <FormField
-                            control={form.control}
                             name='model_mapping'
                             render={({ field }) => (
                               <FormItem>
@@ -4486,6 +4483,43 @@ export function ChannelMutateDrawer({
                                     </AlertDescription>
                                   </Alert>
                                 )}
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className='border-border/60 rounded-lg border p-4'>
+                          <FormField
+                            control={form.control}
+                            name='group'
+                            render={({ field }) => (
+                              <FormItem className='space-y-3'>
+                                <div className='space-y-1'>
+                                  <FormLabel>{t('Groups *')}</FormLabel>
+                                  <FormDescription>
+                                    {t(FIELD_DESCRIPTIONS.GROUP)}
+                                  </FormDescription>
+                                </div>
+                                <FormControl>
+                                  {isLoadingGroups ? (
+                                    <Skeleton className='h-10 w-full' />
+                                  ) : (
+                                    <MultiSelect
+                                      options={groupOptions}
+                                      selected={field.value}
+                                      onChange={(values) => {
+                                        if (!canEditBasicFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(values)
+                                      }}
+                                      placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
+                                      disabled={!canEditBasicFields}
+                                    />
+                                  )}
+                                </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}

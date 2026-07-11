@@ -296,7 +296,10 @@ func SearchModels(keyword string, vendor string, offset int, limit int) ([]*Mode
 	db := DB.Model(&Model{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		db = db.Where("model_name LIKE ? OR description LIKE ? OR tags LIKE ?", like, like, like)
+		// 带 vendor 过滤时会 JOIN vendors，两个表都有 description 字段。
+		// 查询条件必须显式限定 models 表，避免 PostgreSQL/MySQL/SQLite 在跨表查询时
+		// 把 description 解析为歧义列，导致模型库搜索无法按供应商收窄范围。
+		db = db.Where("models.model_name LIKE ? OR models.description LIKE ? OR models.tags LIKE ?", like, like, like)
 	}
 	if vendor != "" {
 		if vid, err := strconv.Atoi(vendor); err == nil {
