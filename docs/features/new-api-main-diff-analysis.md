@@ -217,7 +217,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
 | P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 已完成首批账号池专用移动端卡片与移动筛选 Drawer：Usage Logs、State Logs、Check History 在手机端不再横向滚动表格，常用搜索保留在页面，低频筛选收纳进底部 Drawer，并保留账号粒度、状态迁移、检测任务详情和脱敏语义；后续可继续推进 DataTable 分层。 |
-| P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并新增桌面表格/卡片视图切换底座，先在 `/models/metadata` 模型表启用；new-api-main 的 core/layout/static/hooks 全量目录拆分仍未迁移。后续新页面或大改页面可继续复用该底座，避免一次性替换全站表格。 |
+| P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并新增桌面表格/卡片视图切换底座，先后在 `/models/metadata` 模型表和 `/channels` 渠道列表启用；new-api-main 的 core/layout/static/hooks 全量目录拆分仍未迁移。后续新页面或大改页面可继续复用该底座，避免一次性替换全站表格。 |
 | P2/P3 | Playground 目录结构 polish | `features/playground/components/{chat,input,message}`、`lib/{message,streaming,storage}` | 消息渲染、错误、输入、编辑器、CodeMirror、流式 helper 和大量纯函数测试已原生化；剩余差异主要是目录层级组织，不应为了路径一致而重构，除非后续功能开发自然触碰。 |
 | P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
 
@@ -11268,3 +11268,54 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 10. 显式按钮路径验证：重新打开编辑抽屉搜索 `gpt-5.6`，点击 `添加 2 个新模型` 后草稿变为 `已选 5 个`，包含 Terra/Luna/Sol 三项。
 11. 验证期间未点击 `更新渠道`；随后调用 `GET /api/channel/?p=1&page_size=5&tag_mode=false&id_sort=false`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
 12. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
+
+## 本轮实施评审：渠道列表桌面卡片视图原生化
+
+### 需求分析
+
+继续复核 `new-api-main` 默认前端后确认，最新版渠道列表已经在桌面端支持表格/卡片视图切换，管理员可以在宽屏上用更紧凑的卡片扫 provider、状态、余额、响应时间、优先级、权重和分组。NexusTok 当前公共 `DataTablePage` 已经有 `enableCardView`、`viewModeStorageKey`、`renderCard` 和卡片网格底座，并已先在模型元数据表试点，但 `/channels` 渠道列表仍只使用桌面表格 + 移动端卡片。
+
+本轮目标不是复制 new-api 的整个 DataTable `core/layout/toolbar` 目录，也不改渠道后端、筛选接口、编辑抽屉或状态操作，而是把 new-api 的“渠道桌面卡片视图”优势转换成 NexusTok 原生能力：复用现有 `ChannelCard`、列 cell renderer、批量操作和筛选状态，让渠道页也具备可持久化的桌面表格/卡片切换。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道移动/桌面卡片 | `web/default/src/features/channels/components/channel-card.tsx` | 将既有 `ChannelCard` 导出给桌面卡片视图复用；移动端 `ChannelsMobileList` 行为不变。 |
+| 渠道列表页面 | `web/default/src/features/channels/components/channels-table.tsx` | 在 `DataTablePage` 上开启 `enableCardView`，使用 `channels-table-view-mode` 持久化桌面视图模式，并通过 `renderCard` 复用 `ChannelCard`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新 DataTable 渐进分层状态，并记录本轮需求、风险、方案、实施和验证结果。 |
+
+### 风险评估
+
+1. 桌面表格工作流风险：渠道页是高频管理页，表格仍必须作为默认视图，避免管理员已有列宽、排序、批量选择和操作习惯被打断。本轮仅新增可选卡片视图，默认 `table` 视图不变。
+2. 业务逻辑重复风险：如果重写一套渠道卡片，容易漏掉账号池、multi-key、IO.NET、通行体警告、状态 tooltip、优先级/权重 inline 控件和分组 badge。本轮复用既有 `ChannelCard`，内部继续通过 `flexRender` 调用列 cell renderer。
+3. 移动端回归风险：移动端已经有专用 `ChannelsMobileList`，不应被桌面卡片网格替换。本轮 `mobile` slot 保持原样，`enableCardView` 只在非 mobile 时生效。
+4. 禁用渠道样式风险：禁用/异常渠道在桌面表格和移动卡片已有左侧边框/背景提示。本轮继续通过 `getRowClassName` 把同一禁用样式传给卡片网格。
+5. 热更新环境风险：本轮验证时发现热更新后端扫描和前端构建进程曾卡在内核 `wait_on_buffer` / `blk_mq_get_tag`，导致本地 `tsc -b` 无法稳定完成；因此验证以 Prettier、`git diff --check`、Docker 热更新构建发布、真实 3003 页面 CDP 操作为准，并在记录中保留受限项。
+
+### 方案评审
+
+采用最小接入方案：
+
+1. 将 `ChannelCard` 从 `channel-card.tsx` 导出，不移动文件、不拆分目录，避免触发大范围 import churn。
+2. 在 `ChannelsTable` 中引入 `ChannelCard`，为 `DataTablePage` 增加 `enableCardView`、`viewModeStorageKey='channels-table-view-mode'`、三列桌面卡片网格和 `renderCard`。
+3. `ChannelCard` 外层由 `DataTableCardGrid` 提供边框、选中态和禁用态，传入 `className='px-0 py-0'` 避免双层内边距；卡片内部仍保留原来的信息层级。
+4. 不改变 column definitions、筛选、分页、排序、批量操作、移动端列表、权限按钮或后端 API。
+
+### 实施结果
+
+- `/channels` 桌面端现在和 `/models/metadata` 一样具备表格/卡片视图切换。
+- 视图选择写入 `localStorage.channels-table-view-mode`，刷新后可保留管理员偏好。
+- 卡片内容复用既有 `ChannelCard`，保留 provider/type、名称/备注、状态、优先级、权重、余额、响应时间、最近测试时间、分组、行操作和选择框。
+- 移动端继续走 `ChannelsMobileList`，没有改变手机端布局。
+- 本轮继续推进 DataTable 渐进分层，但仍避免一次性迁移 new-api-main 的 `core/layout/static/hooks` 全目录。
+
+### 验证记录
+
+1. `cd web/default && ./node_modules/.bin/prettier --check src/features/channels/components/channel-card.tsx src/features/channels/components/channels-table.tsx` 通过。
+2. `git diff --check` 通过。
+3. `nexustok-frontend-watch` 日志显示 Rsbuild 完成并输出 `[hot] published default dist`，说明本轮 JSX/TS 变更已被热更新构建链路编译并发布。
+4. 访问 `http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`，后端热更新容器在重启后完成数据库迁移并输出 `NexusTok ready`。
+5. 发布产物中已确认存在 `enableCardView:!0`、`viewModeStorageKey:"channels-table-view-mode"` 和卡片网格配置，证明 3003 加载的渠道页 chunk 包含本轮改动。
+6. Chrome Headless + DevTools Protocol 真实页面验证：登录 `c1cada` 成功，打开 `http://192.168.0.202:3003/channels` 后存在视图切换控件；点击卡片视图按钮后，按钮状态从 `[false,true]` 变为 `[true,false]`，`localStorage.channels-table-view-mode` 为 `card`，DOM 中出现 `[data-slot="data-table-card"]` 卡片节点，桌面表格节点数为 0。
+7. `cd web/default && bun run typecheck` 曾多次启动，但 `tsc -b` 卡在内核 `wait_on_buffer` / `folio_wait_bit_common` 超过数分钟，已终止以避免继续阻塞；本轮以已通过的 Prettier、`git diff --check`、容器 Rsbuild 热更新构建和真实页面验证作为替代证据。

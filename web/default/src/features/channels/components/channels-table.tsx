@@ -53,7 +53,7 @@ import {
   getChannelTypeLabel,
 } from '../lib'
 import type { Channel, ChannelSortBy } from '../types'
-import { ChannelsMobileList } from './channel-card'
+import { ChannelCard, ChannelsMobileList } from './channel-card'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
@@ -70,6 +70,7 @@ const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
 ])
 
 const EMPTY_FILTER_VALUES: string[] = []
+const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels-table-view-mode'
 
 function isDisabledChannelRow(channel: Channel) {
   return (
@@ -398,6 +399,12 @@ export function ChannelsTable() {
         'No channels available. Create your first channel to get started.'
       )}
       skeletonKeyPrefix='channel-skeleton'
+      enableCardView
+      viewModeStorageKey={CHANNELS_VIEW_MODE_STORAGE_KEY}
+      renderCard={(row, { isSelected }) => (
+        <ChannelCard className='px-0 py-0' isSelected={isSelected} row={row} />
+      )}
+      cardGridClassName='grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3'
       applyHeaderSize
       toolbarProps={{
         searchPlaceholder: t('Filter by name, ID, or key...'),

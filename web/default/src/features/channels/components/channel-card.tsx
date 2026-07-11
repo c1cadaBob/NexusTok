@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { memo } from 'react'
 import { flexRender, type Row, type Table } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
-import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { GroupBadge } from '@/components/group-badge'
+import { cn } from '@/lib/utils'
 import {
   Empty,
   EmptyDescription,
@@ -29,7 +29,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
+import { GroupBadge } from '@/components/group-badge'
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
 import type { Channel } from '../types'
@@ -134,9 +134,7 @@ function ChannelCardComponent({
       <div className='grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3'>
         <div className='flex min-w-0 flex-col gap-3 overflow-hidden'>
           <div className='min-w-0'>
-            {!isTagRow && (
-              <div className={labelClass}>#{channel.id}</div>
-            )}
+            {!isTagRow && <div className={labelClass}>#{channel.id}</div>}
             <div className='min-w-0 text-sm'>{nameCell}</div>
           </div>
 
@@ -181,7 +179,7 @@ function ChannelCardComponent({
   )
 }
 
-const ChannelCard = memo(ChannelCardComponent)
+export const ChannelCard = memo(ChannelCardComponent)
 
 export function ChannelsMobileList({
   emptyDescription,
