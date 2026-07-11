@@ -100,6 +100,15 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionWrite: true,
 		},
 	}, ExplicitUserOverrides(42))
+
+	var policyRecords []model.CasbinRule
+	require.NoError(t, db.Where("ptype = ? AND v0 = ?", "p", UserSubject(42)).
+		Order("v1 ASC, v2 ASC").
+		Find(&policyRecords).Error)
+	require.Len(t, policyRecords, 3)
+	assertCasbinRule(t, policyRecords[0], 42, ResourceChannel, ActionSensitiveWrite, EffectAllow)
+	assertCasbinRule(t, policyRecords[1], 42, ResourceSystemSetting, ActionRead, EffectDeny)
+	assertCasbinRule(t, policyRecords[2], 42, ResourceSystemSetting, ActionWrite, EffectAllow)
 }
 
 func TestCanUsesUserOverridesWithoutElevatingCommonUsers(t *testing.T) {
@@ -147,7 +156,7 @@ func TestCapabilitiesForUserAppliesOverrides(t *testing.T) {
 }
 
 func TestClearUserAuthorizationRemovesOverrides(t *testing.T) {
-	setupAuthzOverrideTestDB(t)
+	db := setupAuthzOverrideTestDB(t)
 
 	require.NoError(t, SetUserPermissions(42, PermissionsMap{ResourceChannel: {
 		ActionSensitiveWrite: true,
@@ -158,6 +167,12 @@ func TestClearUserAuthorizationRemovesOverrides(t *testing.T) {
 
 	assert.Empty(t, ExplicitUserOverrides(42))
 	assert.False(t, Can(42, common.RoleAdminUser, ChannelSensitiveWrite))
+
+	var policyCount int64
+	require.NoError(t, db.Model(&model.CasbinRule{}).
+		Where("ptype = ? AND v0 = ?", "p", UserSubject(42)).
+		Count(&policyCount).Error)
+	assert.Zero(t, policyCount)
 }
 
 func TestSetUserPermissionsInTxRollbackLeavesNoOverrides(t *testing.T) {
@@ -173,6 +188,11 @@ func TestSetUserPermissionsInTxRollbackLeavesNoOverrides(t *testing.T) {
 	require.ErrorIs(t, err, errRollback)
 
 	assert.Empty(t, ExplicitUserOverrides(42))
+	var policyCount int64
+	require.NoError(t, db.Model(&model.CasbinRule{}).
+		Where("ptype = ? AND v0 = ?", "p", UserSubject(42)).
+		Count(&policyCount).Error)
+	assert.Zero(t, policyCount)
 }
 
 func assertAuthzOverrideRecord(t *testing.T, record model.AuthzUserOverride, userID int, resource string, action string, effect string) {
@@ -184,4 +204,14 @@ func assertAuthzOverrideRecord(t *testing.T, record model.AuthzUserOverride, use
 	assert.Equal(t, effect, record.Effect)
 	assert.NotZero(t, record.CreatedAt)
 	assert.NotZero(t, record.UpdatedAt)
+}
+
+func assertCasbinRule(t *testing.T, record model.CasbinRule, userID int, resource string, action string, effect string) {
+	t.Helper()
+
+	assert.Equal(t, "p", record.Ptype)
+	assert.Equal(t, UserSubject(userID), record.V0)
+	assert.Equal(t, resource, record.V1)
+	assert.Equal(t, action, record.V2)
+	assert.Equal(t, effect, record.V3)
 }

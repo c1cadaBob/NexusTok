@@ -48,7 +48,9 @@ func SetUserPermissionsInTx(tx *gorm.DB, userID int, permissions PermissionsMap)
 		if !ok {
 			continue
 		}
-		overrides := userOverrideRecords(userID, resource, actions)
+		overrides := userOverrideRecords(userID, resource, actions, func(resource string, action string) (bool, bool) {
+			return persistentAdminBaselineInTx(tx, resource, action)
+		})
 		if err := model.ReplaceAuthzUserResourceOverridesInTx(tx, userID, resource.Resource, overrides); err != nil {
 			return err
 		}
@@ -112,7 +114,12 @@ func ExplicitUserOverrides(userID int) PermissionsMap {
 	return result
 }
 
-func userOverrideRecords(userID int, resource ResourceDefinition, actions map[string]bool) []model.AuthzUserOverride {
+func userOverrideRecords(
+	userID int,
+	resource ResourceDefinition,
+	actions map[string]bool,
+	adminBaselineResolver func(resource string, action string) (bool, bool),
+) []model.AuthzUserOverride {
 	records := make([]model.AuthzUserOverride, 0, len(actions))
 	for _, action := range resource.Actions {
 		desired, ok := actions[action.Action]
@@ -120,7 +127,7 @@ func userOverrideRecords(userID int, resource ResourceDefinition, actions map[st
 			continue
 		}
 		adminBaseline := actionHasRole(action, BuiltInRoleAdmin)
-		if allowed, ok := persistentAdminBaseline(resource.Resource, action.Action); ok {
+		if allowed, ok := adminBaselineResolver(resource.Resource, action.Action); ok {
 			adminBaseline = allowed
 		}
 		if desired == adminBaseline {

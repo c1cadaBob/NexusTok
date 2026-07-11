@@ -210,8 +210,15 @@ func persistentRoleGrants(role roleSpec) (PermissionsMap, bool) {
 }
 
 func loadPersistentRoleGrantsFromDB(role roleSpec) (PermissionsMap, bool, error) {
+	return loadPersistentRoleGrantsFromDBWithConn(model.DB, role)
+}
+
+func loadPersistentRoleGrantsFromDBWithConn(db *gorm.DB, role roleSpec) (PermissionsMap, bool, error) {
+	if db == nil {
+		return nil, false, nil
+	}
 	var records []model.CasbinRule
-	err := model.DB.Where("ptype = ? AND v0 = ?", "p", RoleSubject(role.key)).
+	err := db.Where("ptype = ? AND v0 = ?", "p", RoleSubject(role.key)).
 		Order("v1 ASC, v2 ASC").
 		Find(&records).Error
 	if err != nil || len(records) == 0 {
@@ -249,6 +256,37 @@ func persistentAdminBaseline(resource string, action string) (bool, bool) {
 	if !ok {
 		return false, false
 	}
+	return grantsAllow(grants, resource, action)
+}
+
+// persistentAdminBaselineInTx 用于在用户权限事务内计算“相对 Admin 基线”的差异。
+//
+// 策略快照已经加载时仍以快照为准，保持与当前授权热路径一致；快照未加载时复用调用方
+// 事务读取 casbin_rule，避免 SQLite 内存库在一个写事务内再通过全局连接读取而互相等待。
+func persistentAdminBaselineInTx(tx *gorm.DB, resource string, action string) (bool, bool) {
+	adminRole, ok := builtInRoleByKey(BuiltInRoleAdmin)
+	if !ok {
+		return false, false
+	}
+	if grants, ok, loaded := persistentRoleGrantsFromSnapshot(adminRole.key); loaded {
+		if !ok {
+			return false, false
+		}
+		return grantsAllow(grants, resource, action)
+	}
+	if tx == nil {
+		return persistentAdminBaseline(resource, action)
+	}
+	grants, ok, err := loadPersistentRoleGrantsFromDBWithConn(tx, *adminRole)
+	if err != nil || !ok {
+		return false, false
+	}
+	return grantsAllow(grants, resource, action)
+}
+
+// grantsAllow 在完整权限矩阵中查找某个动作的授权结果。返回值第二项表示该矩阵
+// 是否已经覆盖对应资源/动作，用于区分“显式不允许”和“没有持久策略可用”。
+func grantsAllow(grants PermissionsMap, resource string, action string) (bool, bool) {
 	actions, ok := grants[resource]
 	if !ok {
 		return false, true
