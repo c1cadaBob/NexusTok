@@ -61,12 +61,7 @@ describe('MultiSelect 搜索过滤', () => {
   })
 
   test('搜索时可隐藏已选项但保留可新增候选', () => {
-    const items = [
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.6-sol',
-      'gpt-5.4',
-    ]
+    const items = ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.4']
 
     assert.deepEqual(
       getVisibleMultiSelectItems({

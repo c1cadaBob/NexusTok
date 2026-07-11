@@ -296,13 +296,7 @@ export function MultiSelect({
       hideSelectedOptionsWhenSearching,
       selected,
     })
-  }, [
-    hideSelectedOptionsWhenSearching,
-    inputValue,
-    items,
-    labelMap,
-    selected,
-  ])
+  }, [hideSelectedOptionsWhenSearching, inputValue, items, labelMap, selected])
 
   const updateInputValue = React.useCallback(
     (value: string) => {
