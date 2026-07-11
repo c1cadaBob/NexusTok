@@ -216,7 +216,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 已完成首批账号池专用移动端卡片：Usage Logs、State Logs、Check History 在手机端不再横向滚动表格，并保留账号粒度、状态迁移、检测任务详情和脱敏语义；后续可继续推进筛选 Drawer 与 DataTable 分层。 |
+| P1 | 账号池日志与全局 Usage Logs 体验统一 | `usage-logs-mobile-card.tsx`、账号池 History | 已完成首批账号池专用移动端卡片与移动筛选 Drawer：Usage Logs、State Logs、Check History 在手机端不再横向滚动表格，常用搜索保留在页面，低频筛选收纳进底部 Drawer，并保留账号粒度、状态迁移、检测任务详情和脱敏语义；后续可继续推进 DataTable 分层。 |
 | P2 | DataTable 渐进分层 | `components/data-table/core/*`、`layout/*`、`toolbar/*` | NexusTok 已补 DataTable README，并保留当前扁平结构；new-api-main 的 core/layout/static/hooks 全量分层仍未迁移。新页面或大改页面可先复用分层思想，避免一次性替换全站表格。 |
 | P2/P3 | Playground 目录结构 polish | `features/playground/components/{chat,input,message}`、`lib/{message,streaming,storage}` | 消息渲染、错误、输入、编辑器、CodeMirror、流式 helper 和大量纯函数测试已原生化；剩余差异主要是目录层级组织，不应为了路径一致而重构，除非后续功能开发自然触碰。 |
 | P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
@@ -6440,6 +6440,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | 账号池 History 移动端筛选 Drawer | `web/default/src/features/account-pool/index.tsx`、`web/default/src/features/account-pool/components/account-pool-history-filter-drawer.tsx` | 原生化 new-api-main 的移动筛选收纳优势：账号池 Usage/State/Check History 手机端保留搜索框，将状态、action/source、request/time/account 等低频筛选收进 85dvh Drawer；State 使用原生 select 避免 Base Select portal 与 Vaul Drawer transform 冲突，Check status 使用按钮组。桌面筛选栏保留原样。 |
 | 2026-07-10 | 差异报告优先队列状态校准 | `docs/features/new-api-main-diff-analysis.md` | 基于当前工作树证据校准早期总表、优先队列和路线建议；把已原生化的行锁、Responses/Gemini、管理审计、Flow、Usage Logs、Advanced Custom、Waffo Pancake、OpenAI image stream、用户级 Authz override 和多组权限路由从待办中移出，保留 Casbin/角色策略、ClickHouse 真接入、DataTable 分层、账号池日志体验等真实剩余项。 |
 | 2026-07-10 | 订阅到期显式降级分组 | `model/subscription.go`、`model/main.go`、`controller/subscription.go`、`web/default/src/features/subscriptions/*`、`web/classic/src/components/table/subscriptions/*`、`web/default/src/i18n/locales/*.json` | 原生化 new-api-main 的 `downgrade_group` 能力：套餐可配置订阅结束后显式降级到指定分组；用户订阅购买时快照该策略，到期/作废/删除时显式降级优先，空值继续回退购买前分组，并保留其它有效升级订阅的分组权益。 |
 | 2026-07-10 | 账号池分组字段级 fail-closed | `controller/account_pool.go`、`controller/account_pool_authz.go`、`controller/account_pool_authz_test.go`、`web/default/src/features/account-pool/*` | 账号池分组更新读取原始 JSON 并按字段分类做敏感写二次校验：`platform`、`auth_type`、`model_mapping`、`settings` 和未知字段默认需要 `account_pool.sensitive_write`；普通字段仍允许 `account_pool.write`。默认前端账号池页和凭证面板消费 `write/operate/sensitive_write`，编辑既有分组时禁用敏感字段。 |
@@ -8711,7 +8712,7 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 4. 对三个列表添加 `data-account-pool-log-mobile-list=usage/state/check` 只读标记，方便运行态验证移动端路径是否真实生效。
 5. 桌面表格容器改为 `hidden md:block`，移动卡片容器使用 `md:hidden`，保持两个端点互不干扰。
 6. 账号池页面内部 Tabs 从 `flex-wrap` 改为横向滚动，避免手机端主分区导航换行重叠。
-7. 不在本轮迁移 `LogsFilterToolbar` 或 `DataTablePage`，因为它们会扩大状态、列显隐和 URL 同步影响面；筛选 Drawer 与 DataTable 分层留作后续切片。
+7. 不在本轮迁移 `LogsFilterToolbar` 或 `DataTablePage`，因为它们会扩大状态、列显隐和 URL 同步影响面；移动筛选 Drawer 已在后续切片补齐，DataTable 分层继续留作后续独立切片。
 
 ### 实施结果
 
@@ -8741,3 +8742,72 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 13. 账号池主分区 Tabs 验证：手机视口下第一组 Tabs `clientHeight=32`、`overflowX=auto`、`scrollWidth > clientWidth`，不再重叠。
 14. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
 15. 验证截图保存于 `/tmp/nexustok-account-pool-history-mobile-ready.png` 与 `/tmp/nexustok-account-pool-history-mobile-tabs.png`。
+
+## 本轮实施评审：账号池 History 移动端筛选 Drawer 原生化
+
+### 需求分析
+
+上一轮已经把账号池 `History` 的三类日志在手机端改成语义卡片，但筛选区仍然直接堆在页面上。尤其是 `State Logs` 同时包含 action、source、request、起止时间和账号筛选，手机端会把日志卡片推到很深的位置；这与 `/opt/project/new-api-main` 最新页面中“主搜索留在页面、低频筛选收纳到移动抽屉”的体验优势仍有差距。
+
+本轮目标是把该优势转成 NexusTok 原生能力：账号池 History 手机端保留高频搜索输入，其余筛选进入底部 Drawer；桌面端继续保持现有筛选栏，不改变后端查询参数、权限、导出、清理、检测任务详情或日志脱敏语义。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 移动筛选 Drawer | `web/default/src/features/account-pool/components/account-pool-history-filter-drawer.tsx` | 新增账号池 History 专用底部筛选 Drawer，统一触发按钮、激活计数、Reset/Done、焦点释放和 85dvh 工作面。 |
+| 账号池 History 接入 | `web/default/src/features/account-pool/index.tsx` | Usage/State/Check 三个子视图在 `md` 以下使用“搜索框 + Filter Drawer”；桌面筛选栏改为 `hidden md:flex` 保留原行为。 |
+| 移动筛选控件 | `web/default/src/features/account-pool/index.tsx` | Usage/Check 使用按钮组避免小屏下菜单遮挡；State 的 action/source 在移动 Drawer 内使用 `NativeSelect`，避免 Base Select portal 与 Vaul Drawer transform 组合后点不中选项。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新前端体验队列、实施索引和本轮评审记录。 |
+
+本轮没有修改 `/api/account-pool/*` 请求参数、后端接口、数据库、权限判定、账号池调度、导出接口、清理接口或检测任务详情逻辑。
+
+### 风险评估
+
+- 筛选可发现性风险：移动端把低频筛选收进 Drawer 后，管理员可能不知道当前已有筛选。本轮在触发按钮上显示激活数量 badge，搜索框仍保留在页面首行。
+- Reset 误清风险：Usage、State、Check 三组筛选状态不同。本轮分别提供 `clearUsageLogFilters`、`clearStateLogFilters`、`clearCheckTaskFilters`，只清当前子视图的筛选，并把对应页码复位到 1。
+- Drawer 焦点风险：Vaul 打开 Drawer 时会隐藏页面其它区域；如果触发按钮仍持焦点，浏览器可能产生 aria-hidden 焦点警告。本轮打开前主动 blur 当前焦点，并在 Drawer 打开后把焦点送到第一个可交互控件。
+- Select portal 风险：运行态验证发现 Base Select 的 portal popup 在 Vaul Drawer transform 场景中会被 Drawer 内容层覆盖，`elementFromPoint` 命中 Drawer header/body 而不是选项。本轮移动 Drawer 内改用本地控件，避免把共享 Select 层级改动扩散到全站。
+- 桌面回归风险：账号池 History 是排障高频页面。本轮只在 `md` 以下启用新 Drawer，桌面端原 Select、Input、时间筛选、账号筛选 badge、导出和清理入口保持原 DOM 路径。
+- 热更新验证风险：必须以 `http://192.168.0.202:3003/` 真实页面为准。本轮每次关键调整后都通过 Chrome headless/CDP 打开 3003 实测，而不是只看本地类型检查。
+
+### 方案评审
+
+采用“移动端专用筛选 Drawer + 桌面筛选栏保留”的低风险方案：
+
+1. 新增 `AccountPoolHistoryFilterDrawer`，只负责移动端筛选容器、触发按钮、激活计数、Reset/Done 和焦点管理，不感知具体筛选字段。
+2. Usage Logs 手机端保留搜索框，`success/all/failed` 状态放入 Drawer 按钮组；桌面端原三按钮 + 搜索框不变。
+3. State Logs 手机端保留搜索框，action/source 使用 `NativeSelect`，request/start/end/account filter 放入 Drawer；桌面端仍使用原 Base Select 和原布局。
+4. Check History 手机端保留搜索框，status 使用按钮组；桌面端仍使用原 Base Select。
+5. Drawer 使用稳定 `85dvh` 高度和内部滚动，避免短内容底部抽屉让控件贴近屏幕边缘，也为后续继续加入筛选字段留出空间。
+6. 不迁移全局 `LogsFilterToolbar`、URL 同步或 DataTable 分层，避免把移动端体验修复扩大成表格架构重构。
+
+### 实施结果
+
+已完成账号池 History 移动端筛选 Drawer 原生化：
+
+- 新增 `AccountPoolHistoryFilterDrawer`，触发按钮带 `data-account-pool-history-filter-trigger=usage/state/check`，运行态可稳定定位验证。
+- Usage Logs 手机端展示搜索框 + Filter；点击 Filter 后 Drawer 中显示 `All`、`Success`、`Failed`，选择失败状态后触发按钮显示计数 `1`，Reset 后恢复无计数。
+- State Logs 手机端展示搜索框 + Filter；Drawer 中包含 action、source、request id、start/end datetime 和账号筛选显示/清理区域。action/source 在移动端使用 `NativeSelect`，避免 Base Select portal 在 Vaul Drawer 内被内容层遮挡。
+- Check History 手机端展示搜索框 + Filter；Drawer 中显示 `All statuses`、`Queued`、`Running`、`Completed`、`Failed` 按钮组，选择 `Failed` 后触发按钮显示计数 `1`。
+- 三组移动筛选计数均包含搜索框：搜索文本仍属于当前视图的激活筛选，Reset 会同时清空搜索和低频筛选。
+- Drawer 打开前会 blur 当前焦点，打开后自动聚焦第一个输入/按钮/combobox，避免 aria-hidden 焦点警告。
+- 桌面端移动 Drawer trigger 不可见，原筛选输入仍可见；本轮没有改变桌面筛选栏、分页、导出、清理或详情查看行为。
+
+### 验证记录
+
+1. `cd web/default && bunx prettier --write src/features/account-pool/index.tsx src/features/account-pool/components/account-pool-history-filter-drawer.tsx` 通过。
+2. `cd web/default && bunx prettier --check src/features/account-pool/index.tsx src/features/account-pool/components/account-pool-history-filter-drawer.tsx src/features/account-pool/components/account-pool-log-mobile-cards.tsx` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run i18n:sync` 通过，未产生新增翻译缺口；本轮复用已有文案 key。
+5. `cd web/default && bun run build` 通过。
+6. `git diff --check` 通过。
+7. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`，热更新入口可访问。
+8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + CDP 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+9. 使用账号 `c1cada` 登录后，以 390px 手机视口打开 `/account-pool/history`，初始 `visibleTables=0`，Usage mobile Filter trigger 可见。
+10. Usage Logs 验证：打开 `data-account-pool-history-filter-trigger="usage"`，Drawer 高度约 675px，包含 `All/Success/Failed`；点击 `Failed` 后 trigger 文本为 `Filter\n1`，Reset 后恢复 `Filter`。
+11. State Logs 验证：打开 `data-account-pool-history-filter-trigger="state"`，Drawer 内可见 2 个 `NativeSelect`、`Request ID`、`Start time`、`End time`；把 action 设为 `manual_delete` 后 trigger 文本为 `Filter\n1`，Reset 后恢复 `Filter`；最终复测确认 Drawer 打开后焦点落在 `SELECT[data-slot="native-select"]`。
+12. Check History 验证：打开 `data-account-pool-history-filter-trigger="check"`，Drawer 内可见 `Queued`、`Running`、`Completed`、`Failed` 按钮且没有 `NativeSelect`；点击 `Failed` 后 trigger 文本为 `Filter\n1`。
+13. 桌面视口 1280px 验证：usage/state/check 三个移动 Drawer trigger 均不可见，原桌面筛选输入仍可见。
+14. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败；此前发现的 Base Select portal 与 Drawer transform 点击冲突已通过移动端本地控件规避。
+15. 验证截图保存于 `/tmp/nexustok-account-pool-history-filter-drawer.png`。

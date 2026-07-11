@@ -68,6 +68,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -126,6 +127,7 @@ import {
   updatePoolAccount,
   updatePoolAccountStatus,
 } from './api'
+import { AccountPoolHistoryFilterDrawer } from './components/account-pool-history-filter-drawer'
 import {
   AccountPoolCheckTasksMobileList,
   AccountPoolStateLogsMobileList,
@@ -1328,6 +1330,8 @@ export function AccountPool() {
       (usageLogPageInfo?.total ?? 0) / (usageLogPageInfo?.page_size ?? 10)
     )
   )
+  const usageLogFilterCount =
+    (usageLogStatus !== 'all' ? 1 : 0) + (usageLogSearch.trim() !== '' ? 1 : 0)
   const stateLogFilterParams = useMemo(
     () => ({
       pool_account_id: stateLogAccountId ?? undefined,
@@ -1375,14 +1379,16 @@ export function AccountPool() {
       (stateLogPageInfo?.total ?? 0) / (stateLogPageInfo?.page_size ?? 10)
     )
   )
-  const hasStateLogFilters =
-    stateLogAction !== 'all' ||
-    stateLogSource !== 'all' ||
-    stateLogSearch.trim() !== '' ||
-    stateLogRequestId.trim() !== '' ||
-    stateLogStartTime.trim() !== '' ||
-    stateLogEndTime.trim() !== '' ||
-    stateLogAccountId !== null
+  const stateLogFilterCount = [
+    stateLogAction !== 'all',
+    stateLogSource !== 'all',
+    stateLogSearch.trim() !== '',
+    stateLogRequestId.trim() !== '',
+    stateLogStartTime.trim() !== '',
+    stateLogEndTime.trim() !== '',
+    stateLogAccountId !== null,
+  ].filter(Boolean).length
+  const hasStateLogFilters = stateLogFilterCount > 0
   const checkTaskParams = useMemo(
     () => ({
       p: checkTaskPage,
@@ -1405,6 +1411,9 @@ export function AccountPool() {
       (checkTaskPageInfo?.total ?? 0) / (checkTaskPageInfo?.page_size ?? 10)
     )
   )
+  const checkTaskFilterCount =
+    (checkTaskStatus !== 'all' ? 1 : 0) +
+    (checkTaskSearch.trim() !== '' ? 1 : 0)
   const healthParams = useMemo(
     () => ({
       abnormal_limit: 10,
@@ -1420,6 +1429,12 @@ export function AccountPool() {
   const health = healthQuery.data?.data
   const healthTotals = health?.totals
 
+  const clearUsageLogFilters = useCallback(() => {
+    setUsageLogStatus('all')
+    setUsageLogSearch('')
+    setUsageLogPage(1)
+  }, [])
+
   const clearStateLogFilters = useCallback(() => {
     setStateLogAction('all')
     setStateLogSource('all')
@@ -1430,6 +1445,12 @@ export function AccountPool() {
     setStateLogAccountId(null)
     setStateLogAccountLabel('')
     setStateLogPage(1)
+  }, [])
+
+  const clearCheckTaskFilters = useCallback(() => {
+    setCheckTaskStatus('all')
+    setCheckTaskSearch('')
+    setCheckTaskPage(1)
   }, [])
 
   const filterStateLogsByRequest = useCallback((requestId: string) => {
@@ -3595,7 +3616,55 @@ export function AccountPool() {
             </TabsContent>
             <TabsContent value='usage-logs' className='m-0 min-h-0'>
               {logViewTabs}
-              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <Input
+                    className='min-w-0 flex-1'
+                    placeholder={t(
+                      'Search account, channel, model, user, or error'
+                    )}
+                    value={usageLogSearch}
+                    onChange={(event) => setUsageLogSearch(event.target.value)}
+                  />
+                  <AccountPoolHistoryFilterDrawer
+                    kind='usage'
+                    activeCount={usageLogFilterCount}
+                    resetDisabled={usageLogFilterCount === 0}
+                    onReset={clearUsageLogFilters}
+                  >
+                    <div className='grid grid-cols-3 gap-2'>
+                      <Button
+                        variant={
+                          usageLogStatus === 'all' ? 'secondary' : 'outline'
+                        }
+                        size='sm'
+                        onClick={() => setUsageLogStatus('all')}
+                      >
+                        {t('All')}
+                      </Button>
+                      <Button
+                        variant={
+                          usageLogStatus === 'success' ? 'secondary' : 'outline'
+                        }
+                        size='sm'
+                        onClick={() => setUsageLogStatus('success')}
+                      >
+                        {t('Success')}
+                      </Button>
+                      <Button
+                        variant={
+                          usageLogStatus === 'failed' ? 'secondary' : 'outline'
+                        }
+                        size='sm'
+                        onClick={() => setUsageLogStatus('failed')}
+                      >
+                        {t('Failed')}
+                      </Button>
+                    </div>
+                  </AccountPoolHistoryFilterDrawer>
+                </div>
+              </div>
+              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
                 <div className='flex flex-wrap gap-2'>
                   <Button
                     variant={usageLogStatus === 'all' ? 'secondary' : 'outline'}
@@ -3794,7 +3863,114 @@ export function AccountPool() {
             </TabsContent>
             <TabsContent value='state-logs' className='m-0 min-h-0'>
               {logViewTabs}
-              <div className='border-border flex flex-col gap-3 border-b p-3'>
+              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <Input
+                    className='min-w-0 flex-1'
+                    placeholder={t(
+                      'Search account, action, source, actor, or reason'
+                    )}
+                    value={stateLogSearch}
+                    onChange={(event) => setStateLogSearch(event.target.value)}
+                  />
+                  <AccountPoolHistoryFilterDrawer
+                    kind='state'
+                    activeCount={stateLogFilterCount}
+                    resetDisabled={!hasStateLogFilters}
+                    onReset={clearStateLogFilters}
+                  >
+                    <NativeSelect
+                      className='w-full'
+                      value={stateLogAction}
+                      onChange={(event) =>
+                        setStateLogAction(
+                          event.target.value as StateLogActionFilter
+                        )
+                      }
+                    >
+                      {stateLogActionFilterOptions.map((value) => (
+                        <NativeSelectOption key={value} value={value}>
+                          {stateLogActionFilterLabel(value, t)}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      className='w-full'
+                      value={stateLogSource}
+                      onChange={(event) =>
+                        setStateLogSource(
+                          event.target.value as StateLogSourceFilter
+                        )
+                      }
+                    >
+                      {stateLogSourceFilterOptions.map((value) => (
+                        <NativeSelectOption key={value} value={value}>
+                          {stateLogSourceFilterLabel(value, t)}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <Input
+                      placeholder={t('Request ID')}
+                      value={stateLogRequestId}
+                      onChange={(event) =>
+                        setStateLogRequestId(event.target.value)
+                      }
+                    />
+                    <label className='flex min-w-0 flex-col gap-1'>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Start time')}
+                      </span>
+                      <Input
+                        type='datetime-local'
+                        value={stateLogStartTime}
+                        onChange={(event) =>
+                          setStateLogStartTime(event.target.value)
+                        }
+                      />
+                    </label>
+                    <label className='flex min-w-0 flex-col gap-1'>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('End time')}
+                      </span>
+                      <Input
+                        type='datetime-local'
+                        value={stateLogEndTime}
+                        onChange={(event) =>
+                          setStateLogEndTime(event.target.value)
+                        }
+                      />
+                    </label>
+                    {stateLogAccountId ? (
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <Badge
+                          variant='secondary'
+                          className='max-w-full gap-1 overflow-hidden'
+                        >
+                          <span className='shrink-0'>
+                            {t('Account filter')}:
+                          </span>
+                          <span className='truncate'>
+                            {stateLogAccountLabel || `#${stateLogAccountId}`}
+                          </span>
+                        </Badge>
+                        <Button
+                          variant='ghost'
+                          size='icon-xs'
+                          title={t('Clear filters')}
+                          onClick={() => {
+                            setStateLogAccountId(null)
+                            setStateLogAccountLabel('')
+                            setStateLogPage(1)
+                          }}
+                        >
+                          <X aria-hidden='true' />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </AccountPoolHistoryFilterDrawer>
+                </div>
+              </div>
+              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex'>
                 <div className='grid gap-2 lg:grid-cols-[220px_200px_minmax(240px,1fr)]'>
                   <Select
                     items={stateLogActionFilterOptions.map((value) => ({
@@ -4236,7 +4412,41 @@ export function AccountPool() {
             </TabsContent>
             <TabsContent value='check-tasks' className='m-0 min-h-0'>
               {logViewTabs}
-              <div className='border-border flex flex-col gap-3 border-b p-3 md:flex-row md:items-center md:justify-between'>
+              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <Input
+                    className='min-w-0 flex-1'
+                    placeholder={t(
+                      'Search task, group, actor, request, or message'
+                    )}
+                    value={checkTaskSearch}
+                    onChange={(event) => setCheckTaskSearch(event.target.value)}
+                  />
+                  <AccountPoolHistoryFilterDrawer
+                    kind='check'
+                    activeCount={checkTaskFilterCount}
+                    resetDisabled={checkTaskFilterCount === 0}
+                    onReset={clearCheckTaskFilters}
+                  >
+                    <div className='grid grid-cols-2 gap-2'>
+                      {checkTaskStatusFilterOptions.map((value) => (
+                        <Button
+                          key={value}
+                          type='button'
+                          variant={
+                            checkTaskStatus === value ? 'secondary' : 'outline'
+                          }
+                          size='sm'
+                          onClick={() => setCheckTaskStatus(value)}
+                        >
+                          {checkTaskStatusFilterLabel(value, t)}
+                        </Button>
+                      ))}
+                    </div>
+                  </AccountPoolHistoryFilterDrawer>
+                </div>
+              </div>
+              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
                 <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
                   <Select
                     items={checkTaskStatusFilterOptions.map((value) => ({
