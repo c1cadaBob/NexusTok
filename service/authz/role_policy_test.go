@@ -53,6 +53,148 @@ func TestPersistentRolesReturnsStoredRolesAndGrants(t *testing.T) {
 	assert.Equal(t, 1, auditor.PolicyCount)
 }
 
+func TestCreateRoleTemplateCreatesCustomTemplate(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	role, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:         "Security_Audit",
+		Name:        " Security Audit ",
+		Description: " Read-only audit template ",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "security_audit", role.Key)
+	assert.Equal(t, "Security Audit", role.Name)
+	assert.Equal(t, "Read-only audit template", role.Description)
+	assert.False(t, role.BuiltIn)
+	assert.True(t, role.Enabled)
+	assert.False(t, role.RuntimeManaged)
+	assert.Zero(t, role.PolicyCount)
+	assert.False(t, role.Grants[ResourceChannel][ActionRead])
+	assert.GreaterOrEqual(t, role.Sort, 10)
+
+	roles, err := PersistentRoles()
+	require.NoError(t, err)
+	created := requirePersistentRole(t, roles, "security_audit")
+	assert.Equal(t, "Security Audit", created.Name)
+	assert.False(t, created.RuntimeManaged)
+}
+
+func TestCreateRoleTemplateRejectsInvalidReservedAndDuplicateKeys(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "root",
+		Name: "Root clone",
+	})
+	require.ErrorIs(t, err, errAuthzRoleKeyReserved)
+
+	_, err = CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "1auditor",
+		Name: "Auditor",
+	})
+	require.ErrorIs(t, err, errAuthzRoleKeyInvalid)
+
+	_, err = CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+
+	_, err = CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor duplicate",
+	})
+	require.ErrorIs(t, err, errAuthzRoleAlreadyExists)
+}
+
+func TestUpdateRoleTemplateUpdatesOnlyCustomRoleMetadata(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+		Sort: intPtr(40),
+	})
+	require.NoError(t, err)
+
+	updated, err := UpdateRoleTemplate("auditor", RoleTemplateMutationRequest{
+		Name:        "External Auditor",
+		Description: "Reviews usage and billing records",
+		Enabled:     boolPtr(false),
+		Sort:        intPtr(70),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "auditor", updated.Key)
+	assert.Equal(t, "External Auditor", updated.Name)
+	assert.Equal(t, "Reviews usage and billing records", updated.Description)
+	assert.False(t, updated.Enabled)
+	assert.Equal(t, 70, updated.Sort)
+
+	_, err = UpdateRolePolicies("auditor", RolePolicyUpdateRequest{
+		Grants: PermissionsMap{
+			ResourceUsageLog: {
+				ActionRead: true,
+			},
+		},
+	})
+	require.ErrorIs(t, err, errAuthzRoleDisabled)
+}
+
+func TestUpdateRoleTemplateRejectsBuiltInRole(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	_, err := UpdateRoleTemplate(BuiltInRoleAdmin, RoleTemplateMutationRequest{
+		Name: "Custom Admin",
+	})
+	require.ErrorIs(t, err, errAuthzRoleBuiltInReadOnly)
+}
+
+func TestDeleteRoleTemplateRemovesTemplateAndPolicies(t *testing.T) {
+	db := setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+	_, err := CreateRoleTemplate(RoleTemplateMutationRequest{
+		Key:  "auditor",
+		Name: "Auditor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.CasbinRule{
+		Ptype: "p",
+		V0:    RoleSubject("auditor"),
+		V1:    ResourceUsageLog,
+		V2:    ActionRead,
+		V3:    EffectAllow,
+	}).Error)
+
+	result, err := DeleteRoleTemplate("auditor")
+	require.NoError(t, err)
+	assert.Equal(t, "auditor", result.RoleKey)
+	assert.Equal(t, int64(1), result.DeletedPolicyCount)
+	assert.True(t, result.Reloaded)
+
+	roles, err := PersistentRoles()
+	require.NoError(t, err)
+	for _, role := range roles {
+		assert.NotEqual(t, "auditor", role.Key)
+	}
+
+	var policyCount int64
+	require.NoError(t, db.Model(&model.CasbinRule{}).
+		Where("ptype = ? AND v0 = ?", "p", RoleSubject("auditor")).
+		Count(&policyCount).Error)
+	assert.Zero(t, policyCount)
+}
+
+func TestDeleteRoleTemplateRejectsBuiltInRole(t *testing.T) {
+	setupAuthzOverrideTestDB(t)
+	require.NoError(t, SeedPersistentPolicies())
+
+	_, err := DeleteRoleTemplate(BuiltInRoleAdmin)
+	require.ErrorIs(t, err, errAuthzRoleBuiltInReadOnly)
+}
+
 func TestUpdateRolePoliciesDefaultsToDryRun(t *testing.T) {
 	db := setupAuthzOverrideTestDB(t)
 	require.NoError(t, SeedPersistentPolicies())
@@ -175,4 +317,8 @@ func requirePersistentRole(t *testing.T, roles []RolePolicyDescriptor, key strin
 	}
 	t.Fatalf("persistent role %s should exist", key)
 	return RolePolicyDescriptor{}
+}
+
+func intPtr(value int) *int {
+	return &value
 }

@@ -3,7 +3,9 @@ package authz
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/c1cada/NexusTok/model"
 	"gorm.io/gorm"
@@ -15,7 +17,14 @@ var (
 	errAuthzRoleDisabled         = errors.New("authz role is disabled")
 	errAuthzRootRoleReadOnly     = errors.New("root role policies are read-only")
 	errAuthzRolePolicyEmptyAdmin = errors.New("admin role must keep at least one allow policy")
+	errAuthzRoleBuiltInReadOnly  = errors.New("built-in authz roles cannot be changed")
+	errAuthzRoleKeyInvalid       = errors.New("authz role key must start with a lowercase letter and contain only lowercase letters, numbers, underscores or dashes")
+	errAuthzRoleKeyReserved      = errors.New("authz role key is reserved")
+	errAuthzRoleAlreadyExists    = errors.New("authz role key already exists")
+	errAuthzRoleNameRequired     = errors.New("authz role name is required")
 )
+
+var customRoleKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 
 // RolePolicyDescriptor 描述一个持久化角色及其当前权限矩阵。
 //
@@ -60,6 +69,26 @@ type RolePolicyUpdateResult struct {
 	Grants               PermissionsMap `json:"grants"`
 }
 
+// RoleTemplateMutationRequest 是自定义角色模板的创建和元数据更新请求。
+//
+// Key 只在创建时使用；更新时角色 key 来自 URL，避免把重命名和策略迁移混在同
+// 一次高风险操作里。Enabled 与 Sort 使用指针，确保调用方显式传入 false 或 0
+// 时不会被误判为“未传字段”。
+type RoleTemplateMutationRequest struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"`
+	Sort        *int   `json:"sort"`
+}
+
+// RoleTemplateDeleteResult 返回删除角色模板后的清理摘要。
+type RoleTemplateDeleteResult struct {
+	RoleKey            string `json:"role_key"`
+	DeletedPolicyCount int64  `json:"deleted_policy_count"`
+	Reloaded           bool   `json:"reloaded"`
+}
+
 // PersistentRoles 返回持久化角色和角色策略矩阵。
 //
 // 该接口面向 Root 管理页展示当前数据库中的角色模板。数据库尚未完成种子时，
@@ -85,6 +114,186 @@ func PersistentRoles() ([]RolePolicyDescriptor, error) {
 		}
 		result = append(result, descriptor)
 	}
+	return result, nil
+}
+
+// CreateRoleTemplate 创建一个自定义角色模板。
+//
+// 自定义角色当前只作为策略模板存在，尚未接入运行时角色分配；因此创建模板不会
+// 改变任何用户的授权结果。后续管理员可以通过角色策略矩阵为该模板配置 allow
+// 策略，等角色分配能力落地后再启用运行时授权。
+func CreateRoleTemplate(req RoleTemplateMutationRequest) (*RolePolicyDescriptor, error) {
+	if model.DB == nil {
+		return nil, errAuthzDatabaseNotInitialized
+	}
+
+	roleKey, err := normalizeCustomRoleKey(req.Key)
+	if err != nil {
+		return nil, err
+	}
+	name, description, err := normalizeRoleTemplateText(req.Name, req.Description)
+	if err != nil {
+		return nil, err
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	sortOrder := 0
+	if req.Sort != nil {
+		sortOrder = *req.Sort
+	} else {
+		sortOrder, err = nextCustomRoleSort()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var descriptor RolePolicyDescriptor
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.AuthzRole
+		err := tx.Where("key = ?", roleKey).First(&existing).Error
+		switch {
+		case err == nil:
+			return errAuthzRoleAlreadyExists
+		case errors.Is(err, gorm.ErrRecordNotFound):
+		default:
+			return err
+		}
+
+		role := model.AuthzRole{
+			Key:         roleKey,
+			Name:        name,
+			Description: description,
+			BuiltIn:     false,
+			Enabled:     enabled,
+			Sort:        sortOrder,
+		}
+		if err := tx.Create(&role).Error; err != nil {
+			return err
+		}
+
+		nextDescriptor, err := describePersistentRole(tx, role)
+		if err != nil {
+			return err
+		}
+		descriptor = nextDescriptor
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return &descriptor, nil
+}
+
+// UpdateRoleTemplate 更新非内置角色模板的元数据。
+//
+// 该操作只修改模板名称、说明、启用状态和排序，不修改 key，也不修改权限策略；
+// 策略仍由 UpdateRolePolicies 通过 dry-run + 二次确认路径维护。
+func UpdateRoleTemplate(roleKey string, req RoleTemplateMutationRequest) (*RolePolicyDescriptor, error) {
+	if model.DB == nil {
+		return nil, errAuthzDatabaseNotInitialized
+	}
+
+	normalizedKey := strings.ToLower(strings.TrimSpace(roleKey))
+	if normalizedKey == "" {
+		return nil, errAuthzRoleKeyRequired
+	}
+	name, description, err := normalizeRoleTemplateText(req.Name, req.Description)
+	if err != nil {
+		return nil, err
+	}
+
+	var descriptor RolePolicyDescriptor
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var role model.AuthzRole
+		err := tx.Where("key = ?", normalizedKey).First(&role).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errAuthzRoleNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if role.BuiltIn {
+			return errAuthzRoleBuiltInReadOnly
+		}
+
+		updates := map[string]interface{}{
+			"name":        name,
+			"description": description,
+		}
+		if req.Enabled != nil {
+			updates["enabled"] = *req.Enabled
+		}
+		if req.Sort != nil {
+			updates["sort"] = *req.Sort
+		}
+		if err := tx.Model(&role).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("key = ?", normalizedKey).First(&role).Error; err != nil {
+			return err
+		}
+
+		nextDescriptor, err := describePersistentRole(tx, role)
+		if err != nil {
+			return err
+		}
+		descriptor = nextDescriptor
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return &descriptor, nil
+}
+
+// DeleteRoleTemplate 删除非内置角色模板，并同步清理该模板的策略记录。
+//
+// 删除模板不会影响 Root/Admin 等内置运行时角色；如果该模板已有策略，策略会在
+// 同一个事务内删除，避免留下无法从管理页访问的孤儿 `role:<key>` 规则。
+func DeleteRoleTemplate(roleKey string) (*RoleTemplateDeleteResult, error) {
+	if model.DB == nil {
+		return nil, errAuthzDatabaseNotInitialized
+	}
+
+	normalizedKey := strings.ToLower(strings.TrimSpace(roleKey))
+	if normalizedKey == "" {
+		return nil, errAuthzRoleKeyRequired
+	}
+
+	result := &RoleTemplateDeleteResult{RoleKey: normalizedKey}
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var role model.AuthzRole
+		err := tx.Where("key = ?", normalizedKey).First(&role).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errAuthzRoleNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if role.BuiltIn {
+			return errAuthzRoleBuiltInReadOnly
+		}
+
+		policyDelete := tx.Where("ptype = ? AND v0 = ?", "p", RoleSubject(role.Key)).
+			Delete(&model.CasbinRule{})
+		if policyDelete.Error != nil {
+			return policyDelete.Error
+		}
+		result.DeletedPolicyCount = policyDelete.RowsAffected
+
+		if err := tx.Delete(&role).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := ReloadPersistentPolicies(); err != nil {
+		return nil, err
+	}
+	result.Reloaded = true
 	return result, nil
 }
 
@@ -245,6 +454,48 @@ func findPersistentRole(roleKey string) (model.AuthzRole, error) {
 		return model.AuthzRole{}, errAuthzRoleNotFound
 	}
 	return role, err
+}
+
+func normalizeCustomRoleKey(input string) (string, error) {
+	roleKey := strings.ToLower(strings.TrimSpace(input))
+	if roleKey == "" {
+		return "", errAuthzRoleKeyRequired
+	}
+	if roleKey == BuiltInRoleRoot || roleKey == BuiltInRoleAdmin ||
+		strings.HasPrefix(roleKey, "role:") || strings.HasPrefix(roleKey, "user:") {
+		return "", errAuthzRoleKeyReserved
+	}
+	if !customRoleKeyPattern.MatchString(roleKey) {
+		return "", errAuthzRoleKeyInvalid
+	}
+	return roleKey, nil
+}
+
+func normalizeRoleTemplateText(name string, description string) (string, string, error) {
+	normalizedName := strings.TrimSpace(name)
+	if normalizedName == "" {
+		return "", "", errAuthzRoleNameRequired
+	}
+	if len([]rune(normalizedName)) > 100 {
+		return "", "", errors.New("authz role name must be at most 100 characters")
+	}
+	normalizedDescription := strings.TrimSpace(description)
+	if len([]rune(normalizedDescription)) > 2000 {
+		return "", "", errors.New("authz role description must be at most 2000 characters")
+	}
+	return normalizedName, normalizedDescription, nil
+}
+
+func nextCustomRoleSort() (int, error) {
+	var lastRole model.AuthzRole
+	err := model.DB.Order("sort DESC, key DESC").First(&lastRole).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 100, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return lastRole.Sort + 10, nil
 }
 
 func normalizeRolePolicyGrants(input PermissionsMap) (PermissionsMap, error) {

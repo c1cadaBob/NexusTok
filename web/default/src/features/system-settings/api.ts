@@ -21,6 +21,8 @@ import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type {
   AuthzRolesData,
+  AuthzRoleDeleteResponse,
+  AuthzRoleMutationResponse,
   AuthzRolesResponse,
   AuthzRolePolicyUpdateResponse,
   ConfirmPaymentComplianceResponse,
@@ -28,6 +30,7 @@ import type {
   CreateWaffoPancakePairResponse,
   CreateLogCleanupTaskResponse,
   FetchUpstreamRatiosRequest,
+  MutateAuthzRoleRequest,
   SaveWaffoPancakeConfigRequest,
   SaveWaffoPancakeConfigResponse,
   SystemOptionsResponse,
@@ -68,6 +71,47 @@ export async function getAuthzRoles(): Promise<AuthzRolesData> {
     throw new Error(res.data.message || 'Failed to load authorization roles')
   }
   return res.data.data ?? { roles: [] }
+}
+
+export async function createAuthzRole(request: MutateAuthzRoleRequest) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.post<AuthzRoleMutationResponse>(
+    '/api/authz/roles',
+    request,
+    config
+  )
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to create authorization role')
+  }
+  return res.data.data
+}
+
+export async function updateAuthzRole(
+  roleKey: string,
+  request: MutateAuthzRoleRequest
+) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.put<AuthzRoleMutationResponse>(
+    `/api/authz/roles/${encodeURIComponent(roleKey)}`,
+    request,
+    config
+  )
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to update authorization role')
+  }
+  return res.data.data
+}
+
+export async function deleteAuthzRole(roleKey: string) {
+  const config: ExtendedApiConfig = { skipBusinessError: true }
+  const res = await api.delete<AuthzRoleDeleteResponse>(
+    `/api/authz/roles/${encodeURIComponent(roleKey)}`,
+    config
+  )
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to delete authorization role')
+  }
+  return res.data.data
 }
 
 export async function updateAuthzRolePolicies(

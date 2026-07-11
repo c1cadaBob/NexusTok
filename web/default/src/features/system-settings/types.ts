@@ -439,6 +439,14 @@ export type AuthzRolePolicy = {
   grants: AdminPermissionMatrix
 }
 
+export type MutateAuthzRoleRequest = {
+  key?: string
+  name: string
+  description: string
+  enabled?: boolean
+  sort?: number
+}
+
 export type AuthzRolesData = {
   roles: AuthzRolePolicy[]
 }
@@ -471,6 +479,24 @@ export type AuthzRolePolicyUpdateResponse = {
   success: boolean
   message: string
   data?: AuthzRolePolicyUpdateResult
+}
+
+export type AuthzRoleMutationResponse = {
+  success: boolean
+  message: string
+  data?: AuthzRolePolicy
+}
+
+export type AuthzRoleDeleteResult = {
+  role_key: string
+  deleted_policy_count: number
+  reloaded: boolean
+}
+
+export type AuthzRoleDeleteResponse = {
+  success: boolean
+  message: string
+  data?: AuthzRoleDeleteResult
 }
 
 export type UpstreamChannel = {

@@ -29,6 +29,12 @@ var authzPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/policies/export", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ExportPermissionPolicies},
 	// 角色策略矩阵会暴露完整管理边界，读取也继续保持 RootAuth 保底。
 	{method: http.MethodGet, path: "/roles", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ListPermissionRoles},
+	// 自定义角色模板创建只改变权限模板元数据，仍属于高风险权限配置写操作。
+	{method: http.MethodPost, path: "/roles", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.CreatePermissionRole},
+	// 内置 Root/Admin 模板由 service 层保护为只读；路由层统一保持 RootAuth 保底。
+	{method: http.MethodPut, path: "/roles/:key", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.UpdatePermissionRole},
+	// 删除自定义角色模板会同步清理该模板的 role:* 策略，继续归类为敏感写操作。
+	{method: http.MethodDelete, path: "/roles/:key", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.DeletePermissionRole},
 	// 角色策略更新是高风险写操作：service 层默认 dry-run，路由层仍以 RootAuth 保底。
 	{method: http.MethodPut, path: "/roles/:key/policies", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.UpdatePermissionRolePolicies},
 	// 权限策略导入会写入角色、role:* 策略和用户 override，必须继续 RootAuth 保底；

@@ -47,6 +47,44 @@ func ListPermissionRoles(c *gin.Context) {
 	})
 }
 
+// CreatePermissionRole 创建一个自定义角色模板。
+//
+// 自定义角色模板当前不参与运行时用户分配；该接口只让 Root 先沉淀可复用的权限
+// 基线，再通过现有角色策略矩阵维护 allow 策略。
+func CreatePermissionRole(c *gin.Context) {
+	var req authz.RoleTemplateMutationRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	role, err := authz.CreateRoleTemplate(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, role)
+}
+
+// UpdatePermissionRole 更新一个自定义角色模板的元数据。
+//
+// 角色 key 不允许在该接口中修改；策略变更继续走带 dry-run 的 policies 接口，
+// 保持元数据更新与权限矩阵更新的风险边界分离。
+func UpdatePermissionRole(c *gin.Context) {
+	var req authz.RoleTemplateMutationRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	role, err := authz.UpdateRoleTemplate(c.Param("key"), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, role)
+}
+
 // UpdatePermissionRolePolicies 校验并可选替换指定角色策略。
 //
 // 请求默认 dry-run；真正写库需要显式传入 `dry_run:false`。Root 角色策略在
@@ -59,6 +97,19 @@ func UpdatePermissionRolePolicies(c *gin.Context) {
 	}
 
 	result, err := authz.UpdateRolePolicies(c.Param("key"), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// DeletePermissionRole 删除一个自定义角色模板。
+//
+// service 层会在同一事务内清理该模板的 `role:<key>` 策略，避免删除后遗留孤儿
+// Casbin 兼容规则。内置 Root/Admin 模板始终拒绝删除。
+func DeletePermissionRole(c *gin.Context) {
+	result, err := authz.DeleteRoleTemplate(c.Param("key"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

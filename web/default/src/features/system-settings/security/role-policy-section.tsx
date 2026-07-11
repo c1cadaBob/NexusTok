@@ -16,9 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Add01Icon,
+  Delete02Icon,
+  Edit02Icon,
   EyeIcon,
   RefreshIcon,
   RotateLeft01Icon,
@@ -53,6 +56,23 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -63,6 +83,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -71,9 +92,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import {
+  createAuthzRole,
+  deleteAuthzRole,
   getAuthzRoles,
   getPermissionCatalog,
+  updateAuthzRole,
   updateAuthzRolePolicies,
 } from '../api'
 import { SettingsCard } from '../components/settings-card'
@@ -94,6 +119,26 @@ type PreviewState = {
   roleKey: string
   signature: string
   result: AuthzRolePolicyUpdateResult
+}
+
+type RoleTemplateDialogMode = 'create' | 'edit'
+
+type RoleTemplateFormState = {
+  key: string
+  name: string
+  description: string
+  enabled: boolean
+  sort: string
+}
+
+const ROLE_TEMPLATE_KEY_PATTERN = /^[a-z][a-z0-9_-]{1,62}$/
+
+const DEFAULT_ROLE_TEMPLATE_FORM: RoleTemplateFormState = {
+  key: '',
+  name: '',
+  description: '',
+  enabled: true,
+  sort: '',
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -136,6 +181,15 @@ export function RolePolicySection() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
+  const [roleTemplateDialogMode, setRoleTemplateDialogMode] =
+    useState<RoleTemplateDialogMode>('create')
+  const [roleTemplateDialogOpen, setRoleTemplateDialogOpen] = useState(false)
+  const [roleTemplateForm, setRoleTemplateForm] =
+    useState<RoleTemplateFormState>(DEFAULT_ROLE_TEMPLATE_FORM)
+  const [isSavingRoleTemplate, setIsSavingRoleTemplate] = useState(false)
+  const [roleDeleteTarget, setRoleDeleteTarget] =
+    useState<AuthzRolePolicy | null>(null)
+  const [isDeletingRoleTemplate, setIsDeletingRoleTemplate] = useState(false)
 
   const {
     data: catalog = EMPTY_PERMISSION_CATALOG,
@@ -199,6 +253,27 @@ export function RolePolicySection() {
   )
   const adminRoleWouldBeEmpty =
     selectedRole?.key === ADMIN_ROLE_KEY && enabledActions === 0
+  const canMutateSelectedRoleTemplate = Boolean(
+    selectedRole && !selectedRole.built_in && canWritePolicies
+  )
+  const normalizedRoleTemplateKey = roleTemplateForm.key.trim().toLowerCase()
+  const roleTemplateSortValue = roleTemplateForm.sort.trim()
+  const roleTemplateSortNumber =
+    roleTemplateSortValue === '' ? undefined : Number(roleTemplateSortValue)
+  const roleTemplateSortIsValid =
+    roleTemplateSortValue === '' ||
+    (Number.isInteger(roleTemplateSortNumber) &&
+      Number.isFinite(roleTemplateSortNumber))
+  const roleTemplateKeyIsValid =
+    roleTemplateDialogMode === 'edit' ||
+    ROLE_TEMPLATE_KEY_PATTERN.test(normalizedRoleTemplateKey)
+  const roleTemplateNameIsValid = roleTemplateForm.name.trim().length > 0
+  const canSubmitRoleTemplate =
+    canWritePolicies &&
+    roleTemplateKeyIsValid &&
+    roleTemplateNameIsValid &&
+    roleTemplateSortIsValid &&
+    !isSavingRoleTemplate
   const previewIsCurrent =
     preview?.roleKey === selectedRole?.key &&
     preview?.signature === currentSignature
@@ -258,6 +333,107 @@ export function RolePolicySection() {
       queryClient.invalidateQueries({ queryKey: ['authz-permission-catalog'] }),
       queryClient.invalidateQueries({ queryKey: ['authz-roles'] }),
     ])
+  }
+
+  const openCreateRoleTemplateDialog = () => {
+    setRoleTemplateDialogMode('create')
+    setRoleTemplateForm(DEFAULT_ROLE_TEMPLATE_FORM)
+    setRoleTemplateDialogOpen(true)
+  }
+
+  const openEditRoleTemplateDialog = () => {
+    if (!selectedRole || selectedRole.built_in) return
+    setRoleTemplateDialogMode('edit')
+    setRoleTemplateForm({
+      key: selectedRole.key,
+      name: selectedRole.name,
+      description: selectedRole.description,
+      enabled: selectedRole.enabled,
+      sort: String(selectedRole.sort),
+    })
+    setRoleTemplateDialogOpen(true)
+  }
+
+  const handleSubmitRoleTemplate = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!canSubmitRoleTemplate || isSavingRoleTemplate) return
+
+    setIsSavingRoleTemplate(true)
+    try {
+      const request = {
+        ...(roleTemplateDialogMode === 'create'
+          ? { key: normalizedRoleTemplateKey }
+          : {}),
+        name: roleTemplateForm.name.trim(),
+        description: roleTemplateForm.description.trim(),
+        enabled: roleTemplateForm.enabled,
+        ...(roleTemplateSortNumber === undefined
+          ? {}
+          : { sort: roleTemplateSortNumber }),
+      }
+      const role =
+        roleTemplateDialogMode === 'create'
+          ? await createAuthzRole(request)
+          : await updateAuthzRole(roleTemplateForm.key, request)
+
+      setSelectedRoleKey(role.key)
+      setPreview(null)
+      setDrafts((previous) => {
+        const next = { ...previous }
+        delete next[role.key]
+        return next
+      })
+      setRoleTemplateDialogOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['authz-roles'] })
+      toast.success(
+        roleTemplateDialogMode === 'create'
+          ? t('Role template created')
+          : t('Role template updated')
+      )
+    } catch (error) {
+      toast.error(
+        getErrorMessage(
+          error,
+          roleTemplateDialogMode === 'create'
+            ? t('Failed to create role template')
+            : t('Failed to update role template')
+        )
+      )
+    } finally {
+      setIsSavingRoleTemplate(false)
+    }
+  }
+
+  const handleDeleteRoleTemplate = async () => {
+    if (!roleDeleteTarget || isDeletingRoleTemplate) return
+
+    setIsDeletingRoleTemplate(true)
+    try {
+      const deletedRoleKey = roleDeleteTarget.key
+      const result = await deleteAuthzRole(deletedRoleKey)
+      setDrafts((previous) => {
+        const next = { ...previous }
+        delete next[deletedRoleKey]
+        return next
+      })
+      setPreview(null)
+      setRoleDeleteTarget(null)
+      if (selectedRoleKey === deletedRoleKey) {
+        setSelectedRoleKey(
+          roles.find((role) => role.key !== deletedRoleKey)?.key ?? ''
+        )
+      }
+      await queryClient.invalidateQueries({ queryKey: ['authz-roles'] })
+      toast.success(
+        t('Role template deleted ({{count}} policies removed)', {
+          count: result.deleted_policy_count,
+        })
+      )
+    } catch (error) {
+      toast.error(getErrorMessage(error, t('Failed to delete role template')))
+    } finally {
+      setIsDeletingRoleTemplate(false)
+    }
   }
 
   const handlePreview = async () => {
@@ -366,6 +542,73 @@ export function RolePolicySection() {
               </div>
 
               <div className='flex flex-wrap items-center gap-2'>
+                <Button
+                  type='button'
+                  onClick={openCreateRoleTemplateDialog}
+                  disabled={!canWritePolicies || isLoading || isApplying}
+                  title={
+                    canWritePolicies
+                      ? undefined
+                      : t('Sensitive write permission required')
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={Add01Icon}
+                    strokeWidth={2}
+                    data-icon='inline-start'
+                  />
+                  {t('Create role')}
+                </Button>
+                <Button
+                  variant='outline'
+                  type='button'
+                  onClick={openEditRoleTemplateDialog}
+                  disabled={
+                    !canMutateSelectedRoleTemplate ||
+                    isLoading ||
+                    isPreviewing ||
+                    isApplying
+                  }
+                  title={
+                    selectedRole?.built_in
+                      ? t('Built-in roles cannot be edited')
+                      : undefined
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={Edit02Icon}
+                    strokeWidth={2}
+                    data-icon='inline-start'
+                  />
+                  {t('Edit role')}
+                </Button>
+                <Button
+                  variant='destructive'
+                  type='button'
+                  onClick={() => {
+                    if (selectedRole && !selectedRole.built_in) {
+                      setRoleDeleteTarget(selectedRole)
+                    }
+                  }}
+                  disabled={
+                    !canMutateSelectedRoleTemplate ||
+                    isLoading ||
+                    isPreviewing ||
+                    isApplying
+                  }
+                  title={
+                    selectedRole?.built_in
+                      ? t('Built-in roles cannot be deleted')
+                      : undefined
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={Delete02Icon}
+                    strokeWidth={2}
+                    data-icon='inline-start'
+                  />
+                  {t('Delete role')}
+                </Button>
                 <Button
                   variant='outline'
                   type='button'
@@ -527,6 +770,226 @@ export function RolePolicySection() {
           </div>
         </SettingsCard>
       )}
+
+      <Dialog
+        open={roleTemplateDialogOpen}
+        onOpenChange={(open) => {
+          if (isSavingRoleTemplate) return
+          setRoleTemplateDialogOpen(open)
+        }}
+      >
+        <DialogContent className='sm:max-w-lg'>
+          <form
+            className='flex flex-col gap-4'
+            onSubmit={handleSubmitRoleTemplate}
+          >
+            <DialogHeader>
+              <DialogTitle>
+                {roleTemplateDialogMode === 'create'
+                  ? t('Create role template')
+                  : t('Edit role template')}
+              </DialogTitle>
+              <DialogDescription>
+                {t(
+                  'Custom roles are templates only until role assignment is enabled.'
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <FieldGroup>
+              <Field data-invalid={!roleTemplateKeyIsValid}>
+                <FieldLabel htmlFor='authz-role-template-key'>
+                  {t('Role key')}
+                </FieldLabel>
+                <Input
+                  id='authz-role-template-key'
+                  value={roleTemplateForm.key}
+                  onChange={(event) =>
+                    setRoleTemplateForm((previous) => ({
+                      ...previous,
+                      key: event.target.value.toLowerCase(),
+                    }))
+                  }
+                  placeholder='security-auditor'
+                  disabled={
+                    roleTemplateDialogMode === 'edit' || isSavingRoleTemplate
+                  }
+                  aria-invalid={!roleTemplateKeyIsValid}
+                />
+                <FieldDescription>
+                  {roleTemplateDialogMode === 'create'
+                    ? t(
+                        'Use 2-63 lowercase characters: letters, numbers, dashes or underscores.'
+                      )
+                    : t('Role keys cannot be changed after creation.')}
+                </FieldDescription>
+              </Field>
+
+              <Field data-invalid={!roleTemplateNameIsValid}>
+                <FieldLabel htmlFor='authz-role-template-name'>
+                  {t('Role name')}
+                </FieldLabel>
+                <Input
+                  id='authz-role-template-name'
+                  value={roleTemplateForm.name}
+                  onChange={(event) =>
+                    setRoleTemplateForm((previous) => ({
+                      ...previous,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder={t('Security auditor')}
+                  disabled={isSavingRoleTemplate}
+                  aria-invalid={!roleTemplateNameIsValid}
+                />
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor='authz-role-template-description'>
+                  {t('Description')}
+                </FieldLabel>
+                <Textarea
+                  id='authz-role-template-description'
+                  value={roleTemplateForm.description}
+                  onChange={(event) =>
+                    setRoleTemplateForm((previous) => ({
+                      ...previous,
+                      description: event.target.value,
+                    }))
+                  }
+                  placeholder={t('Describe how this role template is used.')}
+                  disabled={isSavingRoleTemplate}
+                />
+              </Field>
+
+              <div className='grid gap-4 sm:grid-cols-[1fr_auto]'>
+                <Field data-invalid={!roleTemplateSortIsValid}>
+                  <FieldLabel htmlFor='authz-role-template-sort'>
+                    {t('Sort order')}
+                  </FieldLabel>
+                  <Input
+                    id='authz-role-template-sort'
+                    type='number'
+                    value={roleTemplateForm.sort}
+                    onChange={(event) =>
+                      setRoleTemplateForm((previous) => ({
+                        ...previous,
+                        sort: event.target.value,
+                      }))
+                    }
+                    placeholder='100'
+                    disabled={isSavingRoleTemplate}
+                    aria-invalid={!roleTemplateSortIsValid}
+                  />
+                  <FieldDescription>
+                    {t('Lower values appear earlier in the role list.')}
+                  </FieldDescription>
+                </Field>
+
+                <Field
+                  orientation='horizontal'
+                  data-disabled={isSavingRoleTemplate}
+                  className='self-start rounded-md border p-3 sm:min-w-40'
+                >
+                  <Switch
+                    checked={roleTemplateForm.enabled}
+                    onCheckedChange={(checked) =>
+                      setRoleTemplateForm((previous) => ({
+                        ...previous,
+                        enabled: checked,
+                      }))
+                    }
+                    disabled={isSavingRoleTemplate}
+                  />
+                  <FieldContent>
+                    <FieldTitle>{t('Enabled')}</FieldTitle>
+                    <FieldDescription>
+                      {t('Disabled templates cannot edit policies.')}
+                    </FieldDescription>
+                  </FieldContent>
+                </Field>
+              </div>
+            </FieldGroup>
+
+            <DialogFooter>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => setRoleTemplateDialogOpen(false)}
+                disabled={isSavingRoleTemplate}
+              >
+                {t('Cancel')}
+              </Button>
+              <Button type='submit' disabled={!canSubmitRoleTemplate}>
+                {isSavingRoleTemplate ? (
+                  <Spinner data-icon='inline-start' />
+                ) : roleTemplateDialogMode === 'create' ? (
+                  <HugeiconsIcon
+                    icon={Add01Icon}
+                    strokeWidth={2}
+                    data-icon='inline-start'
+                  />
+                ) : (
+                  <HugeiconsIcon
+                    icon={Edit02Icon}
+                    strokeWidth={2}
+                    data-icon='inline-start'
+                  />
+                )}
+                {roleTemplateDialogMode === 'create'
+                  ? t('Create role')
+                  : t('Update role')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={Boolean(roleDeleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingRoleTemplate) {
+            setRoleDeleteTarget(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+            </AlertDialogMedia>
+            <AlertDialogTitle>{t('Delete role template?')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'This removes the custom role template and all policies attached to it. Existing built-in roles are not affected.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {roleDeleteTarget && (
+            <div className='rounded-md border p-3 text-sm'>
+              <div className='font-medium'>
+                {roleDeleteTarget.name || roleDeleteTarget.key}
+              </div>
+              <div className='text-muted-foreground mt-1 text-xs'>
+                /{roleDeleteTarget.key} · {roleDeleteTarget.policy_count}{' '}
+                {t('policies')}
+              </div>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingRoleTemplate}>
+              {t('Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant='destructive'
+              onClick={() => void handleDeleteRoleTemplate()}
+              disabled={isDeletingRoleTemplate}
+            >
+              {isDeletingRoleTemplate ? t('Deleting...') : t('Delete role')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
