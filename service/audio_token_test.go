@@ -43,3 +43,28 @@ func TestEstimateAudioDurationTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestEstimateRealtimeAudioTokens(t *testing.T) {
+	t.Run("input uses existing realtime formula", func(t *testing.T) {
+		require.Equal(t, 1666, estimateRealtimeAudioInputTokens(60))
+	})
+
+	t.Run("output uses existing realtime formula", func(t *testing.T) {
+		require.Equal(t, 833, estimateRealtimeAudioOutputTokens(60))
+	})
+
+	t.Run("negative duration does not produce negative tokens", func(t *testing.T) {
+		require.Zero(t, estimateRealtimeAudioInputTokens(-1))
+		require.Zero(t, estimateRealtimeAudioOutputTokens(-1))
+	})
+
+	t.Run("nan duration falls back to zero", func(t *testing.T) {
+		require.Zero(t, estimateRealtimeAudioInputTokens(math.NaN()))
+		require.Zero(t, estimateRealtimeAudioOutputTokens(math.NaN()))
+	})
+
+	t.Run("huge duration saturates before int conversion", func(t *testing.T) {
+		require.Equal(t, common.MaxQuota, estimateRealtimeAudioInputTokens(1e100))
+		require.Equal(t, common.MaxQuota, estimateRealtimeAudioOutputTokens(1e100))
+	})
+}

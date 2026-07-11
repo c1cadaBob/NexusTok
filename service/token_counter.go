@@ -472,7 +472,7 @@ func CountAudioTokenInput(audioBase64 string, audioFormat string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return int(duration / 60 * 100 / 0.06), nil
+	return estimateRealtimeAudioInputTokens(duration), nil
 }
 
 // CountAudioTokenOutput 统计输出音频的 Token 数量
@@ -494,7 +494,31 @@ func CountAudioTokenOutput(audioBase64 string, audioFormat string) (int, error) 
 	if err != nil {
 		return 0, err
 	}
-	return int(duration / 60 * 200 / 0.24), nil
+	return estimateRealtimeAudioOutputTokens(duration), nil
+}
+
+// estimateRealtimeAudioInputTokens 将实时音频输入时长换算为 token。
+//
+// duration 来自用户提供的音频元数据。正常路径继续使用历史公式：
+// duration / 60 * 100 / 0.06；转换阶段复用统一 quota 饱和保护，避免异常大值
+// 在裸 int 转换时回绕。负时长没有真实使用量含义，按 0 处理，避免低估预扣费。
+func estimateRealtimeAudioInputTokens(duration float64) int {
+	if duration < 0 {
+		duration = 0
+	}
+	return common.QuotaFromFloat(duration / 60 * 100 / 0.06)
+}
+
+// estimateRealtimeAudioOutputTokens 将实时音频输出时长换算为 token。
+//
+// duration 来自上游返回的音频元数据。正常路径继续使用历史公式：
+// duration / 60 * 200 / 0.24；转换阶段复用统一 quota 饱和保护，避免异常大值
+// 在裸 int 转换时回绕。负时长没有真实使用量含义，按 0 处理，避免生成负 token。
+func estimateRealtimeAudioOutputTokens(duration float64) int {
+	if duration < 0 {
+		duration = 0
+	}
+	return common.QuotaFromFloat(duration / 60 * 200 / 0.24)
 }
 
 // CountTextToken 统计文本的token数量，仅OpenAI模型使用tokenizer，其余模型使用估算

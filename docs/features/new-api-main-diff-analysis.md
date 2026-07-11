@@ -10073,3 +10073,55 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 5. `git diff --check` 通过。
 6. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
 7. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端任务配额安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
+
+## 本轮实施评审：实时音频 token 计数饱和转换
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的音频 token 计数实现后发现，new-api-main 在 `CountAudioTokenInput` 和 `CountAudioTokenOutput` 中已经把音频时长换算结果交给 `common.QuotaFromFloat`，避免 duration 异常大时通过裸 `int(...)` 转换产生平台相关回绕。NexusTok 上一轮已经完成音频转写/翻译预消费和 OpenAI TTS fallback 的分钟计费保护，但实时/多模态音频输入输出 token 计数仍然使用裸 `int(duration / ...)`。
+
+这两个函数的 duration 来自用户提供或上游返回的音频元数据，正常情况下数值很小，但异常文件、损坏元数据或解析器异常值仍可能导致 token 计数越界或变成负值。本轮目标是把 new-api-main 的实时音频 token 安全边界原生化到 NexusTok：保持现有输入/输出公式不变，同时对负值、NaN 和超大值使用统一 quota 转换兜底。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 实时音频 token 计数 | `service/token_counter.go` | `CountAudioTokenInput` 和 `CountAudioTokenOutput` 改为调用可测试 helper，转换阶段使用 `common.QuotaFromFloat`。 |
+| 音频 token 测试 | `service/audio_token_test.go` | 增加实时音频输入/输出正常公式、负时长、NaN 和超大时长测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改音频解析函数、Base64 解码、请求/响应 DTO、模型倍率、分组倍率、日志结构、前端页面或上游协议。
+
+### 风险评估
+
+1. 正常公式回归风险：输入音频仍使用 `duration / 60 * 100 / 0.06`，输出音频仍使用 `duration / 60 * 200 / 0.24`，并保持向零截断语义。
+2. 负时长风险：负 duration 不代表真实使用量，不能产生负 token。本轮按 0 处理，避免低估预扣费或生成负 usage。
+3. NaN 风险：NaN 不能表示真实 token，`common.QuotaFromFloat` 会兜底为 0。
+4. 超大时长风险：极端 duration 不能在裸 `int` 转换时回绕，应饱和到 `common.MaxQuota`。
+5. 行为面风险：本轮只替换 duration 到 token 的转换，不改变空音频返回 0、解析失败返回 error 的既有行为。
+
+### 方案评审
+
+采用“可测试 helper + 两处替换”的最小方案：
+
+1. 新增 `estimateRealtimeAudioInputTokens(duration)` 和 `estimateRealtimeAudioOutputTokens(duration)`。
+2. helper 内部先将负 duration 钳为 0，再按原公式计算。
+3. 使用 `common.QuotaFromFloat` 转为 int，保持历史向零截断语义并获得 NaN/上下溢保护。
+4. `CountAudioTokenInput/Output` 只替换最后的 return，不改解析流程。
+
+### 实施结果
+
+已完成实时音频 token 计数饱和转换：
+
+- 输入音频和输出音频 token 公式保持不变。
+- 负时长返回 0，不再可能产生负 token。
+- NaN 返回 0，超大时长饱和到 `common.MaxQuota`。
+- 空音频和解析错误路径保持原样。
+
+### 验证记录
+
+1. `go test ./service -run 'TestEstimateAudioDurationTokens|TestEstimateRealtimeAudioTokens'` 通过，覆盖实时音频正常公式和异常 duration。
+2. `go test ./service` 通过，确认 service 包整体构建和既有测试不受影响。
+3. `git diff --check` 通过。
+4. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
+5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端音频 token 计数安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
