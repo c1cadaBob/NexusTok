@@ -18,7 +18,6 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -66,6 +65,21 @@ describe('admin permission helpers', () => {
     assert.equal(
       canReadAdminResource(user, ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL),
       true
+    )
+    assert.equal(
+      canReadAdminResource(
+        user,
+        ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE
+      ),
+      true
+    )
+    assert.equal(
+      hasAdminPermission(
+        user,
+        ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE,
+        ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+      ),
+      false
     )
     assert.equal(
       canReadAdminResource(user, ADMIN_PERMISSION_RESOURCES.REDEMPTION),

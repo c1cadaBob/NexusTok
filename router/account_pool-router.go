@@ -2,8 +2,9 @@
 // 该文件集中注册 NexusTok 原生账号池管理路由。
 //
 // 账号池承载真实上游凭证和账号生命周期。路由先经过 AdminAuth，再按
-// account_pool 资源的 read/operate/write/sensitive_write 权限做二次校验；
-// 当前 authz 基线仍是 Root/Admin 角色，后续接入 Casbin 时只需替换 authz.Can。
+// account_pool 与 account_pool_auth_file 资源的 read/operate/write/sensitive_write
+// 权限做二次校验；当前 authz 基线仍是 Root/Admin 角色，后续接入 Casbin 时只需
+// 替换 authz.Can。
 package router
 
 import (
@@ -35,13 +36,13 @@ var accountPoolPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/check-tasks/cleanup", permission: authz.AccountPoolOperate, handler: controller.CleanupPoolAccountCheckTasks},
 	{method: http.MethodGet, path: "/check-tasks/:check_task_id", permission: authz.AccountPoolRead, handler: controller.GetPoolAccountCheckTask},
 
-	// 认证文件管理。创建、导入、更新和删除都会触碰凭证材料，按敏感写处理。
-	{method: http.MethodGet, path: "/auth-files", permission: authz.AccountPoolRead, handler: controller.ListAccountPoolAuthFiles},
-	{method: http.MethodPost, path: "/auth-files", permission: authz.AccountPoolSensitiveWrite, handler: controller.CreateAccountPoolAuthFile},
-	{method: http.MethodPost, path: "/auth-files/import", permission: authz.AccountPoolSensitiveWrite, handler: controller.ImportAccountPoolAuthFiles},
-	{method: http.MethodGet, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolRead, handler: controller.GetAccountPoolAuthFile},
-	{method: http.MethodPut, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolSensitiveWrite, handler: controller.UpdateAccountPoolAuthFile},
-	{method: http.MethodDelete, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolSensitiveWrite, handler: controller.DeleteAccountPoolAuthFile},
+	// 认证文件管理。读取只返回脱敏元数据；创建、导入、更新和删除都会触碰凭证材料，按独立敏感写处理。
+	{method: http.MethodGet, path: "/auth-files", permission: authz.AccountPoolAuthFileRead, handler: controller.ListAccountPoolAuthFiles},
+	{method: http.MethodPost, path: "/auth-files", permission: authz.AccountPoolAuthFileSensitiveWrite, handler: controller.CreateAccountPoolAuthFile},
+	{method: http.MethodPost, path: "/auth-files/import", permission: authz.AccountPoolAuthFileSensitiveWrite, handler: controller.ImportAccountPoolAuthFiles},
+	{method: http.MethodGet, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolAuthFileRead, handler: controller.GetAccountPoolAuthFile},
+	{method: http.MethodPut, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolAuthFileSensitiveWrite, handler: controller.UpdateAccountPoolAuthFile},
+	{method: http.MethodDelete, path: "/auth-files/:auth_file_id", permission: authz.AccountPoolAuthFileSensitiveWrite, handler: controller.DeleteAccountPoolAuthFile},
 
 	// 分组管理。分组配置本身是普通写，删除分组会影响账号生命周期，按敏感写处理。
 	{method: http.MethodGet, path: "/groups", permission: authz.AccountPoolRead, handler: controller.ListAccountPoolGroups},

@@ -34,6 +34,8 @@ func TestSeedPersistentPoliciesStoresBuiltInRolesAndAdminPolicies(t *testing.T) 
 	assert.True(t, hasPersistentPolicy(adminPolicies, ResourceChannel, ActionRead))
 	assert.True(t, hasPersistentPolicy(adminPolicies, ResourceChannel, ActionWrite))
 	assert.False(t, hasPersistentPolicy(adminPolicies, ResourceChannel, ActionSensitiveWrite))
+	assert.True(t, hasPersistentPolicy(adminPolicies, ResourceAccountPoolAuthFile, ActionRead))
+	assert.False(t, hasPersistentPolicy(adminPolicies, ResourceAccountPoolAuthFile, ActionSensitiveWrite))
 
 	var rootPolicyCount int64
 	require.NoError(t, db.Model(&model.CasbinRule{}).

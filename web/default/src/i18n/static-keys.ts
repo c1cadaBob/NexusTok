@@ -44,6 +44,13 @@ export const STATIC_I18N_KEYS = [
   'Manage and configure',
 
   // Permission catalog
+  'Edit sensitive account pool settings',
+  'Delete groups, refresh account credentials, or edit account lifecycle settings.',
+  'Account Pool Auth Files',
+  'Read account pool auth files',
+  'View imported credential files and non-secret metadata.',
+  'Edit account pool auth files',
+  'Import, update, delete, or replace credential JSON for account pool auth files.',
   'View redemption codes',
   'View complete redemption code values after secure verification.',
 

@@ -54,8 +54,26 @@ func init() {
 		LabelKey: "Account Pool",
 		Actions: managementActions(
 			"Edit sensitive account pool settings",
-			"Import, export, delete, refresh, or edit account credentials and native auth files.",
+			"Delete groups, refresh account credentials, or edit account lifecycle settings.",
 		),
+	})
+
+	registerResource(ResourceDefinition{
+		Resource: ResourceAccountPoolAuthFile,
+		LabelKey: "Account Pool Auth Files",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "Read account pool auth files",
+				DescriptionKey: "View imported credential files and non-secret metadata.",
+				DefaultRoles:   []string{BuiltInRoleAdmin},
+			},
+			{
+				Action:         ActionSensitiveWrite,
+				LabelKey:       "Edit account pool auth files",
+				DescriptionKey: "Import, update, delete, or replace credential JSON for account pool auth files.",
+			},
+		},
 	})
 
 	registerResource(ResourceDefinition{

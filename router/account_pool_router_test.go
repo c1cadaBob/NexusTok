@@ -33,8 +33,12 @@ func TestRegisterAccountPoolRoutesKeepsCoreHandlers(t *testing.T) {
 
 func TestAccountPoolPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertAccountPoolPermissionRoute(t, http.MethodGet, "/health", authz.AccountPoolRead)
-	assertAccountPoolPermissionRoute(t, http.MethodGet, "/auth-files", authz.AccountPoolRead)
-	assertAccountPoolPermissionRoute(t, http.MethodPost, "/auth-files/import", authz.AccountPoolSensitiveWrite)
+	assertAccountPoolPermissionRoute(t, http.MethodGet, "/auth-files", authz.AccountPoolAuthFileRead)
+	assertAccountPoolPermissionRoute(t, http.MethodPost, "/auth-files", authz.AccountPoolAuthFileSensitiveWrite)
+	assertAccountPoolPermissionRoute(t, http.MethodPost, "/auth-files/import", authz.AccountPoolAuthFileSensitiveWrite)
+	assertAccountPoolPermissionRoute(t, http.MethodGet, "/auth-files/:auth_file_id", authz.AccountPoolAuthFileRead)
+	assertAccountPoolPermissionRoute(t, http.MethodPut, "/auth-files/:auth_file_id", authz.AccountPoolAuthFileSensitiveWrite)
+	assertAccountPoolPermissionRoute(t, http.MethodDelete, "/auth-files/:auth_file_id", authz.AccountPoolAuthFileSensitiveWrite)
 	assertAccountPoolPermissionRoute(t, http.MethodGet, "/state-logs/export", authz.AccountPoolOperate)
 	assertAccountPoolPermissionRoute(t, http.MethodPost, "/check-tasks/cleanup", authz.AccountPoolOperate)
 	assertAccountPoolPermissionRoute(t, http.MethodPost, "/groups", authz.AccountPoolWrite)
@@ -48,15 +52,25 @@ func TestAccountPoolPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertAccountPoolPermissionRoute(t, http.MethodPost, "/oauth/codex/complete", authz.AccountPoolSensitiveWrite)
 }
 
-func TestAccountPoolPermissionRoutesStayOnAccountPoolResource(t *testing.T) {
+func TestAccountPoolPermissionRoutesUseExpectedResources(t *testing.T) {
 	require.NotEmpty(t, accountPoolPermissionRoutes)
 	for _, route := range accountPoolPermissionRoutes {
 		assert.NotEmpty(t, route.method)
 		assert.NotEmpty(t, route.path)
 		assert.NotNil(t, route.handler)
-		assert.Equal(t, authz.ResourceAccountPool, route.permission.Resource, "%s %s", route.method, route.path)
+		expectedResource := authz.ResourceAccountPool
+		if isAccountPoolAuthFileRoute(route.path) {
+			expectedResource = authz.ResourceAccountPoolAuthFile
+		}
+		assert.Equal(t, expectedResource, route.permission.Resource, "%s %s", route.method, route.path)
 		assert.NotEmpty(t, route.permission.Action, "%s %s", route.method, route.path)
 	}
+}
+
+func isAccountPoolAuthFileRoute(path string) bool {
+	return path == "/auth-files" ||
+		path == "/auth-files/import" ||
+		path == "/auth-files/:auth_file_id"
 }
 
 func assertAccountPoolPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) {

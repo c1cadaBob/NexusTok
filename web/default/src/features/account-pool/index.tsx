@@ -89,6 +89,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
@@ -1163,6 +1164,14 @@ export function AccountPool() {
     ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+  const canReadAccountPoolAuthFile = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
+  const canSensitiveWriteAccountPoolAuthFile = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
   const selectedGroupIsEditable = Boolean(selectedGroup && canWriteAccountPool)
   const canEditGroupSensitiveFields = Boolean(
     !groupForm.id || canSensitiveWriteAccountPool
@@ -1241,7 +1250,11 @@ export function AccountPool() {
         p: 1,
         page_size: 200,
       }),
-    enabled: accountFormOpen && !accountForm.id && Boolean(selectedGroupId),
+    enabled:
+      canReadAccountPoolAuthFile &&
+      accountFormOpen &&
+      !accountForm.id &&
+      Boolean(selectedGroupId),
   })
 
   const accountItems = accountsQuery.data?.data?.accounts.items
@@ -1732,7 +1745,7 @@ export function AccountPool() {
       platform: selectedGroup?.platform ?? '',
       authType: selectedGroup?.auth_type ?? '',
     })
-    setAccountAddMode('credentials')
+    setAccountAddMode(canReadAccountPoolAuthFile ? 'credentials' : 'manual')
     setCredentialSearch('')
     setSelectedAuthFileIds([])
     setSourceGroupId('')
@@ -1787,6 +1800,12 @@ export function AccountPool() {
   const submitAttachAccounts = async () => {
     if (!ensureAccountPoolPermission(canSensitiveWriteAccountPool)) return
     if (!selectedGroupId) return
+    if (
+      accountAddMode === 'credentials' &&
+      !ensureAccountPoolPermission(canReadAccountPoolAuthFile)
+    ) {
+      return
+    }
     if (accountAddMode === 'credentials' && selectedAuthFileIds.length === 0) {
       toast.error(t('Select at least one credential'))
       return
@@ -3611,7 +3630,8 @@ export function AccountPool() {
             <TabsContent value='auth-files' className='m-0 min-h-0'>
               <AuthFilesPanel
                 groups={groups}
-                canSensitiveWrite={canSensitiveWriteAccountPool}
+                canRead={canReadAccountPoolAuthFile}
+                canSensitiveWrite={canSensitiveWriteAccountPoolAuthFile}
               />
             </TabsContent>
             <TabsContent value='usage-logs' className='m-0 min-h-0'>
@@ -5114,7 +5134,10 @@ export function AccountPool() {
           >
             {!accountForm.id && (
               <TabsList className='max-w-full justify-start overflow-x-auto'>
-                <TabsTrigger value='credentials'>
+                <TabsTrigger
+                  value='credentials'
+                  disabled={!canReadAccountPoolAuthFile}
+                >
                   <FileJson data-icon='inline-start' />
                   {t('Select Credentials')}
                 </TabsTrigger>
@@ -5130,136 +5153,159 @@ export function AccountPool() {
             )}
 
             <TabsContent value='credentials' className='mt-3 space-y-3'>
-              <div className='flex flex-col gap-2 sm:flex-row'>
-                <Input
-                  className='sm:max-w-xs'
-                  placeholder={t('Search credentials')}
-                  value={credentialSearch}
-                  onChange={(event) => setCredentialSearch(event.target.value)}
+              {!canReadAccountPoolAuthFile ? (
+                <EmptyState
+                  icon={FileJson}
+                  title={t("You don't have necessary permission")}
+                  bordered
                 />
-                <Button
-                  variant='outline'
-                  type='button'
-                  onClick={() =>
-                    toggleAllAttachCredentials(!allAttachCredentialsSelected)
-                  }
-                  disabled={selectableAttachCredentialIds.length === 0}
-                >
-                  {allAttachCredentialsSelected
-                    ? t('Clear selection')
-                    : t('Select visible')}
-                </Button>
-                <div className='text-muted-foreground flex items-center text-sm'>
-                  {t('{{count}} selected', {
-                    count: selectedAuthFileIds.length,
-                  })}
-                </div>
-              </div>
-              <div className='border-border max-h-[360px] overflow-y-auto rounded-md border'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className='w-10'>
-                        <Checkbox
-                          checked={allAttachCredentialsSelected}
-                          onCheckedChange={(checked) =>
-                            toggleAllAttachCredentials(Boolean(checked))
-                          }
-                          disabled={selectableAttachCredentialIds.length === 0}
-                          aria-label={t('Select all')}
-                        />
-                      </TableHead>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Source')}</TableHead>
-                      <TableHead>{t('Type')}</TableHead>
-                      <TableHead>{t('Account Groups')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAttachCredentials.map((authFile) => {
-                      const alreadyAssigned = authFileAssignedToGroup(
-                        authFile,
-                        selectedGroupId ?? null
-                      )
-                      const fullSummary = formatCredentialSummary(
-                        authFile.credential_summary
-                      )
-                      return (
-                        <TableRow key={authFile.id}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selectedAuthFileIds.includes(
-                                authFile.id
-                              )}
-                              disabled={alreadyAssigned}
-                              onCheckedChange={(checked) =>
-                                toggleAuthFileSelection(
-                                  authFile.id,
-                                  Boolean(checked)
-                                )
-                              }
-                              aria-label={t('Select row')}
-                            />
-                          </TableCell>
-                          <TableCell className='max-w-[320px] min-w-[220px]'>
-                            <div
-                              className='truncate font-medium'
-                              title={fullSummary}
-                            >
-                              {formatAccountIdentity(
-                                authFile.credential_summary,
-                                authFile.name
-                              )}
-                            </div>
-                            <div className='text-muted-foreground truncate text-xs'>
-                              {authFile.name} · #{authFile.id}
-                            </div>
-                          </TableCell>
-                          <TableCell className='min-w-[140px] text-xs'>
-                            {authFileSourceLabel(authFile) || '-'}
-                          </TableCell>
-                          <TableCell className='min-w-[90px] text-xs'>
-                            {authFile.subscription_type || '-'}
-                          </TableCell>
-                          <TableCell
-                            className='max-w-[220px] min-w-[150px] truncate text-xs'
-                            title={authFilePoolGroupNames(authFile).join(', ')}
-                          >
-                            {authFileGroupLabel(authFile)}
-                          </TableCell>
-                          <TableCell className='min-w-[120px]'>
-                            <StatusBadge
-                              label={
-                                alreadyAssigned
-                                  ? t('Already in group')
-                                  : t('Available')
-                              }
-                              variant={alreadyAssigned ? 'neutral' : 'success'}
-                              copyable={false}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                    {!attachCredentialsQuery.isLoading &&
-                      filteredAttachCredentials.length === 0 && (
+              ) : (
+                <>
+                  <div className='flex flex-col gap-2 sm:flex-row'>
+                    <Input
+                      className='sm:max-w-xs'
+                      placeholder={t('Search credentials')}
+                      value={credentialSearch}
+                      onChange={(event) =>
+                        setCredentialSearch(event.target.value)
+                      }
+                    />
+                    <Button
+                      variant='outline'
+                      type='button'
+                      onClick={() =>
+                        toggleAllAttachCredentials(
+                          !allAttachCredentialsSelected
+                        )
+                      }
+                      disabled={selectableAttachCredentialIds.length === 0}
+                    >
+                      {allAttachCredentialsSelected
+                        ? t('Clear selection')
+                        : t('Select visible')}
+                    </Button>
+                    <div className='text-muted-foreground flex items-center text-sm'>
+                      {t('{{count}} selected', {
+                        count: selectedAuthFileIds.length,
+                      })}
+                    </div>
+                  </div>
+                  <div className='border-border max-h-[360px] overflow-y-auto rounded-md border'>
+                    <Table>
+                      <TableHeader>
                         <TableRow>
-                          <TableCell colSpan={6} className='h-24 text-center'>
-                            {t('No credentials found')}
-                          </TableCell>
+                          <TableHead className='w-10'>
+                            <Checkbox
+                              checked={allAttachCredentialsSelected}
+                              onCheckedChange={(checked) =>
+                                toggleAllAttachCredentials(Boolean(checked))
+                              }
+                              disabled={
+                                selectableAttachCredentialIds.length === 0
+                              }
+                              aria-label={t('Select all')}
+                            />
+                          </TableHead>
+                          <TableHead>{t('Account')}</TableHead>
+                          <TableHead>{t('Source')}</TableHead>
+                          <TableHead>{t('Type')}</TableHead>
+                          <TableHead>{t('Account Groups')}</TableHead>
+                          <TableHead>{t('Status')}</TableHead>
                         </TableRow>
-                      )}
-                    {attachCredentialsQuery.isLoading && (
-                      <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center'>
-                          {t('Loading')}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredAttachCredentials.map((authFile) => {
+                          const alreadyAssigned = authFileAssignedToGroup(
+                            authFile,
+                            selectedGroupId ?? null
+                          )
+                          const fullSummary = formatCredentialSummary(
+                            authFile.credential_summary
+                          )
+                          return (
+                            <TableRow key={authFile.id}>
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedAuthFileIds.includes(
+                                    authFile.id
+                                  )}
+                                  disabled={alreadyAssigned}
+                                  onCheckedChange={(checked) =>
+                                    toggleAuthFileSelection(
+                                      authFile.id,
+                                      Boolean(checked)
+                                    )
+                                  }
+                                  aria-label={t('Select row')}
+                                />
+                              </TableCell>
+                              <TableCell className='max-w-[320px] min-w-[220px]'>
+                                <div
+                                  className='truncate font-medium'
+                                  title={fullSummary}
+                                >
+                                  {formatAccountIdentity(
+                                    authFile.credential_summary,
+                                    authFile.name
+                                  )}
+                                </div>
+                                <div className='text-muted-foreground truncate text-xs'>
+                                  {authFile.name} · #{authFile.id}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[140px] text-xs'>
+                                {authFileSourceLabel(authFile) || '-'}
+                              </TableCell>
+                              <TableCell className='min-w-[90px] text-xs'>
+                                {authFile.subscription_type || '-'}
+                              </TableCell>
+                              <TableCell
+                                className='max-w-[220px] min-w-[150px] truncate text-xs'
+                                title={authFilePoolGroupNames(authFile).join(
+                                  ', '
+                                )}
+                              >
+                                {authFileGroupLabel(authFile)}
+                              </TableCell>
+                              <TableCell className='min-w-[120px]'>
+                                <StatusBadge
+                                  label={
+                                    alreadyAssigned
+                                      ? t('Already in group')
+                                      : t('Available')
+                                  }
+                                  variant={
+                                    alreadyAssigned ? 'neutral' : 'success'
+                                  }
+                                  copyable={false}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                        {!attachCredentialsQuery.isLoading &&
+                          filteredAttachCredentials.length === 0 && (
+                            <TableRow>
+                              <TableCell
+                                colSpan={6}
+                                className='h-24 text-center'
+                              >
+                                {t('No credentials found')}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        {attachCredentialsQuery.isLoading && (
+                          <TableRow>
+                            <TableCell colSpan={6} className='h-24 text-center'>
+                              {t('Loading')}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
             </TabsContent>
 
             <TabsContent value='group' className='mt-3 space-y-3'>

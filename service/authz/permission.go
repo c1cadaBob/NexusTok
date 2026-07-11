@@ -24,15 +24,16 @@ const (
 )
 
 const (
-	ResourceChannel       = "channel"
-	ResourceAccountPool   = "account_pool"
-	ResourceUser          = "user"
-	ResourceModel         = "model"
-	ResourceSubscription  = "subscription"
-	ResourceRedemption    = "redemption"
-	ResourceUsageLog      = "usage_log"
-	ResourceUsageData     = "usage_data"
-	ResourceSystemSetting = "system_setting"
+	ResourceChannel             = "channel"
+	ResourceAccountPool         = "account_pool"
+	ResourceAccountPoolAuthFile = "account_pool_auth_file"
+	ResourceUser                = "user"
+	ResourceModel               = "model"
+	ResourceSubscription        = "subscription"
+	ResourceRedemption          = "redemption"
+	ResourceUsageLog            = "usage_log"
+	ResourceUsageData           = "usage_data"
+	ResourceSystemSetting       = "system_setting"
 )
 
 const (
@@ -55,6 +56,10 @@ var (
 	AccountPoolWrite          = Permission{Resource: ResourceAccountPool, Action: ActionWrite}
 	AccountPoolSensitiveWrite = Permission{Resource: ResourceAccountPool, Action: ActionSensitiveWrite}
 	AccountPoolSecretView     = Permission{Resource: ResourceAccountPool, Action: ActionSecretView}
+
+	AccountPoolAuthFileRead = Permission{Resource: ResourceAccountPoolAuthFile, Action: ActionRead}
+	// AccountPoolAuthFileSensitiveWrite 保护导入、替换和删除认证文件这类会触碰凭证材料的入口。
+	AccountPoolAuthFileSensitiveWrite = Permission{Resource: ResourceAccountPoolAuthFile, Action: ActionSensitiveWrite}
 
 	UserRead           = Permission{Resource: ResourceUser, Action: ActionRead}
 	UserOperate        = Permission{Resource: ResourceUser, Action: ActionOperate}

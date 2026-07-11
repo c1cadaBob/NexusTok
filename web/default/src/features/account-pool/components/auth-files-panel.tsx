@@ -49,6 +49,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
@@ -68,6 +69,7 @@ import type {
 
 type AuthFilesPanelProps = {
   groups: AccountPoolGroup[]
+  canRead?: boolean
   canSensitiveWrite?: boolean
 }
 
@@ -326,6 +328,7 @@ function authFileFormFromRow(authFile: AccountPoolAuthFile): AuthFileFormState {
 
 export function AuthFilesPanel({
   groups,
+  canRead = true,
   canSensitiveWrite = true,
 }: AuthFilesPanelProps) {
   const { t } = useTranslation()
@@ -351,6 +354,7 @@ export function AuthFilesPanel({
   const authFilesQuery = useQuery({
     queryKey: accountPoolQueryKeys.authFiles(queryParams),
     queryFn: () => getAccountPoolAuthFiles(queryParams),
+    enabled: canRead,
   })
 
   const authFiles = authFilesQuery.data?.data?.items ?? []
@@ -370,6 +374,18 @@ export function AuthFilesPanel({
     toast.error(t("You don't have necessary permission"))
     return false
   }, [canSensitiveWrite, t])
+
+  if (!canRead) {
+    return (
+      <div className='flex min-h-0 flex-col p-6'>
+        <EmptyState
+          icon={FileJson}
+          title={t("You don't have necessary permission")}
+          bordered
+        />
+      </div>
+    )
+  }
 
   const openImport = () => {
     if (!ensureSensitiveWrite()) return

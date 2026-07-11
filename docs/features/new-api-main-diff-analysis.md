@@ -207,7 +207,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
 | P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略优先读取和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、策略周期 reload、用户 override 迁入 `casbin_rule`、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
-| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 当前 `account_pool` 已覆盖凭证、账号、分组和日志等能力；后续如需要更细运营分权，可把 `channel_account`、`account_pool_auth_file` 等拆成独立资源，并保留现有敏感写 fail-closed。 |
+| P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；`account_pool` 继续覆盖分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account` 等资源拆分，并保留现有敏感写 fail-closed。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
 | P2/P3 | Advanced Custom 模板库与审计增强 | `relay/channel/advancedcustom/*`、默认前端 editor | 基础 adaptor、后端校验和 Visual/JSON 编辑器已落地；后续可做可信模板、导入导出、路由级审计和更清晰的敏感字段变更预览。 |
@@ -343,9 +343,9 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ## 建议的落地顺序
 
 1. 文档和设计冻结：本文件 + `account-pool-roadmap.md` 作为账号池和平台化能力的共同路线。
-2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表和 Authz 持久策略底座已原生化；下一批聚焦 Casbin runtime/enforcer、角色编辑/导入导出和新增公开模块的测试契约。
+2. 安全小步快跑第一批和多轮补强已完成：匿名请求体限制、HeaderNavModuleAuth、SSRF 客户端、QuotaMath helper、渠道/账号池字段级 fail-closed、用户级 Authz override、多组权限路由表、账号池认证文件独立权限资源和 Authz 持久策略底座已原生化；下一批聚焦 Casbin runtime/enforcer、角色编辑/导入导出和新增公开模块的测试契约。
 3. 系统任务/系统信息已形成后端模型、接口、租约执行和 `/system-info` 页面闭环；后续新增长耗时任务直接接入 SystemTask。
-4. 权限系统已覆盖 channel/account_pool/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座；后续从“有没有 enforcement”转为“Casbin runtime、角色编辑、策略同步、细资源拆分和权限编辑体验”。
+4. 权限系统已覆盖 channel/account_pool/account_pool_auth_file/user/model/subscription/redemption/log/data/system_setting 等资源，并已经具备 `authz_roles`/`casbin_rule` 持久策略底座；后续从“有没有 enforcement”转为“Casbin runtime、角色编辑、策略同步、继续拆分渠道账号等细资源和权限编辑体验”。
 5. 订阅/支付增强已覆盖余额支付、钱包溢出、Waffo Pancake 商品绑定和订阅支付；后续转向诊断、Classic parity 和支付异常自助排查。
 6. 仪表盘和日志体验已覆盖 flow 数据、Sankey、移动端卡片、统一筛选工具条；后续优先统一账号池日志体验。
 7. Relay/Playground 深水区已完成 Responses/Gemini/OpenAI image/Advanced Custom 和 Playground 多个关键切片；后续继续逐协议、逐组件小步演进，不做大爆炸迁移。
@@ -6440,6 +6440,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | 账号池认证文件权限资源拆分 | `service/authz/*`、`router/account_pool-router.go`、`web/default/src/features/account-pool/*` | 将账号池认证文件从粗粒度 `account_pool` 中拆为独立 `account_pool_auth_file` 资源：认证文件列表/详情走 read，导入/更新/删除走 sensitive_write；默认 Admin 只保留读权限，凭证面板和添加账号的选择凭证弹窗按新资源开关请求，避免无权限时触发 403。 |
 | 2026-07-11 | Authz 持久策略状态校准 | `docs/features/new-api-main-diff-analysis.md` | 基于当前 `service/authz/persistent_policy.go`、`model/authz_role.go`、`model/casbin_rule.go` 和 new-api-main `service/authz/enforcer.go` 重新校准 P1 队列：NexusTok 已完成角色/策略持久化底座，剩余差异收窄为 Casbin runtime/enforcer、策略周期 reload、用户 override 同表迁移、角色编辑 UI、自定义角色和策略导入导出。 |
 | 2026-07-11 | 账号池 History 移动端筛选 Drawer | `web/default/src/features/account-pool/index.tsx`、`web/default/src/features/account-pool/components/account-pool-history-filter-drawer.tsx` | 原生化 new-api-main 的移动筛选收纳优势：账号池 Usage/State/Check History 手机端保留搜索框，将状态、action/source、request/time/account 等低频筛选收进 85dvh Drawer；State 使用原生 select 避免 Base Select portal 与 Vaul Drawer transform 冲突，Check status 使用按钮组。桌面筛选栏保留原样。 |
 | 2026-07-10 | 差异报告优先队列状态校准 | `docs/features/new-api-main-diff-analysis.md` | 基于当前工作树证据校准早期总表、优先队列和路线建议；把已原生化的行锁、Responses/Gemini、管理审计、Flow、Usage Logs、Advanced Custom、Waffo Pancake、OpenAI image stream、用户级 Authz override 和多组权限路由从待办中移出，保留 Casbin/角色策略、ClickHouse 真接入、DataTable 分层、账号池日志体验等真实剩余项。 |
@@ -8865,3 +8866,78 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 3. `rg -n "casbin.SyncedEnforcer|StartPolicySync|SetUserPermissionsInTx" /opt/project/new-api-main/service/authz` 确认剩余差异来自 new-api-main 的 Casbin runtime/enforcer 和策略同步实现。
 4. `git diff --check` 通过。
 5. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`；本轮只改文档，运行态入口保持可访问。
+
+## 本轮实施评审：账号池认证文件权限资源拆分原生化
+
+### 需求分析
+
+`new-api-main` 的管理权限优势在于资源边界更细，敏感配置不会长期混在同一个粗粒度资源里。NexusTok 已经把账号池作为原生一等能力实现，但 `/api/account-pool/auth-files*` 仍挂在 `account_pool` 资源下，导致认证文件、账号生命周期、分组、日志、检测和运行态操作共用同一组权限。认证文件承载真实上游凭证 JSON，风险等级高于普通账号池分组和日志查看；如果后续要给运营角色开放账号池健康、分组和历史记录，就需要先把凭证文件从大资源中拆出来。
+
+本轮目标是把 new-api-main 的细粒度授权优势转换为 NexusTok 原生账号池保护能力：新增 `account_pool_auth_file` 资源，只覆盖认证文件列表/详情读取和导入/更新/删除，不改变接口 URL、数据模型、账号池调度、OAuth、账号生命周期或凭证导入格式。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| Authz catalog | `service/authz/permission.go`、`service/authz/registry.go` | 新增 `account_pool_auth_file` 资源和 `read/sensitive_write` 两个实际使用动作；默认 Admin 只授予 read，Root 仍是 superuser。 |
+| 持久策略种子 | `service/authz/persistent_policy_test.go` | 锁定 Admin 持久策略会写入 `account_pool_auth_file.read`，不会写入 `account_pool_auth_file.sensitive_write`。 |
+| 账号池路由权限 | `router/account_pool-router.go`、`router/account_pool_router_test.go` | `/auth-files` 列表/详情切到新 read，创建、导入、更新、删除切到新 sensitive_write；其它账号池路由继续归属 `account_pool`。 |
+| 用户权限回传 | `controller/user_authz_test.go` | `/api/user/self` 的 `permissions.admin_permissions` 必须包含新资源，普通 Admin 默认可读、不可敏感写，普通用户不可读。 |
+| 默认前端权限矩阵 | `web/default/src/lib/admin-permissions.ts`、`admin-permissions.test.ts` | 新增前端资源常量和 legacy Admin 静态 fallback，避免旧登录态缺后端矩阵时误判。 |
+| 账号池凭证页面 | `web/default/src/features/account-pool/index.tsx`、`components/auth-files-panel.tsx` | 凭证面板按新 read 权限开关查询；导入/编辑/删除按新 sensitive_write 禁用；添加账号弹窗的“选择凭证”查询同样受新 read 保护。 |
+| i18n | `web/default/src/i18n/static-keys.ts`、`locales/*.json` | 新增权限 catalog 动态文案六语翻译；旧的账号池敏感写描述改为不再包含 auth files。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新后续队列、建议路线、实施索引和本轮评审记录。 |
+
+本轮没有修改数据库 schema、账号池认证文件模型、加解密逻辑、导入解析器、账号池调度、Relay 热路径、OAuth/设备授权、渠道账号池绑定或 classic 前端。
+
+### 风险评估
+
+- 权限收紧风险：已有用户 override 里如果只配置了 `account_pool.read`，不会自动继承到 `account_pool_auth_file.read`。本轮用 Admin 默认 read 和前端静态 fallback 保持普通 Admin 读取兼容，但显式 override 场景会按新资源收紧，这是拆分资源的预期行为。
+- 敏感写误开放风险：如果直接复用 `managementActions()` 并给 Admin 默认 write，可能误把认证文件导入/删除开放给普通 Admin。本轮只注册 read 和 sensitive_write，且测试锁定 Admin 不具备 sensitive_write。
+- 页面 403 风险：凭证面板和添加账号弹窗原先打开即查询 auth-files。本轮对两个查询都加 `enabled: canReadAccountPoolAuthFile`，无读权限时不发请求，避免无权限用户进入页面后产生 403 噪音。
+- 路由顺序风险：`/auth-files/import` 必须继续排在 `/auth-files/:auth_file_id` 之前，避免 Gin 把 `import` 当成参数。本轮只改 permission，不调整路由顺序，并补齐 6 条 auth-files 路由分类测试。
+- 入口独立性风险：本轮把 `account_pool_auth_file` 定义为账号池页面内的附加资源，进入 `/account-pool` 仍需要 `account_pool.read`；后续如果要允许“只有凭证读权限、没有账号池读权限”的角色进入，需要单独做 section-aware route guard 和侧边栏子项过滤评审。
+- i18n 风险：权限 catalog 文案是后端动态返回，普通源码扫描不会自动发现。本轮把动态 key 写入 `static-keys.ts` 并手动补齐 en/zh/fr/ja/ru/vi。
+
+### 方案评审
+
+采用“小资源拆分 + URL 不变 + 页面查询开关”的低风险方案：
+
+1. 新增 `ResourceAccountPoolAuthFile = "account_pool_auth_file"`，并只暴露 `AccountPoolAuthFileRead` 与 `AccountPoolAuthFileSensitiveWrite` 两个当前路由实际消费的 permission。
+2. catalog 中新增 `Account Pool Auth Files`，动作只包含 `Read account pool auth files` 和 `Edit account pool auth files`；Admin 默认只拥有 read。
+3. `/api/account-pool/auth-files`、`/api/account-pool/auth-files/:auth_file_id` 切到 `account_pool_auth_file.read`。
+4. `/api/account-pool/auth-files` POST、`/auth-files/import`、PUT/DELETE `/:auth_file_id` 切到 `account_pool_auth_file.sensitive_write`。
+5. 前端新增 `ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL_AUTH_FILE`，凭证面板读取和敏感写按钮分别消费新资源，不再复用 `account_pool.sensitive_write`。
+6. 添加账号弹窗中的“选择凭证”只在有新 read 权限时请求认证文件；无读权限时默认切到 `Manual`，并禁用 `Select Credentials`。
+7. 不迁移审计 action 名、不改 API URL、不做用户 override 迁移，避免把本轮权限资源拆分扩大到审计报表和数据迁移。
+
+### 实施结果
+
+已完成账号池认证文件权限资源拆分：
+
+- 后端 catalog 返回新资源 `account_pool_auth_file`，仅包含 `read` 和 `sensitive_write` 两个动作。
+- 默认 Admin 基线和持久策略种子只授予 `account_pool_auth_file.read`；Root 仍按 superuser 拥有全部已注册动作。
+- `/api/account-pool/auth-files*` 六条路由已经从 `account_pool` 拆出；其余账号池分组、账号、日志、检测、OAuth 和运行态操作仍保持原 `account_pool` 权限。
+- 默认前端凭证面板、导入按钮、编辑/删除按钮和添加账号弹窗的选择凭证路径均消费新权限。
+- 动态权限 catalog 文案已补齐六语：`Account Pool Auth Files`、`Read account pool auth files`、`Edit account pool auth files` 及其描述。
+- 差异报告的 P1/P2 Authz 资源继续细分队列已更新：认证文件已拆出，后续可继续评估 `channel_account` 等细资源。
+
+### 验证记录
+
+1. `go test ./service/authz -run 'TestCatalogIncludesNexusTokCoreResources|TestRolesExposeRootAndAdminBaselines|TestCapabilitiesFollowExistingSystemRoles|TestCanFollowsRoleBaselinesAndFailsClosed|TestSeedPersistentPoliciesStoresBuiltInRolesAndAdminPolicies'` 通过。
+2. `go test ./router -run 'TestRegisterAccountPoolRoutesKeepsCoreHandlers|TestAccountPoolPermissionRoutes'` 通过。
+3. `go test ./controller -run 'TestGetSelfReturnsAdminPermissions|TestGetSelfIncludesAuthzUserOverrides|TestGetUserReturnsAdminPermissions|TestUpdateUserAdminPermissions'` 通过。
+4. `go test ./service/authz ./router ./controller -run 'Authz|AccountPool|GetSelfReturnsAdminPermissions|GetSelfIncludesAuthzUserOverrides|GetUserReturnsAdminPermissions|UpdateUserAdminPermissions'` 通过；`service/authz` 在该宽泛正则下无匹配测试，精确 authz 测试见第 1 条。
+5. `cd web/default && bun test src/lib/admin-permissions.test.ts` 通过。
+6. `cd web/default && bunx prettier --check src/features/account-pool/index.tsx src/features/account-pool/components/auth-files-panel.tsx src/lib/admin-permissions.ts src/lib/admin-permissions.test.ts src/i18n/static-keys.ts src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` 通过。
+7. `cd web/default && bun run i18n:sync` 通过，报告显示 en/zh/fr/ja/ru/vi `missingCount=0`、`extrasCount=0`。
+8. `cd web/default && bun run typecheck` 通过。
+9. `cd web/default && bun run build` 通过。
+10. `git diff --check` 通过。
+11. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`，热更新入口可访问，未重启容器。
+12. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+13. 使用账号 `c1cada` 登录后打开 `/account-pool/credentials`，运行态 `/api/authz/catalog` 返回 `account_pool_auth_file`，actions 为 `read` 和 `sensitive_write`。
+14. `/api/user/self` 中 `permissions.admin_permissions.account_pool_auth_file` 对 Root 用户显示 `read=true`、`sensitive_write=true`；普通 Admin 默认敏感写 false 已由后端和前端单元测试覆盖。
+15. 运行态凭证页显示 `Account Credentials`、搜索框 placeholder `Search credentials`、`Import Credential` 按钮和空态 `No credentials found`；没有出现无权限状态。
+16. 运行态 `/api/account-pool/auth-files?p=1&page_size=10` 返回 HTTP 200 且 `success=true`。
+17. Chrome/CDP 记录没有 console warning/error、运行时 exception 或非取消型网络失败。
