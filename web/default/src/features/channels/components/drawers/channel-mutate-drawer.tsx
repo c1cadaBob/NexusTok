@@ -1407,8 +1407,9 @@ export function ChannelMutateDrawer({
   )
   const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
   const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
-  const modelSearchBackendTotal =
-    modelSearchData?.data?.total ?? modelSearchAppendSummary.matchedCount
+  const modelSearchBackendTotal = isModelSearchResultCurrent
+    ? (modelSearchData?.data?.total ?? modelSearchAppendSummary.matchedCount)
+    : modelSearchAppendSummary.matchedCount
   const unscannedModelSearchResultCount = Math.max(
     0,
     modelSearchBackendTotal - modelSearchAppendSummary.matchedCount
@@ -1416,6 +1417,16 @@ export function ChannelMutateDrawer({
   const canRunModelSearchAppend =
     modelSearchAppendSummary.addableCount > 0 ||
     unscannedModelSearchResultCount > 0
+  const modelSearchAddButtonLabel =
+    unscannedModelSearchResultCount > 0
+      ? t('Add all {{count}} matched model(s)', {
+          count: modelSearchBackendTotal,
+        })
+      : modelSearchAppendSummary.addableCount > 0
+        ? t('Add {{count}} new model(s)', {
+            count: modelSearchAppendSummary.addableCount,
+          })
+        : t('Add')
   const shouldShowModelSearchAppend =
     trimmedModelSearchKeyword.length > 0 &&
     !isSearchingModelMeta &&
@@ -4009,13 +4020,7 @@ export function ChannelMutateDrawer({
                                           ) : (
                                             <Plus data-icon='inline-start' />
                                           )}
-                                          {modelSearchAppendSummary.addableCount >
-                                          0
-                                            ? t('Add {{count}} new model(s)', {
-                                                count:
-                                                  modelSearchAppendSummary.addableCount,
-                                              })
-                                            : t('Add')}
+                                          {modelSearchAddButtonLabel}
                                         </InputGroupButton>
                                       </InputGroupAddon>
                                     </InputGroup>
@@ -4320,6 +4325,43 @@ export function ChannelMutateDrawer({
                         <div className='border-border/60 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
+                            name='group'
+                            render={({ field }) => (
+                              <FormItem className='space-y-3'>
+                                <div className='space-y-1'>
+                                  <FormLabel>{t('Groups *')}</FormLabel>
+                                  <FormDescription>
+                                    {t(FIELD_DESCRIPTIONS.GROUP)}
+                                  </FormDescription>
+                                </div>
+                                <FormControl>
+                                  {isLoadingGroups ? (
+                                    <Skeleton className='h-10 w-full' />
+                                  ) : (
+                                    <MultiSelect
+                                      options={groupOptions}
+                                      selected={field.value}
+                                      onChange={(values) => {
+                                        if (!canEditBasicFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(values)
+                                      }}
+                                      placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
+                                      disabled={!canEditBasicFields}
+                                    />
+                                  )}
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <div className='border-border/60 rounded-lg border p-4'>
+                          <FormField
+                            control={form.control}
                             name='model_mapping'
                             render={({ field }) => (
                               <FormItem>
@@ -4444,42 +4486,6 @@ export function ChannelMutateDrawer({
                                     </AlertDescription>
                                   </Alert>
                                 )}
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-
-                        <div className='border-border/60 rounded-lg border p-4'>
-                          <FormField
-                            control={form.control}
-                            name='group'
-                            render={({ field }) => (
-                              <FormItem className='space-y-3'>
-                                <div className='space-y-1'>
-                                  <FormLabel>{t('Groups *')}</FormLabel>
-                                  <FormDescription>
-                                    {t(FIELD_DESCRIPTIONS.GROUP)}
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  {isLoadingGroups ? (
-                                    <Skeleton className='h-10 w-full' />
-                                  ) : (
-                                    <MultiSelect
-                                      options={groupOptions}
-                                      selected={field.value}
-                                      onChange={(values) => {
-                                        if (!canEditBasicFields) {
-                                          toast.error(noPermissionMessage)
-                                          return
-                                        }
-                                        field.onChange(values)
-                                      }}
-                                      placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
-                                    />
-                                  )}
-                                </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}

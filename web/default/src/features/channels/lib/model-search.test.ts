@@ -65,17 +65,23 @@ describe('渠道模型列表归一化', () => {
 })
 
 describe('渠道模型搜索候选提取', () => {
-  test('只保留模型名自身包含关键词的搜索结果', () => {
+  test('保留后端搜索命中的精确模型名，不再按关键词二次过滤', () => {
     assert.deepEqual(
       getModelSearchModelNames(
         [
-          { model_name: 'gpt-5.6-terra' },
-          { model_name: 'claude-sonnet' },
-          { model_name: ' gpt-5.6-luna ' },
+          {
+            model_name: 'gpt-5.6-terra',
+            description: 'GPT-5.6 Terra is an AI model from OpenAI.',
+          },
+          {
+            model_name: 'claude-sonnet',
+            description: 'OpenAI-compatible Claude route.',
+          },
+          { model_name: ' gpt-5.6-luna ', tags: 'OpenAI,Reasoning' },
         ],
-        'gpt-5.6'
+        'openai'
       ),
-      ['gpt-5.6-terra', 'gpt-5.6-luna']
+      ['gpt-5.6-terra', 'claude-sonnet', 'gpt-5.6-luna']
     )
   })
 
@@ -110,7 +116,28 @@ describe('渠道模型搜索候选提取', () => {
         ],
         'gpt-5.6'
       ),
-      ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol']
+      ['gpt-5.6-terra', 'gpt-5.6-luna', 'claude-sonnet', 'gpt-5.6-sol']
+    )
+  })
+
+  test('名称规则没有展开结果时只在规则名自身命中时保留占位名', () => {
+    assert.deepEqual(
+      getModelSearchModelNames(
+        [
+          {
+            model_name: 'gpt-5.6-*',
+            name_rule: 1,
+            matched_models: [],
+          },
+          {
+            model_name: 'claude-*',
+            name_rule: 1,
+            matched_models: [],
+          },
+        ],
+        'gpt-5.6'
+      ),
+      ['gpt-5.6-*']
     )
   })
 

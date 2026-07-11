@@ -9849,3 +9849,69 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 8. 使用账号 `c1cada` 登录 3003 成功，创建临时角色模板 `audit-smoke-*` 后立即删除，接口均返回 `success=true`。
 9. 调用 `GET /api/log/?type=3&p=1&page_size=20` 确认最新两条管理日志分别为 `authz.role_create` 和 `authz.role_delete`，`Other.op.params` 包含 `role_key`、`role_name`、`enabled`、`sort`、`policy_count`、`deleted_policy_count` 和 `reloaded` 等非敏感摘要；没有完整 grants 矩阵。
 10. 再次调用 `GET /api/authz/roles`，确认临时 `audit-smoke-*` 模板已删除且无测试数据残留。
+
+## 本轮实施评审：渠道编辑页模型搜索追加与 new-api 编辑流对齐
+
+### 需求分析
+
+用户反馈渠道编辑页“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面，将当前项目的编辑渠道页体验向 new-api-main 对齐。结合运行态数据验证，当前 3003 服务中 `/api/models/search?keyword=gpt-5.6` 已返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型元数据，但现有渠道 `11111` 只包含 `gpt-5.6-sol`。后端模型库没有丢失，问题集中在默认前端将模型库搜索结果追加到渠道 `models` 草稿时的提取和展示语义。
+
+`new-api-main` 的渠道编辑页优势是核心配置流更接近管理员实际工作顺序：先选择模型并用快捷操作填充，再补充自定义模型，随后设置可用分组，最后处理模型重定向。NexusTok 当前 default 前端已经具备更强的原生能力，包括权限锁、敏感字段保护、Codex OAuth、模型映射风险提示、上游拉取弹窗和搜索模型库补齐。本轮目标不是照搬 Semi UI，而是在保留这些原生增强的前提下修复搜索追加逻辑，并把模型区顺序调整为更接近 new-api 的配置流程。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道模型搜索纯函数 | `web/default/src/features/channels/lib/model-search.ts` | 搜索结果提取改为尊重后端 `/api/models/search` 已完成的 model_name/description/tags 过滤，不再要求返回模型名本身包含关键词。 |
+| 渠道模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加供应商/标签/描述命中仍可追加模型的覆盖；保留大小写去重、缺失项计算、上下文防旧请求污染等既有覆盖。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 搜索追加按钮在存在未扫描分页时显示“添加全部匹配模型”语义；搜索输入清空后不再使用旧搜索 total 驱动按钮状态；模型区顺序调整为模型选择/搜索/自定义/快捷操作 -> 分组 -> 模型映射。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改后端 API、数据库 schema、Relay、计费、渠道权限接口、模型同步接口或现有模型元数据记录。
+
+### 风险评估
+
+1. 搜索追加范围扩大：此前前端二次要求模型名包含关键词，搜索 `OpenAI`、`Reasoning` 或描述字段时会误丢模型。本轮改为信任后端搜索结果，管理员输入过宽关键词时可能追加更多模型。为降低风险，页面仍展示命中、新增、已存在和未扫描分页数量，并在真正追加前按当前表单模型列表再次去重。
+2. 规则模型占位名风险：名称规则模型如果没有运行时展开结果，直接加入规则占位名可能误导渠道能力。本轮保留保护逻辑：规则模型优先使用 `matched_models`，只有规则名自身命中关键词且无展开结果时才保留占位名。
+3. 表单顺序调整风险：分组块从模型映射后移动到模型映射前，字段名、表单控制器和提交 payload 不变；只影响视觉顺序和 `MultiSelect` 禁用态，不改变保存语义。
+4. 旧搜索状态残留风险：追加成功后搜索输入会被清空，如果继续使用旧的 `modelSearchData.total`，按钮可能显示旧搜索的“添加全部匹配模型”。本轮将后端 total 与当前 debounced 关键词一致性绑定，避免空输入状态继续引用旧结果。
+5. i18n 风险：本轮复用已有 `Add all {{count}} matched model(s)` 等翻译键，没有新增缺失翻译。`bun run i18n:sync` 报告 missingCount 为 0。
+
+### 方案评审
+
+采用“小范围原生对齐”的方案：
+
+1. 将 `getModelSearchModelNames()` 改为消费后端搜索结果集合，精确模型直接提取 `model_name`，不再按关键词二次过滤。
+2. 名称规则模型仍优先提取 `matched_models`，并保留无展开结果时的谨慎 fallback。
+3. 搜索追加按钮在当前页之外还有未扫描结果时，使用已有文案 `Add all {{count}} matched model(s)`，避免按钮只显示当前页新增数但实际追加更多分页结果。
+4. 搜索输入清空或关键词变化时，搜索 total 和待追加状态不再读取旧请求缓存，避免按钮文案与当前输入状态不一致。
+5. 渠道编辑模型区顺序对齐 new-api-main 的核心配置流：模型选择、搜索补齐、自定义模型和快捷操作之后先设置分组，再配置模型映射。
+6. 不引入新组件库、不重写抽屉框架、不移除 NexusTok 已有权限和安全能力。
+
+### 实施结果
+
+已完成渠道编辑页模型搜索追加修复与 new-api 编辑流对齐：
+
+- 搜索 `gpt-5.6` 时，前端可从模型库搜索结果中识别全部三个模型：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+- 搜索供应商、标签或描述命中的模型时，不再因为模型名不包含关键词而被前端过滤掉。
+- 搜索结果存在分页未扫描项时，追加按钮展示“添加全部匹配模型”语义，和实际全分页扫描追加行为一致。
+- 追加完成后搜索输入清空，按钮回到禁用的普通 `Add` 状态，不再被旧搜索 total 误导为仍可追加全部匹配模型。
+- 模型区配置顺序调整为：模型选择和搜索补齐、自定义模型、快捷操作、分组、模型映射，更贴近 new-api-main 编辑渠道页的核心配置路径。
+- 现有权限锁、敏感字段保护、Codex OAuth、模型映射缺失模型提示、上游拉取弹窗和分组表单控制均保留。
+
+### 验证记录
+
+1. 使用 3003 真实服务登录后调用 `GET /api/models/search?keyword=gpt-5.6&p=1&page_size=20`，确认返回 `total=3`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+2. 使用 3003 真实服务调用 `GET /api/channel/?p=1&page_size=5`，确认当前渠道 `11111` 仍只配置 `gpt-5.6-sol`，说明本轮问题是渠道编辑追加能力，不是模型库同步丢失。
+3. `cd web/default && bun test src/features/channels/lib/model-search.test.ts` 通过，覆盖模型草稿解析、搜索候选提取、供应商/标签/描述命中、批量追加计划和旧请求上下文保护。
+4. `cd web/default && bunx eslint src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts src/features/channels/components/drawers/channel-mutate-drawer.tsx` 通过。
+5. `cd web/default && bun run typecheck` 通过。
+6. `cd web/default && bun run i18n:sync` 通过，报告显示 en/zh/fr/ja/ru/vi 均 `missingCount=0`。
+7. `cd web/default && bun run build` 通过，确认前端生产构建无错误。
+8. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本环境未暴露浏览器 MCP 工具，因此使用 Chrome Headless + DevTools Protocol 在真实 3003 页面完成等价页面操作验证。
+9. 在 3003 页面使用账号 `c1cada` 登录，进入 `/channels`，打开渠道 `11111` 的编辑抽屉；初始模型显示 `Selected 3`，包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+10. 在 “Search model library” 输入 `gpt-5.6` 后，页面显示 `3 matched · 2 new · 1 already selected`，预览新增模型为 `gpt-5.6-terra`、`gpt-5.6-luna`，按钮显示 `Add 2 new model(s)`。
+11. 点击追加后未保存表单，草稿模型显示 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三种 `gpt-5.6` 模型；搜索输入清空后 Add 按钮回到禁用状态，不再显示旧的 `Add all 3 matched model(s)`。
+12. DevTools Network 捕获到 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 与全量扫描 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 均返回 HTTP 200；Console 和 Network 未发现错误。
+13. 编辑抽屉中的顺序验证为：`Models *` -> `Quick actions` -> `Groups *` -> `Model Mapping`，符合本轮对齐方案。
+14. 关闭抽屉后再次调用 `GET /api/channel/?p=1&page_size=5`，确认渠道 `11111` 后端 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，没有因页面验证污染真实配置。

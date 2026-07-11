@@ -49,6 +49,8 @@ const MODEL_DRAFT_SEPARATOR_REGEX = /[,，\n]+/
 
 type ModelSearchItemLike = {
   model_name?: string | null
+  description?: string | null
+  tags?: string | null
   name_rule?: number | null
   matched_models?: string[] | null
 }
@@ -95,9 +97,9 @@ export function parseModelDraftList(value: string): string[] {
 }
 
 // 从模型搜索接口返回项中提取可用于渠道模型选择器的真实模型名。
-// /api/models/search 会匹配 description/tags；渠道模型补齐只应该使用
-// 精确模型的 model_name 或名称规则展开出的 matched_models，并再次按关键词过滤，
-// 避免把标签命中的无关模型、规则模型占位名加入渠道。
+// /api/models/search 已经在后端按 model_name、description、tags 完成过滤；
+// 前端不能再要求模型名自身包含关键词，否则搜索供应商、标签或描述时会丢失真实命中模型。
+// 名称规则模型优先使用运行时展开的 matched_models，避免把规则占位名误加入渠道。
 export function getModelSearchModelNames(
   searchItems: readonly ModelSearchItemLike[],
   keyword: string
@@ -111,16 +113,24 @@ export function getModelSearchModelNames(
       ? item.matched_models
       : []
     const isRuleModel = typeof item.name_rule === 'number' && item.name_rule > 0
+    const modelName = item.model_name?.trim()
+    const ruleFallback =
+      isRuleModel &&
+      matchedModels.length === 0 &&
+      modelName &&
+      (!normalizedKeyword ||
+        normalizeModelSearchKey(modelName).includes(normalizedKeyword))
+        ? [modelName]
+        : []
     const candidates = isRuleModel
-      ? matchedModels
-      : [item.model_name, ...matchedModels]
+      ? [...matchedModels, ...ruleFallback]
+      : [modelName, ...matchedModels]
     for (const candidate of candidates) {
       const name = candidate?.trim()
       if (!name) continue
 
       const key = normalizeModelSearchKey(name)
       if (seenKeys.has(key)) continue
-      if (normalizedKeyword && !key.includes(normalizedKeyword)) continue
 
       seenKeys.add(key)
       names.push(name)
