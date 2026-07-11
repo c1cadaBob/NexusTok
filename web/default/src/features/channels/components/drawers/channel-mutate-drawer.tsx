@@ -535,117 +535,202 @@ function ChannelEditorNav(props: {
   expandedItemId?: string
   onNavigate: (targetId: string) => void
 }) {
-  return (
-    <div className='sticky top-0 z-20 -mx-1 bg-background/95 py-1 backdrop-blur supports-[backdrop-filter]:bg-background/80'>
-      <div className='border-border/60 bg-background rounded-lg border p-2 shadow-sm'>
-        <div className='flex flex-col gap-2 xl:flex-row xl:items-center'>
-          <div className='bg-muted/30 flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 xl:w-56'>
-            <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
-              {props.providerLogo}
+  const renderStatusMarker = (item: ChannelEditorNavItem) => {
+    const isError = item.status === 'error'
+    const isDone = item.status === 'complete' || item.status === 'configured'
+    const isConfigured = Boolean(item.configured)
+
+    if (isConfigured && !isError && !isDone) {
+      return (
+        <span
+          className='bg-primary block size-2 rounded-full'
+          aria-hidden='true'
+        />
+      )
+    }
+
+    return getSectionStatusIcon(item.status)
+  }
+
+  const renderNavButton = (
+    item: ChannelEditorNavItem,
+    layout: 'horizontal' | 'vertical'
+  ) => {
+    const isError = item.status === 'error'
+    const isDone = item.status === 'complete' || item.status === 'configured'
+    const isConfigured = Boolean(item.configured)
+    const isActive = props.activeItemId === item.id
+
+    return (
+      <button
+        key={item.id}
+        type='button'
+        className={cn(
+          'hover:bg-muted/60 flex items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
+          layout === 'horizontal' && 'min-w-[9.5rem] shrink-0',
+          layout === 'vertical' && 'w-full',
+          isActive && 'bg-muted/80',
+          isConfigured && !isError && 'text-primary',
+          isError && 'text-destructive hover:bg-destructive/10'
+        )}
+        onClick={() => props.onNavigate(item.id)}
+        aria-current={isActive ? 'true' : undefined}
+      >
+        <span
+          className={cn(
+            'bg-muted text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
+            isConfigured && !isError && 'bg-primary/10 text-primary',
+            isError && 'bg-destructive/10 text-destructive',
+            isDone && !isError && 'text-primary'
+          )}
+        >
+          {item.icon}
+        </span>
+        <span className='min-w-0 flex-1'>
+          <span className='block truncate text-sm font-medium'>
+            {item.title}
+          </span>
+          {item.description && (
+            <span className='text-muted-foreground block truncate text-xs'>
+              {item.description}
             </span>
-            <div className='min-w-0'>
-              <p className='truncate text-sm font-medium'>
-                {props.providerLabel}
-              </p>
-              <p className='text-muted-foreground truncate text-xs'>
-                {props.statusLabel} · {props.progressLabel}
-              </p>
+          )}
+        </span>
+        <span
+          className={cn(
+            'text-muted-foreground mt-1 shrink-0',
+            isError && 'text-destructive',
+            isDone && !isError && 'text-primary',
+            isConfigured && !isError && !isDone && 'pt-1.5'
+          )}
+          aria-label={item.statusLabel}
+        >
+          {renderStatusMarker(item)}
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <>
+      <div className='bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-20 -mx-1 py-1 backdrop-blur lg:hidden'>
+        <div className='border-border/60 bg-background rounded-lg border p-2 shadow-sm'>
+          <div className='flex flex-col gap-2 xl:flex-row xl:items-center'>
+            <div className='bg-muted/30 flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 xl:w-56'>
+              <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
+                {props.providerLogo}
+              </span>
+              <div className='min-w-0'>
+                <p className='truncate text-sm font-medium'>
+                  {props.providerLabel}
+                </p>
+                <p className='text-muted-foreground truncate text-xs'>
+                  {props.statusLabel} · {props.progressLabel}
+                </p>
+              </div>
+            </div>
+
+            <nav
+              className='flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5'
+              aria-label={props.navigationLabel}
+            >
+              {props.items.map((item) => renderNavButton(item, 'horizontal'))}
+            </nav>
+          </div>
+
+          {props.items.map((item) => {
+            const isExpanded = props.expandedItemId === item.id
+            if (!item.children || !isExpanded) return null
+
+            return (
+              <div
+                key={`${item.id}-children`}
+                className='border-border/60 mt-2 flex gap-1 overflow-x-auto border-t pt-2'
+              >
+                {item.children.map((child) => (
+                  <button
+                    key={child.id}
+                    type='button'
+                    className={cn(
+                      'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex min-w-fit items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
+                      child.configured && 'text-primary'
+                    )}
+                    onClick={() => props.onNavigate(child.id)}
+                  >
+                    <span className='truncate'>{child.title}</span>
+                    {child.configured && (
+                      <span
+                        className='bg-primary size-1.5 shrink-0 rounded-full'
+                        aria-hidden='true'
+                      />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <aside className='hidden self-start lg:sticky lg:top-4 lg:z-20 lg:block'>
+        <div className='flex max-h-[calc(100dvh-12rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
+          <div className='border-border/60 bg-muted/20 rounded-lg border p-3'>
+            <div className='flex min-w-0 items-center gap-2'>
+              <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
+                {props.providerLogo}
+              </span>
+              <div className='min-w-0'>
+                <p className='truncate text-sm font-medium'>
+                  {props.providerLabel}
+                </p>
+                <p className='text-muted-foreground truncate text-xs'>
+                  {props.statusLabel} · {props.progressLabel}
+                </p>
+              </div>
             </div>
           </div>
 
           <nav
-            className='flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5'
+            className='border-border/60 bg-background rounded-lg border p-1'
             aria-label={props.navigationLabel}
           >
             {props.items.map((item) => {
-              const isError = item.status === 'error'
-              const isDone =
-                item.status === 'complete' || item.status === 'configured'
-              const isConfigured = Boolean(item.configured)
-              const isActive = props.activeItemId === item.id
-
+              const isExpanded = props.expandedItemId === item.id
               return (
-                <button
-                  key={item.id}
-                  type='button'
-                  className={cn(
-                    'hover:bg-muted/60 flex min-w-[9.5rem] shrink-0 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors',
-                    isActive && 'bg-muted/80',
-                    isConfigured && !isError && 'text-primary',
-                    isError && 'text-destructive hover:bg-destructive/10'
+                <div key={item.id}>
+                  {renderNavButton(item, 'vertical')}
+                  {item.children && isExpanded && (
+                    <div className='border-border/60 ml-5 flex flex-col gap-0.5 border-l py-1 pl-3'>
+                      {item.children.map((child) => (
+                        <button
+                          key={child.id}
+                          type='button'
+                          className={cn(
+                            'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
+                            child.configured && 'text-primary'
+                          )}
+                          onClick={() => props.onNavigate(child.id)}
+                        >
+                          <span className='min-w-0 flex-1 truncate'>
+                            {child.title}
+                          </span>
+                          {child.configured && (
+                            <span
+                              className='bg-primary size-1.5 shrink-0 rounded-full'
+                              aria-hidden='true'
+                            />
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   )}
-                  onClick={() => props.onNavigate(item.id)}
-                  aria-current={isActive ? 'true' : undefined}
-                >
-                  <span
-                    className={cn(
-                      'bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md',
-                      isConfigured && !isError && 'bg-primary/10 text-primary',
-                      isError && 'bg-destructive/10 text-destructive',
-                      isDone && !isError && 'text-primary'
-                    )}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className='min-w-0 flex-1'>
-                    <span className='block truncate text-sm font-medium'>
-                      {item.title}
-                    </span>
-                    {item.description && (
-                      <span className='text-muted-foreground block truncate text-xs'>
-                        {item.description}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={cn(
-                      'text-muted-foreground mt-1 shrink-0',
-                      isError && 'text-destructive',
-                      isDone && !isError && 'text-primary'
-                    )}
-                    aria-label={item.statusLabel}
-                  >
-                    {getSectionStatusIcon(item.status)}
-                  </span>
-                </button>
+                </div>
               )
             })}
           </nav>
         </div>
-
-        {props.items.map((item) => {
-          const isExpanded = props.expandedItemId === item.id
-          if (!item.children || !isExpanded) return null
-
-          return (
-            <div
-              key={`${item.id}-children`}
-              className='border-border/60 mt-2 flex gap-1 overflow-x-auto border-t pt-2'
-            >
-              {item.children.map((child) => (
-                <button
-                  key={child.id}
-                  type='button'
-                  className={cn(
-                    'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex min-w-fit items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
-                    child.configured && 'text-primary'
-                  )}
-                  onClick={() => props.onNavigate(child.id)}
-                >
-                  <span className='truncate'>{child.title}</span>
-                  {child.configured && (
-                    <span
-                      className='bg-primary size-1.5 shrink-0 rounded-full'
-                      aria-hidden='true'
-                    />
-                  )}
-                </button>
-              ))}
-            </div>
-          )
-        })}
-      </div>
-    </div>
+      </aside>
+    </>
   )
 }
 
@@ -2174,7 +2259,7 @@ export function ChannelMutateDrawer({
               {isChannelDetailLoading && <ChannelEditorLoadingState />}
               <div
                 className={cn(
-                  'flex flex-col gap-5',
+                  'grid gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]',
                   isChannelDetailLoading && 'hidden'
                 )}
               >
@@ -5365,7 +5450,9 @@ export function ChannelMutateDrawer({
                                           />
                                         }
                                       >
-                                        {upstreamDetectedModelsPreview.join(', ')}
+                                        {upstreamDetectedModelsPreview.join(
+                                          ', '
+                                        )}
                                       </TooltipTrigger>
                                       <TooltipContent
                                         side='top'

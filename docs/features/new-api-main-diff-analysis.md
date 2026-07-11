@@ -8941,3 +8941,75 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 15. 运行态凭证页显示 `Account Credentials`、搜索框 placeholder `Search credentials`、`Import Credential` 按钮和空态 `No credentials found`；没有出现无权限状态。
 16. 运行态 `/api/account-pool/auth-files?p=1&page_size=10` 返回 HTTP 200 且 `success=true`。
 17. Chrome/CDP 记录没有 console warning/error、运行时 exception 或非取消型网络失败。
+
+## 本轮实施评审：编辑渠道页左侧分区导航对齐与模型搜索追加复验
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并指出 `/opt/project/new-api-main` 最新版编辑渠道页面体验更好，希望 NexusTok 的编辑渠道页面继续向该页面对齐。结合前几轮 `gpt-5.6` 模型同步上下文，本轮先以 3003 运行态复现，再决定是否修改搜索逻辑。
+
+复现结论如下：
+
+1. 运行态 `/api/models/search?keyword=gpt-5.6&p=1&page_size=50` 返回 3 条模型：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，三者 `vendor_id=1`，供应商为 OpenAI。
+2. 运行态渠道 `11111` 当前保存的模型为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，因此搜索 `gpt-5.6` 时应只新增缺失的 `terra/luna` 两个模型，而不是新增 3 个。
+3. 真实页面复现显示模型搜索弹层为 `3 matched · 2 new · 1 already selected`，候选列表只显示 `gpt-5.6-terra` 和 `gpt-5.6-luna`，没有出现 `Press Enter to use "gpt-5.6"` 或把前缀创建为自定义模型的入口。
+4. 因此搜索追加主逻辑当前是正确的；本轮更需要处理的是“编辑渠道页与 new-api 图二的结构差异”：NexusTok 桌面端仍使用顶部横向分区导航，而 new-api 最新页面使用左侧垂直分区导航，更适合长表单扫描、定位和高级设置展开。
+
+本轮目标是把 new-api 最新编辑渠道页的左侧信息架构转换为 NexusTok 原生能力，同时保留 NexusTok 已有的权限拆分、账号池、Codex OAuth、模型搜索补齐、自定义模型输入、上游模型检测和高级配置能力。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| 编辑渠道抽屉导航 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | `lg` 及以上视口改为 new-api 风格左侧垂直导航；`lg` 以下保留顶部横向导航，避免手机端失去快速分区入口。 |
+| 编辑渠道抽屉布局 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 表单内容区从单列改为桌面两列：左侧 17rem 导航，右侧主表单。 |
+| 模型搜索追加 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/components/multi-select.tsx` | 本轮不改算法，只复验运行态行为，确认当前已正确区分命中数、可新增数和已存在数。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求分析、影响范围、风险评估、方案评审、实施结果和运行态验证。 |
+
+本轮没有修改后端接口、数据库 schema、模型同步任务、供应商元数据、渠道保存 payload、权限 catalog、计费、relay、账号池调度或模型搜索 API。
+
+### 风险评估
+
+- 长表单布局风险：编辑渠道页包含身份、凭证、模型、映射、高级设置、参数覆盖和上游模型检测等大量字段。直接覆盖成 new-api 文件会丢失 NexusTok 独有能力；本轮只移植导航结构，不做整文件替换。
+- 移动端回归风险：new-api 桌面左侧导航在小屏隐藏。若 NexusTok 也完全隐藏，小屏编辑长表单会失去快速跳转能力。本轮在 `lg` 以下保留原顶部横向导航。
+- 滚动定位风险：左侧导航与表单滚动容器必须继续共用现有 `handleEditorNavNavigate` 和 active section 计算。本轮不改锚点 id、scrollIntoView 逻辑或高级设置展开逻辑。
+- 搜索追加误判风险：当前渠道已有 `gpt-5.6-sol` 时，按钮显示 `Add 2 new model(s)` 是正确行为；报告中明确写出数据依据，避免把“命中 3 条”误解为“应新增 3 条”。
+- 热更新验证风险：必须以 `http://192.168.0.202:3003/` 真实页面为准。本轮使用 Chrome headless + CDP 登录 3003 验证，未仅依赖本地构建。
+
+### 方案评审
+
+采用“桌面对齐 new-api 左侧导航 + 小屏保留 NexusTok 横向导航 + 搜索追加复验不改算法”的方案：
+
+1. `ChannelEditorNav` 抽出统一的导航按钮和状态标记渲染逻辑，避免桌面/移动两套导航状态分叉。
+2. `lg:hidden` 分支保留原顶部横向导航，适合小屏横向滚动。
+3. `lg:block` 分支新增左侧垂直 `aside`，显示 provider、状态进度、主分区和高级设置子分区，结构对齐 new-api 最新编辑页。
+4. 表单主体外层改为 `lg:grid-cols-[17rem_minmax(0,1fr)]`，在桌面端形成左侧导航、右侧表单的稳定布局；小屏仍为单列。
+5. 不改 `getModelSearchModelNames`、`buildModelSearchAppendSummary`、`fetchAllModelSearchModelNames` 或 `MultiSelect` 创建策略，避免把已验证正确的搜索补齐路径引入新风险。
+
+### 实施结果
+
+已完成编辑渠道页左侧导航对齐：
+
+- 1440px 桌面视口下，编辑渠道抽屉显示左侧垂直导航：provider 为 `Codex`，状态为 `Enabled · 3/3`，分区为 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`。
+- 桌面端顶部横向导航隐藏，避免与左侧导航重复。
+- 小屏端仍保留顶部横向导航，继续支持移动端快速分区跳转。
+- 现有搜索追加逻辑保持不变：输入 `gpt-5.6` 时显示 `3 matched · 2 new · 1 already selected`，只追加缺失的 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+- 点击追加后表单草稿从 `Selected 3` 变为 `Selected 5`，并同时包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；验证过程中未点击 `Update Channel`，未保存运行态渠道。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，27 个模型搜索与 MultiSelect 用例全部成功。
+2. `cd web/default && bunx prettier --check src/features/channels/components/drawers/channel-mutate-drawer.tsx` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `cd web/default && bun run i18n:sync` 通过，本轮未新增 UI 文案。
+6. `git diff --check` 通过。
+7. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 Google Chrome headless + DevTools Protocol 替代真实浏览器验证，入口仍为 `http://192.168.0.202:3003/`。
+9. 使用账号 `c1cada` 登录 3003 后打开 `/channels`，编辑渠道 `11111`。
+10. 桌面 1440x1000 视口验证：`sideNavVisible=true`、`topNavVisible=false`、抽屉宽度约 1152px，左侧导航文本包含 `Codex`、`Enabled · 3/3`、`Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`。
+11. 同一页面输入 `gpt-5.6` 后，弹层文本为 `Search results`、`3 matched · 2 new · 1 already selected`、`gpt-5.6-terra, gpt-5.6-luna` 和 `Add 2 new model(s)`，没有自定义创建 `gpt-5.6` 的入口。
+12. 点击 `Add 2 new model(s)` 后，表单显示 `Selected 5`，并包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；弹层关闭。
+13. Chrome/CDP 网络记录显示 `/api/channel/models`、`/api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、`/api/channel/1`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=50`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 均返回 200。
+14. Chrome/CDP 记录没有 console error/warning，也没有非取消型网络失败。
+15. 运行态验证截图保存于 `/tmp/nexustok-channel-left-nav-search-add.png`。
