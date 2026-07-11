@@ -27,4 +27,7 @@ var authzPermissionRoutes = []permissionRoute{
 	// 权限策略导出包含完整角色与 Casbin 兼容策略快照，继续保持 RootAuth 保底；
 	// secret_view 作为权限表中的二次边界，便于后续审计和用户级 override 统一分类。
 	{method: http.MethodGet, path: "/policies/export", permission: authz.SystemSettingSecretView, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ExportPermissionPolicies},
+	// 权限策略导入会写入角色、role:* 策略和用户 override，必须继续 RootAuth 保底；
+	// sensitive_write 用作权限表中的写入分类，默认 dry-run 由 service 层兜底。
+	{method: http.MethodPost, path: "/policies/import", permission: authz.SystemSettingSensitiveWrite, before: []gin.HandlerFunc{middleware.RootAuth()}, handler: controller.ImportPermissionPolicies},
 }

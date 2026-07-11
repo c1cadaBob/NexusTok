@@ -31,3 +31,23 @@ func ExportPermissionPolicies(c *gin.Context) {
 	}
 	common.ApiSuccess(c, export)
 }
+
+// ImportPermissionPolicies 校验并可选导入持久化权限策略快照。
+//
+// 导入是高风险写操作：默认只 dry-run；真正写库必须由 Root 显式传入
+// `dry_run:false`，replace 模式还需要确认字符串。service 层负责事务写入、
+// 用户 override 同步和策略快照 reload。
+func ImportPermissionPolicies(c *gin.Context) {
+	var req authz.PersistentPolicyImportRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	result, err := authz.ImportPersistentPolicies(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
