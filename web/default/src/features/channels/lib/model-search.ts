@@ -69,6 +69,12 @@ export type ModelSearchAppendSummary = {
   existingCount: number
 }
 
+export type ModelSearchUnscannedResultRequest = {
+  isResultCurrent: boolean
+  loadedResultCount: number
+  backendResultTotal: number
+}
+
 export type ModelSearchModelNameResult = {
   names: string[]
   unresolvedMatchedCount: number
@@ -271,6 +277,22 @@ export function buildModelSearchAppendSummary(
     addableCount: addableMatches.length,
     existingCount: uniqueMatches.length - addableMatches.length,
   }
+}
+
+// 计算搜索接口还没有被当前下拉候选覆盖的分页结果数量。
+// 编辑页会先加载第一页用于即时候选，再在“添加搜索结果”时扫描全部分页；
+// 这里把按钮提示统一到后端 total，避免第一页只有一个命中时让管理员误以为只会添加一个模型。
+export function getModelSearchUnscannedResultCount({
+  isResultCurrent,
+  loadedResultCount,
+  backendResultTotal,
+}: ModelSearchUnscannedResultRequest): number {
+  if (!isResultCurrent) return 0
+
+  return Math.max(
+    0,
+    Math.max(0, backendResultTotal) - Math.max(0, loadedResultCount)
+  )
 }
 
 // 搜索追加会异步扫描所有分页结果。请求返回时必须确认抽屉仍打开、

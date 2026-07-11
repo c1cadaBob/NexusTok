@@ -25,6 +25,7 @@ import {
   getMissingModelSearchMatches,
   getModelSearchModelNameResult,
   getModelSearchModelNames,
+  getModelSearchUnscannedResultCount,
   getModelSearchVendorForChannelType,
   isModelSearchAppendContextCurrent,
   mergeModelNames,
@@ -167,11 +168,7 @@ describe('渠道模型搜索候选提取', () => {
             model_name: 'gpt-5.6',
             name_rule: 1,
             matched_count: 3,
-            matched_models: [
-              'gpt-5.6-terra',
-              'gpt-5.6-luna',
-              'gpt-5.6-sol',
-            ],
+            matched_models: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
           },
         ],
         'gpt-5.6'
@@ -291,6 +288,38 @@ describe('渠道模型搜索批量追加计划', () => {
         addableCount: 2,
         existingCount: 1,
       }
+    )
+  })
+})
+
+describe('渠道模型搜索分页提示', () => {
+  test('按后端 total 计算尚未扫描的搜索结果', () => {
+    assert.equal(
+      getModelSearchUnscannedResultCount({
+        isResultCurrent: true,
+        loadedResultCount: 1,
+        backendResultTotal: 3,
+      }),
+      2
+    )
+  })
+
+  test('搜索结果过期或 total 小于当前页时不提示未扫描项', () => {
+    assert.equal(
+      getModelSearchUnscannedResultCount({
+        isResultCurrent: false,
+        loadedResultCount: 1,
+        backendResultTotal: 3,
+      }),
+      0
+    )
+    assert.equal(
+      getModelSearchUnscannedResultCount({
+        isResultCurrent: true,
+        loadedResultCount: 5,
+        backendResultTotal: 3,
+      }),
+      0
     )
   })
 })

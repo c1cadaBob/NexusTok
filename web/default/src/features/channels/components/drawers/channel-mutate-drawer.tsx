@@ -74,6 +74,12 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -158,9 +164,11 @@ import {
   dedupeModelNames,
   getModelSearchVendorForChannelType,
   getModelSearchModelNames,
+  getModelSearchUnscannedResultCount,
   getMissingModelSearchMatches,
   isModelSearchAppendContextCurrent,
   mergeModelNames,
+  parseModelDraftList,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
@@ -769,6 +777,7 @@ export function ChannelMutateDrawer({
   >()
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
   const [modelSelectOpen, setModelSelectOpen] = useState(false)
+  const [customModelDraft, setCustomModelDraft] = useState('')
   const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
     useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
@@ -897,9 +906,11 @@ export function ChannelMutateDrawer({
       setChannelKey(null)
       setIsChannelKeyLoading(false)
       clearModelSearch()
+      setCustomModelDraft('')
       setModelSelectOpen(false)
     } else if (channelId) {
       setChannelKey(null)
+      setCustomModelDraft('')
     }
   }, [open, channelId, clearModelSearch])
 
@@ -1378,10 +1389,11 @@ export function ChannelMutateDrawer({
   const modelSearchBackendResultTotal = isModelSearchResultCurrent
     ? (modelSearchData?.data?.total ?? loadedModelSearchResultCount)
     : loadedModelSearchResultCount
-  const unscannedModelSearchResultCount = Math.max(
-    0,
-    modelSearchBackendResultTotal - loadedModelSearchResultCount
-  )
+  const unscannedModelSearchResultCount = getModelSearchUnscannedResultCount({
+    isResultCurrent: isModelSearchResultCurrent,
+    loadedResultCount: loadedModelSearchResultCount,
+    backendResultTotal: modelSearchBackendResultTotal,
+  })
   const canRunModelSearchAppend =
     modelSearchAppendSummary.addableCount > 0 ||
     unscannedModelSearchResultCount > 0
@@ -1795,10 +1807,6 @@ export function ChannelMutateDrawer({
       toast.info(t('No new search results to add'))
       return
     }
-    if (debouncedModelSearchKeyword.trim() !== keyword) {
-      toast.info(t('Searching model metadata...'))
-      return
-    }
 
     const requestSeq = modelSearchAppendRequestSeqRef.current + 1
     modelSearchAppendRequestSeqRef.current = requestSeq
@@ -1853,7 +1861,6 @@ export function ChannelMutateDrawer({
     canEditBasicFields,
     channelId,
     clearModelSearch,
-    debouncedModelSearchKeyword,
     form,
     noPermissionMessage,
     t,
@@ -1910,6 +1917,33 @@ export function ChannelMutateDrawer({
     },
     [canEditBasicFields, noPermissionMessage, updateModels, t]
   )
+
+  const handleAddCustomModels = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
+    const customModels = parseModelDraftList(customModelDraft)
+    if (customModels.length === 0) {
+      toast.info(t('No models to add'))
+      return
+    }
+
+    const count = updateModels(customModels, true)
+    setCustomModelDraft('')
+    if (count === 0) {
+      toast.info(t('No new models to add'))
+      return
+    }
+    toast.success(t('Added {{count}} custom model(s)', { count }))
+  }, [
+    canEditBasicFields,
+    customModelDraft,
+    noPermissionMessage,
+    t,
+    updateModels,
+  ])
 
   // MultiSelect 组件会回传数组，保存前仍要转成逗号分隔字符串。
   const handleModelsChange = useCallback(
@@ -3885,6 +3919,60 @@ export function ChannelMutateDrawer({
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
                                     onSearchSubmit={handleAddModelSearchMatches}
+                                    contentHeader={
+                                      shouldShowModelSearchAppend ? (
+                                        <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                          <div className='flex flex-col gap-1'>
+                                            <span className='text-sm font-medium'>
+                                              {t('Search results')}
+                                            </span>
+                                            <span className='text-muted-foreground text-xs'>
+                                              {t(
+                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                {
+                                                  matched:
+                                                    modelSearchAppendSummary.matchedCount,
+                                                  addable:
+                                                    modelSearchAppendSummary.addableCount,
+                                                  existing:
+                                                    modelSearchAppendSummary.existingCount,
+                                                }
+                                              )}
+                                            </span>
+                                          </div>
+                                          <Button
+                                            type='button'
+                                            variant='outline'
+                                            size='sm'
+                                            onClick={
+                                              handleAddModelSearchMatches
+                                            }
+                                            disabled={
+                                              !canEditBasicFields ||
+                                              isAddingModelSearchMatches ||
+                                              isSearchingModelMeta ||
+                                              isModelSearchDebouncing ||
+                                              !canRunModelSearchAppend
+                                            }
+                                            title={
+                                              canEditBasicFields
+                                                ? undefined
+                                                : noPermissionMessage
+                                            }
+                                          >
+                                            {isAddingModelSearchMatches ? (
+                                              <Loader2
+                                                data-icon='inline-start'
+                                                className='animate-spin'
+                                              />
+                                            ) : (
+                                              <Plus data-icon='inline-start' />
+                                            )}
+                                            {modelSearchAddButtonLabel}
+                                          </Button>
+                                        </div>
+                                      ) : undefined
+                                    }
                                     submitSearchOnEnterWithMatches
                                     isLoading={
                                       isSearchingModelMeta ||
@@ -3904,51 +3992,6 @@ export function ChannelMutateDrawer({
                                             </span>
                                           ) : shouldShowModelSearchAppend ? (
                                             <>
-                                              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                                <span className='text-muted-foreground text-sm'>
-                                                  {t(
-                                                    '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                    {
-                                                      matched:
-                                                        modelSearchAppendSummary.matchedCount,
-                                                      addable:
-                                                        modelSearchAppendSummary.addableCount,
-                                                      existing:
-                                                        modelSearchAppendSummary.existingCount,
-                                                    }
-                                                  )}
-                                                </span>
-                                                <Button
-                                                  type='button'
-                                                  variant='outline'
-                                                  size='sm'
-                                                  onClick={
-                                                    handleAddModelSearchMatches
-                                                  }
-                                                  disabled={
-                                                    !canEditBasicFields ||
-                                                    isAddingModelSearchMatches ||
-                                                    isSearchingModelMeta ||
-                                                    isModelSearchDebouncing ||
-                                                    !canRunModelSearchAppend
-                                                  }
-                                                  title={
-                                                    canEditBasicFields
-                                                      ? undefined
-                                                      : noPermissionMessage
-                                                  }
-                                                >
-                                                  {isAddingModelSearchMatches ? (
-                                                    <Loader2
-                                                      data-icon='inline-start'
-                                                      className='animate-spin'
-                                                    />
-                                                  ) : (
-                                                    <Plus data-icon='inline-start' />
-                                                  )}
-                                                  {modelSearchAddButtonLabel}
-                                                </Button>
-                                              </div>
                                               {unscannedModelSearchResultCount >
                                                 0 && (
                                                 <span className='text-muted-foreground text-xs'>
@@ -4001,6 +4044,46 @@ export function ChannelMutateDrawer({
                                     }
                                   />
                                 </FormControl>
+                                <div className='flex flex-col gap-2'>
+                                  <FormLabel htmlFor='channel-custom-models'>
+                                    {t('Custom model (comma-separated)')}
+                                  </FormLabel>
+                                  <InputGroup>
+                                    <InputGroupInput
+                                      id='channel-custom-models'
+                                      value={customModelDraft}
+                                      onChange={(event) =>
+                                        setCustomModelDraft(event.target.value)
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key !== 'Enter') return
+                                        event.preventDefault()
+                                        handleAddCustomModels()
+                                      }}
+                                      disabled={!canEditBasicFields}
+                                      placeholder={t(
+                                        'Add custom model(s), comma-separated'
+                                      )}
+                                    />
+                                    <InputGroupAddon align='inline-end'>
+                                      <InputGroupButton
+                                        onClick={handleAddCustomModels}
+                                        disabled={
+                                          !canEditBasicFields ||
+                                          customModelDraft.trim().length === 0
+                                        }
+                                        title={
+                                          canEditBasicFields
+                                            ? undefined
+                                            : noPermissionMessage
+                                        }
+                                      >
+                                        <Plus data-icon='inline-start' />
+                                        {t('Add Models')}
+                                      </InputGroupButton>
+                                    </InputGroupAddon>
+                                  </InputGroup>
+                                </div>
                                 {modelMappingGuardrail.exposedTargetModels
                                   .length > 0 && (
                                   <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>

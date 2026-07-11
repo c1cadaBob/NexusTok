@@ -11091,3 +11091,63 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 15. Chrome Headless 验证期间未捕获业务保存写请求，特别是没有 `PUT /api/channel`；也未捕获 `Runtime.exceptionThrown`、`Network.loadingFailed` 或 error/warning 级别日志。
 16. 验证后通过真实接口重新查询渠道列表，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态配置。
 17. 当前环境没有暴露浏览器 MCP 工具，本轮继续使用 Chrome Headless + DevTools Protocol、真实 HTTP API 和 Docker 热更新日志作为 MCP 替代验证方式。
+
+## 本轮补充评审：渠道模型搜索追加入口前置
+
+### 需求分析
+
+用户继续确认 `gpt-5.6` 应有三种 OpenAI 模型，并反馈“搜索添加时不正确”。结合 3003 真实接口复查，`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 已返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，而渠道 `11111` 当前持久化模型只有 `gpt-5.6-sol`。因此本轮问题不是后端同步缺失，而是编辑渠道页面让管理员“发现并一次性追加全部搜索结果”的交互仍不够直观：批量追加按钮藏在下拉 footer，管理员容易只点击单个候选或误以为搜索只会处理当前可见的一项。
+
+对照 `/opt/project/new-api-main` 最新编辑渠道页面后，new-api 的优势在于模型配置动作更贴近表单主流程：模型选择、自定义模型录入、快捷填充和映射配置都在同一模型区内直接可见。NexusTok 已经具备供应商收窄、全分页扫描、权限锁和模型映射风险提示，本轮应把这些原生能力用更清晰的入口呈现出来，而不是牺牲已有的搜索补齐能力。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 将模型搜索追加摘要和按钮放入 MultiSelect 下拉 `contentHeader`；恢复独立自定义模型输入组；搜索追加不再被 debounce 关键词差异阻塞。 |
+| 模型搜索工具函数 | `web/default/src/features/channels/lib/model-search.ts` | 新增未扫描分页数量纯函数，统一按钮提示和实际扫描语义。 |
+| 模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 覆盖后端 `total` 大于当前已加载结果时的未扫描数量，以及过期结果/异常 total 的边界。 |
+| 后端/API/数据库 | 无 | 不修改模型同步、模型搜索接口、渠道保存 payload、渠道能力表、账号池、权限矩阵、数据库结构或 relay。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和真实页面验证结果。 |
+
+### 风险评估
+
+1. 误保存风险：页面验证只允许点击搜索追加按钮验证表单草稿，不点击 `Update Channel`；验证后必须重新查 `/api/channel/` 确认运行态模型未变化。
+2. 旧搜索污染风险：批量追加会异步扫描全部分页，仍必须保留 request 序号、渠道 ID、关键词和供应商上下文校验，避免旧请求回写当前表单。
+3. debounce 竞态风险：用户快速输入后按 Enter 时，不能因为 debounced keyword 尚未刷新而直接提示 `Searching model metadata...` 并丢弃追加动作；追加逻辑应以当前输入框关键词为准重新扫描。
+4. 重复模型风险：`gpt-5.6-sol` 已存在于渠道时，追加 Terra/Luna 不能重复写入 Sol；仍使用大小写不敏感去重和 `updateModels(..., true)` 合并草稿。
+5. UI 回归风险：自定义模型输入必须复用 `InputGroup`，按钮禁用态和无权限提示仍跟随 `canEditBasicFields`，避免绕过渠道编辑权限。
+
+### 方案评审
+
+采用“把 NexusTok 原生搜索补齐能力前置，而不是复制 new-api 旧表单”的方案：
+
+1. MultiSelect 下拉顶部用 `contentHeader` 固定展示 `Search results`、`matched/new/already selected` 摘要和批量追加按钮，搜索命中后管理员第一眼就能看到一次性追加入口。
+2. 下拉 footer 只保留未扫描分页提示、待追加预览和空结果提示，减少顶部按钮和底部按钮重复造成的理解成本。
+3. `handleAddModelSearchMatches()` 移除对 debounced keyword 的硬阻塞，点击按钮或按 Enter 时都用当前输入框关键词执行全分页扫描。
+4. 独立增加 `Custom model (comma-separated)` 输入组，支持英文逗号、中文逗号和换行批量录入，补齐 new-api 页面里“自定义模型名称 + 填入”的直接录入流。
+5. 未扫描分页数量抽成纯函数并加测试，避免 UI 文案和最终追加路径对后端 `total` 的解释分叉。
+
+### 实施结果
+
+- 搜索 `gpt-5.6` 时，下拉顶部直接显示 `Search results`、`3 matched · 2 new · 1 already selected` 和 `Add 2 new model(s)`。
+- 点击批量追加后，未保存草稿从 `Selected 3` 变为 `Selected 5`，包含 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`；已有的 `gpt-5.6-sol` 不会重复写入。
+- 独立自定义模型输入支持批量粘贴模型名并通过 `Add Models` 合并到当前草稿，0 新增时会提示 `No new models to add`。
+- 搜索追加按钮、Enter 提交和自定义模型输入都继续受 `canEditBasicFields` 控制；本轮没有修改任何后端保存、同步或 relay 逻辑。
+
+### 验证记录
+
+1. `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 返回 `total: 3`，items 为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，确认供应商确为 OpenAI 且模型库三项完整。
+2. `GET /api/channel/?p=0&page_size=5` 确认渠道 `11111` 初始持久化模型为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`。
+3. 访问 `http://192.168.0.202:3003/` 返回 `HTTP/1.1 200 OK`，`Cache-Version: b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14`。
+4. Chrome Headless + DevTools Protocol 登录账号 `c1cada`，打开 `http://192.168.0.202:3003/channels`，通过行菜单进入渠道 `11111` 的 `Edit Channel` 抽屉。
+5. 真实页面显示新增的 `Custom model (comma-separated)` 输入组和 `Add Models` 按钮，证明热更新页面已生效。
+6. 在模型搜索输入 `gpt-5.6` 后，下拉顶部显示 `Search results`、`3 matched · 2 new · 1 already selected` 和 `Add 2 new model(s)`；候选列表完整展示 Terra/Luna/Sol 三项。
+7. 点击 `Add 2 new model(s)` 后页面 toast 显示 `Added 2 model(s) from search`，表单草稿变为 `Selected 5`，包含 Terra/Luna/Sol。
+8. 验证过程中未点击 `Update Channel`；再次调用 `GET /api/channel/?p=0&page_size=5`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`。
+9. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，45 个用例成功。
+10. `cd web/default && bun run i18n:sync` 通过。
+11. `cd web/default && bun run typecheck` 通过。
+12. `cd web/default && bun run build` 通过。
+13. 定向 ESLint 对本轮渠道文件通过，`src/components/multi-select.tsx` 仅保留 5 个既有 `react-refresh/only-export-components` warning。
+14. 当前环境没有暴露浏览器 MCP 工具，本轮按项目规则记录限制，并使用 Chrome Headless + DevTools Protocol、真实 HTTP API 作为替代验证方式。
