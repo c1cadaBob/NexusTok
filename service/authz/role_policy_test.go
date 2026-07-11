@@ -43,6 +43,8 @@ func TestPersistentRolesReturnsStoredRolesAndGrants(t *testing.T) {
 	assert.True(t, admin.Grants[ResourceChannel][ActionWrite])
 	assert.False(t, admin.Grants[ResourceChannel][ActionSensitiveWrite])
 	assert.Greater(t, admin.PolicyCount, 0)
+	assert.NotZero(t, admin.CreatedAt)
+	assert.NotZero(t, admin.UpdatedAt)
 
 	auditor := requirePersistentRole(t, roles, "auditor")
 	assert.False(t, auditor.BuiltIn)
@@ -51,6 +53,8 @@ func TestPersistentRolesReturnsStoredRolesAndGrants(t *testing.T) {
 	assert.True(t, auditor.Grants[ResourceUsageLog][ActionRead])
 	assert.False(t, auditor.Grants[ResourceChannel][ActionRead])
 	assert.Equal(t, 1, auditor.PolicyCount)
+	assert.NotZero(t, auditor.CreatedAt)
+	assert.NotZero(t, auditor.UpdatedAt)
 }
 
 func TestCreateRoleTemplateCreatesCustomTemplate(t *testing.T) {
@@ -72,6 +76,8 @@ func TestCreateRoleTemplateCreatesCustomTemplate(t *testing.T) {
 	assert.Zero(t, role.PolicyCount)
 	assert.False(t, role.Grants[ResourceChannel][ActionRead])
 	assert.GreaterOrEqual(t, role.Sort, 10)
+	assert.NotZero(t, role.CreatedAt)
+	assert.NotZero(t, role.UpdatedAt)
 
 	roles, err := PersistentRoles()
 	require.NoError(t, err)

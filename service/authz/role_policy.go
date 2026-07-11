@@ -39,6 +39,8 @@ type RolePolicyDescriptor struct {
 	BuiltIn        bool           `json:"built_in"`
 	Enabled        bool           `json:"enabled"`
 	Sort           int            `json:"sort"`
+	CreatedAt      int64          `json:"created_at"`
+	UpdatedAt      int64          `json:"updated_at"`
 	Superuser      bool           `json:"superuser"`
 	RuntimeManaged bool           `json:"runtime_managed"`
 	PolicyCount    int            `json:"policy_count"`
@@ -396,6 +398,8 @@ func fallbackBuiltInRolePolicies() []RolePolicyDescriptor {
 			BuiltIn:        role.builtIn,
 			Enabled:        true,
 			Sort:           role.sort,
+			CreatedAt:      0,
+			UpdatedAt:      0,
 			Superuser:      role.superuser,
 			RuntimeManaged: true,
 			PolicyCount:    len(permissionsFromGrants(roleGrants(role))),
@@ -415,6 +419,8 @@ func describePersistentRole(db *gorm.DB, role model.AuthzRole) (RolePolicyDescri
 			BuiltIn:        role.BuiltIn,
 			Enabled:        role.Enabled,
 			Sort:           role.Sort,
+			CreatedAt:      role.CreatedAt,
+			UpdatedAt:      role.UpdatedAt,
 			Superuser:      true,
 			RuntimeManaged: true,
 			PolicyCount:    0,
@@ -440,6 +446,8 @@ func describePersistentRole(db *gorm.DB, role model.AuthzRole) (RolePolicyDescri
 		BuiltIn:        role.BuiltIn,
 		Enabled:        role.Enabled,
 		Sort:           role.Sort,
+		CreatedAt:      role.CreatedAt,
+		UpdatedAt:      role.UpdatedAt,
 		Superuser:      false,
 		RuntimeManaged: runtimeManaged,
 		PolicyCount:    count,

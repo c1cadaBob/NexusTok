@@ -433,6 +433,8 @@ export type AuthzRolePolicy = {
   built_in: boolean
   enabled: boolean
   sort: number
+  created_at: number
+  updated_at: number
   superuser: boolean
   runtime_managed: boolean
   policy_count: number

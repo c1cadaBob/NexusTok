@@ -165,6 +165,14 @@ function getRoleInitialGrants(
   return normalizeRolePolicyGrants(role?.grants, catalog)
 }
 
+function formatRoleTimestamp(timestamp: number | undefined) {
+  if (!timestamp || timestamp <= 0) return '-'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp * 1000))
+}
+
 export function RolePolicySection() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -731,6 +739,7 @@ export function RolePolicySection() {
                   enabledActions={enabledActions}
                   totalActions={totalActions}
                   policyCount={selectedRole.policy_count}
+                  updatedAt={selectedRole.updated_at}
                   diffChanged={diff.changed}
                   diffEnabled={diff.enabled}
                   diffDisabled={diff.disabled}
@@ -1088,6 +1097,14 @@ function RoleSummary({
           total: totalActions,
         })}
       </div>
+      <div className='text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs'>
+        <span>
+          {t('Created')}: {formatRoleTimestamp(role.created_at)}
+        </span>
+        <span>
+          {t('Updated')}: {formatRoleTimestamp(role.updated_at)}
+        </span>
+      </div>
     </div>
   )
 }
@@ -1096,6 +1113,7 @@ function RolePolicyStats({
   enabledActions,
   totalActions,
   policyCount,
+  updatedAt,
   diffChanged,
   diffEnabled,
   diffDisabled,
@@ -1103,6 +1121,7 @@ function RolePolicyStats({
   enabledActions: number
   totalActions: number
   policyCount: number
+  updatedAt: number
   diffChanged: number
   diffEnabled: number
   diffDisabled: number
@@ -1115,6 +1134,10 @@ function RolePolicyStats({
         value={`${enabledActions}/${totalActions}`}
       />
       <PolicyCount label={t('Current policies')} value={policyCount} />
+      <PolicyCount
+        label={t('Last updated')}
+        value={formatRoleTimestamp(updatedAt)}
+      />
       <PolicyCount label={t('Changed')} value={diffChanged} />
       <PolicyCount
         label={t('Enable / disable')}
