@@ -38,7 +38,7 @@ func TestSubscriptionPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertSubscriptionPermissionRoute(t, http.MethodGet, "/plans", authz.SubscriptionRead)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/plans", authz.SubscriptionWrite)
 	assertSubscriptionPermissionRoute(t, http.MethodPut, "/plans/:id", authz.SubscriptionWrite)
-	assertSubscriptionPermissionRoute(t, http.MethodPatch, "/plans/:id", authz.SubscriptionWrite)
+	assertSubscriptionPermissionRoute(t, http.MethodPatch, "/plans/:id", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/plans/:id/subscriptions/reset", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodPost, "/bind", authz.SubscriptionOperate)
 	assertSubscriptionPermissionRoute(t, http.MethodGet, "/users/:id/subscriptions", authz.SubscriptionRead)

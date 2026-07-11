@@ -42,7 +42,7 @@ export function ToggleStatusDialog() {
     : t('After enabling, the plan will be shown to users. Continue?')
 
   const handleConfirm = async () => {
-    if (!permissions.canWrite) {
+    if (!permissions.canOperate) {
       toast.error(noPermissionMessage)
       return
     }
@@ -70,7 +70,7 @@ export function ToggleStatusDialog() {
       title={title}
       desc={description}
       handleConfirm={handleConfirm}
-      disabled={!permissions.canWrite}
+      disabled={!permissions.canOperate}
       isLoading={loading}
       confirmText={isEnabled ? t('Disable') : t('Enable')}
       destructive={isEnabled}

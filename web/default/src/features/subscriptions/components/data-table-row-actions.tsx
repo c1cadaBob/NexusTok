@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { type Row } from '@tanstack/react-table'
-import { MoreHorizontal, Pencil, Power, PowerOff, RotateCcw } from 'lucide-react'
+import {
+  MoreHorizontal,
+  Pencil,
+  Power,
+  PowerOff,
+  RotateCcw,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -90,10 +96,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             {t('Reset quota')}
           </DropdownMenuItem>
           <DropdownMenuItem
-            disabled={!canWritePlan}
-            title={permissions.canWrite ? undefined : noPermissionMessage}
+            disabled={!canOperatePlan}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
             onClick={() => {
-              if (!guardWrite() || !complianceConfirmed) return
+              if (!guardOperate() || !complianceConfirmed) return
               setCurrentRow(row.original)
               setOpen('toggle-status')
             }}

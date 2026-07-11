@@ -27,7 +27,7 @@ var subscriptionPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/plans", permission: authz.SubscriptionRead, handler: controller.AdminListSubscriptionPlans},
 	{method: http.MethodPost, path: "/plans", permission: authz.SubscriptionWrite, handler: controller.AdminCreateSubscriptionPlan},
 	{method: http.MethodPut, path: "/plans/:id", permission: authz.SubscriptionWrite, handler: controller.AdminUpdateSubscriptionPlan},
-	{method: http.MethodPatch, path: "/plans/:id", permission: authz.SubscriptionWrite, handler: controller.AdminUpdateSubscriptionPlanStatus},
+	{method: http.MethodPatch, path: "/plans/:id", permission: authz.SubscriptionOperate, handler: controller.AdminUpdateSubscriptionPlanStatus},
 	{method: http.MethodPost, path: "/plans/:id/subscriptions/reset", permission: authz.SubscriptionOperate, handler: controller.AdminResetPlanSubscriptions},
 
 	// 用户订阅管理。删除会直接移除权益记录，按敏感写处理；失效与创建仍属于运营动作。

@@ -1934,13 +1934,13 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 
 ### 需求分析
 
-订阅管理后端 `/api/subscription/admin` 已按 `subscription.read/write/operate/sensitive_write` 接入权限表：套餐列表走 read，套餐创建、编辑和启停走 write，用户订阅创建/失效走 operate，用户订阅删除走 sensitive_write。上一轮已经为用户行内订阅弹窗补齐跨资源 `subscription.*` 消费；订阅管理页面本身仍只在路由入口校验 `subscription.read`，`Create Plan`、套餐行 `Edit`、套餐 `Enable/Disable`、套餐抽屉保存和启停确认没有按 `subscription.write` 做按钮禁用与提交前保护。
+订阅管理后端 `/api/subscription/admin` 已按 `subscription.read/write/operate/sensitive_write` 接入权限表：套餐列表走 read，套餐创建/编辑走 write，套餐启停已在后续切片收窄为 operate，用户订阅创建/失效走 operate，用户订阅删除走 sensitive_write。上一轮已经为用户行内订阅弹窗补齐跨资源 `subscription.*` 消费；订阅管理页面本身仍只在路由入口校验 `subscription.read`，`Create Plan`、套餐行 `Edit`、套餐抽屉保存需要按 `subscription.write` 做按钮禁用与提交前保护，套餐 `Enable/Disable` 和启停确认需要按 `subscription.operate` 做按钮禁用与提交前保护。
 
 本轮目标：
 
-1. 复用 `useSubscriptionPermissions`，让订阅套餐页主按钮、行菜单、创建/编辑抽屉和启停确认弹窗消费 `subscription.write`。
+1. 复用 `useSubscriptionPermissions`，让订阅套餐页主按钮、行菜单、创建/编辑抽屉和启停确认弹窗按后端动作消费 `subscription.write`/`subscription.operate`。
 2. 保留现有支付合规确认逻辑，不把 `subscription.write` 与合规状态混为一个条件；按钮禁用原因仍优先体现权限不足。
-3. 不修改订阅后端路由、套餐 payload、支付合规系统设置接口、用户购买流程和用户订阅弹窗逻辑。
+3. 该切片自身不修改订阅后端路由、套餐 payload、支付合规系统设置接口、用户购买流程和用户订阅弹窗逻辑；启停路由权限已在后续“订阅套餐启停操作权限原生化”切片同步调整。
 4. 不新增可见文案，继续复用既有 `You don't have necessary permission`。
 
 ### 影响范围
@@ -1948,21 +1948,21 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 范围 | 文件 | 影响 |
 |------|------|------|
 | 订阅主按钮 | `web/default/src/features/subscriptions/components/subscriptions-primary-buttons.tsx` | `Create Plan` 需要 `subscription.write`，并保留支付合规确认约束。 |
-| 订阅行操作 | `data-table-row-actions.tsx` | `Edit` 与 `Enable/Disable` 需要 `subscription.write`，查看或其他只读行为不变。 |
+| 订阅行操作 | `data-table-row-actions.tsx` | `Edit` 需要 `subscription.write`；`Enable/Disable` 已在后续切片收窄为 `subscription.operate`，查看或其他只读行为不变。 |
 | 套餐抽屉 | `subscriptions-mutate-drawer.tsx` | 创建/编辑提交前检查 `subscription.write`，保存按钮按权限禁用。 |
-| 启停确认弹窗 | `dialogs/toggle-status-dialog.tsx` | 确认启停前检查 `subscription.write`，确认按钮按权限禁用。 |
+| 启停确认弹窗 | `dialogs/toggle-status-dialog.tsx` | 确认启停前检查 `subscription.operate`，确认按钮按操作权限禁用。 |
 | 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案和验收标准，并补充能力落地清单。 |
 
 ### 风险评估
 
 1. 本轮只改变前端按钮状态和提交前保护，不降低后端 `RequirePermission` enforcement；后端仍是最终授权边界。
 2. 订阅套餐创建/编辑同时受支付合规确认约束和 `subscription.write` 约束；本轮仅增加权限约束，不改变合规确认流程。
-3. 默认 Admin 拥有 `subscription.write`，因此现有管理员工作流保持可用；未来用户级 override 可以单独关闭套餐写操作。
+3. 默认 Admin 拥有 `subscription.write` 和 `subscription.operate`，因此现有管理员工作流保持可用；用户级 override 可以分别关闭套餐编辑和套餐启停操作。
 4. 用户订阅创建/失效/删除已在上一轮用户切片接入 `subscription.operate/sensitive_write`，本轮避免重复修改以降低冲突面。
 
 ### 方案评审
 
-采用“复用订阅权限 hook + 按后端套餐路由动作映射”的方案。订阅套餐创建、编辑和启停后端都归入 `subscription.write`，前端也保持同一映射；如果未来要把启停拆成 `operate`，应先调整后端路由权限表，再改前端按钮映射，避免前端放行而服务端 403。
+采用“复用订阅权限 hook + 按后端套餐路由动作映射”的方案。订阅套餐创建、编辑归入 `subscription.write`；套餐启停已在后续切片随路由权限表一起调整为 `subscription.operate`，避免前端放行而服务端 403。
 
 动作映射：
 
@@ -1971,7 +1971,7 @@ NexusTok 已经把 `/api/user` 管理员子路由接入 `user.read/operate/write
 | 查看订阅套餐列表 | `subscription.read` | `GET /api/subscription/admin/plans` |
 | 创建套餐 | `subscription.write` | `POST /api/subscription/admin/plans` |
 | 编辑套餐 | `subscription.write` | `PUT /api/subscription/admin/plans/:id` |
-| 启用/禁用套餐 | `subscription.write` | `PATCH /api/subscription/admin/plans/:id` |
+| 启用/禁用套餐 | `subscription.operate` | `PATCH /api/subscription/admin/plans/:id` |
 
 验收方式：
 
@@ -6648,6 +6648,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | 订阅套餐启停操作权限原生化 | `router/subscription-router.go`、`router/subscription_router_test.go`、`web/default/src/features/subscriptions/components/data-table-row-actions.tsx`、`web/default/src/features/subscriptions/components/dialogs/toggle-status-dialog.tsx` | 对齐 new-api-main 独立 `PATCH /api/subscription/admin/plans/:id` 状态接口的操作语义，并发展为 NexusTok 原生 Authz 边界：套餐启停从 `subscription.write` 收窄到 `subscription.operate`，编辑套餐内容仍保留 `subscription.write`，前端行操作和确认弹窗同步消费 operate 权限。 |
 | 2026-07-11 | 渠道状态专用 API 与编辑解耦 | `controller/channel.go`、`controller/channel_authz.go`、`router/channel-router.go`、`web/default/src/features/channels/api.ts`、`web/default/src/features/channels/lib/channel-actions.ts` | 原生化 new-api-main 的渠道状态操作边界：新增 `POST /api/channel/:id/status` 与 `/api/channel/status/batch`，通用 `PUT /api/channel/` 拒绝 `status` 字段，前端单个/批量启停改走 `channel.operate` 专用接口；只允许手动启用/禁用，不允许伪造自动禁用状态。 |
 | 2026-07-11 | Authz 角色策略审计摘要增强 | `controller/authz.go`、`controller/audit.go`、`middleware/audit.go`、`controller/authz_audit_test.go`、`middleware/audit_test.go` | 角色模板创建/更新/删除、角色策略 dry-run/apply 和策略导入成功后写入 `authz.*` 结构化管理审计摘要；失败路径通过中间件稳定 action 兜底，审计只记录角色 key、策略计数、dry-run/applied/reloaded 等非敏感摘要，不写完整 grants 矩阵。 |
 | 2026-07-11 | Authz 默认前端角色策略编辑 UI | `web/default/src/features/system-settings/security/role-policy-section.tsx`、`role-policy-utils.ts`、`web/default/src/features/system-settings/api.ts`、`web/default/src/i18n/locales/*.json` | 在系统设置安全页新增 `role-policies` 分区，Root 可查看角色模板、编辑非 superuser 角色权限矩阵、先 dry-run 预览再二次确认保存；矩阵以后端 catalog 补齐完整 grants，动态 badge 和页面文案补齐六语。 |
@@ -10311,3 +10312,62 @@ NexusTok 当前已经有 `model.UpdateChannelStatus()`，并且该函数会同�
 8. 同一运行态调用 `PUT /api/channel/` 且 payload 为 `{"id":1,"status":1}` 返回 `success=false,message="无效的参数"`；调用 `POST /api/channel/1/status` 且 payload 为 `{"status":3}` 同样返回参数错误，确认通用编辑和自动禁用伪造均被拒绝。
 9. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 进行真实页面验证：通过登录表单进入 `http://192.168.0.202:3003/channels`，点击渠道 `11111` 行内“禁用”按钮，网络捕获到 `POST /api/channel/1/status`，payload 为 `{"status":2}`，没有出现旧的 `PUT /api/channel/` 状态更新请求。
 10. 页面验证后立即调用 `POST /api/channel/1/status` 恢复原始 `status=1`；随后通过 `GET /api/channel/1` 和刷新 `/channels` 页面确认渠道 `11111` 最终仍为 `已启用`，没有留下错误启停状态。
+
+## 本轮实施评审：订阅套餐启停操作权限原生化
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的订阅套餐管理实现后确认，new-api-main 已将套餐启停拆成独立 `PATCH /api/subscription/admin/plans/:id` 状态接口，请求体只包含 `enabled`。NexusTok 当前后端已经有同形接口，前端也已经通过 `patchPlanStatus()` 调用该接口；缺口不在接口路径，而在 NexusTok 原生 Authz 语义：当前路由权限和默认前端都把启停归到 `subscription.write`，和编辑套餐名称、价格、额度、有效期、支付产品 ID 等配置字段混在一起。
+
+套餐启停属于运行期运营动作：它只控制套餐是否对用户展示，不修改套餐价格、权益和第三方支付绑定。上一轮已经把渠道启停从通用编辑接口中拆出并归到 `channel.operate`，本轮沿用同一治理原则，将套餐启停发展为 `subscription.operate` 能力，让“编辑套餐内容”和“运营启停套餐”在权限模型上可独立授权。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 订阅管理路由权限表 | `router/subscription-router.go` | `PATCH /api/subscription/admin/plans/:id` 的权限从 `authz.SubscriptionWrite` 调整为 `authz.SubscriptionOperate`。 |
+| 路由回归测试 | `router/subscription_router_test.go` | 更新套餐启停路由的权限断言，确保后续不会误回退到 write。 |
+| 订阅套餐行操作 | `web/default/src/features/subscriptions/components/data-table-row-actions.tsx` | 启停菜单项从 `canWritePlan` 改为 `canOperatePlan`，点击守卫从 `guardWrite()` 改为 `guardOperate()`。 |
+| 启停确认弹窗 | `web/default/src/features/subscriptions/components/dialogs/toggle-status-dialog.tsx` | 确认前和确认按钮禁用态改用 `permissions.canOperate`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果，并更新实施索引。 |
+
+本轮不修改数据库 schema、套餐表结构、套餐创建/编辑 payload、订阅购买流程、支付回调、余额支付、钱包溢出、订阅到期分组降级、用户订阅重置或用户订阅失效逻辑。
+
+### 风险评估
+
+1. 权限收紧风险：只拥有 `subscription.write` 但没有 `subscription.operate` 的管理员将不能启停套餐。这是本轮的预期边界修正；编辑套餐内容仍由 `subscription.write` 控制，Root 和默认 Admin 基线仍具备 operate 能力。
+2. 页面入口不一致风险：如果行操作和确认弹窗只改一处，会出现按钮可点但确认失败，或按钮禁用但接口可用的割裂。本轮同步修改入口和确认两个位置。
+3. 接口兼容风险：接口路径、HTTP method、请求体和响应体均不变，现有自动化脚本只要具备 operate 权限即可继续调用。
+4. 运行数据风险：3003 当前没有订阅套餐；验证时不能为了制造测试条件创建真实套餐，避免污染业务数据。本轮使用参数校验、页面渲染和路由测试证明行为，并明确记录空数据约束。
+5. Authz catalog 风险：本轮没有新增资源或动作，不需要迁移角色 catalog；只是让已有订阅套餐启停路由消费现有 `subscription.operate` 动作。
+
+### 方案评审
+
+采用“权限归类修正 + 前端守卫同步”的最小方案：
+
+1. 保留 new-api-main 已对齐的 `PATCH /api/subscription/admin/plans/:id` 接口形态，不增加新接口。
+2. 将该路由从 `SubscriptionWrite` 调整为 `SubscriptionOperate`，与绑定订阅、创建用户订阅、重置订阅额度和失效用户订阅保持同一操作语义。
+3. 默认前端套餐行操作和确认弹窗都改用 `canOperate`，避免按钮状态与后端权限不一致。
+4. 保留套餐创建和完整编辑的 `canWrite` 语义，不扩大 write 权限的操作面。
+5. 使用路由权限测试锁定后端分类，用 TypeScript typecheck 和真实 3003 页面验证确认前端无回归。
+
+### 实施结果
+
+已完成订阅套餐启停操作权限原生化：
+
+- `PATCH /api/subscription/admin/plans/:id` 现在归属于 `subscription.operate`。
+- `POST /api/subscription/admin/plans` 和 `PUT /api/subscription/admin/plans/:id` 仍归属于 `subscription.write`，套餐内容编辑边界不变。
+- 订阅套餐行操作中的启用/禁用入口改用 `canOperatePlan`。
+- 启停确认弹窗的确认守卫和禁用态改用 `permissions.canOperate`。
+- new-api-main 的独立状态接口优势已经和 NexusTok 的细粒度 Authz 能力结合：接口形态保持兼容，权限表达更精确。
+
+### 验证记录
+
+1. `go test ./router -run 'TestRegisterSubscriptionAdminRoutesKeepsCoreHandlers|TestSubscriptionPermissionRoutesClassifyCoreActions|TestSubscriptionPermissionRoutesStayOnSubscriptionResource'` 通过，确认订阅套餐启停路由 handler 保持不变，权限断言已更新为 `SubscriptionOperate`。
+2. `go test ./controller -run 'TestSubscriptionPlanGroupValidation'` 通过，确认订阅 controller 既有套餐分组校验测试不受影响。
+3. `cd web/default && bun run typecheck` 通过，确认默认前端订阅套餐行操作和启停确认弹窗类型无回归。
+4. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200。
+5. 使用账号 `c1cada` 登录 3003 后调用 `GET /api/subscription/admin/plans` 返回 `success=true` 且当前套餐数为 `0`；因此本轮没有创建临时套餐，也没有执行会污染业务数据的启停切换。
+6. 同一登录态调用 `PATCH /api/subscription/admin/plans/1` 且 payload 为 `{}` 返回 `success=false,message="参数错误"`；调用 `PATCH /api/subscription/admin/plans/0` 且 payload 为 `{"enabled":true}` 返回 `success=false,message="无效的ID"`，确认状态接口仍执行参数校验。
+7. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 进行真实页面验证：写入登录态后打开 `http://192.168.0.202:3003/subscriptions`，页面渲染 `Subscription Management`、`Create Plan` 和空状态 `No subscription plans yet`，接口探针 `/api/subscription/admin/plans` 返回 `success=true,count=0`。
+8. 同一页面验证中没有捕获到 JavaScript exception 或 Network loadingFailed；Console 仅有 i18next/Locize 的信息级提示。
