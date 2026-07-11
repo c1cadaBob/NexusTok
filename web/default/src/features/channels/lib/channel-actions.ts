@@ -25,6 +25,8 @@ import {
   deleteChannel,
   testChannel,
   updateChannel,
+  updateChannelStatus,
+  batchUpdateChannelStatus,
   batchDeleteChannels,
   batchSetChannelTag,
   enableTagChannels,
@@ -65,7 +67,7 @@ export async function handleEnableChannel(
   onSuccess?: () => void
 ): Promise<void> {
   try {
-    const response = await updateChannel(id, { status: CHANNEL_STATUS.ENABLED })
+    const response = await updateChannelStatus(id, CHANNEL_STATUS.ENABLED)
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.ENABLED))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
@@ -85,9 +87,10 @@ export async function handleDisableChannel(
   onSuccess?: () => void
 ): Promise<void> {
   try {
-    const response = await updateChannel(id, {
-      status: CHANNEL_STATUS.MANUAL_DISABLED,
-    })
+    const response = await updateChannelStatus(
+      id,
+      CHANNEL_STATUS.MANUAL_DISABLED
+    )
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.DISABLED))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
@@ -349,27 +352,16 @@ export async function handleBatchEnable(
   }
 
   try {
-    // Update each channel individually
-    const promises = ids.map((id) =>
-      updateChannel(id, { status: CHANNEL_STATUS.ENABLED })
-    )
-    const results = await Promise.allSettled(promises)
-
-    const successCount = results.filter((r) => r.status === 'fulfilled').length
-    const failCount = results.filter((r) => r.status === 'rejected').length
-
-    if (successCount > 0) {
+    const response = await batchUpdateChannelStatus(ids, CHANNEL_STATUS.ENABLED)
+    if (response.success) {
+      const successCount = response.data ?? ids.length
       toast.success(
         i18next.t('{{count}} channel(s) enabled', { count: successCount })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
-    }
-
-    if (failCount > 0) {
-      toast.error(
-        i18next.t('{{count}} channel(s) failed to enable', { count: failCount })
-      )
+    } else {
+      toast.error(response.message || i18next.t('Failed to enable channels'))
     }
   } catch (_error) {
     toast.error(i18next.t('Failed to enable channels'))
@@ -390,29 +382,19 @@ export async function handleBatchDisable(
   }
 
   try {
-    // Update each channel individually
-    const promises = ids.map((id) =>
-      updateChannel(id, { status: CHANNEL_STATUS.MANUAL_DISABLED })
+    const response = await batchUpdateChannelStatus(
+      ids,
+      CHANNEL_STATUS.MANUAL_DISABLED
     )
-    const results = await Promise.allSettled(promises)
-
-    const successCount = results.filter((r) => r.status === 'fulfilled').length
-    const failCount = results.filter((r) => r.status === 'rejected').length
-
-    if (successCount > 0) {
+    if (response.success) {
+      const successCount = response.data ?? ids.length
       toast.success(
         i18next.t('{{count}} channel(s) disabled', { count: successCount })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
-    }
-
-    if (failCount > 0) {
-      toast.error(
-        i18next.t('{{count}} channel(s) failed to disable', {
-          count: failCount,
-        })
-      )
+    } else {
+      toast.error(response.message || i18next.t('Failed to disable channels'))
     }
   } catch (_error) {
     toast.error(i18next.t('Failed to disable channels'))

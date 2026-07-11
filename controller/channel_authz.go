@@ -144,8 +144,8 @@ var channelSensitiveFields = map[string]struct{}{
 }
 
 // channelOperationalFields 由操作类入口管理。
-// 目前 NexusTok 的通用编辑接口仍兼容 status 字段，后续拆分 Channel 路由和 Authz 后，
-// 应迁移到专用状态接口并绑定 operate 权限。
+// status 已迁移到 /api/channel/:id/status 和 /api/channel/status/batch，
+// 通用编辑接口会提前拒绝该字段；这里保留分类是为了让字段分类测试继续约束模型字段全集。
 var channelOperationalFields = map[string]struct{}{
 	"status": {},
 }

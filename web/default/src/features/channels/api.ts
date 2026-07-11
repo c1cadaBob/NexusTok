@@ -150,6 +150,28 @@ export async function updateChannel(
 }
 
 /**
+ * 通过专用操作接口更新渠道启用状态，避免通用编辑接口误改运行状态。
+ */
+export async function updateChannelStatus(
+  id: number,
+  status: number
+): Promise<{ success: boolean; message?: string; data?: boolean }> {
+  const res = await api.post(`/api/channel/${id}/status`, { status })
+  return res.data
+}
+
+/**
+ * 批量更新渠道启用状态，后端返回实际发生变化的渠道数量。
+ */
+export async function batchUpdateChannelStatus(
+  ids: number[],
+  status: number
+): Promise<{ success: boolean; message?: string; data?: number }> {
+  const res = await api.post('/api/channel/status/batch', { ids, status })
+  return res.data
+}
+
+/**
  * Delete single channel
  */
 export async function deleteChannel(

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -305,6 +306,194 @@ func TestUpdateChannelAllowsAdminForNonSensitiveFields(t *testing.T) {
 	assert.Equal(t, "default,vip", stored.Group)
 	require.NotNil(t, stored.Priority)
 	assert.Equal(t, int64(5), *stored.Priority)
+}
+
+func TestUpdateChannelRejectsStatusField(t *testing.T) {
+	setupChannelStatusControllerTestDB(t)
+	channel := createChannelStatusTestChannel(t, "status-reject", common.ChannelStatusEnabled)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/channel/",
+		bytes.NewBufferString(`{"id":`+strconv.Itoa(channel.Id)+`,"status":2}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannel(ctx)
+
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+}
+
+func TestUpdateChannelStatusDisablesChannelAndAbilities(t *testing.T) {
+	setupChannelStatusControllerTestDB(t)
+	channel := createChannelStatusTestChannel(t, "status-single", common.ChannelStatusEnabled)
+
+	ctx, recorder := newChannelStatusContext(t, channel.Id, gin.H{
+		"status": common.ChannelStatusManuallyDisabled,
+	})
+	UpdateChannelStatus(ctx)
+
+	response := decodeChannelStatusResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	require.True(t, response.Data)
+
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, stored.Status)
+
+	var ability model.Ability
+	require.NoError(t, model.DB.Where("channel_id = ? AND model = ?", channel.Id, "gpt-4o").First(&ability).Error)
+	assert.False(t, ability.Enabled)
+}
+
+func TestUpdateChannelStatusRejectsAutoDisabledStatus(t *testing.T) {
+	setupChannelStatusControllerTestDB(t)
+	channel := createChannelStatusTestChannel(t, "status-invalid", common.ChannelStatusEnabled)
+
+	ctx, recorder := newChannelStatusContext(t, channel.Id, gin.H{
+		"status": common.ChannelStatusAutoDisabled,
+	})
+	UpdateChannelStatus(ctx)
+
+	response := decodeChannelStatusResponse(t, recorder)
+	assert.False(t, response.Success)
+
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+}
+
+func TestBatchUpdateChannelStatusCountsChangedChannels(t *testing.T) {
+	setupChannelStatusControllerTestDB(t)
+	channelA := createChannelStatusTestChannel(t, "status-batch-a", common.ChannelStatusEnabled)
+	channelB := createChannelStatusTestChannel(t, "status-batch-b", common.ChannelStatusEnabled)
+	channelC := createChannelStatusTestChannel(t, "status-batch-c", common.ChannelStatusManuallyDisabled)
+
+	ctx, recorder := newChannelStatusBatchContext(t, gin.H{
+		"ids":    []int{channelA.Id, channelB.Id, channelC.Id},
+		"status": common.ChannelStatusManuallyDisabled,
+	})
+	BatchUpdateChannelStatus(ctx)
+
+	response := decodeChannelStatusBatchResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, 2, response.Data)
+
+	for _, channel := range []*model.Channel{channelA, channelB, channelC} {
+		var stored model.Channel
+		require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+		assert.Equal(t, common.ChannelStatusManuallyDisabled, stored.Status)
+	}
+}
+
+type channelStatusAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    bool   `json:"data"`
+}
+
+type channelStatusBatchAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    int    `json:"data"`
+}
+
+func setupChannelStatusControllerTestDB(t *testing.T) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	model.LOG_DB = db
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.User{}))
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "root",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.RedisEnabled = oldRedisEnabled
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+}
+
+func createChannelStatusTestChannel(t *testing.T, name string, status int) *model.Channel {
+	t.Helper()
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "test-key",
+		Status: status,
+		Name:   name,
+		Models: "gpt-4o",
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+	return channel
+}
+
+func newChannelStatusContext(t *testing.T, channelID int, body any) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	payload, err := common.Marshal(body)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/"+strconv.Itoa(channelID)+"/status", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channelID)}}
+	ctx.Set("username", "channel-status-tester")
+	ctx.Set("id", 1)
+	return ctx, recorder
+}
+
+func newChannelStatusBatchContext(t *testing.T, body any) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	payload, err := common.Marshal(body)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/status/batch", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("username", "channel-status-tester")
+	ctx.Set("id", 1)
+	return ctx, recorder
+}
+
+func decodeChannelStatusResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelStatusAPIResponse {
+	t.Helper()
+	var response channelStatusAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	return response
+}
+
+func decodeChannelStatusBatchResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelStatusBatchAPIResponse {
+	t.Helper()
+	var response channelStatusBatchAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	return response
 }
 
 func TestChannelFieldsAreClassified(t *testing.T) {

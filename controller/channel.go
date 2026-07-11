@@ -901,6 +901,17 @@ type PatchChannel struct {
 	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
 }
 
+// ChannelStatusRequest 是单渠道启用/禁用操作的请求体。
+type ChannelStatusRequest struct {
+	Status int `json:"status"`
+}
+
+// ChannelStatusBatchRequest 是批量渠道启用/禁用操作的请求体。
+type ChannelStatusBatchRequest struct {
+	Ids    []int `json:"ids"`
+	Status int   `json:"status"`
+}
+
 func UpdateChannel(c *gin.Context) {
 	channel := PatchChannel{}
 	rawBody, err := c.GetRawData()
@@ -915,6 +926,10 @@ func UpdateChannel(c *gin.Context) {
 	var requestData map[string]any
 	if err := common.Unmarshal(rawBody, &requestData); err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if _, ok := requestData["status"]; ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
@@ -1077,6 +1092,75 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
+}
+
+// UpdateChannelStatus 只处理手动启用/禁用渠道。
+// 自动禁用状态由运行时错误治理流程写入，管理端只能通过专用操作入口恢复或手动禁用，
+// 避免通用渠道编辑请求顺手改动运行状态并绕过 ChannelOperate 权限边界。
+func UpdateChannelStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	req := ChannelStatusRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil || !isManageableChannelStatus(req.Status) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
+	if changed {
+		model.InitChannelCache()
+		service.ResetProxyClientCache()
+	}
+	recordManageAudit(c, "channel.status_update", map[string]interface{}{
+		"id":      id,
+		"status":  req.Status,
+		"changed": changed,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    changed,
+	})
+}
+
+// BatchUpdateChannelStatus 批量处理渠道手动启用/禁用。
+// 返回值 data 表示实际发生状态变化的渠道数量；已经处于目标状态的渠道不会重复刷新能力表。
+func BatchUpdateChannelStatus(c *gin.Context) {
+	req := ChannelStatusBatchRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Ids) == 0 || !isManageableChannelStatus(req.Status) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	changedCount := 0
+	for _, id := range req.Ids {
+		if model.UpdateChannelStatus(id, "", req.Status, "manual batch operation") {
+			changedCount++
+		}
+	}
+	if changedCount > 0 {
+		model.InitChannelCache()
+		service.ResetProxyClientCache()
+	}
+	recordManageAudit(c, "channel.status_update_batch", map[string]interface{}{
+		"count":  changedCount,
+		"total":  len(req.Ids),
+		"status": req.Status,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    changedCount,
+	})
+}
+
+// isManageableChannelStatus 限定管理端可直接写入的渠道状态。
+// ChannelStatusAutoDisabled 表示系统根据错误率自动熔断，不能由页面批量伪造。
+func isManageableChannelStatus(status int) bool {
+	return status == common.ChannelStatusEnabled || status == common.ChannelStatusManuallyDisabled
 }
 
 func FetchModels(c *gin.Context) {

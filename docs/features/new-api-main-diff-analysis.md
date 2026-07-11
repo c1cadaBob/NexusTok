@@ -6648,6 +6648,7 @@ NexusTok 已经有 `service/openaicompat/*` 原生命名，不应照搬上游仅
 
 | 日期 | 能力 | 文件 | 说明 |
 |------|------|------|------|
+| 2026-07-11 | 渠道状态专用 API 与编辑解耦 | `controller/channel.go`、`controller/channel_authz.go`、`router/channel-router.go`、`web/default/src/features/channels/api.ts`、`web/default/src/features/channels/lib/channel-actions.ts` | 原生化 new-api-main 的渠道状态操作边界：新增 `POST /api/channel/:id/status` 与 `/api/channel/status/batch`，通用 `PUT /api/channel/` 拒绝 `status` 字段，前端单个/批量启停改走 `channel.operate` 专用接口；只允许手动启用/禁用，不允许伪造自动禁用状态。 |
 | 2026-07-11 | Authz 角色策略审计摘要增强 | `controller/authz.go`、`controller/audit.go`、`middleware/audit.go`、`controller/authz_audit_test.go`、`middleware/audit_test.go` | 角色模板创建/更新/删除、角色策略 dry-run/apply 和策略导入成功后写入 `authz.*` 结构化管理审计摘要；失败路径通过中间件稳定 action 兜底，审计只记录角色 key、策略计数、dry-run/applied/reloaded 等非敏感摘要，不写完整 grants 矩阵。 |
 | 2026-07-11 | Authz 默认前端角色策略编辑 UI | `web/default/src/features/system-settings/security/role-policy-section.tsx`、`role-policy-utils.ts`、`web/default/src/features/system-settings/api.ts`、`web/default/src/i18n/locales/*.json` | 在系统设置安全页新增 `role-policies` 分区，Root 可查看角色模板、编辑非 superuser 角色权限矩阵、先 dry-run 预览再二次确认保存；矩阵以后端 catalog 补齐完整 grants，动态 badge 和页面文案补齐六语。 |
 | 2026-07-11 | Authz 角色策略编辑接口 | `service/authz/role_policy.go`、`controller/authz.go`、`router/authz-router.go`、`service/authz/role_policy_test.go` | 新增 Root-only `GET /api/authz/roles` 与 `PUT /api/authz/roles/:key/policies`；读取返回持久角色模板、superuser/runtime 标记和 grants 矩阵，更新默认 dry-run，显式 apply 后替换目标 `role:<key>` allow 策略并 reload 持久策略快照。 |
@@ -10248,3 +10249,65 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200，并通过真实接口调用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=20`，返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个 OpenAI 供应商模型，不再出现 PostgreSQL `description` 歧义错误。
 7. 由于当前环境没有浏览器 MCP 工具，本轮使用本机 Chrome Headless + DevTools Protocol 作为替代真实页面验证：登录 `c1cada` 后打开 `http://192.168.0.202:3003/channels`，进入渠道 `11111` 的编辑抽屉，确认页面显示 `Search model library`、`Vendor: OpenAI`，且没有控制台错误。
 8. 在同一编辑抽屉里输入 `gpt-5.6`，页面显示 `3 matched · 2 new · 1 already selected` 和待追加预览 `gpt-5.6-terra, gpt-5.6-luna`；点击 `Add 2 new model(s)` 后，未保存的表单草稿显示 `Selected 5`，包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，验证搜索添加逻辑已按 OpenAI 供应商正确补齐。
+
+## 本轮实施评审：渠道状态专用 API 与通用编辑解耦
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的渠道管理接口后发现，new-api-main 已经把渠道启用/禁用拆成 `POST /api/channel/:id/status` 和 `POST /api/channel/status/batch`，并且通用 `UpdateChannel` 会拒绝请求体中的 `status` 字段。这样做的核心优势是把“运行期操作”从“配置编辑”中解耦：启停渠道只需要操作权限，不应走完整渠道写权限，也不应和密钥、BaseURL、模型、分组等配置字段混在同一个 payload 中。
+
+NexusTok 当前已经有 `model.UpdateChannelStatus()`，并且该函数会同步渠道状态、能力表启用状态、缓存和多 Key 状态；缺口主要在 controller/router/frontend 调用层：前端单个启停与批量启停仍通过 `PUT /api/channel/` 携带 `status`。本轮目标是把 new-api-main 的状态操作边界原生化到 NexusTok，同时保留现有模型层能力、审计日志、权限体系和页面交互。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道控制器 | `controller/channel.go` | 新增单个/批量状态请求结构和 handler；通用 `UpdateChannel` 提前拒绝 `status` 字段；专用接口只允许手动启用与手动禁用。 |
+| 字段权限分类 | `controller/channel_authz.go` | 更新 `status` 字段说明：该字段已迁移到专用操作入口，通用编辑接口不再接受它。 |
+| 路由权限表 | `router/channel-router.go` | 新增 `/api/channel/:id/status` 与 `/api/channel/status/batch`，权限均为 `channel.operate`。 |
+| 前端 API 与动作 | `web/default/src/features/channels/api.ts`、`web/default/src/features/channels/lib/channel-actions.ts` | 新增 `updateChannelStatus()` 和 `batchUpdateChannelStatus()`；行内启停和批量启停改走专用接口。 |
+| 回归测试 | `controller/channel_authz_test.go`、`router/channel_router_test.go` | 覆盖通用编辑拒绝 `status`、单个状态接口同步能力表、自动禁用状态拒绝、批量状态实际变更计数和路由权限。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果，并更新实施索引。 |
+
+本轮不修改数据库 schema、渠道表结构、能力表结构、调度策略、标签启停接口、账号池状态接口、多 Key 管理接口或渠道编辑表单保存 payload。
+
+### 风险评估
+
+1. 旧客户端兼容风险：如果旧前端或脚本继续通过 `PUT /api/channel/` 携带 `status`，现在会得到 `success=false` 的参数错误。这是有意收紧，用于避免状态操作绕过 `channel.operate` 边界。
+2. 自动禁用语义风险：`ChannelStatusAutoDisabled` 表示系统按错误率或运行时治理自动熔断，管理端不能伪造该状态。本轮只允许 `ChannelStatusEnabled` 和 `ChannelStatusManuallyDisabled`。
+3. 能力表同步风险：状态变化必须同步 `abilities.enabled`，否则 `/v1/models`、调度和 owner 展示会不一致。本轮复用 `model.UpdateChannelStatus()`，继续使用既有能力同步逻辑。
+4. 批量操作统计风险：批量接口返回的是实际发生变化的数量，已经处于目标状态的渠道不会重复计数；前端 toast 使用该数量，避免误报。
+5. 运行态验证风险：页面点击启停会短暂改变真实渠道状态。本轮验证先记录原始状态，点击后立即通过专用接口恢复，并最终通过接口和页面刷新确认渠道仍为启用。
+
+### 方案评审
+
+采用“薄 controller + 复用模型层 + 前端调用切换”的低风险方案：
+
+1. 在 `controller/channel.go` 中新增 `ChannelStatusRequest`、`ChannelStatusBatchRequest`、`UpdateChannelStatus()`、`BatchUpdateChannelStatus()` 和 `isManageableChannelStatus()`。
+2. `UpdateChannel()` 读取原始 JSON 后先检查 `status` 字段，发现即返回参数错误，避免后续字段级权限分类误放行。
+3. 两个专用接口均调用 `model.UpdateChannelStatus(id, "", status, "...")`，只有实际发生变化时刷新渠道缓存和代理客户端缓存。
+4. 路由表将两个状态接口绑定到 `authz.ChannelOperate`，其中 `/status/batch` 放在 `/:id/status` 前，避免动态路径影响静态批量路径。
+5. 默认前端新增专用 API wrapper，并让行内启停和批量启停走新接口；标签启停继续使用已有 tag 专用接口。
+
+### 实施结果
+
+已完成渠道状态专用 API 与通用编辑解耦：
+
+- `POST /api/channel/:id/status` 支持单个渠道手动启用/禁用，返回 `data=true/false` 表示是否实际变更。
+- `POST /api/channel/status/batch` 支持批量手动启用/禁用，返回实际变更数量。
+- `PUT /api/channel/` 请求体包含 `status` 时返回参数错误，不再允许通过配置编辑接口改运行状态。
+- 自动禁用状态只能由系统运行时流程产生，管理端专用状态接口会拒绝 `status=3`。
+- 前端行内启停和批量启停已改走专用接口，页面权限语义继续使用 `channel.operate`。
+
+### 验证记录
+
+1. `go test ./controller -run 'TestUpdateChannelRejectsStatusField|TestUpdateChannelStatus|TestBatchUpdateChannelStatus|TestChannelHasSensitiveChanges|TestChannelFieldsAreClassified'` 通过，覆盖通用编辑拒绝、状态接口、批量接口和字段分类。
+2. `go test ./router -run 'TestRegisterChannelRoutesKeepsCoreHandlers|TestChannelPermissionRoutesClassifyCoreActions'` 通过，确认路由 handler 与 `ChannelOperate` 权限注册正确。
+3. `go test ./controller ./router` 通过，确认 controller/router 包既有测试不受影响。
+4. `cd web/default && bun run typecheck` 通过，确认默认前端 API 和启停动作类型无回归。
+5. `cd web/default && bunx prettier --check src/features/channels/api.ts src/features/channels/lib/channel-actions.ts` 通过。
+6. `git diff --check` 通过。
+7. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；登录账号 `c1cada` 后调用 `POST /api/channel/1/status` 且 payload 为 `{"status":1}` 返回 `success=true,data=false`，确认专用接口已生效且同状态 no-op 不改数据。
+8. 同一运行态调用 `PUT /api/channel/` 且 payload 为 `{"id":1,"status":1}` 返回 `success=false,message="无效的参数"`；调用 `POST /api/channel/1/status` 且 payload 为 `{"status":3}` 同样返回参数错误，确认通用编辑和自动禁用伪造均被拒绝。
+9. 当前环境没有暴露浏览器 MCP 工具，本轮使用 Chrome Headless + DevTools Protocol 进行真实页面验证：通过登录表单进入 `http://192.168.0.202:3003/channels`，点击渠道 `11111` 行内“禁用”按钮，网络捕获到 `POST /api/channel/1/status`，payload 为 `{"status":2}`，没有出现旧的 `PUT /api/channel/` 状态更新请求。
+10. 页面验证后立即调用 `POST /api/channel/1/status` 恢复原始 `status=1`；随后通过 `GET /api/channel/1` 和刷新 `/channels` 页面确认渠道 `11111` 最终仍为 `已启用`，没有留下错误启停状态。
