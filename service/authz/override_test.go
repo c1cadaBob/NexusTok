@@ -27,6 +27,7 @@ func setupAuthzTestDB(t *testing.T, migrateModels ...interface{}) *gorm.DB {
 	common.UsingMySQL = false
 	common.UsingPostgreSQL = false
 	common.RedisEnabled = false
+	clearPersistentPolicySnapshot()
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -35,6 +36,7 @@ func setupAuthzTestDB(t *testing.T, migrateModels ...interface{}) *gorm.DB {
 	model.DB = db
 
 	t.Cleanup(func() {
+		clearPersistentPolicySnapshot()
 		model.DB = oldDB
 		common.UsingSQLite = oldUsingSQLite
 		common.UsingMySQL = oldUsingMySQL

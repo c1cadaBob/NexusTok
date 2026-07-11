@@ -48,7 +48,7 @@ func TestSeedPersistentPoliciesStoresBuiltInRolesAndAdminPolicies(t *testing.T) 
 	assert.Zero(t, rootPolicyCount)
 }
 
-func TestPersistentPoliciesOverrideAdminBaseline(t *testing.T) {
+func TestReloadPersistentPoliciesRefreshesAdminBaseline(t *testing.T) {
 	db := setupAuthzOverrideTestDB(t)
 	require.NoError(t, SeedPersistentPolicies())
 
@@ -60,7 +60,15 @@ func TestPersistentPoliciesOverrideAdminBaseline(t *testing.T) {
 		ActionWrite,
 	).Delete(&model.CasbinRule{}).Error)
 
+	// 角色基线使用内存快照，数据库变更需要显式 reload 后才会影响授权判定。
 	admin := requireRole(t, Roles(), BuiltInRoleAdmin)
+	assert.True(t, admin.Grants[ResourceChannel][ActionRead])
+	assert.True(t, admin.Grants[ResourceChannel][ActionWrite])
+	assert.True(t, Can(42, common.RoleAdminUser, ChannelWrite))
+
+	require.NoError(t, ReloadPersistentPolicies())
+
+	admin = requireRole(t, Roles(), BuiltInRoleAdmin)
 	assert.True(t, admin.Grants[ResourceChannel][ActionRead])
 	assert.False(t, admin.Grants[ResourceChannel][ActionWrite])
 	assert.True(t, Can(42, common.RoleAdminUser, ChannelRead))
@@ -78,6 +86,7 @@ func TestUserOverridesWinOverPersistentRolePolicies(t *testing.T) {
 		ResourceChannel,
 		ActionWrite,
 	).Delete(&model.CasbinRule{}).Error)
+	require.NoError(t, ReloadPersistentPolicies())
 
 	require.NoError(t, SetUserPermissions(42, PermissionsMap{
 		ResourceChannel: {

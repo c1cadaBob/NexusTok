@@ -3,10 +3,21 @@ package authz
 import (
 	"errors"
 	"strconv"
+	"sync"
+	"time"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 	"gorm.io/gorm"
 )
+
+var persistentPolicySnapshot = struct {
+	sync.RWMutex
+	loaded bool
+	roles  map[string]PermissionsMap
+}{
+	roles: make(map[string]PermissionsMap),
+}
 
 // RoleSubject 返回角色在策略表中的 subject 名称。
 //
@@ -34,7 +45,7 @@ func SeedPersistentPolicies() error {
 		return errAuthzDatabaseNotInitialized
 	}
 
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := seedBuiltInRoles(tx); err != nil {
 			return err
 		}
@@ -42,7 +53,57 @@ func SeedPersistentPolicies() error {
 			return err
 		}
 		return seedDefaultRolePolicies(tx)
-	})
+	}); err != nil {
+		return err
+	}
+	return ReloadPersistentPolicies()
+}
+
+// ReloadPersistentPolicies 从数据库重新加载角色策略快照。
+//
+// NexusTok 当前还没有引入完整 Casbin runtime，但权限判定已经依赖 `casbin_rule`
+// 中的角色基线策略。这里把数据库策略收敛为内存快照，语义上对齐 new-api 的
+// enforcer.LoadPolicy：策略编辑或多节点同步后必须 reload 才会影响 Can/Roles。
+func ReloadPersistentPolicies() error {
+	if model.DB == nil {
+		return errAuthzDatabaseNotInitialized
+	}
+
+	nextSnapshot := make(map[string]PermissionsMap)
+	for _, role := range builtInRoles {
+		if role.superuser {
+			continue
+		}
+		grants, ok, err := loadPersistentRoleGrantsFromDB(role)
+		if err != nil {
+			return err
+		}
+		if ok {
+			nextSnapshot[role.key] = grants
+		}
+	}
+
+	persistentPolicySnapshot.Lock()
+	persistentPolicySnapshot.roles = nextSnapshot
+	persistentPolicySnapshot.loaded = true
+	persistentPolicySnapshot.Unlock()
+	return nil
+}
+
+// StartPersistentPolicySync 周期性刷新角色策略快照。
+//
+// 用户 override 当前仍按请求读取数据库，角色基线则通过快照避免每次授权判定读库。
+// 多节点部署中，Root 在任一节点调整角色策略后，其它节点需要通过该同步循环感知变更。
+func StartPersistentPolicySync(frequency int) {
+	if frequency <= 0 {
+		return
+	}
+	for {
+		time.Sleep(time.Duration(frequency) * time.Second)
+		if err := ReloadPersistentPolicies(); err != nil {
+			common.SysLog("authz: failed to reload persistent policies: " + err.Error())
+		}
+	}
 }
 
 func seedBuiltInRoles(tx *gorm.DB) error {
@@ -137,13 +198,24 @@ func persistentRoleGrants(role roleSpec) (PermissionsMap, bool) {
 	if role.superuser || model.DB == nil {
 		return nil, false
 	}
+	if grants, ok, loaded := persistentRoleGrantsFromSnapshot(role.key); loaded {
+		return grants, ok
+	}
 
+	grants, ok, err := loadPersistentRoleGrantsFromDB(role)
+	if err != nil {
+		return nil, false
+	}
+	return grants, ok
+}
+
+func loadPersistentRoleGrantsFromDB(role roleSpec) (PermissionsMap, bool, error) {
 	var records []model.CasbinRule
 	err := model.DB.Where("ptype = ? AND v0 = ?", "p", RoleSubject(role.key)).
 		Order("v1 ASC, v2 ASC").
 		Find(&records).Error
 	if err != nil || len(records) == 0 {
-		return nil, false
+		return nil, false, err
 	}
 
 	grants := emptyGrants()
@@ -163,9 +235,9 @@ func persistentRoleGrants(role roleSpec) (PermissionsMap, bool) {
 	// 如果策略表存在但该角色没有任何可用 allow 策略，视为策略缺失并回退静态
 	// 基线。这样迁移中断、表被清空或只残留未知策略时不会把 Admin 瞬间降为全拒绝。
 	if validAllowCount == 0 {
-		return nil, false
+		return nil, false, nil
 	}
-	return grants, true
+	return grants, true, nil
 }
 
 func persistentAdminBaseline(resource string, action string) (bool, bool) {
@@ -186,4 +258,36 @@ func persistentAdminBaseline(resource string, action string) (bool, bool) {
 		return false, true
 	}
 	return allowed, true
+}
+
+func persistentRoleGrantsFromSnapshot(roleKey string) (PermissionsMap, bool, bool) {
+	persistentPolicySnapshot.RLock()
+	defer persistentPolicySnapshot.RUnlock()
+	if !persistentPolicySnapshot.loaded {
+		return nil, false, false
+	}
+	grants, ok := persistentPolicySnapshot.roles[roleKey]
+	if !ok {
+		return nil, false, true
+	}
+	return clonePermissionsMap(grants), true, true
+}
+
+func clearPersistentPolicySnapshot() {
+	persistentPolicySnapshot.Lock()
+	persistentPolicySnapshot.roles = make(map[string]PermissionsMap)
+	persistentPolicySnapshot.loaded = false
+	persistentPolicySnapshot.Unlock()
+}
+
+func clonePermissionsMap(source PermissionsMap) PermissionsMap {
+	cloned := make(PermissionsMap, len(source))
+	for resource, actions := range source {
+		clonedActions := make(map[string]bool, len(actions))
+		for action, allowed := range actions {
+			clonedActions[action] = allowed
+		}
+		cloned[resource] = clonedActions
+	}
+	return cloned
 }

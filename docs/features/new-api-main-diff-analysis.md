@@ -206,7 +206,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
-| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略优先读取和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、策略周期 reload、用户 override 迁入 `casbin_rule`、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
+| P1 | 角色模板与 Casbin/策略持久化 | `service/authz/*`、`model/authz_role.go`、`model/casbin_rule.go` | 已完成持久化底座：`authz_roles`、`casbin_rule`、Root/Admin 内置角色种子、Admin 默认策略写入、持久角色策略快照、显式 reload、周期同步和静态基线 fallback 已原生化；仍未引入 Casbin runtime/enforcer、用户 override 迁入 `casbin_rule`、角色编辑 UI、自定义角色和导入导出。下一步应围绕这些剩余能力做独立评审，而不是再重做基础权限表。 |
 | P1/P2 | Authz 资源继续细分 | `router/channel-router.go`、账号池/渠道账号/凭证路由 | 账号池认证文件已拆为独立 `account_pool_auth_file` 资源，`GET /api/account-pool/auth-files*` 走 read，导入/更新/删除走 sensitive_write；渠道内账号已拆为独立 `channel_account` 资源，列表/详情走 read，启停/清冷却走 operate，新增/批量导入/更新/删除走 sensitive_write；`channel_account.read` 响应已做基础脱敏，只有 sensitive_write 用户可见上游地址、组织 ID、请求覆盖、模型映射、provider settings 和原始错误详情；`account_pool` 继续覆盖全局分组、账号生命周期、日志、检测和运行态操作。后续如需要更细运营分权，可继续评估 `channel_account.write` 非敏感写边界、字段级审计增强和角色编辑 UI，而不是重复拆资源。 |
 | P2 | ClickHouse 日志库真接入 | `model/clickhouse_log_test.go`、`gorm.io/driver/clickhouse` | 当前只完成日志查询准备层护栏、LIKE 转义、TTL SQL helper 和 fail-fast 提示，尚未引入 driver 或运行时写入。只有明确要支持 ClickHouse 部署时再扩展依赖、迁移、写入和查询矩阵。 |
 | P2 | 账号池任务持久队列与占用释放 | `service/account_pool_task_limit.go`、SystemTask | 已有提交级并发/RPM/等待策略；完整持久队列、任务完成后释放账号占用和更细调度观测仍可作为账号池主线后续增强。 |
@@ -9223,3 +9223,67 @@ new-api 最新编辑渠道页的优势不是某个单独按钮，而是长表单
 12. Chrome/CDP 网络记录显示 `/api/channel/models`、`/api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、`/api/channel/1`、`/api/models/search?keyword=gpt-5.6&p=1&page_size=50`、点击追加时的 `/api/models/search?keyword=gpt-5.6&p=1&page_size=100`、以及复查 `/api/channel/?p=0&page_size=5` 均返回 HTTP 200。
 13. Chrome/CDP 记录没有 console error/warning、运行时 exception 或非取消型网络失败。
 14. 运行态验证截图保存于 `/tmp/nexustok-channel-model-search-rule-fix.png`。
+
+## 本轮实施评审：Authz 持久角色策略快照与周期同步
+
+### 需求分析
+
+继续推进 `new-api-main` 差异吸收时，当前最高优先级仍是角色模板与 Casbin/策略持久化。对照 `/opt/project/new-api-main/service/authz` 后确认，new-api 已经具备 `adapter.go`、`enforcer.go`、`resolver.go`、`role.go`、`seed.go` 和 `assignment.go`，通过 Casbin enforcer 将 `casbin_rule` 加载到内存，并提供 `ReloadPolicy()` 和 `StartPolicySync()` 周期刷新。
+
+NexusTok 当前已经有 `authz_roles`、`casbin_rule`、Root/Admin 内置角色种子和 Admin 默认策略写入，也让 `Can()` / `Roles()` 读取持久角色策略。但旧实现每次权限判定都直接读数据库，缺少运行态策略快照、显式 reload 和多节点周期同步语义；这会让后续角色编辑 UI 或策略导入导出缺少可靠的“写库后刷新”边界。
+
+本轮目标不是一次性引入完整 Casbin runtime/enforcer，也不新增角色编辑 UI，而是先把 new-api 的“内存策略快照 + reload + 周期同步”优势转换成 NexusTok 原生能力，为后续 Casbin runtime、角色 UI、自定义角色和用户 override 迁移打底。
+
+### 影响范围分析
+
+| 模块 | 文件 | 影响 |
+| --- | --- | --- |
+| Authz 持久策略服务 | `service/authz/persistent_policy.go` | 新增角色策略内存快照、`ReloadPersistentPolicies()`、`StartPersistentPolicySync()`，并让 `persistentRoleGrants()` 优先读取快照。 |
+| 启动初始化 | `main.go` | 主节点 seed 后自动 reload；从节点启动时只 reload；所有节点按 `common.SyncFrequency` 周期刷新策略快照。 |
+| Authz 测试 | `service/authz/persistent_policy_test.go`、`service/authz/override_test.go` | 锁定“数据库策略变更必须 reload 后生效”的运行态语义，并清理全局快照避免测试互相污染。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新 P1 队列状态并记录本轮需求、风险、方案、实施和验证。 |
+
+本轮不改变 `authz_roles` / `casbin_rule` 表结构，不引入 `github.com/casbin/casbin/v2`，不改变任何管理路由权限分类，不改前端权限矩阵和用户 override 保存格式。
+
+### 风险评估
+
+- 授权语义风险：快照引入后，直接修改 `casbin_rule` 不再立即影响 `Can()`，必须 reload。这与 new-api enforcer 语义一致，也更适合后续多节点部署；测试已明确锁定该行为。
+- 启动风险：主节点仍先完成数据库 migration 和内置策略 seed，再 reload；从节点只加载现有策略，加载失败只记录日志并由后台同步重试，避免从节点因短暂迁移时序直接退出。
+- 性能风险：旧实现每次读取角色策略都查库，快照后可以降低授权路径数据库压力；用户级 override 暂时仍按请求读库，保持现有实时性和兼容性。
+- 回退风险：如果策略表缺失、清空或只存在未知策略，仍保留静态 Admin 基线 fallback，避免把管理员瞬间降为全拒绝。
+- 范围风险：完整 Casbin runtime、用户 override 迁入 `casbin_rule` 和角色编辑 UI 都是更大范围变更，本轮明确不混入，降低对核心管理面的冲击。
+
+### 方案评审
+
+采用“轻量快照层，暂不引入 Casbin runtime”的方案：
+
+1. 保留现有 `casbin_rule` 表约定和 `role:<key>` subject 命名。
+2. 新增进程内 `persistentPolicySnapshot`，保存内置非 superuser 角色的权限矩阵。
+3. `SeedPersistentPolicies()` 完成内置角色和 Admin 默认策略写入后立即 `ReloadPersistentPolicies()`，让主节点启动即使用快照。
+4. 从节点启动不重置内置策略，只 `ReloadPersistentPolicies()`；失败时日志告警，后台周期同步继续重试。
+5. `persistentRoleGrants()` 优先读快照；快照未初始化时继续读数据库，以兼容单元测试、迁移过渡和未经过启动流程的调用点。
+6. 后续角色编辑 UI 或导入导出只需要写入 `casbin_rule` 后调用 reload 或等待同步，不需要再改所有授权调用点。
+
+### 实施结果
+
+已完成 Authz 持久角色策略快照原生化：
+
+- 新增 `ReloadPersistentPolicies()`，可从 `casbin_rule` 重新构建角色策略快照。
+- 新增 `StartPersistentPolicySync(frequency)`，按 `common.SyncFrequency` 周期刷新策略快照。
+- `Can()`、`Roles()` 和 `CapabilitiesForUser()` 通过 `persistentRoleGrants()` 优先消费内存快照。
+- 主节点启动时 seed 内置策略并 reload；从节点启动时只 reload；所有节点启动后台同步循环。
+- 单元测试已覆盖数据库策略删除在 reload 前不影响快照、reload 后才影响 Admin 基线的语义。
+- 测试 helper 清理全局快照，避免 Authz 测试之间串状态。
+
+### 验证记录
+
+1. `go test ./service/authz` 通过。
+2. `go test ./router ./controller` 通过，确认路由权限表和控制器权限回传未回归。
+3. `go test ./model -run 'TestAuthz|TestUserDeleteClearsAuthz|TestUserEditDoesNotOverwrite'` 通过，确认用户生命周期与 authz override 清理仍稳定。
+4. `gofmt -w service/authz/persistent_policy.go service/authz/persistent_policy_test.go service/authz/override_test.go main.go` 已执行。
+5. `go test .` 通过，确认根包启动代码编译正常。
+6. `git diff --check` 通过。
+7. `curl --noproxy '*' -I --max-time 10 http://192.168.0.202:3003/` 返回 HTTP 200，热更新入口可访问。
+8. 当前会话没有暴露 MCP 浏览器工具；本轮使用 `curl` 登录 3003 并调用真实后端接口验证。
+9. 使用账号 `c1cada` 登录 `POST /api/user/login?turnstile=` 返回 HTTP 200、`success=true`、`role=100`。
+10. 携带登录 cookie 和 `NexusTok-User: 1` 调用 `GET /api/authz/catalog` 返回 HTTP 200，响应包含 `channel`、`channel_account`、`account_pool`、`account_pool_auth_file`、`user`、`model`、`subscription`、`redemption` 等资源和 Root/Admin 角色基线，确认 Authz catalog 运行态接口未回归。

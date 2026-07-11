@@ -425,7 +425,10 @@ func InitResources() error {
 			common.FatalLog("failed to seed authz persistent policies: " + err.Error())
 			return err
 		}
+	} else if err = authz.ReloadPersistentPolicies(); err != nil {
+		common.SysLog("failed to load authz persistent policies, will retry in background: " + err.Error())
 	}
+	go authz.StartPersistentPolicySync(common.SyncFrequency)
 
 	// 检查数据库设置状态
 	// 如果是首次运行，可能需要初始化表结构
