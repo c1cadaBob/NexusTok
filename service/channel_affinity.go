@@ -31,19 +31,19 @@ import (
 )
 
 const (
-	ginKeyChannelAffinityCacheKey   = "channel_affinity_cache_key"           // Gin 上下文键：缓存键
-	ginKeyChannelAffinityTTLSeconds = "channel_affinity_ttl_seconds"         // Gin 上下文键：TTL 秒数
-	ginKeyChannelAffinityMeta       = "channel_affinity_meta"                // Gin 上下文键：亲和性元数据
-	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"            // Gin 上下文键：日志信息
+	ginKeyChannelAffinityCacheKey   = "channel_affinity_cache_key"             // Gin 上下文键：缓存键
+	ginKeyChannelAffinityTTLSeconds = "channel_affinity_ttl_seconds"           // Gin 上下文键：TTL 秒数
+	ginKeyChannelAffinityMeta       = "channel_affinity_meta"                  // Gin 上下文键：亲和性元数据
+	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"              // Gin 上下文键：日志信息
 	ginKeyChannelAffinitySkipRetry  = "channel_affinity_skip_retry_on_failure" // Gin 上下文键：失败时跳过重试
 
-	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v2"                        // 渠道亲和性缓存的 Redis 命名空间
-	channelAffinityUsageCacheStatsNamespace = "nexustok:channel_affinity_usage_cache_stats:v2"      // 使用统计缓存的 Redis 命名空间
+	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v2"                   // 渠道亲和性缓存的 Redis 命名空间
+	channelAffinityUsageCacheStatsNamespace = "nexustok:channel_affinity_usage_cache_stats:v2" // 使用统计缓存的 Redis 命名空间
 )
 
 var (
-	channelAffinityCacheOnce sync.Once                              // 确保缓存只初始化一次
-	channelAffinityCache     *cachex.HybridCache[int]               // 渠道亲和性混合缓存（Redis + 内存）
+	channelAffinityCacheOnce sync.Once                // 确保缓存只初始化一次
+	channelAffinityCache     *cachex.HybridCache[int] // 渠道亲和性混合缓存（Redis + 内存）
 
 	channelAffinityUsageCacheStatsOnce  sync.Once                                              // 确保使用统计缓存只初始化一次
 	channelAffinityUsageCacheStatsCache *cachex.HybridCache[ChannelAffinityUsageCacheCounters] // 使用统计混合缓存
@@ -80,7 +80,7 @@ type ChannelAffinityStatsContext struct {
 
 // 缓存 token 比率模式常量，用于区分不同上游的缓存命中率计算方式
 const (
-	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"            // OpenAI 模式：cached / prompt
+	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"             // OpenAI 模式：cached / prompt
 	cacheTokenRateModeCachedOverPromptPlusCached = "cached_over_prompt_plus_cached" // Claude 模式：cached / (prompt + cached)
 	cacheTokenRateModeMixed                      = "mixed"                          // 混合模式：同时有 OpenAI 和 Claude 格式
 )
@@ -324,9 +324,10 @@ func matchAnyIncludeFold(patterns []string, s string) bool {
 }
 
 // extractChannelAffinityValue 从请求上下文中提取亲和值。
-// 支持三种来源类型：
+// 支持四种来源类型：
 // - context_int: 从 Gin 上下文中获取整数值
 // - context_string: 从 Gin 上下文中获取字符串值
+// - request_header: 从 HTTP 请求头中获取字符串值
 // - gjson: 从请求体 JSON 中使用 gjson 路径提取值
 func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAffinityKeySource) string {
 	switch src.Type {
@@ -344,6 +345,11 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 			return ""
 		}
 		return strings.TrimSpace(c.GetString(src.Key))
+	case "request_header":
+		if c == nil || c.Request == nil || src.Key == "" {
+			return ""
+		}
+		return strings.TrimSpace(c.GetHeader(src.Key))
 	case "gjson":
 		if src.Path == "" {
 			return ""
@@ -727,6 +733,47 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return meta.SkipRetry
 }
 
+// ClearCurrentChannelAffinityCache 清理当前请求命中的渠道亲和缓存。
+//
+// 当缓存命中的渠道已禁用、已删除或不再支持当前分组/模型时，继续保留该缓存会让后续
+// 请求反复命中过期渠道。该函数只清理本次请求上下文中的缓存键，并清除跳过重试标记，
+// 让本次之后的请求可以重新选择健康渠道。
+func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	cacheKey, _, ok := getChannelAffinityContext(c)
+	if !ok || cacheKey == "" {
+		return false
+	}
+
+	cache := getChannelAffinityCache()
+	deleted, err := cache.DeleteMany([]string{cacheKey})
+	if err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache delete current failed: err=%v", err))
+		return false
+	}
+	c.Set(ginKeyChannelAffinitySkipRetry, false)
+	for _, ok := range deleted {
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ShouldKeepChannelAffinityOnChannelDisabled 判断亲和渠道不可用时是否保留旧缓存。
+//
+// 默认 false，与 new-api-main 对齐：失效缓存会被清理，后续请求重新选择渠道。
+// 管理员显式开启 keep_on_channel_disabled 后才保留旧缓存，适合等待短暂维护恢复的场景。
+func ShouldKeepChannelAffinityOnChannelDisabled() bool {
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return false
+	}
+	return setting.KeepOnChannelDisabled
+}
+
 // MarkChannelAffinityUsed 标记渠道亲和性已被使用。
 // 将选中的渠道信息记录到 Gin 上下文中，用于日志和管理界面展示。
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
@@ -804,9 +851,9 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 // ChannelAffinityUsageCacheStats 表示渠道亲和性使用缓存的统计信息。
 // 跟踪缓存命中率、token 使用量等指标。
 type ChannelAffinityUsageCacheStats struct {
-	RuleName            string `json:"rule_name"`             // 规则名称
-	UsingGroup          string `json:"using_group"`           // 使用的分组
-	KeyFingerprint      string `json:"key_fp"`                // 亲和值指纹
+	RuleName            string `json:"rule_name"`              // 规则名称
+	UsingGroup          string `json:"using_group"`            // 使用的分组
+	KeyFingerprint      string `json:"key_fp"`                 // 亲和值指纹
 	CachedTokenRateMode string `json:"cached_token_rate_mode"` // 缓存 token 比率模式
 
 	Hit           int64 `json:"hit"`            // 缓存命中次数

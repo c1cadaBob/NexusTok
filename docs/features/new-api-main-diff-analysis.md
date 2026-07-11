@@ -10125,3 +10125,63 @@ NexusTok 当前已经有稳定运行的 `authz_user_overrides` 表、用户详�
 3. `git diff --check` 通过。
 4. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
 5. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端音频 token 计数安全修复，没有新增前端页面或可直接手动触发的公开交互入口。
+
+## 本轮实施评审：渠道亲和失效清理与 Header 键来源
+
+### 需求分析
+
+继续对照 `/opt/project/new-api-main` 的渠道亲和实现后发现，new-api-main 在两个细节上比 NexusTok 当前实现更稳：
+
+1. `ChannelAffinityKeySource` 支持 `request_header`，管理员可以用租户 ID、会话 ID、客户端 trace ID 等 HTTP Header 建立亲和绑定；NexusTok 当前只支持 `context_int`、`context_string` 和 `gjson`。
+2. 当亲和缓存命中的渠道已禁用、已删除或不再支持当前分组/模型时，new-api-main 默认会清理当前命中的亲和缓存，避免后续请求反复命中过期渠道；同时提供 `keep_on_channel_disabled` 开关，让管理员在确实希望等待渠道恢复时保留旧缓存。NexusTok 当前会在不可用时走随机兜底或按 `SkipRetryOnFailure` 返回 403，但没有清理旧缓存，容易让后续请求继续命中同一个坏渠道。
+
+本轮目标是把这两个 new-api 优势原生化到 NexusTok 的渠道亲和能力中：扩展 key source 类型，同时补上失效缓存清理的默认保护，保持现有成功亲和、参数覆盖模板、使用缓存统计和 `SkipRetryOnFailure` 语义不变。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道亲和配置 | `setting/operation_setting/channel_affinity_setting.go` | `ChannelAffinityKeySource.Type` 增加 `request_header` 说明；`ChannelAffinitySetting` 增加 `keep_on_channel_disabled`，默认 false。 |
+| 渠道亲和 service | `service/channel_affinity.go` | `extractChannelAffinityValue()` 支持从 HTTP Header 提取亲和值；新增 `ClearCurrentChannelAffinityCache()` 和 `ShouldKeepChannelAffinityOnChannelDisabled()`。 |
+| 分发中间件 | `middleware/distributor.go` | 亲和命中但最终不可用时，按配置清理当前缓存；禁用渠道且规则要求跳过重试时，本次请求仍返回 403。 |
+| 回归测试 | `service/channel_affinity_template_test.go` | 覆盖 header 键来源、header 规则缓存命中、当前缓存清理、keep 开关。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改数据库 schema、渠道表结构、缓存命名空间、默认亲和规则、路由权限、前端页面、Relay 请求构造或账号池调度。
+
+### 风险评估
+
+1. 兼容性风险：新增 `keep_on_channel_disabled` 默认 false，与 new-api-main 对齐；旧配置缺失该字段时 Go 零值为 false，因此会启用清理失效缓存的默认保护。
+2. `SkipRetryOnFailure` 风险：Codex/Claude CLI 这类规则仍需要在亲和渠道禁用时跳过重试。本轮先记录是否需要 403，再按配置清理缓存，最后仍返回原有 403 响应，不改变本次请求语义。
+3. Header 来源风险：Header 名称来自管理员配置，只读取请求头，不写入响应或日志明文；日志仍使用已有 `KeyHint/KeyFingerprint`，避免暴露完整亲和值。
+4. 缓存键风险：`ClearCurrentChannelAffinityCache()` 只删除本次请求上下文里已匹配的 cache key，不做按规则批量删除，不会误删其他租户/模型/分组的亲和绑定。
+5. 兜底选择风险：亲和命中但渠道不可用且未跳过重试时，本次请求继续进入随机选择渠道兜底；清理旧缓存只影响后续请求，避免反复命中过期渠道。
+
+### 方案评审
+
+采用“小范围扩展配置 + 复用上下文 cache key”的方案：
+
+1. `ChannelAffinityKeySource.Type` 支持 `request_header`，通过 `c.GetHeader(src.Key)` 获取并 `TrimSpace`。
+2. `ChannelAffinitySetting` 增加 `KeepOnChannelDisabled`，JSON 键为 `keep_on_channel_disabled`。
+3. 新增 `ClearCurrentChannelAffinityCache(c)`，从 `getChannelAffinityContext()` 获取当前 cache key，并调用 `HybridCache.DeleteMany()` 删除；清理成功或尝试后会把上下文中的 skip retry 标记设为 false，避免当前上下文继续传播失效语义。
+4. 分发中间件在亲和命中但 `affinityUsable=false` 时，如果未开启 keep 开关，则清理当前缓存；若命中的渠道已禁用且规则要求跳过重试，则仍按原逻辑返回 403。
+5. 不改变 `RecordChannelAffinity()` 的写入逻辑，不改变成功请求更新亲和绑定的时机。
+
+### 实施结果
+
+已完成渠道亲和失效清理与 Header 键来源原生化：
+
+- 管理员现在可以配置 `request_header` 作为渠道亲和值来源。
+- `keep_on_channel_disabled` 默认 false，亲和命中渠道不可用时会清理当前缓存。
+- 显式开启 `keep_on_channel_disabled=true` 后会保留旧缓存，适合短暂维护场景。
+- `SkipRetryOnFailure` 的本次请求行为保持不变；命中禁用渠道时仍可返回 403，但默认会先清理失效缓存，避免后续请求持续失败。
+- 缓存清理只作用于本次请求命中的单个亲和 key，不影响其他亲和绑定。
+
+### 验证记录
+
+1. `go test ./service -run 'ChannelAffinity|ShouldKeepChannelAffinityOnChannelDisabled|ClearCurrentChannelAffinityCache|RequestHeader'` 通过，覆盖 Header 键来源、缓存命中、当前缓存清理和 keep 开关。
+2. `go test ./middleware ./service` 通过，确认分发中间件和 service 包整体测试不受影响。
+3. `go test ./setting/operation_setting ./middleware ./service` 通过，确认配置包、分发中间件和 service 包整体构建与测试不受影响。
+4. `git diff --check` 通过。
+5. `cd web/default && bunx prettier --check ../../docs/features/new-api-main-diff-analysis.md` 通过。
+6. 访问 `http://192.168.0.202:3003/` 返回 HTTP 200；本轮为后端渠道亲和调度能力修复，没有新增前端页面或可直接手动触发的公开交互入口。

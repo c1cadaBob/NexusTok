@@ -13,8 +13,9 @@ type ChannelAffinityKeySource struct {
 	// Type 键来源类型，可选值：
 	//   "context_int"    - 从请求上下文中获取整型键
 	//   "context_string" - 从请求上下文中获取字符串键
+	//   "request_header" - 从 HTTP 请求头中获取字符串键
 	//   "gjson"          - 使用 gjson 路径从请求体 JSON 中提取
-	Type string `json:"type"` // context_int, context_string, gjson
+	Type string `json:"type"` // context_int, context_string, request_header, gjson
 	// Key 上下文键名（当 Type 为 context_int/context_string 时使用）
 	Key string `json:"key,omitempty"`
 	// Path gjson 路径表达式（当 Type 为 gjson 时使用）
@@ -59,6 +60,10 @@ type ChannelAffinitySetting struct {
 	Enabled bool `json:"enabled"`
 	// SwitchOnSuccess 控制是否仅在请求成功时更新亲和性绑定
 	SwitchOnSuccess bool `json:"switch_on_success"`
+	// KeepOnChannelDisabled 控制亲和命中的渠道不可用时是否保留旧缓存。
+	// 默认 false：当亲和渠道已禁用、已删除或不再支持当前分组/模型时，清理本次命中的缓存，
+	// 让后续请求重新选择健康渠道。开启后保留旧缓存，适用于管理员希望等待渠道恢复的场景。
+	KeepOnChannelDisabled bool `json:"keep_on_channel_disabled"`
 	// MaxEntries 亲和性缓存的最大条目数
 	MaxEntries int `json:"max_entries"`
 	// DefaultTTLSeconds 默认的亲和性绑定过期时间（秒）
@@ -115,10 +120,11 @@ func buildPassHeaderTemplate(headers []string) map[string]interface{} {
 
 // channelAffinitySetting 是全局渠道亲和性配置实例，默认包含 Codex CLI 和 Claude CLI 两条规则
 var channelAffinitySetting = ChannelAffinitySetting{
-	Enabled:           true,             // 默认启用
-	SwitchOnSuccess:   true,             // 仅在请求成功时更新绑定
-	MaxEntries:        100_000,          // 最大缓存 10 万条
-	DefaultTTLSeconds: 3600,             // 默认 TTL 1 小时
+	Enabled:               true,    // 默认启用
+	SwitchOnSuccess:       true,    // 仅在请求成功时更新绑定
+	KeepOnChannelDisabled: false,   // 亲和渠道不可用时默认清理缓存，避免反复命中过期渠道
+	MaxEntries:            100_000, // 最大缓存 10 万条
+	DefaultTTLSeconds:     3600,    // 默认 TTL 1 小时
 	Rules: []ChannelAffinityRule{
 		{
 			// Codex CLI 追踪规则：匹配所有 gpt-* 模型的 /v1/responses 请求
@@ -129,7 +135,7 @@ var channelAffinitySetting = ChannelAffinitySetting{
 				{Type: "gjson", Path: "prompt_cache_key"},
 			},
 			ValueRegex:            "",
-			TTLSeconds:            0,  // 使用默认 TTL
+			TTLSeconds:            0, // 使用默认 TTL
 			ParamOverrideTemplate: buildPassHeaderTemplate(codexCliPassThroughHeaders),
 			SkipRetryOnFailure:    true,
 			IncludeUsingGroup:     true,
@@ -145,7 +151,7 @@ var channelAffinitySetting = ChannelAffinitySetting{
 				{Type: "gjson", Path: "metadata.user_id"},
 			},
 			ValueRegex:            "",
-			TTLSeconds:            0,  // 使用默认 TTL
+			TTLSeconds:            0, // 使用默认 TTL
 			ParamOverrideTemplate: buildPassHeaderTemplate(claudeCliPassThroughHeaders),
 			SkipRetryOnFailure:    true,
 			IncludeUsingGroup:     true,

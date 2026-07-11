@@ -185,14 +185,13 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 	// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
 	// 如果之前对该模型的成功请求使用过某个渠道，优先复用该渠道
 	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+		affinityUsable := false
+		shouldAbortAffinityDisabled := false
 		preferred, err := model.CacheGetChannel(preferredChannelID)
 		if err == nil && preferred != nil {
 			if preferred.Status != common.ChannelStatusEnabled {
 				// 亲和性渠道已禁用
-				if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-					return nil, false
-				}
+				shouldAbortAffinityDisabled = service.ShouldSkipRetryAfterChannelAffinityFailure(c)
 			} else if usingGroup == "auto" {
 				// auto 分组：遍历用户可用的自动分组，找到第一个支持该模型的分组
 				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
@@ -202,6 +201,7 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 						selectGroup = g
 						common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
 						channel = preferred
+						affinityUsable = true
 						service.MarkChannelAffinityUsed(c, g, preferred.Id)
 						break
 					}
@@ -210,8 +210,16 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 				// 普通分组：检查渠道是否在该分组中支持该模型
 				channel = preferred
 				selectGroup = usingGroup
+				affinityUsable = true
 				service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 			}
+		}
+		if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+			service.ClearCurrentChannelAffinityCache(c)
+		}
+		if shouldAbortAffinityDisabled {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
+			return nil, false
 		}
 	}
 

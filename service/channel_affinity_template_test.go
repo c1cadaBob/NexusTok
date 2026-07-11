@@ -67,11 +67,11 @@ func TestApplyChannelAffinityOverrideTemplate_MergeTemplate(t *testing.T) {
 	}
 
 	merged, applied := ApplyChannelAffinityOverrideTemplate(ctx, base)
-	require.True(t, applied)                        // 模板存在，应标记为已应用
-	require.Equal(t, 0.7, merged["temperature"])    // 基础参数保持原值，不被模板覆盖
-	require.Equal(t, 0.95, merged["top_p"])         // 模板中的新参数被正确添加
-	require.Equal(t, 2000, merged["max_tokens"])    // 基础参数中的 max_tokens 保留
-	require.Equal(t, 0.7, base["temperature"])      // 原始 base map 不被修改
+	require.True(t, applied)                     // 模板存在，应标记为已应用
+	require.Equal(t, 0.7, merged["temperature"]) // 基础参数保持原值，不被模板覆盖
+	require.Equal(t, 0.95, merged["top_p"])      // 模板中的新参数被正确添加
+	require.Equal(t, 2000, merged["max_tokens"]) // 基础参数中的 max_tokens 保留
+	require.Equal(t, 0.7, base["temperature"])   // 原始 base map 不被修改
 
 	// 验证日志信息已正确写入 gin.Context
 	anyInfo, ok := ctx.Get(ginKeyChannelAffinityLogInfo)
@@ -199,6 +199,119 @@ func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 	}
 }
 
+// TestExtractChannelAffinityValue_RequestHeader 测试 request_header 键来源。
+// 管理员可通过该来源把租户 ID、会话 ID 等上游客户端头作为亲和键。
+func TestExtractChannelAffinityValue_RequestHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Affinity-Key", " tenant-123 ")
+
+	value := extractChannelAffinityValue(ctx, operation_setting.ChannelAffinityKeySource{
+		Type: "request_header",
+		Key:  "X-Affinity-Key",
+	})
+
+	require.Equal(t, "tenant-123", value)
+}
+
+// TestGetPreferredChannelByAffinity_RequestHeaderKeySource 测试 request_header 规则可命中缓存。
+// 这让非 JSON 请求或不能稳定暴露 body 字段的客户端，也能通过显式 Header 建立渠道亲和。
+func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rule := operation_setting.ChannelAffinityRule{
+		Name:       "header-affinity",
+		ModelRegex: []string{"^gpt-5$"},
+		PathRegex:  []string{"/v1/chat/completions"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "request_header", Key: "X-Affinity-Key"},
+		},
+		TTLSeconds:        60,
+		IncludeUsingGroup: true,
+		IncludeRuleName:   true,
+	}
+	affinityValue := fmt.Sprintf("header-hit-%d", time.Now().UnixNano())
+	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9528, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+	originalRules := append([]operation_setting.ChannelAffinityRule(nil), setting.Rules...)
+	setting.Rules = append([]operation_setting.ChannelAffinityRule{rule}, originalRules...)
+	t.Cleanup(func() {
+		setting.Rules = originalRules
+	})
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
+
+	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+	require.True(t, found)
+	require.Equal(t, 9528, channelID)
+
+	meta, ok := getChannelAffinityMeta(ctx)
+	require.True(t, ok)
+	require.Equal(t, "request_header", meta.KeySourceType)
+	require.Equal(t, "X-Affinity-Key", meta.KeySourceKey)
+	require.Equal(t, buildChannelAffinityKeyHint(affinityValue), meta.KeyHint)
+}
+
+// TestClearCurrentChannelAffinityCache 测试当前请求命中的亲和缓存清理能力。
+// 当亲和渠道已经禁用或不再可用时，分发层会调用该函数清理本次命中的缓存键，
+// 同时清除跳过重试标记，让后续请求可以重新选择健康渠道。
+func TestClearCurrentChannelAffinityCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cacheKeySuffix := fmt.Sprintf("codex cli trace:default:clear-current-%d", time.Now().UnixNano())
+	cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:   cacheKeyFull,
+		TTLSeconds: 60,
+		RuleName:   "codex cli trace",
+		SkipRetry:  true,
+	})
+	require.True(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
+
+	deleted := ClearCurrentChannelAffinityCache(ctx)
+	require.True(t, deleted)
+	_, found, err := cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
+}
+
+// TestShouldKeepChannelAffinityOnChannelDisabled 测试亲和渠道不可用时的保留开关。
+// 默认 false 会清理失效缓存；管理员显式开启后才保留旧缓存，等待渠道恢复。
+func TestShouldKeepChannelAffinityOnChannelDisabled(t *testing.T) {
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+	previous := setting.KeepOnChannelDisabled
+	t.Cleanup(func() {
+		setting.KeepOnChannelDisabled = previous
+	})
+
+	setting.KeepOnChannelDisabled = false
+	require.False(t, ShouldKeepChannelAffinityOnChannelDisabled())
+
+	setting.KeepOnChannelDisabled = true
+	require.True(t, ShouldKeepChannelAffinityOnChannelDisabled())
+}
+
 // TestChannelAffinityHitCodexTemplatePassHeadersEffective 测试 Codex CLI 场景下的端到端流程：
 // - 缓存命中时能正确获取优选渠道 ID
 // - 参数覆盖模板正确应用
@@ -235,7 +348,7 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
 	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
-	require.True(t, found)          // 缓存命中，应找到优选渠道
+	require.True(t, found)            // 缓存命中，应找到优选渠道
 	require.Equal(t, 9527, channelID) // 返回缓存中存储的渠道 ID
 
 	baseOverride := map[string]interface{}{
@@ -266,8 +379,8 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	// 验证原始静态头保留，以及 pass_headers 操作透传的请求头生效
 	require.Equal(t, "legacy-static", info.RuntimeHeadersOverride["x-static"])
 	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])      // 从原始请求头透传
-	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])        // 从原始请求头透传
-	require.Equal(t, "codex-cli-test", info.RuntimeHeadersOverride["user-agent"])  // 从原始请求头透传
+	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])       // 从原始请求头透传
+	require.Equal(t, "codex-cli-test", info.RuntimeHeadersOverride["user-agent"]) // 从原始请求头透传
 
 	// 验证未在白名单中的 Codex 特定头不会被透传
 	_, exists := info.RuntimeHeadersOverride["x-codex-beta-features"]
