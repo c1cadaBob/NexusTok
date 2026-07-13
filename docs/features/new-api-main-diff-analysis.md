@@ -12254,3 +12254,72 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 12. MCP 网络记录显示 `/api/log/stat?...type=0...` 返回 HTTP 200，`/api/log/?p=1&page_size=100&type=0...` 返回 HTTP 200（中间 `/api/log` 到 `/api/log/` 的 301 为既有路径规范化）。
 13. MCP 读取 `/api/log/` 响应体确认真实后端日志包含 `other.op.action=login`、`params.method=password` 以及 `other.op.action=channel.update`；页面摘要来自这些结构化字段。
 14. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间临时启动 headless Chrome 连接 MCP，验证完成后已停止该临时会话。
+
+## 本轮实施评审：Markdown 富内容渲染能力原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/ui/markdown.tsx` 与当前 `web/default/src/components/ui/markdown.tsx` 后确认，NexusTok 已经吸收了 `RichContent`、`HtmlContent`、`JsonCodeEditor` 和 AI response renderer 等富内容基础组件，但底层 `Markdown` 仍是简化版 `react-markdown + remark-gfm`。new-api 最新 `Markdown` 组件已经切换为 `marked + DOMPurify + KaTeX`，并提供数学公式、任务列表、emoji shortcode、分页分隔符、轻量 flow/sequence 图表等渲染能力。
+
+该差异影响的不只是 Playground。当前 NexusTok 的首页公告、通知弹窗、Dashboard 公告详情、FAQ、法务文档和更新检查 release body 都通过 `RichContent` 或 `Markdown` 渲染；如果管理员在后台写入数学公式、流程说明、FAQ 图示或 release markdown，当前展示能力会明显弱于 new-api。
+
+### 需求分析
+
+1. 在不改变 `RichContent` 和 `Markdown` 调用 API 的前提下，让 Markdown 支持 DOMPurify 清洗后的 HTML 输出、GFM、任务列表、表格、代码块、数学公式和轻量图表。
+2. 保留现有 `breaks` 参数语义，公告、通知和 FAQ 中需要换行即换行的内容仍能工作。
+3. 所有 Markdown 输出必须经过 DOMPurify；新增 SVG/MathML 标签和属性只能服务公式/图表渲染，不能放开脚本执行或危险协议。
+4. 新增依赖只限 new-api 当前已验证使用的 `marked` 和 `katex`，不引入更重的 Mermaid runtime，避免前台公告和通知渲染成本激增。
+5. 该能力是纯前端展示增强，不改变后端公告、通知、法务文档、系统设置、Playground 消息、API 响应或权限语义。
+6. 增加轻量测试覆盖，证明数学、流程图和危险 HTML 清洗能够同时成立。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Markdown 组件 | `web/default/src/components/ui/markdown.tsx` | 从简化 ReactMarkdown 渲染升级为 new-api 的安全 HTML 渲染能力，并保持 `children/className/breaks` API。 |
+| 前端依赖 | `web/default/package.json`、`web/default/bun.lock` | 新增 `marked`、`katex`；保留现有依赖，避免顺手移除造成锁文件大幅波动。 |
+| 测试 | `web/default/src/components/ui/markdown.test.tsx` | 覆盖 KaTeX 输出、flow 图表输出、危险 HTML/URL 清洗和 breaks 语义。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、实施结果和验证记录。 |
+
+本轮不修改 `HtmlContent`、`RichContent`、通知接口、公告接口、法务文档加载、Playground 消息存储、AI response renderer、Go 后端和数据库。
+
+### 风险评估
+
+1. XSS 风险：new-api 组件允许更多 SVG/MathML 标签和属性。迁移时必须保留 DOMPurify 清洗，并用测试覆盖 `script`、事件属性和 `javascript:` 链接被移除。
+2. Bundle 体积风险：`katex` CSS 和 `marked` 会增加前端包体积；相比 Mermaid runtime 更轻，且只替换原有 Markdown 组件，不在每个调用点重复引入。
+3. 样式回归风险：ReactMarkdown 原本直接产出 React 节点，new-api 组件产出清洗后的 HTML。需要保留 `prose prose-neutral dark:prose-invert max-w-none` 基础类，并继承当前 `className`。
+4. SSR/测试风险：DOMPurify、KaTeX 和 marked 依赖浏览器/DOM 行为。当前应用是客户端 SPA，测试可通过 DOM 环境或组件渲染验证；若单元测试环境无法提供 DOM，应将纯渲染函数以浏览器环境测试或通过 build/MCP 验证兜底。
+5. 兼容风险：已有通知和公告中的普通 Markdown、表格和链接不能回退。迁移后用 MCP 实际访问首页、通知弹窗或 Dashboard 公告/FAQ 页面确认真实渲染。
+6. 覆盖风险：不直接改 AI response renderer；Playground 助手消息仍走现有 stream markdown parser 和 CodeBlock，不把公告文档组件与模型输出渲染混为一谈。
+
+### 方案评审
+
+采用“底层 Markdown 组件替换 + API 保持 + 安全测试 + 页面验证”的方案：
+
+1. 将 new-api `Markdown` 的 marked/DOMPurify/KaTeX 渲染能力迁入 NexusTok，并替换版权头、品牌命名和必要中文注释。
+2. 保持 `MarkdownProps` 的 `children: string`、`className?: string`、`breaks?: boolean` 不变，确保 `RichContent`、FAQ、法务、更新检查等调用点无需改动。
+3. 在 `web/default/package.json` 中新增 `marked`、`katex` 并用 Bun 更新锁文件。
+4. 增加 `markdown.test.tsx`，至少覆盖公式渲染、flow 图表渲染、危险 HTML 清洗和 `breaks` 换行。
+5. 运行 Markdown 单测、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 以及一个真实使用 `RichContent/Markdown` 的页面，确认热更新生效、页面无控制台错误。
+
+### 实施结果
+
+- `web/default/src/components/ui/markdown.tsx` 已从简化 `react-markdown + remark-gfm` 升级为 `marked + DOMPurify + KaTeX` 渲染实现，保持 `children`、`className`、`breaks` 组件 API 不变。
+- Markdown 现在支持 GFM、任务列表、表格、emoji shortcode、`[========]` 分页线、块级/行内 KaTeX 数学公式、`flow` 轻量流程图和 `seq` 轻量时序图。
+- Markdown 输出仍统一经过 DOMPurify 清洗；为了让 Bun 单测和潜在非 DOM 环境也能执行，新增了非浏览器 fallback 清洗，剥离 `script/style/iframe/object/embed`、事件属性和 `javascript:` URL。真实浏览器运行时仍优先使用 DOMPurify。
+- 新增 `renderMarkdownForTest` 作为测试入口，业务调用仍使用 `Markdown` 组件。
+- `web/default/package.json` 和 `bun.lock` 已新增 `marked`、`katex`；保留原有 `react-markdown`、`remark-gfm` 依赖，避免在本轮顺手移除造成无关锁文件波动。
+- 新增 `web/default/src/components/ui/markdown.test.tsx`，覆盖 KaTeX、flow SVG、危险 HTML 清洗和 breaks 语义。
+- 没有修改 `RichContent`、`HtmlContent`、通知/公告接口、法务文档加载、Playground 消息渲染、AI response renderer、Go 后端和数据库。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/ui/markdown.test.tsx` 通过，4 个 Markdown 渲染与清洗用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 11.9 秒内完成生产构建；构建产物包含 KaTeX CSS 与字体资源。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 打开 `http://192.168.0.202:3003/`，页面正常加载；在浏览器上下文调用 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`。
+6. MCP 忽略缓存访问 `http://192.168.0.202:3003/about`，About 页面正常渲染 `No About Content Set` 默认内容、项目链接和页脚；该页面路径会加载 `RichContent/Markdown` 相关前端包，本轮 Markdown 替换没有造成页面崩溃。
+7. MCP 重新忽略缓存访问 `http://192.168.0.202:3003/` 根页面，首页导航、hero、功能区和页脚均正常显示；请求 `/api/status`、`/api/notice`、`/api/home_page_content` 均返回 HTTP 200。
+8. 当前 3003 环境没有配置包含公式或 flow 图表的真实公告/About 内容，因此新增富 Markdown 渲染分支由 `markdown.test.tsx` 覆盖；MCP 负责验证真实页面、热更新和运行时稳定性。
+9. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间临时启动 headless Chrome 连接 MCP，验证完成后已停止该临时会话。
