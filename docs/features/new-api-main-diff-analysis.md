@@ -12708,3 +12708,71 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 13. MCP 取消抽屉后调用 `/api/channel/1`，返回 `models: "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认验证过程未保存或污染真实渠道配置。
 14. MCP 网络请求记录只包含 GET：`/api/status`、`/api/user/self`、`/api/notice`、`/api/group/`、`/api/channel/`、`/api/channel/1`、`/api/channel/models`、`/api/models/search`、`/api/prefill_group/`、`/api/account-pool/groups/options`、`/api/user/2fa/status`、`/api/user/passkey`；未出现渠道保存请求。
 15. MCP 控制台无 JavaScript `error` 或 `warn`。Chrome DevTools 报出两个既有表单 `issue`：`name` 输入缺少 `autocomplete`，以及部分 label 的 `for` 与控件 `id` 不匹配；本轮未修改这些表单基础组件，已记录为后续可访问性改进项。
+
+## 本轮实施评审：模型倍率可视化编辑器保存前草稿提交保护
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main` 与当前项目的系统设置模型倍率页面后发现，new-api 在 `web/default/src/features/system-settings/models/model-ratio-form.tsx`、`model-ratio-visual-editor.tsx` 和 `model-pricing-sheet.tsx` 中已经加入了“打开中的模型定价编辑器在外层保存前先提交草稿”的保护链路：`ModelRatioForm` 持有 `visualEditorRef`，保存时调用 `commitOpenEditor()`；视觉编辑器再调用右侧 `ModelPricingEditorPanel` 或移动端 `ModelPricingSheet` 的 `commitDraft()`，只有草稿校验通过才继续外层保存。
+
+NexusTok 当前项目已经具备比 new-api 更完整的批量模型定价能力，包括 CodeMirror JSON 模式、计费表达式编辑器、模型定价格式化稳定化、权限控制和可视化批量复制。但当前保存链路仍存在一个细节风险：管理员在可视化模式打开某个模型的右侧定价面板，修改输入价格、缓存价格或表达式草稿后，如果没有点击面板底部 `Update`/`Add`，直接点击外层 `Save model prices`，外层表单只提交已经写入 `react-hook-form` 的 JSON 字符串，打开面板里的未提交草稿不会进入保存 payload。这会让管理员误以为“保存成功但刚才改的模型定价没生效”。
+
+前端设计方向保持当前系统设置页的克制数据工具风格：使用现有表格、边框面板和标准按钮，不引入新的视觉装饰；本轮可见差异主要是行为可靠性，而不是新文案或新布局。
+
+### 需求分析
+
+1. 将 new-api 的保存前草稿提交保护转换为 NexusTok 原生能力：外层模型倍率保存必须先尝试提交当前打开的可视化定价面板草稿。
+2. 保留当前 NexusTok 已有的面板级 `Update`/`Add` 行为、批量复制、移动端 Sheet、权限禁用、计费表达式和 JSON 模式，不整段覆盖 new-api 文件。
+3. 如果打开面板草稿校验失败，例如模型名为空、依赖价格缺失、音频输出价格缺少音频输入价格，外层保存必须中止，避免把半成品计费配置写入系统 option。
+4. 如果没有打开面板，或当前处于 JSON 模式，外层保存行为应保持原样。
+5. 本轮不真实保存运行态模型倍率配置；MCP 只验证页面热更新、打开面板、修改草稿和取消路径，保存前提交行为主要由类型检查和代码路径覆盖，避免污染计费环境。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型倍率表单保存链路 | `web/default/src/features/system-settings/models/model-ratio-form.tsx` | 增加 `visualEditorRef` 与统一 `handleSave`，可视化模式保存前先提交打开面板草稿；JSON 模式继续使用原表单提交。 |
+| 可视化批量模型定价编辑器 | `web/default/src/features/system-settings/models/model-ratio-visual-editor.tsx` | 暴露 `ModelRatioVisualEditorHandle.commitOpenEditor()`，桥接右侧面板或移动端 Sheet 的草稿提交；保留现有表格、批量复制和 `persistPricingData`。 |
+| 模型定价面板/Sheet | `web/default/src/features/system-settings/models/model-pricing-sheet.tsx` | 将编辑面板改为 `forwardRef`，暴露 `commitDraft()` 复用现有表单校验和数据构造；面板底部 `Update`/`Add` 仍调用原 `onSave(data)`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+本轮不修改 Go 后端、数据库 schema、`options` 存储结构、`billing_setting` 后端、`pkg/billingexpr` 表达式语言、预消费、结算、日志展示、模型同步接口、分组倍率、工具价格和 new-api 源码。
+
+### 风险评估
+
+1. 计费语义风险：模型倍率和表达式直接影响扣费，任何自动提交草稿都不能改写字段含义。方案只复用现有 `handleSubmit` 校验与 `persistPricingData` 写表单字符串，不改变 `ModelPrice`、`ModelRatio`、`billing_setting.billing_mode`、`billing_setting.billing_expr` 的结构。
+2. 校验绕过风险：如果 `commitDraft()` 只读取表单值而不触发校验，外层保存可能写入非法草稿。方案必须先 `form.trigger()` 并执行与原 `handleSubmit` 相同的跨字段校验。
+3. 行为重复风险：面板内 `Update`/`Add` 和外层保存都可能提交草稿；方案将草稿构造收敛到同一个 helper，避免两条路径产生不一致 payload。
+4. 移动端风险：移动端使用 `ModelPricingSheet` 而不是右侧内嵌面板，必须把同一个 ref 传进 Sheet 内部面板，避免桌面修复而移动端仍丢草稿。
+5. 权限风险：外层 `Save model prices` 已受 `canSave` 控制；本轮不新增绕过权限的保存按钮，也不在无权限状态主动写入系统 option。
+6. 验证风险：真实保存模型倍率会影响计费，MCP 需要以打开、编辑、取消和页面状态为主；保存前提交的核心不变量由 TypeScript、构建和代码审查验证。
+
+### 方案评审
+
+采用“小范围保存链路增强，不拆分大文件”的方案：
+
+1. 在 `model-pricing-sheet.tsx` 中新增 `ModelPricingEditorPanelHandle`，让 `ModelPricingEditorPanel` 与 `ModelPricingSheet` 都通过 `forwardRef` 暴露 `commitDraft()`。
+2. 抽出 `validatePricingValues()` 与 `buildSubmitData()`，让面板底部提交和外层保存前提交复用同一套校验和数据构造；原 `Update`/`Add` 仍然关闭面板并写入表单草稿。
+3. 在 `model-ratio-visual-editor.tsx` 中引入 `editorPanelRef`，实现 `commitOpenEditor()`：未打开编辑器时直接返回 `true`；有打开编辑器时调用 `commitDraft()`，失败返回 `false`，成功则调用现有 `persistPricingData(data)` 写入表单 JSON 并保留当前编辑数据。
+4. 在 `model-ratio-form.tsx` 中持有 `visualEditorRef`，新增 `handleSave`：可视化模式先 `commitOpenEditor()`，返回 `false` 时中止；成功后再执行 `form.handleSubmit(onSave)()`。JSON 模式没有打开中的可视化面板，继续沿用原表单提交。
+5. 不新增可见文案、不修改 i18n locale；如后续为了快照状态新增 `Draft changed`、`New draft` 等徽标，再以单独切片引入翻译和测试。
+6. 验证顺序：先跑 `bun run typecheck`、模型相关测试、`bun run i18n:sync`、`bun run build`、`git diff --check`；再用 MCP 访问 `http://192.168.0.202:3003/system-settings/models/model-ratio`，确认页面热更新、可视化编辑面板可打开、草稿修改后可取消且不保存真实配置。
+
+### 实施结果
+
+1. `ModelPricingEditorPanel` 和 `ModelPricingSheet` 已转换为 `forwardRef`，并暴露 `commitDraft()`。该方法会先执行 react-hook-form 字段校验，再执行输入价格依赖和音频输出依赖的跨字段校验，失败时返回 `null` 并阻止外层保存。
+2. `ModelPricingEditorPanel` 的面板按钮提交和外层保存前提交现在复用同一个 `buildSubmitData()`，避免 `Update`/`Add` 与外层 `Save model prices` 产生不同的 `ModelRatioData`。
+3. `ModelRatioVisualEditor` 已暴露 `commitOpenEditor()`：没有打开编辑面板时直接允许保存；有打开面板时先调用 `commitDraft()`，成功后通过现有 `persistPricingData()` 写入表单 JSON 草稿，真正写入系统 option 仍由父级保存流程统一处理。
+4. `ModelRatioForm` 的可视化模式保存按钮已接入 `handleSave`，保存前先提交打开中的模型定价面板草稿；JSON 模式继续沿用原表单提交路径。
+5. 本轮未新增可见文案，未修改 i18n locale，未修改后端、数据库、`pkg/billingexpr`、模型倍率 option key、分组倍率或工具价格。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/system-settings`，17 个系统设置相关测试通过，覆盖数字字段、价格格式化、Grok 表单转换、角色策略工具和 Waffo Pancake 凭据解析。
+2. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认 `forwardRef`、`ModelPricingEditorPanelHandle`、`ModelRatioVisualEditorHandle` 和父子 ref 传递链路类型正确。
+3. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮没有新增可见翻译 key。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过，说明隐藏的模型定价组件和可达的 pricing route 均能被当前打包链路解析。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，截图保存为 `/tmp/nexustok-pricing-settings-after-draft-commit.png`。
+7. MCP 访问 `/system-settings/models/model-ratio` 时当前生产路由会按 `section-registry` 回落到 `/system-settings/models/global`；当前项目没有公开模型价格 tab 的导航入口，本轮未改变导航可见性，避免把保存链路保护与页面暴露策略混在一个切片。
+8. MCP 控制台没有 JavaScript `error` 或 `warn`，仅有 i18next 信息和 `nexustok-build` debug；网络请求只有 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，未出现保存 option 的写请求，确认验证未污染运行态计费配置。

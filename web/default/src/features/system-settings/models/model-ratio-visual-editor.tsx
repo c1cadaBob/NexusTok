@@ -16,7 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useMemo, memo, useCallback, useEffect } from 'react'
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -61,6 +70,7 @@ import {
 } from '@/features/pricing/lib/billing-expr'
 import { safeJsonParse } from '../utils/json-parser'
 import {
+  type ModelPricingEditorPanelHandle,
   ModelPricingEditorPanel,
   ModelPricingSheet,
   type ModelRatioData,
@@ -79,6 +89,10 @@ type ModelRatioVisualEditorProps = {
   billingMode: string
   billingExpr: string
   onChange: (field: string, value: string) => void
+}
+
+export type ModelRatioVisualEditorHandle = {
+  commitOpenEditor: () => Promise<boolean>
 }
 
 type ModelRow = {
@@ -192,8 +206,11 @@ const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
   return details.length > 0 ? details.join(' · ') : t('Base input price only')
 }
 
-export const ModelRatioVisualEditor = memo(
-  function ModelRatioVisualEditor({
+const ModelRatioVisualEditorComponent = forwardRef<
+  ModelRatioVisualEditorHandle,
+  ModelRatioVisualEditorProps
+>(function ModelRatioVisualEditor(
+  {
     modelPrice,
     modelRatio,
     cacheRatio,
@@ -205,12 +222,15 @@ export const ModelRatioVisualEditor = memo(
     billingMode,
     billingExpr,
     onChange,
-  }: ModelRatioVisualEditorProps) {
+  },
+  ref
+) {
     const { t } = useTranslation()
     const isMobile = useMediaQuery('(max-width: 767px)')
     const [sheetOpen, setSheetOpen] = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
     const [editData, setEditData] = useState<ModelRatioData | null>(null)
+    const editorPanelRef = useRef<ModelPricingEditorPanelHandle>(null)
     const [sorting, setSorting] = useState<SortingState>([])
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
     const [globalFilter, setGlobalFilter] = useState('')
@@ -870,6 +890,24 @@ export const ModelRatioVisualEditor = memo(
       )
     }, [editData, persistPricingData, t, table])
 
+    useImperativeHandle(
+      ref,
+      () => ({
+        commitOpenEditor: async () => {
+          if (!editorOpen || !editorPanelRef.current) return true
+          const data = await editorPanelRef.current.commitDraft()
+          if (!data) return false
+
+          // 外层保存前只提交当前打开面板到表单草稿；真正写入系统 option
+          // 仍由父级保存按钮统一处理，避免绕过权限和差异计算。
+          persistPricingData(data)
+          setEditData(data)
+          return true
+        },
+      }),
+      [editorOpen, persistPricingData]
+    )
+
     const selectedTargetCount = table.getFilteredSelectedRowModel().rows.length
 
     return (
@@ -977,6 +1015,7 @@ export const ModelRatioVisualEditor = memo(
           <div className='hidden min-w-0 md:block'>
             {editorOpen ? (
               <ModelPricingEditorPanel
+                ref={editorPanelRef}
                 onSave={handleSave}
                 onCancel={handleCancel}
                 editData={editData}
@@ -1013,6 +1052,7 @@ export const ModelRatioVisualEditor = memo(
 
         {isMobile && (
           <ModelPricingSheet
+            ref={editorPanelRef}
             open={sheetOpen}
             onOpenChange={setSheetOpen}
             onSave={handleSave}
@@ -1023,8 +1063,12 @@ export const ModelRatioVisualEditor = memo(
         )}
       </div>
     )
-  },
-  // Custom equality check - only re-render if JSON props actually changed
+  }
+)
+
+export const ModelRatioVisualEditor = memo(
+  ModelRatioVisualEditorComponent,
+  // 自定义相等判断：只有 JSON 配置或变更回调变化时才重新渲染大表格。
   (prevProps, nextProps) => {
     return (
       prevProps.modelPrice === nextProps.modelPrice &&
