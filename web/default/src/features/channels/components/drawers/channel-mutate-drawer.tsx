@@ -570,11 +570,21 @@ function ChannelEditorNav(props: {
           {item.icon}
         </span>
         <span className='min-w-0 flex-1'>
-          <span className='block truncate text-sm font-medium'>
+          <span
+            className={cn(
+              'block text-sm font-medium',
+              layout === 'horizontal' ? 'truncate' : 'leading-4 break-words'
+            )}
+          >
             {item.title}
           </span>
           {item.description && (
-            <span className='text-muted-foreground block truncate text-xs'>
+            <span
+              className={cn(
+                'text-muted-foreground block text-xs',
+                layout === 'horizontal' ? 'truncate' : 'leading-4 break-words'
+              )}
+            >
               {item.description}
             </span>
           )}
@@ -2286,7 +2296,7 @@ export function ChannelMutateDrawer({
               {isChannelDetailLoading && <ChannelEditorLoadingState />}
               <div
                 className={cn(
-                  'grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start',
+                  'grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start',
                   isChannelDetailLoading && 'hidden'
                 )}
               >
@@ -2445,1384 +2455,1456 @@ export function ChannelMutateDrawer({
                         </Alert>
                       )}
 
-                      {/* Azure 类型的 endpoint 和 API version 配置。 */}
-                      {currentType === 3 && !isGlobalAccountPoolMode && (
-                        <>
-                          <FormField
-                            control={form.control}
-                            name='base_url'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('AZURE_OPENAI_ENDPOINT *')}
-                                </FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t(
-                                      'e.g., https://docs-test-001.openai.azure.com'
-                                    )}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t('Your Azure OpenAI endpoint URL')}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name='other'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('Default API Version *')}
-                                </FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t('e.g., 2025-04-01-preview')}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t('Default API version for this channel')}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name='azure_responses_version'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('Responses API Version')}
-                                </FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t('e.g., preview')}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t(
-                                    'Default Responses API version, if empty, will use the API version above'
-                                  )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </>
-                      )}
-
-                      {/* 自定义完整 URL 渠道。 */}
-                      {currentType === 8 && !isGlobalAccountPoolMode && (
-                        <FormField
-                          control={form.control}
-                          name='base_url'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>
-                                {t('Full Base URL (supports')} {'{'}
-                                {t('model')}
-                                {'}'} {t('variable) *')}
-                              </FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t(
-                                    'e.g., https://api.openai.com/v1/chat/completions'
-                                  )}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t('Enter the complete URL, supports')} {'{'}
-                                {t('model')}
-                                {'}'} {t('variable')}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* 讯飞星火模型版本配置。 */}
-                      {currentType === 18 && (
-                        <FormField
-                          control={form.control}
-                          name='other'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Model Version *')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t('e.g., v2.1')}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t(
-                                  'Spark model version, e.g., v2.1 (version number in API URL)'
-                                )}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* OpenRouter 企业账户配置。 */}
-                      {currentType === 20 && (
-                        <FormField
-                          control={form.control}
-                          name='is_enterprise_account'
-                          render={({ field }) => (
-                            <FormItem className='flex items-center justify-between'>
-                              <div className='space-y-0.5'>
-                                <FormLabel>{t('Enterprise Account')}</FormLabel>
-                                <FormDescription>
-                                  {t(
-                                    'Enable if this is an OpenRouter enterprise account with special response format'
-                                  )}
-                                </FormDescription>
-                              </div>
-                              <FormControl>
-                                <Switch
-                                  checked={field.value}
-                                  disabled={!canEditSensitiveFields}
-                                  onCheckedChange={field.onChange}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* AWS 凭证格式配置；账号池组模式下由组内账号提供，不在渠道表单展示。 */}
-                      {currentType === 33 && !isGlobalAccountPoolMode && (
-                        <FormField
-                          control={form.control}
-                          name='aws_key_type'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('AWS Key Format')}</FormLabel>
-                              <Select
-                                items={[
-                                  {
-                                    value: 'ak_sk',
-                                    label: t('AccessKey / SecretAccessKey'),
-                                  },
-                                  { value: 'api_key', label: t('API Key') },
-                                ]}
-                                onValueChange={(value) => {
-                                  if (!canEditSensitiveFields) {
-                                    toast.error(noPermissionMessage)
-                                    return
-                                  }
-                                  field.onChange(value)
-                                }}
-                                value={field.value}
-                              >
-                                <FormControl>
-                                  <SelectTrigger
-                                    disabled={!canEditSensitiveFields}
-                                  >
-                                    <SelectValue
-                                      placeholder={t('Select key format')}
-                                    />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent alignItemWithTrigger={false}>
-                                  <SelectGroup>
-                                    <SelectItem value='ak_sk'>
-                                      {t('AccessKey / SecretAccessKey')}
-                                    </SelectItem>
-                                    <SelectItem value='api_key'>
-                                      {t('API Key')}
-                                    </SelectItem>
-                                  </SelectGroup>
-                                </SelectContent>
-                              </Select>
-                              <FormDescription>
-                                {field.value === 'api_key'
-                                  ? t('API Key mode: use APIKey|Region')
-                                  : t(
-                                      'AK/SK mode: use AccessKey|SecretAccessKey|Region'
-                                    )}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* AI Proxy Library 知识库 ID。 */}
-                      {currentType === 21 && (
-                        <FormField
-                          control={form.control}
-                          name='other'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Knowledge Base ID *')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t('e.g., 123456')}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t('Enter the knowledge base ID')}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* FastGPT 私有部署地址。 */}
-                      {currentType === 22 && !isGlobalAccountPoolMode && (
-                        <FormField
-                          control={form.control}
-                          name='base_url'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>
-                                {t('Private Deployment URL')}
-                              </FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t(
-                                    'e.g., https://fastgpt.run/api/openapi'
-                                  )}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t(
-                                  'For private deployments, format: https://fastgpt.run/api/openapi'
-                                )}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* SunoAPI 专用基础地址。 */}
-                      {currentType === 36 && !isGlobalAccountPoolMode && (
-                        <FormField
-                          control={form.control}
-                          name='base_url'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>
-                                {t('API Base URL (Important: Not Chat API) *')}
-                              </FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t(
-                                    'e.g., https://api.example.com (path before /suno)'
-                                  )}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t(
-                                  'Enter the path before /suno, usually just the domain'
-                                )}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* Cloudflare Workers AI Account ID。 */}
-                      {currentType === 39 && (
-                        <FormField
-                          control={form.control}
-                          name='other'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Account ID *')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t(
-                                    'e.g., d6b5da8hk1awo8nap34ube6gh'
-                                  )}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t('Your Cloudflare Account ID')}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* SiliconFlow 推荐链接提示。 */}
-                      {currentType === 40 && (
-                        <Alert>
-                          <AlertDescription>
-                            {t('Referral link:')}{' '}
-                            <a
-                              href='https://cloud.siliconflow.cn/i/hij0YNTZ'
-                              target='_blank'
-                              rel='noopener noreferrer'
-                              className='text-primary underline'
-                            >
-                              {t('https://cloud.siliconflow.cn/i/hij0YNTZ')}
-                            </a>
-                          </AlertDescription>
-                        </Alert>
-                      )}
-
-                      {/* Vertex AI 凭证和部署地区配置；账号池组模式下由组内账号提供。 */}
-                      {currentType === 41 && !isGlobalAccountPoolMode && (
-                        <>
-                          <FormField
-                            control={form.control}
-                            name='vertex_key_type'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('Vertex AI Key Format')}
-                                </FormLabel>
-                                <Select
-                                  items={[
-                                    { value: 'json', label: t('JSON') },
-                                    { value: 'api_key', label: t('API Key') },
-                                  ]}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='json'>
-                                        {t('JSON')}
-                                      </SelectItem>
-                                      <SelectItem value='api_key'>
-                                        {t('API Key')}
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {field.value === 'json'
-                                    ? t(
-                                        'JSON format supports service account JSON files'
-                                      )
-                                    : t(
-                                        'API Key mode (does not support batch creation)'
-                                      )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          {form.watch('vertex_key_type') === 'json' && (
-                            <FormItem>
-                              <FormLabel>
-                                {t('Service account JSON file(s)')}
-                              </FormLabel>
-                              <FormControl>
-                                <Input
-                                  type='file'
-                                  accept='.json,application/json'
-                                  multiple={isBatchMode}
-                                  disabled={!canEditSensitiveFields}
-                                  onChange={async (e) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    const fileList = e.target.files
-                                    const files = fileList
-                                      ? Array.from(fileList)
-                                      : []
-                                    // 清空 input value，允许管理员重新选择同一个文件并触发 change。
-                                    e.target.value = ''
-
-                                    if (files.length === 0) {
-                                      toast.info(t('Please upload key file(s)'))
-                                      return
-                                    }
-
-                                    const keys: unknown[] = []
-                                    for (const file of files) {
-                                      try {
-                                        const txt = await file.text()
-                                        keys.push(JSON.parse(txt))
-                                      } catch {
-                                        toast.error(
-                                          t(
-                                            'Failed to parse JSON file: {{name}}',
-                                            {
-                                              name: file.name,
-                                            }
-                                          )
-                                        )
-                                        return
-                                      }
-                                    }
-
-                                    if (keys.length === 0) {
-                                      toast.info(t('Please upload key file(s)'))
-                                      return
-                                    }
-
-                                    const keyValue = isBatchMode
-                                      ? JSON.stringify(keys)
-                                      : JSON.stringify(keys[0])
-
-                                    form.setValue('key', keyValue, {
-                                      shouldDirty: true,
-                                      shouldValidate: true,
-                                    })
-
-                                    toast.success(
-                                      t(
-                                        'Parsed {{count}} service account file(s)',
-                                        {
-                                          count: keys.length,
-                                        }
-                                      )
-                                    )
-                                  }}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {isBatchMode
-                                  ? t(
-                                      'Upload multiple JSON files in batch modes'
-                                    )
-                                  : t(
-                                      'Upload a single service account JSON file'
-                                    )}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                          <FormField
-                            control={form.control}
-                            name='other'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('Deployment Region *')}
-                                </FormLabel>
-                                <FormControl>
-                                  <Textarea
-                                    placeholder={t(
-                                      'e.g., us-central1 or JSON format for model-specific regions'
-                                    )}
-                                    rows={3}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t(
-                                    'Enter deployment region or JSON mapping:'
-                                  )}{' '}
-                                  {'{'}
-                                  {t(
-                                    '"default": "us-central1", "claude-3-5-sonnet-20240620": "europe-west1"'
-                                  )}
-                                  {'}'}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </>
-                      )}
-
-                      {/* 火山引擎内置区域地址选择。 */}
-                      {currentType === 45 &&
-                        !doubaoApiEditUnlocked &&
-                        !isGlobalAccountPoolMode && (
-                          <FormField
-                            control={form.control}
-                            name='base_url'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel
-                                  className='cursor-pointer select-none'
-                                  onClick={handleApiConfigSecretClick}
-                                >
-                                  {t('API Base URL *')}
-                                </FormLabel>
-                                <Select
-                                  items={[
-                                    {
-                                      value:
-                                        'https://ark.cn-beijing.volces.com',
-                                      label: t(
-                                        'https://ark.cn-beijing.volces.com'
-                                      ),
-                                    },
-                                    {
-                                      value:
-                                        'https://ark.ap-southeast.bytepluses.com',
-                                      label: t(
-                                        'https://ark.ap-southeast.bytepluses.com'
-                                      ),
-                                    },
-                                    {
-                                      value: 'doubao-coding-plan',
-                                      label: t('Doubao Coding Plan'),
-                                    },
-                                  ]}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={
-                                    field.value ||
-                                    'https://ark.cn-beijing.volces.com'
-                                  }
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='https://ark.cn-beijing.volces.com'>
-                                        {t('https://ark.cn-beijing.volces.com')}
-                                      </SelectItem>
-                                      <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
-                                        {t(
-                                          'https://ark.ap-southeast.bytepluses.com'
+                      <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                        <div className='flex flex-col gap-4'>
+                          {/* Azure 类型的 endpoint 和 API version 配置。 */}
+                          {currentType === 3 && !isGlobalAccountPoolMode && (
+                            <>
+                              <FormField
+                                control={form.control}
+                                name='base_url'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('AZURE_OPENAI_ENDPOINT *')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        placeholder={t(
+                                          'e.g., https://docs-test-001.openai.azure.com'
                                         )}
-                                      </SelectItem>
-                                      <SelectItem value='doubao-coding-plan'>
-                                        {t('Doubao Coding Plan')}
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {t('Select the API endpoint region')}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-
-                      {/* 火山引擎自定义 API URL，仅在隐藏开关解锁后展示。 */}
-                      {currentType === 45 &&
-                        doubaoApiEditUnlocked &&
-                        !isGlobalAccountPoolMode && (
-                          <FormField
-                            control={form.control}
-                            name='base_url'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('API Base URL *')}</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t(
-                                      'e.g., https://ark.cn-beijing.volces.com'
-                                    )}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t('Enter custom API endpoint URL')}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-
-                      {/* Coze 智能体 ID。 */}
-                      {currentType === 49 && (
-                        <FormField
-                          control={form.control}
-                          name='other'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Agent ID *')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t('e.g., 7342866812345')}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t('Enter the Coze agent ID')}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {/* 其他渠道类型的通用 base_url 配置。 */}
-                      {![3, 8, 22, 36, 45].includes(currentType) &&
-                        !isGlobalAccountPoolMode && (
-                          <FormField
-                            control={form.control}
-                            name='base_url'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Base URL')}</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
-                                    disabled={!canEditSensitiveFields}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription>
-                                  {t(
-                                    'Custom API base URL. For official channels, NexusTok has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                                  )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-
-                      {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (
-                        <FormField
-                          control={form.control}
-                          name='advanced_custom'
-                          render={({ field }) => (
-                            <FormItem className='border-border/60 rounded-lg border p-4'>
-                              <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-                                <div className='min-w-0 space-y-2'>
-                                  <FormLabel>
-                                    {t('Advanced Custom Routes')}
-                                  </FormLabel>
-                                  <FormDescription>
-                                    {t(
-                                      'Configure incoming paths, upstream paths, converters, and authentication for this Advanced Custom channel.'
-                                    )}
-                                  </FormDescription>
-                                  <div className='flex flex-wrap gap-2'>
-                                    <Badge variant='secondary'>
-                                      {t('Routes')}:{' '}
-                                      {advancedCustomStats.routeCount}
-                                    </Badge>
-                                    {advancedCustomRouteTypeLabels.map(
-                                      (label) => (
-                                        <Badge
-                                          key={label}
-                                          variant='outline'
-                                          className='max-w-[12rem]'
-                                          title={label}
-                                        >
-                                          <span className='truncate'>
-                                            {t(label)}
-                                          </span>
-                                        </Badge>
-                                      )
-                                    )}
-                                    {hiddenAdvancedCustomRouteTypeCount > 0 && (
-                                      <Badge
-                                        variant='outline'
-                                        title={advancedCustomRouteTypeTitle}
-                                      >
-                                        +{hiddenAdvancedCustomRouteTypeCount}
-                                      </Badge>
-                                    )}
-                                    {!advancedCustomStats.valid && (
-                                      <Badge variant='destructive'>
-                                        {t('Incomplete')}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={() => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    setAdvancedCustomEditorOpen(true)
-                                  }}
-                                  disabled={!canEditSensitiveFields}
-                                  title={
-                                    canEditSensitiveFields
-                                      ? undefined
-                                      : noPermissionMessage
-                                  }
-                                >
-                                  <Route data-icon='inline-start' />
-                                  {t('Configure routes')}
-                                </Button>
-                              </div>
-                              <FormControl>
-                                <input type='hidden' {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      <ChannelAuthSection>
-                        <FormField
-                          control={form.control}
-                          name='credential_mode'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Credential Mode')}</FormLabel>
-                              <Select
-                                items={credentialModeOptions}
-                                onValueChange={(value) => {
-                                  if (!canEditSensitiveFields) {
-                                    toast.error(noPermissionMessage)
-                                    return
-                                  }
-                                  field.onChange(value)
-                                  if (value === 'multi_key') {
-                                    form.setValue(
-                                      'multi_key_mode',
-                                      'multi_to_single'
-                                    )
-                                  } else if (
-                                    value === 'account_pool' ||
-                                    value === 'global_account_pool'
-                                  ) {
-                                    form.setValue('multi_key_mode', 'single')
-                                    if (value === 'global_account_pool') {
-                                      form.setValue(
-                                        'account_pool_fallback',
-                                        false
-                                      )
-                                      form.setValue('base_url', '')
-                                      form.setValue('key', '')
-                                    }
-                                  } else if (
-                                    form.getValues('multi_key_mode') ===
-                                    'multi_to_single'
-                                  ) {
-                                    form.setValue('multi_key_mode', 'single')
-                                  }
-                                }}
-                                value={field.value}
-                              >
-                                <FormControl>
-                                  <SelectTrigger
-                                    disabled={!canEditSensitiveFields}
-                                  >
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent alignItemWithTrigger={false}>
-                                  <SelectGroup>
-                                    {credentialModeOptions.map((option) => (
-                                      <SelectItem
-                                        key={option.value}
-                                        value={option.value}
-                                      >
-                                        {option.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectGroup>
-                                </SelectContent>
-                              </Select>
-                              <FormDescription>
-                                {credentialModeDescription}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        {credentialMode === 'account_pool' && (
-                          <FormField
-                            control={form.control}
-                            name='account_pool_mode'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>
-                                  {t('Account Pool Strategy')}
-                                </FormLabel>
-                                <Select
-                                  items={[
-                                    { value: 'polling', label: t('Polling') },
-                                    { value: 'random', label: t('Random') },
-                                  ]}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='polling'>
-                                        {t('Polling')}
-                                      </SelectItem>
-                                      <SelectItem value='random'>
-                                        {t('Random')}
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {t(
-                                    'Highest priority wins; accounts with the same priority rotate by weight.'
-                                  )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-                        {credentialMode === 'global_account_pool' && (
-                          <FormField
-                            control={form.control}
-                            name='account_pool_group_id'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Account Pool Group')}</FormLabel>
-                                <Select
-                                  items={accountPoolGroupOptions}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(Number(value))
-                                  }}
-                                  value={field.value ? String(field.value) : ''}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue
-                                        placeholder={t('Select account group')}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
                                       />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      {accountPoolGroupOptions.map((option) => (
-                                        <SelectItem
-                                          key={option.value}
-                                          value={option.value}
-                                        >
-                                          {option.label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {accountPoolGroupId
-                                    ? t(
-                                        'Channels reference this group at relay time.'
-                                      )
-                                    : t(
-                                        'Create account groups in Admin Account Pool.'
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t('Your Azure OpenAI endpoint URL')}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name='other'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Default API Version *')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        placeholder={t(
+                                          'e.g., 2025-04-01-preview'
+                                        )}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Default API version for this channel'
                                       )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-                        {credentialMode === 'account_pool' && (
-                          <FormField
-                            control={form.control}
-                            name='account_pool_fallback'
-                            render={({ field }) => (
-                              <FormItem
-                                className={sideDrawerSwitchItemClassName()}
-                              >
-                                <div className='flex flex-col gap-0.5'>
-                                  <FormLabel>
-                                    {t('Fallback to Channel Key')}
-                                  </FormLabel>
-                                  <FormDescription className='text-xs'>
-                                    {t(
-                                      'Use the channel key or multi-key list only when no account is available.'
-                                    )}
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch
-                                    checked={field.value === true}
-                                    disabled={!canEditSensitiveFields}
-                                    onCheckedChange={field.onChange}
-                                  />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                        )}
-                        {!isEditing && credentialMode === 'single_key' && (
-                          <FormField
-                            control={form.control}
-                            name='multi_key_mode'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Add Mode')}</FormLabel>
-                                <Select
-                                  items={addModeOptions.map((option) => ({
-                                    value: option.value,
-                                    label: t(option.label),
-                                  }))}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      {addModeOptions.map((option) => (
-                                        <SelectItem
-                                          key={option.value}
-                                          value={option.value}
-                                        >
-                                          {t(option.label)}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {t(FIELD_DESCRIPTIONS.BATCH_ADD)}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name='azure_responses_version'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Responses API Version')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        placeholder={t('e.g., preview')}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Default Responses API version, if empty, will use the API version above'
+                                      )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </>
+                          )}
 
-                        {!isGlobalAccountPoolMode && (
-                          <FormField
-                            control={form.control}
-                            name='key'
-                            render={({ field }) => {
-                              const keyPlaceholder = (() => {
-                                if (isEditing) {
-                                  return t('Leave empty to keep existing key')
-                                }
-                                if (currentType === 33) {
-                                  if (awsKeyType === 'api_key') {
-                                    return isBatchMode
-                                      ? t(
-                                          'Enter API Key, one per line, format: APIKey|Region'
-                                        )
-                                      : t(
-                                          'Enter API Key, format: APIKey|Region'
-                                        )
-                                  }
-                                  return isBatchMode
-                                    ? t(
-                                        'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
-                                      )
-                                    : t(
-                                        'Enter key, format: AccessKey|SecretAccessKey|Region'
-                                      )
-                                }
-                                if (isBatchMode) {
-                                  return t(
-                                    'Enter one key per line for batch creation'
-                                  )
-                                }
-                                return t(getKeyPromptForType(currentType))
-                              })()
-                              return (
+                          {/* 自定义完整 URL 渠道。 */}
+                          {currentType === 8 && !isGlobalAccountPoolMode && (
+                            <FormField
+                              control={form.control}
+                              name='base_url'
+                              render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>{t('API Key *')}</FormLabel>
+                                  <FormLabel>
+                                    {t('Full Base URL (supports')} {'{'}
+                                    {t('model')}
+                                    {'}'} {t('variable) *')}
+                                  </FormLabel>
                                   <FormControl>
-                                    <Textarea
-                                      placeholder={keyPlaceholder}
-                                      rows={isBatchMode ? 8 : 4}
+                                    <Input
+                                      placeholder={t(
+                                        'e.g., https://api.openai.com/v1/chat/completions'
+                                      )}
                                       disabled={!canEditSensitiveFields}
                                       {...field}
                                     />
                                   </FormControl>
                                   <FormDescription>
-                                    <span className='flex flex-col gap-2'>
-                                      <span>
-                                        {isEditing ? (
-                                          <>
-                                            {t(
-                                              'Enter new key to update, or leave empty to keep current key'
-                                            )}
-                                            {isMultiKeyChannel && (
-                                              <span className='text-warning mt-1 block'>
-                                                {t(
-                                                  'Multi-key channel: Keys will be'
-                                                )}{' '}
-                                                {keyMode === 'replace'
-                                                  ? t('replaced')
-                                                  : t('appended')}
-                                              </span>
-                                            )}
-                                          </>
-                                        ) : isBatchMode ? (
-                                          t(
-                                            'Enter one API key per line for batch creation'
-                                          )
-                                        ) : (
-                                          t(FIELD_DESCRIPTIONS.KEY)
-                                        )}
-                                      </span>
-                                      {isBatchMode && (
-                                        <Button
-                                          type='button'
-                                          variant='outline'
-                                          size='sm'
-                                          onClick={handleDeduplicateKeys}
-                                          disabled={!canEditSensitiveFields}
-                                          title={
-                                            canEditSensitiveFields
-                                              ? undefined
-                                              : noPermissionMessage
-                                          }
-                                          className='w-fit'
-                                        >
-                                          <Trash2 className='mr-2 h-4 w-4' />
-                                          {t('Remove Duplicates')}
-                                        </Button>
-                                      )}
-                                    </span>
+                                    {t('Enter the complete URL, supports')}{' '}
+                                    {'{'}
+                                    {t('model')}
+                                    {'}'} {t('variable')}
                                   </FormDescription>
-                                  {isEditing && (
-                                    <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
-                                      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                        <div>
-                                          <p className='text-sm font-medium'>
-                                            {t('Current key')}
-                                          </p>
-                                          <p className='text-muted-foreground text-xs'>
-                                            {t(
-                                              'Verification required to reveal the saved key.'
-                                            )}
-                                          </p>
-                                        </div>
-                                        <div className='flex items-center gap-2'>
-                                          <Button
-                                            type='button'
-                                            variant='outline'
-                                            size='sm'
-                                            onClick={handleRevealKey}
-                                            disabled={
-                                              !permissions.canViewSecret ||
-                                              isChannelKeyLoading ||
-                                              verificationState.loading
-                                            }
-                                            title={
-                                              permissions.canViewSecret
-                                                ? undefined
-                                                : noPermissionMessage
-                                            }
-                                          >
-                                            {isChannelKeyLoading ||
-                                            verificationState.loading ? (
-                                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                            ) : (
-                                              <Eye className='mr-2 h-4 w-4' />
-                                            )}
-                                            {t('Reveal key')}
-                                          </Button>
-                                          <Button
-                                            type='button'
-                                            variant='ghost'
-                                            size='sm'
-                                            onClick={async () => {
-                                              if (channelKey) {
-                                                await copyToClipboard(
-                                                  channelKey
-                                                )
-                                              }
-                                            }}
-                                            disabled={!channelKey}
-                                          >
-                                            <Copy className='mr-2 h-4 w-4' />
-                                            {t('Copy')}
-                                          </Button>
-                                        </div>
-                                      </div>
-                                      <Input
-                                        readOnly
-                                        value={channelKey ?? ''}
-                                        placeholder={t(
-                                          'Hidden — verify to reveal'
-                                        )}
-                                        className='font-mono'
-                                      />
-                                    </div>
-                                  )}
                                   <FormMessage />
                                 </FormItem>
-                              )
-                            }}
-                          />
-                        )}
+                              )}
+                            />
+                          )}
 
-                        {currentType === 57 &&
-                          credentialMode !== 'global_account_pool' && (
-                            <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
-                              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                <div className='space-y-0.5'>
-                                  <div className='text-sm font-semibold'>
-                                    {t('Codex Authorization')}
-                                  </div>
-                                  <div className='text-muted-foreground text-xs'>
+                          {/* 讯飞星火模型版本配置。 */}
+                          {currentType === 18 && (
+                            <FormField
+                              control={form.control}
+                              name='other'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Model Version *')}</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t('e.g., v2.1')}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
                                     {t(
-                                      'Codex channels use an OAuth JSON credential as the key.'
+                                      'Spark model version, e.g., v2.1 (version number in API URL)'
                                     )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* OpenRouter 企业账户配置。 */}
+                          {currentType === 20 && (
+                            <FormField
+                              control={form.control}
+                              name='is_enterprise_account'
+                              render={({ field }) => (
+                                <FormItem className='flex items-center justify-between'>
+                                  <div className='space-y-0.5'>
+                                    <FormLabel>
+                                      {t('Enterprise Account')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t(
+                                        'Enable if this is an OpenRouter enterprise account with special response format'
+                                      )}
+                                    </FormDescription>
                                   </div>
-                                </div>
-                                <div className='flex flex-wrap items-center gap-2'>
-                                  <Button
-                                    type='button'
-                                    variant='outline'
-                                    size='sm'
-                                    onClick={() =>
-                                      setCodexOAuthDialogOpen(true)
-                                    }
-                                    disabled={!canEditSensitiveFields}
-                                    title={
-                                      canEditSensitiveFields
-                                        ? undefined
-                                        : noPermissionMessage
-                                    }
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value}
+                                      disabled={!canEditSensitiveFields}
+                                      onCheckedChange={field.onChange}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* AWS 凭证格式配置；账号池组模式下由组内账号提供，不在渠道表单展示。 */}
+                          {currentType === 33 && !isGlobalAccountPoolMode && (
+                            <FormField
+                              control={form.control}
+                              name='aws_key_type'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('AWS Key Format')}</FormLabel>
+                                  <Select
+                                    items={[
+                                      {
+                                        value: 'ak_sk',
+                                        label: t('AccessKey / SecretAccessKey'),
+                                      },
+                                      { value: 'api_key', label: t('API Key') },
+                                    ]}
+                                    onValueChange={(value) => {
+                                      if (!canEditSensitiveFields) {
+                                        toast.error(noPermissionMessage)
+                                        return
+                                      }
+                                      field.onChange(value)
+                                    }}
+                                    value={field.value}
                                   >
-                                    <Link2 className='mr-2 h-4 w-4' />
-                                    {t('Authorize')}
-                                  </Button>
-                                  {isEditing && channelId && (
+                                    <FormControl>
+                                      <SelectTrigger
+                                        disabled={!canEditSensitiveFields}
+                                      >
+                                        <SelectValue
+                                          placeholder={t('Select key format')}
+                                        />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent alignItemWithTrigger={false}>
+                                      <SelectGroup>
+                                        <SelectItem value='ak_sk'>
+                                          {t('AccessKey / SecretAccessKey')}
+                                        </SelectItem>
+                                        <SelectItem value='api_key'>
+                                          {t('API Key')}
+                                        </SelectItem>
+                                      </SelectGroup>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription>
+                                    {field.value === 'api_key'
+                                      ? t('API Key mode: use APIKey|Region')
+                                      : t(
+                                          'AK/SK mode: use AccessKey|SecretAccessKey|Region'
+                                        )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* AI Proxy Library 知识库 ID。 */}
+                          {currentType === 21 && (
+                            <FormField
+                              control={form.control}
+                              name='other'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Knowledge Base ID *')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t('e.g., 123456')}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t('Enter the knowledge base ID')}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* FastGPT 私有部署地址。 */}
+                          {currentType === 22 && !isGlobalAccountPoolMode && (
+                            <FormField
+                              control={form.control}
+                              name='base_url'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Private Deployment URL')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t(
+                                        'e.g., https://fastgpt.run/api/openapi'
+                                      )}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'For private deployments, format: https://fastgpt.run/api/openapi'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* SunoAPI 专用基础地址。 */}
+                          {currentType === 36 && !isGlobalAccountPoolMode && (
+                            <FormField
+                              control={form.control}
+                              name='base_url'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t(
+                                      'API Base URL (Important: Not Chat API) *'
+                                    )}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t(
+                                        'e.g., https://api.example.com (path before /suno)'
+                                      )}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Enter the path before /suno, usually just the domain'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* Cloudflare Workers AI Account ID。 */}
+                          {currentType === 39 && (
+                            <FormField
+                              control={form.control}
+                              name='other'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Account ID *')}</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t(
+                                        'e.g., d6b5da8hk1awo8nap34ube6gh'
+                                      )}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t('Your Cloudflare Account ID')}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* SiliconFlow 推荐链接提示。 */}
+                          {currentType === 40 && (
+                            <Alert>
+                              <AlertDescription>
+                                {t('Referral link:')}{' '}
+                                <a
+                                  href='https://cloud.siliconflow.cn/i/hij0YNTZ'
+                                  target='_blank'
+                                  rel='noopener noreferrer'
+                                  className='text-primary underline'
+                                >
+                                  {t('https://cloud.siliconflow.cn/i/hij0YNTZ')}
+                                </a>
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                          {/* Vertex AI 凭证和部署地区配置；账号池组模式下由组内账号提供。 */}
+                          {currentType === 41 && !isGlobalAccountPoolMode && (
+                            <>
+                              <FormField
+                                control={form.control}
+                                name='vertex_key_type'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Vertex AI Key Format')}
+                                    </FormLabel>
+                                    <Select
+                                      items={[
+                                        { value: 'json', label: t('JSON') },
+                                        {
+                                          value: 'api_key',
+                                          label: t('API Key'),
+                                        },
+                                      ]}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(value)
+                                      }}
+                                      value={field.value}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='json'>
+                                            {t('JSON')}
+                                          </SelectItem>
+                                          <SelectItem value='api_key'>
+                                            {t('API Key')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {field.value === 'json'
+                                        ? t(
+                                            'JSON format supports service account JSON files'
+                                          )
+                                        : t(
+                                            'API Key mode (does not support batch creation)'
+                                          )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              {form.watch('vertex_key_type') === 'json' && (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Service account JSON file(s)')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='file'
+                                      accept='.json,application/json'
+                                      multiple={isBatchMode}
+                                      disabled={!canEditSensitiveFields}
+                                      onChange={async (e) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        const fileList = e.target.files
+                                        const files = fileList
+                                          ? Array.from(fileList)
+                                          : []
+                                        // 清空 input value，允许管理员重新选择同一个文件并触发 change。
+                                        e.target.value = ''
+
+                                        if (files.length === 0) {
+                                          toast.info(
+                                            t('Please upload key file(s)')
+                                          )
+                                          return
+                                        }
+
+                                        const keys: unknown[] = []
+                                        for (const file of files) {
+                                          try {
+                                            const txt = await file.text()
+                                            keys.push(JSON.parse(txt))
+                                          } catch {
+                                            toast.error(
+                                              t(
+                                                'Failed to parse JSON file: {{name}}',
+                                                {
+                                                  name: file.name,
+                                                }
+                                              )
+                                            )
+                                            return
+                                          }
+                                        }
+
+                                        if (keys.length === 0) {
+                                          toast.info(
+                                            t('Please upload key file(s)')
+                                          )
+                                          return
+                                        }
+
+                                        const keyValue = isBatchMode
+                                          ? JSON.stringify(keys)
+                                          : JSON.stringify(keys[0])
+
+                                        form.setValue('key', keyValue, {
+                                          shouldDirty: true,
+                                          shouldValidate: true,
+                                        })
+
+                                        toast.success(
+                                          t(
+                                            'Parsed {{count}} service account file(s)',
+                                            {
+                                              count: keys.length,
+                                            }
+                                          )
+                                        )
+                                      }}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {isBatchMode
+                                      ? t(
+                                          'Upload multiple JSON files in batch modes'
+                                        )
+                                      : t(
+                                          'Upload a single service account JSON file'
+                                        )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                              <FormField
+                                control={form.control}
+                                name='other'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Deployment Region *')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Textarea
+                                        placeholder={t(
+                                          'e.g., us-central1 or JSON format for model-specific regions'
+                                        )}
+                                        rows={3}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Enter deployment region or JSON mapping:'
+                                      )}{' '}
+                                      {'{'}
+                                      {t(
+                                        '"default": "us-central1", "claude-3-5-sonnet-20240620": "europe-west1"'
+                                      )}
+                                      {'}'}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </>
+                          )}
+
+                          {/* 火山引擎内置区域地址选择。 */}
+                          {currentType === 45 &&
+                            !doubaoApiEditUnlocked &&
+                            !isGlobalAccountPoolMode && (
+                              <FormField
+                                control={form.control}
+                                name='base_url'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel
+                                      className='cursor-pointer select-none'
+                                      onClick={handleApiConfigSecretClick}
+                                    >
+                                      {t('API Base URL *')}
+                                    </FormLabel>
+                                    <Select
+                                      items={[
+                                        {
+                                          value:
+                                            'https://ark.cn-beijing.volces.com',
+                                          label: t(
+                                            'https://ark.cn-beijing.volces.com'
+                                          ),
+                                        },
+                                        {
+                                          value:
+                                            'https://ark.ap-southeast.bytepluses.com',
+                                          label: t(
+                                            'https://ark.ap-southeast.bytepluses.com'
+                                          ),
+                                        },
+                                        {
+                                          value: 'doubao-coding-plan',
+                                          label: t('Doubao Coding Plan'),
+                                        },
+                                      ]}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(value)
+                                      }}
+                                      value={
+                                        field.value ||
+                                        'https://ark.cn-beijing.volces.com'
+                                      }
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='https://ark.cn-beijing.volces.com'>
+                                            {t(
+                                              'https://ark.cn-beijing.volces.com'
+                                            )}
+                                          </SelectItem>
+                                          <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
+                                            {t(
+                                              'https://ark.ap-southeast.bytepluses.com'
+                                            )}
+                                          </SelectItem>
+                                          <SelectItem value='doubao-coding-plan'>
+                                            {t('Doubao Coding Plan')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {t('Select the API endpoint region')}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                          {/* 火山引擎自定义 API URL，仅在隐藏开关解锁后展示。 */}
+                          {currentType === 45 &&
+                            doubaoApiEditUnlocked &&
+                            !isGlobalAccountPoolMode && (
+                              <FormField
+                                control={form.control}
+                                name='base_url'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>{t('API Base URL *')}</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        placeholder={t(
+                                          'e.g., https://ark.cn-beijing.volces.com'
+                                        )}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t('Enter custom API endpoint URL')}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                          {/* Coze 智能体 ID。 */}
+                          {currentType === 49 && (
+                            <FormField
+                              control={form.control}
+                              name='other'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Agent ID *')}</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t('e.g., 7342866812345')}
+                                      disabled={!canEditSensitiveFields}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t('Enter the Coze agent ID')}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {/* 其他渠道类型的通用 base_url 配置。 */}
+                          {![3, 8, 22, 36, 45].includes(currentType) &&
+                            !isGlobalAccountPoolMode && (
+                              <FormField
+                                control={form.control}
+                                name='base_url'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>{t('Base URL')}</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        placeholder={t(
+                                          FIELD_PLACEHOLDERS.BASE_URL
+                                        )}
+                                        disabled={!canEditSensitiveFields}
+                                        {...field}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Custom API base URL. For official channels, NexusTok has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                                      )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                          {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (
+                            <FormField
+                              control={form.control}
+                              name='advanced_custom'
+                              render={({ field }) => (
+                                <FormItem className='border-border/60 rounded-lg border p-4'>
+                                  <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+                                    <div className='min-w-0 space-y-2'>
+                                      <FormLabel>
+                                        {t('Advanced Custom Routes')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Configure incoming paths, upstream paths, converters, and authentication for this Advanced Custom channel.'
+                                        )}
+                                      </FormDescription>
+                                      <div className='flex flex-wrap gap-2'>
+                                        <Badge variant='secondary'>
+                                          {t('Routes')}:{' '}
+                                          {advancedCustomStats.routeCount}
+                                        </Badge>
+                                        {advancedCustomRouteTypeLabels.map(
+                                          (label) => (
+                                            <Badge
+                                              key={label}
+                                              variant='outline'
+                                              className='max-w-[12rem]'
+                                              title={label}
+                                            >
+                                              <span className='truncate'>
+                                                {t(label)}
+                                              </span>
+                                            </Badge>
+                                          )
+                                        )}
+                                        {hiddenAdvancedCustomRouteTypeCount >
+                                          0 && (
+                                          <Badge
+                                            variant='outline'
+                                            title={advancedCustomRouteTypeTitle}
+                                          >
+                                            +
+                                            {hiddenAdvancedCustomRouteTypeCount}
+                                          </Badge>
+                                        )}
+                                        {!advancedCustomStats.valid && (
+                                          <Badge variant='destructive'>
+                                            {t('Incomplete')}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
                                     <Button
                                       type='button'
                                       variant='outline'
                                       size='sm'
-                                      onClick={handleRefreshCodexCredential}
-                                      disabled={
-                                        !canEditSensitiveFields ||
-                                        isCodexCredentialRefreshing
-                                      }
+                                      onClick={() => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        setAdvancedCustomEditorOpen(true)
+                                      }}
+                                      disabled={!canEditSensitiveFields}
                                       title={
                                         canEditSensitiveFields
                                           ? undefined
                                           : noPermissionMessage
                                       }
                                     >
-                                      {isCodexCredentialRefreshing ? (
-                                        <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                      ) : (
-                                        <RefreshCw className='mr-2 h-4 w-4' />
-                                      )}
-                                      {isCodexCredentialRefreshing
-                                        ? t('Refreshing...')
-                                        : t('Refresh credential')}
+                                      <Route data-icon='inline-start' />
+                                      {t('Configure routes')}
                                     </Button>
-                                  )}
-                                </div>
-                              </div>
-                              <Alert>
-                                <AlertDescription>
-                                  {t(
-                                    'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
-                                  )}
-                                </AlertDescription>
-                              </Alert>
-                            </div>
+                                  </div>
+                                  <FormControl>
+                                    <input type='hidden' {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
                           )}
 
-                        <CodexOAuthDialog
-                          open={codexOAuthDialogOpen}
-                          onOpenChange={setCodexOAuthDialogOpen}
-                          onKeyGenerated={(key) => {
-                            if (!canEditSensitiveFields) {
-                              toast.error(noPermissionMessage)
-                              return
-                            }
-                            form.setValue('key', key, { shouldDirty: true })
-                          }}
-                        />
-
-                        {isEditing && isMultiKeyChannel && (
-                          <FormField
-                            control={form.control}
-                            name='key_mode'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Key Update Mode')}</FormLabel>
-                                <Select
-                                  items={[
-                                    {
-                                      value: 'append',
-                                      label: t('Append to existing keys'),
-                                    },
-                                    {
-                                      value: 'replace',
-                                      label: t('Replace all existing keys'),
-                                    },
-                                  ]}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
+                          <ChannelAuthSection>
+                            <FormField
+                              control={form.control}
+                              name='credential_mode'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Credential Mode')}</FormLabel>
+                                  <Select
+                                    items={credentialModeOptions}
+                                    onValueChange={(value) => {
+                                      if (!canEditSensitiveFields) {
+                                        toast.error(noPermissionMessage)
+                                        return
+                                      }
+                                      field.onChange(value)
+                                      if (value === 'multi_key') {
+                                        form.setValue(
+                                          'multi_key_mode',
+                                          'multi_to_single'
+                                        )
+                                      } else if (
+                                        value === 'account_pool' ||
+                                        value === 'global_account_pool'
+                                      ) {
+                                        form.setValue(
+                                          'multi_key_mode',
+                                          'single'
+                                        )
+                                        if (value === 'global_account_pool') {
+                                          form.setValue(
+                                            'account_pool_fallback',
+                                            false
+                                          )
+                                          form.setValue('base_url', '')
+                                          form.setValue('key', '')
+                                        }
+                                      } else if (
+                                        form.getValues('multi_key_mode') ===
+                                        'multi_to_single'
+                                      ) {
+                                        form.setValue(
+                                          'multi_key_mode',
+                                          'single'
+                                        )
+                                      }
+                                    }}
+                                    value={field.value}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger
+                                        disabled={!canEditSensitiveFields}
+                                      >
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent alignItemWithTrigger={false}>
+                                      <SelectGroup>
+                                        {credentialModeOptions.map((option) => (
+                                          <SelectItem
+                                            key={option.value}
+                                            value={option.value}
+                                          >
+                                            {option.label}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectGroup>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription>
+                                    {credentialModeDescription}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            {credentialMode === 'account_pool' && (
+                              <FormField
+                                control={form.control}
+                                name='account_pool_mode'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Account Pool Strategy')}
+                                    </FormLabel>
+                                    <Select
+                                      items={[
+                                        {
+                                          value: 'polling',
+                                          label: t('Polling'),
+                                        },
+                                        { value: 'random', label: t('Random') },
+                                      ]}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(value)
+                                      }}
+                                      value={field.value}
                                     >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='append'>
-                                        {t('Append to existing keys')}
-                                      </SelectItem>
-                                      <SelectItem value='replace'>
-                                        {t('Replace all existing keys')}
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {field.value === 'replace'
-                                    ? t(
-                                        'Replace mode: Will completely replace all existing keys'
-                                      )
-                                    : t(
-                                        'Append mode: New keys will be added to the end of the existing key list'
-                                      )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-
-                        {!isEditing && multiKeyMode === 'multi_to_single' && (
-                          <FormField
-                            control={form.control}
-                            name='multi_key_type'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Multi-Key Strategy')}</FormLabel>
-                                <Select
-                                  items={[
-                                    { value: 'random', label: t('Random') },
-                                    { value: 'polling', label: t('Polling') },
-                                  ]}
-                                  onValueChange={(value) => {
-                                    if (!canEditSensitiveFields) {
-                                      toast.error(noPermissionMessage)
-                                      return
-                                    }
-                                    field.onChange(value)
-                                  }}
-                                  value={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger
-                                      disabled={!canEditSensitiveFields}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='random'>
-                                        {t('Random')}
-                                      </SelectItem>
-                                      <SelectItem value='polling'>
-                                        {t('Polling')}
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  {multiKeyType === 'polling' ? (
-                                    <span className='text-warning'>
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='polling'>
+                                            {t('Polling')}
+                                          </SelectItem>
+                                          <SelectItem value='random'>
+                                            {t('Random')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
                                       {t(
-                                        'Polling mode requires Redis and memory cache, otherwise performance will be significantly degraded'
+                                        'Highest priority wins; accounts with the same priority rotate by weight.'
                                       )}
-                                    </span>
-                                  ) : (
-                                    t(
-                                      'Randomly select a key from the pool for each request'
-                                    )
-                                  )}
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
                             )}
-                          />
-                        )}
-                      </ChannelAuthSection>
+                            {credentialMode === 'global_account_pool' && (
+                              <FormField
+                                control={form.control}
+                                name='account_pool_group_id'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Account Pool Group')}
+                                    </FormLabel>
+                                    <Select
+                                      items={accountPoolGroupOptions}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(Number(value))
+                                      }}
+                                      value={
+                                        field.value ? String(field.value) : ''
+                                      }
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue
+                                            placeholder={t(
+                                              'Select account group'
+                                            )}
+                                          />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          {accountPoolGroupOptions.map(
+                                            (option) => (
+                                              <SelectItem
+                                                key={option.value}
+                                                value={option.value}
+                                              >
+                                                {option.label}
+                                              </SelectItem>
+                                            )
+                                          )}
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {accountPoolGroupId
+                                        ? t(
+                                            'Channels reference this group at relay time.'
+                                          )
+                                        : t(
+                                            'Create account groups in Admin Account Pool.'
+                                          )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+                            {credentialMode === 'account_pool' && (
+                              <FormField
+                                control={form.control}
+                                name='account_pool_fallback'
+                                render={({ field }) => (
+                                  <FormItem
+                                    className={sideDrawerSwitchItemClassName()}
+                                  >
+                                    <div className='flex flex-col gap-0.5'>
+                                      <FormLabel>
+                                        {t('Fallback to Channel Key')}
+                                      </FormLabel>
+                                      <FormDescription className='text-xs'>
+                                        {t(
+                                          'Use the channel key or multi-key list only when no account is available.'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value === true}
+                                        disabled={!canEditSensitiveFields}
+                                        onCheckedChange={field.onChange}
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+                            {!isEditing && credentialMode === 'single_key' && (
+                              <FormField
+                                control={form.control}
+                                name='multi_key_mode'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>{t('Add Mode')}</FormLabel>
+                                    <Select
+                                      items={addModeOptions.map((option) => ({
+                                        value: option.value,
+                                        label: t(option.label),
+                                      }))}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(value)
+                                      }}
+                                      value={field.value}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          {addModeOptions.map((option) => (
+                                            <SelectItem
+                                              key={option.value}
+                                              value={option.value}
+                                            >
+                                              {t(option.label)}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {t(FIELD_DESCRIPTIONS.BATCH_ADD)}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {!isGlobalAccountPoolMode && (
+                              <FormField
+                                control={form.control}
+                                name='key'
+                                render={({ field }) => {
+                                  const keyPlaceholder = (() => {
+                                    if (isEditing) {
+                                      return t(
+                                        'Leave empty to keep existing key'
+                                      )
+                                    }
+                                    if (currentType === 33) {
+                                      if (awsKeyType === 'api_key') {
+                                        return isBatchMode
+                                          ? t(
+                                              'Enter API Key, one per line, format: APIKey|Region'
+                                            )
+                                          : t(
+                                              'Enter API Key, format: APIKey|Region'
+                                            )
+                                      }
+                                      return isBatchMode
+                                        ? t(
+                                            'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
+                                          )
+                                        : t(
+                                            'Enter key, format: AccessKey|SecretAccessKey|Region'
+                                          )
+                                    }
+                                    if (isBatchMode) {
+                                      return t(
+                                        'Enter one key per line for batch creation'
+                                      )
+                                    }
+                                    return t(getKeyPromptForType(currentType))
+                                  })()
+                                  return (
+                                    <FormItem>
+                                      <FormLabel>{t('API Key *')}</FormLabel>
+                                      <FormControl>
+                                        <Textarea
+                                          placeholder={keyPlaceholder}
+                                          rows={isBatchMode ? 8 : 4}
+                                          disabled={!canEditSensitiveFields}
+                                          {...field}
+                                        />
+                                      </FormControl>
+                                      <FormDescription>
+                                        <span className='flex flex-col gap-2'>
+                                          <span>
+                                            {isEditing ? (
+                                              <>
+                                                {t(
+                                                  'Enter new key to update, or leave empty to keep current key'
+                                                )}
+                                                {isMultiKeyChannel && (
+                                                  <span className='text-warning mt-1 block'>
+                                                    {t(
+                                                      'Multi-key channel: Keys will be'
+                                                    )}{' '}
+                                                    {keyMode === 'replace'
+                                                      ? t('replaced')
+                                                      : t('appended')}
+                                                  </span>
+                                                )}
+                                              </>
+                                            ) : isBatchMode ? (
+                                              t(
+                                                'Enter one API key per line for batch creation'
+                                              )
+                                            ) : (
+                                              t(FIELD_DESCRIPTIONS.KEY)
+                                            )}
+                                          </span>
+                                          {isBatchMode && (
+                                            <Button
+                                              type='button'
+                                              variant='outline'
+                                              size='sm'
+                                              onClick={handleDeduplicateKeys}
+                                              disabled={!canEditSensitiveFields}
+                                              title={
+                                                canEditSensitiveFields
+                                                  ? undefined
+                                                  : noPermissionMessage
+                                              }
+                                              className='w-fit'
+                                            >
+                                              <Trash2 className='mr-2 h-4 w-4' />
+                                              {t('Remove Duplicates')}
+                                            </Button>
+                                          )}
+                                        </span>
+                                      </FormDescription>
+                                      {isEditing && (
+                                        <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
+                                          <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                            <div>
+                                              <p className='text-sm font-medium'>
+                                                {t('Current key')}
+                                              </p>
+                                              <p className='text-muted-foreground text-xs'>
+                                                {t(
+                                                  'Verification required to reveal the saved key.'
+                                                )}
+                                              </p>
+                                            </div>
+                                            <div className='flex items-center gap-2'>
+                                              <Button
+                                                type='button'
+                                                variant='outline'
+                                                size='sm'
+                                                onClick={handleRevealKey}
+                                                disabled={
+                                                  !permissions.canViewSecret ||
+                                                  isChannelKeyLoading ||
+                                                  verificationState.loading
+                                                }
+                                                title={
+                                                  permissions.canViewSecret
+                                                    ? undefined
+                                                    : noPermissionMessage
+                                                }
+                                              >
+                                                {isChannelKeyLoading ||
+                                                verificationState.loading ? (
+                                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                                ) : (
+                                                  <Eye className='mr-2 h-4 w-4' />
+                                                )}
+                                                {t('Reveal key')}
+                                              </Button>
+                                              <Button
+                                                type='button'
+                                                variant='ghost'
+                                                size='sm'
+                                                onClick={async () => {
+                                                  if (channelKey) {
+                                                    await copyToClipboard(
+                                                      channelKey
+                                                    )
+                                                  }
+                                                }}
+                                                disabled={!channelKey}
+                                              >
+                                                <Copy className='mr-2 h-4 w-4' />
+                                                {t('Copy')}
+                                              </Button>
+                                            </div>
+                                          </div>
+                                          <Input
+                                            readOnly
+                                            value={channelKey ?? ''}
+                                            placeholder={t(
+                                              'Hidden — verify to reveal'
+                                            )}
+                                            className='font-mono'
+                                          />
+                                        </div>
+                                      )}
+                                      <FormMessage />
+                                    </FormItem>
+                                  )
+                                }}
+                              />
+                            )}
+
+                            {currentType === 57 &&
+                              credentialMode !== 'global_account_pool' && (
+                                <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                    <div className='space-y-0.5'>
+                                      <div className='text-sm font-semibold'>
+                                        {t('Codex Authorization')}
+                                      </div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t(
+                                          'Codex channels use an OAuth JSON credential as the key.'
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className='flex flex-wrap items-center gap-2'>
+                                      <Button
+                                        type='button'
+                                        variant='outline'
+                                        size='sm'
+                                        onClick={() =>
+                                          setCodexOAuthDialogOpen(true)
+                                        }
+                                        disabled={!canEditSensitiveFields}
+                                        title={
+                                          canEditSensitiveFields
+                                            ? undefined
+                                            : noPermissionMessage
+                                        }
+                                      >
+                                        <Link2 className='mr-2 h-4 w-4' />
+                                        {t('Authorize')}
+                                      </Button>
+                                      {isEditing && channelId && (
+                                        <Button
+                                          type='button'
+                                          variant='outline'
+                                          size='sm'
+                                          onClick={handleRefreshCodexCredential}
+                                          disabled={
+                                            !canEditSensitiveFields ||
+                                            isCodexCredentialRefreshing
+                                          }
+                                          title={
+                                            canEditSensitiveFields
+                                              ? undefined
+                                              : noPermissionMessage
+                                          }
+                                        >
+                                          {isCodexCredentialRefreshing ? (
+                                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                          ) : (
+                                            <RefreshCw className='mr-2 h-4 w-4' />
+                                          )}
+                                          {isCodexCredentialRefreshing
+                                            ? t('Refreshing...')
+                                            : t('Refresh credential')}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Alert>
+                                    <AlertDescription>
+                                      {t(
+                                        'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                </div>
+                              )}
+
+                            <CodexOAuthDialog
+                              open={codexOAuthDialogOpen}
+                              onOpenChange={setCodexOAuthDialogOpen}
+                              onKeyGenerated={(key) => {
+                                if (!canEditSensitiveFields) {
+                                  toast.error(noPermissionMessage)
+                                  return
+                                }
+                                form.setValue('key', key, { shouldDirty: true })
+                              }}
+                            />
+
+                            {isEditing && isMultiKeyChannel && (
+                              <FormField
+                                control={form.control}
+                                name='key_mode'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Key Update Mode')}
+                                    </FormLabel>
+                                    <Select
+                                      items={[
+                                        {
+                                          value: 'append',
+                                          label: t('Append to existing keys'),
+                                        },
+                                        {
+                                          value: 'replace',
+                                          label: t('Replace all existing keys'),
+                                        },
+                                      ]}
+                                      onValueChange={(value) => {
+                                        if (!canEditSensitiveFields) {
+                                          toast.error(noPermissionMessage)
+                                          return
+                                        }
+                                        field.onChange(value)
+                                      }}
+                                      value={field.value}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger
+                                          disabled={!canEditSensitiveFields}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='append'>
+                                            {t('Append to existing keys')}
+                                          </SelectItem>
+                                          <SelectItem value='replace'>
+                                            {t('Replace all existing keys')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {field.value === 'replace'
+                                        ? t(
+                                            'Replace mode: Will completely replace all existing keys'
+                                          )
+                                        : t(
+                                            'Append mode: New keys will be added to the end of the existing key list'
+                                          )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {!isEditing &&
+                              multiKeyMode === 'multi_to_single' && (
+                                <FormField
+                                  control={form.control}
+                                  name='multi_key_type'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('Multi-Key Strategy')}
+                                      </FormLabel>
+                                      <Select
+                                        items={[
+                                          {
+                                            value: 'random',
+                                            label: t('Random'),
+                                          },
+                                          {
+                                            value: 'polling',
+                                            label: t('Polling'),
+                                          },
+                                        ]}
+                                        onValueChange={(value) => {
+                                          if (!canEditSensitiveFields) {
+                                            toast.error(noPermissionMessage)
+                                            return
+                                          }
+                                          field.onChange(value)
+                                        }}
+                                        value={field.value}
+                                      >
+                                        <FormControl>
+                                          <SelectTrigger
+                                            disabled={!canEditSensitiveFields}
+                                          >
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent
+                                          alignItemWithTrigger={false}
+                                        >
+                                          <SelectGroup>
+                                            <SelectItem value='random'>
+                                              {t('Random')}
+                                            </SelectItem>
+                                            <SelectItem value='polling'>
+                                              {t('Polling')}
+                                            </SelectItem>
+                                          </SelectGroup>
+                                        </SelectContent>
+                                      </Select>
+                                      <FormDescription>
+                                        {multiKeyType === 'polling' ? (
+                                          <span className='text-warning'>
+                                            {t(
+                                              'Polling mode requires Redis and memory cache, otherwise performance will be significantly degraded'
+                                            )}
+                                          </span>
+                                        ) : (
+                                          t(
+                                            'Randomly select a key from the pool for each request'
+                                          )
+                                        )}
+                                      </FormDescription>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
+                          </ChannelAuthSection>
+                        </div>
+                      </div>
                     </ChannelApiAccessSection>
                   </div>
 

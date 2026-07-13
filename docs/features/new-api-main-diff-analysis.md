@@ -11751,3 +11751,74 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 8. MCP 打开 `/dashboard/models`，页面正常显示 `No performance data available` 空态，没有渲染错误。
 9. MCP 打开 `/pricing`，模型广场正常渲染 3 个模型卡片；由于当前无性能摘要数据，性能徽章保持无数据回退状态。
 10. MCP 控制台无 error/warn；仅有既有 i18next 信息、构建 debug 和表单可访问性 issue，本轮没有扩大该独立问题。
+
+## 本轮实施评审：渠道编辑页与 new-api 最新编辑页视觉结构对齐
+
+### 差异来源
+
+用户继续反馈“搜索添加时不正确”，并指出 `/opt/project/new-api-main` 最新编辑渠道页面观感更好，要求当前项目的编辑渠道页面向其对齐。重新对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 与当前 `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认：
+
+1. NexusTok 已经吸收了 new-api 的主干编辑结构：右侧大抽屉、固定头部和底部、左侧分段导航、`Basic Information` / `Credentials` / `Models & Groups` / `Advanced Settings` 四段表单、模型区卡片、模型映射编辑器和高级配置折叠区。
+2. NexusTok 在此基础上增加了原生能力：账号池凭证模式、Codex OAuth 授权、细粒度权限、模型元信息库搜索、供应商范围提示、搜索结果摘要、分页扫描批量追加和模型映射 guardrail。这些不能用 new-api 文件整段覆盖，否则会回退当前项目核心能力。
+3. MCP 在 3003 运行态页面复测显示，当前搜索 `gpt-5.6` 已能正确显示 `3 matched · 2 new · 1 already selected`；点击 `Add all 2 new match(es)` 或在搜索框按 Enter 都会把草稿从 `Selected 3` 追加到 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，不重复已有 `gpt-5.6-sol`。
+4. 当前仍存在页面对齐问题：桌面抽屉左侧导航宽度偏窄，英文 `Advanced Settings` 被截断；`Credentials` 在 NexusTok 的账号池/Codex 场景下呈现为裸表单，缺少 new-api 编辑页里凭证配置区域的卡片边界，视觉层级不如模型区清晰。
+
+### 需求分析
+
+本轮目标是把 new-api 最新编辑页的可读性和结构优势继续原生化到 NexusTok，而不是删除 NexusTok 已经实现的增强能力。具体需要：
+
+1. 保持搜索添加的正确批量行为：搜索 `gpt-5.6` 时必须能基于 OpenAI 供应商范围追加全部缺失模型，按钮和 Enter 共享同一逻辑。
+2. 提升编辑抽屉左侧导航可读性：分区名称不能因固定宽度被无意义截断，尤其是英文界面下的 `Advanced Settings`。
+3. 对齐 new-api 凭证配置区域的卡片化结构：`Credentials` 下的账号池、API Key、多 Key、Codex OAuth 等表单应在同一个边界内组织，和 `Models & Groups` 的卡片层级一致。
+4. 保留当前项目原生能力：账号池模式、权限禁用、Codex OAuth、模型搜索批量追加、模型映射校验、上游模型检测和高级设置导航都必须继续可用。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑页布局 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/features/channels/components/drawers/sections/channel-auth-section.tsx` | 调整桌面导航列宽和导航标题换行策略；为 `Credentials` 内容增加卡片化容器，并让 `Authentication` 子段在卡片首项时不显示多余顶部分隔线；字段顺序和业务逻辑不变。 |
+| 搜索添加行为 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`web/default/src/components/multi-select.tsx` | 不改变已验证正确的批量追加函数和 MultiSelect 默认行为，只通过页面复测确认按钮与 Enter 路径仍一致。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 追加本轮需求分析、影响范围、风险评估、方案评审和后续验证记录。 |
+
+本轮不修改 Go 后端、数据库、模型同步接口、`/api/models/search`、渠道保存 payload、账号池后端、Codex 凭证刷新、计费和模型价格能力。
+
+### 风险评估
+
+1. 视觉回归风险：导航列变宽会减少右侧表单宽度；采用小幅增加并保持 `minmax(0,1fr)`，避免移动端和窄桌面出现横向溢出。
+2. 表单结构风险：为 `Credentials` 增加容器可能影响滚动定位和间距；只添加一层展示容器，不移动字段、不改变表单 `name`、`disabled`、`onChange`、`watch` 和提交逻辑。
+3. 权限风险：卡片化不能绕过 `canEditSensitiveFields`、`permissions.canViewSecret`、`canEditBasicFields` 等判断；所有原有按钮 disabled、toast 和 title 逻辑保持不变。
+4. 搜索行为风险：本轮不改搜索业务函数，但布局调整后仍必须用 MCP 重新验证 `gpt-5.6` 搜索、按钮追加和 Enter 追加。
+5. new-api 覆盖风险：不从 `/opt/project/new-api-main` 整文件复制，避免丢失 NexusTok 的账号池、权限和 Codex 原生能力。
+
+### 方案评审
+
+采用“结构对齐、逻辑不动”的保守方案：
+
+1. 将桌面编辑导航从 `13rem` 调整为更宽的列，并允许垂直导航标题在必要时换行；移动端横向导航仍保持单行截断，避免顶部导航高度不稳定。
+2. 在 `Credentials` section 内增加与模型区一致的 `border-border/60 bg-muted/10 rounded-lg border p-4` 容器，并用内部纵向间距统一各凭证字段、账号池模式和 Codex 授权区块。
+3. 保持 `ChannelAuthSection`、`ChannelApiAccessSection`、`FormField`、`Select`、`Textarea`、`Switch` 等现有组件组合，不引入新的 UI 组件和第三方依赖。
+4. 保持模型搜索增强现状：`onSearchSubmit={handleAddModelSearchMatches}`、`submitSearchOnEnterWithMatches`、`submitSearchOnEnterWhenHighlighted`、供应商推导和分页扫描逻辑都不改。
+5. 完成后执行前端定向测试、typecheck、build、`git diff --check`，并用 MCP 访问 `http://192.168.0.202:3003/` 与 `/channels` 真实复测页面是否热更新生效。
+
+### 实施结果
+
+- 渠道编辑抽屉桌面布局从 `lg:grid-cols-[13rem_minmax(0,1fr)]` 调整为 `lg:grid-cols-[15rem_minmax(0,1fr)]`，左侧导航拥有更稳定的展示空间。
+- 桌面侧栏导航标题和描述支持换行，`Advanced Settings` 不再因为固定宽度被截断；移动端横向导航仍保持单行截断，避免高度跳动。
+- `Credentials` 内容增加与模型区一致的卡片边界，账号池、API Key、多 Key 和 Codex OAuth 等凭证配置在同一视觉容器中呈现。
+- `ChannelAuthSection` 增加 `first:border-t-0 first:pt-0`，当 `Authentication` 是卡片首项时不再显示多余顶部分隔线；存在上游专属字段时仍保留分隔线。
+- 模型搜索业务逻辑没有改变：OpenAI/Codex 渠道继续按 `vendor=OpenAI` 搜索，按钮和 Enter 仍复用 `handleAddModelSearchMatches` 批量追加缺失模型。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts` 通过，72 个用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.3 秒内完成生产构建。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，根页面正常加载；随后登录 `c1cada` 并进入 `/channels`。
+6. MCP 打开渠道 `11111` 编辑抽屉后确认热更新生效：左侧 `Advanced Settings` 完整显示，`Credentials` 区域已经呈现卡片边界，模型区仍显示 `Selected 3` 和 `Vendor: OpenAI`。
+7. MCP 搜索 `gpt-5.6`，页面显示 `Search results`、`3 matched · 2 new · 1 already selected`、`Will add: gpt-5.6-terra, gpt-5.6-luna`。
+8. MCP 在搜索框按 Enter 后，页面出现 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，未重复已有 `gpt-5.6-sol`；随后点击 `Cancel`，没有保存。
+9. MCP 重新打开编辑抽屉，再次搜索 `gpt-5.6` 并点击 `Add all 2 new match(es)`，页面同样变为 `Selected 5`，证明显式按钮路径仍正确。
+10. MCP 点击 `Cancel` 后使用浏览器上下文调用 `GET /api/channel/1` 并携带 `NexusTok-User` 头，返回 `models="gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认验证过程没有污染后端渠道配置。
+11. MCP 网络记录中本轮相关请求均为 `GET`：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、批量扫描 `page_size=100` 和 `/api/channel/1` 回查；未出现 `PUT /api/channel/`。
+12. MCP 控制台无 error/warn。
