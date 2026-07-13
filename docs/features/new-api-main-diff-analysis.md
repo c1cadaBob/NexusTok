@@ -12776,3 +12776,72 @@ NexusTok 当前项目已经具备比 new-api 更完整的批量模型定价能�
 6. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，截图保存为 `/tmp/nexustok-pricing-settings-after-draft-commit.png`。
 7. MCP 访问 `/system-settings/models/model-ratio` 时当前生产路由会按 `section-registry` 回落到 `/system-settings/models/global`；当前项目没有公开模型价格 tab 的导航入口，本轮未改变导航可见性，避免把保存链路保护与页面暴露策略混在一个切片。
 8. MCP 控制台没有 JavaScript `error` 或 `warn`，仅有 i18next 信息和 `nexustok-build` debug；网络请求只有 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，未出现保存 option 的写请求，确认验证未污染运行态计费配置。
+
+## 本轮实施评审：模型定价快照与草稿状态原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main` 的模型定价实现后发现，new-api 已将模型定价表格的数据解析、价格摘要、模式标签和快照签名拆分到 `model-pricing-snapshots.ts`，并在 `ModelRatioVisualEditor` 中同时构造“已保存快照”和“当前草稿快照”。这样表格行可以标记 `isDraftChanged`、`isDraftNew`、`isDraftDeleted`、`hasConflict`，编辑器打开时也能优先使用当前草稿而不是旧的保存值。
+
+NexusTok 当前项目在上一轮已经具备“保存前提交打开面板草稿”的保护，但可视化编辑器内部仍只根据当前表单 JSON 解析一份行数据。管理员编辑或批量复制模型定价后，表格无法区分“已经保存的配置”和“尚未保存的草稿配置”；后续继续接入 new-api 的草稿徽标、冲突定位或保存前差异审阅时，也缺少稳定的纯函数基座。
+
+本轮前端设计方向仍保持系统设置页的数据工具风格：不引入新布局、不新增装饰、不把隐藏的模型价格 tab 暴露到导航，只在已有表格行中复用现有 `Unsaved changes` 文案标记草稿态。
+
+### 需求分析
+
+1. 把 new-api 的快照解析能力转为 NexusTok 原生纯函数：从八个模型倍率/价格 JSON 字符串和两个计费表达式 JSON 字符串中生成稳定的 `ModelPricingSnapshot`。
+2. 增加 saved/draft 对比能力：基于已保存基线和当前表单草稿生成行数据，识别草稿新增、草稿变更和草稿删除。
+3. 可视化编辑器展示和编辑应优先使用 draft 行，避免管理员刚修改的未保存草稿在表格摘要或右侧编辑面板中仍显示旧保存值。
+4. 保留当前 NexusTok 的计费表达式语义、tiered_expr 兜底 ratio/price 保留逻辑、批量复制、删除、搜索、列显隐、移动端 Sheet 和保存前提交保护。
+5. 不修改后端接口、数据库、option key、`pkg/billingexpr`、预消费、结算或实际扣费公式。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型定价快照纯函数 | `web/default/src/features/system-settings/models/model-pricing-snapshots.ts` | 新增快照解析、摘要、签名和 saved/draft 行合并能力；逻辑从当前可视化编辑器抽出，便于单测覆盖。 |
+| 快照单测 | `web/default/src/features/system-settings/models/model-pricing-snapshots.test.ts` | 覆盖 per-token、per-request、tiered_expr、冲突、草稿新增和草稿变更，不依赖浏览器环境。 |
+| 可视化编辑器 | `web/default/src/features/system-settings/models/model-ratio-visual-editor.tsx` | 使用快照 helper 构造行数据；行编辑优先使用 `draft ?? saved ?? row`；草稿态复用 `Unsaved changes` 徽标。 |
+| 模型倍率表单与父级基线 | `model-ratio-form.tsx`、`ratio-settings-card.tsx` | 从父级传入 `savedValues`，保存成功或后端默认值刷新后同步更新保存基线。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 计费语义风险：快照 helper 只能解析和展示配置，不能改写 `ModelPrice`、`ModelRatio`、`billing_setting.billing_mode`、`billing_setting.billing_expr` 的保存格式。方案保留现有 `persistPricingData()` 作为唯一写表单 JSON 的函数。
+2. 表格显示风险：如果 changed 行展示 saved 值，管理员会看不到自己的草稿；如果删除行仍展示，可能误导管理员。本轮采用 draft 优先并过滤已删除草稿行。
+3. tiered_expr 风险：表达式计费模型在多实例同步延迟期间可能保留 ratio/price 作为兜底值。快照解析必须继续保留这些字段，并将 `billingExpr` 拆成纯表达式和请求规则。
+4. 翻译风险：新增可见文案会触发六语翻译维护。本轮复用已有 `Unsaved changes`，不新增 locale key。
+5. 路由验证风险：当前生产导航没有公开模型价格 tab，MCP 难以直接操作该隐藏组件。本轮以纯函数单测、typecheck、构建和可达 `/pricing-settings` 页面运行态验证共同覆盖。
+6. 父级基线风险：如果保存成功后不更新 saved baseline，表格会一直显示未保存；如果保存失败时提前更新，则会掩盖失败。本轮仅在 `updateOption.mutateAsync` 循环全部完成后更新 baseline。
+
+### 方案评审
+
+采用“先抽纯函数并接入草稿状态，不拆列文件、不暴露隐藏入口”的小步方案：
+
+1. 新增 `model-pricing-snapshots.ts`，提供 `buildModelSnapshots()`、`getSnapshotSignature()`、`buildModelRows()`、`getModeLabel()`、`getModeVariant()`、`getPriceSummary()` 和 `getPriceDetail()`。
+2. 从 `model-ratio-visual-editor.tsx` 移除内联解析和摘要 helper，改为调用快照 helper；保留当前 DataTable 结构，不迁入 new-api 的 `model-ratio-table-columns.tsx`，避免一次性重写列渲染。
+3. `ModelRow` 增加 `saved`、`draft`、`isDraftChanged`、`isDraftNew`、`isDraftDeleted`；表格行展示使用 draft 优先，编辑打开也使用 draft 优先。
+4. 在模型名称旁复用已有 `Unsaved changes` 徽标，提示草稿新增或草稿变更；`Conflict`、`Tiered` 和模式标签继续复用现有文案。
+5. `RatioSettingsCard` 维护 `savedModelValues`，后端默认值刷新或保存成功后同步；`ModelRatioForm` 将 saved 值传给视觉编辑器。
+6. 验证顺序：新增纯函数单测后运行 `bun test src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`、`bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；再用 MCP 访问 `http://192.168.0.202:3003/pricing-settings`，确认可达计费设置页没有运行时错误且没有写请求。
+
+### 实施结果
+
+1. 新增 `model-pricing-snapshots.ts`，把模型定价表格的 JSON 解析、模式标签、价格摘要、表达式请求规则拆分、快照签名和 saved/draft 行合并收敛为纯函数。`tiered_expr` 快照继续保留 ratio/price/cache/audio 等兜底字段，避免多实例同步延迟时误删兼容配置。
+2. 新增 `model-pricing-snapshots.test.ts`，覆盖 per-token 摘要、per-request 与 ratio 冲突、tiered_expr 请求规则拆分、草稿新增/变更识别和快照签名稳定性。测试中的请求规则表达式使用当前前端 `combineBillingExpr()` 的真实保存格式：`(<base>) * (<condition> ? multiplier : 1)`。
+3. `ModelRatioVisualEditor` 已删除内联快照/摘要解析逻辑，改为调用 `buildModelRows({ saved, draft })`。表格展示和编辑打开均优先使用 draft 行，模型名旁复用已有 `Unsaved changes` 徽标标记草稿新增或草稿变更。
+4. `ModelRatioForm` 已接收 `savedValues` 并传入视觉编辑器；`RatioSettingsCard` 已维护 `savedModelValues`，在后端默认值刷新或模型价格保存全部成功后同步保存基线。若保存 API 返回失败或 mutation 抛错，baseline 不会提前更新。
+5. 删除当前正在编辑的模型时，右侧编辑面板会同步关闭，避免表格行已消失但面板仍保留旧草稿。
+6. 本轮未新增可见文案，未修改 i18n locale 文件；未修改 Go 后端、数据库 schema、option key、`pkg/billingexpr`、预消费、结算、日志展示、模型同步接口、分组倍率、工具价格和 new-api 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`，8 个测试通过。
+2. 已运行 `cd web/default && bun test src/features/system-settings`，22 个系统设置相关测试通过，覆盖数字字段、价格格式化、Grok 表单转换、模型定价快照、角色策略工具和 Waffo Pancake 凭据解析。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认 `savedValues`、`ModelRow`、快照 helper 和视觉编辑器引用链类型正确。
+4. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮未新增可见翻译 key。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过，确认可达 route 与隐藏模型定价组件均能被打包解析。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，未出现保存 option 的写请求。
+8. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；本轮未暴露隐藏的模型价格 tab，避免把草稿状态能力与导航策略混在一个切片。
+9. MCP 验证截图保存为 `/tmp/nexustok-pricing-snapshots-validation.png`。
