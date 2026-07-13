@@ -57,12 +57,12 @@ type BucketPoint struct {
 
 // GroupResult 表示按用户分组聚合的性能指标结果
 type GroupResult struct {
-	Group        string        `json:"group"`         // 用户分组名称
-	AvgTtftMs    int64         `json:"avg_ttft_ms"`   // 该分组的平均首 Token 延迟
+	Group        string        `json:"group"`          // 用户分组名称
+	AvgTtftMs    int64         `json:"avg_ttft_ms"`    // 该分组的平均首 Token 延迟
 	AvgLatencyMs int64         `json:"avg_latency_ms"` // 该分组的平均端到端延迟
-	SuccessRate  float64       `json:"success_rate"`  // 该分组的成功率
-	AvgTps       float64       `json:"avg_tps"`       // 该分组的平均 TPS
-	Series       []BucketPoint `json:"series"`        // 时间序列数据点
+	SuccessRate  float64       `json:"success_rate"`   // 该分组的成功率
+	AvgTps       float64       `json:"avg_tps"`        // 该分组的平均 TPS
+	Series       []BucketPoint `json:"series"`         // 时间序列数据点
 }
 
 // QueryResult 表示性能指标查询的完整结果
@@ -75,11 +75,12 @@ type QueryResult struct {
 // ModelSummary 表示单个模型的性能摘要
 // 用于性能概览页面展示所有模型的汇总指标
 type ModelSummary struct {
-	ModelName    string  `json:"model_name"`    // 模型名称
-	AvgLatencyMs int64   `json:"avg_latency_ms"` // 平均延迟
-	SuccessRate  float64 `json:"success_rate"`  // 成功率
-	AvgTps       float64 `json:"avg_tps"`       // 平均 TPS
-	RequestCount int64   `json:"-"`             // 请求总数（不序列化到 JSON，仅内部排序用）
+	ModelName          string    `json:"model_name"`                     // 模型名称
+	AvgLatencyMs       int64     `json:"avg_latency_ms"`                 // 平均延迟
+	SuccessRate        float64   `json:"success_rate"`                   // 成功率
+	AvgTps             float64   `json:"avg_tps"`                        // 平均 TPS
+	RecentSuccessRates []float64 `json:"recent_success_rates,omitempty"` // 最近时间桶成功率，供前端展示短趋势
+	RequestCount       int64     `json:"-"`                              // 请求总数（不序列化到 JSON，仅内部排序用）
 }
 
 // SummaryAllResult 表示所有模型摘要的查询结果

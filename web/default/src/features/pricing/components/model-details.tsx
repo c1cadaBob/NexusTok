@@ -49,6 +49,7 @@ import {
   formatLatency,
   formatThroughput,
   formatUptimePct,
+  getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
 import { DEFAULT_TOKEN_UNIT, QUOTA_TYPE_VALUES } from '../constants'
 import { usePricingData } from '../hooks/use-pricing-data'
@@ -172,10 +173,9 @@ function OverviewMetric(props: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   value: React.ReactNode
-  intent?: 'default' | 'warning' | 'success'
+  valueClassName?: string
 }) {
   const Icon = props.icon
-  const intent = props.intent ?? 'default'
 
   return (
     <div className='flex min-w-0 items-center gap-2 px-3 py-2'>
@@ -187,8 +187,7 @@ function OverviewMetric(props: {
         <div
           className={cn(
             'text-foreground truncate font-mono text-sm font-semibold tabular-nums',
-            intent === 'warning' && 'text-amber-600 dark:text-amber-400',
-            intent === 'success' && 'text-emerald-600 dark:text-emerald-400'
+            props.valueClassName
           )}
         >
           {props.value}
@@ -214,12 +213,6 @@ function OverviewSummaryGrid(props: { model: PricingModel }) {
     successRates.length > 0
       ? successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length
       : Number.NaN
-  let successIntent: 'default' | 'warning' | 'success' = 'warning'
-  if (successRate >= 99.9) {
-    successIntent = 'success'
-  } else if (successRate >= 99) {
-    successIntent = 'default'
-  }
   const tpsValues = groups
     .map((group) => group.avg_tps)
     .filter((value) => value > 0)
@@ -254,7 +247,7 @@ function OverviewSummaryGrid(props: { model: PricingModel }) {
         icon={HeartPulse}
         label={t('Success rate')}
         value={formatUptimePct(successRate)}
-        intent={successIntent}
+        valueClassName={getSuccessRateTextClass(successRate)}
       />
     </div>
   )

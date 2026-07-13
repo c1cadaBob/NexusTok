@@ -32,3 +32,60 @@ export function formatUptimePct(pct: number): string {
   if (!Number.isFinite(pct)) return '—'
   return `${pct.toFixed(2)}%`
 }
+
+export type SuccessRateLevel =
+  | 'excellent'
+  | 'good'
+  | 'warning'
+  | 'critical'
+  | 'unknown'
+
+const SUCCESS_RATE_EXCELLENT_MIN = 100
+const SUCCESS_RATE_GOOD_MIN = 90
+const SUCCESS_RATE_WARNING_MIN = 70
+
+// 成功率等级是模型广场、仪表盘和详情页共用的可观测语义。
+// 100% 视为完全健康，90% 以上仍可用，70% 以下进入严重告警。
+export function getSuccessRateLevel(rate: number): SuccessRateLevel {
+  if (!Number.isFinite(rate)) return 'unknown'
+  if (rate >= SUCCESS_RATE_EXCELLENT_MIN) return 'excellent'
+  if (rate >= SUCCESS_RATE_GOOD_MIN) return 'good'
+  if (rate >= SUCCESS_RATE_WARNING_MIN) return 'warning'
+  return 'critical'
+}
+
+const SUCCESS_RATE_TEXT_CLASS: Record<SuccessRateLevel, string> = {
+  excellent: 'text-success',
+  good: 'text-success/80',
+  warning: 'text-warning',
+  critical: 'text-destructive',
+  unknown: 'text-muted-foreground',
+}
+
+const SUCCESS_RATE_DOT_CLASS: Record<SuccessRateLevel, string> = {
+  excellent: 'bg-success',
+  good: 'bg-success/80',
+  warning: 'bg-warning',
+  critical: 'bg-destructive',
+  unknown: 'bg-muted-foreground',
+}
+
+const SUCCESS_RATE_HEX_COLOR: Record<SuccessRateLevel, string> = {
+  excellent: '#22c55e',
+  good: '#4ade80',
+  warning: '#f59e0b',
+  critical: '#ef4444',
+  unknown: '#9ca3af',
+}
+
+export function getSuccessRateTextClass(rate: number): string {
+  return SUCCESS_RATE_TEXT_CLASS[getSuccessRateLevel(rate)]
+}
+
+export function getSuccessRateDotClass(rate: number): string {
+  return SUCCESS_RATE_DOT_CLASS[getSuccessRateLevel(rate)]
+}
+
+export function getSuccessRateColor(rate: number): string {
+  return SUCCESS_RATE_HEX_COLOR[getSuccessRateLevel(rate)]
+}

@@ -25,7 +25,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { formatUptimePct } from '@/features/performance-metrics/lib/format'
+import {
+  formatUptimePct,
+  getSuccessRateDotClass,
+  getSuccessRateLevel,
+  getSuccessRateTextClass,
+} from '@/features/performance-metrics/lib/format'
 import { aggregateUptime, type UptimeDayPoint } from '../lib/mock-stats'
 
 // ---------------------------------------------------------------------------
@@ -50,27 +55,12 @@ type UptimeSparklineProps = {
   className?: string
 }
 
-function colourFor(uptime: number): string {
-  if (uptime >= 99.9) return 'bg-emerald-500'
-  if (uptime >= 99.0) return 'bg-emerald-400'
-  if (uptime >= 95.0) return 'bg-amber-500'
-  if (uptime >= 90.0) return 'bg-amber-600'
-  return 'bg-rose-500'
-}
-
 function heightFor(uptime: number): string {
   if (uptime >= 99.9) return 'h-full'
   if (uptime >= 99.0) return 'h-[88%]'
   if (uptime >= 95.0) return 'h-[72%]'
   if (uptime >= 90.0) return 'h-[55%]'
   return 'h-[40%]'
-}
-
-function overallTextColour(pct: number): string {
-  if (pct >= 99.9) return 'text-emerald-600 dark:text-emerald-400'
-  if (pct >= 99.0) return 'text-emerald-600 dark:text-emerald-400'
-  if (pct >= 95.0) return 'text-amber-600 dark:text-amber-400'
-  return 'text-rose-600 dark:text-rose-400'
 }
 
 export function UptimeSparkline(props: UptimeSparklineProps) {
@@ -116,7 +106,7 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
               <div
                 className={cn(
                   'w-full rounded-sm',
-                  colourFor(day.uptime_pct),
+                  getSuccessRateDotClass(day.uptime_pct),
                   heightFor(day.uptime_pct)
                 )}
                 aria-hidden
@@ -138,7 +128,7 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
         <span
           className={cn(
             'font-mono text-sm font-semibold tabular-nums',
-            overallTextColour(overall)
+            getSuccessRateTextClass(overall)
           )}
         >
           {overall.toFixed(1)}%
@@ -158,35 +148,26 @@ export function UptimeStatusRow(props: {
 }) {
   const { t } = useTranslation()
   const summary = useMemo(() => aggregateUptime(props.series), [props.series])
-  const status = useMemo(() => {
-    if (summary.uptime_pct >= 99.9) return 'operational'
-    if (summary.uptime_pct >= 99.0) return 'minor'
-    if (summary.uptime_pct >= 95.0) return 'degraded'
-    return 'major'
-  }, [summary.uptime_pct])
+  const statusLevel = useMemo(
+    () => getSuccessRateLevel(summary.uptime_pct),
+    [summary.uptime_pct]
+  )
 
   const StatusIcon =
-    status === 'operational'
+    statusLevel === 'excellent'
       ? CheckCircle2
-      : status === 'minor'
+      : statusLevel === 'good'
         ? Activity
         : AlertCircle
 
-  const statusColour =
-    status === 'operational'
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : status === 'minor'
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : status === 'degraded'
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-rose-600 dark:text-rose-400'
+  const statusColour = getSuccessRateTextClass(summary.uptime_pct)
 
   const statusLabel =
-    status === 'operational'
+    statusLevel === 'excellent'
       ? t('All systems operational')
-      : status === 'minor'
+      : statusLevel === 'good'
         ? t('Minor blips in the last 30 days')
-        : status === 'degraded'
+        : statusLevel === 'warning'
           ? t('Degraded performance recently')
           : t('Significant outages detected')
 

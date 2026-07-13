@@ -11691,3 +11691,63 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 10. MCP 点击 `Cancel` 后通过 `GET /api/channel/1` 回查，后端持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认没有误保存渠道。
 11. MCP 网络记录显示本轮相关请求均为 GET：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、Enter 批量扫描 `page_size=100` 和 `/api/channel/1` 回查；未出现 `PUT /api/channel/`。
 12. MCP 控制台无 error/warn；仅有既有 i18next 信息、`[nexustok-build] rv.0000.nexustok-default` debug，以及既有 autocomplete / label 可访问性 issue。
+
+## 本轮实施评审：性能指标摘要趋势原生化
+
+### 差异来源
+
+对照 `/opt/project/new-api-main` 后确认，new-api 的性能摘要能力不仅返回模型整体成功率，还会为模型卡片提供近期成功率趋势，并在摘要层过滤无效分组。NexusTok 已有 `perf_metrics` 采样、详情查询和模型广场展示，但摘要接口只返回整体平均值，前端模型卡片也只能显示单个状态柱；如果历史数据来自已删除分组，摘要层还可能把不可见分组的请求量带入模型广场和仪表盘。
+
+### 需求分析
+
+本轮目标是把 new-api 的优势转换为 NexusTok 原生可观测能力：摘要接口按当前有效分组和 `auto` 分组聚合，返回每个模型最近 3 个时间桶的成功率；前端统一成功率等级、颜色和状态点映射，让模型广场、模型详情和仪表盘使用同一套健康语义。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 后端摘要 DTO | `pkg/perf_metrics/types.go` | `ModelSummary` 新增 `recent_success_rates`，兼容旧客户端的可选字段。 |
+| 后端聚合查询 | `model/perf_metric.go`、`pkg/perf_metrics/metrics.go` | 新增按 `model_name,bucket_ts` 的摘要聚合，支持按有效分组过滤，并从数据库桶和内存热桶合并最近 3 个成功率点。 |
+| 摘要控制器 | `controller/perf_metrics.go` | `/api/perf-metrics/summary` 传入当前有效分组和 `auto`，避免隐藏分组污染摘要。 |
+| 前端可观测格式化 | `web/default/src/features/performance-metrics/lib/format.ts` | 新增共享成功率等级、文本颜色、状态点颜色和图表颜色 helper。 |
+| 前端性能展示 | `web/default/src/features/dashboard/*`、`web/default/src/features/pricing/components/*` | 仪表盘、模型卡片、模型详情和 uptime sparkline 统一使用共享成功率语义；模型卡片使用 `recent_success_rates` 展示最近 3 段状态。 |
+| 测试 | `pkg/perf_metrics/metrics_test.go`、`web/default/src/features/performance-metrics/lib/format.test.ts` | 覆盖有效分组过滤、最近 3 个成功率点、空分组结果和前端成功率等级。 |
+
+### 风险评估
+
+1. 数据库兼容风险：新增查询继续使用 GORM 聚合，并使用 `clause.IN` 生成分组过滤，避免手写 `group` 保留字 SQL，保持 SQLite、MySQL、PostgreSQL 兼容。
+2. 热路径风险：不改 `perf_metrics` 表结构，不改采样写入和 relay 热路径，只改摘要读取与前端展示。
+3. 分组过滤风险：`groups=nil` 仍表示不过滤，空切片表示返回空结果；controller 实际传入 `当前 group ratio + auto`，避免误删自动路由分组。
+4. 前端兼容风险：`recent_success_rates` 为可选字段，缺失时模型卡片回退到整体 `success_rate`。
+5. 视觉回归风险：颜色不照搬 new-api 的 raw Tailwind，而是使用 NexusTok 语义 token，保持当前主题能力。
+
+### 方案评审
+
+采用“后端摘要补趋势、前端共享语义”的方案：
+
+1. 后端聚合从“按模型一次汇总”调整为“按模型和时间桶汇总后再合并”，同时产出总量和最近桶成功率。
+2. 内存热桶和数据库历史桶走同一合并函数，保证当前小时未落库数据也能参与趋势。
+3. `recentSuccessRates` 只暴露成功率数组，不暴露内部请求量和 bucket 时间戳，减少前端耦合。
+4. 前端把成功率等级集中到 `performance-metrics/lib/format.ts`，删除仪表盘和模型详情里的重复阈值函数。
+5. 模型卡片只展示最多 3 个状态柱，缺失趋势时用单个整体成功率回退，避免无数据页面出现空白状态。
+
+### 实施结果
+
+- `/api/perf-metrics/summary` 返回的模型摘要支持 `recent_success_rates`，有数据时包含最近 3 个时间桶的成功率。
+- 摘要层过滤有效分组，已删除/隐藏分组的历史性能数据不会继续影响模型广场排序和仪表盘健康度。
+- 模型广场性能徽章可展示 3 段近期健康趋势；无趋势数据时继续使用整体成功率。
+- 仪表盘、模型详情和 uptime sparkline 统一使用 `excellent/good/warning/critical/unknown` 成功率等级。
+- 前端性能格式测试改为项目统一的 `node:test`，解除 `tsc -b` 对 `bun:test` 类型的依赖。
+
+### 验证记录
+
+1. `go test ./pkg/perf_metrics ./model ./controller -run 'TestQuerySummaryAll|TestGetPerfMetrics|TestAuthzShadow|TestClickHouse|TestBuildLogLikeCondition'` 通过。
+2. `cd web/default && bun test src/features/performance-metrics/lib/format.test.ts src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，51 个用例成功。
+3. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+4. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 生产构建成功。
+5. `git diff --check` 通过，未发现空白错误。
+6. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，根页面正常加载。
+7. MCP 在浏览器上下文调用 `GET /api/perf-metrics/summary?hours=24`，返回 HTTP 200 且 `success=true`；当前环境 24 小时无性能采样，`models` 数量为 0，空态合理。
+8. MCP 打开 `/dashboard/models`，页面正常显示 `No performance data available` 空态，没有渲染错误。
+9. MCP 打开 `/pricing`，模型广场正常渲染 3 个模型卡片；由于当前无性能摘要数据，性能徽章保持无数据回退状态。
+10. MCP 控制台无 error/warn；仅有既有 i18next 信息、构建 debug 和表单可访问性 issue，本轮没有扩大该独立问题。

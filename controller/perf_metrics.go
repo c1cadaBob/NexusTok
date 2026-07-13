@@ -30,7 +30,7 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		}
 	}
 
-	result, err := perfmetrics.QuerySummaryAll(hours)
+	result, err := perfmetrics.QuerySummaryAll(hours, activePerfMetricGroups())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -43,6 +43,20 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		"success": true,
 		"data":    result,
 	})
+}
+
+// activePerfMetricGroups 返回模型性能摘要允许统计的分组。
+//
+// 详情接口会在查询后过滤掉已删除分组；摘要接口需要在聚合前过滤，否则隐藏分组的历史请求量
+// 仍可能把模型推到模型广场前列。auto 是路由自动分组，虽不在 group ratio 配置中，也应保留。
+func activePerfMetricGroups() []string {
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	groups := make([]string, 0, len(groupRatios)+1)
+	for group := range groupRatios {
+		groups = append(groups, group)
+	}
+	groups = append(groups, "auto")
+	return groups
 }
 
 // GetPerfMetrics 获取指定模型的性能指标详情

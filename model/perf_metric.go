@@ -20,17 +20,17 @@ import (
 // PerfMetric 性能指标数据模型
 // 存储模型广场展示的聚合性能指标，按时间桶（bucket）聚合
 type PerfMetric struct {
-	Id             int    `json:"id" gorm:"primaryKey"`                                                          // 指标 ID
-	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"` // 模型名称
-	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"` // 分组
+	Id             int    `json:"id" gorm:"primaryKey"`                                                                         // 指标 ID
+	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`                // 模型名称
+	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`         // 分组
 	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"` // 时间桶时间戳
-	RequestCount   int64  `json:"-" gorm:"default:0"`   // 请求数量
-	SuccessCount   int64  `json:"-" gorm:"default:0"`   // 成功数量
-	TotalLatencyMs int64  `json:"-" gorm:"default:0"`   // 总延迟（毫秒）
-	TtftSumMs      int64  `json:"-" gorm:"default:0"`   // TTFT 总和（毫秒，Time To First Token）
-	TtftCount      int64  `json:"-" gorm:"default:0"`   // TTFT 计数
-	OutputTokens   int64  `json:"-" gorm:"default:0"`   // 输出 Token 数量
-	GenerationMs   int64  `json:"-" gorm:"default:0"`   // 生成时间（毫秒）
+	RequestCount   int64  `json:"-" gorm:"default:0"`                                                                           // 请求数量
+	SuccessCount   int64  `json:"-" gorm:"default:0"`                                                                           // 成功数量
+	TotalLatencyMs int64  `json:"-" gorm:"default:0"`                                                                           // 总延迟（毫秒）
+	TtftSumMs      int64  `json:"-" gorm:"default:0"`                                                                           // TTFT 总和（毫秒，Time To First Token）
+	TtftCount      int64  `json:"-" gorm:"default:0"`                                                                           // TTFT 计数
+	OutputTokens   int64  `json:"-" gorm:"default:0"`                                                                           // 输出 Token 数量
+	GenerationMs   int64  `json:"-" gorm:"default:0"`                                                                           // 生成时间（毫秒）
 }
 
 // TableName 指定性能指标表名
@@ -93,12 +93,26 @@ func GetPerfMetrics(modelName string, group string, startTs int64, endTs int64) 
 // PerfMetricSummary 性能指标汇总
 // 用于展示模型的聚合性能数据
 type PerfMetricSummary struct {
-	ModelName      string `json:"model_name"`      // 模型名称
-	RequestCount   int64  `json:"request_count"`   // 请求数量
-	SuccessCount   int64  `json:"success_count"`   // 成功数量
+	ModelName      string `json:"model_name"`       // 模型名称
+	RequestCount   int64  `json:"request_count"`    // 请求数量
+	SuccessCount   int64  `json:"success_count"`    // 成功数量
 	TotalLatencyMs int64  `json:"total_latency_ms"` // 总延迟（毫秒）
-	OutputTokens   int64  `json:"output_tokens"`   // 输出 Token 数量
-	GenerationMs   int64  `json:"generation_ms"`   // 生成时间（毫秒）
+	OutputTokens   int64  `json:"output_tokens"`    // 输出 Token 数量
+	GenerationMs   int64  `json:"generation_ms"`    // 生成时间（毫秒）
+}
+
+// PerfMetricSummaryBucket 表示按模型和时间桶聚合后的性能摘要。
+//
+// 该结构用于模型广场短趋势展示：后端仍按数据库中的原始 bucket 聚合，前端只接收最近
+// 若干个成功率点。这样不会改变 perf_metrics 表结构，也能兼容 SQLite、MySQL 和 PostgreSQL。
+type PerfMetricSummaryBucket struct {
+	ModelName      string `json:"model_name"`       // 模型名称
+	BucketTs       int64  `json:"bucket_ts"`        // 时间桶时间戳
+	RequestCount   int64  `json:"request_count"`    // 请求数量
+	SuccessCount   int64  `json:"success_count"`    // 成功数量
+	TotalLatencyMs int64  `json:"total_latency_ms"` // 总延迟（毫秒）
+	OutputTokens   int64  `json:"output_tokens"`    // 输出 Token 数量
+	GenerationMs   int64  `json:"generation_ms"`    // 生成时间（毫秒）
 }
 
 // GetPerfMetricsSummaryAll 获取所有模型的性能指标汇总
@@ -119,6 +133,40 @@ func GetPerfMetricsSummaryAll(startTs int64, endTs int64) ([]PerfMetricSummary, 
 		Having("SUM(request_count) > 0").
 		Find(&summaries).Error
 	return summaries, err
+}
+
+// GetPerfMetricsSummaryBucketsAll 获取所有模型按时间桶聚合的性能指标摘要。
+//
+// groups 为 nil 时查询所有分组；为空切片时返回空结果。该语义让 controller 可以显式传入
+// “当前有效分组 + auto”，避免模型广场摘要被已删除或隐藏分组的历史数据污染。
+func GetPerfMetricsSummaryBucketsAll(startTs int64, endTs int64, groups []string) ([]PerfMetricSummaryBucket, error) {
+	var summaries []PerfMetricSummaryBucket
+	query := DB.Model(&PerfMetric{}).
+		Select("model_name, bucket_ts, SUM(request_count) as request_count, SUM(success_count) as success_count, SUM(total_latency_ms) as total_latency_ms, SUM(output_tokens) as output_tokens, SUM(generation_ms) as generation_ms").
+		Where("bucket_ts >= ? AND bucket_ts <= ?", startTs, endTs)
+	if groups != nil {
+		if len(groups) == 0 {
+			return summaries, nil
+		}
+		query = query.Where(clause.IN{
+			Column: clause.Column{Name: "group"},
+			Values: stringSliceToInterfaces(groups),
+		})
+	}
+	err := query.
+		Group("model_name, bucket_ts").
+		Having("SUM(request_count) > 0").
+		Order("bucket_ts ASC").
+		Find(&summaries).Error
+	return summaries, err
+}
+
+func stringSliceToInterfaces(values []string) []interface{} {
+	items := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		items = append(items, value)
+	}
+	return items
 }
 
 // DeletePerfMetricsBefore 删除指定时间之前的性能指标

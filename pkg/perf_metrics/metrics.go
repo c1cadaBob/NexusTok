@@ -148,10 +148,11 @@ func Query(params QueryParams) (QueryResult, error) {
 	return buildQueryResult(params.Model, merged), nil
 }
 
-// QuerySummaryAll 查询所有模型的性能摘要
-// 合并数据库历史数据和内存实时数据，按请求量降序排列
-// 用于性能概览页面展示所有模型的汇总指标
-func QuerySummaryAll(hours int) (SummaryAllResult, error) {
+// QuerySummaryAll 查询所有模型的性能摘要。
+//
+// groups 为 nil 时统计全部分组；传入具体分组时只统计这些分组。controller 会传入当前有效
+// 分组和 auto，避免已删除分组的历史指标继续影响模型广场和仪表盘健康度。
+func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 	if hours <= 0 {
 		hours = 24
 	}
@@ -160,21 +161,25 @@ func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 	}
 	endTs := time.Now().Unix()
 	startTs := endTs - int64(hours)*3600
+	allowedGroups := allowedGroupSet(groups)
 
-	rows, err := model.GetPerfMetricsSummaryAll(startTs, endTs)
+	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
 	if err != nil {
 		return SummaryAllResult{}, err
 	}
 
 	totals := map[string]counters{}
+	modelBuckets := map[string]map[int64]counters{}
 	for _, row := range rows {
-		totals[row.ModelName] = counters{
+		value := counters{
 			requestCount:   row.RequestCount,
 			successCount:   row.SuccessCount,
 			totalLatencyMs: row.TotalLatencyMs,
 			outputTokens:   row.OutputTokens,
 			generationMs:   row.GenerationMs,
 		}
+		mergeModelTotals(totals, row.ModelName, value)
+		mergeModelBucket(modelBuckets, row.ModelName, row.BucketTs, value)
 	}
 
 	hotBuckets.Range(func(key, value any) bool {
@@ -182,17 +187,17 @@ func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 		if k.bucketTs < startTs || k.bucketTs > endTs {
 			return true
 		}
+		if allowedGroups != nil {
+			if _, ok := allowedGroups[k.group]; !ok {
+				return true
+			}
+		}
 		snap := value.(*atomicBucket).snapshot()
 		if snap.requestCount == 0 {
 			return true
 		}
-		cur := totals[k.model]
-		cur.requestCount += snap.requestCount
-		cur.successCount += snap.successCount
-		cur.totalLatencyMs += snap.totalLatencyMs
-		cur.outputTokens += snap.outputTokens
-		cur.generationMs += snap.generationMs
-		totals[k.model] = cur
+		mergeModelTotals(totals, k.model, snap)
+		mergeModelBucket(modelBuckets, k.model, k.bucketTs, snap)
 		return true
 	})
 
@@ -208,11 +213,12 @@ func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 			avgTps = float64(total.outputTokens) / (float64(total.generationMs) / 1000.0)
 		}
 		models = append(models, ModelSummary{
-			ModelName:    name,
-			AvgLatencyMs: avgLatency,
-			SuccessRate:  math.Round(successRate*100) / 100,
-			AvgTps:       math.Round(avgTps*100) / 100,
-			RequestCount: total.requestCount,
+			ModelName:          name,
+			AvgLatencyMs:       avgLatency,
+			SuccessRate:        math.Round(successRate*100) / 100,
+			AvgTps:             math.Round(avgTps*100) / 100,
+			RecentSuccessRates: recentSuccessRates(modelBuckets[name], 3),
+			RequestCount:       total.requestCount,
 		})
 	}
 	sort.Slice(models, func(i, j int) bool {
@@ -220,6 +226,76 @@ func QuerySummaryAll(hours int) (SummaryAllResult, error) {
 	})
 
 	return SummaryAllResult{Models: models}, nil
+}
+
+func mergeModelTotals(totals map[string]counters, modelName string, value counters) {
+	if value.requestCount == 0 {
+		return
+	}
+	current := totals[modelName]
+	current.requestCount += value.requestCount
+	current.successCount += value.successCount
+	current.totalLatencyMs += value.totalLatencyMs
+	current.ttftSumMs += value.ttftSumMs
+	current.ttftCount += value.ttftCount
+	current.outputTokens += value.outputTokens
+	current.generationMs += value.generationMs
+	totals[modelName] = current
+}
+
+func mergeModelBucket(modelBuckets map[string]map[int64]counters, modelName string, bucketTs int64, value counters) {
+	if value.requestCount == 0 {
+		return
+	}
+	if _, ok := modelBuckets[modelName]; !ok {
+		modelBuckets[modelName] = map[int64]counters{}
+	}
+	current := modelBuckets[modelName][bucketTs]
+	current.requestCount += value.requestCount
+	current.successCount += value.successCount
+	current.totalLatencyMs += value.totalLatencyMs
+	current.ttftSumMs += value.ttftSumMs
+	current.ttftCount += value.ttftCount
+	current.outputTokens += value.outputTokens
+	current.generationMs += value.generationMs
+	modelBuckets[modelName][bucketTs] = current
+}
+
+// recentSuccessRates 返回最近若干个时间桶的成功率，用于前端展示短趋势。
+//
+// 输入已经按模型聚合，但可能同时包含数据库历史桶和当前进程热桶；这里按时间戳排序并只
+// 暴露成功率，避免把请求量等内部排序字段泄露给模型广场卡片。
+func recentSuccessRates(buckets map[int64]counters, limit int) []float64 {
+	if len(buckets) == 0 || limit <= 0 {
+		return nil
+	}
+	timestamps := make([]int64, 0, len(buckets))
+	for ts := range buckets {
+		timestamps = append(timestamps, ts)
+	}
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] < timestamps[j]
+	})
+	if len(timestamps) > limit {
+		timestamps = timestamps[len(timestamps)-limit:]
+	}
+	rates := make([]float64, 0, len(timestamps))
+	for _, ts := range timestamps {
+		rates = append(rates, math.Round(successRate(buckets[ts])*100)/100)
+	}
+	return rates
+}
+
+// allowedGroupSet 将可见分组列表转为集合。nil 表示不限制分组；空切片表示不允许任何分组。
+func allowedGroupSet(groups []string) map[string]struct{} {
+	if groups == nil {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		allowed[group] = struct{}{}
+	}
+	return allowed
 }
 
 // bucketStart 计算给定时间戳所在时间桶的起始时间
