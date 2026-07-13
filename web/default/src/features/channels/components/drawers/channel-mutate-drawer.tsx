@@ -3881,6 +3881,7 @@ export function ChannelMutateDrawer({
                                     onOpenChange={setModelSelectOpen}
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
+                                    onSearchSubmit={handleAddModelSearchMatches}
                                     contentHeader={
                                       shouldShowModelSearchAppend ? (
                                         <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
@@ -3944,6 +3945,8 @@ export function ChannelMutateDrawer({
                                     )}
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
+                                    submitSearchOnEnterWithMatches
+                                    submitSearchOnEnterWhenHighlighted
                                     contentFooter={
                                       trimmedModelSearchKeyword.length > 0 ? (
                                         <div className='flex flex-col gap-2'>
