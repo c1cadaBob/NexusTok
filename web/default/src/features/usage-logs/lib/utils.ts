@@ -179,19 +179,31 @@ export function buildApiParams(config: {
 }): GetLogsParams {
   const { page, pageSize, searchParams, columnFilters = [], isAdmin } = config
 
-  // Helper to process type parameter (single value from array)
-  const processType = (value: unknown) => {
+  // common logs 的 type 只支持单选；0 是后端约定的“全部类型”哨兵，必须保留并透传。
+  const processType = (value: unknown): number | undefined => {
+    const parseType = (raw: unknown): number | undefined => {
+      const type = Number(raw)
+      return Number.isFinite(type) ? type : undefined
+    }
+
     if (Array.isArray(value) && value.length === 1) {
-      return Number(value[0])
+      return parseType(value[0])
+    }
+    if (typeof value === 'number') {
+      return parseType(value)
+    }
+    if (typeof value === 'string' && value !== '') {
+      return parseType(value)
     }
     return undefined
   }
+  const searchType = processType(searchParams.type)
 
   // Build base params from search params
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
-    ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
+    ...(searchType !== undefined ? { type: searchType } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),

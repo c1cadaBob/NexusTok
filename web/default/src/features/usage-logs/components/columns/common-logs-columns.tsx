@@ -38,6 +38,7 @@ import {
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import type { UsageLog } from '../../data/schema'
+import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import {
   formatModelName,
   getFirstResponseTimeColor,
@@ -295,7 +296,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         )
       },
       filterFn: (row, _id, value) => {
-        if (!value || value.length === 0) return true
+        if (!Array.isArray(value) || value.length === 0) return true
+        if (value.includes(LOG_TYPE_ALL_VALUE)) return true
         return value.includes(String(row.original.type))
       },
       enableHiding: false,

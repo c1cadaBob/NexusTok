@@ -61,6 +61,12 @@ export const LOG_TYPE_ENUM = {
   LOGIN: 7,
 } as const
 
+/**
+ * common logs 列表和统计接口把 type=0 作为“全部类型”的哨兵值。
+ * 行渲染仍通过 LOG_TYPES 把真实 type=0 的日志展示为 Unknown，避免筛选语义和数据展示语义混用。
+ */
+export const LOG_TYPE_ALL_VALUE = '0' as const
+
 // ============================================================================
 // Time Range Presets
 // ============================================================================
@@ -95,11 +101,17 @@ export const LOG_TYPES = [
 
 /**
  * DataTableToolbar 使用的日志类型筛选项（单选模式）。
+ * 后端查询把 type=0 解释为全部，因此筛选项中不能再把 0 标注成 Unknown。
  */
-export const LOG_TYPE_FILTERS = LOG_TYPES.map((type) => ({
-  label: type.label,
-  value: String(type.value),
-}))
+export const LOG_TYPE_FILTERS = [
+  { label: 'All Types', value: LOG_TYPE_ALL_VALUE },
+  ...LOG_TYPES.filter((type) => type.value !== LOG_TYPE_ENUM.UNKNOWN).map(
+    (type) => ({
+      label: type.label,
+      value: String(type.value),
+    })
+  ),
+] as const
 
 // ============================================================================
 // Drawing Logs (Midjourney) Constants

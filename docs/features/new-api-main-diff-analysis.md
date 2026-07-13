@@ -12029,3 +12029,83 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 8. MCP 切换表格视图后，模型列展示 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，Vendor 列仍显示 `OpenAI`，证明模型列和供应商列都能正常渲染。
 9. MCP 网络记录显示 `/api/pricing`、`/api/perf-metrics/summary?hours=24` 和详情触发的 `/api/perf-metrics?model=gpt-5.4&hours=24` 均返回 HTTP 200。
 10. MCP 控制台无 error/warn；DevTools 报告 1 条表单字段缺少 `id/name` 的既有 accessibility issue，本轮没有触碰表单控件。
+
+## 本轮实施评审：Usage Logs 类型筛选语义原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/usage-logs` 后确认，new-api 最新版已经把 common logs 的类型筛选语义拆成两层：筛选下拉中的 `type=0` 表示 `All Types`，而表格行中真实日志记录的 `type=0` 仍展示为 `Unknown`。NexusTok 当前仍把 `LOG_TYPE_FILTERS` 直接从 `LOG_TYPES` 派生，导致筛选项里 `0` 显示为 `Unknown`；同时 URL schema 只接受数组形式，`/usage-logs/common?type=0` 和浏览器手动输入的单值 query 容易产生 UI、表格本地过滤和后端查询语义不一致。
+
+早期报告中曾记录“暂不迁移 `LOG_TYPE_ALL_VALUE='0'` 语义”，当时是为了避免误改后端查询。本轮通过重新核对当前后端 list/stat 查询行为和 new-api 前端实现，确认后端 common logs 接口已经把 `type=0` 作为“全部类型”哨兵使用，因此需要将该优势原生化到 NexusTok 前端，修正历史遗留结论。
+
+### 需求分析
+
+1. common logs 类型筛选下拉必须显示 `All Types`、`Top-up`、`Consume`、`Manage`、`System`、`Error`、`Refund`、`Login`，不再把筛选项 `0` 显示成 `Unknown`。
+2. 真实日志行的 `type=0` 仍应通过 `LOG_TYPES` 展示为 `Unknown`，不能丢失未知类型日志的可观测性。
+3. URL 中 `type=0`、`type[]=0` 或路由解析后的 `['0']` 都应代表“全部类型”；表格本地 column filter 不应因为 `0` 把页面过滤到只剩 Unknown。
+4. URL schema 需要同时兼容字符串和数组形式，便于用户手动输入、历史链接、表格状态序列化和 TanStack Router 解析。
+5. common logs 筛选栏的草稿状态应从当前 URL 派生；URL 改变时不能保留旧筛选草稿，避免“页面看似 All Types，但搜索仍带旧 type”的幽灵筛选。
+6. 非 common 日志页继续清理 `type` 查询参数，避免 drawing/task logs 误用 common logs 的类型筛选。
+7. 保留 NexusTok 当前细粒度管理员权限、敏感信息显隐、移动端筛选工具栏、DataTablePage 体系和后端接口，不整文件覆盖 new-api 实现。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 类型常量 | `web/default/src/features/usage-logs/constants.ts` | 新增 `LOG_TYPE_ALL_VALUE`，并让筛选项使用 `All Types` + 非 Unknown 类型列表；行展示配置仍保留 Unknown。 |
+| 路由 search schema | `web/default/src/routes/_authenticated/usage-logs/$section.tsx` | `type` 支持字符串或数组输入；非 common 分区继续清理已有 type。 |
+| common logs 表格 | `web/default/src/features/usage-logs/components/usage-logs-table.tsx` | URL 中的 `type=0` 进入表格本地筛选前会被反序列化为空筛选，避免前端二次过滤误伤。 |
+| common logs 筛选栏 | `web/default/src/features/usage-logs/components/common-logs-filter-bar.tsx` | 使用统一筛选项、URL 派生草稿、All Types 哨兵和重置语义；保留敏感信息显隐按钮与管理员字段。 |
+| common logs 列过滤 | `web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 本地 filterFn 兼容 `LOG_TYPE_ALL_VALUE`，即使外部传入 `0` 也视为全部。 |
+| 接口参数构建 | `web/default/src/features/usage-logs/lib/utils.ts` | `buildApiParams` 兼容字符串和数组形式的 type，继续把 `0` 发送给后端作为全部类型哨兵。 |
+| 测试 | `web/default/src/features/usage-logs/lib/utils.test.ts` | 增加 type 解析和 `type=0` 哨兵相关的纯逻辑覆盖。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮差异来源、需求分析、影响范围、风险评估、方案评审和后续验证记录。 |
+
+本轮不修改 Go 后端、数据库日志模型、日志权限模型、审计/登录日志摘要、任务日志、绘图日志、统计接口、渠道编辑页和模型搜索逻辑。
+
+### 风险评估
+
+1. 后端语义风险：若前端把 `type=0` 当作 Unknown，本地过滤和后端查询会冲突。本轮明确 `LOG_TYPE_ALL_VALUE='0'` 只用于筛选项，行展示仍使用 `LOG_TYPES`，降低语义混淆。
+2. URL 兼容风险：历史链接可能是 `?type=2`，也可能是重复 query 形成数组。schema 通过 preprocess 统一成数组，避免 validateSearch 把合法链接清空。
+3. 本地过滤风险：DataTable 的 column filter 可能先于远端结果再过滤一次。对 `type=0` 做 deserialize 过滤，并在列 filterFn 中兜底 pass-all，可避免远端返回的非 Unknown 日志被前端隐藏。
+4. 状态同步风险：原筛选栏用 `useEffect` 局部 merge URL，URL 清空时旧 draft 可能残留。本轮改为 URL 派生 searchState + draft sourceKey，确保外部导航、重置和浏览器前进后退都能同步。
+5. 权限回退风险：new-api 使用 `useIsAdmin`，NexusTok 使用资源级 `useAdminPermission`。本轮只迁移筛选语义，不改变管理员字段的可见性规则。
+6. i18n 风险：`All Types` 已是既有 key，本轮不新增文案；修改后仍会通过 typecheck/build 和页面验证观察是否出现缺键。
+
+### 方案评审
+
+采用“语义常量 + URL 归一 + 表格反序列化 + 筛选栏派生草稿”的保守方案：
+
+1. 在 `constants.ts` 中新增 `LOG_TYPE_ALL_VALUE='0'`，`LOG_TYPE_FILTERS` 第一项固定为 `All Types`，其余项过滤掉 `LOG_TYPE_ENUM.UNKNOWN`。
+2. 在路由 schema 中为 `type` 添加 preprocess：空值转为 `undefined`，字符串转为单元素数组，数组保持原样并通过枚举校验；非 common 分区判断字符串/数组两种形态并清理。
+3. 在 `UsageLogsTable` 中为 `type` column filter 添加 `deserializeLogTypeFilter`，把 URL 的 `0` 哨兵从本地表格过滤状态中移除。
+4. 在 `CommonLogsFilterBar` 中移植 new-api 的 URL 派生草稿思路，但保留 NexusTok 的资源级权限和现有敏感信息显隐按钮；搜索和重置都显式写入 `type: [LOG_TYPE_ALL_VALUE]`，让 URL 与后端语义一致。
+5. 在 common logs 列 filterFn 中把 `LOG_TYPE_ALL_VALUE` 视为 pass-all，作为 deserialize 之外的防御式兜底。
+6. 在 `buildApiParams` 中让 `processType` 同时接受字符串和单元素数组，并只返回有限数字；这能兼容路由 schema、表格 column filter 和手动调用。
+7. 修改后运行 usage-logs helper 测试、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/usage-logs/common?type=0` 验证 All Types 展示、接口请求、特定类型筛选、非 common 分区清理 type 和控制台状态。
+
+### 实施结果
+
+- `LOG_TYPE_ALL_VALUE='0'` 已成为 common logs 筛选层的显式常量；`LOG_TYPE_FILTERS` 现在展示 `All Types` 和 1-7 的具体日志类型，不再在筛选下拉中暴露 `Unknown`。
+- `LOG_TYPES` 仍保留 `Unknown`，真实日志行如果返回 `type=0` 仍会展示为 Unknown，筛选语义和数据展示语义已经分离。
+- 路由 search schema 已支持字符串、数字和数组形态的 `type`：手动访问 `?type=0` 会规范化为 `type=["0"]`，避免 TanStack Router 把数值 `0` 解析后落入 fallback。
+- `CommonLogsFilterBar` 已改为 URL 派生 `searchState` + 草稿 `sourceKey`，搜索、重置、浏览器导航和外部 URL 改变时不会保留旧类型筛选。
+- `UsageLogsTable` 已对 `type=0` 做本地 column filter 反序列化，避免后端返回多类型数据后被前端二次过滤成 Unknown。
+- common logs `created_at` 列的本地 `filterFn` 已把 `LOG_TYPE_ALL_VALUE` 视为 pass-all，作为防御式兜底。
+- `buildApiParams` 已兼容数组、字符串和数值 `type`，并继续把 `0` 透传给后端 list/stat 接口作为“全部类型”哨兵。
+- 新增 `web/default/src/features/usage-logs/lib/utils.test.ts`，覆盖 `type=0` 哨兵、字符串 type、数值 type 和列筛选覆盖 URL type。
+- 保留 NexusTok 的 `useAdminPermission(USAGE_LOG, READ)` 权限模型、敏感信息显隐按钮、移动端筛选工具栏和当前 DataTablePage 架构，没有回退到 new-api 的粗粒度管理员判断。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/usage-logs/lib/utils.test.ts` 通过，4 个 `buildApiParams` 类型解析用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.6 秒内完成生产构建。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，在浏览器上下文调用 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`。
+6. MCP 首次访问 `http://192.168.0.202:3003/usage-logs/common?type=0` 时发现路由会把裸 `0` 解析为数值并 fallback 成空数组；已补充数字归一逻辑和测试后重新验证通过。
+7. MCP 重新访问 `http://192.168.0.202:3003/usage-logs/common?type=0` 后，URL 规范化为 `type=%5B%220%22%5D`；页面 common logs 类型下拉显示 `All Types`，下拉选项为 `All Types`、`Top-up`、`Consume`、`Manage`、`System`、`Error`、`Refund`、`Login`，没有 `Unknown` 筛选项。
+8. MCP 网络记录显示 common logs 统计请求为 `/api/log/stat?...&type=0...`，列表请求为 `/api/log/?p=1&page_size=100&type=0...`，均返回 HTTP 200；响应数据中同时包含 `Login` 和 `Manage` 类型记录，证明 `type=0` 没有被本地表格误过滤为 Unknown。
+9. MCP 在页面下拉选择 `Manage` 后点击 `Search`，URL 更新为 `type=%5B%223%22%5D`；网络记录显示 `/api/log/stat?...&type=3...` 和 `/api/log/?...&type=3...` 均返回 HTTP 200，表格仅展示 `Manage` 记录。
+10. MCP 访问 `http://192.168.0.202:3003/usage-logs/task?type=3` 后页面自动规范化为 `/usage-logs/task`，task logs 请求为 `/api/task/?p=1&page_size=100&start_timestamp=...&end_timestamp=...`，没有携带 `type`。
+11. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间 3003 曾在热发布重建窗口短暂返回连接拒绝；Docker 日志确认 `nexustok-api-hot` 完成 frontend dist 发布和 backend restart 后恢复，随后所有页面与接口验证均通过。
