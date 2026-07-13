@@ -29,10 +29,12 @@ import i18next from 'i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { getStatus } from '@/lib/api'
+import { installBuildMetadata } from '@/lib/build-metadata'
+import { DEFAULT_LOGO } from '@/lib/constants'
 import '@/lib/dayjs'
 import { applyFaviconToDom } from '@/lib/dom-utils'
+import { initializeFrontendCache } from '@/lib/frontend-cache'
 import { handleServerError } from '@/lib/handle-server-error'
-import { DEFAULT_LOGO } from '@/lib/constants'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
@@ -42,7 +44,9 @@ import { routeTree } from './routeTree.gen'
 // Styles
 import './styles/index.css'
 
-// VChart 主题由 ThemeProvider 驱动；这里保留初始化顺序，避免图表首帧闪成默认浅色主题。
+// 构建指纹和缓存版本清理需要先于 React 渲染执行，便于热更新验证和旧 UI 缓存淘汰。
+installBuildMetadata()
+initializeFrontendCache()
 
 const queryClient = new QueryClient({
   defaultOptions: {

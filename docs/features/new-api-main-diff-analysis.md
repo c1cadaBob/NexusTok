@@ -162,7 +162,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | AI Elements | new-api-main response renderer 更完整 | NexusTok 目前已有部分 ai-elements | 优先迁移 response renderer 的安全解析和表格/图片/details 渲染。 |
 | Dialog/Drawer Layout | NexusTok 使用项目现有组件 | new-api-main 有 `dialog.tsx`、`drawer-layout.ts` 公共布局 | 可吸收为长表单统一布局，尤其渠道和账号池编辑器。 |
 | Sidebar View | NexusTok 无 `use-sidebar-view.ts` | new-api-main 有 | 如果账号池、系统设置、模型设置继续多层导航，可引入嵌套侧边栏视图。 |
-| 前端缓存 | NexusTok 无 `frontend-cache.ts` | new-api-main 有 | 可用于状态接口、系统配置和低频元数据缓存，需避免缓存权限敏感数据。 |
+| 前端构建元数据与缓存版本清理 | `frontend-cache.ts`、`build-metadata.ts`、`main.tsx` 已接入 | new-api-main 有同类能力 | 已原生化为 NexusTok 命名空间：运行时暴露 `window.__NEXUSTOK_BUILD__`、DOM/meta/CSS/localStorage 构建指纹；缓存版本变化时清理旧 UI 缓存，同时保留登录、语言、系统状态、通知已读、表格视图、渠道模式和 Playground 草稿等关键状态。 |
 | 构建/检查 | NexusTok 使用 ESLint/Prettier/tsc | new-api-main 使用 oxlint/oxfmt/tsgo | 不建议立刻切换；可单独评估速度收益，避免扰动现有格式化规则。 |
 
 ## 后端依赖和基础设施差异
@@ -11319,3 +11319,58 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 5. 发布产物中已确认存在 `enableCardView:!0`、`viewModeStorageKey:"channels-table-view-mode"` 和卡片网格配置，证明 3003 加载的渠道页 chunk 包含本轮改动。
 6. Chrome Headless + DevTools Protocol 真实页面验证：登录 `c1cada` 成功，打开 `http://192.168.0.202:3003/channels` 后存在视图切换控件；点击卡片视图按钮后，按钮状态从 `[false,true]` 变为 `[true,false]`，`localStorage.channels-table-view-mode` 为 `card`，DOM 中出现 `[data-slot="data-table-card"]` 卡片节点，桌面表格节点数为 0。
 7. `cd web/default && bun run typecheck` 曾多次启动，但 `tsc -b` 卡在内核 `wait_on_buffer` / `folio_wait_bit_common` 超过数分钟，已终止以避免继续阻塞；本轮以已通过的 Prettier、`git diff --check`、容器 Rsbuild 热更新构建和真实页面验证作为替代证据。
+
+## 本轮实施评审：前端构建元数据与缓存版本清理原生化
+
+### 需求分析
+
+`new-api-main` 的 `frontend-cache.ts` 和 `build-metadata.ts` 提供了两个小但很实用的运维能力：前端版本变化时清理旧 UI 缓存，并把当前构建版本写到 `window`、`html data-*`、`meta[name="build-id"]`、CSS 变量和 localStorage 中。NexusTok 当前每次修改后都要求访问 `http://192.168.0.202:3003/` 确认页面更新，但缺少浏览器运行态层面的构建指纹，排查“热更新是否真的加载新包”时仍要靠手动查 chunk 或容器日志。
+
+本轮目标是把这两个能力转换为 NexusTok 原生能力：使用 NexusTok 专属 key 和全局对象名，不复用 `newapi:*` 或 `app:rev`；同时保守处理 localStorage，避免误清登录态、语言、系统状态、通知已读、表格视图、渠道模式和 Playground 草稿。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 前端启动入口 | `web/default/src/main.tsx` | 在应用渲染前安装构建元数据并执行缓存版本同步；不改变 React Router、QueryClient、认证和品牌刷新逻辑。 |
+| 构建元数据 | `web/default/src/lib/build-metadata.ts` | 新增 `window.__NEXUSTOK_BUILD__`、`data-build-rev`、`data-app-channel`、`meta[name="build-id"]`、`--app-build-rev` 和 `localStorage.nexustok:default:app-rev`。 |
+| 缓存版本清理 | `web/default/src/lib/frontend-cache.ts` | 新增 `nexustok:default:cache-version`，版本变化时清理未保留的 UI 缓存，保留关键用户状态和偏好。 |
+| 测试 | `web/default/src/lib/build-metadata.test.ts`、`web/default/src/lib/frontend-cache.test.ts` | 覆盖版本号计算、DOM/window/meta/CSS/localStorage 写入、版本一致不清理、版本变化清理未知缓存并保留关键状态。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 更新前端缓存差异状态并记录本轮评审。 |
+
+### 风险评估
+
+1. 登录态风险：如果清理 `user` 或 `uid`，用户刷新后可能被迫重新登录；本轮明确保留。
+2. 语言和系统状态风险：如果清理 `i18nextLng` 或 `status`，首屏语言和系统名可能闪烁；本轮明确保留。
+3. 管理员偏好风险：渠道 tag mode、ID sort、表格/卡片视图、设置页 accordion、仪表盘偏好、通知已读和 Playground 草稿都属于有价值工作状态；本轮保留这些 key 或前缀。
+4. 旧品牌缓存风险：历史 `system_name`、`logo`、`footer_html` 等已由当前系统状态和固定随包 logo 接管，继续保留反而可能污染首屏；本轮会被版本清理移除。
+5. 浏览器存储不可用风险：隐私模式、受限 iframe 或浏览器策略可能让 localStorage 写入抛错；两个初始化函数都使用 best-effort，不阻断应用启动。
+6. 观测命名冲突风险：不能使用 new-api 的 `window.__APP_BUILD__` 或 `app:rev`，避免未来嵌入、迁移或调试脚本混淆；本轮使用 `__NEXUSTOK_BUILD__` 和 `nexustok:default:*`。
+
+### 方案评审
+
+采用独立工具模块 + 启动入口接入方案：
+
+1. `build-metadata.ts` 计算 `rv.<envVersion|0000>.nexustok-default`，并把同一个 revision 写入多层观测位置。
+2. `frontend-cache.ts` 以 `default-v1` 作为首个 NexusTok 默认前端缓存版本，只有版本不一致时才扫描 localStorage 并清理非保留项。
+3. 保留名单按 NexusTok 当前代码实际使用的 key 制定，包括认证、语言、系统状态、通知、DataTable 视图、渠道模式、Dashboard、Playground、系统设置折叠状态和模型定价列偏好。
+4. `main.tsx` 在 QueryClient 和 React 渲染前执行两个初始化函数，使构建指纹和缓存清理尽早生效。
+5. 测试使用纯内存 storage 和最小 fake document，不引入 JSDOM 或新依赖。
+
+### 实施结果
+
+- 运行中的默认前端现在可以通过 `window.__NEXUSTOK_BUILD__`、`document.documentElement.dataset.buildRev`、`meta[name="build-id"]`、`--app-build-rev` 和 `localStorage['nexustok:default:app-rev']` 观测构建版本。
+- 首次升级到该版本后，`localStorage['nexustok:default:cache-version']` 会写入 `default-v1`。
+- 版本变化时会清理未知 UI 缓存和旧品牌缓存，但保留登录、语言、系统状态、通知已读、表格视图、渠道模式、Dashboard、Playground 和系统设置偏好。
+- 应用启动在 localStorage 或 DOM 写入失败时仍继续渲染。
+
+### 验证记录
+
+1. `cd web/default && bun test src/lib/frontend-cache.test.ts src/lib/build-metadata.test.ts` 通过，4 个用例成功。
+2. `cd web/default && ./node_modules/.bin/prettier --check src/lib/frontend-cache.ts src/lib/frontend-cache.test.ts src/lib/build-metadata.ts src/lib/build-metadata.test.ts src/main.tsx` 通过。
+3. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+4. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.1 秒内完成生产构建。
+5. `git diff --check` 通过。
+6. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 成功，根文档、主 JS/CSS、`/api/status`、`/api/setup`、`/api/notice`、`/api/home_page_content` 和 `logo.png` 请求均返回 200。
+7. MCP 浏览器上下文读取到运行态构建指纹：`window.__NEXUSTOK_BUILD__.rev`、`html[data-build-rev]`、`meta[name="build-id"]`、`--app-build-rev` 和 `localStorage['nexustok:default:app-rev']` 均为 `rv.0000.nexustok-default`，`html[data-app-channel]` 为 `nexustok-default`，`localStorage['nexustok:default:cache-version']` 为 `default-v1`。
+8. MCP 控制台仅有 i18next 提示和 `[nexustok-build] rv.0000.nexustok-default` debug 日志，未发现 error 级别异常。
