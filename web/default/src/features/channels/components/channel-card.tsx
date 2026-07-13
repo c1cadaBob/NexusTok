@@ -34,12 +34,15 @@ import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
 import type { Channel } from '../types'
 
+const SENSITIVE_MASK = '••••'
+
 interface ChannelsMobileListProps {
   emptyDescription?: string
   emptyTitle?: string
   enableSelection?: boolean
   getRowClassName?: (row: Row<Channel>) => string | undefined
   isLoading?: boolean
+  sensitiveVisible?: boolean
   table: Table<Channel>
 }
 
@@ -48,6 +51,7 @@ interface ChannelCardProps {
   enableSelection?: boolean
   isSelected: boolean
   row: Row<Channel>
+  sensitiveVisible?: boolean
 }
 
 function ChannelMobileSkeleton() {
@@ -93,6 +97,7 @@ function ChannelCardComponent({
   enableSelection = true,
   isSelected,
   row,
+  sensitiveVisible = true,
 }: ChannelCardProps) {
   const { t } = useTranslation()
   const channel = row.original
@@ -138,7 +143,11 @@ function ChannelCardComponent({
       <div className='grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3'>
         <div className='flex min-w-0 flex-col gap-3 overflow-hidden'>
           <div className='min-w-0'>
-            {!isTagRow && <div className={labelClass}>#{channel.id}</div>}
+            {!isTagRow && (
+              <div className={labelClass}>
+                #{sensitiveVisible ? channel.id : SENSITIVE_MASK}
+              </div>
+            )}
             <div className='min-w-0 text-sm'>{nameCell}</div>
           </div>
 
@@ -172,7 +181,12 @@ function ChannelCardComponent({
         {groups.length > 0 ? (
           <div className='flex flex-wrap gap-1'>
             {groups.map((group) => (
-              <GroupBadge group={group} key={group} size='sm' />
+              <GroupBadge
+                group={group}
+                key={group}
+                size='sm'
+                label={sensitiveVisible ? undefined : SENSITIVE_MASK}
+              />
             ))}
           </div>
         ) : (
@@ -191,6 +205,7 @@ export function ChannelsMobileList({
   enableSelection = true,
   getRowClassName,
   isLoading = false,
+  sensitiveVisible = true,
   table,
 }: ChannelsMobileListProps) {
   const { t } = useTranslation()
@@ -230,6 +245,7 @@ export function ChannelsMobileList({
           isSelected={row.getIsSelected()}
           key={row.id}
           row={row}
+          sensitiveVisible={sensitiveVisible}
         />
       ))}
     </div>

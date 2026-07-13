@@ -13352,3 +13352,86 @@ NexusTok 当前渠道编辑抽屉已经具备 new-api 最新编辑渠道页的�
 18. MCP 将页面调整到 `390x844` 移动视口，确认默认关闭批量模式时移动卡片没有 `Select row` 控件；打开更多菜单可见 `批量操作` checkbox；开启后移动卡片出现选择框；关闭后通过脚本确认 `selectControls: []`，修复后的移动端残留选择框问题已解决。
 19. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有表单可访问性 `issue`：缺少 autocomplete 属性、部分 label 关联不完全，本轮未扩大范围处理。
 20. MCP 验证截图保存为 `/tmp/nexustok-channel-batch-mode-validation.png` 和 `/tmp/nexustok-channel-batch-mode-mobile-validation.png`。
+
+## 本轮实施评审：渠道敏感信息显隐原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/channels-provider.tsx`、`channels-table.tsx`、`channels-columns.tsx`、`channel-card.tsx` 和 `dialogs/codex-usage-dialog.tsx` 后确认，new-api 最新渠道页在批量操作模式之外还提供了敏感信息显隐能力：工具栏中有 `Hide` / `Show` 眼睛按钮，关闭可见性后会用 `••••` 遮罩渠道 ID、渠道名称、分组、余额/用量、移动卡片和 Codex 用量弹窗中的渠道标识。
+
+当前 NexusTok 已完成公共 DataTable、模型筛选防抖、编辑页模型搜索添加和批量操作模式原生化，但管理员在共享屏幕或排查问题时仍会默认暴露渠道名称、ID、分组和余额。NexusTok 这里比 new-api 多了账号池统计、Codex OAuth、账号池组模式、模型库搜索和自定义移动卡片，因此本轮不能整文件搬运；需要把 new-api 的敏感显隐优势转为 NexusTok 自己的“有界遮罩”能力。
+
+### 需求分析
+
+1. 渠道页工具栏新增敏感信息显隐按钮，默认显示真实信息，点击后进入遮罩模式，再次点击恢复。
+2. 遮罩模式下隐藏渠道 ID、渠道名称、渠道备注、分组标签、分组筛选项、余额/已用额度和 Codex 用量弹窗中的渠道名/ID。
+3. 模型名、渠道类型、状态、响应时间、测试时间、优先级、权重、批量操作、账号池统计和操作入口继续显示，保证管理员仍能进行运营判断和基础操作。
+4. 移动端 `ChannelsMobileList` 和桌面卡片视图必须和表格视图一致，不能只遮罩桌面表格。
+5. Tag 聚合行的 Tag 名称和分组筛选也属于运营敏感分组信息，遮罩模式下应使用统一掩码，但展开/收起和子渠道数量仍保留。
+6. 本轮不修改后端接口、数据库、渠道保存逻辑、模型同步逻辑、relay、计费、权限模型和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道上下文 | `web/default/src/features/channels/components/channels-provider.tsx` | 新增 `sensitiveVisible` / `setSensitiveVisible` 临时状态，复用已 memo 化的 context value。 |
+| 渠道表格工具栏 | `web/default/src/features/channels/components/channels-table.tsx` | 新增 Eye/EyeOff 显隐按钮；分组筛选项 label 在遮罩模式下显示统一掩码；桌面卡片和移动列表传入敏感可见性状态。 |
+| 渠道列定义 | `web/default/src/features/channels/components/channels-columns.tsx` | ID、名称、备注、Tag 聚合标题、分组、余额/用量和 Codex 弹窗渠道标识按 `sensitiveVisible` 切换。 |
+| 渠道卡片 | `web/default/src/features/channels/components/channel-card.tsx` | 移动端与桌面卡片视图遮罩原始 `channel.id` 和分组标签。 |
+| Codex 用量弹窗 | `web/default/src/features/channels/components/dialogs/codex-usage-dialog.tsx` | 新增可选展示名/展示 ID props，遮罩模式下仅隐藏弹窗标题区渠道标识，不影响真实 channelId 调接口。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 复用已有 `Hide` / `Show` 翻译；如实现中新增文案再补齐六语。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 数据误遮罩风险：如果隐藏模型名、状态、响应时间或操作入口，会影响管理员判断渠道健康。本轮只遮运营敏感字段，保留功能性字段。
+2. 数据泄露风险：移动卡片直接读取 `channel.id` 和 `channel.group`，不能只在表格列里遮罩，否则移动端仍会暴露敏感信息。
+3. Codex 弹窗风险：弹窗仍必须使用真实 `channelId` 调用用量和 reset credit 接口；遮罩只影响展示字段，不能把掩码传给 API。
+4. 分组筛选风险：过滤 value 必须保持真实 group 值，否则筛选会失效；只替换 label，不改 value。
+5. 复制风险：遮罩模式下 `TableId` 和 `StatusBadge` 不应复制真实 ID/分组；对于遮罩展示项，复制文本也应是掩码或禁用复制。
+6. 范围风险：本轮不处理 API key、凭证字段、账号池账号页或其它管理页面的敏感显隐；这些页面需要单独差异分析和权限评审。
+
+### 方案评审
+
+采用“上下文状态 + 展示层遮罩”的渐进方案：
+
+1. 在 `ChannelsProvider` 中新增 `sensitiveVisible` state，默认 `true`，不写入 localStorage，避免管理员离开页面后误以为系统永久隐藏或永久展示敏感信息。
+2. 在 `ChannelsTable` 中读取 `sensitiveVisible` / `setSensitiveVisible`，通过 `toolbarProps.preActions` 加入 `Eye` / `EyeOff` 图标按钮，`aria-label` 和 tooltip 复用 `Hide` / `Show`。
+3. `groupFilterOptions` 只在 label 层遮罩，value 保持真实分组名，保证现有 URL 过滤和后端查询参数不变。
+4. `useChannelsColumns()` 内读取 `sensitiveVisible`，用统一 `SENSITIVE_MASK = '••••'` 遮罩 ID、名称、备注、Tag 聚合标题、分组 Badge、余额和 Codex 弹窗渠道标识。
+5. `BalanceCell` 仍保留真实数值用于内部计算和刷新逻辑，但遮罩模式下展示和 tooltip 均只显示掩码；Codex 渠道仍可点击打开用量弹窗。
+6. `ChannelCard` 新增 `sensitiveVisible` 参数，遮罩移动卡片中的 `#id` 和分组 Badge，桌面卡片视图通过 `renderCard` 传入同一状态。
+7. `CodexUsageDialog` 新增 `channelDisplayName` / `channelDisplayId` 可选 props，默认不传时保持旧行为，传入掩码时只影响 `DialogDescription`。
+8. 验证顺序：`bun run i18n:sync`、`bun run typecheck`、渠道相关单测、系统设置回归单测、改动文件 ESLint、`bun run build`、`git diff --check`；最后用 MCP 登录 `http://192.168.0.202:3003/channels` 验证桌面表格、桌面卡片、移动卡片、分组筛选、Codex 弹窗和无写请求。
+
+### 实施结果
+
+1. `ChannelsProvider` 新增 `sensitiveVisible` / `setSensitiveVisible`，默认显示真实信息，不写入 localStorage；同时保留已完成的 `batchMode` 临时状态和 memo 化 context。
+2. `ChannelsTable` 在公共 DataTable 工具栏 `preActions` 中新增 Eye/EyeOff 显隐按钮，tooltip 与 `aria-label` 复用已有 `Hide` / `Show` i18n 文案。
+3. 分组筛选的 `value` 保持真实 group，仅在遮罩模式下将 label 显示为 `••••`，避免破坏 URL 筛选、后端查询参数和已选筛选条件。
+4. `useChannelsColumns()` 按 `sensitiveVisible` 遮罩渠道 ID、渠道名称、渠道备注、Tag 聚合标题、分组 Badge、Tag Badge、已用额度、剩余额度和 Codex 用量弹窗中的渠道名/ID。
+5. 遮罩模式下 `TableId` 和 Tag Badge 禁用复制真实值；模型名、渠道类型、状态、响应时间、测试时间、优先级、权重、账号池统计、上游更新提示和操作菜单继续显示。
+6. `BalanceCell` 仍用真实余额和真实 `channelId` 执行余额刷新或 Codex 用量查询，但展示值和 tooltip 在遮罩模式下只显示掩码。
+7. `ChannelCard` / `ChannelsMobileList` 新增 `sensitiveVisible` 参数，桌面卡片视图和移动端卡片同步遮罩 `#id` 与分组标签。
+8. `CodexUsageDialog` 新增 `channelDisplayName` / `channelDisplayId` 可选展示字段，默认不传时完全保持旧行为；传入掩码时只影响弹窗描述区，reset credits 与 reset usage 接口仍使用真实 `channelId`。
+9. 本轮没有修改 `/opt/project/new-api-main` 源码、后端接口、数据库结构、渠道保存逻辑、模型同步逻辑、relay、计费或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前前端仍为 Manual + Tailwind v4 + Base UI + hugeicons，且本轮复用的 `button`、`tooltip`、`table`、`checkbox` 等组件均已存在。
+2. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮复用已有 `Hide` / `Show` / `Used:` / `Remaining:` / `Select all` / `Select row` 文案，没有新增缺失 key。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun test src/features/channels`，56 个渠道相关测试全部通过。
+5. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试全部通过。
+6. 已运行 `cd web/default && bunx eslint src/features/channels/components/channels-provider.tsx src/features/channels/components/channels-table.tsx src/features/channels/components/channels-columns.tsx src/features/channels/components/channel-card.tsx src/features/channels/components/dialogs/codex-usage-dialog.tsx`，ESLint 通过。
+7. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+8. 已运行 `git diff --check`，未发现空白错误。
+9. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/`，进入 `/channels`，确认页面热更新已生效，工具栏新增 `隐藏` 按钮，默认显示真实渠道 ID、名称、分组和余额。
+10. MCP 桌面表格视图点击 `隐藏` 后，按钮切换为 `显示`；渠道 ID、名称、分组、已用额度和剩余额度均显示为 `••••`，渠道类型 `Codex`、状态、响应时间、上次测试时间、优先级、权重和操作按钮仍保持可见。
+11. MCP 在遮罩模式下打开分组筛选，确认分组选项 label 显示为 `••••`；实际选择遮罩选项后 URL 使用真实 `group=["svip"]`，没有把掩码写入筛选 value。
+12. MCP 桌面卡片视图默认显示真实 `#1`、`11111`、`default` 和 `$0 / 账户信息`；点击 `隐藏` 后卡片中的 `#id`、名称、分组和余额同步变为 `••••`。
+13. MCP 使用 `390x844x2,mobile,touch` 移动视口验证移动列表，默认显示真实数据，点击 `隐藏` 后移动卡片中的 `#id`、名称、分组和余额同步遮罩，类型、操作、响应时间和测试时间仍可见。
+14. MCP 在遮罩模式下点击 Codex 余额入口，网络请求为 `GET /api/channel/1/codex/usage`，确认遮罩没有污染真实 `channelId`；当前运行数据返回 `{"success":false,"message":"解析凭证失败，请检查渠道配置"}`，因此环境未弹出 Codex 用量弹窗，弹窗标题遮罩路径已通过代码接线、TypeScript 和构建验证覆盖。
+15. MCP 控制台没有 JavaScript `error`、`warn` 或 `issue`；网络请求均为 `GET`，没有渠道保存、更新或删除类写请求。
+16. MCP 在浏览器上下文携带 `NexusTok-User: 1` 读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态数据。
+17. MCP 验证截图保存为 `/tmp/nexustok-channel-sensitive-visible-validation.png` 和 `/tmp/nexustok-channel-sensitive-visible-mobile-validation.png`。

@@ -62,6 +62,8 @@ type ChannelsContextType = {
   setIdSort: (enabled: boolean) => void
   batchMode: boolean
   setBatchMode: (enabled: boolean) => void
+  sensitiveVisible: boolean
+  setSensitiveVisible: (visible: boolean) => void
   upstream: UpstreamUpdateState
 }
 
@@ -88,6 +90,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
     return localStorage.getItem('channels-id-sort') === 'true'
   })
   const [batchMode, setBatchMode] = useState(false)
+  const [sensitiveVisible, setSensitiveVisible] = useState(true)
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
@@ -95,7 +98,8 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient])
   const upstream = useChannelUpstreamUpdates(refreshChannels)
 
-  // 批量操作模式是临时操作状态，不写入 localStorage；context value 使用 memo 避免无关渲染扩散到表格单元格。
+  // 批量操作模式和敏感显隐都是页面级临时操作状态，不写入 localStorage，避免跨会话造成误判。
+  // context value 使用 memo，减少无关状态更新扩散到表格单元格和移动卡片。
   const value = useMemo<ChannelsContextType>(
     () => ({
       open,
@@ -110,9 +114,20 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       setIdSort,
       batchMode,
       setBatchMode,
+      sensitiveVisible,
+      setSensitiveVisible,
       upstream,
     }),
-    [open, currentRow, currentTag, enableTagMode, idSort, batchMode, upstream]
+    [
+      open,
+      currentRow,
+      currentTag,
+      enableTagMode,
+      idSort,
+      batchMode,
+      sensitiveVisible,
+      upstream,
+    ]
   )
 
   return (

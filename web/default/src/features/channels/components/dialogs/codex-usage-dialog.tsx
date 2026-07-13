@@ -125,6 +125,8 @@ type CodexUsageDialogProps = {
   onOpenChange: (open: boolean) => void
   channelName?: string
   channelId?: number
+  channelDisplayName?: string
+  channelDisplayId?: number | string
   response: CodexUsageDialogData | null
   onRefresh?: () => void | Promise<void>
   isRefreshing?: boolean
@@ -728,6 +730,8 @@ export function CodexUsageDialog({
   onOpenChange,
   channelName,
   channelId,
+  channelDisplayName,
+  channelDisplayId,
   response,
   onRefresh,
   isRefreshing,
@@ -770,6 +774,8 @@ export function CodexUsageDialog({
     ? String(resetCredits)
     : '-'
   const canResetCodexUsage = Number(resetCredits) > 0
+  const displayChannelName = channelDisplayName ?? channelName ?? '-'
+  const displayChannelId = channelDisplayId ?? channelId
 
   const statusBadge = (() => {
     if (!rateLimit || Object.keys(rateLimit).length === 0) {
@@ -914,8 +920,8 @@ export function CodexUsageDialog({
             {t('Codex Account & Usage')}
           </DialogTitle>
           <DialogDescription>
-            {t('Channel:')} <strong>{channelName || '-'}</strong>{' '}
-            {channelId ? `(#${channelId})` : ''}
+            {t('Channel:')} <strong>{displayChannelName}</strong>{' '}
+            {displayChannelId ? `(#${displayChannelId})` : ''}
           </DialogDescription>
         </DialogHeader>
 

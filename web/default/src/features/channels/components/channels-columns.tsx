@@ -85,6 +85,8 @@ import {
 } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
+const SENSITIVE_MASK = '••••'
+
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
   deployment_id?: string
@@ -299,10 +301,11 @@ function WeightCell({ channel }: { channel: Channel }) {
 }
 
 /**
- * Balance cell component with click to update
+ * 余额单元格：展示已用额度和剩余额度，并保留点击刷新或查看 Codex 用量的入口。
  */
 function BalanceCell({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
+  const { sensitiveVisible } = useChannels()
   const queryClient = useQueryClient()
   const isTagRow = isTagAggregateRow(channel)
   const balance = channel.balance || 0
@@ -318,12 +321,16 @@ function BalanceCell({ channel }: { channel: Channel }) {
 
   const usedDisplay = withSuffix(formatQuotaValue(usedQuota))
   const remainingDisplay = withSuffix(formatBalance(balance))
+  const usedLabel = `${t('Used:')} ${usedDisplay}`
+  const remainingLabel = `${t('Remaining:')} ${remainingDisplay}`
+  const maskedUsedLabel = `${t('Used:')} ${SENSITIVE_MASK}`
+  const maskedRemainingLabel = `${t('Remaining:')} ${SENSITIVE_MASK}`
 
-  // Tag row: only show cumulative used quota
+  // Tag 聚合行只展示该组累计已用额度；遮罩模式下仍保留“已用”语义，不暴露具体数值。
   if (isTagRow) {
     return (
       <StatusBadge
-        label={`Used: ${usedDisplay}`}
+        label={sensitiveVisible ? usedLabel : maskedUsedLabel}
         variant='neutral'
         size='sm'
         copyable={false}
@@ -331,8 +338,20 @@ function BalanceCell({ channel }: { channel: Channel }) {
     )
   }
 
-  // Regular channel row: show used and remaining with click to update
+  // 普通渠道行展示已用/剩余额度；遮罩只影响文本，不影响点击后的真实刷新请求。
   const variant = getBalanceVariant(balance)
+  const remainingBadgeLabel = !sensitiveVisible
+    ? SENSITIVE_MASK
+    : isUpdating
+      ? 'Updating...'
+      : channel.type === 57
+        ? t('Account Info')
+        : remainingDisplay
+  const remainingTooltipLabel = !sensitiveVisible
+    ? maskedRemainingLabel
+    : channel.type === 57
+      ? t('Click to view Codex usage')
+      : remainingLabel
 
   const handleClickUpdate = async () => {
     if (isUpdating) return
@@ -374,12 +393,10 @@ function BalanceCell({ channel }: { channel: Channel }) {
           <TooltipTrigger
             render={<span className='text-muted-foreground cursor-help' />}
           >
-            {usedDisplay}
+            {sensitiveVisible ? usedDisplay : SENSITIVE_MASK}
           </TooltipTrigger>
           <TooltipContent>
-            <p>
-              {t('Used:')} {usedDisplay}
-            </p>
+            <p>{sensitiveVisible ? usedLabel : maskedUsedLabel}</p>
           </TooltipContent>
         </Tooltip>
         <span className='text-muted-foreground/30'>·</span>
@@ -397,18 +414,10 @@ function BalanceCell({ channel }: { channel: Channel }) {
               />
             }
           >
-            {isUpdating
-              ? 'Updating...'
-              : channel.type === 57
-                ? t('Account Info')
-                : remainingDisplay}
+            {remainingBadgeLabel}
           </TooltipTrigger>
           <TooltipContent>
-            <p>
-              {channel.type === 57
-                ? t('Click to view Codex usage')
-                : `${t('Remaining:')} ${remainingDisplay}`}
-            </p>
+            <p>{remainingTooltipLabel}</p>
             {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
@@ -419,6 +428,8 @@ function BalanceCell({ channel }: { channel: Channel }) {
         onOpenChange={setCodexUsageOpen}
         channelName={channel.name}
         channelId={channel.id}
+        channelDisplayName={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        channelDisplayId={sensitiveVisible ? undefined : SENSITIVE_MASK}
         response={codexUsageResponse}
         onRefresh={async () => {
           if (isUpdating) return
@@ -456,6 +467,7 @@ export function useChannelsColumns({
   enableSelection = true,
 }: UseChannelsColumnsOptions = {}): ColumnDef<Channel>[] {
   const { t } = useTranslation()
+  const { sensitiveVisible } = useChannels()
   const selectionColumn: ColumnDef<Channel> = {
     id: 'select',
     header: ({ table }) => (
@@ -463,7 +475,7 @@ export function useChannelsColumns({
         checked={table.getIsAllPageRowsSelected()}
         indeterminate={table.getIsSomePageRowsSelected()}
         onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-        aria-label='Select all'
+        aria-label={t('Select all')}
       />
     ),
     cell: ({ row }) => {
@@ -478,7 +490,7 @@ export function useChannelsColumns({
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label='Select row'
+          aria-label={t('Select row')}
         />
       )
     },
@@ -497,7 +509,12 @@ export function useChannelsColumns({
       ),
       cell: ({ row }) => {
         const id = row.getValue('id') as number
-        return <TableId value={id} copyable />
+        return (
+          <TableId
+            value={sensitiveVisible ? id : SENSITIVE_MASK}
+            copyable={sensitiveVisible}
+          />
+        )
       },
       size: 80,
     },
@@ -548,7 +565,9 @@ export function useChannelsColumns({
                 )}
               </Button>
               <div className='flex items-center gap-1.5'>
-                <span className='font-semibold'>Tag：{tag}</span>
+                <span className='font-semibold'>
+                  Tag：{sensitiveVisible ? tag : SENSITIVE_MASK}
+                </span>
                 <StatusBadge
                   label={`${childrenCount} channels`}
                   variant='blue'
@@ -569,7 +588,7 @@ export function useChannelsColumns({
             <div className='flex flex-col gap-1'>
               <div className='flex items-center gap-1.5'>
                 <TruncatedText
-                  text={name}
+                  text={sensitiveVisible ? name : SENSITIVE_MASK}
                   maxWidth='max-w-[220px]'
                   className='font-medium'
                 />
@@ -635,13 +654,19 @@ export function useChannelsColumns({
                 <UpstreamUpdateTags channel={channel} />
               </div>
               {channel.remark && (
-                <TruncatedText
-                  text={channel.remark}
-                  maxWidth='max-w-[280px]'
-                  side='bottom'
-                  className='text-muted-foreground text-xs'
-                  contentClassName='break-words'
-                />
+                sensitiveVisible ? (
+                  <TruncatedText
+                    text={channel.remark}
+                    maxWidth='max-w-[280px]'
+                    side='bottom'
+                    className='text-muted-foreground text-xs'
+                    contentClassName='break-words'
+                  />
+                ) : (
+                  <span className='text-muted-foreground text-xs'>
+                    {SENSITIVE_MASK}
+                  </span>
+                )
               )}
             </div>
           </div>
@@ -944,7 +969,12 @@ export function useChannelsColumns({
         const groupArray = parseGroupsList(group)
 
         const groupBadges = groupArray.map((g) => (
-          <GroupBadge key={g} group={g} size='sm' />
+          <GroupBadge
+            key={g}
+            group={g}
+            size='sm'
+            label={sensitiveVisible ? undefined : SENSITIVE_MASK}
+          />
         ))
 
         return (
@@ -985,7 +1015,15 @@ export function useChannelsColumns({
         if (!tag)
           return <span className='text-muted-foreground text-xs'>-</span>
 
-        return <StatusBadge label={tag} autoColor={tag} size='sm' />
+        return (
+          <StatusBadge
+            label={sensitiveVisible ? tag : SENSITIVE_MASK}
+            autoColor={sensitiveVisible ? tag : undefined}
+            variant={sensitiveVisible ? undefined : 'neutral'}
+            size='sm'
+            copyable={sensitiveVisible}
+          />
+        )
       },
       size: 120,
       enableSorting: false,
