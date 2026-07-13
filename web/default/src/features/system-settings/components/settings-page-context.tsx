@@ -108,6 +108,7 @@ type SettingsPageFormActionsProps = {
   isSaving?: boolean
   isSaveDisabled?: boolean
   isResetDisabled?: boolean
+  saveDisabledReason?: string
   saveLabel?: string
   savingLabel?: string
   resetLabel?: string
@@ -141,6 +142,7 @@ export function SettingsPageFormActions(props: SettingsPageFormActionsProps) {
         size='sm'
         onClick={props.onSave}
         disabled={props.isSaving || props.isSaveDisabled}
+        title={props.isSaveDisabled ? props.saveDisabledReason : undefined}
       >
         <Save data-icon='inline-start' />
         <span>{t(saveLabel)}</span>

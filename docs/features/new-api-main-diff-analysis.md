@@ -12559,3 +12559,77 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 11. MCP 切换 390px 移动视口后访问 `site/system-info`，再次修改 `System Name`，标题区显示 `System Information Unsaved changes`，表单按钮和字段没有重叠；截图保存到 `/tmp/nexustok-system-settings-frame-mobile.png`。
 12. MCP 网络记录中系统设置验证相关请求均为 GET：`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/`；未出现系统设置保存接口请求，确认验证过程未污染运行态配置。
 13. MCP 控制台没有 JavaScript `error`、`warn` 或 DevTools `issue`；仅有 i18next 宣传 info 和本地构建指纹 debug。
+
+## 本轮实施评审：系统信息表单页头动作与主题切换保护
+
+### 差异来源
+
+在上一轮已经把系统设置页统一到 `SettingsPage` / `SectionPageLayout` 之后，继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/system-info-section.tsx` 与当前 NexusTok 同名文件发现，new-api 的 `SystemInfoSection` 进一步使用了 `SettingsForm`、`SettingsFormGrid`、`SettingsFormGridItem` 和 `SettingsPageFormActions`：保存/重置按钮被迁移到页面标题右侧动作槽，表单本体只保留字段内容；同时，`theme.frontend` 会被延后到最后提交，成功后通过 `window.location.replace('/')` 回首页，避免在系统设置深层路由切换到另一套前端后出现 404 或历史记录回退到失效路由。
+
+当前 NexusTok 已经具备对应公共组件，但 `SystemInfoSection` 仍在表单底部渲染 `Save Changes` / `Reset`，没有使用页头动作槽；主题切换也直接和其它字段一起提交。该页面是系统设置中最能代表整体编辑体验的入口，适合作为第一批表单动作迁移样板。
+
+### 需求分析
+
+1. 将 `System Information` 表单的保存/重置动作迁移到统一页面动作槽，延续 new-api 设置页“标题 + 动作 + 内容”的信息架构。
+2. 表单内容改用 NexusTok 已新增的 `SettingsForm` / `SettingsFormGrid`，让站点基本信息字段在桌面端形成更紧凑的两列布局，长文本区域保持全宽。
+3. 保留 NexusTok 品牌文案：`SystemName` 占位仍为 `NexusTok`，首页内容占位仍为 `Welcome to our NexusTok...`，不能把 new-api 的 `New API` 文案带入当前项目。
+4. 保留现有保存语义：继续只提交 dirty 字段，`ServerAddress` 继续去除尾部 `/`，权限不足时保存按钮禁用并保留禁用原因。
+5. 增加前端主题切换保护：如果同时修改多个字段，先保存其它字段，全部成功后再提交 `theme.frontend`；主题切换成功后回首页并 replace 当前历史，避免切换到 classic/default 时深层设置路由失效。
+6. 本轮只迁移 `SystemInfoSection`，不一次性修改所有系统设置表单，降低跨设置项回归风险。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统信息表单 | `web/default/src/features/system-settings/general/system-info-section.tsx` | 迁移保存/重置到页头动作槽，使用统一表单网格，增加主题切换保存顺序保护。 |
+| 设置页动作上下文 | `web/default/src/features/system-settings/components/settings-page-context.tsx` | 复用已有 `SettingsPageFormActions`，补充可选 `saveDisabledReason`，让页头保存按钮迁移后仍能呈现无权限禁用原因。 |
+| 设置表单布局 | `web/default/src/features/system-settings/components/settings-form-layout.tsx` | 复用已有网格和全宽项能力，验证其在真实表单中的表现。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、实施结果和 MCP 验证。 |
+
+本轮不修改 Go 后端、数据库迁移、系统设置 API、权限后端、其它系统设置表单、i18n 文案、渠道编辑页、模型同步、计费表达式和 Relay 调度。
+
+### 风险评估
+
+1. 保存触发风险：页头按钮位于 form DOM 内但视觉上通过 portal 渲染到页头。需要确认 `SettingsPageFormActions` 的 `onSave={handleSubmit}` 能正常触发 React Hook Form 校验与提交，而不会触发原生表单重复提交。
+2. 权限风险：迁移按钮后不能丢失 `updateOption.canUpdate` 与 `disabledReason`，否则无权限用户可能看到可点保存按钮。
+3. 主题切换风险：`theme.frontend` 涉及前端产物切换，错误顺序可能在其它字段失败时先切主题，造成用户停在另一套前端不存在的路由。方案必须先保存其它字段，全部成功后再保存主题。
+4. 脏状态风险：主题保存失败或被跳过时需要把提交数据改回已保存默认值，避免 `useSettingsForm` 把未实际保存的主题写入 baseline。
+5. 布局风险：两列网格在桌面端更紧凑，但文本域和法律条款必须保持可读，全宽字段不能被挤压；移动端必须单列且按钮不重叠。
+6. 品牌回归风险：不能照搬 new-api 的 `New API` placeholder，应保留 NexusTok。
+7. 验证风险：真实保存系统名会影响运行环境品牌；MCP 验证应优先修改后重置，不触发保存接口。主题切换保护通过代码审查和非破坏性路径验证覆盖，避免实际切换运行环境前端。
+
+### 方案评审
+
+采用“迁移一个样板表单 + 保留业务语义 + 非破坏性运行态验证”的方案：
+
+1. 从 `SystemInfoSection` 移除底部按钮和 `Button` / `RotateCcw` 直接依赖，导入 `SettingsForm`、`SettingsFormGrid`、`SettingsFormGridItem` 和 `SettingsPageFormActions`。
+2. 在 `<Form {...form}>` 内使用 `<SettingsForm onSubmit={handleSubmit}>`，并将 `<SettingsPageFormActions>` 放在表单顶部，让它通过 portal 渲染到页头动作槽。
+3. `SettingsPageFormActions` 的保存禁用条件设置为 `isSubmitting || updateOption.isPending || !updateOption.canUpdate`，重置禁用条件为 `!isDirty`；保存按钮继续显示 `Save Changes` / `Saving...`，重置按钮继续显示 `Reset`。
+4. 表单字段包进 `SettingsFormGrid`，短字段自然两列，`HomePageContent` 使用 `SettingsFormGridItem span='full'` 保持全宽，其它较长 textarea 依赖布局规则在桌面端自动全宽或按网格安全换行。
+5. 迁移 new-api 的主题保存顺序保护，但把英文注释改为中文，解释为何要最后保存主题和成功后回首页。
+6. 保留 NexusTok 的 `NexusTok`、`Welcome to our NexusTok...` 占位文案，避免品牌回退。
+7. 运行系统设置单测、typecheck、i18n sync、build、`git diff --check`，并用 MCP 访问 `http://192.168.0.202:3003/system-settings/site/system-info`：确认页头有保存/重置按钮、修改字段后出现 `Unsaved changes`、重置后不触发保存接口、桌面和 390px 移动视口布局正常。
+
+### 实施结果
+
+1. `SystemInfoSection` 已使用 `SettingsForm`、`SettingsFormGrid`、`SettingsFormGridItem` 和 `SettingsPageFormActions`，保存/重置按钮从表单底部迁移到页面标题动作槽，表单字段在桌面端保持更紧凑的网格布局，`Home Page Content` 保持全宽。
+2. `SettingsPageFormActions` 增加可选 `saveDisabledReason`，保存按钮禁用时继续通过 `title` 暴露权限禁用原因，避免动作迁移后丢失原有权限反馈。
+3. `theme.frontend` 已改为最后提交：其它 dirty 字段全部提交成功后才提交主题；主题保存成功后通过 `window.location.replace('/')` 回首页；其它字段失败或主题保存失败时会把提交数据中的主题值恢复为后端已保存默认值，避免表单基线误认为主题已保存。
+4. 保留 NexusTok 原生品牌占位：`SystemName` 仍为 `NexusTok`，`HomePageContent` 仍为 `Welcome to our NexusTok...`，没有把 new-api 的品牌文案带入当前项目。
+5. 本轮未修改后端接口、数据库迁移、权限判定、其它系统设置表单、渠道编辑页、模型搜索逻辑和计费表达式。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/system-settings`，17 个测试通过。
+2. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+3. 已运行 `cd web/default && bun run i18n:sync`，六语 missing/extras 为 0；法语、日语、俄语、越南语仍有既有 untranslated 计数，本轮未新增。
+4. 已运行 `cd web/default && bun run build`，生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 打开 `http://192.168.0.202:3003/system-settings/site/system-info`，使用账号 `c1cada` 登录成功，页面标题显示 `System Information`。
+7. MCP 桌面视口确认标题右侧存在 `Reset` 和 `Save Changes`，初始 `Reset` 为禁用状态，表单底部不再渲染重复按钮。
+8. MCP 修改 `System Name` 为 `NexusTok-verify` 后，标题显示 `System Information Unsaved changes`，`Reset` 变为可用，未点击保存。
+9. MCP 点击 `Reset` 后，字段恢复为 `NexusTok`，`Unsaved changes` 消失，`Reset` 回到禁用状态，并出现 `Form reset to saved values` 提示。
+10. MCP 网络请求记录仅包含 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`；没有出现保存接口请求，确认验证未污染运行态配置。
+11. MCP 控制台 `error`、`warn`、`issue` 均为空。
+12. MCP 保存桌面截图 `/tmp/nexustok-system-info-actions-desktop.png`；切换 390px 移动视口后确认页头动作仍可访问、表单单列展示，截图保存为 `/tmp/nexustok-system-info-actions-mobile.png`。
+13. 主题切换保护未在运行态执行真实保存，避免改变当前验证环境的前端主题；该风险通过代码审查、typecheck、构建和非破坏性页面验证覆盖。
