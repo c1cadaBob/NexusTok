@@ -12845,3 +12845,71 @@ NexusTok 当前项目在上一轮已经具备“保存前提交打开面板草�
 7. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，未出现保存 option 的写请求。
 8. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；本轮未暴露隐藏的模型价格 tab，避免把草稿状态能力与导航策略混在一个切片。
 9. MCP 验证截图保存为 `/tmp/nexustok-pricing-snapshots-validation.png`。
+
+## 本轮实施评审：模型定价编辑器核心逻辑模块化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/models` 后发现，new-api 已将模型定价编辑器中的核心定价类型、价格换算、预览构造和输入组件拆分为 `model-pricing-core.ts` 与 `model-pricing-inputs.tsx`。这让定价编辑器的业务转换逻辑可以脱离 React 面板单独测试，也让后续表格列、编辑面板和模型详情页复用同一套定价单位/价格推导规则。
+
+NexusTok 当前项目已经在 new-api 基础上加入了更完整的编辑体验：折叠式保存预览、取消按钮、批量复制目标提示、保存前草稿提交保护、`tiered_expr` 兜底字段保留、草稿快照状态等。但当前 `model-pricing-sheet.tsx` 仍同时承载类型定义、价格换算、预览构造、表单状态和具体 UI 渲染。对于会影响计费配置的代码来说，这种集中实现会增加后续继续吸收 new-api 功能时的回归风险。
+
+本轮不改变页面视觉，不暴露隐藏模型价格 tab，不新增配置项；只将 new-api 的“核心逻辑可测试化/模块化”优势转为 NexusTok 原生能力。
+
+### 需求分析
+
+1. 将模型定价编辑器中的纯业务逻辑抽出为 `model-pricing-core.ts`，包括 schema、类型、价格 lane 配置、数值草稿校验、倍率与美元价格互转、初始 lane 状态推导、保存预览行构造。
+2. 将 `PriceInput` 和 `PriceLane` 抽出为 `model-pricing-inputs.tsx`，但保留 NexusTok 当前使用的 `Field`、`FieldContent`、`FieldDescription`、`Switch`、`InputGroup` 视觉结构，不用 new-api 的 `SettingsControlGroup` 覆盖当前设计。
+3. 为核心价格换算和预览构造补充单元测试，覆盖 per-token、per-request、tiered_expr、音频输出依赖音频输入、禁用 lane 清空等关键不变量。
+4. 保留现有 `ModelPricingSheet`、`ModelPricingEditorPanel`、`ModelRatioData` 导出路径与外部调用契约，避免影响 `ModelRatioVisualEditor` 和上一轮保存前草稿提交保护。
+5. 不修改后端、数据库、计费表达式引擎、option key、保存 payload 格式或真实运行配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型定价核心逻辑 | `web/default/src/features/system-settings/models/model-pricing-core.ts` | 新增定价编辑器纯函数与共享类型，作为 `model-pricing-sheet.tsx` 的业务核心。 |
+| 核心逻辑测试 | `web/default/src/features/system-settings/models/model-pricing-core.test.ts` | 新增不依赖浏览器的单测，覆盖价格换算、预览构造和空值判断。 |
+| 价格输入组件 | `web/default/src/features/system-settings/models/model-pricing-inputs.tsx` | 新增 `PriceInput`、`PriceLane`，保留当前 NexusTok 的 Field/Switch/InputGroup 视觉和交互。 |
+| 模型定价面板 | `web/default/src/features/system-settings/models/model-pricing-sheet.tsx` | 删除内联核心逻辑和输入组件，改为从 core/inputs 导入；面板 UI、保存行为、Sheet props 保持不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 计费换算风险：per-token 模式依赖 “输入价格 / 2 = ModelRatio” 和 “lane 价格 / 输入价格 = 对应 ratio”，音频输出还依赖音频输入价格。本轮抽取必须保持现有公式完全不变，并用单测覆盖。
+2. 表单契约风险：`ModelRatioData` 已被 `ModelRatioVisualEditor` 和快照 helper 使用；导出路径变化可能破坏调用方。方案继续从 `model-pricing-sheet.tsx` re-export `ModelRatioData`，外部无需改 import。
+3. UI 回归风险：直接搬 new-api 的 `PriceLane` 会改变当前 Field/Switch 布局和禁用背景。本轮只抽当前实现，不替换视觉结构。
+4. 表达式风险：`tiered_expr` 的保存预览必须继续通过当前 `combineBillingExpr()` 组合 request rules；不修改表达式语法、存储格式或后端校验。
+5. 翻译风险：抽组件可能移动已有文案，但不新增新 key；仍需运行 `bun run i18n:sync` 确认 locale 状态。
+6. 验证风险：模型价格页仍不是公开导航入口，MCP 只能验证可达 `/pricing-settings` 与 `/system-settings/models/global` 无运行时错误；核心不变量主要由单测、typecheck 和构建覆盖。
+
+### 方案评审
+
+采用“抽纯函数 + 保留 UI + 增加单测”的低风险方案：
+
+1. 新建 `model-pricing-core.ts`，从当前 `model-pricing-sheet.tsx` 移出 `createModelPricingSchema`、`ModelPricingFormValues`、`PricingMode`、`LaneKey`、`ModelRatioData`、`PreviewRow`、`numericDraftRegex`、lane 常量、`hasValue()`、`toNumberOrNull()`、`createInitialLaneState()`、`buildPreviewRows()`。
+2. 新建 `model-pricing-inputs.tsx`，从当前面板移出 `PriceInput` 和 `PriceLane`，保留 `Field`/`Switch`/`InputGroup` 结构和现有文案。
+3. `model-pricing-sheet.tsx` 改为导入 core 与 inputs，保留 `ModelPricingSheet`、`ModelPricingEditorPanel`、`ModelPricingEditorPanelHandle`、保存前 `commitDraft()`、取消、批量目标提示和折叠预览行为。
+4. 新增 `model-pricing-core.test.ts`，用纯函数断言初始 lane 状态、预览行和空值/数字解析，避免只有组件构建能覆盖计费换算。
+5. 验证顺序：`bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`、`bun test src/features/system-settings`、`bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后 MCP 访问 `http://192.168.0.202:3003/pricing-settings` 与 `/system-settings/models/model-ratio`，确认页面运行态无错误且没有保存写请求。
+
+### 实施结果
+
+1. 新增 `model-pricing-core.ts`，集中导出模型定价编辑器的 schema、表单类型、计费模式、lane key、保存数据类型、预览行类型、数值草稿正则、lane 常量、lane 配置、空值判断、数字解析、初始 lane 状态推导和保存预览行构造。
+2. 新增 `model-pricing-inputs.tsx`，将 `PriceInput` 与 `PriceLane` 从 `model-pricing-sheet.tsx` 中拆出，保留当前 NexusTok 的 `Field`、`FieldContent`、`FieldDescription`、`Switch`、`InputGroup` 结构，没有引入 new-api 的整套视觉实现。
+3. `model-pricing-sheet.tsx` 已改为导入 core 与 inputs；`ModelPricingSheet`、`ModelPricingEditorPanel`、`ModelPricingEditorPanelHandle`、保存前 `commitDraft()`、取消按钮、批量目标提示、折叠式保存预览和 `ModelRatioData` re-export 保持原外部契约。
+4. 新增 `model-pricing-core.test.ts`，覆盖从保存倍率推导美元价格、空模型 lane 状态副本、per-token 预览、per-request 预览、`tiered_expr` 请求规则组合预览、空值/零值语义和数字草稿正则。
+5. 本轮没有修改 Go 后端、数据库 schema、option key、真实保存 payload、`pkg/billingexpr` 表达式引擎、预消费、结算、日志展示、模型同步接口、分组倍率、工具价格和 `/opt/project/new-api-main` 源码。
+6. 本轮未新增可见文案，只移动已有组件文案；`bun run i18n:sync` 后没有产生 locale 文件变更。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`，13 个测试通过，覆盖本轮新增核心逻辑、上一轮草稿快照 helper 和价格格式化。
+2. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过，覆盖数字字段、价格格式化、模型定价核心、Grok 表单转换、模型定价快照、角色策略工具和 Waffo Pancake 凭据解析。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认 `model-pricing-sheet.tsx` 拆分后的类型导入、`ModelRatioData` re-export 和面板引用链正确。
+4. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮没有新增需要补翻译的 key。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过，确认系统设置路由、定价组件和隐藏模型价格面板均能被打包解析。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 访问 `http://192.168.0.202:3003/pricing-settings`，页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`；网络请求只有 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求以及既有登录请求，未出现保存 option 的写请求。
+8. MCP 访问 `http://192.168.0.202:3003/system-settings/models/model-ratio` 后仍按当前 `section-registry` 回落到 `/system-settings/models/global`，页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
+9. MCP 验证截图保存为 `/tmp/nexustok-pricing-core-validation.png`。
