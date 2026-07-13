@@ -41,6 +41,7 @@ export {
   type DataTableViewMode,
 } from './use-data-table-view-mode'
 export { useDataTable } from './use-data-table'
+export { useDebouncedColumnFilter } from './use-debounced-column-filter'
 export { TableSkeleton } from './table-skeleton'
 export { TableEmpty } from './table-empty'
 export { MobileCardList } from './mobile-card-list'

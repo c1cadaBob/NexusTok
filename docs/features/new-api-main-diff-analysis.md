@@ -13050,3 +13050,78 @@ NexusTok 当前项目的公共 data-table 目录已有 `DataTablePage`、`DataTa
 7. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功；访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求和登录请求，未出现保存 option 的写请求。
 8. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
 9. MCP 验证截图保存为 `/tmp/nexustok-use-data-table-validation.png`。
+
+## 本轮实施评审：渠道表格模型筛选防组合输入 Hook 原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table/hooks/use-debounced-column-filter.ts` 与 `/opt/project/new-api-main/web/default/src/features/channels/components/channels-table.tsx` 后确认，new-api 最新渠道表格已经把“按模型过滤”的输入框收敛为公共 `useDebouncedColumnFilter()`。该 hook 不只做普通 debounce，还显式处理 `compositionstart` / `compositionend`，避免中文、日文、韩文等输入法组合输入过程中把半成品拼音或候选词提前写入 URL 列过滤状态。
+
+NexusTok 当前渠道编辑抽屉已经具备 new-api 最新编辑渠道页的主干结构：右侧大抽屉、左侧分段导航、`Basic Information` / `Credentials` / `Models & Groups` / `Advanced Settings` 四段、模型区搜索与分页扫描追加、账号池、Codex OAuth、权限控制和模型映射防护均已原生化。但渠道列表页的模型过滤输入仍保留手写 `useState + useDebounce + useEffect` 逻辑，缺少组合输入保护；当管理员在渠道页用模型名筛选再进入编辑页时，筛选状态可能过早变化，容易被误认为“搜索添加不正确”或搜索结果刷新不稳定。
+
+本轮不重新覆盖编辑渠道页，也不修改保存、模型同步、模型库搜索或后端接口；只将 new-api 的防组合输入列过滤能力转为 NexusTok 公共 DataTable 原生能力，并先接入渠道表格的 `model` 列过滤。
+
+### 需求分析
+
+1. 新增 `web/default/src/components/data-table/use-debounced-column-filter.ts`，提供可复用的列过滤输入状态 hook。
+2. hook 必须保持输入框即时反馈、URL 列过滤 debounce 写入、外部 URL/back-forward 状态同步和重置能力。
+3. hook 必须识别输入法组合状态：组合输入期间只更新本地输入值，不更新待提交值；组合结束后再提交完整文本，避免半成品关键词触发渠道列表查询。
+4. 渠道表格的 `Filter by model...` 输入改为复用该 hook，重置表格筛选时同步清空模型输入框。
+5. 保留渠道表格现有查询契约：`model` 仍写入 `useTableUrlState` 的 `columnFilters`，`shouldSearch`、`searchChannels()`、分页、排序、状态/type/group 过滤逻辑均不变。
+6. 不新增可见文案，不修改 i18n locale，不修改 Go 后端、数据库、模型同步接口、渠道编辑抽屉和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 公共 DataTable hook | `web/default/src/components/data-table/use-debounced-column-filter.ts` | 新增防组合输入列过滤 hook，供渠道、日志、模型等后续表格复用。 |
+| 公共导出入口 | `web/default/src/components/data-table/index.ts` | 导出 `useDebouncedColumnFilter`，保持业务页面统一从 `@/components/data-table` 引入。 |
+| 渠道列表表格 | `web/default/src/features/channels/components/channels-table.tsx` | 移除本地手写模型筛选 debounce/effect，接入公共 hook，并在 Reset 时同步清空模型筛选输入。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. URL 状态回归风险：渠道表格模型过滤依赖 `useTableUrlState` 将 `model` 参数写入地址栏；hook 必须继续通过 `onColumnFiltersChange` 更新同一个 `columnId`，不能改 URL key 或过滤值类型。
+2. 查询触发风险：`searchChannels()` 只应在全局搜索或模型过滤非空时触发；hook 返回的 `value` 必须代表已经提交到 column filters 的值，而不是输入法组合中的本地临时值。
+3. 重置风险：DataTableToolbar 的 Reset 会清理表格过滤；模型输入本地状态也必须清空，否则 UI 显示和实际 URL 过滤会短暂不一致。
+4. 组合输入风险：如果组合开始后外部 URL 变化，不能覆盖用户正在输入的本地文本；组合结束后应以输入框最终值提交。
+5. 公共 API 风险：hook 进入 data-table 公共入口后会被后续页面复用，类型应使用 TanStack 的 `ColumnFiltersState` 和 `OnChangeFn<ColumnFiltersState>`，避免写成渠道专用实现。
+6. 范围风险：new-api 渠道表格还有批量模式、敏感信息显隐、列显隐持久化等差异；这些会触碰更多权限和表格状态，不应混入本轮小修复。
+
+### 方案评审
+
+采用“公共 hook + 单点接入”的低风险方案：
+
+1. 按 new-api 的 `useDebouncedColumnFilter()` 思路新增 NexusTok 版本，改为本项目版权头和中文注释，继续复用现有 `@/hooks/use-debounce`。
+2. hook 内部维护 `inputValue`、`pendingValue`、`isComposingRef` 和 `debouncedValue`；`onColumnFiltersChange` 使用 ref 保存最新回调，避免 effect 依赖导致重复提交。
+3. 当外部 `columnFilters` 的目标列值变化时，同步 `pendingValue`，并且只在未组合输入时同步 `inputValue`。
+4. 当 `debouncedValue !== value` 时，用函数式 updater 删除旧目标列过滤并按非空值写入新过滤；空值则移除该列过滤。
+5. 渠道表格删除 `useDebounce`、`useEffect` 和本地 `modelFilterInput` 逻辑，改为从 `useDebouncedColumnFilter()` 获取 `value`、`inputValue`、`onChange`、组合输入事件和 `resetInput`。
+6. `DataTableToolbar` 的 `onReset` 调用 `resetModelFilterInput()`，让 UI 输入框和 URL 过滤状态共同归零。
+7. 验证顺序：`bun run typecheck`、渠道相关单测、系统设置回归单测、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后用 MCP 登录并访问 `http://192.168.0.202:3003/channels`，验证模型筛选输入和编辑抽屉页面仍正常渲染。
+
+### 实施结果
+
+1. 新增 `web/default/src/components/data-table/use-debounced-column-filter.ts`，提供 NexusTok 原生 `useDebouncedColumnFilter()`，统一处理列过滤输入的本地显示值、待提交值、debounce 提交、外部 URL 状态同步、组合输入事件和 reset。
+2. `useDebouncedColumnFilter()` 使用 `ColumnFiltersState` / `OnChangeFn<ColumnFiltersState>` 作为公共类型，后续其它 DataTable 页面可以复用；实现中用 ref 保存最新 `onColumnFiltersChange`，避免 effect 反复绑定导致旧回调提交。
+3. `web/default/src/components/data-table/index.ts` 已导出 `useDebouncedColumnFilter`，继续维持业务页面统一从 `@/components/data-table` 导入公共表格能力。
+4. `web/default/src/features/channels/components/channels-table.tsx` 已移除模型筛选的手写 `useDebounce`、本地输入 state 和两段同步 effect，改为复用公共 hook。
+5. 渠道页 `Filter by model...` 输入新增 `onCompositionStart` / `onCompositionEnd` 绑定；输入法组合期间不会提前提交 `model` URL 过滤，组合结束后才 debounce 更新。
+6. 渠道表格 reset 已调用 `resetModelFilterInput()`，避免清空过滤后模型输入框残留旧搜索词。
+7. 本轮没有修改渠道编辑抽屉主结构、模型搜索追加算法、模型同步接口、后端 API、数据库 schema、Go 代码、i18n locale 文件和 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前前端仍为 Manual + Tailwind v4 + Base UI + hugeicons，已安装 input/table/button 等本轮复用组件；命令没有产生锁文件或 package 变更。
+2. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认公共 hook 类型、data-table 导出和渠道表格接入链路正确。
+3. 已运行 `cd web/default && bun test src/features/channels`，56 个渠道相关测试通过，覆盖模型搜索追加、`gpt-5.6` 三模型缺失项计算、渠道表单转换、抽屉更新权限裁剪、模型映射编辑器和 Advanced Custom 工具函数。
+4. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过，确认本轮公共 data-table 增强没有回归近期模型定价和系统设置能力。
+5. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮未新增可见翻译 key。
+6. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+7. 已运行 `git diff --check`，未发现空白错误。
+8. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，打开 `/channels` 后页面正常显示渠道列表和 `Filter by model...` 输入框。
+9. MCP 在 `Filter by model...` 输入框模拟组合输入：`compositionstart` 后输入 `gp` 并等待 700ms，URL 仍为 `/channels`；`compositionend` 后输入完整 `gpt-5.6` 并等待 debounce，URL 正确变为 `/channels?model=gpt-5.6`，证明新 hook 已在热更新页面生效。
+10. MCP 打开渠道 `11111` 的 `Edit Channel` 抽屉，确认仍显示 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，模型区显示 `Selected 3`、`Vendor: OpenAI`，并包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+11. MCP 在模型选择器中搜索 `gpt-5.6`，页面出现 `gpt-5.6-terra`、`gpt-5.6-luna` 和已有的 `gpt-5.6-sol`，并出现搜索匹配添加入口；网络请求为 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，验证 OpenAI 供应商范围和三模型候选均已同步到编辑体验。
+12. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留浏览器 DevTools 的既有表单可访问性 `issue` 提示：缺少 autocomplete 属性、部分 label 关联不完全，本轮未扩大范围处理。
+13. MCP 验证截图保存为 `/tmp/nexustok-channel-debounced-filter-validation.png`。
