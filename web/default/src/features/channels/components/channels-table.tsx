@@ -16,17 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
-  getCoreRowModel,
-  useReactTable,
-  getExpandedRowModel,
   type OnChangeFn,
   type SortingState,
-  type VisibilityState,
-  type ExpandedState,
   type Row,
 } from '@tanstack/react-table'
 import { useMediaQuery } from '@/hooks'
@@ -39,6 +34,7 @@ import {
   DISABLED_ROW_MOBILE,
   DataTablePage,
   useDebouncedColumnFilter,
+  useDataTable,
 } from '@/components/data-table'
 import { getChannels, searchChannels, getGroups } from '../api'
 import {
@@ -71,7 +67,12 @@ const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
 ])
 
 const EMPTY_FILTER_VALUES: string[] = []
+const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels-column-visibility'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels-table-view-mode'
+const CHANNELS_INITIAL_COLUMN_VISIBILITY = {
+  models: false,
+  tag: false,
+}
 
 function isDisabledChannelRow(channel: Channel) {
   return (
@@ -86,12 +87,6 @@ export function ChannelsTable() {
 
   // Table state
   const [sorting, setSorting] = useState<SortingState>([])
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
-    models: false,
-    tag: false,
-  })
-  const [rowSelection, setRowSelection] = useState({})
-  const [expanded, setExpanded] = useState<ExpandedState>({})
 
   // URL state management
   const {
@@ -276,41 +271,29 @@ export function ChannelsTable() {
   // Columns configuration
   const columns = useChannelsColumns()
 
-  // React Table instance
-  const table = useReactTable({
+  // 公共 DataTable hook 统一管理列显隐、行选择、展开行和页码范围修正。
+  const { table } = useDataTable({
     data: channels,
     columns,
-    pageCount: Math.ceil(totalCount / pagination.pageSize),
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection,
-      pagination,
-      expanded,
-      globalFilter,
-    },
+    totalCount,
+    sorting,
+    columnFilters,
+    initialColumnVisibility: CHANNELS_INITIAL_COLUMN_VISIBILITY,
+    columnVisibilityStorageKey: CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY,
+    pagination,
+    globalFilter,
     enableRowSelection: (row: Row<Channel>) => !isTagAggregateRow(row.original),
-    onRowSelectionChange: setRowSelection,
     onSortingChange: handleSortingChange,
     onColumnFiltersChange,
-    onColumnVisibilityChange: setColumnVisibility,
     onPaginationChange,
-    onExpandedChange: setExpanded,
     onGlobalFilterChange,
-    getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
     getSubRows: (row: Channel & { children?: Channel[] }) => row.children,
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    withExpandedRowModel: true,
+    ensurePageInRange,
   })
-
-  // Ensure page is in range when total count changes
-  const pageCount = table.getPageCount()
-  useEffect(() => {
-    ensurePageInRange(pageCount)
-  }, [pageCount, ensurePageInRange])
 
   // Prepare filter options from existing channel types only.
   const typeFilterOptions = useMemo(() => {

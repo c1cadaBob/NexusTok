@@ -13125,3 +13125,74 @@ NexusTok 当前渠道编辑抽屉已经具备 new-api 最新编辑渠道页的�
 11. MCP 在模型选择器中搜索 `gpt-5.6`，页面出现 `gpt-5.6-terra`、`gpt-5.6-luna` 和已有的 `gpt-5.6-sol`，并出现搜索匹配添加入口；网络请求为 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，验证 OpenAI 供应商范围和三模型候选均已同步到编辑体验。
 12. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留浏览器 DevTools 的既有表单可访问性 `issue` 提示：缺少 autocomplete 属性、部分 label 关联不完全，本轮未扩大范围处理。
 13. MCP 验证截图保存为 `/tmp/nexustok-channel-debounced-filter-validation.png`。
+
+## 本轮实施评审：渠道表格接入公共 useDataTable
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/channels-table.tsx` 后确认，new-api 最新渠道表格已经使用公共 `useDataTable()` 组合 TanStack Table 状态，页面侧只保留渠道查询、过滤条件、列定义和少量业务逻辑。NexusTok 已在前序切片新增公共 `useDataTable()`，并先在模型定价表格验证了排序、分页、列显隐、行选择和 localStorage 持久化能力；但渠道表格仍直接调用 `useReactTable()`，并手写 `columnVisibility`、`rowSelection`、`expanded`、`getCoreRowModel()`、`getExpandedRowModel()` 和页码范围 effect。
+
+渠道列表是管理员高频页面，后续还要继续吸收 new-api 的批量模式、敏感信息显隐、列显隐持久化、状态筛选记忆等能力。如果继续让渠道表格保留手写 TanStack 配置，后续每个表格能力都需要重复处理状态组合，回归风险会逐步增大。本轮先把渠道表格接入 NexusTok 原生公共 `useDataTable()`，为后续更细的渠道表格体验对齐打底。
+
+本轮不引入 new-api 的 batch mode UI、敏感信息显隐按钮、状态筛选 localStorage 记忆或权限按钮重排；这些会改变可见交互和权限语义，需要单独评审。本轮只替换表格状态组合层，并保留当前 NexusTok 的移动端 `ChannelsMobileList`、账号池管理入口、权限守卫、批量操作栏和视图模式存储 key。
+
+### 需求分析
+
+1. 将 `web/default/src/features/channels/components/channels-table.tsx` 从直接 `useReactTable()` 切换到公共 `useDataTable()`。
+2. 保留当前渠道表格行为：服务端分页、服务端排序、服务端过滤、Tag 聚合展开、非 Tag 行可选择、批量操作栏、移动端自定义列表、桌面表格/卡片视图切换、禁用渠道行样式和页码范围修正。
+3. 使用稳定的 `initialColumnVisibility`，默认继续隐藏 `models` 与 `tag` 列。
+4. 新增渠道列显隐 localStorage key，把列显隐偏好交给公共 hook 防御式读写，向 new-api 的表格状态持久化能力靠齐。
+5. 保留现有 `CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels-table-view-mode'`，避免已有用户桌面表格/卡片视图偏好被重置。
+6. 不修改渠道列定义、渠道 API、后端查询参数、权限判断、i18n 文案、移动端列表和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道表格 | `web/default/src/features/channels/components/channels-table.tsx` | 使用 `useDataTable()` 替代内联 `useReactTable()` 与手写表格状态；新增列显隐存储 key。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 分页回归风险：渠道表格使用后端分页，`pageCount` 必须继续来自 `totalCount / pageSize`，并在总数变化时调用 `ensurePageInRange()` 修正越界页。
+2. 过滤回归风险：状态、类型、分组、模型和全局搜索仍由 `useTableUrlState` 控制；切换 hook 不能改变 URL 参数或 `searchChannels()` 的触发条件。
+3. 排序回归风险：当前只允许 `id`、`name`、`priority`、`balance`、`response_time`、`test_time` 进入服务端排序参数，切换 hook 后必须继续走 `handleSortingChange()`。
+4. 展开回归风险：Tag 模式依赖 `getSubRows()` 和 expanded row model；公共 hook 需要显式开启 `withExpandedRowModel`。
+5. 选择回归风险：批量操作依赖 `table.getFilteredSelectedRowModel()`；公共 hook 内部 rowSelection 必须保留，且 Tag 聚合行仍不可选择。
+6. 列显隐风险：新增 localStorage key 只影响渠道列显示偏好；默认隐藏列必须保持 `models` 和 `tag`，避免第一次加载展示过宽。
+7. 范围风险：如果本轮同时加入 batch mode、敏感显隐和状态筛选记忆，会引入新文案、权限体验和更多 UI 分支。本轮先迁状态 Hook，后续再分片评审这些可见能力。
+
+### 方案评审
+
+采用“状态层替换，业务层不变”的渐进方案：
+
+1. 在渠道表格中新增 `CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels-column-visibility'` 和稳定常量 `CHANNELS_INITIAL_COLUMN_VISIBILITY`。
+2. 删除 `VisibilityState`、`ExpandedState`、`useReactTable()`、`getCoreRowModel()`、`getExpandedRowModel()` 和本地 `columnVisibility` / `rowSelection` / `expanded` state。
+3. 调用 `useDataTable({ data, columns, totalCount, sorting, columnFilters, pagination, globalFilter, initialColumnVisibility, columnVisibilityStorageKey, enableRowSelection, onSortingChange, onColumnFiltersChange, onPaginationChange, onGlobalFilterChange, getSubRows, manualPagination, manualSorting, manualFiltering, withExpandedRowModel, ensurePageInRange })`。
+4. 保留 `handleSortingChange()`、查询参数构造、过滤选项、`DataTablePage`、`ChannelsMobileList`、`DataTableBulkActions` 和行样式逻辑不变。
+5. 验证顺序：`bun run typecheck`、`bun test src/features/channels`、`bun test src/features/system-settings`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后用 MCP 登录 `http://192.168.0.202:3003/channels` 验证渠道列表、模型筛选、编辑抽屉和控制台/网络。
+
+### 实施结果
+
+1. `web/default/src/features/channels/components/channels-table.tsx` 已从直接 `useReactTable()` 切换为公共 `useDataTable()`。
+2. 删除渠道表格本地 `columnVisibility`、`rowSelection`、`expanded` state 和手写页码范围 `useEffect`；这些状态现在由公共 hook 统一管理。
+3. 新增 `CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels-column-visibility'`，渠道表格列显隐偏好会由 `useDataTable()` 防御式读写 localStorage。
+4. 新增稳定常量 `CHANNELS_INITIAL_COLUMN_VISIBILITY`，默认仍隐藏 `models` 与 `tag` 列，保持首次加载宽度和旧页面一致。
+5. 渠道表格继续保留服务端分页、服务端排序、服务端过滤、Tag 聚合展开、非 Tag 行可选择、批量操作栏、自定义移动端 `ChannelsMobileList`、桌面卡片/表格视图切换、禁用渠道行样式和模型筛选组合输入保护。
+6. 本轮没有修改渠道列定义、渠道 API、后端查询参数、权限判断、账号池管理入口、渠道编辑抽屉、i18n locale 文件和 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认 `useDataTable()` 泛型、渠道列定义、行选择和 Tag 子行配置类型正确。
+2. 已运行 `cd web/default && bun test src/features/channels`，56 个渠道相关测试通过。
+3. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过，确认公共 data-table hook 的新增消费没有回归近期模型定价与系统设置能力。
+4. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮未新增可见翻译 key。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，打开 `/channels` 后页面正常显示渠道列表、`11111` 行和 `Filter by model...` 输入框。
+8. MCP 读取浏览器 localStorage，确认新列显隐持久化 key 已写入：`channels-column-visibility = {"models":false,"tag":false}`，说明热更新页面已使用公共 `useDataTable()` 的列显隐持久化能力。
+9. MCP 重新验证模型筛选组合输入：`compositionstart` 后输入 `gp` 并等待 700ms，URL 仍为 `/channels`；`compositionend` 后输入 `gpt-5.6` 并等待 debounce，URL 正确变为 `/channels?model=gpt-5.6`。
+10. MCP 清空筛选后打开渠道 `11111` 的 `Edit Channel` 抽屉，确认仍显示 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings`，模型区显示 `Selected 3`、`Vendor: OpenAI` 和 `gpt-5.6-sol`。
+11. MCP 网络请求均为预期读取请求，包括 `/api/channel/`、`/api/channel/search?keyword=&model=gpt-5.6...` 和 `/api/channel/1`；没有出现保存类写请求。
+12. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留浏览器 DevTools 的既有表单可访问性 `issue` 提示，本轮未扩大范围处理。
+13. MCP 验证截图保存为 `/tmp/nexustok-channel-use-data-table-validation.png`。
