@@ -26,13 +26,11 @@ import type {
   MathBlockNode,
   MathInlineNode,
 } from 'stream-markdown-parser'
-
+import { cn } from '@/lib/utils'
 import {
   CodeBlock,
   CodeBlockCopyButton,
 } from '@/components/ai-elements/code-block'
-import { cn } from '@/lib/utils'
-
 import { getNodeKey } from './response-content'
 import type { BlockRendererOptions } from './response-types'
 
@@ -142,13 +140,19 @@ export function renderList(
 
 export function renderCodeBlock(node: CodeBlockNode, key: string): ReactNode {
   const language = node.language || 'plaintext'
+  const lineCount = node.code.split('\n').length
 
   return (
     <CodeBlock
+      collapsedLines={14}
       code={node.code}
+      defaultCollapsed={lineCount > 14}
       key={key}
       language={language}
+      maxExpandedLines={44}
       showLineNumbers
+      showToolbar
+      title={language}
     >
       <CodeBlockCopyButton />
     </CodeBlock>

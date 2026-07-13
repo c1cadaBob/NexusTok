@@ -37,7 +37,14 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, lineNumbers } from '@codemirror/view'
 import { tags as highlightTags } from '@lezer/highlight'
 import type { Element } from 'hast'
-import { CheckIcon, CopyIcon } from 'lucide-react'
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  DownloadIcon,
+} from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   type BundledLanguage,
   codeToHtml,
@@ -45,11 +52,25 @@ import {
 } from 'shiki/bundle/web'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string
+  collapsedLines?: number
+  defaultCollapsed?: boolean
+  enableCollapse?: boolean
+  filename?: string
   language: BundledLanguage | string
+  maxExpandedLines?: number
+  /** @deprecated use collapsedLines for collapsed preview height. */
+  maxCollapsedLines?: number
   showLineNumbers?: boolean
+  showToolbar?: boolean
+  title?: ReactNode
 }
 
 type CodeBlockEditorProps = Omit<
@@ -78,6 +99,27 @@ type CodeMirrorCodeViewProps = {
   rows?: number
   showLineNumbers?: boolean
   value: string
+}
+
+type CodeBlockFrameProps = Omit<HTMLAttributes<HTMLDivElement>, 'title'> & {
+  bodyClassName?: string
+  bodyMaxHeight?: string
+  bodyOverlay?: ReactNode
+  children: ReactNode
+  endActions?: ReactNode
+  showToolbar?: boolean
+  title?: ReactNode
+}
+
+type CodeBlockDisplayStateOptions = {
+  code: string
+  collapsedLines?: number
+  enableCollapse?: boolean
+  filename?: string
+  isCollapsed?: boolean
+  language: BundledLanguage | string
+  maxCollapsedLines?: number
+  maxExpandedLines?: number
 }
 
 type CodeBlockContextType = {
@@ -265,6 +307,76 @@ function normalizeCodeLanguage(language: BundledLanguage | string) {
   return normalized
 }
 
+function getCodeLineCount(code: string) {
+  if (!code) {
+    return 1
+  }
+
+  return code.split('\n').length
+}
+
+function getDownloadFilename(language: string, filename?: string) {
+  if (filename) {
+    return filename
+  }
+
+  const extension = language === 'plaintext' ? 'txt' : language
+  return `code.${extension}`
+}
+
+function getCodeBlockHeight(lines: number) {
+  return `${Math.max(4, lines) * 1.5 + 2}rem`
+}
+
+function getCodeBlockMaxHeight(
+  isCodeCollapsed: boolean,
+  previewLines: number,
+  maxExpandedLines?: number
+): string | undefined {
+  if (isCodeCollapsed) {
+    return getCodeBlockHeight(previewLines)
+  }
+
+  if (maxExpandedLines) {
+    return getCodeBlockHeight(maxExpandedLines)
+  }
+
+  return undefined
+}
+
+// resolveCodeBlockDisplayState 集中计算只读代码块展示状态，避免渲染层和测试对折叠规则各算一套。
+export function resolveCodeBlockDisplayState({
+  code,
+  collapsedLines = 12,
+  enableCollapse = true,
+  filename,
+  isCollapsed = false,
+  language,
+  maxCollapsedLines,
+  maxExpandedLines,
+}: CodeBlockDisplayStateOptions) {
+  const displayLanguage = normalizeCodeLanguage(language)
+  const lineCount = getCodeLineCount(code)
+  const previewLines = maxCollapsedLines ?? collapsedLines
+  const canCollapse = enableCollapse && lineCount > previewLines
+  const isCodeCollapsed = canCollapse && isCollapsed
+  const bodyMaxHeight = getCodeBlockMaxHeight(
+    isCodeCollapsed,
+    previewLines,
+    maxExpandedLines
+  )
+
+  return {
+    bodyMaxHeight,
+    canCollapse,
+    displayLanguage,
+    downloadFilename: getDownloadFilename(displayLanguage, filename),
+    isCodeCollapsed,
+    lineCount,
+    previewLines,
+  }
+}
+
 /**
  * 根据代码语言选择 CodeMirror 扩展。
  *
@@ -435,15 +547,101 @@ function CodeMirrorCodeView({
   )
 }
 
+export const CodeBlockFrame = ({
+  bodyClassName,
+  bodyMaxHeight,
+  bodyOverlay,
+  children,
+  className,
+  endActions,
+  showToolbar = false,
+  title,
+  ...props
+}: CodeBlockFrameProps) => (
+  <div
+    className={cn(
+      'group/code-block bg-background text-foreground my-0 w-full max-w-full overflow-hidden rounded-lg border shadow-xs',
+      className
+    )}
+    {...props}
+  >
+    {showToolbar && (
+      <div className='bg-muted/35 border-border/70 flex min-h-10 items-center gap-2 border-b px-2 py-1.5'>
+        <div className='min-w-0 flex-1'>
+          <div className='text-muted-foreground truncate font-mono text-[11px] font-medium tracking-wide uppercase'>
+            {title}
+          </div>
+        </div>
+        {endActions && (
+          <div className='flex shrink-0 items-center gap-1'>{endActions}</div>
+        )}
+      </div>
+    )}
+    <div className='relative min-w-0'>
+      <div
+        className={cn(
+          'code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out',
+          bodyClassName
+        )}
+        style={{ maxHeight: bodyMaxHeight }}
+      >
+        {children}
+      </div>
+      {bodyOverlay}
+    </div>
+  </div>
+)
+
 export const CodeBlock = ({
   code,
+  collapsedLines = 12,
+  defaultCollapsed,
+  enableCollapse = true,
+  filename,
   language,
+  maxExpandedLines,
+  maxCollapsedLines,
   showLineNumbers = false,
+  showToolbar = false,
+  title,
   className,
   children,
   ...props
 }: CodeBlockProps) => {
+  const { t } = useTranslation()
   const [html, setHtml] = useState<string>('')
+  const [isCollapsed, setIsCollapsed] = useState(Boolean(defaultCollapsed))
+  const displayState = useMemo(
+    () =>
+      resolveCodeBlockDisplayState({
+        code,
+        collapsedLines,
+        enableCollapse,
+        filename,
+        isCollapsed,
+        language,
+        maxCollapsedLines,
+        maxExpandedLines,
+      }),
+    [
+      code,
+      collapsedLines,
+      enableCollapse,
+      filename,
+      isCollapsed,
+      language,
+      maxCollapsedLines,
+      maxExpandedLines,
+    ]
+  )
+  const {
+    bodyMaxHeight,
+    canCollapse,
+    displayLanguage,
+    downloadFilename,
+    isCodeCollapsed,
+  } = displayState
+  const displayTitle = title ?? displayLanguage
 
   useEffect(() => {
     let cancelled = false
@@ -457,28 +655,95 @@ export const CodeBlock = ({
     }
   }, [code, language, showLineNumbers])
 
+  const downloadCode = () => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return
+    }
+
+    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = downloadFilename
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <CodeBlockContext.Provider value={{ code }}>
-      <div
-        className={cn(
-          'group bg-background text-foreground relative w-full overflow-hidden rounded-md border',
-          className
-        )}
+      <CodeBlockFrame
+        bodyClassName='p-0'
+        bodyMaxHeight={bodyMaxHeight}
+        bodyOverlay={
+          <>
+            {isCodeCollapsed && (
+              <div className='from-background/0 to-background pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-linear-to-b' />
+            )}
+            {!showToolbar && children && (
+              <div className='absolute top-2 right-2 flex items-center gap-1'>
+                {children}
+              </div>
+            )}
+          </>
+        }
+        className={cn('my-3', className)}
+        endActions={
+          <>
+            {canCollapse && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label={isCodeCollapsed ? t('Expand') : t('Collapse')}
+                      onClick={() => setIsCollapsed((value) => !value)}
+                      size='icon-sm'
+                      type='button'
+                      variant='ghost'
+                    >
+                      {isCodeCollapsed ? (
+                        <ChevronRightIcon />
+                      ) : (
+                        <ChevronDownIcon />
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <p>{isCodeCollapsed ? t('Expand') : t('Collapse')}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {showToolbar && children}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={t('Download')}
+                    onClick={downloadCode}
+                    size='icon-sm'
+                    type='button'
+                    variant='ghost'
+                  >
+                    <DownloadIcon />
+                  </Button>
+                }
+              />
+              <TooltipContent>
+                <p>{t('Download')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </>
+        }
+        showToolbar={showToolbar}
+        title={displayTitle}
         {...props}
       >
-        <div className='relative'>
-          <div
-            className='[&>pre]:bg-background! [&>pre]:text-foreground! overflow-hidden [&_code]:font-mono [&_code]:text-sm [&>pre]:m-0 [&>pre]:p-4 [&>pre]:text-sm'
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-          {children && (
-            <div className='absolute top-2 right-2 flex items-center gap-2'>
-              {children}
-            </div>
-          )}
-        </div>
-      </div>
+        <div
+          className='[&>pre]:bg-background! [&>pre]:text-foreground! overflow-hidden [&_code]:font-mono [&_code]:text-sm [&>pre]:m-0 [&>pre]:p-4 [&>pre]:text-sm'
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </CodeBlockFrame>
     </CodeBlockContext.Provider>
   )
 }
@@ -503,39 +768,26 @@ export const CodeBlockEditor = ({
   value,
   ...props
 }: CodeBlockEditorProps) => (
-  <div
-    className={cn(
-      'bg-background text-foreground my-0 w-full max-w-full overflow-hidden rounded-lg border shadow-xs',
-      className
-    )}
+  <CodeBlockFrame
+    bodyClassName='p-0'
+    className={cn('my-0', className)}
+    endActions={actions}
+    showToolbar={Boolean(title || actions)}
+    title={title}
     {...props}
   >
-    {(title || actions) && (
-      <div className='bg-muted/35 border-border/70 flex min-h-10 items-center gap-2 border-b px-2 py-1.5'>
-        <div className='min-w-0 flex-1'>
-          <div className='text-muted-foreground truncate font-mono text-[11px] font-medium tracking-wide uppercase'>
-            {title}
-          </div>
-        </div>
-        {actions && (
-          <div className='flex shrink-0 items-center gap-1'>{actions}</div>
-        )}
-      </div>
-    )}
-    <div className='max-w-full overflow-auto'>
-      <CodeMirrorCodeView
-        ariaLabel={ariaLabel}
-        autoFocus={autoFocus}
-        language={language}
-        onChange={onChange}
-        onKeyDown={onKeyDown}
-        readOnly={readOnly}
-        rows={rows}
-        showLineNumbers
-        value={value}
-      />
-    </div>
-  </div>
+    <CodeMirrorCodeView
+      ariaLabel={ariaLabel}
+      autoFocus={autoFocus}
+      language={language}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      readOnly={readOnly}
+      rows={rows}
+      showLineNumbers
+      value={value}
+    />
+  </CodeBlockFrame>
 )
 
 export type CodeBlockCopyButtonProps = ComponentProps<typeof Button> & {
@@ -550,8 +802,10 @@ export const CodeBlockCopyButton = ({
   timeout = 2000,
   children,
   className,
+  'aria-label': ariaLabel,
   ...props
 }: CodeBlockCopyButtonProps) => {
+  const { t } = useTranslation()
   const [isCopied, setIsCopied] = useState(false)
   const { code } = useContext(CodeBlockContext)
 
@@ -575,13 +829,15 @@ export const CodeBlockCopyButton = ({
 
   return (
     <Button
+      aria-label={ariaLabel ?? (isCopied ? t('Copied!') : t('Copy code'))}
       className={cn('shrink-0', className)}
       onClick={copyToClipboard}
-      size='icon'
+      size='icon-sm'
+      type='button'
       variant='ghost'
       {...props}
     >
-      {children ?? <Icon size={14} />}
+      {children ?? <Icon />}
     </Button>
   )
 }

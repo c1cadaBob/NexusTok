@@ -12323,3 +12323,78 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 7. MCP 重新忽略缓存访问 `http://192.168.0.202:3003/` 根页面，首页导航、hero、功能区和页脚均正常显示；请求 `/api/status`、`/api/notice`、`/api/home_page_content` 均返回 HTTP 200。
 8. 当前 3003 环境没有配置包含公式或 flow 图表的真实公告/About 内容，因此新增富 Markdown 渲染分支由 `markdown.test.tsx` 覆盖；MCP 负责验证真实页面、热更新和运行时稳定性。
 9. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间临时启动 headless Chrome 连接 MCP，验证完成后已停止该临时会话。
+
+## 本轮实施评审：AI 响应代码块折叠与下载体验原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/ai-elements/code-block.tsx` 与当前 `web/default/src/components/ai-elements/code-block.tsx` 后确认，两边都已经具备 AI response renderer、Shiki/CodeMirror 代码展示和复制按钮，但 new-api 最新 `CodeBlock` 额外提供代码块 toolbar、长代码自动折叠、展开/收起按钮、下载按钮、标题和最大展开高度控制。NexusTok 当前 `response-renderer-blocks.tsx` 调用 `CodeBlock` 时只传入 `code/language/showLineNumbers`，长代码会完整撑开消息区域，Playground 或模型详情中包含长 JSON、SQL、Python、日志片段时阅读效率弱于 new-api。
+
+该能力属于前端展示层增强，不改变 Playground 请求、流式解析、消息存储、Markdown 清洗、Relay 协议、计费或后端接口。它适合转为 NexusTok 原生 AI 展示能力：保留当前项目的语义色、Base UI 组件和代码高亮 fallback，同时吸收 new-api 的折叠和下载交互。
+
+### 需求分析
+
+1. 长代码块在 AI 响应中应默认折叠，避免单条消息把 Playground 或日志说明区域无限拉长。
+2. 用户应能通过明确的图标按钮展开/收起长代码，并能下载代码内容到本地文件，便于调试上游返回的 JSON、脚本和配置片段。
+3. 短代码块不应强制出现折叠按钮；复制按钮继续可用，且复制内容仍来自原始代码字符串。
+4. `CodeBlockEditor` 仍服务编辑态 JSON/消息编辑器，不应被只读展示逻辑破坏；编辑态保留 `autoFocus/readOnly/onChange` 等 NexusTok 已新增能力。
+5. 视觉上沿用当前默认前端的中性运维界面：1px 边界、语义 token、紧凑 toolbar；不引入 new-api 品牌、颜色或整文件覆盖。
+6. 增加单元测试覆盖长代码默认折叠、展开按钮和下载按钮，避免后续 AI renderer 退回无折叠状态。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| AI 代码块组件 | `web/default/src/components/ai-elements/code-block.tsx` | 增加 toolbar frame、折叠高度、下载按钮、语言标题和可选折叠参数；保留 Shiki 展示路径与 CodeMirror 编辑路径。 |
+| AI 响应渲染 | `web/default/src/components/ai-elements/response-renderer-blocks.tsx` | 对 AI 响应中的长 code fence 启用 new-api 同款默认折叠策略。 |
+| 测试 | `web/default/src/components/ai-elements/code-block.test.tsx` | 覆盖长代码默认折叠、点击展开和下载文件名行为。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和后续验证。 |
+
+本轮不修改 Go 后端、数据库、Relay、计费表达式、模型搜索、渠道编辑页、Markdown 文档渲染、Playground 请求构造和消息持久化。
+
+### 风险评估
+
+1. 公共组件回归风险：`CodeBlock` 被 AI response renderer、工具调用展示、Pricing API 示例和 Playground 专用消息内容复用。方案会保持默认 `showToolbar=false`，只有调用方显式传入时展示 toolbar；普通工具调用和 Pricing 示例默认只获得向后兼容的展示框。
+2. Shiki/CodeMirror 行为风险：new-api 当前只读 CodeBlock 改用 CodeMirrorCodeView 会改变高亮路径。NexusTok 已对 Shiki fallback 做过本地适配，本轮保留 Shiki 作为只读展示核心，只在外层 frame 增加折叠高度和 toolbar，降低渲染回归。
+3. 下载安全风险：下载只基于当前代码字符串创建 `text/plain` Blob，不使用远程 URL，不读取本地文件，不把内容写入后端。
+4. i18n 风险：新增按钮 aria-label 和 tooltip 文案需要进入 en/zh/fr/ja/ru/vi 六语 locale，并运行 `bun run i18n:sync`。
+5. 可访问性风险：折叠和下载按钮必须有 `aria-label`、`type="button"` 和 tooltip；复制按钮应补充默认 `aria-label`，避免图标按钮在屏幕阅读器中无名称。
+6. 布局风险：折叠遮罩、toolbar 和绝对定位复制按钮不能覆盖代码内容或导致横向滚动异常；测试和 MCP 需要覆盖真实 Playground 页面加载。
+
+### 方案评审
+
+采用“保留 NexusTok Shiki 展示路径 + 吸收 new-api toolbar/折叠交互 + 小范围测试”的方案：
+
+1. 在 `CodeBlock` 中扩展 props：`collapsedLines`、`defaultCollapsed`、`enableCollapse`、`filename`、`maxExpandedLines`、`maxCollapsedLines`、`showToolbar`、`title`，默认行为保持向后兼容。
+2. 新增内部 `CodeBlockFrame`，统一只读和编辑态外框，让 toolbar、标题、end actions 和滚动区域复用同一结构；编辑态继续传入 `CodeBlockEditor` 的 `actions/autoFocus/readOnly`。
+3. 只读展示继续使用现有 `highlightCode()` + `dangerouslySetInnerHTML`，保留语言 alias、Shiki fallback、语义色高亮和行号 transformer。
+4. 在 AI `renderCodeBlock` 中按 new-api 策略启用：超过 14 行默认折叠，预览 14 行，展开最多 44 行，显示 toolbar 和语言标题。
+5. 补充 `code-block.test.tsx`，用长代码验证折叠高度、展开后高度和下载文件名；避免测试依赖真实 Shiki worker。
+6. 运行相关单测、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 与 `/playground`，确认热更新和页面稳定。
+
+### 实施结果
+
+- `CodeBlock` 已扩展 `collapsedLines`、`defaultCollapsed`、`enableCollapse`、`filename`、`maxExpandedLines`、`maxCollapsedLines`、`showToolbar` 和 `title` 参数，默认 `showToolbar=false`，未显式开启的既有调用继续保持原展示语义。
+- 新增 `CodeBlockFrame` 统一只读代码块和 `CodeBlockEditor` 的外框、toolbar、标题区、滚动区域和右侧动作位；编辑态继续保留 `autoFocus`、`readOnly`、`onChange`、`onKeyDown` 等 NexusTok 现有能力。
+- 只读代码展示仍走 NexusTok 当前 `highlightCode()` + Shiki fallback，不改成 CodeMirror 只读渲染，避免影响已有语义色高亮和未知语言 fallback。
+- AI response renderer 中的 code fence 现在超过 14 行会默认折叠，toolbar 显示语言标题、复制按钮、展开/收起按钮和下载按钮；展开后最大高度为 44 行。
+- 复制按钮补齐默认 `aria-label`，调用方传入自定义 `aria-label` 时继续优先使用调用方文案。
+- 新增 `resolveCodeBlockDisplayState` 纯函数集中计算折叠状态、预览高度、语言归一化和下载文件名，避免 UI 和测试各自实现规则。
+- 新增 `web/default/src/components/ai-elements/code-block.test.ts`，覆盖长代码折叠、展开最大高度、短代码不折叠、关闭折叠和自定义下载文件名。
+- 没有修改 Go 后端、数据库、Relay、计费表达式、模型搜索、渠道编辑页、Markdown 文档渲染、Playground 请求构造和消息持久化。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/ai-elements/code-block.test.ts` 通过，4 个代码块折叠/文件名用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bunx prettier --write src/components/ai-elements/code-block.tsx src/components/ai-elements/response-renderer-blocks.tsx src/components/ai-elements/code-block.test.ts ../../docs/features/new-api-main-diff-analysis.md` 已格式化本轮触碰文件。
+4. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 与 `extrasCount` 均为 0，本轮未新增翻译缺口。
+5. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 11.9 秒内完成生产构建。
+6. `git diff --check` 通过，未发现空白错误。
+7. 使用 Chrome DevTools MCP 打开 `http://192.168.0.202:3003/`，页面正常加载；在浏览器上下文调用 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`，运行态构建指纹为 `rv.0000.nexustok-default`。
+8. MCP 忽略缓存访问 `http://192.168.0.202:3003/playground`，页面加载成功；请求 `/api/status`、`/api/user/self`、`/api/notice`、`/api/user/models?group=default`、`/api/user/self/groups` 均返回 HTTP 200。
+9. MCP 在临时浏览器 profile 中向 `playground_messages` 写入一条本地助手消息，内容包含 20 行 `ts` 代码块；reload 后页面真实渲染出 AI response code block，toolbar、语言标题、复制按钮、展开按钮和下载按钮均存在。
+10. MCP 读取代码块 DOM，折叠态滚动区 `max-height` 为 `368px`，对应 14 行预览；点击 `Expand` 后按钮切换为 `Collapse`，`max-height` 切换为 `1088px`，对应 44 行最大展开高度。
+11. MCP 拦截下载按钮验证其创建本地 Blob，文件名为 `code.typescript`，Blob URL 被及时 revoke；该操作没有触发后端请求。
+12. MCP 验证结束后已恢复/清理临时 `playground_messages`，没有污染运行态用户数据。
+13. MCP 控制台检查 `error`、`warn`、`issue` 均为空；本轮相关网络请求均为页面加载和只读 GET，没有触发模型请求或后端写接口。
