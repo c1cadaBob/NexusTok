@@ -70,6 +70,7 @@ interface MultiSelectProps {
   preserveSelectedOnEmptyRemovalKey?: boolean
   hideSelectedOptionsWhenSearching?: boolean
   submitSearchOnEnterWithMatches?: boolean
+  submitSearchOnEnterWhenHighlighted?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -202,6 +203,7 @@ export function shouldSubmitMultiSelectSearchOnEnter({
   isLoading,
   hasMatchingOption,
   hasHighlightedOption = false,
+  submitSearchOnEnterWhenHighlighted = false,
 }: {
   submitSearchOnEnterWithMatches: boolean
   hasSearchSubmit: boolean
@@ -210,11 +212,12 @@ export function shouldSubmitMultiSelectSearchOnEnter({
   isLoading: boolean
   hasMatchingOption: boolean
   hasHighlightedOption?: boolean
+  submitSearchOnEnterWhenHighlighted?: boolean
 }): boolean {
   if (!submitSearchOnEnterWithMatches || !hasSearchSubmit) return false
   if (key !== 'Enter') return false
   if (inputValue.trim().length === 0) return false
-  if (hasHighlightedOption) return false
+  if (hasHighlightedOption && !submitSearchOnEnterWhenHighlighted) return false
 
   // 渠道模型搜索里，输入 gpt-5.6 这类系列前缀时，Enter 应优先解释为
   // “提交当前搜索并批量补齐命中模型”。如果没有任何候选且也不在搜索中，
@@ -259,6 +262,7 @@ export function MultiSelect({
   preserveSelectedOnEmptyRemovalKey = false,
   hideSelectedOptionsWhenSearching = false,
   submitSearchOnEnterWithMatches = false,
+  submitSearchOnEnterWhenHighlighted = false,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -434,6 +438,7 @@ export function MultiSelect({
         isLoading,
         hasMatchingOption,
         hasHighlightedOption: hasHighlightedComboboxOption(),
+        submitSearchOnEnterWhenHighlighted,
       })
     ) {
       event.preventDefault()

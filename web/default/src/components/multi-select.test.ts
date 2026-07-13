@@ -170,6 +170,22 @@ describe('MultiSelect 搜索提交键盘行为', () => {
     )
   })
 
+  test('显式开启后高亮候选时 Enter 也提交搜索追加', () => {
+    assert.equal(
+      shouldSubmitMultiSelectSearchOnEnter({
+        submitSearchOnEnterWithMatches: true,
+        submitSearchOnEnterWhenHighlighted: true,
+        hasSearchSubmit: true,
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+        isLoading: false,
+        hasMatchingOption: true,
+        hasHighlightedOption: true,
+      }),
+      true
+    )
+  })
+
   test('搜索请求仍在进行时 Enter 也交给搜索提交处理', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({

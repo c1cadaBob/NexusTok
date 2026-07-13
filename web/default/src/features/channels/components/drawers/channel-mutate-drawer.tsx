@@ -1401,7 +1401,7 @@ export function ChannelMutateDrawer({
     unscannedModelSearchResultCount > 0
       ? t('Scan all search results')
       : modelSearchAppendSummary.addableCount > 0
-        ? t('Add {{count}} new model(s)', {
+        ? t('Add all {{count}} new match(es)', {
             count: modelSearchAppendSummary.addableCount,
           })
         : t('Add')
@@ -3974,6 +3974,7 @@ export function ChannelMutateDrawer({
                                       ) : undefined
                                     }
                                     submitSearchOnEnterWithMatches
+                                    submitSearchOnEnterWhenHighlighted
                                     isLoading={
                                       isSearchingModelMeta ||
                                       isModelSearchDebouncing
@@ -3996,7 +3997,7 @@ export function ChannelMutateDrawer({
                                                 0 && (
                                                 <span className='text-muted-foreground text-xs'>
                                                   {t(
-                                                    '{{count}} more result(s) will be checked when adding',
+                                                    '{{count}} more result(s) will be checked before adding all matches',
                                                     {
                                                       count:
                                                         unscannedModelSearchResultCount,
@@ -4007,6 +4008,9 @@ export function ChannelMutateDrawer({
                                               {modelSearchAppendPlan.totalCount >
                                               0 ? (
                                                 <span className='text-xs'>
+                                                  <span className='text-muted-foreground mr-1'>
+                                                    {t('Will add')}:
+                                                  </span>
                                                   <span className='break-all'>
                                                     {modelSearchMissingPreview.join(
                                                       ', '
