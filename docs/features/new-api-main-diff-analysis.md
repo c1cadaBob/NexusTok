@@ -13435,3 +13435,49 @@ NexusTok 当前渠道编辑抽屉已经具备 new-api 最新编辑渠道页的�
 15. MCP 控制台没有 JavaScript `error`、`warn` 或 `issue`；网络请求均为 `GET`，没有渠道保存、更新或删除类写请求。
 16. MCP 在浏览器上下文携带 `NexusTok-User: 1` 读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态数据。
 17. MCP 验证截图保存为 `/tmp/nexustok-channel-sensitive-visible-validation.png` 和 `/tmp/nexustok-channel-sensitive-visible-mobile-validation.png`。
+
+## 本轮实施评审：编辑渠道页模型搜索内聚化与新版 new-api 页面回归对齐
+
+### 差异来源
+
+用户继续反馈编辑渠道页“搜索添加时不正确”，并指出 `/opt/project/new-api-main` 最新版 new-api 的编辑渠道页面观感更好，需要把当前编辑渠道页与之对齐。复核两边源码后确认：new-api 最新页面在 `Models & Groups` 区块中保持了更清晰的主流程，顺序为模型 MultiSelect、模型映射、分组和 Quick actions；当前 NexusTok 为了解决模型库缺失同步，额外在 MultiSelect 上方放置了独立 `Search model library` 搜索框、结果摘要和追加按钮。这个独立搜索区虽然修复了批量追加逻辑，但它与 MultiSelect 自带搜索形成两套输入路径：管理员自然在模型选择器里搜索时，只会得到本地候选或单个候选选择，容易再次表现为“搜索添加只加了一个/不符合预期”。
+
+NexusTok 当前还保留了 new-api 没有的增强能力，包括 OpenAI/Codex 默认供应商收窄、模型元信息远程搜索、全量分页扫描追加、账号池凭证模式、细粒度字段权限、上游模型检测、模型映射 guardrail 和敏感信息显隐。因此本轮不能整文件覆盖 new-api；应当吸收 new-api 的页面结构优势，把 NexusTok 的增强搜索能力内聚到模型选择器下拉层，外层布局回到 new-api 的紧凑分区。
+
+### 需求分析
+
+1. 管理员在模型 MultiSelect 中搜索 `gpt-5.6` 时，必须触发同一套远程模型库搜索，而不是只过滤当前已加载的本地选项。
+2. 搜索结果必须明确展示命中、可新增、已存在数量，并提供一个“添加全部新模型/扫描全部搜索结果”的批量入口；点击候选行仍只添加单个模型，点击批量入口才添加全部缺失模型。
+3. 外层 `Models & Groups` 页面结构要回到 new-api 最新页面的观感：模型字段本身为主入口，Quick actions 保持在模型选择器下方，避免额外搜索卡片把页面拉长。
+4. 继续保留 NexusTok 原生增强：按渠道类型推断供应商、OpenAI/Codex 默认搜索 OpenAI、规则模型展开、分页扫描、大小写不敏感去重、表单草稿追加、权限只读态和不自动保存渠道。
+5. 本轮不修改后端接口、数据库结构、模型同步任务、渠道保存接口、relay、计费、权限模型和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除模型区外层独立搜索框，把远程搜索状态、摘要、预览和批量追加按钮接入 `MultiSelect` 的 `searchValue`、`onSearchChange`、`contentFooter` 和 `onSearchSubmit`。 |
+| 多选组件调用 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 只调整渠道页消费方式，不修改公共 `MultiSelect` 组件，避免影响 API Key、模型部署、Dashboard Flow 等其它使用方。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 优先复用已有 `Search results`、`Add {{count}} new model(s)`、`No new matches`、`Will add`、分页提示和搜索加载态文案；如新增文案则补齐六语。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果、验证和提交信息。 |
+
+### 风险评估
+
+1. 搜索路径回归风险：接入 controlled `searchValue` 后，MultiSelect 选中候选、清空输入、关闭抽屉必须同步清空远程搜索关键词，避免旧关键词污染下一次编辑。
+2. Enter 键风险：有候选高亮时 Enter 应优先选择候选；没有高亮且存在远程命中时 Enter 才作为批量追加/搜索提交，不能误提交整个渠道表单。
+3. 自定义模型风险：当远程或本地存在候选时，`gpt-5.6` 这类系列前缀不能被创建成自定义模型；完全无候选时仍允许管理员创建自定义模型。
+4. 添加数量风险：按钮显示、预览和实际追加必须继续共用 `buildModelSearchAppendSummary()`、`buildModelSearchAppendPlan()`、`getMissingModelSearchMatches()`，避免展示 2 个但实际追加 1 个。
+5. 异步污染风险：全量扫描期间切换渠道、改变关键词、改变供应商或关闭抽屉时，必须继续用请求序号和上下文校验丢弃过期结果。
+6. 页面密度风险：下拉 footer 里的摘要和按钮必须适配移动端宽度，不能遮挡候选、挤压按钮文字或破坏 new-api 的主区块节奏。
+
+### 方案评审
+
+采用“回归 new-api 外层结构 + 内聚 NexusTok 远程搜索”的方案：
+
+1. 删除模型区外层 `Search model library` 独立输入行，保留顶部 `Selected {{count}}` 和供应商 Badge。
+2. 将 `modelSearchKeyword` 作为 `MultiSelect` 的 controlled `searchValue`，`onSearchChange` 直接驱动 `/api/models/search` 防抖查询。
+3. 将搜索摘要、未扫描分页提示、`Will add` 预览和批量按钮放入 `MultiSelect.contentFooter`，只在有搜索词时展示。
+4. `MultiSelect` 继续设置 `allowCreateWithMatches={false}`、`hideSelectedOptionsWhenSearching`、`preserveSelectedOnEmptyRemovalKey`，并新增 `isLoading`、`loadingText`、`onSearchSubmit`、`submitSearchOnEnterWithMatches`。
+5. 批量按钮继续调用 `handleAddModelSearchMatches()`，该函数继续扫描全部分页并只追加当前表单草稿缺失的模型。
+6. 搜索成功追加后清空搜索词；选中单个候选时由 MultiSelect 清空搜索词，避免 footer 残留旧结果。
+7. 验证顺序：`bun run i18n:sync`、`bun run typecheck`、渠道相关单测、系统设置回归单测、改动文件 ESLint、`bun run build`、`git diff --check`；最后使用 MCP 登录 `http://192.168.0.202:3003/` 打开 `/channels`，验证编辑渠道页热更新、MultiSelect 内搜索 `gpt-5.6`、批量追加草稿、无渠道保存写请求和控制台状态。
