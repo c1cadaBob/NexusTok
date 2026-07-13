@@ -12981,3 +12981,72 @@ NexusTok 当前项目已经原生化了快照 helper、草稿状态和定价编�
 8. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功；访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求和登录请求，未出现保存 option 的写请求。
 9. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
 10. MCP 验证截图保存为 `/tmp/nexustok-model-ratio-columns-validation.png`。
+
+## 本轮实施评审：DataTable 状态 Hook 原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table` 后发现，new-api 已新增 `hooks/use-data-table.ts`，将 TanStack Table 的常用状态和 row model 组合收敛为公共 `useDataTable()`。new-api 中的 usage logs、users、subscriptions、models、channels、pricing、system-settings/model-ratio 等多个页面都通过该 hook 创建表格实例，页面侧只保留业务数据、列定义和少量自定义过滤逻辑。
+
+NexusTok 当前项目的公共 data-table 目录已有 `DataTablePage`、`DataTableToolbar`、`DataTablePagination`、`DataTableBulkActions`、移动端卡片和列显隐控件，但页面仍在多处重复调用 `useReactTable()` 并手动拼装 `getCoreRowModel()`、`getFilteredRowModel()`、`getPaginationRowModel()`、`getFacetedRowModel()`、`getFacetedUniqueValues()`、排序、分页、列显隐、行选择等配置。模型定价表格已经完成列定义模块化，是接入公共 hook 的低风险落点。
+
+本轮不改视觉、不改数据表格目录结构，不迁入 new-api 的 `core/`、`layout/`、`toolbar/` 分层；只把 `useDataTable()` 作为 NexusTok 当前扁平 data-table 目录的原生公共能力，并先在模型定价表格中使用。
+
+### 需求分析
+
+1. 新增 `web/default/src/components/data-table/use-data-table.ts`，提供可控/非可控混合的 TanStack Table 状态管理能力。
+2. hook 需要支持当前和后续页面常用能力：排序、列显隐、行选择、展开行、列过滤、全局过滤、分页、可选手动过滤/分页/排序、可选 row model、`getRowId`、`getSubRows`、`globalFilterFn`、`autoResetPageIndex`。
+3. 支持 `columnVisibilityStorageKey`，把列显隐 localStorage 读写从业务页面中移出；存储不可用或 JSON 损坏时必须安全降级为空对象。
+4. 从 `@/components/data-table` 稳定入口导出 `useDataTable()`，符合当前 README 中“功能页面优先使用统一入口”的约定。
+5. 将 `model-ratio-visual-editor.tsx` 从直接 `useReactTable()` 切换为 `useDataTable()`，保留原有排序、模式筛选、全局搜索关闭编辑面板、分页、行选择、列显隐持久化、行点击编辑、批量复制和保存前草稿提交行为。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 公共 DataTable hook | `web/default/src/components/data-table/use-data-table.ts` | 新增 TanStack Table 状态组合 hook，为后续页面逐步去重提供稳定公共能力。 |
+| 公共导出入口 | `web/default/src/components/data-table/index.ts` | 导出 `useDataTable`，保持业务页面只依赖 `@/components/data-table`。 |
+| 模型定价可视化编辑器 | `web/default/src/features/system-settings/models/model-ratio-visual-editor.tsx` | 使用 `useDataTable()` 替代内联 `useReactTable()` 和手写列显隐 localStorage 读写；表格渲染和业务行为保持不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 公共 API 风险：`useDataTable()` 进入公共入口后会被后续页面复用，类型设计必须覆盖当前常见 `useReactTable()` 参数，不应为了模型定价表格写成专用 hook。
+2. 行为回归风险：模型定价表格的全局搜索会关闭打开中的编辑面板；切换 hook 后必须继续通过 `handleGlobalFilterChange` 保持该行为。
+3. 列显隐风险：当前模型定价表格使用 `model-ratio-column-visibility` localStorage key。迁入 hook 后必须使用相同 key 和相同默认隐藏列，避免用户列显示偏好丢失或反复重置。
+4. 行选择风险：批量复制依赖 `table.getFilteredSelectedRowModel()` 和 `table.resetRowSelection()`；hook 内部管理 rowSelection 时必须仍触发表格刷新并保留 TanStack 原 API。
+5. 分页风险：hook 默认 pageSize 需要保持 20，且继续开启 `getPaginationRowModel()`，避免模型定价表格一页显示数量变化。
+6. 范围风险：一次性替换所有页面的 `useReactTable()` 会跨越 channels、users、logs、keys 等核心页面。本轮只接入模型定价表格，公共 hook 经验证稳定后再逐步迁移其它页面。
+
+### 方案评审
+
+采用“新增公共 hook + 单页面接入”的渐进方案：
+
+1. 新建 `use-data-table.ts`，从 new-api 的 hook 设计迁移核心能力，并改为 NexusTok 版权头和中文注释；保留 `useControllableTableState()`，让调用方既可以传受控 state，也可以交给 hook 内部 state 管理。
+2. `readColumnVisibility()` 使用防御式解析，只接受对象中的 boolean 值；localStorage 不存在、不可用或内容异常时返回 `{}`。
+3. hook 默认开启本地 row model：filtered、pagination、sorted、faceted；在手动过滤/分页/排序模式下自动关闭对应 row model，同时允许调用方显式覆盖。
+4. `index.ts` 导出 `useDataTable`，后续页面可以从 `@/components/data-table` 统一导入。
+5. `model-ratio-visual-editor.tsx` 移除 `useReactTable()` 和各 row model 导入，移除本地 `columnVisibility`/`pagination`/`rowSelection` state 与手写 localStorage effect，改为调用 `useDataTable({ initialColumnVisibility, columnVisibilityStorageKey: STORAGE_KEY, ... })`。
+6. 验证顺序：`bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`、`bun test src/features/system-settings`、`bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后 MCP 访问 `http://192.168.0.202:3003/pricing-settings` 与 `/system-settings/models/model-ratio`，确认页面运行态无错误且没有保存写请求。
+
+### 实施结果
+
+1. 新增 `web/default/src/components/data-table/use-data-table.ts`，提供公共 `useDataTable()`，统一 TanStack Table 的排序、列显隐、行选择、展开行、分页、列过滤、全局过滤、可选手动模式和常用 row model 组合。
+2. `useDataTable()` 支持受控和非受控状态混用：调用方传入 `sorting`、`columnVisibility`、`rowSelection`、`expanded`、`pagination` 时按外部状态运行；未传入时由 hook 内部管理，并仍会调用对应 `onChange`。
+3. 新增 `columnVisibilityStorageKey` 支持，hook 会从 localStorage 防御式读取 boolean 字段，并在列显隐变化时写回；localStorage 不可用或内容异常时安全降级，不影响表格交互。
+4. `web/default/src/components/data-table/index.ts` 已导出 `useDataTable`，后续页面可以继续从 `@/components/data-table` 稳定入口引入公共表格能力。
+5. `model-ratio-visual-editor.tsx` 已移除直接 `useReactTable()`、`getCoreRowModel()`、`getFilteredRowModel()`、`getPaginationRowModel()`、`getFacetedRowModel()`、`getFacetedUniqueValues()` 等样板配置，改为调用 `useDataTable()`。
+6. 模型定价表格继续保留原 `model-ratio-column-visibility` 存储 key、默认隐藏的 cache/image/audio 相关列、搜索时关闭编辑面板、模式筛选、分页、行选择、批量复制、行点击编辑和保存前草稿提交行为。
+7. 本轮没有修改 Go 后端、数据库 schema、option key、保存 payload、`pkg/billingexpr`、预消费、结算、日志展示、模型同步接口、分组倍率、工具价格和 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认公共 hook 泛型、`useDataTable()` 导出和模型定价表格接入链路类型正确。
+2. 已运行 `cd web/default && bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`，13 个测试通过。
+3. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过。
+4. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮未新增可见文案或翻译 key。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功；访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求和登录请求，未出现保存 option 的写请求。
+8. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
+9. MCP 验证截图保存为 `/tmp/nexustok-use-data-table-validation.png`。

@@ -20,7 +20,6 @@ import {
   forwardRef,
   memo,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -29,18 +28,8 @@ import {
 import {
   type ColumnFiltersState,
   type OnChangeFn,
-  type PaginationState,
-  type RowSelectionState,
-  type VisibilityState,
   type SortingState,
   flexRender,
-  getCoreRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getSortedRowModel,
-  getPaginationRowModel,
-  useReactTable,
 } from '@tanstack/react-table'
 import { useMediaQuery } from '@/hooks'
 import { Copy, Plus } from 'lucide-react'
@@ -59,6 +48,7 @@ import {
   DataTableBulkActions,
   DataTableToolbar,
   DataTablePagination,
+  useDataTable,
 } from '@/components/data-table'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { safeJsonParse } from '../utils/json-parser'
@@ -139,49 +129,6 @@ const ModelRatioVisualEditorComponent = forwardRef<
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 20,
-  })
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
-    () => {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        try {
-          return safeJsonParse<VisibilityState>(saved, {
-            fallback: {
-              cacheRatio: false,
-              createCacheRatio: false,
-              imageRatio: false,
-              audioRatio: false,
-              audioCompletionRatio: false,
-            },
-            silent: true,
-          })
-        } catch {
-          return {
-            cacheRatio: false,
-            createCacheRatio: false,
-            imageRatio: false,
-            audioRatio: false,
-            audioCompletionRatio: false,
-          }
-        }
-      }
-      return {
-        cacheRatio: false,
-        createCacheRatio: false,
-        imageRatio: false,
-        audioRatio: false,
-        audioCompletionRatio: false,
-      }
-    }
-  )
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(columnVisibility))
-  }, [columnVisibility])
 
   const models = useMemo(
     () =>
@@ -418,31 +365,25 @@ const ModelRatioVisualEditorComponent = forwardRef<
     [handleEdit, handleDelete, t]
   )
 
-  const table = useReactTable({
+  const { table } = useDataTable({
     data: models,
     columns,
-    state: {
-      sorting,
-      columnFilters,
-      globalFilter,
-      columnVisibility,
-      pagination,
-      rowSelection,
+    sorting,
+    columnFilters,
+    globalFilter,
+    initialColumnVisibility: {
+      cacheRatio: false,
+      createCacheRatio: false,
+      imageRatio: false,
+      audioRatio: false,
+      audioCompletionRatio: false,
     },
+    columnVisibilityStorageKey: STORAGE_KEY,
     enableRowSelection: true,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: handleGlobalFilterChange,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    onRowSelectionChange: setRowSelection,
     autoResetPageIndex: false,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
     globalFilterFn: (row, _columnId, filterValue) => {
       const searchValue = String(filterValue).toLowerCase()
       return row.original.name.toLowerCase().includes(searchValue)
