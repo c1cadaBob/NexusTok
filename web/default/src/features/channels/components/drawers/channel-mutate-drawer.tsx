@@ -74,12 +74,6 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from '@/components/ui/input-group'
-import {
   Select,
   SelectContent,
   SelectGroup,
@@ -168,7 +162,6 @@ import {
   getMissingModelSearchMatches,
   isModelSearchAppendContextCurrent,
   mergeModelNames,
-  parseModelDraftList,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
@@ -777,7 +770,6 @@ export function ChannelMutateDrawer({
   >()
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
   const [modelSelectOpen, setModelSelectOpen] = useState(false)
-  const [customModelDraft, setCustomModelDraft] = useState('')
   const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
     useState(false)
   const trimmedModelSearchKeyword = modelSearchKeyword.trim()
@@ -906,11 +898,9 @@ export function ChannelMutateDrawer({
       setChannelKey(null)
       setIsChannelKeyLoading(false)
       clearModelSearch()
-      setCustomModelDraft('')
       setModelSelectOpen(false)
     } else if (channelId) {
       setChannelKey(null)
-      setCustomModelDraft('')
     }
   }, [open, channelId, clearModelSearch])
 
@@ -1917,33 +1907,6 @@ export function ChannelMutateDrawer({
     },
     [canEditBasicFields, noPermissionMessage, updateModels, t]
   )
-
-  const handleAddCustomModels = useCallback(() => {
-    if (!canEditBasicFields) {
-      toast.error(noPermissionMessage)
-      return
-    }
-
-    const customModels = parseModelDraftList(customModelDraft)
-    if (customModels.length === 0) {
-      toast.info(t('No models to add'))
-      return
-    }
-
-    const count = updateModels(customModels, true)
-    setCustomModelDraft('')
-    if (count === 0) {
-      toast.info(t('No new models to add'))
-      return
-    }
-    toast.success(t('Added {{count}} custom model(s)', { count }))
-  }, [
-    canEditBasicFields,
-    customModelDraft,
-    noPermissionMessage,
-    t,
-    updateModels,
-  ])
 
   // MultiSelect 组件会回传数组，保存前仍要转成逗号分隔字符串。
   const handleModelsChange = useCallback(
@@ -3983,6 +3946,7 @@ export function ChannelMutateDrawer({
                                       'Searching model metadata...'
                                     )}
                                     preserveSelectedOnEmptyRemovalKey
+                                    hideSelectedOptionsWhenSearching
                                     contentFooter={
                                       trimmedModelSearchKeyword.length > 0 ? (
                                         <div className='flex flex-col gap-2'>
@@ -4048,46 +4012,6 @@ export function ChannelMutateDrawer({
                                     }
                                   />
                                 </FormControl>
-                                <div className='flex flex-col gap-2'>
-                                  <FormLabel htmlFor='channel-custom-models'>
-                                    {t('Custom model (comma-separated)')}
-                                  </FormLabel>
-                                  <InputGroup>
-                                    <InputGroupInput
-                                      id='channel-custom-models'
-                                      value={customModelDraft}
-                                      onChange={(event) =>
-                                        setCustomModelDraft(event.target.value)
-                                      }
-                                      onKeyDown={(event) => {
-                                        if (event.key !== 'Enter') return
-                                        event.preventDefault()
-                                        handleAddCustomModels()
-                                      }}
-                                      disabled={!canEditBasicFields}
-                                      placeholder={t(
-                                        'Add custom model(s), comma-separated'
-                                      )}
-                                    />
-                                    <InputGroupAddon align='inline-end'>
-                                      <InputGroupButton
-                                        onClick={handleAddCustomModels}
-                                        disabled={
-                                          !canEditBasicFields ||
-                                          customModelDraft.trim().length === 0
-                                        }
-                                        title={
-                                          canEditBasicFields
-                                            ? undefined
-                                            : noPermissionMessage
-                                        }
-                                      >
-                                        <Plus data-icon='inline-start' />
-                                        {t('Add Models')}
-                                      </InputGroupButton>
-                                    </InputGroupAddon>
-                                  </InputGroup>
-                                </div>
                                 {modelMappingGuardrail.exposedTargetModels
                                   .length > 0 && (
                                   <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>

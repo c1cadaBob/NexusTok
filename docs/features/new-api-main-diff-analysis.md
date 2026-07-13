@@ -11432,3 +11432,62 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 9. MCP 打开渠道 `11111` 的编辑抽屉，模型区显示 provider 为 OpenAI，当前模型包含 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；输入 `gpt-5.6` 后页面显示 `3 matched · 2 new · 1 already selected`、按钮 `Add all 2 new match(es)`、页脚 `Will add: gpt-5.6-terra, gpt-5.6-luna`。
 10. MCP 在同一输入框按 Enter 后，草稿模型列表变为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，并出现 `Added 2 model(s) from search` 提示；未点击保存按钮，因此未改写后端渠道数据。
 11. MCP 网络记录显示 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 与分页扫描请求 `page_size=100` 均返回 200；控制台未出现 error 级别异常。DevTools 仍提示两个既有表单可访问性 issue（autocomplete/label），本轮未扩大到该独立问题。
+
+## 本轮实施评审：渠道编辑页模型入口二次对齐 new-api 最新体验
+
+### 需求分析
+
+用户继续反馈“搜索添加时不正确”，并指出最新版 `new-api-main` 的编辑渠道页面体验更好，希望 NexusTok 的编辑渠道页向该页面对齐。上一轮已经修复了 `gpt-5.6` 搜索时 Enter 被 Base UI Combobox 高亮候选截走的问题，但当前 NexusTok 模型区仍同时存在两个入口：上方模型 `MultiSelect` 负责搜索、选择和搜索批量追加，下方独立的 `Custom model (comma-separated)` 输入框负责自定义添加。这个布局会让“搜索添加”和“自定义添加”两个概念挤在一起，用户容易把下方 `Add Models` 理解为搜索结果添加按钮。
+
+本轮目标是继续吸收 `new-api-main` 最新编辑页的优势：保持单一、稳定、分区明确的渠道编辑体验；把模型搜索、已有模型选择和自定义模型创建统一回到一个模型输入控件内；保留 NexusTok 已有的模型元数据搜索、供应商过滤、分页全量扫描、账号池凭证模式、Codex 渠道能力和权限控制。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 抽屉布局 | `web/default/src/components/drawer-layout.ts` | 给侧边抽屉表单滚动容器补充 `overflow-x-hidden`，避免窄屏出现底部横向滚动条。 |
+| Combobox 芯片控件 | `web/default/src/components/ui/combobox.tsx` | 给芯片容器、单个芯片和芯片输入补充 `min-w-0` / `max-w-full` / 收缩 basis，确保模型名多时仍在容器内稳定换行或收缩。 |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 让芯片标签可收缩并保持 truncate；继续保留搜索提交和自定义创建能力。 |
+| 渠道编辑页 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除独立自定义模型输入框与 `Add Models` 按钮；渠道模型选择器开启 `hideSelectedOptionsWhenSearching`，搜索时聚焦展示尚未选择的命中项。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 自定义模型能力丢失风险：移除独立输入框不能导致管理员无法添加自定义模型；本轮保留 `MultiSelect allowCreate`，无候选时输入模型名并按 Enter 仍可创建，自带逗号/中文逗号/换行批量解析逻辑。
+2. 搜索批量追加回归风险：`gpt-5.6` 仍必须按 OpenAI 供应商搜索到 3 个模型，并只追加渠道尚未包含的 `terra/luna`；本轮继续复用上一轮分页扫描、去重和上下文防污染逻辑。
+3. 共享 UI 回归风险：`Combobox` / `MultiSelect` 是共享组件，布局收缩不能破坏其它页面；本轮只调整容器尺寸约束和文本 truncate，不改变默认选中、删除和搜索行为。
+4. 窄屏布局风险：抽屉内部既有移动端顶部导航，又有芯片式模型输入，容易制造横向滚动；本轮同时在抽屉表单和芯片控件层面限制横向溢出。
+5. 权限风险：模型草稿更新仍必须受 `canEditBasicFields` 控制；本轮没有放宽任何权限判断。
+6. 热更新验证风险：3003 可能存在旧缓存；本轮访问 `http://192.168.0.202:3003/` 后重新登录并打开 `/channels`，以运行态页面为准验证改动已生效。
+
+### 方案评审
+
+采用“保留原生能力、收敛入口、限制溢出”的方案：
+
+1. 保留 `MultiSelect` 的 `allowCreate`、逗号拆分、远程搜索受控输入、Enter 搜索批量追加、搜索结果分页扫描和大小写不敏感去重。
+2. 移除渠道编辑页模型区下方独立的自定义模型小表单，让模型添加只有一个主入口，和 `new-api-main` 最新编辑页的简洁模型区对齐。
+3. 渠道模型搜索时开启 `hideSelectedOptionsWhenSearching`，避免搜索下拉把已经选择的模型和可新增模型混在一起；统计区仍显示 `matched/new/already selected`，保持“3 个模型都已同步到模型库”的可见性。
+4. 对抽屉表单和芯片组件增加宽度收缩约束，修复 780px 窄宽度下底部横向滚动条和芯片撑宽问题。
+5. 不修改后端接口、渠道保存 payload、账号池/Codex 逻辑和模型映射风险保护，避免影响核心业务稳定性。
+
+### 实施结果
+
+- 渠道编辑页模型区删除了 `Custom model (comma-separated)` 和独立 `Add Models` 按钮，模型搜索、选择、搜索批量追加和自定义模型创建统一在 `Select models or add custom ones` 控件内完成。
+- 搜索 `gpt-5.6` 时仍显示 `3 matched · 2 new · 1 already selected`，并通过 Enter 追加 `gpt-5.6-terra`、`gpt-5.6-luna`，不会重复已有的 `gpt-5.6-sol`。
+- 780px 宽度下，页面 body 不再出现横向滚动；抽屉和芯片输入的 `scrollWidth` 与 `clientWidth` 保持在容器约束内，模型芯片稳定展示。
+- NexusTok 特有的账号池凭证、Codex 渠道、权限裁剪、模型映射风险提示和 Quick actions 均保留。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts` 通过，47 个用例成功。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en/zh/fr/ja/ru/vi 的 `missingCount` 均为 0。本轮未新增文案，历史 `untranslatedCount` 仍存在于 fr/ja/ru/vi，未在本轮扩大处理。
+3. `cd web/default && bunx prettier --write src/components/drawer-layout.ts src/components/ui/combobox.tsx src/components/multi-select.tsx src/features/channels/components/drawers/channel-mutate-drawer.tsx` 已格式化本轮触碰文件；全量 `bun run format:check` 仍会因仓库既有多处无关格式差异失败，本轮未批量改写无关文件。
+4. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+5. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.5 秒内完成生产构建。
+6. `git diff --check` 通过。
+7. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，登录 `c1cada` 成功，运行态构建标识仍为 `rv.0000.nexustok-default`；随后打开 `/channels` 并编辑渠道 `11111`。
+8. MCP 页面验证：编辑抽屉模型区不再出现 `Custom model (comma-separated)`；当前模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；输入 `gpt-5.6` 后显示 `3 matched · 2 new · 1 already selected`、按钮 `Add all 2 new match(es)` 和 `Will add: gpt-5.6-terra, gpt-5.6-luna`。
+9. MCP 按 Enter 后，前端草稿显示 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，并出现 `Added 2 model(s) from search` 提示；未点击保存。
+10. MCP 接口复核 `/api/channel/1` 返回的持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认验证过程没有污染后端渠道数据。
+11. MCP 窄屏验证：将视口调整为 `780x620`，`document.body.scrollWidth === document.body.clientWidth === 780`，抽屉 `overflowX` 为 `hidden`，模型芯片容器 `scrollWidth === clientWidth`；视觉截图显示模型区无底部横向滚动条。
+12. MCP 网络记录显示 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 与分页扫描请求 `page_size=100` 均返回 200；控制台无 error，仅有 i18next 信息、构建 debug 日志和既有表单可访问性 issue。

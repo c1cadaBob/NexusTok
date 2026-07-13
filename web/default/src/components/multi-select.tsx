@@ -482,7 +482,10 @@ export function MultiSelect({
       onOpenChange={updateOpen}
       disabled={disabled}
     >
-      <ComboboxChips ref={chipsAnchorRef} className={cn('w-full', className)}>
+      <ComboboxChips
+        ref={chipsAnchorRef}
+        className={cn('max-w-full min-w-0', className)}
+      >
         <ComboboxValue>
           {(values: string[]) => {
             const shouldLimit = typeof maxVisibleChips === 'number' && !expanded
@@ -513,12 +516,14 @@ export function MultiSelect({
                           }
                           onPointerDown={(event) => event.stopPropagation()}
                           title={t('Click to copy')}
-                          className='max-w-[16rem] cursor-pointer truncate rounded-sm hover:underline'
+                          className='max-w-[16rem] min-w-0 cursor-pointer truncate rounded-sm hover:underline'
                         >
                           {label}
                         </button>
                       ) : (
-                        <span className='max-w-[16rem] truncate'>{label}</span>
+                        <span className='max-w-[16rem] min-w-0 truncate'>
+                          {label}
+                        </span>
                       )}
                     </ComboboxChip>
                   )
