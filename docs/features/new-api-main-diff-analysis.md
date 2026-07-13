@@ -12109,3 +12109,69 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 9. MCP 在页面下拉选择 `Manage` 后点击 `Search`，URL 更新为 `type=%5B%223%22%5D`；网络记录显示 `/api/log/stat?...&type=3...` 和 `/api/log/?...&type=3...` 均返回 HTTP 200，表格仅展示 `Manage` 记录。
 10. MCP 访问 `http://192.168.0.202:3003/usage-logs/task?type=3` 后页面自动规范化为 `/usage-logs/task`，task logs 请求为 `/api/task/?p=1&page_size=100&start_timestamp=...&end_timestamp=...`，没有携带 `type`。
 11. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间 3003 曾在热发布重建窗口短暂返回连接拒绝；Docker 日志确认 `nexustok-api-hot` 完成 frontend dist 发布和 backend restart 后恢复，随后所有页面与接口验证均通过。
+
+## 本轮实施评审：Usage Logs 渠道列重试链与 multi-key 标记原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx` 后确认，new-api 最新 Common Logs 在管理员渠道列中直接展示两类排障信息：当 `other.admin_info.is_multi_key=true` 且存在 `multi_key_index` 时，在渠道 ID 旁显示 key index 小徽标；当 `other.admin_info.use_channel` 包含多个渠道时，在同一行提供 `Retry Chain` 弹层展示完整重试链路。NexusTok 当前详情弹窗已经能展示 `Retry Chain`，但列表页渠道列只显示渠道 ID、渠道名称和 Channel Affinity，管理员无法在列表扫描阶段快速发现多 key 命中或重试链路。
+
+### 需求分析
+
+1. Common Logs 管理员视图的渠道列应在渠道 ID 旁显示 multi-key 命中序号，便于定位同一渠道内实际使用的 key。
+2. 当 `use_channel` 包含多个有效渠道值时，渠道列应显示可点击的重试链路图标，点击后用 Popover 展示完整链路。
+3. 单个 `use_channel` 只代表当前使用渠道，不应误标为重试链；空值、非数组和无效值应忽略。
+4. 现有详情弹窗里的 `Retry Chain` 行保留；列表增强只是提前暴露关键排障信号，不改变后端日志结构。
+5. 继续保留 NexusTok 当前更完整的 `DataTableColumnHeader`、`meta.label`、移动端隐藏策略、Channel Affinity 弹窗入口和敏感信息显隐逻辑。
+6. 该能力只对管理员日志列生效，不影响普通用户日志、日志查询参数、计费、渠道调度和 relay 请求。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道标记解析 | `web/default/src/features/usage-logs/lib/channel-markers.ts` | 新增纯函数，从 `admin_info` 中归一化 `use_channel`、`is_multi_key` 和 `multi_key_index`。 |
+| 纯逻辑测试 | `web/default/src/features/usage-logs/lib/channel-markers.test.ts` | 覆盖多渠道重试链、单渠道忽略、multi-key index 展示和无效 index 忽略。 |
+| Common Logs 列 | `web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 管理员渠道列新增 key index 徽标和 `Retry Chain` Popover；保留原渠道 Tooltip 与 Channel Affinity。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮差异来源、需求分析、影响范围、风险评估、方案评审和后续验证。 |
+
+本轮不修改 Go 后端、数据库、日志写入、日志详情弹窗、日志查询参数、权限规则、渠道调度、账号池、模型搜索和计费表达式。
+
+### 风险评估
+
+1. 敏感信息风险：`multi_key_index` 和 `use_channel` 来源于 `admin_info`，本轮只在管理员列中消费；普通用户没有渠道列，也不会看到该信息。Tooltip/Popover 中仍遵循 `sensitiveVisible` 对渠道名称和 affinity group 的遮罩。
+2. 误报风险：`use_channel` 只有一个元素时不展示 Retry Chain 图标，避免把正常单渠道命中误判为重试；非数组值会被忽略。
+3. 布局风险：渠道列宽度有限，新增 key index 和 branch 图标可能挤压渠道名称。本轮将标记放在渠道 ID 同一行，以小尺寸、可收缩控件展示，渠道名称仍在下一行 truncate。
+4. 交互风险：Channel Affinity 原有小图标使用绝对定位；新增的 key index 和 retry icon 不能遮挡它。保持外层 `relative inline-flex`，新增元素位于正常 flex 流，affinity 继续固定在右上角。
+5. 组件风险：Popover 使用项目已安装的 Base UI shadcn 组件，`Retry Chain`/`Key`/`Chain` 翻译键已存在，不新增 i18n 文案。
+6. 可测试性风险：列表 UI 依赖日志数据，测试环境不一定有 multi-key 日志。本轮把解析逻辑提到纯函数并加单元测试，MCP 侧至少验证页面无运行时错误和普通日志列不回归。
+
+### 方案评审
+
+采用“纯函数归一化 + 渠道列小幅增强”的保守方案：
+
+1. 新增 `getUsageLogChannelMarkers(adminInfo)`，返回 `retryChannels`、`retryChain`、`hasRetryChain` 和 `multiKeyIndex`；只有多个有效渠道才生成 retry chain，只有 `is_multi_key=true` 且 index 为有限数字时才返回 index。
+2. 在 common logs 渠道列中用 helper 替代直接读取 `use_channel`，让列表、Tooltip 和 Popover 共享同一解析语义。
+3. 渠道 ID `StatusBadge` 改为无 leading dot 的紧凑形态，旁边追加 key index 小圆徽标和 `GitBranch` 图标按钮；点击 retry 按钮打开 `PopoverContent` 展示完整链路。
+4. 保留原 `TooltipContent` 中的 `Chain` 文案和 Channel Affinity 详情，并在 Tooltip 中补充 `Key: <index>`。
+5. 修改后运行 `channel-markers` 测试、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/usage-logs/common?type=0` 验证页面热更新、渠道列渲染、接口请求和控制台状态。
+
+### 实施结果
+
+- 新增 `getUsageLogChannelMarkers(adminInfo)`，统一归一化渠道列 marker：`use_channel` 只接受数组并转换成有效字符串列表；两个及以上有效渠道才生成 `retryChain`；`multiKeyIndex` 只在 `is_multi_key=true` 且序号为有限数字时返回。
+- Common Logs 管理员渠道列已使用该 helper，不再在列组件内直接拼接 `use_channel`。
+- 渠道 ID 徽标已改为更紧凑的无 dot 形态，保留 `copyText={channel}`；当存在 `multiKeyIndex` 时在渠道 ID 旁显示小圆徽标，并在 Tooltip 中补充 `Key: <index>`。
+- 当 `hasRetryChain=true` 时，渠道列会显示 `GitBranch` 图标按钮，点击后通过 `Popover` 展示完整 `Retry Chain`。
+- 原有 Channel Affinity 小图标、Tooltip 内容、敏感数据显隐、管理员权限控制、详情弹窗 `Retry Chain` 行和日志请求参数均未改变。
+- 新增 `channel-markers.test.ts`，覆盖多渠道重试链、单渠道不展示、multi-key 序号展示和无效序号忽略。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/usage-logs/lib/channel-markers.test.ts` 通过，4 个 marker 解析用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.3 秒内完成生产构建。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 打开 `http://192.168.0.202:3003/usage-logs/common?type=0`，调用 `/api/user/login` 登录 `c1cada` 返回 HTTP 200、`success=true`、`uid=1`、`role=100`；随后忽略缓存 reload 页面。
+6. MCP 页面快照确认 `Common Logs` 正常渲染、类型下拉为 `All Types`、管理员列包含 `Channel`、`User`、`Token`、`Model`、`Timing`、`Tokens`、`Cost` 和 `Details`，本轮渠道列增强没有破坏表格布局。
+7. MCP 网络记录显示页面自身请求 `/api/log/stat?...&type=0...` 返回 HTTP 200，`/api/log/?p=1&page_size=100&type=0...` 返回 HTTP 200（中间 `/api/log` 到 `/api/log/` 的 301 为既有路径规范化）。
+8. MCP 分页抽样调用 `/api/log/?p=1..5&page_size=100&type=0&start_timestamp=0&end_timestamp=4102444800`，共扫描当前环境 372 条日志，没有发现 `other.admin_info.use_channel` 或 `multi_key_index` 样例，因此无法在真实页面点击 `Retry Chain` Popover；对应分支已由 `channel-markers.test.ts` 覆盖。
+9. MCP 干净 reload 后检查控制台，`error`、`warn`、`issue` 均为空。验证过程中早先两次手写 fetch 因未带 `NexusTok-User` 头产生 401 噪声，已重新 reload 后排除，不属于页面自身错误。

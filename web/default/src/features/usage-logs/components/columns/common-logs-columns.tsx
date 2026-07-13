@@ -18,7 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useState } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
-import { CircleAlert, Sparkles, KeyRound } from 'lucide-react'
+import { CircleAlert, GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
@@ -30,6 +30,11 @@ import {
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -39,6 +44,7 @@ import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import type { UsageLog } from '../../data/schema'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { getUsageLogChannelMarkers } from '../../lib/channel-markers'
 import {
   formatModelName,
   getFirstResponseTimeColor,
@@ -321,11 +327,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
           const other = parseLogOther(log.other)
           const affinity = other?.admin_info?.channel_affinity
-          const useChannel = other?.admin_info?.use_channel
-          const channelChain =
-            useChannel && useChannel.length > 0
-              ? useChannel.join(' → ')
-              : undefined
+          const channelMarkers = getUsageLogChannelMarkers(other?.admin_info)
+          const channelChain = channelMarkers.retryChain
           const channelDisplay = log.channel_name
             ? `${log.channel_name} #${log.channel}`
             : `#${log.channel}`
@@ -340,14 +343,57 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     <div className='flex max-w-[160px] flex-col gap-0.5' />
                   }
                 >
-                  <div className='relative inline-flex w-fit'>
+                  <div className='relative inline-flex w-fit items-center gap-1'>
                     <StatusBadge
                       label={channelIdDisplay}
                       autoColor={String(log.channel)}
                       copyText={String(log.channel)}
                       size='sm'
+                      showDot={false}
                       className='font-mono'
                     />
+                    {channelMarkers.multiKeyIndex != null && (
+                      <StatusBadge
+                        label={String(channelMarkers.multiKeyIndex)}
+                        size='sm'
+                        showDot={false}
+                        copyable={false}
+                        variant='neutral'
+                        className='h-5 min-w-5 justify-center rounded-full px-1 font-mono text-xs'
+                        aria-label={`${t('Key')} ${channelMarkers.multiKeyIndex}`}
+                      />
+                    )}
+                    {channelMarkers.hasRetryChain && channelChain && (
+                      <Popover>
+                        <PopoverTrigger
+                          render={
+                            <button
+                              type='button'
+                              className='text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-5 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:outline-none'
+                              aria-label={t('Retry Chain')}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          }
+                        >
+                          <GitBranch
+                            className='size-3.5 text-amber-500'
+                            aria-hidden='true'
+                          />
+                        </PopoverTrigger>
+                        <PopoverContent
+                          side='top'
+                          align='start'
+                          className='w-64 text-xs'
+                        >
+                          <div className='flex flex-col gap-1'>
+                            <p className='font-medium'>{t('Retry Chain')}</p>
+                            <p className='text-muted-foreground font-mono break-all'>
+                              {channelChain}
+                            </p>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                     {affinity && (
                       <button
                         type='button'
@@ -384,6 +430,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     {channelChain && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Chain')}: {channelChain}
+                      </p>
+                    )}
+                    {channelMarkers.multiKeyIndex != null && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Key')}: {channelMarkers.multiKeyIndex}
                       </p>
                     )}
                     {affinity && (
