@@ -12398,3 +12398,78 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 11. MCP 拦截下载按钮验证其创建本地 Blob，文件名为 `code.typescript`，Blob URL 被及时 revoke；该操作没有触发后端请求。
 12. MCP 验证结束后已恢复/清理临时 `playground_messages`，没有污染运行态用户数据。
 13. MCP 控制台检查 `error`、`warn`、`issue` 均为空；本轮相关网络请求均为页面加载和只读 GET，没有触发模型请求或后端写接口。
+
+## 本轮实施评审：渠道编辑页模型搜索与 new-api 编辑体验对齐
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx`、`/opt/project/new-api-main/web/default/src/components/multi-select.tsx` 与当前 NexusTok 对应文件后确认，new-api 最新编辑渠道页已经采用右侧 `Sheet`、左侧分段导航、`Basic Information` / `Credentials` / `Models & Groups` / `Advanced Settings` 的分区体验。NexusTok 当前页面已吸收该主骨架，并在此基础上增加了账号池凭证模式、Codex OAuth、细粒度权限提示、模型元数据搜索和分页扫描追加等原生增强。
+
+本轮用户反馈“搜索添加时不正确”，并希望编辑渠道页面向最新版 new-api 对齐。MCP 在 `http://192.168.0.202:3003/channels` 以渠道 `11111` 复现后确认：输入 `gpt-5.6` 并按 Enter 会把缺失的 `gpt-5.6-terra`、`gpt-5.6-luna` 追加到草稿，已存在的 `gpt-5.6-sol` 不重复追加，接口与批量追加主路径是可用的；但当前搜索区域把“逐个选择候选”“批量添加所有搜索命中”“自定义模型创建”放在同一个芯片输入框里，候选隐藏已选项后容易让管理员误以为只同步了一个或只添加了当前高亮项。new-api 的优势在于编辑抽屉结构更清晰、表单分区更克制；NexusTok 应保留远程搜索优势，同时把搜索添加语义做成更明确的原生能力。
+
+### 需求分析
+
+1. 编辑渠道页继续保留 new-api 风格的分段导航、紧凑表单和清晰分区，不回退到旧式长表单。
+2. 模型搜索输入时必须清楚区分：当前页命中数、可新增数、已选择数、是否还会扫描更多分页结果，以及最终将添加哪些模型。
+3. 按 Enter、点击搜索结果区按钮、存在高亮候选时的行为都应稳定：有真实匹配时优先执行批量补齐；没有匹配时才允许自定义模型创建，避免把 `gpt-5.6` 这种系列前缀误写成一个不可调用模型。
+4. 候选列表不应让用户误以为“只会添加可见的一个候选”；批量添加按钮和预览需要使用同一套缺失模型计算结果。
+5. 布局上将 `Models & Groups` 内部从嵌套卡片感较强的块状结构调整为更贴近 new-api 的轻量分组：模型选择、快捷操作、模型映射和分组各自清楚，但不制造卡片套卡片。
+6. 本轮只修改前端展示和模型搜索草稿交互，不保存表单、不改渠道后端接口、不改模型同步接口、不改数据库和计费。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 调整模型区布局、搜索结果提示、批量追加入口和 Enter 行为提示，保留现有账号池与权限能力。 |
+| 多选组件 | `web/default/src/components/multi-select.tsx` | 如需修复高亮候选与搜索提交冲突，只在已有 props 语义内小改，不改变普通多选默认行为。 |
+| 模型搜索纯函数 | `web/default/src/features/channels/lib/model-search.ts` | 如需补充“按钮文案/预览/实际添加”一致性的纯函数，保持无副作用。 |
+| 测试 | `web/default/src/components/multi-select.test.ts`、`web/default/src/features/channels/lib/model-search.test.ts` | 覆盖 Enter 搜索提交、真实匹配时不创建自定义值、批量追加数量一致性。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增或调整搜索提示文案时补齐六语翻译并运行同步。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、实施结果和 MCP 验证。 |
+
+本轮不修改 Go 后端、`/api/models/search`、`/api/channel` 保存逻辑、模型元数据同步、账号池、Relay 调度、计费表达式、数据库迁移和权限后端。
+
+### 风险评估
+
+1. 搜索语义回归风险：MultiSelect 是公共组件，直接改变默认 Enter 或创建行为会影响用户分组、多模型选择和其他表单。方案只通过渠道编辑页已有 props 启用搜索提交逻辑，默认组件行为保持不变。
+2. 已选模型误删风险：芯片输入框空值时 Backspace/Delete 已被保护，本轮不能移除该保护；否则管理员搜索后可能误删最后一个模型。
+3. 重复模型风险：搜索追加、手动创建、预设填充和复制粘贴都必须继续按 trim + 大小写不敏感去重，不能引入 `GPT-5.6-TERRA` 与 `gpt-5.6-terra` 并存。
+4. 分页误导风险：第一页候选可能少于后端 `total`。如果按钮显示“添加全部”，实际追加前仍必须扫描全部分页；UI 需要明确“会检查更多结果”，避免管理员误判。
+5. 权限风险：普通写权限只能编辑非敏感字段；模型搜索添加应继续受 `canEditBasicFields` 控制，不能绕过 `canSensitiveWrite` 与只读提示。
+6. 布局风险：编辑抽屉本身内容密集，收敛卡片嵌套时不能造成按钮、芯片和说明文字在移动端重叠；需要 MCP 截图检查桌面和至少一个窄宽度。
+7. i18n 风险：新增动态文案必须补齐六语 locale；否则 `bun run i18n:sync` 会出现 missing key。
+
+### 方案评审
+
+采用“保留 NexusTok 搜索增强 + 向 new-api 收敛编辑抽屉信息架构 + 小步修复搜索入口”的方案：
+
+1. 保留当前 `Sheet + ChannelEditorNav`、账号池、Codex、权限和模型元数据搜索等 NexusTok 原生能力；不整文件覆盖 new-api。
+2. 将模型搜索结果 header 改成更明确的状态行：展示当前已加载命中、可新增、已选择，并在按钮文案中说明“添加搜索匹配”而非笼统 `Add`。
+3. Footer 继续展示将添加的缺失模型预览，并在存在后端未扫描分页时提示点击会先扫描全部结果；预览、按钮可用性和实际追加统一使用 `buildModelSearchAppendPlan` / `getMissingModelSearchMatches`。
+4. 检查 `MultiSelect` 的 Enter 捕获路径，确保渠道编辑页传入 `submitSearchOnEnterWithMatches` 和 `submitSearchOnEnterWhenHighlighted` 时，有匹配或仍在加载就提交搜索；无匹配时才保留自定义创建。
+5. 把 `Models & Groups` 内部布局从大块嵌套卡片调整成轻量分组：模型选择区、快捷操作区、映射区、分组区通过边界和 gap 分隔，避免与外层 `SideDrawerSection` 形成卡片套卡片。
+6. 补充/更新单元测试，运行 `bun test`、`bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 和 `/channels`，复现 `gpt-5.6` 搜索添加、截图确认页面已热更新。
+
+### 实施结果
+
+- 编辑渠道页模型搜索批量按钮文案从笼统 `Add` / `Add all {{count}} new match(es)` 调整为更明确的 `Add {{count}} search match(es)`；当命中都已在渠道中时显示禁用态 `No new matches`，避免管理员误以为仍可追加。
+- 搜索结果弹层新增说明：`Use the button to add every matching model. Selecting a row below adds only that one model.`，明确“按钮=批量添加所有匹配模型”“候选行=只选择单个模型”的区别。
+- `Models & Groups` 内部布局改为轻量分组：模型选择区保留徽标和远程搜索，快捷操作区用紧凑的 muted 分组承载 Fill/Fetch/Copy/Clear，模型映射和用户分组改为边界分隔而不是嵌套卡片。
+- 保留 NexusTok 已有的模型搜索原生能力：OpenAI/Codex 渠道默认搜索 OpenAI 模型库，点击批量添加前会扫描全部分页结果，搜索追加继续按 trim + 大小写不敏感去重。
+- 未修改 `MultiSelect` 默认行为、后端 `/api/models/search`、渠道保存接口、账号池、Relay 调度、模型同步任务、计费、数据库和权限后端。
+- 新增两个按钮状态文案，并已补齐 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六语翻译。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts` 通过，49 个模型搜索和 MultiSelect 键盘/创建/去重用例成功。
+2. `cd web/default && bun run i18n:sync` 通过；同步报告中 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 的 `missingCount=0`、`extrasCount=0`。
+3. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+4. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.3 秒内完成生产构建。
+5. `git diff --check` 通过，未发现空白错误。
+6. 使用 Chrome DevTools MCP 忽略缓存访问 `http://192.168.0.202:3003/channels`，页面正常加载并能打开渠道 `11111` 的编辑抽屉；本轮无需重启容器，热更新已生效。
+7. MCP 在编辑抽屉模型输入框搜索 `gpt-5.6`，弹层显示 `3 matched · 2 new · 1 already selected`、按钮 `Add 2 search match(es)`、说明 `Use the button to add every matching model. Selecting a row below adds only that one model.`，预览将添加 `gpt-5.6-terra, gpt-5.6-luna`。
+8. MCP 点击批量按钮后，草稿模型从 3 个变成 5 个，并出现 toast `Added 2 model(s) from search`；再次搜索同一关键词显示 `3 matched · 0 new · 3 already selected`，按钮为禁用态 `No new matches`，footer 显示 `No new search results to add`。
+9. MCP 验证后点击 `Cancel` 退出抽屉，未触发 `Update Channel`；随后调用 `/api/channel/1` 读取后端详情，`models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认验证草稿没有写入后端。
+10. MCP 网络记录显示 `/api/channel/1`、`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 均返回 HTTP 200；`/api/prefill_group?type=model` 到 `/api/prefill_group/?type=model` 的 301 为既有路径规范化。
+11. MCP 桌面截图已保存到 `/tmp/nexustok-channel-edit-after-desktop.png`，390px 窄屏截图已保存到 `/tmp/nexustok-channel-edit-after-mobile.png`；窄屏下搜索结果、按钮和说明完整展示，没有重叠。
+12. MCP 控制台没有 JavaScript `error` 或 `warn`；DevTools 仍报告既有表单 a11y issue（`autocomplete`、`label for` 关联），本轮没有引入新的运行时异常。

@@ -1401,10 +1401,10 @@ export function ChannelMutateDrawer({
     unscannedModelSearchResultCount > 0
       ? t('Scan all search results')
       : modelSearchAppendSummary.addableCount > 0
-        ? t('Add all {{count}} new match(es)', {
+        ? t('Add {{count}} search match(es)', {
             count: modelSearchAppendSummary.addableCount,
           })
-        : t('Add')
+        : t('No new matches')
   const shouldShowModelSearchAppend =
     trimmedModelSearchKeyword.length > 0 &&
     !isSearchingModelMeta &&
@@ -3914,15 +3914,15 @@ export function ChannelMutateDrawer({
                     className='scroll-mt-4'
                   >
                     <ChannelModelsSection>
-                      <div className='space-y-5'>
-                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                      <div className='flex flex-col gap-5'>
+                        <div className='flex flex-col gap-4'>
                           <FormField
                             control={form.control}
                             name='models'
                             render={() => (
-                              <FormItem className='space-y-3'>
+                              <FormItem className='flex flex-col gap-3'>
                                 <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                  <div className='space-y-1'>
+                                  <div className='flex flex-col gap-1'>
                                     <FormLabel>{t('Models *')}</FormLabel>
                                     <FormDescription>
                                       {t(FIELD_DESCRIPTIONS.MODELS)}
@@ -3966,55 +3966,63 @@ export function ChannelMutateDrawer({
                                     onSearchSubmit={handleAddModelSearchMatches}
                                     contentHeader={
                                       shouldShowModelSearchAppend ? (
-                                        <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                          <div className='flex flex-col gap-1'>
-                                            <span className='text-sm font-medium'>
-                                              {t('Search results')}
-                                            </span>
-                                            <span className='text-muted-foreground text-xs'>
-                                              {t(
-                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                {
-                                                  matched:
-                                                    modelSearchAppendSummary.matchedCount,
-                                                  addable:
-                                                    modelSearchAppendSummary.addableCount,
-                                                  existing:
-                                                    modelSearchAppendSummary.existingCount,
-                                                }
+                                        <div className='flex flex-col gap-3'>
+                                          <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                            <div className='flex flex-col gap-1'>
+                                              <span className='text-sm font-medium'>
+                                                {t('Search results')}
+                                              </span>
+                                              <span className='text-muted-foreground text-xs'>
+                                                {t(
+                                                  '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                  {
+                                                    matched:
+                                                      modelSearchAppendSummary.matchedCount,
+                                                    addable:
+                                                      modelSearchAppendSummary.addableCount,
+                                                    existing:
+                                                      modelSearchAppendSummary.existingCount,
+                                                  }
+                                                )}
+                                              </span>
+                                            </div>
+                                            <Button
+                                              type='button'
+                                              variant='outline'
+                                              size='sm'
+                                              className='shrink-0'
+                                              onClick={
+                                                handleAddModelSearchMatches
+                                              }
+                                              disabled={
+                                                !canEditBasicFields ||
+                                                isAddingModelSearchMatches ||
+                                                isSearchingModelMeta ||
+                                                isModelSearchDebouncing ||
+                                                !canRunModelSearchAppend
+                                              }
+                                              title={
+                                                canEditBasicFields
+                                                  ? undefined
+                                                  : noPermissionMessage
+                                              }
+                                            >
+                                              {isAddingModelSearchMatches ? (
+                                                <Loader2
+                                                  data-icon='inline-start'
+                                                  className='animate-spin'
+                                                />
+                                              ) : (
+                                                <Plus data-icon='inline-start' />
                                               )}
-                                            </span>
+                                              {modelSearchAddButtonLabel}
+                                            </Button>
                                           </div>
-                                          <Button
-                                            type='button'
-                                            variant='outline'
-                                            size='sm'
-                                            onClick={
-                                              handleAddModelSearchMatches
-                                            }
-                                            disabled={
-                                              !canEditBasicFields ||
-                                              isAddingModelSearchMatches ||
-                                              isSearchingModelMeta ||
-                                              isModelSearchDebouncing ||
-                                              !canRunModelSearchAppend
-                                            }
-                                            title={
-                                              canEditBasicFields
-                                                ? undefined
-                                                : noPermissionMessage
-                                            }
-                                          >
-                                            {isAddingModelSearchMatches ? (
-                                              <Loader2
-                                                data-icon='inline-start'
-                                                className='animate-spin'
-                                              />
-                                            ) : (
-                                              <Plus data-icon='inline-start' />
+                                          <p className='text-muted-foreground text-xs leading-relaxed'>
+                                            {t(
+                                              'Use the button to add every matching model. Selecting a row below adds only that one model.'
                                             )}
-                                            {modelSearchAddButtonLabel}
-                                          </Button>
+                                          </p>
                                         </div>
                                       ) : undefined
                                     }
@@ -4139,9 +4147,9 @@ export function ChannelMutateDrawer({
                             )}
                           />
 
-                          <Separator className='my-4' />
+                          <Separator />
 
-                          <div className='flex flex-col gap-3'>
+                          <div className='border-border/60 bg-muted/20 flex flex-col gap-3 rounded-md border p-3'>
                             <div>
                               <p className='text-sm font-medium'>
                                 {t('Quick actions')}
@@ -4265,7 +4273,7 @@ export function ChannelMutateDrawer({
                           </div>
                         </div>
 
-                        <div className='border-border/60 rounded-lg border p-4'>
+                        <div className='border-border/60 border-t pt-5'>
                           <FormField
                             control={form.control}
                             name='model_mapping'
@@ -4404,13 +4412,13 @@ export function ChannelMutateDrawer({
                           />
                         </div>
 
-                        <div className='border-border/60 rounded-lg border p-4'>
+                        <div className='border-border/60 border-t pt-5'>
                           <FormField
                             control={form.control}
                             name='group'
                             render={({ field }) => (
-                              <FormItem className='space-y-3'>
-                                <div className='space-y-1'>
+                              <FormItem className='flex flex-col gap-3'>
+                                <div className='flex flex-col gap-1'>
                                   <FormLabel>{t('Groups *')}</FormLabel>
                                   <FormDescription>
                                     {t(FIELD_DESCRIPTIONS.GROUP)}
