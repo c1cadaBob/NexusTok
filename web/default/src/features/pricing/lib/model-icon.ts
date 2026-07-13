@@ -16,16 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-// ----------------------------------------------------------------------------
-// Pricing Lib Exports
-// ----------------------------------------------------------------------------
+import type { PricingModel } from '../types'
 
-export * from './filters'
-export * from './price'
-export * from './model-helpers'
-export * from './model-icon'
-export * from './billing-expr'
-export * from './tier-expr'
-export * from './model-metadata'
-export * from './mock-stats'
-export * from './seed'
+type PricingModelIconFields = Pick<PricingModel, 'icon' | 'vendor_icon'>
+
+function normalizeIconKey(value: string | undefined | null): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+// 模型广场优先展示模型自身图标；模型未配置图标时回退到供应商图标，避免自定义模型品牌被供应商品牌覆盖。
+export function getPricingModelIconKey(
+  model: PricingModelIconFields
+): string | undefined {
+  return normalizeIconKey(model.icon) ?? normalizeIconKey(model.vendor_icon)
+}

@@ -11962,3 +11962,70 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 8. MCP 点击显隐按钮后，按钮状态变为 `Show sensitive data` 且 `aria-pressed=true`，证明显隐状态能在真实页面中切换。
 9. MCP 网络记录显示页面触发 `GET /api/data/flow?start_timestamp=...&end_timestamp=...&default_time=hour` 并返回 HTTP 200；响应体为 `{"data":[],"message":"","success":true}`，当前环境无 Flow 数据，因此页面显示 `No flow data available` 为空态是合理结果。
 10. MCP 控制台无 error、warn、issue，本轮没有引入新的前端运行时问题。
+
+## 本轮实施评审：Pricing 模型级图标 fallback 原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/pricing` 后确认，new-api 最新 Pricing 在模型卡片、表格模型列和模型详情头部都会优先展示模型自身 `icon`，仅当模型级图标为空时才回退到供应商 `vendor_icon`。NexusTok 后端 `model/pricing.go` 的 `Pricing` DTO 已经返回 `icon,omitempty`，但当前前端 `PricingModel` 类型没有声明模型级 `icon` 字段，Pricing 展示层也主要只读取 `vendor_icon`，导致 models.dev 或管理员维护的模型级图标无法在模型广场中体现。
+
+### 需求分析
+
+本轮目标是把 new-api 的模型级图标展示优势转成 NexusTok 原生能力，同时保留当前 Pricing 页面已有的价格、性能、动态计费和模型详情能力：
+
+1. 前端 `PricingModel` 类型需要补齐后端已经返回的 `icon?: string` 字段。
+2. 模型卡片、Pricing 表格模型列、模型详情页头部都应使用统一优先级：`model.icon` 优先，`model.vendor_icon` 作为 fallback。
+3. 空字符串、空白字符串不能覆盖有效供应商图标；应归一为“没有模型图标”并继续 fallback。
+4. 不改变供应商筛选、供应商侧栏、Vendor 列、价格计算、动态计费表达式和性能徽章。
+5. 用纯函数测试锁定 fallback 规则，避免后续页面局部实现再次分叉。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Pricing 类型 | `web/default/src/features/pricing/types.ts` | `PricingModel` 新增可选 `icon` 字段，与后端 DTO 和 new-api 类型对齐。 |
+| Pricing 图标规则 | `web/default/src/features/pricing/lib/model-icon.ts` | 新增共享 helper，统一选择 `model.icon || model.vendor_icon` 并处理空白值。 |
+| Pricing 展示组件 | `web/default/src/features/pricing/components/model-card.tsx`、`pricing-columns.tsx`、`model-details.tsx` | 模型卡片、表格模型列和详情头部改用共享 helper；布局、文案和交互不变。 |
+| 测试 | `web/default/src/features/pricing/lib/model-icon.test.ts` | 覆盖模型级图标优先、供应商 fallback、空白模型图标 fallback 和完全缺失。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮差异来源、需求分析、影响范围、风险评估、方案评审和后续验证。 |
+
+本轮不修改 Go 后端、数据库、`/api/pricing` 响应结构、模型同步任务、模型元信息编辑、计费表达式、价格换算、权限和渠道逻辑。
+
+### 风险评估
+
+1. 数据兼容风险：后端已存在 `icon,omitempty`，前端只补类型和展示 fallback；旧响应没有 `icon` 时会继续使用 `vendor_icon`，不会破坏现有页面。
+2. 视觉回归风险：只改变模型图标来源，不改容器尺寸、卡片排版、表格列宽、详情页布局和 fallback 首字母显示。
+3. 图标 key 风险：`getLobeIcon` 已能处理未知 key 并渲染首字母 fallback；本轮只决定传入哪个 key，不引入新的图标库和资源。
+4. 性能风险：helper 是简单字符串选择，渲染成本不变；Pricing 列表已有的 memo、table 和详情逻辑不受影响。
+5. 业务风险：供应商侧栏和 Vendor 列仍展示供应商图标，不会因为模型级图标存在而影响供应商归类和筛选。
+
+### 方案评审
+
+采用“类型补齐 + 共享 helper + 三处消费替换”的保守方案：
+
+1. 在 `PricingModel` 中添加 `icon?: string`，与后端 DTO 和 new-api 类型保持一致。
+2. 新增 `getPricingModelIconKey(model)`，返回去空白后的模型级图标；模型级图标为空时再返回去空白后的 `vendor_icon`；两者都为空则返回 `undefined`。
+3. 模型卡片、表格模型列和模型详情头部统一调用 `getPricingModelIconKey` 后再交给 `getLobeIcon`，不在组件里重复写 fallback 条件。
+4. 增加 `model-icon.test.ts`，用 `node:test` 覆盖核心 fallback 语义。
+5. 修改后运行 Pricing helper 测试、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 和 `/pricing` 验证页面热更新、模型图标 DOM 状态、接口响应和控制台状态。
+
+### 实施结果
+
+- `PricingModel` 已补齐 `icon?: string`，前端类型与后端 `Pricing.Icon` 和 new-api 类型保持一致。
+- 新增 `getPricingModelIconKey(model)`，统一实现 `model.icon` 优先、`model.vendor_icon` fallback，并对空白字符串做归一处理。
+- 模型卡片、Pricing 表格模型列、模型详情页头部都已切换到共享 helper，模型级图标会覆盖供应商图标；Vendor 列和供应商侧栏仍展示供应商图标。
+- 新增 `model-icon.test.ts`，覆盖模型级优先、供应商 fallback、空白值 fallback 和完全缺失四种场景。
+- 没有修改 `/api/pricing`、价格计算、动态计费表达式、性能摘要、筛选或排序逻辑。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/pricing/lib/model-icon.test.ts` 通过，4 个 fallback 规则用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.3 秒内完成生产构建。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，根页面正常加载；随后跳转 `/pricing`，页面显示 `Model Square` 和 3 个模型卡片。
+6. MCP 在浏览器上下文调用 `GET /api/pricing`，返回 HTTP 200、`success=true`、`modelCount=3`；三个模型 `gpt-5.6-sol`、`gpt-5.5`、`gpt-5.4` 均返回 `icon="OpenAI.Color"`，供应商 `vendor_icon="OpenAI"`，预期展示 key 为 `OpenAI.Color`。
+7. MCP 确认卡片视图中 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol` 正常渲染并显示模型图标；点击 `gpt-5.4` 的 `Details` 后，详情弹窗头部也正常显示图标和模型名。
+8. MCP 切换表格视图后，模型列展示 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，Vendor 列仍显示 `OpenAI`，证明模型列和供应商列都能正常渲染。
+9. MCP 网络记录显示 `/api/pricing`、`/api/perf-metrics/summary?hours=24` 和详情触发的 `/api/perf-metrics?model=gpt-5.4&hours=24` 均返回 HTTP 200。
+10. MCP 控制台无 error/warn；DevTools 报告 1 条表单字段缺少 `id/name` 的既有 accessibility issue，本轮没有触碰表单控件。

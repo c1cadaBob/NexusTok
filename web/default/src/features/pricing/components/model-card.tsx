@@ -29,6 +29,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getPricingModelIconKey } from '../lib/model-icon'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
@@ -56,9 +57,8 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
   const endpoints = props.model.supported_endpoint_types || []
-  const vendorIcon = props.model.vendor_icon
-    ? getLobeIcon(props.model.vendor_icon, 28)
-    : null
+  const modelIconKey = getPricingModelIconKey(props.model)
+  const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
   const initial = props.model.model_name?.charAt(0).toUpperCase() || '?'
   const isDynamicPricing =
     props.model.billing_mode === 'tiered_expr' &&
@@ -97,7 +97,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       <div className='flex items-start justify-between gap-2.5 sm:gap-3'>
         <div className='flex min-w-0 items-start gap-2.5 sm:gap-3'>
           <div className='bg-muted/40 flex size-9 shrink-0 items-center justify-center rounded-lg sm:size-10 sm:rounded-xl'>
-            {vendorIcon || (
+            {modelIcon || (
               <span className='text-muted-foreground text-sm font-bold'>
                 {initial}
               </span>
