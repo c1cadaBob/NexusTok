@@ -11822,3 +11822,78 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 10. MCP 点击 `Cancel` 后使用浏览器上下文调用 `GET /api/channel/1` 并携带 `NexusTok-User` 头，返回 `models="gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认验证过程没有污染后端渠道配置。
 11. MCP 网络记录中本轮相关请求均为 `GET`：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、批量扫描 `page_size=100` 和 `/api/channel/1` 回查；未出现 `PUT /api/channel/`。
 12. MCP 控制台无 error/warn。
+
+## 本轮实施评审：渠道编辑页搜索弹层与 new-api 组件体验对齐
+
+### 差异来源
+
+用户继续反馈“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面。重新以 3003 运行态页面和接口为准复查后确认：
+
+1. 模型库数据并未缺失：`/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型。
+2. OpenAI 供应商过滤也正确：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 同样返回 3 个模型，三个模型的 `vendor_id` 均为 `1`。
+3. 运行态编辑抽屉中，渠道 `11111` 已有 `gpt-5.6-sol`，所以搜索摘要显示 `3 matched · 2 new · 1 already selected` 是正确的；按 Enter 已能追加两个缺失模型，草稿从 `Selected 3` 变为 `Selected 5`。
+4. 但搜索弹层在浅色页面中被强制渲染为深色，和 new-api 最新组件不一致，也让“搜索结果”和“Will add”区域在视觉上像独立暗色浮层而不是编辑页原生控件。对照 `/opt/project/new-api-main/web/default/src/components/ui/combobox.tsx`，new-api 的 `ComboboxContent` 没有强制 `dark` 类。
+5. new-api 的旧式 `ComboboxInput` 还补充了 `openOnFocus` 和鼠标重新打开逻辑。NexusTok 的渠道类型选择器仍通过 legacy `Combobox` wrapper 使用 `ComboboxInput`，该能力有助于编辑渠道页和其它设置弹窗保持一致的选择器交互。
+
+### 需求分析
+
+本轮目标是让渠道编辑页的搜索添加区域更贴近 new-api 最新编辑页，同时保留 NexusTok 已验证正确的模型搜索批量追加能力：
+
+1. 保持 `gpt-5.6` 搜索结果按 OpenAI 供应商返回 3 个模型，并只追加尚未选择的 `terra/luna`。
+2. 保持按钮和 Enter 两条路径都复用 `handleAddModelSearchMatches`，不引入新的模型保存路径。
+3. 去掉通用 Combobox 弹层的强制暗色主题，让弹层跟随当前页面主题，和 new-api 最新组件一致。
+4. 补回 legacy Combobox 的 `openOnFocus` 兼容能力，减少渠道类型选择、设置弹窗模型选择等旧式输入与 new-api 的交互差距。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 通用 Combobox 弹层 | `web/default/src/components/ui/combobox.tsx` | 移除 `ComboboxContent` 上的强制 `dark` 类；弹层颜色回到 `bg-popover/text-popover-foreground` 语义 token，自动跟随当前主题。 |
+| legacy Combobox wrapper | `web/default/src/components/ui/combobox.tsx` | 为 legacy props 暴露并透传 `openOnFocus`，与 new-api 最新组件保持一致。 |
+| legacy ComboboxInput | `web/default/src/components/ui/combobox-input.tsx` | 增加 `openOnFocus` 默认值、鼠标按下重新打开逻辑和 pointer focus 标记；不改变默认打开行为。 |
+| 渠道模型搜索 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 不改业务逻辑，只通过 MCP 回归验证 `gpt-5.6` 搜索、Enter 追加和按钮追加。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审和验证结果。 |
+
+本轮不修改 Go 后端、数据库、模型同步接口、`/api/models/search` 查询逻辑、渠道保存 payload、账号池、Codex OAuth、权限控制、模型映射和计费逻辑。
+
+### 风险评估
+
+1. 通用组件视觉风险：`ComboboxContent` 被多个页面复用。移除强制 `dark` 后，浅色主题弹层会变浅，深色主题仍由全局主题变量控制；这是与 new-api 对齐的预期变化。
+2. 交互回归风险：`openOnFocus` 默认仍为 `true`，和现有“聚焦打开”行为一致；新增参数只允许调用方显式关闭，不会改变现有调用点。
+3. 渠道搜索业务风险：本轮不改搜索追加函数、供应商推导、分页扫描和权限判断，避免再次影响已验证的 `Selected 3 -> Selected 5` 流程。
+4. 可访问性风险：弹层主题改变不影响 Base UI Combobox 的 `listbox`、`option`、高亮和多选状态；完成后继续通过 MCP 快照和控制台检查。
+5. new-api 覆盖风险：只增量吸收组件差异，不覆盖整个渠道抽屉或通用 Combobox 文件，避免丢失 NexusTok 的 chip 宽度、防溢出和模型搜索增强。
+
+### 方案评审
+
+采用“组件主题对齐 + legacy 交互补齐”的小切片方案：
+
+1. 将 `ComboboxContent` className 中的强制 `dark` 移除，保留现有 `bg-popover`、`text-popover-foreground`、动画、尺寸、chips anchor 和输入组样式。
+2. 在 `LegacyComboboxProps` 中补充 `openOnFocus?: boolean`，并透传给 `LegacyComboboxInput`。
+3. 在 `ComboboxInput` 中按 new-api 最新实现增加 `pointerFocusRef`、`onPointerDown` 和 `openOnFocus` 判断；默认值为 `true`，保持现有体验。
+4. 不修改渠道模型 MultiSelect 的业务 props 和 `handleAddModelSearchMatches`。
+5. 修改后运行定向测试、typecheck、build、`git diff --check`，并访问 `http://192.168.0.202:3003/` 与 `/channels` 真实复测搜索弹层主题和模型追加结果。
+
+### 实施结果
+
+- `ComboboxContent` 已移除强制 `dark` 类，弹层重新使用 `bg-popover` / `text-popover-foreground` 跟随当前主题；浅色页面中的渠道模型搜索结果弹层不再突兀显示为深色。
+- legacy `Combobox` wrapper 已支持 `openOnFocus?: boolean` 并透传给 `ComboboxInput`，与 new-api 最新组件能力对齐。
+- `ComboboxInput` 已补充 `pointerFocusRef`、`onPointerDown` 和 `openOnFocus` 判断：默认仍聚焦打开，鼠标点击已聚焦但关闭的输入框也能重新打开下拉。
+- 渠道模型搜索业务逻辑未修改；`gpt-5.6` 仍按 `vendor=OpenAI` 搜索并展示 `3 matched · 2 new · 1 already selected`。
+- 按 Enter 和点击 `Add all 2 new match(es)` 都继续只追加缺失的 `gpt-5.6-terra`、`gpt-5.6-luna`，不会重复已有 `gpt-5.6-sol`。
+
+### 验证记录
+
+1. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts` 通过，72 个用例成功。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.6 秒内完成生产构建。
+4. `git diff --check` 通过，未发现空白错误。
+5. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，根页面正常加载；随后进入 `/channels` 并打开渠道 `11111` 编辑抽屉。
+6. MCP 在浏览器上下文调用模型搜索接口确认数据完整：`/api/models/search?keyword=gpt-5.6&p=1&page_size=100` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`；`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 同样返回 3 条，三条模型 `vendor_id` 均为 `1`。
+7. MCP 在模型输入中搜索 `gpt-5.6`，页面显示 `Search results`、`3 matched · 2 new · 1 already selected`、`Will add: gpt-5.6-terra, gpt-5.6-luna`。
+8. MCP 读取弹层 DOM 确认热更新已生效：`[data-slot="combobox-content"]` 不再包含 `dark` 类，计算样式背景为浅色 `bg-popover`，候选项为 `gpt-5.6-terra` 和 `gpt-5.6-luna`。
+9. MCP 在搜索框按 Enter 后，页面出现 `Added 2 model(s) from search`，前端草稿从 `Selected 3` 变为 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`。
+10. MCP 点击 `Cancel` 后通过 `GET /api/channel/1` 回查，后端持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认未误保存。
+11. MCP 再次打开编辑抽屉，搜索 `gpt-5.6` 后点击 `Add all 2 new match(es)`，按钮路径同样变为 `Selected 5`，与 Enter 路径一致。
+12. MCP 网络记录显示本轮相关请求均为 GET：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、批量扫描 `page_size=100` 和 `/api/channel/1` 回查；未出现 `PUT /api/channel/`。
+13. MCP 控制台无 error/warn；仅保留既有 autocomplete / label 可访问性 issue，本轮没有扩大该独立问题。
