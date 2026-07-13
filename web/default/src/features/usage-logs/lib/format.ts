@@ -298,3 +298,331 @@ export function formatDuration(
 
   return { durationSec, variant: durationSec > 60 ? 'red' : 'green' }
 }
+
+type AuditTranslateFn = (
+  key: string,
+  opts?: Record<string, unknown>
+) => string
+
+// 审计 action 是后端写入的语言无关标识。这里吸收 new-api 的结构化摘要模板，
+// 并补入 NexusTok 自身的权限治理、订阅和管理操作，列表与详情共用同一渲染规则。
+const AUDIT_TEMPLATES: Record<string, string> = {
+  login: 'Logged in successfully via {{method}}',
+
+  'user.create': 'Created user {{username}}',
+  'user.update': 'Updated user {{username}} (ID: {{id}})',
+  'user.delete': 'Deleted user {{username}} (ID: {{id}})',
+  'user.manage': 'Managed user {{username}} (ID: {{id}})',
+  'user.quota_add': 'Increased user quota by {{quota}}',
+  'user.quota_subtract': 'Decreased user quota by {{quota}}',
+  'user.quota_override': 'Overrode user quota from {{from}} to {{to}}',
+  'user.binding_clear': 'Cleared {{bindingType}} binding for user {{username}}',
+  'user.2fa_disable': 'Force-disabled two-factor authentication for the user',
+  'user.passkey_register': 'Registered a passkey',
+  'user.passkey_delete': 'Deleted a passkey',
+  'user.topup_complete': 'Completed top-up order for the user',
+  'user.reset_passkey': 'Reset the user passkey',
+  'user.oauth_unbind': 'Removed an OAuth binding for the user',
+
+  'option.update': 'Updated system setting {{key}}',
+  'option.payment_compliance': 'Confirmed payment compliance',
+  'option.reset_ratio': 'Reset model ratios',
+  'option.reset_model_ratio': 'Reset model ratios',
+  'option.clear_affinity_cache': 'Cleared channel affinity cache',
+  'option.migrate_console_setting': 'Migrated console settings',
+
+  'custom_oauth.discovery': 'Discovered a custom OAuth provider',
+  'custom_oauth.create': 'Created a custom OAuth provider',
+  'custom_oauth.update': 'Updated a custom OAuth provider',
+  'custom_oauth.delete': 'Deleted a custom OAuth provider',
+
+  'performance.reset_stats': 'Reset performance statistics',
+  'performance.clear_disk_cache': 'Cleared disk cache',
+  'performance.gc': 'Triggered garbage collection',
+  'performance.clear_logs': 'Cleared log files',
+
+  'channel.create': 'Created channel {{name}}',
+  'channel.update': 'Updated channel {{name}} (ID: {{id}})',
+  'channel.delete': 'Deleted channel {{name}} (ID: {{id}})',
+  'channel.delete_batch': 'Batch deleted {{count}} channels',
+  'channel.delete_disabled': 'Deleted all disabled channels ({{count}})',
+  'channel.key_view': 'Viewed channel key {{name}} (ID: {{id}})',
+  'channel.tag_disable': 'Disabled channels with tag {{tag}}',
+  'channel.tag_enable': 'Enabled channels with tag {{tag}}',
+  'channel.tag_edit': 'Edited channels with tag {{tag}}',
+  'channel.tag_batch_set': 'Batch set tag for {{count}} channels',
+  'channel.copy':
+    'Copied channel {{sourceId}} to {{name}} (ID: {{id}})',
+  'channel.multi_key_manage':
+    'Multi-key management {{action}} on channel (ID: {{id}})',
+  'channel.upstream_apply':
+    'Applied upstream model changes to channel (ID: {{id}})',
+  'channel.upstream_apply_all':
+    'Applied upstream model changes to {{count}} channels',
+  'channel.upstream_detect': 'Detected upstream model changes',
+  'channel.upstream_detect_all': 'Detected upstream model changes for all channels',
+  'channel.fix': 'Fixed channel metadata',
+  'channel.fetch_models': 'Fetched channel models',
+  'channel.codex_oauth_start': 'Started Codex OAuth for channels',
+  'channel.codex_oauth_complete': 'Completed Codex OAuth for channels',
+  'channel.codex_oauth_start_for_channel':
+    'Started Codex OAuth for channel (ID: {{id}})',
+  'channel.codex_oauth_complete_for_channel':
+    'Completed Codex OAuth for channel (ID: {{id}})',
+  'channel.codex_refresh': 'Refreshed Codex credentials for channel (ID: {{id}})',
+  'channel.codex_usage_reset': 'Reset Codex usage for channel (ID: {{id}})',
+  'channel.ollama_pull': 'Pulled an Ollama model',
+  'channel.ollama_pull_stream': 'Pulled an Ollama model with streaming progress',
+  'channel.ollama_delete': 'Deleted an Ollama model',
+
+  'channel_account.create': 'Created a channel account',
+  'channel_account.batch_create': 'Batch created channel accounts',
+  'channel_account.import_multikey': 'Imported multi-key channel accounts',
+  'channel_account.update': 'Updated a channel account',
+  'channel_account.delete': 'Deleted a channel account',
+  'channel_account.status': 'Changed channel account status',
+
+  'redemption.create':
+    'Created {{count}} redemption codes named {{name}} ({{quota}} each)',
+  'redemption.update': 'Updated a redemption code',
+  'redemption.delete': 'Deleted a redemption code',
+  'redemption.delete_invalid': 'Deleted invalid redemption codes',
+
+  'prefill_group.create': 'Created a prefill group',
+  'prefill_group.update': 'Updated a prefill group',
+  'prefill_group.delete': 'Deleted a prefill group',
+
+  'vendor.create': 'Created a vendor',
+  'vendor.update': 'Updated a vendor',
+  'vendor.delete': 'Deleted a vendor',
+
+  'model.create': 'Created a model',
+  'model.update': 'Updated a model',
+  'model.delete': 'Deleted a model',
+  'model.pricing_update': 'Updated model pricing',
+  'model.sync_upstream': 'Synced upstream models',
+
+  'deployment.settings_test_connection':
+    'Tested deployment settings connection',
+  'deployment.test_connection': 'Tested deployment connection',
+  'deployment.price_estimation': 'Estimated deployment price',
+  'deployment.create': 'Created a deployment',
+  'deployment.update': 'Updated a deployment',
+  'deployment.rename': 'Renamed a deployment',
+  'deployment.extend': 'Extended a deployment',
+  'deployment.delete': 'Deleted a deployment',
+
+  'subscription.plan_create': 'Created a subscription plan',
+  'subscription.plan_update': 'Updated a subscription plan',
+  'subscription.plan_status_update': 'Updated subscription plan status',
+  'subscription.bind': 'Bound a subscription',
+  'subscription.user_create': 'Created a user subscription',
+  'subscription.user_invalidate': 'Invalidated a user subscription',
+  'subscription.user_delete': 'Deleted a user subscription',
+  'subscription.plan_reset': 'Reset active subscriptions for plan {{planId}}',
+  'subscription.user_plan_reset':
+    'Reset active plan {{planId}} subscriptions for user {{targetUserId}}',
+
+  'authz.role_create': 'Created authz role {{roleKey}}',
+  'authz.role_update': 'Updated authz role {{roleKey}}',
+  'authz.role_delete': 'Deleted authz role {{roleKey}}',
+  'authz.role_policies_update': 'Processed authz role policies {{roleKey}}',
+  'authz.policies_import': 'Processed authz policy import {{mode}}',
+
+  'account_pool.auth_file_create': 'Created an account pool auth file',
+  'account_pool.auth_file_import': 'Imported account pool auth files',
+  'account_pool.auth_file_update': 'Updated an account pool auth file',
+  'account_pool.auth_file_delete': 'Deleted an account pool auth file',
+  'account_pool.check_task_cleanup': 'Cleaned up account pool check tasks',
+  'account_pool.group_create': 'Created an account pool group',
+  'account_pool.group_update': 'Updated an account pool group',
+  'account_pool.group_delete': 'Deleted an account pool group',
+  'account_pool.oauth_start': 'Started account pool OAuth',
+  'account_pool.oauth_complete': 'Completed account pool OAuth',
+  'account_pool.device_start': 'Started account pool device authorization',
+  'account_pool.account_create': 'Created an account pool account',
+  'account_pool.account_batch_create': 'Batch created account pool accounts',
+  'account_pool.account_attach': 'Attached account pool accounts',
+  'account_pool.account_batch_status':
+    'Changed account pool account statuses',
+  'account_pool.account_batch_export': 'Exported account pool accounts',
+  'account_pool.account_batch_delete': 'Batch deleted account pool accounts',
+  'account_pool.account_batch_check': 'Checked account pool accounts',
+  'account_pool.account_check_task': 'Created account pool check tasks',
+  'account_pool.login_session_cancel':
+    'Canceled an account pool login session',
+  'account_pool.account_update': 'Updated an account pool account',
+  'account_pool.account_delete': 'Deleted an account pool account',
+  'account_pool.account_status': 'Changed account pool account status',
+  'account_pool.account_check': 'Checked an account pool account',
+  'account_pool.account_refresh': 'Refreshed an account pool account',
+  'account_pool.account_runtime_reset':
+    'Reset an account pool account runtime',
+  'account_pool.codex_oauth_start': 'Started account pool Codex OAuth',
+  'account_pool.codex_oauth_complete': 'Completed account pool Codex OAuth',
+
+  'ratio_sync.fetch': 'Fetched upstream ratio sync data',
+  'system_task.log_cleanup': 'Cleaned up historical logs',
+  'log.clear': 'Cleared historical logs',
+  generic: '{{method}} {{route}}',
+}
+
+const AUDIT_PARAM_ALIASES: Record<string, string> = {
+  auth_file_id: 'authFileId',
+  binding_type: 'bindingType',
+  group_id: 'groupId',
+  plan_id: 'planId',
+  role_key: 'roleKey',
+  source_id: 'sourceId',
+  target_user_id: 'targetUserId',
+}
+
+const AUDIT_FALLBACK_PARAM_ORDER = [
+  'username',
+  'name',
+  'id',
+  'targetUserId',
+  'target_user_id',
+  'roleKey',
+  'role_key',
+  'key',
+  'tag',
+  'count',
+  'quota',
+  'method',
+  'route',
+  'status',
+  'mode',
+]
+
+function normalizeAuditParams(
+  params: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {}
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      normalized[key] = value
+      const alias = AUDIT_PARAM_ALIASES[key]
+      if (alias && normalized[alias] == null) {
+        normalized[alias] = value
+      }
+    }
+  }
+  return normalized
+}
+
+function getTemplateParams(template: string): string[] {
+  const params = new Set<string>()
+  template.replace(/{{\s*([A-Za-z0-9_]+)\s*}}/g, (_match, key: string) => {
+    params.add(key)
+    return _match
+  })
+  return [...params]
+}
+
+function hasUsableAuditValue(value: unknown): boolean {
+  if (value == null) return false
+  if (typeof value !== 'string') return true
+  return value.trim() !== ''
+}
+
+function hasTemplateParams(
+  template: string,
+  params: Record<string, unknown>
+): boolean {
+  return getTemplateParams(template).every((key) =>
+    hasUsableAuditValue(params[key])
+  )
+}
+
+function formatAuditParamValue(value: unknown): string {
+  if (value == null) return '-'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatAuditParamValue(item))
+      .filter((item) => item !== '-')
+      .join(', ')
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function humanizeAuditAction(action: string): string {
+  return action
+    .replace(/[._-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase()
+      if (lower === 'oauth') return 'OAuth'
+      if (lower === 'api') return 'API'
+      if (lower === 'id') return 'ID'
+      if (lower === 'codex') return 'Codex'
+      if (lower === 'authz') return 'Authz'
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join(' ')
+}
+
+function summarizeAuditParams(params: Record<string, unknown>): string | null {
+  const entries: Array<[string, unknown]> = []
+  const used = new Set<string>()
+
+  for (const key of AUDIT_FALLBACK_PARAM_ORDER) {
+    if (!hasUsableAuditValue(params[key])) continue
+    entries.push([key, params[key]])
+    used.add(key)
+  }
+
+  for (const [key, value] of Object.entries(params)) {
+    if (used.has(key) || !hasUsableAuditValue(value)) continue
+    entries.push([key, value])
+  }
+
+  if (entries.length === 0) return null
+  return entries
+    .slice(0, 4)
+    .map(([key, value]) => `${key}: ${formatAuditParamValue(value)}`)
+    .join(', ')
+}
+
+/**
+ * 从结构化的审计/登录日志 `other.op` 渲染本地化摘要。
+ *
+ * 返回 `null` 表示该日志没有可识别的结构化 op，调用方应继续使用旧版 content 兜底。
+ * 如果模板缺少必要参数，则返回稳定 action 摘要和可展示参数，避免历史日志出现空白插值。
+ */
+export function renderAuditContent(
+  other: LogOtherData | null | undefined,
+  t: AuditTranslateFn
+): string | null {
+  const op = other?.op
+  const action = typeof op?.action === 'string' ? op.action.trim() : ''
+  if (!action) return null
+
+  const params = normalizeAuditParams(op?.params)
+  const auditInfo = other?.audit_info
+  const fallbackParams = normalizeAuditParams({
+    ...params,
+    ...(auditInfo?.method ? { method: auditInfo.method } : {}),
+    ...(auditInfo?.route ? { route: auditInfo.route } : {}),
+    ...(auditInfo?.status != null ? { status: auditInfo.status } : {}),
+  })
+  const template = AUDIT_TEMPLATES[action]
+
+  if (template && hasTemplateParams(template, params)) {
+    return t(template, params)
+  }
+
+  const fallback = t('Audit operation {{action}}', {
+    action: humanizeAuditAction(action),
+  })
+  const summary = summarizeAuditParams(fallbackParams)
+  return summary ? `${fallback} · ${summary}` : fallback
+}

@@ -12175,3 +12175,82 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 7. MCP 网络记录显示页面自身请求 `/api/log/stat?...&type=0...` 返回 HTTP 200，`/api/log/?p=1&page_size=100&type=0...` 返回 HTTP 200（中间 `/api/log` 到 `/api/log/` 的 301 为既有路径规范化）。
 8. MCP 分页抽样调用 `/api/log/?p=1..5&page_size=100&type=0&start_timestamp=0&end_timestamp=4102444800`，共扫描当前环境 372 条日志，没有发现 `other.admin_info.use_channel` 或 `multi_key_index` 样例，因此无法在真实页面点击 `Retry Chain` Popover；对应分支已由 `channel-markers.test.ts` 覆盖。
 9. MCP 干净 reload 后检查控制台，`error`、`warn`、`issue` 均为空。验证过程中早先两次手写 fetch 因未带 `NexusTok-User` 头产生 401 噪声，已重新 reload 后排除，不属于页面自身错误。
+
+## 本轮实施评审：Usage Logs 审计与登录摘要本地化原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/usage-logs` 后确认，new-api 最新版已经在 `lib/format.ts` 中提供 `renderAuditContent(other, t)`，并在 Common Logs 列表摘要与详情弹窗中优先使用 `other.op.action + params` 渲染审计/登录日志的人类可读文案。NexusTok 后端已经写入同样的结构化 `other.op` 字段，登录日志也写入 `login_method` 和 `user_agent`，但当前前端列表只对消费日志、退款日志和异常计费做摘要增强；`type=3` 管理审计与 `type=7` 登录审计仍主要依赖 `content` 或只展示 action code，中文/多语言环境下可读性不足。
+
+本轮不采用整文件覆盖。当前 NexusTok 详情弹窗已经具备 new-api 没有的更完整审计信息：操作者、auth method、fallback audit_info、路径参数、充值审计、额度饱和、动态计费、订阅计费、请求转换、Retry Chain 等，因此只将 new-api 的结构化摘要能力融合为 NexusTok 原生能力。
+
+### 需求分析
+
+1. Common Logs 列表中 `type=3` 管理审计和 `type=7` 登录审计应优先展示本地化的操作摘要，而不是只显示英文 raw content 或空的 Details。
+2. 详情弹窗应在现有管理审计块中补充 `Operation` 文案，并将 `changed_fields` 渲染为可读字段名，方便管理员快速识别渠道编辑等操作的变更范围。
+3. 登录详情应在现有 Login Info 中补充登录操作摘要，例如 `Logged in successfully via password` 对应的本地化文案。
+4. 对后端已经存在但 new-api 模板尚未覆盖的 NexusTok 原生 action（权限治理、账号池、渠道账号、Codex OAuth、部署测试、订阅实例等）需要提供更稳健的 fallback，不能因为模板缺失而丢失可读信息。
+5. 模板缺参、未知 action 或老日志缺少 `other.op` 时必须安全回退，不影响日志列表渲染。
+6. 新增 UI 文案必须进入 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六种前端 locale。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 审计摘要渲染 | `web/default/src/features/usage-logs/lib/format.ts` | 新增 `renderAuditContent`、审计模板和 action fallback，复用现有 `LogOtherData`，只处理前端展示。 |
+| Common Logs 列表 | `web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx` | `type=3/7` 的 Details 摘要优先使用结构化本地化文本；消费日志摘要、渠道列、筛选、权限不变。 |
+| 日志详情弹窗 | `web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx` | 在现有管理/登录审计详情中补充 Operation、Changed Fields 和本地化结果展示；保留现有 audit_info 全量字段。 |
+| 类型出口 | `web/default/src/features/usage-logs/lib/index.ts` | 导出 `renderAuditContent`，便于后续同域复用。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐本轮新增审计摘要、字段名和操作标签翻译。 |
+| 测试 | `web/default/src/features/usage-logs/lib/format.test.ts` | 覆盖登录摘要、渠道更新摘要、generic fallback、未知 action 安全回退。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、实施结果与验证记录。 |
+
+本轮不修改 Go 后端、数据库日志结构、审计写入逻辑、日志查询接口、权限判断、计费、渠道调度和模型同步。
+
+### 风险评估
+
+1. 运行时缺参风险：审计参数来自历史日志，可能缺少 `name`、`id`、`method` 等字段。渲染函数需要接受缺参，模板无法完整表达时仍返回安全字符串或回退到 raw content，不抛异常。
+2. 覆盖不足风险：NexusTok 当前后端 action 数量多于 new-api 模板。方案会先覆盖 new-api 模板和 NexusTok 当前审计 action 中的常见资源，再为未知 action 生成稳定 fallback，避免列表空白。
+3. i18n 风险：`renderAuditContent` 使用模板 map 动态传入 `t()`，自动扫描脚本不会发现这些 key。需要显式写入 locale 并运行 `bun run i18n:sync`，确认六语缺失数为 0。
+4. 详情回归风险：当前详情弹窗已有比 new-api 更多的审计字段。只在现有块内追加 Operation/Changed Fields，不删除 `Action`、`Result`、`HTTP Method`、`Route`、`Path Parameters` 等已有排障字段。
+5. 权限风险：管理审计详情仍受 `isManage && props.isAdmin` 控制；登录信息仍按日志归属用户可见，不把管理员专用 `admin_info` 泄露给普通用户。
+6. 性能风险：渲染函数只做对象查表、少量字符串格式化和字段过滤，成本与单行日志渲染相比可以忽略，不引入额外网络请求。
+
+### 方案评审
+
+采用“共享渲染 helper + 列表摘要接入 + 详情增量融合 + i18n 补齐”的保守方案：
+
+1. 在 `format.ts` 中新增 `AUDIT_TEMPLATES`，先吸收 new-api 的模板，再补齐 NexusTok 当前 `controller/audit.go` 和 `middleware/audit.go` 中已有的关键 action；同时提供 `generic` 和未知 action fallback。
+2. `renderAuditContent(other, t)` 只读取 `other.op`，识别到模板时用 `op.params` 插值；未知 action 时把 `action` 转为可读标题并追加关键参数，缺少 `op` 时返回 `null` 让调用方继续使用原内容。
+3. 在 `common-logs-columns.tsx` 的 `buildTypeDetailSegments` 中对 `log.type === 3 || log.type === 7` 优先展示 `renderAuditContent`，不影响消费日志现有摘要。
+4. 在 `details-dialog.tsx` 中复用同一 helper：管理审计块新增 `Operation`、`Changed Fields`，登录信息块新增 `Operation`；保留原始 action code 和 audit_info 详情用于排障。
+5. 补充单元测试覆盖：登录摘要、渠道更新 + changed_fields、generic fallback、未知 action fallback、缺 op 返回 null。
+6. 按 i18n 技能流程补 locale，运行 `bun run i18n:sync`、单测、typecheck、build、`git diff --check`，最后通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/usage-logs/common?type=0` 验证热更新、日志页面、详情弹窗、接口请求和控制台状态。
+
+### 实施结果
+
+- 新增 `renderAuditContent(other, t)`，从 `other.op.action + params` 渲染管理审计和登录审计摘要；缺少 `op` 时返回 `null`，调用方继续使用旧 `content`。
+- 审计模板已吸收 new-api 的操作摘要，并补入 NexusTok 当前后端 action：权限治理、账号池、渠道账号、Codex OAuth、Ollama、部署、订阅实例、模型价格、倍率同步和系统任务等。
+- 模板参数完整时展示自然语言摘要；模板缺少必要参数或遇到未知 action 时，自动退回到 `Audit operation {{action}}` 的稳定摘要，并追加 `method`、`route`、`status` 等可排障字段，避免历史日志出现空白插值。
+- Common Logs 列表中 `type=3` 管理日志和 `type=7` 登录日志已优先展示结构化本地化摘要；消费日志、退款日志、渠道列、类型筛选、敏感信息显隐和权限控制不变。
+- 详情弹窗保留现有 NexusTok 管理审计字段，并新增 `Operation` 行；登录详情新增 `Operation` 行；渠道更新日志如果带 `changed_fields`，会展示本地化 `Changed Fields`。
+- `web/default/src/features/usage-logs/lib/index.ts` 已导出 `renderAuditContent`，便于 usage-logs 同域继续复用。
+- 新增 `format.test.ts`，覆盖登录摘要、渠道更新摘要、generic 请求摘要、模板缺参 fallback、未知 action fallback 和缺 `op` 安全返回。
+- 已补齐 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六种 locale 中 132 个审计摘要相关 key；其中与 new-api 重叠的翻译直接复用 new-api，NexusTok 新增 action 已单独翻译。
+
+### 验证记录
+
+1. `cd web/default && bun run i18n:sync` 通过，`en/zh/fr/ja/ru/vi` 的 `missingCount=0`、`extrasCount=0`；`fr/ja/ru/vi` 的 untranslated 数量仍为既有债务，本轮没有扩大缺失面。
+2. 额外脚本检查本轮 132 个审计模板 key 在六种 locale 中均存在，`audit missing=0`。
+3. `cd web/default && bun test src/features/usage-logs/lib/format.test.ts src/features/usage-logs/lib/channel-markers.test.ts src/features/usage-logs/lib/utils.test.ts` 通过，14 个用例成功。
+4. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+5. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.2 秒内完成生产构建。
+6. `git diff --check` 通过，未发现空白错误。
+7. 使用 Chrome DevTools MCP 打开 `http://192.168.0.202:3003/`，页面正常加载；在浏览器上下文调用 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`。
+8. MCP 设置 `i18nextLng=zh` 后忽略缓存访问 `http://192.168.0.202:3003/usage-logs/common?type=0`，路由规范化为 `type=%5B%220%22%5D`，页面标题显示 `通用日志`，类型筛选显示 `所有类型`。
+9. MCP 页面快照确认列表中登录日志 Details 显示 `登录成功（通过 password）`，管理审计日志 Details 在模板缺参时显示 `审计操作 Channel Update · method: PUT, route: /api/channel/, status: 200`。
+10. MCP 点开登录日志详情，弹窗 `登录信息` 中出现新增 `操作` 行，值为 `登录成功（通过 password）`，同时保留 raw `内容` 行 `Logged in successfully via password`。
+11. MCP 点开管理审计详情，弹窗 `管理审计信息` 中出现新增 `操作` 行，值为结构化 fallback 摘要；原有 `动作=channel.update`、`结果=失败`、`HTTP 方法=PUT`、`状态码=200`、`路由=/api/channel/`、`路径=/api/channel/`、`客户端 IP`、`认证方式=会话` 均保留。
+12. MCP 网络记录显示 `/api/log/stat?...type=0...` 返回 HTTP 200，`/api/log/?p=1&page_size=100&type=0...` 返回 HTTP 200（中间 `/api/log` 到 `/api/log/` 的 301 为既有路径规范化）。
+13. MCP 读取 `/api/log/` 响应体确认真实后端日志包含 `other.op.action=login`、`params.method=password` 以及 `other.op.action=channel.update`；页面摘要来自这些结构化字段。
+14. MCP 控制台检查 `error`、`warn`、`issue` 均为空。本轮验证期间临时启动 headless Chrome 连接 MCP，验证完成后已停止该临时会话。

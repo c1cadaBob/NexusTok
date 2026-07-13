@@ -59,6 +59,7 @@ import {
   isViolationFeeLog,
   getFirstResponseTimeColor,
   getResponseTimeColor,
+  renderAuditContent,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -66,6 +67,15 @@ import {
   isTimingLogType,
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
+
+const CHANNEL_FIELD_LABELS: Record<string, string> = {
+  status: 'Status',
+  models: 'Models',
+  group: 'Group',
+  type: 'Type',
+  base_url: 'Base URL',
+  key: 'Key',
+}
 
 function timingTextColorClass(
   variant: 'success' | 'warning' | 'danger'
@@ -498,6 +508,17 @@ export function DetailsDialog(props: DetailsDialogProps) {
   })()
   const auditInfo = isManage && props.isAdmin ? other?.audit_info : undefined
   const auditOp = isManage && props.isAdmin ? other?.op : undefined
+  const operationText =
+    isManage || isLogin ? renderAuditContent(other, t) : null
+  const changedFieldTokens =
+    isManage &&
+    props.isAdmin &&
+    Array.isArray(other?.op?.params?.changed_fields)
+      ? other.op.params.changed_fields.map(String).filter(Boolean)
+      : []
+  const changedFieldsText = changedFieldTokens
+    .map((field) => t(CHANNEL_FIELD_LABELS[field] ?? field))
+    .join(', ')
   const auditRouteParams =
     auditInfo?.params && typeof auditInfo.params === 'object'
       ? Object.entries(auditInfo.params).filter(
@@ -515,6 +536,8 @@ export function DetailsDialog(props: DetailsDialogProps) {
     props.isAdmin &&
     (auditInfo ||
       auditOp?.action ||
+      operationText ||
+      changedFieldsText ||
       props.log.ip ||
       authMethodLabel ||
       auditRouteParams.length > 0)
@@ -862,6 +885,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 icon={<ShieldCheck className='size-3.5' aria-hidden='true' />}
                 label={t('Manage Audit Info')}
               >
+                {operationText && (
+                  <DetailRow label={t('Operation')} value={operationText} />
+                )}
                 {auditOp?.action && (
                   <DetailRow
                     label={t('Action')}
@@ -911,6 +937,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     mono
                   />
                 )}
+                {changedFieldsText && (
+                  <DetailRow
+                    label={t('Changed Fields')}
+                    value={changedFieldsText}
+                  />
+                )}
                 {auditRouteParams.length > 0 && (
                   <DetailRow
                     label={t('Path Parameters')}
@@ -937,6 +969,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 icon={<LogIn className='size-3.5' aria-hidden='true' />}
                 label={t('Login Info')}
               >
+                {operationText && (
+                  <DetailRow label={t('Operation')} value={operationText} />
+                )}
                 {loginAuditFields.map((field, idx) => (
                   <DetailRow
                     key={idx}
