@@ -21,6 +21,7 @@ import type { BillingSettings } from '../types'
 import {
   BILLING_DEFAULT_SECTION,
   getBillingSectionContent,
+  getBillingSectionMeta,
 } from './section-registry.tsx'
 
 export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
@@ -120,6 +121,7 @@ export function BillingSettings() {
       defaultSettings={DEFAULT_BILLING_SETTINGS}
       defaultSection={BILLING_DEFAULT_SECTION}
       getSectionContent={getBillingSectionContent}
+      getSectionMeta={getBillingSectionMeta}
     />
   )
 }

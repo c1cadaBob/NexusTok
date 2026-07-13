@@ -82,9 +82,16 @@ export function createSectionRegistry<
     settings: TSettings,
     ...extraArgs: TExtraArgs
   ) {
+    return getSectionMeta(sectionId).build(settings, ...extraArgs)
+  }
+
+  /**
+   * Get section metadata by section ID
+   */
+  function getSectionMeta(sectionId: SectionId) {
     const section =
       sections.find((item) => item.id === sectionId) ?? sections[0]
-    return section.build(settings, ...extraArgs)
+    return section
   }
 
   return {
@@ -92,5 +99,6 @@ export function createSectionRegistry<
     defaultSection,
     getSectionNavItems,
     getSectionContent,
+    getSectionMeta,
   }
 }

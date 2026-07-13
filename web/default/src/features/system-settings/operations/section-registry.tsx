@@ -180,3 +180,4 @@ export const OPERATIONS_DEFAULT_SECTION = operationsRegistry.defaultSection
 export const getOperationsSectionNavItems =
   operationsRegistry.getSectionNavItems
 export const getOperationsSectionContent = operationsRegistry.getSectionContent
+export const getOperationsSectionMeta = operationsRegistry.getSectionMeta

@@ -12473,3 +12473,89 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 10. MCP 网络记录显示 `/api/channel/1`、`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 均返回 HTTP 200；`/api/prefill_group?type=model` 到 `/api/prefill_group/?type=model` 的 301 为既有路径规范化。
 11. MCP 桌面截图已保存到 `/tmp/nexustok-channel-edit-after-desktop.png`，390px 窄屏截图已保存到 `/tmp/nexustok-channel-edit-after-mobile.png`；窄屏下搜索结果、按钮和说明完整展示，没有重叠。
 12. MCP 控制台没有 JavaScript `error` 或 `warn`；DevTools 仍报告既有表单 a11y issue（`autocomplete`、`label for` 关联），本轮没有引入新的运行时异常。
+
+## 本轮实施评审：系统设置页面统一框架原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings` 与当前 NexusTok 后确认，new-api 默认前端已经把系统设置页升级为统一页面框架：`SettingsPage` 通过 `SectionPageLayout` 渲染当前设置分区标题，`settings-page-context.tsx` 提供标题状态槽和页面动作槽，`FormDirtyIndicator` 以标题旁紧凑状态标识展示未保存变化，`settings-form-layout.tsx` 提供统一表单网格、开关行和控制组布局。
+
+当前 NexusTok 已经吸收了大量系统设置业务能力，例如角色策略、Token Limits、Grok 设置、Waffo/Waffo Pancake、渠道亲和、性能监控等；但页面框架仍停留在旧式实现：`SystemSettings` 外层手动包裹 `Main`，`SettingsPage` 只负责加载数据和渲染内容，子页面标题没有进入统一布局，`content` 与 `operations` 两类设置仍手写加载/滚动框架，未保存提示以表单内 Alert 占据首行。new-api 的优势适合转成 NexusTok 的原生公共能力，但不能覆盖各设置表单的业务逻辑和本项目额外设置项。
+
+### 需求分析
+
+1. 系统设置所有分区页面应使用统一页面框架：顶部展示当前分区标题，内容区使用一致滚动容器，后续保存/重置动作可以进入页面动作槽。
+2. 需要保留 NexusTok 当前七类设置入口：站点、认证、模型、安全、计费、内容、运维；不能只覆盖 new-api 中已有的子集。
+3. 需要保留各 registry 的 `descriptionKey`，因为当前侧边栏/导航仍可能依赖描述信息；新增 `getSectionMeta` 不能破坏既有 `getSectionNavItems` 与 `getSectionContent`。
+4. `content` 与 `operations` 当前有额外解析逻辑：内容页需要兼容旧键 `Announcements`、`ApiInfo`、`FAQ`、`UptimeKumaUrl`/`UptimeKumaSlug`；运维页需要从 `useStatus()` 传入版本和启动时间。这些逻辑应通过 `SettingsPage` 的 `resolveSettings` 和 `extraArgs` 原生承接。
+5. 未保存提示应优先显示在标题旁，让设置表单首屏更紧凑；但如果组件脱离 `SettingsPage` 使用，仍需保留旧 Alert fallback，避免提示静默消失。
+6. 本轮先建立公共框架和最小接入，不一次性重写所有具体设置表单为 `SettingsForm`，降低业务回归风险。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统设置外层路由 | `web/default/src/features/system-settings/index.tsx` | 移除外层 `Main` 包裹，让子页 `SettingsPage` 自己使用 `SectionPageLayout`；避免 Main 嵌套 Main。 |
+| 通用页面框架 | `web/default/src/features/system-settings/components/settings-page.tsx`、新增 `settings-page-context.tsx` | 接入 `SectionPageLayout`、标题状态槽、页面动作槽、可选加载文案、`resolveSettings` 和泛型 `extraArgs`。 |
+| 通用表单布局 | 新增 `web/default/src/features/system-settings/components/settings-form-layout.tsx` | 提供后续表单原生化所需的统一网格、开关行、控制组和表单 wrapper；本轮不强制迁移所有表单。 |
+| 分区 registry | `web/default/src/features/system-settings/utils/section-registry.ts` 与各 `section-registry.tsx` | 保留 `descriptionKey`，新增 `getSectionMeta` 导出，供标题区读取当前分区名称。 |
+| 设置入口页面 | `site/auth/models/security/billing/content/operations/index.tsx` | 七个入口统一使用 `SettingsPage`，content/operations 的 legacy fallback 与 status extra args 通过新参数承接。 |
+| 未保存提示 | `web/default/src/features/system-settings/components/form-dirty-indicator.tsx` | 标题旁展示 `Unsaved changes` badge；无 provider 时继续使用原 Alert。 |
+| i18n | `web/default/src/i18n/locales/*.json` | 复用已有 `Unsaved changes`、`Loading settings...`、`Save Changes`、`Saving...`、`Reset` 等文案；如发现缺口再补齐六语。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮评审、实施结果和真实页面验证。 |
+
+本轮不修改 Go 后端、数据库迁移、系统设置 API、权限后端、计费表达式、模型同步、渠道编辑页、Relay 调度和具体设置项保存语义。
+
+### 风险评估
+
+1. 页面嵌套风险：如果保留当前 `SystemSettings -> Main`，再让 `SettingsPage` 使用 `SectionPageLayout -> Main`，会形成嵌套滚动和重复 header。方案必须同步移除外层 `Main`。
+2. 标题缺失风险：所有设置入口都需要传入 `getSectionMeta`；否则统一框架只能显示默认标题或空标题。方案通过 registry 统一暴露 meta，避免每个入口手写映射。
+3. content/operations 回归风险：这两个入口当前手写逻辑包含 legacy 键兼容和运行状态参数。迁移时必须使用 `resolveSettings` 和 `extraArgs` 逐项保留。
+4. `descriptionKey` 兼容风险：new-api registry 删除了 `descriptionKey`，但 NexusTok 当前保留描述更利于导航和报告追踪。本轮只新增 meta，不删除描述字段。
+5. 未保存提示风险：`FormDirtyIndicator` 如果只改成 portal，脱离页面框架时会完全不显示。本轮让 portal 组件返回是否已挂载，未挂载时 fallback 到旧 Alert。
+6. 布局风险：标题旁 badge 和动作槽必须在窄屏下换行而不挤压标题；`SectionPageLayout.Title` 的容器需要允许标题占据剩余宽度并安全截断。
+7. i18n 风险：新增文案必须完整进入 en/zh/fr/ja/ru/vi；本轮优先复用既有 key，最终仍运行 `bun run i18n:sync` 验证。
+
+### 方案评审
+
+采用“先统一页面框架，再逐步迁移具体表单”的低风险方案：
+
+1. 将 `SectionPageLayout` 与 new-api 对齐，补充 `fixedContent` 能力，并让标题容器 `flex-1`，为标题状态 badge 预留空间。
+2. 新增 NexusTok 品牌化的 `settings-page-context.tsx`，提供 `SettingsPageProvider`、`SettingsPageActionsPortal`、`SettingsPageTitleStatusPortal`、`SettingsPageFormActions` 和 `useSuppressSettingsSectionHeader`。按钮图标先沿用 lucide，因为项目当前前端已大量使用 lucide。
+3. 修改 `SettingsPage` 使用 `SectionPageLayout`，支持 `getSectionMeta`、`loadingMessage`、`resolveSettings` 和泛型 `extraArgs`；加载态也保留当前分区标题。
+4. 新增 `settings-form-layout.tsx` 作为后续表单迁移的公共布局，但本轮只让类型和构建通过，不大规模替换具体表单 JSX。
+5. 修改 `SettingsSection` 支持页面框架内隐藏重复 section header，同时保留 `description` prop 兼容当前调用。
+6. `createSectionRegistry` 新增 `getSectionMeta`，各分区 registry 导出对应 meta；七个入口页面统一传入 `getSectionMeta`。
+7. `content` 入口将 legacy option fallback 提取为 `resolveContentSettings()` 并传给 `SettingsPage`；`operations` 入口通过 `extraArgs` 传递版本和启动时间。
+8. `FormDirtyIndicator` 优先把 `Unsaved changes` 渲染到标题状态槽；没有 provider 时继续渲染旧 Alert。
+9. 运行 `bun run i18n:sync`、`bun run typecheck`、`bun run build`、相关单测和 `git diff --check`；最后用 Chrome DevTools MCP 登录并访问 `http://192.168.0.202:3003/system-settings/site/system-info`，修改一个字段但不保存，确认标题、动作槽、未保存状态和页面热更新。
+
+### 实施结果
+
+- `SectionPageLayout` 已补齐 `fixedContent` 能力，并让标题区域占据剩余宽度、动作区右对齐，后续需要固定内容或页头动作时可以复用同一布局。
+- 新增 `settings-page-context.tsx`，提供 `SettingsPageProvider`、`SettingsPageActionsPortal`、`SettingsPageTitleStatusPortal`、`SettingsPageFormActions`、`useSuppressSettingsSectionHeader` 和标题状态容器 hook。该能力用于后续把设置页保存/重置按钮迁移到页头动作区。
+- 新增 `settings-form-layout.tsx`，提供 `SettingsForm`、`SettingsFormGrid`、`SettingsFormGridItem`、`SettingsSwitchItem`、`SettingsSwitchRow`、`SettingsSwitchField`、`SettingsControlGroup`、`SettingsControlChildren` 等公共布局组件，作为后续表单逐步收敛的原生基础。
+- `SettingsPage` 已使用 `SectionPageLayout` 渲染当前分区标题，并支持 `getSectionMeta`、`loadingMessage`、`resolveSettings` 和泛型 `extraArgs`。加载态也会保留当前分区标题，不再只显示孤立 loading 文本。
+- `SystemSettings` 外层已移除手写 `Main`，避免统一框架接入后形成重复页面壳。
+- `createSectionRegistry` 在保留 NexusTok 现有 `descriptionKey` 的基础上新增 `getSectionMeta`；site/auth/models/security/billing/content/operations 七类设置 registry 均已导出对应 meta。
+- site/auth/models/security/billing 五个已有 `SettingsPage` 入口已传入 `getSectionMeta`；content 和 operations 两个原手写入口也已迁移到统一 `SettingsPage`。
+- content 入口保留旧配置键兼容：`Announcements`、`ApiInfo`、`FAQ`、`UptimeKumaUrl`/`UptimeKumaSlug` 仍会在新键缺失时补入当前设置草稿。
+- operations 入口保留 `useStatus()` 运行信息传递，`update-checker` 分区仍能显示当前版本和启动时间。
+- `FormDirtyIndicator` 在 `SettingsPage` 内会把 `Unsaved changes` 以紧凑 `Badge` 渲染到标题旁；脱离 `SettingsPageProvider` 时继续 fallback 为旧 Alert，避免提示静默消失。
+- 本轮未修改任何系统设置保存 API、后端权限、数据库、计费表达式、模型同步、渠道编辑页或 Relay 行为。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/system-settings` 通过，17 个系统设置相关单测成功，覆盖数字字段、模型定价格式、Grok 表单转换、角色策略工具和 Waffo Pancake 凭据解析。
+2. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+3. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount=0`、`extrasCount=0`。fr/ja/ru/vi 仍存在既有 `untranslatedCount`，本轮未新增翻译缺口。
+4. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.2 秒内完成生产构建。
+5. `git diff --check` 通过，未发现空白错误。
+6. 使用 Chrome DevTools MCP 启动临时 Chrome，访问 `http://192.168.0.202:3003/system-settings/site/system-info`，通过 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`。
+7. MCP 忽略缓存重新访问 `http://192.168.0.202:3003/system-settings/site/system-info`，页面标题区显示 `System Information`，表单内重复的 `SettingsSection` 标题已被统一框架抑制；表单字段继续正常展示。
+8. MCP 修改 `System Name` 字段但不保存，标题变为 `System Information Unsaved changes`，证明 `FormDirtyIndicator` 已进入标题状态槽；页面没有出现旧的表单首行 Alert。
+9. MCP 点击 `Reset` 清理草稿后访问 `http://192.168.0.202:3003/system-settings/content/announcements`，页面标题区显示 `Announcements`，原手写 content 入口已统一到新框架，公告列表和按钮仍正常展示。
+10. MCP 访问 `http://192.168.0.202:3003/system-settings/operations/update-checker`，页面标题区显示 `System maintenance`，并正常展示 `Current version` 与 `Uptime since`，确认 `extraArgs` 仍把运行状态传给 `UpdateCheckerSection`。
+11. MCP 切换 390px 移动视口后访问 `site/system-info`，再次修改 `System Name`，标题区显示 `System Information Unsaved changes`，表单按钮和字段没有重叠；截图保存到 `/tmp/nexustok-system-settings-frame-mobile.png`。
+12. MCP 网络记录中系统设置验证相关请求均为 GET：`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/`；未出现系统设置保存接口请求，确认验证过程未污染运行态配置。
+13. MCP 控制台没有 JavaScript `error`、`warn` 或 DevTools `issue`；仅有 i18next 宣传 info 和本地构建指纹 debug。

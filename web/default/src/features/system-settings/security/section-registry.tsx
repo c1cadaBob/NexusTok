@@ -119,3 +119,4 @@ export const SECURITY_SECTION_IDS = securityRegistry.sectionIds
 export const SECURITY_DEFAULT_SECTION = securityRegistry.defaultSection
 export const getSecuritySectionNavItems = securityRegistry.getSectionNavItems
 export const getSecuritySectionContent = securityRegistry.getSectionContent
+export const getSecuritySectionMeta = securityRegistry.getSectionMeta

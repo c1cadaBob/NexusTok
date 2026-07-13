@@ -141,3 +141,4 @@ export const CONTENT_SECTION_IDS = contentRegistry.sectionIds
 export const CONTENT_DEFAULT_SECTION = contentRegistry.defaultSection
 export const getContentSectionNavItems = contentRegistry.getSectionNavItems
 export const getContentSectionContent = contentRegistry.getSectionContent
+export const getContentSectionMeta = contentRegistry.getSectionMeta

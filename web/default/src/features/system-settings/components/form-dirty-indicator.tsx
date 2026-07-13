@@ -19,6 +19,11 @@ For commercial licensing, please contact support@c1cada.dev
 import { Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import {
+  SettingsPageTitleStatusPortal,
+  useSettingsPageTitleStatusContainer,
+} from './settings-page-context'
 
 type FormDirtyIndicatorProps = {
   isDirty: boolean
@@ -38,15 +43,24 @@ export function FormDirtyIndicator({
   message,
 }: FormDirtyIndicatorProps) {
   const { t } = useTranslation()
+  const titleStatusContainer = useSettingsPageTitleStatusContainer()
   if (!isDirty) return null
 
+  if (titleStatusContainer) {
+    return (
+      <SettingsPageTitleStatusPortal>
+        <Badge variant='outline' className='text-muted-foreground'>
+          <Info data-icon='inline-start' />
+          <span>{message ? t(message) : t('Unsaved changes')}</span>
+        </Badge>
+      </SettingsPageTitleStatusPortal>
+    )
+  }
+
   return (
-    <Alert
-      variant='default'
-      className='border-orange-500/50 bg-orange-50 dark:bg-orange-950/20'
-    >
-      <Info className='h-4 w-4 text-orange-600 dark:text-orange-500' />
-      <AlertDescription className='text-orange-800 dark:text-orange-400'>
+    <Alert variant='default'>
+      <Info />
+      <AlertDescription>
         {message ?? t('You have unsaved changes')}
       </AlertDescription>
     </Alert>
