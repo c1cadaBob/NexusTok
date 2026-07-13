@@ -13267,3 +13267,88 @@ NexusTok 当前渠道编辑抽屉已经具备 new-api 最新编辑渠道页的�
 12. MCP 在浏览器上下文携带 `NexusTok-User: 1` 读取 `GET /api/channel/1`，后端仍返回 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认验证未污染运行态数据。
 13. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有表单可访问性 `issue`：缺少 autocomplete 属性、部分 label 关联不完全，本轮未扩大范围处理。
 14. MCP 验证截图保存为 `/tmp/nexustok-channel-edit-model-search-validation.png`。
+
+## 本轮实施评审：渠道批量操作模式原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/channels-provider.tsx`、`channels-primary-buttons.tsx`、`channels-table.tsx` 和 `channels-columns.tsx` 后确认，new-api 最新渠道页已经把表格行选择与批量操作栏收进 `Batch Operations` 模式中：默认页面不展示复选框列，也不挂载批量操作栏；只有管理员显式打开批量模式后，非 Tag 聚合行才允许被选择，关闭批量模式时会清空已选状态。
+
+当前 NexusTok 已在前序切片接入公共 `useDataTable()`，并保留了账号池、Codex OAuth、权限守卫、模型库搜索、上游模型检测和 Tag 聚合等原生能力。但当前渠道表格仍默认展示复选框列并始终传入 `DataTableBulkActions`，这会让日常查看和编辑渠道时出现额外操作面，也增加误选、误批量操作和移动端视觉拥挤风险。本轮吸收 new-api 的批量模式优势，但不引入其 `sensitiveVisible` 敏感信息显隐逻辑，避免把数据遮罩策略、分组筛选展示和 Codex 用量弹窗字段一起混入同一次变更。
+
+### 需求分析
+
+1. 渠道页顶部主按钮区新增 `Batch Operations` 开关，桌面端显示为独立开关，移动端放入更多菜单。
+2. 默认关闭批量模式时，渠道表格不展示选择列，行选择禁用，批量操作栏不显示。
+3. 打开批量模式后，表格恢复非 Tag 聚合行可选择能力，并显示现有 NexusTok `DataTableBulkActions`。
+4. 关闭批量模式时必须清空已选行，避免隐藏批量栏后残留不可见选择状态。
+5. 保留 Tag 模式、ID 排序、渠道权限守卫、账号池管理、上游检测、移动端列表、卡片视图和模型筛选等现有行为。
+6. 本轮不修改后端接口、数据库、渠道保存逻辑、模型同步逻辑、计费、relay、权限模型和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道上下文 | `web/default/src/features/channels/components/channels-provider.tsx` | 新增 `batchMode` / `setBatchMode`，并用 `useMemo` 稳定 context value，降低开关状态变化外的无意义重渲染。 |
+| 渠道主按钮 | `web/default/src/features/channels/components/channels-primary-buttons.tsx` | 新增桌面和移动端 `Batch Operations` 开关，继续复用现有权限守卫和操作菜单。 |
+| 渠道列定义 | `web/default/src/features/channels/components/channels-columns.tsx` | `useChannelsColumns()` 增加 `enableSelection` 参数，允许调用方隐藏选择列；默认仍为 `true` 以降低其它潜在调用方回归风险。 |
+| 渠道表格 | `web/default/src/features/channels/components/channels-table.tsx` | 根据 `batchMode` 控制选择列、行选择、批量操作栏，并在关闭时重置 row selection。 |
+| 渠道移动卡片 | `web/default/src/features/channels/components/channel-card.tsx` | 移动端和桌面卡片视图也需要显式接收批量模式状态，避免关闭批量模式后仍残留行选择框。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `Batch Operations` 六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 批量操作可达性风险：默认隐藏选择列后，管理员必须能清楚找到 `Batch Operations` 开关，桌面端和移动端都需要入口。
+2. 选择状态残留风险：如果关闭批量模式不清空 selection，重新打开后可能直接显示旧选择，并影响批量操作目标。
+3. Tag 聚合风险：Tag 行本身是聚合视图，不应被普通批量操作选中；开启批量模式后仍需保留 `!isTagAggregateRow()` 约束。
+4. 列定义回归风险：`useChannelsColumns()` 改为条件插入选择列后，所有原有列顺序、列宽、meta、排序和 cell 渲染必须保持不变。
+5. 移动端风险：更多菜单新增开关不能挤压现有操作，也不能影响 `Tag Mode`、`Sort by ID` 和危险操作的权限 guard。
+6. 范围风险：new-api 同一批改动还包含敏感信息显隐；该能力涉及渠道名、ID、分组、余额、用量弹窗和筛选项遮罩策略，本轮明确不合并，避免影响核心运营判断。
+
+### 方案评审
+
+采用“状态开关 + 表格选择条件化”的低风险方案：
+
+1. 在 `ChannelsProvider` 中新增 `batchMode` state，默认 `false`，不写入 localStorage，保持 new-api 的显式临时操作模式语义。
+2. 将 provider value 用 `useMemo<ChannelsContextType>()` 包裹；`useState` setter 稳定，依赖只保留实际状态值和 `upstream`。
+3. 在 `ChannelsPrimaryButtons` 中引入 `ListChecks`，新增 `handleBatchModeToggle()`，桌面端放在 `Tag Mode` 前，移动端更多菜单第一项放置同名 checkbox。
+4. 将 `useChannelsColumns()` 改为接受 `{ enableSelection?: boolean }`，内部先构造 `selectionColumn`，再按 `enableSelection` 返回 `[selectionColumn, ...columns]` 或 `columns`。
+5. 在 `ChannelsTable` 中读取 `batchMode`，调用 `useChannelsColumns({ enableSelection: batchMode })`；`enableRowSelection` 在关闭时传 `false`，开启时保留非 Tag 行选择函数。
+6. 在 `ChannelsTable` 中新增 `useEffect`，当 `batchMode` 为 `false` 时执行 `table.resetRowSelection()`。
+7. `DataTablePage` 的 `bulkActions` 改为 `batchMode ? <DataTableBulkActions table={table} /> : null`。
+8. 验证顺序：`bun run typecheck`、渠道相关单测、系统设置回归单测、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后使用 MCP 登录并访问 `http://192.168.0.202:3003/channels` 验证开关、选择列、批量栏、编辑抽屉和控制台状态。
+
+### 实施结果
+
+1. `ChannelsProvider` 新增 `batchMode` / `setBatchMode`，默认关闭，不持久化到 localStorage，保持“本次会话临时进入批量操作”的交互语义。
+2. `ChannelsProvider` 的 context value 改为 `useMemo`，避免批量模式以外的无关渲染把全新对象扩散给渠道表格、卡片和单元格消费者。
+3. `ChannelsPrimaryButtons` 新增桌面端 `批量操作` 开关，并在移动端更多菜单第一项增加同名 checkbox；现有 `Tag Mode`、`Sort by ID`、创建渠道、全局测试、余额更新、上游检测、修复能力和删除禁用渠道的权限 guard 均保持原样。
+4. `useChannelsColumns()` 支持 `{ enableSelection?: boolean }`，默认仍为 `true`，但渠道表格会按 `batchMode` 决定是否注入选择列；Tag 聚合行仍不会渲染选择框。
+5. `ChannelsTable` 根据 `batchMode` 控制 `enableRowSelection` 和 `bulkActions`，关闭批量模式时执行 `table.resetRowSelection()` 清空旧选择。
+6. MCP 移动端验证时发现：仅靠列定义条件化后，移动卡片在菜单内关闭批量模式时仍可能残留旧的 `Select row` 渲染。已补充 `ChannelCard` / `ChannelsMobileList` 的 `enableSelection` 显式参数，桌面卡片视图和移动列表都会按 `batchMode` 决定是否展示选择框和选中态。
+7. 六个前端 locale 已新增 `Batch Operations` 翻译：en `Batch Operations`、zh `批量操作`、fr `Opérations groupées`、ja `一括操作`、ru `Пакетные операции`、vi `Thao tác hàng loạt`。
+8. 本轮没有修改 `/opt/project/new-api-main` 源码、后端接口、数据库结构、渠道保存逻辑、模型同步逻辑、relay、计费或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前前端仍为 Manual + Tailwind v4 + Base UI + hugeicons，组件库中已存在本轮复用的 `button`、`dropdown-menu`、`switch`、`checkbox`、`table` 等组件。
+2. 已运行 `cd web/default && bun run i18n:sync`，同步通过，并生成最新 `_sync-report.json`；本轮新增的 `Batch Operations` 六语 key 已完整写入。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过；在移动端修复后又重新运行一次，仍通过。
+4. 已运行 `cd web/default && bun test src/features/channels`，56 个渠道相关测试通过；在移动端修复后又重新运行一次，仍为 56 pass。
+5. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过；在移动端修复后又重新运行一次，仍为 27 pass。
+6. 已运行 `cd web/default && bunx eslint src/features/channels/components/channel-card.tsx src/features/channels/components/channels-provider.tsx src/features/channels/components/channels-primary-buttons.tsx src/features/channels/components/channels-columns.tsx src/features/channels/components/channels-table.tsx`，ESLint 通过。
+7. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过；在移动端修复后又重新运行一次，仍通过。
+8. 已运行 `git diff --check`，未发现空白错误；在移动端修复后又重新运行一次，仍通过。
+9. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功，打开 `/channels` 后确认页面热更新已生效，桌面端出现 `批量操作`、`标签模式`、`使用 ID 排序` 三个开关。
+10. MCP 桌面端默认关闭批量模式时，表格列头从 `ID` 开始，没有 `Select all` / `Select row` 控件，批量操作栏不显示。
+11. MCP 桌面端打开 `批量操作` 后，`Select all` 表头复选框和 `Select row` 行复选框出现；勾选渠道 `11111` 后出现 `Bulk actions for 1 selected channel` 工具栏，包含清除选择、启用、禁用、设置标签和删除入口。
+12. MCP 桌面端关闭 `批量操作` 后，选择列和批量栏消失；再次打开时行复选框未选中，确认 `table.resetRowSelection()` 生效。
+13. MCP 在模型筛选框输入 `gpt-5.6` 后，URL 正确变为 `/channels?model=gpt-5.6`，渠道 `11111` 仍正常显示。
+14. MCP 打开渠道 `11111` 编辑抽屉，确认仍保留 NexusTok 原生能力：四段结构、账号池凭证、OpenAI 供应商范围、独立 `搜索模型库` 输入、模型映射 guardrail 和高级设置入口。
+15. MCP 在编辑抽屉的 `搜索模型库` 输入 `gpt-5.6` 后，显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，预览 `gpt-5.6-terra, gpt-5.6-luna`；点击 `添加 2 个新模型` 后只更新表单草稿为 `已选 5 个`，没有点击 `更新渠道`。
+16. MCP 读取网络请求确认均为 `GET` 请求，包括 `/api/channel/search?...model=gpt-5.6...`、`/api/channel/1`、`/api/models/search?keyword=gpt-5.6&vendor=OpenAI...`，没有渠道保存类写请求。
+17. MCP 在浏览器上下文携带 `NexusTok-User: 1` 读取 `GET /api/channel/1`，后端仍返回 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`name = "11111"`，确认搜索追加验证未污染运行态数据。
+18. MCP 将页面调整到 `390x844` 移动视口，确认默认关闭批量模式时移动卡片没有 `Select row` 控件；打开更多菜单可见 `批量操作` checkbox；开启后移动卡片出现选择框；关闭后通过脚本确认 `selectControls: []`，修复后的移动端残留选择框问题已解决。
+19. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有表单可访问性 `issue`：缺少 autocomplete 属性、部分 label 关联不完全，本轮未扩大范围处理。
+20. MCP 验证截图保存为 `/tmp/nexustok-channel-batch-mode-validation.png` 和 `/tmp/nexustok-channel-batch-mode-mobile-validation.png`。

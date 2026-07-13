@@ -660,6 +660,7 @@
     "Batch Edit by Tag": "タグによる一括編集",
     "Batch enable failed": "一括有効化に失敗しました",
     "Batch Import": "Batch Import",
+    "Batch Operations": "一括操作",
     "Batch processing failed": "一括処理に失敗しました",
     "Batch set tag for {{count}} channels": "{{count}} 件のチャネルにタグを一括設定しました",
     "Batch upstream model detection task started: {{taskId}}": "上流モデルの一括検出タスクを開始しました：{{taskId}}",

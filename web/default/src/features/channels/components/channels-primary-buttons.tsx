@@ -26,6 +26,7 @@ import {
   Tags,
   TestTube,
   DollarSign,
+  ListChecks,
   SortAsc,
   RefreshCw,
   ArrowUpFromLine,
@@ -45,13 +46,13 @@ import {
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import {
   handleDeleteAllDisabled,
   handleFixAbilities,
   handleTestAllChannels,
   handleUpdateAllBalances,
 } from '../lib'
-import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import { useChannels } from './channels-provider'
 
 export function ChannelsPrimaryButtons() {
@@ -62,6 +63,8 @@ export function ChannelsPrimaryButtons() {
     setEnableTagMode,
     idSort,
     setIdSort,
+    batchMode,
+    setBatchMode,
     upstream,
   } = useChannels()
   const queryClient = useQueryClient()
@@ -85,10 +88,29 @@ export function ChannelsPrimaryButtons() {
     setIdSort(checked)
   }
 
+  const handleBatchModeToggle = (checked: boolean) => {
+    setBatchMode(checked)
+  }
+
   return (
     <>
       <div className='flex items-center gap-2'>
-        {/* Desktop: Toggle switches visible */}
+        {/* 桌面端直接展示常用开关。 */}
+        <div className='hidden items-center gap-2 rounded-md border px-3 py-1.5 sm:flex'>
+          <ListChecks className='text-muted-foreground h-4 w-4' />
+          <Label
+            htmlFor='channel-batch-mode'
+            className='cursor-pointer text-sm'
+          >
+            {t('Batch Operations')}
+          </Label>
+          <Switch
+            id='channel-batch-mode'
+            checked={batchMode}
+            onCheckedChange={handleBatchModeToggle}
+          />
+        </div>
+
         <div className='hidden items-center gap-2 rounded-md border px-3 py-1.5 sm:flex'>
           <Tags className='text-muted-foreground h-4 w-4' />
           <Label htmlFor='tag-mode' className='cursor-pointer text-sm'>
@@ -113,7 +135,7 @@ export function ChannelsPrimaryButtons() {
           />
         </div>
 
-        {/* Create Channel */}
+        {/* 创建渠道 */}
         <Button
           onClick={() => {
             if (!guardPermission(permissions.canSensitiveWrite)) return
@@ -130,13 +152,22 @@ export function ChannelsPrimaryButtons() {
           <span className='sm:hidden'>{t('Create')}</span>
         </Button>
 
-        {/* More Actions */}
+        {/* 更多操作 */}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant='outline' size='sm' />}>
             <MoreHorizontal className='h-4 w-4' />
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end' className='w-56'>
-            {/* Mobile-only: toggle switches */}
+            {/* 移动端把开关收进更多菜单。 */}
+            <DropdownMenuCheckboxItem
+              className='sm:hidden'
+              checked={batchMode}
+              onCheckedChange={handleBatchModeToggle}
+            >
+              <ListChecks className='mr-2 h-4 w-4' />
+              {t('Batch Operations')}
+            </DropdownMenuCheckboxItem>
+
             <DropdownMenuCheckboxItem
               className='sm:hidden'
               checked={enableTagMode}

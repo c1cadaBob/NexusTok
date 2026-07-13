@@ -37,6 +37,7 @@ import type { Channel } from '../types'
 interface ChannelsMobileListProps {
   emptyDescription?: string
   emptyTitle?: string
+  enableSelection?: boolean
   getRowClassName?: (row: Row<Channel>) => string | undefined
   isLoading?: boolean
   table: Table<Channel>
@@ -44,6 +45,7 @@ interface ChannelsMobileListProps {
 
 interface ChannelCardProps {
   className?: string
+  enableSelection?: boolean
   isSelected: boolean
   row: Row<Channel>
 }
@@ -88,6 +90,7 @@ function renderCell(row: Row<Channel>, id: string) {
 
 function ChannelCardComponent({
   className,
+  enableSelection = true,
   isSelected,
   row,
 }: ChannelCardProps) {
@@ -112,15 +115,16 @@ function ChannelCardComponent({
     isTagRow ||
     (channel.status !== CHANNEL_STATUS.ENABLED &&
       channel.status !== CHANNEL_STATUS.MANUAL_DISABLED)
+  const isVisuallySelected = enableSelection && isSelected
 
   return (
     <div
       className={cn('bg-card flex flex-col gap-3 px-3 py-3', className)}
-      data-state={isSelected ? 'selected' : undefined}
+      data-state={isVisuallySelected ? 'selected' : undefined}
     >
       <div className='flex items-center justify-between gap-2'>
         <div className='flex min-w-0 flex-1 items-center gap-2'>
-          {!isTagRow && selectCell && (
+          {enableSelection && !isTagRow && selectCell && (
             <span className='shrink-0'>{selectCell}</span>
           )}
           <div className='min-w-0 overflow-hidden'>{typeCell}</div>
@@ -184,6 +188,7 @@ export const ChannelCard = memo(ChannelCardComponent)
 export function ChannelsMobileList({
   emptyDescription,
   emptyTitle,
+  enableSelection = true,
   getRowClassName,
   isLoading = false,
   table,
@@ -221,6 +226,7 @@ export function ChannelsMobileList({
       {rows.map((row) => (
         <ChannelCard
           className={cn('border-b last:border-b-0', getRowClassName?.(row))}
+          enableSelection={enableSelection}
           isSelected={row.getIsSelected()}
           key={row.id}
           row={row}

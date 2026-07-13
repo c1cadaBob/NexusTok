@@ -660,6 +660,7 @@
     "Batch Edit by Tag": "Chỉnh sửa hàng loạt theo Thẻ",
     "Batch enable failed": "Kích hoạt hàng loạt thất bại",
     "Batch Import": "Batch Import",
+    "Batch Operations": "Thao tác hàng loạt",
     "Batch processing failed": "Xử lý hàng loạt thất bại",
     "Batch set tag for {{count}} channels": "Đã đặt thẻ hàng loạt cho {{count}} kênh",
     "Batch upstream model detection task started: {{taskId}}": "Tác vụ phát hiện hàng loạt mô hình upstream đã bắt đầu: {{taskId}}",

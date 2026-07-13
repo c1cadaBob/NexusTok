@@ -445,45 +445,50 @@ function BalanceCell({ channel }: { channel: Channel }) {
   )
 }
 
+type UseChannelsColumnsOptions = {
+  enableSelection?: boolean
+}
+
 /**
- * Generate channels columns configuration
+ * 生成渠道表格列定义。
  */
-export function useChannelsColumns(): ColumnDef<Channel>[] {
+export function useChannelsColumns({
+  enableSelection = true,
+}: UseChannelsColumnsOptions = {}): ColumnDef<Channel>[] {
   const { t } = useTranslation()
-  return [
-    // Checkbox column
-    {
-      id: 'select',
-      header: ({ table }) => (
+  const selectionColumn: ColumnDef<Channel> = {
+    id: 'select',
+    header: ({ table }) => (
+      <Checkbox
+        checked={table.getIsAllPageRowsSelected()}
+        indeterminate={table.getIsSomePageRowsSelected()}
+        onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+        aria-label='Select all'
+      />
+    ),
+    cell: ({ row }) => {
+      const isTagRow = isTagAggregateRow(row.original)
+
+      // Tag 聚合行代表一组渠道，不能作为普通行参与批量操作。
+      if (isTagRow) {
+        return null
+      }
+
+      return (
         <Checkbox
-          checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label='Select all'
+          checked={row.getIsSelected()}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          aria-label='Select row'
         />
-      ),
-      cell: ({ row }) => {
-        const isTagRow = isTagAggregateRow(row.original)
-
-        // Don't show checkbox for tag rows
-        if (isTagRow) {
-          return null
-        }
-
-        return (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label='Select row'
-          />
-        )
-      },
-      enableSorting: false,
-      enableHiding: false,
-      size: 40,
+      )
     },
+    enableSorting: false,
+    enableHiding: false,
+    size: 40,
+  }
 
-    // ID column
+  const columns: ColumnDef<Channel>[] = [
+    // ID 列
     {
       accessorKey: 'id',
       meta: { label: t('ID'), mobileHidden: true },
@@ -497,7 +502,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       size: 80,
     },
 
-    // Name column
+    // 名称列
     {
       accessorKey: 'name',
       meta: { label: t('Name'), mobileTitle: true },
@@ -523,7 +528,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
               ? 'warning'
               : 'blue'
 
-        // Tag row with expand/collapse
+        // Tag 聚合行带展开/收起控制。
         if (isTagRow) {
           const tag = (row.original as TagRow).tag || name
           const childrenCount = (row.original as TagRow).children?.length || 0
@@ -555,7 +560,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
           )
         }
 
-        // Regular channel row
+        // 普通渠道行。
         const settings = parseChannelSettings(channel.setting)
         const isPassThrough = settings.pass_through_body_enabled === true
 
@@ -645,7 +650,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       minSize: 200,
     },
 
-    // Type column
+    // 类型列
     {
       accessorKey: 'type',
       meta: { label: t('Type') },
@@ -759,7 +764,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Status column
+    // 状态列
     {
       accessorKey: 'status',
       meta: { label: t('Status'), mobileBadge: true },
@@ -769,7 +774,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const status = row.getValue('status') as number
         const channel = row.original as Channel
 
-        // Tag row: show aggregated status
+        // Tag 聚合行展示子渠道状态汇总。
         if (isTagRow) {
           const childrenCount = (row.original as TagRow).children?.length || 0
           const hasEnabled = status === 1
@@ -796,7 +801,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
           }
         }
 
-        // Regular channel row
+        // 普通渠道行展示渠道状态。
         const config =
           CHANNEL_STATUS_CONFIG[status as keyof typeof CHANNEL_STATUS_CONFIG] ||
           CHANNEL_STATUS_CONFIG[0]
@@ -812,7 +817,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
             ? `${t(config.label)} (${enabledCount}/${keySize})`
             : t(config.label)
 
-        // Auto-disabled: show reason and time tooltip
+        // 自动禁用状态展示禁用原因和时间提示。
         if (status === 3) {
           let statusReason = ''
           let statusTime = ''
@@ -884,7 +889,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Models column
+    // 模型列
     {
       accessorKey: 'models',
       meta: { label: t('Models'), mobileHidden: true },
@@ -929,7 +934,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Group column
+    // 分组列
     {
       accessorKey: 'group',
       meta: { label: t('Groups'), mobileHidden: true },
@@ -970,7 +975,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Tag column
+    // Tag 列
     {
       accessorKey: 'tag',
       meta: { label: t('Tag'), mobileHidden: true },
@@ -986,7 +991,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Priority column
+    // 优先级列
     {
       accessorKey: 'priority',
       meta: { label: t('Priority'), mobileHidden: true },
@@ -997,7 +1002,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       size: 100,
     },
 
-    // Weight column
+    // 权重列
     {
       accessorKey: 'weight',
       meta: { label: t('Weight'), mobileHidden: true },
@@ -1007,7 +1012,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Balance column (Used/Remaining)
+    // 余额列（已用/剩余）
     {
       accessorKey: 'balance',
       meta: { label: t('Used / Remaining') },
@@ -1018,7 +1023,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       size: 180,
     },
 
-    // Response Time column
+    // 响应时间列
     {
       accessorKey: 'response_time',
       meta: { label: t('Response'), mobileHidden: true },
@@ -1041,7 +1046,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       size: 110,
     },
 
-    // Test Time column
+    // 测试时间列
     {
       accessorKey: 'test_time',
       meta: { label: t('Last Tested'), mobileHidden: true },
@@ -1051,7 +1056,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       cell: ({ row }) => {
         const testTime = row.getValue('test_time') as number
 
-        // For invalid timestamps, show "Never" badge
+        // 无效时间戳展示为空状态。
         if (!testTime || testTime === 0) {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
@@ -1059,7 +1064,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const timeText = formatRelativeTime(testTime)
         const fullDate = formatTimestampToDate(testTime)
 
-        // For valid timestamps, show tooltip with full date
+        // 有效时间戳通过提示展示完整日期。
         return (
           <TooltipProvider>
             <Tooltip>
@@ -1081,11 +1086,11 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableSorting: false,
     },
 
-    // Actions column
+    // 操作列
     {
       id: 'actions',
       cell: ({ row }) => {
-        // Check if this is a tag row (has children)
+        // Tag 聚合行和普通渠道行使用不同操作菜单。
         const isTagRow = isTagAggregateRow(row.original)
 
         if (isTagRow) {
@@ -1104,4 +1109,6 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableHiding: false,
     },
   ]
+
+  return enableSelection ? [selectionColumn, ...columns] : columns
 }

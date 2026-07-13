@@ -660,6 +660,7 @@
     "Batch Edit by Tag": "按标签批量编辑",
     "Batch enable failed": "批量启用失败",
     "Batch Import": "批量导入",
+    "Batch Operations": "批量操作",
     "Batch processing failed": "批量处理失败",
     "Batch set tag for {{count}} channels": "批量为 {{count}} 个渠道设置标签",
     "Batch upstream model detection task started: {{taskId}}": "批量上游模型检测任务已启动：{{taskId}}",

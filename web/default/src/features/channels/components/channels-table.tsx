@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
@@ -82,13 +82,13 @@ function isDisabledChannelRow(channel: Channel) {
 
 export function ChannelsTable() {
   const { t } = useTranslation()
-  const { enableTagMode, idSort } = useChannels()
+  const { enableTagMode, idSort, batchMode } = useChannels()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
-  // Table state
+  // 表格排序状态由后端排序参数消费。
   const [sorting, setSorting] = useState<SortingState>([])
 
-  // URL state management
+  // URL 状态负责让筛选、搜索和分页可分享、可刷新恢复。
   const {
     globalFilter,
     onGlobalFilterChange,
@@ -113,7 +113,7 @@ export function ChannelsTable() {
     ],
   })
 
-  // Extract filters from column filters
+  // 从列过滤状态中提取后端接口需要的查询参数。
   const statusFilter =
     (columnFilters.find((f) => f.id === 'status')?.value as
       | string[]
@@ -139,7 +139,7 @@ export function ChannelsTable() {
     onColumnFiltersChange,
   })
 
-  // Determine whether to use search or regular list API
+  // 全局关键字或模型过滤存在时走搜索接口，否则走普通列表接口。
   const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
 
   const sortParams = useMemo(() => {
@@ -167,7 +167,7 @@ export function ChannelsTable() {
     })
   }
 
-  // Fetch groups for filter
+  // 获取分组列表，用于构造分组过滤器。
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
@@ -182,7 +182,7 @@ export function ChannelsTable() {
     [groupsData]
   )
 
-  // Fetch channels data
+  // 获取渠道数据。
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching } = useQuery({
     queryKey: channelsQueryKeys.list({
@@ -254,7 +254,7 @@ export function ChannelsTable() {
     placeholderData: (previousData) => previousData,
   })
 
-  // Apply tag aggregation if tag mode is enabled
+  // Tag 模式开启时把后端返回的普通渠道聚合成可展开行。
   const channels = useMemo(() => {
     const rawChannels = data?.data?.items || []
 
@@ -268,8 +268,8 @@ export function ChannelsTable() {
   const totalCount = data?.data?.total || 0
   const typeCounts = data?.data?.type_counts
 
-  // Columns configuration
-  const columns = useChannelsColumns()
+  // 列定义会跟随批量模式决定是否注入选择列。
+  const columns = useChannelsColumns({ enableSelection: batchMode })
 
   // 公共 DataTable hook 统一管理列显隐、行选择、展开行和页码范围修正。
   const { table } = useDataTable({
@@ -282,7 +282,9 @@ export function ChannelsTable() {
     columnVisibilityStorageKey: CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY,
     pagination,
     globalFilter,
-    enableRowSelection: (row: Row<Channel>) => !isTagAggregateRow(row.original),
+    enableRowSelection: batchMode
+      ? (row: Row<Channel>) => !isTagAggregateRow(row.original)
+      : false,
     onSortingChange: handleSortingChange,
     onColumnFiltersChange,
     onPaginationChange,
@@ -295,7 +297,13 @@ export function ChannelsTable() {
     ensurePageInRange,
   })
 
-  // Prepare filter options from existing channel types only.
+  useEffect(() => {
+    if (!batchMode) {
+      table.resetRowSelection()
+    }
+  }, [batchMode, table])
+
+  // 类型过滤只展示当前数据集中实际存在的渠道类型。
   const typeFilterOptions = useMemo(() => {
     const counts = typeCounts || {}
     const typeIds = Object.entries(counts)
@@ -373,7 +381,12 @@ export function ChannelsTable() {
       enableCardView
       viewModeStorageKey={CHANNELS_VIEW_MODE_STORAGE_KEY}
       renderCard={(row, { isSelected }) => (
-        <ChannelCard className='px-0 py-0' isSelected={isSelected} row={row} />
+        <ChannelCard
+          className='px-0 py-0'
+          enableSelection={batchMode}
+          isSelected={isSelected}
+          row={row}
+        />
       )}
       cardGridClassName='grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3'
       applyHeaderSize
@@ -415,6 +428,7 @@ export function ChannelsTable() {
       }}
       mobile={
         <ChannelsMobileList
+          enableSelection={batchMode}
           table={table}
           isLoading={isLoading}
           emptyTitle={t('No Channels Found')}
@@ -427,7 +441,7 @@ export function ChannelsTable() {
       getRowClassName={(row, { isMobile }) =>
         getChannelRowClassName(row, isMobile)
       }
-      bulkActions={<DataTableBulkActions table={table} />}
+      bulkActions={batchMode ? <DataTableBulkActions table={table} /> : null}
     />
   )
 }

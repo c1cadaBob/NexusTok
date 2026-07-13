@@ -660,6 +660,7 @@
     "Batch Edit by Tag": "Batch Edit by Tag",
     "Batch enable failed": "Batch enable failed",
     "Batch Import": "Batch Import",
+    "Batch Operations": "Batch Operations",
     "Batch processing failed": "Batch processing failed",
     "Batch set tag for {{count}} channels": "Batch set tag for {{count}} channels",
     "Batch upstream model detection task started: {{taskId}}": "Batch upstream model detection task started: {{taskId}}",

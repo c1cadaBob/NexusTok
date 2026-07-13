@@ -17,14 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'
 import type { Channel } from '../types'
 
 // ============================================================================
-// Types
+// 类型定义
 // ============================================================================
 
 type DialogType =
@@ -54,11 +60,13 @@ type ChannelsContextType = {
   setEnableTagMode: (enabled: boolean) => void
   idSort: boolean
   setIdSort: (enabled: boolean) => void
+  batchMode: boolean
+  setBatchMode: (enabled: boolean) => void
   upstream: UpstreamUpdateState
 }
 
 // ============================================================================
-// Context
+// 上下文
 // ============================================================================
 
 const ChannelsContext = createContext<ChannelsContextType | undefined>(
@@ -79,6 +87,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [idSort, setIdSort] = useState(() => {
     return localStorage.getItem('channels-id-sort') === 'true'
   })
+  const [batchMode, setBatchMode] = useState(false)
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
@@ -86,22 +95,28 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient])
   const upstream = useChannelUpstreamUpdates(refreshChannels)
 
+  // 批量操作模式是临时操作状态，不写入 localStorage；context value 使用 memo 避免无关渲染扩散到表格单元格。
+  const value = useMemo<ChannelsContextType>(
+    () => ({
+      open,
+      setOpen,
+      currentRow,
+      setCurrentRow,
+      currentTag,
+      setCurrentTag,
+      enableTagMode,
+      setEnableTagMode,
+      idSort,
+      setIdSort,
+      batchMode,
+      setBatchMode,
+      upstream,
+    }),
+    [open, currentRow, currentTag, enableTagMode, idSort, batchMode, upstream]
+  )
+
   return (
-    <ChannelsContext.Provider
-      value={{
-        open,
-        setOpen,
-        currentRow,
-        setCurrentRow,
-        currentTag,
-        setCurrentTag,
-        enableTagMode,
-        setEnableTagMode,
-        idSort,
-        setIdSort,
-        upstream,
-      }}
-    >
+    <ChannelsContext.Provider value={value}>
       {children}
     </ChannelsContext.Provider>
   )

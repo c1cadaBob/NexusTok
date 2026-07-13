@@ -660,6 +660,7 @@
     "Batch Edit by Tag": "Modification par lot par tag",
     "Batch enable failed": "Échec de l'activation par lots",
     "Batch Import": "Batch Import",
+    "Batch Operations": "Opérations groupées",
     "Batch processing failed": "Échec du traitement par lot",
     "Batch set tag for {{count}} channels": "Étiquette définie par lot pour {{count}} canaux",
     "Batch upstream model detection task started: {{taskId}}": "Tâche de détection groupée des modèles amont démarrée : {{taskId}}",
