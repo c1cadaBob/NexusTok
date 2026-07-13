@@ -22,6 +22,7 @@ import {
   canCreateMultiSelectValue,
   filterMultiSelectItems,
   getVisibleMultiSelectItems,
+  shouldPreventMultiSelectEnterFormSubmit,
   shouldPreventEmptyInputChipRemoval,
   shouldSubmitMultiSelectSearchOnEnter,
 } from './multi-select'
@@ -259,6 +260,35 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         inputValue: 'gpt-5.6',
         isLoading: true,
         hasMatchingOption: true,
+      }),
+      false
+    )
+  })
+})
+
+describe('MultiSelect 表单提交防护', () => {
+  test('存在搜索词时 Enter 不应冒泡提交父表单', () => {
+    assert.equal(
+      shouldPreventMultiSelectEnterFormSubmit({
+        key: 'Enter',
+        inputValue: 'gpt-5.6',
+      }),
+      true
+    )
+  })
+
+  test('空输入或非 Enter 键不拦截父级默认行为', () => {
+    assert.equal(
+      shouldPreventMultiSelectEnterFormSubmit({
+        key: 'Enter',
+        inputValue: '   ',
+      }),
+      false
+    )
+    assert.equal(
+      shouldPreventMultiSelectEnterFormSubmit({
+        key: 'Tab',
+        inputValue: 'gpt-5.6',
       }),
       false
     )

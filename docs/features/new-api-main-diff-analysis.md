@@ -11564,3 +11564,67 @@ NexusTok 已经具备更多原生能力，包括 `Enable Waffo Pancake`、沙箱
 14. MCP pair mock 响应后，页面表单草稿填入 `STO_mocked` / `PROD_mocked` 并显示成功提示；验证过程未点击 `Save Waffo Pancake settings`。
 15. MCP 再次调用 `/api/option/` 回查运行态，`WaffoPancakeMerchantID`、`WaffoPancakeStoreID`、`WaffoPancakeProductID`、`WaffoPancakeReturnURL` 仍为空，确认页面验证没有污染后端配置。
 16. MCP 控制台无 error/warn；仅剩既有表单可访问性 issue：autocomplete、label 与无关联 label 提示，本轮没有扩大该独立问题。
+
+## 本轮实施评审：渠道模型搜索添加键盘语义对齐 new-api 编辑页
+
+### 差异来源
+
+用户继续反馈渠道编辑页“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面继续对齐。重新对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认，`new-api-main` 的模型区以模型多选器为主入口：管理员在同一个控件中搜索、选择已有模型或添加自定义模型，批量能力主要通过 `Fetch Models` 弹窗等明确动作完成。
+
+NexusTok 当前已经在 new-api 主结构上原生化了更多能力，包括 OpenAI/Codex 供应商范围提示、模型元信息库搜索、`Search results` 摘要、缺失模型预览和 `Add all {{count}} new match(es)` 显式批量追加按钮。MCP 真实复现显示，搜索 `gpt-5.6` 时接口返回并渲染了 `gpt-5.6-terra`、`gpt-5.6-luna` 两个可新增候选，点击显式按钮会把草稿从 `Selected 3` 正确追加到 `Selected 5`；但之前模型输入框还把 Enter 绑定到批量追加，导致“选择高亮候选”和“追加全部命中”两种动作挤在同一个键盘路径里，容易让用户误以为搜索添加行为不稳定。
+
+### 需求分析
+
+本轮目标不是移除 NexusTok 的模型库搜索优势，而是把它转换成更符合 new-api 编辑页直觉的交互：模型输入框负责搜索、选择具体候选和自定义添加；批量追加全部搜索命中必须通过 `Add all {{count}} new match(es)` 按钮显式触发。这样搜索 `gpt-5.6` 时，管理员仍能看到 3 个已同步模型、2 个可新增模型和 1 个已选模型，但按 Enter 不再绕过候选选择语义直接批量追加。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑页模型区 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除模型 MultiSelect 的 `onSearchSubmit` 和两个 Enter 批量提交开关；保留搜索结果 header/footer 和显式批量按钮。 |
+| 通用 MultiSelect | `web/default/src/components/multi-select.tsx` | 增加有搜索词时的 Enter 父表单提交防护；候选选择、自定义创建和显式搜索提交仍按原有分支处理。 |
+| 单元测试 | `web/default/src/components/multi-select.test.ts` | 补充搜索词 Enter 不冒泡提交父表单的纯函数覆盖。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮复现、需求、风险、方案和验证。 |
+
+本轮不修改 Go 后端、`/api/models/search`、模型同步、渠道保存 payload、账号池、Codex OAuth、权限裁剪、模型映射 guardrail 和上游模型检测配置。
+
+### 风险评估
+
+1. 批量追加能力丢失风险：显式按钮仍调用原来的 `handleAddModelSearchMatches`，继续扫描分页、按供应商过滤、按大小写不敏感去重，并只追加当前渠道尚未包含的模型。
+2. 键盘习惯变化风险：Enter 不再触发“追加全部搜索命中”，但这正是本轮要消除的歧义；候选选择和自定义模型创建回归更接近 new-api 的常规输入语义。
+3. 共享组件回归风险：`MultiSelect` 本轮只在“有搜索词且 Enter 未被其它分支消费”时阻止父表单提交；不会改变候选点击、Chip 删除、逗号批量创建和显式搜索提交。
+4. 页面布局风险：不调整抽屉结构、分区顺序、Quick actions、模型映射和 Groups 区域，因此不会回退已经对齐 new-api 的页面主结构。
+5. 权限风险：显式按钮仍受 `canEditBasicFields` 和原有 disabled 条件控制，没有放宽编辑权限。
+
+### 方案评审
+
+采用“显式批量、键盘回归选择”的最小方案：
+
+1. 保留 `Search results` 顶部摘要和 `Will add` 底部预览，让管理员继续清楚看到搜索命中、可新增和已存在数量。
+2. 保留 `Add all {{count}} new match(es)` 按钮，作为唯一批量追加入口。
+3. 移除 `onSearchSubmit={handleAddModelSearchMatches}`、`submitSearchOnEnterWithMatches` 和 `submitSearchOnEnterWhenHighlighted`，避免 Enter 与候选选择争抢语义。
+4. 在通用 `MultiSelect` 中补充 Enter 防护：当输入框仍有搜索词，且没有高亮候选选择、自定义创建或显式搜索提交时，阻止事件冒泡为父表单提交。
+5. 不修改 `allowCreateWithMatches={false}`，搜索存在真实候选时仍不显示 `Add custom model "gpt-5.6"`，避免把模型族前缀误写成真实模型。
+6. 不修改后端和保存链路，确保本轮只影响前端草稿交互。
+
+### 实施结果
+
+- 渠道模型搜索仍会请求 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，并将真实候选合并进模型选择器。
+- 搜索 `gpt-5.6` 时页面继续展示 `3 matched · 2 new · 1 already selected`，候选列表包含 `gpt-5.6-terra`、`gpt-5.6-luna`，页脚显示 `Will add: gpt-5.6-terra, gpt-5.6-luna`。
+- 批量追加只能通过 `Add all 2 new match(es)` 按钮触发；点击后仍正确追加 `terra/luna`，不重复 `gpt-5.6-sol`。
+- 搜索输入里按 Enter 不再触发 `PUT /api/channel/` 父表单提交，避免在未点击 `Update Channel` 时产生无意义保存请求。
+- 编辑渠道页继续保持 new-api 风格的 `Basic Information`、`Credentials`、`Models & Groups`、`Advanced Settings` 分区，并保留 NexusTok 的账号池、Codex、权限控制和模型搜索补齐能力。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts`，49 个用例通过，覆盖通用多选 Enter 防护、模型搜索过滤、去重、供应商范围和分页提示。
+2. 已运行 `cd web/default && bun run i18n:sync`，`en` / `zh` 无缺失、无额外、无未翻译；`fr`、`ja`、`ru`、`vi` 无缺失和额外，本轮未新增翻译债务。
+3. 已运行 `cd web/default && bun run typecheck` 与 `cd web/default && bun run build`，类型检查和生产构建通过。
+4. 已运行 `git diff --check`，未发现空白错误。
+5. 已使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/channels`，在真实页面中打开渠道 `11111` 编辑抽屉；初始模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，页面显示 `Selected 3` 和 `Vendor: OpenAI`。
+6. 在模型输入中搜索 `gpt-5.6`，页面显示 `Search results`、`3 matched · 2 new · 1 already selected`、显式按钮 `Add all 2 new match(es)`，页脚预览 `Will add: gpt-5.6-terra, gpt-5.6-luna`。
+7. 搜索结果展开时按 Enter 后，页面仍为 `Selected 3`，没有出现 `Added 2 model(s) from search`，网络记录只有 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，未产生 `PUT /api/channel/`。
+8. 再次搜索 `gpt-5.6` 并点击 `Add all 2 new match(es)` 后，页面出现 `Added 2 model(s) from search`，草稿模型变为 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，未重复 `gpt-5.6-sol`。
+9. 验证过程中没有点击 `Update Channel`；通过 `GET /api/channel/1` 回查后端持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认页面验证没有污染运行态渠道配置。
+10. MCP 网络面板中本轮相关请求均为 GET：`/api/models/search` 的 `page_size=50` 交互搜索、`page_size=100` 显式批量扫描，以及用于验证的 `/api/channel/1` 回查；未出现渠道保存写请求。
+11. MCP 控制台无 error/warn；仅保留既有 i18next info、`[nexustok-build] rv.0000.nexustok-default` debug，以及既有 autocomplete / label 可访问性 issue，本轮没有扩大该独立问题。

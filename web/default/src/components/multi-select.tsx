@@ -225,6 +225,16 @@ export function shouldSubmitMultiSelectSearchOnEnter({
   return isLoading || hasMatchingOption
 }
 
+export function shouldPreventMultiSelectEnterFormSubmit({
+  key,
+  inputValue,
+}: {
+  key: string
+  inputValue: string
+}): boolean {
+  return key === 'Enter' && inputValue.trim().length > 0
+}
+
 function hasHighlightedComboboxOption(): boolean {
   if (typeof document === 'undefined') return false
   const popup = document.querySelector<HTMLElement>(
@@ -467,6 +477,18 @@ export function MultiSelect({
     if (onSearchSubmit && trimmedInput.length > 0) {
       event.preventDefault()
       onSearchSubmit()
+      return
+    }
+
+    if (
+      shouldPreventMultiSelectEnterFormSubmit({
+        key: event.key,
+        inputValue,
+      })
+    ) {
+      // 多选搜索框位于表单中时，未被候选选择或自定义创建消费的 Enter
+      // 只应停留在搜索交互内，不能冒泡成父表单提交。
+      event.preventDefault()
     }
   }
 

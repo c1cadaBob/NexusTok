@@ -3881,7 +3881,6 @@ export function ChannelMutateDrawer({
                                     onOpenChange={setModelSelectOpen}
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
-                                    onSearchSubmit={handleAddModelSearchMatches}
                                     contentHeader={
                                       shouldShowModelSearchAppend ? (
                                         <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
@@ -3936,8 +3935,6 @@ export function ChannelMutateDrawer({
                                         </div>
                                       ) : undefined
                                     }
-                                    submitSearchOnEnterWithMatches
-                                    submitSearchOnEnterWhenHighlighted
                                     isLoading={
                                       isSearchingModelMeta ||
                                       isModelSearchDebouncing
