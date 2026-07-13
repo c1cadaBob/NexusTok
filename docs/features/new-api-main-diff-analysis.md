@@ -11491,3 +11491,76 @@ NexusTok 当前已经比 new-api-main 走得更远：有自定义角色模板、
 10. MCP 接口复核 `/api/channel/1` 返回的持久化 `models` 仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认验证过程没有污染后端渠道数据。
 11. MCP 窄屏验证：将视口调整为 `780x620`，`document.body.scrollWidth === document.body.clientWidth === 780`，抽屉 `overflowX` 为 `hidden`，模型芯片容器 `scrollWidth === clientWidth`；视觉截图显示模型区无底部横向滚动条。
 12. MCP 网络记录显示 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 与分页扫描请求 `page_size=100` 均返回 200；控制台无 error，仅有 i18next 信息、构建 debug 日志和既有表单可访问性 issue。
+
+## 本轮实施评审：Waffo Pancake 管理端凭据复用语义原生化
+
+### 差异来源
+
+对比 `/opt/project/new-api-main/web/default/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx` 与当前 NexusTok 实现后确认，`new-api-main` 在 Waffo Pancake 管理端页面中有一个值得吸收的细节：由于 `GET /api/option/` 不回显 `PrivateKey`，返回管理员打开页面时如果没有重新粘贴私钥，catalog/pair 辅助接口会发送空凭据，让后端回退到已保存的 `OptionMap` 凭据；如果管理员正在输入新凭据，则必须 `Merchant ID` 和 `API Private Key` 成对填写。
+
+NexusTok 已经具备更多原生能力，包括 `Enable Waffo Pancake`、沙箱模式、生产/测试 webhook key、钱包充值 Store/Product、币种、单价、最低充值、订阅套餐 product 管理和 Authz 权限控制，因此本轮不照搬 `new-api-main` 的整页受控表单结构，只吸收其“私钥不回显时避免混合态请求”的优势语义。
+
+### 需求分析
+
+当前 NexusTok 的 Waffo Pancake 设置页在点击 `Refresh catalog` 时，如果私钥为空会走 `GET /api/option/waffo-pancake/catalog`，能够复用已保存凭据；但点击 `Create store + product` 时会把当前表单里的 `Merchant ID` 和空 `Private Key` 一并提交给 `/api/option/waffo-pancake/pair`。后端 `resolveWaffoPancakeAdminCreds` 的契约是“二者都空表示复用已保存凭据；只传其中一个表示不完整临时凭据并失败”，因此这个前端行为会让已保存私钥的管理员刷新页面后无法直接创建默认 Store/Product。
+
+本轮目标是把 `new-api-main` 的凭据读取策略原生化到 NexusTok：未编辑凭据且已有 Merchant ID 时发送空 payload 复用后端已保存值；一旦编辑 Merchant ID 或 Private Key，就要求两者同时填写；首次配置时两者都为空则在前端给出明确错误提示，避免无意义请求。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Waffo Pancake 凭据解析 | `web/default/src/features/system-settings/integrations/waffo-pancake-credentials.ts` | 新增纯函数 `resolveWaffoPancakeAdminCredentials`，集中实现“未编辑复用已保存凭据、编辑时成对提交”的判断。 |
+| Waffo Pancake 页面 | `web/default/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx` | `Refresh catalog` 和 `Create store + product` 调用同一凭据解析；无效输入在前端 toast 提示，不再发请求。 |
+| 单元测试 | `web/default/src/features/system-settings/integrations/waffo-pancake-credentials.test.ts` | 覆盖未编辑已保存、完整新凭据、只填 Merchant ID、只填 Private Key 四类边界。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `API Private Key is required` 与 `Merchant ID and API Private Key are required` 六语言翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮差异来源、需求、风险、方案、实施和验证。 |
+
+本轮不修改 Go 后端、数据库迁移、支付下单、webhook、订阅支付、Waffo 聚合支付、Creem、Stripe、Epay 和系统设置其它 section。
+
+### 风险评估
+
+1. 外部资源副作用风险：点击 `Create store + product` 会真实创建上游 Pancake Store/Product。MCP 验证阶段通过浏览器 XHR mock 捕获请求并返回模拟结果，没有向后端/上游发起创建请求，也没有点击保存。
+2. 已保存凭据回归风险：如果管理员已保存 Merchant ID 和 Private Key，但页面私钥为空，本轮必须发送 `{ merchant_id: "", private_key: "" }` 让后端复用已保存值；该路径由纯函数单测覆盖。
+3. 首次配置体验风险：首次配置时空表单点击刷新或创建不能静默失败；本轮新增双字段必填提示，且不会发出无效网络请求。
+4. 临时凭据安全风险：临时 Private Key 仍只通过 POST JSON body 发送，不进入 URL query；本轮保留现有 `listWaffoPancakeCatalog` 在编辑凭据时走 POST、未编辑时走 GET 的语义。
+5. 权限风险：`Refresh catalog` 仍受 `permissions.canOperate` 控制，`Create store + product` 仍受 `canUpdateWaffoPancakeSettings` 控制；没有放宽 Authz 权限。
+6. 翻译风险：新增文案已补齐 en、zh、fr、ja、ru、vi，并运行 `bun run i18n:sync`，避免运行时缺 key。
+
+### 方案评审
+
+采用“抽纯函数、组件复用、保留 NexusTok 原生配置”的方案：
+
+1. 新增 `resolveWaffoPancakeAdminCredentials(defaults, values)`，只依赖当前默认值和表单值，返回 `payload`、`edited`、`ready` 和缺失字段标记。
+2. `edited=false` 且默认 Merchant ID 存在时，payload 固定为 `{ merchant_id: "", private_key: "" }`，对应后端的已保存凭据回退契约。
+3. `edited=true` 时，payload 使用表单 trim 后的 Merchant ID / Private Key；任何单边缺失都会在前端 toast 并阻止请求。
+4. `Refresh catalog` 仅在 `edited=true` 时传临时凭据；未编辑时继续调用 `GET /catalog`，保留已保存凭据只读回访路径。
+5. `Create store + product` 也复用同一解析结果，修复刷新页面后“已有 Merchant ID + 空 Private Key”导致 pair 创建失败的问题。
+6. 不把 `new-api-main` 的受控 payment 大表单迁入 NexusTok，因为 NexusTok 已经有独立保存按钮、更多配置字段、权限系统和订阅 product 原生能力。
+
+### 实施结果
+
+- Waffo Pancake 管理端 catalog/pair 两条辅助路径统一使用凭据状态解析，避免混合态请求。
+- 首次配置时，空凭据点击 `Refresh catalog` 会提示 `Merchant ID and API Private Key are required`，不会调用 `/api/option/waffo-pancake/*`。
+- 只填 `Merchant ID` 不填 `API Private Key` 时提示 `API Private Key is required`，不会发出请求。
+- 填完整临时凭据时，catalog 请求体为 `{"merchant_id":"...","private_key":"..."}`；pair 请求体额外包含去尾斜杠后的 `return_url`。
+- 保留 NexusTok 的启用/沙箱/webhook key/价格/最低充值/Store/Product/订阅套餐 product 管理和 Authz 权限，不覆盖当前项目原生能力。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/system-settings/integrations/waffo-pancake-credentials.test.ts` 通过，4 个用例成功。
+2. `cd web/default && bun test src/features/system-settings/integrations/waffo-pancake-credentials.test.ts src/features/system-settings/utils/numeric-field.test.ts` 通过，7 个用例成功。
+3. `cd web/default && bun run i18n:sync` 通过；同步报告显示 en、zh、fr、ja、ru、vi 的 `missingCount` 与 `extrasCount` 均为 0。本轮新增 key 已写入六种语言；fr/ja/ru/vi 的 `untranslatedCount` 为历史统计，本轮未扩大该问题。
+4. `cd web/default && bunx prettier --write src/features/system-settings/integrations/waffo-pancake-credentials.ts src/features/system-settings/integrations/waffo-pancake-credentials.test.ts src/features/system-settings/integrations/waffo-pancake-settings-section.tsx src/i18n/locales/en.json src/i18n/locales/zh.json src/i18n/locales/fr.json src/i18n/locales/ja.json src/i18n/locales/ru.json src/i18n/locales/vi.json` 已格式化本轮触碰文件。
+5. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+6. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.2 秒内完成生产构建。
+7. `git diff --check` 通过。
+8. 使用 Chrome DevTools MCP 登录 `c1cada`，访问 `http://192.168.0.202:3003/system-settings/billing/payment`，Waffo Pancake 区域正常渲染。
+9. MCP 调用 `/api/option/` 回查运行态，当前 `WaffoPancakeMerchantID`、`WaffoPancakeStoreID`、`WaffoPancakeProductID`、`WaffoPancakeReturnURL` 均为空，确认没有已保存 Pancake 配置可供真实创建测试使用。
+10. MCP 空表单点击 `Refresh catalog`，页面显示 `Merchant ID and API Private Key are required`，`performance` 资源记录中 `/api/option/waffo-pancake/*` 请求增量为 0。
+11. MCP 只填写 Waffo Pancake 的 `Merchant ID=MER_runtime_check` 后点击 `Refresh catalog`，页面显示 `API Private Key is required`，`/api/option/waffo-pancake/*` 请求增量仍为 0。
+12. MCP 在浏览器上下文 mock `XMLHttpRequest`，填写 `Merchant ID=MER_payload_check`、`API Private Key=KEY_payload_check` 后点击 `Refresh catalog`，捕获到 `POST /api/option/waffo-pancake/catalog`，请求体为 `{"merchant_id":"MER_payload_check","private_key":"KEY_payload_check"}`，mock 响应后页面显示 `No stores found`。
+13. MCP 继续 mock `POST /api/option/waffo-pancake/pair`，填写 `Merchant ID=MER_pair_check`、`API Private Key=KEY_pair_check`、`Payment return URL=https://example.com/console/topup/` 后点击 `Create store + product`，捕获请求体为 `{"merchant_id":"MER_pair_check","private_key":"KEY_pair_check","return_url":"https://example.com/console/topup"}`，证明返回地址已去除尾斜杠。
+14. MCP pair mock 响应后，页面表单草稿填入 `STO_mocked` / `PROD_mocked` 并显示成功提示；验证过程未点击 `Save Waffo Pancake settings`。
+15. MCP 再次调用 `/api/option/` 回查运行态，`WaffoPancakeMerchantID`、`WaffoPancakeStoreID`、`WaffoPancakeProductID`、`WaffoPancakeReturnURL` 仍为空，确认页面验证没有污染后端配置。
+16. MCP 控制台无 error/warn；仅剩既有表单可访问性 issue：autocomplete、label 与无关联 label 提示，本轮没有扩大该独立问题。

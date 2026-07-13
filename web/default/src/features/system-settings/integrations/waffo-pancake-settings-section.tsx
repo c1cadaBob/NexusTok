@@ -47,6 +47,10 @@ import { useSystemSettingPermissions } from '../hooks/use-system-setting-permiss
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { WaffoPancakeCatalogStore } from '../types'
 import { removeTrailingSlash } from './utils'
+import {
+  resolveWaffoPancakeAdminCredentials,
+  type WaffoPancakeAdminCredentialState,
+} from './waffo-pancake-credentials'
 
 export interface WaffoPancakeSettingsValues {
   WaffoPancakeEnabled: boolean
@@ -95,6 +99,28 @@ export function WaffoPancakeSettingsSection(props: Props) {
   useEffect(() => {
     form.reset(props.defaultValues)
   }, [props.defaultValues, form])
+
+  const resolveAdminCredentialState = () =>
+    resolveWaffoPancakeAdminCredentials(props.defaultValues, form.getValues())
+
+  const showAdminCredentialError = (
+    credentialState: WaffoPancakeAdminCredentialState
+  ) => {
+    if (
+      credentialState.missingMerchantID &&
+      credentialState.missingPrivateKey
+    ) {
+      toast.error(t('Merchant ID and API Private Key are required'))
+      return
+    }
+    if (credentialState.missingMerchantID) {
+      toast.error(t('Merchant ID is required'))
+      return
+    }
+    if (credentialState.missingPrivateKey) {
+      toast.error(t('API Private Key is required'))
+    }
+  }
 
   const storeSelectItems = useMemo<CatalogSelectItem[]>(() => {
     const items = catalogStores.map((store) => ({
@@ -204,23 +230,16 @@ export function WaffoPancakeSettingsSection(props: Props) {
       return
     }
 
-    const values = form.getValues()
-    const merchantID = values.WaffoPancakeMerchantID.trim()
-    const privateKey = values.WaffoPancakePrivateKey.trim()
-    if (privateKey && !merchantID) {
-      toast.error(t('Merchant ID is required'))
+    const credentialState = resolveAdminCredentialState()
+    if (!credentialState.ready) {
+      showAdminCredentialError(credentialState)
       return
     }
 
     setCatalogLoading(true)
     try {
       const result = await listWaffoPancakeCatalog(
-        privateKey
-          ? {
-              merchant_id: merchantID,
-              private_key: privateKey,
-            }
-          : undefined
+        credentialState.edited ? credentialState.payload : undefined
       )
       if (!result.success) {
         throw new Error(result.message || t('Catalog fetch failed'))
@@ -229,7 +248,9 @@ export function WaffoPancakeSettingsSection(props: Props) {
       const stores = result.data?.stores || []
       setCatalogStores(stores)
       applyCatalogSelection(stores)
-      toast.success(stores.length > 0 ? t('Catalog loaded') : t('No stores found'))
+      toast.success(
+        stores.length > 0 ? t('Catalog loaded') : t('No stores found')
+      )
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('Catalog fetch failed')
@@ -245,19 +266,18 @@ export function WaffoPancakeSettingsSection(props: Props) {
       return
     }
 
-    const values = form.getValues()
-    const merchantID = values.WaffoPancakeMerchantID.trim()
-    const privateKey = values.WaffoPancakePrivateKey.trim()
-    if (privateKey && !merchantID) {
-      toast.error(t('Merchant ID is required'))
+    const credentialState = resolveAdminCredentialState()
+    if (!credentialState.ready) {
+      showAdminCredentialError(credentialState)
       return
     }
+    const values = form.getValues()
 
     setPairLoading(true)
     try {
       const result = await createWaffoPancakePair({
-        merchant_id: merchantID,
-        private_key: privateKey,
+        merchant_id: credentialState.payload.merchant_id,
+        private_key: credentialState.payload.private_key,
         return_url: removeTrailingSlash(values.WaffoPancakeReturnURL || ''),
       })
 
@@ -268,7 +288,11 @@ export function WaffoPancakeSettingsSection(props: Props) {
             shouldDirty: true,
           })
           setCatalogStores((stores) =>
-            mergeCreatedStore(stores, data.store_id || '', data.store_name || '')
+            mergeCreatedStore(
+              stores,
+              data.store_id || '',
+              data.store_name || ''
+            )
           )
           toast.error(t('Store created but product creation failed'))
           return
@@ -473,9 +497,7 @@ export function WaffoPancakeSettingsSection(props: Props) {
               size='sm'
               onClick={handleCreatePair}
               disabled={
-                pairLoading ||
-                catalogLoading ||
-                !canUpdateWaffoPancakeSettings
+                pairLoading || catalogLoading || !canUpdateWaffoPancakeSettings
               }
               title={
                 canUpdateWaffoPancakeSettings
