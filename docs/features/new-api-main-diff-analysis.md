@@ -11897,3 +11897,68 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 11. MCP 再次打开编辑抽屉，搜索 `gpt-5.6` 后点击 `Add all 2 new match(es)`，按钮路径同样变为 `Selected 5`，与 Enter 路径一致。
 12. MCP 网络记录显示本轮相关请求均为 GET：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、批量扫描 `page_size=100` 和 `/api/channel/1` 回查；未出现 `PUT /api/channel/`。
 13. MCP 控制台无 error/warn；仅保留既有 autocomplete / label 可访问性 issue，本轮没有扩大该独立问题。
+
+## 本轮实施评审：Dashboard Flow 敏感数据显隐原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/dashboard/index.tsx` 后确认，new-api 最新 Dashboard 在 `flow` 分区右上角提供了敏感数据显隐按钮，点击后通过 `sensitiveVisible` 控制流量图是否展示真实用户、Token、渠道等节点名称。NexusTok 的 `FlowCharts` 组件内部已经具备 `sensitiveVisible?: boolean` 能力，并会在 `props.sensitiveVisible === false` 时调用 `buildDashboardFlowData(..., { maskSensitive })` 对图节点做遮罩；当前缺口只在 Dashboard 页面入口没有暴露这个开关，管理员查看流量账本时无法按场景快速隐藏敏感信息。
+
+### 需求分析
+
+本轮目标是把 new-api 的 Flow 敏感数据显隐优势转为 NexusTok 原生能力，同时保留 NexusTok 已有的细粒度权限、分区描述和 FlowCharts 扩展能力：
+
+1. 在 `/dashboard/flow` 页面的操作区新增图标按钮，默认展示真实数据，点击后切换为遮罩显示。
+2. 按钮需要有可访问的 `aria-label` 和 Tooltip 文案，状态变化时文案在“隐藏敏感数据”和“显示敏感数据”之间切换。
+3. 只把显隐状态传给 `LazyFlowCharts`，不改变 Flow 数据查询条件、筛选器、图表交互、权限判断和后端接口。
+4. 新增文案必须补齐 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六种前端语言，避免 i18n 缺键。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Dashboard 页面入口 | `web/default/src/features/dashboard/index.tsx` | 新增 `flowSensitiveVisible` 状态、Flow 操作区显隐按钮，并把状态传给 `LazyFlowCharts`。 |
+| Flow 图表 | `web/default/src/features/dashboard/components/flow/flow-charts.tsx` | 已有 `sensitiveVisible` 支持，本轮不修改内部图表逻辑，只复用现有遮罩能力。 |
+| 前端国际化 | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `Hide sensitive data` 与 `Show sensitive data` 翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮差异来源、需求分析、影响范围、风险评估、方案评审和后续验证记录。 |
+
+本轮不修改 Go 后端、数据库、日志聚合接口、模型筛选逻辑、用户权限模型、渠道编辑页和模型搜索逻辑。
+
+### 风险评估
+
+1. 权限回退风险：new-api 使用较粗的管理员判断，而 NexusTok 当前 Dashboard 使用 `canReadAdminResource(user, ADMIN_PERMISSION_RESOURCES.USAGE_DATA)` 控制 `users` 分区可见性。本轮只新增 Flow 按钮，不改 `visibleSections` 和 `canReadUsageData`，避免权限模型回退。
+2. 数据展示风险：显隐开关只影响前端节点标签遮罩，不影响 `/api/log/flow` 或等价 Flow 接口的查询参数和返回数据；管理员显隐属于本地 UI 状态，不会写入服务端。
+3. 交互回归风险：操作区已有 `ModelsFilter`，新增按钮会增加一个紧凑图标控件；采用现有 `Button size='icon'` 和 `TooltipTrigger render` 组合，避免自定义浮层和布局。
+4. i18n 风险：新增两个英文 key 后必须同步六种语言并运行 `bun run i18n:sync`，防止缺键或排序漂移。
+5. 图标体系风险：项目 shadcn 配置为 hugeicons，但 Dashboard/Flow 现有模块已经大量使用 `lucide-react`。本轮在同一模块沿用 `Eye/EyeOff`，避免跨图标库混排和额外映射风险；按钮内部不添加手写尺寸类，交给 `Button` 控制图标尺寸。
+
+### 方案评审
+
+采用“入口补开关、图表复用已有能力”的最小切片方案：
+
+1. 在 `Dashboard` 组件中新增 `flowSensitiveVisible` 状态，默认值为 `true`，保持现有页面默认行为不变。
+2. 在 `dashboardActions` 的 `activeSection === 'flow'` 场景中，在 `ModelsFilter` 前渲染 Tooltip 包裹的 icon Button；按钮点击时切换显隐状态，`aria-label` 和 Tooltip 文案根据状态动态变化。
+3. 将 `LazyFlowCharts filters={modelFilters}` 改为 `LazyFlowCharts filters={modelFilters} sensitiveVisible={flowSensitiveVisible}`，复用 FlowCharts 现有遮罩实现。
+4. 只新增 `Hide sensitive data`、`Show sensitive data` 两个翻译 key，不引入新的展示文案和设置项。
+5. 修改后执行 i18n 同步、typecheck、build、`git diff --check`，并通过 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/` 和 `/dashboard/flow` 真实验证热更新、按钮状态、Tooltip、接口请求和控制台状态。
+
+### 实施结果
+
+- Dashboard `flow` 分区操作区新增敏感数据显隐按钮，默认状态为展示真实标签，按钮 `aria-label` 为 `Hide sensitive data`。
+- 点击按钮后本地状态切换为遮罩模式，按钮 `aria-label` 变为 `Show sensitive data`，同时 `aria-pressed=true`，便于辅助技术识别当前遮罩状态。
+- `LazyFlowCharts` 已接收 `sensitiveVisible={flowSensitiveVisible}`，复用现有 `maskSensitive` 能力；没有修改 Flow 数据查询、筛选器、节点显示/隐藏、图表点击和后端接口。
+- 已补齐 `Hide sensitive data`、`Show sensitive data` 在 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六种语言中的翻译。
+- 保留 NexusTok 原有 Dashboard 细粒度权限判断和分区描述，没有回退到 new-api 的粗粒度管理员逻辑。
+
+### 验证记录
+
+1. `cd web/default && bun run i18n:sync` 通过，`en/zh` missing、extras、untranslated 均为 0；`fr/ja/ru/vi` 没有 missing/extras，本轮新增的两个 key 均已翻译，剩余 untranslated 为既有债务。
+2. `cd web/default && bun test src/features/dashboard/lib/flow.test.ts` 通过，11 个 Flow 数据构建用例成功。
+3. `cd web/default && bun run typecheck` 通过，`tsc -b` 无类型错误。
+4. `cd web/default && bun run build` 通过，Rsbuild v2.0.1 在 12.2 秒内完成生产构建。
+5. `git diff --check` 通过，未发现空白错误。
+6. 使用 Chrome DevTools MCP 访问 `http://192.168.0.202:3003/`，根页面正常加载；随后在浏览器上下文调用 `/api/user/login` 登录 `c1cada`，返回 HTTP 200、`success=true`、`uid=1`、`role=100`。
+7. MCP 跳转 `/dashboard/flow` 后确认热更新生效：页面标题为 `Traffic Flow`，操作区出现按钮 `Hide sensitive data`，旁边仍保留 `Filter` 筛选按钮。
+8. MCP 点击显隐按钮后，按钮状态变为 `Show sensitive data` 且 `aria-pressed=true`，证明显隐状态能在真实页面中切换。
+9. MCP 网络记录显示页面触发 `GET /api/data/flow?start_timestamp=...&end_timestamp=...&default_time=hour` 并返回 HTTP 200；响应体为 `{"data":[],"message":"","success":true}`，当前环境无 Flow 数据，因此页面显示 `No flow data available` 为空态是合理结果。
+10. MCP 控制台无 error、warn、issue，本轮没有引入新的前端运行时问题。

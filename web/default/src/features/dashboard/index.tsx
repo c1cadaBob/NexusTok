@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
+import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -25,8 +26,14 @@ import {
   canReadAdminResource,
 } from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { SectionPageLayout } from '@/components/layout'
 import { FadeIn } from '@/components/page-transition'
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
@@ -179,6 +186,7 @@ export function Dashboard() {
   const [modelFilters, setModelFilters] = useState<DashboardFilters>(() =>
     buildDefaultDashboardFilters(getSavedChartPreferences())
   )
+  const [flowSensitiveVisible, setFlowSensitiveVisible] = useState(true)
 
   const handleFilterChange = useCallback((filters: DashboardFilters) => {
     setModelFilters(filters)
@@ -238,6 +246,36 @@ export function Dashboard() {
             preferences={chartPreferences}
             onPreferencesChange={handleChartPreferencesChange}
           />
+        )}
+        {activeSection === 'flow' && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  onClick={() => setFlowSensitiveVisible((prev) => !prev)}
+                  aria-pressed={!flowSensitiveVisible}
+                  aria-label={
+                    flowSensitiveVisible
+                      ? t('Hide sensitive data')
+                      : t('Show sensitive data')
+                  }
+                />
+              }
+            >
+              {flowSensitiveVisible ? (
+                <Eye aria-hidden='true' />
+              ) : (
+                <EyeOff aria-hidden='true' />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>
+              {flowSensitiveVisible
+                ? t('Hide sensitive data')
+                : t('Show sensitive data')}
+            </TooltipContent>
+          </Tooltip>
         )}
         <ModelsFilter
           preferences={chartPreferences}
@@ -343,7 +381,10 @@ export function Dashboard() {
           {activeSection === 'flow' && (
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
-                <LazyFlowCharts filters={modelFilters} />
+                <LazyFlowCharts
+                  filters={modelFilters}
+                  sensitiveVisible={flowSensitiveVisible}
+                />
               </Suspense>
             </FadeIn>
           )}
