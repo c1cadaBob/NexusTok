@@ -27,7 +27,6 @@ import {
   useState,
 } from 'react'
 import {
-  type ColumnDef,
   type ColumnFiltersState,
   type OnChangeFn,
   type PaginationState,
@@ -44,11 +43,10 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useMediaQuery } from '@/hooks'
-import { Copy, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Copy, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -59,11 +57,9 @@ import {
 } from '@/components/ui/table'
 import {
   DataTableBulkActions,
-  DataTableColumnHeader,
   DataTableToolbar,
   DataTablePagination,
 } from '@/components/data-table'
-import { StatusBadge } from '@/components/status-badge'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { safeJsonParse } from '../utils/json-parser'
 import {
@@ -72,14 +68,8 @@ import {
   ModelPricingSheet,
   type ModelRatioData,
 } from './model-pricing-sheet'
-import {
-  buildModelRows,
-  getModeLabel,
-  getModeVariant,
-  getPriceDetail,
-  getPriceSummary,
-  type ModelRow,
-} from './model-pricing-snapshots'
+import { buildModelRows, type ModelRow } from './model-pricing-snapshots'
+import { buildModelRatioColumns } from './model-ratio-table-columns'
 
 type ModelRatioVisualEditorProps = {
   savedModelPrice: string
@@ -110,14 +100,6 @@ export type ModelRatioVisualEditorHandle = {
 }
 
 const STORAGE_KEY = 'model-ratio-column-visibility'
-
-const filterBySelectedValues = (
-  rowValue: unknown,
-  filterValue: unknown
-): boolean => {
-  if (!Array.isArray(filterValue) || filterValue.length === 0) return true
-  return filterValue.includes(String(rowValue))
-}
 
 const ModelRatioVisualEditorComponent = forwardRef<
   ModelRatioVisualEditorHandle,
@@ -426,127 +408,15 @@ const ModelRatioVisualEditorComponent = forwardRef<
     ]
   )
 
-  const columns = useMemo<ColumnDef<ModelRow>[]>(() => {
-    return [
-      {
-        id: 'select',
-        header: ({ table }) => (
-          <Checkbox
-            checked={table.getIsAllPageRowsSelected()}
-            indeterminate={table.getIsSomePageRowsSelected()}
-            onCheckedChange={(value) =>
-              table.toggleAllPageRowsSelected(!!value)
-            }
-            aria-label={t('Select all')}
-            className='translate-y-[2px]'
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label={t('Select row')}
-            className='translate-y-[2px]'
-          />
-        ),
-        enableSorting: false,
-        enableHiding: false,
-        meta: { label: t('Select') },
-      },
-      {
-        accessorKey: 'name',
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={t('Model name')} />
-        ),
-        cell: ({ row }) => (
-          <div className='flex items-center gap-2 font-medium'>
-            {row.getValue('name')}
-            {row.original.billingMode === 'tiered_expr' && (
-              <StatusBadge
-                label={t('Tiered')}
-                variant='info'
-                copyable={false}
-              />
-            )}
-            {row.original.hasConflict && (
-              <StatusBadge
-                label={t('Conflict')}
-                variant='danger'
-                copyable={false}
-              />
-            )}
-            {(row.original.isDraftChanged || row.original.isDraftNew) && (
-              <StatusBadge
-                label={t('Unsaved changes')}
-                variant='warning'
-                copyable={false}
-              />
-            )}
-          </div>
-        ),
-        enableHiding: false,
-      },
-      {
-        accessorKey: 'billingMode',
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={t('Mode')} />
-        ),
-        cell: ({ row }) => (
-          <StatusBadge
-            label={t(getModeLabel(row.original.billingMode))}
-            variant={getModeVariant(row.original.billingMode)}
-            copyable={false}
-          />
-        ),
-        filterFn: (row, id, value) =>
-          filterBySelectedValues(row.getValue(id), value),
-        meta: { label: t('Mode') },
-      },
-      {
-        id: 'priceSummary',
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={t('Price summary')} />
-        ),
-        cell: ({ row }) => (
-          <div className='flex min-w-[180px] flex-col gap-1'>
-            <span className='font-medium'>
-              {getPriceSummary(row.original, t)}
-            </span>
-            <span className='text-muted-foreground max-w-[320px] truncate text-xs'>
-              {getPriceDetail(row.original, t)}
-            </span>
-          </div>
-        ),
-        sortingFn: (rowA, rowB) =>
-          getPriceSummary(rowA.original, t).localeCompare(
-            getPriceSummary(rowB.original, t)
-          ),
-        meta: { label: t('Price summary') },
-      },
-      {
-        id: 'actions',
-        cell: ({ row }) => (
-          <div className='flex justify-end gap-2'>
-            <Button
-              variant='ghost'
-              size='sm'
-              onClick={() => handleEdit(row.original)}
-            >
-              <Pencil />
-            </Button>
-            <Button
-              variant='ghost'
-              size='sm'
-              onClick={() => handleDelete(row.original.name)}
-            >
-              <Trash2 />
-            </Button>
-          </div>
-        ),
-        enableHiding: false,
-      },
-    ]
-  }, [handleEdit, handleDelete, t])
+  const columns = useMemo(
+    () =>
+      buildModelRatioColumns({
+        onDelete: handleDelete,
+        onEdit: handleEdit,
+        t,
+      }),
+    [handleEdit, handleDelete, t]
+  )
 
   const table = useReactTable({
     data: models,

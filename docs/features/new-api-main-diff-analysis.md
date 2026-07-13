@@ -12913,3 +12913,71 @@ NexusTok 当前项目已经在 new-api 基础上加入了更完整的编辑体�
 7. MCP 访问 `http://192.168.0.202:3003/pricing-settings`，页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`；网络请求只有 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求以及既有登录请求，未出现保存 option 的写请求。
 8. MCP 访问 `http://192.168.0.202:3003/system-settings/models/model-ratio` 后仍按当前 `section-registry` 回落到 `/system-settings/models/global`，页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
 9. MCP 验证截图保存为 `/tmp/nexustok-pricing-core-validation.png`。
+
+## 本轮实施评审：模型定价表格列定义模块化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/models` 后发现，new-api 已将模型定价表格列定义拆分为 `model-ratio-table-columns.tsx`，并在 `model-ratio-visual-editor.tsx` 中只负责数据、状态、编辑器和保存链路。列文件统一封装选择列、模型名列、计费模式列、价格摘要列和操作列，复用 `model-pricing-snapshots.ts` 中的模式标签和价格摘要 helper。
+
+NexusTok 当前项目已经原生化了快照 helper、草稿状态和定价编辑核心模块，但 `model-ratio-visual-editor.tsx` 仍内联完整 `ColumnDef<ModelRow>[]`。这个文件同时处理 JSON 解析、表格状态、列渲染、编辑面板、保存前草稿提交、删除、批量复制等职责。继续吸收 new-api 的表格能力时，内联列定义会让每次 UI 调整都触碰保存链路，增加计费配置页面回归风险。
+
+本轮前端设计方向保持当前系统设置页的数据工具风格：沿用现有 shadcn/base 组件、语义色、表格密度和操作按钮，不新增装饰，不改变页面导航，不引入 new-api 更大范围的 `DataTableView/useDataTable` 通用表格架构。
+
+### 需求分析
+
+1. 新增 NexusTok 原生 `model-ratio-table-columns.tsx`，将模型定价表格列定义从 `model-ratio-visual-editor.tsx` 抽出。
+2. 列定义应保留当前项目已有能力：行选择、模型名展示、`Tiered`/`Conflict`/`Unsaved changes` 状态徽标、计费模式筛选、价格摘要、行内编辑与删除按钮。
+3. `model-ratio-visual-editor.tsx` 只负责构造表格数据、状态、编辑器、删除、批量复制和保存前草稿提交；列渲染细节通过 `buildModelRatioColumns()` 注入。
+4. 不改变表格渲染容器、分页、过滤、行点击、选中态、高亮态、移动端 Sheet、保存 payload、option key 或计费表达式语义。
+5. 本轮不迁入 new-api 的 `DataTableView`、`DataTableRow`、`StaticRowActions`、`useDataTable` 等通用表格层；这些属于更大范围的 data-table 架构差异，后续需要单独评审。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 模型定价表格列定义 | `web/default/src/features/system-settings/models/model-ratio-table-columns.tsx` | 新增列构造函数，封装选择列、模型名列、模式列、价格摘要列和操作列。 |
+| 模型定价可视化编辑器 | `web/default/src/features/system-settings/models/model-ratio-visual-editor.tsx` | 删除内联列定义，改为调用 `buildModelRatioColumns()`；保存、删除、批量复制、表格状态和渲染容器保持不变。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 操作列行为风险：抽列后 `handleEdit()` 和 `handleDelete()` 必须仍拿到同一个 `ModelRow`/模型名，避免编辑打开旧数据或删除错误模型。
+2. 草稿徽标风险：当前项目比 new-api 的列文件多了 `Unsaved changes` 徽标；抽取时必须保留 `isDraftChanged || isDraftNew` 展示，不退化草稿可见性。
+3. 表格交互风险：当前渲染层通过 `button, [role="checkbox"]` 阻止行点击误触发编辑；抽列时操作按钮和 checkbox 仍必须使用原组件语义。
+4. 布局回归风险：模型名和价格摘要列已有截断宽度与 `min-w` 控制，抽取时需要保持，避免长模型名或表达式摘要撑破表格。
+5. 翻译风险：本轮只移动现有文案，不新增 key；仍运行 `bun run i18n:sync` 确认 locale 状态。
+6. 范围风险：如果同时迁入通用 `DataTableView/useDataTable`，会触碰 shared data-table API 和多个页面。本轮只抽模型定价列，后续再单独推进通用表格架构差异。
+
+### 方案评审
+
+采用“列定义模块化，渲染层不变”的低风险方案：
+
+1. 新建 `model-ratio-table-columns.tsx`，导出 `buildModelRatioColumns({ onDelete, onEdit, t })` 和内部 `filterBySelectedValues()`。
+2. 列文件从当前 `model-ratio-visual-editor.tsx` 原样迁移列行为，并继续使用当前项目已有 `Button`、`Checkbox`、`DataTableColumnHeader`、`StatusBadge`、`Pencil`、`Trash2`，不引入尚未存在的 `StaticRowActions`。
+3. `model-ratio-visual-editor.tsx` 删除 `ColumnDef`、`Checkbox`、`Button` 操作图标、`DataTableColumnHeader`、`StatusBadge`、价格摘要 helper 等列渲染相关导入，只保留状态与行为依赖。
+4. 使用 `useMemo(() => buildModelRatioColumns(...), [handleEdit, handleDelete, t])` 生成列，保持现有 `useReactTable` 和手写 `Table` 渲染不变。
+5. 验证顺序：`bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`、`bun test src/features/system-settings`、`bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后 MCP 访问 `http://192.168.0.202:3003/pricing-settings` 与 `/system-settings/models/model-ratio`，确认页面运行态无错误且没有保存写请求。
+
+### 实施结果
+
+1. 新增 `model-ratio-table-columns.tsx`，封装模型定价表格的选择列、模型名列、计费模式列、价格摘要列和操作列。
+2. 列文件继续复用 `model-pricing-snapshots.ts` 中的 `getModeLabel()`、`getModeVariant()`、`getPriceSummary()`、`getPriceDetail()`，让表格展示与快照解析保持同一来源。
+3. `model-ratio-visual-editor.tsx` 已删除内联 `ColumnDef<ModelRow>[]` 和列渲染相关导入，改为通过 `buildModelRatioColumns({ onDelete, onEdit, t })` 生成列；`useReactTable`、手写 `Table` 渲染、行点击编辑、分页、筛选、选中态和高亮态保持原实现。
+4. 当前项目已有的 `Tiered`、`Conflict`、`Unsaved changes` 状态徽标均保留；操作列仍调用原 `handleEdit(row.original)` 与 `handleDelete(row.original.name)`，没有改动删除、批量复制、保存前草稿提交或真实 option 写入流程。
+5. 本轮顺手补齐操作列 icon-only 按钮的 `aria-label` 和 `data-icon`，让编辑/删除按钮更符合当前 shadcn 规则；没有新增可见文案或 locale key。
+6. 本轮未迁入 new-api 的 `DataTableView`、`DataTableRow`、`StaticRowActions`、`useDataTable` 等通用表格层，避免扩大 shared data-table 影响范围。
+7. 本轮没有修改 Go 后端、数据库 schema、option key、保存 payload、`pkg/billingexpr`、预消费、结算、日志展示、模型同步接口、分组倍率、工具价格和 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前前端为 Manual + Tailwind v4 + Base UI + hugeicons，已安装 table、checkbox、button 等本轮使用组件；命令没有产生工作区变更。
+2. 已运行 `cd web/default && bun test src/features/system-settings/models/model-pricing-core.test.ts src/features/system-settings/models/model-pricing-snapshots.test.ts src/features/system-settings/models/pricing-format.test.ts`，13 个测试通过。
+3. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试通过。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过，确认列文件类型、`ModelRow` 引用和 `useReactTable` 列注入链路正确。
+5. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮没有新增需要补翻译的 key。
+6. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+7. 已运行 `git diff --check`，未发现空白错误。
+8. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/` 成功；访问 `/pricing-settings` 后页面正常显示 `Group & Tool Pricing`、`Group ratios` 和 `Tool prices`，控制台没有 JavaScript `error` 或 `warn`，网络资源记录只包含 `/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求和登录请求，未出现保存 option 的写请求。
+9. MCP 访问 `/system-settings/models/model-ratio` 时仍按当前 `section-registry` 回落到 `/system-settings/models/global`；页面显示 `Global Model Configuration`，控制台没有 JavaScript `error` 或 `warn`，网络请求只有读取请求。
+10. MCP 验证截图保存为 `/tmp/nexustok-model-ratio-columns-validation.png`。
