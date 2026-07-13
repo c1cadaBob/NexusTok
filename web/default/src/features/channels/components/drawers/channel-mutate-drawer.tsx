@@ -3915,7 +3915,7 @@ export function ChannelMutateDrawer({
                   >
                     <ChannelModelsSection>
                       <div className='flex flex-col gap-5'>
-                        <div className='flex flex-col gap-4'>
+                        <div className='border-border/60 bg-muted/10 flex flex-col gap-4 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
                             name='models'
@@ -4036,7 +4036,6 @@ export function ChannelMutateDrawer({
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
                                     submitSearchOnEnterWithMatches
-                                    submitSearchOnEnterWhenHighlighted
                                     contentFooter={
                                       trimmedModelSearchKeyword.length > 0 ? (
                                         <div className='flex flex-col gap-2'>
@@ -4149,7 +4148,7 @@ export function ChannelMutateDrawer({
 
                           <Separator />
 
-                          <div className='border-border/60 bg-muted/20 flex flex-col gap-3 rounded-md border p-3'>
+                          <div className='flex flex-col gap-3'>
                             <div>
                               <p className='text-sm font-medium'>
                                 {t('Quick actions')}
@@ -4273,7 +4272,7 @@ export function ChannelMutateDrawer({
                           </div>
                         </div>
 
-                        <div className='border-border/60 border-t pt-5'>
+                        <div className='border-border/60 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
                             name='model_mapping'
@@ -4412,7 +4411,7 @@ export function ChannelMutateDrawer({
                           />
                         </div>
 
-                        <div className='border-border/60 border-t pt-5'>
+                        <div className='border-border/60 rounded-lg border p-4'>
                           <FormField
                             control={form.control}
                             name='group'

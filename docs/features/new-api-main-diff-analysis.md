@@ -12633,3 +12633,78 @@ MCP 真实复现显示：渠道 `11111` 初始模型为 `gpt-5.4`、`gpt-5.5`、
 11. MCP 控制台 `error`、`warn`、`issue` 均为空。
 12. MCP 保存桌面截图 `/tmp/nexustok-system-info-actions-desktop.png`；切换 390px 移动视口后确认页头动作仍可访问、表单单列展示，截图保存为 `/tmp/nexustok-system-info-actions-mobile.png`。
 13. 主题切换保护未在运行态执行真实保存，避免改变当前验证环境的前端主题；该风险通过代码审查、typecheck、构建和非破坏性页面验证覆盖。
+
+## 本轮实施评审：渠道编辑页模型搜索添加与 new-api 模型区对齐
+
+### 差异来源
+
+用户反馈“搜索添加时不正确”，并指出最新版 new-api 的编辑渠道页面体验较好，要求将当前项目的编辑渠道页面与 `/opt/project/new-api-main` 对齐。对照当前 NexusTok 与 new-api 的 `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后发现：
+
+1. new-api 的模型区域采用清晰的边界分组：`Models` 与 `Quick actions` 位于同一个浅背景边框块，`Model Mapping` 和 `Groups` 分别使用独立边框块，信息层次更清楚。
+2. NexusTok 在 new-api 基础上已经原生增强了模型元数据搜索、供应商过滤、批量追加、预设分组、权限禁用原因、模型映射风险提示和账号池能力；这些是当前项目优势，不能回退或整段覆盖。
+3. MCP 真实访问 `http://192.168.0.202:3003/channels` 并编辑渠道 `11111` 时，`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 返回 3 条：`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。渠道当前已有 `gpt-5.6-sol`，因此页面显示 `3 matched · 2 new · 1 already selected`，批量按钮补齐 2 个新模型是正确结果。
+4. 复现中发现更细的交互风险：`MultiSelect` 在渠道模型搜索中开启了 `submitSearchOnEnterWhenHighlighted`，导致有高亮候选时 Enter 也会批量追加全部搜索结果，而不是选择高亮的单个候选。这与页面提示“Selecting a row below adds only that one model.”以及常见 Combobox 键盘预期冲突，容易被理解为“搜索添加不正确”。
+
+### 需求分析
+
+1. 保留当前 NexusTok 的模型库搜索能力：按渠道类型推导供应商、从 `/api/models/search` 拉取模型元信息、识别已选模型、批量补齐所有搜索命中、继续支持自定义模型输入。
+2. 修复搜索添加键盘语义：当下拉中存在高亮候选时，Enter 应交给 Combobox 选择该单个候选；当没有高亮候选且输入仍为搜索词时，Enter 才可触发搜索批量追加；点击批量按钮始终追加全部未选命中。
+3. 与 new-api 对齐模型区视觉结构：将 `Models` 字段和 `Quick actions` 收进同一个边框分组，`Model Mapping` 与 `Groups` 使用独立边框分组，让编辑渠道页面更接近最新版 new-api 的信息层级。
+4. 保留 NexusTok 原生差异：权限禁用原因、账号池模式、模型映射风险提示、搜索统计、供应商徽标、批量追加预览、预设分组、`copyChipOnClick`、隐藏已选搜索结果、已有模型去重均不可丢失。
+5. 本轮不保存真实渠道配置；MCP 验证只在抽屉草稿内搜索、添加、取消，避免污染运行态渠道模型列表。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道模型搜索键盘行为 | `web/default/src/components/multi-select.tsx` | 已有通用能力保持不变，渠道页不再为高亮候选开启批量 Enter。若调整单元测试，只覆盖 helper 的预期语义。 |
+| 渠道编辑抽屉模型区 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 模型区视觉结构向 new-api 的边框分组对齐，同时保留 NexusTok 的搜索、权限和风险提示能力。 |
+| 前端测试 | `web/default/src/components/multi-select.test.ts`、`web/default/src/features/channels/lib/model-search.test.ts` | 用现有测试覆盖模型搜索去重、批量追加和 Enter 高亮行为；视实现增补必要断言。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录需求分析、影响范围、风险评估、方案评审、实施结果和 MCP 验证。 |
+
+本轮不修改 Go 后端、数据库、模型同步接口、渠道保存 API、账号池 API、Relay 调度、计费表达式、模型元数据表结构、权限后端和 new-api 源码。
+
+### 风险评估
+
+1. 键盘行为风险：如果直接禁用 Enter 搜索提交，管理员可能失去“输入前缀后回车批量添加”的快捷路径。方案只在有高亮候选时交给单选，无高亮时仍允许批量提交。
+2. 搜索追加风险：批量按钮必须继续按后端搜索全量分页扫描，不能只添加当前第一页或当前可见行；`gpt-5.6` 三模型场景必须保持补两个新模型的正确结果。
+3. 自定义模型风险：无候选的自定义模型仍需可输入和创建，不能因为修复搜索追加而禁用 `custom-model` 类场景。
+4. 视觉对齐风险：new-api 的边框块不能照搬成破坏 NexusTok 侧栏导航和权限提示的结构；需要用现有 `gap`、`Button`、`Badge`、`Alert`、`MultiSelect` 等组件组合，避免新增不必要抽象。
+5. 权限风险：模型区分组移动后，所有涉及写入草稿的按钮仍需遵守 `canEditBasicFields`、`permissions.canOperate` 和禁用原因提示。
+6. 验证风险：编辑渠道保存会改变真实配置；本轮 MCP 必须只验证草稿行为并取消抽屉，最后通过接口确认渠道 `models` 仍未被保存修改。
+
+### 方案评审
+
+采用“小范围键盘语义修复 + 模型区结构对齐 + 非破坏性 MCP 验证”的方案：
+
+1. 在渠道模型 `MultiSelect` 调用处移除 `submitSearchOnEnterWhenHighlighted`，保留 `submitSearchOnEnterWithMatches`、`onSearchSubmit` 和批量按钮。这样有高亮候选时 Enter 选择单条，无高亮时 Enter 仍可批量追加搜索命中。
+2. 保留 `allowCreateWithMatches={false}`，避免输入 `gpt-5.6` 这类系列前缀时创建一个不完整自定义模型；无候选时仍允许创建自定义模型。
+3. 将模型字段和快捷操作包进 `border-border/60 bg-muted/10 rounded-lg border p-4` 的同一分组；`Quick actions` 使用轻量分隔线与模型字段分开，贴近 new-api 的编辑页结构。
+4. 将 `Model Mapping` 和 `Groups` 由 `border-t pt-5` 调整为独立 `border-border/60 rounded-lg border p-4` 分组，减少长抽屉中的视觉漂移，提升扫描效率。
+5. 不引入新接口、不改后端、不新增依赖；如新增可见文案则补齐六语 i18n 并运行 `bun run i18n:sync`，优先复用现有文案避免翻译面扩大。
+6. 验证顺序：先跑 `bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/lib/channel-form.test.ts`，再跑 `bun run typecheck`、`bun run i18n:sync`、`bun run build`、`git diff --check`；最后 MCP 登录 3003，编辑渠道 `11111`，搜索 `gpt-5.6`，验证批量按钮补 2 个、候选单击只补 1 个、取消后接口模型列表未变化、控制台无错误。
+
+### 实施结果
+
+1. 渠道编辑页模型搜索保留批量按钮、搜索统计、供应商过滤和全量分页扫描能力，但移除了渠道模型 `MultiSelect` 调用处的 `submitSearchOnEnterWhenHighlighted`。现在有高亮候选时 Enter 由 Combobox 选择单条候选；没有高亮候选时仍可通过原有 `onSearchSubmit` 路径批量追加搜索命中。
+2. 模型区视觉结构已对齐 new-api 的分组方式：`Models` 字段与 `Quick actions` 位于同一个浅背景边框块，`Model Mapping` 和 `Groups` 分别使用独立边框块。
+3. 保留 NexusTok 原生能力：`Vendor: OpenAI` 徽标、`3 matched · 2 new · 1 already selected` 搜索摘要、`Will add` 预览、批量追加按钮、权限禁用原因、预设分组、模型映射风险提示、账号池模式、隐藏已选搜索结果、点击模型 chip 复制等能力均未回退。
+4. 本轮未新增可见文案，未修改 i18n locale 文件中的业务翻译，未修改 Go 后端、数据库、模型同步接口、渠道保存 API、Relay 调度和 new-api 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/components/multi-select.test.ts`，24 个测试通过。
+2. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts`，25 个测试通过，覆盖 `gpt-5.6` 三模型搜索、已选去重、分页提示和默认供应商。
+3. 已运行 `cd web/default && bun test src/features/channels/lib/channel-form.test.ts`，19 个测试通过，确认渠道表单转换和校验未受影响。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+5. 已运行 `cd web/default && bun run i18n:sync`，六语 missing/extras 为 0；既有 untranslated 计数不属于本轮新增。
+6. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+7. 已运行 `git diff --check`，未发现空白错误。
+8. MCP 刷新并访问 `http://192.168.0.202:3003/channels`，确认页面热更新生效；打开渠道 `11111` 编辑抽屉后，模型区已呈现 new-api 风格的边框分组。桌面截图保存为 `/tmp/nexustok-channel-edit-aligned.png`，移动端 390px 截图保存为 `/tmp/nexustok-channel-edit-aligned-mobile.png`。
+9. MCP 调用接口确认搜索数据：`/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 共 3 条；渠道 `11111` 当前模型为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`。
+10. MCP 在编辑抽屉搜索 `gpt-5.6` 后，页面显示 `3 matched · 2 new · 1 already selected`、按钮 `Add 2 search match(es)`、预览 `gpt-5.6-terra, gpt-5.6-luna`。
+11. MCP 通过键盘事件先 `ArrowDown` 高亮 `gpt-5.6-terra`，再按 Enter，草稿只新增 `gpt-5.6-terra`，选中数从 3 变为 4，没有批量加入 `gpt-5.6-luna`，确认高亮候选不再触发批量搜索追加。
+12. MCP 取消草稿后重新打开编辑抽屉，点击 `Add 2 search match(es)`，草稿一次新增 `gpt-5.6-terra` 和 `gpt-5.6-luna`，选中数从 3 变为 5，并显示 `Added 2 model(s) from search`。
+13. MCP 取消抽屉后调用 `/api/channel/1`，返回 `models: "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认验证过程未保存或污染真实渠道配置。
+14. MCP 网络请求记录只包含 GET：`/api/status`、`/api/user/self`、`/api/notice`、`/api/group/`、`/api/channel/`、`/api/channel/1`、`/api/channel/models`、`/api/models/search`、`/api/prefill_group/`、`/api/account-pool/groups/options`、`/api/user/2fa/status`、`/api/user/passkey`；未出现渠道保存请求。
+15. MCP 控制台无 JavaScript `error` 或 `warn`。Chrome DevTools 报出两个既有表单 `issue`：`name` 输入缺少 `autocomplete`，以及部分 label 的 `for` 与控件 `id` 不匹配；本轮未修改这些表单基础组件，已记录为后续可访问性改进项。
