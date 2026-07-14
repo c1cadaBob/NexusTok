@@ -13781,3 +13781,76 @@ NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽
 11. MCP 网络请求确认只有读取请求：`GET /api/channel/1`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 等，没有渠道保存类 `PUT/POST /api/channel` 写请求。
 12. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态渠道配置。
 13. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。
+
+## 本轮实施评审：API Key 独立密钥搜索与分页响应原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main` 与当前 NexusTok 的 `keys` 页面后确认，new-api 最新版已经把 API Key 列表搜索拆成两个入口：名称搜索走 `keyword`，密钥片段搜索走 `token`，并且搜索态同样按后端分页响应的 `data.items` 与 `data.total` 渲染。当前 NexusTok 后端 `controller/token.go::SearchTokens` 已经支持 `keyword`、`token`、`p`、`size`，并返回 `PageInfo` 分页对象；但前端还没有把 `token` 放进路由 search schema，也没有独立密钥搜索框，而且 `searchApiKeys()` 的类型仍写成 `ApiKey[]`，表格搜索路径把 `result.data` 当数组处理。
+
+这不是单纯 UX 差异：当搜索结果跨页或后端返回分页对象时，当前前端会丢失分页总数，甚至可能把分页对象误当数组，导致搜索态列表和翻页不可靠。本轮把 new-api 的优势转成 NexusTok 原生能力，同时保留 NexusTok 已有的 USD 消耗列、分组倍率、Cross-group、模型限制、IP 限制、安全查看/复制 API Key、批量操作和当前 DataTable 视觉结构。
+
+### 需求分析
+
+1. `/keys` URL search schema 需要支持 `token` 参数，便于密钥片段搜索可复制、可刷新、可翻页保留。
+2. API Key 表格需要提供独立的 `Filter by API key...` 输入；名称搜索只负责名称，密钥片段搜索只负责 token 参数。
+3. 搜索态必须请求 `/api/token/search?keyword=...&token=...&p=...&size=...`，并按 `data.items` 渲染、按 `data.total` 计算分页。
+4. 非搜索态继续请求 `/api/token/?p=...&size=...`，保留当前列表分页。
+5. Reset 操作需要同时清空名称搜索、密钥搜索和状态筛选，并把 URL 中的 `filter`、`token`、`status` 清理掉。
+6. 新增前端可见文案必须补齐 en、zh、fr、ja、ru、vi 并运行 `bun run i18n:sync`。
+7. 本轮不修改 Go 后端、数据库、token 创建/编辑/删除/批量删除、安全查看密钥接口、relay、计费或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Keys 路由 search schema | `web/default/src/routes/_authenticated/keys/index.tsx` | 新增 `token` URL 参数，刷新和翻页时保留密钥搜索条件。 |
+| Keys API 类型 | `web/default/src/features/keys/api.ts` | 将 `searchApiKeys()` 返回类型改为 `GetApiKeysResponse`，与后端 `PageInfo` 响应一致。 |
+| Keys 表格 | `web/default/src/features/keys/components/api-keys-table.tsx` | 新增独立密钥搜索输入、`token` URL state、搜索态分页请求和分页响应读取。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 `Filter by name...` 与 `Filter by API key...` 六语翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施与验证。 |
+
+### 风险评估
+
+1. 搜索响应形状风险：前端必须统一按 `data.items` / `data.total` 读取搜索结果，不能再用数组路径，否则搜索态分页会继续错误。
+2. 分页风险：搜索条件变化时需要回到第一页；翻页时必须保留 `filter` 与 `token`，避免用户搜索第二页时条件丢失。
+3. 状态筛选风险：后端 token 搜索当前只支持 `keyword` 和 `token`；本轮不扩展后端状态筛选，状态筛选仍保持现有 DataTable 行为，不把 `status` 写入后端接口。
+4. Reset 风险：密钥搜索是独立 URL state 而不是普通全局搜索，必须接入统一 Reset，并阻止旧 debounce 值在 URL 清空后重新写回 `token`。
+5. 安全风险：独立密钥搜索只把管理员输入的片段作为 GET 查询参数发给既有受权接口；不新增明文密钥展示，不绕过 `fetchTokenKey` 的安全验证路径。
+6. i18n 风险：新增两个可见 placeholder，必须补齐六语并运行同步脚本，避免运行时落回英文或产生缺失 key。
+
+### 方案评审
+
+采用“复用现有后端 + 前端原生化搜索状态”的方案：
+
+1. 在 `/keys` 路由 search schema 中加入 `token: z.string().optional().catch('')`。
+2. 将 `searchApiKeys()` 返回类型从 `ApiKey[]` 改为 `GetApiKeysResponse`，不改变实际请求路径。
+3. 在 `ApiKeysTable` 中用独立 `rawTokenFilter`、`tokenFilterInput`、`pendingTokenFilter` 和 `useDebounce()` 维护密钥搜索输入，避免把密钥片段混入名称搜索或状态列过滤。
+4. token 输入兼容中文输入法组合输入；只有去抖后的值与当前待提交输入一致时才写入 URL，避免 Reset 或浏览器前进/后退后旧 debounce 值重新污染 search params。
+5. 查询函数根据 `globalFilter.trim()` 或 `rawTokenFilter.trim()` 判断是否进入搜索态；搜索态和非搜索态都传入当前 `p` 与 `size`。
+6. 表格统一按服务端分页处理，`pageCount` 基于 `data.total / pagination.pageSize`，避免搜索态只显示当前返回数组长度。
+7. toolbar 的主搜索 placeholder 改为 `Filter by name...`，并通过 `additionalSearch` 增加 `Filter by API key...` 输入；Reset 继续复用 DataTableToolbar，同时在 Keys 页回调中显式清空 `filter`、`token`、`status` 和页码。
+8. 验证顺序：`bun run i18n:sync`、定向 lint/typecheck/build、`git diff --check`；最后使用 MCP 访问 `http://192.168.0.202:3003/keys` 验证名称搜索、密钥搜索、翻页/URL、Reset、控制台和网络请求。
+
+### 实施结果
+
+1. `/keys` 路由 search schema 已新增 `token` 参数，API Key 密钥片段搜索可通过 URL 保留、刷新和复现。
+2. `searchApiKeys()` 返回类型已改为 `GetApiKeysResponse`，搜索态与普通列表态都按 `data.items` 和 `data.total` 读取分页对象。
+3. API Key 表格新增独立 `Filter by API key...` 输入；名称输入只提交 `keyword`，密钥输入只提交 `token`，不会继续把 key 片段混进名称搜索。
+4. 搜索态请求统一携带 `p` 与 `size`，并开启 `manualPagination`，分页页数按后端 `total` 计算。
+5. Reset 已显式清空名称筛选、密钥筛选、状态筛选和页码；同时增加旧 debounce 值保护，避免 `token` 被清空后又被上一次输入值写回 URL。
+6. 新增 `Filter by name...` 与 `Filter by API key...` 六语翻译，并保持 NexusTok 现有 USD 消耗、分组倍率、Cross-group、模型限制、IP 限制、安全查看/复制和批量操作能力不变。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；en/zh 缺失、冗余、未翻译均为 0，fr/ja/ru/vi 未翻译数量分别为 34/85/97/36，均为既有缺口，本轮未扩大。
+2. 已运行 `cd web/default && bunx eslint src/features/keys/api.ts src/features/keys/components/api-keys-table.tsx src/routes/_authenticated/keys/index.tsx`，ESLint 通过。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 访问并硬刷新 `http://192.168.0.202:3003/keys?postcheck=1784033000000&token=HPv1`，确认页面展示两个输入框：`按名称筛选...` 与 `按 API 密钥筛选...`，密钥输入框能从 URL 恢复 `HPv1`。
+7. MCP 点击 Reset 后，URL 从 `...&token=HPv1` 清为 `/keys?postcheck=1784033000000`，密钥输入框清空；等待 900ms 后 URL 仍不含 `token`，确认旧 debounce 值不会回写。
+8. MCP 输入名称 `11`，网络请求最终为 `GET /api/token/search?keyword=11&p=1&size=20`，没有携带 `token`。
+9. MCP 输入密钥片段 `HPv1`，网络请求为 `GET /api/token/search?token=HPv1&p=1&size=20`，响应体为 `{"data":{"page":1,"page_size":20,"total":0,"items":[]},"message":"","success":true}`，前端按分页对象渲染。
+10. MCP 最后再次点击 Reset 并等待 900ms，URL、名称输入、密钥输入均为空，列表恢复显示现有 API Key 行。
+11. MCP 控制台检查 JavaScript `error`、`warn` 和浏览器 `issue`，均未发现消息。

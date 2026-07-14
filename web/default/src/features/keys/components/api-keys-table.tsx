@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
@@ -37,6 +37,7 @@ import { formatQuotaAsFixedUSD } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { useDebounce } from '@/hooks/use-debounce'
 import {
   Empty,
   EmptyDescription,
@@ -44,6 +45,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   DISABLED_ROW_DESKTOP,
@@ -208,6 +210,8 @@ export function ApiKeysTable() {
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
+  const search = route.useSearch()
+  const navigate = route.useNavigate()
 
   const {
     globalFilter,
@@ -218,47 +222,78 @@ export function ApiKeysTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search,
+    navigate,
     pagination: { defaultPage: 1, defaultPageSize: 20 },
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [{ columnId: 'status', searchKey: 'status', type: 'array' }],
   })
+  const rawTokenFilter = typeof search.token === 'string' ? search.token : ''
+  const [tokenFilterInput, setTokenFilterInput] = useState(rawTokenFilter)
+  const [pendingTokenFilter, setPendingTokenFilter] = useState(rawTokenFilter)
+  const isTokenComposingRef = useRef(false)
+  const debouncedTokenFilter = useDebounce(pendingTokenFilter, 500)
 
-  // Fetch data with React Query
+  useEffect(() => {
+    if (!isTokenComposingRef.current) {
+      setTokenFilterInput(rawTokenFilter)
+    }
+    setPendingTokenFilter(rawTokenFilter)
+  }, [rawTokenFilter])
+
+  useEffect(() => {
+    // URL 变化时可能来自 Reset 或浏览器前进/后退；此时旧的 debounce 值不能再回写到 URL。
+    if (debouncedTokenFilter !== pendingTokenFilter) return
+
+    const nextToken = debouncedTokenFilter.trim()
+    if (nextToken === rawTokenFilter) return
+
+    navigate({
+      search: (previous) => ({
+        ...previous,
+        page: undefined,
+        token: nextToken || undefined,
+      }),
+    })
+  }, [debouncedTokenFilter, pendingTokenFilter, rawTokenFilter, navigate])
+
+  const trimmedNameFilter = globalFilter?.trim() ?? ''
+  const trimmedTokenFilter = rawTokenFilter.trim()
+  const shouldSearch = Boolean(trimmedNameFilter || trimmedTokenFilter)
+
+  // 统一由服务端返回分页后的列表；前端仅保留状态列的本地筛选。
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'keys',
       pagination.pageIndex + 1,
       pagination.pageSize,
-      globalFilter,
+      trimmedNameFilter,
+      trimmedTokenFilter,
       refreshTrigger,
     ],
     queryFn: async () => {
-      // If there's a global filter, use search
-      const hasFilter = globalFilter?.trim()
-
-      if (hasFilter) {
-        const result = await searchApiKeys({ keyword: globalFilter })
-        if (!result.success) {
-          toast.error(result.message || t(ERROR_MESSAGES.SEARCH_FAILED))
-          return { items: [], total: 0 }
-        }
-        return {
-          items: result.data || [],
-          total: result.data?.length || 0,
-        }
-      }
-
-      // Otherwise use pagination
-      const result = await getApiKeys({
-        p: pagination.pageIndex + 1,
-        size: pagination.pageSize,
-      })
+      const result = shouldSearch
+        ? await searchApiKeys({
+            keyword: trimmedNameFilter,
+            token: trimmedTokenFilter,
+            p: pagination.pageIndex + 1,
+            size: pagination.pageSize,
+          })
+        : await getApiKeys({
+            p: pagination.pageIndex + 1,
+            size: pagination.pageSize,
+          })
 
       if (!result.success) {
-        toast.error(result.message || t(ERROR_MESSAGES.LOAD_FAILED))
+        toast.error(
+          result.message ||
+            t(
+              shouldSearch
+                ? ERROR_MESSAGES.SEARCH_FAILED
+                : ERROR_MESSAGES.LOAD_FAILED
+            )
+        )
         return { items: [], total: 0 }
       }
 
@@ -289,10 +324,9 @@ export function ApiKeysTable() {
     onColumnVisibilityChange: setColumnVisibility,
     globalFilterFn: (row, _columnId, filterValue) => {
       const name = String(row.getValue('name')).toLowerCase()
-      const key = String(row.original.key).toLowerCase()
       const searchValue = String(filterValue).toLowerCase()
 
-      return name.includes(searchValue) || key.includes(searchValue)
+      return name.includes(searchValue)
     },
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -303,10 +337,8 @@ export function ApiKeysTable() {
     onPaginationChange,
     onGlobalFilterChange,
     onColumnFiltersChange,
-    manualPagination: !globalFilter,
-    pageCount: globalFilter
-      ? Math.ceil((data?.total || 0) / pagination.pageSize)
-      : Math.ceil((data?.total || 0) / pagination.pageSize),
+    manualPagination: true,
+    pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 
   const pageCount = table.getPageCount()
@@ -326,14 +358,55 @@ export function ApiKeysTable() {
       )}
       skeletonKeyPrefix='api-keys-skeleton'
       toolbarProps={{
-        searchPlaceholder: t('Filter by name or key...'),
+        searchPlaceholder: t('Filter by name...'),
+        additionalSearch: (
+          <Input
+            placeholder={t('Filter by API key...')}
+            aria-label={t('Filter by API key...')}
+            value={tokenFilterInput}
+            onChange={(event) => {
+              const nextValue = event.target.value
+              setTokenFilterInput(nextValue)
+
+              if (!isTokenComposingRef.current) {
+                setPendingTokenFilter(nextValue)
+              }
+            }}
+            onCompositionStart={() => {
+              isTokenComposingRef.current = true
+            }}
+            onCompositionEnd={(event) => {
+              isTokenComposingRef.current = false
+              const nextValue = event.currentTarget.value
+              setTokenFilterInput(nextValue)
+              setPendingTokenFilter(nextValue)
+            }}
+            className='w-full sm:w-[200px] lg:w-[240px]'
+          />
+        ),
+        hasAdditionalFilters: Boolean(trimmedTokenFilter),
         filters: [
           {
             columnId: 'status',
             title: t('Status'),
             options: API_KEY_STATUS_OPTIONS,
+            singleSelect: true,
           },
         ],
+        onReset: () => {
+          isTokenComposingRef.current = false
+          setTokenFilterInput('')
+          setPendingTokenFilter('')
+          navigate({
+            search: (previous) => ({
+              ...previous,
+              page: undefined,
+              filter: undefined,
+              status: undefined,
+              token: undefined,
+            }),
+          })
+        },
       }}
       mobile={<ApiKeysMobileList table={table} isLoading={isLoading} />}
       getRowClassName={(row) =>
