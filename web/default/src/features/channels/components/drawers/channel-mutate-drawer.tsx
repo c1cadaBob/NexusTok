@@ -27,7 +27,6 @@ import {
 import { type SubmitErrorHandler, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useDebounce } from '@/hooks'
 import {
   ArrowRight,
   AlertCircle,
@@ -44,6 +43,7 @@ import {
   Eye,
   Link2,
   RefreshCw,
+  Search,
   Code,
   Boxes,
   KeyRound,
@@ -114,7 +114,6 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
-import { searchModels } from '@/features/models/api'
 import {
   fetchModels,
   getAllModels,
@@ -153,14 +152,8 @@ import {
   extractMappingSourceModels,
   hasModelConfigChanged,
   findMissingModelsInMapping,
-  buildModelSearchAppendPlan,
-  buildModelSearchAppendSummary,
   dedupeModelNames,
   getModelSearchVendorForChannelType,
-  getModelSearchModelNames,
-  getModelSearchUnscannedResultCount,
-  getMissingModelSearchMatches,
-  isModelSearchAppendContextCurrent,
   mergeModelNames,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -174,6 +167,7 @@ import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
+import { ModelLibrarySearchDialog } from '../dialogs/model-library-search-dialog'
 import {
   MissingModelsConfirmationDialog,
   type MissingModelsAction,
@@ -222,31 +216,6 @@ type ChannelEditorNavItem = {
   children?: ChannelEditorNavChildItem[]
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function getErrorMessage(error: unknown): string | undefined {
-  if (error instanceof Error && typeof error.message === 'string') {
-    return error.message
-  }
-
-  if (!isRecord(error)) return undefined
-
-  const response = error.response
-  if (isRecord(response)) {
-    const data = response.data
-    if (isRecord(data)) {
-      const message = data.message
-      if (typeof message === 'string') return message
-    }
-  }
-
-  const message = error.message
-  if (typeof message === 'string') return message
-  return undefined
-}
-
 // 表单辅助函数
 const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
   invalidJson: false,
@@ -289,46 +258,6 @@ const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
 )
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
-const MODEL_SEARCH_APPEND_PAGE_SIZE = 100
-
-async function fetchAllModelSearchModelNames(
-  keyword: string,
-  vendor = ''
-): Promise<string[]> {
-  const trimmedKeyword = keyword.trim()
-  const trimmedVendor = vendor.trim()
-  if (!trimmedKeyword) return []
-
-  const names: string[] = []
-  let page = 1
-
-  for (;;) {
-    const response = await searchModels({
-      keyword: trimmedKeyword,
-      vendor: trimmedVendor || undefined,
-      p: page,
-      page_size: MODEL_SEARCH_APPEND_PAGE_SIZE,
-    })
-
-    if (!response.success) {
-      throw new Error(response.message || '')
-    }
-
-    const data = response.data
-    if (!data) return names
-
-    const items = data.items ?? []
-    names.push(...getModelSearchModelNames(items, trimmedKeyword))
-
-    const pageSize = data.page_size || MODEL_SEARCH_APPEND_PAGE_SIZE
-    const loadedCount = page * pageSize
-    if (loadedCount >= data.total || items.length === 0) {
-      return names
-    }
-
-    page += 1
-  }
-}
 
 function readAdvancedSettingsPreference(): boolean {
   if (typeof window === 'undefined') return false
@@ -766,49 +695,21 @@ export function ChannelMutateDrawer({
   >(null)
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
-  const modelSearchAppendRequestSeqRef = useRef(0)
-  const isAddingModelSearchMatchesRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
+  const [modelLibrarySearchOpen, setModelLibrarySearchOpen] = useState(false)
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
     CHANNEL_EDITOR_SECTION_IDS.identity
   )
   const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
     string | undefined
   >()
-  const [modelSelectOpen, setModelSelectOpen] = useState(false)
-  const [modelSearchKeyword, setModelSearchKeyword] = useState('')
-  const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
-    useState(false)
-  const trimmedModelSearchKeyword = modelSearchKeyword.trim()
   const modelSearchVendor = useMemo(
     () => getModelSearchVendorForChannelType(currentType),
     [currentType]
   )
-  const debouncedModelSearchKeyword = useDebounce(
-    trimmedModelSearchKeyword,
-    300
-  )
-  const isModelSearchDebouncing =
-    trimmedModelSearchKeyword.length > 0 &&
-    trimmedModelSearchKeyword !== debouncedModelSearchKeyword
-  const isModelSearchResultCurrent =
-    trimmedModelSearchKeyword.length > 0 &&
-    trimmedModelSearchKeyword === debouncedModelSearchKeyword
-  const clearModelSearch = useCallback(() => {
-    setModelSearchKeyword('')
-  }, [])
-  const modelSearchKeywordRef = useRef(trimmedModelSearchKeyword)
-  const modelSearchVendorRef = useRef(modelSearchVendor)
-
-  const modelSearchAppendContextRef = useRef({
-    open,
-    channelId: currentRow?.id ?? null,
-    keyword: trimmedModelSearchKeyword,
-    vendor: modelSearchVendor,
-  })
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -838,24 +739,6 @@ export function ChannelMutateDrawer({
     queryFn: getAllModels,
   })
 
-  // 用模型元信息搜索补齐系统模型候选源，避免已同步到模型库但尚未加入任何渠道的模型不可选。
-  const { data: modelSearchData, isFetching: isSearchingModelMeta } = useQuery({
-    queryKey: [
-      'channel_model_meta_search',
-      debouncedModelSearchKeyword,
-      modelSearchVendor,
-    ],
-    queryFn: () =>
-      searchModels({
-        keyword: debouncedModelSearchKeyword,
-        vendor: modelSearchVendor || undefined,
-        p: 1,
-        page_size: 50,
-      }),
-    enabled: open && debouncedModelSearchKeyword.length > 0,
-    staleTime: 30_000,
-  })
-
   // 拉取模型预设分组，便于管理员快速批量填入常用模型集合。
   const { data: prefillGroupsData } = useQuery({
     queryKey: ['prefill_groups', 'model'],
@@ -868,30 +751,6 @@ export function ChannelMutateDrawer({
   })
 
   const { copyToClipboard } = useCopyToClipboard()
-
-  useEffect(() => {
-    modelSearchKeywordRef.current = trimmedModelSearchKeyword
-  }, [trimmedModelSearchKeyword])
-
-  useEffect(() => {
-    modelSearchVendorRef.current = modelSearchVendor
-  }, [modelSearchVendor])
-
-  useEffect(() => {
-    modelSearchAppendContextRef.current = {
-      open,
-      channelId,
-      keyword: trimmedModelSearchKeyword,
-      vendor: modelSearchVendor,
-    }
-  }, [channelId, modelSearchVendor, open, trimmedModelSearchKeyword])
-
-  useEffect(() => {
-    modelSearchAppendRequestSeqRef.current += 1
-    isAddingModelSearchMatchesRef.current = false
-    setIsAddingModelSearchMatches(false)
-    setModelSelectOpen(false)
-  }, [channelId, modelSearchVendor, open])
 
   const {
     open: verificationOpen,
@@ -908,12 +767,11 @@ export function ChannelMutateDrawer({
     if (!open) {
       setChannelKey(null)
       setIsChannelKeyLoading(false)
-      setModelSelectOpen(false)
-      clearModelSearch()
+      setModelLibrarySearchOpen(false)
     } else if (channelId) {
       setChannelKey(null)
     }
-  }, [open, channelId, clearModelSearch])
+  }, [open, channelId])
 
   // 判断当前编辑对象是否为多 Key 渠道，决定是否展示追加/覆盖等历史密钥管理入口。
   const isMultiKeyChannel =
@@ -1034,14 +892,6 @@ export function ChannelMutateDrawer({
     () => allModelsData?.data?.map((model) => model.id).filter(Boolean) || [],
     [allModelsData]
   )
-
-  const modelSearchModelNames = useMemo(() => {
-    if (!isModelSearchResultCurrent) return []
-    return getModelSearchModelNames(
-      modelSearchData?.data?.items ?? [],
-      debouncedModelSearchKeyword
-    )
-  }, [debouncedModelSearchKeyword, isModelSearchResultCurrent, modelSearchData])
 
   // 按渠道类型推导基础模型集合。
   const basicModels = useMemo(() => {
@@ -1361,57 +1211,12 @@ export function ChannelMutateDrawer({
 
   // 将系统模型和当前渠道模型合并成模型选择器选项，避免编辑历史模型时选项丢失。
   const modelOptions = useMemo(() => {
-    const allModels = new Set([
-      ...modelSearchModelNames,
-      ...allModelsList,
-      ...currentModelsArray,
-    ])
+    const allModels = new Set([...allModelsList, ...currentModelsArray])
     return Array.from(allModels).map((model) => ({
       value: model,
       label: model,
     }))
-  }, [allModelsList, currentModelsArray, modelSearchModelNames])
-
-  const modelSearchAppendPlan = useMemo(
-    () =>
-      buildModelSearchAppendPlan(modelSearchModelNames, currentModelsArray, 6),
-    [currentModelsArray, modelSearchModelNames]
-  )
-  const modelSearchAppendSummary = useMemo(
-    () =>
-      buildModelSearchAppendSummary(modelSearchModelNames, currentModelsArray),
-    [currentModelsArray, modelSearchModelNames]
-  )
-  const modelSearchMissingPreview = modelSearchAppendPlan.previewModels
-  const modelSearchMissingOmittedCount = modelSearchAppendPlan.omittedCount
-  const loadedModelSearchResultCount = isModelSearchResultCurrent
-    ? (modelSearchData?.data?.items?.length ?? 0)
-    : 0
-  const modelSearchBackendResultTotal = isModelSearchResultCurrent
-    ? (modelSearchData?.data?.total ?? loadedModelSearchResultCount)
-    : loadedModelSearchResultCount
-  const unscannedModelSearchResultCount = getModelSearchUnscannedResultCount({
-    isResultCurrent: isModelSearchResultCurrent,
-    loadedResultCount: loadedModelSearchResultCount,
-    backendResultTotal: modelSearchBackendResultTotal,
-  })
-  const canRunModelSearchAppend =
-    modelSearchAppendSummary.addableCount > 0 ||
-    unscannedModelSearchResultCount > 0
-  const modelSearchAddButtonLabel =
-    unscannedModelSearchResultCount > 0
-      ? t('Scan all search results')
-      : modelSearchAppendSummary.addableCount > 0
-        ? t('Add {{count}} new model(s)', {
-            count: modelSearchAppendSummary.addableCount,
-          })
-        : t('No new matches')
-  const shouldShowModelSearchAppend =
-    trimmedModelSearchKeyword.length > 0 &&
-    !isSearchingModelMeta &&
-    !isModelSearchDebouncing &&
-    (modelSearchAppendSummary.matchedCount > 0 ||
-      unscannedModelSearchResultCount > 0)
+  }, [allModelsList, currentModelsArray])
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1794,81 +1599,6 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
-  const handleAddModelSearchMatches = useCallback(async () => {
-    if (!canEditBasicFields) {
-      toast.error(noPermissionMessage)
-      return
-    }
-    if (isAddingModelSearchMatchesRef.current) {
-      return
-    }
-    const keyword = modelSearchKeywordRef.current.trim()
-    const vendor = modelSearchVendorRef.current.trim()
-    if (!keyword) {
-      toast.info(t('No new search results to add'))
-      return
-    }
-
-    const requestSeq = modelSearchAppendRequestSeqRef.current + 1
-    modelSearchAppendRequestSeqRef.current = requestSeq
-    isAddingModelSearchMatchesRef.current = true
-    setIsAddingModelSearchMatches(true)
-    setModelSelectOpen(false)
-    const requestChannelId = channelId
-    try {
-      const allSearchModelNames = await fetchAllModelSearchModelNames(
-        keyword,
-        vendor
-      )
-      const latestContext = modelSearchAppendContextRef.current
-      if (
-        modelSearchAppendRequestSeqRef.current !== requestSeq ||
-        !isModelSearchAppendContextCurrent(latestContext, {
-          channelId: requestChannelId,
-          keyword,
-          vendor,
-        })
-      ) {
-        return
-      }
-
-      const currentModels = parseModelsString(form.getValues('models') || '')
-      const modelsToAdd = getMissingModelSearchMatches(
-        allSearchModelNames,
-        currentModels
-      )
-
-      if (modelsToAdd.length === 0) {
-        toast.info(t('No new search results to add'))
-        return
-      }
-
-      // 搜索追加入口位于模型 MultiSelect footer，但仍必须读取 form 里的最新草稿。
-      // 这样可以避免旧闭包把刚追加的模型覆盖回去，也能兼容管理员先手动改模型再批量补齐的场景。
-      const count = updateModels(modelsToAdd, true)
-      clearModelSearch()
-      setModelSelectOpen(false)
-      window.setTimeout(() => {
-        toast.success(t('Added {{count}} model(s) from search', { count }))
-      }, 0)
-    } catch (error) {
-      toast.error(getErrorMessage(error) || t('Refresh failed'))
-    } finally {
-      if (modelSearchAppendRequestSeqRef.current === requestSeq) {
-        isAddingModelSearchMatchesRef.current = false
-        setIsAddingModelSearchMatches(false)
-      }
-    }
-  }, [
-    canEditBasicFields,
-    channelId,
-    clearModelSearch,
-    form,
-    noPermissionMessage,
-    t,
-    updateModels,
-  ])
-
   const handleClearModels = useCallback(() => {
     if (!canEditBasicFields) {
       toast.error(noPermissionMessage)
@@ -2130,11 +1860,7 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
-        modelSearchAppendRequestSeqRef.current += 1
-        isAddingModelSearchMatchesRef.current = false
-        setIsAddingModelSearchMatches(false)
-        setModelSelectOpen(false)
-        clearModelSearch()
+        setModelLibrarySearchOpen(false)
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
         advancedNavScrollPendingRef.current = false
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
@@ -2143,7 +1869,7 @@ export function ChannelMutateDrawer({
         setAdvancedCustomEditorOpen(false)
       }
     },
-    [clearModelSearch, onOpenChange, form]
+    [onOpenChange, form]
   )
 
   const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
@@ -3958,163 +3684,12 @@ export function ChannelMutateDrawer({
                                       'Select models or add custom ones'
                                     )}
                                     allowCreate
-                                    allowCreateWithMatches={false}
                                     createLabel='Add custom model "{{value}}"'
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
-                                    open={modelSelectOpen}
-                                    onOpenChange={setModelSelectOpen}
-                                    searchValue={modelSearchKeyword}
-                                    onSearchChange={setModelSearchKeyword}
-                                    isLoading={
-                                      isSearchingModelMeta ||
-                                      isModelSearchDebouncing
-                                    }
-                                    loadingText={t(
-                                      'Searching model metadata...'
-                                    )}
-                                    onSearchSubmit={() => {
-                                      if (
-                                        !canEditBasicFields ||
-                                        isAddingModelSearchMatches ||
-                                        isSearchingModelMeta ||
-                                        isModelSearchDebouncing ||
-                                        !canRunModelSearchAppend
-                                      ) {
-                                        return
-                                      }
-                                      void handleAddModelSearchMatches()
-                                    }}
-                                    submitSearchOnEnterWithMatches
                                     emptyText={t('No matching models')}
                                     preserveSelectedOnEmptyRemovalKey
-                                    hideSelectedOptionsWhenSearching
-                                    contentFooter={
-                                      trimmedModelSearchKeyword.length > 0 ? (
-                                        <div
-                                          id='channel-model-library-search-status'
-                                          className='flex flex-col gap-2'
-                                        >
-                                          <div className='flex flex-wrap items-center gap-2'>
-                                            <Badge
-                                              variant='secondary'
-                                              className='w-fit'
-                                            >
-                                              {t('Search results')}
-                                            </Badge>
-                                            {isSearchingModelMeta ||
-                                            isModelSearchDebouncing ? (
-                                              <span className='text-muted-foreground text-xs'>
-                                                {t(
-                                                  'Searching model metadata...'
-                                                )}
-                                              </span>
-                                            ) : shouldShowModelSearchAppend ? (
-                                              <span className='text-muted-foreground text-xs'>
-                                                {t(
-                                                  '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                  {
-                                                    matched:
-                                                      modelSearchAppendSummary.matchedCount,
-                                                    addable:
-                                                      modelSearchAppendSummary.addableCount,
-                                                    existing:
-                                                      modelSearchAppendSummary.existingCount,
-                                                  }
-                                                )}
-                                              </span>
-                                            ) : (
-                                              <span className='text-muted-foreground text-xs'>
-                                                {t('No matching models')}
-                                              </span>
-                                            )}
-                                          </div>
-                                          {!isSearchingModelMeta &&
-                                            !isModelSearchDebouncing &&
-                                            shouldShowModelSearchAppend && (
-                                              <>
-                                                {unscannedModelSearchResultCount >
-                                                  0 && (
-                                                  <span className='text-muted-foreground text-xs'>
-                                                    {t(
-                                                      '{{count}} more result(s) will be checked before adding all matches',
-                                                      {
-                                                        count:
-                                                          unscannedModelSearchResultCount,
-                                                      }
-                                                    )}
-                                                  </span>
-                                                )}
-                                                {modelSearchAppendPlan.totalCount >
-                                                0 ? (
-                                                  <span className='text-xs'>
-                                                    <span className='text-muted-foreground mr-1'>
-                                                      {t('Will add')}:
-                                                    </span>
-                                                    <span className='break-all'>
-                                                      {modelSearchMissingPreview.join(
-                                                        ', '
-                                                      )}
-                                                    </span>
-                                                    {modelSearchMissingOmittedCount >
-                                                      0 && (
-                                                      <span className='ml-1'>
-                                                        {t(
-                                                          '({{total}} total, {{omit}} omitted)',
-                                                          {
-                                                            total:
-                                                              modelSearchAppendPlan.totalCount,
-                                                            omit: modelSearchMissingOmittedCount,
-                                                          }
-                                                        )}
-                                                      </span>
-                                                    )}
-                                                  </span>
-                                                ) : unscannedModelSearchResultCount ===
-                                                  0 ? (
-                                                  <span className='text-muted-foreground text-xs'>
-                                                    {t(
-                                                      'No new search results to add'
-                                                    )}
-                                                  </span>
-                                                ) : null}
-                                              </>
-                                            )}
-                                          <Button
-                                            type='button'
-                                            variant='outline'
-                                            size='sm'
-                                            className='w-full sm:w-fit'
-                                            onClick={() => {
-                                              void handleAddModelSearchMatches()
-                                            }}
-                                            disabled={
-                                              !canEditBasicFields ||
-                                              isAddingModelSearchMatches ||
-                                              isSearchingModelMeta ||
-                                              isModelSearchDebouncing ||
-                                              !canRunModelSearchAppend
-                                            }
-                                            title={
-                                              canEditBasicFields
-                                                ? undefined
-                                                : noPermissionMessage
-                                            }
-                                          >
-                                            {isAddingModelSearchMatches ? (
-                                              <Loader2
-                                                data-icon='inline-start'
-                                                className='animate-spin'
-                                              />
-                                            ) : (
-                                              <Plus data-icon='inline-start' />
-                                            )}
-                                            {modelSearchAddButtonLabel}
-                                          </Button>
-                                        </div>
-                                      ) : undefined
-                                    }
                                   />
                                 </FormControl>
                                 {modelMappingGuardrail.exposedTargetModels
@@ -4209,6 +3784,21 @@ export function ChannelMutateDrawer({
                               >
                                 <Plus data-icon='inline-start' />
                                 {t('Fill All Models')}
+                              </Button>
+                              <Button
+                                type='button'
+                                variant='outline'
+                                size='sm'
+                                onClick={() => setModelLibrarySearchOpen(true)}
+                                disabled={!canEditBasicFields}
+                                title={
+                                  canEditBasicFields
+                                    ? undefined
+                                    : noPermissionMessage
+                                }
+                              >
+                                <Search data-icon='inline-start' />
+                                {t('Search model library')}
                               </Button>
                               {MODEL_FETCHABLE_TYPES.has(currentType) &&
                                 !isGlobalAccountPoolMode && (
@@ -5646,6 +5236,20 @@ export function ChannelMutateDrawer({
           }}
         />
       )}
+
+      {/* 模型库搜索弹窗：只追加到当前表单草稿，不直接保存渠道。 */}
+      <ModelLibrarySearchDialog
+        open={modelLibrarySearchOpen}
+        onOpenChange={setModelLibrarySearchOpen}
+        vendor={modelSearchVendor}
+        currentModels={currentModelsArray}
+        channelName={currentName?.trim() || currentRow?.name || null}
+        canEdit={canEditBasicFields}
+        noPermissionMessage={noPermissionMessage}
+        onAddModels={(models) => {
+          updateModels(models, true)
+        }}
+      />
 
       {/* 上游模型选择弹窗：编辑模式按 channel id 拉取，新建模式按当前表单凭证拉取。 */}
       <FetchModelsDialog
