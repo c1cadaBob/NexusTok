@@ -13510,3 +13510,51 @@ NexusTok 当前还保留了 new-api 没有的增强能力，包括 OpenAI/Codex 
 14. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`name = "11111"`、`group = "default"`，确认验证没有污染运行态渠道配置。
 15. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。
 16. MCP 验证截图保存为 `/tmp/nexustok-channel-model-search-in-multiselect.png` 和 `/tmp/nexustok-channel-model-search-added-draft.png`。
+
+## 本轮实施评审：Advanced Custom 导入导出与配置摘要原生化
+
+### 差异来源
+
+继续复核 `/opt/project/new-api-main/web/default/src/features/channels/components/dialogs/advanced-custom-editor-dialog.tsx`、`/opt/project/new-api-main/web/default/src/features/channels/lib/advanced-custom.ts` 与当前 NexusTok 同名实现后确认，两边 Advanced Custom 的基础能力基本同源：均支持可视化路由编辑、JSON 文本编辑、官方模板填充/追加、converter 与 incoming path 约束校验。
+
+NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽屉，并比 new-api 多了项目品牌、Hugeicons、Base UI 组件体系、渠道权限与保存 guardrail。但在实际运营迁移中，管理员常需要把一组 Advanced Custom 路由从测试环境迁移到生产环境，或者在修改前留存配置快照；当前只能手工切换 JSON Text 并复制全文，缺少可审计的导入预览和一键导出入口。因此本轮不整文件搬运 new-api，而是在 NexusTok 原生编辑器上补齐更完整的迁移与审计体验。
+
+### 需求分析
+
+1. Advanced Custom 编辑弹窗应提供当前配置的导出入口，支持复制 JSON 和下载 JSON 文件，便于迁移、审计和回滚。
+2. Advanced Custom 编辑弹窗应提供导入 JSON 入口，导入前必须解析、规范化并执行既有 `validateAdvancedCustomConfig()` 校验。
+3. 导入前需要展示配置摘要，包括路由数量、入口路径、converter 数量、认证模式数量和相对 upstream path 数量，帮助管理员判断导入内容是否符合预期。
+4. 导入只更新 Advanced Custom 编辑弹窗内的前端草稿；真正写入渠道仍必须由原有 `Save changes` 和外层渠道保存流程完成，不能自动保存渠道。
+5. 导出内容必须来自当前编辑模式下的有效配置：Visual 模式导出 `normalizedConfig`，JSON Text 模式必须先通过解析和校验，避免导出非法草稿。
+6. 本轮不修改后端接口、数据库结构、渠道保存接口、relay、计费、权限模型、公共 Dialog 组件和 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Advanced Custom 工具函数 | `web/default/src/features/channels/lib/advanced-custom.ts` | 新增配置摘要纯函数，复用现有 normalize/validate/path/auth/converter 规则，不引入运行态副作用。 |
+| Advanced Custom 工具测试 | `web/default/src/features/channels/lib/advanced-custom.test.ts` | 覆盖摘要统计、导入预览依赖的 route/converter/auth/relative upstream 计数。 |
+| Advanced Custom 编辑弹窗 | `web/default/src/features/channels/components/dialogs/advanced-custom-editor-dialog.tsx` | 新增导入 JSON 弹窗、复制 JSON、下载 JSON 和当前配置摘要；导入只更新弹窗草稿。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增 Advanced Custom 导入/导出/摘要相关六语文案，并运行 `bun run i18n:sync`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 非法 JSON 风险：导入内容可能不是对象、缺少 `advanced_routes` 或 route 字段不合法，必须复用既有解析和校验逻辑，并在 UI 中阻止确认导入。
+2. 覆盖误操作风险：导入会替换当前弹窗草稿，应在按钮文案和摘要中明确这是导入到当前草稿，且不自动保存渠道。
+3. 敏感信息风险：Advanced Custom auth value 可能包含 `{api_key}` 或真实凭证；导出/复制是管理员主动操作，但摘要不能把 auth value 明文展示出来。
+4. 状态一致性风险：导入后 Visual 模式的 `config`、JSON Text 模式的 `jsonText`、`routeKeys` 和错误状态必须同步更新，避免切换模式时看到旧配置。
+5. 浏览器兼容风险：复制需要兼容当前 HTTP 部署环境，应复用项目现有 `useCopyToClipboard()` fallback；下载应使用 Blob URL 并及时 revoke。
+6. UI 回归风险：编辑弹窗工具栏已经较密集，新增按钮必须适配移动端换行，不应破坏模板选择、Visual/JSON 切换和保存按钮。
+
+### 方案评审
+
+采用“纯函数摘要 + 弹窗内草稿导入 + 显式导出”的低风险方案：
+
+1. 在 `advanced-custom.ts` 新增 `buildAdvancedCustomConfigSummary(config)`，返回 routeCount、incomingPaths、converterCount、authModeCount、relativeUpstreamPathCount、fullUrlUpstreamPathCount 和 valid 状态；内部只依赖 normalize/validate 与现有 auth/converter 判断。
+2. 在编辑器顶部工具栏新增 `Copy JSON`、`Download JSON`、`Import JSON` 三个小按钮，复用 Hugeicons 和 shadcn/Base UI Button，不新增组件库。
+3. `getCurrentExportConfig()` 根据当前模式取有效配置：JSON Text 模式先调用 `parseJsonEditorConfig()`，Visual 模式使用 `normalizedConfig` 并检查 `validationError`。
+4. `Copy JSON` 复用 `useCopyToClipboard()`；`Download JSON` 使用 Blob + temporary anchor，文件名使用固定前缀和本地时间戳，不包含渠道名或敏感字段。
+5. `Import JSON` 打开二级 Dialog，管理员粘贴 JSON 后实时生成预览摘要；确认导入时只调用 `applyImportedConfig()` 更新 `config`、`jsonText`、`routeKeys` 和 `jsonError`，不触发 `onSave()`。
+6. 配置摘要只展示 path、converter/auth 数量和 upstream path 类型数量，不展示 auth value，降低导出/导入预览泄露真实凭证的概率。
+7. 验证顺序：`bun run i18n:sync`、`bun run typecheck`、Advanced Custom 单测、渠道相关单测、系统设置回归单测、改动文件 ESLint、`bun run build`、`git diff --check`；最后使用 MCP 登录 `http://192.168.0.202:3003/` 打开 `/channels`，验证 Advanced Custom 编辑弹窗、导入预览、复制/下载、草稿不自动保存、控制台和网络请求。
