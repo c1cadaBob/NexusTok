@@ -13481,3 +13481,32 @@ NexusTok 当前还保留了 new-api 没有的增强能力，包括 OpenAI/Codex 
 5. 批量按钮继续调用 `handleAddModelSearchMatches()`，该函数继续扫描全部分页并只追加当前表单草稿缺失的模型。
 6. 搜索成功追加后清空搜索词；选中单个候选时由 MultiSelect 清空搜索词，避免 footer 残留旧结果。
 7. 验证顺序：`bun run i18n:sync`、`bun run typecheck`、渠道相关单测、系统设置回归单测、改动文件 ESLint、`bun run build`、`git diff --check`；最后使用 MCP 登录 `http://192.168.0.202:3003/` 打开 `/channels`，验证编辑渠道页热更新、MultiSelect 内搜索 `gpt-5.6`、批量追加草稿、无渠道保存写请求和控制台状态。
+
+### 实施结果
+
+1. 已将编辑渠道页模型区的外层独立 `Search model library` 搜索卡片移除，页面重新回到 new-api 最新编辑页更紧凑的主结构：模型 MultiSelect 为主入口，Quick actions 紧随其后，模型映射和分组保持原有顺序。
+2. `modelSearchKeyword` 现在作为 `MultiSelect` 的受控搜索值，管理员在模型选择器内输入 `gpt-5.6` 就会触发 `/api/models/search`，不再需要理解“两套搜索框”的区别。
+3. `MultiSelect` 下拉底部新增模型库搜索结果 footer，展示 `Search results`、命中/可新增/已存在摘要、未扫描分页提示、`Will add` 预览和批量追加按钮。
+4. 批量追加按钮继续使用 `handleAddModelSearchMatches()` 和 `fetchAllModelSearchModelNames()` 扫描所有分页，仍按 OpenAI/Codex 渠道默认供应商 `OpenAI` 搜索，并只把当前表单草稿缺失的模型追加进去。
+5. 保留 `allowCreateWithMatches={false}`、`hideSelectedOptionsWhenSearching`、`preserveSelectedOnEmptyRemovalKey`、点击 chip 复制和自定义模型能力：存在候选时前缀搜索不会被误创建为自定义模型，真正无候选时仍可新增自定义模型。
+6. 搜索追加后自动清空模型选择器输入，避免 footer 残留旧搜索结果；选中单个候选时也沿用 MultiSelect 原有清空搜索词行为。
+7. 本轮没有修改公共 `MultiSelect` 组件、后端模型搜索接口、渠道保存接口、数据库结构、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步通过；本轮复用已有六语文案，没有新增缺失 key。
+2. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+3. 已运行 `cd web/default && bun test src/features/channels`，56 个渠道相关测试全部通过。
+4. 已运行 `cd web/default && bun test src/components/multi-select.test.ts`，24 个 MultiSelect 测试全部通过，覆盖 Enter 搜索提交、候选高亮、自定义创建、搜索过滤和空搜索删除键保护。
+5. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试全部通过。
+6. 已运行 `cd web/default && bunx eslint src/features/channels/components/drawers/channel-mutate-drawer.tsx`，ESLint 通过。
+7. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+8. 已运行 `git diff --check`，未发现空白错误。
+9. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/`，进入 `/channels` 并打开渠道 `11111` 的 `编辑` 抽屉，确认页面热更新已生效。
+10. MCP 确认编辑抽屉模型区不再显示外层 `搜索模型库` 输入；模型选择器是唯一搜索入口，`快捷操作` 仍位于模型选择器下方。
+11. MCP 在模型选择器内输入 `gpt-5.6` 后，下拉底部显示 `搜索结果`、`命中 3 个 · 可新增 2 个 · 已存在 1 个`，并预览 `将添加: gpt-5.6-terra, gpt-5.6-luna`。
+12. MCP 点击 `添加 2 个新模型` 后，页面 toast 显示 `已从搜索结果添加 2 个模型`，表单草稿变为 `已选 5 个`，五个可见模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
+13. MCP 网络请求确认模型搜索使用 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 和全量扫描 `page_size=100`；没有渠道保存类 `PUT/POST /api/channel` 写请求。
+14. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`name = "11111"`、`group = "default"`，确认验证没有污染运行态渠道配置。
+15. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。
+16. MCP 验证截图保存为 `/tmp/nexustok-channel-model-search-in-multiselect.png` 和 `/tmp/nexustok-channel-model-search-added-draft.png`。

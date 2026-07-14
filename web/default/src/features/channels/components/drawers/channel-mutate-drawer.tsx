@@ -3942,160 +3942,9 @@ export function ChannelMutateDrawer({
                                     </Badge>
                                   </div>
                                 </div>
-                                <div className='bg-background/70 flex flex-col gap-3 rounded-md p-3'>
-                                  <div className='flex flex-col gap-2 lg:flex-row lg:items-end'>
-                                    <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
-                                      <FormLabel
-                                        htmlFor='channel-model-library-search'
-                                        className='text-xs font-medium'
-                                      >
-                                        {t('Search model library')}
-                                      </FormLabel>
-                                      <Input
-                                        id='channel-model-library-search'
-                                        type='search'
-                                        value={modelSearchKeyword}
-                                        onChange={(event) =>
-                                          setModelSearchKeyword(
-                                            event.target.value
-                                          )
-                                        }
-                                        onKeyDown={(event) => {
-                                          if (event.key !== 'Enter') return
-
-                                          event.preventDefault()
-                                          if (
-                                            canEditBasicFields &&
-                                            !isAddingModelSearchMatches &&
-                                            !isSearchingModelMeta &&
-                                            !isModelSearchDebouncing &&
-                                            canRunModelSearchAppend
-                                          ) {
-                                            void handleAddModelSearchMatches()
-                                          }
-                                        }}
-                                        disabled={!canEditBasicFields}
-                                        placeholder={t('Search model library')}
-                                        aria-describedby='channel-model-library-search-status'
-                                      />
-                                    </div>
-                                    <Button
-                                      type='button'
-                                      variant='outline'
-                                      className='shrink-0'
-                                      onClick={handleAddModelSearchMatches}
-                                      disabled={
-                                        !canEditBasicFields ||
-                                        isAddingModelSearchMatches ||
-                                        isSearchingModelMeta ||
-                                        isModelSearchDebouncing ||
-                                        !canRunModelSearchAppend
-                                      }
-                                      title={
-                                        canEditBasicFields
-                                          ? undefined
-                                          : noPermissionMessage
-                                      }
-                                    >
-                                      {isAddingModelSearchMatches ? (
-                                        <Loader2
-                                          data-icon='inline-start'
-                                          className='animate-spin'
-                                        />
-                                      ) : (
-                                        <Plus data-icon='inline-start' />
-                                      )}
-                                      {modelSearchAddButtonLabel}
-                                    </Button>
-                                  </div>
-                                  <div
-                                    id='channel-model-library-search-status'
-                                    className='flex min-h-5 flex-col gap-2'
-                                  >
-                                    {trimmedModelSearchKeyword.length > 0 &&
-                                      (isSearchingModelMeta ||
-                                      isModelSearchDebouncing ? (
-                                        <span className='text-muted-foreground text-xs'>
-                                          {t('Searching model metadata...')}
-                                        </span>
-                                      ) : shouldShowModelSearchAppend ? (
-                                        <>
-                                          <div className='flex flex-wrap items-center gap-2'>
-                                            <Badge
-                                              variant='secondary'
-                                              className='w-fit'
-                                            >
-                                              {t('Search results')}
-                                            </Badge>
-                                            <span className='text-muted-foreground text-xs'>
-                                              {t(
-                                                '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                {
-                                                  matched:
-                                                    modelSearchAppendSummary.matchedCount,
-                                                  addable:
-                                                    modelSearchAppendSummary.addableCount,
-                                                  existing:
-                                                    modelSearchAppendSummary.existingCount,
-                                                }
-                                              )}
-                                            </span>
-                                          </div>
-                                          {unscannedModelSearchResultCount >
-                                            0 && (
-                                            <span className='text-muted-foreground text-xs'>
-                                              {t(
-                                                '{{count}} more result(s) will be checked before adding all matches',
-                                                {
-                                                  count:
-                                                    unscannedModelSearchResultCount,
-                                                }
-                                              )}
-                                            </span>
-                                          )}
-                                          {modelSearchAppendPlan.totalCount >
-                                          0 ? (
-                                            <span className='text-xs'>
-                                              <span className='text-muted-foreground mr-1'>
-                                                {t('Will add')}:
-                                              </span>
-                                              <span className='break-all'>
-                                                {modelSearchMissingPreview.join(
-                                                  ', '
-                                                )}
-                                              </span>
-                                              {modelSearchMissingOmittedCount >
-                                                0 && (
-                                                <span className='ml-1'>
-                                                  {t(
-                                                    '({{total}} total, {{omit}} omitted)',
-                                                    {
-                                                      total:
-                                                        modelSearchAppendPlan.totalCount,
-                                                      omit: modelSearchMissingOmittedCount,
-                                                    }
-                                                  )}
-                                                </span>
-                                              )}
-                                            </span>
-                                          ) : unscannedModelSearchResultCount ===
-                                            0 ? (
-                                            <span className='text-muted-foreground text-xs'>
-                                              {t(
-                                                'No new search results to add'
-                                              )}
-                                            </span>
-                                          ) : null}
-                                        </>
-                                      ) : (
-                                        <span className='text-muted-foreground text-xs'>
-                                          {t('No matching models')}
-                                        </span>
-                                      ))}
-                                  </div>
-                                </div>
                                 <FormControl>
                                   <MultiSelect
+                                    id='channel-models'
                                     options={modelOptions}
                                     selected={currentModelsArray}
                                     onChange={handleModelsChange}
@@ -4108,9 +3957,156 @@ export function ChannelMutateDrawer({
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
+                                    searchValue={modelSearchKeyword}
+                                    onSearchChange={setModelSearchKeyword}
+                                    isLoading={
+                                      isSearchingModelMeta ||
+                                      isModelSearchDebouncing
+                                    }
+                                    loadingText={t(
+                                      'Searching model metadata...'
+                                    )}
+                                    onSearchSubmit={() => {
+                                      if (
+                                        !canEditBasicFields ||
+                                        isAddingModelSearchMatches ||
+                                        isSearchingModelMeta ||
+                                        isModelSearchDebouncing ||
+                                        !canRunModelSearchAppend
+                                      ) {
+                                        return
+                                      }
+                                      void handleAddModelSearchMatches()
+                                    }}
+                                    submitSearchOnEnterWithMatches
                                     emptyText={t('No matching models')}
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
+                                    contentFooter={
+                                      trimmedModelSearchKeyword.length > 0 ? (
+                                        <div
+                                          id='channel-model-library-search-status'
+                                          className='flex flex-col gap-2'
+                                        >
+                                          <div className='flex flex-wrap items-center gap-2'>
+                                            <Badge
+                                              variant='secondary'
+                                              className='w-fit'
+                                            >
+                                              {t('Search results')}
+                                            </Badge>
+                                            {isSearchingModelMeta ||
+                                            isModelSearchDebouncing ? (
+                                              <span className='text-muted-foreground text-xs'>
+                                                {t(
+                                                  'Searching model metadata...'
+                                                )}
+                                              </span>
+                                            ) : shouldShowModelSearchAppend ? (
+                                              <span className='text-muted-foreground text-xs'>
+                                                {t(
+                                                  '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                  {
+                                                    matched:
+                                                      modelSearchAppendSummary.matchedCount,
+                                                    addable:
+                                                      modelSearchAppendSummary.addableCount,
+                                                    existing:
+                                                      modelSearchAppendSummary.existingCount,
+                                                  }
+                                                )}
+                                              </span>
+                                            ) : (
+                                              <span className='text-muted-foreground text-xs'>
+                                                {t('No matching models')}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {!isSearchingModelMeta &&
+                                            !isModelSearchDebouncing &&
+                                            shouldShowModelSearchAppend && (
+                                              <>
+                                                {unscannedModelSearchResultCount >
+                                                  0 && (
+                                                  <span className='text-muted-foreground text-xs'>
+                                                    {t(
+                                                      '{{count}} more result(s) will be checked before adding all matches',
+                                                      {
+                                                        count:
+                                                          unscannedModelSearchResultCount,
+                                                      }
+                                                    )}
+                                                  </span>
+                                                )}
+                                                {modelSearchAppendPlan.totalCount >
+                                                0 ? (
+                                                  <span className='text-xs'>
+                                                    <span className='text-muted-foreground mr-1'>
+                                                      {t('Will add')}:
+                                                    </span>
+                                                    <span className='break-all'>
+                                                      {modelSearchMissingPreview.join(
+                                                        ', '
+                                                      )}
+                                                    </span>
+                                                    {modelSearchMissingOmittedCount >
+                                                      0 && (
+                                                      <span className='ml-1'>
+                                                        {t(
+                                                          '({{total}} total, {{omit}} omitted)',
+                                                          {
+                                                            total:
+                                                              modelSearchAppendPlan.totalCount,
+                                                            omit: modelSearchMissingOmittedCount,
+                                                          }
+                                                        )}
+                                                      </span>
+                                                    )}
+                                                  </span>
+                                                ) : unscannedModelSearchResultCount ===
+                                                  0 ? (
+                                                  <span className='text-muted-foreground text-xs'>
+                                                    {t(
+                                                      'No new search results to add'
+                                                    )}
+                                                  </span>
+                                                ) : null}
+                                              </>
+                                            )}
+                                          <Button
+                                            type='button'
+                                            variant='outline'
+                                            size='sm'
+                                            className='w-full sm:w-fit'
+                                            onClick={() => {
+                                              void handleAddModelSearchMatches()
+                                            }}
+                                            disabled={
+                                              !canEditBasicFields ||
+                                              isAddingModelSearchMatches ||
+                                              isSearchingModelMeta ||
+                                              isModelSearchDebouncing ||
+                                              !canRunModelSearchAppend
+                                            }
+                                            title={
+                                              canEditBasicFields
+                                                ? undefined
+                                                : noPermissionMessage
+                                            }
+                                          >
+                                            {isAddingModelSearchMatches ? (
+                                              <Loader2
+                                                data-icon='inline-start'
+                                                className='animate-spin'
+                                              />
+                                            ) : (
+                                              <Plus data-icon='inline-start' />
+                                            )}
+                                            {modelSearchAddButtonLabel}
+                                          </Button>
+                                        </div>
+                                      ) : undefined
+                                    }
                                   />
                                 </FormControl>
                                 {modelMappingGuardrail.exposedTargetModels
