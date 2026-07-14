@@ -7330,6 +7330,67 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 5. `git diff --check` 通过。
 6. MCP 访问 `http://192.168.0.202:3003/models/metadata`，模型元数据表格加载成功，Tags/Endpoints/Enable Groups 等列仍显示前两个 badge 与 `+N` 折叠数量；控制台无 `error`、`warn`、`issue`。
 7. MCP 访问 `http://192.168.0.202:3003/channels`，渠道表格加载成功，当前运行态仅返回一个 Codex 渠道；页面无 JavaScript 控制台错误，网络请求均为 GET，未触发渠道写入接口。
+
+## 本轮实施评审：渠道编辑页搜索追加收口与 new-api 细节对齐
+
+### 差异来源
+
+对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 与当前 NexusTok 后确认，new-api 的编辑渠道页已经形成“左侧分区导航 + 右侧表单分组 + 模型与分组独立卡片 + 模型映射护栏”的结构。当前 NexusTok 已吸收该主结构，并在此基础上增加了项目原生能力：权限分层、账号池凭证模式、Codex OAuth、Advanced Custom、模型元信息搜索补齐、搜索结果批量追加、敏感字段只读提示和更严格的模型去重。
+
+本轮在 3003 真实页面复现用户反馈的“搜索添加不正确”后发现：搜索 `gpt-5.6` 时系统能正确识别 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个命中，其中 `gpt-5.6-sol` 已在当前渠道模型列表内，因此“添加 2 个新模型”的数量计算是正确的；点击后草稿会追加 `gpt-5.6-terra` 与 `gpt-5.6-luna`。真正不正确的是追加成功后 MultiSelect 下拉层仍保持打开，但搜索词已清空，页面残留一个空白 listbox/dismiss 层，容易让用户误以为追加未完成或搜索状态异常。
+
+### 需求分析
+
+1. 保留当前搜索追加的正确业务语义：搜索命中按模型元信息展开，已存在模型不重复添加，新增模型按大小写不敏感去重。
+2. 修复搜索追加后的交互收口：点击“添加新模型”或通过 Enter 提交搜索追加成功后，应清空搜索词并关闭模型选择下拉层，不保留空白弹层。
+3. 对齐 new-api 编辑页的导航细节：高级设置子项“已配置”状态使用成功色语义，而不是主色，避免与当前选中态混淆。
+4. 不覆盖 NexusTok 已有原生能力：权限控制、账号池、Codex、Advanced Custom、模型搜索补齐和敏感字段只读逻辑必须保留。
+5. 不修改后端接口、数据库、渠道保存 payload、模型搜索 API、计费、relay 或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 为模型 MultiSelect 增加受控 open 状态；搜索追加成功、抽屉关闭、渠道切换时关闭下拉层；左侧高级子导航配置标记改为成功色。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、复现结论和验证结果。 |
+
+### 风险评估
+
+1. 模型字段风险：`models` 是渠道保存核心字段，改动不能改变 `updateModels()`、`getMissingModelSearchMatches()`、`mergeModelNames()` 和最终逗号分隔格式。
+2. 搜索弹层风险：MultiSelect 是通用组件；本轮不改公共组件默认行为，只在渠道模型字段处使用已有 `open/onOpenChange` 受控能力，避免影响其它多选字段。
+3. 权限风险：无写权限用户仍不能通过搜索追加修改草稿；现有 `canEditBasicFields` 和 `noPermissionMessage` 判断保持不变。
+4. 运行态污染风险：MCP 验证只操作前端草稿，不点击“更新渠道”，并在验证后读取渠道列表接口确认后端 models 未被改写。
+5. i18n 风险：本轮不新增自然语言文案，只调整状态控制和语义色，无需新增 locale key。
+
+### 方案评审
+
+采用“受控弹层 + 成功色细节对齐”的低风险方案：
+
+1. 在 `ChannelMutateDrawer` 内新增 `modelSelectOpen` 状态，并把它传给模型 MultiSelect 的 `open` / `onOpenChange`。
+2. 搜索追加成功后继续调用 `updateModels(modelsToAdd, true)` 和 `clearModelSearch()`，再关闭 `modelSelectOpen`，让 UI 状态与追加成功 toast 保持一致。
+3. 抽屉关闭、渠道切换或供应商切换时同步关闭 `modelSelectOpen`，避免旧渠道的搜索弹层跨上下文残留。
+4. 左侧高级子导航子项的配置圆点从 `bg-primary` 调整为 `bg-success`，对齐 new-api 的已配置语义，并与当前选中态区分。
+5. 验证顺序：渠道模型搜索单测、MultiSelect 单测、改动文件 ESLint、TypeScript、生产构建、`git diff --check`；最后使用 MCP 访问 `http://192.168.0.202:3003/channels`，在编辑渠道页复现 `gpt-5.6` 搜索追加，确认只追加两个缺失模型、弹层关闭、控制台无错误且未保存后端配置。
+
+### 实施结果
+
+1. `ChannelMutateDrawer` 新增 `modelSelectOpen`，模型 MultiSelect 改为受控打开状态，但只作用于渠道模型字段，不改变其它 MultiSelect 默认行为。
+2. 搜索追加成功后会清空搜索词并关闭模型选择下拉层；关闭抽屉、切换渠道或供应商时也会关闭该弹层，避免旧搜索上下文残留。
+3. 搜索追加仍走原有 `fetchAllModelSearchModelNames()`、`getMissingModelSearchMatches()` 和 `updateModels(modelsToAdd, true)`，不会重复加入已存在模型，也不会改变模型保存格式。
+4. 左侧编辑导航的高级子项“已配置”圆点改为 `bg-success`，对齐 new-api 的成功语义，避免与主导航选中态混用同一主色。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts` 通过，共 72 个用例。
+2. `cd web/default && bunx eslint src/features/channels/components/drawers/channel-mutate-drawer.tsx` 通过。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
+6. MCP 访问 `http://192.168.0.202:3003/channels?verify=...`，打开渠道 ID 1 的编辑抽屉；初始草稿模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，页面显示 `已选 3 个` 与 `供应商: OpenAI`。
+7. MCP 在模型选择框输入 `gpt-5.6`，搜索弹层显示 `gpt-5.6-terra`、`gpt-5.6-luna` 两个可见新增项，并显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，确认 `gpt-5.6-sol` 被识别为已存在模型。
+8. MCP 点击 `添加 2 个新模型` 后，抽屉草稿显示 `已选 5 个`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna` 两个 chip；模型选择下拉层关闭，不再残留空白 listbox/dismiss 层。
+9. MCP 点击 `取消` 关闭抽屉后重新导航到 `/channels?postcheck=...`，控制台无 `error`、`warn`、`issue`；网络请求均为 GET，没有渠道更新、创建、删除等写请求。
+10. MCP 读取列表接口 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20` 响应，渠道 ID 1 仍为 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证只修改前端草稿，未污染运行态渠道配置。
 6. MCP 打开 `http://192.168.0.202:3003/channels`，编辑渠道 `11111`，当前模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；在模型输入框输入 `gpt-5.6` 后，DOM 中真实下拉候选为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，搜索结果条显示 `3 synced model(s) matched "gpt-5.6"` 和 `Add 2 search result(s)`。
 7. MCP 点击批量追加后，表单内模型数从 `Selected 3` 变为 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，搜索输入和结果条被清空；验证期间未点击 `Update Channel`。
 8. MCP 在浏览器上下文携带 `NexusTok-User: 1` 调用 `GET /api/channel?p=1&page_size=10&tag_mode=false&id_sort=false` 返回 HTTP 200、`success=true`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认搜索追加验证没有写入运行态数据。

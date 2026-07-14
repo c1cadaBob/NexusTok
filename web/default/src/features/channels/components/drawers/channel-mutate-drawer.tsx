@@ -653,7 +653,7 @@ function ChannelEditorNav(props: {
                     <span className='truncate'>{child.title}</span>
                     {child.configured && (
                       <span
-                        className='bg-primary size-1.5 shrink-0 rounded-full'
+                        className='bg-success size-1.5 shrink-0 rounded-full'
                         aria-hidden='true'
                       />
                     )}
@@ -709,7 +709,7 @@ function ChannelEditorNav(props: {
                           </span>
                           {child.configured && (
                             <span
-                              className='bg-primary size-1.5 shrink-0 rounded-full'
+                              className='bg-success size-1.5 shrink-0 rounded-full'
                               aria-hidden='true'
                             />
                           )}
@@ -778,6 +778,7 @@ export function ChannelMutateDrawer({
   const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
     string | undefined
   >()
+  const [modelSelectOpen, setModelSelectOpen] = useState(false)
   const [modelSearchKeyword, setModelSearchKeyword] = useState('')
   const [isAddingModelSearchMatches, setIsAddingModelSearchMatches] =
     useState(false)
@@ -889,6 +890,7 @@ export function ChannelMutateDrawer({
     modelSearchAppendRequestSeqRef.current += 1
     isAddingModelSearchMatchesRef.current = false
     setIsAddingModelSearchMatches(false)
+    setModelSelectOpen(false)
   }, [channelId, modelSearchVendor, open])
 
   const {
@@ -906,6 +908,7 @@ export function ChannelMutateDrawer({
     if (!open) {
       setChannelKey(null)
       setIsChannelKeyLoading(false)
+      setModelSelectOpen(false)
       clearModelSearch()
     } else if (channelId) {
       setChannelKey(null)
@@ -1843,6 +1846,7 @@ export function ChannelMutateDrawer({
       // 这样可以避免旧闭包把刚追加的模型覆盖回去，也能兼容管理员先手动改模型再批量补齐的场景。
       const count = updateModels(modelsToAdd, true)
       clearModelSearch()
+      setModelSelectOpen(false)
       window.setTimeout(() => {
         toast.success(t('Added {{count}} model(s) from search', { count }))
       }, 0)
@@ -2128,6 +2132,7 @@ export function ChannelMutateDrawer({
         modelSearchAppendRequestSeqRef.current += 1
         isAddingModelSearchMatchesRef.current = false
         setIsAddingModelSearchMatches(false)
+        setModelSelectOpen(false)
         clearModelSearch()
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
         advancedNavScrollPendingRef.current = false
@@ -3957,6 +3962,8 @@ export function ChannelMutateDrawer({
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
+                                    open={modelSelectOpen}
+                                    onOpenChange={setModelSelectOpen}
                                     searchValue={modelSearchKeyword}
                                     onSearchChange={setModelSearchKeyword}
                                     isLoading={
