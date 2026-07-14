@@ -13716,3 +13716,68 @@ NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽
 3. `cd web/default && bun run typecheck` 通过。
 4. `cd web/default && bun run build` 通过。
 5. `git diff --check` 通过。
+
+## 本轮实施评审：编辑渠道页模型搜索追加弹层收口
+
+### 差异来源
+
+用户继续反馈编辑渠道页“搜索添加时不正确”，并要求对齐 `/opt/project/new-api-main` 最新编辑渠道页面。复核 new-api 源码与当前 NexusTok 页面后确认：当前 NexusTok 已经保留 new-api 的抽屉式分区、左侧导航、模型区紧凑主流程，并额外原生化了模型元信息搜索、OpenAI/Codex 供应商收窄、全量分页扫描和账号池凭证模式。
+
+本轮在 3003 页面实测渠道 `11111`：模型选择器搜索 `gpt-5.6` 时，接口与页面都能正确识别 3 个 OpenAI 模型，其中当前渠道已有 `gpt-5.6-sol`，可新增 `gpt-5.6-terra`、`gpt-5.6-luna` 两个；点击批量追加后前端草稿正确变为 5 个模型，且没有保存到后端。剩余可优化点是：批量按钮位于 `MultiSelect` 的弹层 footer 中，当前实现等全量分页扫描、表单草稿更新和搜索词清理完成后才关闭弹层；在网络或渲染较慢时，用户会短暂看到空 listbox / dismiss 层，容易误判为“搜索添加状态不正确”。
+
+### 需求分析
+
+1. 搜索 `gpt-5.6` 必须继续显示 `3 matched / 2 new / 1 already selected` 的语义，并只追加当前渠道缺失的两个模型。
+2. 批量追加开始后应立即关闭模型选择器弹层，避免添加完成后残留空 listbox 或焦点停留在弹层内。
+3. 成功追加后仍清空搜索词，保持模型区回到 new-api 最新页面的紧凑主流程：模型选择器、快捷操作、模型映射、分组。
+4. 失败或没有新增结果时继续用 toast 给出原因，不自动提交渠道表单，不污染运行态渠道配置。
+5. 本轮不修改公共 `MultiSelect` API、不改后端模型搜索接口、不改渠道保存接口、不改数据库、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 在批量追加动作开始时立即关闭模型选择器弹层，并修正已过时的代码注释。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和后续验证结果。 |
+
+### 风险评估
+
+1. 添加数量风险：关闭弹层不能改变 `fetchAllModelSearchModelNames()`、`getMissingModelSearchMatches()` 和 `updateModels(..., true)` 的追加规则。
+2. 失败重试风险：如果搜索接口失败，弹层关闭但搜索词仍保留，管理员重新打开模型选择器应能看到同一搜索上下文并重试。
+3. 表单污染风险：本轮只改前端草稿交互，不点击 `Update Channel`，验证时必须确认后端 `models` 仍是原值。
+4. 组件复用风险：不修改公共 `MultiSelect`，避免影响 API Key、模型部署、Dashboard Flow 等其它多选消费方。
+5. 页面一致性风险：不能重新引入独立 `Search model library` 输入框；模型选择器仍是唯一搜索入口，以保持 new-api 最新页面的紧凑结构。
+
+### 方案评审
+
+采用“动作开始即关闭弹层”的最小方案：
+
+1. 在 `handleAddModelSearchMatches()` 校验权限、关键词和并发状态后，设置追加请求序号与 loading 状态。
+2. 立即执行 `setModelSelectOpen(false)`，让 Base UI Combobox 在网络请求发出前开始关闭弹层。
+3. 搜索成功后继续执行现有 `updateModels(modelsToAdd, true)`、`clearModelSearch()` 和成功 toast。
+4. 保留 finally 中的 loading 状态复位和请求序号校验，避免过期请求污染当前抽屉。
+5. 同步把注释从“搜索追加入口独立于模型 MultiSelect”改为“搜索追加入口位于模型 MultiSelect footer”，使维护者不会误判当前页面结构。
+
+### 实施结果
+
+1. `handleAddModelSearchMatches()` 在进入异步分页扫描前立即执行 `setModelSelectOpen(false)`，模型搜索批量追加开始后弹层会先关闭，再等待接口返回和草稿更新。
+2. 成功追加后仍保留原有 `clearModelSearch()` 和第二次 `setModelSelectOpen(false)` 收口，确保搜索词、footer 和弹层状态都被清理。
+3. 追加算法、供应商收窄、分页扫描、大小写不敏感去重、表单草稿合并和权限校验均保持不变。
+4. 已修正同一逻辑块内过时中文注释，明确当前搜索追加入口位于 `MultiSelect` footer，而不是独立搜索框。
+5. 本轮没有修改公共 `MultiSelect` 组件、后端接口、数据库结构、渠道保存逻辑、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts`，72 个用例全部通过。
+2. 已运行 `cd web/default && bunx eslint src/features/channels/components/drawers/channel-mutate-drawer.tsx`，ESLint 通过。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. `bun run build` 后首次访问 `http://192.168.0.202:3003/channels?postcheck=...` 发现页面尝试加载 hash 后的生产资源并返回 404，导致空白根节点。已按要求重启 `nexustok-frontend-watch` 与 `nexustok-api-hot` 容器，再重新访问 3003 完成验证。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postcheck=1784025163969`，确认渠道列表和渠道 `11111` 正常显示，页面热更新/容器重启后的代码已生效。
+8. MCP 打开渠道 `11111` 的编辑抽屉，初始模型仍为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，模型区保持 new-api 最新页面的紧凑主流程，没有外层独立 `搜索模型库` 输入。
+9. MCP 在模型选择器内输入 `gpt-5.6`，下拉底部显示 `搜索结果`、`命中 3 个 · 可新增 2 个 · 已存在 1 个`，并预览 `gpt-5.6-terra, gpt-5.6-luna`。
+10. MCP 点击 `添加 2 个新模型` 后，弹层立即关闭，toast 显示 `已从搜索结果添加 2 个模型`，表单草稿显示 `已选 5 个`，新增模型为 `gpt-5.6-terra` 与 `gpt-5.6-luna`。
+11. MCP 网络请求确认只有读取请求：`GET /api/channel/1`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 等，没有渠道保存类 `PUT/POST /api/channel` 写请求。
+12. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态渠道配置。
+13. MCP 控制台没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。

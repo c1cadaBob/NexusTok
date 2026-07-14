@@ -1813,6 +1813,7 @@ export function ChannelMutateDrawer({
     modelSearchAppendRequestSeqRef.current = requestSeq
     isAddingModelSearchMatchesRef.current = true
     setIsAddingModelSearchMatches(true)
+    setModelSelectOpen(false)
     const requestChannelId = channelId
     try {
       const allSearchModelNames = await fetchAllModelSearchModelNames(
@@ -1842,7 +1843,7 @@ export function ChannelMutateDrawer({
         return
       }
 
-      // 搜索追加入口独立于模型 MultiSelect，但仍必须读取 form 里的最新草稿。
+      // 搜索追加入口位于模型 MultiSelect footer，但仍必须读取 form 里的最新草稿。
       // 这样可以避免旧闭包把刚追加的模型覆盖回去，也能兼容管理员先手动改模型再批量补齐的场景。
       const count = updateModels(modelsToAdd, true)
       clearModelSearch()
