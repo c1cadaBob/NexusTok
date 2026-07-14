@@ -118,6 +118,16 @@ export type AdvancedCustomTemplateOption = {
   config: AdvancedCustomConfig
 }
 
+export type AdvancedCustomConfigSummary = {
+  routeCount: number
+  valid: boolean
+  incomingPaths: string[]
+  converterLabels: string[]
+  authModeLabels: string[]
+  relativeUpstreamPathCount: number
+  fullUrlUpstreamPathCount: number
+}
+
 const bearerHeaderAuth = (): AdvancedCustomRouteAuth => ({
   type: 'header',
   name: 'Authorization',
@@ -454,6 +464,86 @@ export function advancedCustomConfigUsesRelativeUpstreamPath(
   )
 }
 
+export function buildAdvancedCustomConfigSummary(
+  config: AdvancedCustomConfig | null
+): AdvancedCustomConfigSummary {
+  if (!config) {
+    return {
+      routeCount: 0,
+      valid: false,
+      incomingPaths: [],
+      converterLabels: [],
+      authModeLabels: [],
+      relativeUpstreamPathCount: 0,
+      fullUrlUpstreamPathCount: 0,
+    }
+  }
+
+  const normalized = normalizeAdvancedCustomConfig(config)
+  const routes = normalized.advanced_routes || []
+  const incomingPaths: string[] = []
+  const converterLabels: string[] = []
+  const authModeLabels: string[] = []
+  const seenIncomingPaths = new Set<string>()
+  const seenConverterLabels = new Set<string>()
+  const seenAuthModeLabels = new Set<string>()
+  let relativeUpstreamPathCount = 0
+  let fullUrlUpstreamPathCount = 0
+
+  for (const route of routes) {
+    const incomingPath = route.incoming_path?.trim() || ''
+    const upstreamPath = getAdvancedCustomRouteUpstreamPath(route)
+    const converter = route.converter || 'none'
+    const converterLabel = getAdvancedCustomConverterLabel(converter)
+    const authModeLabel = getAdvancedCustomAuthModeLabel(
+      getAdvancedCustomAuthMode(route)
+    )
+
+    if (incomingPath && !seenIncomingPaths.has(incomingPath)) {
+      incomingPaths.push(incomingPath)
+      seenIncomingPaths.add(incomingPath)
+    }
+    if (!seenConverterLabels.has(converterLabel)) {
+      converterLabels.push(converterLabel)
+      seenConverterLabels.add(converterLabel)
+    }
+    if (!seenAuthModeLabels.has(authModeLabel)) {
+      authModeLabels.push(authModeLabel)
+      seenAuthModeLabels.add(authModeLabel)
+    }
+    if (upstreamPath.startsWith('/')) {
+      relativeUpstreamPathCount += 1
+    } else if (isFullHttpURLOrAbsolutePath(upstreamPath)) {
+      fullUrlUpstreamPathCount += 1
+    }
+  }
+
+  return {
+    routeCount: routes.length,
+    valid: validateAdvancedCustomConfig(normalized) === null,
+    incomingPaths,
+    converterLabels,
+    authModeLabels,
+    relativeUpstreamPathCount,
+    fullUrlUpstreamPathCount,
+  }
+}
+
+export function getAdvancedCustomExportFilename(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const timestamp = [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('')
+
+  return `advanced-custom-routes-${timestamp}.json`
+}
+
 export function getAdvancedCustomStats(value: string | undefined): {
   routeCount: number
   valid: boolean
@@ -540,6 +630,23 @@ function getAdvancedCustomRouteSummaryLabel(
   return (
     ADVANCED_CUSTOM_ROUTE_SUMMARY_LABELS[incomingPath] ||
     getAdvancedCustomIncomingPathLabel(incomingPath)
+  )
+}
+
+function getAdvancedCustomConverterLabel(
+  converter: AdvancedCustomConverter
+): string {
+  return (
+    ADVANCED_CUSTOM_CONVERTER_OPTIONS.find(
+      (option) => option.value === converter
+    )?.label || converter
+  )
+}
+
+function getAdvancedCustomAuthModeLabel(authMode: AdvancedCustomAuthMode): string {
+  return (
+    ADVANCED_CUSTOM_AUTH_MODE_OPTIONS.find((option) => option.value === authMode)
+      ?.label || authMode
   )
 }
 

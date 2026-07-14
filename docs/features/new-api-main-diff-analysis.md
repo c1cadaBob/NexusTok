@@ -13558,3 +13558,36 @@ NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽
 5. `Import JSON` 打开二级 Dialog，管理员粘贴 JSON 后实时生成预览摘要；确认导入时只调用 `applyImportedConfig()` 更新 `config`、`jsonText`、`routeKeys` 和 `jsonError`，不触发 `onSave()`。
 6. 配置摘要只展示 path、converter/auth 数量和 upstream path 类型数量，不展示 auth value，降低导出/导入预览泄露真实凭证的概率。
 7. 验证顺序：`bun run i18n:sync`、`bun run typecheck`、Advanced Custom 单测、渠道相关单测、系统设置回归单测、改动文件 ESLint、`bun run build`、`git diff --check`；最后使用 MCP 登录 `http://192.168.0.202:3003/` 打开 `/channels`，验证 Advanced Custom 编辑弹窗、导入预览、复制/下载、草稿不自动保存、控制台和网络请求。
+
+### 实施结果
+
+1. `advanced-custom.ts` 新增 `buildAdvancedCustomConfigSummary()`，统一统计路由数、有效性、入口路径、converter 类型数、认证模式数、相对 upstream path 数和完整 URL upstream path 数；摘要逻辑复用现有 normalize/validate/auth/converter/path 判断，不暴露 auth value。
+2. `advanced-custom.ts` 新增 `getAdvancedCustomExportFilename()`，导出文件名固定为 `advanced-custom-routes-YYYYMMDD-HHMMSS.json`，不包含渠道名称、渠道 ID 或其它敏感字段。
+3. `advanced-custom.test.ts` 新增摘要与导出文件名测试，覆盖 route/converter/auth/relative/full URL 统计，以及 auth value 不进入摘要的迁移预览约束。
+4. `AdvancedCustomEditorDialog` 顶部工具栏新增 `复制 JSON`、`下载 JSON`、`导入 JSON`，并在工具栏下方展示“当前草稿”摘要；Visual 和 JSON Text 两种模式都会导出当前有效配置。
+5. `导入 JSON` 二级弹窗支持粘贴 JSON、实时校验、非法配置错误提示、合法配置摘要预览和确认导入；确认导入只更新当前编辑器草稿，不调用 `onSave()`，也不触发外层渠道保存。
+6. `下载 JSON` 在安全浏览器上下文中执行真实下载；MCP 在 `http://192.168.0.202:3003/` 验证时发现 Chrome 会把 HTTP 页面上的 `blob:` / `data:` 下载记为 console error，因此已补充 HTTP fallback：非安全上下文改为复制 JSON 到剪贴板并提示，不产生浏览器安全错误。
+7. 六个前端 locale 已新增导入/导出/摘要相关文案：en、zh、fr、ja、ru、vi 均通过 `bun run i18n:sync` 同步；本轮没有新增缺失 key。
+8. 本轮没有修改 `/opt/project/new-api-main` 源码、后端接口、数据库结构、渠道保存接口、relay、计费、权限模型或公共 Dialog 组件。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前前端仍为 Manual + Tailwind v4 + Base UI + hugeicons，且本轮复用的 `button`、`dialog`、`textarea`、`select`、`separator`、`badge` 等组件均已存在。
+2. 已运行 `cd web/default && bun run i18n:sync`，同步通过；`_sync-report.json` 中 en/zh missing 均为 0，本轮新增 key 已写入 en、zh、fr、ja、ru、vi。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过；在修复 HTTP 下载 fallback 后又重新运行一次，仍通过。
+4. 已运行 `cd web/default && bun test src/features/channels/lib/advanced-custom.test.ts`，6 个 Advanced Custom 工具测试通过。
+5. 已运行 `cd web/default && bun test src/features/channels`，58 个渠道相关测试全部通过；在修复 HTTP 下载 fallback 和补充 i18n 后又重新运行一次，仍为 58 pass。
+6. 已运行 `cd web/default && bun test src/features/system-settings`，27 个系统设置相关测试全部通过；在修复 HTTP 下载 fallback 和补充 i18n 后又重新运行一次，仍为 27 pass。
+7. 已运行 `cd web/default && bunx eslint src/features/channels/components/dialogs/advanced-custom-editor-dialog.tsx src/features/channels/lib/advanced-custom.ts src/features/channels/lib/advanced-custom.test.ts`，ESLint 通过；在修复 HTTP 下载 fallback 后又重新运行一次，仍通过。
+8. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过；在修复 HTTP 下载 fallback 和补充 i18n 后又重新运行一次，仍通过。
+9. 已运行 `git diff --check`，未发现空白错误；在修复 HTTP 下载 fallback 后又重新运行一次，仍通过。
+10. MCP 使用账号 `c1cada` 登录 `http://192.168.0.202:3003/`，进入 `/channels`，并使用忽略缓存刷新确认页面以最新代码运行。
+11. MCP 点击 `创建渠道`，在类型组合框中选择 `高级自定义`，确认表单出现 Advanced Custom 安全提示、`配置路由` 入口、模型搜索供应商切换为“所有供应商”。
+12. MCP 打开 `高级自定义路由` 弹窗，确认顶部出现 `复制 JSON`、`下载 JSON`、`导入 JSON` 三个按钮，当前草稿摘要显示 `配置有效`、`1 条路由`、`1 种转换器`、`1 个认证模式`、`1 个相对 upstream path` 和入口路径 `/v1/chat/completions`。
+13. MCP 打开 `导入 JSON`，空状态显示“粘贴 JSON 后可在导入前预览路由”，导入按钮禁用；输入 `{"advanced_routes":[]}` 后显示“高级自定义配置至少需要一条路由”，导入按钮仍禁用。
+14. MCP 输入两条合法路由配置后，导入预览显示 `2 条路由`、`2 种转换器`、`2 个认证模式`、`1 个相对 upstream path`、`1 个完整 URL upstream path`，入口路径为 `/v1/chat/completions, /v1/responses`；点击 `导入配置` 后主编辑器草稿同步显示两条路由。
+15. MCP 点击 `下载 JSON` 后最初发现 Chrome 在 HTTP 页面下会对 `blob:`/`data:` 下载记 console error；代码修复为非安全上下文复制 fallback 后，忽略缓存刷新并再次验证，控制台不再出现下载相关 error/warn。
+16. MCP 网络请求列表仅包含 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/group/`、`GET /api/channel/?...`、`GET /api/channel/models`、`GET /api/account-pool/groups/options`、`GET /api/prefill_group/?type=model` 等读取请求，没有渠道创建、更新或删除写请求。
+17. MCP 控制台最终没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。
+18. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`type = 57`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态渠道配置。
+19. MCP 验证截图保存为 `/tmp/nexustok-advanced-custom-import-export-validation.png`。

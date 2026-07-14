@@ -20,6 +20,8 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   advancedCustomConfigUsesRelativeUpstreamPath,
+  buildAdvancedCustomConfigSummary,
+  getAdvancedCustomExportFilename,
   getAdvancedCustomStats,
   getAdvancedCustomTemplateConfig,
   normalizeAdvancedCustomConfig,
@@ -91,5 +93,45 @@ describe('Advanced Custom 前端配置工具', () => {
       valid: true,
       routeTypeLabels: ['OpenAI Chat'],
     })
+  })
+
+  test('配置摘要隐藏 auth value 并统计迁移预览所需信息', () => {
+    const config: AdvancedCustomConfig = {
+      advanced_routes: [
+        {
+          incoming_path: '/v1/chat/completions',
+          upstream_path: '/v1/chat/completions',
+          converter: 'none',
+          auth: {
+            type: 'header',
+            name: 'Authorization',
+            value: 'Bearer secret-value',
+          },
+        },
+        {
+          incoming_path: '/v1/responses',
+          upstream_path: 'https://api.example.com/v1/responses',
+          converter: 'openai_responses_to_openai_chat_completions',
+        },
+      ],
+    }
+
+    assert.deepEqual(buildAdvancedCustomConfigSummary(config), {
+      routeCount: 2,
+      valid: true,
+      incomingPaths: ['/v1/chat/completions', '/v1/responses'],
+      converterLabels: ['Native forwarding', 'OpenAI Responses to OpenAI Chat'],
+      authModeLabels: ['Header', 'Default Bearer'],
+      relativeUpstreamPathCount: 1,
+      fullUrlUpstreamPathCount: 1,
+    })
+  })
+
+  test('导出文件名使用固定前缀和时间戳且不包含渠道信息', () => {
+    const filename = getAdvancedCustomExportFilename(
+      new Date('2026-07-14T08:09:10')
+    )
+
+    assert.equal(filename, 'advanced-custom-routes-20260714-080910.json')
   })
 })

@@ -20,15 +20,20 @@ import { type ReactNode, useMemo, useRef, useState } from 'react'
 import {
   Add01Icon,
   ArrowRight01Icon,
+  Copy02Icon,
   Delete02Icon,
+  Download01Icon,
+  FileImportIcon,
   ShuffleIcon,
   Tick02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -62,8 +67,10 @@ import {
   ADVANCED_CUSTOM_TEMPLATE_OPTIONS,
   type AdvancedCustomAuthMode,
   buildAdvancedCustomAuth,
+  buildAdvancedCustomConfigSummary,
   createAdvancedCustomConfig,
   createAdvancedCustomRoute,
+  getAdvancedCustomExportFilename,
   getAdvancedCustomAuthMode,
   getAdvancedCustomConverterOptions,
   getAdvancedCustomIncomingPathLabel,
@@ -92,6 +99,12 @@ type AdvancedCustomEditorDialogProps = {
 
 type AdvancedCustomEditMode = 'visual' | 'json'
 
+type AdvancedCustomImportParseResult = {
+  config: AdvancedCustomConfig | null
+  errorMessage?: string
+  routeIndex?: number
+}
+
 const longSelectContentClass = 'w-[360px] max-w-[calc(100vw-2rem)]'
 const longSelectItemClass =
   'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
@@ -114,6 +127,10 @@ export function AdvancedCustomEditorDialog({
   onSave,
 }: AdvancedCustomEditorDialogProps) {
   const { t } = useTranslation()
+  const { copyToClipboard } = useCopyToClipboard()
+  const { copyToClipboard: copyToClipboardSilently } = useCopyToClipboard({
+    notify: false,
+  })
   const routeKeyCounterRef = useRef(0)
   const initialConfig =
     parseAdvancedCustomConfig(value) || createAdvancedCustomConfig()
@@ -128,6 +145,8 @@ export function AdvancedCustomEditorDialog({
     stringifyAdvancedCustomConfig(initialConfig)
   )
   const [jsonError, setJsonError] = useState('')
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importText, setImportText] = useState('')
   const [templateKey, setTemplateKey] = useState(
     ADVANCED_CUSTOM_TEMPLATE_OPTIONS[0]?.value || ''
   )
@@ -154,6 +173,35 @@ export function AdvancedCustomEditorDialog({
     () => validateAdvancedCustomConfig(normalizedConfig),
     [normalizedConfig]
   )
+  const activeSummary = useMemo(() => {
+    if (editMode === 'json') {
+      return buildAdvancedCustomConfigSummary(parseAdvancedCustomConfig(jsonText))
+    }
+    return buildAdvancedCustomConfigSummary(normalizedConfig)
+  }, [editMode, jsonText, normalizedConfig])
+  const importParseResult = useMemo<AdvancedCustomImportParseResult>(() => {
+    if (!importText.trim()) return { config: null }
+
+    const parsed = parseAdvancedCustomConfig(importText)
+    if (!parsed) {
+      return { config: null, errorMessage: 'Invalid JSON' }
+    }
+
+    const error = validateAdvancedCustomConfig(parsed)
+    if (error) {
+      return {
+        config: null,
+        errorMessage: error.message,
+        routeIndex: error.routeIndex,
+      }
+    }
+
+    return { config: normalizeAdvancedCustomConfig(parsed) }
+  }, [importText])
+  const importSummary = useMemo(
+    () => buildAdvancedCustomConfigSummary(importParseResult.config),
+    [importParseResult.config]
+  )
 
   const createRouteKey = () => {
     routeKeyCounterRef.current += 1
@@ -162,6 +210,14 @@ export function AdvancedCustomEditorDialog({
 
   const createRouteKeys = (count: number) =>
     Array.from({ length: count }, () => createRouteKey())
+
+  const applyConfigDraft = (nextConfig: AdvancedCustomConfig) => {
+    const normalized = normalizeAdvancedCustomConfig(nextConfig)
+    setConfig(normalized)
+    setRouteKeys(createRouteKeys(normalized.advanced_routes?.length || 0))
+    setJsonText(stringifyAdvancedCustomConfig(normalized))
+    setJsonError('')
+  }
 
   const updateRoute = (index: number, patch: Partial<AdvancedCustomRoute>) => {
     setConfig((current) => {
@@ -262,11 +318,75 @@ export function AdvancedCustomEditorDialog({
       }
     }
 
-    const normalized = normalizeAdvancedCustomConfig(nextConfig)
-    setConfig(normalized)
-    setRouteKeys(createRouteKeys(normalized.advanced_routes?.length || 0))
-    setJsonText(stringifyAdvancedCustomConfig(normalized))
-    setJsonError('')
+    applyConfigDraft(nextConfig)
+  }
+
+  const getCurrentExportConfig = (): AdvancedCustomConfig | null => {
+    if (editMode === 'json') {
+      const parsed = parseJsonEditorConfig()
+      if (!parsed) {
+        toast.error(t('Please fix JSON errors before exporting'))
+        return null
+      }
+      return normalizeAdvancedCustomConfig(parsed)
+    }
+
+    if (validationError) {
+      toast.error(t(validationError.message))
+      return null
+    }
+
+    return normalizedConfig
+  }
+
+  const copyCurrentJson = async () => {
+    const currentConfig = getCurrentExportConfig()
+    if (!currentConfig) return
+
+    await copyToClipboard(stringifyAdvancedCustomConfig(currentConfig))
+  }
+
+  const downloadCurrentJson = async () => {
+    const currentConfig = getCurrentExportConfig()
+    if (!currentConfig) return
+
+    const currentJson = stringifyAdvancedCustomConfig(currentConfig)
+    if (!window.isSecureContext) {
+      const copied = await copyToClipboardSilently(currentJson)
+      if (copied) {
+        toast.info(
+          t(
+            'Download requires a secure browser context. JSON was copied to clipboard instead.'
+          )
+        )
+      } else {
+        toast.error(t('Failed to copy to clipboard'))
+      }
+      return
+    }
+
+    const encodedConfig = encodeURIComponent(currentJson)
+    const link = document.createElement('a')
+    link.href = `data:application/json;charset=utf-8,${encodedConfig}`
+    link.download = getAdvancedCustomExportFilename()
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    toast.success(t('Downloaded Advanced Custom JSON'))
+  }
+
+  const openImportDialog = () => {
+    setImportText('')
+    setImportDialogOpen(true)
+  }
+
+  const importCurrentJson = () => {
+    if (!importParseResult.config) return
+
+    applyConfigDraft(importParseResult.config)
+    setImportDialogOpen(false)
+    setImportText('')
+    toast.success(t('Imported Advanced Custom configuration'))
   }
 
   const saveConfig = () => {
@@ -290,8 +410,9 @@ export function AdvancedCustomEditorDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-5xl'>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className='flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-5xl'>
         <DialogHeader className='border-b px-6 py-4'>
           <DialogTitle>{t('Advanced Custom Routes')}</DialogTitle>
           <DialogDescription>
@@ -323,7 +444,7 @@ export function AdvancedCustomEditorDialog({
               {t('JSON Text')}
             </Button>
 
-            <div className='bg-border mx-1 h-5 w-px' />
+            <Separator orientation='vertical' className='mx-1 h-5 self-center' />
 
             <span className='text-muted-foreground text-xs font-medium'>
               {t('Template')}
@@ -380,8 +501,55 @@ export function AdvancedCustomEditorDialog({
             >
               {t('Append Template')}
             </Button>
+
+            <Separator orientation='vertical' className='mx-1 h-5 self-center' />
+
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={copyCurrentJson}
+            >
+              <HugeiconsIcon
+                icon={Copy02Icon}
+                data-icon='inline-start'
+                strokeWidth={2}
+              />
+              {t('Copy JSON')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={downloadCurrentJson}
+            >
+              <HugeiconsIcon
+                icon={Download01Icon}
+                data-icon='inline-start'
+                strokeWidth={2}
+              />
+              {t('Download JSON')}
+            </Button>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={openImportDialog}
+            >
+              <HugeiconsIcon
+                icon={FileImportIcon}
+                data-icon='inline-start'
+                strokeWidth={2}
+              />
+              {t('Import JSON')}
+            </Button>
           </div>
         </div>
+
+        <AdvancedCustomSummaryBar
+          title={t('Current draft')}
+          summary={activeSummary}
+        />
 
         <div className='min-h-0 flex-1 overflow-y-auto'>
           {editMode === 'visual' ? (
@@ -495,8 +663,143 @@ export function AdvancedCustomEditorDialog({
             {t('Save changes')}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
+          <DialogHeader>
+            <DialogTitle>{t('Import Advanced Custom JSON')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Paste a trusted Advanced Custom JSON configuration. Import updates this editor draft only.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className='flex flex-col gap-3'>
+            <Textarea
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+              placeholder={stringifyAdvancedCustomConfig(
+                getAdvancedCustomTemplateConfig(templateKey)
+              )}
+              rows={12}
+              className='min-h-[260px] font-mono text-xs'
+            />
+
+            {importParseResult.errorMessage ? (
+              <Alert variant='destructive'>
+                <AlertDescription>
+                  {importParseResult.routeIndex !== undefined
+                    ? `${t('Route')} ${importParseResult.routeIndex + 1}: `
+                    : ''}
+                  {t(importParseResult.errorMessage)}
+                </AlertDescription>
+              </Alert>
+            ) : importParseResult.config ? (
+              <AdvancedCustomSummaryBar
+                title={t('Import preview')}
+                summary={importSummary}
+                compact
+              />
+            ) : (
+              <p className='text-muted-foreground text-xs'>
+                {t('Paste JSON to preview routes before importing.')}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => setImportDialogOpen(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='button'
+              onClick={importCurrentJson}
+              disabled={!importParseResult.config}
+            >
+              <HugeiconsIcon
+                icon={FileImportIcon}
+                data-icon='inline-start'
+                strokeWidth={2}
+              />
+              {t('Import configuration')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function AdvancedCustomSummaryBar({
+  title,
+  summary,
+  compact = false,
+}: {
+  title: string
+  summary: ReturnType<typeof buildAdvancedCustomConfigSummary>
+  compact?: boolean
+}) {
+  const { t } = useTranslation()
+  const visibleIncomingPaths = summary.incomingPaths.slice(0, 3)
+  const hiddenIncomingPathCount = Math.max(
+    summary.incomingPaths.length - visibleIncomingPaths.length,
+    0
+  )
+
+  return (
+    <div
+      className={cn(
+        'border-b px-4 py-3',
+        compact ? 'rounded-md border bg-muted/30' : 'bg-background'
+      )}
+    >
+      <div className='flex flex-wrap items-center gap-2 text-xs'>
+        <span className='text-muted-foreground font-medium'>{title}</span>
+        <Badge variant={summary.valid ? 'secondary' : 'destructive'}>
+          {summary.valid ? t('Valid configuration') : t('Invalid configuration')}
+        </Badge>
+        <Badge variant='outline'>
+          {t('{{count}} route(s)', { count: summary.routeCount })}
+        </Badge>
+        <Badge variant='outline'>
+          {t('{{count}} converter type(s)', {
+            count: summary.converterLabels.length,
+          })}
+        </Badge>
+        <Badge variant='outline'>
+          {t('{{count}} auth mode(s)', {
+            count: summary.authModeLabels.length,
+          })}
+        </Badge>
+        <Badge variant='outline'>
+          {t('{{count}} relative upstream path(s)', {
+            count: summary.relativeUpstreamPathCount,
+          })}
+        </Badge>
+        {summary.fullUrlUpstreamPathCount > 0 ? (
+          <Badge variant='outline'>
+            {t('{{count}} full URL upstream path(s)', {
+              count: summary.fullUrlUpstreamPathCount,
+            })}
+          </Badge>
+        ) : null}
+      </div>
+      {visibleIncomingPaths.length > 0 ? (
+        <p className='text-muted-foreground mt-2 text-xs leading-relaxed break-all'>
+          {t('Incoming paths')}: {visibleIncomingPaths.join(', ')}
+          {hiddenIncomingPathCount > 0
+            ? ` ${t('+{{count}} more', { count: hiddenIncomingPathCount })}`
+            : ''}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
