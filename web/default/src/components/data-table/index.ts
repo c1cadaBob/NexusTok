@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 export { DataTablePagination } from './pagination'
 export { DataTableColumnHeader } from './column-header'
+export { BadgeListCell } from './badge-list-cell'
 export { DataTableFacetedFilter } from './faceted-filter'
 export { DataTableViewOptions } from './view-options'
 export { DataTableToolbar } from './toolbar'

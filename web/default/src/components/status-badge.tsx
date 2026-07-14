@@ -158,6 +158,67 @@ export function StatusBadge({
   )
 }
 
+export interface StatusBadgeListProps<T> extends Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  'children'
+> {
+  empty?: React.ReactNode
+  getKey?: (item: T, index: number) => React.Key
+  items: T[]
+  max?: number
+  moreLabel?: (remaining: number) => string
+  renderItem: (item: T, index: number) => React.ReactNode
+}
+
+/**
+ * 统一渲染表格和卡片中的 badge 列表。
+ *
+ * 业务列只负责把数据转换为 badge 节点；这里负责前 N 个展示、空状态和
+ * `+N` 剩余数量，避免各页面重复实现并出现宽度/overflow 行为不一致。
+ */
+export function StatusBadgeList<T>({
+  className,
+  empty = <span className='text-muted-foreground text-xs'>-</span>,
+  getKey,
+  items,
+  max = 2,
+  moreLabel,
+  renderItem,
+  ...props
+}: StatusBadgeListProps<T>) {
+  if (items.length === 0) {
+    return empty
+  }
+
+  const displayed = items.slice(0, max)
+  const remaining = items.length - max
+
+  return (
+    <div
+      className={cn(
+        'flex max-w-full min-w-0 items-center gap-1 overflow-hidden',
+        className
+      )}
+      {...props}
+    >
+      {displayed.map((item, index) => (
+        <React.Fragment key={getKey?.(item, index) ?? index}>
+          {renderItem(item, index)}
+        </React.Fragment>
+      ))}
+      {remaining > 0 && (
+        <StatusBadge
+          label={moreLabel?.(remaining) ?? `+${remaining}`}
+          variant='neutral'
+          size='sm'
+          copyable={false}
+          className='shrink-0'
+        />
+      )}
+    </div>
+  )
+}
+
 export const statusPresets = {
   active: {
     variant: 'success' as const,

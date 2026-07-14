@@ -7328,6 +7328,8 @@ Relay 层新增 `relay/channel/advancedcustom` adaptor，并在统一 adaptor �
 3. `cd web/default && bun run typecheck` 通过。
 4. `cd web/default && bun run build` 通过。
 5. `git diff --check` 通过。
+6. MCP 访问 `http://192.168.0.202:3003/models/metadata`，模型元数据表格加载成功，Tags/Endpoints/Enable Groups 等列仍显示前两个 badge 与 `+N` 折叠数量；控制台无 `error`、`warn`、`issue`。
+7. MCP 访问 `http://192.168.0.202:3003/channels`，渠道表格加载成功，当前运行态仅返回一个 Codex 渠道；页面无 JavaScript 控制台错误，网络请求均为 GET，未触发渠道写入接口。
 6. MCP 打开 `http://192.168.0.202:3003/channels`，编辑渠道 `11111`，当前模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`；在模型输入框输入 `gpt-5.6` 后，DOM 中真实下拉候选为 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`，搜索结果条显示 `3 synced model(s) matched "gpt-5.6"` 和 `Add 2 search result(s)`。
 7. MCP 点击批量追加后，表单内模型数从 `Selected 3` 变为 `Selected 5`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，搜索输入和结果条被清空；验证期间未点击 `Update Channel`。
 8. MCP 在浏览器上下文携带 `NexusTok-User: 1` 调用 `GET /api/channel?p=1&page_size=10&tag_mode=false&id_sort=false` 返回 HTTP 200、`success=true`，渠道 `11111` 持久化模型仍为 `gpt-5.4,gpt-5.5,gpt-5.6-sol`，确认搜索追加验证没有写入运行态数据。
@@ -13591,3 +13593,65 @@ NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽
 17. MCP 控制台最终没有 JavaScript `error` 或 `warn`；仅保留既有可访问性 `issue`：部分输入缺少 `autocomplete`、部分 label 关联不完全，本轮未扩大范围处理。
 18. MCP 在浏览器上下文读取 `GET /api/channel/1`，后端仍返回 `name = "11111"`、`type = 57`、`models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`、`group = "default"`，确认验证未污染运行态渠道配置。
 19. MCP 验证截图保存为 `/tmp/nexustok-advanced-custom-import-export-validation.png`。
+
+## 本轮实施评审：DataTable BadgeListCell 小组件原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table/core/badge-list-cell.tsx`、`badge-cell.tsx`、`truncated-cell.tsx` 与当前 NexusTok `web/default/src/components/data-table` 后确认，new-api-main 已把表格里常见的 badge 列展示抽成 core cell 小组件：单个 badge 容器负责对齐，多 badge 列负责显示前 N 个并通过 tooltip 展开剩余项。当前 NexusTok 已有 DataTable README、桌面表格/卡片视图切换、移动卡片列表和多个页面接入，但 `models-columns.tsx` 与 `channels-columns.tsx` 仍各自重复实现 `renderLimitedItems()`，并在每个字段里手写 `TooltipProvider`、`Tooltip`、`TooltipTrigger` 和剩余 badge 展示。
+
+本轮不做 new-api-main 的 `core/layout/toolbar/static/hooks` 全量目录迁移；只把“多 badge 列的稳定展示能力”转成 NexusTok 原生小组件，并先接入模型和渠道两个已经启用 DataTable 的页面。
+
+### 需求分析
+
+1. 新增 `BadgeListCell`，用于 DataTable 单元格内展示一组 badge：默认显示前 2 个，剩余项通过 `+N` 和 tooltip 展开。
+2. 空列表继续显示 `-`，保持当前模型/渠道表格空状态语义。
+3. tooltip 内容使用完整 badge 列表，但不改变 badge 本身的 copy、颜色、label 和权限遮罩语义。
+4. 模型表和渠道表的 tag、endpoint、channel、group、model 等多 badge 列优先改用该组件，减少重复逻辑。
+5. 本轮不改变 DataTable 文件目录结构，不迁移 `DataTableView`、静态表格、列 pinning、content-sized columns 或 row action menu。
+6. 本轮不修改后端接口、数据库、权限、计费、relay、渠道保存或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| StatusBadge 列表 helper | `web/default/src/components/status-badge.tsx` | 新增向后兼容的 `StatusBadgeList` 导出，用于统一多 badge 截断和 `+N` 展示；不改变现有 `StatusBadge` 调用。 |
+| DataTable 小组件 | `web/default/src/components/data-table/badge-list-cell.tsx` | 新增通用多 badge 单元格展示组件，复用 `StatusBadgeList`、Tooltip 和语义类名。 |
+| DataTable 导出 | `web/default/src/components/data-table/index.ts` | 导出 `BadgeListCell`，供各业务表格列使用。 |
+| 模型列 | `web/default/src/features/models/components/models-columns.tsx` | 删除本地 `renderLimitedItems()`，tag、endpoint、channel、group、quota type 等多 badge 列改用 `BadgeListCell`。 |
+| 渠道列 | `web/default/src/features/channels/components/channels-columns.tsx` | 删除本地 `renderLimitedItems()`，models 和 groups 多 badge 列改用 `BadgeListCell`，保持敏感遮罩逻辑在生成 badge 前完成。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、验收方式和验证结果。 |
+
+### 风险评估
+
+1. 表格展示风险：模型和渠道表格是高频管理页面；组件必须保持 `max-w-full`、`min-w-0` 和 overflow 约束，避免长模型名撑宽列或移动卡片。
+2. Tooltip 交互风险：当前页面已有 tooltip 依赖；新组件只收敛重复逻辑，不改变点击、复制或打开详情的业务行为。
+3. 敏感信息风险：渠道页已支持敏感信息遮罩；本轮只接收已经生成好的 badge 节点，不在组件内部读取原始 channel/model 数据，避免绕过遮罩。
+4. i18n 风险：`+N` 和 `-` 没有新增自然语言文案；本轮不新增 locale key。
+5. 范围风险：new-api-main 的 DataTable 分层还包括大量基础视图组件；本轮只迁移最小 cell 能力，避免一次性重写表格核心。
+
+### 方案评审
+
+采用“小组件抽取 + 两个页面接入”的低风险方案：
+
+1. 在当前扁平 `components/data-table` 目录新增 `badge-list-cell.tsx`，不引入 `core/` 子目录，保持 NexusTok 现有导入路径稳定。
+2. 先在 `StatusBadge` 模块新增 `StatusBadgeList`，再让 DataTable 组件复用它，避免在每个业务表格里继续手写 `slice(0, max)` 和 `+N` badge。
+3. 组件 API 与 new-api-main 语义保持一致：`items: ReactNode[]`、`max = 2`、可选 `tooltipClassName`。
+4. tooltip trigger 使用一个 `div` 包裹 `StatusBadgeList`，`+N` 仍由 `StatusBadgeList` 负责渲染，避免每个业务列手写剩余 badge 逻辑。
+5. `models-columns.tsx` 和 `channels-columns.tsx` 删除各自重复的 `renderLimitedItems()`，只保留业务数据到 badge 节点的转换。
+6. 验证顺序：DataTable/模型/渠道相关定向测试、TypeScript、改动文件 ESLint、生产构建、`git diff --check`；最后使用 MCP 打开 `http://192.168.0.202:3003/models/metadata` 和 `/channels`，确认页面热更新、badge 列显示、tooltip 展开、控制台和网络请求。
+
+### 实施结果
+
+1. 新增 `StatusBadgeList`，把空状态、前 N 个 badge 展示和 `+N` 剩余数量展示收敛到 `StatusBadge` 模块；现有 `StatusBadge` API 不变。
+2. 新增 `BadgeListCell` 并从 `components/data-table` 统一导出，默认展示前 2 个 badge，只有存在折叠项时才挂载 tooltip 展示完整列表。
+3. 模型列表的 Tags、Endpoints、Bound Channels、Enable Groups、Quota Types 五个多 badge 列已切换为 `BadgeListCell`。
+4. 渠道列表的 Models、Groups 两个多 badge 列已切换为 `BadgeListCell`，分组遮罩仍在业务列生成 `GroupBadge` 时完成，通用组件不读取原始敏感字段。
+
+### 验证记录
+
+1. `cd web/default && bunx eslint src/components/status-badge.tsx src/components/data-table/badge-list-cell.tsx src/components/data-table/index.ts src/features/models/components/models-columns.tsx src/features/channels/components/channels-columns.tsx` 通过。
+2. `cd web/default && bun test src/components/data-table/use-data-table-view-mode.test.ts src/features/channels/lib/model-search.test.ts` 通过，共 29 个用例。
+3. `cd web/default && bun run typecheck` 通过。
+4. `cd web/default && bun run build` 通过。
+5. `git diff --check` 通过。
