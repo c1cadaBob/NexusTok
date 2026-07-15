@@ -26,7 +26,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { Loader2, Settings } from 'lucide-react'
+import { Check, Copy, Info, Loader2, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -38,6 +38,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -65,7 +73,20 @@ import {
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
 import { DataTablePagination } from '@/components/data-table/pagination'
 import { StatusBadge } from '@/components/status-badge'
-import { formatResponseTime, handleTestChannel } from '../../lib'
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { useIsMobile } from '@/hooks/use-mobile'
+import {
+  CHANNEL_TEST_MODEL_PRICE_ERROR_CODE,
+  formatResponseTime,
+  getChannelTestFailureDisplay,
+  handleTestChannel,
+} from '../../lib'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
@@ -85,6 +106,12 @@ type TestResult = {
   responseTime?: number
   error?: string
   errorCode?: string
+}
+
+type FailureDetailsState = {
+  model: string
+  summary: string
+  details: string
 }
 
 const endpointTypeOptions: Array<{ value: string; label: string }> = [
@@ -130,6 +157,8 @@ export function ChannelTestDialog({
     () => new Set()
   )
   const [isBatchTesting, setIsBatchTesting] = useState(false)
+  const [failureDetails, setFailureDetails] =
+    useState<FailureDetailsState | null>(null)
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 10,
@@ -145,6 +174,7 @@ export function ChannelTestDialog({
     setRowSelection({})
     setTestingModels(() => new Set())
     setIsBatchTesting(false)
+    setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 10 })
   }, [])
 
@@ -310,17 +340,19 @@ export function ChannelTestDialog({
       },
       {
         accessorKey: 'model',
-        header: 'Model',
+        header: t('Model'),
         cell: ({ row }) => {
           const model = row.original.model
           const isDefault = defaultTestModel === model
 
           return (
-            <div className='flex items-center gap-2'>
-              <span className='font-medium'>{model}</span>
+            <div className='flex min-w-0 items-center gap-2'>
+              <span className='truncate font-medium' title={model}>
+                {model}
+              </span>
               {isDefault && (
                 <StatusBadge
-                  label='Default'
+                  label={t('Default')}
                   variant='info'
                   size='sm'
                   copyable={false}
@@ -332,80 +364,35 @@ export function ChannelTestDialog({
       },
       {
         id: 'status',
-        header: 'Status',
+        header: t('Status'),
         cell: ({ row }) => {
           const model = row.original.model
           const result = testResults[model]
-
-          if (!result || result.status === 'idle') {
-            return (
-              <StatusBadge
-                label={t('Not tested')}
-                variant='neutral'
-                copyable={false}
-              />
-            )
-          }
-
-          if (result.status === 'testing') {
-            return (
-              <div className='text-muted-foreground flex items-center gap-2 text-sm'>
-                <Loader2 className='h-4 w-4 animate-spin' />
-                Testing...
-              </div>
-            )
-          }
-
-          if (result.status === 'success') {
-            const successLabel =
-              typeof result.responseTime === 'number'
-                ? `${t('Success')} - ${formatResponseTime(result.responseTime, t)}`
-                : t('Success')
-            return (
-              <div className='flex flex-col gap-1 text-xs'>
-                <StatusBadge
-                  label={successLabel}
-                  variant='success'
-                  copyable={false}
-                />
-              </div>
-            )
-          }
-
+          return <TestStatusCell result={result} />
+        },
+        enableSorting: false,
+        size: 112,
+      },
+      {
+        id: 'result',
+        header: t('Result'),
+        cell: ({ row }) => {
+          const model = row.original.model
+          const result = testResults[model]
           return (
-            <div className='flex flex-col gap-1 text-xs'>
-              <StatusBadge
-                label={t('Failed')}
-                variant='danger'
-                copyable={false}
-              />
-              {result.error && (
-                <span className='text-muted-foreground break-all'>
-                  {result.error}
-                </span>
-              )}
-              {result.errorCode === 'model_price_error' && (
-                <Button
-                  variant='outline'
-                  size='sm'
-                  className='w-fit'
-                  onClick={() =>
-                    window.open('/console/setting?tab=ratio', '_blank')
-                  }
-                >
-                  <Settings className='mr-1 h-3 w-3' />
-                  {t('Go to Settings')}
-                </Button>
-              )}
-            </div>
+            <TestResultCell
+              result={result}
+              model={model}
+              onOpenDetails={setFailureDetails}
+            />
           )
         },
         enableSorting: false,
-        size: 220,
+        size: 320,
       },
       {
         id: 'actions',
-        header: 'Actions',
+        header: t('Actions'),
         cell: ({ row }) => {
           const model = row.original.model
           const isTestingModel = testingModels.has(model)
@@ -421,9 +408,9 @@ export function ChannelTestDialog({
               title={permissions.canOperate ? undefined : noPermissionMessage}
             >
               {isTestingModel && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 data-icon='inline-start' className='animate-spin' />
               )}
-              Test
+              {t('Test')}
             </Button>
           )
         },
@@ -462,8 +449,9 @@ export function ChannelTestDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className='max-h-[90vh] overflow-hidden sm:max-w-3xl'>
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className='max-h-[90vh] overflow-hidden sm:max-w-3xl'>
         <DialogHeader>
           <DialogTitle>{t('Test Channel Connection')}</DialogTitle>
           <DialogDescription>
@@ -588,8 +576,8 @@ export function ChannelTestDialog({
                             className='text-muted-foreground h-16 text-center text-sm'
                           >
                             {models.length
-                              ? 'No models matched your search.'
-                              : 'This channel has no configured models.'}
+                              ? t('No models matched your search.')
+                              : t('This channel has no configured models.')}
                           </TableCell>
                         </TableRow>
                       )}
@@ -615,8 +603,215 @@ export function ChannelTestDialog({
             {t('Close')}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <FailureDetailsSheet
+        details={failureDetails}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setFailureDetails(null)
+          }
+        }}
+      />
+    </>
+  )
+}
+
+function TestStatusCell({ result }: { result?: TestResult }) {
+  const { t } = useTranslation()
+
+  if (!result || result.status === 'idle') {
+    return (
+      <StatusBadge label={t('Not tested')} variant='neutral' copyable={false} />
+    )
+  }
+
+  if (result.status === 'testing') {
+    return (
+      <div className='text-muted-foreground flex min-w-0 items-center gap-2 text-sm'>
+        <Loader2 className='size-4 shrink-0 animate-spin' />
+        <span className='truncate'>{t('Testing...')}</span>
+      </div>
+    )
+  }
+
+  if (result.status === 'success') {
+    return (
+      <StatusBadge label={t('Success')} variant='success' copyable={false} />
+    )
+  }
+
+  return <StatusBadge label={t('Failed')} variant='danger' copyable={false} />
+}
+
+function TestResultCell({
+  result,
+  model,
+  onOpenDetails,
+}: {
+  result?: TestResult
+  model: string
+  onOpenDetails: (details: FailureDetailsState) => void
+}) {
+  const { t } = useTranslation()
+
+  if (!result || result.status === 'idle') {
+    return <span className='text-muted-foreground text-sm'>-</span>
+  }
+
+  if (result.status === 'testing') {
+    return <span className='text-muted-foreground text-sm'>-</span>
+  }
+
+  if (result.status === 'success') {
+    return typeof result.responseTime === 'number' ? (
+      <span className='text-muted-foreground text-sm'>
+        {formatResponseTime(result.responseTime, t)}
+      </span>
+    ) : (
+      <span className='text-muted-foreground text-sm'>-</span>
+    )
+  }
+
+  return (
+    <FailureResultContent
+      result={result}
+      model={model}
+      onOpenDetails={onOpenDetails}
+    />
+  )
+}
+
+function FailureResultContent({
+  result,
+  model,
+  onOpenDetails,
+}: {
+  result: TestResult
+  model: string
+  onOpenDetails: (details: FailureDetailsState) => void
+}) {
+  const { t } = useTranslation()
+  const errorText = result.error?.trim()
+  const isModelPriceError =
+    result.errorCode === CHANNEL_TEST_MODEL_PRICE_ERROR_CODE
+  const modelPriceSummary = t(
+    'Model price is not configured. Please complete model pricing in settings.'
+  )
+  const { summary, details } = getChannelTestFailureDisplay({
+    errorText,
+    fallbackSummary: t('Test failed'),
+    isModelPriceError,
+    modelPriceSummary,
+  })
+
+  return (
+    <div className='flex min-w-0 items-center gap-2 text-xs whitespace-normal'>
+      <p className='text-muted-foreground line-clamp-2 min-w-0 flex-1 leading-snug break-words'>
+        {summary}
+      </p>
+      <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+        {isModelPriceError && (
+          <Button
+            variant='outline'
+            size='sm'
+            className='h-7 w-fit px-2 text-xs'
+            onClick={() =>
+              window.open('/system-settings/billing/model-pricing', '_blank')
+            }
+          >
+            <Settings data-icon='inline-start' />
+            {t('Go to Settings')}
+          </Button>
+        )}
+        {details && (
+          <Button
+            variant='ghost'
+            size='sm'
+            className='h-7 w-fit px-2 text-xs'
+            aria-haspopup='dialog'
+            onClick={() => onOpenDetails({ model, summary, details })}
+          >
+            <Info data-icon='inline-start' />
+            {t('Details')}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FailureDetailsSheet({
+  details,
+  onOpenChange,
+}: {
+  details: FailureDetailsState | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const isMobile = useIsMobile()
+  const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
+
+  return (
+    <Sheet open={Boolean(details)} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isMobile ? 'bottom' : 'right'}
+        className={
+          isMobile
+            ? sideDrawerContentClassName('h-auto max-h-[85dvh] rounded-t-xl')
+            : sideDrawerContentClassName('sm:max-w-lg')
+        }
+      >
+        {details && (
+          <>
+            <SheetHeader className={sideDrawerHeaderClassName('sm:px-5')}>
+              <SheetTitle className='pr-10'>{t('Details')}</SheetTitle>
+              <SheetDescription className='pr-10 break-words'>
+                {details.model}
+              </SheetDescription>
+            </SheetHeader>
+            <div className={sideDrawerFormClassName('gap-4 sm:px-5')}>
+              <section className='space-y-1'>
+                <div className='text-muted-foreground text-xs font-medium'>
+                  {t('Model')}
+                </div>
+                <p className='text-sm font-medium break-all'>{details.model}</p>
+              </section>
+              <section className='space-y-1'>
+                <div className='text-muted-foreground text-xs font-medium'>
+                  {t('Failed')}
+                </div>
+                <p className='text-muted-foreground text-sm leading-relaxed break-words'>
+                  {details.summary}
+                </p>
+              </section>
+              <section className='space-y-2'>
+                <div className='text-muted-foreground text-xs font-medium'>
+                  {t('Details')}
+                </div>
+                <pre className='bg-muted/30 text-muted-foreground m-0 max-w-full rounded-md border p-3 text-xs leading-relaxed break-words whitespace-pre-wrap'>
+                  {details.details}
+                </pre>
+              </section>
+            </div>
+            <SheetFooter className={sideDrawerFooterClassName('sm:px-5')}>
+              <Button
+                variant='outline'
+                className='w-full sm:w-auto'
+                onClick={() => copyToClipboard(details.details)}
+              >
+                {copiedText === details.details ? (
+                  <Check data-icon='inline-start' className='text-success' />
+                ) : (
+                  <Copy data-icon='inline-start' />
+                )}
+                {t('Copy')}
+              </Button>
+            </SheetFooter>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   )
 }
 

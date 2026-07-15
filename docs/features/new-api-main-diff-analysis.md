@@ -13779,6 +13779,73 @@ NexusTok 当前已经把 Advanced Custom 作为原生渠道类型接入编辑抽
 4. `cd web/default && bun run build` 通过。
 5. `git diff --check` 通过。
 
+## 本轮实施评审：渠道测试失败结果详情原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/dialogs/channel-test-dialog.tsx` 与当前 NexusTok 的 `web/default/src/features/channels/components/dialogs/channel-test-dialog.tsx` 后确认，new-api 最新渠道测试弹窗已把“测试状态”和“测试结果”拆成两列：状态列只展示 Not tested / Testing / Success / Failed，结果列展示响应时间或失败摘要；当失败详情较长时，表格只保留短摘要，并通过详情 Sheet 展示完整错误和复制按钮。
+
+NexusTok 当前测试弹窗把失败错误直接渲染在 `status` 列里，长上游错误会撑高表格行，也不方便复制完整错误给排障人员。该差异属于渠道页排障体验增强：只改变前端展示层，不改变测试接口、不改变渠道保存、不修改后端或数据模型。
+
+### 需求分析
+
+1. 测试弹窗需要保留当前单模型测试、批量测试、端点类型选择、stream 开关、分页和权限控制。
+2. 失败状态应从长错误文本中抽取短摘要，表格行内只展示可扫描的摘要，避免长错误撑破行高。
+3. 完整错误需要进入详情 Sheet，包含模型名、失败摘要、完整详情和复制按钮。
+4. `model_price_error` 需要显示更明确的本地化摘要，并继续提供跳转到 NexusTok 真实模型定价页 `/system-settings/billing/model-pricing` 的入口。
+5. 复制完整错误只能复制当前测试结果中的文本，不触发渠道保存、模型删除、模型更新或任何后端写请求。
+6. 新增可见文案必须补齐 en、zh、fr、ja、ru、vi，并运行 `bun run i18n:sync`。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道测试弹窗 | `web/default/src/features/channels/components/dialogs/channel-test-dialog.tsx` | 拆分状态与结果列，新增失败摘要展示、详情 Sheet 和复制完整错误。 |
+| 失败摘要工具 | `web/default/src/features/channels/lib/channel-test-result.ts` | 新增纯函数，统一处理错误首行、空白归一化、摘要截断和详情保留。 |
+| 失败摘要测试 | `web/default/src/features/channels/lib/channel-test-result.test.ts` | 覆盖普通长错误、空错误、模型定价错误和无重复详情等边界。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 补齐新增测试失败文案翻译。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 测试行为风险：本轮不能改变 `handleTestChannel()`、`testSingleModel()` 或批量测试请求行为，否则可能影响真实上游测试结果。
+2. 错误信息泄露风险：详情 Sheet 展示的是当前用户已经能在测试弹窗看到的错误，不能扩大到无权限用户；权限仍由测试入口的 `canOperate` 控制。
+3. 可用性风险：如果只显示摘要而没有详情入口，会降低排障能力；如果所有失败都强制打开详情，会增加操作成本。需要按是否存在额外详情决定按钮展示。
+4. 路由风险：new-api 跳转路径要按 NexusTok 当前路由调整为 `/system-settings/billing/model-pricing`，不能保留旧 `/console/setting?tab=ratio`。
+5. 移动端风险：详情 Sheet 在窄屏上应使用 bottom 面板，避免右侧抽屉过窄导致长错误不可读。
+6. i18n 风险：新增文案如果未补齐六语，运行时会回退英文并扩大翻译缺口。
+
+### 方案评审
+
+采用“纯函数摘要 + 弹窗展示分层”的低风险方案：
+
+1. 新增 `getChannelTestFailureDisplay()`，输入错误文本、fallback 摘要、模型定价错误摘要和错误类型，输出 `{ summary, details? }`。
+2. 摘要规则：优先取第一条非空错误行，压缩连续空白，超过固定长度后截断；完整原文保留在 `details`。
+3. 对 `model_price_error` 使用固定本地化摘要；当后端原始错误与摘要不同，保留原始错误作为详情。
+4. `channel-test-dialog.tsx` 将状态列改为紧凑 badge，新增 `Result` 列承载响应时间、失败摘要、详情按钮和模型定价设置入口。
+5. 新增 `FailureDetailsSheet`，使用项目现有 `Sheet`、`sideDrawer*ClassName`、`useIsMobile()` 和 `useCopyToClipboard({ notify: false })`；移动端 bottom，桌面 right。
+6. 新增纯函数单测并补齐 i18n；验证顺序为 i18n sync、定向测试、渠道相关测试、ESLint、typecheck、build、`git diff --check`，最后用 MCP 打开 3003 渠道测试弹窗真实验证失败详情。
+
+### 实施结果
+
+1. `channel-test-dialog.tsx` 已将测试状态与测试结果拆分为 `Status` / `Result` 两列：状态列只承载 `Not tested`、`Testing...`、`Success`、`Failed`，结果列承载响应时间、失败摘要、详情入口和模型定价设置入口。
+2. 新增 `getChannelTestFailureDisplay()`，统一处理空错误、单行错误、多行错误、长错误截断和 `model_price_error` 摘要；当完整错误与摘要一致时不重复展示详情按钮。
+3. 新增 `FailureDetailsSheet`，桌面使用右侧 Sheet、移动端使用底部 Sheet，详情内展示模型名、失败摘要、完整错误并支持复制。
+4. `model_price_error` 的设置入口已按 NexusTok 当前路由改为 `/system-settings/billing/model-pricing`。
+5. 新增文案已补齐 `en`、`zh`、`fr`、`ja`、`ru`、`vi` 六语并完成 i18n 同步。
+
+### 验证记录
+
+1. `cd web/default && bun test src/features/channels/lib/channel-test-result.test.ts` 通过，覆盖 6 个失败摘要边界用例。
+2. `cd web/default && bunx eslint src/features/channels/components/dialogs/channel-test-dialog.tsx src/features/channels/lib/channel-test-result.ts src/features/channels/lib/channel-test-result.test.ts src/features/channels/lib/index.ts` 通过。
+3. `cd web/default && bun run i18n:sync` 通过。
+4. `cd web/default && bun run typecheck` 通过。
+5. `cd web/default && bun run build` 通过。
+6. `git diff --check` 通过。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postcheck=1784157000000`，登录 `c1cada` 后在渠道 `11111` 的行菜单打开“测试连接”，确认弹窗展示 `模型 / 状态 / 结果 / 操作` 四列，热更新已生效。
+8. MCP 在测试弹窗中点击 `gpt-5.4` 的“测试”，请求为 `GET /api/channel/test/1?model=gpt-5.4`，页面显示状态 `失败`、结果摘要 `账号池无可用账号`；该错误为单行错误，按设计不展示详情按钮。
+9. MCP 网络面板确认本轮验证没有产生 `PUT/POST /api/channel` 写请求；控制台只有登录页既有 autocomplete issue，没有渠道测试弹窗 runtime error。
+
 ## 本轮实施评审：编辑渠道页模型搜索追加弹层收口
 
 ### 差异来源
