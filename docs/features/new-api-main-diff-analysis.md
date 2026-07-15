@@ -228,6 +228,68 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | P2 | ClickHouse/高级部署文档 | `docs/installation/*` | 多语言 README、Electron、constant、开发 Compose、Makefile、任意分支 Docker 镜像和 Issue 模板已品牌化；若后续真接入 ClickHouse，再补部署和回滚文档。 |
 | P3 | CI 工具链评估 | `oxlint`、`oxfmt`、`tsgo` | 当前保留 Bun/ESLint/TypeScript/Rsbuild 工具链；只有在现有 lint/build 成本成为瓶颈时再评估，不作为功能差异迁移前置条件。 |
 
+### 当前切片评审：Form 提交错误自动聚焦原生化
+
+#### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/ui/form.tsx` 后确认，new-api 的 Form 基础组件除了 `FormField`/`FormItem`/`FormLabel`/`FormControl` 组合，还内置 `FormValidationFocus`：当表单提交后出现校验错误时，会在当前表单作用域内查找第一个 `aria-invalid="true"` 控件或错误消息，自动滚动到对应表单项并聚焦可交互控件。NexusTok 当前 `Form` 只是 `react-hook-form` 的 `FormProvider` 别名；渠道、账号池、订阅、系统设置等长表单在提交失败时主要依赖页面局部逻辑或用户手动查找错误。
+
+这属于 new-api 的基础交互优势：它不改变业务数据、不改变校验规则，却能让长表单错误更快定位。刚刚 MCP 验证编辑渠道页时也暴露出长抽屉表单中浏览器 issue/错误定位不够集中；本轮先把“提交错误自动聚焦”转成 NexusTok 原生 Form 能力，不在同一切片重构全局 label/combobox 关联。
+
+#### 需求分析
+
+1. `Form` 需要保持现有 `FormProvider` 用法兼容，所有调用 `<Form {...form}>` 的页面无需改调用方式。
+2. 提交失败且 `react-hook-form` 存在 errors 时，应只在当前 Form 作用域内查找错误目标，避免多个表单/弹窗同时存在时聚焦到别的表单。
+3. 优先聚焦第一个 `aria-invalid="true"` 控件；如果错误消息比控件更靠前，则先滚动到错误消息所在表单项，并尝试聚焦该表单项内的可交互控件。
+4. 需要在 `FormItem`、`FormControl`、`FormMessage` 上提供稳定 `data-form-root` 作用域标记，避免使用全局 DOM 查询误伤其它页面区域。
+5. 不改变 `FormLabel` 的 `htmlFor` 行为、不改变校验错误文案、不改变表单提交、保存接口、权限模型、后端接口或业务 schema。
+6. 需要补充前端单元测试，覆盖错误出现后只在当前表单范围滚动并聚焦。
+
+#### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 公共 Form 组件 | `web/default/src/components/ui/form.tsx` | 从 `FormProvider` 别名升级为包装组件，增加表单作用域和提交错误自动聚焦。 |
+| Form 测试 | `web/default/src/components/ui/form.test.ts` | 新增 FormValidationFocus 辅助函数测试，防止错误目标选择逻辑后续回退。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施和验证。 |
+
+#### 风险评估
+
+1. 全局影响风险：`Form` 是公共组件，任何行为变化都可能影响渠道、账号池、系统设置、订阅、用户等表单。方案必须保持 props 兼容，只增加提交失败后的辅助聚焦，不修改字段注册或错误计算。
+2. 多表单误聚焦风险：页面上可能同时存在抽屉、弹窗和隐藏表单。必须使用 `data-form-root` 将 DOM 查询限制在当前 Form 内。
+3. 测试环境风险：`scrollIntoView`、`focus` 和 `requestAnimationFrame` 在测试环境里需要 mock，避免测试不稳定。
+4. 可访问性风险：自动聚焦不能抢在用户正常输入时触发，只能在 `submitCount` 变化且当前提交存在错误时执行。
+5. 渲染风险：新增 wrapper 不能额外插入 DOM 节点，否则可能影响现有布局；应只通过 context 和子组件属性传递作用域。
+6. 范围风险：本轮不处理既有 Chrome issue 中的 `FormLabel` 与 Base UI combobox/select trigger 关联问题，避免把可访问性结构重构和错误聚焦混在一个切片。
+
+#### 方案评审
+
+采用与 new-api 同源但按 NexusTok 包边界收敛的方案：
+
+1. 新增 `FormRootContext`，`Form` 组件使用 `React.useId()` 生成稳定作用域 id，并继续包裹 `FormProvider`。
+2. 新增 `FormValidationFocus`，通过 `useFormContext()` 和 `useFormState()` 监听 `submitCount` 与 `errors`；只有 `submitCount > 0` 且存在错误时执行。
+3. 在 `requestAnimationFrame` 中查询当前作用域下的 `[aria-invalid="true"]` 与 `[data-slot="form-message"]`，取 DOM 顺序更靠前者作为滚动目标。
+4. 滚动目标优先使用最近的 `[data-slot="form-item"]`，聚焦目标优先使用 invalid 控件；如果目标是错误消息，则在同一 `FormItem` 内查找 `aria-invalid`、`input`、`textarea`、`select`、`button` 或可聚焦元素。
+5. `FormItem`、`FormControl`、`FormMessage` 增加 `data-form-root` 标记；`FormControl` 仍通过 `useRender` 给子控件注入原有 `id`、`aria-describedby`、`aria-invalid`。
+6. 添加辅助函数测试：覆盖空错误对象、存在字段错误、无错误消息时选择 invalid 控件、错误消息位于 invalid 控件前后时的目标选择，确保浏览器行为以外的排序逻辑稳定。
+7. 验证顺序：定向测试、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 打开 `http://192.168.0.202:3003/channels`，在编辑渠道页触发表单校验失败，确认页面更新和控制台无运行时错误。
+
+#### 实施结果
+
+1. `web/default/src/components/ui/form.tsx` 已将 `Form` 从 `FormProvider` 别名升级为兼容包装组件，保留 `<Form {...form}>` 的调用方式，并通过 `FormRootContext` 为每个表单实例生成独立作用域。
+2. 新增 `FormValidationFocus`：提交次数变化且存在 `react-hook-form` 错误时，在当前 `data-form-root` 作用域内查找第一个 invalid 控件或错误消息，滚动到最近的 `FormItem`，并聚焦可交互控件。
+3. `FormItem`、`FormControl`、`FormMessage` 已写入 `data-form-root`，用于避免多个抽屉/弹窗/页面表单同时存在时误聚焦到其它表单。
+4. `web/default/src/components/ui/form-validation-focus.ts` 抽出选择器、错误判定和目标选择纯函数，降低公共 Form 组件复杂度，并方便单元测试。
+5. `web/default/src/components/ui/form.test.ts` 覆盖辅助函数边界条件；本切片未新增可见文案，因此不需要调整 i18n。
+
+#### 验证记录
+
+1. 静态验证已通过：`bun test src/components/ui/form.test.ts`、`bunx eslint --no-ignore src/components/ui/form.tsx src/components/ui/form-validation-focus.ts src/components/ui/form.test.ts`、`bun run typecheck`、`bun run build`、`git diff --check`。
+2. MCP 已访问 `http://192.168.0.202:3003/channels?postcheck=1784036000000`，打开渠道 `11111` 编辑抽屉；点击“清除全部”使模型列表为空后提交，页面显示“需要模型”和“请先修复高亮字段后再保存”，焦点停在模型 combobox。
+3. MCP 网络检查确认该客户端校验失败场景未新增 `PUT/POST /api/channel` 请求，避免污染后端渠道数据。
+4. MCP DOM 检查确认错误消息与最近表单项均带同一个 `data-form-root`，公共 Form 作用域标记已在页面生效。
+5. MCP 控制台仅剩两个既有 Chrome issue：名称输入缺少 `autocomplete`、部分 `FormLabel` 与 Base UI combobox/select trigger 的 `label for` 关联不完整；本切片未处理这些结构性可访问性问题，后续应独立评审后再改。
+
 ## 原生化路线建议
 
 ### P0：保护并完成 NexusTok 已有账号池主线
