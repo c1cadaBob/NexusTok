@@ -13984,84 +13984,73 @@ NexusTok 当前测试弹窗把失败错误直接渲染在 `status` 列里，长�
 10. MCP 最后再次点击 Reset 并等待 900ms，URL、名称输入、密钥输入均为空，列表恢复显示现有 API Key 行。
 11. MCP 控制台检查 JavaScript `error`、`warn` 和浏览器 `issue`，均未发现消息。
 
-## 本轮实施评审：编辑渠道模型库搜索添加对话框原生化
+## 本轮实施评审：编辑渠道页模型搜索回归内联主流程
 
 ### 差异来源
 
-用户反馈编辑渠道页“搜索添加时不正确”，并要求参考 `/opt/project/new-api-main` 最新编辑渠道页面。复核两个前端后确认：
+用户反馈编辑渠道页“搜索添加时不正确”，并指出 `/opt/project/new-api-main` 最新编辑渠道页面观感更好。重新对照 `new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认：new-api 最新默认前端的模型区没有独立模型库搜索弹窗，也没有第二套模型搜索入口；模型字段以 `MultiSelect` 为唯一主入口，后续紧跟快捷操作、模型映射和分组。
 
-1. `new-api-main/web/default` 的编辑渠道页模型区是紧凑的“模型选择 + 快捷操作 + 模型映射 + 分组”结构，不把额外搜索状态堆进主表单。
-2. `new-api-main/web/classic` 的 `ModelSelectModal` 把“获取/搜索/勾选模型”放在独立弹窗里，并按“新获取的模型 / 已有的模型 / 上游已删除的模型”分区，搜索和添加语义清晰。
-3. NexusTok 当前已把模型元信息搜索作为优势能力接入，但入口藏在 `MultiSelect` 下拉 footer 中；MCP 实测搜索 `gpt-5.6` 时可以正确识别 `3 matched / 2 new / 1 already selected`，单点候选和批量追加也能更新草稿，但管理员需要在同一个下拉里区分“普通候选选择”和“搜索结果批量追加”，可访问性快照也没有稳定暴露候选 option，整体不如 new-api 的独立选择弹窗直观。
-
-本轮目标不是移除 NexusTok 已有模型元信息搜索优势，而是把它转成更原生的编辑渠道能力：主页面保持 new-api 最新版的紧凑模型区，搜索添加进入独立对话框完成，避免 MultiSelect footer 承担过多状态。
+NexusTok 前一轮将模型库搜索迁移到独立 `ModelLibrarySearchDialog`，虽然能展示 `gpt-5.6` 的 3 个命中并追加缺失模型，但它与 new-api 最新页面不一致，也会让管理员在“模型选择器搜索”和“搜索模型库弹窗”之间产生两套心智模型。本轮将独立弹窗撤回，把 `/api/models/search` 的优势恢复为模型选择器内部的原生增强：管理员仍在 `Models` 多选框输入关键词，页面内联展示搜索结果摘要和批量追加按钮。
 
 ### 需求分析
 
-1. 编辑渠道模型区需要新增一个清晰的“搜索模型库”快捷入口，用于从 `/api/models/search` 搜索模型元信息并追加到当前表单草稿。
-2. `MultiSelect` 应回归已知模型选择和自定义模型输入，不再承载模型库搜索结果 footer，减少“搜索候选”和“批量添加”的语义混杂。
-3. 搜索对话框需要保留 NexusTok 优势：按当前渠道类型推导供应商（例如 Codex/OpenAI 走 `vendor=OpenAI`）、按 `matched_models` 展开规则模型、按大小写不敏感去重、区分可新增和已存在模型。
-4. 搜索 `gpt-5.6` 时应清楚展示已存在的 `gpt-5.6-sol` 和可新增的 `gpt-5.6-terra`、`gpt-5.6-luna`，并能一次追加所有选中新模型。
-5. 对话框只能更新当前抽屉表单草稿，不能直接保存渠道；验证时必须确认没有 `PUT/POST /api/channel` 写请求。
-6. 本轮不修改后端模型搜索接口、不改渠道保存接口、不改数据库、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
+1. 编辑渠道页模型区需要与 new-api 最新默认页面对齐：`Models` 多选框是模型编辑唯一主入口，快捷操作区不再出现独立 `Search model library` 按钮。
+2. NexusTok 已有模型元信息搜索优势不能丢失：输入 `gpt-5.6` 时仍调用 `/api/models/search`，并把真实模型名合并到模型候选。
+3. 搜索 `gpt-5.6` 时需要明确区分命中、可新增和已存在；当前渠道已有 `gpt-5.6-sol` 时，正确结果是命中 3 个、可新增 2 个，而不是只同步 1 个或重复添加 3 个。
+4. 批量追加必须扫描所有分页结果，再基于当前表单最新 `models` 草稿计算缺失项，避免旧闭包覆盖刚编辑的模型列表。
+5. 输入关键词后按 Enter 不应提交整个渠道表单；存在真实候选时也不应误创建裸模型名 `gpt-5.6`。
+6. 本轮只修改前端编辑渠道页和 i18n 清理，不修改后端模型搜索接口、渠道保存接口、数据库、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
 
 ### 影响范围分析
 
 | 范围 | 文件 | 影响 |
 | --- | --- | --- |
-| 模型库搜索对话框 | `web/default/src/features/channels/components/dialogs/model-library-search-dialog.tsx` | 新增独立搜索/分区/勾选/追加 UI，复用模型搜索接口与现有模型搜索工具函数。 |
-| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除 `MultiSelect` footer 搜索追加状态，新增“搜索模型库”快捷按钮与对话框挂载。 |
-| 模型搜索工具 | `web/default/src/features/channels/lib/model-search.ts` | 如有必要，仅补充纯函数以支撑对话框状态拆分；保持现有搜索追加规则兼容。 |
-| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 新增或补齐对话框可见文案翻译，并运行 `bun run i18n:sync`。 |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 删除独立模型库搜索弹窗入口，恢复 `MultiSelect` 内联模型元信息搜索、摘要和批量追加。 |
+| 独立搜索弹窗 | `web/default/src/features/channels/components/dialogs/model-library-search-dialog.tsx` | 删除不再使用的弹窗组件，避免两套搜索入口并存。 |
+| i18n | `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` | 清理仅服务独立弹窗的可见文案，保留内联搜索已有文案。 |
 | 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施与验证。 |
 
 ### 风险评估
 
-1. 功能回退风险：不能因为移除 `MultiSelect` footer 而丢失从模型元信息库搜索并追加未绑定模型的能力。
-2. 添加数量风险：对话框需要与既有 `getModelSearchModelNames()`、`getMissingModelSearchMatches()` 和 `mergeModelNames()` 保持同一套去重规则，避免 `gpt-5.6` 系列只添加一个或重复添加。
-3. 分页风险：第一页搜索结果可能少于后端 `total`；对话框需要提示并提供扫描全部结果能力，避免管理员误以为只添加当前页。
-4. 表单污染风险：对话框只调用 `form.setValue('models', ...)` 更新草稿，不直接调用 `updateChannel`；取消抽屉或不保存时后端渠道模型不能改变。
-5. 权限风险：没有基础编辑权限时入口应禁用或拒绝追加；只读管理员不能通过对话框绕过现有 `canEditBasicFields`。
-6. 可访问性风险：新对话框必须有 `DialogTitle`、明确搜索输入、checkbox label 和可读计数，避免继续依赖下拉 footer 的隐式状态。
+1. 搜索数量风险：`gpt-5.6` 系列的 3 个模型需要从后端真实 `model_name` / `matched_models` 提取，前端不能把关键词本身当模型名，也不能根据 `matched_count` 猜造模型。
+2. 入口混乱风险：如果保留独立弹窗，会继续偏离 new-api 最新页面；如果只保留普通候选选择，又会丢失 NexusTok 一次追加全部缺失模型的优势。需要在同一个 `MultiSelect` 内清楚区分候选选择和批量追加。
+3. 异步污染风险：搜索追加会跨分页异步请求，渠道切换、抽屉关闭、关键词或供应商变化时必须拒绝旧结果写入表单。
+4. 表单提交风险：`MultiSelect` 位于渠道表单内，搜索关键词存在时 Enter 必须留在搜索交互内，不能冒泡为保存渠道。
+5. 权限风险：无基础编辑权限时不能通过内联搜索追加模型。
+6. i18n 风险：删除独立弹窗后要同步清理冗余翻译，不能留下未使用入口文案造成后续误判。
 
 ### 方案评审
 
-采用“独立模型库搜索对话框 + 主表单保持紧凑”的方案：
+采用“单一模型选择器 + 内联搜索增强”的方案：
 
-1. 新增 `ModelLibrarySearchDialog`，使用 `Dialog`、`Input`、`Tabs`、`Checkbox`、`Badge` 和 `Button` 组合，不新增第三方依赖。
-2. 对话框内部按关键词和当前渠道供应商调用 `searchModels({ keyword, vendor, p: 1, page_size: 50 })`；结果通过 `getModelSearchModelNames()` 展开为真实模型名。
-3. 对话框按当前表单模型列表拆分为“New Models”和“Existing Models”；新命中默认选中，管理员可取消勾选，点击“Add selected models”后合并进表单草稿。
-4. 当 `total` 大于当前页加载数量时，展示尚未扫描数量，并提供“Scan all search results”按钮分页拉取全部命中，再重新计算可新增项。
-5. 编辑渠道抽屉移除 `modelSelectOpen`、`modelSearchKeyword`、`modelSearchData`、`handleAddModelSearchMatches()` 和 `MultiSelect contentFooter`，避免主表单下拉继续承载搜索添加状态。
-6. 模型区快捷操作新增 `Search model library` 按钮；按钮沿用当前 `canEditBasicFields` 权限控制和供应商提示，OpenAI/Codex 继续收窄到 OpenAI，Custom/Advanced Custom 保持全供应商搜索。
-7. 验证顺序：模型搜索/多选相关单元测试、定向 ESLint、`bun run i18n:sync`、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 `http://192.168.0.202:3003/channels` 打开渠道 `11111`，用对话框搜索 `gpt-5.6`，确认能追加 `terra/luna`、不会保存后端、控制台和网络请求正常。
+1. 删除 `ModelLibrarySearchDialog` 文件、抽屉 state、挂载和快捷操作按钮。
+2. 在 `channel-mutate-drawer.tsx` 恢复 `modelSearchKeyword`、debounce、`searchModels()` 查询和供应商收窄；OpenAI/Codex 继续默认 `vendor=OpenAI`，Custom/Advanced Custom 保持全供应商搜索。
+3. 将 `modelSearchModelNames` 合并进 `modelOptions`，让同步到模型库但尚未加入任何渠道的模型也能在 `MultiSelect` 中出现。
+4. 恢复 `contentFooter`，展示 `Search results`、`{{matched}} matched · {{addable}} new · {{existing}} already selected`、`Will add` 预览和 `Add {{count}} new model(s)` / `Scan all search results` 按钮。
+5. 批量追加时先关闭下拉，再按 `page_size=100` 扫描全部分页结果；请求返回后校验抽屉、渠道、关键词、供应商和请求序号仍一致，然后重新读取 `form.getValues('models')` 计算缺失项并合并。
+6. `MultiSelect` 使用 `allowCreateWithMatches={false}`、`submitSearchOnEnterWithMatches`、`hideSelectedOptionsWhenSearching` 和空输入删除键保护，避免存在真实候选时创建裸关键词或误删已有模型。
+7. 验证顺序：`bun run i18n:sync`、模型搜索/多选单元测试、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 编辑渠道 `11111`，搜索 `gpt-5.6`，确认新增数量、网络请求和后端未保存。
 
 ### 实施结果
 
-1. 新增 `ModelLibrarySearchDialog`，将模型元信息搜索从 `MultiSelect` footer 迁移到独立对话框；对话框包含渠道名、供应商、搜索框、命中统计、新模型/现有模型两个页签、扫描全部结果和添加选中模型操作。
-2. 对话框继续复用 `searchModels()` 与现有模型搜索纯函数：`getModelSearchModelNames()` 展开规则模型，`getMissingModelSearchMatches()` 过滤已存在模型，`mergeModelNames()` 合并草稿并按大小写不敏感去重。
-3. 搜索结果按当前渠道模型拆分：新命中默认勾选，已存在模型显示为禁用 checkbox，避免 `gpt-5.6-sol` 这类已有模型被重复添加。
-4. 当后端 `total` 大于当前页返回数量时，对话框保留“扫描全部搜索结果”能力，按 `page_size=100` 分页扫描后重新计算可新增模型。
-5. 编辑渠道模型区回到紧凑主流程：`MultiSelect` 只负责已知模型选择和自定义模型输入；快捷操作区新增“搜索模型库”按钮，并保留“填入相关模型”“填充所有模型”“全部复制”“清除全部”等原有能力。
-6. 打开/关闭抽屉时会同步关闭模型库搜索对话框；对话框只调用当前表单草稿更新函数，不直接触发渠道保存。
-7. 新增 `Add selected models` 与 `Search model metadata and add selected matches to this channel draft.` 六语翻译，并运行 `bun run i18n:sync`。
-8. 新对话框使用项目已有 `InputGroup`、`Empty`、`Spinner`、`Tabs`、`Checkbox`、`Badge`、`Button` 和 Hugeicons 搜索图标；checkbox 通过 `aria-labelledby` 关联文本，避免新增 Base UI checkbox 的 `label for` 可访问性问题。
-9. 本轮未修改后端模型搜索接口、渠道保存接口、数据库结构、relay、计费、权限模型、公共 `MultiSelect` API 或 `/opt/project/new-api-main` 源码。
+1. 已删除 `web/default/src/features/channels/components/dialogs/model-library-search-dialog.tsx`，编辑渠道页不再存在独立“搜索模型库”弹窗入口。
+2. `channel-mutate-drawer.tsx` 已恢复内联模型元信息搜索：输入关键词后调用 `searchModels({ keyword, vendor, p: 1, page_size: 50 })`，候选通过 `getModelSearchModelNames()` 展开为真实模型名。
+3. 模型选择器下拉 footer 已恢复搜索摘要、可新增预览、全量分页扫描和批量追加按钮；当前渠道已有模型会通过 `getMissingModelSearchMatches()` 排除，避免重复写入。
+4. 批量追加保留请求序号和上下文校验，并在写入前重新读取表单最新模型草稿，避免旧搜索结果污染当前编辑状态。
+5. `MultiSelect` 保留自定义模型能力，但存在真实匹配候选时不会把 `gpt-5.6` 这样的系列前缀创建为裸模型。
+6. 清理了仅服务独立弹窗的 `Add selected models` 与 `Search model metadata and add selected matches to this channel draft.` 六语翻译，并运行 `bun run i18n:sync`。
+7. 本轮未修改后端模型搜索接口、渠道保存接口、数据库结构、relay、计费、权限模型或 `/opt/project/new-api-main` 源码。
 
 ### 验证记录
 
 1. 已运行 `cd web/default && bun run i18n:sync`，同步完成。
-2. 已运行 `cd web/default && bunx eslint src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/components/dialogs/model-library-search-dialog.tsx`，ESLint 通过。
-3. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts`，72 个用例全部通过。
+2. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts`，49 个用例全部通过，其中包含 `gpt-5.6` 搜索缺失项计算、搜索摘要、分页提示和上下文校验。
+3. 已运行 `cd web/default && bunx eslint --no-ignore src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.tsx src/components/multi-select.test.ts`，无错误；`multi-select.tsx` 仍有既有 Fast Refresh warning，本轮未新增。
 4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
 5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
 6. 已运行 `git diff --check`，未发现空白错误。
-7. MCP 重新访问 `http://192.168.0.202:3003/channels?postcheck=1784035000002`，确认页面热更新生效，渠道列表展示渠道 `11111`。
-8. MCP 打开渠道 `11111` 编辑抽屉，模型区显示 `已选 3 个`、`供应商: OpenAI`，初始模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，并显示“搜索模型库”快捷按钮。
-9. MCP 点击“搜索模型库”后，对话框标题、描述、渠道名 `11111` 和供应商 `OpenAI` 正常展示，搜索框可聚焦输入。
-10. MCP 输入 `gpt-5.6`，真实请求为 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`；对话框显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`。
-11. MCP 确认“新模型 (2)”页签内 `gpt-5.6-terra` 与 `gpt-5.6-luna` 默认勾选；“现有模型 (1)”页签内 `gpt-5.6-sol` 显示为已存在且禁用。
-12. MCP 点击“添加选中模型 (2)”后，对话框关闭，表单草稿显示 `已选 5 个`，新增模型为 `gpt-5.6-terra` 与 `gpt-5.6-luna`。
-13. MCP 网络请求确认只有读取请求：`GET /api/channel/1`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 等，没有渠道保存类 `PUT/POST /api/channel` 写请求。
-14. MCP 读取真实页面请求 `GET /api/channel/1` 的响应体，后端仍返回 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认搜索添加只影响当前表单草稿，未污染运行态渠道配置。
-15. MCP 控制台没有 JavaScript runtime `error` 或 `warn`。当前编辑抽屉仍保留两个既有 Chrome 表单建议 issue：名称输入缺少 `autocomplete`，以及部分 `FormLabel` 与 Base UI combobox/select trigger 的 `label for` 关联不完全；DOM 检查确认新模型搜索对话框的 checkbox 不再生成此类 `label for` 问题，本轮不扩大到全局表单基础组件重构。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postcheck=1784159200000`，打开渠道 `11111` 编辑抽屉，确认模型区快捷操作只剩“填入相关模型 / 填充所有模型 / 全部复制 / 清除全部”，不再出现独立“搜索模型库”按钮。
+8. MCP 在 `Models` 多选框内输入 `gpt-5.6`，页面请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，下拉 footer 显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，并预览将添加 `gpt-5.6-terra, gpt-5.6-luna`。
+9. MCP 点击“添加 2 个新模型”后，页面继续请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 扫描全部搜索结果，表单草稿变为 `已选 5 个`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，没有重复添加已存在的 `gpt-5.6-sol`。
+10. MCP 网络请求确认没有 `PUT/POST /api/channel` 写请求；读取 `GET /api/channel/1` 响应体，后端仍为 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认本轮搜索添加只影响当前表单草稿。
+11. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：登录/表单 autocomplete 提示 1 个、部分 Base UI 表单 `label for` 关联提示 3 个，本轮未扩大该问题。
