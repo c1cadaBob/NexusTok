@@ -30,7 +30,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DataTableColumnHeader } from '@/components/data-table'
+import { DataTableColumnHeader, TruncatedCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { API_KEY_STATUSES } from '../constants'
@@ -101,9 +101,9 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
         <DataTableColumnHeader column={column} title={t('Name')} />
       ),
       cell: ({ row }) => (
-        <div className='max-w-[200px] truncate font-medium'>
+        <TruncatedCell className='max-w-[200px] font-medium'>
           {row.getValue('name')}
-        </div>
+        </TruncatedCell>
       ),
       meta: { label: t('Name'), mobileTitle: true },
     },

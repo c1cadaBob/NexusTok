@@ -14054,3 +14054,67 @@ NexusTok 前一轮将模型库搜索迁移到独立 `ModelLibrarySearchDialog`�
 9. MCP 点击“添加 2 个新模型”后，页面继续请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=100` 扫描全部搜索结果，表单草稿变为 `已选 5 个`，新增 `gpt-5.6-terra` 与 `gpt-5.6-luna`，没有重复添加已存在的 `gpt-5.6-sol`。
 10. MCP 网络请求确认没有 `PUT/POST /api/channel` 写请求；读取 `GET /api/channel/1` 响应体，后端仍为 `models = "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，确认本轮搜索添加只影响当前表单草稿。
 11. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：登录/表单 autocomplete 提示 1 个、部分 Base UI 表单 `label for` 关联提示 3 个，本轮未扩大该问题。
+
+## 本轮实施评审：DataTable TruncatedCell 单元格原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table/core/truncated-cell.tsx` 与当前 NexusTok 的 DataTable 组件后确认：new-api 已把表格文本截断和完整值 tooltip 抽成 `TruncatedCell`，并在 API Key 等表格列中复用。NexusTok 当前已经原生化了 DataTable README、移动卡片、桌面卡片视图切换和 `BadgeListCell`，但部分表格文本列仍在业务列定义中手写 `max-w + truncate`，没有统一完整值查看入口。
+
+该能力属于低风险展示层增强：不改变列表请求、分页、筛选、批量操作、权限或任何后端数据，只让被截断的表格文本有一致的完整内容 tooltip。NexusTok 现有 `LongText`/`TruncatedText` 会基于 DOM 溢出做桌面 tooltip 与移动 Popover，适合普通文本；本轮新增的 `DataTable TruncatedCell` 更适合表格核心单元格，先接入 API Key 和兑换码两个高频管理表格的名称列。
+
+### 需求分析
+
+1. 在 NexusTok DataTable 组件中补齐一个原生 `TruncatedCell`，吸收 new-api 的单元格抽象优势，但保留本项目 Base UI `TooltipTrigger render` 用法和中文注释规范。
+2. API Key 列表和兑换码列表的 `Name` 列应继续保持单行截断布局，同时 hover/focus 时可查看完整名称。
+3. 新组件应从 `@/components/data-table` 统一导出，后续表格列可渐进复用，不要求一次性改完整站。
+4. 本轮不修改 Go 后端、数据库、权限、列表 API、分页、筛选、批量操作、行操作、安全查看密钥、兑换码复制或 `/opt/project/new-api-main` 源码。
+5. 本轮不新增可见文案，因此不需要新增翻译 key；仍需运行 i18n 同步确认未引入缺口。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| DataTable 组件 | `web/default/src/components/data-table/truncated-cell.tsx` | 新增统一截断单元格，使用 tooltip 展示完整文本。 |
+| DataTable 导出 | `web/default/src/components/data-table/index.ts` | 导出 `TruncatedCell` 供业务表格复用。 |
+| API Key 表格 | `web/default/src/features/keys/components/api-keys-columns.tsx` | `Name` 列从手写 `div.truncate` 改为 `TruncatedCell`。 |
+| 兑换码表格 | `web/default/src/features/redemption-codes/components/redemptions-columns.tsx` | `Name` 列从手写 `div.truncate` 改为 `TruncatedCell`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 表格布局风险：`TruncatedCell` 必须保持 `max-w`、`min-w-0` 与 `truncate` 语义，避免名称列撑宽 API Key 或兑换码表格。
+2. Tooltip 组合风险：项目使用 Base UI，触发器必须使用 `render`，不能引入 Radix 风格 `asChild`。
+3. 可访问性风险：名称列只是文本补充 tooltip，不能吞掉行操作按钮、复选框或安全密钥查看按钮的焦点行为。
+4. 移动端风险：`DataTablePage` 在手机端有专用移动卡片，本轮只改桌面列定义；移动卡片仍使用各页面现有渲染，不改变交互密度。
+5. 范围风险：new-api 的 DataTable core 还包含 `DataTableView`、静态表格、列宽与 pinning 等更大能力；本轮只迁移最小 `TruncatedCell`，避免一次性重写表格核心。
+
+### 方案评审
+
+采用“新增共享单元格 + 两个页面先行接入”的渐进方案：
+
+1. 新增 `web/default/src/components/data-table/truncated-cell.tsx`，使用本项目现有 `Tooltip`、`TooltipTrigger`、`TooltipContent` 与 `cn()`。
+2. 组件 API 保持接近 new-api：`children`、`className`、`cellClassName`、`contentClassName`、`tooltipContent`、`tooltipClassName` 和 `side`；默认 tooltip 内容从字符串/数字 children 提取。
+3. `DataTable` index 统一导出该组件，方便后续表格列逐步替换重复截断写法。
+4. API Key 和兑换码名称列保留原有 `max-w` 与 `font-medium`，只替换最内层渲染组件。
+5. 验证顺序：`bun run i18n:sync`、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 的 `/keys` 和 `/redemption-codes`，确认表格正常渲染、名称列仍截断且 tooltip 可见、控制台无新增错误。
+
+### 实施结果
+
+1. 已新增 `TruncatedCell`，表格文本列可以统一使用单行截断和完整值 tooltip。
+2. API Key 表格 `Name` 列已接入 `TruncatedCell`，保留 `max-w-[200px] font-medium`。
+3. 兑换码表格 `Name` 列已接入 `TruncatedCell`，保留 `max-w-[150px] font-medium`。
+4. `TruncatedCell` 已从 `@/components/data-table` 导出，后续 DataTable 分层可以继续按页面渐进接入。
+5. 本轮没有修改后端接口、数据库、权限、筛选分页、批量操作、行操作、安全密钥查看、兑换码复制或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮没有新增可见翻译 key。
+2. 已运行 `cd web/default && bunx eslint --no-ignore src/components/data-table/truncated-cell.tsx src/components/data-table/index.ts src/features/keys/components/api-keys-columns.tsx src/features/redemption-codes/components/redemptions-columns.tsx`，ESLint 通过。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 访问 `http://192.168.0.202:3003/keys?postcheck=1784160500000`，确认 API Key 页面正常渲染现有行，名称列显示 `11`，API Key、额度、分组、模型限制、IP 限制和行操作布局正常。
+7. MCP 在 `/keys` 页面通过 DOM 检查确认名称 `11` 已由 `TruncatedCell` 的 `data-slot="tooltip-trigger"` 包裹，class 为 `block min-w-0 truncate max-w-[200px] font-medium`，完整值 tooltip 触发器已接入。
+8. MCP 访问 `http://192.168.0.202:3003/redemption-codes?postcheck=1784160500000`，确认兑换码页面正常渲染表头和空态，请求 `GET /api/redemption/?p=1&page_size=20` 返回 200；当前环境没有兑换码数据，因此验证范围为页面加载、表头、空态和无 runtime 错误。
+9. MCP 控制台检查 `/keys` 与 `/redemption-codes`，均没有 JavaScript `error`、`warn` 或浏览器 `issue`。

@@ -25,7 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DataTableColumnHeader } from '@/components/data-table'
+import { DataTableColumnHeader, TruncatedCell } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { REDEMPTION_FILTER_EXPIRED, REDEMPTION_STATUSES } from '../constants'
 import { isRedemptionExpired, isTimestampExpired } from '../lib'
@@ -77,9 +77,9 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       ),
       cell: ({ row }) => {
         return (
-          <div className='max-w-[150px] truncate font-medium'>
+          <TruncatedCell className='max-w-[150px] font-medium'>
             {row.getValue('name')}
-          </div>
+          </TruncatedCell>
         )
       },
     },
