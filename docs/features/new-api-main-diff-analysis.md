@@ -15422,3 +15422,73 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 7. MCP 控制台中未出现新的 runtime error；仅有一条 i18next 的 info 提示和一条 `nexustok-build` debug 输出，不属于业务异常。
 8. MCP 网络面板中，本轮根导航页和系统设置页相关文档、脚本、样式和 API 请求均返回 `200`，包括 `POST /api/user/login?turnstile=`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`、`GET /api/token/`、`GET /api/data/self`、`GET /api/perf-metrics/summary`、`GET /api/uptime/status` 等，未观察到新的失败请求。
 9. 本轮 3003 页面已直接反映热更新后的实现，未触发容器重启流程。
+
+## 本轮实施评审：Header Navigation 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/maintenance/header-navigation-section.tsx` 与当前默认前端后确认：NexusTok 虽然已经原生化了 `SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsForm`、`SettingsControlGroup` 等系统设置共享基座，但 `/system-settings/site/header-navigation` 这页仍停留在旧实现：
+
+1. 保存/重置按钮固定在内容底部，没有进入系统设置页头动作区。
+2. 页面没有未保存脏态徽标，也没有离开页面前的统一确认拦截。
+3. 开关卡片仍使用旧的 `FormItem + border` 手写结构，没有复用当前项目已经稳定的设置表单布局组件。
+
+这类差异不会影响后端配置结构，但会让系统设置在同一工作区内出现“新旧两套表单体验”并存的裂缝。由于当前项目已经具备完整共享能力，这属于典型的“优势没有继续转成当前项目原生页面能力”的尾差。
+
+### 需求分析
+
+1. `/system-settings/site/header-navigation` 需要接入当前项目原生的系统设置页头动作区，让“重置为默认”“保存导航”与其它已升级分区保持同一交互位置。
+2. 页面需要展示未保存脏态，并在用户尝试离开当前分区时使用统一确认对话框拦截，避免误丢草稿。
+3. 页面内部的开关分组应复用 `SettingsForm`、`SettingsSwitchItem`、`SettingsControlGroup`、`SettingsControlChildren` 等共享布局，而不是继续保留旧式手写结构。
+4. `HeaderNavModules` 的默认值解析、序列化结果、保存接口、权限禁用原因和 `status` 刷新语义必须保持不变。
+5. “重置为默认”只能修改当前草稿，不能把默认值误记成新的已保存基线；否则管理员点击保存时会丢失 dirtyFields，无法真正把配置恢复为平台默认值。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 顶部导航设置页 | `web/default/src/features/system-settings/maintenance/header-navigation-section.tsx` | 将页面从 `useForm` 旧实现迁到 `useSettingsForm`、页头动作区和统一设置表单布局。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `HeaderNavModules` 直接影响公开首页、Pricing、Rankings 和后台顶部导航；如果本轮改变了序列化字段或默认值，可能导致全站导航配置偏移。
+2. `useSettingsForm` 会在提交后重置基线；如果“重置为默认”直接调用普通 `form.reset(defaults)`，会把默认值误当成已保存值，随后点击保存时 dirtyFields 清空，恢复默认配置路径失效。
+3. 页面保存权限仍由 `useUpdateOption()` 控制，不能因为迁移到共享动作区而绕过 `canUpdate/disabledReason`。
+4. 这页属于真实运行中的全局配置页，必须在 `http://192.168.0.202:3003/` 运行态验证热更新结果和真实 `PUT /api/option/` 保存链路，不能只依赖本地静态检查。
+
+### 方案评审
+
+采用“只迁前端表单基座，不改配置合同”的最小方案：
+
+1. 保留现有 `headerNavSchema`、`toFormValues()`、`serializeHeaderNavModules()` 和 `updateOption.mutateAsync({ key: 'HeaderNavModules' })` 路径。
+2. 把页面从 `react-hook-form useForm` 旧写法迁移到项目已有的 `useSettingsForm()`，让无改动不提交、成功后刷新基线和 toast 行为保持与其它设置页一致。
+3. 使用 `SettingsPageFormActions` 将保存/重置按钮提升到页头动作区，并接入 `updateOption.canUpdate` 与 `disabledReason`。
+4. 使用 `FormDirtyIndicator` 与 `FormNavigationGuard` 提供未保存状态徽标和离开确认拦截。
+5. 使用 `SettingsSwitchItem`、`SettingsSwitchContent`、`SettingsControlGroup`、`SettingsControlChildren` 收口开关布局。
+6. 针对“重置为默认后仍需允许保存默认配置”的特殊路径，在 `resetToDefault()` 中使用 `form.reset(defaults, { keepDefaultValues: true })`，只修改草稿值，不覆盖已保存基线。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/maintenance/header-navigation-section.tsx` 已迁移到 `useSettingsForm()`，保留 `HeaderNavModules` 解析和序列化逻辑不变。
+2. 页面已新增 `FormNavigationGuard` 和 `FormDirtyIndicator`，未保存时标题区域会显示“未保存的更改”状态，并在离开页面时弹出确认对话框。
+3. 保存/重置按钮已通过 `SettingsPageFormActions` 进入页头动作区，不再固定在页面底部。
+4. 顶部导航的普通开关和需要附属 `requireAuth` 的访问控制开关，已分别改为 `SettingsSwitchItem` 和 `SettingsControlGroup + SettingsControlChildren` 组合，视觉和信息层级与当前系统设置共享样式一致。
+5. 保存按钮继续消费 `updateOption.canUpdate` 与 `disabledReason`，没有改变 `system_setting.sensitive_write` 的权限边界。
+6. 本轮在真实运行态验证时额外发现一个细节风险：若“重置为默认”直接覆写表单默认基线，会导致后续无法真正保存默认配置。最终已通过 `keepDefaultValues: true` 修正该路径。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/maintenance/header-navigation-section.tsx`：通过。
+2. 已运行 `cd web/default && bun run typecheck`：通过。
+3. 已运行 `cd web/default && bun run build`：通过。
+4. 已运行 `git diff --check`：通过。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/site/header-navigation?verify=20260716-header-nav-actions-clean`，确认页面热更新生效，保存/重置按钮已位于标题右侧页头动作区，而不是页面底部。
+6. 在同一 3003 页面中手动切换“主页”开关后，标题更新为“顶部导航 未保存的更改”，说明脏态徽标已正常显示。
+7. 点击系统设置侧栏中的“系统信息”时，页面弹出“未保存的更改”确认对话框；取消离开后停留在当前页，说明统一离开拦截已生效。
+8. 继续在该页面执行两次真实保存：
+   - 第一次关闭“主页”开关后点击“保存导航”，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`。
+   - 第二次点击“重置为默认”后再次点击“保存导航”，页面再次提示“设置更新成功”，并再次产生 `PUT /api/option/ [200]`，证明“重置为默认后仍可真正保存默认配置”的路径已修复。
+9. MCP 控制台仅剩既有的 i18next info 和 `nexustok-build` debug，没有新的 `error`、`warn` 或 `issue`。
+10. MCP 网络面板中，本轮页面加载与交互相关请求均返回 `200`，关键请求包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`，未出现新的失败请求。
+11. 热更新已在 3003 页面直接体现，本轮未触发容器重启流程。

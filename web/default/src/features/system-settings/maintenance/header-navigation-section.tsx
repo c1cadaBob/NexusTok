@@ -16,24 +16,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
 import { parseHeaderNavBoolean } from '@/lib/nav-modules'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
   FormDescription,
   FormField,
-  FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsControlChildren,
+  SettingsControlGroup,
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
   HEADER_NAV_DEFAULT,
@@ -114,49 +123,6 @@ export function HeaderNavigationSection({
   const updateOption = useUpdateOption()
   const formDefaults = useMemo(() => toFormValues(config), [config])
 
-  const form = useForm<HeaderNavFormValues>({
-    resolver: zodResolver(headerNavSchema),
-    defaultValues: formDefaults,
-  })
-
-  useEffect(() => {
-    form.reset(formDefaults)
-  }, [formDefaults, form])
-
-  const onSubmit = async (values: HeaderNavFormValues) => {
-    const payload: HeaderNavModulesConfig = {
-      ...config,
-      home: values.home,
-      console: values.console,
-      docs: values.docs,
-      about: values.about,
-      pricing: {
-        ...(config.pricing ?? HEADER_NAV_DEFAULT.pricing),
-        enabled: values.pricingEnabled,
-        requireAuth: values.pricingRequireAuth,
-      },
-      rankings: {
-        ...(config.rankings ?? HEADER_NAV_DEFAULT.rankings),
-        enabled: values.rankingsEnabled,
-        requireAuth: values.rankingsRequireAuth,
-      },
-    }
-
-    const serialized = serializeHeaderNavModules(payload)
-    if (serialized === initialSerialized) {
-      return
-    }
-
-    await updateOption.mutateAsync({
-      key: 'HeaderNavModules',
-      value: serialized,
-    })
-  }
-
-  const resetToDefault = () => {
-    form.reset(toFormValues(HEADER_NAV_DEFAULT))
-  }
-
   const simpleModules: Array<{
     key: keyof HeaderNavFormValues
     title: string
@@ -217,27 +183,88 @@ export function HeaderNavigationSection({
     },
   ]
 
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<HeaderNavFormValues>({
+      resolver: zodResolver(headerNavSchema) as Resolver<
+        HeaderNavFormValues,
+        unknown,
+        HeaderNavFormValues
+      >,
+      defaultValues: formDefaults,
+      onSubmit: async (values) => {
+        const payload: HeaderNavModulesConfig = {
+          ...config,
+          home: values.home,
+          console: values.console,
+          docs: values.docs,
+          about: values.about,
+          pricing: {
+            ...(config.pricing ?? HEADER_NAV_DEFAULT.pricing),
+            enabled: values.pricingEnabled,
+            requireAuth: values.pricingRequireAuth,
+          },
+          rankings: {
+            ...(config.rankings ?? HEADER_NAV_DEFAULT.rankings),
+            enabled: values.rankingsEnabled,
+            requireAuth: values.rankingsRequireAuth,
+          },
+        }
+
+        const serialized = serializeHeaderNavModules(payload)
+        if (serialized === initialSerialized) {
+          return
+        }
+
+        await updateOption.mutateAsync({
+          key: 'HeaderNavModules',
+          value: serialized,
+        })
+      },
+    })
+
+  const resetToDefault = () => {
+    // 这里只重置当前草稿到平台默认值，但不能把默认值误记为“已保存基线”，
+    // 否则后续点击保存时 dirtyFields 会被清空，无法真正提交默认配置。
+    form.reset(toFormValues(HEADER_NAV_DEFAULT), {
+      keepDefaultValues: true,
+    })
+  }
+
   return (
     <SettingsSection
       title={t('Header navigation')}
       description={t('Enable or disable top navigation modules globally.')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
-          <div className='grid gap-4 md:grid-cols-2'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={resetToDefault}
+            isSaving={isSubmitting || updateOption.isPending}
+            isSaveDisabled={!updateOption.canUpdate}
+            saveDisabledReason={updateOption.disabledReason}
+            resetLabel='Reset to default'
+            saveLabel='Save navigation'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
+          <div
+            data-settings-form-span='full'
+            className='grid gap-4 md:grid-cols-2'
+          >
             {simpleModules.map((module) => (
               <FormField
                 key={module.key}
                 control={form.control}
                 name={module.key}
                 render={({ field }) => (
-                  <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                    <div className='space-y-0.5 pe-4'>
-                      <FormLabel className='text-base'>
-                        {module.title}
-                      </FormLabel>
+                  <SettingsSwitchItem className='rounded-xl border px-4 py-3.5'>
+                    <SettingsSwitchContent className='pe-4'>
+                      <FormLabel>{module.title}</FormLabel>
                       <FormDescription>{module.description}</FormDescription>
-                    </div>
+                    </SettingsSwitchContent>
                     <FormControl>
                       <Switch
                         checked={field.value}
@@ -245,26 +272,30 @@ export function HeaderNavigationSection({
                       />
                     </FormControl>
                     <FormMessage />
-                  </FormItem>
+                  </SettingsSwitchItem>
                 )}
               />
             ))}
           </div>
 
-          <div className='grid gap-4 lg:grid-cols-2'>
+          <div
+            data-settings-form-span='full'
+            className='grid gap-4 lg:grid-cols-2'
+          >
             {accessModules.map((module) => (
-              <div key={module.enabledKey} className='rounded-lg border p-4'>
+              <SettingsControlGroup
+                key={module.enabledKey}
+                className='gap-4 rounded-xl px-4 py-3.5'
+              >
                 <FormField
                   control={form.control}
                   name={module.enabledKey}
                   render={({ field }) => (
-                    <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                      <div className='space-y-0.5 pe-4'>
-                        <FormLabel className='text-base'>
-                          {module.title}
-                        </FormLabel>
+                    <SettingsSwitchItem className='py-0'>
+                      <SettingsSwitchContent className='pe-4'>
+                        <FormLabel>{module.title}</FormLabel>
                         <FormDescription>{module.description}</FormDescription>
-                      </div>
+                      </SettingsSwitchContent>
                       <FormControl>
                         <Switch
                           checked={field.value}
@@ -272,7 +303,7 @@ export function HeaderNavigationSection({
                         />
                       </FormControl>
                       <FormMessage />
-                    </FormItem>
+                    </SettingsSwitchItem>
                   )}
                 />
 
@@ -280,45 +311,30 @@ export function HeaderNavigationSection({
                   control={form.control}
                   name={module.requireAuthKey}
                   render={({ field }) => (
-                    <FormItem className='mt-4 flex flex-row items-start justify-between rounded-lg border border-dashed p-4'>
-                      <div className='space-y-0.5 pe-4'>
-                        <FormLabel className='text-base'>
-                          {module.requireAuthTitle}
-                        </FormLabel>
-                        <FormDescription>
-                          {module.requireAuthDescription}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          disabled={!form.watch(module.requireAuthDependsOn)}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                    <SettingsControlChildren className='pl-4'>
+                      <SettingsSwitchItem className='py-0'>
+                        <SettingsSwitchContent className='pe-4'>
+                          <FormLabel>{module.requireAuthTitle}</FormLabel>
+                          <FormDescription>
+                            {module.requireAuthDescription}
+                          </FormDescription>
+                        </SettingsSwitchContent>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            disabled={!form.watch(module.requireAuthDependsOn)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </SettingsSwitchItem>
+                    </SettingsControlChildren>
                   )}
                 />
-              </div>
+              </SettingsControlGroup>
             ))}
           </div>
-
-          <div className='flex flex-wrap gap-3'>
-            <Button type='button' variant='outline' onClick={resetToDefault}>
-              {t('Reset to default')}
-            </Button>
-            <Button
-              type='submit'
-              disabled={updateOption.isPending || !updateOption.canUpdate}
-              title={
-                updateOption.canUpdate ? undefined : updateOption.disabledReason
-              }
-            >
-              {updateOption.isPending ? t('Saving...') : t('Save navigation')}
-            </Button>
-          </div>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
