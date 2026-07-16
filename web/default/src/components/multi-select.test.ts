@@ -142,7 +142,7 @@ describe('MultiSelect 空搜索删除键保护', () => {
 })
 
 describe('MultiSelect 搜索提交键盘行为', () => {
-  test('启用后存在候选时 Enter 优先提交搜索追加', () => {
+  test('启用后存在候选时 Enter 优先交给调用方搜索提交', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({
         submitSearchOnEnterWithMatches: true,
@@ -171,7 +171,7 @@ describe('MultiSelect 搜索提交键盘行为', () => {
     )
   })
 
-  test('显式开启后高亮候选时 Enter 也提交搜索追加', () => {
+  test('显式开启后高亮候选时 Enter 也交给调用方搜索提交', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({
         submitSearchOnEnterWithMatches: true,

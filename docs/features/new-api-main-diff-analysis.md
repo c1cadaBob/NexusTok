@@ -14264,3 +14264,74 @@ NexusTok 当前已经原生化了 `BadgeListCell`、`TruncatedCell` 和 `StaticD
 9. MCP 在 `/models/metadata` 页面执行 DOM 检查，确认表格中有 80 个 `badge-cell` 和 180 个 `status-badge`；模型名、状态、供应商、官方同步列均进入 `BadgeCell`，页面仍显示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
 10. MCP 在模型页点击 `部署` tab，跳转到 `http://192.168.0.202:3003/models/deployments`，当前环境显示“模型部署服务未启用”，无法验证部署表格行级 DOM；已确认 `GET /api/deployments/settings` 返回 200，页面提示正常，控制台无错误。
 11. MCP 访问 `http://192.168.0.202:3003/subscriptions?postcheck=1784247200000`，确认订阅管理页面正常渲染空态 `暂无订阅套餐`，请求 `GET /api/subscription/admin/plans` 和 `GET /api/option/` 均返回 200；当前环境无订阅套餐数据，无法验证订阅行级 DOM，控制台无 `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：编辑渠道 Models 页面与 new-api 最新版对齐
+
+### 差异来源
+
+对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 与当前 NexusTok 后确认：new-api 最新版编辑渠道页的 `Models & Groups` 区域保持“模型多选 + 已选数量 + 快捷操作 + 模型映射 + 分组”的清晰结构，不在 `Models` 下拉 footer 中提供“搜索模型库 / 添加搜索结果 / 扫描全部搜索结果”的批量追加入口。
+
+NexusTok 当前在此前原生化过程中额外加入了模型元数据远程搜索与批量追加 footer。该能力本意是让已同步到模型库但尚未暴露到任何渠道的模型可被选中，例如 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。但它也引入了与 new-api 页面不同的行为：搜索输入既是过滤器，又会触发远程查询和“添加 N 个新模型”按钮；已选模型还会在搜索时被隐藏，管理员容易把“搜索候选”和“批量写入表单草稿”混为一谈。用户反馈“搜索添加时不正确”后，本轮按 new-api 最新版页面形态收敛交互。
+
+### 需求分析
+
+1. 编辑渠道页需要与 new-api 最新版模型区对齐：保留 `Models` 多选、已选数量、快捷操作、上游拉取、模型映射和分组，不再显示额外供应商徽章、搜索结果 footer 或批量添加按钮。
+2. 搜索 `gpt-5.6` 时，应表现为普通多选搜索：展示可选候选，管理员逐项选择；不应通过 footer 一次性批量修改模型草稿。
+3. NexusTok 仍需保留模型元数据候选补齐能力，因为 `/api/channel/models` 只代表当前渠道能力集合，不等同于完整模型元数据表；已同步但未加入渠道的模型仍应能在搜索后出现在候选中。
+4. 保留 OpenAI/Codex 渠道的默认供应商过滤能力，但作为后台候选收敛，不再在编辑页显示额外 `Vendor: OpenAI` badge。
+5. 本轮不修改后端接口、数据库、权限、渠道保存 payload、账号池模式、上游拉取弹窗、模型映射保护、分组选择或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 编辑渠道抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除搜索批量追加状态、footer、按钮和供应商展示 badge；保留远程候选补齐。 |
+| 通用多选组件 | `web/default/src/components/multi-select.tsx`、`multi-select.test.ts` | 将通用搜索提交能力的注释和测试标题从“搜索追加”改为中性“搜索提交”，避免误导后续维护。 |
+| 渠道模型搜索工具 | `web/default/src/features/channels/lib/model-search.ts` | 删除不再被页面使用的搜索批量追加计划、分页提示和上下文校验工具，保留去重、合并、候选提取和默认供应商推导。 |
+| 渠道模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 删除批量追加专属用例，保留模型草稿、去重、候选提取和供应商推导测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 候选完整性风险：如果完全删除模型元数据搜索，`gpt-5.6-terra/luna/sol` 这类已同步但未进入渠道能力表的模型可能无法在编辑渠道页选中；因此本轮只移除“搜索后批量添加”，不删除远程候选补齐。
+2. 交互风险：移除 footer 后，管理员需要在下拉候选中逐项选择模型；这是 new-api 最新版的更明确行为，但需要验证搜索 `gpt-5.6` 时三个候选都能看到。
+3. 表单草稿风险：模型搜索不再直接批量写 `models` 字段，能降低误把搜索关键词或过期搜索结果写入表单的风险；仍需确认手动选择、快捷填充和预设分组继续走 `updateModels`/`handleModelsChange`。
+4. 权限风险：普通写权限和敏感写权限边界不能变化；禁用态、上游拉取、保存提交仍沿用既有 guard。
+5. i18n 风险：本轮不新增可见文案，但会减少页面上使用的文案；仍需运行 `bun run i18n:sync` 确认翻译文件状态。
+6. 热更新风险：页面部署在 Docker 3003，修改后必须访问 `http://192.168.0.202:3003/` 或对应页面确认热更新生效；如页面无变化，需要先重启容器再验证。
+
+### 方案评审
+
+采用“页面对齐 + 候选补齐保留”的最小风险方案：
+
+1. `Models` 标题右侧只保留 `Selected {{count}}` badge，与 new-api 页面结构一致，移除 `Vendor: OpenAI / All Vendors` 展示。
+2. `MultiSelect` 继续使用 `searchValue/onSearchChange` 触发模型元数据查询，并把 `modelSearchModelNames` 合并进 `modelOptions`，保证模型库候选可见。
+3. 删除 `contentFooter`、`onSearchSubmit`、`submitSearchOnEnterWithMatches`、`hideSelectedOptionsWhenSearching`、`modelSelectOpen`、批量追加按钮、分页扫描提示和相关异步追加函数。
+4. 保留 `allowCreateWithMatches={false}`，避免输入 `gpt-5.6` 这类系列前缀时在已有候选情况下误创建不完整自定义模型。
+5. 保留 `preserveSelectedOnEmptyRemovalKey`，避免空搜索时 Backspace/Delete 误删已有模型芯片；这是 NexusTok 原生安全增强，不改变页面结构。
+6. 删除不再使用的搜索批量追加纯函数和测试，减少后续维护误判。
+7. 验证顺序：`bun run i18n:sync`、定向 `bun test`、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 的 `/channels` 编辑渠道，搜索 `gpt-5.6`，确认候选和页面形态。
+
+### 实施结果
+
+1. 已将编辑渠道 `Models` 区域对齐 new-api 最新版页面形态：标题右侧只保留 `Selected {{count}}`，不再展示 `Vendor: OpenAI / All Vendors` 额外 badge。
+2. 已删除 `Models` 多选下拉 footer 中的 `Search results`、命中/可新增/已存在统计、`Will add` 预览、`Scan all search results` 和 `Add {{count}} new model(s)` 批量按钮。
+3. 已删除搜索批量追加的异步扫描函数、请求序列 ref、追加 loading 状态、旧上下文校验和页面写入 handler；搜索输入不再直接批量修改 `models` 表单草稿。
+4. 已保留模型元数据远程候选补齐：搜索 `gpt-5.6` 时仍请求 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，并把返回模型作为 `Models` 多选候选，管理员可以逐项选择。
+5. 已拆分 `baseModelOptions` 与 `modelOptions`：模型映射目标候选只使用系统模型和当前渠道模型，不再被 `Models` 搜索框的临时远程候选污染。
+6. 已删除不再使用的搜索批量追加纯函数、类型和测试用例，保留模型草稿解析、去重合并、模型搜索候选提取和渠道类型默认供应商推导。
+7. 已同步清理 `MultiSelect` 的注释和测试标题，把已不用于渠道页的“搜索追加”描述改为通用“搜索提交”描述。
+8. 本轮没有修改后端接口、数据库、权限、渠道保存 payload、账号池模式、上游拉取弹窗、模型映射保护、分组选择或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮没有新增可见翻译 key。
+2. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts`，37 个用例全部通过。
+3. 已运行 `cd web/default && bunx eslint --no-ignore src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.tsx src/components/multi-select.test.ts`，无错误；`multi-select.tsx` 仍有 6 个既有 Fast Refresh warning，本轮未新增。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postedit=1784162053831`，打开渠道 `11111` 编辑抽屉，确认模型区只显示 `已选 3 个`，不再显示 `供应商: OpenAI`，也不再显示 `搜索结果`、`扫描全部搜索结果` 或 `添加 N 个新模型` footer。
+8. MCP 在 `Models` 多选输入 `gpt-5.6`，确认下拉候选显示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型，且没有批量添加按钮。
+9. MCP 网络请求确认页面触发 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，保留 OpenAI/Codex 渠道默认供应商候选收敛；本轮操作没有触发 `PUT/POST /api/channel` 保存写请求。
+10. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：登录/表单 autocomplete 提示 1 个、部分 Base UI 表单 `label for` 关联提示 3 个，本轮未扩大该问题。

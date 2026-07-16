@@ -219,9 +219,8 @@ export function shouldSubmitMultiSelectSearchOnEnter({
   if (inputValue.trim().length === 0) return false
   if (hasHighlightedOption && !submitSearchOnEnterWhenHighlighted) return false
 
-  // 渠道模型搜索里，输入 gpt-5.6 这类系列前缀时，Enter 应优先解释为
-  // “提交当前搜索并批量补齐命中模型”。如果没有任何候选且也不在搜索中，
-  // 则继续交给原有自定义模型创建逻辑处理，避免禁用真正的自定义能力。
+  // 受控搜索场景里，存在候选或远程搜索仍在进行时，Enter 应优先交给调用方的
+  // 搜索提交处理；没有候选且未搜索时继续保留自定义值创建路径。
   return isLoading || hasMatchingOption
 }
 

@@ -22,7 +22,7 @@ export function normalizeModelSearchKey(model: string): string {
 }
 
 // 渠道模型列表在前端草稿中统一按 trim + lower 去重，并保留首次出现的展示形式。
-// 这样搜索追加、自定义输入、预设分组和手动选择不会因为大小写差异生成重复模型。
+// 这样自定义输入、预设分组、模型映射补齐和手动选择不会因为大小写差异生成重复模型。
 export function dedupeModelNames(models: readonly string[]): string[] {
   const seenKeys = new Set<string>()
   const dedupedModels: string[] = []
@@ -56,41 +56,9 @@ type ModelSearchItemLike = {
   matched_count?: number | null
 }
 
-export type ModelSearchAppendPlan = {
-  missingModels: string[]
-  previewModels: string[]
-  omittedCount: number
-  totalCount: number
-}
-
-export type ModelSearchAppendSummary = {
-  matchedCount: number
-  addableCount: number
-  existingCount: number
-}
-
-export type ModelSearchUnscannedResultRequest = {
-  isResultCurrent: boolean
-  loadedResultCount: number
-  backendResultTotal: number
-}
-
 export type ModelSearchModelNameResult = {
   names: string[]
   unresolvedMatchedCount: number
-}
-
-export type ModelSearchAppendContext = {
-  open: boolean
-  channelId: number | null
-  keyword: string
-  vendor: string
-}
-
-export type ModelSearchAppendRequest = {
-  channelId: number | null
-  keyword: string
-  vendor: string
 }
 
 const CHANNEL_TYPE_MODEL_SEARCH_VENDORS: Record<number, string> = {
@@ -145,8 +113,8 @@ export function parseModelDraftList(value: string): string[] {
 // /api/models/search 已经在后端按 model_name、description、tags 完成过滤；
 // 前端不能再要求模型名自身包含关键词，否则搜索供应商、标签或描述时会丢失真实命中模型。
 // 名称规则模型优先使用运行时展开的 matched_models，避免把规则占位名误加入渠道。
-// matched_count 可能大于当前返回的 matched_models 数量；这种情况只作为提示信息，
-// 追加时仍以后端实际返回的模型名为准，避免把不可见或不可调用的占位结果写入渠道。
+// matched_count 可能大于当前返回的 matched_models 数量；这种情况只作为候选缺口信息，
+// 页面只展示已经返回的真实模型名，避免把不可见或不可调用的占位结果写入渠道。
 export function getModelSearchModelNameResult(
   searchItems: readonly ModelSearchItemLike[],
   keyword: string
@@ -200,117 +168,4 @@ export function getModelSearchModelNames(
   keyword: string
 ): string[] {
   return getModelSearchModelNameResult(searchItems, keyword).names
-}
-
-// 搜索下拉只展示当前页已经展开出的真实模型名；当后端返回的规则模型声明
-// matched_count 多于 matched_models 时，在 UI 中提示管理员继续使用“扫描全部搜索结果”。
-export function getUnresolvedModelSearchMatchedCount(
-  searchItems: readonly ModelSearchItemLike[],
-  keyword: string
-): number {
-  return getModelSearchModelNameResult(searchItems, keyword)
-    .unresolvedMatchedCount
-}
-
-// 计算当前模型库搜索命中里还没有加入渠道的模型。
-// 该函数只负责前端草稿层面的去重：同一搜索结果大小写不同只保留首次出现，
-// 已经存在于渠道模型列表中的项不会再次返回，避免批量追加时重复写入。
-export function getMissingModelSearchMatches(
-  searchMatches: readonly string[],
-  currentModels: readonly string[]
-): string[] {
-  const currentModelKeys = new Set(
-    currentModels.map(normalizeModelSearchKey).filter(Boolean)
-  )
-  const seenSearchKeys = new Set<string>()
-  const missingModels: string[] = []
-
-  for (const rawModel of searchMatches) {
-    const model = rawModel.trim()
-    const modelKey = normalizeModelSearchKey(model)
-    if (!modelKey || seenSearchKeys.has(modelKey)) continue
-    seenSearchKeys.add(modelKey)
-    if (currentModelKeys.has(modelKey)) continue
-    missingModels.push(model)
-  }
-
-  return missingModels
-}
-
-// 生成渠道编辑页“搜索后批量追加”操作所需的展示计划。
-// 该函数只处理已经提取出的真实模型名，不再读取 description/tags 命中的条目，
-// 保证按钮文案、预览列表和最终追加数量使用同一套去重规则。
-export function buildModelSearchAppendPlan(
-  searchMatches: readonly string[],
-  currentModels: readonly string[],
-  previewLimit = 6
-): ModelSearchAppendPlan {
-  const missingModels = getMissingModelSearchMatches(
-    searchMatches,
-    currentModels
-  )
-  const normalizedPreviewLimit = Math.max(0, previewLimit)
-  const previewModels = missingModels.slice(0, normalizedPreviewLimit)
-
-  return {
-    missingModels,
-    previewModels,
-    omittedCount: missingModels.length - previewModels.length,
-    totalCount: missingModels.length,
-  }
-}
-
-// 汇总搜索结果与当前渠道模型的关系，供编辑页明确展示“命中/可新增/已存在”。
-// 该统计只描述当前已加载的真实模型名；点击追加时仍会重新按最新表单值计算缺失项。
-export function buildModelSearchAppendSummary(
-  searchMatches: readonly string[],
-  currentModels: readonly string[]
-): ModelSearchAppendSummary {
-  const uniqueMatches = getMissingModelSearchMatches(searchMatches, [])
-  const addableMatches = getMissingModelSearchMatches(
-    uniqueMatches,
-    currentModels
-  )
-
-  return {
-    matchedCount: uniqueMatches.length,
-    addableCount: addableMatches.length,
-    existingCount: uniqueMatches.length - addableMatches.length,
-  }
-}
-
-// 计算搜索接口还没有被当前下拉候选覆盖的分页结果数量。
-// 编辑页会先加载第一页用于即时候选，再在“添加搜索结果”时扫描全部分页；
-// 这里把按钮提示统一到后端 total，避免第一页只有一个命中时让管理员误以为只会添加一个模型。
-export function getModelSearchUnscannedResultCount({
-  isResultCurrent,
-  loadedResultCount,
-  backendResultTotal,
-}: ModelSearchUnscannedResultRequest): number {
-  if (!isResultCurrent) return 0
-
-  return Math.max(
-    0,
-    Math.max(0, backendResultTotal) - Math.max(0, loadedResultCount)
-  )
-}
-
-// 搜索追加会异步扫描所有分页结果。请求返回时必须确认抽屉仍打开、
-// 仍在编辑同一个渠道且输入框关键词没有变化，避免旧搜索结果污染当前表单草稿。
-export function isModelSearchAppendContextCurrent(
-  context: ModelSearchAppendContext,
-  request: ModelSearchAppendRequest
-): boolean {
-  if (!context.open) return false
-  if (context.channelId !== request.channelId) return false
-  if (
-    normalizeModelSearchKey(context.keyword) ===
-    normalizeModelSearchKey(request.keyword)
-  ) {
-    return (
-      normalizeModelSearchKey(context.vendor) ===
-      normalizeModelSearchKey(request.vendor)
-    )
-  }
-  return false
 }
