@@ -14482,3 +14482,73 @@ NexusTok 当前在此前原生化过程中额外加入了模型元数据远程�
 10. MCP 重新打开编辑抽屉后再次搜索 `gpt-5.6` 并按 Enter，确认键盘路径同样追加 `gpt-5.6-terra` 和 `gpt-5.6-luna`，`Selected` badge 变为 5。
 11. MCP 网络请求确认仅触发 `GET /api/channel/1`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 等读取请求，没有触发 `PUT/POST /api/channel` 保存写请求。
 12. MCP 控制台未出现 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：输入 autocomplete 提示和部分 Base UI `label for` 关联提示，本轮未扩大为运行时错误。
+
+## 本轮实施评审：编辑渠道敏感字段提交前拦截
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认：new-api 最新编辑渠道页在普通管理员缺少敏感写权限时，不只通过禁用控件限制编辑，还会在提交路径检查敏感表单字段是否被标记为 dirty；如果存在敏感变更，会直接提示 `You do not have permission to edit sensitive channel settings.` 并阻止提交。
+
+NexusTok 当前已经有更强的后端和 Hook 侧 fail-closed 保护：`use-channel-mutate-form.ts` 在普通写权限下会把更新 payload 裁剪到 `NON_SENSITIVE_CHANNEL_UPDATE_FIELDS`，避免前端状态漂移导致越权保存。但编辑抽屉提交路径还缺少 new-api 这种明确的前端提示。如果普通写用户通过浏览器自动填充、开发者工具、残留状态或未来新增控件误改了敏感字段，当前表现会是“保存成功但敏感字段被静默忽略”，不利于管理员理解权限边界。
+
+本轮同时通过 MCP 复核了用户反馈的 `gpt-5.6` 搜索添加问题：3003 页面在渠道 `11111` 中搜索 `gpt-5.6` 时，接口按 OpenAI 供应商请求 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，页面显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，下拉候选包含 `gpt-5.6-terra` 和 `gpt-5.6-luna`，已选的 `gpt-5.6-sol` 不会混入可添加候选。因此当前搜索候选完整性已经成立，本轮不删除 NexusTok 的模型库远程搜索和批量补齐能力。
+
+### 需求分析
+
+1. 普通写用户编辑渠道时，如果表单 dirty 字段包含敏感字段，提交前必须给出明确权限提示并阻止提交，避免“保存成功但敏感字段被静默忽略”的误解。
+2. 敏感字段判断必须使用 NexusTok 原生权限边界，而不是照搬 new-api 的字段数组；NexusTok 已经将模型、分组、模型映射、优先级、权重、测试模型、自动禁用、状态码映射、标签、备注、名称和多 Key 调度模式纳入普通写字段。
+3. 现有 `buildAllowedChannelUpdatePayload()` 的 fail-closed payload 裁剪仍保留为最终防线；前端提示只是更早、更清晰的 UX guard。
+4. 新建渠道仍要求敏感写权限，本轮只增强编辑渠道路径，不改变创建渠道、删除渠道、密钥查看、Codex OAuth、账号池绑定、上游拉取或后端权限中间件。
+5. `gpt-5.6` 三个模型变体仍必须通过 OpenAI 模型库搜索全部暴露给编辑渠道页；本轮不能回退模型搜索候选补齐和显式批量添加逻辑。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道更新权限工具 | `web/default/src/features/channels/hooks/use-channel-mutate-form.ts` | 新增普通写表单字段白名单和 dirty 敏感字段检测函数；复用现有普通写 payload 白名单语义。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 在编辑提交路径中，当用户缺少 `channel.sensitive_write` 且存在敏感 dirty 字段时提示并中断提交。 |
+| 权限单测 | `web/default/src/features/channels/hooks/use-channel-mutate-form.test.ts` | 覆盖普通字段 dirty 不拦截、敏感字段 dirty 拦截、嵌套 dirty 结构识别。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 误拦截风险：如果普通写字段白名单遗漏了现有可编辑字段，普通管理员会无法保存合法变更；因此白名单需要与 `NON_SENSITIVE_CHANNEL_UPDATE_FIELDS` 保持一致，并用单测覆盖 `models/group/priority/name` 等典型普通字段。
+2. 漏拦截风险：如果新增敏感表单字段没有进入白名单也没有测试，默认应按敏感字段处理；采用白名单策略能让未知 dirty 字段默认被拦截。
+3. 权限一致性风险：前端提示不能替代服务端权限；本轮保留 Hook 的 payload 裁剪和后端字段级 fail-closed，不降低核心业务稳定性。
+4. 体验风险：普通写用户如果打开了禁用控件但未实际修改，不应被拦截；dirty 检测只看 `react-hook-form` 的 `dirtyFields`。
+5. 搜索回归风险：本轮不触碰模型搜索候选合并、供应商推导、批量添加和 `MultiSelect` 键盘路径，避免影响已经复核正确的 `gpt-5.6` 三变体添加。
+6. 热更新风险：修改后必须访问 `http://192.168.0.202:3003/` 及渠道编辑页确认页面更新；如果页面无变化，需要先重启容器再验证。
+
+### 方案评审
+
+采用“前端提交 guard + 现有 fail-closed 保底”的最小风险方案：
+
+1. 在 `use-channel-mutate-form.ts` 新增 `NON_SENSITIVE_CHANNEL_FORM_FIELDS`，字段范围与普通写 payload 白名单保持同向：`name/models/group/model_mapping/priority/weight/test_model/auto_ban/status_code_mapping/tag/remark/multi_key_mode`。`other_info` 只存在于 update payload 兼容白名单，当前编辑表单没有对应字段。
+2. 新增 `getDirtySensitiveChannelFormFields(dirtyFields)` 和 `hasDirtySensitiveChannelFormFields(dirtyFields)`；dirty 字段不在白名单内即视为敏感，嵌套对象 dirty 也视为该顶层字段 dirty。
+3. `channel-mutate-drawer.tsx` 在 `onSubmit` 中，针对编辑模式且 `!canEditSensitiveFields` 的场景调用检测函数；存在敏感 dirty 字段时 toast 提示并 return。
+4. 提示文案使用 new-api 的明确表达 `You do not have permission to edit sensitive channel settings.`，交由现有 i18n 同步流程补齐各语言。
+5. 保留 `buildAllowedChannelUpdatePayload()` 对 payload 的裁剪；即使前端 guard 被绕过，敏感字段仍不会进入普通写保存请求。
+6. 验证顺序：`bun run i18n:sync`、定向单测、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 `/channels`，复核 `gpt-5.6` 搜索添加和编辑页无运行时错误。
+
+### 实施结果
+
+1. 已新增 `NON_SENSITIVE_CHANNEL_FORM_FIELDS`、`getDirtySensitiveChannelFormFields()` 和 `hasDirtySensitiveChannelFormFields()`，普通写字段采用白名单，未知 dirty 字段默认视为敏感变更。
+2. 编辑渠道 `onSubmit` 已在普通写但无敏感写权限时检测 `form.formState.dirtyFields`；存在敏感变更时直接提示 `You do not have permission to edit sensitive channel settings.` 并中断提交。
+3. 现有 `buildAllowedChannelUpdatePayload()` 和 `pickNonSensitiveChannelUpdatePayload()` 保持不变，后端保存前仍会把普通写 payload 裁剪到非敏感字段。
+4. 火山引擎默认北京 endpoint、讯飞星火默认版本号这类页面自动补值已显式 `shouldDirty:false`，避免普通写用户仅打开编辑页就产生敏感 dirty 状态。
+5. 已补充单测覆盖普通 dirty 字段不拦截、敏感 dirty 字段拦截、未知字段和嵌套 dirty 结构默认按敏感字段处理。
+6. 本轮没有修改 Go 后端、数据库、权限中间件、渠道保存接口、模型搜索接口、账号池后端、Codex OAuth 后端或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮提示文案没有产生 locale 文件差异。
+2. 已运行 `cd web/default && bun test src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts`，46 个用例全部通过，覆盖敏感 dirty 字段 guard、普通写 payload 裁剪、`gpt-5.6` 搜索候选汇总和 MultiSelect 搜索提交行为。
+3. 已运行 `cd web/default && bunx eslint --no-ignore src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/hooks/use-channel-mutate-form.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts src/components/multi-select.tsx src/components/multi-select.test.ts`，无错误；`multi-select.tsx` 仍有 6 个既有 Fast Refresh warning，本轮未新增。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 访问并强刷 `http://192.168.0.202:3003/channels?postfix=1784165130626`，确认渠道页正常渲染，渠道 `11111` 的编辑抽屉可正常打开。
+8. MCP 在编辑抽屉 `Models` 输入 `gpt-5.6`，确认页面仍显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，候选包含 `gpt-5.6-terra` 和 `gpt-5.6-luna`，已选 `gpt-5.6-sol` 不在下拉可添加候选中。
+9. MCP 网络记录确认验证期间只触发 `GET /api/channel/1` 和 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 等读取请求，没有触发 `PUT/POST /api/channel` 保存写请求。
+10. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：输入 autocomplete 提示和部分 Base UI `label for` 关联提示，以及 i18next info/debug 日志，本轮未扩大为运行时错误。
+11. 普通写用户缺少敏感写权限时的提交前拦截分支由单测覆盖；当前 3003 登录账号是 Root/Admin 权限，真实页面会天然拥有 `channel.sensitive_write`，因此没有在浏览器中修改会话权限矩阵做破坏性模拟。

@@ -134,7 +134,10 @@ import {
   FIELD_PLACEHOLDERS,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
-import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
+import {
+  hasDirtySensitiveChannelFormFields,
+  useChannelMutateForm,
+} from '../../hooks/use-channel-mutate-form'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
@@ -1408,7 +1411,10 @@ export function ChannelMutateDrawer({
     if (currentType === 45 && !isGlobalAccountPoolMode) {
       const currentBaseUrlValue = form.getValues('base_url')
       if (!currentBaseUrlValue || currentBaseUrlValue === '') {
-        form.setValue('base_url', 'https://ark.cn-beijing.volces.com')
+        form.setValue('base_url', 'https://ark.cn-beijing.volces.com', {
+          shouldDirty: false,
+          shouldValidate: true,
+        })
       }
     }
 
@@ -1416,7 +1422,10 @@ export function ChannelMutateDrawer({
     if (currentType === 18) {
       const currentOther = form.getValues('other')
       if (!currentOther || currentOther === '') {
-        form.setValue('other', 'v2.1')
+        form.setValue('other', 'v2.1', {
+          shouldDirty: false,
+          shouldValidate: true,
+        })
       }
     }
   }, [currentType, isEditing, form, isGlobalAccountPoolMode])
@@ -1921,6 +1930,18 @@ export function ChannelMutateDrawer({
         toast.error(noPermissionMessage)
         return
       }
+      if (
+        isEditing &&
+        !canEditSensitiveFields &&
+        hasDirtySensitiveChannelFormFields(
+          form.formState.dirtyFields as Partial<Record<string, unknown>>
+        )
+      ) {
+        toast.error(
+          t('You do not have permission to edit sensitive channel settings.')
+        )
+        return
+      }
 
       const isAccountPoolGroupMode =
         data.credential_mode === 'global_account_pool'
@@ -2013,6 +2034,7 @@ export function ChannelMutateDrawer({
     [
       isEditing,
       canEditBasicFields,
+      canEditSensitiveFields,
       noPermissionMessage,
       permissions.canSensitiveWrite,
       form,

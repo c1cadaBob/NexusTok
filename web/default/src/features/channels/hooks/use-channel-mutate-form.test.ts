@@ -21,6 +21,8 @@ import { describe, test } from 'node:test'
 import type { Channel } from '../types'
 import {
   buildAllowedChannelUpdatePayload,
+  getDirtySensitiveChannelFormFields,
+  hasDirtySensitiveChannelFormFields,
   pickNonSensitiveChannelUpdatePayload,
 } from './use-channel-mutate-form'
 
@@ -130,5 +132,60 @@ describe('渠道更新权限 payload 裁剪', () => {
     })
 
     assert.equal('key_mode' in allowed, false)
+  })
+})
+
+describe('渠道编辑表单敏感 dirty 字段识别', () => {
+  test('普通写字段 dirty 不会触发敏感拦截', () => {
+    const dirtyFields = {
+      name: true,
+      models: true,
+      group: { 0: true },
+      model_mapping: true,
+      priority: true,
+      weight: true,
+      test_model: true,
+      auto_ban: true,
+      status_code_mapping: true,
+      tag: true,
+      remark: true,
+      multi_key_mode: true,
+    }
+
+    assert.equal(hasDirtySensitiveChannelFormFields(dirtyFields), false)
+    assert.deepEqual(getDirtySensitiveChannelFormFields(dirtyFields), [])
+  })
+
+  test('凭证、上游地址和请求改写字段 dirty 会触发敏感拦截', () => {
+    const dirtyFields = {
+      key: true,
+      base_url: true,
+      param_override: true,
+      header_override: true,
+    }
+
+    assert.equal(hasDirtySensitiveChannelFormFields(dirtyFields), true)
+    assert.deepEqual(getDirtySensitiveChannelFormFields(dirtyFields), [
+      'key',
+      'base_url',
+      'param_override',
+      'header_override',
+    ])
+  })
+
+  test('未知字段和嵌套 dirty 结构默认按敏感字段处理', () => {
+    const dirtyFields = {
+      settings: { allow_service_tier: true },
+      channel_info: { account_pool_group_id: true },
+      future_sensitive_field: true,
+      base_url: false,
+    }
+
+    assert.equal(hasDirtySensitiveChannelFormFields(dirtyFields), true)
+    assert.deepEqual(getDirtySensitiveChannelFormFields(dirtyFields), [
+      'settings',
+      'channel_info',
+      'future_sensitive_field',
+    ])
   })
 })

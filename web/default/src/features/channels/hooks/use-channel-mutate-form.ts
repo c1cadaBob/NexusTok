@@ -65,8 +65,30 @@ export const NON_SENSITIVE_CHANNEL_UPDATE_FIELDS = [
   'multi_key_mode',
 ] as const
 
+export const NON_SENSITIVE_CHANNEL_FORM_FIELDS = [
+  'name',
+  'models',
+  'group',
+  'model_mapping',
+  'priority',
+  'weight',
+  'test_model',
+  'auto_ban',
+  'status_code_mapping',
+  'tag',
+  'remark',
+  'multi_key_mode',
+] satisfies readonly (keyof ChannelFormValues)[]
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function hasDirtyValue(value: unknown): boolean {
+  if (value === true) return true
+  if (Array.isArray(value)) return value.some(hasDirtyValue)
+  if (isRecord(value)) return Object.values(value).some(hasDirtyValue)
+  return Boolean(value)
 }
 
 function getErrorMessage(error: unknown): string | undefined {
@@ -106,6 +128,31 @@ export function pickNonSensitiveChannelUpdatePayload(
     },
     {}
   )
+}
+
+// 普通写权限只能提交调度、模型暴露和备注类字段；任何不在白名单内的 dirty 字段
+// 都按敏感变更处理。这里用于前端提交前提示，Hook 的 payload 裁剪仍是最终防线。
+export function getDirtySensitiveChannelFormFields(
+  dirtyFields: Partial<Record<string, unknown>>
+): string[] {
+  const nonSensitiveFields = new Set<string>(NON_SENSITIVE_CHANNEL_FORM_FIELDS)
+
+  return Object.entries(dirtyFields).reduce<string[]>(
+    (sensitiveFields, [field, dirtyValue]) => {
+      if (!hasDirtyValue(dirtyValue)) return sensitiveFields
+      if (!nonSensitiveFields.has(field)) {
+        sensitiveFields.push(field)
+      }
+      return sensitiveFields
+    },
+    []
+  )
+}
+
+export function hasDirtySensitiveChannelFormFields(
+  dirtyFields: Partial<Record<string, unknown>>
+): boolean {
+  return getDirtySensitiveChannelFormFields(dirtyFields).length > 0
 }
 
 export function buildAllowedChannelUpdatePayload({
