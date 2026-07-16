@@ -61,6 +61,12 @@ export type ModelSearchModelNameResult = {
   unresolvedMatchedCount: number
 }
 
+export type ModelSearchCandidateSummary = {
+  matched: string[]
+  addable: string[]
+  existingCount: number
+}
+
 const CHANNEL_TYPE_MODEL_SEARCH_VENDORS: Record<number, string> = {
   1: 'OpenAI',
   3: 'Azure',
@@ -168,4 +174,25 @@ export function getModelSearchModelNames(
   keyword: string
 ): string[] {
   return getModelSearchModelNameResult(searchItems, keyword).names
+}
+
+// 汇总搜索候选与当前已选模型的关系。
+// 模型搜索通常会返回一个系列的所有真实模型，例如 gpt-5.6-terra/luna/sol。
+// 前端需要明确区分“接口命中的全部模型”和“尚未加入当前渠道的模型”，否则搜索后
+// 继续展示已选项会让 Base UI 高亮已选模型，导致 Enter 或点击行为像是没有追加结果。
+export function summarizeModelSearchCandidates(
+  candidateModels: readonly string[],
+  selectedModels: readonly string[]
+): ModelSearchCandidateSummary {
+  const matched = dedupeModelNames(candidateModels)
+  const selectedKeys = new Set(selectedModels.map(normalizeModelSearchKey))
+  const addable = matched.filter(
+    (model) => !selectedKeys.has(normalizeModelSearchKey(model))
+  )
+
+  return {
+    matched,
+    addable,
+    existingCount: matched.length - addable.length,
+  }
 }

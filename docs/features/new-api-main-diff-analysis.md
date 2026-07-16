@@ -14405,3 +14405,80 @@ NexusTok 当前在此前原生化过程中额外加入了模型元数据远程�
 9. MCP 将视口调整到 `390x844`，移动卡片列表正常显示渠道 `11111`、`已使用 / 剩余`、`账户信息`、优先级/权重、响应和上次测试；DOM 检查确认移动视图直接编辑按钮数量为 0，测试/禁用/菜单按钮各 1 个。
 10. MCP 移动视图打开更多菜单，确认 `编辑`、`测试连接`、`查询余额`、`获取模型`、`复制渠道`、`账号池`、`删除` 均存在；本轮验证没有触发渠道保存写请求。
 11. MCP 控制台检查没有 JavaScript `error`、`warn` 或 browser `issue`；网络请求只包含渠道列表、模型、分组、账号池、用户状态等 GET 请求。
+
+## 本轮实施评审：渠道模型搜索添加修复与编辑渠道页低风险对齐
+
+### 差异来源
+
+用户反馈“搜索添加时不正确”，并指出 new-api 最新版编辑渠道页整体观感更好。复查 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 后确认：new-api 的编辑渠道页在基础信息、凭证、模型与分组、高级设置的分段结构上清晰稳定，但 NexusTok 当前已经在其基础上形成了账号池模式、Codex OAuth、细粒度权限、模型元数据远程搜索、移动端 sticky 横向导航和编辑模式模型保留等原生增强，不能整文件覆盖。
+
+本轮通过 MCP 在 `http://192.168.0.202:3003/channels?postedit=1784162053831` 复现：渠道 `11111` 当前模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。在 `Models` 输入 `gpt-5.6` 后，后端请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 已正确返回并渲染 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个候选。但旧交互中已选的 `gpt-5.6-sol` 仍混在候选列表里并处于 selected 状态，按 Enter 不会追加缺失的 `terra/luna`，表现为搜索后“只同步/只添加到一个模型”。
+
+同时，只读子 agent 对比 new-api 最新编辑渠道页后给出结论：NexusTok 编辑渠道页整体是 new-api 的增强版，高优先级可安全同步点只有少量低风险交互，包括渠道类型 Combobox 聚焦不自动展开、火山引擎移除 `Doubao Coding Plan` 新选项并迁移历史值。敏感字段脏数据提交前拦截和高级设置视觉拆分后续可继续评审，不适合在本轮搜索修复中混入。
+
+### 需求分析
+
+1. 修复 `Models` 搜索添加语义：搜索 `gpt-5.6` 这类系列前缀时，必须能够一次追加所有尚未加入当前渠道的真实候选模型，而不是误停留在已选模型或创建不完整自定义模型。
+2. 下拉候选需要明确区分“全部搜索命中”和“尚未选择的命中”；搜索时不要把已选项混在可添加候选中，避免 Base UI 高亮 selected 项导致 Enter 行为不直观。
+3. 保留 NexusTok 的模型元数据远程搜索能力，因为 `/api/channel/models` 只代表当前渠道能力集合，不等同于完整模型元数据表；已同步但尚未加入任何渠道的模型仍应能被选中。
+4. 批量添加搜索结果作为 NexusTok 原生增强保留，但必须改为显式、可解释、可测试：按钮和 Enter 走同一条 `updateModels(..., true)` 合并路径，按大小写不敏感去重。
+5. 对齐 new-api 编辑渠道页时，只同步低风险页面交互，不覆盖 NexusTok 的账号池、Codex OAuth、权限、模型搜索、移动导航、编辑模式模型保留和上游拉取增强。
+6. 本轮不修改 Go 后端、数据库、模型元数据接口、渠道保存接口、权限模型、账号池后端、Codex OAuth 后端或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 修复模型搜索添加；搜索时隐藏已选模型候选；增加搜索结果头部统计和显式添加按钮；同步 `Type` 下拉与火山 endpoint 低风险对齐。 |
+| 模型搜索工具 | `web/default/src/features/channels/lib/model-search.ts` | 新增搜索候选汇总函数，区分全部命中、可新增命中和已存在命中。 |
+| 模型搜索测试 | `web/default/src/features/channels/lib/model-search.test.ts` | 增加搜索候选汇总测试，覆盖 `gpt-5.6-sol` 已存在时只追加 `terra/luna` 的核心场景。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮复现、需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 表单草稿风险：批量添加只能追加搜索结果中未选择的模型，不能替换已有 `models`；因此复用 `updateModels(addableModelSearchNames, true)`，保持合并语义。
+2. 重复模型风险：候选和当前模型都必须按 trim + lower 去重，避免 `GPT-5.6-SOL` 与 `gpt-5.6-sol` 形成重复能力。
+3. 自定义模型风险：输入系列前缀 `gpt-5.6` 时，如果已经存在真实候选，不应展示“添加自定义 gpt-5.6”；继续保留 `allowCreateWithMatches={false}`。
+4. 权限风险：批量添加按钮、Enter 添加和逐项选择都必须受 `canEditBasicFields` 控制；无权限时只提示，不写表单。
+5. 加载状态风险：远程搜索仍在 debounce 或 fetching 时，Enter 不能错误提示“无搜索结果”；本轮在加载中直接返回，按钮保持 disabled。
+6. 页面覆盖风险：new-api 当前缺少 NexusTok 的账号池、Codex OAuth、细粒度权限和模型远程搜索增强，不能整文件覆盖。
+7. 火山 endpoint 风险：直接保留 `Doubao Coding Plan` 会让管理员继续新保存弃用值；直接强制写脏又可能造成意外保存。本轮仅将历史值展示/归一为北京 endpoint，并从新选项中移除弃用项。
+
+### 方案评审
+
+采用“搜索候选汇总 + 显式批量添加 + 低风险页面对齐”的方案：
+
+1. 在 `model-search.ts` 新增 `summarizeModelSearchCandidates()`，输入远程候选和当前已选模型，输出 `matched`、`addable`、`existingCount`。
+2. `channel-mutate-drawer.tsx` 用该汇总结果生成 `addableModelSearchNames`，`modelOptions` 只额外合并可新增远程候选；搜索时通过 `hideSelectedOptionsWhenSearching` 隐藏已选项。
+3. `Models` 下拉头部显示 `Search results`、命中总数、可新增数和已存在数，按钮 `Add {{count}} search result(s)` 一次追加所有可新增候选。
+4. Enter 行为和按钮行为统一走 `handleAddModelSearchResults()`；加载中不执行，加载完成后无可新增项则提示 `No new search results to add`。
+5. 保留逐项选择能力：点击候选行仍只添加单个模型；按钮用于明确批量补齐系列模型。
+6. 渠道类型 Combobox 增加 `openOnFocus={false}`，与 new-api 最新交互对齐，避免 tab/focus 时立即弹出长 provider 列表。
+7. 火山引擎内置 endpoint 移除 `Doubao Coding Plan` 新选项；历史值 `doubao-coding-plan` 在编辑页归一展示为 `https://ark.cn-beijing.volces.com`，并通过 effect 迁移表单值。
+8. 验证顺序：`bun run i18n:sync`、定向单测、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 打开 3003 渠道编辑页，真实搜索 `gpt-5.6` 并验证批量添加行为。
+
+### 实施结果
+
+1. `gpt-5.6` 搜索现在会统计 `matched=3`、`addable=2`、`existing=1`，并仅把 `gpt-5.6-terra`、`gpt-5.6-luna` 作为可新增批量结果。
+2. 搜索时下拉候选不再混入已选的 `gpt-5.6-sol`，避免 selected 项干扰高亮和 Enter 行为。
+3. 已新增 `Add {{count}} search result(s)` 显式按钮，点击后追加所有未选搜索结果并清空搜索词；不会覆盖已有模型。
+4. 已将 Enter 行为与按钮统一，搜索结果存在时可直接按 Enter 追加全部可新增候选；无可新增候选时给出明确提示。
+5. 已保留逐项选择、复制 chip、清空、填入相关模型、填充所有模型、上游拉取、模型映射保护和分组选择等既有能力。
+6. 已对齐 new-api 的 `Type` 下拉 `openOnFocus={false}`。
+7. 已从火山引擎内置 endpoint 选择器中移除 `Doubao Coding Plan` 新选项，并迁移历史值到北京 endpoint。
+8. 本轮没有修改后端接口、数据库、权限模型、渠道保存接口、账号池后端、Codex OAuth 后端或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/features/channels/lib/model-search.test.ts src/components/multi-select.test.ts`，39 个用例全部通过。
+2. 已运行 `cd web/default && bunx eslint --no-ignore src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts`，无错误。
+3. 已运行 `cd web/default && bun run i18n:sync`，同步完成；相关文案在 `en/zh/fr/ja/ru/vi` 中已有翻译，无需新增 key。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postfix=1784165130626`，打开渠道 `11111` 编辑抽屉，确认热更新生效：`Models` 搜索输入 `gpt-5.6` 后，下拉头部显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，按钮显示 `添加 2 个搜索结果`。
+8. MCP DOM 检查确认搜索候选只包含 `gpt-5.6-terra`、`gpt-5.6-luna`，已选的 `gpt-5.6-sol` 不再混入可添加候选；当前模型芯片仍保留 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`。
+9. MCP 点击 `添加 2 个搜索结果` 后，表单草稿新增 `gpt-5.6-terra` 和 `gpt-5.6-luna`，toast 显示 `已从搜索结果添加 2 个模型`，`Selected` badge 从 3 变为 5；本次未点击保存。
+10. MCP 重新打开编辑抽屉后再次搜索 `gpt-5.6` 并按 Enter，确认键盘路径同样追加 `gpt-5.6-terra` 和 `gpt-5.6-luna`，`Selected` badge 变为 5。
+11. MCP 网络请求确认仅触发 `GET /api/channel/1`、`GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 等读取请求，没有触发 `PUT/POST /api/channel` 保存写请求。
+12. MCP 控制台未出现 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：输入 autocomplete 提示和部分 Base UI `label for` 关联提示，本轮未扩大为运行时错误。

@@ -25,6 +25,7 @@ import {
   getModelSearchVendorForChannelType,
   mergeModelNames,
   parseModelDraftList,
+  summarizeModelSearchCandidates,
 } from './model-search'
 
 describe('渠道模型草稿解析', () => {
@@ -191,6 +192,36 @@ describe('渠道模型搜索候选提取', () => {
       {
         names: ['gpt-5.6-terra'],
         unresolvedMatchedCount: 2,
+      }
+    )
+  })
+})
+
+describe('渠道模型搜索候选汇总', () => {
+  test('区分全部命中、可新增命中和已存在命中', () => {
+    assert.deepEqual(
+      summarizeModelSearchCandidates(
+        ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        ['gpt-5.4', 'GPT-5.6-SOL']
+      ),
+      {
+        matched: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+        addable: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+        existingCount: 1,
+      }
+    )
+  })
+
+  test('候选自身先按大小写不敏感去重', () => {
+    assert.deepEqual(
+      summarizeModelSearchCandidates(
+        ['gpt-5.6-terra', 'GPT-5.6-TERRA', 'gpt-5.6-luna'],
+        []
+      ),
+      {
+        matched: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+        addable: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+        existingCount: 0,
       }
     )
   })

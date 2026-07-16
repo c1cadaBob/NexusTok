@@ -156,6 +156,7 @@ import {
   dedupeModelNames,
   getModelSearchVendorForChannelType,
   getModelSearchModelNames,
+  summarizeModelSearchCandidates,
   mergeModelNames,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -935,18 +936,6 @@ export function ChannelMutateDrawer({
     )
   }, [debouncedModelSearchKeyword, isModelSearchResultCurrent, modelSearchData])
 
-  // 按渠道类型推导基础模型集合。
-  const basicModels = useMemo(() => {
-    if (!allModelsList.length) return []
-    // OpenAI 类型只优先填充常见文本模型，避免把无关 provider 的模型一起塞入渠道。
-    if (currentType === 1) {
-      return allModelsList.filter(
-        (model) => model.startsWith('gpt-') || model.startsWith('text-')
-      )
-    }
-    return allModelsList
-  }, [allModelsList, currentType])
-
   // 模型预设分组列表。
   const prefillGroups = useMemo(
     () => prefillGroupsData?.data || [],
@@ -994,6 +983,26 @@ export function ChannelMutateDrawer({
     () => parseModelsString(currentModels),
     [currentModels]
   )
+
+  const modelSearchCandidateSummary = useMemo(
+    () =>
+      summarizeModelSearchCandidates(modelSearchModelNames, currentModelsArray),
+    [currentModelsArray, modelSearchModelNames]
+  )
+
+  const addableModelSearchNames = modelSearchCandidateSummary.addable
+
+  // 按渠道类型推导基础模型集合。
+  const basicModels = useMemo(() => {
+    if (!allModelsList.length) return []
+    // OpenAI 类型只优先填充常见文本模型，避免把无关 provider 的模型一起塞入渠道。
+    if (currentType === 1) {
+      return allModelsList.filter(
+        (model) => model.startsWith('gpt-') || model.startsWith('text-')
+      )
+    }
+    return allModelsList
+  }, [allModelsList, currentType])
 
   const advancedCustomStats = useMemo(
     () => getAdvancedCustomStats(currentAdvancedCustom),
@@ -1265,14 +1274,14 @@ export function ChannelMutateDrawer({
   // 但尚未进入任何渠道能力表的模型也能被管理员逐项选择。
   const modelOptions = useMemo(() => {
     const allModels = new Set([
-      ...modelSearchModelNames,
+      ...addableModelSearchNames,
       ...baseModelOptions.map((option) => option.value),
     ])
     return Array.from(allModels).map((model) => ({
       value: model,
       label: model,
     }))
-  }, [baseModelOptions, modelSearchModelNames])
+  }, [addableModelSearchNames, baseModelOptions])
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1411,6 +1420,17 @@ export function ChannelMutateDrawer({
       }
     }
   }, [currentType, isEditing, form, isGlobalAccountPoolMode])
+
+  useEffect(() => {
+    if (currentType !== 45 || currentBaseUrl !== 'doubao-coding-plan') return
+
+    // Doubao Coding Plan 是火山引擎早期内置别名，new-api 已从可选 endpoint 中移除。
+    // 这里仅迁移历史值到官方北京 endpoint，避免管理员编辑其它字段时继续保存弃用别名。
+    form.setValue('base_url', 'https://ark.cn-beijing.volces.com', {
+      shouldDirty: false,
+      shouldValidate: true,
+    })
+  }, [currentBaseUrl, currentType, form])
 
   // base_url 末尾带 /v1 时很容易与后端自动拼接逻辑冲突，因此延迟提示管理员确认。
   useEffect(() => {
@@ -1655,6 +1675,37 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
+  const handleAddModelSearchResults = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (isSearchingModelMeta || isModelSearchDebouncing) {
+      return
+    }
+    if (!addableModelSearchNames.length) {
+      toast.info(t('No new search results to add'))
+      return
+    }
+
+    const count = updateModels(addableModelSearchNames, true)
+    if (count === 0) {
+      toast.info(t('No new search results to add'))
+      return
+    }
+
+    toast.success(t('Added {{count}} model(s) from search', { count }))
+    setModelSearchKeyword('')
+  }, [
+    addableModelSearchNames,
+    canEditBasicFields,
+    isModelSearchDebouncing,
+    isSearchingModelMeta,
+    noPermissionMessage,
+    updateModels,
+    t,
+  ])
+
   const handleClearModels = useCallback(() => {
     if (!canEditBasicFields) {
       toast.error(noPermissionMessage)
@@ -1720,6 +1771,67 @@ export function ChannelMutateDrawer({
     },
     [canEditBasicFields, form, noPermissionMessage]
   )
+
+  const modelSearchContentHeader = useMemo(() => {
+    if (trimmedModelSearchKeyword.length === 0) return undefined
+
+    const matchedCount = modelSearchCandidateSummary.matched.length
+    const addableCount = modelSearchCandidateSummary.addable.length
+    const existingCount = modelSearchCandidateSummary.existingCount
+
+    return (
+      <div className='flex flex-col gap-2'>
+        <div className='flex items-center justify-between gap-3'>
+          <div className='min-w-0'>
+            <p className='text-sm font-medium'>{t('Search results')}</p>
+            <p className='text-muted-foreground text-xs'>
+              {isSearchingModelMeta || isModelSearchDebouncing
+                ? t('Searching model metadata...')
+                : t(
+                    '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                    {
+                      matched: matchedCount,
+                      addable: addableCount,
+                      existing: existingCount,
+                    }
+                  )}
+            </p>
+          </div>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='shrink-0'
+            onClick={handleAddModelSearchResults}
+            disabled={
+              !canEditBasicFields ||
+              addableCount === 0 ||
+              isSearchingModelMeta ||
+              isModelSearchDebouncing
+            }
+            title={canEditBasicFields ? undefined : noPermissionMessage}
+          >
+            <Plus data-icon='inline-start' />
+            {t('Add {{count}} search result(s)', { count: addableCount })}
+          </Button>
+        </div>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Use the button to add every matching model. Selecting a row below adds only that one model.'
+          )}
+        </p>
+      </div>
+    )
+  }, [
+    canEditBasicFields,
+    handleAddModelSearchResults,
+    isModelSearchDebouncing,
+    isSearchingModelMeta,
+    modelSearchCandidateSummary,
+    noPermissionMessage,
+    t,
+    trimmedModelSearchKeyword,
+  ])
 
   // 提交成功后刷新渠道列表并关闭抽屉。
   const handleSuccess = useCallback(() => {
@@ -2141,6 +2253,7 @@ export function ChannelMutateDrawer({
                                     searchPlaceholder={t(
                                       'Search channel type...'
                                     )}
+                                    openOnFocus={false}
                                     emptyText={t('No channel type found.')}
                                     allowCustomValue
                                     className={cn(
@@ -2814,10 +2927,6 @@ export function ChannelMutateDrawer({
                                             'https://ark.ap-southeast.bytepluses.com'
                                           ),
                                         },
-                                        {
-                                          value: 'doubao-coding-plan',
-                                          label: t('Doubao Coding Plan'),
-                                        },
                                       ]}
                                       onValueChange={(value) => {
                                         if (!canEditSensitiveFields) {
@@ -2827,7 +2936,9 @@ export function ChannelMutateDrawer({
                                         field.onChange(value)
                                       }}
                                       value={
-                                        field.value ||
+                                        field.value === 'doubao-coding-plan'
+                                          ? 'https://ark.cn-beijing.volces.com'
+                                          : field.value ||
                                         'https://ark.cn-beijing.volces.com'
                                       }
                                     >
@@ -2851,9 +2962,6 @@ export function ChannelMutateDrawer({
                                             {t(
                                               'https://ark.ap-southeast.bytepluses.com'
                                             )}
-                                          </SelectItem>
-                                          <SelectItem value='doubao-coding-plan'>
-                                            {t('Doubao Coding Plan')}
                                           </SelectItem>
                                         </SelectGroup>
                                       </SelectContent>
@@ -3748,6 +3856,11 @@ export function ChannelMutateDrawer({
                                     )}
                                     emptyText={t('No matching models')}
                                     preserveSelectedOnEmptyRemovalKey
+                                    hideSelectedOptionsWhenSearching
+                                    contentHeader={modelSearchContentHeader}
+                                    onSearchSubmit={handleAddModelSearchResults}
+                                    submitSearchOnEnterWithMatches
+                                    submitSearchOnEnterWhenHighlighted
                                   />
                                 </FormControl>
                                 {modelMappingGuardrail.exposedTargetModels
