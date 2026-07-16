@@ -18,6 +18,8 @@
 | `column-header.tsx`           | 可排序列头，封装排序状态和列操作入口。                                                      |
 | `faceted-filter.tsx`          | 列枚举筛选控件，支持多选和单选。                                                            |
 | `view-options.tsx`            | 列显示/隐藏控制。                                                                           |
+| `badge-cell.tsx`              | 单个或少量 badge 的表格单元格容器，统一处理收缩、截断和 overflow 边界。                    |
+| `badge-list-cell.tsx`         | 多 badge 列表单元格，支持前 N 个展示、`+N` 折叠和完整列表 tooltip。                         |
 | `static-data-table.tsx`       | 静态数组表格，适合弹窗预览、状态清单和其它不需要 TanStack 状态的简单表格。                  |
 | `truncated-cell.tsx`          | DataTable 单行文本截断单元格，通过 tooltip 暴露完整文本。                                  |
 | `table-empty.tsx`             | 桌面表格空态行。                                                                            |
@@ -138,6 +140,18 @@ import {
 4. 接口请求、权限判定、缓存 key 和业务状态转换。
 
 当同一段表格展示逻辑被两个以上页面复用，并且不依赖具体业务接口时，再考虑沉淀到公共 DataTable 或其它公共组件目录。
+
+## Badge 单元格
+
+单个 badge 或少量 badge 的表格列优先使用 `BadgeCell`，它只处理表格单元格的宽度、收缩和 overflow 边界，不处理业务状态：
+
+```tsx
+<BadgeCell>
+  <StatusBadge label={t('Enabled')} variant='success' copyable={false} />
+</BadgeCell>
+```
+
+当一列可能包含多个业务 badge，并需要只展示前 N 个、用 `+N` 折叠剩余项时，继续使用 `BadgeListCell`。
 
 ## 静态数组表格
 

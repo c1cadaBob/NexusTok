@@ -30,7 +30,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DataTableColumnHeader, TruncatedCell } from '@/components/data-table'
+import {
+  BadgeCell,
+  DataTableColumnHeader,
+  TruncatedCell,
+} from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { API_KEY_STATUSES } from '../constants'
@@ -225,7 +229,7 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className='inline-flex items-center gap-1.5 text-xs' />
+                  <BadgeCell className='ml-0 gap-1.5 text-xs' />
                 }
               >
                 <GroupBadge group='auto' />

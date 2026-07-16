@@ -87,7 +87,7 @@ export interface StatusBadgeProps extends Omit<
   children?: React.ReactNode
   icon?: LucideIcon
   pulse?: boolean
-  /** When false, hides the leading dot */
+  /** 设置为 false 时隐藏前置状态点。 */
   showDot?: boolean
   variant?: StatusVariant | null
   size?: 'sm' | 'md' | 'lg' | null
@@ -130,6 +130,7 @@ export function StatusBadge({
 
   return (
     <span
+      data-slot='status-badge'
       className={cn(
         'inline-flex w-fit shrink-0 items-center font-medium whitespace-nowrap',
         sizeMap[size ?? 'sm'],

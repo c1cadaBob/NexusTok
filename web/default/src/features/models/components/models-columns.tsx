@@ -27,7 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { BadgeListCell } from '@/components/data-table'
+import { BadgeCell, BadgeListCell } from '@/components/data-table'
 import { DataTableColumnHeader } from '@/components/data-table/column-header'
 import { GroupBadge } from '@/components/group-badge'
 import { ProviderBadge } from '@/components/provider-badge'
@@ -44,12 +44,12 @@ import { DataTableRowActions } from './data-table-row-actions'
 import { DescriptionCell } from './description-cell'
 
 /**
- * Generate models columns configuration
+ * 生成模型表格列配置。
  */
 export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
   const { t } = useTranslation()
 
-  // Get translated configs
+  // 获取需要随语言变化的列配置。
   const NAME_RULE_CONFIG = getNameRuleConfig(t)
   const MODEL_STATUS_CONFIG = getModelStatusConfig(t)
   const QUOTA_TYPE_CONFIG = getQuotaTypeConfig(t)
@@ -60,7 +60,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
   })
 
   return [
-    // Checkbox column
+    // 选择列
     {
       id: 'select',
       header: ({ table }) => (
@@ -83,7 +83,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       size: 40,
     },
 
-    // ID column
+    // ID 列
     {
       accessorKey: 'id',
       meta: { label: t('ID'), mobileHidden: true },
@@ -97,7 +97,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       size: 80,
     },
 
-    // Icon column
+    // 图标列
     {
       accessorKey: 'icon',
       meta: { label: t('Icon'), mobileHidden: true },
@@ -117,7 +117,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Model Name column
+    // 模型名称列
     {
       accessorKey: 'model_name',
       meta: { label: t('Model Name'), mobileTitle: true },
@@ -127,19 +127,21 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       cell: ({ row }) => {
         const name = row.getValue('model_name') as string
         return (
-          <StatusBadge
-            label={name}
-            variant='neutral'
-            copyText={name}
-            size='sm'
-            className='font-mono'
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={name}
+              variant='neutral'
+              copyText={name}
+              size='sm'
+              className='font-mono'
+            />
+          </BadgeCell>
         )
       },
       minSize: 200,
     },
 
-    // Name Rule column
+    // 匹配类型列
     {
       accessorKey: 'name_rule',
       meta: { label: t('Match Type') },
@@ -171,7 +173,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
           />
         )
 
-        // Show tooltip with matched models for non-exact rules
+        // 非精确匹配规则展示已匹配模型列表。
         if (
           rule !== 0 &&
           model.matched_models &&
@@ -202,7 +204,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Status column
+    // 状态列
     {
       accessorKey: 'status',
       meta: { label: t('Status'), mobileBadge: true },
@@ -213,13 +215,15 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
           MODEL_STATUS_CONFIG[status as 0 | 1] || MODEL_STATUS_CONFIG[0]
 
         return (
-          <StatusBadge
-            label={config.label}
-            variant={config.variant}
-            showDot={config.showDot}
-            size='sm'
-            copyable={false}
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={config.label}
+              variant={config.variant}
+              showDot={config.showDot}
+              size='sm'
+              copyable={false}
+            />
+          </BadgeCell>
         )
       },
       filterFn: (row, id, value) => {
@@ -233,7 +237,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Vendor column
+    // 供应商列
     {
       accessorKey: 'vendor_id',
       meta: { label: t('Vendor') },
@@ -247,11 +251,13 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
         }
 
         return (
-          <ProviderBadge
-            iconKey={vendor.icon}
-            label={vendor.name}
-            className='max-w-[150px]'
-          />
+          <BadgeCell>
+            <ProviderBadge
+              iconKey={vendor.icon}
+              label={vendor.name}
+              className='max-w-[150px]'
+            />
+          </BadgeCell>
         )
       },
       filterFn: (row, id, value) => {
@@ -262,7 +268,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Description column
+    // 描述列
     {
       accessorKey: 'description',
       meta: { label: t('Description'), mobileHidden: true },
@@ -279,7 +285,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Tags column
+    // 标签列
     {
       accessorKey: 'tags',
       meta: { label: t('Tags'), mobileHidden: true },
@@ -302,7 +308,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Endpoints column
+    // 端点列
     {
       accessorKey: 'endpoints',
       meta: { label: t('Endpoints'), mobileHidden: true },
@@ -325,7 +331,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Bound Channels column
+    // 绑定渠道列
     {
       accessorKey: 'bound_channels',
       meta: { label: t('Bound Channels'), mobileHidden: true },
@@ -357,7 +363,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Enable Groups column
+    // 可用分组列
     {
       accessorKey: 'enable_groups',
       meta: { label: t('Enable Groups'), mobileHidden: true },
@@ -381,7 +387,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Quota Types column
+    // 计费类型列
     {
       accessorKey: 'quota_types',
       meta: { label: t('Quota Types'), mobileHidden: true },
@@ -418,7 +424,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Sync Official column
+    // 官方同步列
     {
       accessorKey: 'sync_official',
       meta: { label: t('Official Sync'), mobileHidden: true },
@@ -426,12 +432,14 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       cell: ({ row }) => {
         const syncOfficial = row.getValue('sync_official') as number
         return (
-          <StatusBadge
-            label={syncOfficial === 1 ? t('Official Sync') : t('No Sync')}
-            variant={syncOfficial === 1 ? 'success' : 'warning'}
-            size='sm'
-            copyable={false}
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={syncOfficial === 1 ? t('Official Sync') : t('No Sync')}
+              variant={syncOfficial === 1 ? 'success' : 'warning'}
+              size='sm'
+              copyable={false}
+            />
+          </BadgeCell>
         )
       },
       filterFn: (row, id, value) => {
@@ -445,7 +453,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       enableSorting: false,
     },
 
-    // Created Time column
+    // 创建时间列
     {
       accessorKey: 'created_time',
       meta: { label: t('Created'), mobileHidden: true },
@@ -463,7 +471,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       size: 180,
     },
 
-    // Updated Time column
+    // 更新时间列
     {
       accessorKey: 'updated_time',
       meta: { label: t('Updated'), mobileHidden: true },
@@ -481,7 +489,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       size: 180,
     },
 
-    // Actions column
+    // 操作列
     {
       id: 'actions',
       cell: ({ row }) => {

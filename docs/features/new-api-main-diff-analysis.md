@@ -14188,3 +14188,79 @@ NexusTok 当前已经原生化了 DataTable README、移动卡片、桌面卡片
 8. MCP 打开当前渠道 `11111` 的行菜单，菜单正常显示 `编辑`、`测试连接`、`查询余额`、`获取模型`、`复制渠道`、`账号池`、`删除` 等入口，未出现前端运行时错误。
 9. MCP 读取渠道列表响应确认当前唯一渠道 `channel_info.is_multi_key=false`、`credential_mode="global_account_pool"`，因此按现有业务逻辑不会展示 `Multi-Key Management` 菜单，当前环境无法真实打开多 Key 管理弹窗验证静态表格 DOM；本轮对该弹窗的验证范围为类型检查、构建、静态逻辑和渠道页/行菜单无回退。
 10. MCP 控制台检查 `/channels`，没有 JavaScript `error`、`warn` 或浏览器 `issue`。
+
+## 本轮实施评审：DataTable BadgeCell badge 单元格原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table/core/badge-cell.tsx` 与当前 NexusTok DataTable 目录后确认：new-api 已把表格中单个 badge 或少量 badge 的单元格容器抽成 `BadgeCell`。该组件统一提供 `max-w-full`、`min-w-0`、`overflow-hidden` 和对内部 `StatusBadge` 的宽度约束，避免长模型名、供应商名、分组名、支付渠道名等 badge 在固定列或弹性列中撑宽表格。
+
+NexusTok 当前已经原生化了 `BadgeListCell`、`TruncatedCell` 和 `StaticDataTable`，但单个 badge 仍直接散落在业务列里。`StatusBadge` 外层目前也没有 `data-slot="status-badge"`，导致业务侧无法像 new-api 一样通过父容器统一约束 badge 的收缩边界。
+
+### 需求分析
+
+1. 在 NexusTok `@/components/data-table` 中新增原生 `BadgeCell`，保持当前扁平目录结构，不直接搬运 new-api 的 `core/` 子目录。
+2. `BadgeCell` 应只负责表格 badge 容器布局，不理解业务状态、权限、点击、复制、筛选、排序或接口请求。
+3. `StatusBadge` 需要补齐稳定 `data-slot="status-badge"`，让 `BadgeCell` 能精准约束内部 badge；该标记不改变可见文案或业务行为。
+4. 首批接入 API Key、模型和订阅表格中已有单个/少量 badge 且存在列宽风险的展示列。
+5. 本轮不修改 Go 后端、数据库、权限模型、列表接口、写接口、筛选、分页、批量操作、行操作或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| DataTable badge 容器 | `web/default/src/components/data-table/badge-cell.tsx` | 新增单 badge/少量 badge 表格容器。 |
+| DataTable 导出与文档 | `web/default/src/components/data-table/index.ts`、`README.md` | 导出 `BadgeCell`，补充目录职责说明。 |
+| Badge 基础标记 | `web/default/src/components/status-badge.tsx` | 增加 `data-slot="status-badge"`，供表格容器和后续 DOM 验证使用。 |
+| API Key 表格 | `web/default/src/features/keys/components/api-keys-columns.tsx`、`api-keys-cells.tsx` | group、model limit、IP restriction 等 badge 单元格接入 `BadgeCell`。 |
+| 模型表格 | `web/default/src/features/models/components/models-columns.tsx` | model name、status、vendor、official sync 等单 badge 单元格接入 `BadgeCell`。 |
+| 模型部署表格 | `web/default/src/features/models/components/deployments-columns.tsx` | deployment ID、name、status、provider 等单 badge 单元格接入 `BadgeCell`。 |
+| 订阅表格 | `web/default/src/features/subscriptions/components/subscriptions-columns.tsx` | payment channel、upgrade group 等少量 badge 单元格接入 `BadgeCell`。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 布局风险：`BadgeCell` 会改变父容器的 overflow 和收缩行为，必须只接入表格 badge 单元格，避免影响普通正文、按钮组或行操作菜单。
+2. Tooltip 风险：API Key 的模型限制和 IP 限制用 `TooltipTrigger render` 包住 badge；替换 trigger 容器时必须保留 Base UI `render` 用法和内部 `StatusBadge`。
+3. 点击/复制风险：`StatusBadge` 的复制点击、`GroupBadge` 和 `ProviderBadge` 的展示逻辑不能被容器吞掉。
+4. 移动端风险：`DataTablePage` 移动卡片复用列 cell；首批只接入无写操作的 badge 展示，避免移动端操作布局变化。
+5. 范围风险：new-api 还有 `column-pinning`、`colgroup`、`content-sized-columns` 等更大表格能力；本轮只迁移 `BadgeCell`，不重写表格核心。
+6. i18n 风险：本轮不新增可见文案；仍需运行 `bun run i18n:sync` 验证无翻译缺口。
+
+### 方案评审
+
+采用“公共容器 + 首批低风险列接入”的渐进方案：
+
+1. 新增 `BadgeCell`，使用本项目 `cn()`，默认 class 与 new-api 能力等价，并添加中文维护说明。
+2. 在 `StatusBadge` 外层增加 `data-slot="status-badge"`，不改变 className、事件、title、复制逻辑或显示内容。
+3. 从 `@/components/data-table` 统一导出 `BadgeCell`，并在 README 中注明它适合单个/少量 badge 单元格，区别于 `BadgeListCell`。
+4. API Key 表格：`group` tooltip trigger、`ModelLimitsCell`、`IpRestrictionsCell` 使用 `BadgeCell` 作为 badge 容器。
+5. 模型表格：`model_name`、`status`、`vendor`、`sync_official` 等纯展示单 badge 列使用 `BadgeCell`，但不接入已由 `BadgeListCell` 处理的 tags、endpoints、bound channels、groups、quota types 多 badge 列。
+6. 模型部署表格：`id`、`name`、`status`、`provider` 等纯展示单 badge 列使用 `BadgeCell`，但不接入 `time_remaining`、`hardware` 等自定义换行/混合内容列。
+7. 订阅表格：`payment` 和 `upgrade_group` 列使用 `BadgeCell` 包裹少量支付渠道/分组 badge。
+8. 验证顺序：`bun run i18n:sync`、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 的 `/keys`、`/models/metadata`、`/models/deployments` 和 `/subscriptions`，检查页面渲染、关键 badge DOM、网络请求和控制台。
+
+### 实施结果
+
+1. 已新增 `BadgeCell`，用于 DataTable 中单个或少量 badge 的单元格容器，并通过 `[data-slot=status-badge]` 选择器约束内部 badge 的 `max-width`、`min-width`、`shrink` 和 `overflow`。
+2. `StatusBadge` 已增加稳定 `data-slot="status-badge"` 标记；显示内容、复制行为、点击行为、title、颜色、大小和 `showDot` 逻辑不变。
+3. `BadgeCell` 已从 `@/components/data-table` 导出，`README.md` 已补充 `BadgeCell` 和 `BadgeListCell` 的职责边界。
+4. API Key 表格已接入 `BadgeCell`：自动分组 tooltip trigger、模型限制、IP 限制及其空态 badge 均统一使用 badge 容器。
+5. 模型元信息表格已接入 `BadgeCell`：模型名、状态、供应商、官方同步等纯展示单 badge 列已包裹容器；多 badge 列仍继续使用 `BadgeListCell`。
+6. 模型部署表格已接入 `BadgeCell`：deployment ID、name、status、provider 等纯展示单 badge 列已包裹容器；硬件和剩余时间等复合布局列未改。
+7. 订阅表格已接入 `BadgeCell`：支付渠道和升级分组列使用统一 badge 容器。
+8. 本轮没有修改后端接口、数据库、权限模型、列表查询、写接口、筛选、排序、分页、批量操作、行操作或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮没有新增可见翻译 key。
+2. 已运行 `cd web/default && bunx eslint --no-ignore src/components/data-table/badge-cell.tsx src/components/data-table/index.ts src/components/status-badge.tsx src/features/keys/components/api-keys-columns.tsx src/features/keys/components/api-keys-cells.tsx src/features/models/components/models-columns.tsx src/features/models/components/deployments-columns.tsx src/features/subscriptions/components/subscriptions-columns.tsx`，ESLint 通过。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 访问 `http://192.168.0.202:3003/keys?postcheck=1784247200000`，确认 API Key 页面正常渲染，请求 `GET /api/token/?p=1&size=20`、`GET /api/user/self/groups`、`GET /api/user/models` 均返回 200；页面控制台无 `error`、`warn` 或 `issue`。
+7. MCP 在 `/keys` 页面执行 DOM 检查，确认模型限制和 IP 限制空态 `无限制` 已由 `data-slot="badge-cell"` 包裹，页面共有 2 个 `badge-cell` 和 6 个 `status-badge`。
+8. MCP 访问 `http://192.168.0.202:3003/models/metadata?postcheck=1784247200000`，确认模型元信息表格正常渲染，请求 `GET /api/models/?p=1&page_size=20`、`GET /api/vendors/?page_size=1000`、`GET /api/deployments/settings` 均返回 200；页面控制台无 `error`、`warn` 或 `issue`。
+9. MCP 在 `/models/metadata` 页面执行 DOM 检查，确认表格中有 80 个 `badge-cell` 和 180 个 `status-badge`；模型名、状态、供应商、官方同步列均进入 `BadgeCell`，页面仍显示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol`。
+10. MCP 在模型页点击 `部署` tab，跳转到 `http://192.168.0.202:3003/models/deployments`，当前环境显示“模型部署服务未启用”，无法验证部署表格行级 DOM；已确认 `GET /api/deployments/settings` 返回 200，页面提示正常，控制台无错误。
+11. MCP 访问 `http://192.168.0.202:3003/subscriptions?postcheck=1784247200000`，确认订阅管理页面正常渲染空态 `暂无订阅套餐`，请求 `GET /api/subscription/admin/plans` 和 `GET /api/option/` 均返回 200；当前环境无订阅套餐数据，无法验证订阅行级 DOM，控制台无 `error`、`warn` 或 `issue`。

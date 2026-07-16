@@ -21,6 +21,7 @@ import { Eye, Info, Pencil, Settings2, Timer, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { BadgeCell } from '@/components/data-table'
 import { DataTableColumnHeader } from '@/components/data-table/column-header'
 import { StatusBadge } from '@/components/status-badge'
 import { getDeploymentStatusConfig } from '../constants'
@@ -55,13 +56,15 @@ export function useDeploymentsColumns(opts: {
       cell: ({ row }) => {
         const id = row.original.id
         return (
-          <StatusBadge
-            label={String(id)}
-            variant='neutral'
-            copyText={String(id)}
-            size='sm'
-            className='font-mono'
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={String(id)}
+              variant='neutral'
+              copyText={String(id)}
+              size='sm'
+              className='font-mono'
+            />
+          </BadgeCell>
         )
       },
       size: 120,
@@ -77,13 +80,15 @@ export function useDeploymentsColumns(opts: {
       cell: ({ getValue }) => {
         const name = String(getValue() || '-') || '-'
         return (
-          <StatusBadge
-            label={name}
-            variant='neutral'
-            copyText={name}
-            size='sm'
-            className='font-mono'
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={name}
+              variant='neutral'
+              copyText={name}
+              size='sm'
+              className='font-mono'
+            />
+          </BadgeCell>
         )
       },
       minSize: 220,
@@ -101,13 +106,15 @@ export function useDeploymentsColumns(opts: {
           variant: 'neutral' as const,
         }
         return (
-          <StatusBadge
-            label={config.label}
-            variant={config.variant}
-            showDot={config.showDot}
-            size='sm'
-            copyable={false}
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={config.label}
+              variant={config.variant}
+              showDot={config.showDot}
+              size='sm'
+              copyable={false}
+            />
+          </BadgeCell>
         )
       },
       filterFn: (row, id, value) => {
@@ -133,12 +140,14 @@ export function useDeploymentsColumns(opts: {
         if (!provider)
           return <span className='text-muted-foreground text-xs'>-</span>
         return (
-          <StatusBadge
-            label={String(provider)}
-            autoColor={String(provider)}
-            size='sm'
-            copyable={false}
-          />
+          <BadgeCell>
+            <StatusBadge
+              label={String(provider)}
+              autoColor={String(provider)}
+              size='sm'
+              copyable={false}
+            />
+          </BadgeCell>
         )
       },
       size: 140,

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useMemo } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
-import { DataTableColumnHeader } from '@/components/data-table'
+import { BadgeCell, DataTableColumnHeader } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { formatDuration, formatResetPeriod } from '../lib'
@@ -151,7 +151,7 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         cell: ({ row }) => {
           const plan = row.original.plan
           return (
-            <div className='flex gap-1'>
+            <BadgeCell className='ml-0'>
               {plan.stripe_price_id && (
                 <StatusBadge
                   label='Stripe'
@@ -176,7 +176,7 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
                   copyable={false}
                 />
               )}
-            </div>
+            </BadgeCell>
           )
         },
         size: 180,
@@ -210,7 +210,11 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
               <span className='text-muted-foreground'>{t('No Upgrade')}</span>
             )
           }
-          return <GroupBadge group={group} />
+          return (
+            <BadgeCell>
+              <GroupBadge group={group} />
+            </BadgeCell>
+          )
         },
         size: 100,
       },
