@@ -57,6 +57,7 @@ import { toast } from 'sonner'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { useDebounce } from '@/hooks/use-debounce'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -113,6 +114,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { searchModels } from '@/features/models/api'
 import {
   fetchModels,
   getAllModels,
@@ -155,7 +157,10 @@ import {
   hasModelConfigChanged,
   findMissingModelsInMapping,
   dedupeModelNames,
+  getModelSearchModelNameResult,
+  getModelSearchVendorForChannelType,
   mergeModelNames,
+  summarizeModelSearchCandidates,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
@@ -258,6 +263,7 @@ const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
 )
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
+const MODEL_SEARCH_RESULT_PREVIEW_LIMIT = 6
 
 function readAdvancedSettingsPreference(): boolean {
   if (typeof window === 'undefined') return false
@@ -693,12 +699,15 @@ export function ChannelMutateDrawer({
   const missingModelsResolveRef = useRef<
     ((action: MissingModelsAction) => void) | null
   >(null)
+  const modelSearchPointerHandledRef = useRef(false)
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
+  const [modelSearchValue, setModelSearchValue] = useState('')
+  const [modelSearchOpen, setModelSearchOpen] = useState(false)
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
     CHANNEL_EDITOR_SECTION_IDS.identity
   )
@@ -714,6 +723,9 @@ export function ChannelMutateDrawer({
   const canEditSensitiveFields = permissions.canSensitiveWrite
   const canEditBasicFields =
     permissions.canWrite || permissions.canSensitiveWrite
+  const debouncedModelSearchValue = useDebounce(modelSearchValue, 300)
+  const trimmedModelSearchValue = modelSearchValue.trim()
+  const trimmedDebouncedModelSearchValue = debouncedModelSearchValue.trim()
 
   // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
@@ -732,6 +744,37 @@ export function ChannelMutateDrawer({
   const { data: allModelsData } = useQuery({
     queryKey: ['channel_models'],
     queryFn: getAllModels,
+  })
+
+  const modelSearchVendor = useMemo(
+    () => getModelSearchVendorForChannelType(currentType),
+    [currentType]
+  )
+
+  const shouldSearchModels = trimmedDebouncedModelSearchValue.length >= 2
+
+  // 在渠道编辑页搜索模型元信息库，把已同步但尚未绑定到渠道的模型纳入可选候选。
+  // 例如 OpenAI 的 gpt-5.6 系列有 Terra/Luna/Sol 三个真实模型，不能只依赖
+  // `/api/channel/models` 中已经绑定过的能力列表。
+  const {
+    data: modelSearchData,
+    isFetching: isModelSearchFetching,
+    isError: isModelSearchError,
+  } = useQuery({
+    queryKey: [
+      'channel-model-search',
+      modelSearchVendor,
+      trimmedDebouncedModelSearchValue,
+    ],
+    queryFn: () =>
+      searchModels({
+        keyword: trimmedDebouncedModelSearchValue,
+        vendor: modelSearchVendor || undefined,
+        p: 1,
+        page_size: 50,
+      }),
+    enabled: open && shouldSearchModels,
+    placeholderData: (previousData) => previousData,
   })
 
   // 拉取模型预设分组，便于管理员快速批量填入常用模型集合。
@@ -1203,8 +1246,26 @@ export function ChannelMutateDrawer({
     [currentModelMapping]
   )
 
+  const modelSearchNameResult = useMemo(
+    () =>
+      getModelSearchModelNameResult(
+        modelSearchData?.data?.items ?? [],
+        trimmedDebouncedModelSearchValue
+      ),
+    [modelSearchData, trimmedDebouncedModelSearchValue]
+  )
+
+  const modelSearchSummary = useMemo(
+    () =>
+      summarizeModelSearchCandidates(
+        modelSearchNameResult.names,
+        currentModelsArray
+      ),
+    [currentModelsArray, modelSearchNameResult.names]
+  )
+
   // 将系统模型和当前渠道模型合并成基础候选，避免编辑历史模型时选项丢失。
-  // 该列表也用于模型映射目标，不能被搜索框的临时远程结果污染。
+  // 该列表保留编辑草稿里已经存在的模型，避免历史能力在切换渠道后丢失。
   const baseModelOptions = useMemo(() => {
     return dedupeModelNames([...allModelsList, ...currentModelsArray]).map((model) => ({
       value: model,
@@ -1212,8 +1273,37 @@ export function ChannelMutateDrawer({
     }))
   }, [allModelsList, currentModelsArray])
 
-  // `Models` 多选只使用当前系统模型池作为候选，保持和 new-api-main 一致。
-  const modelOptions = baseModelOptions
+  // 本地能力列表和远程模型元信息搜索结果合并成选择器候选。
+  // 远程结果只来自真实 `model_name`/规则展开结果，不把搜索关键词本身写入渠道。
+  const modelOptions = useMemo(
+    () =>
+      dedupeModelNames([
+        ...modelSearchSummary.addable,
+        ...modelSearchSummary.matched,
+        ...baseModelOptions.map((option) => option.value),
+      ]).map((model) => ({
+        value: model,
+        label: model,
+      })),
+    [baseModelOptions, modelSearchSummary.addable, modelSearchSummary.matched]
+  )
+
+  const modelSearchPreviewNames = modelSearchSummary.addable.slice(
+    0,
+    MODEL_SEARCH_RESULT_PREVIEW_LIMIT
+  )
+  const modelSearchPreviewOmittedCount =
+    modelSearchSummary.addable.length - modelSearchPreviewNames.length
+  const modelSearchIsWaitingForDebounce =
+    trimmedModelSearchValue.length >= 2 &&
+    trimmedModelSearchValue !== trimmedDebouncedModelSearchValue
+  const modelSearchIsLoading =
+    modelSearchIsWaitingForDebounce || isModelSearchFetching
+  const showModelSearchPanel =
+    trimmedModelSearchValue.length >= 2 &&
+    (modelSearchIsLoading ||
+      isModelSearchError ||
+      modelSearchSummary.matched.length > 0)
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1677,6 +1767,51 @@ export function ChannelMutateDrawer({
       })
     },
     [canEditBasicFields, form, noPermissionMessage]
+  )
+
+  // 将模型元信息搜索命中的真实模型一次性追加到当前渠道能力草稿。
+  // 只追加未选择项，避免把系列前缀或重复模型写入 `models` 字段。
+  const handleAddModelSearchResults = useCallback(() => {
+    if (!canEditBasicFields) {
+      toast.error(noPermissionMessage)
+      return
+    }
+
+    if (modelSearchSummary.addable.length === 0) {
+      toast.info(t('No new search results to add'))
+      return
+    }
+
+    const addedCount = updateModels(modelSearchSummary.addable, true)
+    if (addedCount === 0) {
+      toast.info(t('No new search results to add'))
+      return
+    }
+
+    toast.success(t('Added {{count}} model(s) from search', { count: addedCount }))
+    setModelSearchOpen(false)
+  }, [
+    canEditBasicFields,
+    modelSearchSummary.addable,
+    noPermissionMessage,
+    t,
+    updateModels,
+  ])
+
+  const handleAddModelSearchResultsPress = useCallback(
+    (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (modelSearchPointerHandledRef.current) return
+
+      modelSearchPointerHandledRef.current = true
+      handleAddModelSearchResults()
+      window.setTimeout(() => {
+        modelSearchPointerHandledRef.current = false
+      }, 0)
+    },
+    [handleAddModelSearchResults]
   )
 
   // 提交成功后刷新渠道列表并关闭抽屉。
@@ -3703,8 +3838,131 @@ export function ChannelMutateDrawer({
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
+                                    isLoading={modelSearchIsLoading}
+                                    emptyText={t('No matching models')}
+                                    loadingText={t('Searching...')}
+                                    searchValue={modelSearchValue}
+                                    onSearchChange={setModelSearchValue}
+                                    open={modelSearchOpen}
+                                    onOpenChange={setModelSearchOpen}
+                                    onSearchSubmit={handleAddModelSearchResults}
+                                    contentHeader={
+                                      showModelSearchPanel ? (
+                                        <div className='bg-background flex flex-col gap-3 rounded-md'>
+                                          <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                            <div className='flex min-w-0 flex-col gap-1'>
+                                              <p className='text-sm font-medium'>
+                                                {t('Search results')}
+                                              </p>
+                                              <p className='text-muted-foreground text-xs'>
+                                                {modelSearchIsLoading
+                                                  ? t('Searching...')
+                                                  : isModelSearchError
+                                                    ? t('No matching models')
+                                                    : t(
+                                                        '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                        {
+                                                          matched:
+                                                            modelSearchSummary
+                                                              .matched.length,
+                                                          addable:
+                                                            modelSearchSummary
+                                                              .addable.length,
+                                                          existing:
+                                                            modelSearchSummary
+                                                              .existingCount,
+                                                        }
+                                                      )}
+                                              </p>
+                                            </div>
+                                            <Button
+                                              type='button'
+                                              variant='outline'
+                                              size='sm'
+                                              onPointerDown={
+                                                handleAddModelSearchResultsPress
+                                              }
+                                              onMouseDown={
+                                                handleAddModelSearchResultsPress
+                                              }
+                                              onClick={(event) => {
+                                                if (
+                                                  modelSearchPointerHandledRef.current
+                                                ) {
+                                                  modelSearchPointerHandledRef.current =
+                                                    false
+                                                  return
+                                                }
+                                                event.preventDefault()
+                                                handleAddModelSearchResults()
+                                              }}
+                                              disabled={
+                                                !canEditBasicFields ||
+                                                modelSearchIsLoading ||
+                                                modelSearchSummary.addable
+                                                  .length === 0
+                                              }
+                                              title={
+                                                canEditBasicFields
+                                                  ? undefined
+                                                  : noPermissionMessage
+                                              }
+                                            >
+                                              <Plus data-icon='inline-start' />
+                                              {t(
+                                                'Add {{count}} search result(s)',
+                                                {
+                                                  count:
+                                                    modelSearchSummary.addable
+                                                      .length,
+                                                }
+                                              )}
+                                            </Button>
+                                          </div>
+                                          {modelSearchPreviewNames.length >
+                                            0 && (
+                                            <div className='flex flex-wrap gap-1.5'>
+                                              {modelSearchPreviewNames.map(
+                                                (model) => (
+                                                  <Badge
+                                                    key={model}
+                                                    variant='secondary'
+                                                    className='max-w-full truncate font-mono'
+                                                  >
+                                                    {model}
+                                                  </Badge>
+                                                )
+                                              )}
+                                              {modelSearchPreviewOmittedCount >
+                                                0 && (
+                                                <Badge variant='outline'>
+                                                  {t('+{{count}} more', {
+                                                    count:
+                                                      modelSearchPreviewOmittedCount,
+                                                  })}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                          )}
+                                          {modelSearchNameResult.unresolvedMatchedCount >
+                                            0 && (
+                                            <p className='text-muted-foreground text-xs'>
+                                              {t(
+                                                '{{count}} more result(s) will be checked when adding',
+                                                {
+                                                  count:
+                                                    modelSearchNameResult.unresolvedMatchedCount,
+                                                }
+                                              )}
+                                            </p>
+                                          )}
+                                        </div>
+                                      ) : undefined
+                                    }
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
+                                    submitSearchOnEnterWithMatches
+                                    submitSearchOnEnterWhenHighlighted
                                     clearSearchOnSelect={false}
                                   />
                                 </FormControl>

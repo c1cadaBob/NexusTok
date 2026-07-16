@@ -14757,3 +14757,60 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 7. MCP 继续点击 `gpt-5.6-luna` 后，已选数量变为 `已选 5 个`，已选 chip 包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，三种 `gpt-5.6` 模型在编辑草稿中全部可见。
 8. MCP 使用带 `NexusTok-User: 1` 的只读请求 `GET /api/channel/1` 复核后端数据，返回 `models: "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，说明本轮页面验证只改变前端草稿，没有误触发渠道保存写入。
 9. MCP 控制台无新增 JavaScript runtime error；系统设置页网络请求均为 200。渠道页验证中一次未带 `NexusTok-User` 头的手工只读探测按预期返回 401，随后带头请求返回 200，不属于页面自身回归。
+
+## 本轮实施评审：编辑渠道页模型搜索批量追加最终修复
+
+### 需求分析
+
+用户反馈 `gpt-5.6` 有三种 OpenAI 模型，但编辑渠道页搜索添加时只同步/添加到一个模型。重新在 3003 运行态确认后，实际数据为：当前渠道 `11111` 仅持久化 `gpt-5.6-sol`，而 `/api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 返回 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三条真实模型元信息，供应商 `vendor_id=1`，即 OpenAI。
+
+因此本轮目标不是移除远程搜索，而是把“已同步模型元信息”转化为渠道能力编辑页的清晰原生能力：输入系列前缀时，页面必须展示真实命中模型、区分已存在与可新增项，并提供一键追加所有未加入模型的操作；同时不能把 `gpt-5.6` 这种系列前缀误创建为模型能力。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 接入模型元信息搜索，按渠道类型收窄 vendor，把搜索命中合并入候选，并在模型多选弹层头部展示命中/可新增/已存在统计和批量追加按钮。 |
+| 复用组件 | `web/default/src/components/multi-select.tsx` | 未修改本文件；复用既有受控搜索、`contentHeader`、加载态和 Enter 搜索提交能力。 |
+| 纯函数与测试 | `web/default/src/features/channels/lib/model-search.ts`、`web/default/src/components/multi-select.test.ts`、`web/default/src/features/channels/lib/model-search.test.ts` | 本轮继续复用已有候选提取、去重、供应商映射和创建防护测试。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和 3003 验证。 |
+
+### 风险评估
+
+1. 本轮只改默认前端渠道编辑抽屉，不改 Go 后端、数据库结构、模型同步逻辑、渠道保存接口、账号池、权限或计费逻辑，核心业务风险低。
+2. 批量追加只使用 `/api/models/search` 返回项经 `getModelSearchModelNameResult()` 提取出的真实 `model_name` / 规则展开模型，不把输入关键词本身写入 `models` 字段。
+3. `summarizeModelSearchCandidates()` 会按当前已选模型排除重复项，因此 `gpt-5.6-sol` 已存在时按钮只追加 `terra` 与 `luna`。
+4. 操作只调用 `form.setValue('models', ...)` 更新前端草稿，仍需用户点击“更新渠道”才会触发原有保存、权限校验和风险确认链路。
+5. 初版把搜索结果面板放在 Combobox 外侧，MCP 复现发现鼠标点击会被 Base UI 外部点击关闭流程抢先卸载；最终修正为使用 `MultiSelect.contentHeader`，使批量追加按钮处在 Combobox 弹层内部，鼠标点击和键盘 Enter 都能稳定触发。
+6. 如果模型搜索接口失败，页面仍保留本地候选和自定义模型创建路径，不阻断渠道编辑。
+
+### 方案评审
+
+采用“远程模型元信息搜索 + Combobox 内部结果头部 + 批量追加”的方案：
+
+1. 渠道编辑抽屉新增受控 `modelSearchValue` 与 `modelSearchOpen`，输入模型搜索词后使用 `useDebounce()` 防抖调用 `/api/models/search`。
+2. 通过 `getModelSearchVendorForChannelType(currentType)` 对 OpenAI/Codex 渠道传入 `vendor=OpenAI`，自定义渠道保持全局搜索。
+3. 用 `getModelSearchModelNameResult()` 从接口结果中提取真实模型名，用 `summarizeModelSearchCandidates()` 生成 `matched/addable/existingCount`。
+4. `modelOptions` 合并远程命中、本地 `/api/channel/models` 和当前渠道历史模型，确保搜索候选和逐项选择都能看到已同步但未绑定的模型。
+5. 把搜索结果摘要、预览 badge 和 `Add {{count}} search result(s)` 按钮放到 `MultiSelect.contentHeader`，避免外部点击导致弹层先关闭；按钮同时处理 pointer/mouse/click，键盘 Enter 继续走 `onSearchSubmit`。
+6. 保留 `allowCreateWithMatches={false}`、`hideSelectedOptionsWhenSearching`、`preserveSelectedOnEmptyRemovalKey` 和 `clearSearchOnSelect={false}`，既防止误创建系列前缀，也支持连续选择同系列模型。
+
+### 实施结果
+
+- 输入 `gpt-5.6` 后，页面显示 `搜索结果`、`命中 3 个 · 可新增 2 个 · 已存在 1 个`，预览 `gpt-5.6-terra` 与 `gpt-5.6-luna`。
+- 点击 `添加 2 个搜索结果` 后，toast 显示 `已从搜索结果添加 2 个模型`，表单草稿从 `已选 3 个` 变为 `已选 5 个`。
+- 草稿中包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 三种 `gpt-5.6` 模型，`sol` 没有重复添加。
+- 同一输入状态下按钮更新为 `添加 0 个搜索结果` 并禁用，统计变为 `命中 3 个 · 可新增 0 个 · 已存在 3 个`。
+- 搜索结果面板已对齐编辑渠道页现有抽屉结构和 `new-api-main` 的分段页面体验：仍处于 `Models & Groups` 主流程内，不新增第二个独立模型编辑入口。
+
+### 验证记录
+
+1. `cd web/default && bun run typecheck`：通过。
+2. `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts`：47 个测试通过。
+3. `git diff --check`：通过。
+4. 按要求访问 `http://192.168.0.202:3003/` 相关页面验证。首次热更新后页面仍未使用最新事件修复，已重启 `nexustok-frontend-watch` 与 `nexustok-api-hot` 后继续验证。
+5. MCP 打开 `http://192.168.0.202:3003/channels?verify=20260716-model-search-header`，设置 `NexusTok-User: 1`，进入渠道 `11111` 编辑抽屉。
+6. 初始模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，说明当前渠道持久化只包含一个 `gpt-5.6` 变体。
+7. 在模型输入框输入 `gpt-5.6`，真实网络请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 返回 200，页面显示三条命中、两条可新增、一条已存在。
+8. 鼠标点击 `添加 2 个搜索结果` 后，页面 toast 显示 `已从搜索结果添加 2 个模型`，草稿 chip 增加 `gpt-5.6-terra` 与 `gpt-5.6-luna`，已选数量变为 5。
+9. 网络记录中没有 `PUT /api/channel/` 保存请求，只有只读的 `/api/channel/1` 与 `/api/models/search`，确认本轮验证未改动运行态渠道数据。
