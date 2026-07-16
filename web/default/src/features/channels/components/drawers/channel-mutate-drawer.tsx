@@ -27,7 +27,6 @@ import {
 import { type SubmitErrorHandler, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useDebounce } from '@/hooks'
 import {
   ArrowRight,
   AlertCircle,
@@ -114,7 +113,6 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
-import { searchModels } from '@/features/models/api'
 import {
   fetchModels,
   getAllModels,
@@ -157,8 +155,6 @@ import {
   hasModelConfigChanged,
   findMissingModelsInMapping,
   dedupeModelNames,
-  getModelSearchVendorForChannelType,
-  getModelSearchModelNames,
   mergeModelNames,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -709,22 +705,6 @@ export function ChannelMutateDrawer({
   const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
     string | undefined
   >()
-  const [modelSearchKeyword, setModelSearchKeyword] = useState('')
-  const trimmedModelSearchKeyword = modelSearchKeyword.trim()
-  const modelSearchVendor = useMemo(
-    () => getModelSearchVendorForChannelType(currentType),
-    [currentType]
-  )
-  const debouncedModelSearchKeyword = useDebounce(
-    trimmedModelSearchKeyword,
-    300
-  )
-  const isModelSearchDebouncing =
-    trimmedModelSearchKeyword.length > 0 &&
-    trimmedModelSearchKeyword !== debouncedModelSearchKeyword
-  const isModelSearchResultCurrent =
-    trimmedModelSearchKeyword.length > 0 &&
-    trimmedModelSearchKeyword === debouncedModelSearchKeyword
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -754,24 +734,6 @@ export function ChannelMutateDrawer({
     queryFn: getAllModels,
   })
 
-  // 用模型元信息搜索补齐系统模型候选源，避免已同步到模型库但尚未加入任何渠道的模型不可选。
-  const { data: modelSearchData, isFetching: isSearchingModelMeta } = useQuery({
-    queryKey: [
-      'channel_model_meta_search',
-      debouncedModelSearchKeyword,
-      modelSearchVendor,
-    ],
-    queryFn: () =>
-      searchModels({
-        keyword: debouncedModelSearchKeyword,
-        vendor: modelSearchVendor || undefined,
-        p: 1,
-        page_size: 50,
-      }),
-    enabled: open && debouncedModelSearchKeyword.length > 0,
-    staleTime: 30_000,
-  })
-
   // 拉取模型预设分组，便于管理员快速批量填入常用模型集合。
   const { data: prefillGroupsData } = useQuery({
     queryKey: ['prefill_groups', 'model'],
@@ -784,11 +746,6 @@ export function ChannelMutateDrawer({
   })
 
   const { copyToClipboard } = useCopyToClipboard()
-
-  // 搜索框关闭或切换渠道时清空候选关键词，避免上一次编辑的远程候选残留到下一次抽屉。
-  useEffect(() => {
-    setModelSearchKeyword('')
-  }, [channelId, open])
 
   const {
     open: verificationOpen,
@@ -929,14 +886,6 @@ export function ChannelMutateDrawer({
     () => allModelsData?.data?.map((model) => model.id).filter(Boolean) || [],
     [allModelsData]
   )
-
-  const modelSearchModelNames = useMemo(() => {
-    if (!isModelSearchResultCurrent) return []
-    return getModelSearchModelNames(
-      modelSearchData?.data?.items ?? [],
-      debouncedModelSearchKeyword
-    )
-  }, [debouncedModelSearchKeyword, isModelSearchResultCurrent, modelSearchData])
 
   // 模型预设分组列表。
   const prefillGroups = useMemo(
@@ -1263,17 +1212,8 @@ export function ChannelMutateDrawer({
     }))
   }, [allModelsList, currentModelsArray])
 
-  // `Models` 多选需要额外合并模型元数据搜索结果，保证已经同步到模型库、
-  // 但尚未进入任何渠道能力表的模型也能被管理员逐项选择。
-  const modelOptions = useMemo(() => {
-    return dedupeModelNames([
-      ...modelSearchModelNames,
-      ...baseModelOptions.map((option) => option.value),
-    ]).map((model) => ({
-      value: model,
-      label: model,
-    }))
-  }, [baseModelOptions, modelSearchModelNames])
+  // `Models` 多选只使用当前系统模型池作为候选，保持和 new-api-main 一致。
+  const modelOptions = baseModelOptions
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1947,7 +1887,6 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
-        setModelSearchKeyword('')
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
         advancedNavScrollPendingRef.current = false
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
@@ -3764,16 +3703,6 @@ export function ChannelMutateDrawer({
                                     maxVisibleChips={8}
                                     copyChipOnClick
                                     disabled={!canEditBasicFields}
-                                    searchValue={modelSearchKeyword}
-                                    onSearchChange={setModelSearchKeyword}
-                                    isLoading={
-                                      isSearchingModelMeta ||
-                                      isModelSearchDebouncing
-                                    }
-                                    loadingText={t(
-                                      'Searching model metadata...'
-                                    )}
-                                    emptyText={t('No matching models')}
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
                                     clearSearchOnSelect={false}

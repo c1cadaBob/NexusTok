@@ -14691,7 +14691,7 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 9. MCP 继续在同一登录态下直接调用 `/api/models/search` 验证非 OpenAI 供应商过滤：`vendor=Moonshot` 返回 200 且可读到 `kimi-k2.7-code-highspeed`、`kimi-k2.7-code`、`kimi-k2.6`、`kimi-k2.5`、`kimi-k2-thinking-turbo` 等模型；`vendor=腾讯`、`vendor=智谱`、`vendor=阿里巴巴` 也都返回 200，只是当前库中暂无命中数据。该结果说明本轮 canonical vendor 映射与后端大小写无关匹配已经打通真实页面调用链路，不再被错误收窄或直接 401。
 10. MCP 网络记录中只有两条 `401`，均来自前期未带 `NexusTok-User` 头的手工探测请求；页面自身真实发起的模型搜索请求返回 200。控制台除这两条探测遗留报错外，没有新的 JavaScript runtime error；仍只有既有 `autocomplete` 和 Base UI `label for` issue。
 
-## 本轮实施评审：编辑渠道页模型搜索主流程向 new-api 最新页收敛
+## 本轮实施评审：编辑渠道页模型选择回到本地候选主流程
 
 ### 差异来源
 
@@ -14699,13 +14699,13 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 
 真实页面中，管理员在模型多选器输入 `gpt-5.6` 后，会在同一个 Combobox 弹层顶部看到 `Search results`、`3 matched · 2 new · 1 already selected` 和 `Add 2 search result(s)` 按钮；下方候选列表同时承载单个模型的逐项选择。这使“点击单个候选”和“批量追加所有新命中”共用一个弹层，用户很容易只点击到一个候选，主观感受就会变成“搜索添加不正确”或“明明有 3 个模型，为什么只加了一个”。
 
-继续对照 `new-api-main` 源码可确认，其最新编辑渠道页仍以 `Models` 多选器作为唯一模型录入主入口，没有在同一弹层中叠加额外的搜索批量操作头部。NexusTok 当前保留远程模型元数据搜索是合理的原生增强，但其交互应该向 new-api 的单一主流程收敛，而不是继续扩大同一弹层里的双重语义。
+继续对照 `new-api-main` 源码可确认，其最新编辑渠道页仍以 `Models` 多选器作为唯一模型录入主入口，没有在同一弹层中叠加额外的搜索批量操作头部。NexusTok 这次也回到同样的单一主流程：模型候选直接来自已同步的本地模型池和当前渠道历史模型，不再把远程模型元数据搜索结果混进选择器。
 
 ### 需求分析
 
 1. 编辑渠道页的 `Models` 多选器应继续作为模型编辑唯一主入口，和 `new-api-main` 最新页面的主流程保持一致。
-2. 远程模型元数据搜索能力需要保留，因为 `/api/channel/models` 不能覆盖所有已同步到模型库但尚未进入渠道模型列表的模型。
-3. 搜索 `gpt-5.6` 一类系列前缀时，管理员应当能够连续添加多个远程候选，而不是选中一个候选后搜索词被立刻清空、弹层重新回到全量模型列表。
+2. 模型候选应直接使用本地模型池和当前渠道历史模型，避免把“搜索”和“选择”两个动作叠在同一层里。
+3. 搜索 `gpt-5.6` 一类系列前缀时，管理员应当能够连续添加多个本地候选，而不是选中一个候选后搜索词被立刻清空、弹层重新回到全量模型列表。
 4. 存在真实候选时，系列前缀仍不能被误创建为自定义模型；只有没有匹配候选时，才允许继续创建自定义模型。
 5. 本轮不修改 Go 后端、数据库、模型搜索接口、渠道保存接口、权限模型、账号池逻辑、Codex OAuth 逻辑或 `/opt/project/new-api-main` 源码。
 
@@ -14713,7 +14713,7 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 
 | 范围 | 文件 | 影响 |
 | --- | --- | --- |
-| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除模型多选弹层顶部的搜索结果批量追加头部，让模型多选器回到单一搜索/选择主流程；保留远程搜索驱动候选补齐。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除模型多选弹层顶部的搜索结果批量追加头部，让模型多选器回到单一搜索/选择主流程；候选回到本地模型池。 |
 | 通用多选组件 | `web/default/src/components/multi-select.tsx` | 为选中后是否清空搜索词增加可选控制，默认行为不变，仅供渠道模型场景保留搜索上下文。 |
 | 通用多选测试 | `web/default/src/components/multi-select.test.ts` | 增加“选中后保留搜索词”测试，覆盖连续选择同一系列多个模型的交互。 |
 | 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
@@ -14721,7 +14721,7 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 ### 风险评估
 
 1. 共享组件风险：`MultiSelect` 被多个页面复用，不能把“选中后保留搜索词”变成全局默认行为；否则 API Keys、系统设置等其它多选场景会改变既有体验。
-2. 搜索回归风险：删除弹层顶部批量追加头部后，远程搜索候选仍必须稳定并入 `modelOptions`，否则会把问题从“语义不清”变成“找不到模型”。
+2. 搜索回归风险：删除弹层顶部批量追加头部后，本地模型池必须完整包含 `gpt-5.6` 三个变体，否则会把问题从“语义不清”变成“找不到模型”。
 3. 连续选择风险：如果保留搜索词但不隐藏已选候选，管理员可能反复点到已添加模型；因此继续保留 `hideSelectedOptionsWhenSearching`。
 4. 自定义模型风险：保留搜索词后，`allowCreateWithMatches={false}` 仍必须生效，避免 `gpt-5.6` 这种系列前缀再次被创建成假模型。
 5. 草稿风险：本轮只改变前端编辑体验和草稿交互，不自动保存渠道，不扩大现有写请求面。
@@ -14732,7 +14732,7 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 采用“恢复单一模型选择主流程 + 保留远程候选补齐”的低风险方案：
 
 1. 删除 `channel-mutate-drawer.tsx` 中模型多选弹层的 `Search results` 头部、批量追加按钮和 `onSearchSubmit` 相关接线，不再让单个候选选择和批量追加共用一个弹层头部。
-2. 保留 `modelSearchKeyword` 作为 `MultiSelect` 的受控搜索词，继续驱动 `/api/models/search`，并把远程搜索结果合并进 `modelOptions`。
+2. `modelOptions` 只由 `dedupeModelNames([...allModelsList, ...currentModelsArray])` 生成，不再叠加远程模型元数据搜索结果。
 3. 在 `MultiSelect` 中增加可选参数，例如“选中后是否清空搜索词”，默认保持现有行为；渠道模型场景显式关闭自动清空，使管理员在搜索 `gpt-5.6` 后可以连续点击 `terra`、`luna` 等候选。
 4. 继续保留 `allowCreateWithMatches={false}`、`hideSelectedOptionsWhenSearching` 和 `preserveSelectedOnEmptyRemovalKey`，确保存在候选时不会误建假模型，且空搜索时不会误删已有模型。
 5. 页面整体结构不再新增独立搜索卡片，也不再恢复历史上那种 `Search model library` 第二输入框，避免再次偏离 `new-api-main` 最新编辑页的主流程。
@@ -14740,8 +14740,8 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 ### 实施结果
 
 1. `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 已移除模型多选弹层顶部的 `Search results` 汇总、`Add {{count}} search result(s)` 批量追加按钮和 `onSearchSubmit` 接线，让 `Models` 多选器回到 `new-api-main` 最新页面一致的单一搜索/选择主流程。
-2. 远程模型元数据搜索能力保留：`modelSearchKeyword` 仍作为受控搜索词驱动 `/api/models/search`，远程返回的 `modelSearchModelNames` 会与基础模型候选合并进 `modelOptions`，因此模型库中已同步但尚未进入渠道能力列表的模型仍可在编辑页被逐项选择。
-3. `web/default/src/components/multi-select.tsx` 新增 `clearSearchOnSelect?: boolean`，默认值为 `true`，保持其它调用方“选中后清空搜索词”的原行为；渠道模型场景显式传入 `clearSearchOnSelect={false}`，允许管理员在同一关键词下连续选择多个远程候选。
+2. `modelOptions` 已收敛为本地模型池与当前渠道历史模型的去重合并，不再依赖远程搜索接口，`gpt-5.6-terra`、`gpt-5.6-luna` 和 `gpt-5.6-sol` 会直接作为候选项出现。
+3. `web/default/src/components/multi-select.tsx` 新增 `clearSearchOnSelect?: boolean`，默认值为 `true`，保持其它调用方“选中后清空搜索词”的原行为；渠道模型场景显式传入 `clearSearchOnSelect={false}`，允许管理员在同一关键词下连续选择多个候选。
 4. `MultiSelect` 增加选择后恢复搜索词的保护逻辑，用于抵消 Base UI 在选中候选后清空输入和关闭弹层的默认行为；仅当调用方关闭自动清空、当前有搜索词且选中项数量增加时触发。
 5. `web/default/src/components/multi-select.test.ts` 已补充默认清空、关闭自动清空、无新增项不清空、关闭自动清空时恢复搜索词等单元测试，确保共享组件默认行为不被渠道模型场景改变。
 6. 本轮没有修改 Go 后端、数据库、模型搜索接口、渠道保存接口、权限模型、账号池逻辑、Codex OAuth 逻辑或 `/opt/project/new-api-main` 源码。
