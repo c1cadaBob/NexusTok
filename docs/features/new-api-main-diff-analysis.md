@@ -137,8 +137,8 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | Playground | 扁平组件结构，已有消息/输入/存储能力 | 更细拆成 `chat/`、`input/`、`message/`、`options/`、`streaming/`、`storage/` | 逐步重构，不改变接口协议；先迁移错误展示、消息编辑、stream utils。 |
 | Usage Logs | 有通用/绘图/任务日志 | 额外有 `logs-filter-toolbar`、移动端卡片、schema | 先吸收移动端卡片和筛选工具条，再把账号池日志也纳入一致交互。 |
 | Subscriptions | 有计划管理、reset dialog、余额支付、钱包溢出、Waffo Pancake 产品字段 | 具备同类能力 | 余额支付与钱包兜底已原生化；后续重点转为订阅重置交互 polish、权限细分和支付产品绑定体验。 |
-| System Settings / Models | 缺少 routing-reliability section | 有 `RoutingReliabilitySection` | 将重试、自动禁用、自动启用、自动测试统一挪到“路由可靠性”。 |
-| System Settings / Request Limits | 缺少 `token-limit-section.tsx` | 有 token limit 设置页 | 后端已有全局 max token 边界时再做设置页。 |
+| System Settings / Models | 已有 `RoutingReliabilitySection`、`Channel Affinity`、Model Deployment 等分区，但 `Channel Affinity` 的部分细项接线曾滞后 | 有 `RoutingReliabilitySection` 与更完整的 `Channel Affinity` 前端接线 | 保持 NexusTok 当前分区结构，持续把后端已存在的模型治理能力接成前端原生入口，避免出现“后端已有、默认前端不可配”的尾差。 |
+| System Settings / Request Limits | 已有 `rate-limit-section.tsx`、`ssrf-section.tsx`、`sensitive-words-section.tsx`、`token-limit-section.tsx` | 有同类设置页 | 当前差异已不在“有没有页面”，而在更细的权限消费、表单 polish 和能力持续收口。 |
 | System Settings / Integrations | 有 Waffo Pancake 基础设置 | new-api-main 有 catalog、pair、product options 体验 | 保留 NexusTok 支付配置字段，增加“验证并绑定商品”的向导。 |
 | Layout Sidebar | NexusTok 侧边栏有 Account Pool、Group & Tool Pricing | new-api-main 侧边栏有 System Info | 合并后 Admin 区建议顺序：Channels、Account Pool、Models、Pricing、Users、Redemptions、Subscriptions、System Info、System Settings。 |
 
@@ -222,6 +222,67 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | P2/P3 | Classic 前端同等体验补齐 | `web/classic` | 默认前端是主要承载面；Classic 仍可按低优先级补齐 Codex 用量、部分订阅/支付和账号池历史体验，但不阻塞默认前端原生能力。 |
 
 ### 文档与工程化 P2/P3
+
+## 本轮实施评审：Channel Affinity 缺失策略与请求头键来源补齐
+
+### 差异来源
+
+重新审计系统设置相关差异时发现，文档中早期“System Settings / Models 缺少 routing-reliability section”“System Settings / Request Limits 缺少 token-limit-section.tsx”两条结论已经过时：NexusTok 当前默认前端已经有 `RoutingReliabilitySection`、`TokenLimitSection` 以及对应的系统设置路由与保存权限消费，继续按旧结论推进会导致重复工作。
+
+不过在同一轮复核里也确认了一个真实仍然存在的缺口：`new-api-main` 已经把 `channel_affinity_setting.keep_on_channel_disabled` 暴露到默认前端的 `Channel Affinity` 页面，并且规则编辑器支持 `request_header` 作为亲和性键来源；NexusTok 当前后端 `setting/operation_setting/channel_affinity_setting.go`、`service/channel_affinity.go` 已经完整支持这两项能力，但默认前端的系统设置类型、默认值、分区注册和 `ChannelAffinitySection` / `RuleEditorDialog` 还没有把它们接出来。这会造成后端有能力、管理员却无法在原生页面中配置，属于“优势没有转换成当前项目原生能力”的典型尾差。
+
+### 需求分析
+
+1. `Channel Affinity` 页面必须能够显示和保存 `channel_affinity_setting.keep_on_channel_disabled`，让管理员决定当亲和命中的渠道被禁用、删除或不再适配当前模型/分组时，是保留旧缓存等待恢复，还是立即清理缓存重新选路。
+2. `Channel Affinity` 规则编辑器必须支持 `request_header` 作为 `key_sources` 的合法类型，和后端配置结构保持一致；否则管理员无法通过默认前端配置基于请求头的粘滞选路规则。
+3. 本轮只补前端系统设置接线，不修改后端亲和逻辑、缓存结构、路由器选路流程或数据库。
+4. 差异文档中与 `Routing Reliability`、`Token Limits` 相关的过时结论要同步校准，避免后续目标判断继续基于旧状态。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统设置类型 | `web/default/src/features/system-settings/types.ts` | 为 `ModelSettings` 补上 `channel_affinity_setting.keep_on_channel_disabled`，让页面默认值、分区配置和请求载荷类型一致。 |
+| 模型设置默认值与分区注册 | `web/default/src/features/system-settings/models/index.tsx`、`web/default/src/features/system-settings/models/section-registry.tsx` | 补齐亲和设置默认值和 `ChannelAffinitySection` 的 props 传递。 |
+| 渠道亲和设置页 | `web/default/src/features/system-settings/general/channel-affinity/index.tsx`、`types.ts` | 增加 `keep_on_channel_disabled` 的展示、保存与类型定义。 |
+| 规则编辑器 | `web/default/src/features/system-settings/general/channel-affinity/rule-editor-dialog.tsx`、`types.ts` | 让 `request_header` 成为可选 `key_source` 类型，并沿用现有 key/path 输入逻辑。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果，并校准系统设置旧差异描述。 |
+
+### 风险评估
+
+1. 配置兼容风险：新增前端字段必须与后端现有 `channel_affinity_setting` JSON 结构一致，不能改变其他字段的默认值和保存键名。
+2. 页面回归风险：`ChannelAffinitySection` 目前已经有权限控制、规则 JSON/可视化双模式、缓存清理操作；本轮不能破坏现有保存、权限拦截和缓存统计刷新行为。
+3. 规则编辑风险：`request_header` 与 `context_string` 一样都使用 `key` 输入，但语义不同；UI 需要最小改动复用现有输入，不应引入额外复杂状态。
+4. 文档风险：若只改代码不校准报告，后续仍会重复把 `Routing Reliability`、`Token Limits` 当作未完成差异，影响长期目标的真实优先级。
+5. 热更新风险：修改后必须在 3003 页面实际进入系统设置验证页面更新生效；若页面未刷新，需要先重启容器再验证。
+
+### 方案评审
+
+采用“最小前端接线 + 文档校准”的方案：
+
+1. 在系统设置 `ModelSettings` 类型、默认值和 `section-registry` 中补齐 `channel_affinity_setting.keep_on_channel_disabled`。
+2. 在 `ChannelAffinitySettings` 类型中补齐该字段，并在 `ChannelAffinitySection` 内新增 state、同步、保存差异检测和开关 UI。
+3. 在 `RuleEditorDialog` 与 `ChannelAffinity` 类型定义中加入 `request_header`，复用现有 `key` 输入，不改弹窗结构。
+4. 在差异文档中把 `Routing Reliability`、`Token Limits` 从“缺少”改为“已原生化”，并补充本轮新的实施评审。
+5. 验证顺序：定向测试/类型检查/构建后，使用 MCP 打开 `http://192.168.0.202:3003/system-settings/models/channel-affinity`，确认新开关渲染、规则编辑器可选 `request_header`，且页面无新的运行时错误。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/types.ts`、`web/default/src/features/system-settings/models/index.tsx`、`web/default/src/features/system-settings/models/section-registry.tsx` 已补齐 `channel_affinity_setting.keep_on_channel_disabled`，默认值为 `false`，并随 `ChannelAffinitySection` props 一起传递。
+2. `web/default/src/features/system-settings/general/channel-affinity/index.tsx` 已新增 `keepOnChannelDisabled` state、默认值同步、保存差异检测和开关 UI；保存时只在该字段相对默认值变化后提交 `channel_affinity_setting.keep_on_channel_disabled`。
+3. `web/default/src/features/system-settings/general/channel-affinity/types.ts` 与 `rule-editor-dialog.tsx` 已将 `request_header` 纳入 `KeySource.type` 与规则编辑器下拉选项，继续复用现有 `key` 输入路径。
+4. `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json` 已吸收 `/opt/project/new-api-main` 中同名文案翻译，新增“渠道禁用后保留亲和”及其说明文案的六语翻译。
+5. 差异总表中 `System Settings / Models` 和 `System Settings / Request Limits` 的旧结论已校准：当前缺口不再是缺少 `RoutingReliabilitySection` 或 `TokenLimitSection`，而是后端已具备能力的更细系统设置项需要持续接成默认前端原生入口。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，报告显示 `en`/`zh` missing 为 0，新增文案已进入所有支持语言；`fr`/`ja`/`ru`/`vi` 仍有项目既有 untranslated 统计，本轮未扩大。
+2. 已运行定向测试：`cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts`，73 个测试全部通过。
+3. 已运行定向 ESLint：`cd web/default && bunx eslint --no-ignore ...`，无 error；仅 `multi-select.tsx` 因导出测试辅助函数保留既有 `react-refresh/only-export-components` warning。
+4. 已运行 `cd web/default && bun run typecheck`、`cd web/default && bun run build`、`git diff --check`，类型检查、生产构建和空白检查均通过。
+5. 已重启 `nexustok-frontend-watch` 与 `nexustok-api-hot` 后，通过 MCP 打开 `http://192.168.0.202:3003/system-settings/models/channel-affinity?verify=20260716-final-affinity`，页面正常渲染 `渠道禁用后保留亲和` 开关和说明文案。
+6. MCP 在该页面打开“添加规则”弹窗并展开 Key 来源下拉，确认候选包含 `context_int`、`context_string`、`request_header`、`gjson`，其中 `request_header` 已作为可选键来源暴露。
+7. MCP 网络记录显示系统设置页面相关请求 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`、`GET /api/option/channel_affinity_cache` 均为 200；控制台无 JavaScript runtime error，仅保留项目既有表单 `label` / `autocomplete` 浏览器 issue。
 
 | 优先级 | 能力 | 参考路径 | 当前状态与迁移方式 |
 |--------|------|----------|--------------------|
@@ -14629,3 +14690,70 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 8. MCP 点击“添加 2 个搜索结果”后，页面 toast 显示 `已从搜索结果添加 2 个模型`，抽屉内实际新增 `gpt-5.6-terra` 与 `gpt-5.6-luna` 两个模型 chip，已存在的 `gpt-5.6-sol` 没有被重复加入，证明搜索批量添加路径与 MultiSelect 交互层去重已对齐。
 9. MCP 继续在同一登录态下直接调用 `/api/models/search` 验证非 OpenAI 供应商过滤：`vendor=Moonshot` 返回 200 且可读到 `kimi-k2.7-code-highspeed`、`kimi-k2.7-code`、`kimi-k2.6`、`kimi-k2.5`、`kimi-k2-thinking-turbo` 等模型；`vendor=腾讯`、`vendor=智谱`、`vendor=阿里巴巴` 也都返回 200，只是当前库中暂无命中数据。该结果说明本轮 canonical vendor 映射与后端大小写无关匹配已经打通真实页面调用链路，不再被错误收窄或直接 401。
 10. MCP 网络记录中只有两条 `401`，均来自前期未带 `NexusTok-User` 头的手工探测请求；页面自身真实发起的模型搜索请求返回 200。控制台除这两条探测遗留报错外，没有新的 JavaScript runtime error；仍只有既有 `autocomplete` 和 Base UI `label for` issue。
+
+## 本轮实施评审：编辑渠道页模型搜索主流程向 new-api 最新页收敛
+
+### 差异来源
+
+2026-07-16 在 `http://192.168.0.202:3003/channels?verify=20260716a` 使用 MCP 真实复现当前热更新页面后确认：编辑渠道抽屉的主体结构已经和 `/opt/project/new-api-main/web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 相当接近，`Basic Information / Credentials / Models & Groups / Advanced Settings` 四段、左侧分区导航、模型映射和快捷操作都已存在。当前最主要的偏差不在页面骨架，而在 `Models` 多选框的搜索主流程。
+
+真实页面中，管理员在模型多选器输入 `gpt-5.6` 后，会在同一个 Combobox 弹层顶部看到 `Search results`、`3 matched · 2 new · 1 already selected` 和 `Add 2 search result(s)` 按钮；下方候选列表同时承载单个模型的逐项选择。这使“点击单个候选”和“批量追加所有新命中”共用一个弹层，用户很容易只点击到一个候选，主观感受就会变成“搜索添加不正确”或“明明有 3 个模型，为什么只加了一个”。
+
+继续对照 `new-api-main` 源码可确认，其最新编辑渠道页仍以 `Models` 多选器作为唯一模型录入主入口，没有在同一弹层中叠加额外的搜索批量操作头部。NexusTok 当前保留远程模型元数据搜索是合理的原生增强，但其交互应该向 new-api 的单一主流程收敛，而不是继续扩大同一弹层里的双重语义。
+
+### 需求分析
+
+1. 编辑渠道页的 `Models` 多选器应继续作为模型编辑唯一主入口，和 `new-api-main` 最新页面的主流程保持一致。
+2. 远程模型元数据搜索能力需要保留，因为 `/api/channel/models` 不能覆盖所有已同步到模型库但尚未进入渠道模型列表的模型。
+3. 搜索 `gpt-5.6` 一类系列前缀时，管理员应当能够连续添加多个远程候选，而不是选中一个候选后搜索词被立刻清空、弹层重新回到全量模型列表。
+4. 存在真实候选时，系列前缀仍不能被误创建为自定义模型；只有没有匹配候选时，才允许继续创建自定义模型。
+5. 本轮不修改 Go 后端、数据库、模型搜索接口、渠道保存接口、权限模型、账号池逻辑、Codex OAuth 逻辑或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 移除模型多选弹层顶部的搜索结果批量追加头部，让模型多选器回到单一搜索/选择主流程；保留远程搜索驱动候选补齐。 |
+| 通用多选组件 | `web/default/src/components/multi-select.tsx` | 为选中后是否清空搜索词增加可选控制，默认行为不变，仅供渠道模型场景保留搜索上下文。 |
+| 通用多选测试 | `web/default/src/components/multi-select.test.ts` | 增加“选中后保留搜索词”测试，覆盖连续选择同一系列多个模型的交互。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求分析、影响范围、风险评估、方案评审、实施结果和验证记录。 |
+
+### 风险评估
+
+1. 共享组件风险：`MultiSelect` 被多个页面复用，不能把“选中后保留搜索词”变成全局默认行为；否则 API Keys、系统设置等其它多选场景会改变既有体验。
+2. 搜索回归风险：删除弹层顶部批量追加头部后，远程搜索候选仍必须稳定并入 `modelOptions`，否则会把问题从“语义不清”变成“找不到模型”。
+3. 连续选择风险：如果保留搜索词但不隐藏已选候选，管理员可能反复点到已添加模型；因此继续保留 `hideSelectedOptionsWhenSearching`。
+4. 自定义模型风险：保留搜索词后，`allowCreateWithMatches={false}` 仍必须生效，避免 `gpt-5.6` 这种系列前缀再次被创建成假模型。
+5. 草稿风险：本轮只改变前端编辑体验和草稿交互，不自动保存渠道，不扩大现有写请求面。
+6. 热更新风险：修改后必须再次访问 `http://192.168.0.202:3003/` 的真实页面验证；如页面无变化，先重启容器再验证。
+
+### 方案评审
+
+采用“恢复单一模型选择主流程 + 保留远程候选补齐”的低风险方案：
+
+1. 删除 `channel-mutate-drawer.tsx` 中模型多选弹层的 `Search results` 头部、批量追加按钮和 `onSearchSubmit` 相关接线，不再让单个候选选择和批量追加共用一个弹层头部。
+2. 保留 `modelSearchKeyword` 作为 `MultiSelect` 的受控搜索词，继续驱动 `/api/models/search`，并把远程搜索结果合并进 `modelOptions`。
+3. 在 `MultiSelect` 中增加可选参数，例如“选中后是否清空搜索词”，默认保持现有行为；渠道模型场景显式关闭自动清空，使管理员在搜索 `gpt-5.6` 后可以连续点击 `terra`、`luna` 等候选。
+4. 继续保留 `allowCreateWithMatches={false}`、`hideSelectedOptionsWhenSearching` 和 `preserveSelectedOnEmptyRemovalKey`，确保存在候选时不会误建假模型，且空搜索时不会误删已有模型。
+5. 页面整体结构不再新增独立搜索卡片，也不再恢复历史上那种 `Search model library` 第二输入框，避免再次偏离 `new-api-main` 最新编辑页的主流程。
+
+### 实施结果
+
+1. `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 已移除模型多选弹层顶部的 `Search results` 汇总、`Add {{count}} search result(s)` 批量追加按钮和 `onSearchSubmit` 接线，让 `Models` 多选器回到 `new-api-main` 最新页面一致的单一搜索/选择主流程。
+2. 远程模型元数据搜索能力保留：`modelSearchKeyword` 仍作为受控搜索词驱动 `/api/models/search`，远程返回的 `modelSearchModelNames` 会与基础模型候选合并进 `modelOptions`，因此模型库中已同步但尚未进入渠道能力列表的模型仍可在编辑页被逐项选择。
+3. `web/default/src/components/multi-select.tsx` 新增 `clearSearchOnSelect?: boolean`，默认值为 `true`，保持其它调用方“选中后清空搜索词”的原行为；渠道模型场景显式传入 `clearSearchOnSelect={false}`，允许管理员在同一关键词下连续选择多个远程候选。
+4. `MultiSelect` 增加选择后恢复搜索词的保护逻辑，用于抵消 Base UI 在选中候选后清空输入和关闭弹层的默认行为；仅当调用方关闭自动清空、当前有搜索词且选中项数量增加时触发。
+5. `web/default/src/components/multi-select.test.ts` 已补充默认清空、关闭自动清空、无新增项不清空、关闭自动清空时恢复搜索词等单元测试，确保共享组件默认行为不被渠道模型场景改变。
+6. 本轮没有修改 Go 后端、数据库、模型搜索接口、渠道保存接口、权限模型、账号池逻辑、Codex OAuth 逻辑或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts src/features/channels/lib/channel-form.test.ts`，73 个测试全部通过。
+2. 已运行 `cd web/default && bunx eslint --no-ignore src/components/multi-select.tsx src/components/multi-select.test.ts src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/system-settings/general/channel-affinity/index.tsx src/features/system-settings/general/channel-affinity/rule-editor-dialog.tsx src/features/system-settings/general/channel-affinity/types.ts src/features/system-settings/models/index.tsx src/features/system-settings/models/section-registry.tsx src/features/system-settings/types.ts`，无 error；仅 `multi-select.tsx` 保留既有 Fast Refresh warning。
+3. 已运行 `cd web/default && bun run i18n:sync`、`cd web/default && bun run typecheck`、`cd web/default && bun run build`、`git diff --check`，均通过。
+4. 已重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，通过 MCP 打开 `http://192.168.0.202:3003/channels?verify=20260716-final-model-search` 并进入渠道 `11111` 编辑抽屉。页面初始已选模型为 `gpt-5.4`、`gpt-5.5`、`gpt-5.6-sol`，说明三种 `gpt-5.6` 中的 `sol` 已经在当前渠道内。
+5. MCP 在 `Models` 多选器输入 `gpt-5.6` 后，DOM 读取确认候选列表包含 `gpt-5.6-terra` 与 `gpt-5.6-luna`，已选 `gpt-5.6-sol` 不作为可新增候选重复出现；页面不再包含 `搜索结果` / `Search results` 头部，也不再包含 `添加 2 个搜索结果` / `Add 2 search result(s)` 按钮。
+6. MCP 点击 `gpt-5.6-terra` 后，输入框仍保持 `gpt-5.6`，已选数量从 `已选 3 个` 变为 `已选 4 个`，候选列表只剩 `gpt-5.6-luna`，证明连续选择上下文被保留。
+7. MCP 继续点击 `gpt-5.6-luna` 后，已选数量变为 `已选 5 个`，已选 chip 包含 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，三种 `gpt-5.6` 模型在编辑草稿中全部可见。
+8. MCP 使用带 `NexusTok-User: 1` 的只读请求 `GET /api/channel/1` 复核后端数据，返回 `models: "gpt-5.4,gpt-5.5,gpt-5.6-sol"`，说明本轮页面验证只改变前端草稿，没有误触发渠道保存写入。
+9. MCP 控制台无新增 JavaScript runtime error；系统设置页网络请求均为 200。渠道页验证中一次未带 `NexusTok-User` 头的手工只读探测按预期返回 401，随后带头请求返回 200，不属于页面自身回归。

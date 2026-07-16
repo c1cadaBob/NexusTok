@@ -24,8 +24,10 @@ import {
   filterMultiSelectItems,
   getNewMultiSelectValues,
   getVisibleMultiSelectItems,
+  shouldClearMultiSelectSearchAfterChange,
   shouldPreventMultiSelectEnterFormSubmit,
   shouldPreventEmptyInputChipRemoval,
+  shouldRestoreMultiSelectSearchAfterSelection,
   shouldSubmitMultiSelectSearchOnEnter,
 } from './multi-select'
 
@@ -113,6 +115,74 @@ describe('MultiSelect 值去重', () => {
         incoming: ['GPT-5.6-SOL', 'gpt-5.6-terra', ' gpt-5.6-luna '],
       }),
       ['gpt-5.6-terra', 'gpt-5.6-luna']
+    )
+  })
+})
+
+describe('MultiSelect 选中后搜索词清理', () => {
+  test('默认在新增选中项后清空搜索词', () => {
+    assert.equal(
+      shouldClearMultiSelectSearchAfterChange({
+        clearSearchOnSelect: true,
+        previousSelectedLength: 1,
+        nextSelectedLength: 2,
+      }),
+      true
+    )
+  })
+
+  test('调用方可关闭自动清空，便于连续选择同系列候选', () => {
+    assert.equal(
+      shouldClearMultiSelectSearchAfterChange({
+        clearSearchOnSelect: false,
+        previousSelectedLength: 1,
+        nextSelectedLength: 2,
+      }),
+      false
+    )
+  })
+
+  test('没有新增选中项时不触发清空', () => {
+    assert.equal(
+      shouldClearMultiSelectSearchAfterChange({
+        clearSearchOnSelect: true,
+        previousSelectedLength: 2,
+        nextSelectedLength: 2,
+      }),
+      false
+    )
+  })
+
+  test('关闭自动清空时新增选中项会恢复搜索词', () => {
+    assert.equal(
+      shouldRestoreMultiSelectSearchAfterSelection({
+        clearSearchOnSelect: false,
+        inputValue: 'gpt-5.6',
+        previousSelectedLength: 1,
+        nextSelectedLength: 2,
+      }),
+      true
+    )
+  })
+
+  test('默认自动清空或空搜索不会恢复搜索词', () => {
+    assert.equal(
+      shouldRestoreMultiSelectSearchAfterSelection({
+        clearSearchOnSelect: true,
+        inputValue: 'gpt-5.6',
+        previousSelectedLength: 1,
+        nextSelectedLength: 2,
+      }),
+      false
+    )
+    assert.equal(
+      shouldRestoreMultiSelectSearchAfterSelection({
+        clearSearchOnSelect: false,
+        inputValue: '   ',
+        previousSelectedLength: 1,
+        nextSelectedLength: 2,
+      }),
+      false
     )
   })
 })

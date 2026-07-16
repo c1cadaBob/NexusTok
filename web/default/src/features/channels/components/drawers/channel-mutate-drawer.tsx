@@ -159,7 +159,6 @@ import {
   dedupeModelNames,
   getModelSearchVendorForChannelType,
   getModelSearchModelNames,
-  summarizeModelSearchCandidates,
   mergeModelNames,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
@@ -987,14 +986,6 @@ export function ChannelMutateDrawer({
     [currentModels]
   )
 
-  const modelSearchCandidateSummary = useMemo(
-    () =>
-      summarizeModelSearchCandidates(modelSearchModelNames, currentModelsArray),
-    [currentModelsArray, modelSearchModelNames]
-  )
-
-  const addableModelSearchNames = modelSearchCandidateSummary.addable
-
   // 按渠道类型推导基础模型集合。
   const basicModels = useMemo(() => {
     if (!allModelsList.length) return []
@@ -1276,13 +1267,13 @@ export function ChannelMutateDrawer({
   // 但尚未进入任何渠道能力表的模型也能被管理员逐项选择。
   const modelOptions = useMemo(() => {
     return dedupeModelNames([
-      ...addableModelSearchNames,
+      ...modelSearchModelNames,
       ...baseModelOptions.map((option) => option.value),
     ]).map((model) => ({
       value: model,
       label: model,
     }))
-  }, [addableModelSearchNames, baseModelOptions])
+  }, [baseModelOptions, modelSearchModelNames])
 
   const modelMappingGuardrail = useMemo<ModelMappingGuardrail>(() => {
     if (!currentModelMapping?.trim()) {
@@ -1682,37 +1673,6 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, canEditBasicFields, noPermissionMessage, updateModels, t])
 
-  const handleAddModelSearchResults = useCallback(() => {
-    if (!canEditBasicFields) {
-      toast.error(noPermissionMessage)
-      return
-    }
-    if (isSearchingModelMeta || isModelSearchDebouncing) {
-      return
-    }
-    if (!addableModelSearchNames.length) {
-      toast.info(t('No new search results to add'))
-      return
-    }
-
-    const count = updateModels(addableModelSearchNames, true)
-    if (count === 0) {
-      toast.info(t('No new search results to add'))
-      return
-    }
-
-    toast.success(t('Added {{count}} model(s) from search', { count }))
-    setModelSearchKeyword('')
-  }, [
-    addableModelSearchNames,
-    canEditBasicFields,
-    isModelSearchDebouncing,
-    isSearchingModelMeta,
-    noPermissionMessage,
-    updateModels,
-    t,
-  ])
-
   const handleClearModels = useCallback(() => {
     if (!canEditBasicFields) {
       toast.error(noPermissionMessage)
@@ -1778,67 +1738,6 @@ export function ChannelMutateDrawer({
     },
     [canEditBasicFields, form, noPermissionMessage]
   )
-
-  const modelSearchContentHeader = useMemo(() => {
-    if (trimmedModelSearchKeyword.length === 0) return undefined
-
-    const matchedCount = modelSearchCandidateSummary.matched.length
-    const addableCount = modelSearchCandidateSummary.addable.length
-    const existingCount = modelSearchCandidateSummary.existingCount
-
-    return (
-      <div className='flex flex-col gap-2'>
-        <div className='flex items-center justify-between gap-3'>
-          <div className='min-w-0'>
-            <p className='text-sm font-medium'>{t('Search results')}</p>
-            <p className='text-muted-foreground text-xs'>
-              {isSearchingModelMeta || isModelSearchDebouncing
-                ? t('Searching model metadata...')
-                : t(
-                    '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                    {
-                      matched: matchedCount,
-                      addable: addableCount,
-                      existing: existingCount,
-                    }
-                  )}
-            </p>
-          </div>
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            className='shrink-0'
-            onClick={handleAddModelSearchResults}
-            disabled={
-              !canEditBasicFields ||
-              addableCount === 0 ||
-              isSearchingModelMeta ||
-              isModelSearchDebouncing
-            }
-            title={canEditBasicFields ? undefined : noPermissionMessage}
-          >
-            <Plus data-icon='inline-start' />
-            {t('Add {{count}} search result(s)', { count: addableCount })}
-          </Button>
-        </div>
-        <p className='text-muted-foreground text-xs'>
-          {t(
-            'Use the button to add every matching model. Selecting a row below adds only that one model.'
-          )}
-        </p>
-      </div>
-    )
-  }, [
-    canEditBasicFields,
-    handleAddModelSearchResults,
-    isModelSearchDebouncing,
-    isSearchingModelMeta,
-    modelSearchCandidateSummary,
-    noPermissionMessage,
-    t,
-    trimmedModelSearchKeyword,
-  ])
 
   // 提交成功后刷新渠道列表并关闭抽屉。
   const handleSuccess = useCallback(() => {
@@ -3877,10 +3776,7 @@ export function ChannelMutateDrawer({
                                     emptyText={t('No matching models')}
                                     preserveSelectedOnEmptyRemovalKey
                                     hideSelectedOptionsWhenSearching
-                                    contentHeader={modelSearchContentHeader}
-                                    onSearchSubmit={handleAddModelSearchResults}
-                                    submitSearchOnEnterWithMatches
-                                    submitSearchOnEnterWhenHighlighted
+                                    clearSearchOnSelect={false}
                                   />
                                 </FormControl>
                                 {modelMappingGuardrail.exposedTargetModels

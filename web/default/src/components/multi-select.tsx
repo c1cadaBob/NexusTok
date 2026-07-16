@@ -71,6 +71,7 @@ interface MultiSelectProps {
   hideSelectedOptionsWhenSearching?: boolean
   submitSearchOnEnterWithMatches?: boolean
   submitSearchOnEnterWhenHighlighted?: boolean
+  clearSearchOnSelect?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -276,6 +277,36 @@ export function shouldPreventMultiSelectEnterFormSubmit({
   return key === 'Enter' && inputValue.trim().length > 0
 }
 
+export function shouldClearMultiSelectSearchAfterChange({
+  clearSearchOnSelect,
+  previousSelectedLength,
+  nextSelectedLength,
+}: {
+  clearSearchOnSelect: boolean
+  previousSelectedLength: number
+  nextSelectedLength: number
+}): boolean {
+  return clearSearchOnSelect && nextSelectedLength > previousSelectedLength
+}
+
+export function shouldRestoreMultiSelectSearchAfterSelection({
+  clearSearchOnSelect,
+  inputValue,
+  previousSelectedLength,
+  nextSelectedLength,
+}: {
+  clearSearchOnSelect: boolean
+  inputValue: string
+  previousSelectedLength: number
+  nextSelectedLength: number
+}): boolean {
+  return (
+    !clearSearchOnSelect &&
+    inputValue.trim().length > 0 &&
+    nextSelectedLength > previousSelectedLength
+  )
+}
+
 function hasHighlightedComboboxOption(): boolean {
   if (typeof document === 'undefined') return false
   const popup = document.querySelector<HTMLElement>(
@@ -314,6 +345,7 @@ export function MultiSelect({
   hideSelectedOptionsWhenSearching = false,
   submitSearchOnEnterWithMatches = false,
   submitSearchOnEnterWhenHighlighted = false,
+  clearSearchOnSelect = true,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -323,6 +355,7 @@ export function MultiSelect({
   const [internalInputValue, setInternalInputValue] = React.useState('')
   const [internalOpen, setInternalOpen] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
+  const restoreSearchAfterSelectRef = React.useRef<string | null>(null)
   const inputValue = searchValue ?? internalInputValue
   const open = controlledOpen ?? internalOpen
 
@@ -413,6 +446,19 @@ export function MultiSelect({
   )
 
   const handleInputValueChange = (value: string) => {
+    if (
+      restoreSearchAfterSelectRef.current !== null &&
+      value.trim().length === 0
+    ) {
+      const restoredInputValue = restoreSearchAfterSelectRef.current
+      restoreSearchAfterSelectRef.current = null
+      updateInputValue(restoredInputValue)
+      updateOpen(true)
+      return
+    }
+
+    restoreSearchAfterSelectRef.current = null
+
     if (!allowCreate) {
       updateInputValue(value)
       return
@@ -431,9 +477,30 @@ export function MultiSelect({
   const handleValueChange = (next: string[]) => {
     const dedupedNext = dedupeMultiSelectValues(next)
     onChange(dedupedNext)
-    // 选中候选后清空搜索词，方便连续选择多个模型。
-    if (dedupedNext.length > selected.length) {
+    const shouldRestoreSearch = shouldRestoreMultiSelectSearchAfterSelection({
+      clearSearchOnSelect,
+      inputValue,
+      previousSelectedLength: selected.length,
+      nextSelectedLength: dedupedNext.length,
+    })
+
+    // 默认延续现有多选体验：选中后清空搜索词。
+    // 调用方可显式关闭该行为，用于在同一关键词下连续选择多个远程候选。
+    if (
+      shouldClearMultiSelectSearchAfterChange({
+        clearSearchOnSelect,
+        previousSelectedLength: selected.length,
+        nextSelectedLength: dedupedNext.length,
+      })
+    ) {
       updateInputValue('')
+      return
+    }
+
+    if (shouldRestoreSearch) {
+      restoreSearchAfterSelectRef.current = inputValue
+      updateInputValue(inputValue)
+      updateOpen(true)
     }
   }
 
