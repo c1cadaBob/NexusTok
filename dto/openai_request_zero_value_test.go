@@ -99,3 +99,26 @@ func TestImageRequestPreserveExplicitStreamFalse(t *testing.T) {
 	require.True(t, gjson.GetBytes(encoded, "stream").Exists())
 	require.False(t, gjson.GetBytes(encoded, "stream").Bool())
 }
+
+func TestGeneralOpenAIRequestGetSystemRoleName(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		expected string
+	}{
+		{name: "o1 mini keeps system", model: "o1-mini", expected: "system"},
+		{name: "o1 preview keeps system", model: "o1-preview", expected: "system"},
+		{name: "o3 uses developer", model: "o3-mini", expected: "developer"},
+		{name: "o4 uses developer", model: "o4-mini", expected: "developer"},
+		{name: "gpt5 uses developer", model: "gpt-5.4", expected: "developer"},
+		{name: "omni moderation stays system", model: "omni-moderation-latest", expected: "system"},
+		{name: "plain gpt4 stays system", model: "gpt-4.1", expected: "system"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := GeneralOpenAIRequest{Model: test.model}
+			require.Equal(t, test.expected, request.GetSystemRoleName())
+		})
+	}
+}

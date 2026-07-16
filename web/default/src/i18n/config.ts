@@ -24,7 +24,12 @@ import fr from './locales/fr.json'
 import ja from './locales/ja.json'
 import ru from './locales/ru.json'
 import vi from './locales/vi.json'
+import zhTW from './locales/zh-TW.json'
 import zh from './locales/zh.json'
+import {
+  getInitialInterfaceLanguage,
+  INTERFACE_LANGUAGE_OPTIONS,
+} from './languages'
 
 export const resources = {
   en,
@@ -33,6 +38,7 @@ export const resources = {
   ru,
   ja,
   vi,
+  'zh-TW': zhTW,
 } as const
 
 i18n
@@ -40,9 +46,10 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
+    lng: getInitialInterfaceLanguage(),
     fallbackLng: 'en',
-    supportedLngs: ['en', 'zh', 'fr', 'ru', 'ja', 'vi'],
-    load: 'languageOnly', // Convert zh-CN -> zh
+    supportedLngs: INTERFACE_LANGUAGE_OPTIONS.map((language) => language.code),
+    load: 'currentOnly',
     nsSeparator: false, // Allow literal colons in keys (e.g., URLs, labels)
     debug: import.meta.env.DEV,
     interpolation: {

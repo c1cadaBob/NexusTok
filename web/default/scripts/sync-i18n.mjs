@@ -221,7 +221,7 @@ function isLikelyUntranslated({ locale, baseValue, value }) {
   if (!/[A-Za-z]{3,}/.test(s)) return false
 
   // 非拉丁文字 locale 与英文完全相同时，通常是漏翻译的强信号。
-  if (locale === 'ja' || locale === 'zh') return true
+  if (locale === 'ja' || locale === 'zh' || locale === 'zh-TW') return true
   if (locale === 'ru') return true
 
   // fr/vi 与英文共享词更多，保持更保守的英文功能词检测。

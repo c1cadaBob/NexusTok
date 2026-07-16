@@ -1843,7 +1843,7 @@
     "Endpoint:": "エンドポイント:",
     "Endpoints": "エンドポイント",
     "English": "英語",
-    "English, Chinese, French, Japanese, Russian, Vietnamese": "英語、中国語、フランス語、日本語、ロシア語、ベトナム語",
+    "English, Simplified Chinese, Traditional Chinese, French, Japanese, Russian, Vietnamese": "英語、簡体字中国語、繁体字中国語、フランス語、日本語、ロシア語、ベトナム語",
     "Ensure Prefix": "プレフィックスを保証",
     "Ensure Suffix": "サフィックスを保証",
     "Ensure the string has a specified prefix": "文字列に指定のプレフィックスがあることを確認",

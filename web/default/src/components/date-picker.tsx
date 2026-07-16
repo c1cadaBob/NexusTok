@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { Calendar as CalendarIcon } from 'lucide-react'
-import { enUS, fr, ja, ru, vi, zhCN } from 'react-day-picker/locale'
+import { enUS, fr, ja, ru, vi, zhCN, zhTW } from 'react-day-picker/locale'
 import { useTranslation } from 'react-i18next'
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -31,6 +32,7 @@ import {
 const calendarLocales = {
   en: enUS,
   zh: zhCN,
+  'zh-TW': zhTW,
   fr,
   ru,
   ja,
@@ -50,8 +52,9 @@ export function DatePicker({
 }: DatePickerProps) {
   const { t, i18n } = useTranslation()
   const placeholderText = placeholder ?? t('Pick a date')
+  const currentLanguage = normalizeInterfaceLanguage(i18n.language)
   const calendarLocale =
-    calendarLocales[i18n.language as keyof typeof calendarLocales] ?? enUS
+    calendarLocales[currentLanguage as keyof typeof calendarLocales] ?? enUS
   return (
     <Popover>
       <PopoverTrigger

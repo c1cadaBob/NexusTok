@@ -93,6 +93,16 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+// GetChannelOps 返回渠道管理页使用的运行期只读参数。
+//
+// 目前只暴露全局重试次数，用于把后端真实重试策略同步给默认前端和外部治理脚本，
+// 避免它们只能依赖部署侧配置文件或硬编码默认值推断。
+func GetChannelOps(c *gin.Context) {
+	common.ApiSuccess(c, gin.H{
+		"retry_times": common.RetryTimes,
+	})
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)

@@ -20,6 +20,10 @@ import { useCallback } from 'react'
 import { Languages, Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  INTERFACE_LANGUAGE_OPTIONS,
+  normalizeInterfaceLanguage,
+} from '@/i18n/languages'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -30,25 +34,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-const languages = [
-  { code: 'en', label: 'English' },
-  { code: 'zh', label: '中文' },
-  { code: 'fr', label: 'Français' },
-  { code: 'ru', label: 'Русский' },
-  { code: 'ja', label: '日本語' },
-  { code: 'vi', label: 'Tiếng Việt' },
-]
-
 export function LanguageSwitcher() {
   const { i18n, t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
+  const currentLanguage = normalizeInterfaceLanguage(i18n.language)
 
   const handleChangeLanguage = useCallback(
     async (code: string) => {
-      await i18n.changeLanguage(code)
+      const nextLanguage = normalizeInterfaceLanguage(code)
+      await i18n.changeLanguage(nextLanguage)
       if (user) {
         try {
-          await api.put('/api/user/self', { language: code })
+          await api.put('/api/user/self', { language: nextLanguage })
         } catch {
           // Best-effort persistence; don't block the UI on failure
         }
@@ -66,7 +63,7 @@ export function LanguageSwitcher() {
         <span className='sr-only'>{t('Change language')}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
-        {languages.map((lang) => (
+        {INTERFACE_LANGUAGE_OPTIONS.map((lang) => (
           <DropdownMenuItem
             key={lang.code}
             onClick={() => handleChangeLanguage(lang.code)}
@@ -74,7 +71,10 @@ export function LanguageSwitcher() {
             {lang.label}
             <Check
               size={14}
-              className={cn('ms-auto', i18n.language !== lang.code && 'hidden')}
+              className={cn(
+                'ms-auto',
+                currentLanguage !== lang.code && 'hidden'
+              )}
             />
           </DropdownMenuItem>
         ))}

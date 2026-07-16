@@ -24,6 +24,7 @@ func TestRegisterChannelRoutesKeepsCoreHandlers(t *testing.T) {
 	})
 
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/", controller.GetAllChannels)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/ops", controller.GetChannelOps)
 	assertRouteHandler(t, engine, http.MethodPut, "/api/channel/", controller.UpdateChannel)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/", controller.AddChannel)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/status/batch", controller.BatchUpdateChannelStatus)
@@ -50,6 +51,7 @@ func TestRegisterChannelRoutesKeepsRootProtectedHandlers(t *testing.T) {
 
 func TestChannelPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertPermissionRoute(t, http.MethodGet, "/", authz.ChannelRead)
+	assertPermissionRoute(t, http.MethodGet, "/ops", authz.ChannelRead)
 	assertPermissionRoute(t, http.MethodGet, "/models", authz.ChannelRead)
 	assertPermissionRoute(t, http.MethodGet, "/test/:id", authz.ChannelOperate)
 	assertPermissionRoute(t, http.MethodGet, "/update_balance/:id", authz.ChannelOperate)

@@ -18,8 +18,9 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import * as React from 'react'
 import { ChevronDownIcon } from 'lucide-react'
-import { enUS, fr, ja, ru, vi, zhCN } from 'react-day-picker/locale'
+import { enUS, fr, ja, ru, vi, zhCN, zhTW } from 'react-day-picker/locale'
 import { useTranslation } from 'react-i18next'
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ import {
 const calendarLocales = {
   en: enUS,
   zh: zhCN,
+  'zh-TW': zhTW,
   fr,
   ru,
   ja,
@@ -65,8 +67,9 @@ export function DateTimePicker({
   const placeholderText = placeholder ?? t('Select date')
   const resolvedDateLabel = dateLabel ?? placeholderText
   const resolvedTimeLabel = timeLabel ?? t('Time')
+  const currentLanguage = normalizeInterfaceLanguage(i18n.language)
   const calendarLocale =
-    calendarLocales[i18n.language as keyof typeof calendarLocales] ?? enUS
+    calendarLocales[currentLanguage as keyof typeof calendarLocales] ?? enUS
   const [open, setOpen] = React.useState(false)
   const [date, setDate] = React.useState<Date | undefined>(value)
   const [month, setMonth] = React.useState<Date | undefined>(value)

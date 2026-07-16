@@ -45,9 +45,11 @@ export function Stats(_props: StatsProps) {
       description: t('SQLite, MySQL, and PostgreSQL supported by one codepath'),
     },
     {
-      value: '6',
+      value: '7',
       label: t('locale packs'),
-      description: t('English, Chinese, French, Japanese, Russian, Vietnamese'),
+      description: t(
+        'English, Simplified Chinese, Traditional Chinese, French, Japanese, Russian, Vietnamese'
+      ),
     },
     {
       value: '1',

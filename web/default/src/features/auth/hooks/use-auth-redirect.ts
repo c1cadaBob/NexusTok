@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
 import { useAuthStore } from '@/stores/auth-store'
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import { getSelf } from '@/lib/api'
 import type { User } from '@/features/users/types'
 import { saveUserId } from '../lib/storage'
@@ -77,7 +78,7 @@ export function useAuthRedirect() {
         // Restore saved language preference
         const savedLang = getSavedLanguage(user)
         if (savedLang && savedLang !== i18n.language) {
-          i18n.changeLanguage(savedLang)
+          i18n.changeLanguage(normalizeInterfaceLanguage(savedLang))
         }
       }
     } catch (error) {

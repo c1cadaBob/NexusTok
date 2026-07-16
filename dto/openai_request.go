@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"github.com/c1cada/NexusTok/common" // 公共工具包
-	"github.com/c1cada/NexusTok/types"   // 类型定义
-	"github.com/samber/lo"               // Go 泛型工具库
+	"github.com/c1cada/NexusTok/types"  // 类型定义
+	"github.com/samber/lo"              // Go 泛型工具库
 
 	"github.com/gin-gonic/gin" // Gin 框架
 )
@@ -23,7 +23,7 @@ import (
 // ResponseFormat 响应格式结构体
 // 指定模型输出的格式（如 JSON 模式）
 type ResponseFormat struct {
-	Type       string          `json:"type,omitempty"`       // 格式类型（text/json_object/json_schema）
+	Type       string          `json:"type,omitempty"`        // 格式类型（text/json_object/json_schema）
 	JsonSchema json.RawMessage `json:"json_schema,omitempty"` // JSON Schema 定义
 }
 
@@ -42,84 +42,84 @@ type FormatJsonSchema struct {
 // 这是为了确保参数能够正确地透传到上游 API
 type GeneralOpenAIRequest struct {
 	// 基础参数
-	Model               string            `json:"model,omitempty"`                // 模型名称
-	Messages            []Message         `json:"messages,omitempty"`             // 聊天消息列表
-	Prompt              any               `json:"prompt,omitempty"`               // 文本补全的提示词
-	Prefix              any               `json:"prefix,omitempty"`               // 前缀
-	Suffix              any               `json:"suffix,omitempty"`               // 后缀
+	Model    string    `json:"model,omitempty"`    // 模型名称
+	Messages []Message `json:"messages,omitempty"` // 聊天消息列表
+	Prompt   any       `json:"prompt,omitempty"`   // 文本补全的提示词
+	Prefix   any       `json:"prefix,omitempty"`   // 前缀
+	Suffix   any       `json:"suffix,omitempty"`   // 后缀
 
 	// 流式和 Token 参数
-	Stream              *bool             `json:"stream,omitempty"`               // 是否启用流式响应
-	StreamOptions       *StreamOptions    `json:"stream_options,omitempty"`       // 流式选项
-	MaxTokens           *uint             `json:"max_tokens,omitempty"`           // 最大 token 数（旧版）
-	MaxCompletionTokens *uint             `json:"max_completion_tokens,omitempty"` // 最大补全 token 数（新版）
+	Stream              *bool          `json:"stream,omitempty"`                // 是否启用流式响应
+	StreamOptions       *StreamOptions `json:"stream_options,omitempty"`        // 流式选项
+	MaxTokens           *uint          `json:"max_tokens,omitempty"`            // 最大 token 数（旧版）
+	MaxCompletionTokens *uint          `json:"max_completion_tokens,omitempty"` // 最大补全 token 数（新版）
 
 	// 推理参数
-	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`     // 推理努力级别（low/medium/high）
-	Verbosity           json.RawMessage   `json:"verbosity,omitempty"`            // 详细程度（gpt-5）
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"` // 推理努力级别（low/medium/high）
+	Verbosity       json.RawMessage `json:"verbosity,omitempty"`        // 详细程度（gpt-5）
 
 	// 采样参数
-	Temperature         *float64          `json:"temperature,omitempty"`          // 温度（0-2）
-	TopP                *float64          `json:"top_p,omitempty"`                // Top P 采样
-	TopK                *int              `json:"top_k,omitempty"`                // Top K 采样
-	Stop                any               `json:"stop,omitempty"`                 // 停止词
-	N                   *int              `json:"n,omitempty"`                    // 生成数量
+	Temperature *float64 `json:"temperature,omitempty"` // 温度（0-2）
+	TopP        *float64 `json:"top_p,omitempty"`       // Top P 采样
+	TopK        *int     `json:"top_k,omitempty"`       // Top K 采样
+	Stop        any      `json:"stop,omitempty"`        // 停止词
+	N           *int     `json:"n,omitempty"`           // 生成数量
 
 	// 其他参数
-	Input               any               `json:"input,omitempty"`                // 输入（图像/音频等）
-	Instruction         string            `json:"instruction,omitempty"`          // 指令
-	Size                string            `json:"size,omitempty"`                 // 图像尺寸
+	Input       any    `json:"input,omitempty"`       // 输入（图像/音频等）
+	Instruction string `json:"instruction,omitempty"` // 指令
+	Size        string `json:"size,omitempty"`        // 图像尺寸
 
 	// 工具调用参数
-	Functions           json.RawMessage   `json:"functions,omitempty"`            // 函数定义（旧版）
-	Tools               []ToolCallRequest `json:"tools,omitempty"`                // 工具定义（新版）
-	ToolChoice          any               `json:"tool_choice,omitempty"`          // 工具选择策略
-	FunctionCall        json.RawMessage   `json:"function_call,omitempty"`        // 函数调用（旧版）
-	ParallelTooCalls    *bool             `json:"parallel_tool_calls,omitempty"`  // 是否并行调用工具
+	Functions        json.RawMessage   `json:"functions,omitempty"`           // 函数定义（旧版）
+	Tools            []ToolCallRequest `json:"tools,omitempty"`               // 工具定义（新版）
+	ToolChoice       any               `json:"tool_choice,omitempty"`         // 工具选择策略
+	FunctionCall     json.RawMessage   `json:"function_call,omitempty"`       // 函数调用（旧版）
+	ParallelTooCalls *bool             `json:"parallel_tool_calls,omitempty"` // 是否并行调用工具
 
 	// 惩罚参数
-	FrequencyPenalty    *float64          `json:"frequency_penalty,omitempty"`    // 频率惩罚
-	PresencePenalty     *float64          `json:"presence_penalty,omitempty"`     // 存在惩罚
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"` // 频率惩罚
+	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`  // 存在惩罚
 
 	// 响应格式
-	ResponseFormat      *ResponseFormat   `json:"response_format,omitempty"`      // 响应格式
-	EncodingFormat      json.RawMessage   `json:"encoding_format,omitempty"`      // 编码格式（embedding）
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"` // 响应格式
+	EncodingFormat json.RawMessage `json:"encoding_format,omitempty"` // 编码格式（embedding）
 
 	// 其他可选参数
-	Seed                *float64          `json:"seed,omitempty"`                 // 随机种子
-	User                json.RawMessage   `json:"user,omitempty"`                 // 用户标识
+	Seed *float64        `json:"seed,omitempty"` // 随机种子
+	User json.RawMessage `json:"user,omitempty"` // 用户标识
 
 	// ServiceTier 指定上游服务级别，可能影响计费
 	// 此字段默认过滤，可通过渠道设置 allow_service_tier 启用
-	ServiceTier         json.RawMessage   `json:"service_tier,omitempty"`
+	ServiceTier json.RawMessage `json:"service_tier,omitempty"`
 
 	// 日志概率参数
-	LogProbs            *bool             `json:"logprobs,omitempty"`             // 是否返回 logprobs
-	TopLogProbs         *int              `json:"top_logprobs,omitempty"`         // 返回的 top logprobs 数量
+	LogProbs    *bool `json:"logprobs,omitempty"`     // 是否返回 logprobs
+	TopLogProbs *int  `json:"top_logprobs,omitempty"` // 返回的 top logprobs 数量
 
 	// Embedding 参数
-	Dimensions          *int              `json:"dimensions,omitempty"`           // 嵌入维度
+	Dimensions *int `json:"dimensions,omitempty"` // 嵌入维度
 
 	// 多模态参数
-	Modalities          json.RawMessage   `json:"modalities,omitempty"`           // 模态类型
-	Audio               json.RawMessage   `json:"audio,omitempty"`                // 音频参数
+	Modalities json.RawMessage `json:"modalities,omitempty"` // 模态类型
+	Audio      json.RawMessage `json:"audio,omitempty"`      // 音频参数
 
 	// SafetyIdentifier 安全标识符，用于帮助 OpenAI 检测可能违反使用政策的应用程序用户
 	// 注意：此字段会向 OpenAI 发送用户标识信息，默认过滤，可通过 allow_safety_identifier 开启
-	SafetyIdentifier    json.RawMessage   `json:"safety_identifier,omitempty"`
+	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
 
 	// Store 是否存储此次请求数据供 OpenAI 用于评估和优化产品
 	// 注意：默认允许透传，可通过 disable_store 禁用；禁用后可能导致 Codex 无法正常使用
-	Store               json.RawMessage   `json:"store,omitempty"`
+	Store json.RawMessage `json:"store,omitempty"`
 
 	// PromptCacheKey 用于缓存相似请求的响应，优化缓存命中率
-	PromptCacheKey      string            `json:"prompt_cache_key,omitempty"`
-	PromptCacheRetention json.RawMessage  `json:"prompt_cache_retention,omitempty"`
+	PromptCacheKey       string          `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention json.RawMessage `json:"prompt_cache_retention,omitempty"`
 
 	// 其他 OpenAI 参数
-	LogitBias           json.RawMessage   `json:"logit_bias,omitempty"`           // logit 偏置
-	Metadata            json.RawMessage   `json:"metadata,omitempty"`             // 元数据
-	Prediction          json.RawMessage   `json:"prediction,omitempty"`           // 预测
+	LogitBias  json.RawMessage `json:"logit_bias,omitempty"` // logit 偏置
+	Metadata   json.RawMessage `json:"metadata,omitempty"`   // 元数据
+	Prediction json.RawMessage `json:"prediction,omitempty"` // 预测
 	// gemini
 	ExtraBody json.RawMessage `json:"extra_body,omitempty"`
 	//xai
@@ -255,12 +255,27 @@ func (r *GeneralOpenAIRequest) ToMap() map[string]any {
 	return result
 }
 
+// IsOpenAIReasoningOModel 识别 OpenAI reasoning O 系列模型。
+//
+// 这里不能简单按首字母 "o" 判断，否则 omni-moderation-latest 这类
+// 非 reasoning 模型也会被误判成 O 系列，导致请求被错误改写。
+func IsOpenAIReasoningOModel(modelName string) bool {
+	return strings.HasPrefix(modelName, "o1") ||
+		strings.HasPrefix(modelName, "o3") ||
+		strings.HasPrefix(modelName, "o4")
+}
+
+// IsOpenAIGPT5Model 识别 GPT-5 系列模型。
+func IsOpenAIGPT5Model(modelName string) bool {
+	return strings.HasPrefix(modelName, "gpt-5")
+}
+
 func (r *GeneralOpenAIRequest) GetSystemRoleName() string {
-	if strings.HasPrefix(r.Model, "o") {
+	if IsOpenAIReasoningOModel(r.Model) {
 		if !strings.HasPrefix(r.Model, "o1-mini") && !strings.HasPrefix(r.Model, "o1-preview") {
 			return "developer"
 		}
-	} else if strings.HasPrefix(r.Model, "gpt-5") {
+	} else if IsOpenAIGPT5Model(r.Model) {
 		return "developer"
 	}
 	return "system"

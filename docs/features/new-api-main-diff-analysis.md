@@ -14814,3 +14814,97 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 7. 在模型输入框输入 `gpt-5.6`，真实网络请求 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 返回 200，页面显示三条命中、两条可新增、一条已存在。
 8. 鼠标点击 `添加 2 个搜索结果` 后，页面 toast 显示 `已从搜索结果添加 2 个模型`，草稿 chip 增加 `gpt-5.6-terra` 与 `gpt-5.6-luna`，已选数量变为 5。
 9. 网络记录中没有 `PUT /api/channel/` 保存请求，只有只读的 `/api/channel/1` 与 `/api/models/search`，确认本轮验证未改动运行态渠道数据。
+
+## 本轮实施评审：繁體中文原生支持、渠道运行参数接口与登录表单修复
+
+### 差异来源
+
+2026 年 7 月 16 日重新执行 `./scripts/compare-new-api-main.sh` 后，当前快照的文件级差异为：
+
+1. NexusTok 独有文件 `1244` 个。
+2. `new-api-main` 独有文件 `114` 个。
+3. 同路径但内容不同文件 `1988` 个。
+
+为满足“需要包含所有差异，而不是个别差异”的要求，本轮没有只保留摘要，而是把完整文件级清单正式归档到 `docs/features/new-api-main-diff-files/`，包含：
+
+- `nexustok-files.txt`
+- `new-api-main-files.txt`
+- `nexustok-only.txt`
+- `new-api-main-only.txt`
+- `common-files.txt`
+- `common-changed.txt`
+- `summary.md`
+
+同时将 `docs/features/new-api-main-diff-inventory.md` 的统计口径、目录分布和默认前端独有路由结论更新到本次快照，避免后续继续基于旧的 `1060 / 226 / 1877` 统计推进任务。
+
+在功能层复核中，本轮确认了 4 个可以低风险落地、且直接对应 `new-api-main` 优势的缺口：
+
+1. 默认前端缺少 `zh-TW` 原生支持，首页语言包统计也仍停留在 6。
+2. 登录/注册表单缺少 `autocomplete`，浏览器会持续报告可访问性 issue。
+3. `new-api-main` 已暴露 `GET /api/channel/ops` 供前端读取运行期只读参数，NexusTok 缺少该接口。
+4. OpenAI O 系列模型识别过于宽泛，`strings.HasPrefix(model, "o")` 会把 `omni-*` 错误当成 O 系列推理模型。
+
+### 需求分析
+
+1. 默认前端需要把 `繁體中文` 作为真正的界面语言，而不是仅存在于 classic 或历史语言包中。
+2. 登录页和注册页必须提供标准 `autocomplete` 属性，消除浏览器对账号和密码字段的告警。
+3. 渠道管理页需要一个稳定的只读接口返回运行期参数，让页面和治理脚本不再依赖硬编码默认值。
+4. OpenAI O 系列识别需要精确化，避免把 `omni-moderation-latest` 一类模型误改写成 developer role。
+5. 在进行代码修改前，只选择不改变核心计费、鉴权热路径和数据库结构的低风险项落地；更高风险的角色边界收紧、DataTable 大重构等仍留待后续独立评审。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 默认前端 i18n | `web/default/src/i18n/{config.ts,languages.ts}`、`locales/*.json`、`scripts/sync-i18n.mjs` | 新增 `zh-TW` 资源、统一语言码归一化、把同步报告扩展到第 7 个语言包。 |
+| 默认前端语言切换与日期控件 | `web/default/src/components/language-switcher.tsx`、`date-picker.tsx`、`datetime-picker.tsx`、`features/profile/components/language-preferences-card.tsx`、`features/auth/hooks/use-auth-redirect.ts` | 让公开页、个人设置、登录恢复逻辑和日期组件都能稳定识别并保留 `zh-TW`。 |
+| 默认前端首页与认证表单 | `web/default/src/features/home/components/sections/stats.tsx`、`features/auth/sign-in/components/user-auth-form.tsx`、`features/auth/sign-up/components/sign-up-form.tsx` | 首页语言包统计从 6 更新到 7，并补齐登录/注册输入框 `autocomplete`。 |
+| 渠道只读运行参数接口 | `router/channel-router.go`、`controller/channel.go`、`router/channel_router_test.go` | 增加 `GET /api/channel/ops`，按 `authz.ChannelRead` 权限返回 `retry_times`。 |
+| OpenAI O 系列识别 | `dto/openai_request.go`、`relay/channel/openai/adaptor.go`、`dto/openai_request_zero_value_test.go` | 引入精确 helper，避免 `omni-*` 误判，同时保留显式零值 DTO 规则和现有协议兼容。 |
+| 差异文档归档 | `docs/features/new-api-main-diff-analysis.md`、`docs/features/new-api-main-diff-inventory.md`、`docs/features/new-api-main-diff-files/*` | 让“功能/页面差异分析”和“全量文件差异清单”都落到正式文档目录中。 |
+
+### 风险评估
+
+1. `zh-TW` 支持会同时影响 i18n 初始化、语言切换器、缓存恢复和日期组件，若语言码归一化不一致，容易出现页面切成繁体后又回退英文或简体的问题。
+2. 首页语言包统计属于公开首页第一屏内容，如果只补语言包不修首页数字，会形成“功能已支持、页面仍显示旧数据”的对外不一致。
+3. `/api/channel/ops` 虽然是只读接口，但需要挂在既有 `/api/channel` 权限表上，不能绕开现有 `AdminAuth + RequirePermission` 结构。
+4. O 系列识别修复涉及 relay 请求改写，必须通过单测明确覆盖 `o1`、`o3`、`o4`、`gpt-5` 与 `omni-*`，否则容易在聊天角色改写上引入隐蔽回归。
+5. 当前仓库存在用户自己的未提交改动，本轮必须避开这些文件或只在明确相关的文件里做最小变更，不能把其它工作树修改混入。
+6. 用户明确要求以 3003 运行态页面为准；如果热更新页面不刷新，就不能只凭本地代码判断，必须先重启容器再验证。
+
+### 方案评审
+
+采用“低风险原生化收尾 + 真实页面校验 + 文档同步归档”的方案：
+
+1. 对 `zh-TW` 采用与现有 `zh/en/fr/ru/ja/vi` 相同的资源注册方式，不引入运行时动态加载或新的 i18n 框架。
+2. 通过 `normalizeInterfaceLanguage()` 统一处理 `zh-TW`、`zh_HK`、`zh-Hant` 等输入，避免语言检测与缓存恢复各写一套逻辑。
+3. `autocomplete` 仅补在登录/注册表单的用户名、邮箱和密码字段，不扩大到全站尚未评审的 Base UI 表单组件。
+4. `/api/channel/ops` 只暴露 `retry_times` 这一项运行期只读数据，保持返回结构最小，先满足默认前端和治理脚本读取需求。
+5. O 系列识别通过新增 helper 收窄规则，不在现有转换流程里继续散落字符串前缀判断。
+6. 先用 `bun run i18n:sync`、`bun run typecheck`、`bun run build`、定向 `go test` 和 `git diff --check` 本地收口，再以 3003 页面为准做浏览器实测；若热更新未生效，按要求先重启 `nexustok-frontend-watch` 和 `nexustok-api-hot` 后再验证。
+
+### 实施结果
+
+1. 默认前端已新增 `zh-TW` 原生语言支持，`web/default/src/i18n/languages.ts` 统一管理语言选项、语言码归一化和首次加载策略。
+2. `web/default/src/i18n/config.ts` 已注册 `zh-TW` 资源，并将 `supportedLngs`、`lng`、`load` 统一到当前语言选项。
+3. `language-switcher`、`language-preferences-card`、`use-auth-redirect`、`date-picker`、`datetime-picker` 已全部接入 `zh-TW`，公开首页、个人设置、登录后恢复和日期选择都能稳定保留繁体偏好。
+4. `web/default/src/i18n/locales/zh-TW.json` 已补齐，`bun run i18n:sync` 后 `_sync-report.json` 显示 `zh-TW` 的 `missingCount=0`、`extrasCount=0`、`untranslatedCount=0`。
+5. 首页 `Stats` 区域已将语言包统计从 `6` 更新到 `7`，并把说明改为 `English, Simplified Chinese, Traditional Chinese, French, Japanese, Russian, Vietnamese`，对应七语翻译均已同步更新。
+6. 登录页和注册页表单已补齐标准 `autocomplete`：用户名 `username`、登录密码 `current-password`、注册密码/确认密码 `new-password`、邮箱 `email`。
+7. 后端已新增 `GET /api/channel/ops`，路径挂在 `authz.ChannelRead` 权限下，返回 `{"retry_times": common.RetryTimes}`。
+8. `dto/openai_request.go` 已新增 `IsOpenAIReasoningOModel()` 与 `IsOpenAIGPT5Model()`，`GetSystemRoleName()` 和 OpenAI adaptor 改为复用这两个 helper，不再对所有 `o*` 前缀一刀切。
+9. `dto/openai_request_zero_value_test.go` 已新增针对 `o1-mini`、`o1-preview`、`o3-mini`、`o4-mini`、`gpt-5.4`、`omni-moderation-latest`、`gpt-4.1` 的回归测试，明确约束角色判定边界。
+10. 差异分析文档和差异索引文档都已更新到 2026-07-16 快照；完整文件级清单已归档到 `docs/features/new-api-main-diff-files/`，不再只保留临时目录。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，生成最新 `_sync-report.json`；`zh-TW` 为 `missingCount=0`、`extrasCount=0`、`untranslatedCount=0`。
+2. 已运行 `cd web/default && bun run typecheck`：通过。
+3. 已运行 `cd web/default && bun run build`：通过。
+4. 已运行 `cd /opt/project/NexusTok && go test ./router -run 'TestRegisterChannelRoutesKeepsCoreHandlers|TestChannelPermissionRoutesClassifyCoreActions' ./dto`：通过。
+5. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+6. 按用户要求访问 `http://192.168.0.202:3003/` 进行真实验证。首次验证时公开首页仍显示旧的“6 个语言包”，说明热更新未刷新到最新构建，因此按要求重启了 `nexustok-frontend-watch` 与 `nexustok-api-hot`。
+7. 重启后通过 MCP 打开 `http://192.168.0.202:3003/?verify=1784230775683`，公开首页实际显示 `7` 个语言包，文案为 `英語、簡體中文、繁體中文、法語、日語、俄語、越南語`，说明 `zh-TW` 原生支持与首页统计已同步生效。
+8. 通过 MCP 打开 `http://192.168.0.202:3003/sign-in?verify=1784231170566`，登录页用户名输入框的 `autocomplete` 为 `username`，密码输入框为 `current-password`，对应浏览器 `autocomplete` issue 已消失。
+9. 在已登录管理页 `http://192.168.0.202:3003/dashboard/overview?verify=1784230848471` 中，使用真实登录态和 `NexusTok-User: 1` 请求 `http://192.168.0.202:3003/api/channel/ops`，返回 `200`，响应体为 `{"data":{"retry_times":0},"message":"","success":true}`。
+10. 重新导航后的管理页 `http://192.168.0.202:3003/dashboard/overview?verify=1784231660589` 通过 MCP 读取控制台消息结果为 `<no console messages found>`；登录页控制台仅剩 i18next info 和构建版本 debug，没有新增 `error` 或 `warn`。
