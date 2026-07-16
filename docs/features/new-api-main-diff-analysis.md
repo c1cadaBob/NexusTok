@@ -15095,3 +15095,88 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 5. 页面快照确认最终页面为 `Sign in` 登录页，仍显示 `Username or Email`、`Password` 和 `Forgot password?` 等正式登录界面内容，没有进入 404 页面。
 6. 在该次真实导航后读取控制台消息，结果为 `<no console messages found>`。
 7. 在该次真实导航后读取网络请求，`/login?redirect=%2Fdashboard%2Foverview&verify=1784235000000` 文档请求返回 `200`，后续只产生静态资源、`/api/status`、`/api/setup` 等读取请求，没有新增失败请求。
+
+## 本轮实施评审：classic 控制台遗留入口兼容
+
+### 差异来源
+
+继续对照 classic 前端与当前默认前端路由后发现，NexusTok 仍保留 classic 侧边栏和弹窗中的若干历史控制台入口：
+
+1. `/console/account-pool`
+2. `/console/pricing-setting`
+3. `/console/setting?tab=...`
+
+当前默认前端只保留了 `/console/log`、`/console/topup` 两个兼容路由，其余 classic 入口在默认前端中会直接落到 404。这样会导致旧书签、旧文档、classic 页面中的 `window.open('/console/setting?tab=ratio')`、`navigate('/console/setting?tab=model-deployment')` 等真实路径在切到 default 主题后失效。
+
+与此同时，NexusTok 当前默认前端已经存在清晰的原生落点：
+
+1. 账号池原生入口：`/account-pool`
+2. Root 定价原生入口：`/pricing-settings`
+3. 系统设置分区：`/system-settings/*`
+
+因此这组差异属于典型的“旧路由兼容缺口”，适合继续采用纯前端别名页方案，而不是回退到 classic 页面。
+
+### 需求分析
+
+1. `/console/account-pool` 需要兼容到当前默认前端账号池原生页。
+2. `/console/pricing-setting` 需要兼容到当前默认前端定价原生页。
+3. `/console/setting?tab=...` 只应兼容已经确认语义的旧 tab，避免把未知 tab 错误导向到无关页面。
+4. 所有兼容路由都必须保留额外查询参数，并把权限判断继续交给目标页本身处理，不能在兼容层绕过 `/403`。
+5. 验证必须以 `http://192.168.0.202:3003/` 的真实运行态为准，并覆盖未登录态与已登录态的关键跳转链路。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| classic 账号池入口兼容 | `web/default/src/routes/console/account-pool.tsx` | 新增 `/console/account-pool`，统一跳到 `/account-pool`。 |
+| classic 定价入口兼容 | `web/default/src/routes/console/pricing-setting.tsx` | 新增 `/console/pricing-setting`，统一跳到 `/pricing-settings`。 |
+| classic 设置页 tab 兼容 | `web/default/src/routes/console/setting.tsx` | 新增 `/console/setting`，对已确认旧 tab 做精确映射，其它值保守回到 `/system-settings`。 |
+| 自动生成路由树 | `web/default/src/routeTree.gen.ts` | 自动收录新增 `/console/*` 路由定义和类型映射。 |
+| 差异分析文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 如果把 `/console/setting` 的所有旧 tab 都直接映射到单一新页面，容易把未知历史语义导向错误页面，造成“不是 404，但跳错了”的隐蔽问题。
+2. `/account-pool` 和 `/pricing-settings` 本身有现成权限守卫；兼容页必须只做跳转，不能在别名页里自行放宽权限。
+3. 如果不使用 `replace`，浏览器历史栈会保留旧入口中转页，用户回退时体验会变差。
+4. `routeTree.gen.ts` 是生成文件，不能手工硬改；需要通过类型检查触发 TanStack Router 重新收录新增路由。
+
+### 方案评审
+
+采用“保守映射 + 精确 tab 兼容”的最小方案：
+
+1. `/console/account-pool` 使用纯路由别名，`replace` 跳到 `/account-pool`。
+2. `/console/pricing-setting` 使用纯路由别名，`replace` 跳到 `/pricing-settings`。
+3. `/console/setting` 仅兼容当前已确认语义的一组旧 tab：
+   - `operation` -> `/system-settings/operations/behavior`
+   - `dashboard` -> `/system-settings/content/dashboard`
+   - `chats` -> `/system-settings/content/chat`
+   - `drawing` -> `/system-settings/content/drawing`
+   - `payment` -> `/system-settings/billing/payment`
+   - `ratio` -> `/pricing-settings`
+   - `ratelimit` -> `/system-settings/security/rate-limit`
+   - `models` -> `/system-settings/models/global`
+   - `model-deployment` -> `/system-settings/models/model-deployment`
+   - `performance` -> `/system-settings/operations/performance`
+4. 未知旧 tab 保守回到 `/system-settings`，再由当前默认路由跳到 `/system-settings/site`，避免拍脑袋映射。
+
+### 实施结果
+
+1. 已新增 `web/default/src/routes/console/account-pool.tsx`，classic 账号池入口会跳到 `/account-pool`，并保留查询参数。
+2. 已新增 `web/default/src/routes/console/pricing-setting.tsx`，classic 定价入口会跳到 `/pricing-settings`，并保留查询参数。
+3. 已新增 `web/default/src/routes/console/setting.tsx`，对旧 `tab` 做显式 `switch` 映射；映射后会移除历史 `tab` 参数，避免把无意义旧参数继续带到新页面。
+4. `web/default/src/routeTree.gen.ts` 已自动收录 3 条新的 `/console/*` 路由及类型映射。
+5. 本轮没有修改账号池页面、定价页面、系统设置页面本体，也没有改动任何后端接口或权限逻辑。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`：通过。
+2. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+3. 使用 MCP 访问未登录地址 `http://192.168.0.202:3003/console/pricing-setting?verify=1784235600000`，页面实际进入 `http://192.168.0.202:3003/sign-in?redirect=%2Fpricing-settings%3Fverify%3D1784235600000`，说明旧入口已先接回新原生页，再交给现有登录守卫处理。
+4. 在同一未登录页使用真实账号 `c1cada` 登录后，页面实际回跳到 `http://192.168.0.202:3003/pricing-settings?verify=1784235600000`。
+5. 在已登录态中访问 `http://192.168.0.202:3003/console/account-pool?verify=1784235700000`，页面实际导航到了 `http://192.168.0.202:3003/account-pool/credentials`，说明 classic 账号池入口已接回默认前端原生页。
+6. 在已登录态中访问 `http://192.168.0.202:3003/console/setting?tab=ratio&verify=1784235800000`，页面实际导航到了 `http://192.168.0.202:3003/pricing-settings?verify=1784235800000`。
+7. 在已登录态中访问 `http://192.168.0.202:3003/console/setting?tab=model-deployment&verify=1784235900000`，页面实际导航到了 `http://192.168.0.202:3003/system-settings/models/model-deployment?verify=1784235900000`。
+8. 最终页面快照确认 `model-deployment` 兼容落点显示为“模型部署”设置页，界面包含 `启用 io.net 部署` 开关和 `保存 io.net 设置` 按钮。
+9. 该轮已登录态验证后的控制台消息结果为 `<no console messages found>`。
+10. 该轮已登录态验证后的网络请求仅包含 `/console/setting?...` 文档请求、静态资源、`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，没有新增失败请求或写请求。

@@ -20,7 +20,10 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as ConsoleTopupRouteImport } from './routes/console/topup'
+import { Route as ConsoleSettingRouteImport } from './routes/console/setting'
+import { Route as ConsolePricingSettingRouteImport } from './routes/console/pricing-setting'
 import { Route as ConsoleLogRouteImport } from './routes/console/log'
+import { Route as ConsoleAccountPoolRouteImport } from './routes/console/account-pool'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
@@ -127,9 +130,24 @@ const ConsoleTopupRoute = ConsoleTopupRouteImport.update({
   path: '/console/topup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConsoleSettingRoute = ConsoleSettingRouteImport.update({
+  id: '/console/setting',
+  path: '/console/setting',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsolePricingSettingRoute = ConsolePricingSettingRouteImport.update({
+  id: '/console/pricing-setting',
+  path: '/console/pricing-setting',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleLogRoute = ConsoleLogRouteImport.update({
   id: '/console/log',
   path: '/console/log',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConsoleAccountPoolRoute = ConsoleAccountPoolRouteImport.update({
+  id: '/console/account-pool',
+  path: '/console/account-pool',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedChat2linkRoute = AuthenticatedChat2linkRouteImport.update({
@@ -445,7 +463,10 @@ export interface FileRoutesByFullPath {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/account-pool': typeof ConsoleAccountPoolRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/pricing-setting': typeof ConsolePricingSettingRoute
+  '/console/setting': typeof ConsoleSettingRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -508,7 +529,10 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/account-pool': typeof ConsoleAccountPoolRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/pricing-setting': typeof ConsolePricingSettingRoute
+  '/console/setting': typeof ConsoleSettingRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -575,7 +599,10 @@ export interface FileRoutesById {
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
+  '/console/account-pool': typeof ConsoleAccountPoolRoute
   '/console/log': typeof ConsoleLogRoute
+  '/console/pricing-setting': typeof ConsolePricingSettingRoute
+  '/console/setting': typeof ConsoleSettingRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -641,7 +668,10 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/console/account-pool'
     | '/console/log'
+    | '/console/pricing-setting'
+    | '/console/setting'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about/'
@@ -704,7 +734,10 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/console/account-pool'
     | '/console/log'
+    | '/console/pricing-setting'
+    | '/console/setting'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about'
@@ -770,7 +803,10 @@ export interface FileRouteTypes {
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/chat2link'
+    | '/console/account-pool'
     | '/console/log'
+    | '/console/pricing-setting'
+    | '/console/setting'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about/'
@@ -827,7 +863,10 @@ export interface RootRouteChildren {
   errors404Route: typeof errors404Route
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
+  ConsoleAccountPoolRoute: typeof ConsoleAccountPoolRoute
   ConsoleLogRoute: typeof ConsoleLogRoute
+  ConsolePricingSettingRoute: typeof ConsolePricingSettingRoute
+  ConsoleSettingRoute: typeof ConsoleSettingRoute
   ConsoleTopupRoute: typeof ConsoleTopupRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
@@ -916,11 +955,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleTopupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/console/setting': {
+      id: '/console/setting'
+      path: '/console/setting'
+      fullPath: '/console/setting'
+      preLoaderRoute: typeof ConsoleSettingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/pricing-setting': {
+      id: '/console/pricing-setting'
+      path: '/console/pricing-setting'
+      fullPath: '/console/pricing-setting'
+      preLoaderRoute: typeof ConsolePricingSettingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console/log': {
       id: '/console/log'
       path: '/console/log'
       fullPath: '/console/log'
       preLoaderRoute: typeof ConsoleLogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/console/account-pool': {
+      id: '/console/account-pool'
+      path: '/console/account-pool'
+      fullPath: '/console/account-pool'
+      preLoaderRoute: typeof ConsoleAccountPoolRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/chat2link': {
@@ -1442,7 +1502,10 @@ const rootRouteChildren: RootRouteChildren = {
   errors404Route: errors404Route,
   errors500Route: errors500Route,
   errors503Route: errors503Route,
+  ConsoleAccountPoolRoute: ConsoleAccountPoolRoute,
   ConsoleLogRoute: ConsoleLogRoute,
+  ConsolePricingSettingRoute: ConsolePricingSettingRoute,
+  ConsoleSettingRoute: ConsoleSettingRoute,
   ConsoleTopupRoute: ConsoleTopupRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
