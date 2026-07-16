@@ -3323,10 +3323,10 @@ export function AccountPool() {
                                   ) : null}
 
                                   <div className='min-w-0'>
-                                    <Table className='min-w-[760px] table-fixed'>
+                                    <Table className='w-[1060px] min-w-[1060px] table-fixed'>
                                       <TableHeader>
                                         <TableRow>
-                                          <TableHead className='w-10'>
+                                          <TableHead className='w-11'>
                                             <Checkbox
                                               checked={
                                                 allAccountsOnPageSelected
@@ -3342,19 +3342,19 @@ export function AccountPool() {
                                               aria-label={t('Select all')}
                                             />
                                           </TableHead>
-                                          <TableHead className='w-[34%]'>
+                                          <TableHead className='w-[368px]'>
                                             {t('Account')}
                                           </TableHead>
-                                          <TableHead className='w-[13%]'>
+                                          <TableHead className='w-[136px]'>
                                             {t('Status')}
                                           </TableHead>
-                                          <TableHead className='w-[18%]'>
+                                          <TableHead className='w-[188px]'>
                                             {t('Usage')}
                                           </TableHead>
-                                          <TableHead className='w-[23%]'>
+                                          <TableHead className='w-[212px]'>
                                             {t('Last Used')}
                                           </TableHead>
-                                          <TableHead className='w-[104px] text-right'>
+                                          <TableHead className='w-[112px] text-right'>
                                             {t('Actions')}
                                           </TableHead>
                                         </TableRow>
@@ -3549,7 +3549,7 @@ export function AccountPool() {
                                                   </div>
                                                 ) : null}
                                               </TableCell>
-                                              <TableCell className='w-[104px]'>
+                                              <TableCell className='w-[112px]'>
                                                 <div className='flex flex-nowrap justify-end gap-1.5'>
                                                   <Button
                                                     variant='ghost'
