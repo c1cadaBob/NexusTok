@@ -37,6 +37,7 @@ export { SectionPageLayout } from './components/section-page-layout'
 export { SystemBrand } from './components/system-brand'
 export { TopNav } from './components/top-nav'
 export { MobileDrawer } from './components/mobile-drawer'
+export { SidebarViewHeader } from './components/sidebar-view-header'
 
 // 上下文
 export { WorkspaceProvider, useWorkspace } from './context/workspace-context'
@@ -59,6 +60,10 @@ export {
   getAllWorkspaces,
   WORKSPACE_IDS,
 } from './lib/workspace-registry'
+export {
+  resolveSidebarView,
+  getNavGroupsForPath as getSidebarViewNavGroupsForPath,
+} from './lib/sidebar-view-registry'
 
 // 类型导出（使用 type-only 导出避免与组件冲突）
 export type {
@@ -68,6 +73,9 @@ export type {
   NavItem,
   NavGroup as NavGroupType,
   SidebarData,
+  SidebarView,
+  SidebarViewParent,
+  ResolvedSidebarView,
   TopNavLink,
 } from './types'
 export type { WorkspaceConfig, WorkspaceId } from './lib/workspace-registry'

@@ -613,6 +613,7 @@
     "Azure": "Azure",
     "AZURE_OPENAI_ENDPOINT *": "AZURE_OPENAI_ENDPOINT *",
     "Back": "戻る",
+    "Back to Dashboard": "ダッシュボードに戻る",
     "Back to footnote {{id}} reference": "脚注 {{id}} の参照に戻る",
     "Back to Home": "ホームに戻る",
     "Back to login": "ログインに戻る",

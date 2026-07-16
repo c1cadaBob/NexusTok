@@ -33,14 +33,19 @@ import { getModelsSectionNavItems } from '@/features/system-settings/models/sect
 import { getOperationsSectionNavItems } from '@/features/system-settings/operations/section-registry.tsx'
 import { getSecuritySectionNavItems } from '@/features/system-settings/security/section-registry.tsx'
 import { getSiteSectionNavItems } from '@/features/system-settings/site/section-registry.tsx'
-import { type NavGroup } from '../types'
+import { type NavGroup, type SidebarView } from '../types'
 
 /**
- * System settings sidebar configuration
- * Displayed when switching to "System Settings" workspace
+ * System Settings 工作区标识
  */
 export const WORKSPACE_SYSTEM_SETTINGS_ID = 'system-settings'
 
+/**
+ * System Settings 嵌套侧边栏导航分组
+ *
+ * 该视图只在 `/system-settings/*` 路由内生效，避免把系统设置
+ * 的二级分区继续堆叠在根导航树上，提升定位效率。
+ */
 export function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
   return [
     {
@@ -85,4 +90,20 @@ export function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
       ],
     },
   ]
+}
+
+/**
+ * `/system-settings/*` 对应的侧边栏 Drill-in 视图定义
+ *
+ * 返回入口回到控制台概览，而不是停留在系统设置根路由，
+ * 这样能让用户快速回到主导航上下文。
+ */
+export const SYSTEM_SETTINGS_VIEW: SidebarView = {
+  id: WORKSPACE_SYSTEM_SETTINGS_ID,
+  pathPattern: /^\/system-settings(\/|$)/,
+  parent: {
+    to: '/dashboard/overview',
+    label: 'Back to Dashboard',
+  },
+  getNavGroups: getSystemSettingsNavGroups,
 }

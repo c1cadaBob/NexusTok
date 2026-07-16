@@ -46,18 +46,11 @@ export type WorkspaceConfig = {
 }
 
 /**
- * Workspace registry
+ * 工作区注册表
  *
- * Sorted by priority, first matched workspace will be used
- * Last one should be default workspace (matches all paths)
- *
- * @example
- * // Add new workspace
- * {
- *   name: 'User Management',
- *   pathPattern: /^\/user-management/,
- *   navGroups: userManagementConfig
- * }
+ * 该注册表继续承担“当前路径属于哪个工作区”的识别职责，供顶部
+ * 工作区语义和兼容调用方使用。侧边栏 Drill-in 导航解析已迁移到
+ * `sidebar-view-registry.ts`，避免把工作区识别与导航视图切换耦合。
  */
 const workspaceRegistry: WorkspaceConfig[] = [
   // System Settings workspace
@@ -77,9 +70,7 @@ const workspaceRegistry: WorkspaceConfig[] = [
 ]
 
 /**
- * Get matched workspace configuration based on path
- * @param pathname - Current route path
- * @returns Matched workspace configuration
+ * 根据路径获取命中的工作区配置
  */
 export function getWorkspaceByPath(pathname: string): WorkspaceConfig {
   const workspace = workspaceRegistry.find((ws) => {
@@ -89,14 +80,16 @@ export function getWorkspaceByPath(pathname: string): WorkspaceConfig {
     return ws.pathPattern.test(pathname)
   })
 
-  // If no match, return default workspace (last one)
+  // 未命中时回退到末尾的默认工作区
   return workspace || workspaceRegistry[workspaceRegistry.length - 1]
 }
 
 /**
- * Get corresponding sidebar navigation group configuration based on path
- * @param pathname - Current route path
- * @returns Navigation group configuration for corresponding workspace
+ * 兼容旧调用方：根据工作区返回对应导航分组
+ *
+ * 注意：侧边栏本身已改为使用 `sidebar-view-registry.ts` 驱动 Drill-in
+ * 视图；这里保留该函数，避免其它仅依赖“工作区分组”语义的调用方
+ * 立即断裂。
  */
 export function getNavGroupsForPath(
   pathname: string,
@@ -107,10 +100,7 @@ export function getNavGroupsForPath(
 }
 
 /**
- * Determine if in specified workspace
- * @param pathname - Current route path
- * @param workspaceId - Workspace identifier
- * @returns Whether in specified workspace
+ * 判断当前路径是否属于指定工作区
  */
 export function isInWorkspace(
   pathname: string,
@@ -120,8 +110,7 @@ export function isInWorkspace(
 }
 
 /**
- * Get all registered workspace configurations
- * @returns Array of workspace configurations
+ * 返回全部已注册工作区配置
  */
 export function getAllWorkspaces(): WorkspaceConfig[] {
   return workspaceRegistry

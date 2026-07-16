@@ -613,6 +613,7 @@
     "Azure": "Azure",
     "AZURE_OPENAI_ENDPOINT *": "AZURE_OPENAI_ENDPOINT *",
     "Back": "返回",
+    "Back to Dashboard": "返回控制台",
     "Back to footnote {{id}} reference": "返回脚注 {{id}} 引用",
     "Back to Home": "返回主页",
     "Back to login": "返回登录",

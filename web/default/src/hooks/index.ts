@@ -21,6 +21,7 @@ export { useSystemConfig } from './use-system-config'
 
 // Navigation
 export { useTopNavLinks } from './use-top-nav-links'
+export { useSidebarView } from './use-sidebar-view'
 
 // Notifications
 export { useNotifications } from './use-notifications'

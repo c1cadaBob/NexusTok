@@ -16,73 +16,50 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useMemo } from 'react'
-import { useLocation } from '@tanstack/react-router'
-import { useTranslation } from 'react-i18next'
-import {
-  ADMIN_PERMISSION_RESOURCES,
-  type AdminPermissionResource,
-  canReadAdminResource,
-} from '@/lib/admin-permissions'
-import { useAuthStore } from '@/stores/auth-store'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLayout } from '@/context/layout-provider'
-import { useSidebarConfig } from '@/hooks/use-sidebar-config'
-import { useSidebarData } from '@/hooks/use-sidebar-data'
+import { useSidebarView } from '@/hooks/use-sidebar-view'
 import { Sidebar, SidebarContent, SidebarRail } from '@/components/ui/sidebar'
-import { getNavGroupsForPath } from '../lib/workspace-registry'
+import { MOTION_TRANSITION, MOTION_VARIANTS } from '@/lib/motion'
 import { NavGroup } from './nav-group'
+import { SidebarViewHeader } from './sidebar-view-header'
 
 /**
- * Application sidebar component
- * Fetches corresponding navigation menu from workspace registry based on current path
- * Dynamically filters navigation items based on backend SidebarModulesAdmin configuration
+ * 应用侧边栏
  *
- * Automatically matches workspace configuration for current path through workspace registry system
- * Adding new workspaces only requires registration in workspace-registry.ts
+ * 侧边栏根据 URL 决定渲染根导航还是嵌套工作区视图：
+ * - 根导航继续沿用 NexusTok 现有的权限矩阵和 sidebar_modules 过滤；
+ * - 已注册的工作区（当前为 `/system-settings/*`）切换为 Drill-in 视图，
+ *   并在头部提供返回主导航上下文的入口。
  */
 export function AppSidebar() {
-  const { t } = useTranslation()
   const { collapsible, variant } = useLayout()
-  const { pathname } = useLocation()
-  const user = useAuthStore((state) => state.auth.user)
-  const sidebarData = useSidebarData()
-
-  // Get navigation group configuration corresponding to current path from workspace registry
-  const allNavGroups = getNavGroupsForPath(pathname, t) || sidebarData.navGroups
-
-  // Filter sidebar navigation items based on backend configuration
-  const configFilteredNavGroups = useSidebarConfig(allNavGroups)
-
-  // Filter navigation groups based on user role
-  // Non-Admin users cannot see Admin navigation group
-  const currentNavGroups = useMemo(() => {
-    const adminResources: AdminPermissionResource[] = [
-      ADMIN_PERMISSION_RESOURCES.CHANNEL,
-      ADMIN_PERMISSION_RESOURCES.ACCOUNT_POOL,
-      ADMIN_PERMISSION_RESOURCES.USER,
-      ADMIN_PERMISSION_RESOURCES.MODEL,
-      ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION,
-      ADMIN_PERMISSION_RESOURCES.REDEMPTION,
-      ADMIN_PERMISSION_RESOURCES.SYSTEM_SETTING,
-    ]
-    const canReadAnyAdminResource = adminResources.some((resource) =>
-      canReadAdminResource(user, resource)
-    )
-    return configFilteredNavGroups.filter((group) => {
-      if (group.id === 'admin') {
-        return canReadAnyAdminResource
-      }
-      return true
-    })
-  }, [configFilteredNavGroups, user])
+  const { key, view, navGroups } = useSidebarView()
+  const shouldReduceMotion = useReducedMotion()
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
+      {view && <SidebarViewHeader view={view} />}
+
       <SidebarContent className='py-2'>
-        {currentNavGroups.map((props) => {
-          const key = props.id || props.title
-          return <NavGroup key={key} {...props} />
-        })}
+        <AnimatePresence mode='wait' initial={false}>
+          <motion.div
+            key={key}
+            initial={
+              shouldReduceMotion ? false : MOTION_VARIANTS.sidebarSlide.initial
+            }
+            animate={MOTION_VARIANTS.sidebarSlide.animate}
+            exit={
+              shouldReduceMotion ? undefined : MOTION_VARIANTS.sidebarSlide.exit
+            }
+            transition={MOTION_TRANSITION.fast}
+            className='flex flex-col'
+          >
+            {navGroups.map((props) => (
+              <NavGroup key={props.id || props.title} {...props} />
+            ))}
+          </motion.div>
+        </AnimatePresence>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>

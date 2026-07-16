@@ -161,7 +161,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | Rich Content / Markdown | NexusTok 有 `react-markdown`、`streamdown` | new-api-main 有 `rich-content.tsx`、`html-content.tsx`、`json-code-editor.tsx`、CodeMirror/KaTeX/DOMPurify | 对日志详情、模型说明、Playground 输出优先引入富文本安全渲染。 |
 | AI Elements | new-api-main response renderer 更完整 | NexusTok 目前已有部分 ai-elements | 优先迁移 response renderer 的安全解析和表格/图片/details 渲染。 |
 | Dialog/Drawer Layout | NexusTok 使用项目现有组件 | new-api-main 有 `dialog.tsx`、`drawer-layout.ts` 公共布局 | 可吸收为长表单统一布局，尤其渠道和账号池编辑器。 |
-| Sidebar View | NexusTok 无 `use-sidebar-view.ts` | new-api-main 有 | 如果账号池、系统设置、模型设置继续多层导航，可引入嵌套侧边栏视图。 |
+| Sidebar View | 默认前端已原生化 `use-sidebar-view.ts`、`sidebar-view-registry.ts` 和 `sidebar-view-header.tsx`，当前先覆盖 `/system-settings/*` Drill-in 视图 | new-api-main 有 | 已吸收为 NexusTok 共享布局能力；后续若账号池、模型设置等继续增长二级导航，可按同一注册表继续扩展。 |
 | 前端构建元数据与缓存版本清理 | `frontend-cache.ts`、`build-metadata.ts`、`main.tsx` 已接入 | new-api-main 有同类能力 | 已原生化为 NexusTok 命名空间：运行时暴露 `window.__NEXUSTOK_BUILD__`、DOM/meta/CSS/localStorage 构建指纹；缓存版本变化时清理旧 UI 缓存，同时保留登录、语言、系统状态、通知已读、表格视图、渠道模式和 Playground 草稿等关键状态。 |
 | 构建/检查 | NexusTok 使用 ESLint/Prettier/tsc | new-api-main 使用 oxlint/oxfmt/tsgo | 不建议立刻切换；可单独评估速度收益，避免扰动现有格式化规则。 |
 
@@ -15354,3 +15354,71 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. MCP 控制台查询结果为 `<no console messages found>`，本轮没有引入新的 console error、warn 或 issue。
 10. MCP 网络面板中，本轮登录、进入 Playground 和多次刷新期间的文档、脚本、样式与 API 请求均返回 `200`；关键请求包括 `POST /api/user/login?turnstile=`、`GET /api/user/self`、`GET /api/user/models?group=default`、`GET /api/user/self/groups` 和 `GET /playground?...`，未观察到新的失败请求。
 11. 由于 3003 热更新页面已直接体现本轮实现，本次未触发容器重启流程。
+
+## 本轮实施评审：默认前端 Sidebar View Drill-in 原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/layout` 与当前默认前端布局实现后，确认 `new-api-main` 具备一套 URL 驱动的侧栏 Drill-in 能力：进入 `/system-settings/*` 这类工作区后，左侧不再继续显示根导航树，而是切换成工作区自己的上下文导航，并在顶部提供“返回控制台”的回退入口。当前 NexusTok 已有 `workspace-registry.ts` 和 `system-settings.config.ts`，但它只是把系统设置分组作为导航数据返回给侧栏，尚未实现独立视图切换、回退头部和命令面板上下文同步。
+
+这属于真实的 `new-api-main` 默认前端差异，而且是可感知的共享导航体验增强，适合在不触碰后端业务和权限语义的前提下，转化为 NexusTok 的原生布局能力。
+
+### 需求分析
+
+1. 默认前端需要引入 URL 驱动的 `Sidebar View` 能力，让 `/system-settings/*` 路由切换为独立的 Drill-in 侧栏视图，而不是继续把系统设置分区堆叠在根侧栏内。
+2. 该 Drill-in 视图必须提供回退入口，允许用户从系统设置侧栏快速返回主导航上下文。
+3. 根导航的权限过滤、`sidebar_modules` 配置过滤、账号池/定价设置等 NexusTok 现有能力必须保持不变，不能为了对齐 `new-api-main` 而重写整个侧栏体系。
+4. 命令面板使用的导航分组也必须与侧栏保持同一视图语义，避免 `/system-settings/*` 页面中左侧已经切到工作区视图，而 `Ctrl/Cmd+K` 搜索仍列出根导航。
+5. 本轮只先对 `/system-settings/*` 落地，不扩散到账号池、模型等其它潜在工作区，控制共享层改动半径。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 侧栏视图类型与配置 | `web/default/src/components/layout/types.ts`、`config/system-settings.config.ts` | 为布局层新增 `SidebarView`、`ResolvedSidebarView` 等类型，并把系统设置视图定义为独立 Drill-in 工作区。 |
+| 侧栏视图解析 | `web/default/src/components/layout/lib/sidebar-view-registry.ts`、`web/default/src/hooks/use-sidebar-view.ts` | 新增 URL 到侧栏视图的解析层，并把根导航权限过滤与嵌套视图分开处理。 |
+| 共享布局渲染 | `web/default/src/components/layout/components/app-sidebar.tsx`、`sidebar-view-header.tsx` | 左侧栏按视图切换渲染，嵌套视图头部提供返回入口，并复用现有 motion 动画。 |
+| 命令面板 | `web/default/src/components/command-menu.tsx` | 让命令面板使用同一套视图解析结果，确保搜索结果与当前导航上下文一致。 |
+| 兼容导出与文档 | `web/default/src/components/layout/index.ts`、`lib/workspace-registry.ts`、`docs/features/new-api-main-diff-analysis.md` | 保持旧工作区语义可用，并记录本轮方案、实现和验证结果。 |
+| 前端 i18n | `web/default/src/i18n/locales/*` | 为“Back to Dashboard”补全多语言翻译。 |
+
+### 风险评估
+
+1. 共享导航回归风险：`AppSidebar` 和 `CommandMenu` 都属于全局布局层，改动如果处理不当，会影响所有认证态页面的导航渲染与搜索行为。
+2. 权限绕过风险：根导航当前叠加了 `sidebar_modules`、Admin 资源权限矩阵等过滤逻辑；新引入的视图解析不能意外绕过这些既有约束。
+3. 移动端行为风险：侧栏回退按钮需要正确关闭移动端抽屉，否则在手机布局下返回后可能残留抽屉开启状态。
+4. 国际化风险：新增回退文案必须在所有现有 locale 中补齐，不能把 `en` 源文案直接泄漏到非英语界面。
+5. 热更新验证风险：共享布局改动必须在 3003 真实页面上确认已经生效；如果页面没有更新，必须按约定先重启容器再验证。
+
+### 方案评审
+
+采用“最小共享层增强”的方案：
+
+1. 在布局层新增 `SidebarView` 与 `ResolvedSidebarView` 类型，保持 `Workspace` 概念不变，不对现有工作区提供者和顶层布局做重构。
+2. 在 `system-settings.config.ts` 中直接注册 `SYSTEM_SETTINGS_VIEW`，由新的 `sidebar-view-registry.ts` 负责按路径解析 Drill-in 视图。
+3. 新增 `useSidebarView()`：根导航继续走 NexusTok 现有权限和 `sidebar_modules` 过滤；命中 Drill-in 视图时直接返回工作区专属导航分组和头部元信息。
+4. `AppSidebar` 改为消费 `useSidebarView()`，在命中嵌套视图时渲染 `SidebarViewHeader`，并复用现有 `motion` 动画平滑切换根导航与工作区导航。
+5. `CommandMenu` 也切到 `useSidebarView()`，保证搜索结果与当前页面上下文一致。
+6. 只先覆盖 `/system-settings/*`，不把 `pricing-settings`、`account-pool` 等页面并入 Drill-in 视图；这些页面仍留在根导航中，避免当前切片把管理员主导航切得过碎。
+
+### 实施结果
+
+1. `web/default/src/components/layout/types.ts` 已补齐 `SidebarView`、`SidebarViewParent`、`ResolvedSidebarView` 等布局层类型，并保留原有 `Workspace`/`SidebarData` 结构兼容。
+2. `web/default/src/components/layout/config/system-settings.config.ts` 已新增 `SYSTEM_SETTINGS_VIEW`，将 `/system-settings/*` 注册为一个独立 Drill-in 视图，回退目标为 `/dashboard/overview`。
+3. `web/default/src/components/layout/lib/sidebar-view-registry.ts`、`web/default/src/hooks/use-sidebar-view.ts` 已落地：当前先注册 `system-settings` 视图，根导航继续复用现有权限矩阵与 `sidebar_modules` 过滤逻辑。
+4. `web/default/src/components/layout/components/app-sidebar.tsx` 已切换为消费 `useSidebarView()`；命中工作区时会显示 `SidebarViewHeader`，并使用现有 `motion` 过渡动画切换侧栏内容。
+5. `web/default/src/components/command-menu.tsx` 已同步改为使用 `useSidebarView()`，确保 `Ctrl/Cmd+K` 搜索结果与当前侧栏上下文一致；同时移除了会阻断 `cmdk` 注册 `CommandItem` 的额外 `ScrollArea` 包装，修复了当前项目运行态中“命令面板只显示分组标题、不显示条目”的既有前端问题。
+6. `web/default/src/i18n/locales/{en,zh,zh-TW,fr,ja,ru,vi}.json` 已补齐 “Back to Dashboard” 文案。
+7. 差异总表中 “Sidebar View” 已从“当前缺失”更新为“已原生化为默认前端共享布局能力”。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun test src/components/layout/lib/sidebar-view-registry.test.ts`，新增的侧栏视图注册表测试通过，覆盖 `/system-settings/*` 命中和根导航回退场景。
+2. 已运行定向 ESLint、`cd web/default && bun run typecheck`、`cd web/default && bun run build`、`git diff --check`，共享布局改动在静态层面通过。
+3. 已使用全新的 MCP 隔离浏览器上下文登录 `http://192.168.0.202:3003/sign-in?redirect=%2Fdashboard%2Foverview%3Fverify%3D20260716-sidebar-final-fresh`，确认这轮验证命中的是用户指定的 3003 运行态，而不是先前 Playground 验证上下文。
+4. 在该最新运行态的根导航页打开命令面板后，DOM 中已能看到完整命令项，包含 `游乐场`、`概览`、`API 密钥`、`系统设置`、`账号池 > 概览/凭证/账号组/历史记录` 等，说明命令面板空列表的既有前端问题已修复。
+5. 在同一运行态进入 `http://192.168.0.202:3003/system-settings/site/system-info?verify=20260716-sidebar-final-fresh` 后，左侧侧栏已切换为 System Settings Drill-in 视图，并出现“返回控制台”入口；侧栏内容不再混入根导航的“第三方/常规/个人/管理员”分组。
+6. 在系统设置页打开命令面板后，命令分组标题为 `系统管理`，条目包含 `站点与品牌 > 系统信息/系统公告/顶部导航/侧边栏模块`、`身份验证 > 基本身份验证/OAuth 集成/通行密钥认证`、`模型与路由 > 路由可靠性/渠道亲和性/模型部署` 等，说明命令面板上下文已与 Drill-in 侧栏保持一致。
+7. MCP 控制台中未出现新的 runtime error；仅有一条 i18next 的 info 提示和一条 `nexustok-build` debug 输出，不属于业务异常。
+8. MCP 网络面板中，本轮根导航页和系统设置页相关文档、脚本、样式和 API 请求均返回 `200`，包括 `POST /api/user/login?turnstile=`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`、`GET /api/token/`、`GET /api/data/self`、`GET /api/perf-metrics/summary`、`GET /api/uptime/status` 等，未观察到新的失败请求。
+9. 本轮 3003 页面已直接反映热更新后的实现，未触发容器重启流程。

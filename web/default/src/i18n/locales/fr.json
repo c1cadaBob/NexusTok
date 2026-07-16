@@ -613,6 +613,7 @@
     "Azure": "Azure",
     "AZURE_OPENAI_ENDPOINT *": "AZURE_OPENAI_ENDPOINT *",
     "Back": "Retour",
+    "Back to Dashboard": "Retour au tableau de bord",
     "Back to footnote {{id}} reference": "Retour à la référence de la note {{id}}",
     "Back to Home": "Retour à l'accueil",
     "Back to login": "Retour à la connexion",
