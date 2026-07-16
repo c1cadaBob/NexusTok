@@ -15692,3 +15692,68 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 为避免影响当前 3003 实例的系统行为配置，本轮验证结束前已将临时修改的字段恢复为原值。
 10. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`；仅保留既有 i18next info 与 `nexustok-build` debug。
 11. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 与保存时触发的 `PUT /api/option/`。
+
+## 本轮实施评审：Quota Settings 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/quota-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/billing/quota` 虽然已经接入了 `useSettingsForm()`、未保存脏态提示和离开拦截，但页面仍停留在旧式表单布局：
+
+1. 保存按钮固定在内容底部，没有进入系统设置页头动作区。
+2. 数字输入、开关和链接输入仍然以传统 `space-y-6` 串行布局组织，没有复用当前项目已稳定的 `SettingsFormGrid`、`SettingsFormGridItem`、`SettingsSwitchItem` 等共享表单布局。
+3. 页面已经具备脏态和离开拦截能力，却仍保留旧视觉结构，导致计费分组内部的表单体验不一致。
+
+由于这页属于管理员高频操作的计费基础配置页，同时又已经具备共享表单基座，继续保留旧布局只会让默认前端的原生能力停在半路。
+
+### 需求分析
+
+1. `/system-settings/billing/quota` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持统一位置。
+2. 页面中的数值输入、链接输入和“免费模型预消耗”开关应复用共享设置表单布局，减少同类配置页在视觉和交互上的分叉。
+3. 已有的 `useSettingsForm()`、未保存脏态提示、离开拦截、敏感写权限禁用和支付合规告警都必须保留，不能因布局迁移而弱化。
+4. `QuotaForNewUser`、`PreConsumedQuota`、`QuotaForInviter`、`QuotaForInvitee`、`TopUpLink`、`general_setting.docs_link`、`quota_setting.enable_free_model_pre_consume` 的保存合同必须保持不变。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 额度设置页 | `web/default/src/features/system-settings/general/quota-settings-section.tsx` | 将页面从旧式表单布局收口到 `SettingsForm`、`SettingsFormGrid` 和页头动作区。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页字段较多，既有数值输入、文本输入，也有开关；如果迁移时改坏字段名、提交循环或表单结构，可能出现部分字段不提交或错误提交。
+2. 页面已经具备脏态与离开拦截能力，本轮风险主要集中在布局迁移过程中误丢 `updateOption.canUpdate`、`disabledReason` 或支付合规告警的展示。
+3. 这页属于真实运行中的计费设置页，必须在 `http://192.168.0.202:3003/` 上验证热更新结果、真实 `PUT /api/option/` 保存链路和控制台状态，并在验证结束后把临时修改恢复原值。
+
+### 方案评审
+
+采用“保留现有保存逻辑，只迁共享布局和页头动作区”的最小方案：
+
+1. 保留现有 `quotaSchema`、`useSettingsForm()` 和逐项 `updateOption.mutateAsync({ key, value })` 的提交逻辑不变。
+2. 将页面从普通 `<form className='space-y-6'>` 收口到 `SettingsForm + SettingsFormGrid`，使数值输入和文本输入按统一网格排布。
+3. 使用 `SettingsPageFormActions` 将保存按钮提升到页头动作区，并继续接入 `updateOption.canUpdate` 与 `disabledReason`。
+4. 使用 `SettingsFormGridItem(span='full') + SettingsSwitchItem + SettingsSwitchContent` 收口“免费模型预消耗”开关布局。
+5. 保持支付合规告警块继续位于表单上方，不改变触发条件和提示文案。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/general/quota-settings-section.tsx` 已切换为 `SettingsForm`、`SettingsFormGrid` 和 `SettingsPageFormActions` 组合，保存按钮不再固定在页面底部。
+2. 四个数值输入项和两个链接输入已纳入统一表单网格；“免费模型预消耗”开关已改为共享的 `SettingsSwitchItem` 布局。
+3. 页面原有的 `FormDirtyIndicator`、`FormNavigationGuard`、`useSettingsForm()`、权限禁用提示和支付合规告警均保持不变。
+4. 保存逻辑仍逐项写入原有 option key，没有改变后端配置合同。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/general/quota-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/billing/quota?verify=20260716-quota-baseline`，确认页面热更新生效，保存按钮已位于标题右侧页头动作区。
+6. 在同一 3003 页面中将“邀请者奖励”从 `0` 临时改为 `1` 后，标题区域出现“未保存的更改”，说明脏态徽标已正常显示。
+7. 点击计费侧栏中的“货币与展示”时，页面弹出“未保存的更改”确认对话框；取消后仍停留在当前页，说明统一离开拦截已生效。
+8. 已在该页面执行两次真实保存：
+   - 第一次将“邀请者奖励”从 `0` 改为 `1` 后点击“保存更改”，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`。
+   - 第二次将“邀请者奖励”恢复为 `0` 后再次点击“保存更改”，页面再次提示“设置更新成功”，并再次产生 `PUT /api/option/ [200]`。
+9. 为避免影响当前 3003 实例的计费配置，本轮验证结束前已将“邀请者奖励”恢复为原值 `0`。
+10. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`；仅保留既有 i18next info 与 `nexustok-build` debug。
+11. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`。
