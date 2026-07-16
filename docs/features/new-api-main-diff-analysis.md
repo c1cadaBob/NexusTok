@@ -14978,3 +14978,64 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 4. 通过 MCP 打开 `http://192.168.0.202:3003/channels?verify=1784232621213` 并进入真实渠道编辑抽屉，当前导航下读取控制台消息结果为 `<no console messages found>`。
 5. 修改前在同一页面可稳定复现 1 个 `autocomplete` issue 和 3 个 `label for` issue；修改后重新导航并打开抽屉，`issue`、`error`、`warn` 全部归零，说明这 4 个浏览器可访问性问题已被当前运行态消除。
 6. 本轮验证中没有触发任何 `PUT` / `POST` 渠道写请求，验证范围仅限页面渲染、抽屉打开和浏览器可访问性检查。
+
+## 本轮实施评审：模型倍率旧路由兼容
+
+### 差异来源
+
+继续复核 `new-api-main` 与当前项目的系统设置路由时发现，历史入口 `http://192.168.0.202:3003/system-settings/models/model-ratio` 在 NexusTok 运行态中会被 `models/$section` 的兜底逻辑静默回退到 `/system-settings/models/global`。这会导致旧书签、旧外链或旧操作路径进入错误页面，用户无法到达当前项目已经原生化的定价能力页。
+
+当前项目的正式信息架构已经与 `new-api-main` 不同：
+
+1. `system-settings/models` 下的正式 section 已只保留 `global`、`gemini`、`claude`、`grok`、`routing-reliability`、`channel-affinity`、`model-deployment`。
+2. 模型/分组定价管理已经统一收敛到 Root 专用入口 `/pricing-settings`。
+3. `billing/$section` 中的 `model-pricing`、`group-pricing` 也会继续重定向到 `/pricing-settings`。
+
+因此，这个差异已经不再是“缺一个 tab”，而是“历史路由没有兼容到当前原生入口”。
+
+### 需求分析
+
+1. 历史入口 `/system-settings/models/model-ratio` 需要在当前项目中保持可达，不能继续被兜底逻辑吞掉后静默回退到 `global`。
+2. 兼容方案必须对齐 NexusTok 当前的原生信息架构，命中旧入口时应跳到统一定价页，而不是重新把 `model-ratio` 塞回 models section registry。
+3. 修复范围应尽量限制在前端路由层，不引入新的后端接口、权限模型或导航结构调整。
+4. 验证必须以 `http://192.168.0.202:3003/` 的真实运行态为准，并确认没有新增控制台错误、网络失败或错误页面。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| models section 路由 | `web/default/src/routes/_authenticated/system-settings/models/$section.tsx` | 为历史 `model-ratio` section 增加定向兼容跳转，避免被未知 section 兜底逻辑回退到 `global`。 |
+| 差异分析文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 如果直接把 `model-ratio` 重新加入 `MODELS_SECTION_IDS`，会把当前已经迁出的定价职责重新混回 `system-settings/models`，污染既有信息架构。
+2. 如果把所有未知 section 都改为跳 `/pricing-settings`，会误伤真正的错误地址，使现有 `global` 默认回退逻辑失效。
+3. `/pricing-settings` 是 Root 专用页面，必须先确认它与 `/system-settings/*` 的权限边界一致，避免把原本可访问的页面错误重定向到更高权限页面。
+4. 当前用户明确要求以 3003 运行态为准；如果浏览器命中热更新重启窗口或缓存状态，仅凭本地代码判断会得出错误结论。
+
+### 方案评审
+
+采用“单路由定向兼容”的最小方案：
+
+1. 只在 `/_authenticated/system-settings/models/$section` 的 `beforeLoad` 中对 `params.section === 'model-ratio'` 做专门判断。
+2. 命中该历史 section 时直接 `redirect({ to: '/pricing-settings' })`，落到 NexusTok 当前正式的统一定价入口。
+3. 其它未知 section 继续沿用现有 `MODELS_DEFAULT_SECTION` 回退逻辑，不改变当前 models registry。
+4. 本轮不暴露新的导航项，不新增假 section，不改后端接口；只修正遗留入口兼容行为。
+
+### 实施结果
+
+1. `web/default/src/routes/_authenticated/system-settings/models/$section.tsx` 已新增历史 `model-ratio` 入口兼容逻辑。
+2. 代码中补充了中文注释，明确说明当前项目已将模型与分组定价统一收敛到独立定价页，因此历史入口命中时应直接进入正式入口，而不是回退到 `global`。
+3. 现有合法 models section、默认 section 回退逻辑和组件 registry 均保持不变。
+4. 本轮没有修改后端接口、数据库、权限模型、侧边栏导航和定价页面内容。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`：通过。
+2. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+3. 通过终端确认 `http://192.168.0.202:3003/` 运行态可达，`curl -I` 返回 `200 OK`；同时检查热更新容器日志，确认默认前端构建已重新发布。
+4. 使用 MCP 选中已有真实登录态页面后，直接访问 `http://192.168.0.202:3003/system-settings/models/model-ratio?verify=1784233500000`，页面实际导航到了 `http://192.168.0.202:3003/pricing-settings`。
+5. MCP 页面快照确认最终页面标题为 `分组与工具价格`，并显示 `分组比例`、`工具价格` 等当前正式定价配置内容，不再落到 `Global Model Configuration`。
+6. 在该次真实导航后读取控制台消息，结果为 `<no console messages found>`。
+7. 在该次真实导航后读取网络请求，`/system-settings/models/model-ratio?verify=1784233500000` 文档请求返回 `200`，页面只产生静态资源、`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，没有新增失败请求或写请求。
