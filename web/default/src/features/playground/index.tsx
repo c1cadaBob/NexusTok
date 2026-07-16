@@ -31,6 +31,7 @@ export function Playground() {
     config,
     parameterEnabled,
     messages,
+    isLoadingMessages,
     models,
     groups,
     updateMessages,
@@ -91,6 +92,7 @@ export function Playground() {
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
           isGenerating={isGenerating}
+          isLoadingMessages={isLoadingMessages}
           editingKey={editingMessageKey}
           onCancelEdit={handleEditOpenChange}
           onSaveEdit={(newContent) => applyEdit(newContent, false)}
@@ -102,7 +104,7 @@ export function Playground() {
       {/* 输入区与消息容器保持同一最大宽度。 */}
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
-          disabled={isGenerating}
+          disabled={isGenerating || isLoadingMessages}
           groups={groups}
           groupValue={config.group}
           isGenerating={isGenerating}

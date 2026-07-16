@@ -100,7 +100,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 | `/redemption-codes` | 兑换码 | 两边都有。 |
 | `/subscriptions` | 订阅管理 | new-api-main 多订阅重置弹窗、余额支付、钱包溢出字段。 |
 | `/system-settings/*` | 系统设置 | 两边都有；new-api-main 的 models/settings 子页更偏平台治理，NexusTok 多定价独立页。 |
-| `/playground` | Playground | new-api-main 已重构为 chat/input/message/options/storage 子目录，NexusTok 仍是较扁平实现。 |
+| `/playground` | Playground | new-api-main 已重构为 chat/input/message/options/storage 子目录；NexusTok 已补齐本地会话异步恢复、防抖保存、加载态与长历史裁剪，但目录结构仍较扁平。 |
 | `/chat/:chatId`、`/chat2link` | Chat 预设 | 两边都有。 |
 | `/pricing`、`/pricing/:modelId` | 模型价格公开页 | 两边都有；NexusTok 多模型详情能力拆分组件。 |
 | `/rankings` | 排行榜 | 两边都有；new-api-main 通过 HeaderNavModuleAuth 可控制公开/登录访问。 |
@@ -134,7 +134,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 |------|---------------|------------------|------------|
 | Channels | 有账号池绑定、Codex OAuth 弹窗、渠道账号池管理 | 有移动端 `channel-card`、表单 section 拆分、权限上下文、Advanced Custom 编辑器 | 合并方向：保留 NexusTok 账号池能力，吸收 new-api-main 的表单拆分和移动端卡片。 |
 | Dashboard | 有 overview/models/users 等面板 | 额外有 `dashboard/components/flow` 和 flow selection 测试 | 引入 `/api/data/flow` 后再接入流量 Sankey，不先做纯前端页面。 |
-| Playground | 扁平组件结构，已有消息/输入/存储能力 | 更细拆成 `chat/`、`input/`、`message/`、`options/`、`streaming/`、`storage/` | 逐步重构，不改变接口协议；先迁移错误展示、消息编辑、stream utils。 |
+| Playground | 已有消息/输入/存储能力，并补齐本地会话异步恢复、防抖保存、加载态和长历史裁剪 | 更细拆成 `chat/`、`input/`、`message/`、`options/`、`streaming/`、`storage/` | 继续按功能自然演进；优先保持现有协议稳定，后续仅在新能力落地时再逐步整理目录层级。 |
 | Usage Logs | 有通用/绘图/任务日志 | 额外有 `logs-filter-toolbar`、移动端卡片、schema | 先吸收移动端卡片和筛选工具条，再把账号池日志也纳入一致交互。 |
 | Subscriptions | 有计划管理、reset dialog、余额支付、钱包溢出、Waffo Pancake 产品字段 | 具备同类能力 | 余额支付与钱包兜底已原生化；后续重点转为订阅重置交互 polish、权限细分和支付产品绑定体验。 |
 | System Settings / Models | 已有 `RoutingReliabilitySection`、`Channel Affinity`、Model Deployment 等分区，但 `Channel Affinity` 的部分细项接线曾滞后 | 有 `RoutingReliabilitySection` 与更完整的 `Channel Affinity` 前端接线 | 保持 NexusTok 当前分区结构，持续把后端已存在的模型治理能力接成前端原生入口，避免出现“后端已有、默认前端不可配”的尾差。 |
@@ -15260,3 +15260,97 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
    - `POST http://192.168.0.202:3003/api/waffo-pancake/webhook?verify=1784237600002 [403]`
 7. MCP 控制台中出现的两条 `403` 错误消息来自上述手动 webhook 探测请求，属于验证动作本身的预期结果，不是页面业务异常；除这两条外未观察到新的脚本报错。
 8. 由于当前 3003 运行态未启用 Waffo Pancake webhook，非法环境段在真实环境中会先命中 `webhook disabled` 保护，`404 unknown env` 分支已通过 controller 单测覆盖，避免为验证该分支去改动真实支付配置。
+
+## 本轮实施评审：Playground 本地会话加载与保存体验增强
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/playground/` 与当前默认前端后发现，NexusTok 的 Playground 虽然已经具备消息编辑、错误恢复、原始响应切换、本地存储 schema 和流式状态工具，但本地会话恢复与保存节奏仍停留在较早实现：
+
+1. `usePlaygroundState` 通过 `useState(getInitialMessages)` 在首帧同步读取 localStorage。
+2. `updateMessages` 每次消息状态变化都会立即 `saveMessages(newMessages)`。
+3. `PlaygroundChat` 默认全量渲染所有历史消息。
+4. 页面没有“正在恢复本地会话”的加载态。
+
+`new-api-main` 在同一模块里已经补上了更稳的交互语义：
+
+1. 首屏异步恢复消息历史，避免空态闪烁。
+2. 对本地消息持久化做短延迟防抖，减少流式输出阶段的频繁写入。
+3. 组件卸载时强制 flush，避免最后一段消息丢失。
+4. 长历史只渲染最近一段，降低 DOM 压力。
+5. 聊天区在消息恢复期间显示明确的 `Loading conversation...` 反馈。
+
+这块属于纯前端本地状态层差异，不涉及后端协议、数据库或 relay 行为，非常适合作为低风险原生增强项先落地。
+
+### 需求分析
+
+1. Playground 需要在页面挂载后异步恢复本地历史消息，避免首屏先显示空态再闪回旧会话。
+2. 本地消息保存需要从“每次变更立即写 localStorage”改为短延迟防抖保存，减少流式输出期间的高频同步写。
+3. 必须保留页面关闭、路由切换或组件卸载时的最终 flush，确保最后一段消息不会因防抖计时器未触发而丢失。
+4. 长历史会话只需要优先渲染最近一段消息，但不能破坏现有编辑、重试、错误消息回溯上一条用户消息、版本切换和原始响应显示逻辑。
+5. 在本地会话尚未恢复完成前，聊天区要显示明确加载态，输入区要避免用户先提交新消息再被旧历史覆盖。
+6. 新增加载文案必须进入默认前端 i18n 词条，并通过 3003 真实运行态验证页面更新和控制台状态。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Playground 状态 hook | `web/default/src/features/playground/hooks/use-playground-state.ts` | 引入异步 `loadMessages()`、加载态、防抖保存、卸载 flush 和最新消息引用，替换旧的同步初始读取与即时写入。 |
+| Playground 容器 | `web/default/src/features/playground/index.tsx` | 透传 `isLoadingMessages` 到聊天区，并在恢复本地会话期间禁用输入框，避免新旧消息竞态。 |
+| Playground 聊天视图 | `web/default/src/features/playground/components/playground-chat.tsx` | 增加 `Loading conversation...` 加载态，只渲染最近 24 条历史消息，同时继续使用原始消息数组索引计算编辑、错误恢复和动作显隐。 |
+| 前端国际化 | `web/default/src/i18n/locales/{en,zh,zh-TW,fr,ja,ru,vi}.json` | 新增 `Loading conversation...` 文案。 |
+| 差异分析文档 | `docs/features/new-api-main-diff-analysis.md` | 校准 Playground 差异总表，并记录本轮需求、风险、方案、实施和验证结论。 |
+
+### 风险评估
+
+1. 如果只做防抖保存而不在卸载时 flush，用户在流式生成末尾立刻关闭页面时可能丢最后一段会话内容。
+2. 如果仍然保留同步 `getInitialMessages()`，即使加了加载态，首屏也可能先闪出空态再回到旧会话，体验仍然不稳定。
+3. 如果历史裁剪直接把裁剪后的索引当作原始索引使用，会破坏错误消息向前查找用户 prompt、最后一条 assistant 动作显隐和编辑态判定。
+4. 如果会话尚未恢复完成时输入区仍可提交，异步加载回来的旧消息有机会覆盖用户刚刚提交的新消息，造成前端状态回退。
+5. 这轮只应收敛在 `web/default/src/features/playground`，不能顺手改动聊天请求体、上游 relay、模型选择、参数开关或其它页面共享组件，避免把低风险增强扩大成跨模块回归。
+
+### 方案评审
+
+采用“只增强状态恢复与渲染策略，不改聊天协议”的最小方案：
+
+1. 在 `usePlaygroundState` 中移除 `getInitialMessages()` 的同步首帧读取，把消息恢复切换为 `useEffect + loadMessages()` 的异步流程，并新增 `isLoadingMessages` 状态。
+2. 增加 `MESSAGE_SAVE_DEBOUNCE_MS = 500`、`messagesSaveTimerRef`、`latestMessagesRef` 和 `hasLoadedMessagesRef`：
+   - 仅在消息已恢复完成后参与持久化；
+   - 每次消息更新只重置计时器；
+   - 计时器到点后统一 `saveMessages(latestMessagesRef.current)`；
+   - 卸载时清理计时器并强制 flush。
+3. 在 `Playground` 容器把 `isLoadingMessages` 传给 `PlaygroundChat`，并把输入区 `disabled` 条件改为 `isGenerating || isLoadingMessages`。
+4. 在 `PlaygroundChat` 中：
+   - 增加 `MAX_RENDERED_HISTORY_MESSAGES = 24`；
+   - 仅渲染 `visibleMessages = messages.slice(...)`；
+   - 但所有派生逻辑仍基于原始 `messages` 和真实 `messageIndex` 计算；
+   - 加载期间显示 `Loader + Loading conversation...`；
+   - 空态仍只在未加载且没有消息时展示。
+5. 新增 i18n 文案后执行 `bun run i18n:sync`，再做类型检查、构建和 3003 运行态验证。
+
+### 实施结果
+
+1. `usePlaygroundState` 已改为挂载后异步恢复本地消息历史，并新增 `isLoadingMessages`、500ms 防抖保存、组件卸载 flush 和 `latestMessagesRef`。
+2. `updateMessages` 已从“每次消息变化立即写入 localStorage”切换为“更新 React 状态后交给防抖持久化”，减少流式输出时的同步写频率。
+3. `Playground` 已将 `isLoadingMessages` 透传到聊天区，并在恢复本地会话期间禁用输入区，避免旧历史覆盖新提交消息的竞态。
+4. `PlaygroundChat` 已新增加载态，并只渲染最近 24 条历史消息；错误恢复、编辑态、版本切换、动作显隐和原始响应切换仍按原始消息索引运行。
+5. 默认前端多语言词条已补齐 `Loading conversation...`，覆盖 `en`、`zh`、`zh-TW`、`fr`、`ja`、`ru`、`vi`。
+6. 本轮没有修改 Playground 的请求体结构、模型/分组加载接口、聊天发送链路、后端 controller/service/relay 逻辑，也没有引入新的持久化 schema 字段。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`：通过，生成同步报告 `web/default/src/i18n/locales/_reports/_sync-report.json`。
+2. 已运行 `cd web/default && bun run typecheck`：通过。
+3. 已运行 `cd web/default && bun run build`：通过。
+4. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+5. 已使用 MCP 独立浏览器上下文访问 `http://192.168.0.202:3003/sign-in?redirect=%2Fplayground%3Fverify%3D1784238451000`，并使用账号 `c1cada` 登录进入 `http://192.168.0.202:3003/playground?verify=1784238451000`，确认本轮验证命中用户指定的 3003 运行态。
+6. 在该浏览器上下文中向 localStorage 写入 30 条 `playground_messages` 历史消息后刷新页面，最终实际渲染的消息内容为 `history-check-06` 到 `history-check-29`，共 24 条，证明长历史裁剪已生效。
+7. 为了稳定捕捉恢复阶段的瞬时状态，本轮在刷新前通过 `initScript` 放大了 `setTimeout` 的等待窗口，并注入 `window.__playgroundLoadingTracker` 记录恢复过程。跟踪结果返回：
+   - `loadingSeen: true`
+   - `disabledSeen: true`
+   - `checks: 35`
+   说明本地会话恢复期间，`Loading conversation...` 确实出现过，且输入框在恢复阶段曾被禁用。
+8. MCP 页面最终快照显示 Playground 页面可正常恢复历史消息、保留现有消息动作按钮与版本切换 UI，没有出现页面空白、路由异常或消息列表错位。
+9. MCP 控制台查询结果为 `<no console messages found>`，本轮没有引入新的 console error、warn 或 issue。
+10. MCP 网络面板中，本轮登录、进入 Playground 和多次刷新期间的文档、脚本、样式与 API 请求均返回 `200`；关键请求包括 `POST /api/user/login?turnstile=`、`GET /api/user/self`、`GET /api/user/models?group=default`、`GET /api/user/self/groups` 和 `GET /playground?...`，未观察到新的失败请求。
+11. 由于 3003 热更新页面已直接体现本轮实现，本次未触发容器重启流程。

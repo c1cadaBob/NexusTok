@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Branch,
   BranchMessages,
@@ -30,6 +31,7 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation'
+import { Loader } from '@/components/ai-elements/loader'
 import { Message } from '@/components/ai-elements/message'
 import { MESSAGE_STATUS } from '../constants'
 import {
@@ -50,6 +52,8 @@ import { PlaygroundEmptyState } from './playground-empty-state'
 import { PlaygroundMessageContent } from './playground-message-content'
 import { PlaygroundMessageEditor } from './playground-message-editor'
 
+const MAX_RENDERED_HISTORY_MESSAGES = 24
+
 interface PlaygroundChatProps {
   messages: MessageType[]
   onCopyMessage?: (message: MessageType) => void
@@ -57,6 +61,7 @@ interface PlaygroundChatProps {
   onEditMessage?: (message: MessageType) => void
   onDeleteMessage?: (message: MessageType) => void
   isGenerating?: boolean
+  isLoadingMessages?: boolean
   editingKey?: string | null
   onSaveEdit?: (newContent: string) => void
   onCancelEdit?: (open: boolean) => void
@@ -72,6 +77,7 @@ export function PlaygroundChat({
   onEditMessage,
   onDeleteMessage,
   isGenerating = false,
+  isLoadingMessages = false,
   editingKey,
   onSaveEdit,
   onCancelEdit,
@@ -79,11 +85,17 @@ export function PlaygroundChat({
   onSelectPrompt,
   messageLayoutMode = 'alternating',
 }: PlaygroundChatProps) {
+  const { t } = useTranslation()
   const [editText, setEditText] = useState('')
   const [originalText, setOriginalText] = useState('')
   const [sourceMessageKeys, setSourceMessageKeys] = useState<
     ReadonlySet<string>
   >(() => new Set())
+  const visibleMessageOffset = Math.max(
+    0,
+    messages.length - MAX_RENDERED_HISTORY_MESSAGES
+  )
+  const visibleMessages = messages.slice(visibleMessageOffset)
 
   function handleToggleMessageSource(message: MessageType): void {
     setSourceMessageKeys((currentKeys) =>
@@ -101,10 +113,16 @@ export function PlaygroundChat({
   }, [editingKey, messages])
 
   const chatContent =
-    messages.length === 0 && onSelectPrompt ? (
+    isLoadingMessages ? (
+      <div className='text-muted-foreground flex min-h-[min(520px,calc(100svh-18rem))] items-center justify-center gap-2 text-sm'>
+        <Loader />
+        <span>{t('Loading conversation...')}</span>
+      </div>
+    ) : visibleMessages.length === 0 && onSelectPrompt ? (
       <PlaygroundEmptyState onSelectPrompt={onSelectPrompt} />
     ) : (
-      messages.map((message, messageIndex) => {
+      visibleMessages.map((message, visibleMessageIndex) => {
+        const messageIndex = visibleMessageOffset + visibleMessageIndex
         const { versions = [] } = message
         const { alwaysShowActions, isEditing } = getChatMessageRenderState(
           messages,

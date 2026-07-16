@@ -16,13 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
   saveConfig,
   saveParameterEnabled,
   saveMessages,
-  getInitialMessages,
+  loadMessages,
   getInitialParameterEnabled,
   getInitialPlaygroundConfig,
   applyMessageStateUpdate,
@@ -35,6 +35,8 @@ import type {
   ModelOption,
   GroupOption,
 } from '../types'
+
+const MESSAGE_SAVE_DEBOUNCE_MS = 500
 
 /**
  * Playground 主状态管理 hook。
@@ -49,10 +51,64 @@ export function usePlaygroundState() {
     getInitialParameterEnabled
   )
 
-  const [messages, setMessages] = useState<Message[]>(getInitialMessages)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true)
+  const messagesSaveTimerRef = useRef<number | null>(null)
+  const latestMessagesRef = useRef<Message[]>([])
+  const hasLoadedMessagesRef = useRef(false)
 
   const [models, setModels] = useState<ModelOption[]>([])
   const [groups, setGroups] = useState<GroupOption[]>([])
+
+  // Playground 消息会在流式输出期间频繁变化；这里做前端防抖持久化，
+  // 避免每个 token 都写 localStorage，同时在卸载时强制 flush，保证最后状态不丢。
+  const persistMessages = useCallback((messagesToSave: Message[]) => {
+    latestMessagesRef.current = messagesToSave
+
+    if (!hasLoadedMessagesRef.current) {
+      return
+    }
+
+    if (messagesSaveTimerRef.current !== null) {
+      window.clearTimeout(messagesSaveTimerRef.current)
+    }
+
+    messagesSaveTimerRef.current = window.setTimeout(() => {
+      messagesSaveTimerRef.current = null
+      saveMessages(latestMessagesRef.current)
+    }, MESSAGE_SAVE_DEBOUNCE_MS)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    // 将 localStorage 读取放到 effect 中，避免首屏先渲染空态再闪回历史会话。
+    window.setTimeout(() => {
+      const loadedMessages = loadMessages() || []
+      if (cancelled) {
+        return
+      }
+
+      latestMessagesRef.current = loadedMessages
+      hasLoadedMessagesRef.current = true
+      setMessages(loadedMessages)
+      setIsLoadingMessages(false)
+    }, 0)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (messagesSaveTimerRef.current !== null) {
+        window.clearTimeout(messagesSaveTimerRef.current)
+        saveMessages(latestMessagesRef.current)
+      }
+    },
+    []
+  )
 
   // 更新配置并自动保存。
   const updateConfig = useCallback(
@@ -79,13 +135,16 @@ export function usePlaygroundState() {
   )
 
   // 更新消息并自动保存。
-  const updateMessages = useCallback((updater: MessageStateUpdater) => {
-    setMessages((prev) => {
-      const newMessages = applyMessageStateUpdate(prev, updater)
-      saveMessages(newMessages)
-      return newMessages
-    })
-  }, [])
+  const updateMessages = useCallback(
+    (updater: MessageStateUpdater) => {
+      setMessages((prev) => {
+        const newMessages = applyMessageStateUpdate(prev, updater)
+        persistMessages(newMessages)
+        return newMessages
+      })
+    },
+    [persistMessages]
+  )
 
   // 清空当前会话消息。
   const clearMessages = useCallback(() => {
@@ -105,6 +164,7 @@ export function usePlaygroundState() {
     config,
     parameterEnabled,
     messages,
+    isLoadingMessages,
     models,
     groups,
 
