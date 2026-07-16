@@ -3354,7 +3354,7 @@ export function AccountPool() {
                                           <TableHead className='w-[212px]'>
                                             {t('Last Used')}
                                           </TableHead>
-                                          <TableHead className='w-[112px] text-center'>
+                                          <TableHead className='w-[112px] px-0 text-center'>
                                             {t('Actions')}
                                           </TableHead>
                                         </TableRow>
@@ -3549,8 +3549,8 @@ export function AccountPool() {
                                                   </div>
                                                 ) : null}
                                               </TableCell>
-                                              <TableCell className='w-[112px]'>
-                                                <div className='flex flex-nowrap justify-end gap-1.5'>
+                                              <TableCell className='w-[112px] px-0'>
+                                                <div className='flex flex-nowrap justify-center gap-1.5'>
                                                   <Button
                                                     variant='ghost'
                                                     size='icon-sm'
