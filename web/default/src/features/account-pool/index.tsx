@@ -3345,16 +3345,16 @@ export function AccountPool() {
                                           <TableHead className='w-[368px]'>
                                             {t('Account')}
                                           </TableHead>
-                                          <TableHead className='w-[136px]'>
+                                          <TableHead className='w-[136px] text-center'>
                                             {t('Status')}
                                           </TableHead>
-                                          <TableHead className='w-[188px]'>
+                                          <TableHead className='w-[188px] text-center'>
                                             {t('Usage')}
                                           </TableHead>
                                           <TableHead className='w-[212px]'>
                                             {t('Last Used')}
                                           </TableHead>
-                                          <TableHead className='w-[112px] text-right'>
+                                          <TableHead className='w-[112px] text-center'>
                                             {t('Actions')}
                                           </TableHead>
                                         </TableRow>
