@@ -151,7 +151,6 @@ import {
 import { AuthFilesPanel } from './components/auth-files-panel'
 import {
   ACCOUNT_POOL_DEFAULT_SECTION,
-  ACCOUNT_POOL_SECTION_IDS,
   type AccountPoolSectionId,
   isAccountPoolSectionId,
 } from './section-registry'
@@ -367,30 +366,6 @@ const stateLogSourceFilterOptions: StateLogSourceFilter[] = [
   'daily_limit',
   'auto_refresh',
 ]
-
-const accountPoolSectionMeta: Record<
-  AccountPoolSectionId,
-  { titleKey: string; descriptionKey: string }
-> = {
-  overview: {
-    titleKey: 'Overview',
-    descriptionKey: 'Review account pool health and recent exceptions.',
-  },
-  credentials: {
-    titleKey: 'Account Credentials',
-    descriptionKey:
-      'Manage imported account credentials as reusable pool resources.',
-  },
-  groups: {
-    titleKey: 'Account Groups',
-    descriptionKey:
-      'Configure pool groups, scheduling policies, and linked accounts.',
-  },
-  history: {
-    titleKey: 'Account Records',
-    descriptionKey: 'Inspect usage records, state changes, and check tasks.',
-  },
-}
 
 const accountPoolLogViews: AccountPoolLogView[] = [
   'usage-logs',
@@ -1222,9 +1197,6 @@ export function AccountPool() {
     [navigate]
   )
 
-  const sectionMeta =
-    accountPoolSectionMeta[activeSection] ??
-    accountPoolSectionMeta[ACCOUNT_POOL_DEFAULT_SECTION]
   const logViewTabs = (
     <div className='border-border border-b p-3'>
       <Tabs
@@ -2436,152 +2408,6 @@ export function AccountPool() {
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex flex-col gap-4'>
-            <Card size='sm'>
-              <CardHeader className='border-b'>
-                <CardTitle>
-                  {activeSection === 'groups' && selectedGroup
-                    ? selectedGroup.name
-                    : t(sectionMeta.titleKey)}
-                </CardTitle>
-                <CardDescription>
-                  <span className='block'>
-                    {t(
-                      'Manage native account pools and credential scheduling.'
-                    )}
-                  </span>
-                  <span className='block'>
-                    {activeSection === 'groups' && selectedGroup
-                      ? `${selectedGroup.platform} / ${selectedGroup.auth_type}`
-                      : t(sectionMeta.descriptionKey)}
-                  </span>
-                </CardDescription>
-                {activeSection === 'groups' && selectedGroup ? (
-                  <div className='flex flex-wrap items-center gap-2 text-xs'>
-                    <StatusBadge
-                      label={groupStatusLabel(selectedGroup, t)}
-                      variant={groupStatusVariant(selectedGroup)}
-                      copyable={false}
-                    />
-                    <span className='text-muted-foreground'>
-                      {t('Available')}: {stats?.enabled ?? 0}
-                    </span>
-                    <span className='text-muted-foreground'>
-                      {t('Total')}: {stats?.total ?? 0}
-                    </span>
-                    <span className='text-muted-foreground'>
-                      {strategyLabel(selectedGroup.strategy, t)}
-                    </span>
-                    <span className='text-muted-foreground truncate'>
-                      {selectedGroup.models || t('All Models')}
-                    </span>
-                    <span
-                      className='text-muted-foreground truncate'
-                      title={`${groupAutoCheckSummary(
-                        selectedGroup,
-                        t
-                      )} · ${groupPreflightCheckSummary(
-                        selectedGroup,
-                        t
-                      )} · ${groupNoAvailableSummary(
-                        selectedGroup,
-                        t
-                      )} · ${groupTaskLimitSummary(selectedGroup, t)}`}
-                    >
-                      {groupAutoCheckSummary(selectedGroup, t)} ·{' '}
-                      {groupPreflightCheckSummary(selectedGroup, t)} ·{' '}
-                      {groupNoAvailableSummary(selectedGroup, t)} ·{' '}
-                      {groupTaskLimitSummary(selectedGroup, t)}
-                    </span>
-                  </div>
-                ) : null}
-                <CardAction className='flex flex-col gap-2'>
-                  <Tabs
-                    value={activeSection}
-                    onValueChange={handleSectionChange}
-                  >
-                    <TabsList className='max-w-full justify-start overflow-x-auto'>
-                      {ACCOUNT_POOL_SECTION_IDS.map((section) => (
-                        <TabsTrigger key={section} value={section}>
-                          {t(accountPoolSectionMeta[section].titleKey)}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </Tabs>
-                  <div className='flex flex-wrap justify-start gap-2 lg:justify-end'>
-                    {activeView === 'usage-logs' && (
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() => void usageLogsQuery.refetch()}
-                      >
-                        <RefreshCw data-icon='inline-start' />
-                        {t('Refresh')}
-                      </Button>
-                    )}
-                    {activeView === 'state-logs' && (
-                      <>
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => {
-                            void stateLogsQuery.refetch()
-                            void stateLogAuditQuery.refetch()
-                          }}
-                        >
-                          <RefreshCw data-icon='inline-start' />
-                          {t('Refresh')}
-                        </Button>
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          disabled={stateLogExporting || !canOperateAccountPool}
-                          onClick={() => void exportStateLogs()}
-                        >
-                          {stateLogExporting ? (
-                            <Loader2
-                              data-icon='inline-start'
-                              className='animate-spin'
-                            />
-                          ) : (
-                            <Download data-icon='inline-start' />
-                          )}
-                          {t('Export audit')}
-                        </Button>
-                      </>
-                    )}
-                    {activeView === 'check-tasks' && (
-                      <>
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => void checkTasksQuery.refetch()}
-                        >
-                          <RefreshCw data-icon='inline-start' />
-                          {t('Refresh')}
-                        </Button>
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          disabled={checkTaskCleaning || !canOperateAccountPool}
-                          onClick={() => void cleanupCheckTasks()}
-                        >
-                          {checkTaskCleaning ? (
-                            <Loader2
-                              data-icon='inline-start'
-                              className='animate-spin'
-                            />
-                          ) : (
-                            <Trash2 data-icon='inline-start' />
-                          )}
-                          {t('Cleanup')}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </CardAction>
-              </CardHeader>
-            </Card>
-
             <Tabs value={activeView} className='flex min-h-0 flex-col gap-4'>
               <TabsContent value='health' className='m-0 flex flex-col gap-4'>
                 <Card size='sm'>
@@ -3962,6 +3788,16 @@ export function AccountPool() {
                         'Inspect usage records, state changes, and check tasks.'
                       )}
                     </CardDescription>
+                    <CardAction>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void usageLogsQuery.refetch()}
+                      >
+                        <RefreshCw data-icon='inline-start' />
+                        {t('Refresh')}
+                      </Button>
+                    </CardAction>
                   </CardHeader>
                   <CardContent className='p-0'>
                     {logViewTabs}
@@ -4255,6 +4091,35 @@ export function AccountPool() {
                         'Inspect usage records, state changes, and check tasks.'
                       )}
                     </CardDescription>
+                    <CardAction className='flex flex-wrap justify-start gap-2 lg:justify-end'>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => {
+                          void stateLogsQuery.refetch()
+                          void stateLogAuditQuery.refetch()
+                        }}
+                      >
+                        <RefreshCw data-icon='inline-start' />
+                        {t('Refresh')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={stateLogExporting || !canOperateAccountPool}
+                        onClick={() => void exportStateLogs()}
+                      >
+                        {stateLogExporting ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <Download data-icon='inline-start' />
+                        )}
+                        {t('Export audit')}
+                      </Button>
+                    </CardAction>
                   </CardHeader>
                   <CardContent className='p-0'>
                     {logViewTabs}
@@ -4844,6 +4709,32 @@ export function AccountPool() {
                         'Inspect usage records, state changes, and check tasks.'
                       )}
                     </CardDescription>
+                    <CardAction className='flex flex-wrap justify-start gap-2 lg:justify-end'>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void checkTasksQuery.refetch()}
+                      >
+                        <RefreshCw data-icon='inline-start' />
+                        {t('Refresh')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={checkTaskCleaning || !canOperateAccountPool}
+                        onClick={() => void cleanupCheckTasks()}
+                      >
+                        {checkTaskCleaning ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <Trash2 data-icon='inline-start' />
+                        )}
+                        {t('Cleanup')}
+                      </Button>
+                    </CardAction>
                   </CardHeader>
                   <CardContent className='p-0'>
                     {logViewTabs}
