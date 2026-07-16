@@ -39,13 +39,10 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+  StaticDataTable,
+  type StaticDataTableColumn,
+  staticDataTableClassNames,
+} from '@/components/data-table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StatusBadge } from '@/components/status-badge'
 import {
@@ -86,7 +83,7 @@ export function MultiKeyManageDialog({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
 
-  // Data state
+  // 数据状态。
   const [isLoading, setIsLoading] = useState(false)
   const [keys, setKeys] = useState<KeyStatus[]>([])
   const [currentPage, setCurrentPage] = useState(1)
@@ -97,13 +94,13 @@ export function MultiKeyManageDialog({
   const [manualDisabledCount, setManualDisabledCount] = useState(0)
   const [autoDisabledCount, setAutoDisabledCount] = useState(0)
 
-  // UI state
+  // UI 状态。
   const [statusFilter, setStatusFilter] = useState<number | null>(null)
   const [confirmAction, setConfirmAction] =
     useState<MultiKeyConfirmAction | null>(null)
   const [isPerformingAction, setIsPerformingAction] = useState(false)
 
-  // Reset and load data when dialog opens
+  // 弹窗打开时重置筛选条件，并加载第一页密钥状态。
   useEffect(() => {
     if (open && currentRow) {
       setCurrentPage(1)
@@ -173,7 +170,7 @@ export function MultiKeyManageDialog({
       const { type, keyIndex } = confirmAction
       let response
 
-      // Execute the appropriate action
+      // 根据确认动作调用对应的多 Key 管理接口。
       if (type === 'enable' && keyIndex !== undefined) {
         response = await enableMultiKey(currentRow.id, keyIndex)
       } else if (type === 'disable' && keyIndex !== undefined) {
@@ -192,7 +189,7 @@ export function MultiKeyManageDialog({
         toast.success(response.message || 'Operation successful')
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
 
-        // Reload data - reset to page 1 for bulk actions
+        // 批量操作后回到第一页，单 Key 操作保留当前页以减少上下文跳转。
         const isBulkAction = type.includes('all') || type === 'delete-disabled'
         if (isBulkAction) {
           setCurrentPage(1)
@@ -228,6 +225,51 @@ export function MultiKeyManageDialog({
     return formatTimestamp(timestamp)
   }
 
+  const keyStatusColumns: StaticDataTableColumn<KeyStatus>[] = [
+    {
+      id: 'index',
+      header: t('Index'),
+      className: 'w-20',
+      cellClassName: staticDataTableClassNames.codeCell,
+      cell: (key) => `#${key.index + 1}`,
+    },
+    {
+      id: 'status',
+      header: t('Status'),
+      className: 'w-32',
+      cell: (key) => renderStatusBadge(key.status),
+    },
+    {
+      id: 'reason',
+      header: t('Disabled Reason'),
+      className: 'min-w-[200px]',
+      cellClassName: 'max-w-xs text-sm',
+      cell: (key) => key.reason || '-',
+    },
+    {
+      id: 'disabled-time',
+      header: t('Disabled Time'),
+      className: 'w-44',
+      cellClassName: staticDataTableClassNames.mutedCell,
+      cell: (key) => formatKeyTimestamp(key.disabled_time),
+    },
+    {
+      id: 'actions',
+      header: t('Actions'),
+      className: 'w-44 text-right',
+      cellClassName: staticDataTableClassNames.actionCell,
+      cell: (key) => (
+        <MultiKeyTableRowActions
+          keyIndex={key.index}
+          status={key.status}
+          disabled={!permissions.canSensitiveWrite}
+          disabledReason={noPermissionMessage}
+          onAction={setConfirmAction}
+        />
+      ),
+    },
+  ]
+
   if (!currentRow) return null
 
   return (
@@ -259,8 +301,8 @@ export function MultiKeyManageDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className='flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden'>
-            {/* Statistics */}
+          <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-hidden'>
+            {/* 统计概览 */}
             <div className='grid shrink-0 grid-cols-3 gap-3'>
               <StatisticsCard
                 label={t('Enabled')}
@@ -281,7 +323,7 @@ export function MultiKeyManageDialog({
 
             <Separator className='shrink-0' />
 
-            {/* Toolbar */}
+            {/* 工具栏 */}
             <div className='flex shrink-0 items-center justify-between'>
               <Select
                 items={[
@@ -388,7 +430,7 @@ export function MultiKeyManageDialog({
               </div>
             </div>
 
-            {/* Table */}
+            {/* 表格 */}
             <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
               {isLoading ? (
                 <div className='flex items-center justify-center py-12'>
@@ -400,53 +442,17 @@ export function MultiKeyManageDialog({
                 </div>
               ) : (
                 <div className='min-w-[800px]'>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className='w-20'>{t('Index')}</TableHead>
-                        <TableHead className='w-32'>{t('Status')}</TableHead>
-                        <TableHead className='min-w-[200px]'>
-                          {t('Disabled Reason')}
-                        </TableHead>
-                        <TableHead className='w-44'>
-                          {t('Disabled Time')}
-                        </TableHead>
-                        <TableHead className='w-44 text-right'>
-                          {t('Actions')}
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {keys.map((key) => (
-                        <TableRow key={key.index}>
-                          <TableCell className='font-mono text-sm'>
-                            #{key.index + 1}
-                          </TableCell>
-                          <TableCell>{renderStatusBadge(key.status)}</TableCell>
-                          <TableCell className='max-w-xs truncate text-sm'>
-                            {key.reason || '-'}
-                          </TableCell>
-                          <TableCell className='text-muted-foreground text-sm'>
-                            {formatKeyTimestamp(key.disabled_time)}
-                          </TableCell>
-                          <TableCell>
-                            <MultiKeyTableRowActions
-                              keyIndex={key.index}
-                              status={key.status}
-                              disabled={!permissions.canSensitiveWrite}
-                              disabledReason={noPermissionMessage}
-                              onAction={setConfirmAction}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <StaticDataTable
+                    className={staticDataTableClassNames.embeddedContainer}
+                    columns={keyStatusColumns}
+                    data={keys}
+                    getRowKey={(key) => key.index}
+                  />
                 </div>
               )}
             </div>
 
-            {/* Pagination */}
+            {/* 分页 */}
             {totalPages > 1 && (
               <div className='flex shrink-0 items-center justify-between'>
                 <div className='text-muted-foreground text-sm'>
@@ -479,7 +485,7 @@ export function MultiKeyManageDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Confirmation Dialog */}
+      {/* 确认弹窗 */}
       <ConfirmDialog
         open={confirmAction !== null}
         onOpenChange={(open) => !open && setConfirmAction(null)}

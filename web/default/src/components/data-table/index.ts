@@ -20,6 +20,11 @@ export { DataTablePagination } from './pagination'
 export { DataTableColumnHeader } from './column-header'
 export { BadgeListCell } from './badge-list-cell'
 export { TruncatedCell } from './truncated-cell'
+export {
+  StaticDataTable,
+  type StaticDataTableColumn,
+} from './static-data-table'
+export { staticDataTableClassNames } from './static-data-table-classnames'
 export { DataTableFacetedFilter } from './faceted-filter'
 export { DataTableViewOptions } from './view-options'
 export { DataTableToolbar } from './toolbar'

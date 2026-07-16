@@ -18,6 +18,8 @@
 | `column-header.tsx`           | 可排序列头，封装排序状态和列操作入口。                                                      |
 | `faceted-filter.tsx`          | 列枚举筛选控件，支持多选和单选。                                                            |
 | `view-options.tsx`            | 列显示/隐藏控制。                                                                           |
+| `static-data-table.tsx`       | 静态数组表格，适合弹窗预览、状态清单和其它不需要 TanStack 状态的简单表格。                  |
+| `truncated-cell.tsx`          | DataTable 单行文本截断单元格，通过 tooltip 暴露完整文本。                                  |
 | `table-empty.tsx`             | 桌面表格空态行。                                                                            |
 | `table-skeleton.tsx`          | 桌面表格加载骨架。                                                                          |
 | `index.ts`                    | 对外导出入口，新增通用能力时应优先在这里保持兼容导出。                                      |
@@ -136,6 +138,32 @@ import {
 4. 接口请求、权限判定、缓存 key 和业务状态转换。
 
 当同一段表格展示逻辑被两个以上页面复用，并且不依赖具体业务接口时，再考虑沉淀到公共 DataTable 或其它公共组件目录。
+
+## 静态数组表格
+
+弹窗里的导入预览、状态清单、批量操作结果等本地数组，不需要 TanStack Table 的排序、筛选、列显示和分页状态。此类场景优先使用 `StaticDataTable`：
+
+```tsx
+<StaticDataTable
+  columns={[
+    {
+      id: 'name',
+      header: t('Name'),
+      cellClassName: staticDataTableClassNames.mediumCell,
+      cell: (item) => item.name,
+    },
+  ]}
+  data={items}
+  emptyContent={t('No items found')}
+/>
+```
+
+`StaticDataTable` 的边界：
+
+1. 只负责静态数组渲染、空态行和默认文本截断。
+2. 不承载排序、筛选、列显示、行选择、分页和数据请求。
+3. 操作按钮、确认弹窗、权限判断和接口调用仍放在业务组件中。
+4. 需要完整列表页体验时继续使用 `DataTablePage`。
 
 ## 后续分层原则
 

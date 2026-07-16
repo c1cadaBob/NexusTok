@@ -14118,3 +14118,73 @@ NexusTok 前一轮将模型库搜索迁移到独立 `ModelLibrarySearchDialog`�
 7. MCP 在 `/keys` 页面通过 DOM 检查确认名称 `11` 已由 `TruncatedCell` 的 `data-slot="tooltip-trigger"` 包裹，class 为 `block min-w-0 truncate max-w-[200px] font-medium`，完整值 tooltip 触发器已接入。
 8. MCP 访问 `http://192.168.0.202:3003/redemption-codes?postcheck=1784160500000`，确认兑换码页面正常渲染表头和空态，请求 `GET /api/redemption/?p=1&page_size=20` 返回 200；当前环境没有兑换码数据，因此验证范围为页面加载、表头、空态和无 runtime 错误。
 9. MCP 控制台检查 `/keys` 与 `/redemption-codes`，均没有 JavaScript `error`、`warn` 或浏览器 `issue`。
+
+## 本轮实施评审：DataTable StaticDataTable 静态表格原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/components/data-table/static/static-data-table.tsx`、`static-data-table-classnames.ts` 与当前 NexusTok DataTable 目录后确认：new-api 已把“本地数组 + 固定列定义”的简单表格抽成 `StaticDataTable`，避免这类页面为了少量静态数据引入 TanStack Table 的分页、排序、筛选状态，也避免在业务组件里重复手写 `TableHeader`、`TableBody`、空态行、单元格截断和容器样式。
+
+NexusTok 当前已经原生化了 DataTable README、移动卡片、桌面卡片视图、`BadgeListCell` 和 `TruncatedCell`，但还没有静态数组表格抽象。首个明显缺口是 `web/default/src/features/channels/components/dialogs/multi-key-manage-dialog.tsx`：多 Key 管理弹窗内的密钥状态列表来自当前接口返回的本页数组，页面不需要 TanStack 状态，却手写了完整 Table 结构、空态、列宽、禁用原因截断和操作列。
+
+### 需求分析
+
+1. 在 NexusTok `@/components/data-table` 中新增原生 `StaticDataTable`，保持当前扁平目录结构，不直接搬运 new-api 的 `static/` 子目录。
+2. 公共组件应支持列定义、数组数据、row key、row className、可选自定义 row、空态内容、header row className、容器和 table className 覆盖。
+3. 默认单元格对字符串/数字内容使用本项目刚原生化的 `TruncatedCell`，保证静态表格也能复用完整值 tooltip。
+4. 首个接入点为多 Key 管理弹窗，保持原有状态筛选、刷新、批量启用/禁用/删除、分页和确认弹窗逻辑不变。
+5. 多 Key 的 `Enable`、`Disable`、`Delete` 行操作仍留在业务组件 `MultiKeyTableRowActions`，公共表格不理解业务动作或权限。
+6. 本轮不修改 Go 后端、数据库、渠道保存、multi-key 管理接口、权限模型、relay、计费或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| DataTable 静态表格 | `web/default/src/components/data-table/static-data-table.tsx` | 新增静态数组表格组件，支持列定义、空态和默认文本截断。 |
+| DataTable 静态样式 | `web/default/src/components/data-table/static-data-table-classnames.ts` | 新增静态表格常用 className map，便于业务侧保持紧凑一致。 |
+| DataTable 导出与文档 | `web/default/src/components/data-table/index.ts`、`README.md` | 导出 `StaticDataTable`、`StaticDataTableColumn` 和 className map，并补充目录职责说明。 |
+| 多 Key 管理弹窗 | `web/default/src/features/channels/components/dialogs/multi-key-manage-dialog.tsx` | 用 `StaticDataTable` 替换手写 Table，保留加载、空态、分页和操作逻辑。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 多 Key 操作风险：公共静态表格不能改变 `enableMultiKey`、`disableMultiKey`、`deleteMultiKey`、批量操作和确认弹窗的触发路径。
+2. 布局风险：多 Key 弹窗需要继续保留 `min-w-[800px]`、操作列右对齐、状态列宽、禁用原因截断和滚动容器，避免窄屏或长错误撑破 Dialog。
+3. 空态风险：加载态、空态和表格态的高度/边框不能回退；没有数据时仍显示当前本地化文案 `No keys found`。
+4. 组件抽象风险：`StaticDataTable` 只服务本地数组静态表格，不应替代 `DataTablePage` 或引入排序/筛选/分页状态，避免公共组件职责膨胀。
+5. Tooltip 风险：默认文本截断依赖 `TruncatedCell` 和 Base UI `TooltipTrigger render`，不能引入 Radix 风格 `asChild`。
+6. i18n 风险：本轮理论上不新增可见文案；若实现时新增文案，必须补齐六语并运行 `bun run i18n:sync`。
+
+### 方案评审
+
+采用“公共静态表格 + 多 Key 弹窗首接入”的渐进方案：
+
+1. 新增 `static-data-table-classnames.ts`，沉淀容器、紧凑表头、紧凑单元格、数值列、muted/code/action cell 等常用 className。
+2. 新增 `StaticDataTable<TData>`，支持两种模式：传入 `columns + data` 自动渲染，或传入 `children` 手动组合内部行结构。
+3. 列定义包含 `id`、`header`、`className`、`cellClassName`、`cell`；`cellClassName` 可接收 row/index 以满足状态差异。
+4. 自动渲染模式中，原始字符串/数字或只有原始文本 children 的 React 元素会包进 `TruncatedCell`；复杂节点直接原样渲染。
+5. 多 Key 弹窗替换手写 `Table` 结构：保留外层滚动/加载/空态判断，表格态内部使用 `StaticDataTable`；操作列仍调用 `MultiKeyTableRowActions`。
+6. 验证顺序：`bun run i18n:sync`、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 `/channels`，打开多 Key 管理入口或在接口无 multi-key 数据时至少验证渠道页、行菜单和弹窗入口不回退，并检查网络/控制台。
+
+### 实施结果
+
+1. 已新增 `StaticDataTable<TData>`，用于本地数组、固定列、无需 TanStack 状态的静态表格场景。
+2. 已新增 `staticDataTableClassNames`，沉淀静态表格容器、紧凑表头、紧凑单元格、muted/code/action cell 等常用样式。
+3. `StaticDataTable` 自动渲染模式支持 `columns`、`data`、`getRowKey`、`getRowClassName`、`renderRow`、`emptyContent`、`headerRowClassName`、`containerProps` 和 `tableProps`；同时保留 `children` 模式，便于少数业务继续手动组合表格内部结构。
+4. 字符串/数字单元格默认接入 `TruncatedCell`，静态表格也能复用完整值 tooltip；复杂节点如 `StatusBadge` 和行操作按钮保持原样渲染。
+5. 多 Key 管理弹窗的密钥状态列表已从手写 `TableHeader`、`TableBody`、`TableRow`、`TableCell` 改为 `StaticDataTable` 列定义；加载态、空态、筛选、刷新、分页、批量操作、确认弹窗、权限判断和接口调用路径未变。
+6. `web/default/src/components/data-table/index.ts` 已导出 `StaticDataTable`、`StaticDataTableColumn` 和 `staticDataTableClassNames`，`README.md` 已补充静态数组表格的使用边界。
+7. 本轮没有修改后端接口、数据库、权限模型、渠道保存、multi-key 管理 API、relay、计费逻辑或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx shadcn@latest info --json`，确认当前默认前端为 Base UI、Tailwind v4、`iconLibrary: hugeicons`，因此本轮继续沿用项目现有 Base UI 组件组合方式。
+2. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮没有新增可见翻译 key。
+3. 已运行 `cd web/default && bunx eslint --no-ignore src/components/data-table/static-data-table.tsx src/components/data-table/static-data-table-classnames.ts src/components/data-table/truncated-cell.tsx src/components/data-table/index.ts src/features/channels/components/dialogs/multi-key-manage-dialog.tsx`，首次发现 `static-data-table.tsx` 存在重复 `react` import；已合并 import 后重跑通过。
+4. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+5. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+6. 已运行 `git diff --check`，未发现空白错误。
+7. MCP 访问 `http://192.168.0.202:3003/channels?postcheck=1784161700000`，确认渠道页面正常渲染，`GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、`GET /api/channel/models`、`GET /api/account-pool/groups/options` 等请求成功。
+8. MCP 打开当前渠道 `11111` 的行菜单，菜单正常显示 `编辑`、`测试连接`、`查询余额`、`获取模型`、`复制渠道`、`账号池`、`删除` 等入口，未出现前端运行时错误。
+9. MCP 读取渠道列表响应确认当前唯一渠道 `channel_info.is_multi_key=false`、`credential_mode="global_account_pool"`，因此按现有业务逻辑不会展示 `Multi-Key Management` 菜单，当前环境无法真实打开多 Key 管理弹窗验证静态表格 DOM；本轮对该弹窗的验证范围为类型检查、构建、静态逻辑和渠道页/行菜单无回退。
+10. MCP 控制台检查 `/channels`，没有 JavaScript `error`、`warn` 或浏览器 `issue`。
