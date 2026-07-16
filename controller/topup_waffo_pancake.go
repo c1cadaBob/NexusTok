@@ -537,6 +537,17 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		return
 	}
 
+	// 旧版 `/webhook` 不带环境段，保持现有兼容；只有新分环境路径才校验 test/prod。
+	expectedEnv := strings.ToLower(strings.TrimSpace(c.Param("env")))
+	if expectedEnv != "" && expectedEnv != "test" && expectedEnv != "prod" {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake webhook 路径环境段无效 env=%q path=%q client_ip=%s",
+			expectedEnv, c.Request.RequestURI, c.ClientIP(),
+		))
+		c.String(http.StatusNotFound, "unknown env")
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 读取请求体失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
@@ -551,6 +562,15 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 验签失败 path=%q client_ip=%s signature=%q body=%q error=%q", c.Request.RequestURI, c.ClientIP(), signature, string(bodyBytes), err.Error()))
 		c.String(http.StatusUnauthorized, "invalid signature")
+		return
+	}
+
+	if expectedEnv != "" && !strings.EqualFold(strings.TrimSpace(event.Mode), expectedEnv) {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Waffo Pancake webhook 环境不匹配 expected=%q actual_mode=%q event_id=%s order_id=%s client_ip=%s",
+			expectedEnv, event.Mode, event.ID, event.Data.OrderID, c.ClientIP(),
+		))
+		c.String(http.StatusOK, "OK")
 		return
 	}
 

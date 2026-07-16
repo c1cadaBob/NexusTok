@@ -21,4 +21,6 @@ func TestSetApiRouterRegistersWaffoPancakeUserPaymentRoutes(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodPost, "/api/user/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/user/waffo-pancake/pay", controller.RequestWaffoPancakePay)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/subscription/waffo-pancake/pay", controller.SubscriptionRequestWaffoPancakePay)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/waffo-pancake/webhook", controller.WaffoPancakeWebhook)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/waffo-pancake/webhook/:env", controller.WaffoPancakeWebhook)
 }

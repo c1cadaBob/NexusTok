@@ -118,7 +118,9 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)              // Stripe 支付回调
 		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)                // Creem 支付回调
 		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)                // Waffo 支付回调
-		apiRouter.POST("/waffo-pancake/webhook", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook) // Waffo Pancake 支付回调
+		apiRouter.POST("/waffo-pancake/webhook", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook) // Waffo Pancake 旧版回调地址
+		// 兼容 new-api-main 的分环境回调地址，让运维可在 Pancake 后台分别登记 test/prod Webhook。
+		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
 
 		// 通用安全验证路由（需要用户认证）
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)

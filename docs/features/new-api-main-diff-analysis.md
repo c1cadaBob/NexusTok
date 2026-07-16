@@ -677,7 +677,7 @@ NexusTok 独有 API 族：
 | `/api/data/flow`、`/api/data/flow/self` | 流量账本聚合 | 已引入；Root/Admin/User 按角色返回不同维度。 |
 | `/api/subscription/balance/pay` | 余额购买订阅 | P2 引入。 |
 | `/api/subscription/admin/*/reset` | 订阅重置 | P2 引入。 |
-| `/api/waffo-pancake/webhook`、`/api/waffo-pancake/webhook/:env` | Waffo Pancake webhook | NexusTok 已有无环境路径的支付实现，应先补齐无环境回调路由；分环境路径后续评估。 |
+| `/api/waffo-pancake/webhook`、`/api/waffo-pancake/webhook/:env` | Waffo Pancake webhook | 已引入双路由兼容：保留旧版无环境回调地址，同时补齐 `:env` 分环境路径，并在带环境段的 URL 上校验 `event.mode`，避免 test/prod 回调串线。 |
 | `/api/option/waffo-pancake/*` | Waffo Pancake catalog/pair/product 绑定 | P2 引入为设置向导。 |
 
 ## 验收建议
@@ -15180,3 +15180,83 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 8. 最终页面快照确认 `model-deployment` 兼容落点显示为“模型部署”设置页，界面包含 `启用 io.net 部署` 开关和 `保存 io.net 设置` 按钮。
 9. 该轮已登录态验证后的控制台消息结果为 `<no console messages found>`。
 10. 该轮已登录态验证后的网络请求仅包含 `/console/setting?...` 文档请求、静态资源、`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，没有新增失败请求或写请求。
+
+## 本轮实施评审：Waffo Pancake 分环境 webhook 路由兼容
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/router/api-router.go` 与当前项目后发现，`new-api-main` 已注册：
+
+1. `POST /api/waffo-pancake/webhook/:env`
+
+并在 `controller/topup_waffo_pancake.go` 中明确要求 URL 环境段与 Webhook payload 的 `mode` 一致，用来区分 Pancake 后台登记的 `test` 与 `prod` 回调地址。
+
+NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签名校验、Webhook 入账和订阅分流能力，但公开路由层只保留了：
+
+1. `POST /api/waffo-pancake/webhook`
+
+这会带来两个兼容问题：
+
+1. 如果运维沿用 `new-api-main` 的 `.../webhook/test` 或 `.../webhook/prod` 配置，当前 NexusTok 会直接返回 404。
+2. 即使后续只补 `:env` 路由，不校验 URL 环境段与 payload `mode`，也会留下“测试回调打到生产地址仍可继续处理”的偏差，弱化原有运维保护。
+
+### 需求分析
+
+1. 保留现有 `/api/waffo-pancake/webhook`，避免破坏已部署实例和旧回调地址。
+2. 补齐 `/api/waffo-pancake/webhook/:env`，兼容 `new-api-main` 与外部 Pancake 后台已登记的 test/prod 路径。
+3. 仅在带 `:env` 的路径上校验 `event.mode` 与 URL 环境段一致；旧版无环境路径继续按当前逻辑兼容。
+4. 不改动现有签名校验、公钥选择、充值入账、订阅分流和幂等锁逻辑，确保核心支付链路稳定。
+5. 以 `http://192.168.0.202:3003/` 的真实运行态验证“新旧路径都不再是 404”。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| API 公开路由 | `router/api-router.go` | 新增 `POST /api/waffo-pancake/webhook/:env`，复用现有 `controller.WaffoPancakeWebhook`。 |
+| Webhook handler | `controller/topup_waffo_pancake.go` | 保留旧路径兼容；当 URL 带 `:env` 时，新增环境段合法性与 `event.mode` 一致性校验。 |
+| 路由测试 | `router/api_router_payment_test.go` | 补充 Waffo Pancake 公开回调路由注册断言。 |
+| Controller 单测 | `controller/topup_waffo_pancake_test.go` | 补充非法环境段拒绝，以及旧路径仍按原有验签流程返回 `invalid signature` 的兼容测试。 |
+| 差异分析文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施和 3003 运行态验证结果。 |
+
+### 风险评估
+
+1. 如果直接把无环境旧路由替换成 `:env` 路由，会导致已经登记旧地址的生产实例在切换版本后失效。
+2. 如果只补路由而不校验环境一致性，测试事件有机会通过生产 URL 继续处理，和 `new-api-main` 的防误配置约束不一致。
+3. 如果把环境校验强加到旧版无环境路径，会把当前已部署但未区分环境的回调地址一并打断，属于不必要的行为回归。
+4. Webhook 属于支付回调入口，必须把改动收敛在路由层和 handler 前置校验层，避免触碰已稳定运行的签名、公钥、订单映射和入账逻辑。
+
+### 方案评审
+
+采用“双路由并存 + 新路径精确校验”的最小方案：
+
+1. 保留 `POST /api/waffo-pancake/webhook` 不动，继续兼容旧版部署。
+2. 新增 `POST /api/waffo-pancake/webhook/:env`，复用同一个 handler 和 `AnonymousRequestBodyLimit()`。
+3. 在 `WaffoPancakeWebhook` 中先读取 `c.Param("env")`：
+   - 为空：视为旧路径，不新增环境约束；
+   - 为 `test` 或 `prod`：验签成功后要求 `event.Mode` 与 URL 一致；
+   - 其它值：直接返回 `404 unknown env`。
+4. 不改 `service.VerifyConfiguredWaffoPancakeWebhook`、`ResolveWaffoPancakeTradeNo`、`ResolveWaffoPancakeSubscriptionTradeNo`、`RechargeWaffoPancake` 和 `CompleteSubscriptionOrder`。
+
+### 实施结果
+
+1. `router/api-router.go` 已新增 `POST /api/waffo-pancake/webhook/:env`，并保留原有 `/api/waffo-pancake/webhook`。
+2. `controller/topup_waffo_pancake.go` 已补充中文注释，说明旧版无环境路径继续兼容，只有带环境段的新路径才做 `test/prod` 校验。
+3. 对非法环境段（如 `staging`）会直接返回 `404 unknown env`，避免把任意路径段当作可用回调入口。
+4. 对合法环境段，在验签成功后新增 `event.Mode` 一致性校验；若 URL 和 payload 不一致，则记录错误日志并返回 `200 OK`，避免上游反复重试错误配置的永久性问题。
+5. 本轮没有修改任何支付配置、签名公钥解析、充值订单创建、订阅订单完成或用户侧支付 API。
+
+### 验证记录
+
+1. 已运行 `go test ./router -run TestSetApiRouterRegistersWaffoPancakeUserPaymentRoutes -count=1`：通过。
+2. 已运行 `go test ./controller -run 'TestWaffoPancakeWebhook(RejectsUnknownEnvSegment|KeepsLegacyPathBehaviorWithoutEnv)|TestGetWaffoPancakePayMoney|TestFormatWaffoPancakeAmount_UsesDisplayPriceString' -count=1`：通过。
+3. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+4. 已使用 MCP 打开 `http://192.168.0.202:3003/?verify=1784237600000`，确认当前验证命中的是用户指定的 3003 运行态。
+5. 在该页面浏览器上下文调用：
+   - `POST /api/waffo-pancake/webhook/test?verify=1784237600001`
+   - `POST /api/waffo-pancake/webhook?verify=1784237600002`
+   两个请求均返回 `403 webhook disabled`，说明新旧路径都已经进入当前 handler，而不是 404 未注册路由。
+6. MCP 网络面板显示这两条请求分别记录为：
+   - `POST http://192.168.0.202:3003/api/waffo-pancake/webhook/test?verify=1784237600001 [403]`
+   - `POST http://192.168.0.202:3003/api/waffo-pancake/webhook?verify=1784237600002 [403]`
+7. MCP 控制台中出现的两条 `403` 错误消息来自上述手动 webhook 探测请求，属于验证动作本身的预期结果，不是页面业务异常；除这两条外未观察到新的脚本报错。
+8. 由于当前 3003 运行态未启用 Waffo Pancake webhook，非法环境段在真实环境中会先命中 `webhook disabled` 保护，`404 unknown env` 分支已通过 controller 单测覆盖，避免为验证该分支去改动真实支付配置。

@@ -9,11 +9,14 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/setting"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,4 +99,63 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 			require.InDelta(t, tc.expected, actual, 0.000001)
 		})
 	}
+}
+
+func TestWaffoPancakeWebhookRejectsUnknownEnvSegment(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalEnabled := setting.WaffoPancakeEnabled
+	originalMerchantID := setting.WaffoPancakeMerchantID
+	originalPrivateKey := setting.WaffoPancakePrivateKey
+	originalWebhookPublicKey := setting.WaffoPancakeWebhookPublicKey
+	t.Cleanup(func() {
+		setting.WaffoPancakeEnabled = originalEnabled
+		setting.WaffoPancakeMerchantID = originalMerchantID
+		setting.WaffoPancakePrivateKey = originalPrivateKey
+		setting.WaffoPancakeWebhookPublicKey = originalWebhookPublicKey
+	})
+
+	setting.WaffoPancakeEnabled = true
+	setting.WaffoPancakeMerchantID = "merchant"
+	setting.WaffoPancakePrivateKey = "private"
+	setting.WaffoPancakeWebhookPublicKey = "public"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/waffo-pancake/webhook/staging", nil)
+	ctx.Params = gin.Params{{Key: "env", Value: "staging"}}
+
+	WaffoPancakeWebhook(ctx)
+
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Equal(t, "unknown env", recorder.Body.String())
+}
+
+func TestWaffoPancakeWebhookKeepsLegacyPathBehaviorWithoutEnv(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalEnabled := setting.WaffoPancakeEnabled
+	originalMerchantID := setting.WaffoPancakeMerchantID
+	originalPrivateKey := setting.WaffoPancakePrivateKey
+	originalWebhookPublicKey := setting.WaffoPancakeWebhookPublicKey
+	t.Cleanup(func() {
+		setting.WaffoPancakeEnabled = originalEnabled
+		setting.WaffoPancakeMerchantID = originalMerchantID
+		setting.WaffoPancakePrivateKey = originalPrivateKey
+		setting.WaffoPancakeWebhookPublicKey = originalWebhookPublicKey
+	})
+
+	setting.WaffoPancakeEnabled = true
+	setting.WaffoPancakeMerchantID = "merchant"
+	setting.WaffoPancakePrivateKey = "private"
+	setting.WaffoPancakeWebhookPublicKey = "public"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/waffo-pancake/webhook", http.NoBody)
+
+	WaffoPancakeWebhook(ctx)
+
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Equal(t, "invalid signature", recorder.Body.String())
 }
