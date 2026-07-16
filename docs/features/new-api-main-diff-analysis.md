@@ -15560,3 +15560,67 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 8. MCP 控制台仅剩既有的 i18next info 和 `nexustok-build` debug，没有新的 `error`、`warn` 或 `issue`。
 9. MCP 网络面板中，本轮页面加载与交互相关请求均返回 `200`，关键请求包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`，未出现新的失败请求。
 10. 热更新已在 3003 页面直接体现，本轮未触发容器重启流程。
+
+## 本轮实施评审：System Notice 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/maintenance/notice-section.tsx` 与当前默认前端后确认：NexusTok 在系统设置工作区中已经原生化了页头动作区、未保存状态徽标和离开拦截，但 `/system-settings/site/notice` 仍停留在早期独立表单写法：
+
+1. 保存按钮固定在内容底部，没有进入系统设置页头动作区。
+2. 页面没有未保存脏态提示，也没有离开页面前的统一确认拦截。
+3. 页面仍使用 `useForm + useEffect reset` 的旧模式，没有接入当前项目已经稳定的 `useSettingsForm()` 共享基座。
+
+这类差异虽然不影响后端 `Notice` 配置结构，但会让同一站点设置分组内部出现“部分页面已经原生化、部分页面还停留旧体验”的割裂感，也会继续放大误离开导致全局公告草稿丢失的风险。
+
+### 需求分析
+
+1. `/system-settings/site/notice` 需要接入当前项目原生的系统设置页头动作区，让“保存通知”与其它已升级设置页保持同一交互位置。
+2. 页面需要展示未保存脏态，并在管理员尝试切换系统设置分区或刷新页面时给出统一确认拦截，避免误丢草稿。
+3. 页面应接入 `useSettingsForm()`，统一复用当前项目已有的“无变化不提交、提交成功后刷新已保存基线、toast 反馈一致”的表单行为。
+4. `Notice` 配置键、`PUT /api/option/` 保存链路、权限禁用提示和成功后触发 `status` 刷新的行为必须保持不变。
+5. 本轮不额外引入“重置为默认”动作，因为当前 `Notice` 仅以字符串 option 形式存在，没有独立的平台默认配置常量；强行补默认值只会引入额外语义假设。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统公告设置页 | `web/default/src/features/system-settings/maintenance/notice-section.tsx` | 将页面从旧式 `useForm` 实现迁移到 `useSettingsForm`、页头动作区、脏态提示和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `Notice` 会直接影响前台全局公告展示；如果本轮误改保存 key 或值类型，会导致全站公告更新失败或内容错乱。
+2. `useSettingsForm()` 会在提交成功后刷新基线；如果迁移方式不当，可能出现“保存后仍显示未保存”或“明明有改动却无法提交”的表单状态问题。
+3. 这页属于真实运行中的全局配置页，必须在 `http://192.168.0.202:3003/` 上验证热更新结果、真实 `PUT /api/option/` 请求和控制台状态，不能只依赖静态检查。
+
+### 方案评审
+
+采用“只迁表单基座，不改配置合同”的最小方案：
+
+1. 保留现有 `noticeSchema`、`Notice` 字段名和 `updateOption.mutateAsync({ key: 'Notice' })` 提交路径。
+2. 把页面从 `react-hook-form useForm + useEffect reset` 旧写法迁移到项目已有的 `useSettingsForm()`，复用当前项目统一的基线管理和提交行为。
+3. 使用 `SettingsPageFormActions` 将保存按钮提升到页头动作区，并继续接入 `updateOption.canUpdate` 与 `disabledReason`。
+4. 使用 `FormDirtyIndicator` 与 `FormNavigationGuard` 提供未保存状态徽标和离开确认拦截。
+5. 保持文本域字段、占位文案和 Markdown 支持说明不变，不引入新的保存选项或布局分叉。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/maintenance/notice-section.tsx` 已迁移到 `useSettingsForm()`，移除了旧的 `useEffect + form.reset()` 管理方式。
+2. 页面已新增 `FormNavigationGuard` 与 `FormDirtyIndicator`；修改公告内容后，标题区域会显示“未保存的更改”，并在离开页面时弹出统一确认对话框。
+3. 保存按钮已通过 `SettingsPageFormActions` 进入页头动作区，不再固定在文本域下方。
+4. 保存逻辑仍然写入 `Notice` option，继续复用 `useUpdateOption()` 的权限校验、成功 toast 和 `status` 刷新能力，没有改变后端配置合同。
+5. 本轮没有引入额外的默认值重置动作，避免对当前项目尚未定义的平台默认公告语义做主观扩展。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/maintenance/notice-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/site/notice`，确认页面热更新生效，保存按钮位于标题右侧页头动作区。
+6. 在同一 3003 页面中修改公告内容后，标题区域出现“未保存的更改”，说明脏态徽标已正常显示。
+7. 点击系统设置侧栏中的其它分区时，页面会弹出“未保存的更改”确认对话框；取消后仍停留在当前页，说明统一离开拦截已生效。
+8. 在该页面执行一次真实保存，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`，证明 `Notice` 保存链路保持正常。
+9. MCP 控制台仅保留既有 i18next info 和 `nexustok-build` debug，没有新增 `error`、`warn` 或 `issue`。
+10. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 与 `PUT /api/option/`。

@@ -16,12 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -31,7 +29,12 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Textarea } from '@/components/ui/textarea'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import { SettingsForm } from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const noticeSchema = z.object({
@@ -47,27 +50,24 @@ type NoticeSectionProps = {
 export function NoticeSection({ defaultValue }: NoticeSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const form = useForm<NoticeFormValues>({
-    resolver: zodResolver(noticeSchema),
-    defaultValues: {
-      Notice: defaultValue ?? '',
-    },
-  })
-
-  useEffect(() => {
-    form.reset({ Notice: defaultValue ?? '' })
-  }, [defaultValue, form])
-
-  const onSubmit = async (values: NoticeFormValues) => {
-    const normalized = values.Notice ?? ''
-    if (normalized === (defaultValue ?? '')) {
-      return
-    }
-    await updateOption.mutateAsync({
-      key: 'Notice',
-      value: normalized,
+  const normalizedDefaultValue = defaultValue ?? ''
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<NoticeFormValues>({
+      resolver: zodResolver(noticeSchema) as Resolver<
+        NoticeFormValues,
+        unknown,
+        NoticeFormValues
+      >,
+      defaultValues: {
+        Notice: normalizedDefaultValue,
+      },
+      onSubmit: async (values) => {
+        await updateOption.mutateAsync({
+          key: 'Notice',
+          value: values.Notice ?? '',
+        })
+      },
     })
-  }
 
   return (
     <SettingsSection
@@ -76,8 +76,19 @@ export function NoticeSection({ defaultValue }: NoticeSectionProps) {
         'Broadcast a global banner to users. Markdown is supported.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={isSubmitting || updateOption.isPending}
+            isSaveDisabled={!updateOption.canUpdate}
+            saveDisabledReason={updateOption.disabledReason}
+            saveLabel='Save notice'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='Notice'
@@ -97,17 +108,7 @@ export function NoticeSection({ defaultValue }: NoticeSectionProps) {
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save notice')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
