@@ -36,6 +36,11 @@ interface ComboboxInputProps {
   emptyText?: string
   className?: string
   id?: string
+  name?: string
+  autoComplete?: string
+  'aria-labelledby'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
   allowCustomValue?: boolean
   openOnFocus?: boolean
 }
@@ -48,6 +53,11 @@ export function ComboboxInput({
   emptyText = 'No option found.',
   className,
   id,
+  name,
+  autoComplete = 'off',
+  'aria-labelledby': ariaLabelledBy,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
   allowCustomValue = false,
   openOnFocus = true,
 }: ComboboxInputProps) {
@@ -162,12 +172,16 @@ export function ComboboxInput({
       <Input
         ref={inputRef}
         id={id}
+        name={name}
         type='text'
         role='combobox'
         aria-expanded={open}
         aria-haspopup='listbox'
         aria-autocomplete='list'
-        autoComplete='off'
+        aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid}
+        autoComplete={autoComplete}
         placeholder={placeholder}
         value={displayValue}
         onChange={(e) => {

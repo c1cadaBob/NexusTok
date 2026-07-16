@@ -14908,3 +14908,73 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 8. 通过 MCP 打开 `http://192.168.0.202:3003/sign-in?verify=1784231170566`，登录页用户名输入框的 `autocomplete` 为 `username`，密码输入框为 `current-password`，对应浏览器 `autocomplete` issue 已消失。
 9. 在已登录管理页 `http://192.168.0.202:3003/dashboard/overview?verify=1784230848471` 中，使用真实登录态和 `NexusTok-User: 1` 请求 `http://192.168.0.202:3003/api/channel/ops`，返回 `200`，响应体为 `{"data":{"retry_times":0},"message":"","success":true}`。
 10. 重新导航后的管理页 `http://192.168.0.202:3003/dashboard/overview?verify=1784231660589` 通过 MCP 读取控制台消息结果为 `<no console messages found>`；登录页控制台仅剩 i18next info 和构建版本 debug，没有新增 `error` 或 `warn`。
+
+## 本轮实施评审：渠道编辑抽屉表单可访问性修复
+
+### 差异来源
+
+在 2026-07-16 的 3003 运行态复核中，渠道编辑抽屉仍然存在浏览器级可访问性 issue：
+
+1. `An element doesn't have an autocomplete attribute (count: 1)`
+2. `Incorrect use of <label for=FORM_ELEMENT> (count: 3)`
+
+继续用 MCP 在真实页面里读取 DOM 后确认，问题都集中在 `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 的 4 个字段：
+
+1. `Name *` 输入框缺少 `autocomplete`。
+2. `Type *` 的 `FormLabel` 通过 `FormControl` 自动绑定到了一个不可标记的 `div[data-slot=form-control]`，而不是实际可输入的 Combobox。
+3. `Models *` 的 `FormLabel` 默认指向 `react-hook-form` 生成的 `formItemId`，但 `MultiSelect` 实际使用的是自定义 `ComboboxChipsInput`，导致 `label for` 找不到真实目标。
+4. `Model Mapping` 使用 `FormLabel` 包裹复合编辑器，但编辑器内部没有对应的单一可标记目标，`for` 绑定直接失效。
+
+### 需求分析
+
+1. 渠道编辑抽屉中的关键表单控件必须能被浏览器和辅助技术正确识别，至少要消除这 4 个当前可复现的 issue。
+2. 修复应保持当前渠道编辑页的业务行为、权限控制、保存逻辑和模型搜索流程不变，只处理表单可访问性。
+3. 复合控件需要优先采用“显式关联到真实输入元素”或“改成非 `label` 标题”的最小改动方案，不能为了消 issue 大改整个 Form 框架。
+4. 这轮必须以 `http://192.168.0.202:3003/` 上的真实浏览器结果为准，而不是只凭本地构建判断。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 为 `Type`、`Models`、`Model Mapping`、`Name` 显式补齐真实控件关联与 `autocomplete`。 |
+| 旧式 Combobox 输入 | `web/default/src/components/ui/combobox-input.tsx` | 为 legacy combobox 输入透传 `name`、`autocomplete`、`aria-labelledby`、`aria-describedby`、`aria-invalid`。 |
+| Combobox 包装层 | `web/default/src/components/ui/combobox.tsx` | 把上述可访问性属性传给 legacy combobox 实现，不影响 Base UI 原生 Root 用法。 |
+| MultiSelect | `web/default/src/components/multi-select.tsx` | 为芯片式输入透传 `name` 和 `aria-*`，让外层 label 可以绑定到真实 `ComboboxChipsInput`。 |
+| Model Mapping 复合编辑器 | `web/default/src/features/channels/components/model-mapping-editor.tsx` | 增加 `role='group'` 与 `aria-*` 透传，让复合编辑器可由外层标题描述；JSON 模式下的 `Textarea` 继续继承这些可访问性属性。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施和 3003 验证。 |
+
+### 风险评估
+
+1. 如果直接修改全局 `FormLabel` / `FormControl` 语义，会波及大量表单页面，风险远高于本轮目标。
+2. `Combobox` 和 `MultiSelect` 是共享组件，新增透传属性必须保持向后兼容，不能改变已有页面的交互行为。
+3. `Model Mapping` 是复合编辑器，没有天然单一输入目标；如果仍强行使用 `label for`，只会继续制造无效关联。因此这里需要改为语义标题 + `aria-labelledby`，而不是继续依赖 `FormLabel` 默认逻辑。
+4. `autocomplete='off'` 只补在渠道名称输入框，避免把尚未评审的全站表单全部卷进本轮。
+5. 当前仓库有持续演进中的其它前端改动，本轮只触碰渠道编辑抽屉和相关复用组件，不做无关重构。
+
+### 方案评审
+
+采用“页面显式绑定 + 复合控件透传 `aria-*` + 不改全局表单框架”的低风险方案：
+
+1. `Type *` 改为显式 `htmlFor='channel-type'`，并给实际的 legacy combobox 输入透传 `id='channel-type'`。
+2. `Name *` 输入框补 `autoComplete='off'`，仅收口当前浏览器 issue，不扩大到其它字段。
+3. `Models *` 改为显式 `htmlFor='channel-models'`，同时让 `MultiSelect` 支持把 `id/name/aria-*` 直接落到 `ComboboxChipsInput`。
+4. `Model Mapping` 改为普通标题容器 `id='channel-model-mapping-label'`，编辑器自身作为 `role='group'` 接收 `aria-labelledby`，避免继续产生错误的 `label for`。
+5. `ComboboxInput` / `Combobox` / `MultiSelect` / `ModelMappingEditor` 只增加透传属性，不改变已有筛选、搜索、创建、自定义值、JSON/Visual 切换等行为。
+
+### 实施结果
+
+1. `web/default/src/components/ui/combobox-input.tsx` 已支持 `name`、`autoComplete`、`aria-labelledby`、`aria-describedby`、`aria-invalid` 透传到底层 `Input`。
+2. `web/default/src/components/ui/combobox.tsx` 已把上述可访问性属性传给 legacy combobox 分支，当前渠道类型选择框可以拿到真实 `id='channel-type'`。
+3. `web/default/src/components/multi-select.tsx` 已支持把 `name` 和 `aria-*` 透传到 `ComboboxChipsInput`，渠道模型输入框现在能被 `label` 正确指向。
+4. `web/default/src/features/channels/components/model-mapping-editor.tsx` 已新增 `role='group'` 和 `aria-labelledby` / `aria-describedby` / `aria-invalid` 支持；JSON 模式下的 `Textarea` 继续继承这些属性。
+5. `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 已对 `Type *`、`Models *` 做显式 `htmlFor` 绑定，对 `Model Mapping` 改成普通标题 + `aria-labelledby`，并给 `Name *` 输入框补上 `autoComplete='off'`。
+6. 本轮没有改变任何渠道保存 payload、权限判定、模型搜索、账号池逻辑、上游测试或后端接口。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`：通过。
+2. 已运行 `cd web/default && bun run build`：通过。
+3. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+4. 通过 MCP 打开 `http://192.168.0.202:3003/channels?verify=1784232621213` 并进入真实渠道编辑抽屉，当前导航下读取控制台消息结果为 `<no console messages found>`。
+5. 修改前在同一页面可稳定复现 1 个 `autocomplete` issue 和 3 个 `label for` issue；修改后重新导航并打开抽屉，`issue`、`error`、`warn` 全部归零，说明这 4 个浏览器可访问性问题已被当前运行态消除。
+6. 本轮验证中没有触发任何 `PUT` / `POST` 渠道写请求，验证范围仅限页面渲染、抽屉打开和浏览器可访问性检查。

@@ -47,6 +47,11 @@ type LegacyComboboxProps = {
   allowCustomValue?: boolean
   className?: string
   id?: string
+  name?: string
+  autoComplete?: string
+  'aria-labelledby'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
   openOnFocus?: boolean
 }
 
@@ -69,6 +74,11 @@ function Combobox(
         placeholder={props.searchPlaceholder ?? props.placeholder}
         emptyText={props.emptyText}
         className={props.className}
+        name={props.name}
+        autoComplete={props.autoComplete}
+        aria-labelledby={props['aria-labelledby']}
+        aria-describedby={props['aria-describedby']}
+        aria-invalid={props['aria-invalid']}
         allowCustomValue={props.allowCustomValue}
         openOnFocus={props.openOnFocus}
       />

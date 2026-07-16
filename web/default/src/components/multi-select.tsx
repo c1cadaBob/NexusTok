@@ -55,6 +55,7 @@ interface MultiSelectProps {
   allowCreate?: boolean
   createLabel?: string
   id?: string
+  name?: string
   disabled?: boolean
   copyChipOnClick?: boolean
   isLoading?: boolean
@@ -72,6 +73,9 @@ interface MultiSelectProps {
   submitSearchOnEnterWithMatches?: boolean
   submitSearchOnEnterWhenHighlighted?: boolean
   clearSearchOnSelect?: boolean
+  'aria-labelledby'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
 }
 
 const COMMA_REGEX = /[,，\n]/
@@ -329,6 +333,7 @@ export function MultiSelect({
   allowCreate = false,
   createLabel,
   id,
+  name,
   disabled = false,
   copyChipOnClick = false,
   isLoading = false,
@@ -346,6 +351,9 @@ export function MultiSelect({
   submitSearchOnEnterWithMatches = false,
   submitSearchOnEnterWhenHighlighted = false,
   clearSearchOnSelect = true,
+  'aria-labelledby': ariaLabelledBy,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: MultiSelectProps) {
   const { t } = useTranslation()
   const resolvedPlaceholder = placeholder ?? t('Select items...')
@@ -688,10 +696,15 @@ export function MultiSelect({
         </ComboboxValue>
         <ComboboxChipsInput
           id={id}
+          name={name}
           placeholder={selected.length === 0 ? resolvedPlaceholder : undefined}
           onKeyDownCapture={handleRemovalKeyDownCapture}
           onKeyDown={handleKeyDown}
           aria-label={resolvedPlaceholder}
+          aria-labelledby={ariaLabelledBy}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
+          autoComplete='off'
         />
       </ComboboxChips>
 

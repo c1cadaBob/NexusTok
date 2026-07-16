@@ -2217,7 +2217,9 @@ export function ChannelMutateDrawer({
                           name='type'
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>{t('Type *')}</FormLabel>
+                              <FormLabel htmlFor='channel-type'>
+                                {t('Type *')}
+                              </FormLabel>
                               <FormControl>
                                 <div className='relative'>
                                   <span className='pointer-events-none absolute top-1/2 left-3 z-10 flex -translate-y-1/2'>
@@ -2227,6 +2229,7 @@ export function ChannelMutateDrawer({
                                     />
                                   </span>
                                   <Combobox
+                                    id='channel-type'
                                     options={channelTypeOptions}
                                     value={String(field.value)}
                                     onValueChange={(value) => {
@@ -2270,6 +2273,7 @@ export function ChannelMutateDrawer({
                               <FormLabel>{t('Name *')}</FormLabel>
                               <FormControl>
                                 <Input
+                                  autoComplete='off'
                                   placeholder={t(FIELD_PLACEHOLDERS.NAME)}
                                   {...field}
                                 />
@@ -3810,7 +3814,9 @@ export function ChannelMutateDrawer({
                               <FormItem className='flex flex-col gap-3'>
                                 <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
                                   <div className='flex flex-col gap-1'>
-                                    <FormLabel>{t('Models *')}</FormLabel>
+                                    <FormLabel htmlFor='channel-models'>
+                                      {t('Models *')}
+                                    </FormLabel>
                                     <FormDescription>
                                       {t(FIELD_DESCRIPTIONS.MODELS)}
                                     </FormDescription>
@@ -4146,9 +4152,12 @@ export function ChannelMutateDrawer({
                                 <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
                                   <div className='flex flex-col gap-1'>
                                     <div className='flex items-center gap-2'>
-                                      <FormLabel className='mb-0'>
+                                      <div
+                                        id='channel-model-mapping-label'
+                                        className='text-sm leading-none font-medium'
+                                      >
                                         {t('Model Mapping')}
-                                      </FormLabel>
+                                      </div>
                                       <Tooltip>
                                         <TooltipTrigger
                                           render={
@@ -4209,6 +4218,7 @@ export function ChannelMutateDrawer({
                                 </div>
                                 <FormControl>
                                   <ModelMappingEditor
+                                    aria-labelledby='channel-model-mapping-label'
                                     value={field.value || ''}
                                     onChange={field.onChange}
                                     disabled={

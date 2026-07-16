@@ -32,6 +32,9 @@ type ModelMappingEditorProps = {
   disabled?: boolean
   sourceModelOptions?: string[]
   targetModelOptions?: string[]
+  'aria-labelledby'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
 }
 
 export type MappingRow = {
@@ -141,6 +144,9 @@ export function ModelMappingEditor({
   disabled = false,
   sourceModelOptions = [],
   targetModelOptions = [],
+  'aria-labelledby': ariaLabelledBy,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: ModelMappingEditorProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<'visual' | 'json'>('visual')
@@ -290,7 +296,13 @@ export function ModelMappingEditor({
   }
 
   return (
-    <div className='flex flex-col gap-2'>
+    <div
+      className='flex flex-col gap-2'
+      role='group'
+      aria-labelledby={ariaLabelledBy}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid || undefined}
+    >
       <Tabs value={mode} onValueChange={handleModeChange} className='gap-2'>
         <div className='flex items-center justify-between gap-3'>
           <TabsList>
@@ -413,7 +425,10 @@ export function ModelMappingEditor({
               'font-mono text-sm',
               jsonError && 'border-destructive'
             )}
-            aria-invalid={Boolean(jsonError)}
+            aria-invalid={ariaInvalid || Boolean(jsonError)}
+            aria-labelledby={ariaLabelledBy}
+            aria-describedby={ariaDescribedBy}
+            autoComplete='off'
           />
         </TabsContent>
       </Tabs>
