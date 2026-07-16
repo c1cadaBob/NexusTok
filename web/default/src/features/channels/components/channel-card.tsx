@@ -33,6 +33,7 @@ import { GroupBadge } from '@/components/group-badge'
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
 import type { Channel } from '../types'
+import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 
 const SENSITIVE_MASK = '••••'
 
@@ -123,77 +124,83 @@ function ChannelCardComponent({
   const isVisuallySelected = enableSelection && isSelected
 
   return (
-    <div
-      className={cn('bg-card flex flex-col gap-3 px-3 py-3', className)}
-      data-state={isVisuallySelected ? 'selected' : undefined}
-    >
-      <div className='flex items-center justify-between gap-2'>
-        <div className='flex min-w-0 flex-1 items-center gap-2'>
-          {enableSelection && !isTagRow && selectCell && (
-            <span className='shrink-0'>{selectCell}</span>
-          )}
-          <div className='min-w-0 overflow-hidden'>{typeCell}</div>
-        </div>
-        <div className='flex shrink-0 items-center gap-1.5'>
-          {showStatusBadge && statusCell}
-          {actionsCell}
-        </div>
-      </div>
-
-      <div className='grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3'>
-        <div className='flex min-w-0 flex-col gap-3 overflow-hidden'>
-          <div className='min-w-0'>
-            {!isTagRow && (
-              <div className={labelClass}>
-                #{sensitiveVisible ? channel.id : SENSITIVE_MASK}
-              </div>
+    <ChannelRowActionsLayoutContext.Provider value='card'>
+      <div
+        className={cn('bg-card flex flex-col gap-3 px-3 py-3', className)}
+        data-state={isVisuallySelected ? 'selected' : undefined}
+      >
+        <div className='flex items-center justify-between gap-2'>
+          <div className='flex min-w-0 flex-1 items-center gap-2'>
+            {enableSelection && !isTagRow && selectCell && (
+              <span className='shrink-0'>{selectCell}</span>
             )}
-            <div className='min-w-0 text-sm'>{nameCell}</div>
+            <div className='min-w-0 overflow-hidden'>{typeCell}</div>
+          </div>
+          <div className='flex shrink-0 items-center gap-1.5'>
+            {showStatusBadge && statusCell}
+            {actionsCell}
+          </div>
+        </div>
+
+        <div className='grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3'>
+          <div className='flex min-w-0 flex-col gap-3 overflow-hidden'>
+            <div className='min-w-0'>
+              {!isTagRow && (
+                <div className={labelClass}>
+                  #{sensitiveVisible ? channel.id : SENSITIVE_MASK}
+                </div>
+              )}
+              <div className='min-w-0 text-sm'>{nameCell}</div>
+            </div>
+
+            <div className='min-w-0'>
+              <div className={cn('mb-1', labelClass)}>
+                {t('Used / Remaining')}
+              </div>
+              <div className='min-w-0 overflow-hidden text-sm'>
+                {balanceCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className='min-w-0'>
-            <div className={cn('mb-1', labelClass)}>
-              {t('Used / Remaining')}
+          <div className='grid shrink-0 grid-cols-[auto_auto] items-center gap-x-3 gap-y-1'>
+            <span className={labelClass}>{t('Priority')}</span>
+            <span className={labelClass}>{t('Weight')}</span>
+            <div className='flex justify-start'>{priorityCell}</div>
+            <div className='flex justify-start'>{weightCell}</div>
+            <span className={cn('mt-2', labelClass)}>{t('Response')}</span>
+            <span className={cn('mt-2', labelClass)}>{t('Last Tested')}</span>
+            <div className='overflow-hidden text-sm'>
+              {responseCell ?? (
+                <span className='text-muted-foreground'>-</span>
+              )}
             </div>
-            <div className='min-w-0 overflow-hidden text-sm'>
-              {balanceCell ?? <span className='text-muted-foreground'>-</span>}
+            <div className='overflow-hidden text-sm'>
+              {testCell ?? <span className='text-muted-foreground'>-</span>}
             </div>
           </div>
         </div>
 
-        <div className='grid shrink-0 grid-cols-[auto_auto] items-center gap-x-3 gap-y-1'>
-          <span className={labelClass}>{t('Priority')}</span>
-          <span className={labelClass}>{t('Weight')}</span>
-          <div className='flex justify-start'>{priorityCell}</div>
-          <div className='flex justify-start'>{weightCell}</div>
-          <span className={cn('mt-2', labelClass)}>{t('Response')}</span>
-          <span className={cn('mt-2', labelClass)}>{t('Last Tested')}</span>
-          <div className='overflow-hidden text-sm'>
-            {responseCell ?? <span className='text-muted-foreground'>-</span>}
-          </div>
-          <div className='overflow-hidden text-sm'>
-            {testCell ?? <span className='text-muted-foreground'>-</span>}
-          </div>
+        <div className='min-w-0'>
+          {groups.length > 0 ? (
+            <div className='flex flex-wrap gap-1'>
+              {groups.map((group) => (
+                <GroupBadge
+                  group={group}
+                  key={group}
+                  size='sm'
+                  label={sensitiveVisible ? undefined : SENSITIVE_MASK}
+                />
+              ))}
+            </div>
+          ) : (
+            <span className='text-muted-foreground text-sm'>-</span>
+          )}
         </div>
       </div>
-
-      <div className='min-w-0'>
-        {groups.length > 0 ? (
-          <div className='flex flex-wrap gap-1'>
-            {groups.map((group) => (
-              <GroupBadge
-                group={group}
-                key={group}
-                size='sm'
-                label={sensitiveVisible ? undefined : SENSITIVE_MASK}
-              />
-            ))}
-          </div>
-        ) : (
-          <span className='text-muted-foreground text-sm'>-</span>
-        )}
-      </div>
-    </div>
+    </ChannelRowActionsLayoutContext.Provider>
   )
 }
 

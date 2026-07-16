@@ -14335,3 +14335,73 @@ NexusTok 当前在此前原生化过程中额外加入了模型元数据远程�
 8. MCP 在 `Models` 多选输入 `gpt-5.6`，确认下拉候选显示 `gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.6-sol` 三个模型，且没有批量添加按钮。
 9. MCP 网络请求确认页面触发 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，保留 OpenAI/Codex 渠道默认供应商候选收敛；本轮操作没有触发 `PUT/POST /api/channel` 保存写请求。
 10. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：登录/表单 autocomplete 提示 1 个、部分 Base UI 表单 `label for` 关联提示 3 个，本轮未扩大该问题。
+
+## 本轮实施评审：渠道卡片行操作布局与余额紧凑显示
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/channels/components/channel-row-actions-context.ts`、`channel-card.tsx`、`data-table-row-actions.tsx` 和 `channels-columns.tsx` 后确认：new-api 已将渠道行操作所在布局抽象为 `ChannelRowActionsLayoutContext`，让同一套列渲染器可以感知自己处于桌面表格还是卡片视图。桌面表格保留完整快捷操作，卡片视图则隐藏冗余的桌面快捷入口，把编辑等动作收敛到菜单中，避免移动/卡片头部塞入过多 icon。
+
+同时，new-api 的渠道余额单元格会根据布局处理显示：桌面端保留货币符号，卡片视图可用更紧凑的展示；较长的已用/剩余额度会压缩为 compact 形式，完整值保留在 tooltip 中。NexusTok 当前已经有自定义渠道卡片和敏感信息遮罩，但没有布局上下文，余额单元格也直接展示完整格式化文本，在高额度、tokens 展示或窄卡片视图下容易撑宽卡片内容。
+
+### 需求分析
+
+1. 在 NexusTok 渠道模块中新增原生 `ChannelRowActionsLayoutContext`，支持 `table` 与 `card` 两种布局，不直接扩大到全局 DataTable。
+2. `ChannelCard` 渲染卡片内容时提供 `card` 上下文，使列 cell、余额 cell 和行操作 cell 能稳定区分布局。
+3. `DataTableRowActions` 在桌面表格中展示直接 `Edit` icon，与 new-api 桌面效率对齐；在卡片视图中隐藏该直接 icon，把 `Edit` 保留在更多菜单中，避免卡片头部动作过载。
+4. `BalanceCell` 根据布局压缩长额度文本：完整值继续用于 tooltip，短值保持不变；敏感遮罩、Codex 用量入口、余额刷新点击行为和权限逻辑不变。
+5. 本轮不修改 Go 后端、数据库、渠道查询/保存接口、权限模型、计费换算、货币配置、行菜单业务动作、卡片数据来源或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 渠道行布局上下文 | `web/default/src/features/channels/components/channel-row-actions-context.ts` | 新增 `table/card` 上下文，供渠道列 cell 感知渲染位置。 |
+| 渠道卡片 | `web/default/src/features/channels/components/channel-card.tsx` | 在卡片根部提供 `card` 上下文，保持现有自定义卡片结构。 |
+| 渠道行操作 | `web/default/src/features/channels/components/data-table-row-actions.tsx` | 桌面表格展示直接编辑按钮；卡片视图将编辑入口保留在菜单中。 |
+| 渠道列/余额单元格 | `web/default/src/features/channels/components/channels-columns.tsx` | 余额 cell 按布局压缩长文本，完整值留在 tooltip；引入布局上下文。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案和后续验证。 |
+
+### 风险评估
+
+1. 权限风险：直接编辑 icon 必须继续受 `permissions.canWrite` 控制，不能绕过现有 `guardPermission` 和禁用态。
+2. 行操作风险：卡片视图不能丢失编辑、测试、查询余额、获取模型、账号池、删除等菜单动作；只调整直接快捷 icon 的布局。
+3. 余额点击风险：剩余额度 badge/文本仍承担点击刷新余额或查看 Codex usage 的入口；压缩显示不能吞掉点击事件。
+4. Tooltip 风险：完整额度必须继续出现在 tooltip，避免 compact 显示降低审计和排障精度。
+5. 国际化/货币风险：当前 NexusTok `currency` 工具没有 new-api 的 `showSymbol/compact` 参数；本轮采用局部显示压缩，不扩展全局货币 API，避免影响钱包、订阅、计费日志等高风险页面。
+6. 移动端布局风险：卡片视图由 `DataTablePage` 和自定义 `ChannelsMobileList` 共同使用，验证时需要覆盖桌面卡片视图和移动宽度下的渠道页。
+
+### 方案评审
+
+采用“布局上下文 + 余额局部压缩”的最小风险方案：
+
+1. 新增 `channel-row-actions-context.ts`，默认值为 `table`，只有渠道卡片显式提供 `card`。
+2. `ChannelCard` 用 `ChannelRowActionsLayoutContext.Provider value="card"` 包裹原有卡片 DOM，不改变字段排列、空态、骨架屏或分组展示。
+3. `DataTableRowActions` 读取 `layout`：`table` 布局显示直接编辑 icon；`card` 布局不显示该 icon，但更多菜单顶部显示 `Edit`。
+4. 直接编辑 icon 使用现有 `handleEdit()`，按钮禁用态和 tooltip 均使用现有权限判定；不新增任何写接口。
+5. `BalanceCell` 新增局部 `compactFormattedAmount()`：当格式化文本过长时尝试压缩数字部分，解析失败则回退完整文本；tooltip 始终使用完整值。
+6. `BalanceCell` 在卡片布局下不改变数据换算，只通过更短的文本降低卡片撑宽风险；`StatusBadge` 点击刷新/Codex usage 逻辑保留。
+7. 验证顺序：`bun run i18n:sync`、定向 ESLint、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 `/channels`，切换卡片视图/移动宽度，确认行操作、编辑入口、余额展示、网络请求和控制台。
+
+### 实施结果
+
+1. 已新增 `ChannelRowActionsLayoutContext`，默认布局为 `table`，仅渠道卡片显式提供 `card`；上下文只描述展示位置，不承载权限、业务状态或接口参数。
+2. `ChannelCard` 已用 `ChannelRowActionsLayoutContext.Provider value="card"` 包裹原有卡片内容；字段排列、分组展示、空态、骨架屏和卡片选择态未变。
+3. `DataTableRowActions` 已按布局调整入口：桌面表格显示直接 `Edit` icon，并继续受 `permissions.canWrite` 和 `handleEdit()` guard 控制；卡片视图隐藏直接编辑 icon，但更多菜单顶部保留 `Edit`。
+4. `BalanceCell` 已接入布局上下文，卡片布局下对较长额度文本使用局部 compact 显示；桌面表格仍展示完整格式化文本。
+5. 余额 tooltip 始终使用完整额度值，`Codex` 渠道的 `Account Info` 入口、普通渠道余额刷新点击、敏感信息遮罩和错误 toast 逻辑保持不变。
+6. 本轮没有修改后端接口、数据库、渠道查询/保存接口、权限模型、计费换算、货币配置、行菜单业务动作、卡片数据来源或 `/opt/project/new-api-main` 源码。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run i18n:sync`，同步完成；本轮没有新增可见翻译 key。
+2. 已运行 `cd web/default && bunx eslint --no-ignore src/features/channels/components/channel-row-actions-context.ts src/features/channels/components/channel-card.tsx src/features/channels/components/data-table-row-actions.tsx src/features/channels/components/channels-columns.tsx`，ESLint 通过。
+3. 已运行 `cd web/default && bun run typecheck`，TypeScript 检查通过。
+4. 已运行 `cd web/default && bun run build`，Rsbuild 生产构建通过。
+5. 已运行 `git diff --check`，未发现空白错误。
+6. MCP 访问 `http://192.168.0.202:3003/channels?postedit=1784162053831` 并使用 ignore cache 强刷，确认热更新生效；渠道列表请求 `GET /api/channel/?tag_mode=false&id_sort=false&p=1&page_size=20`、模型和账号池相关请求均返回 200。
+7. MCP 桌面表格视图确认渠道 `11111` 行操作区出现直接 `编辑` 按钮，旁边仍保留 `测试连接`、`禁用` 和 `打开菜单`；打开桌面更多菜单后确认菜单不再重复显示 `编辑`，仍保留 `测试连接`、`查询余额`、`获取模型`、`复制渠道`、`账号池`、`删除`。
+8. MCP 切换卡片视图后确认卡片头部只显示 `测试连接`、`禁用` 和 `打开菜单`，没有直接 `编辑` icon；打开卡片更多菜单后确认 `编辑` 位于菜单顶部，后续动作完整保留。
+9. MCP 将视口调整到 `390x844`，移动卡片列表正常显示渠道 `11111`、`已使用 / 剩余`、`账户信息`、优先级/权重、响应和上次测试；DOM 检查确认移动视图直接编辑按钮数量为 0，测试/禁用/菜单按钮各 1 个。
+10. MCP 移动视图打开更多菜单，确认 `编辑`、`测试连接`、`查询余额`、`获取模型`、`复制渠道`、`账号池`、`删除` 均存在；本轮验证没有触发渠道保存写请求。
+11. MCP 控制台检查没有 JavaScript `error`、`warn` 或 browser `issue`；网络请求只包含渠道列表、模型、分组、账号池、用户状态等 GET 请求。

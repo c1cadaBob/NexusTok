@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 /* eslint-disable react-refresh/only-export-components */
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import {
@@ -29,11 +29,12 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getCurrencyLabel } from '@/lib/currency'
 import {
-  formatTimestampToDate,
-  formatQuota as formatQuotaValue,
-} from '@/lib/format'
+  formatCurrencyFromUSD,
+  formatQuotaWithCurrency,
+  getCurrencyLabel,
+} from '@/lib/currency'
+import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -58,7 +59,6 @@ import { TruncatedText } from '@/components/truncated-text'
 import { getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
-  formatBalance,
   formatRelativeTime,
   formatResponseTime,
   getBalanceVariant,
@@ -77,6 +77,7 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
+import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
@@ -87,6 +88,26 @@ import {
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 const SENSITIVE_MASK = '••••'
+const MAX_INLINE_BALANCE_CHARS = 8
+
+function compactNumberText(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function compactFormattedAmount(value: string): string {
+  if (value.length <= MAX_INLINE_BALANCE_CHARS) return value
+
+  const match = value.match(/-?[\d,.]+/)
+  if (!match) return value
+
+  const numericValue = Number(match[0].replace(/,/g, ''))
+  if (!Number.isFinite(numericValue)) return value
+
+  return value.replace(match[0], compactNumberText(numericValue))
+}
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -277,6 +298,7 @@ function WeightCell({ channel }: { channel: Channel }) {
  */
 function BalanceCell({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
+  const layout = useContext(ChannelRowActionsLayoutContext)
   const { sensitiveVisible } = useChannels()
   const queryClient = useQueryClient()
   const isTagRow = isTagAggregateRow(channel)
@@ -291,10 +313,27 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const withSuffix = (value: string) =>
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
 
-  const usedDisplay = withSuffix(formatQuotaValue(usedQuota))
-  const remainingDisplay = withSuffix(formatBalance(balance))
-  const usedLabel = `${t('Used:')} ${usedDisplay}`
-  const remainingLabel = `${t('Remaining:')} ${remainingDisplay}`
+  const usedFull = withSuffix(
+    formatQuotaWithCurrency(usedQuota, {
+      digitsLarge: 2,
+      digitsSmall: 4,
+      abbreviate: true,
+    })
+  )
+  const remainingFull = withSuffix(
+    formatCurrencyFromUSD(balance, {
+      digitsLarge: 2,
+      digitsSmall: 4,
+      abbreviate: false,
+    })
+  )
+  const shouldCompact = layout === 'card'
+  const usedDisplay = shouldCompact ? compactFormattedAmount(usedFull) : usedFull
+  const remainingDisplay = shouldCompact
+    ? compactFormattedAmount(remainingFull)
+    : remainingFull
+  const usedLabel = `${t('Used:')} ${usedFull}`
+  const remainingLabel = `${t('Remaining:')} ${remainingFull}`
   const maskedUsedLabel = `${t('Used:')} ${SENSITIVE_MASK}`
   const maskedRemainingLabel = `${t('Remaining:')} ${SENSITIVE_MASK}`
 

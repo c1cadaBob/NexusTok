@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type Row } from '@tanstack/react-table'
 import {
@@ -65,6 +65,7 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
+import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
 
 interface DataTableRowActionsProps {
@@ -73,6 +74,7 @@ interface DataTableRowActionsProps {
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
+  const layout = useContext(ChannelRowActionsLayoutContext)
   const channel = row.original
   const { setOpen, setCurrentRow, upstream } = useChannels()
   const queryClient = useQueryClient()
@@ -169,6 +171,30 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   return (
     <div className='flex items-center justify-end gap-1'>
+      {layout !== 'card' && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={(event) => {
+                  event.stopPropagation()
+                  handleEdit()
+                }}
+                disabled={!permissions.canWrite}
+                aria-label={t('Edit')}
+              />
+            }
+          >
+            <Pencil className='size-4' />
+          </TooltipTrigger>
+          <TooltipContent>
+            {permissions.canWrite ? t('Edit') : noPermissionMessage}
+          </TooltipContent>
+        </Tooltip>
+      )}
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -239,17 +265,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <span className='sr-only'>{t('Open menu')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-48'>
-          {/* Edit */}
-          <DropdownMenuItem
-            onClick={handleEdit}
-            disabled={!permissions.canWrite}
-            title={permissions.canWrite ? undefined : noPermissionMessage}
-          >
-            {t('Edit')}
-            <DropdownMenuShortcut>
-              <Pencil size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {layout === 'card' && (
+            <DropdownMenuItem
+              onClick={handleEdit}
+              disabled={!permissions.canWrite}
+              title={permissions.canWrite ? undefined : noPermissionMessage}
+            >
+              {t('Edit')}
+              <DropdownMenuShortcut>
+                <Pencil size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           {/* Test Connection */}
           <DropdownMenuItem
