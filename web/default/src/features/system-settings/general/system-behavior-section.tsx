@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -32,9 +31,18 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useResetForm } from '../hooks/use-reset-form'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const behaviorSchema = z.object({
   RetryTimes: z.coerce.number().min(0).max(10),
@@ -55,30 +63,41 @@ export function SystemBehaviorSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
-  const form = useForm({
-    resolver: zodResolver(behaviorSchema),
-    defaultValues,
-  })
-
-  useResetForm(form, defaultValues)
-
-  const onSubmit = async (data: BehaviorFormValues) => {
-    const updates = Object.entries(data).filter(
-      ([key, value]) => value !== defaultValues[key as keyof BehaviorFormValues]
-    )
-
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
-    }
-  }
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<BehaviorFormValues>({
+      resolver: zodResolver(behaviorSchema) as Resolver<
+        BehaviorFormValues,
+        unknown,
+        BehaviorFormValues
+      >,
+      defaultValues,
+      onSubmit: async (_data, changedFields) => {
+        for (const [key, value] of Object.entries(changedFields)) {
+          await updateOption.mutateAsync({
+            key,
+            value: value as string | number | boolean,
+          })
+        }
+      },
+    })
 
   return (
     <SettingsSection
       title={t('System Behavior')}
       description={t('Configure system-wide behavior and defaults')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={isSubmitting || updateOption.isPending}
+            isSaveDisabled={!updateOption.canUpdate}
+            saveDisabledReason={updateOption.disabledReason}
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='RetryTimes'
@@ -90,11 +109,7 @@ export function SystemBehaviorSection({
                     type='number'
                     min='0'
                     max='10'
-                    value={field.value as number}
-                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
-                    name={field.name}
-                    onBlur={field.onBlur}
-                    ref={field.ref}
+                    {...safeNumberFieldProps(field)}
                   />
                 </FormControl>
                 <FormDescription>
@@ -109,22 +124,22 @@ export function SystemBehaviorSection({
             control={form.control}
             name='DefaultCollapseSidebar'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel className='text-base'>
                     {t('Default Collapse Sidebar')}
                   </FormLabel>
                   <FormDescription>
                     {t('Sidebar collapsed by default for new users')}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -132,22 +147,22 @@ export function SystemBehaviorSection({
             control={form.control}
             name='DemoSiteEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel className='text-base'>
                     {t('Demo Site Mode')}
                   </FormLabel>
                   <FormDescription>
                     {t('Enable demo mode with limited functionality')}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -155,35 +170,25 @@ export function SystemBehaviorSection({
             control={form.control}
             name='SelfUseModeEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel className='text-base'>
                     {t('Self-Use Mode')}
                   </FormLabel>
                   <FormDescription>
                     {t('Optimize system for self-hosted single-user usage')}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save Changes')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

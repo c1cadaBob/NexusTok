@@ -15624,3 +15624,71 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 8. 在该页面执行一次真实保存，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`，证明 `Notice` 保存链路保持正常。
 9. MCP 控制台仅保留既有 i18next info 和 `nexustok-build` debug，没有新增 `error`、`warn` 或 `issue`。
 10. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 与 `PUT /api/option/`。
+
+## 本轮实施评审：System Behavior 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/system-behavior-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/operations/behavior` 仍停留在旧式独立表单写法：
+
+1. 保存按钮固定在内容底部，没有进入系统设置页头动作区。
+2. 页面没有未保存脏态提示，也没有离开页面前的统一确认拦截。
+3. 页面仍使用 `useForm + useResetForm` 的旧模式，没有接入当前项目已经稳定的 `useSettingsForm()` 共享基座。
+4. 当前项目在这页额外提供了 `RetryTimes` 数字输入，这是 `new-api-main` 对照页没有的原生扩展能力，不能在收口时被误删或弱化。
+
+这页属于运维分组的全局系统行为设置页，管理员修改后若误切换分区，现状会直接丢失草稿；同时它也让系统设置工作区继续保留“部分页面已原生化、部分页面仍是旧体验”的断层。
+
+### 需求分析
+
+1. `/system-settings/operations/behavior` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级设置页保持同一位置。
+2. 页面需要展示未保存脏态，并在管理员尝试切换其它运维分区或刷新页面时使用统一确认拦截，避免误丢草稿。
+3. 页面应接入 `useSettingsForm()`，统一复用当前项目已有的“无变化不提交、提交成功后刷新已保存基线、toast 行为一致”的表单能力。
+4. `RetryTimes`、`DefaultCollapseSidebar`、`DemoSiteEnabled`、`SelfUseModeEnabled` 四个字段及其 `PUT /api/option/` 保存链路必须保持不变，尤其不能因为对照页没有 `RetryTimes` 而把当前项目已有能力回退掉。
+5. 数字输入仍需保持安全数值绑定，避免把 `NaN` 写入表单状态后造成保存阶段无提示失败。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统行为设置页 | `web/default/src/features/system-settings/general/system-behavior-section.tsx` | 将页面从旧式 `useForm`/`useResetForm` 实现迁移到 `useSettingsForm`、页头动作区、脏态提示和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页含有当前项目独有的 `RetryTimes` 设置项；如果迁移时 schema、表单默认值或提交循环处理错误，会让默认前端已有能力回退。
+2. `useSettingsForm()` 会在提交成功后刷新基线；若迁移不当，可能出现“保存后仍显示未保存”或“明明有改动却无法提交”的状态错误。
+3. `RetryTimes` 是数字输入，若直接把 `valueAsNumber` 的 `NaN` 写回表单状态，可能在提交阶段触发无感失败，因此必须继续使用安全数值绑定。
+4. 这页属于真实运行中的全局系统行为设置，必须在 `http://192.168.0.202:3003/` 运行态验证热更新结果、真实 `PUT /api/option/` 请求和控制台状态。
+
+### 方案评审
+
+采用“保留当前项目字段能力，只迁共享表单壳层”的最小方案：
+
+1. 保留现有 `behaviorSchema` 的四个字段，继续使用逐项 `updateOption.mutateAsync({ key, value })` 的保存路径。
+2. 将页面从 `react-hook-form useForm + useResetForm` 旧写法迁移到项目已有的 `useSettingsForm()`，统一复用当前项目的基线管理、无变化不提交和成功后重置行为。
+3. 使用 `SettingsPageFormActions` 将保存按钮提升到页头动作区，并继续接入 `updateOption.canUpdate` 与 `disabledReason`。
+4. 使用 `FormDirtyIndicator` 与 `FormNavigationGuard` 提供未保存状态徽标和离开确认拦截。
+5. 使用 `SettingsForm`、`SettingsSwitchItem`、`SettingsSwitchContent` 收口开关布局；`RetryTimes` 则继续保留为数字输入，并复用 `safeNumberFieldProps()` 处理非有限值输入。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/general/system-behavior-section.tsx` 已迁移到 `useSettingsForm()`，移除了旧的 `useForm + useResetForm` 管理方式。
+2. 页面已新增 `FormNavigationGuard` 与 `FormDirtyIndicator`；修改任一系统行为设置后，标题区域会显示“未保存的更改”，并在离开页面时弹出统一确认对话框。
+3. 保存按钮已通过 `SettingsPageFormActions` 进入页头动作区，不再固定在页面底部。
+4. 三个布尔开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局，视觉层级与当前系统设置共享样式一致。
+5. `RetryTimes` 继续保留为当前项目独有的数字输入能力，并改为复用 `safeNumberFieldProps()`，避免 `NaN` 进入表单状态。
+6. 保存逻辑仍逐项写入 `RetryTimes`、`DefaultCollapseSidebar`、`DemoSiteEnabled`、`SelfUseModeEnabled` 四个 option，没有改变后端配置合同。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/general/system-behavior-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/operations/behavior`，确认页面热更新生效，保存按钮位于标题右侧页头动作区。
+6. 在同一 3003 页面中修改 `RetryTimes` 或开关项后，标题区域出现“未保存的更改”，说明脏态徽标已正常显示。
+7. 点击运维侧栏中的其它分区时，页面会弹出“未保存的更改”确认对话框；取消后仍停留在当前页，说明统一离开拦截已生效。
+8. 在该页面执行真实保存后，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`，证明系统行为设置的保存链路保持正常。
+9. 为避免影响当前 3003 实例的系统行为配置，本轮验证结束前已将临时修改的字段恢复为原值。
+10. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`；仅保留既有 i18next info 与 `nexustok-build` debug。
+11. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 与保存时触发的 `PUT /api/option/`。
