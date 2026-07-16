@@ -2794,6 +2794,7 @@
     "Manage Bindings": "Quản lý liên kết",
     "Manage catalog visibility and pricing.": "Quản lý hiển thị danh mục và giá cả.",
     "Manage custom OAuth providers for user authentication": "Quản lý nhà cung cấp OAuth tùy chỉnh để xác thực người dùng",
+    "Manage accounts and credentials assigned to this group.": "Quản lý tài khoản và thông tin xác thực được gán cho nhóm này.",
     "Manage imported account credentials as reusable pool resources.": "Quản lý thông tin xác thực tài khoản đã nhập như tài nguyên nhóm có thể tái sử dụng.",
     "Manage imported JSON credentials and their linked pool accounts": "Quản lý thông tin xác thực JSON đã nhập và tài khoản pool liên kết",
     "Manage Keys": "Quản lý Khóa",

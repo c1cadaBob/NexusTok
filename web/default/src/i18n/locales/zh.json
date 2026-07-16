@@ -2794,6 +2794,7 @@
     "Manage Bindings": "管理绑定",
     "Manage catalog visibility and pricing.": "管理目录可见性和定价。",
     "Manage custom OAuth providers for user authentication": "管理用于用户认证的自定义 OAuth 提供商",
+    "Manage accounts and credentials assigned to this group.": "管理分配到该账号组的账号和凭证。",
     "Manage imported account credentials as reusable pool resources.": "将导入的账号凭证作为可复用的账号池资源管理。",
     "Manage imported JSON credentials and their linked pool accounts": "管理已导入的 JSON 凭据及其关联池账号",
     "Manage Keys": "管理密钥",

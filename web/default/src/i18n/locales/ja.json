@@ -2794,6 +2794,7 @@
     "Manage Bindings": "バインド管理",
     "Manage catalog visibility and pricing.": "カタログの表示と価格設定を管理。",
     "Manage custom OAuth providers for user authentication": "ユーザー認証用のカスタムOAuthプロバイダーの管理",
+    "Manage accounts and credentials assigned to this group.": "このグループに割り当てられたアカウントと認証情報を管理します。",
     "Manage imported account credentials as reusable pool resources.": "インポート済みのアカウント認証情報を再利用可能なプールリソースとして管理します。",
     "Manage imported JSON credentials and their linked pool accounts": "インポート済み JSON 認証情報と関連プールアカウントを管理",
     "Manage Keys": "キーの管理",

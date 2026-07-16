@@ -47,10 +47,23 @@ import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
 } from '@/lib/admin-permissions'
-import { cn } from '@/lib/utils'
 import { useAdminPermission } from '@/hooks/use-admin-permission'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -90,6 +103,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { EmptyState } from '@/components/empty-state'
+import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestamp } from '@/features/channels/lib'
@@ -1186,21 +1200,20 @@ export function AccountPool() {
   )
 
   useEffect(() => {
-    if (!selectedGroupId && groups.length > 0 && activeSection === 'groups') {
-      setSelectedGroupId(groups[0].id)
-      return
-    }
     if (
       selectedGroupId &&
       groups.length > 0 &&
       !groups.some((group) => group.id === selectedGroupId)
     ) {
-      setSelectedGroupId(groups[0].id)
+      setSelectedGroupId(null)
     }
-  }, [activeSection, groups, selectedGroupId])
+  }, [groups, selectedGroupId])
 
   const handleSectionChange = useCallback(
     (section: string) => {
+      if (section !== 'groups') {
+        setSelectedGroupId(null)
+      }
       void navigate({
         to: '/account-pool/$section',
         params: { section: section as AccountPoolSectionId },
@@ -1236,7 +1249,7 @@ export function AccountPool() {
         p: page,
         page_size: 10,
       }),
-    enabled: Boolean(selectedGroupId),
+    enabled: activeSection === 'groups' && Boolean(selectedGroupId),
   })
 
   const attachCredentialsQuery = useQuery({
@@ -2406,15 +2419,10 @@ export function AccountPool() {
   }
 
   return (
-    <div className='flex h-full min-h-0 flex-col gap-4 p-4'>
-      <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-        <div>
-          <h1 className='text-xl font-semibold'>{t('Account Pool')}</h1>
-          <p className='text-muted-foreground text-sm'>
-            {t('Manage native account pools and credential scheduling.')}
-          </p>
-        </div>
-        <div className='flex flex-wrap gap-2'>
+    <>
+      <SectionPageLayout>
+        <SectionPageLayout.Title>{t('Account Pool')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
           <Button variant='outline' onClick={() => void refreshAll()}>
             <RefreshCw data-icon='inline-start' />
             {t('Refresh')}
@@ -2425,101 +2433,28 @@ export function AccountPool() {
               {t('New Group')}
             </Button>
           ) : null}
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          'grid min-h-0 flex-1 gap-4',
-          activeSection === 'groups'
-            ? 'lg:grid-cols-[260px_minmax(0,1fr)]'
-            : 'lg:grid-cols-1'
-        )}
-      >
-        {activeSection === 'groups' ? (
-          <section className='border-border bg-background min-h-[260px] rounded-lg border'>
-            <div className='border-border flex items-center justify-between border-b p-3'>
-              <div className='text-sm font-medium'>{t('Account Groups')}</div>
-              {groupsQuery.isLoading && (
-                <Loader2 className='size-4 animate-spin' />
-              )}
-            </div>
-            <div className='divide-border divide-y'>
-              {groups.map((group) => {
-                return (
-                  <button
-                    key={group.id}
-                    type='button'
-                    className={cn(
-                      'hover:bg-muted/60 flex w-full flex-col gap-2 px-3 py-3 text-left',
-                      selectedGroupId === group.id && 'bg-muted'
-                    )}
-                    onClick={() => {
-                      setSelectedGroupId(group.id)
-                      setPage(1)
-                    }}
-                  >
-                    <div className='flex items-start justify-between gap-2'>
-                      <div className='min-w-0 flex-1'>
-                        <div className='truncate text-sm font-medium'>
-                          {group.name}
-                        </div>
-                        <div className='text-muted-foreground truncate text-xs'>
-                          {group.platform} / {group.auth_type}
-                        </div>
-                      </div>
-                      <StatusBadge
-                        label={groupStatusLabel(group, t)}
-                        variant={groupStatusVariant(group)}
-                        copyable={false}
-                        className='shrink-0'
-                      />
-                    </div>
-                    <div className='text-muted-foreground flex gap-3 text-xs'>
-                      <span>
-                        {t('Available')}: {group.stats?.enabled ?? 0} /{' '}
-                        {group.stats?.total ?? 0}
-                      </span>
-                      {(group.stats?.disabled ?? 0) > 0 ? (
-                        <span>
-                          {t('Disabled')}: {group.stats?.disabled ?? 0}
-                        </span>
-                      ) : null}
-                    </div>
-                    {group.daily_limit_state?.limited ? (
-                      <div className='text-warning flex items-center gap-1 text-xs'>
-                        <AlertTriangle className='size-3.5 shrink-0' />
-                        <span className='truncate'>
-                          {groupDailyLimitSummary(group, t)}
-                        </span>
-                      </div>
-                    ) : null}
-                  </button>
-                )
-              })}
-              {!groupsQuery.isLoading && groups.length === 0 && (
-                <div className='text-muted-foreground p-6 text-center text-sm'>
-                  {t('No account groups found')}
-                </div>
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        <section className='border-border bg-background min-w-0 rounded-lg border'>
-          <Tabs value={activeView} className='flex min-h-0 flex-col'>
-            <div className='border-border flex flex-col gap-3 border-b p-3 lg:flex-row lg:items-center lg:justify-between'>
-              <div className='flex min-w-0 flex-col gap-2'>
-                <div className='truncate text-sm font-semibold'>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <div className='flex flex-col gap-4'>
+            <Card size='sm'>
+              <CardHeader className='border-b'>
+                <CardTitle>
                   {activeSection === 'groups' && selectedGroup
                     ? selectedGroup.name
                     : t(sectionMeta.titleKey)}
-                </div>
-                <div className='text-muted-foreground text-xs'>
-                  {activeSection === 'groups' && selectedGroup
-                    ? `${selectedGroup.platform} / ${selectedGroup.auth_type}`
-                    : t(sectionMeta.descriptionKey)}
-                </div>
+                </CardTitle>
+                <CardDescription>
+                  <span className='block'>
+                    {t(
+                      'Manage native account pools and credential scheduling.'
+                    )}
+                  </span>
+                  <span className='block'>
+                    {activeSection === 'groups' && selectedGroup
+                      ? `${selectedGroup.platform} / ${selectedGroup.auth_type}`
+                      : t(sectionMeta.descriptionKey)}
+                  </span>
+                </CardDescription>
                 {activeSection === 'groups' && selectedGroup ? (
                   <div className='flex flex-wrap items-center gap-2 text-xs'>
                     <StatusBadge
@@ -2559,2096 +2494,2594 @@ export function AccountPool() {
                     </span>
                   </div>
                 ) : null}
-              </div>
-              <div className='flex flex-col gap-2 lg:items-end'>
-                <Tabs value={activeSection} onValueChange={handleSectionChange}>
-                  <TabsList className='max-w-full justify-start overflow-x-auto'>
-                    {ACCOUNT_POOL_SECTION_IDS.map((section) => (
-                      <TabsTrigger key={section} value={section}>
-                        {t(accountPoolSectionMeta[section].titleKey)}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
-                <div className='flex flex-wrap justify-start gap-2 lg:justify-end'>
-                  {activeView === 'health' && (
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => void healthQuery.refetch()}
-                    >
-                      <RefreshCw data-icon='inline-start' />
-                      {t('Refresh health')}
-                    </Button>
-                  )}
-                  {activeView === 'usage-logs' && (
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => void usageLogsQuery.refetch()}
-                    >
-                      <RefreshCw data-icon='inline-start' />
-                      {t('Refresh')}
-                    </Button>
-                  )}
-                  {activeView === 'state-logs' && (
-                    <>
+                <CardAction className='flex flex-col gap-2'>
+                  <Tabs
+                    value={activeSection}
+                    onValueChange={handleSectionChange}
+                  >
+                    <TabsList className='max-w-full justify-start overflow-x-auto'>
+                      {ACCOUNT_POOL_SECTION_IDS.map((section) => (
+                        <TabsTrigger key={section} value={section}>
+                          {t(accountPoolSectionMeta[section].titleKey)}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                  <div className='flex flex-wrap justify-start gap-2 lg:justify-end'>
+                    {activeView === 'usage-logs' && (
                       <Button
                         variant='outline'
                         size='sm'
-                        onClick={() => {
-                          void stateLogsQuery.refetch()
-                          void stateLogAuditQuery.refetch()
-                        }}
+                        onClick={() => void usageLogsQuery.refetch()}
                       >
                         <RefreshCw data-icon='inline-start' />
                         {t('Refresh')}
                       </Button>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        disabled={stateLogExporting || !canOperateAccountPool}
-                        onClick={() => void exportStateLogs()}
-                      >
-                        {stateLogExporting ? (
-                          <Loader2
-                            data-icon='inline-start'
-                            className='animate-spin'
-                          />
-                        ) : (
-                          <Download data-icon='inline-start' />
-                        )}
-                        {t('Export audit')}
-                      </Button>
-                    </>
-                  )}
-                  {activeView === 'check-tasks' && (
-                    <>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() => void checkTasksQuery.refetch()}
-                      >
-                        <RefreshCw data-icon='inline-start' />
-                        {t('Refresh')}
-                      </Button>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        disabled={checkTaskCleaning || !canOperateAccountPool}
-                        onClick={() => void cleanupCheckTasks()}
-                      >
-                        {checkTaskCleaning ? (
-                          <Loader2
-                            data-icon='inline-start'
-                            className='animate-spin'
-                          />
-                        ) : (
-                          <Trash2 data-icon='inline-start' />
-                        )}
-                        {t('Cleanup')}
-                      </Button>
-                    </>
-                  )}
-                  {activeView === 'accounts' && selectedGroup && (
-                    <>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        disabled={
-                          batchChecking ||
-                          selectedGroupCheckTaskActive ||
-                          accountTotal <= 0 ||
-                          !canOperateAccountPool
-                        }
-                        onClick={() => void checkSelectedGroupAccounts()}
-                      >
-                        {batchChecking || selectedGroupCheckTaskActive ? (
-                          <Loader2
-                            data-icon='inline-start'
-                            className='animate-spin'
-                          />
-                        ) : (
-                          <Stethoscope data-icon='inline-start' />
-                        )}
-                        {t('Check Group')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        disabled={!canSensitiveWriteAccountPool}
-                        onClick={openCreateAccount}
-                      >
-                        <Plus data-icon='inline-start' />
-                        {t('Add Account')}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button variant='outline' size='sm'>
-                              <MoreHorizontal data-icon='inline-start' />
-                              {t('More')}
-                            </Button>
-                          }
-                        />
-                        <DropdownMenuContent align='end' className='w-48'>
-                          <DropdownMenuGroup>
-                            <DropdownMenuItem
-                              disabled={!selectedGroupIsEditable}
-                              onClick={() => openEditGroup(selectedGroup)}
-                            >
-                              <Pencil />
-                              {t('Edit Group')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={!canSensitiveWriteAccountPool}
-                              onClick={() => void deleteGroup(selectedGroup)}
-                            >
-                              <Trash2 />
-                              {t('Delete')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={!canSensitiveWriteAccountPool}
-                              onClick={startCodexOAuth}
-                            >
-                              <ShieldCheck />
-                              {t('Codex OAuth')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={!canSensitiveWriteAccountPool}
-                              onClick={startCodexDevice}
-                            >
-                              <Smartphone />
-                              {t('Codex Device')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={!canSensitiveWriteAccountPool}
-                              onClick={() => setBatchOpen(true)}
-                            >
-                              <Upload />
-                              {t('Batch Import')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={
-                                actionLoading ||
-                                accountTotal <= 0 ||
-                                !canOperateAccountPool
-                              }
-                              onClick={() => void exportAccounts()}
-                            >
-                              <Download />
-                              {t('Export Accounts')}
-                            </DropdownMenuItem>
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <TabsContent value='health' className='m-0 min-h-0'>
-              <div className='border-border text-muted-foreground grid grid-cols-1 gap-1 border-b p-3 text-xs lg:grid-cols-2'>
-                <span className='min-w-0'>
-                  {t('Generated at')}:&nbsp;
-                  {health?.generated_at
-                    ? formatTimestamp(health.generated_at)
-                    : '-'}
-                </span>
-                <span className='min-w-0 lg:text-right'>
-                  {t('Window')}:&nbsp;
-                  {health?.window_start
-                    ? formatTimestamp(health.window_start)
-                    : '-'}
-                  {' - '}
-                  {health?.window_end
-                    ? formatTimestamp(health.window_end)
-                    : '-'}
-                </span>
-              </div>
-              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-5 xl:grid-cols-10'>
-                {[
-                  {
-                    label: t('Total accounts'),
-                    value: formatUsageNumber(healthTotals?.total_accounts ?? 0),
-                  },
-                  {
-                    label: t('Available accounts'),
-                    value: formatUsageNumber(
-                      healthTotals?.available_accounts ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Disabled accounts'),
-                    value: formatUsageNumber(
-                      healthTotals?.disabled_accounts ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Cooldown accounts'),
-                    value: formatUsageNumber(
-                      healthTotals?.cooldown_accounts ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Unavailable accounts'),
-                    value: formatUsageNumber(
-                      healthTotals?.unavailable_accounts ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Today requests'),
-                    value: formatUsageNumber(healthTotals?.today_requests ?? 0),
-                  },
-                  {
-                    label: t('Today failures'),
-                    value: formatUsageNumber(healthTotals?.today_failures ?? 0),
-                  },
-                  {
-                    label: t('Success rate'),
-                    value: formatPercent(healthTotals?.success_rate),
-                  },
-                  {
-                    label: t('Availability rate'),
-                    value: formatPercent(healthTotals?.availability_rate),
-                  },
-                  {
-                    label: t('Limited groups'),
-                    value: formatUsageNumber(
-                      healthTotals?.limited_group_count ?? 0
-                    ),
-                  },
-                ].map((metric) => (
-                  <div key={metric.label} className='min-w-0'>
-                    <div className='text-muted-foreground truncate text-xs'>
-                      {metric.label}
-                    </div>
-                    <div className='truncate font-medium'>{metric.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className='border-border border-b'>
-                <div className='flex items-center justify-between gap-2 p-3'>
-                  <div className='text-sm font-medium'>{t('Group health')}</div>
-                  {healthQuery.isFetching ? (
-                    <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
-                  ) : null}
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Group')}</TableHead>
-                      <TableHead>{t('Available rate')}</TableHead>
-                      <TableHead>{t('Today requests')}</TableHead>
-                      <TableHead>{t('Today failures')}</TableHead>
-                      <TableHead>{t('Success rate')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Automation')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(health?.groups ?? []).map((group) => (
-                      <TableRow key={group.id}>
-                        <TableCell className='min-w-[200px]'>
-                          <div className='text-sm font-medium'>
-                            {group.name || `#${group.id}`}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {group.platform} / {group.auth_type} ·{' '}
-                            {strategyLabel(group.strategy, t)}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          <div className='font-medium'>
-                            {formatPercent(group.availability_rate)}
-                          </div>
-                          <div className='text-muted-foreground mt-1'>
-                            {formatUsageNumber(group.stats?.enabled ?? 0)} /{' '}
-                            {formatUsageNumber(group.stats?.total ?? 0)}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[130px] text-xs'>
-                          {formatUsageNumber(group.today_requests)}
-                        </TableCell>
-                        <TableCell className='min-w-[130px] text-xs'>
-                          {formatUsageNumber(group.today_failures)}
-                        </TableCell>
-                        <TableCell className='min-w-[120px] text-xs'>
-                          {formatPercent(group.success_rate)}
-                        </TableCell>
-                        <TableCell className='min-w-[150px]'>
-                          <div className='flex flex-col gap-1'>
-                            <StatusBadge
-                              label={healthGroupLabel(group, t)}
-                              variant={healthGroupVariant(group)}
-                              copyable={false}
+                    )}
+                    {activeView === 'state-logs' && (
+                      <>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => {
+                            void stateLogsQuery.refetch()
+                            void stateLogAuditQuery.refetch()
+                          }}
+                        >
+                          <RefreshCw data-icon='inline-start' />
+                          {t('Refresh')}
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={stateLogExporting || !canOperateAccountPool}
+                          onClick={() => void exportStateLogs()}
+                        >
+                          {stateLogExporting ? (
+                            <Loader2
+                              data-icon='inline-start'
+                              className='animate-spin'
                             />
-                            {group.daily_limit_state?.limited ? (
-                              <span className='text-muted-foreground text-xs'>
-                                {group.daily_limit_state.next_reset_time
-                                  ? `${t('Next daily reset')}: ${formatTimestamp(
-                                      group.daily_limit_state.next_reset_time
-                                    )}`
-                                  : group.daily_limit_state.reason || '-'}
-                              </span>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[260px] text-xs'>
-                          {healthGroupAutomationSummary(group, t)}
-                          {group.auto_check_next_time ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Next auto check')}:&nbsp;
-                              {formatTimestamp(group.auto_check_next_time)}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!healthQuery.isLoading &&
-                      (health?.groups ?? []).length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className='h-24 text-center'>
-                            {t('No account groups found')}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    {healthQuery.isLoading ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className='h-24 text-center'>
-                          {t('Loading')}
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className='border-border border-b'>
-                <div className='p-3 text-sm font-medium'>
-                  {t('Recent abnormal accounts')}
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Reason')}</TableHead>
-                      <TableHead>{t('Cooling until')}</TableHead>
-                      <TableHead>{t('Failure rate')}</TableHead>
-                      <TableHead>{t('Last Used')}</TableHead>
-                      <TableHead>{t('Last check time')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(health?.recent_abnormal_accounts ?? []).map((account) => (
-                      <TableRow key={account.id}>
-                        <TableCell className='min-w-[220px]'>
-                          <div className='text-sm font-medium'>
-                            {account.name || `#${account.id}`}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {account.pool_group_name ||
-                              `#${account.pool_group_id}`}
-                            {' · '}
-                            {account.credential_provider ||
-                              account.platform ||
-                              '-'}
-                            {' / '}
-                            {account.auth_type || '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[140px]'>
-                          <StatusBadge
-                            label={abnormalAccountStatusLabel(
-                              account,
-                              nowSeconds,
-                              t
-                            )}
-                            variant={abnormalAccountVariant(
-                              account,
-                              nowSeconds
-                            )}
-                            copyable={false}
-                          />
-                        </TableCell>
-                        <TableCell className='max-w-[320px] min-w-[240px] text-xs break-words'>
-                          {account.reason ||
-                            account.last_error ||
-                            account.status_message ||
-                            account.disabled_reason ||
-                            '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {account.cooling_until > nowSeconds
-                            ? formatTimestamp(account.cooling_until)
-                            : '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[130px] text-xs'>
-                          {formatPercent(account.failure_rate)}
-                          <div className='text-muted-foreground mt-1'>
-                            {t('Success')}: {account.success_count} ·{' '}
-                            {t('Failed')}: {account.failed_count}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {account.last_used_time
-                            ? formatTimestamp(account.last_used_time)
-                            : '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {account.last_checked_time
-                            ? formatTimestamp(account.last_checked_time)
-                            : '-'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!healthQuery.isLoading &&
-                      (health?.recent_abnormal_accounts ?? []).length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className='h-24 text-center'>
-                            {t('No abnormal accounts found')}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div>
-                <div className='p-3 text-sm font-medium'>
-                  {t('Recent state changes')}
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Time')}</TableHead>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Action')}</TableHead>
-                      <TableHead>{t('After state')}</TableHead>
-                      <TableHead>{t('Reason')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(health?.recent_state_logs ?? []).map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {formatTimestamp(log.created_at)}
-                          <div className='text-muted-foreground mt-1'>
-                            {log.request_id || '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[200px]'>
-                          <div className='text-sm font-medium'>
-                            {log.pool_account_name || `#${log.pool_account_id}`}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
-                            {log.pool_account_auth_type || '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[180px] text-xs'>
-                          {stateLogActionLabel(log.action, t)}
-                          <div className='text-muted-foreground mt-1'>
-                            {t('Source')}: {log.source || '-'}
-                            {log.actor ? ` · ${t('Actor')}: ${log.actor}` : ''}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[180px] text-xs'>
-                          {poolAccountStatusText(
-                            log.after_status,
-                            log.after_schedulable,
-                            log.after_unavailable,
-                            t
+                          ) : (
+                            <Download data-icon='inline-start' />
                           )}
-                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
-                            {log.after_status_message ||
-                              log.after_disabled_reason ||
-                              '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='max-w-[320px] min-w-[220px] text-xs break-words'>
-                          {log.reason || '-'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!healthQuery.isLoading &&
-                      (health?.recent_state_logs ?? []).length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={5} className='h-24 text-center'>
-                            {t('No recent state changes found')}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-            <TabsContent value='accounts' className='m-0 min-h-0'>
-              {selectedGroupDailyLimitTitle ? (
-                <div className='border-warning/30 bg-warning/10 text-warning flex gap-2 border-b px-3 py-2 text-sm'>
-                  <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0' />
-                  <div className='min-w-0'>
-                    <div className='font-medium'>
-                      {selectedGroupDailyLimitTitle}
-                    </div>
-                    <div className='text-xs'>
-                      {t(
-                        'Relay will stop selecting accounts from this group until the next daily reset.'
-                      )}
-                      {selectedGroup?.daily_limit_state?.next_reset_time ? (
-                        <>
-                          {' '}
-                          {t('Next daily reset')}:&nbsp;
-                          {formatTimestamp(
-                            selectedGroup.daily_limit_state.next_reset_time
+                          {t('Export audit')}
+                        </Button>
+                      </>
+                    )}
+                    {activeView === 'check-tasks' && (
+                      <>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => void checkTasksQuery.refetch()}
+                        >
+                          <RefreshCw data-icon='inline-start' />
+                          {t('Refresh')}
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={checkTaskCleaning || !canOperateAccountPool}
+                          onClick={() => void cleanupCheckTasks()}
+                        >
+                          {checkTaskCleaning ? (
+                            <Loader2
+                              data-icon='inline-start'
+                              className='animate-spin'
+                            />
+                          ) : (
+                            <Trash2 data-icon='inline-start' />
                           )}
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Total')}
-                  </div>
-                  <div className='font-medium'>{stats?.total ?? 0}</div>
-                </div>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Available')}
-                  </div>
-                  <div className='font-medium'>{stats?.enabled ?? 0}</div>
-                </div>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Disabled')}
-                  </div>
-                  <div className='font-medium'>{stats?.disabled ?? 0}</div>
-                </div>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Cooldown')}
-                  </div>
-                  <div className='font-medium'>{stats?.cooldown ?? 0}</div>
-                </div>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Today requests')}
-                  </div>
-                  <div className='font-medium'>
-                    {formatUsageNumber(selectedGroup?.daily_request_count ?? 0)}
-                    {' / '}
-                    {formatLimitValue(
-                      selectedGroup?.daily_request_limit ?? 0,
-                      t
+                          {t('Cleanup')}
+                        </Button>
+                      </>
                     )}
                   </div>
-                </div>
-                <div>
-                  <div className='text-muted-foreground text-xs'>
-                    {t('Daily quota')}
-                  </div>
-                  <div className='font-medium'>
-                    {formatUsageNumber(selectedGroup?.daily_used_quota ?? 0)}
-                    {' / '}
-                    {formatLimitValue(selectedGroup?.daily_quota_limit ?? 0, t)}
-                  </div>
-                </div>
-              </div>
+                </CardAction>
+              </CardHeader>
+            </Card>
 
-              {selectedGroupCheckTask ? (
-                <div className='border-border flex flex-col gap-2 border-b p-3 text-sm'>
-                  <div className='flex flex-wrap items-center justify-between gap-2'>
-                    <div className='flex flex-wrap items-center gap-2'>
-                      <span className='font-medium'>{t('Check task')}</span>
-                      <Badge
-                        variant={checkTaskBadgeVariant(
-                          selectedGroupCheckTask.status
-                        )}
-                      >
-                        {checkTaskStatusLabel(selectedGroupCheckTask.status, t)}
-                      </Badge>
-                      {checkTaskPolling ? (
-                        <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
-                      ) : null}
-                    </div>
-                    <span className='text-muted-foreground text-xs'>
-                      {t('{{checked}}/{{total}} checked', {
-                        checked:
-                          selectedGroupCheckTask.checked +
-                          selectedGroupCheckTask.skipped,
-                        total: selectedGroupCheckTask.total,
-                      })}
-                    </span>
-                  </div>
-                  <Progress value={checkTaskProgress} />
-                  <div className='text-muted-foreground flex flex-wrap gap-3 text-xs'>
-                    <span>
-                      {t('{{success}} passed', {
-                        success: selectedGroupCheckTask.success,
-                      })}
-                    </span>
-                    <span>
-                      {t('{{failed}} failed', {
-                        failed: selectedGroupCheckTask.failed,
-                      })}
-                    </span>
-                    <span>
-                      {t('{{skipped}} skipped', {
-                        skipped: selectedGroupCheckTask.skipped,
-                      })}
-                    </span>
-                    {selectedGroupCheckTask.message ? (
-                      <span className='max-w-full truncate'>
-                        {selectedGroupCheckTask.message}
+            <Tabs value={activeView} className='flex min-h-0 flex-col gap-4'>
+              <TabsContent value='health' className='m-0 flex flex-col gap-4'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Overview')}</CardTitle>
+                    <CardDescription>
+                      <span className='block'>
+                        {t('Generated at')}:&nbsp;
+                        {health?.generated_at
+                          ? formatTimestamp(health.generated_at)
+                          : '-'}
                       </span>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
+                      <span className='block'>
+                        {t('Window')}:&nbsp;
+                        {health?.window_start
+                          ? formatTimestamp(health.window_start)
+                          : '-'}
+                        {' - '}
+                        {health?.window_end
+                          ? formatTimestamp(health.window_end)
+                          : '-'}
+                      </span>
+                    </CardDescription>
+                    <CardAction>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void healthQuery.refetch()}
+                      >
+                        {healthQuery.isFetching ? (
+                          <Loader2
+                            data-icon='inline-start'
+                            className='animate-spin'
+                          />
+                        ) : (
+                          <RefreshCw data-icon='inline-start' />
+                        )}
+                        {t('Refresh health')}
+                      </Button>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    <div className='grid grid-cols-2 gap-3 text-sm md:grid-cols-5 xl:grid-cols-10'>
+                      {[
+                        {
+                          label: t('Total accounts'),
+                          value: formatUsageNumber(
+                            healthTotals?.total_accounts ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Available accounts'),
+                          value: formatUsageNumber(
+                            healthTotals?.available_accounts ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Disabled accounts'),
+                          value: formatUsageNumber(
+                            healthTotals?.disabled_accounts ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Cooldown accounts'),
+                          value: formatUsageNumber(
+                            healthTotals?.cooldown_accounts ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Unavailable accounts'),
+                          value: formatUsageNumber(
+                            healthTotals?.unavailable_accounts ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Today requests'),
+                          value: formatUsageNumber(
+                            healthTotals?.today_requests ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Today failures'),
+                          value: formatUsageNumber(
+                            healthTotals?.today_failures ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Success rate'),
+                          value: formatPercent(healthTotals?.success_rate),
+                        },
+                        {
+                          label: t('Availability rate'),
+                          value: formatPercent(healthTotals?.availability_rate),
+                        },
+                        {
+                          label: t('Limited groups'),
+                          value: formatUsageNumber(
+                            healthTotals?.limited_group_count ?? 0
+                          ),
+                        },
+                      ].map((metric) => (
+                        <div key={metric.label} className='min-w-0'>
+                          <div className='text-muted-foreground truncate text-xs'>
+                            {metric.label}
+                          </div>
+                          <div className='truncate font-medium'>
+                            {metric.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
 
-              {accounts.length > 0 && selectedAccountIds.length > 0 ? (
-                <div className='border-border flex flex-col gap-2 border-b p-3 text-sm md:flex-row md:items-center md:justify-between'>
-                  <span className='text-muted-foreground'>
-                    {t('{{count}} account(s) selected', {
-                      count: selectedAccountIds.length,
-                    })}
-                  </span>
-                  <div className='flex flex-wrap gap-2'>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        actionLoading ||
-                        selectedAccountIds.length === 0 ||
-                        !canOperateAccountPool
-                      }
-                      onClick={() =>
-                        void batchUpdateSelectedAccountStatus('enable')
-                      }
-                    >
-                      <Power data-icon='inline-start' />
-                      {t('Enable selected accounts')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        actionLoading ||
-                        selectedAccountIds.length === 0 ||
-                        !canOperateAccountPool
-                      }
-                      onClick={() =>
-                        void batchUpdateSelectedAccountStatus('disable')
-                      }
-                    >
-                      <PowerOff data-icon='inline-start' />
-                      {t('Disable selected accounts')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        actionLoading ||
-                        selectedAccountIds.length === 0 ||
-                        !canOperateAccountPool
-                      }
-                      onClick={() =>
-                        void batchUpdateSelectedAccountStatus('clear_cooldown')
-                      }
-                    >
-                      <RefreshCw data-icon='inline-start' />
-                      {t('Clear cooldown')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        actionLoading ||
-                        selectedAccountIds.length === 0 ||
-                        !canOperateAccountPool
-                      }
-                      onClick={() => void exportAccounts(selectedAccountIds)}
-                    >
-                      <Download data-icon='inline-start' />
-                      {t('Export selected accounts')}
-                    </Button>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        actionLoading ||
-                        selectedAccountIds.length === 0 ||
-                        !canSensitiveWriteAccountPool
-                      }
-                      onClick={() => void batchDeleteSelectedAccounts()}
-                    >
-                      <Trash2 data-icon='inline-start' />
-                      {t('Delete selected accounts')}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className='min-w-0'>
-                <Table className='min-w-[760px] table-fixed'>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className='w-10'>
-                        <Checkbox
-                          checked={allAccountsOnPageSelected}
-                          indeterminate={someAccountsOnPageSelected}
-                          onCheckedChange={(checked) =>
-                            toggleAllAccountsOnPage(Boolean(checked))
-                          }
-                          aria-label={t('Select all')}
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Group health')}</CardTitle>
+                    <CardDescription>
+                      {t('Account pool health across all native groups')}
+                    </CardDescription>
+                    <CardAction>
+                      {healthQuery.isFetching ? (
+                        <Loader2
+                          className='text-muted-foreground animate-spin'
+                          aria-hidden='true'
                         />
-                      </TableHead>
-                      <TableHead className='w-[34%]'>{t('Account')}</TableHead>
-                      <TableHead className='w-[13%]'>{t('Status')}</TableHead>
-                      <TableHead className='w-[18%]'>{t('Usage')}</TableHead>
-                      <TableHead className='w-[23%]'>
-                        {t('Last Used')}
-                      </TableHead>
-                      <TableHead className='w-[104px] text-right'>
-                        {t('Actions')}
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {accounts.map((account) => {
-                      const fullCredentialSummary = formatCredentialSummary(
-                        account.credential_summary
-                      )
-                      const accountIdentity = formatAccountIdentity(
-                        account.credential_summary,
-                        account.name
-                      )
-                      const accountFileLabel = poolAccountFileLabel(account)
-                      const statusReason = visibleAccountStatusReason(
-                        account,
-                        nowSeconds,
-                        t
-                      )
-                      const accountEnabled =
-                        account.status === CHANNEL_STATUS.ENABLED &&
-                        account.schedulable
+                      ) : null}
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    <div className='rounded-md border'>
+                      <Table className='min-w-[1120px]'>
+                        <TableHeader>
+                          <TableRow className='bg-muted/40 hover:bg-muted/40'>
+                            <TableHead className='px-4'>{t('Group')}</TableHead>
+                            <TableHead>{t('Available rate')}</TableHead>
+                            <TableHead>{t('Today requests')}</TableHead>
+                            <TableHead>{t('Today failures')}</TableHead>
+                            <TableHead>{t('Success rate')}</TableHead>
+                            <TableHead>{t('Status')}</TableHead>
+                            <TableHead className='pr-4'>
+                              {t('Automation')}
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(health?.groups ?? []).map((group) => (
+                            <TableRow key={group.id}>
+                              <TableCell className='min-w-[200px] px-4'>
+                                <div className='text-sm font-medium'>
+                                  {group.name || `#${group.id}`}
+                                </div>
+                                <div className='text-muted-foreground text-xs'>
+                                  {group.platform} / {group.auth_type} ·{' '}
+                                  {strategyLabel(group.strategy, t)}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                <div className='font-medium'>
+                                  {formatPercent(group.availability_rate)}
+                                </div>
+                                <div className='text-muted-foreground mt-1'>
+                                  {formatUsageNumber(group.stats?.enabled ?? 0)}{' '}
+                                  / {formatUsageNumber(group.stats?.total ?? 0)}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[130px] text-xs'>
+                                {formatUsageNumber(group.today_requests)}
+                              </TableCell>
+                              <TableCell className='min-w-[130px] text-xs'>
+                                {formatUsageNumber(group.today_failures)}
+                              </TableCell>
+                              <TableCell className='min-w-[120px] text-xs'>
+                                {formatPercent(group.success_rate)}
+                              </TableCell>
+                              <TableCell className='min-w-[150px]'>
+                                <div className='flex flex-col gap-1'>
+                                  <StatusBadge
+                                    label={healthGroupLabel(group, t)}
+                                    variant={healthGroupVariant(group)}
+                                    copyable={false}
+                                  />
+                                  {group.daily_limit_state?.limited ? (
+                                    <span className='text-muted-foreground text-xs'>
+                                      {group.daily_limit_state.next_reset_time
+                                        ? `${t('Next daily reset')}: ${formatTimestamp(
+                                            group.daily_limit_state
+                                              .next_reset_time
+                                          )}`
+                                        : group.daily_limit_state.reason || '-'}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[260px] pr-4 text-xs'>
+                                {healthGroupAutomationSummary(group, t)}
+                                {group.auto_check_next_time ? (
+                                  <div className='text-muted-foreground mt-1'>
+                                    {t('Next auto check')}:&nbsp;
+                                    {formatTimestamp(
+                                      group.auto_check_next_time
+                                    )}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!healthQuery.isLoading &&
+                            (health?.groups ?? []).length === 0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={7}
+                                  className='h-24 text-center'
+                                >
+                                  {t('No account groups found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          {healthQuery.isLoading ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={7}
+                                className='h-24 text-center'
+                              >
+                                {t('Loading')}
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
 
-                      return (
-                        <TableRow key={account.id}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selectedAccountIds.includes(account.id)}
-                              onCheckedChange={(checked) =>
-                                toggleAccountSelection(
-                                  account.id,
-                                  Boolean(checked)
-                                )
-                              }
-                              aria-label={t('Select row')}
-                            />
-                          </TableCell>
-                          <TableCell className='min-w-0'>
-                            <div
-                              className='truncate font-medium'
-                              title={accountRowTitle(
-                                account,
-                                fullCredentialSummary,
-                                t
-                              )}
-                            >
-                              {accountIdentity}
-                            </div>
-                            <div
-                              className='text-muted-foreground truncate text-xs'
-                              title={`${t('File')}: ${accountFileLabel}`}
-                            >
-                              {t('File')}: {accountFileLabel}
-                            </div>
-                            {account.models ? (
-                              <div className='text-muted-foreground truncate text-xs'>
-                                {t('Models')}: {account.models}
-                              </div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className='min-w-0'>
-                            <div className='flex flex-col gap-1'>
-                              <StatusBadge
-                                label={statusLabel(account, nowSeconds, t)}
-                                variant={statusVariant(account, nowSeconds)}
-                                copyable={false}
-                              />
-                              {statusReason ? (
-                                <span
-                                  className='text-muted-foreground max-w-full truncate text-xs'
-                                  title={statusReason}
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Recent abnormal accounts')}</CardTitle>
+                    <CardDescription>
+                      {t('Review account pool health and recent exceptions.')}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className='rounded-md border'>
+                      <Table className='min-w-[1180px]'>
+                        <TableHeader>
+                          <TableRow className='bg-muted/40 hover:bg-muted/40'>
+                            <TableHead className='px-4'>
+                              {t('Account')}
+                            </TableHead>
+                            <TableHead>{t('Status')}</TableHead>
+                            <TableHead>{t('Reason')}</TableHead>
+                            <TableHead>{t('Cooling until')}</TableHead>
+                            <TableHead>{t('Failure rate')}</TableHead>
+                            <TableHead>{t('Last Used')}</TableHead>
+                            <TableHead className='pr-4'>
+                              {t('Last check time')}
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(health?.recent_abnormal_accounts ?? []).map(
+                            (account) => (
+                              <TableRow key={account.id}>
+                                <TableCell className='min-w-[220px] px-4'>
+                                  <div className='text-sm font-medium'>
+                                    {account.name || `#${account.id}`}
+                                  </div>
+                                  <div className='text-muted-foreground text-xs'>
+                                    {account.pool_group_name ||
+                                      `#${account.pool_group_id}`}
+                                    {' · '}
+                                    {account.credential_provider ||
+                                      account.platform ||
+                                      '-'}
+                                    {' / '}
+                                    {account.auth_type || '-'}
+                                  </div>
+                                </TableCell>
+                                <TableCell className='min-w-[140px]'>
+                                  <StatusBadge
+                                    label={abnormalAccountStatusLabel(
+                                      account,
+                                      nowSeconds,
+                                      t
+                                    )}
+                                    variant={abnormalAccountVariant(
+                                      account,
+                                      nowSeconds
+                                    )}
+                                    copyable={false}
+                                  />
+                                </TableCell>
+                                <TableCell className='max-w-[320px] min-w-[240px] text-xs break-words'>
+                                  {account.reason ||
+                                    account.last_error ||
+                                    account.status_message ||
+                                    account.disabled_reason ||
+                                    '-'}
+                                </TableCell>
+                                <TableCell className='min-w-[150px] text-xs'>
+                                  {account.cooling_until > nowSeconds
+                                    ? formatTimestamp(account.cooling_until)
+                                    : '-'}
+                                </TableCell>
+                                <TableCell className='min-w-[130px] text-xs'>
+                                  {formatPercent(account.failure_rate)}
+                                  <div className='text-muted-foreground mt-1'>
+                                    {t('Success')}: {account.success_count} ·{' '}
+                                    {t('Failed')}: {account.failed_count}
+                                  </div>
+                                </TableCell>
+                                <TableCell className='min-w-[150px] text-xs'>
+                                  {account.last_used_time
+                                    ? formatTimestamp(account.last_used_time)
+                                    : '-'}
+                                </TableCell>
+                                <TableCell className='min-w-[150px] pr-4 text-xs'>
+                                  {account.last_checked_time
+                                    ? formatTimestamp(account.last_checked_time)
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          )}
+                          {!healthQuery.isLoading &&
+                            (health?.recent_abnormal_accounts ?? []).length ===
+                              0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={7}
+                                  className='h-24 text-center'
                                 >
-                                  {limitInlineText(statusReason, 80)}
-                                </span>
-                              ) : null}
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            className='min-w-0 text-xs'
-                            title={[
-                              `${t('Daily requests')}: ${formatUsageNumber(
-                                account.daily_request_count
-                              )} / ${formatLimitValue(
-                                account.daily_request_limit,
-                                t
-                              )}`,
-                              `${t('Max concurrency')}: ${formatLimitValue(
-                                account.max_concurrency,
-                                t
-                              )}`,
-                              `${t('RPM')}: ${formatLimitValue(
-                                account.rate_limit_rpm,
-                                t
-                              )}`,
-                              `${t('Daily quota')}: ${formatUsageNumber(
-                                account.daily_used_quota
-                              )} / ${formatLimitValue(
-                                account.daily_quota_limit,
-                                t
-                              )}`,
-                            ].join('\n')}
-                          >
-                            <div className='truncate'>
-                              {t('Request')}:&nbsp;
-                              {formatUsageNumber(
-                                account.daily_request_count
-                              )} /{' '}
-                              {formatLimitValue(account.daily_request_limit, t)}
-                            </div>
-                            <div className='text-muted-foreground mt-1 truncate'>
-                              {t('Success')}: {account.success_count ?? 0} ·{' '}
-                              {t('Failed')}: {account.failed_count ?? 0}
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            className='min-w-0 text-xs'
-                            title={[
-                              `${t('Last Used')}: ${
-                                account.last_used_time
-                                  ? formatTimestamp(account.last_used_time)
-                                  : '-'
-                              }`,
-                              `${t('Last check time')}: ${
-                                account.last_checked_time
-                                  ? formatTimestamp(account.last_checked_time)
-                                  : '-'
-                              }`,
-                              account.next_refresh_time
-                                ? `${t('Next refresh')}: ${formatTimestamp(
-                                    account.next_refresh_time
-                                  )}`
-                                : '',
-                            ]
-                              .filter(Boolean)
-                              .join('\n')}
-                          >
-                            <div className='truncate'>
-                              {account.last_used_time
-                                ? formatTimestamp(account.last_used_time)
-                                : '-'}
-                            </div>
-                            <div className='text-muted-foreground mt-1 truncate'>
-                              {t('Last check time')}:&nbsp;
-                              {account.last_checked_time
-                                ? formatTimestamp(account.last_checked_time)
-                                : '-'}
-                            </div>
-                            {account.next_refresh_time ? (
-                              <div
-                                className='text-muted-foreground mt-1 truncate'
-                                title={`${t('Next refresh')}: ${formatTimestamp(
-                                  account.next_refresh_time
-                                )}`}
-                              >
-                                {t('Next refresh')}:&nbsp;
-                                {formatTimestamp(account.next_refresh_time)}
-                              </div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className='w-[104px]'>
-                            <div className='flex flex-nowrap justify-end gap-1.5'>
-                              <Button
-                                variant='ghost'
-                                size='icon-sm'
-                                aria-label={t('Check Account')}
-                                title={t('Check Account')}
-                                disabled={
-                                  checkingAccountId === account.id ||
-                                  !canOperateAccountPool
-                                }
-                                onClick={() => void checkAccount(account)}
-                              >
-                                {checkingAccountId === account.id ? (
-                                  <Loader2 className='animate-spin' />
-                                ) : (
-                                  <Stethoscope />
+                                  {t('No abnormal accounts found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Recent state changes')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Inspect usage records, state changes, and check tasks.'
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className='rounded-md border'>
+                      <Table className='min-w-[960px]'>
+                        <TableHeader>
+                          <TableRow className='bg-muted/40 hover:bg-muted/40'>
+                            <TableHead className='px-4'>{t('Time')}</TableHead>
+                            <TableHead>{t('Account')}</TableHead>
+                            <TableHead>{t('Action')}</TableHead>
+                            <TableHead>{t('After state')}</TableHead>
+                            <TableHead className='pr-4'>
+                              {t('Reason')}
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(health?.recent_state_logs ?? []).map((log) => (
+                            <TableRow key={log.id}>
+                              <TableCell className='min-w-[150px] px-4 text-xs'>
+                                {formatTimestamp(log.created_at)}
+                                <div className='text-muted-foreground mt-1'>
+                                  {log.request_id || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[200px]'>
+                                <div className='text-sm font-medium'>
+                                  {log.pool_account_name ||
+                                    `#${log.pool_account_id}`}
+                                </div>
+                                <div className='text-muted-foreground text-xs'>
+                                  {log.pool_group_name ||
+                                    `#${log.pool_group_id}`}{' '}
+                                  · {log.pool_account_auth_type || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[180px] text-xs'>
+                                {stateLogActionLabel(log.action, t)}
+                                <div className='text-muted-foreground mt-1'>
+                                  {t('Source')}: {log.source || '-'}
+                                  {log.actor
+                                    ? ` · ${t('Actor')}: ${log.actor}`
+                                    : ''}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[180px] text-xs'>
+                                {poolAccountStatusText(
+                                  log.after_status,
+                                  log.after_schedulable,
+                                  log.after_unavailable,
+                                  t
                                 )}
-                              </Button>
-                              <Button
-                                variant='ghost'
-                                size='icon-sm'
-                                aria-label={
-                                  accountEnabled ? t('Disable') : t('Enable')
-                                }
-                                title={
-                                  accountEnabled ? t('Disable') : t('Enable')
-                                }
-                                disabled={!canOperateAccountPool}
-                                onClick={() =>
-                                  void setAccountEnabled(
-                                    account,
-                                    !accountEnabled
-                                  )
-                                }
-                              >
-                                {accountEnabled ? <PowerOff /> : <Power />}
-                              </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger
-                                  render={
-                                    <Button
-                                      variant='ghost'
-                                      size='icon-sm'
-                                      aria-label={t('More')}
-                                      title={t('More')}
-                                    >
-                                      <MoreHorizontal />
-                                    </Button>
-                                  }
-                                />
-                                <DropdownMenuContent
-                                  align='end'
-                                  className='w-44'
+                                <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                                  {log.after_status_message ||
+                                    log.after_disabled_reason ||
+                                    '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='max-w-[320px] min-w-[220px] pr-4 text-xs break-words'>
+                                {log.reason || '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!healthQuery.isLoading &&
+                            (health?.recent_state_logs ?? []).length === 0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={5}
+                                  className='h-24 text-center'
                                 >
-                                  <DropdownMenuGroup>
-                                    <DropdownMenuItem
-                                      disabled={!canSensitiveWriteAccountPool}
-                                      onClick={() => openEditAccount(account)}
-                                    >
-                                      <Pencil />
-                                      {t('Edit')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      disabled={!canOperateAccountPool}
-                                      onClick={() =>
-                                        void clearCooldown(account)
-                                      }
-                                    >
-                                      <RefreshCw />
-                                      {t('Clear cooldown')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      disabled={!canOperateAccountPool}
-                                      onClick={() => void resetRuntime(account)}
-                                    >
-                                      <RotateCcw />
-                                      {t('Reset runtime')}
-                                    </DropdownMenuItem>
-                                    {account.platform === 'codex' &&
-                                      account.auth_type ===
-                                        'official_oauth' && (
-                                        <DropdownMenuItem
+                                  {t('No recent state changes found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              <TabsContent value='accounts' className='m-0'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Account Groups')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Configure pool groups, scheduling policies, and linked accounts.'
+                      )}
+                    </CardDescription>
+                    <CardAction>
+                      {groupsQuery.isLoading ? (
+                        <Loader2
+                          className='text-muted-foreground animate-spin'
+                          aria-hidden='true'
+                        />
+                      ) : null}
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    {groupsQuery.isLoading ? (
+                      <div className='text-muted-foreground rounded-md border p-6 text-center text-sm'>
+                        {t('Loading')}
+                      </div>
+                    ) : null}
+                    {!groupsQuery.isLoading && groups.length === 0 ? (
+                      <EmptyState
+                        icon={FileJson}
+                        title={t('No account groups found')}
+                        bordered
+                      />
+                    ) : null}
+                    {!groupsQuery.isLoading && groups.length > 0 ? (
+                      <Accordion
+                        value={selectedGroupId ? [String(selectedGroupId)] : []}
+                        onValueChange={(value) => {
+                          const nextGroupId = value[0] ? Number(value[0]) : null
+                          setSelectedGroupId(nextGroupId)
+                          setPage(1)
+                          setSelectedAccountIds([])
+                        }}
+                        className='gap-3'
+                      >
+                        {groups.map((group) => (
+                          <AccordionItem
+                            key={group.id}
+                            value={String(group.id)}
+                            className='rounded-md border px-3'
+                          >
+                            <AccordionTrigger className='gap-3 py-3 hover:no-underline'>
+                              <span className='flex min-w-0 flex-1 flex-col gap-2'>
+                                <span className='flex min-w-0 flex-wrap items-center gap-2'>
+                                  <span className='truncate text-sm font-medium'>
+                                    {group.name}
+                                  </span>
+                                  <StatusBadge
+                                    label={groupStatusLabel(group, t)}
+                                    variant={groupStatusVariant(group)}
+                                    copyable={false}
+                                  />
+                                </span>
+                                <span className='text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs font-normal'>
+                                  <span>
+                                    {group.platform} / {group.auth_type}
+                                  </span>
+                                  <span>
+                                    {t('Available')}:{' '}
+                                    {group.stats?.enabled ?? 0} /{' '}
+                                    {group.stats?.total ?? 0}
+                                  </span>
+                                  {(group.stats?.disabled ?? 0) > 0 ? (
+                                    <span>
+                                      {t('Disabled')}:{' '}
+                                      {group.stats?.disabled ?? 0}
+                                    </span>
+                                  ) : null}
+                                  <span>
+                                    {strategyLabel(group.strategy, t)}
+                                  </span>
+                                  <span className='max-w-full truncate'>
+                                    {group.models || t('All Models')}
+                                  </span>
+                                </span>
+                                <span
+                                  className='text-muted-foreground truncate text-xs font-normal'
+                                  title={`${groupAutoCheckSummary(
+                                    group,
+                                    t
+                                  )} · ${groupPreflightCheckSummary(
+                                    group,
+                                    t
+                                  )} · ${groupNoAvailableSummary(
+                                    group,
+                                    t
+                                  )} · ${groupTaskLimitSummary(group, t)}`}
+                                >
+                                  {groupAutoCheckSummary(group, t)} ·{' '}
+                                  {groupPreflightCheckSummary(group, t)} ·{' '}
+                                  {groupNoAvailableSummary(group, t)} ·{' '}
+                                  {groupTaskLimitSummary(group, t)}
+                                </span>
+                                {group.daily_limit_state?.limited ? (
+                                  <span className='text-warning flex items-center gap-1 text-xs font-normal'>
+                                    <AlertTriangle
+                                      className='size-3.5 shrink-0'
+                                      aria-hidden='true'
+                                    />
+                                    <span className='truncate'>
+                                      {groupDailyLimitSummary(group, t)}
+                                    </span>
+                                  </span>
+                                ) : null}
+                              </span>
+                            </AccordionTrigger>
+                            <AccordionContent className='pb-3'>
+                              {selectedGroupId === group.id ? (
+                                <div className='flex min-w-0 flex-col overflow-hidden rounded-md border'>
+                                  {selectedGroupDailyLimitTitle ? (
+                                    <div className='border-warning/30 bg-warning/10 text-warning flex gap-2 border-b px-3 py-2 text-sm'>
+                                      <AlertTriangle className='mt-0.5 size-4 shrink-0' />
+                                      <div className='min-w-0'>
+                                        <div className='font-medium'>
+                                          {selectedGroupDailyLimitTitle}
+                                        </div>
+                                        <div className='text-xs'>
+                                          {t(
+                                            'Relay will stop selecting accounts from this group until the next daily reset.'
+                                          )}
+                                          {selectedGroup?.daily_limit_state
+                                            ?.next_reset_time ? (
+                                            <>
+                                              {' '}
+                                              {t('Next daily reset')}:&nbsp;
+                                              {formatTimestamp(
+                                                selectedGroup.daily_limit_state
+                                                  .next_reset_time
+                                              )}
+                                            </>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-6'>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Total')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {stats?.total ?? 0}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Available')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {stats?.enabled ?? 0}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Disabled')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {stats?.disabled ?? 0}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Cooldown')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {stats?.cooldown ?? 0}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Today requests')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {formatUsageNumber(
+                                          selectedGroup?.daily_request_count ??
+                                            0
+                                        )}
+                                        {' / '}
+                                        {formatLimitValue(
+                                          selectedGroup?.daily_request_limit ??
+                                            0,
+                                          t
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className='text-muted-foreground text-xs'>
+                                        {t('Daily quota')}
+                                      </div>
+                                      <div className='font-medium'>
+                                        {formatUsageNumber(
+                                          selectedGroup?.daily_used_quota ?? 0
+                                        )}
+                                        {' / '}
+                                        {formatLimitValue(
+                                          selectedGroup?.daily_quota_limit ?? 0,
+                                          t
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className='border-border flex flex-col gap-2 border-b p-3 text-sm lg:flex-row lg:items-center lg:justify-between'>
+                                    <span className='text-muted-foreground'>
+                                      {t(
+                                        'Manage accounts and credentials assigned to this group.'
+                                      )}
+                                    </span>
+                                    <div className='flex flex-wrap gap-2'>
+                                      <Button
+                                        variant='outline'
+                                        size='sm'
+                                        disabled={
+                                          batchChecking ||
+                                          selectedGroupCheckTaskActive ||
+                                          accountTotal <= 0 ||
+                                          !canOperateAccountPool
+                                        }
+                                        onClick={() =>
+                                          void checkSelectedGroupAccounts()
+                                        }
+                                      >
+                                        {batchChecking ||
+                                        selectedGroupCheckTaskActive ? (
+                                          <Loader2
+                                            data-icon='inline-start'
+                                            className='animate-spin'
+                                          />
+                                        ) : (
+                                          <Stethoscope data-icon='inline-start' />
+                                        )}
+                                        {t('Check Group')}
+                                      </Button>
+                                      <Button
+                                        size='sm'
+                                        disabled={!canSensitiveWriteAccountPool}
+                                        onClick={openCreateAccount}
+                                      >
+                                        <Plus data-icon='inline-start' />
+                                        {t('Add Account')}
+                                      </Button>
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger
+                                          render={
+                                            <Button variant='outline' size='sm'>
+                                              <MoreHorizontal data-icon='inline-start' />
+                                              {t('More')}
+                                            </Button>
+                                          }
+                                        />
+                                        <DropdownMenuContent
+                                          align='end'
+                                          className='w-48'
+                                        >
+                                          <DropdownMenuGroup>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !selectedGroupIsEditable
+                                              }
+                                              onClick={() =>
+                                                openEditGroup(group)
+                                              }
+                                            >
+                                              <Pencil />
+                                              {t('Edit Group')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !canSensitiveWriteAccountPool
+                                              }
+                                              onClick={() =>
+                                                void deleteGroup(group)
+                                              }
+                                            >
+                                              <Trash2 />
+                                              {t('Delete')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !canSensitiveWriteAccountPool
+                                              }
+                                              onClick={startCodexOAuth}
+                                            >
+                                              <ShieldCheck />
+                                              {t('Codex OAuth')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !canSensitiveWriteAccountPool
+                                              }
+                                              onClick={startCodexDevice}
+                                            >
+                                              <Smartphone />
+                                              {t('Codex Device')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !canSensitiveWriteAccountPool
+                                              }
+                                              onClick={() => setBatchOpen(true)}
+                                            >
+                                              <Upload />
+                                              {t('Batch Import')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                actionLoading ||
+                                                accountTotal <= 0 ||
+                                                !canOperateAccountPool
+                                              }
+                                              onClick={() =>
+                                                void exportAccounts()
+                                              }
+                                            >
+                                              <Download />
+                                              {t('Export Accounts')}
+                                            </DropdownMenuItem>
+                                          </DropdownMenuGroup>
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    </div>
+                                  </div>
+
+                                  {selectedGroupCheckTask ? (
+                                    <div className='border-border flex flex-col gap-2 border-b p-3 text-sm'>
+                                      <div className='flex flex-wrap items-center justify-between gap-2'>
+                                        <div className='flex flex-wrap items-center gap-2'>
+                                          <span className='font-medium'>
+                                            {t('Check task')}
+                                          </span>
+                                          <Badge
+                                            variant={checkTaskBadgeVariant(
+                                              selectedGroupCheckTask.status
+                                            )}
+                                          >
+                                            {checkTaskStatusLabel(
+                                              selectedGroupCheckTask.status,
+                                              t
+                                            )}
+                                          </Badge>
+                                          {checkTaskPolling ? (
+                                            <Loader2 className='text-muted-foreground size-4 animate-spin' />
+                                          ) : null}
+                                        </div>
+                                        <span className='text-muted-foreground text-xs'>
+                                          {t('{{checked}}/{{total}} checked', {
+                                            checked:
+                                              selectedGroupCheckTask.checked +
+                                              selectedGroupCheckTask.skipped,
+                                            total: selectedGroupCheckTask.total,
+                                          })}
+                                        </span>
+                                      </div>
+                                      <Progress value={checkTaskProgress} />
+                                      <div className='text-muted-foreground flex flex-wrap gap-3 text-xs'>
+                                        <span>
+                                          {t('{{success}} passed', {
+                                            success:
+                                              selectedGroupCheckTask.success,
+                                          })}
+                                        </span>
+                                        <span>
+                                          {t('{{failed}} failed', {
+                                            failed:
+                                              selectedGroupCheckTask.failed,
+                                          })}
+                                        </span>
+                                        <span>
+                                          {t('{{skipped}} skipped', {
+                                            skipped:
+                                              selectedGroupCheckTask.skipped,
+                                          })}
+                                        </span>
+                                        {selectedGroupCheckTask.message ? (
+                                          <span className='max-w-full truncate'>
+                                            {selectedGroupCheckTask.message}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  {accounts.length > 0 &&
+                                  selectedAccountIds.length > 0 ? (
+                                    <div className='border-border flex flex-col gap-2 border-b p-3 text-sm md:flex-row md:items-center md:justify-between'>
+                                      <span className='text-muted-foreground'>
+                                        {t('{{count}} account(s) selected', {
+                                          count: selectedAccountIds.length,
+                                        })}
+                                      </span>
+                                      <div className='flex flex-wrap gap-2'>
+                                        <Button
+                                          variant='outline'
+                                          size='sm'
                                           disabled={
+                                            actionLoading ||
+                                            selectedAccountIds.length === 0 ||
+                                            !canOperateAccountPool
+                                          }
+                                          onClick={() =>
+                                            void batchUpdateSelectedAccountStatus(
+                                              'enable'
+                                            )
+                                          }
+                                        >
+                                          <Power data-icon='inline-start' />
+                                          {t('Enable selected accounts')}
+                                        </Button>
+                                        <Button
+                                          variant='outline'
+                                          size='sm'
+                                          disabled={
+                                            actionLoading ||
+                                            selectedAccountIds.length === 0 ||
+                                            !canOperateAccountPool
+                                          }
+                                          onClick={() =>
+                                            void batchUpdateSelectedAccountStatus(
+                                              'disable'
+                                            )
+                                          }
+                                        >
+                                          <PowerOff data-icon='inline-start' />
+                                          {t('Disable selected accounts')}
+                                        </Button>
+                                        <Button
+                                          variant='outline'
+                                          size='sm'
+                                          disabled={
+                                            actionLoading ||
+                                            selectedAccountIds.length === 0 ||
+                                            !canOperateAccountPool
+                                          }
+                                          onClick={() =>
+                                            void batchUpdateSelectedAccountStatus(
+                                              'clear_cooldown'
+                                            )
+                                          }
+                                        >
+                                          <RefreshCw data-icon='inline-start' />
+                                          {t('Clear cooldown')}
+                                        </Button>
+                                        <Button
+                                          variant='outline'
+                                          size='sm'
+                                          disabled={
+                                            actionLoading ||
+                                            selectedAccountIds.length === 0 ||
+                                            !canOperateAccountPool
+                                          }
+                                          onClick={() =>
+                                            void exportAccounts(
+                                              selectedAccountIds
+                                            )
+                                          }
+                                        >
+                                          <Download data-icon='inline-start' />
+                                          {t('Export selected accounts')}
+                                        </Button>
+                                        <Button
+                                          variant='outline'
+                                          size='sm'
+                                          disabled={
+                                            actionLoading ||
+                                            selectedAccountIds.length === 0 ||
                                             !canSensitiveWriteAccountPool
                                           }
                                           onClick={() =>
-                                            void refreshCredential(account)
+                                            void batchDeleteSelectedAccounts()
                                           }
                                         >
-                                          <ShieldCheck />
-                                          {t('Refresh credential')}
-                                        </DropdownMenuItem>
-                                      )}
-                                    <DropdownMenuItem
-                                      variant='destructive'
-                                      disabled={!canSensitiveWriteAccountPool}
-                                      onClick={() =>
-                                        void deleteAccount(account)
-                                      }
-                                    >
-                                      <Trash2 />
-                                      {t('Delete')}
-                                    </DropdownMenuItem>
-                                  </DropdownMenuGroup>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                    {!accountsQuery.isLoading && accounts.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center'>
-                          {t('No accounts found')}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
-                <span className='text-muted-foreground'>
-                  {t('Page {{page}} of {{total}}', {
-                    page,
-                    total: totalPages,
-                  })}
-                </span>
-                <div className='flex gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={page <= 1}
-                    onClick={() =>
-                      setPage((current) => Math.max(1, current - 1))
-                    }
-                  >
-                    {t('Previous')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={page >= totalPages}
-                    onClick={() =>
-                      setPage((current) => Math.min(totalPages, current + 1))
-                    }
-                  >
-                    {t('Next')}
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-            <TabsContent value='auth-files' className='m-0 min-h-0'>
-              <AuthFilesPanel
-                groups={groups}
-                canRead={canReadAccountPoolAuthFile}
-                canSensitiveWrite={canSensitiveWriteAccountPoolAuthFile}
-              />
-            </TabsContent>
-            <TabsContent value='usage-logs' className='m-0 min-h-0'>
-              {logViewTabs}
-              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
-                <div className='flex min-w-0 items-center gap-2'>
-                  <Input
-                    className='min-w-0 flex-1'
-                    placeholder={t(
-                      'Search account, channel, model, user, or error'
-                    )}
-                    value={usageLogSearch}
-                    onChange={(event) => setUsageLogSearch(event.target.value)}
-                  />
-                  <AccountPoolHistoryFilterDrawer
-                    kind='usage'
-                    activeCount={usageLogFilterCount}
-                    resetDisabled={usageLogFilterCount === 0}
-                    onReset={clearUsageLogFilters}
-                  >
-                    <div className='grid grid-cols-3 gap-2'>
-                      <Button
-                        variant={
-                          usageLogStatus === 'all' ? 'secondary' : 'outline'
-                        }
-                        size='sm'
-                        onClick={() => setUsageLogStatus('all')}
-                      >
-                        {t('All')}
-                      </Button>
-                      <Button
-                        variant={
-                          usageLogStatus === 'success' ? 'secondary' : 'outline'
-                        }
-                        size='sm'
-                        onClick={() => setUsageLogStatus('success')}
-                      >
-                        {t('Success')}
-                      </Button>
-                      <Button
-                        variant={
-                          usageLogStatus === 'failed' ? 'secondary' : 'outline'
-                        }
-                        size='sm'
-                        onClick={() => setUsageLogStatus('failed')}
-                      >
-                        {t('Failed')}
-                      </Button>
-                    </div>
-                  </AccountPoolHistoryFilterDrawer>
-                </div>
-              </div>
-              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
-                <div className='flex flex-wrap gap-2'>
-                  <Button
-                    variant={usageLogStatus === 'all' ? 'secondary' : 'outline'}
-                    size='sm'
-                    onClick={() => setUsageLogStatus('all')}
-                  >
-                    {t('All')}
-                  </Button>
-                  <Button
-                    variant={
-                      usageLogStatus === 'success' ? 'secondary' : 'outline'
-                    }
-                    size='sm'
-                    onClick={() => setUsageLogStatus('success')}
-                  >
-                    {t('Success')}
-                  </Button>
-                  <Button
-                    variant={
-                      usageLogStatus === 'failed' ? 'secondary' : 'outline'
-                    }
-                    size='sm'
-                    onClick={() => setUsageLogStatus('failed')}
-                  >
-                    {t('Failed')}
-                  </Button>
-                </div>
-                <Input
-                  className='md:max-w-xs'
-                  placeholder={t(
-                    'Search account, channel, model, user, or error'
-                  )}
-                  value={usageLogSearch}
-                  onChange={(event) => setUsageLogSearch(event.target.value)}
-                />
-              </div>
-              <AccountPoolUsageLogsMobileList
-                items={usageLogs}
-                isLoading={usageLogsQuery.isLoading}
-                emptyTitle={t('No usage logs found')}
-                onFilterRequest={filterStateLogsByRequest}
-                onFilterAccount={filterStateLogsByAccount}
-              />
-              <div className='hidden overflow-x-auto md:block'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Time')}</TableHead>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Channel')}</TableHead>
-                      <TableHead>{t('Model')}</TableHead>
-                      <TableHead>{t('Usage')}</TableHead>
-                      <TableHead>{t('Result')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {usageLogs.map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {formatTimestamp(log.created_at)}
-                          {log.request_id ? (
-                            <Button
-                              variant='link'
-                              size='xs'
-                              className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
-                              title={t('Click to filter by request')}
-                              onClick={() =>
-                                filterStateLogsByRequest(log.request_id ?? '')
-                              }
-                            >
-                              {log.request_id}
-                            </Button>
-                          ) : (
-                            <div className='text-muted-foreground mt-1'>-</div>
-                          )}
-                        </TableCell>
-                        <TableCell className='min-w-[190px]'>
-                          {log.pool_account_id > 0 ? (
-                            <Button
-                              variant='link'
-                              size='sm'
-                              className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
-                              title={t('Click to filter by account')}
-                              onClick={() =>
-                                filterStateLogsByAccount(
-                                  log.pool_account_id,
-                                  log.pool_account_name ||
-                                    `#${log.pool_account_id}`
-                                )
-                              }
-                            >
-                              {log.pool_account_name ||
-                                `#${log.pool_account_id}`}
-                            </Button>
-                          ) : (
-                            <div className='text-sm font-medium'>
-                              {log.pool_account_name ||
-                                `#${log.pool_account_id}`}
-                            </div>
-                          )}
-                          <div className='text-muted-foreground text-xs'>
-                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
-                            {log.pool_account_auth_type || '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[160px]'>
-                          <div className='text-sm'>
-                            {log.channel_name || `#${log.channel_id}`}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {log.username || '-'} / {log.token_name || '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[160px] text-xs'>
-                          {log.model_name || '-'}
-                          {log.group ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Group')}: {log.group}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className='min-w-[160px] text-xs'>
-                          {t('Quota')}: {formatUsageNumber(log.quota)}
-                          <div className='text-muted-foreground mt-1'>
-                            {t('Tokens')}:&nbsp;
-                            {formatUsageNumber(
-                              log.prompt_tokens + log.completion_tokens
-                            )}
-                            &nbsp;· {formatUsageDuration(log.use_time)}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[200px]'>
-                          <div className='flex flex-col gap-1'>
-                            <StatusBadge
-                              label={log.success ? t('Success') : t('Failed')}
-                              variant={log.success ? 'success' : 'danger'}
-                              copyable={false}
-                            />
-                            {!log.success && (
-                              <div className='text-muted-foreground max-w-[260px] text-xs break-words'>
-                                {log.status_code ? `${log.status_code} · ` : ''}
-                                {log.error_message || log.error_code || '-'}
-                              </div>
-                            )}
-                            {log.retry_index > 0 && (
-                              <div className='text-muted-foreground text-xs'>
-                                {t('Retry')}: {log.retry_index}
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!usageLogsQuery.isLoading && usageLogs.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center'>
-                          {t('No usage logs found')}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
-                <span className='text-muted-foreground'>
-                  {t('Page {{page}} of {{total}}', {
-                    page: usageLogPage,
-                    total: usageLogTotalPages,
-                  })}
-                </span>
-                <div className='flex gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={usageLogPage <= 1}
-                    onClick={() =>
-                      setUsageLogPage((current) => Math.max(1, current - 1))
-                    }
-                  >
-                    {t('Previous')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={usageLogPage >= usageLogTotalPages}
-                    onClick={() =>
-                      setUsageLogPage((current) =>
-                        Math.min(usageLogTotalPages, current + 1)
-                      )
-                    }
-                  >
-                    {t('Next')}
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-            <TabsContent value='state-logs' className='m-0 min-h-0'>
-              {logViewTabs}
-              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
-                <div className='flex min-w-0 items-center gap-2'>
-                  <Input
-                    className='min-w-0 flex-1'
-                    placeholder={t(
-                      'Search account, action, source, actor, or reason'
-                    )}
-                    value={stateLogSearch}
-                    onChange={(event) => setStateLogSearch(event.target.value)}
-                  />
-                  <AccountPoolHistoryFilterDrawer
-                    kind='state'
-                    activeCount={stateLogFilterCount}
-                    resetDisabled={!hasStateLogFilters}
-                    onReset={clearStateLogFilters}
-                  >
-                    <NativeSelect
-                      className='w-full'
-                      value={stateLogAction}
-                      onChange={(event) =>
-                        setStateLogAction(
-                          event.target.value as StateLogActionFilter
-                        )
-                      }
-                    >
-                      {stateLogActionFilterOptions.map((value) => (
-                        <NativeSelectOption key={value} value={value}>
-                          {stateLogActionFilterLabel(value, t)}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                    <NativeSelect
-                      className='w-full'
-                      value={stateLogSource}
-                      onChange={(event) =>
-                        setStateLogSource(
-                          event.target.value as StateLogSourceFilter
-                        )
-                      }
-                    >
-                      {stateLogSourceFilterOptions.map((value) => (
-                        <NativeSelectOption key={value} value={value}>
-                          {stateLogSourceFilterLabel(value, t)}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                    <Input
-                      placeholder={t('Request ID')}
-                      value={stateLogRequestId}
-                      onChange={(event) =>
-                        setStateLogRequestId(event.target.value)
-                      }
-                    />
-                    <label className='flex min-w-0 flex-col gap-1'>
-                      <span className='text-muted-foreground text-xs'>
-                        {t('Start time')}
-                      </span>
-                      <Input
-                        type='datetime-local'
-                        value={stateLogStartTime}
-                        onChange={(event) =>
-                          setStateLogStartTime(event.target.value)
-                        }
-                      />
-                    </label>
-                    <label className='flex min-w-0 flex-col gap-1'>
-                      <span className='text-muted-foreground text-xs'>
-                        {t('End time')}
-                      </span>
-                      <Input
-                        type='datetime-local'
-                        value={stateLogEndTime}
-                        onChange={(event) =>
-                          setStateLogEndTime(event.target.value)
-                        }
-                      />
-                    </label>
-                    {stateLogAccountId ? (
-                      <div className='flex min-w-0 items-center gap-2'>
-                        <Badge
-                          variant='secondary'
-                          className='max-w-full gap-1 overflow-hidden'
-                        >
-                          <span className='shrink-0'>
-                            {t('Account filter')}:
-                          </span>
-                          <span className='truncate'>
-                            {stateLogAccountLabel || `#${stateLogAccountId}`}
-                          </span>
-                        </Badge>
-                        <Button
-                          variant='ghost'
-                          size='icon-xs'
-                          title={t('Clear filters')}
-                          onClick={() => {
-                            setStateLogAccountId(null)
-                            setStateLogAccountLabel('')
-                            setStateLogPage(1)
-                          }}
-                        >
-                          <X aria-hidden='true' />
-                        </Button>
-                      </div>
+                                          <Trash2 data-icon='inline-start' />
+                                          {t('Delete selected accounts')}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  <div className='min-w-0'>
+                                    <Table className='min-w-[760px] table-fixed'>
+                                      <TableHeader>
+                                        <TableRow>
+                                          <TableHead className='w-10'>
+                                            <Checkbox
+                                              checked={
+                                                allAccountsOnPageSelected
+                                              }
+                                              indeterminate={
+                                                someAccountsOnPageSelected
+                                              }
+                                              onCheckedChange={(checked) =>
+                                                toggleAllAccountsOnPage(
+                                                  Boolean(checked)
+                                                )
+                                              }
+                                              aria-label={t('Select all')}
+                                            />
+                                          </TableHead>
+                                          <TableHead className='w-[34%]'>
+                                            {t('Account')}
+                                          </TableHead>
+                                          <TableHead className='w-[13%]'>
+                                            {t('Status')}
+                                          </TableHead>
+                                          <TableHead className='w-[18%]'>
+                                            {t('Usage')}
+                                          </TableHead>
+                                          <TableHead className='w-[23%]'>
+                                            {t('Last Used')}
+                                          </TableHead>
+                                          <TableHead className='w-[104px] text-right'>
+                                            {t('Actions')}
+                                          </TableHead>
+                                        </TableRow>
+                                      </TableHeader>
+                                      <TableBody>
+                                        {accounts.map((account) => {
+                                          const fullCredentialSummary =
+                                            formatCredentialSummary(
+                                              account.credential_summary
+                                            )
+                                          const accountIdentity =
+                                            formatAccountIdentity(
+                                              account.credential_summary,
+                                              account.name
+                                            )
+                                          const accountFileLabel =
+                                            poolAccountFileLabel(account)
+                                          const statusReason =
+                                            visibleAccountStatusReason(
+                                              account,
+                                              nowSeconds,
+                                              t
+                                            )
+                                          const accountEnabled =
+                                            account.status ===
+                                              CHANNEL_STATUS.ENABLED &&
+                                            account.schedulable
+
+                                          return (
+                                            <TableRow key={account.id}>
+                                              <TableCell>
+                                                <Checkbox
+                                                  checked={selectedAccountIds.includes(
+                                                    account.id
+                                                  )}
+                                                  onCheckedChange={(checked) =>
+                                                    toggleAccountSelection(
+                                                      account.id,
+                                                      Boolean(checked)
+                                                    )
+                                                  }
+                                                  aria-label={t('Select row')}
+                                                />
+                                              </TableCell>
+                                              <TableCell className='min-w-0'>
+                                                <div
+                                                  className='truncate font-medium'
+                                                  title={accountRowTitle(
+                                                    account,
+                                                    fullCredentialSummary,
+                                                    t
+                                                  )}
+                                                >
+                                                  {accountIdentity}
+                                                </div>
+                                                <div
+                                                  className='text-muted-foreground truncate text-xs'
+                                                  title={`${t('File')}: ${accountFileLabel}`}
+                                                >
+                                                  {t('File')}:{' '}
+                                                  {accountFileLabel}
+                                                </div>
+                                                {account.models ? (
+                                                  <div className='text-muted-foreground truncate text-xs'>
+                                                    {t('Models')}:{' '}
+                                                    {account.models}
+                                                  </div>
+                                                ) : null}
+                                              </TableCell>
+                                              <TableCell className='min-w-0'>
+                                                <div className='flex flex-col gap-1'>
+                                                  <StatusBadge
+                                                    label={statusLabel(
+                                                      account,
+                                                      nowSeconds,
+                                                      t
+                                                    )}
+                                                    variant={statusVariant(
+                                                      account,
+                                                      nowSeconds
+                                                    )}
+                                                    copyable={false}
+                                                  />
+                                                  {statusReason ? (
+                                                    <span
+                                                      className='text-muted-foreground max-w-full truncate text-xs'
+                                                      title={statusReason}
+                                                    >
+                                                      {limitInlineText(
+                                                        statusReason,
+                                                        80
+                                                      )}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                              </TableCell>
+                                              <TableCell
+                                                className='min-w-0 text-xs'
+                                                title={[
+                                                  `${t('Daily requests')}: ${formatUsageNumber(
+                                                    account.daily_request_count
+                                                  )} / ${formatLimitValue(
+                                                    account.daily_request_limit,
+                                                    t
+                                                  )}`,
+                                                  `${t('Max concurrency')}: ${formatLimitValue(
+                                                    account.max_concurrency,
+                                                    t
+                                                  )}`,
+                                                  `${t('RPM')}: ${formatLimitValue(
+                                                    account.rate_limit_rpm,
+                                                    t
+                                                  )}`,
+                                                  `${t('Daily quota')}: ${formatUsageNumber(
+                                                    account.daily_used_quota
+                                                  )} / ${formatLimitValue(
+                                                    account.daily_quota_limit,
+                                                    t
+                                                  )}`,
+                                                ].join('\n')}
+                                              >
+                                                <div className='truncate'>
+                                                  {t('Request')}:&nbsp;
+                                                  {formatUsageNumber(
+                                                    account.daily_request_count
+                                                  )}{' '}
+                                                  /{' '}
+                                                  {formatLimitValue(
+                                                    account.daily_request_limit,
+                                                    t
+                                                  )}
+                                                </div>
+                                                <div className='text-muted-foreground mt-1 truncate'>
+                                                  {t('Success')}:{' '}
+                                                  {account.success_count ?? 0} ·{' '}
+                                                  {t('Failed')}:{' '}
+                                                  {account.failed_count ?? 0}
+                                                </div>
+                                              </TableCell>
+                                              <TableCell
+                                                className='min-w-0 text-xs'
+                                                title={[
+                                                  `${t('Last Used')}: ${
+                                                    account.last_used_time
+                                                      ? formatTimestamp(
+                                                          account.last_used_time
+                                                        )
+                                                      : '-'
+                                                  }`,
+                                                  `${t('Last check time')}: ${
+                                                    account.last_checked_time
+                                                      ? formatTimestamp(
+                                                          account.last_checked_time
+                                                        )
+                                                      : '-'
+                                                  }`,
+                                                  account.next_refresh_time
+                                                    ? `${t('Next refresh')}: ${formatTimestamp(
+                                                        account.next_refresh_time
+                                                      )}`
+                                                    : '',
+                                                ]
+                                                  .filter(Boolean)
+                                                  .join('\n')}
+                                              >
+                                                <div className='truncate'>
+                                                  {account.last_used_time
+                                                    ? formatTimestamp(
+                                                        account.last_used_time
+                                                      )
+                                                    : '-'}
+                                                </div>
+                                                <div className='text-muted-foreground mt-1 truncate'>
+                                                  {t('Last check time')}:&nbsp;
+                                                  {account.last_checked_time
+                                                    ? formatTimestamp(
+                                                        account.last_checked_time
+                                                      )
+                                                    : '-'}
+                                                </div>
+                                                {account.next_refresh_time ? (
+                                                  <div
+                                                    className='text-muted-foreground mt-1 truncate'
+                                                    title={`${t('Next refresh')}: ${formatTimestamp(
+                                                      account.next_refresh_time
+                                                    )}`}
+                                                  >
+                                                    {t('Next refresh')}:&nbsp;
+                                                    {formatTimestamp(
+                                                      account.next_refresh_time
+                                                    )}
+                                                  </div>
+                                                ) : null}
+                                              </TableCell>
+                                              <TableCell className='w-[104px]'>
+                                                <div className='flex flex-nowrap justify-end gap-1.5'>
+                                                  <Button
+                                                    variant='ghost'
+                                                    size='icon-sm'
+                                                    aria-label={t(
+                                                      'Check Account'
+                                                    )}
+                                                    title={t('Check Account')}
+                                                    disabled={
+                                                      checkingAccountId ===
+                                                        account.id ||
+                                                      !canOperateAccountPool
+                                                    }
+                                                    onClick={() =>
+                                                      void checkAccount(account)
+                                                    }
+                                                  >
+                                                    {checkingAccountId ===
+                                                    account.id ? (
+                                                      <Loader2 className='animate-spin' />
+                                                    ) : (
+                                                      <Stethoscope />
+                                                    )}
+                                                  </Button>
+                                                  <Button
+                                                    variant='ghost'
+                                                    size='icon-sm'
+                                                    aria-label={
+                                                      accountEnabled
+                                                        ? t('Disable')
+                                                        : t('Enable')
+                                                    }
+                                                    title={
+                                                      accountEnabled
+                                                        ? t('Disable')
+                                                        : t('Enable')
+                                                    }
+                                                    disabled={
+                                                      !canOperateAccountPool
+                                                    }
+                                                    onClick={() =>
+                                                      void setAccountEnabled(
+                                                        account,
+                                                        !accountEnabled
+                                                      )
+                                                    }
+                                                  >
+                                                    {accountEnabled ? (
+                                                      <PowerOff />
+                                                    ) : (
+                                                      <Power />
+                                                    )}
+                                                  </Button>
+                                                  <DropdownMenu>
+                                                    <DropdownMenuTrigger
+                                                      render={
+                                                        <Button
+                                                          variant='ghost'
+                                                          size='icon-sm'
+                                                          aria-label={t('More')}
+                                                          title={t('More')}
+                                                        >
+                                                          <MoreHorizontal />
+                                                        </Button>
+                                                      }
+                                                    />
+                                                    <DropdownMenuContent
+                                                      align='end'
+                                                      className='w-44'
+                                                    >
+                                                      <DropdownMenuGroup>
+                                                        <DropdownMenuItem
+                                                          disabled={
+                                                            !canSensitiveWriteAccountPool
+                                                          }
+                                                          onClick={() =>
+                                                            openEditAccount(
+                                                              account
+                                                            )
+                                                          }
+                                                        >
+                                                          <Pencil />
+                                                          {t('Edit')}
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                          disabled={
+                                                            !canOperateAccountPool
+                                                          }
+                                                          onClick={() =>
+                                                            void clearCooldown(
+                                                              account
+                                                            )
+                                                          }
+                                                        >
+                                                          <RefreshCw />
+                                                          {t('Clear cooldown')}
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                          disabled={
+                                                            !canOperateAccountPool
+                                                          }
+                                                          onClick={() =>
+                                                            void resetRuntime(
+                                                              account
+                                                            )
+                                                          }
+                                                        >
+                                                          <RotateCcw />
+                                                          {t('Reset runtime')}
+                                                        </DropdownMenuItem>
+                                                        {account.platform ===
+                                                          'codex' &&
+                                                          account.auth_type ===
+                                                            'official_oauth' && (
+                                                            <DropdownMenuItem
+                                                              disabled={
+                                                                !canSensitiveWriteAccountPool
+                                                              }
+                                                              onClick={() =>
+                                                                void refreshCredential(
+                                                                  account
+                                                                )
+                                                              }
+                                                            >
+                                                              <ShieldCheck />
+                                                              {t(
+                                                                'Refresh credential'
+                                                              )}
+                                                            </DropdownMenuItem>
+                                                          )}
+                                                        <DropdownMenuItem
+                                                          variant='destructive'
+                                                          disabled={
+                                                            !canSensitiveWriteAccountPool
+                                                          }
+                                                          onClick={() =>
+                                                            void deleteAccount(
+                                                              account
+                                                            )
+                                                          }
+                                                        >
+                                                          <Trash2 />
+                                                          {t('Delete')}
+                                                        </DropdownMenuItem>
+                                                      </DropdownMenuGroup>
+                                                    </DropdownMenuContent>
+                                                  </DropdownMenu>
+                                                </div>
+                                              </TableCell>
+                                            </TableRow>
+                                          )
+                                        })}
+                                        {!accountsQuery.isLoading &&
+                                          accounts.length === 0 && (
+                                            <TableRow>
+                                              <TableCell
+                                                colSpan={6}
+                                                className='h-24 text-center'
+                                              >
+                                                {t('No accounts found')}
+                                              </TableCell>
+                                            </TableRow>
+                                          )}
+                                      </TableBody>
+                                    </Table>
+                                  </div>
+                                  <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                                    <span className='text-muted-foreground'>
+                                      {t('Page {{page}} of {{total}}', {
+                                        page,
+                                        total: totalPages,
+                                      })}
+                                    </span>
+                                    <div className='flex gap-2'>
+                                      <Button
+                                        variant='outline'
+                                        size='sm'
+                                        disabled={page <= 1}
+                                        onClick={() =>
+                                          setPage((current) =>
+                                            Math.max(1, current - 1)
+                                          )
+                                        }
+                                      >
+                                        {t('Previous')}
+                                      </Button>
+                                      <Button
+                                        variant='outline'
+                                        size='sm'
+                                        disabled={page >= totalPages}
+                                        onClick={() =>
+                                          setPage((current) =>
+                                            Math.min(totalPages, current + 1)
+                                          )
+                                        }
+                                      >
+                                        {t('Next')}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                      </Accordion>
                     ) : null}
-                  </AccountPoolHistoryFilterDrawer>
-                </div>
-              </div>
-              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex'>
-                <div className='grid gap-2 lg:grid-cols-[220px_200px_minmax(240px,1fr)]'>
-                  <Select
-                    items={stateLogActionFilterOptions.map((value) => ({
-                      value,
-                      label: stateLogActionFilterLabel(value, t),
-                    }))}
-                    value={stateLogAction}
-                    onValueChange={(value) =>
-                      setStateLogAction(
-                        (value as StateLogActionFilter | null) ?? 'all'
-                      )
-                    }
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {stateLogActionFilterOptions.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {stateLogActionFilterLabel(value, t)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    items={stateLogSourceFilterOptions.map((value) => ({
-                      value,
-                      label: stateLogSourceFilterLabel(value, t),
-                    }))}
-                    value={stateLogSource}
-                    onValueChange={(value) =>
-                      setStateLogSource(
-                        (value as StateLogSourceFilter | null) ?? 'all'
-                      )
-                    }
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {stateLogSourceFilterOptions.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {stateLogSourceFilterLabel(value, t)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    placeholder={t(
-                      'Search account, action, source, actor, or reason'
-                    )}
-                    value={stateLogSearch}
-                    onChange={(event) => setStateLogSearch(event.target.value)}
-                  />
-                </div>
-                <div className='grid gap-2 lg:grid-cols-[minmax(180px,1fr)_180px_180px_auto]'>
-                  <Input
-                    placeholder={t('Request ID')}
-                    value={stateLogRequestId}
-                    onChange={(event) =>
-                      setStateLogRequestId(event.target.value)
-                    }
-                  />
-                  <label className='flex min-w-0 flex-col gap-1'>
-                    <span className='text-muted-foreground text-xs'>
-                      {t('Start time')}
-                    </span>
-                    <Input
-                      type='datetime-local'
-                      value={stateLogStartTime}
-                      onChange={(event) =>
-                        setStateLogStartTime(event.target.value)
-                      }
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              <TabsContent value='auth-files' className='m-0'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Account Credentials')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Manage imported account credentials as reusable pool resources.'
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className='p-0'>
+                    <AuthFilesPanel
+                      groups={groups}
+                      canRead={canReadAccountPoolAuthFile}
+                      canSensitiveWrite={canSensitiveWriteAccountPoolAuthFile}
                     />
-                  </label>
-                  <label className='flex min-w-0 flex-col gap-1'>
-                    <span className='text-muted-foreground text-xs'>
-                      {t('End time')}
-                    </span>
-                    <Input
-                      type='datetime-local'
-                      value={stateLogEndTime}
-                      onChange={(event) =>
-                        setStateLogEndTime(event.target.value)
-                      }
-                    />
-                  </label>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    className='self-end'
-                    disabled={!hasStateLogFilters}
-                    onClick={clearStateLogFilters}
-                  >
-                    <FilterX data-icon='inline-start' />
-                    {t('Clear filters')}
-                  </Button>
-                </div>
-                {stateLogAccountId ? (
-                  <div className='flex min-w-0 items-center gap-2'>
-                    <Badge
-                      variant='secondary'
-                      className='max-w-full gap-1 overflow-hidden'
-                    >
-                      <span className='shrink-0'>{t('Account filter')}:</span>
-                      <span className='truncate'>
-                        {stateLogAccountLabel || `#${stateLogAccountId}`}
-                      </span>
-                    </Badge>
-                    <Button
-                      variant='ghost'
-                      size='icon-xs'
-                      title={t('Clear filters')}
-                      onClick={() => {
-                        setStateLogAccountId(null)
-                        setStateLogAccountLabel('')
-                        setStateLogPage(1)
-                      }}
-                    >
-                      <X aria-hidden='true' />
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-              <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
-                {[
-                  {
-                    label: t('Audit logs'),
-                    value: formatUsageNumber(stateLogAuditSummary?.total ?? 0),
-                  },
-                  {
-                    label: t('Manual changes'),
-                    value: formatUsageNumber(
-                      stateLogAuditSummary?.manual_total ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Automatic changes'),
-                    value: formatUsageNumber(
-                      stateLogAuditSummary?.automatic_total ?? 0
-                    ),
-                  },
-                  {
-                    label: t('Affected accounts'),
-                    value: formatUsageNumber(
-                      stateLogAuditSummary?.affected_accounts ?? 0
-                    ),
-                  },
-                ].map((metric) => (
-                  <div key={metric.label} className='min-w-0'>
-                    <div className='text-muted-foreground truncate text-xs'>
-                      {metric.label}
-                    </div>
-                    <div className='truncate font-medium'>{metric.value}</div>
-                  </div>
-                ))}
-              </div>
-              <div className='border-border grid grid-cols-1 border-b lg:grid-cols-3'>
-                <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
-                  <div className='text-sm font-medium'>
-                    {t('Action summary')}
-                  </div>
-                  {(stateLogAuditSummary?.action_stats ?? [])
-                    .slice(0, 5)
-                    .map((bucket) => (
-                      <div
-                        key={bucket.key || 'unknown-action'}
-                        className='flex items-center justify-between gap-2 text-xs'
-                      >
-                        <div className='min-w-0'>
-                          <div className='truncate font-medium'>
-                            {stateLogActionLabel(bucket.key, t)}
-                          </div>
-                          <div className='text-muted-foreground'>
-                            {bucket.latest_at
-                              ? formatTimestamp(bucket.latest_at)
-                              : '-'}
-                          </div>
-                        </div>
-                        <Badge variant='secondary'>
-                          {formatUsageNumber(bucket.total)}
-                        </Badge>
-                      </div>
-                    ))}
-                  {!stateLogAuditQuery.isLoading &&
-                    (stateLogAuditSummary?.action_stats ?? []).length === 0 && (
-                      <div className='text-muted-foreground text-xs'>
-                        {t('No audit summary yet')}
-                      </div>
-                    )}
-                </div>
-                <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
-                  <div className='text-sm font-medium'>
-                    {t('Source summary')}
-                  </div>
-                  {(stateLogAuditSummary?.source_stats ?? [])
-                    .slice(0, 5)
-                    .map((bucket) => (
-                      <div
-                        key={bucket.key || 'unknown-source'}
-                        className='flex items-center justify-between gap-2 text-xs'
-                      >
-                        <div className='min-w-0'>
-                          <div className='truncate font-medium'>
-                            {stateLogSourceLabel(bucket.key, t)}
-                          </div>
-                          <div className='text-muted-foreground'>
-                            {bucket.latest_at
-                              ? formatTimestamp(bucket.latest_at)
-                              : '-'}
-                          </div>
-                        </div>
-                        <Badge variant='secondary'>
-                          {formatUsageNumber(bucket.total)}
-                        </Badge>
-                      </div>
-                    ))}
-                  {!stateLogAuditQuery.isLoading &&
-                    (stateLogAuditSummary?.source_stats ?? []).length === 0 && (
-                      <div className='text-muted-foreground text-xs'>
-                        {t('No audit summary yet')}
-                      </div>
-                    )}
-                </div>
-                <div className='flex flex-col gap-2 p-3'>
-                  <div className='text-sm font-medium'>
-                    {t('Recent bulk operations')}
-                  </div>
-                  {(stateLogAuditSummary?.recent_bulk_operations ?? [])
-                    .slice(0, 3)
-                    .map((operation, index) => (
-                      <div
-                        key={`${operation.request_id || operation.last_at}-${index}`}
-                        className='border-border flex flex-col gap-1 border-t pt-2 text-xs first:border-t-0 first:pt-0'
-                      >
-                        <div className='flex items-center justify-between gap-2'>
-                          <span className='min-w-0 truncate font-medium'>
-                            {stateLogActionLabel(operation.action, t)}
-                          </span>
-                          <Badge variant='secondary'>
-                            {t('{{count}} accounts affected', {
-                              count: operation.account_count,
-                            })}
-                          </Badge>
-                        </div>
-                        <div className='text-muted-foreground truncate'>
-                          {formatTimestamp(operation.last_at)} ·{' '}
-                          {stateLogSourceLabel(operation.source, t)}
-                          {operation.actor
-                            ? ` · ${t('Actor')}: ${operation.actor}`
-                            : ''}
-                        </div>
-                        <div className='text-muted-foreground break-words'>
-                          {bulkAuditSampleText(operation, t)}
-                        </div>
-                        {operation.request_id ? (
-                          <div className='text-muted-foreground truncate'>
-                            {t('Request')}: {operation.request_id}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
-                  {!stateLogAuditQuery.isLoading &&
-                    (stateLogAuditSummary?.recent_bulk_operations ?? [])
-                      .length === 0 && (
-                      <div className='text-muted-foreground text-xs'>
-                        {t('No bulk operations found')}
-                      </div>
-                    )}
-                </div>
-              </div>
-              <AccountPoolStateLogsMobileList
-                items={stateLogs}
-                isLoading={stateLogsQuery.isLoading}
-                emptyTitle={t('No state logs found')}
-                onFilterRequest={filterStateLogsByRequest}
-                onFilterAccount={filterStateLogsByAccount}
-              />
-              <div className='hidden overflow-x-auto md:block'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Time')}</TableHead>
-                      <TableHead>{t('Account')}</TableHead>
-                      <TableHead>{t('Action')}</TableHead>
-                      <TableHead>{t('Before state')}</TableHead>
-                      <TableHead>{t('After state')}</TableHead>
-                      <TableHead>{t('Reason')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {stateLogs.map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {formatTimestamp(log.created_at)}
-                          {log.request_id ? (
-                            <Button
-                              variant='link'
-                              size='xs'
-                              className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
-                              title={t('Click to filter by request')}
-                              onClick={() =>
-                                filterStateLogsByRequest(log.request_id ?? '')
-                              }
-                            >
-                              {log.request_id}
-                            </Button>
-                          ) : (
-                            <div className='text-muted-foreground mt-1'>-</div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              <TabsContent value='usage-logs' className='m-0'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Account Records')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Inspect usage records, state changes, and check tasks.'
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className='p-0'>
+                    {logViewTabs}
+                    <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <Input
+                          className='min-w-0 flex-1'
+                          placeholder={t(
+                            'Search account, channel, model, user, or error'
                           )}
-                        </TableCell>
-                        <TableCell className='min-w-[190px]'>
-                          {log.pool_account_id > 0 ? (
+                          value={usageLogSearch}
+                          onChange={(event) =>
+                            setUsageLogSearch(event.target.value)
+                          }
+                        />
+                        <AccountPoolHistoryFilterDrawer
+                          kind='usage'
+                          activeCount={usageLogFilterCount}
+                          resetDisabled={usageLogFilterCount === 0}
+                          onReset={clearUsageLogFilters}
+                        >
+                          <div className='grid grid-cols-3 gap-2'>
                             <Button
-                              variant='link'
+                              variant={
+                                usageLogStatus === 'all'
+                                  ? 'secondary'
+                                  : 'outline'
+                              }
                               size='sm'
-                              className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
-                              title={t('Click to filter by account')}
-                              onClick={() =>
-                                filterStateLogsByAccount(
-                                  log.pool_account_id,
-                                  log.pool_account_name ||
-                                    `#${log.pool_account_id}`
-                                )
-                              }
+                              onClick={() => setUsageLogStatus('all')}
                             >
-                              {log.pool_account_name ||
-                                `#${log.pool_account_id}`}
+                              {t('All')}
                             </Button>
-                          ) : (
-                            <div className='text-sm font-medium'>
-                              {log.pool_account_name ||
-                                `#${log.pool_account_id}`}
-                            </div>
-                          )}
-                          <div className='text-muted-foreground text-xs'>
-                            {log.pool_group_name || `#${log.pool_group_id}`} ·{' '}
-                            {log.pool_account_auth_type || '-'}
+                            <Button
+                              variant={
+                                usageLogStatus === 'success'
+                                  ? 'secondary'
+                                  : 'outline'
+                              }
+                              size='sm'
+                              onClick={() => setUsageLogStatus('success')}
+                            >
+                              {t('Success')}
+                            </Button>
+                            <Button
+                              variant={
+                                usageLogStatus === 'failed'
+                                  ? 'secondary'
+                                  : 'outline'
+                              }
+                              size='sm'
+                              onClick={() => setUsageLogStatus('failed')}
+                            >
+                              {t('Failed')}
+                            </Button>
                           </div>
-                        </TableCell>
-                        <TableCell className='min-w-[170px]'>
-                          <div className='text-sm'>
-                            {stateLogActionLabel(log.action, t)}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {t('Source')}: {log.source || '-'}
-                            {log.actor ? ` · ${t('Actor')}: ${log.actor}` : ''}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[180px] text-xs'>
-                          {poolAccountStatusText(
-                            log.before_status,
-                            log.before_schedulable,
-                            log.before_unavailable,
-                            t
-                          )}
-                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
-                            {log.before_status_message ||
-                              log.before_disabled_reason ||
-                              '-'}
-                          </div>
-                          {log.before_next_retry_time > 0 ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Next retry')}:&nbsp;
-                              {formatTimestamp(log.before_next_retry_time)}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className='min-w-[180px] text-xs'>
-                          {poolAccountStatusText(
-                            log.after_status,
-                            log.after_schedulable,
-                            log.after_unavailable,
-                            t
-                          )}
-                          <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
-                            {log.after_status_message ||
-                              log.after_disabled_reason ||
-                              '-'}
-                          </div>
-                          {log.after_next_retry_time > 0 ? (
-                            <div className='text-muted-foreground mt-1'>
-                              {t('Next retry')}:&nbsp;
-                              {formatTimestamp(log.after_next_retry_time)}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className='max-w-[280px] text-xs break-words'>
-                          {log.reason || '-'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!stateLogsQuery.isLoading && stateLogs.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center'>
-                          {t('No state logs found')}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
-                <span className='text-muted-foreground'>
-                  {t('Page {{page}} of {{total}}', {
-                    page: stateLogPage,
-                    total: stateLogTotalPages,
-                  })}
-                </span>
-                <div className='flex gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={stateLogPage <= 1}
-                    onClick={() =>
-                      setStateLogPage((current) => Math.max(1, current - 1))
-                    }
-                  >
-                    {t('Previous')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={stateLogPage >= stateLogTotalPages}
-                    onClick={() =>
-                      setStateLogPage((current) =>
-                        Math.min(stateLogTotalPages, current + 1)
-                      )
-                    }
-                  >
-                    {t('Next')}
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-            <TabsContent value='check-tasks' className='m-0 min-h-0'>
-              {logViewTabs}
-              <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
-                <div className='flex min-w-0 items-center gap-2'>
-                  <Input
-                    className='min-w-0 flex-1'
-                    placeholder={t(
-                      'Search task, group, actor, request, or message'
-                    )}
-                    value={checkTaskSearch}
-                    onChange={(event) => setCheckTaskSearch(event.target.value)}
-                  />
-                  <AccountPoolHistoryFilterDrawer
-                    kind='check'
-                    activeCount={checkTaskFilterCount}
-                    resetDisabled={checkTaskFilterCount === 0}
-                    onReset={clearCheckTaskFilters}
-                  >
-                    <div className='grid grid-cols-2 gap-2'>
-                      {checkTaskStatusFilterOptions.map((value) => (
+                        </AccountPoolHistoryFilterDrawer>
+                      </div>
+                    </div>
+                    <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
+                      <div className='flex flex-wrap gap-2'>
                         <Button
-                          key={value}
-                          type='button'
                           variant={
-                            checkTaskStatus === value ? 'secondary' : 'outline'
+                            usageLogStatus === 'all' ? 'secondary' : 'outline'
                           }
                           size='sm'
-                          onClick={() => setCheckTaskStatus(value)}
+                          onClick={() => setUsageLogStatus('all')}
                         >
-                          {checkTaskStatusFilterLabel(value, t)}
+                          {t('All')}
                         </Button>
-                      ))}
+                        <Button
+                          variant={
+                            usageLogStatus === 'success'
+                              ? 'secondary'
+                              : 'outline'
+                          }
+                          size='sm'
+                          onClick={() => setUsageLogStatus('success')}
+                        >
+                          {t('Success')}
+                        </Button>
+                        <Button
+                          variant={
+                            usageLogStatus === 'failed'
+                              ? 'secondary'
+                              : 'outline'
+                          }
+                          size='sm'
+                          onClick={() => setUsageLogStatus('failed')}
+                        >
+                          {t('Failed')}
+                        </Button>
+                      </div>
+                      <Input
+                        className='md:max-w-xs'
+                        placeholder={t(
+                          'Search account, channel, model, user, or error'
+                        )}
+                        value={usageLogSearch}
+                        onChange={(event) =>
+                          setUsageLogSearch(event.target.value)
+                        }
+                      />
                     </div>
-                  </AccountPoolHistoryFilterDrawer>
-                </div>
-              </div>
-              <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
-                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
-                  <Select
-                    items={checkTaskStatusFilterOptions.map((value) => ({
-                      value,
-                      label: checkTaskStatusFilterLabel(value, t),
-                    }))}
-                    value={checkTaskStatus}
-                    onValueChange={(value) =>
-                      setCheckTaskStatus(
-                        (value as CheckTaskStatusFilter | null) ?? 'all'
-                      )
-                    }
-                  >
-                    <SelectTrigger className='w-full sm:w-[180px]'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {checkTaskStatusFilterOptions.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {checkTaskStatusFilterLabel(value, t)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Input
-                  className='md:max-w-xs'
-                  placeholder={t(
-                    'Search task, group, actor, request, or message'
-                  )}
-                  value={checkTaskSearch}
-                  onChange={(event) => setCheckTaskSearch(event.target.value)}
-                />
-              </div>
-              <AccountPoolCheckTasksMobileList
-                items={checkTasks}
-                isLoading={checkTasksQuery.isLoading}
-                emptyTitle={t('No check tasks found')}
-                onViewTask={viewCheckTask}
-              />
-              <div className='hidden overflow-x-auto md:block'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Task')}</TableHead>
-                      <TableHead>{t('Group')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Progress')}</TableHead>
-                      <TableHead>{t('Result')}</TableHead>
-                      <TableHead>{t('Actor')}</TableHead>
-                      <TableHead>{t('Created')}</TableHead>
-                      <TableHead>{t('Finished')}</TableHead>
-                      <TableHead>{t('Message')}</TableHead>
-                      <TableHead>{t('Action')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {checkTasks.map((task) => (
-                      <TableRow key={task.id}>
-                        <TableCell className='min-w-[90px] text-sm font-medium'>
-                          #{task.id}
-                          {task.request_id ? (
-                            <div className='text-muted-foreground mt-1 max-w-[160px] truncate text-xs'>
-                              {task.request_id}
+                    <AccountPoolUsageLogsMobileList
+                      items={usageLogs}
+                      isLoading={usageLogsQuery.isLoading}
+                      emptyTitle={t('No usage logs found')}
+                      onFilterRequest={filterStateLogsByRequest}
+                      onFilterAccount={filterStateLogsByAccount}
+                    />
+                    <div className='hidden overflow-x-auto md:block'>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('Time')}</TableHead>
+                            <TableHead>{t('Account')}</TableHead>
+                            <TableHead>{t('Channel')}</TableHead>
+                            <TableHead>{t('Model')}</TableHead>
+                            <TableHead>{t('Usage')}</TableHead>
+                            <TableHead>{t('Result')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {usageLogs.map((log) => (
+                            <TableRow key={log.id}>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                {formatTimestamp(log.created_at)}
+                                {log.request_id ? (
+                                  <Button
+                                    variant='link'
+                                    size='xs'
+                                    className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
+                                    title={t('Click to filter by request')}
+                                    onClick={() =>
+                                      filterStateLogsByRequest(
+                                        log.request_id ?? ''
+                                      )
+                                    }
+                                  >
+                                    {log.request_id}
+                                  </Button>
+                                ) : (
+                                  <div className='text-muted-foreground mt-1'>
+                                    -
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell className='min-w-[190px]'>
+                                {log.pool_account_id > 0 ? (
+                                  <Button
+                                    variant='link'
+                                    size='sm'
+                                    className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
+                                    title={t('Click to filter by account')}
+                                    onClick={() =>
+                                      filterStateLogsByAccount(
+                                        log.pool_account_id,
+                                        log.pool_account_name ||
+                                          `#${log.pool_account_id}`
+                                      )
+                                    }
+                                  >
+                                    {log.pool_account_name ||
+                                      `#${log.pool_account_id}`}
+                                  </Button>
+                                ) : (
+                                  <div className='text-sm font-medium'>
+                                    {log.pool_account_name ||
+                                      `#${log.pool_account_id}`}
+                                  </div>
+                                )}
+                                <div className='text-muted-foreground text-xs'>
+                                  {log.pool_group_name ||
+                                    `#${log.pool_group_id}`}{' '}
+                                  · {log.pool_account_auth_type || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[160px]'>
+                                <div className='text-sm'>
+                                  {log.channel_name || `#${log.channel_id}`}
+                                </div>
+                                <div className='text-muted-foreground text-xs'>
+                                  {log.username || '-'} /{' '}
+                                  {log.token_name || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[160px] text-xs'>
+                                {log.model_name || '-'}
+                                {log.group ? (
+                                  <div className='text-muted-foreground mt-1'>
+                                    {t('Group')}: {log.group}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className='min-w-[160px] text-xs'>
+                                {t('Quota')}: {formatUsageNumber(log.quota)}
+                                <div className='text-muted-foreground mt-1'>
+                                  {t('Tokens')}:&nbsp;
+                                  {formatUsageNumber(
+                                    log.prompt_tokens + log.completion_tokens
+                                  )}
+                                  &nbsp;· {formatUsageDuration(log.use_time)}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[200px]'>
+                                <div className='flex flex-col gap-1'>
+                                  <StatusBadge
+                                    label={
+                                      log.success ? t('Success') : t('Failed')
+                                    }
+                                    variant={log.success ? 'success' : 'danger'}
+                                    copyable={false}
+                                  />
+                                  {!log.success && (
+                                    <div className='text-muted-foreground max-w-[260px] text-xs break-words'>
+                                      {log.status_code
+                                        ? `${log.status_code} · `
+                                        : ''}
+                                      {log.error_message ||
+                                        log.error_code ||
+                                        '-'}
+                                    </div>
+                                  )}
+                                  {log.retry_index > 0 && (
+                                    <div className='text-muted-foreground text-xs'>
+                                      {t('Retry')}: {log.retry_index}
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!usageLogsQuery.isLoading &&
+                            usageLogs.length === 0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={6}
+                                  className='h-24 text-center'
+                                >
+                                  {t('No usage logs found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                      <span className='text-muted-foreground'>
+                        {t('Page {{page}} of {{total}}', {
+                          page: usageLogPage,
+                          total: usageLogTotalPages,
+                        })}
+                      </span>
+                      <div className='flex gap-2'>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={usageLogPage <= 1}
+                          onClick={() =>
+                            setUsageLogPage((current) =>
+                              Math.max(1, current - 1)
+                            )
+                          }
+                        >
+                          {t('Previous')}
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={usageLogPage >= usageLogTotalPages}
+                          onClick={() =>
+                            setUsageLogPage((current) =>
+                              Math.min(usageLogTotalPages, current + 1)
+                            )
+                          }
+                        >
+                          {t('Next')}
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              <TabsContent value='state-logs' className='m-0'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Account Records')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Inspect usage records, state changes, and check tasks.'
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className='p-0'>
+                    {logViewTabs}
+                    <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <Input
+                          className='min-w-0 flex-1'
+                          placeholder={t(
+                            'Search account, action, source, actor, or reason'
+                          )}
+                          value={stateLogSearch}
+                          onChange={(event) =>
+                            setStateLogSearch(event.target.value)
+                          }
+                        />
+                        <AccountPoolHistoryFilterDrawer
+                          kind='state'
+                          activeCount={stateLogFilterCount}
+                          resetDisabled={!hasStateLogFilters}
+                          onReset={clearStateLogFilters}
+                        >
+                          <NativeSelect
+                            className='w-full'
+                            value={stateLogAction}
+                            onChange={(event) =>
+                              setStateLogAction(
+                                event.target.value as StateLogActionFilter
+                              )
+                            }
+                          >
+                            {stateLogActionFilterOptions.map((value) => (
+                              <NativeSelectOption key={value} value={value}>
+                                {stateLogActionFilterLabel(value, t)}
+                              </NativeSelectOption>
+                            ))}
+                          </NativeSelect>
+                          <NativeSelect
+                            className='w-full'
+                            value={stateLogSource}
+                            onChange={(event) =>
+                              setStateLogSource(
+                                event.target.value as StateLogSourceFilter
+                              )
+                            }
+                          >
+                            {stateLogSourceFilterOptions.map((value) => (
+                              <NativeSelectOption key={value} value={value}>
+                                {stateLogSourceFilterLabel(value, t)}
+                              </NativeSelectOption>
+                            ))}
+                          </NativeSelect>
+                          <Input
+                            placeholder={t('Request ID')}
+                            value={stateLogRequestId}
+                            onChange={(event) =>
+                              setStateLogRequestId(event.target.value)
+                            }
+                          />
+                          <label className='flex min-w-0 flex-col gap-1'>
+                            <span className='text-muted-foreground text-xs'>
+                              {t('Start time')}
+                            </span>
+                            <Input
+                              type='datetime-local'
+                              value={stateLogStartTime}
+                              onChange={(event) =>
+                                setStateLogStartTime(event.target.value)
+                              }
+                            />
+                          </label>
+                          <label className='flex min-w-0 flex-col gap-1'>
+                            <span className='text-muted-foreground text-xs'>
+                              {t('End time')}
+                            </span>
+                            <Input
+                              type='datetime-local'
+                              value={stateLogEndTime}
+                              onChange={(event) =>
+                                setStateLogEndTime(event.target.value)
+                              }
+                            />
+                          </label>
+                          {stateLogAccountId ? (
+                            <div className='flex min-w-0 items-center gap-2'>
+                              <Badge
+                                variant='secondary'
+                                className='max-w-full gap-1 overflow-hidden'
+                              >
+                                <span className='shrink-0'>
+                                  {t('Account filter')}:
+                                </span>
+                                <span className='truncate'>
+                                  {stateLogAccountLabel ||
+                                    `#${stateLogAccountId}`}
+                                </span>
+                              </Badge>
+                              <Button
+                                variant='ghost'
+                                size='icon-xs'
+                                title={t('Clear filters')}
+                                onClick={() => {
+                                  setStateLogAccountId(null)
+                                  setStateLogAccountLabel('')
+                                  setStateLogPage(1)
+                                }}
+                              >
+                                <X aria-hidden='true' />
+                              </Button>
                             </div>
                           ) : null}
-                        </TableCell>
-                        <TableCell className='min-w-[170px]'>
-                          <div className='text-sm'>
-                            {task.pool_group_name || `#${task.pool_group_id}`}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            #{task.pool_group_id}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[120px]'>
-                          <Badge variant={checkTaskBadgeVariant(task.status)}>
-                            {checkTaskStatusLabel(task.status, t)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {t('{{checked}}/{{total}} checked', {
-                            checked: task.checked + task.skipped,
-                            total: task.total,
-                          })}
-                          <div className='text-muted-foreground mt-1'>
-                            {task.total > 0
-                              ? `${checkTaskProgressValue(task)}%`
-                              : '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[170px] text-xs'>
-                          <div>
-                            {t('{{success}} passed', {
-                              success: task.success,
-                            })}
-                          </div>
-                          <div className='text-muted-foreground mt-1'>
-                            {t('{{failed}} failed', {
-                              failed: task.failed,
-                            })}
-                            {' · '}
-                            {t('{{skipped}} skipped', {
-                              skipped: task.skipped,
-                            })}
-                          </div>
-                        </TableCell>
-                        <TableCell className='min-w-[140px] text-xs'>
-                          {task.actor || '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {task.created_time
-                            ? formatTimestamp(task.created_time)
-                            : '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[150px] text-xs'>
-                          {task.finished_time
-                            ? formatTimestamp(task.finished_time)
-                            : '-'}
-                        </TableCell>
-                        <TableCell className='max-w-[300px] min-w-[220px] text-xs break-words'>
-                          {task.message || '-'}
-                        </TableCell>
-                        <TableCell className='min-w-[100px]'>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={() => viewCheckTask(task)}
+                        </AccountPoolHistoryFilterDrawer>
+                      </div>
+                    </div>
+                    <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex'>
+                      <div className='grid gap-2 lg:grid-cols-[220px_200px_minmax(240px,1fr)]'>
+                        <Select
+                          items={stateLogActionFilterOptions.map((value) => ({
+                            value,
+                            label: stateLogActionFilterLabel(value, t),
+                          }))}
+                          value={stateLogAction}
+                          onValueChange={(value) =>
+                            setStateLogAction(
+                              (value as StateLogActionFilter | null) ?? 'all'
+                            )
+                          }
+                        >
+                          <SelectTrigger className='w-full'>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {stateLogActionFilterOptions.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {stateLogActionFilterLabel(value, t)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          items={stateLogSourceFilterOptions.map((value) => ({
+                            value,
+                            label: stateLogSourceFilterLabel(value, t),
+                          }))}
+                          value={stateLogSource}
+                          onValueChange={(value) =>
+                            setStateLogSource(
+                              (value as StateLogSourceFilter | null) ?? 'all'
+                            )
+                          }
+                        >
+                          <SelectTrigger className='w-full'>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {stateLogSourceFilterOptions.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {stateLogSourceFilterLabel(value, t)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          placeholder={t(
+                            'Search account, action, source, actor, or reason'
+                          )}
+                          value={stateLogSearch}
+                          onChange={(event) =>
+                            setStateLogSearch(event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className='grid gap-2 lg:grid-cols-[minmax(180px,1fr)_180px_180px_auto]'>
+                        <Input
+                          placeholder={t('Request ID')}
+                          value={stateLogRequestId}
+                          onChange={(event) =>
+                            setStateLogRequestId(event.target.value)
+                          }
+                        />
+                        <label className='flex min-w-0 flex-col gap-1'>
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Start time')}
+                          </span>
+                          <Input
+                            type='datetime-local'
+                            value={stateLogStartTime}
+                            onChange={(event) =>
+                              setStateLogStartTime(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className='flex min-w-0 flex-col gap-1'>
+                          <span className='text-muted-foreground text-xs'>
+                            {t('End time')}
+                          </span>
+                          <Input
+                            type='datetime-local'
+                            value={stateLogEndTime}
+                            onChange={(event) =>
+                              setStateLogEndTime(event.target.value)
+                            }
+                          />
+                        </label>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          className='self-end'
+                          disabled={!hasStateLogFilters}
+                          onClick={clearStateLogFilters}
+                        >
+                          <FilterX data-icon='inline-start' />
+                          {t('Clear filters')}
+                        </Button>
+                      </div>
+                      {stateLogAccountId ? (
+                        <div className='flex min-w-0 items-center gap-2'>
+                          <Badge
+                            variant='secondary'
+                            className='max-w-full gap-1 overflow-hidden'
                           >
-                            {t('View')}
+                            <span className='shrink-0'>
+                              {t('Account filter')}:
+                            </span>
+                            <span className='truncate'>
+                              {stateLogAccountLabel || `#${stateLogAccountId}`}
+                            </span>
+                          </Badge>
+                          <Button
+                            variant='ghost'
+                            size='icon-xs'
+                            title={t('Clear filters')}
+                            onClick={() => {
+                              setStateLogAccountId(null)
+                              setStateLogAccountLabel('')
+                              setStateLogPage(1)
+                            }}
+                          >
+                            <X aria-hidden='true' />
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!checkTasksQuery.isLoading && checkTasks.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={10} className='h-24 text-center'>
-                          {t('No check tasks found')}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
-                <span className='text-muted-foreground'>
-                  {t('Page {{page}} of {{total}}', {
-                    page: checkTaskPage,
-                    total: checkTaskTotalPages,
-                  })}
-                </span>
-                <div className='flex gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={checkTaskPage <= 1}
-                    onClick={() =>
-                      setCheckTaskPage((current) => Math.max(1, current - 1))
-                    }
-                  >
-                    {t('Previous')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={checkTaskPage >= checkTaskTotalPages}
-                    onClick={() =>
-                      setCheckTaskPage((current) =>
-                        Math.min(checkTaskTotalPages, current + 1)
-                      )
-                    }
-                  >
-                    {t('Next')}
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
-        </section>
-      </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className='border-border grid grid-cols-2 gap-3 border-b p-3 text-sm md:grid-cols-4'>
+                      {[
+                        {
+                          label: t('Audit logs'),
+                          value: formatUsageNumber(
+                            stateLogAuditSummary?.total ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Manual changes'),
+                          value: formatUsageNumber(
+                            stateLogAuditSummary?.manual_total ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Automatic changes'),
+                          value: formatUsageNumber(
+                            stateLogAuditSummary?.automatic_total ?? 0
+                          ),
+                        },
+                        {
+                          label: t('Affected accounts'),
+                          value: formatUsageNumber(
+                            stateLogAuditSummary?.affected_accounts ?? 0
+                          ),
+                        },
+                      ].map((metric) => (
+                        <div key={metric.label} className='min-w-0'>
+                          <div className='text-muted-foreground truncate text-xs'>
+                            {metric.label}
+                          </div>
+                          <div className='truncate font-medium'>
+                            {metric.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className='border-border grid grid-cols-1 border-b lg:grid-cols-3'>
+                      <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
+                        <div className='text-sm font-medium'>
+                          {t('Action summary')}
+                        </div>
+                        {(stateLogAuditSummary?.action_stats ?? [])
+                          .slice(0, 5)
+                          .map((bucket) => (
+                            <div
+                              key={bucket.key || 'unknown-action'}
+                              className='flex items-center justify-between gap-2 text-xs'
+                            >
+                              <div className='min-w-0'>
+                                <div className='truncate font-medium'>
+                                  {stateLogActionLabel(bucket.key, t)}
+                                </div>
+                                <div className='text-muted-foreground'>
+                                  {bucket.latest_at
+                                    ? formatTimestamp(bucket.latest_at)
+                                    : '-'}
+                                </div>
+                              </div>
+                              <Badge variant='secondary'>
+                                {formatUsageNumber(bucket.total)}
+                              </Badge>
+                            </div>
+                          ))}
+                        {!stateLogAuditQuery.isLoading &&
+                          (stateLogAuditSummary?.action_stats ?? []).length ===
+                            0 && (
+                            <div className='text-muted-foreground text-xs'>
+                              {t('No audit summary yet')}
+                            </div>
+                          )}
+                      </div>
+                      <div className='border-border flex flex-col gap-2 border-b p-3 lg:border-r lg:border-b-0'>
+                        <div className='text-sm font-medium'>
+                          {t('Source summary')}
+                        </div>
+                        {(stateLogAuditSummary?.source_stats ?? [])
+                          .slice(0, 5)
+                          .map((bucket) => (
+                            <div
+                              key={bucket.key || 'unknown-source'}
+                              className='flex items-center justify-between gap-2 text-xs'
+                            >
+                              <div className='min-w-0'>
+                                <div className='truncate font-medium'>
+                                  {stateLogSourceLabel(bucket.key, t)}
+                                </div>
+                                <div className='text-muted-foreground'>
+                                  {bucket.latest_at
+                                    ? formatTimestamp(bucket.latest_at)
+                                    : '-'}
+                                </div>
+                              </div>
+                              <Badge variant='secondary'>
+                                {formatUsageNumber(bucket.total)}
+                              </Badge>
+                            </div>
+                          ))}
+                        {!stateLogAuditQuery.isLoading &&
+                          (stateLogAuditSummary?.source_stats ?? []).length ===
+                            0 && (
+                            <div className='text-muted-foreground text-xs'>
+                              {t('No audit summary yet')}
+                            </div>
+                          )}
+                      </div>
+                      <div className='flex flex-col gap-2 p-3'>
+                        <div className='text-sm font-medium'>
+                          {t('Recent bulk operations')}
+                        </div>
+                        {(stateLogAuditSummary?.recent_bulk_operations ?? [])
+                          .slice(0, 3)
+                          .map((operation, index) => (
+                            <div
+                              key={`${operation.request_id || operation.last_at}-${index}`}
+                              className='border-border flex flex-col gap-1 border-t pt-2 text-xs first:border-t-0 first:pt-0'
+                            >
+                              <div className='flex items-center justify-between gap-2'>
+                                <span className='min-w-0 truncate font-medium'>
+                                  {stateLogActionLabel(operation.action, t)}
+                                </span>
+                                <Badge variant='secondary'>
+                                  {t('{{count}} accounts affected', {
+                                    count: operation.account_count,
+                                  })}
+                                </Badge>
+                              </div>
+                              <div className='text-muted-foreground truncate'>
+                                {formatTimestamp(operation.last_at)} ·{' '}
+                                {stateLogSourceLabel(operation.source, t)}
+                                {operation.actor
+                                  ? ` · ${t('Actor')}: ${operation.actor}`
+                                  : ''}
+                              </div>
+                              <div className='text-muted-foreground break-words'>
+                                {bulkAuditSampleText(operation, t)}
+                              </div>
+                              {operation.request_id ? (
+                                <div className='text-muted-foreground truncate'>
+                                  {t('Request')}: {operation.request_id}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                        {!stateLogAuditQuery.isLoading &&
+                          (stateLogAuditSummary?.recent_bulk_operations ?? [])
+                            .length === 0 && (
+                            <div className='text-muted-foreground text-xs'>
+                              {t('No bulk operations found')}
+                            </div>
+                          )}
+                      </div>
+                    </div>
+                    <AccountPoolStateLogsMobileList
+                      items={stateLogs}
+                      isLoading={stateLogsQuery.isLoading}
+                      emptyTitle={t('No state logs found')}
+                      onFilterRequest={filterStateLogsByRequest}
+                      onFilterAccount={filterStateLogsByAccount}
+                    />
+                    <div className='hidden overflow-x-auto md:block'>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('Time')}</TableHead>
+                            <TableHead>{t('Account')}</TableHead>
+                            <TableHead>{t('Action')}</TableHead>
+                            <TableHead>{t('Before state')}</TableHead>
+                            <TableHead>{t('After state')}</TableHead>
+                            <TableHead>{t('Reason')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {stateLogs.map((log) => (
+                            <TableRow key={log.id}>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                {formatTimestamp(log.created_at)}
+                                {log.request_id ? (
+                                  <Button
+                                    variant='link'
+                                    size='xs'
+                                    className='text-muted-foreground mt-1 h-auto max-w-[150px] justify-start truncate p-0 text-xs'
+                                    title={t('Click to filter by request')}
+                                    onClick={() =>
+                                      filterStateLogsByRequest(
+                                        log.request_id ?? ''
+                                      )
+                                    }
+                                  >
+                                    {log.request_id}
+                                  </Button>
+                                ) : (
+                                  <div className='text-muted-foreground mt-1'>
+                                    -
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell className='min-w-[190px]'>
+                                {log.pool_account_id > 0 ? (
+                                  <Button
+                                    variant='link'
+                                    size='sm'
+                                    className='h-auto max-w-[190px] justify-start truncate p-0 text-sm font-medium'
+                                    title={t('Click to filter by account')}
+                                    onClick={() =>
+                                      filterStateLogsByAccount(
+                                        log.pool_account_id,
+                                        log.pool_account_name ||
+                                          `#${log.pool_account_id}`
+                                      )
+                                    }
+                                  >
+                                    {log.pool_account_name ||
+                                      `#${log.pool_account_id}`}
+                                  </Button>
+                                ) : (
+                                  <div className='text-sm font-medium'>
+                                    {log.pool_account_name ||
+                                      `#${log.pool_account_id}`}
+                                  </div>
+                                )}
+                                <div className='text-muted-foreground text-xs'>
+                                  {log.pool_group_name ||
+                                    `#${log.pool_group_id}`}{' '}
+                                  · {log.pool_account_auth_type || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[170px]'>
+                                <div className='text-sm'>
+                                  {stateLogActionLabel(log.action, t)}
+                                </div>
+                                <div className='text-muted-foreground text-xs'>
+                                  {t('Source')}: {log.source || '-'}
+                                  {log.actor
+                                    ? ` · ${t('Actor')}: ${log.actor}`
+                                    : ''}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[180px] text-xs'>
+                                {poolAccountStatusText(
+                                  log.before_status,
+                                  log.before_schedulable,
+                                  log.before_unavailable,
+                                  t
+                                )}
+                                <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                                  {log.before_status_message ||
+                                    log.before_disabled_reason ||
+                                    '-'}
+                                </div>
+                                {log.before_next_retry_time > 0 ? (
+                                  <div className='text-muted-foreground mt-1'>
+                                    {t('Next retry')}:&nbsp;
+                                    {formatTimestamp(
+                                      log.before_next_retry_time
+                                    )}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className='min-w-[180px] text-xs'>
+                                {poolAccountStatusText(
+                                  log.after_status,
+                                  log.after_schedulable,
+                                  log.after_unavailable,
+                                  t
+                                )}
+                                <div className='text-muted-foreground mt-1 max-w-[240px] break-words'>
+                                  {log.after_status_message ||
+                                    log.after_disabled_reason ||
+                                    '-'}
+                                </div>
+                                {log.after_next_retry_time > 0 ? (
+                                  <div className='text-muted-foreground mt-1'>
+                                    {t('Next retry')}:&nbsp;
+                                    {formatTimestamp(log.after_next_retry_time)}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className='max-w-[280px] text-xs break-words'>
+                                {log.reason || '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!stateLogsQuery.isLoading &&
+                            stateLogs.length === 0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={6}
+                                  className='h-24 text-center'
+                                >
+                                  {t('No state logs found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                      <span className='text-muted-foreground'>
+                        {t('Page {{page}} of {{total}}', {
+                          page: stateLogPage,
+                          total: stateLogTotalPages,
+                        })}
+                      </span>
+                      <div className='flex gap-2'>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={stateLogPage <= 1}
+                          onClick={() =>
+                            setStateLogPage((current) =>
+                              Math.max(1, current - 1)
+                            )
+                          }
+                        >
+                          {t('Previous')}
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={stateLogPage >= stateLogTotalPages}
+                          onClick={() =>
+                            setStateLogPage((current) =>
+                              Math.min(stateLogTotalPages, current + 1)
+                            )
+                          }
+                        >
+                          {t('Next')}
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              <TabsContent value='check-tasks' className='m-0'>
+                <Card size='sm'>
+                  <CardHeader className='border-b'>
+                    <CardTitle>{t('Account Records')}</CardTitle>
+                    <CardDescription>
+                      {t(
+                        'Inspect usage records, state changes, and check tasks.'
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className='p-0'>
+                    {logViewTabs}
+                    <div className='border-border flex flex-col gap-2 border-b p-3 md:hidden'>
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <Input
+                          className='min-w-0 flex-1'
+                          placeholder={t(
+                            'Search task, group, actor, request, or message'
+                          )}
+                          value={checkTaskSearch}
+                          onChange={(event) =>
+                            setCheckTaskSearch(event.target.value)
+                          }
+                        />
+                        <AccountPoolHistoryFilterDrawer
+                          kind='check'
+                          activeCount={checkTaskFilterCount}
+                          resetDisabled={checkTaskFilterCount === 0}
+                          onReset={clearCheckTaskFilters}
+                        >
+                          <div className='grid grid-cols-2 gap-2'>
+                            {checkTaskStatusFilterOptions.map((value) => (
+                              <Button
+                                key={value}
+                                type='button'
+                                variant={
+                                  checkTaskStatus === value
+                                    ? 'secondary'
+                                    : 'outline'
+                                }
+                                size='sm'
+                                onClick={() => setCheckTaskStatus(value)}
+                              >
+                                {checkTaskStatusFilterLabel(value, t)}
+                              </Button>
+                            ))}
+                          </div>
+                        </AccountPoolHistoryFilterDrawer>
+                      </div>
+                    </div>
+                    <div className='border-border hidden flex-col gap-3 border-b p-3 md:flex md:flex-row md:items-center md:justify-between'>
+                      <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+                        <Select
+                          items={checkTaskStatusFilterOptions.map((value) => ({
+                            value,
+                            label: checkTaskStatusFilterLabel(value, t),
+                          }))}
+                          value={checkTaskStatus}
+                          onValueChange={(value) =>
+                            setCheckTaskStatus(
+                              (value as CheckTaskStatusFilter | null) ?? 'all'
+                            )
+                          }
+                        >
+                          <SelectTrigger className='w-full sm:w-[180px]'>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {checkTaskStatusFilterOptions.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {checkTaskStatusFilterLabel(value, t)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Input
+                        className='md:max-w-xs'
+                        placeholder={t(
+                          'Search task, group, actor, request, or message'
+                        )}
+                        value={checkTaskSearch}
+                        onChange={(event) =>
+                          setCheckTaskSearch(event.target.value)
+                        }
+                      />
+                    </div>
+                    <AccountPoolCheckTasksMobileList
+                      items={checkTasks}
+                      isLoading={checkTasksQuery.isLoading}
+                      emptyTitle={t('No check tasks found')}
+                      onViewTask={viewCheckTask}
+                    />
+                    <div className='hidden overflow-x-auto md:block'>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('Task')}</TableHead>
+                            <TableHead>{t('Group')}</TableHead>
+                            <TableHead>{t('Status')}</TableHead>
+                            <TableHead>{t('Progress')}</TableHead>
+                            <TableHead>{t('Result')}</TableHead>
+                            <TableHead>{t('Actor')}</TableHead>
+                            <TableHead>{t('Created')}</TableHead>
+                            <TableHead>{t('Finished')}</TableHead>
+                            <TableHead>{t('Message')}</TableHead>
+                            <TableHead>{t('Action')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {checkTasks.map((task) => (
+                            <TableRow key={task.id}>
+                              <TableCell className='min-w-[90px] text-sm font-medium'>
+                                #{task.id}
+                                {task.request_id ? (
+                                  <div className='text-muted-foreground mt-1 max-w-[160px] truncate text-xs'>
+                                    {task.request_id}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className='min-w-[170px]'>
+                                <div className='text-sm'>
+                                  {task.pool_group_name ||
+                                    `#${task.pool_group_id}`}
+                                </div>
+                                <div className='text-muted-foreground text-xs'>
+                                  #{task.pool_group_id}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[120px]'>
+                                <Badge
+                                  variant={checkTaskBadgeVariant(task.status)}
+                                >
+                                  {checkTaskStatusLabel(task.status, t)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                {t('{{checked}}/{{total}} checked', {
+                                  checked: task.checked + task.skipped,
+                                  total: task.total,
+                                })}
+                                <div className='text-muted-foreground mt-1'>
+                                  {task.total > 0
+                                    ? `${checkTaskProgressValue(task)}%`
+                                    : '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[170px] text-xs'>
+                                <div>
+                                  {t('{{success}} passed', {
+                                    success: task.success,
+                                  })}
+                                </div>
+                                <div className='text-muted-foreground mt-1'>
+                                  {t('{{failed}} failed', {
+                                    failed: task.failed,
+                                  })}
+                                  {' · '}
+                                  {t('{{skipped}} skipped', {
+                                    skipped: task.skipped,
+                                  })}
+                                </div>
+                              </TableCell>
+                              <TableCell className='min-w-[140px] text-xs'>
+                                {task.actor || '-'}
+                              </TableCell>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                {task.created_time
+                                  ? formatTimestamp(task.created_time)
+                                  : '-'}
+                              </TableCell>
+                              <TableCell className='min-w-[150px] text-xs'>
+                                {task.finished_time
+                                  ? formatTimestamp(task.finished_time)
+                                  : '-'}
+                              </TableCell>
+                              <TableCell className='max-w-[300px] min-w-[220px] text-xs break-words'>
+                                {task.message || '-'}
+                              </TableCell>
+                              <TableCell className='min-w-[100px]'>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => viewCheckTask(task)}
+                                >
+                                  {t('View')}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!checkTasksQuery.isLoading &&
+                            checkTasks.length === 0 && (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={10}
+                                  className='h-24 text-center'
+                                >
+                                  {t('No check tasks found')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className='border-border flex items-center justify-between border-t p-3 text-sm'>
+                      <span className='text-muted-foreground'>
+                        {t('Page {{page}} of {{total}}', {
+                          page: checkTaskPage,
+                          total: checkTaskTotalPages,
+                        })}
+                      </span>
+                      <div className='flex gap-2'>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={checkTaskPage <= 1}
+                          onClick={() =>
+                            setCheckTaskPage((current) =>
+                              Math.max(1, current - 1)
+                            )
+                          }
+                        >
+                          {t('Previous')}
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled={checkTaskPage >= checkTaskTotalPages}
+                          onClick={() =>
+                            setCheckTaskPage((current) =>
+                              Math.min(checkTaskTotalPages, current + 1)
+                            )
+                          }
+                        >
+                          {t('Next')}
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
 
       <Dialog open={groupFormOpen} onOpenChange={setGroupFormOpen}>
         <DialogContent className='sm:max-w-xl'>
@@ -5102,7 +5535,7 @@ export function AccountPool() {
               disabled={actionLoading || !canWriteAccountPool}
             >
               {actionLoading && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 data-icon='inline-start' className='animate-spin' />
               )}
               {t('Save')}
             </Button>
@@ -5152,7 +5585,10 @@ export function AccountPool() {
               </TabsList>
             )}
 
-            <TabsContent value='credentials' className='mt-3 space-y-3'>
+            <TabsContent
+              value='credentials'
+              className='mt-3 flex flex-col gap-3'
+            >
               {!canReadAccountPoolAuthFile ? (
                 <EmptyState
                   icon={FileJson}
@@ -5308,7 +5744,7 @@ export function AccountPool() {
               )}
             </TabsContent>
 
-            <TabsContent value='group' className='mt-3 space-y-3'>
+            <TabsContent value='group' className='mt-3 flex flex-col gap-3'>
               <Select
                 items={sourceGroupOptions.map((group) => ({
                   value: String(group.id),
@@ -5566,7 +6002,7 @@ export function AccountPool() {
               disabled={actionLoading || !canSensitiveWriteAccountPool}
             >
               {actionLoading && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 data-icon='inline-start' className='animate-spin' />
               )}
               {t(
                 accountForm.id || accountAddMode === 'manual' ? 'Save' : 'Add'
@@ -5596,7 +6032,7 @@ export function AccountPool() {
               disabled={actionLoading || !canSensitiveWriteAccountPool}
             >
               {actionLoading && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 data-icon='inline-start' className='animate-spin' />
               )}
               {t('Import')}
             </Button>
@@ -5631,7 +6067,7 @@ export function AccountPool() {
               disabled={actionLoading || !canSensitiveWriteAccountPool}
             >
               {actionLoading && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 data-icon='inline-start' className='animate-spin' />
               )}
               {t('Complete')}
             </Button>
@@ -5696,6 +6132,6 @@ export function AccountPool() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   )
 }

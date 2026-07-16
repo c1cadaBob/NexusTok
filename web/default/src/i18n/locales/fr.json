@@ -2794,6 +2794,7 @@
     "Manage Bindings": "Gérer les liaisons",
     "Manage catalog visibility and pricing.": "Gérer la visibilité du catalogue et les prix.",
     "Manage custom OAuth providers for user authentication": "Gérer les fournisseurs OAuth personnalisés pour l'authentification des utilisateurs",
+    "Manage accounts and credentials assigned to this group.": "Gérer les comptes et identifiants affectés à ce groupe.",
     "Manage imported account credentials as reusable pool resources.": "Gérer les identifiants de compte importés comme ressources réutilisables du pool.",
     "Manage imported JSON credentials and their linked pool accounts": "Gérer les identifiants JSON importés et leurs comptes de pool liés",
     "Manage Keys": "Gérer les clés",

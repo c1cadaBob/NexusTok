@@ -2794,6 +2794,7 @@
     "Manage Bindings": "Управление привязками",
     "Manage catalog visibility and pricing.": "Управление видимостью каталога и ценообразованием.",
     "Manage custom OAuth providers for user authentication": "Управление пользовательскими поставщиками OAuth для аутентификации пользователей",
+    "Manage accounts and credentials assigned to this group.": "Управляйте аккаунтами и учетными данными, назначенными этой группе.",
     "Manage imported account credentials as reusable pool resources.": "Управляйте импортированными учетными данными аккаунтов как повторно используемыми ресурсами пула.",
     "Manage imported JSON credentials and their linked pool accounts": "Управление импортированными JSON-учетными данными и связанными аккаунтами пула",
     "Manage Keys": "Управление ключами",
