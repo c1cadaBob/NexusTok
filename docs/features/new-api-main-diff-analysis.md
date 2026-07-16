@@ -15039,3 +15039,59 @@ MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `
 5. MCP 页面快照确认最终页面标题为 `分组与工具价格`，并显示 `分组比例`、`工具价格` 等当前正式定价配置内容，不再落到 `Global Model Configuration`。
 6. 在该次真实导航后读取控制台消息，结果为 `<no console messages found>`。
 7. 在该次真实导航后读取网络请求，`/system-settings/models/model-ratio?verify=1784233500000` 文档请求返回 `200`，页面只产生静态资源、`/api/status`、`/api/user/self`、`/api/notice`、`/api/option/` 等读取请求，没有新增失败请求或写请求。
+
+## 本轮实施评审：`/login` 历史登录入口兼容
+
+### 差异来源
+
+继续对照 `new-api-main` 的认证页与当前默认前端路由后发现，NexusTok 当前正式登录入口已经收敛到 `/sign-in`，但历史上常见的 `/login` 入口尚未提供默认前端别名兼容。这样会导致旧书签、外部文档、第三方回跳配置或用户手工输入 `/login?redirect=...` 时直接落到前端 404，而不是进入当前正式登录页。
+
+项目中已经存在同类兼容模式：`/(auth)/register.tsx` 会把历史 `/register` 入口无损重定向到 `/sign-up`，并保留邀请链接与查询参数。因此 `/login` 适合沿用同样的路由别名方案，而不是修改登录页组件或后端认证逻辑。
+
+### 需求分析
+
+1. 历史入口 `/login` 需要在默认前端中继续可用，并统一收敛到当前正式入口 `/sign-in`。
+2. 兼容跳转必须完整保留 `redirect` 等查询参数，避免影响登录后回跳行为。
+3. 修复应仅停留在前端路由层，不改变登录表单、认证接口、Turnstile、OAuth、session 或已登录用户的既有守卫逻辑。
+4. 验证必须以 `http://192.168.0.202:3003/` 的真实运行态为准，并确认跳转后页面、控制台和网络请求正常。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 默认前端认证别名路由 | `web/default/src/routes/(auth)/login.tsx` | 新增历史 `/login` 入口，统一重定向到 `/sign-in`，保留查询参数并使用 replace 避免历史栈污染。 |
+| 自动生成路由树 | `web/default/src/routeTree.gen.ts` | 通过类型检查自动收录新增 `/login` 路由定义。 |
+| 差异分析文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 如果重定向时丢失 `redirect` 参数，会破坏登录成功后的回跳链路，属于可感知行为回归。
+2. 如果在 `/sign-in` 组件内额外处理 `/login`，容易把兼容逻辑混进正式登录页守卫，增加未来维护成本。
+3. 如果不使用 `replace`，浏览器回退时会反复回到 `/login` 别名页，形成多余历史记录。
+4. 这类兼容路由必须与现有 `/register -> /sign-up` 模式保持一致，避免默认前端出现多套不同风格的历史入口处理方案。
+
+### 方案评审
+
+采用“新增单独别名路由”的最小方案：
+
+1. 新增 `web/default/src/routes/(auth)/login.tsx`，与现有 `register.tsx` 使用相同实现风格。
+2. 在 `beforeLoad` 中直接 `redirect({ to: '/sign-in', search: location.search, replace: true })`。
+3. 不修改 `/(auth)/sign-in.tsx` 的已登录守卫，让 `/sign-in` 继续作为唯一正式登录页处理后续逻辑。
+4. 通过 `bun run typecheck` 触发 `routeTree.gen.ts` 自动更新，不手工编辑生成内容。
+
+### 实施结果
+
+1. 已新增 `web/default/src/routes/(auth)/login.tsx`，作为默认前端的历史登录入口兼容页。
+2. 兼容页中补充了中文注释，明确说明该路由用于兼容旧版登录入口，并完整保留 `redirect` 等查询参数交给当前正式登录页处理。
+3. `web/default/src/routeTree.gen.ts` 已自动收录 `/login` 路由，新增 `authLoginRoute` 定义及对应的 fullPath / to / id 类型映射。
+4. 本轮没有修改登录表单组件、认证 API、用户态守卫、OAuth、Turnstile 或任何后端逻辑。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bun run typecheck`：通过。
+2. 已运行 `cd /opt/project/NexusTok && git diff --check`：通过。
+3. 在恢复 MCP Chrome 调试端后，使用全新未登录上下文访问 `http://192.168.0.202:3003/login?redirect=%2Fdashboard%2Foverview&verify=1784235000000`。
+4. MCP 实际打开的页面 URL 为 `http://192.168.0.202:3003/sign-in?redirect=%2Fdashboard%2Foverview&verify=1784235000000`，说明旧入口已正确落到正式登录页，且 `redirect` 参数被完整保留。
+5. 页面快照确认最终页面为 `Sign in` 登录页，仍显示 `Username or Email`、`Password` 和 `Forgot password?` 等正式登录界面内容，没有进入 404 页面。
+6. 在该次真实导航后读取控制台消息，结果为 `<no console messages found>`。
+7. 在该次真实导航后读取网络请求，`/login?redirect=%2Fdashboard%2Foverview&verify=1784235000000` 文档请求返回 `200`，后续只产生静态资源、`/api/status`、`/api/setup` 等读取请求，没有新增失败请求。
