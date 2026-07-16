@@ -204,7 +204,7 @@ function isNavItemVisible(
   adminConfig: SidebarModulesAdminConfig,
   userConfig: SidebarModulesUserConfig
 ): boolean {
-  // Handle dynamic chat presets type — also runs the admin × user AND gate
+  // 动态第三方预设入口同样遵循管理员配置和用户配置的双层收敛。
   if ('type' in item && item.type === 'chat-presets') {
     const adminChat = adminConfig.chat
     const adminAllowed = Boolean(adminChat?.enabled && adminChat.chat === true)

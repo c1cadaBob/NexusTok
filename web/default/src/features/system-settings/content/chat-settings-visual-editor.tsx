@@ -137,7 +137,7 @@ export function ChatSettingsVisualEditor({
         <div className='relative flex-1'>
           <Search className='text-muted-foreground absolute top-2.5 left-2.5 h-4 w-4' />
           <Input
-            placeholder={t('Search chat presets...')}
+            placeholder={t('Search third-party presets...')}
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             className='pl-9'
@@ -145,16 +145,16 @@ export function ChatSettingsVisualEditor({
         </div>
         <Button onClick={handleAdd}>
           <Plus className='mr-2 h-4 w-4' />
-          {t('Add chat preset')}
+          {t('Add third-party preset')}
         </Button>
       </div>
 
       {filteredChats.length === 0 ? (
         <div className='text-muted-foreground rounded-lg border border-dashed p-8 text-center'>
           {searchText
-            ? t('No chat presets match your search')
+            ? t('No third-party presets match your search')
             : t(
-                'No chat presets configured. Click "Add chat preset" to get started.'
+                'No third-party presets configured. Click "Add third-party preset" to get started.'
               )}
         </div>
       ) : (
@@ -162,7 +162,7 @@ export function ChatSettingsVisualEditor({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>{t('Chat Client Name')}</TableHead>
+                <TableHead>{t('Third-party Client Name')}</TableHead>
                 <TableHead>{t('URL')}</TableHead>
                 <TableHead className='text-right'>{t('Actions')}</TableHead>
               </TableRow>

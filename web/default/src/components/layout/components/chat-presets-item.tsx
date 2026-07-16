@@ -51,7 +51,7 @@ import { normalizeHref } from '../lib/url-utils'
 import type { NavChatPresets } from '../types'
 
 /**
- * Sub-menu item for a single chat preset
+ * 单个第三方预设的侧边栏子菜单项。
  */
 function ChatMenuItem({
   preset,
@@ -79,7 +79,9 @@ function ChatMenuItem({
             />
           }
         >
-          <span>{preset.name}</span>
+          <span className='min-w-0 flex-1 truncate' title={preset.name}>
+            {preset.name}
+          </span>
         </SidebarMenuSubButton>
       </SidebarMenuSubItem>
     )
@@ -94,12 +96,13 @@ function ChatMenuItem({
         aria-disabled={loading ? 'true' : undefined}
         isActive={false}
         className='justify-between'
+        title={preset.name}
       >
-        <span>{preset.name}</span>
+        <span className='min-w-0 flex-1 truncate'>{preset.name}</span>
         {loading ? (
-          <Loader2 className='h-4 w-4 animate-spin' />
+          <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
         ) : (
-          <ExternalLink className='h-4 w-4' />
+          <ExternalLink className='h-4 w-4 shrink-0' />
         )}
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
@@ -107,7 +110,7 @@ function ChatMenuItem({
 }
 
 /**
- * Dropdown menu item for a single chat preset
+ * 侧边栏折叠状态下的第三方预设下拉项。
  */
 function DropdownPresetItem({
   preset,
@@ -122,8 +125,9 @@ function DropdownPresetItem({
     return (
       <DropdownMenuItem
         render={<Link to='/chat/$chatId' params={{ chatId: preset.id }} />}
+        title={preset.name}
       >
-        {preset.name}
+        <span className='min-w-0 flex-1 truncate'>{preset.name}</span>
       </DropdownMenuItem>
     )
   }
@@ -134,19 +138,20 @@ function DropdownPresetItem({
       onClick={() => {
         if (!loading) void onOpen(preset)
       }}
+      title={preset.name}
     >
-      {preset.name}
+      <span className='min-w-0 flex-1 truncate'>{preset.name}</span>
       {loading ? (
-        <Loader2 className='ml-auto h-4 w-4 animate-spin opacity-70' />
+        <Loader2 className='ml-auto shrink-0 animate-spin opacity-70' />
       ) : (
-        <ExternalLink className='ml-auto h-4 w-4 opacity-70' />
+        <ExternalLink className='ml-auto shrink-0 opacity-70' />
       )}
     </DropdownMenuItem>
   )
 }
 
 /**
- * Dynamic chat presets navigation item
+ * 动态第三方预设导航入口。
  */
 export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   const { t } = useTranslation()
@@ -169,7 +174,9 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
       let activeKey: string | undefined
 
       if (needsKey && loadingPresetIdRef.current) {
-        toast.info(t('Preparing your chat link, please try again in a moment.'))
+        toast.info(
+          t('Preparing your third-party link, please try again in a moment.')
+        )
         return
       }
 
@@ -183,7 +190,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
             error instanceof Error
               ? error.message
               : t(
-                  'Unable to prepare chat link. Please ensure you have an enabled API key.'
+                  'Unable to prepare third-party link. Please ensure you have an enabled API key.'
                 )
           toast.error(message)
           return
@@ -200,7 +207,9 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
       })
 
       if (!url) {
-        toast.error(t('Invalid chat link. Please contact the administrator.'))
+        toast.error(
+          t('Invalid third-party link. Please contact the administrator.')
+        )
         return
       }
 
@@ -214,12 +223,12 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
 
   const normalizedHref = normalizeHref(href)
 
-  // Don't render if no visible presets
+  // 没有可见预设时不渲染入口，避免侧边栏出现空折叠组。
   if (visiblePresets.length === 0) {
     return null
   }
 
-  // Collapsed state on non-mobile - render dropdown menu
+  // 桌面端折叠侧边栏使用下拉菜单，避免窄栏中直接展开二级项。
   if (state === 'collapsed' && !isMobile) {
     return (
       <SidebarMenuItem>
@@ -231,7 +240,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
             <span>{item.title}</span>
             <ChevronRight className='ms-auto h-4 w-4 opacity-70' />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align='start'>
+          <DropdownMenuContent align='start' className='w-56'>
             {visiblePresets.map((preset) => (
               <DropdownPresetItem
                 key={preset.id}
@@ -246,7 +255,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
     )
   }
 
-  // Expanded state - render collapsible menu
+  // 展开侧边栏使用折叠菜单，保持和其他多级导航一致。
   return (
     <Collapsible
       defaultOpen={normalizedHref.startsWith('/chat')}

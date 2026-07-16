@@ -71,7 +71,7 @@ export function NavGroup({ title, items }: NavGroupProps) {
         {items.map((item) => {
           const key = `${item.title}-${item.url || item.type}`
 
-          // Special handling: dynamic chat presets list
+          // 动态第三方预设入口需要在组件内部读取运行时配置。
           if (item.type === 'chat-presets') {
             return <ChatPresetsItem key={key} item={item as NavChatPresets} />
           }

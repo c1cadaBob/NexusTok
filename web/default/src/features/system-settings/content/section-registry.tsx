@@ -100,8 +100,8 @@ const CONTENT_SECTIONS = [
   },
   {
     id: 'chat',
-    titleKey: 'Chat Presets',
-    descriptionKey: 'Configure chat-related settings',
+    titleKey: 'Third-party Presets',
+    descriptionKey: 'Configure third-party preset links',
     build: (settings: ContentSettings) => (
       <ChatSettingsSection defaultValue={settings.Chats} />
     ),

@@ -99,7 +99,7 @@ export function ChatSettingsSection({
   const formatted = formatJsonForEditor(defaultValue, '[]')
   const form = useForm<ChatSettingsFormValues>({
     resolver: zodResolver(chatSchema),
-    mode: 'onChange', // Enable real-time validation
+    mode: 'onChange', // 启用实时校验，便于 JSON 模式下即时提示格式错误。
     defaultValues: {
       Chats: formatted,
     },
@@ -126,8 +126,10 @@ export function ChatSettingsSection({
 
   return (
     <SettingsSection
-      title={t('Chat Presets')}
-      description={t('Configure predefined chat links surfaced to end users.')}
+      title={t('Third-party Presets')}
+      description={t(
+        'Configure predefined third-party links surfaced to end users.'
+      )}
     >
       <Form {...form}>
         {/* eslint-disable-next-line react-hooks/refs */}
@@ -165,7 +167,7 @@ export function ChatSettingsSection({
                 name='Chats'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Chat configuration JSON')}</FormLabel>
+                    <FormLabel>{t('Third-party configuration JSON')}</FormLabel>
                     <FormControl>
                       <Textarea
                         rows={12}
@@ -177,7 +179,7 @@ export function ChatSettingsSection({
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'Array of chat client presets. Each item is an object with one key-value pair: client name and its URL.'
+                        'Array of third-party client presets. Each item is an object with one key-value pair: client name and its URL.'
                       )}
                     </FormDescription>
                     <FormMessage />
@@ -194,7 +196,9 @@ export function ChatSettingsSection({
               updateOption.canUpdate ? undefined : updateOption.disabledReason
             }
           >
-            {updateOption.isPending ? t('Saving...') : t('Save chat settings')}
+            {updateOption.isPending
+              ? t('Saving...')
+              : t('Save third-party settings')}
           </Button>
         </form>
       </Form>

@@ -83,8 +83,8 @@ export function SidebarModulesSection({
         description: t('Experiment with prompts and models in real time.'),
       },
       chat: {
-        title: t('Chat'),
-        description: t('Access previous conversations and start new ones.'),
+        title: t('Third-party'),
+        description: t('Manage third-party presets and external links.'),
       },
     },
     console: {
@@ -126,11 +126,15 @@ export function SidebarModulesSection({
       },
       account_pool: {
         title: t('Account Pool'),
-        description: t('Manage native account pools and credential scheduling.'),
+        description: t(
+          'Manage native account pools and credential scheduling.'
+        ),
       },
       pricing: {
         title: t('Group & Tool Pricing'),
-        description: t('Configure group ratios and tool prices used for billing'),
+        description: t(
+          'Configure group ratios and tool prices used for billing'
+        ),
       },
       models: {
         title: t('Models'),
@@ -154,7 +158,9 @@ export function SidebarModulesSection({
       },
       system_info: {
         title: t('System Info'),
-        description: t('View instance heartbeats and runtime resource snapshots.'),
+        description: t(
+          'View instance heartbeats and runtime resource snapshots.'
+        ),
       },
     },
   }

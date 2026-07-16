@@ -607,8 +607,8 @@ export const STATIC_I18N_KEYS = [
   'Please wait for the current generation to complete',
 
   // Sidebar modules
-  'Chat Area',
-  'Playground and chat functions',
+  'Third-party Area',
+  'Playground and third-party integrations',
   'Playground',
   'Show preview',
   'Show source',
@@ -616,7 +616,7 @@ export const STATIC_I18N_KEYS = [
   'Thought for a few seconds',
   'Thought for {{duration}} seconds',
   'AI model testing environment',
-  'Chat session management',
+  'Third-party preset management',
   'Console Area',
   'Data management and log viewing',
   'Dashboard',
@@ -662,10 +662,10 @@ export const STATIC_I18N_KEYS = [
   'Violation deduction amount',
   'Base amount. Actual deduction = base amount × system group rate.',
 
-  // Chat2Link
-  'No available Web chat links',
+  // 第三方链接跳转
+  'No available Web third-party links',
   'No enabled tokens available',
-  'Redirecting to chat page...',
+  'Redirecting to third-party page...',
 
   // 系统信息
   'System Info',

@@ -42,7 +42,7 @@ export async function fetchActiveChatKey() {
 }
 
 /**
- * Get the currently active API key for chat links
+ * 获取当前可用的 API key，用于生成需要鉴权的第三方链接。
  */
 export function useActiveChatKey(enabled: boolean) {
   const userId = useAuthStore((state) => state.auth.user?.id)

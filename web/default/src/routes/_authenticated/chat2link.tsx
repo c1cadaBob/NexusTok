@@ -46,7 +46,7 @@ function Chat2LinkPage() {
   useEffect(() => {
     if (!firstWebPreset) {
       if (chatPresets.length > 0) {
-        toast.error(t('No available Web chat links'))
+        toast.error(t('No available Web third-party links'))
       }
       return
     }
@@ -86,7 +86,7 @@ function Chat2LinkPage() {
     <div className='flex h-full flex-col items-center justify-center gap-3'>
       <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
       <p className='text-muted-foreground text-sm'>
-        {t('Redirecting to chat page...')}
+        {t('Redirecting to third-party page...')}
       </p>
     </div>
   )

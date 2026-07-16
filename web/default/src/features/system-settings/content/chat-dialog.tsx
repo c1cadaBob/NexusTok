@@ -43,7 +43,7 @@ import { Input } from '@/components/ui/input'
 
 const createChatDialogSchema = (t: (key: string) => string) =>
   z.object({
-    name: z.string().min(1, t('Chat client name is required')),
+    name: z.string().min(1, t('Third-party client name is required')),
     url: z.string().min(1, t('URL is required')),
   })
 
@@ -101,10 +101,12 @@ export function ChatDialog({
       <DialogContent className='sm:max-w-[500px]'>
         <DialogHeader>
           <DialogTitle>
-            {isEditMode ? t('Edit chat preset') : t('Add chat preset')}
+            {isEditMode
+              ? t('Edit third-party preset')
+              : t('Add third-party preset')}
           </DialogTitle>
           <DialogDescription>
-            {t('Configure a predefined chat link for end users.')}
+            {t('Configure a predefined third-party link for end users.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -118,15 +120,15 @@ export function ChatDialog({
               name='name'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Chat Client Name')}</FormLabel>
+                  <FormLabel>{t('Third-party Client Name')}</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder={t('Please enter chat client name')}
+                      placeholder={t('Please enter third-party client name')}
                       {...field}
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Display name for this chat client.')}
+                    {t('Display name for this third-party client.')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -143,7 +145,7 @@ export function ChatDialog({
                     <Input placeholder={t('Please enter the URL')} {...field} />
                   </FormControl>
                   <FormDescription>
-                    {t('The URL for this chat client.')}
+                    {t('The URL for this third-party client.')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -78,10 +78,12 @@ function ChatRouteComponent() {
         <MessageCircleWarning className='text-muted-foreground h-12 w-12' />
         <div className='space-y-1'>
           <h2 className='text-lg font-semibold'>
-            {t('Chat preset not found')}
+            {t('Third-party preset not found')}
           </h2>
           <p className='text-muted-foreground'>
-            {t('The requested chat preset does not exist or has been removed.')}
+            {t(
+              'The requested third-party preset does not exist or has been removed.'
+            )}
           </p>
         </div>
         <Button variant='outline' render={<Link to='/dashboard' />}>
@@ -116,7 +118,7 @@ function ChatRouteComponent() {
       <div className='flex h-full flex-col items-center justify-center gap-4'>
         <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
         <p className='text-muted-foreground text-sm'>
-          {t('Preparing your chat link…')}
+          {t('Preparing your third-party link…')}
         </p>
       </div>
     )
@@ -126,11 +128,11 @@ function ChatRouteComponent() {
     const message =
       error instanceof Error
         ? error.message
-        : 'Unable to generate chat link. Please check your API keys.'
+        : t('Unable to generate third-party link. Please check your API keys.')
     return (
       <div className='flex h-full flex-col items-center justify-center p-6'>
         <Alert variant='destructive' className='max-w-xl'>
-          <AlertTitle>{t('Unable to open chat')}</AlertTitle>
+          <AlertTitle>{t('Unable to open third-party link')}</AlertTitle>
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       </div>
@@ -141,10 +143,10 @@ function ChatRouteComponent() {
     return (
       <div className='flex h-full flex-col items-center justify-center p-6'>
         <Alert variant='destructive' className='max-w-xl'>
-          <AlertTitle>{t('Unable to open chat')}</AlertTitle>
+          <AlertTitle>{t('Unable to open third-party link')}</AlertTitle>
           <AlertDescription>
             {t(
-              'Unable to generate chat link. Please contact your administrator.'
+              'Unable to generate third-party link. Please contact your administrator.'
             )}
           </AlertDescription>
         </Alert>
@@ -158,7 +160,7 @@ function ChatRouteComponent() {
       key={iframeSrc}
       className='h-full w-full border-0'
       allow='camera; microphone'
-      title={`Chat preset: ${preset.name}`}
+      title={`${t('Third-party preset')}: ${preset.name}`}
     />
   )
 }

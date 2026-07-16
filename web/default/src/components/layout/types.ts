@@ -59,7 +59,7 @@ export type NavCollapsible = BaseNavItem & {
 }
 
 /**
- * Dynamic chat presets type - dynamically loaded chat preset list from API
+ * 动态第三方预设导航项，列表内容来自后端 Chats 配置。
  */
 export type NavChatPresets = BaseNavItem & {
   type: 'chat-presets'

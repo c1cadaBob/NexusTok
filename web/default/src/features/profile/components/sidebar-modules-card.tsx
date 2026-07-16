@@ -56,8 +56,8 @@ export function SidebarModulesCard() {
   const sectionDefs: SectionDef[] = [
     {
       key: 'chat',
-      title: t('Chat Area'),
-      description: t('Playground and chat functions'),
+      title: t('Third-party Area'),
+      description: t('Playground and third-party integrations'),
       modules: [
         {
           key: 'playground',
@@ -66,8 +66,8 @@ export function SidebarModulesCard() {
         },
         {
           key: 'chat',
-          title: t('Chat'),
-          description: t('Chat session management'),
+          title: t('Third-party'),
+          description: t('Third-party preset management'),
         },
       ],
     },

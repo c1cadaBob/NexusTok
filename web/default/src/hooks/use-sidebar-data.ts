@@ -39,11 +39,11 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
-import { ROLE } from '@/lib/roles'
 import {
   ADMIN_PERMISSION_RESOURCES,
   canReadAdminResource,
 } from '@/lib/admin-permissions'
+import { ROLE } from '@/lib/roles'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
 import { getAccountPoolSectionNavItems } from '@/features/account-pool/section-registry'
@@ -81,15 +81,15 @@ export function useSidebarData(): SidebarData {
     workspaces: [
       {
         id: WORKSPACE_IDS.DEFAULT,
-        name: '', // Dynamically fetches system name
+        name: '', // 动态读取系统名称
         logo: Command,
-        plan: '', // Dynamically fetches system version
+        plan: '', // 动态读取系统版本
       },
     ],
     navGroups: [
       {
         id: 'chat',
-        title: t('Chat'),
+        title: t('Third-party'),
         items: [
           {
             title: t('Playground'),
@@ -97,7 +97,7 @@ export function useSidebarData(): SidebarData {
             icon: FlaskConical,
           },
           {
-            title: t('Chat'),
+            title: t('Third-party'),
             icon: MessageSquare,
             type: 'chat-presets',
           },

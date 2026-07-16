@@ -66,7 +66,7 @@ function getServerAddress(): string {
       if (status.server_address) return status.server_address as string
     }
   } catch {
-    /* empty */
+    /* 读取缓存失败时使用当前页面地址兜底。 */
   }
   return window.location.origin
 }
@@ -127,7 +127,9 @@ export function DataTableRowActions<TData>({
       })
 
       if (!resolvedUrl) {
-        toast.error(t('Invalid chat link. Please contact your administrator.'))
+        toast.error(
+          t('Invalid third-party link. Please contact your administrator.')
+        )
         return
       }
 
@@ -272,17 +274,22 @@ export function DataTableRowActions<TData>({
           </DropdownMenuItem>
           {hasChatPresets && (
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>{t('Chat')}</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
+              <DropdownMenuSubTrigger>
+                {t('Third-party')}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className='w-56'>
                 {chatPresets.map((preset) => (
                   <DropdownMenuItem
                     key={preset.id}
                     onClick={() => handleOpenChatPreset(preset)}
+                    title={preset.name}
                   >
-                    {preset.name}
+                    <span className='min-w-0 flex-1 truncate'>
+                      {preset.name}
+                    </span>
                     {preset.type !== 'web' && (
                       <DropdownMenuShortcut>
-                        <ExternalLink size={16} />
+                        <ExternalLink />
                       </DropdownMenuShortcut>
                     )}
                   </DropdownMenuItem>
