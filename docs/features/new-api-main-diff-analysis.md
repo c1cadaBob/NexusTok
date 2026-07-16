@@ -15492,3 +15492,71 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. MCP 控制台仅剩既有的 i18next info 和 `nexustok-build` debug，没有新的 `error`、`warn` 或 `issue`。
 10. MCP 网络面板中，本轮页面加载与交互相关请求均返回 `200`，关键请求包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`，未出现新的失败请求。
 11. 热更新已在 3003 页面直接体现，本轮未触发容器重启流程。
+
+## 本轮实施评审：Sidebar Modules 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/maintenance/sidebar-modules-section.tsx` 与当前默认前端后确认：NexusTok 在上一轮已经把 `/system-settings/site/header-navigation` 收口到统一的系统设置页头动作区与脏态表单基座，但同一站点分组下的 `/system-settings/site/sidebar-modules` 仍停留在旧实现：
+
+1. 保存/重置按钮固定在内容底部，而不是页头动作区。
+2. 页面没有未保存脏态徽标，也没有离开页面前的统一确认拦截。
+3. 分区开关和子模块开关仍使用手写 `FormItem + border` 结构，没有复用当前项目已经稳定的共享设置布局。
+
+由于 `SidebarModulesAdmin` 直接决定后台侧栏可见分区和模块，这页属于管理员高频使用的全局配置页；当前项目既然已经具备共享基座，就没有理由让它继续作为系统设置中的旧体验孤岛。
+
+### 需求分析
+
+1. `/system-settings/site/sidebar-modules` 需要接入当前项目原生的系统设置页头动作区，让“重置为默认”“保存侧边栏模块”与其它已升级分区保持一致。
+2. 页面需要展示未保存脏态，并在用户尝试离开分区时弹出统一确认对话框，避免误丢草稿。
+3. 页面中的分区开关和子模块开关应复用 `SettingsControlGroup`、`SettingsControlChildren`、`SettingsSwitchItem` 等共享布局，而不是继续维持旧式手写卡片。
+4. `SidebarModulesAdmin` 的默认值、序列化结果、父分区关闭后子模块禁用逻辑、保存接口和权限禁用原因必须保持不变。
+5. “重置为默认”只应修改当前草稿，不能覆盖已保存基线；否则后续点击保存时 dirtyFields 会被清空，无法真正把侧栏模块恢复到平台默认配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 侧边栏模块设置页 | `web/default/src/features/system-settings/maintenance/sidebar-modules-section.tsx` | 将页面从 `useForm` 旧实现迁到 `useSettingsForm`、页头动作区和统一设置表单布局。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `SidebarModulesAdmin` 会直接影响默认前端后台侧栏渲染，如果本轮修改了字段名、默认值或序列化结构，可能让管理导航配置偏移。
+2. 分区和子模块存在联动：当父分区关闭时，子开关必须继续保持禁用语义，不能在迁移布局后丢失这一行为。
+3. “重置为默认”路径和上一轮顶部导航页一样，不能把默认值误写为已保存基线；否则恢复默认配置的真实保存链路会失效。
+4. 这页属于全局配置页，必须在 3003 运行态执行真实 `PUT /api/option/` 请求验证，并在验证结束后把被修改的侧栏模块恢复原值。
+
+### 方案评审
+
+采用与上一轮 `header-navigation` 相同的最小共享基座收口方案：
+
+1. 保留现有 `SIDEBAR_MODULES_DEFAULT`、`serializeSidebarModulesAdmin()`、`updateOption.mutateAsync({ key: 'SidebarModulesAdmin' })` 路径。
+2. 将页面从 `react-hook-form useForm` 旧写法迁移到项目已有的 `useSettingsForm()`，复用统一的无改动不提交、成功后刷新基线和 toast 行为。
+3. 使用 `SettingsPageFormActions`、`FormDirtyIndicator` 和 `FormNavigationGuard` 提供页头动作区、未保存状态和离开确认拦截。
+4. 使用 `SettingsControlGroup` 承载每个侧栏分区，使用 `SettingsControlChildren` 承载子模块列表，使用 `SettingsSwitchItem` / `SettingsSwitchContent` 收口开关布局。
+5. `resetToDefault()` 使用 `form.reset(SIDEBAR_MODULES_DEFAULT, { keepDefaultValues: true })`，只重置草稿值，不覆盖已保存基线。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/maintenance/sidebar-modules-section.tsx` 已迁移到 `useSettingsForm()`，保留 `SidebarModulesAdmin` 的默认值、序列化逻辑和保存接口不变。
+2. 页面已新增 `FormNavigationGuard` 与 `FormDirtyIndicator`；修改任意分区或子模块后，标题区域会显示“未保存的更改”，并在离开页面时弹出确认对话框。
+3. 保存/重置按钮已通过 `SettingsPageFormActions` 进入页头动作区，不再固定在页面底部。
+4. 每个侧栏分区已改为 `SettingsControlGroup`，子模块开关列表改为 `SettingsControlChildren + SettingsSwitchItem`，布局与当前系统设置共享样式保持一致。
+5. 父分区关闭后子模块继续沿用现有 `form.watch(\`\${sectionKey}.enabled\`)` 禁用逻辑，没有改变联动语义。
+6. 为避免“重置为默认后无法真正保存默认配置”的路径回退，本轮在 `resetToDefault()` 中显式保留已保存基线，只让默认配置作为当前草稿值参与后续提交。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/maintenance/sidebar-modules-section.tsx`：通过。
+2. 已运行 `cd web/default && bun run typecheck`：通过。
+3. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/site/sidebar-modules?verify=20260716-sidebar-modules-actions`，确认页面热更新生效，保存/重置按钮已位于标题右侧页头动作区。
+4. 在同一 3003 页面中关闭“游乐场”模块开关后，标题更新为“侧边栏模块 未保存的更改”，说明脏态徽标已正常显示。
+5. 点击系统设置侧栏中的“系统信息”时，页面弹出“未保存的更改”确认对话框；取消离开后停留在当前页，说明统一离开拦截已生效。
+6. 继续在该页面执行两次真实保存：
+   - 第一次关闭“游乐场”模块后点击“保存侧边栏模块”，页面提示“设置更新成功”，并产生 `PUT /api/option/ [200]`。
+   - 第二次点击“重置为默认”后再次点击“保存侧边栏模块”，页面再次提示“设置更新成功”，并再次产生 `PUT /api/option/ [200]`，证明恢复默认配置路径已成立。
+7. 为避免影响当前 3003 实例的后台侧栏配置，本轮验证结束后已把“游乐场”模块恢复为默认开启状态。
+8. MCP 控制台仅剩既有的 i18next info 和 `nexustok-build` debug，没有新的 `error`、`warn` 或 `issue`。
+9. MCP 网络面板中，本轮页面加载与交互相关请求均返回 `200`，关键请求包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`，未出现新的失败请求。
+10. 热更新已在 3003 页面直接体现，本轮未触发容器重启流程。

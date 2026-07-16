@@ -16,20 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo } from 'react'
-import { useForm } from 'react-hook-form'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
   FormDescription,
   FormField,
-  FormItem,
   FormLabel,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsControlChildren,
+  SettingsControlGroup,
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
   SIDEBAR_MODULES_DEFAULT,
@@ -165,32 +173,31 @@ export function SidebarModulesSection({
     },
   }
   const formDefaults = useMemo(() => config, [config])
+  const sections = Object.entries(config)
 
-  const form = useForm<SidebarFormValues>({
-    defaultValues: formDefaults,
-  })
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<SidebarFormValues>({
+      defaultValues: formDefaults,
+      onSubmit: async (values) => {
+        const serialized = serializeSidebarModulesAdmin(values)
+        if (serialized === initialSerialized) {
+          return
+        }
 
-  useEffect(() => {
-    form.reset(formDefaults)
-  }, [formDefaults, form])
-
-  const onSubmit = async (values: SidebarFormValues) => {
-    const serialized = serializeSidebarModulesAdmin(values)
-    if (serialized === initialSerialized) {
-      return
-    }
-
-    await updateOption.mutateAsync({
-      key: 'SidebarModulesAdmin',
-      value: serialized,
+        await updateOption.mutateAsync({
+          key: 'SidebarModulesAdmin',
+          value: serialized,
+        })
+      },
     })
-  }
 
   const resetToDefault = () => {
-    form.reset(SIDEBAR_MODULES_DEFAULT)
+    // 只重置当前草稿到平台默认值，保留“已保存基线”，确保随后点击保存时
+    // 仍能把默认配置真正提交到后端，而不是因为 dirtyFields 被清空而跳过。
+    form.reset(SIDEBAR_MODULES_DEFAULT, {
+      keepDefaultValues: true,
+    })
   }
-
-  const sections = Object.entries(config)
 
   return (
     <SettingsSection
@@ -199,8 +206,21 @@ export function SidebarModulesSection({
         'Control which sidebar areas and modules are available to all users.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={resetToDefault}
+            isSaving={isSubmitting || updateOption.isPending}
+            isSaveDisabled={!updateOption.canUpdate}
+            saveDisabledReason={updateOption.disabledReason}
+            resetLabel='Reset to default'
+            saveLabel='Save sidebar modules'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           {sections.map(([sectionKey, sectionConfig]) => {
             const sectionInfo = sectionMeta[sectionKey] ?? {
               title: toTitleCase(sectionKey),
@@ -211,32 +231,34 @@ export function SidebarModulesSection({
             )
 
             return (
-              <div key={sectionKey} className='rounded-lg border p-4'>
+              <SettingsControlGroup
+                key={sectionKey}
+                data-settings-form-span='full'
+                className='gap-4 rounded-xl px-4 py-3.5'
+              >
                 <FormField
                   control={form.control}
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   name={`${sectionKey}.enabled` as any}
                   render={({ field }) => (
-                    <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                      <div className='space-y-0.5 pe-4'>
-                        <FormLabel className='text-base'>
-                          {sectionInfo.title}
-                        </FormLabel>
+                    <SettingsSwitchItem className='py-0'>
+                      <SettingsSwitchContent className='pe-4'>
+                        <FormLabel>{sectionInfo.title}</FormLabel>
                         <FormDescription>
                           {sectionInfo.description}
                         </FormDescription>
-                      </div>
+                      </SettingsSwitchContent>
                       <FormControl>
                         <Switch
                           checked={Boolean(field.value)}
                           onCheckedChange={field.onChange}
                         />
                       </FormControl>
-                    </FormItem>
+                    </SettingsSwitchItem>
                   )}
                 />
 
-                <div className='mt-4 grid gap-4 md:grid-cols-2'>
+                <SettingsControlChildren className='grid gap-3 ps-4 md:grid-cols-2'>
                   {modules.map(([moduleKey]) => {
                     const moduleInfo = moduleMeta[sectionKey]?.[moduleKey] ?? {
                       title: toTitleCase(moduleKey),
@@ -249,15 +271,13 @@ export function SidebarModulesSection({
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         name={`${sectionKey}.${moduleKey}` as any}
                         render={({ field }) => (
-                          <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                            <div className='space-y-0.5 pe-4'>
-                              <FormLabel className='text-base'>
-                                {moduleInfo.title}
-                              </FormLabel>
+                          <SettingsSwitchItem className='py-2'>
+                            <SettingsSwitchContent className='pe-4'>
+                              <FormLabel>{moduleInfo.title}</FormLabel>
                               <FormDescription>
                                 {moduleInfo.description}
                               </FormDescription>
-                            </div>
+                            </SettingsSwitchContent>
                             <FormControl>
                               <Switch
                                 checked={Boolean(field.value)}
@@ -268,33 +288,16 @@ export function SidebarModulesSection({
                                 }
                               />
                             </FormControl>
-                          </FormItem>
+                          </SettingsSwitchItem>
                         )}
                       />
                     )
                   })}
-                </div>
-              </div>
+                </SettingsControlChildren>
+              </SettingsControlGroup>
             )
           })}
-
-          <div className='flex flex-wrap gap-3'>
-            <Button type='button' variant='outline' onClick={resetToDefault}>
-              {t('Reset to default')}
-            </Button>
-            <Button
-              type='submit'
-              disabled={updateOption.isPending || !updateOption.canUpdate}
-              title={
-                updateOption.canUpdate ? undefined : updateOption.disabledReason
-              }
-            >
-              {updateOption.isPending
-                ? t('Saving...')
-                : t('Save sidebar modules')}
-            </Button>
-          </div>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
