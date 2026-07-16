@@ -239,6 +239,14 @@ describe('渠道模型搜索默认供应商', () => {
     assert.equal(getModelSearchVendorForChannelType(43), 'DeepSeek')
   })
 
+  test('使用当前模型库的 canonical vendor 名称，避免搜索被错误收窄', () => {
+    assert.equal(getModelSearchVendorForChannelType(16), '智谱')
+    assert.equal(getModelSearchVendorForChannelType(17), '阿里巴巴')
+    assert.equal(getModelSearchVendorForChannelType(23), '腾讯')
+    assert.equal(getModelSearchVendorForChannelType(25), 'Moonshot')
+    assert.equal(getModelSearchVendorForChannelType(26), '智谱')
+  })
+
   test('自定义与高级自定义渠道保持全局模型库搜索', () => {
     assert.equal(getModelSearchVendorForChannelType(8), '')
     assert.equal(getModelSearchVendorForChannelType(58), '')

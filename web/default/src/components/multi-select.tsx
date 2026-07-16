@@ -75,6 +75,48 @@ interface MultiSelectProps {
 
 const COMMA_REGEX = /[,，\n]/
 
+export function normalizeMultiSelectValueKey(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+// 多选值在交互层统一按 trim + lower 判断重复，并保留首次出现的展示形式。
+// 渠道模型搜索、逗号批量输入和自定义创建都会经过这里，避免大小写差异产生重复 chip。
+export function dedupeMultiSelectValues(values: readonly string[]): string[] {
+  const seenKeys = new Set<string>()
+  const dedupedValues: string[] = []
+
+  for (const rawValue of values) {
+    const value = rawValue.trim()
+    const key = normalizeMultiSelectValueKey(value)
+    if (!key || seenKeys.has(key)) continue
+    seenKeys.add(key)
+    dedupedValues.push(value)
+  }
+
+  return dedupedValues
+}
+
+export function getNewMultiSelectValues({
+  selected,
+  incoming,
+}: {
+  selected: readonly string[]
+  incoming: readonly string[]
+}): string[] {
+  const seenKeys = new Set(selected.map(normalizeMultiSelectValueKey))
+  const nextValues: string[] = []
+
+  for (const rawValue of incoming) {
+    const value = rawValue.trim()
+    const key = normalizeMultiSelectValueKey(value)
+    if (!key || seenKeys.has(key)) continue
+    seenKeys.add(key)
+    nextValues.push(value)
+  }
+
+  return nextValues
+}
+
 export function filterMultiSelectItems(
   items: string[],
   inputValue: string,
@@ -363,16 +405,7 @@ export function MultiSelect({
 
   const addValues = React.useCallback(
     (values: string[]) => {
-      const next: string[] = []
-      const seen = new Set<string>(selected)
-
-      for (const raw of values) {
-        const value = raw.trim()
-        if (!value || seen.has(value)) continue
-        seen.add(value)
-        next.push(value)
-      }
-
+      const next = getNewMultiSelectValues({ selected, incoming: values })
       if (next.length === 0) return
       onChange([...selected, ...next])
     },
@@ -396,9 +429,10 @@ export function MultiSelect({
   }
 
   const handleValueChange = (next: string[]) => {
-    onChange(next)
+    const dedupedNext = dedupeMultiSelectValues(next)
+    onChange(dedupedNext)
     // 选中候选后清空搜索词，方便连续选择多个模型。
-    if (next.length > selected.length) {
+    if (dedupedNext.length > selected.length) {
       updateInputValue('')
     }
   }

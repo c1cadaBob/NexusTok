@@ -460,7 +460,7 @@ function ChannelEditorNav(props: {
     if (isConfigured && !isError && !isDone) {
       return (
         <span
-          className='bg-primary block size-2 rounded-full'
+          className='bg-success block size-2 rounded-full'
           aria-hidden='true'
         />
       )
@@ -1266,8 +1266,7 @@ export function ChannelMutateDrawer({
   // 将系统模型和当前渠道模型合并成基础候选，避免编辑历史模型时选项丢失。
   // 该列表也用于模型映射目标，不能被搜索框的临时远程结果污染。
   const baseModelOptions = useMemo(() => {
-    const allModels = new Set([...allModelsList, ...currentModelsArray])
-    return Array.from(allModels).map((model) => ({
+    return dedupeModelNames([...allModelsList, ...currentModelsArray]).map((model) => ({
       value: model,
       label: model,
     }))
@@ -1276,11 +1275,10 @@ export function ChannelMutateDrawer({
   // `Models` 多选需要额外合并模型元数据搜索结果，保证已经同步到模型库、
   // 但尚未进入任何渠道能力表的模型也能被管理员逐项选择。
   const modelOptions = useMemo(() => {
-    const allModels = new Set([
+    return dedupeModelNames([
       ...addableModelSearchNames,
       ...baseModelOptions.map((option) => option.value),
-    ])
-    return Array.from(allModels).map((model) => ({
+    ]).map((model) => ({
       value: model,
       label: model,
     }))
@@ -2216,7 +2214,7 @@ export function ChannelMutateDrawer({
               {isChannelDetailLoading && <ChannelEditorLoadingState />}
               <div
                 className={cn(
-                  'grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start',
+                  'grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[15rem_minmax(0,1fr)]',
                   isChannelDetailLoading && 'hidden'
                 )}
               >

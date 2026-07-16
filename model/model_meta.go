@@ -305,7 +305,10 @@ func SearchModels(keyword string, vendor string, offset int, limit int) ([]*Mode
 		if vid, err := strconv.Atoi(vendor); err == nil {
 			db = db.Where("models.vendor_id = ?", vid)
 		} else {
-			db = db.Joins("JOIN vendors ON vendors.id = models.vendor_id").Where("vendors.name LIKE ?", "%"+vendor+"%")
+			// 供应商搜索需要兼容 SQLite/MySQL/PostgreSQL 的大小写差异。
+			// 这里统一对比 LOWER(vendors.name) 与小写关键词，避免前端 canonical 名称、
+			// 上游同步供应商名或用户输入大小写不同导致模型库搜索被错误收窄为空。
+			db = db.Joins("JOIN vendors ON vendors.id = models.vendor_id").Where("LOWER(vendors.name) LIKE ?", "%"+strings.ToLower(vendor)+"%")
 		}
 	}
 	var total int64

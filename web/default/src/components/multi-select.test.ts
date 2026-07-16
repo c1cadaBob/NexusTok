@@ -20,7 +20,9 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   canCreateMultiSelectValue,
+  dedupeMultiSelectValues,
   filterMultiSelectItems,
+  getNewMultiSelectValues,
   getVisibleMultiSelectItems,
   shouldPreventMultiSelectEnterFormSubmit,
   shouldPreventEmptyInputChipRemoval,
@@ -87,6 +89,30 @@ describe('MultiSelect 搜索过滤', () => {
         selected: ['gpt-5.6-sol'],
       }),
       items
+    )
+  })
+})
+
+describe('MultiSelect 值去重', () => {
+  test('按 trim + 大小写不敏感方式去重并保留首次展示形式', () => {
+    assert.deepEqual(
+      dedupeMultiSelectValues([
+        ' gpt-5.6-sol ',
+        'GPT-5.6-SOL',
+        '',
+        'gpt-5.6-luna',
+      ]),
+      ['gpt-5.6-sol', 'gpt-5.6-luna']
+    )
+  })
+
+  test('追加候选时不会把大小写不同的已选模型当作新增项', () => {
+    assert.deepEqual(
+      getNewMultiSelectValues({
+        selected: ['gpt-5.6-sol'],
+        incoming: ['GPT-5.6-SOL', 'gpt-5.6-terra', ' gpt-5.6-luna '],
+      }),
+      ['gpt-5.6-terra', 'gpt-5.6-luna']
     )
   })
 })

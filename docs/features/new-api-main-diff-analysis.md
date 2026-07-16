@@ -14552,3 +14552,80 @@ NexusTok 当前已经有更强的后端和 Hook 侧 fail-closed 保护：`use-ch
 9. MCP 网络记录确认验证期间只触发 `GET /api/channel/1` 和 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50` 等读取请求，没有触发 `PUT/POST /api/channel` 保存写请求。
 10. MCP 控制台没有 JavaScript runtime `error` 或 `warn`；仅有既有浏览器 issue：输入 autocomplete 提示和部分 Base UI `label for` 关联提示，以及 i18next info/debug 日志，本轮未扩大为运行时错误。
 11. 普通写用户缺少敏感写权限时的提交前拦截分支由单测覆盖；当前 3003 登录账号是 Root/Admin 权限，真实页面会天然拥有 `channel.sensitive_write`，因此没有在浏览器中修改会话权限矩阵做破坏性模拟。
+
+## 本轮实施评审：模型搜索添加去重与编辑渠道页面对齐
+
+### 差异来源
+
+用户继续反馈“搜索添加时不正确”，并指出最新版 new-api 的编辑渠道页面体验较好，要求将当前项目的编辑渠道页面与 `/opt/project/new-api-main` 对齐。重新核查源码后确认：`/opt/project/new-api-main` 同时存在 `web/default` 新版编辑渠道抽屉和 `web/classic` 旧式 `EditChannelModal.jsx`。当前 NexusTok 已经吸收了 `web/default` 的大部分新版结构，包括分区导航、provider 状态摘要、模型与分组分区、高级设置分组、只读敏感字段提示、模型映射可视化编辑、上游模型管理、账号池与 Codex OAuth 增强。因此本轮不做整文件覆盖，而是继续按“new-api 优势原生化”的方式补齐可验证的低风险差异。
+
+MCP 在 `http://192.168.0.202:3003/channels?verify=1784248000000` 复查渠道 `11111` 编辑页：输入 `gpt-5.6` 后，页面能显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`，下拉真实候选为 `gpt-5.6-terra`、`gpt-5.6-luna`。这说明前一轮的远程模型元数据搜索、OpenAI 供应商收窄、`matched_models` 展开和已选项隐藏已经生效。但继续检查 `MultiSelect` 内部追加逻辑发现，它仍使用原始字符串集合判断重复；当模型库或用户输入出现大小写差异时，可能把 `GPT-5.6-SOL` 与 `gpt-5.6-sol` 当作不同值短暂加入选中列表。渠道表单保存前虽会二次归一化，但交互层会表现为搜索添加不稳定。
+
+### 需求分析
+
+1. 搜索添加模型必须在交互层、渠道表单层和保存 payload 层都保持一致的去重语义：按 `trim + lower` 判断同一模型，展示保留首次出现形式。
+2. 远程模型搜索结果、系统已有模型列表和当前渠道历史模型合并时不能产生大小写重复候选，避免搜索下拉出现重复项或误判可新增项。
+3. `MultiSelect` 逐项点击、逗号/换行批量输入、自定义创建和搜索批量添加必须遵循相同的重复判断，避免“点了但结果看起来不正确”。
+4. 编辑渠道页面继续对齐 new-api 最新 `web/default` 的紧凑编辑体验，但不能覆盖 NexusTok 已经增强的账号池、Codex OAuth、远程模型元数据搜索、细粒度权限和移动端导航。
+5. 本轮不修改 Go 后端、数据库、权限模型、渠道保存接口、模型搜索接口、账号池后端、Codex OAuth 后端或 `/opt/project/new-api-main` 源码。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 多选组件 | `web/default/src/components/multi-select.tsx` | 新增并复用大小写不敏感的选中值去重/追加工具，修复搜索候选逐项添加和手动输入的重复边界。 |
+| 多选组件测试 | `web/default/src/components/multi-select.test.ts` | 增加大小写不敏感追加和整体去重测试，覆盖 `gpt-5.6` 变体大小写不一致场景。 |
+| 渠道编辑抽屉 | `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` | 基础模型选项和搜索候选合并改用统一模型去重；左侧导航宽度对齐 new-api 新版更紧凑布局。 |
+| 差异报告 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施和验证。 |
+
+### 风险评估
+
+1. 去重语义风险：`MultiSelect` 是通用组件，按大小写不敏感去重可能影响极少数需要区分大小写值的场景；但组件现有 `canCreateMultiSelectValue()` 已经按大小写不敏感阻止重复创建，本轮只是让追加/选中路径与既有语义一致。
+2. 模型候选风险：如果模型库中确实存在仅大小写不同但语义不同的模型，本轮会合并为一个；AI 模型 ID 通常大小写不敏感或要求稳定小写，且渠道模型列表此前已经在 `dedupeModelNames()` 中采用该规则。
+3. 表单草稿风险：本轮只改变前端草稿去重，不自动保存，不改变 PUT/POST payload 字段范围。
+4. 页面布局风险：将桌面分区导航从 `15rem` 调整到 new-api 新版的 `13rem` 会增加表单主体空间，但可能让较长导航文案换行；当前导航按钮已有断行/截断处理，移动端导航不受影响。
+5. 热更新风险：修改后必须重新访问 3003 页面并确认 chunk 已更新；如果页面无变化，需要先重启容器再验证。
+
+### 方案评审
+
+采用“统一去重工具 + 候选合并修正 + 轻量布局对齐”的方案：
+
+1. 在 `multi-select.tsx` 新增 `normalizeMultiSelectValueKey()`、`dedupeMultiSelectValues()`、`getNewMultiSelectValues()`，统一按 `trim + lower` 判断重复。
+2. `addValues()` 改用 `getNewMultiSelectValues()`，避免用户输入或搜索候选大小写不同导致重复加入。
+3. `handleValueChange()` 改用 `dedupeMultiSelectValues()`，确保 Base UI 返回的选中数组也被统一归一。
+4. `channel-mutate-drawer.tsx` 的 `baseModelOptions` 和 `modelOptions` 改用 `dedupeModelNames()` 合并，避免系统模型、当前渠道模型、远程搜索候选之间的大小写重复。
+5. 桌面编辑渠道导航列宽对齐 new-api 新版的 `13rem`，保留 NexusTok 当前移动端 sticky 导航和更完整的权限/账号池能力。
+6. 验证顺序：定向单测、定向 ESLint、`bun run i18n:sync`、`bun run typecheck`、`bun run build`、`git diff --check`；最后 MCP 访问 3003 渠道编辑页，真实搜索 `gpt-5.6` 并确认候选、逐项添加、批量添加和无保存写请求。
+
+### 补充评审：供应商映射一致性
+
+继续核查后发现，当前“搜索添加不正确”还有一类不易在 OpenAI/Codex 场景复现的根因：前端 `CHANNEL_TYPE_MODEL_SEARCH_VENDORS` 对部分渠道类型使用了英文 vendor 名，而当前模型库默认供应商规则里实际落库名称是 `智谱`、`阿里巴巴`、`腾讯`、`Moonshot` 等 canonical 名称。如果继续把 `vendor=Zhipu AI`、`Alibaba`、`tencent`、`Moonshot AI` 传给 `/api/models/search`，某些渠道会被错误收窄到空结果。与此同时，后端 `SearchModels` 的 `vendors.name LIKE ?` 仍是大小写敏感比较，PostgreSQL 下也存在 `tencent` 不能稳定命中 `Tencent` 的风险。
+
+这部分属于搜索正确性问题，而不是样式问题，因此本轮一并处理，但保持改动最小：
+
+1. 前端只把已确认不一致的渠道类型映射改为当前模型库实际 canonical vendor 名称：`Zhipu AI -> 智谱`、`Alibaba -> 阿里巴巴`、`tencent -> 腾讯`、`Moonshot AI -> Moonshot`。
+2. 后端 `SearchModels` 的 vendor 名称过滤改为 `LOWER(vendors.name) LIKE ?`，用跨 SQLite / MySQL / PostgreSQL 都可用的大小写无关比较，避免大小写造成的假空结果。
+3. 为前端映射和后端大小写匹配分别补测试，确保这类搜索回归能被及时发现。
+
+### 实施结果
+
+1. `web/default/src/components/multi-select.tsx` 已新增 `normalizeMultiSelectValueKey()`、`dedupeMultiSelectValues()` 和 `getNewMultiSelectValues()`，把搜索候选点击、逗号/换行批量输入和 Base UI 返回值统一到 `trim + lower` 去重语义，保留首次出现的展示形式。
+2. `web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 已把基础模型候选和远程搜索候选统一走 `dedupeModelNames()`，避免系统模型、当前渠道模型和搜索结果仅因大小写不同而重复展示或重复追加。
+3. 编辑渠道抽屉桌面端主布局已从 `lg:grid-cols-[15rem_minmax(0,1fr)]` 收紧为 `lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)]`，与 `/opt/project/new-api-main/web/default` 的紧凑导航宽度对齐，同时保留 NexusTok 已经扩展的移动端 sticky 导航、账号池、Codex OAuth 和远程模型元数据能力。
+4. 左侧分区导航中“已配置但未完成”的状态点已统一为 `bg-success` 语义色，和 new-api 最新默认前端的状态表达保持一致。
+5. `web/default/src/features/channels/lib/model-search.ts` 已把 `16/17/23/25/26` 等渠道类型的默认搜索供应商改为当前模型库使用的 canonical vendor 名称：`智谱`、`阿里巴巴`、`腾讯`、`Moonshot`、`智谱`。
+6. `model/model_meta.go` 已将模型搜索中的供应商名称匹配改为 `LOWER(vendors.name) LIKE ?`，在 SQLite、MySQL、PostgreSQL 上统一为大小写无关匹配，避免 canonical 名称或供应商大小写不同造成假空结果。
+7. 本轮没有整文件覆盖 `/opt/project/new-api-main` 的编辑渠道页。经源码比对，NexusTok 当前页已经包含更多原生能力；本轮只吸收低风险、可验证的页面结构和搜索交互改进，避免把现有账号池、Codex OAuth、权限提示和模型元数据搜索能力回退掉。
+
+### 验证记录
+
+1. 已运行 `go test ./model -run 'TestSearchModelsWithVendor'`，新增的 `TestSearchModelsWithVendorIsCaseInsensitive` 通过，确认 `Tencent` / `Moonshot` 在小写查询 `tencent` / `moonshot` 下能稳定命中。
+2. 已运行 `cd web/default && bun test src/components/multi-select.test.ts src/features/channels/lib/model-search.test.ts src/features/channels/hooks/use-channel-mutate-form.test.ts`，49 个测试全部通过，覆盖 MultiSelect 大小写不敏感去重、canonical vendor 映射和既有渠道表单保护逻辑。
+3. 已运行 `cd web/default && bunx eslint --no-ignore src/components/multi-select.tsx src/components/multi-select.test.ts src/features/channels/lib/model-search.ts src/features/channels/lib/model-search.test.ts src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/hooks/use-channel-mutate-form.test.ts`，无 error；仅保留 `multi-select.tsx` 的既有 Fast Refresh warning，本轮未新增新的 lint 问题。
+4. 已运行 `cd web/default && bun run i18n:sync`、`cd web/default && bun run typecheck`、`cd web/default && bun run build`，前端国际化同步、类型检查和生产构建均通过。
+5. 已运行 `git diff --check`，未发现空白或 patch 格式问题。
+6. MCP 已在 `http://192.168.0.202:3003/channels?verify=1784249800000` 打开实际部署页面并进入渠道 `11111` 的编辑抽屉。页面内通过 `evaluate_script` 读取到主网格类名为 `grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[15rem_minmax(0,1fr)]`，说明热更新后的编辑页布局已经生效。
+7. MCP 页面搜索 `gpt-5.6` 时，实际请求为 `GET /api/models/search?keyword=gpt-5.6&vendor=OpenAI&p=1&page_size=50`，请求头包含 `NexusTok-User: 1`，返回体包含 `gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra` 三个模型，页面文案显示 `命中 3 个 · 可新增 2 个 · 已存在 1 个`。
+8. MCP 点击“添加 2 个搜索结果”后，页面 toast 显示 `已从搜索结果添加 2 个模型`，抽屉内实际新增 `gpt-5.6-terra` 与 `gpt-5.6-luna` 两个模型 chip，已存在的 `gpt-5.6-sol` 没有被重复加入，证明搜索批量添加路径与 MultiSelect 交互层去重已对齐。
+9. MCP 继续在同一登录态下直接调用 `/api/models/search` 验证非 OpenAI 供应商过滤：`vendor=Moonshot` 返回 200 且可读到 `kimi-k2.7-code-highspeed`、`kimi-k2.7-code`、`kimi-k2.6`、`kimi-k2.5`、`kimi-k2-thinking-turbo` 等模型；`vendor=腾讯`、`vendor=智谱`、`vendor=阿里巴巴` 也都返回 200，只是当前库中暂无命中数据。该结果说明本轮 canonical vendor 映射与后端大小写无关匹配已经打通真实页面调用链路，不再被错误收窄或直接 401。
+10. MCP 网络记录中只有两条 `401`，均来自前期未带 `NexusTok-User` 头的手工探测请求；页面自身真实发起的模型搜索请求返回 200。控制台除这两条探测遗留报错外，没有新的 JavaScript runtime error；仍只有既有 `autocomplete` 和 Base UI `label for` issue。

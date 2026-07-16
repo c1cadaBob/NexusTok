@@ -62,3 +62,39 @@ func TestSearchModelsWithVendorQualifiesModelColumns(t *testing.T) {
 	require.Len(t, models, 1)
 	require.Equal(t, "gpt-5.6-terra", models[0].ModelName)
 }
+
+func TestSearchModelsWithVendorIsCaseInsensitive(t *testing.T) {
+	db := setupModelMetaSearchTestDB(t)
+
+	tencentVendor := Vendor{Name: "Tencent", Description: "Hunyuan models", Status: 1}
+	moonshotVendor := Vendor{Name: "Moonshot", Description: "Kimi family", Status: 1}
+	require.NoError(t, db.Create(&tencentVendor).Error)
+	require.NoError(t, db.Create(&moonshotVendor).Error)
+
+	require.NoError(t, db.Create(&Model{
+		ModelName:   "hunyuan-t1",
+		Description: "Tencent reasoning model",
+		Tags:        "Hunyuan,Tencent",
+		VendorID:    tencentVendor.Id,
+		Status:      1,
+	}).Error)
+	require.NoError(t, db.Create(&Model{
+		ModelName:   "kimi-k2",
+		Description: "Moonshot model",
+		Tags:        "Moonshot,Kimi",
+		VendorID:    moonshotVendor.Id,
+		Status:      1,
+	}).Error)
+
+	tencentModels, tencentTotal, err := SearchModels("", "tencent", 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), tencentTotal)
+	require.Len(t, tencentModels, 1)
+	require.Equal(t, "hunyuan-t1", tencentModels[0].ModelName)
+
+	moonshotModels, moonshotTotal, err := SearchModels("", "moonshot", 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), moonshotTotal)
+	require.Len(t, moonshotModels, 1)
+	require.Equal(t, "kimi-k2", moonshotModels[0].ModelName)
+}
