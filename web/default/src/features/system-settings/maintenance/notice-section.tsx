@@ -51,7 +51,7 @@ export function NoticeSection({ defaultValue }: NoticeSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const normalizedDefaultValue = defaultValue ?? ''
-  const { form, handleSubmit, isDirty, isSubmitting } =
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
     useSettingsForm<NoticeFormValues>({
       resolver: zodResolver(noticeSchema) as Resolver<
         NoticeFormValues,
@@ -82,9 +82,13 @@ export function NoticeSection({ defaultValue }: NoticeSectionProps) {
         <SettingsForm onSubmit={handleSubmit}>
           <SettingsPageFormActions
             onSave={handleSubmit}
+            onReset={handleReset}
             isSaving={isSubmitting || updateOption.isPending}
-            isSaveDisabled={!updateOption.canUpdate}
-            saveDisabledReason={updateOption.disabledReason}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
             saveLabel='Save notice'
           />
           <FormDirtyIndicator isDirty={isDirty} />

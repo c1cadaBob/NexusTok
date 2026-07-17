@@ -16838,6 +16838,68 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 本轮验证没有点击“测试连接”，未触发 `/api/deployments/settings/test-connection` 或外部 io.net 连接测试。
 10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
 
+## 本轮实施评审：系统公告页重置动作与保存禁用补齐
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/maintenance/notice-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/site/notice` 已经完成共享表单、页头保存动作、脏态徽标和离页拦截迁移，但仍存在两个尾差：
+
+1. 页头动作区只暴露“保存通知”，没有接入 `useSettingsForm()` 已提供的 `handleReset`，管理员临时编辑公告后无法一键回到保存基线。
+2. 首屏无脏态时“保存通知”仍可点击，和 Worker、Token 数限制、敏感词、SMTP 等已经补齐页面的“无变更禁用保存”语义不一致。
+
+这两个问题都属于同一页头动作一致性问题，不需要改后端 `Notice` option 合同，也不需要引入“恢复平台默认公告”这类额外业务语义。
+
+### 需求分析
+
+1. `/system-settings/site/notice` 需要补齐页头“重置”动作，让管理员临时编辑公告内容后可以直接回滚到保存基线。
+2. 无脏态时“保存通知”应禁用；有脏态且具备系统设置写权限时才允许保存。
+3. 必须保持现有 `useSettingsForm()`、`FormDirtyIndicator`、`FormNavigationGuard`、`Notice` option key、空公告 `''` 语义和权限禁用理由不变。
+4. 验证阶段不能点击“保存通知”，避免污染当前全局公告内容。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 系统公告设置页 | `web/default/src/features/system-settings/maintenance/notice-section.tsx` | 在已有共享表单结构中暴露页头重置动作；保存按钮按脏态和权限禁用；不改变公告字段、文本域或后端保存合同。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `Notice` 会影响前台全局公告展示；验证阶段如果误保存临时公告，会直接改变用户可见内容。
+2. `Notice` 允许空字符串；本轮不能改 `values.Notice ?? ''` 提交语义，避免空公告保存行为变化。
+3. 无脏态保存禁用只应影响按钮可用性，不能改变 `handleSubmit` 内部保存路径，避免和既有权限、toast、状态刷新逻辑分叉。
+4. 重置动作必须只回滚当前草稿，不能触发 `PUT /api/option/`。
+
+### 方案评审
+
+采用“页头动作一致性补齐”的方案：
+
+1. 继续复用当前项目已有 `useSettingsForm()`，从 hook 返回值中解构 `handleReset`。
+2. 给 `SettingsPageFormActions` 增加 `onReset={handleReset}` 与 `isResetDisabled={!isDirty}`。
+3. 将 `isSaveDisabled` 调整为 `!isDirty || !updateOption.canUpdate`，让无脏态时保存禁用，缺权限时继续禁用。
+4. `saveDisabledReason` 仅在缺少权限时传入，避免无脏态禁用时展示误导性的权限原因。
+5. 不改 Zod schema、`onSubmit`、`Notice` option key、textarea 或任意后端保存逻辑。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/maintenance/notice-section.tsx` 已在现有共享表单结构中接入 `handleReset`。
+2. `/system-settings/site/notice` 页头动作区现在同时提供“重置”和“保存通知”；无脏态时二者禁用，有脏态时按现有权限和提交状态启用。
+3. 保存合同仍然只写入 `Notice`，没有改变后端接口、权限模型、状态刷新或公告展示逻辑。
+4. 空公告仍以空字符串作为表单基线和保存值，没有引入新的默认公告概念。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/maintenance/notice-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已使用 MCP 访问 `http://192.168.0.202:3003/system-settings/site/notice?verify=20260717-notice-reset-action-v2`，确认热更新生效，页头显示“重置”和“保存通知”，首屏二者均为禁用态。
+5. 将公告内容临时改为 `preview notice only` 后，标题区域出现“未保存的更改”，页头“重置”和“保存通知”从禁用变为可用。
+6. 在脏态下点击侧栏“系统信息”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在系统公告页，说明统一离开拦截正常。
+7. 点击页头“重置”后，公告内容恢复为空字符串，标题状态消失，页头“重置”和“保存通知”重新禁用，说明共享表单回滚行为正确。
+8. 本轮验证没有点击“保存通知”，未执行真实 `PUT /api/option/`，没有污染当前全局公告配置。
+9. MCP 网络请求只出现 `GET /api/status`、`GET /api/user/self`、`GET /api/notice` 和 `GET /api/option/`。
+10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
 ## 本轮实施评审：Sensitive Words 设置页重置动作补齐
 
 ### 差异来源
