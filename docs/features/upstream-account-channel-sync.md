@@ -166,7 +166,7 @@ sub2api 使用 `/api/v1` 前缀，标准响应为 `{"code": 0, "message": "succe
 | 用量统计 | `GET /api/v1/usage/dashboard/stats`、`POST /api/v1/usage/dashboard/api-keys-usage` 等 | Bearer | `/opt/project/sub2api-main/frontend/src/api/usage.ts` | 可用于交叉校验账号/Key 用量；批量 key 用量最多 100 个 id |
 | 可用渠道与模型 | `GET /api/v1/channels/available` | Bearer | `/opt/project/sub2api-main/frontend/src/api/channels.ts` | 返回用户可见渠道、平台、分组和模型定价 |
 
-sub2api 的分组倍率来自 `Group.rate_multiplier` 和用户专属 `/groups/rates` 覆盖；API Key 的剩余可由 `quota - quota_used` 推导，`quota = 0` 表示无限制。用户账号余额来自 `User.balance`。如果目标平台启用了 2FA 或 Turnstile，第一版账号密码同步应返回明确错误，提示需要关闭或后续扩展交互式认证。
+sub2api 的分组倍率来自 `Group.rate_multiplier` 和用户专属 `/groups/rates` 覆盖；API Key 的剩余可由 `quota - quota_used` 推导，`quota = 0` 表示无限制。用户账号余额来自 `User.balance`。当前实现已支持 sub2api TOTP 2FA：首次登录返回 `requires_2fa/temp_token` 时生成短期 challenge，管理员输入验证码后再读取密钥、倍率和余额。Turnstile 仍需要后续按目标平台实际配置扩展交互式校验。
 
 sub2api 的金额与配额字段是 USD float，不需要 `QuotaPerUnit` 换算。它没有单独的用户 `used_balance` 字段，累计已用优先采用 `/usage/dashboard/stats.total_actual_cost`；密钥级用量优先采用 API Key 的 `quota_used`，需要更精确趋势时再调用 usage dashboard 接口。
 
@@ -607,3 +607,34 @@ sub2api 指定账号复测：
 - 已用错误验证码真实调用 `POST /api/channel/upstream-account/preview/2fa`，后端返回 `new-api 2FA 验证失败`，前端清空 challenge，未生成密钥预览。
 - 已用指定 sub2api 账号真实调用普通 preview，仍返回 `preview_id`、1 个脱敏 Key、1 个分组、余额快照；响应不包含完整 `key` 字段。
 - 本轮无法完成 new-api 二阶段正向同步，因为当前 TOTP/备用码是外部动态凭据，未在本任务中提供；接口、页面状态和错误路径已真实验证。
+
+## 2026-07-17 sub2api 2FA 与 challenge 边界缺陷方案评审
+
+继续审计时发现两个与二阶段登录相关的缺口。第一，sub2api 源码已经提供 `/api/v1/auth/login/2fa`，首次登录启用 TOTP 时会返回 `requires_2fa=true` 和 `temp_token`，但 NexusTok 适配器此前直接返回“不支持交互式二次验证”；这会让启用 2FA 的 sub2api 账号无法完成账号密码同步。第二，`POST /api/channel/upstream-account/preview/2fa` 旧实现会先消费 challenge，再进入平台验证码校验；前端虽然会拦截空验证码，但直接调用接口传空 `code` 会导致后端把可用 challenge 删除，管理员需要重新输入账号密码。
+
+### 需求分析
+
+- sub2api 与 new-api 都应支持账号密码同步中的 TOTP 二阶段登录，普通未启用 2FA 的账号仍直接返回普通 `preview_id`。
+- 二阶段 challenge 只能短期保存继续认证所需的最小上下文。sub2api 只保存 `temp_token`、平台、Base URL 和账号展示名；不得保存密码、正式 access token 或完整 API Key。
+- 参数错误和平台验证码错误需要区分：空验证码属于 NexusTok API 参数错误，不应消费 challenge；错误 TOTP 会真正触发目标平台验证，应继续保持一次性消费，避免 pending 会话被重复探测。
+
+### 影响范围分析
+
+- 后端 `service/upstreamaccount`：`AuthChallengeRecord` 新增 sub2api 二阶段数据；`Preview` 对 sub2api 返回 challenge；`CompletePreview2FA` 支持 sub2api 完成登录；sub2api 普通登录快照读取抽成复用函数。
+- 前端 `web/default/src/features/channels/types.ts`：2FA challenge 的 `platform` 类型从单一 `new-api` 放宽为 `new-api | sub2api`。现有 UI 文案使用“上游 2FA”，无需新增翻译。
+- 路由和权限不新增路径，继续复用 `POST /api/channel/upstream-account/preview/2fa` 和既有 `ChannelSensitiveWrite` 权限。
+- 数据库无迁移；challenge 和 preview 都仍走短期混合缓存，不落库。
+
+### 风险评估
+
+- sub2api `temp_token` 仍是敏感短期凭据。缓解：只放入 5 分钟 TTL 的 challenge 缓存，不返回前端，不写入文档和日志。
+- 普通 sub2api 同步可能因重构快照读取函数产生回归。缓解：普通账号路径仍先登录拿 access token，再调用同一批 `/auth/me`、`/user/profile`、`/groups/*`、`/usage/dashboard/stats`、`/keys` 接口；既有真实普通 preview 场景和单元测试继续覆盖。
+- 空验证码不消费 challenge 可能允许短时间重复参数错误。评审：该路径不会访问目标平台，不增加上游验证尝试；相比让管理员重新登录，保留 challenge 更符合 API 参数错误语义。
+
+### 方案评审与当前状态
+
+- 后端为 sub2api 增加 `BeginPreview`：普通账号直接返回快照；返回 `requires_2fa/temp_token` 时生成 challenge，响应结构与 new-api 一致，只含 `challenge`，不含 `snapshot` 或 `preview_id`。
+- 后端为 sub2api 增加 `Complete2FA`：使用缓存的 `temp_token` 调用 `/api/v1/auth/login/2fa`，请求体为 `temp_token` 和 `totp_code`；成功拿到 access token 后复用普通快照读取逻辑。
+- `CompletePreview2FA` 先校验 `code` 非空再消费 challenge。空验证码会返回“验证码不能为空”并保留 challenge；平台返回验证码错误仍会消费 challenge。
+- 单元测试新增 `TestSub2APIPreviewCompletesTwoFAChallenge` 和 `TestCompletePreview2FARejectsEmptyCodeWithoutConsumingChallenge`，覆盖 sub2api challenge 正向流程和空验证码边界。
+- 真实 sub2api 指定账号当前未启用 2FA，因此本轮真实验证重点仍是普通 preview 正向链路；sub2api 2FA 的协议正确性来自本地 `/opt/project/sub2api-main` 源码和 `httptest` 模拟真实 envelope。

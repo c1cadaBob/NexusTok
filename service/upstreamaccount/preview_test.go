@@ -256,6 +256,30 @@ func TestCompletePreview2FARejectsExpiredChallenge(t *testing.T) {
 	require.Contains(t, err.Error(), "二次验证会话不存在或已过期")
 }
 
+func TestCompletePreview2FARejectsEmptyCodeWithoutConsumingChallenge(t *testing.T) {
+	challenge, err := saveAuthChallenge(AuthChallengeRecord{
+		Platform: PlatformSub2API,
+		BaseURL:  "http://example.test",
+		Email:    "alice@example.com",
+		Sub2API: &Sub2APIChallengeData{
+			TempToken: "temp-token",
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = CompletePreview2FA(context.Background(), Preview2FARequest{
+		ChallengeID: challenge.ChallengeID,
+		Code:        " ",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "验证码不能为空")
+	_, found, err := authChallengeCache.Get(challenge.ChallengeID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, authChallengeCache.Purge())
+}
+
 func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -302,6 +326,73 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
+}
+
+func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/auth/login" && r.URL.Path != "/api/v1/auth/login/2fa" {
+			require.Equal(t, "Bearer sub2-2fa-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"requires_2fa":true,"temp_token":"temp-123"}}`))
+		case "/api/v1/auth/login/2fa":
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "temp-123", body["temp_token"])
+			require.Equal(t, "654321", body["totp_code"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-2fa-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-2fa-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	first, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Email:    "alice@example.com",
+		Password: "secret",
+	}})
+	require.NoError(t, err)
+	require.Empty(t, first.PreviewID)
+	require.Nil(t, first.Snapshot)
+	require.NotNil(t, first.Challenge)
+	require.Equal(t, PlatformSub2API, first.Challenge.Platform)
+	require.Equal(t, "alice@example.com", first.Challenge.Username)
+
+	result, err := CompletePreview2FA(context.Background(), Preview2FARequest{
+		ChallengeID: first.Challenge.ChallengeID,
+		Code:        "654321",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Nil(t, result.Challenge)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Empty(t, result.Snapshot.Keys[0].Key)
+	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
+	require.Equal(t, float64(12.5), *result.Snapshot.Balance.BalanceUSD)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-sub2-2fa-full-key", record.Snapshot.Keys[0].Key)
+
+	_, found, err := authChallengeCache.Get(first.Challenge.ChallengeID)
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func TestSub2APIPreviewAcceptsLoginPageURL(t *testing.T) {

@@ -120,25 +120,83 @@ type sub2APIUsageStats struct {
 
 // FetchSnapshot 登录 sub2api 并读取当前账号可见的密钥、分组、倍率和余额。
 func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential) (*Snapshot, error) {
+	snapshot, challenge, err := c.BeginPreview(ctx, credential)
+	if err != nil {
+		return nil, err
+	}
+	if challenge != nil {
+		return nil, fmt.Errorf("sub2api 账号启用了 2FA，请使用二阶段验证码完成上游账号同步")
+	}
+	return snapshot, nil
+}
+
+// BeginPreview 开始 sub2api 账号同步预览。
+//
+// 普通账号会直接返回完整后端快照；启用 2FA 的账号只返回短期 challenge。challenge 中
+// 只保存 sub2api 登录接口返回的 temp_token，不保存账号密码或正式 access_token。
+func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential) (*Snapshot, *AuthChallengeRecord, error) {
 	credential.BaseURL = normalizeSub2APIBaseURL(credential.BaseURL)
 	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	login, err := c.login(ctx, api, credential)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if login.Requires2FA || strings.TrimSpace(login.TempToken) != "" {
-		return nil, fmt.Errorf("sub2api 账号启用了 2FA，当前预览接口暂不支持交互式二次验证")
+		tempToken := strings.TrimSpace(login.TempToken)
+		if tempToken == "" {
+			return nil, nil, fmt.Errorf("sub2api 账号启用了 2FA，但登录响应缺少 temp_token")
+		}
+		return nil, &AuthChallengeRecord{
+			Platform: PlatformSub2API,
+			BaseURL:  api.baseURL,
+			Email:    strings.TrimSpace(firstNonEmpty(credential.Email, credential.Username)),
+			Sub2API: &Sub2APIChallengeData{
+				TempToken: tempToken,
+			},
+		}, nil
 	}
-	if strings.TrimSpace(login.AccessToken) == "" {
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	return snapshot, nil, err
+}
+
+// Complete2FA 使用已缓存的 sub2api temp_token 和管理员输入的验证码完成预览。
+func (c *Sub2APIClient) Complete2FA(ctx context.Context, record AuthChallengeRecord, code string) (*Snapshot, error) {
+	if record.Sub2API == nil || strings.TrimSpace(record.Sub2API.TempToken) == "" {
+		return nil, fmt.Errorf("sub2api 二次验证会话无效，请重新同步上游账号")
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, fmt.Errorf("验证码不能为空")
+	}
+	api, err := newHTTPClient(record.BaseURL, c.httpClient)
+	if err != nil {
+		return nil, err
+	}
+	var envelope sub2APIEnvelope[sub2APILoginResponse]
+	body := map[string]string{
+		"temp_token": record.Sub2API.TempToken,
+		"totp_code":  code,
+	}
+	if err := api.postJSON(ctx, "/api/v1/auth/login/2fa", nil, body, &envelope); err != nil {
+		return nil, err
+	}
+	login, err := unwrapSub2API(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("sub2api 2FA 验证失败：%w", err)
+	}
+	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+}
+
+func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, accessToken string, user sub2APIUser) (*Snapshot, error) {
+	if strings.TrimSpace(accessToken) == "" {
 		return nil, fmt.Errorf("sub2api 登录响应缺少 access_token")
 	}
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+login.AccessToken)
+	headers.Set("Authorization", "Bearer "+accessToken)
 
-	user := login.User
 	if me, err := c.fetchMe(ctx, api, headers); err == nil {
 		user = me
 	}

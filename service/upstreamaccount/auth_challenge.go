@@ -40,23 +40,29 @@ var (
 
 // AuthChallengeRecord 是后端短期保存的二阶段登录上下文。
 //
-// 该结构故意不包含账号密码、完整 API Key 或 access token。new-api 2FA 只需要首次
-// 登录时目标站点写入的 pending session cookie，因此缓存中只保存可序列化 cookie 和
-// 已探测的基础参数；验证码完成后再生成普通 preview 缓存。
+// 该结构故意不包含账号密码、完整 API Key 或正式 access token。new-api 2FA 只需要首次
+// 登录时目标站点写入的 pending session cookie；sub2api 2FA 只需要目标平台返回的短期
+// temp_token。验证码完成后才会继续读取密钥并生成普通 preview 缓存。
 type AuthChallengeRecord struct {
-	ID        string               `json:"id"`
-	Platform  string               `json:"platform"`
-	BaseURL   string               `json:"base_url"`
-	Username  string               `json:"username,omitempty"`
-	Email     string               `json:"email,omitempty"`
-	ExpiresAt int64                `json:"expires_at"`
-	NewAPI    *NewAPIChallengeData `json:"new_api,omitempty"`
+	ID        string                `json:"id"`
+	Platform  string                `json:"platform"`
+	BaseURL   string                `json:"base_url"`
+	Username  string                `json:"username,omitempty"`
+	Email     string                `json:"email,omitempty"`
+	ExpiresAt int64                 `json:"expires_at"`
+	NewAPI    *NewAPIChallengeData  `json:"new_api,omitempty"`
+	Sub2API   *Sub2APIChallengeData `json:"sub2api,omitempty"`
 }
 
 // NewAPIChallengeData 保存 new-api 2FA 二阶段需要复用的上下文。
 type NewAPIChallengeData struct {
 	QuotaPerUnit float64            `json:"quota_per_unit"`
 	Cookies      []StoredHTTPCookie `json:"cookies"`
+}
+
+// Sub2APIChallengeData 保存 sub2api 2FA 二阶段需要复用的上下文。
+type Sub2APIChallengeData struct {
+	TempToken string `json:"temp_token"`
 }
 
 // StoredHTTPCookie 是 http.Cookie 的可缓存子集。

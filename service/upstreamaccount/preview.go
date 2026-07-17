@@ -57,8 +57,26 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if req.Platform == PlatformNewAPI {
+	switch req.Platform {
+	case PlatformNewAPI:
 		client := NewNewAPIClient(nil)
+		snapshot, challengeRecord, err := client.BeginPreview(ctx, req.Credential)
+		if err != nil {
+			return nil, err
+		}
+		if challengeRecord != nil {
+			challenge, err := saveAuthChallenge(*challengeRecord)
+			if err != nil {
+				return nil, err
+			}
+			return &PreviewResult{
+				ExpiresAt: challenge.ExpiresAt,
+				Challenge: challenge,
+			}, nil
+		}
+		return SavePreviewSnapshot(snapshot)
+	case PlatformSub2API:
+		client := NewSub2APIClient(nil)
 		snapshot, challengeRecord, err := client.BeginPreview(ctx, req.Credential)
 		if err != nil {
 			return nil, err
@@ -84,6 +102,9 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 
 // CompletePreview2FA 使用短期 challenge 完成上游平台二次验证，并生成普通预览快照。
 func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewResult, error) {
+	if strings.TrimSpace(req.Code) == "" {
+		return nil, fmt.Errorf("验证码不能为空")
+	}
 	record, err := consumeAuthChallenge(req.ChallengeID)
 	if err != nil {
 		return nil, err
@@ -91,6 +112,13 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 	switch NormalizePlatform(record.Platform) {
 	case PlatformNewAPI:
 		client := NewNewAPIClient(nil)
+		snapshot, err := client.Complete2FA(ctx, *record, req.Code)
+		if err != nil {
+			return nil, err
+		}
+		return SavePreviewSnapshot(snapshot)
+	case PlatformSub2API:
+		client := NewSub2APIClient(nil)
 		snapshot, err := client.Complete2FA(ctx, *record, req.Code)
 		if err != nil {
 			return nil, err

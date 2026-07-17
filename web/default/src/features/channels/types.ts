@@ -286,7 +286,7 @@ export interface UpstreamAccountPreviewData {
 
 export interface UpstreamAccountTwoFactorChallenge {
   challenge_id: string
-  platform: 'new-api'
+  platform: UpstreamAccountPlatform
   type: 'totp'
   expires_at: number
   username?: string
