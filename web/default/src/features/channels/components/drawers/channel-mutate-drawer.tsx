@@ -237,8 +237,26 @@ type UpstreamAccountConfigDraft = {
   enabled: boolean
 }
 
+const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
+
 function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
   return key.sync_id || key.external_id || key.masked_key || `${index}`
+}
+
+function upstreamPreviewRemainingSeconds(expiresAt: number, nowMs: number) {
+  if (!expiresAt) return 0
+  return Math.max(0, Math.ceil(expiresAt - nowMs / 1000))
+}
+
+function formatUpstreamPreviewRemaining(seconds: number) {
+  const safeSeconds = Math.max(0, seconds)
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainingSeconds = safeSeconds % 60
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+}
+
+function isUpstreamPreviewExpiredError(message?: string) {
+  return Boolean(message?.includes(PREVIEW_EXPIRED_ERROR_TEXT))
 }
 
 function upstreamModelsToString(keys: UpstreamAccountKey[]) {
@@ -764,10 +782,16 @@ export function ChannelMutateDrawer({
   const [upstreamUsername, setUpstreamUsername] = useState('')
   const [upstreamPassword, setUpstreamPassword] = useState('')
   const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
+  const [upstreamPreviewExpiresAt, setUpstreamPreviewExpiresAt] = useState(0)
   const [upstreamSnapshot, setUpstreamSnapshot] =
     useState<UpstreamAccountSnapshot | null>(null)
+  const [upstreamRefreshPreviewExpiresAt, setUpstreamRefreshPreviewExpiresAt] =
+    useState(0)
   const [upstreamRefreshSnapshot, setUpstreamRefreshSnapshot] =
     useState<UpstreamAccountSnapshot | null>(null)
+  const [upstreamPreviewNowMs, setUpstreamPreviewNowMs] = useState(() =>
+    Date.now()
+  )
   const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
@@ -881,6 +905,59 @@ export function ChannelMutateDrawer({
     mutationFn: previewUpstreamAccount,
   })
 
+  const upstreamPreviewRemaining = upstreamPreviewRemainingSeconds(
+    upstreamPreviewExpiresAt,
+    upstreamPreviewNowMs
+  )
+  const upstreamRefreshPreviewRemaining = upstreamPreviewRemainingSeconds(
+    upstreamRefreshPreviewExpiresAt,
+    upstreamPreviewNowMs
+  )
+  const isUpstreamPreviewExpired = Boolean(
+    upstreamSnapshot && upstreamPreviewExpiresAt && upstreamPreviewRemaining <= 0
+  )
+  const isUpstreamRefreshPreviewExpired = Boolean(
+    upstreamRefreshSnapshot &&
+      upstreamRefreshPreviewExpiresAt &&
+      upstreamRefreshPreviewRemaining <= 0
+  )
+
+  const clearUpstreamCreatePreview = useCallback(() => {
+    setUpstreamPreviewId('')
+    setUpstreamPreviewExpiresAt(0)
+    setUpstreamSnapshot(null)
+  }, [])
+
+  const clearUpstreamRefreshPreview = useCallback(() => {
+    setUpstreamRefreshPreviewExpiresAt(0)
+    setUpstreamRefreshSnapshot(null)
+  }, [])
+
+  const clearAllUpstreamPreviews = useCallback(() => {
+    clearUpstreamCreatePreview()
+    clearUpstreamRefreshPreview()
+    setUpstreamAccountConfigs({})
+  }, [clearUpstreamCreatePreview, clearUpstreamRefreshPreview])
+
+  const showUpstreamPreviewExpiredToast = useCallback(() => {
+    toast.error(
+      t(
+        'The upstream account preview expired or was already used. Sync the upstream account again.'
+      )
+    )
+  }, [t])
+
+  useEffect(() => {
+    if (!upstreamPreviewExpiresAt && !upstreamRefreshPreviewExpiresAt) return
+
+    setUpstreamPreviewNowMs(Date.now())
+    const timer = window.setInterval(() => {
+      setUpstreamPreviewNowMs(Date.now())
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [upstreamPreviewExpiresAt, upstreamRefreshPreviewExpiresAt])
+
   const handleUpstreamSyncEnabledChange = useCallback(
     (checked: boolean) => {
       setUpstreamSyncEnabled(checked)
@@ -889,13 +966,10 @@ export function ChannelMutateDrawer({
         shouldValidate: true,
       })
       if (!checked) {
-        setUpstreamPreviewId('')
-        setUpstreamSnapshot(null)
-        setUpstreamRefreshSnapshot(null)
-        setUpstreamAccountConfigs({})
+        clearAllUpstreamPreviews()
       }
     },
-    [form]
+    [clearAllUpstreamPreviews, form]
   )
 
   const { copyToClipboard } = useCopyToClipboard()
@@ -963,11 +1037,9 @@ export function ChannelMutateDrawer({
     if (upstreamCredentialFingerprintRef.current === fingerprint) return
     upstreamCredentialFingerprintRef.current = fingerprint
     if (!upstreamSnapshot && !upstreamRefreshSnapshot) return
-    setUpstreamPreviewId('')
-    setUpstreamSnapshot(null)
-    setUpstreamRefreshSnapshot(null)
-    setUpstreamAccountConfigs({})
+    clearAllUpstreamPreviews()
   }, [
+    clearAllUpstreamPreviews,
     currentBaseUrl,
     upstreamPassword,
     upstreamPlatform,
@@ -1148,6 +1220,27 @@ export function ChannelMutateDrawer({
     hiddenAdvancedCustomRouteTypeCount > 0
       ? advancedCustomStats.routeTypeLabels.join(', ')
       : undefined
+
+  const renderUpstreamPreviewExpiryNotice = useCallback(
+    (remainingSeconds: number, expired: boolean) => (
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertDescription>
+          {expired
+            ? t(
+                'This upstream account preview expired. Sync the upstream account again before saving.'
+              )
+            : t(
+                'This upstream account preview expires in {{time}}. Sync again if it expires before you save.',
+                {
+                  time: formatUpstreamPreviewRemaining(remainingSeconds),
+                }
+              )}
+        </AlertDescription>
+      </Alert>
+    ),
+    [t]
+  )
 
   const renderUpstreamSnapshotReview = useCallback(
     (snapshot: UpstreamAccountSnapshot) => (
@@ -1706,6 +1799,7 @@ export function ChannelMutateDrawer({
     if (isEditing && channelData?.data) {
       const defaults = transformChannelToFormDefaults(channelData.data)
       form.reset(defaults)
+      clearAllUpstreamPreviews()
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -1718,12 +1812,13 @@ export function ChannelMutateDrawer({
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+      clearAllUpstreamPreviews()
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [clearAllUpstreamPreviews, isEditing, channelData, form])
 
   // 渠道类型变化时补充类型默认值；编辑模式不自动覆盖已有渠道配置。
   useEffect(() => {
@@ -2056,7 +2151,9 @@ export function ChannelMutateDrawer({
       return
     }
     setUpstreamPreviewId(res.data.preview_id)
+    setUpstreamPreviewExpiresAt(res.data.expires_at)
     setUpstreamSnapshot(res.data.snapshot)
+    clearUpstreamRefreshPreview()
     setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
 
     const models = upstreamModelsToString(res.data.snapshot.keys)
@@ -2090,6 +2187,7 @@ export function ChannelMutateDrawer({
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
+    clearUpstreamRefreshPreview,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
@@ -2204,6 +2302,12 @@ export function ChannelMutateDrawer({
     mutationFn: createUpstreamAccountChannel,
     onSuccess: (res) => {
       if (!res.success) {
+        if (isUpstreamPreviewExpiredError(res.message)) {
+          clearUpstreamCreatePreview()
+          setUpstreamAccountConfigs({})
+          showUpstreamPreviewExpiredToast()
+          return
+        }
         toast.error(res.message || t('Failed to create channel'))
         return
       }
@@ -2227,6 +2331,12 @@ export function ChannelMutateDrawer({
     }) => refreshUpstreamAccountChannel(id, payload),
     onSuccess: (res) => {
       if (!res.success) {
+        if (isUpstreamPreviewExpiredError(res.message)) {
+          clearUpstreamRefreshPreview()
+          setUpstreamAccountConfigs({})
+          showUpstreamPreviewExpiredToast()
+          return
+        }
         toast.error(res.message || t('Failed to refresh upstream account'))
         return
       }
@@ -2241,7 +2351,7 @@ export function ChannelMutateDrawer({
         )
       )
       setUpstreamPassword('')
-      setUpstreamRefreshSnapshot(null)
+      clearUpstreamRefreshPreview()
       setUpstreamAccountConfigs({})
       queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       if (channelId) {
@@ -2279,6 +2389,12 @@ export function ChannelMutateDrawer({
     }
     if (!upstreamRefreshSnapshot) {
       toast.error(t('Preview upstream account before applying refresh'))
+      return
+    }
+    if (isUpstreamRefreshPreviewExpired) {
+      clearUpstreamRefreshPreview()
+      setUpstreamAccountConfigs({})
+      showUpstreamPreviewExpiredToast()
       return
     }
     await upstreamRefreshMutation.mutateAsync({
@@ -2323,6 +2439,9 @@ export function ChannelMutateDrawer({
     upstreamRefreshSnapshot,
     upstreamRefreshMutation,
     upstreamUsername,
+    clearUpstreamRefreshPreview,
+    isUpstreamRefreshPreviewExpired,
+    showUpstreamPreviewExpiredToast,
   ])
 
   const handlePreviewUpstreamRefresh = useCallback(async () => {
@@ -2354,6 +2473,8 @@ export function ChannelMutateDrawer({
       return
     }
     setUpstreamRefreshSnapshot(res.data.snapshot)
+    setUpstreamRefreshPreviewExpiresAt(res.data.expires_at)
+    clearUpstreamCreatePreview()
     setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
     toast.success(
       t('Synced {{count}} upstream key(s)', {
@@ -2365,6 +2486,7 @@ export function ChannelMutateDrawer({
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
+    clearUpstreamCreatePreview,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
@@ -2463,6 +2585,12 @@ export function ChannelMutateDrawer({
       if (!isEditing && upstreamSyncEnabled) {
         if (!upstreamPreviewId || !upstreamSnapshot) {
           toast.error(t('Sync upstream account before creating the channel'))
+          return
+        }
+        if (isUpstreamPreviewExpired) {
+          clearUpstreamCreatePreview()
+          setUpstreamAccountConfigs({})
+          showUpstreamPreviewExpiredToast()
           return
         }
         if (upstreamSnapshot.keys.length === 0) {
@@ -2605,6 +2733,9 @@ export function ChannelMutateDrawer({
       upstreamAccountConfigs,
       upstreamApplySuggested,
       upstreamCreateMutation,
+      clearUpstreamCreatePreview,
+      isUpstreamPreviewExpired,
+      showUpstreamPreviewExpiredToast,
       upstreamPreviewId,
       upstreamSnapshot,
       upstreamSyncEnabled,
@@ -2626,14 +2757,11 @@ export function ChannelMutateDrawer({
         form.setValue('upstream_account_sync', false)
         setUpstreamUsername('')
         setUpstreamPassword('')
-        setUpstreamPreviewId('')
-        setUpstreamSnapshot(null)
-        setUpstreamRefreshSnapshot(null)
-        setUpstreamAccountConfigs({})
+        clearAllUpstreamPreviews()
         upstreamCredentialFingerprintRef.current = ''
       }
     },
-    [onOpenChange, form]
+    [clearAllUpstreamPreviews, onOpenChange, form]
   )
 
   const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
@@ -3079,6 +3207,12 @@ export function ChannelMutateDrawer({
                                 ) : null}
 
                                 {upstreamSnapshot &&
+                                  renderUpstreamPreviewExpiryNotice(
+                                    upstreamPreviewRemaining,
+                                    isUpstreamPreviewExpired
+                                  )}
+
+                                {upstreamSnapshot &&
                                   renderUpstreamSnapshotReview(
                                     upstreamSnapshot
                                   )}
@@ -3190,6 +3324,7 @@ export function ChannelMutateDrawer({
                                   disabled={
                                     !upstreamRefreshSnapshot ||
                                     upstreamRefreshSnapshot.keys.length === 0 ||
+                                    isUpstreamRefreshPreviewExpired ||
                                     upstreamPreviewMutation.isPending ||
                                     upstreamRefreshMutation.isPending
                                   }
@@ -3225,6 +3360,12 @@ export function ChannelMutateDrawer({
                                 </AlertDescription>
                               </Alert>
                             ) : null}
+
+                            {upstreamRefreshSnapshot &&
+                              renderUpstreamPreviewExpiryNotice(
+                                upstreamRefreshPreviewRemaining,
+                                isUpstreamRefreshPreviewExpired
+                              )}
 
                             {upstreamRefreshSnapshot &&
                               renderUpstreamSnapshotReview(
