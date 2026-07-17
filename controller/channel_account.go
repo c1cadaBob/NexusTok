@@ -515,7 +515,9 @@ func channelAccountUpdateMap(req channelAccountUpsertRequest, requestData map[st
 		updates["base_url"] = optionalStringValue(req.BaseURL)
 	}
 	if _, ok := requestData["openai_organization"]; ok {
-		updates["openai_organization"] = optionalStringValue(req.OpenAIOrganization)
+		// ChannelAccount.OpenAIOrganization 未显式声明 gorm column，GORM 默认列名为
+		// open_ai_organization；请求和响应仍沿用 API 字段 openai_organization。
+		updates["open_ai_organization"] = optionalStringValue(req.OpenAIOrganization)
 	}
 	if _, ok := requestData["setting"]; ok {
 		updates["setting"] = optionalStringValue(req.Setting)

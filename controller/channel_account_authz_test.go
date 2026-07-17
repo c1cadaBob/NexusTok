@@ -48,6 +48,20 @@ func TestChannelAccountUpdateMapKeepsEmptyKeyFromOverwritingCredential(t *testin
 	assert.NotContains(t, updates, "key")
 }
 
+func TestChannelAccountUpdateMapUsesGormColumnForOpenAIOrganization(t *testing.T) {
+	organization := "org-example"
+	req := channelAccountUpsertRequest{OpenAIOrganization: &organization}
+
+	updates := channelAccountUpdateMap(req, map[string]any{
+		"openai_organization": organization,
+	})
+
+	assert.Equal(t, map[string]interface{}{
+		"open_ai_organization": organization,
+	}, updates)
+	assert.NotContains(t, updates, "openai_organization")
+}
+
 func TestChannelAccountSensitiveChangeClassification(t *testing.T) {
 	baseURL := "https://api.example.com"
 	account := &model.ChannelAccount{
