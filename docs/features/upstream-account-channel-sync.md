@@ -350,7 +350,7 @@ type AccountSnapshot struct {
 - [x] 使用 MCP 浏览器验证新增渠道页面账号同步流程。
 - [x] 调用 preview/create/refresh 接口验证请求体、响应体、错误提示和权限。
 - [x] 使用真实 sub2api 测试账号触发 preview；当前账号返回 0 个密钥，页面展示“未找到此账号的上游密钥。”并禁止基于空密钥快照继续创建。
-- [ ] 用真实 relay 请求验证渠道失败后按优先级/权重降级。
+- [x] 用 relay 请求级测试验证渠道失败后按优先级/权重降级：`TestRelayRetriesToNextChannelAfterChannelFailure` 使用两个 OpenAI 兼容 httptest 上游，首个高优先级渠道返回 401 后，同一次请求排除失败渠道并降级到第二渠道成功返回。
 - [ ] 页面未更新时重启容器后重新验证。
 
 ## 验证清单
