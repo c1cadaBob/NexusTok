@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Code2, Palette } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -35,8 +35,18 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 import { RateLimitVisualEditor } from './rate-limit-visual-editor'
 
 const isValidJSON = (value: string | undefined) => {
@@ -78,6 +88,18 @@ type RateLimitSectionProps = {
   defaultValues: RateLimitFormValues
 }
 
+const rateLimitUpdateOrder: Array<keyof RateLimitFormValues> = [
+  'ModelRequestRateLimitEnabled',
+  'ModelRequestRateLimitDurationMinutes',
+  'ModelRequestRateLimitCount',
+  'ModelRequestRateLimitSuccessCount',
+  'ModelRequestRateLimitGroup',
+]
+
+function normalizeRateLimitGroup(value: string | undefined) {
+  return value ?? ''
+}
+
 export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -85,26 +107,37 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
 
   const rateLimitSchema = createRateLimitSchema(t)
 
-  const form = useForm<RateLimitFormValues>({
-    resolver: zodResolver(rateLimitSchema),
-    mode: 'onChange', // Enable real-time validation
-    defaultValues,
-  })
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
+    useSettingsForm<RateLimitFormValues>({
+      resolver: zodResolver(rateLimitSchema) as Resolver<
+        RateLimitFormValues,
+        unknown,
+        RateLimitFormValues
+      >,
+      mode: 'onChange',
+      defaultValues: {
+        ...defaultValues,
+        ModelRequestRateLimitGroup: normalizeRateLimitGroup(
+          defaultValues.ModelRequestRateLimitGroup
+        ),
+      },
+      onSubmit: async (values, changedFields) => {
+        // 按固定顺序提交，便于后续阅读请求日志，也避免 JSON 配置字段穿插在
+        // 开关和基础数值之间时造成排查困难。后端 option key 与保存合同不变。
+        for (const key of rateLimitUpdateOrder) {
+          if (!(key in changedFields)) {
+            continue
+          }
 
-  useEffect(() => {
-    form.reset(defaultValues)
-  }, [defaultValues, form])
+          const value =
+            key === 'ModelRequestRateLimitGroup'
+              ? normalizeRateLimitGroup(values[key])
+              : values[key]
 
-  const onSubmit = async (values: RateLimitFormValues) => {
-    const updates = Object.entries(values).filter(
-      ([key, value]) =>
-        value !== defaultValues[key as keyof RateLimitFormValues]
-    )
-
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value: value ?? '' })
-    }
-  }
+          await updateOption.mutateAsync({ key, value })
+        }
+      },
+    })
 
   return (
     <SettingsSection
@@ -113,30 +146,43 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
         'Control request frequency to prevent abuse and manage system load.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save rate limits'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='ModelRequestRateLimitEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Enable rate limiting')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable rate limiting')}</FormLabel>
                   <FormDescription>
                     {t(
                       'This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -147,22 +193,19 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t('Limit period')}</FormLabel>
-                  <FormControl>
-                    <div className='flex items-center gap-2'>
+                  <div className='flex items-center gap-2'>
+                    <FormControl>
                       <Input
                         type='number'
                         min={0}
                         step={1}
-                        {...field}
-                        onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 0)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
-                      <span className='text-muted-foreground text-sm'>
-                        {t('minutes')}
-                      </span>
-                    </div>
-                  </FormControl>
+                    </FormControl>
+                    <span className='text-muted-foreground text-sm'>
+                      {t('minutes')}
+                    </span>
+                  </div>
                   <FormDescription>
                     {t('Time window for rate limiting')}
                   </FormDescription>
@@ -177,23 +220,20 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t('Max requests per period')}</FormLabel>
-                  <FormControl>
-                    <div className='flex items-center gap-2'>
+                  <div className='flex items-center gap-2'>
+                    <FormControl>
                       <Input
                         type='number'
                         min={0}
                         max={100000000}
                         step={1}
-                        {...field}
-                        onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 0)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
-                      <span className='text-muted-foreground text-sm'>
-                        {t('times')}
-                      </span>
-                    </div>
-                  </FormControl>
+                    </FormControl>
+                    <span className='text-muted-foreground text-sm'>
+                      {t('times')}
+                    </span>
+                  </div>
                   <FormDescription>
                     {t('Including failed requests, 0 = unlimited')}
                   </FormDescription>
@@ -208,23 +248,20 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t('Max successful requests')}</FormLabel>
-                  <FormControl>
-                    <div className='flex items-center gap-2'>
+                  <div className='flex items-center gap-2'>
+                    <FormControl>
                       <Input
                         type='number'
                         min={1}
                         max={100000000}
                         step={1}
-                        {...field}
-                        onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 1)
-                        }
+                        {...safeNumberFieldProps(field)}
                       />
-                      <span className='text-muted-foreground text-sm'>
-                        {t('times')}
-                      </span>
-                    </div>
-                  </FormControl>
+                    </FormControl>
+                    <span className='text-muted-foreground text-sm'>
+                      {t('times')}
+                    </span>
+                  </div>
                   <FormDescription>
                     {t('Only successful requests')}
                   </FormDescription>
@@ -240,7 +277,9 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
             render={({ field }) => (
               <FormItem>
                 <div className='flex items-center justify-between'>
-                  <FormLabel>{t('Group-based rate limits')}</FormLabel>
+                  <div className='text-sm leading-none font-medium'>
+                    {t('Group-based rate limits')}
+                  </div>
                   <Button
                     type='button'
                     variant='outline'
@@ -249,12 +288,12 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                   >
                     {useVisualEditor ? (
                       <>
-                        <Code2 className='mr-2 h-4 w-4' />
+                        <Code2 data-icon='inline-start' />
                         {t('JSON Mode')}
                       </>
                     ) : (
                       <>
-                        <Palette className='mr-2 h-4 w-4' />
+                        <Palette data-icon='inline-start' />
                         {t('Visual Mode')}
                       </>
                     )}
@@ -277,9 +316,9 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                 </FormControl>
                 {!useVisualEditor && (
                   <FormDescription>
-                    <div className='space-y-1 text-xs'>
+                    <div className='flex flex-col gap-1 text-xs'>
                       <p className='font-semibold'>{t('Format:')}</p>
-                      <ul className='list-inside list-disc space-y-0.5 pl-2'>
+                      <ul className='flex list-inside list-disc flex-col gap-0.5 pl-2'>
                         <li>
                           {t('JSON object:')}{' '}
                           {`{"groupName": [maxRequests, maxSuccess]}`}
@@ -306,17 +345,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save rate limits')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

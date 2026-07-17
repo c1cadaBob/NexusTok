@@ -16491,3 +16491,77 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 切换到 OIDC tab 后，`Client ID`、`Client Secret`、`Well-Known URL`、`Authorization Endpoint`、`Token Endpoint`、`User Info Endpoint` 均正常展示，tabs 切换没有触发路由或运行时错误。
 10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/setup`、`POST /api/user/login`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等请求，说明本轮未污染真实 OAuth 配置。
 11. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Rate Limiting 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/request-limits/rate-limit-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/security/rate-limit` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致安全与限制分组内部的表单体验与已经收口完成的 `token-limits / sensitive-words / ssrf` 等页面不一致。
+3. 数字字段使用局部 `parseInt(e.target.value) || fallback` 处理空值和输入中间态，用户清空输入或输入未完成数字时容易把字段静默改成默认兜底值。
+4. `ModelRequestRateLimitGroup` 是 JSON 配置字段，页面同时支持可视化编辑器和 JSON 文本模式；旧实现只依赖局部 `useForm()` 与手工比较默认值，没有复用共享表单基线、脏态和离页保护能力。
+5. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator` 和 `FormNavigationGuard`；当前项目应吸收其页头动作区优势，同时按 NexusTok 已完成页面的更高标准补齐完整四件套。
+
+### 需求分析
+
+1. `/system-settings/security/rate-limit` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，不调整模型请求限流逻辑、路由环境变量限流逻辑或 `ModelRequestRateLimitGroup` 的 JSON 存储格式。
+4. 数字字段应使用项目已有的 `safeNumberFieldProps()`，避免把 `NaN` 或空输入中间态写入表单状态。
+5. 可视化编辑器和 JSON 文本模式切换应仅改变编辑 UI，不应触发保存请求，也不应改变脏态基线。
+6. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Rate Limiting 设置页 | `web/default/src/features/system-settings/request-limits/rate-limit-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截；同时修正数字字段和分组配置标题的 label 指向问题。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `ModelRequestRateLimitGroup` 是 JSON 配置字段，既支持可视化编辑器又支持文本编辑；迁移共享壳层时如果没有保留现有校验和空值归一化，可能导致合法空配置被误判为脏态或非法配置。
+2. 三个数字字段直接影响限流语义，必须保留原有最小值、最大值和“0 = 不限制”的含义；如果空输入被错误提交，可能造成管理员误改真实限流配置。
+3. 这页既有全局限流字段也有组限流 JSON 字段；保存顺序应固定，便于排查请求日志并避免 JSON 配置字段穿插在基础开关和数字字段之间。
+4. 页面初次 MCP 验证时浏览器报告 `Incorrect use of <label for=FORM_ELEMENT>` issue；如果不修复，虽然不影响保存功能，但会继续在控制台留下可访问性问题，并可能影响辅助技术和自动填充。
+5. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前限流配置。
+
+### 方案评审
+
+采用“共享表单壳层 + 限流字段最小归一化”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、`useEffect reset` 与手工比较默认值逻辑，保留现有 Zod schema 和字段 key。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将启用开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、顺序和字段 key 不变。
+5. 对三个数字输入使用 `safeNumberFieldProps()`，避免 `NaN` 和空输入中间态进入表单状态。
+6. 对 `ModelRequestRateLimitGroup` 使用 `normalizeRateLimitGroup()`，让缺省值和空字符串在前端表单基线里保持一致。
+7. 显式固定提交顺序为 `ModelRequestRateLimitEnabled -> ModelRequestRateLimitDurationMinutes -> ModelRequestRateLimitCount -> ModelRequestRateLimitSuccessCount -> ModelRequestRateLimitGroup`，继续与系统设置页的最小字段提交能力配合。
+8. 把数字字段的 `FormControl` 移到真正的 `Input` 上，并把“基于分组的速率限制”从会自动生成 `htmlFor` 的 `FormLabel` 改为普通标题文本，消除浏览器 label issue。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/request-limits/rate-limit-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存速率限制` 两个动作；无脏态时二者禁用，有脏态时按权限启用保存。
+4. 启用开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；按钮权限禁用逻辑继续消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。
+5. 三个数字字段已改用 `safeNumberFieldProps()`，保留原有 min/max/step 约束，同时避免输入中间态写入非法数字。
+6. `ModelRequestRateLimitGroup` 仍保持原有 JSON 保存合同，可视化编辑器和 JSON 文本模式均继续使用同一个字段值。
+7. 已修复本页浏览器控制台报告的 label 可访问性 issue：所有 `FormLabel` 都指向真实 `input`，分组编辑器标题不再生成无效 `htmlFor`。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/request-limits/rate-limit-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/security/rate-limit?verify=20260717-rate-limit-label-fix`，确认热更新生效，`重置` 与 `保存速率限制` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+6. 首次 MCP 检查发现控制台存在 `Incorrect use of <label for=FORM_ELEMENT>` issue；修复后重新访问同一页面，DOM 检查确认 `启用速率限制`、`限制周期`、`每周期最大请求数`、`最大成功请求数` 的 label 均指向真实 `input`，分组编辑器标题不再生成无效 label。
+7. 将“限制周期”从 `1` 临时改为 `2` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+8. 在脏态下点击侧栏“敏感词”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Rate Limiting 页，且临时输入值仍保留，说明统一离开拦截正常。
+9. 点击页头“重置”后，“限制周期”恢复为 `1`，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和回滚行为正确。
+10. 点击 `JSON 模式` 切换按钮后，JSON 文本框正常出现，页头保存按钮仍保持禁用，说明编辑模式切换不会误触发脏态或保存。
+11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`POST /api/user/login`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等请求，说明本轮未污染真实限流配置。
+12. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
