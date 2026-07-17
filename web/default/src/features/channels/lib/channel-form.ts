@@ -138,7 +138,7 @@ export const channelFormSchema = z
     base_url: z.string().optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
-    models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
+    models: z.string(),
     group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
     model_mapping: z
       .string()
@@ -218,8 +218,15 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
+    // 上游账号同步创建会先从目标平台读取密钥，再由后端推断模型和类型。
+    // 该标记只用于前端表单校验分支，不会写入普通渠道 payload。
+    upstream_account_sync: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
+    if (!data.upstream_account_sync && !data.models.trim()) {
+      addRequiredIssue(ctx, 'models', ERROR_MESSAGES.REQUIRED_MODELS)
+    }
+
     if (
       [3, 8, 36, 45].includes(data.type) &&
       !usesGlobalAccountPool(data) &&
@@ -375,6 +382,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+  upstream_account_sync: false,
 }
 
 // ============================================================================

@@ -26,7 +26,7 @@ import {
 } from 'react'
 import { type SubmitErrorHandler, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
   AlertCircle,
@@ -122,6 +122,8 @@ import {
   getChannelKey,
   getGroups,
   getPrefillGroups,
+  createUpstreamAccountChannel,
+  previewUpstreamAccount,
   refreshCodexCredential,
 } from '../../api'
 import {
@@ -152,6 +154,7 @@ import {
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
+  formatGroups,
   extractRedirectModels,
   extractMappingSourceModels,
   hasModelConfigChanged,
@@ -168,7 +171,12 @@ import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
-import type { Channel } from '../../types'
+import type {
+  Channel,
+  UpstreamAccountKey,
+  UpstreamAccountPlatform,
+  UpstreamAccountSnapshot,
+} from '../../types'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
@@ -219,6 +227,36 @@ type ChannelEditorNavItem = {
   icon: ReactNode
   configured?: boolean
   children?: ChannelEditorNavChildItem[]
+}
+
+function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
+  return key.external_id || key.masked_key || `${index}`
+}
+
+function upstreamModelsToString(keys: UpstreamAccountKey[]) {
+  const seen = new Set<string>()
+  const models: string[] = []
+  keys.forEach((key) => {
+    key.models?.forEach((modelName) => {
+      const trimmed = modelName.trim()
+      if (!trimmed || seen.has(trimmed)) return
+      seen.add(trimmed)
+      models.push(trimmed)
+    })
+  })
+  return models.join(',')
+}
+
+function upstreamGroupsToString(keys: UpstreamAccountKey[]) {
+  const seen = new Set<string>()
+  const groups: string[] = []
+  keys.forEach((key) => {
+    const group = (key.group_name || key.group_id || '').trim()
+    if (!group || seen.has(group)) return
+    seen.add(group)
+    groups.push(group)
+  })
+  return groups.join(',')
 }
 
 // 表单辅助函数
@@ -684,6 +722,18 @@ export function ChannelMutateDrawer({
   const [codexOAuthDialogOpen, setCodexOAuthDialogOpen] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
+  const [upstreamSyncEnabled, setUpstreamSyncEnabled] = useState(false)
+  const [upstreamPlatform, setUpstreamPlatform] =
+    useState<UpstreamAccountPlatform>('new-api')
+  const [upstreamUsername, setUpstreamUsername] = useState('')
+  const [upstreamPassword, setUpstreamPassword] = useState('')
+  const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
+  const [upstreamSnapshot, setUpstreamSnapshot] =
+    useState<UpstreamAccountSnapshot | null>(null)
+  const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
+  const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
+    Record<string, { priority: number; weight: number; enabled: boolean }>
+  >({})
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
@@ -787,6 +837,26 @@ export function ChannelMutateDrawer({
     queryKey: ['account-pool', 'groups', 'options'],
     queryFn: getAccountPoolGroupOptions,
   })
+
+  const upstreamPreviewMutation = useMutation({
+    mutationFn: previewUpstreamAccount,
+  })
+
+  const handleUpstreamSyncEnabledChange = useCallback(
+    (checked: boolean) => {
+      setUpstreamSyncEnabled(checked)
+      form.setValue('upstream_account_sync', checked, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      if (!checked) {
+        setUpstreamPreviewId('')
+        setUpstreamSnapshot(null)
+        setUpstreamAccountConfigs({})
+      }
+    },
+    [form]
+  )
 
   const { copyToClipboard } = useCopyToClipboard()
 
@@ -1267,10 +1337,12 @@ export function ChannelMutateDrawer({
   // 将系统模型和当前渠道模型合并成基础候选，避免编辑历史模型时选项丢失。
   // 该列表保留编辑草稿里已经存在的模型，避免历史能力在切换渠道后丢失。
   const baseModelOptions = useMemo(() => {
-    return dedupeModelNames([...allModelsList, ...currentModelsArray]).map((model) => ({
-      value: model,
-      label: model,
-    }))
+    return dedupeModelNames([...allModelsList, ...currentModelsArray]).map(
+      (model) => ({
+        value: model,
+        label: model,
+      })
+    )
   }, [allModelsList, currentModelsArray])
 
   // 本地能力列表和远程模型元信息搜索结果合并成选择器候选。
@@ -1724,6 +1796,86 @@ export function ChannelMutateDrawer({
     await copyToClipboard(models)
   }, [form, copyToClipboard, t])
 
+  const handlePreviewUpstreamAccount = useCallback(async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    const baseUrl = form.getValues('base_url')?.trim()
+    if (!baseUrl) {
+      form.setError('base_url', {
+        type: 'manual',
+        message: t('Base URL is required'),
+      })
+      return
+    }
+    if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
+      toast.error(t('Account and password are required'))
+      return
+    }
+    const res = await upstreamPreviewMutation.mutateAsync({
+      platform: upstreamPlatform,
+      base_url: baseUrl,
+      username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
+      email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
+      password: upstreamPassword,
+    })
+    if (!res.success || !res.data) {
+      toast.error(res.message || t('Failed to sync upstream account'))
+      return
+    }
+    setUpstreamPreviewId(res.data.preview_id)
+    setUpstreamSnapshot(res.data.snapshot)
+    const configs: Record<
+      string,
+      { priority: number; weight: number; enabled: boolean }
+    > = {}
+    res.data.snapshot.keys.forEach((key, index) => {
+      configs[upstreamKeyConfigId(key, index)] = {
+        priority: key.suggested_priority,
+        weight: key.suggested_weight,
+        enabled: true,
+      }
+    })
+    setUpstreamAccountConfigs(configs)
+
+    const models = upstreamModelsToString(res.data.snapshot.keys)
+    if (models) {
+      form.setValue('models', models, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+    const groups = upstreamGroupsToString(res.data.snapshot.keys)
+    if (groups) {
+      form.setValue('group', groups.split(',').filter(Boolean), {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+    if (!form.getValues('name')?.trim()) {
+      form.setValue(
+        'name',
+        `${upstreamPlatform === 'new-api' ? 'new-api' : 'sub2api'} ${upstreamUsername}`,
+        { shouldDirty: true, shouldValidate: true }
+      )
+    }
+    toast.success(
+      t('Synced {{count}} upstream key(s)', {
+        count: res.data.snapshot.keys.length,
+      })
+    )
+  }, [
+    form,
+    noPermissionMessage,
+    permissions.canSensitiveWrite,
+    t,
+    upstreamPassword,
+    upstreamPlatform,
+    upstreamPreviewMutation,
+    upstreamUsername,
+  ])
+
   // 添加模型预设分组中的模型。
   const handleAddPrefillGroup = useCallback(
     (group: { id: number; name: string; items: string | string[] }) => {
@@ -1788,7 +1940,9 @@ export function ChannelMutateDrawer({
       return
     }
 
-    toast.success(t('Added {{count}} model(s) from search', { count: addedCount }))
+    toast.success(
+      t('Added {{count}} model(s) from search', { count: addedCount })
+    )
     setModelSearchOpen(false)
   }, [
     canEditBasicFields,
@@ -1825,6 +1979,23 @@ export function ChannelMutateDrawer({
     onOpenChange(false)
     setOpen(null)
   }, [channelId, queryClient, onOpenChange, setOpen])
+
+  const upstreamCreateMutation = useMutation({
+    mutationFn: createUpstreamAccountChannel,
+    onSuccess: (res) => {
+      if (!res.success) {
+        toast.error(res.message || t('Failed to create channel'))
+        return
+      }
+      toast.success(t('Channel created'))
+      handleSuccess()
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : t('Failed to create channel')
+      toast.error(message)
+    },
+  })
 
   // 模型映射源模型缺失时弹出确认，避免管理员保存后看不到映射入口模型。
   const confirmMissingModelMappings = useCallback(
@@ -1912,6 +2083,41 @@ export function ChannelMutateDrawer({
         toast.error(
           t('You do not have permission to edit sensitive channel settings.')
         )
+        return
+      }
+
+      if (!isEditing && upstreamSyncEnabled) {
+        if (!upstreamPreviewId || !upstreamSnapshot) {
+          toast.error(t('Sync upstream account before creating the channel'))
+          return
+        }
+        await upstreamCreateMutation.mutateAsync({
+          preview_id: upstreamPreviewId,
+          apply_suggested: upstreamApplySuggested,
+          channel: {
+            name: data.name,
+            type: data.type,
+            base_url: data.base_url || null,
+            models: data.models,
+            group: formatGroups(data.group),
+            status: data.status,
+            priority: data.priority ?? null,
+            weight: data.weight ?? null,
+          },
+          accounts: upstreamSnapshot.keys.map((key, index) => {
+            const config =
+              upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
+            return {
+              external_id: key.external_id,
+              name: key.name || key.masked_key,
+              enabled: config?.enabled ?? true,
+              models: key.models?.join(',') || data.models,
+              group: key.group_name || key.group_id || formatGroups(data.group),
+              priority: config?.priority,
+              weight: config?.weight,
+            }
+          }),
+        })
         return
       }
 
@@ -2014,6 +2220,12 @@ export function ChannelMutateDrawer({
       confirmStatusCodeRisk,
       submitChannelMutation,
       t,
+      upstreamAccountConfigs,
+      upstreamApplySuggested,
+      upstreamCreateMutation,
+      upstreamPreviewId,
+      upstreamSnapshot,
+      upstreamSyncEnabled,
     ]
   )
 
@@ -2028,6 +2240,13 @@ export function ChannelMutateDrawer({
         setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
         setAdvancedCustomEditorOpen(false)
+        setUpstreamSyncEnabled(false)
+        form.setValue('upstream_account_sync', false)
+        setUpstreamUsername('')
+        setUpstreamPassword('')
+        setUpstreamPreviewId('')
+        setUpstreamSnapshot(null)
+        setUpstreamAccountConfigs({})
       }
     },
     [onOpenChange, form]
@@ -2349,6 +2568,304 @@ export function ChannelMutateDrawer({
                             {t(CHANNEL_TYPE_WARNINGS[currentType])}
                           </AlertDescription>
                         </Alert>
+                      )}
+
+                      {!isEditing && (
+                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                          <div className='flex flex-col gap-4'>
+                            <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                              <div className='flex flex-col gap-1'>
+                                <div className='flex items-center gap-2'>
+                                  <KeyRound aria-hidden='true' />
+                                  <span className='text-sm font-semibold'>
+                                    {t('Upstream Account Sync')}
+                                  </span>
+                                </div>
+                                <p className='text-muted-foreground text-xs'>
+                                  {t(
+                                    'Use a new-api or sub2api account to sync keys, groups, rates, and balance.'
+                                  )}
+                                </p>
+                              </div>
+                              <Switch
+                                checked={upstreamSyncEnabled}
+                                disabled={!permissions.canSensitiveWrite}
+                                onCheckedChange={
+                                  handleUpstreamSyncEnabledChange
+                                }
+                              />
+                            </div>
+
+                            {upstreamSyncEnabled && (
+                              <>
+                                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+                                  <div className='flex flex-col gap-2'>
+                                    <FormLabel>
+                                      {t('Upstream Platform')}
+                                    </FormLabel>
+                                    <Select
+                                      value={upstreamPlatform}
+                                      onValueChange={(value) =>
+                                        setUpstreamPlatform(
+                                          value as UpstreamAccountPlatform
+                                        )
+                                      }
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='new-api'>
+                                            new-api
+                                          </SelectItem>
+                                          <SelectItem value='sub2api'>
+                                            sub2api
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <FormLabel>{t('Account')}</FormLabel>
+                                    <Input
+                                      value={upstreamUsername}
+                                      onChange={(event) =>
+                                        setUpstreamUsername(event.target.value)
+                                      }
+                                      placeholder={
+                                        upstreamPlatform === 'new-api'
+                                          ? t('Username')
+                                          : t('Email')
+                                      }
+                                    />
+                                  </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <FormLabel>{t('Password')}</FormLabel>
+                                    <Input
+                                      value={upstreamPassword}
+                                      onChange={(event) =>
+                                        setUpstreamPassword(event.target.value)
+                                      }
+                                      type='password'
+                                      autoComplete='new-password'
+                                      placeholder={t('Password')}
+                                    />
+                                  </div>
+                                  <div className='flex items-end'>
+                                    <Button
+                                      type='button'
+                                      variant='outline'
+                                      className='w-full'
+                                      disabled={
+                                        upstreamPreviewMutation.isPending
+                                      }
+                                      onClick={handlePreviewUpstreamAccount}
+                                    >
+                                      {upstreamPreviewMutation.isPending ? (
+                                        <Loader2
+                                          data-icon='inline-start'
+                                          className='animate-spin'
+                                        />
+                                      ) : (
+                                        <RefreshCw data-icon='inline-start' />
+                                      )}
+                                      {t('Sync Keys')}
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {upstreamSnapshot?.warnings?.length ? (
+                                  <Alert>
+                                    <AlertCircle aria-hidden='true' />
+                                    <AlertDescription>
+                                      {upstreamSnapshot.warnings.join('；')}
+                                    </AlertDescription>
+                                  </Alert>
+                                ) : null}
+
+                                {upstreamSnapshot && (
+                                  <div className='flex flex-col gap-3'>
+                                    <div className='grid gap-3 sm:grid-cols-3'>
+                                      <div className='rounded-md border p-3'>
+                                        <div className='text-muted-foreground text-xs'>
+                                          {t('Synced Keys')}
+                                        </div>
+                                        <div className='text-lg font-semibold'>
+                                          {upstreamSnapshot.keys.length}
+                                        </div>
+                                      </div>
+                                      <div className='rounded-md border p-3'>
+                                        <div className='text-muted-foreground text-xs'>
+                                          {t('Remaining Balance')}
+                                        </div>
+                                        <div className='text-lg font-semibold'>
+                                          {upstreamSnapshot.balance
+                                            ?.balance_usd ?? '-'}
+                                        </div>
+                                      </div>
+                                      <div className='rounded-md border p-3'>
+                                        <div className='text-muted-foreground text-xs'>
+                                          {t('Used Balance')}
+                                        </div>
+                                        <div className='text-lg font-semibold'>
+                                          {upstreamSnapshot.balance?.used_usd ??
+                                            '-'}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className='flex items-center justify-between gap-3'>
+                                      <div className='flex flex-col gap-1'>
+                                        <span className='text-sm font-medium'>
+                                          {t(
+                                            'Apply suggested priority and weight'
+                                          )}
+                                        </span>
+                                        <span className='text-muted-foreground text-xs'>
+                                          {t(
+                                            'Lower upstream rates get higher priority and weight by default.'
+                                          )}
+                                        </span>
+                                      </div>
+                                      <Switch
+                                        checked={upstreamApplySuggested}
+                                        onCheckedChange={
+                                          setUpstreamApplySuggested
+                                        }
+                                      />
+                                    </div>
+
+                                    <div className='overflow-hidden rounded-md border'>
+                                      <div className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
+                                        <span>{t('Key')}</span>
+                                        <span>{t('Group')}</span>
+                                        <span>{t('Priority')}</span>
+                                        <span>{t('Weight')}</span>
+                                        <span>{t('Enabled')}</span>
+                                      </div>
+                                      {upstreamSnapshot.keys.map(
+                                        (key, index) => {
+                                          const configId = upstreamKeyConfigId(
+                                            key,
+                                            index
+                                          )
+                                          const config =
+                                            upstreamAccountConfigs[configId]
+                                          return (
+                                            <div
+                                              key={configId}
+                                              className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
+                                            >
+                                              <div className='min-w-0'>
+                                                <div className='truncate text-sm font-medium'>
+                                                  {key.name || key.masked_key}
+                                                </div>
+                                                <div className='text-muted-foreground truncate text-xs'>
+                                                  {key.masked_key}
+                                                </div>
+                                              </div>
+                                              <div className='min-w-0'>
+                                                <Badge variant='secondary'>
+                                                  {key.group_name ||
+                                                    key.group_id ||
+                                                    '-'}
+                                                </Badge>
+                                                {key.group_ratio !==
+                                                  undefined && (
+                                                  <span className='text-muted-foreground ml-2 text-xs'>
+                                                    {key.group_ratio}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <Input
+                                                type='number'
+                                                value={config?.priority ?? 0}
+                                                disabled={
+                                                  upstreamApplySuggested
+                                                }
+                                                onChange={(event) =>
+                                                  setUpstreamAccountConfigs(
+                                                    (prev) => ({
+                                                      ...prev,
+                                                      [configId]: {
+                                                        enabled:
+                                                          prev[configId]
+                                                            ?.enabled ?? true,
+                                                        weight:
+                                                          prev[configId]
+                                                            ?.weight ??
+                                                          key.suggested_weight,
+                                                        priority: Number(
+                                                          event.target.value
+                                                        ),
+                                                      },
+                                                    })
+                                                  )
+                                                }
+                                              />
+                                              <Input
+                                                type='number'
+                                                value={config?.weight ?? 0}
+                                                disabled={
+                                                  upstreamApplySuggested
+                                                }
+                                                onChange={(event) =>
+                                                  setUpstreamAccountConfigs(
+                                                    (prev) => ({
+                                                      ...prev,
+                                                      [configId]: {
+                                                        enabled:
+                                                          prev[configId]
+                                                            ?.enabled ?? true,
+                                                        priority:
+                                                          prev[configId]
+                                                            ?.priority ??
+                                                          key.suggested_priority,
+                                                        weight: Number(
+                                                          event.target.value
+                                                        ),
+                                                      },
+                                                    })
+                                                  )
+                                                }
+                                              />
+                                              <Switch
+                                                checked={
+                                                  config?.enabled ?? true
+                                                }
+                                                onCheckedChange={(checked) =>
+                                                  setUpstreamAccountConfigs(
+                                                    (prev) => ({
+                                                      ...prev,
+                                                      [configId]: {
+                                                        priority:
+                                                          prev[configId]
+                                                            ?.priority ??
+                                                          key.suggested_priority,
+                                                        weight:
+                                                          prev[configId]
+                                                            ?.weight ??
+                                                          key.suggested_weight,
+                                                        enabled: checked,
+                                                      },
+                                                    })
+                                                  )
+                                                }
+                                              />
+                                            </div>
+                                          )
+                                        }
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
                       )}
 
                       <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
@@ -2936,7 +3453,7 @@ export function ChannelMutateDrawer({
                                         field.value === 'doubao-coding-plan'
                                           ? 'https://ark.cn-beijing.volces.com'
                                           : field.value ||
-                                        'https://ark.cn-beijing.volces.com'
+                                            'https://ark.cn-beijing.volces.com'
                                       }
                                     >
                                       <FormControl>
@@ -3875,8 +4392,7 @@ export function ChannelMutateDrawer({
                                                             modelSearchSummary
                                                               .addable.length,
                                                           existing:
-                                                            modelSearchSummary
-                                                              .existingCount,
+                                                            modelSearchSummary.existingCount,
                                                         }
                                                       )}
                                               </p>
@@ -3895,8 +4411,7 @@ export function ChannelMutateDrawer({
                                                 if (
                                                   modelSearchPointerHandledRef.current
                                                 ) {
-                                                  modelSearchPointerHandledRef.current =
-                                                    false
+                                                  modelSearchPointerHandledRef.current = false
                                                   return
                                                 }
                                                 event.preventDefault()

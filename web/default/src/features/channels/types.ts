@@ -218,6 +218,111 @@ export interface CopyChannelResponse {
   }
 }
 
+export type UpstreamAccountPlatform = 'new-api' | 'sub2api'
+
+export interface UpstreamAccountBalanceSnapshot {
+  balance_usd?: number
+  used_usd?: number
+  raw_balance?: number
+  raw_used?: number
+  quota_per_unit?: number
+  source?: string
+  partial?: boolean
+  missing_used_value?: boolean
+  missing_balance_value?: boolean
+}
+
+export interface UpstreamAccountGroup {
+  id?: string
+  name: string
+  platform?: string
+  ratio?: number
+  peak_ratio?: number
+  description?: string
+  model_ratios?: Record<string, number>
+}
+
+export interface UpstreamAccountKey {
+  external_id?: string
+  name?: string
+  masked_key?: string
+  status?: number
+  group_id?: string
+  group_name?: string
+  models?: string[]
+  model_ratios?: Record<string, number>
+  group_ratio?: number
+  quota_limit_usd?: number
+  quota_used_usd?: number
+  quota_remaining_usd?: number
+  unlimited?: boolean
+  suggested_priority: number
+  suggested_weight: number
+}
+
+export interface UpstreamAccountSnapshot {
+  platform: UpstreamAccountPlatform
+  base_url: string
+  balance?: UpstreamAccountBalanceSnapshot
+  groups: UpstreamAccountGroup[]
+  keys: UpstreamAccountKey[]
+  warnings?: string[]
+}
+
+export interface UpstreamAccountPreviewRequest {
+  platform: UpstreamAccountPlatform
+  base_url: string
+  username?: string
+  email?: string
+  password: string
+}
+
+export interface UpstreamAccountPreviewResponse {
+  success: boolean
+  message?: string
+  data?: {
+    preview_id: string
+    expires_at: number
+    snapshot: UpstreamAccountSnapshot
+  }
+}
+
+export interface UpstreamAccountCreateAccountConfig {
+  external_id?: string
+  name?: string
+  enabled?: boolean
+  models?: string
+  group?: string
+  priority?: number
+  weight?: number
+}
+
+export interface UpstreamAccountCreateRequest {
+  preview_id: string
+  apply_suggested: boolean
+  channel: {
+    name: string
+    type: number
+    base_url?: string | null
+    models?: string
+    group?: string
+    status?: number
+    priority?: number | null
+    weight?: number | null
+  }
+  accounts?: UpstreamAccountCreateAccountConfig[]
+}
+
+export interface UpstreamAccountCreateResponse {
+  success: boolean
+  message?: string
+  data?: {
+    channel_id: number
+    created: number
+    skipped: number
+  }
+}
+
 // ============================================================================
 // Multi-Key Management Types
 // ============================================================================

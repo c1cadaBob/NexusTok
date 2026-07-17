@@ -108,6 +108,67 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, int64(4), abilityCount)
 }
 
+func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-deferred"
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "deferred",
+				Name:              "Deferred",
+				Key:               "sk-deferred",
+				MaskedKey:         "sk-deferred",
+				GroupName:         "default",
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: true,
+		Channel: ChannelCreateConfig{
+			Name: "deferred-channel",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+
+	var channel model.Channel
+	require.NoError(t, db.First(&channel, result.ChannelID).Error)
+	require.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
+	require.Equal(t, "", channel.Models)
+	require.Equal(t, "default", channel.Group)
+
+	var abilityCount int64
+	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
+	require.Equal(t, int64(0), abilityCount)
+}
+
 func int64Ptr(value int64) *int64 {
 	return &value
 }

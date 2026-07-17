@@ -42,6 +42,10 @@ import type {
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
+  UpstreamAccountCreateRequest,
+  UpstreamAccountCreateResponse,
+  UpstreamAccountPreviewRequest,
+  UpstreamAccountPreviewResponse,
 } from './types'
 
 // 扩展 API 请求配置，主要用于跳过全局业务错误处理或禁用重复请求合并。
@@ -135,6 +139,26 @@ export async function createChannel(
   data: AddChannelRequest
 ): Promise<{ success: boolean; message?: string }> {
   const res = await api.post('/api/channel', data)
+  return res.data
+}
+
+/**
+ * 使用上游平台账号密码读取密钥、分组、倍率和余额预览。
+ */
+export async function previewUpstreamAccount(
+  data: UpstreamAccountPreviewRequest
+): Promise<UpstreamAccountPreviewResponse> {
+  const res = await api.post('/api/channel/upstream-account/preview', data)
+  return res.data
+}
+
+/**
+ * 根据预览快照创建一个渠道和多条渠道账号。
+ */
+export async function createUpstreamAccountChannel(
+  data: UpstreamAccountCreateRequest
+): Promise<UpstreamAccountCreateResponse> {
+  const res = await api.post('/api/channel/upstream-account/create', data)
   return res.data
 }
 

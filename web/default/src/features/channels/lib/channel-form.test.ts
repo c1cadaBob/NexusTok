@@ -109,6 +109,26 @@ describe('渠道表单映射字段校验', () => {
 })
 
 describe('渠道类型专属表单校验', () => {
+  test('普通渠道仍要求填写模型', () => {
+    const result = channelFormSchema.safeParse(
+      makeValidChannelForm({ models: '' })
+    )
+
+    assert.equal(result.success, false)
+    assert.deepEqual(getIssuePaths(result), ['models'])
+  })
+
+  test('上游账号同步创建允许先不填写模型', () => {
+    const result = channelFormSchema.safeParse(
+      makeValidChannelForm({
+        models: '',
+        upstream_account_sync: true,
+      })
+    )
+
+    assert.equal(result.success, true)
+  })
+
   test('指定渠道类型要求填写 Base URL', () => {
     const result = channelFormSchema.safeParse(
       makeValidChannelForm({

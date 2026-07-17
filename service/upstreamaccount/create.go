@@ -112,15 +112,15 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	if strings.TrimSpace(req.Channel.Name) == "" {
 		return nil, nil, fmt.Errorf("渠道名称不能为空")
 	}
-	if req.Channel.Type <= 0 {
-		return nil, nil, fmt.Errorf("渠道类型不能为空")
+	channelType := req.Channel.Type
+	if channelType <= 0 {
+		// new-api 和 sub2api 都暴露 OpenAI 兼容接口。账号同步创建允许管理员先不选择类型，
+		// 后端默认按 OpenAI 兼容渠道保存，避免空类型渠道进入后续调度路径。
+		channelType = constant.ChannelTypeOpenAI
 	}
 	models := strings.TrimSpace(req.Channel.Models)
 	if models == "" {
 		models = inferModelsFromKeys(snapshot.Keys)
-	}
-	if models == "" {
-		return nil, nil, fmt.Errorf("模型不能为空，请在预览结果中选择或手动填写模型")
 	}
 	group := strings.TrimSpace(req.Channel.Group)
 	if group == "" {
@@ -149,7 +149,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		autoBan = &value
 	}
 	channel := &model.Channel{
-		Type:               req.Channel.Type,
+		Type:               channelType,
 		Key:                constant.ChannelCredentialModeAccountPool,
 		Name:               strings.TrimSpace(req.Channel.Name),
 		Weight:             weight,
