@@ -316,10 +316,11 @@ type AccountSnapshot struct {
 
 ### 阶段 2：平台账号同步适配层
 
-- [ ] 新建平台客户端接口和 new-api/sub2api 实现。
-- [ ] 实现登录、密钥列表、分组倍率、余额快照归一化。
-- [ ] 增加预览接口和错误响应结构。
-- [ ] 补充适配层单元测试，必要时使用 httptest 模拟目标平台。
+- [x] 新建平台客户端接口和 new-api/sub2api 实现。
+- [x] 实现登录、密钥列表、分组倍率、余额快照归一化。
+- [x] 增加预览接口和错误响应结构。
+- [x] 补充适配层单元测试，使用 httptest 模拟目标平台。
+- [x] 验证 `go test ./service/upstreamaccount ./controller ./router`。
 
 ### 阶段 3：创建/刷新渠道和渠道账号
 
