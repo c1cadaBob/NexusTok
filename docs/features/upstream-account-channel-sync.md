@@ -127,29 +127,35 @@
 
 ### new-api
 
-new-api 使用 Gin session cookie 鉴权，登录成功后会在服务端 session 写入 `id`、`username`、`role`、`status` 和 `group`。NexusTok 后端适配时需要维护 cookie jar。
+new-api 使用 `/api` 前缀，标准响应为 `{"success": true, "message": "", "data": ...}`；很多业务错误仍返回 HTTP 200，需要同时检查 HTTP 状态和 `success`。new-api 登录成功后会在服务端 session 写入 `id`、`username`、`role`、`status` 和 `group`。NexusTok 后端适配时需要维护 cookie jar；受保护接口除 session 或用户 access token 外，还需要带 `New-Api-User: <user_id>`。
 
 | 能力 | 方法与路径 | 鉴权 | 代码位置 | 备注 |
 | --- | --- | --- | --- | --- |
-| 登录 | `POST /api/user/login` | 无，可能受 Turnstile/全局限速影响 | `/opt/project/new-api-main/controller/user.go` | 请求体 `username`、`password`；成功返回用户基础信息 |
-| 当前用户 | `GET /api/user/self` | session | `/opt/project/new-api-main/controller/user.go` | 返回 `quota`、`used_quota`、`group` 等字段，可用于余额同步 |
-| 用户可用分组 | `GET /api/user/self/groups` | session | `/opt/project/new-api-main/controller/group.go` | 返回分组 map，值包含 `ratio` 和 `desc` |
-| 用户模型 | `GET /api/user/models` | session | `/opt/project/new-api-main/controller/user.go` | 可辅助推断模型列表 |
-| Token 列表 | `GET /api/token/?p=&page_size=` | session | `/opt/project/new-api-main/controller/token.go` | 返回脱敏 `key`、`name`、`group`、`remain_quota`、`used_quota`、`model_limits` 等 |
-| Token 完整 Key | `POST /api/token/:id/key` | session | `/opt/project/new-api-main/controller/token.go` | 逐条读取完整 Key，属高敏操作 |
-| Token 批量 Key | `POST /api/token/batch/keys` | session | `/opt/project/new-api-main/controller/token.go` | 可减少请求次数，但需要确认权限/请求体 |
+| 状态/单位 | `GET /api/status` | 无 | `/opt/project/new-api-main/controller/misc.go` | 返回 `quota_per_unit`、Turnstile 状态等；余额换算必须读取实例配置 |
+| 登录 | `POST /api/user/login?turnstile=` | 无，可能受 Turnstile/全局限速影响 | `/opt/project/new-api-main/controller/user.go` | 请求体 `username`、`password`；Turnstile token 在 query；成功返回用户基础信息 |
+| 2FA 补全 | `POST /api/user/login/2fa` | pending session cookie | `/opt/project/new-api-main/controller/twofa.go` | 首次登录若返回 `require_2fa`，保留 cookie 后提交 `code` |
+| 当前用户 | `GET /api/user/self` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/user.go` | 返回 `quota`、`used_quota`、`group` 等字段，可用于余额同步 |
+| 用户可用分组 | `GET /api/user/self/groups` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/group.go` | 返回分组 map，值包含 `ratio` 和 `desc` |
+| 用户模型 | `GET /api/user/models?group=` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/user.go` | 可辅助推断模型列表 |
+| 用户 access token | `GET /api/user/token` | session + `New-Api-User` | `/opt/project/new-api-main/controller/user.go` | 会生成/更新用户 access token；不应每次同步都调用 |
+| Token 列表 | `GET /api/token/?p=&page_size=` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/token.go` | 返回脱敏 `key`、`name`、`group`、`remain_quota`、`used_quota`、`model_limits` 等，单页最大 100 |
+| Token 完整 Key | `POST /api/token/:id/key` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/token.go` | 逐条读取完整 Key，属高敏操作 |
+| Token 批量 Key | `POST /api/token/batch/keys` | session/access token + `New-Api-User` | `/opt/project/new-api-main/controller/token.go` | 请求体 `{"ids":[...]}`；最多 100 个 id |
 | 倍率配置 | `GET /api/ratio_config` | 无登录也可访问，但依赖 `ExposeRatioEnabled` | `/opt/project/new-api-main/controller/ratio_config.go` | 返回 `model_ratio`、`completion_ratio`、`cache_ratio`、`create_cache_ratio`、`model_price` |
+| API Key 自身用量 | `GET /api/usage/token/` | `Authorization: Bearer <sk-key>` | `/opt/project/new-api-main/controller/token.go` | 返回 `total_granted`、`total_used`、`total_available`、模型限制等 |
 | OpenAI 兼容余额 | `GET /dashboard/billing/subscription`、`GET /dashboard/billing/usage` | TokenAuth，不是 session | `/opt/project/new-api-main/controller/billing.go` | 更适合已有 API Key 余额查询，不适合账号密码同步首选 |
 
-new-api 的密钥级余额可以由 Token 的 `remain_quota + used_quota`、`used_quota`、`remain_quota` 直接换算。账号级余额可优先使用 `/api/user/self` 的 `quota` 和 `used_quota`。
+new-api 的余额单位是 quota 整数，不能假设固定比例。适配时先读 `/api/status.data.quota_per_unit`，再按 `usd = quota / quota_per_unit` 换算，同时保留 raw quota。密钥级余额可以由 Token 的 `remain_quota + used_quota`、`used_quota`、`remain_quota` 计算；账号级余额优先使用 `/api/user/self` 的 `quota` 和 `used_quota`。
 
 ### sub2api
 
-sub2api 前端默认 API Base URL 为 `/api/v1`，Axios 请求使用 Bearer token，并带 `withCredentials`。登录成功返回 `access_token`、`refresh_token`、`expires_in` 和 `user`。NexusTok 适配时应使用 Bearer token，不依赖浏览器本地存储。
+sub2api 使用 `/api/v1` 前缀，标准响应为 `{"code": 0, "message": "success", "data": ...}`；错误使用真实 HTTP 状态码。分页响应为 `data.items/total/page/page_size/pages`。前端默认 Axios 请求使用 Bearer token，并带 `withCredentials`。登录成功返回 `access_token`、`refresh_token`、`expires_in` 和 `user`。NexusTok 适配时应使用 Bearer token，不依赖浏览器本地存储。
 
 | 能力 | 方法与路径 | 鉴权 | 代码位置 | 备注 |
 | --- | --- | --- | --- | --- |
 | 登录 | `POST /api/v1/auth/login` | 无，可能受 Turnstile 设置影响 | `/opt/project/sub2api-main/backend/internal/handler/auth_handler.go` | 请求体 `email`、`password`、可选 `turnstile_token`；可能返回 2FA 临时态 |
+| 2FA 补全 | `POST /api/v1/auth/login/2fa` | 临时 token | `/opt/project/sub2api-main/backend/internal/handler/auth_handler.go` | 首次登录若返回 `requires_2fa`，提交 `temp_token` 和 `totp_code` |
+| 刷新 token | `POST /api/v1/auth/refresh` | refresh token | `/opt/project/sub2api-main/backend/internal/handler/auth_handler.go` | access token 过期或 401 时刷新 |
 | 当前用户 | `GET /api/v1/auth/me` | Bearer | `/opt/project/sub2api-main/backend/internal/handler/auth_handler.go` | 返回当前用户信息 |
 | 用户资料 | `GET /api/v1/user/profile` | Bearer | `/opt/project/sub2api-main/frontend/src/api/user.ts` | 用户类型包含 `balance` |
 | 用户平台额度 | `GET /api/v1/user/platform-quotas` | Bearer | `/opt/project/sub2api-main/frontend/src/api/user.ts` | 返回平台维度限额/用量，用于余额或额度补充 |
@@ -157,10 +163,28 @@ sub2api 前端默认 API Base URL 为 `/api/v1`，Axios 请求使用 Bearer toke
 | 用户专属分组倍率 | `GET /api/v1/groups/rates` | Bearer | `/opt/project/sub2api-main/frontend/src/api/groups.ts` | 返回 `group_id -> rate_multiplier` 覆盖 |
 | API Key 列表 | `GET /api/v1/keys?page=&page_size=` | Bearer | `/opt/project/sub2api-main/frontend/src/api/keys.ts` | 前端封装使用 `/keys`；后端注释里存在旧名 `/api/v1/api-keys`，实现前要以路由注册为准 |
 | API Key 详情 | `GET /api/v1/keys/:id` | Bearer | `/opt/project/sub2api-main/frontend/src/api/keys.ts` | `ApiKey` 类型包含 `key`、`group_id`、`quota`、`quota_used`、`group` |
-| 用量统计 | `GET /api/v1/usage/dashboard/stats` 等 | Bearer | `/opt/project/sub2api-main/frontend/src/api/usage.ts` | 可用于交叉校验账号/Key 用量 |
+| 用量统计 | `GET /api/v1/usage/dashboard/stats`、`POST /api/v1/usage/dashboard/api-keys-usage` 等 | Bearer | `/opt/project/sub2api-main/frontend/src/api/usage.ts` | 可用于交叉校验账号/Key 用量；批量 key 用量最多 100 个 id |
 | 可用渠道与模型 | `GET /api/v1/channels/available` | Bearer | `/opt/project/sub2api-main/frontend/src/api/channels.ts` | 返回用户可见渠道、平台、分组和模型定价 |
 
 sub2api 的分组倍率来自 `Group.rate_multiplier` 和用户专属 `/groups/rates` 覆盖；API Key 的剩余可由 `quota - quota_used` 推导，`quota = 0` 表示无限制。用户账号余额来自 `User.balance`。如果目标平台启用了 2FA 或 Turnstile，第一版账号密码同步应返回明确错误，提示需要关闭或后续扩展交互式认证。
+
+sub2api 的金额与配额字段是 USD float，不需要 `QuotaPerUnit` 换算。它没有单独的用户 `used_balance` 字段，累计已用优先采用 `/usage/dashboard/stats.total_actual_cost`；密钥级用量优先采用 API Key 的 `quota_used`，需要更精确趋势时再调用 usage dashboard 接口。
+
+### 平台关键差异
+
+| 维度 | new-api | sub2api |
+| --- | --- | --- |
+| API 前缀 | `/api` | `/api/v1` |
+| 响应 envelope | `success/message/data`，业务错误常见 HTTP 200 | `code/message/data`，错误使用真实 HTTP 状态 |
+| 登录字段 | `username`、`password` | `email`、`password` |
+| Turnstile | query `turnstile` | JSON `turnstile_token` |
+| 2FA | pending session cookie + `code` | `temp_token` + `totp_code` |
+| 后台鉴权 | session/access token + `New-Api-User` | JWT Bearer |
+| Key 暴露 | 列表脱敏，需 reveal 单个或批量真实 key | 当前本地代码列表直接返回完整 key |
+| 余额单位 | quota int，需 `quota_per_unit` 换算 | USD float |
+| 分组标识 | group name 字符串 | group id + group name + platform |
+| 倍率/价格 | 可选暴露 `ratio_config` | 分组倍率 + 用户倍率覆盖 + 模型 pricing |
+| 已用余额 | 用户 `used_quota` 直接可用 | 需 usage 聚合或 key `quota_used` |
 
 ## 初步接口方案
 
@@ -176,11 +200,12 @@ sub2api 的分组倍率来自 `Group.rate_multiplier` 和用户专属 `/groups/r
 
 ### 适配层草案
 
-新增 `service/upstreamaccount` 包，定义统一接口：
+新增 `service/upstreamaccount` 包，按平台隔离实现 `NewAPIAdapter` 和 `Sub2APIAdapter`。统一接口既要支持登录挑战，也要支持分页、倍率和用量快照：
 
 ```go
 type PlatformClient interface {
-    Login(ctx context.Context, credential LoginCredential) (*Session, error)
+    Login(ctx context.Context, credential LoginCredential, challenge *LoginChallenge) (*Session, *LoginChallenge, error)
+    Refresh(ctx context.Context, session *Session) error
     FetchAccountSnapshot(ctx context.Context, session *Session) (*AccountSnapshot, error)
 }
 ```
@@ -193,6 +218,8 @@ type AccountSnapshot struct {
     BaseURL string
     Keys []SyncedKey
     Groups []SyncedGroup
+    Rates *RateSnapshot
+    Usage *UsageSnapshot
     Balance *BalanceSnapshot
 }
 ```
@@ -210,6 +237,32 @@ type AccountSnapshot struct {
 | `GroupRatios` | 分组倍率 |
 | `SuggestedPriority` | 自动策略建议优先级 |
 | `SuggestedWeight` | 自动策略建议权重 |
+
+统一结构必须保留 raw 字段，避免丢失平台特有信息：
+
+| 结构 | 关键字段 |
+| --- | --- |
+| `Session` | `platform`、`base_url`、`user_id`、`access_token`、`refresh_token`、`cookie_jar`、`expires_at`、`auth_headers` |
+| `LoginChallenge` | `turnstile_required`、`two_factor_required`、`temp_token`、`cookie_required`、`message` |
+| `SyncedKey` | `external_id`、`key`、`masked_key`、`name`、`status`、`group_id`、`group_name`、`quota_limit_usd`、`quota_used_usd`、`quota_raw`、`expires_at`、`unlimited`、`raw` |
+| `SyncedGroup` | `id`、`name`、`platform`、`ratio`、`description`、`limits`、`peak_rate`、`raw` |
+| `RateSnapshot` | `model_ratios`、`completion_ratios`、`cache_ratios`、`model_prices`、`group_rates`、`channel_model_pricing`、`source`、`partial` |
+| `UsageSnapshot` | `total_actual_cost_usd`、`total_cost_usd`、`today_actual_cost_usd`、`by_key`、`by_platform`、`raw` |
+
+适配层需要提供公共辅助：
+
+| 辅助 | 说明 |
+| --- | --- |
+| `EnvelopeDecoder` | 分别处理 new-api 的 `success/message/data` 与 sub2api 的 `code/message/data` |
+| `Paginator` | new-api 使用 `p/page_size`，sub2api 使用 `page/page_size` |
+| `SecretRedactor` | 请求/响应日志必须屏蔽 `password`、`access_token`、`refresh_token`、完整 API Key |
+| `QuotaNormalizer` | new-api raw quota 转 USD，sub2api 直接使用 USD |
+| `FeatureProbe` | 探测 `ratio_config`、`channels/available`、Key 是否脱敏、是否需要 Turnstile |
+
+推荐同步流程：
+
+1. new-api：先 `GET /api/status` 读取 `quota_per_unit` 和 Turnstile 状态，再登录；若出现 2FA 返回 `LoginChallenge`；登录后拉 `/api/user/self`、`/api/user/self/groups`、`/api/user/models`、`/api/ratio_config`，分页拉 `/api/token/` 后按 100 个一组调用 `/api/token/batch/keys` 补齐真实 Key。
+2. sub2api：登录后保存 token pair；401 或即将过期时用 `/api/v1/auth/refresh`；拉 `/auth/me` 或 `/user/profile`、`/user/platform-quotas`、分页 `/keys`、`/groups/available`、`/groups/rates`、`/channels/available`，并用 `/usage/dashboard/stats` 补充累计已用。
 
 ### 自动优先级/权重建议
 
