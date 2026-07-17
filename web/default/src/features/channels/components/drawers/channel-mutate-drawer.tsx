@@ -124,6 +124,7 @@ import {
   getPrefillGroups,
   createUpstreamAccountChannel,
   previewUpstreamAccount,
+  refreshUpstreamAccountChannel,
   refreshCodexCredential,
 } from '../../api'
 import {
@@ -931,6 +932,10 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
+  const isUpstreamAccountSyncedChannel =
+    isEditing &&
+    (credentialMode === 'account_pool' ||
+      channelData?.data?.channel_info?.account_pool_enabled === true)
   const supportsMultiKeyAddMode =
     currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
 
@@ -1997,6 +2002,89 @@ export function ChannelMutateDrawer({
     },
   })
 
+  const upstreamRefreshMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number
+      payload: Parameters<typeof refreshUpstreamAccountChannel>[1]
+    }) => refreshUpstreamAccountChannel(id, payload),
+    onSuccess: (res) => {
+      if (!res.success) {
+        toast.error(res.message || t('Failed to refresh upstream account'))
+        return
+      }
+      toast.success(
+        t(
+          'Upstream account refreshed: {{created}} created, {{updated}} updated, {{disabled}} disabled',
+          {
+            created: res.data?.created ?? 0,
+            updated: res.data?.updated ?? 0,
+            disabled: res.data?.disabled ?? 0,
+          }
+        )
+      )
+      setUpstreamPassword('')
+      queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      if (channelId) {
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.detail(channelId),
+        })
+      }
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : t('Failed to refresh upstream account')
+      toast.error(message)
+    },
+  })
+
+  const handleRefreshUpstreamAccount = useCallback(async () => {
+    if (!channelId) return
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    const baseUrl = form.getValues('base_url')?.trim()
+    if (!baseUrl) {
+      form.setError('base_url', {
+        type: 'manual',
+        message: t('Base URL is required'),
+      })
+      return
+    }
+    if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
+      toast.error(t('Account and password are required'))
+      return
+    }
+    await upstreamRefreshMutation.mutateAsync({
+      id: channelId,
+      payload: {
+        platform: upstreamPlatform,
+        base_url: baseUrl,
+        username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
+        email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
+        password: upstreamPassword,
+        apply_suggested: upstreamApplySuggested,
+        disable_missing_key: true,
+      },
+    })
+  }, [
+    channelId,
+    form,
+    noPermissionMessage,
+    permissions.canSensitiveWrite,
+    t,
+    upstreamApplySuggested,
+    upstreamPassword,
+    upstreamPlatform,
+    upstreamRefreshMutation,
+    upstreamUsername,
+  ])
+
   // 模型映射源模型缺失时弹出确认，避免管理员保存后看不到映射入口模型。
   const confirmMissingModelMappings = useCallback(
     (missingModels: string[]): Promise<MissingModelsAction> => {
@@ -2864,6 +2952,116 @@ export function ChannelMutateDrawer({
                                 )}
                               </>
                             )}
+                          </div>
+                        </div>
+                      )}
+
+                      {isUpstreamAccountSyncedChannel && (
+                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                          <div className='flex flex-col gap-4'>
+                            <div className='flex flex-col gap-1'>
+                              <div className='flex items-center gap-2'>
+                                <RefreshCw aria-hidden='true' />
+                                <span className='text-sm font-semibold'>
+                                  {t('Refresh Upstream Account')}
+                                </span>
+                              </div>
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Re-enter the upstream account password to update keys, groups, rates, and balance.'
+                                )}
+                              </p>
+                            </div>
+
+                            <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+                              <div className='flex flex-col gap-2'>
+                                <FormLabel>{t('Upstream Platform')}</FormLabel>
+                                <Select
+                                  value={upstreamPlatform}
+                                  onValueChange={(value) =>
+                                    setUpstreamPlatform(
+                                      value as UpstreamAccountPlatform
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent alignItemWithTrigger={false}>
+                                    <SelectGroup>
+                                      <SelectItem value='new-api'>
+                                        new-api
+                                      </SelectItem>
+                                      <SelectItem value='sub2api'>
+                                        sub2api
+                                      </SelectItem>
+                                    </SelectGroup>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <FormLabel>{t('Account')}</FormLabel>
+                                <Input
+                                  value={upstreamUsername}
+                                  onChange={(event) =>
+                                    setUpstreamUsername(event.target.value)
+                                  }
+                                  placeholder={
+                                    upstreamPlatform === 'new-api'
+                                      ? t('Username')
+                                      : t('Email')
+                                  }
+                                />
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <FormLabel>{t('Password')}</FormLabel>
+                                <Input
+                                  value={upstreamPassword}
+                                  onChange={(event) =>
+                                    setUpstreamPassword(event.target.value)
+                                  }
+                                  type='password'
+                                  autoComplete='new-password'
+                                  placeholder={t('Password')}
+                                />
+                              </div>
+                              <div className='flex items-end'>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  className='w-full'
+                                  disabled={upstreamRefreshMutation.isPending}
+                                  onClick={handleRefreshUpstreamAccount}
+                                >
+                                  {upstreamRefreshMutation.isPending ? (
+                                    <Loader2
+                                      data-icon='inline-start'
+                                      className='animate-spin'
+                                    />
+                                  ) : (
+                                    <RefreshCw data-icon='inline-start' />
+                                  )}
+                                  {t('Refresh Keys')}
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className='flex items-center justify-between gap-3'>
+                              <div className='flex flex-col gap-1'>
+                                <span className='text-sm font-medium'>
+                                  {t('Apply suggested priority and weight')}
+                                </span>
+                                <span className='text-muted-foreground text-xs'>
+                                  {t(
+                                    'Missing upstream keys will be disabled after refresh.'
+                                  )}
+                                </span>
+                              </div>
+                              <Switch
+                                checked={upstreamApplySuggested}
+                                onCheckedChange={setUpstreamApplySuggested}
+                              />
+                            </div>
                           </div>
                         </div>
                       )}

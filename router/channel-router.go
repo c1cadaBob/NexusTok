@@ -59,6 +59,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/upstream-account/preview", permission: authz.ChannelSensitiveWrite, handler: controller.PreviewUpstreamAccount},
 	{method: http.MethodPost, path: "/upstream-account/create", permission: authz.ChannelSensitiveWrite, handler: controller.CreateUpstreamAccountChannel},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
+	{method: http.MethodPost, path: "/:id/upstream-account/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshUpstreamAccountChannel},
 
 	// 渠道账号管理。列表和详情只读脱敏数据；启停和清冷却是运行期操作；账号新增、导入、
 	// 更新接口先允许普通写进入 controller，再按字段级分类要求敏感写；删除仍会移除

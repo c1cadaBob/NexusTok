@@ -323,6 +323,28 @@ export interface UpstreamAccountCreateResponse {
   }
 }
 
+export interface UpstreamAccountRefreshRequest {
+  platform: UpstreamAccountPlatform
+  base_url: string
+  username?: string
+  email?: string
+  password: string
+  apply_suggested: boolean
+  disable_missing_key?: boolean
+  accounts?: UpstreamAccountCreateAccountConfig[]
+}
+
+export interface UpstreamAccountRefreshResponse {
+  success: boolean
+  message?: string
+  data?: {
+    channel_id: number
+    created: number
+    updated: number
+    disabled: number
+  }
+}
+
 // ============================================================================
 // Multi-Key Management Types
 // ============================================================================

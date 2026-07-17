@@ -46,6 +46,8 @@ import type {
   UpstreamAccountCreateResponse,
   UpstreamAccountPreviewRequest,
   UpstreamAccountPreviewResponse,
+  UpstreamAccountRefreshRequest,
+  UpstreamAccountRefreshResponse,
 } from './types'
 
 // 扩展 API 请求配置，主要用于跳过全局业务错误处理或禁用重复请求合并。
@@ -159,6 +161,20 @@ export async function createUpstreamAccountChannel(
   data: UpstreamAccountCreateRequest
 ): Promise<UpstreamAccountCreateResponse> {
   const res = await api.post('/api/channel/upstream-account/create', data)
+  return res.data
+}
+
+/**
+ * 使用重新输入的上游账号密码刷新已有账号同步渠道。
+ */
+export async function refreshUpstreamAccountChannel(
+  id: number,
+  data: UpstreamAccountRefreshRequest
+): Promise<UpstreamAccountRefreshResponse> {
+  const res = await api.post(
+    `/api/channel/${id}/upstream-account/refresh`,
+    data
+  )
   return res.data
 }
 

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -48,6 +49,32 @@ func CreateUpstreamAccountChannel(c *gin.Context) {
 		return
 	}
 	result, err := upstreamaccount.CreateFromPreview(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// RefreshUpstreamAccountChannel 使用重新输入的上游账号密码刷新已有账号同步渠道。
+//
+// 刷新不会保存账号密码；后端只在本次请求内登录目标平台，并把新快照应用到已有
+// ChannelAccount。缺失密钥是否自动禁用由请求中的 disable_missing_key 控制。
+func RefreshUpstreamAccountChannel(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		common.ApiErrorMsg(c, "无效的渠道 ID")
+		return
+	}
+	var req upstreamaccount.RefreshRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	req.ChannelID = channelID
+	ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamAccountPreviewTimeout)
+	defer cancel()
+	result, err := upstreamaccount.RefreshChannelFromCredential(ctx, req)
 	if err != nil {
 		common.ApiError(c, err)
 		return

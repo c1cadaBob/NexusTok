@@ -171,7 +171,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		HeaderOverride:     req.Channel.HeaderOverride,
 		StatusCodeMapping:  req.Channel.StatusCodeMapping,
 		Other:              req.Channel.Other,
-		OtherSettings:      mergeSyncMetadata(req.Channel.OtherSettings, snapshot),
+		OtherSettings:      mergeChannelSyncMetadata(req.Channel.OtherSettings, snapshot),
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:      constant.ChannelCredentialModeAccountPool,
 			AccountPoolEnabled:  true,
@@ -253,7 +253,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			OpenAIOrganization: config.OpenAIOrganization,
 			Other:              config.Other,
 			Setting:            config.Setting,
-			OtherSettings:      config.OtherSettings,
+			OtherSettings:      mergeAccountSyncMetadata(config.OtherSettings, snapshot, key),
 			ModelMapping:       config.ModelMapping,
 			ParamOverride:      config.ParamOverride,
 			HeaderOverride:     config.HeaderOverride,
@@ -322,24 +322,4 @@ func quotaToInt64(value *float64) int64 {
 		return 0
 	}
 	return int64(*value)
-}
-
-func mergeSyncMetadata(existing string, snapshot *Snapshot) string {
-	var data map[string]any
-	if strings.TrimSpace(existing) != "" {
-		_ = common.UnmarshalJsonStr(existing, &data)
-	}
-	if data == nil {
-		data = map[string]any{}
-	}
-	data["upstream_account_sync"] = map[string]any{
-		"platform":  snapshot.Platform,
-		"base_url":  snapshot.BaseURL,
-		"synced_at": common.GetTimestamp(),
-	}
-	bytes, err := common.Marshal(data)
-	if err != nil {
-		return existing
-	}
-	return string(bytes)
 }
