@@ -3225,6 +3225,7 @@
     "No models to add": "Aucun modèle à ajouter",
     "No models to copy": "Aucun modèle à copier",
     "No models to remove": "Aucun modèle à supprimer",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "Le compte amont n'a renvoyé aucun modèle. Ajoutez des modèles manuellement après la création afin que ce canal puisse recevoir des requêtes routées.",
     "No new matches": "Aucune nouvelle correspondance",
     "No new models to add": "Aucun nouveau modèle à ajouter",
     "No new models yet": "Pas encore de nouveaux modèles",

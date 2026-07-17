@@ -3225,6 +3225,7 @@
     "No models to add": "无待新增模型",
     "No models to copy": "没有模型可复制",
     "No models to remove": "无待删除模型",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "上游账号未返回模型。创建后请手动添加模型，确保该渠道可以接收路由请求。",
     "No new matches": "没有新匹配项",
     "No new models to add": "没有新模型可添加",
     "No new models yet": "暂无新模型",

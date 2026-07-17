@@ -3225,6 +3225,7 @@
     "No models to add": "Không có mô hình để thêm",
     "No models to copy": "Không có mô hình nào để sao chép",
     "No models to remove": "Không có mô hình để xóa",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "Tài khoản upstream không trả về model nào. Hãy thêm model thủ công sau khi tạo để kênh này có thể nhận các yêu cầu được định tuyến.",
     "No new matches": "Không có kết quả khớp mới",
     "No new models to add": "Không có mô hình mới để thêm",
     "No new models yet": "Chưa có mô hình mới",

@@ -3225,6 +3225,7 @@
     "No models to add": "No models to add",
     "No models to copy": "No models to copy",
     "No models to remove": "No models to remove",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.",
     "No new matches": "No new matches",
     "No new models to add": "No new models to add",
     "No new models yet": "No new models yet",

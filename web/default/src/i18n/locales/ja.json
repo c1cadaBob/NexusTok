@@ -3225,6 +3225,7 @@
     "No models to add": "追加するモデルがありません",
     "No models to copy": "コピーするモデルがありません",
     "No models to remove": "削除するモデルがありません",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "アップストリームアカウントからモデルが返されませんでした。作成後に手動でモデルを追加し、このチャネルがルーティングされたリクエストを受け取れるようにしてください。",
     "No new matches": "新しい一致はありません",
     "No new models to add": "追加する新しいモデルはありません",
     "No new models yet": "新しいモデルはまだありません",

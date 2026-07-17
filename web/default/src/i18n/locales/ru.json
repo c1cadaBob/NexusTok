@@ -3225,6 +3225,7 @@
     "No models to add": "Нет моделей для добавления",
     "No models to copy": "Нет моделей для копирования",
     "No models to remove": "Нет моделей для удаления",
+    "No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.": "Вышестоящий аккаунт не вернул модели. После создания добавьте модели вручную, чтобы этот канал мог получать маршрутизируемые запросы.",
     "No new matches": "Нет новых совпадений",
     "No new models to add": "Нет новых моделей для добавления",
     "No new models yet": "Новых моделей пока нет",
