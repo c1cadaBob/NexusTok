@@ -64,31 +64,32 @@ export function CheckinSettingsSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
-  const { form, handleSubmit, isDirty, isSubmitting } = useSettingsForm<Values>({
-    resolver: zodResolver(schema) as unknown as Resolver<Values>,
-    defaultValues: {
-      enabled: defaultValues.enabled,
-      minQuota: defaultValues.minQuota,
-      maxQuota: defaultValues.maxQuota,
-    },
-    onSubmit: async (_data, changedFields) => {
-      for (const [key, value] of Object.entries(changedFields)) {
-        let optionKey = key
-        if (key === 'enabled') {
-          optionKey = 'checkin_setting.enabled'
-        } else if (key === 'minQuota') {
-          optionKey = 'checkin_setting.min_quota'
-        } else if (key === 'maxQuota') {
-          optionKey = 'checkin_setting.max_quota'
-        }
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
+    useSettingsForm<Values>({
+      resolver: zodResolver(schema) as unknown as Resolver<Values>,
+      defaultValues: {
+        enabled: defaultValues.enabled,
+        minQuota: defaultValues.minQuota,
+        maxQuota: defaultValues.maxQuota,
+      },
+      onSubmit: async (_data, changedFields) => {
+        for (const [key, value] of Object.entries(changedFields)) {
+          let optionKey = key
+          if (key === 'enabled') {
+            optionKey = 'checkin_setting.enabled'
+          } else if (key === 'minQuota') {
+            optionKey = 'checkin_setting.min_quota'
+          } else if (key === 'maxQuota') {
+            optionKey = 'checkin_setting.max_quota'
+          }
 
-        await updateOption.mutateAsync({
-          key: optionKey,
-          value: value as string | number | boolean,
-        })
-      }
-    },
-  })
+          await updateOption.mutateAsync({
+            key: optionKey,
+            value: value as string | number | boolean,
+          })
+        }
+      },
+    })
 
   const enabled = form.watch('enabled')
 
@@ -103,8 +104,10 @@ export function CheckinSettingsSection({
         <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
           <SettingsPageFormActions
             onSave={handleSubmit}
+            onReset={handleReset}
             isSaving={updateOption.isPending || isSubmitting}
             isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
             saveDisabledReason={
               updateOption.canUpdate ? undefined : updateOption.disabledReason
             }

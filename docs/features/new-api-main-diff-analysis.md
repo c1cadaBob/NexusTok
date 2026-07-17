@@ -16838,6 +16838,64 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 本轮验证没有点击“测试连接”，未触发 `/api/deployments/settings/test-connection` 或外部 io.net 连接测试。
 10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
 
+## 本轮实施评审：签到奖励页重置动作补齐
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/checkin-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/billing/checkin` 已经完成共享表单、页头保存动作、脏态徽标、离页拦截、开关布局和数字字段接线迁移，但页头动作区仍只暴露“保存签到设置”，没有接入 `useSettingsForm()` 已提供的 `handleReset`。
+
+这会让签到奖励页在体验上落后于 Worker、Token 数限制、敏感词、系统公告等已补齐页面：管理员临时开启签到或调整奖励区间后，只能手工恢复原值，不能通过页头“重置”直接回到保存基线。
+
+### 需求分析
+
+1. `/system-settings/billing/checkin` 需要补齐页头“重置”动作，让管理员临时切换签到开关或调整 `minQuota/maxQuota` 后可以直接回滚到保存基线。
+2. 本轮只补齐缺失动作，不重新迁移页面，也不从 `new-api-main` 回退到旧式 `useForm()` 实现。
+3. 必须保持现有 `useSettingsForm()`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem`、`safeNumberFieldProps()`、权限禁用理由和三个 `checkin_setting.*` option key 保存合同不变。
+4. 验证阶段不能点击“保存签到设置”，避免污染当前签到奖励配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 签到奖励设置页 | `web/default/src/features/system-settings/general/checkin-settings-section.tsx` | 在已有共享表单结构中暴露页头重置动作，并按脏态禁用/启用；不改变保存字段、条件渲染、数字输入接线或权限语义。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `checkin_setting.enabled`、`checkin_setting.min_quota` 和 `checkin_setting.max_quota` 会影响用户每日签到奖励；验证阶段如果误保存临时值，可能改变当前运行环境的配额发放策略。
+2. `enabled` 会控制 `minQuota/maxQuota` 数字字段的条件渲染；重置动作必须恢复开关状态并同步收起或展开数字字段，不能让隐藏字段残留为脏态。
+3. 字段保存需要从表单名 `enabled/minQuota/maxQuota` 映射到后端 option key；本轮不能改映射逻辑，避免写错配置项。
+4. 重置动作必须只回滚当前草稿，不能触发 `PUT /api/option/`。
+
+### 方案评审
+
+采用“最小动作补齐”的方案：
+
+1. 继续复用当前项目已有 `useSettingsForm()`，从 hook 返回值中解构 `handleReset`。
+2. 给 `SettingsPageFormActions` 增加 `onReset={handleReset}`，让页头动作区展示统一“重置”按钮。
+3. 给 `SettingsPageFormActions` 增加 `isResetDisabled={!isDirty}`，无脏态时禁用重置，避免无意义操作。
+4. 不改 Zod schema、`onSubmit`、三个 option key 映射、`enabled` 条件渲染、数字输入或任意后端保存逻辑。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/general/checkin-settings-section.tsx` 已在现有共享表单结构中接入 `handleReset`。
+2. `/system-settings/billing/checkin` 页头动作区现在同时提供“重置”和“保存签到设置”；无脏态时二者禁用，有脏态时按现有权限和提交状态启用。
+3. 保存合同仍然只写入 `checkin_setting.enabled`、`checkin_setting.min_quota`、`checkin_setting.max_quota`，没有改变后端接口、权限模型或签到奖励逻辑。
+4. 签到关闭时奖励区间输入仍收起；临时开启后重置会恢复关闭状态并收起数字字段。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/general/checkin-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已使用 MCP 访问 `http://192.168.0.202:3003/system-settings/billing/checkin?verify=20260717-checkin-reset-action`，确认热更新生效，页头显示“重置”和“保存签到设置”，首屏二者均为禁用态。
+5. 点击“启用签到功能”开关后，标题区域出现“未保存的更改”，页头“重置”和“保存签到设置”从禁用变为可用，`minQuota/maxQuota` 数字输入展开并显示 `1000`、`10000`。
+6. 在脏态下点击侧栏“货币与展示”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在签到奖励页，说明统一离开拦截正常。
+7. 点击页头“重置”后，签到开关恢复关闭，`minQuota/maxQuota` 数字输入收起，标题状态消失，页头“重置”和“保存签到设置”重新禁用，说明共享表单回滚和条件渲染恢复行为正确。
+8. 本轮验证没有点击“保存签到设置”，未执行真实 `PUT /api/option/`，没有污染当前签到奖励配置。
+9. MCP 网络请求只出现 `GET /api/status`、`GET /api/user/self`、`GET /api/notice` 和 `GET /api/option/`。
+10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
 ## 本轮实施评审：系统公告页重置动作与保存禁用补齐
 
 ### 差异来源
