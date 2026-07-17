@@ -113,6 +113,49 @@ func TestCacheUpdateChannelStatusRemovesDuplicateChannelIds(t *testing.T) {
 	require.Equal(t, common.ChannelStatusAutoDisabled, channelsIDM[1].Status)
 }
 
+func TestInitChannelCacheCreatesMissingGroupMapFromChannel(t *testing.T) {
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldGroup2Model2Channels := group2model2channels
+	oldChannelsIDM := channelsIDM
+	oldAdvancedConfigs := channel2advancedCustomConfig
+
+	common.MemoryCacheEnabled = true
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}))
+	DB = db
+	LOG_DB = db
+
+	t.Cleanup(func() {
+		DB = oldDB
+		LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		channelSyncLock.Lock()
+		defer channelSyncLock.Unlock()
+		group2model2channels = oldGroup2Model2Channels
+		channelsIDM = oldChannelsIDM
+		channel2advancedCustomConfig = oldAdvancedConfigs
+	})
+
+	priority := int64(0)
+	require.NoError(t, db.Create(&Channel{
+		Id:       1,
+		Type:     constant.ChannelTypeOpenAI,
+		Status:   common.ChannelStatusEnabled,
+		Name:     "synced-account-channel",
+		Models:   " gpt-retry, ",
+		Group:    " synced-group, ",
+		Priority: &priority,
+	}).Error)
+
+	require.NotPanics(t, InitChannelCache)
+	require.Equal(t, []int{1}, group2model2channels["synced-group"]["gpt-retry"])
+	require.Contains(t, channelsIDM, 1)
+}
+
 func TestGetChannelWithExclusionsFiltersChannelStatusInDBFallback(t *testing.T) {
 	oldDB := DB
 	oldLogDB := LOG_DB

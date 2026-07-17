@@ -82,12 +82,26 @@ func InitChannelCache() {
 	}
 	for _, channel := range channels {
 		if channel.Status != common.ChannelStatusEnabled {
-			continue // skip disabled channels
+			continue // 跳过禁用渠道，避免它们进入运行期选路缓存。
 		}
 		groups := strings.Split(channel.Group, ",")
 		for _, group := range groups {
+			group = strings.TrimSpace(group)
+			if group == "" {
+				continue
+			}
+			if _, ok := newGroup2model2channels[group]; !ok {
+				// 渠道缓存会在启动、热更新和能力修复时重建；此时 abilities 表可能
+				// 尚未包含刚创建渠道的分组，必须按渠道本身的分组懒初始化二级 map，
+				// 否则会因为写入 nil map 导致进程启动失败。
+				newGroup2model2channels[group] = make(map[string][]int)
+			}
 			models := strings.Split(channel.Models, ",")
 			for _, model := range models {
+				model = strings.TrimSpace(model)
+				if model == "" {
+					continue
+				}
 				if _, ok := newGroup2model2channels[group][model]; !ok {
 					newGroup2model2channels[group][model] = make([]int, 0)
 				}
