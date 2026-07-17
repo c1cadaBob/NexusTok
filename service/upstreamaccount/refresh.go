@@ -276,6 +276,15 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 	settings := account.OtherSettings
 	if existing != nil {
 		settings = mergeAccountSyncMetadata(existing.OtherSettings, snapshot, key)
+		if !applySuggested && config.Priority == nil {
+			account.Priority = existing.Priority
+		}
+		if !applySuggested && config.Weight == nil {
+			account.Weight = existing.Weight
+		}
+		if config.Enabled == nil {
+			account.Status = existing.Status
+		}
 	}
 	updates := map[string]any{
 		"name":                account.Name,

@@ -281,3 +281,90 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 	require.Equal(t, "local", metadata.ExternalID)
 	require.Equal(t, keyDigest("sk-new-local"), metadata.KeyDigest)
 }
+
+func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "manual-scheduling-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	oldKey := SyncedKey{
+		ExternalID: "manual",
+		Name:       "Manual Key",
+		Key:        "sk-manual-old",
+		MaskedKey:  "sk-manual-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-old"},
+	}
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Manual Key",
+		Key:           "sk-manual-old",
+		Status:        common.ChannelStatusManuallyDisabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		Priority:      33,
+		Weight:        44,
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformSub2API, BaseURL: "https://sub2api.example"}, oldKey),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "manual",
+				Name:              "Manual Key Refreshed",
+				Key:               "sk-manual-new",
+				MaskedKey:         "sk-manual-new",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 8,
+				SuggestedWeight:   66,
+			},
+		},
+	}
+	result, err := RefreshChannelFromSnapshot(channel.Id, snapshot, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Created)
+	require.Equal(t, 1, result.Updated)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "Manual Key Refreshed", refreshed.Name)
+	require.Equal(t, "sk-manual-new", refreshed.Key)
+	require.Equal(t, int64(33), refreshed.Priority)
+	require.Equal(t, 44, refreshed.Weight)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
+}
