@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
+import { useEffect, useMemo, useRef } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -32,8 +32,16 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useResetForm } from '../hooks/use-reset-form'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { removeTrailingSlash } from './utils'
 
@@ -54,50 +62,100 @@ type WorkerSettingsSectionProps = {
   defaultValues: WorkerFormValues
 }
 
+type NormalizedWorkerValues = {
+  WorkerUrl: string
+  WorkerValidKey: string
+  WorkerAllowHttpImageRequestEnabled: boolean
+}
+
+function normalizeWorkerValues(
+  values: WorkerFormValues
+): NormalizedWorkerValues {
+  return {
+    WorkerUrl: removeTrailingSlash(values.WorkerUrl),
+    WorkerValidKey: values.WorkerValidKey.trim(),
+    WorkerAllowHttpImageRequestEnabled:
+      values.WorkerAllowHttpImageRequestEnabled,
+  }
+}
+
 export function WorkerSettingsSection({
   defaultValues,
 }: WorkerSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const workerSchema = createWorkerSchema(t)
+  const normalizedDefaults = useMemo(
+    () => normalizeWorkerValues(defaultValues),
+    [defaultValues]
+  )
+  const savedValuesRef = useRef<NormalizedWorkerValues>(normalizedDefaults)
+  const savedSerializedRef = useRef<string>(
+    JSON.stringify(normalizedDefaults)
+  )
 
-  const form = useForm<WorkerFormValues>({
-    resolver: zodResolver(workerSchema),
-    defaultValues,
-  })
+  useEffect(() => {
+    const serialized = JSON.stringify(normalizedDefaults)
+    if (serialized === savedSerializedRef.current) return
+    savedValuesRef.current = normalizedDefaults
+    savedSerializedRef.current = serialized
+  }, [normalizedDefaults])
 
-  useResetForm(form, defaultValues)
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<WorkerFormValues>({
+      resolver: zodResolver(workerSchema) as Resolver<
+        WorkerFormValues,
+        unknown,
+        WorkerFormValues
+      >,
+      defaultValues,
+      onSubmit: async (values) => {
+        const sanitizedUrl = removeTrailingSlash(values.WorkerUrl)
+        const sanitizedKey = values.WorkerValidKey.trim()
+        const savedValues = savedValuesRef.current
 
-  const onSubmit = async (values: WorkerFormValues) => {
-    const sanitizedUrl = removeTrailingSlash(values.WorkerUrl)
-    const sanitizedKey = values.WorkerValidKey.trim()
-    const initialUrl = removeTrailingSlash(defaultValues.WorkerUrl)
-    const initialKey = defaultValues.WorkerValidKey.trim()
+        const updates: Array<{ key: string; value: string | boolean }> = []
 
-    const updates: Array<{ key: string; value: string | boolean }> = []
+        if (sanitizedUrl !== savedValues.WorkerUrl) {
+          updates.push({ key: 'WorkerUrl', value: sanitizedUrl })
+        }
 
-    if (sanitizedUrl !== initialUrl) {
-      updates.push({ key: 'WorkerUrl', value: sanitizedUrl })
-    }
+        if (
+          sanitizedKey !== savedValues.WorkerValidKey ||
+          sanitizedUrl === ''
+        ) {
+          updates.push({ key: 'WorkerValidKey', value: sanitizedKey })
+        }
 
-    if (sanitizedKey !== initialKey || sanitizedUrl === '') {
-      updates.push({ key: 'WorkerValidKey', value: sanitizedKey })
-    }
+        if (
+          values.WorkerAllowHttpImageRequestEnabled !==
+          savedValues.WorkerAllowHttpImageRequestEnabled
+        ) {
+          updates.push({
+            key: 'WorkerAllowHttpImageRequestEnabled',
+            value: values.WorkerAllowHttpImageRequestEnabled,
+          })
+        }
 
-    if (
-      values.WorkerAllowHttpImageRequestEnabled !==
-      defaultValues.WorkerAllowHttpImageRequestEnabled
-    ) {
-      updates.push({
-        key: 'WorkerAllowHttpImageRequestEnabled',
-        value: values.WorkerAllowHttpImageRequestEnabled,
-      })
-    }
+        for (const update of updates) {
+          await updateOption.mutateAsync(update)
+        }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
+        const nextSavedValues: NormalizedWorkerValues = {
+          WorkerUrl: sanitizedUrl,
+          // Worker 密钥不会回显到页面；保存成功后继续以空字符串作为“保留现有 secret”
+          // 的基线，避免用户后续把输入框清空时被误判为要主动清空后端密钥。
+          WorkerValidKey: '',
+          WorkerAllowHttpImageRequestEnabled:
+            values.WorkerAllowHttpImageRequestEnabled,
+        }
+
+        savedValuesRef.current = nextSavedValues
+        savedSerializedRef.current = JSON.stringify(nextSavedValues)
+        values.WorkerUrl = sanitizedUrl
+        values.WorkerValidKey = ''
+      },
+    })
 
   return (
     <SettingsSection
@@ -106,12 +164,21 @@ export function WorkerSettingsSection({
         'Configure upstream worker or proxy service for outbound requests'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit(onSubmit)}
-          autoComplete='off'
-          className='space-y-6'
-        >
+        <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save Worker settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='WorkerUrl'
@@ -167,8 +234,8 @@ export function WorkerSettingsSection({
             control={form.control}
             name='WorkerAllowHttpImageRequestEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel className='text-base'>
                     {t('Allow HTTP image requests')}
                   </FormLabel>
@@ -177,29 +244,18 @@ export function WorkerSettingsSection({
                       'Enable when proxying workers that fetch images over HTTP.'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
+                    disabled={updateOption.isPending || isSubmitting}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending
-              ? t('Saving...')
-              : t('Save Worker settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
