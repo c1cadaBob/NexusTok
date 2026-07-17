@@ -36,3 +36,21 @@ func PreviewUpstreamAccount(c *gin.Context) {
 		"data":    result,
 	})
 }
+
+// CreateUpstreamAccountChannel 根据预览快照创建一个渠道和多条渠道账号。
+//
+// 请求只引用 preview_id 和用户在页面上确认后的配置；后端从短期缓存取完整 key，
+// 因此前端不需要也不应该回传完整密钥。
+func CreateUpstreamAccountChannel(c *gin.Context) {
+	var req upstreamaccount.CreateRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.CreateFromPreview(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
