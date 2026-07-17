@@ -16414,3 +16414,80 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. 继续在同一页面聚焦“允许的端口”输入框，将默认值 `80,443,8080,8443` 临时改为 `80,443,8080,8443,9000` 后，标题区域出现“未保存的更改”，页头保存按钮可用；恢复为原值后，标题状态再次消失，页头保存按钮重新禁用，说明逗号端口列表字段的归一化与回滚行为正确。
 11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 SSRF 配置。
 12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+
+## 本轮实施评审：OAuth 集成设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/auth/oauth-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/auth/oauth` 仍处在旧式表单壳层与局部状态模型中：
+
+1. 保存按钮和重置按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面虽已有未保存提示与离开拦截，但仍由局部 `useForm()`、局部 dirty 状态和手工 flatten 提交驱动，没有复用当前项目已经稳定的共享表单壳层。
+3. 旧实现混用了 `'discord.client_id'`、`'oidc.client_id'` 这类 flat dotted key 与 `react-hook-form` 的嵌套路径语义，需要通过 `as any`、手工 flatten 和手工 reset 兜底，状态模型脆弱。
+4. `GitHubClientSecret`、`discord.client_secret`、`oidc.client_secret`、`TelegramBotToken`、`LinuxDOClientSecret`、`WeChatServerToken` 都不会通过 `/api/option/` 回填；旧实现会把空 secret 与真实基线混在一起，容易误判脏态或误发空值。
+5. OIDC 的 well-known 自动发现由浏览器直接请求第三方 URL，容易产生 CORS、外网失败和控制台网络错误；项目内自定义 OAuth 已经有后端 discovery 接口，可以复用同一 SSRF 防护边界。
+6. 后端在启用 GitHub、Discord、OIDC、Telegram、LinuxDO、WeChat 开关时会立即校验相关凭据是否已存在，因此 OAuth 页不能继续依赖普通对象遍历顺序保存。
+
+### 需求分析
+
+1. `/system-settings/auth/oauth` 需要接入当前项目原生的系统设置页头动作区，让保存、重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，但 OAuth 的提交基线需要在组件内自管，以正确处理多字段串行保存和部分失败场景。
+3. 保持现有六个 provider tabs 不变：GitHub、Discord、OIDC、Telegram、LinuxDO、WeChat。
+4. 保持后端 option key 合同不变，前端内部可以使用嵌套 `discord` / `oidc` 对象，保存前必须转回后端已有 dotted key。
+5. Secret/Token 字段继续遵循“输入为空表示保留现有值”的语义；保存成功后也必须恢复为空输入，并把空值作为新的可见基线。
+6. OIDC well-known 自动发现仍要保留，因为后端登录流程实际消费保存后的 endpoint 字段；但发现请求应改为复用后端 `/api/custom-oauth-provider/discovery` 接口，避免浏览器直连第三方地址带来的控制台和 CORS 问题。
+7. 保存顺序必须显式固定为凭据、端点、Bot 信息、二维码等配置先保存，启用开关最后保存，避免同一轮保存中因顺序问题触发后端“配置缺失”校验。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| OAuth 集成设置页 | `web/default/src/features/system-settings/auth/oauth-section.tsx` | 将页面从旧式底部按钮表单收口到页头动作区和共享布局组件；改用嵌套 `discord` / `oidc` 表单模型；补齐 secret 可见基线、OIDC 后端 discovery、显式保存顺序和统一刷新逻辑。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. OAuth 页存在 6 个 provider 共用同一个表单的 multi-tab 场景；隐藏 tab 字段也在同一个表单状态中，保存、重置和离页拦截必须按全局表单语义处理。
+2. `discord.*` 与 `oidc.*` 是后端 option dotted key，但 `react-hook-form` 把 dotted name 当作嵌套路径；如果不改成真正嵌套对象，会继续存在 schema、dirtyFields、提交值和 reset 值分裂的问题。
+3. Secret/Token 字段不回填；如果保存成功后把用户刚输入的 secret 推进表单基线，会造成敏感信息在前端继续可见；如果把空值当作变更提交，又可能把后端配置清空。
+4. OIDC well-known 自动发现会改写 `authorization_endpoint`、`token_endpoint`、`user_info_endpoint`；如果保存前置请求失败，必须中止本轮保存，避免只保存一部分 OIDC 配置。
+5. 后端 `UpdateOption` 对启用开关有前置校验；如果开关先于凭据保存，可能出现用户同一轮已经输入凭据但后端仍拒绝启用的错误体验。
+6. `useUpdateOption().mutateAsync()` 在后端返回 `success: false` 时不会抛异常，只会 toast；OAuth 页如果继续直接使用它逐项保存，可能把失败字段也当作成功推进表单基线。
+7. 每个 option 保存成功都会触发 `system-options` 刷新；多字段串行保存期间如果中途刷新，可能把用户未保存字段回刷掉。因此本轮需要在组件内统一串行保存，全部成功后再统一刷新。
+
+### 方案评审
+
+采用“共享表单壳层 + OAuth 专用基线与提交控制”的方案：
+
+1. 用嵌套 `discord` 与 `oidc` 对象重建 Zod schema，彻底移除 `as any` 和手工 RHF flatten/reset 兜底。
+2. 用 `SettingsForm` 与 `SettingsPageFormActions` 替换旧 `<form className='space-y-6'>` 和底部按钮，让保存、重置动作进入页头。
+3. 继续使用 `FormDirtyIndicator` 与 `FormNavigationGuard`，但脏态由页面内归一化后的可见基线计算，而不是直接依赖普通 `formState.isDirty`。
+4. 对 secret/token 字段建立固定集合：空值不参与保存；保存成功后把对应表单值恢复为空字符串，并把空字符串作为新的可见基线。
+5. 复用 `discoverOIDCEndpoints()` 调用后端 discovery 接口；只有 well-known 相对已保存值发生变化时才自动发现端点，避免每次保存都覆盖手填 endpoint。
+6. 直接调用 `updateSystemOption()` 串行保存每个变更字段，逐项检查 `response.success`；只有全部成功后才推进可见基线和重置表单。
+7. 显式维护 `oauthUpdateOrder`，把所有凭据、端点和展示信息排在启用开关之前。
+8. 保存完成后统一刷新 `system-options`；当变更涉及登录入口对外状态时同步刷新 `status`，避免登录页、个人绑定页和导航状态滞后。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/auth/oauth-section.tsx` 已接入 `SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，保存/重置动作进入页头，底部旧按钮已移除。
+2. `discord` 与 `oidc` 已改为真正嵌套表单对象，保存前通过归一化 helper 转回后端已有 dotted option key。
+3. Secret/Token 字段已实现“留空表示保留现有值”：空值不会被提交；保存成功后继续恢复为空输入，避免密钥回显和误清空。
+4. OIDC well-known 自动发现已从浏览器直连第三方 URL 改为复用后端 `discoverOIDCEndpoints()`，与自定义 OAuth 使用同一 discovery 接口和 SSRF 防护边界。
+5. 保存逻辑已改为组件内自管：显式顺序、逐项检查 `success`、全部成功后推进可见基线，并统一刷新 `system-options` / `status`。
+6. WeChat Server Address 保存前继续裁剪尾部斜杠，保留 classic 前端已有的地址归一化语义。
+7. 保存合同仍然只写入 OAuth 相关既有 option key，没有改变后端登录、绑定、OAuth 回调或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/auth/oauth-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/auth/oauth?verify=20260717-oauth-after-change`，确认页面已经加载新实现：`重置` 与 `保存更改` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+6. 在 GitHub tab 将 `Client ID` 临时填入 `oauth-dirty-check` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+7. 在脏态下点击侧栏“通行密钥认证”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 OAuth 页，且临时输入值仍保留，说明统一离开拦截正常。
+8. 点击页头“重置”后，`Client ID` 恢复为空，标题状态消失，页头保存与重置按钮重新禁用，说明可见基线和回滚行为正确。
+9. 切换到 OIDC tab 后，`Client ID`、`Client Secret`、`Well-Known URL`、`Authorization Endpoint`、`Token Endpoint`、`User Info Endpoint` 均正常展示，tabs 切换没有触发路由或运行时错误。
+10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/setup`、`POST /api/user/login`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等请求，说明本轮未污染真实 OAuth 配置。
+11. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
