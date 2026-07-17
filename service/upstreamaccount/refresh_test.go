@@ -1,6 +1,7 @@
 package upstreamaccount
 
 import (
+	"context"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -10,6 +11,74 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRefreshChannelFromCredentialConsumesPreviewSnapshot(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "synced-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	preview, err := SavePreviewSnapshot(&Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Balance:  &BalanceSnapshot{BalanceUSD: floatPtr(5), UsedUSD: floatPtr(1)},
+		Keys: []SyncedKey{{
+			ExternalID:        "new",
+			Name:              "New Key",
+			Key:               "sk-new",
+			MaskedKey:         "sk-new",
+			GroupName:         "default",
+			Models:            []string{"gpt-4o"},
+			SuggestedPriority: 1,
+			SuggestedWeight:   100,
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := RefreshChannelFromCredential(context.Background(), RefreshRequest{
+		ChannelID:         channel.Id,
+		PreviewID:         preview.PreviewID,
+		ApplySuggested:    true,
+		DisableMissingKey: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.Equal(t, 0, result.Updated)
+
+	var accounts []model.ChannelAccount
+	require.NoError(t, db.Find(&accounts).Error)
+	require.Len(t, accounts, 1)
+	require.Equal(t, "sk-new", accounts[0].Key)
+
+	_, err = GetPreviewRecord(preview.PreviewID)
+	require.Error(t, err)
+}
 
 func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.T) {
 	oldDB := model.DB

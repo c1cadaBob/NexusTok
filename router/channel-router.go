@@ -57,6 +57,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/models", permission: authz.ChannelRead, handler: controller.ChannelListModels},
 	{method: http.MethodGet, path: "/models_enabled", permission: authz.ChannelRead, handler: controller.EnabledListModels},
 	{method: http.MethodPost, path: "/upstream-account/preview", permission: authz.ChannelSensitiveWrite, handler: controller.PreviewUpstreamAccount},
+	{method: http.MethodPost, path: "/upstream-account/preview/2fa", permission: authz.ChannelSensitiveWrite, handler: controller.CompleteUpstreamAccount2FA},
 	{method: http.MethodPost, path: "/upstream-account/create", permission: authz.ChannelSensitiveWrite, handler: controller.CreateUpstreamAccountChannel},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodPost, path: "/:id/upstream-account/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshUpstreamAccountChannel},

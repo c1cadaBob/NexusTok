@@ -123,6 +123,7 @@ import {
   getChannelKey,
   getGroups,
   getPrefillGroups,
+  completeUpstreamAccountPreview2FA,
   createUpstreamAccountChannel,
   previewUpstreamAccount,
   refreshUpstreamAccountChannel,
@@ -176,6 +177,8 @@ import {
 import type {
   Channel,
   UpstreamAccountKey,
+  UpstreamAccountPreviewData,
+  UpstreamAccountTwoFactorChallenge,
   UpstreamAccountPlatform,
   UpstreamAccountSnapshot,
 } from '../../types'
@@ -237,6 +240,8 @@ type UpstreamAccountConfigDraft = {
   enabled: boolean
 }
 
+type UpstreamTwoFactorMode = 'create' | 'refresh'
+
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 
 function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
@@ -246,6 +251,28 @@ function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
 function upstreamPreviewRemainingSeconds(expiresAt: number, nowMs: number) {
   if (!expiresAt) return 0
   return Math.max(0, Math.ceil(expiresAt - nowMs / 1000))
+}
+
+function hasUpstreamPreviewSnapshot(
+  data: unknown
+): data is UpstreamAccountPreviewData {
+  return Boolean(
+    data &&
+    typeof data === 'object' &&
+    'preview_id' in data &&
+    'snapshot' in data
+  )
+}
+
+function getUpstreamPreviewChallenge(
+  data: unknown
+): UpstreamAccountTwoFactorChallenge | null {
+  if (!data || typeof data !== 'object' || !('challenge' in data)) return null
+  const challenge = (data as { challenge?: unknown }).challenge
+  if (!challenge || typeof challenge !== 'object') return null
+  if (!('challenge_id' in challenge) || !('expires_at' in challenge))
+    return null
+  return challenge as UpstreamAccountTwoFactorChallenge
 }
 
 function formatUpstreamPreviewRemaining(seconds: number) {
@@ -785,10 +812,20 @@ export function ChannelMutateDrawer({
   const [upstreamPreviewExpiresAt, setUpstreamPreviewExpiresAt] = useState(0)
   const [upstreamSnapshot, setUpstreamSnapshot] =
     useState<UpstreamAccountSnapshot | null>(null)
+  const [upstreamTwoFactorChallenge, setUpstreamTwoFactorChallenge] =
+    useState<UpstreamAccountTwoFactorChallenge | null>(null)
+  const [upstreamTwoFactorCode, setUpstreamTwoFactorCode] = useState('')
   const [upstreamRefreshPreviewExpiresAt, setUpstreamRefreshPreviewExpiresAt] =
     useState(0)
+  const [upstreamRefreshPreviewId, setUpstreamRefreshPreviewId] = useState('')
   const [upstreamRefreshSnapshot, setUpstreamRefreshSnapshot] =
     useState<UpstreamAccountSnapshot | null>(null)
+  const [
+    upstreamRefreshTwoFactorChallenge,
+    setUpstreamRefreshTwoFactorChallenge,
+  ] = useState<UpstreamAccountTwoFactorChallenge | null>(null)
+  const [upstreamRefreshTwoFactorCode, setUpstreamRefreshTwoFactorCode] =
+    useState('')
   const [upstreamPreviewNowMs, setUpstreamPreviewNowMs] = useState(() =>
     Date.now()
   )
@@ -905,32 +942,57 @@ export function ChannelMutateDrawer({
     mutationFn: previewUpstreamAccount,
   })
 
+  const upstreamPreview2FAMutation = useMutation({
+    mutationFn: completeUpstreamAccountPreview2FA,
+  })
+
   const upstreamPreviewRemaining = upstreamPreviewRemainingSeconds(
     upstreamPreviewExpiresAt,
+    upstreamPreviewNowMs
+  )
+  const upstreamTwoFactorRemaining = upstreamPreviewRemainingSeconds(
+    upstreamTwoFactorChallenge?.expires_at ?? 0,
     upstreamPreviewNowMs
   )
   const upstreamRefreshPreviewRemaining = upstreamPreviewRemainingSeconds(
     upstreamRefreshPreviewExpiresAt,
     upstreamPreviewNowMs
   )
+  const upstreamRefreshTwoFactorRemaining = upstreamPreviewRemainingSeconds(
+    upstreamRefreshTwoFactorChallenge?.expires_at ?? 0,
+    upstreamPreviewNowMs
+  )
   const isUpstreamPreviewExpired = Boolean(
-    upstreamSnapshot && upstreamPreviewExpiresAt && upstreamPreviewRemaining <= 0
+    upstreamSnapshot &&
+    upstreamPreviewExpiresAt &&
+    upstreamPreviewRemaining <= 0
   )
   const isUpstreamRefreshPreviewExpired = Boolean(
     upstreamRefreshSnapshot &&
-      upstreamRefreshPreviewExpiresAt &&
-      upstreamRefreshPreviewRemaining <= 0
+    upstreamRefreshPreviewExpiresAt &&
+    upstreamRefreshPreviewRemaining <= 0
+  )
+  const isUpstreamTwoFactorExpired = Boolean(
+    upstreamTwoFactorChallenge && upstreamTwoFactorRemaining <= 0
+  )
+  const isUpstreamRefreshTwoFactorExpired = Boolean(
+    upstreamRefreshTwoFactorChallenge && upstreamRefreshTwoFactorRemaining <= 0
   )
 
   const clearUpstreamCreatePreview = useCallback(() => {
     setUpstreamPreviewId('')
     setUpstreamPreviewExpiresAt(0)
     setUpstreamSnapshot(null)
+    setUpstreamTwoFactorChallenge(null)
+    setUpstreamTwoFactorCode('')
   }, [])
 
   const clearUpstreamRefreshPreview = useCallback(() => {
+    setUpstreamRefreshPreviewId('')
     setUpstreamRefreshPreviewExpiresAt(0)
     setUpstreamRefreshSnapshot(null)
+    setUpstreamRefreshTwoFactorChallenge(null)
+    setUpstreamRefreshTwoFactorCode('')
   }, [])
 
   const clearAllUpstreamPreviews = useCallback(() => {
@@ -948,7 +1010,14 @@ export function ChannelMutateDrawer({
   }, [t])
 
   useEffect(() => {
-    if (!upstreamPreviewExpiresAt && !upstreamRefreshPreviewExpiresAt) return
+    if (
+      !upstreamPreviewExpiresAt &&
+      !upstreamRefreshPreviewExpiresAt &&
+      !upstreamTwoFactorChallenge?.expires_at &&
+      !upstreamRefreshTwoFactorChallenge?.expires_at
+    ) {
+      return
+    }
 
     setUpstreamPreviewNowMs(Date.now())
     const timer = window.setInterval(() => {
@@ -956,7 +1025,12 @@ export function ChannelMutateDrawer({
     }, 1000)
 
     return () => window.clearInterval(timer)
-  }, [upstreamPreviewExpiresAt, upstreamRefreshPreviewExpiresAt])
+  }, [
+    upstreamPreviewExpiresAt,
+    upstreamRefreshPreviewExpiresAt,
+    upstreamRefreshTwoFactorChallenge?.expires_at,
+    upstreamTwoFactorChallenge?.expires_at,
+  ])
 
   const handleUpstreamSyncEnabledChange = useCallback(
     (checked: boolean) => {
@@ -1036,15 +1110,24 @@ export function ChannelMutateDrawer({
     }
     if (upstreamCredentialFingerprintRef.current === fingerprint) return
     upstreamCredentialFingerprintRef.current = fingerprint
-    if (!upstreamSnapshot && !upstreamRefreshSnapshot) return
+    if (
+      !upstreamSnapshot &&
+      !upstreamRefreshSnapshot &&
+      !upstreamTwoFactorChallenge &&
+      !upstreamRefreshTwoFactorChallenge
+    ) {
+      return
+    }
     clearAllUpstreamPreviews()
   }, [
     clearAllUpstreamPreviews,
     currentBaseUrl,
     upstreamPassword,
     upstreamPlatform,
+    upstreamRefreshTwoFactorChallenge,
     upstreamRefreshSnapshot,
     upstreamSnapshot,
+    upstreamTwoFactorChallenge,
     upstreamUsername,
   ])
 
@@ -1250,9 +1333,7 @@ export function ChannelMutateDrawer({
             <div className='text-muted-foreground text-xs'>
               {t('Synced Keys')}
             </div>
-            <div className='text-lg font-semibold'>
-              {snapshot.keys.length}
-            </div>
+            <div className='text-lg font-semibold'>{snapshot.keys.length}</div>
           </div>
           <div className='rounded-md border p-3'>
             <div className='text-muted-foreground text-xs'>
@@ -1278,7 +1359,9 @@ export function ChannelMutateDrawer({
               {t('Apply suggested priority and weight')}
             </span>
             <span className='text-muted-foreground text-xs'>
-              {t('Lower upstream rates get higher priority and weight by default.')}
+              {t(
+                'Lower upstream rates get higher priority and weight by default.'
+              )}
             </span>
           </div>
           <Switch
@@ -2122,6 +2205,91 @@ export function ChannelMutateDrawer({
     await copyToClipboard(models)
   }, [form, copyToClipboard, t])
 
+  const applyUpstreamPreviewData = useCallback(
+    (data: UpstreamAccountPreviewData, mode: UpstreamTwoFactorMode) => {
+      if (mode === 'create') {
+        setUpstreamPreviewId(data.preview_id)
+        setUpstreamPreviewExpiresAt(data.expires_at)
+        setUpstreamSnapshot(data.snapshot)
+        setUpstreamTwoFactorChallenge(null)
+        setUpstreamTwoFactorCode('')
+        clearUpstreamRefreshPreview()
+      } else {
+        setUpstreamRefreshPreviewId(data.preview_id)
+        setUpstreamRefreshPreviewExpiresAt(data.expires_at)
+        setUpstreamRefreshSnapshot(data.snapshot)
+        setUpstreamRefreshTwoFactorChallenge(null)
+        setUpstreamRefreshTwoFactorCode('')
+        clearUpstreamCreatePreview()
+      }
+
+      setUpstreamAccountConfigs(buildUpstreamAccountConfigs(data.snapshot.keys))
+
+      if (mode === 'create') {
+        const models = upstreamModelsToString(data.snapshot.keys)
+        if (models) {
+          form.setValue('models', models, {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
+        }
+        const groups = upstreamGroupsToString(data.snapshot.keys)
+        if (groups) {
+          form.setValue('group', groups.split(',').filter(Boolean), {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
+        }
+        if (!form.getValues('name')?.trim()) {
+          form.setValue(
+            'name',
+            `${data.snapshot.platform === 'new-api' ? 'new-api' : 'sub2api'} ${upstreamUsername}`,
+            { shouldDirty: true, shouldValidate: true }
+          )
+        }
+      }
+
+      toast.success(
+        t('Synced {{count}} upstream key(s)', {
+          count: data.snapshot.keys.length,
+        })
+      )
+    },
+    [
+      clearUpstreamCreatePreview,
+      clearUpstreamRefreshPreview,
+      form,
+      t,
+      upstreamUsername,
+    ]
+  )
+
+  const applyUpstreamPreviewChallenge = useCallback(
+    (
+      challenge: UpstreamAccountTwoFactorChallenge,
+      mode: UpstreamTwoFactorMode
+    ) => {
+      if (mode === 'create') {
+        setUpstreamTwoFactorChallenge(challenge)
+        setUpstreamTwoFactorCode('')
+        setUpstreamPreviewId('')
+        setUpstreamPreviewExpiresAt(0)
+        setUpstreamSnapshot(null)
+        clearUpstreamRefreshPreview()
+      } else {
+        setUpstreamRefreshTwoFactorChallenge(challenge)
+        setUpstreamRefreshTwoFactorCode('')
+        setUpstreamRefreshPreviewId('')
+        setUpstreamRefreshPreviewExpiresAt(0)
+        setUpstreamRefreshSnapshot(null)
+        clearUpstreamCreatePreview()
+      }
+      setUpstreamAccountConfigs({})
+      toast.info(t('Enter the 2FA code from the upstream account.'))
+    },
+    [clearUpstreamCreatePreview, clearUpstreamRefreshPreview, t]
+  )
+
   const handlePreviewUpstreamAccount = useCallback(async () => {
     if (!permissions.canSensitiveWrite) {
       toast.error(noPermissionMessage)
@@ -2150,44 +2318,23 @@ export function ChannelMutateDrawer({
       toast.error(res.message || t('Failed to sync upstream account'))
       return
     }
-    setUpstreamPreviewId(res.data.preview_id)
-    setUpstreamPreviewExpiresAt(res.data.expires_at)
-    setUpstreamSnapshot(res.data.snapshot)
-    clearUpstreamRefreshPreview()
-    setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
-
-    const models = upstreamModelsToString(res.data.snapshot.keys)
-    if (models) {
-      form.setValue('models', models, {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
+    const challenge = getUpstreamPreviewChallenge(res.data)
+    if (challenge) {
+      applyUpstreamPreviewChallenge(challenge, 'create')
+      return
     }
-    const groups = upstreamGroupsToString(res.data.snapshot.keys)
-    if (groups) {
-      form.setValue('group', groups.split(',').filter(Boolean), {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
+    if (hasUpstreamPreviewSnapshot(res.data)) {
+      applyUpstreamPreviewData(res.data, 'create')
+      return
     }
-    if (!form.getValues('name')?.trim()) {
-      form.setValue(
-        'name',
-        `${upstreamPlatform === 'new-api' ? 'new-api' : 'sub2api'} ${upstreamUsername}`,
-        { shouldDirty: true, shouldValidate: true }
-      )
-    }
-    toast.success(
-      t('Synced {{count}} upstream key(s)', {
-        count: res.data.snapshot.keys.length,
-      })
-    )
+    toast.error(t('Failed to sync upstream account'))
   }, [
+    applyUpstreamPreviewChallenge,
+    applyUpstreamPreviewData,
     form,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
-    clearUpstreamRefreshPreview,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
@@ -2375,19 +2522,7 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
-    const baseUrl = form.getValues('base_url')?.trim()
-    if (!baseUrl) {
-      form.setError('base_url', {
-        type: 'manual',
-        message: t('Base URL is required'),
-      })
-      return
-    }
-    if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
-      toast.error(t('Account and password are required'))
-      return
-    }
-    if (!upstreamRefreshSnapshot) {
+    if (!upstreamRefreshPreviewId || !upstreamRefreshSnapshot) {
       toast.error(t('Preview upstream account before applying refresh'))
       return
     }
@@ -2400,16 +2535,11 @@ export function ChannelMutateDrawer({
     await upstreamRefreshMutation.mutateAsync({
       id: channelId,
       payload: {
-        platform: upstreamPlatform,
-        base_url: baseUrl,
-        username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
-        email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
-        password: upstreamPassword,
+        preview_id: upstreamRefreshPreviewId,
         apply_suggested: upstreamApplySuggested,
         disable_missing_key: true,
         accounts: upstreamRefreshSnapshot.keys.map((key, index) => {
-          const config =
-            upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
+          const config = upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
           return {
             sync_id: key.sync_id,
             external_id: key.external_id,
@@ -2428,17 +2558,14 @@ export function ChannelMutateDrawer({
     })
   }, [
     channelId,
-    form,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
     upstreamApplySuggested,
     upstreamAccountConfigs,
-    upstreamPassword,
-    upstreamPlatform,
+    upstreamRefreshPreviewId,
     upstreamRefreshSnapshot,
     upstreamRefreshMutation,
-    upstreamUsername,
     clearUpstreamRefreshPreview,
     isUpstreamRefreshPreviewExpired,
     showUpstreamPreviewExpiredToast,
@@ -2472,26 +2599,170 @@ export function ChannelMutateDrawer({
       toast.error(res.message || t('Failed to sync upstream account'))
       return
     }
-    setUpstreamRefreshSnapshot(res.data.snapshot)
-    setUpstreamRefreshPreviewExpiresAt(res.data.expires_at)
-    clearUpstreamCreatePreview()
-    setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
-    toast.success(
-      t('Synced {{count}} upstream key(s)', {
-        count: res.data.snapshot.keys.length,
-      })
-    )
+    const challenge = getUpstreamPreviewChallenge(res.data)
+    if (challenge) {
+      applyUpstreamPreviewChallenge(challenge, 'refresh')
+      return
+    }
+    if (hasUpstreamPreviewSnapshot(res.data)) {
+      applyUpstreamPreviewData(res.data, 'refresh')
+      return
+    }
+    toast.error(t('Failed to sync upstream account'))
   }, [
+    applyUpstreamPreviewChallenge,
+    applyUpstreamPreviewData,
     form,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
-    clearUpstreamCreatePreview,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
     upstreamUsername,
   ])
+
+  const handleCompleteUpstreamTwoFactor = useCallback(
+    async (mode: UpstreamTwoFactorMode) => {
+      const challenge =
+        mode === 'create'
+          ? upstreamTwoFactorChallenge
+          : upstreamRefreshTwoFactorChallenge
+      const code =
+        mode === 'create'
+          ? upstreamTwoFactorCode.trim()
+          : upstreamRefreshTwoFactorCode.trim()
+      const expired =
+        mode === 'create'
+          ? isUpstreamTwoFactorExpired
+          : isUpstreamRefreshTwoFactorExpired
+
+      if (!challenge) return
+      if (expired) {
+        toast.error(
+          t(
+            'The upstream 2FA challenge expired. Sync the upstream account again.'
+          )
+        )
+        if (mode === 'create') {
+          clearUpstreamCreatePreview()
+        } else {
+          clearUpstreamRefreshPreview()
+        }
+        setUpstreamAccountConfigs({})
+        return
+      }
+      if (!code) {
+        toast.error(t('Enter the upstream 2FA code'))
+        return
+      }
+
+      const res = await upstreamPreview2FAMutation.mutateAsync({
+        challenge_id: challenge.challenge_id,
+        code,
+      })
+      if (!res.success || !res.data) {
+        toast.error(res.message || t('Failed to verify upstream 2FA code'))
+        if (mode === 'create') {
+          clearUpstreamCreatePreview()
+        } else {
+          clearUpstreamRefreshPreview()
+        }
+        setUpstreamAccountConfigs({})
+        return
+      }
+      applyUpstreamPreviewData(res.data, mode)
+    },
+    [
+      applyUpstreamPreviewData,
+      clearUpstreamCreatePreview,
+      clearUpstreamRefreshPreview,
+      isUpstreamRefreshTwoFactorExpired,
+      isUpstreamTwoFactorExpired,
+      t,
+      upstreamPreview2FAMutation,
+      upstreamRefreshTwoFactorChallenge,
+      upstreamRefreshTwoFactorCode,
+      upstreamTwoFactorChallenge,
+      upstreamTwoFactorCode,
+    ]
+  )
+
+  const renderUpstreamTwoFactorChallenge = useCallback(
+    (
+      mode: UpstreamTwoFactorMode,
+      challenge: UpstreamAccountTwoFactorChallenge,
+      code: string,
+      setCode: (value: string) => void,
+      remainingSeconds: number,
+      expired: boolean
+    ) => (
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertTitle>{t('Upstream 2FA required')}</AlertTitle>
+        <AlertDescription>
+          <div className='flex flex-col gap-3'>
+            <p>
+              {expired
+                ? t(
+                    'The upstream 2FA challenge expired. Sync the upstream account again.'
+                  )
+                : t(
+                    'Enter the TOTP code for {{account}}. This challenge expires in {{time}}.',
+                    {
+                      account: challenge.username || t('the upstream account'),
+                      time: formatUpstreamPreviewRemaining(remainingSeconds),
+                    }
+                  )}
+            </p>
+            <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end'>
+              <div className='flex flex-col gap-2'>
+                <Label
+                  htmlFor={
+                    mode === 'create'
+                      ? 'upstream-sync-2fa-code'
+                      : 'upstream-refresh-2fa-code'
+                  }
+                >
+                  {t('Verification Code')}
+                </Label>
+                <Input
+                  id={
+                    mode === 'create'
+                      ? 'upstream-sync-2fa-code'
+                      : 'upstream-refresh-2fa-code'
+                  }
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  inputMode='numeric'
+                  autoComplete='one-time-code'
+                  placeholder={t('Enter the upstream 2FA code')}
+                  disabled={expired || upstreamPreview2FAMutation.isPending}
+                />
+              </div>
+              <Button
+                type='button'
+                disabled={
+                  expired ||
+                  upstreamPreview2FAMutation.isPending ||
+                  !code.trim()
+                }
+                onClick={() => handleCompleteUpstreamTwoFactor(mode)}
+              >
+                {upstreamPreview2FAMutation.isPending ? (
+                  <Loader2 data-icon='inline-start' className='animate-spin' />
+                ) : (
+                  <CheckCircle2 data-icon='inline-start' />
+                )}
+                {t('Continue Sync')}
+              </Button>
+            </div>
+          </div>
+        </AlertDescription>
+      </Alert>
+    ),
+    [handleCompleteUpstreamTwoFactor, t, upstreamPreview2FAMutation.isPending]
+  )
 
   // 模型映射源模型缺失时弹出确认，避免管理员保存后看不到映射入口模型。
   const confirmMissingModelMappings = useCallback(
@@ -2624,7 +2895,10 @@ export function ChannelMutateDrawer({
                 config,
                 upstreamApplySuggested
               ),
-              weight: upstreamAccountWeightValue(config, upstreamApplySuggested),
+              weight: upstreamAccountWeightValue(
+                config,
+                upstreamApplySuggested
+              ),
             }
           }),
         })
@@ -3180,6 +3454,7 @@ export function ChannelMutateDrawer({
                                       className='w-full'
                                       disabled={
                                         upstreamPreviewMutation.isPending ||
+                                        upstreamPreview2FAMutation.isPending ||
                                         upstreamRefreshMutation.isPending
                                       }
                                       onClick={handlePreviewUpstreamAccount}
@@ -3196,6 +3471,16 @@ export function ChannelMutateDrawer({
                                     </Button>
                                   </div>
                                 </div>
+
+                                {upstreamTwoFactorChallenge &&
+                                  renderUpstreamTwoFactorChallenge(
+                                    'create',
+                                    upstreamTwoFactorChallenge,
+                                    upstreamTwoFactorCode,
+                                    setUpstreamTwoFactorCode,
+                                    upstreamTwoFactorRemaining,
+                                    isUpstreamTwoFactorExpired
+                                  )}
 
                                 {upstreamSnapshot?.warnings?.length ? (
                                   <Alert>
@@ -3326,6 +3611,7 @@ export function ChannelMutateDrawer({
                                     upstreamRefreshSnapshot.keys.length === 0 ||
                                     isUpstreamRefreshPreviewExpired ||
                                     upstreamPreviewMutation.isPending ||
+                                    upstreamPreview2FAMutation.isPending ||
                                     upstreamRefreshMutation.isPending
                                   }
                                   onClick={handleRefreshUpstreamAccount}
@@ -3351,6 +3637,16 @@ export function ChannelMutateDrawer({
                                 )}
                               </AlertDescription>
                             </Alert>
+
+                            {upstreamRefreshTwoFactorChallenge &&
+                              renderUpstreamTwoFactorChallenge(
+                                'refresh',
+                                upstreamRefreshTwoFactorChallenge,
+                                upstreamRefreshTwoFactorCode,
+                                setUpstreamRefreshTwoFactorCode,
+                                upstreamRefreshTwoFactorRemaining,
+                                isUpstreamRefreshTwoFactorExpired
+                              )}
 
                             {upstreamRefreshSnapshot?.warnings?.length ? (
                               <Alert>

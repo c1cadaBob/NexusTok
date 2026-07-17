@@ -3,7 +3,9 @@ package upstreamaccount
 import (
 	"context"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -137,13 +139,14 @@ func TestNewAPIPreviewFailsWhenFullKeyCannotBeRevealed(t *testing.T) {
 	require.Contains(t, err.Error(), "读取 new-api 完整 Key 失败")
 }
 
-func TestNewAPIPreviewReturnsClearErrorWhenTwoFARequired(t *testing.T) {
+func TestNewAPIPreviewReturnsChallengeWhenTwoFARequired(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/status":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
 		case "/api/user/login":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "pending-session", Path: "/"})
 			_, _ = w.Write([]byte(`{"success":true,"message":"Please enter two-factor authentication code","data":{"require_2fa":true}}`))
 		default:
 			http.NotFound(w, r)
@@ -151,15 +154,106 @@ func TestNewAPIPreviewReturnsClearErrorWhenTwoFARequired(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
 		Platform: PlatformNewAPI,
 		BaseURL:  server.URL,
 		Username: "alice",
 		Password: "secret",
 	}})
 
+	require.NoError(t, err)
+	require.Empty(t, result.PreviewID)
+	require.Nil(t, result.Snapshot)
+	require.NotNil(t, result.Challenge)
+	require.Equal(t, PlatformNewAPI, result.Challenge.Platform)
+	require.Equal(t, authChallengeTypeTOTP, result.Challenge.Type)
+	require.NotEmpty(t, result.Challenge.ChallengeID)
+
+	record, found, err := authChallengeCache.Get(result.Challenge.ChallengeID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "alice", record.Username)
+	require.Equal(t, server.URL, record.BaseURL)
+	require.Equal(t, float64(100), record.NewAPI.QuotaPerUnit)
+	require.NotEmpty(t, record.NewAPI.Cookies)
+}
+
+func TestNewAPIPreviewCompletesTwoFAChallenge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login/2fa":
+			cookie, err := r.Cookie("session")
+			require.NoError(t, err)
+			require.Equal(t, "pending-session", cookie.Value)
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "123456", body["code"])
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
+		case "/api/user/self":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":250,"used_quota":50}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"model_ratio":{"gpt-4o":2},"completion_ratio":{},"cache_ratio":{},"create_cache_ratio":{},"model_price":{}}}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"11":"sk-newapi-full-key"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	api, err := newHTTPClient(server.URL, &http.Client{Jar: jar})
+	require.NoError(t, err)
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	jar.SetCookies(u, []*http.Cookie{{Name: "session", Value: "pending-session", Path: "/"}})
+
+	challenge, err := saveAuthChallenge(AuthChallengeRecord{
+		Platform: PlatformNewAPI,
+		BaseURL:  api.baseURL,
+		Username: "alice",
+		NewAPI: &NewAPIChallengeData{
+			QuotaPerUnit: 100,
+			Cookies:      storeCookiesFromJar(api),
+		},
+	})
+	require.NoError(t, err)
+
+	result, err := CompletePreview2FA(context.Background(), Preview2FARequest{
+		ChallengeID: challenge.ChallengeID,
+		Code:        "123456",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Nil(t, result.Challenge)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Empty(t, result.Snapshot.Keys[0].Key)
+	require.Equal(t, "sk-new...-key", result.Snapshot.Keys[0].MaskedKey)
+	require.Equal(t, float64(2.5), *result.Snapshot.Balance.BalanceUSD)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-newapi-full-key", record.Snapshot.Keys[0].Key)
+
+	_, found, err := authChallengeCache.Get(challenge.ChallengeID)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestCompletePreview2FARejectsExpiredChallenge(t *testing.T) {
+	_, err := CompletePreview2FA(context.Background(), Preview2FARequest{
+		ChallengeID: "missing",
+		Code:        "123456",
+	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "new-api 账号启用了 2FA")
+	require.Contains(t, err.Error(), "二次验证会话不存在或已过期")
 }
 
 func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {

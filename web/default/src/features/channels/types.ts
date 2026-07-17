@@ -278,14 +278,44 @@ export interface UpstreamAccountPreviewRequest {
   password: string
 }
 
+export interface UpstreamAccountPreviewData {
+  preview_id: string
+  expires_at: number
+  snapshot: UpstreamAccountSnapshot
+}
+
+export interface UpstreamAccountTwoFactorChallenge {
+  challenge_id: string
+  platform: 'new-api'
+  type: 'totp'
+  expires_at: number
+  username?: string
+}
+
+export interface UpstreamAccountPreviewChallengeData {
+  expires_at: number
+  challenge: UpstreamAccountTwoFactorChallenge
+}
+
+export type UpstreamAccountPreviewResponseData =
+  | UpstreamAccountPreviewData
+  | UpstreamAccountPreviewChallengeData
+
 export interface UpstreamAccountPreviewResponse {
   success: boolean
   message?: string
-  data?: {
-    preview_id: string
-    expires_at: number
-    snapshot: UpstreamAccountSnapshot
-  }
+  data?: UpstreamAccountPreviewResponseData
+}
+
+export interface UpstreamAccountPreview2FARequest {
+  challenge_id: string
+  code: string
+}
+
+export interface UpstreamAccountPreview2FAResponse {
+  success: boolean
+  message?: string
+  data?: UpstreamAccountPreviewData
 }
 
 export interface UpstreamAccountCreateAccountConfig {
@@ -326,11 +356,12 @@ export interface UpstreamAccountCreateResponse {
 }
 
 export interface UpstreamAccountRefreshRequest {
-  platform: UpstreamAccountPlatform
-  base_url: string
+  preview_id?: string
+  platform?: UpstreamAccountPlatform
+  base_url?: string
   username?: string
   email?: string
-  password: string
+  password?: string
   apply_suggested: boolean
   disable_missing_key?: boolean
   accounts?: UpstreamAccountCreateAccountConfig[]

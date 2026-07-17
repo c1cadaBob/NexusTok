@@ -57,10 +57,52 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if req.Platform == PlatformNewAPI {
+		client := NewNewAPIClient(nil)
+		snapshot, challengeRecord, err := client.BeginPreview(ctx, req.Credential)
+		if err != nil {
+			return nil, err
+		}
+		if challengeRecord != nil {
+			challenge, err := saveAuthChallenge(*challengeRecord)
+			if err != nil {
+				return nil, err
+			}
+			return &PreviewResult{
+				ExpiresAt: challenge.ExpiresAt,
+				Challenge: challenge,
+			}, nil
+		}
+		return SavePreviewSnapshot(snapshot)
+	}
 	snapshot, err := client.FetchSnapshot(ctx, req.Credential)
 	if err != nil {
 		return nil, err
 	}
+	return SavePreviewSnapshot(snapshot)
+}
+
+// CompletePreview2FA 使用短期 challenge 完成上游平台二次验证，并生成普通预览快照。
+func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewResult, error) {
+	record, err := consumeAuthChallenge(req.ChallengeID)
+	if err != nil {
+		return nil, err
+	}
+	switch NormalizePlatform(record.Platform) {
+	case PlatformNewAPI:
+		client := NewNewAPIClient(nil)
+		snapshot, err := client.Complete2FA(ctx, *record, req.Code)
+		if err != nil {
+			return nil, err
+		}
+		return SavePreviewSnapshot(snapshot)
+	default:
+		return nil, fmt.Errorf("不支持的二次验证平台：%s", record.Platform)
+	}
+}
+
+// SavePreviewSnapshot 保存包含完整 Key 的短期快照，并返回脱敏预览结果。
+func SavePreviewSnapshot(snapshot *Snapshot) (*PreviewResult, error) {
 	id := common.GetUUID()
 	expiresAt := time.Now().Add(previewTTL).Unix()
 	record := PreviewRecord{

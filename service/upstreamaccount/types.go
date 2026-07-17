@@ -33,6 +33,12 @@ type PreviewRequest struct {
 	Credential
 }
 
+// Preview2FARequest 是补全上游平台二次验证后的预览请求体。
+type Preview2FARequest struct {
+	ChallengeID string `json:"challenge_id"`
+	Code        string `json:"code"`
+}
+
 // Snapshot 表示目标平台账号当前可见的密钥、分组、倍率和余额快照。
 type Snapshot struct {
 	Platform string           `json:"platform"`
@@ -115,9 +121,10 @@ type RateSnapshot struct {
 
 // PreviewResult 是预览接口返回给前端的安全数据。
 type PreviewResult struct {
-	PreviewID string    `json:"preview_id"`
-	ExpiresAt int64     `json:"expires_at"`
-	Snapshot  *Snapshot `json:"snapshot"`
+	PreviewID string         `json:"preview_id,omitempty"`
+	ExpiresAt int64          `json:"expires_at"`
+	Snapshot  *Snapshot      `json:"snapshot,omitempty"`
+	Challenge *AuthChallenge `json:"challenge,omitempty"`
 }
 
 // PreviewRecord 是后端短期缓存的预览记录，包含完整 key。
@@ -125,6 +132,15 @@ type PreviewRecord struct {
 	ID        string    `json:"id"`
 	ExpiresAt int64     `json:"expires_at"`
 	Snapshot  *Snapshot `json:"snapshot"`
+}
+
+// AuthChallenge 表示需要管理员继续输入的上游平台登录挑战。
+type AuthChallenge struct {
+	ChallengeID string `json:"challenge_id"`
+	Platform    string `json:"platform"`
+	Type        string `json:"type"`
+	ExpiresAt   int64  `json:"expires_at"`
+	Username    string `json:"username,omitempty"`
 }
 
 // PlatformClient 定义目标平台账号同步客户端。

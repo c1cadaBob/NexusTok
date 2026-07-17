@@ -561,8 +561,49 @@ sub2api 指定账号复测：
    - 方案：前端保存创建/刷新预览的 `expires_at`，在预览结果区展示剩余时间；倒计时归零后禁用创建/应用刷新并提示重新同步。若后端仍返回预览失效错误，前端清空本地预览状态并给出“已过期或已被使用”的明确提示。
    - 评审：该方案不延长后端 TTL、不改变一次性消费语义，只减少无效提交和误判；主要风险是客户端时间和服务端时间存在轻微偏差，因此最终仍以服务端错误为准。
 
-### 仍需后续增强
+### 已在本轮继续完善
 
 1. new-api 2FA 交互式同步。
-   - 当前指定 new-api 账号启用了 2FA，后端已能给出明确错误，但还没有 TOTP 输入、pending session 或二阶段验证接口。
-   - 影响：启用 2FA 的 new-api 管理账号无法通过账号密码自动同步密钥；需要管理员关闭 2FA、使用无 2FA 测试账号，或后续扩展交互式 2FA。
+   - 当前指定 new-api 账号启用了 2FA，此前只能返回“不支持交互式二次验证”。
+   - 已实现二阶段 challenge 缓存、验证码提交接口和前端输入态；完整 Key 仍只会在验证码成功后进入后端短期 preview 缓存。
+   - 当前 TOTP/备用码属于外部动态凭据，本轮无法完成指定账号二阶段正向读取密钥；但已真实验证 challenge 生成、页面输入态和错误验证码路径。
+
+## 2026-07-17 new-api 2FA 同步缺陷方案评审
+
+本轮继续围绕用户指定 new-api 账号复测。该账号真实返回 `require_2fa=true`，此前前端只能展示“暂不支持交互式二次验证”，导致账号密码同步在真实指定账号上无法完成。静态复核目标 new-api 源码后确认：第一次 `/api/user/login?turnstile=` 会在目标平台 session cookie 中写入 `pending_user_id`，第二次 `/api/user/login/2fa` 只需要提交 `code`，并复用同一个 cookie jar 完成正式登录。
+
+### 缺陷确认
+
+- 现象：new-api 启用 2FA 的账号无法继续同步，管理员无法在 NexusTok 页面输入 TOTP 或备用码。
+- 影响范围：只影响 new-api 账号密码同步的 preview/refresh 登录阶段；sub2api 当前指定账号未启用 2FA，原有正向链路不受影响。
+- 风险：若简单把账号密码保存在前端或落库等待验证码，会扩大敏感凭证暴露面；若把完整 Key 提前返回前端，会破坏现有“完整 Key 只在后端短期缓存”的安全边界。
+- 方案：后端在 new-api 第一阶段登录检测到 `require_2fa=true` 时，生成短期 `challenge_id`，只缓存目标站点 cookie jar、平台、Base URL、用户名和已读取的 `quota_per_unit`，不保存密码；前端收到 challenge 后展示验证码输入。第二阶段提交 `challenge_id + code`，后端复用 cookie jar 调用 `/api/user/login/2fa`，成功后继续读取用户、分组、倍率、密钥和余额，并生成现有一次性 `preview_id`。
+- 评审：该方案保持普通无 2FA preview 响应兼容；2FA challenge TTL 独立且短于预览 TTL，过期后必须重新输入账号密码；验证码错误只消费一次目标平台验证机会，但不落库任何凭证。最终完整 Key 仍只保存到后端 preview 缓存，前端只拿脱敏 snapshot。
+- 刷新链路补充评审：旧刷新流程虽然前端先执行预览，但“应用刷新”时后端会再次使用账号密码登录目标平台；这会让 2FA 账号在预览完成后仍卡在第二次登录。为保证创建和刷新一致，刷新请求新增 `preview_id` 分支，前端应用刷新时消费已确认的后端预览快照，旧账号密码刷新参数仅保留为兼容入口。
+
+### 待实现与验证
+
+- [x] 后端增加 new-api 2FA pending challenge 缓存和完成接口。
+- [x] 后端刷新接口支持通过 `preview_id` 消费已确认快照，避免 2FA 场景应用刷新时二次登录。
+- [x] 前端在账号同步区域展示验证码输入、challenge 过期提示和继续同步按钮。
+- [x] 单元测试覆盖：new-api 首次 preview 返回 2FA challenge、验证码完成后生成脱敏 preview、challenge 过期/平台不匹配/错误验证码明确报错。
+- [x] 3003 页面验证：使用真实 new-api 指定账号触发 2FA 输入态；若缺少当前 TOTP/备用码，记录无法完成第二阶段真实同步的外部条件。
+
+### 当前后端实现记录
+
+- 新增 `POST /api/channel/upstream-account/preview/2fa`，请求体为 `challenge_id` 和 `code`，成功后返回普通预览结构。
+- `POST /api/channel/upstream-account/preview` 遇到 new-api `require_2fa=true` 时返回 `challenge`，不返回 `snapshot` 或 `preview_id`。
+- `challenge` 只缓存目标站点 pending session cookie、平台、Base URL、用户名和 `quota_per_unit`，不缓存密码或完整 Key。
+- `POST /api/channel/:id/upstream-account/refresh` 支持 `preview_id`，会一次性消费预览快照并应用刷新；旧账号密码刷新逻辑继续保留。
+- 已通过 `go test ./service/upstreamaccount ./controller ./router` 和 `go test ./router`。
+
+### 当前前端与真实验证记录
+
+- 前端新增 2FA challenge 状态、验证码输入、倒计时、继续同步按钮和失败清理逻辑；验证码错误后会清空 challenge，提示管理员重新同步账号密码，避免复用已被后端一次性消费的 pending session。
+- 刷新预览完成后保存 `preview_id`，应用刷新时只提交 `preview_id`、逐密钥配置和刷新策略，不再二次提交上游账号密码。
+- 已通过 `cd web/default && bun run i18n:sync`、`cd web/default && bun run typecheck`、`cd web/default && bun run build`。
+- 已用 MCP 打开 `http://192.168.0.202:3003/channels?verify=newapi-2fa-clear-challenge-after-fail`，页面加载到新 hash bundle，未触发容器重启条件。
+- 已用指定 new-api 账号真实调用 `POST /api/channel/upstream-account/preview`，返回 `success=true` 且仅包含 `challenge`，不包含 `snapshot` 或 `preview_id`；页面创建渠道抽屉展示“需要上游 2FA 验证”、验证码输入和“继续同步”按钮。
+- 已用错误验证码真实调用 `POST /api/channel/upstream-account/preview/2fa`，后端返回 `new-api 2FA 验证失败`，前端清空 challenge，未生成密钥预览。
+- 已用指定 sub2api 账号真实调用普通 preview，仍返回 `preview_id`、1 个脱敏 Key、1 个分组、余额快照；响应不包含完整 `key` 字段。
+- 本轮无法完成 new-api 二阶段正向同步，因为当前 TOTP/备用码是外部动态凭据，未在本任务中提供；接口、页面状态和错误路径已真实验证。

@@ -103,18 +103,85 @@ func (r *newAPITokenKeysResponse) UnmarshalJSON(data []byte) error {
 
 // FetchSnapshot 登录 new-api 并读取当前账号可见的密钥、分组、倍率和余额。
 func (c *NewAPIClient) FetchSnapshot(ctx context.Context, credential Credential) (*Snapshot, error) {
-	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
+	snapshot, challenge, err := c.BeginPreview(ctx, credential)
 	if err != nil {
 		return nil, err
+	}
+	if challenge != nil {
+		return nil, fmt.Errorf("new-api 账号启用了 2FA，请使用二阶段验证码完成上游账号同步")
+	}
+	return snapshot, nil
+}
+
+// BeginPreview 开始 new-api 账号同步预览。
+//
+// 普通账号会直接返回完整后端快照；启用 2FA 的账号会返回 challenge 记录，调用方需要
+// 先短期缓存该记录，再等待管理员输入验证码后调用 Complete2FA。该方法不会保存密码。
+func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) (*Snapshot, *AuthChallengeRecord, error) {
+	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
+	if err != nil {
+		return nil, nil, err
 	}
 	status, err := c.fetchStatus(ctx, api)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	user, headers, err := c.login(ctx, api, credential)
+	user, headers, needs2FA, err := c.login(ctx, api, credential)
+	if err != nil {
+		return nil, nil, err
+	}
+	if needs2FA {
+		return nil, &AuthChallengeRecord{
+			Platform: PlatformNewAPI,
+			BaseURL:  api.baseURL,
+			Username: strings.TrimSpace(firstNonEmpty(credential.Username, credential.Email)),
+			NewAPI: &NewAPIChallengeData{
+				QuotaPerUnit: status.QuotaPerUnit,
+				Cookies:      storeCookiesFromJar(api),
+			},
+		}, nil
+	}
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, status.QuotaPerUnit, user, headers)
+	return snapshot, nil, err
+}
+
+// Complete2FA 使用已缓存的 new-api pending session 和管理员输入的验证码完成预览。
+func (c *NewAPIClient) Complete2FA(ctx context.Context, record AuthChallengeRecord, code string) (*Snapshot, error) {
+	if record.NewAPI == nil {
+		return nil, fmt.Errorf("new-api 二次验证会话无效，请重新同步上游账号")
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, fmt.Errorf("验证码不能为空")
+	}
+	api, err := newHTTPClient(record.BaseURL, c.httpClient)
 	if err != nil {
 		return nil, err
 	}
+	if err := restoreCookiesToJar(api, record.NewAPI.Cookies); err != nil {
+		return nil, err
+	}
+	quotaPerUnit := record.NewAPI.QuotaPerUnit
+	if quotaPerUnit <= 0 {
+		status, err := c.fetchStatus(ctx, api)
+		if err != nil {
+			return nil, err
+		}
+		quotaPerUnit = status.QuotaPerUnit
+	}
+	var envelope newAPIEnvelope[newAPIUser]
+	if err := api.postJSON(ctx, "/api/user/login/2fa", nil, map[string]string{"code": code}, &envelope); err != nil {
+		return nil, err
+	}
+	user, err := unwrapNewAPI(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("new-api 2FA 验证失败：%w", err)
+	}
+	headers := http.Header{}
+	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &user, headers)
+}
+
+func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, user *newAPIUser, headers http.Header) (*Snapshot, error) {
 	if user.ID == nil {
 		return nil, fmt.Errorf("new-api 登录响应缺少用户 ID")
 	}
@@ -131,7 +198,7 @@ func (c *NewAPIClient) FetchSnapshot(ctx context.Context, credential Credential)
 		return nil, err
 	}
 	rates, warnings := c.fetchRatioConfig(ctx, api)
-	keys, err := c.fetchTokens(ctx, api, headers, status.QuotaPerUnit, groupRates, rates)
+	keys, err := c.fetchTokens(ctx, api, headers, quotaPerUnit, groupRates, rates)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +212,7 @@ func (c *NewAPIClient) FetchSnapshot(ctx context.Context, credential Credential)
 			Email:    user.Email,
 			Group:    user.Group,
 		},
-		Balance:  buildNewAPIBalance(*user, status.QuotaPerUnit),
+		Balance:  buildNewAPIBalance(*user, quotaPerUnit),
 		Groups:   groups,
 		Keys:     keys,
 		Rates:    rates,
@@ -170,13 +237,13 @@ func (c *NewAPIClient) fetchStatus(ctx context.Context, api *httpClient) (*newAP
 	return &status, nil
 }
 
-func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Credential) (*newAPIUser, http.Header, error) {
+func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Credential) (*newAPIUser, http.Header, bool, error) {
 	username := strings.TrimSpace(credential.Username)
 	if username == "" {
 		username = strings.TrimSpace(credential.Email)
 	}
 	if username == "" || strings.TrimSpace(credential.Password) == "" {
-		return nil, nil, fmt.Errorf("new-api 账号和密码不能为空")
+		return nil, nil, false, fmt.Errorf("new-api 账号和密码不能为空")
 	}
 	body := map[string]string{
 		"username": username,
@@ -184,17 +251,17 @@ func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Cr
 	}
 	var envelope newAPIEnvelope[newAPIUser]
 	if err := api.postJSON(ctx, "/api/user/login?turnstile=", nil, body, &envelope); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	user, err := unwrapNewAPI(envelope)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if user.Require2FA {
-		return nil, nil, fmt.Errorf("new-api 账号启用了 2FA，当前预览接口暂不支持交互式二次验证")
+		return &user, nil, true, nil
 	}
 	headers := http.Header{}
-	return &user, headers, nil
+	return &user, headers, false, nil
 }
 
 func (c *NewAPIClient) fetchSelf(ctx context.Context, api *httpClient, headers http.Header) (newAPIUser, error) {

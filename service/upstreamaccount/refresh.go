@@ -15,6 +15,7 @@ import (
 type RefreshRequest struct {
 	Credential
 	ChannelID         int                   `json:"channel_id"`
+	PreviewID         string                `json:"preview_id,omitempty"`
 	Accounts          []AccountCreateConfig `json:"accounts"`
 	ApplySuggested    bool                  `json:"apply_suggested"`
 	DisableMissingKey bool                  `json:"disable_missing_key"`
@@ -35,6 +36,16 @@ type RefreshResult struct {
 func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*RefreshResult, error) {
 	if req.ChannelID <= 0 {
 		return nil, fmt.Errorf("渠道 ID 不能为空")
+	}
+	if strings.TrimSpace(req.PreviewID) != "" {
+		record, err := ConsumePreviewRecord(req.PreviewID)
+		if err != nil {
+			return nil, err
+		}
+		if record.Snapshot == nil {
+			return nil, fmt.Errorf("预览快照为空，请重新同步")
+		}
+		return RefreshChannelFromSnapshot(req.ChannelID, record.Snapshot, req)
 	}
 	req.Platform = NormalizePlatform(req.Platform)
 	if strings.TrimSpace(req.Platform) == "" {

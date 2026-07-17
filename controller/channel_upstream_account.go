@@ -38,6 +38,30 @@ func PreviewUpstreamAccount(c *gin.Context) {
 	})
 }
 
+// CompleteUpstreamAccount2FA 使用二次验证码继续上游账号预览。
+//
+// 第一阶段只缓存目标平台 pending session，不缓存账号密码。验证码完成后后端继续读取
+// 目标平台密钥、分组、倍率和余额，并返回与普通预览一致的脱敏 snapshot。
+func CompleteUpstreamAccount2FA(c *gin.Context) {
+	var req upstreamaccount.Preview2FARequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamAccountPreviewTimeout)
+	defer cancel()
+	result, err := upstreamaccount.CompletePreview2FA(ctx, req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    result,
+	})
+}
+
 // CreateUpstreamAccountChannel 根据预览快照创建一个渠道和多条渠道账号。
 //
 // 请求只引用 preview_id 和用户在页面上确认后的配置；后端从短期缓存取完整 key，

@@ -44,6 +44,8 @@ import type {
   TagOperationParams,
   UpstreamAccountCreateRequest,
   UpstreamAccountCreateResponse,
+  UpstreamAccountPreview2FARequest,
+  UpstreamAccountPreview2FAResponse,
   UpstreamAccountPreviewRequest,
   UpstreamAccountPreviewResponse,
   UpstreamAccountRefreshRequest,
@@ -151,6 +153,16 @@ export async function previewUpstreamAccount(
   data: UpstreamAccountPreviewRequest
 ): Promise<UpstreamAccountPreviewResponse> {
   const res = await api.post('/api/channel/upstream-account/preview', data)
+  return res.data
+}
+
+/**
+ * 提交上游平台 2FA 验证码，验证成功后换取普通预览快照。
+ */
+export async function completeUpstreamAccountPreview2FA(
+  data: UpstreamAccountPreview2FARequest
+): Promise<UpstreamAccountPreview2FAResponse> {
+  const res = await api.post('/api/channel/upstream-account/preview/2fa', data)
   return res.data
 }
 
