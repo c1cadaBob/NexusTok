@@ -73,6 +73,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -2688,9 +2689,9 @@ export function ChannelMutateDrawer({
                               <>
                                 <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
                                   <div className='flex flex-col gap-2'>
-                                    <FormLabel>
+                                    <Label htmlFor='upstream-sync-platform'>
                                       {t('Upstream Platform')}
-                                    </FormLabel>
+                                    </Label>
                                     <Select
                                       value={upstreamPlatform}
                                       onValueChange={(value) =>
@@ -2699,7 +2700,7 @@ export function ChannelMutateDrawer({
                                         )
                                       }
                                     >
-                                      <SelectTrigger>
+                                      <SelectTrigger id='upstream-sync-platform'>
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent
@@ -2717,12 +2718,16 @@ export function ChannelMutateDrawer({
                                     </Select>
                                   </div>
                                   <div className='flex flex-col gap-2'>
-                                    <FormLabel>{t('Account')}</FormLabel>
+                                    <Label htmlFor='upstream-sync-account'>
+                                      {t('Account')}
+                                    </Label>
                                     <Input
+                                      id='upstream-sync-account'
                                       value={upstreamUsername}
                                       onChange={(event) =>
                                         setUpstreamUsername(event.target.value)
                                       }
+                                      autoComplete='username'
                                       placeholder={
                                         upstreamPlatform === 'new-api'
                                           ? t('Username')
@@ -2731,14 +2736,17 @@ export function ChannelMutateDrawer({
                                     />
                                   </div>
                                   <div className='flex flex-col gap-2'>
-                                    <FormLabel>{t('Password')}</FormLabel>
+                                    <Label htmlFor='upstream-sync-password'>
+                                      {t('Password')}
+                                    </Label>
                                     <Input
+                                      id='upstream-sync-password'
                                       value={upstreamPassword}
                                       onChange={(event) =>
                                         setUpstreamPassword(event.target.value)
                                       }
                                       type='password'
-                                      autoComplete='new-password'
+                                      autoComplete='current-password'
                                       placeholder={t('Password')}
                                     />
                                   </div>
@@ -2975,7 +2983,9 @@ export function ChannelMutateDrawer({
 
                             <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
                               <div className='flex flex-col gap-2'>
-                                <FormLabel>{t('Upstream Platform')}</FormLabel>
+                                <Label htmlFor='upstream-refresh-platform'>
+                                  {t('Upstream Platform')}
+                                </Label>
                                 <Select
                                   value={upstreamPlatform}
                                   onValueChange={(value) =>
@@ -2984,7 +2994,7 @@ export function ChannelMutateDrawer({
                                     )
                                   }
                                 >
-                                  <SelectTrigger>
+                                  <SelectTrigger id='upstream-refresh-platform'>
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent alignItemWithTrigger={false}>
@@ -3000,12 +3010,16 @@ export function ChannelMutateDrawer({
                                 </Select>
                               </div>
                               <div className='flex flex-col gap-2'>
-                                <FormLabel>{t('Account')}</FormLabel>
+                                <Label htmlFor='upstream-refresh-account'>
+                                  {t('Account')}
+                                </Label>
                                 <Input
+                                  id='upstream-refresh-account'
                                   value={upstreamUsername}
                                   onChange={(event) =>
                                     setUpstreamUsername(event.target.value)
                                   }
+                                  autoComplete='username'
                                   placeholder={
                                     upstreamPlatform === 'new-api'
                                       ? t('Username')
@@ -3014,14 +3028,17 @@ export function ChannelMutateDrawer({
                                 />
                               </div>
                               <div className='flex flex-col gap-2'>
-                                <FormLabel>{t('Password')}</FormLabel>
+                                <Label htmlFor='upstream-refresh-password'>
+                                  {t('Password')}
+                                </Label>
                                 <Input
+                                  id='upstream-refresh-password'
                                   value={upstreamPassword}
                                   onChange={(event) =>
                                     setUpstreamPassword(event.target.value)
                                   }
                                   type='password'
-                                  autoComplete='new-password'
+                                  autoComplete='current-password'
                                   placeholder={t('Password')}
                                 />
                               </div>
