@@ -18,7 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useState } from 'react'
 import { z } from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -38,7 +38,16 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { testDeploymentConnectionWithKey } from '@/features/models/api'
 import { useModelPermissions } from '@/features/models/hooks/use-model-permissions'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const schema = z.object({
@@ -48,6 +57,13 @@ const schema = z.object({
 
 // NOTE: react-hook-form resolver uses the schema input type
 type Values = z.input<typeof schema>
+
+const updateOrder: Array<keyof Values> = ['enabled', 'apiKey']
+
+const optionKeyMap: Record<keyof Values, string> = {
+  enabled: 'model_deployment.ionet.enabled',
+  apiKey: 'model_deployment.ionet.api_key',
+}
 
 export function IoNetDeploymentSettingsSection({
   defaultValues,
@@ -62,15 +78,31 @@ export function IoNetDeploymentSettingsSection({
   const modelPermissions = useModelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
 
-  const form = useForm<Values>({
-    resolver: zodResolver(schema),
+  const {
+    form,
+    handleSubmit,
+    handleReset,
+    isDirty,
+    isSubmitting,
+  } = useSettingsForm<Values>({
+    resolver: zodResolver(schema) as Resolver<Values, unknown, Values>,
     defaultValues: {
       enabled: defaultValues.enabled,
       apiKey: defaultValues.apiKey ?? '',
     },
-  })
+    onSubmit: async (values, changedFields) => {
+      for (const key of updateOrder) {
+        if (!(key in changedFields)) {
+          continue
+        }
 
-  const { isDirty, isSubmitting } = form.formState
+        await updateOption.mutateAsync({
+          key: optionKeyMap[key],
+          value: String(values[key] ?? ''),
+        })
+      }
+    },
+  })
   const enabled = form.watch('enabled')
 
   const [testState, setTestState] = useState<{
@@ -78,35 +110,6 @@ export function IoNetDeploymentSettingsSection({
     ok: boolean | null
     error: string | null
   }>({ loading: false, ok: null, error: null })
-
-  async function onSubmit(values: Values) {
-    const updates: Array<{ key: string; value: string }> = []
-
-    if (values.enabled !== defaultValues.enabled) {
-      updates.push({
-        key: 'model_deployment.ionet.enabled',
-        value: String(values.enabled),
-      })
-    }
-
-    if ((values.apiKey || '') !== (defaultValues.apiKey || '')) {
-      updates.push({
-        key: 'model_deployment.ionet.api_key',
-        value: String(values.apiKey || ''),
-      })
-    }
-
-    if (updates.length === 0) {
-      toast.info(t('No changes to save'))
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-
-    form.reset(values)
-  }
 
   const handleTestConnection = async () => {
     if (!modelPermissions.canOperate) {
@@ -141,25 +144,34 @@ export function IoNetDeploymentSettingsSection({
       title={t('io.net Deployments')}
       description={t('Configure io.net API key for model deployments')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit(onSubmit)}
-          autoComplete='off'
-          className='space-y-6'
-        >
+        <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save io.net settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='enabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Enable io.net deployments')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable io.net deployments')}</FormLabel>
                   <FormDescription>
                     {t('Enable io.net model deployment service in console')}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
@@ -167,7 +179,7 @@ export function IoNetDeploymentSettingsSection({
                     disabled={updateOption.isPending || isSubmitting}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -271,23 +283,7 @@ export function IoNetDeploymentSettingsSection({
             </>
           ) : null}
 
-          <Button
-            type='submit'
-            disabled={
-              !isDirty ||
-              updateOption.isPending ||
-              isSubmitting ||
-              !updateOption.canUpdate
-            }
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending || isSubmitting
-              ? t('Saving...')
-              : t('Save io.net settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

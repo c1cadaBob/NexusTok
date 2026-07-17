@@ -16770,3 +16770,70 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. 重置后再次点击侧栏“Claude”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
 11. 本轮验证没有点击“保存更改”，未执行真实 `PUT /api/option/`，没有污染当前 Grok 违规扣费配置。
 12. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：io.net 模型部署设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/models/model-deployment` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标、重置动作与离开拦截，导致模型与路由分组内部的模型部署页与已经收口完成的 Grok 设置页体验不一致。
+3. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator`、`FormNavigationGuard`、重置动作和保存权限禁用理由；当前项目应吸收其页头动作区优势，同时保持 NexusTok 更完整的权限边界。
+4. NexusTok 相比 `new-api-main` 已经为 `Test Connection` 按钮接入 `model.operate` 权限保护；这属于当前项目已有原生能力，本轮必须保留，不能为了对齐对照项目而退回到只按 loading/pending 禁用。
+
+### 需求分析
+
+1. `/system-settings/models/model-deployment` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，仍写入 `model_deployment.ionet.enabled` 与 `model_deployment.ionet.api_key`，不调整模型部署服务、部署列表或 io.net 连接测试接口。
+4. 保存按钮继续消费 `useUpdateOption()` 暴露的 `system_setting.sensitive_write` 权限；连接测试按钮继续消费 `useModelPermissions().canOperate` 对应的模型操作权限。
+5. 当前环境中 io.net 部署默认关闭；验证阶段只切换本地开关触发脏态和显隐逻辑，不点击“保存 io.net 设置”，不点击“测试连接”，避免污染真实配置或触发外部接口。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| io.net 模型部署设置页 | `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截；保留连接测试按钮的 `model.operate` 权限保护。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `model_deployment.ionet.enabled` 会控制控制台内 io.net 模型部署能力是否开放；验证阶段如果误保存，可能改变真实用户可见能力。
+2. `model_deployment.ionet.api_key` 是敏感凭据；迁移表单时必须保持 `autoComplete='off'`、密码输入和现有保存 key，不引入密钥回显或额外日志。
+3. `Test Connection` 会调用 `/api/deployments/settings/test-connection`；它不是 `PUT /api/option/` 保存动作，但会触发后端部署诊断和外部服务连接，验证阶段不应点击。
+4. 启用开关会控制 API key 表单、帮助提示和测试按钮的显隐；重置逻辑必须同时恢复开关值和条件渲染区域，否则可能留下半展开的本地状态。
+5. 页面原有 `useForm()` 使用传入 `defaultValues` 做变更比较；迁移到 `useSettingsForm()` 后需要固定提交顺序和 option key 映射，避免保存字段顺序或字符串化语义变化。
+
+### 方案评审
+
+采用“共享表单壳层 + 权限边界原样保留”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、旧底部提交按钮和手工无变更提示分支，交由共享 hook 负责无变更提示、提交态、重置和最小变更过滤。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将启用开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、字段 key、禁用态和开关语义不变。
+5. 显式维护 `updateOrder` 与 `optionKeyMap`，保存时按 `enabled -> apiKey` 固定顺序提交到既有 option key，并继续把值转为字符串，保持后端合同稳定。
+6. 保留 `useModelPermissions()`、`noPermissionMessage`、`handleTestConnection()` 前置权限判断和按钮 title，不改变连接测试请求路径、payload、成功/失败展示或权限语义。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/integrations/ionet-deployment-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存 io.net 设置` 两个动作；无脏态时二者禁用，有脏态时按系统设置敏感写权限启用保存。
+4. 启用 io.net 部署开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；开关打开后 API key 输入、帮助提示、测试连接按钮继续按原条件渲染。
+5. `Test Connection` 按钮的 `model.operate` 权限保护、禁用理由和 handler 前置校验均保留，保存设置与模型部署操作仍是两个独立权限边界。
+6. 保存合同仍然只写入 io.net 模型部署相关既有 option key，没有改变后端部署诊断、模型部署列表、权限模型或外部链接。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/integrations/ionet-deployment-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/models/model-deployment?verify=20260717-ionet-after-change`，确认热更新生效，`重置` 与 `保存 io.net 设置` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+4. 当前运行态中 io.net 部署开关默认为关闭；临时切换“启用 io.net 部署”后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，API key 输入、帮助提示和“测试连接”按钮按条件显示。
+5. 在脏态下点击侧栏“Grok”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在模型部署页，且临时开关值和 API key 区块仍保留，说明统一离开拦截正常。
+6. 点击页头“重置”后，“启用 io.net 部署”恢复关闭，API key 区块消失，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和条件渲染回滚行为正确。
+7. 重置后再次点击侧栏“Grok”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
+8. 本轮验证没有点击“保存 io.net 设置”，未执行真实 `PUT /api/option/`，没有污染当前 io.net 模型部署配置。
+9. 本轮验证没有点击“测试连接”，未触发 `/api/deployments/settings/test-connection` 或外部 io.net 连接测试。
+10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
