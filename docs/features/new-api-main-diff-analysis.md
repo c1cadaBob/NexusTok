@@ -16270,3 +16270,74 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. MCP 的批量 `fill_form` 对多行文本域没有稳定触发共享表单脏态，因此本轮对白名单文本域以真实用户式键盘交互结果作为最终验收依据。
 11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实基础认证配置。
 12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+
+## 本轮实施评审：Passkey 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/auth/passkey-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/auth/passkey` 仍保留旧式表单壳层与旧式状态模型：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致身份验证分组内部的表单体验与已经收口完成的 `behavior / checkin / quota / currency / logs / worker / token-limits / sensitive-words / bot-protection / basic-auth` 明显分叉。
+3. 旧实现同时混用了 `passkey.enabled` 这类 flat dotted key 与 `FormField name='passkey.xxx'` 的嵌套路径语义；在 `react-hook-form` 中，这类组合容易让表单状态、schema 校验与提交 flatten 逻辑分离。
+4. `Allowed Origins` 在前端按换行编辑、在后端按逗号存储；`attachment_preference` 在后端使用空字符串表示“不限制”，而前端选择器使用 `none`。旧实现没有把这两个双向映射和共享表单基线能力统一收口。
+
+### 需求分析
+
+1. `/system-settings/auth/passkey` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有字段合同不变，不调整后端 `/api/option/` 保存语义，也不改变 `passkey.origins` 的逗号存储结构和 `passkey.attachment_preference` 的空字符串语义。
+4. 需要把页面表单模型收口为真正的嵌套 `passkey` 对象，确保 `FormField name='passkey.xxx'`、Zod schema 与 `react-hook-form` 的路径语义完全对齐。
+5. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Passkey 设置页 | `web/default/src/features/system-settings/auth/passkey-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截，并把 flat dotted key 的表单模型切到嵌套对象结构。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `passkey.origins` 在表单里按换行编辑、在后端按逗号保存；如果迁移共享壳层时没有正确处理双向归一化，可能出现“仅调整空白字符也会触发无意义保存”“恢复原值后仍被判定为未保存”或“把错误展示格式推进为保存基线”。
+2. `passkey.attachment_preference` 的后端空字符串与前端 `none` 选项存在显式映射关系；如果处理不当，可能出现“切换到无限制后仍被认为有变更”或“保存时把 `none` 原样发给后端”的回归。
+3. 旧实现混用 flat key 与嵌套路径语义；如果这轮没有彻底对齐 RHF 路径模型，可能出现 `dirtyFields`、`FormField`、schema 校验与最终提交字段不一致的隐性状态错误。
+4. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前 Passkey 配置。
+5. MCP 对多行文本域的批量 `fill_form` 并不总能完整模拟真实用户输入事件；如果只看自动填值结果，容易把测试方式局限误判成页面逻辑问题。因此本轮必须补充真实用户式键盘交互作为最终验收依据。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同，并在页面内完成嵌套表单模型与特殊字段归一化”的最小方案：
+
+1. 用 `useSettingsForm()` 替换旧的局部 `useForm()` 与手工 flatten 提交逻辑，保留现有字段 key 和后端接口不变。
+2. 用嵌套 `passkey` 对象重建 Zod schema 与 `defaultValues`，让 `FormField name='passkey.xxx'` 与 `react-hook-form` 路径语义保持一致。
+3. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+4. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+5. 在页面内保留并显式封装两个双向转换 helper：
+   - `Allowed Origins`：首屏把逗号分隔值格式化为多行文本；保存时把多行文本规范化回逗号格式；提交成功后再把规范化后的多行展示格式推进回表单基线。
+   - `attachment_preference`：在前端选择器里使用 `none`，在后端保存与基线比较时映射为 `''`。
+6. 显式固定提交顺序为 `enabled -> rp_display_name -> rp_id -> user_verification -> attachment_preference -> allow_insecure_origin -> origins`，继续与系统设置页的最小字段提交能力配合。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/auth/passkey-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页面表单模型已从旧的 flat dotted key 结构切换为嵌套 `passkey` 对象，`FormField`、Zod schema、`react-hook-form` 路径和共享表单 dirty 收集逻辑现在使用同一套语义。
+4. `Allowed Origins` 仍保持“前端多行 / 后端逗号分隔”的保存合同，`设备类型偏好` 仍保持“前端 `none` / 后端空字符串”的既有语义，但两者都已收口为页面内明确的归一化 helper，并在共享表单提交前把规范化后的显示值推进回表单基线。
+5. 保存合同仍然只写入 Passkey 相关的既有 option key，没有改变后端 Passkey 配置、验证逻辑或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/auth/passkey-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/auth/passkey?verify=20260717-passkey-after-change-v2`，确认热更新生效，`保存更改` 已位于标题右侧页头动作区，首屏为禁用态，底部旧按钮已消失。
+6. 在同一页面将“依赖方显示名称”从 `NexusTok` 临时改为 `NexusTok Test` 后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区已正常工作。
+7. 在同一页面点击侧栏中的“OAuth 集成”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+8. 将“依赖方显示名称”恢复为 `NexusTok` 后，标题状态消失，页头保存按钮重新禁用，说明普通文本字段的脏态回滚行为正确。
+9. 继续在同一页面将“设备类型偏好”从“无限制”切到“内置设备”再切回“无限制”，标题状态随之出现并在回滚后消失，说明 `none <-> ''` 的显式映射没有破坏共享表单基线判断。
+10. 在 `http://192.168.0.202:3003/system-settings/auth/passkey?verify=20260717-passkey-keyboard-check` 中聚焦“允许的 Origins”文本域，使用真实用户式键盘输入 `X` 后标题区域出现“未保存的更改”；随后使用真实键盘清空回原值，标题状态消失，页头保存按钮重新禁用，说明多行 Origins 字段的脏态与回滚行为正确。
+11. MCP 的批量 `fill` / `fill_form` 对多行文本域不总能稳定模拟共享表单的真实输入事件，因此本轮对白名单文本域以真实用户式键盘交互结果作为最终验收依据。
+12. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Passkey 配置。
+13. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
