@@ -23,6 +23,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service/authz"
+	"github.com/c1cada/NexusTok/service/upstreamaccount"
 
 	"github.com/gin-gonic/gin"
 )
@@ -186,7 +187,7 @@ func UpdateChannelAccount(c *gin.Context) {
 		})
 		return
 	}
-	updates := channelAccountUpdateMap(req, requestData)
+	updates := channelAccountUpdateMap(account, req, requestData)
 	if len(updates) == 0 {
 		common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 		return
@@ -482,7 +483,7 @@ func buildChannelAccountFromRequest(channelID int, req channelAccountUpsertReque
 // 因此 PUT 请求不能沿用“空字符串就是清空”的全量表单语义，否则只改一个字段时会把
 // models/group/settings 等字段误覆盖为空。requestData 来自原始 JSON，用来判断字段是否
 // 真实出现；key 仍保持“空值不写入”，避免编辑时空密钥覆盖已有凭证。
-func channelAccountUpdateMap(req channelAccountUpsertRequest, requestData map[string]any) map[string]interface{} {
+func channelAccountUpdateMap(account *model.ChannelAccount, req channelAccountUpsertRequest, requestData map[string]any) map[string]interface{} {
 	updates := map[string]interface{}{}
 	if _, ok := requestData["name"]; ok && strings.TrimSpace(req.Name) != "" {
 		updates["name"] = strings.TrimSpace(req.Name)
@@ -503,7 +504,11 @@ func channelAccountUpdateMap(req channelAccountUpsertRequest, requestData map[st
 		updates["other"] = req.Other
 	}
 	if _, ok := requestData["settings"]; ok {
-		updates["settings"] = req.OtherSettings
+		settings := req.OtherSettings
+		if account != nil {
+			settings = upstreamaccount.PreserveAccountSyncMetadata(account.OtherSettings, req.OtherSettings)
+		}
+		updates["settings"] = settings
 	}
 	if _, ok := requestData["priority"]; ok && req.Priority != nil {
 		updates["priority"] = *req.Priority

@@ -67,6 +67,43 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 	return string(bytes)
 }
 
+// PreserveAccountSyncMetadata 在账号本地 settings 被手动更新时保留同步身份。
+//
+// 同步账号的刷新匹配依赖 `upstream_account_sync` 中的 platform、base_url、
+// external_id 和 key_digest。管理员在渠道账号编辑页保存本地配置时，前端可能只提交
+// 业务 settings；若直接覆盖会丢失同步身份，下一次刷新就无法按 external_id 更新原账号，
+// 只能创建新账号。该函数只在旧 settings 已有同步身份、且新 settings 未显式携带同步身份
+// 时合并；如果新 settings 不是 JSON，则保持原输入，避免改变既有容错语义。
+func PreserveAccountSyncMetadata(existing string, next string) string {
+	var existingData map[string]any
+	if strings.TrimSpace(existing) == "" {
+		return next
+	}
+	if err := common.UnmarshalJsonStr(existing, &existingData); err != nil {
+		return next
+	}
+	rawMetadata, ok := existingData[upstreamAccountSyncMetadataKey]
+	if !ok {
+		return next
+	}
+
+	nextData := map[string]any{}
+	if strings.TrimSpace(next) != "" {
+		if err := common.UnmarshalJsonStr(next, &nextData); err != nil {
+			return next
+		}
+	}
+	if _, ok := nextData[upstreamAccountSyncMetadataKey]; ok {
+		return next
+	}
+	nextData[upstreamAccountSyncMetadataKey] = rawMetadata
+	bytes, err := common.Marshal(nextData)
+	if err != nil {
+		return next
+	}
+	return string(bytes)
+}
+
 func readAccountSyncMetadata(settings string) syncMetadata {
 	var data map[string]any
 	if strings.TrimSpace(settings) == "" {

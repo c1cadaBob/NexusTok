@@ -5,6 +5,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service/upstreamaccount"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,10 +22,10 @@ func TestChannelAccountUpdateMapOnlyUpdatesSubmittedFields(t *testing.T) {
 		MaxConcurrency: &maxConcurrency,
 	}
 
-	updates := channelAccountUpdateMap(req, map[string]any{"name": req.Name})
+	updates := channelAccountUpdateMap(nil, req, map[string]any{"name": req.Name})
 	assert.Equal(t, map[string]interface{}{"name": "renamed"}, updates)
 
-	updates = channelAccountUpdateMap(req, map[string]any{
+	updates = channelAccountUpdateMap(nil, req, map[string]any{
 		"models":          req.Models,
 		"group":           req.Group,
 		"priority":        priority,
@@ -43,7 +44,7 @@ func TestChannelAccountUpdateMapOnlyUpdatesSubmittedFields(t *testing.T) {
 func TestChannelAccountUpdateMapKeepsEmptyKeyFromOverwritingCredential(t *testing.T) {
 	req := channelAccountUpsertRequest{Key: "   "}
 
-	updates := channelAccountUpdateMap(req, map[string]any{"key": req.Key})
+	updates := channelAccountUpdateMap(nil, req, map[string]any{"key": req.Key})
 
 	assert.NotContains(t, updates, "key")
 }
@@ -52,7 +53,7 @@ func TestChannelAccountUpdateMapUsesGormColumnForOpenAIOrganization(t *testing.T
 	organization := "org-example"
 	req := channelAccountUpsertRequest{OpenAIOrganization: &organization}
 
-	updates := channelAccountUpdateMap(req, map[string]any{
+	updates := channelAccountUpdateMap(nil, req, map[string]any{
 		"openai_organization": organization,
 	})
 
@@ -60,6 +61,26 @@ func TestChannelAccountUpdateMapUsesGormColumnForOpenAIOrganization(t *testing.T
 		"open_ai_organization": organization,
 	}, updates)
 	assert.NotContains(t, updates, "openai_organization")
+}
+
+func TestChannelAccountUpdateMapPreservesUpstreamSyncMetadata(t *testing.T) {
+	existing := &model.ChannelAccount{
+		OtherSettings: upstreamaccount.PreserveAccountSyncMetadata(
+			`{"upstream_account_sync":{"platform":"sub2api","base_url":"http://example.test","external_id":"9001","key_digest":"digest","synced_at":1}}`,
+			`{"local_flag":false}`,
+		),
+	}
+	req := channelAccountUpsertRequest{OtherSettings: `{"local_flag":true}`}
+
+	updates := channelAccountUpdateMap(existing, req, map[string]any{
+		"settings": req.OtherSettings,
+	})
+
+	settings, ok := updates["settings"].(string)
+	assert.True(t, ok)
+	assert.Contains(t, settings, `"local_flag":true`)
+	assert.Contains(t, settings, `"upstream_account_sync"`)
+	assert.Contains(t, settings, `"external_id":"9001"`)
 }
 
 func TestChannelAccountSensitiveChangeClassification(t *testing.T) {
