@@ -16,12 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -33,7 +31,16 @@ import {
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const sensitiveSchema = z.object({
@@ -53,84 +60,87 @@ export function SensitiveWordsSection({
 }: SensitiveWordsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const form = useForm<SensitiveFormValues>({
-    resolver: zodResolver(sensitiveSchema),
-    defaultValues,
-  })
-
-  useEffect(() => {
-    form.reset(defaultValues)
-  }, [defaultValues, form])
-
-  const onSubmit = async (values: SensitiveFormValues) => {
-    const updates = Object.entries(values).filter(
-      ([key, value]) =>
-        value !== defaultValues[key as keyof SensitiveFormValues]
-    )
-
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value: value ?? '' })
-    }
-  }
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<SensitiveFormValues>({
+      resolver: zodResolver(sensitiveSchema) as Resolver<
+        SensitiveFormValues,
+        unknown,
+        SensitiveFormValues
+      >,
+      defaultValues,
+      onSubmit: async (_values, changedFields) => {
+        for (const [key, value] of Object.entries(changedFields)) {
+          const normalizedValue = (value ?? '') as string | boolean
+          await updateOption.mutateAsync({ key, value: normalizedValue })
+        }
+      },
+    })
 
   return (
     <SettingsSection
       title={t('Sensitive Words')}
       description={t('Configure keyword filtering for prompts and responses.')}
     >
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
-          <div className='space-y-4'>
-            <FormField
-              control={form.control}
-              name='CheckSensitiveEnabled'
-              render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Enable filtering')}
-                    </FormLabel>
-                    <FormDescription>
-                      {t(
-                        'Blocks messages when sensitive keywords are detected.'
-                      )}
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
+      <FormNavigationGuard when={isDirty} />
 
-            <FormField
-              control={form.control}
-              name='CheckSensitiveOnPromptEnabled'
-              render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Inspect user prompts')}
-                    </FormLabel>
-                    <FormDescription>
-                      {t(
-                        'When enabled, prompts are scanned before reaching upstream models.'
-                      )}
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-          </div>
+      <Form {...form}>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save sensitive words'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
+          <FormField
+            control={form.control}
+            name='CheckSensitiveEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable filtering')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Blocks messages when sensitive keywords are detected.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='CheckSensitiveOnPromptEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Inspect user prompts')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'When enabled, prompts are scanned before reaching upstream models.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
 
           <FormField
             control={form.control}
@@ -154,19 +164,7 @@ export function SensitiveWordsSection({
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending
-              ? t('Saving...')
-              : t('Save sensitive words')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

@@ -16065,3 +16065,66 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 8. 已在验证结束前将“每用户最大 Token 数”恢复为原值 `1000`；恢复后标题状态消失，页头保存按钮重新禁用，说明脏态回滚行为正确。
 9. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实安全配置。
 10. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+
+## 本轮实施评审：Sensitive Words 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/request-limits/sensitive-words-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/security/sensitive-words` 仍停留在旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. “启用过滤”和“检查用户提示”仍使用手写 `FormItem className='flex ... rounded-lg border p-4'` 行布局，没有复用当前项目已经稳定的 `SettingsSwitchItem` / `SettingsSwitchContent`。
+3. 页面没有接入统一的未保存脏态徽标与离开拦截，导致安全与限制分组内部的表单体验与已经收口完成的 `behavior / checkin / quota / currency / logs / worker / token-limits` 明显分叉。
+
+这类差异不涉及后端敏感词检测逻辑或 option 合同，但会直接影响系统设置页的一致性，也会让后续继续迁移 `bot-protection / basic-auth / request-limits` 等页面时缺少统一样板。
+
+### 需求分析
+
+1. `/system-settings/security/sensitive-words` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 现有字段合同 `CheckSensitiveEnabled`、`CheckSensitiveOnPromptEnabled`、`SensitiveWords` 必须保持不变，不调整后端 `/api/option/` 保存语义，也不改变敏感词文本域的输入结构。
+4. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 敏感词设置页 | `web/default/src/features/system-settings/request-limits/sensitive-words-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页同时包含两个布尔开关和一个多行文本；如果迁移共享壳层时改坏默认值与脏态基线处理，可能出现“未保存的更改”常驻、离页拦截误触发，或文本域在切页后被错误重置。
+2. `SensitiveWords` 允许空值；如果保存前的类型收窄处理不当，可能把 `unknown` 值错误传给 `updateOption.mutateAsync()`，引发 TypeScript 或运行态问题。
+3. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前敏感词配置。
+4. 本轮真实验证中页面首次仍显示旧壳层，说明容器热更新在该页面上存在缓存或产物未刷新情况；必须按约定先重启容器、再带 `verify` 参数重新访问页面，不能依赖旧页面判断结果。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()` 与手动 `reset`，保留原有 Zod schema，并在 `onSubmit` 中继续按 `CheckSensitiveEnabled`、`CheckSensitiveOnPromptEnabled`、`SensitiveWords` 原键保存。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将两个开关从手写 `FormItem` 行布局迁到 `SettingsSwitchItem + SettingsSwitchContent`，保留文本域、描述文案和 `updateOption.canUpdate` 的既有语义。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/request-limits/sensitive-words-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. “启用过滤”和“检查用户提示”已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；多行文本域仍沿用原有字段结构和保存语义。
+4. 保存合同仍然只写入 `CheckSensitiveEnabled`、`CheckSensitiveOnPromptEnabled`、`SensitiveWords` 三个 option key，没有改变后端接口、敏感词检测逻辑或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/request-limits/sensitive-words-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 首次在 `http://192.168.0.202:3003/system-settings/security/sensitive-words` 验证时，页面仍显示旧壳层，底部仍有单独的“保存敏感词”按钮；按用户要求已先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`。
+6. 重启后通过 MCP 重新访问 `http://192.168.0.202:3003/system-settings/security/sensitive-words?verify=20260717-sensitive-words-after-restart`，确认新壳层已生效，`保存敏感词` 已位于标题右侧页头动作区。
+7. 在同一 3003 页面中将文本域内容从 `test_sensitive` 临时改为 `test_sensitive\\npreview_keyword` 后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区都已正常工作。
+8. 点击安全侧栏中的“SSRF 保护”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+9. 已在验证结束前将文本域恢复为原值 `test_sensitive`；恢复后标题状态消失，页头保存按钮重新禁用，说明脏态回滚行为正确。
+10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实敏感词配置。
+11. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；页面在重启前后都保持控制台干净。
