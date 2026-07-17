@@ -343,6 +343,7 @@ type AccountSnapshot struct {
 - [x] 放宽账号同步模式下模型的前端校验；普通渠道仍保持模型必填。
 - [x] 新增 i18n 翻译并运行 `bun run i18n:sync`。
 - [x] 在编辑已有同步渠道时提供刷新入口，要求重新输入上游账号密码，不保存平台密码。
+- [x] 编辑已有同步渠道时刷新改为先预览、再应用：管理员可在刷新快照中查看密钥、分组倍率、余额和建议 priority/weight，必要时手动调整后再提交刷新。
 
 ### 阶段 5：真实环境验证
 
@@ -354,6 +355,7 @@ type AccountSnapshot struct {
 - [x] 复核真实平台 preview 状态：sub2api 仍可登录但返回 0 个 key、余额为 0；new-api 仍返回账号或密码错误/用户被禁用，说明当前阻塞来自目标测试账号状态。
 - [x] 用 relay 请求级测试验证渠道失败后按优先级/权重降级：`TestRelayRetriesToNextChannelAfterChannelFailure` 使用两个 OpenAI 兼容 httptest 上游，首个高优先级渠道返回 401 后，同一次请求排除失败渠道并降级到第二渠道成功返回。
 - [x] 用 MCP 浏览器上下文调用 NexusTok preview/create/account update/refresh/delete，并通过临时 sub2api mock 验证：刷新时 `apply_suggested=false` 会保留账号手动 priority、weight、status 和本地 settings，同时按同步元数据更新同一账号，不误创建重复账号。
+- [x] 补充前端刷新预览交互验证：编辑同步渠道时必须先 Preview Refresh 获得快照，页面展示与新建同步一致的倍率/余额/优先级/权重表格，Apply Refresh 只在非空快照后可用。
 - [ ] 页面未更新时重启容器后重新验证。
 
 ## 验证清单

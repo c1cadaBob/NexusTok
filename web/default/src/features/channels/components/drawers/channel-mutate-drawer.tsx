@@ -231,6 +231,12 @@ type ChannelEditorNavItem = {
   children?: ChannelEditorNavChildItem[]
 }
 
+type UpstreamAccountConfigDraft = {
+  priority: number
+  weight: number
+  enabled: boolean
+}
+
 function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
   return key.external_id || key.masked_key || `${index}`
 }
@@ -259,6 +265,34 @@ function upstreamGroupsToString(keys: UpstreamAccountKey[]) {
     groups.push(group)
   })
   return groups.join(',')
+}
+
+function buildUpstreamAccountConfigs(
+  keys: UpstreamAccountKey[]
+): Record<string, UpstreamAccountConfigDraft> {
+  const configs: Record<string, UpstreamAccountConfigDraft> = {}
+  keys.forEach((key, index) => {
+    configs[upstreamKeyConfigId(key, index)] = {
+      priority: key.suggested_priority,
+      weight: key.suggested_weight,
+      enabled: true,
+    }
+  })
+  return configs
+}
+
+function upstreamAccountPriorityValue(
+  config: UpstreamAccountConfigDraft | undefined,
+  applySuggested: boolean
+) {
+  return applySuggested ? undefined : config?.priority
+}
+
+function upstreamAccountWeightValue(
+  config: UpstreamAccountConfigDraft | undefined,
+  applySuggested: boolean
+) {
+  return applySuggested ? undefined : config?.weight
 }
 
 // 表单辅助函数
@@ -732,13 +766,16 @@ export function ChannelMutateDrawer({
   const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
   const [upstreamSnapshot, setUpstreamSnapshot] =
     useState<UpstreamAccountSnapshot | null>(null)
+  const [upstreamRefreshSnapshot, setUpstreamRefreshSnapshot] =
+    useState<UpstreamAccountSnapshot | null>(null)
   const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
-    Record<string, { priority: number; weight: number; enabled: boolean }>
+    Record<string, UpstreamAccountConfigDraft>
   >({})
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
+  const upstreamCredentialFingerprintRef = useRef('')
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -854,6 +891,7 @@ export function ChannelMutateDrawer({
       if (!checked) {
         setUpstreamPreviewId('')
         setUpstreamSnapshot(null)
+        setUpstreamRefreshSnapshot(null)
         setUpstreamAccountConfigs({})
       }
     },
@@ -910,6 +948,34 @@ export function ChannelMutateDrawer({
   const currentSettings = form.watch('settings')
   const currentAdvancedCustom = form.watch('advanced_custom')
   const currentFormValues = form.watch()
+
+  useEffect(() => {
+    const fingerprint = [
+      currentBaseUrl || '',
+      upstreamPlatform,
+      upstreamUsername,
+      upstreamPassword,
+    ].join('\n')
+    if (!upstreamCredentialFingerprintRef.current) {
+      upstreamCredentialFingerprintRef.current = fingerprint
+      return
+    }
+    if (upstreamCredentialFingerprintRef.current === fingerprint) return
+    upstreamCredentialFingerprintRef.current = fingerprint
+    if (!upstreamSnapshot && !upstreamRefreshSnapshot) return
+    setUpstreamPreviewId('')
+    setUpstreamSnapshot(null)
+    setUpstreamRefreshSnapshot(null)
+    setUpstreamAccountConfigs({})
+  }, [
+    currentBaseUrl,
+    upstreamPassword,
+    upstreamPlatform,
+    upstreamRefreshSnapshot,
+    upstreamSnapshot,
+    upstreamUsername,
+  ])
+
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
@@ -1082,6 +1148,150 @@ export function ChannelMutateDrawer({
     hiddenAdvancedCustomRouteTypeCount > 0
       ? advancedCustomStats.routeTypeLabels.join(', ')
       : undefined
+
+  const renderUpstreamSnapshotReview = useCallback(
+    (snapshot: UpstreamAccountSnapshot) => (
+      <div className='flex flex-col gap-3'>
+        <div className='grid gap-3 sm:grid-cols-3'>
+          <div className='rounded-md border p-3'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Synced Keys')}
+            </div>
+            <div className='text-lg font-semibold'>
+              {snapshot.keys.length}
+            </div>
+          </div>
+          <div className='rounded-md border p-3'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Remaining Balance')}
+            </div>
+            <div className='text-lg font-semibold'>
+              {snapshot.balance?.balance_usd ?? '-'}
+            </div>
+          </div>
+          <div className='rounded-md border p-3'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Used Balance')}
+            </div>
+            <div className='text-lg font-semibold'>
+              {snapshot.balance?.used_usd ?? '-'}
+            </div>
+          </div>
+        </div>
+
+        <div className='flex items-center justify-between gap-3'>
+          <div className='flex flex-col gap-1'>
+            <span className='text-sm font-medium'>
+              {t('Apply suggested priority and weight')}
+            </span>
+            <span className='text-muted-foreground text-xs'>
+              {t('Lower upstream rates get higher priority and weight by default.')}
+            </span>
+          </div>
+          <Switch
+            checked={upstreamApplySuggested}
+            disabled={snapshot.keys.length === 0}
+            onCheckedChange={setUpstreamApplySuggested}
+          />
+        </div>
+
+        {snapshot.keys.length === 0 ? (
+          <Alert>
+            <AlertCircle aria-hidden='true' />
+            <AlertDescription>
+              {t('No upstream keys were found for this account.')}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className='overflow-x-auto rounded-md border'>
+            <div className='grid min-w-[38rem] grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
+              <span>{t('Key')}</span>
+              <span>{t('Group')}</span>
+              <span>{t('Priority')}</span>
+              <span>{t('Weight')}</span>
+              <span>{t('Enabled')}</span>
+            </div>
+            {snapshot.keys.map((key, index) => {
+              const configId = upstreamKeyConfigId(key, index)
+              const config = upstreamAccountConfigs[configId]
+              return (
+                <div
+                  key={configId}
+                  className='grid min-w-[38rem] grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
+                >
+                  <div className='min-w-0'>
+                    <div className='truncate text-sm font-medium'>
+                      {key.name || key.masked_key}
+                    </div>
+                    <div className='text-muted-foreground truncate text-xs'>
+                      {key.masked_key}
+                    </div>
+                  </div>
+                  <div className='min-w-0'>
+                    <Badge variant='secondary'>
+                      {key.group_name || key.group_id || '-'}
+                    </Badge>
+                    {key.group_ratio !== undefined && (
+                      <span className='text-muted-foreground ml-2 text-xs'>
+                        {key.group_ratio}
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    type='number'
+                    value={config?.priority ?? 0}
+                    disabled={upstreamApplySuggested}
+                    onChange={(event) =>
+                      setUpstreamAccountConfigs((prev) => ({
+                        ...prev,
+                        [configId]: {
+                          enabled: prev[configId]?.enabled ?? true,
+                          weight:
+                            prev[configId]?.weight ?? key.suggested_weight,
+                          priority: Number(event.target.value),
+                        },
+                      }))
+                    }
+                  />
+                  <Input
+                    type='number'
+                    value={config?.weight ?? 0}
+                    disabled={upstreamApplySuggested}
+                    onChange={(event) =>
+                      setUpstreamAccountConfigs((prev) => ({
+                        ...prev,
+                        [configId]: {
+                          enabled: prev[configId]?.enabled ?? true,
+                          priority:
+                            prev[configId]?.priority ?? key.suggested_priority,
+                          weight: Number(event.target.value),
+                        },
+                      }))
+                    }
+                  />
+                  <Switch
+                    checked={config?.enabled ?? true}
+                    onCheckedChange={(checked) =>
+                      setUpstreamAccountConfigs((prev) => ({
+                        ...prev,
+                        [configId]: {
+                          priority:
+                            prev[configId]?.priority ?? key.suggested_priority,
+                          weight: prev[configId]?.weight ?? key.suggested_weight,
+                          enabled: checked,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    ),
+    [t, upstreamAccountConfigs, upstreamApplySuggested]
+  )
 
   const currentTypeLabel = useMemo(
     () =>
@@ -1832,18 +2042,7 @@ export function ChannelMutateDrawer({
     }
     setUpstreamPreviewId(res.data.preview_id)
     setUpstreamSnapshot(res.data.snapshot)
-    const configs: Record<
-      string,
-      { priority: number; weight: number; enabled: boolean }
-    > = {}
-    res.data.snapshot.keys.forEach((key, index) => {
-      configs[upstreamKeyConfigId(key, index)] = {
-        priority: key.suggested_priority,
-        weight: key.suggested_weight,
-        enabled: true,
-      }
-    })
-    setUpstreamAccountConfigs(configs)
+    setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
 
     const models = upstreamModelsToString(res.data.snapshot.keys)
     if (models) {
@@ -2027,6 +2226,8 @@ export function ChannelMutateDrawer({
         )
       )
       setUpstreamPassword('')
+      setUpstreamRefreshSnapshot(null)
+      setUpstreamAccountConfigs({})
       queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       if (channelId) {
         queryClient.invalidateQueries({
@@ -2061,6 +2262,10 @@ export function ChannelMutateDrawer({
       toast.error(t('Account and password are required'))
       return
     }
+    if (!upstreamRefreshSnapshot) {
+      toast.error(t('Preview upstream account before applying refresh'))
+      return
+    }
     await upstreamRefreshMutation.mutateAsync({
       id: channelId,
       payload: {
@@ -2071,6 +2276,22 @@ export function ChannelMutateDrawer({
         password: upstreamPassword,
         apply_suggested: upstreamApplySuggested,
         disable_missing_key: true,
+        accounts: upstreamRefreshSnapshot.keys.map((key, index) => {
+          const config =
+            upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
+          return {
+            external_id: key.external_id,
+            name: key.name || key.masked_key,
+            enabled: config?.enabled ?? true,
+            models: key.models?.join(','),
+            group: key.group_name || key.group_id,
+            priority: upstreamAccountPriorityValue(
+              config,
+              upstreamApplySuggested
+            ),
+            weight: upstreamAccountWeightValue(config, upstreamApplySuggested),
+          }
+        }),
       },
     })
   }, [
@@ -2080,9 +2301,57 @@ export function ChannelMutateDrawer({
     permissions.canSensitiveWrite,
     t,
     upstreamApplySuggested,
+    upstreamAccountConfigs,
     upstreamPassword,
     upstreamPlatform,
+    upstreamRefreshSnapshot,
     upstreamRefreshMutation,
+    upstreamUsername,
+  ])
+
+  const handlePreviewUpstreamRefresh = useCallback(async () => {
+    if (!permissions.canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    const baseUrl = form.getValues('base_url')?.trim()
+    if (!baseUrl) {
+      form.setError('base_url', {
+        type: 'manual',
+        message: t('Base URL is required'),
+      })
+      return
+    }
+    if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
+      toast.error(t('Account and password are required'))
+      return
+    }
+    const res = await upstreamPreviewMutation.mutateAsync({
+      platform: upstreamPlatform,
+      base_url: baseUrl,
+      username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
+      email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
+      password: upstreamPassword,
+    })
+    if (!res.success || !res.data) {
+      toast.error(res.message || t('Failed to sync upstream account'))
+      return
+    }
+    setUpstreamRefreshSnapshot(res.data.snapshot)
+    setUpstreamAccountConfigs(buildUpstreamAccountConfigs(res.data.snapshot.keys))
+    toast.success(
+      t('Synced {{count}} upstream key(s)', {
+        count: res.data.snapshot.keys.length,
+      })
+    )
+  }, [
+    form,
+    noPermissionMessage,
+    permissions.canSensitiveWrite,
+    t,
+    upstreamPassword,
+    upstreamPlatform,
+    upstreamPreviewMutation,
     upstreamUsername,
   ])
 
@@ -2206,8 +2475,11 @@ export function ChannelMutateDrawer({
               enabled: config?.enabled ?? true,
               models: key.models?.join(',') || data.models,
               group: key.group_name || key.group_id || formatGroups(data.group),
-              priority: config?.priority,
-              weight: config?.weight,
+              priority: upstreamAccountPriorityValue(
+                config,
+                upstreamApplySuggested
+              ),
+              weight: upstreamAccountWeightValue(config, upstreamApplySuggested),
             }
           }),
         })
@@ -2339,7 +2611,9 @@ export function ChannelMutateDrawer({
         setUpstreamPassword('')
         setUpstreamPreviewId('')
         setUpstreamSnapshot(null)
+        setUpstreamRefreshSnapshot(null)
         setUpstreamAccountConfigs({})
+        upstreamCredentialFingerprintRef.current = ''
       }
     },
     [onOpenChange, form]
@@ -2759,9 +3033,10 @@ export function ChannelMutateDrawer({
                                       type='button'
                                       variant='outline'
                                       className='w-full'
-                                      disabled={
-                                        upstreamPreviewMutation.isPending
-                                      }
+                                  disabled={
+                                    upstreamPreviewMutation.isPending ||
+                                    upstreamRefreshMutation.isPending
+                                  }
                                       onClick={handlePreviewUpstreamAccount}
                                     >
                                       {upstreamPreviewMutation.isPending ? (
@@ -2786,194 +3061,10 @@ export function ChannelMutateDrawer({
                                   </Alert>
                                 ) : null}
 
-                                {upstreamSnapshot && (
-                                  <div className='flex flex-col gap-3'>
-                                    <div className='grid gap-3 sm:grid-cols-3'>
-                                      <div className='rounded-md border p-3'>
-                                        <div className='text-muted-foreground text-xs'>
-                                          {t('Synced Keys')}
-                                        </div>
-                                        <div className='text-lg font-semibold'>
-                                          {upstreamSnapshot.keys.length}
-                                        </div>
-                                      </div>
-                                      <div className='rounded-md border p-3'>
-                                        <div className='text-muted-foreground text-xs'>
-                                          {t('Remaining Balance')}
-                                        </div>
-                                        <div className='text-lg font-semibold'>
-                                          {upstreamSnapshot.balance
-                                            ?.balance_usd ?? '-'}
-                                        </div>
-                                      </div>
-                                      <div className='rounded-md border p-3'>
-                                        <div className='text-muted-foreground text-xs'>
-                                          {t('Used Balance')}
-                                        </div>
-                                        <div className='text-lg font-semibold'>
-                                          {upstreamSnapshot.balance?.used_usd ??
-                                            '-'}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    <div className='flex items-center justify-between gap-3'>
-                                      <div className='flex flex-col gap-1'>
-                                        <span className='text-sm font-medium'>
-                                          {t(
-                                            'Apply suggested priority and weight'
-                                          )}
-                                        </span>
-                                        <span className='text-muted-foreground text-xs'>
-                                          {t(
-                                            'Lower upstream rates get higher priority and weight by default.'
-                                          )}
-                                        </span>
-                                      </div>
-                                      <Switch
-                                        checked={upstreamApplySuggested}
-                                        disabled={
-                                          upstreamSnapshot.keys.length === 0
-                                        }
-                                        onCheckedChange={
-                                          setUpstreamApplySuggested
-                                        }
-                                      />
-                                    </div>
-
-                                    {upstreamSnapshot.keys.length === 0 ? (
-                                      <Alert>
-                                        <AlertCircle aria-hidden='true' />
-                                        <AlertDescription>
-                                          {t(
-                                            'No upstream keys were found for this account.'
-                                          )}
-                                        </AlertDescription>
-                                      </Alert>
-                                    ) : (
-                                      <div className='overflow-hidden rounded-md border'>
-                                        <div className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
-                                          <span>{t('Key')}</span>
-                                          <span>{t('Group')}</span>
-                                          <span>{t('Priority')}</span>
-                                          <span>{t('Weight')}</span>
-                                          <span>{t('Enabled')}</span>
-                                        </div>
-                                        {upstreamSnapshot.keys.map(
-                                          (key, index) => {
-                                            const configId =
-                                              upstreamKeyConfigId(key, index)
-                                            const config =
-                                              upstreamAccountConfigs[configId]
-                                            return (
-                                              <div
-                                                key={configId}
-                                                className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
-                                              >
-                                                <div className='min-w-0'>
-                                                  <div className='truncate text-sm font-medium'>
-                                                    {key.name || key.masked_key}
-                                                  </div>
-                                                  <div className='text-muted-foreground truncate text-xs'>
-                                                    {key.masked_key}
-                                                  </div>
-                                                </div>
-                                                <div className='min-w-0'>
-                                                  <Badge variant='secondary'>
-                                                    {key.group_name ||
-                                                      key.group_id ||
-                                                      '-'}
-                                                  </Badge>
-                                                  {key.group_ratio !==
-                                                    undefined && (
-                                                    <span className='text-muted-foreground ml-2 text-xs'>
-                                                      {key.group_ratio}
-                                                    </span>
-                                                  )}
-                                                </div>
-                                                <Input
-                                                  type='number'
-                                                  value={config?.priority ?? 0}
-                                                  disabled={
-                                                    upstreamApplySuggested
-                                                  }
-                                                  onChange={(event) =>
-                                                    setUpstreamAccountConfigs(
-                                                      (prev) => ({
-                                                        ...prev,
-                                                        [configId]: {
-                                                          enabled:
-                                                            prev[configId]
-                                                              ?.enabled ?? true,
-                                                          weight:
-                                                            prev[configId]
-                                                              ?.weight ??
-                                                            key.suggested_weight,
-                                                          priority: Number(
-                                                            event.target.value
-                                                          ),
-                                                        },
-                                                      })
-                                                    )
-                                                  }
-                                                />
-                                                <Input
-                                                  type='number'
-                                                  value={config?.weight ?? 0}
-                                                  disabled={
-                                                    upstreamApplySuggested
-                                                  }
-                                                  onChange={(event) =>
-                                                    setUpstreamAccountConfigs(
-                                                      (prev) => ({
-                                                        ...prev,
-                                                        [configId]: {
-                                                          enabled:
-                                                            prev[configId]
-                                                              ?.enabled ?? true,
-                                                          priority:
-                                                            prev[configId]
-                                                              ?.priority ??
-                                                            key.suggested_priority,
-                                                          weight: Number(
-                                                            event.target.value
-                                                          ),
-                                                        },
-                                                      })
-                                                    )
-                                                  }
-                                                />
-                                                <Switch
-                                                  checked={
-                                                    config?.enabled ?? true
-                                                  }
-                                                  onCheckedChange={(checked) =>
-                                                    setUpstreamAccountConfigs(
-                                                      (prev) => ({
-                                                        ...prev,
-                                                        [configId]: {
-                                                          priority:
-                                                            prev[configId]
-                                                              ?.priority ??
-                                                            key.suggested_priority,
-                                                          weight:
-                                                            prev[configId]
-                                                              ?.weight ??
-                                                            key.suggested_weight,
-                                                          enabled: checked,
-                                                        },
-                                                      })
-                                                    )
-                                                  }
-                                                />
-                                              </div>
-                                            )
-                                          }
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                {upstreamSnapshot &&
+                                  renderUpstreamSnapshotReview(
+                                    upstreamSnapshot
+                                  )}
                               </>
                             )}
                           </div>
@@ -3058,12 +3149,33 @@ export function ChannelMutateDrawer({
                                   placeholder={t('Password')}
                                 />
                               </div>
-                              <div className='flex items-end'>
+                              <div className='flex flex-col justify-end gap-2'>
                                 <Button
                                   type='button'
                                   variant='outline'
-                                  className='w-full'
-                                  disabled={upstreamRefreshMutation.isPending}
+                                  className='flex-1'
+                                  disabled={upstreamPreviewMutation.isPending}
+                                  onClick={handlePreviewUpstreamRefresh}
+                                >
+                                  {upstreamPreviewMutation.isPending ? (
+                                    <Loader2
+                                      data-icon='inline-start'
+                                      className='animate-spin'
+                                    />
+                                  ) : (
+                                    <RefreshCw data-icon='inline-start' />
+                                  )}
+                                  {t('Preview Refresh')}
+                                </Button>
+                                <Button
+                                  type='button'
+                                  className='flex-1'
+                                  disabled={
+                                    !upstreamRefreshSnapshot ||
+                                    upstreamRefreshSnapshot.keys.length === 0 ||
+                                    upstreamPreviewMutation.isPending ||
+                                    upstreamRefreshMutation.isPending
+                                  }
                                   onClick={handleRefreshUpstreamAccount}
                                 >
                                   {upstreamRefreshMutation.isPending ? (
@@ -3072,29 +3184,35 @@ export function ChannelMutateDrawer({
                                       className='animate-spin'
                                     />
                                   ) : (
-                                    <RefreshCw data-icon='inline-start' />
+                                    <CheckCircle2 data-icon='inline-start' />
                                   )}
-                                  {t('Refresh Keys')}
+                                  {t('Apply Refresh')}
                                 </Button>
                               </div>
                             </div>
 
-                            <div className='flex items-center justify-between gap-3'>
-                              <div className='flex flex-col gap-1'>
-                                <span className='text-sm font-medium'>
-                                  {t('Apply suggested priority and weight')}
-                                </span>
-                                <span className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Missing upstream keys will be disabled after refresh.'
-                                  )}
-                                </span>
-                              </div>
-                              <Switch
-                                checked={upstreamApplySuggested}
-                                onCheckedChange={setUpstreamApplySuggested}
-                              />
-                            </div>
+                            <Alert>
+                              <AlertCircle aria-hidden='true' />
+                              <AlertDescription>
+                                {t(
+                                  'Preview the upstream account before applying refresh. Missing upstream keys will be disabled after refresh.'
+                                )}
+                              </AlertDescription>
+                            </Alert>
+
+                            {upstreamRefreshSnapshot?.warnings?.length ? (
+                              <Alert>
+                                <AlertCircle aria-hidden='true' />
+                                <AlertDescription>
+                                  {upstreamRefreshSnapshot.warnings.join('；')}
+                                </AlertDescription>
+                              </Alert>
+                            ) : null}
+
+                            {upstreamRefreshSnapshot &&
+                              renderUpstreamSnapshotReview(
+                                upstreamRefreshSnapshot
+                              )}
                           </div>
                         </div>
                       )}
