@@ -16128,3 +16128,75 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 已在验证结束前将文本域恢复为原值 `test_sensitive`；恢复后标题状态消失，页头保存按钮重新禁用，说明脏态回滚行为正确。
 10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实敏感词配置。
 11. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；页面在重启前后都保持控制台干净。
+
+## 本轮实施评审：Bot Protection 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/auth/bot-protection-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/auth/bot-protection` 仍停留在旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致身份验证分组内部的表单体验与已经收口完成的 `behavior / checkin / quota / currency / logs / worker / token-limits / sensitive-words` 明显分叉。
+3. Bot Protection 同时包含 Turnstile 开关、站点密钥和密钥字段，而 `/api/option/` 不会回填这些 secret 类字段；旧实现没有把这种“留空表示保留现有值”的既有语义和共享表单基线逻辑对齐。
+4. 旧实现直接按对象遍历顺序提交 `TurnstileCheckEnabled`、`TurnstileSiteKey`、`TurnstileSecretKey`，存在先打开开关、后提交站点密钥时触发后端校验失败的风险。
+
+### 需求分析
+
+1. `/system-settings/auth/bot-protection` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. `TurnstileCheckEnabled`、`TurnstileSiteKey`、`TurnstileSecretKey` 的保存合同必须保持不变，不调整后端 `/api/option/` 接口或 Turnstile 校验逻辑。
+4. 需要显式保留这页既有的 secret 语义：
+   - 后端不回填站点密钥和密钥；
+   - 前端输入框留空表示“保留现有值”，而不是“主动清空后端密钥”。
+5. `TurnstileCheckEnabled` 的保存顺序必须放在两个 key 字段之后，避免启用开关时后端因站点密钥尚未落库而立即拒绝保存。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Bot Protection 设置页 | `web/default/src/features/system-settings/auth/bot-protection-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截，并补齐 secret 字段的可见基线处理。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页的两个 key 字段不会通过 `/api/option/` 回填前端；如果直接复用普通 `isDirty` 语义，用户把临时输入删回空值后，页面仍可能被误判为未保存，或者把 secret 错误推进为可见基线。
+2. 启用 Turnstile 时后端会立即校验 `TurnstileSiteKey` 是否存在；如果保存顺序不正确，可能出现“先打开开关、后保存站点密钥”导致的真实配置失败。
+3. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前 Turnstile 配置。
+4. 本轮真实验证中，旧 tab 在强刷后曾保留浏览器层面的历史未保存状态；必须按用户约定在页面行为异常时先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，再带新的 `verify` 参数重新验证，不能依赖单个旧 tab 的残留状态判断结果。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改后端合同，并在页面内维护 secret 可见基线”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()` 与手动 `reset`，保留原有 Zod schema。
+2. 用 `SettingsForm` 替换旧 `<form>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 维持开关布局 `SettingsSwitchItem + SettingsSwitchContent`，保留站点密钥和密钥字段的输入结构与文案。
+5. 在页面内引入 `normalizeBotProtectionValues()` 与单独的“已保存可见基线”状态：
+   - 上游默认值变化时，继续用归一化后的后端返回值作为基线；
+   - 保存成功后，将 `TurnstileSiteKey` 与 `TurnstileSecretKey` 的可见基线重置为空字符串，只保留 `TurnstileCheckEnabled` 的真实保存值；
+   - 脏态、页头按钮和离页拦截统一基于“当前可见值 vs 可见基线”计算，避免直接读取 secret 的历史真实值。
+6. 显式固定保存顺序为 `TurnstileSiteKey -> TurnstileSecretKey -> TurnstileCheckEnabled`，避免后端在开关开启时先校验失败。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/auth/bot-protection-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页面已补上 `normalizeBotProtectionValues()`、保存顺序常量与独立的 secret 可见基线处理，避免将后端实际密钥回显到前端，同时保留“留空表示保留现有值”的既有语义。
+4. 保存合同仍然只写入 `TurnstileSiteKey`、`TurnstileSecretKey`、`TurnstileCheckEnabled` 三个 option key，没有改变后端接口、Turnstile 校验逻辑或权限模型。
+5. 这次补修后，标题状态、保存按钮和离页拦截都改为依赖页面级 `hasPendingChanges`，不再直接使用共享表单默认的 `isDirty`，从而把 secret 特殊语义限制在单页内，不影响其他已收口页面。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/auth/bot-protection-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 首次在 `http://192.168.0.202:3003/system-settings/auth/bot-protection?verify=20260717-bot-protection-baseline` 强刷验证时，旧 tab 曾显示历史未保存状态；按用户要求已先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，再带新的 `verify` 参数重新验证。
+6. 重启后通过 MCP 重新访问 `http://192.168.0.202:3003/system-settings/auth/bot-protection?verify=20260717-bot-protection-after-restart`，确认新壳层已生效，`保存更改` 位于标题右侧页头动作区，首屏为禁用态。
+7. 在 `http://192.168.0.202:3003/system-settings/auth/bot-protection?verify=20260717-bot-protection-keyboard` 中临时输入 `TurnstileSiteKey` 与 `TurnstileSecretKey` 后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区都已正常工作。
+8. 点击侧栏中的“通行密钥认证”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+9. 已在验证结束前使用真实用户式键盘交互将临时输入恢复为空值；恢复后标题状态消失，页头保存按钮重新禁用，说明这页针对 secret 留空语义的可见基线回滚行为正确。
+10. 在验证过程中，MCP 的批量 `fill_form` 清空动作曾出现标题状态未立即回落的现象；改用真实用户式键盘全选删除后页面状态恢复正常，因此本轮以真实用户交互结果作为验收依据。
+11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Turnstile 配置。
+12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
