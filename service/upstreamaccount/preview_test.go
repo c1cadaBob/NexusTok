@@ -56,6 +56,85 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	require.Equal(t, "sk-newapi-full-key", record.Snapshot.Keys[0].Key)
 }
 
+func TestNewAPIPreviewFallsBackToSingleKeyReveal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":0,"used_quota":0}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":false,"message":"hidden"}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"success":false,"message":"rate limited"}`))
+		case "/api/token/11/key":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"key":"sk-single-full-key"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Username: "alice",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-sin...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-single-full-key", record.Snapshot.Keys[0].Key)
+}
+
+func TestNewAPIPreviewFailsWhenFullKeyCannotBeRevealed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":0,"used_quota":0}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":false,"message":"hidden"}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys", "/api/token/11/key":
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"success":false,"message":"rate limited"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Username: "alice",
+		Password: "secret",
+	}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "读取 new-api 完整 Key 失败")
+}
+
 func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -116,4 +195,18 @@ func TestSub2APIKeyStatusAcceptsStringEnums(t *testing.T) {
 	var numeric sub2APIKey
 	require.NoError(t, common.Unmarshal([]byte(`{"status":1}`), &numeric))
 	require.Equal(t, common.ChannelStatusEnabled, numeric.Status.value)
+}
+
+func TestNewAPITokenKeysResponseAcceptsWrappedAndDirectMaps(t *testing.T) {
+	var wrapped newAPITokenKeysResponse
+	require.NoError(t, common.Unmarshal([]byte(`{"keys":{"50":"sk-wrapped-key"}}`), &wrapped))
+	require.Equal(t, "sk-wrapped-key", wrapped.Keys["50"])
+
+	var emptyWrapped newAPITokenKeysResponse
+	require.NoError(t, common.Unmarshal([]byte(`{"keys":{}}`), &emptyWrapped))
+	require.Empty(t, emptyWrapped.Keys)
+
+	var direct newAPITokenKeysResponse
+	require.NoError(t, common.Unmarshal([]byte(`{"51":"sk-direct-key"}`), &direct))
+	require.Equal(t, "sk-direct-key", direct.Keys["51"])
 }

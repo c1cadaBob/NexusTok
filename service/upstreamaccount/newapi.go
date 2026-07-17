@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/c1cada/NexusTok/common"
 )
 
 // NewAPIClient 负责从 new-api 平台读取账号快照。
@@ -60,6 +62,42 @@ type newAPIRatioConfig struct {
 	CacheRatio       map[string]float64 `json:"cache_ratio"`
 	CreateCacheRatio map[string]float64 `json:"create_cache_ratio"`
 	ModelPrice       map[string]float64 `json:"model_price"`
+}
+
+type newAPITokenKeysResponse struct {
+	Keys map[string]string `json:"keys"`
+}
+
+// UnmarshalJSON 兼容 new-api 不同版本的批量 Key 响应。
+//
+// 当前 new-api controller 返回 `data.keys`，早期或兼容实现可能直接返回
+// `data` 作为 `id -> key` 映射。同步链路只需要完整 Key 的短期后端快照，
+// 因此这里统一归一化到 Keys，避免真实平台有 Key 时因 envelope 差异取不到密钥。
+func (r *newAPITokenKeysResponse) UnmarshalJSON(data []byte) error {
+	type wrappedTokenKeys struct {
+		Keys map[string]string `json:"keys"`
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, hasWrappedKeys := raw["keys"]; hasWrappedKeys {
+		var wrapped wrappedTokenKeys
+		if err := common.Unmarshal(data, &wrapped); err != nil {
+			return err
+		}
+		if wrapped.Keys == nil {
+			wrapped.Keys = map[string]string{}
+		}
+		r.Keys = wrapped.Keys
+		return nil
+	}
+	var direct map[string]string
+	if err := common.Unmarshal(data, &direct); err != nil {
+		return err
+	}
+	r.Keys = direct
+	return nil
 }
 
 // FetchSnapshot 登录 new-api 并读取当前账号可见的密钥、分组、倍率和余额。
@@ -233,13 +271,19 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 	if len(tokens) == 0 {
 		return nil, nil
 	}
-	fullKeys := c.fetchTokenKeys(ctx, api, headers, tokens)
+	fullKeys, err := c.fetchTokenKeys(ctx, api, headers, tokens)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]SyncedKey, 0, len(tokens))
 	for _, token := range tokens {
 		externalID := stringValue(token.ID)
 		key := strings.TrimSpace(fullKeys[externalID])
 		if key == "" && !strings.Contains(token.Key, "*") {
 			key = strings.TrimSpace(token.Key)
+		}
+		if key == "" {
+			return nil, fmt.Errorf("new-api 密钥 %s 缺少完整 key，请稍后重试或检查目标平台完整 Key 读取权限", firstNonEmpty(token.Name, externalID))
 		}
 		groupRatio, hasGroupRatio := groupRates[token.Group]
 		synced := SyncedKey{
@@ -267,29 +311,87 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 	return result, nil
 }
 
-func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, headers http.Header, tokens []newAPIToken) map[string]string {
+func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, headers http.Header, tokens []newAPIToken) (map[string]string, error) {
 	ids := make([]any, 0, len(tokens))
 	for _, token := range tokens {
-		if token.ID != nil {
+		// new-api 有些兼容版本会在列表接口直接返回完整 Key；只有列表 Key 为空或
+		// 明确为脱敏值时才需要调用敏感 reveal 接口，避免目标平台限流影响不必要的同步。
+		if token.ID != nil && (strings.TrimSpace(token.Key) == "" || strings.Contains(token.Key, "*")) {
 			ids = append(ids, token.ID)
 		}
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
-	var envelope newAPIEnvelope[map[string]string]
+	normalized := map[string]string{}
+	var batchErr error
+	var envelope newAPIEnvelope[newAPITokenKeysResponse]
 	if err := api.postJSON(ctx, "/api/token/batch/keys", headers, map[string]any{"ids": ids}, &envelope); err != nil {
-		return nil
+		batchErr = err
+	} else {
+		data, err := unwrapNewAPI(envelope)
+		if err != nil {
+			batchErr = err
+		} else {
+			for id, key := range data.Keys {
+				normalized[strings.TrimSpace(id)] = key
+			}
+		}
 	}
-	keys, err := unwrapNewAPI(envelope)
+
+	var fallbackErr error
+	for _, token := range tokens {
+		externalID := stringValue(token.ID)
+		if externalID == "" || strings.TrimSpace(normalized[externalID]) != "" {
+			continue
+		}
+		key, err := c.fetchTokenKey(ctx, api, headers, externalID)
+		if err != nil {
+			fallbackErr = err
+			continue
+		}
+		normalized[externalID] = key
+	}
+	for _, token := range tokens {
+		externalID := stringValue(token.ID)
+		if externalID == "" || strings.TrimSpace(normalized[externalID]) != "" || !strings.Contains(token.Key, "*") {
+			continue
+		}
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", fallbackErr)
+		}
+		if batchErr != nil {
+			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", batchErr)
+		}
+		return nil, fmt.Errorf("读取 new-api 完整 Key 失败：token %s 未返回完整 key", externalID)
+	}
+	if len(normalized) == 0 {
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", fallbackErr)
+		}
+		if batchErr != nil {
+			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", batchErr)
+		}
+	}
+	return normalized, nil
+}
+
+func (c *NewAPIClient) fetchTokenKey(ctx context.Context, api *httpClient, headers http.Header, externalID string) (string, error) {
+	var envelope newAPIEnvelope[struct {
+		Key string `json:"key"`
+	}]
+	if err := api.postJSON(ctx, "/api/token/"+url.PathEscape(externalID)+"/key", headers, nil, &envelope); err != nil {
+		return "", err
+	}
+	data, err := unwrapNewAPI(envelope)
 	if err != nil {
-		return nil
+		return "", err
 	}
-	normalized := make(map[string]string, len(keys))
-	for id, key := range keys {
-		normalized[strings.TrimSpace(id)] = key
+	key := strings.TrimSpace(data.Key)
+	if key == "" {
+		return "", fmt.Errorf("new-api token %s 返回空 key", externalID)
 	}
-	return normalized
+	return key, nil
 }
 
 func buildNewAPIBalance(user newAPIUser, quotaPerUnit float64) *BalanceSnapshot {

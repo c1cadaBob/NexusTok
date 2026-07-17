@@ -353,6 +353,9 @@ type AccountSnapshot struct {
 - [x] 使用真实 sub2api 测试账号触发 preview；当前账号返回 0 个密钥，页面展示“未找到此账号的上游密钥。”并禁止基于空密钥快照继续创建。
 - [x] 使用真实 new-api 测试地址触发 preview，并在目标 new-api 登录页复核；当前测试账号被目标平台拒绝，preview 正确透传“账号/密码错误或用户被禁用”，因此尚无法完成 new-api 成功读取密钥的正向验证。
 - [x] 复核真实平台 preview 状态：sub2api 仍可登录但返回 0 个 key、余额为 0；new-api 仍返回账号或密码错误/用户被禁用，说明当前阻塞来自目标测试账号状态。
+- [x] 使用真实 new-api 注册临时账号并创建临时 token 后，通过 NexusTok 3003 `preview` 验证成功读取 1 个 key、2 个分组、余额/已用额度、模型限制和建议 priority/weight；预览响应只包含脱敏 key，不包含完整 `key` 字段。验证后已删除临时 new-api token。
+- [x] 在真实 new-api 端到端创建复测中发现批量完整 Key 读取受 `data.keys` 包裹格式和敏感接口限流影响，预览曾生成缺完整 Key 的不可创建快照；已修复为兼容 `data.keys`/直出映射，批量 reveal 失败时逐条 reveal 兜底，仍无法补齐完整 Key 时在 preview 阶段直接返回明确错误。
+- [x] 使用 MCP 从 3003 页面上下文调用临时 mock new-api 服务验证：批量 reveal 返回 429 时，NexusTok 自动走单个 token reveal 兜底，`preview` 返回脱敏 key，`create` 成功创建 1 条渠道账号；验证后已删除临时 NexusTok 渠道并停止 mock 服务。
 - [x] 用 relay 请求级测试验证渠道失败后按优先级/权重降级：`TestRelayRetriesToNextChannelAfterChannelFailure` 使用两个 OpenAI 兼容 httptest 上游，首个高优先级渠道返回 401 后，同一次请求排除失败渠道并降级到第二渠道成功返回。
 - [x] 用 MCP 浏览器上下文调用 NexusTok preview/create/account update/refresh/delete，并通过临时 sub2api mock 验证：刷新时 `apply_suggested=false` 会保留账号手动 priority、weight、status 和本地 settings，同时按同步元数据更新同一账号，不误创建重复账号。
 - [x] 补充前端刷新预览交互验证：编辑同步渠道时必须先 Preview Refresh 获得快照，页面展示与新建同步一致的倍率/余额/优先级/权重表格，Apply Refresh 只在非空快照后可用。
@@ -374,7 +377,7 @@ type AccountSnapshot struct {
 
 人工联调：
 
-- new-api 登录成功，能读取密钥、分组倍率、余额。（当前测试账号被目标平台拒绝，需可登录账号后补正向验证。）
+- new-api 登录成功，能读取密钥、分组倍率、余额；真实站点已完成 preview 正向验证，真实 create 闭环当前受目标平台敏感接口限流影响，已用 3003 + mock new-api 验证 reveal 兜底和 create 成功路径。
 - sub2api 登录成功，能读取密钥、分组倍率、余额。
 - 同步创建后，一个渠道下生成多条渠道账号，且每个账号可独立编辑。
 - 自动策略生成的优先级/权重可被手动覆盖。
@@ -382,7 +385,7 @@ type AccountSnapshot struct {
 
 ## 当前未决问题
 
-1. new-api 正向联调受当前测试账号状态阻塞；目标 new-api 登录页与 NexusTok preview 均返回账号/密码错误或用户被禁用，需要可登录账号后再验证密钥、分组倍率和余额的成功快照。
+1. 真实 new-api preview 正向链路已完成；真实 create 闭环在最终复测时触发目标平台登录/完整 Key 敏感接口 429 限流，需等待限流窗口恢复后再做一次真实 create 成功验证。当前代码已用 3003 + mock new-api 覆盖批量 reveal 429、单个 reveal 兜底和 create 成功路径。
 2. 是否允许保存平台账号密码用于后台定时刷新尚未确定。第一版默认不保存，刷新时重新输入。
 3. 预览接口已通过后端短期缓存保存完整 Key，前端只接收脱敏快照；确认创建时引用一次性 `preview_id`。
 4. 目标平台的“模型倍率”可能是系统级配置而非密钥级配置，需要确认密钥和分组的关联关系后再计算建议策略。
@@ -397,12 +400,12 @@ type AccountSnapshot struct {
 | --- | --- | --- |
 | R1 添加上游渠道时填写账号密码同步密钥、分组倍率 | 已实现 | 后端提供 `POST /api/channel/upstream-account/preview`、`POST /api/channel/upstream-account/create`、`POST /api/channel/:id/upstream-account/refresh`；前端创建渠道抽屉已显示“上游账号同步”、平台、账号、密码和“同步密钥”入口。 |
 | R2 根据密钥倍率自动设置优先级和权重，也支持手动设定 | 已实现 | 预览快照生成 `suggested_priority`、`suggested_weight`；前端支持自动建议和手动覆盖；刷新时 `apply_suggested=false` 且未显式提交覆盖字段会保留已有本地配置。 |
-| R3 账号密码同步时同步已使用余额和剩余余额 | 已实现，new-api 真实正向数据仍受测试账号限制 | new-api/sub2api 适配层会归一化 `balance` 和 `used_quota`；真实 sub2api 有 key 场景已验证余额和已用均按平台返回的 0 同步，new-api 测试账号仍被目标平台拒绝，尚缺 new-api 真实有 key 且有余额数据的正向样本。 |
+| R3 账号密码同步时同步已使用余额和剩余余额 | 已实现 | new-api/sub2api 适配层会归一化 `balance` 和 `used_quota`；真实 sub2api 有 key 场景已验证余额和已用均按平台返回的 0 同步；真实 new-api 临时账号 preview 已验证 `quota_per_unit=500000`、`balance_usd=0`、`used_usd=0` 和 key 级额度归一化。 |
 | R4 账号密码模式允许先不填模型和类型 | 已实现 | 创建时类型为空默认保存为 OpenAI 兼容渠道；模型为空时优先从同步 key 推断，无法推断时不写入空 `Ability`。 |
 | R5 自动获取的密钥放在同一渠道名称下，并允许每个密钥不同配置 | 已实现 | 创建流程使用一个 `Channel` 加多条 `ChannelAccount`，每条账号可配置模型、分组、优先级、权重、Base URL、覆盖参数、状态码映射和状态。 |
 | R6 请求渠道失效后按优先级和权重自动降级 | 已实现并测试 | Relay 失败后把渠道加入请求级排除集；缓存和 DB fallback 都过滤排除渠道和禁用渠道；`specific_channel_id` 不自动降级；已有 `TestRelayRetriesToNextChannelAfterChannelFailure` 覆盖同一次请求从失败渠道降级到下一渠道。 |
 | R7 Docker 热更新和 3003 页面验证 | 已执行 | 通过 MCP 访问 `http://192.168.0.202:3003/` 并登录后台，打开 `/channels`，创建抽屉中确认“上游账号同步”入口可见；页面控制台无 `error`、`warn`、`issue`，渠道列表相关接口均返回 200。页面已更新，未触发容器重启条件。 |
-| R8 接入 new-api 和 sub2api | sub2api 真实有 key 场景已验证，new-api 仍受账号状态限制 | sub2api 真实平台临时创建 1 个 key 后，NexusTok preview 成功读取脱敏 key、分组倍率、余额/已用和建议 priority/weight；验证后已删除临时 key。new-api 当前测试账号仍被目标平台拒绝。 |
+| R8 接入 new-api 和 sub2api | 两个平台 preview 正向链路已验证 | sub2api 真实平台临时创建 1 个 key 后，NexusTok preview 成功读取脱敏 key、分组倍率、余额/已用和建议 priority/weight；验证后已删除临时 key。new-api 使用临时注册账号完成真实 preview 正向验证；完整 Key reveal 的批量格式和限流问题已修复并用 3003 + mock create 验证。 |
 | R9 需求文档、影响范围、风险评估、方案评审 | 已完成 | 本文档持续记录需求拆解、影响范围、风险、方案和阶段验证；本次复核补充逐项验收结论。 |
 
 本次复核命令：
@@ -441,4 +444,36 @@ type AccountSnapshot struct {
 
 本次剩余真实平台缺口：
 
-- new-api 测试账号仍返回“账号或密码错误/用户被禁用”，因此 new-api 真实有 key 正向读取仍需可登录账号后补测。
+- 用户最初提供的 new-api 测试账号仍返回“账号或密码错误/用户被禁用”；本次已改用临时注册账号补齐真实 preview 正向验证。真实 create 成功闭环仍需等待目标平台 429 限流窗口恢复后再补一次。
+
+## 2026-07-17 真实 new-api 有 Key 场景复核
+
+本次通过真实 new-api 注册临时账号、创建临时 token，并从 NexusTok 3003 页面上下文调用 `POST /api/channel/upstream-account/preview` 复核 new-api 正向同步链路。验证过程中没有把临时密码或完整 Key 写入代码、文档或日志输出；验证结束后已删除临时 new-api token。普通注册用户没有管理员删除用户权限，因此仅清理本次创建的 token。
+
+真实 preview 结果：
+
+- `success=true`，返回 `preview_id`。
+- `keyCount=1`，`groupCount=2`，分组包含 `default` 与 `vip`。
+- 预览响应中的 key 只包含脱敏值，例如 `S4GjD1...SfIg`，没有完整 `key` JSON 字段。
+- 账号余额和已用额度按 `quota_per_unit=500000` 归一化，测试账号结果为 `balance_usd=0`、`used_usd=0`，来源为 `new-api:user/self`。
+- key 级模型限制包含 `gpt-4o` 和 `gpt-4o-mini`，key 级额度按 token `remain_quota` 归一化为 `quota_limit_usd=1`、`quota_remaining_usd=1`、`quota_used_usd=0`。
+- 同步 key 获得建议 `suggested_priority=1`、`suggested_weight=100`。
+
+真实 create 复测暴露并修复的问题：
+
+- 目标 new-api 的 `POST /api/token/batch/keys` 实际返回 `data.keys` 包裹映射；早期适配器只按 `data` 直出映射解析，导致完整 Key 未进入后端预览缓存。
+- 目标平台敏感 reveal 接口存在限流，真实复测后续命中 429；旧逻辑会静默忽略 reveal 错误，使 preview 成功但 create 报“缺少完整 key”。
+- 已修复为兼容 `data.keys` 和 `data` 直出映射；批量 reveal 失败或缺项时逐条调用 `/api/token/:id/key` 兜底；如果列表返回的是脱敏 Key 且最终仍无法补齐完整 Key，preview 阶段直接返回“读取 new-api 完整 Key 失败”，不会再生成不可创建的快照。
+- 若 new-api 兼容版本在 token 列表接口已直接返回完整 Key，则跳过敏感 reveal 接口，避免不必要触发限流。
+
+本次 MCP/接口验证：
+
+- 从 `http://192.168.0.202:3003/channels` 页面上下文调用 NexusTok preview，确认真实 new-api 有 Key 场景返回脱敏快照。
+- 在真实平台触发 429 后，使用临时 mock new-api 服务模拟“批量 reveal 429、单个 reveal 成功”，再从 3003 页面上下文调用 NexusTok `preview` 和 `create`。
+- mock 验证结果：`preview.success=true`、`keyCount=1`、前端响应无完整 `key` 字段；`create.success=true`、创建 1 条渠道账号；验证后已删除临时 NexusTok 渠道并停止 mock 服务。
+
+本次新增验证命令：
+
+- `go test ./service/upstreamaccount`
+- `go test ./service/upstreamaccount ./controller ./router`
+- `git diff --check -- service/upstreamaccount/newapi.go service/upstreamaccount/preview_test.go`
