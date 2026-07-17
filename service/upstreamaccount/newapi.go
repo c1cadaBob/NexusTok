@@ -26,12 +26,13 @@ type newAPIStatus struct {
 }
 
 type newAPIUser struct {
-	ID        any     `json:"id"`
-	Username  string  `json:"username"`
-	Email     string  `json:"email"`
-	Group     string  `json:"group"`
-	Quota     float64 `json:"quota"`
-	UsedQuota float64 `json:"used_quota"`
+	ID         any     `json:"id"`
+	Username   string  `json:"username"`
+	Email      string  `json:"email"`
+	Group      string  `json:"group"`
+	Quota      float64 `json:"quota"`
+	UsedQuota  float64 `json:"used_quota"`
+	Require2FA bool    `json:"require_2fa"`
 }
 
 type newAPIGroup struct {
@@ -188,6 +189,9 @@ func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Cr
 	user, err := unwrapNewAPI(envelope)
 	if err != nil {
 		return nil, nil, err
+	}
+	if user.Require2FA {
+		return nil, nil, fmt.Errorf("new-api 账号启用了 2FA，当前预览接口暂不支持交互式二次验证")
 	}
 	headers := http.Header{}
 	return &user, headers, nil

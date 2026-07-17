@@ -120,6 +120,7 @@ type sub2APIUsageStats struct {
 
 // FetchSnapshot 登录 sub2api 并读取当前账号可见的密钥、分组、倍率和余额。
 func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential) (*Snapshot, error) {
+	credential.BaseURL = normalizeSub2APIBaseURL(credential.BaseURL)
 	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
 	if err != nil {
 		return nil, err
@@ -180,6 +181,27 @@ func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential
 	}
 	ApplySuggestions(snapshot)
 	return snapshot, nil
+}
+
+func normalizeSub2APIBaseURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw
+	}
+	switch strings.TrimRight(u.EscapedPath(), "/") {
+	case "/login", "/dashboard", "/register", "/setup":
+		// 用户通常会复制 sub2api 的前端页面地址作为测试地址；后端接口实际固定在
+		// 同站点的 /api/v1 下。只剥离明确的前端路由，避免破坏带反向代理 API
+		// 前缀的部署地址。
+		u.Path = ""
+		u.RawPath = ""
+		u.RawQuery = ""
+		u.Fragment = ""
+		return strings.TrimRight(u.String(), "/")
+	default:
+		return raw
+	}
 }
 
 func (c *Sub2APIClient) login(ctx context.Context, api *httpClient, credential Credential) (*sub2APILoginResponse, error) {

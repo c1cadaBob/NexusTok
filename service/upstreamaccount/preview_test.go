@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -135,6 +136,31 @@ func TestNewAPIPreviewFailsWhenFullKeyCannotBeRevealed(t *testing.T) {
 	require.Contains(t, err.Error(), "读取 new-api 完整 Key 失败")
 }
 
+func TestNewAPIPreviewReturnsClearErrorWhenTwoFARequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"success":true,"message":"Please enter two-factor authentication code","data":{"require_2fa":true}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Username: "alice",
+		Password: "secret",
+	}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "new-api 账号启用了 2FA")
+}
+
 func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -181,6 +207,46 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
+}
+
+func TestSub2APIPreviewAcceptsLoginPageURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/login/") {
+			http.Error(w, "<html>login page</html>", http.StatusOK)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":1}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":1}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":0}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL + "/login",
+		Email:    "alice@example.com",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
 }
 
 func TestSub2APIKeyStatusAcceptsStringEnums(t *testing.T) {
