@@ -638,3 +638,38 @@ sub2api 指定账号复测：
 - `CompletePreview2FA` 先校验 `code` 非空再消费 challenge。空验证码会返回“验证码不能为空”并保留 challenge；平台返回验证码错误仍会消费 challenge。
 - 单元测试新增 `TestSub2APIPreviewCompletesTwoFAChallenge` 和 `TestCompletePreview2FARejectsEmptyCodeWithoutConsumingChallenge`，覆盖 sub2api challenge 正向流程和空验证码边界。
 - 真实 sub2api 指定账号当前未启用 2FA，因此本轮真实验证重点仍是普通 preview 正向链路；sub2api 2FA 的协议正确性来自本地 `/opt/project/sub2api-main` 源码和 `httptest` 模拟真实 envelope。
+
+## 2026-07-17 上游同步创建表单互斥与逐密钥保存修复
+
+### 缺陷确认
+
+用户复核前端创建流程时发现两个交互缺陷：
+
+1. 新建渠道抽屉中开启“上游账号同步”后，仍同时展示手动 API 地址、凭证模式和 API Key 输入，导致“账号同步”和“手动凭证”两种来源在同一表单里混杂。
+2. 同步密钥后无法按不同密钥设置并保存模型/分组。旧预览表格只允许改启用、优先级和权重；创建/刷新 payload 也继续优先使用上游快照原始 `models/group`，没有消费管理员在页面里的逐密钥配置。
+
+### 影响范围分析
+
+- 前端 `channel-mutate-drawer.tsx`：调整新建渠道抽屉的凭证区域渲染、同步预览表格和创建/刷新 payload。
+- 前端 `channel-form.ts`：同步模式下隐藏的手动类型专属字段不应继续触发表单校验。
+- 后端创建与刷新接口已支持 `accounts[].models` 和 `accounts[].group`，本轮无需新增 API 字段或数据库迁移。
+- 普通手动创建、编辑已有渠道和已有账号同步渠道刷新入口仍保留原有表单路径；本轮只改变“新建渠道 + 上游账号同步开启”时的可见手动凭证区。
+
+### 风险评估与方案评审
+
+- 风险一：隐藏手动凭证区后同步模式没有 Base URL 输入。处理：把 `base_url` 表单字段移动到“上游账号同步”面板内显示，仍复用原字段用于 preview/create。
+- 风险二：同步模式下 `models` 允许为空，但 schema 可能先拦截 Azure、Vertex、Coze 等手动类型专属字段。处理：当 `upstream_account_sync=true` 时跳过手动模式专属的 `base_url/other` 强制校验，最终创建仍由后端按快照推断或按逐密钥配置落库。
+- 风险三：只保存账号级模型/分组，渠道顶层能力为空会影响普通模型路由。处理：创建时从逐密钥配置汇总渠道顶层 `models/group`，再传入 `accounts[]` 作为每个密钥的独立覆盖；若仍为空，继续让后端按快照兜底。
+- 风险四：刷新已有同步渠道时清空本地覆盖。处理：本轮只让刷新 payload 优先带上预览表格里的逐密钥 `models/group`；后端已有刷新逻辑继续保留显式配置才覆盖的约束。
+
+### 当前状态与验证
+
+- 开启“上游账号同步”后，创建抽屉只展示“上游平台 / Base URL / 账号 / 密码 / 同步密钥”，不再同时展示手动“凭证模式”和“API Key”输入。
+- 同步预览表格新增逐密钥“模型”和“分组”输入，保留倍率展示、自动建议优先级/权重开关和手动优先级/权重输入。
+- 创建和刷新 payload 均优先读取逐密钥草稿配置：`accounts[].models`、`accounts[].group`、`accounts[].priority`、`accounts[].weight`、`accounts[].enabled`。
+- 已通过 `cd web/default && bun run typecheck`、`cd web/default && bun run build`、`git diff --check`。
+- 已用 MCP 打开 `http://192.168.0.202:3003/channels?verify=upstream-ui-mutual-exclusive-20260717` 真实验证页面更新，无需重启容器。
+- 已通过页面真实登录管理端，打开创建渠道抽屉并确认：同步模式开启前手动凭证字段可见，开启后手动凭证字段隐藏。
+- 已使用真实 sub2api 测试平台执行 preview，返回 1 个脱敏密钥和余额快照；页面展示逐密钥模型/分组输入。
+- 已在逐密钥模型输入中填写测试模型并保存创建，`POST /api/channel/upstream-account/create` 返回 `success=true`，请求体确认 `accounts[0].models` 和 `accounts[0].group` 来自逐密钥配置。验证后已删除临时测试渠道。
+- MCP 控制台未发现 `error`、`warn` 或 `issue`。

@@ -223,12 +223,14 @@ export const channelFormSchema = z
     upstream_account_sync: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
+    const isUpstreamAccountSync = data.upstream_account_sync === true
     if (!data.upstream_account_sync && !data.models.trim()) {
       addRequiredIssue(ctx, 'models', ERROR_MESSAGES.REQUIRED_MODELS)
     }
 
     if (
       [3, 8, 36, 45].includes(data.type) &&
+      !isUpstreamAccountSync &&
       !usesGlobalAccountPool(data) &&
       !data.base_url?.trim()
     ) {
@@ -267,6 +269,7 @@ export const channelFormSchema = z
 
     if (
       [3, 18, 21, 39, 41, 49].includes(data.type) &&
+      !isUpstreamAccountSync &&
       !usesGlobalAccountPool(data) &&
       !data.other?.trim()
     ) {
