@@ -46,6 +46,7 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, result.PreviewID)
 	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "11", result.Snapshot.Keys[0].SyncID)
 	require.Empty(t, result.Snapshot.Keys[0].Key)
 	require.Equal(t, "sk-new...-key", result.Snapshot.Keys[0].MaskedKey)
 	require.Equal(t, "vip", result.Snapshot.Keys[0].GroupName)

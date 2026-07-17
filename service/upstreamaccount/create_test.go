@@ -91,7 +91,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, "gpt-4o,gpt-4o-mini", channel.Models)
 	require.Equal(t, "vip,default", channel.Group)
 	require.Equal(t, float64(3.5), channel.Balance)
-	require.Equal(t, int64(1), channel.UsedQuota)
+	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
 
 	var accounts []model.ChannelAccount
 	require.NoError(t, db.Order("key ASC").Find(&accounts).Error)
@@ -99,6 +99,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, "sk-a", accounts[0].Key)
 	require.Equal(t, int64(2), accounts[0].Priority)
 	require.Equal(t, 100, accounts[0].Weight)
+	require.Equal(t, int64(common.QuotaPerUnit), accounts[0].UsedQuota)
 	require.Equal(t, "sk-b", accounts[1].Key)
 	require.Equal(t, int64(9), accounts[1].Priority)
 	require.Equal(t, 7, accounts[1].Weight)
@@ -117,6 +118,62 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 		},
 	})
 	require.ErrorContains(t, err, "预览快照不存在或已过期")
+}
+
+func TestCreateFromPreviewAppliesConfigBySyncIDWhenExternalIDMissing(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-sync-id"
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example",
+		Keys: []SyncedKey{
+			{
+				Name:              "No External ID",
+				Key:               "sk-no-external-id",
+				MaskedKey:         "sk-noe...l-id",
+				GroupName:         "default",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	ApplySyncIDs(snapshot)
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: false,
+		Channel: ChannelCreateConfig{
+			Name: "sync-id-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+		Accounts: []AccountCreateConfig{
+			{SyncID: snapshot.Keys[0].SyncID, Enabled: boolPtr(false), Priority: int64Ptr(9), Weight: intPtr(7)},
+		},
+	})
+
+	require.ErrorContains(t, err, "没有可创建的同步密钥")
+	require.Nil(t, result)
 }
 
 func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
@@ -185,5 +242,9 @@ func int64Ptr(value int64) *int64 {
 }
 
 func intPtr(value int) *int {
+	return &value
+}
+
+func boolPtr(value bool) *bool {
 	return &value
 }

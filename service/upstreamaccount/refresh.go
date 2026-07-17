@@ -62,6 +62,7 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	if snapshot == nil {
 		return nil, fmt.Errorf("上游账号快照为空")
 	}
+	ApplySyncIDs(snapshot)
 	result := &RefreshResult{ChannelID: channelID}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var channel model.Channel
@@ -108,14 +109,14 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			return err
 		}
 
-		configs := accountConfigByExternalID(req.Accounts)
+		configs := accountConfigBySyncID(req.Accounts)
 		byIdentity, byDigest := indexExistingAccounts(existing)
 		seenExistingIDs := map[int]struct{}{}
 		for _, key := range snapshot.Keys {
 			if strings.TrimSpace(key.Key) == "" {
 				return fmt.Errorf("上游密钥 %s 缺少完整 key，无法刷新", key.Name)
 			}
-			config := configs[key.ExternalID]
+			config := configs[accountConfigLookupID(key)]
 			enabled := true
 			if config.Enabled != nil {
 				enabled = *config.Enabled
@@ -180,16 +181,34 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	return result, nil
 }
 
-func accountConfigByExternalID(configs []AccountCreateConfig) map[string]AccountCreateConfig {
+func accountConfigBySyncID(configs []AccountCreateConfig) map[string]AccountCreateConfig {
 	result := map[string]AccountCreateConfig{}
 	for _, config := range configs {
-		externalID := strings.TrimSpace(config.ExternalID)
-		if externalID == "" {
-			continue
+		syncID := strings.TrimSpace(config.SyncID)
+		if syncID != "" {
+			result[syncID] = config
 		}
-		result[externalID] = config
+		externalID := strings.TrimSpace(config.ExternalID)
+		if externalID != "" {
+			if _, exists := result[externalID]; !exists {
+				result[externalID] = config
+			}
+		}
 	}
 	return result
+}
+
+func accountConfigLookupID(key SyncedKey) string {
+	if strings.TrimSpace(key.SyncID) != "" {
+		return strings.TrimSpace(key.SyncID)
+	}
+	if strings.TrimSpace(key.ExternalID) != "" {
+		return strings.TrimSpace(key.ExternalID)
+	}
+	if strings.TrimSpace(key.MaskedKey) != "" {
+		return strings.TrimSpace(key.MaskedKey)
+	}
+	return keyDigest(key.Key)
 }
 
 func indexExistingAccounts(accounts []model.ChannelAccount) (map[string]*model.ChannelAccount, map[string]*model.ChannelAccount) {
@@ -257,7 +276,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		Group:              group,
 		Priority:           priority,
 		Weight:             weight,
-		UsedQuota:          quotaToInt64(key.QuotaUsedUSD),
+		UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
 		BaseURL:            config.BaseURL,
 		OpenAIOrganization: config.OpenAIOrganization,
 		Other:              config.Other,

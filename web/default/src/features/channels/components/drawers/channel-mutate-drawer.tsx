@@ -238,7 +238,7 @@ type UpstreamAccountConfigDraft = {
 }
 
 function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
-  return key.external_id || key.masked_key || `${index}`
+  return key.sync_id || key.external_id || key.masked_key || `${index}`
 }
 
 function upstreamModelsToString(keys: UpstreamAccountKey[]) {
@@ -2280,6 +2280,7 @@ export function ChannelMutateDrawer({
           const config =
             upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
           return {
+            sync_id: key.sync_id,
             external_id: key.external_id,
             name: key.name || key.masked_key,
             enabled: config?.enabled ?? true,
@@ -2470,6 +2471,7 @@ export function ChannelMutateDrawer({
             const config =
               upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
             return {
+              sync_id: key.sync_id,
               external_id: key.external_id,
               name: key.name || key.masked_key,
               enabled: config?.enabled ?? true,

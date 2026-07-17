@@ -133,7 +133,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "gpt-4o,gpt-4o-mini", refreshed.Models)
 	require.Equal(t, "vip", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)
-	require.Equal(t, int64(2), refreshed.UsedQuota)
+	require.Equal(t, int64(common.QuotaPerUnit*2), refreshed.UsedQuota)
 
 	var accounts []model.ChannelAccount
 	require.NoError(t, db.Order("id ASC").Find(&accounts).Error)
@@ -142,6 +142,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "sk-old-rotated", accounts[0].Key)
 	require.Equal(t, int64(3), accounts[0].Priority)
 	require.Equal(t, 90, accounts[0].Weight)
+	require.Equal(t, int64(common.QuotaPerUnit), accounts[0].UsedQuota)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, accounts[1].Status)
 	require.Equal(t, "New Key", accounts[2].Name)
 	require.Equal(t, "sk-new", accounts[2].Key)
@@ -367,4 +368,69 @@ func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(
 	require.Equal(t, int64(33), refreshed.Priority)
 	require.Equal(t, 44, refreshed.Weight)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
+}
+
+func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "sync-id-refresh-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-4o",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	key := SyncedKey{
+		Name:              "No External ID",
+		Key:               "sk-no-external-id",
+		MaskedKey:         "sk-noe...l-id",
+		GroupName:         "default",
+		Models:            []string{"gpt-4o"},
+		SuggestedPriority: 1,
+		SuggestedWeight:   100,
+	}
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example",
+		Keys:     []SyncedKey{key},
+	}
+	ApplySyncIDs(snapshot)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, snapshot, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+		Accounts: []AccountCreateConfig{
+			{SyncID: snapshot.Keys[0].SyncID, Priority: int64Ptr(12), Weight: intPtr(34)},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+
+	var account model.ChannelAccount
+	require.NoError(t, db.First(&account).Error)
+	require.Equal(t, int64(12), account.Priority)
+	require.Equal(t, 34, account.Weight)
 }

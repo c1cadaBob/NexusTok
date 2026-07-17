@@ -43,6 +43,7 @@ type ChannelCreateConfig struct {
 
 // AccountCreateConfig 是单个同步密钥在 NexusTok 中的配置覆盖。
 type AccountCreateConfig struct {
+	SyncID             string  `json:"sync_id"`
 	ExternalID         string  `json:"external_id"`
 	Name               string  `json:"name"`
 	Enabled            *bool   `json:"enabled"`
@@ -112,6 +113,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	if strings.TrimSpace(req.Channel.Name) == "" {
 		return nil, nil, fmt.Errorf("渠道名称不能为空")
 	}
+	ApplySyncIDs(snapshot)
 	channelType := req.Channel.Type
 	if channelType <= 0 {
 		// new-api 和 sub2api 都暴露 OpenAI 兼容接口。账号同步创建允许管理员先不选择类型，
@@ -188,19 +190,13 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 }
 
 func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, defaultGroup string) ([]model.ChannelAccount, error) {
-	configs := map[string]AccountCreateConfig{}
-	for _, config := range req.Accounts {
-		if strings.TrimSpace(config.ExternalID) == "" {
-			continue
-		}
-		configs[config.ExternalID] = config
-	}
+	configs := accountConfigBySyncID(req.Accounts)
 	accounts := make([]model.ChannelAccount, 0, len(snapshot.Keys))
 	for _, key := range snapshot.Keys {
 		if strings.TrimSpace(key.Key) == "" {
 			return nil, fmt.Errorf("预览快照中的密钥 %s 缺少完整 key，请重新同步", key.Name)
 		}
-		config := configs[key.ExternalID]
+		config := configs[accountConfigLookupID(key)]
 		if config.Enabled != nil && !*config.Enabled {
 			continue
 		}
@@ -248,7 +244,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			Group:              group,
 			Priority:           priority,
 			Weight:             weight,
-			UsedQuota:          quotaToInt64(key.QuotaUsedUSD),
+			UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
 			BaseURL:            config.BaseURL,
 			OpenAIOrganization: config.OpenAIOrganization,
 			Other:              config.Other,
@@ -312,14 +308,14 @@ func balanceValue(balance *BalanceSnapshot) float64 {
 
 func usedQuotaValue(balance *BalanceSnapshot) int64 {
 	if balance != nil && balance.UsedUSD != nil {
-		return int64(*balance.UsedUSD)
+		return int64(common.QuotaRound(*balance.UsedUSD * common.QuotaPerUnit))
 	}
 	return 0
 }
 
-func quotaToInt64(value *float64) int64 {
+func usdToQuotaInt64(value *float64) int64 {
 	if value == nil {
 		return 0
 	}
-	return int64(*value)
+	return int64(common.QuotaRound(*value * common.QuotaPerUnit))
 }

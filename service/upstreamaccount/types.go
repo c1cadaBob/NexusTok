@@ -81,6 +81,7 @@ type SyncedGroup struct {
 
 // SyncedKey 表示目标平台中的一个 API Key。
 type SyncedKey struct {
+	SyncID            string             `json:"sync_id,omitempty"`
 	ExternalID        string             `json:"external_id,omitempty"`
 	Name              string             `json:"name,omitempty"`
 	Key               string             `json:"-"`
@@ -158,6 +159,7 @@ func ApplySuggestions(snapshot *Snapshot) {
 	if snapshot == nil || len(snapshot.Keys) == 0 {
 		return
 	}
+	ApplySyncIDs(snapshot)
 	ratios := make([]float64, 0, len(snapshot.Keys))
 	for i := range snapshot.Keys {
 		ratio := effectiveKeyRatio(snapshot.Keys[i])
@@ -192,6 +194,40 @@ func ApplySuggestions(snapshot *Snapshot) {
 			weight = 100
 		}
 		snapshot.Keys[i].SuggestedWeight = weight
+	}
+}
+
+// ApplySyncIDs 为每个同步密钥生成前后端一致的配置标识。
+//
+// 真实平台并不总是提供稳定 external_id。前端需要用该标识回传逐密钥启用、
+// 优先级和权重配置；后端刷新也需要在 external_id 缺失时按同一标识匹配配置。
+// 该值只用于一次预览/刷新请求内的配置关联，不写入明文 key。
+func ApplySyncIDs(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	seen := map[string]int{}
+	for i := range snapshot.Keys {
+		id := strings.TrimSpace(snapshot.Keys[i].ExternalID)
+		if id == "" {
+			id = strings.TrimSpace(snapshot.Keys[i].MaskedKey)
+		}
+		if id == "" {
+			masked := maskKey(snapshot.Keys[i].Key)
+			if masked != "" {
+				snapshot.Keys[i].MaskedKey = masked
+				id = masked
+			}
+		}
+		if id == "" {
+			id = fmt.Sprintf("index:%d", i)
+		}
+		baseID := id
+		if count := seen[baseID]; count > 0 {
+			id = fmt.Sprintf("%s#%d", baseID, count+1)
+		}
+		seen[baseID]++
+		snapshot.Keys[i].SyncID = id
 	}
 }
 

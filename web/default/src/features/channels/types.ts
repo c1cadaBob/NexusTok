@@ -243,6 +243,7 @@ export interface UpstreamAccountGroup {
 }
 
 export interface UpstreamAccountKey {
+  sync_id?: string
   external_id?: string
   name?: string
   masked_key?: string
@@ -288,6 +289,7 @@ export interface UpstreamAccountPreviewResponse {
 }
 
 export interface UpstreamAccountCreateAccountConfig {
+  sync_id?: string
   external_id?: string
   name?: string
   enabled?: boolean

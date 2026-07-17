@@ -523,3 +523,39 @@ sub2api 指定账号复测：
 - 调用 NexusTok 3003 的 new-api preview 确认错误提示为 2FA 不支持，而不是用户 ID 缺失。
 - 调用 NexusTok 3003 的 sub2api preview/create/delete 确认指定账号完成闭环。
 - MCP 控制台未发现 `error`、`warn` 或 `issue` 消息。
+
+## 2026-07-17 深度缺陷审计
+
+本轮从真实平台返回形态、前后端协议、渠道调度、计量单位和刷新幂等性重新审计账号同步功能。审计重点不是新增平台能力，而是避免管理员在真实账号同步后出现配置未生效、展示用量错误或刷新后误创建账号。
+
+### 已确认并修复
+
+1. 无 `external_id` 的 Key 无法应用逐密钥配置。
+   - 现象：后端 `AccountCreateConfig` 只按 `external_id` 建立配置映射；前端在 `external_id` 缺失时使用 `masked_key` 或 index 作为 UI 配置 ID，但提交 payload 中没有稳定 ID。真实平台如果不返回 `external_id`，管理员在预览表里手动关闭某个 Key 或修改优先级/权重，后端会忽略这些配置。
+   - 风险：禁用状态、手动优先级和手动权重不会生效，可能导致管理员以为低价 Key 优先但实际仍按默认建议或启用全部 Key。
+   - 修复：`SyncedKey` 新增 `sync_id`，后端在预览前按 `external_id -> masked_key -> masked full key -> index` 生成不含完整 Key 的稳定配置 ID；创建和刷新均优先按 `sync_id` 匹配配置，同时兼容旧前端只传 `external_id` 的请求。前端类型和 create/refresh payload 同步回传 `sync_id`。
+   - 验证：新增 `TestCreateFromPreviewAppliesConfigBySyncIDWhenExternalIDMissing`、`TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing`、预览响应 `sync_id` 脱敏测试。
+
+2. 账号同步已用额度单位错误。
+   - 现象：目标平台快照字段命名为 `used_usd`，但同步写入 `Channel.UsedQuota` 和 `ChannelAccount.UsedQuota` 时直接 `int64(used_usd)`；项目本地 `used_quota` 是 quota 单位，前端也通过 `formatQuotaWithCurrency` 展示该字段。
+   - 风险：例如上游已用 `$2` 会被写成 `2` quota，而不是 `2 * common.QuotaPerUnit`，渠道列表和账号池最少使用策略都会基于错误数量级工作。
+   - 修复：新增统一转换入口，按 `used_usd * common.QuotaPerUnit` 使用 `common.QuotaRound` 转为本地 quota。保留 `balance` 字段继续使用 USD，因为 `Channel.Balance` 的模型注释和前端展示均以 USD 为单位。
+   - 验证：更新创建和刷新测试的 `UsedQuota` 断言，覆盖渠道级与账号级用量转换。
+
+### 仍需后续增强
+
+1. new-api 2FA 交互式同步。
+   - 当前指定 new-api 账号启用了 2FA，后端已能给出明确错误，但还没有 TOTP 输入、pending session 或二阶段验证接口。
+   - 影响：启用 2FA 的 new-api 管理账号无法通过账号密码自动同步密钥；需要管理员关闭 2FA、使用无 2FA 测试账号，或后续扩展交互式 2FA。
+
+2. 刷新时同源判定的 Base URL 归一化还可以进一步平台化。
+   - 当前 `sameSyncSource` 只做 trim slash；sub2api 已在抓取快照前剥离 `/login` 等页面路径，因此新元数据一致，但历史元数据如果保存了页面路径，禁用缺失 Key 时可能无法识别为同源。
+   - 建议：后续把 `syncIdentityKey` 和 `sameSyncSource` 改为调用平台级 Base URL 归一化，迁移或兼容历史 `/login` 元数据。
+
+3. 账号同步创建后渠道级 `models` 为空时仍不会生成 `Ability`。
+   - 这是按需求“可先不填模型和类型”的有意设计，避免空模型污染调度；但如果上游平台也不返回模型，创建后的渠道不会被普通模型路由命中。
+   - 建议：前端在 `keyCount>0` 但模型为空时增加非阻塞提示，提示管理员后续补模型或使用支持全部模型的显式策略。
+
+4. 预览缓存过期和多标签页并发创建的交互提示仍偏后端化。
+   - 后端已通过一次性消费 `preview_id` 避免完整 Key 被重复使用；但前端没有倒计时，也没有在 create 后清晰区分“已过期”和“已被其他标签页消费”。
+   - 建议：前端展示 `expires_at` 倒计时，并在 `preview_id` 消费失败时引导重新同步。
