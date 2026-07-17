@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,7 +76,7 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 		case "/api/v1/usage/dashboard/stats":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75,"total_cost":5}}`))
 		case "/api/v1/keys":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":1,"group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -101,4 +102,18 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
+}
+
+func TestSub2APIKeyStatusAcceptsStringEnums(t *testing.T) {
+	var active sub2APIKey
+	require.NoError(t, common.Unmarshal([]byte(`{"status":"active"}`), &active))
+	require.Equal(t, common.ChannelStatusEnabled, active.Status.value)
+
+	var inactive sub2APIKey
+	require.NoError(t, common.Unmarshal([]byte(`{"status":"quota_exhausted"}`), &inactive))
+	require.Equal(t, common.ChannelStatusManuallyDisabled, inactive.Status.value)
+
+	var numeric sub2APIKey
+	require.NoError(t, common.Unmarshal([]byte(`{"status":1}`), &numeric))
+	require.Equal(t, common.ChannelStatusEnabled, numeric.Status.value)
 }

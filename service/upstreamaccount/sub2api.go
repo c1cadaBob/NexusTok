@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/c1cada/NexusTok/common"
 )
 
 // Sub2APIClient 负责从 sub2api 平台读取账号快照。
@@ -50,15 +52,64 @@ type sub2APIKeyList struct {
 }
 
 type sub2APIKey struct {
-	ID        any          `json:"id"`
-	Name      string       `json:"name"`
-	Key       string       `json:"key"`
-	Status    int          `json:"status"`
-	GroupID   any          `json:"group_id"`
-	Group     sub2APIGroup `json:"group"`
-	Models    []string     `json:"models"`
-	Quota     float64      `json:"quota"`
-	QuotaUsed float64      `json:"quota_used"`
+	ID        any              `json:"id"`
+	Name      string           `json:"name"`
+	Key       string           `json:"key"`
+	Status    sub2APIKeyStatus `json:"status"`
+	GroupID   any              `json:"group_id"`
+	Group     sub2APIGroup     `json:"group"`
+	Models    []string         `json:"models"`
+	Quota     float64          `json:"quota"`
+	QuotaUsed float64          `json:"quota_used"`
+}
+
+// sub2APIKeyStatus 兼容 sub2api 不同版本的 API Key 状态字段。
+//
+// 早期 mock 与部分部署可能返回数字状态；当前真实 sub2api 返回 `active`、
+// `inactive`、`quota_exhausted`、`expired` 等字符串枚举。这里在解析阶段统一
+// 映射为 NexusTok 渠道账号状态，避免真实平台新增 key 后预览失败。
+type sub2APIKeyStatus struct {
+	value int
+}
+
+// UnmarshalJSON 支持数字、数字字符串和字符串枚举三类状态格式。
+func (s *sub2APIKeyStatus) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		s.value = common.ChannelStatusEnabled
+		return nil
+	}
+	var number int
+	if err := common.Unmarshal(data, &number); err == nil {
+		s.value = normalizeSub2APIKeyNumericStatus(number)
+		return nil
+	}
+	var text string
+	if err := common.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	s.value = normalizeSub2APIKeyTextStatus(text)
+	return nil
+}
+
+func normalizeSub2APIKeyNumericStatus(status int) int {
+	if status <= 0 {
+		return common.ChannelStatusEnabled
+	}
+	return status
+}
+
+func normalizeSub2APIKeyTextStatus(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "active", "enabled", "enable", "ok", "normal", "1":
+		return common.ChannelStatusEnabled
+	case "inactive", "disabled", "disable", "quota_exhausted", "expired", "deleted", "revoked", "2":
+		return common.ChannelStatusManuallyDisabled
+	case "auto_disabled", "auto-disabled", "error", "errored", "3":
+		return common.ChannelStatusAutoDisabled
+	default:
+		return common.ChannelStatusManuallyDisabled
+	}
 }
 
 type sub2APIUsageStats struct {
@@ -279,7 +330,7 @@ func (c *Sub2APIClient) fetchKeys(ctx context.Context, api *httpClient, headers 
 			Name:              key.Name,
 			Key:               key.Key,
 			MaskedKey:         maskKey(key.Key),
-			Status:            key.Status,
+			Status:            key.Status.value,
 			GroupID:           groupID,
 			GroupName:         groupName,
 			Models:            key.Models,

@@ -397,12 +397,12 @@ type AccountSnapshot struct {
 | --- | --- | --- |
 | R1 添加上游渠道时填写账号密码同步密钥、分组倍率 | 已实现 | 后端提供 `POST /api/channel/upstream-account/preview`、`POST /api/channel/upstream-account/create`、`POST /api/channel/:id/upstream-account/refresh`；前端创建渠道抽屉已显示“上游账号同步”、平台、账号、密码和“同步密钥”入口。 |
 | R2 根据密钥倍率自动设置优先级和权重，也支持手动设定 | 已实现 | 预览快照生成 `suggested_priority`、`suggested_weight`；前端支持自动建议和手动覆盖；刷新时 `apply_suggested=false` 且未显式提交覆盖字段会保留已有本地配置。 |
-| R3 账号密码同步时同步已使用余额和剩余余额 | 已实现，真实正向数据仍受测试账号限制 | new-api/sub2api 适配层会归一化 `balance` 和 `used_quota`；当前真实 sub2api 账号返回余额 0 且无 key，new-api 测试账号仍被目标平台拒绝，尚缺真实平台有 key 且有余额数据的正向样本。 |
+| R3 账号密码同步时同步已使用余额和剩余余额 | 已实现，new-api 真实正向数据仍受测试账号限制 | new-api/sub2api 适配层会归一化 `balance` 和 `used_quota`；真实 sub2api 有 key 场景已验证余额和已用均按平台返回的 0 同步，new-api 测试账号仍被目标平台拒绝，尚缺 new-api 真实有 key 且有余额数据的正向样本。 |
 | R4 账号密码模式允许先不填模型和类型 | 已实现 | 创建时类型为空默认保存为 OpenAI 兼容渠道；模型为空时优先从同步 key 推断，无法推断时不写入空 `Ability`。 |
 | R5 自动获取的密钥放在同一渠道名称下，并允许每个密钥不同配置 | 已实现 | 创建流程使用一个 `Channel` 加多条 `ChannelAccount`，每条账号可配置模型、分组、优先级、权重、Base URL、覆盖参数、状态码映射和状态。 |
 | R6 请求渠道失效后按优先级和权重自动降级 | 已实现并测试 | Relay 失败后把渠道加入请求级排除集；缓存和 DB fallback 都过滤排除渠道和禁用渠道；`specific_channel_id` 不自动降级；已有 `TestRelayRetriesToNextChannelAfterChannelFailure` 覆盖同一次请求从失败渠道降级到下一渠道。 |
 | R7 Docker 热更新和 3003 页面验证 | 已执行 | 通过 MCP 访问 `http://192.168.0.202:3003/` 并登录后台，打开 `/channels`，创建抽屉中确认“上游账号同步”入口可见；页面控制台无 `error`、`warn`、`issue`，渠道列表相关接口均返回 200。页面已更新，未触发容器重启条件。 |
-| R8 接入 new-api 和 sub2api | 代码已接入，真实正向验证部分受账号状态限制 | sub2api 可登录但当前账号返回 0 个 key；new-api 当前测试账号被目标平台拒绝。临时 mock 已覆盖有 key 场景的 preview/create/refresh/delete。 |
+| R8 接入 new-api 和 sub2api | sub2api 真实有 key 场景已验证，new-api 仍受账号状态限制 | sub2api 真实平台临时创建 1 个 key 后，NexusTok preview 成功读取脱敏 key、分组倍率、余额/已用和建议 priority/weight；验证后已删除临时 key。new-api 当前测试账号仍被目标平台拒绝。 |
 | R9 需求文档、影响范围、风险评估、方案评审 | 已完成 | 本文档持续记录需求拆解、影响范围、风险、方案和阶段验证；本次复核补充逐项验收结论。 |
 
 本次复核命令：
@@ -419,3 +419,26 @@ type AccountSnapshot struct {
 - 打开创建渠道抽屉，切换“上游账号同步”，确认平台、账号、密码和“同步密钥”控件出现。
 - 检查控制台没有 `error`、`warn`、`issue`。
 - 检查关键网络请求：`/api/status`、`/api/setup`、`/api/user/login`、`/api/user/self`、`/api/channel/`、`/api/channel/models`、`/api/group/` 均正常返回。
+
+## 2026-07-17 真实 sub2api 有 Key 场景复核
+
+本次继续补齐真实平台证据，在真实 sub2api 测试平台上临时创建 1 个 API Key 后，用 NexusTok 3003 环境调用 `POST /api/channel/upstream-account/preview` 复测。复测发现真实 sub2api 的 key `status` 字段返回字符串枚举（例如 `active`），而早期 mock 使用数字状态；旧适配器按 `int` 解码会导致预览失败。已修复为兼容数字、数字字符串和字符串枚举，并补充单元测试。
+
+修复后真实 sub2api preview 结果：
+
+- `success=true`，返回 `preview_id`。
+- `keyCount=1`，`groupCount=1`。
+- 预览响应中的 key 只包含脱敏值，例如 `sk-095...369d`，没有完整 `key` JSON 字段。
+- 余额和已用额度按真实平台返回同步为 `balance_usd=0`、`used_usd=0`，来源为 `sub2api:user/profile`。
+- 分组倍率快照包含 `group_rates`，同步 key 获得建议 `suggested_priority=1`、`suggested_weight=100`。
+- 验证完成后已删除临时 key；再次 preview 确认真实 sub2api 账号恢复为 `keyCount=0`，无测试数据残留。
+
+本次新增验证命令：
+
+- `go test ./service/upstreamaccount ./controller ./router`
+- `go test ./model ./service ./controller ./middleware ./router`
+- `git diff --check -- service/upstreamaccount/sub2api.go service/upstreamaccount/preview_test.go`
+
+本次剩余真实平台缺口：
+
+- new-api 测试账号仍返回“账号或密码错误/用户被禁用”，因此 new-api 真实有 key 正向读取仍需可登录账号后补测。
