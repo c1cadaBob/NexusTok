@@ -60,7 +60,7 @@ export function SensitiveWordsSection({
 }: SensitiveWordsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const { form, handleSubmit, isDirty, isSubmitting } =
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
     useSettingsForm<SensitiveFormValues>({
       resolver: zodResolver(sensitiveSchema) as Resolver<
         SensitiveFormValues,
@@ -87,8 +87,10 @@ export function SensitiveWordsSection({
         <SettingsForm onSubmit={handleSubmit}>
           <SettingsPageFormActions
             onSave={handleSubmit}
+            onReset={handleReset}
             isSaving={updateOption.isPending || isSubmitting}
             isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
             saveDisabledReason={
               updateOption.canUpdate ? undefined : updateOption.disabledReason
             }
