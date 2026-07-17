@@ -351,7 +351,9 @@ type AccountSnapshot struct {
 - [x] 调用 preview/create/refresh 接口验证请求体、响应体、错误提示和权限。
 - [x] 使用真实 sub2api 测试账号触发 preview；当前账号返回 0 个密钥，页面展示“未找到此账号的上游密钥。”并禁止基于空密钥快照继续创建。
 - [x] 使用真实 new-api 测试地址触发 preview，并在目标 new-api 登录页复核；当前测试账号被目标平台拒绝，preview 正确透传“账号/密码错误或用户被禁用”，因此尚无法完成 new-api 成功读取密钥的正向验证。
+- [x] 复核真实平台 preview 状态：sub2api 仍可登录但返回 0 个 key、余额为 0；new-api 仍返回账号或密码错误/用户被禁用，说明当前阻塞来自目标测试账号状态。
 - [x] 用 relay 请求级测试验证渠道失败后按优先级/权重降级：`TestRelayRetriesToNextChannelAfterChannelFailure` 使用两个 OpenAI 兼容 httptest 上游，首个高优先级渠道返回 401 后，同一次请求排除失败渠道并降级到第二渠道成功返回。
+- [x] 用 MCP 浏览器上下文调用 NexusTok preview/create/account update/refresh/delete，并通过临时 sub2api mock 验证：刷新时 `apply_suggested=false` 会保留账号手动 priority、weight、status 和本地 settings，同时按同步元数据更新同一账号，不误创建重复账号。
 - [ ] 页面未更新时重启容器后重新验证。
 
 ## 验证清单
