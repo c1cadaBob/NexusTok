@@ -16838,6 +16838,64 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 本轮验证没有点击“测试连接”，未触发 `/api/deployments/settings/test-connection` 或外部 io.net 连接测试。
 10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
 
+## 本轮实施评审：Token 数限制页重置动作补齐
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/request-limits/token-limit-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/security/token-limits` 已经完成了前一轮共享表单收口，但页头动作区仍只暴露“保存 Token 限制”，没有把 `useSettingsForm()` 提供的重置能力接入页面。
+
+这个缺口已经不是旧式表单迁移问题，而是已迁移页面的尾部一致性问题：管理员临时修改“每用户最大 Token 数”后，仍需要手工把数值改回保存值，无法像 Worker、SMTP、io.net、Grok、Dashboard、Drawing 等页面一样直接点击页头“重置”恢复。
+
+### 需求分析
+
+1. `/system-settings/security/token-limits` 需要补齐页头“重置”动作，让管理员在临时修改 `token_setting.max_user_tokens` 后可以直接回滚到保存基线。
+2. 本轮只补齐缺失动作，不重新迁移页面，也不从 `new-api-main` 回退到旧式 `useForm()` 实现。
+3. 必须保持现有 `useSettingsForm()`、`FormDirtyIndicator`、`FormNavigationGuard`、`safeNumberFieldProps()`、权限禁用理由和 `token_setting.max_user_tokens` 保存合同不变。
+4. 验证阶段不能点击“保存 Token 限制”，避免污染当前安全配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Token 数限制设置页 | `web/default/src/features/system-settings/request-limits/token-limit-section.tsx` | 在已有共享表单结构中暴露页头重置动作，并按脏态禁用/启用；不改变保存字段、数字输入接线或权限语义。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `token_setting.max_user_tokens` 会影响用户可创建 API Token 的数量；验证阶段如果误保存临时值，可能改变当前运行环境的安全限制。
+2. 该页只有一个数字字段，但表单字段名是嵌套路径 `token_setting.max_user_tokens`；本轮不能改 `onSubmit` 或 normalized key 映射，避免写错 option key。
+3. 数字输入已经复用 `safeNumberFieldProps()`；本轮不能恢复到手写 `Number.parseInt()`，也不能改变最小值、步进值和 Zod 校验。
+4. 重置动作必须只回滚当前草稿，不能触发 `PUT /api/option/`。
+
+### 方案评审
+
+采用“最小动作补齐”的方案：
+
+1. 继续复用当前项目已有 `useSettingsForm()`，从 hook 返回值中解构 `handleReset`。
+2. 给 `SettingsPageFormActions` 增加 `onReset={handleReset}`，让页头动作区展示统一“重置”按钮。
+3. 给 `SettingsPageFormActions` 增加 `isResetDisabled={!isDirty}`，无脏态时禁用重置，避免无意义操作。
+4. 不改 `onSubmit`、`buildFormDefaults()`、`normalizeFormValues()`、Zod schema、`safeNumberFieldProps()` 或任意后端 option key。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/request-limits/token-limit-section.tsx` 已在现有共享表单结构中接入 `handleReset`。
+2. `/system-settings/security/token-limits` 页头动作区现在同时提供“重置”和“保存 Token 限制”；无脏态时二者禁用，有脏态时按现有权限和提交状态启用。
+3. 保存合同仍然只写入 `token_setting.max_user_tokens`，没有改变后端接口、数据库逻辑、权限模型或安全限制语义。
+4. 数字输入仍复用 `safeNumberFieldProps()`，没有引入新的数值转换路径。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/request-limits/token-limit-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已使用 MCP 访问 `http://192.168.0.202:3003/system-settings/security/token-limits?verify=20260717-token-reset-action`，确认热更新生效，页头显示“重置”和“保存 Token 限制”，首屏二者均为禁用态。
+5. 将“每用户最大 Token 数”从 `1000` 临时改为 `1001` 后，标题区域出现“未保存的更改”，页头“重置”和“保存 Token 限制”从禁用变为可用。
+6. 在脏态下点击侧栏“敏感词”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Token 数限制页，说明统一离开拦截正常。
+7. 点击页头“重置”后，“每用户最大 Token 数”恢复为 `1000`，标题状态消失，页头“重置”和“保存 Token 限制”重新禁用，说明共享表单回滚行为正确。
+8. 本轮验证没有点击“保存 Token 限制”，未执行真实 `PUT /api/option/`，没有污染当前安全配置。
+9. MCP 网络请求只出现 `GET /api/status`、`GET /api/user/self`、`GET /api/notice` 和 `GET /api/option/`。
+10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
 ## 本轮实施评审：SMTP 邮件设置页头动作区原生化
 
 ### 差异来源

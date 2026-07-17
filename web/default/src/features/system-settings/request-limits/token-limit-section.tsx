@@ -71,7 +71,7 @@ const normalizeFormValues = (
 export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const { form, handleSubmit, isDirty, isSubmitting } =
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
     useSettingsForm<TokenLimitFormValues>({
       resolver: zodResolver(tokenLimitSchema) as Resolver<
         TokenLimitFormValues,
@@ -102,8 +102,10 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
         <SettingsForm onSubmit={handleSubmit}>
           <SettingsPageFormActions
             onSave={handleSubmit}
+            onReset={handleReset}
             isSaving={updateOption.isPending || isSubmitting}
             isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
             saveDisabledReason={
               updateOption.canUpdate ? undefined : updateOption.disabledReason
             }
