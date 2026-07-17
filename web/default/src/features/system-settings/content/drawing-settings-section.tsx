@@ -16,23 +16,29 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
   FormDescription,
   FormField,
-  FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const drawingSchema = z.object({
@@ -50,29 +56,38 @@ type DrawingSettingsSectionProps = {
   defaultValues: DrawingFormValues
 }
 
+const drawingUpdateOrder: Array<keyof DrawingFormValues> = [
+  'DrawingEnabled',
+  'MjNotifyEnabled',
+  'MjAccountFilterEnabled',
+  'MjForwardUrlEnabled',
+  'MjModeClearEnabled',
+  'MjActionCheckSuccessEnabled',
+]
+
 export function DrawingSettingsSection({
   defaultValues,
 }: DrawingSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const form = useForm<DrawingFormValues>({
-    resolver: zodResolver(drawingSchema),
-    defaultValues,
-  })
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
+    useSettingsForm<DrawingFormValues>({
+      resolver: zodResolver(drawingSchema) as Resolver<
+        DrawingFormValues,
+        unknown,
+        DrawingFormValues
+      >,
+      defaultValues,
+      onSubmit: async (values, changedFields) => {
+        for (const key of drawingUpdateOrder) {
+          if (!(key in changedFields)) {
+            continue
+          }
 
-  useEffect(() => {
-    form.reset(defaultValues)
-  }, [defaultValues, form])
-
-  const onSubmit = async (values: DrawingFormValues) => {
-    const updates = Object.entries(values).filter(
-      ([key, value]) => value !== defaultValues[key as keyof DrawingFormValues]
-    )
-
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
-    }
-  }
+          await updateOption.mutateAsync({ key, value: values[key] })
+        }
+      },
+    })
 
   const switches: Array<{
     name: keyof DrawingFormValues
@@ -128,20 +143,35 @@ export function DrawingSettingsSection({
       title={t('Drawing')}
       description={t('Fine-tune Midjourney integration and guardrails.')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
-          <div className='space-y-4'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save drawing settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
+          <div className='flex flex-col gap-4'>
             {switches.map((item) => (
               <FormField
                 key={item.name}
                 control={form.control}
                 name={item.name}
                 render={({ field }) => (
-                  <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                    <div className='space-y-0.5 pe-4'>
-                      <FormLabel className='text-base'>{item.label}</FormLabel>
+                  <SettingsSwitchItem className='items-start'>
+                    <SettingsSwitchContent className='pe-4'>
+                      <FormLabel>{item.label}</FormLabel>
                       <FormDescription>{item.description}</FormDescription>
-                    </div>
+                    </SettingsSwitchContent>
                     <FormControl>
                       <Switch
                         checked={field.value}
@@ -149,24 +179,12 @@ export function DrawingSettingsSection({
                       />
                     </FormControl>
                     <FormMessage />
-                  </FormItem>
+                  </SettingsSwitchItem>
                 )}
               />
             ))}
           </div>
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending
-              ? t('Saving...')
-              : t('Save drawing settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

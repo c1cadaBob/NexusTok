@@ -16634,3 +16634,68 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 点击页头“重置”后，“刷新间隔 (分钟)”恢复为 `5`，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和回滚行为正确。
 10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Data Dashboard 配置。
 11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Drawing 内容设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/content/drawing-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/content/drawing` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致控制台内容分组内部的绘图设置页与已经收口完成的 Data Dashboard 页体验不一致。
+3. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator`、`FormNavigationGuard`、重置动作和权限禁用理由；当前项目应吸收其页头动作区优势，同时保持 NexusTok 已完成页面的完整交互标准。
+4. 该页面只有 `DrawingEnabled`、`MjNotifyEnabled`、`MjAccountFilterEnabled`、`MjForwardUrlEnabled`、`MjModeClearEnabled`、`MjActionCheckSuccessEnabled` 六个布尔开关，没有 secret、数字输入、JSON 编辑器或外部接口操作，适合作为内容分组第二个低风险原生化页面。
+
+### 需求分析
+
+1. `/system-settings/content/drawing` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，不调整绘图代理、Midjourney 回调、账号过滤、回调 URL 改写、提示词模式清理或后续动作校验逻辑。
+4. 保存时只提交真实变化字段；用户切回原值后，标题脏态和页头按钮必须恢复到禁用状态。
+5. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Drawing 内容设置页 | `web/default/src/features/system-settings/content/drawing-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `MjNotifyEnabled` 会影响上游回调接收，并且页面文案明确提示可能暴露服务器 IP；验证阶段不能执行真实保存，避免改变当前暴露面。
+2. `MjAccountFilterEnabled`、`MjForwardUrlEnabled`、`MjModeClearEnabled`、`MjActionCheckSuccessEnabled` 分别影响上游账号选择、回调 URL 改写、提示词参数清理和后续动作门禁；迁移时必须保留字段 key、顺序和布尔语义。
+3. 六个开关都在同一表单内，若共享表单 dirty 收集或提交顺序处理不当，可能出现无变化保存、回滚后仍提示未保存或提交字段顺序不稳定。
+4. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前绘图配置。
+
+### 方案评审
+
+采用“共享表单壳层 + 布尔开关固定顺序提交”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、`useEffect reset` 与手工比较默认值逻辑，保留现有 Zod schema 和字段 key。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将六个开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、顺序和字段 key 不变。
+5. 显式固定提交顺序为 `DrawingEnabled -> MjNotifyEnabled -> MjAccountFilterEnabled -> MjForwardUrlEnabled -> MjModeClearEnabled -> MjActionCheckSuccessEnabled`，继续与系统设置页的最小字段提交能力配合。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/content/drawing-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存绘图设置` 两个动作；无脏态时二者禁用，有脏态时按权限启用保存。
+4. 六个布尔开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；按钮权限禁用逻辑继续消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。
+5. 保存合同仍然只写入 Drawing 相关既有 option key，没有改变后端绘图代理、回调处理、提示词处理或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/content/drawing-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/content/drawing?verify=20260717-drawing-after-change`，确认热更新生效，`重置` 与 `保存绘图设置` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+6. MCP DOM 检查确认本页六个开关的 label 均存在有效目标控件，没有出现 label 可访问性 issue。
+7. 临时切换“允许上游回调”开关后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+8. 在脏态下点击侧栏“第三方预设”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Drawing 页，且临时开关值仍保留，说明统一离开拦截正常。
+9. 点击页头“重置”后，“允许上游回调”恢复为原值，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和回滚行为正确。
+10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Drawing 配置。
+11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
