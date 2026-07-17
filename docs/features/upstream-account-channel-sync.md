@@ -356,6 +356,7 @@ type AccountSnapshot struct {
 - [x] 使用真实 new-api 注册临时账号并创建临时 token 后，通过 NexusTok 3003 `preview` 验证成功读取 1 个 key、2 个分组、余额/已用额度、模型限制和建议 priority/weight；预览响应只包含脱敏 key，不包含完整 `key` 字段。验证后已删除临时 new-api token。
 - [x] 在真实 new-api 端到端创建复测中发现批量完整 Key 读取受 `data.keys` 包裹格式和敏感接口限流影响，预览曾生成缺完整 Key 的不可创建快照；已修复为兼容 `data.keys`/直出映射，批量 reveal 失败时逐条 reveal 兜底，仍无法补齐完整 Key 时在 preview 阶段直接返回明确错误。
 - [x] 使用 MCP 从 3003 页面上下文调用临时 mock new-api 服务验证：批量 reveal 返回 429 时，NexusTok 自动走单个 token reveal 兜底，`preview` 返回脱敏 key，`create` 成功创建 1 条渠道账号；验证后已删除临时 NexusTok 渠道并停止 mock 服务。
+- [x] 目标 new-api 限流恢复后，使用真实 new-api 临时账号完成 `preview -> create` 端到端闭环：`preview` 返回 1 个脱敏 key 和 2 个分组，`create` 成功创建 1 条渠道账号；验证后已删除临时 NexusTok 渠道和临时 new-api token，并确认该临时账号 token 列表为 0。
 - [x] 用 relay 请求级测试验证渠道失败后按优先级/权重降级：`TestRelayRetriesToNextChannelAfterChannelFailure` 使用两个 OpenAI 兼容 httptest 上游，首个高优先级渠道返回 401 后，同一次请求排除失败渠道并降级到第二渠道成功返回。
 - [x] 用 MCP 浏览器上下文调用 NexusTok preview/create/account update/refresh/delete，并通过临时 sub2api mock 验证：刷新时 `apply_suggested=false` 会保留账号手动 priority、weight、status 和本地 settings，同时按同步元数据更新同一账号，不误创建重复账号。
 - [x] 补充前端刷新预览交互验证：编辑同步渠道时必须先 Preview Refresh 获得快照，页面展示与新建同步一致的倍率/余额/优先级/权重表格，Apply Refresh 只在非空快照后可用。
@@ -377,7 +378,7 @@ type AccountSnapshot struct {
 
 人工联调：
 
-- new-api 登录成功，能读取密钥、分组倍率、余额；真实站点已完成 preview 正向验证，真实 create 闭环当前受目标平台敏感接口限流影响，已用 3003 + mock new-api 验证 reveal 兜底和 create 成功路径。
+- new-api 登录成功，能读取密钥、分组倍率、余额；真实站点已完成 preview 和 create 端到端闭环，且已验证临时测试数据清理。
 - sub2api 登录成功，能读取密钥、分组倍率、余额。
 - 同步创建后，一个渠道下生成多条渠道账号，且每个账号可独立编辑。
 - 自动策略生成的优先级/权重可被手动覆盖。
@@ -385,12 +386,11 @@ type AccountSnapshot struct {
 
 ## 当前未决问题
 
-1. 真实 new-api preview 正向链路已完成；真实 create 闭环在最终复测时触发目标平台登录/完整 Key 敏感接口 429 限流，需等待限流窗口恢复后再做一次真实 create 成功验证。当前代码已用 3003 + mock new-api 覆盖批量 reveal 429、单个 reveal 兜底和 create 成功路径。
-2. 是否允许保存平台账号密码用于后台定时刷新尚未确定。第一版默认不保存，刷新时重新输入。
-3. 预览接口已通过后端短期缓存保存完整 Key，前端只接收脱敏快照；确认创建时引用一次性 `preview_id`。
-4. 目标平台的“模型倍率”可能是系统级配置而非密钥级配置，需要确认密钥和分组的关联关系后再计算建议策略。
-5. 平台账号没有任何密钥时，创建流程阻止落库；前端预览页展示无密钥提示并禁用基于建议倍率的配置入口。
-6. 同步身份当前写入账号 `settings` 文本，已避免新增数据库字段；若后续需要按外部 key id 查询或批量统计，再评估新增三库兼容字段。
+1. 是否允许保存平台账号密码用于后台定时刷新尚未确定。第一版默认不保存，刷新时重新输入。
+2. 预览接口已通过后端短期缓存保存完整 Key，前端只接收脱敏快照；确认创建时引用一次性 `preview_id`。
+3. 目标平台的“模型倍率”可能是系统级配置而非密钥级配置，需要确认密钥和分组的关联关系后再计算建议策略。
+4. 平台账号没有任何密钥时，创建流程阻止落库；前端预览页展示无密钥提示并禁用基于建议倍率的配置入口。
+5. 同步身份当前写入账号 `settings` 文本，已避免新增数据库字段；若后续需要按外部 key id 查询或批量统计，再评估新增三库兼容字段。
 
 ## 2026-07-17 接手后最终审计记录
 
@@ -405,7 +405,7 @@ type AccountSnapshot struct {
 | R5 自动获取的密钥放在同一渠道名称下，并允许每个密钥不同配置 | 已实现 | 创建流程使用一个 `Channel` 加多条 `ChannelAccount`，每条账号可配置模型、分组、优先级、权重、Base URL、覆盖参数、状态码映射和状态。 |
 | R6 请求渠道失效后按优先级和权重自动降级 | 已实现并测试 | Relay 失败后把渠道加入请求级排除集；缓存和 DB fallback 都过滤排除渠道和禁用渠道；`specific_channel_id` 不自动降级；已有 `TestRelayRetriesToNextChannelAfterChannelFailure` 覆盖同一次请求从失败渠道降级到下一渠道。 |
 | R7 Docker 热更新和 3003 页面验证 | 已执行 | 通过 MCP 访问 `http://192.168.0.202:3003/` 并登录后台，打开 `/channels`，创建抽屉中确认“上游账号同步”入口可见；页面控制台无 `error`、`warn`、`issue`，渠道列表相关接口均返回 200。页面已更新，未触发容器重启条件。 |
-| R8 接入 new-api 和 sub2api | 两个平台 preview 正向链路已验证 | sub2api 真实平台临时创建 1 个 key 后，NexusTok preview 成功读取脱敏 key、分组倍率、余额/已用和建议 priority/weight；验证后已删除临时 key。new-api 使用临时注册账号完成真实 preview 正向验证；完整 Key reveal 的批量格式和限流问题已修复并用 3003 + mock create 验证。 |
+| R8 接入 new-api 和 sub2api | 两个平台真实链路已验证 | sub2api 真实平台临时创建 1 个 key 后，NexusTok preview 成功读取脱敏 key、分组倍率、余额/已用和建议 priority/weight；验证后已删除临时 key。new-api 使用临时注册账号完成真实 preview 和 create 端到端验证；完整 Key reveal 的批量格式和限流问题已修复，并在真实 create 前用 3003 + mock 覆盖过兜底路径。 |
 | R9 需求文档、影响范围、风险评估、方案评审 | 已完成 | 本文档持续记录需求拆解、影响范围、风险、方案和阶段验证；本次复核补充逐项验收结论。 |
 
 本次复核命令：
@@ -444,7 +444,7 @@ type AccountSnapshot struct {
 
 本次剩余真实平台缺口：
 
-- 用户最初提供的 new-api 测试账号仍返回“账号或密码错误/用户被禁用”；本次已改用临时注册账号补齐真实 preview 正向验证。真实 create 成功闭环仍需等待目标平台 429 限流窗口恢复后再补一次。
+- 用户最初提供的 new-api 测试账号仍返回“账号或密码错误/用户被禁用”；本次已改用临时注册账号补齐真实 preview 和 create 正向验证。当前没有阻塞新功能验收的真实平台缺口。
 
 ## 2026-07-17 真实 new-api 有 Key 场景复核
 
@@ -472,8 +472,18 @@ type AccountSnapshot struct {
 - 在真实平台触发 429 后，使用临时 mock new-api 服务模拟“批量 reveal 429、单个 reveal 成功”，再从 3003 页面上下文调用 NexusTok `preview` 和 `create`。
 - mock 验证结果：`preview.success=true`、`keyCount=1`、前端响应无完整 `key` 字段；`create.success=true`、创建 1 条渠道账号；验证后已删除临时 NexusTok 渠道并停止 mock 服务。
 
+目标平台限流恢复后的真实 create 验证结果：
+
+- 使用新的真实 new-api 临时账号创建 1 个 token 后，从 NexusTok 3003 页面上下文调用 `preview`，返回 `success=true`、`keyCount=1`、`groupCount=2`、模型限制 `gpt-4o` 与 `gpt-4o-mini`、`quota_per_unit=500000`、`balance_usd=0`、`used_usd=0`。
+- 同一个 `preview_id` 调用 `create`，返回 `success=true`，创建 1 条渠道账号。
+- 验证后已删除 NexusTok 临时渠道；切回真实 new-api 页面删除临时 token，最终 token 列表 `tokenCount=0`，确认无测试 token 残留。
+
 本次新增验证命令：
 
 - `go test ./service/upstreamaccount`
 - `go test ./service/upstreamaccount ./controller ./router`
+- `go test ./model ./service ./controller ./middleware ./router`
+- `cd web/default && bun run i18n:sync`
+- `cd web/default && bun run typecheck`
+- `cd web/default && bun run build`
 - `git diff --check -- service/upstreamaccount/newapi.go service/upstreamaccount/preview_test.go`
