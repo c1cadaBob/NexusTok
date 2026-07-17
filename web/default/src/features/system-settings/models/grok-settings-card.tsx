@@ -17,12 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import * as z from 'zod'
-import { useEffect, useRef } from 'react'
-import { useForm } from 'react-hook-form'
+import { useEffect, useMemo, useRef } from 'react'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -34,7 +32,16 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import {
@@ -62,17 +69,60 @@ interface Props {
   defaultValues: FlatGrokSettings
 }
 
+const grokUpdateOrder: Array<keyof FlatGrokSettings> = [
+  'grok.violation_deduction_enabled',
+  'grok.violation_deduction_amount',
+]
+
 export function GrokSettingsCard(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const formDefaults = useMemo(
+    () => buildGrokFormDefaults(props.defaultValues),
+    [props.defaultValues]
+  )
   const baselineRef = useRef<FlatGrokSettings>(props.defaultValues)
   const baselineSerializedRef = useRef<string>(
     JSON.stringify(props.defaultValues)
   )
 
-  const form = useForm<GrokFormInput, unknown, GrokFormValues>({
-    resolver: zodResolver(grokSchema),
-    defaultValues: buildGrokFormDefaults(props.defaultValues),
+  const {
+    form,
+    handleSubmit,
+    handleReset,
+    isDirty,
+    isSubmitting,
+  } = useSettingsForm<GrokFormInput>({
+    resolver: zodResolver(grokSchema) as Resolver<
+      GrokFormInput,
+      unknown,
+      GrokFormInput
+    >,
+    defaultValues: formDefaults,
+    onSubmit: async (values) => {
+      const normalized = normalizeGrokFormValues(values as GrokFormValues)
+      const updates = getChangedGrokSettingKeys(
+        normalized,
+        baselineRef.current
+      )
+
+      for (const key of grokUpdateOrder) {
+        if (!updates.includes(key)) {
+          continue
+        }
+
+        await updateOption.mutateAsync({
+          key,
+          value: normalized[key],
+        })
+      }
+
+      baselineRef.current = normalized
+      baselineSerializedRef.current = JSON.stringify(normalized)
+      // 保存成功后把后端扁平 key 重新映射为嵌套表单基线，避免 dotted key
+      // 与 react-hook-form 路径语义再次分裂。
+      form.reset(buildGrokFormDefaults(normalized))
+    },
   })
 
   useEffect(() => {
@@ -81,33 +131,7 @@ export function GrokSettingsCard(props: Props) {
 
     baselineRef.current = props.defaultValues
     baselineSerializedRef.current = serialized
-    form.reset(buildGrokFormDefaults(props.defaultValues))
-  }, [props.defaultValues, form])
-
-  const onSubmit = async (values: GrokFormValues) => {
-    if (!updateOption.canUpdate) {
-      toast.error(updateOption.disabledReason)
-      return
-    }
-
-    const normalized = normalizeGrokFormValues(values)
-    const updates = getChangedGrokSettingKeys(normalized, baselineRef.current)
-    if (updates.length === 0) {
-      toast.info(t('No changes to save'))
-      return
-    }
-
-    for (const key of updates) {
-      await updateOption.mutateAsync({
-        key,
-        value: normalized[key],
-      })
-    }
-
-    baselineRef.current = normalized
-    baselineSerializedRef.current = JSON.stringify(normalized)
-    form.reset(buildGrokFormDefaults(normalized))
-  }
+  }, [props.defaultValues])
 
   const enabled = form.watch('grok.violation_deduction_enabled')
 
@@ -116,20 +140,28 @@ export function GrokSettingsCard(props: Props) {
       title={t('Grok Settings')}
       description={t('Configure xAI Grok model specific settings')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='grok.violation_deduction_enabled'
             render={({ field }) => (
-              <FormItem className='flex items-center gap-2'>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-                <div>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel>{t('Enable violation deduction')}</FormLabel>
                   <FormDescription>
                     {t(
@@ -144,8 +176,14 @@ export function GrokSettingsCard(props: Props) {
                       {t('Official documentation')}
                     </a>
                   </FormDescription>
-                </div>
-              </FormItem>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -173,17 +211,7 @@ export function GrokSettingsCard(props: Props) {
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save Changes')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

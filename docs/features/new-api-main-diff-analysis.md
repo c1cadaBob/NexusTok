@@ -16699,3 +16699,74 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 点击页头“重置”后，“允许上游回调”恢复为原值，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和回滚行为正确。
 10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Drawing 配置。
 11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Grok 模型设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/models/grok-settings-card.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/models/grok` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标、重置动作与离开拦截，导致模型与路由分组内部的 Grok 设置页与已经收口完成的内容、安全、认证类页面体验不一致。
+3. `new-api-main` 同名页面已经使用 `SettingsForm` 与 `SettingsPageFormActions`，并且修复了 `react-hook-form` dotted name 与嵌套路径语义冲突；当前项目已把 Grok 的转换 helper 独立到 `grok-settings-utils.ts` 并补了单元测试，本轮应在保留这些原生边界的前提下吸收页头动作区优势。
+4. 该页面只有 `grok.violation_deduction_enabled` 与 `grok.violation_deduction_amount` 两个 option key，但它们直接影响 xAI Grok 违规请求扣费策略，因此适合作为低代码量但高业务敏感度的模型分组原生化切片。
+
+### 需求分析
+
+1. `/system-settings/models/grok` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，仍写入 `grok.violation_deduction_enabled` 与 `grok.violation_deduction_amount`，不调整后端扣费、分组倍率或模型路由逻辑。
+4. 继续保留 `grok-settings-utils.ts` 中“后端扁平 dotted key <-> RHF 嵌套对象”的转换边界，避免 `react-hook-form` 把 dotted name 当作路径后产生双份值树。
+5. `grok.violation_deduction_amount` 必须继续保持 `min(0)` 约束，并使用项目已有的 `safeNumberFieldProps()` 避免空输入中间态或 `NaN` 写入表单状态。
+6. 验证阶段不能执行真实保存，避免改变当前 xAI Grok 违规扣费配置；只能检查脏态、重置、离页确认、控制台和只读网络行为。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Grok 模型设置页 | `web/default/src/features/system-settings/models/grok-settings-card.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截；保留 Grok 专用扁平 key 转换 helper 与官方文档链接。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `grok.violation_deduction_enabled` 会启用违规请求额外扣费；如果验证或迁移误触发保存，可能直接改变真实计费策略。
+2. `grok.violation_deduction_amount` 是扣费基础金额，实际扣费还会乘以系统分组倍率；迁移时必须保留非负数字约束、输入禁用联动和基线回滚能力。
+3. 后端 option key 使用 dotted 形式，而 RHF 会把 dotted name 当作嵌套路径；如果直接把扁平对象交给共享表单 hook，dirtyFields、提交值和 reset 基线会再次分裂。
+4. `useSettingsForm()` 内部会把 defaultValues 归一化为嵌套对象并在 defaultValues 改变时 reset；Grok 页同时维护后端扁平基线，必须确保保存成功后同步推进扁平基线，再把嵌套默认值重置回 RHF。
+5. 本页虽然字段少，但位于模型与路由分组；若页头动作区或离页拦截行为异常，会影响管理员对模型计费配置的可预测性。
+
+### 方案评审
+
+采用“共享表单壳层 + Grok 专用扁平基线”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、旧底部提交按钮和手工 `toast` 分支，交由共享 hook 负责无变更提示、提交态、重置和最小变更过滤。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将启用开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、官方 xAI 文档链接、字段 key 和开关语义不变。
+5. 保存前继续调用 `normalizeGrokFormValues()` 转回后端扁平 key，再用 `getChangedGrokSettingKeys()` 相对扁平基线计算真实变更。
+6. 显式固定提交顺序为 `grok.violation_deduction_enabled -> grok.violation_deduction_amount`，便于后续排查请求日志并保持保存行为稳定。
+7. 保存成功后先推进扁平基线，再调用 `form.reset(buildGrokFormDefaults(normalized))`，确保后端 dotted key 和 RHF 嵌套路径不会再次产生状态分裂。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/models/grok-settings-card.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存更改` 两个动作；无脏态时二者禁用，有脏态时按权限启用保存。
+4. 启用违规扣费开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；官方 xAI 使用说明链接、金额输入、启用后才可编辑金额的联动逻辑均保留。
+5. Grok 专用转换 helper 仍是唯一的扁平 key 转换边界，单元测试继续覆盖默认值构造、提交值归一化和变更 key 计算。
+6. 保存合同仍然只写入 Grok 相关既有 option key，没有改变后端计费、分组倍率、模型路由或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/models/grok-settings-card.tsx`。
+2. 已运行 `cd web/default && bun test src/features/system-settings/models/grok-settings-utils.test.ts`。
+3. 已运行 `cd web/default && bun run typecheck`。
+4. 已运行 `cd web/default && bun run build`。
+5. 已运行 `git diff --check`。
+6. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/models/grok?verify=20260717-grok-after-change`，确认热更新生效，`重置` 与 `保存更改` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+7. 将“违规扣费金额”从 `0.05` 临时改为 `0.06` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+8. 在脏态下点击侧栏“Claude”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Grok 页，且临时金额值仍保留，说明统一离开拦截正常。
+9. 点击页头“重置”后，“违规扣费金额”恢复为 `0.05`，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线、Grok 扁平基线和回滚行为正确。
+10. 重置后再次点击侧栏“Claude”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
+11. 本轮验证没有点击“保存更改”，未执行真实 `PUT /api/option/`，没有污染当前 Grok 违规扣费配置。
+12. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
