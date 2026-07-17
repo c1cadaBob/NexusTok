@@ -16341,3 +16341,76 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 11. MCP 的批量 `fill` / `fill_form` 对多行文本域不总能稳定模拟共享表单的真实输入事件，因此本轮对白名单文本域以真实用户式键盘交互结果作为最终验收依据。
 12. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Passkey 配置。
 13. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+
+## 本轮实施评审：SSRF 保护设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/request-limits/ssrf-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/security/ssrf` 仍停留在旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致安全与限制分组内部的表单体验与已经收口完成的 `rate-limit / token-limits / sensitive-words / bot-protection / basic-auth / passkey` 明显分叉。
+3. 旧实现虽然已经使用嵌套 `fetch_setting` 对象，但仍依赖局部 `useForm()`、局部 baselineRef 与手工最小提交，没有复用当前项目已经稳定的共享表单基座。
+4. `domain_list`、`ip_list` 与 `allowed_ports` 在前端是文本输入，在后端分别保存为字符串数组、IP/CIDR 数组和端口数组；旧实现没有把这些“前端文本 / 后端结构化数组”的双向归一化与共享表单基线同步统一收口。
+
+### 需求分析
+
+1. `/system-settings/security/ssrf` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有字段合同不变，不调整后端 `fetch_setting.*` 的 option key、数组 JSON 序列化格式和 SSRF 保护逻辑。
+4. 需要保留并明确收口这页的双向归一化语义：
+   - `domain_list`、`ip_list` 在前端按换行编辑，在后端按数组保存；
+   - `allowed_ports` 在前端按逗号编辑，在后端按数字数组保存；
+   - 提交成功后要把当前值重新规范化为统一展示格式，避免仅空白字符或无效端口差异残留为未保存状态。
+5. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| SSRF 保护设置页 | `web/default/src/features/system-settings/request-limits/ssrf-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截，并保持域名/IP/端口字段的归一化保存合同。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `domain_list`、`ip_list` 和 `allowed_ports` 都属于“用户可编辑文本 -> 后端结构化数组”字段；如果迁移共享壳层时没有正确处理双向归一化，可能出现“仅调整空白字符也会触发无意义保存”“恢复原值后仍被判定为未保存”或“把展示格式错误推进为保存基线”。
+2. `allowed_ports` 需要过滤无效端口文本并规范化为数字数组；如果前端保存基线与后端数组值不一致，可能出现页头状态常驻或回滚失效。
+3. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前 SSRF 配置。
+4. 这次真实验证里，页面首次仍展示旧壳层，说明热更新并未立即生效；必须按用户约定先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，再带新的 `verify` 参数重新验证，不能依赖旧 tab 结果做结论。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改后端合同，并在页面内明确归一化基线同步”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()` 与手工 toast/最小提交逻辑，保留现有嵌套 `fetch_setting` schema。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将三个布尔开关统一迁到 `SettingsSwitchItem + SettingsSwitchContent`，保留文案、顺序和字段 key 不变。
+5. 在页面内保留并显式封装归一化 helper：
+   - `domain_list`、`ip_list`：换行文本 <-> 数组；
+   - `allowed_ports`：逗号文本 <-> `number[]`；
+   - 提交成功后，把数组值重新格式化回换行/逗号展示形式，再推进共享表单基线。
+6. 显式固定提交顺序为 `enable_ssrf_protection -> allow_private_ip -> domain_filter_mode -> domain_list -> ip_filter_mode -> ip_list -> allowed_ports -> apply_ip_filter_for_domain`，继续与系统设置页的最小字段提交能力配合。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/request-limits/ssrf-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 三个布尔开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；按钮权限禁用逻辑继续消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。
+4. 域名/IP 列表和允许端口仍保持原有保存合同：前端按文本编辑，提交时序列化为数组 JSON 字符串写入对应 option key；但这些字段已收口为页面内明确的归一化 helper，并在共享表单提交成功后把规范化后的展示值推进回表单基线，避免空白字符或无效端口残留脏态。
+5. 保存合同仍然只写入 `fetch_setting.*` 既有 option key，没有改变后端 SSRF 保护逻辑、结构化数组格式或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/request-limits/ssrf-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 首次使用 MCP 访问 `http://192.168.0.202:3003/system-settings/security/ssrf?verify=20260717-ssrf-baseline` 时，页面仍展示旧式底部按钮壳层；按用户要求已先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`，再带新的 `verify` 参数重新验证。
+6. 重启后通过 MCP 访问 `http://192.168.0.202:3003/system-settings/security/ssrf?verify=20260717-ssrf-after-restart-v2`，确认热更新生效，`保存 SSRF 设置` 已位于标题右侧页头动作区，首屏为禁用态，底部旧按钮已消失。
+7. 在同一页面切换“允许私有 IP”开关后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区已正常工作。
+8. 点击侧栏中的“敏感词”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+9. 将“允许私有 IP”开关切回原值后，标题状态消失，页头保存按钮重新禁用，说明开关类字段的脏态回滚行为正确。
+10. 继续在同一页面聚焦“允许的端口”输入框，将默认值 `80,443,8080,8443` 临时改为 `80,443,8080,8443,9000` 后，标题区域出现“未保存的更改”，页头保存按钮可用；恢复为原值后，标题状态再次消失，页头保存按钮重新禁用，说明逗号端口列表字段的归一化与回滚行为正确。
+11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 SSRF 配置。
+12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。

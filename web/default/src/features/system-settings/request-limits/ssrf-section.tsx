@@ -18,11 +18,9 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useMemo, useRef } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -43,7 +41,16 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const ssrfSchema = z.object({
@@ -86,6 +93,21 @@ type SSRFSectionProps = {
   }
 }
 
+const ssrfUpdateOrder: Array<keyof NormalizedSSRFValues> = [
+  'fetch_setting.enable_ssrf_protection',
+  'fetch_setting.allow_private_ip',
+  'fetch_setting.domain_filter_mode',
+  'fetch_setting.domain_list',
+  'fetch_setting.ip_filter_mode',
+  'fetch_setting.ip_list',
+  'fetch_setting.allowed_ports',
+  'fetch_setting.apply_ip_filter_for_domain',
+]
+
+const joinLines = (values: string[]) => values.join('\n')
+
+const joinPorts = (values: number[]) => values.join(',')
+
 const splitLines = (value: string) =>
   value
     .split('\n')
@@ -106,9 +128,9 @@ const buildFormDefaults = (
     allow_private_ip: defaults['fetch_setting.allow_private_ip'],
     domain_filter_mode: defaults['fetch_setting.domain_filter_mode'],
     ip_filter_mode: defaults['fetch_setting.ip_filter_mode'],
-    domain_list: defaults['fetch_setting.domain_list'].join('\n'),
-    ip_list: defaults['fetch_setting.ip_list'].join('\n'),
-    allowed_ports: defaults['fetch_setting.allowed_ports'].join(','),
+    domain_list: joinLines(defaults['fetch_setting.domain_list']),
+    ip_list: joinLines(defaults['fetch_setting.ip_list']),
+    allowed_ports: joinPorts(defaults['fetch_setting.allowed_ports']),
     apply_ip_filter_for_domain:
       defaults['fetch_setting.apply_ip_filter_for_domain'],
   },
@@ -143,56 +165,90 @@ const normalizeFormValues = (values: SSRFFormValues): NormalizedSSRFValues => ({
     values.fetch_setting.apply_ip_filter_for_domain,
 })
 
-const isEqual = (a: unknown, b: unknown) => {
+const isSameSSRFValue = (a: unknown, b: unknown) => {
   if (Array.isArray(a) && Array.isArray(b)) {
     return JSON.stringify(a) === JSON.stringify(b)
   }
   return a === b
 }
 
+function applyNormalizedFormValues(
+  values: SSRFFormValues,
+  normalized: NormalizedSSRFValues
+) {
+  values.fetch_setting.domain_list = joinLines(
+    normalized['fetch_setting.domain_list']
+  )
+  values.fetch_setting.ip_list = joinLines(normalized['fetch_setting.ip_list'])
+  values.fetch_setting.allowed_ports = joinPorts(
+    normalized['fetch_setting.allowed_ports']
+  )
+}
+
 export function SSRFSection({ defaultValues }: SSRFSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const baselineRef = useRef<NormalizedSSRFValues>(
-    normalizeDefaults(defaultValues)
-  )
-
   const formDefaults = useMemo(
     () => buildFormDefaults(defaultValues),
     [defaultValues]
   )
-
-  const form = useForm<SSRFFormInput, unknown, SSRFFormValues>({
-    resolver: zodResolver(ssrfSchema),
-    defaultValues: formDefaults,
-  })
+  const normalizedDefaults = useMemo(
+    () => normalizeDefaults(defaultValues),
+    [defaultValues]
+  )
+  const savedValuesRef = useRef<NormalizedSSRFValues>(normalizedDefaults)
+  const savedSerializedRef = useRef<string>(
+    JSON.stringify(normalizedDefaults)
+  )
 
   useEffect(() => {
-    baselineRef.current = normalizeDefaults(defaultValues)
-    form.reset(buildFormDefaults(defaultValues))
-  }, [defaultValues, form])
+    const serialized = JSON.stringify(normalizedDefaults)
+    if (serialized === savedSerializedRef.current) return
+    savedValuesRef.current = normalizedDefaults
+    savedSerializedRef.current = serialized
+  }, [normalizedDefaults])
 
-  const onSubmit = async (data: SSRFFormValues) => {
-    const normalized = normalizeFormValues(data)
-    const updates = (
-      Object.keys(normalized) as Array<keyof NormalizedSSRFValues>
-    ).filter((key) => !isEqual(normalized[key], baselineRef.current[key]))
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<SSRFFormValues>({
+      resolver: zodResolver(ssrfSchema) as Resolver<
+        SSRFFormValues,
+        unknown,
+        SSRFFormValues
+      >,
+      defaultValues: formDefaults,
+      onSubmit: async (data, changedFields) => {
+        const normalizedValues = normalizeFormValues(data)
+        const savedValues = savedValuesRef.current
+        const updates: Array<{
+          key: keyof NormalizedSSRFValues
+          value: string | boolean
+        }> = []
 
-    if (updates.length === 0) {
-      toast.info(t('No changes to save'))
-      return
-    }
+        for (const key of ssrfUpdateOrder) {
+          if (!(key in changedFields)) {
+            continue
+          }
 
-    for (const key of updates) {
-      const value = normalized[key]
-      await updateOption.mutateAsync({
-        key,
-        value: Array.isArray(value) ? JSON.stringify(value) : value,
-      })
-    }
+          if (!isSameSSRFValue(normalizedValues[key], savedValues[key])) {
+            const value = normalizedValues[key]
+            updates.push({
+              key,
+              value: Array.isArray(value) ? JSON.stringify(value) : value,
+            })
+          }
+        }
 
-    baselineRef.current = normalized
-  }
+        for (const update of updates) {
+          await updateOption.mutateAsync(update)
+        }
+
+        // 这些字段在表单里按换行或逗号编辑，提交后继续把当前值规范化回
+        // 统一展示格式，避免仅空白字符或无效端口差异残留为未保存状态。
+        applyNormalizedFormValues(data, normalizedValues)
+        savedValuesRef.current = normalizedValues
+        savedSerializedRef.current = JSON.stringify(normalizedValues)
+      },
+    })
 
   const domainFilterMode = form.watch('fetch_setting.domain_filter_mode')
   const ipFilterMode = form.watch('fetch_setting.ip_filter_mode')
@@ -204,28 +260,39 @@ export function SSRFSection({ defaultValues }: SSRFSectionProps) {
         'Prevent server-side request forgery attacks by controlling outbound requests.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save SSRF settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='fetch_setting.enable_ssrf_protection'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Enable SSRF Protection')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable SSRF Protection')}</FormLabel>
                   <FormDescription>
                     {t('Prevent server-side request forgery attacks')}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -233,24 +300,22 @@ export function SSRFSection({ defaultValues }: SSRFSectionProps) {
             control={form.control}
             name='fetch_setting.allow_private_ip'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Allow Private IPs')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Allow Private IPs')}</FormLabel>
                   <FormDescription>
                     {t(
                       'Allow requests to private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -408,37 +473,25 @@ export function SSRFSection({ defaultValues }: SSRFSectionProps) {
             control={form.control}
             name='fetch_setting.apply_ip_filter_for_domain'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Apply IP Filter to Resolved Domains')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Apply IP Filter to Resolved Domains')}</FormLabel>
                   <FormDescription>
                     {t(
                       'Check resolved IPs against IP filters even when accessing by domain'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save SSRF settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
