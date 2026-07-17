@@ -487,3 +487,39 @@ type AccountSnapshot struct {
 - `cd web/default && bun run typecheck`
 - `cd web/default && bun run build`
 - `git diff --check -- service/upstreamaccount/newapi.go service/upstreamaccount/preview_test.go`
+
+## 2026-07-17 用户指定账号复测
+
+按用户更正后的真实平台账号，从 NexusTok 3003 页面上下文重新调用上游账号同步接口，并直接登录目标平台交叉确认。验证过程中不记录密码或完整 Key。
+
+本轮复测先发现 3003 后端热更新启动时在 `InitChannelCache` 中 panic，原因是渠道表已存在尚未同步到 `abilities` 表的分组，缓存构建时直接写入缺失的二级 map。已修复为按渠道分组懒初始化缓存映射，并跳过空分组/空模型；修复后 `http://192.168.0.202:3003/api/status` 恢复 `200`，无需手动重启容器。
+
+new-api 指定账号复测：
+
+- 直接在目标 new-api 页面同源调用 `/api/user/login?turnstile=`，返回 `success=true`、`data.require_2fa=true`，提示需要两步验证码；该响应不包含用户 ID。
+- NexusTok `POST /api/channel/upstream-account/preview` 使用指定 new-api 地址和账号调用，返回 `success=false`，错误为 `new-api 账号启用了 2FA，当前预览接口暂不支持交互式二次验证`。
+- 已修复旧适配器在该响应形态下误报“登录响应缺少用户 ID”的问题；当前结论是目标账号启用了 2FA，账号密码同步无法在无交互验证码的 preview 接口中继续读取密钥。此前已通过真实 new-api 临时账号完成平台能力、preview 和 create 正向验证。
+
+sub2api 指定账号复测：
+
+- 用户提供的 sub2api 地址是前端登录页 `/login`。真实复测发现旧适配器会把 `/login` 当作 API 根路径，导致请求拼接到 `/login/api/v1/...` 并解析到 HTML。已修复为仅对明确前端路由 `/login`、`/dashboard`、`/register`、`/setup` 剥离路径，避免破坏带反向代理 API 前缀的部署。
+- 修复后 NexusTok `POST /api/channel/upstream-account/preview` 使用指定 sub2api 登录页地址和账号调用成功，返回 `success=true`、`preview_id`、`keyCount=1`、`groupCount=1`。
+- 分组为 `id=2`、`name=11`、`ratio=1`、`peak_ratio=1`；预览响应只包含脱敏 key，例如 `sk-ec0...a7f6`，没有完整 `key` JSON 字段。
+- 账号余额和已用额度同步为 `balance_usd=0`、`used_usd=0`，来源为 `sub2api:user/profile`；同步 key 获得 `suggested_priority=1`、`suggested_weight=100`。
+- 使用该 `preview_id` 调用 `create` 成功创建 1 条渠道账号，返回 `channelId=15`、`created=1`、`skipped=0`；验证后已调用 `DELETE /api/channel/15` 删除临时 NexusTok 渠道，返回 `success=true`。
+
+本轮新增验证命令：
+
+- `go test ./model`
+- `go test ./service/upstreamaccount`
+- `go test ./service/upstreamaccount ./controller ./router`
+- `git diff --check -- model/channel_cache.go model/channel_retry_exclusion_test.go`
+- `git diff --check -- service/upstreamaccount/newapi.go service/upstreamaccount/sub2api.go service/upstreamaccount/preview_test.go`
+
+本轮 MCP 验证：
+
+- 打开 `http://192.168.0.202:3003/channels?verify=provided-account-retest-20260717-compat`，通过页面同源上下文登录管理端并调用真实接口。
+- 调用 new-api 目标平台页面同源登录接口确认指定账号需要 2FA。
+- 调用 NexusTok 3003 的 new-api preview 确认错误提示为 2FA 不支持，而不是用户 ID 缺失。
+- 调用 NexusTok 3003 的 sub2api preview/create/delete 确认指定账号完成闭环。
+- MCP 控制台未发现 `error`、`warn` 或 `issue` 消息。
