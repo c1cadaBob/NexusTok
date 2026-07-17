@@ -16200,3 +16200,73 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. 在验证过程中，MCP 的批量 `fill_form` 清空动作曾出现标题状态未立即回落的现象；改用真实用户式键盘全选删除后页面状态恢复正常，因此本轮以真实用户交互结果作为验收依据。
 11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Turnstile 配置。
 12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+
+## 本轮实施评审：Basic Authentication 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/auth/basic-auth-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/auth/basic-auth` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 六个布尔开关仍使用手写 `FormItem className='flex ... rounded-lg border p-4'` 行布局，没有复用当前项目已经稳定的 `SettingsSwitchItem` / `SettingsSwitchContent`。
+3. 页面没有接入统一的未保存脏态徽标与离开拦截，导致身份验证分组内部的表单体验与已经收口完成的 `behavior / checkin / quota / currency / logs / worker / token-limits / sensitive-words / bot-protection` 明显分叉。
+4. 邮箱域白名单字段在前端按换行编辑、在后端按逗号存储；旧实现依赖局部 `useForm + useResetForm`，没有与共享表单的最小提交和基线重置能力对齐。
+
+与 `new-api-main` 相比，NexusTok 这页除了要补齐页头动作区外，还应同时吸收当前项目已经稳定的原生能力：`FormDirtyIndicator`、`FormNavigationGuard` 和统一的 `useSettingsForm()` 最小提交逻辑，而不只是对齐上游的基础布局。
+
+### 需求分析
+
+1. `/system-settings/auth/basic-auth` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 现有字段合同 `PasswordLoginEnabled`、`PasswordRegisterEnabled`、`EmailVerificationEnabled`、`RegisterEnabled`、`EmailDomainRestrictionEnabled`、`EmailAliasRestrictionEnabled`、`EmailDomainWhitelist` 必须保持不变，不调整后端 `/api/option/` 保存语义，也不改变邮箱域白名单“前端多行 / 后端逗号分隔”的存储结构。
+4. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 基础认证设置页 | `web/default/src/features/system-settings/auth/basic-auth-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截，并保持邮箱域白名单的换行/逗号归一化语义。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 邮箱域白名单在表单里按换行编辑、在后端按逗号保存；如果迁移共享壳层时没有正确处理双向归一化，可能出现“仅调整空白字符也会触发无意义保存”“恢复原值后仍被判定为未保存”或“把显示格式错误推进为保存基线”。
+2. 这页包含多个布尔开关和一个多行文本域；如果迁移共享壳层时改坏默认值与脏态基线处理，可能出现页头状态常驻、离页拦截误触发或文本域在切页后被错误重置。
+3. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前登录与注册配置。
+4. MCP 对多行文本域的批量 `fill_form` 并不总能完整模拟真实用户输入事件；如果只看自动填值结果，容易把测试方式局限误判成页面逻辑问题。因此本轮必须补充真实用户式键盘交互作为最终验收依据。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同，并在页面内处理白名单归一化”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()` 与 `useResetForm()`，保留原有 Zod schema，并继续使用最小字段提交。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将六个开关统一迁到 `SettingsSwitchItem + SettingsSwitchContent`，保留文案、顺序和字段 key 不变。
+5. 在页面内保留邮箱域白名单的双向转换 helper：
+   - 首屏把逗号分隔值格式化为多行文本；
+   - 保存时把多行文本规范化回逗号格式；
+   - 在提交前把表单内值重新规范化为多行展示格式，确保共享表单保存后推进的是“规范化后的可见基线”。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/auth/basic-auth-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 六个开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；按钮权限禁用逻辑继续消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。
+4. 邮箱域白名单仍保持“前端多行 / 后端逗号分隔”的保存合同，但已收口为页面内明确的格式化 helper，并在共享表单提交前把规范化后的多行值推进回表单基线，避免无意义空白差异残留。
+5. 保存合同仍然只写入基础认证相关的七个 option key，没有改变后端登录、注册、邮箱校验或域名限制逻辑。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/auth/basic-auth-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/auth/basic-auth?verify=20260717-basic-auth-baseline`，确认热更新生效，`保存更改` 已位于标题右侧页头动作区，首屏为禁用态，底部旧按钮已消失。
+6. 在 `http://192.168.0.202:3003/system-settings/auth/basic-auth?verify=20260717-basic-auth-switch-check` 中切换“密码登录”开关后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区已正常工作。
+7. 在同一页面点击侧栏中的“OAuth 集成”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+8. 将“密码登录”开关切回原值后，标题状态消失，页头保存按钮重新禁用，说明开关类字段的脏态回滚行为正确。
+9. 继续在同一页面聚焦“电子邮件域白名单”文本域，使用真实用户式键盘输入临时换行后，标题区域出现“未保存的更改”，页头保存按钮可用；删除该临时换行后，标题状态再次消失，页头保存按钮重新禁用，说明多行白名单字段的脏态与回滚行为正确。
+10. MCP 的批量 `fill_form` 对多行文本域没有稳定触发共享表单脏态，因此本轮对白名单文本域以真实用户式键盘交互结果作为最终验收依据。
+11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实基础认证配置。
+12. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
