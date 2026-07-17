@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import { useMemo } from 'react'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 import {
   Form,
   FormControl,
@@ -32,8 +33,16 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useResetForm } from '../hooks/use-reset-form'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const createEmailSchema = (t: (key: string) => string) =>
@@ -63,111 +72,135 @@ type EmailSettingsSectionProps = {
   defaultValues: EmailFormValues
 }
 
+const emailUpdateOrder: Array<keyof EmailFormValues> = [
+  'SMTPServer',
+  'SMTPPort',
+  'SMTPAccount',
+  'SMTPFrom',
+  'SMTPToken',
+  'SMTPSSLEnabled',
+  'SMTPStartTLSEnabled',
+  'SMTPInsecureSkipVerify',
+  'SMTPForceAuthLogin',
+]
+
+const emailOptionKeyMap: Record<keyof EmailFormValues, string> = {
+  SMTPServer: 'SMTPServer',
+  SMTPPort: 'SMTPPort',
+  SMTPAccount: 'SMTPAccount',
+  SMTPFrom: 'SMTPFrom',
+  SMTPToken: 'SMTPToken',
+  SMTPSSLEnabled: 'SMTPSSLEnabled',
+  SMTPStartTLSEnabled: 'SMTPStartTLSEnabled',
+  SMTPInsecureSkipVerify: 'SMTPInsecureSkipVerify',
+  SMTPForceAuthLogin: 'SMTPForceAuthLogin',
+}
+
+function normalizeEmailValues(values: EmailFormValues): EmailFormValues {
+  return {
+    SMTPServer: values.SMTPServer.trim(),
+    SMTPPort: values.SMTPPort.trim(),
+    SMTPAccount: values.SMTPAccount.trim(),
+    SMTPFrom: values.SMTPFrom.trim(),
+    SMTPToken: values.SMTPToken.trim(),
+    SMTPSSLEnabled: values.SMTPSSLEnabled,
+    SMTPStartTLSEnabled: values.SMTPStartTLSEnabled,
+    SMTPInsecureSkipVerify: values.SMTPInsecureSkipVerify,
+    SMTPForceAuthLogin: values.SMTPForceAuthLogin,
+  }
+}
+
 export function EmailSettingsSection({
   defaultValues,
 }: EmailSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const emailSchema = createEmailSchema(t)
+  const formDefaults = useMemo<EmailFormValues>(
+    () => ({
+      ...defaultValues,
+      // SMTPToken 是敏感凭据：后端已有值不应成为前端表单基线。
+      // 留空表示保留现有凭据，只有管理员输入新 token 时才提交更新。
+      SMTPToken: '',
+    }),
+    [defaultValues]
+  )
 
-  const form = useForm<EmailFormValues>({
-    resolver: zodResolver(emailSchema),
-    defaultValues,
+  const {
+    form,
+    handleSubmit,
+    handleReset,
+    isDirty,
+    isSubmitting,
+  } = useSettingsForm<EmailFormValues>({
+    resolver: zodResolver(emailSchema) as Resolver<
+      EmailFormValues,
+      unknown,
+      EmailFormValues
+    >,
+    defaultValues: formDefaults,
+    onSubmit: async (values, changedFields) => {
+      const sanitized = normalizeEmailValues(values)
+      const initial = normalizeEmailValues(defaultValues)
+      const updates: Array<{ key: string; value: string | boolean }> = []
+
+      for (const key of emailUpdateOrder) {
+        if (!(key in changedFields)) {
+          continue
+        }
+
+        if (key === 'SMTPToken') {
+          if (!sanitized.SMTPToken || sanitized.SMTPToken === initial.SMTPToken) {
+            continue
+          }
+        } else if (sanitized[key] === initial[key]) {
+          continue
+        }
+
+        updates.push({
+          key: emailOptionKeyMap[key],
+          value: sanitized[key],
+        })
+      }
+
+      Object.assign(values, {
+        ...sanitized,
+        SMTPToken: '',
+      })
+
+      if (updates.length === 0) {
+        toast.info(t('No changes to save'))
+        return
+      }
+
+      for (const update of updates) {
+        await updateOption.mutateAsync(update)
+      }
+    },
   })
-
-  useResetForm(form, defaultValues)
-
-  const onSubmit = async (values: EmailFormValues) => {
-    const sanitized = {
-      SMTPServer: values.SMTPServer.trim(),
-      SMTPPort: values.SMTPPort.trim(),
-      SMTPAccount: values.SMTPAccount.trim(),
-      SMTPFrom: values.SMTPFrom.trim(),
-      SMTPToken: values.SMTPToken.trim(),
-      SMTPSSLEnabled: values.SMTPSSLEnabled,
-      SMTPStartTLSEnabled: values.SMTPStartTLSEnabled,
-      SMTPInsecureSkipVerify: values.SMTPInsecureSkipVerify,
-      SMTPForceAuthLogin: values.SMTPForceAuthLogin,
-    }
-
-    const initial = {
-      SMTPServer: defaultValues.SMTPServer.trim(),
-      SMTPPort: defaultValues.SMTPPort.trim(),
-      SMTPAccount: defaultValues.SMTPAccount.trim(),
-      SMTPFrom: defaultValues.SMTPFrom.trim(),
-      SMTPToken: defaultValues.SMTPToken.trim(),
-      SMTPSSLEnabled: defaultValues.SMTPSSLEnabled,
-      SMTPStartTLSEnabled: defaultValues.SMTPStartTLSEnabled,
-      SMTPInsecureSkipVerify: defaultValues.SMTPInsecureSkipVerify,
-      SMTPForceAuthLogin: defaultValues.SMTPForceAuthLogin,
-    }
-
-    const updates: Array<{ key: string; value: string | boolean }> = []
-
-    if (sanitized.SMTPServer !== initial.SMTPServer) {
-      updates.push({ key: 'SMTPServer', value: sanitized.SMTPServer })
-    }
-
-    if (sanitized.SMTPPort !== initial.SMTPPort) {
-      updates.push({ key: 'SMTPPort', value: sanitized.SMTPPort })
-    }
-
-    if (sanitized.SMTPAccount !== initial.SMTPAccount) {
-      updates.push({ key: 'SMTPAccount', value: sanitized.SMTPAccount })
-    }
-
-    if (sanitized.SMTPFrom !== initial.SMTPFrom) {
-      updates.push({ key: 'SMTPFrom', value: sanitized.SMTPFrom })
-    }
-
-    if (sanitized.SMTPToken && sanitized.SMTPToken !== initial.SMTPToken) {
-      updates.push({ key: 'SMTPToken', value: sanitized.SMTPToken })
-    }
-
-    if (sanitized.SMTPSSLEnabled !== initial.SMTPSSLEnabled) {
-      updates.push({
-        key: 'SMTPSSLEnabled',
-        value: sanitized.SMTPSSLEnabled,
-      })
-    }
-
-    if (sanitized.SMTPStartTLSEnabled !== initial.SMTPStartTLSEnabled) {
-      updates.push({
-        key: 'SMTPStartTLSEnabled',
-        value: sanitized.SMTPStartTLSEnabled,
-      })
-    }
-
-    if (sanitized.SMTPInsecureSkipVerify !== initial.SMTPInsecureSkipVerify) {
-      updates.push({
-        key: 'SMTPInsecureSkipVerify',
-        value: sanitized.SMTPInsecureSkipVerify,
-      })
-    }
-
-    if (sanitized.SMTPForceAuthLogin !== initial.SMTPForceAuthLogin) {
-      updates.push({
-        key: 'SMTPForceAuthLogin',
-        value: sanitized.SMTPForceAuthLogin,
-      })
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
 
   return (
     <SettingsSection
       title={t('SMTP Email')}
       description={t('Configure outgoing email server for notifications')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit(onSubmit)}
-          className='space-y-6'
-          autoComplete='off'
-        >
+        <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save SMTP settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='SMTPServer'
@@ -218,22 +251,20 @@ export function EmailSettingsSection({
               control={form.control}
               name='SMTPSSLEnabled'
               render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Enable SSL/TLS')}
-                    </FormLabel>
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Enable SSL/TLS')}</FormLabel>
                     <FormDescription>
                       {t('Use secure connection when sending emails')}
                     </FormDescription>
-                  </div>
+                  </SettingsSwitchContent>
                   <FormControl>
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                </FormItem>
+                </SettingsSwitchItem>
               )}
             />
 
@@ -241,22 +272,20 @@ export function EmailSettingsSection({
               control={form.control}
               name='SMTPStartTLSEnabled'
               render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Use STARTTLS')}
-                    </FormLabel>
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Use STARTTLS')}</FormLabel>
                     <FormDescription>
                       {t('Require STARTTLS upgrade for non-SSL SMTP connections')}
                     </FormDescription>
-                  </div>
+                  </SettingsSwitchContent>
                   <FormControl>
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                </FormItem>
+                </SettingsSwitchItem>
               )}
             />
 
@@ -264,22 +293,22 @@ export function EmailSettingsSection({
               control={form.control}
               name='SMTPInsecureSkipVerify'
               render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>
                       {t('Skip SMTP TLS certificate verification')}
                     </FormLabel>
                     <FormDescription>
                       {t('Allow self-signed or mismatched SMTP certificates')}
                     </FormDescription>
-                  </div>
+                  </SettingsSwitchContent>
                   <FormControl>
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                </FormItem>
+                </SettingsSwitchItem>
               )}
             />
 
@@ -287,22 +316,20 @@ export function EmailSettingsSection({
               control={form.control}
               name='SMTPForceAuthLogin'
               render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Force AUTH LOGIN')}
-                    </FormLabel>
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Force AUTH LOGIN')}</FormLabel>
                     <FormDescription>
                       {t('Force SMTP authentication using AUTH LOGIN method')}
                     </FormDescription>
-                  </div>
+                  </SettingsSwitchContent>
                   <FormControl>
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                </FormItem>
+                </SettingsSwitchItem>
               )}
             />
           </div>
@@ -373,17 +400,7 @@ export function EmailSettingsSection({
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save SMTP settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )

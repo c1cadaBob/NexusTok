@@ -16837,3 +16837,73 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 8. 本轮验证没有点击“保存 io.net 设置”，未执行真实 `PUT /api/option/`，没有污染当前 io.net 模型部署配置。
 9. 本轮验证没有点击“测试连接”，未触发 `/api/deployments/settings/test-connection` 或外部 io.net 连接测试。
 10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：SMTP 邮件设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/integrations/email-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/operations/email` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标、重置动作与离开拦截，导致运维分组内部的 SMTP 设置页与已经收口完成的模型部署页体验不一致。
+3. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator`、`FormNavigationGuard`、重置动作和保存权限禁用理由；当前项目应吸收其页头动作区优势，同时保持 NexusTok 已有的敏感凭据和权限边界。
+4. `new-api-main` 还把 `SMTPSSLEnabled` 与 `SMTPStartTLSEnabled` 收敛为互斥的 `SMTP encryption` 单选项，能减少“同时开启 SSL/TLS 与 STARTTLS”的误配置。但这会改变现有表单输入模型和保存语义，本轮只记录为后续增强候选，不与页头动作区收口混在一个提交里。
+
+### 需求分析
+
+1. `/system-settings/operations/email` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，仍写入 `SMTPServer`、`SMTPPort`、`SMTPAccount`、`SMTPFrom`、`SMTPToken`、`SMTPSSLEnabled`、`SMTPStartTLSEnabled`、`SMTPInsecureSkipVerify` 与 `SMTPForceAuthLogin`。
+4. `SMTPToken` 必须继续遵守“留空表示保留现有凭据”：默认表单值和保存成功后的可见基线都应保持空字符串；只有管理员输入非空新 token 时才提交 `SMTPToken`。
+5. 本轮不改变 SSL/TLS、STARTTLS、跳过证书校验、强制 AUTH LOGIN 的后端发送逻辑，不新增邮件发送测试按钮，也不触发真实邮件发送。
+6. 验证阶段不能点击“保存 SMTP 设置”，避免污染当前 SMTP 主机、端口、账号、发件人、token 或安全开关配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| SMTP 邮件设置页 | `web/default/src/features/system-settings/integrations/email-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截；保持 SMTP token 空值保留语义。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `SMTPServer`、`SMTPPort`、`SMTPAccount`、`SMTPFrom` 与 `SMTPToken` 直接影响注册验证、密码重置、配额预警和系统通知邮件；验证阶段如果误保存，可能造成真实邮件发送失败。
+2. `SMTPToken` 是敏感凭据；如果把后端已有 token 作为前端表单基线或保存成功后继续留在输入框里，会造成密钥回显和浏览器侧留存风险。
+3. `SMTPSSLEnabled` 与 `SMTPStartTLSEnabled` 当前在后端有优先级：`SMTPSSLEnabled=true` 或端口 `465` 且未启用 STARTTLS 时走隐式 TLS，`SMTPStartTLSEnabled=true` 时要求显式 STARTTLS。本轮不改这一规则，避免在 UI 收口切片里引入连接行为变化。
+4. 共享 hook 会在保存成功后用提交数据作为新基线；SMTP 页必须在提交完成前把可见 token 归零，否则会把新 token 固定在 RHF 基线里。
+5. 字符串字段保存前会 trim；迁移共享表单时必须继续保留这一归一化，避免空格差异导致误判脏态或保存无意义值。
+
+### 方案评审
+
+采用“共享表单壳层 + SMTP token 可见基线归零”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、`useResetForm()`、旧底部提交按钮和手工脏态保存入口，交由共享 hook 负责无变更提示、提交态、重置和最小变更过滤。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将四个 SMTP 安全/认证开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、字段 key 和开关语义不变。
+5. 显式维护 `emailUpdateOrder` 与 `emailOptionKeyMap`，保存时按稳定顺序提交既有 option key。
+6. `normalizeEmailValues()` 统一 trim 字符串字段；`SMTPToken` 默认值固定为空，保存时只有非空且不同于后端初始值才提交，保存流程结束前再把提交数据里的 `SMTPToken` 改回空字符串，让共享 hook 的新基线继续保持“凭据不可见”。
+7. 暂不搬运 `new-api-main` 的 `SMTP encryption` 单选项；该能力会作为后续单独切片评审，届时需要覆盖两个布尔 option 到一个互斥 UI 状态的映射、保存顺序和后端连接优先级说明。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/integrations/email-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存 SMTP 设置` 两个动作；无脏态时二者禁用，有脏态时按系统设置敏感写权限启用保存。
+4. `SMTPToken` 默认可见值和重置基线均保持为空；管理员不输入新 token 时不会提交 `SMTPToken`，符合“留空保留现有凭据”的既有合同。
+5. 四个 SMTP 开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；SSL/TLS、STARTTLS、证书校验和 AUTH LOGIN 的 option key 与布尔语义均未改变。
+6. 保存合同仍然只写入 SMTP 相关既有 option key，没有改变后端邮件发送、SMTP 连接、认证策略或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/integrations/email-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/operations/email?verify=20260717-email-after-change`，确认热更新生效，`重置` 与 `保存 SMTP 设置` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+4. 首屏快照确认 `SMTPToken` 对应的“密码 / 访问令牌”输入框为空，且页面没有因为后端已有凭据或空 token 基线而进入脏态。
+5. 将“SMTP 主机”临时改为 `smtp.verify.local` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+6. 在脏态下点击侧栏“Worker 代理”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 SMTP 邮箱页，且临时主机值仍保留，说明统一离开拦截正常。
+7. 点击页头“重置”后，“SMTP 主机”恢复为空，“密码 / 访问令牌”仍为空，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和敏感 token 可见基线正确。
+8. 重置后再次点击侧栏“Worker 代理”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
+9. 本轮验证没有点击“保存 SMTP 设置”，未执行真实 `PUT /api/option/`，没有污染当前 SMTP 配置。
+10. 本轮验证没有触发任何真实邮件发送或 SMTP 连接测试。
+11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
