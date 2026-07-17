@@ -3281,6 +3281,7 @@
     "No token found.": "Токен не найден.",
     "No tools configured": "Нет настроенных инструментов",
     "No Upgrade": "Без повышения",
+    "No upstream keys were found for this account.": "Для этой учетной записи upstream-ключи не найдены.",
     "No upstream price differences found": "Различий в ценах провайдера не найдено",
     "No upstream ratio differences found": "Различия в коэффициентах вышестоящего потока не найдены",
     "No uptime data available": "Данные о доступности недоступны",

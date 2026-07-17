@@ -3281,6 +3281,7 @@
     "No token found.": "トークンが見つかりません。",
     "No tools configured": "ツールが未設定です",
     "No Upgrade": "アップグレードなし",
+    "No upstream keys were found for this account.": "このアカウントの上流キーは見つかりませんでした。",
     "No upstream price differences found": "上流価格の差異は見つかりませんでした",
     "No upstream ratio differences found": "アップストリームの比率の差は見つかりません",
     "No uptime data available": "稼働率データがありません",

@@ -2180,6 +2180,10 @@ export function ChannelMutateDrawer({
           toast.error(t('Sync upstream account before creating the channel'))
           return
         }
+        if (upstreamSnapshot.keys.length === 0) {
+          toast.error(t('No upstream keys were found for this account.'))
+          return
+        }
         await upstreamCreateMutation.mutateAsync({
           preview_id: upstreamPreviewId,
           apply_suggested: upstreamApplySuggested,
@@ -2828,134 +2832,146 @@ export function ChannelMutateDrawer({
                                       </div>
                                       <Switch
                                         checked={upstreamApplySuggested}
+                                        disabled={
+                                          upstreamSnapshot.keys.length === 0
+                                        }
                                         onCheckedChange={
                                           setUpstreamApplySuggested
                                         }
                                       />
                                     </div>
 
-                                    <div className='overflow-hidden rounded-md border'>
-                                      <div className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
-                                        <span>{t('Key')}</span>
-                                        <span>{t('Group')}</span>
-                                        <span>{t('Priority')}</span>
-                                        <span>{t('Weight')}</span>
-                                        <span>{t('Enabled')}</span>
+                                    {upstreamSnapshot.keys.length === 0 ? (
+                                      <Alert>
+                                        <AlertCircle aria-hidden='true' />
+                                        <AlertDescription>
+                                          {t(
+                                            'No upstream keys were found for this account.'
+                                          )}
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : (
+                                      <div className='overflow-hidden rounded-md border'>
+                                        <div className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
+                                          <span>{t('Key')}</span>
+                                          <span>{t('Group')}</span>
+                                          <span>{t('Priority')}</span>
+                                          <span>{t('Weight')}</span>
+                                          <span>{t('Enabled')}</span>
+                                        </div>
+                                        {upstreamSnapshot.keys.map(
+                                          (key, index) => {
+                                            const configId =
+                                              upstreamKeyConfigId(key, index)
+                                            const config =
+                                              upstreamAccountConfigs[configId]
+                                            return (
+                                              <div
+                                                key={configId}
+                                                className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
+                                              >
+                                                <div className='min-w-0'>
+                                                  <div className='truncate text-sm font-medium'>
+                                                    {key.name || key.masked_key}
+                                                  </div>
+                                                  <div className='text-muted-foreground truncate text-xs'>
+                                                    {key.masked_key}
+                                                  </div>
+                                                </div>
+                                                <div className='min-w-0'>
+                                                  <Badge variant='secondary'>
+                                                    {key.group_name ||
+                                                      key.group_id ||
+                                                      '-'}
+                                                  </Badge>
+                                                  {key.group_ratio !==
+                                                    undefined && (
+                                                    <span className='text-muted-foreground ml-2 text-xs'>
+                                                      {key.group_ratio}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <Input
+                                                  type='number'
+                                                  value={config?.priority ?? 0}
+                                                  disabled={
+                                                    upstreamApplySuggested
+                                                  }
+                                                  onChange={(event) =>
+                                                    setUpstreamAccountConfigs(
+                                                      (prev) => ({
+                                                        ...prev,
+                                                        [configId]: {
+                                                          enabled:
+                                                            prev[configId]
+                                                              ?.enabled ?? true,
+                                                          weight:
+                                                            prev[configId]
+                                                              ?.weight ??
+                                                            key.suggested_weight,
+                                                          priority: Number(
+                                                            event.target.value
+                                                          ),
+                                                        },
+                                                      })
+                                                    )
+                                                  }
+                                                />
+                                                <Input
+                                                  type='number'
+                                                  value={config?.weight ?? 0}
+                                                  disabled={
+                                                    upstreamApplySuggested
+                                                  }
+                                                  onChange={(event) =>
+                                                    setUpstreamAccountConfigs(
+                                                      (prev) => ({
+                                                        ...prev,
+                                                        [configId]: {
+                                                          enabled:
+                                                            prev[configId]
+                                                              ?.enabled ?? true,
+                                                          priority:
+                                                            prev[configId]
+                                                              ?.priority ??
+                                                            key.suggested_priority,
+                                                          weight: Number(
+                                                            event.target.value
+                                                          ),
+                                                        },
+                                                      })
+                                                    )
+                                                  }
+                                                />
+                                                <Switch
+                                                  checked={
+                                                    config?.enabled ?? true
+                                                  }
+                                                  onCheckedChange={(checked) =>
+                                                    setUpstreamAccountConfigs(
+                                                      (prev) => ({
+                                                        ...prev,
+                                                        [configId]: {
+                                                          priority:
+                                                            prev[configId]
+                                                              ?.priority ??
+                                                            key.suggested_priority,
+                                                          weight:
+                                                            prev[configId]
+                                                              ?.weight ??
+                                                            key.suggested_weight,
+                                                          enabled: checked,
+                                                        },
+                                                      })
+                                                    )
+                                                  }
+                                                />
+                                              </div>
+                                            )
+                                          }
+                                        )}
                                       </div>
-                                      {upstreamSnapshot.keys.map(
-                                        (key, index) => {
-                                          const configId = upstreamKeyConfigId(
-                                            key,
-                                            index
-                                          )
-                                          const config =
-                                            upstreamAccountConfigs[configId]
-                                          return (
-                                            <div
-                                              key={configId}
-                                              className='grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
-                                            >
-                                              <div className='min-w-0'>
-                                                <div className='truncate text-sm font-medium'>
-                                                  {key.name || key.masked_key}
-                                                </div>
-                                                <div className='text-muted-foreground truncate text-xs'>
-                                                  {key.masked_key}
-                                                </div>
-                                              </div>
-                                              <div className='min-w-0'>
-                                                <Badge variant='secondary'>
-                                                  {key.group_name ||
-                                                    key.group_id ||
-                                                    '-'}
-                                                </Badge>
-                                                {key.group_ratio !==
-                                                  undefined && (
-                                                  <span className='text-muted-foreground ml-2 text-xs'>
-                                                    {key.group_ratio}
-                                                  </span>
-                                                )}
-                                              </div>
-                                              <Input
-                                                type='number'
-                                                value={config?.priority ?? 0}
-                                                disabled={
-                                                  upstreamApplySuggested
-                                                }
-                                                onChange={(event) =>
-                                                  setUpstreamAccountConfigs(
-                                                    (prev) => ({
-                                                      ...prev,
-                                                      [configId]: {
-                                                        enabled:
-                                                          prev[configId]
-                                                            ?.enabled ?? true,
-                                                        weight:
-                                                          prev[configId]
-                                                            ?.weight ??
-                                                          key.suggested_weight,
-                                                        priority: Number(
-                                                          event.target.value
-                                                        ),
-                                                      },
-                                                    })
-                                                  )
-                                                }
-                                              />
-                                              <Input
-                                                type='number'
-                                                value={config?.weight ?? 0}
-                                                disabled={
-                                                  upstreamApplySuggested
-                                                }
-                                                onChange={(event) =>
-                                                  setUpstreamAccountConfigs(
-                                                    (prev) => ({
-                                                      ...prev,
-                                                      [configId]: {
-                                                        enabled:
-                                                          prev[configId]
-                                                            ?.enabled ?? true,
-                                                        priority:
-                                                          prev[configId]
-                                                            ?.priority ??
-                                                          key.suggested_priority,
-                                                        weight: Number(
-                                                          event.target.value
-                                                        ),
-                                                      },
-                                                    })
-                                                  )
-                                                }
-                                              />
-                                              <Switch
-                                                checked={
-                                                  config?.enabled ?? true
-                                                }
-                                                onCheckedChange={(checked) =>
-                                                  setUpstreamAccountConfigs(
-                                                    (prev) => ({
-                                                      ...prev,
-                                                      [configId]: {
-                                                        priority:
-                                                          prev[configId]
-                                                            ?.priority ??
-                                                          key.suggested_priority,
-                                                        weight:
-                                                          prev[configId]
-                                                            ?.weight ??
-                                                          key.suggested_weight,
-                                                        enabled: checked,
-                                                      },
-                                                    })
-                                                  )
-                                                }
-                                              />
-                                            </div>
-                                          )
-                                        }
-                                      )}
-                                    </div>
+                                    )}
                                   </div>
                                 )}
                               </>
