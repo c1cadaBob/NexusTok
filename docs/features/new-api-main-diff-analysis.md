@@ -16003,3 +16003,65 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 7. 点击运维侧栏中的“性能”时，页面弹出“未保存的更改”确认对话框；取消离开后仍停留在当前页，说明统一离开拦截已生效。
 8. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Worker 配置。
 9. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info、`nexustok-build` debug 和浏览器对 `type='password'` 输入的 `verbose` 提示。
+
+## 本轮实施评审：Token Limits 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/request-limits/token-limit-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/security/token-limits` 仍停留在旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致安全与限制分组内部的表单体验与已经收口完成的 `behavior / checkin / quota / currency / logs / worker` 明显分叉。
+3. 数字输入仍使用页面内手写的 `onChange(Number.parseInt(...))` 转换逻辑，没有复用当前项目已经稳定的 `safeNumberFieldProps()` 数字字段接线。
+
+这类差异不涉及后端配置合同或安全热路径，但会直接影响系统设置页的一致性，也会让后续继续迁移 `sensitive-words / bot-protection / request-limits` 等页面时缺少统一样板。
+
+### 需求分析
+
+1. `/system-settings/security/token-limits` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard` 和 `safeNumberFieldProps()`，把脏态提示、离开拦截和数字字段接线都收口到现有公共基座。
+3. 现有字段合同 `token_setting.max_user_tokens` 必须保持不变，不调整后端 `/api/option/` 保存语义，也不改变当前的嵌套表单结构。
+4. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Token 数限制设置页 | `web/default/src/features/system-settings/request-limits/token-limit-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页虽然只有一个数值字段，但如果迁移共享壳层时改坏默认值与数字转换语义，可能出现脏态误判、保存按钮常亮或离页拦截误触发。
+2. 表单字段实际通过 `token_setting.max_user_tokens` 嵌套结构保存；如果字段名映射错误，可能导致提交值类型漂移，甚至把 option key 写错。
+3. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前安全配置。
+4. 页面无变化时必须按约定先重启容器再继续验证；本轮热更新已生效，但文档中仍需明确这个运行约束，避免后续误判。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()` 与手动 `reset`，保留原有 Zod schema，并在 `onSubmit` 中继续按 `token_setting.max_user_tokens` 原键保存。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将数字输入从手写 `Number.parseInt()` 转换迁到 `safeNumberFieldProps()`，继续保持最小值、步进值和当前文案不变。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/request-limits/token-limit-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 数字输入已改为 `safeNumberFieldProps()` 接线，去掉了页面内重复的 `Number.parseInt()` 事件处理，保持了数值字段的统一行为。
+4. 保存合同仍然只写入 `token_setting.max_user_tokens`，没有改变后端接口、数据库逻辑或安全限制语义。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/request-limits/token-limit-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/security/token-limits?verify=20260717-token-limits-baseline`，确认热更新生效，`保存 Token 限制` 已位于标题右侧页头动作区。
+6. 在同一 3003 页面中将“每用户最大 Token 数”从 `1000` 临时改为 `1001` 后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用，说明脏态徽标和页头动作区都已正常工作。
+7. 点击安全侧栏中的“敏感词”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在当前页，说明统一离开拦截已生效。
+8. 已在验证结束前将“每用户最大 Token 数”恢复为原值 `1000`；恢复后标题状态消失，页头保存按钮重新禁用，说明脏态回滚行为正确。
+9. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实安全配置。
+10. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。

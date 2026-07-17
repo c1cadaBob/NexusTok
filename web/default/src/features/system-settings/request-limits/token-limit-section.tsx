@@ -16,13 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -33,8 +30,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import { SettingsForm } from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const tokenLimitSchema = z.object({
   token_setting: z.object({
@@ -68,28 +71,23 @@ const normalizeFormValues = (
 export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const form = useForm<TokenLimitFormValues>({
-    resolver: zodResolver(tokenLimitSchema),
-    mode: 'onChange',
-    defaultValues: buildFormDefaults(defaultValues),
-  })
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<TokenLimitFormValues>({
+      resolver: zodResolver(tokenLimitSchema) as Resolver<
+        TokenLimitFormValues,
+        unknown,
+        TokenLimitFormValues
+      >,
+      mode: 'onChange',
+      defaultValues: buildFormDefaults(defaultValues),
+      onSubmit: async (values) => {
+        const key = 'token_setting.max_user_tokens'
+        const normalized = normalizeFormValues(values)
+        const value = normalized[key]
 
-  useEffect(() => {
-    form.reset(buildFormDefaults(defaultValues))
-  }, [defaultValues, form])
-
-  const onSubmit = async (values: TokenLimitFormValues) => {
-    const key = 'token_setting.max_user_tokens'
-    const normalized = normalizeFormValues(values)
-    const value = normalized[key]
-
-    if (value === defaultValues[key]) {
-      toast.info(t('No changes to save'))
-      return
-    }
-
-    await updateOption.mutateAsync({ key, value })
-  }
+        await updateOption.mutateAsync({ key, value })
+      },
+    })
 
   return (
     <SettingsSection
@@ -98,8 +96,21 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
         'Set how many API tokens each user can create before new token creation is blocked.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save token limits'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='token_setting.max_user_tokens'
@@ -111,10 +122,7 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
                     type='number'
                     min={1}
                     step={1}
-                    {...field}
-                    onChange={(event) =>
-                      field.onChange(Number.parseInt(event.target.value) || 1)
-                    }
+                    {...safeNumberFieldProps(field)}
                   />
                 </FormControl>
                 <FormDescription>
@@ -126,17 +134,7 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
               </FormItem>
             )}
           />
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save token limits')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
