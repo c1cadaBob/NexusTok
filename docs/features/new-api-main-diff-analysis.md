@@ -15818,3 +15818,64 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 为避免影响当前 3003 实例的计费配置，本轮验证结束前已将“邀请者奖励”恢复为原值 `0`。
 10. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`；仅保留既有 i18next info 与 `nexustok-build` debug。
 11. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 以及两次 `PUT /api/option/`。
+
+## 本轮实施评审：Check-in Settings 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/checkin-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/billing/checkin` 仍停留在旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. “启用签到功能”仍使用手写 `FormItem className='flex ... rounded-lg border p-4'` 行布局，没有复用当前项目已稳定的 `SettingsSwitchItem` / `SettingsSwitchContent`。
+3. 页面缺少统一的未保存脏态徽标与离开拦截；在计费分组内部，这让 `checkin` 的体验和已经收口完成的 `quota / currency` 明显分叉。
+
+这类差异不涉及后端合同和计费热路径，但会直接影响系统设置页的一致性，也会让后续继续迁移其它分区时缺少统一样板。
+
+### 需求分析
+
+1. `/system-settings/billing/checkin` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 现有字段合同 `checkin_setting.enabled`、`checkin_setting.min_quota`、`checkin_setting.max_quota` 必须保持不变，不调整后端 `/api/option/` 保存语义。
+4. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 签到奖励设置页 | `web/default/src/features/system-settings/general/checkin-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页虽然字段少，但会根据 `enabled` 动态显示 `minQuota/maxQuota`；如果迁移表单壳层时改坏 watch/reset 语义，可能出现切换开关后脏态不正确或字段值意外清空。
+2. `useSettingsForm()` 会根据 dirtyFields 决定是否提交，如果字段名映射到 `checkin_setting.*` 时处理错误，会导致保存接口写入错误 key。
+3. 该页面位于 3003 热更新运行态，本轮已经真实遇到“代码变了但页面仍显示旧壳层”的情况；必须按要求在页面无变化时重启容器后再验证，不能依赖热更新缓存做判断。
+4. 本轮只验证脏态、按钮位置、离开拦截和网络/控制台状态，不执行真实 `PUT /api/option/`，避免污染热更新实例中的签到配置。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`，保留原有 Zod schema，并在 `onSubmit` 中把 `enabled / minQuota / maxQuota` 映射回 `checkin_setting.enabled / min_quota / max_quota`。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与 `quota / currency / behavior` 等已收口分区保持一致。
+4. 将开关行从手写 `FormItem` 迁到 `SettingsSwitchItem + SettingsSwitchContent`，数值输入继续保留现有文案和字段结构，但改用 `safeNumberFieldProps()` 以与其它数字设置页保持一致。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/general/checkin-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. “启用签到功能”开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；`minQuota/maxQuota` 数值输入改为 `safeNumberFieldProps()` 接线。
+4. 保存合同仍然只写入 `checkin_setting.enabled`、`checkin_setting.min_quota`、`checkin_setting.max_quota` 三个 option key，没有改变后端接口或数据库行为。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/general/checkin-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 首次在 `http://192.168.0.202:3003/system-settings/billing/checkin` 验证时，页面仍显示旧壳层，没有加载本轮代码；按用户要求已先重启 `nexustok-frontend-watch` 与 `nexustok-api-hot`。
+6. 重启后通过 MCP 重新访问 `http://192.168.0.202:3003/system-settings/billing/checkin?verify=20260717-checkin-after-restart`，确认热更新生效，`保存签到设置` 已位于标题右侧页头动作区。
+7. 在同一 3003 页面中点击“启用签到功能”后，标题区域出现“未保存的更改”，`minQuota/maxQuota` 输入区域展开，说明脏态徽标和条件渲染都已正常工作。
+8. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实签到配置。
+9. MCP 控制台在重启前后的两轮验证中都没有出现新的 runtime `error`、`warn` 或 `issue`。

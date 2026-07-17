@@ -17,11 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { z } from 'zod'
-import { useForm, type Resolver } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -33,8 +31,18 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const schema = z.object({
   enabled: z.boolean(),
@@ -56,80 +64,67 @@ export function CheckinSettingsSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
-  const form = useForm<Values>({
+  const { form, handleSubmit, isDirty, isSubmitting } = useSettingsForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
     defaultValues: {
       enabled: defaultValues.enabled,
       minQuota: defaultValues.minQuota,
       maxQuota: defaultValues.maxQuota,
     },
+    onSubmit: async (_data, changedFields) => {
+      for (const [key, value] of Object.entries(changedFields)) {
+        let optionKey = key
+        if (key === 'enabled') {
+          optionKey = 'checkin_setting.enabled'
+        } else if (key === 'minQuota') {
+          optionKey = 'checkin_setting.min_quota'
+        } else if (key === 'maxQuota') {
+          optionKey = 'checkin_setting.max_quota'
+        }
+
+        await updateOption.mutateAsync({
+          key: optionKey,
+          value: value as string | number | boolean,
+        })
+      }
+    },
   })
 
-  const { isDirty, isSubmitting } = form.formState
   const enabled = form.watch('enabled')
-
-  async function onSubmit(values: Values) {
-    const updates: Array<{ key: string; value: string }> = []
-
-    if (values.enabled !== defaultValues.enabled) {
-      updates.push({
-        key: 'checkin_setting.enabled',
-        value: String(values.enabled),
-      })
-    }
-
-    if (values.minQuota !== defaultValues.minQuota) {
-      updates.push({
-        key: 'checkin_setting.min_quota',
-        value: String(values.minQuota),
-      })
-    }
-
-    if (values.maxQuota !== defaultValues.maxQuota) {
-      updates.push({
-        key: 'checkin_setting.max_quota',
-        value: String(values.maxQuota),
-      })
-    }
-
-    if (updates.length === 0) {
-      toast.info(t('No changes to save'))
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-
-    form.reset(values)
-  }
 
   return (
     <SettingsSection
       title={t('Check-in Settings')}
       description={t('Configure daily check-in rewards for users')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit(onSubmit)}
-          autoComplete='off'
-          className='space-y-6'
-        >
+        <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save check-in settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='enabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Enable check-in feature')}
-                  </FormLabel>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable check-in feature')}</FormLabel>
                   <FormDescription>
                     {t(
                       'Allow users to check in daily for random quota rewards'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
@@ -137,12 +132,12 @@ export function CheckinSettingsSection({
                     disabled={updateOption.isPending || isSubmitting}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
           {enabled && (
-            <div className='grid gap-6 sm:grid-cols-2'>
+            <>
               <FormField
                 control={form.control}
                 name='minQuota'
@@ -154,7 +149,7 @@ export function CheckinSettingsSection({
                         type='number'
                         min={0}
                         placeholder={t('1000')}
-                        {...field}
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -176,7 +171,7 @@ export function CheckinSettingsSection({
                         type='number'
                         min={0}
                         placeholder={t('10000')}
-                        {...field}
+                        {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
@@ -186,26 +181,9 @@ export function CheckinSettingsSection({
                   </FormItem>
                 )}
               />
-            </div>
+            </>
           )}
-
-          <Button
-            type='submit'
-            disabled={
-              !isDirty ||
-              updateOption.isPending ||
-              isSubmitting ||
-              !updateOption.canUpdate
-            }
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending || isSubmitting
-              ? t('Saving...')
-              : t('Save check-in settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
