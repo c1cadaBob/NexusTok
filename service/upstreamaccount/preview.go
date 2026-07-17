@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -29,6 +30,16 @@ var previewCache = cachex.NewHybridCache[PreviewRecord](cachex.HybridCacheConfig
 			Build()
 	},
 })
+
+var (
+	previewConsumeMu    sync.Mutex
+	previewConsumeLocks = map[string]*previewConsumeLock{}
+)
+
+type previewConsumeLock struct {
+	mu   sync.Mutex
+	refs int
+}
 
 // Preview 使用临时账号密码读取目标平台快照，并生成可由前端展示的预览结果。
 func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
@@ -81,6 +92,48 @@ func GetPreviewRecord(previewID string) (*PreviewRecord, error) {
 		return nil, fmt.Errorf("预览快照不存在或已过期，请重新同步")
 	}
 	return &record, nil
+}
+
+// ConsumePreviewRecord 读取并删除完整预览快照，保证包含完整 Key 的快照只能被创建流程使用一次。
+func ConsumePreviewRecord(previewID string) (*PreviewRecord, error) {
+	previewID = strings.TrimSpace(previewID)
+	if previewID == "" {
+		return nil, fmt.Errorf("preview_id 不能为空")
+	}
+
+	unlock := lockPreviewConsume(previewID)
+	defer unlock()
+
+	record, found, err := previewCache.GetAndDelete(previewID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || record.Snapshot == nil || record.ExpiresAt < time.Now().Unix() {
+		return nil, fmt.Errorf("预览快照不存在或已过期，请重新同步")
+	}
+	return &record, nil
+}
+
+func lockPreviewConsume(previewID string) func() {
+	previewConsumeMu.Lock()
+	lock := previewConsumeLocks[previewID]
+	if lock == nil {
+		lock = &previewConsumeLock{}
+		previewConsumeLocks[previewID] = lock
+	}
+	lock.refs++
+	previewConsumeMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		previewConsumeMu.Lock()
+		lock.refs--
+		if lock.refs == 0 && previewConsumeLocks[previewID] == lock {
+			delete(previewConsumeLocks, previewID)
+		}
+		previewConsumeMu.Unlock()
+	}
 }
 
 // sanitizeSnapshot 返回可发送到前端的快照副本。

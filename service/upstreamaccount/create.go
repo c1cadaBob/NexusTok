@@ -71,7 +71,7 @@ type CreateResult struct {
 
 // CreateFromPreview 根据短期预览快照创建渠道和渠道内账号池。
 func CreateFromPreview(req CreateRequest) (*CreateResult, error) {
-	record, err := GetPreviewRecord(req.PreviewID)
+	record, err := ConsumePreviewRecord(req.PreviewID)
 	if err != nil {
 		return nil, err
 	}

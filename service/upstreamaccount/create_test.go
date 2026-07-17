@@ -106,6 +106,17 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
 	require.Equal(t, int64(4), abilityCount)
+
+	_, err = GetPreviewRecord(previewID)
+	require.ErrorContains(t, err, "预览快照不存在或已过期")
+	_, err = CreateFromPreview(CreateRequest{
+		PreviewID: previewID,
+		Channel: ChannelCreateConfig{
+			Name: "duplicated-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+	})
+	require.ErrorContains(t, err, "预览快照不存在或已过期")
 }
 
 func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {

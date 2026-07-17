@@ -28,6 +28,7 @@ const (
 	defaultRedisOpTimeout   = 2 * time.Second
 	defaultRedisScanTimeout = 30 * time.Second
 	defaultRedisDelTimeout  = 10 * time.Second
+	getAndDeleteLua         = `local value = redis.call("GET", KEYS[1]); if value then redis.call("DEL", KEYS[1]); end; return value`
 )
 
 // HybridCacheConfig 混合缓存的配置结构体
@@ -36,9 +37,9 @@ type HybridCacheConfig[V any] struct {
 	Namespace Namespace // 缓存命名空间，用于键隔离
 
 	// Redis 配置（当 Redis 启用时使用）
-	Redis        *redis.Client    // Redis 客户端实例
-	RedisCodec   ValueCodec[V]    // Redis 值编解码器
-	RedisEnabled func() bool      // 动态检查 Redis 是否启用的回调函数
+	Redis        *redis.Client // Redis 客户端实例
+	RedisCodec   ValueCodec[V] // Redis 值编解码器
+	RedisEnabled func() bool   // 动态检查 Redis 是否启用的回调函数
 
 	// 内存缓存配置（当 Redis 未启用时作为降级方案）
 	Memory func() *hot.HotCache[string, V] // 内存缓存工厂函数
@@ -50,13 +51,13 @@ type HybridCacheConfig[V any] struct {
 type HybridCache[V any] struct {
 	ns Namespace // 缓存命名空间
 
-	redis        *redis.Client         // Redis 客户端
-	redisCodec   ValueCodec[V]         // Redis 值编解码器
-	redisEnabled func() bool           // Redis 启用状态检查回调
+	redis        *redis.Client // Redis 客户端
+	redisCodec   ValueCodec[V] // Redis 值编解码器
+	redisEnabled func() bool   // Redis 启用状态检查回调
 
-	memOnce sync.Once                  // 内存缓存初始化的单次执行保证
+	memOnce sync.Once                       // 内存缓存初始化的单次执行保证
 	memInit func() *hot.HotCache[string, V] // 内存缓存工厂函数
-	mem     *hot.HotCache[string, V]  // 内存缓存实例
+	mem     *hot.HotCache[string, V]        // 内存缓存实例
 }
 
 // NewHybridCache 创建一个新的混合缓存实例
@@ -162,6 +163,54 @@ func (c *HybridCache[V]) SetWithTTL(key string, v V, ttl time.Duration) error {
 
 	c.memCache().SetWithTTL(full, v, ttl)
 	return nil
+}
+
+// GetAndDelete 读取并删除一个缓存键。
+// Redis 模式下使用 Lua 保证跨进程原子消费，并避免依赖 Redis 6.2 才支持的 GETDEL；内存模式下先读取再删除，调用方如需防并发复用应在业务层加锁。
+func (c *HybridCache[V]) GetAndDelete(key string) (value V, found bool, err error) {
+	full := c.ns.FullKey(key)
+	if full == "" {
+		var zero V
+		return zero, false, nil
+	}
+
+	if c.redisOn() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		defer cancel()
+
+		raw, e := c.redis.Eval(ctx, getAndDeleteLua, []string{full}).Result()
+		if e == nil {
+			rawString, ok := raw.(string)
+			if !ok || rawString == "" {
+				var zero V
+				return zero, false, nil
+			}
+			v, decErr := c.redisCodec.Decode(rawString)
+			if decErr != nil {
+				var zero V
+				return zero, false, decErr
+			}
+			return v, true, nil
+		}
+		if errors.Is(e, redis.Nil) {
+			var zero V
+			return zero, false, nil
+		}
+		var zero V
+		return zero, false, e
+	}
+
+	value, found, err = c.memCache().Get(full)
+	if err != nil || !found {
+		var zero V
+		return zero, false, err
+	}
+	_, deleteErr := c.DeleteMany([]string{full})
+	if deleteErr != nil {
+		var zero V
+		return zero, false, deleteErr
+	}
+	return value, true, nil
 }
 
 // Keys 返回所有有效缓存键
