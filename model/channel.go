@@ -722,8 +722,8 @@ func GetChannelPollingLock(channelId int) *sync.Mutex {
 	return actual.(*sync.Mutex)
 }
 
-// CleanupChannelPollingLocks removes locks for channels that no longer exist
-// This is optional and can be called periodically to prevent memory leaks
+// CleanupChannelPollingLocks 清理已经不存在渠道的轮询锁。
+// 该函数可被周期性调用，用于避免长期运行实例中残留无效渠道锁。
 func CleanupChannelPollingLocks() {
 	var activeChannelIds []int
 	DB.Model(&Channel{}).Pluck("id", &activeChannelIds)
@@ -742,41 +742,72 @@ func CleanupChannelPollingLocks() {
 	})
 }
 
+func applyChannelStatus(channel *Channel, status int, reason string) {
+	channel.Status = status
+	if channel.ChannelInfo.IsMultiKey && status == common.ChannelStatusEnabled {
+		channel.ChannelInfo.MultiKeyStatusList = nil
+		channel.ChannelInfo.MultiKeyDisabledReason = nil
+		channel.ChannelInfo.MultiKeyDisabledTime = nil
+	}
+	info := channel.GetOtherInfo()
+	info["status_reason"] = reason
+	info["status_time"] = common.GetTimestamp()
+	channel.SetOtherInfo(info)
+}
+
+func findMultiKeyIndex(keys []string, usingKey string) int {
+	usingKey = strings.TrimSpace(usingKey)
+	if usingKey == "" {
+		return -1
+	}
+	for i, key := range keys {
+		if strings.TrimSpace(key) == usingKey {
+			return i
+		}
+	}
+	return -1
+}
+
 func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string) {
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
-		channel.Status = status
+		applyChannelStatus(channel, status, reason)
+		return
+	}
+
+	keyIndex := findMultiKeyIndex(keys, usingKey)
+	if keyIndex < 0 {
+		// 自动禁用单个多 Key 时必须能定位到本次实际使用的 Key。
+		// usingKey 为空或不匹配通常表示调用方在做渠道级启停，或请求尚未完成密钥选择；
+		// 此时直接更新渠道整体状态，避免历史逻辑默认操作索引 0 而误禁用第一把 Key。
+		applyChannelStatus(channel, status, reason)
+		return
+	}
+
+	if channel.ChannelInfo.MultiKeyStatusList == nil {
+		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+	}
+	if status == common.ChannelStatusEnabled {
+		delete(channel.ChannelInfo.MultiKeyStatusList, keyIndex)
+		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+			delete(channel.ChannelInfo.MultiKeyDisabledTime, keyIndex)
+		}
 	} else {
-		var keyIndex int
-		for i, key := range keys {
-			if key == usingKey {
-				keyIndex = i
-				break
-			}
+		channel.ChannelInfo.MultiKeyStatusList[keyIndex] = status
+		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
+			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
 		}
-		if channel.ChannelInfo.MultiKeyStatusList == nil {
-			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
+			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		}
-		if status == common.ChannelStatusEnabled {
-			delete(channel.ChannelInfo.MultiKeyStatusList, keyIndex)
-		} else {
-			channel.ChannelInfo.MultiKeyStatusList[keyIndex] = status
-			if channel.ChannelInfo.MultiKeyDisabledReason == nil {
-				channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
-			}
-			if channel.ChannelInfo.MultiKeyDisabledTime == nil {
-				channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
-			}
-			channel.ChannelInfo.MultiKeyDisabledReason[keyIndex] = reason
-			channel.ChannelInfo.MultiKeyDisabledTime[keyIndex] = common.GetTimestamp()
-		}
-		if len(channel.ChannelInfo.MultiKeyStatusList) >= channel.ChannelInfo.MultiKeySize {
-			channel.Status = common.ChannelStatusAutoDisabled
-			info := channel.GetOtherInfo()
-			info["status_reason"] = "All keys are disabled"
-			info["status_time"] = common.GetTimestamp()
-			channel.SetOtherInfo(info)
-		}
+		channel.ChannelInfo.MultiKeyDisabledReason[keyIndex] = reason
+		channel.ChannelInfo.MultiKeyDisabledTime[keyIndex] = common.GetTimestamp()
+	}
+	if len(channel.ChannelInfo.MultiKeyStatusList) >= len(keys) {
+		applyChannelStatus(channel, common.ChannelStatusAutoDisabled, "All keys are disabled")
 	}
 }
 
@@ -790,12 +821,15 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			return false
 		}
 		if channelCache.ChannelInfo.IsMultiKey {
-			// Use per-channel lock to prevent concurrent map read/write with GetNextEnabledKey
+			// 使用渠道级锁保护 MultiKeyStatusList，避免与 GetNextEnabledKey 并发读写 map。
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
 			// 如果是多Key模式，更新缓存中的状态
 			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
 			pollingLock.Unlock()
+			if channelCache.Status != common.ChannelStatusEnabled {
+				CacheUpdateChannelStatus(channelId, channelCache.Status)
+			}
 			//CacheUpdateChannel(channelCache)
 			//return true
 		} else {
@@ -826,7 +860,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
-			// Protect map writes with the same per-channel lock used by readers
+			// 使用与读取路径一致的渠道级锁，保护多 Key 状态 map 的并发写入。
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
 			handlerMultiKeyUpdate(channel, usingKey, status, reason)
@@ -835,11 +869,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 				shouldUpdateAbilities = true
 			}
 		} else {
-			info := channel.GetOtherInfo()
-			info["status_reason"] = reason
-			info["status_time"] = common.GetTimestamp()
-			channel.SetOtherInfo(info)
-			channel.Status = status
+			applyChannelStatus(channel, status, reason)
 			shouldUpdateAbilities = true
 		}
 		err = channel.SaveWithoutKey()
