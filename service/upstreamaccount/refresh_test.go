@@ -434,3 +434,73 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	require.Equal(t, int64(12), account.Priority)
 	require.Equal(t, 34, account.Weight)
 }
+
+func TestRefreshChannelFromSnapshotDisablesMissingSub2APIKeyWithLoginMetadataURL(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "sub2-login-metadata-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-4o",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	missingKey := SyncedKey{
+		ExternalID: "missing",
+		Name:       "Missing",
+		Key:        "sk-missing",
+		MaskedKey:  "sk-missing",
+		GroupName:  "default",
+	}
+	account := model.ChannelAccount{
+		ChannelId: channel.Id,
+		Name:      "Missing",
+		Key:       "sk-missing",
+		Status:    common.ChannelStatusEnabled,
+		Models:    "gpt-4o",
+		Group:     "default",
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  "https://sub2api.example/login",
+		}, missingKey),
+	}
+	require.NoError(t, db.Create(&account).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example",
+		Keys:     []SyncedKey{},
+	}, RefreshRequest{
+		ChannelID:         channel.Id,
+		DisableMissingKey: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Disabled)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, account.Id).Error)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
+}

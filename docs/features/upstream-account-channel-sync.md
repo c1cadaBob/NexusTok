@@ -542,20 +542,22 @@ sub2api 指定账号复测：
    - 修复：新增统一转换入口，按 `used_usd * common.QuotaPerUnit` 使用 `common.QuotaRound` 转为本地 quota。保留 `balance` 字段继续使用 USD，因为 `Channel.Balance` 的模型注释和前端展示均以 USD 为单位。
    - 验证：更新创建和刷新测试的 `UsedQuota` 断言，覆盖渠道级与账号级用量转换。
 
+3. 历史 sub2api `/login` 元数据在刷新缺失 Key 时可能无法识别同源。
+   - 现象：`sameSyncSource` 只做 trim slash；若历史同步元数据保存了用户粘贴的 `/login` 页面地址，而新适配器刷新快照保存站点根地址，则 `DisableMissingKey` 会误判不是同一来源。
+   - 风险：上游真实删除 Key 后，刷新不会禁用 NexusTok 内历史账号，导致失效 Key 继续参与调度。
+   - 修复：同步身份比较增加平台级 Base URL 归一化，sub2api 的 `/login`、`/dashboard`、`/register`、`/setup` 与站点根地址视为同源；`syncIdentityKey` 和 `sameSyncSource` 共用该归一化。
+   - 验证：新增 `TestRefreshChannelFromSnapshotDisablesMissingSub2APIKeyWithLoginMetadataURL`。
+
 ### 仍需后续增强
 
 1. new-api 2FA 交互式同步。
    - 当前指定 new-api 账号启用了 2FA，后端已能给出明确错误，但还没有 TOTP 输入、pending session 或二阶段验证接口。
    - 影响：启用 2FA 的 new-api 管理账号无法通过账号密码自动同步密钥；需要管理员关闭 2FA、使用无 2FA 测试账号，或后续扩展交互式 2FA。
 
-2. 刷新时同源判定的 Base URL 归一化还可以进一步平台化。
-   - 当前 `sameSyncSource` 只做 trim slash；sub2api 已在抓取快照前剥离 `/login` 等页面路径，因此新元数据一致，但历史元数据如果保存了页面路径，禁用缺失 Key 时可能无法识别为同源。
-   - 建议：后续把 `syncIdentityKey` 和 `sameSyncSource` 改为调用平台级 Base URL 归一化，迁移或兼容历史 `/login` 元数据。
-
-3. 账号同步创建后渠道级 `models` 为空时仍不会生成 `Ability`。
+2. 账号同步创建后渠道级 `models` 为空时仍不会生成 `Ability`。
    - 这是按需求“可先不填模型和类型”的有意设计，避免空模型污染调度；但如果上游平台也不返回模型，创建后的渠道不会被普通模型路由命中。
    - 建议：前端在 `keyCount>0` 但模型为空时增加非阻塞提示，提示管理员后续补模型或使用支持全部模型的显式策略。
 
-4. 预览缓存过期和多标签页并发创建的交互提示仍偏后端化。
+3. 预览缓存过期和多标签页并发创建的交互提示仍偏后端化。
    - 后端已通过一次性消费 `preview_id` 避免完整 Key 被重复使用；但前端没有倒计时，也没有在 create 后清晰区分“已过期”和“已被其他标签页消费”。
    - 建议：前端展示 `expires_at` 倒计时，并在 `preview_id` 消费失败时引导重新同步。

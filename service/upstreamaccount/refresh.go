@@ -362,5 +362,5 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 func sameSyncSource(metadata syncMetadata, snapshot *Snapshot) bool {
 	return syncIdentityKey(metadata.Platform, metadata.BaseURL, metadata.ExternalID) != "" &&
 		NormalizePlatform(metadata.Platform) == NormalizePlatform(snapshot.Platform) &&
-		strings.TrimRight(strings.TrimSpace(metadata.BaseURL), "/") == strings.TrimRight(strings.TrimSpace(snapshot.BaseURL), "/")
+		sameSyncSourceBaseURL(snapshot.Platform, metadata.BaseURL, snapshot.BaseURL)
 }

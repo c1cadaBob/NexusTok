@@ -129,10 +129,22 @@ func readAccountSyncMetadata(settings string) syncMetadata {
 
 func syncIdentityKey(platform string, baseURL string, externalID string) string {
 	platform = NormalizePlatform(platform)
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	baseURL = normalizeSyncMetadataBaseURL(platform, baseURL)
 	externalID = strings.TrimSpace(externalID)
 	if platform == "" || baseURL == "" || externalID == "" {
 		return ""
 	}
 	return platform + "|" + baseURL + "|" + externalID
+}
+
+func sameSyncSourceBaseURL(platform string, left string, right string) bool {
+	return normalizeSyncMetadataBaseURL(platform, left) == normalizeSyncMetadataBaseURL(platform, right)
+}
+
+func normalizeSyncMetadataBaseURL(platform string, raw string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if NormalizePlatform(platform) == PlatformSub2API {
+		return strings.TrimRight(strings.TrimSpace(normalizeSub2APIBaseURL(trimmed)), "/")
+	}
+	return trimmed
 }
