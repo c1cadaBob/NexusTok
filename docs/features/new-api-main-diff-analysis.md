@@ -16907,3 +16907,72 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 本轮验证没有点击“保存 SMTP 设置”，未执行真实 `PUT /api/option/`，没有污染当前 SMTP 配置。
 10. 本轮验证没有触发任何真实邮件发送或 SMTP 连接测试。
 11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：第三方预设内容设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/content/chat-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/content/chat` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标、重置动作与离开拦截，导致控制台内容分组内部的第三方预设页与已经收口完成的 Data Dashboard、Drawing 页体验不一致。
+3. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator`、`FormNavigationGuard`、重置动作和保存权限禁用理由；当前项目应吸收其页头动作区优势，同时保持 NexusTok “Third-party Presets” 命名和 visual/json 双模式能力。
+4. 该页面只保存单个 `Chats` JSON option，但该 JSON 会影响终端用户可见的第三方客户端跳转入口；验证阶段必须只检查本地脏态和重置，不执行真实保存。
+
+### 需求分析
+
+1. `/system-settings/content/chat` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator` 与 `FormNavigationGuard`，把脏态提示、离开拦截和页头动作都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，仍只写入 `Chats`，不调整前台 `/chat/:chatId`、`/chat2link` 或第三方链接生成逻辑。
+4. 保持现有 JSON schema 不变：`Chats` 必须是数组，数组每项必须是只包含一个键值对的对象。
+5. 保持 Visual / JSON 双模式不变；模式切换不应触发保存，也不应误改 JSON 语义。
+6. 继续使用 `normalizeJsonString()` 比较语义等价 JSON，避免仅格式化差异导致无意义保存。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 第三方预设内容设置页 | `web/default/src/features/system-settings/content/chat-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截；保持 Visual / JSON 编辑模式与 JSON 校验合同。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `Chats` JSON 会直接影响用户看到的第三方客户端预设入口；验证阶段如果误保存 `[]` 或非法 JSON，会清空或破坏真实入口。
+2. Visual 编辑器与 JSON 文本框共用同一个字段；共享表单迁移必须保留当前 `field.value` 单源状态，避免两个模式之间数据不同步。
+3. JSON 格式化后的 pretty 字符串和后端保存用的压缩字符串在文本上不同但语义相同；如果脏态比较只做字符串比较，可能出现保存后仍显示未保存或反复提交无意义 JSON。
+4. 该页面有实时 JSON 校验；迁移表单 hook 时必须继续保留 `mode: 'onChange'`，避免 JSON 模式下错误提示滞后。
+5. Visual 模式的新增、编辑、删除弹窗会修改表单字段；本轮不改弹窗和表格逻辑，避免引入列表编辑行为变化。
+
+### 方案评审
+
+采用“共享表单壳层 + JSON 语义比较”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、手工 `useEffect reset`、旧底部提交按钮和初始 normalized ref。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. `defaultValues` 继续使用 `formatJsonForEditor(defaultValue, '[]')`，保证 JSON 模式展示为可读缩进格式。
+5. `compareValues` 使用 `normalizeJsonString()` 对当前值和基线值做语义比较，忽略缩进和空白差异。
+6. 保存前继续使用 `normalizeJsonString(values.Chats, '[]')`，只向后端提交压缩且稳定的 JSON 字符串。
+7. 保留 `Visual / JSON` tabs、`ChatSettingsVisualEditor`、`ChatDialog`、JSON schema 和所有现有文案，不改列表编辑器行为。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/content/chat-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存第三方设置` 两个动作；无脏态时二者禁用，有脏态时按系统设置敏感写权限启用保存。
+4. JSON 模式继续实时校验，Visual 模式继续使用同一个 `Chats` 字段驱动列表、搜索、添加、编辑和删除。
+5. 保存合同仍然只写入 `Chats`，没有改变前台第三方链接生成、chat preset 路由或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/content/chat-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已使用 MCP 在真实运行态登录并访问 `http://192.168.0.202:3003/system-settings/content/chat?verify=20260717-chat-after-change`，确认热更新生效，`重置` 与 `保存第三方设置` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+4. 首屏 Visual 模式正常展示现有第三方预设列表，包括 Cherry Studio、AionUI、流畅阅读、CC Switch、DeepChat、Lobe Chat 官方示例、AI as Workspace、AMA 问天和 OpenCat。
+5. 切换到 JSON 模式后，现有 `Chats` JSON 以缩进格式展示，模式切换本身没有触发脏态或保存按钮启用。
+6. 将 JSON 文本临时改为 `[]` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+7. 在脏态下点击侧栏“绘图”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在第三方预设页，且临时 JSON 值仍保留，说明统一离开拦截正常。
+8. 点击页头“重置”后，JSON 文本恢复完整预设列表，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和 JSON 回滚行为正确。
+9. 重置后再次点击侧栏“绘图”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
+10. 本轮验证没有点击“保存第三方设置”，未执行真实 `PUT /api/option/`，没有污染当前 `Chats` 配置。
+11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。

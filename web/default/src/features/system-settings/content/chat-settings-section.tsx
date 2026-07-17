@@ -16,12 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -33,7 +32,12 @@ import {
 } from '@/components/ui/form'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import { SettingsForm } from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { ChatSettingsVisualEditor } from './chat-settings-visual-editor'
 import { formatJsonForEditor, normalizeJsonString } from './utils'
@@ -96,33 +100,44 @@ export function ChatSettingsSection({
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
 
   const chatSchema = createChatSchema(t)
-  const formatted = formatJsonForEditor(defaultValue, '[]')
-  const form = useForm<ChatSettingsFormValues>({
-    resolver: zodResolver(chatSchema),
+  const formDefaults = useMemo(
+    () => ({ Chats: formatJsonForEditor(defaultValue, '[]') }),
+    [defaultValue]
+  )
+  const defaultNormalized = useMemo(
+    () => normalizeJsonString(defaultValue, '[]'),
+    [defaultValue]
+  )
+
+  const {
+    form,
+    handleSubmit,
+    handleReset,
+    isDirty,
+    isSubmitting,
+  } = useSettingsForm<ChatSettingsFormValues>({
+    resolver: zodResolver(chatSchema) as Resolver<
+      ChatSettingsFormValues,
+      unknown,
+      ChatSettingsFormValues
+    >,
     mode: 'onChange', // 启用实时校验，便于 JSON 模式下即时提示格式错误。
-    defaultValues: {
-      Chats: formatted,
+    defaultValues: formDefaults,
+    compareValues: (value, baseline) =>
+      normalizeJsonString(String(value ?? ''), '[]') ===
+      normalizeJsonString(String(baseline ?? ''), '[]'),
+    onSubmit: async (values) => {
+      const normalized = normalizeJsonString(values.Chats, '[]')
+      if (normalized === defaultNormalized) {
+        return
+      }
+
+      await updateOption.mutateAsync({
+        key: 'Chats',
+        value: normalized,
+      })
     },
   })
-
-  const initialNormalizedRef = useRef(normalizeJsonString(defaultValue, '[]'))
-
-  useEffect(() => {
-    form.reset({ Chats: formatJsonForEditor(defaultValue, '[]') })
-    initialNormalizedRef.current = normalizeJsonString(defaultValue, '[]')
-  }, [defaultValue, form])
-
-  const onSubmit = async (values: ChatSettingsFormValues) => {
-    const normalized = normalizeJsonString(values.Chats, '[]')
-    if (normalized === initialNormalizedRef.current) {
-      return
-    }
-
-    await updateOption.mutateAsync({
-      key: 'Chats',
-      value: normalized,
-    })
-  }
 
   return (
     <SettingsSection
@@ -131,9 +146,23 @@ export function ChatSettingsSection({
         'Configure predefined third-party links surfaced to end users.'
       )}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        {/* eslint-disable-next-line react-hooks/refs */}
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+            saveLabel='Save third-party settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <Tabs
             value={editMode}
             onValueChange={(value) => setEditMode(value as 'visual' | 'json')}
@@ -188,19 +217,7 @@ export function ChatSettingsSection({
               />
             </TabsContent>
           </Tabs>
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending
-              ? t('Saving...')
-              : t('Save third-party settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
