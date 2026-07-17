@@ -139,7 +139,7 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 				continue
 			}
 			seenExistingIDs[account.Id] = struct{}{}
-			updates := buildAccountRefreshUpdates(snapshot, key, config, req.ApplySuggested, defaultModels, defaultGroup)
+			updates := buildAccountRefreshUpdates(account, snapshot, key, config, req.ApplySuggested, defaultModels, defaultGroup)
 			if !enabled {
 				updates["status"] = common.ChannelStatusManuallyDisabled
 				updates["disabled_reason"] = "upstream account sync disabled"
@@ -271,8 +271,12 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 	}
 }
 
-func buildAccountRefreshUpdates(snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) map[string]any {
+func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) map[string]any {
 	account := buildAccountFromSyncedKey(snapshot, key, config, applySuggested, defaultModels, defaultGroup)
+	settings := account.OtherSettings
+	if existing != nil {
+		settings = mergeAccountSyncMetadata(existing.OtherSettings, snapshot, key)
+	}
 	updates := map[string]any{
 		"name":                account.Name,
 		"key":                 account.Key,
@@ -282,7 +286,7 @@ func buildAccountRefreshUpdates(snapshot *Snapshot, key SyncedKey, config Accoun
 		"priority":            account.Priority,
 		"weight":              account.Weight,
 		"used_quota":          account.UsedQuota,
-		"settings":            account.OtherSettings,
+		"settings":            settings,
 		"disabled_reason":     "",
 		"rate_limited_until":  0,
 		"overload_until":      0,
@@ -308,6 +312,8 @@ func buildAccountRefreshUpdates(snapshot *Snapshot, key SyncedKey, config Accoun
 		updates["setting"] = account.Setting
 	}
 	if strings.TrimSpace(config.OtherSettings) != "" {
+		// 显式提交 settings 时仍要把新的同步身份写回，避免管理员的本地配置覆盖掉
+		// `platform/base_url/external_id/key_digest`，否则下次刷新只能退回 key digest 匹配。
 		updates["settings"] = account.OtherSettings
 	}
 	if config.ModelMapping != nil {
