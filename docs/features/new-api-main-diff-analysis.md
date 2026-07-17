@@ -15693,6 +15693,67 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`；仅保留既有 i18next info 与 `nexustok-build` debug。
 11. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 与保存时触发的 `PUT /api/option/`。
 
+## 本轮实施评审：Pricing Settings 货币与展示页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/general/pricing-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/billing/currency` 在功能上已经具备货币展示模式、汇率、自定义货币与 Token 统计开关，但页面仍停留在旧式表单壳层：
+
+1. 保存/重置按钮固定在表单内容底部，没有进入系统设置页头动作区。
+2. 两个布尔开关仍使用手写 `FormItem className='flex ... rounded-lg border p-4'` 结构，没有复用当前项目已稳定的 `SettingsSwitchItem` / `SettingsSwitchContent` 共享布局。
+3. 同一计费分组下的 `/system-settings/billing/quota` 已经迁到统一表单壳层，如果 `currency` 继续停留在旧结构，计费设置页内部的体验会继续分叉。
+
+这类差异不涉及后端合同，也不改变真实计费算法，但它会直接影响系统设置页的一致性和后续继续原生化更多表单页的可维护性。
+
+### 需求分析
+
+1. `/system-settings/billing/currency` 需要接入当前项目原生的系统设置页头动作区，让保存/重置动作与其它已升级页面保持同一位置。
+2. 页面应复用 `SettingsForm`、`SettingsPageFormActions`、`SettingsSwitchItem` 和 `SettingsSwitchContent`，减少同类设置页的重复 JSX 和样式分叉。
+3. 现有 `useSettingsForm()`、`FormDirtyIndicator`、`FormNavigationGuard`、`updateOption.canUpdate` / `disabledReason`、`safeNumberFieldProps` 和逐项 option 保存合同都必须保持不变。
+4. 不修改后端 `/api/option/` 行为，不调整 `QuotaPerUnit`、`USDExchangeRate`、`DisplayInCurrencyEnabled`、`DisplayTokenStatEnabled` 与 `general_setting.*` 的 key 语义。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 货币与展示设置页 | `web/default/src/features/system-settings/general/pricing-section.tsx` | 将页面从旧式底部按钮与手写开关行收口到共享表单壳层和页头动作区。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页属于真实运行中的计费展示设置页，如果保存/重置接线错误，可能导致管理员无法提交汇率或展示模式修改。
+2. `useSettingsForm()` 已承担脏态、重置和按字段提交逻辑；本轮迁移壳层时如果误改 `handleSubmit` / `handleReset` 接线，可能导致标题状态不更新或重置失效。
+3. `Display in Currency` 与 `Display Token Statistics` 是布尔开关；若 `SettingsSwitchItem` 迁移不当，可能出现描述、禁用态或无障碍属性回退。
+4. 该页面位于 3003 热更新运行态，必须在真实页面验证热更新是否生效、页头动作是否渲染、dirty/reset 是否正常、控制台和网络没有新异常；若页面未更新，需要按约定先重启容器再继续验证。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改业务字段和保存合同”的最小方案：
+
+1. 保留现有 `pricingSchema`、`useSettingsForm()`、`handleSubmit`、`handleReset` 和逐项 `updateOption.mutateAsync({ key, value })` 提交流程不变。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部放置 `SettingsPageFormActions`，让保存/重置动作通过 portal 进入页头动作区。
+3. 将两个布尔开关从手写 `FormItem` 边框行收口到 `SettingsSwitchItem + SettingsSwitchContent`，保持现有文案、说明和 `Switch` 行为不变。
+4. 继续让 `isSaveDisabled` / `saveDisabledReason` 透传到页头保存按钮，保持当前项目的权限禁用提示能力，不退回 `new-api-main` 的较简化版本。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/general/pricing-section.tsx` 已切换为 `SettingsForm + SettingsPageFormActions` 结构，保存/重置动作不再固定在表单底部。
+2. `Display in Currency` 与 `Display Token Statistics` 两个开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 共享布局。
+3. 页面原有的 `FormDirtyIndicator`、`FormNavigationGuard`、`updateOption.canUpdate` / `disabledReason`、数值字段校验和逐项 option 保存合同均保持不变。
+4. 相比 `/opt/project/new-api-main`，NexusTok 版本继续保留分区描述文案和权限禁用提示接线，没有因为同步共享壳层而回退现有原生能力。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/general/pricing-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/billing/currency?verify=20260716-currency-baseline`，确认页面热更新生效，保存/重置按钮位于标题右侧页头动作区。
+6. 在同一 3003 页面中将“美元汇率”从 `7.3` 临时改为 `7.4` 后，标题区域出现“未保存的更改”，说明脏态徽标已正常显示。
+7. 点击页头“重置”后，字段恢复为已保存值 `7.3`，页面出现“表单已重置为保存的值”提示，且没有产生新的 `PUT /api/option/` 请求，说明本轮未污染真实配置。
+8. MCP 控制台未出现新的 runtime `error`、`warn` 或 `issue`。
+9. MCP 网络面板中，本轮页面加载相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`；本轮仅验证脏态和重置，不执行真实保存。
+
 ## 本轮实施评审：Quota Settings 设置页头动作区原生化
 
 ### 差异来源
