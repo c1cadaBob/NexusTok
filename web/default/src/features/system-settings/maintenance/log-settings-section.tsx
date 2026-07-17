@@ -16,10 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as z from 'zod'
+import type { Resolver } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -45,14 +45,22 @@ import {
   FormControl,
   FormDescription,
   FormField,
-  FormItem,
   FormLabel,
-  FormMessage,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { createLogCleanupTask } from '../api'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsControlGroup,
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const logSettingsSchema = z.object({
@@ -102,22 +110,31 @@ export function LogSettingsSection({
   )
   const canCleanLogs = updateOption.canUpdate && canDeleteUsageLogs
   const noPermissionMessage = updateOption.disabledReason
-  const form = useForm<LogSettingsFormValues>({
-    resolver: zodResolver(logSettingsSchema),
-    defaultValues: {
-      LogConsumeEnabled: defaultEnabled,
-    },
-  })
+  const { form, handleSubmit, isDirty, isSubmitting } =
+    useSettingsForm<LogSettingsFormValues>({
+      resolver: zodResolver(logSettingsSchema) as Resolver<
+        LogSettingsFormValues,
+        unknown,
+        LogSettingsFormValues
+      >,
+      defaultValues: {
+        LogConsumeEnabled: defaultEnabled,
+      },
+      onSubmit: async (_data, changedFields) => {
+        for (const [key, value] of Object.entries(changedFields)) {
+          await updateOption.mutateAsync({
+            key,
+            value: value as boolean,
+          })
+        }
+      },
+    })
 
   const [purgeDate, setPurgeDate] = useState<Date | undefined>(() =>
     getDateDaysAgo(30)
   )
   const [isCleaning, setIsCleaning] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
-
-  useEffect(() => {
-    form.reset({ LogConsumeEnabled: defaultEnabled })
-  }, [defaultEnabled, form])
 
   const purgeTimestamp = useMemo(() => {
     if (!purgeDate) return null
@@ -129,13 +146,9 @@ export function LogSettingsSection({
     return formatTimestampToDate(purgeDate.getTime(), 'milliseconds')
   }, [purgeDate])
 
-  const onSubmit = async (values: LogSettingsFormValues) => {
-    if (values.LogConsumeEnabled === defaultEnabled) return
-    await updateOption.mutateAsync({
-      key: 'LogConsumeEnabled',
-      value: values.LogConsumeEnabled,
-    })
-  }
+  const saveDisabledReason = updateOption.canUpdate
+    ? undefined
+    : updateOption.disabledReason
 
   const handleRequestCleanLogs = () => {
     if (!canCleanLogs) {
@@ -192,14 +205,25 @@ export function LogSettingsSection({
       title={t('Log Maintenance')}
       description={t('Control log retention and clean historical data.')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            isSaving={isSubmitting || updateOption.isPending}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            saveDisabledReason={saveDisabledReason}
+            saveLabel='Save log settings'
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='LogConsumeEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-start justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5 pe-4'>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
                   <FormLabel className='text-base'>
                     {t('Record quota usage')}
                   </FormLabel>
@@ -208,19 +232,19 @@ export function LogSettingsSection({
                       'Track per-request consumption to power usage analytics. Keeping this on increases database writes.'
                     )}
                   </FormDescription>
-                </div>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
+                    disabled={updateOption.isPending || isSubmitting}
                   />
                 </FormControl>
-                <FormMessage />
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
-          <div className='space-y-4 rounded-lg border p-4'>
+          <SettingsControlGroup className='gap-4 rounded-xl px-4 py-3.5'>
             <div>
               <h4 className='text-sm font-medium'>{t('Clean history logs')}</h4>
               <p className='text-muted-foreground text-sm'>
@@ -251,18 +275,8 @@ export function LogSettingsSection({
                 {isCleaning ? t('Cleaning...') : t('Clean logs')}
               </Button>
             </div>
-          </div>
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save log settings')}
-          </Button>
-        </form>
+          </SettingsControlGroup>
+        </SettingsForm>
       </Form>
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <AlertDialogContent>

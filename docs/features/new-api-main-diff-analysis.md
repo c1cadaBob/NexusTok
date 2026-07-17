@@ -15879,3 +15879,65 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 7. 在同一 3003 页面中点击“启用签到功能”后，标题区域出现“未保存的更改”，`minQuota/maxQuota` 输入区域展开，说明脏态徽标和条件渲染都已正常工作。
 8. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实签到配置。
 9. MCP 控制台在重启前后的两轮验证中都没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Log Settings 设置页头动作区原生化
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/maintenance/log-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/operations/logs` 已经具备原生的 SystemTask 日志清理入口和双资源权限前置保护，但页面壳层仍停留在旧式实现：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. “记录配额使用量”仍使用手写 `FormItem className='flex ... rounded-lg border p-4'` 行布局，没有复用当前项目已经稳定的 `SettingsSwitchItem` / `SettingsSwitchContent`。
+3. 页面没有接入统一的未保存脏态徽标与离开拦截，导致运维分组内部的表单体验与已经收口完成的 `notice / behavior / checkin / quota / currency` 明显分叉。
+
+这类差异不涉及日志清理后端合同或任务调度逻辑，但会直接影响系统设置页的一致性，也会让后续继续迁移运维分组其它页面时缺少统一样板。
+
+### 需求分析
+
+1. `/system-settings/operations/logs` 需要接入当前项目原生的系统设置页头动作区，让保存动作与其它已升级页面保持同一位置。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem`、`SettingsSwitchContent` 与 `SettingsControlGroup`，把脏态提示、离开拦截和表单布局都收口到现有公共基座。
+3. 现有字段合同 `LogConsumeEnabled`，以及历史日志清理所依赖的 `POST /api/system-task/log-cleanup` 任务创建链路、双资源权限前置判断和成功提示语义必须保持不变。
+4. 本轮不混入 `new-api-main` 中额外的服务器日志文件清理面板，避免把另一个能力面与共享表单壳层迁移耦合在同一切片中。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| 日志维护设置页 | `web/default/src/features/system-settings/maintenance/log-settings-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. 这页同时承载系统设置保存和高风险日志清理动作；如果迁移壳层时误改按钮接线，可能出现误触发保存或误触发删除确认链路。
+2. `useSettingsForm()` 会根据 dirtyFields 判断是否提交；若字段名或禁用态接线错误，可能出现页头保存按钮始终可点、始终禁用，或脏态提示与真实变更不一致。
+3. 日志清理属于真实运行实例中的危险操作，本轮验证只能检查确认弹窗、按钮状态和网络静默，不执行最终“删除日志”，避免污染 3003 上的真实日志数据。
+4. 该页面位于 3003 热更新运行态，必须以 `http://192.168.0.202:3003/` 的真实页面为准；若页面未更新，需要按约定先重启容器后再继续验证。
+
+### 方案评审
+
+采用“仅迁共享表单壳层，不改日志清理业务合同”的最小方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`，保留原有 Zod schema，并在 `onSubmit` 中继续按 `LogConsumeEnabled` 原键保存。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与 `notice / checkin / quota / currency / behavior` 等已收口分区保持一致。
+4. 将开关行从手写 `FormItem` 迁到 `SettingsSwitchItem + SettingsSwitchContent`，并用 `SettingsControlGroup` 收口历史日志清理区域，同时保留原有按钮文案、权限提示和 SystemTask 创建逻辑。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/maintenance/log-settings-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. “记录配额使用量”开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；历史日志清理区域已收口到 `SettingsControlGroup`，但仍沿用现有 `DateTimePicker`、快捷时间按钮、确认弹窗和 SystemTask 创建链路。
+4. 保存合同仍然只写入 `LogConsumeEnabled`，日志清理仍然要求系统设置敏感写与日志敏感写双权限，没有改变后端接口或数据库行为。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/maintenance/log-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/operations/logs?verify=20260717-log-settings-baseline`，确认热更新生效，`保存日志设置` 已位于标题右侧页头动作区。
+6. 在同一 3003 页面中临时切换“记录配额使用量”后，标题区域出现“未保存的更改”，页头保存按钮从禁用变为可用；再切回原值后，标题状态恢复，说明脏态计算正常。
+7. 点击运维侧栏中的“性能”时，页面弹出“未保存的更改”确认对话框；取消离开后仍停留在当前页，说明统一离开拦截已生效。
+8. 点击“清理日志”后，页面弹出“确认日志清理”对话框，并展示目标时间戳；本轮没有点击最终“删除日志”，网络面板也没有新增 `POST /api/system-task/log-cleanup` 请求，说明验证未污染真实日志数据。
+9. MCP 控制台在本轮验证中没有出现新的 runtime `error`、`warn` 或 `issue`；仅保留项目既有 i18next info 与 `nexustok-build` debug。
+10. MCP 网络面板中，本轮页面加载与交互相关请求返回 `200`，包括 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/`；本轮没有产生 `PUT /api/option/` 或日志删除请求。
