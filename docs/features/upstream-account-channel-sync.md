@@ -388,3 +388,34 @@ type AccountSnapshot struct {
 4. 目标平台的“模型倍率”可能是系统级配置而非密钥级配置，需要确认密钥和分组的关联关系后再计算建议策略。
 5. 平台账号没有任何密钥时，创建流程阻止落库；前端预览页展示无密钥提示并禁用基于建议倍率的配置入口。
 6. 同步身份当前写入账号 `settings` 文本，已避免新增数据库字段；若后续需要按外部 key id 查询或批量统计，再评估新增三库兼容字段。
+
+## 2026-07-17 接手后最终审计记录
+
+本次复核没有继续修改业务代码，只核对当前实现、测试结果和 3003 页面状态，确认已提交代码与需求台账一致。
+
+| 需求项 | 当前结论 | 证据与备注 |
+| --- | --- | --- |
+| R1 添加上游渠道时填写账号密码同步密钥、分组倍率 | 已实现 | 后端提供 `POST /api/channel/upstream-account/preview`、`POST /api/channel/upstream-account/create`、`POST /api/channel/:id/upstream-account/refresh`；前端创建渠道抽屉已显示“上游账号同步”、平台、账号、密码和“同步密钥”入口。 |
+| R2 根据密钥倍率自动设置优先级和权重，也支持手动设定 | 已实现 | 预览快照生成 `suggested_priority`、`suggested_weight`；前端支持自动建议和手动覆盖；刷新时 `apply_suggested=false` 且未显式提交覆盖字段会保留已有本地配置。 |
+| R3 账号密码同步时同步已使用余额和剩余余额 | 已实现，真实正向数据仍受测试账号限制 | new-api/sub2api 适配层会归一化 `balance` 和 `used_quota`；当前真实 sub2api 账号返回余额 0 且无 key，new-api 测试账号仍被目标平台拒绝，尚缺真实平台有 key 且有余额数据的正向样本。 |
+| R4 账号密码模式允许先不填模型和类型 | 已实现 | 创建时类型为空默认保存为 OpenAI 兼容渠道；模型为空时优先从同步 key 推断，无法推断时不写入空 `Ability`。 |
+| R5 自动获取的密钥放在同一渠道名称下，并允许每个密钥不同配置 | 已实现 | 创建流程使用一个 `Channel` 加多条 `ChannelAccount`，每条账号可配置模型、分组、优先级、权重、Base URL、覆盖参数、状态码映射和状态。 |
+| R6 请求渠道失效后按优先级和权重自动降级 | 已实现并测试 | Relay 失败后把渠道加入请求级排除集；缓存和 DB fallback 都过滤排除渠道和禁用渠道；`specific_channel_id` 不自动降级；已有 `TestRelayRetriesToNextChannelAfterChannelFailure` 覆盖同一次请求从失败渠道降级到下一渠道。 |
+| R7 Docker 热更新和 3003 页面验证 | 已执行 | 通过 MCP 访问 `http://192.168.0.202:3003/` 并登录后台，打开 `/channels`，创建抽屉中确认“上游账号同步”入口可见；页面控制台无 `error`、`warn`、`issue`，渠道列表相关接口均返回 200。页面已更新，未触发容器重启条件。 |
+| R8 接入 new-api 和 sub2api | 代码已接入，真实正向验证部分受账号状态限制 | sub2api 可登录但当前账号返回 0 个 key；new-api 当前测试账号被目标平台拒绝。临时 mock 已覆盖有 key 场景的 preview/create/refresh/delete。 |
+| R9 需求文档、影响范围、风险评估、方案评审 | 已完成 | 本文档持续记录需求拆解、影响范围、风险、方案和阶段验证；本次复核补充逐项验收结论。 |
+
+本次复核命令：
+
+- `go test ./service/upstreamaccount ./controller ./router`
+- `go test ./model ./service ./controller ./middleware ./router`
+- `cd web/default && bun run typecheck`
+- `cd web/default && bun run build`
+
+本次 MCP 验证：
+
+- 打开 `http://192.168.0.202:3003/?verify=final-upstream-sync-audit-20260717`。
+- 使用测试管理员账号登录，进入 `/channels`。
+- 打开创建渠道抽屉，切换“上游账号同步”，确认平台、账号、密码和“同步密钥”控件出现。
+- 检查控制台没有 `error`、`warn`、`issue`。
+- 检查关键网络请求：`/api/status`、`/api/setup`、`/api/user/login`、`/api/user/self`、`/api/channel/`、`/api/channel/models`、`/api/group/` 均正常返回。
