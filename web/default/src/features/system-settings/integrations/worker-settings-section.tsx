@@ -101,7 +101,7 @@ export function WorkerSettingsSection({
     savedSerializedRef.current = serialized
   }, [normalizedDefaults])
 
-  const { form, handleSubmit, isDirty, isSubmitting } =
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
     useSettingsForm<WorkerFormValues>({
       resolver: zodResolver(workerSchema) as Resolver<
         WorkerFormValues,
@@ -170,8 +170,10 @@ export function WorkerSettingsSection({
         <SettingsForm onSubmit={handleSubmit} autoComplete='off'>
           <SettingsPageFormActions
             onSave={handleSubmit}
+            onReset={handleReset}
             isSaving={updateOption.isPending || isSubmitting}
             isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
             saveDisabledReason={
               updateOption.canUpdate ? undefined : updateOption.disabledReason
             }

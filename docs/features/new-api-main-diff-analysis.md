@@ -16976,3 +16976,64 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 9. 重置后再次点击侧栏“绘图”可以直接导航，不再弹出离页确认，说明脏态已被正确清除。
 10. 本轮验证没有点击“保存第三方设置”，未执行真实 `PUT /api/option/`，没有污染当前 `Chats` 配置。
 11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Worker 代理设置页重置动作补齐
+
+### 差异来源
+
+继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/integrations/worker-settings-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/operations/worker` 已经具备比 `new-api-main` 更完整的原生设置页能力：
+
+1. 当前项目已经接入 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator` 与 `FormNavigationGuard`。
+2. 当前项目已经实现 Worker 密钥不回显的保存基线处理，保存成功后继续把可见 `WorkerValidKey` 归零，避免把敏感凭据固化在浏览器表单状态中。
+3. 当前项目保存时仍保留 `WorkerUrl` 末尾斜杠清理，以及 `WorkerUrl` 清空时同步提交 `WorkerValidKey` 的既有合同。
+4. 唯一缺口是页头动作区只有“保存 Worker 设置”，没有把共享表单提供的 `handleReset` 暴露为“重置”按钮，导致该页与 SMTP、io.net、Grok、第三方预设等已收口页面在无保存回滚体验上不一致。
+
+### 需求分析
+
+1. `/system-settings/operations/worker` 需要补齐页头“重置”动作，让管理员在临时编辑 Worker URL、访问密钥或 HTTP 图片请求开关后，可以不离开页面直接回滚到保存基线。
+2. 本轮只补齐缺失动作，不从 `new-api-main` 回退到旧式 `useForm()` / `useResetForm()` 实现。
+3. 必须保持现有脏态徽标、离开拦截、保存权限保护、Worker URL 清理和 Worker 密钥不回显语义不变。
+4. 验证阶段不能点击“保存 Worker 设置”，避免污染当前 Worker 代理地址、访问密钥或 HTTP 图片请求开关配置。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Worker 代理设置页 | `web/default/src/features/system-settings/integrations/worker-settings-section.tsx` | 在已有共享表单结构中暴露页头重置动作，并按脏态禁用/启用；不改变保存字段、保存顺序或敏感密钥处理。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `WorkerUrl` 与 `WorkerValidKey` 影响代理中转能力；验证阶段如果误保存临时 URL 或空密钥，可能导致真实上游 Worker 请求失败。
+2. `WorkerValidKey` 是敏感凭据；本轮不能改变保存成功后可见输入框和共享表单基线继续为空字符串的规则。
+3. `WorkerUrl` 保存前会执行 `removeTrailingSlash()`；补齐重置动作时不能把 URL 归一化逻辑迁入输入阶段，避免管理员尚未保存时看到意外改写。
+4. 旧合同要求 `sanitizedUrl === ''` 时同步提交 `WorkerValidKey`，用于清空 Worker 配置链路；本轮不触碰提交路径，避免引入行为回归。
+
+### 方案评审
+
+采用“最小动作补齐”的方案：
+
+1. 继续复用当前项目已有 `useSettingsForm()`，从 hook 返回值中解构 `handleReset`。
+2. 给 `SettingsPageFormActions` 增加 `onReset={handleReset}`，让页头动作区展示统一“重置”按钮。
+3. 给 `SettingsPageFormActions` 增加 `isResetDisabled={!isDirty}`，与保存按钮一样在无脏态时禁用，避免无意义重置。
+4. 不改 `onSubmit`、`savedValuesRef`、`savedSerializedRef`、`normalizeWorkerValues()`、`removeTrailingSlash()` 或任意 option key。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/integrations/worker-settings-section.tsx` 已在现有共享表单结构中接入 `handleReset`。
+2. `/system-settings/operations/worker` 页头动作区现在同时提供“重置”和“保存 Worker 设置”；无脏态时二者禁用，有脏态时按现有权限和提交状态启用。
+3. Worker URL、Worker 访问密钥、允许 HTTP 图片请求三个字段的保存合同未改变。
+4. Worker 访问密钥仍不回显；本轮没有改变保存成功后将 `WorkerValidKey` 可见值和新基线清空的敏感信息保护逻辑。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/integrations/worker-settings-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已使用 MCP 访问 `http://192.168.0.202:3003/system-settings/operations/worker?verify=20260717-worker-reset-action`，确认热更新生效，页头显示“重置”和“保存 Worker 设置”，首屏二者均为禁用态。
+5. 将 `Worker URL` 临时改为 `https://worker-verify.example.workers.dev/` 后，标题区域出现“未保存的更改”，页头“重置”和“保存 Worker 设置”从禁用变为可用。
+6. 在脏态下点击侧栏“SMTP 邮箱”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Worker 代理页，说明统一离开拦截正常。
+7. 点击页头“重置”后，`Worker URL` 恢复为空，标题状态消失，页头“重置”和“保存 Worker 设置”重新禁用，说明共享表单回滚行为正确。
+8. 本轮验证没有点击“保存 Worker 设置”，未执行真实 `PUT /api/option/`，没有污染当前 Worker 配置。
+9. MCP 网络请求只出现 `GET /api/status`、`GET /api/user/self`、`GET /api/notice` 和 `GET /api/option/`。
+10. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
