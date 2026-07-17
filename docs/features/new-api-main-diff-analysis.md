@@ -16565,3 +16565,72 @@ NexusTok 当前虽然已经具备完整的 Waffo Pancake 充值、订阅、签�
 10. 点击 `JSON 模式` 切换按钮后，JSON 文本框正常出现，页头保存按钮仍保持禁用，说明编辑模式切换不会误触发脏态或保存。
 11. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有登录后的 `GET /api/status`、`POST /api/user/login`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等请求，说明本轮未污染真实限流配置。
 12. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。
+
+## 本轮实施评审：Data Dashboard 内容设置页头动作区原生化
+
+### 差异来源
+
+子 agent 对系统设置页面做只读盘点后，将 `/system-settings/content/dashboard` 标记为下一批低风险候选。继续对照 `/opt/project/new-api-main/web/default/src/features/system-settings/content/dashboard-section.tsx` 与当前默认前端后确认：NexusTok 的 `/system-settings/content/dashboard` 仍保留旧式表单壳层：
+
+1. 保存按钮固定在内容区底部，没有进入系统设置页头动作区。
+2. 页面没有接入统一的未保存脏态徽标与离开拦截，导致控制台内容分组内部的默认页面与已经收口完成的安全、认证、通用设置页体验不一致。
+3. `new-api-main` 同名页面已经接入 `SettingsForm` 与 `SettingsPageFormActions`，但没有完整补齐 `FormDirtyIndicator`、`FormNavigationGuard`、重置动作和权限禁用理由；当前项目应吸收其页头动作区优势，同时保持 NexusTok 已完成页面的完整交互标准。
+4. 该页面只有 `DataExportEnabled`、`DataExportInterval`、`DataExportDefaultTime` 三个 option key，且没有 secret、JSON 编辑器、列表弹窗或外部接口操作，适合作为内容分组原生化的第一刀。
+
+### 需求分析
+
+1. `/system-settings/content/dashboard` 需要接入当前项目原生的系统设置页头动作区，让保存和重置动作与其它已升级设置页保持一致。
+2. 页面应复用 `useSettingsForm()`、`SettingsForm`、`SettingsPageFormActions`、`FormDirtyIndicator`、`FormNavigationGuard`、`SettingsSwitchItem` 与 `SettingsSwitchContent`，把脏态提示、离开拦截和开关布局都收口到现有公共基座。
+3. 保持现有后端 option key 合同不变，不调整数据导出任务、仪表板聚合逻辑或内容设置路由。
+4. `DataExportDefaultTime` 必须继续限制在 `hour/day/week`，并保留 `section-registry` 中对异常存储值回退到 `hour` 的防护。
+5. `DataExportInterval` 必须继续保持 `1..1440` 的整数约束，并使用项目已有的 `safeNumberFieldProps()` 避免空输入中间态写入非法数字。
+6. “无脏数据时保存按钮禁用”“缺少敏感写权限时禁用并展示原因”这两个既有按钮语义都要保留。
+
+### 影响范围分析
+
+| 范围 | 文件 | 影响 |
+| --- | --- | --- |
+| Data Dashboard 内容设置页 | `web/default/src/features/system-settings/content/dashboard-section.tsx` | 将页面从旧式底部按钮表单收口到共享表单壳层、页头动作区、脏态徽标和离开拦截。 |
+| 差异文档 | `docs/features/new-api-main-diff-analysis.md` | 记录本轮需求、影响、风险、方案、实施结果和 3003 运行态验证。 |
+
+### 风险评估
+
+1. `DataExportInterval` 直接影响导出刷新频率，必须保留 `1..1440` 约束；迁移时如果把空输入或 `NaN` 写入表单状态，可能造成管理员误保存非法刷新间隔。
+2. `DataExportDefaultTime` 是 `hour/day/week` 枚举；如果 Select 的值或翻译处理不当，可能出现展示值和保存值混淆，导致把本地化文案写入后端。
+3. 关闭 `DataExportEnabled` 时，刷新间隔和默认粒度控件会禁用；这些值仍必须保留在表单状态和保存基线里，避免开关切换后丢失管理员已有配置。
+4. 该页面位于 3003 热更新运行态，本轮验证必须只检查脏态、按钮位置、离页拦截、控制台和网络，不执行真实 `PUT /api/option/`，避免污染当前数据仪表板配置。
+
+### 方案评审
+
+采用“共享表单壳层 + 简单字段固定顺序提交”的方案：
+
+1. 用 `useSettingsForm()` 替换局部 `useForm()`、`useEffect reset` 与手工比较默认值逻辑，保留现有 Zod schema 和字段 key。
+2. 用 `SettingsForm` 替换旧 `<form className='space-y-6'>`，并在表单顶部接入 `SettingsPageFormActions`，让保存和重置动作进入页头。
+3. 接入 `FormDirtyIndicator` 与 `FormNavigationGuard`，与已经收口完成的系统设置页保持一致。
+4. 将启用开关迁到 `SettingsSwitchItem + SettingsSwitchContent` 布局，保留文案、顺序和字段 key 不变。
+5. `DataExportInterval` 继续使用 `safeNumberFieldProps()`，保留原有 min/max/step 约束。
+6. Select 的 `items` 和 `SelectItem` 仅翻译 label，不翻译 value，确保后端仍只收到 `hour/day/week`。
+7. 显式固定提交顺序为 `DataExportEnabled -> DataExportInterval -> DataExportDefaultTime`，继续与系统设置页的最小字段提交能力配合。
+
+### 实施结果
+
+1. `web/default/src/features/system-settings/content/dashboard-section.tsx` 已切换为 `useSettingsForm()`、`SettingsForm` 和 `SettingsPageFormActions` 结构，保存按钮不再固定在内容区底部。
+2. 页面已补齐 `FormDirtyIndicator` 与 `FormNavigationGuard`，进入脏态后标题区会显示“未保存的更改”，离开当前分区时会走统一确认拦截。
+3. 页头动作区已提供 `重置` 与 `保存更改` 两个动作；无脏态时二者禁用，有脏态时按权限启用保存。
+4. 启用开关已统一改为 `SettingsSwitchItem + SettingsSwitchContent` 布局；按钮权限禁用逻辑继续消费 `useUpdateOption()` 暴露的 `canUpdate/disabledReason`。
+5. `DataExportDefaultTime` 的下拉展示已使用本地化 label，但保存值仍保持 `hour/day/week`；`DataExportInterval` 继续使用安全数字输入适配器。
+6. 保存合同仍然只写入 Data Dashboard 相关既有 option key，没有改变后端数据导出、仪表板聚合或权限模型。
+
+### 验证记录
+
+1. 已运行 `cd web/default && bunx eslint --no-ignore src/features/system-settings/content/dashboard-section.tsx`。
+2. 已运行 `cd web/default && bun run typecheck`。
+3. 已运行 `cd web/default && bun run build`。
+4. 已运行 `git diff --check`。
+5. 已使用 MCP 在真实运行态访问 `http://192.168.0.202:3003/system-settings/content/dashboard?verify=20260717-dashboard-after-change`，确认热更新生效，`重置` 与 `保存更改` 位于标题右侧页头动作区，首屏为禁用态，内容区底部旧按钮已消失。
+6. MCP DOM 检查确认本页 `启用数据仪表板`、`刷新间隔 (分钟)`、`默认时间粒度` 的 label 均存在有效目标控件，没有复现上轮限流页的 label issue。
+7. 将“刷新间隔 (分钟)”从 `5` 临时改为 `6` 后，标题区域出现“未保存的更改”，页头保存与重置按钮从禁用变为可用，说明脏态徽标和页头动作区正常工作。
+8. 在脏态下点击侧栏“公告”时，页面弹出“未保存的更改”确认对话框；选择“留下来”后仍停留在 Data Dashboard 页，且临时输入值仍保留，说明统一离开拦截正常。
+9. 点击页头“重置”后，“刷新间隔 (分钟)”恢复为 `5`，标题状态消失，页头保存与重置按钮重新禁用，说明共享表单基线和回滚行为正确。
+10. MCP 网络面板确认本轮验证没有产生 `PUT /api/option/` 请求，仅有 `GET /api/status`、`GET /api/user/self`、`GET /api/notice`、`GET /api/option/` 等只读请求，说明本轮未污染真实 Data Dashboard 配置。
+11. MCP 控制台在最终验证中没有出现新的 runtime `error`、`warn` 或 `issue`。

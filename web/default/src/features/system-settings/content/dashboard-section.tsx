@@ -16,12 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect } from 'react'
 import * as z from 'zod'
-import { useForm } from 'react-hook-form'
+import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -41,7 +39,16 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
@@ -63,29 +70,34 @@ const granularityOptions = [
   { label: 'Week', value: 'week' },
 ]
 
+const dashboardUpdateOrder: Array<keyof DataDashboardFormValues> = [
+  'DataExportEnabled',
+  'DataExportInterval',
+  'DataExportDefaultTime',
+]
+
 export function DashboardSection({ defaultValues }: DashboardSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
-  const form = useForm<DataDashboardFormValues>({
-    resolver: zodResolver(dataDashboardSchema),
-    defaultValues,
-  })
+  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
+    useSettingsForm<DataDashboardFormValues>({
+      resolver: zodResolver(dataDashboardSchema) as Resolver<
+        DataDashboardFormValues,
+        unknown,
+        DataDashboardFormValues
+      >,
+      defaultValues,
+      onSubmit: async (values, changedFields) => {
+        for (const key of dashboardUpdateOrder) {
+          if (!(key in changedFields)) {
+            continue
+          }
 
-  useEffect(() => {
-    form.reset(defaultValues)
-  }, [defaultValues, form])
-
-  const onSubmit = async (values: DataDashboardFormValues) => {
-    const updates = Object.entries(values).filter(
-      ([key, value]) =>
-        value !== defaultValues[key as keyof DataDashboardFormValues]
-    )
-
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
-    }
-  }
+          await updateOption.mutateAsync({ key, value: values[key] })
+        }
+      },
+    })
 
   const isEnabled = form.watch('DataExportEnabled')
 
@@ -94,25 +106,37 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
       title={t('Data Dashboard')}
       description={t('Configure experimental data export for the dashboard')}
     >
+      <FormNavigationGuard when={isDirty} />
+
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
+        <SettingsForm onSubmit={handleSubmit}>
+          <SettingsPageFormActions
+            onSave={handleSubmit}
+            onReset={handleReset}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty || !updateOption.canUpdate}
+            isResetDisabled={!isDirty}
+            saveDisabledReason={
+              updateOption.canUpdate ? undefined : updateOption.disabledReason
+            }
+          />
+          <FormDirtyIndicator isDirty={isDirty} />
+
           <FormField
             control={form.control}
             name='DataExportEnabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
-                  <FormLabel className='text-base'>
-                    {t('Enable Data Dashboard')}
-                  </FormLabel>
-                </div>
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable Data Dashboard')}</FormLabel>
+                </SettingsSwitchContent>
                 <FormControl>
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
                 </FormControl>
-              </FormItem>
+              </SettingsSwitchItem>
             )}
           />
 
@@ -151,7 +175,7 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
                     items={[
                       ...granularityOptions.map((option) => ({
                         value: option.value,
-                        label: option.label,
+                        label: t(option.label),
                       })),
                     ]}
                     onValueChange={field.onChange}
@@ -167,7 +191,7 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
                       <SelectGroup>
                         {granularityOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
-                            {option.label}
+                            {t(option.label)}
                           </SelectItem>
                         ))}
                       </SelectGroup>
@@ -183,17 +207,7 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
               )}
             />
           </div>
-
-          <Button
-            type='submit'
-            disabled={updateOption.isPending || !updateOption.canUpdate}
-            title={
-              updateOption.canUpdate ? undefined : updateOption.disabledReason
-            }
-          >
-            {updateOption.isPending ? t('Saving...') : t('Save Changes')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
     </SettingsSection>
   )
