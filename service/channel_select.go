@@ -30,6 +30,40 @@ type RetryParam struct {
 	resetNextTry bool         // 是否在下次重试时重置计数
 }
 
+// GetExcludedChannelIds 获取当前请求已经失败的渠道 ID 列表。
+//
+// 该排除集只在一次请求的重试生命周期内生效，用于弥补自动禁用异步落库、
+// 缓存同步延迟、同优先级加权随机再次命中失败渠道等问题。返回切片副本，
+// 调用方可以安全传递给选路函数，不会修改 Gin context 中保存的集合。
+func GetExcludedChannelIds(c *gin.Context) []int {
+	if c == nil {
+		return nil
+	}
+	if ids, ok := common.GetContextKeyType[[]int](c, constant.ContextKeyChannelExcludedIds); ok {
+		return append([]int(nil), ids...)
+	}
+	return nil
+}
+
+// AddExcludedChannelId 把失败渠道加入当前请求的排除集。
+//
+// 排除集按渠道维度记录：普通渠道失败后下一轮必须换渠道；账号池渠道只有在
+// 同渠道账号已经耗尽并准备走渠道级降级时才会调用该方法，避免破坏“同渠道
+// 先换账号”的语义。
+func AddExcludedChannelId(c *gin.Context, channelId int) {
+	if c == nil || channelId <= 0 {
+		return
+	}
+	ids := GetExcludedChannelIds(c)
+	for _, id := range ids {
+		if id == channelId {
+			return
+		}
+	}
+	ids = append(ids, channelId)
+	common.SetContextKey(c, constant.ContextKeyChannelExcludedIds, ids)
+}
+
 // GetRetry 获取当前重试次数
 //
 // 返回值：
@@ -104,6 +138,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+	excludedChannelIds := GetExcludedChannelIds(param.Ctx)
 
 	// Auto 模式：自动在多个分组间切换
 	if param.TokenGroup == "auto" {
@@ -140,8 +175,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			// 获取满足要求的随机渠道
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+			// 获取满足要求的随机渠道。请求级排除集会优先过滤已失败渠道，
+			// 当前优先级被排空后再降到下一优先级，避免同一请求反复命中坏渠道。
+			channel, _ = model.GetRandomSatisfiedChannelWithExclusions(autoGroup, param.ModelName, priorityRetry, param.RequestPath, excludedChannelIds)
 
 			if channel == nil {
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -180,7 +216,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	} else {
 		// 普通模式：直接根据 token 分组和模型名称获取渠道
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err = model.GetRandomSatisfiedChannelWithExclusions(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, excludedChannelIds)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

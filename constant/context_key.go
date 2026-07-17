@@ -90,6 +90,9 @@ const (
 	ContextKeyChannelMultiKeyIndex ContextKey = "channel_multi_key_index"
 	// ContextKeyChannelKey 渠道 API 密钥
 	ContextKeyChannelKey ContextKey = "channel_key"
+	// ContextKeyChannelExcludedIds 当前请求中已经失败的渠道 ID 集合
+	// 重试选路必须排除这些渠道，避免自动禁用的异步缓存更新尚未完成时再次命中同一渠道。
+	ContextKeyChannelExcludedIds ContextKey = "channel_excluded_ids"
 	// ContextKeyChannelCredentialMode 渠道凭证模式
 	ContextKeyChannelCredentialMode ContextKey = "channel_credential_mode"
 	// ContextKeyChannelAccountPool 渠道账号池

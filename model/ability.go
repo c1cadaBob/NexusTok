@@ -92,12 +92,21 @@ func GetAllEnableAbilities() []Ability {
 // 优先级按降序排列，retry=0 使用最高优先级，retry=1 使用次高优先级，以此类推
 // 当 retry 超过可用优先级数量时，使用最低优先级
 func getPriority(group string, model string, retry int) (int, error) {
+	return getPriorityWithExclusions(group, model, retry, nil)
+}
 
+// getPriorityWithExclusions 获取过滤掉禁用渠道和请求级失败渠道后的可用优先级。
+//
+// 数据库兜底路径不能只看 abilities.enabled：自动禁用渠道时能力表更新可能和
+// 渠道状态存在短暂不一致，因此这里显式 join channels 并要求渠道仍处于启用状态。
+func getPriorityWithExclusions(group string, model string, retry int, excludedChannelIds []int) (int, error) {
 	var priorities []int
-	err := DB.Model(&Ability{}).
-		Select("DISTINCT(priority)").
-		Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
-		Order("priority DESC").              // 按优先级降序排序
+	query := abilityEnabledChannelQuery().
+		Select("DISTINCT(abilities.priority)").
+		Where("abilities."+commonGroupCol+" = ? and abilities.model = ? and abilities.enabled = ?", group, model, true)
+	query = applyExcludedChannelCondition(query, excludedChannelIds)
+	err := query.
+		Order("abilities.priority DESC").    // 按优先级降序排序
 		Pluck("priority", &priorities).Error // Pluck用于将查询的结果直接扫描到一个切片中
 
 	if err != nil {
@@ -125,18 +134,59 @@ func getPriority(group string, model string, retry int) (int, error) {
 // 根据 retry 次数确定优先级，返回对应的 GORM 查询对象
 // retry=0 时查询最高优先级，retry>0 时查询对应优先级
 func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
-	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
-	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, true, maxPrioritySubQuery)
-	if retry != 0 {
-		priority, err := getPriority(group, model, retry)
+	return getChannelQueryWithExclusions(group, model, retry, nil)
+}
+
+// getChannelQueryWithExclusions 构建带渠道状态过滤和请求级排除集的能力查询。
+func getChannelQueryWithExclusions(group string, model string, retry int, excludedChannelIds []int) (*gorm.DB, error) {
+	maxPrioritySubQuery := abilityEnabledChannelQuery().
+		Select("MAX(abilities.priority)").
+		Where("abilities."+commonGroupCol+" = ? and abilities.model = ? and abilities.enabled = ?", group, model, true)
+	maxPrioritySubQuery = applyExcludedChannelCondition(maxPrioritySubQuery, excludedChannelIds)
+
+	channelQuery := abilityEnabledChannelQuery().
+		Where("abilities."+commonGroupCol+" = ? and abilities.model = ? and abilities.enabled = ? and abilities.priority = (?)", group, model, true, maxPrioritySubQuery)
+	channelQuery = applyExcludedChannelCondition(channelQuery, excludedChannelIds)
+	if retry != 0 && len(excludedChannelIds) == 0 {
+		priority, err := getPriorityWithExclusions(group, model, retry, excludedChannelIds)
 		if err != nil {
 			return nil, err
-		} else {
-			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ?", group, model, true, priority)
 		}
+		channelQuery = abilityEnabledChannelQuery().
+			Where("abilities."+commonGroupCol+" = ? and abilities.model = ? and abilities.enabled = ? and abilities.priority = ?", group, model, true, priority)
+		channelQuery = applyExcludedChannelCondition(channelQuery, excludedChannelIds)
 	}
-
 	return channelQuery, nil
+}
+
+// abilityEnabledChannelQuery 返回只包含启用渠道的 ability 查询基底。
+func abilityEnabledChannelQuery() *gorm.DB {
+	return DB.Model(&Ability{}).
+		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Where("channels.status = ?", common.ChannelStatusEnabled)
+}
+
+// applyExcludedChannelCondition 在查询中排除当前请求已经失败的渠道。
+func applyExcludedChannelCondition(query *gorm.DB, excludedChannelIds []int) *gorm.DB {
+	if len(excludedChannelIds) == 0 {
+		return query
+	}
+	validIds := make([]int, 0, len(excludedChannelIds))
+	seen := make(map[int]struct{}, len(excludedChannelIds))
+	for _, id := range excludedChannelIds {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		validIds = append(validIds, id)
+	}
+	if len(validIds) == 0 {
+		return query
+	}
+	return query.Where("abilities.channel_id NOT IN ?", validIds)
 }
 
 // GetChannel 根据分组、模型和重试次数选择一个可用渠道
@@ -144,18 +194,19 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 // 基础权重为 10，加上渠道自身的权重值
 // 返回 nil 表示没有可用渠道
 func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+	return GetChannelWithExclusions(group, model, retry, requestPath, nil)
+}
+
+// GetChannelWithExclusions 根据分组、模型和请求级排除集选择一个可用渠道。
+func GetChannelWithExclusions(group string, model string, retry int, requestPath string, excludedChannelIds []int) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
-	channelQuery, err := getChannelQuery(group, model, retry)
+	channelQuery, err := getChannelQueryWithExclusions(group, model, retry, requestPathNormalizedExclusions(excludedChannelIds))
 	if err != nil {
 		return nil, err
 	}
-	if common.UsingSQLite || common.UsingPostgreSQL {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	} else {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	}
+	err = channelQuery.Order("abilities.weight DESC").Find(&abilities).Error
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +233,26 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+// requestPathNormalizedExclusions 返回去重后的渠道排除列表。
+func requestPathNormalizedExclusions(excludedChannelIds []int) []int {
+	if len(excludedChannelIds) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(excludedChannelIds))
+	ids := make([]int, 0, len(excludedChannelIds))
+	for _, id := range excludedChannelIds {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // filterAbilitiesByRequestPath 按请求路径过滤数据库兜底选路得到的能力候选。

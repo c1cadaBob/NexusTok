@@ -329,12 +329,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 
-		// 释放选中的账号
-		service.ReleaseSelectedChannelAccount(c)
-		service.ReleaseSelectedPoolAccount(c)
-
 		// 请求成功，退出重试循环
 		if newAPIError == nil {
+			// 释放选中的账号
+			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
 			relayInfo.LastError = nil
 			return
 		}
@@ -345,6 +344,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		// 处理渠道错误（禁用渠道、记录日志等）
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+
+		markChannelExcludedForRetry(c, channel.Id)
+
+		// 错误处理需要读取账号池上下文；处理完成后再释放并发槽位。
+		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
 
 		// 判断是否应该重试
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
@@ -378,6 +383,21 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+}
+
+// markChannelExcludedForRetry 把本轮失败的渠道加入请求级排除集。
+//
+// 普通渠道失败后必须立即排除，避免自动禁用异步执行尚未完成时下一轮又选中
+// 同一渠道。账号池渠道失败时先由账号级排除集在同渠道内切换账号；只有同渠
+// 道已经没有可用账号、准备进入渠道级降级时，才排除整个渠道。
+func markChannelExcludedForRetry(c *gin.Context, channelId int) {
+	if channelId <= 0 {
+		return
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool) {
+		return
+	}
+	service.AddExcludedChannelId(c, channelId)
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -430,23 +450,56 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	if channel, setupErr, ok := trySetupAccountPoolRetryChannel(c, info); ok {
 		return channel, setupErr
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+	for attempt := 0; attempt < maxChannelSetupSelectionAttempts(); attempt++ {
+		channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
-	if err != nil {
-		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
-	if channel == nil {
-		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		if err != nil {
+			return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		if channel == nil {
+			return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+
+		newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+		if newAPIError != nil {
+			if shouldExcludeSetupFailedChannel(c, newAPIError) {
+				service.AddExcludedChannelId(c, channel.Id)
+				continue
+			}
+			return nil, newAPIError
+		}
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		info.InitChannelMeta(c)
+		return channel, nil
 	}
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
-	if newAPIError != nil {
-		return nil, newAPIError
+	return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的候选渠道均不可用（retry）", retryParam.TokenGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+}
+
+// maxChannelSetupSelectionAttempts 限制单次 getChannel 内因 setup 失败而重选渠道的次数。
+//
+// 正常情况下排除集会让候选很快耗尽并返回“无可用渠道”；这里设置上限只是为了
+// 防止缓存/能力表异常导致同一渠道被反复返回，避免请求线程陷入无限循环。
+func maxChannelSetupSelectionAttempts() int {
+	if common.RetryTimes > 0 {
+		return common.RetryTimes + 16
 	}
-	info.InitChannelMeta(c)
-	return channel, nil
+	return 16
+}
+
+// shouldExcludeSetupFailedChannel 判断 setup 阶段失败后是否可以继续选择其他渠道。
+//
+// 只有“候选渠道没有可用 key/账号”属于渠道局部不可用，可排除后继续选路；
+// 管理员指定 specific_channel_id 时保持单渠道调试语义，不自动降级。
+func shouldExcludeSetupFailedChannel(c *gin.Context, err *types.NexusTokError) bool {
+	if err == nil || err.GetErrorCode() != types.ErrorCodeChannelNoAvailableKey {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	return true
 }
 
 // trySetupAccountPoolRetryChannel 在账号失败后的重试中优先复用当前渠道，避免直接跳出账号池。
@@ -472,6 +525,7 @@ func trySetupAccountPoolRetryChannel(c *gin.Context, info *relaycommon.RelayInfo
 	if setupErr != nil {
 		if setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey {
 			common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
+			service.AddExcludedChannelId(c, retryChannelID)
 			return nil, nil, false
 		}
 		return nil, setupErr, true
@@ -503,9 +557,6 @@ func shouldRetry(c *gin.Context, openaiErr *types.NexusTokError, retryTimes int)
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if types.IsChannelError(openaiErr) {
-		return true
-	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
@@ -514,6 +565,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NexusTokError, retryTimes int)
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
+	}
+	if types.IsChannelError(openaiErr) {
+		return true
 	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
@@ -752,9 +806,9 @@ func RelayTask(c *gin.Context) {
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
-		service.ReleaseSelectedChannelAccount(c)
-		service.ReleaseSelectedPoolAccount(c)
 		if taskErr == nil {
+			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
 			break
 		}
 
@@ -763,7 +817,10 @@ func RelayTask(c *gin.Context) {
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+			markChannelExcludedForRetry(c, channel.Id)
 		}
+		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break

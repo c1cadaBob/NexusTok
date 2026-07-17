@@ -146,21 +146,33 @@ func SyncChannelCache(frequency int) {
 // 3. 在目标优先级内，按权重进行加权随机选择
 // 4. 使用平滑因子处理权重差异过小的情况
 func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+	return GetRandomSatisfiedChannelWithExclusions(group, model, retry, requestPath, nil)
+}
+
+// GetRandomSatisfiedChannelWithExclusions 基于优先级和权重选择渠道，并排除当前请求中已失败的渠道。
+//
+// excludedChannelIds 只影响当前请求的重试选路：当某个渠道在本请求中已经失败，
+// 下一轮不能再次命中它，即使自动禁用还没有完成 DB 和缓存更新。没有排除项时
+// 保留旧的 retry -> 优先级层级映射；存在排除项时，会从 retry 指向的优先级
+// 切换为“剩余候选的最高优先级”，避免同优先级其他健康渠道被跳过。
+func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry int, requestPath string, excludedChannelIds []int) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannelWithExclusions(group, model, retry, requestPath, excludedChannelIds)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	excludedSet := intSliceToSet(excludedChannelIds)
+
+	channels := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
 	}
 
 	if len(channels) == 0 {
@@ -191,7 +203,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	if retry >= len(uniquePriorities) {
 		retry = len(uniquePriorities) - 1
 	}
-	targetPriority := int64(sortedUniquePriorities[retry])
+	targetPriority := int64(sortedUniquePriorities[selectPriorityIndexForRetry(sortedUniquePriorities, retry, len(excludedSet) > 0)])
 
 	// get the priority for the given retry number
 	var sumWeight = 0
@@ -240,6 +252,72 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+// selectPriorityIndexForRetry 计算本次重试应使用的优先级索引。
+//
+// 没有请求级排除集时保持旧行为：retry=0 选最高优先级，retry=1 选下一档。
+// 有排除集时，候选列表已经移除了失败渠道，因此应优先从剩余最高优先级开始；
+// 若该优先级已被排空，sortedPriorities 自然只剩更低档位，实现自动降级。
+func selectPriorityIndexForRetry(sortedPriorities []int, retry int, hasExclusions bool) int {
+	if len(sortedPriorities) == 0 {
+		return 0
+	}
+	if hasExclusions {
+		return 0
+	}
+	if retry < 0 {
+		return 0
+	}
+	if retry >= len(sortedPriorities) {
+		return len(sortedPriorities) - 1
+	}
+	return retry
+}
+
+// filterCandidateChannels 过滤当前请求不可用的候选渠道。
+//
+// 这里会二次校验渠道状态，防止缓存列表中残留已禁用 ID；同时排除本请求已经
+// 失败过的渠道，并继续应用 Advanced Custom 的 request path 约束。
+func filterCandidateChannels(channels []int, requestPath string, excludedSet map[int]struct{}) []int {
+	channels = filterChannelsByRequestPath(channels, requestPath)
+	if len(channels) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	seen := make(map[int]struct{}, len(channels))
+	for _, channelId := range channels {
+		if _, exists := seen[channelId]; exists {
+			continue
+		}
+		seen[channelId] = struct{}{}
+		if _, excluded := excludedSet[channelId]; excluded {
+			continue
+		}
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			// 保留未知 ID，让后续一致性检查继续按旧逻辑报错。
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		filtered = append(filtered, channelId)
+	}
+	return filtered
+}
+
+// intSliceToSet 将 ID 列表转换为集合，忽略无效 ID。
+func intSliceToSet(ids []int) map[int]struct{} {
+	set := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		set[id] = struct{}{}
+	}
+	return set
 }
 
 // filterChannelsByRequestPath 按当前请求路径过滤内存缓存中的候选渠道。
@@ -322,13 +400,13 @@ func CacheUpdateChannelStatus(id int, status int) {
 		// delete the channel from group2model2channels
 		for group, model2channels := range group2model2channels {
 			for model, channels := range model2channels {
-				for i, channelId := range channels {
-					if channelId == id {
-						// remove the channel from the slice
-						group2model2channels[group][model] = append(channels[:i], channels[i+1:]...)
-						break
+				filtered := channels[:0]
+				for _, channelId := range channels {
+					if channelId != id {
+						filtered = append(filtered, channelId)
 					}
 				}
+				group2model2channels[group][model] = filtered
 			}
 		}
 	}
