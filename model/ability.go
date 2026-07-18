@@ -307,6 +307,9 @@ func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Abi
 // 使用 ON CONFLICT DO NOTHING 避免重复插入
 // 支持分批插入（每批 50 条）以避免大事务
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
+	if channel.IsChannelAccountPoolEnabled() && !channel.ChannelInfo.AccountPoolFallback {
+		return channel.UpdateAccountPoolAbilities(tx)
+	}
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
@@ -363,6 +366,9 @@ func (channel *Channel) DeleteAbilities() error {
 // UpdateAbilities updates abilities of this channel.
 // Make sure the channel is completed before calling this function.
 func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
+	if channel.IsChannelAccountPoolEnabled() && !channel.ChannelInfo.AccountPoolFallback {
+		return channel.UpdateAccountPoolAbilities(tx)
+	}
 	isNewTx := false
 	// 如果没有传入事务，创建新的事务
 	if tx == nil {
@@ -438,6 +444,190 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	return nil
+}
+
+// SyncChannelAccountPoolCapabilities 基于渠道内启用账号重建渠道顶层能力和能力表。
+//
+// 上游账号同步渠道允许每个 key 维护不同的模型、分组和启停状态。普通
+// Channel.UpdateAbilities 只能根据渠道顶层 models/group 做笛卡尔积，无法表达
+// “账号 A 只支持 default/gpt-a，账号 B 只支持 vip/gpt-b” 这类真实组合。同步渠道
+// 必须以最终启用账号为准生成 Ability，否则路由层会把不存在可用账号的组合选中，
+// 直到账号池选择阶段才失败并触发额外降级。
+func SyncChannelAccountPoolCapabilities(channelID int, tx *gorm.DB) error {
+	isNewTx := false
+	if tx == nil {
+		tx = DB.Begin()
+		if tx.Error != nil {
+			return tx.Error
+		}
+		isNewTx = true
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+	}
+
+	var channel Channel
+	if err := tx.Where("id = ?", channelID).First(&channel).Error; err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if !channel.IsChannelAccountPoolEnabled() || channel.ChannelInfo.AccountPoolFallback {
+		if isNewTx {
+			return tx.Commit().Error
+		}
+		return nil
+	}
+	if err := channel.syncAccountPoolCapabilities(tx); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if isNewTx {
+		return tx.Commit().Error
+	}
+	return nil
+}
+
+// UpdateAccountPoolAbilities 只重建账号池渠道的 Ability，不修改渠道 models/group。
+//
+// 该方法供 AddAbilities/UpdateAbilities/FixAbility 使用，保持历史渠道字段不被能力
+// 修复任务意外改写；需要同时同步渠道顶层 models/group 时应调用
+// SyncChannelAccountPoolCapabilities。
+func (channel *Channel) UpdateAccountPoolAbilities(tx *gorm.DB) error {
+	isNewTx := false
+	if tx == nil {
+		tx = DB.Begin()
+		if tx.Error != nil {
+			return tx.Error
+		}
+		isNewTx = true
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+	}
+	abilities, _, _, err := channel.buildAccountPoolAbilities(tx)
+	if err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if err := replaceChannelAbilities(tx, channel.Id, abilities); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if isNewTx {
+		return tx.Commit().Error
+	}
+	return nil
+}
+
+func (channel *Channel) syncAccountPoolCapabilities(tx *gorm.DB) error {
+	abilities, models, groups, err := channel.buildAccountPoolAbilities(tx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(groups) == "" {
+		groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
+	}
+	if err := tx.Model(channel).Select("models", "group").Updates(map[string]any{
+		"models": models,
+		"group":  groups,
+	}).Error; err != nil {
+		return err
+	}
+	channel.Models = models
+	channel.Group = groups
+	return replaceChannelAbilities(tx, channel.Id, abilities)
+}
+
+func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, string, string, error) {
+	var accounts []ChannelAccount
+	if err := tx.Where("channel_id = ? AND status = ?", channel.Id, common.ChannelStatusEnabled).Order("priority DESC").Order("id ASC").Find(&accounts).Error; err != nil {
+		return nil, "", "", err
+	}
+	abilities := make([]Ability, 0)
+	abilitySet := map[string]struct{}{}
+	modelSet := map[string]struct{}{}
+	groupSet := map[string]struct{}{}
+	models := make([]string, 0)
+	groups := make([]string, 0)
+	for _, account := range accounts {
+		accountModels := splitAbilityValues(firstNonEmptyString(account.Models, channel.Models))
+		accountGroups := splitAbilityValues(firstNonEmptyString(account.Group, channel.Group))
+		for _, modelName := range accountModels {
+			if _, ok := modelSet[modelName]; !ok {
+				modelSet[modelName] = struct{}{}
+				models = append(models, modelName)
+			}
+			for _, groupName := range accountGroups {
+				if _, ok := groupSet[groupName]; !ok {
+					groupSet[groupName] = struct{}{}
+					groups = append(groups, groupName)
+				}
+				abilityKey := groupName + "|" + modelName
+				if _, exists := abilitySet[abilityKey]; exists {
+					continue
+				}
+				abilitySet[abilityKey] = struct{}{}
+				abilities = append(abilities, Ability{
+					Group:     groupName,
+					Model:     modelName,
+					ChannelId: channel.Id,
+					Enabled:   channel.Status == common.ChannelStatusEnabled,
+					Priority:  channel.Priority,
+					Weight:    uint(channel.GetWeight()),
+					Tag:       channel.Tag,
+				})
+			}
+		}
+	}
+	return abilities, strings.Join(models, ","), strings.Join(groups, ","), nil
+}
+
+func replaceChannelAbilities(tx *gorm.DB, channelID int, abilities []Ability) error {
+	if err := tx.Where("channel_id = ?", channelID).Delete(&Ability{}).Error; err != nil {
+		return err
+	}
+	if len(abilities) == 0 {
+		return nil
+	}
+	for _, chunk := range lo.Chunk(abilities, 50) {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitAbilityValues(value string) []string {
+	parts := strings.Split(strings.TrimSpace(value), ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // UpdateAbilityStatus 更新指定渠道所有能力的启用状态

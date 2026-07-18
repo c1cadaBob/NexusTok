@@ -24,6 +24,7 @@ import {
   buildUpstreamAccountConfigsFromSnapshotKeys,
   getUpstreamAccountConfig,
   upstreamAccountFromChannelAccount,
+  upstreamAccountValuesToString,
 } from './channel-mutate-drawer'
 
 function makeChannelAccount(
@@ -105,5 +106,50 @@ describe('上游同步渠道本地配置索引', () => {
       models: 'gpt-local',
       group: 'local-group',
     })
+  })
+
+  test('渠道级能力汇总忽略已禁用的同步密钥', () => {
+    const enabledKey = makeSnapshotKey({
+      sync_id: 'enabled',
+      external_id: 'enabled',
+      models: ['gpt-enabled'],
+      group_name: 'enabled-group',
+    })
+    const disabledKey = makeSnapshotKey({
+      sync_id: 'disabled',
+      external_id: 'disabled',
+      models: ['gpt-disabled'],
+      group_name: 'disabled-group',
+    })
+    const configs = {
+      enabled: {
+        enabled: true,
+        priority: 1,
+        weight: 100,
+        models: 'gpt-enabled',
+        group: 'enabled-group',
+      },
+      disabled: {
+        enabled: false,
+        priority: 1,
+        weight: 100,
+        models: 'gpt-disabled',
+        group: 'disabled-group',
+      },
+    }
+
+    const models = upstreamAccountValuesToString(
+      [enabledKey, disabledKey],
+      configs,
+      (key, config) => config?.models ?? key.models?.join(',') ?? ''
+    )
+    const groups = upstreamAccountValuesToString(
+      [enabledKey, disabledKey],
+      configs,
+      (key, config) => config?.group ?? key.group_name ?? key.group_id ?? ''
+    )
+
+    assert.equal(models, 'gpt-enabled')
+    assert.equal(groups, 'enabled-group')
   })
 })

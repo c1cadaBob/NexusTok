@@ -104,21 +104,12 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			"balance":              balanceValue(snapshot.Balance),
 			"balance_updated_time": common.GetTimestamp(),
 			"used_quota":           usedQuotaValue(snapshot.Balance),
-			"group":                defaultGroup,
 			"settings":             mergeChannelSyncMetadata(channel.OtherSettings, snapshot),
-		}
-		if defaultModels != "" || strings.TrimSpace(channel.Models) != "" {
-			updates["models"] = defaultModels
 		}
 		if err := tx.Model(&channel).Updates(updates).Error; err != nil {
 			return err
 		}
-		channel.Models = defaultModels
-		channel.Group = defaultGroup
 		channel.OtherSettings = updates["settings"].(string)
-		if err := channel.UpdateAbilities(tx); err != nil {
-			return err
-		}
 
 		configs := accountConfigBySyncID(req.Accounts)
 		byIdentity, byDigest := indexExistingAccounts(existing)
@@ -183,6 +174,9 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 					result.Disabled++
 				}
 			}
+		}
+		if err := model.SyncChannelAccountPoolCapabilities(channelID, tx); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {

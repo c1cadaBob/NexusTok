@@ -1,6 +1,7 @@
 package upstreamaccount
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -88,8 +89,8 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.Key)
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.ChannelInfo.CredentialMode)
 	require.True(t, channel.ChannelInfo.AccountPoolEnabled)
-	require.Equal(t, "gpt-4o,gpt-4o-mini", channel.Models)
-	require.Equal(t, "vip,default", channel.Group)
+	require.ElementsMatch(t, []string{"gpt-4o", "gpt-4o-mini"}, strings.Split(channel.Models, ","))
+	require.ElementsMatch(t, []string{"vip", "default"}, strings.Split(channel.Group, ","))
 	require.Equal(t, float64(3.5), channel.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
 
@@ -106,7 +107,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
-	require.Equal(t, int64(4), abilityCount)
+	require.Equal(t, int64(2), abilityCount)
 
 	_, err = GetPreviewRecord(previewID)
 	require.ErrorContains(t, err, "预览快照不存在或已过期")
@@ -174,6 +175,83 @@ func TestCreateFromPreviewAppliesConfigBySyncIDWhenExternalIDMissing(t *testing.
 
 	require.ErrorContains(t, err, "没有可创建的同步密钥")
 	require.Nil(t, result)
+}
+
+func TestCreateFromPreviewSummarizesOnlyEnabledAccounts(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-enabled-only"
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "enabled",
+				Name:              "Enabled Key",
+				Key:               "sk-enabled",
+				MaskedKey:         "sk-enabled",
+				GroupName:         "enabled-group",
+				Models:            []string{"gpt-enabled"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+			{
+				ExternalID:        "disabled",
+				Name:              "Disabled Key",
+				Key:               "sk-disabled",
+				MaskedKey:         "sk-disabled",
+				GroupName:         "disabled-group",
+				Models:            []string{"gpt-disabled"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: true,
+		Channel: ChannelCreateConfig{
+			Name: "enabled-only-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+		Accounts: []AccountCreateConfig{
+			{ExternalID: "disabled", Enabled: boolPtr(false)},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+
+	var channel model.Channel
+	require.NoError(t, db.First(&channel, result.ChannelID).Error)
+	require.Equal(t, "gpt-enabled", channel.Models)
+	require.Equal(t, "enabled-group", channel.Group)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	require.Equal(t, "gpt-enabled", abilities[0].Model)
+	require.Equal(t, "enabled-group", abilities[0].Group)
 }
 
 func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {

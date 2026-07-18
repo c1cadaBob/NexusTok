@@ -199,8 +199,8 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
-	require.Equal(t, "gpt-4o,gpt-4o-mini", refreshed.Models)
-	require.Equal(t, "vip", refreshed.Group)
+	require.Equal(t, "gpt-old,gpt-4o-mini", refreshed.Models)
+	require.Equal(t, "default,vip", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*2), refreshed.UsedQuota)
 
@@ -219,6 +219,89 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
 	require.Equal(t, int64(2), abilityCount)
+}
+
+func TestRefreshChannelFromSnapshotSummarizesOnlyEnabledAccounts(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "synced-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old,gpt-disabled",
+		Group:  "old-group,disabled-group",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "enabled",
+				Name:              "Enabled Key",
+				Key:               "sk-enabled",
+				MaskedKey:         "sk-enabled",
+				GroupName:         "enabled-group",
+				Models:            []string{"gpt-enabled"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+			{
+				ExternalID:        "disabled",
+				Name:              "Disabled Key",
+				Key:               "sk-disabled",
+				MaskedKey:         "sk-disabled",
+				GroupName:         "disabled-group",
+				Models:            []string{"gpt-disabled"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, snapshot, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: true,
+		Accounts: []AccountCreateConfig{
+			{ExternalID: "disabled", Enabled: boolPtr(false)},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.Equal(t, 0, result.Updated)
+
+	var refreshed model.Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	require.Equal(t, "gpt-enabled", refreshed.Models)
+	require.Equal(t, "enabled-group", refreshed.Group)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	require.Equal(t, "gpt-enabled", abilities[0].Model)
+	require.Equal(t, "enabled-group", abilities[0].Group)
 }
 
 func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) {

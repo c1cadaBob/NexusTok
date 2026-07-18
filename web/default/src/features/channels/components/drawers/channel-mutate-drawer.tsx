@@ -431,7 +431,7 @@ function upstreamAccountWeightValue(
   return applySuggested ? undefined : config?.weight
 }
 
-function upstreamAccountValuesToString(
+export function upstreamAccountValuesToString(
   keys: UpstreamAccountKey[],
   configs: Record<string, UpstreamAccountConfigDraft>,
   getValue: (
@@ -443,6 +443,7 @@ function upstreamAccountValuesToString(
   const values: string[] = []
   keys.forEach((key, index) => {
     const config = getUpstreamAccountConfig(configs, key, index)
+    if (config?.enabled === false) return
     getValue(key, config)
       .split(',')
       .map((value) => value.trim())

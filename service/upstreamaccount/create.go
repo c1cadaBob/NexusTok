@@ -89,9 +89,6 @@ func CreateFromPreview(req CreateRequest) (*CreateResult, error) {
 		if err := tx.Create(channel).Error; err != nil {
 			return err
 		}
-		if err := channel.AddAbilities(tx); err != nil {
-			return err
-		}
 		for i := range accounts {
 			accounts[i].ChannelId = channel.Id
 		}
@@ -100,6 +97,9 @@ func CreateFromPreview(req CreateRequest) (*CreateResult, error) {
 				return err
 			}
 			created = len(accounts)
+		}
+		if err := model.SyncChannelAccountPoolCapabilities(channel.Id, tx); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -186,6 +186,12 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	if err != nil {
 		return nil, nil, err
 	}
+	// 渠道顶层 models/group 是路由能力表的来源，只能由最终启用的同步账号贡献。
+	// 如果把已跳过或已禁用的 key 也汇总进去，能力表会暴露实际没有可用账号的模型，
+	// 请求进入 Relay 后才因账号不可用而失败，造成“保存成功但调度异常”的误判。
+	models, group = summarizeEnabledAccountCapabilities(accounts, models, group)
+	channel.Models = models
+	channel.Group = group
 	return channel, accounts, nil
 }
 
@@ -311,6 +317,60 @@ func inferGroupFromKeys(keys []SyncedKey) string {
 		result = append(result, group)
 	}
 	return strings.Join(result, ",")
+}
+
+func summarizeEnabledAccountCapabilities(accounts []model.ChannelAccount, fallbackModels string, fallbackGroup string) (string, string) {
+	hasEnabledAccount := false
+	for _, account := range accounts {
+		if account.Status == common.ChannelStatusEnabled {
+			hasEnabledAccount = true
+			break
+		}
+	}
+	if !hasEnabledAccount {
+		return "", firstNonEmpty(strings.TrimSpace(fallbackGroup), "default")
+	}
+	models := uniqueAccountCSV(accounts, func(account model.ChannelAccount) string {
+		if account.Status != common.ChannelStatusEnabled {
+			return ""
+		}
+		return account.Models
+	})
+	groups := uniqueAccountCSV(accounts, func(account model.ChannelAccount) string {
+		if account.Status != common.ChannelStatusEnabled {
+			return ""
+		}
+		return account.Group
+	})
+	if strings.TrimSpace(models) == "" {
+		models = strings.TrimSpace(fallbackModels)
+	}
+	if strings.TrimSpace(groups) == "" {
+		groups = strings.TrimSpace(fallbackGroup)
+	}
+	if strings.TrimSpace(groups) == "" {
+		groups = "default"
+	}
+	return models, groups
+}
+
+func uniqueAccountCSV(accounts []model.ChannelAccount, valueFn func(model.ChannelAccount) string) string {
+	seen := map[string]struct{}{}
+	values := make([]string, 0)
+	for _, account := range accounts {
+		for _, part := range strings.Split(valueFn(account), ",") {
+			value := strings.TrimSpace(part)
+			if value == "" {
+				continue
+			}
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return strings.Join(values, ",")
 }
 
 func balanceValue(balance *BalanceSnapshot) float64 {
