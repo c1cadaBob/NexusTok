@@ -296,6 +296,56 @@ describe('渠道表单 settings 转换', () => {
     assert.equal(values.disable_task_polling_sleep, true)
   })
 
+  test('从 settings JSON 回填上游账号同步模式', () => {
+    const channel: Channel = {
+      id: 1,
+      type: 1,
+      key: '',
+      openai_organization: '',
+      test_model: '',
+      status: 1,
+      name: 'Synced Channel',
+      weight: 0,
+      created_time: 0,
+      test_time: 0,
+      response_time: 0,
+      base_url: 'https://api.example.com',
+      other: '',
+      balance: 0,
+      balance_updated_time: 0,
+      models: '',
+      group: '',
+      used_quota: 0,
+      model_mapping: '',
+      status_code_mapping: '',
+      priority: 0,
+      auto_ban: 1,
+      other_info: '',
+      tag: '',
+      setting: '{}',
+      param_override: '',
+      header_override: '',
+      remark: '',
+      max_input_tokens: 0,
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+        credential_mode: 'account_pool',
+        account_pool_enabled: true,
+      },
+      settings:
+        '{"upstream_account_sync":{"platform":"sub2api","base_url":"https://api.example.com","synced_at":1}}',
+    }
+
+    const values = transformChannelToFormDefaults(channel)
+    const result = channelFormSchema.safeParse(values)
+
+    assert.equal(values.upstream_account_sync, true)
+    assert.equal(result.success, true)
+  })
+
   test('保存跳过异步任务轮询等待开关到 settings JSON', () => {
     const payload = transformFormDataToUpdatePayload(
       makeValidChannelForm({
@@ -409,6 +459,17 @@ describe('渠道表单更新 payload', () => {
 
     assert.equal(payload.base_url, '')
     assert.equal(payload.key, 'global_account_pool')
-    assert.equal(payload.channel_info?.account_pool_group_id, 12)
+    assert.equal('channel_info' in payload, false)
+  })
+
+  test('普通更新 payload 不携带渠道启停状态', () => {
+    const payload = transformFormDataToUpdatePayload(
+      makeValidChannelForm({
+        status: 2,
+      }),
+      7
+    )
+
+    assert.equal('status' in payload, false)
   })
 })

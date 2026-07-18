@@ -5650,6 +5650,27 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Add missing models": "Add missing models",
+    "Added {{count}} models from \"{{name}}\"": "Added {{count}} models from \"{{name}}\"",
+    "Channel account list is still loading": "Channel account list is still loading",
+    "Channel created": "Channel created",
+    "Configure models, groups, priority, weight, and enabled state for each synced key. Save changes updates the current keys without refreshing the upstream account.": "Configure models, groups, priority, weight, and enabled state for each synced key. Save changes updates the current keys without refreshing the upstream account.",
+    "Credential Source": "Credential Source",
+    "Choose one credential source for this channel.": "Choose one credential source for this channel.",
+    "Each synced key keeps its own models and groups. Review them in the table below.": "Each synced key keeps its own models and groups. Review them in the table below.",
+    "Loading synced keys...": "Loading synced keys...",
+    "Manual API Credentials": "Manual API Credentials",
+    "No synced keys were found for this channel.": "No synced keys were found for this channel.",
+    "Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.": "Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.",
+    "Optional: re-enter the upstream account password only when you need to fetch new keys, groups, rates, or balance.": "Optional: re-enter the upstream account password only when you need to fetch new keys, groups, rates, or balance.",
+    "Preview refresh is only required before applying a fresh upstream sync. The main save button can save current key configuration without refreshing.": "Preview refresh is only required before applying a fresh upstream sync. The main save button can save current key configuration without refreshing.",
+    "Set the API address and key on this channel.": "Set the API address and key on this channel.",
+    "Preview the upstream account before saving refresh changes. Missing upstream keys will be disabled after refresh.": "Preview the upstream account before saving refresh changes. Missing upstream keys will be disabled after refresh.",
+    "Routes": "Routes",
+    "Saved key configuration, but status changes require operate permission.": "Saved key configuration, but status changes require operate permission.",
+    "Synced Key Configuration": "Synced Key Configuration",
+    "Synced key configuration saved: {{updated}} updated": "Synced key configuration saved: {{updated}} updated",
+    "You do not have permission to edit sensitive channel settings.": "You do not have permission to edit sensitive channel settings."
   }
 }

@@ -130,6 +130,17 @@ export function pickNonSensitiveChannelUpdatePayload(
   )
 }
 
+// 渠道状态必须走专用状态接口，普通编辑/同步保存不能携带 status。
+// 这里作为提交前的最后防线，即使调用方拥有敏感写权限也不能把 status 混入通用更新。
+export function omitOperationalChannelUpdateFields<T extends Partial<Channel>>(
+  payload: T
+): T {
+  if (!('status' in payload)) return payload
+  const nextPayload = { ...payload }
+  delete (nextPayload as Record<string, unknown>).status
+  return nextPayload
+}
+
 // 普通写权限只能提交调度、模型暴露和备注类字段；任何不在白名单内的 dirty 字段
 // 都按敏感变更处理。这里用于前端提交前提示，Hook 的 payload 裁剪仍是最终防线。
 export function getDirtySensitiveChannelFormFields(
@@ -161,13 +172,15 @@ export function buildAllowedChannelUpdatePayload({
   isMultiKeyChannel,
   keyMode,
 }: BuildAllowedUpdatePayloadParams): ChannelUpdatePayload {
+  const payloadWithoutOperationalFields =
+    omitOperationalChannelUpdateFields(payload)
   const payloadWithKeyMode: ChannelUpdatePayload =
     canEditSensitiveFields && isMultiKeyChannel && keyMode
       ? {
-          ...payload,
+          ...payloadWithoutOperationalFields,
           key_mode: keyMode,
         }
-      : payload
+      : payloadWithoutOperationalFields
 
   return canEditSensitiveFields
     ? payloadWithKeyMode

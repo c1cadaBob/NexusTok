@@ -504,6 +504,98 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	require.Equal(t, 34, account.Weight)
 }
 
+func TestRefreshChannelFromSnapshotFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "explicit-empty-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	key := SyncedKey{
+		ExternalID: "empty",
+		Name:       "Empty Key",
+		Key:        "sk-empty",
+		MaskedKey:  "sk-empty",
+		GroupName:  "vip",
+		Models:     []string{"gpt-4o"},
+	}
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Empty Key",
+		Key:           "sk-empty",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "empty",
+				Name:              "Empty Key",
+				Key:               "sk-empty-new",
+				MaskedKey:         "sk-empty-new",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 5,
+				SuggestedWeight:   70,
+			},
+		},
+	}, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID: "empty",
+				Models:     "",
+				Group:      "",
+				Priority:   int64Ptr(9),
+				Weight:     intPtr(8),
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Created)
+	require.Equal(t, 1, result.Updated)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "gpt-4o", refreshed.Models)
+	require.Equal(t, "vip", refreshed.Group)
+	require.Equal(t, int64(9), refreshed.Priority)
+	require.Equal(t, 8, refreshed.Weight)
+}
+
 func TestRefreshChannelFromSnapshotDisablesMissingSub2APIKeyWithLoginMetadataURL(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB

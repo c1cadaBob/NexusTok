@@ -24,6 +24,7 @@ import {
   useCallback,
   useRef,
 } from 'react'
+import { z } from 'zod'
 import { type SubmitErrorHandler, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -74,6 +75,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -120,6 +122,7 @@ import {
   fetchModels,
   getAllModels,
   getChannel,
+  getChannelAccounts,
   getChannelKey,
   getGroups,
   getPrefillGroups,
@@ -128,9 +131,13 @@ import {
   previewUpstreamAccount,
   refreshUpstreamAccountChannel,
   refreshCodexCredential,
+  updateChannel,
+  updateChannelAccount,
+  updateChannelAccountStatus,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
+  CHANNEL_STATUS,
   CHANNEL_STATUS_LABELS,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
@@ -141,6 +148,7 @@ import {
 } from '../../constants'
 import {
   hasDirtySensitiveChannelFormFields,
+  pickNonSensitiveChannelUpdatePayload,
   useChannelMutateForm,
 } from '../../hooks/use-channel-mutate-form'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
@@ -150,6 +158,7 @@ import {
   channelFormSchema,
   channelsQueryKeys,
   transformChannelToFormDefaults,
+  transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
   getAdvancedCustomStats,
@@ -176,6 +185,7 @@ import {
 } from '../../lib/status-code-risk-guard'
 import type {
   Channel,
+  ChannelAccount,
   UpstreamAccountKey,
   UpstreamAccountPreviewData,
   UpstreamAccountTwoFactorChallenge,
@@ -238,13 +248,20 @@ type UpstreamAccountConfigDraft = {
   priority: number
   weight: number
   enabled: boolean
-  models: string
-  group: string
+  models?: string
+  group?: string
+}
+
+type UpstreamEditableAccount = UpstreamAccountKey & {
+  account_id?: number
+  account_status?: number
 }
 
 type UpstreamTwoFactorMode = 'create' | 'refresh'
+type CredentialSourceMode = 'manual' | 'upstream_account'
 
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
+const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
 
 function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
   return key.sync_id || key.external_id || key.masked_key || `${index}`
@@ -323,11 +340,16 @@ function buildUpstreamAccountConfigs(
       priority: key.suggested_priority,
       weight: key.suggested_weight,
       enabled: true,
-      models: key.models?.join(',') || '',
-      group: key.group_name || key.group_id || '',
     }
   })
   return configs
+}
+
+function upstreamAccountConfigTextValue(
+  configValue: string | undefined,
+  fallbackValue: string
+) {
+  return configValue ?? fallbackValue
 }
 
 function upstreamAccountModelsValue(
@@ -335,12 +357,12 @@ function upstreamAccountModelsValue(
   config: UpstreamAccountConfigDraft | undefined,
   fallbackModels = ''
 ) {
-  return (
-    config?.models?.trim() ||
-    key.models?.join(',') ||
-    fallbackModels.trim() ||
-    ''
-  )
+  // 逐密钥输入框允许管理员显式清空模型。只有配置对象里完全没有 models 字段时，
+  // 才回退到上游快照和渠道级默认值，避免保存时把用户输入的空值吞回旧值。
+  if (config && Object.prototype.hasOwnProperty.call(config, 'models')) {
+    return config.models?.trim() || ''
+  }
+  return key.models?.join(',') || fallbackModels.trim() || ''
 }
 
 function upstreamAccountGroupValue(
@@ -348,13 +370,11 @@ function upstreamAccountGroupValue(
   config: UpstreamAccountConfigDraft | undefined,
   fallbackGroup = ''
 ) {
-  return (
-    config?.group?.trim() ||
-    key.group_name ||
-    key.group_id ||
-    fallbackGroup.trim() ||
-    ''
-  )
+  // 分组与模型相同：空字符串是显式配置，不能再回退到上游原始分组。
+  if (config && Object.prototype.hasOwnProperty.call(config, 'group')) {
+    return config.group?.trim() || ''
+  }
+  return key.group_name || key.group_id || fallbackGroup.trim() || ''
 }
 
 function upstreamAccountPriorityValue(
@@ -394,6 +414,84 @@ function upstreamAccountValuesToString(
       })
   })
   return values.join(',')
+}
+
+function buildUpstreamAccountPayloads(
+  keys: UpstreamAccountKey[],
+  configs: Record<string, UpstreamAccountConfigDraft>,
+  applySuggested: boolean,
+  fallbackModels = '',
+  fallbackGroup = ''
+) {
+  return keys.map((key, index) => {
+    const config = configs[upstreamKeyConfigId(key, index)]
+    return {
+      sync_id: key.sync_id,
+      external_id: key.external_id,
+      name: key.name || key.masked_key,
+      enabled: config?.enabled ?? true,
+      models: upstreamAccountModelsValue(key, config, fallbackModels),
+      group: upstreamAccountGroupValue(key, config, fallbackGroup),
+      priority: upstreamAccountPriorityValue(config, applySuggested),
+      weight: upstreamAccountWeightValue(config, applySuggested),
+    }
+  })
+}
+
+function upstreamAccountFromChannelAccount(
+  account: ChannelAccount
+): UpstreamEditableAccount {
+  return {
+    account_id: account.id,
+    sync_id: String(account.id),
+    external_id: String(account.id),
+    name: account.name || `#${account.id}`,
+    masked_key: account.key,
+    status: account.status,
+    account_status: account.status,
+    group_name: account.group,
+    group_id: account.group,
+    models: parseModelsString(account.models || ''),
+    suggested_priority: account.priority || 0,
+    suggested_weight: account.weight || 0,
+  }
+}
+
+function buildUpstreamAccountConfigsFromChannelAccounts(
+  accounts: ChannelAccount[]
+): Record<string, UpstreamAccountConfigDraft> {
+  const configs: Record<string, UpstreamAccountConfigDraft> = {}
+  accounts.forEach((account) => {
+    const key = upstreamAccountFromChannelAccount(account)
+    configs[upstreamKeyConfigId(key, 0)] = {
+      priority: account.priority || 0,
+      weight: account.weight || 0,
+      enabled: account.status === CHANNEL_STATUS.ENABLED,
+      models: account.models || '',
+      group: account.group || '',
+    }
+  })
+  return configs
+}
+
+function isChannelFromUpstreamAccountSync(channel: Channel | undefined | null) {
+  if (!channel?.settings) return false
+  try {
+    const settings = JSON.parse(channel.settings) as Record<string, unknown>
+    const metadata = settings[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+    if (metadata === undefined || metadata === null) {
+      return false
+    }
+    if (typeof metadata === 'object') {
+      return true
+    }
+    if (typeof metadata === 'boolean') {
+      return metadata
+    }
+    return typeof metadata === 'string' && metadata.trim().length > 0
+  } catch {
+    return false
+  }
 }
 
 // 表单辅助函数
@@ -848,7 +946,11 @@ export function ChannelMutateDrawer({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   // 表单实例初始化。
-  const form = useForm<ChannelFormValues>({
+  const form = useForm<
+    z.input<typeof channelFormSchema>,
+    unknown,
+    ChannelFormValues
+  >({
     resolver: zodResolver(channelFormSchema),
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
@@ -889,6 +991,8 @@ export function ChannelMutateDrawer({
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
+  const [isSavingSyncedAccountConfigs, setIsSavingSyncedAccountConfigs] =
+    useState(false)
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
@@ -1210,13 +1314,48 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
+  const hasUpstreamAccountSyncMetadata = isChannelFromUpstreamAccountSync(
+    channelData?.data ?? currentRow
+  )
   const isUpstreamAccountSyncedChannel =
     isEditing &&
-    (credentialMode === 'account_pool' ||
-      channelData?.data?.channel_info?.account_pool_enabled === true)
+    (hasUpstreamAccountSyncMetadata ||
+      (currentRow?.channel_info?.credential_mode === 'account_pool' &&
+        currentRow?.channel_info?.account_pool_enabled === true))
   const isCreateUpstreamSyncMode = !isEditing && upstreamSyncEnabled
+  const usesUpstreamAccountCredentialSource =
+    isCreateUpstreamSyncMode || isUpstreamAccountSyncedChannel
+  // 账号密码同步模式下，密钥级模型和分组才是主配置面；隐藏渠道级共享面板，
+  // 避免管理员误以为还需要同时维护统一模型/分组和逐密钥模型/分组两套配置。
+  const showSharedModelsSection = !usesUpstreamAccountCredentialSource
+  const showManualCredentialSection = !usesUpstreamAccountCredentialSource
   const supportsMultiKeyAddMode =
     currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+  const syncedChannelAccountsQuery = useQuery({
+    queryKey: [
+      ...channelsQueryKeys.detail(channelId || 0),
+      'upstream-sync-accounts',
+    ],
+    queryFn: () =>
+      getChannelAccounts(channelId!, {
+        p: 1,
+        page_size: 100,
+      }),
+    enabled:
+      open &&
+      Boolean(channelId) &&
+      isUpstreamAccountSyncedChannel &&
+      permissions.canReadChannelAccount,
+  })
+  const syncedChannelAccounts =
+    syncedChannelAccountsQuery.data?.data?.accounts.items ?? []
+  const syncedChannelAccountsTotal =
+    syncedChannelAccountsQuery.data?.data?.accounts.total ?? 0
+  const syncedChannelAccountsLoadedCount = syncedChannelAccounts.length
+  const syncedEditableAccounts = useMemo(
+    () => syncedChannelAccounts.map(upstreamAccountFromChannelAccount),
+    [syncedChannelAccounts]
+  )
 
   const credentialModeOptions = useMemo(() => {
     const options = [
@@ -1383,124 +1522,137 @@ export function ChannelMutateDrawer({
   )
 
   const renderUpstreamSnapshotReview = useCallback(
-    (snapshot: UpstreamAccountSnapshot) => (
-      <div className='flex flex-col gap-3'>
-        <div className='grid gap-3 sm:grid-cols-3'>
-          <div className='rounded-md border p-3'>
-            <div className='text-muted-foreground text-xs'>
-              {t('Synced Keys')}
-            </div>
-            <div className='text-lg font-semibold'>{snapshot.keys.length}</div>
-          </div>
-          <div className='rounded-md border p-3'>
-            <div className='text-muted-foreground text-xs'>
-              {t('Remaining Balance')}
-            </div>
-            <div className='text-lg font-semibold'>
-              {snapshot.balance?.balance_usd ?? '-'}
-            </div>
-          </div>
-          <div className='rounded-md border p-3'>
-            <div className='text-muted-foreground text-xs'>
-              {t('Used Balance')}
-            </div>
-            <div className='text-lg font-semibold'>
-              {snapshot.balance?.used_usd ?? '-'}
-            </div>
-          </div>
-        </div>
-
-        <div className='flex items-center justify-between gap-3'>
-          <div className='flex flex-col gap-1'>
-            <span className='text-sm font-medium'>
-              {t('Apply suggested priority and weight')}
-            </span>
-            <span className='text-muted-foreground text-xs'>
-              {t(
-                'Lower upstream rates get higher priority and weight by default.'
-              )}
-            </span>
-          </div>
-          <Switch
-            checked={upstreamApplySuggested}
-            disabled={snapshot.keys.length === 0}
-            onCheckedChange={setUpstreamApplySuggested}
-          />
-        </div>
-
-        {snapshot.keys.length === 0 ? (
-          <Alert>
-            <AlertCircle aria-hidden='true' />
-            <AlertDescription>
-              {t('No upstream keys were found for this account.')}
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <>
-            {!upstreamModelsToString(snapshot.keys) && (
-              <Alert>
-                <AlertCircle aria-hidden='true' />
-                <AlertDescription>
-                  {t(
-                    'No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.'
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
-            <div className='overflow-x-auto rounded-md border'>
-              <div className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
-                <span>{t('Key')}</span>
-                <span>{t('Models')}</span>
-                <span>{t('Group')}</span>
-                <span>{t('Priority')}</span>
-                <span>{t('Weight')}</span>
-                <span>{t('Enabled')}</span>
+    (
+      snapshot: Pick<UpstreamAccountSnapshot, 'balance' | 'keys'>,
+      options: {
+        showBalance?: boolean
+        showSuggestedToggle?: boolean
+        emptyText?: string
+      } = {}
+    ) => {
+      const showSuggestedToggle = options.showSuggestedToggle !== false
+      return (
+        <div className='flex flex-col gap-3'>
+          {options.showBalance !== false && (
+            <div className='grid gap-3 sm:grid-cols-3'>
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Synced Keys')}
+                </div>
+                <div className='text-lg font-semibold'>
+                  {snapshot.keys.length}
+                </div>
               </div>
-              {snapshot.keys.map((key, index) => {
-                const configId = upstreamKeyConfigId(key, index)
-                const config = upstreamAccountConfigs[configId]
-                return (
-                  <div
-                    key={configId}
-                    className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
-                  >
-                    <div className='min-w-0'>
-                      <div className='truncate text-sm font-medium'>
-                        {key.name || key.masked_key}
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Remaining Balance')}
+                </div>
+                <div className='text-lg font-semibold'>
+                  {snapshot.balance?.balance_usd ?? '-'}
+                </div>
+              </div>
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Used Balance')}
+                </div>
+                <div className='text-lg font-semibold'>
+                  {snapshot.balance?.used_usd ?? '-'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {options.showBalance === false && (
+            <div className='rounded-md border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {t('Synced Keys')}
+              </div>
+              <div className='text-lg font-semibold'>
+                {snapshot.keys.length}
+              </div>
+            </div>
+          )}
+
+          {showSuggestedToggle && (
+            <div className='flex items-center justify-between gap-3'>
+              <div className='flex flex-col gap-1'>
+                <span className='text-sm font-medium'>
+                  {t('Apply suggested priority and weight')}
+                </span>
+                <span className='text-muted-foreground text-xs'>
+                  {t(
+                    'Lower upstream rates get higher priority and weight by default.'
+                  )}
+                </span>
+              </div>
+              <Switch
+                checked={upstreamApplySuggested}
+                disabled={snapshot.keys.length === 0}
+                onCheckedChange={setUpstreamApplySuggested}
+              />
+            </div>
+          )}
+
+          {snapshot.keys.length === 0 ? (
+            <Alert>
+              <AlertCircle aria-hidden='true' />
+              <AlertDescription>
+                {options.emptyText ||
+                  t('No upstream keys were found for this account.')}
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              {!upstreamModelsToString(snapshot.keys) && (
+                <Alert>
+                  <AlertCircle aria-hidden='true' />
+                  <AlertDescription>
+                    {t(
+                      'No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className='overflow-x-auto rounded-md border'>
+                <div className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
+                  <span>{t('Key')}</span>
+                  <span>{t('Models')}</span>
+                  <span>{t('Group')}</span>
+                  <span>{t('Priority')}</span>
+                  <span>{t('Weight')}</span>
+                  <span>{t('Enabled')}</span>
+                </div>
+                {snapshot.keys.map((key, index) => {
+                  const configId = upstreamKeyConfigId(key, index)
+                  const config = upstreamAccountConfigs[configId]
+                  const currentModelsValue = upstreamAccountConfigTextValue(
+                    config?.models,
+                    key.models?.join(',') || ''
+                  )
+                  const currentGroupValue = upstreamAccountConfigTextValue(
+                    config?.group,
+                    key.group_name || key.group_id || ''
+                  )
+                  const currentPriorityValue =
+                    config?.priority ?? key.suggested_priority ?? 0
+                  const currentWeightValue =
+                    config?.weight ?? key.suggested_weight ?? 0
+                  return (
+                    <div
+                      key={configId}
+                      className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
+                    >
+                      <div className='min-w-0'>
+                        <div className='truncate text-sm font-medium'>
+                          {key.name || key.masked_key}
+                        </div>
+                        <div className='text-muted-foreground truncate text-xs'>
+                          {key.masked_key}
+                        </div>
                       </div>
-                      <div className='text-muted-foreground truncate text-xs'>
-                        {key.masked_key}
-                      </div>
-                    </div>
-                    <Input
-                      value={config?.models ?? key.models?.join(',') ?? ''}
-                      placeholder={t('Models inherited from channel if empty')}
-                      onChange={(event) =>
-                        setUpstreamAccountConfigs((prev) => ({
-                          ...prev,
-                          [configId]: {
-                            enabled: prev[configId]?.enabled ?? true,
-                            priority:
-                              prev[configId]?.priority ??
-                              key.suggested_priority,
-                            weight:
-                              prev[configId]?.weight ?? key.suggested_weight,
-                            group:
-                              prev[configId]?.group ??
-                              key.group_name ??
-                              key.group_id ??
-                              '',
-                            models: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    <div className='flex min-w-0 flex-col gap-1'>
                       <Input
-                        value={
-                          config?.group ?? key.group_name ?? key.group_id ?? ''
-                        }
-                        placeholder={t('Group inherited from channel if empty')}
+                        value={currentModelsValue}
+                        placeholder={t('Models inherited from channel if empty')}
                         onChange={(event) =>
                           setUpstreamAccountConfigs((prev) => ({
                             ...prev,
@@ -1511,107 +1663,132 @@ export function ChannelMutateDrawer({
                                 key.suggested_priority,
                               weight:
                                 prev[configId]?.weight ?? key.suggested_weight,
-                              models:
-                                prev[configId]?.models ??
-                                key.models?.join(',') ??
+                              group:
+                                prev[configId]?.group ??
+                                key.group_name ??
+                                key.group_id ??
                                 '',
-                              group: event.target.value,
+                              models: event.target.value,
                             },
                           }))
                         }
                       />
-                      {key.group_ratio !== undefined && (
-                        <Badge variant='secondary' className='w-fit'>
-                          {t('Group: {{ratio}}x', {
-                            ratio: key.group_ratio,
-                          })}
-                        </Badge>
-                      )}
+                      <div className='flex min-w-0 flex-col gap-1'>
+                        <Input
+                          value={currentGroupValue}
+                          placeholder={t('Group inherited from channel if empty')}
+                          onChange={(event) =>
+                            setUpstreamAccountConfigs((prev) => ({
+                              ...prev,
+                              [configId]: {
+                                enabled: prev[configId]?.enabled ?? true,
+                                priority:
+                                  prev[configId]?.priority ??
+                                  key.suggested_priority,
+                                weight:
+                                  prev[configId]?.weight ?? key.suggested_weight,
+                                models:
+                                  prev[configId]?.models ??
+                                  key.models?.join(',') ??
+                                  '',
+                                group: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                        {key.group_ratio !== undefined && (
+                          <Badge variant='secondary' className='w-fit'>
+                            {t('Group: {{ratio}}x', {
+                              ratio: key.group_ratio,
+                            })}
+                          </Badge>
+                        )}
+                      </div>
+                      <Input
+                        type='number'
+                        value={currentPriorityValue}
+                        disabled={showSuggestedToggle && upstreamApplySuggested}
+                        onChange={(event) =>
+                          setUpstreamAccountConfigs((prev) => ({
+                            ...prev,
+                            [configId]: {
+                              enabled: prev[configId]?.enabled ?? true,
+                              models:
+                                prev[configId]?.models ??
+                                key.models?.join(',') ??
+                                '',
+                              group:
+                                prev[configId]?.group ??
+                                key.group_name ??
+                                key.group_id ??
+                                '',
+                              weight:
+                                prev[configId]?.weight ?? key.suggested_weight,
+                              priority: Number(event.target.value),
+                            },
+                          }))
+                        }
+                      />
+                      <Input
+                        type='number'
+                        value={currentWeightValue}
+                        disabled={showSuggestedToggle && upstreamApplySuggested}
+                        onChange={(event) =>
+                          setUpstreamAccountConfigs((prev) => ({
+                            ...prev,
+                            [configId]: {
+                              enabled: prev[configId]?.enabled ?? true,
+                              models:
+                                prev[configId]?.models ??
+                                key.models?.join(',') ??
+                                '',
+                              group:
+                                prev[configId]?.group ??
+                                key.group_name ??
+                                key.group_id ??
+                                '',
+                              priority:
+                                prev[configId]?.priority ??
+                                key.suggested_priority,
+                              weight: Number(event.target.value),
+                            },
+                          }))
+                        }
+                      />
+                      <Switch
+                        checked={config?.enabled ?? true}
+                        onCheckedChange={(checked) =>
+                          setUpstreamAccountConfigs((prev) => ({
+                            ...prev,
+                            [configId]: {
+                              priority:
+                                prev[configId]?.priority ??
+                                key.suggested_priority,
+                              weight:
+                                prev[configId]?.weight ?? key.suggested_weight,
+                              models:
+                                prev[configId]?.models ??
+                                key.models?.join(',') ??
+                                '',
+                              group:
+                                prev[configId]?.group ??
+                                key.group_name ??
+                                key.group_id ??
+                                '',
+                              enabled: checked,
+                            },
+                          }))
+                        }
+                      />
                     </div>
-                    <Input
-                      type='number'
-                      value={config?.priority ?? 0}
-                      disabled={upstreamApplySuggested}
-                      onChange={(event) =>
-                        setUpstreamAccountConfigs((prev) => ({
-                          ...prev,
-                          [configId]: {
-                            enabled: prev[configId]?.enabled ?? true,
-                            models:
-                              prev[configId]?.models ??
-                              key.models?.join(',') ??
-                              '',
-                            group:
-                              prev[configId]?.group ??
-                              key.group_name ??
-                              key.group_id ??
-                              '',
-                            weight:
-                              prev[configId]?.weight ?? key.suggested_weight,
-                            priority: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                    <Input
-                      type='number'
-                      value={config?.weight ?? 0}
-                      disabled={upstreamApplySuggested}
-                      onChange={(event) =>
-                        setUpstreamAccountConfigs((prev) => ({
-                          ...prev,
-                          [configId]: {
-                            enabled: prev[configId]?.enabled ?? true,
-                            models:
-                              prev[configId]?.models ??
-                              key.models?.join(',') ??
-                              '',
-                            group:
-                              prev[configId]?.group ??
-                              key.group_name ??
-                              key.group_id ??
-                              '',
-                            priority:
-                              prev[configId]?.priority ??
-                              key.suggested_priority,
-                            weight: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                    <Switch
-                      checked={config?.enabled ?? true}
-                      onCheckedChange={(checked) =>
-                        setUpstreamAccountConfigs((prev) => ({
-                          ...prev,
-                          [configId]: {
-                            priority:
-                              prev[configId]?.priority ??
-                              key.suggested_priority,
-                            weight:
-                              prev[configId]?.weight ?? key.suggested_weight,
-                            models:
-                              prev[configId]?.models ??
-                              key.models?.join(',') ??
-                              '',
-                            group:
-                              prev[configId]?.group ??
-                              key.group_name ??
-                              key.group_id ??
-                              '',
-                            enabled: checked,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          </>
-        )}
-      </div>
-    ),
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )
+    },
     [t, upstreamAccountConfigs, upstreamApplySuggested]
   )
 
@@ -1663,20 +1840,35 @@ export function ChannelMutateDrawer({
   )
   const advancedHaveErrors = hasAdvancedSettingsErrors(formErrors)
   const providerRequiresBaseUrl =
-    !isGlobalAccountPoolMode && [3, 8, 36, 45].includes(currentType)
-  const providerRequiresOther = [3, 18, 21, 39, 41, 49].includes(currentType)
+    !isGlobalAccountPoolMode &&
+    !usesUpstreamAccountCredentialSource &&
+    [3, 8, 36, 45].includes(currentType)
+  const providerRequiresOther =
+    !usesUpstreamAccountCredentialSource &&
+    [3, 18, 21, 39, 41, 49].includes(currentType)
   const identityComplete = Boolean(currentName?.trim() && currentType > 0)
-  const credentialsComplete = isCreateUpstreamSyncMode
-    ? Boolean(upstreamPreviewId && upstreamSnapshot?.keys.length)
-    : isGlobalAccountPoolMode
-      ? Boolean(accountPoolGroupId)
-      : Boolean(
-          (isEditing || currentKey?.trim()) &&
-          (!providerRequiresBaseUrl || currentBaseUrl?.trim()) &&
-          (!providerRequiresOther || currentOther?.trim())
-        )
-  const modelsComplete = isCreateUpstreamSyncMode
-    ? Boolean(upstreamSnapshot?.keys.length)
+  const credentialsComplete = (() => {
+    if (isCreateUpstreamSyncMode) {
+      return Boolean(upstreamPreviewId && upstreamSnapshot?.keys.length)
+    }
+    if (isUpstreamAccountSyncedChannel) {
+      return true
+    }
+    if (isGlobalAccountPoolMode) {
+      return Boolean(accountPoolGroupId)
+    }
+    return Boolean(
+      (isEditing || currentKey?.trim()) &&
+      (!providerRequiresBaseUrl || currentBaseUrl?.trim()) &&
+      (!providerRequiresOther || currentOther?.trim())
+    )
+  })()
+  const modelsComplete = usesUpstreamAccountCredentialSource
+    ? Boolean(
+        isUpstreamAccountSyncedChannel ||
+        upstreamSnapshot?.keys.length ||
+        upstreamRefreshSnapshot?.keys.length
+      )
     : Boolean(currentModelsArray.length > 0 && currentGroups?.length)
   const requiredCompletedCount = [
     identityComplete,
@@ -1808,14 +2000,18 @@ export function ChannelMutateDrawer({
       status: credentialsStatus,
       icon: <KeyRound className='h-4 w-4' aria-hidden='true' />,
     },
-    {
-      id: CHANNEL_EDITOR_SECTION_IDS.models,
-      title: t('Models & Groups'),
-      description: getSectionStatusLabel(modelsStatus, t),
-      statusLabel: getSectionStatusLabel(modelsStatus, t),
-      status: modelsStatus,
-      icon: <Boxes className='h-4 w-4' aria-hidden='true' />,
-    },
+    ...(showSharedModelsSection
+      ? [
+          {
+            id: CHANNEL_EDITOR_SECTION_IDS.models,
+            title: t('Models & Groups'),
+            description: getSectionStatusLabel(modelsStatus, t),
+            statusLabel: getSectionStatusLabel(modelsStatus, t),
+            status: modelsStatus,
+            icon: <Boxes className='h-4 w-4' aria-hidden='true' />,
+          } satisfies ChannelEditorNavItem,
+        ]
+      : []),
     {
       id: CHANNEL_EDITOR_SECTION_IDS.advanced,
       title: t('Advanced Settings'),
@@ -2013,9 +2209,17 @@ export function ChannelMutateDrawer({
   // 编辑模式加载渠道数据并写入表单，同时记录初始模型配置用于后续风险提示。
   useEffect(() => {
     if (isEditing && channelData?.data) {
-      const defaults = transformChannelToFormDefaults(channelData.data)
+      const isSyncedChannel =
+        isChannelFromUpstreamAccountSync(channelData.data) ||
+        (channelData.data.channel_info?.credential_mode === 'account_pool' &&
+          channelData.data.channel_info?.account_pool_enabled === true)
+      const defaults = {
+        ...transformChannelToFormDefaults(channelData.data),
+        upstream_account_sync: isSyncedChannel,
+      }
       form.reset(defaults)
       clearAllUpstreamPreviews()
+      setUpstreamSyncEnabled(false)
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -2035,6 +2239,25 @@ export function ChannelMutateDrawer({
       initialStatusCodeMappingRef.current = ''
     }
   }, [clearAllUpstreamPreviews, isEditing, channelData, form])
+
+  useEffect(() => {
+    if (
+      !isUpstreamAccountSyncedChannel ||
+      upstreamRefreshSnapshot ||
+      syncedChannelAccounts.length === 0 ||
+      Object.keys(upstreamAccountConfigs).length > 0
+    ) {
+      return
+    }
+    setUpstreamAccountConfigs(
+      buildUpstreamAccountConfigsFromChannelAccounts(syncedChannelAccounts)
+    )
+  }, [
+    isUpstreamAccountSyncedChannel,
+    syncedChannelAccounts,
+    upstreamRefreshSnapshot,
+    upstreamAccountConfigs,
+  ])
 
   // 渠道类型变化时补充类型默认值；编辑模式不自动覆盖已有渠道配置。
   useEffect(() => {
@@ -2372,6 +2595,11 @@ export function ChannelMutateDrawer({
             shouldDirty: true,
             shouldValidate: true,
           })
+        } else {
+          form.setValue('group', [], {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
         }
         if (!form.getValues('name')?.trim()) {
           form.setValue(
@@ -2649,6 +2877,163 @@ export function ChannelMutateDrawer({
     },
   })
 
+  const saveSyncedAccountLocalConfigs = useCallback(
+    async (data: ChannelFormValues) => {
+      if (!channelId || !currentRow) return
+      if (!canEditBasicFields) {
+        toast.error(noPermissionMessage)
+        return
+      }
+      if (!permissions.canWriteChannelAccount) {
+        toast.error(noPermissionMessage)
+        return
+      }
+      if (syncedChannelAccountsQuery.isLoading) {
+        toast.error(t('Channel account list is still loading'))
+        return
+      }
+      if (syncedChannelAccountsTotal > syncedChannelAccountsLoadedCount) {
+        toast.error(
+          t(
+            'Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.',
+            {
+              loaded: syncedChannelAccountsLoadedCount,
+              total: syncedChannelAccountsTotal,
+            }
+          )
+        )
+        return
+      }
+
+      setIsSavingSyncedAccountConfigs(true)
+      try {
+        const syncedChannelModels =
+          upstreamAccountValuesToString(
+            syncedEditableAccounts,
+            upstreamAccountConfigs,
+            upstreamAccountModelsValue
+          ) || data.models
+        const syncedChannelGroup =
+          upstreamAccountValuesToString(
+            syncedEditableAccounts,
+            upstreamAccountConfigs,
+            upstreamAccountGroupValue
+          ) || formatGroups(data.group || [])
+        const syncedData: ChannelFormValues = {
+          ...data,
+          models: syncedChannelModels,
+          group: syncedChannelGroup
+            .split(',')
+            .map((group) => group.trim())
+            .filter(Boolean),
+        }
+        // 同步渠道的本地保存只需要更新渠道聚合能力字段，用于路由筛选和列表展示；
+        // 每个密钥自己的模型、分组、优先级、权重和启停状态会在下面逐条写入
+        // ChannelAccount。不能复用完整表单 payload，否则 base_url、settings 或
+        // status 等字段会被误带进普通渠道更新接口，导致后端按无效参数拒绝保存。
+        const channelPayload = pickNonSensitiveChannelUpdatePayload(
+          transformFormDataToUpdatePayload(syncedData, channelId)
+        )
+        const channelResponse = await updateChannel(channelId, channelPayload)
+        if (!channelResponse.success) {
+          throw new Error(
+            channelResponse.message || t(ERROR_MESSAGES.UPDATE_FAILED)
+          )
+        }
+
+        let updated = 0
+        let statusUpdated = 0
+        for (let index = 0; index < syncedEditableAccounts.length; index += 1) {
+          const editableAccount = syncedEditableAccounts[index]
+          if (!editableAccount.account_id) continue
+          const config =
+            upstreamAccountConfigs[upstreamKeyConfigId(editableAccount, index)]
+          if (!config) continue
+
+          const account = syncedChannelAccounts.find(
+            (item) => item.id === editableAccount.account_id
+          )
+          const accountResponse = await updateChannelAccount(
+            channelId,
+            editableAccount.account_id,
+            {
+              models: upstreamAccountModelsValue(editableAccount, config),
+              group: upstreamAccountGroupValue(editableAccount, config),
+              priority: config.priority,
+              weight: config.weight,
+            }
+          )
+          if (!accountResponse.success) {
+            throw new Error(accountResponse.message || t('Operation failed'))
+          }
+          updated += 1
+
+          const nextEnabled = config.enabled === true
+          const currentEnabled =
+            (account?.status ?? editableAccount.account_status) ===
+            CHANNEL_STATUS.ENABLED
+          if (nextEnabled !== currentEnabled) {
+            if (!permissions.canOperateChannelAccount) {
+              toast.warning(
+                t(
+                  'Saved key configuration, but status changes require operate permission.'
+                )
+              )
+              continue
+            }
+            const statusResponse = await updateChannelAccountStatus(
+              channelId,
+              editableAccount.account_id,
+              {
+                status: nextEnabled
+                  ? CHANNEL_STATUS.ENABLED
+                  : CHANNEL_STATUS.MANUAL_DISABLED,
+                reason: nextEnabled ? '' : 'upstream account sync disabled',
+                clear_cooldown: nextEnabled,
+              }
+            )
+            if (!statusResponse.success) {
+              throw new Error(statusResponse.message || t('Operation failed'))
+            }
+            statusUpdated += 1
+          }
+        }
+
+        toast.success(
+          t('Synced key configuration saved: {{updated}} updated', {
+            updated: updated + statusUpdated,
+          })
+        )
+        handleSuccess()
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t(ERROR_MESSAGES.UPDATE_FAILED)
+        )
+      } finally {
+        setIsSavingSyncedAccountConfigs(false)
+      }
+    },
+    [
+      canEditSensitiveFields,
+      canEditBasicFields,
+      channelId,
+      currentRow,
+      handleSuccess,
+      isMultiKeyChannel,
+      noPermissionMessage,
+      permissions.canOperateChannelAccount,
+      permissions.canWriteChannelAccount,
+      queryClient,
+      syncedChannelAccounts,
+      syncedChannelAccountsLoadedCount,
+      syncedChannelAccountsQuery.isLoading,
+      syncedChannelAccountsTotal,
+      syncedEditableAccounts,
+      t,
+      upstreamAccountConfigs,
+    ]
+  )
+
   const handleRefreshUpstreamAccount = useCallback(async () => {
     if (!channelId) return
     if (!permissions.canSensitiveWrite) {
@@ -2671,22 +3056,11 @@ export function ChannelMutateDrawer({
         preview_id: upstreamRefreshPreviewId,
         apply_suggested: upstreamApplySuggested,
         disable_missing_key: true,
-        accounts: upstreamRefreshSnapshot.keys.map((key, index) => {
-          const config = upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
-          return {
-            sync_id: key.sync_id,
-            external_id: key.external_id,
-            name: key.name || key.masked_key,
-            enabled: config?.enabled ?? true,
-            models: upstreamAccountModelsValue(key, config),
-            group: upstreamAccountGroupValue(key, config),
-            priority: upstreamAccountPriorityValue(
-              config,
-              upstreamApplySuggested
-            ),
-            weight: upstreamAccountWeightValue(config, upstreamApplySuggested),
-          }
-        }),
+        accounts: buildUpstreamAccountPayloads(
+          upstreamRefreshSnapshot.keys,
+          upstreamAccountConfigs,
+          upstreamApplySuggested
+        ),
       },
     })
   }, [
@@ -2986,7 +3360,7 @@ export function ChannelMutateDrawer({
         return
       }
 
-      if (!isEditing && upstreamSyncEnabled) {
+      if (!isEditing && isCreateUpstreamSyncMode) {
         if (!upstreamPreviewId || !upstreamSnapshot) {
           toast.error(t('Sync upstream account before creating the channel'))
           return
@@ -3012,7 +3386,7 @@ export function ChannelMutateDrawer({
             upstreamSnapshot.keys,
             upstreamAccountConfigs,
             upstreamAccountGroupValue
-          ) || formatGroups(data.group)
+          ) || formatGroups(data.group || [])
         await upstreamCreateMutation.mutateAsync({
           preview_id: upstreamPreviewId,
           apply_suggested: upstreamApplySuggested,
@@ -3026,34 +3400,46 @@ export function ChannelMutateDrawer({
             priority: data.priority ?? null,
             weight: data.weight ?? null,
           },
-          accounts: upstreamSnapshot.keys.map((key, index) => {
-            const config =
-              upstreamAccountConfigs[upstreamKeyConfigId(key, index)]
-            return {
-              sync_id: key.sync_id,
-              external_id: key.external_id,
-              name: key.name || key.masked_key,
-              enabled: config?.enabled ?? true,
-              models: upstreamAccountModelsValue(
-                key,
-                config,
-                upstreamChannelModels
-              ),
-              group: upstreamAccountGroupValue(
-                key,
-                config,
-                upstreamChannelGroup
-              ),
-              priority: upstreamAccountPriorityValue(
-                config,
-                upstreamApplySuggested
-              ),
-              weight: upstreamAccountWeightValue(
-                config,
-                upstreamApplySuggested
-              ),
-            }
-          }),
+          accounts: buildUpstreamAccountPayloads(
+            upstreamSnapshot.keys,
+            upstreamAccountConfigs,
+            upstreamApplySuggested,
+            upstreamChannelModels,
+            upstreamChannelGroup
+          ),
+        })
+        return
+      }
+
+      if (isEditing && isUpstreamAccountSyncedChannel) {
+        const syncSnapshot = upstreamRefreshSnapshot
+        const syncPreviewId = upstreamRefreshPreviewId
+        if (!syncPreviewId || !syncSnapshot) {
+          await saveSyncedAccountLocalConfigs(data)
+          return
+        }
+        if (isUpstreamRefreshPreviewExpired) {
+          clearUpstreamRefreshPreview()
+          setUpstreamAccountConfigs({})
+          showUpstreamPreviewExpiredToast()
+          return
+        }
+        if (syncSnapshot.keys.length === 0) {
+          toast.error(t('No upstream keys were found for this account.'))
+          return
+        }
+        await upstreamRefreshMutation.mutateAsync({
+          id: channelId!,
+          payload: {
+            preview_id: syncPreviewId,
+            apply_suggested: upstreamApplySuggested,
+            disable_missing_key: true,
+            accounts: buildUpstreamAccountPayloads(
+              syncSnapshot.keys,
+              upstreamAccountConfigs,
+              upstreamApplySuggested
+            ),
+          },
         })
         return
       }
@@ -3150,22 +3536,30 @@ export function ChannelMutateDrawer({
       isEditing,
       canEditBasicFields,
       canEditSensitiveFields,
+      channelId,
       noPermissionMessage,
       permissions.canSensitiveWrite,
       form,
       confirmMissingModelMappings,
       confirmStatusCodeRisk,
+      saveSyncedAccountLocalConfigs,
       submitChannelMutation,
       t,
       upstreamAccountConfigs,
       upstreamApplySuggested,
       upstreamCreateMutation,
+      upstreamRefreshMutation,
       clearUpstreamCreatePreview,
+      clearUpstreamRefreshPreview,
+      isCreateUpstreamSyncMode,
+      isUpstreamAccountSyncedChannel,
       isUpstreamPreviewExpired,
+      isUpstreamRefreshPreviewExpired,
       showUpstreamPreviewExpiredToast,
       upstreamPreviewId,
+      upstreamRefreshPreviewId,
+      upstreamRefreshSnapshot,
       upstreamSnapshot,
-      upstreamSyncEnabled,
     ]
   )
 
@@ -3470,28 +3864,32 @@ export function ChannelMutateDrawer({
                         />
                       )}
 
-                      {currentType === 1 && !isGlobalAccountPoolMode && (
-                        <FormField
-                          control={form.control}
-                          name='openai_organization'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('OpenAI Organization')}</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder={t('org-...')}
-                                  disabled={!canEditSensitiveFields}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t(FIELD_DESCRIPTIONS.OPENAI_ORG)}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
+                      {currentType === 1 &&
+                        !isGlobalAccountPoolMode &&
+                        showManualCredentialSection && (
+                          <FormField
+                            control={form.control}
+                            name='openai_organization'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>
+                                  {t('OpenAI Organization')}
+                                </FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder={t('org-...')}
+                                    disabled={!canEditSensitiveFields}
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription>
+                                  {t(FIELD_DESCRIPTIONS.OPENAI_ORG)}
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
                     </ChannelBasicSection>
                   </div>
 
@@ -3512,28 +3910,93 @@ export function ChannelMutateDrawer({
                       {!isEditing && (
                         <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
                           <div className='flex flex-col gap-4'>
-                            <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                              <div className='flex flex-col gap-1'>
-                                <div className='flex items-center gap-2'>
-                                  <KeyRound aria-hidden='true' />
-                                  <span className='text-sm font-semibold'>
-                                    {t('Upstream Account Sync')}
-                                  </span>
-                                </div>
-                                <p className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Use a new-api or sub2api account to sync keys, groups, rates, and balance.'
-                                  )}
-                                </p>
+                            <div className='flex flex-col gap-1'>
+                              <div className='flex items-center gap-2'>
+                                <KeyRound aria-hidden='true' />
+                                <span className='text-sm font-semibold'>
+                                  {t('Credential Source')}
+                                </span>
                               </div>
-                              <Switch
-                                checked={upstreamSyncEnabled}
-                                disabled={!permissions.canSensitiveWrite}
-                                onCheckedChange={
-                                  handleUpstreamSyncEnabledChange
-                                }
-                              />
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Choose one credential source for this channel.'
+                                )}
+                              </p>
                             </div>
+
+                            <RadioGroup
+                              value={
+                                upstreamSyncEnabled
+                                  ? 'upstream_account'
+                                  : 'manual'
+                              }
+                              onValueChange={(value) => {
+                                handleUpstreamSyncEnabledChange(
+                                  value === 'upstream_account'
+                                )
+                              }}
+                              className='grid gap-3 md:grid-cols-2'
+                            >
+                              {(
+                                [
+                                  {
+                                    value: 'manual',
+                                    label: t('Manual API Credentials'),
+                                    description: t(
+                                      'Set the API address and key on this channel.'
+                                    ),
+                                  },
+                                  {
+                                    value: 'upstream_account',
+                                    label: t('Upstream Account Sync'),
+                                    description: t(
+                                      'Use a new-api or sub2api account to sync keys, groups, rates, and balance.'
+                                    ),
+                                  },
+                                ] satisfies Array<{
+                                  value: CredentialSourceMode
+                                  label: string
+                                  description: string
+                                }>
+                              ).map((option) => {
+                                const isActive =
+                                  (upstreamSyncEnabled
+                                    ? 'upstream_account'
+                                    : 'manual') === option.value
+                                return (
+                                  <Label
+                                    key={option.value}
+                                    htmlFor={`channel-credential-source-${option.value}`}
+                                    className={cn(
+                                      'flex-col items-start gap-0 rounded-lg border p-4 font-normal transition-all',
+                                      isActive &&
+                                        'border-primary ring-primary ring-1',
+                                      permissions.canSensitiveWrite
+                                        ? 'hover:border-primary/60 cursor-pointer'
+                                        : 'cursor-not-allowed opacity-60'
+                                    )}
+                                  >
+                                    <div className='flex items-start gap-3'>
+                                      <RadioGroupItem
+                                        id={`channel-credential-source-${option.value}`}
+                                        value={option.value}
+                                        disabled={
+                                          !permissions.canSensitiveWrite
+                                        }
+                                      />
+                                      <div className='flex flex-col gap-1'>
+                                        <span className='font-medium'>
+                                          {option.label}
+                                        </span>
+                                        <span className='text-muted-foreground text-xs'>
+                                          {option.description}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </Label>
+                                )
+                              })}
+                            </RadioGroup>
 
                             {upstreamSyncEnabled && (
                               <>
@@ -3687,6 +4150,71 @@ export function ChannelMutateDrawer({
                           <div className='flex flex-col gap-4'>
                             <div className='flex flex-col gap-1'>
                               <div className='flex items-center gap-2'>
+                                <KeyRound aria-hidden='true' />
+                                <span className='text-sm font-semibold'>
+                                  {t('Synced Key Configuration')}
+                                </span>
+                              </div>
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Configure models, groups, priority, weight, and enabled state for each synced key. Save changes updates the current keys without refreshing the upstream account.'
+                                )}
+                              </p>
+                            </div>
+                            {!permissions.canReadChannelAccount ? (
+                              <Alert>
+                                <AlertCircle aria-hidden='true' />
+                                <AlertDescription>
+                                  {noPermissionMessage}
+                                </AlertDescription>
+                              </Alert>
+                            ) : syncedChannelAccountsQuery.isLoading ? (
+                              <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+                                <Loader2
+                                  data-icon='inline-start'
+                                  className='animate-spin'
+                                />
+                                {t('Loading synced keys...')}
+                              </div>
+                            ) : (
+                              <>
+                                {syncedChannelAccountsTotal >
+                                  syncedChannelAccountsLoadedCount && (
+                                  <Alert>
+                                    <AlertCircle aria-hidden='true' />
+                                    <AlertDescription>
+                                      {t(
+                                        'Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.',
+                                        {
+                                          loaded:
+                                            syncedChannelAccountsLoadedCount,
+                                          total: syncedChannelAccountsTotal,
+                                        }
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                )}
+                                {renderUpstreamSnapshotReview(
+                                  { keys: syncedEditableAccounts },
+                                  {
+                                    showBalance: false,
+                                    showSuggestedToggle: false,
+                                    emptyText: t(
+                                      'No synced keys were found for this channel.'
+                                    ),
+                                  }
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {isUpstreamAccountSyncedChannel && (
+                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                          <div className='flex flex-col gap-4'>
+                            <div className='flex flex-col gap-1'>
+                              <div className='flex items-center gap-2'>
                                 <RefreshCw aria-hidden='true' />
                                 <span className='text-sm font-semibold'>
                                   {t('Refresh Upstream Account')}
@@ -3694,7 +4222,7 @@ export function ChannelMutateDrawer({
                               </div>
                               <p className='text-muted-foreground text-xs'>
                                 {t(
-                                  'Re-enter the upstream account password to update keys, groups, rates, and balance.'
+                                  'Optional: re-enter the upstream account password only when you need to fetch new keys, groups, rates, or balance.'
                                 )}
                               </p>
                             </div>
@@ -3808,7 +4336,7 @@ export function ChannelMutateDrawer({
                               <AlertCircle aria-hidden='true' />
                               <AlertDescription>
                                 {t(
-                                  'Preview the upstream account before applying refresh. Missing upstream keys will be disabled after refresh.'
+                                  'Preview refresh is only required before applying a fresh upstream sync. The main save button can save current key configuration without refreshing.'
                                 )}
                               </AlertDescription>
                             </Alert>
@@ -3846,7 +4374,7 @@ export function ChannelMutateDrawer({
                         </div>
                       )}
 
-                      {!isCreateUpstreamSyncMode && (
+                      {showManualCredentialSection && (
                         <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
                           <div className='flex flex-col gap-4'>
                             {/* Azure 类型的 endpoint 和 API version 配置。 */}
@@ -5333,530 +5861,545 @@ export function ChannelMutateDrawer({
                     </ChannelApiAccessSection>
                   </div>
 
-                  {/* ── Models & Groups ── */}
-                  <div
-                    id={CHANNEL_EDITOR_SECTION_IDS.models}
-                    className='scroll-mt-4'
-                  >
-                    <ChannelModelsSection>
-                      <div className='flex flex-col gap-5'>
-                        <div className='border-border/60 bg-muted/10 flex flex-col gap-4 rounded-lg border p-4'>
-                          <FormField
-                            control={form.control}
-                            name='models'
-                            render={() => (
-                              <FormItem className='flex flex-col gap-3'>
-                                <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                  <div className='flex flex-col gap-1'>
-                                    <FormLabel htmlFor='channel-models'>
-                                      {t('Models *')}
-                                    </FormLabel>
-                                    <FormDescription>
-                                      {t(FIELD_DESCRIPTIONS.MODELS)}
-                                    </FormDescription>
-                                  </div>
-                                  <div className='flex flex-wrap gap-2'>
-                                    <Badge variant='outline' className='w-fit'>
-                                      {t('Selected {{count}}', {
-                                        count: currentModelsArray.length,
-                                      })}
-                                    </Badge>
-                                  </div>
-                                </div>
-                                <FormControl>
-                                  <MultiSelect
-                                    id='channel-models'
-                                    options={modelOptions}
-                                    selected={currentModelsArray}
-                                    onChange={handleModelsChange}
-                                    placeholder={t(
-                                      'Select models or add custom ones'
-                                    )}
-                                    allowCreate
-                                    allowCreateWithMatches={false}
-                                    createLabel='Add custom model "{{value}}"'
-                                    maxVisibleChips={8}
-                                    copyChipOnClick
-                                    disabled={!canEditBasicFields}
-                                    isLoading={modelSearchIsLoading}
-                                    emptyText={t('No matching models')}
-                                    loadingText={t('Searching...')}
-                                    searchValue={modelSearchValue}
-                                    onSearchChange={setModelSearchValue}
-                                    open={modelSearchOpen}
-                                    onOpenChange={setModelSearchOpen}
-                                    onSearchSubmit={handleAddModelSearchResults}
-                                    contentHeader={
-                                      showModelSearchPanel ? (
-                                        <div className='bg-background flex flex-col gap-3 rounded-md'>
-                                          <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-                                            <div className='flex min-w-0 flex-col gap-1'>
-                                              <p className='text-sm font-medium'>
-                                                {t('Search results')}
-                                              </p>
-                                              <p className='text-muted-foreground text-xs'>
-                                                {modelSearchIsLoading
-                                                  ? t('Searching...')
-                                                  : isModelSearchError
-                                                    ? t('No matching models')
-                                                    : t(
-                                                        '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                        {
-                                                          matched:
-                                                            modelSearchSummary
-                                                              .matched.length,
-                                                          addable:
-                                                            modelSearchSummary
-                                                              .addable.length,
-                                                          existing:
-                                                            modelSearchSummary.existingCount,
-                                                        }
-                                                      )}
-                                              </p>
-                                            </div>
-                                            <Button
-                                              type='button'
-                                              variant='outline'
-                                              size='sm'
-                                              onPointerDown={
-                                                handleAddModelSearchResultsPress
-                                              }
-                                              onMouseDown={
-                                                handleAddModelSearchResultsPress
-                                              }
-                                              onClick={(event) => {
-                                                if (
-                                                  modelSearchPointerHandledRef.current
-                                                ) {
-                                                  modelSearchPointerHandledRef.current = false
-                                                  return
-                                                }
-                                                event.preventDefault()
-                                                handleAddModelSearchResults()
-                                              }}
-                                              disabled={
-                                                !canEditBasicFields ||
-                                                modelSearchIsLoading ||
-                                                modelSearchSummary.addable
-                                                  .length === 0
-                                              }
-                                              title={
-                                                canEditBasicFields
-                                                  ? undefined
-                                                  : noPermissionMessage
-                                              }
-                                            >
-                                              <Plus data-icon='inline-start' />
-                                              {t(
-                                                'Add {{count}} search result(s)',
-                                                {
-                                                  count:
-                                                    modelSearchSummary.addable
-                                                      .length,
-                                                }
-                                              )}
-                                            </Button>
-                                          </div>
-                                          {modelSearchPreviewNames.length >
-                                            0 && (
-                                            <div className='flex flex-wrap gap-1.5'>
-                                              {modelSearchPreviewNames.map(
-                                                (model) => (
-                                                  <Badge
-                                                    key={model}
-                                                    variant='secondary'
-                                                    className='max-w-full truncate font-mono'
-                                                  >
-                                                    {model}
-                                                  </Badge>
-                                                )
-                                              )}
-                                              {modelSearchPreviewOmittedCount >
-                                                0 && (
-                                                <Badge variant='outline'>
-                                                  {t('+{{count}} more', {
-                                                    count:
-                                                      modelSearchPreviewOmittedCount,
-                                                  })}
-                                                </Badge>
-                                              )}
-                                            </div>
-                                          )}
-                                          {modelSearchNameResult.unresolvedMatchedCount >
-                                            0 && (
-                                            <p className='text-muted-foreground text-xs'>
-                                              {t(
-                                                '{{count}} more result(s) will be checked when adding',
-                                                {
-                                                  count:
-                                                    modelSearchNameResult.unresolvedMatchedCount,
-                                                }
-                                              )}
-                                            </p>
-                                          )}
-                                        </div>
-                                      ) : undefined
-                                    }
-                                    preserveSelectedOnEmptyRemovalKey
-                                    hideSelectedOptionsWhenSearching
-                                    submitSearchOnEnterWithMatches
-                                    submitSearchOnEnterWhenHighlighted
-                                    clearSearchOnSelect={false}
-                                  />
-                                </FormControl>
-                                {modelMappingGuardrail.exposedTargetModels
-                                  .length > 0 && (
-                                  <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                                    <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                                      <span>
-                                        {t('The mapped upstream model(s)')}{' '}
-                                        {formatModelNames(
-                                          modelMappingGuardrail.exposedTargetModels
-                                        )}{' '}
-                                        {t(
-                                          'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
-                                        )}
-                                      </span>
-                                      <Button
-                                        type='button'
+                  {showSharedModelsSection && (
+                    <div
+                      id={CHANNEL_EDITOR_SECTION_IDS.models}
+                      className='scroll-mt-4'
+                    >
+                      <ChannelModelsSection>
+                        <div className='flex flex-col gap-5'>
+                          <div className='border-border/60 bg-muted/10 flex flex-col gap-4 rounded-lg border p-4'>
+                            <FormField
+                              control={form.control}
+                              name='models'
+                              render={() => (
+                                <FormItem className='flex flex-col gap-3'>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                    <div className='flex flex-col gap-1'>
+                                      <FormLabel htmlFor='channel-models'>
+                                        {t('Models *')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(FIELD_DESCRIPTIONS.MODELS)}
+                                      </FormDescription>
+                                    </div>
+                                    <div className='flex flex-wrap gap-2'>
+                                      <Badge
                                         variant='outline'
-                                        size='sm'
-                                        onClick={() => {
-                                          const hiddenTargets = new Set(
+                                        className='w-fit'
+                                      >
+                                        {t('Selected {{count}}', {
+                                          count: currentModelsArray.length,
+                                        })}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  <FormControl>
+                                    <MultiSelect
+                                      id='channel-models'
+                                      options={modelOptions}
+                                      selected={currentModelsArray}
+                                      onChange={handleModelsChange}
+                                      placeholder={t(
+                                        'Select models or add custom ones'
+                                      )}
+                                      allowCreate
+                                      allowCreateWithMatches={false}
+                                      createLabel='Add custom model "{{value}}"'
+                                      maxVisibleChips={8}
+                                      copyChipOnClick
+                                      disabled={!canEditBasicFields}
+                                      isLoading={modelSearchIsLoading}
+                                      emptyText={t('No matching models')}
+                                      loadingText={t('Searching...')}
+                                      searchValue={modelSearchValue}
+                                      onSearchChange={setModelSearchValue}
+                                      open={modelSearchOpen}
+                                      onOpenChange={setModelSearchOpen}
+                                      onSearchSubmit={
+                                        handleAddModelSearchResults
+                                      }
+                                      contentHeader={
+                                        showModelSearchPanel ? (
+                                          <div className='bg-background flex flex-col gap-3 rounded-md'>
+                                            <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                              <div className='flex min-w-0 flex-col gap-1'>
+                                                <p className='text-sm font-medium'>
+                                                  {t('Search results')}
+                                                </p>
+                                                <p className='text-muted-foreground text-xs'>
+                                                  {modelSearchIsLoading
+                                                    ? t('Searching...')
+                                                    : isModelSearchError
+                                                      ? t('No matching models')
+                                                      : t(
+                                                          '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                          {
+                                                            matched:
+                                                              modelSearchSummary
+                                                                .matched.length,
+                                                            addable:
+                                                              modelSearchSummary
+                                                                .addable.length,
+                                                            existing:
+                                                              modelSearchSummary.existingCount,
+                                                          }
+                                                        )}
+                                                </p>
+                                              </div>
+                                              <Button
+                                                type='button'
+                                                variant='outline'
+                                                size='sm'
+                                                onPointerDown={
+                                                  handleAddModelSearchResultsPress
+                                                }
+                                                onMouseDown={
+                                                  handleAddModelSearchResultsPress
+                                                }
+                                                onClick={(event) => {
+                                                  if (
+                                                    modelSearchPointerHandledRef.current
+                                                  ) {
+                                                    modelSearchPointerHandledRef.current = false
+                                                    return
+                                                  }
+                                                  event.preventDefault()
+                                                  handleAddModelSearchResults()
+                                                }}
+                                                disabled={
+                                                  !canEditBasicFields ||
+                                                  modelSearchIsLoading ||
+                                                  modelSearchSummary.addable
+                                                    .length === 0
+                                                }
+                                                title={
+                                                  canEditBasicFields
+                                                    ? undefined
+                                                    : noPermissionMessage
+                                                }
+                                              >
+                                                <Plus data-icon='inline-start' />
+                                                {t(
+                                                  'Add {{count}} search result(s)',
+                                                  {
+                                                    count:
+                                                      modelSearchSummary.addable
+                                                        .length,
+                                                  }
+                                                )}
+                                              </Button>
+                                            </div>
+                                            {modelSearchPreviewNames.length >
+                                              0 && (
+                                              <div className='flex flex-wrap gap-1.5'>
+                                                {modelSearchPreviewNames.map(
+                                                  (model) => (
+                                                    <Badge
+                                                      key={model}
+                                                      variant='secondary'
+                                                      className='max-w-full truncate font-mono'
+                                                    >
+                                                      {model}
+                                                    </Badge>
+                                                  )
+                                                )}
+                                                {modelSearchPreviewOmittedCount >
+                                                  0 && (
+                                                  <Badge variant='outline'>
+                                                    {t('+{{count}} more', {
+                                                      count:
+                                                        modelSearchPreviewOmittedCount,
+                                                    })}
+                                                  </Badge>
+                                                )}
+                                              </div>
+                                            )}
+                                            {modelSearchNameResult.unresolvedMatchedCount >
+                                              0 && (
+                                              <p className='text-muted-foreground text-xs'>
+                                                {t(
+                                                  '{{count}} more result(s) will be checked when adding',
+                                                  {
+                                                    count:
+                                                      modelSearchNameResult.unresolvedMatchedCount,
+                                                  }
+                                                )}
+                                              </p>
+                                            )}
+                                          </div>
+                                        ) : undefined
+                                      }
+                                      preserveSelectedOnEmptyRemovalKey
+                                      hideSelectedOptionsWhenSearching
+                                      submitSearchOnEnterWithMatches
+                                      submitSearchOnEnterWhenHighlighted
+                                      clearSearchOnSelect={false}
+                                    />
+                                  </FormControl>
+                                  {modelMappingGuardrail.exposedTargetModels
+                                    .length > 0 && (
+                                    <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                                      <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                                        <span>
+                                          {t('The mapped upstream model(s)')}{' '}
+                                          {formatModelNames(
                                             modelMappingGuardrail.exposedTargetModels
-                                          )
-                                          updateModels(
-                                            currentModelsArray.filter(
-                                              (model) =>
-                                                !hiddenTargets.has(model)
+                                          )}{' '}
+                                          {t(
+                                            'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
+                                          )}
+                                        </span>
+                                        <Button
+                                          type='button'
+                                          variant='outline'
+                                          size='sm'
+                                          onClick={() => {
+                                            const hiddenTargets = new Set(
+                                              modelMappingGuardrail.exposedTargetModels
                                             )
-                                          )
-                                        }}
-                                        disabled={!canEditBasicFields}
-                                        title={
-                                          canEditBasicFields
-                                            ? undefined
-                                            : noPermissionMessage
-                                        }
-                                      >
-                                        {t('Remove mapped targets')}
-                                      </Button>
-                                    </AlertDescription>
-                                  </Alert>
-                                )}
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <Separator />
-
-                          <div className='flex flex-col gap-3'>
-                            <div>
-                              <p className='text-sm font-medium'>
-                                {t('Quick actions')}
-                              </p>
-                              <p className='text-muted-foreground text-xs'>
-                                {t(
-                                  'Use presets or upstream discovery to populate the model list faster.'
-                                )}
-                              </p>
-                            </div>
-                            <div className='flex flex-wrap gap-2'>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleFillRelatedModels}
-                                disabled={
-                                  !canEditBasicFields || !basicModels.length
-                                }
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                <FileText data-icon='inline-start' />
-                                {t('Fill Related Models')}
-                              </Button>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleFillAllModels}
-                                disabled={
-                                  !canEditBasicFields || !allModelsList.length
-                                }
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                <Plus data-icon='inline-start' />
-                                {t('Fill All Models')}
-                              </Button>
-                              {MODEL_FETCHABLE_TYPES.has(currentType) &&
-                                !isGlobalAccountPoolMode && (
-                                  <Button
-                                    type='button'
-                                    variant='outline'
-                                    size='sm'
-                                    onClick={handleFetchModels}
-                                    disabled={
-                                      !permissions.canOperate ||
-                                      !canEditBasicFields
-                                    }
-                                    title={
-                                      permissions.canOperate &&
-                                      canEditBasicFields
-                                        ? undefined
-                                        : noPermissionMessage
-                                    }
-                                  >
-                                    <Sparkles data-icon='inline-start' />
-                                    {t('Fetch from Upstream')}
-                                  </Button>
-                                )}
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleCopyModels}
-                                disabled={currentModelsArray.length === 0}
-                              >
-                                <Copy data-icon='inline-start' />
-                                {t('Copy All')}
-                              </Button>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='sm'
-                                onClick={handleClearModels}
-                                disabled={
-                                  !canEditBasicFields ||
-                                  currentModelsArray.length === 0
-                                }
-                                title={
-                                  canEditBasicFields
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                              >
-                                <Eraser data-icon='inline-start' />
-                                {t('Clear All')}
-                              </Button>
-                            </div>
-                            {prefillGroups.length > 0 && (
-                              <div className='flex flex-wrap items-center gap-2'>
-                                <span className='text-muted-foreground text-xs'>
-                                  {t('Preset groups')}:
-                                </span>
-                                {prefillGroups.map((group) => (
-                                  <Button
-                                    key={group.id}
-                                    type='button'
-                                    variant='secondary'
-                                    size='sm'
-                                    onClick={() => handleAddPrefillGroup(group)}
-                                    disabled={!canEditBasicFields}
-                                    title={
-                                      canEditBasicFields
-                                        ? undefined
-                                        : noPermissionMessage
-                                    }
-                                  >
-                                    {group.name}
-                                  </Button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className='border-border/60 rounded-lg border p-4'>
-                          <FormField
-                            control={form.control}
-                            name='model_mapping'
-                            render={({ field }) => (
-                              <FormItem className='flex flex-col gap-3'>
-                                <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-                                  <div className='flex flex-col gap-1'>
-                                    <div className='flex items-center gap-2'>
-                                      <div
-                                        id='channel-model-mapping-label'
-                                        className='text-sm leading-none font-medium'
-                                      >
-                                        {t('Model Mapping')}
-                                      </div>
-                                      <Tooltip>
-                                        <TooltipTrigger
-                                          render={
-                                            <Button
-                                              type='button'
-                                              variant='ghost'
-                                              size='icon-sm'
-                                              className='text-muted-foreground hover:text-foreground size-auto p-0'
-                                              aria-label={t(
-                                                'How model mapping works'
-                                              )}
-                                            />
+                                            updateModels(
+                                              currentModelsArray.filter(
+                                                (model) =>
+                                                  !hiddenTargets.has(model)
+                                              )
+                                            )
+                                          }}
+                                          disabled={!canEditBasicFields}
+                                          title={
+                                            canEditBasicFields
+                                              ? undefined
+                                              : noPermissionMessage
                                           }
                                         >
-                                          <HelpCircle aria-hidden='true' />
-                                        </TooltipTrigger>
-                                        <TooltipContent
-                                          side='top'
-                                          align='start'
-                                          className='flex max-w-xs flex-col gap-2 text-left'
+                                          {t('Remove mapped targets')}
+                                        </Button>
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <Separator />
+
+                            <div className='flex flex-col gap-3'>
+                              <div>
+                                <p className='text-sm font-medium'>
+                                  {t('Quick actions')}
+                                </p>
+                                <p className='text-muted-foreground text-xs'>
+                                  {t(
+                                    'Use presets or upstream discovery to populate the model list faster.'
+                                  )}
+                                </p>
+                              </div>
+                              <div className='flex flex-wrap gap-2'>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleFillRelatedModels}
+                                  disabled={
+                                    !canEditBasicFields || !basicModels.length
+                                  }
+                                  title={
+                                    canEditBasicFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
+                                >
+                                  <FileText data-icon='inline-start' />
+                                  {t('Fill Related Models')}
+                                </Button>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleFillAllModels}
+                                  disabled={
+                                    !canEditBasicFields || !allModelsList.length
+                                  }
+                                  title={
+                                    canEditBasicFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
+                                >
+                                  <Plus data-icon='inline-start' />
+                                  {t('Fill All Models')}
+                                </Button>
+                                {MODEL_FETCHABLE_TYPES.has(currentType) &&
+                                  !isGlobalAccountPoolMode && (
+                                    <Button
+                                      type='button'
+                                      variant='outline'
+                                      size='sm'
+                                      onClick={handleFetchModels}
+                                      disabled={
+                                        !permissions.canOperate ||
+                                        !canEditBasicFields
+                                      }
+                                      title={
+                                        permissions.canOperate &&
+                                        canEditBasicFields
+                                          ? undefined
+                                          : noPermissionMessage
+                                      }
+                                    >
+                                      <Sparkles data-icon='inline-start' />
+                                      {t('Fetch from Upstream')}
+                                    </Button>
+                                  )}
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleCopyModels}
+                                  disabled={currentModelsArray.length === 0}
+                                >
+                                  <Copy data-icon='inline-start' />
+                                  {t('Copy All')}
+                                </Button>
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='sm'
+                                  onClick={handleClearModels}
+                                  disabled={
+                                    !canEditBasicFields ||
+                                    currentModelsArray.length === 0
+                                  }
+                                  title={
+                                    canEditBasicFields
+                                      ? undefined
+                                      : noPermissionMessage
+                                  }
+                                >
+                                  <Eraser data-icon='inline-start' />
+                                  {t('Clear All')}
+                                </Button>
+                              </div>
+                              {prefillGroups.length > 0 && (
+                                <div className='flex flex-wrap items-center gap-2'>
+                                  <span className='text-muted-foreground text-xs'>
+                                    {t('Preset groups')}:
+                                  </span>
+                                  {prefillGroups.map((group) => (
+                                    <Button
+                                      key={group.id}
+                                      type='button'
+                                      variant='secondary'
+                                      size='sm'
+                                      onClick={() =>
+                                        handleAddPrefillGroup(group)
+                                      }
+                                      disabled={!canEditBasicFields}
+                                      title={
+                                        canEditBasicFields
+                                          ? undefined
+                                          : noPermissionMessage
+                                      }
+                                    >
+                                      {group.name}
+                                    </Button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className='border-border/60 rounded-lg border p-4'>
+                            <FormField
+                              control={form.control}
+                              name='model_mapping'
+                              render={({ field }) => (
+                                <FormItem className='flex flex-col gap-3'>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                    <div className='flex flex-col gap-1'>
+                                      <div className='flex items-center gap-2'>
+                                        <div
+                                          id='channel-model-mapping-label'
+                                          className='text-sm leading-none font-medium'
                                         >
-                                          <p className='text-xs font-semibold tracking-wide uppercase'>
-                                            {t('Request flow')}
-                                          </p>
-                                          <div className='flex flex-col gap-1 font-mono text-xs'>
-                                            {mappingPreviewPairs.map((pair) => (
-                                              <div
-                                                key={`${pair.source}-${pair.target}`}
-                                                className='flex items-center gap-1'
-                                              >
-                                                <span>{pair.source}</span>
-                                                <ArrowRight className='size-3.5 opacity-70' />
-                                                <span>{pair.target}</span>
-                                              </div>
-                                            ))}
-                                            {remainingMappingCount > 0 && (
-                                              <div className='text-[11px] opacity-70'>
-                                                +{remainingMappingCount}{' '}
-                                                {t('more mapping')}
-                                                {remainingMappingCount > 1
-                                                  ? 's'
-                                                  : ''}
-                                              </div>
-                                            )}
-                                          </div>
-                                          <p className='text-[11px] leading-relaxed opacity-80'>
-                                            {t(
-                                              'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
-                                            )}
-                                          </p>
-                                        </TooltipContent>
-                                      </Tooltip>
+                                          {t('Model Mapping')}
+                                        </div>
+                                        <Tooltip>
+                                          <TooltipTrigger
+                                            render={
+                                              <Button
+                                                type='button'
+                                                variant='ghost'
+                                                size='icon-sm'
+                                                className='text-muted-foreground hover:text-foreground size-auto p-0'
+                                                aria-label={t(
+                                                  'How model mapping works'
+                                                )}
+                                              />
+                                            }
+                                          >
+                                            <HelpCircle aria-hidden='true' />
+                                          </TooltipTrigger>
+                                          <TooltipContent
+                                            side='top'
+                                            align='start'
+                                            className='flex max-w-xs flex-col gap-2 text-left'
+                                          >
+                                            <p className='text-xs font-semibold tracking-wide uppercase'>
+                                              {t('Request flow')}
+                                            </p>
+                                            <div className='flex flex-col gap-1 font-mono text-xs'>
+                                              {mappingPreviewPairs.map(
+                                                (pair) => (
+                                                  <div
+                                                    key={`${pair.source}-${pair.target}`}
+                                                    className='flex items-center gap-1'
+                                                  >
+                                                    <span>{pair.source}</span>
+                                                    <ArrowRight className='size-3.5 opacity-70' />
+                                                    <span>{pair.target}</span>
+                                                  </div>
+                                                )
+                                              )}
+                                              {remainingMappingCount > 0 && (
+                                                <div className='text-[11px] opacity-70'>
+                                                  +{remainingMappingCount}{' '}
+                                                  {t('more mapping')}
+                                                  {remainingMappingCount > 1
+                                                    ? 's'
+                                                    : ''}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <p className='text-[11px] leading-relaxed opacity-80'>
+                                              {t(
+                                                'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+                                              )}
+                                            </p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </div>
+                                      <FormDescription>
+                                        {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
+                                      </FormDescription>
                                     </div>
+                                  </div>
+                                  <FormControl>
+                                    <ModelMappingEditor
+                                      aria-labelledby='channel-model-mapping-label'
+                                      value={field.value || ''}
+                                      onChange={field.onChange}
+                                      disabled={
+                                        isSubmitting || !canEditBasicFields
+                                      }
+                                      sourceModelOptions={currentModelsArray}
+                                      targetModelOptions={baseModelOptions.map(
+                                        (option) => option.value
+                                      )}
+                                    />
+                                  </FormControl>
+                                  {modelMappingGuardrail.invalidJson && (
+                                    <Alert
+                                      variant='destructive'
+                                      className='mt-3'
+                                    >
+                                      <AlertDescription>
+                                        {t(
+                                          'Model Mapping must be a JSON object like'
+                                        )}{' '}
+                                        <code className='font-mono'>
+                                          {'{"gpt-4":"Azure-GPT4"}'}
+                                        </code>
+                                        {t(
+                                          '. Please fix the JSON before saving.'
+                                        )}
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
+                                  {modelMappingGuardrail.missingSourceModels
+                                    .length > 0 && (
+                                    <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                                      <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                                        <span>
+                                          {t('Add')}{' '}
+                                          {formatModelNames(
+                                            modelMappingGuardrail.missingSourceModels
+                                          )}{' '}
+                                          {t(
+                                            'to the Models list so users can use them before the mapping sends traffic upstream.'
+                                          )}
+                                        </span>
+                                        <Button
+                                          type='button'
+                                          variant='outline'
+                                          size='sm'
+                                          onClick={() => {
+                                            updateModels(
+                                              modelMappingGuardrail.missingSourceModels,
+                                              true
+                                            )
+                                          }}
+                                          disabled={!canEditBasicFields}
+                                          title={
+                                            canEditBasicFields
+                                              ? undefined
+                                              : noPermissionMessage
+                                          }
+                                        >
+                                          {t('Add missing models')}
+                                        </Button>
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <div className='border-border/60 rounded-lg border p-4'>
+                            <FormField
+                              control={form.control}
+                              name='group'
+                              render={({ field }) => (
+                                <FormItem className='flex flex-col gap-3'>
+                                  <div className='flex flex-col gap-1'>
+                                    <FormLabel>{t('Groups *')}</FormLabel>
                                     <FormDescription>
-                                      {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
+                                      {t(FIELD_DESCRIPTIONS.GROUP)}
                                     </FormDescription>
                                   </div>
-                                </div>
-                                <FormControl>
-                                  <ModelMappingEditor
-                                    aria-labelledby='channel-model-mapping-label'
-                                    value={field.value || ''}
-                                    onChange={field.onChange}
-                                    disabled={
-                                      isSubmitting || !canEditBasicFields
-                                    }
-                                    sourceModelOptions={currentModelsArray}
-                                    targetModelOptions={baseModelOptions.map(
-                                      (option) => option.value
-                                    )}
-                                  />
-                                </FormControl>
-                                {modelMappingGuardrail.invalidJson && (
-                                  <Alert variant='destructive' className='mt-3'>
-                                    <AlertDescription>
-                                      {t(
-                                        'Model Mapping must be a JSON object like'
-                                      )}{' '}
-                                      <code className='font-mono'>
-                                        {'{"gpt-4":"Azure-GPT4"}'}
-                                      </code>
-                                      {t(
-                                        '. Please fix the JSON before saving.'
-                                      )}
-                                    </AlertDescription>
-                                  </Alert>
-                                )}
-                                {modelMappingGuardrail.missingSourceModels
-                                  .length > 0 && (
-                                  <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                                    <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                                      <span>
-                                        {t('Add')}{' '}
-                                        {formatModelNames(
-                                          modelMappingGuardrail.missingSourceModels
-                                        )}{' '}
-                                        {t(
-                                          'to the Models list so users can use them before the mapping sends traffic upstream.'
-                                        )}
-                                      </span>
-                                      <Button
-                                        type='button'
-                                        variant='outline'
-                                        size='sm'
-                                        onClick={() => {
-                                          updateModels(
-                                            modelMappingGuardrail.missingSourceModels,
-                                            true
-                                          )
+                                  <FormControl>
+                                    {isLoadingGroups ? (
+                                      <Skeleton className='h-10 w-full' />
+                                    ) : (
+                                      <MultiSelect
+                                        options={groupOptions}
+                                        selected={field.value || []}
+                                        onChange={(values) => {
+                                          if (!canEditBasicFields) {
+                                            toast.error(noPermissionMessage)
+                                            return
+                                          }
+                                          field.onChange(values)
                                         }}
+                                        placeholder={t(
+                                          FIELD_PLACEHOLDERS.GROUP
+                                        )}
                                         disabled={!canEditBasicFields}
-                                        title={
-                                          canEditBasicFields
-                                            ? undefined
-                                            : noPermissionMessage
-                                        }
-                                      >
-                                        {t('Add missing models')}
-                                      </Button>
-                                    </AlertDescription>
-                                  </Alert>
-                                )}
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                                      />
+                                    )}
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
                         </div>
-
-                        <div className='border-border/60 rounded-lg border p-4'>
-                          <FormField
-                            control={form.control}
-                            name='group'
-                            render={({ field }) => (
-                              <FormItem className='flex flex-col gap-3'>
-                                <div className='flex flex-col gap-1'>
-                                  <FormLabel>{t('Groups *')}</FormLabel>
-                                  <FormDescription>
-                                    {t(FIELD_DESCRIPTIONS.GROUP)}
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  {isLoadingGroups ? (
-                                    <Skeleton className='h-10 w-full' />
-                                  ) : (
-                                    <MultiSelect
-                                      options={groupOptions}
-                                      selected={field.value}
-                                      onChange={(values) => {
-                                        if (!canEditBasicFields) {
-                                          toast.error(noPermissionMessage)
-                                          return
-                                        }
-                                        field.onChange(values)
-                                      }}
-                                      placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
-                                      disabled={!canEditBasicFields}
-                                    />
-                                  )}
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-                      </div>
-                    </ChannelModelsSection>
-                  </div>
+                      </ChannelModelsSection>
+                    </div>
+                  )}
 
                   <div
                     id={CHANNEL_EDITOR_SECTION_IDS.advanced}
@@ -6981,7 +7524,12 @@ export function ChannelMutateDrawer({
 
           <SheetFooter className={sideDrawerFooterClassName()}>
             <SheetClose
-              render={<Button variant='outline' disabled={isSubmitting} />}
+              render={
+                <Button
+                  variant='outline'
+                  disabled={isSubmitting || isSavingSyncedAccountConfigs}
+                />
+              }
             >
               {t('Cancel')}
             </SheetClose>
@@ -6989,11 +7537,14 @@ export function ChannelMutateDrawer({
               form='channel-form'
               type='submit'
               disabled={
-                isSubmitting || !canSubmitForm || isChannelDetailLoading
+                isSubmitting ||
+                isSavingSyncedAccountConfigs ||
+                !canSubmitForm ||
+                isChannelDetailLoading
               }
               title={canSubmitForm ? undefined : noPermissionMessage}
             >
-              {isSubmitting && (
+              {(isSubmitting || isSavingSyncedAccountConfigs) && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
               {isEditing ? t('Update Channel') : t('Save changes')}

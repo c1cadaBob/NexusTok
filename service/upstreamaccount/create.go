@@ -211,15 +211,15 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		if name == "" {
 			name = key.MaskedKey
 		}
-		models := strings.TrimSpace(config.Models)
-		if models == "" {
+		models, hasModels := explicitSyncValue(config.Models)
+		if !hasModels {
 			models = strings.Join(key.Models, ",")
 		}
 		if models == "" {
 			models = defaultModels
 		}
-		group := strings.TrimSpace(config.Group)
-		if group == "" {
+		group, hasGroup := explicitSyncValue(config.Group)
+		if !hasGroup {
 			group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
 		}
 		priority := int64(0)
@@ -261,6 +261,20 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		return nil, fmt.Errorf("没有可创建的同步密钥")
 	}
 	return accounts, nil
+}
+
+// explicitSyncValue 解析同步表单里可覆盖快照的非空字符串值。
+//
+// 上游账号同步的创建/刷新请求目前使用 string 字段，Go 反序列化后无法区分
+// “字段缺失”和“字段显式传入空串”。因此创建和刷新语义保持保守：空串代表
+// 未覆盖，继续回退到上游快照或渠道级默认值；已同步账号的本地编辑保存则走
+// ChannelAccount 更新接口，该接口可根据原始 JSON 字段集合支持显式清空。
+func explicitSyncValue(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
+	return trimmed, true
 }
 
 func inferModelsFromKeys(keys []SyncedKey) string {

@@ -23,6 +23,7 @@ import {
   buildAllowedChannelUpdatePayload,
   getDirtySensitiveChannelFormFields,
   hasDirtySensitiveChannelFormFields,
+  omitOperationalChannelUpdateFields,
   pickNonSensitiveChannelUpdatePayload,
 } from './use-channel-mutate-form'
 
@@ -108,6 +109,7 @@ describe('渠道更新权限 payload 裁剪', () => {
     assert.equal(allowed.param_override, '{"temperature":0}')
     assert.equal(allowed.header_override, '{"X-Test":"1"}')
     assert.equal(allowed.key_mode, 'replace')
+    assert.equal('status' in allowed, false)
   })
 
   test('普通写权限不会携带多 Key key_mode 或未知字段', () => {
@@ -132,6 +134,13 @@ describe('渠道更新权限 payload 裁剪', () => {
     })
 
     assert.equal('key_mode' in allowed, false)
+  })
+
+  test('通用渠道更新始终剔除操作类状态字段', () => {
+    const allowed = omitOperationalChannelUpdateFields(makeUpdatePayload())
+
+    assert.equal('status' in allowed, false)
+    assert.equal(allowed.name, 'OpenAI Main')
   })
 })
 

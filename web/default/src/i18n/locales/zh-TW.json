@@ -5650,6 +5650,27 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Add missing models": "新增缺失模型",
+    "Added {{count}} models from \"{{name}}\"": "已從「{{name}}」新增 {{count}} 個模型",
+    "Channel account list is still loading": "渠道帳號列表仍在載入",
+    "Channel created": "渠道已建立",
+    "Configure models, groups, priority, weight, and enabled state for each synced key. Save changes updates the current keys without refreshing the upstream account.": "為每個同步密鑰配置模型、分組、優先級、權重和啟用狀態。儲存更改會更新目前密鑰配置，不會重新刷新上游帳號。",
+    "Credential Source": "憑證來源",
+    "Choose one credential source for this channel.": "為此渠道選擇一種憑證來源。",
+    "Each synced key keeps its own models and groups. Review them in the table below.": "每個同步密鑰都有自己的模型和分組，請在下方表格中檢視。",
+    "Loading synced keys...": "正在載入同步密鑰...",
+    "Manual API Credentials": "手動 API 憑證",
+    "No synced keys were found for this channel.": "此渠道未找到同步密鑰。",
+    "Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.": "目前僅載入 {{loaded}} / {{total}} 個同步密鑰。請打開渠道帳號列表編輯全部密鑰。",
+    "Optional: re-enter the upstream account password only when you need to fetch new keys, groups, rates, or balance.": "可選：僅在需要重新取得新密鑰、分組、倍率或餘額時，重新輸入上游帳號密碼。",
+    "Preview refresh is only required before applying a fresh upstream sync. The main save button can save current key configuration without refreshing.": "只有在套用新的上游同步前才需要預覽刷新。主儲存按鈕可直接儲存目前密鑰配置，無需刷新上游帳號。",
+    "Set the API address and key on this channel.": "在此渠道上設定 API 位址和密鑰。",
+    "Preview the upstream account before saving refresh changes. Missing upstream keys will be disabled after refresh.": "儲存刷新變更前請先預覽上游帳號。刷新後缺失的上游密鑰將被停用。",
+    "Routes": "路由",
+    "Saved key configuration, but status changes require operate permission.": "密鑰配置已儲存，但狀態變更需要運維權限。",
+    "Synced Key Configuration": "同步密鑰配置",
+    "Synced key configuration saved: {{updated}} updated": "同步密鑰配置已儲存：已更新 {{updated}} 項",
+    "You do not have permission to edit sensitive channel settings.": "您沒有編輯敏感渠道設定的權限。"
   }
 }

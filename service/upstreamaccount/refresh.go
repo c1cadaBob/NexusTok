@@ -268,15 +268,15 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 	if name == "" {
 		name = key.MaskedKey
 	}
-	models := strings.TrimSpace(config.Models)
-	if models == "" {
+	models, hasModels := explicitSyncValue(config.Models)
+	if !hasModels {
 		models = strings.Join(key.Models, ",")
 	}
 	if models == "" {
 		models = defaultModels
 	}
-	group := strings.TrimSpace(config.Group)
-	if group == "" {
+	group, hasGroup := explicitSyncValue(config.Group)
+	if !hasGroup {
 		group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
 	}
 	return model.ChannelAccount{

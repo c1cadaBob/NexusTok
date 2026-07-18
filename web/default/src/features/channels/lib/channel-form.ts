@@ -35,6 +35,8 @@ import {
 // 表单校验 Schema
 // ============================================================================
 
+const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
+
 function parseOptionalJson(value: string | undefined): unknown {
   if (!value?.trim()) return undefined
   return JSON.parse(value)
@@ -131,6 +133,26 @@ function usesGlobalAccountPool(data: { credential_mode?: string }): boolean {
   return data.credential_mode === 'global_account_pool'
 }
 
+function hasUpstreamAccountSyncMetadata(settings: string | undefined): boolean {
+  if (!settings?.trim()) return false
+  try {
+    const parsed = JSON.parse(settings) as Record<string, unknown>
+    const metadata = parsed[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+    if (metadata === undefined || metadata === null) {
+      return false
+    }
+    if (typeof metadata === 'object') {
+      return true
+    }
+    if (typeof metadata === 'boolean') {
+      return metadata
+    }
+    return typeof metadata === 'string' && metadata.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
 export const channelFormSchema = z
   .object({
     name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
@@ -139,7 +161,7 @@ export const channelFormSchema = z
     key: z.string(),
     openai_organization: z.string().optional(),
     models: z.string(),
-    group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
+    group: z.array(z.string()).optional(),
     model_mapping: z
       .string()
       .optional()
@@ -322,6 +344,14 @@ export const channelFormSchema = z
         message: 'Account pool group is required',
       })
     }
+
+    if (
+      !isUpstreamAccountSync &&
+      !usesGlobalAccountPool(data) &&
+      (!data.group || data.group.length === 0)
+    ) {
+      addRequiredIssue(ctx, 'group', ERROR_MESSAGES.REQUIRED_GROUP)
+    }
   })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
@@ -337,7 +367,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   key: '',
   openai_organization: '',
   models: '',
-  group: ['default'],
+  group: [],
   model_mapping: '',
   priority: 0,
   weight: 0,
@@ -537,6 +567,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
+    upstream_account_sync: hasUpstreamAccountSyncMetadata(channel.settings),
   }
 }
 
@@ -725,7 +756,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
         : formData.key,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
-    group: formatGroups(formData.group),
+    group: formatGroups(formData.group || []),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
@@ -781,6 +812,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
  *
  * 账号池组模式不依赖渠道 key/base_url，因此更新时强制写入哨兵 key 并清空 base_url。
  * 其他模式下，只有用户输入了新 key 才提交 key 字段，防止编辑保存时误清空已有密钥。
+ *
+ * 渠道启停状态已经迁移到专用操作接口，普通编辑 payload 不能携带 status。
+ * 后端会直接拒绝带 status 的 `PUT /api/channel/` 请求，避免编辑保存顺手绕过
+ * ChannelOperate 权限边界。
  */
 export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
@@ -797,13 +832,12 @@ export function transformFormDataToUpdatePayload(
         : normalizeBaseUrl(formData.base_url) || null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
-    group: formatGroups(formData.group),
+    group: formatGroups(formData.group || []),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
-    status: formData.status,
     status_code_mapping: formData.status_code_mapping || null,
     tag: formData.tag || null,
     remark: formData.remark || '',
@@ -812,23 +846,6 @@ export function transformFormDataToUpdatePayload(
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
-    channel_info: {
-      credential_mode: credentialMode,
-      account_pool_enabled: credentialMode === 'account_pool',
-      account_pool_mode: formData.account_pool_mode || 'polling',
-      account_pool_fallback:
-        credentialMode === 'global_account_pool'
-          ? false
-          : formData.account_pool_fallback === true,
-      account_pool_group_id:
-        credentialMode === 'global_account_pool'
-          ? formData.account_pool_group_id || 0
-          : 0,
-      is_multi_key: credentialMode === 'multi_key',
-      multi_key_size: 0,
-      multi_key_polling_index: 0,
-      multi_key_mode: formData.multi_key_type || 'random',
-    },
   }
 
   // 只有账号池组模式或用户显式输入新 key 时才携带 key，避免空 key 覆盖旧凭证。

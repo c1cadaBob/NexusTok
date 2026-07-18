@@ -79,6 +79,59 @@ func TestRelayRetriesToNextChannelAfterChannelFailure(t *testing.T) {
 	require.Equal(t, common.ChannelStatusEnabled, firstStored.Status)
 }
 
+func TestRelayRetriesToNextChannelAccountAfterSyncedKeyFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+
+	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer sk-account-fail", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"synced key rejected","type":"invalid_request_error","code":"invalid_api_key"}}`))
+	}))
+	defer firstUpstream.Close()
+
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer sk-account-ok", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-account-retry-ok","object":"chat.completion","created":1,"model":"gpt-retry-relay","choices":[{"index":0,"message":{"role":"assistant","content":"account-fallback-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer secondUpstream.Close()
+
+	channel := createRelayRetryFallbackAccountPoolChannel(t, 1, "synced-account-channel")
+	createRelayRetryFallbackChannelAccount(t, channel.Id, "first", "sk-account-fail", firstUpstream.URL, 20, 100)
+	createRelayRetryFallbackChannelAccount(t, channel.Id, "second", "sk-account-ok", secondUpstream.URL, 10, 100)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, channel, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "account-fallback-ok")
+	require.Equal(t, []string{"1", "1"}, c.GetStringSlice("use_channel"))
+	require.Empty(t, service.GetExcludedChannelIds(c))
+	require.Len(t, service.GetExcludedChannelAccountIds(c), 1)
+
+	var firstStored model.ChannelAccount
+	require.NoError(t, model.DB.Where("channel_id = ? AND name = ?", channel.Id, "first").First(&firstStored).Error)
+	require.Equal(t, common.ChannelStatusEnabled, firstStored.Status)
+	require.Contains(t, firstStored.LastError, "synced key rejected")
+	require.True(t, service.GetExcludedChannelAccountIds(c)[firstStored.Id])
+}
+
 func setupRelayRetryFallbackTestState(t *testing.T) {
 	t.Helper()
 
@@ -111,7 +164,7 @@ func setupRelayRetryFallbackTestState(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Token{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Token{}, &model.Log{}, &model.ChannelAccount{}))
 	model.DB = db
 	model.LOG_DB = db
 
@@ -178,6 +231,57 @@ func createRelayRetryFallbackChannel(t *testing.T, id int, name string, baseURL 
 		Weight:    weight,
 	}).Error)
 	return channel
+}
+
+func createRelayRetryFallbackAccountPoolChannel(t *testing.T, id int, name string) *model.Channel {
+	t.Helper()
+
+	weight := uint(100)
+	priority := int64(20)
+	autoBan := 0
+	channel := &model.Channel{
+		Id:       id,
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      constant.ChannelCredentialModeAccountPool,
+		Status:   common.ChannelStatusEnabled,
+		Name:     name,
+		Weight:   &weight,
+		Models:   "gpt-retry-relay",
+		Group:    "default",
+		Priority: &priority,
+		AutoBan:  &autoBan,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-retry-relay",
+		ChannelId: id,
+		Enabled:   true,
+		Priority:  &priority,
+		Weight:    weight,
+	}).Error)
+	return channel
+}
+
+func createRelayRetryFallbackChannelAccount(t *testing.T, channelID int, name string, key string, baseURL string, priority int64, weight int) {
+	t.Helper()
+
+	require.NoError(t, model.DB.Create(&model.ChannelAccount{
+		ChannelId: channelID,
+		Name:      name,
+		Key:       key,
+		Status:    common.ChannelStatusEnabled,
+		Models:    "gpt-retry-relay",
+		Group:     "default",
+		BaseURL:   &baseURL,
+		Priority:  priority,
+		Weight:    weight,
+	}).Error)
 }
 
 func setRelayRetryFallbackRequestContext(c *gin.Context) {

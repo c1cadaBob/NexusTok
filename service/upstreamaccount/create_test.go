@@ -237,6 +237,73 @@ func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
 	require.Equal(t, int64(0), abilityCount)
 }
 
+func TestCreateFromPreviewFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-explicit-empty"
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "empty",
+				Name:              "Empty Key",
+				Key:               "sk-empty",
+				MaskedKey:         "sk-empty",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: true,
+		Channel: ChannelCreateConfig{
+			Name:   "explicit-empty-channel",
+			Type:   constant.ChannelTypeOpenAI,
+			Group:  "",
+			Models: "",
+		},
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID: "empty",
+				Models:     "",
+				Group:      "",
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+
+	var account model.ChannelAccount
+	require.NoError(t, db.First(&account).Error)
+	require.Equal(t, "gpt-4o", account.Models)
+	require.Equal(t, "vip", account.Group)
+}
+
 func int64Ptr(value int64) *int64 {
 	return &value
 }
