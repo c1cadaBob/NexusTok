@@ -315,6 +315,12 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if config.Enabled == nil {
 			account.Status = existing.Status
 		}
+		if strings.TrimSpace(config.Models) == "" && strings.TrimSpace(existing.Models) != "" {
+			account.Models = existing.Models
+		}
+		if strings.TrimSpace(config.Group) == "" && strings.TrimSpace(existing.Group) != "" {
+			account.Group = existing.Group
+		}
 	}
 	updates := map[string]any{
 		"name":                account.Name,

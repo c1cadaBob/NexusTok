@@ -328,8 +328,8 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 	require.NoError(t, db.First(&refreshed, existing.Id).Error)
 	require.Equal(t, "Local Key Renamed", refreshed.Name)
 	require.Equal(t, "sk-new-local", refreshed.Key)
-	require.Equal(t, "gpt-4o", refreshed.Models)
-	require.Equal(t, "vip", refreshed.Group)
+	require.Equal(t, "gpt-old", refreshed.Models)
+	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, int64(8), refreshed.Priority)
 	require.Equal(t, 66, refreshed.Weight)
 	require.Equal(t, localBaseURL, *refreshed.BaseURL)
@@ -350,6 +350,90 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 	require.Equal(t, "https://newapi.example", metadata.BaseURL)
 	require.Equal(t, "local", metadata.ExternalID)
 	require.Equal(t, keyDigest("sk-new-local"), metadata.KeyDigest)
+}
+
+func TestRefreshChannelFromSnapshotAppliesExplicitLocalModelsAndGroup(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "explicit-local-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	oldKey := SyncedKey{
+		ExternalID: "explicit",
+		Name:       "Explicit Key",
+		Key:        "sk-explicit-old",
+		MaskedKey:  "sk-explicit-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-old"},
+	}
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Explicit Key",
+		Key:           "sk-explicit-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, oldKey),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{{
+			ExternalID:        "explicit",
+			Name:              "Explicit Key Refreshed",
+			Key:               "sk-explicit-new",
+			MaskedKey:         "sk-explicit-new",
+			GroupName:         "upstream-vip",
+			Models:            []string{"gpt-upstream"},
+			SuggestedPriority: 3,
+			SuggestedWeight:   80,
+		}},
+	}, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+		Accounts: []AccountCreateConfig{{
+			ExternalID: "explicit",
+			Models:     "gpt-local",
+			Group:      "local-vip",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Created)
+	require.Equal(t, 1, result.Updated)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "gpt-local", refreshed.Models)
+	require.Equal(t, "local-vip", refreshed.Group)
 }
 
 func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(t *testing.T) {
@@ -504,7 +588,7 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	require.Equal(t, 34, account.Weight)
 }
 
-func TestRefreshChannelFromSnapshotFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *testing.T) {
+func TestRefreshChannelFromSnapshotKeepsExistingModelsAndGroupWhenConfigEmpty(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -590,8 +674,8 @@ func TestRefreshChannelFromSnapshotFallsBackWhenSyncedAccountModelsAndGroupAreEm
 
 	var refreshed model.ChannelAccount
 	require.NoError(t, db.First(&refreshed, existing.Id).Error)
-	require.Equal(t, "gpt-4o", refreshed.Models)
-	require.Equal(t, "vip", refreshed.Group)
+	require.Equal(t, "gpt-old", refreshed.Models)
+	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, int64(9), refreshed.Priority)
 	require.Equal(t, 8, refreshed.Weight)
 }

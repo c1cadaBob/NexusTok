@@ -33,6 +33,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Circle,
+  ChevronDown,
   HelpCircle,
   Loader2,
   Sparkles,
@@ -97,6 +98,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Tooltip,
   TooltipContent,
@@ -252,7 +258,7 @@ type UpstreamAccountConfigDraft = {
   group?: string
 }
 
-type UpstreamEditableAccount = UpstreamAccountKey & {
+export type UpstreamEditableAccount = UpstreamAccountKey & {
   account_id?: number
   account_status?: number
 }
@@ -263,8 +269,50 @@ type CredentialSourceMode = 'manual' | 'upstream_account'
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
 
-function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
+export function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
   return key.sync_id || key.external_id || key.masked_key || `${index}`
+}
+
+export function getUpstreamAccountConfig(
+  configs: Record<string, UpstreamAccountConfigDraft>,
+  key: UpstreamAccountKey,
+  index: number
+) {
+  const candidates = [
+    upstreamKeyConfigId(key, index),
+    key.sync_id,
+    key.external_id,
+    key.masked_key,
+  ]
+  for (const candidate of candidates) {
+    if (candidate && configs[candidate]) {
+      return configs[candidate]
+    }
+  }
+  return undefined
+}
+
+export function buildUpstreamAccountConfigsFromSnapshotKeys(
+  keys: UpstreamAccountKey[],
+  previousConfigs: Record<string, UpstreamAccountConfigDraft> = {}
+): Record<string, UpstreamAccountConfigDraft> {
+  const configs: Record<string, UpstreamAccountConfigDraft> = {}
+  keys.forEach((key, index) => {
+    const configId = upstreamKeyConfigId(key, index)
+    const previousConfig = getUpstreamAccountConfig(
+      previousConfigs,
+      key,
+      index
+    )
+    configs[configId] = {
+      priority: previousConfig?.priority ?? key.suggested_priority,
+      weight: previousConfig?.weight ?? key.suggested_weight,
+      enabled: previousConfig?.enabled ?? true,
+      models: previousConfig?.models ?? key.models?.join(',') ?? '',
+      group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
+    }
+  })
+  return configs
 }
 
 function upstreamPreviewRemainingSeconds(expiresAt: number, nowMs: number) {
@@ -334,15 +382,7 @@ function upstreamGroupsToString(keys: UpstreamAccountKey[]) {
 function buildUpstreamAccountConfigs(
   keys: UpstreamAccountKey[]
 ): Record<string, UpstreamAccountConfigDraft> {
-  const configs: Record<string, UpstreamAccountConfigDraft> = {}
-  keys.forEach((key, index) => {
-    configs[upstreamKeyConfigId(key, index)] = {
-      priority: key.suggested_priority,
-      weight: key.suggested_weight,
-      enabled: true,
-    }
-  })
-  return configs
+  return buildUpstreamAccountConfigsFromSnapshotKeys(keys)
 }
 
 function upstreamAccountConfigTextValue(
@@ -402,7 +442,7 @@ function upstreamAccountValuesToString(
   const seen = new Set<string>()
   const values: string[] = []
   keys.forEach((key, index) => {
-    const config = configs[upstreamKeyConfigId(key, index)]
+    const config = getUpstreamAccountConfig(configs, key, index)
     getValue(key, config)
       .split(',')
       .map((value) => value.trim())
@@ -424,7 +464,7 @@ function buildUpstreamAccountPayloads(
   fallbackGroup = ''
 ) {
   return keys.map((key, index) => {
-    const config = configs[upstreamKeyConfigId(key, index)]
+    const config = getUpstreamAccountConfig(configs, key, index)
     return {
       sync_id: key.sync_id,
       external_id: key.external_id,
@@ -438,13 +478,22 @@ function buildUpstreamAccountPayloads(
   })
 }
 
-function upstreamAccountFromChannelAccount(
+export function upstreamAccountFromChannelAccount(
   account: ChannelAccount
 ): UpstreamEditableAccount {
+  const syncMetadata = parseSettingsRecord(account.settings)[
+    UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY
+  ]
+  const upstreamExternalId =
+    syncMetadata && typeof syncMetadata === 'object'
+      ? String((syncMetadata as Record<string, unknown>).external_id || '').trim()
+      : ''
+  const upstreamConfigId = upstreamExternalId || account.key || String(account.id)
+
   return {
     account_id: account.id,
-    sync_id: String(account.id),
-    external_id: String(account.id),
+    sync_id: upstreamConfigId,
+    external_id: upstreamConfigId,
     name: account.name || `#${account.id}`,
     masked_key: account.key,
     status: account.status,
@@ -457,13 +506,13 @@ function upstreamAccountFromChannelAccount(
   }
 }
 
-function buildUpstreamAccountConfigsFromChannelAccounts(
+export function buildUpstreamAccountConfigsFromChannelAccounts(
   accounts: ChannelAccount[]
 ): Record<string, UpstreamAccountConfigDraft> {
   const configs: Record<string, UpstreamAccountConfigDraft> = {}
   accounts.forEach((account) => {
     const key = upstreamAccountFromChannelAccount(account)
-    configs[upstreamKeyConfigId(key, 0)] = {
+    configs[upstreamKeyConfigId(key, account.id)] = {
       priority: account.priority || 0,
       weight: account.weight || 0,
       enabled: account.status === CHANNEL_STATUS.ENABLED,
@@ -1013,6 +1062,7 @@ export function ChannelMutateDrawer({
   const channelFormRef = useRef<HTMLFormElement>(null)
   const advancedNavScrollPendingRef = useRef(false)
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
+  const [syncRefreshOpen, setSyncRefreshOpen] = useState(false)
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
@@ -1024,9 +1074,21 @@ export function ChannelMutateDrawer({
   const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
     string | undefined
   >()
+  const renderModeRef = useRef<'create' | 'edit'>('create')
+  const renderCurrentRowRef = useRef<Channel | null>(null)
 
-  const isEditing = Boolean(currentRow)
-  const channelId = currentRow?.id ?? null
+  // Sheet 关闭动画期间父级会先把 open 状态清空，如果此时直接根据 currentRow
+  // 渲染，会把正在关闭的编辑抽屉短暂切成创建抽屉。这里在打开期间锁定渲染模式，
+  // 只有下一次真正打开时才切换创建/编辑内容，避免保存成功后误显示创建表单。
+  if (open) {
+    renderModeRef.current = currentRow ? 'edit' : 'create'
+    renderCurrentRowRef.current = currentRow ?? null
+  }
+  const renderCurrentRow =
+    renderModeRef.current === 'edit' ? renderCurrentRowRef.current : null
+
+  const isEditing = Boolean(renderCurrentRow)
+  const channelId = renderCurrentRow?.id ?? null
   const canSubmitForm = isEditing
     ? permissions.canWrite || permissions.canSensitiveWrite
     : permissions.canSensitiveWrite
@@ -1039,9 +1101,9 @@ export function ChannelMutateDrawer({
 
   // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
-    queryKey: channelsQueryKeys.detail(currentRow?.id || 0),
-    queryFn: () => getChannel(currentRow!.id),
-    enabled: isEditing && Boolean(currentRow?.id),
+    queryKey: channelsQueryKeys.detail(renderCurrentRow?.id || 0),
+    queryFn: () => getChannel(renderCurrentRow!.id),
+    enabled: isEditing && Boolean(renderCurrentRow?.id),
   })
 
   // 拉取 NexusTok 用户分组，渠道仍然需要用它做路由、权限和计费归属。
@@ -1315,13 +1377,13 @@ export function ChannelMutateDrawer({
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
   const hasUpstreamAccountSyncMetadata = isChannelFromUpstreamAccountSync(
-    channelData?.data ?? currentRow
+    channelData?.data ?? renderCurrentRow
   )
   const isUpstreamAccountSyncedChannel =
     isEditing &&
     (hasUpstreamAccountSyncMetadata ||
-      (currentRow?.channel_info?.credential_mode === 'account_pool' &&
-        currentRow?.channel_info?.account_pool_enabled === true))
+      (renderCurrentRow?.channel_info?.credential_mode === 'account_pool' &&
+        renderCurrentRow?.channel_info?.account_pool_enabled === true))
   const isCreateUpstreamSyncMode = !isEditing && upstreamSyncEnabled
   const usesUpstreamAccountCredentialSource =
     isCreateUpstreamSyncMode || isUpstreamAccountSyncedChannel
@@ -1624,7 +1686,11 @@ export function ChannelMutateDrawer({
                 </div>
                 {snapshot.keys.map((key, index) => {
                   const configId = upstreamKeyConfigId(key, index)
-                  const config = upstreamAccountConfigs[configId]
+                  const config = getUpstreamAccountConfig(
+                    upstreamAccountConfigs,
+                    key,
+                    index
+                  )
                   const currentModelsValue = upstreamAccountConfigTextValue(
                     config?.models,
                     key.models?.join(',') || ''
@@ -2220,6 +2286,7 @@ export function ChannelMutateDrawer({
       form.reset(defaults)
       clearAllUpstreamPreviews()
       setUpstreamSyncEnabled(false)
+      setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -2233,6 +2300,7 @@ export function ChannelMutateDrawer({
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       clearAllUpstreamPreviews()
+      setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
@@ -2579,7 +2647,9 @@ export function ChannelMutateDrawer({
         clearUpstreamCreatePreview()
       }
 
-      setUpstreamAccountConfigs(buildUpstreamAccountConfigs(data.snapshot.keys))
+      setUpstreamAccountConfigs((prev) =>
+        buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
+      )
 
       if (mode === 'create') {
         const models = upstreamModelsToString(data.snapshot.keys)
@@ -2879,7 +2949,7 @@ export function ChannelMutateDrawer({
 
   const saveSyncedAccountLocalConfigs = useCallback(
     async (data: ChannelFormValues) => {
-      if (!channelId || !currentRow) return
+      if (!channelId || !renderCurrentRow) return
       if (!canEditBasicFields) {
         toast.error(noPermissionMessage)
         return
@@ -2946,8 +3016,11 @@ export function ChannelMutateDrawer({
         for (let index = 0; index < syncedEditableAccounts.length; index += 1) {
           const editableAccount = syncedEditableAccounts[index]
           if (!editableAccount.account_id) continue
-          const config =
-            upstreamAccountConfigs[upstreamKeyConfigId(editableAccount, index)]
+          const config = getUpstreamAccountConfig(
+            upstreamAccountConfigs,
+            editableAccount,
+            index
+          )
           if (!config) continue
 
           const account = syncedChannelAccounts.find(
@@ -3000,9 +3073,12 @@ export function ChannelMutateDrawer({
         }
 
         toast.success(
-          t('Synced key configuration saved: {{updated}} updated', {
-            updated: updated + statusUpdated,
-          })
+          t(
+            'Synced key configuration saved. Channel updated, {{updated}} key update(s) applied.',
+            {
+              updated: updated + statusUpdated,
+            }
+          )
         )
         handleSuccess()
       } catch (error) {
@@ -3017,13 +3093,13 @@ export function ChannelMutateDrawer({
       canEditSensitiveFields,
       canEditBasicFields,
       channelId,
-      currentRow,
       handleSuccess,
       isMultiKeyChannel,
       noPermissionMessage,
       permissions.canOperateChannelAccount,
       permissions.canWriteChannelAccount,
       queryClient,
+      renderCurrentRow,
       syncedChannelAccounts,
       syncedChannelAccountsLoadedCount,
       syncedChannelAccountsQuery.isLoading,
@@ -3325,7 +3401,7 @@ export function ChannelMutateDrawer({
 
   const { mutateAsync: submitChannelMutation, isPending: isSubmitting } =
     useChannelMutateForm({
-      currentRow,
+      currentRow: renderCurrentRow,
       isEditing,
       isMultiKeyChannel,
       permissions,
@@ -3412,35 +3488,7 @@ export function ChannelMutateDrawer({
       }
 
       if (isEditing && isUpstreamAccountSyncedChannel) {
-        const syncSnapshot = upstreamRefreshSnapshot
-        const syncPreviewId = upstreamRefreshPreviewId
-        if (!syncPreviewId || !syncSnapshot) {
-          await saveSyncedAccountLocalConfigs(data)
-          return
-        }
-        if (isUpstreamRefreshPreviewExpired) {
-          clearUpstreamRefreshPreview()
-          setUpstreamAccountConfigs({})
-          showUpstreamPreviewExpiredToast()
-          return
-        }
-        if (syncSnapshot.keys.length === 0) {
-          toast.error(t('No upstream keys were found for this account.'))
-          return
-        }
-        await upstreamRefreshMutation.mutateAsync({
-          id: channelId!,
-          payload: {
-            preview_id: syncPreviewId,
-            apply_suggested: upstreamApplySuggested,
-            disable_missing_key: true,
-            accounts: buildUpstreamAccountPayloads(
-              syncSnapshot.keys,
-              upstreamAccountConfigs,
-              upstreamApplySuggested
-            ),
-          },
-        })
+        await saveSyncedAccountLocalConfigs(data)
         return
       }
 
@@ -3548,17 +3596,12 @@ export function ChannelMutateDrawer({
       upstreamAccountConfigs,
       upstreamApplySuggested,
       upstreamCreateMutation,
-      upstreamRefreshMutation,
       clearUpstreamCreatePreview,
-      clearUpstreamRefreshPreview,
       isCreateUpstreamSyncMode,
       isUpstreamAccountSyncedChannel,
       isUpstreamPreviewExpired,
-      isUpstreamRefreshPreviewExpired,
       showUpstreamPreviewExpiredToast,
       upstreamPreviewId,
-      upstreamRefreshPreviewId,
-      upstreamRefreshSnapshot,
       upstreamSnapshot,
     ]
   )
@@ -3575,6 +3618,7 @@ export function ChannelMutateDrawer({
         setAdvancedSettingsOpen(false)
         setAdvancedCustomEditorOpen(false)
         setUpstreamSyncEnabled(false)
+        setSyncRefreshOpen(false)
         form.setValue('upstream_account_sync', false)
         setUpstreamUsername('')
         setUpstreamPassword('')
@@ -4211,167 +4255,185 @@ export function ChannelMutateDrawer({
                       )}
 
                       {isUpstreamAccountSyncedChannel && (
-                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
-                          <div className='flex flex-col gap-4'>
-                            <div className='flex flex-col gap-1'>
-                              <div className='flex items-center gap-2'>
-                                <RefreshCw aria-hidden='true' />
-                                <span className='text-sm font-semibold'>
+                        <Collapsible
+                          open={syncRefreshOpen}
+                          onOpenChange={setSyncRefreshOpen}
+                          className='border-border/60 bg-muted/10 rounded-lg border'
+                        >
+                          <CollapsibleTrigger className='hover:bg-muted/40 flex w-full items-center justify-between gap-3 rounded-lg px-4 py-3 text-left transition-colors'>
+                            <div className='flex min-w-0 items-start gap-2'>
+                              <RefreshCw
+                                className='mt-0.5 size-4 shrink-0'
+                                aria-hidden='true'
+                              />
+                              <div className='min-w-0'>
+                                <span className='block text-sm font-semibold'>
                                   {t('Refresh Upstream Account')}
                                 </span>
-                              </div>
-                              <p className='text-muted-foreground text-xs'>
-                                {t(
-                                  'Optional: re-enter the upstream account password only when you need to fetch new keys, groups, rates, or balance.'
-                                )}
-                              </p>
-                            </div>
-
-                            <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
-                              <div className='flex flex-col gap-2'>
-                                <Label htmlFor='upstream-refresh-platform'>
-                                  {t('Upstream Platform')}
-                                </Label>
-                                <Select
-                                  value={upstreamPlatform}
-                                  onValueChange={(value) =>
-                                    setUpstreamPlatform(
-                                      value as UpstreamAccountPlatform
-                                    )
-                                  }
-                                >
-                                  <SelectTrigger id='upstream-refresh-platform'>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      <SelectItem value='new-api'>
-                                        new-api
-                                      </SelectItem>
-                                      <SelectItem value='sub2api'>
-                                        sub2api
-                                      </SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className='flex flex-col gap-2'>
-                                <Label htmlFor='upstream-refresh-account'>
-                                  {t('Account')}
-                                </Label>
-                                <Input
-                                  id='upstream-refresh-account'
-                                  value={upstreamUsername}
-                                  onChange={(event) =>
-                                    setUpstreamUsername(event.target.value)
-                                  }
-                                  autoComplete='username'
-                                  placeholder={
-                                    upstreamPlatform === 'new-api'
-                                      ? t('Username')
-                                      : t('Email')
-                                  }
-                                />
-                              </div>
-                              <div className='flex flex-col gap-2'>
-                                <Label htmlFor='upstream-refresh-password'>
-                                  {t('Password')}
-                                </Label>
-                                <Input
-                                  id='upstream-refresh-password'
-                                  value={upstreamPassword}
-                                  onChange={(event) =>
-                                    setUpstreamPassword(event.target.value)
-                                  }
-                                  type='password'
-                                  autoComplete='current-password'
-                                  placeholder={t('Password')}
-                                />
-                              </div>
-                              <div className='flex flex-col justify-end gap-2'>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  className='flex-1'
-                                  disabled={upstreamPreviewMutation.isPending}
-                                  onClick={handlePreviewUpstreamRefresh}
-                                >
-                                  {upstreamPreviewMutation.isPending ? (
-                                    <Loader2
-                                      data-icon='inline-start'
-                                      className='animate-spin'
-                                    />
-                                  ) : (
-                                    <RefreshCw data-icon='inline-start' />
+                                <span className='text-muted-foreground block text-xs'>
+                                  {t(
+                                    'Optional: fetch new keys, groups, rates, and balance from the upstream account.'
                                   )}
-                                  {t('Preview Refresh')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  className='flex-1'
-                                  disabled={
-                                    !upstreamRefreshSnapshot ||
-                                    upstreamRefreshSnapshot.keys.length === 0 ||
-                                    isUpstreamRefreshPreviewExpired ||
-                                    upstreamPreviewMutation.isPending ||
-                                    upstreamPreview2FAMutation.isPending ||
-                                    upstreamRefreshMutation.isPending
-                                  }
-                                  onClick={handleRefreshUpstreamAccount}
-                                >
-                                  {upstreamRefreshMutation.isPending ? (
-                                    <Loader2
-                                      data-icon='inline-start'
-                                      className='animate-spin'
-                                    />
-                                  ) : (
-                                    <CheckCircle2 data-icon='inline-start' />
-                                  )}
-                                  {t('Apply Refresh')}
-                                </Button>
+                                </span>
                               </div>
                             </div>
-
-                            <Alert>
-                              <AlertCircle aria-hidden='true' />
-                              <AlertDescription>
-                                {t(
-                                  'Preview refresh is only required before applying a fresh upstream sync. The main save button can save current key configuration without refreshing.'
-                                )}
-                              </AlertDescription>
-                            </Alert>
-
-                            {upstreamRefreshTwoFactorChallenge &&
-                              renderUpstreamTwoFactorChallenge(
-                                'refresh',
-                                upstreamRefreshTwoFactorChallenge,
-                                upstreamRefreshTwoFactorCode,
-                                setUpstreamRefreshTwoFactorCode,
-                                upstreamRefreshTwoFactorRemaining,
-                                isUpstreamRefreshTwoFactorExpired
+                            <ChevronDown
+                              className={cn(
+                                'text-muted-foreground size-4 shrink-0 transition-transform',
+                                syncRefreshOpen && 'rotate-180'
                               )}
+                              aria-hidden='true'
+                            />
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className='border-border/60 border-t px-4 py-4'>
+                            <div className='flex flex-col gap-4'>
+                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-platform'>
+                                    {t('Upstream Platform')}
+                                  </Label>
+                                  <Select
+                                    value={upstreamPlatform}
+                                    onValueChange={(value) =>
+                                      setUpstreamPlatform(
+                                        value as UpstreamAccountPlatform
+                                      )
+                                    }
+                                  >
+                                    <SelectTrigger id='upstream-refresh-platform'>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent alignItemWithTrigger={false}>
+                                      <SelectGroup>
+                                        <SelectItem value='new-api'>
+                                          new-api
+                                        </SelectItem>
+                                        <SelectItem value='sub2api'>
+                                          sub2api
+                                        </SelectItem>
+                                      </SelectGroup>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-account'>
+                                    {t('Account')}
+                                  </Label>
+                                  <Input
+                                    id='upstream-refresh-account'
+                                    value={upstreamUsername}
+                                    onChange={(event) =>
+                                      setUpstreamUsername(event.target.value)
+                                    }
+                                    autoComplete='username'
+                                    placeholder={
+                                      upstreamPlatform === 'new-api'
+                                        ? t('Username')
+                                        : t('Email')
+                                    }
+                                  />
+                                </div>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-password'>
+                                    {t('Password')}
+                                  </Label>
+                                  <Input
+                                    id='upstream-refresh-password'
+                                    value={upstreamPassword}
+                                    onChange={(event) =>
+                                      setUpstreamPassword(event.target.value)
+                                    }
+                                    type='password'
+                                    autoComplete='current-password'
+                                    placeholder={t('Password')}
+                                  />
+                                </div>
+                                <div className='flex flex-col justify-end gap-2'>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    className='flex-1'
+                                    disabled={upstreamPreviewMutation.isPending}
+                                    onClick={handlePreviewUpstreamRefresh}
+                                  >
+                                    {upstreamPreviewMutation.isPending ? (
+                                      <Loader2
+                                        data-icon='inline-start'
+                                        className='animate-spin'
+                                      />
+                                    ) : (
+                                      <RefreshCw data-icon='inline-start' />
+                                    )}
+                                    {t('Preview Refresh')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    className='flex-1'
+                                    disabled={
+                                      !upstreamRefreshSnapshot ||
+                                      upstreamRefreshSnapshot.keys.length ===
+                                        0 ||
+                                      isUpstreamRefreshPreviewExpired ||
+                                      upstreamPreviewMutation.isPending ||
+                                      upstreamPreview2FAMutation.isPending ||
+                                      upstreamRefreshMutation.isPending
+                                    }
+                                    onClick={handleRefreshUpstreamAccount}
+                                  >
+                                    {upstreamRefreshMutation.isPending ? (
+                                      <Loader2
+                                        data-icon='inline-start'
+                                        className='animate-spin'
+                                      />
+                                    ) : (
+                                      <CheckCircle2 data-icon='inline-start' />
+                                    )}
+                                    {t('Apply Refresh')}
+                                  </Button>
+                                </div>
+                              </div>
 
-                            {upstreamRefreshSnapshot?.warnings?.length ? (
                               <Alert>
                                 <AlertCircle aria-hidden='true' />
                                 <AlertDescription>
-                                  {upstreamRefreshSnapshot.warnings.join('；')}
+                                  {t(
+                                    'Refreshing is optional. The main save button only saves current synced key configuration.'
+                                  )}
                                 </AlertDescription>
                               </Alert>
-                            ) : null}
 
-                            {upstreamRefreshSnapshot &&
-                              renderUpstreamPreviewExpiryNotice(
-                                upstreamRefreshPreviewRemaining,
-                                isUpstreamRefreshPreviewExpired
-                              )}
+                              {upstreamRefreshTwoFactorChallenge &&
+                                renderUpstreamTwoFactorChallenge(
+                                  'refresh',
+                                  upstreamRefreshTwoFactorChallenge,
+                                  upstreamRefreshTwoFactorCode,
+                                  setUpstreamRefreshTwoFactorCode,
+                                  upstreamRefreshTwoFactorRemaining,
+                                  isUpstreamRefreshTwoFactorExpired
+                                )}
 
-                            {upstreamRefreshSnapshot &&
-                              renderUpstreamSnapshotReview(
-                                upstreamRefreshSnapshot
-                              )}
-                          </div>
-                        </div>
+                              {upstreamRefreshSnapshot?.warnings?.length ? (
+                                <Alert>
+                                  <AlertCircle aria-hidden='true' />
+                                  <AlertDescription>
+                                    {upstreamRefreshSnapshot.warnings.join('；')}
+                                  </AlertDescription>
+                                </Alert>
+                              ) : null}
+
+                              {upstreamRefreshSnapshot &&
+                                renderUpstreamPreviewExpiryNotice(
+                                  upstreamRefreshPreviewRemaining,
+                                  isUpstreamRefreshPreviewExpired
+                                )}
+
+                              {upstreamRefreshSnapshot &&
+                                renderUpstreamSnapshotReview(
+                                  upstreamRefreshSnapshot
+                                )}
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
                       )}
 
                       {showManualCredentialSection && (
@@ -7547,7 +7609,11 @@ export function ChannelMutateDrawer({
               {(isSubmitting || isSavingSyncedAccountConfigs) && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
-              {isEditing ? t('Update Channel') : t('Save changes')}
+              {isEditing && isUpstreamAccountSyncedChannel
+                ? t('Save synced key configuration')
+                : isEditing
+                  ? t('Update Channel')
+                  : t('Save changes')}
             </Button>
           </SheetFooter>
         </SheetContent>
