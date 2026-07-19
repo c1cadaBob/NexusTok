@@ -76,7 +76,31 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 
 	if updateErr := model.UpdateChannelAccountErrorState(channelError.ChannelId, channelError.ChannelAccountId, updates); updateErr != nil {
 		common.SysLog("failed to update channel account error state: " + updateErr.Error())
+		return
 	}
+	if channelAccountErrorUpdatesAffectCapabilities(updates) {
+		if syncErr := model.SyncChannelAccountPoolCapabilities(channelError.ChannelId, nil); syncErr != nil {
+			common.SysLog("failed to sync channel account capabilities after error: " + syncErr.Error())
+			return
+		}
+		model.InitChannelCache()
+		ResetProxyClientCache()
+	}
+}
+
+// channelAccountErrorUpdatesAffectCapabilities 判断账号错误状态是否会影响渠道可用能力。
+//
+// 自动禁用会让该账号从账号池候选中移除；限流、过载或临时禁用会让账号进入冷却，
+// 同样不应继续参与后续请求调度。只记录 last_error 时不重建能力，避免普通错误日志
+// 造成不必要的全量渠道缓存刷新。
+func channelAccountErrorUpdatesAffectCapabilities(updates map[string]interface{}) bool {
+	for field := range updates {
+		switch field {
+		case "status", "rate_limited_until", "overload_until", "temp_disabled_until":
+			return true
+		}
+	}
+	return false
 }
 
 // shouldDisableChannelAccount 判断错误是否应该导致账户被自动禁用
@@ -87,6 +111,7 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 // - ShouldDisableChannel 返回 true（其他需要禁用的情况）
 // 参数:
 //   - err: 错误详情
+//
 // 返回值:
 //   - bool: 是否应该禁用账户
 func shouldDisableChannelAccount(err *types.NexusTokError) bool {
@@ -108,6 +133,7 @@ func shouldDisableChannelAccount(err *types.NexusTokError) bool {
 // - 错误信息中包含 "overload"（不区分大小写）
 // 参数:
 //   - err: 错误详情
+//
 // 返回值:
 //   - bool: 是否为过载错误
 func isChannelAccountOverloadError(err *types.NexusTokError) bool {
@@ -128,6 +154,7 @@ func isChannelAccountOverloadError(err *types.NexusTokError) bool {
 // 参数:
 //   - retryAfter: Retry-After 响应头的值
 //   - defaultCooldown: 默认冷却时间
+//
 // 返回值:
 //   - int64: 冷却结束的 Unix 时间戳
 func retryAfterUntil(retryAfter string, defaultCooldown time.Duration) int64 {

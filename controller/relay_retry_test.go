@@ -132,6 +132,35 @@ func TestRelayRetriesToNextChannelAccountAfterSyncedKeyFailure(t *testing.T) {
 	require.True(t, service.GetExcludedChannelAccountIds(c)[firstStored.Id])
 }
 
+func TestPrepareRelayChannelContextFallsBackWhenInitialAccountPoolUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+
+	accountPoolChannel := createRelayRetryFallbackAccountPoolChannel(t, 1, "cooling-account-channel")
+	createRelayRetryFallbackCoolingChannelAccount(t, accountPoolChannel.Id, "cooling", "sk-cooling", 20, 100)
+	fallbackChannel := createRelayRetryFallbackChannel(t, 2, "fallback", "https://fallback.example.test", 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	selected, ok := middleware.PrepareRelayChannelContext(c)
+
+	require.True(t, ok)
+	require.NotNil(t, selected)
+	require.Equal(t, fallbackChannel.Id, selected.Id)
+	require.Equal(t, []int{accountPoolChannel.Id}, service.GetExcludedChannelIds(c))
+	require.Equal(t, fallbackChannel.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+}
+
 func setupRelayRetryFallbackTestState(t *testing.T) {
 	t.Helper()
 
@@ -281,6 +310,22 @@ func createRelayRetryFallbackChannelAccount(t *testing.T, channelID int, name st
 		BaseURL:   &baseURL,
 		Priority:  priority,
 		Weight:    weight,
+	}).Error)
+}
+
+func createRelayRetryFallbackCoolingChannelAccount(t *testing.T, channelID int, name string, key string, priority int64, weight int) {
+	t.Helper()
+
+	require.NoError(t, model.DB.Create(&model.ChannelAccount{
+		ChannelId:        channelID,
+		Name:             name,
+		Key:              key,
+		Status:           common.ChannelStatusEnabled,
+		Models:           "gpt-retry-relay",
+		Group:            "default",
+		Priority:         priority,
+		Weight:           weight,
+		RateLimitedUntil: common.GetTimestamp() + 300,
 	}).Error)
 }
 

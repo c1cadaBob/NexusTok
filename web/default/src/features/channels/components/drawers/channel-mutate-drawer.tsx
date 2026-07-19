@@ -76,7 +76,6 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -137,7 +136,6 @@ import {
   previewUpstreamAccount,
   refreshUpstreamAccountChannel,
   refreshCodexCredential,
-  updateChannel,
   updateChannelAccount,
   updateChannelAccountStatus,
 } from '../../api'
@@ -154,7 +152,6 @@ import {
 } from '../../constants'
 import {
   hasDirtySensitiveChannelFormFields,
-  pickNonSensitiveChannelUpdatePayload,
   useChannelMutateForm,
 } from '../../hooks/use-channel-mutate-form'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
@@ -164,7 +161,6 @@ import {
   channelFormSchema,
   channelsQueryKeys,
   transformChannelToFormDefaults,
-  transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
   getAdvancedCustomStats,
@@ -353,6 +349,14 @@ function isUpstreamPreviewExpiredError(message?: string) {
   return Boolean(message?.includes(PREVIEW_EXPIRED_ERROR_TEXT))
 }
 
+function getUpstreamSyncBaseUrlFromSettings(
+  settings: string | undefined
+): string {
+  const metadata = parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  if (!metadata || typeof metadata !== 'object') return ''
+  return String((metadata as Record<string, unknown>).base_url || '').trim()
+}
+
 function upstreamModelsToString(keys: UpstreamAccountKey[]) {
   const seen = new Set<string>()
   const models: string[] = []
@@ -377,12 +381,6 @@ function upstreamGroupsToString(keys: UpstreamAccountKey[]) {
     groups.push(group)
   })
   return groups.join(',')
-}
-
-function buildUpstreamAccountConfigs(
-  keys: UpstreamAccountKey[]
-): Record<string, UpstreamAccountConfigDraft> {
-  return buildUpstreamAccountConfigsFromSnapshotKeys(keys)
 }
 
 function upstreamAccountConfigTextValue(
@@ -1014,6 +1012,7 @@ export function ChannelMutateDrawer({
   const [upstreamSyncEnabled, setUpstreamSyncEnabled] = useState(false)
   const [upstreamPlatform, setUpstreamPlatform] =
     useState<UpstreamAccountPlatform>('new-api')
+  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
   const [upstreamUsername, setUpstreamUsername] = useState('')
   const [upstreamPassword, setUpstreamPassword] = useState('')
   const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
@@ -1322,7 +1321,7 @@ export function ChannelMutateDrawer({
 
   useEffect(() => {
     const fingerprint = [
-      currentBaseUrl || '',
+      upstreamBaseUrl || '',
       upstreamPlatform,
       upstreamUsername,
       upstreamPassword,
@@ -1344,7 +1343,7 @@ export function ChannelMutateDrawer({
     clearAllUpstreamPreviews()
   }, [
     clearAllUpstreamPreviews,
-    currentBaseUrl,
+    upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
     upstreamRefreshTwoFactorChallenge,
@@ -2287,6 +2286,11 @@ export function ChannelMutateDrawer({
       form.reset(defaults)
       clearAllUpstreamPreviews()
       setUpstreamSyncEnabled(false)
+      setUpstreamBaseUrl(
+        getUpstreamSyncBaseUrlFromSettings(channelData.data.settings) ||
+          channelData.data.base_url ||
+          ''
+      )
       setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
@@ -2301,6 +2305,7 @@ export function ChannelMutateDrawer({
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       clearAllUpstreamPreviews()
+      setUpstreamBaseUrl('')
       setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
@@ -2727,12 +2732,9 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
-    const baseUrl = form.getValues('base_url')?.trim()
+    const baseUrl = upstreamBaseUrl.trim()
     if (!baseUrl) {
-      form.setError('base_url', {
-        type: 'manual',
-        message: t('Base URL is required'),
-      })
+      toast.error(t('Upstream platform URL is required'))
       return
     }
     if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
@@ -2763,10 +2765,10 @@ export function ChannelMutateDrawer({
   }, [
     applyUpstreamPreviewChallenge,
     applyUpstreamPreviewData,
-    form,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
+    upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
@@ -2949,7 +2951,7 @@ export function ChannelMutateDrawer({
   })
 
   const saveSyncedAccountLocalConfigs = useCallback(
-    async (data: ChannelFormValues) => {
+    async (_data: ChannelFormValues) => {
       if (!channelId || !renderCurrentRow) return
       if (!canEditBasicFields) {
         toast.error(noPermissionMessage)
@@ -2978,40 +2980,6 @@ export function ChannelMutateDrawer({
 
       setIsSavingSyncedAccountConfigs(true)
       try {
-        const syncedChannelModels =
-          upstreamAccountValuesToString(
-            syncedEditableAccounts,
-            upstreamAccountConfigs,
-            upstreamAccountModelsValue
-          ) || data.models
-        const syncedChannelGroup =
-          upstreamAccountValuesToString(
-            syncedEditableAccounts,
-            upstreamAccountConfigs,
-            upstreamAccountGroupValue
-          ) || formatGroups(data.group || [])
-        const syncedData: ChannelFormValues = {
-          ...data,
-          models: syncedChannelModels,
-          group: syncedChannelGroup
-            .split(',')
-            .map((group) => group.trim())
-            .filter(Boolean),
-        }
-        // 同步渠道的本地保存只需要更新渠道聚合能力字段，用于路由筛选和列表展示；
-        // 每个密钥自己的模型、分组、优先级、权重和启停状态会在下面逐条写入
-        // ChannelAccount。不能复用完整表单 payload，否则 base_url、settings 或
-        // status 等字段会被误带进普通渠道更新接口，导致后端按无效参数拒绝保存。
-        const channelPayload = pickNonSensitiveChannelUpdatePayload(
-          transformFormDataToUpdatePayload(syncedData, channelId)
-        )
-        const channelResponse = await updateChannel(channelId, channelPayload)
-        if (!channelResponse.success) {
-          throw new Error(
-            channelResponse.message || t(ERROR_MESSAGES.UPDATE_FAILED)
-          )
-        }
-
         let updated = 0
         let statusUpdated = 0
         for (let index = 0; index < syncedEditableAccounts.length; index += 1) {
@@ -3075,7 +3043,7 @@ export function ChannelMutateDrawer({
 
         toast.success(
           t(
-            'Synced key configuration saved. Channel updated, {{updated}} key update(s) applied.',
+            'Synced key configuration saved: {{updated}} key update(s) applied.',
             {
               updated: updated + statusUpdated,
             }
@@ -3091,15 +3059,12 @@ export function ChannelMutateDrawer({
       }
     },
     [
-      canEditSensitiveFields,
       canEditBasicFields,
       channelId,
       handleSuccess,
-      isMultiKeyChannel,
       noPermissionMessage,
       permissions.canOperateChannelAccount,
       permissions.canWriteChannelAccount,
-      queryClient,
       renderCurrentRow,
       syncedChannelAccounts,
       syncedChannelAccountsLoadedCount,
@@ -3160,12 +3125,9 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
-    const baseUrl = form.getValues('base_url')?.trim()
+    const baseUrl = upstreamBaseUrl.trim()
     if (!baseUrl) {
-      form.setError('base_url', {
-        type: 'manual',
-        message: t('Base URL is required'),
-      })
+      toast.error(t('Upstream platform URL is required'))
       return
     }
     if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
@@ -3196,10 +3158,10 @@ export function ChannelMutateDrawer({
   }, [
     applyUpstreamPreviewChallenge,
     applyUpstreamPreviewData,
-    form,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
+    upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
@@ -3470,7 +3432,7 @@ export function ChannelMutateDrawer({
           channel: {
             name: data.name,
             type: data.type,
-            base_url: data.base_url || null,
+            base_url: upstreamBaseUrl.trim() || null,
             models: upstreamChannelModels,
             group: upstreamChannelGroup,
             status: data.status,
@@ -3602,6 +3564,7 @@ export function ChannelMutateDrawer({
       isUpstreamAccountSyncedChannel,
       isUpstreamPreviewExpired,
       showUpstreamPreviewExpiredToast,
+      upstreamBaseUrl,
       upstreamPreviewId,
       upstreamSnapshot,
     ]
@@ -3621,6 +3584,7 @@ export function ChannelMutateDrawer({
         setUpstreamSyncEnabled(false)
         setSyncRefreshOpen(false)
         form.setValue('upstream_account_sync', false)
+        setUpstreamBaseUrl('')
         setUpstreamUsername('')
         setUpstreamPassword('')
         clearAllUpstreamPreviews()
@@ -3969,19 +3933,7 @@ export function ChannelMutateDrawer({
                               </p>
                             </div>
 
-                            <RadioGroup
-                              value={
-                                upstreamSyncEnabled
-                                  ? 'upstream_account'
-                                  : 'manual'
-                              }
-                              onValueChange={(value) => {
-                                handleUpstreamSyncEnabledChange(
-                                  value === 'upstream_account'
-                                )
-                              }}
-                              className='grid gap-3 md:grid-cols-2'
-                            >
+                            <div className='grid gap-3 md:grid-cols-2'>
                               {(
                                 [
                                   {
@@ -4009,39 +3961,53 @@ export function ChannelMutateDrawer({
                                     ? 'upstream_account'
                                     : 'manual') === option.value
                                 return (
-                                  <Label
+                                  <button
                                     key={option.value}
-                                    htmlFor={`channel-credential-source-${option.value}`}
+                                    type='button'
+                                    aria-pressed={isActive}
+                                    onClick={() => {
+                                      if (!permissions.canSensitiveWrite) {
+                                        toast.error(noPermissionMessage)
+                                        return
+                                      }
+                                      handleUpstreamSyncEnabledChange(
+                                        option.value === 'upstream_account'
+                                      )
+                                    }}
                                     className={cn(
-                                      'flex-col items-start gap-0 rounded-lg border p-4 font-normal transition-all',
+                                      'flex items-start gap-3 rounded-lg border p-4 text-left transition-all',
                                       isActive &&
                                         'border-primary ring-primary ring-1',
                                       permissions.canSensitiveWrite
                                         ? 'hover:border-primary/60 cursor-pointer'
                                         : 'cursor-not-allowed opacity-60'
                                     )}
+                                    disabled={!permissions.canSensitiveWrite}
                                   >
-                                    <div className='flex items-start gap-3'>
-                                      <RadioGroupItem
-                                        id={`channel-credential-source-${option.value}`}
-                                        value={option.value}
-                                        disabled={
-                                          !permissions.canSensitiveWrite
-                                        }
-                                      />
-                                      <div className='flex flex-col gap-1'>
-                                        <span className='font-medium'>
-                                          {option.label}
-                                        </span>
-                                        <span className='text-muted-foreground text-xs'>
-                                          {option.description}
-                                        </span>
-                                      </div>
+                                    <span
+                                      className={cn(
+                                        'border-input mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
+                                        isActive &&
+                                          'border-primary bg-primary text-primary-foreground'
+                                      )}
+                                      aria-hidden='true'
+                                    >
+                                      {isActive && (
+                                        <span className='bg-primary-foreground size-2 rounded-full' />
+                                      )}
+                                    </span>
+                                    <div className='flex min-w-0 flex-col gap-1'>
+                                      <span className='font-medium'>
+                                        {option.label}
+                                      </span>
+                                      <span className='text-muted-foreground text-xs'>
+                                        {option.description}
+                                      </span>
                                     </div>
-                                  </Label>
+                                  </button>
                                 )
                               })}
-                            </RadioGroup>
+                            </div>
 
                             {upstreamSyncEnabled && (
                               <>
@@ -4075,28 +4041,22 @@ export function ChannelMutateDrawer({
                                       </SelectContent>
                                     </Select>
                                   </div>
-                                  <FormField
-                                    control={form.control}
-                                    name='base_url'
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <FormLabel htmlFor='upstream-sync-base-url'>
-                                          {t('Base URL')}
-                                        </FormLabel>
-                                        <FormControl>
-                                          <Input
-                                            id='upstream-sync-base-url'
-                                            placeholder={t(
-                                              FIELD_PLACEHOLDERS.BASE_URL
-                                            )}
-                                            disabled={!canEditSensitiveFields}
-                                            {...field}
-                                          />
-                                        </FormControl>
-                                        <FormMessage />
-                                      </FormItem>
-                                    )}
-                                  />
+                                  <div className='flex flex-col gap-2'>
+                                    <Label htmlFor='upstream-sync-base-url'>
+                                      {t('Upstream Platform URL')}
+                                    </Label>
+                                    <Input
+                                      id='upstream-sync-base-url'
+                                      value={upstreamBaseUrl}
+                                      onChange={(event) =>
+                                        setUpstreamBaseUrl(event.target.value)
+                                      }
+                                      placeholder={t(
+                                        'new-api or sub2api site URL'
+                                      )}
+                                      disabled={!canEditSensitiveFields}
+                                    />
+                                  </div>
                                   <div className='flex flex-col gap-2'>
                                     <Label htmlFor='upstream-sync-account'>
                                       {t('Account')}
@@ -4273,7 +4233,7 @@ export function ChannelMutateDrawer({
                                 </span>
                                 <span className='text-muted-foreground block text-xs'>
                                   {t(
-                                    'Optional: fetch new keys, groups, rates, and balance from the upstream account.'
+                                    'Optional upstream re-sync. It does not replace the current synced key configuration until you apply the refresh.'
                                   )}
                                 </span>
                               </div>
@@ -4288,7 +4248,7 @@ export function ChannelMutateDrawer({
                           </CollapsibleTrigger>
                           <CollapsibleContent className='border-border/60 border-t px-4 py-4'>
                             <div className='flex flex-col gap-4'>
-                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-5'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-platform'>
                                     {t('Upstream Platform')}
@@ -4315,6 +4275,22 @@ export function ChannelMutateDrawer({
                                       </SelectGroup>
                                     </SelectContent>
                                   </Select>
+                                </div>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-base-url'>
+                                    {t('Upstream Platform URL')}
+                                  </Label>
+                                  <Input
+                                    id='upstream-refresh-base-url'
+                                    value={upstreamBaseUrl}
+                                    onChange={(event) =>
+                                      setUpstreamBaseUrl(event.target.value)
+                                    }
+                                    placeholder={t(
+                                      'new-api or sub2api site URL'
+                                    )}
+                                    disabled={!canEditSensitiveFields}
+                                  />
                                 </div>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-account'>
@@ -4398,7 +4374,7 @@ export function ChannelMutateDrawer({
                                 <AlertCircle aria-hidden='true' />
                                 <AlertDescription>
                                   {t(
-                                    'Refreshing is optional. The main save button only saves current synced key configuration.'
+                                    'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
                                   )}
                                 </AlertDescription>
                               </Alert>

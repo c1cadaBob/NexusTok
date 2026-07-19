@@ -116,11 +116,100 @@ func PrepareRelayChannelContext(c *gin.Context) (*model.Channel, bool) {
 	// 记录请求开始时间（用于计费和日志）
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 	// 将选中渠道的配置信息写入上下文
-	if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+	channel, setupErr := setupSelectedChannelWithFallback(c, channel, modelRequest)
+	if setupErr != nil {
 		abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
 		return nil, false
 	}
 	return channel, true
+}
+
+// setupSelectedChannelWithFallback 为初次分发阶段写入渠道上下文。
+//
+// 账号池渠道可能因为所有账号正在冷却、并发已满或已被当前请求排除而在 setup
+// 阶段返回“无可用 Key”。这属于该渠道的局部不可用，不能直接终止请求；自动选路
+// 场景下应排除当前渠道并重新按优先级/权重选下一个渠道。管理员指定渠道请求仍
+// 保持原有单渠道调试语义。
+func setupSelectedChannelWithFallback(
+	c *gin.Context,
+	channel *model.Channel,
+	modelRequest *ModelRequest,
+) (*model.Channel, *types.NexusTokError) {
+	if channel == nil || modelRequest == nil {
+		return channel, SetupContextForSelectedChannel(c, channel, "")
+	}
+	for attempt := 0; attempt < maxInitialChannelSetupAttempts(); attempt++ {
+		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr == nil {
+			return channel, nil
+		}
+		if !shouldRetryInitialChannelSetup(c, setupErr) {
+			return channel, setupErr
+		}
+		service.AddExcludedChannelId(c, channel.Id)
+		nextChannel, nextErr := selectRelayChannelForSetupRetry(c, modelRequest)
+		if nextErr != nil {
+			return channel, nextErr
+		}
+		if nextChannel == nil {
+			return channel, setupErr
+		}
+		channel = nextChannel
+	}
+	return channel, types.NewError(
+		fmt.Errorf("分组 %s 下模型 %s 的候选渠道均不可用", common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelRequest.Model),
+		types.ErrorCodeGetChannelFailed,
+		types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
+func maxInitialChannelSetupAttempts() int {
+	if common.RetryTimes > 0 {
+		return common.RetryTimes + 16
+	}
+	return 16
+}
+
+func shouldRetryInitialChannelSetup(c *gin.Context, err *types.NexusTokError) bool {
+	if err == nil || err.GetErrorCode() != types.ErrorCodeChannelNoAvailableKey {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	return true
+}
+
+func selectRelayChannelForSetupRetry(
+	c *gin.Context,
+	modelRequest *ModelRequest,
+) (*model.Channel, *types.NexusTokError) {
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+		Ctx:         c,
+		ModelName:   modelRequest.Model,
+		TokenGroup:  usingGroup,
+		RequestPath: c.Request.URL.Path,
+		Retry:       common.GetPointer(0),
+	})
+	if err != nil {
+		return nil, types.NewError(
+			fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败：%s", selectGroup, modelRequest.Model, err.Error()),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if channel == nil {
+		return nil, types.NewError(
+			fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", selectGroup, modelRequest.Model),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	return channel, nil
 }
 
 // selectRelayChannel 按标准分发规则为请求选择渠道。

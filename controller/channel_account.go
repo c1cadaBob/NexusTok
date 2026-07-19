@@ -22,6 +22,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/service/authz"
 	"github.com/c1cada/NexusTok/service/upstreamaccount"
 
@@ -118,6 +119,10 @@ func CreateChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 }
 
@@ -138,6 +143,12 @@ func BatchCreateChannelAccounts(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if created > 0 {
+		if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	common.ApiSuccess(c, gin.H{
 		"created": created,
@@ -196,6 +207,12 @@ func UpdateChannelAccount(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if channelAccountUpdatesAffectCapabilities(updates) {
+		if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	updated, err := model.GetChannelAccountById(channelID, accountID)
 	if err != nil {
 		common.ApiError(c, err)
@@ -210,6 +227,10 @@ func DeleteChannelAccount(c *gin.Context) {
 		return
 	}
 	if err := model.DB.Where("channel_id = ? AND id = ?", channelID, accountID).Delete(&model.ChannelAccount{}).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -237,6 +258,10 @@ func UpdateChannelAccountStatus(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		common.ApiSuccess(c, nil)
 		return
 	}
@@ -254,6 +279,10 @@ func UpdateChannelAccountStatus(c *gin.Context) {
 			"overload_until":      0,
 			"temp_disabled_until": 0,
 		})
+	}
+	if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 	common.ApiSuccess(c, nil)
 }
@@ -296,6 +325,12 @@ func ImportMultiKeyToChannelAccounts(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if created > 0 {
+		if err := syncChannelAccountCapabilitiesIfNeeded(channelID); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	common.ApiSuccess(c, gin.H{
 		"created": created,
@@ -429,6 +464,34 @@ var channelAccountKnownFields = map[string]struct{}{
 	"header_override":     {},
 	"status_code_mapping": {},
 	"max_concurrency":     {},
+}
+
+// syncChannelAccountCapabilitiesIfNeeded 在渠道账号变化后重建账号池渠道能力。
+//
+// 同步渠道的路由能力来自每个启用 key 的真实模型/分组组合，而不是渠道顶层
+// models/group 的简单笛卡尔积。账号新增、删除、模型/分组修改或启停后，如果不立即
+// 重建 `abilities`，Relay 会继续命中过期能力，表现为本地保存成功但请求没有按最新
+// 优先级、权重和可用 key 降级。非账号池渠道会在 model 层快速返回，不影响普通渠道。
+func syncChannelAccountCapabilitiesIfNeeded(channelID int) error {
+	if channelID <= 0 {
+		return nil
+	}
+	if err := model.SyncChannelAccountPoolCapabilities(channelID, nil); err != nil {
+		return err
+	}
+	model.InitChannelCache()
+	service.ResetProxyClientCache()
+	return nil
+}
+
+func channelAccountUpdatesAffectCapabilities(updates map[string]interface{}) bool {
+	for field := range updates {
+		switch field {
+		case "models", "group", "priority", "weight", "status":
+			return true
+		}
+	}
+	return false
 }
 
 func buildChannelAccountFromRequest(channelID int, req channelAccountUpsertRequest) (*model.ChannelAccount, error) {

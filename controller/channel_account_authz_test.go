@@ -4,9 +4,13 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service/upstreamaccount"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestChannelAccountUpdateMapOnlyUpdatesSubmittedFields(t *testing.T) {
@@ -140,5 +144,80 @@ func TestChannelAccountUnknownFieldsFailClosed(t *testing.T) {
 	}))
 	assert.True(t, channelAccountHasUnknownFields(map[string]any{
 		"future_secret_field": "value",
+	}))
+}
+
+func TestSyncChannelAccountCapabilitiesIfNeededRebuildsAccountPoolAbilities(t *testing.T) {
+	oldDB := model.DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.InitChannelCache()
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "synced",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old,gpt-b",
+		Group:  "default,vip",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:      constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled:  true,
+			AccountPoolMode:     constant.ChannelAccountPoolModePolling,
+			AccountPoolFallback: false,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&[]model.ChannelAccount{
+		{
+			ChannelId: channel.Id,
+			Name:      "enabled",
+			Key:       "sk-enabled",
+			Status:    common.ChannelStatusEnabled,
+			Models:    "gpt-new",
+			Group:     "vip",
+		},
+		{
+			ChannelId: channel.Id,
+			Name:      "disabled",
+			Key:       "sk-disabled",
+			Status:    common.ChannelStatusManuallyDisabled,
+			Models:    "gpt-disabled",
+			Group:     "default",
+		},
+	}).Error)
+	require.NoError(t, (&channel).UpdateAbilities(nil))
+
+	require.NoError(t, syncChannelAccountCapabilitiesIfNeeded(channel.Id))
+
+	var refreshed model.Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	assert.Equal(t, "gpt-new", refreshed.Models)
+	assert.Equal(t, "vip", refreshed.Group)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Order("model ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	assert.Equal(t, "gpt-new", abilities[0].Model)
+	assert.Equal(t, "vip", abilities[0].Group)
+}
+
+func TestChannelAccountUpdatesAffectCapabilities(t *testing.T) {
+	assert.True(t, channelAccountUpdatesAffectCapabilities(map[string]interface{}{
+		"models": "gpt-new",
+	}))
+	assert.True(t, channelAccountUpdatesAffectCapabilities(map[string]interface{}{
+		"group": "vip",
+	}))
+	assert.True(t, channelAccountUpdatesAffectCapabilities(map[string]interface{}{
+		"status": common.ChannelStatusManuallyDisabled,
+	}))
+	assert.False(t, channelAccountUpdatesAffectCapabilities(map[string]interface{}{
+		"name": "renamed",
 	}))
 }
