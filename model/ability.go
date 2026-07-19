@@ -536,6 +536,21 @@ func (channel *Channel) syncAccountPoolCapabilities(tx *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	if channel.HasUpstreamAccountSyncMetadata() {
+		// 上游账号同步渠道中 ChannelAccount.group 表示“密钥分组”，只用于展示和成本
+		// 区分；NexusTok 下游用户的可用分组必须始终来自 Channel.group。刷新账号池
+		// 能力时只更新模型集合，避免把上游密钥分组回写为渠道分组。
+		groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
+		if err := tx.Model(channel).Select("models", "group").Updates(map[string]any{
+			"models": models,
+			"group":  groups,
+		}).Error; err != nil {
+			return err
+		}
+		channel.Models = models
+		channel.Group = groups
+		return replaceChannelAbilities(tx, channel.Id, abilities)
+	}
 	if strings.TrimSpace(groups) == "" {
 		groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
 	}
@@ -561,9 +576,16 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 	groupSet := map[string]struct{}{}
 	models := make([]string, 0)
 	groups := make([]string, 0)
+	useChannelGroups := channel.HasUpstreamAccountSyncMetadata()
+	channelGroups := splitAbilityValues(firstNonEmptyString(channel.Group, "default"))
 	for _, account := range accounts {
 		accountModels := splitAbilityValues(firstNonEmptyString(account.Models, channel.Models))
 		accountGroups := splitAbilityValues(firstNonEmptyString(account.Group, channel.Group))
+		if useChannelGroups {
+			// 同步渠道的账号分组是上游密钥分组，不能参与 NexusTok 用户分组路由；
+			// 但账号模型仍表示该 key 的真实支持范围，需要继续逐账号生成能力。
+			accountGroups = channelGroups
+		}
 		for _, modelName := range accountModels {
 			if _, ok := modelSet[modelName]; !ok {
 				modelSet[modelName] = struct{}{}

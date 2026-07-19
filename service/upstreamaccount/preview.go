@@ -74,6 +74,8 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 				Challenge: challenge,
 			}, nil
 		}
+		ApplyRatioConversion(snapshot, req.RatioConversion)
+		ApplySuggestions(snapshot)
 		return SavePreviewSnapshot(snapshot)
 	case PlatformSub2API:
 		client := NewSub2APIClient(nil)
@@ -91,12 +93,16 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 				Challenge: challenge,
 			}, nil
 		}
+		ApplyRatioConversion(snapshot, req.RatioConversion)
+		ApplySuggestions(snapshot)
 		return SavePreviewSnapshot(snapshot)
 	}
 	snapshot, err := client.FetchSnapshot(ctx, req.Credential)
 	if err != nil {
 		return nil, err
 	}
+	ApplyRatioConversion(snapshot, req.RatioConversion)
+	ApplySuggestions(snapshot)
 	return SavePreviewSnapshot(snapshot)
 }
 
@@ -116,6 +122,8 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 		if err != nil {
 			return nil, err
 		}
+		ApplyRatioConversion(snapshot, req.RatioConversion)
+		ApplySuggestions(snapshot)
 		return SavePreviewSnapshot(snapshot)
 	case PlatformSub2API:
 		client := NewSub2APIClient(nil)
@@ -123,6 +131,8 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 		if err != nil {
 			return nil, err
 		}
+		ApplyRatioConversion(snapshot, req.RatioConversion)
+		ApplySuggestions(snapshot)
 		return SavePreviewSnapshot(snapshot)
 	default:
 		return nil, fmt.Errorf("不支持的二次验证平台：%s", record.Platform)

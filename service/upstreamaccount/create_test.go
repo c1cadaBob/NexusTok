@@ -93,7 +93,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.NotNil(t, channel.BaseURL)
 	require.Equal(t, "https://newapi.example", *channel.BaseURL)
 	require.ElementsMatch(t, []string{"gpt-4o", "gpt-4o-mini"}, strings.Split(channel.Models, ","))
-	require.ElementsMatch(t, []string{"vip", "default"}, strings.Split(channel.Group, ","))
+	require.Equal(t, "default", channel.Group)
 	require.Equal(t, float64(3.5), channel.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
 
@@ -109,10 +109,12 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	accountA := accountsByKey["sk-a"]
 	accountB := accountsByKey["sk-b"]
 	require.Empty(t, stringPtrValue(accountA.BaseURL))
+	require.Equal(t, "vip", accountA.Group)
 	require.Equal(t, int64(2), accountA.Priority)
 	require.Equal(t, 100, accountA.Weight)
 	require.Equal(t, int64(common.QuotaPerUnit), accountA.UsedQuota)
 	require.NotNil(t, accountB.BaseURL)
+	require.Equal(t, "default", accountB.Group)
 	require.Equal(t, "https://account.example", *accountB.BaseURL)
 	require.Equal(t, int64(9), accountB.Priority)
 	require.Equal(t, 7, accountB.Weight)
@@ -257,13 +259,13 @@ func TestCreateFromPreviewSummarizesOnlyEnabledAccounts(t *testing.T) {
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, result.ChannelID).Error)
 	require.Equal(t, "gpt-enabled", channel.Models)
-	require.Equal(t, "enabled-group", channel.Group)
+	require.Equal(t, "default", channel.Group)
 
 	var abilities []model.Ability
 	require.NoError(t, db.Find(&abilities).Error)
 	require.Len(t, abilities, 1)
 	require.Equal(t, "gpt-enabled", abilities[0].Model)
-	require.Equal(t, "enabled-group", abilities[0].Group)
+	require.Equal(t, "default", abilities[0].Group)
 }
 
 func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {

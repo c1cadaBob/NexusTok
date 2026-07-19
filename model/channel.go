@@ -406,6 +406,27 @@ func (channel *Channel) IsChannelAccountPoolEnabled() bool {
 	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeAccountPool
 }
 
+// HasUpstreamAccountSyncMetadata 判断渠道是否由上游账号同步流程创建或刷新。
+//
+// 上游账号同步渠道会在 `settings.upstream_account_sync` 中保存平台、Base URL 和同步
+// 时间等元数据。该判断只依赖渠道自身 settings，不依赖 ChannelAccount.group，因为
+// 同步渠道里账号分组表示“上游密钥分组”，不能再被当作 NexusTok 下游用户分组使用。
+func (channel *Channel) HasUpstreamAccountSyncMetadata() bool {
+	if channel == nil || strings.TrimSpace(channel.OtherSettings) == "" {
+		return false
+	}
+	var settings map[string]any
+	if err := common.UnmarshalJsonStr(channel.OtherSettings, &settings); err != nil {
+		return false
+	}
+	raw, ok := settings["upstream_account_sync"]
+	if !ok {
+		return false
+	}
+	_, ok = raw.(map[string]any)
+	return ok
+}
+
 func (channel *Channel) IsGlobalAccountPoolEnabled() bool {
 	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeGlobalAccountPool
 }

@@ -719,6 +719,21 @@ func channelAccountResponse(account *model.ChannelAccount, includeSensitive bool
 		"max_concurrency":     account.MaxConcurrency,
 		"created_time":        account.CreatedTime,
 	}
+	if metadata := upstreamaccount.ReadAccountSyncDisplayMetadata(account.OtherSettings); metadata.KeyGroupID != "" ||
+		metadata.KeyGroupName != "" ||
+		metadata.GroupRatio != nil ||
+		len(metadata.ModelRatios) > 0 ||
+		metadata.EffectiveRatio > 0 ||
+		metadata.RatioConversion > 0 ||
+		metadata.RatioConversionConfig != nil {
+		response["key_group_id"] = metadata.KeyGroupID
+		response["key_group_name"] = metadata.KeyGroupName
+		response["group_ratio"] = metadata.GroupRatio
+		response["model_ratios"] = metadata.ModelRatios
+		response["effective_ratio"] = metadata.EffectiveRatio
+		response["ratio_conversion"] = metadata.RatioConversion
+		response["ratio_conversion_config"] = metadata.RatioConversionConfig
+	}
 	if includeSensitive {
 		response["base_url"] = account.BaseURL
 		response["openai_organization"] = account.OpenAIOrganization

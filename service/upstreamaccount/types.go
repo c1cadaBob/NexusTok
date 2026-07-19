@@ -31,25 +31,28 @@ type Credential struct {
 // PreviewRequest 是预览接口的请求体。
 type PreviewRequest struct {
 	Credential
+	RatioConversion RatioConversionConfig `json:"ratio_conversion,omitempty"`
 }
 
 // Preview2FARequest 是补全上游平台二次验证后的预览请求体。
 type Preview2FARequest struct {
-	ChallengeID string `json:"challenge_id"`
-	Code        string `json:"code"`
+	ChallengeID     string                `json:"challenge_id"`
+	Code            string                `json:"code"`
+	RatioConversion RatioConversionConfig `json:"ratio_conversion,omitempty"`
 }
 
 // Snapshot 表示目标平台账号当前可见的密钥、分组、倍率和余额快照。
 type Snapshot struct {
-	Platform string           `json:"platform"`
-	BaseURL  string           `json:"base_url"`
-	User     *UserSnapshot    `json:"user,omitempty"`
-	Balance  *BalanceSnapshot `json:"balance,omitempty"`
-	Groups   []SyncedGroup    `json:"groups"`
-	Keys     []SyncedKey      `json:"keys"`
-	Rates    *RateSnapshot    `json:"rates,omitempty"`
-	Warnings []string         `json:"warnings,omitempty"`
-	Raw      map[string]any   `json:"raw,omitempty"`
+	Platform        string                   `json:"platform"`
+	BaseURL         string                   `json:"base_url"`
+	User            *UserSnapshot            `json:"user,omitempty"`
+	Balance         *BalanceSnapshot         `json:"balance,omitempty"`
+	Groups          []SyncedGroup            `json:"groups"`
+	Keys            []SyncedKey              `json:"keys"`
+	Rates           *RateSnapshot            `json:"rates,omitempty"`
+	RatioConversion *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
+	Warnings        []string                 `json:"warnings,omitempty"`
+	Raw             map[string]any           `json:"raw,omitempty"`
 }
 
 // UserSnapshot 表示目标平台当前登录用户的基础信息。
@@ -98,6 +101,8 @@ type SyncedKey struct {
 	Models            []string           `json:"models,omitempty"`
 	ModelRatios       map[string]float64 `json:"model_ratios,omitempty"`
 	GroupRatio        *float64           `json:"group_ratio,omitempty"`
+	EffectiveRatio    float64            `json:"effective_ratio,omitempty"`
+	RatioConversion   float64            `json:"ratio_conversion,omitempty"`
 	QuotaLimitUSD     *float64           `json:"quota_limit_usd,omitempty"`
 	QuotaUsedUSD      *float64           `json:"quota_used_usd,omitempty"`
 	QuotaRemainingUSD *float64           `json:"quota_remaining_usd,omitempty"`
@@ -176,9 +181,10 @@ func ApplySuggestions(snapshot *Snapshot) {
 		return
 	}
 	ApplySyncIDs(snapshot)
+	ApplyExistingRatioConversion(snapshot)
 	ratios := make([]float64, 0, len(snapshot.Keys))
 	for i := range snapshot.Keys {
-		ratio := effectiveKeyRatio(snapshot.Keys[i])
+		ratio := ConvertedKeyRatio(snapshot.Keys[i])
 		ratios = append(ratios, ratio)
 	}
 	uniqueRatios := make([]float64, 0, len(ratios))
@@ -196,7 +202,7 @@ func ApplySuggestions(snapshot *Snapshot) {
 		ratioRank[ratio] = int64(len(uniqueRatios) - index)
 	}
 	for i := range snapshot.Keys {
-		ratio := effectiveKeyRatio(snapshot.Keys[i])
+		ratio := ConvertedKeyRatio(snapshot.Keys[i])
 		snapshot.Keys[i].SuggestedPriority = ratioRank[ratio]
 		if ratio <= 0 {
 			snapshot.Keys[i].SuggestedWeight = 100
@@ -245,25 +251,4 @@ func ApplySyncIDs(snapshot *Snapshot) {
 		seen[baseID]++
 		snapshot.Keys[i].SyncID = id
 	}
-}
-
-func effectiveKeyRatio(key SyncedKey) float64 {
-	if key.GroupRatio != nil && *key.GroupRatio > 0 {
-		return *key.GroupRatio
-	}
-	if len(key.ModelRatios) > 0 {
-		var sum float64
-		var count float64
-		for _, ratio := range key.ModelRatios {
-			if ratio <= 0 {
-				continue
-			}
-			sum += ratio
-			count++
-		}
-		if count > 0 {
-			return sum / count
-		}
-	}
-	return 1
 }

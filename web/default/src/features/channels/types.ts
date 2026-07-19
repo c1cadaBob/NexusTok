@@ -253,6 +253,8 @@ export interface UpstreamAccountKey {
   models?: string[]
   model_ratios?: Record<string, number>
   group_ratio?: number
+  effective_ratio?: number
+  ratio_conversion?: number
   quota_limit_usd?: number
   quota_used_usd?: number
   quota_remaining_usd?: number
@@ -261,12 +263,19 @@ export interface UpstreamAccountKey {
   suggested_weight: number
 }
 
+export interface UpstreamAccountRatioConversion {
+  paid_cny?: number
+  platform_usd_credit?: number
+  enabled?: boolean
+}
+
 export interface UpstreamAccountSnapshot {
   platform: UpstreamAccountPlatform
   base_url: string
   balance?: UpstreamAccountBalanceSnapshot
   groups: UpstreamAccountGroup[]
   keys: UpstreamAccountKey[]
+  ratio_conversion?: UpstreamAccountRatioConversion
   warnings?: string[]
 }
 
@@ -276,6 +285,7 @@ export interface UpstreamAccountPreviewRequest {
   username?: string
   email?: string
   password: string
+  ratio_conversion?: UpstreamAccountRatioConversion
 }
 
 export interface UpstreamAccountPreviewData {
@@ -310,6 +320,7 @@ export interface UpstreamAccountPreviewResponse {
 export interface UpstreamAccountPreview2FARequest {
   challenge_id: string
   code: string
+  ratio_conversion?: UpstreamAccountRatioConversion
 }
 
 export interface UpstreamAccountPreview2FAResponse {
@@ -332,6 +343,7 @@ export interface UpstreamAccountCreateAccountConfig {
 export interface UpstreamAccountCreateRequest {
   preview_id: string
   apply_suggested: boolean
+  ratio_conversion?: UpstreamAccountRatioConversion
   channel: {
     name: string
     type: number
@@ -364,6 +376,7 @@ export interface UpstreamAccountRefreshRequest {
   password?: string
   apply_suggested: boolean
   disable_missing_key?: boolean
+  ratio_conversion?: UpstreamAccountRatioConversion
   accounts?: UpstreamAccountCreateAccountConfig[]
 }
 
@@ -451,6 +464,13 @@ export interface ChannelAccount {
   last_error: string
   max_concurrency: number
   created_time: number
+  key_group_id?: string
+  key_group_name?: string
+  group_ratio?: number | null
+  model_ratios?: Record<string, number>
+  effective_ratio?: number
+  ratio_conversion?: number
+  ratio_conversion_config?: UpstreamAccountRatioConversion | null
 }
 
 export interface ChannelAccountListResponse {

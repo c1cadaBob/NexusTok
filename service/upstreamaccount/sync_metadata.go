@@ -10,11 +10,33 @@ import (
 const upstreamAccountSyncMetadataKey = "upstream_account_sync"
 
 type syncMetadata struct {
-	Platform   string `json:"platform,omitempty"`
-	BaseURL    string `json:"base_url,omitempty"`
-	ExternalID string `json:"external_id,omitempty"`
-	KeyDigest  string `json:"key_digest,omitempty"`
-	SyncedAt   int64  `json:"synced_at,omitempty"`
+	Platform              string                   `json:"platform,omitempty"`
+	BaseURL               string                   `json:"base_url,omitempty"`
+	ExternalID            string                   `json:"external_id,omitempty"`
+	KeyDigest             string                   `json:"key_digest,omitempty"`
+	SyncedAt              int64                    `json:"synced_at,omitempty"`
+	GroupID               string                   `json:"group_id,omitempty"`
+	GroupName             string                   `json:"group_name,omitempty"`
+	GroupRatio            *float64                 `json:"group_ratio,omitempty"`
+	ModelRatios           map[string]float64       `json:"model_ratios,omitempty"`
+	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
+	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
+	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
+}
+
+// AccountSyncDisplayMetadata 是可返回给前端展示的同步账号元数据。
+//
+// 该结构体只包含上游密钥分组和倍率信息，不包含明文 key、key digest、external_id
+// 等可用于定位或恢复凭证的敏感身份字段。controller 的账号列表和详情响应可以直接
+// 展示这些字段，避免只读管理员为了查看同步成本信息而必须拥有敏感写权限。
+type AccountSyncDisplayMetadata struct {
+	KeyGroupID            string                   `json:"key_group_id,omitempty"`
+	KeyGroupName          string                   `json:"key_group_name,omitempty"`
+	GroupRatio            *float64                 `json:"group_ratio,omitempty"`
+	ModelRatios           map[string]float64       `json:"model_ratios,omitempty"`
+	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
+	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
+	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
 }
 
 func keyDigest(key string) string {
@@ -54,17 +76,41 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 		data = map[string]any{}
 	}
 	data[upstreamAccountSyncMetadataKey] = syncMetadata{
-		Platform:   snapshot.Platform,
-		BaseURL:    snapshot.BaseURL,
-		ExternalID: key.ExternalID,
-		KeyDigest:  keyDigest(key.Key),
-		SyncedAt:   common.GetTimestamp(),
+		Platform:              snapshot.Platform,
+		BaseURL:               snapshot.BaseURL,
+		ExternalID:            key.ExternalID,
+		KeyDigest:             keyDigest(key.Key),
+		SyncedAt:              common.GetTimestamp(),
+		GroupID:               strings.TrimSpace(key.GroupID),
+		GroupName:             strings.TrimSpace(key.GroupName),
+		GroupRatio:            key.GroupRatio,
+		ModelRatios:           cloneModelRatios(key.ModelRatios),
+		EffectiveRatio:        EffectiveKeyRatio(key),
+		RatioConversion:       ConvertedKeyRatio(key),
+		RatioConversionConfig: snapshot.RatioConversion,
 	}
 	bytes, err := common.Marshal(data)
 	if err != nil {
 		return existing
 	}
 	return string(bytes)
+}
+
+// ReadAccountSyncDisplayMetadata 从账号 settings 读取安全展示字段。
+func ReadAccountSyncDisplayMetadata(settings string) AccountSyncDisplayMetadata {
+	metadata := readAccountSyncMetadata(settings)
+	if metadata.Platform == "" && metadata.BaseURL == "" && metadata.ExternalID == "" && metadata.KeyDigest == "" {
+		return AccountSyncDisplayMetadata{}
+	}
+	return AccountSyncDisplayMetadata{
+		KeyGroupID:            metadata.GroupID,
+		KeyGroupName:          metadata.GroupName,
+		GroupRatio:            metadata.GroupRatio,
+		ModelRatios:           cloneModelRatios(metadata.ModelRatios),
+		EffectiveRatio:        metadata.EffectiveRatio,
+		RatioConversion:       metadata.RatioConversion,
+		RatioConversionConfig: metadata.RatioConversionConfig,
+	}
 }
 
 // PreserveAccountSyncMetadata 在账号本地 settings 被手动更新时保留同步身份。
@@ -147,4 +193,21 @@ func normalizeSyncMetadataBaseURL(platform string, raw string) string {
 		return strings.TrimRight(strings.TrimSpace(normalizeSub2APIBaseURL(trimmed)), "/")
 	}
 	return trimmed
+}
+
+func cloneModelRatios(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]float64, len(values))
+	for modelName, ratio := range values {
+		if strings.TrimSpace(modelName) == "" || ratio <= 0 {
+			continue
+		}
+		cloned[modelName] = ratio
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+	return cloned
 }

@@ -19,6 +19,7 @@ type RefreshRequest struct {
 	Accounts          []AccountCreateConfig `json:"accounts"`
 	ApplySuggested    bool                  `json:"apply_suggested"`
 	DisableMissingKey bool                  `json:"disable_missing_key"`
+	RatioConversion   RatioConversionConfig `json:"ratio_conversion,omitempty"`
 }
 
 // RefreshResult 表示刷新已有同步渠道后的变更统计。
@@ -45,6 +46,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 		if record.Snapshot == nil {
 			return nil, fmt.Errorf("预览快照为空，请重新同步")
 		}
+		applySnapshotRatioConversionForRequest(record.Snapshot, req.RatioConversion)
 		return RefreshChannelFromSnapshot(req.ChannelID, record.Snapshot, req)
 	}
 	req.Platform = NormalizePlatform(req.Platform)
@@ -65,6 +67,8 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	if err != nil {
 		return nil, err
 	}
+	ApplyRatioConversion(snapshot, req.RatioConversion)
+	ApplySuggestions(snapshot)
 	return RefreshChannelFromSnapshot(req.ChannelID, snapshot, req)
 }
 
@@ -73,6 +77,7 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	if snapshot == nil {
 		return nil, fmt.Errorf("上游账号快照为空")
 	}
+	applySnapshotRatioConversionForRequest(snapshot, req.RatioConversion)
 	ApplySyncIDs(snapshot)
 	result := &RefreshResult{ChannelID: channelID}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -93,9 +98,6 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			defaultModels = inferred
 		}
 		defaultGroup := strings.TrimSpace(channel.Group)
-		if inferred := inferGroupFromKeys(snapshot.Keys); inferred != "" {
-			defaultGroup = inferred
-		}
 		if defaultGroup == "" {
 			defaultGroup = "default"
 		}

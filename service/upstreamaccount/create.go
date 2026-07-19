@@ -17,6 +17,7 @@ type CreateRequest struct {
 	Accounts          []AccountCreateConfig `json:"accounts"`
 	ApplySuggested    bool                  `json:"apply_suggested"`
 	DisableMissingKey bool                  `json:"disable_missing_key"`
+	RatioConversion   RatioConversionConfig `json:"ratio_conversion,omitempty"`
 }
 
 // ChannelCreateConfig 是预览创建时允许用户配置的渠道字段。
@@ -79,6 +80,7 @@ func CreateFromPreview(req CreateRequest) (*CreateResult, error) {
 	if record.Snapshot == nil {
 		return nil, fmt.Errorf("预览快照为空，请重新同步")
 	}
+	applySnapshotRatioConversionForRequest(record.Snapshot, req.RatioConversion)
 	channel, accounts, err := buildChannelAndAccounts(record.Snapshot, req)
 	if err != nil {
 		return nil, err
@@ -125,9 +127,6 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		models = inferModelsFromKeys(snapshot.Keys)
 	}
 	group := strings.TrimSpace(req.Channel.Group)
-	if group == "" {
-		group = inferGroupFromKeys(snapshot.Keys)
-	}
 	if group == "" {
 		group = "default"
 	}
@@ -189,7 +188,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	// 渠道顶层 models/group 是路由能力表的来源，只能由最终启用的同步账号贡献。
 	// 如果把已跳过或已禁用的 key 也汇总进去，能力表会暴露实际没有可用账号的模型，
 	// 请求进入 Relay 后才因账号不可用而失败，造成“保存成功但调度异常”的误判。
-	models, group = summarizeEnabledAccountCapabilities(accounts, models, group)
+	models, group = summarizeEnabledAccountCapabilities(accounts, models, group, false)
 	channel.Models = models
 	channel.Group = group
 	return channel, accounts, nil
@@ -357,7 +356,7 @@ func inferGroupFromKeys(keys []SyncedKey) string {
 	return strings.Join(result, ",")
 }
 
-func summarizeEnabledAccountCapabilities(accounts []model.ChannelAccount, fallbackModels string, fallbackGroup string) (string, string) {
+func summarizeEnabledAccountCapabilities(accounts []model.ChannelAccount, fallbackModels string, fallbackGroup string, includeAccountGroups bool) (string, string) {
 	hasEnabledAccount := false
 	for _, account := range accounts {
 		if account.Status == common.ChannelStatusEnabled {
@@ -375,6 +374,9 @@ func summarizeEnabledAccountCapabilities(accounts []model.ChannelAccount, fallba
 		return account.Models
 	})
 	groups := uniqueAccountCSV(accounts, func(account model.ChannelAccount) string {
+		if !includeAccountGroups {
+			return ""
+		}
 		if account.Status != common.ChannelStatusEnabled {
 			return ""
 		}

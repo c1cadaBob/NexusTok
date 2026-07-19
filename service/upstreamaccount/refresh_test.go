@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -200,7 +201,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
 	require.Equal(t, "gpt-old,gpt-4o-mini", refreshed.Models)
-	require.Equal(t, "default,vip", refreshed.Group)
+	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*2), refreshed.UsedQuota)
 
@@ -209,12 +210,14 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Len(t, accounts, 3)
 	require.Equal(t, "Old Key Renamed", accounts[0].Name)
 	require.Equal(t, "sk-old-rotated", accounts[0].Key)
+	require.Equal(t, "default", accounts[0].Group)
 	require.Equal(t, int64(3), accounts[0].Priority)
 	require.Equal(t, 90, accounts[0].Weight)
 	require.Equal(t, int64(common.QuotaPerUnit), accounts[0].UsedQuota)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, accounts[1].Status)
 	require.Equal(t, "New Key", accounts[2].Name)
 	require.Equal(t, "sk-new", accounts[2].Key)
+	require.Equal(t, "vip", accounts[2].Group)
 
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
@@ -295,13 +298,21 @@ func TestRefreshChannelFromSnapshotSummarizesOnlyEnabledAccounts(t *testing.T) {
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
 	require.Equal(t, "gpt-enabled", refreshed.Models)
-	require.Equal(t, "enabled-group", refreshed.Group)
+	require.Equal(t, "old-group,disabled-group", refreshed.Group)
 
 	var abilities []model.Ability
 	require.NoError(t, db.Find(&abilities).Error)
-	require.Len(t, abilities, 1)
+	sort.Slice(abilities, func(i, j int) bool {
+		if abilities[i].Group == abilities[j].Group {
+			return abilities[i].Model < abilities[j].Model
+		}
+		return abilities[i].Group < abilities[j].Group
+	})
+	require.Len(t, abilities, 2)
 	require.Equal(t, "gpt-enabled", abilities[0].Model)
-	require.Equal(t, "enabled-group", abilities[0].Group)
+	require.Equal(t, "disabled-group", abilities[0].Group)
+	require.Equal(t, "gpt-enabled", abilities[1].Model)
+	require.Equal(t, "old-group", abilities[1].Group)
 }
 
 func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) {

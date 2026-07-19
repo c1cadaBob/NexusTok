@@ -26,11 +26,11 @@ var (
 	// ErrNoAvailableChannelAccount 表示渠道账号池中没有可用的账号。
 	ErrNoAvailableChannelAccount = errors.New("该渠道账号池无可用账号")
 
-	channelAccountCursorMu sync.Mutex          // 游标映射表的互斥锁
+	channelAccountCursorMu sync.Mutex            // 游标映射表的互斥锁
 	channelAccountCursors  = map[string]uint64{} // 轮询游标映射表
 
 	channelAccountConcurrencyMu sync.Mutex      // 并发计数映射表的互斥锁
-	channelAccountConcurrency   = map[int]int{}  // 账号并发计数映射表
+	channelAccountConcurrency   = map[int]int{} // 账号并发计数映射表
 )
 
 // SelectChannelAccount 从渠道账号池中选择一个可用账号。
@@ -337,14 +337,19 @@ func channelAccountSupportsModel(account *model.ChannelAccount, channel *model.C
 }
 
 // channelAccountSupportsGroup 检查渠道账号是否属于指定的使用分组。
-// 优先使用账号级别的分组，其次使用渠道级别的分组。
-// 空列表或通配符 "*" 表示属于所有分组。
+//
+// 历史账号池渠道中，ChannelAccount.group 表示 NexusTok 用户分组，可以优先于渠道
+// 分组做精细过滤。上游账号同步渠道中，同一字段改为上游密钥分组，只用于展示和成本
+// 区分；此时必须只按 Channel.group 判断用户可用分组，否则下游用户会被上游 key 的
+// 分组名称错误拦截，导致同步渠道无法按渠道分组正常路由。
 func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.Channel, usingGroup string) bool {
 	if strings.TrimSpace(usingGroup) == "" {
 		return true
 	}
 	group := account.Group
-	if strings.TrimSpace(group) == "" && channel != nil {
+	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
+		group = channel.Group
+	} else if strings.TrimSpace(group) == "" && channel != nil {
 		group = channel.Group
 	}
 	groups := splitCommaValues(group)
