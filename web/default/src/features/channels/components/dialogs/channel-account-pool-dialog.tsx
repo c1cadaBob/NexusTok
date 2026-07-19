@@ -71,6 +71,12 @@ import {
 import { CHANNEL_STATUS } from '../../constants'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { channelsQueryKeys, formatTimestamp } from '../../lib'
+import {
+  formatUpstreamModelRatioDetails,
+  formatUpstreamRatioCompact,
+  getUpstreamKeyGroupLabel,
+  getUpstreamRatioDisplayValue,
+} from '../../lib/upstream-sync'
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
 import { useChannels } from '../channels-provider'
 
@@ -680,14 +686,19 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             )}
 
             <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-              <Table className='min-w-[1180px]'>
+              <Table className='min-w-[1320px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead className='min-w-[160px]'>{t('Name')}</TableHead>
                     <TableHead className='min-w-[170px]'>{t('Key')}</TableHead>
                     <TableHead className='min-w-[120px]'>{t('Status')}</TableHead>
                     <TableHead className='min-w-[260px]'>{t('Models')}</TableHead>
-                    <TableHead className='min-w-[130px]'>{t('Group')}</TableHead>
+                    <TableHead className='min-w-[150px]'>
+                      {t('Key Group')}
+                    </TableHead>
+                    <TableHead className='min-w-[120px]'>
+                      {t('Ratio Conversion')}
+                    </TableHead>
                     <TableHead className='min-w-[86px]'>{t('Priority')}</TableHead>
                     <TableHead className='min-w-[86px]'>{t('Weight')}</TableHead>
                     <TableHead className='min-w-[140px]'>{t('Cooldown')}</TableHead>
@@ -724,6 +735,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   ) : (
                     accounts.map((account) => {
                       const status = statusLabel(account, nowSeconds)
+                      const ratioValue = getUpstreamRatioDisplayValue(account)
+                      const ratioDetails = formatUpstreamModelRatioDetails(
+                        account.model_ratios
+                      )
                       return (
                         <TableRow key={account.id}>
                           <TableCell className='max-w-[220px] min-w-[160px] truncate font-medium'>
@@ -747,9 +762,17 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                           </TableCell>
                           <TableCell
                             className='max-w-[220px] min-w-[130px] truncate'
-                            title={account.group || t('Inherited')}
+                            title={getUpstreamKeyGroupLabel(account) || t('Inherited')}
                           >
-                            {account.group || t('Inherited')}
+                            {getUpstreamKeyGroupLabel(account) || t('Inherited')}
+                          </TableCell>
+                          <TableCell
+                            className='min-w-[120px] font-mono text-xs'
+                            title={ratioDetails || undefined}
+                          >
+                            {ratioValue != null
+                              ? `${formatUpstreamRatioCompact(ratioValue)}x`
+                              : '-'}
                           </TableCell>
                           <TableCell className='min-w-[86px]'>
                             {account.priority}

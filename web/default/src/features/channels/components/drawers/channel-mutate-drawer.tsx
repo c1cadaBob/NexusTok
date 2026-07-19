@@ -136,6 +136,7 @@ import {
   previewUpstreamAccount,
   refreshUpstreamAccountChannel,
   refreshCodexCredential,
+  updateChannel,
   updateChannelAccount,
   updateChannelAccountStatus,
 } from '../../api'
@@ -151,6 +152,7 @@ import {
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
 import {
+  buildAllowedChannelUpdatePayload,
   hasDirtySensitiveChannelFormFields,
   useChannelMutateForm,
 } from '../../hooks/use-channel-mutate-form'
@@ -180,16 +182,24 @@ import {
   summarizeModelSearchCandidates,
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
+  transformFormDataToUpdatePayload,
 } from '../../lib'
 import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
+import {
+  formatUpstreamModelRatioDetails,
+  formatUpstreamRatioCompact,
+  getUpstreamKeyGroupLabel,
+  getUpstreamRatioDisplayValue,
+} from '../../lib/upstream-sync'
 import type {
   Channel,
   ChannelAccount,
   UpstreamAccountKey,
   UpstreamAccountPreviewData,
+  UpstreamAccountRatioConversion,
   UpstreamAccountTwoFactorChallenge,
   UpstreamAccountPlatform,
   UpstreamAccountSnapshot,
@@ -264,6 +274,48 @@ type CredentialSourceMode = 'manual' | 'upstream_account'
 
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
+
+function parsePositiveNumber(value: string): number | undefined {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
+function buildUpstreamRatioConversionPayload(
+  paidCny: string,
+  platformUsdCredit: string
+): UpstreamAccountRatioConversion | undefined {
+  const normalizedPaidCny = parsePositiveNumber(paidCny)
+  const normalizedPlatformUsdCredit = parsePositiveNumber(platformUsdCredit)
+  if (!normalizedPaidCny || !normalizedPlatformUsdCredit) {
+    return undefined
+  }
+  return {
+    paid_cny: normalizedPaidCny,
+    platform_usd_credit: normalizedPlatformUsdCredit,
+  }
+}
+
+export function resolveUpstreamChannelGroup(groups: string[] | undefined) {
+  return formatGroups(groups || []) || 'default'
+}
+
+function setUpstreamRatioConversionState(
+  config: UpstreamAccountRatioConversion | null | undefined,
+  setPaidCny: (value: string) => void,
+  setPlatformUsdCredit: (value: string) => void
+) {
+  setPaidCny(
+    config?.paid_cny && Number.isFinite(config.paid_cny)
+      ? String(config.paid_cny)
+      : ''
+  )
+  setPlatformUsdCredit(
+    config?.platform_usd_credit && Number.isFinite(config.platform_usd_credit)
+      ? String(config.platform_usd_credit)
+      : ''
+  )
+}
 
 export function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
   return key.sync_id || key.external_id || key.masked_key || `${index}`
@@ -375,18 +427,6 @@ function upstreamModelsToString(keys: UpstreamAccountKey[]) {
     })
   })
   return models.join(',')
-}
-
-function upstreamGroupsToString(keys: UpstreamAccountKey[]) {
-  const seen = new Set<string>()
-  const groups: string[] = []
-  keys.forEach((key) => {
-    const group = (key.group_name || key.group_id || '').trim()
-    if (!group || seen.has(group)) return
-    seen.add(group)
-    groups.push(group)
-  })
-  return groups.join(',')
 }
 
 function upstreamAccountConfigTextValue(
@@ -503,9 +543,13 @@ export function upstreamAccountFromChannelAccount(
     masked_key: account.key,
     status: account.status,
     account_status: account.status,
-    group_name: account.group,
-    group_id: account.group,
+    group_name: account.key_group_name || account.group,
+    group_id: account.key_group_id || account.group,
     models: parseModelsString(account.models || ''),
+    model_ratios: account.model_ratios,
+    group_ratio: account.group_ratio ?? undefined,
+    effective_ratio: account.effective_ratio,
+    ratio_conversion: account.ratio_conversion,
     suggested_priority: account.priority || 0,
     suggested_weight: account.weight || 0,
   }
@@ -1021,6 +1065,8 @@ export function ChannelMutateDrawer({
   const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
   const [upstreamUsername, setUpstreamUsername] = useState('')
   const [upstreamPassword, setUpstreamPassword] = useState('')
+  const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
+  const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] = useState('')
   const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
   const [upstreamPreviewExpiresAt, setUpstreamPreviewExpiresAt] = useState(0)
   const [upstreamSnapshot, setUpstreamSnapshot] =
@@ -1046,6 +1092,14 @@ export function ChannelMutateDrawer({
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
+  const upstreamRatioConversion = useMemo(
+    () =>
+      buildUpstreamRatioConversionPayload(
+        upstreamPaidCny,
+        upstreamPlatformUsdCredit
+      ),
+    [upstreamPaidCny, upstreamPlatformUsdCredit]
+  )
   const [isSavingSyncedAccountConfigs, setIsSavingSyncedAccountConfigs] =
     useState(false)
   const initialModelsRef = useRef<string[]>([])
@@ -1267,6 +1321,12 @@ export function ChannelMutateDrawer({
         shouldDirty: true,
         shouldValidate: true,
       })
+      if (checked && !(form.getValues('group') || []).length) {
+        form.setValue('group', ['default'], {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+      }
       if (!checked) {
         clearAllUpstreamPreviews()
       }
@@ -1386,16 +1446,13 @@ export function ChannelMutateDrawer({
     channelData?.data ?? renderCurrentRow
   )
   const isUpstreamAccountSyncedChannel =
-    isEditing &&
-    (hasUpstreamAccountSyncMetadata ||
-      (renderCurrentRow?.channel_info?.credential_mode === 'account_pool' &&
-        renderCurrentRow?.channel_info?.account_pool_enabled === true))
+    isEditing && hasUpstreamAccountSyncMetadata
   const isCreateUpstreamSyncMode = !isEditing && upstreamSyncEnabled
   const usesUpstreamAccountCredentialSource =
     isCreateUpstreamSyncMode || isUpstreamAccountSyncedChannel
-  // 账号密码同步模式下，密钥级模型和分组才是主配置面；隐藏渠道级共享面板，
-  // 避免管理员误以为还需要同时维护统一模型/分组和逐密钥模型/分组两套配置。
-  const showSharedModelsSection = !usesUpstreamAccountCredentialSource
+  // 同步模式下渠道模型由逐 key 配置主导，但渠道分组仍然决定 NexusTok 用户可见性，
+  // 因此保留该区块，仅隐藏共享模型编辑能力。
+  const showSharedModelsSection = true
   const showManualCredentialSection = !usesUpstreamAccountCredentialSource
   const supportsMultiKeyAddMode =
     currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
@@ -1415,8 +1472,13 @@ export function ChannelMutateDrawer({
       isUpstreamAccountSyncedChannel &&
       permissions.canReadChannelAccount,
   })
-  const syncedChannelAccounts =
-    syncedChannelAccountsQuery.data?.data?.accounts.items ?? []
+  // 创建渠道时查询不会启用，这里必须给空列表一个稳定引用。
+  // 否则 `undefined ?? []` 会在每次渲染时生成新数组，触发依赖它的 useEffect
+  // 反复执行 `form.reset`，最终让创建抽屉进入 React 最大更新深度错误。
+  const syncedChannelAccounts = useMemo(
+    () => syncedChannelAccountsQuery.data?.data?.accounts.items ?? [],
+    [syncedChannelAccountsQuery.data?.data?.accounts.items]
+  )
   const syncedChannelAccountsTotal =
     syncedChannelAccountsQuery.data?.data?.accounts.total ?? 0
   const syncedChannelAccountsLoadedCount = syncedChannelAccounts.length
@@ -1649,7 +1711,7 @@ export function ChannelMutateDrawer({
                 </span>
                 <span className='text-muted-foreground text-xs'>
                   {t(
-                    'Lower upstream rates get higher priority and weight by default.'
+                    'Lower ratio conversion gets higher priority and weight by default.'
                   )}
                 </span>
               </div>
@@ -1682,10 +1744,11 @@ export function ChannelMutateDrawer({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] gap-2 border-b px-3 py-2 text-xs font-medium'>
+                <div className='grid min-w-[74rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
                   <span>{t('Key')}</span>
                   <span>{t('Models')}</span>
-                  <span>{t('Group')}</span>
+                  <span>{t('Key Group')}</span>
+                  <span>{t('Ratio Conversion')}</span>
                   <span>{t('Priority')}</span>
                   <span>{t('Weight')}</span>
                   <span>{t('Enabled')}</span>
@@ -1709,10 +1772,26 @@ export function ChannelMutateDrawer({
                     config?.priority ?? key.suggested_priority ?? 0
                   const currentWeightValue =
                     config?.weight ?? key.suggested_weight ?? 0
+                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
+                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
+                  const modelRatioDetails = formatUpstreamModelRatioDetails(
+                    key.model_ratios
+                  )
+                  const ratioTitle = [
+                    key.ratio_conversion != null
+                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
+                      : '',
+                    key.effective_ratio != null
+                      ? `${t('Upstream Ratio')}: ${formatUpstreamRatioCompact(key.effective_ratio)}x`
+                      : '',
+                    modelRatioDetails,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
                   return (
                     <div
                       key={configId}
-                      className='grid min-w-[62rem] grid-cols-[minmax(0,1.35fr)_minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_5rem_5rem_4rem] items-center gap-2 border-b px-3 py-2 last:border-b-0'
+                      className='grid min-w-[74rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
                     >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
@@ -1748,7 +1827,9 @@ export function ChannelMutateDrawer({
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input
                           value={currentGroupValue}
-                          placeholder={t('Group inherited from channel if empty')}
+                          placeholder={t(
+                            'Key group inherited from upstream if empty'
+                          )}
                           onChange={(event) =>
                             setUpstreamAccountConfigs((prev) => ({
                               ...prev,
@@ -1768,13 +1849,34 @@ export function ChannelMutateDrawer({
                             }))
                           }
                         />
-                        {key.group_ratio !== undefined && (
-                          <Badge variant='secondary' className='w-fit'>
-                            {t('Group: {{ratio}}x', {
-                              ratio: key.group_ratio,
-                            })}
-                          </Badge>
-                        )}
+                        <span
+                          className='text-muted-foreground truncate text-[11px]'
+                          title={currentKeyGroupLabel || undefined}
+                        >
+                          {currentKeyGroupLabel || t('Inherited')}
+                        </span>
+                      </div>
+                      <div
+                        className='flex min-w-0 flex-col gap-1'
+                        title={ratioTitle || undefined}
+                      >
+                        <span className='font-mono text-xs'>
+                          {displayedRatioValue != null
+                            ? `${formatUpstreamRatioCompact(displayedRatioValue)}x`
+                            : '-'}
+                        </span>
+                        {key.ratio_conversion != null &&
+                          key.effective_ratio != null &&
+                          Math.abs(key.ratio_conversion - key.effective_ratio) >
+                            Number.EPSILON && (
+                            <span className='text-muted-foreground truncate text-[11px]'>
+                              {t('Upstream Ratio')}:{' '}
+                              {formatUpstreamRatioCompact(
+                                key.effective_ratio
+                              )}
+                              x
+                            </span>
+                          )}
                       </div>
                       <Input
                         type='number'
@@ -2297,6 +2399,13 @@ export function ChannelMutateDrawer({
           channelData.data.base_url ||
           ''
       )
+      setUpstreamUsername('')
+      setUpstreamPassword('')
+      setUpstreamRatioConversionState(
+        syncedChannelAccounts[0]?.ratio_conversion_config,
+        setUpstreamPaidCny,
+        setUpstreamPlatformUsdCredit
+      )
       setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
@@ -2312,13 +2421,23 @@ export function ChannelMutateDrawer({
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       clearAllUpstreamPreviews()
       setUpstreamBaseUrl('')
+      setUpstreamUsername('')
+      setUpstreamPassword('')
+      setUpstreamPaidCny('')
+      setUpstreamPlatformUsdCredit('')
       setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [clearAllUpstreamPreviews, isEditing, channelData, form])
+  }, [
+    clearAllUpstreamPreviews,
+    isEditing,
+    channelData,
+    form,
+    syncedChannelAccounts,
+  ])
 
   useEffect(() => {
     if (
@@ -2337,6 +2456,34 @@ export function ChannelMutateDrawer({
     syncedChannelAccounts,
     upstreamRefreshSnapshot,
     upstreamAccountConfigs,
+  ])
+
+  useEffect(() => {
+    if (
+      !isUpstreamAccountSyncedChannel ||
+      upstreamRefreshSnapshot ||
+      upstreamSnapshot ||
+      upstreamPaidCny.trim() ||
+      upstreamPlatformUsdCredit.trim()
+    ) {
+      return
+    }
+    const ratioConfig = syncedChannelAccounts.find(
+      (account) => account.ratio_conversion_config
+    )?.ratio_conversion_config
+    if (!ratioConfig) return
+    setUpstreamRatioConversionState(
+      ratioConfig,
+      setUpstreamPaidCny,
+      setUpstreamPlatformUsdCredit
+    )
+  }, [
+    isUpstreamAccountSyncedChannel,
+    syncedChannelAccounts,
+    upstreamPaidCny,
+    upstreamPlatformUsdCredit,
+    upstreamRefreshSnapshot,
+    upstreamSnapshot,
   ])
 
   // 渠道类型变化时补充类型默认值；编辑模式不自动覆盖已有渠道配置。
@@ -2662,6 +2809,11 @@ export function ChannelMutateDrawer({
       setUpstreamAccountConfigs((prev) =>
         buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
       )
+      setUpstreamRatioConversionState(
+        data.snapshot.ratio_conversion,
+        setUpstreamPaidCny,
+        setUpstreamPlatformUsdCredit
+      )
 
       if (mode === 'create') {
         const models = upstreamModelsToString(data.snapshot.keys)
@@ -2671,14 +2823,8 @@ export function ChannelMutateDrawer({
             shouldValidate: true,
           })
         }
-        const groups = upstreamGroupsToString(data.snapshot.keys)
-        if (groups) {
-          form.setValue('group', groups.split(',').filter(Boolean), {
-            shouldDirty: true,
-            shouldValidate: true,
-          })
-        } else {
-          form.setValue('group', [], {
+        if (!(form.getValues('group') || []).length) {
+          form.setValue('group', ['default'], {
             shouldDirty: true,
             shouldValidate: true,
           })
@@ -2753,6 +2899,7 @@ export function ChannelMutateDrawer({
       username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
       email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
       password: upstreamPassword,
+      ratio_conversion: upstreamRatioConversion,
     })
     if (!res.success || !res.data) {
       toast.error(res.message || t('Failed to sync upstream account'))
@@ -2778,6 +2925,7 @@ export function ChannelMutateDrawer({
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
+    upstreamRatioConversion,
     upstreamUsername,
   ])
 
@@ -2986,6 +3134,34 @@ export function ChannelMutateDrawer({
 
       setIsSavingSyncedAccountConfigs(true)
       try {
+        const aggregatedChannelModels = upstreamAccountValuesToString(
+          syncedEditableAccounts,
+          upstreamAccountConfigs,
+          upstreamAccountModelsValue
+        )
+        const normalizedData: ChannelFormValues = {
+          ..._data,
+          models: aggregatedChannelModels,
+          group: _data.group?.length ? _data.group : ['default'],
+        }
+        const channelPayload = transformFormDataToUpdatePayload(
+          normalizedData,
+          channelId
+        )
+        const allowedChannelPayload = buildAllowedChannelUpdatePayload({
+          payload: channelPayload,
+          canEditSensitiveFields,
+          isMultiKeyChannel,
+          keyMode: normalizedData.key_mode,
+        })
+        const channelResponse = await updateChannel(
+          channelId,
+          allowedChannelPayload
+        )
+        if (!channelResponse.success) {
+          throw new Error(channelResponse.message || t('Operation failed'))
+        }
+
         let updated = 0
         let statusUpdated = 0
         for (let index = 0; index < syncedEditableAccounts.length; index += 1) {
@@ -3066,8 +3242,10 @@ export function ChannelMutateDrawer({
     },
     [
       canEditBasicFields,
+      canEditSensitiveFields,
       channelId,
       handleSuccess,
+      isMultiKeyChannel,
       noPermissionMessage,
       permissions.canOperateChannelAccount,
       permissions.canWriteChannelAccount,
@@ -3104,6 +3282,7 @@ export function ChannelMutateDrawer({
         preview_id: upstreamRefreshPreviewId,
         apply_suggested: upstreamApplySuggested,
         disable_missing_key: true,
+        ratio_conversion: upstreamRatioConversion,
         accounts: buildUpstreamAccountPayloads(
           upstreamRefreshSnapshot.keys,
           upstreamAccountConfigs,
@@ -3121,6 +3300,7 @@ export function ChannelMutateDrawer({
     upstreamRefreshPreviewId,
     upstreamRefreshSnapshot,
     upstreamRefreshMutation,
+    upstreamRatioConversion,
     clearUpstreamRefreshPreview,
     isUpstreamRefreshPreviewExpired,
     showUpstreamPreviewExpiredToast,
@@ -3146,6 +3326,7 @@ export function ChannelMutateDrawer({
       username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
       email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
       password: upstreamPassword,
+      ratio_conversion: upstreamRatioConversion,
     })
     if (!res.success || !res.data) {
       toast.error(res.message || t('Failed to sync upstream account'))
@@ -3171,6 +3352,7 @@ export function ChannelMutateDrawer({
     upstreamPassword,
     upstreamPlatform,
     upstreamPreviewMutation,
+    upstreamRatioConversion,
     upstreamUsername,
   ])
 
@@ -3212,6 +3394,7 @@ export function ChannelMutateDrawer({
       const res = await upstreamPreview2FAMutation.mutateAsync({
         challenge_id: challenge.challenge_id,
         code,
+        ratio_conversion: upstreamRatioConversion,
       })
       if (!res.success || !res.data) {
         toast.error(res.message || t('Failed to verify upstream 2FA code'))
@@ -3232,6 +3415,7 @@ export function ChannelMutateDrawer({
       isUpstreamRefreshTwoFactorExpired,
       isUpstreamTwoFactorExpired,
       t,
+      upstreamRatioConversion,
       upstreamPreview2FAMutation,
       upstreamRefreshTwoFactorChallenge,
       upstreamRefreshTwoFactorCode,
@@ -3426,15 +3610,11 @@ export function ChannelMutateDrawer({
             upstreamAccountConfigs,
             upstreamAccountModelsValue
           ) || data.models
-        const upstreamChannelGroup =
-          upstreamAccountValuesToString(
-            upstreamSnapshot.keys,
-            upstreamAccountConfigs,
-            upstreamAccountGroupValue
-          ) || formatGroups(data.group || [])
+        const upstreamChannelGroup = resolveUpstreamChannelGroup(data.group)
         await upstreamCreateMutation.mutateAsync({
           preview_id: upstreamPreviewId,
           apply_suggested: upstreamApplySuggested,
+          ratio_conversion: upstreamRatioConversion,
           channel: {
             name: data.name,
             type: data.type,
@@ -3453,7 +3633,7 @@ export function ChannelMutateDrawer({
             upstreamAccountConfigs,
             upstreamApplySuggested,
             upstreamChannelModels,
-            upstreamChannelGroup
+            ''
           ),
         })
         return
@@ -3568,6 +3748,7 @@ export function ChannelMutateDrawer({
       upstreamAccountConfigs,
       upstreamApplySuggested,
       upstreamCreateMutation,
+      upstreamRatioConversion,
       clearUpstreamCreatePreview,
       isCreateUpstreamSyncMode,
       isUpstreamAccountSyncedChannel,
@@ -3596,6 +3777,8 @@ export function ChannelMutateDrawer({
         setUpstreamBaseUrl('')
         setUpstreamUsername('')
         setUpstreamPassword('')
+        setUpstreamPaidCny('')
+        setUpstreamPlatformUsdCredit('')
         clearAllUpstreamPreviews()
         upstreamCredentialFingerprintRef.current = ''
       }
@@ -3709,7 +3892,11 @@ export function ChannelMutateDrawer({
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+        <SheetContent
+          className={sideDrawerContentClassName(
+            'sm:max-w-[96vw] xl:max-w-[1700px]'
+          )}
+        >
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
@@ -4020,7 +4207,7 @@ export function ChannelMutateDrawer({
 
                             {upstreamSyncEnabled && (
                               <>
-                                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-5'>
+                                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-7'>
                                   <div className='flex flex-col gap-2'>
                                     <Label htmlFor='upstream-sync-platform'>
                                       {t('Upstream Platform')}
@@ -4099,6 +4286,36 @@ export function ChannelMutateDrawer({
                                       placeholder={t('Password')}
                                     />
                                   </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <Label htmlFor='upstream-sync-paid-cny'>
+                                      {t('Paid CNY')}
+                                    </Label>
+                                    <Input
+                                      id='upstream-sync-paid-cny'
+                                      value={upstreamPaidCny}
+                                      onChange={(event) =>
+                                        setUpstreamPaidCny(event.target.value)
+                                      }
+                                      inputMode='decimal'
+                                      placeholder='1'
+                                    />
+                                  </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <Label htmlFor='upstream-sync-platform-usd-credit'>
+                                      {t('Platform USD Credit')}
+                                    </Label>
+                                    <Input
+                                      id='upstream-sync-platform-usd-credit'
+                                      value={upstreamPlatformUsdCredit}
+                                      onChange={(event) =>
+                                        setUpstreamPlatformUsdCredit(
+                                          event.target.value
+                                        )
+                                      }
+                                      inputMode='decimal'
+                                      placeholder='20'
+                                    />
+                                  </div>
                                   <div className='flex items-end'>
                                     <Button
                                       type='button'
@@ -4123,6 +4340,11 @@ export function ChannelMutateDrawer({
                                     </Button>
                                   </div>
                                 </div>
+                                <p className='text-muted-foreground text-xs'>
+                                  {t(
+                                    'Used to calculate the actual cost ratio for synced keys. Leave both empty to use the upstream ratio directly.'
+                                  )}
+                                </p>
 
                                 {upstreamTwoFactorChallenge &&
                                   renderUpstreamTwoFactorChallenge(
@@ -4257,7 +4479,7 @@ export function ChannelMutateDrawer({
                           </CollapsibleTrigger>
                           <CollapsibleContent className='border-border/60 border-t px-4 py-4'>
                             <div className='flex flex-col gap-4'>
-                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-5'>
+                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-7'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-platform'>
                                     {t('Upstream Platform')}
@@ -4334,6 +4556,36 @@ export function ChannelMutateDrawer({
                                     placeholder={t('Password')}
                                   />
                                 </div>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-paid-cny'>
+                                    {t('Paid CNY')}
+                                  </Label>
+                                  <Input
+                                    id='upstream-refresh-paid-cny'
+                                    value={upstreamPaidCny}
+                                    onChange={(event) =>
+                                      setUpstreamPaidCny(event.target.value)
+                                    }
+                                    inputMode='decimal'
+                                    placeholder='1'
+                                  />
+                                </div>
+                                <div className='flex flex-col gap-2'>
+                                  <Label htmlFor='upstream-refresh-platform-usd-credit'>
+                                    {t('Platform USD Credit')}
+                                  </Label>
+                                  <Input
+                                    id='upstream-refresh-platform-usd-credit'
+                                    value={upstreamPlatformUsdCredit}
+                                    onChange={(event) =>
+                                      setUpstreamPlatformUsdCredit(
+                                        event.target.value
+                                      )
+                                    }
+                                    inputMode='decimal'
+                                    placeholder='20'
+                                  />
+                                </div>
                                 <div className='flex flex-col justify-end gap-2'>
                                   <Button
                                     type='button'
@@ -4378,6 +4630,11 @@ export function ChannelMutateDrawer({
                                   </Button>
                                 </div>
                               </div>
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Used to calculate the actual cost ratio for synced keys. Leave both empty to use the upstream ratio directly.'
+                                )}
+                              </p>
 
                               <Alert>
                                 <AlertCircle aria-hidden='true' />
@@ -5925,10 +6182,16 @@ export function ChannelMutateDrawer({
                                   <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
                                     <div className='flex flex-col gap-1'>
                                       <FormLabel htmlFor='channel-models'>
-                                        {t('Models *')}
+                                        {usesUpstreamAccountCredentialSource
+                                          ? t('Aggregated Models')
+                                          : t('Models *')}
                                       </FormLabel>
                                       <FormDescription>
-                                        {t(FIELD_DESCRIPTIONS.MODELS)}
+                                        {usesUpstreamAccountCredentialSource
+                                          ? t(
+                                              'Derived from enabled synced keys. Edit per-key models in synced key configuration.'
+                                            )
+                                          : t(FIELD_DESCRIPTIONS.MODELS)}
                                       </FormDescription>
                                     </div>
                                     <div className='flex flex-wrap gap-2'>
@@ -5956,7 +6219,10 @@ export function ChannelMutateDrawer({
                                       createLabel='Add custom model "{{value}}"'
                                       maxVisibleChips={8}
                                       copyChipOnClick
-                                      disabled={!canEditBasicFields}
+                                      disabled={
+                                        !canEditBasicFields ||
+                                        usesUpstreamAccountCredentialSource
+                                      }
                                       isLoading={modelSearchIsLoading}
                                       emptyText={t('No matching models')}
                                       loadingText={t('Searching...')}
@@ -6150,7 +6416,9 @@ export function ChannelMutateDrawer({
                                   size='sm'
                                   onClick={handleFillRelatedModels}
                                   disabled={
-                                    !canEditBasicFields || !basicModels.length
+                                    !canEditBasicFields ||
+                                    usesUpstreamAccountCredentialSource ||
+                                    !basicModels.length
                                   }
                                   title={
                                     canEditBasicFields
@@ -6167,7 +6435,9 @@ export function ChannelMutateDrawer({
                                   size='sm'
                                   onClick={handleFillAllModels}
                                   disabled={
-                                    !canEditBasicFields || !allModelsList.length
+                                    !canEditBasicFields ||
+                                    usesUpstreamAccountCredentialSource ||
+                                    !allModelsList.length
                                   }
                                   title={
                                     canEditBasicFields
@@ -6187,7 +6457,8 @@ export function ChannelMutateDrawer({
                                       onClick={handleFetchModels}
                                       disabled={
                                         !permissions.canOperate ||
-                                        !canEditBasicFields
+                                        !canEditBasicFields ||
+                                        usesUpstreamAccountCredentialSource
                                       }
                                       title={
                                         permissions.canOperate &&
@@ -6217,6 +6488,7 @@ export function ChannelMutateDrawer({
                                   onClick={handleClearModels}
                                   disabled={
                                     !canEditBasicFields ||
+                                    usesUpstreamAccountCredentialSource ||
                                     currentModelsArray.length === 0
                                   }
                                   title={

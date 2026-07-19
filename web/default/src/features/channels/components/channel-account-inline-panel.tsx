@@ -36,6 +36,12 @@ import { TruncatedText } from '@/components/truncated-text'
 import { getChannelAccounts } from '../api'
 import { CHANNEL_STATUS } from '../constants'
 import { channelsQueryKeys, formatTimestamp } from '../lib'
+import {
+  formatUpstreamModelRatioDetails,
+  formatUpstreamRatioCompact,
+  getUpstreamKeyGroupLabel,
+  getUpstreamRatioDisplayValue,
+} from '../lib/upstream-sync'
 import type { Channel, ChannelAccount } from '../types'
 
 const INLINE_ACCOUNT_PAGE_SIZE = 50
@@ -184,7 +190,8 @@ export function ChannelAccountInlinePanel({
               <TableHead>{t('Key')}</TableHead>
               <TableHead>{t('Status')}</TableHead>
               <TableHead>{t('Models')}</TableHead>
-              <TableHead>{t('Group')}</TableHead>
+              <TableHead>{t('Key Group')}</TableHead>
+              <TableHead>{t('Ratio Conversion')}</TableHead>
               <TableHead>{t('Priority')}</TableHead>
               <TableHead>{t('Weight')}</TableHead>
               <TableHead>{t('Used')}</TableHead>
@@ -200,6 +207,10 @@ export function ChannelAccountInlinePanel({
                 digitsSmall: 4,
                 abbreviate: true,
               })
+              const ratioValue = getUpstreamRatioDisplayValue(account)
+              const ratioDetails = formatUpstreamModelRatioDetails(
+                account.model_ratios
+              )
 
               return (
                 <TableRow key={account.id}>
@@ -252,7 +263,18 @@ export function ChannelAccountInlinePanel({
                   </TableCell>
                   <TableCell>
                     <span className='text-xs'>
-                      {maskedText ?? (account.group || '-')}
+                      {maskedText ?? (getUpstreamKeyGroupLabel(account) || '-')}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className='font-mono text-xs'
+                      title={ratioDetails || undefined}
+                    >
+                      {maskedText ??
+                        (ratioValue != null
+                          ? `${formatUpstreamRatioCompact(ratioValue)}x`
+                          : '-')}
                     </span>
                   </TableCell>
                   <TableCell>

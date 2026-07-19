@@ -23,6 +23,7 @@ import {
   buildUpstreamAccountConfigsFromChannelAccounts,
   buildUpstreamAccountConfigsFromSnapshotKeys,
   getUpstreamAccountConfig,
+  resolveUpstreamChannelGroup,
   upstreamAccountFromChannelAccount,
   upstreamAccountValuesToString,
 } from './channel-mutate-drawer'
@@ -75,11 +76,18 @@ function makeSnapshotKey(
 
 describe('上游同步渠道本地配置索引', () => {
   test('已同步账号使用上游 external_id 作为本地配置标识', () => {
-    const editable = upstreamAccountFromChannelAccount(makeChannelAccount())
+    const editable = upstreamAccountFromChannelAccount(
+      makeChannelAccount({
+        key_group_id: 'upstream-key-group',
+        key_group_name: 'upstream-key-group-name',
+      })
+    )
 
     assert.equal(editable.sync_id, '9001')
     assert.equal(editable.external_id, '9001')
     assert.equal(editable.masked_key, 'sk-abc...7890')
+    assert.equal(editable.group_id, 'upstream-key-group')
+    assert.equal(editable.group_name, 'upstream-key-group-name')
   })
 
   test('刷新快照复用已保存账号配置而不是覆盖回上游建议值', () => {
@@ -151,5 +159,11 @@ describe('上游同步渠道本地配置索引', () => {
 
     assert.equal(models, 'gpt-enabled')
     assert.equal(groups, 'enabled-group')
+  })
+
+  test('同步渠道分组为空时默认回退到 default', () => {
+    assert.equal(resolveUpstreamChannelGroup([]), 'default')
+    assert.equal(resolveUpstreamChannelGroup(undefined), 'default')
+    assert.equal(resolveUpstreamChannelGroup(['vip']), 'vip')
   })
 })
