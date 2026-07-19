@@ -417,7 +417,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   return (
     <>
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-        <DialogContent className='flex max-h-[90vh] max-w-6xl flex-col'>
+        <DialogContent className='flex max-h-[92vh] !w-[calc(100vw-1rem)] !max-w-none flex-col sm:!w-[min(98vw,1560px)]'>
           <DialogHeader>
             <DialogTitle className='flex items-center gap-2'>
               {t('Account Pool')}
@@ -680,18 +680,20 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             )}
 
             <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-              <Table>
+              <Table className='min-w-[1180px]'>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{t('Name')}</TableHead>
-                    <TableHead>{t('Key')}</TableHead>
-                    <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Models')}</TableHead>
-                    <TableHead>{t('Group')}</TableHead>
-                    <TableHead>{t('Priority')}</TableHead>
-                    <TableHead>{t('Weight')}</TableHead>
-                    <TableHead>{t('Cooldown')}</TableHead>
-                    <TableHead className='text-right'>{t('Actions')}</TableHead>
+                    <TableHead className='min-w-[160px]'>{t('Name')}</TableHead>
+                    <TableHead className='min-w-[170px]'>{t('Key')}</TableHead>
+                    <TableHead className='min-w-[120px]'>{t('Status')}</TableHead>
+                    <TableHead className='min-w-[260px]'>{t('Models')}</TableHead>
+                    <TableHead className='min-w-[130px]'>{t('Group')}</TableHead>
+                    <TableHead className='min-w-[86px]'>{t('Priority')}</TableHead>
+                    <TableHead className='min-w-[86px]'>{t('Weight')}</TableHead>
+                    <TableHead className='min-w-[140px]'>{t('Cooldown')}</TableHead>
+                    <TableHead className='min-w-[130px] text-right'>
+                      {t('Actions')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -724,31 +726,41 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       const status = statusLabel(account, nowSeconds)
                       return (
                         <TableRow key={account.id}>
-                          <TableCell className='font-medium'>
+                          <TableCell className='max-w-[220px] min-w-[160px] truncate font-medium'>
                             {account.name || `#${account.id}`}
                           </TableCell>
-                          <TableCell className='font-mono text-xs'>
+                          <TableCell className='min-w-[170px] font-mono text-xs'>
                             {account.key || '-'}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className='min-w-[120px]'>
                             <StatusBadge
                               label={t(status.label)}
                               variant={status.variant}
                               copyable={false}
                             />
                           </TableCell>
-                          <TableCell className='max-w-48 truncate'>
+                          <TableCell
+                            className='max-w-[420px] min-w-[260px] truncate'
+                            title={account.models || t('Inherited')}
+                          >
                             {account.models || t('Inherited')}
                           </TableCell>
-                          <TableCell>
+                          <TableCell
+                            className='max-w-[220px] min-w-[130px] truncate'
+                            title={account.group || t('Inherited')}
+                          >
                             {account.group || t('Inherited')}
                           </TableCell>
-                          <TableCell>{account.priority}</TableCell>
-                          <TableCell>{account.weight || 1}</TableCell>
-                          <TableCell>
+                          <TableCell className='min-w-[86px]'>
+                            {account.priority}
+                          </TableCell>
+                          <TableCell className='min-w-[86px]'>
+                            {account.weight || 1}
+                          </TableCell>
+                          <TableCell className='min-w-[140px] whitespace-nowrap'>
                             {cooldownText(account, nowSeconds)}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className='min-w-[130px]'>
                             <div className='flex justify-end gap-1'>
                               <Button
                                 type='button'
