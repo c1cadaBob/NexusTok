@@ -345,6 +345,12 @@ function formatUpstreamPreviewRemaining(seconds: number) {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
+function normalizeUpstreamChannelBaseUrl(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .replace(/\/+$/, '')
+}
+
 function isUpstreamPreviewExpiredError(message?: string) {
   return Boolean(message?.includes(PREVIEW_EXPIRED_ERROR_TEXT))
 }
@@ -3432,7 +3438,10 @@ export function ChannelMutateDrawer({
           channel: {
             name: data.name,
             type: data.type,
-            base_url: upstreamBaseUrl.trim() || null,
+            base_url:
+              normalizeUpstreamChannelBaseUrl(upstreamSnapshot.base_url) ||
+              normalizeUpstreamChannelBaseUrl(upstreamBaseUrl) ||
+              null,
             models: upstreamChannelModels,
             group: upstreamChannelGroup,
             status: data.status,

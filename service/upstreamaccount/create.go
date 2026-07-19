@@ -156,7 +156,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		Name:               strings.TrimSpace(req.Channel.Name),
 		Weight:             weight,
 		CreatedTime:        common.GetTimestamp(),
-		BaseURL:            req.Channel.BaseURL,
+		BaseURL:            normalizeSyncedChannelBaseURL(req.Channel.BaseURL, snapshot),
 		Balance:            balanceValue(snapshot.Balance),
 		BalanceUpdatedTime: common.GetTimestamp(),
 		Models:             models,
@@ -193,6 +193,44 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	channel.Models = models
 	channel.Group = group
 	return channel, accounts, nil
+}
+
+// normalizeSyncedChannelBaseURL 统一选择同步渠道的真实调用地址。
+//
+// 上游账号同步的预览阶段会通过 newHTTPClient/平台适配器拿到规范后的站点根地址：
+// new-api 会去掉尾部 `/`，sub2api 会把常见前端路由 `/login`、`/dashboard` 等剥离。
+// 创建渠道时优先使用该快照地址，可以避免前端仍把用户粘贴的页面地址写入渠道
+// `base_url`，导致后续 Relay 拼出 `//v1/...` 或 `/login/v1/...` 这类错误上游路径。
+func normalizeSyncedChannelBaseURL(value *string, snapshot *Snapshot) *string {
+	if snapshot != nil {
+		baseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL)
+		if baseURL != "" {
+			return &baseURL
+		}
+	}
+	if value == nil {
+		return nil
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(*value), "/")
+	if baseURL == "" {
+		return nil
+	}
+	return &baseURL
+}
+
+// normalizeAccountConfigBaseURL 规整单个同步 key 的本地 API 地址覆盖。
+//
+// 账号级 BaseURL 优先级高于渠道级 BaseURL，因此这里也需要去掉尾部 `/`。空字符串按
+// 未设置处理，继续回退到渠道级调用地址，避免把空指针以外的空值写入数据库后造成误判。
+func normalizeAccountConfigBaseURL(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(*value), "/")
+	if baseURL == "" {
+		return nil
+	}
+	return &baseURL
 }
 
 func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, defaultGroup string) ([]model.ChannelAccount, error) {
@@ -251,7 +289,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			Priority:           priority,
 			Weight:             weight,
 			UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
-			BaseURL:            config.BaseURL,
+			BaseURL:            normalizeAccountConfigBaseURL(config.BaseURL),
 			OpenAIOrganization: config.OpenAIOrganization,
 			Other:              config.Other,
 			Setting:            config.Setting,

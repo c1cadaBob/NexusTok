@@ -9,6 +9,7 @@ package common
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -44,17 +45,46 @@ type HasImage interface {
 // 返回值：
 //   - string: 完整的请求 URL
 func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
-	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
+	normalizedBaseURL, normalizedRequestURL := normalizeRelayRequestURLParts(baseURL, requestURL)
+	fullRequestURL := fmt.Sprintf("%s%s", normalizedBaseURL, normalizedRequestURL)
 
-	if strings.HasPrefix(baseURL, "https://gateway.ai.cloudflare.com") {
+	if strings.HasPrefix(normalizedBaseURL, "https://gateway.ai.cloudflare.com") {
 		switch channelType {
 		case constant.ChannelTypeOpenAI:
-			fullRequestURL = fmt.Sprintf("%s%s", baseURL, strings.TrimPrefix(requestURL, "/v1"))
+			fullRequestURL = fmt.Sprintf("%s%s", normalizedBaseURL, ensureRelayRequestPath(strings.TrimPrefix(normalizedRequestURL, "/v1")))
 		case constant.ChannelTypeAzure:
-			fullRequestURL = fmt.Sprintf("%s%s", baseURL, strings.TrimPrefix(requestURL, "/openai/deployments"))
+			fullRequestURL = fmt.Sprintf("%s%s", normalizedBaseURL, ensureRelayRequestPath(strings.TrimPrefix(normalizedRequestURL, "/openai/deployments")))
 		}
 	}
 	return fullRequestURL
+}
+
+// normalizeRelayRequestURLParts 将渠道基础地址与请求路径规整为“无尾斜杠 base + 单前导斜杠 path”。
+//
+// 渠道 base_url 由管理员输入或账号同步生成，历史数据中可能包含尾部 `/`；Relay 的
+// requestURL 通常以 `/v1/...` 开头。直接字符串相加会生成 `//v1/...`，部分 OpenAI
+// 兼容上游会把这种路径路由到前端页面，随后本地按 JSON 解析就会得到
+// `invalid character '<'`。这里统一处理普通路径，不影响包含查询参数的请求路径。
+func normalizeRelayRequestURLParts(baseURL string, requestURL string) (string, string) {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	request := ensureRelayRequestPath(requestURL)
+	return base, request
+}
+
+// ensureRelayRequestPath 确保请求路径有且只有需要的前导斜杠。
+//
+// 上游适配器传入的 requestURL 应为路径而不是完整 URL；若未来遇到完整 URL，
+// 这里保守提取 path/query，避免把 scheme 中的 `//` 当作路径斜杠清理。
+func ensureRelayRequestPath(requestURL string) string {
+	request := strings.TrimSpace(requestURL)
+	if request == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(request); err == nil && parsed.IsAbs() {
+		request = parsed.RequestURI()
+	}
+	request = "/" + strings.TrimLeft(request, "/")
+	return request
 }
 
 // GetAPIVersion 从请求中获取 API 版本号。

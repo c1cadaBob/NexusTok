@@ -143,3 +143,54 @@
 1. 账号变更后多一次能力重建查询，影响只限账号池渠道；普通单 Key、多 Key 渠道不会额外重建账号池能力。
 2. 批量导入大量账号后一次性重建能力，避免每个账号单独重建造成额外数据库压力。
 3. 前端卡片 `onClick` 必须尊重敏感写权限，权限不足时不切换，不清空已有草稿。
+
+## 2026-07-19 渠道测试失败缺陷审计：同步渠道请求地址拼接异常
+
+### 现象
+
+用户在渠道列表中测试同步创建的 `new-api c1cada` 渠道时，测试模型 `gpt-5.5` 返回：
+
+`invalid character '<' looking for beginning of value`
+
+该错误说明本地测试路径期望解析 JSON，但上游实际返回了 HTML。
+
+### 根因
+
+1. 同步创建渠道时，前端把管理员填写的上游平台地址作为渠道 `base_url` 传给后端。历史数据中存在 `http://118.31.248.175:3000/` 这类尾部带 `/` 的地址。
+2. OpenAI 兼容 Relay 适配器传入的请求路径是 `/v1/chat/completions`。
+3. `relay/common.GetFullRequestURL` 过去直接执行 `baseURL + requestURL`，最终请求地址变为 `http://118.31.248.175:3000//v1/chat/completions`。
+4. new-api 对双斜杠路径返回前端 HTML 页面，而不是 JSON API 响应，渠道测试解析响应时报 `invalid character '<'`。
+
+真实验证结果：
+
+1. `POST http://118.31.248.175:3000//v1/chat/completions` 返回 `200 text/html`，响应体为 new-api 前端页面。
+2. `POST http://118.31.248.175:3000/v1/chat/completions` 返回 `401 application/json` 和 `Invalid token`，说明无双斜杠路径才进入 API 路由。
+
+### 影响范围
+
+1. 所有使用 `relay/common.GetFullRequestURL` 的 OpenAI 兼容适配器都会受益，包括渠道测试和真实转发请求。
+2. Cloudflare AI Gateway 依赖该函数做特殊路径改写，本次修复必须保持 `/v1` 与 `/openai/deployments` 前缀剥离语义。
+3. 上游账号同步创建渠道时，sub2api 管理员可能粘贴 `/login` 页面地址；预览快照已经保存规范根地址，创建落库应优先使用快照地址。
+4. 单个同步 key 的账号级 `base_url` 覆盖优先级高于渠道级地址，也需要规整尾部 `/`，否则仍可能在账号池选择后复现双斜杠请求。
+
+### 修复方案
+
+1. `relay/common.GetFullRequestURL` 统一将基础地址规整为无尾斜杠，将请求路径规整为单个前导斜杠，再拼接完整上游请求 URL。
+2. Cloudflare AI Gateway 分支改用规整后的 base/path，继续保留 OpenAI `/v1` 与 Azure `/openai/deployments` 的前缀剥离逻辑。
+3. 同步渠道创建后端优先使用预览快照中的 `snapshot.BaseURL` 保存渠道 `base_url`；该地址已经由平台客户端规范化，new-api 去尾斜杠，sub2api 会剥离 `/login` 等明确前端路由。
+4. 同步 key 的账号级 `base_url` 覆盖在创建和刷新时统一去尾斜杠；空字符串按未设置处理，继续回退到渠道级地址。
+5. 前端同步创建 payload 也优先使用 `upstreamSnapshot.base_url`，页面热更新生效后不会继续把原始输入地址写为调用地址。
+
+### 风险评估
+
+1. 去掉 base URL 末尾 `/` 对常见 HTTP API 根地址是兼容的；如果某个特殊上游依赖尾部 `/` 区分资源，仍会通过请求路径的单前导斜杠得到等价 API 路径。
+2. `requestURL` 通常由本项目适配器生成，不应是完整 URL；本次实现对完整 URL 做保守 `RequestURI()` 提取，避免破坏 scheme 中的 `//`。
+3. 同步渠道创建改为优先快照地址后，管理员在创建阶段手动输入的原始页面地址不会覆盖快照规范地址，这是预期行为；需要单 key 特殊代理地址时仍可通过账号级配置保存。
+4. 现有数据库中的错误 `base_url` 不会仅靠代码迁移自动修改，需要对已确认的受影响渠道做一次数据修正并刷新后端缓存。
+
+### 验证计划
+
+1. 新增后端单元测试覆盖普通 OpenAI 兼容 URL、无前导斜杠请求路径、Cloudflare OpenAI 和 Cloudflare Azure 路径。
+2. 调整同步创建测试，覆盖快照地址带尾斜杠、请求里传入另一个尾斜杠地址时，最终渠道落库优先使用快照规范地址；账号级覆盖地址也会去尾斜杠。
+3. 修复现有测试数据：将 `channels.id=18` 的 `base_url` 从 `http://118.31.248.175:3000/` 修正为 `http://118.31.248.175:3000`，然后重启热更新容器刷新缓存。
+4. 使用 MCP 打开 `http://192.168.0.202:3003/`，登录后进入渠道列表，对 `new-api c1cada` 执行真实渠道测试，确认不再返回 HTML 解析错误。

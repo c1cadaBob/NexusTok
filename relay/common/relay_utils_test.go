@@ -12,6 +12,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGetFullRequestURLNormalizesSlashes 验证渠道 base_url 带尾斜杠时不会拼出双斜杠路径。
+func TestGetFullRequestURLNormalizesSlashes(t *testing.T) {
+	tests := []struct {
+		name        string
+		baseURL     string
+		requestURL  string
+		channelType int
+		want        string
+	}{
+		{
+			name:        "openai compatible base url with trailing slash",
+			baseURL:     "http://example.test/",
+			requestURL:  "/v1/chat/completions",
+			channelType: constant.ChannelTypeOpenAI,
+			want:        "http://example.test/v1/chat/completions",
+		},
+		{
+			name:        "request path without leading slash",
+			baseURL:     "http://example.test///",
+			requestURL:  "v1/chat/completions?stream=false",
+			channelType: constant.ChannelTypeOpenAI,
+			want:        "http://example.test/v1/chat/completions?stream=false",
+		},
+		{
+			name:        "cloudflare gateway still removes openai v1 prefix",
+			baseURL:     "https://gateway.ai.cloudflare.com/v1/account/gateway/",
+			requestURL:  "/v1/chat/completions",
+			channelType: constant.ChannelTypeOpenAI,
+			want:        "https://gateway.ai.cloudflare.com/v1/account/gateway/chat/completions",
+		},
+		{
+			name:        "cloudflare gateway still removes azure deployments prefix",
+			baseURL:     "https://gateway.ai.cloudflare.com/v1/account/gateway/",
+			requestURL:  "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21",
+			channelType: constant.ChannelTypeAzure,
+			want:        "https://gateway.ai.cloudflare.com/v1/account/gateway/gpt-4o/chat/completions?api-version=2024-10-21",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, GetFullRequestURL(tt.baseURL, tt.requestURL, tt.channelType))
+		})
+	}
+}
+
 // TestValidateMultipartDirectNormalizesImageField 验证直连视频 JSON 的单图 image 字段会参与图生视频动作判断。
 func TestValidateMultipartDirectNormalizesImageField(t *testing.T) {
 	gin.SetMode(gin.TestMode)

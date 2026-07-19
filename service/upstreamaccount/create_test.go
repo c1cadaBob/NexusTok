@@ -33,7 +33,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	previewID := "create-preview"
 	snapshot := &Snapshot{
 		Platform: PlatformNewAPI,
-		BaseURL:  "https://newapi.example",
+		BaseURL:  "https://newapi.example/",
 		Balance: &BalanceSnapshot{
 			BalanceUSD: floatPtr(3.5),
 			UsedUSD:    floatPtr(1.2),
@@ -72,11 +72,12 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 		PreviewID:      previewID,
 		ApplySuggested: true,
 		Channel: ChannelCreateConfig{
-			Name: "synced-channel",
-			Type: constant.ChannelTypeOpenAI,
+			Name:    "synced-channel",
+			Type:    constant.ChannelTypeOpenAI,
+			BaseURL: stringPtr("https://should-use-snapshot.example/"),
 		},
 		Accounts: []AccountCreateConfig{
-			{ExternalID: "b", Priority: int64Ptr(9), Weight: intPtr(7)},
+			{ExternalID: "b", Priority: int64Ptr(9), Weight: intPtr(7), BaseURL: stringPtr("https://account.example///")},
 		},
 	})
 
@@ -89,21 +90,32 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.Key)
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.ChannelInfo.CredentialMode)
 	require.True(t, channel.ChannelInfo.AccountPoolEnabled)
+	require.NotNil(t, channel.BaseURL)
+	require.Equal(t, "https://newapi.example", *channel.BaseURL)
 	require.ElementsMatch(t, []string{"gpt-4o", "gpt-4o-mini"}, strings.Split(channel.Models, ","))
 	require.ElementsMatch(t, []string{"vip", "default"}, strings.Split(channel.Group, ","))
 	require.Equal(t, float64(3.5), channel.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
 
 	var accounts []model.ChannelAccount
-	require.NoError(t, db.Order("key ASC").Find(&accounts).Error)
+	require.NoError(t, db.Find(&accounts).Error)
 	require.Len(t, accounts, 2)
-	require.Equal(t, "sk-a", accounts[0].Key)
-	require.Equal(t, int64(2), accounts[0].Priority)
-	require.Equal(t, 100, accounts[0].Weight)
-	require.Equal(t, int64(common.QuotaPerUnit), accounts[0].UsedQuota)
-	require.Equal(t, "sk-b", accounts[1].Key)
-	require.Equal(t, int64(9), accounts[1].Priority)
-	require.Equal(t, 7, accounts[1].Weight)
+	accountsByKey := map[string]model.ChannelAccount{}
+	for _, account := range accounts {
+		accountsByKey[account.Key] = account
+	}
+	require.Contains(t, accountsByKey, "sk-a")
+	require.Contains(t, accountsByKey, "sk-b")
+	accountA := accountsByKey["sk-a"]
+	accountB := accountsByKey["sk-b"]
+	require.Empty(t, stringPtrValue(accountA.BaseURL))
+	require.Equal(t, int64(2), accountA.Priority)
+	require.Equal(t, 100, accountA.Weight)
+	require.Equal(t, int64(common.QuotaPerUnit), accountA.UsedQuota)
+	require.NotNil(t, accountB.BaseURL)
+	require.Equal(t, "https://account.example", *accountB.BaseURL)
+	require.Equal(t, int64(9), accountB.Priority)
+	require.Equal(t, 7, accountB.Weight)
 
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
@@ -392,4 +404,15 @@ func intPtr(value int) *int {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

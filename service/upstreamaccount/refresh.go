@@ -282,7 +282,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		Priority:           priority,
 		Weight:             weight,
 		UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
-		BaseURL:            config.BaseURL,
+		BaseURL:            normalizeAccountConfigBaseURL(config.BaseURL),
 		OpenAIOrganization: config.OpenAIOrganization,
 		Other:              config.Other,
 		Setting:            config.Setting,
