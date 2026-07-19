@@ -42,8 +42,8 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
-import type { UsageLog } from '../../data/schema'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import type { UsageLog } from '../../data/schema'
 import { getUsageLogChannelMarkers } from '../../lib/channel-markers'
 import {
   formatModelName,
@@ -335,11 +335,17 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           const affinity = other?.admin_info?.channel_affinity
           const channelMarkers = getUsageLogChannelMarkers(other?.admin_info)
           const channelChain = channelMarkers.retryChain
+          const channelAccount = channelMarkers.channelAccount
           const channelDisplay = log.channel_name
             ? `${log.channel_name} #${log.channel}`
             : `#${log.channel}`
           const channelIdDisplay = `#${log.channel}`
           const channelName = sensitiveVisible ? log.channel_name : '••••'
+          const channelAccountDisplay = channelAccount
+            ? sensitiveVisible && channelAccount.name
+              ? `${channelAccount.name} #${channelAccount.id}`
+              : `#${channelAccount.id}`
+            : null
 
           return (
             <TooltipProvider>
@@ -367,6 +373,17 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                         variant='neutral'
                         className='h-5 min-w-5 justify-center rounded-full px-1 font-mono text-xs'
                         aria-label={`${t('Key')} ${channelMarkers.multiKeyIndex}`}
+                      />
+                    )}
+                    {channelAccount && (
+                      <StatusBadge
+                        label={`#${channelAccount.id}`}
+                        size='sm'
+                        showDot={false}
+                        copyText={channelAccount.id}
+                        variant='purple'
+                        className='h-5 min-w-5 justify-center rounded-full px-1 font-mono text-xs'
+                        aria-label={`${t('Channel Account')} #${channelAccount.id}`}
                       />
                     )}
                     {channelMarkers.hasRetryChain && channelChain && (
@@ -427,12 +444,24 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                       {channelName}
                     </span>
                   )}
+                  {channelAccountDisplay && (
+                    <span className='text-muted-foreground/70 inline-flex items-center gap-1 truncate text-[11px]'>
+                      <KeyRound className='size-3' aria-hidden='true' />
+                      {channelAccountDisplay}
+                    </span>
+                  )}
                 </TooltipTrigger>
                 <TooltipContent>
-                  <div className='space-y-1'>
+                  <div className='flex flex-col gap-1'>
                     <p>
                       {sensitiveVisible ? channelDisplay : channelIdDisplay}
                     </p>
+                    {channelAccount && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Channel Account')}:{' '}
+                        {channelAccountDisplay ?? `#${channelAccount.id}`}
+                      </p>
+                    )}
                     {channelChain && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Chain')}: {channelChain}

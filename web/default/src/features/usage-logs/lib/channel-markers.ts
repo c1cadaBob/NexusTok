@@ -21,6 +21,11 @@ interface ChannelMarkerAdminInfo {
   is_multi_key?: unknown
   multi_key_index?: unknown
   use_channel?: unknown
+  account_pool?: unknown
+  channel_account_id?: unknown
+  channel_account_name?: unknown
+  pool_account_id?: unknown
+  pool_account_name?: unknown
 }
 
 export interface UsageLogChannelMarkers {
@@ -28,6 +33,10 @@ export interface UsageLogChannelMarkers {
   retryChain?: string
   hasRetryChain: boolean
   multiKeyIndex?: number
+  channelAccount?: {
+    id: string
+    name?: string
+  }
 }
 
 function normalizeRetryChannels(value: unknown): string[] {
@@ -46,12 +55,29 @@ function normalizeMultiKeyIndex(
   return info.multi_key_index
 }
 
+function normalizeChannelAccount(
+  info: ChannelMarkerAdminInfo
+): UsageLogChannelMarkers['channelAccount'] {
+  const rawId = info.channel_account_id ?? info.pool_account_id
+  const id = String(rawId ?? '').trim()
+  if (!id || id === '0' || id === '<nil>') return undefined
+
+  const rawName = info.channel_account_name ?? info.pool_account_name
+  const name = String(rawName ?? '').trim()
+
+  return {
+    id,
+    name: name.length > 0 && name !== '<nil>' ? name : undefined,
+  }
+}
+
 /**
  * 从日志 admin_info 中提取渠道列的可视化标记。
  *
  * 后端写入的 use_channel 可能只包含当前命中渠道，也可能包含多次重试链路。
  * 只有两个及以上有效渠道值才视为 Retry Chain，避免在普通单渠道日志上制造误导。
  * multi_key_index 仅在后端明确标记 is_multi_key=true 且序号为有限数字时展示。
+ * 账号池命中信息只取后端写入的账号 ID 和名称，不读取或展示任何完整 key。
  */
 export function getUsageLogChannelMarkers(
   info: ChannelMarkerAdminInfo | undefined | null
@@ -71,5 +97,6 @@ export function getUsageLogChannelMarkers(
     retryChain: hasRetryChain ? retryChannels.join(' → ') : undefined,
     hasRetryChain,
     multiKeyIndex: normalizeMultiKeyIndex(info),
+    channelAccount: normalizeChannelAccount(info),
   }
 }

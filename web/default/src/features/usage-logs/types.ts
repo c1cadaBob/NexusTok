@@ -97,6 +97,15 @@ export interface LogOtherData {
     is_multi_key?: boolean
     multi_key_index?: number
     use_channel?: number[]
+    // 账号池命中字段仅管理员日志可见，用于定位本次请求实际调用的同步 key。
+    account_pool?: boolean
+    channel_account_id?: number | string
+    channel_account_name?: string
+    pool_group_id?: number | string
+    pool_group_name?: string
+    pool_account_id?: number | string
+    pool_account_name?: string
+    pool_account_auth_type?: string
     local_count_tokens?: boolean
     channel_affinity?: ChannelAffinityInfo
     // 充值审计字段（type=1，仅管理员可见）

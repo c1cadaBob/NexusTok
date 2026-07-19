@@ -66,4 +66,39 @@ describe('getUsageLogChannelMarkers', () => {
       undefined
     )
   })
+
+  test('账号池命中信息会提取账号 ID 和名称', () => {
+    const markers = getUsageLogChannelMarkers({
+      account_pool: true,
+      channel_account_id: 18,
+      channel_account_name: 'c1cada',
+    })
+
+    assert.deepEqual(markers.channelAccount, {
+      id: '18',
+      name: 'c1cada',
+    })
+  })
+
+  test('账号池旧字段会作为兼容兜底', () => {
+    const markers = getUsageLogChannelMarkers({
+      pool_account_id: '22',
+      pool_account_name: 'vip-key',
+    })
+
+    assert.deepEqual(markers.channelAccount, {
+      id: '22',
+      name: 'vip-key',
+    })
+  })
+
+  test('无效账号池命中 ID 会被忽略', () => {
+    assert.equal(
+      getUsageLogChannelMarkers({
+        channel_account_id: 0,
+        channel_account_name: 'ignored',
+      }).channelAccount,
+      undefined
+    )
+  })
 })

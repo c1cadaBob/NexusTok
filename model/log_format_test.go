@@ -36,6 +36,27 @@ func TestFormatUserLogsStripsQuotaSaturationAdminInfo(t *testing.T) {
 	require.False(t, hasAuditInfo)
 }
 
+func TestFormatUserLogsStripsChannelAccountAdminInfo(t *testing.T) {
+	other := map[string]interface{}{
+		"model_ratio": 1.25,
+		"admin_info": map[string]interface{}{
+			"account_pool":         true,
+			"channel_account_id":   18,
+			"channel_account_name": "c1cada",
+			"use_channel":          []int{18},
+		},
+	}
+	logs := []*Log{{Other: common.MapToJsonStr(other)}}
+
+	formatUserLogs(logs, 0)
+
+	formatted, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.Equal(t, 1.25, formatted["model_ratio"])
+	_, hasAdminInfo := formatted["admin_info"]
+	require.False(t, hasAdminInfo)
+}
+
 func TestBuildTopupAdminInfoMergesExtraAudit(t *testing.T) {
 	extra := map[string]interface{}{
 		"quota_saturation": (&common.QuotaClamp{

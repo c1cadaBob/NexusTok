@@ -328,7 +328,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
     })
   )
   const shouldCompact = layout === 'card'
-  const usedDisplay = shouldCompact ? compactFormattedAmount(usedFull) : usedFull
+  const usedDisplay = shouldCompact
+    ? compactFormattedAmount(usedFull)
+    : usedFull
   const remainingDisplay = shouldCompact
     ? compactFormattedAmount(remainingFull)
     : remainingFull
@@ -478,7 +480,11 @@ export function useChannelsColumns({
   enableSelection = true,
 }: UseChannelsColumnsOptions = {}): ColumnDef<Channel>[] {
   const { t } = useTranslation()
-  const { sensitiveVisible } = useChannels()
+  const {
+    sensitiveVisible,
+    toggleAccountPoolExpanded,
+    isAccountPoolExpanded: getIsAccountPoolExpanded,
+  } = useChannels()
   const selectionColumn: ColumnDef<Channel> = {
     id: 'select',
     header: ({ table }) => (
@@ -555,6 +561,7 @@ export function useChannelsColumns({
             : (accountPoolStats?.cooldown ?? 0) > 0
               ? 'warning'
               : 'blue'
+        const accountPoolExpanded = getIsAccountPoolExpanded(channel.id)
 
         // Tag 聚合行带展开/收起控制。
         if (isTagRow) {
@@ -566,14 +573,11 @@ export function useChannelsColumns({
               <Button
                 variant='ghost'
                 size='sm'
-                className='h-6 w-6 p-0'
+                className='size-6 p-0'
                 onClick={row.getToggleExpandedHandler()}
+                aria-label={row.getIsExpanded() ? t('Collapse') : t('Expand')}
               >
-                {row.getIsExpanded() ? (
-                  <ChevronDown className='h-4 w-4' />
-                ) : (
-                  <ChevronRight className='h-4 w-4' />
-                )}
+                {row.getIsExpanded() ? <ChevronDown /> : <ChevronRight />}
               </Button>
               <div className='flex items-center gap-1.5'>
                 <span className='font-semibold'>
@@ -632,18 +636,42 @@ export function useChannelsColumns({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className='inline-flex'>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='sm'
+                            className='h-6 gap-1 px-1'
+                            aria-label={
+                              accountPoolExpanded
+                                ? t('Collapse Account Pool')
+                                : t('Expand Account Pool')
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleAccountPoolExpanded(channel.id)
+                            }}
+                          >
+                            {accountPoolExpanded ? (
+                              <ChevronDown data-icon='inline-start' />
+                            ) : (
+                              <ChevronRight data-icon='inline-start' />
+                            )}
                             <StatusBadge
                               label={`${t('Pool')} ${accountPoolStats?.enabled ?? 0}/${accountPoolStats?.total ?? 0}`}
                               variant={accountPoolVariant}
                               size='sm'
                               copyable={false}
                             />
-                          </span>
+                          </Button>
                         }
                       />
                       <TooltipContent side='top'>
-                        <div className='space-y-1 text-xs'>
+                        <div className='flex flex-col gap-1 text-xs'>
+                          <div className='font-medium'>
+                            {accountPoolExpanded
+                              ? t('Collapse Account Pool')
+                              : t('Expand Account Pool')}
+                          </div>
                           <div>
                             {t('Total')}: {accountPoolStats?.total ?? 0}
                           </div>
@@ -664,8 +692,8 @@ export function useChannelsColumns({
                 )}
                 <UpstreamUpdateTags channel={channel} />
               </div>
-              {channel.remark && (
-                sensitiveVisible ? (
+              {channel.remark &&
+                (sensitiveVisible ? (
                   <TruncatedText
                     text={channel.remark}
                     maxWidth='max-w-[280px]'
@@ -677,8 +705,7 @@ export function useChannelsColumns({
                   <span className='text-muted-foreground text-xs'>
                     {SENSITIVE_MASK}
                   </span>
-                )
-              )}
+                ))}
             </div>
           </div>
         )

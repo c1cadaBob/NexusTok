@@ -64,6 +64,9 @@ type ChannelsContextType = {
   setBatchMode: (enabled: boolean) => void
   sensitiveVisible: boolean
   setSensitiveVisible: (visible: boolean) => void
+  expandedAccountPoolChannelIds: Set<number>
+  toggleAccountPoolExpanded: (channelId: number) => void
+  isAccountPoolExpanded: (channelId: number) => boolean
   upstream: UpstreamUpdateState
 }
 
@@ -91,14 +94,32 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   })
   const [batchMode, setBatchMode] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
+  const [expandedAccountPoolChannelIds, setExpandedAccountPoolChannelIds] =
+    useState<Set<number>>(() => new Set())
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
   }, [queryClient])
   const upstream = useChannelUpstreamUpdates(refreshChannels)
+  const toggleAccountPoolExpanded = useCallback((channelId: number) => {
+    setExpandedAccountPoolChannelIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(channelId)) {
+        next.delete(channelId)
+      } else {
+        next.add(channelId)
+      }
+      return next
+    })
+  }, [])
+  const isAccountPoolExpanded = useCallback(
+    (channelId: number) => expandedAccountPoolChannelIds.has(channelId),
+    [expandedAccountPoolChannelIds]
+  )
 
   // 批量操作模式和敏感显隐都是页面级临时操作状态，不写入 localStorage，避免跨会话造成误判。
+  // 账号池展开状态仅用于当前列表页快速查看，保持临时状态可避免跨页缓存过期账号摘要。
   // context value 使用 memo，减少无关状态更新扩散到表格单元格和移动卡片。
   const value = useMemo<ChannelsContextType>(
     () => ({
@@ -116,6 +137,9 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       setBatchMode,
       sensitiveVisible,
       setSensitiveVisible,
+      expandedAccountPoolChannelIds,
+      toggleAccountPoolExpanded,
+      isAccountPoolExpanded,
       upstream,
     }),
     [
@@ -126,6 +150,9 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       idSort,
       batchMode,
       sensitiveVisible,
+      expandedAccountPoolChannelIds,
+      toggleAccountPoolExpanded,
+      isAccountPoolExpanded,
       upstream,
     ]
   )

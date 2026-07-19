@@ -194,3 +194,44 @@
 2. 调整同步创建测试，覆盖快照地址带尾斜杠、请求里传入另一个尾斜杠地址时，最终渠道落库优先使用快照规范地址；账号级覆盖地址也会去尾斜杠。
 3. 修复现有测试数据：将 `channels.id=18` 的 `base_url` 从 `http://118.31.248.175:3000/` 修正为 `http://118.31.248.175:3000`，然后重启热更新容器刷新缓存。
 4. 使用 MCP 打开 `http://192.168.0.202:3003/`，登录后进入渠道列表，对 `new-api c1cada` 执行真实渠道测试，确认不再返回 HTML 解析错误。
+
+## 2026-07-19 同步渠道逐 key 展开与管理员日志命中账号可见
+
+### 需求澄清
+
+1. 通过上游账号密码同步得到的一组 key 需要在渠道列表中能直接展开查看，管理员不应只能通过弹窗入口才能确认每个 key 的状态、模型、分组、优先级和权重。
+2. 列表展开主要承担“快速查看与进入管理”的职责；逐 key 的新增、编辑、启停、删除仍复用已有账号池管理弹窗和后端接口，避免同一批配置出现两套保存语义。
+3. 使用日志中，管理员需要看到本次请求实际命中的同步 key。普通用户仍按原来的日志展示，不能看到管理员字段或账号池 key 信息。
+4. 命中 key 信息以后端已写入的 `other.admin_info.channel_account_id` 与 `channel_account_name` 为准；前端只负责展示，不从日志列表额外请求账号明文 key。
+
+### 影响范围
+
+1. 渠道页上下文：新增账号池展开状态，供名称列 badge 和表格自定义展开行共享。
+2. 渠道列表表格：在账号池渠道主行后插入异步加载的账号摘要行，展示前 50 个 key 的本地配置，并提供“账号池管理”入口。
+3. 渠道名称列：把账号池统计 badge 调整为展开/收起控制，同时保留总数、启用数、冷却数、禁用数提示。
+4. 使用日志类型与渠道列：补齐账号池命中字段类型，在管理员渠道列展示命中账号标记和 tooltip 详情。
+5. 日志格式化测试：确认普通用户日志会剥离包含账号池命中信息的 `admin_info`。
+6. 前端 i18n：新增页面文案必须补齐所有语言，避免构建后出现缺失翻译。
+
+### 风险评估
+
+1. 如果在列表页直接实现编辑表单，容易与现有账号池弹窗的权限、保存、缓存刷新逻辑分叉。本轮采用只读摘要加统一管理入口，降低配置不一致风险。
+2. 账号池 key 数量可能很多，列表展开只加载第一页 50 条并显示总量提示；完整管理继续进入账号池弹窗分页操作，避免渠道列表一次性拉取过大数据。
+3. 展开状态必须避开 tag 聚合行的 TanStack 展开逻辑，否则 tag 模式和账号池展开会相互干扰。本轮将账号池展开作为渠道页自定义状态维护。
+4. 管理员日志展示账号名称时受页面敏感信息开关控制；关闭敏感显示时只保留账号 ID 以便定位，不暴露账号名称。
+5. 普通用户日志安全边界依赖后端 `formatUserLogs` 删除 `admin_info`，本轮补充测试锁定该行为。
+
+### 方案评审
+
+1. `ChannelsProvider` 增加 `expandedAccountPoolChannelIds`、`toggleAccountPoolExpanded`、`isAccountPoolExpanded`，作为账号池展开状态的唯一来源。
+2. 名称列账号池 badge 改为小按钮，点击时 `stopPropagation` 并切换该渠道展开状态；tooltip 继续展示统计明细。
+3. `ChannelsTable` 使用 `DataTablePage.renderRow` 渲染默认行，并在账号池渠道展开后追加一个跨列 `TableRow`，内部加载 `ChannelAccountInlinePanel`。
+4. `ChannelAccountInlinePanel` 调用 `GET /api/channel/:id/accounts?p=1&page_size=50`，展示账号名、脱敏 key、状态、模型、分组、优先级、权重、已用额度、最后使用时间和冷却时间；点击“账号池管理”打开现有 `ChannelAccountPoolDialog`。
+5. `getUsageLogChannelMarkers` 解析 `channel_account_id/name`，管理员日志渠道列在渠道 badge 旁展示 `Key` 标记，tooltip 展示命中账号详情；普通用户不进入管理员列且后端不会返回 `admin_info`。
+
+### 验证计划
+
+1. 前端运行 `bun run typecheck`、`bun run build`、`bun test src/features/usage-logs/lib/channel-markers.test.ts`、`bun run i18n:sync`。
+2. 后端运行 `go test ./model ./service ./controller`，确认普通用户日志脱敏和已有同步账号逻辑不回归。
+3. 使用 MCP 浏览器访问 `http://192.168.0.202:3003/channels`，确认 `new-api c1cada` 账号池 badge 可展开、能看到 4 个同步 key 的摘要，并能进入账号池管理弹窗。
+4. 通过页面执行一次 `gpt-5.5` 渠道测试或查看已有请求日志，确认管理员使用日志渠道列显示命中账号；普通用户日志接口不包含 `admin_info`。

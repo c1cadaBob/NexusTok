@@ -16,21 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
+  flexRender,
   type OnChangeFn,
   type SortingState,
   type Row,
 } from '@tanstack/react-table'
-import { Eye, EyeOff } from 'lucide-react'
 import { useMediaQuery } from '@/hooks'
+import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TableCell, TableRow } from '@/components/ui/table'
 import {
   Tooltip,
   TooltipContent,
@@ -57,6 +59,7 @@ import {
   getChannelTypeLabel,
 } from '../lib'
 import type { Channel, ChannelSortBy } from '../types'
+import { ChannelAccountInlinePanel } from './channel-account-inline-panel'
 import { ChannelCard, ChannelsMobileList } from './channel-card'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
@@ -88,6 +91,15 @@ function isDisabledChannelRow(channel: Channel) {
   )
 }
 
+function isAccountPoolChannel(channel: Channel) {
+  return (
+    !isTagAggregateRow(channel) &&
+    (channel.channel_info?.credential_mode === 'account_pool' ||
+      channel.channel_info?.account_pool_enabled === true ||
+      (channel.channel_account_stats?.total ?? 0) > 0)
+  )
+}
+
 export function ChannelsTable() {
   const { t } = useTranslation()
   const {
@@ -96,6 +108,9 @@ export function ChannelsTable() {
     batchMode,
     sensitiveVisible,
     setSensitiveVisible,
+    isAccountPoolExpanded,
+    setCurrentRow,
+    setOpen,
   } = useChannels()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -387,6 +402,42 @@ export function ChannelsTable() {
         : DISABLED_ROW_DESKTOP
       : undefined
 
+  const renderDesktopRow = (row: Row<Channel>) => {
+    const channel = row.original
+    const showInlineAccounts =
+      isAccountPoolChannel(channel) && isAccountPoolExpanded(channel.id)
+    const colSpan = row.getVisibleCells().length
+
+    return (
+      <Fragment key={row.id}>
+        <TableRow
+          data-state={row.getIsSelected() && 'selected'}
+          className={getChannelRowClassName(row, false)}
+        >
+          {row.getVisibleCells().map((cell) => (
+            <TableCell key={cell.id}>
+              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            </TableCell>
+          ))}
+        </TableRow>
+        {showInlineAccounts && (
+          <TableRow key={`${row.id}-accounts`} className='hover:bg-transparent'>
+            <TableCell colSpan={colSpan} className='bg-muted/10 p-3'>
+              <ChannelAccountInlinePanel
+                channel={channel}
+                sensitiveVisible={sensitiveVisible}
+                onManage={() => {
+                  setCurrentRow(channel)
+                  setOpen('account-pool-manage')
+                }}
+              />
+            </TableCell>
+          </TableRow>
+        )}
+      </Fragment>
+    )
+  }
+
   return (
     <DataTablePage
       table={table}
@@ -400,15 +451,33 @@ export function ChannelsTable() {
       skeletonKeyPrefix='channel-skeleton'
       enableCardView
       viewModeStorageKey={CHANNELS_VIEW_MODE_STORAGE_KEY}
-      renderCard={(row, { isSelected }) => (
-        <ChannelCard
-          className='px-0 py-0'
-          enableSelection={batchMode}
-          isSelected={isSelected}
-          row={row}
-          sensitiveVisible={sensitiveVisible}
-        />
-      )}
+      renderCard={(row, { isSelected }) => {
+        const channel = row.original
+        const showInlineAccounts =
+          isAccountPoolChannel(channel) && isAccountPoolExpanded(channel.id)
+
+        return (
+          <div className='flex min-w-0 flex-col gap-2'>
+            <ChannelCard
+              className='px-0 py-0'
+              enableSelection={batchMode}
+              isSelected={isSelected}
+              row={row}
+              sensitiveVisible={sensitiveVisible}
+            />
+            {showInlineAccounts && (
+              <ChannelAccountInlinePanel
+                channel={channel}
+                sensitiveVisible={sensitiveVisible}
+                onManage={() => {
+                  setCurrentRow(channel)
+                  setOpen('account-pool-manage')
+                }}
+              />
+            )}
+          </div>
+        )
+      }}
       cardGridClassName='grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3'
       applyHeaderSize
       toolbarProps={{
@@ -483,6 +552,7 @@ export function ChannelsTable() {
       getRowClassName={(row, { isMobile }) =>
         getChannelRowClassName(row, isMobile)
       }
+      renderRow={renderDesktopRow}
       bulkActions={batchMode ? <DataTableBulkActions table={table} /> : null}
     />
   )
