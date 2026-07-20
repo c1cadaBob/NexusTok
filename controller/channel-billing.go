@@ -378,7 +378,11 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 
 func updateChannelBalance(channel *model.Channel) (float64, error) {
 	if channel.HasUpstreamAccountSyncMetadata() {
-		return upstreamaccount.RefreshChannelBalance(context.Background(), channel)
+		result, err := upstreamaccount.RefreshChannelBalance(context.Background(), channel)
+		if err != nil {
+			return 0, err
+		}
+		return result.Balance, nil
 	}
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
@@ -463,19 +467,23 @@ func UpdateChannelBalance(c *gin.Context) {
 		return
 	}
 	if channel.HasUpstreamAccountSyncMetadata() {
-		balance, err := upstreamaccount.RefreshChannelBalance(c.Request.Context(), channel)
+		result, err := upstreamaccount.RefreshChannelBalance(c.Request.Context(), channel)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-				"balance": channel.Balance,
+				"success":              false,
+				"message":              err.Error(),
+				"balance":              channel.Balance,
+				"used_quota":           channel.UsedQuota,
+				"balance_updated_time": channel.BalanceUpdatedTime,
 			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"balance": balance,
+			"success":              true,
+			"message":              "",
+			"balance":              result.Balance,
+			"used_quota":           result.UsedQuota,
+			"balance_updated_time": result.BalanceUpdatedTime,
 		})
 		return
 	}

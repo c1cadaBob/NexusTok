@@ -201,6 +201,8 @@ export interface ChannelBalanceResponse {
   success: boolean
   message?: string
   balance?: number
+  used_quota?: number
+  balance_updated_time?: number
   currency?: string
 }
 

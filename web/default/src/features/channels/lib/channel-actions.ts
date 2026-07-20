@@ -39,7 +39,14 @@ import {
   updateChannelBalance,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import type { CopyChannelParams } from '../types'
+import type {
+  Channel,
+  ChannelBalanceResponse,
+  CopyChannelParams,
+  GetChannelResponse,
+  GetChannelsResponse,
+  SearchChannelsResponse,
+} from '../types'
 
 // ============================================================================
 // Query Keys
@@ -52,6 +59,70 @@ export const channelsQueryKeys = {
     [...channelsQueryKeys.lists(), params] as const,
   details: () => [...channelsQueryKeys.all, 'detail'] as const,
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
+}
+
+type ChannelListCache = GetChannelsResponse | SearchChannelsResponse
+
+function patchChannelBalanceInChannel(
+  channel: Channel,
+  response: ChannelBalanceResponse
+): Channel {
+  return {
+    ...channel,
+    ...(response.balance !== undefined ? { balance: response.balance } : {}),
+    ...(response.used_quota !== undefined
+      ? { used_quota: response.used_quota }
+      : {}),
+    ...(response.balance_updated_time !== undefined
+      ? { balance_updated_time: response.balance_updated_time }
+      : {}),
+  }
+}
+
+/**
+ * 将余额刷新结果同步到渠道列表和详情缓存，保证界面能立即看到已使用量和剩余额度。
+ */
+export function patchChannelBalanceCache(
+  queryClient: QueryClient | undefined,
+  id: number,
+  response: ChannelBalanceResponse
+): void {
+  if (!queryClient) return
+
+  queryClient.setQueriesData<ChannelListCache>(
+    { queryKey: channelsQueryKeys.lists() },
+    (oldData) => {
+      if (!oldData?.data?.items) return oldData
+
+      let changed = false
+      const items = oldData.data.items.map((channel) => {
+        if (channel.id !== id) return channel
+        changed = true
+        return patchChannelBalanceInChannel(channel, response)
+      })
+
+      if (!changed) return oldData
+
+      return {
+        ...oldData,
+        data: {
+          ...oldData.data,
+          items,
+        },
+      }
+    }
+  )
+
+  queryClient.setQueryData<GetChannelResponse>(
+    channelsQueryKeys.detail(id),
+    (oldData) => {
+      if (!oldData?.data) return oldData
+      return {
+        ...oldData,
+        data: patchChannelBalanceInChannel(oldData.data, response),
+      }
+    }
+  )
 }
 
 // ============================================================================
@@ -276,7 +347,7 @@ export async function handleCopyChannel(
 export async function handleUpdateChannelBalance(
   id: number,
   queryClient?: QueryClient,
-  onSuccess?: (balance: number) => void
+  onSuccess?: (response: ChannelBalanceResponse) => void
 ): Promise<void> {
   try {
     const response = await updateChannelBalance(id)
@@ -291,8 +362,9 @@ export async function handleUpdateChannelBalance(
           }),
         })
       )
+      patchChannelBalanceCache(queryClient, id, response)
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-      onSuccess?.(balance)
+      onSuccess?.(response)
     } else {
       toast.error(response.message || i18next.t('Failed to update balance'))
     }

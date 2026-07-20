@@ -33,8 +33,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { getCodexUsage, updateChannelBalance } from '../../api'
-import { channelsQueryKeys } from '../../lib'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
+import { channelsQueryKeys, patchChannelBalanceCache } from '../../lib'
 import { useChannels } from '../channels-provider'
 import {
   CodexUsageDialog,
@@ -71,9 +71,9 @@ export function BalanceQueryDialog({
       const metadata = parsed.upstream_account_sync
       return Boolean(
         metadata &&
-          (typeof metadata === 'object' ||
-            metadata === true ||
-            (typeof metadata === 'string' && metadata.trim().length > 0))
+        (typeof metadata === 'object' ||
+          metadata === true ||
+          (typeof metadata === 'string' && metadata.trim().length > 0))
       )
     } catch {
       return false
@@ -122,20 +122,23 @@ export function BalanceQueryDialog({
       const response = await updateChannelBalance(currentRow.id)
       if (response.success && response.balance !== undefined) {
         const newBalance = response.balance
-        const now = Math.floor(Date.now() / 1000)
+        const updatedTime =
+          response.balance_updated_time ?? Math.floor(Date.now() / 1000)
 
         setBalance(newBalance)
-        setBalanceUpdatedTime(now)
+        setBalanceUpdatedTime(updatedTime)
         toast.success(t('Balance updated successfully'))
 
-        // Update currentRow immediately with new balance and timestamp
+        // 同步渠道余额刷新会同时返回账号已使用量，弹窗和列表都要立即更新。
         setCurrentRow({
           ...currentRow,
           balance: newBalance,
-          balance_updated_time: now,
+          used_quota: response.used_quota ?? currentRow.used_quota,
+          balance_updated_time: updatedTime,
         })
+        patchChannelBalanceCache(queryClient, currentRow.id, response)
 
-        // Invalidate queries to refresh the table
+        // 后台重新拉取列表，确保缓存补丁之外的其他字段也保持最新。
         await queryClient.invalidateQueries({
           queryKey: channelsQueryKeys.lists(),
         })

@@ -89,9 +89,11 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&channel).Error)
 
-	balance, err := RefreshChannelBalance(context.Background(), &channel)
+	result, err := RefreshChannelBalance(context.Background(), &channel)
 	require.NoError(t, err)
-	require.Equal(t, 12.5, balance)
+	require.Equal(t, 12.5, result.Balance)
+	require.Equal(t, int64(common.QuotaPerUnit*4.75), result.UsedQuota)
+	require.Greater(t, result.BalanceUpdatedTime, int64(1))
 
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
