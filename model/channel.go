@@ -427,6 +427,43 @@ func (channel *Channel) HasUpstreamAccountSyncMetadata() bool {
 	return ok
 }
 
+// UpstreamAccountSyncPlatform 读取同步渠道元数据中记录的上游平台。
+//
+// 返回值只做展示和迁移判断使用；历史数据如果缺少 platform，仍由
+// HasUpstreamAccountSyncMetadata 判断为同步渠道，但这里返回空字符串，
+// 避免误把未知平台迁移成某个具体渠道类型。
+func (channel *Channel) UpstreamAccountSyncPlatform() string {
+	if channel == nil || strings.TrimSpace(channel.OtherSettings) == "" {
+		return ""
+	}
+	var settings map[string]any
+	if err := common.UnmarshalJsonStr(channel.OtherSettings, &settings); err != nil {
+		return ""
+	}
+	raw, ok := settings["upstream_account_sync"]
+	if !ok {
+		return ""
+	}
+	metadata, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	platform, _ := metadata["platform"].(string)
+	return strings.TrimSpace(platform)
+}
+
+// SyncedAccountPlatformChannelType 将上游账号同步平台转换为一等渠道类型。
+func SyncedAccountPlatformChannelType(platform string) int {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "new-api", "newapi":
+		return constant.ChannelTypeNewAPI
+	case "sub2api", "sub2-api":
+		return constant.ChannelTypeSub2API
+	default:
+		return 0
+	}
+}
+
 func (channel *Channel) IsGlobalAccountPoolEnabled() bool {
 	return channel != nil && channel.GetCredentialMode() == constant.ChannelCredentialModeGlobalAccountPool
 }

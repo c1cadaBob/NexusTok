@@ -465,6 +465,9 @@ func migrateDB() error {
 			return err
 		}
 	}
+	if err := migrateSyncedAccountChannelTypes(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -550,7 +553,36 @@ func migrateDBFast() error {
 	if err := ensureAccountPoolAuthFileLinks(); err != nil {
 		return err
 	}
+	if err := migrateSyncedAccountChannelTypes(); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func migrateSyncedAccountChannelTypes() error {
+	var channels []Channel
+	if err := DB.Select("id", "type", "settings").
+		Where("settings LIKE ?", "%upstream_account_sync%").
+		Find(&channels).Error; err != nil {
+		return err
+	}
+	updated := 0
+	for _, channel := range channels {
+		nextType := SyncedAccountPlatformChannelType(channel.UpstreamAccountSyncPlatform())
+		if nextType == 0 || channel.Type == nextType {
+			continue
+		}
+		if err := DB.Model(&Channel{}).
+			Where("id = ?", channel.Id).
+			Update("type", nextType).Error; err != nil {
+			return err
+		}
+		updated++
+	}
+	if updated > 0 {
+		common.SysLog(fmt.Sprintf("migrated %d upstream account synced channel type(s)", updated))
+	}
 	return nil
 }
 

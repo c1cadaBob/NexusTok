@@ -77,12 +77,14 @@ export const CHANNEL_TYPES = {
   56: 'Replicate',
   57: 'Codex',
   58: 'Advanced Custom',
+  59: 'new-api',
+  60: 'sub2api',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 33, 24, 43, 3, 41, 48, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46, 23,
-  18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 58, 57, 22, 21, 44, 2, 5, 36,
-  50, 51, 52, 53, 54, 55, 56,
+  59, 60, 1, 14, 33, 24, 43, 3, 41, 48, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15,
+  46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 58, 57, 22, 21, 44, 2,
+  5, 36, 50, 51, 52, 53, 54, 55, 56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -242,8 +244,7 @@ export const ERROR_MESSAGES = {
   REQUIRED_MODELS: 'Models are required',
   REQUIRED_GROUP: 'Group is required',
   REQUIRED_BASE_URL_FOR_TYPE: 'Base URL is required for this channel type',
-  REQUIRED_EXTRA_CONFIG:
-    'This channel type requires additional configuration',
+  REQUIRED_EXTRA_CONFIG: 'This channel type requires additional configuration',
   INVALID_JSON: 'Invalid JSON format',
   INVALID_MODEL_MAPPING: 'Invalid model mapping format',
   INVALID_MODEL_MAPPING_OBJECT:

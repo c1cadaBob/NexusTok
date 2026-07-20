@@ -145,6 +145,26 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by the custom upstream routes',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'network',
+    hints: {
+      baseUrl: 'new-api site URL',
+      key: 'Synced from upstream account',
+      models: 'Synced from upstream keys',
+    },
+  },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'repeat',
+    hints: {
+      baseUrl: 'sub2api site URL',
+      key: 'Synced from upstream account',
+      models: 'Synced from upstream keys',
+    },
+  },
 }
 
 /**

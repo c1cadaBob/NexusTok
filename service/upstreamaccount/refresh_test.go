@@ -291,6 +291,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	require.Equal(t, constant.ChannelTypeNewAPI, refreshed.Type)
 	require.Equal(t, "gpt-old,gpt-4o-mini", refreshed.Models)
 	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)

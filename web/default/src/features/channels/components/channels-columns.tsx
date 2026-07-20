@@ -78,6 +78,7 @@ import {
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
+import { ChannelTypeIcon } from './channel-type-icon'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
@@ -132,9 +133,9 @@ function isUpstreamAccountSyncedChannel(channel: Channel): boolean {
     const metadata = parsed.upstream_account_sync
     return Boolean(
       metadata &&
-        (typeof metadata === 'object' ||
-          metadata === true ||
-          (typeof metadata === 'string' && metadata.trim().length > 0))
+      (typeof metadata === 'object' ||
+        metadata === true ||
+        (typeof metadata === 'string' && metadata.trim().length > 0))
     )
   } catch {
     return false
@@ -383,7 +384,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
       ? t('Click to view Codex usage')
       : isUpstreamAccountSync
         ? t('Click to refresh the synced upstream account balance')
-      : remainingLabel
+        : remainingLabel
 
   const handleClickUpdate = async () => {
     if (isUpdating) return
@@ -762,7 +763,6 @@ export function useChannelsColumns({
         const type = row.getValue('type') as number
         const typeNameKey = getChannelTypeLabel(type)
         const typeName = t(typeNameKey)
-        const iconName = getChannelTypeIcon(type)
         const channel = row.original as Channel
         const isMultiKey = isMultiKeyChannel(channel)
         const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
@@ -800,12 +800,19 @@ export function useChannelsColumns({
                 </TooltipProvider>
               )}
             </div>
-            <ProviderBadge
-              iconKey={`${iconName}.Color`}
-              iconSize={20}
-              label={typeName}
-              className='max-w-[160px]'
-            />
+            {type === 59 || type === 60 ? (
+              <span className='flex max-w-[160px] min-w-0 items-center gap-1.5'>
+                <ChannelTypeIcon type={type} size={20} />
+                <span className='truncate text-sm font-medium'>{typeName}</span>
+              </span>
+            ) : (
+              <ProviderBadge
+                iconKey={`${getChannelTypeIcon(type)}.Color`}
+                iconSize={20}
+                label={typeName}
+                className='max-w-[160px]'
+              />
+            )}
             {isIonet && (
               <TooltipProvider delay={100}>
                 <Tooltip>

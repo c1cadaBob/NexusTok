@@ -56,7 +56,6 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -64,6 +63,11 @@ import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
@@ -97,11 +101,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   Tooltip,
   TooltipContent,
@@ -166,7 +165,6 @@ import {
   type ChannelFormValues,
   deduplicateKeys,
   getAdvancedCustomStats,
-  getChannelTypeIcon,
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
@@ -205,6 +203,7 @@ import type {
   UpstreamAccountPlatform,
   UpstreamAccountSnapshot,
 } from '../../types'
+import { ChannelTypeIcon } from '../channel-type-icon'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
@@ -271,10 +270,57 @@ export type UpstreamEditableAccount = UpstreamAccountKey & {
 }
 
 type UpstreamTwoFactorMode = 'create' | 'refresh'
-type CredentialSourceMode = 'manual' | 'upstream_account'
 
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
+const CHANNEL_TYPE_NEW_API = 59
+const CHANNEL_TYPE_SUB2API = 60
+
+function upstreamPlatformFromChannelType(
+  channelType: number
+): UpstreamAccountPlatform | null {
+  if (channelType === CHANNEL_TYPE_NEW_API) return 'new-api'
+  if (channelType === CHANNEL_TYPE_SUB2API) return 'sub2api'
+  return null
+}
+
+function channelTypeFromUpstreamPlatform(platform: string | undefined | null) {
+  const normalized = String(platform || '')
+    .trim()
+    .toLowerCase()
+    .replaceAll('_', '-')
+  if (normalized === 'new-api' || normalized === 'newapi') {
+    return CHANNEL_TYPE_NEW_API
+  }
+  if (normalized === 'sub2api' || normalized === 'sub2-api') {
+    return CHANNEL_TYPE_SUB2API
+  }
+  return undefined
+}
+
+export function defaultUpstreamChannelName(baseUrl: string, fallback = '') {
+  const trimmedBaseUrl = baseUrl.trim()
+  const fallbackName = fallback.trim()
+  if (!trimmedBaseUrl) return fallbackName
+
+  try {
+    const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmedBaseUrl)
+      ? trimmedBaseUrl
+      : `https://${trimmedBaseUrl}`
+    const host = new URL(withProtocol).hostname.replace(/^www\./i, '')
+    if (!host) return fallbackName
+    if (
+      host === 'localhost' ||
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+      host.includes(':')
+    ) {
+      return host
+    }
+    return host.split('.').filter(Boolean)[0] || fallbackName
+  } catch {
+    return fallbackName
+  }
+}
 
 function parsePositiveNumber(value: string): number | undefined {
   const parsed = Number(value)
@@ -348,11 +394,7 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
   const configs: Record<string, UpstreamAccountConfigDraft> = {}
   keys.forEach((key, index) => {
     const configId = upstreamKeyConfigId(key, index)
-    const previousConfig = getUpstreamAccountConfig(
-      previousConfigs,
-      key,
-      index
-    )
+    const previousConfig = getUpstreamAccountConfig(previousConfigs, key, index)
     configs[configId] = {
       priority: previousConfig?.priority ?? key.suggested_priority,
       weight: previousConfig?.weight ?? key.suggested_weight,
@@ -411,9 +453,25 @@ function isUpstreamPreviewExpiredError(message?: string) {
 function getUpstreamSyncBaseUrlFromSettings(
   settings: string | undefined
 ): string {
-  const metadata = parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  const metadata =
+    parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
   if (!metadata || typeof metadata !== 'object') return ''
   return String((metadata as Record<string, unknown>).base_url || '').trim()
+}
+
+function getUpstreamSyncPlatformFromSettings(
+  settings: string | undefined
+): UpstreamAccountPlatform | '' {
+  const metadata =
+    parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  if (!metadata || typeof metadata !== 'object') return ''
+  const platform = String((metadata as Record<string, unknown>).platform || '')
+    .trim()
+    .toLowerCase()
+    .replaceAll('_', '-')
+  if (platform === 'new-api' || platform === 'newapi') return 'new-api'
+  if (platform === 'sub2api' || platform === 'sub2-api') return 'sub2api'
+  return ''
 }
 
 function upstreamModelsToString(keys: UpstreamAccountKey[]) {
@@ -558,9 +616,12 @@ export function upstreamAccountFromChannelAccount(
   ]
   const upstreamExternalId =
     syncMetadata && typeof syncMetadata === 'object'
-      ? String((syncMetadata as Record<string, unknown>).external_id || '').trim()
+      ? String(
+          (syncMetadata as Record<string, unknown>).external_id || ''
+        ).trim()
       : ''
-  const upstreamConfigId = upstreamExternalId || account.key || String(account.id)
+  const upstreamConfigId =
+    upstreamExternalId || account.key || String(account.id)
 
   return {
     account_id: account.id,
@@ -729,35 +790,6 @@ function formatUnixTime(timestamp: unknown): string {
   const seconds = Number(timestamp)
   if (!Number.isFinite(seconds) || seconds <= 0) return '-'
   return new Date(seconds * 1000).toLocaleString()
-}
-
-function ChannelTypeLogo(props: {
-  type: number
-  size?: number
-  className?: string
-}) {
-  const isKnownType = CHANNEL_TYPE_OPTIONS.some(
-    (option) => option.value === props.type
-  )
-
-  if (!isKnownType) {
-    return (
-      <Server
-        className={cn('text-muted-foreground shrink-0', props.className)}
-        style={{
-          width: props.size ?? 16,
-          height: props.size ?? 16,
-        }}
-        aria-hidden='true'
-      />
-    )
-  }
-
-  return (
-    <span className={cn('inline-flex shrink-0', props.className)}>
-      {getLobeIcon(`${getChannelTypeIcon(props.type)}.Color`, props.size ?? 16)}
-    </span>
-  )
 }
 
 function CardHeading({
@@ -1086,7 +1118,6 @@ export function ChannelMutateDrawer({
   const [codexOAuthDialogOpen, setCodexOAuthDialogOpen] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
-  const [upstreamSyncEnabled, setUpstreamSyncEnabled] = useState(false)
   const [upstreamPlatform, setUpstreamPlatform] =
     useState<UpstreamAccountPlatform>('new-api')
   const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
@@ -1341,25 +1372,29 @@ export function ChannelMutateDrawer({
     upstreamTwoFactorChallenge?.expires_at,
   ])
 
-  const handleUpstreamSyncEnabledChange = useCallback(
-    (checked: boolean) => {
-      setUpstreamSyncEnabled(checked)
-      form.setValue('upstream_account_sync', checked, {
-        shouldDirty: true,
+  useEffect(() => {
+    if (isEditing) return
+    const platform = upstreamPlatformFromChannelType(currentType)
+    if (platform) {
+      setUpstreamPlatform(platform)
+      form.setValue('upstream_account_sync', true, {
+        shouldDirty: false,
         shouldValidate: true,
       })
-      if (checked && !(form.getValues('group') || []).length) {
+      if (!(form.getValues('group') || []).length) {
         form.setValue('group', ['default'], {
           shouldDirty: true,
           shouldValidate: true,
         })
       }
-      if (!checked) {
-        clearAllUpstreamPreviews()
-      }
-    },
-    [clearAllUpstreamPreviews, form]
-  )
+      return
+    }
+    form.setValue('upstream_account_sync', false, {
+      shouldDirty: false,
+      shouldValidate: true,
+    })
+    clearAllUpstreamPreviews()
+  }, [clearAllUpstreamPreviews, currentType, form, isEditing])
 
   const { copyToClipboard } = useCopyToClipboard()
 
@@ -1474,9 +1509,15 @@ export function ChannelMutateDrawer({
   )
   const isUpstreamAccountSyncedChannel =
     isEditing && hasUpstreamAccountSyncMetadata
-  const isCreateUpstreamSyncMode = !isEditing && upstreamSyncEnabled
+  const forcedUpstreamPlatform = upstreamPlatformFromChannelType(currentType)
+  const currentTypeRequiresUpstreamSync = Boolean(forcedUpstreamPlatform)
+  const isCreateUpstreamSyncMode = !isEditing && currentTypeRequiresUpstreamSync
+  const isEditingUnsupportedUnsyncedUpstreamType =
+    isEditing &&
+    currentTypeRequiresUpstreamSync &&
+    !isUpstreamAccountSyncedChannel
   const usesUpstreamAccountCredentialSource =
-    isCreateUpstreamSyncMode || isUpstreamAccountSyncedChannel
+    currentTypeRequiresUpstreamSync || isUpstreamAccountSyncedChannel
   // 同步模式下渠道模型由逐 key 配置主导，但渠道分组仍然决定 NexusTok 用户可见性，
   // 因此保留该区块，仅隐藏共享模型编辑能力。
   const showSharedModelsSection = true
@@ -1797,9 +1838,7 @@ export function ChannelMutateDrawer({
                     ])
                   const updateConfig = (
                     updater: (
-                      previous:
-                        | UpstreamAccountConfigDraft
-                        | undefined
+                      previous: UpstreamAccountConfigDraft | undefined
                     ) => UpstreamAccountConfigDraft
                   ) =>
                     setUpstreamAccountConfigs((prev) => ({
@@ -1811,16 +1850,11 @@ export function ChannelMutateDrawer({
                     overrides: Partial<UpstreamAccountConfigDraft>
                   ): UpstreamAccountConfigDraft => ({
                     enabled: previous?.enabled ?? true,
-                    priority:
-                      previous?.priority ?? key.suggested_priority ?? 0,
+                    priority: previous?.priority ?? key.suggested_priority ?? 0,
                     weight: previous?.weight ?? key.suggested_weight ?? 0,
-                    models:
-                      previous?.models ?? key.models?.join(',') ?? '',
+                    models: previous?.models ?? key.models?.join(',') ?? '',
                     group:
-                      previous?.group ??
-                      key.group_name ??
-                      key.group_id ??
-                      '',
+                      previous?.group ?? key.group_name ?? key.group_id ?? '',
                     ...overrides,
                   })
                   const setConfigValue = (
@@ -1839,20 +1873,20 @@ export function ChannelMutateDrawer({
                   )
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
-	                  const currentWeightValue =
-	                    config?.weight ?? key.suggested_weight ?? 0
-	                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
-	                  const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
-	                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
-	                  const modelRatioDetails = formatUpstreamModelRatioDetails(
-	                    key.model_ratios
-	                  )
-	                  const keyRatioTitle = modelRatioDetails
-	                    ? `${t('Model Ratios')}:\n${modelRatioDetails}`
-	                    : undefined
-	                  const ratioTitle = [
-	                    key.ratio_conversion != null
-	                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
+                  const currentWeightValue =
+                    config?.weight ?? key.suggested_weight ?? 0
+                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
+                  const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
+                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
+                  const modelRatioDetails = formatUpstreamModelRatioDetails(
+                    key.model_ratios
+                  )
+                  const keyRatioTitle = modelRatioDetails
+                    ? `${t('Model Ratios')}:\n${modelRatioDetails}`
+                    : undefined
+                  const ratioTitle = [
+                    key.ratio_conversion != null
+                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
                       : '',
                     key.effective_ratio != null
                       ? `${t('Upstream Ratio')}: ${formatUpstreamRatioCompact(key.effective_ratio)}x`
@@ -1861,11 +1895,11 @@ export function ChannelMutateDrawer({
                   ]
                     .filter(Boolean)
                     .join('\n')
-	                  return (
-	                    <div
-	                      key={configId}
-	                      className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
-	                    >
+                  return (
+                    <div
+                      key={configId}
+                      className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
+                    >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
                           {key.name || key.masked_key}
@@ -1901,35 +1935,32 @@ export function ChannelMutateDrawer({
                           className='text-muted-foreground truncate text-[11px]'
                           title={currentKeyGroupLabel || undefined}
                         >
-	                          {currentKeyGroupLabel || t('Inherited')}
-	                        </span>
-	                      </div>
-	                      <span
-	                        className='font-mono text-xs'
-	                        title={keyRatioTitle}
-	                      >
-	                        {keyRatioValue != null
-	                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
-	                          : '-'}
-	                      </span>
-	                      <div
-	                        className='flex min-w-0 flex-col gap-1'
-	                        title={ratioTitle || undefined}
-	                      >
-	                        <span className='font-mono text-xs'>
+                          {currentKeyGroupLabel || t('Inherited')}
+                        </span>
+                      </div>
+                      <span className='font-mono text-xs' title={keyRatioTitle}>
+                        {keyRatioValue != null
+                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+                          : '-'}
+                      </span>
+                      <div
+                        className='flex min-w-0 flex-col gap-1'
+                        title={ratioTitle || undefined}
+                      >
+                        <span className='font-mono text-xs'>
                           {displayedRatioValue != null
                             ? `${formatUpstreamRatioCompact(displayedRatioValue)}x`
                             : '-'}
                         </span>
-	                        {key.ratio_conversion != null &&
-	                          keyRatioValue != null &&
-	                          Math.abs(key.ratio_conversion - keyRatioValue) >
-	                            Number.EPSILON && (
-	                            <span className='text-muted-foreground truncate text-[11px]'>
-	                              {t('Converted')}
-	                            </span>
-	                          )}
-	                      </div>
+                        {key.ratio_conversion != null &&
+                          keyRatioValue != null &&
+                          Math.abs(key.ratio_conversion - keyRatioValue) >
+                            Number.EPSILON && (
+                            <span className='text-muted-foreground truncate text-[11px]'>
+                              {t('Converted')}
+                            </span>
+                          )}
+                      </div>
                       <Input
                         type='number'
                         value={currentPriorityValue}
@@ -2035,6 +2066,9 @@ export function ChannelMutateDrawer({
     }
     if (isUpstreamAccountSyncedChannel) {
       return true
+    }
+    if (isEditingUnsupportedUnsyncedUpstreamType) {
+      return false
     }
     if (isGlobalAccountPoolMode) {
       return Boolean(accountPoolGroupId)
@@ -2210,13 +2244,13 @@ export function ChannelMutateDrawer({
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
-      icon: <ChannelTypeLogo type={option.value} size={16} />,
+      icon: <ChannelTypeIcon type={option.value} size={16} />,
     }))
     if (!options.some((option) => Number(option.value) === currentType)) {
       options.push({
         value: String(currentType),
         label: `#${currentType}`,
-        icon: <ChannelTypeLogo type={currentType} size={16} />,
+        icon: <ChannelTypeIcon type={currentType} size={16} />,
       })
     }
     return options
@@ -2401,7 +2435,11 @@ export function ChannelMutateDrawer({
       }
       form.reset(defaults)
       clearAllUpstreamPreviews()
-      setUpstreamSyncEnabled(false)
+      setUpstreamPlatform(
+        getUpstreamSyncPlatformFromSettings(channelData.data.settings) ||
+          upstreamPlatformFromChannelType(channelData.data.type) ||
+          'new-api'
+      )
       setUpstreamBaseUrl(
         getUpstreamSyncBaseUrlFromSettings(channelData.data.settings) ||
           channelData.data.base_url ||
@@ -2428,6 +2466,7 @@ export function ChannelMutateDrawer({
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       clearAllUpstreamPreviews()
+      setUpstreamPlatform('new-api')
       setUpstreamBaseUrl('')
       setUpstreamUsername('')
       setUpstreamPassword('')
@@ -2825,6 +2864,18 @@ export function ChannelMutateDrawer({
 
       if (mode === 'create') {
         const models = upstreamModelsToString(data.snapshot.keys)
+        const syncedChannelType = channelTypeFromUpstreamPlatform(
+          data.snapshot.platform
+        )
+        if (syncedChannelType) {
+          form.setValue('type', syncedChannelType, {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
+          setUpstreamPlatform(
+            upstreamPlatformFromChannelType(syncedChannelType) || 'new-api'
+          )
+        }
         if (models) {
           form.setValue('models', models, {
             shouldDirty: true,
@@ -2840,7 +2891,10 @@ export function ChannelMutateDrawer({
         if (!form.getValues('name')?.trim()) {
           form.setValue(
             'name',
-            `${data.snapshot.platform === 'new-api' ? 'new-api' : 'sub2api'} ${upstreamUsername}`,
+            defaultUpstreamChannelName(
+              data.snapshot.base_url || upstreamBaseUrl,
+              upstreamUsername
+            ),
             { shouldDirty: true, shouldValidate: true }
           )
         }
@@ -2857,6 +2911,7 @@ export function ChannelMutateDrawer({
       clearUpstreamRefreshPreview,
       form,
       t,
+      upstreamBaseUrl,
       upstreamUsername,
     ]
   )
@@ -2902,10 +2957,16 @@ export function ChannelMutateDrawer({
       return
     }
     const res = await upstreamPreviewMutation.mutateAsync({
-      platform: upstreamPlatform,
+      platform: forcedUpstreamPlatform ?? upstreamPlatform,
       base_url: baseUrl,
-      username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
-      email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
+      username:
+        (forcedUpstreamPlatform ?? upstreamPlatform) === 'new-api'
+          ? upstreamUsername
+          : undefined,
+      email:
+        (forcedUpstreamPlatform ?? upstreamPlatform) === 'sub2api'
+          ? upstreamUsername
+          : undefined,
       password: upstreamPassword,
       ratio_conversion: upstreamRatioConversion,
     })
@@ -2929,6 +2990,7 @@ export function ChannelMutateDrawer({
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
+    forcedUpstreamPlatform,
     upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
@@ -3149,6 +3211,10 @@ export function ChannelMutateDrawer({
         )
         const normalizedData: ChannelFormValues = {
           ..._data,
+          type:
+            channelTypeFromUpstreamPlatform(
+              getUpstreamSyncPlatformFromSettings(renderCurrentRow.settings)
+            ) ?? _data.type,
           models: aggregatedChannelModels,
           group: _data.group?.length ? _data.group : ['default'],
         }
@@ -3242,7 +3308,9 @@ export function ChannelMutateDrawer({
         handleSuccess()
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : t(ERROR_MESSAGES.UPDATE_FAILED)
+          error instanceof Error
+            ? error.message
+            : t(ERROR_MESSAGES.UPDATE_FAILED)
         )
       } finally {
         setIsSavingSyncedAccountConfigs(false)
@@ -3328,11 +3396,12 @@ export function ChannelMutateDrawer({
       toast.error(t('Account and password are required'))
       return
     }
+    const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
     const res = await upstreamPreviewMutation.mutateAsync({
-      platform: upstreamPlatform,
+      platform: refreshPlatform,
       base_url: baseUrl,
-      username: upstreamPlatform === 'new-api' ? upstreamUsername : undefined,
-      email: upstreamPlatform === 'sub2api' ? upstreamUsername : undefined,
+      username: refreshPlatform === 'new-api' ? upstreamUsername : undefined,
+      email: refreshPlatform === 'sub2api' ? upstreamUsername : undefined,
       password: upstreamPassword,
       ratio_conversion: upstreamRatioConversion,
     })
@@ -3353,6 +3422,7 @@ export function ChannelMutateDrawer({
   }, [
     applyUpstreamPreviewChallenge,
     applyUpstreamPreviewData,
+    forcedUpstreamPlatform,
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
@@ -3647,6 +3717,15 @@ export function ChannelMutateDrawer({
         return
       }
 
+      if (isEditingUnsupportedUnsyncedUpstreamType) {
+        toast.error(
+          t(
+            'new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.'
+          )
+        )
+        return
+      }
+
       if (isEditing && isUpstreamAccountSyncedChannel) {
         await saveSyncedAccountLocalConfigs(data)
         return
@@ -3759,6 +3838,7 @@ export function ChannelMutateDrawer({
       upstreamRatioConversion,
       clearUpstreamCreatePreview,
       isCreateUpstreamSyncMode,
+      isEditingUnsupportedUnsyncedUpstreamType,
       isUpstreamAccountSyncedChannel,
       isUpstreamPreviewExpired,
       showUpstreamPreviewExpiredToast,
@@ -3779,7 +3859,6 @@ export function ChannelMutateDrawer({
         setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
         setAdvancedCustomEditorOpen(false)
-        setUpstreamSyncEnabled(false)
         setSyncRefreshOpen(false)
         form.setValue('upstream_account_sync', false)
         setUpstreamBaseUrl('')
@@ -3908,7 +3987,7 @@ export function ChannelMutateDrawer({
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
-                <ChannelTypeLogo type={currentType} size={22} />
+                <ChannelTypeIcon type={currentType} size={22} />
               </span>
               <span>
                 {isEditing ? t('Edit Channel') : t('Create Channel')}
@@ -3958,7 +4037,7 @@ export function ChannelMutateDrawer({
               >
                 <ChannelEditorNav
                   providerLogo={
-                    <ChannelTypeLogo type={currentType} size={18} />
+                    <ChannelTypeIcon type={currentType} size={18} />
                   }
                   providerLabel={t(currentTypeLabel)}
                   statusLabel={t(currentStatusLabel)}
@@ -3988,7 +4067,7 @@ export function ChannelMutateDrawer({
                               <FormControl>
                                 <div className='relative'>
                                   <span className='pointer-events-none absolute top-1/2 left-3 z-10 flex -translate-y-1/2'>
-                                    <ChannelTypeLogo
+                                    <ChannelTypeIcon
                                       type={Number(field.value)}
                                       size={18}
                                     />
@@ -4120,271 +4199,158 @@ export function ChannelMutateDrawer({
                         </Alert>
                       )}
 
-                      {!isEditing && (
+                      {!isEditing && isCreateUpstreamSyncMode && (
                         <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
                           <div className='flex flex-col gap-4'>
                             <div className='flex flex-col gap-1'>
                               <div className='flex items-center gap-2'>
                                 <KeyRound aria-hidden='true' />
                                 <span className='text-sm font-semibold'>
-                                  {t('Credential Source')}
+                                  {t('Upstream Account Sync')}
                                 </span>
                               </div>
                               <p className='text-muted-foreground text-xs'>
                                 {t(
-                                  'Choose one credential source for this channel.'
+                                  'This channel type uses upstream account sync to fetch keys, groups, rates, and balance.'
                                 )}
                               </p>
                             </div>
 
-                            <div className='grid gap-3 md:grid-cols-2'>
-                              {(
-                                [
-                                  {
-                                    value: 'manual',
-                                    label: t('Manual API Credentials'),
-                                    description: t(
-                                      'Set the API address and key on this channel.'
-                                    ),
-                                  },
-                                  {
-                                    value: 'upstream_account',
-                                    label: t('Upstream Account Sync'),
-                                    description: t(
-                                      'Use a new-api or sub2api account to sync keys, groups, rates, and balance.'
-                                    ),
-                                  },
-                                ] satisfies Array<{
-                                  value: CredentialSourceMode
-                                  label: string
-                                  description: string
-                                }>
-                              ).map((option) => {
-                                const isActive =
-                                  (upstreamSyncEnabled
-                                    ? 'upstream_account'
-                                    : 'manual') === option.value
-                                return (
-                                  <button
-                                    key={option.value}
-                                    type='button'
-                                    aria-pressed={isActive}
-                                    onClick={() => {
-                                      if (!permissions.canSensitiveWrite) {
-                                        toast.error(noPermissionMessage)
-                                        return
-                                      }
-                                      handleUpstreamSyncEnabledChange(
-                                        option.value === 'upstream_account'
-                                      )
-                                    }}
-                                    className={cn(
-                                      'flex items-start gap-3 rounded-lg border p-4 text-left transition-all',
-                                      isActive &&
-                                        'border-primary ring-primary ring-1',
-                                      permissions.canSensitiveWrite
-                                        ? 'hover:border-primary/60 cursor-pointer'
-                                        : 'cursor-not-allowed opacity-60'
-                                    )}
-                                    disabled={!permissions.canSensitiveWrite}
-                                  >
-                                    <span
-                                      className={cn(
-                                        'border-input mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-                                        isActive &&
-                                          'border-primary bg-primary text-primary-foreground'
-                                      )}
-                                      aria-hidden='true'
-                                    >
-                                      {isActive && (
-                                        <span className='bg-primary-foreground size-2 rounded-full' />
-                                      )}
-                                    </span>
-                                    <div className='flex min-w-0 flex-col gap-1'>
-                                      <span className='font-medium'>
-                                        {option.label}
-                                      </span>
-                                      <span className='text-muted-foreground text-xs'>
-                                        {option.description}
-                                      </span>
-                                    </div>
-                                  </button>
-                                )
-                              })}
+                            <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'>
+                              <div className='flex flex-col gap-2'>
+                                <Label htmlFor='upstream-sync-base-url'>
+                                  {t('Upstream Platform URL')}
+                                </Label>
+                                <Input
+                                  id='upstream-sync-base-url'
+                                  value={upstreamBaseUrl}
+                                  onChange={(event) =>
+                                    setUpstreamBaseUrl(event.target.value)
+                                  }
+                                  placeholder={t('new-api or sub2api site URL')}
+                                  disabled={!canEditSensitiveFields}
+                                />
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <Label htmlFor='upstream-sync-account'>
+                                  {t('Account')}
+                                </Label>
+                                <Input
+                                  id='upstream-sync-account'
+                                  value={upstreamUsername}
+                                  onChange={(event) =>
+                                    setUpstreamUsername(event.target.value)
+                                  }
+                                  autoComplete='username'
+                                  placeholder={
+                                    upstreamPlatform === 'new-api'
+                                      ? t('Username')
+                                      : t('Email')
+                                  }
+                                />
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <Label htmlFor='upstream-sync-password'>
+                                  {t('Password')}
+                                </Label>
+                                <Input
+                                  id='upstream-sync-password'
+                                  value={upstreamPassword}
+                                  onChange={(event) =>
+                                    setUpstreamPassword(event.target.value)
+                                  }
+                                  type='password'
+                                  autoComplete='current-password'
+                                  placeholder={t('Password')}
+                                />
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <Label htmlFor='upstream-sync-paid-cny'>
+                                  {t('Paid CNY')}
+                                </Label>
+                                <Input
+                                  id='upstream-sync-paid-cny'
+                                  value={upstreamPaidCny}
+                                  onChange={(event) =>
+                                    setUpstreamPaidCny(event.target.value)
+                                  }
+                                  inputMode='decimal'
+                                  placeholder='1'
+                                />
+                              </div>
+                              <div className='flex flex-col gap-2'>
+                                <Label htmlFor='upstream-sync-platform-usd-credit'>
+                                  {t('Platform USD Credit')}
+                                </Label>
+                                <Input
+                                  id='upstream-sync-platform-usd-credit'
+                                  value={upstreamPlatformUsdCredit}
+                                  onChange={(event) =>
+                                    setUpstreamPlatformUsdCredit(
+                                      event.target.value
+                                    )
+                                  }
+                                  inputMode='decimal'
+                                  placeholder='20'
+                                />
+                              </div>
+                              <div className='flex items-end'>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  className='w-full'
+                                  disabled={
+                                    upstreamPreviewMutation.isPending ||
+                                    upstreamPreview2FAMutation.isPending ||
+                                    upstreamRefreshMutation.isPending
+                                  }
+                                  onClick={handlePreviewUpstreamAccount}
+                                >
+                                  {upstreamPreviewMutation.isPending ? (
+                                    <Loader2
+                                      data-icon='inline-start'
+                                      className='animate-spin'
+                                    />
+                                  ) : (
+                                    <RefreshCw data-icon='inline-start' />
+                                  )}
+                                  {t('Sync Keys')}
+                                </Button>
+                              </div>
                             </div>
+                            <p className='text-muted-foreground text-xs'>
+                              {t(
+                                'Used to calculate the actual cost ratio for synced keys. Leave both empty to use the upstream ratio directly.'
+                              )}
+                            </p>
 
-                            {upstreamSyncEnabled && (
-                              <>
-                                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-7'>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-platform'>
-                                      {t('Upstream Platform')}
-                                    </Label>
-                                    <Select
-                                      value={upstreamPlatform}
-                                      onValueChange={(value) =>
-                                        setUpstreamPlatform(
-                                          value as UpstreamAccountPlatform
-                                        )
-                                      }
-                                    >
-                                      <SelectTrigger id='upstream-sync-platform'>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent
-                                        alignItemWithTrigger={false}
-                                      >
-                                        <SelectGroup>
-                                          <SelectItem value='new-api'>
-                                            new-api
-                                          </SelectItem>
-                                          <SelectItem value='sub2api'>
-                                            sub2api
-                                          </SelectItem>
-                                        </SelectGroup>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-base-url'>
-                                      {t('Upstream Platform URL')}
-                                    </Label>
-                                    <Input
-                                      id='upstream-sync-base-url'
-                                      value={upstreamBaseUrl}
-                                      onChange={(event) =>
-                                        setUpstreamBaseUrl(event.target.value)
-                                      }
-                                      placeholder={t(
-                                        'new-api or sub2api site URL'
-                                      )}
-                                      disabled={!canEditSensitiveFields}
-                                    />
-                                  </div>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-account'>
-                                      {t('Account')}
-                                    </Label>
-                                    <Input
-                                      id='upstream-sync-account'
-                                      value={upstreamUsername}
-                                      onChange={(event) =>
-                                        setUpstreamUsername(event.target.value)
-                                      }
-                                      autoComplete='username'
-                                      placeholder={
-                                        upstreamPlatform === 'new-api'
-                                          ? t('Username')
-                                          : t('Email')
-                                      }
-                                    />
-                                  </div>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-password'>
-                                      {t('Password')}
-                                    </Label>
-                                    <Input
-                                      id='upstream-sync-password'
-                                      value={upstreamPassword}
-                                      onChange={(event) =>
-                                        setUpstreamPassword(event.target.value)
-                                      }
-                                      type='password'
-                                      autoComplete='current-password'
-                                      placeholder={t('Password')}
-                                    />
-                                  </div>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-paid-cny'>
-                                      {t('Paid CNY')}
-                                    </Label>
-                                    <Input
-                                      id='upstream-sync-paid-cny'
-                                      value={upstreamPaidCny}
-                                      onChange={(event) =>
-                                        setUpstreamPaidCny(event.target.value)
-                                      }
-                                      inputMode='decimal'
-                                      placeholder='1'
-                                    />
-                                  </div>
-                                  <div className='flex flex-col gap-2'>
-                                    <Label htmlFor='upstream-sync-platform-usd-credit'>
-                                      {t('Platform USD Credit')}
-                                    </Label>
-                                    <Input
-                                      id='upstream-sync-platform-usd-credit'
-                                      value={upstreamPlatformUsdCredit}
-                                      onChange={(event) =>
-                                        setUpstreamPlatformUsdCredit(
-                                          event.target.value
-                                        )
-                                      }
-                                      inputMode='decimal'
-                                      placeholder='20'
-                                    />
-                                  </div>
-                                  <div className='flex items-end'>
-                                    <Button
-                                      type='button'
-                                      variant='outline'
-                                      className='w-full'
-                                      disabled={
-                                        upstreamPreviewMutation.isPending ||
-                                        upstreamPreview2FAMutation.isPending ||
-                                        upstreamRefreshMutation.isPending
-                                      }
-                                      onClick={handlePreviewUpstreamAccount}
-                                    >
-                                      {upstreamPreviewMutation.isPending ? (
-                                        <Loader2
-                                          data-icon='inline-start'
-                                          className='animate-spin'
-                                        />
-                                      ) : (
-                                        <RefreshCw data-icon='inline-start' />
-                                      )}
-                                      {t('Sync Keys')}
-                                    </Button>
-                                  </div>
-                                </div>
-                                <p className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Used to calculate the actual cost ratio for synced keys. Leave both empty to use the upstream ratio directly.'
-                                  )}
-                                </p>
+                            {upstreamTwoFactorChallenge &&
+                              renderUpstreamTwoFactorChallenge(
+                                'create',
+                                upstreamTwoFactorChallenge,
+                                upstreamTwoFactorCode,
+                                setUpstreamTwoFactorCode,
+                                upstreamTwoFactorRemaining,
+                                isUpstreamTwoFactorExpired
+                              )}
 
-                                {upstreamTwoFactorChallenge &&
-                                  renderUpstreamTwoFactorChallenge(
-                                    'create',
-                                    upstreamTwoFactorChallenge,
-                                    upstreamTwoFactorCode,
-                                    setUpstreamTwoFactorCode,
-                                    upstreamTwoFactorRemaining,
-                                    isUpstreamTwoFactorExpired
-                                  )}
+                            {upstreamSnapshot?.warnings?.length ? (
+                              <Alert>
+                                <AlertCircle aria-hidden='true' />
+                                <AlertDescription>
+                                  {upstreamSnapshot.warnings.join('；')}
+                                </AlertDescription>
+                              </Alert>
+                            ) : null}
 
-                                {upstreamSnapshot?.warnings?.length ? (
-                                  <Alert>
-                                    <AlertCircle aria-hidden='true' />
-                                    <AlertDescription>
-                                      {upstreamSnapshot.warnings.join('；')}
-                                    </AlertDescription>
-                                  </Alert>
-                                ) : null}
+                            {upstreamSnapshot &&
+                              renderUpstreamPreviewExpiryNotice(
+                                upstreamPreviewRemaining,
+                                isUpstreamPreviewExpired
+                              )}
 
-                                {upstreamSnapshot &&
-                                  renderUpstreamPreviewExpiryNotice(
-                                    upstreamPreviewRemaining,
-                                    isUpstreamPreviewExpired
-                                  )}
-
-                                {upstreamSnapshot &&
-                                  renderUpstreamSnapshotReview(
-                                    upstreamSnapshot
-                                  )}
-                              </>
-                            )}
+                            {upstreamSnapshot &&
+                              renderUpstreamSnapshotReview(upstreamSnapshot)}
                           </div>
                         </div>
                       )}
@@ -4413,7 +4379,7 @@ export function ChannelMutateDrawer({
                                 </AlertDescription>
                               </Alert>
                             ) : syncedChannelAccountsQuery.isLoading ? (
-                              <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+                              <div className='text-muted-foreground flex items-center gap-2 text-sm'>
                                 <Loader2
                                   data-icon='inline-start'
                                   className='animate-spin'
@@ -4487,34 +4453,7 @@ export function ChannelMutateDrawer({
                           </CollapsibleTrigger>
                           <CollapsibleContent className='border-border/60 border-t px-4 py-4'>
                             <div className='flex flex-col gap-4'>
-                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-7'>
-                                <div className='flex flex-col gap-2'>
-                                  <Label htmlFor='upstream-refresh-platform'>
-                                    {t('Upstream Platform')}
-                                  </Label>
-                                  <Select
-                                    value={upstreamPlatform}
-                                    onValueChange={(value) =>
-                                      setUpstreamPlatform(
-                                        value as UpstreamAccountPlatform
-                                      )
-                                    }
-                                  >
-                                    <SelectTrigger id='upstream-refresh-platform'>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent alignItemWithTrigger={false}>
-                                      <SelectGroup>
-                                        <SelectItem value='new-api'>
-                                          new-api
-                                        </SelectItem>
-                                        <SelectItem value='sub2api'>
-                                          sub2api
-                                        </SelectItem>
-                                      </SelectGroup>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
+                              <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-base-url'>
                                     {t('Upstream Platform URL')}
@@ -4667,7 +4606,9 @@ export function ChannelMutateDrawer({
                                 <Alert>
                                   <AlertCircle aria-hidden='true' />
                                   <AlertDescription>
-                                    {upstreamRefreshSnapshot.warnings.join('；')}
+                                    {upstreamRefreshSnapshot.warnings.join(
+                                      '；'
+                                    )}
                                   </AlertDescription>
                                 </Alert>
                               ) : null}
@@ -4685,6 +4626,18 @@ export function ChannelMutateDrawer({
                             </div>
                           </CollapsibleContent>
                         </Collapsible>
+                      )}
+
+                      {isEditingUnsupportedUnsyncedUpstreamType && (
+                        <Alert>
+                          <AlertCircle aria-hidden='true' />
+                          <AlertTitle>{t('Upstream Account Sync')}</AlertTitle>
+                          <AlertDescription>
+                            {t(
+                              'new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.'
+                            )}
+                          </AlertDescription>
+                        </Alert>
                       )}
 
                       {showManualCredentialSection && (

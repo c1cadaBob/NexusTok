@@ -24,6 +24,7 @@ import {
   buildUpstreamAccountConfigsFromChannelAccounts,
   buildUpstreamAccountConfigsFromSnapshotKeys,
   getUpstreamAccountConfig,
+  defaultUpstreamChannelName,
   resolveUpstreamChannelGroup,
   upstreamAccountModelsArrayValue,
   upstreamAccountFromChannelAccount,
@@ -217,5 +218,18 @@ describe('上游同步渠道本地配置索引', () => {
     assert.equal(resolveUpstreamChannelGroup([]), 'default')
     assert.equal(resolveUpstreamChannelGroup(undefined), 'default')
     assert.equal(resolveUpstreamChannelGroup(['vip']), 'vip')
+  })
+
+  test('上游账号同步默认渠道名称取最低级域名', () => {
+    assert.equal(
+      defaultUpstreamChannelName('https://aaa.bbb.ccc.com/login'),
+      'aaa'
+    )
+    assert.equal(defaultUpstreamChannelName('newapi.example.com'), 'newapi')
+    assert.equal(
+      defaultUpstreamChannelName('http://118.31.248.175:3000/'),
+      '118.31.248.175'
+    )
+    assert.equal(defaultUpstreamChannelName('', 'fallback'), 'fallback')
   })
 })

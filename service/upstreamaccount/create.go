@@ -116,12 +116,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		return nil, nil, fmt.Errorf("渠道名称不能为空")
 	}
 	ApplySyncIDs(snapshot)
-	channelType := req.Channel.Type
-	if channelType <= 0 {
-		// new-api 和 sub2api 都暴露 OpenAI 兼容接口。账号同步创建允许管理员先不选择类型，
-		// 后端默认按 OpenAI 兼容渠道保存，避免空类型渠道进入后续调度路径。
-		channelType = constant.ChannelTypeOpenAI
-	}
+	channelType := resolveSyncedChannelType(snapshot, req.Channel.Type)
 	models := strings.TrimSpace(req.Channel.Models)
 	if models == "" {
 		models = inferModelsFromKeys(snapshot.Keys)
@@ -192,6 +187,24 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	channel.Models = models
 	channel.Group = group
 	return channel, accounts, nil
+}
+
+func resolveSyncedChannelType(snapshot *Snapshot, requestedType int) int {
+	// 上游账号同步渠道的“渠道类型”应表达接入平台本身：new-api 保存为 new-api，
+	// sub2api 保存为 sub2api。两者在 Relay 层仍映射到 OpenAI 兼容 API 类型，
+	// 因此这里改变展示和管理语义，不改变真实请求协议。
+	if snapshot != nil {
+		switch NormalizePlatform(snapshot.Platform) {
+		case PlatformNewAPI:
+			return constant.ChannelTypeNewAPI
+		case PlatformSub2API:
+			return constant.ChannelTypeSub2API
+		}
+	}
+	if requestedType > 0 {
+		return requestedType
+	}
+	return constant.ChannelTypeOpenAI
 }
 
 // normalizeSyncedChannelBaseURL 统一选择同步渠道的真实调用地址。

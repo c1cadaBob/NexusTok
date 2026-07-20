@@ -33,7 +33,9 @@ func ChannelType2APIType(channelType int) (int, bool) {
 	// 每个 case 对应一个上游 AI 服务提供商
 	switch channelType {
 	// ── 国际主流 AI 服务 ──────────────────────────────────────────────
-	case constant.ChannelTypeOpenAI: // OpenAI（GPT-4、GPT-3.5 等）
+	case constant.ChannelTypeOpenAI, // OpenAI（GPT-4、GPT-3.5 等）
+		constant.ChannelTypeNewAPI,  // new-api 暴露 OpenAI 兼容 API
+		constant.ChannelTypeSub2API: // sub2api 暴露 OpenAI 兼容 API
 		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeAnthropic: // Anthropic（Claude 系列）
 		apiType = constant.APITypeAnthropic

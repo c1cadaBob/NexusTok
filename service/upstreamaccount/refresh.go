@@ -109,6 +109,11 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			"used_quota":           usedQuotaValue(snapshot.Balance),
 			"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, req.Credential),
 		}
+		if syncedChannelType := resolveSyncedChannelType(snapshot, channel.Type); syncedChannelType > 0 && channel.Type != syncedChannelType {
+			// 刷新快照时以后端识别出的上游平台为准修正渠道类型，避免历史 OpenAI
+			// 同步渠道或外部 API 调用刷新后继续显示成普通 OpenAI 渠道。
+			updates["type"] = syncedChannelType
+		}
 		if err := tx.Model(&channel).Updates(updates).Error; err != nil {
 			return err
 		}

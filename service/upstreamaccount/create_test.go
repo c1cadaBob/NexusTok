@@ -94,6 +94,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, result.ChannelID).Error)
+	require.Equal(t, constant.ChannelTypeNewAPI, channel.Type)
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.Key)
 	require.Equal(t, constant.ChannelCredentialModeAccountPool, channel.ChannelInfo.CredentialMode)
 	require.True(t, channel.ChannelInfo.AccountPoolEnabled)
@@ -335,7 +336,7 @@ func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
 
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, result.ChannelID).Error)
-	require.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
+	require.Equal(t, constant.ChannelTypeSub2API, channel.Type)
 	require.Equal(t, "", channel.Models)
 	require.Equal(t, "default", channel.Group)
 

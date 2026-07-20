@@ -69,6 +69,8 @@ const (
 	ChannelTypeReplicate      = 56 // Replicate
 	ChannelTypeCodex          = 57 // Codex（OpenAI Codex）
 	ChannelTypeAdvancedCustom = 58 // Advanced Custom（按请求路径自定义上游路由）
+	ChannelTypeNewAPI         = 59 // new-api（OpenAI 兼容聚合平台）
+	ChannelTypeSub2API        = 60 // sub2api（OpenAI 兼容订阅聚合平台）
 	ChannelTypeDummy               // 仅用于计数，不要在此之后添加渠道
 )
 
@@ -134,6 +136,8 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 // 56 - Replicate
 	"https://chatgpt.com",                       // 57 - Codex
 	"",                                          // 58 - Advanced Custom
+	"",                                          // 59 - new-api
+	"",                                          // 60 - sub2api
 }
 
 // ChannelTypeNames 渠道类型名称映射
@@ -194,6 +198,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "Codex",
 	ChannelTypeAdvancedCustom: "Advanced Custom",
+	ChannelTypeNewAPI:         "new-api",
+	ChannelTypeSub2API:        "sub2api",
 }
 
 // GetChannelTypeName 获取渠道类型名称
