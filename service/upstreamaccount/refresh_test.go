@@ -2,6 +2,8 @@ package upstreamaccount
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"testing"
 
@@ -12,6 +14,95 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer sub2-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "alice@example.com", body["email"])
+			require.Equal(t, "secret", body["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":1}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":11}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential("", &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+	}, Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Email:    "alice@example.com",
+		Password: "secret",
+	})
+	channel := model.Channel{
+		Type:               constant.ChannelTypeOpenAI,
+		Key:                constant.ChannelCredentialModeAccountPool,
+		Name:               "synced-sub2-channel",
+		Status:             common.ChannelStatusEnabled,
+		Models:             "gpt-4o",
+		Group:              "default",
+		Balance:            1,
+		BalanceUpdatedTime: 1,
+		OtherSettings:      settings,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	balance, err := RefreshChannelBalance(context.Background(), &channel)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, balance)
+
+	var refreshed model.Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	require.Equal(t, 12.5, refreshed.Balance)
+	require.Equal(t, int64(common.QuotaPerUnit*4.75), refreshed.UsedQuota)
+	require.Greater(t, refreshed.BalanceUpdatedTime, int64(1))
+	credential, ok, err := ReadChannelSyncCredential(refreshed.OtherSettings)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "secret", credential.Password)
+}
 
 func TestRefreshChannelFromCredentialConsumesPreviewSnapshot(t *testing.T) {
 	oldDB := model.DB

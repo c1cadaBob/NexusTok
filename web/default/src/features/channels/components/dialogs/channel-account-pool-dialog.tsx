@@ -74,6 +74,7 @@ import { channelsQueryKeys, formatTimestamp } from '../../lib'
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
 } from '../../lib/upstream-sync'
@@ -686,7 +687,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             )}
 
             <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-              <Table className='min-w-[1320px]'>
+              <Table className='min-w-[1440px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead className='min-w-[160px]'>{t('Name')}</TableHead>
@@ -695,6 +696,9 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     <TableHead className='min-w-[260px]'>{t('Models')}</TableHead>
                     <TableHead className='min-w-[150px]'>
                       {t('Key Group')}
+                    </TableHead>
+                    <TableHead className='min-w-[110px]'>
+                      {t('Key Ratio')}
                     </TableHead>
                     <TableHead className='min-w-[120px]'>
                       {t('Ratio Conversion')}
@@ -735,10 +739,15 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   ) : (
                     accounts.map((account) => {
                       const status = statusLabel(account, nowSeconds)
+                      const keyRatioValue =
+                        getUpstreamKeyRatioDisplayValue(account)
                       const ratioValue = getUpstreamRatioDisplayValue(account)
                       const ratioDetails = formatUpstreamModelRatioDetails(
                         account.model_ratios
                       )
+                      const keyRatioTitle = ratioDetails
+                        ? `${t('Model Ratios')}:\n${ratioDetails}`
+                        : undefined
                       return (
                         <TableRow key={account.id}>
                           <TableCell className='max-w-[220px] min-w-[160px] truncate font-medium'>
@@ -765,6 +774,14 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                             title={getUpstreamKeyGroupLabel(account) || t('Inherited')}
                           >
                             {getUpstreamKeyGroupLabel(account) || t('Inherited')}
+                          </TableCell>
+                          <TableCell
+                            className='min-w-[110px] font-mono text-xs'
+                            title={keyRatioTitle}
+                          >
+                            {keyRatioValue != null
+                              ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+                              : '-'}
                           </TableCell>
                           <TableCell
                             className='min-w-[120px] font-mono text-xs'

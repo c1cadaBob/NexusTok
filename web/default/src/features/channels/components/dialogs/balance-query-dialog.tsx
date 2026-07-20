@@ -64,6 +64,21 @@ export function BalanceQueryDialog({
   const noPermissionMessage = t("You don't have necessary permission")
 
   const isCodex = currentRow?.type === 57
+  const isUpstreamAccountSync = (() => {
+    if (!currentRow?.settings?.trim()) return false
+    try {
+      const parsed = JSON.parse(currentRow.settings) as Record<string, unknown>
+      const metadata = parsed.upstream_account_sync
+      return Boolean(
+        metadata &&
+          (typeof metadata === 'object' ||
+            metadata === true ||
+            (typeof metadata === 'string' && metadata.trim().length > 0))
+      )
+    } catch {
+      return false
+    }
+  })()
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow
@@ -177,7 +192,12 @@ export function BalanceQueryDialog({
         <DialogHeader>
           <DialogTitle>{t('Query Balance')}</DialogTitle>
           <DialogDescription>
-            {t('Update balance for:')} <strong>{currentRow.name}</strong>
+            {isUpstreamAccountSync
+              ? t(
+                  'Refreshes the real upstream account balance using the saved encrypted upstream account credential.'
+                )
+              : t('Update balance for:')}{' '}
+            <strong>{currentRow.name}</strong>
           </DialogDescription>
         </DialogHeader>
 

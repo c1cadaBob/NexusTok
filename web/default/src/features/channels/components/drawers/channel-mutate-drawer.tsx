@@ -191,6 +191,7 @@ import {
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
 } from '../../lib/upstream-sync'
@@ -1744,10 +1745,11 @@ export function ChannelMutateDrawer({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[74rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
+                <div className='grid min-w-[82rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(7.5rem,0.75fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
                   <span>{t('Key')}</span>
                   <span>{t('Models')}</span>
                   <span>{t('Key Group')}</span>
+                  <span>{t('Key Ratio')}</span>
                   <span>{t('Ratio Conversion')}</span>
                   <span>{t('Priority')}</span>
                   <span>{t('Weight')}</span>
@@ -1770,16 +1772,20 @@ export function ChannelMutateDrawer({
                   )
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
-                  const currentWeightValue =
-                    config?.weight ?? key.suggested_weight ?? 0
-                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
-                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
-                  const modelRatioDetails = formatUpstreamModelRatioDetails(
-                    key.model_ratios
-                  )
-                  const ratioTitle = [
-                    key.ratio_conversion != null
-                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
+	                  const currentWeightValue =
+	                    config?.weight ?? key.suggested_weight ?? 0
+	                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
+	                  const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
+	                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
+	                  const modelRatioDetails = formatUpstreamModelRatioDetails(
+	                    key.model_ratios
+	                  )
+	                  const keyRatioTitle = modelRatioDetails
+	                    ? `${t('Model Ratios')}:\n${modelRatioDetails}`
+	                    : undefined
+	                  const ratioTitle = [
+	                    key.ratio_conversion != null
+	                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
                       : '',
                     key.effective_ratio != null
                       ? `${t('Upstream Ratio')}: ${formatUpstreamRatioCompact(key.effective_ratio)}x`
@@ -1788,11 +1794,11 @@ export function ChannelMutateDrawer({
                   ]
                     .filter(Boolean)
                     .join('\n')
-                  return (
-                    <div
-                      key={configId}
-                      className='grid min-w-[74rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
-                    >
+	                  return (
+	                    <div
+	                      key={configId}
+	                      className='grid min-w-[82rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(7.5rem,0.75fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
+	                    >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
                           {key.name || key.masked_key}
@@ -1853,31 +1859,35 @@ export function ChannelMutateDrawer({
                           className='text-muted-foreground truncate text-[11px]'
                           title={currentKeyGroupLabel || undefined}
                         >
-                          {currentKeyGroupLabel || t('Inherited')}
-                        </span>
-                      </div>
-                      <div
-                        className='flex min-w-0 flex-col gap-1'
-                        title={ratioTitle || undefined}
-                      >
-                        <span className='font-mono text-xs'>
+	                          {currentKeyGroupLabel || t('Inherited')}
+	                        </span>
+	                      </div>
+	                      <span
+	                        className='font-mono text-xs'
+	                        title={keyRatioTitle}
+	                      >
+	                        {keyRatioValue != null
+	                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+	                          : '-'}
+	                      </span>
+	                      <div
+	                        className='flex min-w-0 flex-col gap-1'
+	                        title={ratioTitle || undefined}
+	                      >
+	                        <span className='font-mono text-xs'>
                           {displayedRatioValue != null
                             ? `${formatUpstreamRatioCompact(displayedRatioValue)}x`
                             : '-'}
                         </span>
-                        {key.ratio_conversion != null &&
-                          key.effective_ratio != null &&
-                          Math.abs(key.ratio_conversion - key.effective_ratio) >
-                            Number.EPSILON && (
-                            <span className='text-muted-foreground truncate text-[11px]'>
-                              {t('Upstream Ratio')}:{' '}
-                              {formatUpstreamRatioCompact(
-                                key.effective_ratio
-                              )}
-                              x
-                            </span>
-                          )}
-                      </div>
+	                        {key.ratio_conversion != null &&
+	                          keyRatioValue != null &&
+	                          Math.abs(key.ratio_conversion - keyRatioValue) >
+	                            Number.EPSILON && (
+	                            <span className='text-muted-foreground truncate text-[11px]'>
+	                              {t('Converted')}
+	                            </span>
+	                          )}
+	                      </div>
                       <Input
                         type='number'
                         value={currentPriorityValue}

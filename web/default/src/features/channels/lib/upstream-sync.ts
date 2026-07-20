@@ -44,6 +44,19 @@ export function getUpstreamRatioDisplayValue(
   ) as number | undefined
 }
 
+export function getUpstreamKeyRatioDisplayValue(
+  value:
+    | Pick<RatioDisplaySource, 'effective_ratio' | 'group_ratio'>
+    | null
+    | undefined
+): number | undefined {
+  if (!value) return undefined
+  const candidates = [value.effective_ratio, value.group_ratio]
+  return candidates.find(
+    (candidate) => candidate != null && Number.isFinite(candidate)
+  ) as number | undefined
+}
+
 export function formatUpstreamModelRatioDetails(
   ratios?: Record<string, number>
 ): string {

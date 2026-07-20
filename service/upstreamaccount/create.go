@@ -172,7 +172,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		HeaderOverride:     req.Channel.HeaderOverride,
 		StatusCodeMapping:  req.Channel.StatusCodeMapping,
 		Other:              req.Channel.Other,
-		OtherSettings:      mergeChannelSyncMetadata(req.Channel.OtherSettings, snapshot),
+		OtherSettings:      mergeChannelSyncMetadataWithCredential(req.Channel.OtherSettings, snapshot, Credential{}),
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:      constant.ChannelCredentialModeAccountPool,
 			AccountPoolEnabled:  true,

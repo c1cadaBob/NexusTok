@@ -28,6 +28,21 @@ type Credential struct {
 	Email    string `json:"email,omitempty"`
 }
 
+// StoredCredential 是保存到渠道 settings 的上游账号登录凭据。
+//
+// 该结构只用于需要后台重新登录上游平台的管理操作，例如点击渠道余额刷新。
+// Password 必须使用 common.EncryptSensitiveString 加密后再落库；对外返回渠道
+// settings 前必须通过 SanitizeChannelSyncSettings 移除 credentials，避免泄露
+// 可离线解密的敏感密文。
+type StoredCredential struct {
+	Platform  string `json:"platform,omitempty"`
+	BaseURL   string `json:"base_url,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Password  string `json:"password,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
+}
+
 // PreviewRequest 是预览接口的请求体。
 type PreviewRequest struct {
 	Credential
@@ -43,16 +58,17 @@ type Preview2FARequest struct {
 
 // Snapshot 表示目标平台账号当前可见的密钥、分组、倍率和余额快照。
 type Snapshot struct {
-	Platform        string                   `json:"platform"`
-	BaseURL         string                   `json:"base_url"`
-	User            *UserSnapshot            `json:"user,omitempty"`
-	Balance         *BalanceSnapshot         `json:"balance,omitempty"`
-	Groups          []SyncedGroup            `json:"groups"`
-	Keys            []SyncedKey              `json:"keys"`
-	Rates           *RateSnapshot            `json:"rates,omitempty"`
-	RatioConversion *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
-	Warnings        []string                 `json:"warnings,omitempty"`
-	Raw             map[string]any           `json:"raw,omitempty"`
+	Platform         string                   `json:"platform"`
+	BaseURL          string                   `json:"base_url"`
+	User             *UserSnapshot            `json:"user,omitempty"`
+	Balance          *BalanceSnapshot         `json:"balance,omitempty"`
+	Groups           []SyncedGroup            `json:"groups"`
+	Keys             []SyncedKey              `json:"keys"`
+	Rates            *RateSnapshot            `json:"rates,omitempty"`
+	RatioConversion  *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
+	StoredCredential *StoredCredential        `json:"-"`
+	Warnings         []string                 `json:"warnings,omitempty"`
+	Raw              map[string]any           `json:"raw,omitempty"`
 }
 
 // UserSnapshot 表示目标平台当前登录用户的基础信息。

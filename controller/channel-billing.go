@@ -19,7 +19,7 @@
 package controller
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +31,7 @@ import (
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/service/upstreamaccount"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/types"
 
@@ -43,12 +44,12 @@ import (
 
 // OpenAISubscriptionResponse OpenAI 订阅信息响应
 type OpenAISubscriptionResponse struct {
-	Object             string  `json:"object"`               // 对象类型
-	HasPaymentMethod   bool    `json:"has_payment_method"`   // 是否有支付方式
-	SoftLimitUSD       float64 `json:"soft_limit_usd"`       // 软限制（美元）
-	HardLimitUSD       float64 `json:"hard_limit_usd"`       // 硬限制（美元）
+	Object             string  `json:"object"`                // 对象类型
+	HasPaymentMethod   bool    `json:"has_payment_method"`    // 是否有支付方式
+	SoftLimitUSD       float64 `json:"soft_limit_usd"`        // 软限制（美元）
+	HardLimitUSD       float64 `json:"hard_limit_usd"`        // 硬限制（美元）
 	SystemHardLimitUSD float64 `json:"system_hard_limit_usd"` // 系统硬限制（美元）
-	AccessUntil        int64   `json:"access_until"`         // 访问有效期
+	AccessUntil        int64   `json:"access_until"`          // 访问有效期
 }
 
 type OpenAIUsageDailyCost struct {
@@ -193,7 +194,7 @@ func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := OpenAICreditGrants{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -208,7 +209,7 @@ func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := OpenAISBUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -232,7 +233,7 @@ func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := AIProxyUserOverviewResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -251,7 +252,7 @@ func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := API2GPTUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -266,7 +267,7 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := SiliconFlowUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -288,7 +289,7 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := DeepSeekUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -317,7 +318,7 @@ func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := APGC2DGPTUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -332,7 +333,7 @@ func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	response := OpenRouterCreditResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -362,7 +363,7 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	}
 
 	response := MoonshotBalanceResponse{}
-	err = json.Unmarshal(body, &response)
+	err = common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -376,6 +377,9 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 }
 
 func updateChannelBalance(channel *model.Channel) (float64, error) {
+	if channel.HasUpstreamAccountSyncMetadata() {
+		return upstreamaccount.RefreshChannelBalance(context.Background(), channel)
+	}
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
@@ -415,7 +419,7 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	subscription := OpenAISubscriptionResponse{}
-	err = json.Unmarshal(body, &subscription)
+	err = common.Unmarshal(body, &subscription)
 	if err != nil {
 		return 0, err
 	}
@@ -431,7 +435,7 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	usage := OpenAIUsageResponse{}
-	err = json.Unmarshal(body, &usage)
+	err = common.Unmarshal(body, &usage)
 	if err != nil {
 		return 0, err
 	}
@@ -458,6 +462,23 @@ func UpdateChannelBalance(c *gin.Context) {
 		})
 		return
 	}
+	if channel.HasUpstreamAccountSyncMetadata() {
+		balance, err := upstreamaccount.RefreshChannelBalance(c.Request.Context(), channel)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+				"balance": channel.Balance,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"balance": balance,
+		})
+		return
+	}
 	balance, err := updateChannelBalance(channel)
 	if err != nil {
 		common.ApiError(c, err)
@@ -481,6 +502,9 @@ func updateAllChannelsBalance() error {
 		}
 		if channel.ChannelInfo.IsMultiKey {
 			continue // skip multi-key channels
+		}
+		if channel.HasUpstreamAccountSyncMetadata() {
+			continue // 同步渠道余额刷新会重新登录上游账号，只允许管理员手动触发，定时任务不批量登录。
 		}
 		// TODO: support Azure
 		//if channel.Type != common.ChannelTypeOpenAI && channel.Type != common.ChannelTypeCustom {

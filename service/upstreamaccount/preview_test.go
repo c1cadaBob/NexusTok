@@ -58,6 +58,12 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-newapi-full-key", record.Snapshot.Keys[0].Key)
+	require.Nil(t, result.Snapshot.StoredCredential)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.NotContains(t, record.Snapshot.StoredCredential.Password, "secret")
+	decryptedPassword, err := common.DecryptSensitiveString(record.Snapshot.StoredCredential.Password)
+	require.NoError(t, err)
+	require.Equal(t, "secret", decryptedPassword)
 }
 
 func TestNewAPIPreviewFallsBackToSingleKeyReveal(t *testing.T) {

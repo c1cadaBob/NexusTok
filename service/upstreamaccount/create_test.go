@@ -34,6 +34,13 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	snapshot := &Snapshot{
 		Platform: PlatformNewAPI,
 		BaseURL:  "https://newapi.example/",
+		StoredCredential: &StoredCredential{
+			Platform:  PlatformNewAPI,
+			BaseURL:   "https://newapi.example",
+			Username:  "alice",
+			Password:  mustEncryptSensitiveString(t, "secret"),
+			UpdatedAt: common.GetTimestamp(),
+		},
 		Balance: &BalanceSnapshot{
 			BalanceUSD: floatPtr(3.5),
 			UsedUSD:    floatPtr(1.2),
@@ -96,6 +103,14 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.Equal(t, "default", channel.Group)
 	require.Equal(t, float64(3.5), channel.Balance)
 	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
+	credential, ok, err := ReadChannelSyncCredential(channel.OtherSettings)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, PlatformNewAPI, credential.Platform)
+	require.Equal(t, "https://newapi.example", credential.BaseURL)
+	require.Equal(t, "alice", credential.Username)
+	require.Equal(t, "secret", credential.Password)
+	require.NotContains(t, SanitizeChannelSyncSettings(channel.OtherSettings), "credentials")
 
 	var accounts []model.ChannelAccount
 	require.NoError(t, db.Find(&accounts).Error)
@@ -417,4 +432,11 @@ func stringPtrValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func mustEncryptSensitiveString(t *testing.T, value string) string {
+	t.Helper()
+	encrypted, err := common.EncryptSensitiveString(value)
+	require.NoError(t, err)
+	return encrypted
 }

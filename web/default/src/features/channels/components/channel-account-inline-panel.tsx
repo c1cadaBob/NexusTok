@@ -39,6 +39,7 @@ import { channelsQueryKeys, formatTimestamp } from '../lib'
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
 } from '../lib/upstream-sync'
@@ -191,6 +192,7 @@ export function ChannelAccountInlinePanel({
               <TableHead>{t('Status')}</TableHead>
               <TableHead>{t('Models')}</TableHead>
               <TableHead>{t('Key Group')}</TableHead>
+              <TableHead>{t('Key Ratio')}</TableHead>
               <TableHead>{t('Ratio Conversion')}</TableHead>
               <TableHead>{t('Priority')}</TableHead>
               <TableHead>{t('Weight')}</TableHead>
@@ -207,10 +209,14 @@ export function ChannelAccountInlinePanel({
                 digitsSmall: 4,
                 abbreviate: true,
               })
+              const keyRatioValue = getUpstreamKeyRatioDisplayValue(account)
               const ratioValue = getUpstreamRatioDisplayValue(account)
               const ratioDetails = formatUpstreamModelRatioDetails(
                 account.model_ratios
               )
+              const keyRatioTitle = ratioDetails
+                ? `${t('Model Ratios')}:\n${ratioDetails}`
+                : undefined
 
               return (
                 <TableRow key={account.id}>
@@ -264,6 +270,17 @@ export function ChannelAccountInlinePanel({
                   <TableCell>
                     <span className='text-xs'>
                       {maskedText ?? (getUpstreamKeyGroupLabel(account) || '-')}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className='font-mono text-xs'
+                      title={keyRatioTitle}
+                    >
+                      {maskedText ??
+                        (keyRatioValue != null
+                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+                          : '-')}
                     </span>
                   </TableCell>
                   <TableCell>

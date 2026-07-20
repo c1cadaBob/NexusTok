@@ -69,6 +69,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	}
 	ApplyRatioConversion(snapshot, req.RatioConversion)
 	ApplySuggestions(snapshot)
+	attachStoredCredential(snapshot, req.Credential)
 	return RefreshChannelFromSnapshot(req.ChannelID, snapshot, req)
 }
 
@@ -106,7 +107,7 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			"balance":              balanceValue(snapshot.Balance),
 			"balance_updated_time": common.GetTimestamp(),
 			"used_quota":           usedQuotaValue(snapshot.Balance),
-			"settings":             mergeChannelSyncMetadata(channel.OtherSettings, snapshot),
+			"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, req.Credential),
 		}
 		if err := tx.Model(&channel).Updates(updates).Error; err != nil {
 			return err

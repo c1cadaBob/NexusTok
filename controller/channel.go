@@ -22,6 +22,7 @@ import (
 	"github.com/c1cada/NexusTok/relay/channel/gemini"       // Gemini 渠道适配器
 	"github.com/c1cada/NexusTok/relay/channel/ollama"       // Ollama 渠道适配器
 	"github.com/c1cada/NexusTok/service"                    // 服务层
+	"github.com/c1cada/NexusTok/service/upstreamaccount"    // 上游账号同步服务
 
 	"github.com/gin-gonic/gin" // Gin 框架
 )
@@ -91,6 +92,7 @@ func clearChannelInfo(channel *model.Channel) {
 		channel.ChannelInfo.MultiKeyDisabledReason = nil
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
 	}
+	channel.OtherSettings = upstreamaccount.SanitizeChannelSyncSettings(channel.OtherSettings)
 }
 
 // GetChannelOps 返回渠道管理页使用的运行期只读参数。

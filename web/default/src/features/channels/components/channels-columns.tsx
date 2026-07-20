@@ -125,6 +125,22 @@ function parseIonetMeta(otherInfo: string | null | undefined): null | {
   return null
 }
 
+function isUpstreamAccountSyncedChannel(channel: Channel): boolean {
+  if (!channel.settings?.trim()) return false
+  try {
+    const parsed = JSON.parse(channel.settings) as Record<string, unknown>
+    const metadata = parsed.upstream_account_sync
+    return Boolean(
+      metadata &&
+        (typeof metadata === 'object' ||
+          metadata === true ||
+          (typeof metadata === 'string' && metadata.trim().length > 0))
+    )
+  } catch {
+    return false
+  }
+}
+
 /**
  * Upstream update tags (+N / -N) shown on channel name for model-fetchable channels
  */
@@ -302,6 +318,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const { sensitiveVisible } = useChannels()
   const queryClient = useQueryClient()
   const isTagRow = isTagAggregateRow(channel)
+  const isUpstreamAccountSync = isUpstreamAccountSyncedChannel(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
   const [isUpdating, setIsUpdating] = useState(false)
@@ -364,6 +381,8 @@ function BalanceCell({ channel }: { channel: Channel }) {
     ? maskedRemainingLabel
     : channel.type === 57
       ? t('Click to view Codex usage')
+      : isUpstreamAccountSync
+        ? t('Click to refresh the synced upstream account balance')
       : remainingLabel
 
   const handleClickUpdate = async () => {
@@ -385,6 +404,12 @@ function BalanceCell({ channel }: { channel: Channel }) {
       } finally {
         setIsUpdating(false)
       }
+      return
+    }
+
+    if (isUpstreamAccountSync) {
+      await handleUpdateChannelBalance(channel.id, queryClient)
+      setIsUpdating(false)
       return
     }
 
@@ -431,7 +456,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
           </TooltipTrigger>
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {channel.type !== 57 && !isUpstreamAccountSync && (
+              <p>{t('Click to update balance')}</p>
+            )}
           </TooltipContent>
         </Tooltip>
       </div>

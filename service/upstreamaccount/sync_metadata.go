@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -12,6 +13,7 @@ const upstreamAccountSyncMetadataKey = "upstream_account_sync"
 type syncMetadata struct {
 	Platform              string                   `json:"platform,omitempty"`
 	BaseURL               string                   `json:"base_url,omitempty"`
+	Credentials           *StoredCredential        `json:"credentials,omitempty"`
 	ExternalID            string                   `json:"external_id,omitempty"`
 	KeyDigest             string                   `json:"key_digest,omitempty"`
 	SyncedAt              int64                    `json:"synced_at,omitempty"`
@@ -55,14 +57,51 @@ func mergeChannelSyncMetadata(existing string, snapshot *Snapshot) string {
 	if data == nil {
 		data = map[string]any{}
 	}
-	data[upstreamAccountSyncMetadataKey] = map[string]any{
+	next := map[string]any{
 		"platform":  snapshot.Platform,
-		"base_url":  snapshot.BaseURL,
+		"base_url":  normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL),
 		"synced_at": common.GetTimestamp(),
 	}
+	if existingMetadata := readChannelSyncMetadata(existing); existingMetadata.Credentials != nil {
+		next["credentials"] = existingMetadata.Credentials
+	}
+	data[upstreamAccountSyncMetadataKey] = next
 	bytes, err := common.Marshal(data)
 	if err != nil {
 		return existing
+	}
+	return string(bytes)
+}
+
+func mergeChannelSyncMetadataWithCredential(existing string, snapshot *Snapshot, credential Credential) string {
+	metadata := mergeChannelSyncMetadata(existing, snapshot)
+	stored := snapshotStoredCredential(snapshot)
+	if stored == nil {
+		var err error
+		stored, err = buildStoredCredential(snapshot, credential)
+		if err != nil {
+			common.SysLog("failed to encrypt upstream account credential metadata: " + err.Error())
+		}
+	}
+	if stored == nil {
+		return metadata
+	}
+	var data map[string]any
+	if strings.TrimSpace(metadata) != "" {
+		_ = common.UnmarshalJsonStr(metadata, &data)
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	raw, _ := data[upstreamAccountSyncMetadataKey].(map[string]any)
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	raw["credentials"] = stored
+	data[upstreamAccountSyncMetadataKey] = raw
+	bytes, err := common.Marshal(data)
+	if err != nil {
+		return metadata
 	}
 	return string(bytes)
 }
@@ -113,6 +152,66 @@ func ReadAccountSyncDisplayMetadata(settings string) AccountSyncDisplayMetadata 
 	}
 }
 
+// SanitizeChannelSyncSettings 移除渠道 settings 中只供后端使用的上游登录凭据。
+//
+// 渠道列表和详情接口会把 settings 返回给前端用于回填普通配置。即使 Password 是
+// AES-GCM 密文，也不应暴露到浏览器或导出接口里；后端内部从数据库读取原始 settings
+// 时仍可用 ReadChannelSyncCredential 解密并重新登录上游平台。
+func SanitizeChannelSyncSettings(settings string) string {
+	var data map[string]any
+	if strings.TrimSpace(settings) == "" {
+		return settings
+	}
+	if err := common.UnmarshalJsonStr(settings, &data); err != nil {
+		return settings
+	}
+	raw, ok := data[upstreamAccountSyncMetadataKey]
+	if !ok {
+		return settings
+	}
+	rawBytes, err := common.Marshal(raw)
+	if err != nil {
+		return settings
+	}
+	var metadata map[string]any
+	if err := common.Unmarshal(rawBytes, &metadata); err != nil {
+		return settings
+	}
+	delete(metadata, "credentials")
+	data[upstreamAccountSyncMetadataKey] = metadata
+	bytes, err := common.Marshal(data)
+	if err != nil {
+		return settings
+	}
+	return string(bytes)
+}
+
+// ReadChannelSyncCredential 从渠道 settings 中读取并解密上游账号登录凭据。
+func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
+	metadata := readChannelSyncMetadata(settings)
+	if metadata.Platform == "" && metadata.BaseURL == "" {
+		return Credential{}, false, nil
+	}
+	if metadata.Credentials == nil || strings.TrimSpace(metadata.Credentials.Password) == "" {
+		return Credential{}, false, nil
+	}
+	password, err := common.DecryptSensitiveString(metadata.Credentials.Password)
+	if err != nil {
+		return Credential{}, false, fmt.Errorf("解密上游账号凭据失败：%w", err)
+	}
+	credential := Credential{
+		Platform: firstNonEmpty(metadata.Credentials.Platform, metadata.Platform),
+		BaseURL:  firstNonEmpty(metadata.Credentials.BaseURL, metadata.BaseURL),
+		Username: metadata.Credentials.Username,
+		Email:    metadata.Credentials.Email,
+		Password: password,
+	}
+	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Email) == "" {
+		return Credential{}, false, nil
+	}
+	return credential, true, nil
+}
+
 // PreserveAccountSyncMetadata 在账号本地 settings 被手动更新时保留同步身份。
 //
 // 同步账号的刷新匹配依赖 `upstream_account_sync` 中的 platform、base_url、
@@ -151,6 +250,14 @@ func PreserveAccountSyncMetadata(existing string, next string) string {
 }
 
 func readAccountSyncMetadata(settings string) syncMetadata {
+	return readSyncMetadata(settings)
+}
+
+func readChannelSyncMetadata(settings string) syncMetadata {
+	return readSyncMetadata(settings)
+}
+
+func readSyncMetadata(settings string) syncMetadata {
 	var data map[string]any
 	if strings.TrimSpace(settings) == "" {
 		return syncMetadata{}
@@ -171,6 +278,49 @@ func readAccountSyncMetadata(settings string) syncMetadata {
 		return syncMetadata{}
 	}
 	return metadata
+}
+
+func buildStoredCredential(snapshot *Snapshot, credential Credential) (*StoredCredential, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	password := strings.TrimSpace(credential.Password)
+	if password == "" {
+		return nil, nil
+	}
+	encryptedPassword, err := common.EncryptSensitiveString(password)
+	if err != nil {
+		return nil, fmt.Errorf("加密上游账号凭据失败：%w", err)
+	}
+	stored := &StoredCredential{
+		Platform:  NormalizePlatform(firstNonEmpty(credential.Platform, snapshot.Platform)),
+		BaseURL:   normalizeSyncMetadataBaseURL(firstNonEmpty(credential.Platform, snapshot.Platform), firstNonEmpty(credential.BaseURL, snapshot.BaseURL)),
+		Username:  strings.TrimSpace(credential.Username),
+		Email:     strings.TrimSpace(credential.Email),
+		Password:  encryptedPassword,
+		UpdatedAt: common.GetTimestamp(),
+	}
+	if stored.Platform == "" {
+		stored.Platform = NormalizePlatform(snapshot.Platform)
+	}
+	if stored.BaseURL == "" {
+		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, snapshot.BaseURL)
+	}
+	return stored, nil
+}
+
+func snapshotStoredCredential(snapshot *Snapshot) *StoredCredential {
+	if snapshot == nil || snapshot.StoredCredential == nil || strings.TrimSpace(snapshot.StoredCredential.Password) == "" {
+		return nil
+	}
+	stored := *snapshot.StoredCredential
+	if stored.Platform == "" {
+		stored.Platform = NormalizePlatform(snapshot.Platform)
+	}
+	if stored.BaseURL == "" {
+		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, snapshot.BaseURL)
+	}
+	return &stored
 }
 
 func syncIdentityKey(platform string, baseURL string, externalID string) string {

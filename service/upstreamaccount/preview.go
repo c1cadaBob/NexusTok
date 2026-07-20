@@ -76,6 +76,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
 		ApplySuggestions(snapshot)
+		attachStoredCredential(snapshot, req.Credential)
 		return SavePreviewSnapshot(snapshot)
 	case PlatformSub2API:
 		client := NewSub2APIClient(nil)
@@ -95,6 +96,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
 		ApplySuggestions(snapshot)
+		attachStoredCredential(snapshot, req.Credential)
 		return SavePreviewSnapshot(snapshot)
 	}
 	snapshot, err := client.FetchSnapshot(ctx, req.Credential)
@@ -103,6 +105,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 	}
 	ApplyRatioConversion(snapshot, req.RatioConversion)
 	ApplySuggestions(snapshot)
+	attachStoredCredential(snapshot, req.Credential)
 	return SavePreviewSnapshot(snapshot)
 }
 
@@ -156,6 +159,15 @@ func SavePreviewSnapshot(snapshot *Snapshot) (*PreviewResult, error) {
 		ExpiresAt: expiresAt,
 		Snapshot:  sanitizeSnapshot(snapshot),
 	}, nil
+}
+
+func attachStoredCredential(snapshot *Snapshot, credential Credential) {
+	stored, err := buildStoredCredential(snapshot, credential)
+	if err != nil {
+		common.SysLog("failed to store upstream account credential metadata: " + err.Error())
+		return
+	}
+	snapshot.StoredCredential = stored
 }
 
 // GetPreviewRecord 读取后端保存的完整预览快照。
@@ -222,6 +234,7 @@ func sanitizeSnapshot(snapshot *Snapshot) *Snapshot {
 		return nil
 	}
 	copySnapshot := *snapshot
+	copySnapshot.StoredCredential = nil
 	copySnapshot.Groups = append([]SyncedGroup(nil), snapshot.Groups...)
 	copySnapshot.Keys = make([]SyncedKey, len(snapshot.Keys))
 	for i, key := range snapshot.Keys {
