@@ -450,6 +450,32 @@ function upstreamAccountModelsValue(
   return key.models?.join(',') || fallbackModels.trim() || ''
 }
 
+export function upstreamAccountModelsArrayValue(
+  key: UpstreamAccountKey,
+  config: UpstreamAccountConfigDraft | undefined,
+  fallbackModels = ''
+) {
+  return parseModelsString(
+    upstreamAccountModelsValue(key, config, fallbackModels)
+  )
+}
+
+export function buildUpstreamAccountModelOptions(
+  key: UpstreamAccountKey,
+  config: UpstreamAccountConfigDraft | undefined,
+  candidateModels: readonly string[],
+  fallbackModels = ''
+) {
+  return dedupeModelNames([
+    ...upstreamAccountModelsArrayValue(key, config, fallbackModels),
+    ...(key.models ?? []),
+    ...candidateModels,
+  ]).map((model) => ({
+    value: model,
+    label: model,
+  }))
+}
+
 function upstreamAccountGroupValue(
   key: UpstreamAccountKey,
   config: UpstreamAccountConfigDraft | undefined,
@@ -1745,7 +1771,7 @@ export function ChannelMutateDrawer({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[82rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(7.5rem,0.75fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
+                <div className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
                   <span>{t('Key')}</span>
                   <span>{t('Models')}</span>
                   <span>{t('Key Group')}</span>
@@ -1762,10 +1788,51 @@ export function ChannelMutateDrawer({
                     key,
                     index
                   )
-                  const currentModelsValue = upstreamAccountConfigTextValue(
-                    config?.models,
-                    key.models?.join(',') || ''
-                  )
+                  const currentModelsArrayValue =
+                    upstreamAccountModelsArrayValue(key, config)
+                  const upstreamKeyModelOptions =
+                    buildUpstreamAccountModelOptions(key, config, [
+                      ...allModelsList,
+                      ...currentModelsArray,
+                    ])
+                  const updateConfig = (
+                    updater: (
+                      previous:
+                        | UpstreamAccountConfigDraft
+                        | undefined
+                    ) => UpstreamAccountConfigDraft
+                  ) =>
+                    setUpstreamAccountConfigs((prev) => ({
+                      ...prev,
+                      [configId]: updater(prev[configId]),
+                    }))
+                  const buildConfigWithDefaults = (
+                    previous: UpstreamAccountConfigDraft | undefined,
+                    overrides: Partial<UpstreamAccountConfigDraft>
+                  ): UpstreamAccountConfigDraft => ({
+                    enabled: previous?.enabled ?? true,
+                    priority:
+                      previous?.priority ?? key.suggested_priority ?? 0,
+                    weight: previous?.weight ?? key.suggested_weight ?? 0,
+                    models:
+                      previous?.models ?? key.models?.join(',') ?? '',
+                    group:
+                      previous?.group ??
+                      key.group_name ??
+                      key.group_id ??
+                      '',
+                    ...overrides,
+                  })
+                  const setConfigValue = (
+                    overrides: Partial<UpstreamAccountConfigDraft>
+                  ) =>
+                    updateConfig((previous) =>
+                      buildConfigWithDefaults(previous, overrides)
+                    )
+                  const handleKeyModelsChange = (values: string[]) =>
+                    setConfigValue({
+                      models: formatModelsArray(dedupeModelNames(values)),
+                    })
                   const currentGroupValue = upstreamAccountConfigTextValue(
                     config?.group,
                     key.group_name || key.group_id || ''
@@ -1797,7 +1864,7 @@ export function ChannelMutateDrawer({
 	                  return (
 	                    <div
 	                      key={configId}
-	                      className='grid min-w-[82rem] grid-cols-[minmax(0,1.3fr)_minmax(15rem,1.25fr)_minmax(11rem,0.95fr)_minmax(7.5rem,0.75fr)_minmax(9rem,0.85fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
+	                      className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
 	                    >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
@@ -1807,28 +1874,18 @@ export function ChannelMutateDrawer({
                           {key.masked_key}
                         </div>
                       </div>
-                      <Input
-                        value={currentModelsValue}
-                        placeholder={t('Models inherited from channel if empty')}
-                        onChange={(event) =>
-                          setUpstreamAccountConfigs((prev) => ({
-                            ...prev,
-                            [configId]: {
-                              enabled: prev[configId]?.enabled ?? true,
-                              priority:
-                                prev[configId]?.priority ??
-                                key.suggested_priority,
-                              weight:
-                                prev[configId]?.weight ?? key.suggested_weight,
-                              group:
-                                prev[configId]?.group ??
-                                key.group_name ??
-                                key.group_id ??
-                                '',
-                              models: event.target.value,
-                            },
-                          }))
-                        }
+                      <MultiSelect
+                        options={upstreamKeyModelOptions}
+                        selected={currentModelsArrayValue}
+                        onChange={handleKeyModelsChange}
+                        placeholder={t('Select models or add custom ones')}
+                        allowCreate
+                        allowCreateWithMatches={false}
+                        createLabel='Add custom model "{{value}}"'
+                        maxVisibleChips={3}
+                        copyChipOnClick
+                        emptyText={t('No matching models')}
+                        className='min-h-9'
                       />
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input
@@ -1837,22 +1894,7 @@ export function ChannelMutateDrawer({
                             'Key group inherited from upstream if empty'
                           )}
                           onChange={(event) =>
-                            setUpstreamAccountConfigs((prev) => ({
-                              ...prev,
-                              [configId]: {
-                                enabled: prev[configId]?.enabled ?? true,
-                                priority:
-                                  prev[configId]?.priority ??
-                                  key.suggested_priority,
-                                weight:
-                                  prev[configId]?.weight ?? key.suggested_weight,
-                                models:
-                                  prev[configId]?.models ??
-                                  key.models?.join(',') ??
-                                  '',
-                                group: event.target.value,
-                              },
-                            }))
+                            setConfigValue({ group: event.target.value })
                           }
                         />
                         <span
@@ -1893,24 +1935,9 @@ export function ChannelMutateDrawer({
                         value={currentPriorityValue}
                         disabled={showSuggestedToggle && upstreamApplySuggested}
                         onChange={(event) =>
-                          setUpstreamAccountConfigs((prev) => ({
-                            ...prev,
-                            [configId]: {
-                              enabled: prev[configId]?.enabled ?? true,
-                              models:
-                                prev[configId]?.models ??
-                                key.models?.join(',') ??
-                                '',
-                              group:
-                                prev[configId]?.group ??
-                                key.group_name ??
-                                key.group_id ??
-                                '',
-                              weight:
-                                prev[configId]?.weight ?? key.suggested_weight,
-                              priority: Number(event.target.value),
-                            },
-                          }))
+                          setConfigValue({
+                            priority: Number(event.target.value),
+                          })
                         }
                       />
                       <Input
@@ -1918,50 +1945,15 @@ export function ChannelMutateDrawer({
                         value={currentWeightValue}
                         disabled={showSuggestedToggle && upstreamApplySuggested}
                         onChange={(event) =>
-                          setUpstreamAccountConfigs((prev) => ({
-                            ...prev,
-                            [configId]: {
-                              enabled: prev[configId]?.enabled ?? true,
-                              models:
-                                prev[configId]?.models ??
-                                key.models?.join(',') ??
-                                '',
-                              group:
-                                prev[configId]?.group ??
-                                key.group_name ??
-                                key.group_id ??
-                                '',
-                              priority:
-                                prev[configId]?.priority ??
-                                key.suggested_priority,
-                              weight: Number(event.target.value),
-                            },
-                          }))
+                          setConfigValue({
+                            weight: Number(event.target.value),
+                          })
                         }
                       />
                       <Switch
                         checked={config?.enabled ?? true}
                         onCheckedChange={(checked) =>
-                          setUpstreamAccountConfigs((prev) => ({
-                            ...prev,
-                            [configId]: {
-                              priority:
-                                prev[configId]?.priority ??
-                                key.suggested_priority,
-                              weight:
-                                prev[configId]?.weight ?? key.suggested_weight,
-                              models:
-                                prev[configId]?.models ??
-                                key.models?.join(',') ??
-                                '',
-                              group:
-                                prev[configId]?.group ??
-                                key.group_name ??
-                                key.group_id ??
-                                '',
-                              enabled: checked,
-                            },
-                          }))
+                          setConfigValue({ enabled: checked })
                         }
                       />
                     </div>
@@ -1973,7 +1965,13 @@ export function ChannelMutateDrawer({
         </div>
       )
     },
-    [t, upstreamAccountConfigs, upstreamApplySuggested]
+    [
+      allModelsList,
+      currentModelsArray,
+      t,
+      upstreamAccountConfigs,
+      upstreamApplySuggested,
+    ]
   )
 
   const currentTypeLabel = useMemo(

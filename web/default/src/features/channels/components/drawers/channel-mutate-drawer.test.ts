@@ -20,10 +20,12 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { ChannelAccount, UpstreamAccountKey } from '../../types'
 import {
+  buildUpstreamAccountModelOptions,
   buildUpstreamAccountConfigsFromChannelAccounts,
   buildUpstreamAccountConfigsFromSnapshotKeys,
   getUpstreamAccountConfig,
   resolveUpstreamChannelGroup,
+  upstreamAccountModelsArrayValue,
   upstreamAccountFromChannelAccount,
   upstreamAccountValuesToString,
 } from './channel-mutate-drawer'
@@ -159,6 +161,56 @@ describe('上游同步渠道本地配置索引', () => {
 
     assert.equal(models, 'gpt-enabled')
     assert.equal(groups, 'enabled-group')
+  })
+
+  test('逐密钥模型选择器优先保留本地草稿并合并候选模型', () => {
+    const key = makeSnapshotKey({
+      models: ['gpt-upstream', 'gpt-shared'],
+    })
+    const config = {
+      enabled: true,
+      priority: 1,
+      weight: 100,
+      models: 'gpt-local,gpt-shared,GPT-LOCAL',
+      group: 'local-group',
+    }
+
+    assert.deepEqual(upstreamAccountModelsArrayValue(key, config), [
+      'gpt-local',
+      'gpt-shared',
+      'GPT-LOCAL',
+    ])
+
+    assert.deepEqual(
+      buildUpstreamAccountModelOptions(key, config, [
+        'gpt-system',
+        'gpt-local',
+      ]),
+      [
+        { value: 'gpt-local', label: 'gpt-local' },
+        { value: 'gpt-shared', label: 'gpt-shared' },
+        { value: 'gpt-upstream', label: 'gpt-upstream' },
+        { value: 'gpt-system', label: 'gpt-system' },
+      ]
+    )
+  })
+
+  test('逐密钥模型数组允许管理员显式清空模型', () => {
+    const key = makeSnapshotKey({
+      models: ['gpt-upstream'],
+    })
+    const config = {
+      enabled: true,
+      priority: 1,
+      weight: 100,
+      models: '',
+      group: 'local-group',
+    }
+
+    assert.deepEqual(
+      upstreamAccountModelsArrayValue(key, config, 'gpt-channel'),
+      []
+    )
   })
 
   test('同步渠道分组为空时默认回退到 default', () => {

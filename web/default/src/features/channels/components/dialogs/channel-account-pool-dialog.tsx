@@ -58,6 +58,7 @@ import {
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { MultiSelect } from '@/components/multi-select'
 import { StatusBadge } from '@/components/status-badge'
 import {
   batchCreateChannelAccounts,
@@ -70,7 +71,13 @@ import {
 } from '../../api'
 import { CHANNEL_STATUS } from '../../constants'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
-import { channelsQueryKeys, formatTimestamp } from '../../lib'
+import {
+  channelsQueryKeys,
+  dedupeModelNames,
+  formatModelsArray,
+  formatTimestamp,
+  parseModelsString,
+} from '../../lib'
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
@@ -197,6 +204,18 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const stats = accountsQuery.data?.data?.stats
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const nowSeconds = useMemo(() => Math.floor(Date.now() / 1000), [accounts])
+  const accountModelOptions = useMemo(
+    () =>
+      dedupeModelNames([
+        ...parseModelsString(formState.models),
+        ...parseModelsString(currentRow?.models ?? ''),
+        ...accounts.flatMap((account) => parseModelsString(account.models)),
+      ]).map((model) => ({
+        value: model,
+        label: model,
+      })),
+    [accounts, currentRow?.models, formState.models]
+  )
 
   const resetForm = () => {
     setFormState(emptyForm)
@@ -624,12 +643,23 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                         : t('Enter secret key')
                   }
                 />
-                <Input
-                  value={formState.models}
-                  onChange={(event) =>
-                    setFormState({ ...formState, models: event.target.value })
+                <MultiSelect
+                  options={accountModelOptions}
+                  selected={parseModelsString(formState.models)}
+                  onChange={(models) =>
+                    setFormState({
+                      ...formState,
+                      models: formatModelsArray(dedupeModelNames(models)),
+                    })
                   }
-                  placeholder={t('Models inherited from channel if empty')}
+                  placeholder={t('Select models or add custom ones')}
+                  allowCreate
+                  allowCreateWithMatches={false}
+                  createLabel='Add custom model "{{value}}"'
+                  maxVisibleChips={4}
+                  copyChipOnClick
+                  emptyText={t('No matching models')}
+                  className='min-h-9'
                 />
                 <Input
                   value={formState.group}
