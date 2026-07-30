@@ -40,18 +40,20 @@ var (
 
 // AuthChallengeRecord 是后端短期保存的二阶段登录上下文。
 //
-// 该结构故意不包含账号密码、完整 API Key 或正式 access token。new-api 2FA 只需要首次
-// 登录时目标站点写入的 pending session cookie；sub2api 2FA 只需要目标平台返回的短期
-// temp_token。验证码完成后才会继续读取密钥并生成普通 preview 缓存。
+// 该结构不保存明文账号密码、完整 API Key 或正式 access token；如果前端选择“记住
+// 上游登录”，这里只会保存加密后的上游凭据，供 2FA 完成后继续写入普通预览快照。
+// new-api 2FA 仍只需要首次登录时目标站点写入的 pending session cookie；sub2api 2FA
+// 仍只需要目标平台返回的短期 temp_token。
 type AuthChallengeRecord struct {
-	ID        string                `json:"id"`
-	Platform  string                `json:"platform"`
-	BaseURL   string                `json:"base_url"`
-	Username  string                `json:"username,omitempty"`
-	Email     string                `json:"email,omitempty"`
-	ExpiresAt int64                 `json:"expires_at"`
-	NewAPI    *NewAPIChallengeData  `json:"new_api,omitempty"`
-	Sub2API   *Sub2APIChallengeData `json:"sub2api,omitempty"`
+	ID         string                `json:"id"`
+	Platform   string                `json:"platform"`
+	BaseURL    string                `json:"base_url"`
+	Username   string                `json:"username,omitempty"`
+	Email      string                `json:"email,omitempty"`
+	ExpiresAt  int64                 `json:"expires_at"`
+	Credential *StoredCredential     `json:"credential,omitempty"`
+	NewAPI     *NewAPIChallengeData  `json:"new_api,omitempty"`
+	Sub2API    *Sub2APIChallengeData `json:"sub2api,omitempty"`
 }
 
 // NewAPIChallengeData 保存 new-api 2FA 二阶段需要复用的上下文。

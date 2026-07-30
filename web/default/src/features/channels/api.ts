@@ -147,7 +147,7 @@ export async function createChannel(
 }
 
 /**
- * 使用上游平台账号密码读取密钥、分组、倍率和余额预览。
+ * 使用上游平台账号密码或已保存凭据读取密钥、分组、倍率和余额预览。
  */
 export async function previewUpstreamAccount(
   data: UpstreamAccountPreviewRequest
@@ -177,7 +177,7 @@ export async function createUpstreamAccountChannel(
 }
 
 /**
- * 使用重新输入的上游账号密码刷新已有账号同步渠道。
+ * 使用重新输入或已保存的上游账号凭据刷新已有账号同步渠道。
  */
 export async function refreshUpstreamAccountChannel(
   id: number,

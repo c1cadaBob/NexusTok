@@ -20,6 +20,7 @@ func TestClearChannelInfoSanitizesUpstreamAccountCredential(t *testing.T) {
 
 	require.Contains(t, channel.OtherSettings, `"upstream_account_sync"`)
 	require.Contains(t, channel.OtherSettings, `"allow_service_tier":false`)
+	require.Contains(t, channel.OtherSettings, `"credential_saved":true`)
 	require.NotContains(t, channel.OtherSettings, "credentials")
 	require.NotContains(t, channel.OtherSettings, encrypted)
 }

@@ -21,31 +21,68 @@ const (
 
 // Credential 是管理员发起同步时输入的临时凭证。
 type Credential struct {
-	Platform string `json:"platform"`
-	BaseURL  string `json:"base_url"`
-	Username string `json:"username"`
-	Password string `json:"password,omitempty"`
-	Email    string `json:"email,omitempty"`
+	Platform string                `json:"platform"`
+	BaseURL  string                `json:"base_url"`
+	Username string                `json:"username"`
+	Password string                `json:"password,omitempty"`
+	Email    string                `json:"email,omitempty"`
+	Session  *AuthenticatedSession `json:"-"`
 }
 
 // StoredCredential 是保存到渠道 settings 的上游账号登录凭据。
 //
 // 该结构只用于需要后台重新登录上游平台的管理操作，例如点击渠道余额刷新。
-// Password 必须使用 common.EncryptSensitiveString 加密后再落库；对外返回渠道
-// settings 前必须通过 SanitizeChannelSyncSettings 移除 credentials，避免泄露
-// 可离线解密的敏感密文。
+// Password 和 Session 必须使用 common.EncryptSensitiveString 加密后再落库；对外返回
+// 渠道 settings 前必须通过 SanitizeChannelSyncSettings 移除 credentials，避免泄露
+// 可离线解密的敏感密文。Session 保存的是已通过上游 2FA 的登录态，用于降低刷新时
+// 反复输入验证码的频率；失效后仍会自动回退到保存的账号密码登录。
 type StoredCredential struct {
-	Platform  string `json:"platform,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Username  string `json:"username,omitempty"`
-	Email     string `json:"email,omitempty"`
-	Password  string `json:"password,omitempty"`
-	UpdatedAt int64  `json:"updated_at,omitempty"`
+	Platform         string `json:"platform,omitempty"`
+	BaseURL          string `json:"base_url,omitempty"`
+	Username         string `json:"username,omitempty"`
+	Email            string `json:"email,omitempty"`
+	Password         string `json:"password,omitempty"`
+	Session          string `json:"session,omitempty"`
+	SessionUpdatedAt int64  `json:"session_updated_at,omitempty"`
+	UpdatedAt        int64  `json:"updated_at,omitempty"`
+}
+
+// AuthenticatedSession 是已通过上游登录和 2FA 的短期登录态。
+//
+// 该结构只在后端内存中使用；落库时会先序列化再整体加密到 StoredCredential.Session。
+// 它的安全边界等同于上游账号密码，因此任何 controller 返回 settings 前都必须继续
+// 通过 SanitizeChannelSyncSettings 移除 credentials。
+type AuthenticatedSession struct {
+	Platform  string              `json:"platform,omitempty"`
+	BaseURL   string              `json:"base_url,omitempty"`
+	UpdatedAt int64               `json:"updated_at,omitempty"`
+	NewAPI    *NewAPISessionData  `json:"new_api,omitempty"`
+	Sub2API   *Sub2APISessionData `json:"sub2api,omitempty"`
+}
+
+// NewAPISessionData 保存 new-api 登录后的 session cookie 和用户 ID。
+//
+// new-api 的管理接口除 Cookie 外还要求携带用户 ID 头，因此复用登录态时必须同时保存
+// user_id；如果 Cookie 失效，调用方会自动回退到账号密码登录并重新触发上游 2FA。
+type NewAPISessionData struct {
+	UserID  string             `json:"user_id,omitempty"`
+	Cookies []StoredHTTPCookie `json:"cookies,omitempty"`
+}
+
+// Sub2APISessionData 保存 sub2api 登录后的访问令牌。
+//
+// 目前同步链路只使用 access_token 直接重试；refresh_token 先加密保留，便于后续接入
+// 上游刷新接口。若 access_token 过期或不可用，调用方会回退到账号密码登录。
+type Sub2APISessionData struct {
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
 // PreviewRequest 是预览接口的请求体。
 type PreviewRequest struct {
 	Credential
+	ChannelID       int                   `json:"channel_id,omitempty"`
 	RatioConversion RatioConversionConfig `json:"ratio_conversion,omitempty"`
 }
 
@@ -67,6 +104,7 @@ type Snapshot struct {
 	Rates            *RateSnapshot            `json:"rates,omitempty"`
 	RatioConversion  *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
 	StoredCredential *StoredCredential        `json:"-"`
+	AuthSession      *AuthenticatedSession    `json:"-"`
 	Warnings         []string                 `json:"warnings,omitempty"`
 	Raw              map[string]any           `json:"raw,omitempty"`
 }

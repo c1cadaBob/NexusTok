@@ -10,7 +10,11 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
@@ -20,6 +24,7 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 		case "/api/status":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
 		case "/api/user/login":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "authenticated-session", Path: "/"})
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
 		case "/api/user/self":
 			require.Equal(t, "7", r.Header.Get("New-Api-User"))
@@ -64,6 +69,14 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	decryptedPassword, err := common.DecryptSensitiveString(record.Snapshot.StoredCredential.Password)
 	require.NoError(t, err)
 	require.Equal(t, "secret", decryptedPassword)
+	require.NotEmpty(t, record.Snapshot.StoredCredential.Session)
+	require.NotContains(t, record.Snapshot.StoredCredential.Session, "authenticated-session")
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, PlatformNewAPI, authSession.Platform)
+	require.Equal(t, "7", authSession.NewAPI.UserID)
+	require.NotEmpty(t, authSession.NewAPI.Cookies)
 }
 
 func TestNewAPIPreviewFallsBackToSingleKeyReveal(t *testing.T) {
@@ -180,6 +193,10 @@ func TestNewAPIPreviewReturnsChallengeWhenTwoFARequired(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, "alice", record.Username)
 	require.Equal(t, server.URL, record.BaseURL)
+	require.NotNil(t, record.Credential)
+	decryptedPassword, err := common.DecryptSensitiveString(record.Credential.Password)
+	require.NoError(t, err)
+	require.Equal(t, "secret", decryptedPassword)
 	require.Equal(t, float64(100), record.NewAPI.QuotaPerUnit)
 	require.NotEmpty(t, record.NewAPI.Cookies)
 }
@@ -195,6 +212,7 @@ func TestNewAPIPreviewCompletesTwoFAChallenge(t *testing.T) {
 			var body map[string]string
 			require.NoError(t, common.DecodeJson(r.Body, &body))
 			require.Equal(t, "123456", body["code"])
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "authenticated-session", Path: "/"})
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
 		case "/api/user/self":
 			require.Equal(t, "7", r.Header.Get("New-Api-User"))
@@ -225,6 +243,20 @@ func TestNewAPIPreviewCompletesTwoFAChallenge(t *testing.T) {
 		Platform: PlatformNewAPI,
 		BaseURL:  api.baseURL,
 		Username: "alice",
+		Credential: func() *StoredCredential {
+			stored, err := buildStoredCredentialWithBase(
+				PlatformNewAPI,
+				api.baseURL,
+				Credential{
+					Platform: PlatformNewAPI,
+					BaseURL:  api.baseURL,
+					Username: "alice",
+					Password: "secret",
+				},
+			)
+			require.NoError(t, err)
+			return stored
+		}(),
 		NewAPI: &NewAPIChallengeData{
 			QuotaPerUnit: 100,
 			Cookies:      storeCookiesFromJar(api),
@@ -247,10 +279,76 @@ func TestNewAPIPreviewCompletesTwoFAChallenge(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-newapi-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	decryptedPassword, err := common.DecryptSensitiveString(record.Snapshot.StoredCredential.Password)
+	require.NoError(t, err)
+	require.Equal(t, "secret", decryptedPassword)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, PlatformNewAPI, authSession.Platform)
+	require.Equal(t, "7", authSession.NewAPI.UserID)
+	require.NotEmpty(t, authSession.NewAPI.Cookies)
 
 	_, found, err := authChallengeCache.Get(challenge.ChallengeID)
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestNewAPIPreviewUsesSavedAuthenticatedSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			t.Fatalf("已保存登录态可用时不应重新调用 new-api 登录接口")
+		case "/api/user/self":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			cookie, err := r.Cookie("session")
+			require.NoError(t, err)
+			require.Equal(t, "authenticated-session", cookie.Value)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":250,"used_quota":50}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"model_ratio":{"gpt-4o":2},"completion_ratio":{},"cache_ratio":{},"create_cache_ratio":{},"model_price":{}}}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"11":"sk-newapi-full-key"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Session: &AuthenticatedSession{
+			Platform: PlatformNewAPI,
+			BaseURL:  server.URL,
+			NewAPI: &NewAPISessionData{
+				UserID: "7",
+				Cookies: []StoredHTTPCookie{
+					{Name: "session", Value: "authenticated-session", Path: "/"},
+				},
+			},
+		},
+	}})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-new...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-newapi-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.Empty(t, record.Snapshot.StoredCredential.Password)
+	require.NotEmpty(t, record.Snapshot.StoredCredential.Session)
 }
 
 func TestCompletePreview2FARejectsExpiredChallenge(t *testing.T) {
@@ -348,7 +446,7 @@ func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
 			require.NoError(t, common.DecodeJson(r.Body, &body))
 			require.Equal(t, "temp-123", body["temp_token"])
 			require.Equal(t, "654321", body["totp_code"])
-			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-2fa-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-2fa-token","refresh_token":"sub2-refresh","expires_in":3600,"user":{"id":5,"email":"alice@example.com","balance":10}}}`))
 		case "/api/v1/auth/me":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
 		case "/api/v1/user/profile":
@@ -395,6 +493,14 @@ func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-sub2-2fa-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, PlatformSub2API, authSession.Platform)
+	require.Equal(t, "sub2-2fa-token", authSession.Sub2API.AccessToken)
+	require.Equal(t, "sub2-refresh", authSession.Sub2API.RefreshToken)
+	require.Greater(t, authSession.Sub2API.ExpiresAt, common.GetTimestamp())
 
 	_, found, err := authChallengeCache.Get(first.Challenge.ChallengeID)
 	require.NoError(t, err)
@@ -439,6 +545,189 @@ func TestSub2APIPreviewAcceptsLoginPageURL(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Snapshot.Keys, 1)
 	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
+}
+
+func TestPreviewUsesSavedChannelCredentialWhenChannelIDProvided(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer sub2-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "alice@example.com", body["email"])
+			require.Equal(t, "secret", body["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25,"peak_rate_multiplier":0.5}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.2}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75,"total_cost":5}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+		},
+		Credential{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			Email:    "alice@example.com",
+			Password: "secret",
+		},
+	)
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "saved-credential-channel",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: settings,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	result, err := Preview(context.Background(), PreviewRequest{ChannelID: channel.Id})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	decryptedPassword, err := common.DecryptSensitiveString(record.Snapshot.StoredCredential.Password)
+	require.NoError(t, err)
+	require.Equal(t, "secret", decryptedPassword)
+}
+
+func TestPreviewUsesSavedChannelAuthenticatedSessionBeforePassword(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer saved-session-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			t.Fatalf("已保存登录态可用时不应重新调用 sub2api 登录接口")
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25,"peak_rate_multiplier":0.5}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.2}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75,"total_cost":5}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			AuthSession: &AuthenticatedSession{
+				Platform: PlatformSub2API,
+				BaseURL:  server.URL,
+				Sub2API: &Sub2APISessionData{
+					AccessToken:  "saved-session-token",
+					RefreshToken: "saved-refresh-token",
+					ExpiresAt:    common.GetTimestamp() + 3600,
+				},
+			},
+		},
+		Credential{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			Email:    "alice@example.com",
+			Password: "secret",
+		},
+	)
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "saved-session-channel",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: settings,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	credential, ok, err := ReadChannelSyncCredential(channel.OtherSettings)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "secret", credential.Password)
+	require.NotNil(t, credential.Session)
+	require.Equal(t, "saved-session-token", credential.Session.Sub2API.AccessToken)
+
+	result, err := Preview(context.Background(), PreviewRequest{ChannelID: channel.Id})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, "saved-session-token", authSession.Sub2API.AccessToken)
 }
 
 func TestSub2APIKeyStatusAcceptsStringEnums(t *testing.T) {

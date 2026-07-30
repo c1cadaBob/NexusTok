@@ -286,7 +286,8 @@ export interface UpstreamAccountPreviewRequest {
   base_url: string
   username?: string
   email?: string
-  password: string
+  password?: string
+  channel_id?: number
   ratio_conversion?: UpstreamAccountRatioConversion
 }
 

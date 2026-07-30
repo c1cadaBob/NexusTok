@@ -474,6 +474,14 @@ function getUpstreamSyncPlatformFromSettings(
   return ''
 }
 
+function hasUpstreamSyncSavedCredential(settings: string | undefined): boolean {
+  const metadata =
+    parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  if (!metadata || typeof metadata !== 'object') return false
+  const record = metadata as Record<string, unknown>
+  return Boolean(record.credential_saved || record.credentials)
+}
+
 function upstreamModelsToString(keys: UpstreamAccountKey[]) {
   const seen = new Set<string>()
   const models: string[] = []
@@ -1123,6 +1131,8 @@ export function ChannelMutateDrawer({
   const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
   const [upstreamUsername, setUpstreamUsername] = useState('')
   const [upstreamPassword, setUpstreamPassword] = useState('')
+  const [upstreamUseSavedCredential, setUpstreamUseSavedCredential] =
+    useState(false)
   const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
   const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] = useState('')
   const [upstreamPreviewId, setUpstreamPreviewId] = useState('')
@@ -1453,6 +1463,7 @@ export function ChannelMutateDrawer({
       upstreamPlatform,
       upstreamUsername,
       upstreamPassword,
+      upstreamUseSavedCredential ? 'saved' : 'manual',
     ].join('\n')
     if (!upstreamCredentialFingerprintRef.current) {
       upstreamCredentialFingerprintRef.current = fingerprint
@@ -1474,6 +1485,7 @@ export function ChannelMutateDrawer({
     upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
+    upstreamUseSavedCredential,
     upstreamRefreshTwoFactorChallenge,
     upstreamRefreshSnapshot,
     upstreamSnapshot,
@@ -2414,6 +2426,14 @@ export function ChannelMutateDrawer({
     }
   }, [currentSettings])
 
+  const savedUpstreamCredentialAvailable = useMemo(
+    () =>
+      hasUpstreamSyncSavedCredential(
+        channelData?.data?.settings ?? renderCurrentRow?.settings
+      ),
+    [channelData?.data?.settings, renderCurrentRow?.settings]
+  )
+
   const upstreamDetectedModelsPreview = upstreamUpdateMeta.detectedModels.slice(
     0,
     UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT
@@ -2445,6 +2465,7 @@ export function ChannelMutateDrawer({
           channelData.data.base_url ||
           ''
       )
+      setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
       setUpstreamUsername('')
       setUpstreamPassword('')
       setUpstreamRatioConversionState(
@@ -2468,6 +2489,7 @@ export function ChannelMutateDrawer({
       clearAllUpstreamPreviews()
       setUpstreamPlatform('new-api')
       setUpstreamBaseUrl('')
+      setUpstreamUseSavedCredential(false)
       setUpstreamUsername('')
       setUpstreamPassword('')
       setUpstreamPaidCny('')
@@ -2484,6 +2506,7 @@ export function ChannelMutateDrawer({
     channelData,
     form,
     syncedChannelAccounts,
+    savedUpstreamCredentialAvailable,
   ])
 
   useEffect(() => {
@@ -3387,24 +3410,49 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
-    const baseUrl = upstreamBaseUrl.trim()
-    if (!baseUrl) {
-      toast.error(t('Upstream platform URL is required'))
+    const usingSavedCredential =
+      isUpstreamAccountSyncedChannel &&
+      upstreamUseSavedCredential &&
+      savedUpstreamCredentialAvailable
+    if (upstreamUseSavedCredential && !savedUpstreamCredentialAvailable) {
+      toast.error(
+        t(
+          'No saved upstream login is available yet. Complete a sync once to enable it.'
+        )
+      )
       return
     }
-    if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
-      toast.error(t('Account and password are required'))
-      return
+    if (!usingSavedCredential) {
+      const baseUrl = upstreamBaseUrl.trim()
+      if (!baseUrl) {
+        toast.error(t('Upstream platform URL is required'))
+        return
+      }
+      if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
+        toast.error(t('Account and password are required'))
+        return
+      }
     }
     const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
-    const res = await upstreamPreviewMutation.mutateAsync({
-      platform: refreshPlatform,
-      base_url: baseUrl,
-      username: refreshPlatform === 'new-api' ? upstreamUsername : undefined,
-      email: refreshPlatform === 'sub2api' ? upstreamUsername : undefined,
-      password: upstreamPassword,
-      ratio_conversion: upstreamRatioConversion,
-    })
+    const res = await upstreamPreviewMutation.mutateAsync(
+      usingSavedCredential
+        ? {
+            channel_id: channelId ?? undefined,
+            platform: refreshPlatform,
+            base_url: upstreamBaseUrl.trim(),
+            ratio_conversion: upstreamRatioConversion,
+          }
+        : {
+            platform: refreshPlatform,
+            base_url: upstreamBaseUrl.trim(),
+            username:
+              refreshPlatform === 'new-api' ? upstreamUsername : undefined,
+            email:
+              refreshPlatform === 'sub2api' ? upstreamUsername : undefined,
+            password: upstreamPassword,
+            ratio_conversion: upstreamRatioConversion,
+          }
+    )
     if (!res.success || !res.data) {
       toast.error(res.message || t('Failed to sync upstream account'))
       return
@@ -3429,9 +3477,13 @@ export function ChannelMutateDrawer({
     upstreamBaseUrl,
     upstreamPassword,
     upstreamPlatform,
+    upstreamUseSavedCredential,
     upstreamPreviewMutation,
     upstreamRatioConversion,
     upstreamUsername,
+    savedUpstreamCredentialAvailable,
+    isUpstreamAccountSyncedChannel,
+    channelId,
   ])
 
   const handleCompleteUpstreamTwoFactor = useCallback(
@@ -4453,6 +4505,35 @@ export function ChannelMutateDrawer({
                           </CollapsibleTrigger>
                           <CollapsibleContent className='border-border/60 border-t px-4 py-4'>
                             <div className='flex flex-col gap-4'>
+                              <div
+                                className={sideDrawerSwitchItemClassName(
+                                  'rounded-lg px-3 py-3'
+                                )}
+                              >
+                                <div className='min-w-0 flex-1'>
+                                  <div className='text-sm font-medium'>
+                                    {t('Use saved upstream login')}
+                                  </div>
+                                  <div className='text-muted-foreground text-xs'>
+                                    {savedUpstreamCredentialAvailable
+                                      ? t(
+                                          'Reuse the encrypted upstream account credential saved after the last successful sync.'
+                                        )
+                                      : t(
+                                          'No saved upstream login is available yet. Complete a sync once to enable it.'
+                                        )}
+                                  </div>
+                                </div>
+                                <Switch
+                                  checked={upstreamUseSavedCredential}
+                                  disabled={
+                                    !savedUpstreamCredentialAvailable ||
+                                    upstreamPreviewMutation.isPending ||
+                                    upstreamRefreshMutation.isPending
+                                  }
+                                  onCheckedChange={setUpstreamUseSavedCredential}
+                                />
+                              </div>
                               <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-base-url'>
@@ -4467,7 +4548,10 @@ export function ChannelMutateDrawer({
                                     placeholder={t(
                                       'new-api or sub2api site URL'
                                     )}
-                                    disabled={!canEditSensitiveFields}
+                                    disabled={
+                                      !canEditSensitiveFields ||
+                                      upstreamUseSavedCredential
+                                    }
                                   />
                                 </div>
                                 <div className='flex flex-col gap-2'>
@@ -4486,6 +4570,7 @@ export function ChannelMutateDrawer({
                                         ? t('Username')
                                         : t('Email')
                                     }
+                                    disabled={upstreamUseSavedCredential}
                                   />
                                 </div>
                                 <div className='flex flex-col gap-2'>
@@ -4500,7 +4585,12 @@ export function ChannelMutateDrawer({
                                     }
                                     type='password'
                                     autoComplete='current-password'
-                                    placeholder={t('Password')}
+                                    placeholder={
+                                      upstreamUseSavedCredential
+                                        ? t('Saved upstream login will be reused')
+                                        : t('Password')
+                                    }
+                                    disabled={upstreamUseSavedCredential}
                                   />
                                 </div>
                                 <div className='flex flex-col gap-2'>
@@ -4586,9 +4676,13 @@ export function ChannelMutateDrawer({
                               <Alert>
                                 <AlertCircle aria-hidden='true' />
                                 <AlertDescription>
-                                  {t(
-                                    'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
-                                  )}
+                                  {upstreamUseSavedCredential
+                                    ? t(
+                                        'This refresh will reuse the saved upstream login. If the upstream site asks for 2FA again, only the code is needed.'
+                                      )
+                                    : t(
+                                        'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
+                                      )}
                                 </AlertDescription>
                               </Alert>
 

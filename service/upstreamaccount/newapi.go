@@ -126,6 +126,9 @@ func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) 
 	if err != nil {
 		return nil, nil, err
 	}
+	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, status.QuotaPerUnit, credential.Session); ok {
+		return snapshot, nil, nil
+	}
 	user, headers, needs2FA, err := c.login(ctx, api, credential)
 	if err != nil {
 		return nil, nil, err
@@ -181,6 +184,24 @@ func (c *NewAPIClient) Complete2FA(ctx context.Context, record AuthChallengeReco
 	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &user, headers)
 }
 
+func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, session *AuthenticatedSession) (*Snapshot, bool) {
+	if api == nil || !authSessionMatches(session, PlatformNewAPI, api.baseURL) || session.NewAPI == nil {
+		return nil, false
+	}
+	if err := restoreCookiesToJar(api, session.NewAPI.Cookies); err != nil {
+		return nil, false
+	}
+	userID := strings.TrimSpace(session.NewAPI.UserID)
+	if userID == "" {
+		return nil, false
+	}
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &newAPIUser{ID: userID}, http.Header{})
+	if err != nil {
+		return nil, false
+	}
+	return snapshot, true
+}
+
 func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, user *newAPIUser, headers http.Header) (*Snapshot, error) {
 	if user.ID == nil {
 		return nil, fmt.Errorf("new-api 登录响应缺少用户 ID")
@@ -218,8 +239,32 @@ func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context
 		Rates:    rates,
 		Warnings: warnings,
 	}
+	snapshot.AuthSession = buildNewAPIAuthenticatedSession(api, snapshot)
 	ApplySuggestions(snapshot)
 	return snapshot, nil
+}
+
+func buildNewAPIAuthenticatedSession(api *httpClient, snapshot *Snapshot) *AuthenticatedSession {
+	if api == nil || snapshot == nil || snapshot.User == nil {
+		return nil
+	}
+	userID := strings.TrimSpace(snapshot.User.ID)
+	if userID == "" {
+		return nil
+	}
+	cookies := storeCookiesFromJar(api)
+	if len(cookies) == 0 {
+		return nil
+	}
+	return &AuthenticatedSession{
+		Platform:  PlatformNewAPI,
+		BaseURL:   api.baseURL,
+		UpdatedAt: common.GetTimestamp(),
+		NewAPI: &NewAPISessionData{
+			UserID:  userID,
+			Cookies: cookies,
+		},
+	}
 }
 
 func (c *NewAPIClient) fetchStatus(ctx context.Context, api *httpClient) (*newAPIStatus, error) {

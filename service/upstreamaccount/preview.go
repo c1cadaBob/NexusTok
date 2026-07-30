@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/pkg/cachex"
 
 	"github.com/samber/hot"
@@ -41,16 +42,25 @@ type previewConsumeLock struct {
 	refs int
 }
 
-// Preview 使用临时账号密码读取目标平台快照，并生成可由前端展示的预览结果。
+// Preview 使用临时账号密码或已保存的上游凭据读取目标平台快照，并生成可由前端展示的预览结果。
 func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 	req.Platform = NormalizePlatform(req.Platform)
+	if strings.TrimSpace(req.Password) == "" && req.ChannelID > 0 {
+		credential, ok, err := loadChannelSyncCredential(req.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			req.Credential = credential
+		}
+	}
 	if req.Platform == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
 	}
 	if strings.TrimSpace(req.BaseURL) == "" {
 		return nil, fmt.Errorf("上游平台地址不能为空")
 	}
-	if strings.TrimSpace(req.Password) == "" {
+	if strings.TrimSpace(req.Password) == "" && !hasReusableAuthSession(req.Session) {
 		return nil, fmt.Errorf("上游平台密码不能为空")
 	}
 	client, err := NewPlatformClient(req.Platform)
@@ -65,6 +75,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 			return nil, err
 		}
 		if challengeRecord != nil {
+			attachStoredCredentialToChallenge(challengeRecord, req.Credential)
 			challenge, err := saveAuthChallenge(*challengeRecord)
 			if err != nil {
 				return nil, err
@@ -85,6 +96,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 			return nil, err
 		}
 		if challengeRecord != nil {
+			attachStoredCredentialToChallenge(challengeRecord, req.Credential)
 			challenge, err := saveAuthChallenge(*challengeRecord)
 			if err != nil {
 				return nil, err
@@ -110,6 +122,9 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 }
 
 // CompletePreview2FA 使用短期 challenge 完成上游平台二次验证，并生成普通预览快照。
+//
+// 如果第一次登录时已经保存了加密凭据，这里会把它继续挂到新的预览快照上，供后续
+// 创建或刷新流程复用。
 func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewResult, error) {
 	if strings.TrimSpace(req.Code) == "" {
 		return nil, fmt.Errorf("验证码不能为空")
@@ -127,6 +142,7 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
 		ApplySuggestions(snapshot)
+		attachStoredCredentialFromChallenge(snapshot, record)
 		return SavePreviewSnapshot(snapshot)
 	case PlatformSub2API:
 		client := NewSub2APIClient(nil)
@@ -136,10 +152,33 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
 		ApplySuggestions(snapshot)
+		attachStoredCredentialFromChallenge(snapshot, record)
 		return SavePreviewSnapshot(snapshot)
 	default:
 		return nil, fmt.Errorf("不支持的二次验证平台：%s", record.Platform)
 	}
+}
+
+// loadChannelSyncCredential 从数据库读取同步渠道里已保存的上游凭据。
+//
+// 这个函数只在前端选择“复用已保存登录”时使用，返回值仍然是普通 Credential，
+// 但 Password 已经是解密后的临时内存值，不会回写给前端。
+func loadChannelSyncCredential(channelID int) (Credential, bool, error) {
+	if channelID <= 0 {
+		return Credential{}, false, nil
+	}
+	var channel model.Channel
+	if err := model.DB.Where("id = ?", channelID).First(&channel).Error; err != nil {
+		return Credential{}, false, err
+	}
+	credential, ok, err := ReadChannelSyncCredential(channel.OtherSettings)
+	if err != nil {
+		return Credential{}, false, err
+	}
+	if !ok {
+		return Credential{}, false, nil
+	}
+	return credential, true, nil
 }
 
 // SavePreviewSnapshot 保存包含完整 Key 的短期快照，并返回脱敏预览结果。
@@ -235,6 +274,7 @@ func sanitizeSnapshot(snapshot *Snapshot) *Snapshot {
 	}
 	copySnapshot := *snapshot
 	copySnapshot.StoredCredential = nil
+	copySnapshot.AuthSession = nil
 	copySnapshot.Groups = append([]SyncedGroup(nil), snapshot.Groups...)
 	copySnapshot.Keys = make([]SyncedKey, len(snapshot.Keys))
 	for i, key := range snapshot.Keys {

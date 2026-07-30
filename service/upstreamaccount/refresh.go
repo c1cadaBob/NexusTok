@@ -30,7 +30,7 @@ type RefreshResult struct {
 	Disabled  int `json:"disabled"`
 }
 
-// RefreshChannelFromCredential 使用管理员临时输入的上游账号密码刷新已有同步渠道。
+// RefreshChannelFromCredential 使用管理员临时输入或已保存的上游账号凭据刷新已有同步渠道。
 //
 // 账号密码只用于本次请求。刷新时优先按账号 settings 中的同步元数据匹配上游 key，
 // 旧账号没有元数据时再按完整 key 的 SHA-256 digest 匹配，避免把明文 key 写入匹配索引。
@@ -49,6 +49,15 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 		applySnapshotRatioConversionForRequest(record.Snapshot, req.RatioConversion)
 		return RefreshChannelFromSnapshot(req.ChannelID, record.Snapshot, req)
 	}
+	if strings.TrimSpace(req.Password) == "" {
+		credential, ok, err := loadChannelSyncCredential(req.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			req.Credential = credential
+		}
+	}
 	req.Platform = NormalizePlatform(req.Platform)
 	if strings.TrimSpace(req.Platform) == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
@@ -56,7 +65,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	if strings.TrimSpace(req.BaseURL) == "" {
 		return nil, fmt.Errorf("上游平台地址不能为空")
 	}
-	if strings.TrimSpace(req.Password) == "" {
+	if strings.TrimSpace(req.Password) == "" && !hasReusableAuthSession(req.Session) {
 		return nil, fmt.Errorf("上游平台密码不能为空")
 	}
 	client, err := NewPlatformClient(req.Platform)

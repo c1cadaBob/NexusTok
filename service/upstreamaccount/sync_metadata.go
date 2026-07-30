@@ -154,9 +154,9 @@ func ReadAccountSyncDisplayMetadata(settings string) AccountSyncDisplayMetadata 
 
 // SanitizeChannelSyncSettings 移除渠道 settings 中只供后端使用的上游登录凭据。
 //
-// 渠道列表和详情接口会把 settings 返回给前端用于回填普通配置。即使 Password 是
-// AES-GCM 密文，也不应暴露到浏览器或导出接口里；后端内部从数据库读取原始 settings
-// 时仍可用 ReadChannelSyncCredential 解密并重新登录上游平台。
+// 渠道列表和详情接口会把 settings 返回给前端用于回填普通配置。即使 Password 和
+// Session 都是 AES-GCM 密文，也不应暴露到浏览器或导出接口里；后端内部从数据库
+// 读取原始 settings 时仍可用 ReadChannelSyncCredential 解密并重新登录上游平台。
 func SanitizeChannelSyncSettings(settings string) string {
 	var data map[string]any
 	if strings.TrimSpace(settings) == "" {
@@ -177,7 +177,21 @@ func SanitizeChannelSyncSettings(settings string) string {
 	if err := common.Unmarshal(rawBytes, &metadata); err != nil {
 		return settings
 	}
+	hasCredential := false
+	if rawCredential, ok := metadata["credentials"]; ok {
+		if credentialMap, ok := rawCredential.(map[string]any); ok {
+			if password, ok := credentialMap["password"].(string); ok && strings.TrimSpace(password) != "" {
+				hasCredential = true
+			}
+			if session, ok := credentialMap["session"].(string); ok && strings.TrimSpace(session) != "" {
+				hasCredential = true
+			}
+		}
+	}
 	delete(metadata, "credentials")
+	if hasCredential {
+		metadata["credential_saved"] = true
+	}
 	data[upstreamAccountSyncMetadataKey] = metadata
 	bytes, err := common.Marshal(data)
 	if err != nil {
@@ -192,12 +206,20 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 	if metadata.Platform == "" && metadata.BaseURL == "" {
 		return Credential{}, false, nil
 	}
-	if metadata.Credentials == nil || strings.TrimSpace(metadata.Credentials.Password) == "" {
+	if metadata.Credentials == nil {
 		return Credential{}, false, nil
 	}
-	password, err := common.DecryptSensitiveString(metadata.Credentials.Password)
+	password := ""
+	if strings.TrimSpace(metadata.Credentials.Password) != "" {
+		var err error
+		password, err = common.DecryptSensitiveString(metadata.Credentials.Password)
+		if err != nil {
+			return Credential{}, false, fmt.Errorf("解密上游账号凭据失败：%w", err)
+		}
+	}
+	session, err := decryptAuthenticatedSession(metadata.Credentials.Session)
 	if err != nil {
-		return Credential{}, false, fmt.Errorf("解密上游账号凭据失败：%w", err)
+		return Credential{}, false, err
 	}
 	credential := Credential{
 		Platform: firstNonEmpty(metadata.Credentials.Platform, metadata.Platform),
@@ -205,8 +227,12 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 		Username: metadata.Credentials.Username,
 		Email:    metadata.Credentials.Email,
 		Password: password,
+		Session:  session,
 	}
-	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Email) == "" {
+	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Email) == "" && !hasReusableAuthSession(session) {
+		return Credential{}, false, nil
+	}
+	if strings.TrimSpace(credential.Password) == "" && !hasReusableAuthSession(session) {
 		return Credential{}, false, nil
 	}
 	return credential, true, nil
@@ -284,33 +310,18 @@ func buildStoredCredential(snapshot *Snapshot, credential Credential) (*StoredCr
 	if snapshot == nil {
 		return nil, nil
 	}
-	password := strings.TrimSpace(credential.Password)
-	if password == "" {
-		return nil, nil
+	if snapshot.AuthSession != nil {
+		credential.Session = snapshot.AuthSession
 	}
-	encryptedPassword, err := common.EncryptSensitiveString(password)
-	if err != nil {
-		return nil, fmt.Errorf("加密上游账号凭据失败：%w", err)
-	}
-	stored := &StoredCredential{
-		Platform:  NormalizePlatform(firstNonEmpty(credential.Platform, snapshot.Platform)),
-		BaseURL:   normalizeSyncMetadataBaseURL(firstNonEmpty(credential.Platform, snapshot.Platform), firstNonEmpty(credential.BaseURL, snapshot.BaseURL)),
-		Username:  strings.TrimSpace(credential.Username),
-		Email:     strings.TrimSpace(credential.Email),
-		Password:  encryptedPassword,
-		UpdatedAt: common.GetTimestamp(),
-	}
-	if stored.Platform == "" {
-		stored.Platform = NormalizePlatform(snapshot.Platform)
-	}
-	if stored.BaseURL == "" {
-		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, snapshot.BaseURL)
-	}
-	return stored, nil
+	return buildStoredCredentialWithBase(
+		firstNonEmpty(credential.Platform, snapshot.Platform),
+		firstNonEmpty(credential.BaseURL, snapshot.BaseURL),
+		credential,
+	)
 }
 
 func snapshotStoredCredential(snapshot *Snapshot) *StoredCredential {
-	if snapshot == nil || snapshot.StoredCredential == nil || strings.TrimSpace(snapshot.StoredCredential.Password) == "" {
+	if snapshot == nil || snapshot.StoredCredential == nil {
 		return nil
 	}
 	stored := *snapshot.StoredCredential
@@ -320,7 +331,187 @@ func snapshotStoredCredential(snapshot *Snapshot) *StoredCredential {
 	if stored.BaseURL == "" {
 		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, snapshot.BaseURL)
 	}
+	if snapshot.AuthSession != nil {
+		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, stored.BaseURL, snapshot.AuthSession); err != nil {
+			common.SysLog("failed to encrypt upstream authenticated session: " + err.Error())
+		}
+	}
+	if strings.TrimSpace(stored.Password) == "" && strings.TrimSpace(stored.Session) == "" {
+		return nil
+	}
 	return &stored
+}
+
+// buildStoredCredentialWithBase 将上游账号密码和已认证登录态加密后封装成可落库的凭据元数据。
+//
+// 这里永远不返回明文密码或明文登录态；调用方如果希望把登录信息继续挂到预览快照
+// 或 challenge，必须显式把返回值放进后端内存结构中，不能依赖前端回填。
+func buildStoredCredentialWithBase(platform string, baseURL string, credential Credential) (*StoredCredential, error) {
+	password := strings.TrimSpace(credential.Password)
+	if password == "" && !hasReusableAuthSession(credential.Session) {
+		return nil, nil
+	}
+	encryptedPassword := ""
+	if password != "" {
+		var err error
+		encryptedPassword, err = common.EncryptSensitiveString(password)
+		if err != nil {
+			return nil, fmt.Errorf("加密上游账号凭据失败：%w", err)
+		}
+	}
+	stored := &StoredCredential{
+		Platform:  NormalizePlatform(platform),
+		BaseURL:   normalizeSyncMetadataBaseURL(platform, baseURL),
+		Username:  strings.TrimSpace(credential.Username),
+		Email:     strings.TrimSpace(credential.Email),
+		Password:  encryptedPassword,
+		UpdatedAt: common.GetTimestamp(),
+	}
+	if stored.Platform == "" {
+		stored.Platform = NormalizePlatform(platform)
+	}
+	if stored.BaseURL == "" {
+		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, baseURL)
+	}
+	if err := attachEncryptedAuthSessionToStoredCredential(stored, stored.Platform, stored.BaseURL, credential.Session); err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+// attachStoredCredentialFromChallenge 将已保存的加密凭据重新挂回预览快照。
+//
+// 只有 2FA challenge 路径会走这里：第一次登录时已经保存的凭据会继续留在后续快照里，
+// 供创建或刷新流程复用，但不会再回传给浏览器。
+func attachStoredCredentialFromChallenge(snapshot *Snapshot, record *AuthChallengeRecord) {
+	if snapshot == nil || record == nil || record.Credential == nil {
+		return
+	}
+	stored := *record.Credential
+	if stored.Platform == "" {
+		stored.Platform = NormalizePlatform(record.Platform)
+	}
+	if stored.BaseURL == "" {
+		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, record.BaseURL)
+	}
+	if snapshot.AuthSession != nil {
+		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, stored.BaseURL, snapshot.AuthSession); err != nil {
+			common.SysLog("failed to encrypt upstream authenticated session from challenge: " + err.Error())
+		}
+	}
+	stored.UpdatedAt = common.GetTimestamp()
+	snapshot.StoredCredential = &stored
+}
+
+// attachStoredCredentialToChallenge 将临时登录凭据加密后挂到 2FA challenge 上。
+//
+// 这样 2FA 通过后仍然可以把登录信息写回普通预览快照，后续刷新时就能复用同一份
+// 上游账号凭据，而不需要管理员再次手动输入。
+func attachStoredCredentialToChallenge(record *AuthChallengeRecord, credential Credential) {
+	if record == nil {
+		return
+	}
+	stored, err := buildStoredCredentialWithBase(record.Platform, record.BaseURL, credential)
+	if err != nil {
+		common.SysLog("failed to encrypt upstream account challenge credential: " + err.Error())
+		return
+	}
+	record.Credential = stored
+}
+
+func attachEncryptedAuthSessionToStoredCredential(stored *StoredCredential, platform string, baseURL string, session *AuthenticatedSession) error {
+	if stored == nil || !hasReusableAuthSession(session) {
+		return nil
+	}
+	encrypted, updatedAt, err := encryptAuthenticatedSession(platform, baseURL, session)
+	if err != nil {
+		return err
+	}
+	if encrypted == "" {
+		return nil
+	}
+	stored.Session = encrypted
+	stored.SessionUpdatedAt = updatedAt
+	return nil
+}
+
+func encryptAuthenticatedSession(platform string, baseURL string, session *AuthenticatedSession) (string, int64, error) {
+	prepared := normalizeAuthenticatedSession(platform, baseURL, session)
+	if !hasReusableAuthSession(prepared) {
+		return "", 0, nil
+	}
+	bytes, err := common.Marshal(prepared)
+	if err != nil {
+		return "", 0, fmt.Errorf("序列化上游登录态失败：%w", err)
+	}
+	encrypted, err := common.EncryptSensitiveString(string(bytes))
+	if err != nil {
+		return "", 0, fmt.Errorf("加密上游登录态失败：%w", err)
+	}
+	return encrypted, prepared.UpdatedAt, nil
+}
+
+func decryptAuthenticatedSession(raw string) (*AuthenticatedSession, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	plain, err := common.DecryptSensitiveString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("解密上游登录态失败：%w", err)
+	}
+	var session AuthenticatedSession
+	if err := common.UnmarshalJsonStr(plain, &session); err != nil {
+		return nil, fmt.Errorf("解析上游登录态失败：%w", err)
+	}
+	prepared := normalizeAuthenticatedSession(session.Platform, session.BaseURL, &session)
+	if !hasReusableAuthSession(prepared) {
+		return nil, nil
+	}
+	return prepared, nil
+}
+
+func normalizeAuthenticatedSession(platform string, baseURL string, session *AuthenticatedSession) *AuthenticatedSession {
+	if session == nil {
+		return nil
+	}
+	prepared := *session
+	prepared.Platform = NormalizePlatform(firstNonEmpty(prepared.Platform, platform))
+	prepared.BaseURL = normalizeSyncMetadataBaseURL(prepared.Platform, firstNonEmpty(prepared.BaseURL, baseURL))
+	if prepared.UpdatedAt <= 0 {
+		prepared.UpdatedAt = common.GetTimestamp()
+	}
+	return &prepared
+}
+
+func hasReusableAuthSession(session *AuthenticatedSession) bool {
+	if session == nil {
+		return false
+	}
+	switch NormalizePlatform(session.Platform) {
+	case PlatformNewAPI:
+		return session.NewAPI != nil &&
+			strings.TrimSpace(session.NewAPI.UserID) != "" &&
+			len(session.NewAPI.Cookies) > 0
+	case PlatformSub2API:
+		return session.Sub2API != nil &&
+			strings.TrimSpace(session.Sub2API.AccessToken) != ""
+	default:
+		return false
+	}
+}
+
+func authSessionMatches(session *AuthenticatedSession, platform string, baseURL string) bool {
+	if !hasReusableAuthSession(session) {
+		return false
+	}
+	normalizedPlatform := NormalizePlatform(platform)
+	if NormalizePlatform(session.Platform) != normalizedPlatform {
+		return false
+	}
+	if strings.TrimSpace(session.BaseURL) == "" {
+		return true
+	}
+	return sameSyncSourceBaseURL(normalizedPlatform, session.BaseURL, baseURL)
 }
 
 func syncIdentityKey(platform string, baseURL string, externalID string) string {

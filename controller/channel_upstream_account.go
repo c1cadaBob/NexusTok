@@ -14,9 +14,11 @@ import (
 
 const upstreamAccountPreviewTimeout = 45 * time.Second
 
-// PreviewUpstreamAccount 使用临时账号密码读取目标平台密钥、分组、倍率和余额预览。
+// PreviewUpstreamAccount 使用临时账号密码或已保存的上游凭据读取目标平台密钥、分组、
+// 倍率和余额预览。
 //
-// 账号密码只用于本次后端请求，不会落库；完整 API Key 仅保存在短期预览缓存中，
+// 账号密码只用于本次后端请求，不会落库；如果请求携带 channel_id 且不再提交密码，
+// 后端会从该渠道已保存的加密凭据中恢复登录。完整 API Key 仅保存在短期预览缓存中，
 // 返回给前端的 snapshot 会清空 key 字段，只保留 masked_key 供管理员确认。
 func PreviewUpstreamAccount(c *gin.Context) {
 	var req upstreamaccount.PreviewRequest
@@ -80,9 +82,10 @@ func CreateUpstreamAccountChannel(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
-// RefreshUpstreamAccountChannel 使用重新输入的上游账号密码刷新已有账号同步渠道。
+// RefreshUpstreamAccountChannel 使用重新输入或已保存的上游账号凭据刷新已有账号同步渠道。
 //
-// 刷新不会保存账号密码；后端只在本次请求内登录目标平台，并把新快照应用到已有
+// 刷新不会保存账号密码；后端会优先复用渠道 settings 中已保存的加密凭据，若本次
+// 请求显式提交了账号密码，则会用新凭据重新登录目标平台，并把新快照应用到已有
 // ChannelAccount。缺失密钥是否自动禁用由请求中的 disable_missing_key 控制。
 func RefreshUpstreamAccountChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))

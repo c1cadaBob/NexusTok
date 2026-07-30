@@ -132,13 +132,17 @@ func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential
 
 // BeginPreview 开始 sub2api 账号同步预览。
 //
-// 普通账号会直接返回完整后端快照；启用 2FA 的账号只返回短期 challenge。challenge 中
-// 只保存 sub2api 登录接口返回的 temp_token，不保存账号密码或正式 access_token。
+// 普通账号会直接返回完整后端快照；启用 2FA 的账号只返回短期 challenge。客户端生成
+// 的 challenge 只包含 sub2api 登录接口返回的 temp_token，不包含正式 access_token；
+// 调用方可以再额外挂载加密后的账号凭据，供 2FA 完成后落库复用。
 func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential) (*Snapshot, *AuthChallengeRecord, error) {
 	credential.BaseURL = normalizeSub2APIBaseURL(credential.BaseURL)
 	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
 	if err != nil {
 		return nil, nil, err
+	}
+	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session); ok {
+		return snapshot, nil, nil
 	}
 	login, err := c.login(ctx, api, credential)
 	if err != nil {
@@ -159,6 +163,9 @@ func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential)
 		}, nil
 	}
 	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	if err == nil {
+		snapshot.AuthSession = buildSub2APIAuthenticatedSession(api.baseURL, login)
+	}
 	return snapshot, nil, err
 }
 
@@ -187,7 +194,59 @@ func (c *Sub2APIClient) Complete2FA(ctx context.Context, record AuthChallengeRec
 	if err != nil {
 		return nil, fmt.Errorf("sub2api 2FA 验证失败：%w", err)
 	}
-	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	if err == nil {
+		snapshot.AuthSession = buildSub2APIAuthenticatedSession(api.baseURL, &login)
+	}
+	return snapshot, err
+}
+
+func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, session *AuthenticatedSession) (*Snapshot, bool) {
+	if api == nil || !authSessionMatches(session, PlatformSub2API, api.baseURL) || session.Sub2API == nil {
+		return nil, false
+	}
+	token := strings.TrimSpace(session.Sub2API.AccessToken)
+	if token == "" {
+		return nil, false
+	}
+	if session.Sub2API.ExpiresAt > 0 && session.Sub2API.ExpiresAt <= common.GetTimestamp()+30 {
+		return nil, false
+	}
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
+	if err != nil {
+		return nil, false
+	}
+	snapshot.AuthSession = &AuthenticatedSession{
+		Platform:  PlatformSub2API,
+		BaseURL:   api.baseURL,
+		UpdatedAt: common.GetTimestamp(),
+		Sub2API: &Sub2APISessionData{
+			AccessToken:  token,
+			RefreshToken: session.Sub2API.RefreshToken,
+			ExpiresAt:    session.Sub2API.ExpiresAt,
+		},
+	}
+	return snapshot, true
+}
+
+func buildSub2APIAuthenticatedSession(baseURL string, login *sub2APILoginResponse) *AuthenticatedSession {
+	if login == nil || strings.TrimSpace(login.AccessToken) == "" {
+		return nil
+	}
+	expiresAt := int64(0)
+	if login.ExpiresIn > 0 {
+		expiresAt = common.GetTimestamp() + login.ExpiresIn
+	}
+	return &AuthenticatedSession{
+		Platform:  PlatformSub2API,
+		BaseURL:   baseURL,
+		UpdatedAt: common.GetTimestamp(),
+		Sub2API: &Sub2APISessionData{
+			AccessToken:  strings.TrimSpace(login.AccessToken),
+			RefreshToken: strings.TrimSpace(login.RefreshToken),
+			ExpiresAt:    expiresAt,
+		},
+	}
 }
 
 func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, accessToken string, user sub2APIUser) (*Snapshot, error) {
