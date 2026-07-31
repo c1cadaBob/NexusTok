@@ -77,6 +77,7 @@ import {
   dedupeModelNames,
   formatModelsArray,
   formatTimestamp,
+  isUpstreamAccountSyncChannel,
   parseModelsString,
 } from '../../lib'
 import {
@@ -88,6 +89,7 @@ import {
 } from '../../lib/upstream-sync'
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
 import { useChannels } from '../channels-provider'
+import { UpstreamAccountRefreshPanel } from '../upstream-account-refresh-panel'
 
 type ChannelAccountPoolDialogProps = {
   open: boolean
@@ -169,6 +171,8 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [upstreamRefreshOpen, setUpstreamRefreshOpen] = useState(false)
+  const [upstreamRefreshBusy, setUpstreamRefreshBusy] = useState(false)
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const canReadChannelAccounts = permissions.canReadChannelAccount
@@ -178,6 +182,8 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     permissions.canSensitiveWriteChannelAccount
   const canEditChannelAccounts =
     canWriteChannelAccounts || canSensitiveWriteChannelAccounts
+  const isUpstreamAccountSyncedChannel =
+    isUpstreamAccountSyncChannel(currentRow)
   const allowManualAccountMutation =
     canManuallyMutateChannelAccounts(currentRow)
 
@@ -232,6 +238,17 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     }
   }, [allowManualAccountMutation, formOpen, formState.id, props.open])
 
+  useEffect(() => {
+    if (props.open && isUpstreamAccountSyncedChannel) return
+    setUpstreamRefreshOpen(false)
+    setUpstreamRefreshBusy(false)
+  }, [isUpstreamAccountSyncedChannel, props.open])
+
+  useEffect(() => {
+    if (upstreamRefreshOpen) return
+    setUpstreamRefreshBusy(false)
+  }, [upstreamRefreshOpen])
+
   const resetForm = () => {
     setFormState(emptyForm)
     setFormOpen(false)
@@ -245,6 +262,11 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
           ? accountsQuery.refetch()
           : Promise.resolve(undefined),
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+        channelId > 0
+          ? queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.detail(channelId),
+            })
+          : Promise.resolve(undefined),
       ])
       if (options?.showSuccessToast) {
         toast.success(t('Account pool list refreshed'))
@@ -252,6 +274,24 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     } finally {
       setIsRefreshing(false)
     }
+  }
+
+  const handleToolbarRefresh = async () => {
+    if (isUpstreamAccountSyncedChannel) {
+      if (!permissions.canSensitiveWrite) {
+        toast.error(noPermissionMessage)
+        return
+      }
+      setUpstreamRefreshOpen(true)
+      return
+    }
+    await refresh({ showSuccessToast: true })
+  }
+
+  const handleUpstreamRefreshSuccess = async () => {
+    await refresh()
+    setUpstreamRefreshBusy(false)
+    setUpstreamRefreshOpen(false)
   }
 
   const openCreateForm = () => {
@@ -558,24 +598,38 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   type='button'
                   variant='outline'
                   size='sm'
-                  onClick={() => void refresh({ showSuccessToast: true })}
+                  onClick={() => void handleToolbarRefresh()}
                   disabled={
-                    !canReadChannelAccounts ||
-                    accountsQuery.isFetching ||
-                    isRefreshing
+                    isUpstreamAccountSyncedChannel
+                      ? !permissions.canSensitiveWrite || upstreamRefreshBusy
+                      : !canReadChannelAccounts ||
+                        accountsQuery.isFetching ||
+                        isRefreshing
                   }
                   title={
-                    canReadChannelAccounts ? undefined : noPermissionMessage
+                    isUpstreamAccountSyncedChannel
+                      ? permissions.canSensitiveWrite
+                        ? undefined
+                        : noPermissionMessage
+                      : canReadChannelAccounts
+                        ? undefined
+                        : noPermissionMessage
                   }
                 >
-                  {isRefreshing || accountsQuery.isFetching ? (
+                  {isRefreshing ||
+                  accountsQuery.isFetching ||
+                  upstreamRefreshBusy ? (
                     <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                   ) : (
                     <RefreshCw className='mr-2 h-4 w-4' />
                   )}
-                  {isRefreshing || accountsQuery.isFetching
+                  {isRefreshing ||
+                  accountsQuery.isFetching ||
+                  upstreamRefreshBusy
                     ? t('Refreshing...')
-                    : t('Refresh')}
+                    : isUpstreamAccountSyncedChannel
+                      ? t('Refresh Upstream Account')
+                      : t('Refresh')}
                 </Button>
                 {allowManualAccountMutation && (
                   <Button
@@ -618,6 +672,45 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                 )}
               </div>
             </div>
+
+            {upstreamRefreshOpen && isUpstreamAccountSyncedChannel && (
+              <div className='rounded-lg border p-3'>
+                <div className='mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                  <div className='min-w-0'>
+                    <div className='text-sm font-semibold'>
+                      {t('Refresh Upstream Account')}
+                    </div>
+                    <div className='text-muted-foreground text-xs'>
+                      {t(
+                        'Optional upstream re-sync. It does not replace the current synced key configuration until you apply the refresh.'
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    onClick={() => setUpstreamRefreshOpen(false)}
+                    disabled={upstreamRefreshBusy}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </div>
+                <UpstreamAccountRefreshPanel
+                  open={upstreamRefreshOpen}
+                  channelId={currentRow.id}
+                  channelType={currentRow.type}
+                  channelBaseUrl={currentRow.base_url}
+                  channelModels={currentRow.models}
+                  channelSettings={currentRow.settings}
+                  canReadChannelAccount={canReadChannelAccounts}
+                  canSensitiveWrite={permissions.canSensitiveWrite}
+                  noPermissionMessage={noPermissionMessage}
+                  onSuccess={handleUpstreamRefreshSuccess}
+                  onBusyChange={setUpstreamRefreshBusy}
+                />
+              </div>
+            )}
 
             {batchOpen && allowManualAccountMutation && (
               <div className='space-y-3 rounded-lg border p-3'>

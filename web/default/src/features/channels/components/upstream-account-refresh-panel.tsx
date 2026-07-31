@@ -1,0 +1,1168 @@
+/*
+Copyright (C) 2023-2026 c1cada
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@c1cada.dev
+*/
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { MultiSelect } from '@/components/multi-select'
+import {
+  completeUpstreamAccountPreview2FA,
+  getAllModels,
+  getChannelAccounts,
+  previewUpstreamAccount,
+  refreshUpstreamAccountChannel,
+} from '../api'
+import {
+  channelsQueryKeys,
+  dedupeModelNames,
+  formatModelsArray,
+  parseModelsString,
+} from '../lib'
+import {
+  buildUpstreamAccountConfigsFromChannelAccounts,
+  buildUpstreamAccountConfigsFromSnapshotKeys,
+  buildUpstreamAccountModelOptions,
+  buildUpstreamAccountPreviewRequest,
+  buildUpstreamAccountRefreshPayload,
+  buildUpstreamRatioConversionPayload,
+  formatUpstreamModelRatioDetails,
+  formatUpstreamPreviewRemaining,
+  formatUpstreamRatioCompact,
+  getUpstreamKeyGroupLabel,
+  getUpstreamKeyRatioDisplayValue,
+  getUpstreamPreviewChallenge,
+  getUpstreamRatioDisplayValue,
+  getUpstreamSyncBaseUrlFromSettings,
+  getUpstreamSyncPlatformFromSettings,
+  hasUpstreamPreviewSnapshot,
+  hasUpstreamSyncSavedCredential,
+  isUpstreamPreviewExpiredError,
+  normalizeUpstreamChannelBaseUrl,
+  upstreamAccountKeyConfigId,
+  upstreamAccountModelsArrayValue,
+  upstreamModelsToString,
+  upstreamPlatformFromChannelType,
+  upstreamPreviewRemainingSeconds,
+  type UpstreamAccountConfigDraft,
+} from '../lib/upstream-sync'
+import type {
+  UpstreamAccountPlatform,
+  UpstreamAccountPreviewData,
+  UpstreamAccountSnapshot,
+  UpstreamAccountTwoFactorChallenge,
+} from '../types'
+
+type UpstreamAccountRefreshPanelProps = {
+  open: boolean
+  channelId: number | null
+  channelType?: number | null
+  channelBaseUrl?: string | null
+  channelModels?: string
+  channelSettings?: string
+  canReadChannelAccount: boolean
+  canSensitiveWrite: boolean
+  noPermissionMessage: string
+  onSuccess: () => Promise<void> | void
+  onBusyChange?: (busy: boolean) => void
+}
+
+export function UpstreamAccountRefreshPanel({
+  open,
+  channelId,
+  channelType,
+  channelBaseUrl,
+  channelModels,
+  channelSettings,
+  canReadChannelAccount,
+  canSensitiveWrite,
+  noPermissionMessage,
+  onSuccess,
+  onBusyChange,
+}: UpstreamAccountRefreshPanelProps) {
+  const { t } = useTranslation()
+  const savedUpstreamCredentialAvailable = useMemo(
+    () => hasUpstreamSyncSavedCredential(channelSettings),
+    [channelSettings]
+  )
+  const forcedUpstreamPlatform = useMemo(
+    () => upstreamPlatformFromChannelType(channelType ?? 0),
+    [channelType]
+  )
+  const [upstreamPlatform, setUpstreamPlatform] =
+    useState<UpstreamAccountPlatform>('new-api')
+  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
+  const [upstreamUsername, setUpstreamUsername] = useState('')
+  const [upstreamPassword, setUpstreamPassword] = useState('')
+  const [upstreamUseSavedCredential, setUpstreamUseSavedCredential] =
+    useState(false)
+  const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
+  const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] =
+    useState('')
+  const [upstreamRefreshPreviewId, setUpstreamRefreshPreviewId] = useState('')
+  const [upstreamRefreshPreviewExpiresAt, setUpstreamRefreshPreviewExpiresAt] =
+    useState(0)
+  const [upstreamRefreshSnapshot, setUpstreamRefreshSnapshot] =
+    useState<UpstreamAccountSnapshot | null>(null)
+  const [
+    upstreamRefreshTwoFactorChallenge,
+    setUpstreamRefreshTwoFactorChallenge,
+  ] = useState<UpstreamAccountTwoFactorChallenge | null>(null)
+  const [upstreamRefreshTwoFactorCode, setUpstreamRefreshTwoFactorCode] =
+    useState('')
+  const [upstreamPreviewNowMs, setUpstreamPreviewNowMs] = useState(() =>
+    Date.now()
+  )
+  const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
+  const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
+    Record<string, UpstreamAccountConfigDraft>
+  >({})
+  const autoPreviewTriggeredRef = useRef(false)
+
+  const allModelsQuery = useQuery({
+    queryKey: ['channel_models'],
+    queryFn: getAllModels,
+    enabled: open && Boolean(channelId),
+    placeholderData: (previousData) => previousData,
+  })
+
+  const refreshAccountsQuery = useQuery({
+    queryKey: [
+      ...channelsQueryKeys.detail(channelId || 0),
+      'upstream-refresh-accounts',
+    ],
+    queryFn: () =>
+      getChannelAccounts(channelId!, {
+        p: 1,
+        page_size: 10000,
+      }),
+    enabled: open && Boolean(channelId) && canReadChannelAccount,
+  })
+
+  const refreshAccounts = useMemo(
+    () => refreshAccountsQuery.data?.data?.accounts.items ?? [],
+    [refreshAccountsQuery.data?.data?.accounts.items]
+  )
+  const refreshAccountsTotal =
+    refreshAccountsQuery.data?.data?.accounts.total ?? 0
+  const refreshAccountsLoadedCount = refreshAccounts.length
+  const allModelsList = useMemo(
+    () => allModelsQuery.data?.data?.map((model) => model.id).filter(Boolean) || [],
+    [allModelsQuery.data]
+  )
+  const currentModelsArray = useMemo(
+    () => parseModelsString(channelModels || ''),
+    [channelModels]
+  )
+  const candidateModelNames = useMemo(
+    () => dedupeModelNames([...allModelsList, ...currentModelsArray]),
+    [allModelsList, currentModelsArray]
+  )
+  const upstreamRefreshPreviewRemaining = upstreamPreviewRemainingSeconds(
+    upstreamRefreshPreviewExpiresAt,
+    upstreamPreviewNowMs
+  )
+  const isUpstreamRefreshPreviewExpired = Boolean(
+    upstreamRefreshSnapshot &&
+    upstreamRefreshPreviewExpiresAt &&
+    upstreamRefreshPreviewRemaining <= 0
+  )
+  const upstreamRefreshTwoFactorRemaining = upstreamPreviewRemainingSeconds(
+    upstreamRefreshTwoFactorChallenge?.expires_at ?? 0,
+    upstreamPreviewNowMs
+  )
+  const isUpstreamRefreshTwoFactorExpired = Boolean(
+    upstreamRefreshTwoFactorChallenge &&
+    upstreamRefreshTwoFactorRemaining <= 0
+  )
+
+  const resetRefreshState = useCallback(() => {
+    const nextPlatform =
+      getUpstreamSyncPlatformFromSettings(channelSettings) ||
+      forcedUpstreamPlatform ||
+      'new-api'
+    setUpstreamPlatform(nextPlatform)
+    setUpstreamBaseUrl(
+      getUpstreamSyncBaseUrlFromSettings(channelSettings) ||
+        normalizeUpstreamChannelBaseUrl(channelBaseUrl) ||
+        ''
+    )
+    setUpstreamUsername('')
+    setUpstreamPassword('')
+    setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
+    setUpstreamPaidCny('')
+    setUpstreamPlatformUsdCredit('')
+    setUpstreamRefreshPreviewId('')
+    setUpstreamRefreshPreviewExpiresAt(0)
+    setUpstreamRefreshSnapshot(null)
+    setUpstreamRefreshTwoFactorChallenge(null)
+    setUpstreamRefreshTwoFactorCode('')
+    setUpstreamApplySuggested(true)
+    setUpstreamAccountConfigs({})
+    autoPreviewTriggeredRef.current = false
+  }, [
+    channelBaseUrl,
+    channelSettings,
+    forcedUpstreamPlatform,
+    savedUpstreamCredentialAvailable,
+  ])
+
+  const clearRefreshPreview = useCallback(() => {
+    setUpstreamRefreshPreviewId('')
+    setUpstreamRefreshPreviewExpiresAt(0)
+    setUpstreamRefreshSnapshot(null)
+    setUpstreamRefreshTwoFactorChallenge(null)
+    setUpstreamRefreshTwoFactorCode('')
+  }, [])
+
+  const applyUpstreamPreviewData = useCallback(
+    (data: UpstreamAccountPreviewData) => {
+      setUpstreamRefreshPreviewId(data.preview_id)
+      setUpstreamRefreshPreviewExpiresAt(data.expires_at)
+      setUpstreamRefreshSnapshot(data.snapshot)
+      setUpstreamRefreshTwoFactorChallenge(null)
+      setUpstreamRefreshTwoFactorCode('')
+      setUpstreamAccountConfigs((prev) =>
+        buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
+      )
+      const ratio = data.snapshot.ratio_conversion
+      setUpstreamPaidCny(
+        ratio?.paid_cny && Number.isFinite(ratio.paid_cny)
+          ? String(ratio.paid_cny)
+          : ''
+      )
+      setUpstreamPlatformUsdCredit(
+        ratio?.platform_usd_credit &&
+          Number.isFinite(ratio.platform_usd_credit)
+          ? String(ratio.platform_usd_credit)
+          : ''
+      )
+      toast.success(
+        t('Synced {{count}} upstream key(s)', {
+          count: data.snapshot.keys.length,
+        })
+      )
+    },
+    [t]
+  )
+
+  const previewMutation = useMutation({
+    mutationFn: previewUpstreamAccount,
+  })
+
+  const preview2FAMutation = useMutation({
+    mutationFn: completeUpstreamAccountPreview2FA,
+  })
+
+  const refreshMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number
+      payload: Parameters<typeof refreshUpstreamAccountChannel>[1]
+    }) => refreshUpstreamAccountChannel(id, payload),
+    onSuccess: async (res) => {
+      if (!res.success) {
+        if (isUpstreamPreviewExpiredError(res.message)) {
+          clearRefreshPreview()
+          setUpstreamAccountConfigs({})
+          toast.error(
+            t(
+              'The upstream account preview expired or was already used. Sync the upstream account again.'
+            )
+          )
+          return
+        }
+        toast.error(res.message || t('Failed to refresh upstream account'))
+        return
+      }
+      toast.success(
+        t(
+          'Upstream account refreshed: {{created}} created, {{updated}} updated, {{disabled}} disabled',
+          {
+            created: res.data?.created ?? 0,
+            updated: res.data?.updated ?? 0,
+            disabled: res.data?.disabled ?? 0,
+          }
+        )
+      )
+      setUpstreamPassword('')
+      clearRefreshPreview()
+      setUpstreamAccountConfigs({})
+      await Promise.resolve(onSuccess())
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : t('Failed to refresh upstream account')
+      toast.error(message)
+    },
+  })
+
+  const handlePreviewUpstreamRefresh = useCallback(async () => {
+    if (!canSensitiveWrite) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (upstreamUseSavedCredential && !savedUpstreamCredentialAvailable) {
+      toast.error(
+        t(
+          'No saved upstream login is available yet. Complete a sync once to enable it.'
+        )
+      )
+      return
+    }
+    const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
+    if (!refreshPlatform) {
+      toast.error(t('Upstream platform is required'))
+      return
+    }
+    if (!upstreamUseSavedCredential) {
+      const baseUrl = upstreamBaseUrl.trim()
+      if (!baseUrl) {
+        toast.error(t('Upstream platform URL is required'))
+        return
+      }
+      if (!upstreamUsername.trim() || !upstreamPassword.trim()) {
+        toast.error(t('Account and password are required'))
+        return
+      }
+    }
+
+    let res: Awaited<ReturnType<typeof previewUpstreamAccount>>
+    try {
+      res = await previewMutation.mutateAsync(
+        buildUpstreamAccountPreviewRequest({
+          channelId,
+          platform: refreshPlatform,
+          baseUrl: upstreamBaseUrl,
+          username: upstreamUsername,
+          password: upstreamPassword,
+          useSavedCredential: upstreamUseSavedCredential,
+          ratioConversion: buildUpstreamRatioConversionPayload(
+            upstreamPaidCny,
+            upstreamPlatformUsdCredit
+          ),
+        })
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t('Failed to sync upstream account')
+      toast.error(message)
+      return
+    }
+    if (!res.success || !res.data) {
+      toast.error(res.message || t('Failed to sync upstream account'))
+      return
+    }
+    const challenge = getUpstreamPreviewChallenge(res.data)
+    if (challenge) {
+      setUpstreamRefreshTwoFactorChallenge(challenge)
+      setUpstreamRefreshTwoFactorCode('')
+      setUpstreamRefreshPreviewId('')
+      setUpstreamRefreshPreviewExpiresAt(0)
+      setUpstreamRefreshSnapshot(null)
+      setUpstreamAccountConfigs({})
+      toast.info(t('Enter the 2FA code from the upstream account.'))
+      return
+    }
+    if (hasUpstreamPreviewSnapshot(res.data)) {
+      applyUpstreamPreviewData(res.data)
+      return
+    }
+    toast.error(t('Failed to sync upstream account'))
+  }, [
+    applyUpstreamPreviewData,
+    canSensitiveWrite,
+    channelId,
+    forcedUpstreamPlatform,
+    noPermissionMessage,
+    previewMutation,
+    savedUpstreamCredentialAvailable,
+    t,
+    upstreamBaseUrl,
+    upstreamPassword,
+    upstreamPaidCny,
+    upstreamPlatform,
+    upstreamPlatformUsdCredit,
+    upstreamUseSavedCredential,
+    upstreamUsername,
+  ])
+
+  const handleCompleteUpstreamTwoFactor = useCallback(async () => {
+    const challenge = upstreamRefreshTwoFactorChallenge
+    const code = upstreamRefreshTwoFactorCode.trim()
+    if (!challenge) return
+    if (isUpstreamRefreshTwoFactorExpired) {
+      toast.error(
+        t('The upstream 2FA challenge expired. Sync the upstream account again.')
+      )
+      clearRefreshPreview()
+      setUpstreamAccountConfigs({})
+      return
+    }
+    if (!code) {
+      toast.error(t('Enter the upstream 2FA code'))
+      return
+    }
+
+    let res: Awaited<ReturnType<typeof completeUpstreamAccountPreview2FA>>
+    try {
+      res = await preview2FAMutation.mutateAsync({
+        challenge_id: challenge.challenge_id,
+        code,
+        ratio_conversion: buildUpstreamRatioConversionPayload(
+          upstreamPaidCny,
+          upstreamPlatformUsdCredit
+        ),
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : t('Failed to verify upstream 2FA code')
+      toast.error(message)
+      return
+    }
+    if (!res.success || !res.data) {
+      toast.error(res.message || t('Failed to verify upstream 2FA code'))
+      clearRefreshPreview()
+      setUpstreamAccountConfigs({})
+      return
+    }
+    applyUpstreamPreviewData(res.data)
+  }, [
+    applyUpstreamPreviewData,
+    clearRefreshPreview,
+    isUpstreamRefreshTwoFactorExpired,
+    preview2FAMutation,
+    t,
+    upstreamPaidCny,
+    upstreamPlatformUsdCredit,
+    upstreamRefreshTwoFactorChallenge,
+    upstreamRefreshTwoFactorCode,
+  ])
+
+  const busy =
+    previewMutation.isPending ||
+    preview2FAMutation.isPending ||
+    refreshMutation.isPending
+
+  useEffect(() => {
+    if (!open || !channelId) {
+      resetRefreshState()
+      onBusyChange?.(false)
+      return
+    }
+    resetRefreshState()
+  }, [channelId, onBusyChange, open, resetRefreshState])
+
+  useEffect(() => {
+    if (!open || !canReadChannelAccount) {
+      return
+    }
+    if (upstreamRefreshSnapshot) {
+      return
+    }
+    if (refreshAccounts.length === 0) {
+      return
+    }
+    if (Object.keys(upstreamAccountConfigs).length > 0) {
+      return
+    }
+    setUpstreamAccountConfigs(
+      buildUpstreamAccountConfigsFromChannelAccounts(refreshAccounts)
+    )
+  }, [
+    canReadChannelAccount,
+    open,
+    refreshAccounts,
+    upstreamAccountConfigs,
+    upstreamRefreshSnapshot,
+  ])
+
+  useEffect(() => {
+    if (!open || upstreamRefreshSnapshot) {
+      return
+    }
+    if (
+      upstreamPaidCny.trim() ||
+      upstreamPlatformUsdCredit.trim() ||
+      refreshAccounts.length === 0
+    ) {
+      return
+    }
+    const ratioConfig = refreshAccounts.find(
+      (account) => account.ratio_conversion_config
+    )?.ratio_conversion_config
+    if (!ratioConfig) return
+    setUpstreamPaidCny(
+      ratioConfig.paid_cny && Number.isFinite(ratioConfig.paid_cny)
+        ? String(ratioConfig.paid_cny)
+        : ''
+    )
+    setUpstreamPlatformUsdCredit(
+      ratioConfig.platform_usd_credit &&
+        Number.isFinite(ratioConfig.platform_usd_credit)
+        ? String(ratioConfig.platform_usd_credit)
+        : ''
+    )
+  }, [
+    open,
+    refreshAccounts,
+    upstreamPaidCny,
+    upstreamPlatformUsdCredit,
+    upstreamRefreshSnapshot,
+  ])
+
+  useEffect(() => {
+    if (
+      !open ||
+      !savedUpstreamCredentialAvailable ||
+      !upstreamUseSavedCredential ||
+      busy ||
+      autoPreviewTriggeredRef.current ||
+      upstreamRefreshSnapshot
+    ) {
+      return
+    }
+    autoPreviewTriggeredRef.current = true
+    void handlePreviewUpstreamRefresh()
+  }, [
+    busy,
+    handlePreviewUpstreamRefresh,
+    open,
+    savedUpstreamCredentialAvailable,
+    upstreamRefreshSnapshot,
+    upstreamUseSavedCredential,
+  ])
+
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
+  useEffect(() => {
+    if (
+      !upstreamRefreshPreviewExpiresAt &&
+      !upstreamRefreshTwoFactorChallenge?.expires_at
+    ) {
+      return
+    }
+    setUpstreamPreviewNowMs(Date.now())
+    const timer = window.setInterval(() => {
+      setUpstreamPreviewNowMs(Date.now())
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [
+    upstreamRefreshPreviewExpiresAt,
+    upstreamRefreshTwoFactorChallenge?.expires_at,
+  ])
+
+  const showLoadedWarning =
+    canReadChannelAccount && refreshAccountsTotal > refreshAccountsLoadedCount
+
+  const renderUpstreamPreviewExpiryNotice = useCallback(
+    (remainingSeconds: number, expired: boolean) => (
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertDescription>
+          {expired
+            ? t(
+                'This upstream account preview expired. Sync the upstream account again before saving.'
+              )
+            : t(
+                'This upstream account preview expires in {{time}}. Sync again if it expires before you save.',
+                {
+                  time: formatUpstreamPreviewRemaining(remainingSeconds),
+                }
+              )}
+        </AlertDescription>
+      </Alert>
+    ),
+    [t]
+  )
+
+  const renderTwoFactorChallenge = useCallback(() => {
+    if (!upstreamRefreshTwoFactorChallenge) return null
+    return (
+      <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]'>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-2fa-code'>
+            {t('2FA code')}
+          </Label>
+          <Input
+            id='upstream-refresh-2fa-code'
+            value={upstreamRefreshTwoFactorCode}
+            onChange={(event) =>
+              setUpstreamRefreshTwoFactorCode(event.target.value)
+            }
+            autoComplete='one-time-code'
+            placeholder={t('Enter the upstream 2FA code')}
+            disabled={refreshMutation.isPending || preview2FAMutation.isPending}
+          />
+        </div>
+        <div className='flex items-end'>
+          <Button
+            type='button'
+            variant='outline'
+            className='w-full sm:w-auto'
+            disabled={refreshMutation.isPending || preview2FAMutation.isPending}
+            onClick={() => void handleCompleteUpstreamTwoFactor()}
+          >
+            {preview2FAMutation.isPending ? (
+              <Loader2 data-icon='inline-start' className='animate-spin' />
+            ) : (
+              <CheckCircle2 data-icon='inline-start' />
+            )}
+            {t('Verify')}
+          </Button>
+        </div>
+        <div className='sm:col-span-2'>
+          <div className='text-muted-foreground text-xs'>
+            {t('Enter the 2FA code from the upstream account.')}
+          </div>
+        </div>
+      </div>
+    )
+  }, [
+    handleCompleteUpstreamTwoFactor,
+    preview2FAMutation.isPending,
+    refreshMutation.isPending,
+    t,
+    upstreamRefreshTwoFactorChallenge,
+    upstreamRefreshTwoFactorCode,
+  ])
+
+  const renderSnapshotReview = useCallback(
+    (snapshot: Pick<UpstreamAccountSnapshot, 'balance' | 'keys'>) => {
+      return (
+        <div className='flex flex-col gap-3'>
+          <div className='grid gap-3 sm:grid-cols-3'>
+            <div className='rounded-md border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {t('Synced Keys')}
+              </div>
+              <div className='text-lg font-semibold'>
+                {snapshot.keys.length}
+              </div>
+            </div>
+            <div className='rounded-md border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {t('Remaining Balance')}
+              </div>
+              <div className='text-lg font-semibold'>
+                {snapshot.balance?.balance_usd ?? '-'}
+              </div>
+            </div>
+            <div className='rounded-md border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {t('Used Balance')}
+              </div>
+              <div className='text-lg font-semibold'>
+                {snapshot.balance?.used_usd ?? '-'}
+              </div>
+            </div>
+          </div>
+
+          <div className='flex items-center justify-between gap-3'>
+            <div className='flex flex-col gap-1'>
+              <span className='text-sm font-medium'>
+                {t('Apply suggested priority and weight')}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Lower ratio conversion gets higher priority and weight by default.'
+                )}
+              </span>
+            </div>
+            <Switch
+              checked={upstreamApplySuggested}
+              disabled={snapshot.keys.length === 0}
+              onCheckedChange={setUpstreamApplySuggested}
+            />
+          </div>
+
+          {snapshot.keys.length === 0 ? (
+            <Alert>
+              <AlertCircle aria-hidden='true' />
+              <AlertDescription>
+                {t('No upstream keys were found for this account.')}
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              {!upstreamModelsToString(snapshot.keys) && (
+                <Alert>
+                  <AlertCircle aria-hidden='true' />
+                  <AlertDescription>
+                    {t(
+                      'No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className='overflow-x-auto rounded-md border'>
+                <div className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
+                  <span className='min-w-0 truncate' title={t('Key')}>
+                    {t('Key')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Models')}>
+                    {t('Models')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Key Group')}>
+                    {t('Key Group')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Key Ratio')}>
+                    {t('Key Ratio')}
+                  </span>
+                  <span
+                    className='min-w-0 truncate'
+                    title={t('Ratio Conversion')}
+                  >
+                    {t('Ratio Conversion')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Priority')}>
+                    {t('Priority')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Weight')}>
+                    {t('Weight')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Enabled')}>
+                    {t('Enabled')}
+                  </span>
+                </div>
+                {snapshot.keys.map((key, index) => {
+                  const configId = upstreamAccountKeyConfigId(key, index)
+                  const config = upstreamAccountConfigs[configId]
+                  const currentModelsArrayValue =
+                    upstreamAccountModelsArrayValue(key, config)
+                  const upstreamKeyModelOptions = buildUpstreamAccountModelOptions(
+                    key,
+                    config,
+                    candidateModelNames
+                  )
+                  const updateConfig = (
+                    updater: (
+                      previous: UpstreamAccountConfigDraft | undefined
+                    ) => UpstreamAccountConfigDraft
+                  ) =>
+                    setUpstreamAccountConfigs((prev) => ({
+                      ...prev,
+                      [configId]: updater(prev[configId]),
+                    }))
+                  const buildConfigWithDefaults = (
+                    previous: UpstreamAccountConfigDraft | undefined,
+                    overrides: Partial<UpstreamAccountConfigDraft>
+                  ): UpstreamAccountConfigDraft => ({
+                    enabled: previous?.enabled ?? true,
+                    priority: previous?.priority ?? key.suggested_priority ?? 0,
+                    weight: previous?.weight ?? key.suggested_weight ?? 0,
+                    models: previous?.models ?? key.models?.join(',') ?? '',
+                    group:
+                      previous?.group ?? key.group_name ?? key.group_id ?? '',
+                    ...overrides,
+                  })
+                  const setConfigValue = (
+                    overrides: Partial<UpstreamAccountConfigDraft>
+                  ) =>
+                    updateConfig((previous) =>
+                      buildConfigWithDefaults(previous, overrides)
+                    )
+                  const handleKeyModelsChange = (values: string[]) =>
+                    setConfigValue({
+                      models: formatModelsArray(dedupeModelNames(values)),
+                    })
+                  const upstreamGroupValue = key.group_name || key.group_id || ''
+                  const currentGroupValue = config?.group ?? upstreamGroupValue
+                  const currentPriorityValue =
+                    config?.priority ?? key.suggested_priority ?? 0
+                  const currentWeightValue =
+                    config?.weight ?? key.suggested_weight ?? 0
+                  const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
+                  const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
+                  const displayedRatioValue = getUpstreamRatioDisplayValue(key)
+                  const modelRatioDetails = formatUpstreamModelRatioDetails(
+                    key.model_ratios
+                  )
+                  const keyRatioTitle = modelRatioDetails
+                    ? `${t('Model Ratios')}:\n${modelRatioDetails}`
+                    : undefined
+                  const ratioTitle = [
+                    key.ratio_conversion != null
+                      ? `${t('Ratio Conversion')}: ${formatUpstreamRatioCompact(key.ratio_conversion)}x`
+                      : '',
+                    key.effective_ratio != null
+                      ? `${t('Upstream Ratio')}: ${formatUpstreamRatioCompact(key.effective_ratio)}x`
+                      : '',
+                    modelRatioDetails,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                  return (
+                    <div
+                      key={configId}
+                      className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
+                    >
+                      <div className='min-w-0'>
+                        <div className='truncate text-sm font-medium'>
+                          {key.name || key.masked_key}
+                        </div>
+                        <div className='text-muted-foreground truncate text-xs'>
+                          {key.masked_key}
+                        </div>
+                      </div>
+                      <MultiSelect
+                        options={upstreamKeyModelOptions}
+                        selected={currentModelsArrayValue}
+                        onChange={handleKeyModelsChange}
+                        placeholder={t('Select models or add custom ones')}
+                        allowCreate
+                        allowCreateWithMatches={false}
+                        createLabel='Add custom model "{{value}}"'
+                        maxVisibleChips={2}
+                        copyChipOnClick
+                        emptyText={t('No matching models')}
+                        className='min-h-8'
+                      />
+                      <div className='flex min-w-0 flex-col gap-1'>
+                        <Input
+                          value={currentGroupValue}
+                          placeholder={t(
+                            'Key group inherited from upstream if empty'
+                          )}
+                          onChange={(event) =>
+                            setConfigValue({ group: event.target.value })
+                          }
+                          className='h-8 px-2 text-xs'
+                        />
+                        <span
+                          className='text-muted-foreground truncate text-[11px]'
+                          title={currentKeyGroupLabel || undefined}
+                        >
+                          {currentKeyGroupLabel || t('Inherited')}
+                        </span>
+                      </div>
+                      <span className='font-mono text-xs' title={keyRatioTitle}>
+                        {keyRatioValue != null
+                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+                          : '-'}
+                      </span>
+                      <div
+                        className='flex min-w-0 flex-col gap-1'
+                        title={ratioTitle || undefined}
+                      >
+                        <span className='font-mono text-xs'>
+                          {displayedRatioValue != null
+                            ? `${formatUpstreamRatioCompact(displayedRatioValue)}x`
+                            : '-'}
+                        </span>
+                        {key.ratio_conversion != null &&
+                          keyRatioValue != null &&
+                          Math.abs(key.ratio_conversion - keyRatioValue) >
+                            Number.EPSILON && (
+                            <span className='text-muted-foreground truncate text-[11px]'>
+                              {t('Converted')}
+                            </span>
+                          )}
+                      </div>
+                      <Input
+                        type='number'
+                        value={currentPriorityValue}
+                        disabled={upstreamApplySuggested}
+                        onChange={(event) =>
+                          setConfigValue({
+                            priority: Number(event.target.value),
+                          })
+                        }
+                        className='h-8 px-2 text-xs'
+                      />
+                      <Input
+                        type='number'
+                        value={currentWeightValue}
+                        disabled={upstreamApplySuggested}
+                        onChange={(event) =>
+                          setConfigValue({
+                            weight: Number(event.target.value),
+                          })
+                        }
+                        className='h-8 px-2 text-xs'
+                      />
+                      <Switch
+                        checked={config?.enabled ?? true}
+                        onCheckedChange={(checked) =>
+                          setConfigValue({ enabled: checked })
+                        }
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )
+    },
+    [
+      candidateModelNames,
+      t,
+      upstreamAccountConfigs,
+      upstreamApplySuggested,
+    ]
+  )
+
+  if (!open || !channelId) {
+    return null
+  }
+
+  const refreshPreviewButtonsDisabled =
+    !canSensitiveWrite ||
+    previewMutation.isPending ||
+    preview2FAMutation.isPending ||
+    refreshMutation.isPending
+
+  const usingSavedCredential =
+    savedUpstreamCredentialAvailable && upstreamUseSavedCredential
+
+  return (
+    <div className='flex flex-col gap-4'>
+      <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'>
+        <div className='flex items-end'>
+          <div className='flex items-center gap-3 rounded-lg border px-3 py-3'>
+            <div className='min-w-0 flex-1'>
+              <div className='text-sm font-medium'>
+                {t('Use saved upstream login')}
+              </div>
+              <div className='text-muted-foreground text-xs'>
+                {savedUpstreamCredentialAvailable
+                  ? t(
+                      'Reuse the encrypted upstream account credential saved after the last successful sync.'
+                    )
+                  : t(
+                      'No saved upstream login is available yet. Complete a sync once to enable it.'
+                    )}
+              </div>
+            </div>
+            <Switch
+              checked={upstreamUseSavedCredential}
+              disabled={
+                !savedUpstreamCredentialAvailable ||
+                previewMutation.isPending ||
+                refreshMutation.isPending
+              }
+              onCheckedChange={setUpstreamUseSavedCredential}
+            />
+          </div>
+        </div>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-base-url'>
+            {t('Upstream Platform URL')}
+          </Label>
+          <Input
+            id='upstream-refresh-base-url'
+            value={upstreamBaseUrl}
+            onChange={(event) => setUpstreamBaseUrl(event.target.value)}
+            placeholder={t('new-api or sub2api site URL')}
+            disabled={!canSensitiveWrite || usingSavedCredential}
+          />
+        </div>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-account'>{t('Account')}</Label>
+          <Input
+            id='upstream-refresh-account'
+            value={upstreamUsername}
+            onChange={(event) => setUpstreamUsername(event.target.value)}
+            autoComplete='username'
+            placeholder={t('Username')}
+            disabled={!canSensitiveWrite || usingSavedCredential}
+          />
+        </div>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-password'>{t('Password')}</Label>
+          <Input
+            id='upstream-refresh-password'
+            value={upstreamPassword}
+            onChange={(event) => setUpstreamPassword(event.target.value)}
+            type='password'
+            autoComplete='current-password'
+            placeholder={
+              usingSavedCredential
+                ? t('Saved upstream login will be reused')
+                : t('Password')
+            }
+            disabled={!canSensitiveWrite || usingSavedCredential}
+          />
+        </div>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-paid-cny'>{t('Paid CNY')}</Label>
+          <Input
+            id='upstream-refresh-paid-cny'
+            value={upstreamPaidCny}
+            onChange={(event) => setUpstreamPaidCny(event.target.value)}
+            inputMode='decimal'
+            placeholder='1'
+            disabled={!canSensitiveWrite}
+          />
+        </div>
+        <div className='flex flex-col gap-2'>
+          <Label htmlFor='upstream-refresh-platform-usd-credit'>
+            {t('Platform USD Credit')}
+          </Label>
+          <Input
+            id='upstream-refresh-platform-usd-credit'
+            value={upstreamPlatformUsdCredit}
+            onChange={(event) =>
+              setUpstreamPlatformUsdCredit(event.target.value)
+            }
+            inputMode='decimal'
+            placeholder='20'
+            disabled={!canSensitiveWrite}
+          />
+        </div>
+      </div>
+
+      <div className='grid gap-3 sm:grid-cols-2'>
+        <Button
+          type='button'
+          variant='outline'
+          disabled={refreshPreviewButtonsDisabled}
+          onClick={() => void handlePreviewUpstreamRefresh()}
+        >
+          {previewMutation.isPending ? (
+            <Loader2 data-icon='inline-start' className='animate-spin' />
+          ) : (
+            <RefreshCw data-icon='inline-start' />
+          )}
+          {t('Preview Refresh')}
+        </Button>
+        <Button
+          type='button'
+          disabled={
+            !upstreamRefreshSnapshot ||
+            upstreamRefreshSnapshot.keys.length === 0 ||
+            isUpstreamRefreshPreviewExpired ||
+            refreshPreviewButtonsDisabled
+          }
+          onClick={() => {
+            if (!channelId || !upstreamRefreshSnapshot) return
+            if (isUpstreamRefreshPreviewExpired) {
+              clearRefreshPreview()
+              setUpstreamAccountConfigs({})
+              toast.error(
+                t(
+                  'The upstream account preview expired or was already used. Sync the upstream account again.'
+                )
+              )
+              return
+            }
+            void refreshMutation.mutateAsync({
+              id: channelId,
+              payload: buildUpstreamAccountRefreshPayload({
+                previewId: upstreamRefreshPreviewId,
+                keys: upstreamRefreshSnapshot.keys,
+                configs: upstreamAccountConfigs,
+                applySuggested: upstreamApplySuggested,
+                ratioConversion: buildUpstreamRatioConversionPayload(
+                  upstreamPaidCny,
+                  upstreamPlatformUsdCredit
+                ),
+              }),
+            })
+          }}
+        >
+          {refreshMutation.isPending ? (
+            <Loader2 data-icon='inline-start' className='animate-spin' />
+          ) : (
+            <CheckCircle2 data-icon='inline-start' />
+          )}
+          {t('Apply Refresh')}
+        </Button>
+      </div>
+
+      <div className='text-muted-foreground text-xs'>
+        {usingSavedCredential
+          ? t(
+              'This refresh will reuse the saved upstream login. If the upstream site asks for 2FA again, only the code is needed.'
+            )
+          : t(
+              'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
+            )}
+      </div>
+
+      {upstreamRefreshTwoFactorChallenge && renderTwoFactorChallenge()}
+
+      {upstreamRefreshSnapshot?.warnings?.length ? (
+        <Alert>
+          <AlertCircle aria-hidden='true' />
+          <AlertDescription>
+            {upstreamRefreshSnapshot.warnings.join('；')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {upstreamRefreshSnapshot &&
+        renderUpstreamPreviewExpiryNotice(
+          upstreamRefreshPreviewRemaining,
+          isUpstreamRefreshPreviewExpired
+        )}
+
+      {canReadChannelAccount && refreshAccountsQuery.isError ? (
+        <Alert>
+          <AlertCircle aria-hidden='true' />
+          <AlertDescription>
+            {t('Failed to load channel accounts')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {upstreamRefreshSnapshot ? (
+        renderSnapshotReview(upstreamRefreshSnapshot)
+      ) : canReadChannelAccount && refreshAccountsQuery.isLoading ? (
+        <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+          <Loader2 data-icon='inline-start' className='animate-spin' />
+          {t('Loading synced keys...')}
+        </div>
+      ) : showLoadedWarning ? (
+        <Alert>
+          <AlertCircle aria-hidden='true' />
+          <AlertDescription>
+            {t(
+              'Only {{loaded}} of {{total}} synced keys are loaded. Open the channel account list to edit all keys.',
+              {
+                loaded: refreshAccountsLoadedCount,
+                total: refreshAccountsTotal,
+              }
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  )
+}

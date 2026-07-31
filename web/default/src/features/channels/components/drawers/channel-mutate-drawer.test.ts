@@ -29,7 +29,7 @@ import {
   upstreamAccountModelsArrayValue,
   upstreamAccountFromChannelAccount,
   upstreamAccountValuesToString,
-} from './channel-mutate-drawer'
+} from '../../lib/upstream-sync'
 
 function makeChannelAccount(
   overrides: Partial<ChannelAccount> = {}
