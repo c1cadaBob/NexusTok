@@ -160,6 +160,7 @@
     "Account pool check": "账号池检查",
     "Account Pool Group": "账号池组",
     "Account pool health across all native groups": "原生账号池整体健康状态",
+    "Account pool list refreshed": "账号池列表已刷新",
     "Account Pool Management": "账号池管理",
     "Account pool mode does not fetch models from channel key.": "账号池模式不再通过渠道密钥拉取模型。",
     "Account Pool Strategy": "账号池策略",

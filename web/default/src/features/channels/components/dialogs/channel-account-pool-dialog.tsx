@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Loader2,
@@ -73,6 +73,7 @@ import { CHANNEL_STATUS } from '../../constants'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import {
   channelsQueryKeys,
+  canManuallyMutateChannelAccounts,
   dedupeModelNames,
   formatModelsArray,
   formatTimestamp,
@@ -167,6 +168,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [batchKeys, setBatchKeys] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const canReadChannelAccounts = permissions.canReadChannelAccount
@@ -176,6 +178,8 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     permissions.canSensitiveWriteChannelAccount
   const canEditChannelAccounts =
     canWriteChannelAccounts || canSensitiveWriteChannelAccounts
+  const allowManualAccountMutation =
+    canManuallyMutateChannelAccounts(currentRow)
 
   const channelId = currentRow?.id ?? 0
   const accountsQueryKey = [
@@ -217,17 +221,41 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     [accounts, currentRow?.models, formState.models]
   )
 
+  useEffect(() => {
+    if (!props.open || allowManualAccountMutation) return
+    setBatchOpen(false)
+    setBatchKeys('')
+    setDeleteTarget(null)
+    if (formOpen && !formState.id) {
+      setFormState(emptyForm)
+      setFormOpen(false)
+    }
+  }, [allowManualAccountMutation, formOpen, formState.id, props.open])
+
   const resetForm = () => {
     setFormState(emptyForm)
     setFormOpen(false)
   }
 
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: accountsQueryKey })
-    await queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+  const refresh = async (options?: { showSuccessToast?: boolean }) => {
+    setIsRefreshing(true)
+    try {
+      await Promise.all([
+        canReadChannelAccounts
+          ? accountsQuery.refetch()
+          : Promise.resolve(undefined),
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+      ])
+      if (options?.showSuccessToast) {
+        toast.success(t('Account pool list refreshed'))
+      }
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   const openCreateForm = () => {
+    if (!allowManualAccountMutation) return
     if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       return
@@ -280,6 +308,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitForm = async () => {
     if (!currentRow) return
+    if (!formState.id && !allowManualAccountMutation) return
     if (!canEditChannelAccounts) {
       toast.error(noPermissionMessage)
       return
@@ -368,6 +397,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const performDelete = async () => {
     if (!currentRow || !deleteTarget) return
+    if (!allowManualAccountMutation) {
+      setDeleteTarget(null)
+      return
+    }
     if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       setDeleteTarget(null)
@@ -396,6 +429,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const submitBatch = async (importFromMultiKey = false) => {
     if (!currentRow) return
+    if (!allowManualAccountMutation) return
     if (!canSensitiveWriteChannelAccounts) {
       toast.error(noPermissionMessage)
       return
@@ -524,54 +558,68 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   type='button'
                   variant='outline'
                   size='sm'
-                  onClick={() => accountsQuery.refetch()}
-                  disabled={!canReadChannelAccounts || accountsQuery.isFetching}
+                  onClick={() => void refresh({ showSuccessToast: true })}
+                  disabled={
+                    !canReadChannelAccounts ||
+                    accountsQuery.isFetching ||
+                    isRefreshing
+                  }
                   title={
                     canReadChannelAccounts ? undefined : noPermissionMessage
                   }
                 >
-                  <RefreshCw className='mr-2 h-4 w-4' />
-                  {t('Refresh')}
+                  {isRefreshing || accountsQuery.isFetching ? (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  ) : (
+                    <RefreshCw className='mr-2 h-4 w-4' />
+                  )}
+                  {isRefreshing || accountsQuery.isFetching
+                    ? t('Refreshing...')
+                    : t('Refresh')}
                 </Button>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  onClick={() => {
-                    if (!canSensitiveWriteChannelAccounts) {
-                      toast.error(noPermissionMessage)
-                      return
+                {allowManualAccountMutation && (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => {
+                      if (!canSensitiveWriteChannelAccounts) {
+                        toast.error(noPermissionMessage)
+                        return
+                      }
+                      setBatchOpen((value) => !value)
+                    }}
+                    disabled={!canSensitiveWriteChannelAccounts}
+                    title={
+                      canSensitiveWriteChannelAccounts
+                        ? undefined
+                        : noPermissionMessage
                     }
-                    setBatchOpen((value) => !value)
-                  }}
-                  disabled={!canSensitiveWriteChannelAccounts}
-                  title={
-                    canSensitiveWriteChannelAccounts
-                      ? undefined
-                      : noPermissionMessage
-                  }
-                >
-                  <Upload className='mr-2 h-4 w-4' />
-                  {t('Batch Import')}
-                </Button>
-                <Button
-                  type='button'
-                  size='sm'
-                  onClick={openCreateForm}
-                  disabled={!canSensitiveWriteChannelAccounts}
-                  title={
-                    canSensitiveWriteChannelAccounts
-                      ? undefined
-                      : noPermissionMessage
-                  }
-                >
-                  <Plus className='mr-2 h-4 w-4' />
-                  {t('Add Account')}
-                </Button>
+                  >
+                    <Upload className='mr-2 h-4 w-4' />
+                    {t('Batch Import')}
+                  </Button>
+                )}
+                {allowManualAccountMutation && (
+                  <Button
+                    type='button'
+                    size='sm'
+                    onClick={openCreateForm}
+                    disabled={!canSensitiveWriteChannelAccounts}
+                    title={
+                      canSensitiveWriteChannelAccounts
+                        ? undefined
+                        : noPermissionMessage
+                    }
+                  >
+                    <Plus className='mr-2 h-4 w-4' />
+                    {t('Add Account')}
+                  </Button>
+                )}
               </div>
             </div>
 
-            {batchOpen && (
+            {batchOpen && allowManualAccountMutation && (
               <div className='space-y-3 rounded-lg border p-3'>
                 <Textarea
                   value={batchKeys}
@@ -627,22 +675,24 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   }
                   placeholder={t('Account name')}
                 />
-                <Input
-                  value={formState.key}
-                  onChange={(event) =>
-                    setFormState({ ...formState, key: event.target.value })
-                  }
-                  disabled={
-                    Boolean(formState.id) && !canSensitiveWriteChannelAccounts
-                  }
-                  placeholder={
-                    formState.id && canSensitiveWriteChannelAccounts
-                      ? t('Leave empty to keep existing key')
-                      : formState.id
-                        ? t('Sensitive channel settings are read-only')
-                        : t('Enter secret key')
-                  }
-                />
+                {allowManualAccountMutation && (
+                  <Input
+                    value={formState.key}
+                    onChange={(event) =>
+                      setFormState({ ...formState, key: event.target.value })
+                    }
+                    disabled={
+                      Boolean(formState.id) && !canSensitiveWriteChannelAccounts
+                    }
+                    placeholder={
+                      formState.id && canSensitiveWriteChannelAccounts
+                        ? t('Leave empty to keep existing key')
+                        : formState.id
+                          ? t('Sensitive channel settings are read-only')
+                          : t('Enter secret key')
+                    }
+                  />
+                )}
                 <MultiSelect
                   options={accountModelOptions}
                   selected={parseModelsString(formState.models)}
@@ -717,26 +767,65 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             )}
 
             <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-              <Table className='min-w-[1440px]'>
+              <Table className='w-full min-w-[1080px] table-fixed xl:min-w-0'>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className='min-w-[160px]'>{t('Name')}</TableHead>
-                    <TableHead className='min-w-[170px]'>{t('Key')}</TableHead>
-                    <TableHead className='min-w-[120px]'>{t('Status')}</TableHead>
-                    <TableHead className='min-w-[260px]'>{t('Models')}</TableHead>
-                    <TableHead className='min-w-[150px]'>
+                    <TableHead className='w-32 truncate' title={t('Name')}>
+                      {t('Name')}
+                    </TableHead>
+                    <TableHead className='w-36 truncate' title={t('Key')}>
+                      {t('Key')}
+                    </TableHead>
+                    <TableHead className='w-28 truncate' title={t('Status')}>
+                      {t('Status')}
+                    </TableHead>
+                    <TableHead className='w-52 truncate' title={t('Models')}>
+                      {t('Models')}
+                    </TableHead>
+                    <TableHead
+                      className='w-32 truncate'
+                      title={t('Key Group')}
+                    >
                       {t('Key Group')}
                     </TableHead>
-                    <TableHead className='min-w-[110px]'>
+                    <TableHead
+                      className='w-[5.75rem] truncate'
+                      title={t('Key Ratio')}
+                    >
                       {t('Key Ratio')}
                     </TableHead>
-                    <TableHead className='min-w-[120px]'>
+                    <TableHead
+                      className='w-24 truncate'
+                      title={t('Ratio Conversion')}
+                    >
                       {t('Ratio Conversion')}
                     </TableHead>
-                    <TableHead className='min-w-[86px]'>{t('Priority')}</TableHead>
-                    <TableHead className='min-w-[86px]'>{t('Weight')}</TableHead>
-                    <TableHead className='min-w-[140px]'>{t('Cooldown')}</TableHead>
-                    <TableHead className='min-w-[130px] text-right'>
+                    <TableHead
+                      className='w-16 truncate text-right'
+                      title={t('Priority')}
+                    >
+                      {t('Priority')}
+                    </TableHead>
+                    <TableHead
+                      className='w-16 truncate text-right'
+                      title={t('Weight')}
+                    >
+                      {t('Weight')}
+                    </TableHead>
+                    <TableHead
+                      className='w-28 truncate'
+                      title={t('Cooldown')}
+                    >
+                      {t('Cooldown')}
+                    </TableHead>
+                    <TableHead
+                      className={
+                        allowManualAccountMutation
+                          ? 'w-36 truncate text-right'
+                          : 'w-28 truncate text-right'
+                      }
+                      title={t('Actions')}
+                    >
                       {t('Actions')}
                     </TableHead>
                   </TableRow>
@@ -745,7 +834,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   {!canReadChannelAccounts ? (
                     <TableRow>
                       <TableCell
-                        colSpan={9}
+                        colSpan={11}
                         className='text-muted-foreground h-24 text-center'
                       >
                         {noPermissionMessage}
@@ -753,14 +842,14 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     </TableRow>
                   ) : accountsQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={9} className='h-24 text-center'>
+                      <TableCell colSpan={11} className='h-24 text-center'>
                         <Loader2 className='mx-auto h-5 w-5 animate-spin' />
                       </TableCell>
                     </TableRow>
                   ) : accounts.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={9}
+                        colSpan={11}
                         className='text-muted-foreground h-24 text-center'
                       >
                         {t('No accounts found')}
@@ -778,15 +867,27 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       const keyRatioTitle = ratioDetails
                         ? `${t('Model Ratios')}:\n${ratioDetails}`
                         : undefined
+                      const accountName = account.name || `#${account.id}`
+                      const accountKey = account.key || '-'
+                      const accountModels = account.models || t('Inherited')
+                      const keyGroupLabel =
+                        getUpstreamKeyGroupLabel(account) || t('Inherited')
+                      const cooldownLabel = cooldownText(account, nowSeconds)
                       return (
                         <TableRow key={account.id}>
-                          <TableCell className='max-w-[220px] min-w-[160px] truncate font-medium'>
-                            {account.name || `#${account.id}`}
+                          <TableCell
+                            className='truncate font-medium'
+                            title={accountName}
+                          >
+                            {accountName}
                           </TableCell>
-                          <TableCell className='min-w-[170px] font-mono text-xs'>
-                            {account.key || '-'}
+                          <TableCell
+                            className='truncate font-mono text-xs'
+                            title={accountKey}
+                          >
+                            {accountKey}
                           </TableCell>
-                          <TableCell className='min-w-[120px]'>
+                          <TableCell>
                             <StatusBadge
                               label={t(status.label)}
                               variant={status.variant}
@@ -794,19 +895,19 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                             />
                           </TableCell>
                           <TableCell
-                            className='max-w-[420px] min-w-[260px] truncate'
-                            title={account.models || t('Inherited')}
+                            className='truncate'
+                            title={accountModels}
                           >
-                            {account.models || t('Inherited')}
+                            {accountModels}
                           </TableCell>
                           <TableCell
-                            className='max-w-[220px] min-w-[130px] truncate'
-                            title={getUpstreamKeyGroupLabel(account) || t('Inherited')}
+                            className='truncate'
+                            title={keyGroupLabel}
                           >
-                            {getUpstreamKeyGroupLabel(account) || t('Inherited')}
+                            {keyGroupLabel}
                           </TableCell>
                           <TableCell
-                            className='min-w-[110px] font-mono text-xs'
+                            className='truncate font-mono text-xs'
                             title={keyRatioTitle}
                           >
                             {keyRatioValue != null
@@ -814,23 +915,26 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                               : '-'}
                           </TableCell>
                           <TableCell
-                            className='min-w-[120px] font-mono text-xs'
+                            className='truncate font-mono text-xs'
                             title={ratioDetails || undefined}
                           >
                             {ratioValue != null
                               ? `${formatUpstreamRatioCompact(ratioValue)}x`
                               : '-'}
                           </TableCell>
-                          <TableCell className='min-w-[86px]'>
+                          <TableCell className='text-right tabular-nums'>
                             {account.priority}
                           </TableCell>
-                          <TableCell className='min-w-[86px]'>
+                          <TableCell className='text-right tabular-nums'>
                             {account.weight || 1}
                           </TableCell>
-                          <TableCell className='min-w-[140px] whitespace-nowrap'>
-                            {cooldownText(account, nowSeconds)}
+                          <TableCell
+                            className='truncate whitespace-nowrap text-xs'
+                            title={cooldownLabel}
+                          >
+                            {cooldownLabel}
                           </TableCell>
-                          <TableCell className='min-w-[130px]'>
+                          <TableCell>
                             <div className='flex justify-end gap-1'>
                               <Button
                                 type='button'
@@ -894,28 +998,30 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                               >
                                 <ShieldOff className='h-4 w-4' />
                               </Button>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='icon-sm'
-                                onClick={() => {
-                                  if (!canSensitiveWriteChannelAccounts) {
-                                    toast.error(noPermissionMessage)
-                                    return
+                              {allowManualAccountMutation && (
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  onClick={() => {
+                                    if (!canSensitiveWriteChannelAccounts) {
+                                      toast.error(noPermissionMessage)
+                                      return
+                                    }
+                                    setDeleteTarget(account)
+                                  }}
+                                  disabled={!canSensitiveWriteChannelAccounts}
+                                  title={
+                                    canSensitiveWriteChannelAccounts
+                                      ? undefined
+                                      : noPermissionMessage
                                   }
-                                  setDeleteTarget(account)
-                                }}
-                                disabled={!canSensitiveWriteChannelAccounts}
-                                title={
-                                  canSensitiveWriteChannelAccounts
-                                    ? undefined
-                                    : noPermissionMessage
-                                }
-                                aria-label={t('Delete')}
-                                className='text-destructive hover:text-destructive'
-                              >
-                                <Trash2 className='h-4 w-4' />
-                              </Button>
+                                  aria-label={t('Delete')}
+                                  className='text-destructive hover:text-destructive'
+                                >
+                                  <Trash2 className='h-4 w-4' />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>

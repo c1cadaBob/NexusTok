@@ -110,4 +110,63 @@ describe('渠道余额缓存补丁', () => {
     assert.equal(detailData.data.used_quota, 4750)
     assert.equal(detailData.data.balance_updated_time, 999)
   })
+
+  test('会更新 tag 聚合行的子渠道并重新计算父行已使用量', () => {
+    const queryClient = new QueryClient()
+    const listKey = channelsQueryKeys.list({ p: 1, page_size: 10 })
+
+    queryClient.setQueryData<GetChannelsResponse>(listKey, {
+      success: true,
+      data: {
+        items: [
+          {
+            ...makeChannel({
+              id: 900,
+              name: 'tag-row',
+              tag: 'prod',
+              used_quota: 30,
+            }),
+            children: [
+              makeChannel({
+                id: 1,
+                tag: 'prod',
+                balance: 1,
+                used_quota: 10,
+                balance_updated_time: 100,
+              }),
+              makeChannel({
+                id: 2,
+                tag: 'prod',
+                balance: 2,
+                used_quota: 20,
+                balance_updated_time: 200,
+              }),
+            ],
+          } as Channel & { children: Channel[] },
+        ],
+        total: 2,
+        page: 1,
+        page_size: 10,
+      },
+    })
+
+    patchChannelBalanceCache(queryClient, 1, {
+      success: true,
+      balance: 9.5,
+      used_quota: 70,
+      balance_updated_time: 999,
+    })
+
+    const listData = queryClient.getQueryData<GetChannelsResponse>(listKey)
+    const tagRow = listData?.data?.items[0] as
+      | (Channel & { children?: Channel[] })
+      | undefined
+
+    assert.ok(tagRow?.children)
+    assert.equal(tagRow.children[0].balance, 9.5)
+    assert.equal(tagRow.children[0].used_quota, 70)
+    assert.equal(tagRow.children[0].balance_updated_time, 999)
+    assert.equal(tagRow.children[1].used_quota, 20)
+    assert.equal(tagRow.used_quota, 90)
+  })
 })

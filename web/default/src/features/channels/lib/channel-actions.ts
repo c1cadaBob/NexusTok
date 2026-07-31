@@ -62,11 +62,12 @@ export const channelsQueryKeys = {
 }
 
 type ChannelListCache = GetChannelsResponse | SearchChannelsResponse
+type ChannelWithChildren = Channel & { children?: Channel[] }
 
-function patchChannelBalanceInChannel(
-  channel: Channel,
+function patchChannelBalanceInChannel<T extends Channel>(
+  channel: T,
   response: ChannelBalanceResponse
-): Channel {
+): T {
   return {
     ...channel,
     ...(response.balance !== undefined ? { balance: response.balance } : {}),
@@ -77,6 +78,46 @@ function patchChannelBalanceInChannel(
       ? { balance_updated_time: response.balance_updated_time }
       : {}),
   }
+}
+
+function patchChannelBalanceInTree(
+  channel: ChannelWithChildren,
+  id: number,
+  response: ChannelBalanceResponse
+): { channel: ChannelWithChildren; changed: boolean } {
+  let changed = false
+  let next: ChannelWithChildren = channel
+
+  if (channel.id === id) {
+    next = patchChannelBalanceInChannel(channel, response)
+    changed = true
+  }
+
+  if (channel.children?.length) {
+    let childrenChanged = false
+    const children = channel.children.map((child) => {
+      const result = patchChannelBalanceInTree(child, id, response)
+      if (result.changed) {
+        childrenChanged = true
+      }
+      return result.channel
+    })
+
+    if (childrenChanged) {
+      // tag 聚合行的已使用额度来自子渠道求和；单个子渠道刷新后必须同步重算父行。
+      next = {
+        ...next,
+        children,
+        used_quota: children.reduce(
+          (total, child) => total + (child.used_quota || 0),
+          0
+        ),
+      }
+      changed = true
+    }
+  }
+
+  return { channel: next, changed }
 }
 
 /**
@@ -96,9 +137,11 @@ export function patchChannelBalanceCache(
 
       let changed = false
       const items = oldData.data.items.map((channel) => {
-        if (channel.id !== id) return channel
-        changed = true
-        return patchChannelBalanceInChannel(channel, response)
+        const result = patchChannelBalanceInTree(channel, id, response)
+        if (result.changed) {
+          changed = true
+        }
+        return result.channel
       })
 
       if (!changed) return oldData

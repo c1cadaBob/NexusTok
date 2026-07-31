@@ -176,6 +176,7 @@ import {
   dedupeModelNames,
   getModelSearchModelNameResult,
   getModelSearchVendorForChannelType,
+  isUpstreamAccountSyncChannel,
   mergeModelNames,
   summarizeModelSearchCandidates,
   validateModelMappingJson,
@@ -666,26 +667,6 @@ export function buildUpstreamAccountConfigsFromChannelAccounts(
     }
   })
   return configs
-}
-
-function isChannelFromUpstreamAccountSync(channel: Channel | undefined | null) {
-  if (!channel?.settings) return false
-  try {
-    const settings = JSON.parse(channel.settings) as Record<string, unknown>
-    const metadata = settings[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
-    if (metadata === undefined || metadata === null) {
-      return false
-    }
-    if (typeof metadata === 'object') {
-      return true
-    }
-    if (typeof metadata === 'boolean') {
-      return metadata
-    }
-    return typeof metadata === 'string' && metadata.trim().length > 0
-  } catch {
-    return false
-  }
 }
 
 // 表单辅助函数
@@ -1516,7 +1497,7 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isGlobalAccountPoolMode = credentialMode === 'global_account_pool'
   const isLegacyChannelAccountPoolMode = credentialMode === 'account_pool'
-  const hasUpstreamAccountSyncMetadata = isChannelFromUpstreamAccountSync(
+  const hasUpstreamAccountSyncMetadata = isUpstreamAccountSyncChannel(
     channelData?.data ?? renderCurrentRow
   )
   const isUpstreamAccountSyncedChannel =
@@ -1824,15 +1805,34 @@ export function ChannelMutateDrawer({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] gap-3 border-b px-3 py-2 text-xs font-medium'>
-                  <span>{t('Key')}</span>
-                  <span>{t('Models')}</span>
-                  <span>{t('Key Group')}</span>
-                  <span>{t('Key Ratio')}</span>
-                  <span>{t('Ratio Conversion')}</span>
-                  <span>{t('Priority')}</span>
-                  <span>{t('Weight')}</span>
-                  <span>{t('Enabled')}</span>
+                <div className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
+                  <span className='min-w-0 truncate' title={t('Key')}>
+                    {t('Key')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Models')}>
+                    {t('Models')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Key Group')}>
+                    {t('Key Group')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Key Ratio')}>
+                    {t('Key Ratio')}
+                  </span>
+                  <span
+                    className='min-w-0 truncate'
+                    title={t('Ratio Conversion')}
+                  >
+                    {t('Ratio Conversion')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Priority')}>
+                    {t('Priority')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Weight')}>
+                    {t('Weight')}
+                  </span>
+                  <span className='min-w-0 truncate' title={t('Enabled')}>
+                    {t('Enabled')}
+                  </span>
                 </div>
                 {snapshot.keys.map((key, index) => {
                   const configId = upstreamKeyConfigId(key, index)
@@ -1910,7 +1910,7 @@ export function ChannelMutateDrawer({
                   return (
                     <div
                       key={configId}
-                      className='grid min-w-[94rem] grid-cols-[minmax(0,1.2fr)_minmax(22rem,1.7fr)_minmax(11rem,0.9fr)_minmax(7.5rem,0.7fr)_minmax(9rem,0.8fr)_6rem_6rem_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
+                      className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
                     >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
@@ -1928,10 +1928,10 @@ export function ChannelMutateDrawer({
                         allowCreate
                         allowCreateWithMatches={false}
                         createLabel='Add custom model "{{value}}"'
-                        maxVisibleChips={3}
+                        maxVisibleChips={2}
                         copyChipOnClick
                         emptyText={t('No matching models')}
-                        className='min-h-9'
+                        className='min-h-8'
                       />
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input
@@ -1942,6 +1942,7 @@ export function ChannelMutateDrawer({
                           onChange={(event) =>
                             setConfigValue({ group: event.target.value })
                           }
+                          className='h-8 px-2 text-xs'
                         />
                         <span
                           className='text-muted-foreground truncate text-[11px]'
@@ -1982,6 +1983,7 @@ export function ChannelMutateDrawer({
                             priority: Number(event.target.value),
                           })
                         }
+                        className='h-8 px-2 text-xs'
                       />
                       <Input
                         type='number'
@@ -1992,6 +1994,7 @@ export function ChannelMutateDrawer({
                             weight: Number(event.target.value),
                           })
                         }
+                        className='h-8 px-2 text-xs'
                       />
                       <Switch
                         checked={config?.enabled ?? true}
@@ -2446,7 +2449,7 @@ export function ChannelMutateDrawer({
   useEffect(() => {
     if (isEditing && channelData?.data) {
       const isSyncedChannel =
-        isChannelFromUpstreamAccountSync(channelData.data) ||
+        isUpstreamAccountSyncChannel(channelData.data) ||
         (channelData.data.channel_info?.credential_mode === 'account_pool' &&
           channelData.data.channel_info?.account_pool_enabled === true)
       const defaults = {

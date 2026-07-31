@@ -30,12 +30,11 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
+import { hasUpstreamAccountSyncMetadata } from './channel-utils'
 
 // ============================================================================
 // 表单校验 Schema
 // ============================================================================
-
-const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
 
 function parseOptionalJson(value: string | undefined): unknown {
   if (!value?.trim()) return undefined
@@ -131,26 +130,6 @@ function addRequiredIssue(
 
 function usesGlobalAccountPool(data: { credential_mode?: string }): boolean {
   return data.credential_mode === 'global_account_pool'
-}
-
-function hasUpstreamAccountSyncMetadata(settings: string | undefined): boolean {
-  if (!settings?.trim()) return false
-  try {
-    const parsed = JSON.parse(settings) as Record<string, unknown>
-    const metadata = parsed[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
-    if (metadata === undefined || metadata === null) {
-      return false
-    }
-    if (typeof metadata === 'object') {
-      return true
-    }
-    if (typeof metadata === 'boolean') {
-      return metadata
-    }
-    return typeof metadata === 'string' && metadata.trim().length > 0
-  } catch {
-    return false
-  }
 }
 
 export const channelFormSchema = z

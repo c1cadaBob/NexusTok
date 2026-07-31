@@ -34,7 +34,11 @@ import {
 } from '@/components/ui/dialog'
 import { getCodexUsage, updateChannelBalance } from '../../api'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
-import { channelsQueryKeys, patchChannelBalanceCache } from '../../lib'
+import {
+  channelsQueryKeys,
+  isUpstreamAccountSyncChannel,
+  patchChannelBalanceCache,
+} from '../../lib'
 import { useChannels } from '../channels-provider'
 import {
   CodexUsageDialog,
@@ -64,21 +68,7 @@ export function BalanceQueryDialog({
   const noPermissionMessage = t("You don't have necessary permission")
 
   const isCodex = currentRow?.type === 57
-  const isUpstreamAccountSync = (() => {
-    if (!currentRow?.settings?.trim()) return false
-    try {
-      const parsed = JSON.parse(currentRow.settings) as Record<string, unknown>
-      const metadata = parsed.upstream_account_sync
-      return Boolean(
-        metadata &&
-        (typeof metadata === 'object' ||
-          metadata === true ||
-          (typeof metadata === 'string' && metadata.trim().length > 0))
-      )
-    } catch {
-      return false
-    }
-  })()
+  const isUpstreamAccountSync = isUpstreamAccountSyncChannel(currentRow)
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow

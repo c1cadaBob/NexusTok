@@ -69,12 +69,14 @@ type channelAccountStatusRequest struct {
 	ClearCooldown bool   `json:"clear_cooldown"` // 是否清除冷却时间
 }
 
+const upstreamAccountSyncManualAccountMutationError = "上游同步渠道的账号池由刷新上游账号维护，不能手动新增、导入或删除账号"
+
 func ListChannelAccounts(c *gin.Context) {
 	channelID, ok := parseChannelIDParam(c)
 	if !ok {
 		return
 	}
-	if !ensureChannelExists(c, channelID) {
+	if _, ok := ensureChannelExists(c, channelID); !ok {
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
@@ -102,7 +104,11 @@ func CreateChannelAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !ensureChannelExists(c, channelID) {
+	channel, ok := ensureChannelExists(c, channelID)
+	if !ok {
+		return
+	}
+	if !ensureManualChannelAccountMutationAllowed(c, channel) {
 		return
 	}
 	var req channelAccountUpsertRequest
@@ -131,7 +137,11 @@ func BatchCreateChannelAccounts(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !ensureChannelExists(c, channelID) {
+	channel, ok := ensureChannelExists(c, channelID)
+	if !ok {
+		return
+	}
+	if !ensureManualChannelAccountMutationAllowed(c, channel) {
 		return
 	}
 	var req channelAccountBatchRequest
@@ -226,6 +236,14 @@ func DeleteChannelAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
+	channel, err := model.GetChannelById(channelID, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !ensureManualChannelAccountMutationAllowed(c, channel) {
+		return
+	}
 	if err := model.DB.Where("channel_id = ? AND id = ?", channelID, accountID).Delete(&model.ChannelAccount{}).Error; err != nil {
 		common.ApiError(c, err)
 		return
@@ -297,6 +315,9 @@ func ImportMultiKeyToChannelAccounts(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if !ensureManualChannelAccountMutationAllowed(c, channel) {
+		return
+	}
 	var req channelAccountBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
@@ -360,9 +381,23 @@ func parseChannelAccountParams(c *gin.Context) (int, int, bool) {
 	return channelID, accountID, true
 }
 
-func ensureChannelExists(c *gin.Context, channelID int) bool {
-	if _, err := model.GetChannelById(channelID, false); err != nil {
+func ensureChannelExists(c *gin.Context, channelID int) (*model.Channel, bool) {
+	channel, err := model.GetChannelById(channelID, false)
+	if err != nil {
 		common.ApiError(c, err)
+		return nil, false
+	}
+	return channel, true
+}
+
+// ensureManualChannelAccountMutationAllowed 限制上游同步渠道的账号池手动写入口。
+//
+// 同步渠道的账号生命周期由“刷新上游账号”统一维护：新增、批量导入、从多 Key
+// 导入和删除都可能破坏上游账号快照与本地调度配置的一致性，因此在控制器层直接
+// 返回业务错误。更新账号模型、分组、优先级、权重、状态和清除冷却仍走各自接口放行。
+func ensureManualChannelAccountMutationAllowed(c *gin.Context, channel *model.Channel) bool {
+	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
+		common.ApiErrorMsg(c, upstreamAccountSyncManualAccountMutationError)
 		return false
 	}
 	return true

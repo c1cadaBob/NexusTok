@@ -160,6 +160,7 @@
     "Account pool check": "Проверка пула аккаунтов",
     "Account Pool Group": "Account Pool Group",
     "Account pool health across all native groups": "Состояние пула аккаунтов по всем встроенным группам",
+    "Account pool list refreshed": "Список пула аккаунтов обновлен",
     "Account Pool Management": "Управление пулом аккаунтов",
     "Account pool mode does not fetch models from channel key.": "Account pool mode does not fetch models from channel key.",
     "Account Pool Strategy": "Account Pool Strategy",

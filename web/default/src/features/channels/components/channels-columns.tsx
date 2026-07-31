@@ -72,6 +72,7 @@ import {
   handleUpdateChannelField,
   handleUpdateTagField,
   handleUpdateChannelBalance,
+  isUpstreamAccountSyncChannel,
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
@@ -124,22 +125,6 @@ function parseIonetMeta(otherInfo: string | null | undefined): null | {
     return null
   }
   return null
-}
-
-function isUpstreamAccountSyncedChannel(channel: Channel): boolean {
-  if (!channel.settings?.trim()) return false
-  try {
-    const parsed = JSON.parse(channel.settings) as Record<string, unknown>
-    const metadata = parsed.upstream_account_sync
-    return Boolean(
-      metadata &&
-      (typeof metadata === 'object' ||
-        metadata === true ||
-        (typeof metadata === 'string' && metadata.trim().length > 0))
-    )
-  } catch {
-    return false
-  }
 }
 
 /**
@@ -319,7 +304,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const { sensitiveVisible } = useChannels()
   const queryClient = useQueryClient()
   const isTagRow = isTagAggregateRow(channel)
-  const isUpstreamAccountSync = isUpstreamAccountSyncedChannel(channel)
+  const isUpstreamAccountSync = isUpstreamAccountSyncChannel(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
   const [isUpdating, setIsUpdating] = useState(false)

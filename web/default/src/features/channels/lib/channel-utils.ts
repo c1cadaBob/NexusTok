@@ -283,6 +283,42 @@ export function parseChannelOtherSettings(
 }
 
 /**
+ * 判断渠道 settings 中是否带有上游账号同步元数据。
+ *
+ * 历史前端逻辑曾兼容 object、true 和非空字符串三种形态，这里保留同样的宽松
+ * 识别方式，避免老数据在页面刷新后突然露出手动账号池入口。
+ */
+export function hasUpstreamAccountSyncMetadata(
+  settingsStr: string | null | undefined
+): boolean {
+  if (!settingsStr?.trim()) return false
+  try {
+    const settings = JSON.parse(settingsStr) as Record<string, unknown>
+    const metadata = settings.upstream_account_sync
+    if (metadata === undefined || metadata === null) return false
+    if (typeof metadata === 'object') return true
+    if (typeof metadata === 'boolean') return metadata
+    return typeof metadata === 'string' && metadata.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+// isUpstreamAccountSyncChannel 面向组件层使用，隐藏 settings 的 JSON 细节。
+export function isUpstreamAccountSyncChannel(
+  channel: Pick<Channel, 'settings'> | null | undefined
+): boolean {
+  return hasUpstreamAccountSyncMetadata(channel?.settings)
+}
+
+// canManuallyMutateChannelAccounts 统一决定账号池手动新增、导入和删除入口是否可见。
+export function canManuallyMutateChannelAccounts(
+  channel: Pick<Channel, 'settings'> | null | undefined
+): boolean {
+  return !isUpstreamAccountSyncChannel(channel)
+}
+
+/**
  * Validate JSON string
  */
 export function validateChannelSettings(settings: string): boolean {
