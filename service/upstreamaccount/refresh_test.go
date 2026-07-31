@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -14,6 +15,26 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+const upstreamLargeUsedQuota = int64(33508580000)
+
+func TestSnapshotUSDToQuotaInt64(t *testing.T) {
+	normalCost := 4.75
+	smallCost := 1.2
+	largeCost := 67017.16
+	negativeCost := -1.5
+	nanCost := math.NaN()
+	hugeCost := math.MaxFloat64
+
+	require.Equal(t, int64(0), snapshotUSDToQuotaInt64(nil))
+	require.Equal(t, int64(common.QuotaPerUnit*normalCost), snapshotUSDToQuotaInt64(&normalCost))
+	require.Equal(t, int64(common.QuotaPerUnit*smallCost), snapshotUSDToQuotaInt64(&smallCost))
+	require.Equal(t, upstreamLargeUsedQuota, snapshotUSDToQuotaInt64(&largeCost))
+	require.NotEqual(t, int64(common.MaxQuota), snapshotUSDToQuotaInt64(&largeCost))
+	require.Equal(t, int64(0), snapshotUSDToQuotaInt64(&negativeCost))
+	require.Equal(t, int64(0), snapshotUSDToQuotaInt64(&nanCost))
+	require.Equal(t, int64(math.MaxInt64), snapshotUSDToQuotaInt64(&hugeCost))
+}
 
 func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 	oldDB := model.DB
@@ -53,7 +74,7 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 		case "/api/v1/groups/rates":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
 		case "/api/v1/usage/dashboard/stats":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":67017.16}}`))
 		case "/api/v1/keys":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
 		default:
@@ -92,13 +113,14 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 	result, err := RefreshChannelBalance(context.Background(), &channel)
 	require.NoError(t, err)
 	require.Equal(t, 12.5, result.Balance)
-	require.Equal(t, int64(common.QuotaPerUnit*4.75), result.UsedQuota)
+	require.Equal(t, upstreamLargeUsedQuota, result.UsedQuota)
+	require.NotEqual(t, int64(common.MaxQuota), result.UsedQuota)
 	require.Greater(t, result.BalanceUpdatedTime, int64(1))
 
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
 	require.Equal(t, 12.5, refreshed.Balance)
-	require.Equal(t, int64(common.QuotaPerUnit*4.75), refreshed.UsedQuota)
+	require.Equal(t, upstreamLargeUsedQuota, refreshed.UsedQuota)
 	require.Greater(t, refreshed.BalanceUpdatedTime, int64(1))
 	credential, ok, err := ReadChannelSyncCredential(refreshed.OtherSettings)
 	require.NoError(t, err)
@@ -254,7 +276,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 		BaseURL:  "https://newapi.example",
 		Balance: &BalanceSnapshot{
 			BalanceUSD: floatPtr(8),
-			UsedUSD:    floatPtr(2),
+			UsedUSD:    floatPtr(67017.16),
 		},
 		Keys: []SyncedKey{
 			{
@@ -264,7 +286,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 				MaskedKey:         "sk-old-rotated",
 				GroupName:         "vip",
 				Models:            []string{"gpt-4o"},
-				QuotaUsedUSD:      floatPtr(1),
+				QuotaUsedUSD:      floatPtr(67017.16),
 				SuggestedPriority: 3,
 				SuggestedWeight:   90,
 			},
@@ -297,7 +319,8 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "gpt-old,gpt-4o-mini", refreshed.Models)
 	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)
-	require.Equal(t, int64(common.QuotaPerUnit*2), refreshed.UsedQuota)
+	require.Equal(t, upstreamLargeUsedQuota, refreshed.UsedQuota)
+	require.NotEqual(t, int64(common.MaxQuota), refreshed.UsedQuota)
 
 	var accounts []model.ChannelAccount
 	require.NoError(t, db.Order("id ASC").Find(&accounts).Error)
@@ -307,7 +330,8 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "default", accounts[0].Group)
 	require.Equal(t, int64(3), accounts[0].Priority)
 	require.Equal(t, 90, accounts[0].Weight)
-	require.Equal(t, int64(common.QuotaPerUnit), accounts[0].UsedQuota)
+	require.Equal(t, upstreamLargeUsedQuota, accounts[0].UsedQuota)
+	require.NotEqual(t, int64(common.MaxQuota), accounts[0].UsedQuota)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, accounts[1].Status)
 	require.Equal(t, "New Key", accounts[2].Name)
 	require.Equal(t, "sk-new", accounts[2].Key)

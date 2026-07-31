@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -435,14 +436,35 @@ func balanceValue(balance *BalanceSnapshot) float64 {
 
 func usedQuotaValue(balance *BalanceSnapshot) int64 {
 	if balance != nil && balance.UsedUSD != nil {
-		return int64(common.QuotaRound(*balance.UsedUSD * common.QuotaPerUnit))
+		return snapshotUSDToQuotaInt64(balance.UsedUSD)
 	}
 	return 0
 }
 
 func usdToQuotaInt64(value *float64) int64 {
+	return snapshotUSDToQuotaInt64(value)
+}
+
+// snapshotUSDToQuotaInt64 将上游平台返回的美元快照换算成 NexusTok 内部 quota。
+//
+// 该函数只用于账号同步和余额刷新这类“展示上游累计值”的路径。上游账号的累计用量
+// 可能远大于单次计费额度，如果复用 common.QuotaRound 会被 int32 计费边界截断，
+// 导致渠道列表最多只能显示约 $4,294.97。真实扣费、预扣费和审计日志仍应继续使用
+// common.QuotaRound / QuotaFromDecimal 等全局计费入口。
+func snapshotUSDToQuotaInt64(value *float64) int64 {
 	if value == nil {
 		return 0
 	}
-	return int64(common.QuotaRound(*value * common.QuotaPerUnit))
+	raw := *value
+	if math.IsNaN(raw) || raw <= 0 {
+		return 0
+	}
+	quota := math.Round(raw * common.QuotaPerUnit)
+	if math.IsNaN(quota) || quota <= 0 {
+		return 0
+	}
+	if quota >= float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(quota)
 }

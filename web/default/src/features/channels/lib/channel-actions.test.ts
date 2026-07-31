@@ -169,4 +169,50 @@ describe('渠道余额缓存补丁', () => {
     assert.equal(tagRow.children[1].used_quota, 20)
     assert.equal(tagRow.used_quota, 90)
   })
+
+  test('会完整保留超过 int32 上限的大额已使用量', () => {
+    const queryClient = new QueryClient()
+    const listKey = channelsQueryKeys.list({ p: 1, page_size: 10 })
+    const detailKey = channelsQueryKeys.detail(1)
+    const largeUsedQuota = 33508580000
+
+    queryClient.setQueryData<GetChannelsResponse>(listKey, {
+      success: true,
+      data: {
+        items: [
+          makeChannel({
+            id: 1,
+            balance: 1,
+            used_quota: 10,
+            balance_updated_time: 100,
+          }),
+        ],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      },
+    })
+    queryClient.setQueryData<GetChannelResponse>(detailKey, {
+      success: true,
+      data: makeChannel({
+        id: 1,
+        balance: 1,
+        used_quota: 10,
+        balance_updated_time: 100,
+      }),
+    })
+
+    patchChannelBalanceCache(queryClient, 1, {
+      success: true,
+      balance: 99999933182.84,
+      used_quota: largeUsedQuota,
+      balance_updated_time: 1000,
+    })
+
+    const listData = queryClient.getQueryData<GetChannelsResponse>(listKey)
+    assert.equal(listData?.data?.items[0].used_quota, largeUsedQuota)
+
+    const detailData = queryClient.getQueryData<GetChannelResponse>(detailKey)
+    assert.equal(detailData?.data?.used_quota, largeUsedQuota)
+  })
 })
