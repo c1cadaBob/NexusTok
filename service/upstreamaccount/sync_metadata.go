@@ -189,6 +189,7 @@ func SanitizeChannelSyncSettings(settings string) string {
 		}
 	}
 	delete(metadata, "credentials")
+	delete(metadata, "credential_saved")
 	if hasCredential {
 		metadata["credential_saved"] = true
 	}
@@ -198,6 +199,47 @@ func SanitizeChannelSyncSettings(settings string) string {
 		return settings
 	}
 	return string(bytes)
+}
+
+// PreserveChannelSyncCredential 在渠道编辑保存时保留后端隐藏的上游登录凭据。
+//
+// 渠道详情接口返回给前端的 settings 会把 credentials 脱敏为 credential_saved，
+// 前端保存普通渠道配置时只能提交这个安全副本。如果直接落库，就会把真实的加密
+// password/session 覆盖成一个不可复用的展示标记，导致下次刷新时界面显示“已保存登录”，
+// 但后端读不到任何可认证凭据。该函数只在 next 仍然声明同一个同步来源时，把 existing
+// 中的隐藏 credentials 合并回去；如果来源被显式切换，则不跨平台或跨站点复用旧凭据。
+func PreserveChannelSyncCredential(existing string, next string) string {
+	nextData := map[string]any{}
+	if strings.TrimSpace(next) != "" {
+		if err := common.UnmarshalJsonStr(next, &nextData); err != nil {
+			return next
+		}
+	}
+	rawNextMetadata, ok := nextData[upstreamAccountSyncMetadataKey]
+	if !ok {
+		return next
+	}
+	nextMetadata, ok := syncMetadataMap(rawNextMetadata)
+	if !ok {
+		return next
+	}
+
+	if rawCredential, ok := nextMetadata["credentials"]; ok && syncCredentialHasSecret(rawCredential) {
+		delete(nextMetadata, "credential_saved")
+		nextData[upstreamAccountSyncMetadataKey] = nextMetadata
+		return marshalSettingsOrFallback(nextData, next)
+	}
+
+	delete(nextMetadata, "credentials")
+	delete(nextMetadata, "credential_saved")
+	existingMetadata := readChannelSyncMetadata(existing)
+	if existingMetadata.Credentials != nil &&
+		storedCredentialHasSecret(existingMetadata.Credentials) &&
+		channelSyncCredentialSourceMatches(existingMetadata, nextMetadata) {
+		nextMetadata["credentials"] = existingMetadata.Credentials
+	}
+	nextData[upstreamAccountSyncMetadataKey] = nextMetadata
+	return marshalSettingsOrFallback(nextData, next)
 }
 
 // ReadChannelSyncCredential 从渠道 settings 中读取并解密上游账号登录凭据。
@@ -236,6 +278,81 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 		return Credential{}, false, nil
 	}
 	return credential, true, nil
+}
+
+func syncMetadataMap(raw any) (map[string]any, bool) {
+	rawBytes, err := common.Marshal(raw)
+	if err != nil {
+		return nil, false
+	}
+	var metadata map[string]any
+	if err := common.Unmarshal(rawBytes, &metadata); err != nil {
+		return nil, false
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	return metadata, true
+}
+
+func syncCredentialHasSecret(raw any) bool {
+	rawBytes, err := common.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var credential StoredCredential
+	if err := common.Unmarshal(rawBytes, &credential); err != nil {
+		return false
+	}
+	return storedCredentialHasSecret(&credential)
+}
+
+func storedCredentialHasSecret(credential *StoredCredential) bool {
+	if credential == nil {
+		return false
+	}
+	return strings.TrimSpace(credential.Password) != "" ||
+		strings.TrimSpace(credential.Session) != ""
+}
+
+func channelSyncCredentialSourceMatches(existing syncMetadata, next map[string]any) bool {
+	credential := existing.Credentials
+	if credential == nil {
+		return false
+	}
+	existingPlatform := NormalizePlatform(firstNonEmpty(credential.Platform, existing.Platform))
+	nextPlatform := NormalizePlatform(stringFromMetadata(next, "platform"))
+	if nextPlatform != "" && existingPlatform != "" && nextPlatform != existingPlatform {
+		return false
+	}
+	existingBaseURL := firstNonEmpty(credential.BaseURL, existing.BaseURL)
+	nextBaseURL := stringFromMetadata(next, "base_url")
+	if nextBaseURL != "" && existingBaseURL != "" {
+		platform := firstNonEmpty(nextPlatform, existingPlatform)
+		if !sameSyncSourceBaseURL(platform, existingBaseURL, nextBaseURL) {
+			return false
+		}
+	}
+	return true
+}
+
+func stringFromMetadata(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func marshalSettingsOrFallback(data map[string]any, fallback string) string {
+	bytes, err := common.Marshal(data)
+	if err != nil {
+		return fallback
+	}
+	return string(bytes)
 }
 
 // PreserveAccountSyncMetadata 在账号本地 settings 被手动更新时保留同步身份。

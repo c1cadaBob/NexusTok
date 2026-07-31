@@ -965,6 +965,12 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	if _, ok := requestData["settings"]; ok {
+		// 渠道详情返回给前端的是脱敏 settings，其中上游登录凭据只剩
+		// credential_saved 展示标记。编辑保存时必须从数据库原值恢复隐藏的
+		// credentials，避免普通配置保存把已通过 2FA 的登录态误覆盖掉。
+		channel.OtherSettings = upstreamaccount.PreserveChannelSyncCredential(originChannel.OtherSettings, channel.OtherSettings)
+	}
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) && !channelCanSensitiveWrite(c) {
 		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
