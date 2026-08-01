@@ -5708,6 +5708,21 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Les types de canaux new-api et sub2api doivent utiliser la synchronisation du compte amont. Creez un canal synchronise ou actualisez un canal synchronise existant."
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Les types de canaux new-api et sub2api doivent utiliser la synchronisation du compte amont. Creez un canal synchronise ou actualisez un canal synchronise existant.",
+    "Automatic upstream account sync": "Synchronisation automatique des comptes amont",
+    "Automatically refresh saved upstream account pools in the background": "Actualiser automatiquement les pools de comptes amont enregistrés en arrière-plan",
+    "Sync interval": "Intervalle de synchronisation",
+    "Sync unit": "Unité de synchronisation",
+    "Choose how often eligible upstream account pools are refreshed": "Choisissez la fréquence d'actualisation des pools de comptes amont éligibles",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "Ce paramètre est désactivé ; les pools de comptes amont ne seront pas synchronisés automatiquement.",
+    "Syncing every {{interval}} {{unit}}": "Synchronisation toutes les {{interval}} {{unit}}",
+    "Months": "Mois",
+    "Weeks": "Semaines",
+    "Days": "Jours",
+    "Hours": "Heures",
+    "Minutes": "Minutes",
+    "Seconds": "Secondes",
+    "Automatic upstream account sync was skipped": "La synchronisation automatique des comptes amont a été ignorée",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} canal(aux) analysé(s) ; {{succeeded}} réussie(s), {{failed}} échec(s), {{skipped}} ignorée(s) ; {{created}} créée(s), {{updated}} mise(s) à jour, {{disabled}} désactivée(s)."
   }
 }

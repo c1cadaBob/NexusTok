@@ -380,6 +380,15 @@ export type OperationsSettings = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
+  'upstream_account_sync.enabled': boolean
+  'upstream_account_sync.interval': number
+  'upstream_account_sync.unit':
+    | 'month'
+    | 'week'
+    | 'day'
+    | 'hour'
+    | 'minute'
+    | 'second'
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

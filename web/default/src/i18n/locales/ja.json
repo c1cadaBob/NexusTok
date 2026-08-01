@@ -5708,6 +5708,21 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api と sub2api のチャネルタイプでは上流アカウント同期が必要です。同期チャネルを作成するか、既存の同期チャネルを更新してください。"
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api と sub2api のチャネルタイプでは上流アカウント同期が必要です。同期チャネルを作成するか、既存の同期チャネルを更新してください。",
+    "Automatic upstream account sync": "上流アカウントの自動同期",
+    "Automatically refresh saved upstream account pools in the background": "保存済みの上流アカウントプールをバックグラウンドで自動更新します",
+    "Sync interval": "同期間隔",
+    "Sync unit": "同期単位",
+    "Choose how often eligible upstream account pools are refreshed": "対象となる上流アカウントプールの更新頻度を選択します",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "この設定は無効です。上流アカウントプールは自動同期されません。",
+    "Syncing every {{interval}} {{unit}}": "{{interval}} {{unit}} ごとに同期",
+    "Months": "月",
+    "Weeks": "週",
+    "Days": "日",
+    "Hours": "時間",
+    "Minutes": "分",
+    "Seconds": "秒",
+    "Automatic upstream account sync was skipped": "上流アカウントの自動同期はスキップされました",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} 件のチャネルをスキャン。成功 {{succeeded}}、失敗 {{failed}}、スキップ {{skipped}}。作成 {{created}}、更新 {{updated}}、無効化 {{disabled}}。"
   }
 }

@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { ErrorState } from '@/components/error-state'
+import { formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,8 +48,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { formatTimestampToDate } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { ErrorState } from '@/components/error-state'
 import { listSystemTasks } from '../api'
 import type { SystemTask, SystemTaskStatus } from '../types'
 
@@ -74,6 +73,7 @@ const TYPE_LABEL: Record<string, string> = {
   async_task_poll: 'Async task polling',
   account_pool_check: 'Account pool check',
   subscription_maintenance: 'Subscription maintenance',
+  upstream_account_sync: 'Upstream account sync',
 }
 
 function isActiveStatus(status: SystemTaskStatus) {
@@ -93,6 +93,101 @@ function getTaskTypeLabel(taskType: string) {
 function getDeletedCount(task: SystemTask) {
   const result = task.result as { deleted_count?: unknown } | undefined
   return typeof result?.deleted_count === 'number' ? result.deleted_count : null
+}
+
+type UpstreamAccountSyncResultView = {
+  text: string
+  title?: string
+}
+
+function getUpstreamAccountSyncResult(
+  task: SystemTask,
+  t: (key: string, options?: Record<string, unknown>) => string
+): UpstreamAccountSyncResultView | null {
+  if (task.type !== 'upstream_account_sync' || !task.result) return null
+  const result = task.result as {
+    skipped?: unknown
+    skip_reason?: unknown
+    scanned_channels?: unknown
+    eligible_channels?: unknown
+    succeeded_channels?: unknown
+    failed_channels?: unknown
+    skipped_channels?: unknown
+    created_accounts?: unknown
+    updated_accounts?: unknown
+    disabled_accounts?: unknown
+    failures?: Array<{
+      channel_id?: unknown
+      channel_name?: unknown
+      error?: unknown
+    }>
+  }
+  if (result.skipped === true) {
+    const title =
+      typeof result.skip_reason === 'string' && result.skip_reason.trim()
+        ? result.skip_reason.trim()
+        : undefined
+    return {
+      text: t('Automatic upstream account sync was skipped'),
+      title,
+    }
+  }
+  if (
+    typeof result.scanned_channels !== 'number' ||
+    typeof result.eligible_channels !== 'number' ||
+    typeof result.succeeded_channels !== 'number' ||
+    typeof result.failed_channels !== 'number' ||
+    typeof result.skipped_channels !== 'number'
+  ) {
+    return null
+  }
+  const text = t(
+    'Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.',
+    {
+      scanned: result.scanned_channels,
+      eligible: result.eligible_channels,
+      succeeded: result.succeeded_channels,
+      failed: result.failed_channels,
+      skipped: result.skipped_channels,
+      created:
+        typeof result.created_accounts === 'number'
+          ? result.created_accounts
+          : 0,
+      updated:
+        typeof result.updated_accounts === 'number'
+          ? result.updated_accounts
+          : 0,
+      disabled:
+        typeof result.disabled_accounts === 'number'
+          ? result.disabled_accounts
+          : 0,
+    }
+  )
+  const failureDetails = Array.isArray(result.failures)
+    ? result.failures
+        .map((failure) => {
+          const channelName =
+            typeof failure.channel_name === 'string' &&
+            failure.channel_name.trim()
+              ? failure.channel_name.trim()
+              : typeof failure.channel_id === 'number'
+                ? `#${failure.channel_id}`
+                : ''
+          const error =
+            typeof failure.error === 'string' && failure.error.trim()
+              ? failure.error.trim()
+              : ''
+          if (!channelName && !error) return ''
+          if (!channelName) return error
+          if (!error) return channelName
+          return `${channelName}: ${error}`
+        })
+        .filter(Boolean)
+    : []
+  return {
+    text,
+    title: failureDetails.length > 0 ? failureDetails.join('; ') : undefined,
+  }
 }
 
 function taskStatusDotClass(status: SystemTaskStatus) {
@@ -142,6 +237,23 @@ function SystemTasksTable(props: SystemTasksTableProps) {
           {props.tasks.map((task) => {
             const progress = getProgress(task)
             const deletedCount = getDeletedCount(task)
+            const upstreamAccountSyncResult = getUpstreamAccountSyncResult(
+              task,
+              t
+            )
+            const resultText = task.error
+              ? upstreamAccountSyncResult
+                ? `${task.error} · ${upstreamAccountSyncResult.text}`
+                : task.error
+              : upstreamAccountSyncResult?.text ||
+                (deletedCount === null
+                  ? '-'
+                  : t('{{count}} log entries removed.', {
+                      count: deletedCount,
+                    }))
+            const resultTitle = [task.error, upstreamAccountSyncResult?.title]
+              .filter(Boolean)
+              .join('\n')
 
             return (
               <TableRow key={task.task_id} className='hover:bg-muted/30'>
@@ -191,14 +303,9 @@ function SystemTasksTable(props: SystemTasksTableProps) {
                     'max-w-[220px] truncate py-2.5 pr-4 align-middle text-xs',
                     task.error ? 'text-destructive' : 'text-muted-foreground'
                   )}
-                  title={task.error || undefined}
+                  title={resultTitle || undefined}
                 >
-                  {task.error ||
-                    (deletedCount === null
-                      ? '-'
-                      : t('{{count}} log entries removed.', {
-                          count: deletedCount,
-                        }))}
+                  {resultText}
                 </TableCell>
               </TableRow>
             )
@@ -211,6 +318,8 @@ function SystemTasksTable(props: SystemTasksTableProps) {
 
 export function SystemTasksPanel() {
   const { t } = useTranslation()
+  // 任务数据与当前语言无关；t 只用于请求失败时的本地化兜底文案。
+  // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const tasksQuery = useQuery({
     queryKey: ['system-info', 'system-tasks'],
     queryFn: async () => {

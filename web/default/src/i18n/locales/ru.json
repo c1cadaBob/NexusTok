@@ -5708,6 +5708,21 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Типы каналов new-api и sub2api должны использовать синхронизацию вышестоящего аккаунта. Создайте синхронизированный канал или обновите существующий."
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Типы каналов new-api и sub2api должны использовать синхронизацию вышестоящего аккаунта. Создайте синхронизированный канал или обновите существующий.",
+    "Automatic upstream account sync": "Автоматическая синхронизация вышестоящих аккаунтов",
+    "Automatically refresh saved upstream account pools in the background": "Автоматически обновлять сохраненные пулы вышестоящих аккаунтов в фоне",
+    "Sync interval": "Интервал синхронизации",
+    "Sync unit": "Единица синхронизации",
+    "Choose how often eligible upstream account pools are refreshed": "Выберите частоту обновления подходящих пулов вышестоящих аккаунтов",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "Этот параметр отключен; пулы вышестоящих аккаунтов не будут синхронизироваться автоматически.",
+    "Syncing every {{interval}} {{unit}}": "Синхронизация каждые {{interval}} {{unit}}",
+    "Months": "Месяцы",
+    "Weeks": "Недели",
+    "Days": "Дни",
+    "Hours": "Часы",
+    "Minutes": "Минуты",
+    "Seconds": "Секунды",
+    "Automatic upstream account sync was skipped": "Автоматическая синхронизация вышестоящих аккаунтов пропущена",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Проверено каналов: {{scanned}}; успешно: {{succeeded}}, ошибок: {{failed}}, пропущено: {{skipped}}; создано: {{created}}, обновлено: {{updated}}, отключено: {{disabled}}."
   }
 }

@@ -34,12 +34,28 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import {
+  UPSTREAM_ACCOUNT_SYNC_UNITS,
+  buildUpstreamAccountSyncFormDefaults,
+  buildUpstreamAccountSyncPersistedDefaults,
+  formatUpstreamAccountSyncDescription,
+  normalizeUpstreamAccountSyncInterval,
+  normalizeUpstreamAccountSyncUnit,
+} from './upstream-account-sync-settings'
 
 const numericString = z.string().refine((value) => {
   const trimmed = value.trim()
@@ -62,6 +78,14 @@ const monitoringSchema = z
         .number()
         .int()
         .min(1, 'Interval must be at least 1 minute'),
+    }),
+    upstream_account_sync: z.object({
+      enabled: z.boolean(),
+      interval: z.coerce
+        .number()
+        .int()
+        .min(1, 'Sync interval must be at least 1'),
+      unit: z.enum(UPSTREAM_ACCOUNT_SYNC_UNITS),
     }),
   })
   .superRefine((values, ctx) => {
@@ -106,6 +130,9 @@ type MonitoringSettingsSectionProps = {
     AutomaticRetryStatusCodes: string
     'monitor_setting.auto_test_channel_enabled': boolean
     'monitor_setting.auto_test_channel_minutes': number
+    'upstream_account_sync.enabled': boolean
+    'upstream_account_sync.interval': number
+    'upstream_account_sync.unit': string
   }
 }
 
@@ -123,6 +150,9 @@ type NormalizedMonitoringValues = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
+  'upstream_account_sync.enabled': boolean
+  'upstream_account_sync.interval': number
+  'upstream_account_sync.unit': string
 }
 
 const buildFormDefaults = (
@@ -143,6 +173,11 @@ const buildFormDefaults = (
     auto_test_channel_minutes:
       defaults['monitor_setting.auto_test_channel_minutes'],
   },
+  upstream_account_sync: buildUpstreamAccountSyncFormDefaults({
+    enabled: defaults['upstream_account_sync.enabled'],
+    interval: defaults['upstream_account_sync.interval'],
+    unit: defaults['upstream_account_sync.unit'],
+  }),
 })
 
 const normalizeDefaults = (
@@ -165,6 +200,13 @@ const normalizeDefaults = (
     defaults['monitor_setting.auto_test_channel_enabled'],
   'monitor_setting.auto_test_channel_minutes':
     defaults['monitor_setting.auto_test_channel_minutes'],
+  'upstream_account_sync.enabled': defaults['upstream_account_sync.enabled'],
+  'upstream_account_sync.interval': defaults['upstream_account_sync.interval'],
+  'upstream_account_sync.unit': buildUpstreamAccountSyncPersistedDefaults({
+    enabled: defaults['upstream_account_sync.enabled'],
+    interval: defaults['upstream_account_sync.interval'],
+    unit: defaults['upstream_account_sync.unit'],
+  }).unit,
 })
 
 const normalizeFormValues = (
@@ -187,6 +229,9 @@ const normalizeFormValues = (
     values.monitor_setting.auto_test_channel_enabled,
   'monitor_setting.auto_test_channel_minutes':
     values.monitor_setting.auto_test_channel_minutes,
+  'upstream_account_sync.enabled': values.upstream_account_sync.enabled,
+  'upstream_account_sync.interval': values.upstream_account_sync.interval,
+  'upstream_account_sync.unit': values.upstream_account_sync.unit,
 })
 
 export function MonitoringSettingsSection({
@@ -219,6 +264,16 @@ export function MonitoringSettingsSection({
   const autoRetryParsed = useMemo(
     () => parseHttpStatusCodeRules(autoRetryStatusCodes),
     [autoRetryStatusCodes]
+  )
+  const upstreamAccountSyncEnabled = form.watch('upstream_account_sync.enabled')
+  const upstreamAccountSyncInterval = form.watch(
+    'upstream_account_sync.interval'
+  )
+  const upstreamAccountSyncUnit = form.watch('upstream_account_sync.unit')
+  const upstreamAccountSyncDescriptionInterval =
+    normalizeUpstreamAccountSyncInterval(Number(upstreamAccountSyncInterval))
+  const upstreamAccountSyncDescriptionUnit = normalizeUpstreamAccountSyncUnit(
+    String(upstreamAccountSyncUnit)
   )
 
   const onSubmit = async (values: MonitoringFormValues) => {
@@ -297,6 +352,107 @@ export function MonitoringSettingsSection({
                 </FormItem>
               )}
             />
+          </div>
+
+          <div className='grid gap-6 md:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='upstream_account_sync.enabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Automatic upstream account sync')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Automatically refresh saved upstream account pools in the background'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='upstream_account_sync.interval'
+                render={({ field }) => (
+                  <FormItem data-disabled={!upstreamAccountSyncEnabled}>
+                    <FormLabel>{t('Sync interval')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        step={1}
+                        disabled={!upstreamAccountSyncEnabled}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {upstreamAccountSyncEnabled
+                        ? t(
+                            'Choose how often eligible upstream account pools are refreshed'
+                          )
+                        : t(
+                            'This setting is disabled; upstream account pools will not be synchronized automatically.'
+                          )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='upstream_account_sync.unit'
+                render={({ field }) => (
+                  <FormItem data-disabled={!upstreamAccountSyncEnabled}>
+                    <FormLabel>{t('Sync unit')}</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      disabled={!upstreamAccountSyncEnabled}
+                    >
+                      <FormControl>
+                        <SelectTrigger
+                          className='w-full'
+                          aria-label={t('Sync unit')}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          <SelectItem value='month'>{t('Months')}</SelectItem>
+                          <SelectItem value='week'>{t('Weeks')}</SelectItem>
+                          <SelectItem value='day'>{t('Days')}</SelectItem>
+                          <SelectItem value='hour'>{t('Hours')}</SelectItem>
+                          <SelectItem value='minute'>{t('Minutes')}</SelectItem>
+                          <SelectItem value='second'>{t('Seconds')}</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {formatUpstreamAccountSyncDescription(
+                        upstreamAccountSyncEnabled,
+                        upstreamAccountSyncDescriptionInterval,
+                        upstreamAccountSyncDescriptionUnit,
+                        t
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
           </div>
 
           <div className='grid gap-6 md:grid-cols-2'>

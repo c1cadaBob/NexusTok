@@ -61,6 +61,11 @@ const OPERATIONS_SECTIONS = [
             settings['monitor_setting.auto_test_channel_enabled'],
           'monitor_setting.auto_test_channel_minutes':
             settings['monitor_setting.auto_test_channel_minutes'],
+          'upstream_account_sync.enabled':
+            settings['upstream_account_sync.enabled'],
+          'upstream_account_sync.interval':
+            settings['upstream_account_sync.interval'],
+          'upstream_account_sync.unit': settings['upstream_account_sync.unit'],
         }}
       />
     ),

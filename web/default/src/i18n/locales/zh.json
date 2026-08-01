@@ -5708,6 +5708,21 @@
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api 和 sub2api 渠道类型必须使用上游账号同步。请创建同步渠道，或刷新已有同步渠道。"
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api 和 sub2api 渠道类型必须使用上游账号同步。请创建同步渠道，或刷新已有同步渠道。",
+    "Automatic upstream account sync": "上游账号自动同步",
+    "Automatically refresh saved upstream account pools in the background": "在后台自动刷新已保存的上游账号池",
+    "Sync interval": "同步间隔",
+    "Sync unit": "同步单位",
+    "Choose how often eligible upstream account pools are refreshed": "选择符合条件的上游账号池刷新频率",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "此设置已关闭；上游账号池不会自动同步。",
+    "Syncing every {{interval}} {{unit}}": "每 {{interval}} {{unit}} 同步一次",
+    "Months": "月",
+    "Weeks": "周",
+    "Days": "天",
+    "Hours": "小时",
+    "Minutes": "分钟",
+    "Seconds": "秒",
+    "Automatic upstream account sync was skipped": "上游账号自动同步已跳过",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "已扫描 {{scanned}} 个渠道；成功 {{succeeded}} 个，失败 {{failed}} 个，跳过 {{skipped}} 个；新增 {{created}} 个，更新 {{updated}} 个，停用 {{disabled}} 个。"
   }
 }

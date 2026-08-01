@@ -5708,6 +5708,21 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel."
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.",
+    "Automatic upstream account sync": "Automatic upstream account sync",
+    "Automatically refresh saved upstream account pools in the background": "Automatically refresh saved upstream account pools in the background",
+    "Sync interval": "Sync interval",
+    "Sync unit": "Sync unit",
+    "Choose how often eligible upstream account pools are refreshed": "Choose how often eligible upstream account pools are refreshed",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "This setting is disabled; upstream account pools will not be synchronized automatically.",
+    "Syncing every {{interval}} {{unit}}": "Syncing every {{interval}} {{unit}}",
+    "Months": "Months",
+    "Weeks": "Weeks",
+    "Days": "Days",
+    "Hours": "Hours",
+    "Minutes": "Minutes",
+    "Seconds": "Seconds",
+    "Automatic upstream account sync was skipped": "Automatic upstream account sync was skipped",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled."
   }
 }

@@ -5708,6 +5708,21 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Loai kenh new-api va sub2api phai dung dong bo tai khoan thuong nguon. Hay tao kenh da dong bo hoac lam moi kenh da dong bo hien co."
+    "new-api and sub2api channel types must use upstream account sync. Create a synced channel or refresh an existing synced channel.": "Loai kenh new-api va sub2api phai dung dong bo tai khoan thuong nguon. Hay tao kenh da dong bo hoac lam moi kenh da dong bo hien co.",
+    "Automatic upstream account sync": "Đồng bộ tài khoản upstream tự động",
+    "Automatically refresh saved upstream account pools in the background": "Tự động làm mới các pool tài khoản upstream đã lưu trong nền",
+    "Sync interval": "Khoảng thời gian đồng bộ",
+    "Sync unit": "Đơn vị đồng bộ",
+    "Choose how often eligible upstream account pools are refreshed": "Chọn tần suất làm mới các pool tài khoản upstream đủ điều kiện",
+    "This setting is disabled; upstream account pools will not be synchronized automatically.": "Cài đặt này đã tắt; các pool tài khoản upstream sẽ không được đồng bộ tự động.",
+    "Syncing every {{interval}} {{unit}}": "Đồng bộ mỗi {{interval}} {{unit}}",
+    "Months": "Tháng",
+    "Weeks": "Tuần",
+    "Days": "Ngày",
+    "Hours": "Giờ",
+    "Minutes": "Phút",
+    "Seconds": "Giây",
+    "Automatic upstream account sync was skipped": "Đã bỏ qua đồng bộ tài khoản upstream tự động",
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Đã quét {{scanned}} kênh; thành công {{succeeded}}, thất bại {{failed}}, bỏ qua {{skipped}}; đã tạo {{created}}, đã cập nhật {{updated}}, đã tắt {{disabled}}."
   }
 }
