@@ -66,6 +66,32 @@ func TestAutomaticAccountConfigsPreserveLocalSettings(t *testing.T) {
 	require.Nil(t, configs[0].Enabled)
 }
 
+func TestAutomaticAccountConfigsUsesSyncMaskForLegacyAccounts(t *testing.T) {
+	setupAutomaticSyncTestDB(t)
+
+	channel := model.Channel{
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "legacy-synced-channel",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	account := model.ChannelAccount{
+		ChannelId: channel.Id,
+		Key:       "sk-legacy-account-key",
+	}
+	require.NoError(t, model.DB.Create(&account).Error)
+
+	configs, err := automaticAccountConfigs(channel.Id)
+	require.NoError(t, err)
+	require.Len(t, configs, 1)
+	require.Equal(t, maskKey(account.Key), configs[0].SyncID)
+}
+
 func TestRunUpstreamAccountSyncSkipsIneligibleChannels(t *testing.T) {
 	setupAutomaticSyncTestDB(t)
 

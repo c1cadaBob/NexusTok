@@ -164,7 +164,7 @@ func automaticAccountConfigs(channelID int) ([]AccountCreateConfig, error) {
 		if syncID == "" {
 			// 历史账号可能没有 external_id；ApplySyncIDs 会使用同样的脱敏 key
 			// 作为稳定标识，因此这里使用脱敏 key 继续匹配而不暴露完整 key。
-			syncID = strings.TrimSpace(account.GetMaskedKey())
+			syncID = strings.TrimSpace(maskKey(account.Key))
 		}
 		priority := account.Priority
 		weight := account.Weight
