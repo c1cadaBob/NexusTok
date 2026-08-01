@@ -40,6 +40,14 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Prepare embedded frontend placeholders
+        run: |
+          # main.go 使用 go:embed 引用前端 dist；后端测试不依赖真实前端产物，
+          # 这里只创建最小文件，保证干净 checkout 下根包可以被 Go 正常加载。
+          mkdir -p web/default/dist web/classic/dist
+          printf '<!doctype html><html lang="en"></html>\n' > web/default/dist/index.html
+          printf '<!doctype html><html lang="en"></html>\n' > web/classic/dist/index.html
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
