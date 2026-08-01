@@ -5723,6 +5723,13 @@
     "Minutes": "Minutes",
     "Seconds": "Seconds",
     "Automatic upstream account sync was skipped": "Automatic upstream account sync was skipped",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled."
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.",
+    "Balanced": "Balanced",
+    "Availability first": "Availability first",
+    "Cost first": "Cost first",
+    "Intelligent switching strategy": "Intelligent switching strategy",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "Prefer healthy channels and switch away from temporary failures sooner.",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "Prefer the most cost-efficient healthy channel using its configured priority and weight.",
+    "Balance availability and cost while preserving channel affinity when healthy.": "Balance availability and cost while preserving channel affinity when healthy."
   }
 }

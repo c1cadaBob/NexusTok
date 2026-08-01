@@ -64,6 +64,31 @@ func AddExcludedChannelId(c *gin.Context, channelId int) {
 	common.SetContextKey(c, constant.ContextKeyChannelExcludedIds, ids)
 }
 
+// selectChannelByRoutingStrategy 按现有 retry 层级获取候选，并叠加动态健康策略。
+//
+// 正常情况下只在 retry 对应的优先级层级内选路；当这一层的渠道都处于临时
+// 冷却期时，再展开到同一分组和模型的全部候选，允许请求自动降级到健康渠道。
+// 这样既保持旧的重试语义，也避免高优先级故障时把请求打到同一个坏渠道。
+func selectChannelByRoutingStrategy(group string, modelName string, retry int, requestPath string, excludedChannelIds []int) (*model.Channel, error) {
+	candidates, err := model.GetSatisfiedChannelCandidatesWithExclusions(group, modelName, retry, requestPath, excludedChannelIds)
+	if err != nil || len(candidates) == 0 {
+		return nil, err
+	}
+	selected := SelectChannelByRoutingStrategy(group, modelName, candidates)
+	if selected != nil && IsChannelRoutingHealthy(group, modelName, selected.Id) {
+		return selected, nil
+	}
+
+	allCandidates, allErr := model.GetAllSatisfiedChannelCandidatesWithExclusions(group, modelName, requestPath, excludedChannelIds)
+	if allErr != nil {
+		return nil, allErr
+	}
+	if len(allCandidates) == 0 {
+		return selected, nil
+	}
+	return SelectChannelByRoutingStrategy(group, modelName, allCandidates), nil
+}
+
 // GetRetry 获取当前重试次数
 //
 // 返回值：
@@ -177,7 +202,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 			// 获取满足要求的随机渠道。请求级排除集会优先过滤已失败渠道，
 			// 当前优先级被排空后再降到下一优先级，避免同一请求反复命中坏渠道。
-			channel, _ = model.GetRandomSatisfiedChannelWithExclusions(autoGroup, param.ModelName, priorityRetry, param.RequestPath, excludedChannelIds)
+			channel, _ = selectChannelByRoutingStrategy(autoGroup, param.ModelName, priorityRetry, param.RequestPath, excludedChannelIds)
 
 			if channel == nil {
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -216,7 +241,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	} else {
 		// 普通模式：直接根据 token 分组和模型名称获取渠道
-		channel, err = model.GetRandomSatisfiedChannelWithExclusions(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, excludedChannelIds)
+		channel, err = selectChannelByRoutingStrategy(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, excludedChannelIds)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

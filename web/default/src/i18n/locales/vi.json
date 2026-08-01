@@ -5723,6 +5723,13 @@
     "Minutes": "Phút",
     "Seconds": "Giây",
     "Automatic upstream account sync was skipped": "Đã bỏ qua đồng bộ tài khoản upstream tự động",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Đã quét {{scanned}} kênh; thành công {{succeeded}}, thất bại {{failed}}, bỏ qua {{skipped}}; đã tạo {{created}}, đã cập nhật {{updated}}, đã tắt {{disabled}}."
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Đã quét {{scanned}} kênh; thành công {{succeeded}}, thất bại {{failed}}, bỏ qua {{skipped}}; đã tạo {{created}}, đã cập nhật {{updated}}, đã tắt {{disabled}}.",
+    "Balanced": "Cân bằng",
+    "Availability first": "Ưu tiên khả dụng",
+    "Cost first": "Ưu tiên chi phí",
+    "Intelligent switching strategy": "Chiến lược chuyển đổi thông minh",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "Ưu tiên các kênh khỏe mạnh và chuyển khỏi lỗi tạm thời sớm hơn.",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "Ưu tiên kênh khỏe mạnh tiết kiệm nhất dựa trên độ ưu tiên và trọng số đã cấu hình.",
+    "Balance availability and cost while preserving channel affinity when healthy.": "Cân bằng khả dụng và chi phí, đồng thời giữ ưu tiên kênh khi kênh vẫn khỏe mạnh."
   }
 }

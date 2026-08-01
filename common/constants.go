@@ -205,6 +205,10 @@ var PreConsumedQuota = 500                // 预扣配额（流式请求开始�
 
 var RetryTimes = 0 // 请求失败重试次数（0 表示不重试）
 
+// RoutingStrategyMode 控制自动选路在健康候选之间的排序方式。
+// balanced 保持现有优先级/权重语义，并暂时避开动态不健康渠道。
+var RoutingStrategyMode = "balanced"
+
 //var RootUserEmail = ""
 
 var IsMasterNode bool // 是否为主节点（多节点部署时标识主节点）

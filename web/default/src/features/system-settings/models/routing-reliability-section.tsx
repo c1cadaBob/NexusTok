@@ -58,10 +58,13 @@ const numericString = z.string().refine((value) => {
 
 const channelTestModes = ['scheduled_all', 'passive_recovery'] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
+const routingStrategyModes = ['balanced', 'availability', 'cost'] as const
+type RoutingStrategyMode = (typeof routingStrategyModes)[number]
 
 const routingReliabilitySchema = z
   .object({
     RetryTimes: z.coerce.number().int().min(0).max(10),
+    RoutingStrategyMode: z.enum(routingStrategyModes),
     ChannelDisableThreshold: numericString,
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
@@ -111,6 +114,7 @@ type RoutingReliabilityFormInput = z.input<typeof routingReliabilitySchema>
 type RoutingReliabilitySectionProps = {
   defaultValues: {
     RetryTimes: number
+    RoutingStrategyMode: RoutingStrategyMode
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
@@ -125,6 +129,7 @@ type RoutingReliabilitySectionProps = {
 
 type NormalizedRoutingReliabilityValues = {
   RetryTimes: number
+  RoutingStrategyMode: RoutingStrategyMode
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -144,10 +149,19 @@ function normalizeChannelTestMode(value?: string | null): ChannelTestMode {
   return value === 'passive_recovery' ? 'passive_recovery' : 'scheduled_all'
 }
 
+function normalizeRoutingStrategyMode(
+  value?: string | null
+): RoutingStrategyMode {
+  return value === 'availability' || value === 'cost' ? value : 'balanced'
+}
+
 const buildFormDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): RoutingReliabilityFormInput => ({
   RetryTimes: defaults.RetryTimes ?? 0,
+  RoutingStrategyMode: normalizeRoutingStrategyMode(
+    defaults.RoutingStrategyMode
+  ),
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -171,6 +185,9 @@ const normalizeDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): NormalizedRoutingReliabilityValues => ({
   RetryTimes: defaults.RetryTimes ?? 0,
+  RoutingStrategyMode: normalizeRoutingStrategyMode(
+    defaults.RoutingStrategyMode
+  ),
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -196,6 +213,7 @@ const normalizeFormValues = (
   values: RoutingReliabilityFormValues
 ): NormalizedRoutingReliabilityValues => ({
   RetryTimes: values.RetryTimes,
+  RoutingStrategyMode: values.RoutingStrategyMode,
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
@@ -258,9 +276,19 @@ export function RoutingReliabilitySection({
     [t]
   )
 
+  const routingStrategyModeItems = useMemo(
+    () => [
+      { value: 'balanced', label: t('Balanced') },
+      { value: 'availability', label: t('Availability first') },
+      { value: 'cost', label: t('Cost first') },
+    ],
+    [t]
+  )
+
   const autoDisableStatusCodes = form.watch('AutomaticDisableStatusCodes')
   const autoRetryStatusCodes = form.watch('AutomaticRetryStatusCodes')
   const channelTestMode = form.watch('monitor_setting.channel_test_mode')
+  const routingStrategyMode = form.watch('RoutingStrategyMode')
   const autoDisableParsed = useMemo(
     () => parseHttpStatusCodeRules(autoDisableStatusCodes),
     [autoDisableStatusCodes]
@@ -312,6 +340,51 @@ export function RoutingReliabilitySection({
             </div>
 
             <div className='grid gap-6 xl:grid-cols-[minmax(12rem,24rem)_minmax(0,1fr)]'>
+              <FormField
+                control={form.control}
+                name='RoutingStrategyMode'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Intelligent switching strategy')}</FormLabel>
+                    <Select<RoutingStrategyMode>
+                      items={routingStrategyModeItems}
+                      value={field.value}
+                      onValueChange={(value) =>
+                        field.onChange(normalizeRoutingStrategyMode(value))
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {routingStrategyModeItems.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {routingStrategyMode === 'availability'
+                        ? t(
+                            'Prefer healthy channels and switch away from temporary failures sooner.'
+                          )
+                        : routingStrategyMode === 'cost'
+                          ? t(
+                              'Prefer the most cost-efficient healthy channel using its configured priority and weight.'
+                            )
+                          : t(
+                              'Balance availability and cost while preserving channel affinity when healthy.'
+                            )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name='RetryTimes'

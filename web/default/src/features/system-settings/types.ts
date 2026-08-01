@@ -238,6 +238,7 @@ export type ModelSettings = {
   'grok.violation_deduction_enabled': boolean
   'grok.violation_deduction_amount': number
   RetryTimes: number
+  RoutingStrategyMode: 'balanced' | 'availability' | 'cost'
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean

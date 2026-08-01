@@ -275,6 +275,17 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "RoutingStrategyMode":
+		switch strings.ToLower(strings.TrimSpace(option.Value.(string))) {
+		case "balanced", "availability", "cost":
+			option.Value = strings.ToLower(strings.TrimSpace(option.Value.(string)))
+		default:
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无效的渠道智能切换策略，可选值：balanced、availability、cost",
+			})
+			return
+		}
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {

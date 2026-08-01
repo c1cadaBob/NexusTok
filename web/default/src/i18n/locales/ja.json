@@ -5723,6 +5723,13 @@
     "Minutes": "分",
     "Seconds": "秒",
     "Automatic upstream account sync was skipped": "上流アカウントの自動同期はスキップされました",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} 件のチャネルをスキャン。成功 {{succeeded}}、失敗 {{failed}}、スキップ {{skipped}}。作成 {{created}}、更新 {{updated}}、無効化 {{disabled}}。"
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} 件のチャネルをスキャン。成功 {{succeeded}}、失敗 {{failed}}、スキップ {{skipped}}。作成 {{created}}、更新 {{updated}}、無効化 {{disabled}}。",
+    "Balanced": "バランス",
+    "Availability first": "可用性優先",
+    "Cost first": "コスト優先",
+    "Intelligent switching strategy": "インテリジェント切り替え戦略",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "正常なチャネルを優先し、一時的な障害から早く切り替えます。",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "設定された優先度と重みを使い、正常な候補の中で最も低コストのチャネルを優先します。",
+    "Balance availability and cost while preserving channel affinity when healthy.": "可用性とコストのバランスを取り、正常なチャネルでは親和性を維持します。"
   }
 }

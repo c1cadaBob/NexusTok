@@ -5723,6 +5723,13 @@
     "Minutes": "分钟",
     "Seconds": "秒",
     "Automatic upstream account sync was skipped": "上游账号自动同步已跳过",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "已扫描 {{scanned}} 个渠道；成功 {{succeeded}} 个，失败 {{failed}} 个，跳过 {{skipped}} 个；新增 {{created}} 个，更新 {{updated}} 个，停用 {{disabled}} 个。"
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "已扫描 {{scanned}} 个渠道；成功 {{succeeded}} 个，失败 {{failed}} 个，跳过 {{skipped}} 个；新增 {{created}} 个，更新 {{updated}} 个，停用 {{disabled}} 个。",
+    "Balanced": "平衡",
+    "Availability first": "可用性优先",
+    "Cost first": "成本优先",
+    "Intelligent switching strategy": "智能切换策略",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "优先使用健康渠道，更快避开临时故障。",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "在健康候选中，根据已配置的优先级和权重优先使用成本更低的渠道。",
+    "Balance availability and cost while preserving channel affinity when healthy.": "在可用性和成本之间取得平衡，并在渠道健康时保留渠道亲和。"
   }
 }

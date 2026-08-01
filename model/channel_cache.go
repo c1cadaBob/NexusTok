@@ -268,6 +268,135 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 	return nil, errors.New("channel not found")
 }
 
+// GetSatisfiedChannelCandidatesWithExclusions 获取现有选路规则下的候选渠道列表。
+//
+// 该函数只负责复用原有的分组、模型、优先级、状态、请求路径和请求级排除逻辑，
+// 不执行随机选择。服务层可以在这份候选列表上叠加临时健康状态，而不会改写
+// 数据库中的 priority/weight，也不会破坏账号池先换账号再换渠道的行为。
+func GetSatisfiedChannelCandidatesWithExclusions(group string, model string, retry int, requestPath string, excludedChannelIds []int) ([]*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return getChannelCandidatesWithExclusions(group, model, retry, requestPath, excludedChannelIds)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	excludedSet := intSliceToSet(excludedChannelIds)
+	channelIds := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
+	if len(channelIds) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		channelIds = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
+	}
+	if len(channelIds) == 0 {
+		return nil, nil
+	}
+
+	uniquePriorities := make(map[int]bool)
+	for _, channelId := range channelIds {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
+		}
+		uniquePriorities[int(channel.GetPriority())] = true
+	}
+	sortedUniquePriorities := make([]int, 0, len(uniquePriorities))
+	for priority := range uniquePriorities {
+		sortedUniquePriorities = append(sortedUniquePriorities, priority)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sortedUniquePriorities)))
+	targetPriority := int64(sortedUniquePriorities[selectPriorityIndexForRetry(sortedUniquePriorities, retry, len(excludedSet) > 0)])
+
+	targetChannels := make([]*Channel, 0, len(channelIds))
+	for _, channelId := range channelIds {
+		channel := channelsIDM[channelId]
+		if channel.GetPriority() == targetPriority {
+			targetChannels = append(targetChannels, channel)
+		}
+	}
+	if len(targetChannels) == 0 {
+		return nil, fmt.Errorf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority)
+	}
+	return targetChannels, nil
+}
+
+// GetAllSatisfiedChannelCandidatesWithExclusions 获取分组和模型下所有优先级的候选渠道。
+//
+// 该入口只给动态健康策略使用：普通选路仍由 retry 控制优先级层级。动态策略在
+// 当前层级全部处于临时冷却时，可以通过它寻找尚未降级的低优先级候选，实现
+// “先避开故障，再保持服务可用”的自动降级。
+func GetAllSatisfiedChannelCandidatesWithExclusions(group string, model string, requestPath string, excludedChannelIds []int) ([]*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return getAllChannelCandidatesWithExclusions(group, model, requestPath, excludedChannelIds)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	excludedSet := intSliceToSet(excludedChannelIds)
+	channelIDs := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
+	if len(channelIDs) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		channelIDs = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
+	}
+	if len(channelIDs) == 0 {
+		return nil, nil
+	}
+
+	channels := make([]*Channel, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		channels = append(channels, channel)
+	}
+	return channels, nil
+}
+
+// SelectChannelByWeight 按渠道权重随机选择一个候选。
+//
+// 这里集中保留与旧内存选路一致的平滑权重算法，供动态健康选路复用，
+// 确保新增策略不会改变同分候选的随机语义。
+func SelectChannelByWeight(channels []*Channel) *Channel {
+	if len(channels) == 0 {
+		return nil
+	}
+	if len(channels) == 1 {
+		return channels[0]
+	}
+
+	sumWeight := 0
+	for _, channel := range channels {
+		if channel != nil {
+			sumWeight += channel.GetWeight()
+		}
+	}
+	smoothingFactor := 1
+	smoothingAdjustment := 0
+	if sumWeight == 0 {
+		sumWeight = len(channels) * 100
+		smoothingAdjustment = 100
+	} else if sumWeight/len(channels) < 10 {
+		smoothingFactor = 100
+	}
+
+	totalWeight := sumWeight * smoothingFactor
+	if totalWeight <= 0 {
+		return channels[0]
+	}
+	randomWeight := rand.Intn(totalWeight)
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		if randomWeight < 0 {
+			return channel
+		}
+	}
+	return channels[len(channels)-1]
+}
+
 // selectPriorityIndexForRetry 计算本次重试应使用的优先级索引。
 //
 // 没有请求级排除集时保持旧行为：retry=0 选最高优先级，retry=1 选下一档。

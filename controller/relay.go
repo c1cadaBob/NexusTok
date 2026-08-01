@@ -344,6 +344,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		// 处理渠道错误（禁用渠道、记录日志等）
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		service.RecordChannelRoutingFailureIfEligible(c, channel, relayInfo.OriginModelName, newAPIError)
 
 		markChannelExcludedForRetry(c, channel.Id)
 
@@ -464,6 +465,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 		if newAPIError != nil {
 			if shouldExcludeSetupFailedChannel(c, newAPIError) {
+				service.RecordChannelRoutingSetupFailure(c, channel, info.OriginModelName, newAPIError)
 				service.AddExcludedChannelId(c, channel.Id)
 				continue
 			}
@@ -818,6 +820,7 @@ func RelayTask(c *gin.Context) {
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 			markChannelExcludedForRetry(c, channel.Id)
+			service.RecordChannelRoutingFailureIfEligible(c, channel, relayInfo.OriginModelName, types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
 		service.ReleaseSelectedChannelAccount(c)
 		service.ReleaseSelectedPoolAccount(c)

@@ -146,6 +146,7 @@ func setupSelectedChannelWithFallback(
 		if !shouldRetryInitialChannelSetup(c, setupErr) {
 			return channel, setupErr
 		}
+		service.RecordChannelRoutingSetupFailure(c, channel, modelRequest.Model, setupErr)
 		service.AddExcludedChannelId(c, channel.Id)
 		nextChannel, nextErr := selectRelayChannelForSetupRetry(c, modelRequest)
 		if nextErr != nil {
@@ -278,7 +279,10 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 		shouldAbortAffinityDisabled := false
 		preferred, err := model.CacheGetChannel(preferredChannelID)
 		if err == nil && preferred != nil {
-			if preferred.Status != common.ChannelStatusEnabled {
+			if !service.IsChannelRoutingHealthy(usingGroup, modelRequest.Model, preferred.Id) {
+				// 亲和渠道处于动态冷却期时，允许健康候选接管本次请求，
+				// 避免“亲和”把已知故障渠道硬锁回来。
+			} else if preferred.Status != common.ChannelStatusEnabled {
 				// 亲和性渠道已禁用
 				shouldAbortAffinityDisabled = service.ShouldSkipRetryAfterChannelAffinityFailure(c)
 			} else if !channelSupportsRequestPath(preferred, c.Request.URL.Path) {
@@ -290,7 +294,7 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 				autoGroups := service.GetUserAutoGroup(userGroup)
 				for _, g := range autoGroups {
-					if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+					if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) && service.IsChannelRoutingHealthy(g, modelRequest.Model, preferred.Id) {
 						selectGroup = g
 						common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
 						channel = preferred
@@ -364,6 +368,7 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string) bool
 func RecordRelayChannelAffinityIfSucceeded(c *gin.Context, channel *model.Channel) {
 	if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 		service.RecordChannelAffinity(c, channel.Id)
+		service.RecordChannelRoutingSuccessFromContext(c, channel)
 	}
 }
 

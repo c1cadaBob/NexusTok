@@ -5723,6 +5723,13 @@
     "Minutes": "Минуты",
     "Seconds": "Секунды",
     "Automatic upstream account sync was skipped": "Автоматическая синхронизация вышестоящих аккаунтов пропущена",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Проверено каналов: {{scanned}}; успешно: {{succeeded}}, ошибок: {{failed}}, пропущено: {{skipped}}; создано: {{created}}, обновлено: {{updated}}, отключено: {{disabled}}."
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "Проверено каналов: {{scanned}}; успешно: {{succeeded}}, ошибок: {{failed}}, пропущено: {{skipped}}; создано: {{created}}, обновлено: {{updated}}, отключено: {{disabled}}.",
+    "Balanced": "Сбалансированный",
+    "Availability first": "Приоритет доступности",
+    "Cost first": "Приоритет стоимости",
+    "Intelligent switching strategy": "Стратегия интеллектуального переключения",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "Предпочитает здоровые каналы и быстрее переключается при временных сбоях.",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "Предпочитает самый экономичный здоровый канал на основе заданных приоритета и веса.",
+    "Balance availability and cost while preserving channel affinity when healthy.": "Балансирует доступность и стоимость, сохраняя привязку к здоровому каналу."
   }
 }

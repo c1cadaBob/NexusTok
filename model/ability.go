@@ -25,6 +25,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/setting/ratio_setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -233,6 +234,111 @@ func GetChannelWithExclusions(group string, model string, retry int, requestPath
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+// getChannelCandidatesWithExclusions 获取数据库兜底路径下的候选渠道。
+//
+// 数据库路径继续使用原有 ability 查询来决定优先级层级，再把能力记录转换为
+// 渠道对象返回给服务层评分。查询过程中不写入任何动态健康状态。
+func getChannelCandidatesWithExclusions(group string, model string, retry int, requestPath string, excludedChannelIds []int) ([]*Channel, error) {
+	channelQuery, err := getChannelQueryWithExclusions(group, model, retry, requestPathNormalizedExclusions(excludedChannelIds))
+	if err != nil {
+		return nil, err
+	}
+
+	var abilities []Ability
+	if err := channelQuery.Order("abilities.weight DESC").Find(&abilities).Error; err != nil {
+		return nil, err
+	}
+	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := seen[ability.ChannelId]; ok {
+			continue
+		}
+		seen[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*Channel, len(channels))
+	for _, channel := range channels {
+		channelByID[channel.Id] = channel
+	}
+	ordered := make([]*Channel, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channel, ok := channelByID[channelID]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		ordered = append(ordered, channel)
+	}
+	return ordered, nil
+}
+
+// getAllChannelCandidatesWithExclusions 获取数据库兜底路径下所有优先级的候选渠道。
+func getAllChannelCandidatesWithExclusions(group, model, requestPath string, excludedChannelIds []int) ([]*Channel, error) {
+	buildQuery := func(modelName string) *gorm.DB {
+		query := abilityEnabledChannelQuery().Where(
+			"abilities."+commonGroupCol+" = ? and abilities.model = ? and abilities.enabled = ?",
+			group, modelName, true,
+		)
+		return applyExcludedChannelCondition(query, requestPathNormalizedExclusions(excludedChannelIds))
+	}
+
+	var abilities []Ability
+	query := buildQuery(model)
+	if err := query.Order("abilities.priority DESC").Order("abilities.weight DESC").Find(&abilities).Error; err != nil {
+		return nil, err
+	}
+	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+	if len(abilities) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		if normalizedModel != model {
+			if err := buildQuery(normalizedModel).Order("abilities.priority DESC").Order("abilities.weight DESC").Find(&abilities).Error; err != nil {
+				return nil, err
+			}
+			abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+		}
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{})
+	for _, ability := range abilities {
+		if _, ok := seen[ability.ChannelId]; ok {
+			continue
+		}
+		seen[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*Channel, len(channels))
+	for _, channel := range channels {
+		channelByID[channel.Id] = channel
+	}
+	ordered := make([]*Channel, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channel, ok := channelByID[channelID]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		ordered = append(ordered, channel)
+	}
+	return ordered, nil
 }
 
 // requestPathNormalizedExclusions 返回去重后的渠道排除列表。

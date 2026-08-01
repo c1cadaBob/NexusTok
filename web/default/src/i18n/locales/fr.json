@@ -5723,6 +5723,13 @@
     "Minutes": "Minutes",
     "Seconds": "Secondes",
     "Automatic upstream account sync was skipped": "La synchronisation automatique des comptes amont a été ignorée",
-    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} canal(aux) analysé(s) ; {{succeeded}} réussie(s), {{failed}} échec(s), {{skipped}} ignorée(s) ; {{created}} créée(s), {{updated}} mise(s) à jour, {{disabled}} désactivée(s)."
+    "Scanned {{scanned}} channels ({{eligible}} eligible); {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped; {{created}} created, {{updated}} updated, {{disabled}} disabled.": "{{scanned}} canal(aux) analysé(s) ; {{succeeded}} réussie(s), {{failed}} échec(s), {{skipped}} ignorée(s) ; {{created}} créée(s), {{updated}} mise(s) à jour, {{disabled}} désactivée(s).",
+    "Balanced": "Équilibré",
+    "Availability first": "Disponibilité prioritaire",
+    "Cost first": "Coût prioritaire",
+    "Intelligent switching strategy": "Stratégie de basculement intelligente",
+    "Prefer healthy channels and switch away from temporary failures sooner.": "Privilégie les canaux sains et évite plus rapidement les pannes temporaires.",
+    "Prefer the most cost-efficient healthy channel using its configured priority and weight.": "Privilégie le canal sain le plus économique selon sa priorité et son poids configurés.",
+    "Balance availability and cost while preserving channel affinity when healthy.": "Équilibre disponibilité et coût tout en conservant l’affinité lorsque le canal est sain."
   }
 }
