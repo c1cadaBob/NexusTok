@@ -10,6 +10,11 @@
 #   3. 在 depends_on 中取消 mysql 注释
 #   4. 在 volumes 中取消 mysql_data 注释
 #
+# 高并发日志拆分：
+#   1. 取消 LOG_SQL_DSN=clickhouse://... 行的注释
+#   2. 在 depends_on 中取消 clickhouse 注释
+#   3. 取消 clickhouse 服务和 clickhouse_data 卷的注释
+#
 # ⚠️  重要：生产环境部署前必须修改所有默认密码和会话密钥！
 
 version: '3.4' # For compatibility with older Docker versions
@@ -28,7 +33,13 @@ services:
     environment:
       - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok # ⚠️ IMPORTANT: Change the password in production!
 #      - SQL_DSN=root:123456@tcp(mysql:3306)/nexustok  # Point to the mysql service, uncomment if using MySQL
+#      - LOG_SQL_DSN=clickhouse://default:123456@clickhouse:9000/nexustok_logs # OPTIONAL: high-concurrency consume logs only
+#      - LOG_SQL_CLICKHOUSE_TTL_DAYS=30 # OPTIONAL: ClickHouse log retention days; 0 disables TTL
       - REDIS_CONN_STRING=redis://:123456@redis:6379 # ⚠️ IMPORTANT: Change the password in production!
+      - REDIS_POOL_SIZE=256 # 多节点/高并发建议从 128/256 起步压测
+      - SQL_MAX_IDLE_CONNS=100
+      - SQL_MAX_OPEN_CONNS=1000
+      - SQL_MAX_LIFETIME=60
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
@@ -36,6 +47,12 @@ services:
       - SESSION_SECRET_FILE=/data/session_secret
       - SESSION_MAX_AGE=7776000 # 默认 90 天；多节点部署仍建议显式设置 SESSION_SECRET
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
+#      - RELAY_MAX_IDLE_CONNS=1000
+#      - RELAY_MAX_IDLE_CONNS_PER_HOST=200
+#      - RELAY_MAX_CONNS_PER_HOST=0 # 0 表示不限制；需要保护代理或上游连接数时设置为明确上限
+#      - RELAY_RESPONSE_HEADER_TIMEOUT=300 # 等待上游响应头超时；流式请求已经开始后不受此项限制
+#      - RELAY_PROXY_CLIENT_CACHE_TTL=900
+#      - RELAY_PROXY_CLIENT_CACHE_MAX_SIZE=4096
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
 #      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
@@ -46,6 +63,7 @@ services:
       - redis
       - postgres
 #      - mysql  # Uncomment if using MySQL
+#      - clickhouse  # Uncomment if using ClickHouse for LOG_SQL_DSN
     networks:
       - nexustok-network
     healthcheck:
@@ -91,9 +109,27 @@ services:
 #    ports:
 #      - "3306:3306"  # Uncomment if you need to access MySQL from outside Docker
 
+#  clickhouse:
+#    image: clickhouse/clickhouse-server:24.8
+#    container_name: clickhouse
+#    restart: always
+#    environment:
+#      CLICKHOUSE_DB: nexustok_logs
+#      CLICKHOUSE_USER: default
+#      CLICKHOUSE_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+#      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+#    volumes:
+#      - clickhouse_data:/var/lib/clickhouse
+#    networks:
+#      - nexustok-network
+#    ports:
+#      - "8123:8123"  # HTTP interface, uncomment if you need external access
+#      - "9000:9000"  # Native interface used by LOG_SQL_DSN above
+
 volumes:
   pg_data:
 #  mysql_data:
+#  clickhouse_data:
 
 networks:
   nexustok-network:

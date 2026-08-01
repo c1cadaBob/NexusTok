@@ -64,25 +64,33 @@ func TestChooseDBRejectsClickHouseForMainDatabase(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support ClickHouse")
 }
 
-func TestChooseDBRejectsClickHouseLogDatabaseWithoutDriver(t *testing.T) {
+func TestChooseDBUsesClickHouseDriverForLogDatabase(t *testing.T) {
 	original, had := os.LookupEnv("LOG_SQL_DSN")
+	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
 		if had {
 			require.NoError(t, os.Setenv("LOG_SQL_DSN", original))
-			return
+		} else {
+			require.NoError(t, os.Unsetenv("LOG_SQL_DSN"))
 		}
-		require.NoError(t, os.Unsetenv("LOG_SQL_DSN"))
+		common.SetLogDatabaseType(originalLogDatabaseType)
 	})
 
-	require.NoError(t, os.Setenv("LOG_SQL_DSN", "https://localhost:8443/logs"))
+	require.NoError(t, os.Setenv("LOG_SQL_DSN", "https://127.0.0.1:1/logs"))
 
 	db, err := chooseDB("LOG_SQL_DSN", true)
 
-	require.Error(t, err)
-	assert.Nil(t, db)
-	assert.Contains(t, err.Error(), "ClickHouse log driver")
-	assert.Contains(t, err.Error(), "not enabled")
-	assert.Contains(t, err.Error(), "secure=true")
+	assert.Equal(t, common.DatabaseTypeClickHouse, common.LogDatabaseType())
+	if err != nil {
+		assert.NotContains(t, err.Error(), "not enabled")
+		assert.NotContains(t, err.Error(), "ClickHouse log driver")
+		return
+	}
+
+	require.NotNil(t, db)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
 }
 
 func TestClickHouseLogTTLDays(t *testing.T) {

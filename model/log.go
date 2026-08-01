@@ -158,8 +158,8 @@ func clickHouseLogOrder(prefix string) string {
 
 // assignDisplayLogIds 为分页结果生成前端展示序号。
 //
-// 该序号只用于页面展示，不代表数据库主键；ClickHouse 准备层同样依赖这个函数隐藏
-// 不同日志库底层主键策略差异。
+// 该序号只用于页面展示，不代表数据库主键；ClickHouse 独立日志库同样依赖这个函数隐藏
+// 不同日志库底层主键策略差异，让前端分页不暴露底层排序实现。
 func assignDisplayLogIds(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].Id = startIdx + i + 1
@@ -198,7 +198,11 @@ func formatUserLogs(logs []*Log, startIdx int) {
 //   - logs: 日志列表
 //   - err: 查询失败时返回错误
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+	order := "id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("")
+	}
+	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -873,6 +877,26 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// ClickHouse 的 DELETE 是表 mutation，会重写数据分区；如果像传统数据库一样
+		// 按 id 小批量删除，会产生大量 mutation 并拖慢后台合并。这里先统计数量，再用
+		// 一次同步 mutation 删除全部过期日志，让 SystemTask 的进度循环可以一次完成。
+		total, err := CountOldLog(ctx, targetTimestamp)
+		if err != nil {
+			return 0, err
+		}
+		if total == 0 {
+			return 0, nil
+		}
+		if err := LOG_DB.WithContext(ctx).Exec(
+			"ALTER TABLE logs DELETE WHERE created_at < ? SETTINGS mutations_sync = 1",
+			targetTimestamp,
+		).Error; err != nil {
+			return 0, err
+		}
+		return total, nil
+	}
+
 	var ids []int
 	if err := LOG_DB.WithContext(ctx).
 		Model(&Log{}).

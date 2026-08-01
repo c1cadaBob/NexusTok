@@ -88,6 +88,116 @@ docker compose down -v
 | PostgreSQL 密码 | `postgres.environment` | 默认 `123456` 只能用于本地测试 |
 | Redis 密码 | `redis.command` | 默认 `123456` 只能用于本地测试 |
 
+## 多节点高并发部署基线
+
+高并发生产环境建议采用 **PostgreSQL 主库 + Redis 热路径 + 独立日志库/ClickHouse + Caddy/Nginx 反向代理** 的渐进方案。SQLite 仍适合快速体验和低流量单机部署，但不建议作为多节点生产主库。
+
+推荐基础环境变量：
+
+```yaml
+environment:
+  - SQL_DSN=postgresql://user:password@postgres:5432/nexustok?sslmode=disable
+  - REDIS_CONN_STRING=redis://:password@redis:6379/0
+  - REDIS_POOL_SIZE=256
+  - SQL_MAX_IDLE_CONNS=100
+  - SQL_MAX_OPEN_CONNS=1000
+  - SQL_MAX_LIFETIME=60
+  - SESSION_SECRET=请替换为固定随机字符串
+  - CRYPTO_SECRET=请替换为固定随机字符串
+  - RELAY_MAX_IDLE_CONNS=1000
+  - RELAY_MAX_IDLE_CONNS_PER_HOST=200
+  - RELAY_MAX_CONNS_PER_HOST=0
+  - RELAY_RESPONSE_HEADER_TIMEOUT=300
+  - RELAY_PROXY_CLIENT_CACHE_TTL=900
+  - RELAY_PROXY_CLIENT_CACHE_MAX_SIZE=4096
+```
+
+关键约束：
+
+- 主业务库只支持 SQLite、MySQL 和 PostgreSQL；多节点高并发优先使用 PostgreSQL。
+- Redis 在多节点部署中建议作为必选组件，用于分布式限流、缓存、账号池并发状态和轮询游标等热路径。
+- 每个实例的 `SESSION_SECRET`、`CRYPTO_SECRET` 必须保持一致；`NODE_NAME` 建议显式设置为唯一名称，便于系统实例心跳和排障。
+- `SystemTask` 继续使用主数据库表和租约锁，不需要额外引入 Kafka/RabbitMQ；系统更新、日志清理、账号检测等低频/中频任务仍由现有 runner 承载。
+
+### ClickHouse 消费日志库
+
+如果消费日志写入或统计查询已经影响主库，可以把通用 `logs` 表拆到 ClickHouse：
+
+```yaml
+environment:
+  - LOG_SQL_DSN=clickhouse://default:password@clickhouse:9000/nexustok_logs
+  - LOG_SQL_CLICKHOUSE_TTL_DAYS=30
+```
+
+ClickHouse 在 NexusTok 中只作为独立消费日志库使用：
+
+- 只承载高频通用 `logs` 表，账号池使用日志、账号池状态日志等管理审计辅助表会保留在主业务库。
+- `LOG_SQL_CLICKHOUSE_TTL_DAYS=30` 会给 `logs` 表同步 TTL；设置为 `0` 表示不启用自动清理。
+- 主库 `SQL_DSN` 不能配置为 ClickHouse；如果需要强一致事务、权限、订阅、余额、账号池和 SystemTask，仍必须使用 PostgreSQL/MySQL/SQLite。
+
+`docker-compose.yml` 已内置注释版 ClickHouse 服务。启用步骤：
+
+1. 取消 `LOG_SQL_DSN=clickhouse://...` 和 `LOG_SQL_CLICKHOUSE_TTL_DAYS` 的注释。
+2. 在 `depends_on` 中取消 `clickhouse` 的注释。
+3. 取消 `clickhouse` 服务和 `clickhouse_data` 卷的注释。
+4. 修改默认密码后执行 `docker compose up -d`。
+
+### Relay 连接池参数
+
+Relay 到上游模型服务的连接复用会直接影响 P95/P99 延迟。建议先使用默认值压测，再按上游数量和代理数量调整：
+
+| 环境变量 | 默认值 | 建议 |
+|----------|--------|------|
+| `RELAY_MAX_IDLE_CONNS` | `500` | 高并发可提升到 `1000` 或更高 |
+| `RELAY_MAX_IDLE_CONNS_PER_HOST` | `100` | 单个上游或代理并发高时可提升到 `200` |
+| `RELAY_MAX_CONNS_PER_HOST` | `0` | 默认不限制；需要保护代理或上游时设置明确上限 |
+| `RELAY_RESPONSE_HEADER_TIMEOUT` | `0` | 可设置 `300`，防止上游长时间不返回响应头 |
+| `RELAY_PROXY_CLIENT_CACHE_TTL` | `900` | 多代理场景下回收长时间不用的 proxy client |
+| `RELAY_PROXY_CLIENT_CACHE_MAX_SIZE` | `4096` | 代理 URL 很多时限制缓存规模 |
+
+### 反向代理配置
+
+Caddy 示例：
+
+```caddyfile
+example.com {
+  encode zstd gzip
+
+  reverse_proxy 127.0.0.1:3000 {
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+
+    transport http {
+      keepalive 120s
+      keepalive_idle_conns 256
+      compression off
+    }
+  }
+}
+```
+
+Nginx 关键项：
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_buffering off;
+  proxy_request_buffering off;
+  proxy_read_timeout 600s;
+  proxy_send_timeout 600s;
+  client_max_body_size 32m;
+}
+```
+
+流式响应/SSE 场景下最重要的是关闭响应缓冲、保留长超时和上游 keepalive。反向代理品牌不是关键，关键是这些参数要和实际流式请求、上游延迟和文件上传大小匹配。
+
 ## 单容器部署
 
 如果不需要 Compose 编排，可以直接运行官方镜像。

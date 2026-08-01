@@ -97,6 +97,7 @@ curl -sS http://127.0.0.1:3000/api/status
 |------|------|
 | **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
 | **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **高并发推荐** | PostgreSQL 主库 + Redis，消费日志可拆分到独立日志库或 ClickHouse |
 | **容器引擎** | Docker / Docker Compose |
 
 ### ⚙️ 环境变量配置
@@ -109,7 +110,16 @@ curl -sS http://127.0.0.1:3000/api/status
 | `SESSION_SECRET` / `SESSION_SECRET_FILE` | 会话密钥或持久化密钥文件（多机部署必须固定） | - |
 | `CRYPTO_SECRET` | 加密密钥（Redis 必须） | - |
 | `SQL_DSN` | 数据库连接字符串 | - |
+| `LOG_SQL_DSN` | 独立日志库连接字符串；支持 MySQL/PostgreSQL，消费日志可使用 ClickHouse | - |
+| `LOG_SQL_CLICKHOUSE_TTL_DAYS` | ClickHouse 消费日志保留天数，`0` 表示不启用 TTL | `0` |
 | `REDIS_CONN_STRING` | Redis 连接字符串 | - |
+| `REDIS_POOL_SIZE` | Redis 连接池大小；多节点/高并发建议从 `128` 或 `256` 起步压测 | `10` |
+| `RELAY_MAX_IDLE_CONNS` | Relay HTTP 客户端最大空闲连接数 | `500` |
+| `RELAY_MAX_IDLE_CONNS_PER_HOST` | Relay HTTP 客户端每个上游主机最大空闲连接数 | `100` |
+| `RELAY_MAX_CONNS_PER_HOST` | Relay HTTP 客户端每个上游主机最大总连接数，`0` 表示不限制 | `0` |
+| `RELAY_RESPONSE_HEADER_TIMEOUT` | Relay 等待上游响应头超时时间（秒），流式响应开始后不受该项限制 | `0` |
+| `RELAY_PROXY_CLIENT_CACHE_TTL` | 按代理 URL 缓存 HTTP client 的空闲回收时间（秒） | `900` |
+| `RELAY_PROXY_CLIENT_CACHE_MAX_SIZE` | 按代理 URL 缓存 HTTP client 的最大数量，`0` 表示不限制 | `4096` |
 | `STREAMING_TIMEOUT` | 流式超时时间（秒） | `300` |
 | `STREAM_SCANNER_MAX_BUFFER_MB` | 流式扫描器单行最大缓冲（MB），图像生成等超大 `data:` 片段（如 4K 图片 base64）需适当调大 | `64` |
 | `MAX_REQUEST_BODY_MB` | 请求体最大大小（MB，**解压后**计；防止超大请求/zip bomb 导致内存暴涨），超过将返回 `413` | `32` |

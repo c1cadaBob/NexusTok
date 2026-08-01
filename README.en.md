@@ -93,6 +93,7 @@ docker run --name nexustok -d --restart always \
 | Local database | SQLite with a persisted `/data` volume |
 | Remote database | MySQL >= 5.7.8 or PostgreSQL >= 9.6 |
 | Cache | Redis recommended; memory cache is available for small deployments |
+| High-concurrency baseline | PostgreSQL primary database + Redis; consume logs can be split to an independent log database or ClickHouse |
 | Runtime | Docker / Docker Compose or a Go binary deployment |
 
 Common environment variables:
@@ -102,7 +103,16 @@ Common environment variables:
 | `SESSION_SECRET` | Required for multi-instance deployments so sessions remain valid across nodes. |
 | `CRYPTO_SECRET` | Required when Redis or encrypted shared data is enabled. |
 | `SQL_DSN` | MySQL or PostgreSQL connection string. Leave empty for SQLite. |
+| `LOG_SQL_DSN` | Independent log database connection string; supports MySQL/PostgreSQL, and consume logs can use ClickHouse. |
+| `LOG_SQL_CLICKHOUSE_TTL_DAYS` | ClickHouse consume-log retention days; `0` disables TTL. |
 | `REDIS_CONN_STRING` | Redis connection string. |
+| `REDIS_POOL_SIZE` | Redis connection pool size; start with `128` or `256` for multi-node/high-concurrency tests. |
+| `RELAY_MAX_IDLE_CONNS` | Maximum idle connections for Relay HTTP clients. |
+| `RELAY_MAX_IDLE_CONNS_PER_HOST` | Maximum idle connections per upstream host. |
+| `RELAY_MAX_CONNS_PER_HOST` | Maximum total connections per upstream host; `0` means unlimited. |
+| `RELAY_RESPONSE_HEADER_TIMEOUT` | Timeout while waiting for upstream response headers, in seconds. Streaming after headers are received is not affected. |
+| `RELAY_PROXY_CLIENT_CACHE_TTL` | Idle eviction TTL for HTTP clients cached by proxy URL, in seconds. |
+| `RELAY_PROXY_CLIENT_CACHE_MAX_SIZE` | Maximum number of HTTP clients cached by proxy URL; `0` means unlimited. |
 | `MAX_REQUEST_BODY_MB` | Decompressed request body size limit. |
 | `STREAMING_TIMEOUT` | Streaming timeout in seconds. |
 | `STREAM_SCANNER_MAX_BUFFER_MB` | Maximum scanner buffer for large streaming chunks. |

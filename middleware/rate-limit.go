@@ -1,7 +1,7 @@
 // Package middleware - rate-limit.go
 // 该文件实现了请求频率限制（Rate Limiting）中间件
 //
-// 限流算法：滑动窗口（基于 Redis List 或内存计数器）
+// 限流算法：Redis 固定窗口 Lua 计数器或内存计数器
 // 支持两种存储后端：
 // 1. Redis: 适用于分布式部署，多个实例共享限流状态
 // 2. 内存: 适用于单机部署，性能更好
@@ -15,8 +15,7 @@
 // - SearchRateLimit: 搜索请求限流（基于用户 ID）
 //
 // Redis 限流实现：
-// 使用 Redis List 存储请求时间戳，通过 LLEN 检查请求数量，
-// 通过 LINDEX 获取最早的时间戳判断是否在时间窗口内
+// 使用 Lua 脚本在单次 Redis 调用中完成计数、过期和限流判断，减少高并发下的网络往返。
 package middleware
 
 import (
@@ -28,11 +27,28 @@ import (
 
 	"github.com/c1cada/NexusTok/common" // 公共工具包
 	"github.com/gin-gonic/gin"          // Gin 框架
+	"github.com/go-redis/redis/v8"      // Redis 脚本执行
 )
 
-// timeFormat 时间格式化模板
-// 用于将时间戳存储为字符串格式（ISO 8601）
-var timeFormat = "2006-01-02T15:04:05.000Z"
+// timeFormat 是 Redis List 型限流仍在复用的时间格式。
+// 全局入口限流已切换为 Lua 固定窗口，模型成功请求限流仍使用该格式保存滑动窗口时间戳。
+const timeFormat = "2006-01-02T15:04:05.000Z"
+
+// redisFixedWindowRateLimitScript 使用单条 Lua 脚本完成 INCR + EXPIRE + 判断。
+//
+// 旧实现每次 Redis 限流需要 LLEN/LPUSH/EXPIRE/LINDEX/LTRIM 等多次往返；在多节点高并发
+// 部署中，限流本身会放大 Redis RTT。固定窗口脚本牺牲一点窗口边界平滑度，换取原子性和
+// 单次 Redis 调用，更适合全局入口限流这种“保护服务容量”的场景。
+var redisFixedWindowRateLimitScript = redis.NewScript(`
+local current = redis.call("INCR", KEYS[1])
+if current == 1 then
+  redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+if current > tonumber(ARGV[1]) then
+  return 0
+end
+return 1
+`)
 
 // inMemoryRateLimiter 内存限流器实例
 // 用于单机部署时的请求限流
@@ -72,15 +88,13 @@ var staticAssetWebRateLimitExemptExts = []string{
 	".txt",
 }
 
-// redisRateLimiter Redis 限流实现
-// 使用 Redis List 实现滑动窗口限流
+// redisRateLimiter Redis 限流实现。
+// 使用 Redis Lua 固定窗口计数器，在一次 Redis 调用中完成计数和判断。
 //
 // 算法：
-// 1. 获取 List 长度（当前窗口内的请求数）
-// 2. 如果未达到限制，直接记录请求
-// 3. 如果已达到限制，检查最早请求的时间戳
-// 4. 如果最早请求在时间窗口外，允许请求并更新 List
-// 5. 如果最早请求在时间窗口内，拒绝请求
+// 1. 根据当前时间和 duration 生成窗口 key；
+// 2. Lua 脚本执行 INCR，首次写入时设置过期时间；
+// 3. 当前窗口计数超过 maxRequestNum 时拒绝请求。
 //
 // 参数：
 //   - c: Gin 上下文
@@ -88,50 +102,63 @@ var staticAssetWebRateLimitExemptExts = []string{
 //   - duration: 时间窗口大小（秒）
 //   - mark: 限流标识符（用于区分不同类型的限流）
 func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
-	ctx := context.Background()
-	rdb := common.RDB
-	key := "rateLimit:" + mark + c.ClientIP()
-	listLength, err := rdb.LLen(ctx, key).Result()
+	key := buildRedisRateLimitKey("rateLimit:"+mark+c.ClientIP(), duration, time.Now())
+	allowed, err := redisFixedWindowAllow(context.Background(), key, maxRequestNum, duration)
 	if err != nil {
 		fmt.Println(err.Error())
 		c.Status(http.StatusInternalServerError)
 		c.Abort()
 		return
 	}
-	if listLength < int64(maxRequestNum) {
-		rdb.LPush(ctx, key, time.Now().Format(timeFormat))
-		rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-	} else {
-		oldTimeStr, _ := rdb.LIndex(ctx, key, -1).Result()
-		oldTime, err := time.Parse(timeFormat, oldTimeStr)
-		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
-			return
-		}
-		nowTimeStr := time.Now().Format(timeFormat)
-		nowTime, err := time.Parse(timeFormat, nowTimeStr)
-		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
-			return
-		}
-		// 这里不能直接使用 time.Since。某些 Windows 环境下单调时钟信息丢失或不一致时，
-		// time.Since 可能返回负数，进而误判滑动窗口是否过期；显式解析格式化后的时间可以
-		// 保持 Redis 存储值与当前时间的比较口径一致。
-		if int64(nowTime.Sub(oldTime).Seconds()) < duration {
-			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
-			return
-		} else {
-			rdb.LPush(ctx, key, time.Now().Format(timeFormat))
-			rdb.LTrim(ctx, key, 0, int64(maxRequestNum-1))
-			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-		}
+	if !allowed {
+		c.Status(http.StatusTooManyRequests)
+		c.Abort()
+		return
 	}
+}
+
+// buildRedisRateLimitKey 按固定窗口生成 Redis key。
+//
+// duration 小于等于 0 时使用 1 秒窗口兜底，避免错误环境变量导致除零。窗口序号进入 key，
+// 因此每个窗口只保留一个计数器，过期后由 Redis 自动清理。
+func buildRedisRateLimitKey(baseKey string, duration int64, now time.Time) string {
+	if duration <= 0 {
+		duration = 1
+	}
+	return fmt.Sprintf("%s:%d", baseKey, now.Unix()/duration)
+}
+
+// redisRateLimitExpireSeconds 计算固定窗口 key 的过期时间。
+//
+// 过期时间略长于窗口本身，确保窗口边界附近的请求仍能看到当前计数；同时不沿用旧 List
+// 实现的长过期时间，避免每个时间窗口生成的 key 在 Redis 中滞留过久。
+func redisRateLimitExpireSeconds(duration int64) int64 {
+	if duration <= 0 {
+		duration = 1
+	}
+	expireSeconds := duration + 60
+	if expireSeconds < 60 {
+		return 60
+	}
+	return expireSeconds
+}
+
+// redisFixedWindowAllow 执行 Redis 固定窗口限流判断。
+func redisFixedWindowAllow(ctx context.Context, key string, maxRequestNum int, duration int64) (bool, error) {
+	if maxRequestNum <= 0 {
+		return false, nil
+	}
+	result, err := redisFixedWindowRateLimitScript.Run(
+		ctx,
+		common.RDB,
+		[]string{key},
+		maxRequestNum,
+		redisRateLimitExpireSeconds(duration),
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
 }
 
 // memoryRateLimiter 内存限流实现
@@ -311,48 +338,21 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 
 // userRedisRateLimiter 是 Redis 版本的用户级限流实现。
 //
-// 它与 redisRateLimiter 使用同样的滑动窗口算法，但接收调用方预先构造好的 key，
+// 它与 redisRateLimiter 使用同样的固定窗口 Lua 计数器，但接收调用方预先构造好的 key，
 // 这样可以把 key 绑定到 user:{id} 而不是 ClientIP，满足按用户维度限流的需求。
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
-	ctx := context.Background()
-	rdb := common.RDB
-	listLength, err := rdb.LLen(ctx, key).Result()
+	windowKey := buildRedisRateLimitKey(key, duration, time.Now())
+	allowed, err := redisFixedWindowAllow(context.Background(), windowKey, maxRequestNum, duration)
 	if err != nil {
 		fmt.Println(err.Error())
 		c.Status(http.StatusInternalServerError)
 		c.Abort()
 		return
 	}
-	if listLength < int64(maxRequestNum) {
-		rdb.LPush(ctx, key, time.Now().Format(timeFormat))
-		rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-	} else {
-		oldTimeStr, _ := rdb.LIndex(ctx, key, -1).Result()
-		oldTime, err := time.Parse(timeFormat, oldTimeStr)
-		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
-			return
-		}
-		nowTimeStr := time.Now().Format(timeFormat)
-		nowTime, err := time.Parse(timeFormat, nowTimeStr)
-		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
-			return
-		}
-		if int64(nowTime.Sub(oldTime).Seconds()) < duration {
-			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
-			return
-		} else {
-			rdb.LPush(ctx, key, time.Now().Format(timeFormat))
-			rdb.LTrim(ctx, key, 0, int64(maxRequestNum-1))
-			rdb.Expire(ctx, key, common.RateLimitKeyExpirationDuration)
-		}
+	if !allowed {
+		c.Status(http.StatusTooManyRequests)
+		c.Abort()
+		return
 	}
 }
 

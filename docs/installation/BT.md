@@ -116,6 +116,21 @@ curl -sS http://127.0.0.1:3000/api/status
 | `SQL_DSN`           | 数据库连接字符串（使用外部数据库时） | 可选     |
 | `REDIS_CONN_STRING` | Redis 连接字符串        | 可选     |
 
+### 高并发部署建议
+
+宝塔单容器 SQLite 适合快速安装、测试和低流量站点。多节点或高并发生产环境建议改用 Docker Compose，并至少启用 PostgreSQL 和 Redis：
+
+```yaml
+environment:
+  - SQL_DSN=postgresql://user:password@postgres:5432/nexustok?sslmode=disable
+  - REDIS_CONN_STRING=redis://:password@redis:6379/0
+  - REDIS_POOL_SIZE=256
+  - SESSION_SECRET=请替换为固定随机字符串
+  - CRYPTO_SECRET=请替换为固定随机字符串
+```
+
+如果消费日志量很大，可在 Compose 中额外启用 ClickHouse，并设置 `LOG_SQL_DSN=clickhouse://...` 与 `LOG_SQL_CLICKHOUSE_TTL_DAYS=30`。ClickHouse 只用于通用消费 `logs` 表，主业务库仍必须使用 PostgreSQL、MySQL 或 SQLite。经过宝塔反向代理、Nginx 或 Caddy 时，请关闭响应缓冲并把 `proxy_read_timeout` 调大，避免流式响应被代理中断。
+
 ### 生成随机密钥（可选）
 
 默认示例使用 `SESSION_SECRET_FILE=/data/session_secret`，服务会在首次启动时自动生成并保存密钥。只有改用 `SESSION_SECRET` 环境变量时，才需要手动生成固定随机字符串：

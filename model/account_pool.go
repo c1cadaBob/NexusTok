@@ -2008,17 +2008,36 @@ func RecordPoolAccountRequest(accountID int, success bool, recentRequests string
 	}
 }
 
+// accountPoolLogDB 返回账号池辅助日志使用的数据库。
+//
+// 通用消费日志可以进入 ClickHouse 独立日志库，以承载高并发写入和统计查询；账号池使用日志
+// 与状态日志则服务于管理页审计、健康概览和账号状态排障，字段和事务语义都更接近主业务库。
+// 因此当 LOG_SQL_DSN 指向 ClickHouse 时，这两类辅助日志明确回落到主库，避免在 ClickHouse
+// 中维护额外事务型管理表，也避免日志库只创建 logs 表时出现运行时缺表错误。
+func accountPoolLogDB() (*gorm.DB, error) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		if DB == nil {
+			return nil, gorm.ErrInvalidDB
+		}
+		return DB, nil
+	}
+	if LOG_DB != nil {
+		return LOG_DB, nil
+	}
+	if DB != nil {
+		return DB, nil
+	}
+	return nil, gorm.ErrInvalidDB
+}
+
 // RecordPoolAccountUsageLog 写入账号池账号的一次使用日志。
 // 写入失败不应影响 Relay 主流程，因此只记录系统日志并返回。
 func RecordPoolAccountUsageLog(record PoolAccountUsageLogRecord) {
 	if record.PoolAccountId <= 0 {
 		return
 	}
-	logDB := LOG_DB
-	if logDB == nil {
-		logDB = DB
-	}
-	if logDB == nil {
+	logDB, err := accountPoolLogDB()
+	if err != nil {
 		return
 	}
 	log := &PoolAccountUsageLog{
@@ -2057,12 +2076,9 @@ func RecordPoolAccountUsageLog(record PoolAccountUsageLogRecord) {
 // GetPoolAccountUsageLogs 分页查询账号池使用日志。
 // 管理员页面直接消费该接口，避免从通用日志的 JSON other 字段反向解析账号池信息。
 func GetPoolAccountUsageLogs(filter PoolAccountUsageLogFilter) ([]*PoolAccountUsageLog, int64, error) {
-	logDB := LOG_DB
-	if logDB == nil {
-		logDB = DB
-	}
-	if logDB == nil {
-		return nil, 0, gorm.ErrInvalidDB
+	logDB, err := accountPoolLogDB()
+	if err != nil {
+		return nil, 0, err
 	}
 	if filter.Limit <= 0 {
 		filter.Limit = 20
@@ -2110,7 +2126,7 @@ func GetPoolAccountUsageLogs(filter PoolAccountUsageLogFilter) ([]*PoolAccountUs
 		return nil, 0, err
 	}
 	logs := []*PoolAccountUsageLog{}
-	err := query.Order("id DESC").Limit(filter.Limit).Offset(filter.StartIdx).Find(&logs).Error
+	err = query.Order("id DESC").Limit(filter.Limit).Offset(filter.StartIdx).Find(&logs).Error
 	return logs, total, err
 }
 
@@ -2120,11 +2136,8 @@ func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
 	if record.PoolAccountId <= 0 {
 		return
 	}
-	logDB := LOG_DB
-	if logDB == nil {
-		logDB = DB
-	}
-	if logDB == nil {
+	logDB, err := accountPoolLogDB()
+	if err != nil {
 		return
 	}
 	after, err := GetPoolAccountById(record.PoolAccountId)
@@ -2191,14 +2204,7 @@ func RecordPoolAccountStateLog(record PoolAccountStateLogRecord) {
 }
 
 func poolAccountStateLogDB() (*gorm.DB, error) {
-	logDB := LOG_DB
-	if logDB == nil {
-		logDB = DB
-	}
-	if logDB == nil {
-		return nil, gorm.ErrInvalidDB
-	}
-	return logDB, nil
+	return accountPoolLogDB()
 }
 
 func applyPoolAccountStateLogFilter(query *gorm.DB, filter PoolAccountStateLogFilter) *gorm.DB {

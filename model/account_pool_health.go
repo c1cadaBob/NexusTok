@@ -244,15 +244,12 @@ func loadAccountPoolHealthUsageByGroup(groupIDs []int, start int64, end int64) (
 	if len(groupIDs) == 0 {
 		return result, nil
 	}
-	logDB := LOG_DB
-	if logDB == nil {
-		logDB = DB
-	}
-	if logDB == nil {
-		return result, fmt.Errorf("log db is not initialized")
+	logDB, err := accountPoolLogDB()
+	if err != nil {
+		return result, fmt.Errorf("log db is not initialized: %w", err)
 	}
 	rows := []accountPoolHealthUsageAggregate{}
-	err := logDB.Model(&PoolAccountUsageLog{}).
+	err = logDB.Model(&PoolAccountUsageLog{}).
 		Select("pool_group_id, COUNT(*) AS total, SUM(CASE WHEN success = ? THEN 1 ELSE 0 END) AS failed", false).
 		Where("pool_group_id IN ? AND created_at >= ? AND created_at <= ?", groupIDs, start, end).
 		Group("pool_group_id").

@@ -116,6 +116,26 @@ func TestGlobalWebRateLimitKeepsDynamicPageLimited(t *testing.T) {
 	}
 }
 
+func TestBuildRedisRateLimitKeyUsesFixedWindow(t *testing.T) {
+	now := time.Unix(370, 0)
+
+	if got := buildRedisRateLimitKey("rateLimit:GA203.0.113.10", 180, now); got != "rateLimit:GA203.0.113.10:2" {
+		t.Fatalf("固定窗口 key = %q, want %q", got, "rateLimit:GA203.0.113.10:2")
+	}
+	if got := buildRedisRateLimitKey("rateLimit:GA203.0.113.10", 0, now); got != "rateLimit:GA203.0.113.10:370" {
+		t.Fatalf("无效 duration 应回退到 1 秒窗口，got %q", got)
+	}
+}
+
+func TestRedisRateLimitExpireSeconds(t *testing.T) {
+	if got := redisRateLimitExpireSeconds(180); got != 240 {
+		t.Fatalf("expire seconds = %d, want 240", got)
+	}
+	if got := redisRateLimitExpireSeconds(0); got != 61 {
+		t.Fatalf("无效 duration 的过期时间 = %d, want 61", got)
+	}
+}
+
 func setTestGlobalWebRateLimit(t *testing.T, limit int, duration int64) func() {
 	t.Helper()
 

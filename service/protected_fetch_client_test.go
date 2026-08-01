@@ -302,14 +302,20 @@ func TestProtectedFetchRoundTripperReusesTransportPerProxy(t *testing.T) {
 	originalIdleTimeout := common.RelayIdleConnTimeout
 	originalMaxIdleConns := common.RelayMaxIdleConns
 	originalMaxIdleConnsPerHost := common.RelayMaxIdleConnsPerHost
+	originalMaxConnsPerHost := common.RelayMaxConnsPerHost
+	originalResponseHeaderTimeout := common.RelayResponseHeaderTimeout
 	t.Cleanup(func() {
 		common.RelayIdleConnTimeout = originalIdleTimeout
 		common.RelayMaxIdleConns = originalMaxIdleConns
 		common.RelayMaxIdleConnsPerHost = originalMaxIdleConnsPerHost
+		common.RelayMaxConnsPerHost = originalMaxConnsPerHost
+		common.RelayResponseHeaderTimeout = originalResponseHeaderTimeout
 	})
 	common.RelayIdleConnTimeout = 19
 	common.RelayMaxIdleConns = 41
 	common.RelayMaxIdleConnsPerHost = 7
+	common.RelayMaxConnsPerHost = 11
+	common.RelayResponseHeaderTimeout = 13
 
 	client := newProtectedFetchHTTPClientWithDialer(nil, nil, nil)
 	roundTripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
@@ -323,8 +329,11 @@ func TestProtectedFetchRoundTripperReusesTransportPerProxy(t *testing.T) {
 	require.NotSame(t, direct, proxied)
 	require.Equal(t, common.RelayMaxIdleConns, direct.MaxIdleConns)
 	require.Equal(t, common.RelayMaxIdleConnsPerHost, direct.MaxIdleConnsPerHost)
+	require.Equal(t, common.RelayMaxConnsPerHost, direct.MaxConnsPerHost)
 	require.Equal(t, time.Duration(common.RelayIdleConnTimeout)*time.Second, direct.IdleConnTimeout)
+	require.Equal(t, time.Duration(common.RelayResponseHeaderTimeout)*time.Second, direct.ResponseHeaderTimeout)
 	require.Equal(t, time.Duration(common.RelayIdleConnTimeout)*time.Second, proxied.IdleConnTimeout)
+	require.Equal(t, time.Duration(common.RelayResponseHeaderTimeout)*time.Second, proxied.ResponseHeaderTimeout)
 	require.True(t, direct.ForceAttemptHTTP2)
 	require.False(t, direct.DisableKeepAlives)
 }

@@ -95,14 +95,14 @@ func ThemeAwarePath(suffix string) string {
 var QuotaPerUnit = 500 * 1000.0 // 每单位配额对应的 token 数量（$0.002 / 1K tokens），用于配额和金额的换算
 
 // 保留旧变量以兼容历史逻辑，实际展示由 general_setting.quota_display_type 控制
-var DisplayInCurrencyEnabled = true  // 是否以货币形式显示配额（如 $1.00）
-var DisplayTokenStatEnabled = true   // 是否显示 token 统计信息
-var DrawingEnabled = true            // 是否启用绘图功能（DALL-E、Midjourney 等）
-var TaskEnabled = true               // 是否启用任务功能（异步任务如 Midjourney、Suno 等）
-var DataExportEnabled = true         // 是否启用数据导出功能
-var DataExportInterval = 5           // 数据导出间隔（分钟）
-var DataExportDefaultTime = "hour"   // 默认导出时间范围（hour/day/week/month）
-var DefaultCollapseSidebar = false   // 默认是否折叠侧边栏
+var DisplayInCurrencyEnabled = true // 是否以货币形式显示配额（如 $1.00）
+var DisplayTokenStatEnabled = true  // 是否显示 token 统计信息
+var DrawingEnabled = true           // 是否启用绘图功能（DALL-E、Midjourney 等）
+var TaskEnabled = true              // 是否启用任务功能（异步任务如 Midjourney、Suno 等）
+var DataExportEnabled = true        // 是否启用数据导出功能
+var DataExportInterval = 5          // 数据导出间隔（分钟）
+var DataExportDefaultTime = "hour"  // 默认导出时间范围（hour/day/week/month）
+var DefaultCollapseSidebar = false  // 默认是否折叠侧边栏
 
 // 注意：包含 "Secret" 或 "Token" 的选项不会通过 GetOptions 返回（安全考虑）
 
@@ -110,30 +110,30 @@ var DefaultCollapseSidebar = false   // 默认是否折叠侧边栏
 // 会话和加密配置
 // ========================================
 
-var SessionSecret = uuid.New().String()  // 会话密钥（随机生成，用于 JWT 签名等）
-var CryptoSecret = uuid.New().String()   // 加密密钥（随机生成，用于 HMAC 等加密操作）
+var SessionSecret = uuid.New().String() // 会话密钥（随机生成，用于 JWT 签名等）
+var CryptoSecret = uuid.New().String()  // 加密密钥（随机生成，用于 HMAC 等加密操作）
 var SessionMaxAge = 90 * 24 * 60 * 60   // 会话最大存活时间（秒，默认 90 天）
 
 // ========================================
 // 全局配置映射
 // ========================================
 
-var OptionMap map[string]string    // 全局选项映射（从数据库加载的系统配置）
+var OptionMap map[string]string   // 全局选项映射（从数据库加载的系统配置）
 var OptionMapRWMutex sync.RWMutex // 选项映射读写锁（保护并发访问）
 
-var ItemsPerPage = 10    // 每页显示的条目数（分页参数）
+var ItemsPerPage = 10     // 每页显示的条目数（分页参数）
 var MaxRecentItems = 1000 // 最大最近条目数
 
 // ── 认证和注册开关 ──────────────────────────────────────────────────
-var PasswordLoginEnabled = true       // 是否启用密码登录
-var PasswordRegisterEnabled = true    // 是否启用密码注册
-var EmailVerificationEnabled = false  // 是否启用邮箱验证
-var GitHubOAuthEnabled = false        // 是否启用 GitHub OAuth 登录
-var LinuxDOOAuthEnabled = false       // 是否启用 LinuxDO OAuth 登录
-var WeChatAuthEnabled = false         // 是否启用微信登录
-var TelegramOAuthEnabled = false      // 是否启用 Telegram 登录
-var TurnstileCheckEnabled = false     // 是否启用 Cloudflare Turnstile 验证
-var RegisterEnabled = true            // 是否启用注册功能
+var PasswordLoginEnabled = true      // 是否启用密码登录
+var PasswordRegisterEnabled = true   // 是否启用密码注册
+var EmailVerificationEnabled = false // 是否启用邮箱验证
+var GitHubOAuthEnabled = false       // 是否启用 GitHub OAuth 登录
+var LinuxDOOAuthEnabled = false      // 是否启用 LinuxDO OAuth 登录
+var WeChatAuthEnabled = false        // 是否启用微信登录
+var TelegramOAuthEnabled = false     // 是否启用 Telegram 登录
+var TurnstileCheckEnabled = false    // 是否启用 Cloudflare Turnstile 验证
+var RegisterEnabled = true           // 是否启用注册功能
 
 // ── 邮箱限制配置 ────────────────────────────────────────────────────
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制（只允许白名单域名注册）
@@ -154,12 +154,12 @@ var EmailLoginAuthServerList = []string{ // 邮箱登录认证服务器列表
 	"smtp.azurecomm.net",
 }
 
-var DebugEnabled bool        // 是否启用调试模式（输出详细日志）
-var MemoryCacheEnabled bool  // 是否启用内存缓存
+var DebugEnabled bool       // 是否启用调试模式（输出详细日志）
+var MemoryCacheEnabled bool // 是否启用内存缓存
 
 var LogConsumeEnabled = true // 是否启用消费日志记录
 
-var TLSInsecureSkipVerify bool                              // 是否跳过 TLS 证书验证
+var TLSInsecureSkipVerify bool                                // 是否跳过 TLS 证书验证
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true} // 不安全的 TLS 配置（用于测试或自签名证书）
 
 // ── SMTP 邮件配置 ───────────────────────────────────────────────────
@@ -174,16 +174,16 @@ var SMTPFrom = ""                  // SMTP 发件人地址
 var SMTPToken = ""                 // SMTP 密码/令牌
 
 // ── OAuth 配置 ──────────────────────────────────────────────────────
-var GitHubClientId = ""         // GitHub OAuth Client ID
-var GitHubClientSecret = ""     // GitHub OAuth Client Secret
-var LinuxDOClientId = ""        // LinuxDO OAuth Client ID
-var LinuxDOClientSecret = ""    // LinuxDO OAuth Client Secret
+var GitHubClientId = ""          // GitHub OAuth Client ID
+var GitHubClientSecret = ""      // GitHub OAuth Client Secret
+var LinuxDOClientId = ""         // LinuxDO OAuth Client ID
+var LinuxDOClientSecret = ""     // LinuxDO OAuth Client Secret
 var LinuxDOMinimumTrustLevel = 0 // LinuxDO 最低信任等级要求
 
 // ── 微信登录配置 ────────────────────────────────────────────────────
-var WeChatServerAddress = ""           // 微信服务器地址
-var WeChatServerToken = ""             // 微信服务器令牌
-var WeChatAccountQRCodeImageURL = ""   // 微信公众号二维码图片 URL
+var WeChatServerAddress = ""         // 微信服务器地址
+var WeChatServerToken = ""           // 微信服务器令牌
+var WeChatAccountQRCodeImageURL = "" // 微信公众号二维码图片 URL
 
 // ── Cloudflare Turnstile 配置 ───────────────────────────────────────
 var TurnstileSiteKey = ""   // Turnstile 站点密钥（前端使用）
@@ -194,14 +194,14 @@ var TelegramBotToken = "" // Telegram Bot Token
 var TelegramBotName = ""  // Telegram Bot 用户名
 
 // ── 配额和渠道配置 ──────────────────────────────────────────────────
-var QuotaForNewUser = 0                   // 新用户注册赠送配额
-var QuotaForInviter = 0                   // 邀请人获得的配额奖励
-var QuotaForInvitee = 0                   // 被邀请人获得的配额奖励
-var ChannelDisableThreshold = 5.0         // 渠道自动禁用阈值（错误率超过此值自动禁用）
+var QuotaForNewUser = 0                    // 新用户注册赠送配额
+var QuotaForInviter = 0                    // 邀请人获得的配额奖励
+var QuotaForInvitee = 0                    // 被邀请人获得的配额奖励
+var ChannelDisableThreshold = 5.0          // 渠道自动禁用阈值（错误率超过此值自动禁用）
 var AutomaticDisableChannelEnabled = false // 是否启用渠道自动禁用
 var AutomaticEnableChannelEnabled = false  // 是否启用渠道自动启用（恢复后自动启用）
-var QuotaRemindThreshold = 1000           // 配额提醒阈值（低于此值发送提醒）
-var PreConsumedQuota = 500                // 预扣配额（流式请求开始时预扣）
+var QuotaRemindThreshold = 1000            // 配额提醒阈值（低于此值发送提醒）
+var PreConsumedQuota = 500                 // 预扣配额（流式请求开始时预扣）
 
 var RetryTimes = 0 // 请求失败重试次数（0 表示不重试）
 
@@ -239,9 +239,13 @@ var BatchUpdateInterval int    // 批量更新间隔（秒）
 
 var RelayTimeout int // 中继请求超时时间（秒）
 
-var RelayIdleConnTimeout int     // HTTP 客户端空闲连接超时时间（秒），0 表示不限制
-var RelayMaxIdleConns int        // HTTP 客户端最大空闲连接数
-var RelayMaxIdleConnsPerHost int // HTTP 客户端每主机最大空闲连接数
+var RelayIdleConnTimeout int         // HTTP 客户端空闲连接超时时间（秒），0 表示不限制
+var RelayMaxIdleConns int            // HTTP 客户端最大空闲连接数
+var RelayMaxIdleConnsPerHost int     // HTTP 客户端每主机最大空闲连接数
+var RelayMaxConnsPerHost int         // HTTP 客户端每主机最大连接数（0 表示不限制）
+var RelayResponseHeaderTimeout int   // HTTP 客户端等待上游响应头超时时间（秒，0 表示不限制）
+var RelayProxyClientCacheTTL int     // 代理 HTTP 客户端缓存空闲回收时间（秒，0 表示不主动回收）
+var RelayProxyClientCacheMaxSize int // 代理 HTTP 客户端缓存最大数量（0 表示不限制）
 
 var GeminiSafetySetting string // Gemini 安全设置（JSON 格式）
 
@@ -250,7 +254,7 @@ var CohereSafetySetting string // Cohere 安全设置（NONE/CONTEXTUAL/STRICT�
 
 const (
 	RequestIdKey         = "X-Oneapi-Request-Id"   // 请求 ID 键（存储在 Gin 上下文中）
-	UpstreamRequestIdKey = "X-Upstream-Request-Id"  // 上游请求 ID 键（从上游响应头提取）
+	UpstreamRequestIdKey = "X-Upstream-Request-Id" // 上游请求 ID 键（从上游响应头提取）
 )
 
 // 用户角色常量
@@ -282,16 +286,16 @@ var (
 // 限流配置（时间单位为秒）
 // 不应大于 RateLimitKeyExpirationDuration
 var (
-	GlobalApiRateLimitEnable   bool // 是否启用全局 API 限流
-	GlobalApiRateLimitNum      int  // 全局 API 限流数量（请求数）
+	GlobalApiRateLimitEnable   bool  // 是否启用全局 API 限流
+	GlobalApiRateLimitNum      int   // 全局 API 限流数量（请求数）
 	GlobalApiRateLimitDuration int64 // 全局 API 限流时间窗口（秒）
 
-	GlobalWebRateLimitEnable   bool // 是否启用全局 Web 限流
-	GlobalWebRateLimitNum      int  // 全局 Web 限流数量
+	GlobalWebRateLimitEnable   bool  // 是否启用全局 Web 限流
+	GlobalWebRateLimitNum      int   // 全局 Web 限流数量
 	GlobalWebRateLimitDuration int64 // 全局 Web 限流时间窗口（秒）
 
-	CriticalRateLimitEnable   bool      // 是否启用关键操作限流
-	CriticalRateLimitNum            = 20 // 关键操作限流数量
+	CriticalRateLimitEnable   bool            // 是否启用关键操作限流
+	CriticalRateLimitNum            = 20      // 关键操作限流数量
 	CriticalRateLimitDuration int64 = 20 * 60 // 关键操作限流时间窗口（20 分钟）
 
 	UploadRateLimitNum            = 10 // 上传限流数量

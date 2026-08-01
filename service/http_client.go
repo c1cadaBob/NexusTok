@@ -25,8 +25,13 @@ import (
 var (
 	httpClient      *http.Client
 	proxyClientLock sync.Mutex
-	proxyClients    = make(map[string]*http.Client)
+	proxyClients    = make(map[string]*proxyClientEntry)
 )
+
+type proxyClientEntry struct {
+	client   *http.Client
+	lastUsed time.Time
+}
 
 // checkRedirect HTTP 重定向检查函数。
 // 在重定向时验证目标 URL 的安全性（SSRF 防护），
@@ -54,11 +59,13 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 // 该函数应在应用启动时调用一次。
 func InitHttpClient() {
 	transport := &http.Transport{
-		MaxIdleConns:        common.RelayMaxIdleConns,
-		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
-		ForceAttemptHTTP2:   true,
-		Proxy:               http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
+		MaxIdleConns:          common.RelayMaxIdleConns,
+		MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
+		MaxConnsPerHost:       common.RelayMaxConnsPerHost,
+		IdleConnTimeout:       relayIdleConnTimeout(),
+		ResponseHeaderTimeout: relayResponseHeaderTimeout(),
+		ForceAttemptHTTP2:     true,
+		Proxy:                 http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
 	}
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig
@@ -99,12 +106,10 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
 func ResetProxyClientCache() {
 	proxyClientLock.Lock()
 	defer proxyClientLock.Unlock()
-	for _, client := range proxyClients {
-		if transport, ok := client.Transport.(*http.Transport); ok && transport != nil {
-			transport.CloseIdleConnections()
-		}
+	for _, entry := range proxyClients {
+		closeIdleConnections(entry.client)
 	}
-	proxyClients = make(map[string]*http.Client)
+	proxyClients = make(map[string]*proxyClientEntry)
 }
 
 // NewProxyHttpClient 创建支持代理的 HTTP 客户端
@@ -116,12 +121,9 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 		return http.DefaultClient, nil
 	}
 
-	proxyClientLock.Lock()
-	if client, ok := proxyClients[proxyURL]; ok {
-		proxyClientLock.Unlock()
+	if client, ok := getCachedProxyClient(proxyURL); ok {
 		return client, nil
 	}
-	proxyClientLock.Unlock()
 
 	parsedURL, err := url.Parse(proxyURL)
 	if err != nil {
@@ -131,11 +133,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 	switch parsedURL.Scheme {
 	case "http", "https":
 		transport := &http.Transport{
-			MaxIdleConns:        common.RelayMaxIdleConns,
-			MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-			IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
-			ForceAttemptHTTP2:   true,
-			Proxy:               http.ProxyURL(parsedURL),
+			MaxIdleConns:          common.RelayMaxIdleConns,
+			MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
+			MaxConnsPerHost:       common.RelayMaxConnsPerHost,
+			IdleConnTimeout:       relayIdleConnTimeout(),
+			ResponseHeaderTimeout: relayResponseHeaderTimeout(),
+			ForceAttemptHTTP2:     true,
+			Proxy:                 http.ProxyURL(parsedURL),
 		}
 		if common.TLSInsecureSkipVerify {
 			transport.TLSClientConfig = common.InsecureTLSConfig
@@ -145,9 +149,7 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			CheckRedirect: checkRedirect,
 		}
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-		proxyClientLock.Lock()
-		proxyClients[proxyURL] = client
-		proxyClientLock.Unlock()
+		storeProxyClient(proxyURL, client)
 		return client, nil
 
 	case "socks5", "socks5h":
@@ -171,10 +173,12 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 		}
 
 		transport := &http.Transport{
-			MaxIdleConns:        common.RelayMaxIdleConns,
-			MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-			IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
-			ForceAttemptHTTP2:   true,
+			MaxIdleConns:          common.RelayMaxIdleConns,
+			MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
+			MaxConnsPerHost:       common.RelayMaxConnsPerHost,
+			IdleConnTimeout:       relayIdleConnTimeout(),
+			ResponseHeaderTimeout: relayResponseHeaderTimeout(),
+			ForceAttemptHTTP2:     true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			},
@@ -185,12 +189,109 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 
 		client := &http.Client{Transport: transport, CheckRedirect: checkRedirect}
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-		proxyClientLock.Lock()
-		proxyClients[proxyURL] = client
-		proxyClientLock.Unlock()
+		storeProxyClient(proxyURL, client)
 		return client, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", parsedURL.Scheme)
+	}
+}
+
+func relayIdleConnTimeout() time.Duration {
+	return time.Duration(common.RelayIdleConnTimeout) * time.Second
+}
+
+func relayResponseHeaderTimeout() time.Duration {
+	if common.RelayResponseHeaderTimeout <= 0 {
+		return 0
+	}
+	return time.Duration(common.RelayResponseHeaderTimeout) * time.Second
+}
+
+func relayProxyClientCacheTTL() time.Duration {
+	if common.RelayProxyClientCacheTTL <= 0 {
+		return 0
+	}
+	return time.Duration(common.RelayProxyClientCacheTTL) * time.Second
+}
+
+func closeIdleConnections(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	if transport, ok := client.Transport.(*http.Transport); ok && transport != nil {
+		transport.CloseIdleConnections()
+	}
+}
+
+func getCachedProxyClient(proxyURL string) (*http.Client, bool) {
+	now := time.Now()
+	proxyClientLock.Lock()
+	defer proxyClientLock.Unlock()
+	cleanupProxyClientsLocked(now)
+
+	entry, ok := proxyClients[proxyURL]
+	if !ok || entry == nil || entry.client == nil {
+		return nil, false
+	}
+	entry.lastUsed = now
+	return entry.client, true
+}
+
+func storeProxyClient(proxyURL string, client *http.Client) {
+	if client == nil {
+		return
+	}
+	now := time.Now()
+	proxyClientLock.Lock()
+	defer proxyClientLock.Unlock()
+	cleanupProxyClientsLocked(now)
+	proxyClients[proxyURL] = &proxyClientEntry{
+		client:   client,
+		lastUsed: now,
+	}
+	enforceProxyClientCacheMaxSizeLocked()
+}
+
+func cleanupProxyClientsLocked(now time.Time) {
+	ttl := relayProxyClientCacheTTL()
+	if ttl <= 0 {
+		return
+	}
+	for key, entry := range proxyClients {
+		if entry == nil || entry.client == nil || now.Sub(entry.lastUsed) > ttl {
+			if entry != nil {
+				closeIdleConnections(entry.client)
+			}
+			delete(proxyClients, key)
+		}
+	}
+}
+
+func enforceProxyClientCacheMaxSizeLocked() {
+	maxSize := common.RelayProxyClientCacheMaxSize
+	if maxSize <= 0 {
+		return
+	}
+	for len(proxyClients) > maxSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for key, entry := range proxyClients {
+			if entry == nil {
+				oldestKey = key
+				break
+			}
+			if oldestKey == "" || entry.lastUsed.Before(oldestTime) {
+				oldestKey = key
+				oldestTime = entry.lastUsed
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		if entry := proxyClients[oldestKey]; entry != nil {
+			closeIdleConnections(entry.client)
+		}
+		delete(proxyClients, oldestKey)
 	}
 }

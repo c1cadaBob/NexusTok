@@ -26,6 +26,7 @@ import (
 	"github.com/c1cada/NexusTok/constant" // 常量定义
 
 	"github.com/glebarez/sqlite" // SQLite 驱动
+	"gorm.io/driver/clickhouse"  // ClickHouse 驱动（仅用于独立日志库）
 	"gorm.io/driver/mysql"       // MySQL 驱动
 	"gorm.io/driver/postgres"    // PostgreSQL 驱动
 	"gorm.io/gorm"               // GORM ORM
@@ -167,7 +168,7 @@ func CheckSetup() {
 // isClickHouseDSN 判断 DSN 是否使用 ClickHouse 常见连接协议。
 //
 // ClickHouse 通常使用 clickhouse/tcp/http/https 协议；这些协议不属于 NexusTok 主业务库
-// 当前支持范围，因此主库遇到这类 DSN 会 fail-fast，日志库则进入准备层护栏。
+// 当前支持范围，因此主库遇到这类 DSN 会 fail-fast，日志库则进入独立日志库初始化路径。
 func isClickHouseDSN(dsn string) bool {
 	return strings.HasPrefix(dsn, "clickhouse://") ||
 		strings.HasPrefix(dsn, "tcp://") ||
@@ -177,9 +178,8 @@ func isClickHouseDSN(dsn string) bool {
 
 // normalizeClickHouseDSN 规范化 ClickHouse HTTPS DSN。
 //
-// gorm ClickHouse driver 对 HTTPS 连接需要 `secure=true`，这里先把该兼容行为固化为纯字符串
-// helper。当前构建不会真正打开 ClickHouse 连接，但错误提示会展示规范化后的 DSN，便于用户
-// 后续迁移配置时直接复用。
+// gorm ClickHouse driver 对 HTTPS 连接需要 `secure=true`。这里在打开连接前自动补齐，
+// 让 `https://host:8443/db` 这类运维常见写法也能直接作为独立日志库配置使用。
 func normalizeClickHouseDSN(dsn string) string {
 	parsed, err := url.Parse(dsn)
 	if err != nil || parsed.Scheme != "https" {
@@ -223,11 +223,11 @@ func clickHouseLogTTLClause(ttlDays int) string {
 	return "\nTTL " + expression
 }
 
-// clickHouseLogCreateTableSQL 返回未来接入 ClickHouse 日志库时使用的 logs 表 DDL。
+// clickHouseLogCreateTableSQL 返回 ClickHouse 日志库使用的 logs 表 DDL。
 //
-// 当前构建不启用 ClickHouse driver，也不会执行这段 SQL；保留该 helper 是为了先把
-// request_id 排序、字段类型和 TTL 语义固化为可测试契约，后续真正接入日志库时避免
-// 再重新讨论表结构。
+// ClickHouse 只作为独立日志库使用，不能承载主业务库。这里使用 MergeTree 按月份分区，
+// 并用 created_at + request_id 做稳定排序：request_id 在写入前会自动补齐，因此不依赖
+// 传统自增 id，也能让后台分页、日志清理和后续排障保持确定顺序。
 func clickHouseLogCreateTableSQL(ttlDays int) string {
 	return fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS logs (
@@ -258,12 +258,39 @@ ORDER BY (created_at, request_id)%s`, clickHouseLogTTLClause(ttlDays))
 }
 
 // clickHouseCreateTableHasTTL 判断 ClickHouse 建表 SQL 中是否已经包含 TTL 子句。
-//
-// 当前准备层只做字符串级判断和测试护栏；真正执行 TTL 同步需要等 ClickHouse driver 接入后
-// 再独立实现。
 func clickHouseCreateTableHasTTL(createTableSQL string) bool {
 	upperSQL := strings.ToUpper(createTableSQL)
 	return strings.Contains(upperSQL, "\nTTL ") || strings.Contains(upperSQL, " TTL ")
+}
+
+// syncClickHouseLogTTL 同步 ClickHouse logs 表的 TTL 配置。
+//
+// 运维可能会在升级后调整 LOG_SQL_CLICKHOUSE_TTL_DAYS：大于 0 时使用 MODIFY TTL 更新保留期；
+// 等于 0 时表示关闭自动删除，如果旧表已经带 TTL，则显式 REMOVE TTL。ClickHouse 的 TTL 是
+// 表级元数据，必须用 ALTER TABLE 同步，不能依赖 GORM AutoMigrate。
+func syncClickHouseLogTTL(ttlDays int) error {
+	expression := clickHouseLogTTLExpression(ttlDays)
+	if expression != "" {
+		return LOG_DB.Exec("ALTER TABLE logs MODIFY TTL " + expression).Error
+	}
+
+	hasTTL, err := clickHouseLogTableHasTTL()
+	if err != nil {
+		return err
+	}
+	if !hasTTL {
+		return nil
+	}
+	return LOG_DB.Exec("ALTER TABLE logs REMOVE TTL").Error
+}
+
+// clickHouseLogTableHasTTL 查询 ClickHouse 当前建表语句，判断是否已经存在 TTL。
+func clickHouseLogTableHasTTL() (bool, error) {
+	var createTableSQL string
+	if err := LOG_DB.Raw("SHOW CREATE TABLE logs").Scan(&createTableSQL).Error; err != nil {
+		return false, err
+	}
+	return clickHouseCreateTableHasTTL(createTableSQL), nil
 }
 
 func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
@@ -277,7 +304,14 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 				return nil, fmt.Errorf("%s does not support ClickHouse; use SQLite, MySQL, or PostgreSQL for the primary database", envName)
 			}
 			normalized := normalizeClickHouseDSN(dsn)
-			return nil, fmt.Errorf("%s uses ClickHouse DSN %q, but this build has not enabled the ClickHouse log driver yet", envName, normalized)
+			common.SysLog("using ClickHouse as log database")
+			common.SetLogDatabaseType(common.DatabaseTypeClickHouse)
+			return gorm.Open(clickhouse.Open(normalized), &gorm.Config{
+				// ClickHouse 写入日志时不需要 GORM prepared statement 缓存；关闭它可以减少
+				// 长生命周期多节点部署中的语句缓存占用，也避免部分代理/网关对 prepared
+				// statement 兼容性较差的问题。
+				PrepareStmt: false,
+			})
 		}
 		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 			// 使用 PostgreSQL 作为当前数据库。
@@ -371,6 +405,15 @@ func InitDB() (err error) {
 func InitLogDB() (err error) {
 	if os.Getenv("LOG_SQL_DSN") == "" {
 		LOG_DB = DB
+		switch {
+		case common.UsingPostgreSQL:
+			common.SetLogDatabaseType(common.DatabaseTypePostgreSQL)
+		case common.UsingMySQL:
+			common.SetLogDatabaseType(common.DatabaseTypeMySQL)
+		default:
+			common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+		}
+		initCol()
 		return
 	}
 	db, err := chooseDB("LOG_SQL_DSN", true)
@@ -379,7 +422,7 @@ func InitLogDB() (err error) {
 			db = db.Debug()
 		}
 		LOG_DB = db
-		// If log DB is MySQL, also ensure Chinese-capable charset
+		// 日志库使用 MySQL 时同样校验字符集，确保中文审计日志和错误内容不会乱码。
 		if common.LogSqlType == common.DatabaseTypeMySQL {
 			if err := checkMySQLChineseSupport(LOG_DB); err != nil {
 				panic(err)
@@ -614,6 +657,9 @@ func ensureAccountPoolAuthFileLinks() error {
 }
 
 func migrateLOGDB() error {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return migrateClickHouseLogDB()
+	}
 	var err error
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
 		return err
@@ -625,6 +671,19 @@ func migrateLOGDB() error {
 		return err
 	}
 	return nil
+}
+
+// migrateClickHouseLogDB 初始化 ClickHouse 独立日志库。
+//
+// ClickHouse 只承载高频消费日志，不迁移账号池使用/状态日志，后两者仍保留在主业务库或
+// 普通 LOG_DB 中。这样做可以先把最大写入压力从主库拆出去，同时避免把具有事务语义的
+// 管理状态日志放进最终一致的分析库。
+func migrateClickHouseLogDB() error {
+	ttlDays := clickHouseLogTTLDays()
+	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
+		return err
+	}
+	return syncClickHouseLogTTL(ttlDays)
 }
 
 type sqliteColumnDef struct {

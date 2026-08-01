@@ -94,6 +94,7 @@ docker run --name nexustok -d --restart always \
 | 本地数据库 | SQLite，并持久化挂载 `/data` 目录 |
 | 远程数据库 | MySQL >= 5.7.8 或 PostgreSQL >= 9.6 |
 | 缓存 | 推荐 Redis；小规模部署可使用内存缓存 |
+| 高并发推荐 | PostgreSQL 主库 + Redis，消费日志可拆分到独立日志库或 ClickHouse |
 | 运行方式 | Docker / Docker Compose 或 Go 二进制部署 |
 
 常用环境变量：
@@ -103,7 +104,16 @@ docker run --name nexustok -d --restart always \
 | `SESSION_SECRET` | 多实例部署必须设置，保证会话在节点间一致。 |
 | `CRYPTO_SECRET` | 启用 Redis 或共享加密数据时必须设置。 |
 | `SQL_DSN` | MySQL 或 PostgreSQL 连接字符串；为空时使用 SQLite。 |
+| `LOG_SQL_DSN` | 独立日志库连接字符串；支持 MySQL/PostgreSQL，消费日志可使用 ClickHouse。 |
+| `LOG_SQL_CLICKHOUSE_TTL_DAYS` | ClickHouse 消费日志保留天数，`0` 表示不启用 TTL。 |
 | `REDIS_CONN_STRING` | Redis 连接字符串。 |
+| `REDIS_POOL_SIZE` | Redis 连接池大小；多节点/高并发建议从 `128` 或 `256` 起步压测。 |
+| `RELAY_MAX_IDLE_CONNS` | Relay HTTP 客户端最大空闲连接数。 |
+| `RELAY_MAX_IDLE_CONNS_PER_HOST` | Relay HTTP 客户端每个上游主机最大空闲连接数。 |
+| `RELAY_MAX_CONNS_PER_HOST` | Relay HTTP 客户端每个上游主机最大总连接数，`0` 表示不限制。 |
+| `RELAY_RESPONSE_HEADER_TIMEOUT` | Relay 等待上游响应头超时时间（秒），流式响应开始后不受该项限制。 |
+| `RELAY_PROXY_CLIENT_CACHE_TTL` | 按代理 URL 缓存 HTTP client 的空闲回收时间（秒）。 |
+| `RELAY_PROXY_CLIENT_CACHE_MAX_SIZE` | 按代理 URL 缓存 HTTP client 的最大数量，`0` 表示不限制。 |
 | `MAX_REQUEST_BODY_MB` | 解压后的请求体大小限制。 |
 | `STREAMING_TIMEOUT` | 流式响应超时时间（秒）。 |
 | `STREAM_SCANNER_MAX_BUFFER_MB` | 大型流式片段的扫描缓冲上限。 |

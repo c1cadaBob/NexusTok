@@ -13,7 +13,7 @@ const (
 	DatabaseTypeMySQL      = "mysql"      // MySQL 数据库类型
 	DatabaseTypeSQLite     = "sqlite"     // SQLite 数据库类型
 	DatabaseTypePostgreSQL = "postgres"   // PostgreSQL 数据库类型
-	DatabaseTypeClickHouse = "clickhouse" // ClickHouse 日志数据库类型（仅用于独立日志库准备层）
+	DatabaseTypeClickHouse = "clickhouse" // ClickHouse 日志数据库类型（仅用于独立日志库）
 )
 
 var UsingSQLite = false             // 是否使用 SQLite 数据库
@@ -27,8 +27,8 @@ var SQLitePath = "nexustok.db?_busy_timeout=30000" // SQLite 数据库文件路�
 // LogDatabaseType 返回当前日志数据库类型。
 //
 // 该函数封装历史全局变量 LogSqlType，便于日志查询、迁移和测试在不直接依赖全局变量
-// 细节的情况下判断日志库方言。当前正式支持 SQLite/MySQL/PostgreSQL；ClickHouse 只作为
-// 独立日志库准备层标记，真实 driver 接入需单独评审。
+// 细节的情况下判断日志库方言。主业务库仍只支持 SQLite/MySQL/PostgreSQL；ClickHouse
+// 仅作为独立日志库承载高频消费 logs 表，账号池状态等事务型辅助日志仍保留在普通数据库。
 func LogDatabaseType() string {
 	return LogSqlType
 }
