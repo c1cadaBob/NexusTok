@@ -248,6 +248,7 @@ func SetApiRouter(router *gin.Engine) {
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
 		registerSystemTaskRoutes(apiRouter)
+		registerSystemUpdateRoutes(apiRouter)
 		registerSystemInfoRoutes(apiRouter)
 
 		// ========================================

@@ -127,3 +127,9 @@ export type SystemTaskListResponse = {
   message?: string
   data?: SystemTask[]
 }
+
+export type SystemTaskResponse = {
+  success: boolean
+  message?: string
+  data?: SystemTask | null
+}

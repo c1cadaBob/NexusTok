@@ -49,6 +49,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ErrorState } from '@/components/error-state'
+import {
+  getSystemUpdateTaskSummary,
+  isSystemUpdateTask,
+  type SystemUpdateTaskResult,
+  type SystemUpdateTaskState,
+} from '@/features/system-settings/maintenance/system-update-utils'
 import { listSystemTasks } from '../api'
 import type { SystemTask, SystemTaskStatus } from '../types'
 
@@ -74,6 +80,8 @@ const TYPE_LABEL: Record<string, string> = {
   account_pool_check: 'Account pool check',
   subscription_maintenance: 'Subscription maintenance',
   upstream_account_sync: 'Upstream account sync',
+  system_update: 'System update',
+  system_rollback: 'System rollback',
 }
 
 function isActiveStatus(status: SystemTaskStatus) {
@@ -241,16 +249,33 @@ function SystemTasksTable(props: SystemTasksTableProps) {
               task,
               t
             )
-            const resultText = task.error
-              ? upstreamAccountSyncResult
-                ? `${task.error} · ${upstreamAccountSyncResult.text}`
-                : task.error
-              : upstreamAccountSyncResult?.text ||
-                (deletedCount === null
-                  ? '-'
-                  : t('{{count}} log entries removed.', {
-                      count: deletedCount,
-                    }))
+            const systemUpdateResult = task.result as
+              | SystemUpdateTaskResult
+              | undefined
+            const systemUpdateState = task.state as
+              | SystemUpdateTaskState
+              | undefined
+            const systemUpdateSummary = isSystemUpdateTask(task)
+              ? getSystemUpdateTaskSummary(task)
+              : null
+            const resultText = systemUpdateSummary
+              ? task.error
+                ? task.error
+                : t(systemUpdateSummary, {
+                    version:
+                      systemUpdateResult?.target_version ||
+                      systemUpdateState?.target_version,
+                  })
+              : task.error
+                ? upstreamAccountSyncResult
+                  ? `${task.error} · ${upstreamAccountSyncResult.text}`
+                  : task.error
+                : upstreamAccountSyncResult?.text ||
+                  (deletedCount === null
+                    ? '-'
+                    : t('{{count}} log entries removed.', {
+                        count: deletedCount,
+                      }))
             const resultTitle = [task.error, upstreamAccountSyncResult?.title]
               .filter(Boolean)
               .join('\n')

@@ -138,6 +138,64 @@ export type CreateLogCleanupTaskResponse = {
   }
 }
 
+export type SystemUpdateAsset = {
+  name: string
+  download_url: string
+  size: number
+}
+
+export type SystemUpdateReleaseInfo = {
+  tag_name: string
+  name?: string
+  body?: string
+  html_url?: string
+  published_at?: string
+  assets?: SystemUpdateAsset[]
+}
+
+export type SystemUpdateRuntime = {
+  goos: string
+  goarch: string
+  is_running_in_container: boolean
+}
+
+export type SystemUpdateInfo = {
+  current_version: string
+  latest_version: string
+  has_update: boolean
+  cached: boolean
+  release_info?: SystemUpdateReleaseInfo
+  matched_asset?: SystemUpdateAsset
+  checksum_asset?: SystemUpdateAsset
+  runtime: SystemUpdateRuntime
+  build_type: string
+  can_apply: boolean
+  apply_disabled_reason?: string
+  rollback_available: boolean
+  warning?: string
+}
+
+export type SystemUpdateInfoResponse = {
+  success: boolean
+  message: string
+  data?: SystemUpdateInfo
+}
+
+export type SystemUpdateTaskResponse = CreateLogCleanupTaskResponse
+
+export type SystemRestartResult = {
+  restart_supported: boolean
+  restart_scheduled: boolean
+  manual_required: boolean
+  message: string
+}
+
+export type SystemRestartResponse = {
+  success: boolean
+  message: string
+  data?: SystemRestartResult
+}
+
 export type SiteSettings = {
   'theme.frontend': string
   Notice: string

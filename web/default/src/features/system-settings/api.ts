@@ -36,6 +36,9 @@ import type {
   SaveWaffoPancakeConfigRequest,
   SaveWaffoPancakeConfigResponse,
   SystemOptionsResponse,
+  SystemRestartResponse,
+  SystemUpdateInfoResponse,
+  SystemUpdateTaskResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
   UpdateAuthzRolePoliciesRequest,
@@ -47,6 +50,7 @@ import type {
 
 interface ExtendedApiConfig extends AxiosRequestConfig {
   skipBusinessError?: boolean
+  disableDuplicate?: boolean
 }
 
 export async function getSystemOptions() {
@@ -213,6 +217,39 @@ export async function createLogCleanupTask(targetTimestamp: number) {
     {
       params: { target_timestamp: targetTimestamp },
     }
+  )
+  return res.data
+}
+
+export async function getLatestSystemUpdate(force = false) {
+  const config: ExtendedApiConfig = {
+    params: { force },
+    disableDuplicate: true,
+  }
+  const res = await api.get<SystemUpdateInfoResponse>(
+    '/api/system-update/latest',
+    config
+  )
+  return res.data
+}
+
+export async function applySystemUpdate() {
+  const res = await api.post<SystemUpdateTaskResponse>(
+    '/api/system-update/apply'
+  )
+  return res.data
+}
+
+export async function rollbackSystemUpdate() {
+  const res = await api.post<SystemUpdateTaskResponse>(
+    '/api/system-update/rollback'
+  )
+  return res.data
+}
+
+export async function restartSystemUpdate() {
+  const res = await api.post<SystemRestartResponse>(
+    '/api/system-update/restart'
   )
   return res.data
 }

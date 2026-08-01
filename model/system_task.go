@@ -29,6 +29,8 @@ const (
 	SystemTaskTypeAccountPoolCheck        = "account_pool_check"
 	SystemTaskTypeSubscriptionMaintenance = "subscription_maintenance"
 	SystemTaskTypeUpstreamAccountSync     = "upstream_account_sync"
+	SystemTaskTypeSystemUpdate            = "system_update"
+	SystemTaskTypeSystemRollback          = "system_rollback"
 )
 
 var (
