@@ -11,8 +11,8 @@
 # - 合并为多架构 manifest
 #
 # 镜像标签：
-# - c1cada/nexustok:alpha
-# - c1cada/nexustok:alpha-{YYYYMMDD}-{SHORT_SHA}
+# - <DOCKER_USERNAME>/nexustok:alpha
+# - <DOCKER_USERNAME>/nexustok:alpha-{YYYYMMDD}-{SHORT_SHA}
 # - ghcr.io/{OWNER}/{REPO}:alpha
 
 name: Publish Docker image (alpha)
@@ -41,6 +41,8 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nexustok
     permissions:
       packages: write
       contents: read
@@ -69,8 +71,8 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -84,7 +86,7 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: |
-            c1cada/nexustok
+            ${{ env.IMAGE_NAME }}
             ghcr.io/${{ env.GHCR_REPOSITORY }}
 
       - name: Build & push single-arch (to both registries)
@@ -95,8 +97,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            c1cada/nexustok:alpha-${{ matrix.arch }}
-            c1cada/nexustok:${{ steps.version.outputs.value }}-${{ matrix.arch }}
+            ${{ env.IMAGE_NAME }}:alpha-${{ matrix.arch }}
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.value }}-${{ matrix.arch }}
             ghcr.io/${{ env.GHCR_REPOSITORY }}:alpha-${{ matrix.arch }}
             ghcr.io/${{ env.GHCR_REPOSITORY }}:${{ steps.version.outputs.value }}-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -110,14 +112,14 @@ jobs:
 
       - name: Sign image with cosign
         run: |
-          cosign sign --yes c1cada/nexustok@${{ steps.build.outputs.digest }}
+          cosign sign --yes "${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
           cosign sign --yes ghcr.io/${{ env.GHCR_REPOSITORY }}@${{ steps.build.outputs.digest }}
 
       - name: Output digest
         run: |
           echo "### Docker Image Digest (${{ matrix.arch }})" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "c1cada/nexustok:alpha-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "${IMAGE_NAME}:alpha-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
           echo "ghcr.io/${{ env.GHCR_REPOSITORY }}:alpha-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -126,6 +128,8 @@ jobs:
     name: Create multi-arch manifests (Docker Hub + GHCR)
     needs: [build_single_arch]
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nexustok
     permissions:
       packages: write
       contents: read
@@ -148,22 +152,22 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Create & push manifest (Docker Hub - alpha)
         run: |
           docker buildx imagetools create \
-            -t c1cada/nexustok:alpha \
-            c1cada/nexustok:alpha-amd64 \
-            c1cada/nexustok:alpha-arm64
+            -t "${IMAGE_NAME}:alpha" \
+            "${IMAGE_NAME}:alpha-amd64" \
+            "${IMAGE_NAME}:alpha-arm64"
 
       - name: Create & push manifest (Docker Hub - versioned alpha)
         run: |
           docker buildx imagetools create \
-            -t c1cada/nexustok:${VERSION} \
-            c1cada/nexustok:${VERSION}-amd64 \
-            c1cada/nexustok:${VERSION}-arm64
+            -t "${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_NAME}:${VERSION}-arm64"
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -190,7 +194,7 @@ jobs:
         run: |
           echo "### Multi-arch Manifest Digests" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          docker buildx imagetools inspect c1cada/nexustok:alpha >> $GITHUB_STEP_SUMMARY
+          docker buildx imagetools inspect "${IMAGE_NAME}:alpha" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           docker buildx imagetools inspect ghcr.io/${GHCR_REPOSITORY}:alpha >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

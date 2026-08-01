@@ -1,7 +1,6 @@
-# docker-build.yml - Docker 多架构镜像构建和发布
+# docker-build.yml - 手动标签 Docker 多架构镜像补发
 #
 # 触发条件：
-# - 推送标签（排除 nightly* 标签）
 # - 手动触发（指定标签名称）
 #
 # 功能：
@@ -10,16 +9,11 @@
 # - 推送到 Docker Hub
 #
 # 使用方法：
-#   自动：git push tag v1.0.0
 #   手动：在 GitHub Actions 页面手动触发，输入标签名称
 
-name: Publish Docker image (Multi-arch)
+name: Publish Docker image (manual tag)
 
 on:
-  push:
-    tags:
-      - '*'
-      - '!nightly*'
   workflow_dispatch:
     inputs:
       tag:
@@ -43,9 +37,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      publish_latest: ${{ steps.version.outputs.publish_latest }}
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nexustok
 
     permissions:
-      packages: write
       contents: read
       id-token: write
 
@@ -68,8 +64,17 @@ jobs:
           else
             TAG=${GITHUB_REF#refs/tags/}
           fi
+          if [[ ! "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Tag '$TAG' cannot be used as a Docker tag"
+            exit 1
+          fi
           echo "TAG=${TAG}" >> $GITHUB_ENV
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          if [[ "$TAG" =~ ^v?[0-9]+([.][0-9]+){1,2}$ ]]; then
+            echo "publish_latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "publish_latest=false" >> $GITHUB_OUTPUT
+          fi
           echo "${TAG}" > VERSION
           echo "Building tag: ${TAG} for ${{ matrix.arch }}"
 
@@ -79,14 +84,26 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Extract metadata (labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: c1cada/nexustok
+          images: ${{ env.IMAGE_NAME }}
+
+      - name: Build Docker tag list
+        id: docker_tags
+        run: |
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE_NAME}:${TAG}-${{ matrix.arch }}"
+            if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
+              echo "${IMAGE_NAME}:latest-${{ matrix.arch }}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build & push
         id: build
@@ -95,9 +112,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: true
-          tags: |
-            c1cada/nexustok:${{ env.TAG }}-${{ matrix.arch }}
-            c1cada/nexustok:latest-${{ matrix.arch }}
+          tags: ${{ steps.docker_tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -108,13 +123,13 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image with cosign
-        run: cosign sign --yes c1cada/nexustok@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
 
       - name: Image summary
         run: |
           echo "### Docker Image Digest (${{ matrix.arch }})" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "c1cada/nexustok:${TAG}-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.docker_tags.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
@@ -123,6 +138,8 @@ jobs:
     needs: [build_single_arch]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/nexustok
 
     steps:
       - name: Set version
@@ -131,26 +148,27 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Create & push manifest (version)
         run: |
           docker buildx imagetools create \
-            -t c1cada/nexustok:${TAG} \
-            c1cada/nexustok:${TAG}-amd64 \
-            c1cada/nexustok:${TAG}-arm64
+            -t "${IMAGE_NAME}:${TAG}" \
+            "${IMAGE_NAME}:${TAG}-amd64" \
+            "${IMAGE_NAME}:${TAG}-arm64"
 
       - name: Create & push manifest (latest)
+        if: needs.build_single_arch.outputs.publish_latest == 'true'
         run: |
           docker buildx imagetools create \
-            -t c1cada/nexustok:latest \
-            c1cada/nexustok:latest-amd64 \
-            c1cada/nexustok:latest-arm64
+            -t "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:latest-amd64" \
+            "${IMAGE_NAME}:latest-arm64"
 
       - name: Manifest summary
         run: |
           echo "### Multi-arch Manifest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          docker buildx imagetools inspect c1cada/nexustok:${TAG} >> $GITHUB_STEP_SUMMARY
+          docker buildx imagetools inspect "${IMAGE_NAME}:${TAG}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
