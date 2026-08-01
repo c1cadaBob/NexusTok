@@ -50,25 +50,37 @@ docker-compose up -d
 
 ```bash
 # 拉取最新镜像
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
-# 使用 SQLite（默认）
+# 使用 SQLite（默认），数据和日志保存在 /opt/nexustok
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker rm -f nexustok 2>/dev/null || true
+
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cada/nexustok:latest
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 
 # 使用 MySQL
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cada/nexustok:latest
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
+
+# 启动后检查
+docker ps | grep nexustok
+docker logs -f nexustok
+curl -sS http://127.0.0.1:3000/api/status
 ```
 
-> **💡 提示：** `-v ./data:/data` 会将数据保存在当前目录的 `data` 文件夹中，你也可以改为绝对路径如 `-v /your/custom/path:/data`
+> **💡 提示：** 访问地址为 `http://服务器IP:3000`。云服务器还需要在安全组和系统防火墙中放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。
 
 </details>
 
@@ -77,7 +89,7 @@ docker run --name nexustok -d --restart always \
 ## 🚢 部署
 
 > [!TIP]
-> **最新版 Docker 镜像：** `c1cada/nexustok:latest`
+> **最新版 Docker 镜像：** `c1cadabob/nexustok:latest`
 
 ### 📋 部署要求
 
@@ -94,7 +106,7 @@ docker run --name nexustok -d --restart always \
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `SESSION_SECRET` | 会话密钥（多机部署必须） | - |
+| `SESSION_SECRET` / `SESSION_SECRET_FILE` | 会话密钥或持久化密钥文件（多机部署必须固定） | - |
 | `CRYPTO_SECRET` | 加密密钥（Redis 必须） | - |
 | `SQL_DSN` | 数据库连接字符串 | - |
 | `REDIS_CONN_STRING` | Redis 连接字符串 | - |
@@ -141,11 +153,21 @@ docker-compose up -d
 
 **使用 SQLite：**
 ```bash
+docker pull c1cadabob/nexustok:latest
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker rm -f nexustok 2>/dev/null || true
+
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cada/nexustok:latest
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
+
+docker ps | grep nexustok
+docker logs -f nexustok
+curl -sS http://127.0.0.1:3000/api/status
 ```
 
 **使用 MySQL：**
@@ -154,13 +176,16 @@ docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cada/nexustok:latest
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 ```
 
 > **💡 路径说明：**
-> - `./data:/data` - 相对路径，数据保存在当前目录的 data 文件夹
-> - 也可使用绝对路径，如：`/your/custom/path:/data`
+> - `/opt/nexustok/data:/data` - SQLite、会话密钥文件和运行时数据
+> - `/opt/nexustok/logs:/app/logs` - 主服务日志
+> - 访问 `http://服务器IP:3000` 前，请确认云服务器安全组已放行 TCP `3000` 端口。
 
 </details>
 

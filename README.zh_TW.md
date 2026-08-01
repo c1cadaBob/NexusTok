@@ -71,13 +71,13 @@ docker-compose up -d
 <summary><strong>Docker 命令</strong></summary>
 
 ```bash
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  c1cada/nexustok:latest
+  c1cadabob/nexustok:latest
 ```
 
 `-v ./data:/data` 會把 SQLite 和執行時資料保存到目前目錄的 `data` 資料夾。生產部署建議使用絕對路徑。

@@ -43,7 +43,7 @@
    - **容器名称**：可自定义，默认为 `nexustok`
    - **端口映射**：默认为 `3000:3000`
    - **环境变量**：
-     - `SESSION_SECRET`：会话密钥（**必填**，多机部署时必须一致）
+     - `SESSION_SECRET` 或 `SESSION_SECRET_FILE`：会话密钥（**必填**，多机部署时必须一致）
      - `CRYPTO_SECRET`：加密密钥（使用 Redis 时必填）
 5. 点击 **确认** 开始安装
 6. 等待安装完成后，访问 `http://您的服务器IP:3000` 即可使用
@@ -57,7 +57,7 @@
 version: '3'
 services:
   nexustok:
-    image: c1cada/nexustok:latest
+    image: c1cadabob/nexustok:latest
     container_name: nexustok
     restart: always
     ports:
@@ -65,7 +65,7 @@ services:
     volumes:
       - ./data:/data
     environment:
-      - SESSION_SECRET=your_session_secret_here  # 请修改为随机字符串
+      - SESSION_SECRET_FILE=/data/session_secret
       - TZ=Asia/Shanghai
 ```
 
@@ -76,6 +76,33 @@ cd /www/wwwroot/nexustok
 docker-compose up -d
 ```
 
+### 方法三：终端直接启动单容器
+
+如果已经成功拉取 `c1cadabob/nexustok:latest`，也可以在服务器终端中直接启动 SQLite 单容器：
+
+```bash
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker rm -f nexustok 2>/dev/null || true
+
+docker run --name nexustok -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
+```
+
+启动后检查：
+
+```bash
+docker ps | grep nexustok
+docker logs -f nexustok
+curl -sS http://127.0.0.1:3000/api/status
+```
+
+访问 `http://您的服务器IP:3000`。如果无法访问，请在宝塔面板 **安全** 和云服务器安全组中同时放行 TCP `3000` 端口。
+
 ***
 
 ## 配置说明
@@ -84,12 +111,14 @@ docker-compose up -d
 
 | 变量名                 | 说明                 | 是否必填   |
 | ------------------- | ------------------ | ------ |
-| `SESSION_SECRET`    | 会话密钥，多机部署必须一致      | **必填** |
+| `SESSION_SECRET` / `SESSION_SECRET_FILE` | 会话密钥或持久化密钥文件，多机部署必须一致 | **必填** |
 | `CRYPTO_SECRET`     | 加密密钥，使用 Redis 时必填  | 条件必填   |
 | `SQL_DSN`           | 数据库连接字符串（使用外部数据库时） | 可选     |
 | `REDIS_CONN_STRING` | Redis 连接字符串        | 可选     |
 
-### 生成随机密钥
+### 生成随机密钥（可选）
+
+默认示例使用 `SESSION_SECRET_FILE=/data/session_secret`，服务会在首次启动时自动生成并保存密钥。只有改用 `SESSION_SECRET` 环境变量时，才需要手动生成固定随机字符串：
 
 ```bash
 # 生成 SESSION_SECRET
@@ -111,7 +140,7 @@ head -c 16 /dev/urandom | xxd -p
 
 ### Q2：登录后提示会话失效？
 
-确保设置了 `SESSION_SECRET` 环境变量，且值不为空。
+确保设置了 `SESSION_SECRET` 环境变量，或使用 `SESSION_SECRET_FILE=/data/session_secret` 并持久化挂载 `/data` 目录。
 
 ### Q3：数据如何持久化？
 
@@ -124,12 +153,31 @@ volumes:
 
 ### Q4：如何更新版本？
 
+Docker Compose 部署：
+
 ```bash
 # 拉取最新镜像
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
 # 重启容器
 docker-compose down && docker-compose up -d
+```
+
+单容器部署：
+
+```bash
+docker pull c1cadabob/nexustok:latest
+docker stop nexustok
+docker rm nexustok
+
+# 使用原来的数据目录重新启动，不要删除 /opt/nexustok/data。
+docker run --name nexustok -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 ```
 
 ***
@@ -147,4 +195,4 @@ docker-compose down && docker-compose up -d
 
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
-> ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
+> ⚠️ 注意：请务必固定会话密钥。单容器和 Compose 示例默认使用 `SESSION_SECRET_FILE=/data/session_secret`，因此不要删除持久化的 `data` 目录。

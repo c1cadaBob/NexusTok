@@ -16,7 +16,7 @@ version: '3.4' # For compatibility with older Docker versions
 
 services:
   nexustok:
-    image: c1cada/nexustok:latest
+    image: c1cadabob/nexustok:latest
     container_name: nexustok
     restart: always
     command: --log-dir /app/logs

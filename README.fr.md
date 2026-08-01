@@ -71,13 +71,13 @@ Après le démarrage, ouvrez `http://localhost:3000` et terminez l'assistant d'i
 <summary><strong>Commande Docker</strong></summary>
 
 ```bash
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  c1cada/nexustok:latest
+  c1cadabob/nexustok:latest
 ```
 
 `-v ./data:/data` stocke SQLite et les données d'exécution dans le dossier local `data`. Utilisez un chemin absolu pour les déploiements de production.

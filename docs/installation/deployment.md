@@ -95,25 +95,45 @@ docker compose down -v
 SQLite 模式：
 
 ```bash
+docker pull c1cadabob/nexustok:latest
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker rm -f nexustok 2>/dev/null || true
+
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e SESSION_SECRET="$(openssl rand -hex 32)" \
-  -v "$PWD/data:/data" \
-  c1cada/nexustok:latest
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 ```
+
+启动后检查：
+
+```bash
+docker ps | grep nexustok
+docker logs -f nexustok
+curl -sS http://127.0.0.1:3000/api/status
+```
+
+浏览器访问 `http://服务器IP:3000`。如果部署在云服务器上，请确认安全组和系统防火墙已经放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。
 
 外部 PostgreSQL 示例：
 
 ```bash
+docker pull c1cadabob/nexustok:latest
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker rm -f nexustok 2>/dev/null || true
+
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e SESSION_SECRET="请替换为固定随机字符串" \
+  -e SESSION_SECRET_FILE=/data/session_secret \
   -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable" \
   -e REDIS_CONN_STRING="redis://:password@host:6379/0" \
-  -v "$PWD/data:/data" \
-  c1cada/nexustok:latest
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 ```
 
 单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
@@ -423,6 +443,56 @@ docker logs --tail 200 nexustok-frontend-watch
 | `waiting for production frontend dist` | 热重载环境缺少前端构建产物 | 查看 `nexustok-frontend-watch` 构建日志 |
 | `go build` 失败 | Go 代码编译错误或依赖下载失败 | 查看错误行，检查 `GOPROXY` 和代码改动 |
 
+### Docker 镜像拉取失败
+
+如果 `docker pull c1cadabob/nexustok:latest` 报错：
+
+```text
+Get "https://registry-1.docker.io/v2/": net/http: request canceled while waiting for connection
+```
+
+这通常是服务器到 Docker Hub registry 的网络链路超时，不是 NexusTok 镜像名称错误。可先确认连通性：
+
+```bash
+curl -I --connect-timeout 10 https://registry-1.docker.io/v2/
+getent hosts registry-1.docker.io
+```
+
+国内云服务器建议配置 Docker registry mirror。以阿里云为例，在 **容器镜像服务 ACR → 镜像工具 → 镜像加速器** 获取专属地址后写入：
+
+```bash
+mkdir -p /etc/docker
+cp /etc/docker/daemon.json /etc/docker/daemon.json.bak.$(date +%Y%m%d%H%M%S) 2>/dev/null || true
+
+cat > /etc/docker/daemon.json <<'EOF'
+{
+  "registry-mirrors": [
+    "https://你的镜像加速器地址"
+  ],
+  "dns": [
+    "223.5.5.5",
+    "119.29.29.29"
+  ]
+}
+EOF
+
+systemctl daemon-reload
+systemctl restart docker
+docker info | grep -A 10 "Registry Mirrors"
+docker pull c1cadabob/nexustok:latest
+```
+
+如果目标服务器仍无法访问 Docker Hub，可在一台能联网的机器上导出镜像，再传到服务器导入：
+
+```bash
+docker pull c1cadabob/nexustok:latest
+docker save c1cadabob/nexustok:latest -o nexustok-latest.tar
+
+# 传到目标服务器后执行
+docker load -i /root/nexustok-latest.tar
+docker images | grep nexustok
+```
+
 ### 登录状态频繁失效
 
 多实例或容器重建后登录失效，通常是会话密钥变化。
@@ -522,14 +592,38 @@ curl -H "NexusTok-User: <管理员用户ID>" \
 
 ## 更新流程
 
-生产 Compose 更新：
+生产 Compose 镜像更新：
 
 ```bash
-git pull
 docker compose pull nexustok
-docker compose up -d --build
+docker compose up -d nexustok
 docker compose ps
 curl -sS http://127.0.0.1:3000/api/status
+```
+
+旧版 Docker Compose 可使用：
+
+```bash
+docker-compose pull nexustok
+docker-compose up -d nexustok
+docker-compose ps
+```
+
+单容器镜像更新：
+
+```bash
+docker pull c1cadabob/nexustok:latest
+docker stop nexustok
+docker rm nexustok
+
+# 使用原来的 /opt/nexustok/data 和 /opt/nexustok/logs 挂载目录重新启动。
+docker run --name nexustok -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
 ```
 
 热重载环境更新：

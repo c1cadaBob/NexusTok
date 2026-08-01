@@ -71,13 +71,13 @@ After startup, open `http://localhost:3000` and complete the setup wizard.
 <summary><strong>Docker command</strong></summary>
 
 ```bash
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  c1cada/nexustok:latest
+  c1cadabob/nexustok:latest
 ```
 
 `-v ./data:/data` stores SQLite and runtime data under the local `data` directory. Use an absolute path for production deployments.

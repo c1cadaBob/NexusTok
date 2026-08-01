@@ -71,13 +71,13 @@ docker-compose up -d
 <summary><strong>Docker コマンド</strong></summary>
 
 ```bash
-docker pull c1cada/nexustok:latest
+docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  c1cada/nexustok:latest
+  c1cadabob/nexustok:latest
 ```
 
 `-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。本番環境では絶対パスの利用を推奨します。
