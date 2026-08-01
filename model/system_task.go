@@ -28,6 +28,7 @@ const (
 	SystemTaskTypeAsyncTaskPoll           = "async_task_poll"
 	SystemTaskTypeAccountPoolCheck        = "account_pool_check"
 	SystemTaskTypeSubscriptionMaintenance = "subscription_maintenance"
+	SystemTaskTypeUpstreamAccountSync     = "upstream_account_sync"
 )
 
 var (

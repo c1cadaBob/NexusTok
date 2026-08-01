@@ -13,6 +13,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/service/upstreamaccount"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 )
 
@@ -20,6 +21,7 @@ func init() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(accountPoolCheckHandler{})
+	service.RegisterSystemTaskHandler(upstreamAccountSyncHandler{})
 }
 
 // channelTestHandler 执行批量渠道测试任务。
@@ -159,6 +161,65 @@ func (accountPoolCheckHandler) Run(ctx context.Context, task *model.SystemTask, 
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// upstreamAccountSyncHandler 执行全局上游同步渠道自动刷新。
+//
+// Enabled 和 Interval 只负责调度新任务；Run 开始时会再次检查配置，避免管理员关闭
+// 自动同步后，已经排队的 pending 任务仍然修改渠道账号池。
+type upstreamAccountSyncHandler struct{}
+
+func (upstreamAccountSyncHandler) Type() string {
+	return model.SystemTaskTypeUpstreamAccountSync
+}
+
+func (upstreamAccountSyncHandler) Enabled() bool {
+	setting := operation_setting.GetUpstreamAccountSyncSetting()
+	if !setting.Enabled {
+		return false
+	}
+	_, err := setting.Duration()
+	return err == nil
+}
+
+func (upstreamAccountSyncHandler) Interval() time.Duration {
+	setting := operation_setting.GetUpstreamAccountSyncSetting()
+	duration, err := setting.Duration()
+	if err != nil || duration <= 0 {
+		return time.Hour
+	}
+	return duration
+}
+
+func (upstreamAccountSyncHandler) NewPayload() any {
+	return nil
+}
+
+func (upstreamAccountSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	setting := operation_setting.GetUpstreamAccountSyncSetting()
+	if !setting.Enabled {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, upstreamaccount.UpstreamAccountSyncSummary{
+			Skipped:    true,
+			SkipReason: "上游账号自动同步已关闭",
+		}, nil)
+		return
+	}
+	if _, err := setting.Duration(); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+
+	summary, err := upstreamaccount.RunUpstreamAccountSync(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
+	runErr := upstreamaccount.AutomaticSyncFailureError(summary)
+	status := model.SystemTaskStatusSucceeded
+	if runErr != nil {
+		status = model.SystemTaskStatusFailed
+	}
+	finishSystemTaskHandler(task, runnerID, status, summary, runErr)
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {
