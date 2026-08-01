@@ -138,31 +138,31 @@ export function SidebarModulesSection({
           'Manage native account pools and credential scheduling.'
         ),
       },
+      models: {
+        title: t('Models'),
+        description: t('Manage catalog visibility and pricing.'),
+      },
       pricing: {
         title: t('Group & Tool Pricing'),
         description: t(
           'Configure group ratios and tool prices used for billing'
         ),
       },
-      models: {
-        title: t('Models'),
-        description: t('Manage catalog visibility and pricing.'),
+      user: {
+        title: t('Users'),
+        description: t('Administer user accounts and roles.'),
+      },
+      subscription: {
+        title: t('Subscription Management'),
+        description: t('Manage subscription plans and pricing.'),
       },
       redemption: {
         title: t('Redeem codes'),
         description: t('Create and review invite or credit codes.'),
       },
-      user: {
-        title: t('Users'),
-        description: t('Administer user accounts and roles.'),
-      },
       setting: {
         title: t('System settings'),
         description: t('Advanced platform configuration.'),
-      },
-      subscription: {
-        title: t('Subscription Management'),
-        description: t('Manage subscription plans and pricing.'),
       },
       system_info: {
         title: t('System Info'),

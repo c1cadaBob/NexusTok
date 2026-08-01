@@ -58,12 +58,12 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     channel: true,
     account_pool: true,
-    pricing: true,
     models: true,
-    redemption: true,
+    pricing: true,
     user: true,
-    setting: true,
     subscription: true,
+    redemption: true,
+    setting: true,
     system_info: true,
   },
 }
@@ -87,6 +87,52 @@ const cloneSidebarDefault = (): SidebarModulesAdminConfig =>
     },
     {}
   )
+
+const orderSidebarSection = (
+  section: SidebarSectionConfig,
+  defaultSection: SidebarSectionConfig
+): SidebarSectionConfig => {
+  const ordered: SidebarSectionConfig = {
+    enabled: section.enabled,
+  }
+
+  // 已知模块始终按平台默认信息架构展示；未知自定义模块继续保留在末尾，
+  // 避免旧配置或插件式扩展因为排序归一化而丢失。
+  Object.keys(defaultSection).forEach((moduleKey) => {
+    if (moduleKey === 'enabled') return
+    if (moduleKey in section) {
+      ordered[moduleKey] = section[moduleKey]
+    }
+  })
+
+  Object.entries(section).forEach(([moduleKey, moduleValue]) => {
+    if (moduleKey === 'enabled' || moduleKey in ordered) return
+    ordered[moduleKey] = moduleValue
+  })
+
+  return ordered
+}
+
+const orderSidebarModulesAdmin = (
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig => {
+  const ordered: SidebarModulesAdminConfig = {}
+
+  Object.entries(SIDEBAR_MODULES_DEFAULT).forEach(
+    ([sectionKey, defaultSection]) => {
+      const section = config[sectionKey]
+      if (!section) return
+      ordered[sectionKey] = orderSidebarSection(section, defaultSection)
+    }
+  )
+
+  Object.entries(config).forEach(([sectionKey, section]) => {
+    if (sectionKey in ordered) return
+    ordered[sectionKey] = { ...section }
+  })
+
+  return ordered
+}
 
 export function parseHeaderNavModules(
   value: string | null | undefined
@@ -149,7 +195,7 @@ export function parseSidebarModulesAdmin(
       })
     })
 
-    return result
+    return orderSidebarModulesAdmin(result)
   } catch {
     return defaults
   }
@@ -158,5 +204,5 @@ export function parseSidebarModulesAdmin(
 export function serializeSidebarModulesAdmin(
   config: SidebarModulesAdminConfig
 ): string {
-  return JSON.stringify(config)
+  return JSON.stringify(orderSidebarModulesAdmin(config))
 }

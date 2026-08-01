@@ -191,17 +191,6 @@ export function useSidebarData(): SidebarData {
                   url: '/pricing-settings',
                   icon: Calculator,
                 },
-                {
-                  title: t('System Info'),
-                  url: '/system-info',
-                  icon: ServerCog,
-                },
-                {
-                  title: t('System Settings'),
-                  url: '/system-settings/site',
-                  activeUrls: ['/system-settings'],
-                  icon: Settings,
-                },
               ]
             : []),
           ...(canReadUser
@@ -210,6 +199,15 @@ export function useSidebarData(): SidebarData {
                   title: t('Users'),
                   url: '/users',
                   icon: Users,
+                },
+              ]
+            : []),
+          ...(canReadSubscription
+            ? [
+                {
+                  title: t('Subscription Management'),
+                  url: '/subscriptions',
+                  icon: CreditCard,
                 },
               ]
             : []),
@@ -222,12 +220,18 @@ export function useSidebarData(): SidebarData {
                 },
               ]
             : []),
-          ...(canReadSubscription
+          ...(userRole === ROLE.SUPER_ADMIN
             ? [
                 {
-                  title: t('Subscription Management'),
-                  url: '/subscriptions',
-                  icon: CreditCard,
+                  title: t('System Settings'),
+                  url: '/system-settings/site',
+                  activeUrls: ['/system-settings'],
+                  icon: Settings,
+                },
+                {
+                  title: t('System Info'),
+                  url: '/system-info',
+                  icon: ServerCog,
                 },
               ]
             : []),

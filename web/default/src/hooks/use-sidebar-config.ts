@@ -28,12 +28,11 @@ type SidebarSectionConfig = {
 
 type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 
-// User-layer config is shape-identical to admin, but may be null
-// to signal "no narrowing" (empty/invalid/legacy users).
+// 用户层配置与管理员配置结构一致；null 表示旧用户或空配置不再额外收窄可见项。
 type SidebarModulesUserConfig = SidebarModulesAdminConfig | null
 
 /**
- * Default sidebar modules configuration
+ * 默认侧边栏模块配置。
  */
 const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
   chat: {
@@ -58,12 +57,12 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     enabled: true,
     channel: true,
     account_pool: true,
-    pricing: true,
     models: true,
-    redemption: true,
+    pricing: true,
     user: true,
-    setting: true,
     subscription: true,
+    redemption: true,
+    setting: true,
     system_info: true,
   },
 }
@@ -94,7 +93,7 @@ const mergeWithDefaultSidebarModules = (
 }
 
 /**
- * Mapping from URL to configuration keys
+ * URL 到侧栏模块配置键的映射。
  */
 const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/playground': { section: 'chat', module: 'playground' },
@@ -124,12 +123,12 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
 }
 
 /**
- * Parse backend SidebarModulesAdmin configuration
+ * 解析后端 SidebarModulesAdmin 配置。
  */
 function parseSidebarConfig(
   value: string | null | undefined
 ): SidebarModulesAdminConfig {
-  // If empty string, null, or undefined, use default config
+  // 空字符串、null 或 undefined 都表示未配置，直接使用默认侧栏模块。
   if (!value || value.trim() === '') {
     return DEFAULT_SIDEBAR_MODULES
   }
@@ -145,9 +144,10 @@ function parseSidebarConfig(
 }
 
 /**
- * Parse user-level sidebar_modules. Returns null when the value is empty,
- * invalid, or otherwise unusable — the caller treats null as "do not narrow",
- * so legacy users with an empty sidebar_modules field keep the full admin view.
+ * 解析用户级 sidebar_modules。
+ *
+ * 返回 null 表示用户配置为空、无效或不可用，调用方会把它理解为“不再收窄”。
+ * 这样旧用户在没有 sidebar_modules 字段时，仍能看到管理员允许的完整入口。
  */
 function parseUserSidebarConfig(
   value: string | null | undefined
@@ -165,10 +165,13 @@ function parseUserSidebarConfig(
 }
 
 /**
- * Check if a module is enabled. Admin config is the first (authoritative)
- * layer: if admin disables a section/module it is always hidden. User config
- * is a second narrower layer: it can only further hide what admin allowed.
- * A null user config means "do not narrow" (legacy/empty users).
+ * 判断模块是否可见。
+ *
+ * 可见性由两层配置取交集：
+ * 1. 管理员配置来自 status.SidebarModulesAdmin，是全局权威配置；
+ * 2. 用户配置来自 auth.user.sidebar_modules，只能在管理员允许的范围内继续隐藏。
+ *
+ * 当用户配置为 null 时表示旧用户或空配置，不额外隐藏任何管理员允许的入口。
  */
 function isModuleEnabled(
   url: string,
@@ -177,7 +180,7 @@ function isModuleEnabled(
 ): boolean {
   const mapping = URL_TO_CONFIG_MAP[url]
   if (!mapping) {
-    // No mapping config, default to visible (e.g. system settings and new features)
+    // 没有显式映射的新入口默认可见，避免新增功能因为旧配置缺字段而被意外隐藏。
     return true
   }
 
@@ -197,7 +200,7 @@ function isModuleEnabled(
 }
 
 /**
- * Check if a navigation item should be visible
+ * 判断导航项是否应该展示。
  */
 function isNavItemVisible(
   item: NavItem,
@@ -216,7 +219,7 @@ function isNavItemVisible(
     return userChat.chat !== false
   }
 
-  // Handle direct link type
+  // 单链接入口按自身 URL 或 configUrls 参与配置过滤。
   if ('url' in item && item.url) {
     const configUrls = item.configUrls ?? [item.url]
     return configUrls.some((url) =>
@@ -224,9 +227,8 @@ function isNavItemVisible(
     )
   }
 
-  // Handle collapsible type (with sub-items)
+  // 折叠菜单只要仍有一个可见子入口，就保留父级入口。
   if ('items' in item && item.items) {
-    // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
       isModuleEnabled(subItem.url as string, adminConfig, userConfig)
     )
@@ -236,7 +238,7 @@ function isNavItemVisible(
 }
 
 /**
- * Filter navigation items
+ * 过滤导航项。
  */
 function filterNavItems(
   items: NavItem[],
@@ -245,7 +247,7 @@ function filterNavItems(
 ): NavItem[] {
   return items
     .map((item) => {
-      // If collapsible item, also filter its sub-items
+      // 折叠菜单的子入口需要同步过滤，避免父级展开后露出被配置隐藏的页面。
       if ('items' in item && item.items) {
         const filteredSubItems = item.items.filter((subItem) =>
           isModuleEnabled(subItem.url as string, adminConfig, userConfig)
@@ -262,20 +264,14 @@ function filterNavItems(
 }
 
 /**
- * Filter sidebar navigation groups by admin × user sidebar_modules config.
+ * 按管理员配置和用户配置过滤侧边栏分组。
  *
- * Two layers, AND-combined:
- *   1. Admin (status.SidebarModulesAdmin) — authoritative, falls back to
- *      DEFAULT_SIDEBAR_MODULES when empty/invalid. Disabling here hides the
- *      item for everyone regardless of user preference.
- *   2. User (auth.user.sidebar_modules) — narrower overlay, null sentinel
- *      means "don't narrow". A section/module is only hidden if the user
- *      explicitly set it to false; undefined fields default to visible so
- *      legacy users with empty sidebar_modules keep the full admin view.
- *      The overlay is also skipped entirely when the backend tells us the
- *      user cannot configure sidebar_settings (e.g. root accounts), so a
- *      stale historical value cannot lock them out of entries they have no
- *      UI to restore.
+ * 两层配置取交集：
+ * 1. 管理员配置来自 status.SidebarModulesAdmin，空值或非法值回退默认配置；
+ * 2. 用户配置来自 auth.user.sidebar_modules，只能进一步隐藏管理员允许的模块。
+ *
+ * 当后端标记当前用户不能配置 sidebar_settings 时，忽略用户层配置，避免历史
+ * sidebar_modules 值把 root 等没有恢复入口的账号锁在部分菜单之外。
  */
 export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   const { status } = useStatus()
@@ -290,11 +286,7 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   )
 
   const userConfig = useMemo(() => {
-    // If the backend marks the user as unable to configure the sidebar
-    // (e.g. root accounts), skip the user overlay entirely — a stale
-    // historical sidebar_modules value from a previous role would otherwise
-    // hide admin entries for someone who has no in-product UI to restore
-    // them.
+    // root 等账号没有用户级侧栏配置入口时，旧的本地配置不应继续影响可见菜单。
     if (auth?.user?.permissions?.sidebar_settings === false) {
       return null
     }
@@ -308,7 +300,7 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
           ...group,
           items: filterNavItems(group.items, adminConfig, userConfig),
         }))
-        .filter((group) => group.items.length > 0), // Only show navigation groups with visible items
+        .filter((group) => group.items.length > 0),
     [navGroups, adminConfig, userConfig]
   )
 
