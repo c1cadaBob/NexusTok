@@ -19,13 +19,15 @@ import (
 )
 
 type fakeSystemUpdateGitHubClient struct {
-	release      *systemUpdateGitHubRelease
-	fetchErr     error
-	downloadData []byte
-	checksumData []byte
+	release       *systemUpdateGitHubRelease
+	fetchErr      error
+	downloadData  []byte
+	checksumData  []byte
+	requestedRepo string
 }
 
-func (c *fakeSystemUpdateGitHubClient) FetchLatestRelease(_ context.Context, _ string) (*systemUpdateGitHubRelease, error) {
+func (c *fakeSystemUpdateGitHubClient) FetchLatestRelease(_ context.Context, repo string) (*systemUpdateGitHubRelease, error) {
+	c.requestedRepo = repo
 	if c.fetchErr != nil {
 		return nil, c.fetchErr
 	}
@@ -112,6 +114,59 @@ func TestSystemUpdateCheckFindsApplicableLinuxAsset(t *testing.T) {
 	assert.Equal(t, "nexustok-v1.1.0", info.MatchedAsset.Name)
 	assert.Equal(t, "checksums-linux.txt", info.ChecksumAsset.Name)
 	assert.Equal(t, systemUpdateBuildRelease, info.BuildType)
+	assert.Equal(t, systemUpdateReleaseStatusPublished, info.ReleaseStatus)
+}
+
+func TestSystemUpdateCheckMapsGitHubNotFoundToNoReleaseInfo(t *testing.T) {
+	client := &fakeSystemUpdateGitHubClient{fetchErr: ErrSystemUpdateNoRelease}
+	service := NewSystemUpdateService(client)
+	service.currentVersionFn = func() string { return "v1.0.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return true }
+	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
+
+	info, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	assert.False(t, info.HasUpdate)
+	assert.False(t, info.CanApply)
+	assert.Equal(t, systemUpdateReleaseStatusNone, info.ReleaseStatus)
+	assert.Equal(t, "No published GitHub release was found.", info.ApplyDisabledReason)
+	assert.Contains(t, info.ManualUpdateHint, "c1cadabob/nexustok:latest")
+	assert.Equal(t, systemUpdateBuildContainer, info.BuildType)
+}
+
+func TestSystemUpdateGitHubRepoCanBeOverriddenByEnv(t *testing.T) {
+	t.Setenv("SYSTEM_UPDATE_GITHUB_REPO", "example/fork")
+	client := &fakeSystemUpdateGitHubClient{release: testSystemUpdateRelease("v1.1.0")}
+	service := NewSystemUpdateService(client)
+	service.currentVersionFn = func() string { return "v1.0.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return false }
+	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
+
+	_, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	assert.Equal(t, "example/fork", client.requestedRepo)
+}
+
+func TestSystemUpdateGitHubRepoFallsBackWhenEnvBlank(t *testing.T) {
+	t.Setenv("SYSTEM_UPDATE_GITHUB_REPO", " ")
+	client := &fakeSystemUpdateGitHubClient{release: testSystemUpdateRelease("v1.1.0")}
+	service := NewSystemUpdateService(client)
+	service.currentVersionFn = func() string { return "v1.0.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return false }
+	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
+
+	_, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	assert.Equal(t, systemUpdateDefaultGitHubRepo, client.requestedRepo)
 }
 
 func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
@@ -123,6 +178,7 @@ func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
 	assert.False(t, containerInfo.CanApply)
 	assert.Equal(t, systemUpdateBuildContainer, containerInfo.BuildType)
 	assert.Contains(t, containerInfo.ApplyDisabledReason, "Container deployments")
+	assert.Contains(t, containerInfo.ManualUpdateHint, "c1cadabob/nexustok:latest")
 
 	sourceService := newTestSystemUpdateService("v0.0.0", "linux", "amd64", false, release)
 	sourceInfo, err := sourceService.CheckLatest(context.Background(), true)
@@ -130,6 +186,7 @@ func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
 	assert.False(t, sourceInfo.CanApply)
 	assert.Equal(t, systemUpdateBuildSource, sourceInfo.BuildType)
 	assert.Contains(t, sourceInfo.ApplyDisabledReason, "Source or development")
+	assert.Contains(t, sourceInfo.ManualUpdateHint, "pulling the latest code")
 }
 
 func TestSystemUpdateCheckKeepsUnknownCustomPlatformNotApplicable(t *testing.T) {
@@ -168,7 +225,7 @@ func TestExpectedSystemUpdateAssetNames(t *testing.T) {
 
 func TestValidateSystemUpdateDownloadURL(t *testing.T) {
 	validURLs := []string{
-		"https://github.com/c1cada/NexusTok/releases/download/v1/nexustok-v1",
+		"https://github.com/c1cadaBob/NexusTok/releases/download/v1/nexustok-v1",
 		"https://objects.githubusercontent.com/github-production-release-asset/file",
 		"https://sub.objects.githubusercontent.com/file",
 	}
@@ -177,7 +234,7 @@ func TestValidateSystemUpdateDownloadURL(t *testing.T) {
 	}
 
 	invalidURLs := []string{
-		"http://github.com/c1cada/NexusTok/releases/download/v1/nexustok-v1",
+		"http://github.com/c1cadaBob/NexusTok/releases/download/v1/nexustok-v1",
 		"https://example.com/file",
 		"https://github.com.evil.test/file",
 		"https://objects.githubusercontent.com.evil.test/file",
@@ -413,16 +470,16 @@ func testSystemUpdateRelease(version string) *systemUpdateGitHubRelease {
 	return &systemUpdateGitHubRelease{
 		TagName:     version,
 		Name:        version,
-		HTMLURL:     "https://github.com/c1cada/NexusTok/releases/tag/" + version,
+		HTMLURL:     "https://github.com/c1cadaBob/NexusTok/releases/tag/" + version,
 		PublishedAt: "2026-08-01T00:00:00Z",
 		Assets: []systemUpdateGitHubAsset{
-			{Name: "nexustok-" + version, BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/nexustok-" + version, Size: 10},
-			{Name: "nexustok-arm64-" + version, BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/nexustok-arm64-" + version, Size: 10},
-			{Name: "nexustok-macos-" + version, BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/nexustok-macos-" + version, Size: 10},
-			{Name: "nexustok-" + version + ".exe", BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/nexustok-" + version + ".exe", Size: 10},
-			{Name: "checksums-linux.txt", BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/checksums-linux.txt", Size: 100},
-			{Name: "checksums-macos.txt", BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/checksums-macos.txt", Size: 100},
-			{Name: "checksums-windows.txt", BrowserDownloadURL: "https://github.com/c1cada/NexusTok/releases/download/" + version + "/checksums-windows.txt", Size: 100},
+			{Name: "nexustok-" + version, BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/nexustok-" + version, Size: 10},
+			{Name: "nexustok-arm64-" + version, BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/nexustok-arm64-" + version, Size: 10},
+			{Name: "nexustok-macos-" + version, BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/nexustok-macos-" + version, Size: 10},
+			{Name: "nexustok-" + version + ".exe", BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/nexustok-" + version + ".exe", Size: 10},
+			{Name: "checksums-linux.txt", BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/checksums-linux.txt", Size: 100},
+			{Name: "checksums-macos.txt", BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/checksums-macos.txt", Size: 100},
+			{Name: "checksums-windows.txt", BrowserDownloadURL: "https://github.com/c1cadaBob/NexusTok/releases/download/" + version + "/checksums-windows.txt", Size: 100},
 		},
 	}
 }

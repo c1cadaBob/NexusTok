@@ -231,7 +231,7 @@ const Home = () => {
                       icon={<IconGithubLogo />}
                       onClick={() =>
                         window.open(
-                          'https://github.com/c1cada/NexusTok',
+                          'https://github.com/c1cadaBob/NexusTok',
                           '_blank',
                         )
                       }

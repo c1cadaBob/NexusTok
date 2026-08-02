@@ -28,10 +28,10 @@ import (
 )
 
 const (
-	systemUpdateGitHubRepo      = "c1cada/NexusTok"
-	systemUpdateCacheTTL        = 20 * time.Minute
-	systemUpdateMaxDownloadSize = 500 * 1024 * 1024
-	systemUpdateChecksumMaxSize = 2 * 1024 * 1024
+	systemUpdateDefaultGitHubRepo = "c1cadaBob/NexusTok"
+	systemUpdateCacheTTL          = 20 * time.Minute
+	systemUpdateMaxDownloadSize   = 500 * 1024 * 1024
+	systemUpdateChecksumMaxSize   = 2 * 1024 * 1024
 
 	systemUpdateAllowedDownloadHost = "github.com"
 	systemUpdateAllowedAssetHost    = "objects.githubusercontent.com"
@@ -40,6 +40,9 @@ const (
 	systemUpdateBuildSource    = "source"
 	systemUpdateBuildContainer = "container"
 	systemUpdateActiveKey      = "system_binary_update"
+
+	systemUpdateReleaseStatusPublished = "published"
+	systemUpdateReleaseStatusNone      = "none"
 )
 
 const (
@@ -56,6 +59,7 @@ var (
 	ErrSystemUpdateUnavailable = errors.New("no system update available")
 	ErrSystemUpdateDisabled    = errors.New("system update cannot be applied")
 	ErrSystemRollbackDisabled  = errors.New("no backup executable found")
+	ErrSystemUpdateNoRelease   = errors.New("no published GitHub release was found")
 )
 
 // SystemUpdateInfo 是系统更新检查接口返回给前端的完整视图。
@@ -73,6 +77,8 @@ type SystemUpdateInfo struct {
 	ApplyDisabledReason string                   `json:"apply_disabled_reason,omitempty"`
 	RollbackAvailable   bool                     `json:"rollback_available"`
 	Warning             string                   `json:"warning,omitempty"`
+	ReleaseStatus       string                   `json:"release_status"`
+	ManualUpdateHint    string                   `json:"manual_update_hint,omitempty"`
 }
 
 // SystemUpdateRuntime 描述当前进程运行平台，用于前端解释自动更新可用性。
@@ -194,6 +200,19 @@ type SystemUpdateService struct {
 
 var defaultSystemUpdateService = NewSystemUpdateService(NewSystemUpdateHTTPClient())
 
+// getSystemUpdateGitHubRepo 返回系统更新使用的 GitHub 仓库。
+//
+// 这里不能依赖 Go module 路径：历史 module path 仍是 github.com/c1cada/NexusTok，
+// 但真实 Release 仓库可能迁移 owner。通过环境变量允许私有部署指向自己的 fork，
+// 默认值则使用当前项目实际远程仓库，避免维护页查询不存在的 owner 后只暴露 404。
+func getSystemUpdateGitHubRepo() string {
+	repo := strings.TrimSpace(common.GetEnvOrDefaultString("SYSTEM_UPDATE_GITHUB_REPO", systemUpdateDefaultGitHubRepo))
+	if repo == "" {
+		return systemUpdateDefaultGitHubRepo
+	}
+	return repo
+}
+
 // NewSystemUpdateService 创建系统更新服务。
 func NewSystemUpdateService(githubClient SystemUpdateGitHubClient) *SystemUpdateService {
 	return &SystemUpdateService{
@@ -312,8 +331,13 @@ func (s *SystemUpdateService) CheckLatest(ctx context.Context, force bool) (*Sys
 		}
 	}
 
-	release, err := s.githubClient.FetchLatestRelease(ctx, systemUpdateGitHubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, getSystemUpdateGitHubRepo())
 	if err != nil {
+		if errors.Is(err, ErrSystemUpdateNoRelease) {
+			info := s.buildNoReleaseInfo()
+			s.setCachedInfo(info)
+			return cloneSystemUpdateInfo(info), nil
+		}
 		if cached := s.getCachedInfo(); cached != nil {
 			cached.Warning = "Using cached update data: " + err.Error()
 			return cached, nil
@@ -324,6 +348,30 @@ func (s *SystemUpdateService) CheckLatest(ctx context.Context, force bool) (*Sys
 	info := s.buildUpdateInfo(release)
 	s.setCachedInfo(info)
 	return cloneSystemUpdateInfo(info), nil
+}
+
+func (s *SystemUpdateService) buildNoReleaseInfo() *SystemUpdateInfo {
+	currentVersion := strings.TrimSpace(s.currentVersionFn())
+	_, currentOK := parseSystemUpdateVersion(currentVersion)
+	buildType := s.buildType(currentOK)
+	info := &SystemUpdateInfo{
+		CurrentVersion: currentVersion,
+		LatestVersion:  "",
+		HasUpdate:      false,
+		Runtime: SystemUpdateRuntime{
+			GOOS:                 s.goosFn(),
+			GOARCH:               s.goarchFn(),
+			IsRunningInContainer: s.isContainerFn(),
+		},
+		BuildType:           buildType,
+		RollbackAvailable:   s.RollbackAvailable(),
+		ReleaseStatus:       systemUpdateReleaseStatusNone,
+		ManualUpdateHint:    systemUpdateManualUpdateHint(buildType),
+		CanApply:            false,
+		ApplyDisabledReason: "No published GitHub release was found.",
+		Warning:             "No published GitHub release was found.",
+	}
+	return info
 }
 
 func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease) *SystemUpdateInfo {
@@ -361,6 +409,7 @@ func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease
 		BuildType:         s.buildType(currentOK),
 		RollbackAvailable: s.RollbackAvailable(),
 		Warning:           warning,
+		ReleaseStatus:     systemUpdateReleaseStatusPublished,
 	}
 	s.syncApplicability(info)
 	return info
@@ -379,15 +428,21 @@ func (s *SystemUpdateService) buildType(versionComparable bool) string {
 
 func (s *SystemUpdateService) syncApplicability(info *SystemUpdateInfo) {
 	switch {
+	case info.ReleaseStatus == systemUpdateReleaseStatusNone:
+		info.CanApply = false
+		info.ApplyDisabledReason = "No published GitHub release was found."
+		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
 	case !info.HasUpdate:
 		info.CanApply = false
 		info.ApplyDisabledReason = "Already running the latest version."
 	case info.BuildType == systemUpdateBuildContainer:
 		info.CanApply = false
 		info.ApplyDisabledReason = "Container deployments must be updated by replacing the image."
+		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
 	case info.BuildType == systemUpdateBuildSource:
 		info.CanApply = false
 		info.ApplyDisabledReason = "Source or development builds cannot be replaced safely from the dashboard."
+		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
 	case info.MatchedAsset == nil:
 		info.CanApply = false
 		info.ApplyDisabledReason = fmt.Sprintf("No compatible release asset found for %s/%s.", info.Runtime.GOOS, info.Runtime.GOARCH)
@@ -398,6 +453,21 @@ func (s *SystemUpdateService) syncApplicability(info *SystemUpdateInfo) {
 		info.CanApply = true
 		info.ApplyDisabledReason = ""
 	}
+}
+
+func systemUpdateManualUpdateHint(buildType string) string {
+	switch buildType {
+	case systemUpdateBuildContainer:
+		return systemUpdateDockerManualUpdateHint()
+	case systemUpdateBuildSource:
+		return "Source or development builds should be updated by pulling the latest code, rebuilding, and restarting the service manually."
+	default:
+		return "Publish a GitHub Release with matching binary assets and checksums before applying dashboard updates."
+	}
+}
+
+func systemUpdateDockerManualUpdateHint() string {
+	return "Docker deployments should update by pulling c1cadabob/nexustok:latest and recreating the container with the same mounted data directories."
 }
 
 // RollbackAvailable 检查当前可执行文件旁边是否存在 .backup。
@@ -651,6 +721,9 @@ func (c *systemUpdateHTTPClient) FetchLatestRelease(ctx context.Context, repo st
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrSystemUpdateNoRelease
+		}
 		return nil, fmt.Errorf("GitHub releases API returned %d", resp.StatusCode)
 	}
 

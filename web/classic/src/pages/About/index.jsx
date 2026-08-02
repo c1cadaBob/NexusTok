@@ -64,16 +64,16 @@ const About = () => {
       <p>{t('可在设置页面设置关于内容，支持 HTML & Markdown')}</p>
       {t('NexusTok项目仓库地址：')}
       <a
-        href='https://github.com/c1cada/NexusTok'
+        href='https://github.com/c1cadaBob/NexusTok'
         target='_blank'
         rel='noopener noreferrer'
         className='!text-semi-color-primary'
       >
-        https://github.com/c1cada/NexusTok
+        https://github.com/c1cadaBob/NexusTok
       </a>
       <p>
         <a
-          href='https://github.com/c1cada/NexusTok'
+          href='https://github.com/c1cadaBob/NexusTok'
           target='_blank'
           rel='noopener noreferrer'
           className='!text-semi-color-primary'

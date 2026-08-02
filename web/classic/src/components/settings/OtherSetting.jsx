@@ -235,28 +235,27 @@ const OtherSetting = () => {
         ...loadingInput,
         CheckUpdate: true,
       }));
-      // Use a CORS proxy to avoid direct cross-origin requests to GitHub API
-      // Option 1: Use a public CORS proxy service
+      // 如需避免浏览器直接跨域请求 GitHub API，可接入 CORS 代理。
+      // 方案一：使用公共 CORS 代理服务。
       // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
       // const res = await API.get(
-      //   `${proxyUrl}https://api.github.com/repos/c1cada/NexusTok/releases/latest`,
+      //   `${proxyUrl}https://api.github.com/repos/c1cadaBob/NexusTok/releases/latest`,
       // );
 
-      // Option 2: Use the JSON proxy approach which often works better with GitHub API
+      // 方案二：直接请求 GitHub API 的 JSON 响应。
       const res = await fetch(
-        'https://api.github.com/repos/c1cada/NexusTok/releases/latest',
+        'https://api.github.com/repos/c1cadaBob/NexusTok/releases/latest',
         {
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
-            // Adding User-Agent which is often required by GitHub API
+            // GitHub API 通常要求显式 User-Agent。
             'User-Agent': 'nexustok-update-checker',
           },
         },
       ).then((response) => response.json());
 
-      // Option 3: Use a local proxy endpoint
-      // Create a cached version of the response to avoid frequent GitHub API calls
+      // 方案三：接入本地代理端点，并缓存响应以降低 GitHub API 调用频率。
       // const res = await API.get('/api/status/github-latest-release');
 
       const { tag_name, body } = res;
@@ -340,10 +339,10 @@ const OtherSetting = () => {
     getOptions();
   }, []);
 
-  // Function to open GitHub release page
+  // 打开当前版本对应的 GitHub Release 页面
   const openGitHubRelease = () => {
     window.open(
-      `https://github.com/c1cada/NexusTok/releases/tag/${updateData.tag_name}`,
+      `https://github.com/c1cadaBob/NexusTok/releases/tag/${updateData.tag_name}`,
       '_blank',
     );
   };

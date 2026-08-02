@@ -38,7 +38,7 @@ var (
 func printHelp() {
 	fmt.Println("NexusTok (Based on OneAPI) " + Version + " - The next-generation LLM gateway and AI asset management system supports multiple languages.")
 	fmt.Println("Original Project: OneAPI by JustSong - https://github.com/songquanpeng/one-api")
-	fmt.Println("Maintainer: c1cada - https://github.com/c1cada/NexusTok")
+	fmt.Println("Maintainer: c1cada - https://github.com/c1cadaBob/NexusTok")
 	fmt.Println("Usage: nexustok [--port <port>] [--log-dir <log directory>] [--version] [--help]")
 }
 

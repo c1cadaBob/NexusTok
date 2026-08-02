@@ -257,7 +257,7 @@ export default function GeneralSettings(props) {
                   field={'general_setting.docs_link'}
                   label={t('文档地址')}
                   initValue={''}
-                  placeholder={t('例如 https://github.com/c1cada/NexusTok')}
+                  placeholder={t('例如 https://github.com/c1cadaBob/NexusTok')}
                   onChange={handleFieldChange('general_setting.docs_link')}
                   showClear
                 />

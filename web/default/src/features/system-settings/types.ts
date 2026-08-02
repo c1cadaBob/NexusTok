@@ -173,6 +173,8 @@ export type SystemUpdateInfo = {
   apply_disabled_reason?: string
   rollback_available: boolean
   warning?: string
+  release_status?: string
+  manual_update_hint?: string
 }
 
 export type SystemUpdateInfoResponse = {

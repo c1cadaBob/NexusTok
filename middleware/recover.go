@@ -51,7 +51,7 @@ func RelayPanicRecover() gin.HandlerFunc {
 				// 返回友好的错误响应
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": gin.H{
-						"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/c1cada/NexusTok", err),
+						"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/c1cadaBob/NexusTok", err),
 						"type":    "nexustok_panic",
 					},
 				})

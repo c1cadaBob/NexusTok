@@ -21,7 +21,7 @@
   "author": "c1cada",
   "repository": {
     "type": "git",
-    "url": "https://github.com/c1cada/NexusTok"
+    "url": "https://github.com/c1cadaBob/NexusTok"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

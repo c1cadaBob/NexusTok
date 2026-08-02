@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import {
   DownloadIcon,
   ExternalLinkIcon,
@@ -116,6 +117,7 @@ function getBuildTypeLabel(buildType?: string) {
 
 function getStatusBadgeVariant(info?: SystemUpdateInfo) {
   if (!info) return 'secondary' as const
+  if (info.release_status === 'none') return 'secondary' as const
   if (info.has_update && info.can_apply) return 'default' as const
   if (info.has_update && !info.can_apply) return 'destructive' as const
   return 'secondary' as const
@@ -123,6 +125,7 @@ function getStatusBadgeVariant(info?: SystemUpdateInfo) {
 
 function getUpdateStatusLabel(info?: SystemUpdateInfo) {
   if (!info) return 'Not checked'
+  if (info.release_status === 'none') return 'No release published'
   if (info.has_update && info.can_apply) return 'Update available'
   if (info.has_update) return 'Manual update required'
   return 'Up to date'
@@ -131,6 +134,25 @@ function getUpdateStatusLabel(info?: SystemUpdateInfo) {
 function getTaskTypeLabel(type?: string) {
   if (type === 'system_rollback') return 'System rollback'
   return 'System update'
+}
+
+function translateManualUpdateHint(t: TFunction, hint?: string) {
+  switch (hint) {
+    case 'Docker deployments should update by pulling c1cadabob/nexustok:latest and recreating the container with the same mounted data directories.':
+      return t(
+        'Docker deployments should update by pulling c1cadabob/nexustok:latest and recreating the container with the same mounted data directories.'
+      )
+    case 'Source or development builds should be updated by pulling the latest code, rebuilding, and restarting the service manually.':
+      return t(
+        'Source or development builds should be updated by pulling the latest code, rebuilding, and restarting the service manually.'
+      )
+    case 'Publish a GitHub Release with matching binary assets and checksums before applying dashboard updates.':
+      return t(
+        'Publish a GitHub Release with matching binary assets and checksums before applying dashboard updates.'
+      )
+    default:
+      return hint || ''
+  }
 }
 
 export function UpdateCheckerSection({
@@ -222,12 +244,21 @@ export function UpdateCheckerSection({
   const taskActive = isActiveTask(currentTask)
   const restartRequired = Boolean(taskResult?.restart_required)
   const version = info?.current_version || currentVersion || t('Unknown')
-  const latestVersion = info?.latest_version || t('Unknown')
+  const latestVersion =
+    info?.release_status === 'none'
+      ? t('No release published')
+      : info?.latest_version || t('Unknown')
   const uptime = startTime ? formatTimestamp(startTime) : t('Unknown')
   const runtimeLabel = info
     ? `${info.runtime.goos}/${info.runtime.goarch}`
     : t('Unknown')
   const hasReleaseNotes = Boolean(info?.release_info?.body)
+  const manualUpdateHint = translateManualUpdateHint(
+    t,
+    info?.manual_update_hint
+  )
+  const showDockerManualCommands =
+    info?.build_type === 'container' && Boolean(info?.manual_update_hint)
 
   const checkMutation = useMutation({
     mutationFn: () => getLatestSystemUpdate(true),
@@ -236,7 +267,9 @@ export function UpdateCheckerSection({
         throw new Error(res.message || t('Failed to check for updates'))
       }
       queryClient.setQueryData(['system-update', 'latest'], res.data)
-      if (res.data.has_update) {
+      if (res.data.release_status === 'none') {
+        toast.info(t('No published GitHub release was found.'))
+      } else if (res.data.has_update) {
         toast.success(
           t('New version available: {{version}}', {
             version: res.data.latest_version,
@@ -403,6 +436,18 @@ export function UpdateCheckerSection({
         description={t('Check, apply, roll back, and restart release updates.')}
       >
         <div className='flex flex-col gap-4'>
+          {updateQuery.isError ? (
+            <Alert variant='destructive'>
+              <ShieldAlertIcon aria-hidden='true' />
+              <AlertTitle>{t('Failed to check for updates')}</AlertTitle>
+              <AlertDescription>
+                {updateQuery.error instanceof Error
+                  ? updateQuery.error.message
+                  : t('Please try again later.')}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
             <StatusTile label={t('Current version')} value={version} />
             <StatusTile label={t('Latest version')} value={latestVersion} />
@@ -514,6 +559,41 @@ export function UpdateCheckerSection({
                 <AlertTitle>{t('Automatic update unavailable')}</AlertTitle>
                 <AlertDescription>
                   {t(info.apply_disabled_reason)}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {info?.manual_update_hint ? (
+              <Alert className='mt-4'>
+                <AlertTitle>{t('Manual update')}</AlertTitle>
+                <AlertDescription>
+                  <div className='flex flex-col gap-3'>
+                    <p>{manualUpdateHint}</p>
+                    {showDockerManualCommands ? (
+                      <div className='grid gap-3 lg:grid-cols-2'>
+                        <div className='min-w-0'>
+                          <div className='mb-1 text-xs font-medium'>
+                            {t('Single container')}
+                          </div>
+                          <pre className='bg-muted text-muted-foreground overflow-x-auto rounded-md p-3 text-xs'>
+                            <code>{`docker pull c1cadabob/nexustok:latest
+docker stop nexustok
+docker rm nexustok
+# ${t('Recreate docker run with the same mounted data directories')}`}</code>
+                          </pre>
+                        </div>
+                        <div className='min-w-0'>
+                          <div className='mb-1 text-xs font-medium'>
+                            {t('Docker Compose')}
+                          </div>
+                          <pre className='bg-muted text-muted-foreground overflow-x-auto rounded-md p-3 text-xs'>
+                            <code>{`docker compose pull nexustok
+docker compose up -d nexustok`}</code>
+                          </pre>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </AlertDescription>
               </Alert>
             ) : null}

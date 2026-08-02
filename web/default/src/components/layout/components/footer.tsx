@@ -84,7 +84,7 @@ function ProjectAttribution(props: { currentYear: number }) {
       <span className='text-muted-foreground/45'>
         &copy; {props.currentYear}{' '}
         <a
-          href='https://github.com/c1cada/NexusTok'
+          href='https://github.com/c1cadaBob/NexusTok'
           target='_blank'
           rel='noopener noreferrer'
           className='text-foreground/70 hover:text-foreground font-medium transition-colors'
@@ -118,15 +118,15 @@ export function Footer(props: FooterProps) {
         links: [
           {
             text: t('footer.columns.about.links.aboutProject'),
-            href: 'https://github.com/c1cada/NexusTok',
+            href: 'https://github.com/c1cadaBob/NexusTok',
           },
           {
             text: t('footer.columns.about.links.contact'),
-            href: 'https://github.com/c1cada/NexusTok/issues',
+            href: 'https://github.com/c1cadaBob/NexusTok/issues',
           },
           {
             text: t('footer.columns.about.links.features'),
-            href: 'https://github.com/c1cada/NexusTok#readme',
+            href: 'https://github.com/c1cadaBob/NexusTok#readme',
           },
         ],
       },
@@ -135,15 +135,15 @@ export function Footer(props: FooterProps) {
         links: [
           {
             text: t('footer.columns.docs.links.quickStart'),
-            href: 'https://github.com/c1cada/NexusTok#readme',
+            href: 'https://github.com/c1cadaBob/NexusTok#readme',
           },
           {
             text: t('footer.columns.docs.links.installation'),
-            href: 'https://github.com/c1cada/NexusTok/blob/main/docs/installation/BT.md',
+            href: 'https://github.com/c1cadaBob/NexusTok/blob/main/docs/installation/BT.md',
           },
           {
             text: t('footer.columns.docs.links.apiDocs'),
-            href: 'https://github.com/c1cada/NexusTok/tree/main/docs/openapi',
+            href: 'https://github.com/c1cadaBob/NexusTok/tree/main/docs/openapi',
           },
         ],
       },
