@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +95,46 @@ func TestWriteCatalogToRepositoryRoundTrip(t *testing.T) {
 	require.NotEmpty(t, loaded.Manifest.Hash)
 	require.FileExists(t, filepath.Join(dir, "catalog.generated.json"))
 	require.FileExists(t, filepath.Join(dir, "manifest.json"))
+}
+
+func TestWriteCatalogToRepositoryUsesWindowsSafeFilenamesAndCleansStaleFiles(t *testing.T) {
+	input := &Catalog{
+		Models: map[string]CatalogModel{
+			"openai/gpt-oss:120b": {
+				ID:     "gpt-oss:120b",
+				Name:   "GPT OSS 120B",
+				Status: "active",
+			},
+		},
+		Providers: map[string]CatalogProvider{
+			"ollama-cloud": {
+				ID:     "ollama-cloud",
+				Name:   "Ollama Cloud",
+				Status: "active",
+				Models: map[string]CatalogModel{
+					"gpt-oss:120b": {
+						ID:     "gpt-oss:120b",
+						Status: "active",
+					},
+				},
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	staleFile := filepath.Join(dir, "providers", "ollama-cloud", "models", "gpt-oss:120b.toml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(staleFile), 0o755))
+	require.NoError(t, os.WriteFile(staleFile, []byte("id = 'stale'\n"), 0o644))
+
+	require.NoError(t, WriteCatalogToRepository(dir, input))
+
+	require.NoFileExists(t, staleFile)
+	matches, err := filepath.Glob(filepath.Join(dir, "providers", "ollama-cloud", "models", "gpt-oss-120b--*.toml"))
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	loaded, err := LoadRepository(dir)
+	require.NoError(t, err)
+	require.Contains(t, loaded.Providers["ollama-cloud"].Models, "gpt-oss:120b")
 }
 
 func TestSeedCatalogCreatesMissingAndPreservesManualPricing(t *testing.T) {

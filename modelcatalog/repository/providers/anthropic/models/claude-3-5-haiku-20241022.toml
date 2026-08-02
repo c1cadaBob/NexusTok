@@ -1,8 +1,0 @@
-id = 'claude-3-5-haiku-20241022'
-name = 'Claude 3.5 Haiku'
-status = 'active'
-
-[cost]
-input = 1.0
-output = 5.0
-

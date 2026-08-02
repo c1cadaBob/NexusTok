@@ -1,8 +1,0 @@
-id = 'claude-sonnet-4-20250514'
-name = 'Claude Sonnet 4'
-status = 'active'
-
-[cost]
-input = 3.0
-output = 15.0
-

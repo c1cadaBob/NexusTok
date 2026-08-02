@@ -162,6 +162,9 @@ func WriteCatalogToRepository(dir string, catalog *Catalog) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	if err := cleanRepositorySourceDirs(dir); err != nil {
+		return err
+	}
 
 	if err := writeCanonicalModels(dir, catalog); err != nil {
 		return err
@@ -255,6 +258,20 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// cleanRepositorySourceDirs 清理源码 TOML 目录，确保重新生成时不会保留旧模型文件。
+//
+// models.dev 中存在带冒号的模型 ID，旧版本会直接写成文件名；Windows runner 无法
+// checkout 这类路径。写回前先清理 models/providers，再用安全文件名重建目录，可以
+// 避免发布流水线继续被旧非法文件卡住。
+func cleanRepositorySourceDirs(dir string) error {
+	for _, root := range []string{"models", "providers"} {
+		if err := os.RemoveAll(filepath.Join(dir, root)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BuildManifest 为当前 catalog 构造稳定 manifest。
@@ -379,14 +396,58 @@ func splitCanonicalKey(key string) (string, string) {
 	return "", key
 }
 
+// safePathSegment 将模型或 provider ID 转成跨平台安全的单级路径名。
+//
+// TOML 文件内部仍保留原始 ID，因此这里可以只处理文件系统兼容性。只要发生替换、
+// 裁剪或命中 Windows 保留名，就追加短 hash，避免 gpt:a 与 gpt-a 这类名称碰撞。
 func safePathSegment(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.ReplaceAll(value, "/", "-")
-	value = strings.ReplaceAll(value, "\\", "-")
-	if value == "" {
+	original := strings.TrimSpace(value)
+	if original == "" {
 		return "unknown"
 	}
-	return value
+	var builder strings.Builder
+	changed := false
+	for _, item := range original {
+		if item < 32 || strings.ContainsRune(`<>:"/\|?*`, item) {
+			builder.WriteByte('-')
+			changed = true
+			continue
+		}
+		builder.WriteRune(item)
+	}
+	safe := strings.Trim(builder.String(), " .")
+	if safe == "" {
+		safe = "unknown"
+		changed = true
+	}
+	if isWindowsReservedPathSegment(safe) {
+		safe = "_" + safe
+		changed = true
+	}
+	if changed || safe != original {
+		return safe + "--" + shortPathSegmentHash(original)
+	}
+	return safe
+}
+
+// isWindowsReservedPathSegment 判断路径段是否命中 Windows 保留设备名。
+func isWindowsReservedPathSegment(value string) bool {
+	base := strings.ToLower(strings.TrimSpace(value))
+	base, _, _ = strings.Cut(base, ".")
+	switch base {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "com") || strings.HasPrefix(base, "lpt")) {
+		return base[3] >= '1' && base[3] <= '9'
+	}
+	return false
+}
+
+// shortPathSegmentHash 为改写后的文件名提供稳定短后缀，降低名称碰撞概率。
+func shortPathSegmentHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 func uniqueStrings(values []string) []string {
