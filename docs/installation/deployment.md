@@ -624,9 +624,11 @@ Web 静态资源路由会根据 `common.GetTheme()` 选择默认前端或经典�
 
 ## 后台定时任务
 
-主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、原生账号池凭据刷新、Codex 凭据刷新、上游模型巡检，以及 models.dev 模型目录同步。
+主服务启动后会在主节点上启动多类后台任务，包括渠道缓存同步、系统配置热更新、数据看板刷新、渠道可用性测试、订阅配额维护、原生账号池凭据刷新、Codex 凭据刷新、上游模型巡检、内置模型仓库 seed，以及 models.dev 模型目录同步。
 
-models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.json` 拉取公开模型目录，并补齐本地缺失的模型和供应商。同步时会优先采用 canonical models 的归属方作为本地“供应商”，避免把 Vivgrid 之类的服务商误写成 OpenAI、Anthropic 这类模型原厂。该任务会补齐缺失模型，并在 `sync_official=1` 的官方记录上纠正供应商归属；其它人工维护字段仍保持不动。
+NexusTok 会把 `modelcatalog/repository` 中已审查的模型、供应商和价格随二进制/Docker 镜像打包。生产启动时主节点只读解析内置仓库，补齐缺失供应商、缺失模型和没有模型级价格的模型，不覆盖手动价格、历史 options 覆盖、表达式计费、固定价格或 `sync_official=0` 的模型。
+
+models.dev 模型目录同步用于每天凌晨优先从 `https://models.dev/catalog.json` 拉取公开模型目录；官网不可用时会降级到 `anomalyco/models.dev` GitHub TOML 目录，GitHub 也不可用时再使用 NexusTok 内置模型仓库兜底。同步时会优先采用 canonical models 的归属方作为本地“供应商”，避免把 Vivgrid 之类的服务商误写成 OpenAI、Anthropic 这类模型原厂。该任务会补齐缺失模型，并在 `sync_official=1` 的官方记录上纠正供应商归属；其它人工维护字段仍保持不动。
 
 相关环境变量：
 
@@ -635,7 +637,12 @@ models.dev 模型目录同步用于每天凌晨从 `https://models.dev/catalog.j
 | `MODELS_DEV_AUTO_SYNC_ENABLED` | `true` | 是否启用 models.dev 每日模型目录同步 |
 | `MODELS_DEV_AUTO_SYNC_TIME` | `02:00` | 每日运行时间，格式 `HH:mm`，使用进程当前时区 |
 | `MODELS_DEV_SYNC_BASE` | `https://models.dev` | models.dev 基础地址；内网镜像或代理可覆盖 |
+| `MODELS_DEV_GITHUB_TREE_URL` | `https://api.github.com/repos/anomalyco/models.dev/git/trees/dev?recursive=1` | 官网失败后的 GitHub TOML tree API；内网镜像可覆盖 |
+| `MODELS_DEV_GITHUB_RAW_BASE` | `https://raw.githubusercontent.com/anomalyco/models.dev/dev` | GitHub TOML raw 基础地址；内网镜像可覆盖 |
 | `MODELS_DEV_PRICING_PROVIDER_ORDER` | 空 | 自动价格同步的 provider 降级顺序，逗号分隔，例如 `openai,anthropic,google,azure` |
+| `MODEL_CATALOG_WRITE_BACK` | `false` | 是否把后台新增/同步模型写回项目内模型仓库；生产必须保持关闭 |
+| `MODEL_CATALOG_REPO_DIR` | `modelcatalog/repository` | 开发写回目标目录 |
+| `MODEL_CATALOG_GIT_AUTOCOMMIT` | `false` | 预留开关；当前只写文件，不自动 commit/push |
 
 日志中出现以下内容表示任务已经启动：
 
@@ -658,6 +665,16 @@ environment:
 ```
 
 手动同步和价格策略的完整说明见 [模型同步与价格同步](../features/model-sync-pricing.md)。
+
+开发环境如需把后台新增模型、模型价格保存或 models.dev 同步结果写回仓库文件，可显式开启：
+
+```yaml
+environment:
+  - MODEL_CATALOG_WRITE_BACK=true
+  - MODEL_CATALOG_REPO_DIR=modelcatalog/repository
+```
+
+写回只包含模型、供应商和模型价格参数，不保存渠道、账号池、用户、Token、日志、密钥或部署拓扑。提交发布前应审查 `modelcatalog/repository` 的 Git diff，并重新构建镜像或 release 二进制。
 
 ## 常用排障
 
@@ -859,7 +876,8 @@ docker logs --tail 200 nexustok-api-hot | grep 'models.dev model sync'
 |------|----------|------|
 | 没有启动日志 | 非主节点或 `MODELS_DEV_AUTO_SYNC_ENABLED=false` | 确认主服务节点和环境变量 |
 | 提示 `invalid MODELS_DEV_AUTO_SYNC_TIME` | 时间格式不是 `HH:mm` 或超出范围 | 改为例如 `02:00`、`03:30` |
-| 拉取失败 | 服务器无法访问 `https://models.dev/catalog.json` | 检查 DNS、代理、防火墙，或配置 `MODELS_DEV_SYNC_BASE` |
+| 拉取失败 | 服务器无法访问 `https://models.dev/catalog.json` 且 GitHub fallback 也不可用 | 检查 DNS、代理、防火墙，或配置 `MODELS_DEV_SYNC_BASE`、`MODELS_DEV_GITHUB_TREE_URL`、`MODELS_DEV_GITHUB_RAW_BASE` |
+| 页面提示使用内置仓库 | models.dev 官网和 GitHub fallback 均不可用 | 可先使用内置仓库兜底；需要最新模型时修复网络或更新 `modelcatalog/repository` 后重新构建 |
 | 同步后模型没有变化 | 本地已存在这些模型，任务不会覆盖已有记录 | 在后台模型页面检查模型是否已存在，必要时使用手动编辑或覆盖同步 |
 | 供应商显示成 Vivgrid | 旧数据是在 canonical 归属修复前同步的，或未走 canonical models 路径 | 重新执行 models.dev 同步预览并对相关模型应用覆盖，或在后台模型页手动修正供应商 |
 | 价格没有被覆盖 | 模型已有手动价格或历史 options 覆盖，自动同步默认保护本地配置 | 在后台手动同步时开启“允许覆盖手动定价”，或检查 `ModelPricingSource` |

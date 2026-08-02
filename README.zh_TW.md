@@ -43,7 +43,7 @@ NexusTok 將 OpenAI 相容介面、Claude、Gemini、Azure、AWS Bedrock 等上�
 | 帳號池 | 原生憑證池、帳號分組、OAuth/裝置授權、健康檢查、使用日誌、狀態稽核和渠道級帳號池綁定。 |
 | 計費與額度 | Token/額度核算、模型定價組、動態計費表達式、訂閱方案、錢包餘額、兌換碼和飽和保護額度計算。 |
 | 治理與權限 | JWT、OAuth、WebAuthn/Passkeys、管理員權限 catalog、路由級 Authz enforcement、敏感欄位保護和管理稽核日誌。 |
-| 運維能力 | SystemTask runner、跨節點任務鎖、系統實例心跳、日誌清理、渠道測試、上游模型同步、帳號池檢測和非同步任務輪詢。 |
+| 運維能力 | SystemTask runner、跨節點任務鎖、系統實例心跳、日誌清理、渠道測試、內置模型倉庫、上游模型同步、帳號池檢測和非同步任務輪詢。 |
 | 數據分析 | 總覽看板、模型/使用者用量圖、Dashboard Flow 桑基圖、使用日誌、登入稽核、額度飽和可觀測性和記錄匯出。 |
 | 支付能力 | EPay、Stripe、Creem、Waffo、Waffo Pancake 配置，catalog/pair 綁定、託管支付準備、訂閱商品綁定和 webhook 冪等入帳。 |
 | 前端體驗 | React 19 預設控制台、classic 相容主題、行動端日誌/渠道視圖、安全富文字渲染、Playground 增強和 en/zh/fr/ja/ru/vi 國際化。 |

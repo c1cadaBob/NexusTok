@@ -1,6 +1,6 @@
 # 模型同步与价格同步
 
-NexusTok 的模型同步用于把上游模型目录导入到本地模型库，并可选择把 models.dev 中的 provider 价格同步到模型级定价配置。该功能主要服务于管理员后台的模型管理页面，以及每日 models.dev 自动同步任务。
+NexusTok 的模型同步用于把项目内模型仓库或上游公开目录导入到本地模型库，并可选择把 provider 价格同步到模型级定价配置。该功能主要服务于管理员后台的模型管理页面、构建时内置模型仓库，以及每日 models.dev 自动同步任务。
 
 ## 功能入口
 
@@ -26,11 +26,58 @@ NexusTok 的模型同步用于把上游模型目录导入到本地模型库，�
 
 | 来源 | `source` | 数据内容 | 适用场景 |
 |------|----------|----------|----------|
-| 官方仓库 | `official` | 项目维护的模型和供应商元数据 | 需要沿用旧版官方元数据仓库时 |
-| models.dev | `models.dev` | models.dev catalog 中的 canonical models、provider 目录和 provider 价格 | 推荐；可补齐模型、纠正模型原厂归属并同步 provider 价格 |
-| 配置文件 | `config` | 预留入口 | 当前前端禁用，后续用于本地配置导入 |
+| NexusTok 模型仓库 | `official` | `modelcatalog/repository` 中随版本打包的模型、供应商和价格 | 离线/生产只读补齐；兼容旧 `official` API 值 |
+| models.dev | `models.dev` | models.dev 官网 catalog、GitHub TOML fallback 和内置仓库兜底 | 推荐；可补齐模型、纠正模型原厂归属并同步 provider 价格 |
 
-语言参数 `locale` 来自后台展示的 `zh`、`en`、`ja` 选项。官方仓库会在后端识别到对应 locale 时读取 i18n 路径，否则回退默认路径；models.dev 使用同一份 catalog，语言只用于保持请求结构一致。
+语言参数 `locale` 来自后台展示的 `zh`、`en`、`ja` 选项。当前 NexusTok 模型仓库和 models.dev 都使用同一份标准 catalog，语言参数只用于保持请求结构兼容。
+
+`source=config` 的配置文件导入方式已停用。后端收到该来源会返回明确错误，不再静默降级到其它来源。模型目录应通过项目内 `modelcatalog/repository` 维护，或通过 models.dev 同步后自动写回。
+
+## 项目内模型仓库
+
+模型仓库目录固定在：
+
+```text
+modelcatalog/repository/
+  models/<owner>/<model>.toml
+  providers/<provider>/provider.toml
+  providers/<provider>/models/<model>.toml
+  catalog.generated.json
+  manifest.json
+```
+
+`models/<owner>/<model>.toml` 保存 canonical 模型能力和归属方；`providers/<provider>/models/<model>.toml` 保存 provider 维度价格。`catalog.generated.json` 和 `manifest.json` 由维护命令生成，并通过 Go `embed` 随二进制和 Docker 镜像打包。
+
+维护命令：
+
+```bash
+# 从已审查的 models.dev catalog JSON 导入并生成 TOML 仓库
+go run ./modelcatalog/cmd/catalogtool import-json \
+  -source /path/to/catalog.json \
+  -repo modelcatalog/repository
+
+# 从 TOML 仓库重新生成 catalog.generated.json 和 manifest.json
+go run ./modelcatalog/cmd/catalogtool generate \
+  -repo modelcatalog/repository
+```
+
+也可以使用脚本从 models.dev 官网更新仓库：
+
+```bash
+scripts/update-model-catalog-fallback.sh
+```
+
+开发服自动写回默认关闭。需要让后台新增/编辑模型、保存模型价格或 models.dev 同步结果写回仓库文件时，显式设置：
+
+```bash
+MODEL_CATALOG_WRITE_BACK=true
+MODEL_CATALOG_REPO_DIR=modelcatalog/repository
+MODEL_CATALOG_GIT_AUTOCOMMIT=false
+```
+
+第一版只写 TOML、`catalog.generated.json` 和 `manifest.json`，不自动 commit/push。写回内容仅包含模型、供应商和模型价格参数，不保存 bound channels、enable groups、quota types、渠道、账号池、部署、用户、Token、日志或密钥。
+
+生产环境应保持 `MODEL_CATALOG_WRITE_BACK=false`。启动时主节点会只读解析内置仓库，补齐缺失供应商、缺失模型和没有模型级价格的模型；已有手动价格、历史 options 覆盖、表达式计费、固定价格、`sync_official=0` 的模型都不会被覆盖。
 
 ## 元数据同步规则
 
@@ -46,7 +93,7 @@ NexusTok 的模型同步用于把上游模型目录导入到本地模型库，�
 | `name_rule` | 名称匹配规则 |
 | `status` | 启用状态 |
 
-默认手动同步的补齐范围按来源区分：`models.dev` 会按完整 catalog 补齐所有本地不存在的模型和供应商；`official` 沿用旧行为，只补齐当前能力表中已经被引用但缺少元信息的模型。每日 models.dev 自动同步同样按完整上游目录补齐本地不存在的模型和供应商。已有模型不会被静默覆盖，除非管理员在冲突预览中明确选择覆盖字段。
+默认手动同步的补齐范围按来源区分：`models.dev` 会按完整 catalog 补齐所有本地不存在的模型和供应商；`official` 现在读取 NexusTok 内置模型仓库，默认仍沿用旧 API 的“只补能力表缺失项”语义，接口调用方可传 `create_all=true` 按仓库完整目录补齐。每日 models.dev 自动同步同样按完整上游目录补齐本地不存在的模型和供应商。已有模型不会被静默覆盖，除非管理员在冲突预览中明确选择覆盖字段。
 
 接口调用方可以通过 `create_all` 显式控制补齐范围：`true` 表示按上游完整目录补齐本地缺失模型，`false` 表示只处理当前能力表缺失项。页面上的 models.dev 同步默认等价于 `create_all=true`，因此像 `gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra` 这类同系列模型会一次性补齐。
 
@@ -56,7 +103,7 @@ models.dev 同步会优先使用 canonical models 的归属方作为本地供应
 
 ## 价格同步策略
 
-models.dev 来源支持价格同步。官方仓库目前没有统一 provider 价格结构，因此不会应用价格同步策略。
+models.dev 和 NexusTok 模型仓库都支持价格同步。models.dev 价格来源标记为 `upstream`；NexusTok 内置仓库补齐或 `official` 来源同步的价格标记为 `builtin`。
 
 请求体示例：
 
@@ -77,7 +124,7 @@ models.dev 来源支持价格同步。官方仓库目前没有统一 provider �
 
 | 字段 | 默认行为 | 说明 |
 |------|----------|------|
-| `pricing.enabled` | 后台 models.dev 同步默认开启 | 是否把选中的 provider 价格写入模型定价配置 |
+| `pricing.enabled` | 后台同步默认开启 | 是否把选中的 provider 价格写入模型定价配置 |
 | `pricing.overwrite_manual` | `false` | 是否允许上游价格覆盖管理员手动确认过的价格 |
 | `pricing.provider_order` | 空列表 | provider 降级顺序；为空时使用 models.dev provider 的稳定排序 |
 
@@ -99,6 +146,7 @@ provider 匹配支持 provider ID 或 provider name，比较时会忽略大小�
 |------|--------|------|
 | 管理员手动保存 | `manual` | 在模型编辑页保存的价格；默认不允许上游同步覆盖 |
 | 上游同步写入 | `upstream` | 由 models.dev 价格同步写入；后续同步可以按策略更新 |
+| 内置仓库补齐 | `builtin` | 由 NexusTok 项目内模型仓库补齐；作为构建随附默认值 |
 
 历史版本没有 `ModelPricingSource` 元数据。为了避免升级后每日同步静默改价，只要旧的 `options` 中存在模型级定价覆盖，且 `overwrite_manual=false`，同步也会按手动配置保护。
 
@@ -125,7 +173,7 @@ models.dev provider 价格通常以美元每 1M tokens 表示。NexusTok 的 rel
 
 ## 自动同步
 
-主服务启动后，主节点会启动 models.dev 每日自动同步任务。自动任务使用 `models.dev` 来源，默认启用价格同步，但不会覆盖手动价格。
+主服务启动后，主节点会先执行一次内置模型仓库 seed，然后启动 models.dev 每日自动同步任务。自动任务使用 `models.dev` 来源，默认启用价格同步，但不会覆盖手动价格。
 
 相关环境变量：
 
@@ -134,7 +182,12 @@ models.dev provider 价格通常以美元每 1M tokens 表示。NexusTok 的 rel
 | `MODELS_DEV_AUTO_SYNC_ENABLED` | `true` | 是否启用每日 models.dev 同步 |
 | `MODELS_DEV_AUTO_SYNC_TIME` | `02:00` | 每日运行时间，格式 `HH:mm`，使用进程当前时区 |
 | `MODELS_DEV_SYNC_BASE` | `https://models.dev` | models.dev 基础地址；可替换为内网镜像或代理 |
+| `MODELS_DEV_GITHUB_TREE_URL` | `https://api.github.com/repos/anomalyco/models.dev/git/trees/dev?recursive=1` | models.dev 官网失败后的 GitHub TOML tree API |
+| `MODELS_DEV_GITHUB_RAW_BASE` | `https://raw.githubusercontent.com/anomalyco/models.dev/dev` | GitHub TOML 文件 raw 基础地址 |
 | `MODELS_DEV_PRICING_PROVIDER_ORDER` | 空 | 自动价格同步的 provider 降级顺序，逗号分隔，例如 `openai,anthropic,google,azure` |
+| `MODEL_CATALOG_WRITE_BACK` | `false` | 开发环境是否把后台模型变更写回项目内模型仓库 |
+| `MODEL_CATALOG_REPO_DIR` | `modelcatalog/repository` | 写回目标模型仓库目录 |
+| `MODEL_CATALOG_GIT_AUTOCOMMIT` | `false` | 预留开关；第一版不自动 commit/push |
 
 自动任务日志示例：
 
@@ -167,7 +220,8 @@ models.dev model sync completed: created_models=12 created_vendors=3 updated_mod
 - provider 没有有效的 `cost.input`；
 - 价格结构无法用 ratio 模式表达；
 - 当前策略保护了手动价格；
-- `pricing.enabled=false` 或同步源不是 `models.dev`。
+- `pricing.enabled=false`；
+- 同步源没有可转换的 provider 价格。
 
 ### 为什么 provider 顺序没有命中？
 
