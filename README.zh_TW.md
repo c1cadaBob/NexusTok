@@ -56,7 +56,7 @@ NexusTok 將 OpenAI 相容介面、Claude、Gemini、Azure、AWS Bedrock 等上�
 ### Docker Compose（推薦）
 
 ```bash
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # 生產使用前請先檢查 docker-compose.yml 配置。
@@ -81,6 +81,13 @@ docker run --name nexustok -d --restart always \
 ```
 
 `-v ./data:/data` 會把 SQLite 和執行時資料保存到目前目錄的 `data` 資料夾。生產部署建議使用絕對路徑。
+
+Docker 映像只包含 NexusTok 應用程式，不內建 PostgreSQL 服務。單容器預設使用 SQLite；外接 MySQL 或 PostgreSQL 時請透過 `SQL_DSN` 指定連線字串，例如：
+
+```bash
+-e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
+-e REDIS_CONN_STRING="redis://:password@host:6379/0"
+```
 
 </details>
 
@@ -121,8 +128,8 @@ docker run --name nexustok -d --restart always \
 | 後端 OpenAPI | [docs/openapi/api.json](./docs/openapi/api.json) |
 | Relay OpenAPI | [docs/openapi/relay.json](./docs/openapi/relay.json) |
 | Electron 桌面端 | [electron/README.md](./electron/README.md) |
-| 問題回報 | [GitHub Issues](https://github.com/c1cada/NexusTok/issues) |
-| 最新發布 | [GitHub Releases](https://github.com/c1cada/NexusTok/releases) |
+| 問題回報 | [GitHub Issues](https://github.com/c1cadaBob/NexusTok/issues) |
+| 最新發布 | [GitHub Releases](https://github.com/c1cadaBob/NexusTok/releases) |
 
 ---
 
@@ -140,7 +147,7 @@ NexusTok 採用 [GNU Affero 通用公共授權條款 v3.0](./LICENSE) 授權。
 
 ### 感謝使用 NexusTok
 
-**[專案倉庫](https://github.com/c1cada/NexusTok)** • **[問題回報](https://github.com/c1cada/NexusTok/issues)** • **[最新發布](https://github.com/c1cada/NexusTok/releases)**
+**[專案倉庫](https://github.com/c1cadaBob/NexusTok)** • **[問題回報](https://github.com/c1cadaBob/NexusTok/issues)** • **[最新發布](https://github.com/c1cadaBob/NexusTok/releases)**
 
 <sub>由 c1cada 與貢獻者共同構建。</sub>
 

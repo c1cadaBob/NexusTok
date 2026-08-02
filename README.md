@@ -35,7 +35,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # 编辑 docker-compose.yml 配置
@@ -64,10 +64,21 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/logs:/app/logs \
   c1cadabob/nexustok:latest
 
-# 使用 MySQL
+# 使用 MySQL（外接数据库）
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
+  -e SQL_DSN="root:password@tcp(host:3306)/nexustok" \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
+
+# 使用 PostgreSQL（外接数据库）
+docker run --name nexustok -d --restart always \
+  -p 3000:3000 \
+  -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable" \
+  -e REDIS_CONN_STRING="redis://:password@host:6379/0" \
   -e TZ=Asia/Shanghai \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
@@ -80,7 +91,7 @@ docker logs -f nexustok
 curl -sS http://127.0.0.1:3000/api/status
 ```
 
-> **💡 提示：** 访问地址为 `http://服务器IP:3000`。云服务器还需要在安全组和系统防火墙中放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。
+> **💡 提示：** 访问地址为 `http://服务器IP:3000`。云服务器还需要在安全组和系统防火墙中放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。Docker 镜像只包含 NexusTok 应用本身，不内置 PostgreSQL；需要数据库容器时请使用 Docker Compose，单容器模式则通过 `SQL_DSN` 连接外部 MySQL 或 PostgreSQL。
 
 </details>
 
@@ -133,7 +144,7 @@ curl -sS http://127.0.0.1:3000/api/status
 | `PYROSCOPE_BLOCK_RATE` | Pyroscope block 采样率 | `5` |
 | `HOSTNAME` | Pyroscope 标签里的主机名 | `nexustok` |
 
-📖 **完整配置：** [NexusTok 仓库](https://github.com/c1cada/NexusTok)
+📖 **完整配置：** [NexusTok 仓库](https://github.com/c1cadaBob/NexusTok)
 
 </details>
 
@@ -146,7 +157,7 @@ curl -sS http://127.0.0.1:3000/api/status
 
 ```bash
 # 克隆项目
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # 编辑配置
@@ -184,7 +195,20 @@ curl -sS http://127.0.0.1:3000/api/status
 ```bash
 docker run --name nexustok -d --restart always \
   -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
+  -e SQL_DSN="root:password@tcp(host:3306)/nexustok" \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  c1cadabob/nexustok:latest
+```
+
+**使用 PostgreSQL：**
+```bash
+docker run --name nexustok -d --restart always \
+  -p 3000:3000 \
+  -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable" \
+  -e REDIS_CONN_STRING="redis://:password@host:6379/0" \
   -e TZ=Asia/Shanghai \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
@@ -196,6 +220,7 @@ docker run --name nexustok -d --restart always \
 > - `/opt/nexustok/data:/data` - SQLite、会话密钥文件和运行时数据
 > - `/opt/nexustok/logs:/app/logs` - 主服务日志
 > - 访问 `http://服务器IP:3000` 前，请确认云服务器安全组已放行 TCP `3000` 端口。
+> - Docker 镜像不内置 PostgreSQL。需要随应用一起启动 PostgreSQL/Redis 时使用 Docker Compose；单容器模式通过 `SQL_DSN` 连接外部 MySQL/PostgreSQL。
 
 </details>
 
@@ -242,7 +267,7 @@ docker run --name nexustok -d --restart always \
 
 如果这个项目对你有帮助，欢迎给我们一个 ⭐️ Star！
 
-**[NexusTok 仓库](https://github.com/c1cada/NexusTok)** • **[问题反馈](https://github.com/c1cada/NexusTok/issues)** • **[最新发布](https://github.com/c1cada/NexusTok/releases)**
+**[NexusTok 仓库](https://github.com/c1cadaBob/NexusTok)** • **[问题反馈](https://github.com/c1cadaBob/NexusTok/issues)** • **[最新发布](https://github.com/c1cadaBob/NexusTok/releases)**
 
 <sub>Built with ❤️ by c1cada</sub>
 

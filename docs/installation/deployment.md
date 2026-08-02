@@ -35,7 +35,7 @@ curl -sS http://127.0.0.1:3000/api/status | grep -o '"theme":"[^"]*"'
 生产环境推荐使用仓库根目录的 `docker-compose.yml`：
 
 ```bash
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # 首次部署前必须检查并修改默认密码和密钥。
@@ -415,6 +415,8 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/logs:/app/logs \
   c1cadabob/nexustok:latest
 ```
+
+Docker 镜像只包含 NexusTok 应用进程，不会在同一个容器里内置 PostgreSQL、MySQL 或 Redis。单容器默认使用 SQLite；外接 MySQL/PostgreSQL 时通过 `SQL_DSN` 指向外部服务；需要同时编排 PostgreSQL 和 Redis 时，请优先使用本仓库的 Docker Compose。ClickHouse 只能配置为 `LOG_SQL_DSN` 日志库，不能作为主业务库。
 
 单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
 

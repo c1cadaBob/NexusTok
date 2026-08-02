@@ -56,7 +56,7 @@ NexusTok aggregates OpenAI-compatible, Claude, Gemini, Azure, AWS Bedrock, and o
 ### Docker Compose (Recommended)
 
 ```bash
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # Review docker-compose.yml before production use.
@@ -81,6 +81,13 @@ docker run --name nexustok -d --restart always \
 ```
 
 `-v ./data:/data` stores SQLite and runtime data under the local `data` directory. Use an absolute path for production deployments.
+
+The Docker image contains only the NexusTok application, not a bundled PostgreSQL server. A single container uses SQLite by default; connect to external MySQL or PostgreSQL through `SQL_DSN`, for example:
+
+```bash
+-e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
+-e REDIS_CONN_STRING="redis://:password@host:6379/0"
+```
 
 </details>
 
@@ -131,8 +138,8 @@ See [Deployment and Maintenance](./docs/installation/deployment.md) for producti
 | Backend OpenAPI | [docs/openapi/api.json](./docs/openapi/api.json) |
 | Relay OpenAPI | [docs/openapi/relay.json](./docs/openapi/relay.json) |
 | Electron desktop package | [electron/README.md](./electron/README.md) |
-| Issue tracker | [GitHub Issues](https://github.com/c1cada/NexusTok/issues) |
-| Releases | [GitHub Releases](https://github.com/c1cada/NexusTok/releases) |
+| Issue tracker | [GitHub Issues](https://github.com/c1cadaBob/NexusTok/issues) |
+| Releases | [GitHub Releases](https://github.com/c1cadaBob/NexusTok/releases) |
 
 ---
 
@@ -150,7 +157,7 @@ If your organization cannot use AGPLv3 software or you need a commercial license
 
 ### Thanks for using NexusTok
 
-**[Repository](https://github.com/c1cada/NexusTok)** • **[Issues](https://github.com/c1cada/NexusTok/issues)** • **[Releases](https://github.com/c1cada/NexusTok/releases)**
+**[Repository](https://github.com/c1cadaBob/NexusTok)** • **[Issues](https://github.com/c1cadaBob/NexusTok/issues)** • **[Releases](https://github.com/c1cadaBob/NexusTok/releases)**
 
 <sub>Built by c1cada and contributors.</sub>
 

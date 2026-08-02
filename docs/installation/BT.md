@@ -2,7 +2,7 @@
 
 本文档提供使用宝塔面板 Docker 功能部署 NexusTok 的图文教程。
 
-> 📖 官方链接：[NexusTok 仓库](https://github.com/c1cada/NexusTok)
+> 📖 官方链接：[NexusTok 仓库](https://github.com/c1cadaBob/NexusTok)
 
 ***
 
@@ -129,6 +129,8 @@ environment:
   - CRYPTO_SECRET=请替换为固定随机字符串
 ```
 
+NexusTok Docker 镜像只包含应用本身，不内置 PostgreSQL/MySQL/Redis 服务。宝塔单容器模式默认使用 SQLite；如果要使用外部 PostgreSQL，请在容器环境变量中设置 `SQL_DSN=postgresql://user:password@host:5432/nexustok?sslmode=disable`。ClickHouse 只用于 `LOG_SQL_DSN` 独立日志库，不能作为主业务库。
+
 如果消费日志量很大，可在 Compose 中额外启用 ClickHouse，并设置 `LOG_SQL_DSN=clickhouse://...` 与 `LOG_SQL_CLICKHOUSE_TTL_DAYS=30`。ClickHouse 只用于通用消费 `logs` 表，主业务库仍必须使用 PostgreSQL、MySQL 或 SQLite。经过宝塔反向代理、Nginx 或 Caddy 时，请关闭响应缓冲并把 `proxy_read_timeout` 调大，避免流式响应被代理中断。
 
 ### 生成随机密钥（可选）
@@ -199,10 +201,10 @@ docker run --name nexustok -d --restart always \
 
 ## 相关链接
 
-- [NexusTok 仓库](https://github.com/c1cada/NexusTok)
-- [README](https://github.com/c1cada/NexusTok#readme)
-- [问题反馈](https://github.com/c1cada/NexusTok/issues)
-- [GitHub 仓库](https://github.com/c1cada/NexusTok)
+- [NexusTok 仓库](https://github.com/c1cadaBob/NexusTok)
+- [README](https://github.com/c1cadaBob/NexusTok#readme)
+- [问题反馈](https://github.com/c1cadaBob/NexusTok/issues)
+- [GitHub 仓库](https://github.com/c1cadaBob/NexusTok)
 
 ***
 

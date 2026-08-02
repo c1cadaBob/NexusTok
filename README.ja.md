@@ -56,7 +56,7 @@ NexusTok は OpenAI 互換 API、Claude、Gemini、Azure、AWS Bedrock などの
 ### Docker Compose（推奨）
 
 ```bash
-git clone https://github.com/c1cada/NexusTok.git
+git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
 # 本番利用前に docker-compose.yml を確認してください。
@@ -81,6 +81,13 @@ docker run --name nexustok -d --restart always \
 ```
 
 `-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。本番環境では絶対パスの利用を推奨します。
+
+Docker イメージには NexusTok アプリケーションのみが含まれ、PostgreSQL サーバーは同梱されません。単一コンテナは既定で SQLite を使用します。外部 MySQL または PostgreSQL に接続する場合は `SQL_DSN` を指定してください。例：
+
+```bash
+-e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
+-e REDIS_CONN_STRING="redis://:password@host:6379/0"
+```
 
 </details>
 
@@ -121,8 +128,8 @@ docker run --name nexustok -d --restart always \
 | Backend OpenAPI | [docs/openapi/api.json](./docs/openapi/api.json) |
 | Relay OpenAPI | [docs/openapi/relay.json](./docs/openapi/relay.json) |
 | Electron デスクトップ | [electron/README.md](./electron/README.md) |
-| Issue | [GitHub Issues](https://github.com/c1cada/NexusTok/issues) |
-| リリース | [GitHub Releases](https://github.com/c1cada/NexusTok/releases) |
+| Issue | [GitHub Issues](https://github.com/c1cadaBob/NexusTok/issues) |
+| リリース | [GitHub Releases](https://github.com/c1cadaBob/NexusTok/releases) |
 
 ---
 
@@ -140,7 +147,7 @@ NexusTok は [GNU Affero General Public License v3.0](./LICENSE) の下で公開
 
 ### NexusTok をご利用いただきありがとうございます
 
-**[Repository](https://github.com/c1cada/NexusTok)** • **[Issues](https://github.com/c1cada/NexusTok/issues)** • **[Releases](https://github.com/c1cada/NexusTok/releases)**
+**[Repository](https://github.com/c1cadaBob/NexusTok)** • **[Issues](https://github.com/c1cadaBob/NexusTok/issues)** • **[Releases](https://github.com/c1cadaBob/NexusTok/releases)**
 
 <sub>c1cada とコントリビューターによって構築されています。</sub>
 
