@@ -38,6 +38,7 @@ type Credential struct {
 	Password      string                `json:"password,omitempty"`
 	Email         string                `json:"email,omitempty"`
 	AuthMode      string                `json:"auth_mode,omitempty"`
+	CaptureID     string                `json:"capture_id,omitempty"`
 	SessionCookie string                `json:"session_cookie,omitempty"`
 	UserID        string                `json:"user_id,omitempty"`
 	AccessToken   string                `json:"access_token,omitempty"`
@@ -81,13 +82,16 @@ type AuthenticatedSession struct {
 	Sub2API    *Sub2APISessionData `json:"sub2api,omitempty"`
 }
 
-// NewAPISessionData 保存 new-api 登录后的 session cookie 和用户 ID。
+// NewAPISessionData 保存 new-api 登录后的 session cookie / access token 和用户 ID。
 //
-// new-api 的管理接口除 Cookie 外还要求携带用户 ID 头，因此复用登录态时必须同时保存
-// user_id；如果 Cookie 失效，调用方会自动回退到账号密码登录并重新触发上游 2FA。
+// new-api 的管理接口除 Cookie 或 access token 外还要求携带用户 ID 头，因此复用登录态
+// 时必须同时保存 user_id。油猴脚本不能读取 HttpOnly session Cookie，所以它会在目标站
+// 内使用已登录浏览器生成 access token，再由 NexusTok 通过 Authorization + New-Api-User
+// 读取目标平台快照。
 type NewAPISessionData struct {
-	UserID  string             `json:"user_id,omitempty"`
-	Cookies []StoredHTTPCookie `json:"cookies,omitempty"`
+	UserID      string             `json:"user_id,omitempty"`
+	AccessToken string             `json:"access_token,omitempty"`
+	Cookies     []StoredHTTPCookie `json:"cookies,omitempty"`
 }
 
 // Sub2APISessionData 保存 sub2api 登录后的访问令牌。

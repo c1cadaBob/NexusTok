@@ -89,6 +89,7 @@ import type {
   UpstreamAccountSnapshot,
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
+import { UpstreamAccountCapturePanel } from './upstream-account-capture-panel'
 
 type UpstreamAccountRefreshPanelProps = {
   open: boolean
@@ -138,6 +139,7 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamAccessToken, setUpstreamAccessToken] = useState('')
   const [upstreamRefreshToken, setUpstreamRefreshToken] = useState('')
   const [upstreamTokenExpiresAt, setUpstreamTokenExpiresAt] = useState('')
+  const [upstreamCaptureId, setUpstreamCaptureId] = useState('')
   const [upstreamUseSavedCredential, setUpstreamUseSavedCredential] =
     useState(false)
   const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
@@ -239,6 +241,7 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamAccessToken('')
     setUpstreamRefreshToken('')
     setUpstreamTokenExpiresAt('')
+    setUpstreamCaptureId('')
     setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
     setUpstreamPaidCny('')
     setUpstreamPlatformUsdCredit('')
@@ -387,13 +390,19 @@ export function UpstreamAccountRefreshPanel({
         toast.error(t('Access Token is required'))
         return
       }
-      if (upstreamAuthMode === 'oauth_browser') {
-        toast.error(
-          t(
-            'Automatic OAuth is not supported yet. Log in on the upstream site and import Session/Cookie or Access Token.'
-          )
-        )
+      if (
+        refreshPlatform === 'new-api' &&
+        upstreamAuthMode === 'access_token' &&
+        !upstreamUserId.trim()
+      ) {
+        toast.error(t('New-Api-User / User ID is required for new-api access token'))
         return
+      }
+      if (upstreamAuthMode === 'oauth_browser') {
+        if (!upstreamCaptureId.trim()) {
+          toast.error(t('Complete userscript capture before previewing the upstream account'))
+          return
+        }
       }
     }
 
@@ -407,6 +416,7 @@ export function UpstreamAccountRefreshPanel({
           username: upstreamUsername,
           password: upstreamPassword,
           authMode: upstreamAuthMode,
+          captureId: upstreamCaptureId,
           sessionCookie: upstreamSessionCookie,
           userId: upstreamUserId,
           accessToken: upstreamAccessToken,
@@ -457,6 +467,7 @@ export function UpstreamAccountRefreshPanel({
     upstreamBaseUrl,
     upstreamAccessToken,
     upstreamAuthMode,
+    upstreamCaptureId,
     upstreamPassword,
     upstreamPaidCny,
     upstreamPlatform,
@@ -538,9 +549,6 @@ export function UpstreamAccountRefreshPanel({
   }, [channelId, onBusyChange, open, resetRefreshState])
 
   useEffect(() => {
-    if (upstreamPlatform === 'new-api' && upstreamAuthMode === 'access_token') {
-      setUpstreamAuthMode('password')
-    }
     if (upstreamPlatform === 'sub2api' && upstreamAuthMode === 'session_cookie') {
       setUpstreamAuthMode('password')
     }
@@ -1075,8 +1083,13 @@ export function UpstreamAccountRefreshPanel({
                     {t('Access Token')}
                   </SelectItem>
                 ) : null}
-                <SelectItem value='oauth_browser' disabled>
-                  {t('OAuth browser login')}
+                {upstreamPlatform === 'new-api' ? (
+                  <SelectItem value='access_token'>
+                    {t('Access Token')}
+                  </SelectItem>
+                ) : null}
+                <SelectItem value='oauth_browser'>
+                  {t('Userscript capture')}
                 </SelectItem>
               </SelectGroup>
             </SelectContent>
@@ -1175,6 +1188,20 @@ export function UpstreamAccountRefreshPanel({
         ) : null}
         {effectiveAuthMode === 'access_token' ? (
           <>
+            {upstreamPlatform === 'new-api' ? (
+              <div className='flex flex-col gap-2'>
+                <Label htmlFor='upstream-refresh-token-user-id'>
+                  {t('New-Api-User / User ID')}
+                </Label>
+                <Input
+                  id='upstream-refresh-token-user-id'
+                  value={upstreamUserId}
+                  onChange={(event) => setUpstreamUserId(event.target.value)}
+                  placeholder={t('Required for new-api access token')}
+                  disabled={!canSensitiveWrite || usingSavedCredential}
+                />
+              </div>
+            ) : null}
             <div className='flex flex-col gap-2 sm:col-span-2'>
               <Label htmlFor='upstream-refresh-access-token'>
                 {t('Access Token')}
@@ -1216,6 +1243,16 @@ export function UpstreamAccountRefreshPanel({
               />
             </div>
           </>
+        ) : null}
+        {effectiveAuthMode === 'oauth_browser' ? (
+          <UpstreamAccountCapturePanel
+            platform={forcedUpstreamPlatform ?? upstreamPlatform}
+            baseUrl={upstreamBaseUrl}
+            channelId={channelId}
+            disabled={!canSensitiveWrite || usingSavedCredential}
+            captureId={upstreamCaptureId}
+            onCaptureIdChange={setUpstreamCaptureId}
+          />
         ) : null}
         <div className='flex flex-col gap-2'>
           <Label htmlFor='upstream-refresh-paid-cny'>{t('Paid CNY')}</Label>

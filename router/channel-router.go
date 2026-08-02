@@ -28,6 +28,12 @@ type permissionRoute struct {
 
 // registerChannelRoutes 注册 /api/channel 路由组。
 func registerChannelRoutes(apiRouter *gin.RouterGroup) {
+	apiRouter.POST(
+		"/channel/upstream-account/capture-session/:id/complete",
+		middleware.CriticalRateLimit(),
+		controller.CompleteUpstreamAccountCaptureSession,
+	)
+
 	channelRoute := apiRouter.Group("/channel")
 	channelRoute.Use(middleware.AdminAuth())
 
@@ -60,6 +66,10 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/upstream-account/preview/2fa", permission: authz.ChannelSensitiveWrite, handler: controller.CompleteUpstreamAccount2FA},
 	{method: http.MethodPost, path: "/upstream-account/browser-auth/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartUpstreamAccountBrowserAuth},
 	{method: http.MethodPost, path: "/upstream-account/browser-auth/complete", permission: authz.ChannelSensitiveWrite, handler: controller.CompleteUpstreamAccountBrowserAuth},
+	{method: http.MethodPost, path: "/upstream-account/capture-session/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartUpstreamAccountCaptureSession},
+	{method: http.MethodGet, path: "/upstream-account/capture-session/:id", permission: authz.ChannelSensitiveWrite, handler: controller.GetUpstreamAccountCaptureSession},
+	{method: http.MethodGet, path: "/upstream-account/capture-session/:id/userscript.user.js", permission: authz.ChannelSensitiveWrite, handler: controller.GetUpstreamAccountCaptureUserscript},
+	{method: http.MethodPost, path: "/upstream-account/credentials/parse", permission: authz.ChannelSensitiveWrite, handler: controller.ParseUpstreamAccountCredential},
 	{method: http.MethodPost, path: "/upstream-account/create", permission: authz.ChannelSensitiveWrite, handler: controller.CreateUpstreamAccountChannel},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodPost, path: "/:id/upstream-account/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshUpstreamAccountChannel},

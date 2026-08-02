@@ -30,6 +30,13 @@ type sub2APILoginResponse struct {
 	TempToken    string      `json:"temp_token"`
 }
 
+type sub2APIRefreshResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+	TokenType    string `json:"token_type"`
+}
+
 type sub2APIUser struct {
 	ID       any     `json:"id"`
 	Username string  `json:"username"`
@@ -212,12 +219,30 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 	if token == "" {
 		return nil, false
 	}
-	if session.Sub2API.ExpiresAt > 0 && session.Sub2API.ExpiresAt <= common.GetTimestamp()+30 {
-		return nil, false
+	refreshToken := strings.TrimSpace(session.Sub2API.RefreshToken)
+	expiresAt := normalizeUnixSeconds(session.Sub2API.ExpiresAt)
+	if expiresAt > 0 && expiresAt <= common.GetTimestamp()+30 {
+		refreshed, err := c.refreshAccessToken(ctx, api, refreshToken)
+		if err != nil {
+			return nil, false
+		}
+		token = refreshed.AccessToken
+		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
+		expiresAt = refreshed.ExpiresAt
 	}
 	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
 	if err != nil {
-		return nil, false
+		refreshed, refreshErr := c.refreshAccessToken(ctx, api, refreshToken)
+		if refreshErr != nil {
+			return nil, false
+		}
+		token = refreshed.AccessToken
+		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
+		expiresAt = refreshed.ExpiresAt
+		snapshot, err = c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
+		if err != nil {
+			return nil, false
+		}
 	}
 	snapshot.AuthSession = &AuthenticatedSession{
 		Platform:   PlatformSub2API,
@@ -227,11 +252,45 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 		UpdatedAt:  common.GetTimestamp(),
 		Sub2API: &Sub2APISessionData{
 			AccessToken:  token,
-			RefreshToken: session.Sub2API.RefreshToken,
-			ExpiresAt:    session.Sub2API.ExpiresAt,
+			RefreshToken: refreshToken,
+			ExpiresAt:    expiresAt,
 		},
 	}
 	return snapshot, true
+}
+
+type refreshedSub2APIToken struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    int64
+}
+
+func (c *Sub2APIClient) refreshAccessToken(ctx context.Context, api *httpClient, refreshToken string) (*refreshedSub2APIToken, error) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return nil, fmt.Errorf("sub2api refresh_token 为空")
+	}
+	var envelope sub2APIEnvelope[sub2APIRefreshResponse]
+	if err := api.postJSON(ctx, "/api/v1/auth/refresh", nil, map[string]string{"refresh_token": refreshToken}, &envelope); err != nil {
+		return nil, err
+	}
+	data, err := unwrapSub2API(envelope)
+	if err != nil {
+		return nil, err
+	}
+	accessToken := strings.TrimSpace(data.AccessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("sub2api refresh 响应缺少 access_token")
+	}
+	expiresAt := int64(0)
+	if data.ExpiresIn > 0 {
+		expiresAt = common.GetTimestamp() + data.ExpiresIn
+	}
+	return &refreshedSub2APIToken{
+		AccessToken:  accessToken,
+		RefreshToken: strings.TrimSpace(data.RefreshToken),
+		ExpiresAt:    expiresAt,
+	}, nil
 }
 
 func buildSub2APIAuthenticatedSession(baseURL string, login *sub2APILoginResponse) *AuthenticatedSession {

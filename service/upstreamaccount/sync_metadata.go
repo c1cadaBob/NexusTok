@@ -614,7 +614,7 @@ func hasReusableAuthSession(session *AuthenticatedSession) bool {
 	switch NormalizePlatform(session.Platform) {
 	case PlatformNewAPI:
 		return session.NewAPI != nil &&
-			len(session.NewAPI.Cookies) > 0
+			(strings.TrimSpace(session.NewAPI.AccessToken) != "" || len(session.NewAPI.Cookies) > 0)
 	case PlatformSub2API:
 		return session.Sub2API != nil &&
 			strings.TrimSpace(session.Sub2API.AccessToken) != ""

@@ -44,6 +44,9 @@ import type {
   TagOperationParams,
   UpstreamAccountCreateRequest,
   UpstreamAccountCreateResponse,
+  UpstreamAccountCaptureStartRequest,
+  UpstreamAccountCaptureStartResponse,
+  UpstreamAccountCaptureStatusResponse,
   UpstreamAccountPreview2FARequest,
   UpstreamAccountPreview2FAResponse,
   UpstreamAccountPreviewRequest,
@@ -173,6 +176,31 @@ export async function createUpstreamAccountChannel(
   data: UpstreamAccountCreateRequest
 ): Promise<UpstreamAccountCreateResponse> {
   const res = await api.post('/api/channel/upstream-account/create', data)
+  return res.data
+}
+
+/**
+ * 创建油猴脚本登录态采集会话。
+ */
+export async function startUpstreamAccountCaptureSession(
+  data: UpstreamAccountCaptureStartRequest
+): Promise<UpstreamAccountCaptureStartResponse> {
+  const res = await api.post(
+    '/api/channel/upstream-account/capture-session/start',
+    data
+  )
+  return res.data
+}
+
+/**
+ * 查询油猴脚本登录态采集会话状态。
+ */
+export async function getUpstreamAccountCaptureSession(
+  captureId: string
+): Promise<UpstreamAccountCaptureStatusResponse> {
+  const res = await api.get(
+    `/api/channel/upstream-account/capture-session/${captureId}`
+  )
   return res.data
 }
 

@@ -58,6 +58,7 @@ export type BuildUpstreamAccountPreviewRequestOptions = {
   username?: string
   password?: string
   authMode?: UpstreamAccountAuthMode
+  captureId?: string
   sessionCookie?: string
   userId?: string
   accessToken?: string
@@ -167,6 +168,7 @@ export function buildUpstreamAccountPreviewRequest({
   username = '',
   password = '',
   authMode = 'password',
+  captureId = '',
   sessionCookie = '',
   userId = '',
   accessToken = '',
@@ -186,13 +188,18 @@ export function buildUpstreamAccountPreviewRequest({
 
   if (!useSavedCredential) {
     payload.auth_mode = authMode
-    if (authMode === 'session_cookie') {
+    if (authMode === 'oauth_browser') {
+      payload.capture_id = captureId.trim()
+    } else if (authMode === 'session_cookie') {
       payload.session_cookie = sessionCookie
       payload.user_id = userId.trim() || undefined
     } else if (authMode === 'access_token') {
       payload.access_token = accessToken.trim()
       payload.refresh_token = refreshToken.trim() || undefined
       payload.expires_at = expiresAt
+      if (platform === 'new-api') {
+        payload.user_id = userId.trim() || undefined
+      }
     } else if (platform === 'new-api') {
       payload.username = username.trim()
       payload.password = password

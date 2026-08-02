@@ -217,6 +217,7 @@ import {
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
+import { UpstreamAccountCapturePanel } from '../upstream-account-capture-panel'
 import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
@@ -1120,6 +1121,8 @@ export function ChannelMutateDrawer({
   const [upstreamAccessToken, setUpstreamAccessToken] = useState('')
   const [upstreamRefreshToken, setUpstreamRefreshToken] = useState('')
   const [upstreamTokenExpiresAt, setUpstreamTokenExpiresAt] = useState('')
+  const [upstreamCaptureId, setUpstreamCaptureId] = useState('')
+  const [upstreamRefreshCaptureId, setUpstreamRefreshCaptureId] = useState('')
   const [upstreamUseSavedCredential, setUpstreamUseSavedCredential] =
     useState(false)
   const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
@@ -1347,6 +1350,8 @@ export function ChannelMutateDrawer({
     setUpstreamAccessToken('')
     setUpstreamRefreshToken('')
     setUpstreamTokenExpiresAt('')
+    setUpstreamCaptureId('')
+    setUpstreamRefreshCaptureId('')
   }, [])
 
   const showUpstreamPreviewExpiredToast = useCallback(() => {
@@ -1405,9 +1410,6 @@ export function ChannelMutateDrawer({
   }, [clearAllUpstreamPreviews, currentType, form, isEditing])
 
   useEffect(() => {
-    if (upstreamPlatform === 'new-api' && upstreamAuthMode === 'access_token') {
-      setUpstreamAuthMode('password')
-    }
     if (upstreamPlatform === 'sub2api' && upstreamAuthMode === 'session_cookie') {
       setUpstreamAuthMode('password')
     }
@@ -1476,6 +1478,8 @@ export function ChannelMutateDrawer({
       upstreamAccessToken,
       upstreamRefreshToken,
       upstreamTokenExpiresAt,
+      upstreamCaptureId,
+      upstreamRefreshCaptureId,
       upstreamUseSavedCredential ? 'saved' : 'manual',
     ].join('\n')
     if (!upstreamCredentialFingerprintRef.current) {
@@ -1498,8 +1502,10 @@ export function ChannelMutateDrawer({
     upstreamBaseUrl,
     upstreamAccessToken,
     upstreamAuthMode,
+    upstreamCaptureId,
     upstreamPassword,
     upstreamPlatform,
+    upstreamRefreshCaptureId,
     upstreamRefreshToken,
     upstreamSessionCookie,
     upstreamTokenExpiresAt,
@@ -3019,6 +3025,7 @@ export function ChannelMutateDrawer({
       toast.error(t('Upstream platform URL is required'))
       return
     }
+    const previewPlatform = forcedUpstreamPlatform ?? upstreamPlatform
     if (upstreamAuthMode === 'password' && (!upstreamUsername.trim() || !upstreamPassword.trim())) {
       toast.error(t('Account and password are required'))
       return
@@ -3031,19 +3038,26 @@ export function ChannelMutateDrawer({
       toast.error(t('Access Token is required'))
       return
     }
-    if (upstreamAuthMode === 'oauth_browser') {
-      toast.error(
-        t(
-          'Automatic OAuth is not supported yet. Log in on the upstream site and import Session/Cookie or Access Token.'
-        )
-      )
+    if (
+      previewPlatform === 'new-api' &&
+      upstreamAuthMode === 'access_token' &&
+      !upstreamUserId.trim()
+    ) {
+      toast.error(t('New-Api-User / User ID is required for new-api access token'))
       return
     }
-    const previewPlatform = forcedUpstreamPlatform ?? upstreamPlatform
+    if (upstreamAuthMode === 'oauth_browser') {
+      if (!upstreamCaptureId.trim()) {
+        toast.error(t('Complete userscript capture before previewing the upstream account'))
+        return
+      }
+    }
     const res = await upstreamPreviewMutation.mutateAsync({
       platform: previewPlatform,
       base_url: baseUrl,
       auth_mode: upstreamAuthMode,
+      capture_id:
+        upstreamAuthMode === 'oauth_browser' ? upstreamCaptureId : undefined,
       username:
         upstreamAuthMode === 'password' && previewPlatform === 'new-api'
           ? upstreamUsername
@@ -3058,7 +3072,8 @@ export function ChannelMutateDrawer({
           ? upstreamSessionCookie
           : undefined,
       user_id:
-        upstreamAuthMode === 'session_cookie'
+        upstreamAuthMode === 'session_cookie' ||
+        (upstreamAuthMode === 'access_token' && previewPlatform === 'new-api')
           ? upstreamUserId.trim() || undefined
           : undefined,
       access_token:
@@ -3099,6 +3114,7 @@ export function ChannelMutateDrawer({
     upstreamAccessToken,
     upstreamAuthMode,
     upstreamBaseUrl,
+    upstreamCaptureId,
     upstreamPassword,
     upstreamPlatform,
     upstreamRefreshToken,
@@ -3512,6 +3528,7 @@ export function ChannelMutateDrawer({
     }
     if (!usingSavedCredential) {
       const baseUrl = upstreamBaseUrl.trim()
+      const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
       if (!baseUrl) {
         toast.error(t('Upstream platform URL is required'))
         return
@@ -3528,13 +3545,19 @@ export function ChannelMutateDrawer({
         toast.error(t('Access Token is required'))
         return
       }
-      if (upstreamAuthMode === 'oauth_browser') {
-        toast.error(
-          t(
-            'Automatic OAuth is not supported yet. Log in on the upstream site and import Session/Cookie or Access Token.'
-          )
-        )
+      if (
+        refreshPlatform === 'new-api' &&
+        upstreamAuthMode === 'access_token' &&
+        !upstreamUserId.trim()
+      ) {
+        toast.error(t('New-Api-User / User ID is required for new-api access token'))
         return
+      }
+      if (upstreamAuthMode === 'oauth_browser') {
+        if (!upstreamRefreshCaptureId.trim()) {
+          toast.error(t('Complete userscript capture before previewing the upstream account'))
+          return
+        }
       }
     }
     const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
@@ -3550,6 +3573,10 @@ export function ChannelMutateDrawer({
             platform: refreshPlatform,
             base_url: upstreamBaseUrl.trim(),
             auth_mode: upstreamAuthMode,
+            capture_id:
+              upstreamAuthMode === 'oauth_browser'
+                ? upstreamRefreshCaptureId
+                : undefined,
             username:
               upstreamAuthMode === 'password' && refreshPlatform === 'new-api'
                 ? upstreamUsername
@@ -3565,7 +3592,9 @@ export function ChannelMutateDrawer({
                 ? upstreamSessionCookie
                 : undefined,
             user_id:
-              upstreamAuthMode === 'session_cookie'
+              upstreamAuthMode === 'session_cookie' ||
+              (upstreamAuthMode === 'access_token' &&
+                refreshPlatform === 'new-api')
                 ? upstreamUserId.trim() || undefined
                 : undefined,
             access_token:
@@ -4432,16 +4461,14 @@ export function ChannelMutateDrawer({
                                           {t('Session/Cookie')}
                                         </SelectItem>
                                       ) : null}
-                                      {upstreamPlatform === 'sub2api' ? (
+                                      {upstreamPlatform === 'new-api' ||
+                                      upstreamPlatform === 'sub2api' ? (
                                         <SelectItem value='access_token'>
                                           {t('Access Token')}
                                         </SelectItem>
                                       ) : null}
-                                      <SelectItem
-                                        value='oauth_browser'
-                                        disabled
-                                      >
-                                        {t('OAuth browser login')}
+                                      <SelectItem value='oauth_browser'>
+                                        {t('Userscript capture')}
                                       </SelectItem>
                                     </SelectGroup>
                                   </SelectContent>
@@ -4564,6 +4591,23 @@ export function ChannelMutateDrawer({
                               ) : null}
                               {upstreamAuthMode === 'access_token' ? (
                                 <>
+                                  {upstreamPlatform === 'new-api' ? (
+                                    <div className='flex flex-col gap-2'>
+                                      <Label htmlFor='upstream-sync-token-user-id'>
+                                        {t('New-Api-User / User ID')}
+                                      </Label>
+                                      <Input
+                                        id='upstream-sync-token-user-id'
+                                        value={upstreamUserId}
+                                        onChange={(event) =>
+                                          setUpstreamUserId(event.target.value)
+                                        }
+                                        placeholder={t(
+                                          'Required for new-api access token'
+                                        )}
+                                      />
+                                    </div>
+                                  ) : null}
                                   <div className='flex flex-col gap-2 sm:col-span-2'>
                                     <Label htmlFor='upstream-sync-access-token'>
                                       {t('Access Token')}
@@ -4616,6 +4660,17 @@ export function ChannelMutateDrawer({
                                     />
                                   </div>
                                 </>
+                              ) : null}
+                              {upstreamAuthMode === 'oauth_browser' ? (
+                                <UpstreamAccountCapturePanel
+                                  platform={
+                                    forcedUpstreamPlatform ?? upstreamPlatform
+                                  }
+                                  baseUrl={upstreamBaseUrl}
+                                  disabled={!canEditSensitiveFields}
+                                  captureId={upstreamCaptureId}
+                                  onCaptureIdChange={setUpstreamCaptureId}
+                                />
                               ) : null}
                               <div className='flex flex-col gap-2'>
                                 <Label htmlFor='upstream-sync-paid-cny'>
@@ -4869,16 +4924,14 @@ export function ChannelMutateDrawer({
                                             {t('Session/Cookie')}
                                           </SelectItem>
                                         ) : null}
-                                        {upstreamPlatform === 'sub2api' ? (
+                                        {upstreamPlatform === 'new-api' ||
+                                        upstreamPlatform === 'sub2api' ? (
                                           <SelectItem value='access_token'>
                                             {t('Access Token')}
                                           </SelectItem>
                                         ) : null}
-                                        <SelectItem
-                                          value='oauth_browser'
-                                          disabled
-                                        >
-                                          {t('OAuth browser login')}
+                                        <SelectItem value='oauth_browser'>
+                                          {t('Userscript capture')}
                                         </SelectItem>
                                       </SelectGroup>
                                     </SelectContent>
@@ -5019,6 +5072,25 @@ export function ChannelMutateDrawer({
                                 {!upstreamUseSavedCredential &&
                                 upstreamAuthMode === 'access_token' ? (
                                   <>
+                                    {upstreamPlatform === 'new-api' ? (
+                                      <div className='flex flex-col gap-2'>
+                                        <Label htmlFor='upstream-refresh-token-user-id'>
+                                          {t('New-Api-User / User ID')}
+                                        </Label>
+                                        <Input
+                                          id='upstream-refresh-token-user-id'
+                                          value={upstreamUserId}
+                                          onChange={(event) =>
+                                            setUpstreamUserId(
+                                              event.target.value
+                                            )
+                                          }
+                                          placeholder={t(
+                                            'Required for new-api access token'
+                                          )}
+                                        />
+                                      </div>
+                                    ) : null}
                                     <div className='flex flex-col gap-2 sm:col-span-2'>
                                       <Label htmlFor='upstream-refresh-access-token'>
                                         {t('Access Token')}
@@ -5071,6 +5143,21 @@ export function ChannelMutateDrawer({
                                       />
                                     </div>
                                   </>
+                                ) : null}
+                                {!upstreamUseSavedCredential &&
+                                upstreamAuthMode === 'oauth_browser' ? (
+                                  <UpstreamAccountCapturePanel
+                                    platform={
+                                      forcedUpstreamPlatform ?? upstreamPlatform
+                                    }
+                                    baseUrl={upstreamBaseUrl}
+                                    channelId={channelId}
+                                    disabled={!canEditSensitiveFields}
+                                    captureId={upstreamRefreshCaptureId}
+                                    onCaptureIdChange={
+                                      setUpstreamRefreshCaptureId
+                                    }
+                                  />
                                 ) : null}
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-paid-cny'>

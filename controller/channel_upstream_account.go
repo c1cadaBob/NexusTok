@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -24,6 +25,10 @@ func PreviewUpstreamAccount(c *gin.Context) {
 	var req upstreamaccount.PreviewRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	if err := applyUpstreamCaptureCredential(c, &req.Credential); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamAccountPreviewTimeout)
@@ -99,6 +104,10 @@ func RefreshUpstreamAccountChannel(c *gin.Context) {
 		return
 	}
 	req.ChannelID = channelID
+	if err := applyUpstreamCaptureCredential(c, &req.Credential); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamAccountPreviewTimeout)
 	defer cancel()
 	result, err := upstreamaccount.RefreshChannelFromCredential(ctx, req)
@@ -141,4 +150,107 @@ func CompleteUpstreamAccountBrowserAuth(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, result)
+}
+
+// StartUpstreamAccountCaptureSession 创建油猴脚本登录态采集会话。
+func StartUpstreamAccountCaptureSession(c *gin.Context) {
+	var req upstreamaccount.CaptureSessionStartRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.StartCaptureSession(c.GetInt("id"), req, externalRequestBaseURL(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// GetUpstreamAccountCaptureSession 返回当前采集会话的脱敏状态。
+func GetUpstreamAccountCaptureSession(c *gin.Context) {
+	result, err := upstreamaccount.GetCaptureSessionStatus(c.GetInt("id"), c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// GetUpstreamAccountCaptureUserscript 动态生成仅匹配目标站的 Tampermonkey 脚本。
+func GetUpstreamAccountCaptureUserscript(c *gin.Context) {
+	script, err := upstreamaccount.RenderCaptureUserscript(c.GetInt("id"), c.Param("id"), externalRequestBaseURL(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.String(http.StatusOK, script)
+}
+
+// CompleteUpstreamAccountCaptureSession 接收油猴脚本回传的目标站登录态。
+//
+// 该接口不依赖 NexusTok 登录态，因为脚本运行在目标站页面中，无法稳定携带 NexusTok
+// 后台 Cookie；安全边界由一次性 capture_secret、目标 origin 校验和短 TTL 缓存共同保证。
+func CompleteUpstreamAccountCaptureSession(c *gin.Context) {
+	var req upstreamaccount.CaptureSessionCompleteRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.CompleteCaptureSession(c.Param("id"), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// ParseUpstreamAccountCredential 解析管理员手动粘贴的登录态并返回脱敏摘要。
+//
+// 该接口只服务页面即时校验，不会保存 token/cookie，也不会把明文凭据回传到浏览器。
+func ParseUpstreamAccountCredential(c *gin.Context) {
+	var req upstreamaccount.CredentialParseRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.ParseCredentialDraft(req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func applyUpstreamCaptureCredential(c *gin.Context, credential *upstreamaccount.Credential) error {
+	if credential == nil || strings.TrimSpace(credential.CaptureID) == "" {
+		return nil
+	}
+	captured, err := upstreamaccount.ResolveCaptureCredential(c.GetInt("id"), credential.CaptureID)
+	if err != nil {
+		return err
+	}
+	captureID := credential.CaptureID
+	*credential = captured
+	credential.CaptureID = captureID
+	return nil
+}
+
+func externalRequestBaseURL(c *gin.Context) string {
+	scheme := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = strings.TrimSpace(c.GetHeader("X-Forwarded-Protocol"))
+	}
+	if scheme == "" {
+		scheme = "http"
+		if c.Request != nil && c.Request.TLS != nil {
+			scheme = "https"
+		}
+	}
+	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(c.Request.Host)
+	}
+	return scheme + "://" + host
 }

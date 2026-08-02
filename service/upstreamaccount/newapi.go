@@ -191,10 +191,36 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 	if api == nil || !authSessionMatches(session, PlatformNewAPI, api.baseURL) || session.NewAPI == nil {
 		return nil, false
 	}
+	userID := strings.TrimSpace(session.NewAPI.UserID)
+	accessToken := normalizeImportedBearerToken(session.NewAPI.AccessToken)
+	if accessToken != "" {
+		if userID == "" {
+			return nil, false
+		}
+		headers := http.Header{}
+		headers.Set("Authorization", accessToken)
+		headers.Set("New-Api-User", userID)
+		user := &newAPIUser{ID: userID}
+		snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, headers)
+		if err != nil {
+			return nil, false
+		}
+		snapshot.AuthSession = &AuthenticatedSession{
+			Platform:   PlatformNewAPI,
+			BaseURL:    api.baseURL,
+			AuthMode:   NormalizeAuthMode(firstNonEmpty(session.AuthMode, AuthModeAccessToken)),
+			ImportedAt: session.ImportedAt,
+			UpdatedAt:  common.GetTimestamp(),
+			NewAPI: &NewAPISessionData{
+				UserID:      userID,
+				AccessToken: accessToken,
+			},
+		}
+		return snapshot, true
+	}
 	if err := restoreCookiesToJar(api, session.NewAPI.Cookies); err != nil {
 		return nil, false
 	}
-	userID := strings.TrimSpace(session.NewAPI.UserID)
 	user := &newAPIUser{ID: userID}
 	if userID == "" {
 		self, err := c.fetchSelf(ctx, api, http.Header{})

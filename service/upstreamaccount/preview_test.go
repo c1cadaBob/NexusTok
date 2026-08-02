@@ -416,6 +416,59 @@ func TestNewAPIPreviewImportsSessionCookieAndAutoDetectsUser(t *testing.T) {
 	require.Len(t, authSession.NewAPI.Cookies, 2)
 }
 
+func TestNewAPIPreviewImportsAccessTokenFromUserscript(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/status" && r.URL.Path != "/api/ratio_config" {
+			require.Equal(t, "newapi-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+		}
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			t.Fatalf("导入 Access Token 时不应调用 new-api 账号密码登录接口")
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":250,"used_quota":50}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"model_ratio":{"gpt-4o":2},"completion_ratio":{},"cache_ratio":{},"create_cache_ratio":{},"model_price":{}}}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"11":"sk-token-full-key"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:    PlatformNewAPI,
+		BaseURL:     server.URL,
+		AuthMode:    AuthModeAccessToken,
+		UserID:      "7",
+		AccessToken: "newapi-access-token",
+	}})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-tok...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-token-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.Equal(t, AuthModeAccessToken, record.Snapshot.StoredCredential.AuthMode)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.Equal(t, "7", authSession.NewAPI.UserID)
+	require.Equal(t, "newapi-access-token", authSession.NewAPI.AccessToken)
+	require.Empty(t, authSession.NewAPI.Cookies)
+}
+
 func TestCompletePreview2FARejectsExpiredChallenge(t *testing.T) {
 	_, err := CompletePreview2FA(context.Background(), Preview2FARequest{
 		ChallengeID: "missing",
@@ -625,6 +678,62 @@ func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
 	_, found, err := authChallengeCache.Get(first.Challenge.ChallengeID)
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestSub2APIPreviewRefreshesExpiredImportedToken(t *testing.T) {
+	refreshCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			refreshCalls++
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "old-refresh", body["refresh_token"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"token_type":"Bearer"}}`))
+		case "/api/v1/auth/me":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			require.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-refreshed-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:     PlatformSub2API,
+		BaseURL:      server.URL,
+		AuthMode:     AuthModeAccessToken,
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		ExpiresAt:    common.GetTimestamp() - 1,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshCalls)
+	require.Len(t, result.Snapshot.Keys, 1)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.Equal(t, "new-access", authSession.Sub2API.AccessToken)
+	require.Equal(t, "new-refresh", authSession.Sub2API.RefreshToken)
+	require.Greater(t, authSession.Sub2API.ExpiresAt, common.GetTimestamp())
 }
 
 func TestSub2APIPreviewAcceptsLoginPageURL(t *testing.T) {

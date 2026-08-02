@@ -88,31 +88,64 @@ func prepareSessionCookieCredential(credential Credential) (Credential, error) {
 }
 
 func prepareAccessTokenCredential(credential Credential) (Credential, error) {
-	if credential.Platform != PlatformSub2API {
-		return credential, fmt.Errorf("Access Token 导入目前用于 sub2api 平台；new-api 请使用 Session/Cookie 导入")
-	}
 	if strings.TrimSpace(credential.BaseURL) == "" {
 		return credential, fmt.Errorf("上游平台地址不能为空")
 	}
-	accessToken := strings.TrimSpace(credential.AccessToken)
+	accessToken := normalizeImportedBearerToken(credential.AccessToken)
 	if accessToken == "" {
 		return credential, fmt.Errorf("目标站 Access Token 不能为空")
 	}
 	now := common.GetTimestamp()
 	credential.Password = ""
-	credential.Session = &AuthenticatedSession{
-		Platform:   PlatformSub2API,
-		BaseURL:    credential.BaseURL,
-		AuthMode:   AuthModeAccessToken,
-		ImportedAt: now,
-		UpdatedAt:  now,
-		Sub2API: &Sub2APISessionData{
-			AccessToken:  accessToken,
-			RefreshToken: strings.TrimSpace(credential.RefreshToken),
-			ExpiresAt:    credential.ExpiresAt,
-		},
+	switch credential.Platform {
+	case PlatformNewAPI:
+		userID := strings.TrimSpace(firstNonEmpty(credential.UserID, credential.Username))
+		if userID == "" {
+			return credential, fmt.Errorf("new-api Access Token 导入必须同时提供 New-Api-User / User ID")
+		}
+		credential.Session = &AuthenticatedSession{
+			Platform:   PlatformNewAPI,
+			BaseURL:    credential.BaseURL,
+			AuthMode:   AuthModeAccessToken,
+			ImportedAt: now,
+			UpdatedAt:  now,
+			NewAPI: &NewAPISessionData{
+				UserID:      userID,
+				AccessToken: accessToken,
+			},
+		}
+	case PlatformSub2API:
+		credential.Session = &AuthenticatedSession{
+			Platform:   PlatformSub2API,
+			BaseURL:    credential.BaseURL,
+			AuthMode:   AuthModeAccessToken,
+			ImportedAt: now,
+			UpdatedAt:  now,
+			Sub2API: &Sub2APISessionData{
+				AccessToken:  accessToken,
+				RefreshToken: strings.TrimSpace(credential.RefreshToken),
+				ExpiresAt:    normalizeUnixSeconds(credential.ExpiresAt),
+			},
+		}
+	default:
+		return credential, fmt.Errorf("Access Token 导入目前支持 new-api 和 sub2api 平台")
 	}
 	return credential, nil
+}
+
+func normalizeImportedBearerToken(raw string) string {
+	token := strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		token = strings.TrimSpace(token[7:])
+	}
+	return token
+}
+
+func normalizeUnixSeconds(value int64) int64 {
+	if value > 1_000_000_000_000 {
+		return value / 1000
+	}
+	return value
 }
 
 // ParseImportedCookies 支持 Cookie header、JSON cookie 数组和 name/value 映射三种导入格式。
@@ -229,7 +262,11 @@ func StartBrowserAuth(_ context.Context, req BrowserAuthRequest) (*BrowserAuthRe
 	if platform == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
 	}
-	return nil, fmt.Errorf("暂不支持自动 OAuth 登录，请先打开目标站完成第三方登录，再使用 Session/Cookie 或 Access Token 导入")
+	return &BrowserAuthResult{
+		Supported: false,
+		Message:   "请使用 NexusTok 登录态采集助手生成油猴脚本，在目标站登录后由脚本采集并回填登录态",
+		AuthModes: []string{AuthModePassword, AuthModeSessionCookie, AuthModeAccessToken, AuthModeOAuthBrowser},
+	}, nil
 }
 
 // CompleteBrowserAuth 预留目标站浏览器 OAuth 自动化回调入口。
@@ -238,7 +275,11 @@ func CompleteBrowserAuth(_ context.Context, req BrowserAuthRequest) (*BrowserAut
 	if platform == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
 	}
-	return nil, fmt.Errorf("暂不支持自动 OAuth 登录，请先打开目标站完成第三方登录，再使用 Session/Cookie 或 Access Token 导入")
+	return &BrowserAuthResult{
+		Supported: false,
+		Message:   "目标站 OAuth 自动回调需要目标站配合；当前请使用油猴脚本采集或手动导入登录态",
+		AuthModes: []string{AuthModePassword, AuthModeSessionCookie, AuthModeAccessToken, AuthModeOAuthBrowser},
+	}, nil
 }
 
 func restoreImportedCookiesToJar(api *httpClient, cookies []StoredHTTPCookie) error {

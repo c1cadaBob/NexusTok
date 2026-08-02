@@ -293,6 +293,7 @@ export interface UpstreamAccountPreviewRequest {
   email?: string
   password?: string
   auth_mode?: UpstreamAccountAuthMode
+  capture_id?: string
   session_cookie?: string
   user_id?: string
   access_token?: string
@@ -389,6 +390,7 @@ export interface UpstreamAccountRefreshRequest {
   email?: string
   password?: string
   auth_mode?: UpstreamAccountAuthMode
+  capture_id?: string
   session_cookie?: string
   user_id?: string
   access_token?: string
@@ -409,6 +411,60 @@ export interface UpstreamAccountRefreshResponse {
     updated: number
     disabled: number
   }
+}
+
+export interface UpstreamAccountCaptureStartRequest {
+  platform: UpstreamAccountPlatform
+  base_url: string
+  channel_id?: number
+}
+
+export interface UpstreamAccountCaptureStartData {
+  capture_id: string
+  expires_at: number
+  platform: UpstreamAccountPlatform
+  base_url: string
+  origin: string
+  userscript_url: string
+  login_url: string
+}
+
+export interface UpstreamAccountCaptureCredentialSummary {
+  platform: UpstreamAccountPlatform
+  auth_mode: UpstreamAccountAuthMode
+  base_url: string
+  origin: string
+  user_id?: string
+  username?: string
+  email?: string
+  access_token_masked?: string
+  refresh_token_present?: boolean
+  expires_at?: number
+  captured_at?: number
+  capture_source?: string
+}
+
+export interface UpstreamAccountCaptureStatusData {
+  capture_id: string
+  status: 'pending' | 'completed' | 'failed'
+  message?: string
+  expires_at: number
+  platform: UpstreamAccountPlatform
+  base_url: string
+  origin: string
+  summary?: UpstreamAccountCaptureCredentialSummary
+}
+
+export interface UpstreamAccountCaptureStartResponse {
+  success: boolean
+  message?: string
+  data?: UpstreamAccountCaptureStartData
+}
+
+export interface UpstreamAccountCaptureStatusResponse {
+  success: boolean
+  message?: string
+  data?: UpstreamAccountCaptureStatusData
 }
 
 // ============================================================================
