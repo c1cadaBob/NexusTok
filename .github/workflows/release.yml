@@ -57,6 +57,7 @@ jobs:
       - name: Build Frontend (classic)
         env:
           CI: ""
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web/classic
           bun install
@@ -115,6 +116,7 @@ jobs:
       - name: Build Frontend (classic)
         env:
           CI: ""
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web/classic
           bun install
@@ -170,6 +172,7 @@ jobs:
       - name: Build Frontend (classic)
         env:
           CI: ""
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web/classic
           bun install
